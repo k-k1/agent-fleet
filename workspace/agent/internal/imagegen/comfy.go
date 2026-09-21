@@ -223,33 +223,37 @@ func appendMissing(have, add []string) []string {
 var comfyDefaultOps = []Op{OpGenerate, OpEdit, OpInpaint}
 
 // comfyFamilyOps is ADR 0094 decision 3: which ops a family's template can build at all. Every
-// family through krea2 has an image-to-image path (LoadImage + VAEEncode, plus SetLatentNoiseMask
-// for a mask) alongside its plain generate — Qwen-Image-Edit has NO GENERATE. It has no path that
-// starts from an empty latent: TextEncodeQwenImageEditPlus with no image input is not a documented
-// use of the node.
+// family through krea2 has an image-to-image path (LoadImage + VAEEncode, plus
+// SetLatentNoiseMask for a mask) alongside its plain generate — Qwen-Image-Edit has NO GENERATE.
+// It has no path that starts from an empty latent: TextEncodeQwenImageEditPlus with no image input
+// is not a documented use of the node.
 //
-// `inpaint` was unclaimed until somebody ran it, which is decision 3's own rule and the one ADR
-// 0072 paid for on SD3.5. It was run on 2026-09-21 (実測 G): the sign prompt sent with a mask that
-// does NOT cover the sign left the sign unchanged, where the same request without a mask changes
-// it — so the mask really is a gate even at a full denoise. comfyQwenEditNoiseMask is the wiring,
-// and it is not the same two nodes the other families use.
+// `inpaint` was unclaimed on the 2509/2511 families until somebody ran it, which is decision 3's
+// own rule and the one ADR 0072 paid for on SD3.5. It was run on 2026-09-21 (実測 G and I) and
+// their rows claim it; qwen-image-2.1 still does not, for the same reason they did not.
+//
+// qwen-image-2.1 is why this reads a declared list rather than "is it an instruction edit"
+// (ADR 0098): it is the first family that instruction-edits AND generates from a prompt alone, so
+// those two stopped being the same question.
 func comfyFamilyOps(family comfyFamily) []Op {
-	if comfyFamilyInstructionEdit(family) {
-		return []Op{OpEdit, OpInpaint}
+	if r, ok := comfyFamilyRowFor(family); ok && len(r.Ops) > 0 {
+		return r.Ops
 	}
 	return comfyDefaultOps
 }
 
-// comfyFamilyInstructionEdit is "this family edits by instruction", which is the axis decisions
-// 2, 3 and 4 all turn on — not the family name, and not the version. Both Qwen-Image-Edit
-// topologies answer true and every future one will; they are separate families because their
-// GRAPHS differ (ADR 0094 decision 6), while everything a caller can ask about them is the same.
+// comfyFamilyInstructionEdit is "this family edits by instruction" — the picture conditions the
+// sampler and the denoise is fixed at 1 — which is the axis ADR 0094 decision 2 turns on, not the
+// family name and not the version.
 //
-// It reads the row's wiring rather than naming the families, so that a family this predicate
-// answers true for is exactly a family comfyGraphQwenImageEdit can build (comfyFamilyRow).
+// 🔴 It reads FixedDenoiseEdit and NOT the wiring pointer, and the two are different questions
+// since ADR 0098: both Qwen-Image-Edit topologies go through comfyGraphQwenImageEdit, while
+// qwen-image-2.1 edits the same WAY through a builder of its own. Reading the pointer here would
+// hand that family a `strength` its sampler cannot spend, which is 実測 C's failure — the picture
+// comes back unedited with no error and no warning.
 func comfyFamilyInstructionEdit(family comfyFamily) bool {
 	r, ok := comfyFamilyRowFor(family)
-	return ok && r.InstructionEdit != nil
+	return ok && r.FixedDenoiseEdit
 }
 
 // comfyFamilyStrength is ADR 0094 decision 2: whether Request.Strength reaches this family's
@@ -281,8 +285,8 @@ func comfyFamilyStrength(family comfyFamily) bool {
 // inference is what decision 3 forbade for inpaint, and until the run above this function
 // deliberately answered 2 with image3 unwired-by-absence.
 func comfyFamilyMaxInputs(family comfyFamily) int {
-	if comfyFamilyInstructionEdit(family) {
-		return 3
+	if r, ok := comfyFamilyRowFor(family); ok && r.RefInputs > 0 {
+		return r.RefInputs
 	}
 	return 1
 }
@@ -292,8 +296,20 @@ func comfyFamilyMaxInputs(family comfyFamily) int {
 // catalogue row could name would reach the sampler at all. comfySizesFor checks this BEFORE the
 // row's own declared list — the one family where the family's answer wins over the row's, because
 // the row's list would otherwise offer a control that silently does nothing.
+//
+// 🔴 Read off the op list and not off "does it edit by instruction" (ADR 0098). The two agreed
+// while every instruction-edit family was also edit-only; qwen-image-2.1 is not, and its GENERATE
+// path fills an EmptyLatentImage from whatever size is chosen. Answering true for it would delete
+// the size control from the one op that reads one. The derivation is the real statement of
+// decision 4: a size only ever reaches an EmptyLatentImage, so a family with no generate path has
+// nowhere to put one.
 func comfyFamilyHasNoSizes(family comfyFamily) bool {
-	return comfyFamilyInstructionEdit(family)
+	for _, op := range comfyFamilyOps(family) {
+		if op == OpGenerate {
+			return false
+		}
+	}
+	return true
 }
 
 // comfyFamilyKnobs is the subset of `steps cfg sampler scheduler negative strength` a family's

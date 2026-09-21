@@ -13,10 +13,10 @@ package main
 // Face), so finding them meant knowing a repository name and searching for it by hand.
 //
 // 🔴 Every entry here was measured against the live APIs before it was written — anima and krea2
-// on 2026-09-15, the two qwen-image-edit families on 2026-09-20: the repository, the path inside
-// it, and that it is ungated. A wrong path here is a second download that 404s minutes after
-// somebody pressed a button, which is exactly the shape of failure the ingest form exists to move
-// earlier.
+// on 2026-09-15, the two qwen-image-edit families on 2026-09-20, qwen-image-2.1 on 2026-09-21:
+// the repository, the path inside it, and that it is ungated. A wrong path here is a second
+// download that 404s minutes after somebody pressed a button, which is exactly the shape of
+// failure the ingest form exists to move earlier.
 //
 // ⚠️ The table is deliberately NOT complete. flux1, flux2-klein, sd35 and zimage are split too and
 // have no entry yet, because nobody has measured their parts the way these were — and an entry
@@ -91,6 +91,38 @@ var engineFamilyParts = map[string][]engineFamilyPart{
 		{Flag: "--vae", Repo: "circlestone-labs/Anima",
 			File:  "split_files/vae/qwen_image_vae.safetensors",
 			S3Key: "image/vae/qwen_image_vae.safetensors"},
+	},
+	// qwen-image-2.1 (ADR 0098) shares NOTHING with the four entries above, and the keys say so.
+	//
+	// 🔴 Not the Qwen-Image VAE. This family's autoencoder is 64-channel at a spatial downscale of
+	// 16 (comfy/latent_formats.py's QwenImage21, measured on ComfyUI v0.37.0); the file every
+	// family above points at is the 16-channel one at a downscale of 8. They load through the same
+	// VAELoader and the same `--vae` flag, so nothing refuses the swap — it decodes to noise.
+	// Sharing the key would also be worse than a wrong path: the reuse check would find the wrong
+	// bytes already staged and download nothing.
+	//
+	// 🔴 The repository is Comfy-Org's mirror and not `Qwen/Qwen-Image-2.1`. Both are ungated
+	// (measured 2026-09-21, anonymous: `gated: false`), but the publisher's own repo ships the
+	// diffusers layout, and what a ComfyUI loader reads is the single-file split the mirror
+	// publishes — the same division of labour as Comfy-Org/Qwen-Image_ComfyUI above.
+	//
+	// The int8 builds rather than the bf16 ones, because that is what the official template names
+	// in both of its versions (image_qwen_image_2_1_t2i.json and …_image_edit.json: the CLIPLoader
+	// widget reads `qwen3vl_8b_int8_convrot.safetensors`). The bf16 encoder is 16.33 GiB against
+	// 8.71 — on a card that also has to hold 6.76 GiB of weights, the citable choice and the one
+	// that fits are the same choice.
+	//
+	// ⚠️ `text_encoders/qwen3.5_9b_qwen_image_2.1_pe_{t2i,i2i}.int8_convrot.safetensors` also live
+	// in that repository and are NOT this. They are the prompt-enhancer models, absent from the
+	// template's own model list; declared as `--clip_l` they would load, encode and sample, which
+	// is this file's usual failure mode.
+	"qwen-image-2.1": {
+		{Flag: "--clip_l", Repo: "Comfy-Org/Qwen-Image-2.1",
+			File:  "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+			S3Key: "image/text_encoders/qwen3vl_8b_int8_convrot.safetensors"},
+		{Flag: "--vae", Repo: "Comfy-Org/Qwen-Image-2.1",
+			File:  "vae/qwen_image_2.1_vae_bf16.safetensors",
+			S3Key: "image/vae/qwen_image_2.1_vae_bf16.safetensors"},
 	},
 }
 

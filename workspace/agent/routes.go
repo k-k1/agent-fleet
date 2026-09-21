@@ -482,6 +482,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /connections/muse/poll", muse.HandlePoll)
 	mux.HandleFunc("POST /connections/muse/api-key", muse.HandleAPIKey)
 	mux.HandleFunc("DELETE /connections/muse", muse.HandleDisconnect)
+	// muse on-demand install (ADR 0095 decision 8): the proprietary ~299MB binary is never in
+	// the image, so the connection card's Install button comes here. POST starts a background
+	// install, GET polls its progress — and the same pair performs a pin-bump upgrade and the
+	// repair of a self-installed shadow, because muse has no launch guard to do it implicitly.
+	mux.HandleFunc("POST /connections/muse/install", handleMuseInstall)
+	mux.HandleFunc("GET /connections/muse/install", handleMuseInstall)
 	mux.HandleFunc("PUT /connections/pagerduty", handlePutPagerDutyConn)
 	mux.HandleFunc("DELETE /connections/pagerduty", handleDeletePagerDutyConn)
 	mux.HandleFunc("PUT /connections/grafana", handlePutGrafanaConn)

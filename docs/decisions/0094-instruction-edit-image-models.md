@@ -143,16 +143,21 @@ another shape resolves a different frame and **repaints somewhere the caller did
 other families have no crop, where a different size is still the same relative region — so this
 restriction belongs to this family alone.
 
+⚠️ **qwen-image-2.1 (ADR 0098) does not inherit the claim.** 2509 and 2511 may share a measurement
+because they share a builder and a wiring (`comfyQwenEditNoiseMask`), not because their names look
+alike. 2.1 has a template of its own and no `FluxKontextImageScale` at all — **a capability this
+deployment has not measured is not one it declares** applies there unchanged.
+
 ### Decision 4 — `size` offers no choices for this family, and the row cannot override it
 
 The output size is `FluxKontextImageScale` picking the nearest entry of
 `PREFERRED_KONTEXT_RESOLUTIONS` by the **input's aspect ratio** (read off the node's v0.35.2 source;
 the five runs went 1024² in → 1024² out, which — being all square — does **not** evidence the ratio
-table). `comfySizesFor` (`comfy.go:589`) answers **empty** for this family, and a `size` that
+table). `comfySizesFor` (`comfy.go:605`) answers **empty** for this family, and a `size` that
 arrives anyway is refused the way decision 2 refuses `strength`.
 
 🔴 **The row's own `sizes` are not honoured either.** `comfySizesFor` returns `conn.Sizes[model]`
-ahead of the family's list (`comfy.go:588`), so an empty family answer alone would still let an
+ahead of the family's list (`comfy.go:604`), so an empty family answer alone would still let an
 operator's declared presets through. This family is the one case where **the family wins over the
 row** — the point is not to offer a value that cannot take effect, and that reason belongs in this
 line of the ADR.
@@ -169,8 +174,8 @@ potted plant from the second picture entered the first scene with its colour and
 Make `Caps.MaxInputs` (fixed at 1, `comfy.go:134`) per family.
 
 🔴 **Declaring 2 does not carry a second image.** Today `p.uploadImage(…, req.Inputs[0])`
-(`comfy.go:1020`) uploads **one**, and `comfyParams.Image` is a single string
-(`comfy_workflows.go:140`). `comfyCheckInputs` (`comfy.go:1120`) only tests
+(`comfy.go:1036`) uploads **one**, and `comfyParams.Image` is a single string
+(`comfy_workflows.go:140`). `comfyCheckInputs` (`comfy.go:1136`) only tests
 `len(req.Inputs) > caps.MaxInputs`, so raising the number alone lets a second image **pass the check
 and go unused** — run C's failure mode exactly: a wrong picture with no warning. Therefore:
 
@@ -184,7 +189,7 @@ and go unused** — run C's failure mode exactly: a wrong picture with no warnin
   **the node takes image1..image3** — a family ceiling, not a step towards a larger one.
 
 ⚠️ **`MaxInputs` is not on the wire** (`providerStatus` has no field for it; the only place it
-reaches the outside is the refusal at `comfy.go:1120`). For the pane to state the limit, P3 has to
+reaches the outside is the refusal at `comfy.go:1136`). For the pane to state the limit, P3 has to
 add the field.
 
 🟢 **Done in P3.** `comfyFamilyMaxInputs` answers 3 for the instruction-edit families (run F above), and the path
@@ -223,7 +228,7 @@ a lie).
   meaningless the day 2512 arrives with 2509's wiring. **A family name points at the version that
   first shipped that topology; it is not an alias for a version** — that sentence goes into the
   ingest UI's family selector.
-- ⚠️ **The cost: one LoRA row per family.** `comfyResolveLoras` (`comfy.go:660`) matches `base_model`
+- ⚠️ **The cost: one LoRA row per family.** `comfyResolveLoras` (`comfy.go:676`) matches `base_model`
   exactly, so the Lightning LoRA has to be registered twice. "Leave Lightning to the row" (rejected,
   below) stops being one row the moment the family splits.
 - The number: one family is about **12 declarations** (`engineComfyFamilies`,
@@ -260,7 +265,7 @@ physical size, and `engine_class.go:37` says why) it always asks for `confirm_vr
 
 **Measured** (`/system_stats`, raw): `vram_total` 23,659,151,360 B = **22,563 MiB**, `vram_free`
 1,783,934,774 B = 1,701 MiB, so **20,862 MiB in use** — inside the rung. The conditions were
-**1024², batch 1, one reference image**. `comfyMaxBatch` is 4 (`comfy.go:645`) and **that range was
+**1024², batch 1, one reference image**. `comfyMaxBatch` is 4 (`comfy.go:661`) and **that range was
 not measured** — re-measure in P3, where the second reference opens (decision 5).
 
 Do **not** change the formula — subtracting a text encoder would be a lie for other families. Who
@@ -403,23 +408,23 @@ the same shape:
 - **Judging** (at generation) is `Caps(model)` — `imagegen.go:847`'s `capsOf` already asks
   `p.Caps(req.Model)`, so a request that names a model is already right.
 - 🔴 **With no model named, comfy's own model resolution has to read `req.Op`.** The union only
-  keeps the provider in the candidates: `comfy.go:938-951` resolves an empty `req.Model` to
+  keeps the provider in the candidates: `comfy.go:954-967` resolves an empty `req.Model` to
   `DefaultModel()` — the warm row — and answers `the self-hosted image engine cannot do generate`
   on `!caps.Supports(req.Op)`. `Run` files that under attempts and **`continue`s**
   (`imagegen.go:903-905`), i.e. **falls through to the next provider, which spends a member's
   plan**, and `recordUsage` (`imagegen.go:899`) writes a failed row on the way. So when the warm
   row's family does not claim the op, resolve to **the first enabled row that does** and say so
-  with `comfySwitchWarning` (`comfy.go:796`). A checkpoint switch costs 1-2.5 minutes (measured),
+  with `comfySwitchWarning` (`comfy.go:812`). A checkpoint switch costs 1-2.5 minutes (measured),
   which is explainable; silently billing another plan is not. **P0's third criterion is only
   testable once this exists.**
 
 ### Decision 12 — There are SIX per-family properties. Dropping `cfg` and `negative` produces a false warning
 
-`comfyFamilyKnobs` (`comfy.go:313`) and `comfyFamilyTakesNegative` (`comfy.go:400`) enumerate
+`comfyFamilyKnobs` (`comfy.go:329`) and `comfyFamilyTakesNegative` (`comfy.go:416`) enumerate
 families in a hard-coded switch, and **an unregistered family falls to the default**. Forgetting a new
 family there means:
 
-- `comfyFamilyKnobs` answers `["steps"]`, so `comfyIgnoredParamWarnings` (`comfy.go:359`) returns
+- `comfyFamilyKnobs` answers `["steps"]`, so `comfyIgnoredParamWarnings` (`comfy.go:375`) returns
   "cfg=4 was not applied: the qwen-image-edit family folds its guidance into the conditioning" —
   **the opposite of run A**, which edited at cfg 4;
 - `comfyFamilyTakesNegative` answers false, so `Caps.Negative` and the pane's negative field
@@ -500,23 +505,23 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   two `comfyFamilyRecipes` rows — **2511's shift 3.1 has no field in `comfyRecipe`**, so it is either
   a literal in the template or a fifth field; decide when implementing), `comfy.go` (the six
   properties of decisions 11 and 12), `props.go` (decision 10), `comfyFamilyRow.TrialSteps`
-  (`comfy_workflows.go:476`; it was `jobs.go`'s `comfyTrialSteps` until 未解決 4's consolidation)
+  (`comfy_workflows.go:487`; it was `jobs.go`'s `comfyTrialSteps` until 未解決 4's consolidation)
   (**omitting it fails `TestEveryFamilyHasTrialSteps`**, `comfy_test.go:1807`; run B's 8 steps /
   63.2 s is the citation), `mcpx/mcp_stdio.go:1132` (the `op` enum and its description — the first
   case where which ops exist depends on the model; the reference-image argument is **`inputs`**, not
   `images`, `maxItems` 5). 🔴 **`strength`'s description (`mcp_stdio.go:1227-1231`) is rewritten
   too**: it is offered on the union, so "0.6 when omitted" alone walks an agent into a 400 every
   time — it has to say that some checkpoints refuse it, and that the answer is a 400. **P3's second image lands here too**: make `comfyParams` plural
-  (`comfy_workflows.go:140`'s `Image string`), call `uploadImage` more than once (`comfy.go:1020`
+  (`comfy_workflows.go:140`'s `Image string`), call `uploadImage` more than once (`comfy.go:1036`
   takes `req.Inputs[0]` alone), wire `image2`, and fix the singular wording of `comfyCheckInputs`'
-  refusal (`comfy.go:1120`).
+  refusal (`comfy.go:1136`).
 - **Wire**: `ops` on `modelStatus`, `strength` in `Knobs` (decision 12), and the Console's mirror of
   both: `wire.ts:37`'s `Knob` is a **closed union**
   (`"steps" | "cfg" | "sampler" | "scheduler" | "negative"`), so it will not compile until the type
   changes, and `ImagegenModel` (`wire.ts:90`, `knobs?: Knob[]`) has no `ops`. 🔴 **Three comments
   spell that vocabulary out** — `providerStatus.Strength` (`http.go:108-115`, "No union is needed:
   it is per provider, not per model", which decisions 2 and 11 make false), `comfyFamilyKnobs`
-  (`comfy.go:299-313`) and `modelStatus.Knobs` (`http.go:170-173`). All three say "a subset of those
+  (`comfy.go:315-329`) and `modelStatus.Knobs` (`http.go:170-173`). All three say "a subset of those
   five words", so **the same change rewrites all three**.
 - **CP**: `engine_catalog.go` (two words, required flags), `engine_family_parts.go` (the table), and
   `engine_class.go` is **left alone** (decision 8).
@@ -873,7 +878,7 @@ came off was the REACH of the decisions, and three names in the code.
   (one with a version, one without) breaks the day 2512 arrives with 2509's wiring. Its cost (one
   LoRA row per family) is now stated.
 - 🟡 **Decision 4 was losing to the row's `sizes` and to the Console's default list**
-  (`comfy.go:588`, `families.ts:179`).
+  (`comfy.go:604`, `families.ts:179`).
 - 🟡 **Decision 9's "past 12 families" trigger measured the wrong thing** (families unrelated to
   editing would fire it). It now counts duplication, and names the table-driven middle step.
 - 🟡 **Three names were wrong**: the `op` enum is in `mcp_stdio.go:1132`, not `mcp_imagegen.go`; the
@@ -946,7 +951,7 @@ fixed.
 
 - 🟡 **Adding a wire field touches three more places**: `wire.ts:37`'s `Knob` is a closed union (it
   will not compile until the type changes) and `ImagegenModel` has no `ops`; and two more comments
-  spell the same vocabulary out (`comfy.go:299-313`, `http.go:170-173`) where the consequences named
+  spell the same vocabulary out (`comfy.go:315-329`, `http.go:170-173`) where the consequences named
   only `http.go:108-115`.
 - 🟡 **Decision 2's 400 has two homes** (`http.go:449`, `jobs_http.go:115`). With only one, the pane
   gets a failed job instead of a refusal and P0's second criterion holds on one route only. Decision

@@ -420,6 +420,17 @@ const (
 	// and the version is in both names because a name that meant "the topology 2509 introduced"
 	// while spelling itself `qwen-image-edit` stops making sense the day that happens.
 	ComfyFamilyQwenImageEdit2511 comfyFamily = "qwen-image-edit-2511"
+	// ComfyFamilyQwenImage21 is ADR 0098's family, and it is the first one here that BOTH generates
+	// from a prompt alone and edits by instruction — the two published templates are the same graph
+	// with a different latent into the sampler (comfyGraphQwenImage21). It is not a version of the
+	// two above and shares no file with them: a 7B single-stream DiT against their 20B MMDiT, a
+	// Qwen3-VL-8B text encoder against Qwen2.5-VL-7B, and a 64-channel RGBA autoencoder at a
+	// spatial downscale of 16 against the 16-channel Qwen-Image VAE at 8.
+	//
+	// 🔴 Spelled with the dot the product carries. The Control Plane validates rows against this
+	// exact string (engine_catalog.go's engineComfyFamilies) and engine_catalog_test.go reads it
+	// out of this file, so the two spellings are one spelling.
+	ComfyFamilyQwenImage21 comfyFamily = "qwen-image-2.1"
 )
 
 // comfyFamilyRow is everything a family declares that is a VALUE rather than a graph: the
@@ -511,9 +522,34 @@ type comfyFamilyRow struct {
 	// keyed by the same two) could disagree: a third topology added to the wiring map and
 	// forgotten in the predicate would advertise `generate`, `inpaint` and `strength` it cannot
 	// build, and 実測 C is what that costs — the same graph at denoise 0.6 came back unedited,
-	// with no error and no warning. Non-nil here is the single fact decisions 2, 3, 4, 5 and 12
-	// all turn on.
+	// with no error and no warning.
+	//
+	// ⚠️ It stops being the single fact decisions 2-5 and 12 turn on the moment a family edits by
+	// instruction through a DIFFERENT builder, which qwen-image-2.1 does (ADR 0098). Decision 2's
+	// half moved to FixedDenoiseEdit below; this field stays narrow, and a family it is non-nil
+	// for is exactly a family comfyGraphQwenImageEdit can build.
 	InstructionEdit *comfyQwenEditWiring
+	// FixedDenoiseEdit is ADR 0094 decision 2's fact on its own: `op=edit` here conditions the
+	// sampler through the picture at a FULL denoise, so a caller's Strength has nowhere to go.
+	// Every InstructionEdit family is one of these; qwen-image-2.1 is one WITHOUT being one of
+	// those, which is why the two are separate fields (a test pins the implication).
+	FixedDenoiseEdit bool
+	// Ops is which ops this family's template can build, and empty means the permissive default
+	// (ADR 0094 decision 3 — generate, edit and inpaint). It is a declaration rather than a
+	// derivation of InstructionEdit because the two stopped agreeing: qwen-image-2.1 edits by
+	// instruction AND generates from a prompt alone.
+	//
+	// 🔴 A family that cannot generate can also never be handed a size — the only place a size
+	// reaches is an EmptyLatentImage, which only a generate path builds — so decision 4's
+	// "this family has no sizes" is READ OFF this field (comfyFamilyHasNoSizes) rather than
+	// declared twice.
+	Ops []Op
+	// RefInputs is how many reference pictures the template actually READS, and 0 means one
+	// (ADR 0094 decision 5). 🔴 The number and the code path move together: raising it without
+	// widening the upload and the template is not a smaller version of the feature — the extra
+	// pictures pass comfyCheckInputs, are never wired, and the caller gets a picture that ignored
+	// them with no warning anywhere (実測 C's shape of lie).
+	RefInputs int
 }
 
 // comfyFamilyRows is the vocabulary itself, ordered oldest architecture first — which is the
@@ -597,6 +633,12 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// than ConditioningZeroOut, so the negative genuinely moves the picture (decision 12).
 	Guided:          true,
 	InstructionEdit: &comfyQwenEditWiring{Shift: 3},
+	// inpaint since 実測 G / 実測 I (ADR 0094 decision 3, unresolved 2): a mask that does NOT cover
+	// the sign left the sign unchanged where the same request without one changes it, so the mask
+	// is a real gate even at a full denoise. The wiring is comfyQwenEditNoiseMask, which is NOT
+	// comfyRequestLatent's two nodes — the mask has to go through the picture's own
+	// FluxKontextImageScale or it lands on a frame the picture was cropped out of.
+	FixedDenoiseEdit: true, Ops: []Op{OpEdit, OpInpaint}, RefInputs: 3,
 }, {
 	Family: ComfyFamilyQwenImageEdit2511,
 	// The official 2511 template's KSampler, same LoRA-switch false branch: steps 40, cfg 4,
@@ -610,6 +652,45 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// above that no picture answered.
 	TrialSteps: 8, Guided: true,
 	InstructionEdit: &comfyQwenEditWiring{Shift: 3.1, RefMethod: "index_timestep_zero"},
+	// inpaint for the same reason 2509 claims it: one builder, one wiring (comfyQwenEditNoiseMask).
+	// 実測 G and I ran on 2509; this one rides the SAME code path rather than a parallel one, which
+	// is the only kind of family ADR 0094 decision 5 allows to inherit a measurement.
+	FixedDenoiseEdit: true, Ops: []Op{OpEdit, OpInpaint}, RefInputs: 3,
+}, {
+	Family: ComfyFamilyQwenImage21,
+	// 🔴 Not run on a GPU here. These are the KSampler widgets BOTH of ComfyUI's shipped templates
+	// carry (image_qwen_image_2_1_t2i.json and image_qwen_image_2_1_image_edit.json, read
+	// 2026-09-21): 25 steps, cfg 1, euler, simple. The two agreeing is why there is no range to
+	// span the way krea2's two modes do.
+	//
+	// ⚠️ 25 is the templates' starting point and not the pipeline's: their own note says the
+	// official pipeline uses "about 40-50 with euler". Taking 25 is taking the published graph; a
+	// row that wants the slower, better setting declares it in `params`.
+	Recipe:       comfyRecipe{Steps: 25, CFG: 1, Sampler: "euler", Scheduler: "simple"},
+	SamplerKnobs: comfyKnobsSampled,
+	// A guess of anima's kind and not of 2509's: nothing has been run. Roughly a third of the
+	// recipe's 25, where the undistilled families above sit — and this one is NOT distilled, so
+	// klein's and krea2's "a trial is the batch" does not apply. Its cfg 1 comes from the
+	// architecture, not from a step-count schedule.
+	TrialSteps: 8,
+	// Guided in the sense this field means: the template gives the negative its own encode
+	// (TextEncodeQwenImage21 emits both conditionings from one node), so a negative CAN move the
+	// picture. The recipe's cfg 1 is what makes comfyModelTakesNegative answer false for every row
+	// that does not raise it — the templates say exactly that: "negative_prompt: unused while
+	// cfg is 1".
+	Guided: true,
+	// Not InstructionEdit: comfyGraphQwenImageEdit cannot build this one. It edits by instruction
+	// through its own builder at a fixed denoise 1, which is the field below, and it also
+	// generates — the first family here to do both.
+	FixedDenoiseEdit: true, Ops: []Op{OpGenerate, OpEdit},
+	// 🔴 A CITATION, not a measurement, and the one entry in this column that is not backed by a
+	// run. The node takes image_1..image_16; the official edit template wires exactly ten and its
+	// note says "Up to 10 reference images". Taking the published wiring is this repository's rule
+	// for a family nobody has run — the same rule the recipe above follows — but 2509's 3 was
+	// deliberately NOT raised on "the wiring is a loop, so more must work" (ADR 0094 decision 5),
+	// so the difference is named here rather than left to look alike. A run that finds the tenth
+	// picture ignored makes this the wrong number, and this is where it is corrected.
+	RefInputs: 10,
 }}
 
 // comfyKnobsSampled is `steps cfg sampler scheduler` — every knob a plain KSampler reads, which
@@ -690,6 +771,8 @@ func comfyBuildGraph(family comfyFamily, files comfyFiles, p comfyParams) (comfy
 		return comfyGraphQwenImageEdit2509(files, p)
 	case ComfyFamilyQwenImageEdit2511:
 		return comfyGraphQwenImageEdit2511(files, p)
+	case ComfyFamilyQwenImage21:
+		return comfyGraphQwenImage21(files, p)
 	default:
 		return nil, errUnknownComfyFamily(family)
 	}
@@ -1310,3 +1393,130 @@ func comfyQwenEditNoiseMask(g comfyGraph, p comfyParams) []any {
 		"samples": comfyLink("enc", 0), "mask": comfyLink("mask", 0)}}
 	return comfyLink("noisemask", 0)
 }
+
+// --- Qwen-Image 2.1 — ComfyUI's own shipped templates, NOT YET RUN ON THIS DEPLOYMENT'S HARDWARE
+//
+// 🔴 THIS FAMILY NEEDS ComfyUI v0.37.0 OR LATER, and the engine image is pinned at v0.35.2
+// (deploy/aws/ecs/comfyui/Dockerfile). `TextEncodeQwenImage21` first appears in v0.37.0 — measured
+// 2026-09-21 by reading comfy_extras/nodes_qwen.py at v0.35.2, v0.36.0 and v0.37.0 — so until that
+// pin moves, a row of this family reaches the engine and is refused by /prompt's own validation.
+// That is a loud failure rather than a silent one, which is why this template can land ahead of
+// the bump (ADR 0098 P0), but it is the FIRST thing to check when a run of this family fails.
+//
+// One graph, two published templates. Comfy Org ships image_qwen_image_2_1_t2i.json and
+// image_qwen_image_2_1_image_edit.json, and read side by side (2026-09-21) they are the same nodes
+// wired the same way; the edit one differs in exactly three things, of which two are inert:
+//
+//   - the LATENT into KSampler — an EmptyLatentImage at the requested size for text-to-image, the
+//     ENCODE NODE's own third output for an edit. That output is an all-zero latent shaped to the
+//     resized image_1 (nodes_qwen.py: `[1, 64, h // 16, w // 16]`), which is how "the output
+//     follows image_1" is expressed. The template puts a ComfySwitchNode between the two and
+//     defaults it to the encode's; this builder picks by whether a reference picture is present,
+//     which is the same choice with no node to carry it.
+//   - QwenImage21Cache set to `auto` / `default`, which is a no-op: the model reads
+//     `transformer_options.get("qwen_image21_cache", {})` and defaults device to "auto" and dtype
+//     to "default" when the node is absent (comfy/ldm/qwen_image21/model.py, select_prefix_cache).
+//     Left out rather than emitted as a node that only exists in v0.37.0 and changes nothing.
+//   - image_1..image_10 on the encode. The node itself takes image_1..image_16; TEN is what the
+//     official template wires, and that is the number this family declares (comfyFamilyMaxInputs).
+//
+// 🔴 The 64-channel VAE is this family's own file and NOT the Qwen-Image VAE the four Qwen-adjacent
+// families above share. comfy/latent_formats.py's QwenImage21 is `latent_channels = 64`,
+// `spacial_downscale_ratio = 16`; the shared one is 16 channels at 8. Both load through VAELoader
+// and both are declared `--vae`, so nothing on the way refuses the wrong one — it decodes to noise.
+//
+// 🔴 `type: "qwen_image"` on the CLIPLoader IS READ, and on its own it is not enough. comfy/sd.py
+// at v0.37.0 reaches this family's encoder only through `clip_type == CLIPType.QWEN_IMAGE` AND a
+// state dict detected as `TEModel.QWEN3VL_8B` (line 1955); the Qwen2.5-VL-7B file the edit families
+// declare, at the same type, takes the generic qwen_image branch instead. So this is the krea2 case
+// rather than the anima one — the field matters — but it is the FILE that separates this family
+// from its siblings, and declaring theirs here loads, encodes, samples and returns a picture.
+//
+// EmptyLatentImage is the 4-channel node at a downscale of 8, and that is not a mismatch here
+// either: it hands the sampler `downscale_ratio_spacial: 8` alongside the tensor, and
+// fix_empty_latent_channels rescales an ALL-ZERO latent to the model's own 16 as well as repeating
+// its channels out to 64 (comfy/sample.py). Anima's template already relies on the channel half of
+// that; this family is the first to need the spatial half.
+//
+// SaveImage rather than the templates' SaveImageAdvanced: this model writes RGBA, and SaveImage
+// keeps it — it hands the raw array to PIL, so a 4-channel picture is saved as a PNG with its
+// alpha (nodes.py, save_images). What SaveImage also does, and this route depends on, is write the
+// `prompt` PNG chunk that readImageProps reads (ADR 0094 P2).
+func comfyGraphQwenImage21(f comfyFiles, p comfyParams) (comfyGraph, error) {
+	if f.DiffusionModel == "" {
+		return nil, errComfyMissingFile("qwen-image-2.1", "diffusion model")
+	}
+	if f.ClipL == "" {
+		return nil, errComfyMissingFile("qwen-image-2.1", "text encoder (Qwen3-VL-8B, declared as --clip_l)")
+	}
+	if f.Vae == "" {
+		return nil, errComfyMissingFile("qwen-image-2.1", "vae (this family's own 64-channel one, not the Qwen-Image VAE)")
+	}
+	if p.Op == OpEdit && p.image(0) == "" {
+		return nil, fmt.Errorf("%s needs an input image, and none reached the graph", p.Op)
+	}
+	g := comfyGraph{
+		"unet": {ClassType: "UNETLoader", Inputs: map[string]any{"unet_name": f.DiffusionModel, "weight_dtype": "default"}},
+		"clip": {ClassType: "CLIPLoader", Inputs: map[string]any{"clip_name": f.ClipL, "type": "qwen_image", "device": "default"}},
+		"vae":  {ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}},
+	}
+	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
+	// Every reference goes in as a bare LoadImage, image_1 included — unlike the edit families next
+	// door there is no FluxKontextImageScale to fit them into a frame, because this node does that
+	// resizing itself (one `resolution` for all of them, aspect preserved, rounded to 32).
+	refs := map[string]any{}
+	for n := range p.Images {
+		id := fmt.Sprintf("img%d", n+1)
+		g[id] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.image(n)}}
+		refs[fmt.Sprintf("image_%d", n+1)] = comfyLink(id, 0)
+	}
+	// One node encodes BOTH conditionings, so there is no positive/negative pair to keep in step —
+	// and p.Negative directly rather than comfyNegativeText(p), for the reason the edit families
+	// state: the fallback default was measured for the SDXL-era families, and both official
+	// templates here ship the negative widget empty.
+	//
+	// `vae` is wired for both ops, where the t2i template leaves it unconnected. It is an optional
+	// input the node reads only inside its reference loop (nodes_qwen.py), so with no reference it
+	// is ignored — and holding the node's shape constant across the two ops is one fewer branch
+	// than a wiring that differs in a way nothing can observe.
+	g["enc"] = comfyNode{ClassType: "TextEncodeQwenImage21", Inputs: comfyWith(refs, map[string]any{
+		"clip": clip, "vae": comfyLink("vae", 0),
+		"prompt": p.Prompt, "negative_prompt": p.Negative,
+		"resolution": comfyQwen21Resolution})}
+	lat := comfyLink("enc", 2)
+	if len(p.Images) == 0 {
+		// Nothing to follow, so the caller's size decides — and the encode node's own latent could
+		// not serve here anyway: with no reference it is a bare `resolution` square, which would
+		// answer every text-to-image request at 1024² whatever was asked for.
+		g["lat"] = comfyNode{ClassType: "EmptyLatentImage", Inputs: map[string]any{
+			"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+		lat = comfyLink("lat", 0)
+	}
+	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilyQwenImage21))
+	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
+		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
+		// 1, not p.denoise(): both published templates sample at 1 for both of their ops, because
+		// an edit here conditions the sampler through the picture rather than starting from it.
+		// 実測 C in ADR 0094 is what a partial denoise does to a family of this shape — the same
+		// request came back unedited, with no error and no warning.
+		"denoise": 1,
+		"model":   model, "positive": comfyLink("enc", 0), "negative": comfyLink("enc", 1),
+		"latent_image": lat}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{
+		"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
+	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
+		"filename_prefix": "af-" + comfyFamilyPrefixName(ComfyFamilyQwenImage21), "images": comfyLink("dec", 0)}}
+	return g, nil
+}
+
+// comfyQwen21Resolution is the pixel budget TextEncodeQwenImage21 resizes every reference picture
+// to — `resolution x resolution`, aspect preserved, rounded to a multiple of 32 — and, through the
+// node's own latent output, the canvas an edit is produced on.
+//
+// 🔴 1024 and not the official edit template's 0. The two published numbers disagree, and this is
+// the one place in this template where the published graph is not taken verbatim: the node's own
+// default is 1024, the template's note calls 1024 "the official default", and 0 means "keep each
+// reference at its own size". A template author picks the demo assets; this route takes whatever
+// picture a member uploads, and 0 would encode an 8000px photograph at 8000px — a VAE encode and a
+// vision-token count nothing here caps, on a card that also holds 15 GiB of weights.
+const comfyQwen21Resolution = 1024

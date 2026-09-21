@@ -42,6 +42,14 @@ TARGETS=(
   "agy|AGY_VERSION|agy|https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json"
   "cursor|CURSOR_VERSION|cursor|https://cursor.com/install"
   "kiro|KIRO_VERSION|kiro|https://prod.download.cli.kiro.dev/stable/latest/manifest.json"
+  # muse (ADR 0095): the stable channel endpoint publishes the version and the manifest URL
+  # anonymously, which is what lets this row exist for a proprietary CLI at all.
+  #
+  # Deliberately the one row with NO matching branch in .github/actions/setup-agent-cli: its
+  # contract (muse-contract.yml) installs the artifact itself, because verifying the release
+  # manifest's own checksum and fingerprint IS the check — handing that to a shared installer
+  # would move the thing under test out of the test.
+  "muse|MUSE_VERSION|muse|https://api.meta.ai/muse-code/channels/muse-stable"
   # rtk is not an agent CLI but is baked/self-updated the same way (ARG pin +
   # entrypoint shadow), so its drift is just as invisible without this row.
   "rtk|RTK_VERSION|github|rtk-ai/rtk"
@@ -115,6 +123,12 @@ for t in "${TARGETS[@]}"; do
     kiro)
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         jq -r '.version // .Version // empty' 2>/dev/null)" ;;
+    muse)
+      # The channel document's `version` IS the pin's shape (`1.3.0-R3401.1`), build id and
+      # all, so no massaging is needed — and none is wanted: dropping the build id here would
+      # compare `1.3.0` against a pin of `1.3.0-R3401.1` and report drift forever.
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
+        jq -r '.version // empty' 2>/dev/null)" ;;
     *)
       latest="" ;;
   esac

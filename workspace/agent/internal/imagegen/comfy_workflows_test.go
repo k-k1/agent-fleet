@@ -13,6 +13,7 @@ package imagegen
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -917,6 +918,9 @@ func TestEveryFamilysPrefixIsReadableBack(t *testing.T) {
 	for _, c := range comfyQwenEditFamilies {
 		files[c.family] = c.files
 	}
+	// In neither fixture list because its graph is not either shape (ADR 0098), and this check
+	// reaches every family in the vocabulary by design.
+	files[ComfyFamilyQwenImage21] = comfyQwen21Files
 	for _, family := range comfyFamilies {
 		t.Run(string(family), func(t *testing.T) {
 			f, ok := files[family]
@@ -1234,5 +1238,326 @@ func TestComfyWorkflowQwenImageEditRefusesAnUnwiredFamily(t *testing.T) {
 		if _, err := comfyGraphQwenImageEdit(c.files, p, c.family); err != nil {
 			t.Errorf("%s: %v", c.family, err)
 		}
+	}
+}
+
+// --- Qwen-Image 2.1 (ADR 0098) -----------------------------------------------------------------
+//
+// One template, two ops, and the tests below are written around the single thing that differs
+// between the two published graphs — where KSampler's latent comes from. Everything else this
+// family can get wrong (the VAE, the encoder's type, the reference inputs' names) fails without an
+// error on real hardware, so each of those is pinned by name rather than by the goldens alone.
+
+var comfyQwen21Files = comfyFiles{
+	DiffusionModel: "qwen_image_2.1_int8_convrot.safetensors",
+	ClipL:          "qwen3vl_8b_int8_convrot.safetensors",
+	Vae:            "qwen_image_2.1_vae_bf16.safetensors",
+}
+
+// Two fixtures rather than one, because this is the first family whose graph is not the same
+// document for `op=generate` and `op=edit`.
+func TestComfyWorkflowQwenImage21MatchesGoldenFixtures(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(p *comfyParams)
+	}{
+		{"t2i", func(p *comfyParams) {}},
+		{"edit", func(p *comfyParams) { p.Op, p.Images = OpEdit, []string{"af-photo.png"} }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := comfyGoldenParams
+			c.mut(&p)
+			g, err := comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(qwen-image-2.1, %s) = %v", c.name, err)
+			}
+			got, err := json.MarshalIndent(g, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, '\n')
+			path := filepath.Join("testdata", "comfy_qwen-image-2.1-"+c.name+".golden.json")
+			want, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("reading %s: %v", path, err)
+			}
+			if string(got) != string(want) {
+				t.Errorf("qwen-image-2.1 %s's graph no longer matches %s.\nGot:\n%s\nIf this change is"+
+					" intended, overwrite the fixture and explain why in the commit.", c.name, path, got)
+			}
+		})
+	}
+}
+
+// The one difference between the two published templates, and the reason it is not cosmetic.
+//
+// Generating has to start from EmptyLatentImage at the caller's size: the encode node's own latent
+// output is a bare `resolution` square (nodes_qwen.py builds `[1, 64, h // 16, w // 16]` from the
+// first reference, falling back to resolution when there is none), so wiring it for text-to-image
+// would answer every request at 1024² whatever size was asked for — a picture, not an error.
+//
+// Editing has to start from the encode node's latent: that is how "the output follows image_1"
+// is expressed, and an EmptyLatentImage there would put the edit on a canvas the conditioning was
+// not built for (the template's own note: "Keep it close to the resized image_1 size, or the edit
+// can shift").
+func TestComfyWorkflowQwenImage21TakesItsLatentFromTheOpsOwnSource(t *testing.T) {
+	gen := comfyGoldenParams
+	gen.Width, gen.Height = 1216, 832
+	g, err := comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, gen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := comfyLinkAt(t, g, "ks.latent_image"); got[0] != "lat" {
+		t.Errorf("generate reads %v, want the EmptyLatentImage: the encode's latent ignores the size", got)
+	}
+	lat, ok := g["lat"]
+	if !ok || lat.ClassType != "EmptyLatentImage" {
+		t.Fatalf("lat = %+v, want an EmptyLatentImage", g["lat"])
+	}
+	if lat.Inputs["width"] != 1216 || lat.Inputs["height"] != 832 {
+		t.Errorf("lat = %v x %v, want the request's own 1216x832", lat.Inputs["width"], lat.Inputs["height"])
+	}
+
+	edit := comfyGoldenParams
+	edit.Op, edit.Images = OpEdit, []string{"af-photo.png"}
+	g, err = comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, edit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := comfyLinkAt(t, g, "ks.latent_image"); got[0] != "enc" || got[1] != 2 {
+		t.Errorf("edit reads %v, want the encode node's own latent output [enc 2]", got)
+	}
+	if _, ok := g["lat"]; ok {
+		t.Error("an edit still built an EmptyLatentImage: the canvas would stop following image_1")
+	}
+}
+
+// Ten references, named the way the node names them. `image_1` and not `image1` — the edit
+// families next door take the second spelling, the two nodes are different nodes, and a wrong key
+// is silently dropped by ComfyUI rather than refused.
+func TestComfyWorkflowQwenImage21WiresEveryReferenceOntoTheOneEncode(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op = OpEdit
+	for i := 0; i < comfyFamilyMaxInputs(ComfyFamilyQwenImage21); i++ {
+		p.Images = append(p.Images, fmt.Sprintf("af-ref%d.png", i+1))
+	}
+	if len(p.Images) != 10 {
+		t.Fatalf("the family declares %d references, and this test was written for 10", len(p.Images))
+	}
+	g, err := comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc, ok := g["enc"]
+	if !ok || enc.ClassType != "TextEncodeQwenImage21" {
+		t.Fatalf("enc = %+v, want a TextEncodeQwenImage21", g["enc"])
+	}
+	for i := range p.Images {
+		node := fmt.Sprintf("img%d", i+1)
+		if n, ok := g[node]; !ok || n.ClassType != "LoadImage" || n.Inputs["image"] != p.Images[i] {
+			t.Fatalf("%s = %+v, want a LoadImage of %s", node, g[node], p.Images[i])
+		}
+		if got := comfyLinkAt(t, g, fmt.Sprintf("enc.image_%d", i+1)); got[0] != node {
+			t.Errorf("enc.image_%d reads %v, want %s", i+1, got, node)
+		}
+	}
+	// No FluxKontextImageScale anywhere: this node does its own resizing from `resolution`, and
+	// an extra scale would fix every reference into the first one's frame.
+	for id, n := range g {
+		if n.ClassType == "FluxKontextImageScale" {
+			t.Errorf("%s is a FluxKontextImageScale: this family resizes inside the encode", id)
+		}
+	}
+	if enc.Inputs["resolution"] != comfyQwen21Resolution {
+		t.Errorf("resolution = %v, want %d", enc.Inputs["resolution"], comfyQwen21Resolution)
+	}
+}
+
+// Both conditionings come out of ONE node, which is what makes a negative reach the sampler at all
+// here — and the wrong slot is the failure that produces a picture rather than an error: positive
+// and negative swapped samples away from the prompt.
+func TestComfyWorkflowQwenImage21ReadsBothConditioningsFromTheOneEncode(t *testing.T) {
+	p := comfyGoldenParams
+	p.Negative = "watermark"
+	g, err := comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := comfyLinkAt(t, g, "ks.positive"); got[0] != "enc" || got[1] != 0 {
+		t.Errorf("ks.positive reads %v, want the encode's first output", got)
+	}
+	if got := comfyLinkAt(t, g, "ks.negative"); got[0] != "enc" || got[1] != 1 {
+		t.Errorf("ks.negative reads %v, want the encode's second output", got)
+	}
+	enc := g["enc"]
+	if enc.Inputs["prompt"] != p.Prompt || enc.Inputs["negative_prompt"] != "watermark" {
+		t.Errorf("enc prompts = %+v, want the request's own two", enc.Inputs)
+	}
+	// 🔴 The caller's negative verbatim, never comfyNegativeText's SDXL-era fallback: both
+	// published templates ship the negative widget empty, and nobody has measured this family
+	// against "blurry, lowres, deformed, watermark, text".
+	p.Negative = ""
+	g, err = comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g["enc"].Inputs["negative_prompt"]; got != "" {
+		t.Errorf("negative_prompt = %q, want empty — the fallback belongs to the SDXL-era families", got)
+	}
+}
+
+// The loaders, pinned by the two values that fail silently. `type: "qwen_image"` is READ
+// (comfy/sd.py reaches this family's encoder only through CLIPType.QWEN_IMAGE together with a
+// state dict detected as Qwen3-VL-8B), and the denoise is 1 for both ops by construction.
+func TestComfyWorkflowQwenImage21LoadersAndDenoise(t *testing.T) {
+	for _, op := range []Op{OpGenerate, OpEdit} {
+		p := comfyGoldenParams
+		if op == OpEdit {
+			p.Op, p.Images = OpEdit, []string{"af-photo.png"}
+		}
+		g, err := comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, p)
+		if err != nil {
+			t.Fatalf("%s: %v", op, err)
+		}
+		if got := g["clip"].Inputs["type"]; got != "qwen_image" {
+			t.Errorf("%s: clip.type = %v, want qwen_image — the default loads a different encoder"+
+				" and returns a picture anyway", op, got)
+		}
+		if got := g["vae"].Inputs["vae_name"]; got != comfyQwen21Files.Vae {
+			t.Errorf("%s: vae = %v, want the row's own 64-channel file", op, got)
+		}
+		if got := g["ks"].Inputs["denoise"]; got != 1 {
+			t.Errorf("%s: denoise = %v, want 1 — both published templates sample at 1", op, got)
+		}
+	}
+}
+
+// The recipe is the published KSampler's, and the two templates agree on it.
+func TestComfyWorkflowQwenImage21RecipeIsTheTemplates(t *testing.T) {
+	r := comfyFamilyRecipeFor(ComfyFamilyQwenImage21)
+	if r.Steps != 25 || r.CFG != 1 || r.Sampler != "euler" || r.Scheduler != "simple" {
+		t.Errorf("recipe = %+v, want the shipped templates' 25 / cfg 1 / euler / simple", r)
+	}
+	// cfg 1, so a row that does not raise it advertises no negative prompt — the family's
+	// template still encodes one, which is the pair comfyModelTakesNegative puts together.
+	if !comfyFamilyTakesNegative(ComfyFamilyQwenImage21) {
+		t.Error("the template encodes a real negative branch, so the FAMILY takes one")
+	}
+}
+
+// This family generates AND edits, and it is the first one that does both while fixing its denoise
+// at 1 — so the three answers that used to move together no longer do.
+func TestComfyWorkflowQwenImage21CapabilitiesSplitFromTheEditOnlyFamilies(t *testing.T) {
+	if got := fmt.Sprint(comfyFamilyOps(ComfyFamilyQwenImage21)); got != fmt.Sprint([]Op{OpGenerate, OpEdit}) {
+		t.Errorf("ops = %s, want generate and edit (inpaint is unclaimed: nobody has run it)", got)
+	}
+	if comfyFamilyStrength(ComfyFamilyQwenImage21) {
+		t.Error("strength has nowhere to go: the denoise is 1 for both ops")
+	}
+	if comfyFamilyHasNoSizes(ComfyFamilyQwenImage21) {
+		t.Error("the generate path fills an EmptyLatentImage from the caller's size, so sizes are real")
+	}
+	if n := comfyFamilyMaxInputs(ComfyFamilyQwenImage21); n != 10 {
+		t.Errorf("max inputs = %d, want the 10 the official edit template wires", n)
+	}
+	// The control: the 2509/2511 pair is unmoved by all of it — they still cannot generate, and
+	// they claim the inpaint 実測 G and I measured on their own builder (ADR 0094 decision 3).
+	for _, f := range []comfyFamily{ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511} {
+		if got := fmt.Sprint(comfyFamilyOps(f)); got != fmt.Sprint([]Op{OpEdit, OpInpaint}) {
+			t.Errorf("%s ops = %s, want edit and inpaint, and never generate", f, got)
+		}
+		if !comfyFamilyHasNoSizes(f) {
+			t.Errorf("%s: sizes are still decided by the input picture", f)
+		}
+	}
+}
+
+// The probe Studio() runs (comfyParams{Prompt: "x"}, Op == "") must keep building on a row whose
+// files are declared, the same way it does for the edit families — and an `op=edit` with nothing
+// attached must still be refused.
+func TestComfyWorkflowQwenImage21BuildsForTheProbeAndRefusesAnEmptyEdit(t *testing.T) {
+	if _, err := comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, comfyParams{Prompt: "x"}); err != nil {
+		t.Errorf("the studio probe no longer builds: %v", err)
+	}
+	if _, err := comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, comfyParams{Prompt: "x", Op: OpEdit}); err == nil {
+		t.Error("an edit with no picture built a graph")
+	}
+}
+
+// Each declared file named in its own refusal, which is also what engine_catalog_test.go reads
+// this template's body for.
+func TestComfyWorkflowQwenImage21RefusesMissingFiles(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		files comfyFiles
+	}{
+		{"diffusion model", comfyFiles{ClipL: "e.safetensors", Vae: "v.safetensors"}},
+		{"text encoder", comfyFiles{DiffusionModel: "m.safetensors", Vae: "v.safetensors"}},
+		{"vae", comfyFiles{DiffusionModel: "m.safetensors", ClipL: "e.safetensors"}},
+	} {
+		if _, err := comfyBuildGraph(ComfyFamilyQwenImage21, c.files, comfyGoldenParams); err == nil {
+			t.Errorf("a row with no %s built a graph", c.name)
+		}
+	}
+}
+
+// The implication the two fields owe each other (ADR 0098): editing through
+// comfyGraphQwenImageEdit is editing at a fixed denoise 1, so a row carrying the wiring must also
+// carry FixedDenoiseEdit. The reverse is deliberately NOT true — qwen-image-2.1 edits that way
+// through a builder of its own — which is exactly why they are two fields, and why the one-way
+// direction is worth pinning: a third instruction-edit topology added to the wiring and forgotten
+// here would be handed a `strength` its sampler cannot spend, and 実測 C is what that returns (the
+// same graph at denoise 0.6, unedited, with no error anywhere).
+func TestInstructionEditWiringImpliesAFixedDenoise(t *testing.T) {
+	var wired int
+	for _, r := range comfyFamilyRows {
+		if r.InstructionEdit == nil {
+			continue
+		}
+		wired++
+		if !r.FixedDenoiseEdit {
+			t.Errorf("%s carries the edit wiring but not FixedDenoiseEdit: strength would reach a"+
+				" sampler that samples at 1 regardless", r.Family)
+		}
+	}
+	if wired == 0 {
+		t.Fatal("no row carries the edit wiring, so this check measures nothing")
+	}
+	// The other direction, as the control: at least one family is a fixed-denoise edit WITHOUT the
+	// wiring, or the two fields could be collapsed again and this test would not notice.
+	var unwired int
+	for _, r := range comfyFamilyRows {
+		if r.FixedDenoiseEdit && r.InstructionEdit == nil {
+			unwired++
+		}
+	}
+	if unwired == 0 {
+		t.Error("every fixed-denoise family also carries the wiring — the two fields are the same" +
+			" question again, and comfyFamilyInstructionEdit could go back to reading the pointer")
+	}
+}
+
+// Ops and "can a size reach this family" are one declaration, not two (ADR 0098). The derivation
+// is the statement: a size only ever reaches an EmptyLatentImage, which only a generate path
+// builds.
+func TestFamilySizesFollowTheOpList(t *testing.T) {
+	for _, family := range comfyFamilies {
+		generates := false
+		for _, op := range comfyFamilyOps(family) {
+			if op == OpGenerate {
+				generates = true
+			}
+		}
+		if got := comfyFamilyHasNoSizes(family); got == generates {
+			t.Errorf("%s: ops=%v but hasNoSizes=%v", family, comfyFamilyOps(family), got)
+		}
+	}
+	// Named, so the table above cannot quietly become all-true or all-false.
+	if !comfyFamilyHasNoSizes(ComfyFamilyQwenImageEdit2511) {
+		t.Error("an edit-only family must still refuse sizes (ADR 0094 decision 4)")
+	}
+	if comfyFamilyHasNoSizes(ComfyFamilyQwenImage21) || comfyFamilyHasNoSizes(ComfyFamilySDXL) {
+		t.Error("a family with a generate path reads sizes")
 	}
 }

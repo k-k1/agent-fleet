@@ -895,6 +895,11 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/muse/poll", restLogin)
 	mux.HandleFunc("POST /api/connections/muse/api-key", rest)
 	mux.HandleFunc("DELETE /api/connections/muse", rest)
+	// muse on-demand install (ADR 0095 decision 8) — the proprietary ~299MB binary is not in
+	// the image, so the card triggers a background install (POST) and polls it (GET). Proxied
+	// to the Agent, which installs into the member's ~/.local.
+	mux.HandleFunc("POST /api/connections/muse/install", rest)
+	mux.HandleFunc("GET /api/connections/muse/install", rest)
 	mux.HandleFunc("PUT /api/connections/opencode", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
 	mux.HandleFunc("POST /api/connections/opencode/oauth/start", restLogin)

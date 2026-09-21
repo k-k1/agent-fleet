@@ -128,15 +128,20 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
 **利用者が描いていない場所を塗る**。他のファミリーはクロップが無く、寸法違いは「同じ相対領域」の
 ままなので、この制限はこのファミリーだけに置く。
 
+⚠️ **qwen-image-2.1（ADR 0098）はこの宣言を継がない。** 2509 と 2511 が継ぎ合えるのは
+**同じ builder の同じ配線**（`comfyQwenEditNoiseMask`）を通るからであって、族の名前が似ているから
+ではない。2.1 は自分のテンプレートを持ち、`FluxKontextImageScale` も通さない——**測っていない
+ものを能力として宣言しない**はそこにそのまま残る。
+
 ### 決定 4 — `size` はこのファミリーでは候補を出さない
 
 出力寸法は `FluxKontextImageScale` が**入力画像のアスペクト比**から `PREFERRED_KONTEXT_RESOLUTIONS`
 の最近傍を選ぶ（ノード定義を v0.35.2 のソースで読んだ結果。実測は 1024² → 1024² が 5 本で、
-**正方形しか試していないので比率表の裏取りにはなっていない**）。`comfySizesFor`（`comfy.go:589`）が
+**正方形しか試していないので比率表の裏取りにはなっていない**）。`comfySizesFor`（`comfy.go:605`）が
 このファミリーに返す候補は**空**にし、呼び出し側が `size` を渡したら決定 2 と同じ形で断る。
 
 🔴 **行の `sizes` も受け付けない。** `comfySizesFor` は `conn.Sizes[model]` があればファミリーより先に返すので
-（`comfy.go:588`）、ファミリーが空を返すだけでは運用者が行に書いた候補がそのまま出てしまう。このファミリーは
+（`comfy.go:604`）、ファミリーが空を返すだけでは運用者が行に書いた候補がそのまま出てしまう。このファミリーは
 **行の宣言よりファミリーが勝つ**唯一の例にする——効かない値を選ばせないためであり、理由は本文のこの行に書く。
 - Console 側も同じ穴を持つ: `sizeOptions`（`families.ts:179`）は `familyCard(f)?.sizes ?? DEFAULT_SIZES`
   なので、**ファミリーカードで `sizes` を省くとメガピクセル表が出る**。カードは `sizes: []` を明示し、
@@ -151,8 +156,8 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
 固定 1）をファミリーごとにする。
 
 🔴 **2 枚目は「宣言」だけでは動かない。経路ごと同じフェーズに入れる。** いまの実装は
-`p.uploadImage(…, req.Inputs[0])`（`comfy.go:1020`）で **1 枚しか上げず**、`comfyParams.Image` は
-単数の文字列（`comfy_workflows.go:140`）。`comfyCheckInputs`（`comfy.go:1120`）は
+`p.uploadImage(…, req.Inputs[0])`（`comfy.go:1036`）で **1 枚しか上げず**、`comfyParams.Image` は
+単数の文字列（`comfy_workflows.go:140`）。`comfyCheckInputs`（`comfy.go:1136`）は
 `len(req.Inputs) > caps.MaxInputs` しか見ないので、**宣言だけ 2 にすると 2 枚目は検査を通って使われない**
 ——実測 C と同じ「無警告で誤った絵」である。したがって:
 
@@ -165,7 +170,7 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
   3 で止まるのは**ノードが image1..image3 までしか取らない**から＝族の上限であって途中段階ではない。
 
 ⚠️ **`MaxInputs` はワイヤに載っていない**（`providerStatus` に欄が無く、外に出るのは
-`comfy.go:1120` の拒否文だけ）。ペインが枚数の上限を出すには status に欄を足す決定が要る（P3）。
+`comfy.go:1136` の拒否文だけ）。ペインが枚数の上限を出すには status に欄を足す決定が要る（P3）。
 
 🟢 **P3 で実装済み。** `comfyFamilyMaxInputs` は指示編集の族に 3 を返し（実測 F、上記）、経路は同じ変更で開いた
 （`comfyParams.Images` の複数形化・`req.Inputs` 全件のアップロード・`image2` への配線・拒否文の複数形）。
@@ -199,7 +204,7 @@ shift が 3.0 → 3.1 になる（steps / cfg は switch の false 枝＝40 / 4�
   片方だけ版を持つ非対称（`qwen-image-edit` / `…-2511`）は、2512 が 2509 の配線で来た日に意味不明に
   なる。**ファミリー名は「そのトポロジを最初に出した版」を指し、版の別名ではない**——この一文を取り込み UI の
   ファミリーセレクタの説明に出す。
-- ⚠️ **代償: LoRA がファミリーごとに 1 行要る。** `comfyResolveLoras`（`comfy.go:660`）は
+- ⚠️ **代償: LoRA がファミリーごとに 1 行要る。** `comfyResolveLoras`（`comfy.go:676`）は
   `base_model` の完全一致で適合を見るので、Lightning LoRA は 2 ファミリーぶん 2 行の登録になる。
   「Lightning は行に任せる」（却下した案）は、ファミリーが割れた瞬間 1 行では成立しない。
 - 実数: ファミリー 1 つを足すと宣言が **約 12 か所**（`engineComfyFamilies` / `engineComfyRequiredFlags` /
@@ -236,7 +241,7 @@ shift が 3.0 → 3.1 になる（steps / cfg は switch の false 枝＝40 / 4�
 
 **実測（`/system_stats` の生値）**: `vram_total` 23,659,151,360 B ＝ **22,563 MiB**、
 `vram_free` 1,783,934,774 B ＝ 1,701 MiB、したがって **使用 20,862 MiB**。段の 22,000 に収まっている。
-測定条件は **1024²・batch 1・参照画像 1 枚**。`comfyMaxBatch` は 4（`comfy.go:645`）で、**その範囲は
+測定条件は **1024²・batch 1・参照画像 1 枚**。`comfyMaxBatch` は 4（`comfy.go:661`）で、**その範囲は
 測っていない**——参照 2 枚を開ける P3 で測り直す（決定 5）。
 
 見積りの式は**変えない**（テキストエンコーダを引く式は他のファミリーで嘘になる）。では誰が `vram_mib` を書くか:
@@ -357,20 +362,20 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 - **判定（生成時）は `Caps(model)`**——`imagegen.go:847` の `capsOf` は既に `p.Caps(req.Model)` なので、
   モデルを名指しした要求はそのまま正しい。
 - 🔴 **モデル未指定のときは、comfy のモデル解決が `req.Op` を見る。** union は「候補に残す」までしか
-  効かない: `comfy.go:938-951` は `req.Model` が空なら `DefaultModel()`＝warm な 1 行に解決し、
+  効かない: `comfy.go:954-967` は `req.Model` が空なら `DefaultModel()`＝warm な 1 行に解決し、
   `!caps.Supports(req.Op)` で `the self-hosted image engine cannot do generate` を返す。`Run` は
   それを attempts に積んで **`continue`**（`imagegen.go:903-905`）＝**次の provider（会員の課金プラン）へ
   落ちる**。おまけに `recordUsage`（`imagegen.go:899`）が失敗の行を 1 本刻む。
   したがって warm な行のファミリーがその op を名乗らないときは、**名乗る最初の有効な行に落として
-  `comfySwitchWarning`（`comfy.go:796`）を出す**。チェックポイントの切り替えは実測 1〜2.5 分かかるが、
+  `comfySwitchWarning`（`comfy.go:812`）を出す**。チェックポイントの切り替えは実測 1〜2.5 分かかるが、
   黙って別プランに課金するより説明できる。**P0 完了条件 (3) はこれが入って初めて検証できる。**
 
 ### 決定 12 — ファミリーの属性は 6 つ。`cfg` と `negative` を落とすと**嘘の警告**が出る
 
-`comfyFamilyKnobs`（`comfy.go:313`）と `comfyFamilyTakesNegative`（`comfy.go:400`）はファミリーをハードコードで
+`comfyFamilyKnobs`（`comfy.go:329`）と `comfyFamilyTakesNegative`（`comfy.go:416`）はファミリーをハードコードで
 列挙し、**未登録のファミリーは既定に落ちる**。新しいファミリーをここに書き忘れると:
 
-- `comfyFamilyKnobs` は `["steps"]` だけを返し、`comfyIgnoredParamWarnings`（`comfy.go:359`）が
+- `comfyFamilyKnobs` は `["steps"]` だけを返し、`comfyIgnoredParamWarnings`（`comfy.go:375`）が
   「cfg=4 was not applied: the qwen-image-edit family folds its guidance into the conditioning」と
   **実測 A（cfg 4 で編集が成った）と正反対の文**を返す。
 - `comfyFamilyTakesNegative` は false を返し、`Caps.Negative` もペインのネガティブ欄も消える。
@@ -444,7 +449,7 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
 - **Agent**: `comfy_workflows.go`（ファミリー 2 つ・テンプレート 1 本＋2511 の差分・denoise のファミリー分岐・
   `comfyFamilyRecipes` 2 行。**2511 の shift 3.1 は `comfyRecipe` の 4 欄に無い**のでテンプレート内の
   literal になる——どちらに置くかを実装時に決める）、`comfy.go`（決定 11・12 の 6 属性）、
-  `props.go`（決定 10）、`comfyFamilyRow.TrialSteps`（`comfy_workflows.go:476`。未解決 4 の統合までは
+  `props.go`（決定 10）、`comfyFamilyRow.TrialSteps`（`comfy_workflows.go:487`。未解決 4 の統合までは
   `jobs.go` の `comfyTrialSteps`）（**書かないと
   `TestEveryFamilyHasTrialSteps`（`comfy_test.go:1807`）が赤**。実測 B の 8 steps／63.2 秒がそのまま
   根拠になる）、`mcpx/mcp_stdio.go:1132`（`op` の enum と説明文——ファミリーで使える op が変わる最初の例。
@@ -452,14 +457,14 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
   （`mcp_stdio.go:1227-1231`）も直す**——union で offer される以上、「0.6 when omitted」だけでは
   エージェントが毎回 400 を踏む。「取らないチェックポイントがあり、そのときは 400 で返る」を書く。
   **P3 の 2 枚目**はここに乗る: `comfyParams` の複数形化（`comfy_workflows.go:140` の `Image string`）・
-  `uploadImage`（`comfy.go:1020` は `req.Inputs[0]` の 1 回だけ）の複数回呼び出し・`image2` への配線・
-  `comfyCheckInputs`（`comfy.go:1120`）の拒否文の単数形。
+  `uploadImage`（`comfy.go:1036` は `req.Inputs[0]` の 1 回だけ）の複数回呼び出し・`image2` への配線・
+  `comfyCheckInputs`（`comfy.go:1136`）の拒否文の単数形。
 - **ワイヤ**: `modelStatus` に `ops`、`Knobs` に `strength`（決定 12）。Console 側の写しも同時に:
   `wire.ts:37` の `Knob` は**閉じた union**（`"steps" | "cfg" | "sampler" | "scheduler" | "negative"`）
   なので型ごと直さないとコンパイルが通らず、`ImagegenModel`（`wire.ts:90` が `knobs?: Knob[]`）には
   `ops` が無い。🔴 **語彙を書いたコメントが 3 か所ある**——`providerStatus.Strength`
   （`http.go:108-115`「No union is needed: it is per provider, not per model.」＝決定 2 と 11 が
-  これを嘘にする）・`comfyFamilyKnobs`（`comfy.go:299-313`）・`modelStatus.Knobs`
+  これを嘘にする）・`comfyFamilyKnobs`（`comfy.go:315-329`）・`modelStatus.Knobs`
   （`http.go:170-173`）。どれも「5 語の部分集合」と書いてあるので、**同じ変更で 3 つとも書き替える**。
 - **CP**: `engine_catalog.go`（語彙 2 語・必須フラグ）、`engine_family_parts.go`（部品表）、
   `engine_class.go` は**触らない**（決定 8）。
@@ -781,7 +786,7 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
 - 🔴 **決定 6 の規則は「版ごと」ではなく「トポロジごと」**と書くべきだった。綴りの非対称
   （片方だけ版付き）も、2512 が 2509 の配線で来た日に破綻する。代償（LoRA がファミリーごとに 1 行）も
   書き足した。
-- 🟡 **決定 4 は行の `sizes` と Console の既定表に負けていた**（`comfy.go:588` / `families.ts:179`）。
+- 🟡 **決定 4 は行の `sizes` と Console の既定表に負けていた**（`comfy.go:604` / `families.ts:179`）。
 - 🟡 **決定 9 の引き金「ファミリー 12」は軸が合っていなかった**（編集と無関係なファミリーで発火する）。宣言の
   重複量に変え、中間段（テーブル駆動テンプレート）を候補として書いた。
 - 🟡 **コードの名前 3 つが違った**: `op` の enum は `mcp_imagegen.go` ではなく `mcp_stdio.go:1132`、
@@ -845,7 +850,7 @@ not per model.」と書いており、決定 2 と 11 がそれを嘘にする�
 
 - 🟡 **ワイヤを足すと直る場所がもう 3 つあった**: `wire.ts:37` の `Knob` は閉じた union なので型ごと
   直さないとコンパイルが通らず、`ImagegenModel` に `ops` が無い。語彙を書いたコメントも
-  `comfy.go:299-313` と `http.go:170-173` の 2 つが残っていた（影響に書いていたのは
+  `comfy.go:315-329` と `http.go:170-173` の 2 つが残っていた（影響に書いていたのは
   `http.go:108-115` だけ）。
 - 🟡 **決定 2 の 400 は置き場所が 2 か所**（`http.go:449` と `jobs_http.go:115`）。片方だけだと
   ペインからは「失敗したジョブ」になり、P0 完了条件 (2) が経路によって成立しない。あわせて
