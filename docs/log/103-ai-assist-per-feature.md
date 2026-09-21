@@ -158,8 +158,9 @@ kind, model, _ := resolveOneShot(feature, tier)
   **kind と model が別の解決から来た行**＝どの lookup にも一致しない行が書かれる。
   ストアが空の初回は解決が生成の**後**に初めて走るので、窓は生成時間まるごと（可用性
   キャッシュは 1 分）。model だけ直して kind を走行値のまま残していたのが実際の欠陥だった。
-  ⚠️ その結果 `OneShotHeadlessRun` の戻り値には消費者がいない。残すなら理由を、
-  無いなら関数ごと畳むこと（未決）。
+  ⚠️ その結果 `OneShotHeadlessRun` の戻り値には消費者がいない。**残すと決めた**
+  （2026-09-21・103-final-review E-8）——kind/model は台帳記録用にどのみち計算済みで、
+  戻り値として公開すること自体に追加コストが無い。理由は関数の doc コメントに書いた。
 - **`chatx.Deps` の seam は 3 本。**`AiFeatureAgentPref` / `AiFeatureModelPref` に加え、
   **`ChatReplySuggestEnabled`** が要る——いま `Deps.ReplySuggestEnabled`（`deps.go:83`）の 1 本が
   ミラーとチャットの両方を兼ねており、`chatx` から `uiprefs` を直接呼ぶ道は無い（逆依存は

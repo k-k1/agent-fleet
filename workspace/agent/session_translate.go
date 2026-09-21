@@ -159,13 +159,15 @@ func fnv1a32(s string, seed uint32) uint32 {
 // agent/model, WHAT translated a piece of text is part of its identity, so a cached answer from
 // a different resolved backend/model must not silently stand in when that pin changes.
 //
-// Kind/Model are the values chatx.OneShotHeadlessRun actually reported (never a prediction —
-// docs/log/103 §103.8-2: the 1-minute availability cache can flip between an earlier guess and
-// the moment the call actually runs). Empty (both fields) marks a pre-103 entry: no model
-// dimension existed yet when it was written, and it is read as a hit regardless of the
-// feature's current pin (docs/log/103 §103.9 migration 1) — otherwise every existing
-// translation goes stale, and "same text again is free" (aiassist.note_mirror_translate) breaks
-// for everyone on the very next release, not just the few who touch the new per-feature setting.
+// Kind/Model are what translateCacheModel resolved AT PRESS TIME — the same value the next
+// lookup will compare against — never what the run actually reached (103-final-review 中1: an
+// earlier version took Kind from chatx.OneShotHeadlessRun's own return instead, and a run that
+// reached a different kind than the current resolution wrote a row no future lookup could ever
+// match). Empty (both fields) marks a pre-103 entry: no model dimension existed yet when it was
+// written, and it is read as a hit regardless of the feature's current pin (docs/log/103 §103.9
+// migration 1) — otherwise every existing translation goes stale, and "same text again is free"
+// (aiassist.note_mirror_translate) breaks for everyone on the very next release, not just the
+// few who touch the new per-feature setting.
 type sessionTranslation struct {
 	Hash      string `json:"hash"`            // translateHash of the source text
 	Lang      string `json:"lang"`            // target language ("ja" | "en")

@@ -1816,9 +1816,20 @@ func OneShotHeadless(ctx context.Context, feature string, tier OneShotTier, pers
 }
 
 // OneShotHeadlessRun is OneShotHeadless plus the backend kind and model that ACTUALLY ran.
-// The mirror translation cache key needs that (docs/log/103 decision 8): resolveOneShot's
-// answer is a prediction (raced by the same 1-minute availability cache this call itself
-// refreshes), so the only trustworthy value for a cache key is what this call really did.
+//
+// Nothing currently reads kind/model (103-final-review E-8): the mirror translation cache key
+// used to (docs/log/103 decision 8's original text), but that was corrected — a cache key can
+// only use a value the NEXT lookup can predict, and this call's actual kind/model is a
+// prediction raced by the same 1-minute availability cache this call itself refreshes, so using
+// it produced rows no future lookup could ever match (103-final-review 中1). The key now comes
+// from resolveCacheModel (session_translate.go), a SEPARATE resolution the write and every read
+// share.
+//
+// Kept anyway rather than folded back into OneShotHeadless: kind/model are already computed
+// here for the usage ledger (call.Kind/call.ModelReq below) regardless of whether anyone reads
+// the return, so there is no cost to keeping them — and a caller that needs "what actually ran"
+// for something other than a cache key (a ledger cross-check, say) has a place to get it without
+// re-deriving resolveOneShot's own logic.
 func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, persona, prompt, claudeModel string) (reply, kind, model string, err error) {
 	// Usage ledger (ADR 0029 §3). This function takes the first usable backend out of
 	// claude → codex → opencode → cursor → agy, so kind is filled in inside the branch, as a
