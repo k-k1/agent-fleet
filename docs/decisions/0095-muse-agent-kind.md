@@ -2128,3 +2128,72 @@ Three smaller things:
 should and one passed green — the assertion for the contributor note matched the word
 "contributor" in the picker's own option labels, so deleting the note entirely changed nothing.
 It asserts on the note's own sentence now.
+
+### P2-10: usage — a ledger with no price, a chip with no query, and two kinds nobody could see
+
+The tenth work package: the accounting declaration, the subscription-quota chip, the MCP
+surfaces, and the usage view's own colours.
+
+**The token ledger needed almost nothing, because the transcript already carries the numbers.**
+`applyUsage` folds `item.Usage` onto its turn (P2-3), and the fold, the watermark and the
+per-turn attribution are the shared ones. What this package adds is the *declaration*:
+`usageMeasuredForKind` returns **`MeasuredPartial`**, and the reason is worth keeping in the
+code rather than only here — the wire's own numbers are clean (cached input separated, no
+differencing, a failed turn reporting nothing, a resume replaying nothing), so what is partial
+is OWNERSHIP. Gate B1 measured one turn reporting 88,077 prompt tokens on the wire while the
+host's durable log recorded 116,816 across six calls, two of them a subagent's. AF's clamps
+turn subagents and observers off, which makes the wire complete *in practice* — and that is
+exactly why it stays partial: a clamp is a setting, and this field describes the source.
+
+**No cost estimate, stated in the table rather than left as an absence.** `usageCatalogProviders`
+gains a comment and no row: models.dev has no entry for Muse Code's models, and the vendor's
+own catalogue reports `cost: null` on all four (measured again this round). Both ends are
+empty, so the kind ships a token ledger with no cost chip; a guessed provider would put a
+number on the screen that nobody charged. An absent row looks identical to an oversight, which
+is what the comment is for.
+
+**The quota chip is an observation, not a query, and that difference is the whole design.**
+`usage/read` and the unsolicited `usage/changed` carry the same object, so AF records both into
+one process-wide value — what they describe is the ACCOUNT, and under decision 3's
+one-host-per-session shape five sessions all report the same subscription. Three things follow:
+
+- Newest wins **by the host's own `observedAtMs`**, not by arrival. Two hosts can deliver out
+  of order, and a chip that walks backwards reads as usage being refunded.
+- `GET /muse/usage` asks a live host when it has nothing cached, and **spawns nothing**: a
+  quota reading is not worth a 299 MB process start.
+- 🔴 `{ok: false, authed: true}` is a real state, not a failure. Measured, `usage/read` answers
+  `{}` until that host has seen a completion, so a workspace whose muse sessions have all just
+  started has no reading — and reporting 0% used there would tell the member they had their
+  whole week left. The WsBar's existing "authed but unavailable" path already renders exactly
+  that (a "—" chip), so the shape was chosen to land in it.
+
+The window's length is a wire field rather than a constant (`windowDurationMins`, measured 300)
+and it is carried through instead of assumed, which is why muse's first row is labelled
+"current window" where claude's and codex's say "5-hour".
+
+**The usage view could not see lcpp either.** `KIND_STACK_ORDER` is the list of kinds the chart
+gives a colour; a kind missing from it falls into the grey "other" fold. It had seven entries,
+and lcpp's consumption has been folded into "other" since ADR 0093 — invisible rather than
+wrong, which is why nobody noticed. Adding two kinds to a palette that was *ordered* for
+CVD-adjacency is not an append, so the search was redone as a script that can be re-run
+(`console/scripts/kindcolor/usageorder.mjs`): every permutation of the nine, scored on its
+worst adjacent pair under normal vision and all three dichromacies in both themes.
+
+- Appending the two the obvious way scores **worst adjacent ΔE 10.8** — lcpp's yellow against
+  muse's lilac, which collapse under tritanopia. Nobody would have thought to check that pair.
+- The searched order scores **17.0**, which is also better than the seven-kind order it
+  replaces (13.0 under CVD). The binding pairs are kiro|copilot in normal vision and
+  copilot|agy under tritanopia.
+- The bands were then rendered and looked at, in both themes and all four visions. The numbers
+  rank the permutations; the picture is what confirms a pair the arithmetic passed does not
+  read as one block — this palette's own history (the two greys) is why that step exists.
+
+Two smaller things: `list_models` refused `kind=muse` outright, which is the model-list
+package's own miss found from the MCP side; and `get_session_usage`'s description now says what
+muse's numbers do and do not include, because an assistant reading `cumulative` has no other
+way to know a subagent's tokens are missing.
+
+**Not in this package, and not forgotten:** the context-usage gauge. `session/contextUsage`
+exists on the wire, but it only fires around a turn, so declaring `contextBar` would be a
+capability claimed from a schema rather than measured end to end — the rule the other four
+false caps already follow.

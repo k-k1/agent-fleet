@@ -323,6 +323,16 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 
 	case msp.NotificationUserInputSettled:
 		h.clearAsk(func(p *pendingAsk) bool { return !p.isApproval() })
+
+	case msp.NotificationUsageChanged:
+		// Unsolicited, and about the ACCOUNT rather than this session — so it is recorded
+		// process-wide (usage.go) rather than on the handle. This is the only route by which
+		// the quota chip learns anything without being asked.
+		var p msp.SubscriptionUsage
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		recordQuota(p)
 	}
 }
 

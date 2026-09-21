@@ -216,6 +216,17 @@ func usageMeasuredForKind(kind string) string {
 		return usagex.MeasuredExact
 	case session.KindCopilot:
 		return usagex.MeasuredPartial // the transcript only carries outTok
+	// muse (ADR 0095 decision 10): the wire's own per-turn numbers are clean — cached input is
+	// separated, the cumulative block never needs differencing, a failed turn reports nothing
+	// and a resume replays none of it — so what makes this partial is not precision but
+	// OWNERSHIP. Subagent and observer model calls are never folded into `session/tokenUsage`;
+	// gate B1 measured one turn reporting 88,077 prompt tokens on the wire while the host's own
+	// durable log recorded 116,816 across six calls, two of them owned by a subagent. AF's
+	// clamps turn subagents and observers off, which makes the wire numbers complete in
+	// practice — but a clamp is a setting and this is a declaration about the SOURCE, so it
+	// stays partial rather than claiming an exactness the protocol does not give.
+	case session.KindMuse:
+		return usagex.MeasuredPartial
 	}
 	return usagex.MeasuredNone // kiro / cursor / agy: no tokens in the transcript
 }

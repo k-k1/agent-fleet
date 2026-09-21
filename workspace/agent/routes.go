@@ -331,6 +331,11 @@ func buildMux() *http.ServeMux {
 	// Copilot account credit quota (remaining % + reset + plan) for the WsBar chip;
 	// structured JSON from copilot_internal/user via the gh transparent-auth token.
 	mux.HandleFunc("GET /copilot/usage", copilot.HandleUsage)
+	// muse subscription quota (current window + weekly) for the WsBar chip. Unlike the others
+	// there is no CLI to ask and no file to read: it is the host's own last observation off
+	// the wire (ADR 0095 decision 10), so a workspace with no muse session running answers
+	// "signed in, nothing observed".
+	mux.HandleFunc("GET /muse/usage", muse.HandleUsage)
 	mux.HandleFunc("GET /codex/settings", codex.HandleSettingsGet)
 	mux.HandleFunc("PUT /codex/settings", codex.HandleSettingsPut)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.

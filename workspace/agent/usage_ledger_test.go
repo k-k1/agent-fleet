@@ -398,6 +398,10 @@ func TestUsageMeasuredForKind(t *testing.T) {
 		session.KindCodex:   usagex.MeasuredExact,
 		session.KindLcpp:    usagex.MeasuredExact,   // ADR 0093 decision 8: own engine, own exact usage
 		session.KindCopilot: usagex.MeasuredPartial, // only outTok in the transcript
+		// muse (ADR 0095 decision 10): the wire's own numbers are clean, but subagent and
+		// observer model calls never reach it — one measured turn was 24% short. Partial is
+		// about the SOURCE, so AF's clamps making those calls not happen does not promote it.
+		session.KindMuse: usagex.MeasuredPartial,
 		session.KindCursor:  usagex.MeasuredNone,    // no tokens in the transcript
 		session.KindKiro:    usagex.MeasuredNone,
 		session.KindAgy:     usagex.MeasuredNone,

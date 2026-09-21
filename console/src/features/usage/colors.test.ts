@@ -29,9 +29,22 @@ describe("paintSeries: a colour belongs to the entity, not to its rank", () => {
     const p = paintSeries("kind", ["claude", "codex", "cursor"]);
     // Output is always in slot order = KIND_STACK_ORDER order, so touching pairs are the
     // validated adjacent ones.
-    expect(p.map((x) => x.key)).toEqual(["cursor", "claude", "codex"]);
-    expect(p.map((x) => x.color)).toEqual(["var(--kind-cursor)", "var(--kind-claude)", "var(--kind-codex)"]);
+    expect(p.map((x) => x.key)).toEqual(["codex", "claude", "cursor"]);
+    expect(p.map((x) => x.color)).toEqual(["var(--kind-codex)", "var(--kind-claude)", "var(--kind-cursor)"]);
     expect(KIND_STACK_ORDER.indexOf("claude")).toBeGreaterThanOrEqual(0);
+  });
+
+  // A kind that folds into grey "other" is not a colour bug, it is consumption nobody can
+  // attribute — and it is silent, because "other" is a legitimate slot. lcpp shipped that way
+  // from ADR 0093 and muse would have. Every kind whose sessions carry a transcript the ledger
+  // folds belongs here; shell and ssm have none and must NOT.
+  it("gives every kind the ledger folds a colour of its own", () => {
+    for (const kind of ["claude", "codex", "cursor", "agy", "kiro", "copilot", "opencode", "lcpp", "muse"]) {
+      expect(KIND_STACK_ORDER).toContain(kind);
+    }
+    for (const kind of ["shell", "ssm"]) {
+      expect(KIND_STACK_ORDER).not.toContain(kind);
+    }
   });
 
   it("puts an unknown kind in other rather than assigning a generated colour", () => {
