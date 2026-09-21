@@ -597,10 +597,18 @@ by nothing, and is now gone as well: the role runs ComfyUI, the engine table wri
 literal, and a choice of one is a question nobody should be asked. What a captured file or a
 live stack still says about it is dropped (see the retired-parameters section above).
 
-`ImageComfyImageTag` (default `v0.34.0`) is the tag inside `af-comfyui`, baked by
+`ImageComfyImageTag` (default `v0.37.0`) is the tag inside `af-comfyui`, baked by
 `.github/workflows/comfyui-image.yml` (a dedicated `workflow_dispatch`, deliberately NOT part of
 `dev-image.yml`/`release.sh` — ComfyUI's pinned upstream revision moves on its own schedule, not
 the app's) and copied in by `standup.sh`, gated on `ImageEnabled=true`.
+
+⚠️ **The pin is two halves, and they move in this order.** `COMFYUI_REF`
+(`deploy/aws/ecs/comfyui/Dockerfile`) says what gets BAKED; this parameter — and the identical
+fallback in `standup.sh`, for a capture written before the parameter existed — says what a
+deployment PULLS. Dispatch `comfyui-image.yml` first so the tag exists in GHCR, and only then
+move the default: the other order leaves `standup.sh` crane-copying a tag nobody baked, which
+fails before the stack and takes the engine role's creation with it. An existing deployment is
+unaffected either way — its captured parameter file names the tag it is already running.
 
 ### The `image` role's engine table fields
 

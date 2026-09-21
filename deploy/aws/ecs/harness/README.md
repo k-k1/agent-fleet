@@ -112,7 +112,7 @@ S3 へ写されるので、こちらは編集しても走行中の回には効�
 ```bash
 AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
   deploy/aws/ecs/harness/bench-image-engine.sh --baked \
-  --image ghcr.io/k-k1/agent-fleet/comfyui:v0.34.0 --phases "default:"
+  --image ghcr.io/k-k1/agent-fleet/comfyui:v0.37.0 --phases "default:"
 ```
 
 ## `probe-image-engine.sh` / `probe-llm-engine.sh` —— 走っているエンジンに、VPC の中から 1 回聞く
