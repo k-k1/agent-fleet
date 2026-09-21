@@ -125,6 +125,11 @@ var comfyTrialSteps = map[comfyFamily]int{
 	// in how the sampler descends, and a fifth of 40 is the same kind of guess as every entry
 	// above — except that this one has a sibling that was measured.
 	ComfyFamilyQwenImageEdit2511: 8,
+	// A guess of the same kind as anima's and not of 2509's kind: nothing has been run for this
+	// family. 8 is roughly a third of the recipe's 25, which is where the undistilled families
+	// above sit, and this one is NOT distilled — its cfg 1 comes from the architecture rather than
+	// from a step-count schedule, so the distilled families' "a trial is the batch" does not apply.
+	ComfyFamilyQwenImage21: 8,
 }
 
 // --- the records --------------------------------------------------------------------------

@@ -884,6 +884,10 @@ func TestFamilyKnobsMatchTheTemplates(t *testing.T) {
 		ComfyFamilyFlux2Klein:        "steps,sampler,strength",
 		ComfyFamilyZImage:            "steps,cfg,sampler,scheduler,strength",
 		ComfyFamilyQwenImageEdit2509: "steps,cfg,sampler,scheduler,negative",
+		// Same list as 2509 and for the same reason — it edits at a fixed denoise 1, so no
+		// `strength` — while its cfg 1 recipe is what removes `negative` for a ROW, one layer
+		// further out (comfyModelKnobs). The family's template does encode one.
+		ComfyFamilyQwenImage21: "steps,cfg,sampler,scheduler,negative",
 	}
 	for family, expect := range want {
 		if got := strings.Join(comfyFamilyKnobs(family), ","); got != expect {
