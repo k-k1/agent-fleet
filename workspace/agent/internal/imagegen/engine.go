@@ -199,20 +199,45 @@ type EngineImageRow struct {
 // boot, and the network round trip it costs is the Agent's own catalogue cache, not this call.
 var EngineImageRows func(ctx context.Context) []EngineImageRow
 
-// engineTimeout bounds one call, and it is deliberately LONGER than the gateway's own wake
-// timeout (AF_ENGINE_WAKE_TIMEOUT, 900 s by default). The chain is
-// gateway 900 s < this 960 s < the MCP layer's budget: whoever gives up first decides what
-// the model is told, and the gateway is the only one of the three that knows WHY the wait was
-// long ("the box did not come up", "the engine answered 500"). A bare client-side timeout
-// here would replace that with nothing.
+// engineTimeout bounds WAKING the engine — the calls that may meet a stopped box — and it is
+// deliberately LONGER than the gateway's own wake timeout (AF_ENGINE_WAKE_TIMEOUT, 900 s by
+// default). The chain is gateway 900 s < this 960 s: whoever gives up first decides what the
+// model is told, and the gateway is the only one of the two that knows WHY the wait was long
+// ("the box did not come up", "the engine answered 500"). A bare client-side timeout here would
+// replace that with nothing.
 //
 // A warm engine is nowhere near this: measured on an L4, 512px in 7.8 s and 1024px in 21 s.
 // The budget is for the cold case — task creation to listening was 195 s, on top of however
 // long a GPU box takes to appear (8 to 88 s across P0's measurements).
-const engineTimeout = 16 * time.Minute
+//
+// 🔴 It does NOT bound the generation. It used to bound both, and the two do not belong on one
+// clock: 960 s was sized against the gateway, while what a picture costs is set by the family.
+// Measured (ADR 0094, 2026-09-21): a cold qwen-image-edit-2511 edit spent ~5.3 minutes waking
+// and then overran the rest of the same 960 s while sampling — the caller got a 502 and the GPU
+// went right on working and billing. Once the prompt is accepted the box is up by definition,
+// so the wait that follows is engineRunTimeout's.
+// A var, not a const, only so a test can shorten it (comfyPollEvery's reason).
+var engineTimeout = 16 * time.Minute
+
+// engineRunTimeout bounds waiting for a picture from an engine that has ALREADY accepted the
+// prompt. It is a second clock rather than a bigger first one because the two waits fail
+// differently: giving up on a wake costs nothing, and giving up here stops neither the GPU nor
+// the bill — so this budget is sized to cover the work, and expiring says how to collect the
+// picture (comfyPollTimedOut) instead of reporting a plain failure.
+//
+// 15 minutes, from the slowest measured family: qwen-image-edit-2511 samples 40 steps at 1024²
+// in 393.8 s once warm, and the FIRST prompt on a fresh box pays for loading ~20 GB of weights
+// on top. The one cold run measured end to end needed more than the ~10.7 minutes the old
+// single budget had left it after the wake.
+//
+// ⚠️ A batch is still not covered: comfyMaxBatch is 4, and four pictures of that family would
+// pass this. That is deliberate — the ceiling stays at one measured picture's cost with headroom,
+// and the overrun is recoverable rather than destructive.
+// A var for the same reason as engineTimeout above.
+var engineRunTimeout = 15 * time.Minute
 
 // engineClient has no timeout of its own: the bound is the context, so that a caller who hung
-// up ends the request immediately rather than at the far end of a 16-minute clock.
+// up ends the request immediately rather than at the far end of either clock.
 var engineClient = &http.Client{}
 
 func engineURL(conn EngineConn, path string) string {

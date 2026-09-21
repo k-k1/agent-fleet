@@ -1137,9 +1137,16 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			"description": "Requested background. Some models do not support transparent, and then it goes into warnings"},
 		"count": map[string]any{"type": "integer", "minimum": 1, "maximum": 4,
 			"description": "Requested number of images (1 when omitted). A shortfall goes into warnings"},
-		"inputs": map[string]any{"type": "array", "maxItems": 5,
-			"items":       map[string]any{"type": "string"},
-			"description": "Absolute paths of reference images (up to 5), for editing or as a style reference"},
+		// The ceiling is the offer's union (ADR 0094 decision 5), not a literal: since the
+		// instruction-edit families it is no longer the same on every route, and a schema that
+		// says 5 where the Agent refuses above 1 spends a round trip and a refusal to teach that.
+		// The old literal is the fallback for an Agent that does not report one.
+		"inputs": map[string]any{"type": "array", "maxItems": maxInputsOrDefault(offer.MaxInputs),
+			"items": map[string]any{"type": "string"},
+			"description": fmt.Sprintf(
+				"Absolute paths of reference images (up to %d), for editing or as a style reference."+
+					" A model may take fewer, and then the call is refused by name",
+				maxInputsOrDefault(offer.MaxInputs))},
 	}
 	// mask goes with inpaint and nothing else. A mask handed to a route that has no mask
 	// parameter does not fail — it produces a picture OF the mask — so the parameter is offered
@@ -1376,6 +1383,20 @@ func imageGenRoutesNote(offer imageGenOffer) string {
 
 // imageGenOffer is what THIS session may be told about generate_image: which providers it is
 // allowed to name, and the vocabulary those providers between them support.
+// mcpImageGenDefaultMaxInputs is what the `inputs` array was bounded by before any Agent reported
+// a ceiling, and is what an older one still gets. It is not a capability claim — every provider
+// refuses what it cannot take — so it stays where it was rather than being narrowed to the
+// smallest family: lowering it would withhold an argument that works on the routes that have
+// always taken five.
+const mcpImageGenDefaultMaxInputs = 5
+
+func maxInputsOrDefault(n int) int {
+	if n <= 0 {
+		return mcpImageGenDefaultMaxInputs
+	}
+	return n
+}
+
 type imageGenOffer struct {
 	// Providers is every provider this session may use, in the effective order. The first is
 	// what an unspecified `provider` routes to.
@@ -1407,6 +1428,12 @@ type imageGenOffer struct {
 	// Strength is true when ANY offered provider lets the caller say how much of the input
 	// picture an edit changes, by the same union rule as Seed.
 	Strength bool
+	// MaxInputs is the LARGEST number of reference pictures any offered provider reads (ADR 0094
+	// decision 5), by the same union rule as Seed. It bounds the `inputs` array in the schema,
+	// which is a connect-time snapshot with no provider or model chosen — so a union is the only
+	// honest ceiling, and what one provider or checkpoint actually takes is refused by name at
+	// call time.
+	MaxInputs int
 	// Samplers and Schedulers are the union of the offered providers' own allow-lists, and their
 	// presence is also what says `params` reaches anything at all: only a route that BUILDS the
 	// sampler graph has names to send, so an empty pair is exactly the case where the argument
@@ -1503,6 +1530,9 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		offer.Seed = offer.Seed || p.Seed
 		offer.Negative = offer.Negative || p.Negative
 		offer.Strength = offer.Strength || p.Strength
+		if p.MaxInputs > offer.MaxInputs {
+			offer.MaxInputs = p.MaxInputs
+		}
 		for _, s := range p.Samplers {
 			if !seenSampler[s] {
 				seenSampler[s] = true

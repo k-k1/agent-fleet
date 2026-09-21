@@ -451,7 +451,14 @@ export function GenerateForm({
         </div>
         {isEdit && (
           <>
-            <InputPicker paths={draft.inputs} onChange={(inputs) => patch({ inputs })} />
+            {/* ADR 0094 decision 5 (P3): the ceiling is the chosen model's, because it is the
+                family that decides how many references its template can read. Absent = an Agent
+                from before the ADR, and 1 is what every route took then. */}
+            <InputPicker
+              paths={draft.inputs}
+              max={model?.max_inputs ?? 1}
+              onChange={(inputs) => patch({ inputs })}
+            />
             {/* ADR 0094 decision 2: a family that does not read strength at all (its denoise is
                 fixed by construction) does not draw the slider — the same "no candidate, don't
                 offer a control that does nothing" rule the size field above follows. */}

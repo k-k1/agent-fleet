@@ -408,6 +408,11 @@ type StudioModel struct {
 	// offering "generate" on an edit-only row is decision 2's 400, in front of the member, every
 	// time they press it.
 	Ops []Op
+	// MaxInputs is how many reference pictures THIS model's family reads (ADR 0094 decision 5,
+	// P3). Per model for the same reason Ops above is: the route's ceiling is a union, and a form
+	// pointed at a one-reference checkpoint that offers a second slot has a control which is
+	// refused on press.
+	MaxInputs int
 	// Params are the EFFECTIVE defaults — the family recipe with the catalogue row laid over it
 	// — so the form's placeholders are what will actually run if the member types nothing.
 	Params EngineParams

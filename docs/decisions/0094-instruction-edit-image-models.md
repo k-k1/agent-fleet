@@ -160,6 +160,20 @@ and go unused** — run C's failure mode exactly: a wrong picture with no warnin
 reaches the outside is the refusal at `comfy.go:1092`). For the pane to state the limit, P3 has to
 add the field.
 
+🟢 **Done in P3.** `comfyFamilyMaxInputs` answers 2 for the instruction-edit families, and the path
+opened in the same change (`comfyParams.Images` plural, every `req.Inputs` entry uploaded, `image2`
+wired, the refusal pluralised). The wire gained **two** fields, not one:
+`providerStatus.max_inputs` (a **union** — the MCP tool schema is a connect-time snapshot with no
+model chosen, so a union is the only honest ceiling) and `modelStatus.max_inputs` (**per model** —
+the pane needs the chosen checkpoint's own answer). The same pairing as decisions 11 and 12.
+
+🔴 **The wiring is run D's graph, and reading it off the node list gets it wrong.** The second
+picture does **not** go through `FluxKontextImageScale`: that node fixes the **frame**, the frame is
+image1's, and scaling the second to the first's aspect ratio crops away the object being borrowed.
+It goes into **both** the positive and the negative `TextEncodeQwenImageEditPlus` (CFG subtracts the
+two conditionings, so a reference on one side only leaves its own encoding in the difference). The
+latent still comes from the **scaled image1**.
+
 ### Decision 6 — The unit of a family is the **topology, not the version**. 2509 and 2511 are wired differently, so they are two
 
 2511's template is **a different topology**: `FluxKontextMultiReferenceLatentMethod(index_timestep_zero)`
@@ -559,10 +573,30 @@ counts only providers that were tried and failed, so **nothing is said**. Before
     back **HTTP 200 in 1.07 s** from ComfyUI's own cache with the same picture. So the first edit
     on this family reads as a failure to the caller while the GPU keeps working and billing.
     Outside decision 10, so whether it becomes an open question of its own is the maintainer's
-    call.
+    call. 🟢 **Fixed in P3** (the maintainer's call was "fix it together with P3"); see below.
 - **P3** — the reference-image path end to end (pane and the MCP `inputs` argument) and `MaxInputs`
   on the wire. Done when run D (two images) can be reproduced from the pane, and **three images are
   measured once** before `MaxInputs` goes to 3 (until then it stays 2).
+
+  **Fixed alongside it — waiting for the engine is not one clock.** The settlement of P2's 🔴
+  above. **Waking the box and making the picture fail differently**: giving up on the first costs
+  nothing, and giving up on the second stops neither the GPU nor the bill. So:
+  - `engineTimeout` (960 s) becomes the **wake budget only** — the uploads and `/prompt`. The chain
+    that made the number (longer than the gateway's 900 s, because the gateway is the only layer
+    that knows WHY a wait was long) is unchanged.
+  - Once `/prompt` is accepted the box is up by definition, and the rest runs on
+    **`engineRunTimeout` (15 min)**. Measured: 2511 samples 40 steps at 1024² in **393.8 s** warm,
+    and a first prompt pays for loading ~20 GB of weights on top. The single-clock run had ~10.7
+    minutes left after a 5.3-minute wake, and that was not enough. ⚠️ **A batch is not covered**
+    (`comfyMaxBatch` is 4) — deliberately, because overrunning is no longer destructive; see next.
+  - 🔴 **Expiring after the prompt was accepted says how to collect the picture**: "it is still
+    making this picture (prompt &lt;id&gt;) and was not interrupted — asking again with the same
+    request collects it". The evidence is P2's own measurement: the identical request 22 s later
+    came back in 1.07 s. **A caller told only "timed out" pays for that picture and never collects
+    it.** When the box was being REPLACED the old wording stands ("still starting") — there the
+    work may genuinely be gone, and "ask again to collect it" would be advice to wait for nothing.
+  - The chain still ends at the provider: the MCP budget goes **18 min → 33 min** (over 16 + 15 =
+    31). ⚠️ codex cuts first at its own `tool_timeout_sec` (600 s), so nothing changes there.
 
 ## Open
 

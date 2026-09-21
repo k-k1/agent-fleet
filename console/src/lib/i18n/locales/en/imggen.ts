@@ -91,6 +91,7 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.input_drop": "Drop a file here to upload it into generated/console/inputs/ and reference it",
   "imggen.input_uploading": "Uploading…",
   "imggen.input_upload_failed": "Could not upload",
+  "imggen.input_count": "{n} of {max}",
   "imggen.input_from_gallery": "Pick from the gallery (P1)",
   "imggen.strength": "How much of the input to change",
   "imggen.out_dir": "Output folder",
