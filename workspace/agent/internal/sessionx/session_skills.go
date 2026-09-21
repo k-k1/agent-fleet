@@ -85,12 +85,21 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		skills = opencodeSkills(meta.Dir)
 	case session.KindCursor:
 		skills = cursorSkills(meta)
-	case session.KindKiro, session.KindCopilot, session.KindAgy, session.KindLcpp:
+	case session.KindKiro, session.KindCopilot, session.KindAgy, session.KindLcpp, session.KindMuse:
 		// No native enumeration: no user-invocable mechanism confirmed yet (§7). Foreign only.
 		// lcpp drives no CLI at all (ADR 0093 decision 5: "スキルは foreign のみ"), so it
 		// belongs in this same bucket rather than the default (no-skills) case below — the
 		// Console's picker and harness.SystemPrompt's own foreignSkillsPrompt (both read the
 		// same SKILL.md trees) must agree on what this kind can offer.
+		//
+		// muse is here for a different reason and it is worth spelling out, because it is NOT
+		// "this kind has no mechanism": MSP publishes `skill/list` and a `skill` input part
+		// whose selector the HOST resolves and expands, and muse discovers AF's own fleet
+		// topics under ~/.config/muse/skills (ADR 0095 decision 12). Driving that wire route is
+		// unbuilt work, and until it exists muse belongs in this bucket rather than in the
+		// default case, which returned an EMPTY list — the picker offered a muse session
+		// nothing at all, including the repository's own skills that reach it by injection
+		// exactly as they reach the four kinds above (ADR 0095 P2-14).
 	default:
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 		return

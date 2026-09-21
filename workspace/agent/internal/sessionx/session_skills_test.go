@@ -390,6 +390,26 @@ func TestHandleSessionSkills(t *testing.T) {
 		}
 	}
 
+	// muse, whose picker used to be EMPTY: it was in no case of the switch at all, so it fell
+	// to the default (no-skills) bucket and the composer offered a muse session nothing —
+	// including the repository's own skills, which reach it by the same injection route as the
+	// four kinds above (ADR 0095 P2-14). Native enumeration over MSP's `skill/list` is the
+	// unbuilt half, and until it exists these entries must be foreign-shaped.
+	session.WriteMeta(session.Meta{Name: "sk_muse", Dir: dir, Kind: session.KindMuse})
+	rec = get("sk_muse")
+	resp.Skills = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Skills) != 2 { // .claude/scout + .codex/probe, both foreign
+		t.Fatalf("muse skills = %#v", resp.Skills)
+	}
+	for _, sk := range resp.Skills {
+		if sk.Invoke != "" || sk.Path == "" {
+			t.Errorf("muse entry should be foreign: %#v", sk)
+		}
+	}
+
 	// an unsupported kind (shell) yields empty rather than an error: a forward-compatible contract
 	session.WriteMeta(session.Meta{Name: "sk_shell", Dir: dir, Kind: session.KindShell})
 	rec = get("sk_shell")
