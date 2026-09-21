@@ -32,7 +32,7 @@
 # kinds separately instead of failing the job.
 set -euo pipefail
 
-KINDS="${KINDS:-claude codex opencode copilot agy cursor kiro}"
+KINDS="${KINDS:-claude codex opencode copilot agy cursor kiro muse}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 NOW="${NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"

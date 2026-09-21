@@ -54,12 +54,19 @@ if [ "${1:-}" = "--inner" ]; then
     # kiro is baked only under BAKE_AGENT_CLIS=1 (like cursor/agy); when the agent
     # CLIs are baked it must be present at the pinned version.
     check_ver kiro "$EXPECT_KIRO" kiro-cli --version
+    # muse も BAKE_AGENT_CLIS=1 のときだけ焼かれる。⚠️ check_ver は semver 抽出なので使えない:
+    # `muse --version` は `Muse Code 1.3.0 (1.3.0-R3401.1)` で、ピンは**括弧内のビルド id**
+    # （cursor と同じ理由・ADR 0095 決定 8）。括弧の中身を取り出して丸ごと突き合わせる。
+    muse_out="$(muse --version 2>&1 | head -1)"
+    muse_got="$(printf '%s' "$muse_out" | sed -n 's/.*(\([^)]*\)).*/\1/p')"
+    if [ "$muse_got" = "$EXPECT_MUSE" ]; then echo "ok  muse $muse_out"
+    else echo "NG  muse: actual ${muse_got:-?} != pin $EXPECT_MUSE (from: ${muse_out:-?})"; fail=1; fi
   else
     # Lean distribution variant (BAKE_AGENT_CLIS=0, docs/log/35 §35.7.1-7): verify the
     # agent CLIs really are absent (= we do not redistribute proprietary CLIs).
     # Whether the pinned versions are installable is covered by the versions.json
     # all-pins check (below) and the separate P1-gate boot-install run (needs network).
-    for c in claude opencode codex copilot cursor-agent agy rtk kiro-cli; do
+    for c in claude opencode codex copilot cursor-agent agy rtk kiro-cli muse; do
       if command -v "$c" >/dev/null 2>&1; then
         echo "NG  lean: $c is baked in (expected BAKE_AGENT_CLIS=0)"; fail=1
       else
@@ -101,7 +108,7 @@ if [ "${1:-}" = "--inner" ]; then
   VJ=/usr/local/share/agent-fleet/versions.json
   if [ -f "$VJ" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
-                "cursor=$EXPECT_CURSOR" "kiro=$EXPECT_KIRO" \
+                "cursor=$EXPECT_CURSOR" "kiro=$EXPECT_KIRO" "muse=$EXPECT_MUSE" \
                 "agy=$EXPECT_AGY" "agy_build=$EXPECT_AGY_BUILD" "rtk=$EXPECT_RTK_VER" \
                 "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM" \
                 "chromium_cft=$EXPECT_CHROMIUM_CFT" \
@@ -152,6 +159,19 @@ if [ "${1:-}" = "--inner" ]; then
       echo "ok  versions.json kiro_sha256=$got"
     else
       echo "NG  versions.json kiro_sha256: ${got:-?} != ${kiro_sha_want:-?}"; fail=1
+    fi
+    # muse_sha256 も arch 依存の焼き込み値（on-demand install-muse の検証材料）。
+    # x86_linux / aarch64_linux の release manifest checksum と対（install_muse.go の museAsset）。
+    case "$(dpkg --print-architecture)" in
+      amd64) muse_sha_want="$EXPECT_MUSE_SHA_X64" ;;
+      arm64) muse_sha_want="$EXPECT_MUSE_SHA_ARM64" ;;
+      *)     muse_sha_want="" ;;
+    esac
+    got="$(jq -r .muse_sha256 "$VJ" 2>/dev/null)"
+    if [ -n "$muse_sha_want" ] && [ "$got" = "$muse_sha_want" ]; then
+      echo "ok  versions.json muse_sha256=$got"
+    else
+      echo "NG  versions.json muse_sha256: ${got:-?} != ${muse_sha_want:-?}"; fail=1
     fi
   else
     echo "NG  $VJ missing"; fail=1
@@ -291,6 +311,9 @@ EXPECT_CURSOR_SHA_ARM64="$(arg_pin CURSOR_SHA256_ARM64)"
 EXPECT_KIRO="$(arg_pin KIRO_VERSION)"
 EXPECT_KIRO_SHA_X64="$(arg_pin KIRO_SHA256_X64)"
 EXPECT_KIRO_SHA_ARM64="$(arg_pin KIRO_SHA256_ARM64)"
+EXPECT_MUSE="$(arg_pin MUSE_VERSION)"
+EXPECT_MUSE_SHA_X64="$(arg_pin MUSE_SHA256_X64)"
+EXPECT_MUSE_SHA_ARM64="$(arg_pin MUSE_SHA256_ARM64)"
 EXPECT_AGY="$(arg_pin AGY_VERSION)"
 EXPECT_AGY_BUILD="$(arg_pin AGY_RELEASE_BUILD)"
 EXPECT_AGY_SHA_X64="$(arg_pin AGY_SHA256_X64)"
@@ -325,6 +348,9 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_KIRO="$EXPECT_KIRO" \
   -e EXPECT_KIRO_SHA_X64="$EXPECT_KIRO_SHA_X64" \
   -e EXPECT_KIRO_SHA_ARM64="$EXPECT_KIRO_SHA_ARM64" \
+  -e EXPECT_MUSE="$EXPECT_MUSE" \
+  -e EXPECT_MUSE_SHA_X64="$EXPECT_MUSE_SHA_X64" \
+  -e EXPECT_MUSE_SHA_ARM64="$EXPECT_MUSE_SHA_ARM64" \
   -e EXPECT_AGY="$EXPECT_AGY" \
   -e EXPECT_AGY_BUILD="$EXPECT_AGY_BUILD" \
   -e EXPECT_AGY_SHA_X64="$EXPECT_AGY_SHA_X64" \

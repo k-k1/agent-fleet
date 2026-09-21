@@ -78,7 +78,7 @@ case ",${STUB_DRIFT:-}," in *",$name,"*) echo "9.9.9"; exit 0 ;; esac
 cat "$STUB_PINS/$name"; echo
 FAKE
 
-# curl answers the agy / cursor / kiro / rtk rows. The cursor body is deliberately far
+# curl answers the agy / cursor / kiro / muse / rtk rows. The cursor body is deliberately far
 # bigger than a pipe buffer (64 KiB on Linux): that row used to be
 # `curl | sed | head -1`, and a fixture that fits in the buffer never makes the writer
 # block, so the SIGPIPE the split exists for cannot happen and the case passes either
@@ -90,6 +90,7 @@ case "$url" in
   *antigravity*) name=agy ;;
   *cursor.com*)  name=cursor ;;
   *kiro.dev*)    name=kiro ;;
+  *muse-code/channels*) name=muse ;;
   *rtk-ai/rtk*)  name=rtk ;;
   *) exit 22 ;;
 esac
@@ -98,10 +99,18 @@ version="$(cat "$STUB_PINS/$name")"
 # cursor's version is matched as `<digits and dots>-<hex>`, so its drift fixture has to
 # keep that shape or the row reads as a fetch failure instead of as drift.
 case ",${STUB_DRIFT:-}," in
-  *",$name,"*) [ "$name" = cursor ] && version="9999.99.99-deadbee" || version="9.9.9" ;;
+  *",$name,"*)
+    case "$name" in
+      cursor) version="9999.99.99-deadbee" ;;
+      # muse's pin IS a build id (1.3.0-R3401.1). A bare-semver drift fixture would pass
+      # against a row that silently dropped the suffix, which is the exact defect the muse
+      # row exists to keep out (install_muse.go's museVerRe).
+      muse)   version="9.9.9-R9999.9" ;;
+      *)      version="9.9.9" ;;
+    esac ;;
 esac
 case "$name" in
-  agy|kiro) printf '{"version":"%s"}\n' "$version" ;;
+  agy|kiro|muse) printf '{"version":"%s"}\n' "$version" ;;
   rtk)      printf '{"tag_name":"v%s"}\n' "$version" ;;
   cursor)
     # The real install script is a long shell file with the version buried in a URL.
@@ -141,7 +150,7 @@ code_is()   { [ "$rc" = "$1" ] || fail "expected exit $1, got $rc"; }
 # If the real script grows a row, this test must grow with it rather than quietly
 # exercise fewer rows than it claims.
 ROWS="$(grep -cE '^  "[a-z]+\|' "$CHECK")"
-[ "$ROWS" = 8 ] || fail "cli-drift-check.sh has $ROWS target rows, the stubs answer 8"
+[ "$ROWS" = 9 ] || fail "cli-drift-check.sh has $ROWS target rows, the stubs answer 9"
 
 echo "== case 1: nothing fails and every pin matches -> exit 0, no failed rows =="
 STUB_FAIL="" STUB_DRIFT="" run_check
@@ -155,7 +164,7 @@ sum_has "in sync"
 # what makes its presence in the next cases mean something.
 saysnt " ? "
 
-echo "== case 2: rtk alone fails -> the other seven still answer =="
+echo "== case 2: rtk alone fails -> every other row still answers =="
 # The 2026-09-09 shape exactly: a real edge on claude, rtk's source down.
 STUB_FAIL="rtk" STUB_DRIFT="claude" run_check
 code_is 1   # drift on claude is reportable news, not an error
@@ -170,9 +179,9 @@ err_has "cli-drift-check: warning: rtk:"
 sum_has "could not be read"
 
 echo "== case 3: every source fails -> exit 2 (the control for case 2) =="
-STUB_FAIL="claude,opencode,codex,copilot,agy,cursor,kiro,rtk" STUB_DRIFT="" run_check
+STUB_FAIL="claude,opencode,codex,copilot,agy,cursor,kiro,muse,rtk" STUB_DRIFT="" run_check
 code_is 2
-out_has '^failed=claude,opencode,codex,copilot,agy,cursor,kiro,rtk$'
+out_has '^failed=claude,opencode,codex,copilot,agy,cursor,kiro,muse,rtk$'
 err_has "No release source could be read."
 
 echo "== case 4: two rows fail and a third drifts -> still exit 1, both named =="
@@ -185,7 +194,7 @@ err_has "cli-drift-check: warning: rtk:"
 
 echo "== case 5: one row fails, nothing drifts -> exit 0, and the failure is still said =="
 # The quiet direction, and the reason `failed=` exists at all: the run is green, so
-# nothing else distinguishes "eight in sync" from "seven in sync, one never read".
+# nothing else distinguishes "all in sync" from "all but one in sync, one never read".
 STUB_FAIL="cursor" STUB_DRIFT="" run_check
 code_is 0
 out_has '^failed=cursor$'
@@ -219,7 +228,10 @@ SCRIPT_UNDER_TEST="$CHECK"
 # A pure decision: environment in, GITHUB_OUTPUT and the job summary out. No stubs, so
 # what is left is exactly the branch that matters — which kinds get a dispatch.
 
-# Seven kinds, all in sync, no failures. Cases override single entries on top.
+# Every dispatch kind, all in sync, no failures. Cases override single entries on top.
+# It must stay in step with cli-release-edges.sh's KINDS default: a kind missing here has no
+# LATEST_*, which the decision reads as "unknown" and holds back — so it would sit in
+# `skipped=` in every case and quietly never exercise its own branch.
 edges_base=(
   LATEST_CLAUDE=2.1.265   TESTED_CLAUDE=2.1.265
   LATEST_CODEX=0.145.0    TESTED_CODEX=0.145.0
@@ -228,6 +240,8 @@ edges_base=(
   LATEST_AGY=1.0.0        TESTED_AGY=1.0.0
   LATEST_CURSOR=1.0.0     TESTED_CURSOR=1.0.0
   LATEST_KIRO=0.1.0       TESTED_KIRO=0.1.0
+  # muse's versions are build ids, not semver — keep the fixture in that shape.
+  LATEST_MUSE=1.3.0-R3401.1 TESTED_MUSE=1.3.0-R3401.1
   FAILED=
 )
 run_edges() { # run_edges [VAR=value ...]
@@ -259,6 +273,16 @@ out_has '^skipped=kiro$'
 out_hasnt '^kiro=true$'
 out_has '^watcher_failed=kiro$'
 sum_has 'its `seen` / `tested` update are skipped'
+
+echo "== case 9b: a muse build-id edge is a dispatch like any other =="
+# muse's versions carry a build id (1.3.0-R3401.1 -> 1.3.0-R3402.1), and the decision compares
+# them as opaque strings. A comparison that normalised to semver would see 1.3.0 both sides and
+# miss the release entirely — which is the same defect the drift row's fixture guards.
+run_edges LATEST_MUSE=1.3.0-R3402.1
+out_has '^muse=true$'
+out_has '^count=1$'
+out_has '^skipped=$'
+sum_has '`muse=1.3.0-R3402.1`'
 
 echo "== case 10: POSITIVE CONTROL -- an unknown latest is never an edge =="
 # The trap the old inline loop walked into: `"" != "0.1.0"` is true, so an unread kiro

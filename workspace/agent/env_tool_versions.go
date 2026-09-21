@@ -52,6 +52,12 @@ type toolSpec struct {
 	// every tool but agy, whose FIPS build aborts on a host with no usable RDRAND unless
 	// the mask rides along (agy/fips.go).
 	Env []string
+	// VerRe replaces the default bare-semver extraction for a tool whose version line carries
+	// something the pin needs and semver drops. Only muse sets it: `muse --version` prints
+	// `Muse Code 1.3.0 (1.3.0-R3401.1)` while the pin is the parenthesised build id, so the
+	// default `extractVer` would show 1.3.0 against a pin of 1.3.0-R3401.1 — a row that reads
+	// "drifted" forever on a correctly pinned install (ADR 0095 decision 8's own warning).
+	VerRe func(raw string) string
 	// PyDist is the PyPI distribution name of a Python MCP server installed with
 	// `uv tool install`. These cannot be asked for their version by running them
 	// (measured 2026-08-06):
@@ -87,6 +93,16 @@ var toolSpecs = []toolSpec{
 	// nothing installed both effective and baked are null, which surfaces as "not installed").
 	// `kiro-cli --version` prints "kiro-cli 2.14.1".
 	{Name: "kiro", Cmd: "kiro-cli", Baked: "/usr/local/bin/kiro-cli", Pin: "kiro"},
+	// muse (kind="muse", ADR 0095) is proprietary, so it is never in the distributed image and
+	// Baked is only populated by a self-hosted BAKE_AGENT_CLIS=1 build. Otherwise it installs
+	// on demand into ~/.local/bin (workspace-agent install-muse), so with nothing installed all
+	// three columns are null and the row reads "not installed".
+	//
+	// VerRe is load-bearing, not a nicety: the pin is the build id `1.3.0-R3401.1` and the
+	// default extraction would report `1.3.0`, so this row would claim drift on every
+	// correctly pinned install — and the card built on the same comparison would offer a
+	// 299MB "update" that changes nothing.
+	{Name: "muse", Cmd: "muse", Baked: "/usr/local/bin/muse", Pin: "muse", VerRe: museParseVersion},
 	// psql is installed on-demand by workspace-agent install-pg-client into ~/.local/bin.
 	// No Pin: versions.json "postgres" is the Zonky server version (e.g. 17.11.0) while
 	// psql reports the Debian client version (17.11); comparing them produces false drift.
@@ -249,7 +265,15 @@ func probeTool(ctx context.Context, spec toolSpec, path, home string) *toolBin {
 	if spec.PyDist != "" {
 		return uvToolVersion(path, spec.PyDist, home)
 	}
-	return probeVersion(ctx, path, spec.Args, spec.Env)
+	b := probeVersion(ctx, path, spec.Args, spec.Env)
+	// Re-extract from the raw line for a tool whose pin is not bare semver. Raw is left alone
+	// (the tooltip shows what the binary actually printed); only the compared value changes.
+	if b != nil && spec.VerRe != nil && b.Raw != "" {
+		if v := spec.VerRe(b.Raw); v != "" {
+			b.Version = v
+		}
+	}
+	return b
 }
 
 // toolProbe collects the versions for one tool. The three columns (effective / baked /
