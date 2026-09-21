@@ -388,6 +388,37 @@ lcpp の実運用(20 ターン級の実作業)がまだ限定的(ADR 0093 決定
 
 ---
 
+## 105.6 追記(親セッションの並行確認、2026-09-21)
+
+同じ依頼を親セッション自身も並行して調査しており、上の本文と独立に同じ結論(既存カードの型が
+lcpp に当てはまらない・opencode の `off` が `create_session` を拒んでいない疑い・ADR 0076/0084 の
+状態欄が古い・`llm` 役が単一行に固定・到達性は Workspace でなく CP の問題・compose/native と
+ecs-ec2 で結論が割れる)に独立して達した。**2 セッションの結論が一致したこと自体が、105.1〜105.5 の
+確度を上げる材料として書き足す。** 加えて、本文に無かった追加の発見を 3 点だけ足す:
+
+1. 🔴 **`registry.ts` の `available()` は計画段階では条件付きだった。** `docs/log/99-lcpp-agent-kind.md`
+   §4.12(段 2 着手前の計画メモ)は「接続カードは『chat エンジンが目録にあるか』『起きているか』
+   『既定モデル』の表示だけ。`available` は `conns.lcpp.connected`(＝目録に chat エンジンがある)」
+   と書いていた。**実装(`registry.ts:562` `available: () => true`)はこれを採らず、無条件 `true`
+   にした。** 結果、🔴 **`llm` 役のエンジンが 1 行も無い配備(素の dev CP など)でも、Console の
+   起動導線には `llama.cpp` が出る**——押すと `list_models` が空を返し(`agent_models.go:93`)、
+   driver は "no model configured" で即失敗する(ADR 0093 段 2 実装記録)。これは 105.1 の
+   「オン/オフ」とは別軸の穴(サインインの有無でなく、エンジンの実在)で、薄いカードを作る際に
+   `LaunchDefaults` と一緒に「エンジン未接続」の一言を出すだけでも塞げる。
+2. **`GET /engine/{key}/props`(`control-plane/engine_gateway.go:614-653`)のゲートは
+   `Provider != "llamacpp"` だけを見ており、`lifecycle`(managed/external/remote)を見ていない。**
+   つまり 105.2.4 が指摘した窓取得の仕組みは、`external` な `llm` 行に対しても無改修で動くはずで
+   ある(未検証だが、コード上そう読める)。CP 側の窓取得インフラは image より再利用しやすい側にある。
+3. **`ensureReady`/`ensureStarted`(`engine_gateway.go:1519-1567`)は `eng.def.api()` や role 名で
+   分岐しておらず、`eng.def.external()`/`eng.def.remote()` という lifecycle の述語だけで分岐している。**
+   ADR 0076 が image 用に書いた「external は即時失敗(実測 3.05〜3.11 秒)」は、コード上すでに
+   role 非依存であり、`llm` 役の external 行に対しても**そのまま動く**——105.2.1 が「未確認」と
+   した「chat 経路の即時失敗」は、少なくとも gateway 層(`ensureReady`)においては image と同じ
+   コードパスを通ることが分かった。未確認のまま残るのは driver/harness 側(`lcpp` の `runTurn`)が
+   `engine_unavailable` をどう扱うかだけである。
+
+---
+
 *本文書のために新しく測ったものは無い。根拠は (a) ADR 0076/0079/0084/0093 の記述、
 (b) 2026-09-21 にこのリポジトリのコードから読んだ事実(file:line で示した)、を出所ごとに
 書き分けた。*
