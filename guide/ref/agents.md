@@ -161,10 +161,12 @@ Managed.
 > run what you send verbatim. Keep backups, use least-privilege credentials, and lean
 > on the approval gates.
 
-¹¹ muse is being built (ADR 0095) and is not offered in the launch menu yet. The rows
-marked with this footnote are the parts still to come; they will fill in as each lands.
-Muse Code is also proprietary, so it is not included in the image — a deployment that
-wants it installs it on demand.
+¹¹ muse is still being built (ADR 0095). It IS offered in the launch menu now, but only
+once two things are true: Muse Code is proprietary and not included in the image, so it has
+to be installed on demand (the Muse Code connection card offers it, ~299MB into your home),
+and you have to be signed in — an unauthenticated session would accept work and then fail
+every turn. The rows marked with this footnote are the parts still to come; they fill in as
+each lands.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its

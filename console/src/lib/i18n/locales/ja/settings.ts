@@ -263,6 +263,33 @@ export const settings = {
   "agents.kiro_update": "Kiro を更新",
   "agents.kiro_update_note": "ピン版（約 855MB）を再ダウンロードします。数分かかります。",
   "agents.kiro_updating": "Kiro を更新中です…（約 855MB・数分かかります）。実行中の Kiro セッションはそのまま動き続けます（次回起動から新しい版になります）。",
+  // --- Muse Code（ADR 0095）---
+  // 🔴 このカードは「接続済み」だけでは真実にならない。metered / env_key / API キーの拒否の
+  // 3 つは、どれも利用者の請求に直接関わる（決定 9・P2-6 の実測）。
+  "agents.muse_desc": "Muse Code にサインインします。ブラウザで承認するだけで、貼り戻すコードはありません。",
+  "agents.muse_connect": "Meta アカウントでサインイン",
+  "agents.muse_connect_note": "承認リンクとコードを表示します。ブラウザで承認してください。サブスク契約ならこちら。",
+  "agents.muse_use_key": "API キーを使う",
+  "agents.muse_use_key_note": "従量課金の経路です。サブスク契約なら上を選んでください。",
+  "agents.muse_hint": "Muse Code は配布イメージに含まれません（プロプライエタリ）。サインインの前に一度だけ導入が必要です。",
+  "agents.muse_metered":
+    "この接続は API キー（従量課金）です。使うたびに課金されます。定額プランを使うには一度切断して、Meta アカウントでサインインしてください。",
+  "agents.muse_env_key":
+    "環境変数 META_API_KEY が設定されています。これはサインインより優先されるため、上の表示に関わらず**従量課金**になります。定額プランを使うには、ワークスペースの環境変数からこれを外してください。",
+  "agents.muse_key_warn":
+    "API キーを保存すると、保存済みのアカウントのサインインは**消えます**（Muse Code が資格情報の項目を丸ごと置き換えるため）。定額プランからも外れて従量課金になります。アカウントでサインイン済みの場合は、先に切断する必要があります。",
+  "agents.muse_key_placeholder": "LLM|… で始まる Meta の API キー",
+  "agents.muse_auth_failed": "Muse Code のサインインを開始できませんでした: {msg}",
+  "agents.muse_install_desc": "Muse Code はまだこのワークスペースに導入されていません（プロプライエタリのため配布イメージに含まれません）。一度だけ導入が必要です。",
+  "agents.muse_install": "Muse Code を導入",
+  "agents.muse_install_note": "約 299MB をホームボリュームに落とします（数分）。",
+  "agents.muse_installing": "Muse Code を導入中…（約 299MB・数分）。終わると自動でサインイン画面になります。",
+  "agents.muse_install_error": "導入に失敗しました。接続を確認してやり直してください。",
+  "agents.muse_install_failed": "Muse Code の導入を開始できませんでした: {msg}",
+  "agents.muse_update_avail": "新しい版があります（導入済み {cur} → ピン {pin}）。更新するまで導入済みの版が使われ続けます。",
+  "agents.muse_update": "Muse Code を更新",
+  "agents.muse_update_note": "ピンされた版を再取得します（約 299MB・数分）。",
+  "agents.muse_updating": "Muse Code を更新中…（約 299MB・数分）。稼働中の muse セッションは再起動するまで古い版で動き続けます。",
   "agents.remote_control": "リモートコントロール",
   "agents.notifications": "通知",
   "agents.codex_auth_failed": "Codex 認証開始に失敗: {msg}",

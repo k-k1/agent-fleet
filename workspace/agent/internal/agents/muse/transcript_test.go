@@ -542,3 +542,37 @@ func TestFailedDelegationShowsWhyItFailed(t *testing.T) {
 		t.Errorf("output = %q, want the failure reason", p.Output)
 	}
 }
+
+// 🔴 A muse assistant turn is ONE row, so without EndTS the mirror's footer shows the turn's
+// START: footTime falls back to ts when endTs is absent (console turnTime.ts). Found by working
+// through the Console-surface checklist, not by a failing test — nothing here asserted it.
+//
+// The user arm is the control: a user turn is a single moment and must NOT grow an end, or the
+// mirror would draw a duration for a row that has none.
+func TestAssistantTurnCarriesItsEndTime(t *testing.T) {
+	const (
+		t0 = "2026-09-21T10:00:00Z"
+		t1 = "2026-09-21T10:00:20Z"
+		t2 = "2026-09-21T10:01:30Z"
+	)
+	items := []msp.Item{
+		{ItemID: "u1", Kind: msp.ItemKindUserMessage, Text: sp("go"), RecordedAt: sp(t0)},
+		{ItemID: "a1", Kind: msp.ItemKindAgentMessage, Text: sp("working"), RecordedAt: sp(t1)},
+		{ItemID: "a2", Kind: msp.ItemKindAgentMessage, Text: sp("done"), RecordedAt: sp(t2)},
+	}
+	turns := turnsFromItems(items)
+	if len(turns) != 2 {
+		t.Fatalf("got %d turns, want user + assistant", len(turns))
+	}
+	if turns[0].Role != "user" || turns[0].EndTS != "" {
+		t.Errorf("the user turn grew an end time (%q); a single moment has no duration", turns[0].EndTS)
+	}
+	a := turns[1]
+	if a.TS != t1 {
+		t.Errorf("assistant TS = %q, want the FIRST folded item %q", a.TS, t1)
+	}
+	if a.EndTS != t2 {
+		t.Errorf("assistant EndTS = %q, want the LAST folded item %q — the footer would show "+
+			"the turn's start instead of when it finished", a.EndTS, t2)
+	}
+}

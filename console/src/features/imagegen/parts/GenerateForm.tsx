@@ -92,6 +92,12 @@ export function GenerateForm({
   );
 
   const isEdit = draft.op !== "generate";
+  // Held HERE and not only at the Agent, which is the rule InputPicker already states for the
+  // reference count: the Agent's refusal ("inpaint needs a mask image") arrives on the QUEUE route
+  // as a failed job, so the member reads it in the job list rather than beside the field they have
+  // to change. ADR 0081 decision 9 is why there is a field at all — a mask by path works from day
+  // one; painting one needs a canvas this Console does not have.
+  const needsMask = draft.op === "inpaint" && !draft.mask.trim();
   const append = (text: string) => {
     const cur = draft.prompt.trimEnd();
     if (cur.split(/\s*,\s*/).includes(text)) return;
@@ -459,6 +465,17 @@ export function GenerateForm({
               max={model?.max_inputs ?? 1}
               onChange={(inputs) => patch({ inputs })}
             />
+            {/* The mask is one path, in the same currency and through the same drop zone as the
+                references above. Only on an inpaint: on an edit the Agent has nowhere to put it,
+                and the stored draft keeps the value for the next time the op comes back. */}
+            {draft.op === "inpaint" && (
+              <InputPicker
+                paths={draft.mask.trim() ? [draft.mask.trim()] : []}
+                max={1}
+                label={tr("imggen.mask")}
+                onChange={(p) => patch({ mask: p[0] ?? "" })}
+              />
+            )}
             {/* ADR 0094 decision 2: a family that does not read strength at all (its denoise is
                 fixed by construction) does not draw the slider — the same "no candidate, don't
                 offer a control that does nothing" rule the size field above follows. */}
@@ -476,9 +493,11 @@ export function GenerateForm({
         <button
           type="button"
           className="ui-btn"
-          disabled={busy || trialFull}
+          disabled={busy || trialFull || needsMask}
           title={
-            trialFull
+            needsMask
+              ? tr("imggen.mask_needed")
+              : trialFull
               ? tr("imggen.trial_full")
               : tr("imggen.trial_title") + (card ? ` (${tr("imggen.family_trial", { n: card.trialSteps })})` : "")
           }
@@ -493,8 +512,14 @@ export function GenerateForm({
         <button
           type="button"
           className="ui-btn ui-btn-primary"
-          disabled={busy || queueFull}
-          title={queueFull ? tr("imggen.queue_full") : tr("imggen.enqueue_title", { n: draft.jobs })}
+          disabled={busy || queueFull || needsMask}
+          title={
+            needsMask
+              ? tr("imggen.mask_needed")
+              : queueFull
+              ? tr("imggen.queue_full")
+              : tr("imggen.enqueue_title", { n: draft.jobs })
+          }
           onClick={onEnqueue}
         >
           <Icon name="play" /> {tr("imggen.enqueue", { n: draft.jobs })}

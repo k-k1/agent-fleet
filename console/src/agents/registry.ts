@@ -564,6 +564,54 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // over-admit past the server. Missing ⇒ true, matching the server's opt-out default.
     available: (c) => c.conns?.lcpp?.enabled !== false,
   },
+  muse: {
+    id: "muse",
+    // Meta's own mark, reused from the PROVIDER set rather than vendored again under agents/:
+    // brand keys are one flat namespace (lib/brandicons), Muse Code is Meta's product, and the
+    // provider asset is already there for the model picker. A second copy of the same glyph under
+    // a different key is a thing to keep in step for no gain.
+    icon: "brand:meta",
+    label: "Muse",
+    displayName: "Muse Code",
+    assistantName: "Muse",
+    short: "ms",
+    cssClass: "muse",
+    launchHintKey: "agent.launch_hint.muse",
+    launchSuffix: "-ms",
+    // No plan mode at all: MSP has no method that sets it, and session/setApprovalMode is a
+    // different axis (ADR 0095 — Capabilities.DynamicMode is permanently false).
+    planCycleKey: "",
+    planEnterCmd: "",
+    defaultModeLabel: "",
+    skillTrigger: "",
+    // Managed-only, the same shape as lcpp: BuildLaunch refuses unconditionally (決定 2), so the
+    // launch modal and the driver-switch item must never offer a choice that can only fail.
+    managedDriver: true,
+    terminalDriver: false,
+    tuiMemoryCost: "",
+    caps: caps({
+      chat: true, // the only way to open a session with no pane at all (open.ts's caps.chat gate)
+      transcript: true, // Caps.CanTranscript: AF's own item store, read live or stopped
+      // 🔴 permissionChoice is FALSE, and not for want of a card. Measured (ADR 0095 P2-6), a muse
+      // session in a Workspace raises no approval at all — the sandbox waiver leaves the host's
+      // filesystem unrestricted, so every tool call is policy-allowed before the approval layer —
+      // so both settings of the choice produce the same ungated session. Paired with
+      // agents.Caps.PermissionChoice on the Go side, which is false for the same reason.
+      //
+      // model / effort / contextBar / slashSkills / forkAt are all false because their own work
+      // packages are not built yet, NOT because the protocol lacks them: MSP carries
+      // session/setModel, session/setReasoningEffort, session/contextUsage and session/fork. A cap
+      // is a claim about a path measured end to end, so each flips with its package.
+      runsInDir: true,
+      launchableFromRepo: true,
+    }),
+    // Two preconditions, and they are different things: the proprietary binary has to be
+    // installed (supported), and the member has to be signed in (connected). Either missing means
+    // a launch could only fail — an unauthenticated host accepts session/start and then ends every
+    // turn authRequired. HandleCreateSession and the driver's Resume are the real gates; this is
+    // the signpost that keeps the menu honest.
+    available: (c) => c.conns?.muse?.supported !== false && !!c.conns?.muse?.connected,
+  },
   shell: {
     id: "shell",
     icon: "terminal",
@@ -645,6 +693,6 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted in availability.test.ts); the order
 // is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "shell"];
+export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell"];
 
 export type { SsmHost };

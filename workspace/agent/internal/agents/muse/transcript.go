@@ -160,6 +160,13 @@ func turnsFromItems(items []msp.Item) []transcript.Turn {
 	var turns []transcript.Turn
 	assistant := -1 // index of the open assistant turn, -1 when none
 
+	// 🔴 EndTS is advanced on every folded item, and it is not a nicety. muse's whole assistant
+	// turn is ONE row (unlike claude/codex, which split a turn across rows whose own ts is each
+	// row's end), so with only TS the mirror's footer shows the turn's START — `footTime` falls
+	// back to ts when endTs is absent, and a 90-second turn would be stamped 90 seconds early.
+	// This is the same shape opencode and copilot carry endTs for (turnTime.ts's own comment);
+	// muse is the third kind in that family and the first to fold it in the Agent rather than
+	// read it off the agent's own span record.
 	openAssistant := func(it msp.Item) *transcript.Turn {
 		if assistant < 0 {
 			turns = append(turns, transcript.Turn{
@@ -168,7 +175,14 @@ func turnsFromItems(items []msp.Item) []transcript.Turn {
 			})
 			assistant = len(turns) - 1
 		}
-		return &turns[assistant]
+		t := &turns[assistant]
+		// First-seen order is the store's order (transcript.go's header), so the newest item
+		// folded is the latest moment the turn is known to have reached. An item with no
+		// recorded time leaves the previous end alone rather than clearing it.
+		if ts := itemTS(it); ts != "" {
+			t.EndTS = ts
+		}
+		return t
 	}
 
 	for _, it := range items {

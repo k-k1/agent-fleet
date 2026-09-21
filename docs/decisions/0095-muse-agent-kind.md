@@ -2009,3 +2009,61 @@ Two smaller things the implementation settled:
   installs the artifact itself, because verifying the manifest's own checksum and fingerprint IS
   the check — handing that to the shared installer would move the thing under test out of the
   test. Both files say so, since the action's comment claims parity with the drift targets.
+
+### P2-8: the Console surface — a colour chosen by sweep, and decided by looking at it
+
+The eighth work package: `SessionKind`, the registry descriptor, the kind colour and its seven
+CSS twins, the connection card, the i18n catalogues, the bridge label and the guide. With it the
+kind is offered in the launch menu for the first time — gated on the two things that must both be
+true, the binary installed and a credential stored.
+
+**The colour was swept, not picked.** `console/scripts/kindcolor/muse.mjs` scores a candidate
+against the ten existing `--kind-*` hues plus the semantic colours sharing the same screens, in
+both themes, and reports the worst case. Three constraints on the search matter more than the
+arithmetic, and each came from a run that produced a wrong answer:
+
+- **A chroma band.** Unconstrained, the sweep's top results were all dusty pinks at chroma 20 —
+  they score well precisely because a muted colour is far from every saturated one, and they would
+  have been a third muted badge beside copilot and opencode. The band is measured from the shipped
+  kinds (`--chroma`), with the two greys deliberately outside it.
+- **A hue exclusion around the semantic colours.** The lcpp round rejected red categorically — a
+  badge in the error hue reads as an error state whatever its dE — so the hue is excluded rather
+  than allowed in on a good number. ⚠️ Written inverted the first time, which excluded everything
+  *except* the semantic hues; the sweep then answered in the error red's own hue, and the printed
+  table is what showed it. A silent filter would have been believed.
+- **The picture, for the last step.** The sweep's own answer for the light theme was `#5f376b`
+  (min dE 15.9). Rendered, it is a grey plum: beside kiro's vivid violet and cursor's magenta it
+  reads as a third grey rather than as a coloured peer — the same mistake the chroma band exists
+  to prevent, one step further in. `#6b2d7e` costs 3 points of dE and buys a colour, and its
+  margin is still twice the precedent floor. **dE ranked the candidates; looking at them decided
+  between the ones it could not tell apart.**
+
+Final: `#dbabe6` dark (min dE 17.9 vs cursor, contrast 7.11) / `#6b2d7e` light (min dE 12.9 vs
+kiro, contrast 7.21). Not Meta's brand blue, deliberately — agy and ssm hold that region, and this
+palette has always chosen distinguishability over brand fidelity.
+
+**The render harness found a defect in itself, twice**, which is the argument for keeping it
+(`console/scripts/kindcolor/chips.mjs`): it parsed the token values out of the real stylesheet and
+(1) a `--name: value;` regexp started matching inside a COMMENT — the comments explain each hue by
+naming the surfaces it was measured against, ending in `--bg/--panel/--bar/--active-bg: 7.11` —
+and ran its value past the next declaration, swallowing `--kind-lcpp` entirely; then (2) the
+variables were injected through an inline `style=""` attribute, which several token values
+terminate early because they are font stacks containing double quotes, so **every** `--kind-*`
+was dropped and the page rendered eleven colourless chips while the semantic swatches (declared
+before the fonts) looked fine. Nothing looked broken either time. A count assertion caught the
+first; the second was caught only by looking at the image.
+
+**A defect in the shipped transcript, found by working the checklist rather than by a test.** The
+mirror's turn footer is `endTs || ts`, and muse folds a whole assistant turn into ONE row carrying
+only the first item's time — so a 90-second turn was stamped 90 seconds early. `turnTime.ts`'s own
+header says the footer "used to show when the turn *started* instead of when the answer landed";
+muse had quietly reintroduced it. The fold now advances `EndTS` on every item, and muse joins
+opencode and copilot in that comment's third family.
+
+Two things the package deliberately did not do. There is **no `LaunchDefaults` block on the card**:
+muse's model and effort controls are their own work package and its permission choice is absent by
+measurement, so the group's only row would be an inert "Default" picker. And **muse is not in
+`MCP_KINDS` / `mcpreg.knownKinds`** — which surfaced an item no work package owns: decision 11 puts
+MCP servers on the wire in `session/start.config.mcpServers`, the settings writer correctly writes
+no `mcp_servers`, and **nothing sends them**. The guide's "Receives integration (MCP) servers" row
+is honest at `—`, and the wire half remains unbuilt.

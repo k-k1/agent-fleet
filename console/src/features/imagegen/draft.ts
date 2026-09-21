@@ -44,6 +44,16 @@ export interface ImagegenDraft {
   batchSize: number;
   op: string;
   inputs: string[];
+  /**
+   * The mask for `inpaint`, as a browse-root path — the same currency `inputs` uses and for the
+   * same reason (ADR 0081 decision 9: the pixels have to be on the workspace disk for the Agent
+   * to send them to the box). White is the area to repaint.
+   *
+   * A path and not a painted shape: the ADR puts the CANVAS in P2 because the Console has none,
+   * and says in the same breath that a mask file passed by path works from day one. This is that
+   * half; the drawing is still not here.
+   */
+  mask: string;
   strength: number;
   outDir: string;
   label: string;
@@ -84,6 +94,7 @@ export const emptyDraft = (): ImagegenDraft => ({
   batchSize: 1,
   op: "generate",
   inputs: [],
+  mask: "",
   strength: 0.6,
   outDir: "",
   label: "",
@@ -152,6 +163,7 @@ export function parseDraft(raw: string | null | undefined): ImagegenDraft {
     batchSize: int(p.batchSize, 1, MAX_BATCH, 1),
     op: OPS.includes(str(p.op, 20)) ? str(p.op, 20) : "generate",
     inputs: paths(p.inputs),
+    mask: str(p.mask, 512),
     strength: Math.min(1, Math.max(0, typeof p.strength === "number" ? p.strength : base.strength)),
     outDir: str(p.outDir, 512),
     label: str(p.label, 200),
