@@ -354,7 +354,7 @@ func refreshPlan(ctx context.Context, c *ChatConversation) (bool, error) {
 		Feature: usagex.FeaturePlanUpdate, Trigger: usagex.TriggerManual, Ref: c.ID,
 	})
 	lang := uiprefs.Locale()
-	reply, err := OneShotHeadless(ctx, OneShotProse, PlanRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())
+	reply, err := OneShotHeadless(ctx, usagex.FeaturePlanUpdate, OneShotProse, PlanRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())
 	if err != nil {
 		return false, fmt.Errorf("plan refresh failed: %w", err)
 	}
@@ -423,6 +423,14 @@ func HandleChatPlanSet(w http.ResponseWriter, r *http.Request) {
 // from the recent conversation — the button pressed right after the plan moved in
 // discussion.
 func HandleChatPlanRefresh(w http.ResponseWriter, r *http.Request) {
+	// Settings > AI assistance > plan update: this feature could not be turned off at all
+	// before docs/log/103 (§103.3-2) — the gap is closed here, not just on the Console side
+	// (docs/log/103-review 重大2: a button removed from the screen with no server-side stop is
+	// not actually off).
+	if !uiprefs.PlanUpdate() {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "plan update is turned off")
+		return
+	}
 	id := r.PathValue("id")
 	unlock := LockConv(id)
 	defer unlock()

@@ -150,6 +150,37 @@ func MirrorTranslate() bool {
 	return !ok || v
 }
 
+// PlanUpdate is the ON/OFF for the chat plan's explicit "refresh" button (Settings > AI
+// assistance, docs/log/103 §103.3-2). Missing/invalid ⇒ true: before this key existed the
+// feature had no gate at all — HandleChatPlanRefresh ran unconditionally — so a missing key
+// means "the historical behaviour", the same reasoning as EditSuggest.
+func PlanUpdate() bool {
+	v, ok := Read()["planUpdateEnabled"].(bool)
+	return !ok || v
+}
+
+// ChatReplySuggest is the ON/OFF for the CHAT's own ✨ reply suggestion (Settings > AI
+// assistance, docs/log/103 §103.3-3/§103.9). Before docs/log/103 the chat read
+// `sessionx.ReplySuggestEnabled` — the MIRROR's gate — through a ui-prefs key
+// (`replySuggest`) nothing ever wrote (docs/log/103-review §0.2), so the chat toggle silently
+// did nothing since the feature shipped. `assistantReplySuggestEnabled` is a real, own key now.
+//
+// Missing ⇒ fall back to the mirror's `replySuggestEnabled` (same shape as BranchSuggest falling
+// back to AutoTitleSuggest above): an explicit legacy OFF there must keep the chat's ✨ off too,
+// until the Console's own migration (settings.ts migrateAiAssistPrefs) writes the split key back
+// — that migration is in-memory and only reaches ui-prefs.json on the user's NEXT save, so
+// without this fallback the server enforces nothing in between (103-impl-review 重大5: the
+// exact failure §103.3-3 fixed on the mirror side, reappearing on the chat side). The read is
+// inlined rather than calling sessionx.ReplySuggestEnabled: sessionx imports uiprefs, not the
+// other way around.
+func ChatReplySuggest() bool {
+	if v, ok := Read()["assistantReplySuggestEnabled"].(bool); ok {
+		return v
+	}
+	v, ok := Read()["replySuggestEnabled"].(bool)
+	return !ok || v
+}
+
 // OpencodeCatalog is how the opencode launch-model list is shaped (Settings >
 // Agents > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
 // billing routes, so the same model can appear as opencode/… (Zen, metered) and

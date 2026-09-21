@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -37,8 +38,11 @@ func init() {
 		AiAssistOrderPref: aiAssistOrderPref,
 		AiShortModelPref:  aiShortModelPref,
 		AiProseModelPref:  aiProseModelPref,
-		ChatAutoTurnLimit: chatAutoTurnLimit,
-		ChatAutoTurnModel: chatAutoTurnModel,
+		// Per-feature overrides on top of the two above (docs/log/103).
+		AiFeatureAgentPref: aiFeatureAgentPref,
+		AiFeatureModelPref: aiFeatureModelPref,
+		ChatAutoTurnLimit:  chatAutoTurnLimit,
+		ChatAutoTurnModel:  chatAutoTurnModel,
 
 		FilterVisibleModels: sessionx.FilterVisibleModels,
 		VisibleModel:        sessionx.VisibleModel,
@@ -54,9 +58,11 @@ func init() {
 		TitleSuggestPersona:      sessionx.TitleSuggestPersona,
 		TitleSuggestTimeout:      sessionx.TitleSuggestTimeout,
 
-		CleanSuggestedReplies:    sessionx.CleanSuggestedReplies,
-		ReplyCounterpartChat:     sessionx.ReplyCounterpartChat,
-		ReplySuggestEnabled:      sessionx.ReplySuggestEnabled,
+		CleanSuggestedReplies: sessionx.CleanSuggestedReplies,
+		ReplyCounterpartChat:  sessionx.ReplyCounterpartChat,
+		// The chat's own ✨ gate (docs/log/103-review 重大3) — independent of the mirror's
+		// sessionx.ReplySuggestEnabled, which chatx used to (mistakenly) share.
+		ChatReplySuggestEnabled:  uiprefs.ChatReplySuggest,
 		ReplySuggestInstructions: sessionx.ReplySuggestInstructions,
 		ReplySuggestLogHeader:    sessionx.ReplySuggestLogHeader,
 		ReplySuggestModel:        sessionx.ReplySuggestModel,

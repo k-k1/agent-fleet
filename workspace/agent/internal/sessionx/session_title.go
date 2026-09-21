@@ -187,7 +187,7 @@ func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, e
 	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
 	// claude → codex → opencode, so claude-less workspaces get suggestions too.
 	lang := titleLang()
-	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, TitleSuggestPersona(lang), titleSuggestPrompt(turns, lang), TitleModel())
+	reply, err := chatx.OneShotHeadless(ctx, usagex.FeatureTitleSession, chatx.OneShotShort, TitleSuggestPersona(lang), titleSuggestPrompt(turns, lang), TitleModel())
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
 	}
@@ -722,7 +722,7 @@ const BranchSuggestPersona = "You name git branches. Read the conversation log a
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment.
 func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, BranchSuggestPersona, BranchSuggestPrompt(turns), TitleModel())
+	reply, err := chatx.OneShotHeadless(ctx, usagex.FeatureBranchSuggest, chatx.OneShotShort, BranchSuggestPersona, BranchSuggestPrompt(turns), TitleModel())
 	if err != nil {
 		return "", fmt.Errorf("branch suggestion failed: %w", err)
 	}

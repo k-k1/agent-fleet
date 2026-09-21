@@ -22,7 +22,7 @@ func TestUsageLedgerLive(t *testing.T) {
 	ctx = usagex.WithTag(ctx, usagex.Tag{
 		Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: "slot99",
 	})
-	if _, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, sessionx.TitleSuggestPersona("ja"),
+	if _, err := chatx.OneShotHeadless(ctx, usagex.FeatureTitleSession, chatx.OneShotShort, sessionx.TitleSuggestPersona("ja"),
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します",
 		sessionx.TitleModel()); err != nil {
 		t.Fatalf("chatx.OneShotHeadless: %v", err)
@@ -64,7 +64,7 @@ func TestBranchSuggestLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, sessionx.BranchSuggestPersona, sessionx.BranchSuggestPrompt(oneShotLiveTurns()), sessionx.TitleModel())
+	reply, err := chatx.OneShotHeadless(ctx, usagex.FeatureBranchSuggest, chatx.OneShotShort, sessionx.BranchSuggestPersona, sessionx.BranchSuggestPrompt(oneShotLiveTurns()), sessionx.TitleModel())
 	if err != nil {
 		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestReplySuggestLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, sessionx.ReplySuggestPersona("ja"), sessionx.ReplySuggestPrompt(oneShotLiveTurns(), "ja"), sessionx.ReplySuggestModel())
+	reply, err := chatx.OneShotHeadless(ctx, usagex.FeatureSuggestSession, chatx.OneShotShort, sessionx.ReplySuggestPersona("ja"), sessionx.ReplySuggestPrompt(oneShotLiveTurns(), "ja"), sessionx.ReplySuggestModel())
 	if err != nil {
 		t.Fatalf("chatx.OneShotHeadless: %v", err)
 	}

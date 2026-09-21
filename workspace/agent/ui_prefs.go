@@ -166,6 +166,42 @@ func aiModelPref(key, kind string) (string, bool) {
 	return assistantModelPref("assistantUtilityModels", kind)
 }
 
+// aiFeatureAgentPref is the per-feature agent pin (Settings > AI assist, docs/log/103 decision
+// 1, ui-prefs aiFeatureAgents[feature]). "" ⇒ no pin — the caller falls through to the shared
+// priority order (aiAssistOrderPref). Unlike a model, an agent kind has no hidden-models list
+// to filter against.
+func aiFeatureAgentPref(feature string) string {
+	raw, ok := uiprefs.Read()["aiFeatureAgents"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	v, _ := raw[feature].(string)
+	return v
+}
+
+// aiFeatureModelPref is the per-feature, per-backend model override (Settings > AI assist,
+// docs/log/103 decision 4, ui-prefs aiFeatureModels[feature][kind]). Same (value, ok) contract
+// and the same hidden-models filtering as assistantModelPref: a model excluded by "models not
+// to use" falls back to unset rather than being adopted anyway.
+func aiFeatureModelPref(feature, kind string) (string, bool) {
+	raw, ok := uiprefs.Read()["aiFeatureModels"].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	byKind, ok := raw[feature].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	v, ok := byKind[kind].(string)
+	if !ok {
+		return "", false
+	}
+	if v != chatx.AssistantRecommendedModel && sessionx.ModelHidden(kind, v) {
+		return "", false
+	}
+	return v, true
+}
+
 // chatAutoTurnLimit is the per-conversation ceiling on unattended auto turns
 // (docs/log/30, Settings > Assistant, "auto-reply limit"). Missing/invalid ⇒
 // defaultAutoTurns; always clamped to [1, maxAutoTurnLimit] — there is no

@@ -212,7 +212,7 @@ func cleanEditSuggestion(r editSuggestResult, instruction string) (summary, repl
 
 // editSuggestLLM is the generation seam tests replace.
 var editSuggestLLM = func(ctx context.Context, req *editSuggestRequest) (string, error) {
-	return chatx.OneShotHeadless(ctx, chatx.OneShotProse, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
+	return chatx.OneShotHeadless(ctx, usagex.FeatureSuggestEdit, chatx.OneShotProse, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
 }
 
 // handleFSSuggestEdit — POST /fs/suggest-edit (docs/log/44 Phase 4). The response carries

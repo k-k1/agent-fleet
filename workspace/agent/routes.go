@@ -386,6 +386,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /env/ui-prefs", handleGetUIPrefs)
 	mux.HandleFunc("PUT /env/ui-prefs", handlePutUIPrefs)
 
+	// AI assist per-feature resolution (docs/log/103 §103.6/§103.7's "いま使うのは"row). Never
+	// starts a CLI — see ai_assist.go's header for why.
+	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
+	mux.HandleFunc("GET /ai-assist/resolution", handleAIAssistResolution)
+
 	// MCP registry (docs/log/48 P0 / ADR0031) — CRUD and a connection test for user-registered
 	// MCP servers. Tenant distribution and built-in integrations blend into the same list,
 	// read-only.

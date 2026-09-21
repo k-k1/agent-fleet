@@ -72,7 +72,7 @@ func writeChatTitleWindow(b *strings.Builder, msgs []ChatMessage) {
 
 func runChatTitleSuggestLLM(ctx context.Context, msgs []ChatMessage) (string, error) {
 	lang := titleLang() // same rule as session titles: generate in the display language and do not regenerate on a later switch
-	reply, err := OneShotHeadless(ctx, OneShotShort, titleSuggestPersona(lang), ChatTitleSuggestPrompt(msgs, lang), titleModel())
+	reply, err := OneShotHeadless(ctx, usagex.FeatureTitleChat, OneShotShort, titleSuggestPersona(lang), ChatTitleSuggestPrompt(msgs, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("chat title generation failed: %w", err)
 	}

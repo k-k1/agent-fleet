@@ -159,21 +159,32 @@ the assistant conversation — they share an implementation, but they surface so
 - **Model for short labels** / **Model for prose** — short covers titles, branch names and reply suggestions;
   prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults (a
   lightweight model for short labels, one tier up for prose).
-- **Features that use AI assistance** — each can be turned off individually, which hides its button entirely.
+- **Features that use AI assistance** — one card per feature (8 in total). Turning one off hides its button
+  entirely and folds away that card's agent/model rows.
   - **Session title suggestion** — the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
   - **Chat title suggestion** — "Ask AI" in the assistant's rename dialog. A chat has no banner of its own.
   - **Branch name suggestion** — used when creating a worktree or renaming a branch.
-  - **AI reply suggestions (✨)** — the button on the mirror and chat composers; it spends tokens only when
-    pressed. The **reply suggestions** learned from your own input history (Keys tab) use no AI and are separate.
+  - **Reply suggestions (session)** / **Reply suggestions (chat)** — the ✨ button on the mirror and the chat
+    composer, each its own switch; it spends tokens only when pressed. Turning one off does not affect the
+    other. The **reply suggestions** learned from your own input history (Keys tab) use no AI and are separate.
   - **File edit suggestions** — turns a selection plus your instruction into a proposed replacement.
+  - **Work-plan update** — the "refresh" button that re-derives the assistant chat's plan from the recent
+    exchange.
   - **Answer translation (mirror)** — the "Translate" button on a mirror answer that came back in another
     language. It spends tokens only when pressed and **uses no session turn** (the conversation does not
-    move). A translation is kept until that session is deleted, so the same text is free from the second
-    press on.
+    move). A translation is kept until that session is deleted, so the same text with the **same agent/model**
+    is free from the second press on. Changing this feature's agent or model means there is no translation yet
+    for that combination, so the next press generates a fresh one (the earlier agent/model's translation is
+    not lost — it comes back if you switch back).
   - **Translate automatically** — presses that button for you the moment a turn finishes (off by default).
     Only answers that **arrive while you are watching that session** qualify; answers already on screen when
     you open it are never translated on their own, and the button is still there for them. This is the one
     translation setting that spends without being asked.
+
+  Each card can also be pinned to its own agent, separate from the priority order above (default: "auto —
+  priority order"). Once pinned to one agent, that card can also pick that agent's own model — left on "auto"
+  a card follows the default and cannot pick one concrete model. A card's "currently uses" line names the
+  agent it will actually run on right now (blank until the Agent has an answer).
 
 ### Agent instructions
 

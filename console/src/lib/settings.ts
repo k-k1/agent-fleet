@@ -431,6 +431,12 @@ export interface Settings {
   // opted into. Read only by the mirror (the Agent sees an ordinary request carrying
   // trigger=auto); mirrorTranslateEnabled off disables it whatever this says.
   mirrorAutoTranslate: boolean;
+  // ON/OFF for the chat plan's explicit "refresh" button (Settings > AI assist, docs/log/103
+  // §103.3-2). Previously had no setting at all and was always on, like editSuggestEnabled;
+  // default true keeps that behaviour. The Agent gates the same key server-side
+  // (HandleChatPlanRefresh) — the toggle here is not the only thing standing between a press
+  // and a model run.
+  planUpdateEnabled: boolean;
   // Forced output language for assistant chat: "auto" = follow the input language
   // (default), "ja" / "en" = always reply in that language (even for foreign-language
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
@@ -468,6 +474,18 @@ export interface Settings {
   // afterwards.
   aiShortModels: Record<string, string>;
   aiProseModels: Record<string, string>;
+  // Per-feature agent pin (Settings > AI assist, docs/log/103 decision 1): "" (missing) means
+  // no pin — the feature follows aiAssistOrder like every other one-shot. Keyed by the same
+  // feature ids the usage ledger already uses (usage.val.feature.*), so the row someone reads
+  // in the usage view is the row they adjust here.
+  aiFeatureAgents: Record<string, string>;
+  // Per-feature, per-backend model override, one level under aiFeatureAgents (docs/log/103
+  // decision 4): aiFeatureModels[feature][kind]. Writing a concrete model needs a kind, so the
+  // Console only offers this once the row is pinned to one CLI — "auto" can pick "default" or
+  // "recommended" only. Switching the pin to a different CLI does not erase the model stored
+  // for the previous one (kind-scoped, same shape as aiShortModels/aiProseModels): flipping the
+  // pin back recovers it.
+  aiFeatureModels: Record<string, Record<string, string>>;
   // Auto turn on session reports (docs/log/30): when a session an af_write assistant
   // launched/steered reports back, the assistant runs one turn automatically to
   // process it. Default ON; the backend caps unattended turns at 10 per conversation
@@ -542,10 +560,17 @@ export interface Settings {
   ssmHostUsage: Record<string, { count: number; at: number }>;
   // ON/OFF for reply suggestions (quick replies, lib/quickReplies). Default ON.
   quickRepliesEnabled: boolean;
-  // ON/OFF for reply suggestions v2, the sparkle button that generates from context with an
-  // LLM. Default ON — tokens are spent only when it is pressed. Matches the default of the
-  // Agent's replySuggestEnabled (ui-prefs).
+  // ON/OFF for the SESSION MIRROR's reply suggestions v2 (✨), the sparkle button that
+  // generates from context with an LLM. Default ON — tokens are spent only when it is pressed.
+  // Matches the default of the Agent's replySuggestEnabled (ui-prefs).
+  // CHAT's own ✨ is assistantReplySuggestEnabled, a separate key (docs/log/103 §103.3-3): this
+  // key used to gate both on the Console side too, through a ui-prefs read the Agent spelled
+  // differently (`replySuggest`, never written), so the chat toggle never actually took effect.
   replySuggestEnabled: boolean;
+  // ON/OFF for the CHAT's own ✨ reply suggestions v2 (docs/log/103 §103.3-3/§103.9). Default
+  // ON; an explicit legacy OFF on replySuggestEnabled migrates here once (migrateAiAssistPrefs)
+  // so nobody who had turned suggestions off finds the chat's ✨ switched back on by the split.
+  assistantReplySuggestEnabled: boolean;
   // Learned data for reply suggestions: normalized key → { text = display spelling,
   // count = times sent, at = last sent epoch ms }. Updated when send() succeeds; same shape as
   // ssmHostUsage and mirrored to the server, so it syncs across devices.
@@ -930,12 +955,14 @@ export function normalizeAssistantOrder(v: unknown): string[] {
 // Writing the rule out twice invites fixing only one copy — the old assistantTitleSuggest
 // migration really had been transcribed into two places.
 //
-// The principle is that an upgrade must not change behaviour. aiProseModels is the deliberate
-// exception: the old assistantUtilityModels said "titles and suggestions" in both its name and
-// its label, yet it also replaced the defaults for File pane edit suggestions and plan updates
-// (the sonnet class). Someone who put haiku there meant it for short labels, as the name said,
-// not to downgrade prose generation. The prose side goes back to the recommendation that fits
-// its purpose — the point of this split.
+// The principle is that an upgrade must not change behaviour: BOTH aiShortModels and
+// aiProseModels inherit the old assistantUtilityModels value, carrying the pre-split behaviour
+// over unchanged (docs/log/84 §84.3's ★ — an earlier version of this migration had prose go
+// back to its own recommendation instead, which was reverted because it changed a model out
+// from under a user who had not touched this setting the moment the split shipped). The point
+// of splitting the keys is that they can move independently AFTER this migration runs, not that
+// they start apart (docs/log/103 §103.3-5: this function's own doc comment used to say the
+// opposite of what the code below does — fixed here, not just in the code).
 export function migrateAiAssistPrefs(o: Record<string, unknown>): void {
   // Title suggestion moves to one key per feature. The old autoTitleSuggest covered sessions,
   // chats and branch names at once, so an explicit OFF is carried over to all three.
@@ -962,6 +989,13 @@ export function migrateAiAssistPrefs(o: Record<string, unknown>): void {
   // borrowed value, so the current behaviour — reply language English means read-aloud goes to
   // Polly — is preserved. From now on either one can be changed alone.
   if (!("ttsLang" in o) && typeof o.outputLanguage === "string") o.ttsLang = o.outputLanguage;
+  // The chat's own ✨ gets its own key (docs/log/103 §103.3-3/§103.9): an explicit legacy OFF
+  // on the mirror's replySuggestEnabled carries over once, so nobody who had turned suggestions
+  // off finds the chat's ✨ switched back on the moment the two keys separate. A missing or
+  // true value needs no migration — the new key's own default is already ON.
+  if (!("assistantReplySuggestEnabled" in o) && o.replySuggestEnabled === false) {
+    o.assistantReplySuggestEnabled = false;
+  }
 }
 
 const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
@@ -1024,9 +1058,12 @@ const DEFAULTS: Settings = {
   editSuggestEnabled: true,
   mirrorTranslateEnabled: true,
   mirrorAutoTranslate: false, // opt-in: the only translation setting that spends unasked
+  planUpdateEnabled: true,
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
   aiAssistOrder: [...ASSISTANT_AGENT_KINDS],
+  aiFeatureAgents: {},
+  aiFeatureModels: {},
   assistantModels: {
     claude: ASSISTANT_RECOMMENDED_MODEL,
     codex: ASSISTANT_RECOMMENDED_MODEL,
@@ -1106,6 +1143,7 @@ const DEFAULTS: Settings = {
   ssmHostUsage: {},
   quickRepliesEnabled: true,
   replySuggestEnabled: true,
+  assistantReplySuggestEnabled: true,
   quickReplies: {},
   quickRepliesHidden: [],
   quickRepliesPinned: [],

@@ -85,8 +85,12 @@ func assistantChatModelPref(kind string) (string, bool) {
 }
 func aiShortModelPref(kind string) (string, bool) { return deps.AiShortModelPref(kind) }
 func aiProseModelPref(kind string) (string, bool) { return deps.AiProseModelPref(kind) }
-func chatAutoTurnLimit() int                      { return deps.ChatAutoTurnLimit() }
-func chatAutoTurnModel() string                   { return deps.ChatAutoTurnModel() }
+func aiFeatureAgentPref(feature string) string    { return deps.AiFeatureAgentPref(feature) }
+func aiFeatureModelPref(feature, kind string) (string, bool) {
+	return deps.AiFeatureModelPref(feature, kind)
+}
+func chatAutoTurnLimit() int    { return deps.ChatAutoTurnLimit() }
+func chatAutoTurnModel() string { return deps.ChatAutoTurnModel() }
 
 func filterVisibleModels(kind string, list []agents.ModelChoice) []agents.ModelChoice {
 	return deps.FilterVisibleModels(kind, list)
@@ -104,7 +108,7 @@ func titleSuggestInstructions(lang string) string { return deps.TitleSuggestInst
 func titleSuggestPersona(lang string) string      { return deps.TitleSuggestPersona(lang) }
 
 func cleanSuggestedReplies(s string) []string { return deps.CleanSuggestedReplies(s) }
-func replySuggestEnabled() bool               { return deps.ReplySuggestEnabled() }
+func chatReplySuggestEnabled() bool           { return deps.ChatReplySuggestEnabled() }
 func replySuggestInstructions(lang string, counterpart int) string {
 	return deps.ReplySuggestInstructions(lang, counterpart)
 }

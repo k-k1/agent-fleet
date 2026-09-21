@@ -21,6 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 func TestClaudeOneShotArgs(t *testing.T) {
@@ -100,7 +101,7 @@ func TestTitleSuggestLive(t *testing.T) {
 		t.Run(lang, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			reply, err := OneShotHeadless(ctx, OneShotShort, titleSuggestPersona(lang),
+			reply, err := OneShotHeadless(ctx, usagex.FeatureTitleSession, OneShotShort, titleSuggestPersona(lang),
 				titleSuggestInstructions(lang)+log+"\n"+titleSuggestFooter(lang), titleModel())
 			if err != nil {
 				t.Fatalf("oneShotHeadless: %v", err)
