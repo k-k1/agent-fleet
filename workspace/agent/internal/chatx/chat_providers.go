@@ -1587,10 +1587,12 @@ func oneShotKind(feature string) (kind, source string) {
 // settings tab opened before any of those has fired would otherwise poll "unknown" forever,
 // even while the tab stays open and keeps asking.
 //
-// headlessAgentAvailable does NOT hold headlessAvailMu across the exec call (only around the
-// cache read/write either side of it), so two callers racing on the same cold kind can each
-// still run their own `auth status` — this warms at most a handful of kinds every ~10s poll,
-// not per request, so the occasional doubled-up call is not worth a dedicated in-flight guard.
+// This IS per request, not an occasional doubled-up call: handleAIAssistResolution fires one
+// `go WarmOneShotKind` per feature that came back unknown, up to 8 per request (ai_assist.go).
+// What makes that safe is headlessAvailInFlight (this file, above) — it is the postmortem for
+// the exact failure this comment used to wave off as not worth guarding against: ~490 real
+// `claude` processes and ~25GiB RSS from concurrent callers on the same cold kind with no cap.
+// Removing that guard on the strength of this paragraph would reopen it.
 func WarmOneShotKind(feature string) {
 	oneShotKind(feature)
 }
