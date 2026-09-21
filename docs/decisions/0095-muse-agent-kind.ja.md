@@ -1496,3 +1496,51 @@ Interaction を組む——kiro の ACP `session/request_permission` と lcpp �
 2 回目の Resume が生きたホストを再利用し 1 セッションに 2 つ目の子を作らないこと、drop 後の Resume が
 保存済みセッションを**再読込**して利用者の履歴を黙って分岐させないこと、殺された子が死んだハンドルに
 なること。ターンの手前で止まるので枠は消費しない。
+
+### P2-3: 転写と、決定 4 の「停止中」半分の訂正
+
+3 つ目の作業パッケージ。実行中の `item/*` ストリーム、ミラーのターンモデル、subagent の項目
+——そして実測が覆した決定 4 の前提 1 つ。
+
+🔴 **`session.jsonl` はワイヤの記録を持っていない。** 決定 4 はこう書いている:「ホストが上がって
+いないときは、読み取り層が `~/.local/share/muse/sessions/YYYY/MM/DD/<sid>/session.jsonl` を
+解析する。これは追記専用で、同じ記録を持つ」。実走行で測ると、追記専用ではあるが**同じ記録では
+ない**。これは muse 内部の語彙によるイベントソース型の**実行時**ログである:
+`runtime.session` / `runtime.session.task` の封筒が `started`・`model_request_configured`・
+`provider_request_options_configured`・`model_response_created`・`assistant_message_committed`・
+`goal_usage_attribution`・`terminal` などを運ぶ——1 プロンプトの echo セッション 1 本で、
+68 記録のうち 43 が `runtime.session` だった。ファイルの中に `Item` は 1 つも無い。これを読む
+パーサは、まさに Consequences が「この kind には要らない」と謳っている転写のリバース
+エンジニアリングそのもので、しかも安定の約束が無い内部形式に対して行うことになる。
+
+プロトコル自身の答えは `session/read` で、`SessionHistory.items`——安定面——を返す。ただしここでは
+使えない。理由は muse ではなく Agent Fleet 側にある: `Agent.Transcript` はミラーだけでなく使用量の
+集計からも呼ばれる（`sessionx/session_usage.go`）ので、フリート全体の使用量問い合わせが muse
+セッション 1 本につき 73 MiB のホストを 1 つ起こすことになる。
+
+**よって停止中の半分は AF 自身のストアにする。** 形は ADR 0093 決定 3 が lcpp で既に使っている
+もの——AF が見た item の追記専用ログを `muse-transcripts/<スロット sid>.jsonl` に置き、実行中の
+ストリームが書き、`Transcript` が読み戻す。lcpp との違いは、似ているからこそ書いておく価値がある:
+あちらはストアが会話**そのもの**だが、こちらは会話はホストが持ち、これは AF が観測したものの
+**写し**である。その代償は「AF が見ていない間に走ったターン」で、決定 2（managed 専用・AF が唯一の
+書き手）のもとでは Agent が turn の途中で死んだ場合にしか起きず、次の Resume での `session/read`
+が埋め戻しの正規手段である。決定 4 のセッション id についての論旨は何も変わらない。変わるのは
+名指していたファイルだけである。
+
+実装が固定した小さめの発見が 3 つ:
+
+- **item は改訂されるので、ストアは書き込み時でなく読み出し時に畳む。** `item/started`・任意個の
+  `item/delta`・`item/completed` は `itemId` を共有し `revision` が上がっていく。1 item 1 行を
+  保とうとすると read-modify-write になり、クラッシュ時に並行の追記を失う。観測をすべて追記して
+  読み出しで改訂を畳めばそれが起きない。順序は初見順である——改訂順や id 順に並べると、後に続く
+  テキストより後で完了したツール呼び出しがターンの中で入れ替わる。
+- **delta は永続化しない。** 後続の `item/completed` が全文を運ぶので、断片を全部書くとストアが
+  ストリーミング粒度の分だけ膨れてから捨てられる。断片はメモリに置き `Transcript` が重ねる——
+  これがミラーの逐次表示の正体である。
+- **ターンの区切りは `turnId` ではない。** user メッセージが user ターンを開き、開いている
+  assistant ターンを閉じる。assistant 側の item は 1 つの assistant ターンに畳まれる。item は
+  `turnId` を持つが、steer されたターンは注入の前後の item を抱え、ターン間の compaction は
+  そもそも持たないので、それで束ねると落ちる。
+
+よって `Caps.CanTranscript` は true になり、ガイドの能力表は「停止中の muse セッションも履歴が
+見える」と言う——それが誰の写しなのかを脚注で添えて。

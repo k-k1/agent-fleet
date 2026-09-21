@@ -30,15 +30,15 @@ func (agentImpl) Kind() string { return session.KindMuse }
 // approvals on and the driver answers them from the Console — without it POST /sessions
 // refuses skip_permissions=false for this kind, so the launch flow could not even ask.
 //
-// CanTranscript, CanFork and CanForkAt stay false for now. MSP carries `session/fork` and the
-// transcript rides `item/*` plus the at-rest JSONL, so all three will be true — but a cap is
-// a claim about a path that was measured end to end (docs/log/76), and neither the transcript
-// reader nor the fork path exists yet. Claiming one early shows the member an affordance that
-// silently does nothing.
+// CanTranscript is true now that Transcript below really reads a store that the live item
+// stream fills. CanFork and CanForkAt stay false: MSP carries `session/fork`, so both will be
+// true, but a cap is a claim about a path measured end to end (docs/log/76) and that one is
+// not built — claiming it early shows the member an affordance that silently does nothing.
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{
 		ManagedOnly:      true,
 		PermissionChoice: true,
+		CanTranscript:    true,
 	}
 }
 
@@ -66,11 +66,42 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 // (a retained or reserved id is refused `session_id_conflict`), and the store is keyed by the
 // slot sid, which is a pure function of (dir, name) — a recreate mints a new Name, so it
 // structurally cannot inherit the entry. What this guards is the caller that reuses a name.
-func (agentImpl) ClearResume(sid string) { sessions.Remove(sid) }
+func (agentImpl) ClearResume(sid string) {
+	sessions.Remove(sid)
+	openStore(sid).Remove()
+}
 
-// Transcript has no generic source yet: the live items and the at-rest session.jsonl reader
-// are the next work package. Returning ok=false is what the read layer does for a kind
-// without one, and it is the honest answer until the reader exists.
-func (agentImpl) Transcript(session.Meta) (agents.TranscriptData, bool) {
-	return agents.TranscriptData{}, false
+// Transcript reads AF's own item store, live handle or not — a stopped session shows the same
+// history a running one does, because the store is on disk either way.
+//
+// It must stay a plain disk read: this is called from the usage aggregation as well as the
+// mirror, so spawning a host to ask `session/read` would turn a fleet-wide usage query into
+// one 73 MiB process per muse session (transcript.go's own header explains why muse's
+// at-rest file is not an option).
+func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
+	st := openStore(slotSid(m))
+	items, err := st.Items()
+	if err != nil {
+		return agents.TranscriptData{}, false
+	}
+	td := agents.TranscriptData{Turns: turnsFromItems(items), Path: st.Path(), Mode: "normal"}
+
+	h := handleFor(m.Name)
+	if h == nil {
+		return td, true
+	}
+	// Overlay what only the live handle knows: the fragments of an item still streaming, the
+	// prompt awaiting an answer, and the prompts queued behind the running turn.
+	if fragments := h.streamingText(); len(fragments) > 0 {
+		td.Turns = appendStreaming(td.Turns, items, fragments)
+	}
+	h.mu.Lock()
+	if h.inter != nil {
+		td.Pending = h.inter.Questions
+	}
+	for _, in := range h.queue {
+		td.Queued = append(td.Queued, in.Prompt)
+	}
+	h.mu.Unlock()
+	return td, true
 }

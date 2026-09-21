@@ -99,6 +99,9 @@ var Entries = []string{
 	// existed under .config.
 	"muse-msgledger",
 	"muse-sessions",
+	// AF's own mirror of each muse conversation, written from the live item stream
+	// (transcript.go explains why muse's own at-rest file cannot be read instead).
+	"muse-transcripts",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
 	"bridge-approvals",

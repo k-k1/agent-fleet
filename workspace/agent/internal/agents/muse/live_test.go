@@ -167,3 +167,41 @@ func TestLiveChildDeathMarksTheHandleDead(t *testing.T) {
 		t.Error("Send succeeded against a dead host")
 	}
 }
+
+// The transcript path end to end against the vendor's own host, and it costs nothing: the
+// member's own prompt comes back as a real `item/completed` with kind `userMessage` BEFORE
+// the turn fails on the missing credential, so the wire shape, the store and the rendering
+// are all exercised without a model call.
+func TestLiveUserMessageItemReachesTheTranscript(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	const prompt = "AFPROBE transcript round trip"
+	if err := th.Send(agents.TurnInput{Prompt: prompt}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	deadline := time.After(30 * time.Second)
+	for {
+		td, ok := New().Transcript(m)
+		if ok {
+			for _, turn := range td.Turns {
+				if turn.Role == "user" && turn.Text == prompt {
+					if turn.AnchorID == "" {
+						t.Error("the rendered turn carries no anchor id")
+					}
+					return
+				}
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("the user message never reached the transcript")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
