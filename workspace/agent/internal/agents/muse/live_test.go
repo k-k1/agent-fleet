@@ -358,6 +358,33 @@ func TestLiveSessionStartAcceptsMCPServerConfig(t *testing.T) {
 	//
 	// ⚠️ A failure here is information rather than damage — it means the vendor widened the
 	// union to accept both spellings, at which point the constant stops being a safety rail.
+	// 🔴 And the half that is about a secret rather than a spelling: AF puts the Agent token
+	// and the CP's memo token in this map, because muse scrubs an MCP child's environment
+	// (P2-14). The wire takes VALUES, so the question "does a value handed to the vendor's
+	// host end up on disk" has to be answered by measurement rather than by the schema's
+	// promise that configuration diagnostics never echo a command or a URL.
+	const marker = "AFPROBE-ENV-VALUE-MUST-NOT-LAND-ON-DISK"
+	sidEnv := msp.NewCommandID()
+	withEnv := params
+	withEnv.CommandID = msp.NewCommandID()
+	withEnv.SessionID = &sidEnv
+	withEnv.Config = &msp.SessionConfig{MCPServers: map[string]msp.SessionMCPServerConfig{
+		"afprobe-env": {Transport: msp.SessionMCPServerConfigTransportStdio, Command: &cmd, Mode: &stdioMode,
+			Env: map[string]string{"AFPROBE_SECRET": marker}},
+	}}
+	if err := cl.CallInto(msp.MethodSessionStart, withEnv, callTimeout, nil); err != nil {
+		t.Fatalf("session/start with an env-carrying server: %v", err)
+	}
+	filepath.Walk(filepath.Join(os.Getenv("HOME"), ".local", "share", "muse"), func(p string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), marker) {
+			t.Errorf("a value passed in the wire env was written to %s: AF's tokens must not reach muse's store", p)
+		}
+		return nil
+	})
+
 	sid2 := msp.NewCommandID()
 	bad := params
 	bad.CommandID = msp.NewCommandID()
@@ -370,6 +397,142 @@ func TestLiveSessionStartAcceptsMCPServerConfig(t *testing.T) {
 	} else {
 		t.Logf("the file spelling is refused on the wire, as the closed union declares: %v", err)
 	}
+}
+
+// Open question 6, answered for free: one host per session, but ONE store per user — so a
+// host can list conversations it never started. `session/list` is a query (no commandId, no
+// model call), and two hosts in one throwaway HOME reproduce production's shape exactly,
+// because production's hosts share the member's real HOME the same way.
+//
+// What it decides is a Console rule, not a driver one: if the vendor's own listing crosses
+// AF's session boundary, then no AF surface may ever offer a muse session it did not start.
+func TestLiveSessionListCrossesTheSessionBoundary(t *testing.T) {
+	liveGate(t)
+	a := liveMeta(t)
+	b := a
+	b.Name = a.Name + "-second"
+	t.Cleanup(func() { DropHandle(b.Name) })
+
+	ha, err := NewDriver().Resume(a)
+	if err != nil {
+		t.Fatalf("resume a: %v", err)
+	}
+	hb, err := NewDriver().Resume(b)
+	if err != nil {
+		t.Fatalf("resume b: %v", err)
+	}
+	if ha == hb {
+		t.Fatal("the two session names share one host, so this proves nothing about two hosts")
+	}
+	cl, aSid := clientAndSid(ha)
+	_, bSid := clientAndSid(hb)
+	if aSid == bSid {
+		t.Fatalf("both sessions are %s", aSid)
+	}
+
+	// BOTH directions, because the order matters and one of them would hide the answer: host A
+	// was already running when B's session was created, so asking only A would confuse "the
+	// store is not shared" with "the index was read at boot". B is the host that started last
+	// and therefore the one that can see everything durable before it.
+	bClient, _ := clientAndSid(hb)
+	list := func(who string, cl *msp.Client) map[string]msp.Session {
+		t.Helper()
+		var res msp.SessionListResult
+		if err := cl.CallInto(msp.MethodSessionList, msp.SessionListParams{}, callTimeout, &res); err != nil {
+			t.Fatalf("session/list from %s: %v", who, err)
+		}
+		seen := map[string]msp.Session{}
+		for _, s := range res.Sessions {
+			seen[s.SessionID] = s
+		}
+		return seen
+	}
+	fromA, fromB := list("a", cl), list("b", bClient)
+
+	// The positive control: a host that listed nothing at all would make the interesting arms
+	// below silent for the wrong reason.
+	if _, ok := fromA[aSid]; !ok {
+		t.Fatalf("host a does not list its OWN session %s, so its silence about the other one means nothing", aSid)
+	}
+	if _, ok := fromB[bSid]; !ok {
+		t.Fatalf("host b does not list its OWN session %s", bSid)
+	}
+	for _, arm := range []struct {
+		who   string
+		seen  map[string]msp.Session
+		other string
+	}{{"a", fromA, bSid}, {"b", fromB, aSid}} {
+		if row, ok := arm.seen[arm.other]; ok {
+			// Not a defect of AF's: the store is the member's, so the vendor's listing is
+			// user-wide by design. What it obliges is the guard in muse_test.go — the schema's
+			// own note that a session loaded by ANOTHER host reads `notLoaded` is the tell that
+			// this row came from the shared store.
+			t.Logf("session/list from host %s crosses the AF session boundary: %s (status %q, name %v) belongs to the other session",
+				arm.who, arm.other, row.Status, row.Name)
+			continue
+		}
+		t.Logf("session/list from host %s returned %d row(s) and none of them is the other session's %s",
+			arm.who, len(arm.seen), arm.other)
+	}
+}
+
+// Open question 7, answered for free: with a `Meta.Subdir` the workspaceRoot AF sends is the
+// SUBDIRECTORY, not the working copy — `h.dir` is `m.CWD()` (driver.go) and the same value is
+// the child's cwd and what `--trust-workspace` trusts. The half only the host can answer is
+// what it RECORDS, and `session/list`'s `workspaceRoot` filter answers it with a query.
+//
+// The filter is also the control: a listing keyed to the working copy must NOT return the
+// session, or "the subdirectory is the root" would be a claim about a filter that ignores its
+// argument.
+func TestLiveWorkspaceRootIsTheSubdirectoryNotTheWorkingCopy(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+	sub := filepath.Join(m.Dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.Subdir = "sub"
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	dir := h.dir
+	h.mu.Unlock()
+	if dir != sub {
+		t.Fatalf("the handle runs in %s, want the subdirectory %s", dir, sub)
+	}
+	cl, sid := clientAndSid(th)
+
+	listed := func(root string) bool {
+		t.Helper()
+		var res msp.SessionListResult
+		if err := cl.CallInto(msp.MethodSessionList, msp.SessionListParams{WorkspaceRoot: &root}, callTimeout, &res); err != nil {
+			t.Fatalf("session/list(%s): %v", root, err)
+		}
+		for _, s := range res.Sessions {
+			if s.SessionID == sid {
+				return true
+			}
+		}
+		return false
+	}
+	if !listed(sub) {
+		t.Errorf("the host did not record %s as the session's workspace root", sub)
+	}
+	if listed(m.Dir) {
+		t.Errorf("the host records the working copy %s as the root too, so the filter proves nothing", m.Dir)
+	}
+}
+
+// clientAndSid reads the two fields the live tests need off a handle under its lock.
+func clientAndSid(th agents.ThreadHandle) (*msp.Client, string) {
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cl, h.sid
 }
 
 // The fork, against the real host, for free: a whole-conversation fork of a session with no

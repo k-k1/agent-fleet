@@ -388,3 +388,204 @@ func TestLiveInstructionLayerIsRegistered(t *testing.T) {
 		t.Fatalf("AGENTS.md does not carry both blocks:\n%s", b)
 	}
 }
+
+// Open question 8, answered: muse's own `cron_*` tools survive every clamp, and the key that
+// would stop them cannot be used. This is the measurement the guide's "Agent Fleet does not
+// see those runs" paragraph stands on, and it is free (`--provider echo`).
+//
+// The search for a key was exhaustive against the vendor's own offline validator, which names
+// unknown members: the defaults plane has no `cron` / `scheduler` / `automation` section at
+// all, `run` carries no cron member, and the policy plane is `execution.*` / `model_egress`.
+// The one lever that removes them is `run.toolset` — and see the test below for why it is not
+// the answer.
+func TestLiveCronToolsSurviveTheClamps(t *testing.T) {
+	liveGate(t)
+	bin := liveBin(t)
+
+	home, env := clampedHome(t, true)
+	tools := echoToolset(t, bin, home, env)
+	if n := countTools(tools, "cron"); n == 0 {
+		t.Errorf("no cron tool is left under the clamps: the guide paragraph about muse "+
+			"scheduling its own runs is now wrong and should be removed (tools: %v)", tools)
+	}
+	// The pair, so that "cron survived" cannot be read as "nothing was clamped": the same
+	// toolset must already be missing what the clamps DO remove.
+	if n := countTools(tools, "subagent"); n != 0 {
+		t.Fatalf("the clamps did not apply in this run (%d subagent tools present), so the cron finding is unmeasured", n)
+	}
+}
+
+// 🔴 Why the key that exists is not adopted. `run.toolset` is a NAMED ALLOW-LIST of the whole
+// tool surface, not a cron switch, and it takes two things down with it:
+//
+//   - every MCP tool, including AF's own `af` server — so a muse session clamped this way is
+//     told to call `af_report` and has no such tool, the exact failure P2-12's `ServedKinds`
+//     exists to prevent;
+//   - the host itself on the next release — an unknown name is not ignored, it is
+//     `invalid run configuration: unknown tool names: …` and rc=2 before any session, so a
+//     tool renamed in 1.4 would stop every muse session in the fleet from starting.
+//
+// The MCP arm needs a server that really starts, because a server that failed would leave its
+// tool absent in both arms and prove nothing — hence the stdio stub, and the `mode: all` arm
+// that shows the tool present before the allow-list is applied.
+func TestLiveTheOnlyKeyThatCutsCronCutsMCPToolsToo(t *testing.T) {
+	liveGate(t)
+	bin := liveBin(t)
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3 for the stdio MCP stub")
+	}
+
+	const stub = `import sys, json
+def send(o):
+    sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try: req = json.loads(line)
+    except Exception: continue
+    m, i = req.get("method"), req.get("id")
+    if m == "initialize":
+        send({"jsonrpc":"2.0","id":i,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"afprobe","version":"0.0.1"}}})
+    elif m == "tools/list":
+        send({"jsonrpc":"2.0","id":i,"result":{"tools":[{"name":"probe_ping","description":"probe","inputSchema":{"type":"object","properties":{}}}]}})
+    elif i is not None:
+        send({"jsonrpc":"2.0","id":i,"result":{}})
+`
+
+	arm := func(toolset []string) []string {
+		t.Helper()
+		home, env := clampedHome(t, true)
+		script := filepath.Join(home, "mcpstub.py")
+		if err := os.WriteFile(script, []byte(stub), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// The member's own file dialect, not the wire's: this is `muse exec`, which has no
+		// session/start to carry servers, and the point of the arm is the tool list.
+		cur, err := readSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		setPath(cur, []string{"mcp_servers", "afprobe"}, map[string]any{
+			"enabled": true, "transport": "stdio", "command": py, "args": []any{script},
+		})
+		if len(toolset) > 0 {
+			setPath(cur, []string{"run", "toolset"}, toStrAny(toolset))
+		}
+		if err := writeSettingsAtomic(cur); err != nil {
+			t.Fatal(err)
+		}
+		return echoToolset(t, bin, home, env)
+	}
+
+	// Arm 1, the control: with no allow-list the MCP tool is there to lose, and so is cron.
+	plain := arm(nil)
+	if countTools(plain, "mcp__afprobe") == 0 {
+		t.Fatalf("the stub's tool never reached the toolset, so the arm below proves nothing: %v", plain)
+	}
+	if countTools(plain, "cron") == 0 {
+		t.Fatalf("no cron tool in the control arm: %v", plain)
+	}
+
+	// Arm 2: the only spelling that removes cron.
+	named := arm([]string{"read_file", "search", "bash"})
+	if n := countTools(named, "cron"); n != 0 {
+		t.Errorf("run.toolset left %d cron tools: %v", n, named)
+	}
+	if n := countTools(named, "mcp__afprobe"); n != 0 {
+		t.Errorf("run.toolset kept the MCP tool (%d), so the reason it is rejected no longer holds: %v", n, named)
+	}
+}
+
+// The other half of open question 7: AF sends the SUBDIRECTORY as the workspace root when a
+// session was launched into one (live_test.go measures that), so the question the member
+// actually feels is whether the repository's own AGENTS.md — which sits at the working copy
+// root, ABOVE that path — still reaches the model.
+//
+// 🔴 It does, and ONLY because an AF working copy is a git repository: the walk-up stops at
+// the repository root, so the identical tree with no `.git` loads the subfolder's rules alone.
+// Three arms, all free, and the last two are what give the first one its meaning — a log that
+// simply contained every file on disk, or a walk that ignored trust, would pass arm 1 by
+// itself.
+func TestLiveSubdirWorkspaceStillLoadsTheRepoRootRules(t *testing.T) {
+	liveGate(t)
+	bin := liveBin(t)
+
+	const rootMarker = "AFPROBE-ROOT-RULES"
+	const subMarker = "AFPROBE-SUB-RULES"
+
+	run := func(repo, trust bool) string {
+		home, env := clampedHome(t, true)
+		ws := filepath.Join(home, "ws")
+		sub := filepath.Join(ws, "sub")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for path, marker := range map[string]string{
+			filepath.Join(ws, "AGENTS.md"):  rootMarker,
+			filepath.Join(sub, "AGENTS.md"): subMarker,
+		} {
+			if err := os.WriteFile(path, []byte("# rules\n"+marker+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if repo {
+			init := exec.Command("git", "init", "-q", ws)
+			init.Env = env
+			if b, err := init.CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v\n%s", err, b)
+			}
+		}
+		args := []string{"exec", "--provider", "echo", "--workspace", sub}
+		if trust {
+			args = append(args, "--trust-workspace")
+		}
+		cmd := exec.Command(bin, append(args, "hi")...)
+		cmd.Env = env
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("muse exec: %v\n%s", err, b)
+		}
+		var log string
+		filepath.Walk(filepath.Join(home, ".local", "share", "muse"), func(p string, info os.FileInfo, err error) error {
+			if err == nil && info != nil && info.Name() == "session.jsonl" && log == "" {
+				b, err := os.ReadFile(p)
+				if err == nil {
+					log = string(b)
+				}
+			}
+			return nil
+		})
+		return log
+	}
+
+	// Arm 1: the production shape — a git working copy, trusted, launched into a subfolder.
+	inRepo := run(true, true)
+	if !strings.Contains(inRepo, subMarker) {
+		t.Fatalf("the workspace root's own AGENTS.md did not reach the model input; this test cannot say anything about the one above it")
+	}
+	if !strings.Contains(inRepo, rootMarker) {
+		t.Errorf("the working copy's AGENTS.md did NOT reach a session launched into a subfolder: "+
+			"project rules are lost for subdirectory launches (%s)", rootMarker)
+	}
+	// Arm 2: the boundary, and the reason arm 1 is not "muse reads every ancestor". The same
+	// tree without `.git` must load the subfolder's rules and nothing above them.
+	if noRepo := run(false, true); strings.Contains(noRepo, rootMarker) {
+		t.Errorf("the walk-up crossed a directory that is not a repository root, so it is not "+
+			"the repository boundary this test claims (%s)", rootMarker)
+	} else if !strings.Contains(noRepo, subMarker) {
+		t.Errorf("the no-repository arm assembled no rules at all, so it measures nothing")
+	}
+	// Arm 3: without the trust flag neither file is assembled.
+	if untrusted := run(true, false); strings.Contains(untrusted, rootMarker) || strings.Contains(untrusted, subMarker) {
+		t.Error("an untrusted workspace assembled the rules anyway, so arm 1 proves nothing")
+	}
+}
+
+// toStrAny is the []string -> []any a generic settings document needs.
+func toStrAny(ss []string) []any {
+	out := make([]any, 0, len(ss))
+	for _, s := range ss {
+		out = append(out, s)
+	}
+	return out
+}
