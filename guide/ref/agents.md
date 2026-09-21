@@ -1,7 +1,7 @@
 ---
 audience: "everyone"
 source_of_truth: "this table; the columns and the marked rows are checked against the code"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Agents — what each kind can do
@@ -116,6 +116,38 @@ conversation off to another agent. The differences that most often decide it in
 practice are the context gauge (claude / codex / opencode / kiro), image paste, and
 whether you want Managed execution — Codex and opencode carry no per-session process
 at all, which is what makes them comfortable to run many of at once.
+
+## lcpp: what hardware measurement found
+
+`lcpp` (ADR 0093) runs its own instance of the llama.cpp engine instead of a vendor's
+hosted API, and hardware measurement across sixteen live runs found real,
+worth-knowing costs before your first session.
+
+- **The first turn can take minutes.** If the engine instance was stopped, waking it
+  is a genuine cold start — measured at roughly 3.5 to 7 minutes, most runs landing
+  in the 4–5 minute band (one measured run hit 302 seconds and timed out). The
+  session is not stuck; it is buying and starting an instance. Every turn after the
+  first, while the instance stays warm, is fast.
+- **Choose a context window of 8000 tokens or more.** At a window of 3500, some
+  model families compact so often the harness deliberately stops rather than loop
+  forever — reproduced on both Gemma and Qwen3-Coder. At 8000 both complete
+  cleanly; at 24000 compaction never fires at all. That stop is working as
+  designed, not a malfunction.
+- **The same task costs a very different number of turns by family**, even at the
+  same window. On one measured benchmark (five fixes to a small project plus a
+  recall question), Qwen3.8 took 29–30 turns, Gemma-4 took 63, GPT-OSS took 95, and
+  Qwen3-Coder took 164 (Gemma-4 and Qwen3-Coder both at window 8000). All four
+  finished the task correctly — the gap is cost, not correctness.
+- **Verified working model families: Qwen3, GPT-OSS and Gemma** (four checkpoints
+  measured). `llama-3.1-8b-instruct-q4_k_m` specifically does **not** work: this
+  engine build has no Llama-specific tool-call parser, so its tool calls fail to
+  parse. Not every catalogue entry behaves the same — stick to a verified family.
+- **Swapping the model does not require swapping the instance.** Across every
+  measured run after the first, moving to a different model on the same engine
+  never triggered another cold start. Only the very first purchase pays that cost.
+
+`lcpp` has no Terminal (CLI) route at all — see footnote 9 above — it only runs
+Managed.
 
 ## Not in this table
 

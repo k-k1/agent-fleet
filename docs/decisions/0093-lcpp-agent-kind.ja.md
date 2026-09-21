@@ -2,7 +2,9 @@
 
 [English](0093-lcpp-agent-kind.md) | 日本語
 
-- 状態: **提案**（2026-09-19）。実装は無い。以下の `file:line` は `951bb402`（当時の develop）で読んだ。
+- 状態: **採用**（2026-09-21）。段 2 は PR #816・#818・#821・#823・#824・#825・#826・**#829**
+  （決定 8 の使用量 exact 化・Console 開放・MCP kind 許可リスト）で develop に入った。
+  以下の `file:line` は `951bb402`（当時の develop）で読んだ。
   表ごとの棚卸しは `docs/log/99-lcpp-agent-kind.md` にあり、そちらが作業記録、本 ADR が判断と棄却案を持つ。
   🟢 **2026-09-19・段 0 の前にレビュー済み**（末尾の Review 節。別セッションが全アンカーを tree で読み直した）。
   初稿の前提が 2 つ覆り、本文中で「初稿は…と書いたが誤り」と印を付けて訂正した: `dispatchMCPStdio` は純粋な
@@ -11,9 +13,12 @@
   🟢 **2026-09-19 利用者が計画を承認**（決定 9 の段階化、段 0 から）。実装は親セッションが駆動・レビューする
   子セッションで進め、段ごとに PR で着地させる。段 2 がマージされた時点で *採用* へ移す。途中で止まればその
   場所を本 ADR に記す。
-  🟢 **段 2 進行中（2026-09-20 利用者が決定 9 の門(a)(b)(c)を通過と判定）**。判定の中身と実機 14 本
-  （番号は #1〜#14・#5 は 2 走行のため計 15 走行）の実測は末尾「決定 9 の門の判定（2026-09-20）」、
-  段 2 が必ず踏む既知の負債は「段 2 に持ち越す負債」節。
+  🟢 **段 2 完了（2026-09-20 利用者が決定 9 の門(a)(b)(c)を通過と判定・2026-09-21 段 2 のマージ完了により
+  採用へ移行）**。判定の中身と実機 14 本（番号は #1〜#14・#5 は 2 走行のため計 15 走行、さらに #15/#16
+  を含めると番号は #1〜#16・走行は計 17）の実測は末尾「決定 9 の門の判定（2026-09-20）」、段 2 が必ず踏む
+  既知の負債は「段 2 に持ち越す負債」節、段 2 の実装が決定文から変えたものと負債 9 件の現状は「段 2 の
+  実装記録（2026-09-21）」節。決定 8（使用量 exact）と、Console での起動可能化は PR #829 で develop に
+  入った——中身は「段 2 の実装記録」節に記録する。
 - 依頼は一文: **ベンダーの CLI を駆動する代わりに llama-server の API を直接叩く自前ハーネスは、Agent Fleet の
   セッション種別になれるか、なるなら何がいくらか。**
 - 関連: [0015](0015-agent-managed-driver.ja.md)（この kind が子プロセス無しで実装する managed driver の契約）/
@@ -247,7 +252,11 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
 |---|---|---|
 | 0 | CP に `GET /engine/{key}/props`。`syncEngineProviders` が起床中に `limit.context` を上書き | 無し——出す |
 | 1 | P1: `internal/harness` の中核＋chatx プロバイダ。族の選定。実機計測 | 決定 9 の (a)(b)(c) |
-| 2 | P2: kind の配線・driver・転写の書き手・使用量・契約テスト・guide・本 ADR を *採用* に | — |
+| 2 | P2: kind の配線・driver・転写の書き手・契約テスト・使用量・Console 開放・guide・本 ADR を *採用* に。
+  **完了**——PR #816（kind の器・端末経路無しの門）・#818（転写ストア）・#821（保存先の再検討・ハンドル
+  使い回し）・#823（qwen3-coder 決着）・#824（Console 配線）・#825（managed driver）・#826（実エンジン
+  契約テスト）・#829（決定 8 の使用量 exact 化・Console 開放・MCP kind 許可リスト。詳細は「段 2 の実装
+  記録」節） | — |
 
 ## 未決の問い（段 1 の前に答える）
 
@@ -508,3 +517,119 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
    （#9→#14）と走行順（#14 は #10〜#13 より前）は一致しない（`docs/log/99` §14 の 2026-09-20 追加訂正・
    同じ事実）。負債としては「以後の比較で `compacted_at_turn` を版をまたいで素朴に突き合わせない」という
    注意として書く。
+
+## 段 2 の実装記録（2026-09-21）
+
+段 2 は develop に入った（#816・#818・#821・#823・#824・#825・#826・#829）。#829 が決定 8 の使用量
+exact 化・Console 開放・MCP kind 許可リストを持ち込んだ。**決定文は変えていない。**以下は実装と実測が
+決定文に対して何を足し、何を変えたかの記録である——段 0・段 1 の実装記録と同じ体裁。
+
+### 決定文に対して実装が変えたもの 4 件
+
+- 🔴 **決定 4 は `DynamicModel`・`DynamicEffort`・`DynamicMode` を「全部 true」と書いたが、`DynamicEffort`
+  は false。** `UpdateSettings` が次の `runTurn` に実際に効くのは model（`newHarnessClient` へ渡す文字列）と
+  mode（`rt.Plan`）の 2 つだけで、どちらも `driver_test.go` が運動させている。`reasoning_budget` は
+  llama-server の**起動フラグ**としてしか確認できておらず（ADR 0093 背景節）、per-request の欄が実機で
+  見つかっていない——確認していない上限を名乗るのは docs/log/76 が禁じる「未検証の cap」そのものなので、
+  false のままにした（`workspace/agent/internal/agents/lcpp/driver.go:44-59`）。
+- 🔴 **決定 5 は `Permissions: true` と `PermissionChoice: true` を「実測済みとして宣言できる」と書いたが、
+  `Permissions` は false。** grep で確認した限り**どの kind もこのフィールドを立てていない**——ワイヤの
+  語彙自体が無い。承認は kiro の ACP `session/request_permission` と同じやり方で、専用の「承認」
+  Interaction 種別ではなく既存の `Questions` を再利用して実装した（`driver.go:57-59` の `approve()`）。
+  `PermissionChoice` は true のまま（`agent.go:36-49`）。
+- 🔴 **決定 4 の Steer「次のツール境界に積む」は「次の最上位ターンとしてキュー」に簡略化された。**
+  `harness.Run` は 1 回のブロッキング呼び出しで、ツールループの途中にメッセージを差し込むフックが無い
+  ——kiro / copilot / cursor が同じ理由で既にしている簡略化と同じで、「いま実行中の `Run` 呼び出しが
+  戻り次第」を「次のツール境界」の近似として採用した（`driver.go:44-48`・`threadHandle.Steer` →
+  `accept`）。
+- 🔴 **決定 3 の保存先は `AgentDataDir` ではなく `AgentStateDir`。**（#821。`store.go:86-97`）。sid で引く
+  ものは state 側、という `paths.AgentStateDir` 自身の doc コメントの線引きに、この store は最初から
+  当てはまっていた——ADR 0087 決定 4 の実装節もほぼ同じ言葉でこの規則を繰り返している。ズレの原因は
+  「両方の doc コメントを突き合わせるチェックが無かった」だけで、悪意や設計判断ではない。**副産物として
+  denylist の穴が閉じた**: `AgentStateDir` は Console のファイルブラウザの denylist（`fs.go` の
+  `fsDeny`）に既に入っているが `AgentDataDir` は入っておらず、移す前は生の会話内容（ツール結果・
+  reasoning を含む）がファイルブラウザ経由で見えていた。**書き込み方式も同じ PR で直した**: 毎レコード
+  `MkdirAll`→`OpenFile`→`Write`→`Close` だった実装をハンドル使い回しに変え、`strace -c` の実測で
+  1 レコードあたり約 4.09 → 約 1.10 syscalls（定常状態は write 1 回のみ）に減った（`docs/log/99` §15.2）。
+  **EFS には寄せない**という判断（claude の転写方式との対比）の根拠は、`AgentStateDir`・`AgentDataDir`
+  ともに同じ home（EBS・単一 AZ）ボリュームに載っており、claude の EFS 選択（`CLAUDE_CONFIG_DIR`）は
+  ADR 0045 決定 3-6・ADR 0087 が明言する「資格情報を残すため」の意図的な設計であって `lcpp` には
+  当てはまらない、という一次資料に基づく判断（`docs/log/99` §15.1.1）。
+
+### 決定 8 の実装で見つかったもの（PR #829）
+
+- 🔴 **ワイヤの片肺欠落。** `session.ContextUsage`（Go 側）に `Window`/`WindowSource` の 2 欄が無く、
+  TS 側の `SessionContextUsage` は**既にこの 2 欄を宣言していたのに Go 側が埋めていなかった**
+  （`workspace/agent/internal/session/session.go`）。実機の欠陥ではなく、**決定 8 を実際に実装しようと
+  して初めて見つかった型定義の非対称性**——「実機だけが見つけたもの」ではなく「実装が見つけたもの」
+  として記録する。Go 側に `Window int`・`WindowSource string` を追加し `wire.golden` を更新した。
+- **決定 8 の実装そのものは決定文どおり。** `usage_fold.go` の `usageMeasuredForKind` が `KindLcpp` を
+  `exact` に加え、店の `Record` に `Window` を足して `AppendUsage(u, window)` に拡張——`window` は
+  driver が `runTurn` 内で既に呼んでいた `harness.EngineWindow` の値をそのまま渡すだけで、新規のエンジン
+  呼び出しは無い。`WireLive` は `Store.LastUsage()`（ディスク読みのみ）から `li.Context` を組み、
+  `window>0` のときだけ `WindowSource="recorded"` を名乗る——未解決なら空のままで `WindowGuess` を騙らない。
+- 🔴 **二重計上を塞ぐ側は実装済みだが、生トークン数の重複は残る。** `usage_price.go` の `usagePriceOf` に
+  `kind == KindLcpp` の早期リターンを追加し、常に `price=0`・`src="gpu-billed"` を返す（catalog も
+  builtin テーブルも見ないので、自前モデル名が実在モデル名と衝突しても価格が付かない）。これで**費用の
+  二重計上は無い**。ただし **生トークン数**は `feature=session` 行と `feature=engine.llm` 行の両方に現れ、
+  `by=kind` 集計では重複する。🔴 **これは `lcpp` が作った問題ではない**——`handleEngineUsage`
+  （`workspace/agent/engines.go:1098-1116`）の `Kind` は `engineSessionKind(req.Session)` でセッション側
+  から解決されるため、**opencode が自前エンジンを使うときにも同じことが既に起きている**（駆動役が実
+  コードで確認済み）。決定 8 の文言「同じトークンを 2 度数えない」は**単価 0 という機構としては実装した
+  が、その機構が目指した状態（生トークンも重複しない）とは一致していない**——このずれを実装記録として
+  正直に書く。生トークンの重複は別レイヤ（`handleEngineUsage` の `Kind` 解決）の既存条件であり、段 2 の
+  本体の範囲外として残す。
+
+### 段 2 に持ち越した負債 9 件の現状（2026-09-21）
+
+番号は「段 2 に持ち越す負債」節と同じ。
+
+1. **解消（#818）。** `harness.IsContinuationPrompt` が公開され、`lcpp` の転写ストアが `Transcript()`
+   の生成時にこれを判別してミラー描画から除外している（`store.go:231,270`）。
+2. **未解消（変化なし）。** #823 の qwen3-coder 最終計測でも実機で 0 回発火。原因は未確定のまま。
+3. 🟢 **決着済み（2026-09-21・§14 #15/#16、既に本 ADR 内に記録済み）。** 変更なし。
+4. **未解消（変化なし、エンジン側の制約）。** `llama-3.1-8b-instruct-q4_k_m` はこのエンジンビルドで
+   引き続き動かない。#826 の契約テストは版の変化を見張るだけで、このモデルの直しは範囲外。
+5. **未解消・別件（変化なし）。** `control-plane/engine_gguf.go` は段 2 の 7 PR のどれからも触られて
+   いない。develop には非均一な GGUF 幾何の扱いを広げる別トラックの改修（例: KV 見積りのハイブリッド
+   モデル 4 倍過大修正）が段 2 と並行して入っているが、これが GPT-OSS・gemma-4・LFM2.5 の 409 拒否
+   そのものを解消したかどうかは本調査の範囲では確認できなかった——**分からなかった**、とだけ言える。
+6. **未解消（変化なし）。** #826 の契約テストが `chat_template` は `/props` にも `/v1/models` にも
+   出ないことを対象外として記録している（`live_contract_test.go:45`）。
+7. **見張りだけ付いた（変化なし）。** #826 の契約テストが `GET /props` の `build_info` を**箱を起こさず**
+   読めることを確認し、これが変わればテストが落ちる形にした（`live_contract_test.go:372-393`）。pin
+   自体は #803 で可能になっているだけで、まだ誰も実施していない。
+8. **未解消（変化なし）。** `maybeCompact`（`loop.go:263-281`）は `runToolCalls` の毎反復から呼ばれ、
+   `InputTokens` を毎回叩く形のまま。
+9. 🟢 **解明済み（既に本 ADR 内に記録済み）。** 変更なし。
+
+### 段 2 で新しく生まれた残件
+
+- **ミラー読み取りの増分パースは未実装。** `Store` の `Records()`/`Transcript()`/`Full()` は今も毎回
+  全文を読み直す（codex の `rolloutcache.go` が持つ増分パースに相当するものが無い）。#821 が明示的に
+  スコープ外とした残作業（`docs/log/99` §15.3）。
+- **last-say の「起床待ち」判定は経過時間のみ。** `threadHandle.lastSay`（`driver.go:709-732`）は
+  ターン開始からの経過秒数だけを見て「エンジン起動待ち（n 秒）」を出す——エンジン側の実際の起床
+  シグナル（`engine_waking` そのもの）は見ていない。決定 4 が v1 として認めた簡略化のまま（#825）。
+- 🔴 **通し経路が未検証。** 「配備済みの Agent から `lcpp` セッションを実際に起こして 1 往復させる」確認が
+  段 2 を通じて一度もできていない。ハーネス単体は実機 16 本、driver は偽クライアント、契約テスト（#826）
+  は実エンジンで通っているが、**create → driver → harness → エンジンの通し経路だけが未検証**——理由は
+  構造的で、ワークツリーのソースを直しても、このセッションの `af` ツールに答えているのは**配備済みの
+  Agent バイナリ**なので、再ビルド・再配備まで効かない。残る経路は (i) 配備資格情報を使う dev-deploy
+  （組織ポリシーで触れない）と (ii) コンテナ内で Agent を二重に走らせる（ワークスペース方針が名指しで
+  禁止）で、**どちらも実行していない**——credential が環境にあることを把握したうえで使わなかった、意図的
+  な停止線である。**利用者の判断により、この残件を記録したうえで採用へ移す**——次の配備の機会に通し確認
+  すること。
+- **生トークン数が `feature=session` 行と `feature=engine.llm` 行の両方に現れ重複する。** 上の「決定 8 の
+  実装で見つかったもの」節を参照——`$` は両方 0 なので費用の二重計上は無く、`lcpp` が作った問題でもない
+  （opencode が自前エンジンを使う場合に既に起きている既存条件）。
+
+### 段 2 の最後の 1 歩（PR #829・マージ済み）
+
+**決定 8（使用量 exact）と、Console での起動可能化は PR #829 で develop に入った。**
+`usage_fold.go` の exact 集合に `KindLcpp` を追加し、`console/src/agents/registry.ts` の
+`lcpp.available` を `() => true` に変え `repoLaunchKinds` へ `lcpp` を足し、`mcpx/mcp_stdio.go` の kind
+直書き許可リストに `lcpp` を追加した（無いと `create_session` / `list_models` が `lcpp` に使えない）
+——付随して `GET /agents/lcpp/models` と `agentModels.ts` の `isDynamic` も足した（無いと起動時にモデル
+を選べず driver が "no model configured" で即失敗する）。中身の詳細は「決定 8 の実装で見つかったもの」
+節。
