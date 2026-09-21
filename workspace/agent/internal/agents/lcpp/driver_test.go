@@ -95,9 +95,17 @@ func testMeta(t *testing.T, name string) session.Meta {
 	return session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindLcpp, Model: "test-model"}
 }
 
+// waitState blocks until the handle reports one of `want`.
+//
+// It waits on the handle's EVENT channel rather than polling. The snapshot is read first
+// because the transition can land before this call; after that every wake-up is a real
+// transition instead of a 5ms tick. A poll against a short deadline makes the assertion a
+// statement about how much CPU this process got, which is how codex's twin of this helper
+// turned `go test ./... -p 2` into a red build on unrelated PRs. The 30s bound that remains is
+// a HANG guard — nothing here should approach it.
 func waitState(t *testing.T, h agents.ThreadHandle, want ...agents.TurnState) agents.ThreadSnapshot {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.After(30 * time.Second)
 	for {
 		snap, err := h.Snapshot()
 		if err != nil {
@@ -108,10 +116,13 @@ func waitState(t *testing.T, h agents.ThreadHandle, want ...agents.TurnState) ag
 				return snap
 			}
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-h.Events():
+			// A transition happened; Snapshot above stays the authority (events are advisory
+			// and dropped on overflow).
+		case <-deadline:
 			t.Fatalf("timed out waiting for state in %v, got %v", want, snap.TurnState)
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
 }
 
