@@ -50,6 +50,16 @@ func DataHome() string { return filepath.Join(paths.HomeDir(), ".local", "share"
 //     is silent: the toolCall comes back failed with "bwrap: Failed to make / slave" while
 //     turn/completed still says terminal "completed", so the session looks healthy in the
 //     Console and accomplishes nothing (ADR 0095 decision 5, measured).
+//
+//     🔴 What it costs was measured afterwards (P2-6) and it is more than the sandbox. The
+//     host's committed permission profile with this flag is `filesystem.mode: "unrestricted"`
+//     with no rules and `local_command_network.mode: "enabled"`; without it, `managed` with
+//     six rules and `proxy_only`. And it is not narrowable: `--disable-write`,
+//     `--disable-shell` and `--sandbox-network <mode>` all leave that profile byte-identical
+//     once this flag is present (three arms, session/start only, no quota). With nothing
+//     restricted there is nothing for the approval gate to guard, so no approval is ever
+//     raised — which is why Caps.PermissionChoice is false (muse.go).
+//
 //   - --trust-workspace: without it muse skips the repository's own AGENTS.md — measured, it
 //     says so and carries on — and this project keeps its conventions there. Trust is not on
 //     the wire (the string does not occur in the schema at all), so the flag is the only
@@ -73,19 +83,27 @@ func childEnv(base []string) []string {
 		"MUSE_NO_AUTO_UPDATE=1",
 
 		// Clamp 5, the one with a privacy cost: without it a real turn assembles the
-		// member's own ~/.claude/CLAUDE.md into the model input and ships it to Meta.
-		// Measured on `muse exec`: with this set the "Including your Claude Code and Codex
-		// personal rules" banner disappears AND the marker planted in ~/.claude/CLAUDE.md
-		// stops appearing in the durable log; with it unset or =0, both come back. The ADR
+		// member's own ~/.claude/CLAUDE.md into the model input and ships it to Meta. The ADR
 		// recorded only the settings.json route because `--no-foreign-personal-context` is
 		// absent from `muse serve`; this variable is the cheaper belt, and the settings keys
 		// stay the braces.
+		//
+		// Measured on `muse exec` first, and then over `serve` with two real turns (P2-6): a
+		// marker planted in a throwaway ~/.claude/CLAUDE.md appears in the durable log with
+		// this at 0 and is absent with it at 1. ⚠️ Over `serve` the ORACLE IS THE DURABLE LOG,
+		// not the reply: asked to list the tokens it could see, the model omitted the marker in
+		// both arms, so a check reading the answer would have called a never-exercised clamp
+		// effective. The `exec` banner ("Including your Claude Code and Codex personal rules")
+		// is not a serve signal either — it appears in neither arm.
 		"MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=1",
 
 		// Clamp 6: the approval judge makes its own model call for every Prompt-bound
-		// approval, and decision 5 keeps approvals on, so it would fire often. Its effect is
-		// not measured — no settings key exists for it and `muse serve` has no flag — so it
-		// is set on the evidence of the name alone and owes a behavioural test.
+		// approval, so if approvals fired it would fire often. No settings key exists for it
+		// and `muse serve` has no flag, so it is set on the evidence of the name alone.
+		//
+		// 🔴 It is UNVERIFIABLE here, not merely unverified (P2-6): under `--disable-sandbox` no
+		// approval is ever raised, so there is nothing for a judge to judge and no arm to
+		// compare. It stays set because it is free and correct if the posture ever changes.
 		"MUSE_DISABLE_APPROVAL_JUDGE=1",
 	)
 	// Clamp 2: four background observers each make their own model calls — invisible spend on

@@ -189,10 +189,25 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	return nil
 }
 
-// approvalModeFor maps the launch-time permission choice onto the session's approval mode.
-// The sandbox is off (decision 5), so this gate is the only thing between the agent and the
-// container — which is why "skip permissions" selects allowAll explicitly rather than by
-// omission: the server default is onRequest, and a silent default is not a choice a member made.
+// approvalModeFor maps the launch-time permission choice onto the session's approval mode. It
+// is still sent explicitly rather than by omission, so the wire records a choice rather than a
+// default — but 🔴 what it buys in a Workspace is measured, and it is nothing.
+//
+// Measured on 1.3.0-R3401.1 (ADR 0095 P2-6): the mode IS echoed back on the started session
+// (`session.approvalMode.mode` = what was asked, source `startup`), yet the host's committed
+// enforcement profile reports `approval: "on_request"` for every one of the four wire values —
+// `allowAll`, `onRequest`, `promptUnmatched`, `denyUnmatched` — so the two layers disagree and
+// which one governs is not settled here. What IS settled is that it does not matter under
+// `--disable-sandbox`: with the filesystem unrestricted, tool calls resolve `allow:policy`
+// before any approval layer, and no approval is ever raised (muse.go's Caps header carries the
+// two turns that measured it).
+//
+// It stays wired anyway, at zero cost: the driver can answer an approval, so if a deployment
+// ever regains a restricted posture the gate is already selected rather than needing a change.
+//
+// AF maps two of the four values. `promptUnmatched` and `denyUnmatched` are unmapped because
+// nothing has measured what they do — and `denyUnmatched` is not even in the host's own
+// `component_ceilings.approval` list (`on_request`, `prompt_unmatched`, `allow_all`).
 func approvalModeFor(bypass bool) *msp.ApprovalMode {
 	m := msp.ApprovalModeOnRequest
 	if bypass {

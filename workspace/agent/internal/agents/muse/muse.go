@@ -26,9 +26,31 @@ type agentImpl struct{}
 
 func (agentImpl) Kind() string { return session.KindMuse }
 
-// Caps. ManagedOnly is decision 2. PermissionChoice is true because decision 5 keeps
-// approvals on and the driver answers them from the Console — without it POST /sessions
-// refuses skip_permissions=false for this kind, so the launch flow could not even ask.
+// Caps. ManagedOnly is decision 2.
+//
+// 🔴 PermissionChoice is FALSE, and not because approvals cannot be answered — they can, the
+// driver and the Console card for them are built (P2-5). It is false because in a Workspace
+// there is nothing to choose between: measured on 1.3.0-R3401.1, a muse session raises NO
+// approval at all, so both values of the choice produce the same ungated session and offering
+// it would be a control with no effect.
+//
+// The chain is short and each link is measured (ADR 0095 P2-6):
+//
+//   - Gate A: bubblewrap cannot build a sandbox in this container (AppArmor's docker-default
+//     refuses mount(2) whatever the capabilities), so `--disable-sandbox` is permanent here.
+//   - With that flag the host commits `filesystem.mode: "unrestricted"` with no rules and
+//     `local_command_network.mode: "enabled"`; without it, `managed` with six rules and
+//     `proxy_only`. `--disable-write`, `--disable-shell` and `--sandbox-network` change
+//     NOTHING once `--disable-sandbox` is present (all three measured).
+//   - With nothing restricted, every tool call resolves `policy_decision: "allow:policy"`
+//     before the approval layer sees it. Measured twice, with real turns: in-workspace
+//     `tool:bash` and a `tool:write_file` to `/tmp` — outside `workspaceRoot` entirely —
+//     both ran with zero `approval/requested`, under `approvalMode: "onRequest"`.
+//
+// So decision 5's "approvals stay on" does not hold in a Workspace, and the guide says so.
+// `Capabilities.Permissions` stays true because it means something different — the driver
+// really does support the approval Interaction kind — and it is read in-process only, so it
+// shows the member nothing. This flag is the member-visible one.
 //
 // CanTranscript is true now that Transcript below really reads a store that the live item
 // stream fills. CanFork and CanForkAt stay false: MSP carries `session/fork`, so both will be
@@ -36,9 +58,8 @@ func (agentImpl) Kind() string { return session.KindMuse }
 // not built — claiming it early shows the member an affordance that silently does nothing.
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{
-		ManagedOnly:      true,
-		PermissionChoice: true,
-		CanTranscript:    true,
+		ManagedOnly:   true,
+		CanTranscript: true,
 	}
 }
 
