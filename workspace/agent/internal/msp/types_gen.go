@@ -2265,6 +2265,12 @@ type SessionMCPServerConfig struct {
 	URL *string `json:"url,omitempty"`
 }
 
+// SessionMCPServerConfigTransport values, the discriminator of the SessionMCPServerConfig union.
+const (
+	SessionMCPServerConfigTransportStdio          = "stdio"
+	SessionMCPServerConfigTransportStreamableHTTP = "streamableHttp"
+)
+
 // SessionMCPServerMode Startup failure posture for a session MCP server.
 type SessionMCPServerMode string
 

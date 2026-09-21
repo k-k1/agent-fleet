@@ -25,12 +25,15 @@ import (
 )
 
 // selfReportToolAvailable reports whether the session's CLI actually gets the af MCP
-// server (mcpreg's builtin "af" — every kind that gets materialized). shell / ssm have no
-// config file to write and no such tool, so they are excluded here rather than being told
-// to call a tool that does not exist.
+// server (mcpreg's builtin "af"). shell / ssm have no such tool, so they are excluded here
+// rather than being told to call a tool that does not exist.
+//
+// The axis is ServedKinds, not MaterializedKinds: muse receives its servers on the wire and
+// writes no config file, so the file-writing list would exclude a kind that does get the
+// tool — and a session told to call af_report when it has no such tool simply never reports.
 func selfReportToolAvailable(kind string) bool {
 	k := NormalizeKind(kind)
-	for _, m := range mcpreg.MaterializedKinds {
+	for _, m := range mcpreg.ServedKinds {
 		if m == k {
 			return true
 		}

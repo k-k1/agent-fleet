@@ -59,6 +59,7 @@ type node struct {
 	AnyOf                []*node          `json:"anyOf"`
 	OneOf                []*node          `json:"oneOf"`
 	AdditionalProperties *node            `json:"additionalProperties"`
+	Const                string           `json:"const"`
 }
 
 // types reports the node's declared JSON types, normalising the string and []string spellings.
@@ -314,6 +315,30 @@ func writeFlatUnion(out *bytes.Buffer, name string, n *node) error {
 		writeField(out, nil, pn, merged[pn], req)
 	}
 	fmt.Fprintf(out, "}\n\n")
+
+	// The discriminator's own values. Flattening a union loses the `const` that tells the
+	// arms apart, and the union is CLOSED — an undeclared value fails `session/start` decode
+	// outright, taking the whole session with it rather than the one server. That makes the
+	// exact spelling a thing to generate rather than transcribe: the file route's
+	// documentation spells the same transport `streamable_http` and the wire wants
+	// `streamableHttp`.
+	for _, pn := range sortedKeys(merged) {
+		var consts []string
+		for _, arm := range n.OneOf {
+			if p := arm.Properties[pn]; p != nil && p.Const != "" {
+				consts = append(consts, p.Const)
+			}
+		}
+		if len(consts) != len(n.OneOf) {
+			continue // not the discriminator
+		}
+		fmt.Fprintf(out, "// %s%s values, the discriminator of the %s union.\n", name, goName(pn), name)
+		fmt.Fprintf(out, "const (\n")
+		for _, c := range consts {
+			fmt.Fprintf(out, "\t%s%s%s = %q\n", name, goName(pn), goName(c), c)
+		}
+		fmt.Fprintf(out, ")\n\n")
+	}
 	return nil
 }
 

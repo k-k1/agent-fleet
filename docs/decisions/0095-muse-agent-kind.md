@@ -2238,3 +2238,56 @@ against `settings.json`, which is not what that verb takes (it validates an ente
 *document*, `{schema_version, settings}`), and a second copy of the command ran without the
 throwaway environment at all, i.e. against the member's own home. Both are the same mistake:
 reaching for an oracle by name instead of by what it answers.
+
+### P2-12: MCP on the wire — the residual no work package owned, and the spelling that is not the documented one
+
+P2-8 surfaced this one rather than closing it: decision 11 puts integration servers in
+`session/start.config.mcpServers`, the settings writer correctly writes no `mcp_servers`
+block, and **nothing sent them**. `internal/agents/muse/` carried zero mentions of
+`mcpServers`. This package is that gap.
+
+🔴 **The wire's transport spelling is not the one decision 11 documents, and getting it wrong
+costs the whole session.** Decision 11 describes the settings-file block as
+`transport: stdio | streamable_http`, which is correct for that file — and the wire union's
+HTTP arm is `streamableHttp`. The union is **closed** (`x-msp-openness: "closed"`, the
+schema's own ruling), so an undeclared value is not "that server did not start": it fails
+`session/start` decode, and the session with it. Measured against the real host this round:
+
+```
+-32602 invalid session/start config: mcpServers does not match the supported shape
+```
+
+So a member with one HTTP integration would have had *every* muse session refuse to start —
+and the ADR's own text is what would have led anyone there. The fix is to stop transcribing:
+the generator now emits a closed union's discriminator constants
+(`SessionMCPServerConfigTransportStdio` / `…StreamableHTTP`), flattening a union had been
+dropping the one `const` that tells the arms apart. The live test carries both arms — AF's
+real serialisation accepted, and the file spelling refused as the control, because a host that
+accepted any string would pass the positive test on its own.
+
+**Every server rides as `mode: optional`, with no member-facing choice.** The wire default is
+`required`, and a required server that fails to start aborts the run — so one tenant
+integration with a dead endpoint would stop the member's agent from starting. The registry has
+nowhere to put the choice (`secrets.MCPServer` has `enabled`, `targets`, `kinds`, `timeoutMs`
+and no `mode`), which decision 11 already names as out of scope.
+
+🔴 **`MaterializedKinds` is not the list this needed, and reading it as one has already shipped
+a bug.** It means "whose native config file does af write", and muse has none — adding it
+there would report a permanent `skipped` for a fully served kind. But `selfReportToolAvailable`
+was using it as a stand-in for "does this session get the af MCP server", which for muse is
+**true**. That is precisely the mistake `peerTargetAllowed`'s own header records (lcpp's
+absence from the same list silently forbade peer messages to it, found live on 2026-09-21), so
+the answer is a second list that says what it means: `mcpreg.ServedKinds`. Without it a muse
+session is told to call `af_report` and has no such tool — a failure whose only symptom is a
+report that never arrives.
+
+⚠️ The mutation sweep earned its keep twice in this package. One mutation did not compile, so
+it proved nothing and had to be re-run in a form that did (an unused variable is not a
+measurement). The other passed green: swapping `ServedKinds` back to `MaterializedKinds`
+changed nothing any test checked, because the self-report hint had no test at all. It has one
+now, with shell/ssm as the other side of the pair.
+
+What muse deliberately does NOT get: a row in `fileSpecs` (`mcpproj`), so it is neither
+inspected for project-scope servers nor a copy target, and `HasProjectScope: false` — agy's
+shape. No Muse project-scope spelling is documented and none was measured; that is a static
+fact about the kind rather than a runtime fallback to another kind's file.

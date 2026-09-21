@@ -37,7 +37,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
 | Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
-| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓¹⁷ | — | — |
 | Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
 
 ¹ copilot's model list depends on the plan: Free offers only "Auto (Copilot picks)".
@@ -202,3 +202,12 @@ survive. The workspace's topic files arrive separately, as skills under
 run with the workspace trusted — and note that Muse Code treats `AGENTS.md` and `CLAUDE.md` as
 a precedence, not a sum: with both present it uses `AGENTS.md` and says it is skipping the
 other.
+
+¹⁷ muse is the one kind whose integration servers Agent Fleet does not write into a
+configuration file: they are handed to Muse Code when the session starts, which means the set
+can differ per session rather than being one list for your whole workspace. Two things follow.
+A server you add starts being used by sessions launched **after** the change — a running
+session keeps the set it was given. And each server starts when the session's first turn runs,
+not when the session opens, so a brand-new session shows nothing connected until you send
+something. Every server is passed as optional, so one that fails to start costs you that
+integration and not the session.

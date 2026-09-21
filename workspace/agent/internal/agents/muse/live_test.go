@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -306,4 +307,67 @@ func TestLiveCredentialShapeMatchesTheFixtures(t *testing.T) {
 		t.Errorf("metered = %v for mechanism %q", st["metered"], c.Mechanism)
 	}
 	t.Logf("live credential: mechanism=%q obtained_via=%q metered=%v", c.Mechanism, c.ObtainedVia, st["metered"])
+}
+
+// 🔴 The closed union, against the real host, for free. `session/start.config.mcpServers`
+// rejects an undeclared `transport` by failing the whole command — not the one server — so the
+// cost of the wrong spelling is every muse session refusing to start for a member who has one
+// HTTP integration. A session-only run proves the decode: MCP servers are not spawned until
+// the first turn (measured, gate B1-4), so this costs no quota and starts no child.
+func TestLiveSessionStartAcceptsMCPServerConfig(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	cl, granted := h.cl, h.sessionMCP
+	h.mu.Unlock()
+	if !granted {
+		t.Fatal("the host did not grant sessionMcp, so no server could ever be passed")
+	}
+
+	sid := msp.NewCommandID()
+	root := m.CWD()
+	stdioMode := msp.SessionMCPServerModeOptional
+	httpMode := msp.SessionMCPServerModeOptional
+	url := "https://mcp.example.invalid/mcp"
+	cmd := "/bin/true"
+	params := msp.SessionStartParams{
+		CommandID:     msp.NewCommandID(),
+		SessionID:     &sid,
+		WorkspaceRoot: &root,
+		Config: &msp.SessionConfig{MCPServers: map[string]msp.SessionMCPServerConfig{
+			"afprobe-stdio": {Transport: msp.SessionMCPServerConfigTransportStdio, Command: &cmd, Mode: &stdioMode},
+			"afprobe-http":  {Transport: msp.SessionMCPServerConfigTransportStreamableHTTP, URL: &url, Mode: &httpMode},
+		}},
+	}
+	var res msp.SessionStartResult
+	if err := cl.CallInto(msp.MethodSessionStart, params, callTimeout, &res); err != nil {
+		t.Fatalf("the host refused AF's MCP server config: %v", err)
+	}
+	t.Logf("session/start accepted both transports (session %s)", res.Session.SessionID)
+
+	// The control, and it is the whole reason the assertion above means anything: the file
+	// route's spelling has to be REFUSED. Without this arm a host that accepted any string
+	// would pass the positive test, and the generated constant would look load-bearing while
+	// carrying nothing.
+	//
+	// ⚠️ A failure here is information rather than damage — it means the vendor widened the
+	// union to accept both spellings, at which point the constant stops being a safety rail.
+	sid2 := msp.NewCommandID()
+	bad := params
+	bad.CommandID = msp.NewCommandID()
+	bad.SessionID = &sid2
+	bad.Config = &msp.SessionConfig{MCPServers: map[string]msp.SessionMCPServerConfig{
+		"afprobe-http": {Transport: "streamable_http", URL: &url, Mode: &httpMode},
+	}}
+	if err := cl.CallInto(msp.MethodSessionStart, bad, callTimeout, nil); err == nil {
+		t.Error("the host accepted the settings file's transport spelling on the wire: the union is no longer closed")
+	} else {
+		t.Logf("the file spelling is refused on the wire, as the closed union declares: %v", err)
+	}
 }

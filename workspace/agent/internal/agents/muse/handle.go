@@ -36,6 +36,12 @@ type threadHandle struct {
 
 	spawnMu sync.Mutex // serializes spawns for this handle
 
+	// sessionMCP records whether the host GRANTED the sessionMcp capability. It is asked once
+	// at handshake and remembered: a capability the host did not grant is not a thing to send
+	// anyway, and sending servers into a host that cannot take them is how a decode failure
+	// becomes "the integration is broken".
+	sessionMCP bool
+
 	// bypass is the launch-time permission choice. It selects the session's approval mode and
 	// is resolved on every Resume rather than carried in ThreadSettings, where "empty means
 	// unchanged" cannot express a three-valued bool.
@@ -125,6 +131,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	h.mu.Lock()
 	h.cmd, h.stdin, h.cl = cmd, stdin, cl
 	h.settings = st
+	h.sessionMCP = msp.Granted(res, msp.CapabilityNameSessionMCP)
 	h.mu.Unlock()
 
 	if err := h.openSession(cl, st); err != nil {
@@ -185,6 +192,20 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		// resolves on every path that starts a session rather than in the Console — a
 		// scheduled run and an MCP-created session get the same answer as a launch menu.
 		params.ModelID = &safe
+	}
+	// Integration (MCP) servers ride the wire, per session (decision 11 / mcp.go). A registry
+	// failure logs and launches anyway — the posture materialisation takes for every other
+	// kind — because a broken integration must not cost the member their session.
+	h.mu.Lock()
+	granted := h.sessionMCP
+	h.mu.Unlock()
+	if granted {
+		servers, err := sessionMCPServers()
+		if err != nil {
+			log.Printf("muse: %s: MCP servers unavailable, starting without them: %v", h.name, err)
+		} else if len(servers) > 0 {
+			params.Config = &msp.SessionConfig{MCPServers: servers}
+		}
 	}
 	var res msp.SessionStartResult
 	if err := cl.CallInto(msp.MethodSessionStart, params, callTimeout, &res); err != nil {
