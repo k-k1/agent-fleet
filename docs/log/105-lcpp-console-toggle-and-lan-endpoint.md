@@ -79,7 +79,7 @@ ADR 0076 の想定(「運用者が自前で用意した LAN のエンジンを�
   🔴 **ただしこれは「LAN 機材を運用者が常時起動させている」ことが前提であり、保証ではない。** 借用
   エンジンには「起きていなければ CP が起こして待つ」(ADR 0079 決定 5・`engine_waking`、上限 900 秒)
   という仕組みがあるのに対し、`external` 行には**起こす仕組みが無い**(ADR 0076 決定 4)——LAN 機材が
-  落ちていれば、待たずに即座に失敗する(実測 3.05〜3.11 秒、`engine_gateway.go:1519-1567` の
+  落ちていれば、待たずに即座に失敗する(実測 3.05〜3.11 秒、`control-plane/engine_gateway.go:1519-1567` の
   `ensureReady`)。**「遅いが繋がる」から「速いか、即座に繋がらないか」へ性質が変わる**、という
   トレードオフとして明記する。
 
@@ -216,19 +216,43 @@ func engineLlmEnvRow() (engineDef, string, bool) {
 `Health`/`WarmPath` の値は、いま管理されている `llm` 行(60-engines スタックが書く値、
 `deploy/aws/ecs/cfn/60-engines.yaml:909` の `"health":"/health","warmPath":"/models",
 "provider":"llamacpp"`)と揃えた——llama.cpp router は `/health` が「何も保持していなくても ok」
-を返す(`engines.go:75-79` のコメント)ので、warm 判定は別に `/models` を見る必要があり、これは
-external 行でも変わらない。
+を返す(`control-plane/engines.go:75-79` のコメント)ので、warm 判定は別に `/models` を見る必要が
+あり、これは external 行でも変わらない。
 
-### 優先順位: 既存の `engineTableWithEnvRow` は無改修で今回の「借用からの差し替え」を扱える
+🔴 **このリポジトリには `engines.go` が 2 つある**(`workspace/agent/engines.go` と
+`control-plane/engines.go`)——**別の Go モジュールで、`notManagedHere`/`engineTableWithEnvRow`/
+`engineComfyEnvRow` はすべて後者にしかない**(`workspace/agent/engines.go` には存在しない)。以下、
+本節の `file:line` はすべて `control-plane/engines.go` を指す。
 
-🔴 **これが調べて分かった、今回いちばん都合の良い点である。** `engineTableWithEnvRow`
-(`engines.go:654-670`)は「表の既存行が `!d.notManagedHere()` なら env を無視、そうでなければ
-env が勝つ」という規則で、`notManagedHere()`(`:150-157`)は `d.external() || d.remote()` ——
-**`remote`(借用)行も「ここが管理していない行」として扱われる。** つまり `AF_LLM_URL` を設定して
-CP を再起動すれば、今日の `llm` 行(sandbox からの借用・`remote`)は**自動的に env 由来の
-`external` 行に置き換わる**——「借用をやめて手元に向ける」という今回の要件に、追加のコードなしで
-そのまま合致する。`engineTableNeedsAWS`(`:675-682`)も同じ `notManagedHere()` を使っているので、
-借用をやめた後は AWS 設定を読まない経路にも自然に落ちる。
+### 優先順位: 既存の `engineTableWithEnvRow` の判定機構は無改修で今回の「借用からの差し替え」を扱える。ただしログ文は role 固有で、そのままでは嘘をつく
+
+🔴 **判定そのものは role 非依存で、これが調べて分かった今回いちばん都合の良い点である。**
+`engineTableWithEnvRow`(`control-plane/engines.go:654-670`)は「表の既存行が
+`!d.notManagedHere()` なら env を無視、そうでなければ env が勝つ」という規則で、
+`notManagedHere()`(`control-plane/engines.go:156-158`、直前 `:150-154` の解説コメントどおり)は
+`d.external() || d.remote()` ——**`remote`(借用)行も「ここが管理していない行」として扱われる。**
+つまり `AF_LLM_URL` を設定して CP を再起動すれば、今日の `llm` 行(sandbox からの借用・`remote`)
+は**判定としては**自動的に env 由来の `external` 行に置き換わる——「借用をやめて手元に向ける」
+という今回の要件に、判定ロジックそのものは無改修で合致する。`engineTableNeedsAWS`
+(`control-plane/engines.go:675-682`)も同じ `notManagedHere()` を使っているので、借用をやめた
+後は AWS 設定を読まない経路にも自然に落ちる。
+
+🔴 **ただし「追加コード不要」は正確ではない。** `engineTableWithEnvRow` の**ログ 3 行がすべて
+`AF_COMFY_URL` を直書きしている**(`control-plane/engines.go:660,663,668`):
+
+- `:660` `"... is a managed row in the engine table, so AF_COMFY_URL is ignored (take the role
+  out of the stack to move it onto the network)"`
+- `:663` `"%s comes from AF_COMFY_URL (%s), replacing the external row in the engine table"`
+- `:668` `"%s comes from AF_COMFY_URL (%s), externally managed"`
+
+この関数を `AF_LLM_URL` にそのまま使い回すと、運用者のログには("llm" 行に対してであっても)
+文字どおり「AF_COMFY_URL」と出る。とくに `:660` は「設定した env が**なぜ**効かなかったか
+(managed な行が勝った)」を運用者に伝える唯一の行なので、ここが実際の変数名と食い違うと、
+設定が効かない原因を運用者が追えなくなる。**正しい見立ては「判定機構(`notManagedHere` ベースの
+優先順位)は無改修で再利用できるが、ログ文は role 固有の文字列を直書きしているため、env 変数名
+(呼び出し元から渡す・またはロール名から導く)を引数に取る形への小改修が要る」であり、これは
+`engineComfyEnvRow`/`engineLlmEnvRow` を並べて呼ぶ側の小さな変更で足りる——見積り(CP 側
+1〜2 セッション日)はこの分を含んでいるので変わらない。
 
 ### モデル目録: `lcppModels` の単一行決め打ちはそのままでよい
 
@@ -257,7 +281,7 @@ S3 バケットが無くても登録は通るはずである(未検証)。
 ### 認証: 何が守られなくなるか——**手元の配備でも消える**
 
 🔴 借用行(`remote`)は、Workspace→CP の門(`POST /internal/engine/token` がメンバーシップ別の
-セッション token を発行し `serve()` が検める、`engine_gateway.go:209,227-270,472`)に加えて、
+セッション token を発行し `serve()` が検める、`control-plane/engine_gateway.go:209,227-270,472`)に加えて、
 CP→先方 CP のホップにも**そのためだけの発行メンバーシップ**という、失効可能で追跡可能な門を
 持つ(ADR 0079 決定 3)。**`external` 行にすると、この 2 つ目の門(CP→エンジン間の、失効・追跡が
 効く認証)がまるごと無くなる。** 代わりにあるのは、素の llama-server には認証が無いのが普通、
