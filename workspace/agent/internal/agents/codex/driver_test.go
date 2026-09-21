@@ -43,11 +43,17 @@ type mockCodexServer struct {
 	failNextStart  json.RawMessage // when set, turn/start answers with this JSON-RPC error instead of starting a turn
 	experimental   bool
 	clientResponse chan rpcMsg
+	// callSignal is closed and replaced every time a call is recorded, so a waiter can BLOCK
+	// on the current one instead of polling the count. A 10ms poll against a fixed deadline is
+	// a bet on getting CPU, and `go test ./... -p 2` is where that bet is lost: the whole
+	// module compiles and runs beside this test, and the failure it produces
+	// ("state = running, want completed") reads like a driver defect in an unrelated PR.
+	callSignal chan struct{}
 }
 
 func newMockCodexServer(t *testing.T) (*mockCodexServer, *appClient) {
 	t.Helper()
-	m := &mockCodexServer{t: t, clientResponse: make(chan rpcMsg, 8)}
+	m := &mockCodexServer{t: t, clientResponse: make(chan rpcMsg, 8), callSignal: make(chan struct{})}
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -98,7 +104,10 @@ func (m *mockCodexServer) serve(conn *websocket.Conn) {
 		}
 		m.mu.Lock()
 		m.calls = append(m.calls, mockRPC{Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
+		signal := m.callSignal
+		m.callSignal = make(chan struct{})
 		m.mu.Unlock()
+		close(signal)
 		switch msg.Method {
 		case "turn/start":
 			m.mu.Lock()
@@ -248,21 +257,69 @@ func registerCodexTestHandle(t *testing.T, h *threadHandle) {
 	})
 }
 
+// waitCodexState blocks until the handle reaches `want`.
+//
+// 🔴 It waits on the EVENT the transition emits (setState -> emit), not on a poll: the state is
+// read first, because the transition can land before this call, and after that every wake-up is
+// a real transition rather than a 10ms tick. The old shape — poll every 10ms until a 3s
+// deadline — made the assertion a statement about how much CPU this process got, and under
+// `go test ./... -p 2` it lost: an unrelated PR went red with `state = running, want completed`
+// while the driver was working correctly.
+//
+// The deadline that remains is a HANG guard, not the mechanism, which is why it is long: a test
+// that blocks for ever is worse than one that fails, but nothing here should ever approach it.
 func waitCodexState(t *testing.T, h *threadHandle, want agents.TurnState) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	deadline := time.After(waitBackstop)
+	for {
 		h.mu.Lock()
 		got := h.state
 		h.mu.Unlock()
 		if got == want {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-h.events:
+			// A transition happened; the authoritative value is the handle's own field, so the
+			// loop re-reads it rather than trusting the event's payload (events are advisory
+			// and are dropped on overflow — driver.go's emit).
+		case <-deadline:
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			t.Fatalf("state = %s, want %s", h.state, want)
+		}
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	t.Fatalf("state = %s, want %s", h.state, want)
+}
+
+// waitBackstop bounds every wait in this file. It is deliberately far larger than any of them
+// needs: the waits are event-driven, so this only decides how long a genuinely stuck test takes
+// to name itself.
+const waitBackstop = 30 * time.Second
+
+// waitCodexCalls blocks until the mock has recorded at least n calls of `method`, on the same
+// principle as waitCodexState: the mock signals, the waiter re-reads the count.
+func waitCodexCalls(t *testing.T, m *mockCodexServer, method string, n int) {
+	t.Helper()
+	deadline := time.After(waitBackstop)
+	for {
+		m.mu.Lock()
+		got := 0
+		for _, c := range m.calls {
+			if c.Method == method {
+				got++
+			}
+		}
+		signal := m.callSignal
+		m.mu.Unlock()
+		if got >= n {
+			return
+		}
+		select {
+		case <-signal:
+		case <-deadline:
+			t.Fatalf("%s called %d times, want %d", method, got, n)
+		}
+	}
 }
 
 func TestAppClientEnablesExperimentalAPI(t *testing.T) {
@@ -398,10 +455,7 @@ func TestSteerUsesNativeInjectionAndQueuesOnRace(t *testing.T) {
 	m.autoComplete = true // queued turn is completed automatically once it starts
 	m.mu.Unlock()
 	m.complete("completed")
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && m.callCount("turn/start") < 2 {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitCodexCalls(t, m, "turn/start", 2)
 	waitCodexState(t, h, agents.TurnCompleted)
 	if got := m.callCount("turn/start"); got != 2 {
 		t.Fatalf("turn/start count = %d, want queued fallback as second turn", got)
@@ -428,10 +482,7 @@ func TestResumedActiveTurnQueuesUntilCompletion(t *testing.T) {
 	}
 	dispatchNotification(rpcMsg{Method: "turn/completed", Params: json.RawMessage(
 		`{"threadId":"thr_test","turn":{"id":"turn_external","status":"completed"}}`)})
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && m.callCount("turn/start") < 1 {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitCodexCalls(t, m, "turn/start", 1)
 	if got := m.callCount("turn/start"); got != 1 {
 		t.Fatalf("queued input did not start after external completion: %d calls", got)
 	}
@@ -638,10 +689,7 @@ func TestManagedTurnFailedSurfacesReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Wait for turn/start to land, then answer with a failed completion carrying error detail.
-	deadline := time.Now().Add(3 * time.Second)
-	for m.callCount("turn/start") == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitCodexCalls(t, m, "turn/start", 1)
 	m.mu.Lock()
 	turnID := m.activeTurn
 	m.mu.Unlock()
@@ -755,10 +803,7 @@ func TestManagedUsageLimitBlockedBadge(t *testing.T) {
 	if err := h.Send(agents.TurnInput{Prompt: "hello", ClientMessageID: "af_limitbadge"}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for m.callCount("turn/start") == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitCodexCalls(t, m, "turn/start", 1)
 	m.mu.Lock()
 	turnID := m.activeTurn
 	m.mu.Unlock()
