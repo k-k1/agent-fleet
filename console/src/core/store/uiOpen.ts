@@ -13,6 +13,10 @@ export type OpenTarget =
   | "usage-codex"
   | "usage-copilot"
   | "usage-agy"
+  // muse has a target but no keyboard command, the same as copilot: a leader sequence is a
+  // surface of its own and `g c` / `g x` / `g a` were bound one at a time as the chips earned
+  // them. The popover still opens by click and by the command palette.
+  | "usage-muse"
   | "resources";
 
 interface UiOpenStore {
@@ -22,7 +26,7 @@ interface UiOpenStore {
 }
 
 export const useUiOpen = create<UiOpenStore>((set) => ({
-  seq: { notifications: 0, "usage-claude": 0, "usage-codex": 0, "usage-copilot": 0, "usage-agy": 0, resources: 0 },
+  seq: { notifications: 0, "usage-claude": 0, "usage-codex": 0, "usage-copilot": 0, "usage-agy": 0, "usage-muse": 0, resources: 0 },
   toggle: (t) => set((s) => ({ seq: { ...s.seq, [t]: s.seq[t] + 1 } })),
 }));
 

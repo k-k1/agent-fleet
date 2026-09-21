@@ -106,6 +106,7 @@ export const errors = {
   "err.conn_grafana_fields_required": "Grafana の URL とサービスアカウントトークンを入力してください",
   "err.conn_jira_fields_required": "Jira のアカウントメールアドレスと API トークンを入力してください",
   "err.conn_url_scheme": "URL は http(s):// で始めてください",
+  "err.conn_lcpp_url_required": "接続先の URL を入力してください",
   "err.conn_aws_profile_required": "AWS プロファイルを指定してください",
   "err.conn_sso_region_missing": "SSO リージョンがありません（SSM プロファイルの設定を確認してください）",
   "err.conn_discord_token_required": "Discord Bot トークンを入力してください",

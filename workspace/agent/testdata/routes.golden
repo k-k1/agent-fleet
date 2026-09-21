@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = registered without a method.
-# count: 279
+# count: 283
 GET /agents/memory/diff
 GET /agents/memory/export
 POST /agents/memory/import
@@ -104,6 +104,9 @@ GET /connections/kiro/install
 POST /connections/kiro/install
 POST /connections/kiro/poll
 POST /connections/kiro/start
+DELETE /connections/lcpp
+PUT /connections/lcpp
+POST /connections/lcpp/check
 DELETE /connections/muse
 POST /connections/muse/api-key
 GET /connections/muse/install
@@ -177,6 +180,7 @@ PUT /mcp-servers/{id}/secrets
 POST /memos/images/gc
 GET /memos/images/{file}
 POST /memos/paste-image
+GET /muse/usage
 GET /notifications
 POST /notifications/ack
 ANY /proxy/{port}/{rest...}

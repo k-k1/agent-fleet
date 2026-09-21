@@ -73,12 +73,26 @@ const FEATURE_SLOT: Record<string, number> = {
  * fail the CVD check (agy blue vs kiro purple is protan ΔE 2.0; copilot and opencode are both
  * near-achromatic).
  *
- * So the colours are untouched and only the order was chosen, out of all permutations. In this
- * order the adjacent pairs measure dark: CVD ΔE 13.0 / normal vision 19.8, light: CVD ΔE 17.3 /
- * normal vision 19.4, passing the adjacency gate in both themes. The saturation and lightness
- * bands (the two greys) still fail, because that is a property of the colours themselves; the
- * legend labels, tooltip and table view cover that by never relying on colour alone. */
-export const KIND_STACK_ORDER = ["cursor", "agy", "claude", "copilot", "codex", "kiro", "opencode"];
+ * So the colours are untouched and only the order is chosen, by searching every permutation for
+ * the one whose WORST adjacent pair is best — under normal vision and all three dichromacies, in
+ * both themes. `console/scripts/kindcolor/usageorder.mjs` is that search; it prints the table
+ * below and re-running it is how the next kind joins.
+ *
+ * Worst adjacent ΔE 17.0 (also the worst under CVD), mean 34.8. The binding pairs are
+ * kiro|copilot in normal vision and copilot|agy under tritanopia. For scale: appending lcpp and
+ * muse to the previous seven the obvious way scores 10.8, because lcpp's yellow and muse's lilac
+ * collapse into each other under tritanopia — a pair no one would think to check. The exact
+ * reverse of this order scores identically, as it must; the adjacency set is the same.
+ *
+ * A kind is listed here when its sessions carry a transcript the ledger folds — shell and ssm
+ * have none, so they never produce a series. A kind that is MISSING is not a colour bug but an
+ * invisible one: it falls into the grey "other" fold, which is where lcpp's consumption went
+ * from ADR 0093 until this round.
+ *
+ * The saturation and lightness bands (the two greys) still fail, because that is a property of
+ * the colours themselves; the legend labels, tooltip and table view cover that by never relying
+ * on colour alone. */
+export const KIND_STACK_ORDER = ["muse", "codex", "kiro", "copilot", "agy", "claude", "opencode", "lcpp", "cursor"];
 
 /** Fixed order for the small enumerated axes (slots are assigned in order, starting at 1). */
 const ENUM_ORDER: Record<string, string[]> = {

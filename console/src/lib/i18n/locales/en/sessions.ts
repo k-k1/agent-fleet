@@ -55,6 +55,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.usage.claude.week": "Weekly · all models",
   "wsbar.usage.codex.five": "5-hour",
   "wsbar.usage.codex.week": "Weekly",
+  "wsbar.usage.muse.five": "Current window",
+  "wsbar.usage.muse.week": "Weekly",
   "wsbar.usage.agy.week_row": "{group} (weekly)",
   "wsbar.usage.agy.five_row": "{group} (5-hour)",
   "wsbar.usage.plan": "Plan: {plan}",
@@ -68,6 +70,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
     "The last value codex recorded (a snapshot from that moment). It refreshes the next time you run codex.",
   "wsbar.usage.claude.note":
     "Read from claude's own rate-limit headers, which report utilization to two decimals — so 0% means below 0.5%, not necessarily nothing used.",
+  "wsbar.usage.muse.note":
+    "The last value a running muse session observed. Until you have run muse there is no reading at all — which is not the same as nothing used. The window's length is the provider's (measured: 5 hours).",
   "wsbar.usage.full_reset_one": "{count} full reset",
   "wsbar.usage.full_reset_other": "{count} full resets",
   "wsbar.usage.full_reset_soonest": " · soonest by {when}",

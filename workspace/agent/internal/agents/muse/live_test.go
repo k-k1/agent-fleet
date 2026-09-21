@@ -4,10 +4,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -214,6 +216,62 @@ func TestLiveUserMessageItemReachesTheTranscript(t *testing.T) {
 	}
 }
 
+// The launch model catalog against the real host, and it costs no quota: `model/list` is a
+// query — no commandId, no durable record, no model call.
+//
+// It runs in the member's own home because the catalog IS the authenticated account's
+// (`source: providerCatalog`), so a throwaway home has nothing to ask about. The one side
+// effect is the clamp write dialProbe performs before spawning, which is byte for byte what
+// every session start already writes to the same file.
+func TestLiveModelCatalog(t *testing.T) {
+	liveGate(t)
+	if !readCredential().Present {
+		t.Skip("not signed in to muse: model/list has no catalog to return")
+	}
+	list, safe, err := probeModels()
+	if err != nil {
+		t.Fatalf("model/list: %v", err)
+	}
+	if len(list) == 0 {
+		// Schema-legal, so not a failure — but it means the picker shows Default alone, which
+		// is the symptom this whole package exists to avoid, so it is worth saying out loud.
+		t.Skip("the account's catalog is empty")
+	}
+	for _, m := range list {
+		if m.ID == "" || m.Label == "" {
+			t.Errorf("unselectable row: %+v", m)
+		}
+		// The wire values the picker will offer have to be ones a turn accepts. The unit test
+		// pins offer==accept inside AF; this is the half only the vendor can answer.
+		for _, e := range m.Efforts {
+			if reasoningEffort(e) == nil {
+				t.Errorf("%s offers effort %q, which the driver refuses", m.ID, e)
+			}
+		}
+	}
+	// 🔴 The half that matters for decision 6 clamp 8: the safe default has to be a real row of
+	// the live catalog and it must not be one the vendor says it may learn from. An empty pick
+	// here means every session AF starts without an explicit model falls back to the host's
+	// default, which IS the contributor variant.
+	if safe == "" {
+		t.Error("no non-data-sharing model in the live catalog: sessions would fall back to the host's contributor default")
+	}
+	found := false
+	for _, m := range list {
+		if m.ID == safe {
+			found = true
+		}
+	}
+	if safe != "" && !found {
+		t.Errorf("the safe default %q is not in the catalog it came from", safe)
+	}
+	ids := make([]string, 0, len(list))
+	for _, m := range list {
+		ids = append(ids, m.ID)
+	}
+	t.Logf("live catalog (%d): %s — AF starts on %q", len(list), strings.Join(ids, " "), safe)
+}
+
 // TestLiveCredentialShapeMatchesTheFixtures reads the member's REAL auth.json and checks it
 // against what auth_test.go's fixtures claim. The fixtures are the whole basis for `metered`,
 // and a vendor that renamed `mechanism` in 1.4 would leave every unit test green while the card
@@ -249,4 +307,106 @@ func TestLiveCredentialShapeMatchesTheFixtures(t *testing.T) {
 		t.Errorf("metered = %v for mechanism %q", st["metered"], c.Mechanism)
 	}
 	t.Logf("live credential: mechanism=%q obtained_via=%q metered=%v", c.Mechanism, c.ObtainedVia, st["metered"])
+}
+
+// 🔴 The closed union, against the real host, for free. `session/start.config.mcpServers`
+// rejects an undeclared `transport` by failing the whole command — not the one server — so the
+// cost of the wrong spelling is every muse session refusing to start for a member who has one
+// HTTP integration. A session-only run proves the decode: MCP servers are not spawned until
+// the first turn (measured, gate B1-4), so this costs no quota and starts no child.
+func TestLiveSessionStartAcceptsMCPServerConfig(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	cl, granted := h.cl, h.sessionMCP
+	h.mu.Unlock()
+	if !granted {
+		t.Fatal("the host did not grant sessionMcp, so no server could ever be passed")
+	}
+
+	sid := msp.NewCommandID()
+	root := m.CWD()
+	stdioMode := msp.SessionMCPServerModeOptional
+	httpMode := msp.SessionMCPServerModeOptional
+	url := "https://mcp.example.invalid/mcp"
+	cmd := "/bin/true"
+	params := msp.SessionStartParams{
+		CommandID:     msp.NewCommandID(),
+		SessionID:     &sid,
+		WorkspaceRoot: &root,
+		Config: &msp.SessionConfig{MCPServers: map[string]msp.SessionMCPServerConfig{
+			"afprobe-stdio": {Transport: msp.SessionMCPServerConfigTransportStdio, Command: &cmd, Mode: &stdioMode},
+			"afprobe-http":  {Transport: msp.SessionMCPServerConfigTransportStreamableHTTP, URL: &url, Mode: &httpMode},
+		}},
+	}
+	var res msp.SessionStartResult
+	if err := cl.CallInto(msp.MethodSessionStart, params, callTimeout, &res); err != nil {
+		t.Fatalf("the host refused AF's MCP server config: %v", err)
+	}
+	t.Logf("session/start accepted both transports (session %s)", res.Session.SessionID)
+
+	// The control, and it is the whole reason the assertion above means anything: the file
+	// route's spelling has to be REFUSED. Without this arm a host that accepted any string
+	// would pass the positive test, and the generated constant would look load-bearing while
+	// carrying nothing.
+	//
+	// ⚠️ A failure here is information rather than damage — it means the vendor widened the
+	// union to accept both spellings, at which point the constant stops being a safety rail.
+	sid2 := msp.NewCommandID()
+	bad := params
+	bad.CommandID = msp.NewCommandID()
+	bad.SessionID = &sid2
+	bad.Config = &msp.SessionConfig{MCPServers: map[string]msp.SessionMCPServerConfig{
+		"afprobe-http": {Transport: "streamable_http", URL: &url, Mode: &httpMode},
+	}}
+	if err := cl.CallInto(msp.MethodSessionStart, bad, callTimeout, nil); err == nil {
+		t.Error("the host accepted the settings file's transport spelling on the wire: the union is no longer closed")
+	} else {
+		t.Logf("the file spelling is refused on the wire, as the closed union declares: %v", err)
+	}
+}
+
+// The fork, against the real host, for free: a whole-conversation fork of a session with no
+// completed turns needs no cut point and no model call. What it proves is the part msptest
+// cannot — that the vendor accepts AF's `session/fork` and returns a NEW session whose
+// `forkedFrom` names the source, which is what the driver reads back and stores.
+func TestLiveSessionForkReturnsANewSession(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	cl, srcID := h.cl, h.sid
+	h.mu.Unlock()
+
+	var res msp.SessionForkResult
+	err = cl.CallInto(msp.MethodSessionFork, msp.SessionForkParams{
+		CommandID: msp.NewCommandID(),
+		SessionID: srcID,
+	}, callTimeout, &res)
+	if err != nil {
+		t.Fatalf("session/fork: %v", err)
+	}
+	if res.Session.SessionID == "" || res.Session.SessionID == srcID {
+		t.Fatalf("fork returned %q for source %q", res.Session.SessionID, srcID)
+	}
+	// The provenance the driver relies on being there: AF does not mint the id, so the result
+	// is the only place the new session's identity exists.
+	if res.Session.ForkedFrom == nil || res.Session.ForkedFrom.SessionID != srcID {
+		t.Errorf("forkedFrom = %+v, want the source %q", res.Session.ForkedFrom, srcID)
+	}
+	if res.Session.ForkedFrom != nil && res.Session.ForkedFrom.CutExplicit {
+		t.Error("a fork with no cutPoint reported an explicit cut")
+	}
+	t.Logf("forked %s -> %s (path %s)", srcID, res.Session.SessionID, res.Session.Path)
 }

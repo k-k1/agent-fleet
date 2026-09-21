@@ -275,9 +275,9 @@ export const settings = {
   "agents.muse_metered":
     "この接続は API キー（従量課金）です。使うたびに課金されます。定額プランを使うには一度切断して、Meta アカウントでサインインしてください。",
   "agents.muse_env_key":
-    "環境変数 META_API_KEY が設定されています。これはサインインより優先されるため、上の表示に関わらず**従量課金**になります。定額プランを使うには、ワークスペースの環境変数からこれを外してください。",
+    "環境変数 META_API_KEY が設定されています。これはサインインより優先されるため、上の表示に関わらず従量課金になります。定額プランを使うには、ワークスペースの環境変数からこれを外してください。",
   "agents.muse_key_warn":
-    "API キーを保存すると、保存済みのアカウントのサインインは**消えます**（Muse Code が資格情報の項目を丸ごと置き換えるため）。定額プランからも外れて従量課金になります。アカウントでサインイン済みの場合は、先に切断する必要があります。",
+    "API キーを保存すると、保存済みのアカウントのサインインは消えます（Muse Code が資格情報の項目を丸ごと置き換えるため）。定額プランからも外れて従量課金になります。アカウントでサインイン済みの場合は、先に切断する必要があります。",
   "agents.muse_key_placeholder": "LLM|… で始まる Meta の API キー",
   "agents.muse_auth_failed": "Muse Code のサインインを開始できませんでした: {msg}",
   "agents.muse_install_desc": "Muse Code はまだこのワークスペースに導入されていません（プロプライエタリのため配布イメージに含まれません）。一度だけ導入が必要です。",
@@ -290,6 +290,8 @@ export const settings = {
   "agents.muse_update": "Muse Code を更新",
   "agents.muse_update_note": "ピンされた版を再取得します（約 299MB・数分）。",
   "agents.muse_updating": "Muse Code を更新中…（約 299MB・数分）。稼働中の muse セッションは再起動するまで古い版で動き続けます。",
+  "agents.muse_model_note":
+    "Muse Code の一覧には、各モデルの「-contributor」版が並びます。モデルも料金も同じですが、そちらを選ぶと会話（セッション間のメッセージを含む）が Meta の製品改善に使われることがあります。Muse Code 自身の既定はこの版です。ここの「既定」は、その条件が付かない最新のモデルを Agent Fleet が選ぶという意味です。",
   "agents.remote_control": "リモートコントロール",
   "agents.notifications": "通知",
   "agents.codex_auth_failed": "Codex 認証開始に失敗: {msg}",
@@ -390,6 +392,17 @@ export const settings = {
   "agents.lcpp_enabled_note_off":
     "llama.cpp を起動できません。起動導線から消え、直接 API を叩いても拒否されます（既存のセッションは動き続けます）。",
   "agents.lcpp_enabled_note_on": "llama.cpp を起動できます。既定モデル・使わないモデルは下の動作設定で選べます。",
+  // 自分の接続先（docs/log/107）。設定すると、この配備の llm エンジンより優先し、Control Plane を経由せず
+  // 直結する——テナント管理者の可否（ADR 0084 の allow_engine_llm）を迂回するので、その旨をここで明記する。
+  "agents.lcpp_conn_title": "自分の接続先",
+  "agents.lcpp_conn_note":
+    "LAN の llama-server に直結します。設定すると、この配備のエンジンより優先されます。Control Plane を経由しないため、テナント管理者の可否設定は効きません。空にすると今日の挙動（配備のエンジン）に戻ります。",
+  "agents.lcpp_conn_url_placeholder": "http://192.168.0.10:8080",
+  "agents.lcpp_conn_key_placeholder": "API キー（任意）",
+  "agents.lcpp_conn_check": "接続を確認",
+  "agents.lcpp_conn_checking": "確認中…",
+  "agents.lcpp_conn_check_failed": "確認に失敗: {msg}",
+  "agents.lcpp_conn_check_result": "build {build} ・ 窓 {nctx} ・ モデル: {models}",
   "set.tab_cost": "クラウド費用",
   // --- 稼働時間ヒートマップ（docs/log/83）---
   // ⚠️ ここは占有であって金額ではない。実費は日単位でしか取れないので、時間別の金額は

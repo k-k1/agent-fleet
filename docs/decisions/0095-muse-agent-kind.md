@@ -2,12 +2,17 @@
 
 English | [日本語](0095-muse-agent-kind.ja.md)
 
-- Status: **proposed** (2026-09-20), **Phase 1 gates A, B1 and B2 all answered** (2026-09-20 — the
-  last three sections). None of the kind itself is implemented, and gate A's deployment changes
-  have been taken back out again (the gate-A-artefacts section says why). Every `file:line` below was read on
-  `06ea94d3` (develop at the time). Everything marked ◎ was measured in a Workspace container on
-  **Muse Code 1.3.0-R3401.1** installed into a throwaway directory; △ is the vendor documentation
-  only; × is not measured. The probe is reproducible from the last section.
+- Status: **adopted** (2026-09-21). Phase 1's three gates were answered on 2026-09-20 and Phase 2
+  landed over 2026-09-21 in thirteen work packages (the implementation record at the end, P2-1 to
+  P2-13 — every row of the work-package table below, plus the MCP wire route no row owned and the
+  fork path). The kind is offered in the launch menu behind its two preconditions (the proprietary
+  binary installed, a credential stored). What is NOT built is named in the guide's own capability
+  table and in P2-13's closing section, so an unticked row there means "not built", never "still
+  being decided".
+  Every `file:line` in the decisions below was read on `06ea94d3` (develop at the time) and the
+  implementation record corrects the ones measurement moved. Everything marked ◎ was measured in a
+  Workspace container on **Muse Code 1.3.0-R3401.1**; △ is the vendor documentation only; × is not
+  measured. The probe is reproducible from the "Reproducing the probe" section.
 - The request is one sentence: **can Meta's coding agent Muse Code become the tenth session kind,
   and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements) /
@@ -2067,3 +2072,308 @@ measurement, so the group's only row would be an inert "Default" picker. And **m
 MCP servers on the wire in `session/start.config.mcpServers`, the settings writer correctly writes
 no `mcp_servers`, and **nothing sends them**. The guide's "Receives integration (MCP) servers" row
 is honest at `—`, and the wire half remains unbuilt.
+
+### P2-9: the model and effort controls, and the default nobody would have chosen
+
+The ninth work package: `model/list` behind `GET /agents/muse/models`, the reasoning-effort
+list, the two Console controls, and one thing the work-package table did not have.
+
+🔴 **The launch default was an opt-in to data sharing, and it was invisible.** Decision 6's
+clamp 8 says AF defaults to a non-contributor model. Nothing in the table owned it, and the
+shape everything else uses would have shipped it wrong: a launch with no model chosen sends no
+`modelId`, the host applies its own default, and measured on the live catalogue that default
+is `muse-spark-1.3-contributor` — `isDefault: true`, and the only rows carrying a `description`
+at all are the two contributor ones, whose text is "Your content, including inter-session
+messages, may be used for product improvement." A member who never opened the picker would
+have had every conversation used that way, with nothing on any screen saying so.
+
+So "the member chose no model" resolves in the **driver**, not in the Console: `session/start`
+names the newest row the vendor makes no such claim about, and `UpdateSettings`' `ClearModel`
+resolves to the same one rather than to the host's. That placement is the point — a scheduled
+run, an MCP-created session and the chat bridge all reach `openSession` and none of them reads
+a Console setting. The Console's stored default therefore stays the empty string, which is
+both safe and version-proof; pinning `muse-spark-1.3` into `DEFAULT_AGENT_LAUNCH` would have
+gone stale at the next release. The contributor twins stay selectable, because clamp 8 was
+deliberately softened to leave the member the choice, and the picker now carries the sentence
+that says what the choice is.
+
+The predicate is a union — the `-contributor` suffix **or** a description naming product
+improvement. Measured, the two agree exactly, so it is redundant today. It is a union because
+they fail in opposite directions (a renamed suffix leaves the sentence, a reworded sentence
+leaves the suffix) and the two errors do not cost the same: a false positive costs a model AF
+will not pick for you, a false negative costs your conversations.
+
+**The effort list is the generated enum, not a copy.** The generator now emits a `…Values`
+slice for every string enum in the bundle, so `msp.ReasoningEffortValues` is what the picker
+offers AND what the driver validates against — a value the vendor adds in 1.4 cannot end up
+offered-but-refused, and the fingerprint lock already covers it. A test walks the offered list
+through the driver's own validator, with an undeclared value as its control.
+
+Three smaller things:
+
+- **Catalogue reads reuse a live session's host.** `model/list` is a query — no `commandId`, no
+  durable record — so a running session can answer it, and only a workspace with none pays a
+  process start. A probe host's argv deliberately drops `--trust-workspace`: trust is a decision
+  about a working copy and a catalogue query has none. It still applies the clamps first, which
+  is the driver's invariant rather than a need this path has.
+- 🔴 **A segmented control cannot hold this catalogue, and what it does instead is not clip.**
+  Rendered headless with the real four ids, `.choice-seg` takes the whole row, wraps to a second
+  line and draws over the row's own "Default model" label; the nine effort values do the same.
+  The count rule that has always guarded this (`> 8`) passes four ids of 26 characters, so it
+  gained a width clause. Assumed as "it overflows", measured as "it covers the label" — the
+  screenshot is what told the two apart.
+- **Two shipped defects found on the way.** `DEFAULT_AGENT_LAUNCH` had no `lcpp` row, so lcpp's
+  saved launch defaults were discarded on every reload — the exact failure its own comment
+  records for copilot, shipped again. And this card's three warning strings were written with
+  markdown asterisks that nothing in Settings renders, so `**per use**` reached the member
+  verbatim; the house pattern is a separate `_strong` key, and these are now plain text. A dom
+  assertion that the card renders no `**` covers all of them.
+
+⚠️ The mutation sweep was worth its cost again: of eleven mutations, ten failed a test as they
+should and one passed green — the assertion for the contributor note matched the word
+"contributor" in the picker's own option labels, so deleting the note entirely changed nothing.
+It asserts on the note's own sentence now.
+
+### P2-10: usage — a ledger with no price, a chip with no query, and two kinds nobody could see
+
+The tenth work package: the accounting declaration, the subscription-quota chip, the MCP
+surfaces, and the usage view's own colours.
+
+**The token ledger needed almost nothing, because the transcript already carries the numbers.**
+`applyUsage` folds `item.Usage` onto its turn (P2-3), and the fold, the watermark and the
+per-turn attribution are the shared ones. What this package adds is the *declaration*:
+`usageMeasuredForKind` returns **`MeasuredPartial`**, and the reason is worth keeping in the
+code rather than only here — the wire's own numbers are clean (cached input separated, no
+differencing, a failed turn reporting nothing, a resume replaying nothing), so what is partial
+is OWNERSHIP. Gate B1 measured one turn reporting 88,077 prompt tokens on the wire while the
+host's durable log recorded 116,816 across six calls, two of them a subagent's. AF's clamps
+turn subagents and observers off, which makes the wire complete *in practice* — and that is
+exactly why it stays partial: a clamp is a setting, and this field describes the source.
+
+**No cost estimate, stated in the table rather than left as an absence.** `usageCatalogProviders`
+gains a comment and no row: models.dev has no entry for Muse Code's models, and the vendor's
+own catalogue reports `cost: null` on all four (measured again this round). Both ends are
+empty, so the kind ships a token ledger with no cost chip; a guessed provider would put a
+number on the screen that nobody charged. An absent row looks identical to an oversight, which
+is what the comment is for.
+
+**The quota chip is an observation, not a query, and that difference is the whole design.**
+`usage/read` and the unsolicited `usage/changed` carry the same object, so AF records both into
+one process-wide value — what they describe is the ACCOUNT, and under decision 3's
+one-host-per-session shape five sessions all report the same subscription. Three things follow:
+
+- Newest wins **by the host's own `observedAtMs`**, not by arrival. Two hosts can deliver out
+  of order, and a chip that walks backwards reads as usage being refunded.
+- `GET /muse/usage` asks a live host when it has nothing cached, and **spawns nothing**: a
+  quota reading is not worth a 299 MB process start.
+- 🔴 `{ok: false, authed: true}` is a real state, not a failure. Measured, `usage/read` answers
+  `{}` until that host has seen a completion, so a workspace whose muse sessions have all just
+  started has no reading — and reporting 0% used there would tell the member they had their
+  whole week left. The WsBar's existing "authed but unavailable" path already renders exactly
+  that (a "—" chip), so the shape was chosen to land in it.
+
+The window's length is a wire field rather than a constant (`windowDurationMins`, measured 300)
+and it is carried through instead of assumed, which is why muse's first row is labelled
+"current window" where claude's and codex's say "5-hour".
+
+**The usage view could not see lcpp either.** `KIND_STACK_ORDER` is the list of kinds the chart
+gives a colour; a kind missing from it falls into the grey "other" fold. It had seven entries,
+and lcpp's consumption has been folded into "other" since ADR 0093 — invisible rather than
+wrong, which is why nobody noticed. Adding two kinds to a palette that was *ordered* for
+CVD-adjacency is not an append, so the search was redone as a script that can be re-run
+(`console/scripts/kindcolor/usageorder.mjs`): every permutation of the nine, scored on its
+worst adjacent pair under normal vision and all three dichromacies in both themes.
+
+- Appending the two the obvious way scores **worst adjacent ΔE 10.8** — lcpp's yellow against
+  muse's lilac, which collapse under tritanopia. Nobody would have thought to check that pair.
+- The searched order scores **17.0**, which is also better than the seven-kind order it
+  replaces (13.0 under CVD). The binding pairs are kiro|copilot in normal vision and
+  copilot|agy under tritanopia.
+- The bands were then rendered and looked at, in both themes and all four visions. The numbers
+  rank the permutations; the picture is what confirms a pair the arithmetic passed does not
+  read as one block — this palette's own history (the two greys) is why that step exists.
+
+Two smaller things: `list_models` refused `kind=muse` outright, which is the model-list
+package's own miss found from the MCP side; and `get_session_usage`'s description now says what
+muse's numbers do and do not include, because an assistant reading `cumulative` has no other
+way to know a subagent's tokens are missing.
+
+**Not in this package, and not forgotten:** the context-usage gauge. `session/contextUsage`
+exists on the wire, but it only fires around a turn, so declaring `contextBar` would be a
+capability claimed from a schema rather than measured end to end — the rule the other four
+false caps already follow.
+
+### P2-11: the instruction layers — one file, two blocks, and the text that is not ours
+
+The eleventh work package, and the one decision 12 left as an explicit choice: muse has ONE
+user-scope rules file and both of AF's apply paths have to share it.
+
+**The answer is markers, not ownership.** Decision 12 offered two: AF owns
+`~/.config/muse/AGENTS.md` outright with delimited sections, or merges into the member's own
+text by markers. The second, for the reason decision 6 gives for `settings.json` — the file is
+not AF's. It is where a member writes their own rules for Muse Code, with or without Agent
+Fleet, and owning it outright deletes that text on the next reconcile. The repository has
+already paid for the other answer once (docs/log/60 damage 1, where AF `cp -f`'d a CLI's file
+away on every start).
+
+That makes this codex's situation exactly, so it is codex's mechanism exactly: `mdblock`, one
+`AGENTS.md`, two AF-owned blocks in reconcile's call order (fleet → user), everything outside
+the markers untouched. `mdblock` exists so the spelling of those markers cannot drift per kind,
+and using it here is what stops muse becoming the seventh copy of strip-and-append.
+
+Three details are in the code because the measurement said so:
+
+- **The distribution status measures the BLOCK, not the file.** muse's `AGENTS.md` exists as
+  soon as the fleet policy lands, so `fileExists` — which is what kiro and copilot use, because
+  their artefacts are one file each — would report the member's instructions as delivered
+  before they were written. The same trap agy and codex already avoid.
+- **AF writes `AGENTS.md` and never `CLAUDE.md`.** muse probes both, and the measured project-
+  layer precedence is "AGENTS.md wins, CLAUDE.md is skipped this session". Writing both would
+  mean writing a file whose content muse announces it is discarding. A test pins that the
+  second file is not created.
+- **The skills half needed no code.** `fleetskills.Apply` into `~/.config/muse/skills` is the
+  whole of it: measured again this round against the real binary, `muse skills list --source
+  user` lists a dropped `SKILL.md` with no install step and no lock-file entry.
+
+Verification is the two apply paths through `reconcileAgentInstructions` plus a live check that
+spends nothing: the real writers into a throwaway HOME, then the vendor's own
+`muse skills list --source user` as the authority on whether the topic file is actually
+registered. ⚠️ Written the wrong way first — the draft also ran `muse config validate --file`
+against `settings.json`, which is not what that verb takes (it validates an enterprise config
+*document*, `{schema_version, settings}`), and a second copy of the command ran without the
+throwaway environment at all, i.e. against the member's own home. Both are the same mistake:
+reaching for an oracle by name instead of by what it answers.
+
+### P2-12: MCP on the wire — the residual no work package owned, and the spelling that is not the documented one
+
+P2-8 surfaced this one rather than closing it: decision 11 puts integration servers in
+`session/start.config.mcpServers`, the settings writer correctly writes no `mcp_servers`
+block, and **nothing sent them**. `internal/agents/muse/` carried zero mentions of
+`mcpServers`. This package is that gap.
+
+🔴 **The wire's transport spelling is not the one decision 11 documents, and getting it wrong
+costs the whole session.** Decision 11 describes the settings-file block as
+`transport: stdio | streamable_http`, which is correct for that file — and the wire union's
+HTTP arm is `streamableHttp`. The union is **closed** (`x-msp-openness: "closed"`, the
+schema's own ruling), so an undeclared value is not "that server did not start": it fails
+`session/start` decode, and the session with it. Measured against the real host this round:
+
+```
+-32602 invalid session/start config: mcpServers does not match the supported shape
+```
+
+So a member with one HTTP integration would have had *every* muse session refuse to start —
+and the ADR's own text is what would have led anyone there. The fix is to stop transcribing:
+the generator now emits a closed union's discriminator constants
+(`SessionMCPServerConfigTransportStdio` / `…StreamableHTTP`), flattening a union had been
+dropping the one `const` that tells the arms apart. The live test carries both arms — AF's
+real serialisation accepted, and the file spelling refused as the control, because a host that
+accepted any string would pass the positive test on its own.
+
+**Every server rides as `mode: optional`, with no member-facing choice.** The wire default is
+`required`, and a required server that fails to start aborts the run — so one tenant
+integration with a dead endpoint would stop the member's agent from starting. The registry has
+nowhere to put the choice (`secrets.MCPServer` has `enabled`, `targets`, `kinds`, `timeoutMs`
+and no `mode`), which decision 11 already names as out of scope.
+
+🔴 **`MaterializedKinds` is not the list this needed, and reading it as one has already shipped
+a bug.** It means "whose native config file does af write", and muse has none — adding it
+there would report a permanent `skipped` for a fully served kind. But `selfReportToolAvailable`
+was using it as a stand-in for "does this session get the af MCP server", which for muse is
+**true**. That is precisely the mistake `peerTargetAllowed`'s own header records (lcpp's
+absence from the same list silently forbade peer messages to it, found live on 2026-09-21), so
+the answer is a second list that says what it means: `mcpreg.ServedKinds`. Without it a muse
+session is told to call `af_report` and has no such tool — a failure whose only symptom is a
+report that never arrives.
+
+⚠️ The mutation sweep earned its keep twice in this package. One mutation did not compile, so
+it proved nothing and had to be re-run in a form that did (an unused variable is not a
+measurement). The other passed green: swapping `ServedKinds` back to `MaterializedKinds`
+changed nothing any test checked, because the self-report hint had no test at all. It has one
+now, with shell/ssm as the other side of the pair.
+
+What muse deliberately does NOT get: a row in `fileSpecs` (`mcpproj`), so it is neither
+inspected for project-scope servers nor a copy target, and `HasProjectScope: false` — agy's
+shape. No Muse project-scope spelling is documented and none was measured; that is a static
+fact about the kind rather than a runtime fallback to another kind's file.
+
+### P2-13: fork — an item id on one side, a turn id on the other
+
+The last of the capability work: `session/fork`, both `Caps.CanFork` and `Caps.CanForkAt`, and
+`Capabilities.Fork`.
+
+**The two caps move together for this kind, and they could not do otherwise.** Elsewhere they
+differ because a kind can fork through one launch route and not another (`agents.ErrForkAtRoute`
+exists for exactly that). muse is managed-only, so there is no second route to fail — and on
+the wire a whole-conversation fork IS the point fork with no cut (`cutPoint` omitted means "all
+completed turns"). A kind that could do one and not the other would be AF's invention.
+
+🔴 **The anchor is an ITEM id and the cut point is a TURN id, and the bridge between them is
+an off-by-one that no test of the happy path would find.** The schema settles it rather than a
+measurement: an item's `turnId` is "the owning turn (== the submitting `commandId` for fresh
+turns)", so a user message belongs to the turn it STARTED, not to the one before it. Therefore
+
+- "redo this message" (exclusive) cuts at the **preceding** turn — and there being none is an
+  error, not a whole-conversation fork;
+- "continue from this message" (inclusive) cuts at **that** turn — unless it is the last, where
+  keeping everything through the final turn is the whole conversation, and `""` is the value
+  that says so.
+
+Both directions produce a plausible-looking conversation when wrong, which is why the mutation
+sweep's first arm was moving the exclusive cut by one.
+
+**A fork copies two things, which is why `ForkSource` returns the slot sid rather than the muse
+session id.** The host's conversation is copied by `session/fork`; AF's own item store is copied
+by `store.ForkAt`, and the store is what `Transcript` reads (transcript.go's header). Return the
+muse session id and the store copy has no key — the forked session would open with an empty
+history, the opposite of what forking is for. The slot sid keys both.
+
+Three smaller things the implementation settled:
+
+- **The host mints the new id.** Unlike `session/start`, where AF supplies a UUIDv7, the fork's
+  identity only exists in the result — so it is read back and stored there, and a fork is
+  attempted exactly once, for a slot with no stored session. There is no id to make a retry
+  idempotent with.
+- **The store copy is not fatal.** It runs after the host's fork succeeded, and a failure logs:
+  the conversation exists either way, and refusing the session because AF could not mirror its
+  history trades a rendering gap for a dead session — the posture `onItem` already takes.
+- ⚠️ **A test that hangs is worse than a test that fails.** The first version of the wire test
+  read the captured params off a bare channel, so the mutation that skips the fork entirely —
+  the exact defect it exists for — made it block for the package's full ten-minute timeout with
+  no test named. It has a deadline now.
+
+Verification is msptest for both cut directions, both refusals and the store copy, a six-arm
+mutation sweep, and a live `session/fork` against the vendor's own host that spends nothing: a
+whole-conversation fork of a session with no completed turns needs no cut point and no model
+call, and the result's `forkedFrom` provenance is what the driver reads back.
+
+### Phase 2 closed: what is built, what is not, and one thing found next door
+
+Every row of the work-package table is landed (P2-1 … P2-11 and P2-13, plus P2-12 for the MCP
+route no row owned), so the Status above is *adopted*. The estimate was 22–33 session-days; the
+work ran to thirteen packages.
+
+**The eight capability rows that are still `—` are not blocked by Muse Code, and the guide now
+says so rather than saying "still being built".** Each is an Agent Fleet feature nobody wired
+for this kind, and they split into two shapes:
+
+- **Two the protocol carries and a package deliberately stopped short of.** The context-usage
+  gauge (`session/contextUsage` exists, but it only fires around a turn, so declaring
+  `contextBar` would be a capability read off a schema rather than measured end to end) and
+  image paste (attachments ride as text parts naming the path; MSP's image part takes base64,
+  so this is a real piece of work, not a flag).
+- **Six that are not written per agent at all** — the skill/command picker, handoff, starting in
+  a worktree, scheduled runs, the chat bridge and use as the assistant chat. ADR 0093's own
+  inventory found no per-kind branch in the handoff, spawn, shared-view or scheduled-launch
+  paths, so the likely truth is that most of them already work. "Likely" is exactly why the row
+  stays unticked: this table only ticks what was seen working end to end, and seeing these work
+  costs real turns against a member's subscription.
+
+⚠️ **One finding that is not muse's**, surfaced while checking the above and left alone
+deliberately: `ScheduleDetailModal.tsx`'s `AGENT_KINDS` is a hand-kept list of six
+(`claude, codex, opencode, copilot, cursor, kiro`). It is missing **agy**, which this same guide
+table marks ✓ for scheduled runs, as well as lcpp and muse. So a schedule's agent cannot be
+edited to agy in the Console today. It is not fixed here because it is not this kind's defect
+and because "muse can be scheduled" is a claim that needs a turn to make honestly — but a
+hand-kept kind list that has already drifted once will drift again, and the fix is the same
+shape as `mcpreg.ServedKinds`: name the axis instead of listing the members.

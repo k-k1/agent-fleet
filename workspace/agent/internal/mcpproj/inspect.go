@@ -55,6 +55,11 @@ var kindInfos = []KindInfo{
 	{Kind: session.KindCopilot, HasProjectScope: true, GateCode: "none", Dialects: []string{DialectDollarBrace}},
 	{Kind: session.KindKiro, HasProjectScope: true, Unverified: true},
 	{Kind: session.KindAgy, HasProjectScope: false},
+	// muse: no project-scope MCP spelling is documented and none was measured, so the row is
+	// agy's shape — present, and stating that there is nothing to inspect. `fileSpecs` gains
+	// no entry either, which makes muse neither inspected nor a copy target; that is a static
+	// fact about the kind, not a runtime fallback to another kind's file (ADR 0095 decision 11).
+	{Kind: session.KindMuse, HasProjectScope: false},
 }
 
 // Inspect gathers dir's project-scope MCP servers into a Snapshot. dir must already

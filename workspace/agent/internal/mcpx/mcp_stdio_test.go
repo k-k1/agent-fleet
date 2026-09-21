@@ -237,6 +237,11 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 			_, _ = w.Write([]byte(`{"ok":false,"authed":false}`))
 		case "/connections/agy/usage":
 			_, _ = w.Write([]byte(`{"ok":true,"authed":true,"account":"a@b.com","groups":[{"label":"GEMINI MODELS","remainingPct":98.8}]}`))
+		case "/muse/usage":
+			// Signed in with nothing observed yet — the state a workspace is in until a muse
+			// turn completes. It is a distinct answer from "not signed in", and the assistant
+			// must be able to tell them apart (ADR 0095 decision 10).
+			_, _ = w.Write([]byte(`{"ok":false,"authed":true}`))
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -282,6 +287,10 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 				RemainingPct float64 `json:"remainingPct"`
 			} `json:"groups"`
 		} `json:"agy"`
+		Muse struct {
+			Authed bool `json:"authed"`
+			OK     bool `json:"ok"`
+		} `json:"muse"`
 	}
 	if err := json.Unmarshal([]byte(parsed.Result.Content[0].Text), &merged); err != nil {
 		t.Fatalf("merged payload not JSON: %v: %s", err, parsed.Result.Content[0].Text)
@@ -296,6 +305,11 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 	if !merged.Agy.Authed || merged.Agy.Account != "a@b.com" || len(merged.Agy.Groups) != 1 ||
 		merged.Agy.Groups[0].Label != "GEMINI MODELS" {
 		t.Fatalf("agy = %+v, want authed=true account=a@b.com one GEMINI MODELS group", merged.Agy)
+	}
+	// muse: signed in, no reading. Both flags matter — ok=false alone reads as "not signed
+	// in" and would send the assistant to tell the member to log in.
+	if !merged.Muse.Authed || merged.Muse.OK {
+		t.Fatalf("muse = %+v, want authed=true ok=false", merged.Muse)
 	}
 }
 

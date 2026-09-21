@@ -331,6 +331,11 @@ func buildMux() *http.ServeMux {
 	// Copilot account credit quota (remaining % + reset + plan) for the WsBar chip;
 	// structured JSON from copilot_internal/user via the gh transparent-auth token.
 	mux.HandleFunc("GET /copilot/usage", copilot.HandleUsage)
+	// muse subscription quota (current window + weekly) for the WsBar chip. Unlike the others
+	// there is no CLI to ask and no file to read: it is the host's own last observation off
+	// the wire (ADR 0095 decision 10), so a workspace with no muse session running answers
+	// "signed in, nothing observed".
+	mux.HandleFunc("GET /muse/usage", muse.HandleUsage)
 	mux.HandleFunc("GET /codex/settings", codex.HandleSettingsGet)
 	mux.HandleFunc("PUT /codex/settings", codex.HandleSettingsPut)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
@@ -427,6 +432,13 @@ func buildMux() *http.ServeMux {
 	// sites.
 	mux.HandleFunc("PUT /connections/jira/oauth", handleJiraOAuthStore)
 	mux.HandleFunc("PUT /connections/jira/site", handlePutJiraSite)
+	// llama.cpp member connection (docs/log/107): a member's own LAN llama-server, stored in
+	// the encrypted secrets store like every other connection here — never in ui-prefs.json
+	// (plaintext). check dials the STORED connection live (build_info + n_ctx + model ids);
+	// put/delete never do (shape validation only — see connections.go's own doc comment).
+	mux.HandleFunc("PUT /connections/lcpp", handlePutLcppConn)
+	mux.HandleFunc("DELETE /connections/lcpp", handleDeleteLcppConn)
+	mux.HandleFunc("POST /connections/lcpp/check", handleCheckLcppConn)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
 	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)

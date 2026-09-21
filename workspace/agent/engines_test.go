@@ -1030,6 +1030,7 @@ func TestSyncEngineProvidersRemembersTheLastMeasuredWindow(t *testing.T) {
 // at boot / per catalogue push), so an uncached call would pay enginePropsWindow's own
 // round trip on every single turn. A warm answer is cached across calls within the TTL.
 func TestHarnessEngineWindowCachesAWarmAnswer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // harnessEngineWindowUncached now checks a member connection (docs/log/107) first; isolate from the real secrets store
 	res := engineCatalogPropsStub(t, engineRowLlmSized,
 		map[string]int{"llm": http.StatusOK},
 		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":65536}}`})
@@ -1050,6 +1051,7 @@ func TestHarnessEngineWindowCachesAWarmAnswer(t *testing.T) {
 // live report), and engineMeasuredWindows never remembers a failure — without this cache,
 // every chat turn would pay that round trip again forever.
 func TestHarnessEngineWindowCachesAFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())                                              // isolate from the real secrets store (docs/log/107 member connection check)
 	res := engineCatalogPropsStub(t, engineRowLlmSized, map[string]int{}, nil) // undeclared "llm" -> bare 404
 
 	for i := 0; i < 3; i++ {
@@ -1065,6 +1067,7 @@ func TestHarnessEngineWindowCachesAFailure(t *testing.T) {
 // The cache is keyed and TTL'd, not permanent: once it expires, a box (or a Control Plane)
 // that changed state is picked up rather than being stuck on the first answer forever.
 func TestHarnessEngineWindowCacheExpires(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // isolate from the real secrets store (docs/log/107 member connection check)
 	res := engineCatalogPropsStub(t, engineRowLlmSized,
 		map[string]int{"llm": http.StatusOK},
 		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":65536}}`})

@@ -50,7 +50,9 @@ type managedDriver struct{ agentImpl }
 // muse.go's Caps header carries the measurement.
 //
 // Questions is separately true and is a DIFFERENT channel: userInput/requested maps onto AF's
-// existing question interaction field for field. Fork stays false until the fork path is built.
+// existing question interaction field for field. Fork is true: `session/fork` is the wire
+// method, and the agent's ForkSource / ResolveForkAt with the driver's forkSession are the
+// path — measured end to end against the real host, cut point and all.
 func (managedDriver) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
 		ProcessModel:  "per-session-child",
@@ -59,6 +61,7 @@ func (managedDriver) Capabilities() agents.Capabilities {
 		DynamicEffort: true,
 		Questions:     true,
 		Permissions:   true,
+		Fork:          true,
 	}
 }
 
@@ -129,6 +132,12 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	if h.settings.Effort == "" {
 		h.settings.Effort = m.Effort
+	}
+	// The pending fork, carried until the slot actually opens a session. Cleared by the same
+	// stored-session check openSession makes, so a slot that has already lived never re-forks
+	// even though its meta keeps the provenance forever.
+	if _, opened := readSession(h.slotSid); !opened {
+		h.forkFrom, h.forkAt = m.ForkFrom, m.ForkAt
 	}
 	// Whether to skip the permission prompt is resolved from meta and ui-prefs on every
 	// Resume, not carried in ThreadSettings: "empty means unchanged" cannot make a bool

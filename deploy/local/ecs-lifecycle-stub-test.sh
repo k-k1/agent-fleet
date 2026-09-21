@@ -426,7 +426,7 @@ order "cloudformation deploy --stack-name af-ecs-engines" "ecs update-service --
 # that are easy to get wrong: its image comes from a different upstream, and it has NO
 # generated key at all (ComfyUI has no authentication option — the security group is the whole
 # of it).
-order "crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.34.0" "cloudformation deploy --stack-name af-ecs-engines"
+order "crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.37.0" "cloudformation deploy --stack-name af-ecs-engines"
 has "ecs update-service --cluster t-cluster --service af-af-ecs-engines-image --desired-count 0"
 grep -q "deploy --stack-name t-ingress .*EnginesSsmParam=/af-ws/engines" "$LOG" \
   || fail "30-ingress did not get the engine table's SSM name (the gateway would 404)"

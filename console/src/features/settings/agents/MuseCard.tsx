@@ -5,7 +5,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "../parts/providerCard.tsx";
 import { usePolling } from "../parts/usePolling.ts";
-import { ConnPaused } from "./AgentCardParts.tsx";
+import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
 
 // Muse Code (ADR 0095). Three states, and the order matters because each is a precondition of
 // the next: the proprietary binary is not in the image, so a fresh workspace offers an install
@@ -29,9 +29,9 @@ import { ConnPaused } from "./AgentCardParts.tsx";
 //     member onto metered billing. The card says that up front instead of letting a 409 be the
 //     first the member hears of it.
 //
-// No LaunchDefaults block yet: muse's model and effort controls are their own work package, and
-// its permission choice is deliberately absent (approvals cannot fire — registry.ts). A settings
-// group whose only row is an inert "Default" picker is worse than none.
+// The launch defaults block carries the model and the reasoning effort only. Its permission
+// choice is deliberately absent (approvals cannot fire — registry.ts), and muse has no plan
+// mode, so those two rows would be controls with nothing behind them.
 export function MuseCard({ running, st, reload }: { running: boolean; st: any; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
@@ -287,6 +287,13 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
           )}
         </div>
       )}
+      {/* The launch defaults stay reachable in every state, the same as every other card: they
+          are client-side settings, so they work while the workspace is stopped and before the
+          binary is installed. The model picker is empty until both are true, which is the
+          honest answer — the catalogue is the signed-in account's. */}
+      <CardSettings>
+        <LaunchDefaults kind="muse" />
+      </CardSettings>
     </ProviderCard>
   );
 }

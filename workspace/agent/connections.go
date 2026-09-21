@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 
@@ -61,10 +64,11 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		// muse (ADR 0095): supported=false until the on-demand install lands the proprietary
 		// binary; connected reads ~/.config/muse/auth.json, so it needs no subprocess.
 		"muse": muse.Status(),
-		// lcpp (docs/log/105 §106.2): no sign-in of its own (ADR 0093 決定 10), so the only
-		// thing to report is the user's own display setting — the signpost registry.ts's
-		// available() hides the launch menus behind. HandleCreateSession holds the real gate.
-		"lcpp": map[string]any{"enabled": uiprefs.LcppEnabled()},
+		// lcpp (docs/log/105 §106.2 / docs/log/107): the user's own display setting
+		// (enabled) plus, since docs/log/107, whether a member LAN connection is
+		// configured (connected/url — never the API key). lcppStatus never returns
+		// the key: see connections.go's own doc comment on that function.
+		"lcpp": lcppStatus(s),
 		// copilot rides on the GitHub connection (docs/log/36 contract): no flow of its own.
 		"copilot":    copilot.Status(ghConnected),
 		"jira":       jiraStatus(s), // where work items are fetched from (docs/log/80 P1)
@@ -512,6 +516,142 @@ func handleDeleteGrafanaConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "grafana"})
+}
+
+// --- llama.cpp: the member's own LAN connection (docs/log/107) ------------------------
+//
+// Unlike every other card in this file, lcpp has no service to authenticate against on
+// save — the URL is validated for SHAPE only (http(s):// + a host), never dialed here.
+// Whether it actually answers is a separate, explicit action (handleCheckLcppConn below),
+// the same split Muse's "check for update" affordance makes between "save the setting" and
+// "ask the thing about itself".
+
+// lcppStatus reports the member's llama.cpp connection: the existing display setting
+// (enabled, docs/log/105 §106.2, unrelated to whether a connection is configured) plus,
+// when one is stored, connected=true and the URL. NEVER the API key — GET /connections
+// must not leak a secret, which TestConnectionsGetNeverLeaksLcppAPIKey pins.
+func lcppStatus(s *secrets.Data) map[string]any {
+	out := map[string]any{"enabled": uiprefs.LcppEnabled(), "connected": false}
+	if s.Lcpp != nil && s.Lcpp.URL != "" {
+		out["connected"] = true
+		out["url"] = s.Lcpp.URL
+	}
+	return out
+}
+
+// lcppConnReq is the wire shape of PUT /connections/lcpp. APIKey is optional — an
+// unauthenticated llama-server on a LAN is a real, common setup — but URL is required:
+// clearing the connection is DELETE /connections/lcpp, not an empty PUT, so an empty PUT
+// never has to be read as either "no change" or "disable".
+type lcppConnReq struct {
+	URL    string `json:"url"`
+	APIKey string `json:"apiKey"`
+}
+
+// normalizeLcppURL validates and normalizes the member's llama-server URL: http(s) scheme,
+// a host, and stored WITHOUT a trailing "/v1" — engines.go's harnessEngineToken appends /v1
+// itself for the chat mount, and the window/check probes need the bare base for /props. A
+// URL pasted WITH a trailing /v1 (the shape most OpenAI-compatible client configs use) is
+// still accepted; only the stored form is normalized.
+func normalizeLcppURL(raw string) (string, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	trimmed = strings.TrimSuffix(trimmed, "/v1")
+	trimmed = strings.TrimRight(trimmed, "/")
+	if trimmed == "" {
+		return "", errors.New("enter the connection URL")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", errors.New("URL must start with http(s)://")
+	}
+	return trimmed, nil
+}
+
+func handlePutLcppConn(w http.ResponseWriter, r *http.Request) {
+	var req lcppConnReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	normalized, err := normalizeLcppURL(req.URL)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnLcppURLRequired, err.Error())
+		return
+	}
+	conn := &secrets.LcppConn{URL: normalized, APIKey: strings.TrimSpace(req.APIKey)}
+	var status map[string]any
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = conn
+		status = lcppStatus(s)
+		return nil
+	}); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	lcppMemberCacheReset()
+	httpx.WriteJSON(w, http.StatusOK, status)
+}
+
+func handleDeleteLcppConn(w http.ResponseWriter, r *http.Request) {
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = nil
+		return nil
+	}); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	lcppMemberCacheReset()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "lcpp"})
+}
+
+// lcppCheckTimeout bounds POST /connections/lcpp/check — a synchronous button click against
+// a LAN box that may simply be off, so it must fail fast (same reasoning as
+// lcppMemberClient's own 3s, engines.go).
+const lcppCheckTimeout = 5 * time.Second
+
+// handleCheckLcppConn (POST /connections/lcpp/check) dials the STORED connection directly —
+// never a connection typed but not yet saved, so there is no masked-API-key ambiguity to
+// resolve (GET /connections never echoes the key back, so a re-typed request body could not
+// reliably carry it). Reports build_info and the real window the same way lcppMemberWindow
+// does (engines.go) plus the model id list, and — unlike lcppModels' cached path — always
+// asks live: this is an explicit "check now" action, not the launch menu.
+func handleCheckLcppConn(w http.ResponseWriter, r *http.Request) {
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	if s.Lcpp == nil || s.Lcpp.URL == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnLcppURLRequired, "no connection configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), lcppCheckTimeout)
+	defer cancel()
+	conn := *s.Lcpp
+	props, propsOK := lcppMemberProbeProps(ctx, conn)
+	models, modelsOK := lcppMemberFetchModels(ctx, conn)
+	if !propsOK && !modelsOK {
+		httpx.WriteErr(w, http.StatusBadGateway, "lcpp_check_failed", "the connection did not answer /props or /v1/models")
+		return
+	}
+	nctx := props.DefaultGenerationSettings.NCtx
+	if nctx <= 0 {
+		for _, m := range models {
+			if m.NCtx > 0 {
+				nctx = m.NCtx
+				break
+			}
+		}
+	}
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		ids = append(ids, m.ID)
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"build_info": props.BuildInfo,
+		"n_ctx":      nctx,
+		"models":     ids,
+	})
 }
 
 // cloudwatchStatus reports the stored CloudWatch settings (all non-secret — see

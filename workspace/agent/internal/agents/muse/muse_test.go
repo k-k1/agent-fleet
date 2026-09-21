@@ -31,9 +31,11 @@ func TestKindAndCaps(t *testing.T) {
 	if !c.CanTranscript {
 		t.Error("CanTranscript must be true: Transcript reads a store the item stream fills")
 	}
-	// A cap is a claim about a path that exists, and the fork path is not built.
-	if c.CanFork || c.CanForkAt {
-		t.Error("a fork cap was claimed for a path that is not implemented yet")
+	// The two fork caps move together for this kind, and they must: there is one launch
+	// route, so "can fork, but not through this route" (agents.ErrForkAtRoute) has no case
+	// here, and the whole-conversation fork is the point fork with no cut.
+	if !c.CanFork || !c.CanForkAt {
+		t.Error("both fork caps belong to a kind with one launch route and session/fork on the wire")
 	}
 }
 
@@ -89,8 +91,8 @@ func TestCapabilitiesDeclareOnlyWhatTheDriverImplements(t *testing.T) {
 		t.Error("Caps.PermissionChoice and Capabilities.Permissions have drifted back into a pair; " +
 			"they answer different questions (muse.go, driver.go)")
 	}
-	if c.Fork {
-		t.Error("Fork must stay false until the fork path is built")
+	if !c.Fork {
+		t.Error("Fork must be true: session/fork is wired through ForkSource / ResolveForkAt / forkSession")
 	}
 }
 

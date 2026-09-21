@@ -10,6 +10,7 @@ package muse
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -53,13 +54,19 @@ func (agentImpl) Kind() string { return session.KindMuse }
 // shows the member nothing. This flag is the member-visible one.
 //
 // CanTranscript is true now that Transcript below really reads a store that the live item
-// stream fills. CanFork and CanForkAt stay false: MSP carries `session/fork`, so both will be
-// true, but a cap is a claim about a path measured end to end (docs/log/76) and that one is
-// not built — claiming it early shows the member an affordance that silently does nothing.
+// stream fills.
+//
+// CanFork and CanForkAt are true together, and for muse they cannot be anything else: there is
+// one launch route (managed-only), so `agents.ErrForkAtRoute` — "this kind can fork, but not
+// through the route this session took" — has no case here. The whole-conversation fork is the
+// point fork with no cut, which is exactly what the wire says (`cutPoint` omitted means "all
+// completed turns"), so a kind that could do one and not the other would be AF's invention.
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{
 		ManagedOnly:   true,
 		CanTranscript: true,
+		CanFork:       true,
+		CanForkAt:     true,
 	}
 }
 
@@ -131,4 +138,87 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	}
 	h.mu.Unlock()
 	return td, true
+}
+
+// --- Forker / ForkAtResolver (decision 13: MSP carries `session/fork`) ----------------
+
+// ForkSource returns what the new session's ForkFrom carries: this slot's SID, not the muse
+// session id.
+//
+// That looks like the wrong identifier — `session/fork` takes a muse session id — and it is
+// deliberate: the fork has to copy TWO things, the host's conversation and AF's own item store
+// (transcript.go's header says why the store exists). The slot sid is the key to both; the
+// muse session id is the key to one, and nothing derives the other from it.
+func (agentImpl) ForkSource(m session.Meta) (string, error) {
+	sid := slotSid(m)
+	prev, ok := readSession(sid)
+	if !ok || prev.ID == "" {
+		return "", errors.New("まだ会話がないためフォークできません")
+	}
+	return sid, nil
+}
+
+// ResolveForkAt turns the clicked anchor into the wire's cut point — a TURN id, where the
+// anchor is an ITEM id.
+//
+// The bridge between the two is the schema's own sentence: an item's `turnId` is "the owning
+// turn (== the submitting commandId for fresh turns)", so the item of a user message belongs
+// to the turn that message STARTED, not to the one before it. That is what makes the two
+// directions simple:
+//
+//   - Include=false ("redo this message") keeps everything before that turn, so the cut is the
+//     PRECEDING turn — and there being none is an error, not a whole-conversation fork.
+//   - Include=true ("continue from this message") keeps that turn and its reply, so the cut is
+//     the turn itself — unless it is the last one, where "keep everything through the final
+//     turn" IS the whole conversation and "" is the value that says so.
+//
+// `cutPoint.lastTurnId` is INCLUSIVE on the wire, which is why both arms name a turn to keep
+// rather than a turn to stop before.
+func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
+	items, err := openStore(slotSid(m)).Items()
+	if err != nil {
+		return "", err
+	}
+	var anchorTurn string
+	found := false
+	for _, it := range items {
+		if it.ItemID != at.Anchor {
+			continue
+		}
+		found = true
+		if it.TurnID != nil {
+			anchorTurn = *it.TurnID
+		}
+		break
+	}
+	if !found {
+		return "", fmt.Errorf("フォーク元のターンが見つかりません: %s", at.Anchor)
+	}
+	if anchorTurn == "" {
+		// A `userShell` item is the one kind outside a turn (the schema says so), so there is
+		// no boundary to cut at. Refusing is the honest answer; falling back to the whole
+		// conversation would look like it worked.
+		return "", errors.New("この位置ではフォークできません（ターンに属さない項目です）")
+	}
+	order := turnOrder(items)
+	idx := -1
+	for i, id := range order {
+		if id == anchorTurn {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return "", fmt.Errorf("フォーク元のターンが見つかりません: %s", at.Anchor)
+	}
+	if !at.Include {
+		if idx == 0 {
+			return "", errors.New("この会話の先頭より前ではフォークできません")
+		}
+		return order[idx-1], nil
+	}
+	if idx == len(order)-1 {
+		return "", nil // the last exchange: keep the whole conversation
+	}
+	return order[idx], nil
 }

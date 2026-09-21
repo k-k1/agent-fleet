@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/userinstr"
 )
@@ -53,6 +54,9 @@ func TestReconcileRegistersTopicFilesAsSkills(t *testing.T) {
 		filepath.Join(home, ".claude", "skills"),
 		filepath.Join(home, ".codex", "skills"),
 		filepath.Join(home, ".config", "opencode", "skills"),
+		// muse's user skills root needs no install step and no lock-file entry — a dropped
+		// SKILL.md is simply listed (ADR 0095 gate B1-5).
+		filepath.Join(home, ".config", "muse", "skills"),
 	} {
 		b, err := os.ReadFile(filepath.Join(root, "af-fixture", "SKILL.md"))
 		if err != nil {
@@ -132,6 +136,7 @@ func TestReconcileDeliversToEverySupportedKind(t *testing.T) {
 		{"copilot", copilot.UserInstructionsPath()},
 		{"agy", agy.AgentsPath()},
 		{"kiro", kiro.UserInstructionsPath()},
+		{"muse", muse.AgentsPath()},
 	} {
 		if got := read(t, tc.path); !strings.Contains(got, "Always report in Japanese.") {
 			t.Fatalf("%s: user text missing from %s:\n%s", tc.name, tc.path, got)
@@ -153,7 +158,7 @@ func TestReconcileDeliversToEverySupportedKind(t *testing.T) {
 func TestReconcileComposesFleetGuideForCodexAndOpencode(t *testing.T) {
 	instrEnv(t)
 	reconcileAgentInstructions()
-	for _, path := range []string{codex.AgentsPath(), opencode.AgentsPath(), agy.AgentsPath()} {
+	for _, path := range []string{codex.AgentsPath(), opencode.AgentsPath(), agy.AgentsPath(), muse.AgentsPath()} {
 		got := read(t, path)
 		if !strings.Contains(got, "do not delete other sessions' work") {
 			t.Fatalf("%s: fleet guide missing:\n%s", path, got)
@@ -456,4 +461,78 @@ func TestPutSavesAndAppliesInOneCall(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "ROUNDTRIP") {
 		t.Fatal("PUT response should carry the new snapshot")
 	}
+}
+
+// 🔴 muse is the one kind where BOTH apply paths land in the same file, so its two blocks
+// share `~/.config/muse/AGENTS.md` with whatever the member wrote there themselves (ADR 0095
+// decision 12). Three things have to hold at once and each fails silently on its own: the
+// member's text survives, the fleet block precedes the user block, and neither is written
+// twice.
+func TestMuseFileHoldsFleetAndUserBesideTheMembersOwnText(t *testing.T) {
+	instrEnv(t)
+	path := muse.AgentsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# my own muse rules\n\nalways answer in Japanese\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := userinstr.SaveText("MUSEORDER\n"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	reconcileAgentInstructions() // idempotent
+
+	got := read(t, path)
+	if !strings.Contains(got, "always answer in Japanese") {
+		t.Fatalf("the member's own rules were destroyed:\n%s", got)
+	}
+	fleet := strings.Index(got, "<!-- agent-fleet:fleet -->")
+	user := strings.Index(got, "<!-- agent-fleet:user-notes -->")
+	if fleet < 0 || user < 0 || fleet > user {
+		t.Fatalf("order must be fleet<user (%d,%d):\n%s", fleet, user, got)
+	}
+	for _, marker := range []string{"<!-- agent-fleet:fleet -->", "<!-- agent-fleet:user-notes -->"} {
+		if n := strings.Count(got, marker); n != 1 {
+			t.Fatalf("%s written %d times:\n%s", marker, n, got)
+		}
+	}
+	if !strings.Contains(got, "MUSEORDER") {
+		t.Fatalf("user text missing:\n%s", got)
+	}
+	// AF writes AGENTS.md only. CLAUDE.md is probed by muse too, and the measured precedence
+	// is that AGENTS.md wins and CLAUDE.md is announced as ignored — writing both would mean
+	// writing a file whose content muse says it is discarding.
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatal("AF must not write ~/.config/muse/CLAUDE.md")
+	}
+}
+
+// The distribution status the Console shows has to measure the BLOCK, not the file: muse's
+// AGENTS.md exists as soon as the fleet policy lands, so a file-existence check would report
+// the member's instructions as delivered before they were written.
+func TestMuseStatusMeasuresTheBlockNotTheFile(t *testing.T) {
+	instrEnv(t)
+	off := false
+	if err := userinstr.SavePrefs(userinstr.Prefs{Enabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	if !fileExists(muse.AgentsPath()) {
+		t.Fatal("the fleet policy did not reach muse's AGENTS.md")
+	}
+	for _, tgt := range instrState().Targets {
+		if tgt.Kind != "muse" {
+			continue
+		}
+		if !tgt.Supported || tgt.Delivery != deliveryCompose || tgt.Path != muse.AgentsPath() {
+			t.Fatalf("muse target = %+v", tgt)
+		}
+		// Nothing of the member's is wanted and nothing is there: applied.
+		if !tgt.Applied {
+			t.Fatalf("muse reports not applied while nothing is wanted: %+v", tgt)
+		}
+		return
+	}
+	t.Fatal("muse is not in the distribution status")
 }

@@ -928,7 +928,7 @@ by the Control Plane rather than delegated (ADR 0077 decisions 1 and 5).
    can rescue an empty repository). `standup.sh` does it in the images step; by hand it is
    `crane copy ghcr.io/ggml-org/llama.cpp:server-cuda <acct>.dkr.ecr.<region>.amazonaws.com/af-llamacpp:server-cuda`
    and, for the image role,
-   `crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.34.0 <acct>.dkr.ecr.<region>.amazonaws.com/af-comfyui:v0.34.0`.
+   `crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.37.0 <acct>.dkr.ecr.<region>.amazonaws.com/af-comfyui:v0.37.0`.
    It is also worth doing for a measured reason: **GHCR through this NAT runs at 12–14 MB/s**,
    which put 178 seconds of a 527-second cold start into the pull alone. (`standup.sh` copies
    the image-role image only when `ImageEnabled=true` — an LLM-only deployment does not pay for
