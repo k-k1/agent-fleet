@@ -589,11 +589,11 @@ func TestComfyCapsQwenImageEditIsEditOnlyAndTakesNoStrengthOrSizes(t *testing.T)
 	if len(caps.Sizes) != 0 {
 		t.Errorf("sizes = %v, want none — the family decides the size from the input picture", caps.Sizes)
 	}
-	// 2 since P3 wired image2 (ADR 0094 decision 5). NOT 3: the node takes image3 and the wiring
-	// is a loop, so the only thing keeping this honest is that three references have never been
-	// run — the number and the measurement move together.
-	if caps.MaxInputs != 2 {
-		t.Errorf("max inputs = %d, want 2 (image2 is wired; image3 is unmeasured)", caps.MaxInputs)
+	// 3 since P3: image2 and image3 are wired AND three were measured (実測 F). The node takes
+	// image1..image3 and stops there, so this is the family's ceiling rather than a step on the
+	// way to a larger one.
+	if caps.MaxInputs != 3 {
+		t.Errorf("max inputs = %d, want 3 (TextEncodeQwenImageEditPlus takes image1..image3)", caps.MaxInputs)
 	}
 	// The positive control: the OTHER row on the same engine still answers the old way, so the
 	// difference above is the family's and not some engine-wide change.

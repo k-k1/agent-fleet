@@ -823,22 +823,29 @@ func TestComfyWorkflowQwenImageEditWiresTheSecondReferenceToBothEncodes(t *testi
 	for _, c := range comfyQwenEditFamilies {
 		t.Run(string(c.family), func(t *testing.T) {
 			p := comfyGoldenParams
-			p.Op, p.Images = OpEdit, []string{"af-scene.png", "af-plant.png"}
+			// All three the node takes (実測 F measured three arriving at once), so the loop is
+			// driven past its first turn — an `image2`-shaped special case would pass at two.
+			p.Op, p.Images = OpEdit, []string{"af-scene.png", "af-plant.png", "af-duck.png"}
 			g, err := comfyBuildGraph(c.family, c.files, p)
 			if err != nil {
 				t.Fatal(err)
 			}
-			img2, ok := g["img2"]
-			if !ok || img2.ClassType != "LoadImage" || img2.Inputs["image"] != "af-plant.png" {
-				t.Fatalf("img2 = %+v, want a LoadImage of the second reference", g["img2"])
+			for node, want := range map[string]string{"img2": "af-plant.png", "img3": "af-duck.png"} {
+				n, ok := g[node]
+				if !ok || n.ClassType != "LoadImage" || n.Inputs["image"] != want {
+					t.Fatalf("%s = %+v, want a LoadImage of %s", node, g[node], want)
+				}
 			}
 			for _, encode := range []string{"pos", "neg"} {
 				if got := comfyLinkAt(t, g, encode+".image1"); got[0] != "scale" {
 					t.Errorf("%s.image1 reads %v, want the scaled first picture", encode, got)
 				}
-				got := comfyLinkAt(t, g, encode+".image2")
-				if got[0] != "img2" {
-					t.Errorf("%s.image2 reads %v, want the raw img2 — scaling it would crop the borrowed object", encode, got)
+				for input, want := range map[string]string{"image2": "img2", "image3": "img3"} {
+					got := comfyLinkAt(t, g, encode+"."+input)
+					if got[0] != want {
+						t.Errorf("%s.%s reads %v, want the raw %s — scaling it would crop the borrowed object",
+							encode, input, got, want)
+					}
 				}
 			}
 			if got := comfyLinkAt(t, g, "enc.pixels"); got[0] != "scale" {
