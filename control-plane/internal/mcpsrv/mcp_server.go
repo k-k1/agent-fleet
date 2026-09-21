@@ -71,6 +71,11 @@ var mcpReservedNames = map[string]bool{"af": true, "agent-fleet": true}
 var mcpKnownKinds = map[string]bool{
 	"claude": true, "codex": true, "opencode": true,
 	"cursor": true, "kiro": true, "agy": true, "copilot": true,
+	// muse takes its servers on the WIRE rather than in a config file (ADR 0095 decision 11),
+	// which changes nothing here: this list is "does the kind run an MCP client at all", and
+	// leaving it out meant an admin could not scope a tenant server to muse — the definition
+	// was refused at :232 with the kind unknown.
+	"muse": true,
 }
 
 // mcpServerStore is the narrow store view this feature needs: the definitions plus the
