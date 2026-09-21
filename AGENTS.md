@@ -125,6 +125,12 @@ The full build/reflect matrix is `docs/build/10-development.md`.
 - **Before reporting "0 hits" or "green", show that the tool caught something it should catch.**
   An empty result and a scanner that never ran look identical, and so do a check that passed and a
   check that matched nothing.
+- **`gofmt -l` lists the unformatted files and still exits `0`** — read its OUTPUT, not its
+  status (`out=$(gofmt -l .); [ -z "$out" ] || echo "UNFORMATTED: $out"`, once per module).
+  `ci.yml` checks the output, so this is a step that goes red after `go build`, `go vet`,
+  `go test` and the pre-commit hook were all green. Worth remembering when you edit Go with a
+  script rather than an editor: adding one entry to a map literal or a const block re-aligns
+  the lines around it, so a diff you did not write becomes part of the change.
 
 The long form — 30 rules, each with the concrete defect behind it — is in the developer work
 journal for the 2026-09 parallel refactor.

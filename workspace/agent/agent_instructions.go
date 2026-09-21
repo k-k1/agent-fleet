@@ -35,6 +35,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -80,7 +81,7 @@ type instrTarget struct {
 
 // instrSupportedKinds are the kinds the body can be distributed to, in the Console's
 // display order.
-var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro"}
+var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro", "muse"}
 
 // instrUnsupported are the kinds it cannot reach, with the reason (measured, docs/log/60
 // §60.3).
@@ -126,6 +127,10 @@ func applyInstructionsLocked() {
 	note("agy", agy.ApplyFleetNotes(fleet))
 	note("copilot", copilot.ApplyFleetNotes(fleet))
 	note("kiro", kiro.ApplyFleetNotes(fleet))
+	// muse shares ONE file between both apply paths (ADR 0095 decision 12), so the two notes
+	// below are two marker blocks in the same AGENTS.md rather than two artefacts. The order
+	// they land in is this call order, which is why fleet stays above user here.
+	note("muse", muse.ApplyFleetNotes(fleet))
 
 	// 1b. The topic files behind the policy, registered as skills where the CLI has a user
 	// skills root, so its own index (description at start, body on demand) carries an agent
@@ -136,6 +141,9 @@ func applyInstructionsLocked() {
 	note("claude", fleetskills.Apply(filepath.Join(paths.ClaudeConfigDir(), "skills"), topics))
 	note("codex", fleetskills.Apply(filepath.Join(paths.CodexHome(), "skills"), topics))
 	note("opencode", fleetskills.Apply(filepath.Join(paths.OpencodeConfigDir(), "skills"), topics))
+	// muse's user skills root needs no install step and no lock-file entry: a hand-dropped
+	// SKILL.md is listed by `muse skills list --source user` (measured, gate B1-5).
+	note("muse", fleetskills.Apply(muse.SkillsDir(), topics))
 
 	// 2. The user's own instructions.
 	note("claude", claude.ApplyUserInstructions(st.Body("claude")))
@@ -144,6 +152,7 @@ func applyInstructionsLocked() {
 	note("copilot", copilot.ApplyUserInstructions(st.Body("copilot")))
 	note("agy", agy.ApplyUserInstructions(st.Body("agy")))
 	note("kiro", kiro.ApplyUserInstructions(st.Body("kiro")))
+	note("muse", muse.ApplyUserInstructions(st.Body("muse")))
 
 	// 3. rtk is always last (it comes last within the file too).
 	applyRTKLocked()
@@ -185,6 +194,13 @@ func instrState() instrStateWire {
 		case "kiro":
 			t.Delivery, t.Path = deliveryFile, kiro.UserInstructionsPath()
 			t.Applied = fileExists(t.Path) == want
+		case "muse":
+			// The same shape as codex and agy: one AGENTS.md shared with the fleet policy, so
+			// the measurement has to be the BLOCK's presence. `fileExists` would report
+			// "applied" for a file that holds only the fleet block, or only the member's own
+			// text (ADR 0095 decision 12).
+			t.Delivery, t.Path = deliveryCompose, muse.AgentsPath()
+			t.Applied = fileHasBlock(t.Path, "user-notes") == want
 		}
 		targets = append(targets, t)
 	}

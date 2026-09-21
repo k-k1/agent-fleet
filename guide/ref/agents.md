@@ -21,13 +21,13 @@ because "does this apply to a plain shell session?" is a real question.
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
 | Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓¹² | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
-| Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | —¹¹ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | ✓¹⁴ | — | — |
+| Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
 | Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | —¹¹ | — | — |
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | —¹¹ | — | — |
-| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | —¹¹ | — | — |
-| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | —¹¹ | — | — |
+| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
+| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
 | Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —¹¹ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
@@ -35,9 +35,9 @@ because "does this apply to a plain shell session?" is a real question.
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
-| Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | —¹¹ | — | — |
-| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | —¹¹ | — | — |
-| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
+| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
+| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓¹⁷ | — | — |
 | Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
 
 ¹ copilot's model list depends on the plan: Free offers only "Auto (Copilot picks)".
@@ -161,12 +161,15 @@ Managed.
 > run what you send verbatim. Keep backups, use least-privilege credentials, and lean
 > on the approval gates.
 
-¹¹ muse is still being built (ADR 0095). It IS offered in the launch menu now, but only
-once two things are true: Muse Code is proprietary and not included in the image, so it has
-to be installed on demand (the Muse Code connection card offers it, ~299MB into your home),
-and you have to be signed in — an unauthenticated session would accept work and then fail
-every turn. The rows marked with this footnote are the parts still to come; they fill in as
-each lands.
+¹¹ Two things have to be true before muse appears in the launch menu: Muse Code is
+proprietary and not included in the image, so it has to be installed on demand (the Muse Code
+connection card offers it, ~299MB into your home), and you have to be signed in — an
+unauthenticated session would accept work and then fail every turn.
+
+The rows carrying this footnote are the ones Agent Fleet has not built for muse. They are not
+blocked by Muse Code: the protocol carries a context gauge and image attachments, and the
+scheduled-run, handoff, worktree and bridge paths are not written per agent at all. They are
+simply unverified here, and this table only ticks a row that was seen to work end to end.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
@@ -180,3 +183,34 @@ filesystem and local network unrestricted: every tool call is allowed by policy 
 approval is considered. Measured, a muse turn wrote a file outside its working copy with no
 prompt. So treat a muse session as having the same reach over this container as `shell`
 does, and read the warning above as applying to it in full.
+
+¹⁴ Muse Code's catalogue lists a "-contributor" twin of every model — the same model at the
+same price, except that Meta may use those conversations, including messages between
+sessions, to improve the product. It is Muse Code's own default. Agent Fleet does not pick it
+for you: a session launched on **Default** runs on the newest model without that clause, and
+the twins stay in the picker for anyone who wants one. Settings › Agents › Muse Code ›
+Behaviour is where you choose, and the reasoning effort (`none` … `ultra`) sits beside it.
+
+¹⁵ The muse chip shows what a running muse session last observed, not a number Agent Fleet
+can go and fetch: Muse Code reports its own subscription usage over the session protocol, and
+only after a turn finishes. Until you have run muse in this workspace the chip shows "—",
+which means "no reading yet" rather than "nothing used". The first window's length is the
+provider's own (measured: five hours), so the row is labelled "current window".
+
+¹⁶ Muse Code keeps your personal rules in one file, `~/.config/muse/AGENTS.md`, and both the
+workspace policy and your own instructions have to go there. Agent Fleet writes them as two
+marked blocks and leaves everything else in the file alone, so rules you put there yourself
+survive. The workspace's topic files arrive separately, as skills under
+`~/.config/muse/skills/`. Your repository's own `AGENTS.md` is read as well, because sessions
+run with the workspace trusted — and note that Muse Code treats `AGENTS.md` and `CLAUDE.md` as
+a precedence, not a sum: with both present it uses `AGENTS.md` and says it is skipping the
+other.
+
+¹⁷ muse is the one kind whose integration servers Agent Fleet does not write into a
+configuration file: they are handed to Muse Code when the session starts, which means the set
+can differ per session rather than being one list for your whole workspace. Two things follow.
+A server you add starts being used by sessions launched **after** the change — a running
+session keeps the set it was given. And each server starts when the session's first turn runs,
+not when the session opens, so a brand-new session shows nothing connected until you send
+something. Every server is passed as optional, so one that fails to start costs you that
+integration and not the session.

@@ -49,6 +49,18 @@ var MaterializedKinds = []string{
 	session.KindCursor, session.KindKiro, session.KindAgy, session.KindCopilot,
 }
 
+// ServedKinds are the kinds whose sessions actually RECEIVE af's MCP servers — including the
+// builtin `af` one, and with it the self-report tool.
+//
+// It is a different question from MaterializedKinds, and muse is the kind that made the two
+// diverge: ADR 0095 decision 11 puts its servers on the wire in `session/start.config.mcpServers`,
+// so there is no config file for MaterializeAll to write and adding it above would report a
+// permanent "skipped" for a kind that is fully served. Reading one list as the answer to the
+// other question is a mistake this repository has already made once and shipped — see
+// peerTargetAllowed's own header (sessionx/session_peer.go), where lcpp's absence from
+// MaterializedKinds silently forbade peer messages to it.
+var ServedKinds = append(append([]string(nil), MaterializedKinds...), session.KindMuse)
+
 // MaterializeResult is one kind's outcome, shaped for a log line and for a future
 // Console surface (docs/log/48 §11.3).
 type MaterializeResult struct {

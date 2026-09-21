@@ -276,9 +276,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.muse_metered":
     "This connection is an API key, so it bills per use. To use your flat-rate plan, disconnect and sign in with your Meta account instead.",
   "agents.muse_env_key":
-    "META_API_KEY is set in this workspace's environment. It takes priority over the stored sign-in, so you are billed **per use** whatever this card says above. Remove it from the workspace environment variables to use your flat-rate plan.",
+    "META_API_KEY is set in this workspace's environment. It takes priority over the stored sign-in, so you are billed per use whatever this card says above. Remove it from the workspace environment variables to use your flat-rate plan.",
   "agents.muse_key_warn":
-    "Saving an API key **removes** any stored account sign-in (Muse Code replaces the whole credential entry), and moves this workspace off the flat-rate plan onto per-use billing. If you are signed in with an account, disconnect first.",
+    "Saving an API key REMOVES any stored account sign-in (Muse Code replaces the whole credential entry), and moves this workspace off the flat-rate plan onto per-use billing. If you are signed in with an account, disconnect first.",
   "agents.muse_key_placeholder": "Meta API key (starts with LLM|…)",
   "agents.muse_auth_failed": "Failed to start Muse Code sign-in: {msg}",
   "agents.muse_install_desc": "Muse Code is not installed in this workspace yet (it is proprietary, so it is not in the distributed image). A one-time install is required.",
@@ -291,6 +291,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.muse_update": "Update Muse Code",
   "agents.muse_update_note": "Re-downloads the pinned build (about 299MB). Takes a few minutes.",
   "agents.muse_updating": "Updating Muse Code… (about 299MB, a few minutes). Running muse sessions keep working on the old build until they are restarted.",
+  "agents.muse_model_note":
+    "Muse Code lists a \"-contributor\" twin of each model. It is the same model at the same price, but Meta may use those conversations — including messages between sessions — to improve the product. It is Muse Code's own default; \"Default\" here means Agent Fleet picks the newest model without that clause.",
   "agents.remote_control": "Remote control",
   "agents.notifications": "Notifications",
   "agents.codex_auth_failed": "Failed to start Codex auth: {msg}",

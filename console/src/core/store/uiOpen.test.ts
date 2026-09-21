@@ -4,7 +4,7 @@ import { useUiOpen } from "./uiOpen.ts";
 describe("useUiOpen", () => {
   beforeEach(() => {
     useUiOpen.setState({
-      seq: { notifications: 0, "usage-claude": 0, "usage-codex": 0, "usage-copilot": 0, "usage-agy": 0, resources: 0 },
+      seq: { notifications: 0, "usage-claude": 0, "usage-codex": 0, "usage-copilot": 0, "usage-agy": 0, "usage-muse": 0, resources: 0 },
     });
   });
 
@@ -16,6 +16,7 @@ describe("useUiOpen", () => {
       "usage-codex": 1,
       "usage-copilot": 0,
       "usage-agy": 0,
+      "usage-muse": 0,
       resources: 0,
     });
   });

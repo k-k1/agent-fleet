@@ -58,6 +58,9 @@ var knownKinds = map[string]bool{
 	session.KindClaude: true, session.KindCodex: true, session.KindOpencode: true,
 	session.KindCursor: true, session.KindKiro: true, session.KindAgy: true,
 	session.KindCopilot: true,
+	// muse takes its servers on the wire rather than from a config file (ADR 0095 decision
+	// 11), which changes nothing here: this list is about which kinds a DEFINITION may name.
+	session.KindMuse: true,
 }
 
 // ValidationError marks a refusal caused by the definition itself — the caller sent

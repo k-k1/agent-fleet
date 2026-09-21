@@ -36,6 +36,18 @@ type threadHandle struct {
 
 	spawnMu sync.Mutex // serializes spawns for this handle
 
+	// forkFrom / forkAt carry the pending fork for a slot that has never opened a session.
+	// They live on the handle rather than being read from meta inside openSession because
+	// openSession is also the RESUME path, and a fork is a one-time act at birth.
+	forkFrom string
+	forkAt   string
+
+	// sessionMCP records whether the host GRANTED the sessionMcp capability. It is asked once
+	// at handshake and remembered: a capability the host did not grant is not a thing to send
+	// anyway, and sending servers into a host that cannot take them is how a decode failure
+	// becomes "the integration is broken".
+	sessionMCP bool
+
 	// bypass is the launch-time permission choice. It selects the session's approval mode and
 	// is resolved on every Resume rather than carried in ThreadSettings, where "empty means
 	// unchanged" cannot express a three-valued bool.
@@ -125,6 +137,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	h.mu.Lock()
 	h.cmd, h.stdin, h.cl = cmd, stdin, cl
 	h.settings = st
+	h.sessionMCP = msp.Granted(res, msp.CapabilityNameSessionMCP)
 	h.mu.Unlock()
 
 	if err := h.openSession(cl, st); err != nil {
@@ -143,7 +156,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	return nil
 }
 
-// openSession reloads this slot's conversation, or starts one when it has none.
+// openSession reloads this slot's conversation, forks one, or starts a fresh one.
 //
 // The id is stored rather than derived: MSP refuses a retained or reserved id with
 // `session_id_conflict`, so AF's usual deterministic UUIDv5 would work exactly once
@@ -168,6 +181,16 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		log.Printf("muse: %s: stored session %s is gone; starting a fresh one", h.name, prev.ID)
 	}
 
+	// A slot born from a fork opens by copying the source rather than starting empty. It is
+	// tried once, at birth: after this the slot has a stored session and takes the resume
+	// path above, so a later failure can never re-fork an already-lived conversation.
+	if h.forkFrom != "" {
+		if err := h.forkSession(cl); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	sid := msp.NewCommandID()
 	params := msp.SessionStartParams{
 		CommandID:     msp.NewCommandID(),
@@ -177,6 +200,28 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	}
 	if st.Model != "" {
 		params.ModelID = &st.Model
+	} else if safe := SafeDefaultModel(cl); safe != "" {
+		// 🔴 Omitting modelId is not the neutral choice it looks like: the host's own default
+		// is the contributor variant, whose catalogue description says the conversation may be
+		// used for product improvement (decision 6 clamp 8). So "the member chose no model"
+		// resolves HERE, to the newest row the vendor makes no such claim about, and it
+		// resolves on every path that starts a session rather than in the Console — a
+		// scheduled run and an MCP-created session get the same answer as a launch menu.
+		params.ModelID = &safe
+	}
+	// Integration (MCP) servers ride the wire, per session (decision 11 / mcp.go). A registry
+	// failure logs and launches anyway — the posture materialisation takes for every other
+	// kind — because a broken integration must not cost the member their session.
+	h.mu.Lock()
+	granted := h.sessionMCP
+	h.mu.Unlock()
+	if granted {
+		servers, err := sessionMCPServers()
+		if err != nil {
+			log.Printf("muse: %s: MCP servers unavailable, starting without them: %v", h.name, err)
+		} else if len(servers) > 0 {
+			params.Config = &msp.SessionConfig{MCPServers: servers}
+		}
 	}
 	var res msp.SessionStartResult
 	if err := cl.CallInto(msp.MethodSessionStart, params, callTimeout, &res); err != nil {
@@ -315,6 +360,16 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 
 	case msp.NotificationUserInputSettled:
 		h.clearAsk(func(p *pendingAsk) bool { return !p.isApproval() })
+
+	case msp.NotificationUsageChanged:
+		// Unsolicited, and about the ACCOUNT rather than this session — so it is recorded
+		// process-wide (usage.go) rather than on the handle. This is the only route by which
+		// the quota chip learns anything without being asked.
+		var p msp.SubscriptionUsage
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		recordQuota(p)
 	}
 }
 
@@ -688,6 +743,12 @@ func (h *threadHandle) Interrupt() error {
 // accepted: MSP has no method that sets AF's plan mode, and DynamicMode is false for that
 // reason — silently ignoring it here instead would make the Console show a control that does
 // nothing.
+//
+// "Back to the default" is a real request, not an absence: ClearModel and ClearEffort exist
+// because an empty string means "unchanged" and cannot also mean "reset". Both are honoured
+// below, and for the model that means AF's default (the non-data-sharing row), never the
+// host's — reverting to the host's default would move the member onto the contributor variant
+// by way of a control labelled "Default".
 func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	h.mu.Lock()
 	cl, sid := h.cl, h.sid
@@ -695,17 +756,29 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	if cl == nil {
 		return errors.New("Muse Code のホストが起動していません")
 	}
-	if s.Model != "" {
+	model := s.Model
+	if s.ClearModel {
+		model = SafeDefaultModel(cl)
+	}
+	if model != "" {
 		err := cl.CallInto(msp.MethodSessionSetModel, msp.SessionSetModelParams{
 			CommandID: msp.NewCommandID(),
 			SessionID: sid,
-			Model:     msp.ModelSelection{ModelID: s.Model},
+			Model:     msp.ModelSelection{ModelID: model},
 		}, callTimeout, nil)
 		if err != nil {
 			return err
 		}
 		h.mu.Lock()
-		h.settings.Model = s.Model
+		h.settings.Model = model
+		h.mu.Unlock()
+	}
+	if s.ClearEffort {
+		// No wire call: `session/setReasoningEffort` sets a value and has no "unset", and the
+		// effort a turn runs at is `turn/start.reasoningEffort`, which AF omits when it holds
+		// none. Forgetting it here is therefore exactly "let the host decide from now on".
+		h.mu.Lock()
+		h.settings.Effort = ""
 		h.mu.Unlock()
 	}
 	if s.Effort != "" {
@@ -735,13 +808,16 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 // reasoningEffort maps AF's effort string onto the wire enum, or nil when the string names
 // nothing MSP knows. Returning nil rather than a default is deliberate: sending a guessed
 // effort is a silent behaviour change the member did not ask for.
+//
+// The accepted set is the generated one, not a copy: the same list is what the Console's
+// picker offers (models.go), and a hand-kept second copy is how a value the vendor adds in a
+// later bundle ends up offered but refused, or accepted but never offered.
 func reasoningEffort(s string) *msp.ReasoningEffort {
-	switch msp.ReasoningEffort(strings.ToLower(strings.TrimSpace(s))) {
-	case msp.ReasoningEffortNone, msp.ReasoningEffortMinimal, msp.ReasoningEffortLow,
-		msp.ReasoningEffortMedium, msp.ReasoningEffortHigh, msp.ReasoningEffortXhigh,
-		msp.ReasoningEffortMax, msp.ReasoningEffortUltra:
-		e := msp.ReasoningEffort(strings.ToLower(strings.TrimSpace(s)))
-		return &e
+	want := msp.ReasoningEffort(strings.ToLower(strings.TrimSpace(s)))
+	for _, e := range msp.ReasoningEffortValues {
+		if e == want {
+			return &e
+		}
 	}
 	return nil
 }
@@ -870,3 +946,43 @@ func (h *threadHandle) emit(ev agents.Event) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// forkSession opens this slot by copying the source conversation (decision 13 — MSP carries
+// `session/fork`).
+//
+// Two copies happen, and both are needed: the HOST's history through `session/fork`, and AF's
+// own item store through store.ForkAt, because the store is what `Transcript` reads and a
+// forked session with an empty one would show the member nothing (transcript.go's header).
+//
+// Unlike `session/start`, AF does not mint the id: the host returns the new session, so the
+// stored id is read out of the result rather than chosen. That also means a retry cannot be
+// made idempotent by the id — which is why this runs only for a slot with no stored session.
+func (h *threadHandle) forkSession(cl *msp.Client) error {
+	prev, ok := readSession(h.forkFrom)
+	if !ok || prev.ID == "" {
+		return errors.New("フォーク元の Muse Code セッションが見つかりません")
+	}
+	params := msp.SessionForkParams{
+		CommandID: msp.NewCommandID(),
+		SessionID: prev.ID,
+	}
+	if h.forkAt != "" {
+		params.CutPoint = &msp.ForkCutPoint{LastTurnID: h.forkAt}
+	}
+	var res msp.SessionForkResult
+	if err := cl.CallInto(msp.MethodSessionFork, params, callTimeout, &res); err != nil {
+		return fmt.Errorf("Muse Code セッションのフォークに失敗しました: %w", err)
+	}
+	h.mu.Lock()
+	h.sid, h.path = res.Session.SessionID, res.Session.Path
+	h.mu.Unlock()
+	writeSession(h.slotSid, museSession{ID: res.Session.SessionID, Path: res.Session.Path})
+	// The store copy is deliberately AFTER the host's fork succeeded and is deliberately not
+	// fatal: the conversation exists either way, and refusing the session because AF could not
+	// mirror its history would trade a rendering gap for a dead session — the same posture
+	// onItem takes for every other write to this store.
+	if err := openStore(h.forkFrom).ForkAt(h.slotSid, h.forkAt); err != nil {
+		log.Printf("muse: %s: fork: transcript copy failed: %v", h.name, err)
+	}
+	return nil
+}

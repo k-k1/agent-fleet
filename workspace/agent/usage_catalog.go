@@ -52,6 +52,12 @@ var usageCatalogProviders = map[string][]string{
 	// cursor has no provider on models.dev. kiro and agy are resolved from the model name.
 	session.KindKiro: {"amazon-bedrock", "anthropic"},
 	session.KindAgy:  {"google", "google-vertex"},
+	// muse is deliberately absent, and it is worth saying so here rather than leaving the next
+	// reader to "fix" it: there is no price to look up from either end. models.dev has no row
+	// for Muse Code's models, and the vendor's own catalogue reports `cost: null` on every one
+	// of them (measured, ADR 0095 decision 10) — so this kind ships a token ledger with no cost
+	// estimate, and a guessed provider here would put a number on the screen that nobody
+	// charged. Adding a row is right the day one of those two sources carries a price.
 }
 
 // usageCatalogFallback is the order of primary providers to consult when the kind does not

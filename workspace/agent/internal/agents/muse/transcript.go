@@ -421,3 +421,58 @@ func appendStreaming(turns []transcript.Turn, items []msp.Item, fragments map[st
 	}
 	return turns
 }
+
+// ForkAt copies this store's items into a new slot's store, up to and including the last item
+// of the turn named by cutTurnID. An empty cutTurnID copies everything, which is what a
+// whole-conversation fork means.
+//
+// It exists because AF's store is the at-rest transcript (this file's header): `session/fork`
+// copies the HOST's history into the new muse session, and without this the forked AF session
+// would show an empty conversation until its first turn — the opposite of what forking is for.
+//
+// The destination is written once and never merged into: a store that already exists belongs
+// to a slot that has already lived, and copying over it would splice two conversations.
+func (s *store) ForkAt(newSID, cutTurnID string) error {
+	items, err := s.Items()
+	if err != nil {
+		return err
+	}
+	cut := len(items) - 1
+	if cutTurnID != "" {
+		cut = -1
+		for i, it := range items {
+			if it.TurnID != nil && *it.TurnID == cutTurnID {
+				cut = i
+			}
+		}
+		if cut < 0 {
+			return fmt.Errorf("フォーク位置のターンが見つかりません: %s", cutTurnID)
+		}
+	}
+	dst := openStore(newSID)
+	if _, err := os.Stat(dst.Path()); err == nil {
+		return nil
+	}
+	for i := 0; i <= cut && i < len(items); i++ {
+		if err := dst.Append(items[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// turnOrder is the distinct turn ids in first-seen order, which is the order the conversation
+// happened in. Items with no turn id (a compaction between turns, a `userShell`) carry no
+// boundary and are skipped rather than treated as a turn of their own.
+func turnOrder(items []msp.Item) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, it := range items {
+		if it.TurnID == nil || *it.TurnID == "" || seen[*it.TurnID] {
+			continue
+		}
+		seen[*it.TurnID] = true
+		out = append(out, *it.TurnID)
+	}
+	return out
+}

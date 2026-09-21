@@ -59,6 +59,7 @@ type node struct {
 	AnyOf                []*node          `json:"anyOf"`
 	OneOf                []*node          `json:"oneOf"`
 	AdditionalProperties *node            `json:"additionalProperties"`
+	Const                string           `json:"const"`
 }
 
 // types reports the node's declared JSON types, normalising the string and []string spellings.
@@ -255,6 +256,17 @@ func writeDef(out *bytes.Buffer, b *schemaBundle, name string, n *node) error {
 			fmt.Fprintf(out, "\t%s%s %s = %q\n", name, goName(v), name, v)
 		}
 		fmt.Fprintf(out, ")\n\n")
+		// The values as a list, in the bundle's own order. A caller that has to OFFER an
+		// enum rather than recognize one — the Console's reasoning-effort picker is the
+		// first — would otherwise hand-keep a second copy, and a value the vendor adds in
+		// 1.4 would silently never be offered. Generated, it moves with the bundle and the
+		// drift lock covers it.
+		fmt.Fprintf(out, "// %sValues are every %s the bundle declares, in schema order.\n", name, name)
+		fmt.Fprintf(out, "var %sValues = []%s{\n", name, name)
+		for _, v := range n.Enum {
+			fmt.Fprintf(out, "\t%s%s,\n", name, goName(v))
+		}
+		fmt.Fprintf(out, "}\n\n")
 		return nil
 	case len(n.OneOf) > 0:
 		// The only union in v1 is SessionMcpServerConfig, a closed union discriminated by
@@ -303,6 +315,30 @@ func writeFlatUnion(out *bytes.Buffer, name string, n *node) error {
 		writeField(out, nil, pn, merged[pn], req)
 	}
 	fmt.Fprintf(out, "}\n\n")
+
+	// The discriminator's own values. Flattening a union loses the `const` that tells the
+	// arms apart, and the union is CLOSED — an undeclared value fails `session/start` decode
+	// outright, taking the whole session with it rather than the one server. That makes the
+	// exact spelling a thing to generate rather than transcribe: the file route's
+	// documentation spells the same transport `streamable_http` and the wire wants
+	// `streamableHttp`.
+	for _, pn := range sortedKeys(merged) {
+		var consts []string
+		for _, arm := range n.OneOf {
+			if p := arm.Properties[pn]; p != nil && p.Const != "" {
+				consts = append(consts, p.Const)
+			}
+		}
+		if len(consts) != len(n.OneOf) {
+			continue // not the discriminator
+		}
+		fmt.Fprintf(out, "// %s%s values, the discriminator of the %s union.\n", name, goName(pn), name)
+		fmt.Fprintf(out, "const (\n")
+		for _, c := range consts {
+			fmt.Fprintf(out, "\t%s%s%s = %q\n", name, goName(pn), goName(c), c)
+		}
+		fmt.Fprintf(out, ")\n\n")
+	}
 	return nil
 }
 

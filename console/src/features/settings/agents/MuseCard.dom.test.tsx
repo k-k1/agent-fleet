@@ -68,6 +68,8 @@ describe("MuseCard", () => {
   it("surfaces an environment API key even while the pill says connected", async () => {
     await mount({ supported: true, connected: true, email: "m@example.com", metered: false, env_key: true });
     expect(text()).toMatch(/META_API_KEY/);
+    // Plain text, not markdown: nothing renders it, so a ** reaches the member verbatim.
+    expect(text()).not.toContain("**");
   });
 
   // The binary is not in the image, so a fresh workspace has to be offered the install rather
@@ -96,7 +98,8 @@ describe("MuseCard", () => {
       keyBtn!.click();
     });
     expect(host?.querySelector('input[type="password"]')).toBeTruthy();
-    expect(text()).toMatch(/removes|消えます/);
+    expect(text()).toMatch(/removes|消えます/i);
+    expect(text()).not.toContain("**");
   });
 
   // muse is managed-only, so there is no launch guard to re-pin implicitly: this affordance is
@@ -141,5 +144,57 @@ describe("MuseCard", () => {
     });
     // The device code is on screen, which is what the member compares in the browser.
     expect(text()).toContain("ABCD-EFGH");
+  });
+  // The launch defaults (ADR 0095 P2-9). Three things that are each invisible when wrong:
+  // the catalogue's contributor twins have to stay offered, the two rows have to be dropdowns
+  // rather than segmented controls (four 26-character ids and nine effort values both overflow
+  // `.choice-seg`, which is an inline-flex that does not wrap), and the note explaining what a
+  // contributor model costs has to be plain text — the card's other notes were written with
+  // markdown asterisks that nothing renders, so they reached the member as literal `**`.
+  it("offers the model and effort defaults as dropdowns, with the contributor note in plain text", async () => {
+    const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "api/agents/muse/models"
+          ? {
+              models: [
+                { id: "muse-spark-1.3", label: "muse-spark-1.3", efforts },
+                { id: "muse-spark-1.3-contributor", label: "muse-spark-1.3-contributor", efforts },
+              ],
+            }
+          : {},
+      ),
+    );
+    await mount({ supported: true, connected: true, email: "m@example.com" });
+    const disclosure = buttons().find((b) => b.getAttribute("aria-expanded") !== null);
+    expect(disclosure).toBeTruthy();
+    await act(async () => {
+      disclosure!.click();
+    });
+    // The catalogue fetch resolves after the mount; let its promise chain settle.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Not a count — the hidden-models row has a select of its own. What is asserted is that
+    // NEITHER of the two rows fell to the segmented control.
+    expect(host?.querySelector(".choice-seg")).toBeNull();
+    const optionsOf = (s: HTMLSelectElement) => [...s.options].map((o) => o.textContent || "");
+    const selects = [...(host?.querySelectorAll("select") ?? [])] as HTMLSelectElement[];
+    // The member keeps the choice: a contributor twin is offered, not filtered away.
+    const modelRow = selects.find((s) => optionsOf(s).includes("muse-spark-1.3-contributor"));
+    expect(modelRow).toBeTruthy();
+    // All nine effort values reach the picker — the wire enum, not a subset.
+    const effortRow = selects.find((s) => optionsOf(s).includes("ultra"));
+    expect(effortRow).toBeTruthy();
+    for (const e of efforts) expect(optionsOf(effortRow!)).toContain(e);
+
+    // The note itself, not merely the word "contributor" — which the catalogue's own option
+    // labels also carry, so asserting on that passes with the note deleted (it did).
+    const notes = [...(host?.querySelectorAll(".ps-note") ?? [])].map((n) => n.textContent || "");
+    expect(notes.some((n) => /improve the product|製品改善/.test(n))).toBe(true);
+    // Nothing in this card may ship raw markdown: it is rendered as plain text.
+    expect(text()).not.toContain("**");
   });
 });

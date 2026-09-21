@@ -436,6 +436,23 @@ const USAGE_SOURCES: UsageSource[] = [
     noteKey: "wsbar.usage.codex.note",
     manageURL: "https://chatgpt.com/#settings/Usage",
   },
+  {
+    // muse (ADR 0095 decision 10). Its two windows fill the same two rows, but neither the
+    // reading nor the first row's NAME is what the others' are: the value is the last
+    // observation a running host pushed over the wire, and the window's length is a wire field
+    // (measured 300 minutes) rather than a constant — so the row says "current window" and the
+    // note says what was measured, instead of the label asserting five hours.
+    //
+    // live is false for the reason codex's is: there is nothing to refresh TOWARDS. Asking
+    // again returns the same observation until a muse turn completes.
+    endpoint: "api/muse/usage",
+    key: "usage-muse",
+    kind: "muse",
+    fiveLabelKey: "wsbar.usage.muse.five",
+    weekLabelKey: "wsbar.usage.muse.week",
+    live: false,
+    noteKey: "wsbar.usage.muse.note",
+  },
 ];
 
 // UsageChip: a compact per-agent limit chip (glyph + the two window percentages) that

@@ -304,3 +304,29 @@ describe("migrateAiAssistPrefs", () => {
     expect(o.assistantReplySuggestEnabled).toBe(true);
   });
 });
+
+// Every kind whose card renders a LaunchDefaults block has to have a row in
+// DEFAULT_AGENT_LAUNCH, because that object — not the card — is the list this walks. A card
+// without one saves the member's choice and then drops it on the next load, with nothing to
+// see: the picker simply reads "Default" again. copilot was lost that way once (the comment in
+// normalizeAgentLaunchDefaults records it), and lcpp shipped the same way.
+describe("normalizeAgentLaunchDefaults / the kinds it covers", () => {
+  it("keeps the saved model of every kind that offers the control", () => {
+    const rows = normalizeAgentLaunchDefaults({
+      lcpp: { model: "qwen3-30b-a3b" },
+      muse: { model: "muse-spark-1.3-contributor", effort: "ultra" },
+      copilot: { model: "gpt-5.6-luna" },
+    });
+    expect(rows.lcpp?.model).toBe("qwen3-30b-a3b");
+    expect(rows.muse?.model).toBe("muse-spark-1.3-contributor");
+    expect(rows.muse?.effort).toBe("ultra");
+    expect(rows.copilot?.model).toBe("gpt-5.6-luna");
+  });
+
+  // 🔴 muse's empty model is not "let Muse Code decide": the Agent resolves it to the newest
+  // model the vendor does not say it may learn from (ADR 0095 decision 6 clamp 8). So the
+  // default here must stay empty rather than pin an id that goes stale at the next release.
+  it("leaves muse's model unset so the Agent resolves the non-contributor default", () => {
+    expect(normalizeAgentLaunchDefaults({}).muse?.model).toBe("");
+  });
+});

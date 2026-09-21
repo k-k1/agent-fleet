@@ -1013,6 +1013,12 @@ const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
   kiro: { model: "", effort: "", startMode: "normal", skipPermissions: true },
   agy: { model: "", effort: "", startMode: "normal", skipPermissions: true },
   opencode: { model: "", effort: "", startMode: "normal", skipPermissions: true },
+  lcpp: { model: "", effort: "", startMode: "normal", skipPermissions: true },
+  // muse's "" model is not "whatever muse picks": the Agent resolves an empty model to the
+  // newest NON-contributor entry of the live catalog before it starts the session (ADR 0095
+  // decision 6 clamp 8 — the host's own default is the variant whose conversations may be used
+  // for product improvement). Pinning an id here instead would go stale at the next release.
+  muse: { model: "", effort: "", startMode: "normal", skipPermissions: true },
 };
 
 const DEFAULTS: Settings = {

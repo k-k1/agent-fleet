@@ -58,6 +58,8 @@ export const sessions = {
   "wsbar.usage.claude.week": "週次・全モデル",
   "wsbar.usage.codex.five": "5時間",
   "wsbar.usage.codex.week": "週次",
+  "wsbar.usage.muse.five": "現在の枠",
+  "wsbar.usage.muse.week": "週次",
   "wsbar.usage.agy.week_row": "{group}（週次）",
   "wsbar.usage.agy.five_row": "{group}（5時間枠）",
   "wsbar.usage.plan": "プラン: {plan}",
@@ -71,6 +73,8 @@ export const sessions = {
     "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
   "wsbar.usage.claude.note":
     "claude 自身のレート制限ヘッダから読んだ値です。利用率は小数2桁で届くため、0% は「0.5% 未満」を含みます（未使用とは限りません）。",
+  "wsbar.usage.muse.note":
+    "稼働中の muse セッションが最後に観測した値です。muse を一度も動かしていない間は値がありません（使用ゼロではなく、まだ観測が無いという意味）。現在の枠の長さは上流が決めます（実測では5時間）。",
   "wsbar.usage.full_reset_one": "Full reset {count}件",
   "wsbar.usage.full_reset_other": "Full reset {count}件",
   "wsbar.usage.full_reset_soonest": "・最短 {when}まで",

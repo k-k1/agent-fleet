@@ -1707,7 +1707,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_session_usage",
-		"description": "各セッションのコンテキスト使用量と累積消費トークンを返す。name 指定で1セッション、省略で transcript を持つ全セッション（shell / SSM は対象外）。context は現在のコンテキスト量（tokens と read/create/fresh の内訳、window に対する pct%。最初の応答が返るまでは無く、自動圧縮後は圧縮後の値）。cumulative は累積消費（論理ターン数 turns、inTok/outTok/cacheRead/cacheCreate、spend=inTok+cacheCreate+outTok の合計）。注意: agy / cursor は一覧に含まれるが transcript にトークン情報が無いため context は空・cumulative は全て 0 になる（消費ゼロの意味ではない。agy の残枠は get_agent_usage を見る）。kiro は転写にトークンが無いが、managed（ACP）セッションが稼働中は _kiro.dev/metadata のライブ値から context（pct＋実 window に対する概算 tokens）と cumulative.credits（消費クレジット）を返す（停止中や TUI 実行は context 空）。copilot は outTok のみ記録され inTok/cache は 0・context は無い。『どのセッションがコンテキスト逼迫か』『どれだけ消費したか』を聞かれた時や、引き継ぎ・圧縮・新セッション分割の判断材料に呼ぶ。サブスクリプション枠の残量は get_agent_usage（別ツール）。",
+		"description": "各セッションのコンテキスト使用量と累積消費トークンを返す。name 指定で1セッション、省略で transcript を持つ全セッション（shell / SSM は対象外）。context は現在のコンテキスト量（tokens と read/create/fresh の内訳、window に対する pct%。最初の応答が返るまでは無く、自動圧縮後は圧縮後の値）。cumulative は累積消費（論理ターン数 turns、inTok/outTok/cacheRead/cacheCreate、spend=inTok+cacheCreate+outTok の合計）。注意: agy / cursor は一覧に含まれるが transcript にトークン情報が無いため context は空・cumulative は全て 0 になる（消費ゼロの意味ではない。agy の残枠は get_agent_usage を見る）。kiro は転写にトークンが無いが、managed（ACP）セッションが稼働中は _kiro.dev/metadata のライブ値から context（pct＋実 window に対する概算 tokens）と cumulative.credits（消費クレジット）を返す（停止中や TUI 実行は context 空）。copilot は outTok のみ記録され inTok/cache は 0・context は無い。muse は cumulative を持つが subagent / observer の呼び出しが上流のワイヤに載らないため過少（measured=partial）で、context は無い。『どのセッションがコンテキスト逼迫か』『どれだけ消費したか』を聞かれた時や、引き継ぎ・圧縮・新セッション分割の判断材料に呼ぶ。サブスクリプション枠の残量は get_agent_usage（別ツール）。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1717,7 +1717,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_agent_usage",
-		"description": "各エージェント CLI のサブスクリプション使用量とレート制限を返す（claude / codex / agy。opencode / copilot / cursor / kiro は使用量ソースが無いため含まれない）。claude / codex は fiveHour（5時間枠）と sevenDay（週間枠）の pct が使用率（0–100）、resetsAt が解除日時（ISO 8601）で、codex は planType や resetCredits も付く。agy は形が異なり、account / plan と groups（クォータ枠ごとに label・remainingPct・resetsAt。実験枠 Starter 等）を返す。authed=false はその CLI に未ログイン、ageSec は計測の古さ（秒）。『あとどれくらい使える?』『制限はいつ解除?』と聞かれた時や、大きなタスクをセッションに振る前の判断材料に呼ぶ。",
+		"description": "各エージェント CLI のサブスクリプション使用量とレート制限を返す（claude / codex / agy / muse。opencode / copilot / cursor / kiro は使用量ソースが無いため含まれない）。claude / codex は fiveHour（5時間枠）と sevenDay（週間枠）の pct が使用率（0–100）、resetsAt が解除日時（ISO 8601）で、codex は planType や resetCredits も付く。agy は形が異なり、account / plan と groups（クォータ枠ごとに label・remainingPct・resetsAt。実験枠 Starter 等）を返す。muse は claude / codex と同じ形だが、値はホストが最後に観測したもので、稼働中の muse セッションがターンを1つも終えていない間は ok=false になる（使用量ゼロではなく観測が無いという意味）。windowMins は現在の枠の長さ（分）。authed=false はその CLI に未ログイン、ageSec は計測の古さ（秒）。『あとどれくらい使える?』『制限はいつ解除?』と聞かれた時や、大きなタスクをセッションに振る前の判断材料に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	},
 	{
@@ -2594,10 +2594,19 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err != nil {
 			return mcpToolErr(req.ID, "使用量の取得に失敗しました: "+err.Error())
 		}
+		// muse's reading is the host's own last observation off the wire (ADR 0095 decision
+		// 10), so unlike the three above it can be authed with nothing to report — a
+		// workspace whose muse sessions have all just started has seen no completion yet.
+		// It answers {ok:false, authed:...} in that case and never 500s, so the merge is safe.
+		ms, err := agentGET("/muse/usage")
+		if err != nil {
+			return mcpToolErr(req.ID, "使用量の取得に失敗しました: "+err.Error())
+		}
 		b, _ := json.Marshal(map[string]any{
 			"claude": json.RawMessage(cl),
 			"codex":  json.RawMessage(cx),
 			"agy":    json.RawMessage(ag),
+			"muse":   json.RawMessage(ms),
 		})
 		return mcpTextResult(req.ID, string(b))
 	case "list_models":
@@ -2608,8 +2617,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
 		}
-		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" && a.Kind != "lcpp" {
-			return mcpToolErr(req.ID, "kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp のいずれかを指定してください")
+		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" && a.Kind != "lcpp" && a.Kind != "muse" {
+			return mcpToolErr(req.ID, "kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp / muse のいずれかを指定してください")
 		}
 		out, err := agentGET("/agents/" + url.PathEscape(a.Kind) + "/models")
 		if err != nil {
