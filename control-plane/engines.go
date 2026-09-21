@@ -642,8 +642,41 @@ func engineComfyEnvRow() (engineDef, string, bool) {
 	}, strings.TrimSpace(envx.Or("AF_COMFY_API_KEY", "")), true
 }
 
+// engineLlmEnvRow synthesises the engine table row an operator gets from AF_LLM_URL: the
+// shortcut for pointing the llm role at a llama.cpp on the operator's own network (docs/log/106),
+// the same shape engineComfyEnvRow already gave the image role (ADR 0076 decision 2).
+//
+// No AF_LLM_API_KEY. The bearer is engineEnvAPIKey's AF_ENGINE_API_KEY_LLM — the variable every
+// OTHER external row already reads (ADR 0079 decision 11) — rather than a key of its own, so this
+// function returns no key: AF_COMFY_API_KEY only carries one because it predates that variable,
+// and giving llm a second named variable for the same bearer would be a fresh 401 waiting for
+// whichever one an operator edits.
+//
+// warmPath is "/models", not empty: a llama.cpp router answers /health with ok while holding no
+// weights at all (ADR 0072 P1, measured), so warmth has to be asked somewhere else.
+//
+// Read once, at startup, like AF_COMFY_URL: an environment variable cannot change under a running
+// process, so changing it is a Control Plane restart.
+func engineLlmEnvRow() (engineDef, bool) {
+	url := strings.TrimSpace(envx.Or("AF_LLM_URL", ""))
+	if url == "" {
+		return engineDef{}, false
+	}
+	return engineDef{
+		Key:       "llm",
+		API:       engineAPIChat,
+		Provider:  "llamacpp",
+		URL:       url,
+		Health:    "/health",
+		WarmPath:  "/models",
+		Lifecycle: engineLifecycleExternal,
+	}, true
+}
+
 // engineTableWithEnvRow merges the synthesised row into the table on the key both claim
-// (ADR 0076 decision 2).
+// (ADR 0076 decision 2). envVar names the URL variable the row came from — AF_COMFY_URL or
+// AF_LLM_URL — purely so the three log lines below can say which one, instead of a literal that
+// was only ever true for the image role.
 //
 // A MANAGED row wins over the environment, which is the opposite of what the draft said. The
 // review turned it round: replacing a controlled row leaves the ECS service it named with
@@ -651,21 +684,21 @@ func engineComfyEnvRow() (engineDef, string, bool) {
 // the two mistakes. An operator moving that role onto a LAN box takes it out of the stack.
 // Either way one line says which row won, because the alternative is a URL in the panel that
 // matches neither of the two places it could have come from.
-func engineTableWithEnvRow(rows []engineDef, env engineDef) []engineDef {
+func engineTableWithEnvRow(rows []engineDef, env engineDef, envVar string) []engineDef {
 	for i, d := range rows {
 		if d.Key != env.Key {
 			continue
 		}
 		if !d.notManagedHere() {
-			log.Printf("engines: %s is a managed row in the engine table, so AF_COMFY_URL is ignored (take the role out of the stack to move it onto the network)", d.Key)
+			log.Printf("engines: %s is a managed row in the engine table, so %s is ignored (take the role out of the stack to move it onto the network)", d.Key, envVar)
 			return rows
 		}
-		log.Printf("engines: %s comes from AF_COMFY_URL (%s), replacing the external row in the engine table", env.Key, env.URL)
+		log.Printf("engines: %s comes from %s (%s), replacing the external row in the engine table", env.Key, envVar, env.URL)
 		out := append([]engineDef(nil), rows...)
 		out[i] = env
 		return out
 	}
-	log.Printf("engines: %s comes from AF_COMFY_URL (%s), externally managed", env.Key, env.URL)
+	log.Printf("engines: %s comes from %s (%s), externally managed", env.Key, envVar, env.URL)
 	return append(append([]engineDef(nil), rows...), env)
 }
 
@@ -689,12 +722,13 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	name := strings.TrimSpace(envx.Or("AF_ENGINES_SSM_PARAM", ""))
 	inline := strings.TrimSpace(envx.Or("AF_ENGINES_JSON", ""))
 	envRow, envAPIKey, hasEnvRow := engineComfyEnvRow()
+	llmEnvRow, hasLlmEnvRow := engineLlmEnvRow()
 	// Borrowing is the fourth way a deployment can have engines (ADR 0079 decision 2), and it has
 	// to be on this gate: a CP that declares nothing but AF_REMOTE_ENGINE_URL used to return here
 	// with no registry at all — and registerEngineRoutes then skips the gateway routes entirely,
 	// so `/engine/…` would not even be routed.
 	rem := newEngineRemotes(mgr)
-	if name == "" && inline == "" && !hasEnvRow && rem == nil {
+	if name == "" && inline == "" && !hasEnvRow && !hasLlmEnvRow && rem == nil {
 		return nil
 	}
 	// The inline table is parsed BEFORE any AWS client exists, because whether a single row
@@ -740,7 +774,10 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		}
 	}
 	if hasEnvRow {
-		table.Engines = engineTableWithEnvRow(table.Engines, envRow)
+		table.Engines = engineTableWithEnvRow(table.Engines, envRow, "AF_COMFY_URL")
+	}
+	if hasLlmEnvRow {
+		table.Engines = engineTableWithEnvRow(table.Engines, llmEnvRow, "AF_LLM_URL")
 	}
 	// 🔴 NOT "return nil" any more (ADR 0077 P1 hardware run). A table with no rows is a real
 	// state of a deployment that is mid-migration — the `<Role>Enabled` round trip drops the
