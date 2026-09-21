@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode"
@@ -150,16 +151,29 @@ func TestConsoleCatalogIsReachable(t *testing.T) {
 // the decision itself is covered by main's abort_resume_test.go. That changes how the test is
 // driven, so per README §4 the same mutation was applied to both forms to confirm they are
 // equivalent (results, and where it was applied, in the PR body).
+// It changes a VALUE, never the seam itself. Rewriting deps.AbortResumeHolds mid-test was a
+// data race and the detector caught it: the reconciler goroutine this test starts calls the
+// seam on every sweep, so a test that swaps the function while its own reconciler is running
+// writes what that goroutine is reading. `deps` is written exactly once, by Configure, before
+// anything is running — that is the contract the whole seam design rests on (deps.go), and a
+// test is not exempt from it. The stub is therefore wired in at Configure time
+// (abortHoldsForTest, deps_test.go) and this only stores what it should answer.
 func stubAbortResumeHolds(t *testing.T, name string, hold bool) {
 	t.Helper()
-	old := deps.AbortResumeHolds
-	deps.AbortResumeHolds = func(n string, a claude.Abort, now time.Time) bool {
-		if n == name {
-			return hold
-		}
-		return old(n, a, now)
-	}
-	t.Cleanup(func() { deps.AbortResumeHolds = old })
+	abortHolds.Store(name, hold)
+	t.Cleanup(func() { abortHolds.Delete(name) })
+}
+
+// abortHolds is the test-side input to the AbortResumeHolds seam: session name -> is that
+// session mid auto-resume. A sync.Map because the reconciler reads it from its own goroutine
+// while the test writes it.
+var abortHolds sync.Map
+
+// abortHoldsForTest is what deps_test.go wires into Deps.AbortResumeHolds. A name nobody
+// stubbed answers false — the same answer the constant stub used to give.
+func abortHoldsForTest(name string, _ claude.Abort, _ time.Time) bool {
+	hold, ok := abortHolds.Load(name)
+	return ok && hold.(bool)
 }
 
 // TestJapaneseRangesMatchesTheOriginal pins that this copy stays byte-identical to the original

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -141,7 +140,9 @@ func testDeps() Deps {
 			}
 		},
 
-		AbortResumeHolds: func(string, claude.Abort, time.Time) bool { return false },
+		// Wired once, here: the per-test answer rides in a sync.Map the stub writes, so no test
+		// ever has to write `deps` while a reconciler goroutine is reading it (helpers_test.go).
+		AbortResumeHolds: abortHoldsForTest,
 		ChatTurnUsageTag: func(convID, seedVerb, trigger string) usagex.Tag {
 			return usagex.Tag{Feature: usagex.FeatureAssistantChat, Trigger: trigger, Ref: convID, Verb: seedVerb}
 		},
