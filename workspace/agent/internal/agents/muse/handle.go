@@ -36,6 +36,12 @@ type threadHandle struct {
 
 	spawnMu sync.Mutex // serializes spawns for this handle
 
+	// forkFrom / forkAt carry the pending fork for a slot that has never opened a session.
+	// They live on the handle rather than being read from meta inside openSession because
+	// openSession is also the RESUME path, and a fork is a one-time act at birth.
+	forkFrom string
+	forkAt   string
+
 	// sessionMCP records whether the host GRANTED the sessionMcp capability. It is asked once
 	// at handshake and remembered: a capability the host did not grant is not a thing to send
 	// anyway, and sending servers into a host that cannot take them is how a decode failure
@@ -150,7 +156,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	return nil
 }
 
-// openSession reloads this slot's conversation, or starts one when it has none.
+// openSession reloads this slot's conversation, forks one, or starts a fresh one.
 //
 // The id is stored rather than derived: MSP refuses a retained or reserved id with
 // `session_id_conflict`, so AF's usual deterministic UUIDv5 would work exactly once
@@ -173,6 +179,16 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 			return fmt.Errorf("Muse Code セッションの再開に失敗しました: %w", err)
 		}
 		log.Printf("muse: %s: stored session %s is gone; starting a fresh one", h.name, prev.ID)
+	}
+
+	// A slot born from a fork opens by copying the source rather than starting empty. It is
+	// tried once, at birth: after this the slot has a stored session and takes the resume
+	// path above, so a later failure can never re-fork an already-lived conversation.
+	if h.forkFrom != "" {
+		if err := h.forkSession(cl); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	sid := msp.NewCommandID()
@@ -930,3 +946,43 @@ func (h *threadHandle) emit(ev agents.Event) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// forkSession opens this slot by copying the source conversation (decision 13 — MSP carries
+// `session/fork`).
+//
+// Two copies happen, and both are needed: the HOST's history through `session/fork`, and AF's
+// own item store through store.ForkAt, because the store is what `Transcript` reads and a
+// forked session with an empty one would show the member nothing (transcript.go's header).
+//
+// Unlike `session/start`, AF does not mint the id: the host returns the new session, so the
+// stored id is read out of the result rather than chosen. That also means a retry cannot be
+// made idempotent by the id — which is why this runs only for a slot with no stored session.
+func (h *threadHandle) forkSession(cl *msp.Client) error {
+	prev, ok := readSession(h.forkFrom)
+	if !ok || prev.ID == "" {
+		return errors.New("フォーク元の Muse Code セッションが見つかりません")
+	}
+	params := msp.SessionForkParams{
+		CommandID: msp.NewCommandID(),
+		SessionID: prev.ID,
+	}
+	if h.forkAt != "" {
+		params.CutPoint = &msp.ForkCutPoint{LastTurnID: h.forkAt}
+	}
+	var res msp.SessionForkResult
+	if err := cl.CallInto(msp.MethodSessionFork, params, callTimeout, &res); err != nil {
+		return fmt.Errorf("Muse Code セッションのフォークに失敗しました: %w", err)
+	}
+	h.mu.Lock()
+	h.sid, h.path = res.Session.SessionID, res.Session.Path
+	h.mu.Unlock()
+	writeSession(h.slotSid, museSession{ID: res.Session.SessionID, Path: res.Session.Path})
+	// The store copy is deliberately AFTER the host's fork succeeded and is deliberately not
+	// fatal: the conversation exists either way, and refusing the session because AF could not
+	// mirror its history would trade a rendering gap for a dead session — the same posture
+	// onItem takes for every other write to this store.
+	if err := openStore(h.forkFrom).ForkAt(h.slotSid, h.forkAt); err != nil {
+		log.Printf("muse: %s: fork: transcript copy failed: %v", h.name, err)
+	}
+	return nil
+}

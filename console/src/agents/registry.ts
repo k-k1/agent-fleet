@@ -606,10 +606,14 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       // value. The picker's list IS the generated wire enum (msp.ReasoningEffortValues), so
       // there is no second copy to drift.
       effort: true,
-      // contextBar / slashSkills / forkAt are still false because their own work packages are
-      // not built yet, NOT because the protocol lacks them: MSP carries session/contextUsage
-      // and session/fork. A cap is a claim about a path measured end to end, so each flips
-      // with its package.
+      // forkAt: session/fork with a cutPoint, plus AF's own transcript copy (the store is what
+      // the mirror reads). forkAtManagedOnly is false for lcpp's reason inverted — muse has no
+      // route that could fail the check, since every session is managed.
+      forkAt: true,
+      forkAtManagedOnly: false,
+      // contextBar / slashSkills are still false because their own work packages are not built
+      // yet, NOT because the protocol lacks them: MSP carries session/contextUsage. A cap is a
+      // claim about a path measured end to end, so each flips with its package.
       runsInDir: true,
       launchableFromRepo: true,
     }),

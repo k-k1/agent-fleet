@@ -2291,3 +2291,53 @@ What muse deliberately does NOT get: a row in `fileSpecs` (`mcpproj`), so it is 
 inspected for project-scope servers nor a copy target, and `HasProjectScope: false` — agy's
 shape. No Muse project-scope spelling is documented and none was measured; that is a static
 fact about the kind rather than a runtime fallback to another kind's file.
+
+### P2-13: fork — an item id on one side, a turn id on the other
+
+The last of the capability work: `session/fork`, both `Caps.CanFork` and `Caps.CanForkAt`, and
+`Capabilities.Fork`.
+
+**The two caps move together for this kind, and they could not do otherwise.** Elsewhere they
+differ because a kind can fork through one launch route and not another (`agents.ErrForkAtRoute`
+exists for exactly that). muse is managed-only, so there is no second route to fail — and on
+the wire a whole-conversation fork IS the point fork with no cut (`cutPoint` omitted means "all
+completed turns"). A kind that could do one and not the other would be AF's invention.
+
+🔴 **The anchor is an ITEM id and the cut point is a TURN id, and the bridge between them is
+an off-by-one that no test of the happy path would find.** The schema settles it rather than a
+measurement: an item's `turnId` is "the owning turn (== the submitting `commandId` for fresh
+turns)", so a user message belongs to the turn it STARTED, not to the one before it. Therefore
+
+- "redo this message" (exclusive) cuts at the **preceding** turn — and there being none is an
+  error, not a whole-conversation fork;
+- "continue from this message" (inclusive) cuts at **that** turn — unless it is the last, where
+  keeping everything through the final turn is the whole conversation, and `""` is the value
+  that says so.
+
+Both directions produce a plausible-looking conversation when wrong, which is why the mutation
+sweep's first arm was moving the exclusive cut by one.
+
+**A fork copies two things, which is why `ForkSource` returns the slot sid rather than the muse
+session id.** The host's conversation is copied by `session/fork`; AF's own item store is copied
+by `store.ForkAt`, and the store is what `Transcript` reads (transcript.go's header). Return the
+muse session id and the store copy has no key — the forked session would open with an empty
+history, the opposite of what forking is for. The slot sid keys both.
+
+Three smaller things the implementation settled:
+
+- **The host mints the new id.** Unlike `session/start`, where AF supplies a UUIDv7, the fork's
+  identity only exists in the result — so it is read back and stored there, and a fork is
+  attempted exactly once, for a slot with no stored session. There is no id to make a retry
+  idempotent with.
+- **The store copy is not fatal.** It runs after the host's fork succeeded, and a failure logs:
+  the conversation exists either way, and refusing the session because AF could not mirror its
+  history trades a rendering gap for a dead session — the posture `onItem` already takes.
+- ⚠️ **A test that hangs is worse than a test that fails.** The first version of the wire test
+  read the captured params off a bare channel, so the mutation that skips the fork entirely —
+  the exact defect it exists for — made it block for the package's full ten-minute timeout with
+  no test named. It has a deadline now.
+
+Verification is msptest for both cut directions, both refusals and the store copy, a six-arm
+mutation sweep, and a live `session/fork` against the vendor's own host that spends nothing: a
+whole-conversation fork of a session with no completed turns needs no cut point and no model
+call, and the result's `forkedFrom` provenance is what the driver reads back.

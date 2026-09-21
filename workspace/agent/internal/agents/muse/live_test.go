@@ -371,3 +371,42 @@ func TestLiveSessionStartAcceptsMCPServerConfig(t *testing.T) {
 		t.Logf("the file spelling is refused on the wire, as the closed union declares: %v", err)
 	}
 }
+
+// The fork, against the real host, for free: a whole-conversation fork of a session with no
+// completed turns needs no cut point and no model call. What it proves is the part msptest
+// cannot — that the vendor accepts AF's `session/fork` and returns a NEW session whose
+// `forkedFrom` names the source, which is what the driver reads back and stores.
+func TestLiveSessionForkReturnsANewSession(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	cl, srcID := h.cl, h.sid
+	h.mu.Unlock()
+
+	var res msp.SessionForkResult
+	err = cl.CallInto(msp.MethodSessionFork, msp.SessionForkParams{
+		CommandID: msp.NewCommandID(),
+		SessionID: srcID,
+	}, callTimeout, &res)
+	if err != nil {
+		t.Fatalf("session/fork: %v", err)
+	}
+	if res.Session.SessionID == "" || res.Session.SessionID == srcID {
+		t.Fatalf("fork returned %q for source %q", res.Session.SessionID, srcID)
+	}
+	// The provenance the driver relies on being there: AF does not mint the id, so the result
+	// is the only place the new session's identity exists.
+	if res.Session.ForkedFrom == nil || res.Session.ForkedFrom.SessionID != srcID {
+		t.Errorf("forkedFrom = %+v, want the source %q", res.Session.ForkedFrom, srcID)
+	}
+	if res.Session.ForkedFrom != nil && res.Session.ForkedFrom.CutExplicit {
+		t.Error("a fork with no cutPoint reported an explicit cut")
+	}
+	t.Logf("forked %s -> %s (path %s)", srcID, res.Session.SessionID, res.Session.Path)
+}

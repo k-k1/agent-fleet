@@ -26,8 +26,8 @@ because "does this apply to a plain shell session?" is a real question.
 | Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
 | Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | —¹¹ | — | — |
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | —¹¹ | — | — |
-| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | —¹¹ | — | — |
-| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | —¹¹ | — | — |
+| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
+| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
 | Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —¹¹ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
