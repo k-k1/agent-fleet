@@ -620,6 +620,21 @@ counts only providers that were tried and failed, so **nothing is said**. Before
     red in 0.30 s) and P2's run, which actually hit the 502.
   - The wire was checked live: enabling the row moved `providerStatus.max_inputs` from 1 to 2 (as it
     then was) and `modelStatus.max_inputs` appeared — the union and the per-model answer both work.
+  - 🟢 **A picture from the generation pane — the completion definition itself — was made too**
+    (sandbox, driven with headless Chromium). Choosing the model brought up the family card and
+    **took the size field away** (decision 4); Advanced switched the operation to edit; the field's
+    heading read **"参照画像 2 / 3 枚"**, so the per-model ceiling reaches the UI. The job finished
+    in **868.4 s** with the plant from picture 2 on the table to the right of the mug and nothing
+    else moved, and its props answer `source: "sidecar"` with **both** references in `inputs` —
+    the queue route, exactly as P2's correction says.
+  - 🔴 **That run also found that the pane's reference images fail outright on a fresh workspace.**
+    `InputPicker` uploads into `generated/console/inputs`, which does not exist until something has
+    been generated there, and `handleFSUpload` **required the directory to already exist**
+    (measured: `400 not_dir`, surfaced as "could not upload" with nothing the member can do).
+    It now **creates a target that is missing** (`fs.go`), and still refuses one that exists and is
+    not a directory — that one is a real mistake and could clobber a file. The same reasoning
+    imagegen's `resolveOutDir` already states for out_dir: a folder named for work that has not
+    happened yet cannot be expected to exist.
 
 ## Open
 

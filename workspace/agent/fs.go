@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -466,12 +468,25 @@ func maxUploadBytes() int64 {
 	return defaultMaxUpload
 }
 
-// handleFSUpload writes uploaded files into an existing directory (multipart,
-// field "file", one or more). Guards: the target dir is inside the browse root
-// and not denied; each destination name is reduced to its base and re-checked
-// against denylist/traversal; a per-file size cap applies. A name collision
-// returns 409 with the conflicting names unless ?overwrite=1. Writes go via a
-// temp file + rename so a failed upload never leaves a partial file.
+// handleFSUpload writes uploaded files into a directory (multipart, field "file",
+// one or more). Guards: the target dir is inside the browse root and not denied;
+// each destination name is reduced to its base and re-checked against
+// denylist/traversal; a per-file size cap applies. A name collision returns 409
+// with the conflicting names unless ?overwrite=1. Writes go via a temp file +
+// rename so a failed upload never leaves a partial file.
+//
+// A target that does not exist YET is created rather than refused. The generation pane's
+// reference-image picker uploads into `generated/console/inputs`, which no workspace has until
+// something has already been generated there — so on a workspace that has never made a picture,
+// refusing here made "drop a reference image" fail with nothing the member could do about it
+// (measured on a freshly started workspace: `not_dir`, and the pane says only "could not
+// upload"). It is the same reasoning imagegen's own resolveOutDir states for out_dir: a folder
+// named for work that has not happened yet cannot be expected to exist.
+//
+// 🔴 Only when it is MISSING. A path that exists and is not a directory is still refused: that
+// one is a real mistake — uploading "into" a file would either fail late or clobber it — and the
+// path has already passed safeWritableBrowsePath, the same gate resolveOutDir uses, so creating
+// it cannot escape the browse root or the denylist.
 func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 	dirFull, dirRel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if ok {
@@ -481,7 +496,16 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
-	if fi, err := os.Stat(dirFull); err != nil || !fi.IsDir() {
+	switch fi, err := os.Stat(dirFull); {
+	case err == nil && !fi.IsDir():
+		httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
+		return
+	case errors.Is(err, fs.ErrNotExist):
+		if err := os.MkdirAll(dirFull, 0o700); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", "could not create "+dirRel)
+			return
+		}
+	case err != nil:
 		httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
 		return
 	}
