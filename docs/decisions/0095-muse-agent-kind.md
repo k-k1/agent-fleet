@@ -3,11 +3,13 @@
 English | [日本語](0095-muse-agent-kind.ja.md)
 
 - Status: **adopted** (2026-09-21). Phase 1's three gates were answered on 2026-09-20 and Phase 2
-  landed over 2026-09-21 in thirteen work packages (the implementation record at the end, P2-1 to
-  P2-13 — every row of the work-package table below, plus the MCP wire route no row owned and the
-  fork path). The kind is offered in the launch menu behind its two preconditions (the proprietary
+  landed over 2026-09-21 in fifteen work packages (the implementation record at the end, P2-1 to
+  P2-15 — every row of the work-package table below, plus the MCP wire route no row owned, the
+  fork path, the two guide paragraphs the decisions promised, and the three live turns that
+  ticked two capability rows and found a 401 in the af server's own environment).
+  The kind is offered in the launch menu behind its two preconditions (the proprietary
   binary installed, a credential stored). What is NOT built is named in the guide's own capability
-  table and in P2-13's closing section, so an unticked row there means "not built", never "still
+  table and in the closing section, so an unticked row there means "not built", never "still
   being decided".
   Every `file:line` in the decisions below was read on `06ea94d3` (develop at the time) and the
   implementation record corrects the ones measurement moved. Everything marked ◎ was measured in a
@@ -326,7 +328,8 @@ diagnostic at all. "We wrote the JSON" is not evidence that a clamp is on.
 Muse's own peer messaging and session-name authority (`~/.local/share/muse/session-name-authority/`,
 user-wide) are **not** wired to AF's cross-session messaging in v1: two peer channels with one
 namespace, one of them invisible in the mirror, is how `native-peer-channel-invisible-in-mirror`
-happened. The guide says they exist and that AF does not see them.
+happened. The guide says they exist and that AF does not see them (written in P2-14, which also
+measured that the vendor's own gate is closed: the two tools reach no assembled toolset here).
 
 ### Decision 7 — the kind edits working-copy files and nothing else: no branches, no worktrees, no repository-wide metadata
 
@@ -731,7 +734,7 @@ none of it is optional.
 
 ## Open questions
 
-Five of the seven are answered; what is left is answered in Phase 2, not by another gate.
+All eight are answered now: five before Phase 2, and 6–8 by the free measurements of P2-14.
 
 1. ✅ The accounting matrix of Decision 10 — **`MeasuredPartial`**, because subagent and observer
    usage never reaches the wire (gate B1-1). Not because of the cache, and not because of cumulative
@@ -744,15 +747,20 @@ Five of the seven are answered; what is left is answered in Phase 2, not by anot
    but 🔴 the **default is `muse-spark-1.3-contributor`**, which is what clamp 8 exists for.
 5. ✅ How an approval renders — `subject.command` plus `subject.stages[].argv`, two choices, no scope
    selector (gate B1-2).
-6. Whether `session/list` on a per-session host can see other AF sessions' Muse sessions (one store,
-   one user) — and if so, that the Console never offers them. **Still open**; note that with one host
-   per session the store is shared even though the hosts are not.
-7. Which path `session/start.workspaceRoot` gets when the session has a `Meta.Subdir`: the working
-   copy or the subdirectory. It decides what `--trust-workspace` covers, and `--allow-workspace-switch`
-   exists, so the wrong answer is recoverable but confusing. **Still open.**
-8. New, from gate B1: **muse's own `cron_*` tools survive every clamp measured.** An agent that can
-   schedule its own future runs sits beside Agent Fleet's scheduler with no key found to stop it —
-   Phase 2 either finds the key or says in the guide that AF does not see those runs.
+6. ✅ **Yes, and by start order** (P2-14): the host started second listed the first session as
+   `notLoaded`, the host started first listed nothing of the second's. The store is the member's,
+   not the session's. The Console offers none of them because nothing in the driver calls
+   `session/list` — pinned by a test rather than by intent.
+7. ✅ **The subdirectory** (P2-14): AF sends `m.CWD()`, the host records it, and
+   `--trust-workspace` covers that path. The consequence a member feels is fine — the working
+   copy's own `AGENTS.md` above it is still assembled — but 🔴 only because the working copy is a
+   git repository; the walk-up stops at the repository root.
+8. ✅ **The key exists and cannot be used** (P2-14). There is no cron member anywhere in either
+   enterprise plane; the only lever is `run.toolset`, a named allow-list of the whole tool
+   surface, which measurably removes every MCP tool as well (AF's own `af` server included) and
+   refuses to start the host at all on a tool name a later release renames. So the ADR's second
+   branch is taken: the guide says Agent Fleet does not see those runs, and two live tests keep
+   both halves of that sentence true.
 
 ## Reproducing the probe (2026-09-20, Muse Code 1.3.0-R3401.1)
 
@@ -2347,33 +2355,217 @@ mutation sweep, and a live `session/fork` against the vendor's own host that spe
 whole-conversation fork of a session with no completed turns needs no cut point and no model
 call, and the result's `forkedFrom` provenance is what the driver reads back.
 
+### P2-14: the two guide paragraphs the work-package table never had a row for
+
+Two things this ADR names as Phase 2's own work are not code: decision 6's closing paragraph
+("the guide says they exist and that AF does not see them") and open question 8 ("Phase 2
+either finds the key or says in the guide that AF does not see those runs"). Both went past
+the whole of P2-1 … P2-13 and past the flip to *adopted*, because **the work-package table
+has rows for areas of the codebase and none for "the paragraphs the decisions promise"**. The
+checklist that table came from exists to stop exactly this, so the finding is about the
+checklist: a decision that says "the guide says X" is a deliverable with no file in the table,
+and it needs its own row.
+
+Neither could be written honestly without a measurement first, and both measurements are free.
+
+🔴 **Open question 8: the key exists, and it cannot be used.** The search was exhaustive
+against the vendor's own offline validator, which names unknown members (`muse config validate
+--plane defaults --file`, a document of the shape `{"schema_version":1,"settings":{…}}`): the
+defaults plane has no `cron`, `scheduler` or `automation` section at all — the sections that
+exist are `run`, `agents`, `context`, `skills`, `tools`, `tui`, `telemetry` and the scalar
+`model` — `run` carries no cron member, `tools` is artifact/web_search/web_fetch, and the
+**policy** plane is a different document entirely (`execution.permission_profiles`,
+`execution.approval_{scopes,modes,reviewers}`, `execution.network_sandbox_modes`,
+`model_egress`). The one lever that removes the tools is `run.toolset`, and it is a **named
+allow-list of the entire tool surface**, not a cron switch. Measured with the echo oracle, it
+takes two things down with the cron tools:
+
+- **every MCP tool.** A stub stdio server's `mcp__afprobe__probe_ping` is in the assembled
+  toolset under the default `{"mode":"all","source":"default"}` and gone under
+  `{"mode":"named","source":"settings"}`. AF's own `af` server rides the same route, so a muse
+  session clamped this way would be told to call `af_report` and have no such tool — the
+  failure P2-12's `ServedKinds` exists to prevent, arriving by another door. The names cannot
+  simply be added to the list either: they are discovered per session at the first turn, and
+  AF does not know them when it writes the file.
+- **the host, on the next release.** An unknown name is not ignored: `invalid run
+  configuration: unknown tool names: …`, rc=2 before any session exists. A tool renamed in 1.4
+  would stop every muse session in the fleet from starting.
+
+So the answer is the guide paragraph, and `TestLiveCronToolsSurviveTheClamps` plus
+`TestLiveTheOnlyKeyThatCutsCronCutsMCPToolsToo` keep both halves honest — the first goes red if
+a later release makes the paragraph wrong, the second if the reason for rejecting the key stops
+holding. What the tools actually offer, read out of the binary's own schema: a prompt on a
+5-field local-time cron, recurring by default, **auto-expiring after 7 days**, firing while a
+run is active unless told otherwise, with `cron_delete` as the only cancel.
+
+**Decision 6's other residual: muse's own peer messaging is gated, and the gate is closed.**
+`send_session_message` and `list_peer_sessions` are in the binary's tool tables but in **no**
+assembled toolset here: measured across four arms (`local_session_messaging.enabled` true,
+false, `MUSE_EXPERIMENTAL_LOCAL_SESSION_MESSAGING=1`, and that plus
+`MUSE_EXPERIMENTAL_EXTERNAL_AGENT_INGRESS=1`) the tool list is 29 tools and none of them is
+either — and `muse session-message list` in a throwaway home answers `external agent ingress is
+unavailable`. The feature is real (the subcommand, the user-wide
+`~/.local/share/muse/session-name-authority/`), it is experimental, and AF turns nothing on. The
+guide says it exists and that AF sees none of it, which is what decision 6 asked for; a clamp
+would be writing a key to hold shut a door that is already shut.
+
+✅ **Open question 6 — it crosses, and by start order.** Two hosts in one throwaway HOME, two
+sessions, `session/list` from both (a query: no commandId, no model call). The host started
+**second** listed the first session, with `status: "notLoaded"` — the schema's own tell for "a
+session loaded by another host". The host started first did not list the second's, so a host
+serves the store as it found it rather than re-reading it. Cross-visibility is therefore real
+and AF must never depend on the order: the rule is that nothing in the driver calls
+`session/list` at all, which `TestTheDriverNeverListsTheUsersOtherSessions` pins by scanning the
+package. The Console is fed from AF's own bookkeeping and offers no muse conversation it did not
+start.
+
+✅ **Open question 7 — the subdirectory, and the repository is what saves it.** AF sends
+`m.CWD()` (driver.go), so a session launched into a subfolder passes the **subfolder** as
+`workspaceRoot`, and that is also the child's cwd and what `--trust-workspace` trusts. The host
+records it: `session/list` filtered by the subfolder returns the session and the same filter
+keyed to the working copy does not (the control — a filter that ignored its argument would pass
+the first arm alone). What a member feels is the rules file, and there the answer is better than
+the question feared: the working copy's own `AGENTS.md`, one level **above** the workspace root,
+is still assembled. 🔴 But only because an AF working copy is a git repository — the identical
+tree with no `.git` loads the subfolder's `AGENTS.md` and nothing above it, so the walk-up stops
+at the repository root rather than at the home directory. Three arms, all free, the third being
+the untrusted control in which neither file is assembled.
+
+### P2-15: what three live turns bought, and the 401 they found
+
+The capability table's unticked rows are not a list of things Muse Code cannot do; they are a
+list of things nobody had WATCHED. Three turns against the member's own subscription (declared
+before they were spent, and the whole cost of this package) settled four of them, and found two
+defects that no amount of reading would have.
+
+**Turn 0 — the worktree, for nothing.** `create_session(kind=muse, worktree=true)` with no
+first prompt: the session came up managed in a new worktree, `git worktree list` shows it, and
+the `muse serve` child's `/proc/<pid>/cwd` IS that directory. A row ticked without a model call,
+because "start in a worktree" is a launch claim and the launch is what was watched. ✓
+
+**Turn 1 — the skill picker, and the gap under it.** 🔴 `session_skills.go`'s switch had **no
+muse case at all**, so muse fell to the `default:` bucket and the endpoint answered `{"skills":
+[]}` — the composer offered a muse session nothing, not even the repository's own skills that
+reach every other kind by injection. The ADR's work-package table names that exact file
+(`sessionx/session_skills.go:80-91`, "muse has skills") and the row was missed. Measured live
+against the running Agent, which still answers `[]` for a muse session and the full native list
+for a claude one in the same repo — the negative control, for free.
+
+The fix puts muse in the foreign-only bucket beside copilot/kiro/agy/lcpp, and the turn proves
+the half that matters: a planted `.claude/skills/af-probe-topic/SKILL.md` and the composer's own
+injection text ("Read … and follow that skill's instructions") came back as the skill's one
+line. So the guide row moves from `—¹¹` ("not built") to `—⁴` ("no native enumeration; foreign
+by injection"), which is a different and true sentence. What stays unbuilt is the native half,
+and for muse that is not "no mechanism exists": MSP publishes `skill/list` and a `skill` input
+part whose selector the host expands.
+
+**Turn 2 — the scheduled run, end to end.** A `once` schedule at now+2min, `session_mode:
+reuse`, `agent_kind: muse`, pointed at the live session: the CP fired it (`last_status: fired`,
+`reuse_run_count: 1`), the prompt landed in the session's own transcript carrying
+`source: schedule` — the badge the mirror reads — and the session answered it. ✓, and the
+Console's schedule picker gains muse (`AgentCaps.scheduledRuns`).
+
+**Turn 3 — the handoff, which failed, and the failure is the find.** 🔴 The muse session's `af`
+MCP server starts and its tools reach the model — `mcp__af_…__propose_session_handoff` really
+was called, which is P2-12's wire route measured end to end for the first time — and the call
+came back:
+
+```
+tool failed: 引き継ぎ提案の保存に失敗しました: Agent API エラー (401): missing or invalid agent token
+```
+
+**muse scrubs an MCP child's environment, exactly as codex does.** AF has known that about codex
+since `extraEnvVars` was written — the af server needs `AGENT_TOKEN`, `AGENT_ADDR`,
+`AF_SESSION_NAME`, `AF_CP_BASE_URL`, `AF_MEMO_TOKEN` forwarded explicitly — and muse's wire route
+forwarded nothing, because the definition's own `env` was all it copied. The symptom is the one
+P2-12 named for `ServedKinds` and then shipped anyway by another door: **a session told to call
+`af_report` that cannot**, whose only sign is a report that never arrives. Every builtin is
+affected (the others' `mcp-run` wrapper needs `AF_SECRET_KEY` to open the store), and no test
+could have caught it, because every test that exercised the af server ran in a process that
+still had the environment.
+
+The fix exports the list rather than copying it (`mcpreg.ForwardEnvNames`, one list for codex's
+`env_vars` names and muse's wire `env` values), forwards it for builtins only — a member's own
+stdio command is not handed AF's credentials — and lets a definition's own value win. Six-arm
+mutation sweep, all red. ⚠️ **The live re-check is owed and cannot be run here**: the Agent that
+drives the container's sessions is the deployed build, and this fix is in the source. After a
+deploy it is one turn — ask a muse session to call `af_report` and watch the 401 not happen.
+
+The wire carries VALUES, so "does a token handed to the vendor's host reach its disk" had to be
+measured rather than assumed: a marker passed in `session/start.config.mcpServers[].env` appears
+nowhere under muse's store (now an assertion in the live MCP test, not a one-off).
+
+**Three more things this package fixed, all of them the same shape — a hand-kept list.**
+
+- 🔴 **muse was missing from every MCP tool DESCRIPTION**, in both languages, on both servers:
+  `create_session`'s `kind`, `list_models`'s `kind`, `get_agent_usage`. The validations accept
+  muse; the descriptions are what an agent reads, so no session would ever have started a muse
+  child through MCP. (lcpp is missing from the CP's copy too — ADR 0093's residual, recorded
+  rather than fixed, because "lcpp works through this route" is its measurement to make.)
+- 🔴 **The CP's `mcpKnownKinds` had seven kinds** while `mcpreg.knownKinds` (Go) and `MCP_KINDS`
+  (TS) had eight: an admin scoping a tenant MCP server to muse was refused with "unknown agent
+  kind". Three copies in three languages across two modules, so the guard reads the other two as
+  text and fails on either direction of drift.
+- `session/list`-style axis fixes elsewhere in this record: the schedule picker (P2-14) and
+  `injectDriver`'s comment, which now names muse beside lcpp as a kind whose absence is a no-op.
+
+**And one defect in the suite itself**, found by running it on a machine that HAS muse installed:
+`install_muse_test.go` set a temp HOME but left PATH alone, and `musePresent` falls back to
+`exec.LookPath("muse")` — deliberately, so a baked binary elsewhere is not re-downloaded. Three
+tests went red here and green in CI, which is the wrong way round: a test that only passes where
+the product is absent is a test of the machine. The helper now drops from PATH every directory
+that holds a `muse` and keeps the rest, because emptying PATH turns the checksum test into a
+"curl not found" test.
+
+**Image paste is built, and deliberately not ticked.** `inputParts` now reads an attached
+`.png/.jpg/.gif/.webp` and sends a real MSP `image` part (base64 + the required `mediaType`,
+from a fixed map rather than `mime.TypeByExtension`, which reads a file the container may not
+have). Everything it will not inline — another file type, an empty file, one over 8 MiB, an
+unreadable path — falls back to the text part naming the path, because a member who pasted a
+screenshot must never send a turn that mentions nothing. Six-arm mutation sweep, all red; the
+sweep also deleted a branch it proved was untestable (a `stat`-size check the post-read length
+check already covered). The Console cap stays OFF and the guide row stays `—`: ticking it is one
+turn with a real image, and this table ticks what was watched.
+
 ### Phase 2 closed: what is built, what is not, and one thing found next door
 
 Every row of the work-package table is landed (P2-1 … P2-11 and P2-13, plus P2-12 for the MCP
 route no row owned), so the Status above is *adopted*. The estimate was 22–33 session-days; the
-work ran to thirteen packages.
+work ran to thirteen packages — and then a fourteenth, P2-14, for the two guide paragraphs the
+decisions promised and the table had no row for. Its own lesson is in that record: *adopted* was
+set with two named deliverables unwritten, because the checklist enumerates areas of code.
 
-**The eight capability rows that are still `—` are not blocked by Muse Code, and the guide now
-says so rather than saying "still being built".** Each is an Agent Fleet feature nobody wired
-for this kind, and they split into two shapes:
+**Eight capability rows were still `—` when this section was first written. P2-15 spent three
+turns on them and the count is now five**, which is the honest shape of "not blocked by Muse
+Code, just not watched":
 
-- **Two the protocol carries and a package deliberately stopped short of.** The context-usage
-  gauge (`session/contextUsage` exists, but it only fires around a turn, so declaring
-  `contextBar` would be a capability read off a schema rather than measured end to end) and
-  image paste (attachments ride as text parts naming the path; MSP's image part takes base64,
-  so this is a real piece of work, not a flag).
-- **Six that are not written per agent at all** — the skill/command picker, handoff, starting in
-  a worktree, scheduled runs, the chat bridge and use as the assistant chat. ADR 0093's own
-  inventory found no per-kind branch in the handoff, spawn, shared-view or scheduled-launch
-  paths, so the likely truth is that most of them already work. "Likely" is exactly why the row
-  stays unticked: this table only ticks what was seen working end to end, and seeing these work
-  costs real turns against a member's subscription.
+- **Ticked by measurement**: starting in a worktree and scheduled (unattended) runs — both
+  watched on a real muse session (P2-15), the first for no turns at all.
+- **Re-marked rather than ticked**: the skill/command picker, which was not "unverified" but
+  UNWIRED — muse was in no branch of `session_skills.go` and the endpoint answered an empty
+  list. It now carries footnote 4 with the other four kinds: foreign skills by injection
+  (measured), no native enumeration. The native half is real work over MSP's `skill/list`.
+- **Built but not ticked**: image paste. The driver sends a real `image` part now (P2-15); the
+  cap and the row wait on one turn with a real image.
+- **Still `—` and still not watched**: the context-usage gauge (`session/contextUsage` exists
+  but only fires around a turn, so declaring `contextBar` would be a capability read off a
+  schema), handoff — where P2-15 found and fixed a 401 that made every af-tool write fail from
+  a muse session, so the row is now blocked on a re-measurement after a deploy rather than on
+  nobody having looked — the chat bridge, and use as the assistant chat.
 
-⚠️ **One finding that is not muse's**, surfaced while checking the above and left alone
-deliberately: `ScheduleDetailModal.tsx`'s `AGENT_KINDS` is a hand-kept list of six
-(`claude, codex, opencode, copilot, cursor, kiro`). It is missing **agy**, which this same guide
-table marks ✓ for scheduled runs, as well as lcpp and muse. So a schedule's agent cannot be
-edited to agy in the Console today. It is not fixed here because it is not this kind's defect
-and because "muse can be scheduled" is a claim that needs a turn to make honestly — but a
-hand-kept kind list that has already drifted once will drift again, and the fix is the same
-shape as `mcpreg.ServedKinds`: name the axis instead of listing the members.
+⚠️ **One finding that is not muse's**, surfaced while checking the above:
+`ScheduleDetailModal.tsx`'s `AGENT_KINDS` was a hand-kept list of six
+(`claude, codex, opencode, copilot, cursor, kiro`), missing **agy**, which this same guide
+table marks ✓ for scheduled runs — so a schedule's agent could not be edited to agy in the
+Console at all. **Fixed in P2-14** the way the note asked for, which is `mcpreg.ServedKinds`'
+shape: the axis is named (`AgentCaps.scheduledRuns`) and the picker's list is DERIVED from it
+(`scheduledKinds`), so the copy that drifted no longer exists. lcpp and muse stay off the list
+— not because the scheduler would refuse them, but because the picker offers what the guide
+ticks and those two rows are `—` until a turn is spent seeing one work.
+
+⚠️ The same shape one layer down, left alone on purpose: `scheduler_wake.go`'s `injectDriver`
+is a second hand-kept list of managed kinds and it does not carry lcpp or muse either. That one
+is harmless, and its harmlessness is the interesting part — the Agent defaults any `ManagedOnly`
+kind to managed at create time (`session_handlers.go:707`), so CP's list is an optimisation in
+front of an axis that is already named on the other side. A list that cannot drift into a defect
+is not worth a change here.
