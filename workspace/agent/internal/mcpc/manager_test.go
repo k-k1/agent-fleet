@@ -130,6 +130,49 @@ func TestManager_SyncReconnectsOnDefChange(t *testing.T) {
 	}
 }
 
+// TestManager_SyncIsANoOpWhenDefsAreUnchanged is the negative control
+// TestManager_SyncReconnectsOnDefChange was missing: a repeated Sync call with the SAME defs
+// (the exact shape a caller like lcpp's own runTurn makes every single turn — mcpreg.ForSession
+// returns a stable value across turns for an unchanged registry) must not tear down and
+// reconnect anything. Without this, "Sync compares defs" and "Sync always reconnects" are
+// indistinguishable from outside this package, and a caller that calls Sync every turn would
+// look like it re-dials (execs) every server every turn when it does not.
+func TestManager_SyncIsANoOpWhenDefsAreUnchanged(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := NewManager(ctx)
+	defer func() { _ = m.Close() }()
+
+	defA := fakeStdioDef(t, "a", "modern")
+	if errs := m.Sync(context.Background(), []mcpreg.ServerDef{defA}); len(errs) != 0 {
+		t.Fatalf("Sync errors: %+v", errs)
+	}
+	m.mu.Lock()
+	first := m.servers["a"]
+	m.mu.Unlock()
+
+	// Same def, a fresh slice (the caller's own repeated ForSession call would not hand back
+	// the identical slice value either) — repeated 3 times, matching several turns in a row.
+	for i := 0; i < 3; i++ {
+		if errs := m.Sync(context.Background(), []mcpreg.ServerDef{defA}); len(errs) != 0 {
+			t.Fatalf("Sync errors (call %d): %+v", i, errs)
+		}
+	}
+
+	m.mu.Lock()
+	second := m.servers["a"]
+	m.mu.Unlock()
+	if first != second {
+		t.Fatal("Sync reconnected a server whose definition never changed — it should have been a pure no-op")
+	}
+	// A stronger check than pointer identity alone: if Sync had actually closed and
+	// re-dialed, the OLD connection (now closed) would refuse a call the same way
+	// TestManager_SyncReconnectsOnDefChange's own final assertion checks.
+	if _, _, err := first.CallTool(context.Background(), "echo", []byte(`{"msg":"still-alive"}`)); err != nil {
+		t.Fatalf("the untouched connection should still be usable: %v", err)
+	}
+}
+
 func TestManager_CallToolUnknownName(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

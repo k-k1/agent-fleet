@@ -687,15 +687,19 @@ import する非テストのファイルは 0 件・`driver.go:481` は `harness
 直して `go test ./workspace/agent/...` が緑でも、`control-plane` 側は赤いまま黙って見落とすところだった
 （実際に一度落として確認した）。両方に `"lcpp": true` を足して緑にした。
 
-🔴 **`af` を有効にする＝毎ターン実プロセスを spawn する。** 他の kind（claude/codex/…）にとって
-「`af` が `ServedKinds` にいる」は config ファイルに書くだけで、実際に起動するかは CLI 側の判断
-（ツールを呼ぶまで起動しないことが多い）。`lcpp` は違う——`mcpMgr.Sync` は渡された `ServerDef` を
-**その場で dial（exec）する**。`af` は常に `Ready` な builtin（`builtin.go` の `ready: func(*secrets.Data)
-bool { return true }`）なので opt-out の手段が無く（`compose` の opt-out はテナント行にしか効かない）、
-**`lcpp` の毎ターンが `workspace-agent mcp-stdio --self-report --chromium-attach` を実プロセスとして
-spawn する**——モデルが `af` のツールを 1 度も呼ばなくても。試験ではこれを踏むと危険（後述）なので
-`AF_AGENT_INSTALLED_BIN=/bin/false` で無害化したが、**本番のコストとして次の段に持ち越す**: 毎ターンの
-ハンドシェイク（spawn + `server/discover` + `tools/list`）の実測レイテンシは未計測。
+🔴 **訂正（`sikdmnv` の指摘、2026-09-21）: 「`af` を有効にする＝毎ターン実プロセスを spawn する」は誤り
+だった。** 初稿はここで `mcpMgr.Sync` が「渡された `ServerDef` をその場で dial（exec）する」と書いたが、
+`Sync`（`internal/mcpc/manager.go:55-102`）は `m.servers` を走査し **`!reflect.DeepEqual(d, s.def)` の
+ときだけ** 閉じて繋ぎ直す——def が前回と同じなら map 比較だけで終わり、`Connect`（= spawn）は呼ばれない。
+`mcpreg.ForSession` はターンごとに変わる値（トークン・時刻）を作らず、`BuiltinAF` の `runArgs` も固定
+なので、**`af` の spawn はセッションにつき 1 回（最初のターン）だけ**で、以後の毎ターンの `Sync` 呼び出し
+はハンドシェイクではなく map 比較のコストしか払わない。`mcpc/manager_test.go` に無かった陰性対照
+（`TestManager_SyncReconnectsOnDefChange` の逆——def が同じなら同じ `*Server` のまま）を
+`TestManager_SyncIsANoOpWhenDefsAreUnchanged` として追加し、これで固定した（PR #869 へのレビュー
+コメントを受けた追補コミット）。「本番のコストとして次の段に持ち越す」対象も、ターンごとの
+ハンドシェイクではなく**セッション開始時 1 回ぶんの spawn+ハンドシェイク**の実測レイテンシに変わる。
+`AF_AGENT_INSTALLED_BIN=/bin/false` によるテスト側の無害化（テストバイナリ自身の再帰 re-exec を防ぐ
+ため）はこの訂正と無関係に必要——そちらは変えていない。
 
 **ツール定義の費用（実測、この配備）。** 実 `workspace-agent mcp-stdio --self-report --chromium-attach`
 に `mcpc.Connect` して `ToolDefs()` を JSON にしたもの（`--peer-messaging`/`--image-gen`/`--fleet-spawn`
