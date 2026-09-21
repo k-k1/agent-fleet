@@ -135,6 +135,21 @@ type GrafanaCreds struct {
 	Token string `json:"token"`
 }
 
+// LcppConn is the member's own llama.cpp connection (docs/log/107): a LAN llama-server (or
+// router) URL and an optional API key. When set, it OVERRIDES the deployment's own "llm"
+// engine role for this member's lcpp sessions — engines.go's harnessEngineToken/Window/
+// Available read it before falling back to the Control Plane's catalogue — which is why it
+// lives in the encrypted store next to every other provider credential rather than in
+// ui-prefs.json (plaintext, and the wrong trust boundary for a bearer token). APIKey may be
+// empty: an unauthenticated llama-server on a LAN is a real, common setup.
+//
+// URL is stored normalized WITHOUT a trailing "/v1" (normalizeLcppURL in connections.go) so
+// every reader can append the mount it needs (.../v1 for chat, the bare base for /props).
+type LcppConn struct {
+	URL    string `json:"url"`
+	APIKey string `json:"apiKey,omitempty"`
+}
+
 // AWSProfileRef points an ops integration at an AWS profile. It holds NO secret:
 // auth is the AWS credential chain already in the container (the user's SSO login,
 // same as ssm sessions). Profile selects the profile; Region optionally overrides
@@ -351,6 +366,7 @@ type Data struct {
 	PagerDuty      *PagerDutyCreds   `json:"pagerduty,omitempty"`  // ops MCP credential (docs/log/25)
 	Grafana        *GrafanaCreds     `json:"grafana,omitempty"`    // ops MCP credential (docs/log/25)
 	Jira           *JiraCreds        `json:"jira,omitempty"`       // work item inbox source (docs/log/80 P1)
+	Lcpp           *LcppConn         `json:"lcpp,omitempty"`       // member's own llama.cpp connection (docs/log/107)
 	CloudWatch     *CloudWatchConn   `json:"cloudwatch,omitempty"` // ops MCP settings (docs/log/25; no secret — AWS cred chain)
 	AWS            *AWSConn          `json:"aws,omitempty"`        // Agent Toolkit for AWS MCP settings (docs/log/25; no secret — AWS cred chain)
 	Discord        *DiscordCreds     `json:"discord,omitempty"`    // chat-bridge connection (docs/log/37)
