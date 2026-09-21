@@ -8,18 +8,18 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { EnginesPillView } from "./EnginesPill.tsx";
+import { EnginesPillView, type MemberChatConn } from "./EnginesPill.tsx";
 import type { EngineMemberRow } from "./wire.ts";
 
 let host: HTMLDivElement;
 let root: Root;
 
-async function render(rows: EngineMemberRow[]) {
+async function render(rows: EngineMemberRow[], memberChat?: MemberChatConn) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root.render(<EnginesPillView rows={rows} />);
+    root.render(<EnginesPillView rows={rows} memberChat={memberChat} />);
   });
 }
 
@@ -238,5 +238,67 @@ describe("engine pill — decision 6, queue count", () => {
   it("a fresh-counter 0 does not draw a confident queue line", async () => {
     await render([{ key: "image", api: "images", state: "running", queue: { count: 0, counted_secs: 0 } }]);
     expect(host.querySelector(".engine-pill-queue")).toBeNull();
+  });
+});
+
+describe("engine pill — the member's own lcpp connection (docs/log/107 follow-up)", () => {
+  // Acceptance condition: with no member connection, the render is IDENTICAL to before this
+  // feature existed — same row, same pill, the CP's own chat state untouched.
+  it("no member connection: the chat pill reads the CP's engines row exactly as before", async () => {
+    await render([{ key: "llm", api: "chat", state: "running", warm: true }]);
+    expect(pills().length).toBe(1);
+    // Default locale is ja — "engine.state_ready" (CP vocabulary), not any member wording.
+    expect(host.querySelector(".engine-pill-state")!.textContent).toContain("準備済み");
+  });
+
+  // A member connection overrides the chat pill EVEN WHEN a CP chat row is also present
+  // (decision 1's "member's setting always wins", carried onto the display) — the CP's
+  // "running"/"warm" state must not leak through once a member connection exists.
+  it("a member connection overrides the CP's chat row entirely", async () => {
+    await render(
+      [{ key: "llm", api: "chat", state: "running", warm: true }],
+      { url: "http://box:9931", reachable: true },
+    );
+    expect(pills().length).toBe(1);
+    const stateEl = host.querySelector(".engine-pill-state")!;
+    expect(stateEl.textContent).toContain("接続中"); // engine.state_member_reachable
+    expect(stateEl.textContent).not.toContain("準備済み"); // the CP's own state_ready must not show
+  });
+
+  // A member connection draws a chat pill even with NO chat row from the CP at all (e.g. this
+  // deployment runs no engines) — a direct connection needs nothing from the deployment.
+  it("a member connection draws a chat pill with no CP engines payload at all", async () => {
+    await render([], { url: "http://box:9931", reachable: true });
+    expect(pills().length).toBe(1);
+    expect(host.querySelector(".engine-pill[title*='チャット']")).not.toBeNull();
+  });
+
+  it("reachable=false reads as not-reachable, not as unknown", async () => {
+    await render([], { url: "http://box:9931", reachable: false });
+    expect(host.querySelector(".engine-pill-state")!.textContent).toContain("届いていません");
+  });
+
+  // The core distinction this whole feature exists to preserve: "never observed" must draw
+  // its OWN word, not the same one as a real, failed dial.
+  it("reachable=undefined (never observed) reads as unknown, not as unreachable", async () => {
+    await render([], { url: "http://box:9931" });
+    const text = host.querySelector(".engine-pill-state")!.textContent;
+    expect(text).toContain("確認中"); // engine.state_member_unknown
+    expect(text).not.toContain("届いていません");
+  });
+
+  it("the popover shows the connection's own URL, so it reads as 'mine'", async () => {
+    await render([], { url: "http://192.168.0.113:28080", reachable: true });
+    await openPopover(pills()[0]);
+    const lines = Array.from(host.querySelectorAll(".engine-row-line")).map((n) => n.textContent);
+    expect(lines.some((t) => t?.includes("192.168.0.113:28080"))).toBe(true);
+  });
+
+  // The images role is untouched by any of this — only `chat` is ever overridden.
+  it("an images row is unaffected by a member chat connection", async () => {
+    await render([{ key: "image", api: "images", state: "running" }], { url: "http://box:9931", reachable: true });
+    expect(pills().length).toBe(2);
+    const imagesPill = host.querySelector(".engine-pill[title*='画像']"); // engine.role_images
+    expect(imagesPill).not.toBeNull();
   });
 });

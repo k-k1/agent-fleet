@@ -407,6 +407,11 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.lcpp_conn_checking": "Checking…",
   "agents.lcpp_conn_check_failed": "Check failed: {msg}",
   "agents.lcpp_conn_check_result": "build {build} · window {nctx} · models: {models}",
+  // Reachability (docs/log/107 follow-up). "Never observed" and "unreachable" are different
+  // facts — the latter is a real dial that failed, the former just hasn't been checked yet.
+  // The card auto-checks once in the former case (see the comment atop LcppCard).
+  "agents.lcpp_conn_reachable": "Reachable",
+  "agents.lcpp_conn_unreachable": "Not reachable",
   "set.tab_cost": "Cloud cost",
   // --- 稼働時間 heatmap (docs/log/83) ---
   // ⚠️ Occupancy, never money. Cost Explorer only reports per day, so an hourly

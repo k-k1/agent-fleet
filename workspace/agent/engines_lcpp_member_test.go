@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -241,5 +242,87 @@ func TestNoMemberConnReproducesPreExistingBehaviorExactly(t *testing.T) {
 	}
 	if got := lcppModels(context.Background()); got != nil {
 		t.Errorf("lcppModels = %+v, want nil", got)
+	}
+}
+
+// --- lcppMemberReachable (the "reachable" field's underlying observation) ------------------
+
+// lcppMemberSetConn/lcppMemberNoConn already call lcppMemberCacheReset, which clears the
+// observation too — so every test below starts from "unknown", not whatever a preceding test
+// in this file left behind.
+
+// A real fetch through lcppModels (the launch-menu path, unrelated to a check button) records
+// success.
+func TestLcppMemberFetchModelsCachedRecordsReachableOnSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"m1"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	lcppMemberSetConn(t, srv.URL, "")
+
+	if _, known := lcppMemberObservedReachable(); known {
+		t.Fatal("known = true before any fetch happened")
+	}
+	lcppModels(context.Background())
+	ok, known := lcppMemberObservedReachable()
+	if !known || !ok {
+		t.Errorf("ok=%v known=%v, want true, true", ok, known)
+	}
+}
+
+// An unreachable box records a false observation, not a missing one — "unknown" and
+// "unreachable" are different facts, and only the latter follows a real, failed attempt.
+func TestLcppMemberFetchModelsCachedRecordsReachableOnFailure(t *testing.T) {
+	lcppMemberSetConn(t, "http://127.0.0.1:1", "") // nothing listens here
+	lcppModels(context.Background())
+	ok, known := lcppMemberObservedReachable()
+	if !known || ok {
+		t.Errorf("ok=%v known=%v, want false, true", ok, known)
+	}
+}
+
+// A cache hit (within lcppMemberModelsCacheTTL) must NOT overwrite the observation — the
+// recorded fact is "the last real dial", not "the last time this function was called".
+func TestLcppMemberFetchModelsCachedCacheHitDoesNotReRecord(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusInternalServerError) // every real dial after the first would flip ok to false
+	}))
+	t.Cleanup(srv.Close)
+	lcppMemberSetConn(t, srv.URL, "")
+
+	// Seed one successful observation directly, then force a "would-be" real dial to be a
+	// server error: since it lands inside the cache TTL, lcppModels must serve the cached
+	// (successful) answer and never call the server a second time.
+	lcppMemberRecordReachable(true)
+	lcppMemberModelsCache.mu.Lock()
+	lcppMemberModelsCache.at = time.Now()
+	lcppMemberModelsCache.value = []lcppMemberModel{{ID: "m1"}}
+	lcppMemberModelsCache.mu.Unlock()
+
+	lcppModels(context.Background())
+	if hits != 0 {
+		t.Errorf("hits = %d, want 0 (cache hit must not dial)", hits)
+	}
+	ok, known := lcppMemberObservedReachable()
+	if !known || !ok {
+		t.Errorf("ok=%v known=%v, want true, true (the seeded observation, untouched)", ok, known)
+	}
+}
+
+// Changing the connection (a fresh lcppMemberSetConn/PUT) drops the PREVIOUS connection's
+// observation back to unknown — a stale true/false about a URL that no longer applies must not
+// carry over onto the new one.
+func TestLcppMemberCacheResetClearsReachableObservation(t *testing.T) {
+	lcppMemberSetConn(t, "http://box:9931", "")
+	lcppMemberRecordReachable(true)
+	if _, known := lcppMemberObservedReachable(); !known {
+		t.Fatal("setup: observation not recorded")
+	}
+
+	lcppMemberCacheReset()
+	if _, known := lcppMemberObservedReachable(); known {
+		t.Error("known = true after lcppMemberCacheReset, want false (unknown)")
 	}
 }

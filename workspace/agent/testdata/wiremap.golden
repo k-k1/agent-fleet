@@ -40,7 +40,7 @@ connections.go handlePutCloudWatchConn x1 {connected,profile,region,sso} cond{re
 connections.go handlePutDiscordConn x1 {botName,channelId,connected,events,fullText,mention,mentionUserId,mirrorInput,mode,notify,operator,receive,test,testError,threads} cond{botName,channelId,fullText,mention,mentionUserId,mirrorInput,mode,operator,receive,test,testError,threads}
 connections.go handlePutGitConn x1 {connected,host,username,warn} cond{warn}
 connections.go handlePutGrafanaConn x1 {connected,url}
-connections.go handlePutLcppConn x1 {connected,enabled,url} cond{connected,url}
+connections.go handlePutLcppConn x1 {connected,enabled,reachable,url} cond{connected,reachable,url}
 connections.go handlePutPagerDutyConn x1 {connected,host} cond{host}
 connections_jira.go handleDeleteJiraConn x1 {disconnected}
 connections_jira.go handleJiraOAuthStore x1 {account,authKind,cloudId,connected,email,site,sites} cond{account,cloudId,email,sites}

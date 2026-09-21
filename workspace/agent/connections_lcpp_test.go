@@ -228,3 +228,163 @@ func TestHandleCheckLcppConnUnreachable(t *testing.T) {
 		t.Errorf("status = %d, want 502", w.Code)
 	}
 }
+
+// --- lcppStatus's "reachable" field --------------------------------------------------------
+
+// No connection configured at all: the response is byte-for-byte what it was before this
+// field existed — no "reachable" key, whatever the (irrelevant) observation state happens to
+// hold in this process.
+func TestLcppStatusUnsetConnectionUnchanged(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	lcppMemberRecordReachable(true) // must be ignored: no connection means no "reachable" key at all
+
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := lcppStatus(s)
+	if out["connected"] != false {
+		t.Errorf("connected = %v, want false", out["connected"])
+	}
+	if _, present := out["reachable"]; present {
+		t.Errorf("reachable = %v, want absent when there is no connection", out["reachable"])
+	}
+	if _, present := out["url"]; present {
+		t.Error("url present with no connection")
+	}
+}
+
+// A connection is configured, but nothing has ever observed it (fresh workspace, no launch
+// menu built yet, no check pressed): "reachable" is ABSENT, not false — this is the
+// unknown-vs-unreachable distinction the whole feature exists to preserve.
+func TestLcppStatusConnectedNeverObservedOmitsReachable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset() // known=false
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://box:9931"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := lcppStatus(s)
+	if out["connected"] != true {
+		t.Fatalf("connected = %v, want true", out["connected"])
+	}
+	if _, present := out["reachable"]; present {
+		t.Errorf("reachable = %v, want absent (unknown), not a false", out["reachable"])
+	}
+}
+
+// Once something has observed the connection, lcppStatus reads that observation straight —
+// true and false are both distinguishable from "absent".
+func TestLcppStatusConnectedReflectsObservation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://box:9931"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	lcppMemberRecordReachable(true)
+	s, _ := secrets.Load()
+	if out := lcppStatus(s); out["reachable"] != true {
+		t.Errorf("reachable = %v, want true", out["reachable"])
+	}
+
+	lcppMemberRecordReachable(false)
+	s, _ = secrets.Load()
+	if out := lcppStatus(s); out["reachable"] != false {
+		t.Errorf("reachable = %v, want false", out["reachable"])
+	}
+}
+
+// handleCheckLcppConn's own dial is itself an observation: a successful check leaves
+// lcppStatus reporting reachable=true even without the launch-menu path ever having run.
+func TestHandleCheckLcppConnRecordsObservationOnSuccess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	srv := lcppCheckServer(t, `{"build_info":"b1","default_generation_settings":{"n_ctx":1024}}`, `{"data":[]}`)
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: srv.URL, APIKey: "sk-member"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	handleCheckLcppConn(w, httptest.NewRequest("POST", "/connections/lcpp/check", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	s, _ := secrets.Load()
+	if out := lcppStatus(s); out["reachable"] != true {
+		t.Errorf("reachable = %v after a successful check, want true", out["reachable"])
+	}
+}
+
+// A failed check also records — false, not silence — so the card/pill can say "did not
+// answer" rather than staying in the "never observed" state after somebody explicitly tried.
+func TestHandleCheckLcppConnRecordsObservationOnFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://127.0.0.1:1"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	handleCheckLcppConn(w, httptest.NewRequest("POST", "/connections/lcpp/check", nil))
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", w.Code)
+	}
+	s, _ := secrets.Load()
+	ok, known := lcppMemberObservedReachable()
+	if !known || ok {
+		t.Errorf("observed ok=%v known=%v, want false, true", ok, known)
+	}
+	if out := lcppStatus(s); out["reachable"] != false {
+		t.Errorf("reachable = %v after a failed check, want false", out["reachable"])
+	}
+}
+
+// --- acceptance: GET /connections never dials the member's own lcpp connection -------------
+
+// The absolute condition the parent task set: handleConnectionsGet must be able to answer
+// "reachable" without ever adding a request to the box itself. A fake server with a request
+// counter is the only reliable way to pin "zero dials" — asserting on timing would flake.
+func TestHandleConnectionsGetNeverDialsLcppConnection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: srv.URL}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Positive control: without this test's own guard, a naive lcppStatus that dialed on every
+	// GET would fail obviously — call it several times and require the counter to stay at 0.
+	for i := 0; i < 3; i++ {
+		w := httptest.NewRecorder()
+		handleConnectionsGet(w, httptest.NewRequest("GET", "/connections", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /connections status = %d", w.Code)
+		}
+	}
+	if hits != 0 {
+		t.Errorf("hits = %d, want 0 — GET /connections must never dial the member's lcpp connection", hits)
+	}
+}

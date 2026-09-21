@@ -1144,6 +1144,7 @@ func lcppMemberFetchModelsCached(ctx context.Context, conn secrets.LcppConn) []l
 	lcppMemberModelsCache.mu.Unlock()
 
 	models, ok := lcppMemberFetchModels(ctx, conn)
+	lcppMemberRecordReachable(ok)
 	if !ok {
 		models = nil
 	}
@@ -1154,16 +1155,57 @@ func lcppMemberFetchModelsCached(ctx context.Context, conn secrets.LcppConn) []l
 	return models
 }
 
+// lcppMemberReachable remembers the outcome of the last actual attempt to reach the member's
+// lcpp connection: recorded by lcppMemberFetchModelsCached's real fetch (the launch-menu path,
+// called on every tools/list) and by handleCheckLcppConn's explicit "check connection" button
+// (connections.go). connections.go's lcppStatus READS this but never dials on its own — GET
+// /connections is a hot path several Console screens poll on every open (RepoPicker,
+// HandoffModal, the key launch menu), and paying a LAN round trip there would slow all of them.
+var lcppMemberReachable struct {
+	mu    sync.Mutex
+	known bool
+	ok    bool
+	at    time.Time
+}
+
+// lcppMemberRecordReachable records one observation. Called only from a real dial — never from
+// a cache hit — so "known" means "something actually asked the box just now", not "the TTL has
+// not expired yet".
+func lcppMemberRecordReachable(ok bool) {
+	lcppMemberReachable.mu.Lock()
+	lcppMemberReachable.known = true
+	lcppMemberReachable.ok = ok
+	lcppMemberReachable.at = time.Now()
+	lcppMemberReachable.mu.Unlock()
+}
+
+// lcppMemberObservedReachable reports the last recorded observation. known is false when this
+// process has never attempted a dial for the CURRENT connection (including right after a
+// URL change — see lcppMemberCacheReset below). connections.go's lcppStatus must read that as
+// "unknown", never as "unreachable": an unattempted probe is not a failure, and conflating the
+// two would make the card/pill read red for every member the moment their workspace starts.
+func lcppMemberObservedReachable() (ok, known bool) {
+	lcppMemberReachable.mu.Lock()
+	defer lcppMemberReachable.mu.Unlock()
+	return lcppMemberReachable.ok, lcppMemberReachable.known
+}
+
 // lcppMemberCacheReset drops the short caches keyed off the member's OWN connection
-// (harnessEngineWindowCache's "llm" entry, lcppMemberModelsCache) — connections.go's PUT/
-// DELETE /connections/lcpp call this so a member who just changed the URL is not stuck
-// looking at the PREVIOUS connection's cached window/models for the rest of the TTL.
+// (harnessEngineWindowCache's "llm" entry, lcppMemberModelsCache, lcppMemberReachable) —
+// connections.go's PUT/DELETE /connections/lcpp call this so a member who just changed the URL
+// is not stuck looking at the PREVIOUS connection's cached window/models/reachability for the
+// rest of the TTL (or forever, in lcppMemberReachable's case, since nothing else expires it).
 func lcppMemberCacheReset() {
 	harnessEngineWindowCache.Delete("llm")
 	lcppMemberModelsCache.mu.Lock()
 	lcppMemberModelsCache.at = time.Time{}
 	lcppMemberModelsCache.value = nil
 	lcppMemberModelsCache.mu.Unlock()
+	lcppMemberReachable.mu.Lock()
+	lcppMemberReachable.known = false
+	lcppMemberReachable.ok = false
+	lcppMemberReachable.at = time.Time{}
+	lcppMemberReachable.mu.Unlock()
 }
 
 // --- ADR 0093 phase 1's LLM client (internal/harness) --------------------------------

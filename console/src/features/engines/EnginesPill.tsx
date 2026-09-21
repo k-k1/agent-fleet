@@ -6,11 +6,12 @@
 // mounted and asserted on directly in a DOM test without a store or a mocked `api()` — the
 // same split `imagegen/parts/JobList.tsx` uses. `EnginesPill` (the default export TopBar
 // renders) is the thin store-connected wrapper.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { useEnginesStore, startEnginesPolling } from "./store.ts";
+import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import {
   ROLE_ORDER,
   groupByRole,
@@ -96,23 +97,113 @@ function localStamp(iso: string): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** The member's own lcpp connection (docs/log/107 follow-up), as far as this pill needs it:
+ *  the URL (for the tooltip) and the last OBSERVED reachability. `undefined` reachable means
+ *  "never observed", same distinction connections.go's lcppStatus draws — this must not be
+ *  read as false. */
+export interface MemberChatConn {
+  url?: string;
+  reachable?: boolean;
+}
+
 /** Store-connected pill group — what TopBar renders. Starts the REST-fallback poll once per
- *  mount (TopBar mounts exactly once for the app's lifetime, same as the account menu). */
+ *  mount (TopBar mounts exactly once for the app's lifetime, same as the account menu).
+ *
+ *  The member connection rides the connections cache warmed by the repo rail (`connsCache.ts`,
+ *  the same source `ChatView`'s `chatConns` reads) — NOT a new poll or fetch of its own. Engine
+ *  workspace.agent/engines.go's harnessEngineToken already makes the member's own connection
+ *  win over the deployment's engine for actual chat traffic (docs/log/107 decision 1); this is
+ *  that same rule applied to what the pill DISPLAYS for the `chat` role — reading the CP's
+ *  `engines` stream there would show a connection this session is not even using. */
 export function EnginesPill() {
   const rows = useEnginesStore((s) => s.rows);
   useEffect(() => startEnginesPolling(), []);
-  return <EnginesPillView rows={rows || []} />;
+  const conns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
+  const lcpp = conns?.lcpp;
+  const memberChat: MemberChatConn | undefined = lcpp?.connected ? { url: lcpp.url, reachable: lcpp.reachable } : undefined;
+  return <EnginesPillView rows={rows || []} memberChat={memberChat} />;
 }
 
-/** Pure presentational half — no store, no fetch. */
-export function EnginesPillView({ rows }: { rows: EngineMemberRow[] }) {
+/** Pure presentational half — no store, no fetch. `memberChat` present means a member
+ *  connection is configured: the `chat` role's pill is drawn from IT instead of from `rows`
+ *  entirely (decision 1's "member's setting always wins", read onto the display), whatever the
+ *  CP's `engines` stream says about a deployment `llm` row. Absent (the common case, and the
+ *  ENTIRE case before this feature) reproduces today's behavior exactly. */
+export function EnginesPillView({ rows, memberChat }: { rows: EngineMemberRow[]; memberChat?: MemberChatConn }) {
   const groups = groupByRole(rows);
   return (
     <>
-      {ROLE_ORDER.filter((role) => groups.has(role)).map((role) => (
-        <EngineRolePill key={role} role={role} rows={groups.get(role)!} />
-      ))}
+      {ROLE_ORDER.filter((role) => (role === "chat" && memberChat) || groups.has(role)).map((role) =>
+        role === "chat" && memberChat ? (
+          <MemberChatPill key={role} conn={memberChat} />
+        ) : (
+          <EngineRolePill key={role} role={role} rows={groups.get(role)!} />
+        ),
+      )}
     </>
+  );
+}
+
+const MEMBER_STATE_TONE = {
+  reachable: "on",
+  unreachable: "warn",
+  unknown: "avail",
+} as const;
+
+const MEMBER_STATE_KEY = {
+  reachable: "engine.state_member_reachable",
+  unreachable: "engine.state_member_unreachable",
+  unknown: "engine.state_member_unknown",
+} as const satisfies Record<string, MsgKey>;
+
+/** The `chat` pill when a member connection is configured. Deliberately its own small
+ *  component rather than a specially-shaped `EngineMemberRow` fed through `EngineRolePill`:
+ *  `lifecycle` ("external"/"remote") already means a specific thing — a row this DEPLOYMENT
+ *  does not manage but still proxies and counts a queue for (ADR 0084 decision 4/8) — and a
+ *  direct member connection that bypasses the Control Plane entirely is a different fact.
+ *  Folding the two into one shape is exactly the mistake ADR 0084 decision 11 names ("take the
+ *  unit to be the type and you cannot express the moment there are two"). No countdown, no
+ *  queue, no lifecycle badge — none of those exist for a box only this member's session talks
+ *  to; just reachable / not / not yet known, and the URL so it reads as "mine". */
+function MemberChatPill({ conn }: { conn: MemberChatConn }) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, open, () => setOpen(false));
+
+  const word = conn.reachable === true ? "reachable" : conn.reachable === false ? "unreachable" : "unknown";
+  const tone = MEMBER_STATE_TONE[word];
+  const roleLabel = tr(ROLE_LABEL_KEY.chat);
+  const stateLabel = tr(MEMBER_STATE_KEY[word]);
+  const summary = [roleLabel, stateLabel, conn.url].filter(Boolean).join(tr("ui.sep"));
+
+  return (
+    <div className="engine-pill-wrap" ref={ref}>
+      <button
+        type="button"
+        className={"engine-pill engine-pill-" + tone}
+        title={summary}
+        aria-label={summary}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name={ROLE_ICON.chat} />
+        <span className={"engine-pill-dot engine-pill-dot-" + tone} aria-hidden="true" />
+        <span className="engine-pill-state">{stateLabel}</span>
+      </button>
+      {open && (
+        <div className="engine-popover" role="dialog" aria-label={roleLabel}>
+          <div className="engine-popover-head">
+            <span>{roleLabel}</span>
+            <span className={"engine-row-state engine-row-state-" + tone}>{stateLabel}</span>
+          </div>
+          <div className="engine-row">
+            <div className="engine-row-line muted">{tr("engine.member_conn_hint")}</div>
+            {conn.url && <div className="engine-row-line mono">{conn.url}</div>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

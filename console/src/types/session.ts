@@ -213,6 +213,11 @@ export interface ProviderConn {
   // lcpp (docs/log/107): whether a member's own LAN llama-server connection is configured.
   // `connected`/`url` above double as this card's fields — `url` is never the API key, which
   // GET /connections never returns at all (see connections.go's lcppStatus doc comment).
+  // `reachable` (docs/log/107 follow-up) is the last OBSERVED outcome of an actual dial — the
+  // Agent never dials on this route itself. ABSENT means "never observed yet" and must be
+  // drawn differently from `false` ("observed, and it did not answer") — collapsing the two
+  // would read as unreachable for every member the moment their workspace starts.
+  reachable?: boolean;
   // opencode: the selected billing route (docs/log/54). "free" is a tier that launches with
   // no authentication at all, so the launch gate reads this and allows opencode even when
   // not connected. "off" is the opposite: an explicit disable that closes the launch gate
