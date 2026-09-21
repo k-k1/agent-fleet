@@ -47,6 +47,7 @@ export const aiassist = {
   "aiassist.feature_agent_auto": "自動（優先順位）",
   "aiassist.feature_model": "モデル",
   "aiassist.feature_model_auto_note": "自動では既定のモデルに従います。具体的なモデルを選ぶには、上でエージェントを1つに決めてください。",
-  "aiassist.currently_using": "いま使うのは: {agent}",
+  "aiassist.feature_model_follow_default": "既定（上の設定に従う）",
+  "aiassist.currently_using": "いま使うのは: {agent} / {model}",
   "aiassist.currently_using_unknown": "いま使うのは: 未取得",
 };

@@ -16,6 +16,12 @@ import type { MsgKey } from "./i18n/index.ts";
 
 export type AiAssistTier = "short" | "prose";
 
+// Sentinel for a pinned feature's model picker meaning "no per-feature override — follow the
+// tier default above" (docs/log/103 中6). Never stored: the caller maps it to DELETING
+// aiFeatureModels[feature][kind] rather than writing this string, so the unset state stays
+// truly unset (not a third real value the Agent would have to recognize).
+export const AI_FEATURE_MODEL_FOLLOW_DEFAULT = "__follow_default__";
+
 /** The subset of Settings keys that are plain on/off switches — the only shape an AI-assist
  *  feature's own toggle can be. */
 type BooleanSettingsKey = {

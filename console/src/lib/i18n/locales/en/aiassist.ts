@@ -44,6 +44,7 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.feature_agent_auto": "Auto (priority order)",
   "aiassist.feature_model": "Model",
   "aiassist.feature_model_auto_note": "Auto follows the default model. To pick a concrete model, pin the agent above to one CLI first.",
-  "aiassist.currently_using": "Currently uses: {agent}",
+  "aiassist.feature_model_follow_default": "Default (follow the setting above)",
+  "aiassist.currently_using": "Currently uses: {agent} / {model}",
   "aiassist.currently_using_unknown": "Currently uses: not yet known",
 };

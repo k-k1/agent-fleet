@@ -1,9 +1,9 @@
-import { useSettings, setSetting, ASSISTANT_AGENT_KINDS, ASSISTANT_RECOMMENDED_MODEL, normalizeAssistantOrder } from "../../../lib/settings.ts";
-import { AI_ASSIST_FEATURES, type AiAssistFeatureDef } from "../../../lib/aiAssistFeatures.ts";
+import { useSettings, setSetting, ASSISTANT_AGENT_KINDS, normalizeAssistantOrder } from "../../../lib/settings.ts";
+import { AI_ASSIST_FEATURES, AI_FEATURE_MODEL_FOLLOW_DEFAULT, type AiAssistFeatureDef } from "../../../lib/aiAssistFeatures.ts";
 import { useAiAssistResolution } from "../../../lib/aiAssistResolution.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { OnOff, OrderList, Row, Select } from "../parts/controls.tsx";
-import { AiModelRow, type AiAgentKind } from "../parts/aiModelRow.tsx";
+import { AiModelRow, useResolvedModelLabel, type AiAgentKind } from "../parts/aiModelRow.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
 // AiAssistTab — "AI assisted generation". One place for the settings of every feature that
@@ -81,6 +81,17 @@ function AiFeatureCard({ f }: { f: AiAssistFeatureDef }) {
   const pin = s.aiFeatureAgents?.[f.id] || "";
   const row = resolution?.[f.id];
 
+  // Y (the model name — decision 5): the Agent only ever answers X (kind); the Console draws Y
+  // from the catalog it already fetches (docs/log/103-impl-review 中9). Pinned, this is the
+  // feature's own override; unpinned, it is the shared tier default for whatever kind the
+  // Agent says is actually resolved right now — never a guess at a kind nothing has confirmed,
+  // which is why the hook always runs (hooks can't be conditional) but its result is only
+  // RENDERED once row?.kind makes the fallback below moot.
+  const tierModels = f.tier === "prose" ? s.aiProseModels : s.aiShortModels;
+  const modelKind = (pin || row?.kind || "claude") as AiAgentKind;
+  const modelValue = pin ? s.aiFeatureModels?.[f.id]?.[pin] || "" : tierModels?.[modelKind] || "";
+  const modelLabel = useResolvedModelLabel(modelKind, f.tier, modelValue);
+
   return (
     <div className="ds-subgroup ai-feature-card">
       <Row label={tr(f.labelKey)}>
@@ -105,13 +116,27 @@ function AiFeatureCard({ f }: { f: AiAssistFeatureDef }) {
             <AiModelRow
               kind={pin as AiAgentKind}
               tier={f.tier}
-              value={s.aiFeatureModels?.[f.id]?.[pin] || ASSISTANT_RECOMMENDED_MODEL}
-              onChange={(model) =>
-                setSetting("aiFeatureModels", {
-                  ...s.aiFeatureModels,
-                  [f.id]: { ...s.aiFeatureModels?.[f.id], [pin]: model },
-                })
-              }
+              value={s.aiFeatureModels?.[f.id]?.[pin] || AI_FEATURE_MODEL_FOLLOW_DEFAULT}
+              extraOption={[AI_FEATURE_MODEL_FOLLOW_DEFAULT, tr("aiassist.feature_model_follow_default")]}
+              onChange={(model) => {
+                // "follow default" is never stored — it maps to DELETING the override, not to
+                // writing a third sentinel value the Agent would have to know about
+                // (docs/log/103-impl-review 中6: the picker used to have no way back to "follow
+                // §1" once touched, and showed "推奨" for a value that was actually unset).
+                const byFeature = { ...s.aiFeatureModels?.[f.id] };
+                if (model === AI_FEATURE_MODEL_FOLLOW_DEFAULT) {
+                  delete byFeature[pin];
+                } else {
+                  byFeature[pin] = model;
+                }
+                const next = { ...s.aiFeatureModels };
+                if (Object.keys(byFeature).length === 0) {
+                  delete next[f.id];
+                } else {
+                  next[f.id] = byFeature;
+                }
+                setSetting("aiFeatureModels", next);
+              }}
             />
           ) : (
             // decision 4's invariant: "auto" has no fixed kind to store a concrete model
@@ -120,11 +145,11 @@ function AiFeatureCard({ f }: { f: AiAssistFeatureDef }) {
               <span className="muted">{tr("aiassist.feature_model_auto_note")}</span>
             </Row>
           )}
-          {/* "currently uses": the Agent answers the backend (decision 5); undefined while the
+          {/* "currently uses": the Agent answers X (decision 5); undefined while the
               availability cache is cold reads as "not known yet", never as a guess. */}
           <p className="muted ds-note ai-feature-current">
             {row?.kind
-              ? tr("aiassist.currently_using", { agent: agentOf(row.kind).assistantName })
+              ? tr("aiassist.currently_using", { agent: agentOf(row.kind).assistantName, model: modelLabel })
               : tr("aiassist.currently_using_unknown")}
           </p>
           {/* Auto-fire (docs/log/97 §97.12) is its own axis, deliberately untouched by this

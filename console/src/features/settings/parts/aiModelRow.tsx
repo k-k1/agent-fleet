@@ -36,17 +36,18 @@ function recommendedModelId(kind: AiAgentKind, tier: AiModelTier, ids: string[],
   }
 }
 
-export function AiModelRow({
-  kind,
-  tier,
-  value,
-  onChange,
-}: {
-  kind: AiAgentKind;
-  tier: AiModelTier;
-  value: string;
-  onChange: (v: string) => void;
-}) {
+// useResolvedModelLabel answers "what does this kind x tier x stored value actually show/run
+// as", for both AiModelRow's own "推奨（現在: X）" option label and AiFeatureCard's "いま使う
+// のは" line (docs/log/103 decision 5's Y — the Console draws it from the catalog it already
+// has, never from a guess the Agent cannot confirm).
+//
+// 103-impl-review (a): the recommended label used to fall back to the RAW recommended id when
+// hidden models excluded it from `live` (`|| recommended`) — showing "推奨（現在: haiku）" for a
+// user who put haiku in "models not to use", while the Agent's own visibleModel() falls through
+// to the CLI default in that exact case (chat_providers.go's recommendedUtilityModel). Fixed
+// here: a recommended id absent from the VISIBLE catalog resolves to ui.default, matching what
+// actually runs.
+export function useResolvedModelLabel(kind: AiAgentKind, tier: AiModelTier, value: string): string {
   const tr = useT();
   const live = useModelOptions(kind) || [["", tr("ui.default")]];
   const ids = live.map(([id]) => id);
@@ -54,12 +55,40 @@ export function AiModelRow({
     ["mini", "flash", "lite", "small", "nano", "haiku"].some((x) => id.toLowerCase().includes(x)),
   );
   const recommended = recommendedModelId(kind, tier, ids, cheap);
-  const resolvedLabel = live.find(([id]) => id === recommended)?.[1] || recommended || tr("ui.default");
+  const recommendedVisible = live.some(([id]) => id === recommended);
+  const recommendedLabel = recommendedVisible ? live.find(([id]) => id === recommended)![1] : tr("ui.default");
+  if (!value || value === ASSISTANT_RECOMMENDED_MODEL) {
+    return tr("assistant.recommended_now", { model: recommendedLabel });
+  }
+  return live.find(([id]) => id === value)?.[1] || value;
+}
+
+export function AiModelRow({
+  kind,
+  tier,
+  value,
+  onChange,
+  extraOption,
+}: {
+  kind: AiAgentKind;
+  tier: AiModelTier;
+  value: string;
+  onChange: (v: string) => void;
+  /** An extra choice prepended before "推奨" (docs/log/103 中6 — AiFeatureCard's "既定（上の
+   *  設定に従う）", mapped by the caller's onChange to deleting the per-feature override rather
+   *  than storing this sentinel literally). Omitted by every other caller. */
+  extraOption?: [string, string];
+}) {
+  const tr = useT();
+  const live = useModelOptions(kind) || [["", tr("ui.default")]];
+  // Same resolution AiFeatureCard's "currently uses" line draws Y from (useResolvedModelLabel) —
+  // one function decides what "推奨" resolves to, so the two can never drift apart again the way
+  // the pre-fix duplicate here did (103-impl-review (a)).
   const recommendedOption: [string, string] = [
     ASSISTANT_RECOMMENDED_MODEL,
-    tr("assistant.recommended_now", { model: resolvedLabel }),
+    useResolvedModelLabel(kind, tier, ASSISTANT_RECOMMENDED_MODEL),
   ];
-  const choices = [recommendedOption, ...live];
+  const choices = extraOption ? [extraOption, recommendedOption, ...live] : [recommendedOption, ...live];
   // Preserve a configured model that temporarily disappeared from a live catalog
   // (workspace stopped, provider disconnected, upstream rename). Dropping it from
   // the select would make the visible value lie about the persisted setting.
