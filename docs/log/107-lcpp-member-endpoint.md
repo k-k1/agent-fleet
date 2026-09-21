@@ -113,3 +113,134 @@ cd console && npm run typecheck && npm run i18n:lint && npm test  # 別途記録
 gofmt -l .                     # 空
 python3 scripts/docs-check.py  # 別途記録
 ```
+
+## 追補（2026-09-21）——`[agent-fleet:spawn from=sikdmnv]`: 押さなくても分かるようにする + pill が嘘をつかないようにする
+
+- 依頼: 上の実装が入った後の実機（2026-09-21・親セッションが確認）で、接続先が落ちている間
+  `GET /agents/lcpp/models` が `{"models":[],"reason":"catalog_empty"}` を返していたのに、画面の
+  どこにも「届いていない」と出なかった。加えて `console/src/features/engines/EnginesPill.tsx`
+  （ADR 0084 決定 10/11 の「役ごとに1つ」）の `chat` pill は `GET /api/engines/status`（CP の
+  エンジン表）だけを読んでいて、**メンバー接続は CP を通らない**（`workspace/agent/engines.go:1179`
+  の `harnessEngineToken` が `key=="llm"` のとき CP より先に会員接続を返す、決定1）ので、
+  会員接続時は pill が実際に喋っている相手と違うものを表示し続けていた。
+- 絶対条件だった 2 つ:
+  1. `GET /connections`（`connections.go:46` の `handleConnectionsGet`）は新しくダイヤルしない
+     ——設定モーダル外の複数画面（`RepoPicker`・`HandoffModal`・`ChatView` の `chatConns` など、
+     いずれも `console/src/features/repos/connsCache.ts` 経由）が叩くホットパスだから。
+  2. 「一度も観測していない」と「届かない」を混ぜない——起動直後に必ず赤く見える事故を避ける。
+
+### Agent 側: `GET /connections` の `lcpp` に `reachable` を足す（新しいダイヤルはしない）
+
+`workspace/agent/engines.go:1164` に `lcppMemberReachable`（`known`/`ok`/`at` を持つ小さな観測
+キャッシュ、ミューテックス保護）を足した。書き込むのは実際にダイヤルした 2 箇所だけ:
+
+- `lcppMemberFetchModelsCached`（`engines.go:1137`、起動メニューの経路、30 秒キャッシュ）が
+  **キャッシュを外れて実際に `/v1/models` を叩いたとき**だけ `lcppMemberRecordReachable(ok)`
+  を呼ぶ（`engines.go:1146`）。キャッシュヒットでは呼ばない——「最後に本当にダイヤルした事実」を
+  「この関数が最後に呼ばれた時刻」にすり替えないため。
+- `handleCheckLcppConn`（`connections.go:629`、明示的な「接続を確認」ボタン）も自分自身の
+  ダイヤル結果を同じ場所に書く（`connections.go:634-636`）——起動メニューの経路がまだ一度も
+  走っていなくても、ボタンを押した瞬間に観測が生まれる。
+
+`lcppStatus`（`connections.go:535`）は `lcppMemberObservedReachable()` を**読むだけ**——
+`known` が false（一度も観測していない）のときは `reachable` キーそのものを省く。true/false
+どちらとも異なる「省略」を使うのは、この配備の他の欄（`stop_eta` 等、ADR 0084 決定4）と同じ
+語彙。接続先を変えた（`handlePutLcppConn`/`handleDeleteLcppConn` が呼ぶ `lcppMemberCacheReset`、
+`engines.go:1198`）ときは観測も一緒に unknown へ戻す——古い接続先への観測が新しい URL に
+そのまま乗り移らないように。
+
+`GET /connections` が新しくダイヤルしないことは `TestHandleConnectionsGetNeverDialsLcppConnection`
+（`connections_lcpp_test.go`）で固定した: 偽サーバにリクエストカウンタを立て、`handleConnectionsGet`
+を 3 回呼んで `hits == 0` を確認する形——タイミングでなく回数を数えるのが唯一信頼できるやり方。
+
+### Console 側: カードが開いたら 1 回だけ自動で確認する
+
+`console/src/features/settings/agents/LcppCard.tsx:28` の `LcppCard` に `useEffect`（88 行目）を
+足した。発火条件は「`running && connected && reachable === undefined && !autoChecked.current`」
+の 1 回きり——`reachable` が既に分かっているとき（前回の観測が残っている、または直前の
+チェックが記録された）は叩かない。設定モーダルは `section === "agents" && <AgentsTab/>`
+（`SettingsDialog.tsx`）で開閉のたびにアンマウント/リマウントされるので、モーダルを開き直す
+たびに新しい mount が発火条件を再評価する——が `st.reachable` が既知ならその場で bail する。
+`save()`/`disconnect()` はそれぞれ `autoChecked.current = false` を書いて、保存直後・切断直後は
+次の mount 相当のタイミングで再度「未観測」から始められるようにした（保存直後 → 自動で1回確認、
+という指示どおりの挙動）。
+
+`reachable` が既知のときは、`check`（このマウント自身の checking/ok/error という一時状態）が
+無い間だけ `agents.lcpp_conn_reachable`/`unreachable` の1行を出す（`LcppCard.tsx` 121 行目付近）
+——`check` は毎回のマウントで null にリセットされる local state なので、これが無いと「前回の
+観測は分かっているのに、まだこのマウントで確認していないので何も出ない」という穴ができる。
+
+### Console 側: トップバーの `chat` pill を会員接続に差し替える
+
+`EnginesPill.tsx` の `EnginesPill()`（118 行目）が `console/src/features/repos/connsCache.ts` の
+`getCachedConns`/`subscribeConns` を `useSyncExternalStore` で読む——**新しい poll は足していない**。
+このキャッシュはリポジトリ・レール（`useRepoRail.ts`）が常時マウントされて既に温めているもので、
+`ChatView.tsx` の `chatConns` が読んでいるのと同じソース。
+
+`EnginesPillView`（132 行目）は `memberChat` が渡されたとき、`chat` ロールの描画を CP の
+`rows`（`engines` push ストリーム由来）から `MemberChatPill`（168 行目）に完全に差し替える
+——CP 側に `chat` の行があってもなくても。これは decision 1 の「会員の設定が常に配備のエンジンに
+勝つ」を、実際の通信経路だけでなく**表示にも**適用したもの。
+
+`MemberChatPill` を既存の `EngineMemberRow`（`lifecycle: "external"/"remote"` 付き）に無理やり
+乗せず、独立コンポーネントにしたのは意図的な判断: `lifecycle` は「この配備は管理していないが
+CP が代理してキューを数えている行」（ADR 0084 決定4/8）という別の事実で、会員の直結（CP を
+一切通らない）と混ぜるのは、まさに決定11 が名指す失敗（「単位を型に取ると2つ目が表現できない」）
+を繰り返すことになる。状態語も CP の語彙（`state_running` 等）を流用せず
+`engine.state_member_reachable`/`unreachable`/`unknown` を新設した——`chat pill が状態を出しても
+配備のエンジンの話だと誤読されないように。ツールチップ・ポップオーバーには接続先の URL を出す
+（「自分の接続先」だと分かるように）。
+
+i18n は ja/en 両方に `agents.lcpp_conn_reachable`/`unreachable`（settings ドメイン）と
+`engine.state_member_reachable`/`unreachable`/`unknown`/`engine.member_conn_hint`（engines
+ドメイン）を足した。
+
+### 受け入れ条件の裏取り
+
+- 接続先未設定のとき: `TestLcppStatusUnsetConnectionUnchanged`（Go）・LcppCard の
+  「no connection saved」describe ブロック・EnginesPill の
+  「no member connection: the chat pill reads the CP's engines row exactly as before」で固定。
+- `GET /connections` が新しいダイヤルを起こさないこと: 上記
+  `TestHandleConnectionsGetNeverDialsLcppConnection`。
+- 「未観測」と「届かない」が別物であること: `TestLcppStatusConnectedNeverObservedOmitsReachable`
+  （キーが省略される）と `TestLcppStatusConnectedReflectsObservation`（true/false 双方が出る）の
+  対、および Console 側は「reachable=undefined (never observed) reads as unknown, not as
+  unreachable」（EnginesPill）・LcppCard の "reachable=false ... distinctly from 'unknown'"。
+
+### 陽性対照
+
+`git checkout` ではなく Edit で一時的に分岐を外し、`go test`/`vitest` を回してから Edit で戻した
+（コミットしていない一時変更のみ）:
+
+| 外した箇所 | 赤くなった試験 |
+|---|---|
+| `connections.go` の `lcppStatus` の `if ok, known := ...; known` を `known && false` に | `TestLcppStatusConnectedReflectsObservation`・`TestHandleCheckLcppConnRecordsObservationOnSuccess` |
+| `EnginesPill.tsx` の `EnginesPillView` の `role === "chat" && memberChat` 判定に `&& false` を挿入 | `EnginesPill.dom.test.tsx` の member-connection describe ブロック 5 本 |
+| `LcppCard.tsx` の auto-check エフェクトの先頭に `if (true) return` | `auto-checks exactly once`・`does not fire a second dial ...` |
+| `LcppCard.tsx` の auto-check エフェクトのガードから `reachable !== undefined` を外す | `shows reachable=true/false WITHOUT dialing again`（2本） |
+
+### golden の retake
+
+`workspace/agent/testdata/wiremap.golden` を `-update-wiremap-golden` で取り直した。差分は
+`handlePutLcppConn` の応答欄に `reachable` が増えた1行だけ（`lcppStatus` の返り値が
+`handlePutLcppConn` にインライン展開されて見えている——`handleConnectionsGet` 側は `lcpp` を
+ネストしたキーとしか見ないので、こちらの行は変わっていない）。`routes.golden`（Agent/CP どちらも）
+は変更なし——新しいルートは足していない。
+
+### 検証
+
+```
+cd workspace/agent && go test ./... -count=1 -p 2   # exit 1 — 後述、本改修と無関係
+cd control-plane   && go test ./... -count=1 -p 2   # exit 0
+cd console && npm test                              # exit 0（3288 passed, 1 skipped）
+gofmt -l .                                           # 空
+python3 scripts/docs-check.py                        # 442 files, 0 error(s), 0 warning(s)
+```
+
+`workspace/agent` の exit 1 は `TestInstallMuseRefusesWithoutAPin`・`TestInstallMuseVerifiesTheChecksum`
+——この2本は `install_muse_test.go` にあり、本改修が触ったファイル（`connections.go`・
+`connections_lcpp_test.go`・`engines.go`・`engines_lcpp_member_test.go`・`testdata/wiremap.golden`）
+のいずれとも無関係。`-count=5` で単独再実行しても常に赤（間欠的な flake ではなく、毎回同じ理由
+——ログに実際の `/home/dev/.local/bin/muse`（テストが `t.Setenv("HOME", t.TempDir())` で隔離した
+はずの経路の外）が出てくる、この worktree の環境固有の汚染に見える）で、`lcpp` 関連の試験は
+`Lcpp` で絞った再実行・フルスイートのどちらでも全数green。事前存在の問題として PR 本文にも書く。

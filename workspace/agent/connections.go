@@ -66,8 +66,10 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"muse": muse.Status(),
 		// lcpp (docs/log/105 §106.2 / docs/log/107): the user's own display setting
 		// (enabled) plus, since docs/log/107, whether a member LAN connection is
-		// configured (connected/url — never the API key). lcppStatus never returns
-		// the key: see connections.go's own doc comment on that function.
+		// configured (connected/url — never the API key), plus the last OBSERVED
+		// reachability (never a fresh dial — see lcppStatus's own doc comment).
+		// lcppStatus never returns the key: see connections.go's own doc comment on
+		// that function.
 		"lcpp": lcppStatus(s),
 		// copilot rides on the GitHub connection (docs/log/36 contract): no flow of its own.
 		"copilot":    copilot.Status(ghConnected),
@@ -535,6 +537,16 @@ func lcppStatus(s *secrets.Data) map[string]any {
 	if s.Lcpp != nil && s.Lcpp.URL != "" {
 		out["connected"] = true
 		out["url"] = s.Lcpp.URL
+		// reachable: the last OBSERVED outcome, never a fresh dial — this handler is on a hot
+		// path (see the doc comment above) and must not itself pay a LAN round trip.
+		// lcppMemberObservedReachable (engines.go) reads a fact this process already learned,
+		// from the launch-menu's lcppMemberFetchModelsCached or an explicit POST
+		// /connections/lcpp/check. Omitted entirely when nothing has observed it yet — "unknown"
+		// and "unreachable" must not collapse into the same false, or the card/pill would read
+		// red for every member the moment their workspace starts.
+		if ok, known := lcppMemberObservedReachable(); known {
+			out["reachable"] = ok
+		}
 	}
 	return out
 }
@@ -629,7 +641,12 @@ func handleCheckLcppConn(w http.ResponseWriter, r *http.Request) {
 	conn := *s.Lcpp
 	props, propsOK := lcppMemberProbeProps(ctx, conn)
 	models, modelsOK := lcppMemberFetchModels(ctx, conn)
-	if !propsOK && !modelsOK {
+	// This is itself an observation (an explicit "check now" dial) — record it the same way
+	// lcppMemberFetchModelsCached's own real fetch does, so a card/pill that has never seen the
+	// launch-menu path yet still learns the answer the moment somebody presses this button.
+	reachable := propsOK || modelsOK
+	lcppMemberRecordReachable(reachable)
+	if !reachable {
 		httpx.WriteErr(w, http.StatusBadGateway, "lcpp_check_failed", "the connection did not answer /props or /v1/models")
 		return
 	}

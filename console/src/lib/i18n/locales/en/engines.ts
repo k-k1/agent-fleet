@@ -31,4 +31,12 @@ export const engines: Record<keyof typeof jaEngines, string> = {
   "engine.queue_shared": "{n} queued",
   "engine.dur_hm": "{h}h {m}m",
   "engine.dur_m": "{m}m",
+  // The member's own lcpp connection (docs/log/107 follow-up; ADR 0084 decision 10/11's "one
+  // pill per role" carried over). This connection bypasses the Control Plane entirely, so
+  // reusing the CP engine table's vocabulary (state_running etc.) would read as "the
+  // deployment's engine" — a separate set of words instead.
+  "engine.state_member_reachable": "Connected",
+  "engine.state_member_unreachable": "Not reachable",
+  "engine.state_member_unknown": "Checking",
+  "engine.member_conn_hint": "Your own connection. Not this deployment's engine.",
 };

@@ -34,4 +34,11 @@ export const engines = {
   "engine.queue_shared": "待ち {n}",
   "engine.dur_hm": "{h} 時間 {m} 分",
   "engine.dur_m": "{m} 分",
+  // 会員自身の lcpp 接続（docs/log/107 追補・ADR 0084 決定 10/11 の「役ごとに1つ」を踏襲）。
+  // この接続は Control Plane を経由しない直結なので、CP のエンジン表の語彙（state_running 等）
+  // をそのまま使うと「配備のエンジン」の話に読めてしまう——別の語を用意する。
+  "engine.state_member_reachable": "接続中",
+  "engine.state_member_unreachable": "届いていません",
+  "engine.state_member_unknown": "確認中",
+  "engine.member_conn_hint": "自分の接続先です。この配備のエンジンではありません。",
 };

@@ -403,6 +403,10 @@ export const settings = {
   "agents.lcpp_conn_checking": "確認中…",
   "agents.lcpp_conn_check_failed": "確認に失敗: {msg}",
   "agents.lcpp_conn_check_result": "build {build} ・ 窓 {nctx} ・ モデル: {models}",
+  // 到達可否（docs/log/107 追補）。「未観測」と「届かない」は別物——後者は実際にダイヤルして分かった事実で、
+  // 前者はまだ一度も確認していないだけ。カードは前者のとき自動で1回だけ確認する（LcppCard 冒頭のコメント）。
+  "agents.lcpp_conn_reachable": "届いています",
+  "agents.lcpp_conn_unreachable": "届いていません",
   "set.tab_cost": "クラウド費用",
   // --- 稼働時間ヒートマップ（docs/log/83）---
   // ⚠️ ここは占有であって金額ではない。実費は日単位でしか取れないので、時間別の金額は
