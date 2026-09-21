@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -57,6 +58,9 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"cursor":    cursor.Status(),
 		"kiro":      kiro.Status(),
 		"agy":       agy.Status(),
+		// muse (ADR 0095): supported=false until the on-demand install lands the proprietary
+		// binary; connected reads ~/.config/muse/auth.json, so it needs no subprocess.
+		"muse": muse.Status(),
 		// lcpp (docs/log/105 §106.2): no sign-in of its own (ADR 0093 決定 10), so the only
 		// thing to report is the user's own display setting — the signpost registry.ts's
 		// available() hides the launch menus behind. HandleCreateSession holds the real gate.

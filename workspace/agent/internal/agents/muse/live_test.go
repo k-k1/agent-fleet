@@ -45,6 +45,14 @@ func liveMeta(t *testing.T) session.Meta {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Resume refuses without a stored credential (a host with none ends every turn
+	// `authRequired`, so the session could never answer — driver.go). These tests stop short of
+	// a turn and `session/start` needs no valid credential, so a FAKE one satisfies the gate.
+	//
+	// Deliberately not the member's own: copying their real auth.json into a temp directory to
+	// make a test pass would leave their Meta token in /tmp, which is shared across every
+	// session in this container.
+	writeAuth(t, keyOnlyJSON)
 	name := "muse-live-" + filepath.Base(home)
 	t.Cleanup(func() { DropHandle(name) })
 	return session.Meta{Kind: session.KindMuse, Name: name, Dir: dir, Driver: session.DriverManaged}
@@ -204,4 +212,41 @@ func TestLiveUserMessageItemReachesTheTranscript(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// TestLiveCredentialShapeMatchesTheFixtures reads the member's REAL auth.json and checks it
+// against what auth_test.go's fixtures claim. The fixtures are the whole basis for `metered`,
+// and a vendor that renamed `mechanism` in 1.4 would leave every unit test green while the card
+// started telling a subscription member they were billed per use.
+//
+// It runs in the member's own home on purpose — unlike the turn tests above, which must not —
+// because the file under test IS the member's credential. It asserts no secret and prints none;
+// the one thing it echoes is the mechanism, which is a vocabulary word.
+func TestLiveCredentialShapeMatchesTheFixtures(t *testing.T) {
+	liveGate(t)
+	c := readCredential()
+	if !c.Present {
+		t.Skip("not signed in to muse: nothing to compare the fixtures against")
+	}
+	if c.Mechanism != mechanismAccount {
+		t.Logf("mechanism = %q (the fixtures were measured on an account login, %q)", c.Mechanism, mechanismAccount)
+	}
+	if c.Mechanism == mechanismAccount {
+		// The three fields the fixtures carry alongside the mechanism. Their ABSENCE would mean
+		// the shape moved, so it is checked; their values are the member's and are not compared.
+		if c.ObtainedVia == "" {
+			t.Errorf("an account login with no obtained_via: the fixture's shape has changed")
+		}
+		if c.Email == "" {
+			t.Errorf("an account login with no user_email: the card would show no identity")
+		}
+	}
+	st := Status()
+	if st["connected"] != true {
+		t.Errorf("Status() says not connected while readCredential() found %q", c.Mechanism)
+	}
+	if st["metered"] != (c.Mechanism != mechanismAccount) {
+		t.Errorf("metered = %v for mechanism %q", st["metered"], c.Mechanism)
+	}
+	t.Logf("live credential: mechanism=%q obtained_via=%q metered=%v", c.Mechanism, c.ObtainedVia, st["metered"])
 }

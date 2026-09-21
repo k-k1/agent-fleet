@@ -77,6 +77,17 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if err := EnsureClamps(); err != nil {
 		return nil, err
 	}
+	// No credential, no turn. `serve` has no `--provider echo` equivalent, so an unauthenticated
+	// host accepts `session/start` and then ends every turn `authRequired` (P2-1) — a session
+	// that looks healthy in the Console and can never answer. Refusing here names the fix
+	// instead; the connection card is where it gets done (auth.go).
+	//
+	// It runs after the clamp gate deliberately: the clamps are the safety mechanism and must
+	// be applied on every path that could spawn a host, and a sign-in that arrives later must
+	// not find an unclamped file waiting for it.
+	if !readCredential().Present {
+		return nil, errors.New("Muse Code にサインインしていません（設定 > 接続 の Muse Code カードでサインイン）")
+	}
 
 	handlesMu.Lock()
 	h := handles[m.Name]

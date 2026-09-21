@@ -192,6 +192,14 @@ export const errors = {
   "err.opencode_unsupported": "opencode が見つかりません（イメージが古い可能性があります）",
   "err.kiro_unsupported": "kiro-cli が見つかりません（未導入の可能性があります）",
   "err.cursor_unsupported": "cursor-agent が見つかりません（イメージが古い可能性があります）",
+  "err.muse_unsupported": "Muse Code が見つかりません（未導入の可能性があります）",
+  // muse のサインインは端末を持たない子プロセスで走るので pty_failed ではない（ADR 0095 決定 9）。
+  "err.spawn_failed": "エージェントの CLI を起動できませんでした",
+  // 🔴 これは拒否であって失敗ではない。`muse auth set` は provider の項目を丸ごと置き換える
+  // ので、アカウントのサインインの上に API キーを書くとサインインが消えたうえ従量課金になる。
+  "err.account_login_present":
+    "アカウントでサインイン済みです。API キーを保存するとそのサインインが失われ、定額プランから従量課金に切り替わります。API キーを使うなら先に切断してください。",
+  "err.auth_failed": "API キーを保存できませんでした",
   // These carry err.Error() as the whole message, so the catalogue supplies the human
   // framing and errDetail appends the raw cause after it.
   "err.oauth_start_failed": "サインインを開始できませんでした",
