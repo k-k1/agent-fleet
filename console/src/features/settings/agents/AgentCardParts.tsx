@@ -4,7 +4,7 @@ import { Button } from "../../../ui/Button.tsx";
 import { ModelPicker } from "../../../ui/ModelPicker.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { agentLaunchDefault, useSettings, setSettings, ASSISTANT_RECOMMENDED_MODEL, CLAUDE_MODELS } from "../../../lib/settings.ts";
-import { useEffortOptions, useModelOptions } from "../../../lib/agentModels.ts";
+import { useEffortOptions, useModelOptions, type ModelOption } from "../../../lib/agentModels.ts";
 import { modelMatchesHidden } from "../../../lib/modelDeny.ts";
 import { forgetHiddenRepoModels } from "../../../lib/repoLast.ts";
 import { agentOf, nonPlanModeLabel } from "../../../agents/registry.ts";
@@ -70,10 +70,26 @@ export function ConnPaused() {
   return <div className="p-desc muted">{tr("agents.conn_paused")}</div>;
 }
 
+// tooWideForSegments decides between the segmented control and a dropdown, for the model row
+// and the effort row alike.
+//
+// `.choice-seg` is an inline-flex of `flex: 0 0 auto` buttons: its width is simply the sum of
+// its labels, and what a row too narrow to hold it does is not clip — rendered headless with
+// muse's real catalogue, the strip takes the whole row, wraps onto a second line and DRAWS OVER
+// the row's own "Default model" label. Two independent ways to get there, and muse is the kind
+// that found both: FOUR ids like `muse-spark-1.3-contributor` pass the long-standing count
+// rule, and its NINE reasoning-effort values (the wire enum, `none` … `ultra`) pass the width
+// one. Both numbers are thresholds rather than measurements, and both are deliberately
+// generous: a dropdown where a segmented control would have fitted is a plainer row, a
+// segmented control over its own label is a broken one.
+function tooWideForSegments(options: ModelOption[]): boolean {
+  return options.length > 8 || options.reduce((n, [, label]) => Math.max(n, label.length), 0) > 16;
+}
+
 // LaunchDefaults: the common, per-agent starting point. A repo's last-used values
 // still win in the launch dialog, so these are useful global defaults without
 // repeatedly overwriting deliberate per-repo choices.
-export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro" | "agy" | "opencode" | "copilot" | "lcpp" }) {
+export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro" | "agy" | "opencode" | "copilot" | "lcpp" | "muse" }) {
   const s = useSettings();
   const tr = useT();
   const desc = agentOf(kind);
@@ -91,22 +107,32 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
   return (
     <>
       <SettingRow label={tr("agents.default_model")}>
-        {/* opencode offers dozens of candidates, which a segmented control cannot fit, so long
-            lists use a Select. */}
+        {/* opencode offers dozens of candidates and muse four long ones; neither fits a
+            segmented control (tooWideForSegments). */}
         {kind === "claude" ? (
           <ModelPicker kind={kind} model={row.model} onChange={(model) => update({ model, effort: "" })} />
-        ) : models.length > 8 ? (
+        ) : tooWideForSegments(models) ? (
           <Select value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
         ) : (
           <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
         )}
       </SettingRow>
       {kind === "claude" && <ClaudeCustomModelsRow />}
+      {/* 🔴 muse's catalogue pairs every model with a "-contributor" twin — same model, same
+          price, and Meta may use the conversation to improve the product. It is the vendor's
+          OWN default, so the note sits under the picker rather than in the guide alone: this is
+          where the member either leaves it to Agent Fleet (which picks the other one) or
+          deliberately chooses otherwise (ADR 0095 decision 6 clamp 8). */}
+      {kind === "muse" && <p className="ps-note">{tr("agents.muse_model_note")}</p>}
       {/* agy bakes the effort equivalent into the model name ("(Medium)" and so on), so the row
           is omitted entirely. */}
       {desc.caps.effort && (
         <SettingRow label={tr("agents.default_effort")}>
-          <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
+          {tooWideForSegments(efforts) ? (
+            <Select value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
+          ) : (
+            <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
+          )}
         </SettingRow>
       )}
       <HiddenModelsRow kind={kind} />

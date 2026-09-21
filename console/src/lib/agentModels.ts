@@ -38,7 +38,8 @@ const isDynamic = (kind: string) =>
   kind === "copilot" ||
   kind === "cursor" ||
   kind === "kiro" ||
-  kind === "lcpp";
+  kind === "lcpp" ||
+  kind === "muse";
 const cache = new Map<string, ModelOption[]>();
 const descriptors = new Map<string, ModelDescriptor[]>();
 const inflight = new Map<string, Promise<ModelOption[]>>();

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -212,6 +213,62 @@ func TestLiveUserMessageItemReachesTheTranscript(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// The launch model catalog against the real host, and it costs no quota: `model/list` is a
+// query — no commandId, no durable record, no model call.
+//
+// It runs in the member's own home because the catalog IS the authenticated account's
+// (`source: providerCatalog`), so a throwaway home has nothing to ask about. The one side
+// effect is the clamp write dialProbe performs before spawning, which is byte for byte what
+// every session start already writes to the same file.
+func TestLiveModelCatalog(t *testing.T) {
+	liveGate(t)
+	if !readCredential().Present {
+		t.Skip("not signed in to muse: model/list has no catalog to return")
+	}
+	list, safe, err := probeModels()
+	if err != nil {
+		t.Fatalf("model/list: %v", err)
+	}
+	if len(list) == 0 {
+		// Schema-legal, so not a failure — but it means the picker shows Default alone, which
+		// is the symptom this whole package exists to avoid, so it is worth saying out loud.
+		t.Skip("the account's catalog is empty")
+	}
+	for _, m := range list {
+		if m.ID == "" || m.Label == "" {
+			t.Errorf("unselectable row: %+v", m)
+		}
+		// The wire values the picker will offer have to be ones a turn accepts. The unit test
+		// pins offer==accept inside AF; this is the half only the vendor can answer.
+		for _, e := range m.Efforts {
+			if reasoningEffort(e) == nil {
+				t.Errorf("%s offers effort %q, which the driver refuses", m.ID, e)
+			}
+		}
+	}
+	// 🔴 The half that matters for decision 6 clamp 8: the safe default has to be a real row of
+	// the live catalog and it must not be one the vendor says it may learn from. An empty pick
+	// here means every session AF starts without an explicit model falls back to the host's
+	// default, which IS the contributor variant.
+	if safe == "" {
+		t.Error("no non-data-sharing model in the live catalog: sessions would fall back to the host's contributor default")
+	}
+	found := false
+	for _, m := range list {
+		if m.ID == safe {
+			found = true
+		}
+	}
+	if safe != "" && !found {
+		t.Errorf("the safe default %q is not in the catalog it came from", safe)
+	}
+	ids := make([]string, 0, len(list))
+	for _, m := range list {
+		ids = append(ids, m.ID)
+	}
+	t.Logf("live catalog (%d): %s — AF starts on %q", len(list), strings.Join(ids, " "), safe)
 }
 
 // TestLiveCredentialShapeMatchesTheFixtures reads the member's REAL auth.json and checks it

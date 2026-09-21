@@ -21,8 +21,8 @@ because "does this apply to a plain shell session?" is a real question.
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
 | Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓¹² | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
-| Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | —¹¹ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | ✓¹⁴ | — | — |
+| Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
 | Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | —¹¹ | — | — |
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | —¹¹ | — | — |
@@ -180,3 +180,10 @@ filesystem and local network unrestricted: every tool call is allowed by policy 
 approval is considered. Measured, a muse turn wrote a file outside its working copy with no
 prompt. So treat a muse session as having the same reach over this container as `shell`
 does, and read the warning above as applying to it in full.
+
+¹⁴ Muse Code's catalogue lists a "-contributor" twin of every model — the same model at the
+same price, except that Meta may use those conversations, including messages between
+sessions, to improve the product. It is Muse Code's own default. Agent Fleet does not pick it
+for you: a session launched on **Default** runs on the newest model without that clause, and
+the twins stay in the picker for anyone who wants one. Settings › Agents › Muse Code ›
+Behaviour is where you choose, and the reasoning effort (`none` … `ultra`) sits beside it.

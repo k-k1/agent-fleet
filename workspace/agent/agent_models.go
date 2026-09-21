@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -147,6 +148,11 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// docs/log/36 addendum; Free offers only Auto, i.e. an empty list).
 		// Unspecified means auto routing.
 		list = copilot.Models()
+	case "muse":
+		// `model/list` over the session protocol (ADR 0095 decision 10): muse has no `models`
+		// subcommand, so the catalog is a wire query against a host. Empty until the binary is
+		// installed AND a credential is stored — the catalog is the authenticated account's.
+		list = muse.Models()
 	case "lcpp":
 		// The engine catalog IS the model list (ADR 0093 decision 7): there is no vendor
 		// CLI account to ask, so this reads the same chat-role catalog row driver.go's

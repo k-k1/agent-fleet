@@ -177,6 +177,14 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	}
 	if st.Model != "" {
 		params.ModelID = &st.Model
+	} else if safe := SafeDefaultModel(cl); safe != "" {
+		// 🔴 Omitting modelId is not the neutral choice it looks like: the host's own default
+		// is the contributor variant, whose catalogue description says the conversation may be
+		// used for product improvement (decision 6 clamp 8). So "the member chose no model"
+		// resolves HERE, to the newest row the vendor makes no such claim about, and it
+		// resolves on every path that starts a session rather than in the Console — a
+		// scheduled run and an MCP-created session get the same answer as a launch menu.
+		params.ModelID = &safe
 	}
 	var res msp.SessionStartResult
 	if err := cl.CallInto(msp.MethodSessionStart, params, callTimeout, &res); err != nil {
@@ -688,6 +696,12 @@ func (h *threadHandle) Interrupt() error {
 // accepted: MSP has no method that sets AF's plan mode, and DynamicMode is false for that
 // reason — silently ignoring it here instead would make the Console show a control that does
 // nothing.
+//
+// "Back to the default" is a real request, not an absence: ClearModel and ClearEffort exist
+// because an empty string means "unchanged" and cannot also mean "reset". Both are honoured
+// below, and for the model that means AF's default (the non-data-sharing row), never the
+// host's — reverting to the host's default would move the member onto the contributor variant
+// by way of a control labelled "Default".
 func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	h.mu.Lock()
 	cl, sid := h.cl, h.sid
@@ -695,17 +709,29 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	if cl == nil {
 		return errors.New("Muse Code のホストが起動していません")
 	}
-	if s.Model != "" {
+	model := s.Model
+	if s.ClearModel {
+		model = SafeDefaultModel(cl)
+	}
+	if model != "" {
 		err := cl.CallInto(msp.MethodSessionSetModel, msp.SessionSetModelParams{
 			CommandID: msp.NewCommandID(),
 			SessionID: sid,
-			Model:     msp.ModelSelection{ModelID: s.Model},
+			Model:     msp.ModelSelection{ModelID: model},
 		}, callTimeout, nil)
 		if err != nil {
 			return err
 		}
 		h.mu.Lock()
-		h.settings.Model = s.Model
+		h.settings.Model = model
+		h.mu.Unlock()
+	}
+	if s.ClearEffort {
+		// No wire call: `session/setReasoningEffort` sets a value and has no "unset", and the
+		// effort a turn runs at is `turn/start.reasoningEffort`, which AF omits when it holds
+		// none. Forgetting it here is therefore exactly "let the host decide from now on".
+		h.mu.Lock()
+		h.settings.Effort = ""
 		h.mu.Unlock()
 	}
 	if s.Effort != "" {
@@ -735,13 +761,16 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 // reasoningEffort maps AF's effort string onto the wire enum, or nil when the string names
 // nothing MSP knows. Returning nil rather than a default is deliberate: sending a guessed
 // effort is a silent behaviour change the member did not ask for.
+//
+// The accepted set is the generated one, not a copy: the same list is what the Console's
+// picker offers (models.go), and a hand-kept second copy is how a value the vendor adds in a
+// later bundle ends up offered but refused, or accepted but never offered.
 func reasoningEffort(s string) *msp.ReasoningEffort {
-	switch msp.ReasoningEffort(strings.ToLower(strings.TrimSpace(s))) {
-	case msp.ReasoningEffortNone, msp.ReasoningEffortMinimal, msp.ReasoningEffortLow,
-		msp.ReasoningEffortMedium, msp.ReasoningEffortHigh, msp.ReasoningEffortXhigh,
-		msp.ReasoningEffortMax, msp.ReasoningEffortUltra:
-		e := msp.ReasoningEffort(strings.ToLower(strings.TrimSpace(s)))
-		return &e
+	want := msp.ReasoningEffort(strings.ToLower(strings.TrimSpace(s)))
+	for _, e := range msp.ReasoningEffortValues {
+		if e == want {
+			return &e
+		}
 	}
 	return nil
 }

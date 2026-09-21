@@ -195,6 +195,12 @@ const (
 	ApprovalAmendmentDurabilityLocalPersistent ApprovalAmendmentDurability = "localPersistent"
 )
 
+// ApprovalAmendmentDurabilityValues are every ApprovalAmendmentDurability the bundle declares, in schema order.
+var ApprovalAmendmentDurabilityValues = []ApprovalAmendmentDurability{
+	ApprovalAmendmentDurabilitySession,
+	ApprovalAmendmentDurabilityLocalPersistent,
+}
+
 type ApprovalChange struct {
 	ChoiceID      *string                    `json:"choiceId,omitempty"`
 	Decision      *ApprovalDecision          `json:"decision,omitempty"`
@@ -222,6 +228,13 @@ const (
 	ApprovalChoiceScopeSession         ApprovalChoiceScope = "session"
 	ApprovalChoiceScopeLocalPersistent ApprovalChoiceScope = "localPersistent"
 )
+
+// ApprovalChoiceScopeValues are every ApprovalChoiceScope the bundle declares, in schema order.
+var ApprovalChoiceScopeValues = []ApprovalChoiceScope{
+	ApprovalChoiceScopeOnce,
+	ApprovalChoiceScopeSession,
+	ApprovalChoiceScopeLocalPersistent,
+}
 
 // ApprovalDecideParams `approval/decide` params (tdd SS5.4): the decision. A standard SS3 command — requires
 // the session loaded on this host, requires `commandId`, durable intake before ack,
@@ -273,6 +286,17 @@ const (
 	ApprovalDecisionAbort                   ApprovalDecision = "abort"
 )
 
+// ApprovalDecisionValues are every ApprovalDecision the bundle declares, in schema order.
+var ApprovalDecisionValues = []ApprovalDecision{
+	ApprovalDecisionApproved,
+	ApprovalDecisionApprovedForSession,
+	ApprovalDecisionApprovedPolicyAmendment,
+	ApprovalDecisionDenied,
+	ApprovalDecisionDeniedPolicyAmendment,
+	ApprovalDecisionTimedOut,
+	ApprovalDecisionAbort,
+}
+
 // ApprovalListPendingParams `approval/listPending` params (tdd SS5.7): the pull dual of the re-issued requests. A
 // log-fold read — no lease, works on loaded and unloaded sessions, never subscribes.
 type ApprovalListPendingParams struct {
@@ -304,6 +328,14 @@ const (
 	ApprovalModeDenyUnmatched   ApprovalMode = "denyUnmatched"
 )
 
+// ApprovalModeValues are every ApprovalMode the bundle declares, in schema order.
+var ApprovalModeValues = []ApprovalMode{
+	ApprovalModeAllowAll,
+	ApprovalModePromptUnmatched,
+	ApprovalModeOnRequest,
+	ApprovalModeDenyUnmatched,
+}
+
 // ApprovalModeApplyOutcome Whether a mode change did anything (tdd SS5.12), mirroring
 // `ApprovalReconfigureApplyOutcome`. Apply failures are `commandRejected`.
 type ApprovalModeApplyOutcome string
@@ -312,6 +344,12 @@ const (
 	ApprovalModeApplyOutcomeCompleted ApprovalModeApplyOutcome = "completed"
 	ApprovalModeApplyOutcomeNoop      ApprovalModeApplyOutcome = "noop"
 )
+
+// ApprovalModeApplyOutcomeValues are every ApprovalModeApplyOutcome the bundle declares, in schema order.
+var ApprovalModeApplyOutcomeValues = []ApprovalModeApplyOutcome{
+	ApprovalModeApplyOutcomeCompleted,
+	ApprovalModeApplyOutcomeNoop,
+}
 
 // ApprovalModeSource How an approval mode took effect (tdd SS5.12, the effective-mode projection's `source`
 // vocabulary). Open.
@@ -322,6 +360,13 @@ const (
 	ApprovalModeSourceReplay              ApprovalModeSource = "replay"
 	ApprovalModeSourceApprovalReconfigure ApprovalModeSource = "approvalReconfigure"
 )
+
+// ApprovalModeSourceValues are every ApprovalModeSource the bundle declares, in schema order.
+var ApprovalModeSourceValues = []ApprovalModeSource{
+	ApprovalModeSourceStartup,
+	ApprovalModeSourceReplay,
+	ApprovalModeSourceApprovalReconfigure,
+}
 
 type ApprovalOrigin struct {
 	Command *string `json:"command,omitempty"`
@@ -336,12 +381,24 @@ const (
 	ApprovalPersistenceStatusFailed    ApprovalPersistenceStatus = "failed"
 )
 
+// ApprovalPersistenceStatusValues are every ApprovalPersistenceStatus the bundle declares, in schema order.
+var ApprovalPersistenceStatusValues = []ApprovalPersistenceStatus{
+	ApprovalPersistenceStatusSucceeded,
+	ApprovalPersistenceStatusFailed,
+}
+
 type ApprovalPolicyResult string
 
 const (
 	ApprovalPolicyResultAllow ApprovalPolicyResult = "allow"
 	ApprovalPolicyResultDeny  ApprovalPolicyResult = "deny"
 )
+
+// ApprovalPolicyResultValues are every ApprovalPolicyResult the bundle declares, in schema order.
+var ApprovalPolicyResultValues = []ApprovalPolicyResult{
+	ApprovalPolicyResultAllow,
+	ApprovalPolicyResultDeny,
+}
 
 // ApprovalRequestParams Full params shared by `approval/request` and `approval/requested`.
 type ApprovalRequestParams struct {
@@ -385,6 +442,13 @@ const (
 	ApprovalResolvedByPolicy   ApprovalResolvedBy = "policy"
 	ApprovalResolvedByLlmJudge ApprovalResolvedBy = "llmJudge"
 )
+
+// ApprovalResolvedByValues are every ApprovalResolvedBy the bundle declares, in schema order.
+var ApprovalResolvedByValues = []ApprovalResolvedBy{
+	ApprovalResolvedByUser,
+	ApprovalResolvedByPolicy,
+	ApprovalResolvedByLlmJudge,
+}
 
 // ApprovalResolvedParams `approval/resolved` params: the first durable terminal decision.
 type ApprovalResolvedParams struct {
@@ -491,6 +555,12 @@ const (
 	AttentionFlagInputPending    AttentionFlag = "inputPending"
 )
 
+// AttentionFlagValues are every AttentionFlag the bundle declares, in schema order.
+var AttentionFlagValues = []AttentionFlag{
+	AttentionFlagApprovalPending,
+	AttentionFlagInputPending,
+}
+
 // BackgroundInitiator Who durably backgrounded a task (tdd SS4.5.5, `TaskBackgroundedInitiator`). Open —
 // runtime vocabulary.
 type BackgroundInitiator string
@@ -499,6 +569,12 @@ const (
 	BackgroundInitiatorUser    BackgroundInitiator = "user"
 	BackgroundInitiatorTimeout BackgroundInitiator = "timeout"
 )
+
+// BackgroundInitiatorValues are every BackgroundInitiator the bundle declares, in schema order.
+var BackgroundInitiatorValues = []BackgroundInitiator{
+	BackgroundInitiatorUser,
+	BackgroundInitiatorTimeout,
+}
 
 // BranchState The latest branch observation in the snapshot (tdd SS4.6.4, SS4.9.1).
 type BranchState struct {
@@ -520,6 +596,13 @@ const (
 	CapabilityNameSessionMCP        CapabilityName = "sessionMcp"
 	CapabilityNameSessionListStream CapabilityName = "sessionListStream"
 )
+
+// CapabilityNameValues are every CapabilityName the bundle declares, in schema order.
+var CapabilityNameValues = []CapabilityName{
+	CapabilityNameUserShell,
+	CapabilityNameSessionMCP,
+	CapabilityNameSessionListStream,
+}
 
 // ClientCapabilities The client's requested capability posture (SS1.4.1). Every member defaults; an absent
 // `capabilities` object means all defaults.
@@ -576,6 +659,12 @@ const (
 	CommandAckStatusNoop     CommandAckStatus = "noop"
 )
 
+// CommandAckStatusValues are every CommandAckStatus the bundle declares, in schema order.
+var CommandAckStatusValues = []CommandAckStatus{
+	CommandAckStatusAccepted,
+	CommandAckStatusNoop,
+}
+
 // CommandStatus The SS3.1.2 ack `status`: `accepted` for every admitted command. `session/compact` is
 // the one method that may additionally answer `noop`
 // ([`crate::method::runtime::CompactStatus`]); no other command uses another status (tdd
@@ -585,6 +674,11 @@ type CommandStatus string
 const (
 	CommandStatusAccepted CommandStatus = "accepted"
 )
+
+// CommandStatusValues are every CommandStatus the bundle declares, in schema order.
+var CommandStatusValues = []CommandStatus{
+	CommandStatusAccepted,
+}
 
 // CompactStatus `session/compact`'s ack status (tdd SS3.7): the one method that may answer `noop` in
 // addition to the SS3.1.2 `accepted`. A noop is a success, not an error, and it is durably
@@ -596,6 +690,12 @@ const (
 	CompactStatusNoop     CompactStatus = "noop"
 )
 
+// CompactStatusValues are every CompactStatus the bundle declares, in schema order.
+var CompactStatusValues = []CompactStatus{
+	CompactStatusAccepted,
+	CompactStatusNoop,
+}
+
 // CompactionOutcome Compaction outcome (tdd SS4.5.10, the SS3.7 vocabulary). Open.
 type CompactionOutcome string
 
@@ -606,6 +706,14 @@ const (
 	CompactionOutcomeCancelled CompactionOutcome = "cancelled"
 )
 
+// CompactionOutcomeValues are every CompactionOutcome the bundle declares, in schema order.
+var CompactionOutcomeValues = []CompactionOutcome{
+	CompactionOutcomeCompacted,
+	CompactionOutcomeNoop,
+	CompactionOutcomeFailed,
+	CompactionOutcomeCancelled,
+}
+
 // CompactionTrigger What initiated a compaction (tdd SS4.5.10). Open.
 type CompactionTrigger string
 
@@ -613,6 +721,12 @@ const (
 	CompactionTriggerManual CompactionTrigger = "manual"
 	CompactionTriggerAuto   CompactionTrigger = "auto"
 )
+
+// CompactionTriggerValues are every CompactionTrigger the bundle declares, in schema order.
+var CompactionTriggerValues = []CompactionTrigger{
+	CompactionTriggerManual,
+	CompactionTriggerAuto,
+}
 
 // ContextPressureLevel Context pressure level (tdd SS4.6.6): hard threshold first, both inclusive `>=`. Open.
 type ContextPressureLevel string
@@ -622,6 +736,13 @@ const (
 	ContextPressureLevelWarning ContextPressureLevel = "warning"
 	ContextPressureLevelBlocked ContextPressureLevel = "blocked"
 )
+
+// ContextPressureLevelValues are every ContextPressureLevel the bundle declares, in schema order.
+var ContextPressureLevelValues = []ContextPressureLevel{
+	ContextPressureLevelNormal,
+	ContextPressureLevelWarning,
+	ContextPressureLevelBlocked,
+}
 
 // ContextUsage The SS4.9.1 snapshot `contextUsage` block: the latest `(windowTokens, usedTokens,
 // pressure)` triple; the snapshot member is `null` until the fold's generation chain holds
@@ -790,6 +911,48 @@ const (
 	ErrorKindUserInputAnswerInvalid      ErrorKind = "userInputAnswerInvalid"
 )
 
+// ErrorKindValues are every ErrorKind the bundle declares, in schema order.
+var ErrorKindValues = []ErrorKind{
+	ErrorKindParseError,
+	ErrorKindInvalidRequest,
+	ErrorKindNotInitialized,
+	ErrorKindAlreadyInitialized,
+	ErrorKindMethodNotFound,
+	ErrorKindInvalidParams,
+	ErrorKindExperimentalRequired,
+	ErrorKindInternal,
+	ErrorKindPageEventTooLarge,
+	ErrorKindOutputResultTooLarge,
+	ErrorKindOverloaded,
+	ErrorKindInputTooLarge,
+	ErrorKindCapabilityRequired,
+	ErrorKindNotFound,
+	ErrorKindInterrupted,
+	ErrorKindCancelled,
+	ErrorKindSessionNotFound,
+	ErrorKindSessionInUse,
+	ErrorKindSessionAmbiguous,
+	ErrorKindForkBoundaryInvalid,
+	ErrorKindSessionNotLoaded,
+	ErrorKindSessionStreamMismatch,
+	ErrorKindCommandRejected,
+	ErrorKindBackpressured,
+	ErrorKindSkillNotFound,
+	ErrorKindViewTruncated,
+	ErrorKindOutputUnavailable,
+	ErrorKindBoundaryPruned,
+	ErrorKindBoundaryUnusable,
+	ErrorKindNoBoundary,
+	ErrorKindApprovalNotFound,
+	ErrorKindApprovalAlreadyResolved,
+	ErrorKindApprovalChoiceInvalid,
+	ErrorKindApprovalRequirementStale,
+	ErrorKindApprovalReviewerUnavailable,
+	ErrorKindUserInputNotFound,
+	ErrorKindUserInputAlreadySettled,
+	ErrorKindUserInputAnswerInvalid,
+}
+
 // ErrorObject The `error` member of an error response (SS1.2 §2.4).
 type ErrorObject struct {
 	// Registry code (Appendix B). Typed as a plain integer on the wire; the value domain is
@@ -927,6 +1090,14 @@ const (
 	HistoryModeNone             HistoryMode = "none"
 )
 
+// HistoryModeValues are every HistoryMode the bundle declares, in schema order.
+var HistoryModeValues = []HistoryMode{
+	HistoryModeAnchoredSnapshot,
+	HistoryModeInline,
+	HistoryModeSnapshot,
+	HistoryModeNone,
+}
+
 // HistoryNoneReason Why a result served `history.mode: "none"` — spec 208 FM-005's typed unavailability
 // (tdd SS2.5.2; D-050). Open on the client side: an absent (older server) or unknown
 // (newer server) value decodes conservatively as an unknown reason, and `viewCursor` text
@@ -941,6 +1112,15 @@ const (
 	HistoryNoneReasonProjectionReadLimit   HistoryNoneReason = "projectionReadLimit"
 )
 
+// HistoryNoneReasonValues are every HistoryNoneReason the bundle declares, in schema order.
+var HistoryNoneReasonValues = []HistoryNoneReason{
+	HistoryNoneReasonExcluded,
+	HistoryNoneReasonCursorSuffix,
+	HistoryNoneReasonHistoryBudget,
+	HistoryNoneReasonProjectionUnavailable,
+	HistoryNoneReasonProjectionReadLimit,
+}
+
 // HistoryPreference The `history` request preference of `session/resume` (tdd SS2.5.2). The forced values
 // downgrade `anchored` → `inline` → `snapshot` → `none`; under `auto` the full rung
 // order is anchoredSnapshot → inline → snapshot → elided snapshot → none.
@@ -953,6 +1133,14 @@ const (
 	HistoryPreferenceAnchored HistoryPreference = "anchored"
 )
 
+// HistoryPreferenceValues are every HistoryPreference the bundle declares, in schema order.
+var HistoryPreferenceValues = []HistoryPreference{
+	HistoryPreferenceAuto,
+	HistoryPreferenceInline,
+	HistoryPreferenceSnapshot,
+	HistoryPreferenceAnchored,
+}
+
 // IfBusy Disposition when a turn is already running (tdd SS3.2). The wire default is `queue`: an
 // SDK caller who has not looked at session state should not silently mutate an in-flight
 // turn.
@@ -963,6 +1151,13 @@ const (
 	IfBusySteer   IfBusy = "steer"
 	IfBusyReplace IfBusy = "replace"
 )
+
+// IfBusyValues are every IfBusy the bundle declares, in schema order.
+var IfBusyValues = []IfBusy{
+	IfBusyQueue,
+	IfBusySteer,
+	IfBusyReplace,
+}
 
 // InitializeParams `initialize` request params (SS1.4.1).
 type InitializeParams struct {
@@ -1218,6 +1413,19 @@ const (
 	ItemKindCompaction    ItemKind = "compaction"
 )
 
+// ItemKindValues are every ItemKind the bundle declares, in schema order.
+var ItemKindValues = []ItemKind{
+	ItemKindUserMessage,
+	ItemKindAgentMessage,
+	ItemKindReasoning,
+	ItemKindToolCall,
+	ItemKindUserShell,
+	ItemKindSubagent,
+	ItemKindWorkflow,
+	ItemKindReminderChild,
+	ItemKindCompaction,
+}
+
 // ItemReadOutputEncoding The `item/readOutput` content encoding (tdd SS4.7.4). Closed: text media is ALWAYS
 // `utf8` and binary media `base64`; a third value would change the client's decode
 // contract.
@@ -1227,6 +1435,12 @@ const (
 	ItemReadOutputEncodingUTF8   ItemReadOutputEncoding = "utf8"
 	ItemReadOutputEncodingBase64 ItemReadOutputEncoding = "base64"
 )
+
+// ItemReadOutputEncodingValues are every ItemReadOutputEncoding the bundle declares, in schema order.
+var ItemReadOutputEncodingValues = []ItemReadOutputEncoding{
+	ItemReadOutputEncodingUTF8,
+	ItemReadOutputEncodingBase64,
+}
 
 // ItemReadOutputParams `item/readOutput` params (tdd SS4.7.4): byte-ranged fetch of stored full output that the
 // view truncated — the `outputRef` fetch path SS3.9 and SS4.5.5 owe. Read-only; works on
@@ -1293,6 +1507,16 @@ const (
 	ItemStatusTimedOut   ItemStatus = "timedOut"
 )
 
+// ItemStatusValues are every ItemStatus the bundle declares, in schema order.
+var ItemStatusValues = []ItemStatus{
+	ItemStatusInProgress,
+	ItemStatusCompleted,
+	ItemStatusFailed,
+	ItemStatusCancelled,
+	ItemStatusRejected,
+	ItemStatusTimedOut,
+}
+
 // ItemUpdatedParams `item/updated` params (tdd SS4.4.2): an open item changed non-terminally in a way deltas
 // cannot express — the full item re-emitted at a higher revision (apply rule: replace
 // iff higher).
@@ -1313,6 +1537,11 @@ type JSONRPCVersion string
 const (
 	JSONRPCVersion20 JSONRPCVersion = "2.0"
 )
+
+// JSONRPCVersionValues are every JSONRPCVersion the bundle declares, in schema order.
+var JSONRPCVersionValues = []JSONRPCVersion{
+	JSONRPCVersion20,
+}
 
 // MessageAttachment `userMessage` image attachment metadata (tdd SS4.5.2): metadata only — the durable
 // bytes live in the log and are reachable on the raw altitude.
@@ -1368,6 +1597,15 @@ const (
 	ModelCatalogSourceConfigCatalog     ModelCatalogSource = "configCatalog"
 )
 
+// ModelCatalogSourceValues are every ModelCatalogSource the bundle declares, in schema order.
+var ModelCatalogSourceValues = []ModelCatalogSource{
+	ModelCatalogSourceProviderCatalog,
+	ModelCatalogSourceFakeCatalog,
+	ModelCatalogSourceUnresolvedCatalog,
+	ModelCatalogSourceBundledCatalog,
+	ModelCatalogSourceConfigCatalog,
+}
+
 // ModelChangeSource What drove a model selection (tdd SS4.6.1). Open.
 type ModelChangeSource string
 
@@ -1376,6 +1614,13 @@ const (
 	ModelChangeSourceDefault ModelChangeSource = "default"
 	ModelChangeSourcePolicy  ModelChangeSource = "policy"
 )
+
+// ModelChangeSourceValues are every ModelChangeSource the bundle declares, in schema order.
+var ModelChangeSourceValues = []ModelChangeSource{
+	ModelChangeSourceUser,
+	ModelChangeSourceDefault,
+	ModelChangeSourcePolicy,
+}
 
 // ModelCost Per-1M-token catalog cost, carried **verbatim** for display and never rounded or
 // re-formatted by the host (tdd SS3.10). Cost arithmetic stays client-local view math.
@@ -1490,6 +1735,14 @@ const (
 	OutputRefAvailabilityAccessFailed OutputRefAvailability = "accessFailed"
 )
 
+// OutputRefAvailabilityValues are every OutputRefAvailability the bundle declares, in schema order.
+var OutputRefAvailabilityValues = []OutputRefAvailability{
+	OutputRefAvailabilityAvailable,
+	OutputRefAvailabilityMissing,
+	OutputRefAvailabilityUnsupported,
+	OutputRefAvailabilityAccessFailed,
+}
+
 // PatchSummary Server-authored edit-family diff summary (tdd SS4.5.5, #33025): `files` counts the
 // stored patch document's file entries; `added` and `removed` are the total `+`/`-`
 // prefixed LINE counts summed over the stored patch's hunks across all files — line
@@ -1523,6 +1776,12 @@ const (
 	PendingRequestKindApproval  PendingRequestKind = "approval"
 	PendingRequestKindUserInput PendingRequestKind = "userInput"
 )
+
+// PendingRequestKindValues are every PendingRequestKind the bundle declares, in schema order.
+var PendingRequestKindValues = []PendingRequestKind{
+	PendingRequestKindApproval,
+	PendingRequestKindUserInput,
+}
 
 // PendingRequestPointer A late-joiner pointer at an unsettled server-initiated request (tdd SS2.5.2, SS2.2.1).
 // The full payloads arrive as re-issued server-to-client requests right after a
@@ -1570,6 +1829,12 @@ const (
 	PlatformFamilyWindows PlatformFamily = "windows"
 )
 
+// PlatformFamilyValues are every PlatformFamily the bundle declares, in schema order.
+var PlatformFamilyValues = []PlatformFamily{
+	PlatformFamilyUnix,
+	PlatformFamilyWindows,
+}
+
 // PlatformOS The server's operating system (SS1.4.1). Closed, for the same reason as
 // [`PlatformFamily`].
 type PlatformOS string
@@ -1579,6 +1844,13 @@ const (
 	PlatformOSLinux   PlatformOS = "linux"
 	PlatformOSWindows PlatformOS = "windows"
 )
+
+// PlatformOSValues are every PlatformOS the bundle declares, in schema order.
+var PlatformOSValues = []PlatformOS{
+	PlatformOSMacos,
+	PlatformOSLinux,
+	PlatformOSWindows,
+}
 
 // ReasoningEffort The reasoning-effort tier sampled at submission (tdd SS3.2, SS3.3). The **same closed
 // tier vocabulary** on both the fresh-turn and steer lanes, spelled identically; invalid
@@ -1597,6 +1869,18 @@ const (
 	ReasoningEffortUltra   ReasoningEffort = "ultra"
 )
 
+// ReasoningEffortValues are every ReasoningEffort the bundle declares, in schema order.
+var ReasoningEffortValues = []ReasoningEffort{
+	ReasoningEffortNone,
+	ReasoningEffortMinimal,
+	ReasoningEffortLow,
+	ReasoningEffortMedium,
+	ReasoningEffortHigh,
+	ReasoningEffortXhigh,
+	ReasoningEffortMax,
+	ReasoningEffortUltra,
+}
+
 // ReasoningEffortChangeSource What drove a reasoning-effort default change (tdd SS4.6.9). Open; v1's only producer is
 // `user` (an accepted `session/setReasoningEffort`).
 type ReasoningEffortChangeSource string
@@ -1606,6 +1890,13 @@ const (
 	ReasoningEffortChangeSourceDefault ReasoningEffortChangeSource = "default"
 	ReasoningEffortChangeSourcePolicy  ReasoningEffortChangeSource = "policy"
 )
+
+// ReasoningEffortChangeSourceValues are every ReasoningEffortChangeSource the bundle declares, in schema order.
+var ReasoningEffortChangeSourceValues = []ReasoningEffortChangeSource{
+	ReasoningEffortChangeSourceUser,
+	ReasoningEffortChangeSourceDefault,
+	ReasoningEffortChangeSourcePolicy,
+}
 
 // ReasoningEffortState The snapshot's standing session-default reasoning effort (tdd SS4.9.1, ADR 31255 D1):
 // the fold of the latest completed `runtime.reasoning_effort_reconfigure` fact — the
@@ -1857,6 +2148,12 @@ const (
 	SessionDurabilityEphemeral SessionDurability = "ephemeral"
 )
 
+// SessionDurabilityValues are every SessionDurability the bundle declares, in schema order.
+var SessionDurabilityValues = []SessionDurability{
+	SessionDurabilityDurable,
+	SessionDurabilityEphemeral,
+}
+
 // SessionForkParams `session/fork` params (tdd SS2.5.3).
 type SessionForkParams struct {
 	// The SS2.5 idempotency handle (UUIDv7).
@@ -1976,6 +2273,12 @@ const (
 	SessionMCPServerModeOptional SessionMCPServerMode = "optional"
 )
 
+// SessionMCPServerModeValues are every SessionMCPServerMode the bundle declares, in schema order.
+var SessionMCPServerModeValues = []SessionMCPServerMode{
+	SessionMCPServerModeRequired,
+	SessionMCPServerModeOptional,
+}
+
 // SessionMCPStdioFraming Stdio framing choices exposed by session MCP configuration.
 type SessionMCPStdioFraming string
 
@@ -1984,6 +2287,13 @@ const (
 	SessionMCPStdioFramingContentLength     SessionMCPStdioFraming = "contentLength"
 	SessionMCPStdioFramingLineDelimitedJSON SessionMCPStdioFraming = "lineDelimitedJson"
 )
+
+// SessionMCPStdioFramingValues are every SessionMCPStdioFraming the bundle declares, in schema order.
+var SessionMCPStdioFramingValues = []SessionMCPStdioFraming{
+	SessionMCPStdioFramingAuto,
+	SessionMCPStdioFramingContentLength,
+	SessionMCPStdioFramingLineDelimitedJSON,
+}
 
 // SessionModelChangedParams `session/modelChanged` params (tdd SS4.6.1): a durable model-selection record landed
 // (tdd SS3.8).
@@ -2264,6 +2574,13 @@ const (
 	SessionStatusRunning   SessionStatus = "running"
 )
 
+// SessionStatusValues are every SessionStatus the bundle declares, in schema order.
+var SessionStatusValues = []SessionStatus{
+	SessionStatusNotLoaded,
+	SessionStatusIdle,
+	SessionStatusRunning,
+}
+
 // SessionStatusChangedParams `session/statusChanged` params (tdd SS4.6.10, ADR 31983 D2): a loaded session's
 // projected `(status, attention)` value flipped. A command-plane broadcast — delivered
 // to every connection regardless of its view subscription set, never gated, no
@@ -2370,6 +2687,11 @@ const (
 	SessionViewHealthUnavailable SessionViewHealth = "unavailable"
 )
 
+// SessionViewHealthValues are every SessionViewHealth the bundle declares, in schema order.
+var SessionViewHealthValues = []SessionViewHealth{
+	SessionViewHealthUnavailable,
+}
+
 // SessionViewHealthChangedParams `session/viewHealthChanged` params (ADR 32557; #32557): the named session's live view
 // stream became unavailable, and why. Best-effort: ordered after already-queued view
 // frames and may be dropped (for example when the connection is closing), so a client MUST
@@ -2442,6 +2764,14 @@ const (
 	SkillSourceProject SkillSource = "project"
 	SkillSourcePlugin  SkillSource = "plugin"
 )
+
+// SkillSourceValues are every SkillSource the bundle declares, in schema order.
+var SkillSourceValues = []SkillSource{
+	SkillSourceBundled,
+	SkillSourceUser,
+	SkillSourceProject,
+	SkillSourcePlugin,
+}
 
 // SnapshotAnchor The compaction boundary an anchored snapshot is anchored at (tdd SS2.5.2).
 type SnapshotAnchor struct {
@@ -2550,6 +2880,18 @@ const (
 	SubagentControlStatusRecoveryPending      SubagentControlStatus = "recoveryPending"
 	SubagentControlStatusManualReconciliation SubagentControlStatus = "manualReconciliation"
 )
+
+// SubagentControlStatusValues are every SubagentControlStatus the bundle declares, in schema order.
+var SubagentControlStatusValues = []SubagentControlStatus{
+	SubagentControlStatusAccepted,
+	SubagentControlStatusStarting,
+	SubagentControlStatusRunning,
+	SubagentControlStatusResultReady,
+	SubagentControlStatusClosing,
+	SubagentControlStatusClosed,
+	SubagentControlStatusRecoveryPending,
+	SubagentControlStatusManualReconciliation,
+}
 
 // SubagentInputParams Params for `subagent/sendMessage` and `subagent/followupTask` (SS3.16): a child target
 // plus the input body.
@@ -2737,6 +3079,14 @@ const (
 	TodoStatusCancelled  TodoStatus = "cancelled"
 )
 
+// TodoStatusValues are every TodoStatus the bundle declares, in schema order.
+var TodoStatusValues = []TodoStatus{
+	TodoStatusPending,
+	TodoStatusInProgress,
+	TodoStatusCompleted,
+	TodoStatusCancelled,
+}
+
 // TokenUsage Raw token counters, verbatim from the durable record (tdd SS4.6.5, the runtime's
 // `Usage`, camelCased). Not directly summable across providers — sum the counted-once
 // derivations instead (#8803).
@@ -2841,6 +3191,19 @@ const (
 	TurnErrorKindAuthRequired        TurnErrorKind = "authRequired"
 )
 
+// TurnErrorKindValues are every TurnErrorKind the bundle declares, in schema order.
+var TurnErrorKindValues = []TurnErrorKind{
+	TurnErrorKindStepLimit,
+	TurnErrorKindConfigError,
+	TurnErrorKindProjectionError,
+	TurnErrorKindLogError,
+	TurnErrorKindWorkflowLaunchError,
+	TurnErrorKindEnvironmentError,
+	TurnErrorKindModelError,
+	TurnErrorKindLaunchError,
+	TurnErrorKindAuthRequired,
+}
+
 // TurnInputPart One ordered content part of a turn submission (tdd SS3.2). File mentions are text, not a
 // part type: write `@relative/path` in a text part. A structured `mention` part is
 // reserved and currently rejected, and an unknown part type is `invalidParams` (tdd
@@ -2888,6 +3251,13 @@ const (
 	TurnInputPartTypeImage TurnInputPartType = "image"
 	TurnInputPartTypeSkill TurnInputPartType = "skill"
 )
+
+// TurnInputPartTypeValues are every TurnInputPartType the bundle declares, in schema order.
+var TurnInputPartTypeValues = []TurnInputPartType{
+	TurnInputPartTypeText,
+	TurnInputPartTypeImage,
+	TurnInputPartTypeSkill,
+}
 
 // TurnInterruptParams `turn/interrupt` params (tdd SS3.4): the "user pressed stop" gesture, on the runtime's
 // priority lane.
@@ -2982,6 +3352,13 @@ const (
 	TurnStartDispositionSteered TurnStartDisposition = "steered"
 )
 
+// TurnStartDispositionValues are every TurnStartDisposition the bundle declares, in schema order.
+var TurnStartDispositionValues = []TurnStartDisposition{
+	TurnStartDispositionStarted,
+	TurnStartDispositionQueued,
+	TurnStartDispositionSteered,
+}
+
 // TurnStartParams `turn/start.providerRequestOptions` is deliberately absent: **RULED (#22785 E3, owner,
 // 2026-08-26) to stay off the published schema.** The schema is the contract, and a
 // free-form-object node kind is revisited only if the experimental field graduates.
@@ -3070,6 +3447,13 @@ const (
 	TurnTerminalFailed    TurnTerminal = "failed"
 	TurnTerminalCancelled TurnTerminal = "cancelled"
 )
+
+// TurnTerminalValues are every TurnTerminal the bundle declares, in schema order.
+var TurnTerminalValues = []TurnTerminal{
+	TurnTerminalCompleted,
+	TurnTerminalFailed,
+	TurnTerminalCancelled,
+}
 
 // TurnUnqueueParams `turn/unqueue` params (tdd SS3.6): reclaim a queued submit before it launches. It is
 // **not** a stop — a reclaim that arrives after its target launched is durably rejected,
@@ -3267,6 +3651,16 @@ const (
 	UserInputOutcomeAborted     UserInputOutcome = "aborted"
 )
 
+// UserInputOutcomeValues are every UserInputOutcome the bundle declares, in schema order.
+var UserInputOutcomeValues = []UserInputOutcome{
+	UserInputOutcomeAnswered,
+	UserInputOutcomeCancelled,
+	UserInputOutcomeInterrupted,
+	UserInputOutcomeClarified,
+	UserInputOutcomeTimedOut,
+	UserInputOutcomeAborted,
+}
+
 type UserInputQuestion struct {
 	Header    string             `json:"header"`
 	ID        string             `json:"id"`
@@ -3302,6 +3696,12 @@ const (
 	UserInputSelectionModeMultiple UserInputSelectionMode = "multiple"
 )
 
+// UserInputSelectionModeValues are every UserInputSelectionMode the bundle declares, in schema order.
+var UserInputSelectionModeValues = []UserInputSelectionMode{
+	UserInputSelectionModeSingle,
+	UserInputSelectionModeMultiple,
+}
+
 // UserInputSettledParams `userInput/settled` params: the first durable prompt settlement.
 type UserInputSettledParams struct {
 	Answers            []UserInputAnswer       `json:"answers"`
@@ -3328,6 +3728,12 @@ const (
 	VcsGit     Vcs = "git"
 	VcsSapling Vcs = "sapling"
 )
+
+// VcsValues are every Vcs the bundle declares, in schema order.
+var VcsValues = []Vcs{
+	VcsGit,
+	VcsSapling,
+}
 
 // ViewGapParams `view/gap` params (spec 208 SS4.8, FM-001): push delivery dropped events, and this names
 // the hole. The bracket is deferred (D-16487-2): it flushes at the subscription's next
@@ -3361,6 +3767,11 @@ const (
 	ViewPageAnchorLatestCompaction ViewPageAnchor = "latestCompaction"
 )
 
+// ViewPageAnchorValues are every ViewPageAnchor the bundle declares, in schema order.
+var ViewPageAnchorValues = []ViewPageAnchor{
+	ViewPageAnchorLatestCompaction,
+}
+
 // ViewPageDirection The `view/page` paging direction (tdd SS4.7.3). Closed: the tdd spells exactly two
 // values and a third would change the paging contract.
 type ViewPageDirection string
@@ -3369,6 +3780,12 @@ const (
 	ViewPageDirectionForward  ViewPageDirection = "forward"
 	ViewPageDirectionBackward ViewPageDirection = "backward"
 )
+
+// ViewPageDirectionValues are every ViewPageDirection the bundle declares, in schema order.
+var ViewPageDirectionValues = []ViewPageDirection{
+	ViewPageDirectionForward,
+	ViewPageDirectionBackward,
+}
 
 // ViewPageParams `view/page` params (tdd SS4.7.3): cursor-paged reads of the session view.
 type ViewPageParams struct {
@@ -3501,6 +3918,12 @@ const (
 	WorkflowChildActionSkip  WorkflowChildAction = "skip"
 	WorkflowChildActionRetry WorkflowChildAction = "retry"
 )
+
+// WorkflowChildActionValues are every WorkflowChildAction the bundle declares, in schema order.
+var WorkflowChildActionValues = []WorkflowChildAction{
+	WorkflowChildActionSkip,
+	WorkflowChildActionRetry,
+}
 
 // WorkflowChildControlParams `workflow/childControl` params (tdd SS3.20): skip or retry one workflow child, keyed by
 // the `(childId, attempt)` pair the `workflow` item's `children[]` carries.

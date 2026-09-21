@@ -255,6 +255,17 @@ func writeDef(out *bytes.Buffer, b *schemaBundle, name string, n *node) error {
 			fmt.Fprintf(out, "\t%s%s %s = %q\n", name, goName(v), name, v)
 		}
 		fmt.Fprintf(out, ")\n\n")
+		// The values as a list, in the bundle's own order. A caller that has to OFFER an
+		// enum rather than recognize one — the Console's reasoning-effort picker is the
+		// first — would otherwise hand-keep a second copy, and a value the vendor adds in
+		// 1.4 would silently never be offered. Generated, it moves with the bundle and the
+		// drift lock covers it.
+		fmt.Fprintf(out, "// %sValues are every %s the bundle declares, in schema order.\n", name, name)
+		fmt.Fprintf(out, "var %sValues = []%s{\n", name, name)
+		for _, v := range n.Enum {
+			fmt.Fprintf(out, "\t%s%s,\n", name, goName(v))
+		}
+		fmt.Fprintf(out, "}\n\n")
 		return nil
 	case len(n.OneOf) > 0:
 		// The only union in v1 is SessionMcpServerConfig, a closed union discriminated by

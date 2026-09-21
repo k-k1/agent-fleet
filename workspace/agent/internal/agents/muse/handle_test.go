@@ -276,3 +276,134 @@ func TestInterruptCancelsTheQueueAndCallsTurnInterrupt(t *testing.T) {
 		t.Errorf("%d turns still queued after an interrupt", queued)
 	}
 }
+
+// 🔴 A session started with no model chosen must name the safe model explicitly. Omitting
+// modelId is what hands the member to the host's own default, which is the contributor variant
+// (ADR 0095 decision 6 clamp 8) — and a session that "just works" is exactly the one nobody
+// ever revisits.
+func TestSessionStartNamesTheSafeModelWhenNoneWasChosen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resetModelCatalogCache(t)
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000aa"}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodModelList, func(msptest.Message) (any, *msp.Error) {
+		return json.RawMessage(`{"providerId":"meta","source":"providerCatalog","models":[
+			{"modelId":"muse-spark-1.3","displayLabel":"muse-spark-1.3","providerId":"meta"},
+			{"modelId":"muse-spark-1.3-contributor","displayLabel":"c","providerId":"meta","isDefault":true,
+			 "description":"Your content, including inter-session messages, may be used for product improvement."}]}`), nil
+	})
+	var started msp.SessionStartParams
+	host.Handle(msp.MethodSessionStart, func(m msptest.Message) (any, *msp.Error) {
+		if err := json.Unmarshal(m.Params, &started); err != nil {
+			t.Errorf("session/start params: %v", err)
+		}
+		return map[string]any{
+			"session":    map[string]any{"sessionId": "01a0c1d6-0000-7000-8000-0000000000bb", "path": "/tmp/s.jsonl", "status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 0},
+			"viewCursor": "c1",
+		}, nil
+	})
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	if started.ModelID == nil {
+		t.Fatal("session/start carried no modelId: the host would pick its contributor default")
+	}
+	if *started.ModelID != "muse-spark-1.3" {
+		t.Errorf("session/start named %q", *started.ModelID)
+	}
+}
+
+// The member's own choice still wins, contributor or not: the clamp picks a default, it does
+// not veto a selection.
+func TestSessionStartKeepsTheMembersOwnModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resetModelCatalogCache(t)
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000ab"}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodModelList, func(msptest.Message) (any, *msp.Error) {
+		t.Error("the catalog was fetched for a session that already had a model")
+		return json.RawMessage(`{"providerId":"meta","source":"providerCatalog","models":[]}`), nil
+	})
+	var started msp.SessionStartParams
+	host.Handle(msp.MethodSessionStart, func(m msptest.Message) (any, *msp.Error) {
+		_ = json.Unmarshal(m.Params, &started)
+		return map[string]any{
+			"session":    map[string]any{"sessionId": "01a0c1d6-0000-7000-8000-0000000000bc", "path": "/tmp/s.jsonl", "status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 0},
+			"viewCursor": "c1",
+		}, nil
+	})
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3-contributor"}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	if started.ModelID == nil || *started.ModelID != "muse-spark-1.3-contributor" {
+		t.Errorf("session/start did not carry the member's model: %+v", started.ModelID)
+	}
+}
+
+// "Back to the default" on a running session means AF's default, not the host's. Sending
+// nothing — the shape this had before ClearModel was honoured — leaves the session on whatever
+// model it was already using, so a member who picks Default watches the control do nothing.
+func TestClearModelSetsTheSafeDefault(t *testing.T) {
+	resetModelCatalogCache(t)
+	h := &threadHandle{settings: agents.ThreadSettings{Model: "muse-spark-1.2", Effort: "high"}}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodModelList, func(msptest.Message) (any, *msp.Error) {
+		return json.RawMessage(`{"providerId":"meta","source":"providerCatalog","models":[
+			{"modelId":"muse-spark-1.3","displayLabel":"muse-spark-1.3","providerId":"meta"}]}`), nil
+	})
+	var set msp.SessionSetModelParams
+	host.Handle(msp.MethodSessionSetModel, func(m msptest.Message) (any, *msp.Error) {
+		_ = json.Unmarshal(m.Params, &set)
+		return map[string]any{}, nil
+	})
+
+	if err := h.UpdateSettings(agents.ThreadSettings{ClearModel: true}); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	if set.Model.ModelID != "muse-spark-1.3" {
+		t.Errorf("session/setModel named %q", set.Model.ModelID)
+	}
+	h.mu.Lock()
+	got := h.settings.Model
+	h.mu.Unlock()
+	if got != "muse-spark-1.3" {
+		t.Errorf("the handle still reports %q", got)
+	}
+}
+
+// ClearEffort has no wire call to make — setReasoningEffort has no "unset" — so the test that
+// it worked is the NEXT turn: it must carry no reasoningEffort at all, which is what lets the
+// host apply its own.
+func TestClearEffortLeavesTheNextTurnWithoutOne(t *testing.T) {
+	resetModelCatalogCache(t)
+	h := &threadHandle{settings: agents.ThreadSettings{Effort: "max"}}
+	host := newTestHandle(t, h)
+	turns := make(chan map[string]any, 2)
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		var raw map[string]any
+		_ = json.Unmarshal(m.Params, &raw)
+		turns <- raw
+		return map[string]any{}, nil
+	})
+
+	// The control first: with an effort held, the turn carries it. Without this arm a turn
+	// that never carried one would pass the assertion below.
+	if err := h.startTurn(agents.TurnInput{Prompt: "one"}); err != nil {
+		t.Fatalf("startTurn: %v", err)
+	}
+	if got := (<-turns)["reasoningEffort"]; got != "max" {
+		t.Fatalf("the control turn carried reasoningEffort %v, want max", got)
+	}
+
+	if err := h.UpdateSettings(agents.ThreadSettings{ClearEffort: true}); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	if err := h.startTurn(agents.TurnInput{Prompt: "two"}); err != nil {
+		t.Fatalf("startTurn: %v", err)
+	}
+	if raw := <-turns; raw["reasoningEffort"] != nil {
+		t.Errorf("the turn after ClearEffort still carried reasoningEffort %v", raw["reasoningEffort"])
+	}
+}

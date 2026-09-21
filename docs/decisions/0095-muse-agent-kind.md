@@ -2067,3 +2067,64 @@ measurement, so the group's only row would be an inert "Default" picker. And **m
 MCP servers on the wire in `session/start.config.mcpServers`, the settings writer correctly writes
 no `mcp_servers`, and **nothing sends them**. The guide's "Receives integration (MCP) servers" row
 is honest at `—`, and the wire half remains unbuilt.
+
+### P2-9: the model and effort controls, and the default nobody would have chosen
+
+The ninth work package: `model/list` behind `GET /agents/muse/models`, the reasoning-effort
+list, the two Console controls, and one thing the work-package table did not have.
+
+🔴 **The launch default was an opt-in to data sharing, and it was invisible.** Decision 6's
+clamp 8 says AF defaults to a non-contributor model. Nothing in the table owned it, and the
+shape everything else uses would have shipped it wrong: a launch with no model chosen sends no
+`modelId`, the host applies its own default, and measured on the live catalogue that default
+is `muse-spark-1.3-contributor` — `isDefault: true`, and the only rows carrying a `description`
+at all are the two contributor ones, whose text is "Your content, including inter-session
+messages, may be used for product improvement." A member who never opened the picker would
+have had every conversation used that way, with nothing on any screen saying so.
+
+So "the member chose no model" resolves in the **driver**, not in the Console: `session/start`
+names the newest row the vendor makes no such claim about, and `UpdateSettings`' `ClearModel`
+resolves to the same one rather than to the host's. That placement is the point — a scheduled
+run, an MCP-created session and the chat bridge all reach `openSession` and none of them reads
+a Console setting. The Console's stored default therefore stays the empty string, which is
+both safe and version-proof; pinning `muse-spark-1.3` into `DEFAULT_AGENT_LAUNCH` would have
+gone stale at the next release. The contributor twins stay selectable, because clamp 8 was
+deliberately softened to leave the member the choice, and the picker now carries the sentence
+that says what the choice is.
+
+The predicate is a union — the `-contributor` suffix **or** a description naming product
+improvement. Measured, the two agree exactly, so it is redundant today. It is a union because
+they fail in opposite directions (a renamed suffix leaves the sentence, a reworded sentence
+leaves the suffix) and the two errors do not cost the same: a false positive costs a model AF
+will not pick for you, a false negative costs your conversations.
+
+**The effort list is the generated enum, not a copy.** The generator now emits a `…Values`
+slice for every string enum in the bundle, so `msp.ReasoningEffortValues` is what the picker
+offers AND what the driver validates against — a value the vendor adds in 1.4 cannot end up
+offered-but-refused, and the fingerprint lock already covers it. A test walks the offered list
+through the driver's own validator, with an undeclared value as its control.
+
+Three smaller things:
+
+- **Catalogue reads reuse a live session's host.** `model/list` is a query — no `commandId`, no
+  durable record — so a running session can answer it, and only a workspace with none pays a
+  process start. A probe host's argv deliberately drops `--trust-workspace`: trust is a decision
+  about a working copy and a catalogue query has none. It still applies the clamps first, which
+  is the driver's invariant rather than a need this path has.
+- 🔴 **A segmented control cannot hold this catalogue, and what it does instead is not clip.**
+  Rendered headless with the real four ids, `.choice-seg` takes the whole row, wraps to a second
+  line and draws over the row's own "Default model" label; the nine effort values do the same.
+  The count rule that has always guarded this (`> 8`) passes four ids of 26 characters, so it
+  gained a width clause. Assumed as "it overflows", measured as "it covers the label" — the
+  screenshot is what told the two apart.
+- **Two shipped defects found on the way.** `DEFAULT_AGENT_LAUNCH` had no `lcpp` row, so lcpp's
+  saved launch defaults were discarded on every reload — the exact failure its own comment
+  records for copilot, shipped again. And this card's three warning strings were written with
+  markdown asterisks that nothing in Settings renders, so `**per use**` reached the member
+  verbatim; the house pattern is a separate `_strong` key, and these are now plain text. A dom
+  assertion that the card renders no `**` covers all of them.
+
+⚠️ The mutation sweep was worth its cost again: of eleven mutations, ten failed a test as they
+should and one passed green — the assertion for the contributor note matched the word
+"contributor" in the picker's own option labels, so deleting the note entirely changed nothing.
+It asserts on the note's own sentence now.
