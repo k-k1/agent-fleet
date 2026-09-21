@@ -27,6 +27,7 @@ import { KiroCard } from "./KiroCard.tsx";
 import { AgyCard } from "./AgyCard.tsx";
 import { OpencodeCard } from "./OpencodeCard.tsx";
 import { LcppCard } from "./LcppCard.tsx";
+import { MuseCard } from "./MuseCard.tsx";
 
 // AgentsTab is the per-agent home. Each card is split into two levels so the two
 // concerns read as a hierarchy rather than one flat block:
@@ -258,6 +259,7 @@ export function AgentsTab() {
             updateAgents={updateAgents}
           />
           <LcppCard />
+          <MuseCard running={running} st={conns?.muse} reload={reload} />
           {running && agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
         </>
       )}

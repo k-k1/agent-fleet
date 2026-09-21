@@ -264,6 +264,33 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.kiro_update": "Update Kiro",
   "agents.kiro_update_note": "Re-downloads the pinned build (about 855MB). Takes a few minutes.",
   "agents.kiro_updating": "Updating Kiro… (about 855MB, a few minutes). Running Kiro sessions keep working on the old build until they are restarted.",
+  // --- Muse Code (ADR 0095) ---
+  // 🔴 "connected" is not the whole truth on this card: metered / env_key / the API-key refusal
+  // all bear directly on what the member is billed (decision 9 / P2-6, measured).
+  "agents.muse_desc": "Sign in to Muse Code. Approve in the browser — no code to paste.",
+  "agents.muse_connect": "Sign in with your Meta account",
+  "agents.muse_connect_note": "Shows an authorize link and a code; approve it in your browser. This is the subscription route.",
+  "agents.muse_use_key": "Use an API key",
+  "agents.muse_use_key_note": "The pay-as-you-go route. On a subscription, choose the option above.",
+  "agents.muse_hint": "Muse Code is not included in the distributed image (it is proprietary), so it needs a one-time install before you can sign in.",
+  "agents.muse_metered":
+    "This connection is an API key, so it bills per use. To use your flat-rate plan, disconnect and sign in with your Meta account instead.",
+  "agents.muse_env_key":
+    "META_API_KEY is set in this workspace's environment. It takes priority over the stored sign-in, so you are billed **per use** whatever this card says above. Remove it from the workspace environment variables to use your flat-rate plan.",
+  "agents.muse_key_warn":
+    "Saving an API key **removes** any stored account sign-in (Muse Code replaces the whole credential entry), and moves this workspace off the flat-rate plan onto per-use billing. If you are signed in with an account, disconnect first.",
+  "agents.muse_key_placeholder": "Meta API key (starts with LLM|…)",
+  "agents.muse_auth_failed": "Failed to start Muse Code sign-in: {msg}",
+  "agents.muse_install_desc": "Muse Code is not installed in this workspace yet (it is proprietary, so it is not in the distributed image). A one-time install is required.",
+  "agents.muse_install": "Install Muse Code",
+  "agents.muse_install_note": "Downloads about 299MB into your home volume (takes a few minutes).",
+  "agents.muse_installing": "Installing Muse Code… (about 299MB, a few minutes). The sign-in screen appears automatically when it finishes.",
+  "agents.muse_install_error": "Install failed. Check your connection and try again.",
+  "agents.muse_install_failed": "Failed to start the Muse Code installation: {msg}",
+  "agents.muse_update_avail": "A newer version is available (installed {cur} → pinned {pin}). Until you update, the installed version keeps being used.",
+  "agents.muse_update": "Update Muse Code",
+  "agents.muse_update_note": "Re-downloads the pinned build (about 299MB). Takes a few minutes.",
+  "agents.muse_updating": "Updating Muse Code… (about 299MB, a few minutes). Running muse sessions keep working on the old build until they are restarted.",
   "agents.remote_control": "Remote control",
   "agents.notifications": "Notifications",
   "agents.codex_auth_failed": "Failed to start Codex auth: {msg}",
