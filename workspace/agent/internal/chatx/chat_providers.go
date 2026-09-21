@@ -138,6 +138,11 @@ func headlessAgentAvailable(kind string) bool {
 	}
 	done := make(chan struct{})
 	headlessAvailInFlight[kind] = done
+	// Read the seam under the lock and call the COPY below. A plain read here races with
+	// SetHeadlessAvailCheckForTest: warming goroutines outlive the test that started them
+	// (they are not tied to its lifetime), so the next test's swap lands while a straggler is
+	// still reading this var — measured as a -race failure in `go test -race -count=20`.
+	check := headlessAvailCheck
 	headlessAvailMu.Unlock()
 
 	// Deferred, not inline: headlessAvailCheck shells out to a vendor CLI, and a panic below
@@ -159,7 +164,7 @@ func headlessAgentAvailable(kind string) bool {
 		headlessAvailMu.Unlock()
 		close(done) // wake every caller that joined the wait channel above
 	}()
-	v = headlessAvailCheck(kind)
+	v = check(kind)
 	completed = true
 	return v
 }
@@ -232,10 +237,19 @@ func ClearHeadlessAvailableForTest(kind string) (restore func()) {
 // that it fires) never has to depend on a real CLI's presence, auth state or exec latency: see
 // headlessAvailInFlight's doc comment for the incident that makes "never touch the real CLI in
 // a test that can loop" a hard rule here, not a style preference.
+// Both the swap and the restore take headlessAvailMu, because the reader takes it too: the
+// straggler warming goroutines are what made this an actual data race rather than a
+// theoretical one.
 func SetHeadlessAvailCheckForTest(fn func(kind string) bool) (restore func()) {
+	headlessAvailMu.Lock()
 	prev := headlessAvailCheck
 	headlessAvailCheck = fn
-	return func() { headlessAvailCheck = prev }
+	headlessAvailMu.Unlock()
+	return func() {
+		headlessAvailMu.Lock()
+		headlessAvailCheck = prev
+		headlessAvailMu.Unlock()
+	}
 }
 
 // DefaultHeadlessOrder is the built-in auto-selection order for assistant-chat
@@ -1593,9 +1607,30 @@ func oneShotKind(feature string) (kind, source string) {
 // the exact failure this comment used to wave off as not worth guarding against: ~490 real
 // `claude` processes and ~25GiB RSS from concurrent callers on the same cold kind with no cap.
 // Removing that guard on the strength of this paragraph would reopen it.
+// The goroutine is started HERE rather than by the caller, so the bookkeeping that makes a
+// warm waitable happens before this returns. A caller writing `go chatx.WarmOneShotKind(f)`
+// leaves nothing to wait on, and the warms then outlive whatever started them — in production
+// that is merely untidy, but in a test binary it means one test's stragglers mutate the shared
+// availability cache in the middle of the next one (measured: 9 failures in 20 runs, plus a
+// data race on the headlessAvailCheck seam).
 func WarmOneShotKind(feature string) {
-	oneShotKind(feature)
+	warmWG.Add(1)
+	go func() {
+		defer warmWG.Done()
+		oneShotKind(feature)
+	}()
 }
+
+// warmWG counts the in-flight warms started by WarmOneShotKind. Production never waits on it;
+// it exists so a test can (WaitForWarmsForTest).
+var warmWG sync.WaitGroup
+
+// WaitForWarmsForTest blocks until every warm started so far has finished. TEST ONLY, and the
+// reason it is exported: the warming is fire-and-forget by design, so without this a test in
+// package main can only sleep and hope — and a straggler that lands after the test ends
+// corrupts the NEXT test instead, which is how this arrived (a flake that needed -count to
+// see). Call it after each request whose warms must not escape.
+func WaitForWarmsForTest() { warmWG.Wait() }
 
 // resolveOneShot answers steps ① and ② of docs/log/103's precedence chain for one feature:
 // the backend kind that would run, and the user's per-backend model choice for THAT kind
