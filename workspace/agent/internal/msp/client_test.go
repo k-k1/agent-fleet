@@ -297,3 +297,19 @@ func TestUndeclaredNotificationsExistOnTheWire(t *testing.T) {
 		t.Error("the bundle now declares session/closed; see ADR 0095 P2-1 finding 2")
 	}
 }
+
+// A named empty object is a wire value, not free-form JSON. Rendering RequestReceipt the way
+// an untyped `properties: {}` property is rendered marshals the zero value as `""`, and the
+// host would be answering a must-answer request with a string.
+func TestEmptyObjectTypesMarshalAsObjects(t *testing.T) {
+	b, err := json.Marshal(msp.RequestReceipt{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "{}" {
+		t.Errorf("RequestReceipt{} marshals as %s, want {}", b)
+	}
+	if b, _ := json.Marshal(msp.ViewUnsubscribeResult{}); string(b) != "{}" {
+		t.Errorf("ViewUnsubscribeResult{} marshals as %s, want {}", b)
+	}
+}

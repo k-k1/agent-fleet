@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -49,6 +50,8 @@ func ManagedAlive(m session.Meta) bool {
 		return kiro.ManagedAlive(m.Name)
 	case session.KindLcpp:
 		return lcpp.ManagedAlive(m.Name)
+	case session.KindMuse:
+		return muse.ManagedAlive(m.Name)
 	}
 	return false
 }
@@ -71,6 +74,8 @@ func managedBusy(m session.Meta) bool {
 		return kiro.ManagedBusy(m.Name)
 	case session.KindLcpp:
 		return lcpp.ManagedBusy(m.Name)
+	case session.KindMuse:
+		return muse.ManagedBusy(m.Name)
 	}
 	return false
 }
@@ -93,6 +98,8 @@ func dropManagedRuntime(m session.Meta) {
 		kiro.DropHandle(m.Name)
 	case session.KindLcpp:
 		lcpp.DropHandle(m.Name)
+	case session.KindMuse:
+		muse.DropHandle(m.Name)
 	}
 }
 
@@ -112,6 +119,8 @@ func removeManagedLedger(m session.Meta) {
 		kiro.RemoveLedger(m.Name)
 	case session.KindLcpp:
 		lcpp.RemoveLedger(m.Name)
+	case session.KindMuse:
+		muse.RemoveLedger(m.Name)
 	}
 }
 

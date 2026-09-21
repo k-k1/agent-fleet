@@ -137,6 +137,11 @@ var fsDeny = map[string]bool{
 	".kiro":                    true, // kiro settings + v2 session store (sessions/cli)
 	".local/share/kiro-cli":    true, // kiro auth (data.sqlite3 auth_kv, effectively plaintext) + classic store
 	".aws":                     true, // SSM login: SSO token cache + generated configs
+	".config/muse":             true, // muse auth.json (account login or API key) + settings + user rules
+	// Two paths, not one: this half is every muse session's full transcript plus the
+	// user-wide session-name authority (ADR 0095 decision 9, the same reason opencode's and
+	// kiro's stores are here).
+	".local/share/muse": true,
 }
 
 func isDenied(rel string) bool {

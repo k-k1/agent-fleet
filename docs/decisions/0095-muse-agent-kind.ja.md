@@ -1452,3 +1452,47 @@ lcpp に倣って承認を question 種別に写すかどうかは段 2 の設�
 ない。決定 13 は `approval/requested` が `toolName`・`rawArgs`・`judgeEscalated`・
 `protectedWrite`・`subject.stages[].argv` を運ぶことを実測しており、それを 2 択の質問に畳むと
 その情報は落ちる。
+
+### P2-2: kind とドライバとスレッド（`workspace/agent/internal/agents/muse/`）
+
+2 つ目の作業パッケージ。`session.KindMuse`・両レジストリ・ライフサイクルの分岐 4 か所・起動時の
+reconcile・shutdown・deny-list——そしてドライバ本体（ThreadHandle の 7 メソッド全部、状態の写像、
+承認と userInput の往復、steering、中断、resume の突き合わせ）。転写・設定ファイルの締め付け・使用量・
+接続カード・Console 面・配備はまだ先である。
+
+**承認の Interaction はいまのところ question 種別であり、これは決定ではなく負債である。** 決定 13 は
+AF 初の承認 `Interaction` を求め、決定 5 は承認を有効に保つ。つまり承認に答えられないセッションは
+ツールを 1 つも実行できない。承認種別ができるまで、ドライバは保留中の承認から question 種別の
+Interaction を組む——kiro の ACP `session/request_permission` と lcpp 自身の門が既にしている流用と
+同じである。その代償は正確に書いておく価値がある: ワイヤは `toolName`・`rawArgs`・`judgeEscalated`・
+`protectedWrite`・各ステージの解析済み `argv` を運ぶのに、2 択の質問はコマンド行しか残さない。
+したがって `Capabilities.Permissions` は **false** のままで、承認の作業パッケージが両方をまとめて
+引き上げる。
+
+同じ理由で false を宣言している能力がほかに 3 つある——能力とは「端から端まで実測した経路」の主張
+だからである。`CanTranscript`・`CanFork`・`CanForkAt` は各々の作業パッケージ待ち。`DynamicMode` は
+恒久的に false で、MSP に AF の plan mode を設定するメソッドが無く、`session/setApprovalMode` は
+別の軸だからである。
+
+**ADR が持っていなかった締め付けの経路: `MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL`。**
+決定 6 の締め付け 5 はプライバシーの代償があるもので——これが無いと実ターンが利用者自身の
+`~/.claude/CLAUDE.md` をモデル入力に組み立てる——ADR はその経路を settings ファイル**だけ**と記録して
+いた。`--no-foreign-personal-context` が `muse serve` に無いからである。バイナリ自身の文字列表が
+それ用の環境変数を名指しており、実際に効く: 使い捨て HOME にマーカーを植えて `muse exec` で実測した
+ところ、`1` を設定すると「Including your Claude Code and Codex personal rules」のバナーと、植えた
+マーカーの耐久ログ上の痕跡の**両方**が消え、`0` と未設定ではどちらも戻る。ドライバは spawn 時に、
+オブザーバ 6 変数と `MUSE_DISABLE_APPROVAL_JUDGE` と併せてこれを設定する。⚠️ 実測は `exec` での
+ものであり、`serve` での同等確認には実ターンが要る。よって設定の作業パッケージは依然として鍵ごとの
+振る舞い試験を負っている（元から負っていたものではあるが）。
+
+**ワイヤが先に露見させたはずの生成器の欠陥。** `RequestReceipt` は名前付きの空オブジェクトなのに、
+型生成器はこれを「型無しの `properties: {}` を持つ*プロパティ*」と同じ扱い——`json.RawMessage`——で
+描いていた。そのゼロ値は `""` にマーシャルされる。つまり AF は must-answer のサーバ要求すべてに、
+`{}` ではなく文字列で答えるところだった。名前付きの空オブジェクトは `struct{}` として描くようにし、
+マーシャル結果をテストで固定した。
+
+検証は `msptest` と、`MUSE_LIVE=1` の裏の実機試験群である。実機側が担うのは偽ホストでは測れないもの
+だけ——spawn の argv・子の環境・handshake・`session/start` がベンダ自身のバイナリに対して通ること、
+2 回目の Resume が生きたホストを再利用し 1 セッションに 2 つ目の子を作らないこと、drop 後の Resume が
+保存済みセッションを**再読込**して利用者の履歴を黙って分岐させないこと、殺された子が死んだハンドルに
+なること。ターンの手前で止まるので枠は消費しない。

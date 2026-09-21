@@ -1653,7 +1653,7 @@ type RequestID = json.RawMessage
 // could not present the request; the approval or prompt stays pending and the request is
 // re-issued on the next subscribe (SS5.6). There is no dismiss-without-deciding on the
 // wire.
-type RequestReceipt json.RawMessage
+type RequestReceipt struct{}
 
 // SchemaInfo The `schema` pair in [`InitializeResult`] (SS1.4.1, SS1.5.3). `version` is the wire
 // **envelope** schema version — distinct from the session-view `schemaVersion`, the
@@ -3456,7 +3456,7 @@ type ViewUnsubscribeParams struct {
 
 // ViewUnsubscribeResult `view/unsubscribe` result (tdd SS4.7.2): the empty object. Idempotent — unsubscribing
 // while not subscribed returns `{}`.
-type ViewUnsubscribeResult json.RawMessage
+type ViewUnsubscribeResult struct{}
 
 // WorkflowCancelParams `workflow/cancel` params (tdd SS3.19): cancel a live workflow run.
 type WorkflowCancelParams struct {

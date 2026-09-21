@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -37,6 +38,7 @@ var agentRegistry = map[string]agents.Agent{
 	session.KindShell:    shellAgent{},
 	session.KindSSM:      ssmAgent{},
 	session.KindLcpp:     lcpp.New(),
+	session.KindMuse:     muse.New(),
 }
 
 func AgentOf(kind string) agents.Agent {

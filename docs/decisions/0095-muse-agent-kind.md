@@ -1572,3 +1572,51 @@ session-days**. Whether muse follows lcpp in mapping approvals onto the question
 design decision, not a saving to assume: Decision 13 measured an `approval/requested` carrying
 `toolName`, `rawArgs`, `judgeEscalated`, `protectedWrite` and `subject.stages[].argv`, and folding
 that into a two-option question discards it.
+
+### P2-2: the kind, the driver and the thread (`workspace/agent/internal/agents/muse/`)
+
+The second work package: `session.KindMuse`, both registries, the four lifecycle switches, the
+boot reconcile, shutdown, the deny-list — and the driver itself, with all seven ThreadHandle
+methods, the status mapping, the approval and user-input round trips, steering, interrupt and
+resume reconciliation. The transcript, the settings-file clamps, usage, the connection card,
+the Console surface and deployment are still ahead.
+
+**The approval interaction is the question kind for now, and that is a debt, not a decision.**
+Decision 13 wants AF's first approval `Interaction`; decision 5 keeps approvals on, so a
+session that cannot answer one is a session that cannot run a tool. Until the approval kind
+exists, the driver builds a question-kind Interaction from the pending approval — the same
+reuse kiro's ACP `session/request_permission` and lcpp's own gate already make. What that
+costs is exact and worth writing down: the wire carries `toolName`, `rawArgs`,
+`judgeEscalated`, `protectedWrite` and the parsed `argv` of every stage, and a two-option
+question keeps only the command line. `Capabilities.Permissions` therefore stays **false**, and
+the approval work package upgrades both together.
+
+Three more capabilities are declared false for the same reason — a cap is a claim about a path
+that was measured end to end. `CanTranscript`, `CanFork` and `CanForkAt` wait for their own
+packages; `DynamicMode` is false permanently, because MSP has no method that sets AF's plan
+mode and `session/setApprovalMode` is a different axis.
+
+**A clamp route the ADR did not have: `MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL`.**
+Decision 6's clamp 5 is the one with a privacy cost — without it a real turn assembles the
+member's own `~/.claude/CLAUDE.md` into the model input — and the ADR recorded the settings
+file as its *only* route, because `--no-foreign-personal-context` is absent from `muse serve`.
+The binary's own string table names an environment variable for it, and it works: measured on
+`muse exec` with markers planted in a throwaway HOME, setting it to `1` removes both the
+"Including your Claude Code and Codex personal rules" banner and every trace of the planted
+marker from the durable log, while `0` and unset both bring them back. The driver sets it at
+spawn, together with the six observer variables and `MUSE_DISABLE_APPROVAL_JUDGE`. ⚠️ The
+measurement is on `exec`; the equivalent check on `serve` needs a real turn, so the settings
+work package still owes a behavioural test per key — which it owed anyway.
+
+**A generator defect the wire would have shown first.** `RequestReceipt` is a named empty
+object, and the type generator had been rendering it the way it renders an untyped
+`properties: {}` *property* — as `json.RawMessage`, whose zero value marshals to `""`. AF would
+have answered every must-answer server request with a string instead of `{}`. Named empty
+objects now render as `struct{}`, and a test pins the marshalling.
+
+Verification is `msptest` plus a live suite behind `MUSE_LIVE=1`. The live half covers exactly
+what the fake host cannot — that the spawn argv, the child environment, the handshake and
+`session/start` work against the vendor's own binary, that a second Resume reuses the live host
+rather than spawning a second child for one session, that a Resume after a drop *reloads* the
+stored session instead of silently splitting the member's history, and that a killed child
+turns into a dead handle. It stops before a turn, so it spends no quota.

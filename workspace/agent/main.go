@@ -19,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
@@ -200,6 +201,7 @@ func serve() {
 	go cursor.ReconcileManaged("agent boot")
 	go kiro.ReconcileManaged("agent boot")
 	go lcpp.ReconcileManaged("agent boot")
+	go muse.ReconcileManaged("agent boot")
 	// Assistant-conversation slugs (docs/log/38 assistant triggering): stamp "a…" slugs onto
 	// conversations created before the field existed, so schedules/operator tools can
 	// address every conversation. One-time per store state; cheap when nothing to do.

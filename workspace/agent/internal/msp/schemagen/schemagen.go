@@ -264,6 +264,13 @@ func writeDef(out *bytes.Buffer, b *schemaBundle, name string, n *node) error {
 		return writeFlatUnion(out, name, n)
 	case len(n.Properties) > 0:
 		return writeStruct(out, b, name, n)
+	case isObject(n):
+		// A named object with no members is a real wire value, not free-form JSON: the
+		// presentation receipt has to go out as `{}`. Rendering it the way an untyped
+		// `properties: {}` PROPERTY is rendered — json.RawMessage — would marshal the zero
+		// value as `""`, which is not an object and is not what the schema declares.
+		fmt.Fprintf(out, "type %s struct{}\n\n", name)
+		return nil
 	case len(n.types()) > 1:
 		// RequestId: integer|string. Carried verbatim so an id round-trips in the spelling
 		// the peer chose — the schema is explicit that 1 and "1" are different ids.
@@ -501,4 +508,10 @@ func goName(s string) string {
 		b.WriteString(strings.ToUpper(p[:1]) + p[1:])
 	}
 	return b.String()
+}
+
+// isObject reports whether the node declares exactly the JSON object type.
+func isObject(n *node) bool {
+	t := n.types()
+	return len(t) == 1 && t[0] == "object"
 }
