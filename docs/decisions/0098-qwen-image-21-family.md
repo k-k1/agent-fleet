@@ -15,7 +15,8 @@ English | [日本語](0098-qwen-image-21-family.ja.md)
 - Number: 0097 is the highest on `develop`, and no open pull request claims 0098.
 - Related: [0072](0072-engine-model-catalog.md) (the per-family templates, `base_model` dispatch,
   and decision 2's rule that an operator declares the family) / [0094](0094-instruction-edit-image-models.md)
-  (instruction editing, and the two Qwen-Image-Edit families this one is NOT a version of) /
+  (instruction editing, the two Qwen-Image-Edit families this one is NOT a version of, and 未解決 4's
+  consolidated `comfyFamilyRow` that decision 3 below extends) /
   [0082](0082-many-image-engines-at-once.md) (the provider is the unit, not the row) /
   [0069](0069-image-generation-providers.md) (what earns a new vocabulary word).
 
@@ -129,15 +130,25 @@ publishes it, and nobody here has run it.
 
 ### Decision 3 — this family splits "instruction edit" from "edit only"
 
-Before this, one predicate answered three questions at once, because the only instruction-edit
-families were also edit-only. This one is the counter-example, so the axes separate:
+Before this, ONE fact answered five questions at once, because the only instruction-edit families
+were also edit-only and also built by one builder. ADR 0094 未解決 4 had just consolidated that into
+`comfyFamilyRow.InstructionEdit` — non-nil meaning "decisions 2, 3, 4, 5 and 12 all apply". This
+family is the counter-example on three of those axes at once, so the row grows the fields that were
+being carried by a single pointer:
 
-- `comfyFamilyInstructionEdit` keeps its meaning — the picture conditions the sampler and the
-  denoise is fixed at 1 — and this family answers **true**. That is what makes `strength` not reach
-  it (ADR 0094 decision 2).
-- `comfyFamilyEditOnly` is the narrower fact, and this family answers **false**. It is what the op
-  set and "can a size reach the sampler" actually turn on.
-- The op set and the reference-picture count become tables rather than predicates.
+- `InstructionEdit` keeps the narrow meaning it was consolidated for: a family it is non-nil for is
+  exactly a family `comfyGraphQwenImageEdit` can build. This family is **nil** — it has a builder of
+  its own.
+- `FixedDenoiseEdit` is decision 2's fact alone — `op=edit` conditions the sampler through the
+  picture at a full denoise, so `strength` has nowhere to go — and this family is **true**.
+  `comfyFamilyInstructionEdit` reads this. The wiring pointer implies it and not the reverse; a test
+  pins that one-way direction, with the control that at least one family is true without the
+  pointer (otherwise the two fields have silently become one question again).
+- `Ops` and `RefInputs` are declarations on the row, with the permissive default for an empty one.
+
+🔴 `comfyFamilyHasNoSizes` is **derived from `Ops`** rather than declared a second time, and the
+derivation is the real statement of decision 4: a size only ever reaches an `EmptyLatentImage`, and
+only a generate path builds one — so a family that cannot generate has nowhere to put a size.
 
 🔴 The size consequence is the one worth stating: this family HAS sizes, unlike its two neighbours.
 Emptying its size list to match them would delete the size control from the generate path, which is
@@ -155,7 +166,7 @@ NOT raise that number on the strength of "the wiring is a loop, so more must wor
 実測 F. Here there is no run at all, so the honest basis is the published wiring, which is the same
 basis this repository accepts for a recipe (sd15, anima, krea2 all ship un-run recipes with a
 citation). A run that finds the tenth picture ignored makes this the wrong number, and
-`comfyFamilyRefInputs` is where it is corrected.
+the row's `RefInputs` is where it is corrected.
 
 ### Decision 5 — `resolution` is 1024, the one number not taken verbatim
 
@@ -281,10 +292,10 @@ new one; it is listed under "Open" instead of being fixed inside this change.
   `engineComfyFamilies`, Console `wire.ts`, Console `families.ts`) all carry the new word. Three of
   those are pinned against each other by `engine_catalog_test.go`; **`families.ts` is not**, and
   that fourth copy is held by this ADR alone (ADR 0072's standing note).
-- `comfyFamilyOps` and `comfyFamilyMaxInputs` are tables. A family added to the constants and
-  forgotten here gets the permissive default — three ops and one reference — rather than an error,
-  which is the same shape as `comfyTrialSteps` and is covered the same way, by a test over the
-  whole vocabulary.
+- `comfyFamilyRow` carries three more fields. A family added to the table and leaving them at their
+  zero values gets the permissive default — three ops, one reference, `strength` offered — rather
+  than an error. That is the same shape `TrialSteps` already had, and it is covered the same way:
+  by tests that walk the whole vocabulary rather than by a list of families.
 - The engine image pin is now load-bearing for a family that is in the catalogue vocabulary. Until
   P0 lands, an operator can register and enable a `qwen-image-2.1` row and every screen will say it
   is complete; it fails at `/prompt`, loudly, with a node-type error.
