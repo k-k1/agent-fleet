@@ -1015,3 +1015,60 @@ func TestUnadvertisedToolIsStillRefusedAfterAList(t *testing.T) {
 		}
 	}
 }
+
+// The `inputs` ceiling is the offer's UNION and reaches the schema (ADR 0094 decision 5). It used
+// to be the literal 5 on every route — which since the instruction-edit families over-promises by
+// four on a comfy-only session, and the caller learns that by spending a round trip on a refusal.
+func TestImageGenInputsCeilingComesFromTheOffer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		providers []mcpImageGenProvider
+		want      float64
+	}{{
+		name:      "one route, its own ceiling",
+		providers: []mcpImageGenProvider{{ID: "image", Ops: []string{"edit"}, MaxInputs: 2}},
+		want:      2,
+	}, {
+		name: "two routes, the larger of the two",
+		providers: []mcpImageGenProvider{
+			{ID: "image", Ops: []string{"edit"}, MaxInputs: 2},
+			{ID: "agy", Ops: []string{"generate", "edit"}, MaxInputs: 3},
+		},
+		want: 3,
+	}, {
+		// The same pair the other way round. Without it "the largest" and "the last one wins"
+		// are the same answer, and the second is wrong — it would hand a comfy-only ceiling to a
+		// session that also has agy.
+		name: "the larger one FIRST is still the answer",
+		providers: []mcpImageGenProvider{
+			{ID: "agy", Ops: []string{"generate", "edit"}, MaxInputs: 3},
+			{ID: "image", Ops: []string{"edit"}, MaxInputs: 2},
+		},
+		want: 3,
+	}, {
+		// An Agent from before this field. Keeping the old literal is deliberate: the Agent
+		// refuses what it cannot take either way, so guessing LOW here would take away an
+		// argument that works on the routes which have always read five.
+		name:      "an Agent that reports none keeps the old ceiling",
+		providers: []mcpImageGenProvider{{ID: "codex", Ops: []string{"generate", "edit"}}},
+		want:      mcpImageGenDefaultMaxInputs,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			stubImageGenStatus(t, mcpImageGenStatus{
+				Enabled: true, Ready: true, Kind: "claude", Providers: tc.providers})
+			offer, ok := mcpImageGenAdvertise()
+			if !ok {
+				t.Fatal("expected the tool to be advertised")
+			}
+			props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+			inputs, has := props["inputs"].(map[string]any)
+			if !has {
+				t.Fatal("no `inputs` in the schema")
+			}
+			if got := inputs["maxItems"]; got != int(tc.want) {
+				t.Errorf("inputs.maxItems = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

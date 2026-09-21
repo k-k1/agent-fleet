@@ -127,12 +127,17 @@ type comfyParams struct {
 	Width     int
 	Height    int
 	BatchSize int
-	// Image and Mask are names ComfyUI's own input directory holds, NOT paths in this container:
+	// Images and Mask are names ComfyUI's own input directory holds, NOT paths in this container:
 	// LoadImage's `image` input is an enumeration over that directory (nodes.py), so the bytes
 	// have to be uploaded before a graph can name them. comfyProvider.uploadImage does that and
 	// fills these in with whatever name the engine answered with.
-	Image string
-	Mask  string
+	//
+	// Images is in the caller's own order and the FIRST one is the picture being edited — every
+	// family reads that one, and only the instruction-edit families read any of the rest (ADR
+	// 0094 decision 5). A template must take what it can use and say nothing about the others:
+	// the count was already refused against Caps.MaxInputs (comfyCheckInputs) before any upload.
+	Images []string
+	Mask   string
 	// Loras are already resolved against the catalogue and checked against this model's family
 	// (comfyResolveLoras) — a template applies them, it does not decide whether they fit.
 	Loras []comfyLora
@@ -149,6 +154,16 @@ type comfyParams struct {
 
 // isImageToImage is "the sampler starts from the caller's picture rather than from noise".
 func (p comfyParams) isImageToImage() bool { return p.Op == OpEdit || p.Op == OpInpaint }
+
+// image is the n-th reference (0-based) or "" when the caller sent fewer than that. Templates read
+// the ones they support through this rather than indexing, so a family that wires image2 does not
+// panic on the request that sent one picture — which is every request the other six families make.
+func (p comfyParams) image(n int) string {
+	if n < 0 || n >= len(p.Images) {
+		return ""
+	}
+	return p.Images[n]
+}
 
 // comfyRecipe is one family's sampler settings: the four numbers and names that used to be
 // literals inside each template.
@@ -356,10 +371,12 @@ func comfyRequestLatent(g comfyGraph, p comfyParams, vae []any, emptyClass strin
 			"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
 		return comfyLink("lat", 0), nil
 	}
-	if p.Image == "" {
+	// Only the first: these six families have nowhere to put a second reference, and the count was
+	// already held to Caps.MaxInputs — which is 1 for all of them — before anything was uploaded.
+	if p.image(0) == "" {
 		return nil, fmt.Errorf("%s needs an input image, and none reached the graph", p.Op)
 	}
-	g["img"] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.Image}}
+	g["img"] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.image(0)}}
 	g["enc"] = comfyNode{ClassType: "VAEEncode", Inputs: map[string]any{
 		"pixels": comfyLink("img", 0), "vae": vae}}
 	if p.Op != OpInpaint {
@@ -426,6 +443,21 @@ type comfyNode struct {
 
 // comfyLink is a graph edge: [node id, output slot].
 func comfyLink(node string, slot int) []any { return []any{node, slot} }
+
+// comfyWith lays a node's own inputs over a shared set, answering a fresh map. `over` wins, so a
+// template can never have an optional extra silently replace an input it states itself — and the
+// shared set is not mutated, which matters because the same `refs` map is laid over both the
+// positive and the negative encode.
+func comfyWith(base, over map[string]any) map[string]any {
+	out := make(map[string]any, len(base)+len(over))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range over {
+		out[k] = v
+	}
+	return out
+}
 
 // comfyFamily is one of ADR 0072's checkpoint families (decision 2's `baseModel` values), each
 // naming its own template builder.
@@ -1021,7 +1053,7 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 	// called at all), but Studio()'s own sanity probe (comfyParams{Prompt: "x"}, Op == "") has to
 	// keep succeeding on a row whose files are all declared — the same reason none of the other
 	// families' generate path demands one either.
-	if p.Op == OpEdit && p.Image == "" {
+	if p.Op == OpEdit && p.image(0) == "" {
 		return nil, fmt.Errorf("%s needs an input image, and none reached the graph", p.Op)
 	}
 	// Refused rather than defaulted: the zero value is shift 0 and no reference-method node, which
@@ -1037,19 +1069,35 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 		"unet": {ClassType: "UNETLoader", Inputs: map[string]any{"unet_name": f.DiffusionModel, "weight_dtype": "default"}},
 		"clip": {ClassType: "CLIPLoader", Inputs: map[string]any{"clip_name": f.ClipL, "type": "qwen_image", "device": "default"}},
 		"vae":  {ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}},
-		"img":  {ClassType: "LoadImage", Inputs: map[string]any{"image": p.Image}},
+		"img":  {ClassType: "LoadImage", Inputs: map[string]any{"image": p.image(0)}},
 	}
 	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
 	g["scale"] = comfyNode{ClassType: "FluxKontextImageScale", Inputs: map[string]any{"image": comfyLink("img", 0)}}
-	g["pos"] = comfyNode{ClassType: "TextEncodeQwenImageEditPlus", Inputs: map[string]any{
-		"clip": clip, "vae": comfyLink("vae", 0), "prompt": p.Prompt, "image1": comfyLink("scale", 0)}}
+	// The extra references, exactly as 実測 D wired them (ADR 0094 decision 5): a bare LoadImage
+	// each, straight into the encode. They do NOT go through FluxKontextImageScale — that node
+	// exists to fix the FRAME the picture is made in, and the frame is image1's alone; the others
+	// are things to look at, and scaling them to the first one's aspect ratio would crop away the
+	// object the caller is asking to borrow. The latent still comes from scaled image1 below.
+	refs := map[string]any{}
+	for n := 1; n < len(p.Images); n++ {
+		id := fmt.Sprintf("img%d", n+1)
+		g[id] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.image(n)}}
+		refs[fmt.Sprintf("image%d", n+1)] = comfyLink(id, 0)
+	}
+	g["pos"] = comfyNode{ClassType: "TextEncodeQwenImageEditPlus", Inputs: comfyWith(refs, map[string]any{
+		"clip": clip, "vae": comfyLink("vae", 0), "prompt": p.Prompt, "image1": comfyLink("scale", 0)})}
 	// p.Negative directly, NOT comfyNegativeText(p): that fallback ("blurry, lowres, deformed,
 	// watermark, text") was measured for the megapixel families sharing SDXL's era (ADR 0072),
 	// and the official templates' own negative widget ships empty. Falling back to it here would
 	// fight the instruction itself on the one edit 実測 A made — replacing the sign's own TEXT —
 	// and nobody has measured these families against that default at all.
-	g["neg"] = comfyNode{ClassType: "TextEncodeQwenImageEditPlus", Inputs: map[string]any{
-		"clip": clip, "vae": comfyLink("vae", 0), "prompt": p.Negative, "image1": comfyLink("scale", 0)}}
+	//
+	// The same references go on the NEGATIVE side too — 実測 D's graph did, and the reason is
+	// CFG: the two conditionings are subtracted from one another, so a reference present on only
+	// one of them would leave its own encoding in the difference and push the picture towards or
+	// away from the borrowed object regardless of what either prompt says.
+	g["neg"] = comfyNode{ClassType: "TextEncodeQwenImageEditPlus", Inputs: comfyWith(refs, map[string]any{
+		"clip": clip, "vae": comfyLink("vae", 0), "prompt": p.Negative, "image1": comfyLink("scale", 0)})}
 	pos, neg := comfyLink("pos", 0), comfyLink("neg", 0)
 	if w.RefMethod != "" {
 		g["posref"] = comfyNode{ClassType: "FluxKontextMultiReferenceLatentMethod", Inputs: map[string]any{

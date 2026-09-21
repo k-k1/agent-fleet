@@ -89,6 +89,7 @@ export const imggen = {
   "imggen.input_drop": "ここにファイルを落とすと generated/console/inputs/ に置いて参照します",
   "imggen.input_uploading": "アップロード中…",
   "imggen.input_upload_failed": "アップロードできませんでした",
+  "imggen.input_count": "{n} / {max} 枚",
   "imggen.input_from_gallery": "ギャラリーから選ぶ（P1）",
   "imggen.strength": "元画像をどれだけ変えるか",
   "imggen.out_dir": "出力先",

@@ -93,6 +93,10 @@ export interface ImagegenModel {
    *  ADR, in which case the form falls back to the full OPS list — the same "no signal, assume
    *  the old permissive shape" rule `knobs` already follows. */
   ops?: string[];
+  /** How many reference pictures THIS model reads (ADR 0094 decision 5, P3). Absent on an Agent
+   *  that predates it, and the form then draws the single slot it always did — the same "no
+   *  signal, assume the old shape" rule `knobs` and `ops` follow. */
+  max_inputs?: number;
   license_name?: string;
   license_url?: string;
   source_url?: string;

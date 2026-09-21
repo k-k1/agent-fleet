@@ -589,14 +589,20 @@ func TestComfyCapsQwenImageEditIsEditOnlyAndTakesNoStrengthOrSizes(t *testing.T)
 	if len(caps.Sizes) != 0 {
 		t.Errorf("sizes = %v, want none — the family decides the size from the input picture", caps.Sizes)
 	}
-	if caps.MaxInputs != 1 {
-		t.Errorf("max inputs = %d, want 1 (P0 scope)", caps.MaxInputs)
+	// 2 since P3 wired image2 (ADR 0094 decision 5). NOT 3: the node takes image3 and the wiring
+	// is a loop, so the only thing keeping this honest is that three references have never been
+	// run — the number and the measurement move together.
+	if caps.MaxInputs != 2 {
+		t.Errorf("max inputs = %d, want 2 (image2 is wired; image3 is unmeasured)", caps.MaxInputs)
 	}
 	// The positive control: the OTHER row on the same engine still answers the old way, so the
 	// difference above is the family's and not some engine-wide change.
 	sdxl := p.Caps("sdxl-base-1.0")
 	if !sdxl.Supports(OpGenerate) || !sdxl.Strength || len(sdxl.Sizes) == 0 {
 		t.Errorf("sdxl caps = %+v, want the ordinary shape unaffected", sdxl)
+	}
+	if sdxl.MaxInputs != 1 {
+		t.Errorf("sdxl max inputs = %d, want 1 — only the instruction-edit families read a second reference", sdxl.MaxInputs)
 	}
 }
 
@@ -1761,4 +1767,118 @@ func TestEveryFamilyHasTrialSteps(t *testing.T) {
 			t.Errorf("%s has no trial step count", f)
 		}
 	}
+}
+
+// --- the two clocks (ADR 0094, the P2 acceptance's by-product) ---------------------------------
+
+// Waking the box and making the picture are on SEPARATE budgets, and this is the measured failure
+// that made them separate: one clock covering both meant a cold start ate most of it and the
+// sampling was cut off, so the caller got a failure while the GPU went on working and billing.
+//
+// The stub spends two thirds of the wake budget answering /prompt and then keeps the picture
+// running well past the whole of it. With one clock this cannot pass; the assertion is simply
+// that a picture comes back.
+func TestComfyGenerationGetsItsOwnClockOnceTheEngineHasAccepted(t *testing.T) {
+	const promptID = "af-test-prompt"
+	restore := comfyShortClocks(t, 300*time.Millisecond, 5*time.Second)
+	defer restore()
+
+	start := time.Now()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/engine/image/v1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond) // two thirds of the wake budget, as a cold box would
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": promptID})
+	})
+	mux.HandleFunc("/engine/image/v1/history/"+promptID, func(w http.ResponseWriter, r *http.Request) {
+		// Still sampling until well after the WAKE budget would have expired.
+		if time.Since(start) < 500*time.Millisecond {
+			_ = json.NewEncoder(w).Encode(map[string]any{promptID: map[string]any{
+				"status": map[string]any{"completed": false}}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{promptID: map[string]any{
+			"status": map[string]any{"completed": true, "status_str": "success"},
+			"outputs": map[string]any{"save": map[string]any{"images": []map[string]any{
+				{"filename": "af-sdxl_00001_.png"}}}},
+		}})
+	})
+	mux.HandleFunc("/engine/image/v1/view", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(tinyPNG(t, 1, 1))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	p := &comfyProvider{
+		client: srv.Client(),
+		lookup: func(context.Context) (EngineConn, bool) {
+			c := sdxlConn()
+			c.BaseURL, c.Token = srv.URL+"/engine/image/v1", "afe_test"
+			return c, true
+		},
+	}
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"})
+	if err != nil {
+		t.Fatalf("Generate() = %v — the wake budget must not be what the generation spends", err)
+	}
+	if len(res.Images) != 1 {
+		t.Errorf("images = %d, want 1", len(res.Images))
+	}
+}
+
+// Running out of time AFTER the engine accepted the prompt is not a plain failure: nothing was
+// interrupted, the GPU is still working and still billing, and ComfyUI will hand the picture over
+// to the identical request (measured: 1.07 s from its cache, 22 s after a 960 s timeout). The
+// message has to say so, and it has to name the prompt — a caller who is only told "timed out"
+// pays for a picture they never collect.
+func TestComfyTimeoutAfterSubmitSaysThePictureCanStillBeCollected(t *testing.T) {
+	restore := comfyShortClocks(t, 5*time.Second, 80*time.Millisecond)
+	defer restore()
+
+	p := comfyPollStub(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{}) // never finishes
+	})
+	_, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"})
+	if err == nil {
+		t.Fatal("Generate() = nil, want the run budget to expire")
+	}
+	for _, want := range []string{"af-test-prompt", "was not interrupted", "collects it"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to contain %q", err, want)
+		}
+	}
+}
+
+// The negative control for the message above: a timeout that happened while the box was BEING
+// REPLACED says so instead. The two must not collapse into one sentence — there the work really
+// may be gone (a restarted ComfyUI holds no history for the previous process's prompt id), and
+// telling that caller to ask again "to collect it" would be advice to wait for nothing.
+func TestComfyTimeoutDuringAWakeStillNamesTheWake(t *testing.T) {
+	restore := comfyShortClocks(t, 5*time.Second, 80*time.Millisecond)
+	defer restore()
+
+	p := comfyPollStub(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"code": "engine_waking", "message": "the image engine is starting"}})
+	})
+	_, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"})
+	if err == nil {
+		t.Fatal("Generate() = nil, want the run budget to expire")
+	}
+	if !strings.Contains(err.Error(), "still starting") {
+		t.Errorf("error = %q, want the wake's own explanation", err)
+	}
+	if strings.Contains(err.Error(), "collects it") {
+		t.Errorf("error = %q, want no collect-it advice: a replaced box may hold nothing", err)
+	}
+}
+
+// comfyShortClocks shrinks the two budgets and the poll interval for one test, and answers the
+// restore. A helper rather than three t.Cleanup lines per test because forgetting one of them
+// leaves a millisecond poll interval behind for every test that runs after it.
+func comfyShortClocks(t *testing.T, wake, run time.Duration) func() {
+	t.Helper()
+	oldWake, oldRun, oldPoll := engineTimeout, engineRunTimeout, comfyPollEvery
+	engineTimeout, engineRunTimeout, comfyPollEvery = wake, run, time.Millisecond
+	return func() { engineTimeout, engineRunTimeout, comfyPollEvery = oldWake, oldRun, oldPoll }
 }

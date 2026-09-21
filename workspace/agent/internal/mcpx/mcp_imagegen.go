@@ -61,6 +61,11 @@ type mcpImageGenProvider struct {
 	// Strength is whether this route lets the caller say how much of the input picture an edit
 	// changes (ADR 0069 follow-up, strength).
 	Strength bool `json:"strength,omitempty"`
+	// MaxInputs is the most reference pictures any model on this route reads (ADR 0094 decision
+	// 5). 0 for an Agent too old to report it, and the schema then keeps the fixed ceiling it
+	// always had — an older Agent refuses the extras itself, so guessing low here would only take
+	// away an argument that works.
+	MaxInputs int `json:"max_inputs,omitempty"`
 	// Samplers and Schedulers are the names this route is willing to SEND — the Agent's own
 	// allow-list, not ComfyUI's whole enumeration. The tool's enum is built from these rather
 	// than from a list spelled out here, for the reason the pane's form already relies on: a
@@ -173,13 +178,20 @@ type imageGenLoraArg struct {
 // provider's own so that a slow generation is reported by the provider with a real reason,
 // rather than by this client as a bare timeout. The chain, longest last:
 //
-//	engine gateway 15 min  <  sdcpp provider 16 min  <  this 18 min
-//	codex provider  8 min  <  this
+//	engine gateway 15 min  <  sdcpp provider 16 min                      <  this 33 min
+//	engine gateway 15 min  <  comfy wake 16 min + generation 15 min = 31 <  this 33 min
+//	codex provider  8 min                                                <  this
 //
-// 18 rather than the 10 it started at, because the self-hosted route can legitimately spend a
-// quarter of an hour: a request to a stopped image engine is held by the Control Plane while
-// a GPU box is bought, booted, and loaded with a checkpoint (ADR 0071 decision 5). Waiting is
-// what the progress heartbeat below exists to make survivable.
+// 33 rather than the 18 it grew to, because ADR 0094 split the comfy provider's one budget in
+// two: waking a GPU box and making the picture are different waits and no longer share a clock
+// (engineTimeout, engineRunTimeout). 18 would put THIS layer first past the post on a cold
+// instruction-edit run, which is the one case where the provider has something specific to say —
+// that the engine kept the picture and asking again collects it.
+//
+// It was 18 rather than the 10 it started at for the reason that still holds: a request to a
+// stopped image engine is held by the Control Plane while a GPU box is bought, booted, and loaded
+// with a checkpoint (ADR 0071 decision 5). Waiting is what the progress heartbeat below exists to
+// make survivable.
 //
 // It is also why the budget is bounded rather than left open: RunStdio's loop dispatches
 // serially, so for as long as a generation is in flight this server reads nothing else from
@@ -189,7 +201,7 @@ type imageGenLoraArg struct {
 //
 // ⚠️ A codex session is capped below this by its own tool_timeout_sec (600 s, stamped by the
 // materializer), so on that kind a cold engine start can still be cut short by the client.
-const mcpImageGenCallTimeout = 18 * time.Minute
+const mcpImageGenCallTimeout = 33 * time.Minute
 
 func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	if strings.TrimSpace(a.prompt) == "" {
