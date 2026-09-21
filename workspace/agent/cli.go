@@ -92,6 +92,15 @@ var subcommands = []subcommand{
 		run:     runInstallKiro,
 	},
 	{
+		// Muse Code is proprietary (never in the distributed image) and ~299MB, so it takes
+		// kiro's on-demand shape. Unlike kiro there is no launch guard behind it: muse is
+		// managed-only, so there is no pane program to prepend one to — the driver's Resume
+		// refuses and names this subcommand instead (ADR 0095 decision 8).
+		name:    "install-muse",
+		summary: "download the pinned Muse Code binary into the home volume",
+		run:     runInstallMuse,
+	},
+	{
 		name:     "install-postgres",
 		operands: "[major]",
 		summary:  "download the Zonky embedded-postgres binaries for this arch",

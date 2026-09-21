@@ -1955,3 +1955,57 @@ nothing. The approval card and interaction code stay exactly as P2-5 left them, 
 posture that can raise one. `guide/ref/agents.md` gains footnote 13 in both languages, and it is
 the one row where a dash means less safety rather than a missing feature: a muse session reaches
 this container the way `shell` does.
+
+### P2-7: deployment — the pin, the on-demand install, and the drift lock that costs nothing
+
+The seventh work package, and the one decision 8 had already thought through: `workspace-agent
+install-muse` in kiro's shape, the pin in `versions.json` with its sha256, the `BAKE_AGENT_CLIS=1`
+path, the `NOTICE` entry, the `env_tool_versions` row, the drift row and a release contract.
+
+The pin is `1.3.0-R3401.1`, and it is **verified rather than transcribed**: the local probe
+binary's sha256 equals the release manifest's `artifacts.x86_linux.checksum`
+(`71b089d0…e2a33`, 313,800,920 B), and the manifest's `msp_schema_fingerprint` equals
+`msp.SchemaFingerprint` as generated in P2-1 byte for byte. Two independent checks that the
+number written into the Dockerfile describes the file the code was built against.
+
+**No launch guard, and that is a consequence of decision 2 rather than an omission.** kiro
+re-pins on every launch because its pane program can prepend a guard; muse is managed-only, so
+there is no pane program at all. So the HTTP route is the *only* thing that performs an upgrade
+or repairs a shadow, and the driver's `Resume` refuses with a message naming the subcommand
+instead of stalling for minutes on a download the member did not ask for.
+
+**🔴 The version comparison is the trap decision 8 warned about, and it reaches further than the
+installer.** `muse --version` prints `Muse Code 1.3.0 (1.3.0-R3401.1)` and the pin is the
+parenthesised build id. Bare-semver extraction yields `1.3.0`, which never equals the pin — so
+every check reads "stale" and re-downloads 299 MiB, forever. That regexp is not hypothetical: it
+is `extractVer`, the Agent's own shared version extraction, which the settings UI's tool-versions
+row goes through. So `toolSpec` gained a `VerRe` hook and the muse row sets it; a test pins that
+`extractVer` and `museParseVersion` still *disagree* on the measured line, so the justification
+cannot rot into a stale comment.
+
+⚠️ And a smaller version of the same trap, found by writing the wrong thing first: one regexp
+with an alternation (`\(…\)|semver`) does **not** work, because the bare version sits to the LEFT
+of the parenthesised one on the real line and a match is chosen by position before alternative.
+Two regexps tried in order. The table test caught it on the first run.
+
+**The drift lock is the only credential-free agent contract in the repository**, which is the
+property this ADR named as muse's own. `muse-contract.yml` verifies three things against the real
+proprietary binary and spends nothing: the manifest's fingerprint equals the generated constant,
+the installed binary *exports* the same fingerprint (`muse schema`, offline), and
+`muse --version` still carries the build id in parentheses. Because none of it needs a
+credential, the release watcher dispatches it **unattended** — unlike cursor and kiro, whose
+release edges are held for a deliberate manual run. What it deliberately never does is run a
+turn: over `serve` that needs a member's personal subscription.
+
+Two smaller things the implementation settled:
+
+- **A mutation sweep found the checksum unverified — by the tests, not by the code.** Deleting
+  the `verifySha256` call left every other test in the new file green. That is the shape of a
+  defect this repository has already shipped (the boot-install `set -e` incident, where five
+  sha256 checks were decorative at once), so the download URL became an injectable var and the
+  gate now has a test that feeds a file with the wrong hash and requires a refusal, with the
+  matching hash as its control.
+- **muse is the one drift row with no `setup-agent-cli` branch, on purpose.** Its contract
+  installs the artifact itself, because verifying the manifest's own checksum and fingerprint IS
+  the check — handing that to the shared installer would move the thing under test out of the
+  test. Both files say so, since the action's comment claims parity with the drift targets.

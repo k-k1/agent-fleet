@@ -59,7 +59,12 @@ Third-party software bundled in the distributed container images / rootfs
 (/usr/share/doc/<pkg>/copyright for Debian packages, or the component's own
 distribution). Proprietary agent CLIs (Claude Code, GitHub Copilot CLI,
 Antigravity CLI) are NOT bundled — deployments fetch them directly from their
-official distribution channels at first start (boot-install).
+official distribution channels at first start (boot-install). Muse Code (Meta) is
+likewise NOT bundled, and is not boot-installed either: at ~299MB it is fetched
+from Meta's own release channel only when a user asks for it, into that user's
+home (`workspace-agent install-muse`). The Kiro CLI (Amazon), though not
+proprietary in the same sense, is fetched the same on-demand way for the same
+size reason.
 
 Base system and utilities (Debian GNU/Linux, via the node:22-trixie images):
   Debian packages under their respective licenses, including:

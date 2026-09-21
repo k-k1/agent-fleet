@@ -436,6 +436,26 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 ARG KIRO_VERSION=2.22.0
 ARG KIRO_SHA256_X64=7ec8078d67d5705ff7265a143b25dc1b37b82dabd009e1fce3bd9828a459e971
 ARG KIRO_SHA256_ARM64=7a0b20a11258ab7396b6f855047e444d3a295dfb75bb1e11b0a9832698e7857d
+# Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
+# 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
+# per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
+# versions.json に書き出してその取得版として使われる。BAKE_AGENT_CLIS=1（覚悟のノブ）の
+# ときだけ /usr/local/bin へ焼く。
+#
+# 落とすのは**バイナリそのもの**で、ベンダの bash ランチャではない。ランチャは既定で
+# チャンネルを毎時見て自分を書き換えるが（MUSE_UPDATE_INTERVAL_SECONDS=3600・実測）、
+# manifest の artifact は単体で動き自己更新経路を持たない。だからピンが意味を持つ。
+#
+# 版とアセットは版指定の release manifest から取る:
+#   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url（匿名）
+#   curl -s "<manifest_url>" | jq .artifacts.x86_linux,.artifacts.aarch64_linux
+# sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
+# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 313,800,920 B / 281,942,104 B。
+# ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
+# agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
+ARG MUSE_VERSION=1.3.0-R3401.1
+ARG MUSE_SHA256_X64=71b089d055dfe6e4562092bc484896b61bd96fd6ef9fef9da54a14aa174e2a33
+ARG MUSE_SHA256_ARM64=5e5ea2a3de3a3fabdff8982aec9423d20eaa7dad05df37efb4264356d0d2e223
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
@@ -462,6 +482,25 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       Q_INSTALL_GLOBAL=1 Q_SKIP_SETUP=1 sh /tmp/kiro/kirocli/install.sh; \
       rm -rf /tmp/kiro.zip /tmp/kiro; \
       kiro-cli --version; \
+    fi
+
+# Muse Code の焼き込み（BAKE_AGENT_CLIS=1 のときだけ）。artifact は単体で動くバイナリなので
+# 版付きディレクトリもランチャも要らず、/usr/local/bin/muse へ 1 本置くだけで済む。
+# `--version` ゲートは truncated／arch 不一致を焼き込まないためで、オンデマンド側の
+# museSanityCheck と同じ役割（ただしこちらはビルドを落とす）。
+RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) masset="muse-x86-linux";     sha="${MUSE_SHA256_X64}" ;; \
+        arm64) masset="muse-aarch64-linux"; sha="${MUSE_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+      esac; \
+      curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+        "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${MUSE_VERSION}&file=${masset}" \
+        -o /usr/local/bin/muse; \
+      echo "${sha}  /usr/local/bin/muse" | sha256sum -c -; \
+      chmod 0755 /usr/local/bin/muse; \
+      muse --version; \
     fi
 
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
@@ -507,12 +546,12 @@ RUN mkdir -p /scratch && chown 1000:1000 /scratch
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
-      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}" ;; \
-      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}" ;; \
-      *) agy_sha=""; cursor_sha=""; kiro_sha=""; pg_sha=""; mysql_sha="" ;; \
+      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; muse_sha="${MUSE_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}" ;; \
+      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}" ;; \
+      *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$MUSE_VERSION" "$muse_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
@@ -534,12 +573,16 @@ ENV DISABLE_AUTOUPDATER=1
 # autoUpdate, so it needs no analogous flag.)
 ENV OPENCODE_DISABLE_AUTOUPDATE=true
 
-# Muse Code（ADR 0095）。**この箱は muse を配らない**（種別 `muse` は未実装で、ピンも
-# boot-install も ADR 0095「門 A 成果物の要否」で抜いた）。それでも封殺するのは、利用者が
-# ベンダの install.sh を自分で一度走らせた場合に `~/.local/bin/muse` に載る bash ランチャが
-# 既定でチャンネルを毎時見て自分を書き換えるからである（MUSE_UPDATE_INTERVAL_SECONDS=3600・
-# 実測 2026-09-20）。管理外の自己更新バイナリが黙って育つのを止める 1 行で、
-# 種別を採用するかどうかとは独立に効く。
+# Muse Code の自己更新封殺（ADR 0095 決定 8）。**配布イメージは muse を配らない**
+# （プロプライエタリ・BAKE_AGENT_CLIS=0 既定）。AF が置くのは manifest の**バイナリ**で
+# 自己更新経路を持たないので、この行が効くのは別の相手である: 利用者がベンダの install.sh を
+# 自分で走らせると `~/.local/bin/muse` に bash ランチャが載り、既定でチャンネルを毎時見て
+# 自分を書き換える（MUSE_UPDATE_INTERVAL_SECONDS=3600・実測 2026-09-20）。管理外の
+# 自己更新バイナリが黙って育つのを止める 1 行。
+#
+# 影そのものの検知と修復は install_muse.go の museCheck が持つ——**パスではなく版一致**で
+# 判定する（ベンダの既定の置き場は AF と同じ `~/.local/bin/muse` なので、パスで見ると AF 自身の
+# バイナリを影と報告してしまう）。
 ENV MUSE_NO_AUTO_UPDATE=1
 
 # NEVER let git fall back to an interactive /dev/tty credential prompt. This fixes a

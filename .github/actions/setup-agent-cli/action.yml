@@ -67,6 +67,9 @@ runs:
           agy)      arg=AGY_VERSION;         pkg="" ;;
           cursor)   arg=CURSOR_VERSION;      pkg="" ;;
           kiro)     arg=KIRO_VERSION;        pkg="" ;;
+          # muse は意図的にここに無い（cli-drift-check.sh の TARGETS には有る）。muse-contract.yml が
+          # 自分で artifact を落として release manifest の checksum と fingerprint を突き合わせる
+          # ——それが検査の本体なので、共有インストーラに渡すと検査対象が検査の外に出てしまう。
           *) echo "::error::agent 入力が不正: '$AGENT'（claude | codex | opencode | copilot | agy | cursor | kiro）"; exit 1 ;;
         esac
 

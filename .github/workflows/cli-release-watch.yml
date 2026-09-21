@@ -45,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           deploy/local/cli-release-state.sh ensure watcher ok
-          for name in claude codex opencode copilot agy cursor kiro; do
+          for name in claude codex opencode copilot agy cursor kiro muse; do
             echo "tested_$name=$(deploy/local/cli-release-state.sh get tested "$name")" >> "$GITHUB_OUTPUT"
             echo "seen_$name=$(deploy/local/cli-release-state.sh get seen "$name")" >> "$GITHUB_OUTPUT"
           done
@@ -74,6 +74,7 @@ jobs:
           TESTED_AGY: ${{ steps.state.outputs.tested_agy }}
           TESTED_CURSOR: ${{ steps.state.outputs.tested_cursor }}
           TESTED_KIRO: ${{ steps.state.outputs.tested_kiro }}
+          TESTED_MUSE: ${{ steps.state.outputs.tested_muse }}
           LATEST_CLAUDE: ${{ steps.versions.outputs.latest_claude }}
           LATEST_CODEX: ${{ steps.versions.outputs.latest_codex }}
           LATEST_OPENCODE: ${{ steps.versions.outputs.latest_opencode }}
@@ -81,6 +82,7 @@ jobs:
           LATEST_AGY: ${{ steps.versions.outputs.latest_agy }}
           LATEST_CURSOR: ${{ steps.versions.outputs.latest_cursor }}
           LATEST_KIRO: ${{ steps.versions.outputs.latest_kiro }}
+          LATEST_MUSE: ${{ steps.versions.outputs.latest_muse }}
         run: deploy/local/cli-release-edges.sh
 
       # Before any dispatch, and on the unusable path too: the point of this record is
@@ -115,6 +117,7 @@ jobs:
           AGY_CHANGED: ${{ steps.changed.outputs.agy }}
           CURSOR_CHANGED: ${{ steps.changed.outputs.cursor }}
           KIRO_CHANGED: ${{ steps.changed.outputs.kiro }}
+          MUSE_CHANGED: ${{ steps.changed.outputs.muse }}
           CLAUDE_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
           CLAUDE_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
           COPILOT_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}
@@ -160,6 +163,13 @@ jobs:
             # manual-workflow secrets.  A release edge asks for a deliberate run;
             # it must never spend a user's device-flow credential unattended.
             echo "kiro_manual=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$MUSE_CHANGED" = true ]; then
+            # muse is the one kind whose release contract needs NO credential: it checks the
+            # MSP schema fingerprint and the shape of `muse --version`, both free (ADR 0095
+            # decision 8). So this dispatches unattended, unlike cursor/kiro. A turn is what
+            # would cost a member's subscription, and muse-contract.yml never runs one.
+            gh workflow run muse-contract.yml -f version=latest
           fi
 
       - name: report releases whose credential is unavailable

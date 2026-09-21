@@ -1,0 +1,149 @@
+# Muse Code contract (drift detection). ADR 0095 decision 8 / P2-5-adjacent.
+#
+# This is the one agent-CLI contract in the repository that needs **no credential at all**, and
+# that is not a coincidence — it is the property ADR 0095 named as muse's unique advantage. Two
+# things can be verified against the real proprietary binary for free:
+#
+#   1. **The MSP schema fingerprint.** The release manifest publishes
+#      `msp_schema_fingerprint`, `muse schema` renders the same value offline, and the generated
+#      Go types in internal/msp carry it as a constant. A protocol change upstream therefore
+#      turns into a red build instead of a runtime surprise — no other kind has this.
+#   2. **The shape of `muse --version`.** The pin is the parenthesised build id
+#      (`Muse Code 1.3.0 (1.3.0-R3401.1)`), and install_muse.go compares against it. A release
+#      that changes that line breaks the pin comparison everywhere — the installer would read
+#      "stale" forever and re-download ~299MB on every check — so it is asserted here, at the
+#      release edge, rather than discovered by a member.
+#
+# What this deliberately does NOT do is run a turn. Over `serve` every turn needs a real
+# credential (`--provider echo` is an `exec` flag with no serve equivalent), and that credential
+# is a member's personal subscription: CI must never spend it. Everything reachable without one
+# — initialize, the capability grant, session/start, the transcript path — is covered by the
+# in-process fake host (internal/msp/msptest) in the ordinary test suite.
+name: muse-contract
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "workspace/agent/internal/msp/**"
+      - "workspace/agent/internal/agents/muse/**"
+      - "workspace/agent/install_muse.go"
+      - "workspace/Dockerfile"
+      - ".github/workflows/muse-contract.yml"
+  schedule:
+    # Every Monday 7:05 JST. Offset from the other weeklies (e2e 21:00, opencode 21:30,
+    # codex 21:15 UTC) so they do not all fire at once.
+    - cron: "05 22 * * 0"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Muse Code version to verify (empty = the Dockerfile's MUSE_VERSION pin; `latest` = the stable channel)"
+        type: string
+        default: ""
+
+concurrency:
+  group: muse-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workspace/agent/go.mod
+          cache-dependency-path: workspace/agent/go.sum
+
+      - name: resolve the version and the manifest
+        id: rel
+        run: |
+          set -euo pipefail
+          want='${{ inputs.version }}'
+          if [ -z "$want" ]; then
+            want="$(sed -n 's/^ARG MUSE_VERSION=//p' workspace/Dockerfile | head -1)"
+            echo "using the Dockerfile pin: $want"
+          elif [ "$want" = latest ]; then
+            want="$(curl -fsSL --retry 3 --retry-delay 2 \
+              'https://api.meta.ai/muse-code/channels/muse-stable' | jq -r .version)"
+            echo "using the stable channel: $want"
+          fi
+          [ -n "$want" ] && [ "$want" != null ] || { echo '::error::could not resolve a muse version'; exit 1; }
+          man="https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${want}&file=manifest.json"
+          curl -fsSL --retry 3 --retry-delay 2 "$man" -o /tmp/muse-manifest.json
+          # Nothing below may proceed on a manifest that does not describe this version:
+          # a channel that answered with a different one would silently verify the wrong
+          # artifact against the right checksum field.
+          got="$(jq -r .version /tmp/muse-manifest.json)"
+          [ "$got" = "$want" ] || { echo "::error::manifest says $got, asked for $want"; exit 1; }
+          echo "version=$want" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r .artifacts.x86_linux.checksum /tmp/muse-manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "fingerprint=$(jq -r .msp_schema_fingerprint /tmp/muse-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: download and verify the binary
+        env:
+          VER: ${{ steps.rel.outputs.version }}
+          SHA: ${{ steps.rel.outputs.sha }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-delay 2 \
+            "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${VER}&file=muse-x86-linux" \
+            -o /tmp/muse
+          echo "${SHA}  /tmp/muse" | sha256sum -c -
+          chmod 0755 /tmp/muse
+          /tmp/muse --version
+
+      # The line install_muse.go's pin comparison reads. Asserted as a SHAPE (the build id in
+      # parentheses), not as a fixed string, so a version bump is not a false failure while a
+      # format change is a real one.
+      - name: the version line still carries the build id in parentheses
+        env:
+          VER: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          raw="$(/tmp/muse --version | head -1)"
+          echo "raw: $raw"
+          got="$(printf '%s' "$raw" | sed -n 's/.*(\([^)]*\)).*/\1/p')"
+          if [ "$got" != "$VER" ]; then
+            echo "::error::\`muse --version\` no longer carries the pinned build id in parentheses."
+            echo "::error::got=$got want=$VER from: $raw"
+            echo "::error::install_muse.go's museParseVersion and env_tool_versions.go's muse row compare against it."
+            exit 1
+          fi
+
+      - name: the manifest fingerprint matches the generated types
+        env:
+          FP: ${{ steps.rel.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          have="$(sed -n 's/^const SchemaFingerprint = "\(.*\)"$/\1/p' workspace/agent/internal/msp/types_gen.go)"
+          [ -n "$have" ] || { echo '::error::could not read msp.SchemaFingerprint'; exit 1; }
+          if [ "$have" != "$FP" ]; then
+            echo "::error::MSP schema drift: the release manifest says $FP, the generated types were built from $have."
+            echo "::error::Re-render internal/msp from \`muse schema generate-json-schema\` for this release."
+            exit 1
+          fi
+
+      # The third check of the drift lock, and the only one that needs a binary: the installed
+      # muse must EXPORT the same fingerprint itself. The first two compare files that could
+      # both have gone stale together.
+      #
+      # AF_MUSE_BIN is what the test resolves the binary from, and without it the test SKIPS —
+      # so the grep below is load-bearing: a skip must never read as a pass in a workflow whose
+      # whole purpose is this check.
+      - name: the binary exports the same fingerprint
+        run: |
+          set -euo pipefail
+          cd workspace/agent
+          AF_MUSE_BIN=/tmp/muse go test ./internal/msp/ \
+            -run 'TestSchemaFingerprintMatchesTheBundle|TestInstalledBinaryExportsTheSameSchema' \
+            -count=1 -v 2>&1 | tee /tmp/fp.log
+          grep -q 'PASS: TestInstalledBinaryExportsTheSameSchema' /tmp/fp.log || {
+            echo '::error::the installed-binary fingerprint check did not run (it skips without AF_MUSE_BIN)'
+            exit 1
+          }
