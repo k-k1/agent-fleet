@@ -314,4 +314,26 @@ describe("FleetGraphView", () => {
     // has something to stick to.
     expect(host.querySelector(".fgraph-body")!.firstElementChild).toBe(axis);
   });
+
+  it("an arrow from outside the figure is a stub at its own lane, not a line to the top edge", async () => {
+    await render();
+    const externals = [...host.querySelectorAll<SVGGElement>("svg.fgraph-svg .fgraph-arrow")].filter((g) =>
+      g.querySelector(".fgraph-edge-pt"),
+    );
+    expect(externals.length).toBeGreaterThan(0); // the fixture instructs from `user` and reports to `conv:c1`
+    for (const g of externals) {
+      const line = g.querySelector("line")!;
+      const h = Math.abs(Number(line.getAttribute("y2")) - Number(line.getAttribute("y1")));
+      // One row is 34px. Measured on a real 78-lane fleet, this used to be the distance
+      // from the figure's top edge to the lane — 2,649px of a 2,688px figure, 51 times
+      // over (docs/log/101 §101.13). The bound must not grow with the number of lanes.
+      expect(h).toBeGreaterThan(0);
+      expect(h).toBeLessThanOrEqual(34);
+      // And the "it came from outside" dot sits at the stub's far end, not at the top of
+      // the canvas — otherwise the dot alone would still be a full-height marker.
+      const dot = g.querySelector(".fgraph-edge-pt")!;
+      const cy = Number(dot.getAttribute("cy"));
+      expect(Math.min(Number(line.getAttribute("y1")), Number(line.getAttribute("y2")))).toBe(cy);
+    }
+  });
 });

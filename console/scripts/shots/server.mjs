@@ -31,6 +31,11 @@ const ADMIN = argv.includes("--admin") || process.env.SHOTS_ADMIN === "1";
 // live question card, but that card locks the composer, so anything that needs the composer
 // itself (the skill picker, say) is checked with this on.
 const IDLE = argv.includes("--idle") || process.env.SHOTS_IDLE === "1";
+// --fleet-lanes N: serve a SYNTHETIC fleet graph of N lanes instead of the hand-written
+// nine. The README shots never pass it; it exists because the figure's geometry only goes
+// wrong at scale (a real fleet reached 78 lanes, where an arrow from outside the figure
+// became a 2,400px line across every row — docs/log/101 §101.13).
+const FLEET_LANES = Number(arg("fleet-lanes", "0")) || 0;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -57,9 +62,9 @@ const exact = {
     super_admin: false,
   }),
   "/api/workspace": () => ({ state: "running", bootPhase: "" }),
-  "/api/sessions": () => ({ sessions: fx.sessions(LOCALE) }),
+  "/api/sessions": () => ({ sessions: FLEET_LANES ? fx.sessionsBig(LOCALE, FLEET_LANES) : fx.sessions(LOCALE) }),
   "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
-  "/api/fleet-graph": () => fx.fleetGraph(LOCALE),
+  "/api/fleet-graph": () => (FLEET_LANES ? fx.fleetGraphBig(LOCALE, FLEET_LANES) : fx.fleetGraph(LOCALE)),
   "/api/cleanup/archives": () => ({ archives: fx.cleanupArchives(LOCALE) }),
   "/api/repos": () => ({ repos: fx.repos(LOCALE) }),
   // Four connected agents: at five the launch dialog's per-card sub-label starts to

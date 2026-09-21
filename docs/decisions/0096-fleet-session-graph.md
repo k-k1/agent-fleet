@@ -5,11 +5,11 @@ English | [日本語](0096-fleet-session-graph.ja.md)
 - Status: **adopted, implemented** (P0–P2, 2026-09-20). P1 ran as three parallel lanes (S-BE,
   S-LOGIC, S-VIEW) and P2 merged them. Five post-ship UI adjustments **added the ways in to
   decision 10 and decisions 14–16** (2026-09-20, §101.11), and a further pass **amended
-  decisions 11 and 12, supplemented 16 and added decision 17** (2026-09-21, §101.12);
-  the measurements for both are in [docs/101](../log/101-fleet-session-graph.md).
-  What is left is P3 (filter by
-  conversation id, the cross-tenant overview, collapsing a spawn's excerpt onto its arrow) and
-  measuring whether the activity ledger needs write buffering. The design and the measurements are
+  decisions 11 and 12, supplemented 16 and added decision 17** (2026-09-21, §101.12). **Decision
+  8-2 was then amended** after a real 78-lane fleet showed the arrows from outside the figure
+  running its full height (2026-09-21, §101.13). What is left is P3 (filter by conversation id,
+  the cross-tenant overview, collapsing a spawn's excerpt onto its arrow) and measuring whether
+  the activity ledger needs write buffering. The design and every measurement are in
   [docs/101](../log/101-fleet-session-graph.md).
 - What it replaces: [0027](0027-operator-interaction-graph.md) (the vertical operator↔session sequence
   diagram, of which only the P0 contract freeze landed) becomes **superseded**.
@@ -294,6 +294,23 @@ Session D              ○----------+--------×
 - Rejected: dropping the arrows and marking the lane instead. Density goes down, but **whether a report came
   back** stops being legible at a glance — the same reason 0041 decision 10 refused to defer visualising a
   peer arrival ("invisible exactly where a human most wants to see it").
+
+🔥 **"Leaves through the top of the figure" must not be implemented literally** (the 2026-09-21
+amendment, from the user's report). The first version put the external end at **the canvas's top edge**
+(`TOP_PAD - 14`) and drew a line from there down to the lane. At nine lanes — the fixture's size — that
+line is short and nothing looks wrong. On a real **78-lane fleet it was a 2,649px vertical line through a
+2,688px figure, 51 times over**, and the figure became a picket fence with the lanes lost behind it
+(measured by `console/scripts/fleetgraph/arrows.mjs`).
+
+**The external end sits 16px above the lane it touches** (less than one 34px row, so it cannot be read as
+belonging to the row above). "It came from outside" is carried by **the dot at the stub's far end, the
+arrow's colour and its tooltip** — all of which work at any fleet size. The top edge itself never carried
+information ("it came from the top of a 2,700px canvas" says nothing). **Lane-to-lane arrows stay as long
+as they are**: those connect two real rows, and family order keeps most of them adjacent (measured: of 57,
+only 5 spanned more than three rows, and all five were peer messages).
+
+📌 **A nine-lane fixture cannot show this class of defect at all.** Geometry that only breaks at scale has
+to be measured at scale (`server.mjs --fleet-lanes N`).
 
 ### Decision 9 — lanes are ordered by family; the click rules are borrowed from 0078 unchanged
 

@@ -1506,3 +1506,82 @@ export function fleetGraph(locale) {
     coverage: { activitySince: min(24 * 60), lineageSince: min(24 * 60) },
   };
 }
+
+// ── A fleet at SCALE (docs/log/101 §101.13) ─────────────────────────────────────────
+// The nine hand-written lanes above are what the README shot wants; they are also small
+// enough to hide every geometry defect that only appears with a real fleet. A user's own
+// workspace reached 78 lanes, and at that size an arrow from OUTSIDE the figure (a person
+// or a chat conversation instructing a session) was drawn from the figure's top edge down
+// to its lane — a 2,400px vertical line crossing every row. `--fleet-lanes N` on
+// server.mjs serves this instead, and console/scripts/fleetgraph/check.mjs measures it.
+//
+// The shape is deliberately the shape that goes wrong: families a few deep (so most
+// lineage arrows are short), and instructions arriving from `user` / `conv:` at lanes all
+// the way down the figure (so the external arrows are as long as the figure allows).
+const bigName = (i) => `sbig${String(i).padStart(3, "0")}`;
+const BIG_KINDS = ["claude", "codex", "opencode", "cursor", "shell"];
+
+export function fleetGraphBig(locale, lanes) {
+  const now = NOW.getTime();
+  const min = (m) => now - m * 60_000;
+  const lineage = [];
+  const activity = [];
+  for (let i = 0; i < lanes; i++) {
+    const born = min(1380 - Math.floor((i * 1300) / lanes));
+    // Every third lane is a child of the one before it, so families stay shallow and the
+    // family arrows stay between adjacent rows — which is exactly why they are NOT the
+    // problem and the external ones are.
+    const parent = i % 3 !== 0 && i > 0 ? { origin: "session", originSession: bigName(i - 1) } : { origin: "user" };
+    lineage.push({
+      ev: "birth",
+      ts: born,
+      name: bigName(i),
+      kind: BIG_KINDS[i % BIG_KINDS.length],
+      repo: "webshop",
+      display: L(locale, `作業レーン ${i + 1}`, `Work lane ${i + 1}`),
+      ...parent,
+    });
+    if (i % 4 === 3) lineage.push({ ev: "death", ts: born + 40 * 60_000, name: bigName(i) });
+    activity.push({ ev: "state", ts: born + 60_000, name: bigName(i), to: i % 5 === 0 ? "question" : "working" });
+    activity.push({ ev: "state", ts: born + 30 * 60_000, name: bigName(i), to: "idle" });
+    // The instruction that made the line: from a person or a conversation — neither of
+    // which ever has a lane — into a lane that may be at the very bottom of the figure.
+    if (i % 2 === 0) {
+      activity.push({
+        ev: "instruct",
+        ts: born + 30_000,
+        from: i % 4 === 0 ? "user" : "conv:ops-1",
+        to: bigName(i),
+        excerpt: L(locale, "これを見てほしい", "take a look at this"),
+      });
+    }
+    if (i % 7 === 0) activity.push({ ev: "report", ts: born + 35 * 60_000, from: bigName(i), to: "conv:ops-1", kind: "answer-ready" });
+    // A peer message between two DISTANT lanes: the one lane-to-lane arrow that is long.
+    if (i % 11 === 5 && i + 20 < lanes) {
+      activity.push({ ev: "peer", ts: born + 20 * 60_000, from: bigName(i), to: bigName(i + 20), intent: "request" });
+    }
+  }
+  return { since: min(24 * 60), until: now, now, lineage, activity, coverage: { activitySince: min(24 * 60), lineageSince: min(24 * 60) } };
+}
+
+/** The live rows behind fleetGraphBig — presence needs both halves (ADR 0096). */
+export function sessionsBig(locale, lanes) {
+  const out = [];
+  for (let i = 0; i < lanes; i++) {
+    if (i % 4 === 3) continue; // the ones that died and are no longer listed
+    out.push({
+      name: bigName(i),
+      kind: BIG_KINDS[i % BIG_KINDS.length],
+      driver: "tui",
+      title: L(locale, `作業レーン ${i + 1}`, `Work lane ${i + 1}`),
+      repo: "webshop",
+      dir: "~/repos/webshop",
+      path: "/home/dev/repos/webshop",
+      state: i % 5 === 0 ? "question" : "idle",
+      alive: true,
+      model: "claude-opus-5",
+      ...(i % 3 !== 0 && i > 0 ? { originSession: bigName(i - 1) } : {}),
+    });
+  }
+  return out;
+}
