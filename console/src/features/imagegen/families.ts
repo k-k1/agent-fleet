@@ -154,6 +154,26 @@ export const FAMILY_CARDS: FamilyCard[] = [
     trialSteps: 8,
     sizes: [],
   },
+  {
+    id: "qwen-image-2.1",
+    // Sentences, and for one reason more than the two cards above: the same prompt box drives
+    // both of this family's ops, and its edit instructions name their reference pictures inline
+    // as `<image1>`, `<image2>` — the official template's own note.
+    dialect: "sentences",
+    quality: [],
+    // 25 is what both shipped templates start at; 50 is the top of the range their note gives for
+    // the official pipeline ("about 40-50 with euler"). Unlike the two cards above there IS a
+    // range to span here, and it is upstream's own.
+    steps: [25, 50],
+    // cfg 1 is the published path, and the note says to raise it only alongside a negative
+    // prompt — which is also when the negative field stops being greyed out (`knobs`).
+    cfg: [1, 4],
+    trialSteps: 8,
+    // Not empty, unlike its two neighbours: this family generates as well as edits, and the
+    // generate path fills an EmptyLatentImage from whatever size is picked. On an EDIT the size is
+    // ignored the same way it is for them — the canvas follows the first reference picture.
+    sizes: DEFAULT_SIZES,
+  },
 ];
 
 const BY_ID = new Map(FAMILY_CARDS.map((c) => [c.id, c] as const));
