@@ -65,6 +65,16 @@ describe("AiAssistTab per-feature cards", () => {
     }
   });
 
+  // 103-impl-review 重大2: useAiAssistResolution used to be called INSIDE AiFeatureCard, so 8
+  // cards fired 8 identical GET /ai-assist/resolution requests per mount (measured: 48 req/min
+  // while the tab stayed open at the 10s poll interval) even though the Agent already answers
+  // all 8 features in one response. It must be called once, in AiAssistTab, and passed down.
+  it("fetches the resolution exactly once per mount, not once per card", async () => {
+    await render();
+    const calls = apiMock.mock.calls.filter(([p]) => p === "api/ai-assist/resolution");
+    expect(calls.length).toBe(1);
+  });
+
   it("hides the agent/model rows when the feature is off", async () => {
     setSetting("autoTitleSuggest", false);
     await render();

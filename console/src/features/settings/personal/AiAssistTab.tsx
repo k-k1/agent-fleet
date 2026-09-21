@@ -1,6 +1,6 @@
 import { useSettings, setSetting, ASSISTANT_AGENT_KINDS, normalizeAssistantOrder } from "../../../lib/settings.ts";
 import { AI_ASSIST_FEATURES, AI_FEATURE_MODEL_FOLLOW_DEFAULT, type AiAssistFeatureDef } from "../../../lib/aiAssistFeatures.ts";
-import { useAiAssistResolution } from "../../../lib/aiAssistResolution.ts";
+import { useAiAssistResolution, type AiAssistResolutionRow } from "../../../lib/aiAssistResolution.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { OnOff, OrderList, Row, Select } from "../parts/controls.tsx";
 import { AiModelRow, useResolvedModelLabel, type AiAgentKind } from "../parts/aiModelRow.tsx";
@@ -25,6 +25,11 @@ import { useT } from "../../../lib/i18n/index.ts";
 export function AiAssistTab() {
   const tr = useT();
   const s = useSettings();
+  // Called ONCE here, not once per card (103-impl-review 重大2: a per-card call fanned one GET
+  // /ai-assist/resolution out into 8 identical requests per mount — measured 48 req/min while
+  // the tab stayed open — even though the Agent already answers all 8 features in one
+  // response). Passed down as a prop instead.
+  const resolution = useAiAssistResolution();
   return (
     <>
       <section className="ds-group">
@@ -66,20 +71,18 @@ export function AiAssistTab() {
         <h4 className="ds-title">{tr("aiassist.features")}</h4>
         <p className="muted ds-note">{tr("aiassist.note_features")}</p>
         {AI_ASSIST_FEATURES.map((f) => (
-          <AiFeatureCard key={f.id} f={f} />
+          <AiFeatureCard key={f.id} f={f} row={resolution?.[f.id]} />
         ))}
       </section>
     </>
   );
 }
 
-function AiFeatureCard({ f }: { f: AiAssistFeatureDef }) {
+function AiFeatureCard({ f, row }: { f: AiAssistFeatureDef; row: AiAssistResolutionRow | undefined }) {
   const tr = useT();
   const s = useSettings();
-  const resolution = useAiAssistResolution();
   const enabled = !!s[f.enabledKey];
   const pin = s.aiFeatureAgents?.[f.id] || "";
-  const row = resolution?.[f.id];
 
   // Y (the model name — decision 5): the Agent only ever answers X (kind); the Console draws Y
   // from the catalog it already fetches (docs/log/103-impl-review 中9). Pinned, this is the
