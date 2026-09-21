@@ -56,6 +56,16 @@ export interface AgentCaps {
   // and cuts its own transcript instead: gating it on managed would hide the affordance
   // forever. The server enforces the same per-kind rule (agents.ErrForkAtRoute).
   forkAtManagedOnly: boolean;
+  // offered as the agent of a SCHEDULED (unattended) run. The axis is not "can the scheduler
+  // create a session of this kind" — it can, for every agent kind — but "has a scheduled run of
+  // this kind been seen working end to end", which is the same claim the guide's "Scheduled
+  // (unattended) runs" row makes (guide/ref/agents.md). lcpp and muse are the two agent kinds
+  // that are off, and their rows in that table are `—` for exactly that reason.
+  //
+  // It is a cap rather than a list beside the picker because the list it replaced was hand-kept
+  // and had already drifted: agy shipped scheduled runs and stayed out of the Console's picker
+  // (ADR 0095 P2-13's closing note).
+  scheduledRuns: boolean;
   ephemeral: boolean; // archiving deletes it (no keep) — shell / ssm
   runsInDir: boolean; // launches in a working dir (clone / dir source) — the agents
   launchableFromRepo: boolean; // offered in a repo row's launch menu (ssm is not)
@@ -159,6 +169,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     permissionChoice: false,
     forkAt: false,
     forkAtManagedOnly: true,
+    scheduledRuns: false,
     ephemeral: false,
     runsInDir: false,
     launchableFromRepo: false,
@@ -186,6 +197,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
+      scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: status-hook permission state + the mirror's permission card
       chat: true,
       headlessChat: true, // Phase A: claude -p backs assistant chat (docs/log/19)
@@ -237,6 +249,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     managedDriver: true,
     tuiMemoryCost: "230MiB",
     caps: caps({
+      scheduledRuns: true,
       chat: true,
       headlessChat: true,
       transcript: true,
@@ -282,6 +295,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // resident processes (one cursor process per session) — no extra cost shown, as for copilot.
     tuiMemoryCost: "",
     caps: caps({
+      scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP session/request_permission -> Interaction
       chat: true,
       headlessChat: true, // `cursor-agent -p --mode ask` backs assistant chat, read-only (docs/log/40 Track D)
@@ -328,6 +342,9 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
+      // the one kind whose scheduled runs shipped while the Console's hand-kept picker never
+      // learned about them (ADR 0095 P2-13's closing note); see AgentCaps.scheduledRuns.
+      scheduledRuns: true,
       permissionChoice: true, // approvals are answerable through pending.go's permission state
       chat: true,
       headlessChat: true,
@@ -372,6 +389,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // resident processes (one copilot process per session) — no extra cost shown.
     tuiMemoryCost: "",
     caps: caps({
+      scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP session/request_permission -> Interaction
       chat: true,
       transcript: true,
@@ -438,6 +456,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // cursor and copilot.
     tuiMemoryCost: "",
     caps: caps({
+      scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP request_permission / the TUI's requires-approval
       chat: true,
       transcript: true,
@@ -479,6 +498,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     managedDriver: true,
     tuiMemoryCost: "300MiB",
     caps: caps({
+      scheduledRuns: true,
       chat: true,
       headlessChat: true,
       transcript: true,
@@ -590,6 +610,17 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     terminalDriver: false,
     tuiMemoryCost: "",
     caps: caps({
+      // Measured end to end on 2026-09-21 (ADR 0095 P2-14): a `once` schedule fired into a
+      // running muse session, the prompt arrived carrying the schedule source, and the session
+      // answered it. lcpp's row is still off because nobody has watched one.
+      scheduledRuns: true,
+      // Foreign entries only, the same bucket as copilot/kiro/agy/lcpp — and for muse that is
+      // a statement about AF, not about the kind: MSP publishes `skill/list` and a `skill`
+      // input part, and nothing drives them yet (ADR 0095 P2-14). Until something does, the
+      // picker offers the repository's own SKILL.md trees by injection, which is what the
+      // cap turns on; slashSkillsManaged stays off because it gates NATIVE entries in a
+      // paneless session and muse has none to gate.
+      slashSkills: true,
       chat: true, // the only way to open a session with no pane at all (open.ts's caps.chat gate)
       transcript: true, // Caps.CanTranscript: AF's own item store, read live or stopped
       // 🔴 permissionChoice is FALSE, and not for want of a card. Measured (ADR 0095 P2-6), a muse
@@ -701,6 +732,11 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
   for (const k of SESSION_KINDS) out[k] = AGENTS[k].available(ctx);
   return out;
 }
+
+// Kinds a schedule may be pointed at, DERIVED from the cap rather than listed: the hand-kept
+// copy of this list in the schedule editor had already lost agy, and a derived one cannot drift.
+// The order is the registry's own.
+export const scheduledKinds: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.scheduledRuns);
 
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted in availability.test.ts); the order

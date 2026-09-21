@@ -16,10 +16,13 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { scheduleUpdate } from "./api.ts";
 import { type ScheduleDTO, type ScheduleEditable, scheduleTitle } from "./read.ts";
+import { scheduledKinds } from "../../agents/registry.ts";
 
-// Known agent kinds for the edit picker; the schedule's current kind is always included so
-// an unfamiliar value is never silently dropped from the select.
-const AGENT_KINDS = ["claude", "codex", "opencode", "copilot", "cursor", "kiro"];
+// The agent kinds this picker offers come from the registry cap (AgentCaps.scheduledRuns),
+// never from a list kept here: the hand-kept copy this replaced had already lost agy, whose
+// scheduled runs shipped without the Console ever offering them. The schedule's current kind
+// is still always included, so an unfamiliar value is never silently dropped from the select.
+const AGENT_KINDS: string[] = scheduledKinds;
 const SPEC_KINDS = ["cron", "interval", "once"];
 const WAKE_POLICIES = ["wake", "skip", "catch_up"];
 
