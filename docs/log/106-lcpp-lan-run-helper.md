@@ -387,7 +387,44 @@ go test ./internal/harness/ -tags manuallive -run TestManualLiveEngineContract -
 
 ---
 
-## 10. 分からなかったこと(実行していない検査)
+## 10. 付録——🔴 105 の要望 2「LAN への差し替え」は、今日すでにコード無しでできる
+
+本稿の調査中に、[105](105-lcpp-console-toggle-and-lan-endpoint.md) §106.3 の前提が 1 つ覆ったので
+ここに記録する(105 は凍結済みなので書き換えない)。**105 は `engineLlmEnvRow` の新設(CP 側 1〜2
+セッション日)を要望 2 の段 0 に置いているが、機構としては既にある。**
+
+**証拠は緑のテスト**——`control-plane/engine_external_test.go:541` が、まさにこれを確かめている:
+
+```
+AF_ENGINE_API_KEY_LLM=llm-bearer
+AF_ENGINES_JSON={"engines":[
+  {"key":"llm","api":"chat","provider":"llamacpp","lifecycle":"external",
+   "url":"<LAN の llama-server>","health":"/health"}, …]}
+```
+
+この状態で `POST /engine/llm/v1/chat/completions` が bearer 付きで転送されること、
+external レーンのまま AWS の機械(ecs/ctrl/ssm/activeParam)を 1 つも持たないことを assert している。
+裏側の事実:
+
+- `AF_ENGINES_JSON` は**表まるごと**の宣言(`control-plane/engines.go:557-571` の `loadEngineTable`)。
+  compose/native の CP はこれを起動時に 1 回読む。`warmPath` も JSON の欄として実在する
+  (`engines.go:80`)ので、60-engines が書いているのと同じ `{"health":"/health","warmPath":"/models"}`
+  をそのまま宣言できる。
+- 🔴 **鍵も新設不要**: `AF_ENGINE_API_KEY_<KEY>`(= `AF_ENGINE_API_KEY_LLM`)が **external 行全般**に
+  効く(ADR 0079 決定 11・`engines.go:990-`)。同コメントが「インラインの `AF_ENGINES_JSON` 行が、
+  外部の LLM エンジンを宣言する**唯一の方法**」と明記している。
+  **したがって 105 が提案した `AF_LLM_API_KEY` は作るべきでない**——同じ鍵に入口が 2 つあると、
+  「編集したはずの bearer が効かない 401」を作る(`engines.go:881` 付近に、comfy で既にその調停が
+  書かれている)。
+- 優先順位は 105 の読みどおり無改修で正しい(`notManagedHere()` は remote も含むので、**借用行は
+  env 由来の external 行に置き換わる**)。
+
+**帰結**: 要望 2 の実体は「**近道(`AF_LLM_URL`)と文書**」であって、新しい機構ではない。
+残る実コードの仕事は 105 が見つけた**ログ 3 行の `AF_COMFY_URL` 直書き**(`engines.go:660,663,668`)の
+パラメータ化だけで、見積りは**半日〜1 日**に下がる。運用者がいま LAN 機を立てるなら、**その日のうちに
+`AF_ENGINES_JSON` で切り替えられる**——コードのマージを待つ必要はない。
+
+## 11. 分からなかったこと(実行していない検査)
 
 - **llama-swap の `/upstream/:model_id/` 素通しが 6 軸を満たすか**(§2.4)。実験は
   `AF_LCPP_LIVE_BASE=http://host:port/upstream/<model>/v1` で契約テストを 1 回回すだけ。
