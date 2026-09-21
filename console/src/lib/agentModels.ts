@@ -4,10 +4,10 @@
 // served by the Agent (GET /agents/{kind}/models — codex: `codex debug models`
 // under its own subscription auth, opencode: `opencode models` reflecting the
 // user's connected providers). Codex is cached once per Console load. OpenCode
-// is refetched on each picker mount because its provider connections can change
-// from Settings during the same Console load (the Agent cheaply caches the CLI
-// call). Until the fetch lands (or when it fails) the picker offers only Default,
-// which launches the CLI on its own default model.
+// and lcpp are refetched on each picker mount because their connections can change
+// from Settings during the same Console load (VOLATILE_MODEL_KINDS below; the Agent
+// cheaply caches both answers). Until the fetch lands (or when it fails) the picker
+// offers only Default, which launches the CLI on its own default model.
 import { useEffect, useState } from "react";
 import { api, isTransientErr } from "../core/api/client.ts";
 import { CLAUDE_MODELS, useSettings } from "./settings.ts";
@@ -101,8 +101,21 @@ async function requestModels(kind: string): Promise<Record<string, unknown> | nu
   return d;
 }
 
+/** Kinds whose model list can change from Settings DURING one Console load, so their answer is
+ *  never cached here and every picker mount asks the Agent again.
+ *
+ *  - opencode: the provider connections (and the billing route) are edited on its own card.
+ *  - lcpp: the member's own llama.cpp connection (docs/log/107). The list is whatever THAT
+ *    server's GET /v1/models answers, so saving, changing or clearing the endpoint changes it
+ *    at once — and a cached copy is the deployment engine's list still on screen after the
+ *    member pointed lcpp somewhere else, which is how this was found.
+ *
+ *  Both are cheap to re-ask: the Agent caches its own side (lcpp for 30 s, engines.go's
+ *  lcppMemberModelsCacheTTL, and it drops that cache when the connection is saved or deleted). */
+const VOLATILE_MODEL_KINDS = new Set(["opencode", "lcpp"]);
+
 function fetchModels(kind: string): Promise<ModelOption[]> {
-  const cacheable = kind !== "opencode";
+  const cacheable = !VOLATILE_MODEL_KINDS.has(kind);
   const hit = cacheable ? cache.get(kind) : undefined;
   if (hit) return Promise.resolve(hit);
   let p = inflight.get(kind);
