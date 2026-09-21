@@ -3,8 +3,7 @@
 [English](0093-lcpp-agent-kind.md) | 日本語
 
 - 状態: **採用**（2026-09-21）。段 2 は PR #816・#818・#821・#823・#824・#825・#826・**#829**
-  （決定 8 の使用量 exact 化・Console 開放・MCP kind 許可リスト）で develop に入る。**#829 は本行を書いて
-  いる時点でまだ develop にマージされていない**——中身は「段 2 の実装記録」節に記録する。
+  （決定 8 の使用量 exact 化・Console 開放・MCP kind 許可リスト）で develop に入った。
   以下の `file:line` は `951bb402`（当時の develop）で読んだ。
   表ごとの棚卸しは `docs/log/99-lcpp-agent-kind.md` にあり、そちらが作業記録、本 ADR が判断と棄却案を持つ。
   🟢 **2026-09-19・段 0 の前にレビュー済み**（末尾の Review 節。別セッションが全アンカーを tree で読み直した）。
@@ -18,8 +17,8 @@
   採用へ移行）**。判定の中身と実機 14 本（番号は #1〜#14・#5 は 2 走行のため計 15 走行、さらに #15/#16
   を含めると番号は #1〜#16・走行は計 17）の実測は末尾「決定 9 の門の判定（2026-09-20）」、段 2 が必ず踏む
   既知の負債は「段 2 に持ち越す負債」節、段 2 の実装が決定文から変えたものと負債 9 件の現状は「段 2 の
-  実装記録（2026-09-21）」節。🔴 **決定 8（使用量 exact）と、Console での起動可能化は PR #829 として別セッションから提出されている**
-  （本行を書いている時点でまだ develop に未マージ）——中身は「段 2 の実装記録」節に記録する。
+  実装記録（2026-09-21）」節。決定 8（使用量 exact）と、Console での起動可能化は PR #829 で develop に
+  入った——中身は「段 2 の実装記録」節に記録する。
 - 依頼は一文: **ベンダーの CLI を駆動する代わりに llama-server の API を直接叩く自前ハーネスは、Agent Fleet の
   セッション種別になれるか、なるなら何がいくらか。**
 - 関連: [0015](0015-agent-managed-driver.ja.md)（この kind が子プロセス無しで実装する managed driver の契約）/
@@ -253,12 +252,11 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
 |---|---|---|
 | 0 | CP に `GET /engine/{key}/props`。`syncEngineProviders` が起床中に `limit.context` を上書き | 無し——出す |
 | 1 | P1: `internal/harness` の中核＋chatx プロバイダ。族の選定。実機計測 | 決定 9 の (a)(b)(c) |
-| 2 | P2: kind の配線・driver・転写の書き手・契約テスト・guide・本 ADR を *採用* に。**完了**——PR #816
-  （kind の器・端末経路無しの門）・#818（転写ストア）・#821（保存先の再検討・ハンドル使い回し）・#823
-  （qwen3-coder 決着）・#824（Console 配線）・#825（managed driver）・#826（実エンジン契約テスト）。
-  ⚠️ **使用量 exact（決定 8）と Console での起動可能化は上記 7 PR に入っておらず、PR #829 として別
-  セッションから提出されている**（本行を書いている時点でまだ develop 未マージ・詳細は「段 2 の実装記録」
-  節） | — |
+| 2 | P2: kind の配線・driver・転写の書き手・契約テスト・使用量・Console 開放・guide・本 ADR を *採用* に。
+  **完了**——PR #816（kind の器・端末経路無しの門）・#818（転写ストア）・#821（保存先の再検討・ハンドル
+  使い回し）・#823（qwen3-coder 決着）・#824（Console 配線）・#825（managed driver）・#826（実エンジン
+  契約テスト）・#829（決定 8 の使用量 exact 化・Console 開放・MCP kind 許可リスト。詳細は「段 2 の実装
+  記録」節） | — |
 
 ## 未決の問い（段 1 の前に答える）
 
@@ -522,11 +520,9 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
 
 ## 段 2 の実装記録（2026-09-21）
 
-段 2 は develop に入った（#816・#818・#821・#823・#824・#825・#826）。決定 8 の使用量 exact 化・Console
-開放・MCP kind 許可リストは PR #829 として提出されている（本行を書いている時点でまだ develop 未マージ——
-下記の記述は PR ブランチのコードを直接読んで確認した内容で、マージそのものはまだ先）。**決定文は変えて
-いない。**以下は実装と実測が決定文に対して何を足し、何を変えたかの記録である——段 0・段 1 の実装記録と
-同じ体裁。
+段 2 は develop に入った（#816・#818・#821・#823・#824・#825・#826・#829）。#829 が決定 8 の使用量
+exact 化・Console 開放・MCP kind 許可リストを持ち込んだ。**決定文は変えていない。**以下は実装と実測が
+決定文に対して何を足し、何を変えたかの記録である——段 0・段 1 の実装記録と同じ体裁。
 
 ### 決定文に対して実装が変えたもの 4 件
 
@@ -628,13 +624,12 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
   実装で見つかったもの」節を参照——`$` は両方 0 なので費用の二重計上は無く、`lcpp` が作った問題でもない
   （opencode が自前エンジンを使う場合に既に起きている既存条件）。
 
-### 段 2 の最後の 1 歩（PR #829）
+### 段 2 の最後の 1 歩（PR #829・マージ済み）
 
-🔴 **決定 8（使用量 exact）と、Console での起動可能化は PR #829 として提出されているが、本行を書いている
-時点でまだ develop にマージされていない。** `usage_fold.go` の exact 集合に `KindLcpp` を追加し、
-`console/src/agents/registry.ts` の `lcpp.available` を `() => true` に変え `repoLaunchKinds` へ `lcpp` を
-足し、`mcpx/mcp_stdio.go` の kind 直書き許可リストに `lcpp` を追加する（無いと `create_session` /
-`list_models` が `lcpp` に使えない）——付随して `GET /agents/lcpp/models` と `agentModels.ts` の
-`isDynamic` も足す（無いと起動時にモデルを選べず driver が "no model configured" で即失敗する）。中身の
-詳細は「決定 8 の実装で見つかったもの」節。**マージされ次第、この節と冒頭の状態行・段階表から「未
-マージ」の注記を外すこと。**
+**決定 8（使用量 exact）と、Console での起動可能化は PR #829 で develop に入った。**
+`usage_fold.go` の exact 集合に `KindLcpp` を追加し、`console/src/agents/registry.ts` の
+`lcpp.available` を `() => true` に変え `repoLaunchKinds` へ `lcpp` を足し、`mcpx/mcp_stdio.go` の kind
+直書き許可リストに `lcpp` を追加した（無いと `create_session` / `list_models` が `lcpp` に使えない）
+——付随して `GET /agents/lcpp/models` と `agentModels.ts` の `isDynamic` も足した（無いと起動時にモデル
+を選べず driver が "no model configured" で即失敗する）。中身の詳細は「決定 8 の実装で見つかったもの」
+節。

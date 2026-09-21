@@ -2,10 +2,9 @@
 
 English | [日本語](0093-lcpp-agent-kind.ja.md)
 
-- Status: **adopted** (2026-09-21). Phase 2 lands on develop through PR #816, #818, #821, #823,
+- Status: **adopted** (2026-09-21). Phase 2 landed on develop through PR #816, #818, #821, #823,
   #824, #825, #826 and **#829** (Decision 8's exact usage, Console opening, the MCP kind
-  allowlist). **#829 is not yet merged into develop as this line is written** — its content is
-  recorded under "Phase 2 implementation record". Every `file:line` below was read on
+  allowlist). Every `file:line` below was read on
   `951bb402` (develop at the time); the inventory behind it, table by table, is
   `docs/log/99-lcpp-agent-kind.md`, which stays the working record while this ADR carries the
   decisions and the options rejected.
@@ -24,9 +23,8 @@ English | [日本語](0093-lcpp-agent-kind.ja.md)
   total 17) are at the end, under "Decision 9's gate judgment (2026-09-20)"; the known debt Phase 2
   must carry is under "Debt carried into Phase 2"; what Phase 2's implementation changed against the
   decisions, and where the nine debt items stand, is under "Phase 2 implementation record
-  (2026-09-21)". 🔴 **Decision 8 (exact usage) and making the kind launchable in Console are submitted as
-  PR #829 by another session** (not yet merged into develop as this line is written) — its
-  content is recorded under "Phase 2 implementation record".
+  (2026-09-21)". Decision 8 (exact usage) and making the kind launchable in Console landed through
+  PR #829 — its content is recorded under "Phase 2 implementation record".
 - The request is one sentence: **can our own harness — a process that talks to llama-server's API
   directly instead of driving a vendor CLI — be a session kind of Agent Fleet, and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements
@@ -313,13 +311,12 @@ string-contract tests.
 |---|---|---|
 | 0 | `GET /engine/{key}/props` on the CP; `syncEngineProviders` overwrites `limit.context` while awake | none — ship |
 | 1 | P1: `internal/harness` core + chatx provider; family chosen; hardware measurement | Decision 9's (a)(b)(c) |
-| 2 | P2: kind wiring, driver, transcript writer, contract test, guide, this ADR to *adopted*.
-  **Complete** — PR #816 (kind vessel, no-terminal-route gate), #818 (transcript store), #821
-  (storage location reconsidered, write-handle reuse), #823 (qwen3-coder settled), #824 (Console
-  wiring), #825 (managed driver), #826 (real-engine contract test). ⚠️ **Exact usage (Decision 8)
-  and making the kind launchable in Console are not in the seven PRs above and are submitted as
-  PR #829 by another session** (not yet merged into develop as this line is written — details
-  under "Phase 2 implementation record") | — |
+| 2 | P2: kind wiring, driver, transcript writer, contract test, usage, Console opening, guide, this
+  ADR to *adopted*. **Complete** — PR #816 (kind vessel, no-terminal-route gate), #818 (transcript
+  store), #821 (storage location reconsidered, write-handle reuse), #823 (qwen3-coder settled),
+  #824 (Console wiring), #825 (managed driver), #826 (real-engine contract test), #829 (Decision
+  8's exact usage, Console opening, the MCP kind allowlist — details under "Phase 2 implementation
+  record") | — |
 
 ## Open questions (answer before Phase 1)
 
@@ -640,10 +637,8 @@ certain to be hit by Phase 2's own work.
 
 ## Phase 2 implementation record (2026-09-21)
 
-Phase 2 is on develop (#816, #818, #821, #823, #824, #825, #826). Decision 8's exact usage, Console
-opening and the MCP kind allowlist are submitted as PR #829 (not yet merged into develop as this
-line is written — what follows about it was confirmed by reading the PR branch's own code
-directly, only the merge itself is still ahead). **No decision text changed.** What
+Phase 2 is on develop (#816, #818, #821, #823, #824, #825, #826, #829). #829 brought Decision 8's
+exact usage, Console opening and the MCP kind allowlist. **No decision text changed.** What
 follows records what the implementation and the live runs added to those decisions, and what they
 changed — the same format as the phase 0/1 implementation record.
 
@@ -770,14 +765,12 @@ Numbers match "Debt carried into Phase 2" above.
   double-counted cost, and this is not something `lcpp` created (the same thing already happens
   when opencode uses a self-hosted engine).
 
-### Phase 2's last step (PR #829)
+### Phase 2's last step (PR #829, merged)
 
-🔴 **Decision 8 (exact usage) and making the kind launchable in Console are submitted as PR #829,
-but it is not yet merged into develop as this line is written.** `usage_fold.go`'s exact set gains
-`KindLcpp`, `console/src/agents/registry.ts`'s `lcpp.available` becomes `() => true` with `lcpp`
-added to `repoLaunchKinds`, and `mcpx/mcp_stdio.go`'s kind allowlist gains `lcpp` (without it,
-`create_session`/`list_models` cannot be used for `lcpp` at all) — alongside `GET
-/agents/lcpp/models` and `agentModels.ts`'s `isDynamic` (without these, no model can be chosen at
-launch and the driver fails immediately with "no model configured"). Details are under "What
-implementing Decision 8 found". **Once merged, remove the "not yet merged" notes from this section,
-the status line, and the phases table.**
+**Decision 8 (exact usage) and making the kind launchable in Console landed through PR #829.**
+`usage_fold.go`'s exact set gains `KindLcpp`, `console/src/agents/registry.ts`'s `lcpp.available`
+becomes `() => true` with `lcpp` added to `repoLaunchKinds`, and `mcpx/mcp_stdio.go`'s kind
+allowlist gains `lcpp` (without it, `create_session`/`list_models` could not be used for `lcpp` at
+all) — alongside `GET /agents/lcpp/models` and `agentModels.ts`'s `isDynamic` (without these, no
+model could be chosen at launch and the driver would fail immediately with "no model configured").
+Details are under "What implementing Decision 8 found".
