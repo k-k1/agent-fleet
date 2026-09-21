@@ -451,7 +451,11 @@ func TestComfyFamiliesMatchTheAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading %s: %v — this test is the only thing pinning the two copies together", src, err)
 	}
-	re := regexp.MustCompile(`comfyFamily\s*=\s*"([a-z0-9-]+)"`)
+	// The dot is load-bearing: `qwen-image-2.1` is a family spelling, and a class without it does
+	// not fail — it matches `qwen-image-2` and reports a drift that does not exist, which is the
+	// worst kind of red. The sibling regexp below (famRe, over errComfyMissingFile) already
+	// allowed it.
+	re := regexp.MustCompile(`comfyFamily\s*=\s*"([a-z0-9.-]+)"`)
 	found := re.FindAllStringSubmatch(string(b), -1)
 	if len(found) == 0 {
 		t.Fatalf("no `comfyFamily = \"...\"` constants in %s — the declaration was renamed and this"+

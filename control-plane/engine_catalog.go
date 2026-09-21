@@ -168,7 +168,7 @@ func engineModelIsLora(m store.EngineModel) bool {
 // when the two drift, which is the only thing standing between "a sixth family was added" and
 // "the Console never offers it".
 var engineComfyFamilies = []string{"sd15", "sdxl", "sd35", "flux1", "flux2-klein", "zimage", "anima", "krea2",
-	"qwen-image-edit-2509", "qwen-image-edit-2511"}
+	"qwen-image-edit-2509", "qwen-image-edit-2511", "qwen-image-2.1"}
 
 // engineComfyFileFlags is the per-file Flag vocabulary a comfy row may declare: "" for a
 // single-file checkpoint, and one flag per part of a split model. Without these a catalogue row
@@ -221,6 +221,13 @@ var engineComfyRequiredFlags = map[string][]string{
 	// else. Two rows pointing at one text encoder and one VAE is what the shared S3 keys in
 	// engine_family_parts.go are for.
 	"qwen-image-edit-2511": {"--diffusion-model", "--clip_l", "--vae"},
+	// qwen-image-2.1 (ADR 0098) is the same three ROLES again and shares not one FILE with the
+	// two above, which is the thing to read this line for. Its text encoder is Qwen3-VL-8B rather
+	// than Qwen2.5-VL-7B, and its autoencoder is a 64-channel RGBA one at a downscale of 16 —
+	// measured, comfy/latent_formats.py's QwenImage21 — against the 16-channel Qwen-Image VAE the
+	// four families above all point at. The S3 keys in engine_family_parts.go are therefore new
+	// keys and not shared ones: handing this family the Qwen-Image VAE decodes to noise.
+	"qwen-image-2.1": {"--diffusion-model", "--clip_l", "--vae"},
 }
 
 // engineMissingFileFlags answers "what would this row still be refused for", as the list of
