@@ -739,3 +739,62 @@ func TestTranslatePrefetchMatchesPress(t *testing.T) {
 		t.Fatalf("prefetch disagrees with the press: prefetch=%q want %q", got.Entries[hash], "PIN-A-TRANSLATION")
 	}
 }
+
+// TestTranslatePrefetchMatchesPressAfterASingleRepin is 103-final-review 中2:
+// TestTranslatePrefetchMatchesPress's A->B->A round trip is satisfiable by a naive "first entry
+// in append order wins" prefetch reader alone, with translationMatches never actually consulted
+// — by the third press the pin is back on A, and A also happens to be the FIRST entry the store
+// ever wrote for this hash, so the two shortcuts (order, and the current pin) agree by
+// coincidence (confirmed by mutation: disabling translationMatches in handleSessionTranslations
+// left that test green). A->B, without returning to A, is the more ordinary case a reader hits
+// (re-pin once, keep working) and it is NOT satisfiable by order alone: B is the SECOND entry
+// appended, so only an actual kind/model match — not append order — can make the prefetch agree
+// with a press made while pinned to B.
+func TestTranslatePrefetchMatchesPressAfterASingleRepin(t *testing.T) {
+	const name = "tr15"
+	seedTranslateSession(t, name)
+	t.Cleanup(chatx.SetHeadlessAvailableForTest("claude", true))
+	t.Cleanup(chatx.SetHeadlessAvailableForTest("codex", true))
+
+	prefsDir := filepath.Join(os.Getenv("HOME"), ".config", "agent-fleet")
+	if err := os.MkdirAll(prefsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pin := func(kind, model string) {
+		body := `{"aiFeatureAgents":{"translate.mirror":"` + kind + `"},` +
+			`"aiFeatureModels":{"translate.mirror":{"` + kind + `":"` + model + `"}}}`
+		if err := os.WriteFile(filepath.Join(prefsDir, "ui-prefs.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prev := translateOneShot
+	t.Cleanup(func() { translateOneShot = prev })
+
+	pin("claude", "model-a")
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
+		return "PIN-A-TRANSLATION", "claude", "", nil
+	}
+	first := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"single repin test"}]}`))
+	hash := first.Parts[0].Hash
+
+	// Re-pin once and stop — A's entry (written above) is still the FIRST row in the store for
+	// this hash, so an order-only reader would keep answering with it.
+	pin("codex", "model-b")
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
+		return "PIN-B-TRANSLATION", "codex", "", nil
+	}
+	press := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"single repin test"}]}`))
+	if press.Parts[0].Text != "PIN-B-TRANSLATION" {
+		t.Fatalf("press under the new pin must answer with B's translation: %+v", press)
+	}
+
+	list := translationsCall(t, name, "lang=ja")
+	var got translationsReply
+	if err := json.Unmarshal(list.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Entries[hash] != "PIN-B-TRANSLATION" {
+		t.Fatalf("prefetch disagrees with the press after a single re-pin: prefetch=%q want %q",
+			got.Entries[hash], "PIN-B-TRANSLATION")
+	}
+}
