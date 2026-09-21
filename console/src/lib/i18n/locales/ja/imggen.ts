@@ -91,6 +91,10 @@ export const imggen = {
   "imggen.input_upload_failed": "アップロードできませんでした",
   "imggen.input_count": "{n} / {max} 枚",
   "imggen.input_from_gallery": "ギャラリーから選ぶ（P1）",
+  // 白いところを塗り直す。塗る道具は Console にまだ無いので、ここはファイルを渡す側だけ
+  // （ADR 0081 決定 9）。
+  "imggen.mask": "マスク画像（白いところを塗り直す）",
+  "imggen.mask_needed": "inpaint にはマスク画像が要ります",
   "imggen.strength": "元画像をどれだけ変えるか",
   "imggen.out_dir": "出力先",
   "imggen.out_dir_ph": "browse root からの相対フォルダ（空なら generated/console/）",
