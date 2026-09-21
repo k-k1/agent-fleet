@@ -292,7 +292,7 @@ func memberTools() []mcpTool {
 	return []mcpTool{
 		{
 			name: "list_my_sessions", minScope: scopeRead,
-			desc:   "List the Claude/codex/opencode/agy/copilot/cursor/kiro sessions in your Workspace. Each has a human-readable `display` name and an opaque `name` slug: refer to sessions by `display` when talking to the user (the slug means nothing to them); pass `name` to the other session tools.",
+			desc:   "List the coding-agent sessions in your Workspace (every kind but the raw shell/ssm terminals). Each has a human-readable `display` name and an opaque `name` slug: refer to sessions by `display` when talking to the user (the slug means nothing to them); pass `name` to the other session tools.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a API, res *Resolved, _ map[string]any) (string, error) {
 				return a.cp.AgentText(ctx, res.RT, "GET", "/sessions", nil)
@@ -484,7 +484,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "get_agent_usage", minScope: scopeRead,
-			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex and agy; opencode, copilot, cursor and kiro have no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the experimental Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
+			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex, agy and muse; opencode, copilot, cursor and kiro have no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the experimental Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a API, res *Resolved, _ map[string]any) (string, error) {
 				cl, err := a.cp.AgentText(ctx, res.RT, "GET", "/claude/usage", nil)
@@ -517,12 +517,12 @@ func memberTools() []mcpTool {
 			name: "list_models", minScope: scopeRead,
 			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases; codex, opencode, agy, copilot, cursor and kiro return the live catalog reflecting the user's connected providers; copilot's reflects the account's Copilot plan (empty on Free = Auto only; omit model for auto routing); cursor's is an account-linked catalog with effort folded into the model id; kiro's is account-linked and allows named models even on Free (default auto). Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`). The list already excludes models the user turned off in settings — never pass a model name from memory or an earlier conversation; a create_session naming an excluded model is rejected.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot | cursor | kiro"},
+				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot | cursor | kiro | muse"},
 			}, "required": []string{"kind"}},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
-				if kind != "claude" && kind != "codex" && kind != "opencode" && kind != "agy" && kind != "copilot" && kind != "cursor" && kind != "kiro" {
-					return "", fmt.Errorf("kind must be claude, codex, opencode, agy, copilot, cursor or kiro")
+				if kind != "claude" && kind != "codex" && kind != "opencode" && kind != "agy" && kind != "copilot" && kind != "cursor" && kind != "kiro" && kind != "muse" {
+					return "", fmt.Errorf("kind must be claude, codex, opencode, agy, copilot, cursor, kiro or muse")
 				}
 				return a.cp.AgentText(ctx, res.RT, "GET", "/agents/"+url.PathEscape(kind)+"/models", nil)
 			},
@@ -535,7 +535,7 @@ func memberTools() []mcpTool {
 				"properties": map[string]any{
 					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | shell. agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
+					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | shell. agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
 					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},

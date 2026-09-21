@@ -1,7 +1,11 @@
 package muse
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -405,5 +409,102 @@ func TestClearEffortLeavesTheNextTurnWithoutOne(t *testing.T) {
 	}
 	if raw := <-turns; raw["reasoningEffort"] != nil {
 		t.Errorf("the turn after ClearEffort still carried reasoningEffort %v", raw["reasoningEffort"])
+	}
+}
+
+// Image paste, on the wire. The attachment arrives as an absolute PATH (agents.TurnInput's own
+// contract) and MSP's image part takes base64, so the driver reads the file — and everything it
+// cannot read has to keep arriving as the path, because a member who pasted a screenshot must
+// never send a turn that mentions nothing.
+func TestInputPartsSendsAnImageAndFallsBackToThePath(t *testing.T) {
+	dir := t.TempDir()
+	// A one-pixel PNG, kept as bytes rather than a decodable fixture: what the part carries is
+	// the file verbatim, so the test asserts the round trip rather than any image property.
+	png := []byte{
+		0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R',
+		0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89,
+	}
+	write := func(name string, b []byte) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	image := write("shot.png", png)
+	empty := write("empty.png", nil)
+	notImage := write("notes.txt", []byte("hello"))
+	huge := filepath.Join(dir, "huge.png")
+	f, err := os.Create(huge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxInlineImageBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	missing := filepath.Join(dir, "gone.png")
+
+	parts := inputParts(agents.TurnInput{
+		Prompt:      "look",
+		Attachments: []string{image, notImage, empty, huge, missing, "  "},
+	})
+
+	if len(parts) != 6 {
+		t.Fatalf("parts = %d, want prompt + 5 attachments (the blank one is dropped): %+v", len(parts), parts)
+	}
+	if parts[0].Type != msp.TurnInputPartTypeText || parts[0].Text == nil || *parts[0].Text != "look" {
+		t.Errorf("part 0 is not the prompt: %+v", parts[0])
+	}
+
+	img := parts[1]
+	if img.Type != msp.TurnInputPartTypeImage {
+		t.Fatalf("the png did not become an image part: %+v", img)
+	}
+	if img.MediaType == nil || *img.MediaType != "image/png" {
+		t.Errorf("mediaType = %v, want image/png (it is REQUIRED on an image part)", img.MediaType)
+	}
+	if img.Base64Data == nil {
+		t.Fatal("an image part with no base64Data is invalidParams on the wire")
+	}
+	got, err := base64.StdEncoding.DecodeString(*img.Base64Data)
+	if err != nil || !bytes.Equal(got, png) {
+		t.Errorf("the payload is not the file's bytes (err %v, %d bytes)", err, len(got))
+	}
+
+	// Everything the driver refuses to inline keeps the path, in order.
+	for i, want := range []string{notImage, empty, huge, missing} {
+		p := parts[2+i]
+		if p.Type != msp.TurnInputPartTypeText || p.Text == nil || *p.Text != want {
+			t.Errorf("attachment %s did not fall back to its path: %+v", want, p)
+		}
+	}
+}
+
+// The media type is a fixed map on purpose: `mime.TypeByExtension` reads a file the container
+// may not have, and an empty or surprising mediaType costs the whole turn rather than the
+// attachment. The set is exactly what the paste endpoint accepts.
+func TestImageMediaTypeCoversWhatThePasteEndpointAccepts(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"a.png", "image/png"},
+		{"a.PNG", "image/png"},
+		{"a.jpg", "image/jpeg"},
+		{"a.jpeg", "image/jpeg"},
+		{"a.gif", "image/gif"},
+		{"a.webp", "image/webp"},
+		{"a.bmp", ""}, // accepted by neither endpoint; the path route handles it
+		{"a.pdf", ""}, // a real attachment type, and deliberately not an image part
+		{"noext", ""},
+	} {
+		got, ok := imageMediaType(tc.name)
+		if tc.want == "" {
+			if ok {
+				t.Errorf("imageMediaType(%q) = %q, want no match", tc.name, got)
+			}
+			continue
+		}
+		if !ok || got != tc.want {
+			t.Errorf("imageMediaType(%q) = %q/%v, want %q", tc.name, got, ok, tc.want)
+		}
 	}
 }

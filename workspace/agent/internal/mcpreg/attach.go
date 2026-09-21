@@ -197,6 +197,12 @@ func CodexOverrides(defs []ServerDef, opts CodexOpts) (args []string, env []stri
 // to inject the user's key, so it needs the store key itself. HOME and PATH — the
 // other things mcp-run touches — are already in codex's core set (measured 0.145.0),
 // so nothing else has to be listed.
+//
+// It is the same list for every host that scrubs an MCP child's environment, which is why
+// ForwardEnvNames exports it: muse does the same scrub and takes its servers on the WIRE, so
+// the muse driver reads these names and sends their VALUES (ADR 0095 P2-14). Two copies of
+// "what the af server needs to reach the Agent" is how a 401 with no symptom but a missing
+// report gets shipped.
 func extraEnvVars(d ServerDef) []string {
 	if d.Origin != OriginBuiltin {
 		return nil
@@ -219,6 +225,12 @@ func extraEnvVars(d ServerDef) []string {
 	}
 	return []string{"AF_SECRET_KEY"}
 }
+
+// ForwardEnvNames is extraEnvVars for callers outside this package: the variables a host that
+// scrubs its MCP children's environment has to be told about explicitly. Names only — the
+// caller decides whether its host takes names (codex's `env_vars`) or values (muse's wire
+// `env`).
+func ForwardEnvNames(d ServerDef) []string { return extraEnvVars(d) }
 
 // timeoutArg maps the definition's timeouts onto codex's two budgets. codex takes SECONDS as
 // a float; a definition carries milliseconds.

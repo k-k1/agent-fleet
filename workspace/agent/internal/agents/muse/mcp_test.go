@@ -189,3 +189,66 @@ func keysOf(m map[string]msp.SessionMCPServerConfig) []string {
 	}
 	return out
 }
+
+// 🔴 The 401 nobody would see until a report never arrives. Measured live (ADR 0095 P2-14): a
+// muse session's `af` server starts, its tools reach the model, and every call that writes
+// back to the Agent fails with `missing or invalid agent token` — because muse scrubs an MCP
+// child's environment the way codex does and the wire config carried no `env`.
+//
+// The wire's `env` takes VALUES, not names, so this is the one place a forwarded variable's
+// value is read out of the Agent's own environment.
+func TestBuiltinServersCarryTheEnvTheAgentAPINeeds(t *testing.T) {
+	t.Setenv("AGENT_TOKEN", "probe-token")
+	t.Setenv("AF_MEMO_TOKEN", "probe-memo")
+	t.Setenv("AF_SECRET_KEY", "probe-key")
+
+	af := mcpServerConfig(mcpreg.ServerDef{
+		Name: "af", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinAF,
+		Transport: mcpreg.TransportStdio, Command: "workspace-agent",
+		Args: []string{"mcp-stdio", "--self-report"},
+	})
+	if af.Env["AGENT_TOKEN"] != "probe-token" {
+		t.Errorf("the af server gets no agent token: env = %v", af.Env)
+	}
+	if af.Env["AF_MEMO_TOKEN"] != "probe-memo" {
+		t.Errorf("the memo tools hairpin to the CP and need their own token: env = %v", af.Env)
+	}
+
+	// Another builtin needs the store key its mcp-run wrapper opens the secret store with,
+	// and NOT the agent token — the list is per definition, not one bag for all of them.
+	pd := mcpServerConfig(mcpreg.ServerDef{
+		Name: "pagerduty", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinPagerDuty,
+		Transport: mcpreg.TransportStdio, Command: "workspace-agent",
+	})
+	if pd.Env["AF_SECRET_KEY"] != "probe-key" {
+		t.Errorf("a builtin's mcp-run wrapper cannot open the store: env = %v", pd.Env)
+	}
+	if _, leaked := pd.Env["AGENT_TOKEN"]; leaked {
+		t.Errorf("pagerduty was handed the agent token it has no use for: env = %v", pd.Env)
+	}
+
+	// The control: a user-registered server declares its own environment and is given nothing
+	// else. Forwarding AF's credentials into a member's arbitrary stdio command would be a
+	// credential handed to code AF does not own.
+	user := mcpServerConfig(mcpreg.ServerDef{
+		Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/usr/bin/wiki-mcp",
+		Env: map[string]string{"WIKI_TOKEN": "theirs"},
+	})
+	if user.Env["WIKI_TOKEN"] != "theirs" {
+		t.Errorf("the definition's own env was dropped: %v", user.Env)
+	}
+	if _, leaked := user.Env["AGENT_TOKEN"]; leaked {
+		t.Errorf("a user-registered server was handed AF's agent token: %v", user.Env)
+	}
+
+	// A definition that names one of these itself keeps its own value: it is the one the
+	// member configured, and silently overwriting it would be the bug in the other direction.
+	own := mcpServerConfig(mcpreg.ServerDef{
+		Name: "af", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinAF,
+		Transport: mcpreg.TransportStdio, Command: "workspace-agent",
+		Env: map[string]string{"AGENT_TOKEN": "explicit"},
+	})
+	if own.Env["AGENT_TOKEN"] != "explicit" {
+		t.Errorf("the definition's own value lost to the environment: %v", own.Env)
+	}
+}

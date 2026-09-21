@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AGENTS, repoLaunchKinds, type AvailCtx } from "./registry.ts";
+import { AGENTS, repoLaunchKinds, scheduledKinds, type AvailCtx } from "./registry.ts";
 import { kindDisplayName, kindLabel } from "../lib/sessionkind.ts";
 
 // The launch pickers must never offer an agent the user cannot actually start: the
@@ -177,5 +177,31 @@ describe("muse — installed AND signed in", () => {
     // "cannot launch", not as "no objection". `supported !== false` is true for an absent key,
     // so the connected half is what refuses here.
     expect(ready("muse", {})).toBe(false);
+  });
+});
+
+// The schedule editor's agent picker. It was a hand-kept array of six inside
+// ScheduleDetailModal.tsx and it had already drifted: agy ships scheduled runs and could not be
+// chosen in the Console at all (ADR 0095 P2-13's closing note). Now the picker reads the cap, so
+// what this file pins is the axis itself rather than the copy.
+describe("scheduled runs — the agent picker's axis", () => {
+  it("offers every kind that carries the cap, and agy is one of them", () => {
+    expect(scheduledKinds).toContain("agy");
+    expect(scheduledKinds.filter((k) => !AGENTS[k].caps.scheduledRuns)).toEqual([]);
+  });
+
+  it("leaves out the kinds with no agent behind them", () => {
+    // shell / ssm run what you send verbatim and have no conversation to schedule into.
+    expect(scheduledKinds).not.toContain("shell");
+    expect(scheduledKinds).not.toContain("ssm");
+  });
+
+  it("leaves out lcpp, whose guide row is `—` because nobody has seen one run", () => {
+    // Not a refusal by the scheduler — it would create the session happily. The picker only
+    // offers what the guide's capability table ticks, and that table ticks what was measured
+    // end to end (guide/ref/agents.md footnote 11). muse is in the list for exactly that
+    // reason: a schedule was watched firing into a real muse session (ADR 0095 P2-14).
+    expect(scheduledKinds).not.toContain("lcpp");
+    expect(scheduledKinds).toContain("muse");
   });
 });

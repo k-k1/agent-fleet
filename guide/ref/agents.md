@@ -29,10 +29,10 @@ because "does this apply to a plain shell session?" is a real question.
 | Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
-| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —¹¹ | — | — |
+| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —⁴ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
-| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | ✓ | — |
-| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
@@ -51,9 +51,10 @@ as Terminal (CLI) does persist a readable history. kiro, by contrast, keeps a re
 transcript even under Managed.
 
 ⁴ The picker lists what the CLI can discover and launch by itself, and copilot, kiro,
-agy and lcpp have no verified mechanism for that (lcpp drives no CLI at all, so there
-is nothing of its own to discover). Skills written to another convention's `SKILL.md`
-tree in the repository are still offered to them by injection.
+agy, lcpp and muse have no verified mechanism for that (lcpp drives no CLI at all, so
+there is nothing of its own to discover; muse's own protocol does carry one, and Agent
+Fleet has not built that half yet). Skills written to another convention's `SKILL.md`
+tree in the repository are still offered to them by injection — measured for muse.
 
 ⁵ kiro accepts an effort flag but exposes no per-model picker.
 
@@ -150,6 +151,34 @@ worth-knowing costs before your first session.
 `lcpp` has no Terminal (CLI) route at all — see footnote 9 above — it only runs
 Managed.
 
+## muse: what Agent Fleet does not see
+
+Muse Code brings its own versions of things Agent Fleet also does. They keep working
+inside a muse session, and Agent Fleet has no view of them — so if you use them, use
+them knowing that no Agent Fleet screen will show what happened.
+
+- **Runs a muse session schedules for itself.** A muse session can put a prompt on its
+  own timer and run it later without you. Those are Muse Code's jobs, not Agent Fleet's:
+  they do not appear in the Console's scheduled runs, Agent Fleet cannot cancel one, and
+  only the session itself can list or delete them — ask it to. They fire while that
+  session is running, and a repeating one expires by itself after seven days. Agent Fleet
+  cannot switch the feature off, either: Muse Code has no setting for it, and its one
+  control that would remove those tools removes every integration (MCP) tool along with
+  them, including the ones Agent Fleet gives the session. The "Scheduled (unattended)
+  runs" row above is about Agent Fleet's own schedules, which is a different thing.
+- **Messages muse sessions send each other, and the names they use.** Muse Code has its
+  own cross-session messaging and its own registry of session names, both kept per user
+  in your home directory. Agent Fleet is connected to neither: a message sent that way
+  never reaches the mirror, the conversation or your notifications, and the names in that
+  registry are not the session names the Console shows. To have one session talk to
+  another, use Agent Fleet's own cross-session messaging, which is mirrored.
+- **Its own view of your muse conversations.** One workspace keeps one Muse Code store
+  for all of your muse sessions, so Muse Code's own session list is per user rather than
+  per session: measured, a muse session listed a conversation belonging to a muse session
+  it had nothing to do with. Agent Fleet never offers a muse conversation it did not
+  start, but the session itself can reach the others through Muse Code's own commands and
+  its `read-session` skill.
+
 ## Not in this table
 
 - **Rovo Dev** was studied as a further agent kind and is not implemented.
@@ -168,8 +197,10 @@ unauthenticated session would accept work and then fail every turn.
 
 The rows carrying this footnote are the ones Agent Fleet has not built for muse. They are not
 blocked by Muse Code: the protocol carries a context gauge and image attachments, and the
-scheduled-run, handoff, worktree and bridge paths are not written per agent at all. They are
-simply unverified here, and this table only ticks a row that was seen to work end to end.
+handoff and bridge paths are not written per agent at all. They are simply unverified here, and
+this table only ticks a row that was seen to work end to end — which is why the worktree and
+scheduled-run rows are now ticked and these are not: those two were watched working, on a real
+muse session, before the tick was written.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its

@@ -2,6 +2,7 @@ package muse
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -196,5 +197,41 @@ func TestServeArgsCarryBothPostureFlags(t *testing.T) {
 		if !found {
 			t.Errorf("%s missing from %v", want, args)
 		}
+	}
+}
+
+// 🔴 The store is the MEMBER's, not the session's: one `muse serve` per AF session, but one
+// `~/.local/share/muse` for all of them, and `session/list` is a query over that store
+// (measured live, ADR 0095 P2-14 — a host listed the conversation of a session it never
+// started, which is the vendor's design and not a defect).
+//
+// So the rule AF owns is this one: nothing in the driver may call `session/list`. Every muse
+// surface in the Console is fed from AF's own session bookkeeping, and the first caller here
+// would be the seam through which one member's session offers another session's conversation
+// — a shape no other kind has, because no other kind's vendor keeps a user-wide index.
+func TestTheDriverNeverListsTheUsersOtherSessions(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		if strings.Contains(string(b), "MethodSessionList") {
+			t.Errorf("%s calls session/list: it returns the member's OTHER AF sessions' conversations "+
+				"(ADR 0095 open question 6). Read AF's own session store instead.", name)
+		}
+	}
+	// The control: a scan that read no files would pass this test for ever.
+	if scanned == 0 {
+		t.Fatal("the scan read no source files, so it proves nothing")
 	}
 }

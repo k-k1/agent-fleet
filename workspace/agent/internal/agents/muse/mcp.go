@@ -19,6 +19,8 @@ package muse
 //     forever, so none is made.
 
 import (
+	"os"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -76,6 +78,33 @@ func mcpServerConfig(d mcpreg.ServerDef) msp.SessionMCPServerConfig {
 	}
 	if len(d.Env) > 0 {
 		cfg.Env = copyMap(d.Env)
+	}
+	// 🔴 muse scrubs an MCP child's environment, exactly as codex does — measured live, and the
+	// symptom is the worst kind: AF's own `af` server STARTS, its tools reach the model, and
+	// every call that writes back to the Agent answers
+	// `401 missing or invalid agent token`, so a muse session is told to call af_report and
+	// cannot. The wire's `env` takes VALUES (codex's `env_vars` takes names), so the values are
+	// read here from the Agent's own environment.
+	//
+	// It is the builtins that need this, which is the same rule mcpreg applies for codex
+	// (ForwardEnvNames): a user-registered server declares whatever environment it needs in the
+	// definition, and that is already copied above.
+	//
+	// The secrets do not reach disk: measured against the real host (live_test.go), a value
+	// passed in this map does not appear anywhere under muse's own store. It does reach the
+	// vendor's process — which already holds the whole Agent environment, being AF's own child.
+	for _, name := range mcpreg.ForwardEnvNames(d) {
+		v := os.Getenv(name)
+		if v == "" {
+			continue
+		}
+		if cfg.Env == nil {
+			cfg.Env = map[string]string{}
+		}
+		// A definition's own value wins: it is the one the member configured.
+		if _, taken := cfg.Env[name]; !taken {
+			cfg.Env[name] = v
+		}
 	}
 	return cfg
 }

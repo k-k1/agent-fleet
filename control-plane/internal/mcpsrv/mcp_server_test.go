@@ -15,7 +15,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -335,5 +337,64 @@ func TestDistributeScopesAndStrips(t *testing.T) {
 	// the CP only distributes enabled rows and the local opt-out is applied in the agent.
 	if !byName["wiki"].Enabled {
 		t.Fatal("distributed rows must arrive enabled")
+	}
+}
+
+// 🔴 The same list of MCP-capable kinds exists in three places in three languages, and it had
+// already drifted: muse shipped into `mcpreg.knownKinds` (Go, agent) and `MCP_KINDS` (TS,
+// Console) while this module's copy stayed at seven, so the CP refused a tenant MCP definition
+// scoped to muse with "unknown agent kind" (ADR 0095 P2-14).
+//
+// Module boundaries are why it is a copy at all — the Console is TypeScript and the agent is a
+// separate Go module — so the guard reads the other two as TEXT. A missing file skips rather
+// than fails: the check exists to catch drift in the repo, not to make a trimmed checkout red.
+func TestMcpKnownKindsMirrorsTheOtherTwoCopies(t *testing.T) {
+	read := func(rel string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "..", rel))
+		if err != nil {
+			t.Skipf("%s is not in this checkout: %v", rel, err)
+		}
+		return string(b)
+	}
+	agent := read("workspace/agent/internal/mcpreg/def.go")
+	console := read("console/src/features/settings/mcp/mcpWire.ts")
+
+	start := strings.Index(agent, "var knownKinds = map[string]bool{")
+	if start < 0 {
+		t.Fatal("mcpreg.knownKinds has been renamed; this guard is now reading nothing")
+	}
+	agentBlock := agent[start : start+strings.Index(agent[start:], "\n}")]
+	consoleLine := ""
+	for _, line := range strings.Split(console, "\n") {
+		if strings.HasPrefix(line, "export const MCP_KINDS") {
+			consoleLine = line
+		}
+	}
+	if consoleLine == "" {
+		t.Fatal("MCP_KINDS has been renamed; this guard is now reading nothing")
+	}
+
+	for kind := range mcpKnownKinds {
+		// session.KindMuse, not "muse", is how the agent's copy spells it — so the check is on
+		// the kind slug appearing in the block at all, capitalised the Go way.
+		if !strings.Contains(agentBlock, "Kind"+strings.ToUpper(kind[:1])+kind[1:]) &&
+			!strings.Contains(agentBlock, `"`+kind+`"`) {
+			t.Errorf("%q is in the CP's list and not in mcpreg.knownKinds", kind)
+		}
+		if !strings.Contains(consoleLine, `"`+kind+`"`) {
+			t.Errorf("%q is in the CP's list and not in the Console's MCP_KINDS", kind)
+		}
+	}
+	// …and the other direction, which is the one that actually broke: a kind the agent accepts
+	// and the CP does not is a tenant definition the admin API refuses for no reason the admin
+	// can act on.
+	for _, kind := range []string{"claude", "codex", "opencode", "cursor", "kiro", "agy", "copilot", "muse", "lcpp", "shell"} {
+		inAgent := strings.Contains(agentBlock, "Kind"+strings.ToUpper(kind[:1])+kind[1:])
+		if inAgent && !mcpKnownKinds[kind] {
+			t.Errorf("mcpreg.knownKinds has %q and the CP's copy does not: a tenant server scoped to it is refused", kind)
+		}
+		if !inAgent && mcpKnownKinds[kind] {
+			t.Errorf("the CP's copy has %q and mcpreg.knownKinds does not", kind)
+		}
 	}
 }
