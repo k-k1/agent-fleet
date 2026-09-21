@@ -1759,11 +1759,11 @@ func TestComfyDefaultSizeIsTheFamilysNativeSquare(t *testing.T) {
 	}
 }
 
-// Every family has to have a trial step count: the map is read with a plain lookup, so a family
-// missing from it trials at 0 steps — which is not an error anywhere, just a blank picture.
+// Every family has to have a trial step count: a family whose row declares none leaves the
+// caller's own steps in place, so a trial costs what the batch costs and nothing says so.
 func TestEveryFamilyHasTrialSteps(t *testing.T) {
 	for _, f := range comfyFamilies {
-		if comfyTrialSteps[f] <= 0 {
+		if steps, ok := comfyTrialStepsFor(f); !ok || steps <= 0 {
 			t.Errorf("%s has no trial step count", f)
 		}
 	}

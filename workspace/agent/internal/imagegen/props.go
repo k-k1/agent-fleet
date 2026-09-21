@@ -547,10 +547,10 @@ func comfyFamilyFromPrefix(prefix string) string {
 }
 
 // comfyFamilyPrefixName is the short word a template puts in its filename_prefix, which is the
-// family's own spelling except for flux2-klein, whose prefix is `af-klein`.
+// family's own spelling unless its row declares a shorter one (flux2-klein's `af-klein`).
 func comfyFamilyPrefixName(f comfyFamily) string {
-	if f == ComfyFamilyFlux2Klein {
-		return "klein"
+	if r, ok := comfyFamilyRowFor(f); ok && r.Prefix != "" {
+		return r.Prefix
 	}
 	return string(f)
 }

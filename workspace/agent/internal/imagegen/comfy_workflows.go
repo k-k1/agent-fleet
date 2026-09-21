@@ -225,84 +225,17 @@ var comfySchedulerNames = map[string]bool{
 func comfyKnownSampler(s string) bool   { return comfySamplerNames[strings.TrimSpace(s)] }
 func comfyKnownScheduler(s string) bool { return comfySchedulerNames[strings.TrimSpace(s)] }
 
-// comfyFamilyRecipes is every family's own sampler settings, in ONE place.
-//
-// They used to be literals inside each template, which was fine while the only reader was the
-// template itself. It stopped being fine when the member-facing catalogue had to report the
-// EFFECTIVE defaults (ADR 0081 decision 5) — the form's placeholders are what will run, and a
-// second copy of these five numbers for the status route to read is exactly the kind of pair
-// that drifts silently and shows a member a step count no picture was ever made at.
-//
-// Each entry has been run on a GPU; a catalogue row and then the request may replace any field
-// of it (comfyRecipe.with, comfyEffectiveParams). A family that leaves a field zero does not
-// read it at all — flux1 and klein have no cfg, klein no scheduler — which is the same fact
-// comfyFamilyKnobs states for the form.
-var comfyFamilyRecipes = map[comfyFamily]comfyRecipe{
-	// 🔴 sd15 is the one entry that has NOT been run on a GPU here. It is ComfyUI's own shipped
-	// default graph for this family verbatim (web/scripts/defaultGraph.js, the workflow that
-	// loads with v1-5-pruned-emaonly) rather than a number picked to look like SDXL's, so that
-	// what backs it is a citation a reviewer can check instead of this author's taste.
-	ComfyFamilySD15:       {Steps: 20, CFG: 8, Sampler: "euler", Scheduler: "normal"},
-	ComfyFamilySDXL:       {Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"},
-	ComfyFamilySD35:       {Steps: 28, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "sgm_uniform"},
-	ComfyFamilyFlux1:      {Steps: 20, Sampler: "euler", Scheduler: "simple"},
-	ComfyFamilyFlux2Klein: {Steps: 4, Sampler: "euler"},
-	ComfyFamilyZImage:     {Steps: 8, CFG: 1, Sampler: "res_multistep", Scheduler: "simple"},
-	// 🔴 anima has not been run on a GPU here either. These are ComfyUI's own shipped template
-	// for the family (workflow_templates/templates/image_anima_base_v1.json: 30 steps, cfg 4,
-	// euler, simple), which is also inside the range the model card prints (30-50 steps, CFG
-	// 4-5) — a citation a reviewer can check rather than a number picked to look like SDXL's.
-	//
-	// ⚠️ These are the BASE/Aesthetic numbers. Anima-Turbo is a separate checkpoint distilled to
-	// cfg 1 and 8-12 steps, and sampled at 30/4 it burns out — that is the row's `params` to
-	// declare, exactly as for the distilled SD1.5 variants.
-	ComfyFamilyAnima: {Steps: 30, CFG: 4, Sampler: "euler", Scheduler: "simple"},
-	// 🔴 krea2 has not been run on a GPU here, and its entry points the OTHER way from anima's:
-	// these are the DISTILLED numbers. ComfyUI ships templates for Krea 2 Turbo only
-	// (image_krea2_turbo_t2i.json: 8 steps, cfg 1, euler, simple) and none for Raw, so the
-	// citable recipe is the distilled one — and Raw, at its published 52 steps with a real cfg,
-	// is the row's `params` to declare. Guessing Raw's cfg to make the default "the base model"
-	// would be taste dressed up as a default.
-	ComfyFamilyKrea2: {Steps: 8, CFG: 1, Sampler: "euler", Scheduler: "simple"},
-	// The official 2509 template's KSampler, LoRA-switch false branch (ADR 0094 実測): steps 20,
-	// cfg 4, euler, simple. 実測 A ran these exact numbers and the edit was followed; 実測 B is
-	// the same graph at 8 steps (comfyTrialSteps), which is still recognisably edited.
-	ComfyFamilyQwenImageEdit2509: {Steps: 20, CFG: 4, Sampler: "euler", Scheduler: "simple"},
-	// The official 2511 template's KSampler, same LoRA-switch false branch: steps 40, cfg 4,
-	// euler, simple. Twice 2509's steps, which is upstream's number and not a typo — 実測 E ran
-	// these and took 393.8 s for one 1024² edit, the cost ADR 0094's 未解決 1 is about.
-	ComfyFamilyQwenImageEdit2511: {Steps: 40, CFG: 4, Sampler: "euler", Scheduler: "simple"},
-}
-
 // recipe is the family default with this request's model declaration merged over it.
 func (p comfyParams) recipe(base comfyRecipe) comfyRecipe { return base.with(p.Params) }
 
-// comfyDefaultSizes is the size list a family falls back to when the catalogue row declares
-// none, and the first element is what a request that names no size at all gets.
-//
-// 🔴 This is per-FAMILY because the resolution a diffusion model was trained at is not a
-// preference. Five of the six were trained around a megapixel and share the list this package
-// has always sent; SD1.5's UNet was trained at 512, and asking it for 1024 does not fail — it
-// returns a picture with the subject duplicated, two heads or a second torso, because the
-// composition the model knows tiles at that size. That is the failure mode this repository
-// keeps paying for: no error, no warning, a plausible-looking wrong answer. A catalogue row's
-// own Sizes still override this (comfySizesFor), but a row that declares nothing has to land
-// somewhere its family can actually generate.
-//
-// The SD1.5 entry stops at 768 on the long side for the same reason: 512x768 is the portrait
-// every model card for this family prints, and past it the duplication starts.
-var comfyDefaultSizes = map[comfyFamily][]string{
-	ComfyFamilySD15: {"512x512", "512x768", "768x512", "640x512", "512x640"},
-}
-
-// comfyMegapixelSizes is what the five megapixel-era families share, and it is the exact list
-// this package sent before sizes became a per-family answer.
+// comfyMegapixelSizes is what the megapixel-era families share, and it is the exact list this
+// package sent before sizes became a per-family answer (comfyFamilyRow.Sizes).
 var comfyMegapixelSizes = []string{"1024x1024", "1152x896", "896x1152", "1216x832", "832x1216"}
 
 // comfySizesForFamily is the fallback list, never an override — see comfySizesFor.
 func comfySizesForFamily(f comfyFamily) []string {
-	if s, ok := comfyDefaultSizes[f]; ok {
-		return s
+	if r, ok := comfyFamilyRowFor(f); ok && len(r.Sizes) > 0 {
+		return r.Sizes
 	}
 	return comfyMegapixelSizes
 }
@@ -488,16 +421,231 @@ const (
 	ComfyFamilyQwenImageEdit2511 comfyFamily = "qwen-image-edit-2511"
 )
 
-// comfyFamilies is every family comfyBuildGraph dispatches on. One list, so the acceptance
-// check and the error message that tells an operator what to declare cannot disagree with the
-// switch below. The Control Plane validates catalogue rows against the same spellings and
-// keeps its copy honest by reading THIS file (engine_catalog_test.go).
+// comfyFamilyRow is everything a family declares that is a VALUE rather than a graph: the
+// sampler recipe, which knobs its template reads, what a trial samples at, the sizes it falls
+// back to, whether a negative prompt moves it, and — for the instruction-edit families — the
+// wiring that separates their topologies.
 //
-// Ordered oldest architecture first, which is the order an operator's selector offers them in.
-var comfyFamilies = []comfyFamily{
-	ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35,
-	ComfyFamilyFlux1, ComfyFamilyFlux2Klein, ComfyFamilyZImage,
-	ComfyFamilyAnima, ComfyFamilyKrea2, ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511,
+// One row per family, because ADR 0094 未解決 4 measured what the alternative costs: adding a
+// family meant writing its name in seventeen places, nine of them in this package, each of them
+// a separate table or predicate. Forgetting one is not a build error — it is a silent wrong
+// answer. A family missing from the old comfyFamilyInstructionEdit advertises `generate` and
+// `inpaint` its template cannot build; missing from the old comfyTrialSteps, a trial run
+// quietly samples the full recipe and costs what the batch costs.
+//
+// 🔴 What is NOT here is the template. comfyBuildGraph keeps its switch, and not out of
+// conservatism: a `Build func(...)` field here does not compile. The templates READ this table
+// (comfyRecipe, and the wiring below), so a table that also held them is an initialisation
+// cycle — measured, `initialization cycle for comfyFamilyRows ... refers to comfyGraphSD15 ...
+// refers to comfyFamilyRows`. Whoever takes 未解決 4's remaining step across the module boundary
+// inherits that constraint: the data and the graphs cannot be one declaration in Go unless the
+// graphs take their row as an argument.
+//
+// The per-family template functions stay one per family for a second reason too:
+// engine_catalog_test.go (the other module) learns which files a family needs by pairing a
+// `comfyGraph*` body's errComfyMissingFile with the fields it refuses on, so a family that never
+// names itself in a refusal is a family that check silently stops measuring.
+type comfyFamilyRow struct {
+	Family comfyFamily
+	// Recipe is this family's own sampler settings, and the reason they are declared once rather
+	// than as literals inside the template: the member-facing catalogue reports the EFFECTIVE
+	// defaults (ADR 0081 decision 5), so the form's placeholders are what will run. A second copy
+	// for the status route to read is exactly the pair that drifts silently and shows a member a
+	// step count no picture was ever made at. A catalogue row and then the request may replace
+	// any field (comfyRecipe.with, comfyEffectiveParams); a family that leaves a field zero does
+	// not read it at all — flux1 and klein have no cfg, klein no scheduler — which is the same
+	// fact SamplerKnobs states for the form.
+	Recipe comfyRecipe
+	// SamplerKnobs is the subset of `steps cfg sampler scheduler` this family's template actually
+	// reads. `negative` and `strength` are NOT listed here: comfyFamilyKnobs appends them from
+	// Guided and InstructionEdit, so the two answers cannot disagree with the ones Caps gives.
+	//
+	// Derived from the templates and to be read next to them: flux1 and klein fold guidance into
+	// the conditioning, so the number a model card calls "CFG" is a different knob there, and
+	// klein's Flux2Scheduler takes a size and not a schedule name.
+	SamplerKnobs []string
+	// TrialSteps is what a trial run samples at (ADR 0081 decision 11). The number wanted is the
+	// smallest one at which the composition is still recognisable, which only a picture can
+	// answer — every entry below says whether a picture answered it, and most say no.
+	//
+	// Two families declare their recipe's own number (klein 4, krea2 8) because a distilled model
+	// has no cheaper setting: a trial there differs from the batch in nothing but where it sits
+	// in the queue. Zero is what an undeclared family answers, and comfyTrialStepsFor turns it
+	// into "leave the caller's steps alone".
+	TrialSteps int
+	// Guided is whether a negative prompt can move this family's picture at all. 🔴 Only the
+	// GUIDED families: the distilled ones sample at cfg 1 (zimage's KSampler, klein's CFGGuider)
+	// or fold FLUX.1's guidance into the conditioning (BasicGuider, no negative input at all),
+	// and at cfg 1 classifier-free guidance is `uncond + 1*(cond - uncond)`, which is cond
+	// exactly. The negative words would ride in the graph, cost a text encode, and change no
+	// pixel. Wiring them anyway and reporting the capability as true is worse than refusing: the
+	// caller gets no warning, the picture looks right, and the thing they asked to keep out is
+	// in it.
+	//
+	// ⚠️ This is the family's TEMPLATE, not the answer a member gets: anima and krea2 are true
+	// here because their graphs encode a real negative, while their distilled variants
+	// (Anima-Turbo, Krea 2 Turbo) declare cfg 1 and cancel it anyway. comfyModelTakesNegative is
+	// what puts the two facts together, and it is the one every caller asks.
+	Guided bool
+	// Sizes is the list a catalogue row falls back to when it declares none, and the first
+	// element is what a request that names no size at all gets. Empty means comfyMegapixelSizes.
+	//
+	// 🔴 Per-FAMILY because the resolution a diffusion model was trained at is not a preference.
+	// SD1.5's UNet was trained at 512, and asking it for 1024 does not fail — it returns a picture
+	// with the subject duplicated, two heads or a second torso, because the composition the model
+	// knows tiles at that size. That is the failure mode this repository keeps paying for: no
+	// error, no warning, a plausible-looking wrong answer. A catalogue row's own Sizes still
+	// override this (comfySizesFor), but a row that declares nothing has to land somewhere its
+	// family can actually generate.
+	Sizes []string
+	// Prefix is the short word this family's template puts in SaveImage's filename_prefix, when
+	// that is not the family's own spelling. It is how the reproduction record reads the family
+	// back off a picture (comfyFamilyFromPrefix).
+	Prefix string
+	// InstructionEdit is non-nil for exactly the families whose `op=edit` is instruction editing
+	// rather than the shared partial-denoise img2img — and it carries the wiring that separates
+	// their topologies.
+	//
+	// 🔴 One field and not two lists. The old pair (a predicate naming two families, a wiring map
+	// keyed by the same two) could disagree: a third topology added to the wiring map and
+	// forgotten in the predicate would advertise `generate`, `inpaint` and `strength` it cannot
+	// build, and 実測 C is what that costs — the same graph at denoise 0.6 came back unedited,
+	// with no error and no warning. Non-nil here is the single fact decisions 2, 3, 4, 5 and 12
+	// all turn on.
+	InstructionEdit *comfyQwenEditWiring
+}
+
+// comfyFamilyRows is the vocabulary itself, ordered oldest architecture first — which is the
+// order an operator's selector offers them in. The Control Plane validates catalogue rows
+// against the same spellings and keeps its copy honest by reading the constants above out of
+// THIS file (engine_catalog_test.go).
+var comfyFamilyRows = []comfyFamilyRow{{
+	Family: ComfyFamilySD15,
+	// 🔴 The one recipe that has NOT been run on a GPU here. It is ComfyUI's own shipped default
+	// graph for this family verbatim (web/scripts/defaultGraph.js, the workflow that loads with
+	// v1-5-pruned-emaonly) rather than a number picked to look like SDXL's, so that what backs it
+	// is a citation a reviewer can check instead of this author's taste.
+	Recipe:       comfyRecipe{Steps: 20, CFG: 8, Sampler: "euler", Scheduler: "normal"},
+	SamplerKnobs: comfyKnobsSampled, TrialSteps: 10, Guided: true,
+	// Stops at 768 on the long side for the reason the Sizes field states: 512x768 is the
+	// portrait every model card for this family prints, and past it the duplication starts.
+	Sizes: []string{"512x512", "512x768", "768x512", "640x512", "512x640"},
+}, {
+	Family:       ComfyFamilySDXL,
+	Recipe:       comfyRecipe{Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"},
+	SamplerKnobs: comfyKnobsSampled, TrialSteps: 10, Guided: true,
+}, {
+	Family:       ComfyFamilySD35,
+	Recipe:       comfyRecipe{Steps: 28, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "sgm_uniform"},
+	SamplerKnobs: comfyKnobsSampled, TrialSteps: 12, Guided: true,
+}, {
+	Family:       ComfyFamilyFlux1,
+	Recipe:       comfyRecipe{Steps: 20, Sampler: "euler", Scheduler: "simple"},
+	SamplerKnobs: []string{"steps", "sampler", "scheduler"}, TrialSteps: 8,
+}, {
+	Family:       ComfyFamilyFlux2Klein,
+	Recipe:       comfyRecipe{Steps: 4, Sampler: "euler"},
+	SamplerKnobs: []string{"steps", "sampler"},
+	// The recipe's own 4: a distilled 4-step model has no cheaper trial. See the field.
+	TrialSteps: 4,
+	Prefix:     "klein",
+}, {
+	Family:       ComfyFamilyZImage,
+	Recipe:       comfyRecipe{Steps: 8, CFG: 1, Sampler: "res_multistep", Scheduler: "simple"},
+	SamplerKnobs: comfyKnobsSampled, TrialSteps: 4,
+}, {
+	Family: ComfyFamilyAnima,
+	// 🔴 Not run on a GPU here either. ComfyUI's own shipped template for the family
+	// (workflow_templates/templates/image_anima_base_v1.json: 30 steps, cfg 4, euler, simple),
+	// which is also inside the range the model card prints (30-50 steps, CFG 4-5) — a citation a
+	// reviewer can check rather than a number picked to look like SDXL's.
+	//
+	// ⚠️ These are the BASE/Aesthetic numbers. Anima-Turbo is a separate checkpoint distilled to
+	// cfg 1 and 8-12 steps, and sampled at 30/4 it burns out — that is the row's `params` to
+	// declare, exactly as for the distilled SD1.5 variants.
+	Recipe:       comfyRecipe{Steps: 30, CFG: 4, Sampler: "euler", Scheduler: "simple"},
+	SamplerKnobs: comfyKnobsSampled,
+	// A third of the family's 30, rather than SDXL's 10 out of 20: the model card's floor for the
+	// undistilled versions is 30 steps, so a trial at 10 would be judging a composition this
+	// family does not produce at 10.
+	TrialSteps: 12, Guided: true,
+}, {
+	Family: ComfyFamilyKrea2,
+	// 🔴 Not run on a GPU here, and this one points the OTHER way from anima's: these are the
+	// DISTILLED numbers. ComfyUI ships templates for Krea 2 Turbo only (image_krea2_turbo_t2i.json:
+	// 8 steps, cfg 1, euler, simple) and none for Raw, so the citable recipe is the distilled one
+	// — and Raw, at its published 52 steps with a real cfg, is the row's `params` to declare.
+	// Guessing Raw's cfg to make the default "the base model" would be taste dressed up as a
+	// default.
+	Recipe:       comfyRecipe{Steps: 8, CFG: 1, Sampler: "euler", Scheduler: "simple"},
+	SamplerKnobs: comfyKnobsSampled,
+	// The recipe is already 8, so for a Turbo row a trial IS the batch (klein's case). It is kept
+	// for the Raw rows, where it is the family's published 52 cut to a sixth.
+	TrialSteps: 8, Guided: true,
+}, {
+	Family: ComfyFamilyQwenImageEdit2509,
+	// The official 2509 template's KSampler, LoRA-switch false branch (ADR 0094 実測): steps 20,
+	// cfg 4, euler, simple. 実測 A ran these exact numbers and the edit was followed.
+	Recipe:       comfyRecipe{Steps: 20, CFG: 4, Sampler: "euler", Scheduler: "simple"},
+	SamplerKnobs: comfyKnobsSampled,
+	// ADR 0094 実測 B: the same graph at 8 steps still followed the instruction (63.2 s vs 実測 A's
+	// 226.2 s at the family's own 20) — measured, unlike every entry above.
+	TrialSteps: 8,
+	// Guided, and the evidence is 実測 A and 実測 E: both ran cfg 4 and the edit was followed, and
+	// the template gives the negative branch its own TextEncodeQwenImageEditPlus encode rather
+	// than ConditioningZeroOut, so the negative genuinely moves the picture (decision 12).
+	Guided:          true,
+	InstructionEdit: &comfyQwenEditWiring{Shift: 3},
+}, {
+	Family: ComfyFamilyQwenImageEdit2511,
+	// The official 2511 template's KSampler, same LoRA-switch false branch: steps 40, cfg 4,
+	// euler, simple. Twice 2509's steps, which is upstream's number and not a typo — 実測 E ran
+	// these and took 393.8 s for one 1024² edit, the cost ADR 0094's 未解決 1 is about.
+	Recipe:       comfyRecipe{Steps: 40, CFG: 4, Sampler: "euler", Scheduler: "simple"},
+	SamplerKnobs: comfyKnobsSampled,
+	// Carried over from 2509's measurement rather than scaled with the recipe (2511 samples at 40
+	// where 2509 samples at 20). The two graphs differ in where the reference latents enter, not
+	// in how the sampler descends, and a fifth of 40 is the same kind of guess as every entry
+	// above that no picture answered.
+	TrialSteps: 8, Guided: true,
+	InstructionEdit: &comfyQwenEditWiring{Shift: 3.1, RefMethod: "index_timestep_zero"},
+}}
+
+// comfyKnobsSampled is `steps cfg sampler scheduler` — every knob a plain KSampler reads, which
+// is what the guided families and the two cfg-1 distilled ones (zimage, krea2) all take.
+// A named value because six rows share it verbatim, and a seventh spelling it differently by
+// accident is the drift comfyFamilyRows exists to stop.
+var comfyKnobsSampled = []string{"steps", "cfg", "sampler", "scheduler"}
+
+// comfyFamilyRowFor is the table lookup. False for a family nobody declares, which every caller
+// turns into the same refusal the switch's default does.
+func comfyFamilyRowFor(f comfyFamily) (comfyFamilyRow, bool) {
+	for _, r := range comfyFamilyRows {
+		if r.Family == f {
+			return r, true
+		}
+	}
+	return comfyFamilyRow{}, false
+}
+
+// comfyFamilyRecipeFor is the family's own sampler settings, and the zero recipe for a family
+// nobody declares — which is what the templates already did when the map had no entry.
+func comfyFamilyRecipeFor(f comfyFamily) comfyRecipe {
+	r, _ := comfyFamilyRowFor(f)
+	return r.Recipe
+}
+
+// comfyFamilies is every family comfyBuildGraph dispatches on, in the table's order, so the
+// acceptance check and the error message that tells an operator what to declare cannot disagree
+// with the table or with the switch.
+var comfyFamilies = comfyFamilyNames()
+
+func comfyFamilyNames() []comfyFamily {
+	out := make([]comfyFamily, len(comfyFamilyRows))
+	for i, r := range comfyFamilyRows {
+		out[i] = r.Family
+	}
+	return out
 }
 
 // comfyFileFlags is the Flag vocabulary resolveComfyFiles understands, in the order a panel
@@ -609,7 +757,7 @@ func comfyGraphSingleCheckpoint(f comfyFiles, p comfyParams, family comfyFamily)
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyFamilyRecipes[family])
+	r := p.recipe(comfyFamilyRecipeFor(family))
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),
@@ -650,7 +798,7 @@ func comfyGraphZImage(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyFamilyRecipes[ComfyFamilyZImage])
+	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilyZImage))
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),
@@ -688,7 +836,7 @@ func comfyGraphFlux2Klein(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// 🔴 Steps and the sampler only. The `cfg: 1` above is the DISTILLED path's fixed value, not
 	// a guidance scale a model card is talking about when it prints "CFG 4" — and this family
 	// has no scheduler name to set at all (Flux2Scheduler takes a size, not a schedule name).
-	r := p.recipe(comfyFamilyRecipes[ComfyFamilyFlux2Klein])
+	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilyFlux2Klein))
 	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": r.Sampler}}
 	// Flux2Scheduler has no denoise of its own — it takes steps and a size and nothing else
 	// (comfy_extras/nodes_flux.py, v0.34.0) — so an edit's partial denoise is a TAIL of that
@@ -771,7 +919,7 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// is BasicGuider rather than CFGGuider), so the number a model card calls "CFG" for this
 	// family is FluxGuidance's `guidance` and not a sampler cfg — two different knobs with one
 	// name. Applying the declared cfg here would turn "CFG 4" into a silently wrong picture.
-	r := p.recipe(comfyFamilyRecipes[ComfyFamilyFlux1])
+	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilyFlux1))
 	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": r.Sampler}}
 	// BasicScheduler DOES have a denoise (unlike klein's Flux2Scheduler), and it cuts the tail
 	// itself: total_steps = steps/denoise, then the last steps+1 sigmas. So an edit needs no
@@ -836,7 +984,7 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyFamilyRecipes[ComfyFamilySD35])
+	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilySD35))
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),
@@ -894,7 +1042,7 @@ func comfyGraphAnima(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyFamilyRecipes[ComfyFamilyAnima])
+	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilyAnima))
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),
@@ -954,7 +1102,7 @@ func comfyGraphKrea2(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyFamilyRecipes[ComfyFamilyKrea2])
+	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilyKrea2))
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),
@@ -1025,8 +1173,8 @@ func comfyGraphQwenImageEdit2511(f comfyFiles, p comfyParams) (comfyGraph, error
 	return comfyGraphQwenImageEdit(f, p, ComfyFamilyQwenImageEdit2511)
 }
 
-// comfyQwenEditWiring is everything that separates the two instruction-edit topologies, and it is
-// a table rather than an `if` inside the body so that the answer to "what makes 2511 a family of
+// comfyQwenEditWiring is everything that separates the two instruction-edit topologies, and it
+// hangs off comfyFamilyRow.InstructionEdit so that the answer to "what makes 2511 a family of
 // its own" is one place a reader can look (ADR 0094 decision 6: a family per TOPOLOGY).
 //
 // Shift lives HERE and not as a fifth comfyRecipe field on purpose. comfyRecipe's four fields are
@@ -1042,11 +1190,6 @@ type comfyQwenEditWiring struct {
 	RefMethod string
 }
 
-var comfyQwenEditWirings = map[comfyFamily]comfyQwenEditWiring{
-	ComfyFamilyQwenImageEdit2509: {Shift: 3},
-	ComfyFamilyQwenImageEdit2511: {Shift: 3.1, RefMethod: "index_timestep_zero"},
-}
-
 func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (comfyGraph, error) {
 	// The image is required only when Op says this IS an edit. Generate() never reaches this
 	// builder with anything else (Caps.Ops refuses generate/inpaint before comfyBuildGraph is
@@ -1058,13 +1201,14 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 	}
 	// Refused rather than defaulted: the zero value is shift 0 and no reference-method node, which
 	// is not a topology anybody has run — it would build, sample, and hand back a degraded picture
-	// with nothing to say why. A third instruction-edit family arriving without a row here is the
-	// case this exists for (decision 6 expects more of them), and every other unknown family in
-	// this file fails the same way.
-	w, ok := comfyQwenEditWirings[family]
-	if !ok {
+	// with nothing to say why. A third instruction-edit family arriving without a wiring on its
+	// row is the case this exists for (decision 6 expects more of them), and every other unknown
+	// family in this file fails the same way.
+	row, ok := comfyFamilyRowFor(family)
+	if !ok || row.InstructionEdit == nil {
 		return nil, errUnknownComfyFamily(family)
 	}
+	w := *row.InstructionEdit
 	g := comfyGraph{
 		"unet": {ClassType: "UNETLoader", Inputs: map[string]any{"unet_name": f.DiffusionModel, "weight_dtype": "default"}},
 		"clip": {ClassType: "CLIPLoader", Inputs: map[string]any{"clip_name": f.ClipL, "type": "qwen_image", "device": "default"}},
@@ -1110,7 +1254,7 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 	g["norm"] = comfyNode{ClassType: "CFGNorm", Inputs: map[string]any{"model": comfyLink("ms", 0), "strength": 1}}
 	g["enc"] = comfyNode{ClassType: "VAEEncode", Inputs: map[string]any{
 		"pixels": comfyLink("scale", 0), "vae": comfyLink("vae", 0)}}
-	r := p.recipe(comfyFamilyRecipes[family])
+	r := p.recipe(comfyFamilyRecipeFor(family))
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		// Fixed at 1, not p.denoise(): 実測 C is decision 2's whole reason — the same graph at

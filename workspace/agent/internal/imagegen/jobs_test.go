@@ -248,8 +248,9 @@ func TestTrialReducesStepsAndWritesToTheTrialFolder(t *testing.T) {
 	waitFor(t, "the trial to finish", func() bool { return len(q.List().Jobs[0].Files) > 0 })
 
 	got := p.requests()
-	if len(got) != 1 || got[0].Params == nil || got[0].Params.Steps != comfyTrialSteps[ComfyFamilySDXL] {
-		t.Fatalf("trial ran at %+v, want steps = %d", got[0].Params, comfyTrialSteps[ComfyFamilySDXL])
+	wantSteps, _ := comfyTrialStepsFor(ComfyFamilySDXL)
+	if len(got) != 1 || got[0].Params == nil || got[0].Params.Steps != wantSteps {
+		t.Fatalf("trial ran at %+v, want steps = %d", got[0].Params, wantSteps)
 	}
 	job := q.List().Jobs[0]
 	if job.FullSteps != 40 {
@@ -896,9 +897,9 @@ func TestFamilyKnobsMatchTheTemplates(t *testing.T) {
 // the form's placeholder cannot be a number no picture was ever made at.
 func TestEveryFamilyHasARecipe(t *testing.T) {
 	for _, f := range comfyFamilies {
-		r, ok := comfyFamilyRecipes[f]
-		if !ok || r.Steps == 0 || r.Sampler == "" {
-			t.Errorf("%s has no usable recipe: %+v", f, r)
+		r, ok := comfyFamilyRowFor(f)
+		if !ok || r.Recipe.Steps == 0 || r.Recipe.Sampler == "" {
+			t.Errorf("%s has no usable recipe: %+v", f, r.Recipe)
 		}
 	}
 }
