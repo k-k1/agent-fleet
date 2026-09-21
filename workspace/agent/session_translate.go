@@ -560,7 +560,9 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(r.Context(), translatePartTimeout)
 			// The tag is the LEADER's: one run, one row, filed under the press that started it.
 			ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTranslate, Trigger: trigger, Ref: name})
-			reply, ranKind, _, gerr := translateOneShot(ctx, text, lang)
+			// The run's own kind/model are deliberately dropped: the cache key is what the next
+			// lookup can predict, not what this run happened to reach (see putTranslation below).
+			reply, _, _, gerr := translateOneShot(ctx, text, lang)
 			cancel()
 			if gerr != nil {
 				return "", gerr
@@ -571,18 +573,24 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 				// failures happened, and a waiter on this flight gets the same wording.
 				return "", fmt.Errorf("%w: %v", errTranslateUnusable, gerr)
 			}
-			// Model comes from resolveCacheModel — the SAME value the next lookup will read —
-			// never from what the run actually reported (OneShotHeadlessRun's own return is
-			// discarded here on purpose; see the comment above resolveCacheModel's declaration).
-			// Kind alone is taken from the run: it never drifts from the prediction (③ only
-			// refines the model within a kind), and using the actual value costs nothing.
-			_, cacheModel, cacheModelOK := resolveCacheModel()
+			// BOTH fields come from resolveCacheModel — the SAME values the next lookup will
+			// compare against — never from what the run actually reported (OneShotHeadlessRun's
+			// return is discarded here on purpose; see resolveCacheModel's declaration).
+			//
+			// Taking kind from the run instead looks free ("③ only refines the model within a
+			// kind") and is not: the resolution and the run are separate resolveOneShot calls,
+			// and on a cold store the resolution first runs AFTER generation, so the window is
+			// the whole generation time against a 1-minute availability cache. A flip inside it
+			// writes a row whose kind and model came from different resolutions — a combination
+			// no lookup can ever match, so that press is cached and never read again. That is
+			// exactly the permanent miss this key was corrected to avoid (docs/log/103 決定 8).
+			cacheKind, cacheModel, cacheModelOK := resolveCacheModel()
 			model := ""
 			if cacheModelOK {
 				model = cacheModel
 			}
 			putTranslation(name, &sessionTranslation{
-				Hash: hash, Lang: lang, Kind: ranKind, Model: model,
+				Hash: hash, Lang: lang, Kind: cacheKind, Model: model,
 				Text: got, CreatedAt: time.Now().UnixMilli(),
 			})
 			return got, nil
