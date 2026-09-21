@@ -334,3 +334,57 @@ func TestLiveForeignPersonalRulesAreNotAssembled(t *testing.T) {
 		t.Errorf("the member's ~/.claude/CLAUDE.md still reached the model input, in %s", p)
 	}
 }
+
+// The instruction layer against the real binary, and it costs nothing: both halves have a
+// free oracle. `muse skills list --source user` is the authority on whether a dropped
+// SKILL.md is actually registered (gate B1-5 measured that it needs no install step, and this
+// is the check that the claim still holds), and `muse config validate` is the authority on
+// whether the AGENTS.md beside it left the configuration readable.
+//
+// What it cannot answer is whether a TURN assembles the file — that needs a model call, and
+// gate B1-5 already bought that answer with planted markers.
+func TestLiveInstructionLayerIsRegistered(t *testing.T) {
+	liveGate(t)
+	bin := liveBin(t)
+	home, env := clampedHome(t, true)
+
+	// The real writers, not hand-built files: what is under test is what AF produces.
+	if err := ApplyFleetNotes("# fleet policy\n\nAFPROBE-FLEET\n"); err != nil {
+		t.Fatalf("ApplyFleetNotes: %v", err)
+	}
+	if err := ApplyUserInstructions("AFPROBE-USER\n"); err != nil {
+		t.Fatalf("ApplyUserInstructions: %v", err)
+	}
+	skill := filepath.Join(SkillsDir(), "af-probe-topic", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: af-probe-topic\ndescription: \"a probe topic\"\n---\n# Probe\n\nbody\n"
+	if err := os.WriteFile(skill, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The throwaway environment is what makes this a measurement rather than a reading of the
+	// member's own machine — and `skills list` loading at all is the second half of the
+	// answer, since it reads the configuration in the same home the AGENTS.md now sits in.
+	cmd := exec.Command(bin, "skills", "list", "--source", "user")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("muse skills list: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "af-probe-topic") {
+		t.Fatalf("the fleet topic skill is not registered:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "muse", "AGENTS.md")); err != nil {
+		t.Fatalf("AGENTS.md is not where muse reads it: %v", err)
+	}
+	// Both blocks in the one file, which is the shape decision 12 settled on.
+	b, err := os.ReadFile(AgentsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "AFPROBE-FLEET") || !strings.Contains(string(b), "AFPROBE-USER") {
+		t.Fatalf("AGENTS.md does not carry both blocks:\n%s", b)
+	}
+}

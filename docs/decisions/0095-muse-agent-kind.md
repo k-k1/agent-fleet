@@ -2197,3 +2197,44 @@ way to know a subagent's tokens are missing.
 exists on the wire, but it only fires around a turn, so declaring `contextBar` would be a
 capability claimed from a schema rather than measured end to end — the rule the other four
 false caps already follow.
+
+### P2-11: the instruction layers — one file, two blocks, and the text that is not ours
+
+The eleventh work package, and the one decision 12 left as an explicit choice: muse has ONE
+user-scope rules file and both of AF's apply paths have to share it.
+
+**The answer is markers, not ownership.** Decision 12 offered two: AF owns
+`~/.config/muse/AGENTS.md` outright with delimited sections, or merges into the member's own
+text by markers. The second, for the reason decision 6 gives for `settings.json` — the file is
+not AF's. It is where a member writes their own rules for Muse Code, with or without Agent
+Fleet, and owning it outright deletes that text on the next reconcile. The repository has
+already paid for the other answer once (docs/log/60 damage 1, where AF `cp -f`'d a CLI's file
+away on every start).
+
+That makes this codex's situation exactly, so it is codex's mechanism exactly: `mdblock`, one
+`AGENTS.md`, two AF-owned blocks in reconcile's call order (fleet → user), everything outside
+the markers untouched. `mdblock` exists so the spelling of those markers cannot drift per kind,
+and using it here is what stops muse becoming the seventh copy of strip-and-append.
+
+Three details are in the code because the measurement said so:
+
+- **The distribution status measures the BLOCK, not the file.** muse's `AGENTS.md` exists as
+  soon as the fleet policy lands, so `fileExists` — which is what kiro and copilot use, because
+  their artefacts are one file each — would report the member's instructions as delivered
+  before they were written. The same trap agy and codex already avoid.
+- **AF writes `AGENTS.md` and never `CLAUDE.md`.** muse probes both, and the measured project-
+  layer precedence is "AGENTS.md wins, CLAUDE.md is skipped this session". Writing both would
+  mean writing a file whose content muse announces it is discarding. A test pins that the
+  second file is not created.
+- **The skills half needed no code.** `fleetskills.Apply` into `~/.config/muse/skills` is the
+  whole of it: measured again this round against the real binary, `muse skills list --source
+  user` lists a dropped `SKILL.md` with no install step and no lock-file entry.
+
+Verification is the two apply paths through `reconcileAgentInstructions` plus a live check that
+spends nothing: the real writers into a throwaway HOME, then the vendor's own
+`muse skills list --source user` as the authority on whether the topic file is actually
+registered. ⚠️ Written the wrong way first — the draft also ran `muse config validate --file`
+against `settings.json`, which is not what that verb takes (it validates an enterprise config
+*document*, `{schema_version, settings}`), and a second copy of the command ran without the
+throwaway environment at all, i.e. against the member's own home. Both are the same mistake:
+reaching for an oracle by name instead of by what it answers.

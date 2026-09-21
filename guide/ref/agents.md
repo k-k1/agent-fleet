@@ -36,7 +36,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
-| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | —¹¹ | — | — |
+| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
 | Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
 | Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
 
@@ -193,3 +193,12 @@ can go and fetch: Muse Code reports its own subscription usage over the session 
 only after a turn finishes. Until you have run muse in this workspace the chip shows "—",
 which means "no reading yet" rather than "nothing used". The first window's length is the
 provider's own (measured: five hours), so the row is labelled "current window".
+
+¹⁶ Muse Code keeps your personal rules in one file, `~/.config/muse/AGENTS.md`, and both the
+workspace policy and your own instructions have to go there. Agent Fleet writes them as two
+marked blocks and leaves everything else in the file alone, so rules you put there yourself
+survive. The workspace's topic files arrive separately, as skills under
+`~/.config/muse/skills/`. Your repository's own `AGENTS.md` is read as well, because sessions
+run with the workspace trusted — and note that Muse Code treats `AGENTS.md` and `CLAUDE.md` as
+a precedence, not a sum: with both present it uses `AGENTS.md` and says it is skipping the
+other.
