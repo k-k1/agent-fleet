@@ -49,6 +49,46 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   margin-top: 7px;
   font-size: 11px;
 }
+
+/* Managed tool approval. It shares .mt-perm's shell with the TUI permission card on purpose —
+   the member is answering the same question — and adds what only the managed route carries:
+   the parsed argv of each pipeline stage, and the runtime's own markings. */
+.mt-approval-subject {
+  font-family: var(--mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+  opacity: 1;
+}
+.mt-approval-stages {
+  margin: 0 0 8px;
+  padding-left: 1.6em;
+  font-size: 11px;
+  opacity: 0.8;
+}
+.mt-approval-stages code {
+  word-break: break-all;
+}
+.mt-approval-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.mt-approval-flag {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+.mt-approval-flag.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+  opacity: 1;
+}
+.mt-perm-tool {
+  font-size: 11px;
+}
 /* Chat primary actions (allow / approve and run / send answer / send) follow the theme
    accent instead of the fixed app blue. */
 .mirrorview button.primary {

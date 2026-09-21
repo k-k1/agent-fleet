@@ -21,13 +21,18 @@ import (
 // redrawing, so flow output can be scraped as plain text.
 var AnsiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
 
-// Flow is one running PTY login flow: the interactive CLI process, its PTY, and
-// the accumulated output (scraped for URLs/codes/errors).
+// Flow is one running login flow: the interactive CLI process, the handle its output
+// arrives on, and the accumulated output (scraped for URLs/codes/errors).
+//
+// Ptmx is non-nil for the PTY flows (StartFlow) and nil for the pipe flows
+// (StartPipeFlow) — a caller that types keys at the child must use the former.
 type Flow struct {
 	Ptmx    *os.File
 	Cmd     *exec.Cmd
+	rd      *os.File // pipe flows: the read end we drain (nil for PTY flows)
 	mu      sync.Mutex
 	out     strings.Builder
+	ended   bool
 	Created time.Time
 }
 
@@ -42,21 +47,70 @@ func StartFlow(cmd *exec.Cmd) (*Flow, error) {
 	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 50, Cols: 4000}) // wide => URL on one line
 
 	f := &Flow{Ptmx: ptmx, Cmd: cmd, Created: time.Now()}
-	go func() {
-		buf := make([]byte, 8192)
-		for {
-			n, rerr := ptmx.Read(buf)
-			if n > 0 {
-				f.mu.Lock()
-				f.out.Write(buf[:n])
-				f.mu.Unlock()
-			}
-			if rerr != nil {
-				return
-			}
-		}
-	}()
+	go f.drain(ptmx)
 	return f, nil
+}
+
+// StartPipeFlow launches cmd with NO controlling terminal: stdin is /dev/null and stdout
+// and stderr are one pipe this Flow drains. Everything else — Clean, WaitFor, the flow
+// store and its reaping — behaves as it does for StartFlow.
+//
+// It exists because a login CLI can branch on isatty, and muse's does: measured on
+// 1.3.0-R3401.1, `muse login` on a PTY prints the device URL and then STOPS at
+// "Press Enter to open it in your browser:" — it never starts polling for the approval,
+// and there is no browser in this container to open. Off a TTY the same binary prints the
+// URL and goes straight to "Waiting for approval…", self-polling exactly the way kiro's and
+// cursor's device flows do. So for muse a PTY is not the neutral choice the other kinds
+// found it, it is the broken one (ADR 0095 decision 9).
+func StartPipeFlow(cmd *exec.Cmd) (*Flow, error) {
+	rd, wr, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdin = nil // os/exec opens /dev/null: closed stdin, and not a terminal
+	cmd.Stdout = wr
+	cmd.Stderr = wr
+	if err := cmd.Start(); err != nil {
+		_ = rd.Close()
+		_ = wr.Close()
+		return nil, err
+	}
+	// Drop the parent's copy of the write end, or the drain below never sees EOF when the
+	// child exits — which is what Ended reports on.
+	_ = wr.Close()
+
+	f := &Flow{Cmd: cmd, rd: rd, Created: time.Now()}
+	go f.drain(rd)
+	return f, nil
+}
+
+// drain accumulates the child's output until the handle reports EOF or an error, then
+// marks the flow ended.
+func (f *Flow) drain(src *os.File) {
+	buf := make([]byte, 8192)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			f.mu.Lock()
+			f.out.Write(buf[:n])
+			f.mu.Unlock()
+		}
+		if rerr != nil {
+			f.mu.Lock()
+			f.ended = true
+			f.mu.Unlock()
+			return
+		}
+	}
+}
+
+// Ended reports that the child's output handle reached EOF — for a pipe flow that means
+// the process is gone (or has closed both streams), so a poll loop waiting on a
+// side-channel can stop instead of spinning to its deadline.
+func (f *Flow) Ended() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ended
 }
 
 // Clean returns the accumulated PTY output with ANSI/control noise removed.
@@ -71,10 +125,16 @@ func (f *Flow) Clean() string {
 // Wait is load-bearing: workspace-agent is not PID 1, so a killed-but-unwaited
 // flow child stays a zombie forever (measured: one `[agy] <defunct>` piles up per agy /usage
 // scrape — docs/log/32). Wait after SIGKILL cannot block: pty.Start
-// wires *os.File fds (no copier goroutines), so it only reaps the exit status.
+// wires *os.File fds (no copier goroutines), so it only reaps the exit status — and
+// StartPipeFlow keeps that property by handing os/exec *os.File pipe ends for the same reason.
 func (f *Flow) Close() {
 	_ = f.Cmd.Process.Kill()
-	_ = f.Ptmx.Close()
+	if f.Ptmx != nil {
+		_ = f.Ptmx.Close()
+	}
+	if f.rd != nil {
+		_ = f.rd.Close()
+	}
 	_ = f.Cmd.Wait()
 }
 
@@ -128,6 +188,15 @@ func (s *FlowStore) Put(f *Flow) string {
 	s.flows[id] = f
 	s.mu.Unlock()
 	return id
+}
+
+// Get returns the flow for id WITHOUT removing it (nil when unknown/expired), for a poll that
+// only wants to look at a flow it intends to keep waiting on. Take-then-Put is not the same
+// thing and is a trap: Put mints a fresh id, orphaning the one the client is polling with.
+func (s *FlowStore) Get(id string) *Flow {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.flows[id]
 }
 
 // Take removes and returns the flow for id (nil when unknown/expired). The

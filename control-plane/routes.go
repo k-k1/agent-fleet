@@ -886,6 +886,15 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// polls its progress (GET). Proxied to the Agent (installs into the user's ~/.local).
 	mux.HandleFunc("POST /api/connections/kiro/install", rest)
 	mux.HandleFunc("GET /api/connections/kiro/install", rest)
+	// muse (Muse Code, ADR 0095) — device-code login: start returns the verification URL
+	// (+ user_code + flow_id), poll checks the Meta-side approval (muse self-polls, no pasted
+	// code). api-key is the pay-as-you-go fallback. Proxied to the Agent, which owns the
+	// credential under ~/.config/muse. start and poll take restLogin because the login child
+	// lives in the Agent's memory; api-key and the disconnect carry no such state.
+	mux.HandleFunc("POST /api/connections/muse/start", restLogin)
+	mux.HandleFunc("POST /api/connections/muse/poll", restLogin)
+	mux.HandleFunc("POST /api/connections/muse/api-key", rest)
+	mux.HandleFunc("DELETE /api/connections/muse", rest)
 	mux.HandleFunc("PUT /api/connections/opencode", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
 	mux.HandleFunc("POST /api/connections/opencode/oauth/start", restLogin)

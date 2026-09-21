@@ -39,16 +39,55 @@ type ThreadSettings struct {
 	ClearEffort bool   // explicit reset to the selected model's default
 }
 
-// Interaction generalises approval, question and plan confirmation (§5). Only questions are
-// in scope: all three kinds run with approvals bypassed, so questions are the only thing that
-// reaches an operator. The form itself is carried as a transcript.Question list, the same as
-// the existing Pending UI — claude's AskUserQuestion puts several questions in one modal, so
-// that shape fits reality better than the single Options of design §5.
+// InteractionKind names what an Interaction is asking for.
+//
+// Plan confirmation is still future work; the two that exist differ in what the operator is
+// being asked, not merely in wording. A QUESTION asks the member to choose an answer, and the
+// agent carries on either way. An APPROVAL asks whether a tool may run, and refusing it stops
+// that tool — so it carries the subject (the command, the tool, the parsed argv of each stage)
+// rather than a list of options, and its reply is allow/deny rather than an answer.
+const (
+	InteractionQuestion = "question"
+	InteractionApproval = "approval"
+)
+
+// Interaction generalises approval, question and plan confirmation (§5).
+//
+// The form of a question is carried as a transcript.Question list, the same as the existing
+// Pending UI — claude's AskUserQuestion puts several questions in one modal, so that shape
+// fits reality better than the single Options of design §5. An approval carries Approval
+// instead: folding it into a two-option question would discard everything the member needs to
+// decide with (ADR 0095 decision 13).
 type Interaction struct {
-	ID        string
-	Kind      string // "question" (future: "approval" | "plan")
-	Prompt    string // explanation that ran before the question (the mirror's pendingText)
-	Questions []transcript.Question
+	ID   string
+	Kind string // InteractionQuestion | InteractionApproval (future: "plan")
+	// Prompt is the explanation that ran before the question (the mirror's pendingText). For
+	// an approval it is the one-line subject, so a surface that only knows how to render text
+	// still says something true.
+	Prompt    string
+	Questions []transcript.Question // Kind == InteractionQuestion
+	Approval  *ApprovalRequest      // Kind == InteractionApproval
+}
+
+// ApprovalRequest is what the member is being asked to allow, for an Interaction of kind
+// approval. Every field is optional except Summary: a kind that can only say "this tool wants
+// to run" still produces a usable card, and a kind that knows more fills more in.
+type ApprovalRequest struct {
+	// Summary is the one line the card leads with — the command for a shell approval, the
+	// tool name otherwise. Never empty.
+	Summary string `json:"summary"`
+	// Tool is the tool's own name, when the runtime reports one separately from the command.
+	Tool string `json:"tool,omitempty"`
+	// Command is the shell command line as the agent wrote it, unparsed.
+	Command string `json:"command,omitempty"`
+	// Stages are the parsed argv of each stage of a pipeline, in order. A member approving
+	// `a | b` is approving both, and only the parsed form shows what the second one is.
+	Stages [][]string `json:"stages,omitempty"`
+	// ProtectedWrite marks a write the runtime itself considers dangerous.
+	ProtectedWrite bool `json:"protectedWrite,omitempty"`
+	// JudgeEscalated marks an approval a runtime-side judge escalated to the member rather
+	// than deciding itself — worth showing, because it means the runtime was unsure.
+	JudgeEscalated bool `json:"judgeEscalated,omitempty"`
 }
 
 // Decision is the reply verb for an Interaction (§5).

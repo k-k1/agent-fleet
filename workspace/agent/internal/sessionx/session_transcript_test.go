@@ -3,6 +3,7 @@ package sessionx
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -472,5 +474,94 @@ func TestUnchangedPollIsByteIdentical(t *testing.T) {
 	), "\n")+"\n")
 	if third := poll(); bytes.Equal(second, third) {
 		t.Fatalf("a grown transcript answered identically: %s", third)
+	}
+}
+
+// fakeApprovalAgent is a registered kind whose Transcript reports a pending approval, so the
+// generic /messages path can be exercised without a live runtime.
+type fakeApprovalAgent struct{ agents.Agent }
+
+func (fakeApprovalAgent) Kind() string { return session.KindMuse }
+func (fakeApprovalAgent) Caps() agents.Caps {
+	return agents.Caps{CanTranscript: true, ManagedOnly: true}
+}
+func (fakeApprovalAgent) BuildLaunch(session.Meta, agents.LaunchOpts) (agents.LaunchPlan, error) {
+	return agents.LaunchPlan{}, errors.New("no terminal route")
+}
+func (fakeApprovalAgent) WireLive(session.Meta, bool) agents.LiveInfo { return agents.LiveInfo{} }
+func (fakeApprovalAgent) ClearResume(string)                          {}
+func (fakeApprovalAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
+	return agents.TranscriptData{
+		Turns:             []transcript.Turn{{Role: "user", Text: "go", Idx: 0}},
+		PendingApprovalID: "approval-ap-1",
+		PendingApproval: &agents.ApprovalRequest{
+			Summary: "rm -rf build", Command: "rm -rf build", Tool: "shell", ProtectedWrite: true,
+		},
+	}, true
+}
+
+// The approval has to reach the Console under its OWN key. `pendingPermission` is the TUI
+// route's message string, answered by driving the pane with keystrokes; a managed session has
+// no pane, so a surface that read the two as the same thing would render allow/deny buttons
+// that send keys into nothing.
+func TestGenericMessagesSurfacesAPendingApproval(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	prev := agentRegistry[session.KindMuse]
+	agentRegistry[session.KindMuse] = fakeApprovalAgent{}
+	t.Cleanup(func() { agentRegistry[session.KindMuse] = prev })
+
+	m := session.Meta{Name: "slot-approval-wire", Dir: t.TempDir(), Kind: session.KindMuse,
+		Driver: session.DriverManaged}
+	session.WriteMeta(m)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/sessions/"+m.Name+"/messages", nil)
+	handleGenericMessages(rec, req, m, true, "question")
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	got, ok := resp["pendingApproval"].(map[string]any)
+	if !ok {
+		t.Fatalf("no pendingApproval in the response: %s", rec.Body.String())
+	}
+	if got["id"] != "approval-ap-1" {
+		t.Errorf("id = %v", got["id"])
+	}
+	reqObj, ok := got["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("request = %v", got["request"])
+	}
+	if reqObj["command"] != "rm -rf build" || reqObj["protectedWrite"] != true {
+		t.Errorf("request = %v", reqObj)
+	}
+	// It must NOT double as a question: the question card renders option buttons, and an
+	// approval has none.
+	if _, ok := resp["pendingQuestions"]; ok {
+		t.Error("the approval also went out as a question")
+	}
+}
+
+// A stopped session cannot be answered, so the card must not be offered at all — the same rule
+// pendingQuestions already follows.
+func TestAStoppedSessionOffersNoApproval(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	prev := agentRegistry[session.KindMuse]
+	agentRegistry[session.KindMuse] = fakeApprovalAgent{}
+	t.Cleanup(func() { agentRegistry[session.KindMuse] = prev })
+
+	m := session.Meta{Name: "slot-approval-dead", Dir: t.TempDir(), Kind: session.KindMuse,
+		Driver: session.DriverManaged}
+	session.WriteMeta(m)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/sessions/"+m.Name+"/messages", nil)
+	handleGenericMessages(rec, req, m, false, "")
+
+	var resp map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if _, ok := resp["pendingApproval"]; ok {
+		t.Error("a stopped session offered an approval nobody can answer")
 	}
 }

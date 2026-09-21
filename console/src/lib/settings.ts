@@ -401,6 +401,13 @@ export interface Settings {
   // three routes look like they had the same reach as off, and hid that none of them can
   // take another vendor's key away. The stored value stays one string.
   opencodeCatalog: "off" | "own" | "free" | "go" | "zen";
+  // Whether the lcpp (llama.cpp) kind may be launched at all (Settings > Agents > llama.cpp,
+  // docs/log/105 §106.2). Unlike opencodeCatalog's "off" this kind has no billing route to fall
+  // back to — off simply hides it from every launch menu and the registry's available()
+  // predicate. Default true (opt-out): existing deployments already launch lcpp today, so
+  // upgrading to this setting must not silently stop them. The Agent reads the same key
+  // (ui-prefs lcppEnabled) as the actual, server-side gate — this switch is not decorative.
+  lcppEnabled: boolean;
   // Show the mirror's thinking block expanded from the start (kind-scoped; Settings > Agents >
   // each card > behaviour settings). Default off for every kind, i.e. collapsed as before and
   // opened by a click. How much thinking a backend emits varies enormously by kind and model, so
@@ -1052,6 +1059,7 @@ const DEFAULTS: Settings = {
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
+  lcppEnabled: true, // opt-out (docs/log/105 §106.2) — an existing deployment launches lcpp today
   expandThinking: {},
   assistantTitleSuggest: true,
   branchSuggestEnabled: true,
