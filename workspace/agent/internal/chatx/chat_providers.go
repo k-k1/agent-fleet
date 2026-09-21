@@ -134,13 +134,27 @@ func headlessAgentAvailable(kind string) bool {
 	headlessAvailInFlight[kind] = done
 	headlessAvailMu.Unlock()
 
-	v := headlessAvailCheck(kind)
-
-	headlessAvailMu.Lock()
-	headlessAvailAt[kind], headlessAvail[kind] = time.Now(), v
-	delete(headlessAvailInFlight, kind)
-	headlessAvailMu.Unlock()
-	close(done) // wake every caller that joined the wait channel above
+	// Deferred, not inline: headlessAvailCheck shells out to a vendor CLI, and a panic below
+	// would otherwise leave this kind's in-flight entry in the map with its channel never
+	// closed — every later caller would then block forever on the wait above, permanently
+	// wedging assistant chat and every one-shot, not just the warming that introduced the
+	// concurrency. A leader that dies must still hand the waiters an answer (false) and clear
+	// the slot, so the next caller can retry.
+	var v, completed bool
+	defer func() {
+		headlessAvailMu.Lock()
+		// Only a check that RETURNED gets cached: a panicking one has no answer, and writing
+		// its zero value would pin "unavailable" for the whole minute. Clearing the slot alone
+		// lets the very next caller retry.
+		if completed {
+			headlessAvailAt[kind], headlessAvail[kind] = time.Now(), v
+		}
+		delete(headlessAvailInFlight, kind)
+		headlessAvailMu.Unlock()
+		close(done) // wake every caller that joined the wait channel above
+	}()
+	v = headlessAvailCheck(kind)
+	completed = true
 	return v
 }
 

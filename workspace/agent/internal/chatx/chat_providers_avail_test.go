@@ -89,3 +89,48 @@ func TestHeadlessAgentAvailableDedupesConcurrentColdChecks(t *testing.T) {
 		t.Fatalf("a warm cache hit re-ran the check: %d calls, want 1", got)
 	}
 }
+
+// A leader whose check PANICS must still clear its in-flight slot and wake its waiters.
+// Without the deferred cleanup, the panicking goroutine leaves the kind's channel in the map
+// forever: every later caller blocks on it, wedging assistant chat and every one-shot — a
+// permanent failure from a transient one. The panic is contained here the same way net/http
+// contains one in a handler goroutine.
+func TestHeadlessAgentAvailablePanicDoesNotWedgeLaterCallers(t *testing.T) {
+	const kind = "probe-kind-panic"
+	t.Cleanup(ClearHeadlessAvailableForTest(kind))
+
+	var calls int32
+	prevCheck := headlessAvailCheck
+	headlessAvailCheck = func(k string) bool {
+		if k != kind {
+			return prevCheck(k)
+		}
+		if atomic.AddInt32(&calls, 1) == 1 {
+			panic("probe: the vendor CLI check blew up")
+		}
+		return true
+	}
+	t.Cleanup(func() { headlessAvailCheck = prevCheck })
+
+	func() {
+		defer func() { _ = recover() }()
+		headlessAgentAvailable(kind)
+	}()
+
+	// The second caller must run its OWN check rather than block: the panicking leader cached
+	// no answer, so the slot has to be free AND the minute-long cache must not have been
+	// poisoned with a zero value.
+	got := make(chan bool, 1)
+	go func() { got <- headlessAgentAvailable(kind) }()
+	select {
+	case v := <-got:
+		if !v {
+			t.Fatalf("second caller got %v, want true (a panicking check must not be cached)", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second caller blocked: the panicking leader left its in-flight slot behind")
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Fatalf("checks run = %d, want 2 (one panicked, one retried)", n)
+	}
+}
