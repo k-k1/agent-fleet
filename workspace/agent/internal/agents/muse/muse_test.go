@@ -18,8 +18,15 @@ func TestKindAndCaps(t *testing.T) {
 	if !c.ManagedOnly {
 		t.Error("ManagedOnly must be true: muse has no pane program at all")
 	}
-	if !c.PermissionChoice {
-		t.Error("PermissionChoice must be true, or POST /sessions refuses skip_permissions=false")
+	// 🔴 False, and not for want of a card: the approval Interaction and its card are built.
+	// It is false because in a Workspace there is no approval to choose about — measured, the
+	// sandbox waiver leaves the host's filesystem unrestricted, tool calls resolve
+	// `allow:policy` before the approval layer, and both values of the choice produce the same
+	// ungated session. A launch control whose two settings behave identically is worse than no
+	// control (muse.go's Caps header carries the measurement).
+	if c.PermissionChoice {
+		t.Error("PermissionChoice must be false: no muse approval can fire under --disable-sandbox, " +
+			"so the choice would be a control with no effect")
 	}
 	if !c.CanTranscript {
 		t.Error("CanTranscript must be true: Transcript reads a store the item stream fills")
@@ -67,12 +74,20 @@ func TestCapabilitiesDeclareOnlyWhatTheDriverImplements(t *testing.T) {
 	if c.DynamicMode {
 		t.Error("DynamicMode must be false: MSP has no plan-mode method")
 	}
-	// muse is the first kind to declare it. The condition is not "the wire carries approvals"
-	// but "a pending approval can be ANSWERED from the Console" — the driver raises an
-	// approval-kind Interaction, the read layer sends it out as pendingApproval, and the
-	// mirror's ApprovalCard answers it through /respond.
+	// muse is the first kind to declare it, and what it declares is that this driver SUPPORTS
+	// the approval Interaction kind — it raises one, the read layer sends it out as
+	// pendingApproval, and the mirror's ApprovalCard answers it through /respond. All built.
+	//
+	// It is deliberately NOT paired with Caps.PermissionChoice, which is false: that one is a
+	// member-visible launch control, and measured, no muse approval can fire in a Workspace
+	// (muse.go). This field has no consumer outside this process, so it promises the member
+	// nothing and stays an accurate statement about the code.
 	if !c.Permissions {
 		t.Error("Permissions must be true: the approval interaction and its card both exist")
+	}
+	if a := New().Caps(); a.PermissionChoice {
+		t.Error("Caps.PermissionChoice and Capabilities.Permissions have drifted back into a pair; " +
+			"they answer different questions (muse.go, driver.go)")
 	}
 	if c.Fork {
 		t.Error("Fork must stay false until the fork path is built")
