@@ -126,7 +126,13 @@ func headlessAgentAvailable(kind string) bool {
 		headlessAvailMu.Unlock()
 		<-wait // the leader's exec is already running; take its answer, start none of our own
 		headlessAvailMu.Lock()
-		v := headlessAvail[kind]
+		// Re-check freshness rather than reading headlessAvail[kind] straight: a leader that
+		// panicked clears the in-flight slot (the defer below) WITHOUT writing a fresh cache
+		// entry, so what is sitting in the map can be a much older result from before this
+		// call's own minute-freshness check ran. Reading it unconditionally would hand the
+		// waiter an expired answer instead of the "false" a dead leader is documented to give.
+		t, ok := headlessAvailAt[kind]
+		v := ok && time.Since(t) < time.Minute && headlessAvail[kind]
 		headlessAvailMu.Unlock()
 		return v
 	}

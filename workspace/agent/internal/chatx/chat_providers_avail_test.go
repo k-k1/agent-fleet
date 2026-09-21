@@ -134,3 +134,71 @@ func TestHeadlessAgentAvailablePanicDoesNotWedgeLaterCallers(t *testing.T) {
 		t.Fatalf("checks run = %d, want 2 (one panicked, one retried)", n)
 	}
 }
+
+// A waiter that joins WHILE the leader's check is running, and whose leader then panics, must
+// not read whatever was sitting in headlessAvail[kind] before the leader started — that value
+// can be many minutes stale (103-final-review 軽4). Before this fix, the waiter path read
+// headlessAvail[kind] unconditionally after waking, so a leader that panicked handed every
+// waiter an EXPIRED cached answer instead of the "false" headlessAgentAvailable's own doc
+// promises for a dead leader (chat_providers.go's "A leader that dies must still hand the
+// waiters an answer (false)").
+func TestHeadlessAgentAvailableWaiterGetsFalseNotStaleCacheAfterLeaderPanics(t *testing.T) {
+	const kind = "probe-kind-waiter-expired"
+	t.Cleanup(ClearHeadlessAvailableForTest(kind))
+
+	// Seed a long-expired cache entry (10 minutes old, value true) — exactly the shape the
+	// review measured. It has to predate the leader's own run, so it cannot be written through
+	// headlessAgentAvailable itself (that would make it fresh); write the package vars directly.
+	headlessAvailMu.Lock()
+	headlessAvailAt[kind] = time.Now().Add(-10 * time.Minute)
+	headlessAvail[kind] = true
+	headlessAvailMu.Unlock()
+
+	entered := make(chan struct{})
+	proceed := make(chan struct{})
+	prevCheck := headlessAvailCheck
+	headlessAvailCheck = func(k string) bool {
+		if k != kind {
+			return prevCheck(k)
+		}
+		close(entered)
+		<-proceed
+		panic("probe: the vendor CLI check blew up while a waiter was already joined")
+	}
+	t.Cleanup(func() { headlessAvailCheck = prevCheck })
+
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		defer func() { _ = recover() }()
+		headlessAgentAvailable(kind) // becomes the leader: the seeded entry is stale, not fresh
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("leader never entered its check")
+	}
+
+	waiterResult := make(chan bool, 1)
+	go func() { waiterResult <- headlessAgentAvailable(kind) }() // must join as a waiter, not a second leader
+
+	// Give the waiter a moment to reach the in-flight join before releasing the panic, so it
+	// actually exercises the wake-from-wait path rather than a race that skips it.
+	time.Sleep(150 * time.Millisecond)
+	close(proceed)
+
+	select {
+	case <-leaderDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("leader never finished")
+	}
+	select {
+	case v := <-waiterResult:
+		if v {
+			t.Fatal("waiter got the expired cached true instead of false after the leader panicked")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter blocked: the panicking leader left its in-flight slot behind")
+	}
+}
