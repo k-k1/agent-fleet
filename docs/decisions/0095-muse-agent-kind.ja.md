@@ -8,6 +8,9 @@
   2 件、そして能力 2 行を ✓ にし af サーバ自身の環境の 401 を見つけた実ターン 3 本）。種別は 2 つの前提（プロプライエタリのバイナリが導入済み・資格情報がある）の先で起動
   メニューに出る。**作られていないもの**はガイドの能力表と末尾節に名指してあり、あそこの空欄は
   「まだ検討中」ではなく「まだ作っていない」を意味する。
+  P2-16（コンテキスト使用量ゲージ）はバックエンドを配線済み（`handle.go`・`context.go`・
+  `overlayMuseLiveUsage`）だが、`contextBar` cap とガイドの行は実ターンを 1 本消費して稼働中の
+  Agent でエンドツーエンドを観測するまで `—` のまま（2026-09-22）。
   以下の決定の `file:line` は当時の develop `06ea94d3` で読んだもので、実測が動かした箇所は実装記録が
   訂正している。◎ は Workspace のコンテナで **Muse Code 1.3.0-R3401.1** を実測したもの、△ はベンダ
   文献のみ、× は未測。再現手順は「実機プローブの再現」節にある。
@@ -2372,3 +2375,42 @@ P2-12）。よって冒頭の Status は *adopted* である。見積りは 22�
 無害である理由の方が面白い——Agent 側が作成時に `ManagedOnly` の kind を managed へ既定する
 （`session_handlers.go:707`）ので、CP の一覧は既に反対側で名前の付いた軸の手前に置かれた最適化に
 過ぎない。欠陥へずれようがない一覧は、ここで変える価値が無い。
+
+### P2-16: コンテキスト使用量ゲージ — バックエンド配線済み・実ターン未消費
+
+**作業パッケージが求めたもの。** `session/contextUsage`（MSP のライブなコンテキスト窓圧力通知。
+`SessionContextUsageParams`＝`usedTokens`・省略可能な `windowTokens`・`pressure`）を AF の
+セッション使用量に載せ、Console のコンテキストゲージが muse セッションでも出るようにする。
+
+**作ったもの（実ターン不要）。**
+
+- `handle.go` — 専用の `ctxMu` ロックで保護する 3 フィールドを追加（`ctxUsed int64`・
+  `ctxWindow *int64`・`ctxHasUsage bool`）。`onNotify` に `msp.NotificationSessionContextUsage`
+  の case を追加してデコード・保存する。`ctxWindow` はワイヤに `windowTokens` が無い場合 nil——
+  値は捏造しない。
+- `context.go`（新規）— `ManagedContext(name)` が `(usedTokens, windowTokens, ok)` を返す。
+  ok=false は最初の通知が来るまで継続するので、ターン完了前はゲージを出さない。また
+  `agentImpl` に `agents.ContextReporter`（`ContextFill`）を実装し、チャットミラーの
+  ContextBar がライブ値を拾えるようにする。窓の定数 `MuseDefaultWindow = 1,007,997`（muse-spark
+  の全 4 モデルで実測）。`windowTokens` がワイヤにある場合はその値を優先する。
+- `sessionx/session_usage.go` — `overlayMuseLiveUsage`（`overlayKiroLiveUsage` の並列）を追加し、
+  一括 `/sessions/usage` の context ブロックを `muse.ManagedContext` から埋める。窓ソースは
+  ワイヤが提供した場合 `"recorded"`、フォールバックを使った場合 `"estimated"`。
+
+**テスト（`go test ./...` 全体 51 パッケージ 3940 本で全緑）:**
+`context_test.go` に 6 本の新規テスト: 通知前ガード・通知が記録される（`windowTokens` あり）・
+`windowTokens` 無しでフォールバック・最新スナップショット優先・ハンドル無しの場合の
+`ManagedContext` と `ContextFill` のガード。
+
+**未確認のまま残るもの——`contextBar` は引き続き `false`。**
+
+`session/contextUsage` は実ターンの周りでしか発火しないため、エンドツーエンドの経路
+（MSP ホスト → handle → `ManagedContext` → ミラーの ContextBar 描画）の確認には実際の
+サブスクリプションターンが 1 本必要である。そのターンを消費して稼働中の Agent でその値を
+観測する（神託はモデルの返答ではなく AF のストアと ContextBar のレンダリング）まで、
+`registry.ts` の `caps.contextBar` は `false` のまま、ガイドの行も `—¹¹` のまま。
+
+その 1 ターンで確認すべき 3 つの継ぎ目:
+1. ターン完了後に `ManagedContext` が ok=true かつ `usedTokens` が非ゼロを返す。
+2. チャットミラーの `/messages` レスポンスが `context` ブロック（`tokens`・`window`）を持つ。
+3. Console の ContextBar が描画される（あるいは MCP の `get_session_usage` がそれを報告する）。

@@ -7,6 +7,9 @@ English | [日本語](0095-muse-agent-kind.ja.md)
   P2-15 — every row of the work-package table below, plus the MCP wire route no row owned, the
   fork path, the two guide paragraphs the decisions promised, and the three live turns that
   ticked two capability rows and found a 401 in the af server's own environment).
+  P2-16 (context-usage gauge) wired the backend — `handle.go`, `context.go`, `overlayMuseLiveUsage` —
+  but the `contextBar` cap and guide row remain `—` until a real turn is spent and the value
+  observed end-to-end in the running Agent (2026-09-22).
   The kind is offered in the launch menu behind its two preconditions (the proprietary
   binary installed, a credential stored). What is NOT built is named in the guide's own capability
   table and in the closing section, so an unticked row there means "not built", never "still
@@ -2569,3 +2572,44 @@ is harmless, and its harmlessness is the interesting part — the Agent defaults
 kind to managed at create time (`session_handlers.go:707`), so CP's list is an optimisation in
 front of an axis that is already named on the other side. A list that cannot drift into a defect
 is not worth a change here.
+
+### P2-16: context-usage gauge — backend wired, live turn not yet spent
+
+**What the work-package asked for.** `session/contextUsage` (MSP's live context-window
+pressure notification, `SessionContextUsageParams`: `usedTokens`, optional `windowTokens`,
+`pressure`) wired to AF's session usage, so the Console's ContextBar appears on muse sessions.
+
+**What was built (no real turn needed).**
+
+- `handle.go` — three new fields guarded by a dedicated `ctxMu` lock (`ctxUsed int64`,
+  `ctxWindow *int64`, `ctxHasUsage bool`), and a new case for
+  `msp.NotificationSessionContextUsage` in `onNotify` that decodes and stores them.
+  `ctxWindow` is nil when `windowTokens` is absent from the wire — never fabricated.
+- `context.go` (new file) — `ManagedContext(name)` returns `(usedTokens, windowTokens, ok)`:
+  ok=false until the first notification, so no bar is drawn before a turn completes. Also
+  implements `agents.ContextReporter` (`ContextFill`) on `agentImpl`, making the chat
+  mirror's ContextBar pick up the live value. Fallback window constant `MuseDefaultWindow =
+  1,007,997` (measured across all four muse-spark models); used when `windowTokens` is absent
+  from the wire. When the wire carries a window, that value wins.
+- `sessionx/session_usage.go` — `overlayMuseLiveUsage` (parallel to `overlayKiroLiveUsage`)
+  fills the bulk `/sessions/usage` context block from `muse.ManagedContext`; window source is
+  `"recorded"` when the wire provided it, `"estimated"` when the fallback was used.
+
+**Tests (all green in the full `go test ./...` run, 3940 tests across 51 packages):**
+Six new tests in `context_test.go`: before-notification guard, notification recorded (with
+`windowTokens`), `windowTokens` absent → fallback, latest-wins snapshot, no-handle guards for
+both `ManagedContext` and `ContextFill`.
+
+**What remains unverified — `contextBar` is still `false`.**
+
+`session/contextUsage` fires only around a real turn, so the end-to-end path (MSP host →
+handle → `ManagedContext` → ContextBar rendered in the mirror) requires a real subscription
+turn to confirm. One turn against the member's account is what the tick costs. Until that turn
+is spent and the value observed in the running Agent (the oracle is the AF store and the
+ContextBar render, not the model's output), `caps.contextBar` stays `false` in `registry.ts`
+and the guide row stays `—¹¹`.
+
+The three seams to check on that one turn:
+1. `ManagedContext` returns ok=true with non-zero `usedTokens` after the turn completes.
+2. The chat mirror's `/messages` response carries a `context` block (`tokens`, `window`).
+3. The ContextBar renders in the Console (or `get_session_usage` reports it via MCP).
