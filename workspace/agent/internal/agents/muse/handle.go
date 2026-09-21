@@ -1,6 +1,7 @@
 package muse
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -709,16 +711,94 @@ func (h *threadHandle) pump() {
 	}
 }
 
-// inputParts renders a TurnInput as MSP input parts. Attachments ride as their own text parts
-// naming the path: managed attaches through the API rather than pasting into a pane, and the
-// image part type takes base64 rather than a path, so a path is text until the transcript work
-// package teaches this to read the file.
+// maxInlineImageBytes caps what AF will base64 into a single frame. The upload endpoint accepts
+// 64 MiB (fs.go's defaultMaxUpload) and base64 inflates by a third, so an uncapped read would
+// put an 85 MB line on a pipe whose reader is bounded at 16 MiB (msp/client.go). Eight is far
+// above any screenshot and well under both limits; anything larger takes the path route below,
+// which still works — the workspace is trusted and the host's filesystem is unrestricted, so
+// muse can open the file itself.
+const maxInlineImageBytes = 8 << 20
+
+// inputParts renders a TurnInput as MSP input parts: the prompt, then one part per attachment.
+//
+// An IMAGE becomes a real `image` part — the wire takes base64 rather than a path, so the file
+// is read here. Everything else rides as a text part naming the path, which is the same
+// treatment codex gives a non-image attachment (buildInput): mentioning a path is enough for an
+// agent that can read files.
+//
+// Every failure falls back to that text part rather than failing the turn or dropping the
+// attachment. A member who pasted a screenshot must never end up with a turn that mentions
+// nothing at all, and the path is still useful to the model.
 func inputParts(in agents.TurnInput) []msp.TurnInputPart {
 	parts := []msp.TurnInputPart{{Type: msp.TurnInputPartTypeText, Text: strPtr(in.Prompt)}}
 	for _, a := range in.Attachments {
+		if strings.TrimSpace(a) == "" {
+			continue
+		}
+		if p, ok := imagePart(a); ok {
+			parts = append(parts, p)
+			continue
+		}
 		parts = append(parts, msp.TurnInputPart{Type: msp.TurnInputPartTypeText, Text: strPtr(a)})
 	}
 	return parts
+}
+
+// imagePart reads an attachment into an `image` part, or reports false so the caller keeps the
+// path as text.
+func imagePart(path string) (msp.TurnInputPart, bool) {
+	mediaType, ok := imageMediaType(path)
+	if !ok {
+		return msp.TurnInputPart{}, false
+	}
+	st, err := os.Stat(path)
+	switch {
+	case err != nil:
+		log.Printf("muse: attachment %s is not readable, sending its path instead: %v", path, err)
+		return msp.TurnInputPart{}, false
+	case !st.Mode().IsRegular():
+		return msp.TurnInputPart{}, false
+	case st.Size() > maxInlineImageBytes:
+		log.Printf("muse: attachment %s is %d bytes (> %d), sending its path instead", path, st.Size(), maxInlineImageBytes)
+		return msp.TurnInputPart{}, false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("muse: attachment %s could not be read, sending its path instead: %v", path, err)
+		return msp.TurnInputPart{}, false
+	}
+	// An empty payload is `invalidParams` on the wire, and that costs the whole turn rather
+	// than the attachment. Checked after the read rather than off the stat above, so a file
+	// emptied in between is caught by the same line (and so that the branch has one reason to
+	// exist rather than two, one of which no test could tell apart).
+	if len(b) == 0 {
+		return msp.TurnInputPart{}, false
+	}
+	data := base64.StdEncoding.EncodeToString(b)
+	return msp.TurnInputPart{
+		Type:       msp.TurnInputPartTypeImage,
+		MediaType:  &mediaType,
+		Base64Data: &data,
+	}, true
+}
+
+// imageMediaType is the fixed extension → media type map, deliberately not
+// `mime.TypeByExtension`: that reads the container's /etc/mime.types, which may be absent, and
+// `mediaType` is REQUIRED on an image part — an empty or surprising one costs the turn, not the
+// attachment. The four types are exactly what the paste endpoint itself accepts
+// (sessionx/session_paste.go's imageExt), so a file that arrived by paste always has one.
+func imageMediaType(path string) (string, bool) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png", true
+	case ".jpg", ".jpeg":
+		return "image/jpeg", true
+	case ".gif":
+		return "image/gif", true
+	case ".webp":
+		return "image/webp", true
+	}
+	return "", false
 }
 
 func (h *threadHandle) Interrupt() error {
