@@ -50,7 +50,7 @@ updated: "2026-09"
 ### なぜ `AF_LLM_API_KEY` ではないか
 
 07 の `AF_COMFY_API_KEY` のように、この役だけの鍵の名前を新設することもできました。
-そうしなかったのは、**`AF_ENGINE_API_KEY_LLM` がすでに every external 行の鍵**だからです
+そうしなかったのは、**`AF_ENGINE_API_KEY_LLM` がすでにすべての外部管理の行の鍵**だからです
 ——手で書いた `llm` の行（経路 B）も、他の役の外部管理の行も、みなここから読みます。
 専用の名前をもう1つ足すと、「どちらに書いた鍵が効くか」という調停が要り、
 編集したはずの bearer が効かない 401 を作るだけです。**鍵は 1 つの変数に一本化しています。**
@@ -66,7 +66,12 @@ LAN 機に貼り付けて実行するコマンドで、この配備が走らせ�
 |---|---|---|
 | コンテナ | `docker run ghcr.io/ggml-org/llama.cpp:server-cuda`(**この配備自身が使っているのと同じイメージ**) | — |
 | パッケージ | `winget install llama.cpp` | 同左 |
-| 配布物 | `llama-bNNNNN-bin-ubuntu-cuda-*.zip` | `llama-bNNNNN-bin-win-cuda-*.zip` **+ `cudart-*.zip`（CUDA ランタイムは別配布）** |
+| 配布物 | `llama-bNNNNN-bin-ubuntu-cuda-*.tar.gz`(**`.zip` ではありません**) | `llama-bNNNNN-bin-win-cuda-*.zip` **+ `cudart-*.zip`（CUDA ランタイムは別配布）** |
+
+🔴 **CUDA 対応の Linux 配布物は新しいビルドにしかありません。** この配備が動かして
+いる `b10830` の資産一覧には無く(当時は vulkan/rocm/sycl のみ)、`b11065` で
+`ubuntu-cuda-12.8`/`ubuntu-cuda-13.3` として現れます。古いビルド番号を指定すると
+探しても見つからないので、NVIDIA の GPU なら**コンテナが最も確実**です。
 
 起動コマンドの形:
 

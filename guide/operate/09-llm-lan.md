@@ -71,7 +71,13 @@ Getting it (easiest first):
 |---|---|---|
 | Container | `docker run ghcr.io/ggml-org/llama.cpp:server-cuda` (**the same image this deployment itself runs**) | — |
 | Package manager | `winget install llama.cpp` | same |
-| Release archive | `llama-bNNNNN-bin-ubuntu-cuda-*.zip` | `llama-bNNNNN-bin-win-cuda-*.zip` **+ `cudart-*.zip` (the CUDA runtime ships separately)** |
+| Release archive | `llama-bNNNNN-bin-ubuntu-cuda-*.tar.gz` (**not `.zip`**) | `llama-bNNNNN-bin-win-cuda-*.zip` **+ `cudart-*.zip` (the CUDA runtime ships separately)** |
+
+🔴 **A CUDA-enabled Linux archive only exists on newer builds.** It is absent from
+`b10830`'s asset list, the build this deployment runs (vulkan/rocm/sycl only, back
+then), and appears from `b11065` on as `ubuntu-cuda-12.8`/`ubuntu-cuda-13.3`. Naming
+an older build number will not find one — on an NVIDIA GPU, **the container is the
+safer bet**.
 
 The shape of the command:
 
