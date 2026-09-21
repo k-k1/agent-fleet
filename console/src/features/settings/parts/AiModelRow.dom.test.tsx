@@ -14,12 +14,12 @@ const { setSetting } = await import("../../../lib/settings.ts");
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-function Probe({ value }: { value: string }) {
+function Probe({ value }: { value: string | undefined }) {
   const label = useResolvedModelLabel("claude", "short", value);
   return <span data-testid="label">{label}</span>;
 }
 
-async function render(value: string): Promise<void> {
+async function render(value: string | undefined): Promise<void> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -41,13 +41,13 @@ afterEach(() => {
 
 describe("useResolvedModelLabel", () => {
   it("resolves the recommended label from the visible catalog when nothing is hidden", async () => {
-    await render(""); // "" = follow the recommendation
+    await render(undefined); // undefined = nothing set anywhere in the chain, follow "推奨"
     expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Haiku" }));
   });
 
   it("falls back to the CLI default when the recommended model is hidden, not the raw id", async () => {
     setSetting("hiddenModels", { claude: ["haiku"] });
-    await render("");
+    await render(undefined);
     // Must NOT read "推奨（現在: haiku）" — that is the exact bug: showing an excluded id as if
     // it would run, when the Agent's own visibleModel() falls through to the CLI default here.
     expect(host.textContent).not.toContain("haiku");
@@ -57,5 +57,15 @@ describe("useResolvedModelLabel", () => {
   it("resolves an explicitly configured model to its own catalog label", async () => {
     await render("sonnet");
     expect(host.textContent).toBe("Sonnet");
+  });
+
+  // 103-final-review 中3: "" is not "nothing set" — it is something in the chain explicitly
+  // picking the CLI's own default (assistantModelPref's `ok` marks this the same way on the
+  // Agent side). Collapsing it into the 推奨 branch made a pinned-but-unconfigured feature card
+  // claim "推奨" for a value the Agent never actually falls back to.
+  it("resolves an explicit empty value to the CLI default, not to 推奨", async () => {
+    await render("");
+    expect(host.textContent).toBe(t("ui.default"));
+    expect(host.textContent).not.toBe(t("assistant.recommended_now", { model: "Haiku" }));
   });
 });

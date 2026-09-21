@@ -47,7 +47,12 @@ function recommendedModelId(kind: AiAgentKind, tier: AiModelTier, ids: string[],
 // to the CLI default in that exact case (chat_providers.go's recommendedUtilityModel). Fixed
 // here: a recommended id absent from the VISIBLE catalog resolves to ui.default, matching what
 // actually runs.
-export function useResolvedModelLabel(kind: AiAgentKind, tier: AiModelTier, value: string): string {
+// value is string | undefined, not just string, because the two carry different meanings a
+// caller can produce (103-final-review 中3): undefined ⇒ nothing decided this at any level, so
+// show what "推奨" resolves to; "" ⇒ something in the chain explicitly picked the CLI's own
+// default (assistantModelPref's `ok` marks this the same way on the Agent side), which is a
+// different answer and must not fall into the "推奨" branch just because it is falsy.
+export function useResolvedModelLabel(kind: AiAgentKind, tier: AiModelTier, value: string | undefined): string {
   const tr = useT();
   const live = useModelOptions(kind) || [["", tr("ui.default")]];
   const ids = live.map(([id]) => id);
@@ -57,9 +62,10 @@ export function useResolvedModelLabel(kind: AiAgentKind, tier: AiModelTier, valu
   const recommended = recommendedModelId(kind, tier, ids, cheap);
   const recommendedVisible = live.some(([id]) => id === recommended);
   const recommendedLabel = recommendedVisible ? live.find(([id]) => id === recommended)![1] : tr("ui.default");
-  if (!value || value === ASSISTANT_RECOMMENDED_MODEL) {
+  if (value === undefined || value === ASSISTANT_RECOMMENDED_MODEL) {
     return tr("assistant.recommended_now", { model: recommendedLabel });
   }
+  if (value === "") return tr("ui.default");
   return live.find(([id]) => id === value)?.[1] || value;
 }
 

@@ -92,7 +92,14 @@ function AiFeatureCard({ f, row }: { f: AiAssistFeatureDef; row: AiAssistResolut
   // RENDERED once row?.kind makes the fallback below moot.
   const tierModels = f.tier === "prose" ? s.aiProseModels : s.aiShortModels;
   const modelKind = (pin || row?.kind || "claude") as AiAgentKind;
-  const modelValue = pin ? s.aiFeatureModels?.[f.id]?.[pin] || "" : tierModels?.[modelKind] || "";
+  // No per-feature override (undefined, key never written) falls through to §1's tier default
+  // for the resolved kind — same as an unpinned feature, just anchored to the pinned kind
+  // instead of row?.kind (103-final-review 中3: collapsing this to "" made a pinned-but-
+  // unconfigured card claim "推奨" while the Agent actually ran the tier default). An override
+  // explicitly cleared to "" stays "" here on purpose — useResolvedModelLabel reads that as "CLI
+  // default", not "recommended".
+  const override = pin ? s.aiFeatureModels?.[f.id]?.[pin] : undefined;
+  const modelValue = override ?? tierModels?.[modelKind];
   const modelLabel = useResolvedModelLabel(modelKind, f.tier, modelValue);
 
   return (

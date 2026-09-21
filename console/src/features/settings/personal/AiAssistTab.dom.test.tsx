@@ -153,6 +153,30 @@ describe("AiAssistTab per-feature cards", () => {
     expect(card.textContent).toContain(t("aiassist.currently_using", { agent: "Claude", model: "Haiku" }));
   });
 
+  // 103-final-review 中3: pinned but with no per-feature override, the currently-using line
+  // must show what the Agent actually runs — the §1 tier default for the pinned kind — not
+  // "推奨". Before this fix the missing override collapsed to "", which useResolvedModelLabel
+  // read as "nothing chosen" and rendered as 推奨 even though a concrete tier default existed.
+  it("shows the tier default's own label when pinned with no per-feature override", async () => {
+    apiMock.mockImplementation((p: string) => {
+      if (p === "api/ai-assist/resolution") {
+        return Promise.resolve({
+          features: [{ feature: "title.session", enabled: true, kind: "claude", source: "pin" }],
+        });
+      }
+      return Promise.resolve({});
+    });
+    setSetting("autoTitleSuggest", true);
+    setSetting("aiFeatureAgents", { "title.session": "claude" });
+    setSetting("aiShortModels", { claude: "opus" });
+    await render();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const card = cardFor("title.session");
+    expect(card.textContent).toContain(t("aiassist.currently_using", { agent: "Claude", model: "Opus" }));
+  });
+
   // 103-impl-review 中6: the model picker must be able to go back to "follow the setting
   // above" — before this fix there was no such option, and an unset value showed as
   // "Recommended" (a real, different, sticky choice) instead of "nothing chosen here".
