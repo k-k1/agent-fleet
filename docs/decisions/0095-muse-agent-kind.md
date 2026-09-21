@@ -1504,3 +1504,71 @@ makes it silently, and the guide explains what picking a contributor model means
 the spend: on a subscription the invisible quota is observers and subagents, which the clamps close;
 on a metered account there is still **no price per token from the vendor** (`cost: null`), so the
 cost chip cannot ship in v1 and the guide has to say why.
+
+## Phase 2 implementation record (2026-09-21)
+
+Phase 2 started on 2026-09-21, in the order of the work-package table. This section carries what
+the implementation measured that the decisions above did not know, one entry per landing.
+
+### P2-1: the MSP client, generated types and the drift lock (`workspace/agent/internal/msp/`)
+
+The first work package. 234 types, 47 methods, 31 notifications and 31 error codes are rendered
+from the vendor's own offline export by `internal/msp/schemagen`, so the wire vocabulary is not
+hand-kept. The drift lock the Consequences section promised is three checks, and only the third
+needs a binary: the generated file matches the checked-in bundle, the bundle's fingerprint matches
+the constant, and — with a binary present — the installed binary exports the same fingerprint.
+Each has a negative control, because a check that never ran and a check that passed look the same.
+
+Three measurements corrected or extended the decisions.
+
+**1. `--provider echo` does not reach `muse serve`, so "≈ $0 to build" stops at the turn.** The
+watershed table's harness row, and the Consequences bullet that qualifies it, both rest on
+`--provider echo`. Measured on 1.3.0-R3401.1: `--provider <MODE>` is an **`exec` startup flag**
+and `muse serve --help` has no equivalent — its only posture flags are the sandbox ones,
+`--trust-workspace` and `--no-session-log`. Over the wire, `session/start` *accepts*
+`providerId: "echo"` and `modelId: "echo"` and records both on the session it returns
+(`"providerId": "echo"`, `"modelId": "echo"`), and the turn then ends
+`turn/completed.error.kind = "authRequired"`, `"not logged in: run /login to add an API key"`.
+
+So the credential-free surface is real but narrower than the row claims: `initialize`, the
+capability grant, `session/start` and the transcript path are free; **every turn costs a
+credential**, and Decision 2 makes `serve` the only process AF runs. The consequence is a test
+double rather than a caveat — `internal/msp/msptest` is an in-process host over pipes, which is
+also what lets the suite run in CI, where the proprietary binary will never be. The live tests
+stay behind `MUSE_LIVE=1` and stop short of a turn.
+
+**2. The host emits a notification the stable surface does not declare: `session/started`.** The
+bundle declares 31 notifications and this is not one of them; the string occurs exactly once in
+240 KB of schema, inside `session/listChanged`'s own description ("row birth stays on
+`session/started`, unload pairs with `session/closed`"). Measured, a `session/start` over `serve`
+emits `session/started` *before* its response. The generated notification table is therefore a
+decode map, **not an allow-list**: the dispatcher logs and drops an undeclared method instead of
+treating it as a protocol error, and the driver must not assume the 31 are all it will see.
+
+**3. The host validates UUIDv7 strictly, which turns Decision 4 into a test.** A `commandId`
+carrying a v4 is refused `-32602 invalidParams`, `"invalid session/start commandId: expected
+UUIDv7"`. AF mints its own (`msp.NewCommandID`, RFC 9562 v7, no new dependency), and the live
+suite asserts both directions: the host takes ours verbatim on `session/start.sessionId`, and it
+refuses a v4 — without the second, the first would pass against a host that validated nothing.
+
+### The estimate after 0093, corrected: 22–33 days, not 19–28
+
+ADR 0093 reached *adopted* on 2026-09-21, and the projection above assumed that lands two things.
+It landed one.
+
+- **The managed-only gate is genuinely free.** 0093 introduced `Caps.ManagedOnly`
+  (`agents/agents.go:97-105`) as a kind-independent flag, and the server-side managed→TUI
+  transition now branches on it (`sessionx/session_driver.go:73`), as do the Console sites. For
+  muse that is one line in `Caps()`.
+- **None of the approval `Interaction` was paid.** lcpp declares `Permissions: false` and routes
+  its own approval gate through the existing question kind — its own comment says so
+  (`agents/lcpp/driver.go:57-59`, and `approve` at `:586` builds `Kind: "question"`) — and
+  `agents/driver.go:49` still reads `"question" (future: "approval" | "plan")`. The other half,
+  `Caps.PermissionChoice`, was already true for claude, cursor, kiro, copilot and agy before 0093,
+  so it was never muse's to pay either.
+
+So the 3–5 day approval row stays whole, and the expected figure is the table's **22–33
+session-days**. Whether muse follows lcpp in mapping approvals onto the question kind is a Phase 2
+design decision, not a saving to assume: Decision 13 measured an `approval/requested` carrying
+`toolName`, `rawArgs`, `judgeEscalated`, `protectedWrite` and `subject.stages[].argv`, and folding
+that into a two-option question discards it.
