@@ -345,7 +345,11 @@ export type GraphLane = GraphLaneKnown | GraphLaneErased;
 //                           know (`raw` has it) — "unrecognised state: <raw>"
 // Neither may be drawn as idle: "no evidence" is not "idle" (docs/log/51), and
 // saying "not observed" over a stretch that was observed is the same lie inverted.
-export type SegmentKind = "active" | "idle" | "waiting" | "unknown" | "stopped" | "archived";
+// "archived" was a member here until 2026-09-21. It is gone rather than merely unused:
+// the builder is the only thing that ever produced one, and an archived lane now draws
+// nothing at all past its × (decision 12's amendment). A band kind nothing emits leaves a
+// branch in the view that can never run, which is how a figure grows code nobody can test.
+export type SegmentKind = "active" | "idle" | "waiting" | "unknown" | "stopped";
 
 // The coarse band a recorded state paints. S-LOGIC owns the table; the shape is
 // frozen here so the view cannot invent a second one:

@@ -44,8 +44,9 @@ import type {
   GraphSegment,
   LedgerState,
 } from "../../types/fleetgraph.ts";
-import type { Session, SessionKind } from "../../types/session.ts";
+import type { Session } from "../../types/session.ts";
 import { buildFleetGraph, isExternalActor, laneY, xOf } from "../../lib/fleetgraph.ts";
+import { clampWindow, panByPx, pinchSpanFactor, zoomAt } from "./viewport.ts";
 import "./fleetgraph.css";
 
 const ROW_H = 34;
@@ -73,8 +74,6 @@ const LABEL_W_BREAK = 560;
 const CANVAS_W = 920;
 const MIN_CANVAS_W = 240;
 const DAY_MS = 86_400_000;
-const MIN_SPAN_MS = 30 * 60_000; // 30 minutes — zooming past this stops being readable
-const MAX_SPAN_MS = 30 * DAY_MS; // matches decision 8's activity-retention tier
 // A pan/zoom gesture moves the window on every wheel notch and every pointer move; the
 // page it needs is re-fetched only once the gesture settles. Without this a single
 // trackpad flick fired one request per frame (and each one re-rendered the figure under
@@ -85,6 +84,12 @@ const FETCH_SETTLE_MS = 250;
 // an arrow). Beyond it the gesture was a pan, and the click it would synthesize is
 // swallowed — otherwise dragging the canvas opens whatever the finger came down on.
 const DRAG_SLOP_PX = 4;
+// Two fingers closer than this cannot give a stable ratio, and a ratio change smaller
+// than the deadzone is a resting hand rather than a pinch. Both numbers are the ones the
+// browser pane's recognizer settled on (features/browser/touch.ts) — a second figure for
+// the same physical gesture would only be a second thing to tune.
+const PINCH_MIN_SPAN_PX = 24;
+const PINCH_DEADZONE = 0.04;
 
 const STATE_KEY: Record<LedgerState, MsgKey> = {
   working: "fgraph.state.working",
@@ -167,17 +172,19 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
     const to = Date.now();
     return { from: to - DAY_MS, to };
   });
-  // Both gestures keep the same two invariants: the span stays inside
-  // [MIN_SPAN_MS, MAX_SPAN_MS], and the right edge never passes now — panning into the
-  // future scrolls into a blank the figure can never fill.
-  const zoom = (factor: number) => setWin((w) => {
-    const span = Math.min(MAX_SPAN_MS, Math.max(MIN_SPAN_MS, (w.to - w.from) * factor));
-    return { from: w.to - span, to: w.to };
-  });
+  // Every gesture goes through viewport.ts, which owns the two invariants (span inside
+  // [MIN_SPAN_MS, MAX_SPAN_MS], right edge never past now) AND the directions. The one
+  // defect that module was extracted for is invisible in the figure: a pan with the wrong
+  // sign pushes the window against "now", the clamp holds it, and the gesture reads as
+  // dead rather than reversed.
+  //
+  // `fraction` is where the gesture is anchored across the drawable width: 1 = the right
+  // edge, which is what the header's buttons have always done, and the pointer's own
+  // position for a wheel or a pinch.
+  const zoom = (factor: number, fraction = 1) => setWin((w) => zoomAt(w, factor, fraction, Date.now()));
   const pan = (fraction: number) => setWin((w) => {
     const span = w.to - w.from;
-    const to = Math.min(Date.now(), w.to + span * fraction);
-    return { from: to - span, to };
+    return clampWindow(w.from + span * fraction, w.to + span * fraction, Date.now());
   });
   const resetWindow = () => {
     const to = Date.now();
@@ -204,9 +211,14 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
   // no matter the pane. The callback re-runs on every mount and unmount of the node itself.
   const [bodyW, setBodyW] = useState(CANVAS_W + LABEL_W);
   const roRef = useRef<ResizeObserver | null>(null);
+  // The scroll box itself, kept because a drag scrolls it by hand: on touch the canvas
+  // takes the whole gesture (`touch-action: none`, so a pinch is ours), which also means
+  // the browser no longer scrolls the lane list for us.
+  const bodyElRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useCallback((el: HTMLDivElement | null) => {
     roRef.current?.disconnect();
     roRef.current = null;
+    bodyElRef.current = el;
     if (!el) return;
     const measure = () => setBodyW(el.clientWidth);
     measure();
@@ -222,19 +234,25 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
     [win.from, win.to, canvasW],
   );
 
-  // A gesture's px become a window shift through the scale itself: a wheel notch and a
-  // drag both move the figure by exactly the distance the input travelled. The first
-  // version panned a fixed 12% of the window per wheel EVENT, and one trackpad flick
-  // (dozens of events) threw the window days away.
-  const panPx = (px: number) => setWin((w) => {
-    const span = w.to - w.from;
-    const to = Math.min(Date.now(), w.to + px * (span / Math.max(1, canvasW)));
-    return { from: to - span, to };
-  });
+  // Where a client x falls across the drawable width, 0..1 — the anchor a wheel or a
+  // pinch zooms around, so the instant under the pointer stays under it.
+  const canvasElRef = useRef<HTMLDivElement | null>(null);
+  const fractionAt = (clientX: number): number => {
+    const box = canvasElRef.current?.getBoundingClientRect();
+    if (!box || box.width <= 0) return 1;
+    return (clientX - box.left) / box.width;
+  };
+  const panPx = (px: number) => setWin((w) => panByPx(w, px, canvasW, Date.now()));
+  // Scrolling the lane list is a DOM side effect, not part of the window: dragging up and
+  // down moves the rows, dragging left and right moves time (ADR 0096 decision 16).
+  const scrollRows = (dy: number) => {
+    const el = bodyElRef.current;
+    if (el) el.scrollTop -= dy;
+  };
   const onWheel = (e: RWheelEvent<HTMLDivElement>) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
-      zoom(e.deltaY > 0 ? 1.2 : 1 / 1.2);
+      zoom(e.deltaY > 0 ? 1.2 : 1 / 1.2, fractionAt(e.clientX));
       return;
     }
     // A plain vertical wheel belongs to the LANE LIST, which is what actually overflows
@@ -244,44 +262,89 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
     const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
     if (!dx) return;
     e.preventDefault();
-    // A wheel scrolls the VIEWPORT: deltaX > 0 means "further right", i.e. later. The
-    // opposite of a drag, which moves the CONTENT under the finger — measured with the
-    // sign the wrong way round, where a leftward flick only pressed the window against
-    // "now" and looked like the gesture did nothing at all.
+    // A wheel scrolls the VIEWPORT: deltaX > 0 is "further right", i.e. later — the
+    // opposite sign from a drag, which carries the CONTENT under the finger. viewport.ts
+    // owns both directions; see its header for why getting this wrong is invisible.
     panPx(dx);
   };
 
-  // Drag to pan, the gesture a timeline is expected to have. `moved` is what tells a pan
-  // from a click on a lane: past DRAG_SLOP_PX the click that the browser synthesizes at
-  // the end is swallowed in the capture phase, before any lane/arrow handler sees it.
-  const dragRef = useRef<{ id: number; x: number; moved: boolean } | null>(null);
+  // ── Grab and pinch ────────────────────────────────────────────────────────────────
+  // One pointer drags the figure in BOTH axes (time sideways, the lane list up and down);
+  // two pinch the time axis. Pointer events rather than touch events so a mouse, a
+  // trackpad and a finger all arrive here once — and so `setPointerCapture` can keep a
+  // drag that leaves the pane alive.
+  interface DragPoint {
+    x: number;
+    y: number;
+  }
+  const pointersRef = useRef(new Map<number, DragPoint>());
+  const movedRef = useRef(false);
+  const pinchRef = useRef<{ span: number } | null>(null);
   const swallowClickRef = useRef(false);
+
+  const pinchSpan = (): { span: number; midX: number } | null => {
+    const pts = [...pointersRef.current.values()];
+    if (pts.length < 2) return null;
+    const [a, b] = pts;
+    return { span: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2 };
+  };
+
   const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    dragRef.current = { id: e.pointerId, x: e.clientX, moved: false };
-  };
-  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
-    const d = dragRef.current;
-    if (!d || d.id !== e.pointerId) return;
-    const dx = e.clientX - d.x;
-    if (!d.moved && Math.abs(dx) < DRAG_SLOP_PX) return;
-    if (!d.moved) {
-      d.moved = true;
-      // Captured only once the press IS a drag: capturing on pointerdown would steal the
-      // pointer from every plain click on a lane.
-      e.currentTarget.setPointerCapture(e.pointerId);
+    // Only the primary button drags; a right-click belongs to the context menu, and the
+    // middle one to "open in a new pane" on the targets that still open something.
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 2) {
+      const p = pinchSpan();
+      pinchRef.current = p && p.span > PINCH_MIN_SPAN_PX ? { span: p.span } : null;
+      // A second finger ends the drag: promoting one of a pinch's fingers back to a pan
+      // when the other lifts would jump the window by however far they had spread.
+      movedRef.current = true;
     }
-    d.x = e.clientX;
+  };
+
+  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
+    const prev = pointersRef.current.get(e.pointerId);
+    if (!prev) return;
+    const dx = e.clientX - prev.x;
+    const dy = e.clientY - prev.y;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size >= 2) {
+      const p = pinchSpan();
+      const start = pinchRef.current;
+      if (!p || !start || p.span <= PINCH_MIN_SPAN_PX) return;
+      const ratio = p.span / start.span;
+      // A resting hand is not a pinch: without a deadzone the figure creeps while two
+      // fingers merely sit on the glass.
+      if (Math.abs(ratio - 1) < PINCH_DEADZONE) return;
+      pinchRef.current = { span: p.span };
+      zoom(pinchSpanFactor(ratio), fractionAt(p.midX));
+      return;
+    }
+
+    if (!movedRef.current && Math.hypot(dx, dy) < DRAG_SLOP_PX) return;
+    if (!movedRef.current) {
+      movedRef.current = true;
+      // Captured only once the press IS a drag: capturing on pointerdown would steal the
+      // pointer from every plain click on an arrow.
+      if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+    }
+    // The finger carries the CONTENT: dragging right shows earlier time, dragging down
+    // shows earlier rows. Both are the opposite sign from the wheel above.
     panPx(-dx);
+    scrollRows(dy);
   };
+
   const endDrag = (e: RPointerEvent<HTMLDivElement>) => {
-    const d = dragRef.current;
-    if (!d || d.id !== e.pointerId) return;
-    dragRef.current = null;
-    if (!d.moved) return;
-    swallowClickRef.current = true;
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    if (!pointersRef.current.delete(e.pointerId)) return;
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size > 0) return;
+    if (movedRef.current) swallowClickRef.current = true;
+    movedRef.current = false;
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
+
   const onClickCapture = (e: RMouseEvent<HTMLDivElement>) => {
     if (!swallowClickRef.current) return;
     swallowClickRef.current = false;
@@ -486,6 +549,11 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
             </div>
             <div
             className="fgraph-canvas"
+            ref={canvasElRef}
+            /* The phone's left-swipe rotates through running sessions (App.tsx). This
+               surface owns horizontal dragging, so it opts out by name rather than by
+               being mistaken for a horizontal scroller (app/swipeGuard.ts). */
+            data-no-swipe=""
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={endDrag}
@@ -517,8 +585,12 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
 
               {model.marks.map((m, i) => <CoverageLine key={i} mark={m} totalH={totalH} label={tr(MARK_KEY[m.kind])} />)}
 
+              {/* The lane draws; it does not open (ADR 0096 decision 17). The canvas is a
+                  surface you grab, and a tap that both panned and opened a session was the
+                  one way to lose your place by accident. The NAME opens it — that is what
+                  the label column is for. */}
               {model.lanes.map((lane) => (
-                <LaneLine key={lane.id} lane={lane} scale={scale} y={topY(lane.row)} onOpen={(e) => !lane.erased && clickable(lane.id) && activate(e, (np) => openActor(lane.id, np))} />
+                <LaneLine key={lane.id} lane={lane} scale={scale} y={topY(lane.row)} />
               ))}
 
               {model.segments.map((seg) => {
@@ -527,9 +599,7 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
                 // outlive their lane), but "guess row 0" would silently paint another,
                 // unrelated session's band — skip instead of fabricating data nobody observed.
                 if (row === undefined) return null;
-                const owner = laneById.get(seg.laneId);
-                const kind = owner && !owner.erased ? owner.kind : undefined;
-                return <SegmentRect key={`${seg.laneId}-${seg.t0}-${seg.t1}`} seg={seg} scale={scale} y={topY(row)} kind={kind} tr={tr} />;
+                return <SegmentRect key={`${seg.laneId}-${seg.t0}-${seg.t1}`} seg={seg} scale={scale} y={topY(row)} tr={tr} />;
               })}
 
               {model.arrows.map((a) => {
@@ -736,7 +806,7 @@ function CoverageLine({ mark, totalH, label }: { mark: CoverageMark; totalH: num
   );
 }
 
-function LaneLine({ lane, scale, y, onOpen }: { lane: GraphLane; scale: GraphScale; y: number; onOpen: (e: ClickMods) => void }) {
+function LaneLine({ lane, scale, y }: { lane: GraphLane; scale: GraphScale; y: number }) {
   const tr = useT();
   if (lane.erased) return null; // ADR 0096 decision 6: an erased lane is a row of arrows, no line at all.
   const nodes: ReactNode[] = [];
@@ -763,13 +833,21 @@ function LaneLine({ lane, scale, y, onOpen }: { lane: GraphLane; scale: GraphSca
         </g>,
       );
       // Only the LAST run's tail says whether the lane is still reachable (decision 12):
-      // stopped → dashed to the right edge, archived → faintly dashed, gone → nothing.
+      // stopped → dashed to the right edge; archived and gone → nothing at all.
+      //
+      // Archived lost its faint dashes and its grey band in the 2026-09-21 pass
+      // (decision 12's amendment): a folded-away lane is one a person deliberately put
+      // out of the way, and drawing it to the right edge kept it in the figure as loud as
+      // a live one. What it IS now reads off the label column's chip instead, which says
+      // "archived" in words — the line style was carrying that distinction alone when the
+      // chip did not exist.
       if (isLast && !run.cut) {
-        const tailX = xOf(scale, scale.to);
-        if (lane.presence === "stopped") nodes.push(<line key="tail" className="fgraph-tail stopped" x1={x1} x2={tailX} y1={y} y2={y} />);
-        else if (lane.presence === "archived") nodes.push(<line key="tail" className="fgraph-tail archived" x1={x1} x2={tailX} y1={y} y2={y} />);
+        if (lane.presence === "stopped") {
+          const tailX = xOf(scale, scale.to);
+          nodes.push(<line key="tail" className="fgraph-tail stopped" x1={x1} x2={tailX} y1={y} y2={y} />);
+        }
       } else if (isLast && run.cut) {
-        // "その先は不明" (decision 12): a cut run draws NOTHING like a stopped/archived tail
+        // "その先は不明" (decision 12): a cut run draws NOTHING like a stopped tail
         // would (that reads as "resumable", which this lane is not confirmed to be) — instead
         // the stretch after the hollow × is hatched exactly like an "unknown" activity band,
         // so it reads as uncertain rather than either "still there" or "definitely gone".
@@ -799,15 +877,17 @@ function LaneLine({ lane, scale, y, onOpen }: { lane: GraphLane; scale: GraphSca
   // there is no new per-kind CSS to keep in sync (memo `kind-color-css-checklist`).
   const laneColor = { "--lane-color": `var(--kind-${kindClass(lane.kind)})` } as CSSProperties;
   return (
-    <g className="fgraph-lane-hit" onClick={onOpen} onAuxClick={onOpen} style={laneColor}>
-      {/* A wide, invisible hit target under the (thin) drawn line so the row is easy to click. */}
+    <g className="fgraph-lane-hit" style={laneColor}>
+      {/* A wide, invisible band over the row. It carries no click any more — only the hover
+          highlight that says which row the pointer is on, which is what makes a dense
+          figure readable while the eye tracks one lane across the time axis. */}
       <line x1={0} x2={scale.width} y1={y} y2={y} className="fgraph-hit" />
       {nodes}
     </g>
   );
 }
 
-function SegmentRect({ seg, scale, y, kind, tr }: { seg: GraphSegment; scale: GraphScale; y: number; kind: SessionKind | undefined; tr: Tr }) {
+function SegmentRect({ seg, scale, y, tr }: { seg: GraphSegment; scale: GraphScale; y: number; tr: Tr }) {
   const x0 = xOf(scale, seg.t0); // xOf clamps to the window itself
   const x1 = xOf(scale, seg.t1);
   const w = Math.max(1, x1 - x0);
@@ -820,11 +900,14 @@ function SegmentRect({ seg, scale, y, kind, tr }: { seg: GraphSegment; scale: Gr
         ? tr("fgraph.seg_unrecognized", { raw: seg.raw ?? "?" })
         : tr("fgraph.seg_not_observed")
       : stateWord ?? seg.kind;
-  // Only the "active" band carries the kind color (which agent is doing the work); the
-  // other bands are neutral by state (idle/waiting/unknown), same as the rail's chips.
-  const style = seg.kind === "active" && kind ? ({ "--seg-color": `var(--kind-${kindClass(kind)})` } as CSSProperties) : undefined;
+  // Every band is coloured BY STATE, from the same palette as the state chip on the same
+  // row (ADR 0096 decision 11's amendment): working = accent, waiting = warn, idle =
+  // muted. It used to paint the "active" band in the agent's kind colour, which put a
+  // green bar on a codex lane that was sitting on a question — the figure and the chip
+  // beside it disagreeing about the same instant. Which agent it is stays readable: the
+  // lane LINE is still the kind colour.
   return (
-    <rect className={cx("fgraph-seg", seg.kind)} x={x0} y={y - SEG_H / 2} width={w} height={SEG_H} rx={2} style={style}>
+    <rect className={cx("fgraph-seg", seg.kind)} x={x0} y={y - SEG_H / 2} width={w} height={SEG_H} rx={2}>
       <title>{title}</title>
     </rect>
   );

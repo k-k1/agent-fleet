@@ -201,10 +201,15 @@
 .fgraph-canvas {
   flex: 1;
   min-width: 0;
-  /* Drag-to-pan lives here (pointer handlers in the view). The cursor is the only thing
-     that says the gesture exists, so it is not decoration. */
+  /* Grab to move the figure, pinch to zoom the time axis (pointer handlers in the view).
+     The cursor is the only thing that says the gesture exists, so it is not decoration. */
   cursor: grab;
-  touch-action: pan-y;
+  /* `none`, not `pan-y`: the two-finger pinch and the vertical drag are BOTH ours, and
+     anything the browser keeps for itself it also stops delivering as pointer events. The
+     lane list is scrolled by hand in the drag handler as a result — and the label column
+     next to this one keeps `auto`, so an ordinary flick over the names still scrolls
+     natively. */
+  touch-action: none;
 }
 .fgraph-canvas:active {
   cursor: grabbing;
@@ -240,8 +245,10 @@
   opacity: 0.5;
 }
 
-/* A wide, invisible hit target under the drawn line (easier to click than the 2px line
-   itself), and the hover highlight for the row it belongs to. */
+/* A wide, invisible band over the row: it carries the HOVER highlight (which row is the
+   pointer on) and nothing else. The lane stopped opening a session on click on 2026-09-21
+   — the canvas is a surface you grab, and a press that both panned and opened was the one
+   way to lose your place by accident. */
 .fgraph-hit {
   stroke: transparent;
   stroke-width: 16;
@@ -277,19 +284,15 @@
   }
 }
 
-/* Presence (decision 12): stopped/resumable = dashed to the right edge; archived = the
-   same, fainter. Gone draws nothing past its ×. */
+/* Presence (decision 12): stopped/resumable = dashed to the right edge. Archived and gone
+   draw NOTHING past their × — archived lost its faint dashes on 2026-09-21, because a lane
+   somebody folded away was still being drawn across the whole figure. The word "archived"
+   is on the row's state chip instead. */
 .fgraph-tail.stopped {
   stroke: var(--lane-color, var(--muted2));
   stroke-width: 2;
   stroke-dasharray: 4 3;
   opacity: 0.85;
-}
-.fgraph-tail.archived {
-  stroke: var(--lane-color, var(--muted2));
-  stroke-width: 1.5;
-  stroke-dasharray: 2 4;
-  opacity: 0.45;
 }
 
 /* × = a run's end, as OBSERVED (title carries "may be later than…"). Filled and solid
@@ -315,7 +318,7 @@
   stroke-dasharray: 2 2;
 }
 /* The stretch after a cut run (decision 12): hatched like an "unknown" activity band —
-   deliberately NOT the dashed .fgraph-tail line a stopped/archived lane draws, which reads
+   deliberately NOT the dashed .fgraph-tail line a stopped lane draws, which reads
    as "still there, resumable". A cut lane's fate past that point is genuinely unknown. */
 .fgraph-cut-unknown {
   fill: url(#fgraph-hatch);
@@ -323,13 +326,17 @@
   stroke: none;
 }
 
-/* Activity bands. "active" alone carries the kind color (--seg-color, set inline); the
-   rest are neutral by state, same palette as the session-state chips (lib/sessionview.ts). */
+/* Activity bands, coloured BY STATE from the same palette as the state chip on the same
+   row (lib/sessionview.ts, .session-state.*): working = --accent, waiting = --warn, idle =
+   --muted2. "active" used to carry the agent's kind colour instead, which put a green bar
+   on a codex lane that was sitting on a question — the band and the chip beside it saying
+   different things about the same instant. Which agent it is stays readable: the lane LINE
+   is still the kind colour (--lane-color). */
 .fgraph-seg {
   stroke: none;
 }
 .fgraph-seg.active {
-  fill: var(--seg-color, var(--accent));
+  fill: var(--accent);
 }
 .fgraph-seg.idle {
   fill: var(--muted2);
@@ -338,8 +345,7 @@
 .fgraph-seg.waiting {
   fill: var(--warn);
 }
-.fgraph-seg.stopped,
-.fgraph-seg.archived {
+.fgraph-seg.stopped {
   fill: var(--muted2);
   opacity: 0.3;
 }

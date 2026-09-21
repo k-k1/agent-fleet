@@ -154,11 +154,10 @@ describe("buildFleetGraph — presence (the merge only both sources can decide)"
     const lane = laneOf(model, "sE");
     expect(isKnown(lane) && lane.presence).toBe("archived");
     expect(isKnown(lane) && lane.runs[0]).toEqual({ t0: 0, t1: 1500 }); // no cut, no exitReason — this end WAS observed
+    // Only the run itself bands. Nothing is drawn past the × on an archived lane
+    // (decision 12's 2026-09-21 amendment) — what it is reads off the label column's chip.
     const segs = model.segments.filter((s) => s.laneId === "sE").sort((a, b) => a.t0 - b.t0);
-    expect(segs).toEqual([
-      { laneId: "sE", t0: 0, t1: 1500, kind: "unknown" },
-      { laneId: "sE", t0: 1500, t1: 5000, kind: "archived" },
-    ]);
+    expect(segs).toEqual([{ laneId: "sE", t0: 0, t1: 1500, kind: "unknown" }]);
   });
 
   it("a broken ledger — revive after archived:true with no archived:false restore in between — never produces t1 < t0", () => {
@@ -263,14 +262,22 @@ describe("buildFleetGraph — segments", () => {
     ]);
   });
 
-  it("an archived lane's trailing stretch bands 'archived', not 'stopped' or 'unknown' — even though it is never in the live map", () => {
+  it("an archived lane draws NOTHING past its × — not a band, and not the 'stopped' fill either", () => {
+    // Decision 12's 2026-09-21 amendment. The trap it replaced: an archived lane is never
+    // in the live map (the Agent's list skips it), so falling through to the stopped fill
+    // would paint it exactly like a session you can resume — across the whole figure.
     const page = mkPage([birth("sD", 0), death("sD", 1000), archivedEv("sD", 1500, true)]);
     const model = buildFleetGraph(page, sessMap(), { from: 0, to: 5000 });
     const segs = model.segments.filter((s) => s.laneId === "sD").sort((a, b) => a.t0 - b.t0);
-    expect(segs).toEqual([
-      { laneId: "sD", t0: 0, t1: 1000, kind: "unknown" },
-      { laneId: "sD", t0: 1000, t1: 5000, kind: "archived" },
-    ]);
+    expect(segs).toEqual([{ laneId: "sD", t0: 0, t1: 1000, kind: "unknown" }]);
+    expect(isKnown(laneOf(model, "sD")) && laneOf(model, "sD")!.presence).toBe("archived");
+  });
+
+  it("a STOPPED lane still fills to the right edge — the amendment is about archived alone", () => {
+    const page = mkPage([birth("sD2", 0), death("sD2", 1000)]);
+    const model = buildFleetGraph(page, sessMap(mkSession("sD2")), { from: 0, to: 5000 });
+    const segs = model.segments.filter((s) => s.laneId === "sD2").sort((a, b) => a.t0 - b.t0);
+    expect(segs.at(-1)).toEqual({ laneId: "sD2", t0: 1000, t1: 5000, kind: "stopped" });
   });
 });
 
