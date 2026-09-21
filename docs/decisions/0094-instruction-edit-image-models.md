@@ -645,9 +645,71 @@ counts only providers that were tried and failed, so **nothing is said**. Before
 1. **2511's 40 steps are expensive** (measured 393.8 s). The Lightning LoRA (4 steps) as a row has
    not been measured for quality. **Not measured in P1** (the maintainer's call), so this stays open.
 2. **Whether `inpaint` can be claimed** (deferred in decision 3). `SetLatentNoiseMask` on top of a
-   denoise-1 instruction edit is unmeasured.
-3. **16.1 GB of host RAM is thin** (2.2 GB free). A box with both families enabled, switching
-   repeatedly, has not been measured — the run only switched once.
+   denoise-1 instruction edit was unmeasured.
+   🔵 **Measured (2026-09-21, dev deployment, L4 24GB, 2509, 20 steps — run G). The mask works.**
+   Whether to CLAIM it is the maintainer's call and it has **not been claimed**; decision 3 stands
+   as written.
+
+   The graph is this repository's own golden (`testdata/comfy_qwen-image-edit-2509.golden.json`)
+   with the **same two nodes** `comfyRequestLatent` (`comfy_workflows.go:301`) already builds for
+   the other eight families inserted (`LoadImageMask` channel=red → `SetLatentNoiseMask` →
+   KSampler's `latent_image`). Nothing else but the image name, the prompt and the seed differs.
+   All four ran at seed 42 against the same input picture.
+
+   | # | mask | prompt | INSIDE mean/max/%>8 | OUTSIDE mean/max/%>8 | picture |
+   |---|---|---|---|---|---|
+   | G0 | none | sign | (whole frame) 7.56 / 223 / 5.71% | — | the sign reads CLOSED |
+   | G1 | **the mug** | **the sign** | 3.09 / 50 / 5.83% | 0.43 / 30 / **0.13%** | **the sign still reads OPEN** |
+   | G2 | the sign | the sign | 33.65 / 221 / 20.22% | 0.40 / 38 / **0.08%** | CLOSED, nothing else moved |
+   | G3 | the mug | the mug | 65.00 / 189 / 57.88% | 0.42 / 30 / **0.13%** | a blue teapot; the sign still OPEN |
+
+   🔴 **G1 is the control that makes the rest mean anything.** The prompt that changes the sign,
+   sent with a mask that does NOT cover the sign, leaves it reading OPEN — while the same request
+   with no mask (G0, and 実測 A) changes it. `SetLatentNoiseMask` really is a gate on a denoise-1
+   instruction-edit graph. Outside the mask is not bit-identical (the VAE decode rebuilds the whole
+   frame), but around 0.1% of pixels differ by more than 8, which is unchanged to the eye. The
+   reference conditioning (`TextEncodeQwenImageEditPlus`) still sees the WHOLE unmasked picture,
+   which is also why the repainted area agrees with the scene around it.
+
+   🔴 **One danger is still unmeasured, and it has to be closed before the claim: a non-square
+   input.** `FluxKontextImageScale` REMAKES image1 at the nearest trained ratio, while
+   `LoadImageMask` reads the mask at its own size and `SetLatentNoiseMask` stretches it to the
+   latent's shape. At 1024²→1024² — every run above — the two coincide and nothing shows. **On an
+   input whose ratio changes, a mask the caller drew over their own picture is stretched onto a
+   different frame**, with no error and no warning: 実測 C's shape of lie. How far a thin mask
+   bleeds at the latent's 8× granularity is unmeasured too.
+
+   Cost of the path: `comfyGraphQwenImageEdit` (`comfy_workflows.go:1193`) does not go through
+   `comfyRequestLatent`, so the two mask nodes belong in that template; `Ops` is `comfyFamilyOps`
+   and the `p.Mask` intake is shared with the other families. **Per decision 3's own rule, the
+   claim and the path go in the same phase.**
+3. 🟢 **Closed (2026-09-21, run H). Thin host RAM is not eaten by repeated switching.**
+   The 2509 row was rebuilt from the objects still in S3 (no re-download), **both families
+   enabled**, and the rung pinned to `g6-od` so the card was certainly an L4. The box reported
+   `ram_total` **15,371 MiB** and `vram_total` 22,563 MiB — exactly the thin condition unresolved 3
+   names (2,260 MiB free at the start).
+
+   Six runs at 8 steps, 1024², one reference picture, **each with its own seed** (an identical
+   request comes back from ComfyUI's cache in about a second and would measure no load at all):
+   2509 → 2511 → 2509 → 2511 → 2509 → 2511 = **five switches**, where 実測 E made one.
+
+   | run | family | wall | `ram_free` after |
+   |---|---|---|---|
+   | 101 | 2509 (already resident) | **81 s** | 2,279 MiB |
+   | 102 | 2511 (switch 1) | 117 s | 2,282 MiB |
+   | 103 | 2509 (switch 2) | 112 s | 2,075 MiB |
+   | 104 | 2511 (switch 3) | 120 s | 2,289 MiB |
+   | 105 | 2509 (switch 4) | 113 s | 2,311 MiB |
+   | 106 | 2511 (switch 5) | 118 s | 2,251 MiB |
+
+   - **A switch costs 31–39 s** (112–120 s against the resident 81 s). Cheap for re-reading 20.4 /
+     20.5 GB, and it is cheap because none of it accumulates in host RAM.
+   - **`ram_free` oscillates between 2,075 and 2,311 MiB and does not trend down.** The spread
+     around the starting 2,260 MiB is measurement noise. **No behaviour was observed in which
+     switching eats the host's memory.**
+   - Zero failed prompts, and no ECS task restart (no `has stopped N running tasks` event).
+   - ⚠️ Scope: two fp8 families, 1024², one reference, batch 1, 8 steps. **`comfyMaxBatch` 4 and a
+     third family enabled alongside are still unmeasured.**
 4. **Decision 9's trigger** (a third topology / past 15 declarations) is drawn from the measured 12,
    but "15" is not itself a measured number. Count the declarations again when the next family lands.
    🔵 **Counted, while 2511 was being added: 17 places.**
