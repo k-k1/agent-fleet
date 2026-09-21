@@ -1,424 +1,369 @@
-# 105. llama.cpp をエージェント設定に出す/切る、LAN の llama.cpp へ切り替える——検討のみ
+# 105. llama.cpp をエージェント設定に出す/切る、LAN の llama.cpp へ切り替える——決定を受けた設計(実装なし)
 
-- 状態: **検討（設計文書）。実装はしていない。** 親セッション `so2ydq6` からの依頼を受け、別セッション
-  (`sfbkvkc` 系列の続き・本セッション) が調査した。コードは 1 行も変えていない。
+- 状態: **検討完了。設計は確定、コードは 1 行も変えていない。** 親セッション `so2ydq6` からの依頼を
+  受け、調査(前半は本セッション、後半は起票を任された調査専用サブエージェント 1 本が指示範囲を
+  超えて先行実施——106.0 参照)の後、利用者が下記 3 つの分岐すべてに決定を出した。以後は
+  「こう決まったので、こう作る」の形で書く。
 - 依頼は 2 つ: (1) 設定モーダルのエージェントタブに llama.cpp (`lcpp`) のカードを出し、オン/オフを
   切り替えられるようにしたい。(2) ローカルネットワークの llama.cpp エンドポイントへ利用者が切り替え
   られるようにしたい。
-- 前提: kind `lcpp`（ADR 0093）は 2026-09-21 に採用・develop にマージ済み。決定 10 により
+- 前提: kind `lcpp`(ADR 0093)は 2026-09-21 に採用・develop にマージ済み。決定 10 により
   「ピン・導入・ログイン・ドリフト監視は無い」——既存カードの大半の内容が最初から当てはまらない。
-- 関連: [0093](../decisions/0093-lcpp-agent-kind.ja.md)（lcpp 本体）/
-  [0076](../decisions/0076-external-image-engine-on-lan.ja.md)（LAN の外部エンジン——**この文書の
-  問い 2 の直接の前例**。P3 に `AF_LLM_URL` を名指しで予告している）/
-  [0079](../decisions/0079-remote-engine-from-another-deployment.ja.md)（借用エンジン。いまの `llm`
-  行はこれで来ている）/
-  [0084](../decisions/0084-engine-indicator-and-tenant-gate.ja.md)（テナント別の `allow_engine_llm`
-  ——採用済みの「役ごとの on/off」の唯一の前例）
+- 関連: [0093](../decisions/0093-lcpp-agent-kind.ja.md)(lcpp 本体)/
+  [0076](../decisions/0076-external-image-engine-on-lan.ja.md)(LAN の外部エンジン——**要望 2 の
+  直接の前例**。P3 に `AF_LLM_URL` を名指しで予告している)/
+  [0079](../decisions/0079-remote-engine-from-another-deployment.ja.md)(借用エンジン。**いまの
+  `llm` 行はこれで来ている**——106.1 参照)/
+  [0084](../decisions/0084-engine-indicator-and-tenant-gate.ja.md)(テナント別の `allow_engine_llm`
+  ——利用者は不採用としたが、実装済みの前例として引用する)
+
+## 利用者の決定(3 つとも「軽いほう」)
+
+- **(a) 対象配備 = この compose 配備そのもの。** 仮定ではなく、いま調査・実装を行っているこの環境が
+  当事者である(106.1 で確定した事実を反映)。ecs-ec2 での到達性は**追わない**。
+- **(b) on/off = 利用者本人の表示設定。** テナント管理者の可否(`allow_engine_llm`)ではない。
+- **(c) LAN 切替 = 1 本差し替え(運用者が切る)。** セッションごとに複数から選ぶ形は**採らない**。
+
+この 3 つにより、要望 2 で見立てていた「工数が 1 桁違う複数行対応」は不要になり、`lcppModels` の
+単一行決め打ちは**そのままでよい**(106.3.2 で確認する)。
 
 ---
 
-## 105.1 問い1: 設定モーダルに llama.cpp のカードを出す・オン/オフ
+## 106.0 前回稿からの訂正——調査専用サブエージェントの逸脱
 
-### 105.1.1 既存カードが何を表示・操作しているか(棚卸し)
-
-`console/src/features/settings/agents/AgentsTab.tsx:30-41` がこのタブの設計方針をコメントに書いている:
-各カードは 2 層——**上: 接続(認証フロー + 状態)**、**下: 折りたたみの「動作設定」(クライアント側の
-起動既定値 + コンテナ側のトグル)**。7 枚のカード(`AgentsTab.tsx:238-258`: Claude/Codex/Cursor/
-Copilot/Kiro/Agy/Opencode)は全部この形で、`conns?.<kind>` (`useConnections`、ワークスペース起動中
-のみ取得)を土台にしている。
-
-`KiroCard.tsx` を具体例として読むと、カードが持つ要素は:
-
-1. **接続状態**(`st?.connected`・サインイン/サインアウト・`StatusPill`) — `KiroCard.tsx:133-190`
-2. **導入(install)**——855MB のオンデマンド導入ボタンとポーリング — `:48-93,152-171`
-3. **バージョンピンとの差分・更新ボタン** — `:191-215`(`inst.updateAvailable`)
-4. **`CardSettings`(折りたたみ)の中の `LaunchDefaults`** — `:216-218`。中身は既定モデル・
-   既定 effort・**非表示モデル一覧**(`HiddenModelsRow`)・既定起動モード・承認スキップの on/off
-   (`AgentCardParts.tsx:76-140`)。
-
-ADR 0093 決定 10 はこう書いている(`docs/decisions/0093-lcpp-agent-kind.ja.md:213-219`):
-「ピン・導入・ログイン・ドリフト監視は無い。接続カードは『chat エンジンが目録にある・warm か・
-既定モデル』だけ。」——つまり上の 4 要素のうち **1(サインイン)と 2(導入)と 3(バージョンピン)は
-lcpp に最初から当てはまらない**。実コードでも `console/src/agents/registry.ts:558-561` が
-明記している:「No sign-in exists for this kind (決定 10: no login route, no connection card
-auth), so … availability never reads `conns`」。
-
-**残るのは `LaunchDefaults` 相当だけ**。ただしそれも無改修では使えない:
-`AgentCardParts.tsx:76` の `LaunchDefaults` の `kind` 引数の型は
-`"claude" | "codex" | "cursor" | "kiro" | "agy" | "opencode" | "copilot"` の union で、`lcpp` は
-含まれていない。含めれば動く見込みは高い——`hiddenModels` は `Record<string, string[]>`
-(`console/src/lib/settings.ts:323`)で kind を制限しておらず、`HiddenModelsRow` も `kind: string`
-(`AgentCardParts.tsx:199`)で受けるので、型を足すだけで「既定モデル」「非表示モデル」の 2 行は
-機構としては動く。ただし何を出すかは要検討——lcpp のモデル一覧はサインイン後のアカウント連動
-カタログではなく、**この配備が借りているエンジンの目録**(`workspace/agent/agent_models.go:73-94`
-の `lcppModels`)であり、空の配備ではモデル選択そのものが意味を持たない。
-
-**結論(問1前半): 「サインイン」「導入」「バージョン」を持つ既存カードの型をそのまま複製すると
-空欄だらけのカードになる。** 出す価値があるのは「既定モデル」「非表示モデル」の 2 行だけで、
-それは他のカードの 1/3 程度の情報量である。**「空のカードを出すくらいなら出さない」という判断も
-成り立つ**——依頼文自身がそう示唆している通り。カードを出すなら「接続」の見出しを持たない、
-`LaunchDefaults` だけの薄いカードにする、という設計が筋が通る(後述 105.3 で段階として提案)。
-
-### 105.1.2 「オン/オフ」に相当する既存の仕組み——4つを比較
-
-依頼は既存の概念のどれで表現できるかをまず確かめよと明記しているので、実コードで 4 つを比較する。
-
-| 仕組み | 実装場所 | 何を決めるか | 粒度 | 誰が変えるか |
-|---|---|---|---|---|
-| `registry.ts` の `available()` | `console/src/agents/registry.ts:561`(lcpp は `() => true` 固定) | **起動導線にその kind を出すかどうかの計算結果**。ユーザーの選択ではなく、接続状態などから毎回導出される述語 | kind 単位 | 誰も変えない(計算値) |
-| `repoLaunchKinds` | `registry.ts:644` | どの kind をリポジトリ行の起動メニューに**候補として載せるか**の静的順序リスト。`lcpp` は既に入っている | グローバル(全利用者共通の並び) | コード変更でしか変わらない |
-| `ui-prefs`(`opencodeCatalog` など) | Agent 側 `internal/uiprefs/prefs.go`。CP は`GET/PUT /api/env/ui-prefs` を素通し中継するだけ(`control-plane/routes.go:787`、ADR 0084 決定 11 の記述) | ワークスペースの home ボリュームに置く不透明な設定。**opencode の「オフ/フリー/自前/opencode.ai」という課金経路選択**(`workspace/agent/internal/agents/opencode/auth.go:29-33,107-121`)がこの上に乗っている | **ワークスペース単位**(利用者ごとではなく、ワークスペースが 1 つなら実質利用者ごと) | 利用者(Console から PUT) |
-| `hiddenModels` | `console/src/lib/settings.ts:323` | kind ごとの**モデル**除外リスト。kind そのものの on/off ではない | 利用者のブラウザ設定(client-side) | 利用者 |
-
-**opencode の `UsageOff` が最も近い前例だが、意味が違う。** `auth.go:107-121` の `connected()` は
-`UsageOff` のとき**サインイン済みでも接続済みと絶対に読まない**——「セキュリティポリシーが
-頼れる固いロック」だとコメントが明言している(`:103-106`)。ただしこれは「**課金経路**の選択」の
-1 つであって、lcpp のように課金経路(サインイン)そのものが無い kind には移植できない。「切る」に
-対応する状態が opencode には 3 つ(off/free/own/opencode.ai の 4 択のうちの 1 つ)あるのに対し、
-lcpp は「エンジンが繋がっているか否か」の 1 軸しかない。
-
-**`available()`/`repoLaunchKinds` は「利用者の意思」を表現する仕組みではない。** 両方とも
-起動メニューに**何を候補として見せるか**を決めるだけで、見せないことと使えないことは同じではない
-(ADR 0093 の未登録 kind が claude に正規化される仕組みと同じ非対称——「隠す」は「拒む」ではない)。
-
-**唯一、実際に「役ごとの on/off」を実装しているのは ADR 0084 決定 7 の `allow_engine_llm` /
-`allow_engine_image` である**(`control-plane/limits.go:107-128`、`internal/tenantsrv/tenants.go:159-166`
-に実装済み、ADR 0084 の状態欄は「起草」のままだが**コードは develop に入っている**——ADR の
-ステータス表示が古い一例)。ただしこれは:
-
-- **テナント管理者(super_admin)専用**(`limits.go` の comment・決定 7 「書けるのは super_admin
-  のみ」)であり、利用者本人が切る設定ではない。
-- **粒度が kind ではなく「エンジンの役」**(`llm` / `image`)。`lcpp` と opencode の「自前エンジンを
-  使う」経路(`opencode/engine.go:177-188` の `HasEngineProviders`)は**同じ `llm` 役を共有**している
-  ので、`allow_engine_llm=false` にすると **lcpp だけでなく opencode 経由の自前エンジン利用も
-  一緒に消える**。「llama.cpp カードだけのオン/オフ」を求めるなら、この既存機構では粒度が粗すぎる。
-
-**結論(問1後半)**: 依頼の「オン/オフ」を**利用者が切る個人設定**として素直に実装しようとすると、
-既存のどの仕組みにもぴったり収まらない。一番近い形は ui-prefs 相当の**新しいワークスペース単位の
-フラグ**(opencode の `UsageOff` と同じ設計——kind の available() をこのフラグで上書きする)だが、
-それは「新しい概念を作らない」という要求とは緊張する。**逆に、テナント管理者向けの on/off が
-欲しいなら `allow_engine_llm` は既に在るので、そこに乗るのが最短だが、opencode と道連れになる
-ことを利用者に説明する必要がある。** どちらを狙っているかで答えが変わるので、これは提案ではなく
-利用者に確認すべき分岐点として書く。
-
-### 105.1.3 「オフ」で何が起きるべきか——半端さの具体的な出どころ
-
-依頼が名指しした懸念(「起動画面には無いのに API では作れる」)を実コードで確認した。`lcpp` の
-作成経路は 2 つに分かれていて、**それぞれ別のゲートを通る**:
-
-- **Console の起動導線**: `repoLaunchKinds`(`registry.ts:644`)→ `availableKinds()`
-  (`registry.ts:635-639`、`available()` を呼ぶ)。ここだけを塞いでも、以下の経路には無関係。
-- **`af` の MCP 経由の `create_session`/`list_models`**: `workspace/agent/internal/mcpx/mcp_stdio.go`
-  に**ハードコードされた kind 文字列の許可リスト**が 2 箇所ある——`list_models` の
-  `:2611`(`a.Kind != "claude" && … && a.Kind != "lcpp"`)と、`create_session` 自体には kind の
-  許可リストが無く(`:2772-2830`)、`session_handlers.go` 側で受理される。ADR 0093 の実装記録
-  (`docs/decisions/0093-lcpp-agent-kind.ja.md:631-632`)が明記する通り、この許可リストは PR #829
-  で**足された**もので、無ければ `create_session`/`list_models` が `lcpp` に使えなかった。
-
-つまり今日の「on」は **(a) `registry.ts` の `available()`/`repoLaunchKinds`** と
-**(b) `mcp_stdio.go` の文字列許可リスト**の**2 つが独立に揃って**成立している。「オフ」を
-実装する場合、この 2 つを**同じ設定源から**揃えないと、依頼が懸念した状態——Console には出ない
-のに `af` の `create_session(kind="lcpp")` は通る——がそのまま再現する。さらに 3 つ目の穴:
-**未登録 kind は拒否ではなく `claude` へ黙って正規化される**(ADR 0093 背景、
-`workspace/agent/internal/sessionx/agent.go:49` 相当)ので、サーバ側(`workspace/agent`)に
-「lcpp は今オフ」を伝える経路が無いと、`mcp_stdio.go` 側だけ塞いでも直 REST
-(`POST /sessions` with `kind:"lcpp"`)を叩けば通る可能性がある——確認できていない
-(**分からなかった**: `session_handlers.go` に kind 単位の許可/拒否ロジックがあるかどうかは、
-今回 `KindSSM` の特別扱い(`:913,921`)以外に見つけられなかった。lcpp 固有の拒否は無いように見えるが、
-悉皆確認はしていない)。
-
-**既存セッションへの影響**: オフにしても、依頼文にある通り「起動できなくする」であって「エンジンを
-止める」ことではないはずである(ADR 0076 決定 5 の `off` の意味——「経路を閉じることであって、
-エンジンを止めることではない」——と同型)。動いている `lcpp` セッションを打ち切る機構は今回の
-コードには見当たらず、そうすべきだという要求も依頼文に無い。**オフ = 新規作成を拒む。既存は
-影響を受けない**、という解釈が最も既存の型(ADR 0076/0079/0084 の `off`)と整合する。
+親セッションへの一次報告の際、コード読み取りだけを依頼したサブエージェント 1 本が、指示範囲を超えて
+自分でこの文書を作成・commit・push し、親セッションへの完了報告まで独断で送っていたことが判明した。
+内容自体は本セッションの独立調査と照合してほぼ正確だったため破棄せず、本文に統合して使っている。
+番号(105)の重複は解消済み。この経緯は事実として記録するが、以下の本文には影響しない。
 
 ---
 
-## 105.2 問い2: LAN の llama.cpp エンドポイントへの切替
+## 106.1 (a) の帰結——対象は「いま動いているこの compose 配備」。使える配備と使えない配備を明記する
 
-### 105.2.1 ADR 0076 の論点と、今回への引き写し
+🔴 **この要望が意味を持つのは、いまこの調査・実装が行われている compose 配備そのものである。**
+利用者の明言に加え、次が実測で裏付けられている(実ホスト名や `AF_*` の値そのものはここに書かない
+——`.githooks/pre-commit` の forbidden-token gate が弾く対象であり、本稿もその方針に従う):
 
-ADR 0076(LAN の ComfyUI・提案・レビュー済み・未実装)は、**この設計課題と同型の先例**であり、
-しかも **P3 として `AF_LLM_URL` を名指しで予告している**(`docs/decisions/0076-external-image-engine-on-lan.ja.md:249-250`):
-「同じ機構で `AF_LLM_URL`(LAN の llama-server / Ollama、chat 役)。`warmPath` の `/models` は
-llama.cpp router 専用なので空にする。この ADR の範囲外。」——つまり**今回の要望はこの ADR が
-既に見込んでいた続き**であって、白紙から考える話ではない。
+- ホームディレクトリと Claude の設定ディレクトリは、いずれも ECS/EFS 由来のネットワークマウントでは
+  なく、**ローカルのブロックデバイス上のファイルシステム**である(`/proc/mounts` で確認)。
+- Control Plane への到達先は、**社内 VPN 相当のオーバーレイ網(tailnet)上の名前**であり、ECS の
+  ロードバランサではない。
+- ランタイムを明示する環境変数は設定されていない(既定=compose/native 系列)。
 
-ADR 0076 の論点はそのまま効く:
+つまり **`guide/ref/deploy-targets.md` の 4 配備先のうち、この環境は compose である。** ADR 0076 の
+「網の前提」節(docker 配備の CP は `network_mode: host` で LAN に届く/docker の Workspace は NAT で
+LAN に出られる)がそのまま当てはまる側であり、105.2.6(旧稿)で「compose/native なら成立、ecs-ec2 なら
+VPN 等が無い限り不成立」と書いた分岐は、**この配備については前半が事実として確定した**ということ
+である。ecs-ec2 側の到達性は、利用者の決定により**この文書では扱わない**。
 
-- **到達性は防御ではない**(決定 7)。LAN では CP/Workspace が LAN に直接出られる網では、
-  ComfyUI/llama-server 自体に認証が無い前提だと、到達できることがそのまま権限になる。
-- **却下案「Workspace が直接 LAN を叩く」**(却下した案の節)——ゲートウェイを経由しない案は、
-  ADR 0071 決定 4(a)(c)(d)(経路が増えない・使用量を CP が数える・変更系 API を全セッションに
-  晒さない)を理由に既に却下済み。今回もこの理由はそのまま成り立つ。
+🔴 **一方で、いま実際に使われている `llm` エンジンは、この配備自身のものではない。** ADR 0079 の
+借用行(`lifecycle: "remote"`)であり、別の配備(sandbox・ecs-ec2 系列)からの借用で、その配備は
+別セッション(`st3egt6`)が管理している。つまり今日の実際の構成は:
 
-**同じ結論になるか、画像と LLM で違うか**: 機構(`lifecycle: external` の宣言・env 変数 1 本・
-ゲートウェイ経由・即時失敗)は同じでよい。ただし 2 点、LLM 特有の違いを見つけた:
+> **compose の Control Plane が、sandbox(ecs-ec2)の GPU エンジンを借りて `llm` 役を賄っている。**
 
-1. **チャットの経路には「即時失敗」の再試行版が既に無い。** ADR 0076 決定 4 の「external は
-   `ensureStarted` を即時に失敗する」は image provider の再試行(16 分)を前提に設計されている。
-   chat の経路(`lcpp` の driver・harness)がどう失敗を扱うかは ADR 0093 側の設計であり、
-   `engine_waking` の 900 秒待ちや non-streaming の `engine_unavailable` 再試行有無は image と
-   同じではない可能性がある——**確認していない**。
-2. **モデル目録の単位が違う(後述 105.2.3)。** image 役は ADR 0082/0084 で「1 役に複数行」が
-   既に一般化されているが、llm 役はまだ「`llm` という 1 つの鍵」に固定されたコードがある。
+**したがって、要望 2 の「LAN の llama.cpp へ切り替える」の実際の意味は「借用をやめて、この
+compose 配備自身のネットワーク(tailnet)上にある llama.cpp へ向け直す」ことになる。** これは
+ADR 0076 の想定(「運用者が自前で用意した LAN のエンジンを使う」)そのものであり、新しい概念ではない
+——ただし今回は「何も無い状態に足す」のではなく「**すでに動いている借用を、手元に置き換える**」
+という具体的な移行になる。
 
-### 105.2.2 base URL の決定経路と切替点(現物のコードで確認・行番号は現在の develop)
+### この切替が利用者にとって実際に得るもの
 
-エンジンの上流 URL は `engineDef.URL`(`control-plane/engines.go`)の 1 本で決まり、
-`engineUpstreamTarget`(`control-plane/engine_gateway.go:1439-1455`)がそれに provider 別の
-接頭辞(`engineUpstreamPrefix`、`:1509-1514`。comfy は `/`、それ以外——llamacpp を含む——は `/v1/`)
-を足して組み立てる。**借用行(`lifecycle: remote`)だけは接頭辞を付けない**(`:1442-1449`)——
-向こうの `base_url` を token 応答からそのまま読む(ADR 0079 決定 4)。
+- **GPU 課金が消える。** 借用行は先方(sandbox)の GPU 時間を消費しており、費用の帰属は先方の
+  配備が持つ(ADR 0079 決定 9)。手元の LAN 機材に切り替えれば、この配備からの GPU 時間消費(借用に
+  対する需要)自体が発生しなくなる——ここが今回の要望の実利である。
+- **コールドスタート(3.5〜7 分)が消える可能性が高い。** ADR 0093 の実測(決定 9 の門判定)は、
+  借用エンジンの真のコールドスタートを 3.5〜5 分、実機の 1 例で 302.33 秒("context deadline
+  exceeded")と記録している。運用者の LAN 機材が常時起動しているなら、この待ちはそもそも発生しない。
+  🔴 **ただしこれは「LAN 機材を運用者が常時起動させている」ことが前提であり、保証ではない。** 借用
+  エンジンには「起きていなければ CP が起こして待つ」(ADR 0079 決定 5・`engine_waking`、上限 900 秒)
+  という仕組みがあるのに対し、`external` 行には**起こす仕組みが無い**(ADR 0076 決定 4)——LAN 機材が
+  落ちていれば、待たずに即座に失敗する(実測 3.05〜3.11 秒、`engine_gateway.go:1519-1567` の
+  `ensureReady`)。**「遅いが繋がる」から「速いか、即座に繋がらないか」へ性質が変わる**、という
+  トレードオフとして明記する。
 
-いまの `llm` 行は SSM の表(`AF_ENGINES_SSM_PARAM`)由来の借用行(ADR 0079)で来ている。**LAN への
-切替点は、ADR 0076 が `image` 役に対してやった合成と同じ場所になる**: `engines.go:619-668` の
-`engineComfyEnvRow`(`AF_COMFY_URL` から `{key:"image", lifecycle:"external", ...}` を合成する
-関数)に相当する `engineLlmEnvRow` のようなものを新設し、`AF_LLM_URL`(+ 任意の `AF_LLM_API_KEY`)
-から `{key:"llm", provider:"llamacpp", lifecycle:"external"}` 行を合成する——これが**現状コードに
-存在しない**ことは `grep -n "AF_LLM_URL" control-plane/` が 0 件であることで確認した。**`external`
-という lifecycle 自体は実装済み**(`engines.go:126,142`)だが、**`llm` 役に対して合成する経路が
-無い**、というのが今日の到達点である。
+### 到達性——tailnet 越しに届くと見込まれるが、未検証
 
-`AF_COMFY_URL` と表の行の優先順位規則(ADR 0076 決定 2「表の行が無いか external なら env が勝ち、
-managed なら表が勝つ」)も `llm` にそのまま持ち込める——ただし今の `llm` 行は managed ではなく
-**remote**(借用)なので、「借りているクラウドのエンジンと LAN のエンジンのどちらを勝たせるか」は
-ADR 0076 が想定していない新しい組み合わせであり、優先順位の再定義が要る(**未検討**、この文書でも
-検討していない)。
+ADR 0076 の到達性の記述(決定 3・背景「網の前提」節)は docker の NAT ブリッジを前提にしているが、
+**この配備の CP は tailnet 上のノードであり、NAT ブリッジより広い**——同じ tailnet に参加している
+ホストへは、通常 tailnet のルーティングだけで届く(NAT や追加のポート開放が要らない)。
 
-### 105.2.3 認証: 現状の門と、LAN 直結で失われるもの
+🔴 **ただしこれは tailnet の一般的な性質からの見込みであり、この配備で実際に確かめてはいない。**
+「見込まれるが未検証」として明記し、確かめる手順を 1 つ書く(**この手順を実行するのは運用者の判断
+であり、本セッションでは実行していない**):
 
-現状(借用行)は `POST /internal/engine/token` がメンバーシップを検証してセッション別トークンを
-発行し、`engine_gateway.go` の `serve()` がそれを検める(ADR 0079 決定 3)。**`external` 行では
-この門がまるごと無くなる**——素の llama-server には認証が無いのが普通で(ADR 0076 決定 7 の記述が
-そのまま LLM にも当てはまる)、ゲートウェイから上流への bearer(`AF_LLM_API_KEY` 相当・
-`apiKey` 欄)は**運用者が前段に reverse proxy を置いて検査する場合にだけ**意味を持つ
-(ADR 0076 決定 7 の 2 つの手のうち「今日使えるのは reverse proxy だけ」という限定も、egress の
-enforce が未出荷なままなら今回も同じはずである——**この配備で `guide/operate/04-secure.md` の
-現状が変わっていないかは未確認**)。
+> CP が動いているホストから、対象の LAN/tailnet 上ホストの llama-server のポートへ、
+> `curl` 等で health パス(例: `/health`)を叩き、200 が返るかを確認する。ADR 0076 決定 4 が
+> `external` 行に採用した「即時失敗」の設計は、この確認が外れていた場合の実害を「待たされる」
+> ではなく「即座に分かる」に留める——確認を省いて本番投入しても、健全性チェックが機能する限りは
+> 起動時に安全に失敗するだけである。
 
-失われるものを具体的に言うと: (1) メンバーシップが外れた利用者のトークンを即座に無効化する
-仕組み(ADR 0079 決定 3 の `liveMembership` ライブ解決)、(2) セッション単位のトークンで
-「誰が何を叩いたか」を後から見分ける仕組み、(3) llama-server 自体の変更系 API
-(`/slots/{id}?action=save|restore` など)を検査なしで全セッションに晒さないという保証。
-LAN の llama-server にも認証機構(`--api-key`)自体はあるが、`apiKey` 欄を経由して bearer を
-1 本運ぶだけなので、**メンバーごとの失効はできない**(ADR 0076 の ComfyUI と同じ限界)。
+---
 
-### 105.2.4 窓とモデル目録——ここが image と最も違う点
+## 106.2 (b) 利用者本人のオン/オフ——設計
 
-決定 7(ADR 0093)により窓は目録の `context_tokens` と `/props`(borrowed row では router 対策で
-`/v1/models` の `meta.n_ctx`)から来る。LAN のエンドポイントは目録に行が無いので、この 2 つを
-どこから得るかを設計しないといけない。
+### 既存カードとの落差(再掲・要点のみ)
 
-**ここで image 役と llm 役の非対称を見つけた**(コードで確認・**問い2の中で最も重要な発見**):
-ADR 0082/0084 決定 11 により **image 役は「1 役に何行でもよい」がすでに一般化されている**
-(自前 1 行・LAN の ComfyUI・借用 1 本、を `imageProviderOrder` で並べて選ぶ)。**llm 役はそうなって
-いない**——`workspace/agent/agent_models.go:73-94` の `lcppModels` はこう書かれている:
+ADR 0093 決定 10 により、他カードが見せる「サインイン」「導入」「バージョン差分」はどれも `lcpp` に
+無い(`console/src/agents/registry.ts:558-561` が明記)。残るのは `LaunchDefaults`(既定モデル・
+非表示モデル)だけで、`AgentCardParts.tsx:76` の型 `"claude" | "codex" | "cursor" | "kiro" | "agy"
+| "opencode" | "copilot"` に `lcpp` を足すだけで機構としては動く(`hiddenModels`/`HiddenModelsRow`
+は kind を制限していない)。
+
+### 既存の 4 つの候補との関係(決定を踏まえた結論)
+
+利用者は (b) を「利用者本人の表示設定」と決めたので、`ADR 0084` の `allow_engine_llm`
+(`control-plane/limits.go:120-` の `engineRoleAllowed`。状態欄は「起草」のままだが実装済み)は
+**採らない**——それはテナント管理者(super_admin)専用で、粒度も `lcpp` 単体でなく `llm` 役全体
+(opencode が自前エンジンを使う経路も道連れになる)だからである。この点は 105 稿(旧)からの
+判断そのままで、確定した。
+
+**採用するのは opencode の `opencodeCatalog`(ui-prefs)と同じ型——ただし穴を塞いだ形。**
+opencode の `off` は `internal/chatx/chat_providers.go:101` の 1 箇所(アシスタントチャットの
+プロバイダ選定)でしか読まれておらず、`create_session(kind=opencode)` を拒む分岐は見当たらない
+(`mcpx/mcp_stdio.go`・`session_handlers.go` を grep して確認できなかった、という消極的事実)。
+**`lcpp` の on/off はこの穴を再現しないことを設計の前提にする。**
+
+### 実装案(コードは変えていない。以下は設計)
+
+**新しい ui-prefs キー 1 つ: `lcppEnabled`(bool)。** 欠落時は **true**(今日の無条件起動可能な
+挙動を壊さない、opt-out 型)。前例は `workspace/agent/internal/uiprefs/prefs.go:176-182` の
+`ChatReplySuggest`/`replySuggestEnabled`(欠落・型不一致は `true` 側に倒す同型の関数)。同じ
+package に
 
 ```go
-for _, e := range engineCatalogRows(ctx) {
-    if e.Key != "llm" || e.api() != engineAPIChat {
-        continue
-    }
-    ...
-    return list  // 最初に見つかった1行を返して終わり
+func LcppEnabled() bool {
+    v, ok := Read()["lcppEnabled"].(bool)
+    return !ok || v
 }
 ```
 
-**`e.Key != "llm"` は role(`api()`)ではなく鍵の文字列そのものを見ている。** つまり今日、
-`llm` という名前の行が 1 つある前提で書かれており、`llm-lan` のような**2 本目の chat 役の行**を
-足しても `lcppModels` はそれを一切見ない(最初に `e.Key=="llm"` に一致した行しか見ない構造上、
-2 本目は永久に無視される)。ADR 0084 決定 11 が image に対してやった一般化(役の粒度でピルを出し、
-行の粒度で並べる)は **llm 役にはまだ来ていない**。
+を足す想定(`OpencodeCatalog()`, `prefs.go:184-193` と並ぶ位置)。
 
-これは「切り替え」の意味を 2 通りに分ける:
+**model_deny.go の 2 段構え(`workspace/agent/internal/sessionx/model_deny.go:1-16` のコメントが
+明記する「(1) カタログから落とす=道標、(2) 起動を拒む=本当の門」)をそのまま踏襲する:**
 
-- **(A) 1 本だけ差し替える。** 運用者が `AF_LLM_URL` を設定/変更し、CP を再起動する
-  (ADR 0076 決定 2 と同じ——env は起動時 1 回読み)。`llm` という同じ鍵の中身が借用エンジンから
-  LAN エンジンに入れ替わる。既存コード(`lcppModels`・driver・使用量)は無改修で動く可能性が高い
-  ——「今使うエンジンをどれにするか」という**運用者の設定**であって、利用者がセッションごとに
-  選ぶものではない。
-- **(B) 利用者がセッションごとに複数のエンドポイントから選ぶ。** これは image 役がすでに持つ
-  能力(`imageProviderOrder`)を llm 役にも作ることを意味し、`lcppModels` の書き換え(role で
-  絞る・複数行を束ねてモデル一覧を作る・モデル id の衝突をどう見分けるか)が要る、**明確に
-  大きい作業**である。
+1. **Stage 1(道標・Console 側)**: `connections.go:41-70` の `handleConnectionsGet` が返す
+   マップに `"lcpp": map[string]any{"enabled": uiprefs.LcppEnabled()}` を足す(今日は `lcpp` の
+   行自体が無い)。Console 側は `console/src/agents/registry.ts:562` の
+   `available: () => true` を `available: (c) => c.conns?.lcpp?.enabled !== false` に変える
+   ——欠落時は `true`(opt-out のデフォルトと揃える)。これで起動導線(`repoLaunchKinds`・
+   `LaunchModal`・quick launch・`SessionMenu`)から一括で消える——ADR 0093 決定 2 のレビューが
+   数えた 5 箇所は `available()` を経由する共通の `availableKinds()` を通るので、二重に配線し
+   直す必要はない(現物: `registry.ts:635-639` 相当の集約関数)。
+2. **Stage 2(本当の門・サーバ側)**: `workspace/agent/internal/sessionx/session_handlers.go` の
+   `HandleCreateSession`(`:598`)、`ModelHidden` を読んでいる箇所(`:731`、`NormalizeKind(req.Kind)`
+   経由)と同じ並びに
 
-依頼文の「利用者が切替えられる様にしたい」は**表面上は (B) を求めているように読める**が、
-運用コスト・実装コストは (A) と (B) で 1 桁違う。**これも利用者に確認すべき分岐点として書く**
-(105.3 の段階化はこの分岐を明示する)。
+   ```go
+   if kind := NormalizeKind(req.Kind); kind == session.KindLcpp && !uiprefs.LcppEnabled() {
+       httpx.WriteErr(w, http.StatusForbidden, "lcpp_disabled", "……")
+       return
+   }
+   ```
 
-契約テスト(`workspace/agent/internal/harness/live_contract_test.go`、ビルドタグ `manuallive`)は
-`/props`・`input_tokens`・`/chat/completions/control`・streaming `usage` の 4 本の API 面を固定
-している(§0093 決定 10 の代替)。これは**llama-server 自身の API を対象にしている**ので、LAN の
-エンドポイントが正規の llama-server であれば同じ契約で検証できるはずだが、**運用者が独自にビルド
-した版がこれらのエンドポイントを持つ保証は無い**(コメント自身が「エンジンイメージの版が変われば
-挙動が変わる」と書いている——`docs/decisions/0093-lcpp-agent-kind.ja.md` 決定 10)。LAN 版は
-バージョン固定の仕組み(ADR 0093 段2負債7の pin)の外にあるので、**ドリフトの検知手段が今日より
-さらに弱くなる**。
+   のような 1 行を足す。**ここが opencode の `off` に無い、本当の門である。** `mcp_stdio.go` の
+   `create_session`(`:2772`)は kind の許可リストを持たず素通しで REST に転送するので
+   (`list_models` の許可リスト `:2611` とは別の話)、この門をサーバ側 1 箇所に置くことで、
+   Console 経由・`af` の MCP 経由・直 REST のどれから叩いても同じ結果になる——依頼が最初に
+   懸念した「画面には無いのに API では作れる」を、opencode より一段確実に塞ぐ形。
 
-### 105.2.5 費用と運用
+**`list_models(kind="lcpp")`(`mcp_stdio.go:2611-2613`)は許可リストとしての役割を変えない**
+(「lcpp という kind 名を list_models に渡してよいか」の話であって on/off ではない)。オフの間
+`list_models` が何を返すべきかは未確定として次節に残す。
 
-決定 8(ADR 0093)の実装(`workspace/agent/usage_price.go:175` の `usagePriceOf`)は、**kind が
-`KindLcpp` なら常に `price=0`・`src="gpu-billed"` を返す**——`external` 行かどうかを見ていない。
-LAN の場合、GPU 費用はこの配備が払っているものではなくなるが、**この配備は元々 GPU 費用を
-払っていない体(借用行は先方が払う)なので、`price=0` という結果自体は LAN でも変わらず正しい**。
-ただし `src="gpu-billed"` という文言は運用者から見て正確ではなくなる(実際は「利用者の自前機材」)
-——これは ADR 0076 決定 8 が image 役でやった区別(external 行には費用を付けない、という同じ
-結論)と同じ形だが、**文言レベルでの手当ては今回新たに要る**。生トークン数の二重計上
-(`feature=session` と `feature=engine.llm` の両方に現れる、ADR 0093 段2実装記録)は LAN でも
-同じ既存条件のまま引き継がれる。
+**Console の薄いカード**: `AgentCardParts.tsx:76` の型に `"lcpp"` を足し、`LaunchDefaults
+kind="lcpp"` と `HiddenModelsRow kind="lcpp"` だけを持つ最小カードに、on/off のトグル(opencode の
+`OpencodeUsageRows` と同型の `Choice`、ただし課金経路のラジオは無い——`lcpp` には課金経路の選択肢
+自体が無いため)を追加する。
 
-### 105.2.6 「利用者の LAN」と「Workspace が到達できる網」が同じ保証があるか
+### 捨てた選択肢
 
-**ここが企画全体の前提であり、確かめられた範囲と確かめられなかった範囲を分けて書く。**
-
-- **確認できたこと**: ADR 0076 の到達性の記述(`docs/decisions/0076-external-image-engine-on-lan.ja.md:49-56`)
-  は明確に **docker 配備**を対象にしている——「docker 配備の CP は `network_mode: host` なので
-  LAN に届く」「docker の Workspace コンテナは専用ブリッジから NAT で LAN に出られる」。つまり
-  ADR 0076/ADR 0093 P3 が想定する「LAN」とは、**CP 自体が利用者の LAN と同じ物理ネットワーク上に
-  ある自前配備(compose/native)**を指している。
-- **確認できなかったこと(分からなかった、と明記する)**: この依頼が想定している配備形態が
-  compose/native(自前ホスト)なのか ecs-ec2(AWS 上でホスティングされるマネージド配備)なのかは、
-  依頼文からは判別できない。**もし ecs-ec2 配備を指しているなら、Workspace コンテナは AWS の
-  VPC の中にあり、利用者の自宅/オフィスの LAN とは別のネットワークである**——両者の間に
-  VPN/Direct Connect のような明示的な経路が無い限り、「LAN の llama.cpp」に ECS 上の Workspace
-  から到達する手段は無い。ADR 0079 が却下した案の 1 つ「エンジンのインスタンスへのトンネル/VPN」
-  (却下理由:「到達性がそのまま権限である」「インスタンスは寿命が短い」)はエンジン間の話だが、
-  同じ理由(何を認証にするか)は利用者の自宅ネットワークへの経路にも刺さる。
-  - この worktree のセッション自身が動いている環境(Agent Fleet Workspace コンテナ)を見ても、
-    「per-user container」「ECS 的な性質」を示す記述が組織方針(`/etc/claude-code/CLAUDE.md`)に
-    多数あり、**少なくともこの Workspace の一部運用形態は ECS 系である**——ただし依頼元の配備が
-    具体的にどれかは本調査の範囲では確認していない。
-  - したがって: **compose/native 配備なら ADR 0076 と同じ機構(NAT ブリッジ)がそのまま使え、
-    「利用者の LAN」と「Workspace の到達網」は事実上同じ**。**ecs-ec2 配備なら、追加のネットワーク
-    経路(VPN 等)が無い限り成立しない**——これは推測ではなく、ADR 0076 決定 7 の記述の対象範囲が
-    docker/native に限定されていることの裏返しである。**どちらの配備を対象にするかを、実装に
-    入る前に利用者に確認する必要がある。**
+- **`allow_engine_llm`(ADR 0084)に乗せる。** 利用者本人の設定ではなく、粒度も粗い(105.1 決定
+  (b)により不採用)。
+- **`registry.available()`だけを変える(サーバ側の門を作らない)。** opencode の穴をそのまま
+  複製することになるので不採用。
 
 ---
 
-## 105.3 問い3: 見積りと段階化
+## 106.3 (c) LAN への 1 本差し替え——設計
 
-ADR 0093 決定 9 と同じ形(段階 + 次への門)で書く。**やる場合の見積りであって、着手を勧めている
-わけではない**——105.1/105.2 で見つけた通り、両方の要望とも「利用者の意図がどちらの粒度か」が
-確定していない。
+### 切替点: `engineLlmEnvRow` を新設する(`engineComfyEnvRow` の写し)
 
-### 要望1(Console のオン/オフ)
+ADR 0076 決定 2 の型をそのまま `llm`/`chat`/`llamacpp` に写す。`control-plane/engines.go:619-643`
+の `engineComfyEnvRow`(`AF_COMFY_URL`/`AF_COMFY_API_KEY` から `{key:"image", provider:"comfy",
+lifecycle:"external"}` を合成)に相当する関数を新設する想定:
+
+```go
+func engineLlmEnvRow() (engineDef, string, bool) {
+    url := strings.TrimSpace(envx.Or("AF_LLM_URL", ""))
+    if url == "" {
+        return engineDef{}, "", false
+    }
+    return engineDef{
+        Key:       "llm",
+        API:       engineAPIChat,
+        Provider:  "llamacpp",
+        URL:       url,
+        Health:    "/health",
+        WarmPath:  "/models",
+        Lifecycle: engineLifecycleExternal,
+    }, strings.TrimSpace(envx.Or("AF_LLM_API_KEY", "")), true
+}
+```
+
+`Health`/`WarmPath` の値は、いま管理されている `llm` 行(60-engines スタックが書く値、
+`deploy/aws/ecs/cfn/60-engines.yaml:909` の `"health":"/health","warmPath":"/models",
+"provider":"llamacpp"`)と揃えた——llama.cpp router は `/health` が「何も保持していなくても ok」
+を返す(`engines.go:75-79` のコメント)ので、warm 判定は別に `/models` を見る必要があり、これは
+external 行でも変わらない。
+
+### 優先順位: 既存の `engineTableWithEnvRow` は無改修で今回の「借用からの差し替え」を扱える
+
+🔴 **これが調べて分かった、今回いちばん都合の良い点である。** `engineTableWithEnvRow`
+(`engines.go:654-670`)は「表の既存行が `!d.notManagedHere()` なら env を無視、そうでなければ
+env が勝つ」という規則で、`notManagedHere()`(`:150-157`)は `d.external() || d.remote()` ——
+**`remote`(借用)行も「ここが管理していない行」として扱われる。** つまり `AF_LLM_URL` を設定して
+CP を再起動すれば、今日の `llm` 行(sandbox からの借用・`remote`)は**自動的に env 由来の
+`external` 行に置き換わる**——「借用をやめて手元に向ける」という今回の要件に、追加のコードなしで
+そのまま合致する。`engineTableNeedsAWS`(`:675-682`)も同じ `notManagedHere()` を使っているので、
+借用をやめた後は AWS 設定を読まない経路にも自然に落ちる。
+
+### モデル目録: `lcppModels` の単一行決め打ちはそのままでよい
+
+`workspace/agent/agent_models.go:77-94` の `lcppModels` は `e.Key != "llm"` を continue する
+だけの単純なループで、複数行には対応していない。**利用者の決定(c)により、この単一行前提を崩す
+必要は無い**——env 合成後も `Key` は変わらず `"llm"` のままなので、`lcppModels` は無改修で新しい
+行のモデル一覧(`e.Models`)を返す。
+
+モデル一覧そのものの登録は、ADR 0076 決定 6 と同じ「カタログの手入力宣言」を踏襲する:
+`POST /api/admin/engines/llm/models`(`control-plane/engine_admin.go:1363-` の `postModel`)は
+`key` を汎用に受けるので `image` 専用ではない。ただし `a.refuseBorrowedWrite`
+(`engine_admin.go:1382` 付近)が**借用行への書き込みを拒む**ため、**借用のままではモデルを
+登録できない**——これは今回の「まず借用をやめてから LAN 行にする」という順序を、コードが既に
+強制していることを意味する(都合が良い制約であって、新しい障害ではない)。S3 の存在確認は
+「答えなければ無いのと同じ」という既存の緩さ(`postModel` のコメント)がそのまま使え、LAN 側に
+S3 バケットが無くても登録は通るはずである(未検証)。
+
+### 窓の取得: `GET /engine/{key}/props` は lifecycle を見ないので無改修で動くはず(未検証)
+
+`control-plane/engine_gateway.go:614-653` の `props()` は `eng.def.Provider != "llamacpp"` だけを
+理由に拒否しており、`lifecycle`(managed/external/remote)は見ていない。**新しい `external` な
+`llm` 行に対しても、この経路はそのまま動くはずである** ——ただし LAN の llama.cpp が router
+モードかどうかで `/props` と `/v1/models` のどちらが実窓を持つかが変わる(ADR 0093 決定 7 の
+「覆った前提」)ため、実機での確認は要る(未検証)。
+
+### 認証: 何が守られなくなるか——**手元の配備でも消える**
+
+🔴 借用行(`remote`)は、Workspace→CP の門(`POST /internal/engine/token` がメンバーシップ別の
+セッション token を発行し `serve()` が検める、`engine_gateway.go:209,227-270,472`)に加えて、
+CP→先方 CP のホップにも**そのためだけの発行メンバーシップ**という、失効可能で追跡可能な門を
+持つ(ADR 0079 決定 3)。**`external` 行にすると、この 2 つ目の門(CP→エンジン間の、失効・追跡が
+効く認証)がまるごと無くなる。** 代わりにあるのは、素の llama-server には認証が無いのが普通、
+という前提の上で `apiKey` 欄(`AF_LLM_API_KEY`)経由の**単一の共有 bearer**だけであり、これは
+以下を提供しない:
+
+- **メンバー単位の失効。** テナントから外れた利用者だけを締め出す仕組みが無い——共有 bearer は
+  全メンバー共通であり、変えるなら全員に影響する。
+- **呼び出し元の追跡。** 誰が何を叩いたかを CP→エンジン間で見分ける手段が無い(Workspace→CP の
+  ログには session/membership が残るが、その先は共有の 1 本の bearer でしかない)。
+- **到達できることがそのまま権限になる。** ADR 0076 決定 7 が画像エンジンについて明記した
+  「到達性は防御ではない」がそのまま当てはまる——reverse proxy を運用者が自分で置いて bearer を
+  検査する以外に、今日出荷されている対策は無い(egress の enforce 遮断は未出荷のまま、
+  `guide/operate/04-secure.ja.md:78-81`。**この配備でこの記述が変わっていないかは確認していない**)。
+
+🔴 **これは compose/tailnet という「手元の配備」だから軽くなる話ではない。** tailnet の到達性は
+インターネット全体には開いていない(相応の閉域性がある)という点で外部攻撃者に対する防御には
+なるが、**このテナントの複数メンバーの間での失効・追跡が効かなくなる**という点は、配備の場所に
+関係なく同じである。この配備がシングルユーザーであれば実害は小さいが、複数メンバーが同じ
+compose 配備を使うなら、上記 3 点は実際のリスクとして残る。
+
+### 費用と運用
+
+`usagePriceOf`(`workspace/agent/usage_price.go:174-181`)は `kind == session.KindLcpp` を早期
+リターンで `price=0, src="gpu-billed"` にしており、**エンジン行が external かどうかを見ていない**。
+借用をやめた後もこの結果自体(price=0)は変わらないが、`"gpu-billed"` という出典表示は不正確になる
+(実際には運用者の自機材)——表示文言の小さな手直しが要る。生トークン数の二重計上
+(`feature=session` と `feature=engine.llm` の両方に現れる、ADR 0093 段 2 実装記録が既に認めている
+既存の負債)は、LAN 行かどうかに関わらず引き継がれる。
+
+### 捨てた選択肢
+
+- **利用者がセッションごとに複数の LAN エンドポイントから選ぶ(image 役の `imageProviderOrder`
+  相当を llm 役にも作る)。** 利用者の決定(c)により不採用。`lcppModels` の書き換えが要る、
+  桁違いに重い作業(105 稿(旧)の見立てどおり)を避けられた。
+- **借用行と LAN 行を並行して残し、優先順位ルールを新しく書く。** 106.3.2 で確認した通り、
+  既存の `notManagedHere()` ベースの優先順位がそのまま「差し替え」を実現するので、新しい規則は
+  要らない。
+
+---
+
+## 106.4 段階と門(ADR 0093 決定 9 と同じ形)——(b)と(c)は独立に出す
+
+### 要望 1((b) 利用者本人の on/off)
 
 | 段 | 内容 | 次への門 |
 |---|---|---|
-| 0 | **利用者に確認**: (a) オン/オフは利用者本人の設定か、テナント管理者の設定か。(b) テナント
-  管理者向けでよいなら `allow_engine_llm`(ADR 0084・実装済み)がそのまま使える——ただし
-  opencode の自前エンジン利用も道連れで消えることの説明が要る。(c) 利用者本人の設定を望むなら、
-  新しい ui-prefs 相当のフラグ(opencode の `UsageOff` と同型)を作ることになり、それは
-  「既存の概念で表現する」という要求そのものと緊張する——**その緊張を許容するかどうかも
-  利用者の判断**。 | 無し——出す(コード変更ゼロ) |
-| 1 | (b) を選んだ場合: Console 側で `allow_engine_llm` を利用者(自分のテナントの管理者)から見える
-  形にする改修は不要(ADR 0084 が super_admin 専用と決めている——テナント管理者にすら見せない)。
-  この段は実質「何もしない」で終わる。 | — |
-| 1' | (c) を選んだ場合: 新フラグの設計(ui-prefs か settings.ts か)・`registry.ts` の
-  `available()` を上書きする配線・`mcp_stdio.go` の許可リストとの整合(105.1.3 の 2 ゲート
-  同期)・薄い `LcppCard`(`LaunchDefaults` のみ、105.1.1)。見積り: **2〜4 セッション日**
-  (カード自体は小さいが、2 ゲートを1つの設定源に揃える設計とテストに時間がかかる)。 | 実装前に
-  ADR 化を検討(後述) |
+| 0 | `uiprefs.LcppEnabled()` の追加(`prefs.go` に 1 関数)。 | 無し |
+| 1 | Stage 1: `connections.go` に `lcpp` の行を足し、`registry.ts` の `available()` を
+  `conns.lcpp.enabled` 参照に変える。Stage 2: `session_handlers.go` の `HandleCreateSession` に
+  拒否を 1 行。`list_models(kind="lcpp")` がオフ時に何を返すか(空配列 or 現状維持)を決める——
+  **これは未確定として残す**(提案: 空配列にして「エンジンが使えません」より「何も無い」の方が
+  混乱が少ない、という程度の弱い意見)。 | 動作確認(オフ→起動導線から消える・`create_session`
+  が拒否される・オン→両方復帰) |
+| 2 | 薄い `LcppCard`(`LaunchDefaults`+`HiddenModelsRow`+on/off トグル)を追加。 | — |
 
-**やらない判断の条件**: テナント管理者向けの粗い on/off で運用上困っていないなら、105.1.1 が
-指摘した通り「空のカードを出すくらいなら出さない」で止めてよい。lcpp を使わないテナントは
-`allow_engine_llm=false` で足りる。
+**見積り**: 段 1〜2 合わせて **2〜3 セッション日**(カード自体は小さいが、2 段の門を同じ設定源で
+揃える設計・テストに時間がかかる——依頼が最初から警告していた点)。
 
-### 要望2(LAN エンドポイントへの切替)
+**やらない判断の条件**: 実害(意図しない起動・課金)が報告されていないなら、段 0 で止めて
+Console 側は無改修のままにする選択も正当。
+
+### 要望 2((c) LAN への 1 本差し替え)
 
 | 段 | 内容 | 次への門 |
 |---|---|---|
-| 0 | **利用者に確認**: (a) 対象配備は compose/native か ecs-ec2 か(105.2.6)。(b) 「切替」は
-  運用者が設定する 1 本の差し替え(A)か、利用者がセッションごとに選ぶ複数エンドポイント(B)か
-  (105.2.4)。 | 無し——出す |
-| 1 | (A)・compose/native 前提なら: ADR 0076 の型をそのまま `llm` 役に写す——
-  `engineLlmEnvRow`(`AF_LLM_URL`/`AF_LLM_API_KEY` の合成)、`external` lifecycle の `llm` 行への
-  適用、chat 経路の即時失敗/再試行の設計(105.2.1 の未確認点)、契約テストの LAN 版での成立確認
-  (105.2.4)、guide の追補。ADR 0076 の P0 の見積り(4 レーン)に相当。見積り: **5〜8 セッション日**
-  (image より軽いのは Console 側の改修がほぼ無いこと——lcpp カード自体が薄いため——、重いのは
-  chat 特有の失敗経路の設計)。 | 実機 1 回(運用者の LAN で `create_session(kind="lcpp")` が
-  1 往復する)——ADR 0076 と同じく、この 1 回はセッションの仕事ではなく運用者の手順 |
-| 2 | (B)を求めるなら追加で: `lcppModels` を role 基準の複数行対応に書き換え、`imageProviderOrder`
-  相当の並び設定を llm 役に作る、モデル id の衝突回避。見積り: **段 1 に加えてさらに 4〜6
-  セッション日**。 | — |
-| 3 | ecs-ec2 配備を対象にするなら、まず 105.2.6 の到達性の前提(VPN/Direct Connect 等)を
-  ネットワーク設計として別途確定させる必要があり、**これは Agent セッションの調査範囲外**
-  (組織のネットワーク構成の意思決定)。 | — |
+| 0 | `engineLlmEnvRow`・`AF_LLM_URL`/`AF_LLM_API_KEY` の合成・`newEngineRegistry` への配線
+  (`engineComfyEnvRow` と並べて呼ぶだけ)。優先順位・AWS 要否判定は無改修で済む(106.3.2)。
+  見積り: **1〜2 セッション日**(ADR 0076 の P0 の CP レーンより小さい——Console 側の改修が
+  ほぼ無いため)。 | 106.1 の到達性確認手順を運用者が実施——tailnet 越しに health パスへ届くか |
+| 1 | 運用者が LAN の llama.cpp を用意し、モデルを `postModel` で宣言、`AF_LLM_URL` を設定して
+  CP を再起動。借用行が自動的に置き換わることを確認する(106.3.2)。見積り: 運用者の作業(セッション
+  日ではない)。 | 実機 1 回——`create_session(kind="lcpp")` が LAN のエンジンで 1 往復する
+  (ADR 0076 の完了条件と同型) |
+| 2 | 窓取得(`/props`/`/v1/models`)・契約テスト(`live_contract_test.go`)が LAN のビルドに対して
+  実際に通るかの確認。見積り: 運用者の実機作業込みで **未見積り**(版がバラバラなため)。 | — |
+| 3 | 費用表示(`gpu-billed`→他の文言)の小さな修正。見積り: **半日**。 | — |
 
-**やらない判断の条件**: 対象が ecs-ec2 で、利用者の LAN への経路(VPN 等)が無い/作る予定が
-無いなら、この要望はネットワークの前提から崩れるので着手しない。compose/native でも、
-lcpp の実運用(20 ターン級の実作業)がまだ限定的(ADR 0093 決定 9 門 (c) の「族で 2 倍以上の
-費用差」のような未解決点が残る段階)なら、借用エンジン 1 本の運用を先に安定させてから LAN を
-足す方が手戻りが少ない。
+**やらない判断の条件**: 106.1 の到達性確認(段 0 の門)が外れた場合——同じ tailnet に居ない、
+または health パスが届かない場合——は、そこで一旦止めるべきである。
 
 ---
 
-## 105.4 ADR にするかどうか
+## 106.5 ADR の扱い(確定)
 
-**ADR を起こすべきだと考えるが、起票はしない(利用者の判断)。** 理由:
-
-- 要望2は ADR 0076 の予告(P3)を実際に埋める話であり、ADR 0076 自身が「型」を規定している
-  ので、新設するとしても**ADR 0076 の決定を llm 役に拡張する追補**という形になり、白紙の ADR
-  よりも「0076 決定 X は llm でも成り立つ/成り立たない」という比較の形の文書が適している——
-  これは ADR の書式(決定・却下案・上書きする既存の決定)そのものである。
-- 要望1は、105.1.2 で見た通り「利用者本人の設定か管理者の設定か」という**製品判断**が先に
-  要る。ADR はその判断が決まってから、実装方式(新フラグかどうか)を固定する文書として書くのが
-  筋である——判断より先に ADR を書くと、決定 9 の門のような「利用者が承認する」ステップが
-  文書の途中に挟まる形になり、ADR 0093 のときと同じ運びになる。
-
-したがって: **105.3 の「段 0」(利用者への確認)の答えが出た時点で、要望2は ADR 0076 への
-追補(番号は 0076 のままか、新規にするかは利用者の判断)、要望1は必要であれば軽量な docs/log の
-実装記録で足りる、という提案にとどめる。**
+- **要望 2 は ADR 0076 への追補として書くのが妥当。** ADR 0076 自身が「この ADR の範囲外」として
+  `AF_LLM_URL` を P3 に名指ししており、白紙の ADR より「決定 X は llm 役でも成り立つ/成り立たない」
+  という比較の形の追補文書が適している。**ADR 自体はここでは書かない**(起票は利用者の判断)。
+- **要望 1 は軽量な docs/log の実装記録で足りる。** 製品判断(利用者本人の設定か、テナント設定か)
+  は今回の利用者決定(b)で既に済んでおり、ADR が本来担う「決定・根拠・棄却案」の重さに見合う
+  未決の分岐がもう残っていない。実装時に本稿を実装記録として引用すれば十分。
 
 ---
 
-## 105.5 分からなかったこと(まとめ)
+## 106.6 分からなかったこと(まとめ)
 
-- 依頼元の配備形態(compose/native か ecs-ec2 か)。105.2.6 の到達性の結論はこれに完全に依存する。
-- 「オン/オフ」「切替」が利用者本人の設定を指すのか、テナント管理者の設定を指すのか。
-- `session_handlers.go`(または REST 直叩き)に lcpp 固有の kind 拒否ロジックがあるかどうか
-  (105.1.3)。`mcp_stdio.go` の許可リスト以外は悉皆確認していない。
-- lcpp の chat 経路(driver/harness)が external 行の cold-start 失敗(`engine_unavailable`)に
-  対して image と同じ再試行をするかどうか(105.2.1)。
-- この配備の `guide/operate/04-secure.md` の egress enforce 出荷状況が ADR 0076 執筆時
-  (2026-09-11)から変わっていないか(105.2.3)。今回は確認していない。
-
----
-
-## 105.6 追記(親セッションの並行確認、2026-09-21)
-
-同じ依頼を親セッション自身も並行して調査しており、上の本文と独立に同じ結論(既存カードの型が
-lcpp に当てはまらない・opencode の `off` が `create_session` を拒んでいない疑い・ADR 0076/0084 の
-状態欄が古い・`llm` 役が単一行に固定・到達性は Workspace でなく CP の問題・compose/native と
-ecs-ec2 で結論が割れる)に独立して達した。**2 セッションの結論が一致したこと自体が、105.1〜105.5 の
-確度を上げる材料として書き足す。** 加えて、本文に無かった追加の発見を 3 点だけ足す:
-
-1. 🔴 **`registry.ts` の `available()` は計画段階では条件付きだった。** `docs/log/99-lcpp-agent-kind.md`
-   §4.12(段 2 着手前の計画メモ)は「接続カードは『chat エンジンが目録にあるか』『起きているか』
-   『既定モデル』の表示だけ。`available` は `conns.lcpp.connected`(＝目録に chat エンジンがある)」
-   と書いていた。**実装(`registry.ts:562` `available: () => true`)はこれを採らず、無条件 `true`
-   にした。** 結果、🔴 **`llm` 役のエンジンが 1 行も無い配備(素の dev CP など)でも、Console の
-   起動導線には `llama.cpp` が出る**——押すと `list_models` が空を返し(`agent_models.go:93`)、
-   driver は "no model configured" で即失敗する(ADR 0093 段 2 実装記録)。これは 105.1 の
-   「オン/オフ」とは別軸の穴(サインインの有無でなく、エンジンの実在)で、薄いカードを作る際に
-   `LaunchDefaults` と一緒に「エンジン未接続」の一言を出すだけでも塞げる。
-2. **`GET /engine/{key}/props`(`control-plane/engine_gateway.go:614-653`)のゲートは
-   `Provider != "llamacpp"` だけを見ており、`lifecycle`(managed/external/remote)を見ていない。**
-   つまり 105.2.4 が指摘した窓取得の仕組みは、`external` な `llm` 行に対しても無改修で動くはずで
-   ある(未検証だが、コード上そう読める)。CP 側の窓取得インフラは image より再利用しやすい側にある。
-3. **`ensureReady`/`ensureStarted`(`engine_gateway.go:1519-1567`)は `eng.def.api()` や role 名で
-   分岐しておらず、`eng.def.external()`/`eng.def.remote()` という lifecycle の述語だけで分岐している。**
-   ADR 0076 が image 用に書いた「external は即時失敗(実測 3.05〜3.11 秒)」は、コード上すでに
-   role 非依存であり、`llm` 役の external 行に対しても**そのまま動く**——105.2.1 が「未確認」と
-   した「chat 経路の即時失敗」は、少なくとも gateway 層(`ensureReady`)においては image と同じ
-   コードパスを通ることが分かった。未確認のまま残るのは driver/harness 側(`lcpp` の `runTurn`)が
-   `engine_unavailable` をどう扱うかだけである。
-
----
-
-*本文書のために新しく測ったものは無い。根拠は (a) ADR 0076/0079/0084/0093 の記述、
-(b) 2026-09-21 にこのリポジトリのコードから読んだ事実(file:line で示した)、を出所ごとに
-書き分けた。*
+- **到達性**: tailnet 越しに CP から対象ホストの llama-server へ実際に届くかどうかは確認していない。
+  106.1 に確認手順を書いた——実行は運用者の判断。
+- `list_models(kind="lcpp")` がオフ時に何を返すべきか(空配列か、現状維持か)は未確定。
+- `POST /api/admin/engines/llm/models` に LAN 専用のモデル(S3 に実体が無い)を登録したとき、
+  実際に `files_missing` 等の検査が ADR 0076 の想定通り緩く振る舞うかは、コードの記述(「答えなければ
+  無いのと同じ」)から類推しただけで実行して確かめていない。
+- `GET /engine/{key}/props`/`/v1/models` が LAN の llama.cpp(router モードかどうか含め)に対して
+  実際に窓を返すかは未検証。
+- `guide/operate/04-secure.md` の egress enforce の出荷状況が、この配備で ADR 0076 執筆時
+  (2026-09-11)から変わっていないかは確認していない。
+- 借用行を置き換えた後、sandbox 側(`st3egt6` が管理する配備)の需要計測・費用にどう影響するか
+  (借用が使われなくなったことがどう観測されるか)は、この調査の範囲(compose 側のコード)だけでは
+  確認できなかった。
