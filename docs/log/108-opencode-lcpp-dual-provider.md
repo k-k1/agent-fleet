@@ -72,8 +72,10 @@ provider プレフィクスで判定しているのも同じ規約)。**provider
 (`engineProviderEntry`、`engine.go:273`)で終わる。メンバーが手で書く 2 本目にも同じ文字列を
 使うと、画面上は 2 つの選択肢が見分けにくくなる(id は違うが、ラベルは並んで同じに見える)。
 **衝突ではなくヒューリスティックな UX 問題**——手で書く場合は `(LAN)` のような別のサフィックス
-を勧める。af 自身が 2 本目を書く実装(§6)にするなら、`engineProviderEntry` のサフィックスを
-呼び出し側から渡せるようにする一行の変更で済む。
+を勧める。af 自身が 2 本目を書く実装(§6)にするなら、`engineProviderEntry`
+(`engine.go:259-312`)が今 `" (self-hosted)"` を無条件に付けている箇所を、呼び出し側の
+`EngineProvider` に足す別フィールド(例 `LabelSuffix`)から取るように直せば済む——ただし
+これは §6 段1 の見積りには含めていない、UX 上望ましいという程度の副次提案。
 
 ### 1.3 保存/復元——「前回選んだモデル」を横取りする機構は見つからなかった(消極的事実)
 
@@ -92,34 +94,59 @@ provider で分かれている(§1.2)ことと合わせ、選択の保存/復元
 そのまま残る。af 側の 2 本目(§6 実装案)を足す場合も、単に `providers` スライスに
 `Provider: "llamacpp-member"` のエントリを増やすだけで、同じ PATCH 1 回に相乗りできる。
 
-## 2. LAN API キーを平文にせず env で渡す——既存の作法と、この件特有の衝突面
+## 2. LAN API キーを平文にせず env で渡す——本命の保存先と、段0の手動回避を分離する
 
-### 2.1 既存の仕組みは「任意の env 名 → 値」を秘密ストアに置く、既にある機構
+利用者からの指示どおり、**製品実装として狙うべき保存先は #858(107)が新設した
+`secrets.Data.Lcpp` であって、opencode 用に別の秘密を新設することではない**。以下、
+本命(2.1)と段0限定の手動回避(2.2)を明確に分ける。
 
+### 2.1 本命——`secrets.Data.Lcpp` を再利用する。秘密ストアを2本立てない
+
+107(PR #858)が既に `secrets.Data` に足しているのは `Lcpp *LcppConn`
+(`workspace/agent/internal/secrets/secrets.go:369`)で、`LcppConn` 自体は
+`URL`・`APIKey` を持つ構造体(`secrets.go:148`)。これは「メンバーが LAN の
+llama-server に接続するための情報」を**1件だけ**持つ、既にある正本(source of truth)
+であり、今日は `internal/harness`(lcpp kind)の `harnessEngineToken` などが
+`key=="llm"` のとき最初に読む(`workspace/agent/engines.go:976-993` 付近、107 決定1)。
+
+opencode の2本目を作るときにここを再利用すべき理由は実装の楽さではなく**正本を1つに
+保つこと**: メンバーが自分の LAN 機の URL やキーを変えたとき、`secrets.Data.Opencode`
+のような別の秘密にも同じ値を二重に持たせていると、片方だけ更新して片方が古いまま、と
+いう事故が起きる(107 のカード保存/削除フロー、`connections.go` の
+`handlePutLcppConn`/`handleDeleteLcppConn` は `secrets.Data.Lcpp` しか書き換えない)。
+opencode 側が **`secrets.Data.Opencode` に値をコピーして持つ設計は取るべきではない**
+——読み出す先を増やすだけで、書き込む先(=正本)は `secrets.Data.Lcpp` の1つのままに
+する。具体的な配線案は §6 段2 に置く(`EngineProvider.APIKeyEnv`(提案、§6)を新設し、
+`secrets.Data.Lcpp.APIKey` を直接その env 名へ注入する——`secrets.Data.Opencode` を
+経由しない)。
+
+### 2.2 段0(コード変更ゼロ)の手動回避——`secrets.Data.Opencode` の既存 custom プリセット
+
+**製品実装の本命ではなく、§6 段0(メンバーが手で `opencode.jsonc` を編集する場合)だけの
+話として**、opencode には既に「任意の env 名 → 値」を暗号化ストアへ置く一般機構がある:
 opencode の provider 認証は最初から「Console でキーを1つ貼ると、暗号化ストアに置き、
 起動時に env として注入する」設計(`workspace/agent/internal/agents/opencode/auth.go:14-19`
 のコメント)。ストアは `secrets.Data.Opencode map[string]string`
-(`workspace/agent/internal/secrets/secrets.go:365`、コメント「provider env var name -> API key」)
-——**キー名(env 変数名)も値も自由**、`envNameRe`(`auth.go:23`、`^[A-Z][A-Z0-9_]{1,63}$`)が
-書式だけを縛る。Console 側は既に**任意の env 名を入力させる「custom」プリセット**を持っている
+(`secrets.go:365`、コメント「provider env var name -> API key」)——**キー名(env 変数名)
+も値も自由**、`envNameRe`(`auth.go:23`、`^[A-Z][A-Z0-9_]{1,63}$`)が書式だけを縛る。
+Console 側は既に**任意の env 名を入力させる「custom」プリセット**を持っている
 (`console/src/features/settings/agents/OpencodeCard.tsx:33` の `["custom", ...]` エントリ、
-入力欄は同ファイル 496-499 行付近)。**つまり「メンバーが自分の LAN キーを env 経由で登録する」
-UI と保存先は、opencode に関する限りもう存在している**——107 が lcpp kind 用に新設した
-`secrets.Data.LcppConn`(`secrets.go:148`)のような専用構造体を、opencode 用に新しく作らなくても
-同じ結果になる。
+入力欄は同ファイル 496-499 行付近)。
 
-保存先は 107 が確認したのと同じファイル(`~/.config/agent-fleet/secrets.enc`)で、
-denylist にも既に入っている(`workspace/agent/fs.go:126`、107 の確認をそのまま踏襲——本稿では
-独立に再確認していない)。
+この経路は**段0(手で `opencode.jsonc` に2本目の provider ブロックを書く場合)にだけ
+使う**——正本を `secrets.Data.Lcpp` に一本化する2.1の方針と矛盾しないよう、製品実装
+(§6 段1・段2)では `secrets.Data.Opencode` を経由させない。保存先自体は107が確認した
+のと同じファイル(`~/.config/agent-fleet/secrets.enc`)で、denylist にも既に入っている
+(`workspace/agent/fs.go:126`、107 の確認をそのまま踏襲——本稿では独立に再確認していない)。
 
-### 2.2 注入経路は 2 つ、優先順位の扱いが違う
+### 2.3 注入経路は 2 つ、優先順位の扱いが違う
 
 | 経路 | 関数 | 中身 |
 |---|---|---|
 | managed(共有 `opencode serve` デーモン) | `env()`(`auth.go:45-81`) | `secrets.Opencode` の全キーを sorted で並べたあと、末尾に `EngineEnv("")...` を **append**(`auth.go:80`) |
 | tmux(セッション自身のプロセス) | `BuildLaunch`(`opencode.go:154-172`) | `mergeCommandEnv(env(), EngineEnv(m.Name))`(`opencode.go:172`)——**名前が同じなら override 側(`EngineEnv`)が勝つ**(`mergeCommandEnv`、`models.go:283-304`、コメントに「二重定義を運に任せない」と明記) |
 
-### 2.3 🔴 見つけた衝突面——予約名 `AF_ENGINE_TOKEN` を自分の env 名に選ぶと、tmux 経路では確実に、managed 経路では未検証の形で潰れる
+### 2.4 🔴 見つけた衝突面——予約名 `AF_ENGINE_TOKEN` を自分の env 名に選ぶと、tmux 経路では確実に、managed 経路では未検証の形で潰れる
 
 `opencode.EngineProviderKeyEnv` は `"AF_ENGINE_TOKEN"` という**固定の1文字列**
 (`engine.go:44`)——今日の唯一の provider(`"llamacpp"`)の `apiKey` は必ず
@@ -136,11 +163,11 @@ denylist にも既に入っている(`workspace/agent/fs.go:126`、107 の確認
   実際のプロセス環境にした時にどちらが勝つかは、Go の `exec.Cmd.Env`/`opencode serve` を
   起動する実装依存で、**本調査では実機確認していない**(未検証、と明記する)。
 
-**対策は実装ではなく命名規約**: メンバー(または将来 af 自身が書く 2 本目、§6)は
-`AF_ENGINE_TOKEN` 以外の env 名を使う、の一言に尽きる。コードを変えるなら
-`engineProviderEntry` の apiKey env 名を呼び出し側から渡せるようにし(§6)、
-af 自身が管理する 2 本目には最初から別の予約名(例 `AF_LCPP_MEMBER_TOKEN`)を割り当てて
-この地雷を踏めなくするのが筋。
+**段0(手動回避)の対策は実装ではなく命名規約**: メンバーは `AF_ENGINE_TOKEN` 以外の
+env 名を使う、の一言に尽きる。**製品実装(§6 段1・段2)では、この地雷を規約ではなく
+コードで踏めなくする**——`EngineProvider` に新しいフィールド `APIKeyEnv`(提案、§6)を
+足し、af 自身が書く2本目には最初から別の予約名(例 `AF_LCPP_MEMBER_TOKEN`)を割り当てる。
+メンバーが手で選ぶ余地自体を無くすので、段0でしか起こらない衝突になる。
 
 ## 3. 使用量——opencode 自身の自己申告を Agent Fleet がそのまま信じる。直結で 0 になる根拠は無い
 
@@ -159,10 +186,14 @@ Agent Fleet は opencode が「使った」と書いた数字を疑わずに使�
 リクエストに usage を積まなければ、opencode 自身が 0 を書き、Agent Fleet もそのまま 0 を
 記録する**、という意味で「Agent Fleet 側は空欄を作らない」。
 
-### 3.2 🔴 実機で確認した事実(推測ではない): opencode の openai-compatible クライアントは
-`stream_options.include_usage` を常に送る
+### 3.2 🔴 この配備の `opencode 1.18.31` 実バイナリで確認した事実(推測ではない。
+upstream の一次資料ではないので版が上がったら再確認が要る)
 
-この Workspace に入っている実バイナリを直接調べた:
+以下は **この Workspace に焼き込まれている `opencode 1.18.31` の実バイナリ1本を
+strings で読んだ結果**であり、opencode/`@ai-sdk/openai-compatible` の upstream
+リポジトリやドキュメントを直接確認したものではない。ミニファイされたバンドルの
+関数名(`Q7`・`X7` 等)はビルドのたびに変わりうる識別子で、**次に opencode のピンを
+上げたときはこの節を実バイナリで取り直す必要がある**、という前提を明記した上で読む:
 
 ```
 $ file /home/dev/.local/bin/opencode
@@ -272,37 +303,122 @@ provider ブロック(§1)とは何の関係も無い。したがって:
 
 | 段 | 内容 | 費用 | 次への門 | ロールバック |
 |---|---|---|---|---|
-| 0 | **コード変更ゼロ。** メンバーが `opencode.jsonc` の `provider` に `"llamacpp-lan"`(仮名)を手で追加し、OpencodeCard の「custom」プリセット(`OpencodeCard.tsx:33,496-499`)で任意の env 名(`AF_ENGINE_TOKEN` 以外)に自分の LAN キーを保存する | **0日**(今日できる) | メンバーが実際に両方の provider を launch メニューで選べる(実機1回) | ファイルを戻すだけ |
-| 1 | `engineProviderEntry`/`engineConfigKey` の apiKey env 名を呼び出し側から渡せるように一般化(`engine.go:44,308`) | 0.5〜1日 | 既存の `WriteEngineProviders` 試験(`engine_test.go`)が無改修のまま緑 | Go のみ、revert 容易 |
-| 2 | `secrets.Data.Lcpp` を再利用し、af 自身が2本目の `opencode.EngineProvider`(`Provider: "llamacpp-member"`)を書く経路を足す。モデル一覧は既存の `lcppMemberFetchModelsCached`(`engines.go:1137-1146`)を再利用——新しいポーリングは足さない | 1日 | 段0で確認した実機と同じ launch メニューが、コード生成で再現される | 経路を1つ削るだけ、段0はそのまま生きる |
+| 0 | **コード変更ゼロ。** メンバーが `opencode.jsonc` の `provider` に `"llamacpp-lan"`(仮名)を手で追加し、§2.2 の「custom」プリセット(`OpencodeCard.tsx:33,496-499`)で任意の env 名(`AF_ENGINE_TOKEN` 以外)に自分の LAN キーを保存する | **0日**(今日できる) | メンバーが実際に両方の provider を launch メニューで選べる(実機1回) | ファイルを戻すだけ |
+| 1 | `EngineProvider` 構造体(`engine.go:47-71`)に新フィールド `APIKeyEnv string` を追加(空なら今日どおり `EngineProviderKeyEnv`="AF_ENGINE_TOKEN" にフォールバック)。`engineProviderEntry`(`engine.go:259-312`)の `apiKey` 組み立てを `e.APIKeyEnv` があればそれを使う形に直す。既存の呼び出し元(`workspace/agent/engines.go:337-342`)は `APIKeyEnv` を設定しないので配備側 provider の挙動は不変 | 0.5〜1日 | **新規試験1本を書き、それが緑になること**(既存試験が無改修で緑、だけでは不十分——後述) | Go のみ、`APIKeyEnv` を消せば1に戻る |
+| 2 | `secrets.Data.Lcpp`(§2.1)を正本のまま再利用し、af 自身が2本目の `opencode.EngineProvider{Provider: "llamacpp-member", APIKeyEnv: "AF_LCPP_MEMBER_TOKEN", …}` を書く経路を足す。`AF_LCPP_MEMBER_TOKEN` の値は `secrets.Data.Opencode` を経由せず `secrets.Data.Lcpp.APIKey` から直接 `env()`(`auth.go:45-81`)/`BuildLaunch`(`opencode.go:154-172`)へ注入する一行を足す(`EngineEnv` が `AF_ENGINE_TOKEN` を注入している場所と同じ並び)。モデル一覧は既存の `lcppMemberFetchModelsCached`(`engines.go:1137-1146`)を再利用——新しいポーリングは足さない | 1日 | 段0で確認した実機と同じ launch メニューが、コード生成で再現される。かつ `secrets.Data.Opencode` に `AF_LCPP_MEMBER_TOKEN` 相当のキーが**一切書かれない**ことを確認する試験 | 経路を1つ削るだけ、段0はそのまま生きる |
 | 3 | Console 可視化——§5.3 のどちらかの形で pill/カードに反映 | 1〜1.5日 | メンバーが押さなくても両方の状態が分かる | i18n・dom テストのみ |
 | 4 | 実機受け入れ(利用者のLAN機で1往復・usage が非ゼロで記録されることを確認・tool call 生存確認) | 半日+運用者の実機 | §3.3 の未検証点がすべて実測で決着する | — |
+
+### 6.1 段1の門を具体化する——「既存試験が無改修で緑」だけでは実装したことにならない
+
+既存の `WriteEngineProviders` 試験(`engine_test.go`)が無改修のまま緑、は「壊していない」
+ことの確認にしかならず、`APIKeyEnv` が実際に働くことの証明にはならない。段1の受け入れは
+**新規テスト**(例: `workspace/agent/internal/agents/opencode/engine_test.go` に
+`TestEngineProviderEntryPerProviderAPIKeyEnv` を追加)を書き、以下をすべて assert する
+ことを門とする:
+
+1. `WriteEngineProviders([]EngineProvider{ {Provider:"llamacpp", …}, {Provider:"llamacpp-member", APIKeyEnv:"AF_LCPP_MEMBER_TOKEN", …} })` を呼んだあと、書き出された `opencode.jsonc` を読み戻し、
+   `provider["llamacpp"].options.apiKey == "{env:AF_ENGINE_TOKEN}"`(**借用側の env 名が変わっていないことの回帰確認**)。
+2. 同じ読み戻しで `provider["llamacpp-member"].options.apiKey == "{env:AF_LCPP_MEMBER_TOKEN}"`(**LAN 側が別の env 名を生成すること**)。
+3. 両エントリの `apiKey` の値が正規表現 `^\{env:[A-Z][A-Z0-9_]{1,63}\}$`(`envNameRe` と同じ形、`auth.go:23`)に一致し、それ以外の形(生の値・`=` を含む文字列など)を一切含まないこと(**平文キーが config に無いことの証明**)——`EngineProvider` に生の秘密値を運ぶフィールドが無い、という設計上の不変条件をテストで固定する。
+
+段2の門(表の該当セル)も同じ考え方で、`secrets.Data.Opencode` に `AF_LCPP_MEMBER_TOKEN`
+というキーが増えていないことを assert する新規テストを書くことを指す(`internal/secrets`
+自体には今日テストファイルが無く、`secrets.Data` を触る試験は
+`workspace/agent/connections_lcpp_test.go` のように呼び出し側のパッケージに置かれている
+——同じ置き場を踏襲する)。これも実装時点では未着手。
 
 **ADR は今は起こさないことを提案する(最終判断は利用者)**——新しい概念は増えておらず、
 107 が一度下した「メンバー自身の直結は `allow_engine_llm` を迂回してよい」という決定を
 opencode に広げるかどうかという**1行の確認**(§4末尾)さえ取れれば、106 が lcpp 側について
 出した結論(ADR 不要、docs/log に1行残せば足りる)と同じ位置づけになる。
 
-## 7. 実機測定テンプレート(空欄——本セッションでは実測していない)
+## 7. lcpp MCP ツールコール族の実機測定
 
-依頼にあった、lcpp MCP のツールコール系実機検証で埋めるための雛形。**数値は一切ここでは
-埋めていない**——実機を持つセッション/利用者が測った時にこの表を埋める前提。
+**このセクションは親セッション(sjqlfyj)が実機で取得し、本追記として伝えてきた値を
+そのまま記録するもので、本セッション自身が LAN/lcpp 実機に接続して測ったものではない**
+(本依頼の制約どおり、本セッションはこの調査全体を通じて LAN 実機に一切触れていない)。
+数値の出典・限界は各項目に明記する。
 
-| 日付 | af tool 名 | 承認モード(承認停止 / AutoApprove) | `input_tokens` の有無(harness の decision 7 経路) | spawn+handshake 秒 | Gemma tool call(成功/失敗・内容) | web MCP(成功/失敗・内容) | 備考 |
+### 7.1 af MCP のツール実名——固定 `mcp__af__` ではなく、起動ごとに回転する `mcp__af_<8hex>__`
+
+コード根拠(`workspace/agent/internal/mcpreg/af_server_name.go`): af 自身の MCP サーバー名は
+Agent の起動のたびに新規採番される——`RotateAFServerName`(53-69行目)が
+`"af_" + hex.EncodeToString(4バイト乱数)`(8桁16進、58行目)を作り、`AFServerName()`
+(74-93行目)がその値を返す。ファイル冒頭のコメント(16行目)が明言するとおり、変わるのは
+「各 CLI の設定ファイルに書かれるキー」だけで、変わった結果クライアント側に見える形は
+`mcp__<name>__<tool>`(114-124行目のコメントに実測例:
+`mcp__af_40ed9852__af_report`)。**固定の `mcp__af__…`(接尾辞なし)は、まだ一度も
+回転していない、または回転結果を読めなかった場合にだけ使われるフォールバック**
+(`BuiltinAF`="af"、`workspace/agent/internal/mcpreg/builtin.go:19`、
+`afServerNameLocked` の92行目)であり、通常の起動では観測されない値である。
+
+🔴 **したがって「af 系ツールが生えた」と「そのツールを(回転後の実名で)実際に呼べた」は
+別の主張として扱う**。§7.3 のとおり、今回の実機(lcpp 子セッション `so46xxq`)では
+モデルがツールコールの段まで到達しなかった。**「生えた」は §7.2 の tools payload
+構築(24本という本数のカウント)までの確認であり、「呼べた」——回転後の実名で実際に
+1本のツールが呼び出せたこと——はこの実機では確認されていない。**
+
+### 7.2 tools payload のサイズ——製品コードから組み立てた同一形の probe(実測)
+
+2026-09-22、実プロダクトコード(`mcpreg.ForSession(lcpp)` + `mcpc.Connect` +
+`BuiltinTools`)を使って組み立てた、実ターンと同じ形の message request を、
+`POST /v1/chat/completions/input_tokens`(harness の decision 7 経路)に投げて
+`input_tokens` を読んだ:
+
+| 構成 | input_tokens | バイト数 |
+|---|---|---|
+| tools 無し | 19 | 68 |
+| 最小構成・24 tools 有効 | 4155 | 17765 |
+| **差分** | **4136**(窓 24064 の**約 17.2%**) | — |
+
+窓の値(`n_ctx=24064`)は `GET /v1/models` から読んだ、モデル
+`gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m` の実測値。probe 自体は検証用の
+一時 Go プログラムで、**測定後に削除済み・コミットされていない**(本リポジトリには
+残っていない)。
+
+### 7.3 実ターン——create_session の往復とタイムアウトまで(実測、ただし到達しなかった項目あり)
+
+- 実 lcpp 子セッション `so46xxq` の `create_session` API 往復: **1.477秒**。
+  🔴 **これは spawn + MCP handshake だけを切り出した値ではない**——完了時刻を
+  独立に観測できていないため、「spawn+handshake に何秒かかったか」は**未測定**と
+  明記する(1.477秒を spawn+handshake の代理値として扱わない)。
+- 実ターンでは `/slots` が `n_prompt_tokens=15471`・`n_prompt_tokens_cache=12764`・
+  `n_decoded=2639` を示し、処理が継続していることを示していたが、親セッションは
+  約**117秒**でターンを停止した。**ツールコール/承認ゲートの段には到達していない。**
+  - Gemma の MCP tool-call 品質: **FAIL**(実際に呼び出す段まで進まなかった)。
+  - 承認ゲート(承認停止 / AutoApprove)の実機判定: **未判定**——「無人で承認表示が
+    出た」という事実は観測されていないので、そのようには書かない。
+
+### 7.4 web MCP——利用者指定により af 系ツールで代替。外部 web 検索 MCP は未登録・未実測
+
+利用者の指定により、この検証では独立した web 検索 MCP の代わりに af 系ツールを使う
+構成を取った。**外部の web 検索 MCP は登録されておらず、実測もしていない**。opencode/
+lcpp のどちらにも組み込みの web 検索ツールは無い(§0・§1 の調査範囲で確認した限り)。
+
+### 7.5 空欄のまま残る項目
+
+上記のいずれでも埋まらなかった「複数回のばらつき」「別モデルでの再現性」は、この
+実機1回の測定では答えが出ない——今後の実機で追加する行として、以下の形を残す。
+
+| 日付 | af tool 名(回転後の実名) | 承認モード | `input_tokens` の有無 | spawn+handshake 秒(独立に切り出した値) | Gemma tool call | web MCP | 備考 |
 |---|---|---|---|---|---|---|---|
-| | | | | | | | |
-| | | | | | | | |
+| 2026-09-22 | `mcp__af_<8hex>__*`(§7.1、実名は起動ごとに変わる) | 未判定(§7.3) | 有(§7.2、24 tools で 4155) | 未測定(§7.3、1.477秒は create_session 往復であり別物) | FAIL(§7.3) | af系で代替、外部web MCP未測定(§7.4) | — |
 | | | | | | | | |
 
 ## 8. 検証
 
 ```
-python3 scripts/docs-check.py   # 443 files, 0 error(s), 0 warning(s)（本稿を1本追加した後）
+python3 scripts/docs-check.py   # 443 files, 0 error(s), 0 warning(s)
 rg -l 'lastModel|last_model|selectedModel' console/src/lib console/src/features   # 0 件（§1.3の消極的事実）
-rg -n 'EngineProvider{' workspace/agent/engines.go workspace/agent/internal/agents/opencode/*.go
-rg -rln '"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"' workspace/agent/internal/agents/*/*.go   # lcpp のみ 6 ファイル
+rg -n 'EngineProvider\{' workspace/agent/engines.go workspace/agent/internal/agents/opencode/*.go
+rg -l '"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"' workspace/agent/internal/agents/*/*.go   # lcpp のみ 11 ファイル
+rg -n 'type EngineProvider struct' -A1 workspace/agent/internal/agents/opencode/engine.go
+rg -n 'type LcppConn struct|Lcpp .*LcppConn' workspace/agent/internal/secrets/secrets.go
+rg -n 'func RotateAFServerName|func afServerNameLocked|BuiltinAF =' workspace/agent/internal/mcpreg/af_server_name.go workspace/agent/internal/mcpreg/builtin.go
 gofmt -l .   # 空（本稿はコード変更なし）
 ```
 
 コードは1行も変更していないため `go test ./...` は対象外(触っていないパッケージを回しても
-本稿の主張の裏取りにはならない)。
+本稿の主張の裏取りにはならない)。§6.1 の新規テストは提案であって、まだ書かれていない
+(段1・段2 いずれも未実装)。
