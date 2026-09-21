@@ -392,11 +392,32 @@ func TestManualLiveEngineContract(t *testing.T) {
 		}
 		t.Logf("engine build_info=%s (段2 負債7: pin the engine image to this digest once it stops moving)", props.BuildInfo)
 
-		if props.Role != "router" || props.ModelPath != "none" || props.DefaultGenerationSettings.NCtx != 0 {
-			t.Fatalf("GET /props no longer shows the borrowed-router shape (role=%q model_path=%q default_generation_settings.n_ctx=%d; want role=\"router\" model_path=\"none\" n_ctx=0) — "+
-				"if this deployment stopped being a borrowed row (ADR 0079), or the far side's llama-server changed how it reports a router, "+
-				"control-plane/engine_gateway.go's enginePropsAugmentRouterWindow (the 段0 bypass) may need to change with it",
-				props.Role, props.ModelPath, props.DefaultGenerationSettings.NCtx)
+		// Which of the two shapes this endpoint is decides what /props may be asked for, and
+		// the test has to read that off the answer rather than assume it: the same harness
+		// talks to a borrowed ROUTER through the CP gateway (the dev deployment, ADR 0079) and
+		// to a SINGLE-MODEL llama-server on the operator's own network (guide/operate/
+		// 09-llm-lan.md). `role` is absent entirely on the latter — measured 2026-09-21 against
+		// b11067-932a68e06: role="" model_path=<the real .gguf path> n_ctx=24064, and the whole
+		// router asymmetry simply does not arise because /props IS describing the one model.
+		router := props.Role == "router"
+		switch {
+		case router:
+			if props.ModelPath != "none" || props.DefaultGenerationSettings.NCtx != 0 {
+				t.Fatalf("GET /props calls itself a router but no longer shows the router shape (model_path=%q default_generation_settings.n_ctx=%d; want \"none\" and 0) — "+
+					"control-plane/engine_gateway.go's enginePropsAugmentRouterWindow (the 段0 bypass) reads around exactly this asymmetry and may need to change with it",
+					props.ModelPath, props.DefaultGenerationSettings.NCtx)
+			}
+			t.Logf("router row: /props describes the router itself (model_path=%q n_ctx=%d), so the real window lives in GET /v1/models", props.ModelPath, props.DefaultGenerationSettings.NCtx)
+		default:
+			if props.ModelPath == "" || props.ModelPath == "none" {
+				t.Fatalf("GET /props is not a router (role=%q) and names no model either (model_path=%q) — neither shape holds, so nothing here can be trusted about the window", props.Role, props.ModelPath)
+			}
+			if props.DefaultGenerationSettings.NCtx <= 0 {
+				t.Fatalf("GET /props is a single-model server (model_path=%q) but default_generation_settings.n_ctx=%d — on this shape THIS is where the real window is, and the 段0 bypass has nothing to read around",
+					props.ModelPath, props.DefaultGenerationSettings.NCtx)
+			}
+			t.Logf("single-model row: /props carries the real window itself (n_ctx=%d, model_path=%q) and chat_template is readable here too (absent on a router — docs/log/99 §12.5's 負債 6 is router-only)",
+				props.DefaultGenerationSettings.NCtx, props.ModelPath)
 		}
 
 		modelsStatus, modelsBody := pollEngine(t, ctx, "GET /v1/models", func() (int, []byte, error) {
@@ -414,9 +435,13 @@ func TestManualLiveEngineContract(t *testing.T) {
 			if m.ID == model {
 				found = true
 				if m.Meta.NCtx <= 0 {
-					t.Fatalf("GET /v1/models lists %q with meta.n_ctx=%d — want a positive real window; this is the ONLY place a borrowed router's real window is readable (default_generation_settings.n_ctx above is 0 by design)", model, m.Meta.NCtx)
+					t.Fatalf("GET /v1/models lists %q with meta.n_ctx=%d — want a positive real window; on a router row this is the ONLY place it is readable (default_generation_settings.n_ctx is 0 there by design)", model, m.Meta.NCtx)
 				}
-				t.Logf("GET /v1/models: %q meta.n_ctx=%d (this is the real window — default_generation_settings.n_ctx stays 0 on a router row)", model, m.Meta.NCtx)
+				// Carried on BOTH shapes, measured: the upstream README's single-model example
+				// shows only n_ctx_train, but b11067 answers meta.n_ctx=24064 for a plain `-c
+				// 24000` server. So this assertion is not router-only, and a single-model row
+				// has two places that agree rather than one place that answers.
+				t.Logf("GET /v1/models: %q meta.n_ctx=%d (router=%v)", model, m.Meta.NCtx, router)
 			}
 		}
 		if !found {
