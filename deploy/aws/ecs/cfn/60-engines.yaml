@@ -113,8 +113,8 @@ Parameters:
     Description: DNS label the image engine answers on.
   ImageComfyImageTag:
     Type: String
-    Default: v0.34.0
-    Description: Tag in the af-comfyui ECR repository.
+    Default: v0.37.0
+    Description: Tag in the af-comfyui ECR repository. Follows the Dockerfile's COMFYUI_REF.
   ImageInstanceClasses:
     Type: String
     Default: ""

@@ -3,7 +3,7 @@
 #
 #   AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
 #     deploy/aws/ecs/harness/bench-image-engine.sh [--stack af-ecs-engines] [--phases "default:,highvram:--highvram"]
-#                                                  [--comfy-tag v0.34.0] [--image <ecr uri:tag>] [--print]
+#                                                  [--comfy-tag v0.37.0] [--image <ecr uri:tag>] [--print]
 #
 # Starts ONE task on the `image` role's Managed Instances capacity provider — a fresh g6.xlarge,
 # $1.26/hour while it runs — made of four containers, and follows it to the end:
@@ -64,7 +64,7 @@ STACK=af-ecs-engines
 PLATFORM_STACK=af-ecs-platform
 # label:flags pairs, one ComfyUI start per pair. An empty flag list is the stock configuration.
 PHASES="default:,highvram:--highvram"
-COMFY_TAG=v0.34.0
+COMFY_TAG=v0.37.0
 IMAGE=""
 PRINT=0
 TEXT_ENCODER=qwen_3_4b_fp8_mixed.safetensors
@@ -163,7 +163,7 @@ FETCH_CMD="set -e; B=s3://$BUCKET; mkdir -p /models/checkpoints /models/diffusio
 # creates is removed on purpose (ADR 0071 decision 6: no Manager on a fleet box).
 # shellcheck disable=SC2016
 if [ "$BAKED" = 1 ]; then
-  # The fleet's own image (deploy/aws/ecs/comfyui/Dockerfile): v0.34.0 is already checked out,
+  # The fleet's own image (deploy/aws/ecs/comfyui/Dockerfile): the pinned ref is already checked out,
   # requirements are already installed, there is no Manager to remove, and the workdir is
   # /ComfyUI, not /opt/comfyui. --output-directory still points at the shared /out volume so
   # bench-image-engine.py finds the pictures the same way either mode.

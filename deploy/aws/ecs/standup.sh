@@ -463,8 +463,12 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     # Our OWN build (ADR 0072 decision 4, phase P2), baked by comfyui-image.yml to the same
     # GHCR namespace as control-plane/workspace — not a third-party crane copy like the two
     # engines above.
+    #
+    # The fallback has to be the same tag as 60-engines.yaml's own Default, which in turn
+    # follows the Dockerfile's COMFYUI_REF: a capture written before this parameter existed
+    # gets the tag the template would have given it, and never a tag nobody baked.
     comfy_tag="$(af_read_one_param 60-engines ImageComfyImageTag)"
-    : "${comfy_tag:=v0.34.0}"
+    : "${comfy_tag:=v0.37.0}"
     if "${AWS[@]}" ecr describe-images --repository-name af-comfyui \
         --image-ids "imageTag=$comfy_tag" >/dev/null 2>&1; then
       echo "    · af-comfyui:$comfy_tag is already in ECR"
