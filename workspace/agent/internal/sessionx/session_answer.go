@@ -75,7 +75,13 @@ func applyManagedAnswerAll(h agents.ThreadHandle, name string, choices []int) ([
 		return nil, err
 	}
 	inter := snap.Interaction
-	if inter == nil || inter.Kind != "question" || len(inter.Questions) == 0 {
+	// An approval is a different channel and a different verb: it is answered allow/deny
+	// through /respond, not by picking an option. Saying so beats "no pending question",
+	// which would read as "nothing is waiting" while the session sits blocked on a tool.
+	if inter != nil && inter.Kind == agents.InteractionApproval {
+		return nil, errPendingApproval
+	}
+	if inter == nil || inter.Kind != agents.InteractionQuestion || len(inter.Questions) == 0 {
 		return nil, errNoPendingQuestion
 	}
 	labels, err := validateAnswerChoices(inter.Questions, choices)
@@ -95,6 +101,10 @@ func applyManagedAnswerAll(h agents.ThreadHandle, name string, choices []int) ([
 }
 
 var errNoPendingQuestion = fmt.Errorf("no pending question")
+
+// errPendingApproval tells the operator WHICH modal is open. A tool approval cannot be
+// answered by choosing an option; it takes allow or deny.
+var errPendingApproval = fmt.Errorf("このセッションはツールの承認待ちです（質問ではありません）。Console で許可／拒否を選んでください")
 
 // HandleSessionAnswerQuestion (POST /sessions/{name}/answer-question) applies a
 // full-form AskUserQuestion answer from the operator's MCP tool.

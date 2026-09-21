@@ -117,3 +117,25 @@ func TestApplyManagedAnswerAll(t *testing.T) {
 		t.Fatalf("out-of-range must fail without Respond (err=%v responded=%+v)", err, bad.responded)
 	}
 }
+
+// A session blocked on a tool approval is not "nothing is waiting". The operator's full-form
+// answer tool has no options to pick, and saying so is what sends them to the right control —
+// errNoPendingQuestion would read as "the session is idle" while a tool sits blocked.
+func TestApplyManagedAnswerAllNamesAPendingApproval(t *testing.T) {
+	withTempHome(t)
+	m := session.Meta{Name: "slot-approve", Dir: t.TempDir(), Kind: session.KindCodex}
+	session.WriteMeta(m)
+
+	h := &fakeHandle{snap: agents.ThreadSnapshot{Interaction: &agents.Interaction{
+		ID:       "ap-1",
+		Kind:     agents.InteractionApproval,
+		Approval: &agents.ApprovalRequest{Summary: "rm -rf build"},
+	}}}
+	_, err := applyManagedAnswerAll(h, m.Name, []int{1})
+	if err != errPendingApproval {
+		t.Fatalf("err = %v, want errPendingApproval", err)
+	}
+	if h.responded != nil {
+		t.Errorf("an approval was answered as if it were a question: %+v", h.responded)
+	}
+}

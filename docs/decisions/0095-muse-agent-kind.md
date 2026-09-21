@@ -1725,3 +1725,47 @@ through `muse exec`, and `serve` reads the same file but assembles context at tu
 `serve` arm is argued rather than measured), and clamp 6's effect — the approval judge has no
 settings key and no `serve` flag, so `MUSE_DISABLE_APPROVAL_JUDGE` is set on the strength of
 its name and needs an approval to observe.
+
+### P2-5: AF's first approval `Interaction`, and the card that answers it
+
+The fifth work package, and decision 13's own: `agents.InteractionApproval` exists, muse raises
+it, the read layer sends it out as `pendingApproval`, and the mirror answers it allow/deny
+through `/respond`. `Capabilities.Permissions` is now **true** — the first kind to declare it.
+
+**The survey that justified building it rather than reusing the question kind.** Agent Fleet
+already had a permission surface: `SessionState` has had a `permission` value since the hook
+route, and `PermissionCard` renders one. It cannot serve a managed kind, and not for a reason
+that could be patched: measured in the tree, its three buttons answer by driving a tmux modal
+— `sendKeys(["Enter"])`, `["Down","Enter"]`, `["Down","Down","Enter"]` — and a managed session
+has no pane for the keys to land in. That is the mechanism behind decision 13's "or not even
+there, for managed", and behind `Caps.PermissionChoice`'s condition that an approval must be
+answerable *from the Console*. Until this package, muse met that condition only by folding
+approvals into the question kind, which kept the command line and discarded the tool name, the
+protected-write marking, the judge escalation and the parsed argv of every stage.
+
+So the approval is its own kind, with its own payload and its own verb:
+
+| | question | approval |
+|---|---|---|
+| asks | choose an answer | may this tool run |
+| refusing | the agent carries on | this tool stops |
+| carries | `[]transcript.Question` | summary, tool, command, per-stage argv, protectedWrite, judgeEscalated |
+| answered by | `decision: "answer"` + picks | `decision: "allow"` / `"deny"` |
+| wire key | `pendingQuestions` | `pendingApproval` |
+
+**Two existing consumers had to learn the difference, and both were silently wrong before.**
+`applyManagedAnswerAll` (the operator's full-form answer tool) and `applyManagedQuestion` (the
+chat bridge's buttons) both guard on `Kind != "question"` and report "no pending question" /
+"already answered". Against an approval those are not merely unhelpful, they are the wrong
+fact: the session is blocked on a tool and the operator is told nothing is waiting. Both now
+name the approval and point at the control that answers it.
+
+The card offers exactly **allow and deny** — no scope selector, no "always allow". That is not
+a simplification: gate B1 measured `onRequest` mode presenting exactly two choices,
+`allow_once` and `abort`, so a third button would promise a persistence the runtime never
+agreed to. `pendingApproval` is also withheld from a stopped session, the same rule
+`pendingQuestions` follows: a card nobody can answer is worse than no card.
+
+⚠️ The card's rendering is covered by a dom test, not by a screenshot — no muse session can be
+launched yet (the binary is not installed and the kind is not in the launch menu), so nothing
+in this package was seen on screen. The visual check belongs with the Console surface package.

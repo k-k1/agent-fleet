@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"strings"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -162,5 +164,26 @@ func TestApplyManagedQuestionNoInteraction(t *testing.T) {
 	out, err := applyManagedQuestion(h, "sess", bridge.ParsedInteraction{Kind: "q", Session: "sess", Fp: "x"}, false)
 	if err != nil || h.responded != nil || out == "" {
 		t.Fatalf("want feedback and no respond; out=%q err=%v responded=%v", out, err, h.responded)
+	}
+}
+
+// The bridge's buttons are built from a question's options, so an approval has nothing for
+// them to click. It must say which modal is open rather than "already answered", which would
+// send the operator looking for a question that was never there.
+func TestApplyManagedQuestionNamesAPendingApproval(t *testing.T) {
+	h := &fakeHandle{snap: agents.ThreadSnapshot{Interaction: &agents.Interaction{
+		ID:       "ap-1",
+		Kind:     agents.InteractionApproval,
+		Approval: &agents.ApprovalRequest{Summary: "rm -rf build"},
+	}}}
+	out, err := applyManagedQuestion(h, "sess", bridge.ParsedInteraction{Kind: "q", Session: "sess", QI: 0, OI: 0}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "approval") {
+		t.Errorf("reply = %q, want it to name the approval", out)
+	}
+	if h.responded != nil {
+		t.Errorf("an approval was answered as if it were a question: %+v", h.responded)
 	}
 }

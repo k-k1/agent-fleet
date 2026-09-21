@@ -6,7 +6,7 @@ import { PlanBlock } from "../transcript/blocks.tsx";
 import { PendingQuestions } from "../PendingQuestions.tsx";
 import { questionDraftKey } from "../questionDraft.ts";
 import type { InteractionAnswer } from "../../../core/api/client.ts";
-import type { Question } from "../transcript/types.ts";
+import type { PendingApproval, Question } from "../transcript/types.ts";
 
 // Pending cards (plan approval, permission request, question) stack at the end of the transcript
 // in the same shape as a turn. They are not in the jsonl, so they cannot be grouped and are
@@ -109,6 +109,70 @@ export function PermissionCard({
           </button>
         </div>
         <div className="mt-perm-hint muted">{tr("mirror.perm_hint")}</div>
+      </div>
+    </PendingTurn>
+  );
+}
+
+/** A managed session's tool approval.
+ *
+ *  It looks like PermissionCard on purpose and answers nothing like it. PermissionCard's three
+ *  buttons drive a TUI modal by keystroke, which a managed session has no pane for; this one
+ *  answers the pending Interaction by id through /respond, so allow and deny are the only two
+ *  choices the runtime actually offers (ADR 0095 decision 13: `onRequest` mode presents exactly
+ *  allow_once and abort, so there is no scope selector to render).
+ *
+ *  The subject is shown in full rather than summarised: a member approving `a | b` is approving
+ *  both, and the parsed argv of each stage is the only place the second one is visible. */
+export function ApprovalCard({
+  agentName,
+  approval,
+  sending,
+  onAllow,
+  onDeny,
+}: {
+  agentName: string;
+  approval: PendingApproval;
+  sending: boolean;
+  onAllow: () => void;
+  onDeny: () => void;
+}) {
+  const req = approval.request;
+  const stages = req.stages ?? [];
+  return (
+    <PendingTurn agentName={agentName} note={tr("mirror.perm_pending")}>
+      <div className="mt-perm">
+        <div className="mt-perm-head">
+          <Icon name="shield" /> {tr("mirror.approval_asking")}
+          {req.tool ? <span className="mt-perm-tool muted"> {req.tool}</span> : null}
+        </div>
+        <div className="mt-perm-msg mt-approval-subject">{req.command || req.summary}</div>
+        {stages.length > 1 && (
+          // Only worth the room when there is more than one stage: for a single command the
+          // argv repeats the line above it.
+          <ol className="mt-approval-stages">
+            {stages.map((argv, i) => (
+              <li key={i}>
+                <code>{argv.join(" ")}</code>
+              </li>
+            ))}
+          </ol>
+        )}
+        {(req.protectedWrite || req.judgeEscalated) && (
+          <div className="mt-approval-flags">
+            {req.protectedWrite && <span className="mt-approval-flag warn">{tr("mirror.approval_protected")}</span>}
+            {req.judgeEscalated && <span className="mt-approval-flag">{tr("mirror.approval_escalated")}</span>}
+          </div>
+        )}
+        <div className="mt-perm-actions">
+          <button type="button" className="btn primary mt-perm-btn" disabled={sending} onClick={onAllow}>
+            <Icon name="check" /> {tr("mirror.allow")}
+          </button>
+          <button type="button" className="ghost mt-perm-btn" disabled={sending} onClick={onDeny}>
+            <Icon name="close" /> {tr("mirror.deny")}
+          </button>
+        </div>
+        <div className="mt-perm-hint muted">{tr("mirror.approval_hint")}</div>
       </div>
     </PendingTurn>
   );

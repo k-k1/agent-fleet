@@ -167,7 +167,15 @@ func applyManagedQuestion(h agents.ThreadHandle, name string, pi bridge.ParsedIn
 		return "", err
 	}
 	inter := snap.Interaction
-	if inter == nil || inter.Kind != "question" || len(inter.Questions) == 0 {
+	// The bridge's buttons are built from a question's options, so an approval has nothing for
+	// them to click. Telling the operator which modal is actually open beats "already
+	// answered", which would send them looking for a question that was never there.
+	if inter != nil && inter.Kind == agents.InteractionApproval {
+		clearBridgeAnswer(name)
+		return Fb(en, "ツールの承認待ちです。Console で許可／拒否を選んでください",
+			"A tool approval is waiting — allow or deny it in the Console"), nil
+	}
+	if inter == nil || inter.Kind != agents.InteractionQuestion || len(inter.Questions) == 0 {
 		clearBridgeAnswer(name)
 		return Fb(en, "この質問はもう回答済みです", "This question was already answered"), nil
 	}

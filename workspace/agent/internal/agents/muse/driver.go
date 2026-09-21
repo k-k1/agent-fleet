@@ -36,10 +36,16 @@ type managedDriver struct{ agentImpl }
 // launch-time permission choice. Reading one wire method as two different AF axes is how a
 // capability table starts lying.
 //
-// Fork stays false until the fork path is built, and Permissions stays false until AF has an
-// approval Interaction kind to declare (decision 13: it is the one genuinely new capability,
-// and ADR 0093 did not land it). Questions is true: userInput/requested maps onto AF's
-// existing question interaction field for field.
+// Permissions is true, and muse is the first kind to declare it. Decision 13 calls it the one
+// genuinely new capability, and the condition for claiming it is the same one docs/log/76 sets
+// for Caps.PermissionChoice: a pending approval can actually be ANSWERED from the Console. It
+// can — the driver raises an approval-kind Interaction, the read layer sends it out as
+// `pendingApproval`, and the mirror's ApprovalCard answers it allow/deny through /respond. A
+// session blocked on a tool is the one state where an unanswerable dialog reads to the member
+// as a frozen session.
+//
+// Questions is separately true and is a DIFFERENT channel: userInput/requested maps onto AF's
+// existing question interaction field for field. Fork stays false until the fork path is built.
 func (managedDriver) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
 		ProcessModel:  "per-session-child",
@@ -47,6 +53,7 @@ func (managedDriver) Capabilities() agents.Capabilities {
 		DynamicModel:  true,
 		DynamicEffort: true,
 		Questions:     true,
+		Permissions:   true,
 	}
 }
 
