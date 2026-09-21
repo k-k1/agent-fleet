@@ -1090,10 +1090,10 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 //
 // 🔴 `type: "stable_diffusion"` on the CLIPLoader is INERT here, and is the value ComfyUI's own
 // template ships rather than a claim about what the encoder is. The pinned engine picks Anima's
-// encoder by DETECTION, not by this field: comfy/sd.py (v0.34.0, the ref in
+// encoder by DETECTION, not by this field: comfy/sd.py (v0.37.0, the ref in
 // deploy/aws/ecs/comfyui/Dockerfile) reads the state dict's hidden size, answers TEModel.QWEN3_06B
-// at 1024, and takes the `comfy.text_encoders.anima` branch at line 1927 — which sits OUTSIDE
-// every clip_type test. `anima` is not one of CLIPLoader's type values at all (nodes.py:1011), so
+// at 1024, and takes the `comfy.text_encoders.anima` branch at line 1971 — which sits OUTSIDE
+// every clip_type test. `anima` is not one of CLIPLoader's type values at all (nodes.py:1012), so
 // there is nothing truer to write. That also means this family cannot be broken the way Krea 2
 // can, where the type IS read and a default silently selects a different encoder.
 //
@@ -1147,7 +1147,7 @@ func comfyGraphAnima(f comfyFiles, p comfyParams) (comfyGraph, error) {
 // a different recipe: the CLIPLoader type below, and the family's two modes.
 //
 // 🔴 `type: "krea2"` IS READ, and this is the one place in this file where a wrong-looking-but-
-// harmless default is neither. comfy/sd.py (v0.34.0) reaches the Krea2 tokenizer only through
+// harmless default is neither. comfy/sd.py (v0.37.0) reaches the Krea2 tokenizer only through
 // `clip_type == CLIPType.KREA2`; a Qwen3-VL-4B file loaded at the node's default falls into the
 // generic qwen3vl branch instead, which loads, encodes, samples and returns a picture — made
 // against different conditioning than the model was trained on. No error anywhere. (anima is the
@@ -1396,12 +1396,12 @@ func comfyQwenEditNoiseMask(g comfyGraph, p comfyParams) []any {
 
 // --- Qwen-Image 2.1 — ComfyUI's own shipped templates, NOT YET RUN ON THIS DEPLOYMENT'S HARDWARE
 //
-// 🔴 THIS FAMILY NEEDS ComfyUI v0.37.0 OR LATER, and the engine image is pinned at v0.35.2
+// 🔴 THIS FAMILY NEEDS ComfyUI v0.37.0 OR LATER, which is where the pin now stands
 // (deploy/aws/ecs/comfyui/Dockerfile). `TextEncodeQwenImage21` first appears in v0.37.0 — measured
-// 2026-09-21 by reading comfy_extras/nodes_qwen.py at v0.35.2, v0.36.0 and v0.37.0 — so until that
-// pin moves, a row of this family reaches the engine and is refused by /prompt's own validation.
-// That is a loud failure rather than a silent one, which is why this template can land ahead of
-// the bump (ADR 0098 P0), but it is the FIRST thing to check when a run of this family fails.
+// 2026-09-21 by reading comfy_extras/nodes_qwen.py at v0.35.2, v0.36.0 and v0.37.0 — so an engine
+// built before that bump refuses a row of this family in /prompt's own validation, as an unknown
+// node type. That is a loud failure rather than a silent one, and it is the FIRST thing to check
+// when a run of this family fails: the box may still be running the older baked image.
 //
 // One graph, two published templates. Comfy Org ships image_qwen_image_2_1_t2i.json and
 // image_qwen_image_2_1_image_edit.json, and read side by side (2026-09-21) they are the same nodes
