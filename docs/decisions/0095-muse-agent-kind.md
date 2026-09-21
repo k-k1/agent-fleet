@@ -2,12 +2,17 @@
 
 English | [日本語](0095-muse-agent-kind.ja.md)
 
-- Status: **proposed** (2026-09-20), **Phase 1 gates A, B1 and B2 all answered** (2026-09-20 — the
-  last three sections). None of the kind itself is implemented, and gate A's deployment changes
-  have been taken back out again (the gate-A-artefacts section says why). Every `file:line` below was read on
-  `06ea94d3` (develop at the time). Everything marked ◎ was measured in a Workspace container on
-  **Muse Code 1.3.0-R3401.1** installed into a throwaway directory; △ is the vendor documentation
-  only; × is not measured. The probe is reproducible from the last section.
+- Status: **adopted** (2026-09-21). Phase 1's three gates were answered on 2026-09-20 and Phase 2
+  landed over 2026-09-21 in thirteen work packages (the implementation record at the end, P2-1 to
+  P2-13 — every row of the work-package table below, plus the MCP wire route no row owned and the
+  fork path). The kind is offered in the launch menu behind its two preconditions (the proprietary
+  binary installed, a credential stored). What is NOT built is named in the guide's own capability
+  table and in P2-13's closing section, so an unticked row there means "not built", never "still
+  being decided".
+  Every `file:line` in the decisions below was read on `06ea94d3` (develop at the time) and the
+  implementation record corrects the ones measurement moved. Everything marked ◎ was measured in a
+  Workspace container on **Muse Code 1.3.0-R3401.1**; △ is the vendor documentation only; × is not
+  measured. The probe is reproducible from the "Reproducing the probe" section.
 - The request is one sentence: **can Meta's coding agent Muse Code become the tenth session kind,
   and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements) /
@@ -2341,3 +2346,34 @@ Verification is msptest for both cut directions, both refusals and the store cop
 mutation sweep, and a live `session/fork` against the vendor's own host that spends nothing: a
 whole-conversation fork of a session with no completed turns needs no cut point and no model
 call, and the result's `forkedFrom` provenance is what the driver reads back.
+
+### Phase 2 closed: what is built, what is not, and one thing found next door
+
+Every row of the work-package table is landed (P2-1 … P2-11 and P2-13, plus P2-12 for the MCP
+route no row owned), so the Status above is *adopted*. The estimate was 22–33 session-days; the
+work ran to thirteen packages.
+
+**The eight capability rows that are still `—` are not blocked by Muse Code, and the guide now
+says so rather than saying "still being built".** Each is an Agent Fleet feature nobody wired
+for this kind, and they split into two shapes:
+
+- **Two the protocol carries and a package deliberately stopped short of.** The context-usage
+  gauge (`session/contextUsage` exists, but it only fires around a turn, so declaring
+  `contextBar` would be a capability read off a schema rather than measured end to end) and
+  image paste (attachments ride as text parts naming the path; MSP's image part takes base64,
+  so this is a real piece of work, not a flag).
+- **Six that are not written per agent at all** — the skill/command picker, handoff, starting in
+  a worktree, scheduled runs, the chat bridge and use as the assistant chat. ADR 0093's own
+  inventory found no per-kind branch in the handoff, spawn, shared-view or scheduled-launch
+  paths, so the likely truth is that most of them already work. "Likely" is exactly why the row
+  stays unticked: this table only ticks what was seen working end to end, and seeing these work
+  costs real turns against a member's subscription.
+
+⚠️ **One finding that is not muse's**, surfaced while checking the above and left alone
+deliberately: `ScheduleDetailModal.tsx`'s `AGENT_KINDS` is a hand-kept list of six
+(`claude, codex, opencode, copilot, cursor, kiro`). It is missing **agy**, which this same guide
+table marks ✓ for scheduled runs, as well as lcpp and muse. So a schedule's agent cannot be
+edited to agy in the Console today. It is not fixed here because it is not this kind's defect
+and because "muse can be scheduled" is a claim that needs a turn to make honestly — but a
+hand-kept kind list that has already drifted once will drift again, and the fix is the same
+shape as `mcpreg.ServedKinds`: name the axis instead of listing the members.
