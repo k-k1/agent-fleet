@@ -155,12 +155,16 @@ and go unused** — run C's failure mode exactly: a wrong picture with no warnin
   `comfyParams` plural, wire `image2`, and fix the refusal's singular wording).
 - 🔴 **The third opens after it is measured.** "The node takes `image3`, so the mechanism is the
   same" is exactly the inference decision 3 forbids for inpaint. Measure three once in P3.
+  🟢 **Measured — run F** (2026-09-21, 2511, on a 22,000 rung). Asked for the plant from picture 2
+  and the rubber duck from picture 3 side by side on the table, **both arrived with their colour
+  and shape intact and nothing else moved**. So `MaxInputs` is **3**, and it stops there because
+  **the node takes image1..image3** — a family ceiling, not a step towards a larger one.
 
 ⚠️ **`MaxInputs` is not on the wire** (`providerStatus` has no field for it; the only place it
 reaches the outside is the refusal at `comfy.go:1092`). For the pane to state the limit, P3 has to
 add the field.
 
-🟢 **Done in P3.** `comfyFamilyMaxInputs` answers 2 for the instruction-edit families, and the path
+🟢 **Done in P3.** `comfyFamilyMaxInputs` answers 3 for the instruction-edit families (run F above), and the path
 opened in the same change (`comfyParams.Images` plural, every `req.Inputs` entry uploaded, `image2`
 wired, the refusal pluralised). The wire gained **two** fields, not one:
 `providerStatus.max_inputs` (a **union** — the MCP tool schema is a connect-time snapshot with no
@@ -597,6 +601,25 @@ counts only providers that were tried and failed, so **nothing is said**. Before
     work may genuinely be gone, and "ask again to collect it" would be advice to wait for nothing.
   - The chain still ends at the provider: the MCP budget goes **18 min → 33 min** (over 16 + 15 =
     31). ⚠️ codex cuts first at its own `tool_timeout_sec` (600 s), so nothing changes there.
+
+  **Live acceptance (2026-09-21)**: 🟢 **met** (PR #827 plus run F).
+  - **Two references — run D reproduced.** The blocking route answered **200 in 889.8 s** (678 s of
+    it waking). The graph embedded in the picture is **16 nodes**: `img2` a bare `LoadImage`,
+    `image2` on **both** pos and neg, `enc.pixels` from `scale` (image1) — **the deployed code
+    emitted run D's wiring unchanged**. The plant from picture 2 is on the table to the right of
+    the mug; the sign still reads OPEN and the wall, table and mug are untouched.
+  - **Three references — run F.** 220 s on the warm box, 17 nodes (`img3` added). The plant and the
+    duck **both** arrived with their colour and shape intact and nothing else moved, so `MaxInputs`
+    is **3**. ⚠️ **This cannot be measured through the Agent** — it declared 2 at the time and
+    refuses a third before anything runs. It went to the engine directly, with the graph produced by
+    **this implementation's own builder** and behind a guard that refuses unless `state == running`
+    (so that reading it cannot buy a stopped box).
+  - 🔴 **It is NOT a positive control for the clock split.** 678 s of wake plus 212 s of generation
+    is 889.8 s, which the **single 960 s clock would also have passed, with 70 s to spare**. The
+    evidence for that fix is the unit test's mutation (deriving the run clock from the wake one goes
+    red in 0.30 s) and P2's run, which actually hit the 502.
+  - The wire was checked live: enabling the row moved `providerStatus.max_inputs` from 1 to 2 (as it
+    then was) and `modelStatus.max_inputs` appeared — the union and the per-model answer both work.
 
 ## Open
 

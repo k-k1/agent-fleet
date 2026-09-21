@@ -252,9 +252,9 @@ pane per workspace — opening it again focuses the one you have.
   edit the input's own dimensions win.
 - **How many reference pictures you may add depends on the model.** The field's heading counts
   them ("2 of 2"), and at the ceiling the add field itself goes away. The instruction-edit models
-  — the kind you ask in words, "change the sign to CLOSED" — read **two**: the **first is the
-  picture being redrawn** and the **second is something to bring into it**. Every other model
-  reads one. On a model with no slider, how much changes is decided by the instruction itself.
+  — the kind you ask in words, "change the sign to CLOSED" — read **three**: the **first is the
+  picture being redrawn** and the **rest are things to bring into it** ("put the plant from
+  picture 2 and the duck from picture 3 on the table"). Every other model reads one. On a model with no slider, how much changes is decided by the instruction itself.
 
 **While it runs**
 

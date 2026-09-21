@@ -264,13 +264,17 @@ func comfyFamilyStrength(family comfyFamily) bool {
 // the feature: the extra pictures pass comfyCheckInputs, are never wired, and the caller gets a
 // picture that ignored them with no warning anywhere (the same shape of lie as 実測 C).
 //
-// 🔴 3 is NOT declared. The node takes image3 and the wiring here is already a loop, so the
-// temptation is to write 3 and call it the same mechanism — that is exactly the inference
-// decision 3 forbade for inpaint. 実測 F measured three references and is what this number would
-// have to cite.
+// 3 rather than 2 because three were MEASURED (実測 F, 2026-09-21, 2511 on a 22,000-rung box):
+// asked for the plant from picture 2 and the rubber duck from picture 3 side by side, both arrived
+// with their colour and shape intact and nothing else in the scene moved. It is 3 and not more
+// because that is where the node stops — TextEncodeQwenImageEditPlus takes image1..image3.
+//
+// 🔴 The number was NOT raised on the strength of "the wiring is a loop, so more must work". That
+// inference is what decision 3 forbade for inpaint, and until the run above this function
+// deliberately answered 2 with image3 unwired-by-absence.
 func comfyFamilyMaxInputs(family comfyFamily) int {
 	if comfyFamilyInstructionEdit(family) {
-		return 2
+		return 3
 	}
 	return 1
 }
