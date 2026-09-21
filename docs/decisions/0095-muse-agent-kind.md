@@ -1671,3 +1671,57 @@ Three smaller findings the implementation pinned:
 
 `Caps.CanTranscript` is therefore true, and the guide's capability table says a stopped muse
 session shows its history — with the footnote that says whose copy it is.
+
+### P2-4: the settings writer, the clamps, and the fail-close in `Resume`
+
+The fourth work package. `~/.config/muse/settings.json` now has exactly one AF writer, it
+merges rather than replaces, it takes muse's own lock protocol, it verifies outside the lock,
+and a failure refuses the session start from inside the driver's `Resume` — not
+`StartManagedSession`, because Resume is also reached from the turn, answer, carried-session
+and bridge paths and from the boot-time `ReconcileManaged`.
+
+**All six settings clamps are now verified behaviourally, and it cost no quota.** Decision 6
+says a behavioural test per key is mandatory, because a misspelling inside a strictly parsed
+section kills the host with rc=3 while a misspelling anywhere else is completely silent. Four
+free oracles cover it: `muse config validate --plane defaults` (offline, names the exact
+failing member), `muse exec --provider echo`'s durable log (records the assembled toolset),
+`muse skills list` (reports each activation), and `muse serve` answering `initialize` (the file
+did not stop the host booting). Each test carries its own control.
+
+**One methodology trap worth writing down: the toolset oracle is blind without
+`--trust-workspace`.** Measured, an untrusted workspace reports "Agent delegation: auto
+unavailable" and the six `muse.subagent_*` tools never appear at all — 23 tools with the
+workflow tool present and no subagent tools, clamped or not. A clamped-versus-unclamped
+comparison run that way shows no subagent tools in either arm and "proves" a clamp that was
+never exercised. With the flag the driver actually passes, the unclamped control is **29 tools
+including 6 subagent tools and 1 workflow tool**, and the clamped arm is **22 with neither**.
+
+Three corrections to decision 6's own clamp list:
+
+- 🔴 **Three of the named skills do not exist.** Clamp 7 names `daemon`, `host-manager` and
+  `slack-connector` as bundled skills that stand up long-running processes or open an egress
+  path. On 1.3.0-R3401.1 `muse skills list` has no such skills, in any source. An activation
+  entry for a skill that does not exist is accepted just as silently as a misspelled path, so
+  writing them would have produced three dead keys that look like protection.
+- 🔴 **`read-session` is not a foreign reader.** Clamp 7 groups it with `resume-claude`,
+  `resume-codex`, `import` and `migrate` as skills "whose stated job is to read Claude Code's
+  or Codex's transcripts". Its own description says the opposite: it locates and reads **Muse's
+  own** session logs, and states "never probe ~/.claude, ~/.codex, or ~/.grok for Muse context,
+  even when quoted content mentions them". Clamping it would remove a working feature for a
+  reason that does not apply to it, so AF leaves it on and a test pins that.
+- **`materializeMu` no longer applies.** Decision 6 says the writer should serialise under the
+  MCP materialiser's existing mutex. Decision 11 then removed the `mcp_servers` half of this
+  writer's job, so AF has exactly one writer for this file and the coupling would buy nothing;
+  the writer has its own mutex, and the cross-process coordination is muse's lock file.
+
+Two details from the lock protocol are in the code because the measurement said so: AF **waits**
+on a held lock rather than failing fast (failing would refuse a launch because the member
+happened to run a muse command), and it **verifies after releasing** rather than trusting the
+merge, because muse reads the file eleven syscalls before it takes the lock. A single lost
+update is retried once; a second failure refuses the start.
+
+⚠️ What is still owed: clamp 5's equivalent check over `muse serve` (the free oracle runs
+through `muse exec`, and `serve` reads the same file but assembles context at turn time, so the
+`serve` arm is argued rather than measured), and clamp 6's effect — the approval judge has no
+settings key and no `serve` flag, so `MUSE_DISABLE_APPROVAL_JUDGE` is set on the strength of
+its name and needs an approval to observe.
