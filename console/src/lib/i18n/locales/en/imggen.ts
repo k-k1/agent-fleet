@@ -93,6 +93,10 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.input_upload_failed": "Could not upload",
   "imggen.input_count": "{n} of {max}",
   "imggen.input_from_gallery": "Pick from the gallery (P1)",
+  // White is the area to repaint. The Console has no canvas to paint one with, so this is the
+  // half that takes a file (ADR 0081 decision 9).
+  "imggen.mask": "Mask (white is repainted)",
+  "imggen.mask_needed": "Inpaint needs a mask image",
   "imggen.strength": "How much of the input to change",
   "imggen.out_dir": "Output folder",
   "imggen.out_dir_ph": "a folder relative to the browse root (empty = generated/console/)",

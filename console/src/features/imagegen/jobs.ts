@@ -216,6 +216,11 @@ export function buildRequest(
     ...(sendsSize ? { size: d.size } : {}),
     ...(d.op && d.op !== "generate" ? { op: d.op } : {}),
     ...(d.op !== "generate" && d.inputs.length ? { inputs: d.inputs } : {}),
+    // Only on an inpaint, and only when there is one: a stored draft keeps the mask across a
+    // switch to `edit` (draft.ts persists it), and sending it on an op that has no use for it is
+    // how a field nobody can see any more reaches the engine. The same gate `size` needs one line
+    // up, for the same reason.
+    ...(d.op === "inpaint" && d.mask.trim() ? { mask: d.mask.trim() } : {}),
     ...(sendsStrength ? { strength: d.strength } : {}),
     ...(d.loras.length ? { loras: d.loras } : {}),
     // Ignored on a trial: those always land in `generated/console/trial/` (lane A,

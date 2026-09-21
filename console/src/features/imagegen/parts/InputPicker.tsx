@@ -16,14 +16,21 @@ import { IconButton } from "../../../ui/Button.tsx";
 export const INPUT_DIR = "generated/console/inputs";
 
 /** InputPicker's props. `max` is the chosen model's own ceiling (ADR 0094 decision 5): the
- *  families differ, so the number is the Agent's word rather than a constant here. */
+ *  families differ, so the number is the Agent's word rather than a constant here.
+ *
+ *  `label` exists because inpaint's MASK is the same control with a different name and a ceiling
+ *  of one (ADR 0081 decision 9 — a mask file by path works from day one; painting one needs a
+ *  canvas the Console does not have). Two copies of the drop zone would be two places to fix the
+ *  next time uploading changes. */
 export function InputPicker({
   paths,
   max,
+  label,
   onChange,
 }: {
   paths: string[];
   max: number;
+  label?: string;
   onChange: (p: string[]) => void;
 }) {
   const tr = useT();
@@ -78,7 +85,7 @@ export function InputPicker({
   return (
     <div className="igen-inputs">
       <span className="igen-label">
-        {tr("imggen.inputs")}
+        {label ?? tr("imggen.inputs")}
         {max > 1 && <span className="igen-hint"> {tr("imggen.input_count", { n: paths.length, max })}</span>}
       </span>
       <ul className="igen-input-list">
