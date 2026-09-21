@@ -339,3 +339,31 @@ describe("モデルの選択肢 (ADR 0090)", () => {
     expect(document.querySelector<HTMLOptionElement>(`option[value="${SDXL.id}"]`)!.textContent).toBe("sdxl-base");
   });
 });
+
+// ADR 0094 decision 5 (P3): the number of reference pictures is the chosen MODEL's, and the form
+// has to hold it — the Agent's own refusal reaches a queued job as a failed job rather than as a
+// message beside the field the member would have to change. The instruction-edit families read
+// two; everything else, and every Agent from before the ADR, reads one.
+describe("参照画像の枚数 (ADR 0094 decision 5)", () => {
+  const TWO: ImagegenModel = { ...QWEN_EDIT, max_inputs: 2 };
+  const addRow = () => host.querySelector(".igen-inputs .igen-row");
+  const listed = () => [...host.querySelectorAll(".igen-input-list li span[title]")].map((s) => s.getAttribute("title"));
+
+  it("2 枚読む族は 2 枚目まで足せて、そこで入力欄が消える", async () => {
+    await render(TWO, { op: "edit", inputs: ["a.png"] });
+    expect(listed()).toEqual(["a.png"]);
+    expect(addRow(), "one of two: the field is still offered").toBeTruthy();
+
+    await render(TWO, { op: "edit", inputs: ["a.png", "b.png"] });
+    expect(listed()).toEqual(["a.png", "b.png"]);
+    expect(addRow(), "two of two: offering a third is offering a refusal").toBeFalsy();
+  });
+
+  it("枚数を言わない Agent では 1 枚で止まる", async () => {
+    await render(QWEN_EDIT, { op: "edit", inputs: [] });
+    expect(addRow(), "no picture yet: the field is offered").toBeTruthy();
+
+    await render(QWEN_EDIT, { op: "edit", inputs: ["a.png"] });
+    expect(addRow(), "absent max_inputs must mean 1, the shape every route had").toBeFalsy();
+  });
+});

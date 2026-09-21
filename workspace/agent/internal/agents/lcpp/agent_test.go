@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -46,12 +47,61 @@ func TestBuildLaunchAlwaysErrors(t *testing.T) {
 // LastSay from, and Resumable defaults true (there is no "working dir gone" concept for a
 // managed-only kind the way claude/opencode's tui route has).
 func TestWireLiveNotAliveIsZeroValue(t *testing.T) {
+	testHome(t)
 	a := New()
 	li := a.WireLive(session.Meta{Name: "unknown-session"}, false)
 	if li.State != "" || !li.Resumable || li.LastSay != "" {
 		t.Fatalf("WireLive(alive=false) = %+v, want an empty/resumable zero value", li)
 	}
 	a.ClearResume("anything") // must not panic
+}
+
+// TestWireLiveContextRecordedWindow pins ADR 0093 decision 8's WireLive half: once a turn has
+// completed, Context comes back with WindowSource="recorded" (never a guess), sourced from
+// the store's own last usage record — and it does so whether or not the session is alive
+// (claude's own WireLive reads Context unconditionally too, for the same "a stopped card
+// still shows its last known fill" reason).
+func TestWireLiveContextRecordedWindow(t *testing.T) {
+	testHome(t)
+	m := session.Meta{Name: "ctx-sess", Dir: t.TempDir(), Model: "qwen3-30b"}
+	s := Open(sidFor(m))
+	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 111, CompletionTokens: 22}, 8192); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	a := New()
+	for _, alive := range []bool{true, false} {
+		li := a.WireLive(m, alive)
+		if li.Context == nil {
+			t.Fatalf("alive=%v: Context = nil, want the recorded usage", alive)
+		}
+		if li.Context.Fresh != 111 || li.Context.Model != "qwen3-30b" {
+			t.Fatalf("alive=%v: Context = %+v, want Fresh=111 Model=qwen3-30b", alive, li.Context)
+		}
+		if li.Context.Window != 8192 || li.Context.WindowSource != "recorded" {
+			t.Fatalf("alive=%v: Context window = %d/%q, want 8192/recorded (never a WindowGuess)",
+				alive, li.Context.Window, li.Context.WindowSource)
+		}
+	}
+}
+
+// TestWireLiveContextUnresolvedWindowOmitsSource is the negative control: a turn whose window
+// could not be resolved must not be reported as "recorded" — that would misrepresent a number
+// nobody actually measured as exact.
+func TestWireLiveContextUnresolvedWindowOmitsSource(t *testing.T) {
+	testHome(t)
+	m := session.Meta{Name: "ctx-sess-no-window", Dir: t.TempDir()}
+	s := Open(sidFor(m))
+	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 50, CompletionTokens: 5}, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	li := New().WireLive(m, false)
+	if li.Context == nil {
+		t.Fatal("Context = nil, want the recorded token usage even without a window")
+	}
+	if li.Context.Window != 0 || li.Context.WindowSource != "" {
+		t.Fatalf("Context window = %d/%q, want 0/\"\" (unresolved must not claim recorded)",
+			li.Context.Window, li.Context.WindowSource)
+	}
 }
 
 // TestTranscriptEmptyStoreIsOkTrue pins Transcript()'s "no conversation yet" shape: unlike the

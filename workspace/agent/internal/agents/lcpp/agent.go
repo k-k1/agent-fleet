@@ -61,8 +61,26 @@ func (agentImpl) BuildLaunch(session.Meta, agents.LaunchOpts) (agents.LaunchPlan
 // needed here, only the same EffectiveModal/LiveState read every other hook-driven kind's
 // WireLive makes. LastSay carries the v1 cold-start line (decision 4) while a turn is running
 // past wakingLastSayThreshold; "" once it settles or before any turn ever ran.
+//
+// Context is read straight off the store (Store.LastUsage — a disk read, no engine round
+// trip) rather than computed here, so a session-list render never blocks on or wakes a
+// sleeping engine. ADR 0093 decision 8: this kind never calls usagex.WindowGuess — when
+// LastUsage's window is known (harness.EngineWindow's catalog lookup, the same one driver.go's
+// runTurn already made for the turn itself, decision 7) WindowSource is "recorded"; when a
+// turn ran before that lookup resolved anything, window is left at 0 and WindowSource empty
+// rather than claiming "recorded" for a size nobody actually measured — the Console's own
+// model-name guess is the honest fallback for that turn, same as every kind that has never
+// reported a window. Before the first turn completes there is nothing recorded yet, so
+// Context stays nil like every other kind's WireLive before its own first reply.
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li := agents.LiveInfo{Resumable: true}
+	if u, window, ok := Open(sidFor(m)).LastUsage(); ok {
+		ctx := &session.ContextUsage{Fresh: u.PromptTokens, Model: m.Model}
+		if window > 0 {
+			ctx.Window, ctx.WindowSource = window, "recorded"
+		}
+		li.Context = ctx
+	}
 	if !alive {
 		return li
 	}

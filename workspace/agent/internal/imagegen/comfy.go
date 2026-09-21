@@ -254,14 +254,26 @@ func comfyFamilyStrength(family comfyFamily) bool {
 	return !comfyFamilyInstructionEdit(family)
 }
 
-// comfyFamilyMaxInputs is ADR 0094 decision 5: every family, Qwen-Image-Edit included, takes at
-// most ONE reference image in P0 — TextEncodeQwenImageEditPlus's image2/image3 inputs are real
-// (実測 D measured a second reference reaching the picture), but the upload path only sends
-// req.Inputs[0] and comfyParams.Image is a single string (comfy.go's uploadImage,
-// comfy_workflows.go's comfyParams), so declaring 2 here without widening the code path would
-// pass comfyCheckInputs and then silently use only the first — decision 5's own "宣言と経路は同じ
-// フェーズに入れる". The second reference is P3.
-func comfyFamilyMaxInputs(comfyFamily) int { return 1 }
+// comfyFamilyMaxInputs is ADR 0094 decision 5: how many reference pictures a family's template
+// can actually READ. Every family through krea2 has one LoadImage and nowhere to put a second, so
+// the answer stays 1 for them; the instruction-edit families wire
+// TextEncodeQwenImageEditPlus's image2 and take 2 (P3).
+//
+// 🔴 The number and the code path move together — decision 5's own 「宣言と経路は同じフェーズに
+// 入れる」. Raising this without widening the upload and the template is not a smaller version of
+// the feature: the extra pictures pass comfyCheckInputs, are never wired, and the caller gets a
+// picture that ignored them with no warning anywhere (the same shape of lie as 実測 C).
+//
+// 🔴 3 is NOT declared. The node takes image3 and the wiring here is already a loop, so the
+// temptation is to write 3 and call it the same mechanism — that is exactly the inference
+// decision 3 forbade for inpaint. 実測 F measured three references and is what this number would
+// have to cite.
+func comfyFamilyMaxInputs(family comfyFamily) int {
+	if comfyFamilyInstructionEdit(family) {
+		return 2
+	}
+	return 1
+}
 
 // comfyFamilyHasNoSizes is ADR 0094 decision 4: Qwen-Image-Edit's output size is decided by
 // FluxKontextImageScale from the INPUT PICTURE's own aspect ratio, so no size a request or a
@@ -534,6 +546,7 @@ func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
 			ID: id, Label: conn.Labels[id], Description: conn.Descriptions[id], Family: string(family),
 			Sizes: comfySizesFor(conn, id), Params: comfyEffectiveDefaults(conn, family, id),
 			Negative: conn.Negatives[id], Knobs: comfyModelKnobs(conn, family, id), Ops: comfyFamilyOps(family),
+			MaxInputs:   comfyFamilyMaxInputs(family),
 			Warm:        id != "" && id == conn.Warm,
 			LicenseName: lic.Name, LicenseURL: lic.URL, SourceURL: lic.Source,
 		})
@@ -995,8 +1008,13 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 
 	switchWarning := comfySwitchWarning(conn, model)
 
-	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
-	defer cancel()
+	// Two clocks, both hung off the CALLER's context so that hanging up still ends the request at
+	// once. The wake budget covers everything up to the engine accepting the prompt; what follows
+	// is the GPU's own work and gets engineRunTimeout. One budget for both is what ADR 0094's P2
+	// acceptance measured going wrong: the wake ate a third of it and the sampling was cut off.
+	callerCtx := ctx
+	ctx, cancelWake := context.WithTimeout(callerCtx, engineTimeout)
+	defer cancelWake()
 
 	// The uploads come FIRST, and not only because the graph has to name them: they are now the
 	// call that meets a cold engine, so they carry the wake retry /prompt used to be alone in
@@ -1006,17 +1024,23 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	var sizeWarning string
 	if params.isImageToImage() {
 		req.reportPhase(PhaseUploading)
-		up, err := p.uploadImage(ctx, conn, req, req.Inputs[0])
-		if err != nil {
-			return Result{}, err
-		}
-		params.Image = up.name
-		if up.width > 0 && up.height > 0 {
-			if req.Size != "" && req.Size != "auto" && (up.width != w || up.height != h) {
-				sizeWarning = fmt.Sprintf(
-					"size=%s requested, but %s keeps the input picture's own %dx%d", req.Size, req.Op, up.width, up.height)
+		for _, in := range req.Inputs {
+			up, err := p.uploadImage(ctx, conn, req, in)
+			if err != nil {
+				return Result{}, err
 			}
-			params.Width, params.Height = up.width, up.height
+			params.Images = append(params.Images, up.name)
+			// The FIRST reference decides the output's dimensions, and only it: every family that
+			// reads a second one composes it INTO the first one's frame (FluxKontextImageScale
+			// scales image1 and the rest ride the same latent), so measuring the others here would
+			// report a size no picture ever had.
+			if len(params.Images) == 1 && up.width > 0 && up.height > 0 {
+				if req.Size != "" && req.Size != "auto" && (up.width != w || up.height != h) {
+					sizeWarning = fmt.Sprintf(
+						"size=%s requested, but %s keeps the input picture's own %dx%d", req.Size, req.Op, up.width, up.height)
+				}
+				params.Width, params.Height = up.width, up.height
+			}
 		}
 		if req.Op == OpInpaint {
 			mask, err := p.uploadImage(ctx, conn, req, req.Mask)
@@ -1040,12 +1064,18 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	// and the alternative — the bare /interrupt — would kill another workspace's picture.
 	req.reportUpstream(promptID)
 	req.reportPhase(PhaseRunning)
-	hist, err := p.awaitHistory(ctx, conn, req, promptID)
+	// The wake is over — the box answered. Releasing its budget here rather than letting the
+	// deferred cancel run at the end of the function is the whole point: what is left of it must
+	// not be what the generation gets to spend.
+	cancelWake()
+	runCtx, cancelRun := context.WithTimeout(callerCtx, engineRunTimeout)
+	defer cancelRun()
+	hist, err := p.awaitHistory(runCtx, conn, req, promptID)
 	if err != nil {
 		return Result{}, err
 	}
 	req.reportPhase(PhaseFetching)
-	images, err := p.fetchImages(ctx, conn, hist, seed)
+	images, err := p.fetchImages(runCtx, conn, hist, seed)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1083,7 +1113,13 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 // uploaded and before a GPU is woken. The same three rules sdcpp checks, in the same order.
 func comfyCheckInputs(req Request, caps Caps) error {
 	if len(req.Inputs) > caps.MaxInputs {
-		return fmt.Errorf("at most %d reference image (got %d)", caps.MaxInputs, len(req.Inputs))
+		// Pluralised, because since ADR 0094 decision 5 the ceiling is no longer always 1 and
+		// "at most 2 reference image" is how a reader learns the message is generated.
+		noun := "images"
+		if caps.MaxInputs == 1 {
+			noun = "image"
+		}
+		return fmt.Errorf("at most %d reference %s (got %d)", caps.MaxInputs, noun, len(req.Inputs))
 	}
 	if req.Op != OpGenerate && len(req.Inputs) == 0 {
 		return fmt.Errorf("%s needs an input image", req.Op)
@@ -1358,7 +1394,7 @@ type comfyHistory struct {
 // What a retry cannot recover is the QUEUE: a restarted ComfyUI holds no history for a prompt id
 // the previous process accepted, so once a wake has been seen, a 200 that does not carry this
 // prompt means the work is gone. That is reported rather than polled for, because the alternative
-// is silence until the request's whole 16-minute budget runs out.
+// is silence until the whole generation budget runs out.
 func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req Request, promptID string) (comfyHistory, error) {
 	lastWaking, sawWaking := "", false
 	for {
@@ -1370,7 +1406,7 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 		body, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
 		if err != nil {
 			if ctx.Err() != nil {
-				return comfyHistory{}, comfyPollTimedOut(lastWaking, ctx.Err())
+				return comfyHistory{}, comfyPollTimedOut(promptID, lastWaking, ctx.Err())
 			}
 			return comfyHistory{}, err
 		}
@@ -1418,7 +1454,7 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 		}
 		select {
 		case <-ctx.Done():
-			return comfyHistory{}, comfyPollTimedOut(lastWaking, ctx.Err())
+			return comfyHistory{}, comfyPollTimedOut(promptID, lastWaking, ctx.Err())
 		case <-time.After(wait):
 		}
 	}
@@ -1426,11 +1462,22 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 
 // comfyPollTimedOut names the engine's own last word when the wait ran out during a wake, so a
 // timeout that happened BECAUSE the box was being replaced does not read as a stalled generation.
-func comfyPollTimedOut(lastWaking string, err error) error {
-	if lastWaking == "" {
+//
+// 🔴 It also says the picture is RECOVERABLE, and that is not a nicety. Giving up here does not
+// interrupt the prompt: the GPU keeps working and keeps billing, and ComfyUI then holds the
+// result — measured (ADR 0094, 2026-09-21) after a 960 s timeout, the identical request 22
+// seconds later came back in 1.07 s with the same picture out of the engine's own cache. A caller
+// told only "timed out" pays for that picture and never collects it.
+func comfyPollTimedOut(promptID, lastWaking string, err error) error {
+	if lastWaking != "" {
+		return fmt.Errorf("waiting for the image engine timed out while it was still starting (%s): %w", lastWaking, err)
+	}
+	if promptID == "" {
 		return fmt.Errorf("waiting for the image engine timed out: %w", err)
 	}
-	return fmt.Errorf("waiting for the image engine timed out while it was still starting (%s): %w", lastWaking, err)
+	return fmt.Errorf("waiting for the image engine timed out, but it is still making this picture"+
+		" (prompt %s) and was not interrupted — asking again with the same request collects it"+
+		" from the engine rather than paying for it twice: %w", promptID, err)
 }
 
 // comfyErrorMessages renders ComfyUI's execution_error message list, capped: it carries a full

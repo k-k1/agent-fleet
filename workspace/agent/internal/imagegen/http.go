@@ -113,6 +113,15 @@ type providerStatus struct {
 	// (decision 12) — this field only ever says whether the ARGUMENT reaches something on this
 	// route at all.
 	Strength bool `json:"strength,omitempty"`
+	// MaxInputs is the most reference pictures ANY model on this route reads — a union, like Ops
+	// and Strength above and for the same reason (ADR 0094 decisions 11 and 5). It is what the
+	// MCP tool's `inputs` array is bounded by, and that schema is a connect-time snapshot with no
+	// model chosen yet, so per-model there would mean nothing. The narrow answer a form needs
+	// once a checkpoint IS chosen rides on modelStatus.MaxInputs.
+	//
+	// 🔴 A union WIDENS what may be offered, never what one request may do: comfyCheckInputs
+	// refuses against the resolved model's own Caps.
+	MaxInputs int `json:"max_inputs,omitempty"`
 	// The rest is the MEMBER-facing catalogue (ADR 0081 decision 5), present only for a provider
 	// that builds the graph — the vendor routes have no sampler list and no per-model recipe, so
 	// their entries keep the short shape they always had.
@@ -167,10 +176,14 @@ type modelStatus struct {
 	// (decision 11). A form pointed at one specific checkpoint needs the narrow answer: offering
 	// "generate" on a row whose family cannot build that graph is decision 2's 400 in front of
 	// the member every time they press it.
-	Ops         []string `json:"ops,omitempty"`
-	LicenseName string   `json:"license_name,omitempty"`
-	LicenseURL  string   `json:"license_url,omitempty"`
-	SourceURL   string   `json:"source_url,omitempty"`
+	Ops []string `json:"ops,omitempty"`
+	// MaxInputs is how many reference pictures THIS model reads (ADR 0094 decision 5, P3), per
+	// model for the same reason Ops above is. Absent for a provider with no studio, and the form
+	// then keeps the one slot it always drew.
+	MaxInputs   int    `json:"max_inputs,omitempty"`
+	LicenseName string `json:"license_name,omitempty"`
+	LicenseURL  string `json:"license_url,omitempty"`
+	SourceURL   string `json:"source_url,omitempty"`
 	// TypicalMS is how long a picture on THIS checkpoint usually takes, measured.
 	TypicalMS int64 `json:"typical_ms,omitempty"`
 }
@@ -232,6 +245,7 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		st.Seed = caps.Seed
 		st.Negative = caps.Negative
 		st.Strength = caps.Strength
+		st.MaxInputs = caps.MaxInputs
 		// Only when there is a REAL choice (ADR 0072 decision 5's own rule for `model`, the
 		// same one `provider` already follows) — a list of zero or one is not something a
 		// caller can meaningfully pick between, and advertising it anyway would put an enum in
@@ -299,7 +313,8 @@ func applyStudio(ctx context.Context, p Provider, st *providerStatus) {
 		st.Models = append(st.Models, modelStatus{
 			ID: m.ID, Label: m.Label, Description: m.Description, Warm: m.Warm,
 			Family: m.Family, Sizes: m.Sizes, Params: &params, Negative: m.Negative,
-			Knobs: m.Knobs, Ops: ops, LicenseName: m.LicenseName, LicenseURL: m.LicenseURL,
+			Knobs: m.Knobs, Ops: ops, MaxInputs: m.MaxInputs,
+			LicenseName: m.LicenseName, LicenseURL: m.LicenseURL,
 			SourceURL: m.SourceURL, TypicalMS: jobs.typicalFor(p.ID(), m.ID),
 		})
 	}

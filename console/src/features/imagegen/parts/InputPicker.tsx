@@ -15,7 +15,17 @@ import { IconButton } from "../../../ui/Button.tsx";
  *  the folder is one the member already knows the name of. */
 export const INPUT_DIR = "generated/console/inputs";
 
-export function InputPicker({ paths, onChange }: { paths: string[]; onChange: (p: string[]) => void }) {
+/** InputPicker's props. `max` is the chosen model's own ceiling (ADR 0094 decision 5): the
+ *  families differ, so the number is the Agent's word rather than a constant here. */
+export function InputPicker({
+  paths,
+  max,
+  onChange,
+}: {
+  paths: string[];
+  max: number;
+  onChange: (p: string[]) => void;
+}) {
   const tr = useT();
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
@@ -23,14 +33,23 @@ export function InputPicker({ paths, onChange }: { paths: string[]; onChange: (p
   const [over, setOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Held HERE and not only at the Agent: the Agent's refusal is a 400 the member meets after
+  // pressing, and on a queued job it arrives as a failed job rather than as a message next to
+  // the field they would have to change. `full` also decides whether the drop zone is offered at
+  // all — a zone that accepts a file and then discards it is worse than no zone.
+  const room = Math.max(0, max - paths.length);
+  const full = room === 0;
+
   const add = (p: string) => {
     const path = p.trim().replace(/^\/+/, "");
-    if (!path || paths.includes(path)) return;
+    if (!path || full || paths.includes(path)) return;
     onChange([...paths, path]);
   };
 
   const upload = async (files: FileList | File[]) => {
-    const list = [...files];
+    // Truncated before the upload, not after: uploading bytes this request can never name would
+    // leave them in the member's own folder with nothing pointing at them.
+    const list = [...files].slice(0, room);
     if (!list.length) return;
     setBusy(true);
     setErr("");
@@ -58,7 +77,10 @@ export function InputPicker({ paths, onChange }: { paths: string[]; onChange: (p
 
   return (
     <div className="igen-inputs">
-      <span className="igen-label">{tr("imggen.inputs")}</span>
+      <span className="igen-label">
+        {tr("imggen.inputs")}
+        {max > 1 && <span className="igen-hint"> {tr("imggen.input_count", { n: paths.length, max })}</span>}
+      </span>
       <ul className="igen-input-list">
         {paths.map((p) => (
           <li key={p}>
@@ -71,51 +93,55 @@ export function InputPicker({ paths, onChange }: { paths: string[]; onChange: (p
           </li>
         ))}
       </ul>
-      <div className="igen-row">
-        <input
-          className="ds-input"
-          value={typed}
-          placeholder={tr("imggen.input_ph")}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key !== "Enter") return;
-            e.preventDefault();
-            add(typed);
-            setTyped("");
-          }}
-        />
-        <button
-          type="button"
-          className="ui-btn"
-          onClick={() => {
-            add(typed);
-            setTyped("");
-          }}
-        >
-          {tr("imggen.input_add")}
-        </button>
-      </div>
-      <div
-        className={"igen-drop" + (over ? " over" : "")}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setOver(true);
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={onDrop}
-        onClick={() => fileRef.current?.click()}
-        role="presentation"
-      >
-        <Icon name={busy ? "loading" : "cloud-upload"} spin={busy} />
-        {busy ? tr("imggen.input_uploading") : tr("imggen.input_drop")}
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => e.target.files && void upload(e.target.files)}
-        />
-      </div>
+      {!full && (
+        <>
+          <div className="igen-row">
+            <input
+              className="ds-input"
+              value={typed}
+              placeholder={tr("imggen.input_ph")}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                add(typed);
+                setTyped("");
+              }}
+            />
+            <button
+              type="button"
+              className="ui-btn"
+              onClick={() => {
+                add(typed);
+                setTyped("");
+              }}
+            >
+              {tr("imggen.input_add")}
+            </button>
+          </div>
+          <div
+            className={"igen-drop" + (over ? " over" : "")}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setOver(true);
+            }}
+            onDragLeave={() => setOver(false)}
+            onDrop={onDrop}
+            onClick={() => fileRef.current?.click()}
+            role="presentation"
+          >
+            <Icon name={busy ? "loading" : "cloud-upload"} spin={busy} />
+            {busy ? tr("imggen.input_uploading") : tr("imggen.input_drop")}
+            <input
+              ref={fileRef}
+              type="file"
+              multiple={room > 1}
+              hidden
+              onChange={(e) => e.target.files && void upload(e.target.files)}
+            />
+          </div>
+        </>
+      )}
       {err && <span className="igen-err">{err}</span>}
       <span className="igen-hint">{tr("imggen.input_from_gallery")}</span>
     </div>

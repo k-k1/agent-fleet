@@ -927,7 +927,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"properties": map[string]any{
 					"dir":            map[string]any{"type": "string", "description": "Working directory (a path from list_repos, or your own). Default: home"},
 					"title":          map[string]any{"type": "string", "description": "Short display name saying what the task is (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro. shell/ssm are refused"},
+					"kind":           map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | lcpp. shell/ssm are refused"},
 					"model":          map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like"},
 					"worktree":       map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
@@ -965,7 +965,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot | cursor | kiro"},
+					"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot | cursor | kiro | lcpp"},
 				},
 				"required": []string{"kind"},
 			},
@@ -1137,9 +1137,16 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			"description": "Requested background. Some models do not support transparent, and then it goes into warnings"},
 		"count": map[string]any{"type": "integer", "minimum": 1, "maximum": 4,
 			"description": "Requested number of images (1 when omitted). A shortfall goes into warnings"},
-		"inputs": map[string]any{"type": "array", "maxItems": 5,
-			"items":       map[string]any{"type": "string"},
-			"description": "Absolute paths of reference images (up to 5), for editing or as a style reference"},
+		// The ceiling is the offer's union (ADR 0094 decision 5), not a literal: since the
+		// instruction-edit families it is no longer the same on every route, and a schema that
+		// says 5 where the Agent refuses above 1 spends a round trip and a refusal to teach that.
+		// The old literal is the fallback for an Agent that does not report one.
+		"inputs": map[string]any{"type": "array", "maxItems": maxInputsOrDefault(offer.MaxInputs),
+			"items": map[string]any{"type": "string"},
+			"description": fmt.Sprintf(
+				"Absolute paths of reference images (up to %d), for editing or as a style reference."+
+					" A model may take fewer, and then the call is refused by name",
+				maxInputsOrDefault(offer.MaxInputs))},
 	}
 	// mask goes with inpaint and nothing else. A mask handed to a route that has no mask
 	// parameter does not fail — it produces a picture OF the mask — so the parameter is offered
@@ -1376,6 +1383,20 @@ func imageGenRoutesNote(offer imageGenOffer) string {
 
 // imageGenOffer is what THIS session may be told about generate_image: which providers it is
 // allowed to name, and the vocabulary those providers between them support.
+// mcpImageGenDefaultMaxInputs is what the `inputs` array was bounded by before any Agent reported
+// a ceiling, and is what an older one still gets. It is not a capability claim — every provider
+// refuses what it cannot take — so it stays where it was rather than being narrowed to the
+// smallest family: lowering it would withhold an argument that works on the routes that have
+// always taken five.
+const mcpImageGenDefaultMaxInputs = 5
+
+func maxInputsOrDefault(n int) int {
+	if n <= 0 {
+		return mcpImageGenDefaultMaxInputs
+	}
+	return n
+}
+
 type imageGenOffer struct {
 	// Providers is every provider this session may use, in the effective order. The first is
 	// what an unspecified `provider` routes to.
@@ -1407,6 +1428,12 @@ type imageGenOffer struct {
 	// Strength is true when ANY offered provider lets the caller say how much of the input
 	// picture an edit changes, by the same union rule as Seed.
 	Strength bool
+	// MaxInputs is the LARGEST number of reference pictures any offered provider reads (ADR 0094
+	// decision 5), by the same union rule as Seed. It bounds the `inputs` array in the schema,
+	// which is a connect-time snapshot with no provider or model chosen — so a union is the only
+	// honest ceiling, and what one provider or checkpoint actually takes is refused by name at
+	// call time.
+	MaxInputs int
 	// Samplers and Schedulers are the union of the offered providers' own allow-lists, and their
 	// presence is also what says `params` reaches anything at all: only a route that BUILDS the
 	// sampler graph has names to send, so an empty pair is exactly the case where the argument
@@ -1503,6 +1530,9 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		offer.Seed = offer.Seed || p.Seed
 		offer.Negative = offer.Negative || p.Negative
 		offer.Strength = offer.Strength || p.Strength
+		if p.MaxInputs > offer.MaxInputs {
+			offer.MaxInputs = p.MaxInputs
+		}
 		for _, s := range p.Samplers {
 			if !seenSampler[s] {
 				seenSampler[s] = true
@@ -1856,11 +1886,11 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 	{
 		"name":        "list_models",
-		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと（一覧は利用者が「使わないモデル」で除外したものを除いてある — 記憶や過去の会話にあるモデル名を推測で渡さないこと。除外モデルを渡した create_session は拒否される）。claude は固定の最新ティア別名と、利用者がエージェント設定で登録した完全モデル ID を返す。Claude Code OAuth にはアカウント連動カタログがないため、登録モデルの可否は起動時に判定される。codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。opencode は同じモデルが 2 つの課金経路で並ぶことがある（opencode-go/… = Go サブスクの範囲内、opencode/… = Zen の従量課金）。同名が両方にある場合は先に並んでいる opencode-go/… を選ぶこと（一覧の並びは利用者の設定で整形済み）。利用者が Zen を明示した場合だけ opencode/… を使う。",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと（一覧は利用者が「使わないモデル」で除外したものを除いてある — 記憶や過去の会話にあるモデル名を推測で渡さないこと。除外モデルを渡した create_session は拒否される）。claude は固定の最新ティア別名と、利用者がエージェント設定で登録した完全モデル ID を返す。Claude Code OAuth にはアカウント連動カタログがないため、登録モデルの可否は起動時に判定される。codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。lcpp はサインイン不要で、自前エンジンの目録に載っているモデルをそのまま返す（エンジンが無い配備では空になる）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。opencode は同じモデルが 2 つの課金経路で並ぶことがある（opencode-go/… = Go サブスクの範囲内、opencode/… = Zen の従量課金）。同名が両方にある場合は先に並んでいる opencode-go/… を選ぶこと（一覧の並びは利用者の設定で整形済み）。利用者が Zen を明示した場合だけ opencode/… を使う。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "claude / codex / opencode / agy / copilot / cursor / kiro"},
+				"kind": map[string]any{"type": "string", "description": "claude / codex / opencode / agy / copilot / cursor / kiro / lcpp"},
 			},
 			"required": []string{"kind"},
 		},
@@ -1878,7 +1908,7 @@ var mcpStdioWriteTools = []map[string]any{
 			"properties": map[string]any{
 				"dir":            map[string]any{"type": "string", "description": "作業ディレクトリ（リポジトリの作業コピー等）。省略時はホーム。list_my_sessions の dir か list_repos の path を渡す。"},
 				"title":          map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
-				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | agy | copilot | cursor | kiro | shell。agy は Antigravity CLI（接続済みのときのみ起動可）。copilot は GitHub Copilot CLI（GitHub 連携＋Copilot サブスクが前提）。cursor は Cursor CLI（接続済みのときのみ起動可）。kiro は Kiro CLI（接続済みのときのみ起動可・既定は managed ドライバ）。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
+				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | agy | copilot | cursor | kiro | lcpp | shell。agy は Antigravity CLI（接続済みのときのみ起動可）。copilot は GitHub Copilot CLI（GitHub 連携＋Copilot サブスクが前提）。cursor は Cursor CLI（接続済みのときのみ起動可）。kiro は Kiro CLI（接続済みのときのみ起動可・既定は managed ドライバ）。lcpp は自前の llama.cpp ハーネス（サインイン不要・常に managed・Terminal (CLI) 経路は無い）で、model は list_models(kind=\"lcpp\") が返す自前エンジンの目録から選ぶ。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
 				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
 				"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
 				"worktree":       map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
@@ -2578,8 +2608,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
 		}
-		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" {
-			return mcpToolErr(req.ID, "kind には claude / codex / opencode / agy / copilot / cursor / kiro のいずれかを指定してください")
+		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" && a.Kind != "lcpp" {
+			return mcpToolErr(req.ID, "kind には claude / codex / opencode / agy / copilot / cursor / kiro / lcpp のいずれかを指定してください")
 		}
 		out, err := agentGET("/agents/" + url.PathEscape(a.Kind) + "/models")
 		if err != nil {
@@ -2763,6 +2793,15 @@ func mcpStdioCall(req mcpReq) []byte {
 			}
 		}
 		driver := ""
+		// This list is "kinds where tui vs managed is a REAL choice, and MCP wants to bias
+		// toward managed" (an MCP caller has no way to drive a tui pane). claude and agy are
+		// deliberately absent: both have managedDriver:false (no managed route exists at all,
+		// so there is no choice to bias). lcpp is absent for the mirror-image reason — it has
+		// NO tui route at all (ADR 0093 決定 2), so there is equally no choice to bias: the
+		// Agent's own create handler already defaults an unspecified driver to managed for any
+		// Caps().ManagedOnly kind (session_handlers.go's driver == "" && ManagedOnly branch),
+		// unconditionally, regardless of what this list contains. Adding lcpp here would be a
+		// no-op, not a fix.
 		if a.Kind == "codex" || a.Kind == "opencode" || a.Kind == "copilot" || a.Kind == "cursor" || a.Kind == "kiro" {
 			driver = "managed"
 		}

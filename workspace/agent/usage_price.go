@@ -23,6 +23,8 @@ package main
 import (
 	"strings"
 	"unicode"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // usagePrice is USD per million tokens (the provider's published price).
@@ -147,6 +149,14 @@ func allDigits(s string) bool {
 const (
 	usagePriceSrcBuiltin = "builtin" // the table in this file (Anthropic's primary prices, verified)
 	usagePriceSrcCatalog = "catalog" // models.dev (usage_catalog.go)
+	// usagePriceSrcGPUBilled marks lcpp's $0/token declaration (ADR 0093 decision 8): the
+	// engine's real cost is billed by GPU-hour, in a wholly separate accounting path (the CP's
+	// own engine spend tracking) that this token-price pipeline never touches. Giving lcpp
+	// ALSO a $/token estimate here would add a second, fictional cost on top of the GPU-hour
+	// bill for the exact same run — this src exists so that declared $0 is visibly a decision,
+	// not a model this file simply has no price for (which usagePriceOf reports as unpriced,
+	// src="", ok=false — a different, weaker claim than "priced at zero").
+	usagePriceSrcGPUBilled = "gpu-billed"
 )
 
 // usagePriceOf looks up the price for a kind and model. A false bool return means the
@@ -162,6 +172,13 @@ const (
 //  3. Not in the catalog either: fall back to the built-in table, which still finds a
 //     claude-family model name.
 func usagePriceOf(kind, model string) (usagePrice, string, bool) {
+	if kind == session.KindLcpp {
+		// Never consult the builtin table or the catalog for this kind: a self-hosted model
+		// name that happens to collide with a hosted one (e.g. a "llama-3.1-70b" checkpoint
+		// matching a real provider's catalog entry) must not silently pick up that provider's
+		// $/token price. The zero return is itself the decision (see usagePriceSrcGPUBilled).
+		return usagePrice{}, usagePriceSrcGPUBilled, true
+	}
 	base := usageNormalizeModel(model)
 	order := usageCatalogOrder(kind)
 	builtinFirst := len(order) > 0 && order[0] == "anthropic"

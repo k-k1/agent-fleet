@@ -233,7 +233,7 @@ func TestComfyWorkflowsEditStartsFromTheInputPicture(t *testing.T) {
 	for _, c := range comfyFamilyFixtures {
 		t.Run(c.name, func(t *testing.T) {
 			p := comfyGoldenParams
-			p.Op, p.Image = OpEdit, "af-photo.png"
+			p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 			g, err := comfyBuildGraph(c.family, c.files, p)
 			if err != nil {
 				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
@@ -282,7 +282,7 @@ func TestComfyWorkflowsEditStartsFromTheInputPicture(t *testing.T) {
 func TestComfyWorkflowsKleinEditSplitsTheSigmas(t *testing.T) {
 	files := comfyFiles{DiffusionModel: "k.safetensors", ClipL: "q.safetensors", Vae: "v.safetensors"}
 	p := comfyGoldenParams
-	p.Op, p.Image = OpEdit, "af-photo.png"
+	p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 	g, err := comfyBuildGraph(ComfyFamilyFlux2Klein, files, p)
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func TestComfyWorkflowsKleinEditSplitsTheSigmas(t *testing.T) {
 	// generate and inpaint both run the full schedule, so neither pays for the extra node.
 	for _, op := range []Op{OpGenerate, OpInpaint} {
 		q := comfyGoldenParams
-		q.Op, q.Image, q.Mask = op, "af-photo.png", "af-mask.png"
+		q.Op, q.Images, q.Mask = op, []string{"af-photo.png"}, "af-mask.png"
 		full, err := comfyBuildGraph(ComfyFamilyFlux2Klein, files, q)
 		if err != nil {
 			t.Fatal(err)
@@ -328,7 +328,7 @@ func TestComfyWorkflowsEditStrengthReachesTheSampler(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			s := want
 			p := comfyGoldenParams
-			p.Op, p.Image, p.Strength = OpEdit, "af-photo.png", &s
+			p.Op, p.Images, p.Strength = OpEdit, []string{"af-photo.png"}, &s
 			g, err := comfyBuildGraph(c.family, c.files, p)
 			if err != nil {
 				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
@@ -353,7 +353,7 @@ func TestComfyWorkflowsEditStrengthOutOfRangeFallsBack(t *testing.T) {
 	for _, bad := range []float64{0, -0.5, 1.5} {
 		s := bad
 		p := comfyGoldenParams
-		p.Op, p.Image, p.Strength = OpEdit, "af-photo.png", &s
+		p.Op, p.Images, p.Strength = OpEdit, []string{"af-photo.png"}, &s
 		g, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"}, p)
 		if err != nil {
 			t.Fatalf("strength=%v: %v", bad, err)
@@ -373,7 +373,7 @@ func TestComfyWorkflowsInpaintIgnoresStrength(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			s := 0.2
 			p := comfyGoldenParams
-			p.Op, p.Image, p.Mask, p.Strength = OpInpaint, "af-photo.png", "af-mask.png", &s
+			p.Op, p.Images, p.Mask, p.Strength = OpInpaint, []string{"af-photo.png"}, "af-mask.png", &s
 			g, err := comfyBuildGraph(c.family, c.files, p)
 			if err != nil {
 				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
@@ -406,7 +406,7 @@ func TestComfyWorkflowsKleinStretchesTheScheduleBeforeCutting(t *testing.T) {
 	} {
 		s := c.strength
 		p := comfyGoldenParams
-		p.Op, p.Image, p.Strength = OpEdit, "af-photo.png", &s
+		p.Op, p.Images, p.Strength = OpEdit, []string{"af-photo.png"}, &s
 		g, err := comfyBuildGraph(ComfyFamilyFlux2Klein, files, p)
 		if err != nil {
 			t.Fatalf("strength=%v: %v", c.strength, err)
@@ -438,7 +438,7 @@ func TestComfyWorkflowsInpaintMasksTheLatent(t *testing.T) {
 	for _, c := range comfyFamilyFixtures {
 		t.Run(c.name, func(t *testing.T) {
 			p := comfyGoldenParams
-			p.Op, p.Image, p.Mask = OpInpaint, "af-photo.png", "af-mask.png"
+			p.Op, p.Images, p.Mask = OpInpaint, []string{"af-photo.png"}, "af-mask.png"
 			g, err := comfyBuildGraph(c.family, c.files, p)
 			if err != nil {
 				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
@@ -486,7 +486,7 @@ func TestComfyWorkflowsRefuseImageToImageWithoutTheAttachments(t *testing.T) {
 			if _, err := comfyBuildGraph(c.family, c.files, p); err == nil {
 				t.Error("an edit with no input image built a graph")
 			}
-			p.Op, p.Image = OpInpaint, "af-photo.png"
+			p.Op, p.Images = OpInpaint, []string{"af-photo.png"}
 			if _, err := comfyBuildGraph(c.family, c.files, p); err == nil {
 				t.Error("an inpaint with no mask built a graph")
 			}
@@ -538,7 +538,7 @@ func TestComfyCheckpointFamiliesTakeADeclaredVae(t *testing.T) {
 		base := comfyFiles{Checkpoint: "c.safetensors",
 			ClipL: "l.safetensors", ClipG: "g.safetensors", T5xxl: "t.safetensors"}
 		p := comfyGoldenParams
-		p.Op, p.Image = OpEdit, "af-photo.png"
+		p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 
 		t.Run(string(fam)+" without one", func(t *testing.T) {
 			g, err := comfyBuildGraph(fam, base, p)
@@ -785,7 +785,7 @@ func TestComfyWorkflowQwenImageEditMatchesGoldenFixture(t *testing.T) {
 	for _, c := range comfyQwenEditFamilies {
 		t.Run(string(c.family), func(t *testing.T) {
 			p := comfyGoldenParams
-			p.Op, p.Image = OpEdit, "af-photo.png"
+			p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 			g, err := comfyBuildGraph(c.family, c.files, p)
 			if err != nil {
 				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
@@ -808,13 +808,79 @@ func TestComfyWorkflowQwenImageEditMatchesGoldenFixture(t *testing.T) {
 	}
 }
 
+// The second reference (ADR 0094 decision 5, P3), wired the way 実測 D measured it and not the
+// way it reads at first glance. Three things have to hold together and each fails silently on its
+// own — an extra reference that is dropped, scaled, or attached to one side only all produce a
+// picture with no error anywhere:
+//
+//   - image2 is a LoadImage of its own, NOT routed through FluxKontextImageScale. That node fixes
+//     the FRAME, and the frame is image1's; scaling a borrowed object to the first picture's
+//     aspect ratio crops away the thing the caller asked for.
+//   - it reaches BOTH encodes. CFG subtracts the two conditionings, so a reference on one side
+//     only leaves its own encoding in the difference.
+//   - the latent still comes from scaled image1, so the output keeps the edited picture's size.
+func TestComfyWorkflowQwenImageEditWiresTheSecondReferenceToBothEncodes(t *testing.T) {
+	for _, c := range comfyQwenEditFamilies {
+		t.Run(string(c.family), func(t *testing.T) {
+			p := comfyGoldenParams
+			p.Op, p.Images = OpEdit, []string{"af-scene.png", "af-plant.png"}
+			g, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			img2, ok := g["img2"]
+			if !ok || img2.ClassType != "LoadImage" || img2.Inputs["image"] != "af-plant.png" {
+				t.Fatalf("img2 = %+v, want a LoadImage of the second reference", g["img2"])
+			}
+			for _, encode := range []string{"pos", "neg"} {
+				if got := comfyLinkAt(t, g, encode+".image1"); got[0] != "scale" {
+					t.Errorf("%s.image1 reads %v, want the scaled first picture", encode, got)
+				}
+				got := comfyLinkAt(t, g, encode+".image2")
+				if got[0] != "img2" {
+					t.Errorf("%s.image2 reads %v, want the raw img2 — scaling it would crop the borrowed object", encode, got)
+				}
+			}
+			if got := comfyLinkAt(t, g, "enc.pixels"); got[0] != "scale" {
+				t.Errorf("enc.pixels reads %v, want scaled image1: the output keeps the EDITED picture's size", got)
+			}
+		})
+	}
+}
+
+// The negative control for the test above, and the reason the extra wiring is a loop over what the
+// caller actually sent rather than a fixed image2: one reference must produce the graph 実測 A and
+// E ran, with no img2 node and no image2 input anywhere. Every other family is in this state
+// permanently (Caps.MaxInputs is 1 for them), so an unconditional image2 would be a dangling link
+// in seven templates at once.
+func TestComfyWorkflowQwenImageEditOmitsImage2WhenOnlyOneReferenceWasSent(t *testing.T) {
+	for _, c := range comfyQwenEditFamilies {
+		t.Run(string(c.family), func(t *testing.T) {
+			p := comfyGoldenParams
+			p.Op, p.Images = OpEdit, []string{"af-scene.png"}
+			g, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := g["img2"]; ok {
+				t.Errorf("img2 = %+v, want no such node", g["img2"])
+			}
+			for _, encode := range []string{"pos", "neg"} {
+				if v, ok := g[encode].Inputs["image2"]; ok {
+					t.Errorf("%s.image2 = %v, want the input absent entirely", encode, v)
+				}
+			}
+		})
+	}
+}
+
 // The difference that makes 2511 a family of its own (ADR 0094 decision 6): both conditionings
 // reach the sampler through FluxKontextMultiReferenceLatentMethod, and the shift is 3.1 rather
 // than 3. Ported from the graph 実測 E ran, with 2509 as the control in the same test — "the node
 // is there" and "the node is there in BOTH" look identical from one family alone.
 func TestComfyWorkflowQwenImageEdit2511RoutesBothConditioningsThroughTheReferenceMethod(t *testing.T) {
 	p := comfyGoldenParams
-	p.Op, p.Image = OpEdit, "af-photo.png"
+	p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 	g, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2511, comfyQwenEditFamilies[1].files, p)
 	if err != nil {
 		t.Fatal(err)
@@ -862,7 +928,7 @@ func TestComfyWorkflowQwenImageEditRecipesAreTheTemplates(t *testing.T) {
 	want := map[comfyFamily]int{ComfyFamilyQwenImageEdit2509: 20, ComfyFamilyQwenImageEdit2511: 40}
 	for _, c := range comfyQwenEditFamilies {
 		p := comfyGoldenParams
-		p.Op, p.Image = OpEdit, "af-photo.png"
+		p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 		g, err := comfyBuildGraph(c.family, c.files, p)
 		if err != nil {
 			t.Fatal(err)
@@ -940,7 +1006,7 @@ func TestComfyWorkflowQwenImageEditDenoiseIsAlwaysOne(t *testing.T) {
 		for _, s := range []float64{0.1, 0.6, 1} {
 			strength := s
 			p := comfyGoldenParams
-			p.Op, p.Image, p.Strength = OpEdit, "af-photo.png", &strength
+			p.Op, p.Images, p.Strength = OpEdit, []string{"af-photo.png"}, &strength
 			g, err := comfyBuildGraph(c.family, c.files, p)
 			if err != nil {
 				t.Fatalf("%s strength=%v: %v", c.family, s, err)
@@ -958,7 +1024,7 @@ func TestComfyWorkflowQwenImageEditDenoiseIsAlwaysOne(t *testing.T) {
 func TestComfyWorkflowQwenImageEditEncodesARealNegative(t *testing.T) {
 	for _, c := range comfyQwenEditFamilies {
 		p := comfyGoldenParams
-		p.Op, p.Image, p.Negative = OpEdit, "af-photo.png", "blurry"
+		p.Op, p.Images, p.Negative = OpEdit, []string{"af-photo.png"}, "blurry"
 		g, err := comfyBuildGraph(c.family, c.files, p)
 		if err != nil {
 			t.Fatal(err)
@@ -980,7 +1046,7 @@ func TestComfyWorkflowQwenImageEditEncodesARealNegative(t *testing.T) {
 func TestComfyWorkflowQwenImageEditNegativeIsEmptyWhenNobodyDeclaresOne(t *testing.T) {
 	for _, c := range comfyQwenEditFamilies {
 		p := comfyGoldenParams
-		p.Op, p.Image = OpEdit, "af-photo.png"
+		p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 		g, err := comfyBuildGraph(c.family, c.files, p)
 		if err != nil {
 			t.Fatal(err)
@@ -996,7 +1062,7 @@ func TestComfyWorkflowQwenImageEditNegativeIsEmptyWhenNobodyDeclaresOne(t *testi
 func TestComfyWorkflowQwenImageEditChainsLoras(t *testing.T) {
 	for _, c := range comfyQwenEditFamilies {
 		p := comfyGoldenParams
-		p.Op, p.Image = OpEdit, "af-photo.png"
+		p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 		p.Loras = []comfyLora{{Name: "watercolor-v2.safetensors", Weight: 0.8}}
 		g, err := comfyBuildGraph(c.family, c.files, p)
 		if err != nil {
@@ -1018,7 +1084,7 @@ func TestComfyWorkflowQwenImageEditChainsLoras(t *testing.T) {
 // topology nobody has run, and it would come back as a worse picture rather than as an error.
 func TestComfyWorkflowQwenImageEditRefusesAnUnwiredFamily(t *testing.T) {
 	p := comfyGoldenParams
-	p.Op, p.Image = OpEdit, "af-photo.png"
+	p.Op, p.Images = OpEdit, []string{"af-photo.png"}
 	_, err := comfyGraphQwenImageEdit(comfyQwenEditFiles, p, comfyFamily("qwen-image-edit-2599"))
 	if err == nil {
 		t.Fatal("a family with no wiring built a graph")

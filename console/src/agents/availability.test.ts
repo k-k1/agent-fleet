@@ -25,15 +25,16 @@ describe("launch gate — unknown / failed connection state", () => {
 
   it("distinguishes a KNOWN-empty answer from an unknown one", () => {
     // {} is a successful response that happens to list no authenticated agent — unlike
-    // null it is an answer, so credential-free shell is correctly still offered.
-    expect(gate({})).toEqual(["shell"]);
+    // null it is an answer, so credential-free shell and lcpp (no sign-in exists for this
+    // kind either — ADR 0093 決定 10) are correctly still offered.
+    expect(gate({})).toEqual(["lcpp", "shell"]);
   });
 });
 
 describe("launch gate — per-agent predicates", () => {
-  it("offers only the authenticated agents", () => {
+  it("offers only the authenticated agents (plus the credential-free ones)", () => {
     const conns = { claude: { connected: true }, codex: { connected: false }, agy: { connected: false } };
-    expect(gate(conns)).toEqual(["claude", "shell"]);
+    expect(gate(conns)).toEqual(["claude", "lcpp", "shell"]);
   });
 
   it("keeps an unauthenticated agy out even though it is installed and supported", () => {
@@ -78,27 +79,28 @@ describe("repo launch menu", () => {
   });
 });
 
-describe("lcpp — registered (ADR 0093) but not launchable yet", () => {
-  it("is never in repoLaunchKinds, so no launch picker (grid / modal / quick launch) offers it", () => {
-    expect(repoLaunchKinds).not.toContain("lcpp");
+describe("lcpp — launchable now (ADR 0093 stage 2: driver.go + store.go landed)", () => {
+  it("is in repoLaunchKinds like every other CLI-backed kind", () => {
+    expect(repoLaunchKinds).toContain("lcpp");
   });
 
-  it("available() is false unconditionally — no connection state ever admits it", () => {
-    expect(AGENTS.lcpp.available({})).toBe(false);
-    expect(AGENTS.lcpp.available({ conns: {} })).toBe(false);
-    expect(AGENTS.lcpp.available({ conns: { lcpp: { connected: true } } })).toBe(false);
+  it("available() is unconditional — no sign-in exists for this kind (決定 10)", () => {
+    expect(AGENTS.lcpp.available({})).toBe(true);
+    expect(AGENTS.lcpp.available({ conns: {} })).toBe(true);
+    expect(AGENTS.lcpp.available({ conns: { lcpp: { connected: false } } })).toBe(true);
   });
 
   it("declares the managed-only shape decision 2 describes: managedDriver true, terminalDriver false", () => {
-    // managedDriver stays true (the kind's eventual shape is managed-only), but
-    // terminalDriver:false says there is no Terminal (CLI) route to fall back to, ever —
-    // the two together are what LaunchModal / SessionMenu read to skip offering a choice.
+    // managedDriver stays true (the kind's shape is managed-only), and terminalDriver:false
+    // says there is no Terminal (CLI) route to fall back to, ever — no CLI program exists to
+    // put in a pane (agent.go's BuildLaunch always errors). The two together are what
+    // LaunchModal / SessionMenu read to skip offering a driver choice entirely.
     expect(AGENTS.lcpp.managedDriver).toBe(true);
     expect(AGENTS.lcpp.terminalDriver).toBe(false);
   });
 
-  it("every other registered kind still defaults to having a terminal route", () => {
-    for (const k of repoLaunchKinds) expect(AGENTS[k].terminalDriver).not.toBe(false);
+  it("is the only repo-launchable kind with no Terminal (CLI) route", () => {
+    expect(repoLaunchKinds.filter((k) => AGENTS[k].terminalDriver === false)).toEqual(["lcpp"]);
   });
 });
 

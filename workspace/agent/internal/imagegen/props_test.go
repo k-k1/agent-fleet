@@ -186,7 +186,7 @@ func TestPropsReadsTheInstructionEditGraph(t *testing.T) {
 	for _, f := range []comfyFamily{ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511} {
 		t.Run(string(f), func(t *testing.T) {
 			g, err := comfyBuildGraph(f, files, comfyParams{
-				Op: OpEdit, Image: "af-input.png", Prompt: instruction, Negative: "extra text",
+				Op: OpEdit, Images: []string{"af-input.png"}, Prompt: instruction, Negative: "extra text",
 				Seed: 42, Width: 1024, Height: 1024, BatchSize: 1,
 			})
 			if err != nil {
