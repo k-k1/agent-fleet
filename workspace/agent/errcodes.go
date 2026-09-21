@@ -67,6 +67,9 @@ const (
 	errCodeConnJiraFields   = "conn_jira_fields_required"
 	errCodeConnJiraRejected = "conn_jira_rejected"
 
+	// llama.cpp member connection (connections.go, docs/log/107)
+	errCodeConnLcppURLRequired = "conn_lcpp_url_required"
+
 	// Chat bridge connections (connections.go, docs/log/37 P1)
 	errCodeConnDiscordTokenRequired = "conn_discord_token_required"
 	errCodeConnDiscordDestRequired  = "conn_discord_destination_required"

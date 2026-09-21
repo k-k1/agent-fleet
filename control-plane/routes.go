@@ -931,6 +931,14 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// oauth_jira.go). Only the site choice is a Console -> Agent proxy.
 	mux.HandleFunc("POST /api/connections/jira/oauth/start", cfg.handleJiraOAuthStart)
 	mux.HandleFunc("PUT /api/connections/jira/site", rest)
+	// llama.cpp member connection (docs/log/107): a member's own LAN llama-server URL + key,
+	// stored in the Agent's encrypted secrets like Jira/Grafana above — the CP only proxies,
+	// same as those, and never sees the key. Once saved it BYPASSES the CP entirely for the
+	// lcpp kind's own chat turns (engines.go's harnessEngineToken); this route only carries
+	// the settings card's save/delete/check.
+	mux.HandleFunc("PUT /api/connections/lcpp", rest)
+	mux.HandleFunc("DELETE /api/connections/lcpp", rest)
+	mux.HandleFunc("POST /api/connections/lcpp/check", rest)
 	mux.HandleFunc("PUT /api/connections/pagerduty", rest)
 	mux.HandleFunc("DELETE /api/connections/pagerduty", rest)
 	mux.HandleFunc("PUT /api/connections/grafana", rest)

@@ -167,6 +167,8 @@ export const isManagedSession = (s?: { driver?: string } | null): boolean =>
 // Provider connection status for one agent, from GET /api/connections.
 export interface ProviderConn {
   connected?: boolean;
+  // Grafana / lcpp (docs/log/107): the connection's own URL, non-secret and safe to echo.
+  url?: string;
   envs?: string[]; // opencode: configured provider API-key env names (auth.go)
   // agy: host capability (docs/log/32 Track B — the RDRAND guard). false = this host
   // cannot run agy ("no_rdrand" / "not_installed"); absent = supported.
@@ -204,9 +206,13 @@ export interface ProviderConn {
   metered?: boolean;
   env_key?: boolean;
   // lcpp (docs/log/105 §106.2): the user's own display setting (ui-prefs lcppEnabled). No
-  // sign-in exists for this kind (ADR 0093 決定 10), so this is the only field its connection
-  // status carries. Missing/absent counts as ON, same as the server's opt-out default.
+  // sign-in exists for this kind (ADR 0093 決定 10), so this used to be the only field its
+  // connection status carried. Missing/absent counts as ON, same as the server's opt-out
+  // default.
   enabled?: boolean;
+  // lcpp (docs/log/107): whether a member's own LAN llama-server connection is configured.
+  // `connected`/`url` above double as this card's fields — `url` is never the API key, which
+  // GET /connections never returns at all (see connections.go's lcppStatus doc comment).
   // opencode: the selected billing route (docs/log/54). "free" is a tier that launches with
   // no authentication at all, so the launch gate reads this and allows opencode even when
   // not connected. "off" is the opposite: an explicit disable that closes the launch gate

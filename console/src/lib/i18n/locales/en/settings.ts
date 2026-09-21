@@ -392,6 +392,19 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.lcpp_enabled_note_off":
     "llama.cpp cannot be launched: it disappears from the launch menus and a direct API create is refused too (existing sessions keep running).",
   "agents.lcpp_enabled_note_on": "llama.cpp can be launched. Pick the default model and any excluded ones in the behavior settings below.",
+  // Your own connection (docs/log/107). When set, it takes priority over this deployment's
+  // own "llm" engine and connects directly, bypassing the Control Plane — which also means
+  // the tenant admin's allow setting (ADR 0084's allow_engine_llm) has no effect on it, so
+  // this note says so plainly.
+  "agents.lcpp_conn_title": "Your own connection",
+  "agents.lcpp_conn_note":
+    "Connects straight to a LAN llama-server. When set, it takes priority over this deployment's own engine. It bypasses the Control Plane, so the tenant admin's allow setting has no effect on it. Leave it empty to revert to today's behavior (the deployment's engine).",
+  "agents.lcpp_conn_url_placeholder": "http://192.168.0.10:8080",
+  "agents.lcpp_conn_key_placeholder": "API key (optional)",
+  "agents.lcpp_conn_check": "Check connection",
+  "agents.lcpp_conn_checking": "Checking…",
+  "agents.lcpp_conn_check_failed": "Check failed: {msg}",
+  "agents.lcpp_conn_check_result": "build {build} · window {nctx} · models: {models}",
   "set.tab_cost": "Cloud cost",
   // --- 稼働時間 heatmap (docs/log/83) ---
   // ⚠️ Occupancy, never money. Cost Explorer only reports per day, so an hourly
