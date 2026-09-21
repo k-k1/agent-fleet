@@ -493,7 +493,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		}
 	}
 	if result.Final.Usage != (harness.Usage{}) {
-		if _, aerr := st.AppendUsage(result.Final.Usage); aerr != nil {
+		if _, aerr := st.AppendUsage(result.Final.Usage, window); aerr != nil {
 			log.Printf("lcpp: persisting usage: %v", aerr)
 		}
 	}

@@ -80,6 +80,13 @@ type Record struct {
 	// means the engine reported none" rule — round-trips as visibly present, not
 	// indistinguishable from an absent one).
 	Usage *harness.Usage `json:"usage,omitempty"`
+	// Window is a KindUsage record's context-window size (the catalog's context_tokens,
+	// decision 7 — driver.go's runTurn already resolves this via harness.EngineWindow for
+	// the harness's own compaction math, and AppendUsage is handed the same value). 0 means
+	// the window could not be resolved for that turn. ADR 0093 decision 8: this is the ONLY
+	// window source this kind ever writes — never a usagex.WindowGuess estimate — so a
+	// reader can always mark it WindowSource="recorded" when it is present.
+	Window int `json:"window,omitempty"`
 }
 
 // Store is one lcpp session's JSONL log at
@@ -292,9 +299,27 @@ func (s *Store) AppendModelChangeNote(model string) (Record, error) {
 
 // AppendUsage records one turn's exact token accounting (decision 8: this kind never
 // estimates). u is copied so the caller's own variable can't alias the stored pointer.
-func (s *Store) AppendUsage(u harness.Usage) (Record, error) {
+// window is the context-window size the turn actually ran against (driver.go's own
+// harness.EngineWindow call, decision 7) — 0 when it could not be resolved.
+func (s *Store) AppendUsage(u harness.Usage, window int) (Record, error) {
 	uu := u
-	return s.append(Record{Kind: KindUsage, Usage: &uu})
+	return s.append(Record{Kind: KindUsage, Usage: &uu, Window: window})
+}
+
+// LastUsage returns the most recently completed turn's exact token usage and the context
+// window it ran against, straight off disk — no engine round trip, so WireLive can call this
+// on every session-list render. ok=false before any turn has ever completed.
+func (s *Store) LastUsage() (u harness.Usage, window int, ok bool) {
+	recs, _, err := s.Records()
+	if err != nil {
+		return harness.Usage{}, 0, false
+	}
+	for i := len(recs) - 1; i >= 0; i-- {
+		if recs[i].Kind == KindUsage && recs[i].Usage != nil {
+			return *recs[i].Usage, recs[i].Window, true
+		}
+	}
+	return harness.Usage{}, 0, false
 }
 
 // maxRecordLine bounds one JSONL line Records will accept — generous (a large tool result or
@@ -498,6 +523,13 @@ func transcriptFromRecords(recs []Record) []transcript.Turn {
 			if lastAssistant >= 0 && r.Usage != nil {
 				turns[lastAssistant].InTok = r.Usage.PromptTokens
 				turns[lastAssistant].OutTok = r.Usage.CompletionTokens
+				// ADR 0093 decision 8: this kind's own window, never a guess — session_usage.go's
+				// AggregateUsage and usage_fold.go's foldTurnRows both read CtxWindow>0 as
+				// WindowSource="recorded" automatically, the same way codex/opencode's own
+				// transcript parsers already do (opencode/transcript.go, codex/transcript.go).
+				if r.Window > 0 {
+					turns[lastAssistant].CtxWindow = r.Window
+				}
 			}
 		}
 	}

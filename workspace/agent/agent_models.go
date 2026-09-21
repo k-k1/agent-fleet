@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"strings"
@@ -69,6 +70,29 @@ func emptyReason(enumerated, offered, final int) string {
 	}
 }
 
+// lcppModels reads the chat-role engine's own declared models straight off the catalog
+// (engines.go's engineCatalogRows) — the same "llm" catalog key lcpp/driver.go's runTurn
+// always resolves a token against. A deployment with no engines, or none of them
+// chat-capable, returns nil (the caller's "empty is a valid answer" path).
+func lcppModels(ctx context.Context) []agents.ModelChoice {
+	for _, e := range engineCatalogRows(ctx) {
+		if e.Key != "llm" || e.api() != engineAPIChat {
+			continue
+		}
+		labels := engineModelLabels(e)
+		list := make([]agents.ModelChoice, 0, len(e.Models))
+		for _, id := range e.Models {
+			mc := agents.ModelChoice{ID: id, Label: id}
+			if l, ok := labels[id]; ok {
+				mc.Label = l
+			}
+			list = append(list, mc)
+		}
+		return list
+	}
+	return nil
+}
+
 func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	var list []agents.ModelChoice
 	// route is the opencode billing route the list was actually shaped by — the selected one
@@ -123,6 +147,13 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// docs/log/36 addendum; Free offers only Auto, i.e. an empty list).
 		// Unspecified means auto routing.
 		list = copilot.Models()
+	case "lcpp":
+		// The engine catalog IS the model list (ADR 0093 decision 7): there is no vendor
+		// CLI account to ask, so this reads the same chat-role catalog row driver.go's
+		// runTurn resolves an engine token against (its fixed engineKey="llm"). Empty when
+		// the deployment has no engines, or none of them are chat-capable — same "nothing
+		// to offer" shape as every other kind.
+		list = lcppModels(r.Context())
 	default:
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")
 		return

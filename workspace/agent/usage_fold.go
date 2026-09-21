@@ -205,6 +205,15 @@ func usageMeasuredForKind(kind string) string {
 	switch kind {
 	case session.KindClaude, session.KindCodex, session.KindOpencode:
 		return usagex.MeasuredExact
+	// lcpp (ADR 0093 decision 8): llama-server's own `usage` (prompt_tokens/completion_tokens)
+	// is exact and rides the stream (CP gateway's askForStreamUsage forces
+	// stream_options.include_usage), and this kind never runs it through usagex.WindowGuess or
+	// any other estimator — it IS the executor, so its own store's KindUsage record (lcpp's
+	// store.go AppendUsage) is the same number the engine reported, not a derived one. That
+	// makes lcpp the first kind whose exactness comes from running its own engine rather than
+	// reading a vendor CLI's self-reported total.
+	case session.KindLcpp:
+		return usagex.MeasuredExact
 	case session.KindCopilot:
 		return usagex.MeasuredPartial // the transcript only carries outTok
 	}

@@ -56,6 +56,48 @@ func TestUsageEstCostUSD(t *testing.T) {
 	}
 }
 
+// TestUsageEstCostUSDLcppIsGPUBilledNotDoubleCounted pins ADR 0093 decision 8's price half:
+// lcpp consumption is always priced at exactly $0/token (never left "unpriced" either — the
+// real cost is billed by GPU-hour, a wholly separate path this file never touches), and that
+// holds even when a self-hosted model's name collides with a real, priced catalog/builtin
+// entry — the kind check must short-circuit before either table is ever consulted.
+func TestUsageEstCostUSDLcppIsGPUBilledNotDoubleCounted(t *testing.T) {
+	useIsolatedUsageDir(t)
+	a := usageAgg{In: 1_000_000, Out: 1_000_000, CacheCreate: 1_000_000, CacheRead: 1_000_000}
+
+	// Positive: a plain self-hosted model name prices at exactly $0, and is reported as
+	// PRICED (ok=true), not unpriced — decision 8 says "token price 0", a real declared
+	// price, not "we don't know".
+	got, src, ok := usageEstCostUSD(session.KindLcpp, "qwen3-30b", a)
+	if !ok {
+		t.Fatal("lcpp consumption came back unpriced; decision 8 wants an explicit $0, not unpriced")
+	}
+	if got != 0 {
+		t.Fatalf("estimate = %v, want exactly 0", got)
+	}
+	if src != usagePriceSrcGPUBilled {
+		t.Fatalf("source = %q, want %q", src, usagePriceSrcGPUBilled)
+	}
+
+	// Negative control / collision: naming a self-hosted checkpoint after a real, priced
+	// model must not let it slip through to the builtin table.
+	got, _, ok = usageEstCostUSD(session.KindLcpp, "claude-sonnet-5", a)
+	if !ok || got != 0 {
+		t.Fatalf("lcpp model colliding with a priced builtin name = (%v, ok=%v), want (0, true)", got, ok)
+	}
+
+	// The double-counting scenario itself: the CP's engine-usage gateway posts one ledger row
+	// for the GPU call (feature=engine.llm, engines.go's handleEngineUsage) and lcpp's own
+	// session fold (usage_fold.go) posts a second row for the same turn (feature=session) —
+	// both carry Kind=lcpp for the identical tokens. Summing BOTH rows' estimated cost must
+	// still be $0 total, not 2x some nonzero per-token price.
+	sessionRowCost, _, _ := usageEstCostUSD(session.KindLcpp, "qwen3-30b", a)
+	engineLLMRowCost, _, _ := usageEstCostUSD(session.KindLcpp, "qwen3-30b", a)
+	if total := sessionRowCost + engineLLMRowCost; total != 0 {
+		t.Fatalf("session-row + engine.llm-row cost = %v, want 0 (the same GPU run must not be billed twice)", total)
+	}
+}
+
 // fable 5.1 is the one exception: input and output cost the same as 5, but cache read is
 // $0.25/MTok. This pins that it is not left to the multiplier ($10 x 0.1 = $1.00). It
 // also watches the consequence that a new version has to be added to the table by hand —

@@ -355,6 +355,37 @@ func TestFleetSpawnToolsAreCallableNotJustAdvertised(t *testing.T) {
 	}
 }
 
+// TestListModelsAcceptsLcpp pins the kind allowlist inside the "list_models" case (mcp_stdio.go)
+// to admit lcpp: driver.go/store.go (ADR 0093 stage 2) landed on develop, but this allowlist was
+// a hand-written literal that a peer review caught still missing it — this exact call
+// (list_models(kind="lcpp")) was refused from a live session before this fix, which is how the
+// gap surfaced. Without it the kind can never be created through create_session/the fleet-spawn
+// surface at all: create_session's own tool description sends every caller through list_models
+// first to pick a real model id, so a session can reach the Console's launch grid but never its
+// own create_session tool for this kind.
+func TestListModelsAcceptsLcpp(t *testing.T) {
+	withFleetSpawn(t, true)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agents/lcpp/models" {
+			t.Errorf("list_models(lcpp) hit %s, want /agents/lcpp/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	a, _ := json.Marshal(map[string]any{"kind": "lcpp"})
+	params, _ := json.Marshal(map[string]any{"name": "list_models", "arguments": json.RawMessage(a)})
+	resp := string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+	if strings.Contains(resp, "kind には") {
+		t.Fatalf("list_models(kind=lcpp) was refused by the allowlist: %s", resp)
+	}
+}
+
 // A child the user archived is out of the parent's hands. Reviving one would put a live agent on
 // the host with no row in the active list — and would make archiving a way around ADR 0073
 // decision 13, which keeps archive and delete closed even for one's own children.

@@ -531,19 +531,34 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "",
     defaultModeLabel: "",
     skillTrigger: "",
-    // Registered (ADR 0093) but not launchable yet: BuildLaunch always errors because no
-    // managed driver has landed. managedDriver stays true because the *shape* is managed-only
-    // (決定 2) — the actual gate keeping it out of every launch picker is available() below and
-    // its absence from repoLaunchKinds (guide/ref/agents.md footnote 9).
+    // Both the managed driver (driver.go, in-process — decision 4) and the transcript store
+    // (store.go) landed (ADR 0093 stage 2), so the kind is now launchable. managedDriver is
+    // true because the *shape* is managed-only (決定 2): there is no Terminal (CLI) route at
+    // all (terminalDriver below), so the launch modal's driver choice and the session-menu
+    // driver-switch item never offer one — LaunchModal/SessionMenu both gate on
+    // terminalDriver, not on managedDriver alone.
     managedDriver: true,
     // No Terminal (CLI) route exists, or ever will — see the field's doc comment above.
     terminalDriver: false,
     tuiMemoryCost: "",
     caps: caps({
+      // Caps().PermissionChoice on the Go side is true (driver.go's approve() really blocks
+      // the tool loop on a Console-answerable question, docs/log/76's condition).
+      permissionChoice: true,
+      chat: true, // the ONLY way to open a session with no pane at all (open.ts's caps.chat gate)
+      transcript: true, // store.go IS the persisted conversation (agent.go's Transcript())
+      model: true, // driver.go's Capabilities.DynamicModel is true (UpdateSettings changes it)
+      contextBar: true, // ADR 0093 decision 8 — agent.go's WireLive now reports it, WindowSource=recorded
+      slashSkills: true, // foreign (injection) entries only, like kiro/copilot/agy — docs/log/50 §8
+      slashSkillsManaged: true, // no native entries to gate; declared for parity with kiro
+      forkAt: true, // driver.go's Capabilities.Fork is true, agent.go's ForkSource/ResolveForkAt back it
       runsInDir: true,
+      launchableFromRepo: true,
     }),
-    // Never offered yet, regardless of connections — see the managedDriver comment above.
-    available: () => false,
+    // No sign-in exists for this kind (決定 10: no login route, no connection card auth), so
+    // unlike opencode/kiro/cursor availability never reads `conns` — same unconditional basis
+    // as shell/ssm.
+    available: () => true,
   },
   shell: {
     id: "shell",
@@ -626,6 +641,6 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted in availability.test.ts); the order
 // is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "shell"];
+export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "shell"];
 
 export type { SsmHost };
