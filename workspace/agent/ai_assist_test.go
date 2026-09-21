@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 )
@@ -15,6 +14,12 @@ func aiAssistResolutionCall(t *testing.T) []aiAssistResolutionRow {
 	r := httptest.NewRequest(http.MethodGet, "/ai-assist/resolution", nil)
 	w := httptest.NewRecorder()
 	handleAIAssistResolution(w, r)
+	// Drain the warms this request fired BEFORE returning. The response was written before
+	// they were started, so the rows below are still the cold answer this endpoint's contract
+	// promises — what the drain buys is that no warm survives into the next assertion or the
+	// next test. Without it these tests shared chatx's availability cache with each other's
+	// stragglers: 9 failures in 20 runs, plus a data race on the check seam.
+	chatx.WaitForWarmsForTest()
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -113,22 +118,15 @@ func TestAIAssistResolutionWarmsAfterAnUnknownAnswer(t *testing.T) {
 		}
 	}
 
-	const pollInterval = 50 * time.Millisecond
-	const maxPolls = 20 // 1s ceiling — the fake check is instant, so warming lands within one poll
-	for i := 0; i < maxPolls; i++ {
-		warmed := true
-		for _, r := range aiAssistResolutionCall(t) {
-			if r.Source == "unknown" {
-				warmed = false
-				break
-			}
+	// No polling: aiAssistResolutionCall drains the first call's warms, so by the time the
+	// second call runs, warming has demonstrably finished. A wall-clock loop here would only
+	// re-introduce the question "did it not warm, or was I not patient enough" — and that
+	// question is what a flake is made of.
+	for _, r := range aiAssistResolutionCall(t) {
+		if r.Source == "unknown" {
+			t.Fatalf("%s still unknown after the first call's warming finished", r.Feature)
 		}
-		if warmed {
-			return
-		}
-		time.Sleep(pollInterval)
 	}
-	t.Fatalf("no feature warmed up within %v of the first unknown answer", time.Duration(maxPolls)*pollInterval)
 }
 
 // Each row's enabled flag is that feature's OWN gate, reachable and distinguishable per

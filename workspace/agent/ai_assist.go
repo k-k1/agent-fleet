@@ -78,6 +78,6 @@ func handleAIAssistResolution(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"features": rows})
 	// After the response, not before: this request still answered from the cache alone.
 	for _, feature := range warm {
-		go chatx.WarmOneShotKind(feature)
+		chatx.WarmOneShotKind(feature) // starts its own goroutine, and stays waitable (tests)
 	}
 }
