@@ -1384,3 +1384,71 @@ system の `bwrap` を一切介さずに到達したもので、A-1 の「埋め
 サブスクでは見えない枠の正体はオブザーバと subagent で、締め付けがそれを閉じる。従量アカウントでは
 **ベンダがトークン単価を出していない**（`cost: null`）ので、費用チップは v1 に載せられず、ガイドがその
 理由を書く必要がある。
+
+## 段 2 実装記録（2026-09-21）
+
+段 2 は 2026-09-21 に、作業パッケージ表の順で着手した。この節には、上の決定が知らなかったことで
+実装が実測したものを、着地ごとに 1 項目ずつ置く。
+
+### P2-1: MSP クライアント・生成型・ドリフトの錠（`workspace/agent/internal/msp/`）
+
+最初の作業パッケージ。234 の型・47 メソッド・31 通知・31 エラーコードは、ベンダ自身のオフライン
+エクスポートから `internal/msp/schemagen` が生成する。ワイヤの語彙を手で保守しないためである。
+Consequences が約束した「ドリフトの錠」は 3 つの検査で、バイナリを要るのは 3 つ目だけ:
+生成物が同梱の束ねと一致すること、束ねの指紋が定数と一致すること、そして——バイナリがあれば——
+導入済みバイナリが同じ指紋を出すこと。**各々に陰性対照を付けた**。走らなかった検査と通った検査は
+見分けがつかないからである。
+
+3 つの実測が決定を訂正・補強した。
+
+**1. `--provider echo` は `muse serve` に届かない。よって「構築 ≈ $0」はターンの手前で止まる。**
+分水嶺の表の harness 行と、それを限定する Consequences の箇条書きは、どちらも `--provider echo` に
+乗っている。1.3.0-R3401.1 で実測: `--provider <MODE>` は **`exec` の起動時フラグ**であり、
+`muse serve --help` に同等のものはない（serve の姿勢フラグはサンドボックス系・`--trust-workspace`・
+`--no-session-log` だけ）。ワイヤ越しでは `session/start` が `providerId: "echo"` と
+`modelId: "echo"` を**受け取り**、返す session にその両方を記録する（`"providerId": "echo"`,
+`"modelId": "echo"`）——そのうえでターンは
+`turn/completed.error.kind = "authRequired"`、`"not logged in: run /login to add an API key"`
+で終わる。
+
+つまり認証不要の面は実在するが、表の主張より狭い。`initialize`・能力の付与・`session/start`・
+転写パスまでは無料で、**ターンは必ず資格情報を要する**。そして決定 2 により AF が走らせる
+プロセスは `serve` だけである。帰結は注記ではなくテストダブルであり、`internal/msp/msptest` が
+パイプ越しのインプロセスホストとして入った。これは同時に、専有バイナリが決して置かれない CI で
+試験群を走らせられる理由でもある。実機テストは `MUSE_LIVE=1` の裏に置き、ターンの手前で止める。
+
+**2. ホストは stable surface が宣言していない通知を出す: `session/started`。** 束ねが宣言する
+通知は 31 個で、これはその中にない。240 KB のスキーマ中に文字列はちょうど 1 回だけ現れ、それは
+`session/listChanged` 自身の説明文の中である（「行の誕生は `session/started` に残り、アンロードは
+`session/closed` と対になる」）。実測では、`serve` 越しの `session/start` はその応答より**前**に
+`session/started` を出す。よって生成した通知表は復号のための地図であって**許可リストではない**。
+ディスパッチャは未宣言のメソッドをプロトコル違反として扱わず記録して捨てること、そしてドライバは
+「見えるのはこの 31 個だけ」と仮定してはならない。
+
+**3. ホストは UUIDv7 を厳密に検証する。決定 4 がテストになる。** v4 を載せた `commandId` は
+`-32602 invalidParams`、`"invalid session/start commandId: expected UUIDv7"` で拒否される。
+AF は自前で発番し（`msp.NewCommandID`、RFC 9562 v7、新規依存なし）、実機試験は両方向を主張する:
+ホストは `session/start.sessionId` で我々の id をそのまま採り、v4 は拒む。後者がなければ、前者は
+「何も検証しないホスト」でも通ってしまう。
+
+### 0093 着地後の見積りの訂正: 19〜28 日ではなく 22〜33 日
+
+ADR 0093 は 2026-09-21 に *adopted* へ到達した。上の予測はそれが 2 つを払うと仮定していたが、
+実際に払われたのは 1 つである。
+
+- **managed 専用の門は本当に無料になった。** 0093 は `Caps.ManagedOnly`
+  （`agents/agents.go:97-105`）を種別非依存のフラグとして導入し、サーバ側の managed→TUI 遷移は
+  それで分岐する（`sessionx/session_driver.go:73`）。Console 側の箇所も同様。muse にとっては
+  `Caps()` の 1 行である。
+- **承認 `Interaction` は 1 日も払われていない。** lcpp は `Permissions: false` を宣言し、自前の
+  承認門を既存の question 種別に流している——コメント自身がそう書いている
+  （`agents/lcpp/driver.go:57-59`、`approve` は `:586` で `Kind: "question"` を組む）——そして
+  `agents/driver.go:49` はいまも `"question" (future: "approval" | "plan")` のままである。
+  もう半分の `Caps.PermissionChoice` は 0093 以前から claude・cursor・kiro・copilot・agy が
+  立てており、これも元から muse の支払いではなかった。
+
+よって 3〜5 日の承認の行は丸ごと残り、期待値は表どおりの **22〜33 セッション日**である。muse が
+lcpp に倣って承認を question 種別に写すかどうかは段 2 の設計判断であって、先取りしてよい節約では
+ない。決定 13 は `approval/requested` が `toolName`・`rawArgs`・`judgeEscalated`・
+`protectedWrite`・`subject.stages[].argv` を運ぶことを実測しており、それを 2 択の質問に畳むと
+その情報は落ちる。
