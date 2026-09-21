@@ -1609,11 +1609,20 @@ func WarmOneShotKind(feature string) {
 // step already differs by CLI in ways only the actual call site can apply.
 func resolveOneShot(feature string, tier OneShotTier) (kind, model string, configured bool, source string) {
 	kind, source = oneShotKind(feature)
+	model, configured = resolveOneShotModel(feature, tier, kind)
+	return kind, model, configured, source
+}
+
+// resolveOneShotModel is step ② of resolveOneShot split out from the kind resolution: given a
+// KNOWN kind, ① the feature's own pin or ② the shared tier default for that kind. Neither of
+// those is a CLI call — only oneShotKind's own fallback (headlessAgentAvailable's cold-cache
+// exec) can shell out — so this half is safe to reuse wherever the kind came from a cache peek
+// instead of a live resolution (ResolveOneShotModelCached).
+func resolveOneShotModel(feature string, tier OneShotTier, kind string) (model string, configured bool) {
 	if v, ok := aiFeatureModelPref(feature, kind); ok {
-		return kind, v, true, source
+		return v, true
 	}
-	v, ok := oneShotModelPref(kind, tier)
-	return kind, v, ok, source
+	return oneShotModelPref(kind, tier)
 }
 
 // headlessAvailableCached peeks the 1-minute availability cache WITHOUT ever falling through
@@ -1668,6 +1677,14 @@ func ResolveOneShot(feature string, tier OneShotTier) (kind, model string, confi
 // catalog calls the original design would have paid on every poll.
 func ResolveOneShotCached(feature string) (kind, source string, ok bool) {
 	return oneShotKindCached(feature)
+}
+
+// ResolveOneShotModelCached exposes resolveOneShotModel for a caller that already has a kind
+// from ResolveOneShotCached and needs the model half of decision 8's cache key without ever
+// shelling out (session_translate.go's prefetch — 103-final-review 軽6). It is the same lookup
+// resolveOneShot's model half does; only the kind step differs between the two.
+func ResolveOneShotModelCached(feature string, tier OneShotTier, kind string) (model string, configured bool) {
+	return resolveOneShotModel(feature, tier, kind)
 }
 
 // recommendedUtilityModel picks the cheap model shown as "recommended (currently: …)" for

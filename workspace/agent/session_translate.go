@@ -411,6 +411,44 @@ func onceCacheModel() func() (kind, model string, modelOK bool) {
 	}
 }
 
+// translateCacheModelPeek is translateCacheModel's cache-only twin for the prefetch (GET
+// /sessions/{name}/translations — 103-final-review 軽6). A pane can open, and so call this,
+// before anything has ever warmed headlessAgentAvailable's cache; translateCacheModel's own
+// kind resolution can shell out on exactly that cold-cache case (`auth status` per candidate
+// kind, up to 5 measured), turning "open a pane" into the same cost as pressing a button. This
+// answers from the availability cache alone (chatx.ResolveOneShotCached), never running a CLI.
+//
+// known is false when the cache cannot yet say what would run. The caller does not treat that
+// as "no match" — it treats it the same as a legacy entry (isLegacyTranslation), i.e. gives up
+// matching and shows whatever is stored, which is the same coarse behaviour every entry had
+// before per-feature pinning existed. That is a deliberate, temporary degrade: once something
+// warms the cache (a real generation, or the POST /translate path's own translateCacheModel),
+// later prefetches match exactly again.
+func translateCacheModelPeek() (kind, model string, modelOK, known bool) {
+	kind, _, ok := chatx.ResolveOneShotCached(usagex.FeatureTranslate)
+	if !ok {
+		return "", "", false, false
+	}
+	m, configured := chatx.ResolveOneShotModelCached(usagex.FeatureTranslate, chatx.OneShotProse, kind)
+	if configured && m != "" && m != chatx.AssistantRecommendedModel {
+		return kind, m, true, true
+	}
+	return kind, "", false, true
+}
+
+// oncePeekCacheModel is onceCacheModel's twin for translateCacheModelPeek — see onceCacheModel's
+// doc for why one shared closure per request matters even though this twin never shells out (a
+// GET can still list several texts, and every one of them should see the same resolution).
+func oncePeekCacheModel() func() (kind, model string, modelOK, known bool) {
+	var once sync.Once
+	var kind, model string
+	var modelOK, known bool
+	return func() (string, string, bool, bool) {
+		once.Do(func() { kind, model, modelOK, known = translateCacheModelPeek() })
+		return kind, model, modelOK, known
+	}
+}
+
 // cleanTranslation undoes the one thing the model does despite the persona: wrapping the whole
 // answer in a code fence. It is only unwrapped when the SOURCE was not itself one fenced block
 // — otherwise the fence is content, and stripping it would turn the reader's code block into
@@ -629,7 +667,10 @@ func handleSessionTranslations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := translateTargetLang(r.URL.Query().Get("lang"))
-	resolveCacheModel := onceCacheModel()
+	// The peek variant, not onceCacheModel: this is a GET, and translateCacheModel's kind step
+	// can shell out on a cold availability cache (軽6) — opening a pane must not cost what
+	// pressing a button costs.
+	resolveCacheModel := oncePeekCacheModel()
 	entries := map[string]string{}
 	for _, e := range readSessionTranslations(name) {
 		if e.Lang != lang {
@@ -642,8 +683,11 @@ func handleSessionTranslations(w http.ResponseWriter, r *http.Request) {
 			entries[e.Hash] = e.Text
 			continue
 		}
-		kind, model, modelOK := resolveCacheModel()
-		if translationMatches(e, kind, model, modelOK) {
+		kind, model, modelOK, known := resolveCacheModel()
+		// An unknown resolution (cache cold) can't be matched against, so it isn't treated as a
+		// mismatch either — see translateCacheModelPeek's doc for why showing the stored entry
+		// anyway is the right degrade here.
+		if !known || translationMatches(e, kind, model, modelOK) {
 			entries[e.Hash] = e.Text
 		}
 	}

@@ -511,6 +511,49 @@ func TestLookupTranslationDefersResolveForLegacyHits(t *testing.T) {
 	}
 }
 
+// TestTranslationsPrefetchNeverShellsOutOnAColdCache is 103-final-review 軽6: the prefetch (GET
+// /sessions/{name}/translations) used to resolve the cache key's kind through the SAME path the
+// press uses (translateCacheModel -> chatx.ResolveOneShot -> oneShotKind), which can shell out
+// to a vendor CLI on a cold 1-minute availability cache. Opening a pane must not cost what
+// pressing the translate button costs — a stored NON-legacy entry (the case that needs a
+// resolution at all) with the availability cache forced cold must still answer without ever
+// calling the real check.
+func TestTranslationsPrefetchNeverShellsOutOnAColdCache(t *testing.T) {
+	const name = "tr-prefetch-cold"
+	seedTranslateSession(t, name)
+	hash := translateHash("prefetch cold test")
+	if err := writeSessionTranslations(name, []*sessionTranslation{
+		{Hash: hash, Lang: "ja", Kind: session.KindClaude, Model: "sonnet", Text: "訳あり", CreatedAt: time.Now().UnixMilli()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Clear every candidate kind, not just claude: headlessAvailAt/headlessAvail are package
+	// globals shared by the whole test binary, and oneShotKindCached scans the WHOLE priority
+	// order — any OTHER test that warmed a different kind's cache and outlived its own t.Cleanup
+	// would make this resolution "known" through that kind instead, defeating the point.
+	for _, k := range chatx.DefaultHeadlessOrder {
+		t.Cleanup(chatx.ClearHeadlessAvailableForTest(k))
+	}
+	t.Cleanup(chatx.SetHeadlessAvailCheckForTest(func(kind string) bool {
+		t.Fatalf("headlessAvailCheck ran for %q — the prefetch must never shell out (軽6)", kind)
+		return false
+	}))
+
+	w := translationsCall(t, name, "lang=ja")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var got translationsReply
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Unknown resolution (cache cold) degrades to showing the stored entry anyway
+	// (translateCacheModelPeek's doc), rather than guessing at a match OR paying to find out.
+	if got.Entries[hash] != "訳あり" {
+		t.Fatalf("a cold-cache prefetch should still show the stored entry: %+v", got.Entries)
+	}
+}
+
 // Pinning a feature to a different concrete model is decision 8's one case where a cached
 // translation must go stale: "what translated it" is now part of its identity. Leaving the
 // feature UNPINNED (the default) must not behave this way — that path is covered by every
