@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestParseSubmoduleStatus(t *testing.T) {
@@ -96,13 +95,23 @@ func TestGitSubmodulesEnsureRepairs(t *testing.T) {
 	_, smDir := wedgedWorktree(t, git)
 
 	gitSubmodulesEnsure(filepath.Dir(filepath.Dir(smDir)))
-	// The repair runs in a goroutine (its fetch can take minutes against a real remote).
-	deadline := time.Now().Add(20 * time.Second)
-	for submodulePathEmpty(smDir) {
-		if time.Now().After(deadline) {
-			t.Fatal("gitSubmodulesEnsure did not repair the wedged submodule")
-		}
-		time.Sleep(50 * time.Millisecond)
+	// The repair runs in a goroutine (its fetch can take minutes against a real remote), so the
+	// test waits for the GOROUTINE, not for the symptom to clear. Two things follow, and the
+	// second is why the poll this replaced was a flake: the assertion stops being a race against
+	// a deadline, and the goroutine is provably finished before `t.TempDir()` starts deleting
+	// the HOME its last step writes a notice into.
+	submoduleRepairsWait()
+	// The wait is load-bearing, so it is asserted: without this line a wait that returned
+	// immediately would still pass here most of the time, and "most of the time" is exactly the
+	// property being fixed.
+	submoduleRepairs.mu.Lock()
+	running := len(submoduleRepairs.running)
+	submoduleRepairs.mu.Unlock()
+	if running != 0 {
+		t.Fatalf("%d repair goroutine(s) still running after the wait; teardown would race them", running)
+	}
+	if submodulePathEmpty(smDir) {
+		t.Fatal("gitSubmodulesEnsure did not repair the wedged submodule")
 	}
 }
 

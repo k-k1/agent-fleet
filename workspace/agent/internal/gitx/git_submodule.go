@@ -296,6 +296,10 @@ var submoduleRepairs = struct {
 	mu      sync.Mutex
 	running map[string]bool
 	warned  map[string]bool // dirs we have already told the user about (for the "ready" follow-up)
+	// wg counts the repair goroutines, so something can WAIT for them. Only a test does
+	// (submoduleRepairsWait): a launch must never wait, which is the whole reason the repair is
+	// detached in the first place.
+	wg sync.WaitGroup
 }{running: map[string]bool{}, warned: map[string]bool{}}
 
 func repairStart(dir string) bool {
@@ -305,14 +309,26 @@ func repairStart(dir string) bool {
 		return false
 	}
 	submoduleRepairs.running[dir] = true
+	submoduleRepairs.wg.Add(1)
 	return true
 }
 
 func repairDone(dir string) {
 	submoduleRepairs.mu.Lock()
-	defer submoduleRepairs.mu.Unlock()
 	delete(submoduleRepairs.running, dir)
+	submoduleRepairs.mu.Unlock()
+	submoduleRepairs.wg.Done()
 }
+
+// submoduleRepairsWait blocks until every repair goroutine has returned.
+//
+// 🔴 It exists for tests, and for one reason: the repair OUTLIVES the call that started it, and
+// a test that only waits for the symptom to clear returns while the goroutine is still running
+// — `markSubmodulesReady` still has a notice to write, into a HOME that `t.TempDir()` is by then
+// deleting. That race fails in CLEANUP rather than in the test body, so it reads as an
+// unrelated flake in whatever PR happens to be building (the shape memory calls
+// tempdir-cleanup-lifo-detached-writer). Waiting here is what makes the teardown ordered.
+func submoduleRepairsWait() { submoduleRepairs.wg.Wait() }
 
 // announceSubmoduleGaps notifies (once per dir+missing set) that a working copy is in use with
 // submodules that are not checked out, and names them.
