@@ -124,13 +124,12 @@ func testDeps() Deps {
 
 		CleanSuggestedReplies: func(s string) []string { return strings.Split(s, "\n") },
 		ReplyCounterpartChat:  1,
-		// Reads the preference exactly the way uiprefs.ChatReplySuggest does, for the same
-		// reason as AssistantChatModelPref above: TestHandleChatSuggestRepliesGatedByItsOwnKey
-		// writes ui-prefs.json and needs this to actually consult it, not a fixed "true".
-		ChatReplySuggestEnabled: func() bool {
-			v, ok := uiprefs.Read()["assistantReplySuggestEnabled"].(bool)
-			return !ok || v
-		},
+		// The real function, not a copy (same reasoning as AssistantChatModelPref above):
+		// production wires this to uiprefs.ChatReplySuggest too, and that function's fallback
+		// to the mirror's replySuggestEnabled key (103-impl-review 重大5) must be exercised by
+		// the same tests that write ui-prefs.json, not skipped by a stub that reimplements only
+		// half of it.
+		ChatReplySuggestEnabled:  uiprefs.ChatReplySuggest,
 		ReplySuggestInstructions: func(string, int) string { return "reply-instructions" },
 		ReplySuggestLogHeader:    func(string) string { return "log" },
 		ReplySuggestModel:        func() string { return "haiku" },

@@ -67,9 +67,54 @@ var (
 	headlessAvailMu sync.Mutex
 	headlessAvailAt = map[string]time.Time{}
 	headlessAvail   = map[string]bool{}
+	// headlessAvailInFlight coalesces concurrent cold checks for the same kind into ONE exec —
+	// the postmortem for this: WarmOneShotKind (added for docs/log/103's /ai-assist/resolution)
+	// gave headlessAgentAvailable concurrent callers it never had before, and this function
+	// used to have no guard against that at all. A test that polled the endpoint every 20ms
+	// while the cache was cold spawned a fresh `claude auth status` PER concurrent caller with
+	// no cap — measured: ~490 `claude` processes, ~25GiB RSS, OOM-killed the container. The
+	// cache write only happens after an exec returns, so with no guard, every caller in the
+	// window before the first exec finishes starts its OWN exec, and the more that pile up the
+	// slower each one gets — a positive feedback loop with no natural ceiling. This map is that
+	// ceiling: a cold kind has exactly one exec in flight at a time; every other caller for the
+	// same kind waits on it and shares its answer, no matter how many callers or how tight a
+	// polling loop asks (chat_providers_avail_test.go proves the exec count with an
+	// instrumented, deliberately slow fake in place of headlessAvailCheck — never the real CLI).
+	headlessAvailInFlight = map[string]chan struct{}{}
 )
 
-// headlessAgentAvailable reports (cached) whether a backend's CLI is authenticated.
+// headlessAvailCheck is the real per-kind check, behind a seam so a test can verify
+// headlessAgentAvailable's in-flight dedup with an instrumented fake instead of ever starting a
+// real CLI in a loop (see headlessAvailInFlight's comment for why that matters here
+// specifically).
+var headlessAvailCheck = func(kind string) bool {
+	switch kind {
+	case session.KindClaude:
+		return claude.LoggedIn()
+	case session.KindCodex:
+		return codex.LoggedIn()
+	case session.KindOpencode:
+		// binary present AND actually usable (stored key / oauth / explicit free-tier
+		// opt-in) — opencode.Available() alone used to let assistant chat silently fall
+		// back to opencode's zero-auth free tier for any unconfigured workspace, which
+		// some tenants' security policy forbids. Default OFF, opt-in only.
+		return opencode.Available() && opencode.Connected()
+	case session.KindAgy:
+		return agy.SignedIn()
+	case session.KindCursor:
+		return cursor.LoggedIn()
+	case lcppKind:
+		// Not a CLI login check — there is no CLI (ADR 0093 phase 1 §2). "available" here
+		// means this deployment's self-hosted chat engine exists AND has at least one
+		// enabled model right now; see lcppEngineAvailable's own comment for why that is
+		// the whole check (the Control Plane's catalogue already drops an engine with none).
+		return lcppEngineAvailable()
+	}
+	return false
+}
+
+// headlessAgentAvailable reports (cached) whether a backend's CLI is authenticated. At most one
+// headlessAvailCheck call is ever in flight per kind at a time — see headlessAvailInFlight.
 func headlessAgentAvailable(kind string) bool {
 	headlessAvailMu.Lock()
 	if t, ok := headlessAvailAt[kind]; ok && time.Since(t) < time.Minute {
@@ -77,34 +122,100 @@ func headlessAgentAvailable(kind string) bool {
 		headlessAvailMu.Unlock()
 		return v
 	}
-	headlessAvailMu.Unlock()
-	var v bool
-	switch kind {
-	case session.KindClaude:
-		v = claude.LoggedIn()
-	case session.KindCodex:
-		v = codex.LoggedIn()
-	case session.KindOpencode:
-		// binary present AND actually usable (stored key / oauth / explicit free-tier
-		// opt-in) — opencode.Available() alone used to let assistant chat silently fall
-		// back to opencode's zero-auth free tier for any unconfigured workspace, which
-		// some tenants' security policy forbids. Default OFF, opt-in only.
-		v = opencode.Available() && opencode.Connected()
-	case session.KindAgy:
-		v = agy.SignedIn()
-	case session.KindCursor:
-		v = cursor.LoggedIn()
-	case lcppKind:
-		// Not a CLI login check — there is no CLI (ADR 0093 phase 1 §2). "available" here
-		// means this deployment's self-hosted chat engine exists AND has at least one
-		// enabled model right now; see lcppEngineAvailable's own comment for why that is
-		// the whole check (the Control Plane's catalogue already drops an engine with none).
-		v = lcppEngineAvailable()
+	if wait, inFlight := headlessAvailInFlight[kind]; inFlight {
+		headlessAvailMu.Unlock()
+		<-wait // the leader's exec is already running; take its answer, start none of our own
+		headlessAvailMu.Lock()
+		v := headlessAvail[kind]
+		headlessAvailMu.Unlock()
+		return v
 	}
+	done := make(chan struct{})
+	headlessAvailInFlight[kind] = done
+	headlessAvailMu.Unlock()
+
+	v := headlessAvailCheck(kind)
+
 	headlessAvailMu.Lock()
 	headlessAvailAt[kind], headlessAvail[kind] = time.Now(), v
+	delete(headlessAvailInFlight, kind)
 	headlessAvailMu.Unlock()
+	close(done) // wake every caller that joined the wait channel above
 	return v
+}
+
+// SetHeadlessAvailableForTest pins headlessAgentAvailable's 1-minute cache for kind to
+// available, without touching real credentials or shelling out to a CLI, and returns a restore
+// function. Exported (not a `_test.go` helper) because callers outside chatx need it too — a
+// pin-path test in package main (session_translate_test.go) cannot otherwise make
+// headlessAgentAvailable("claude") true inside a test binary where nothing is authenticated,
+// which is exactly the gap 103-impl-review 中7 found: without it, `preferredFrom` falls
+// through every kind to `order[0]` regardless of any pin, and a test that believes it is
+// exercising the pin path is actually exercising the fallback (chat_resolve_test.go's own
+// forceHeadlessAvailable is the same trick, kept unexported there because chatx's own tests are
+// in-package).
+func SetHeadlessAvailableForTest(kind string, available bool) (restore func()) {
+	headlessAvailMu.Lock()
+	prevAt, hadAt := headlessAvailAt[kind]
+	prevV, hadV := headlessAvail[kind]
+	headlessAvailAt[kind], headlessAvail[kind] = time.Now(), available
+	headlessAvailMu.Unlock()
+	return func() {
+		headlessAvailMu.Lock()
+		defer headlessAvailMu.Unlock()
+		if hadAt {
+			headlessAvailAt[kind] = prevAt
+		} else {
+			delete(headlessAvailAt, kind)
+		}
+		if hadV {
+			headlessAvail[kind] = prevV
+		} else {
+			delete(headlessAvail, kind)
+		}
+	}
+}
+
+// ClearHeadlessAvailableForTest deletes kind's cache entry outright — unlike
+// SetHeadlessAvailableForTest, which pins a KNOWN value, this makes the kind genuinely
+// UNKNOWN again, so the next headlessAgentAvailable/oneShotKindCached call treats it as cold.
+// Needed for testing the warming side of 103-impl-review 重大3 (chatx.WarmOneShotKind): pinning
+// a kind's cache to a known false with SetHeadlessAvailableForTest still counts as "known" for
+// a full minute, so a warm call would just read that back rather than actually running the
+// exec being tested.
+func ClearHeadlessAvailableForTest(kind string) (restore func()) {
+	headlessAvailMu.Lock()
+	prevAt, hadAt := headlessAvailAt[kind]
+	prevV, hadV := headlessAvail[kind]
+	delete(headlessAvailAt, kind)
+	delete(headlessAvail, kind)
+	headlessAvailMu.Unlock()
+	return func() {
+		headlessAvailMu.Lock()
+		defer headlessAvailMu.Unlock()
+		if hadAt {
+			headlessAvailAt[kind] = prevAt
+		} else {
+			delete(headlessAvailAt, kind)
+		}
+		if hadV {
+			headlessAvail[kind] = prevV
+		} else {
+			delete(headlessAvail, kind)
+		}
+	}
+}
+
+// SetHeadlessAvailCheckForTest replaces headlessAvailCheck — the ONLY point that ever starts a
+// real CLI for an availability check — with fn, and returns a restore function. Exported so a
+// test that needs a cold entry to actually resolve (proving WarmOneShotKind's warming, not just
+// that it fires) never has to depend on a real CLI's presence, auth state or exec latency: see
+// headlessAvailInFlight's doc comment for the incident that makes "never touch the real CLI in
+// a test that can loop" a hard rule here, not a style preference.
+func SetHeadlessAvailCheckForTest(fn func(kind string) bool) (restore func()) {
+	prev := headlessAvailCheck
+	headlessAvailCheck = fn
+	return func() { headlessAvailCheck = prev }
 }
 
 // DefaultHeadlessOrder is the built-in auto-selection order for assistant-chat
@@ -1445,6 +1556,23 @@ func oneShotKind(feature string) (kind, source string) {
 		return pin, OneShotSourcePin
 	}
 	return PreferredAssistAgent(), OneShotSourceDefault
+}
+
+// WarmOneShotKind exercises oneShotKind's real resolution (the one that CAN shell out) purely
+// for its side effect on the availability cache; the answer is discarded. GET
+// /ai-assist/resolution calls this in the background, AFTER writing its response, for any
+// feature it could not answer from the cache (docs/log/103 §103.8-3, 103-impl-review 重大3):
+// the only things that ever warm headlessAgentAvailable's cache are an actual chat turn or
+// one-shot generation running (preferredFrom / ChatProviderFor / oneShotKind itself), so a
+// settings tab opened before any of those has fired would otherwise poll "unknown" forever,
+// even while the tab stays open and keeps asking.
+//
+// headlessAgentAvailable does NOT hold headlessAvailMu across the exec call (only around the
+// cache read/write either side of it), so two callers racing on the same cold kind can each
+// still run their own `auth status` — this warms at most a handful of kinds every ~10s poll,
+// not per request, so the occasional doubled-up call is not worth a dedicated in-flight guard.
+func WarmOneShotKind(feature string) {
+	oneShotKind(feature)
 }
 
 // resolveOneShot answers steps ① and ② of docs/log/103's precedence chain for one feature:

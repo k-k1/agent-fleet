@@ -232,6 +232,25 @@ func TestAiFeatureModelPrefHiddenModelFallsBackToUnset(t *testing.T) {
 	}
 }
 
+// TestResolveOneShotHonoursHiddenModels is the chain version of the test above
+// (103-impl-review 軽13): chatx's own test suite cannot exercise the real aiFeatureModelPref —
+// its testDeps() stub is a hand-rolled copy with no hidden-models filter (chatx cannot import
+// sessionx, which is where ModelHidden lives, without an import cycle). Routed through package
+// main's real wiring (chat_wiring.go's init, chatx.ResolveOneShot), the filter is provable
+// end to end instead of resting on the unit test alone.
+func TestResolveOneShotHonoursHiddenModels(t *testing.T) {
+	writeUIPrefs(t, `{"aiFeatureAgents":{"title.session":"claude"},`+
+		`"aiFeatureModels":{"title.session":{"claude":"opus"}},"hiddenModels":{"claude":["opus"]}}`)
+	t.Cleanup(chatx.SetHeadlessAvailableForTest("claude", true))
+	kind, model, configured, _ := chatx.ResolveOneShot("title.session", chatx.OneShotShort)
+	if kind != "claude" {
+		t.Fatalf("kind = %q, want claude (the pin itself is not hidden)", kind)
+	}
+	if configured && model == "opus" {
+		t.Fatalf("a hidden model reached resolveOneShot: model=%q configured=%v", model, configured)
+	}
+}
+
 func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	writeUIPrefs(t, `{"quickReplies":{"ok":{"text":"OK","count":9,"at":1}},"iconSet":"seti"}`)
 

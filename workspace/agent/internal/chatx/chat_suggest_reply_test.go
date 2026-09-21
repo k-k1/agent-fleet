@@ -68,3 +68,25 @@ func TestHandleChatSuggestRepliesIgnoresMirrorKey(t *testing.T) {
 		t.Fatalf("code = %d body = %s (expected to clear the feature gate and stop at no_content)", rr.Code, rr.Body.String())
 	}
 }
+
+// 103-impl-review 重大5: settings.ts's migrateAiAssistPrefs carries an explicit legacy
+// replySuggestEnabled:false to assistantReplySuggestEnabled — but only IN MEMORY, in the
+// browser. It reaches ui-prefs.json only the next time the user saves ANY setting (a whole-
+// object PUT), so in between, the server sees `assistantReplySuggestEnabled` missing and the
+// old key explicitly false. The server must still refuse — otherwise the Console hides the ✨
+// button while `POST .../suggest-replies` (reachable by anything holding AGENT_TOKEN) still
+// runs, the same failure shape §103.3-3 fixed on the mirror side.
+func TestHandleChatSuggestRepliesFallsBackToMirrorKeyBeforeConsoleMigrationLands(t *testing.T) {
+	writeSuggestReplyPrefs(t, `{"replySuggestEnabled":false}`)
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{
+		{Role: "user", Content: "そのまま進めて"},
+	}}
+	if err := SaveConv(c); err != nil {
+		t.Fatal(err)
+	}
+	rr := suggestRepliesRequest(t, c.ID)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "feature_disabled") {
+		t.Fatalf("code = %d body = %s (an explicit legacy OFF must gate the chat's ✨ until the new key is written)",
+			rr.Code, rr.Body.String())
+	}
+}

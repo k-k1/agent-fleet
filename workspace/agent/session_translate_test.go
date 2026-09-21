@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -172,8 +173,15 @@ func TestTranslateReplyClaimsNoModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(stored), `"kind":"claude"`) || !strings.Contains(string(stored), `"model":"stub-model"`) {
-		t.Fatalf("the store must keep the backend/model that actually ran: %s", stored)
+	// Kind always lands (it never drifts from what the run reports). Model does NOT — nothing
+	// pinned this feature or its tier to a concrete model here, and 103-impl-review 重大4 is
+	// exactly the bug where the store recorded the RUN's model (the stub's "stub-model") instead
+	// of the setting-derived value the next read will compare against.
+	if !strings.Contains(string(stored), `"kind":"claude"`) {
+		t.Fatalf("the store must keep the backend that actually ran: %s", stored)
+	}
+	if strings.Contains(string(stored), "stub-model") || strings.Contains(string(stored), `"model"`) {
+		t.Fatalf("an unconfigured feature must not write a model into the store: %s", stored)
 	}
 }
 
@@ -480,20 +488,56 @@ func TestTranslateReadsLegacyKeyEntries(t *testing.T) {
 	}
 }
 
+// TestLookupTranslationDefersResolveForLegacyHits pins 103-impl-review 軽12 at the unit level:
+// a legacy (pre-103) entry must answer WITHOUT ever calling resolve — resolve is exactly what
+// can shell out (translateCacheModel -> oneShotKind -> headlessAgentAvailable's exec fallback
+// on a cold cache), so a press that only touches legacy entries (the common case right after an
+// upgrade) must cost no more than it did before this feature existed.
+func TestLookupTranslationDefersResolveForLegacyHits(t *testing.T) {
+	seedTranslateSession(t, "tr-legacy-defer")
+	const name = "tr-legacy-defer"
+	hash := translateHash("legacy only")
+	if err := writeSessionTranslations(name, []*sessionTranslation{
+		{Hash: hash, Lang: "ja", Text: "旧訳", CreatedAt: time.Now().UnixMilli()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	panicResolve := func() (string, string, bool) {
+		t.Fatal("resolve was called for a legacy-only hit — it must never run")
+		return "", "", false
+	}
+	if got := lookupTranslation(name, hash, "ja", panicResolve); got == nil || got.Text != "旧訳" {
+		t.Fatalf("legacy entry not returned: %+v", got)
+	}
+}
+
 // Pinning a feature to a different concrete model is decision 8's one case where a cached
 // translation must go stale: "what translated it" is now part of its identity. Leaving the
 // feature UNPINNED (the default) must not behave this way — that path is covered by every
 // other cache test in this file re-using the same "claude" prediction across presses.
-func TestTranslateModelPinChangeMissesCache(t *testing.T) {
+// TestTranslatePinRoutesToPinnedKindAndInvalidatesOnModelChange replaces
+// TestTranslateModelPinChangeMissesCache (103-impl-review 中7): the old test pinned
+// translate.mirror to "claude", which is ALSO DefaultHeadlessOrder's own first (and, in this
+// test binary, only reachable) choice — nothing is authenticated, so headlessAgentAvailable
+// returns false for every kind and preferredFrom falls through to order[0], which happens to
+// be "claude" too. The pin and the fallback were indistinguishable: a mutation that deleted the
+// pin branch entirely left this test green (confirmed with SetHeadlessAvailableForTest reproducing
+// the same mutation chat_resolve_test.go's TestOneShotKindPinBeatsPriorityOrder catches).
+//
+// This version forces claude AND codex both "available", pins to codex — the one the plain
+// priority order would NOT pick — and checks the STORED entry's Kind to prove the pin, not the
+// fallback, is what actually ran.
+func TestTranslatePinRoutesToPinnedKindAndInvalidatesOnModelChange(t *testing.T) {
 	const name = "tr12"
 	seedTranslateSession(t, name)
+	t.Cleanup(chatx.SetHeadlessAvailableForTest("claude", true))
+	t.Cleanup(chatx.SetHeadlessAvailableForTest("codex", true))
 
-	var stubModel string
 	calls := 0
 	prev := translateOneShot
 	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
 		calls++
-		return "訳:" + text, "claude", stubModel, nil
+		return "訳:" + text, "codex", "", nil
 	}
 	t.Cleanup(func() { translateOneShot = prev })
 
@@ -502,18 +546,26 @@ func TestTranslateModelPinChangeMissesCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	pin := func(model string) {
-		body := `{"aiFeatureAgents":{"translate.mirror":"claude"},` +
-			`"aiFeatureModels":{"translate.mirror":{"claude":"` + model + `"}}}`
+		body := `{"aiFeatureAgents":{"translate.mirror":"codex"},` +
+			`"aiFeatureModels":{"translate.mirror":{"codex":"` + model + `"}}}`
 		if err := os.WriteFile(filepath.Join(prefsDir, "ui-prefs.json"), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	stubModel = "model-a"
 	pin("model-a")
 	decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"pin test"}]}`))
 	if calls != 1 {
 		t.Fatalf("first press: calls=%d, want 1", calls)
+	}
+	stored, err := os.ReadFile(sessionTranslationsPath(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pin names codex, the plain priority order would pick claude first — so seeing codex
+	// here is proof the PIN decided this, not the fallback (the bug this test replaces).
+	if !strings.Contains(string(stored), `"kind":"codex"`) {
+		t.Fatalf("the store must record the PINNED kind, not the priority order's own pick: %s", stored)
 	}
 
 	same := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"pin test"}]}`))
@@ -521,11 +573,113 @@ func TestTranslateModelPinChangeMissesCache(t *testing.T) {
 		t.Fatalf("re-pressing under the same pin must hit the cache: cached=%v calls=%d", same.Parts[0].Cached, calls)
 	}
 
-	stubModel = "model-b"
 	pin("model-b")
 	changed := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"pin test"}]}`))
 	if changed.Parts[0].Cached || calls != 2 {
-		t.Fatalf("changing the pin must not reuse the old pin's translation: cached=%v calls=%d",
+		t.Fatalf("changing the pin's model must not reuse the old model's translation: cached=%v calls=%d",
 			changed.Parts[0].Cached, calls)
+	}
+}
+
+// TestTranslateTierModelChangeMissesCache is the permanent version of the probe
+// 103-impl-review ran by hand (中8): ② (the shared tier default, aiProseModels — no per-feature
+// pin at all) is also part of the cache key, not just ① (an explicit pin). Without this,
+// translationMatches/translateCacheModel could be narrowed back to "only when pinned" by a
+// future reader who trusts the old (wrong) comments/names more than the code, and this
+// regression would go uncaught.
+func TestTranslateTierModelChangeMissesCache(t *testing.T) {
+	const name = "tr13"
+	seedTranslateSession(t, name)
+	t.Cleanup(chatx.SetHeadlessAvailableForTest("claude", true))
+
+	calls := 0
+	prev := translateOneShot
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
+		calls++
+		return "訳:" + text, "claude", "", nil
+	}
+	t.Cleanup(func() { translateOneShot = prev })
+
+	prefsDir := filepath.Join(os.Getenv("HOME"), ".config", "agent-fleet")
+	if err := os.MkdirAll(prefsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tier := func(model string) {
+		body := `{"aiProseModels":{"claude":"` + model + `"}}`
+		if err := os.WriteFile(filepath.Join(prefsDir, "ui-prefs.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tier("tier-a")
+	decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"tier test"}]}`))
+	if calls != 1 {
+		t.Fatalf("first press: calls=%d, want 1", calls)
+	}
+
+	tier("tier-b")
+	changed := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"tier test"}]}`))
+	if changed.Parts[0].Cached || calls != 2 {
+		t.Fatalf("changing the TIER default model (no pin involved) must miss the cache: cached=%v calls=%d",
+			changed.Parts[0].Cached, calls)
+	}
+}
+
+// TestTranslatePrefetchMatchesPress is 103-impl-review 重大1: GET /translations (the prefetch
+// the mirror uses when a pane opens) must apply the SAME kind/model match POST /translate does.
+// Before this fix it returned the whole session's hash->text map regardless of Kind/Model, so a
+// feature re-pinned to a different agent/model could show one translation on open and a
+// DIFFERENT one on press, for the identical source text.
+func TestTranslatePrefetchMatchesPress(t *testing.T) {
+	const name = "tr14"
+	seedTranslateSession(t, name)
+	t.Cleanup(chatx.SetHeadlessAvailableForTest("claude", true))
+	t.Cleanup(chatx.SetHeadlessAvailableForTest("codex", true))
+
+	prefsDir := filepath.Join(os.Getenv("HOME"), ".config", "agent-fleet")
+	if err := os.MkdirAll(prefsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pin := func(kind, model string) {
+		body := `{"aiFeatureAgents":{"translate.mirror":"` + kind + `"},` +
+			`"aiFeatureModels":{"translate.mirror":{"` + kind + `":"` + model + `"}}}`
+		if err := os.WriteFile(filepath.Join(prefsDir, "ui-prefs.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prev := translateOneShot
+	t.Cleanup(func() { translateOneShot = prev })
+
+	// A -> B -> A: by the third step, the store holds TWO entries for this hash — A's (written
+	// first) and B's (written second, when the pin briefly moved away). A naive "last entry in
+	// append order wins" reader (the bug) would show B's here, even though the pin is back on A
+	// and the press itself correctly serves A's cached entry.
+	pin("claude", "model-a")
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
+		return "PIN-A-TRANSLATION", "claude", "", nil
+	}
+	first := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"prefetch test"}]}`))
+	hash := first.Parts[0].Hash
+
+	pin("codex", "model-b")
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
+		return "PIN-B-TRANSLATION", "codex", "", nil
+	}
+	decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"prefetch test"}]}`))
+
+	pin("claude", "model-a")
+	back := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"prefetch test"}]}`))
+	if !back.Parts[0].Cached || back.Parts[0].Text != "PIN-A-TRANSLATION" {
+		t.Fatalf("returning to pin A must hit ITS cached entry: %+v", back)
+	}
+
+	// The prefetch, read at this same moment (pinned to A again), must agree with the press.
+	list := translationsCall(t, name, "lang=ja")
+	var got translationsReply
+	if err := json.Unmarshal(list.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Entries[hash] != "PIN-A-TRANSLATION" {
+		t.Fatalf("prefetch disagrees with the press: prefetch=%q want %q", got.Entries[hash], "PIN-A-TRANSLATION")
 	}
 }

@@ -291,35 +291,59 @@ func translateShared(ctx context.Context, key string, gen func() (string, error)
 	return f.text, f.err
 }
 
-// lookupTranslation returns the stored translation of that source hash into that language,
-// still valid for the feature's CURRENT resolution (docs/log/103 decision 8):
+// isLegacyTranslation reports a pre-103 entry (Kind and Model both empty — that dimension did
+// not exist when it was written). It always hits: there is nothing to compare it against, and
+// refusing it would make an upgrade discard every existing translation (§103.9 migration 1).
+// Checked BEFORE resolve() anywhere this matters, so a press that only touches legacy entries
+// never calls it — see lookupTranslation's doc.
+func isLegacyTranslation(e *sessionTranslation) bool {
+	return e.Kind == "" && e.Model == ""
+}
+
+// translationMatches decides whether a NON-legacy stored entry is still valid for the
+// feature's CURRENT resolution (docs/log/103 decision 8, as corrected by 103-impl-review §1
+// 重大4/中8):
 //
-//   - a pre-103 entry (Kind and Model both empty) always hits — there is nothing to compare
-//     against, and refusing it would make an upgrade discard every existing translation
-//     (§103.9 migration 1).
-//   - otherwise the entry must be from the same backend KIND. Kind never drifts under an
-//     unpinned feature the way a model id can (chatx.OneShotHeadlessRun's per-backend ③
-//     fallback only ever refines the model within the resolved kind), so this alone is enough
-//     to catch "the feature now resolves to a different agent".
-//   - pinnedModel/pinnedOK add the model dimension ONLY when the feature is explicitly pinned
-//     to one concrete model (never when left to "recommended"/"default" — that path already
-//     varies run to run under ③ the same way it always has, untracked, and matching it here
-//     would make an unpinned feature's cache miss on nearly every press).
-func lookupTranslation(name, hash, lang, kind, pinnedModel string, pinnedOK bool) *sessionTranslation {
+//   - the entry must be from the same backend KIND. Kind never drifts under an unpinned
+//     feature the way a model id can (chatx.OneShotHeadlessRun's per-backend ③ fallback only
+//     ever refines the model within the resolved kind), so this alone is enough to catch "the
+//     feature now resolves to a different agent".
+//   - modelOK adds the model dimension whenever a SETTING names one — either ① the feature's
+//     own pin, or ② the shared tier default (aiShortModels/aiProseModels[kind]). ③ (env
+//     overrides, "recommended", the CLI's own default) is never tracked: it already varied run
+//     to run before this feature existed, untracked, and matching it here would make an
+//     unconfigured feature's cache miss on nearly every press. One asymmetry is accepted on
+//     purpose: switching a pin from a concrete model back to "recommended" drops modelOK, so a
+//     translation made under that concrete model is reused under "recommended" too, until a
+//     press under a DIFFERENT concrete model evicts it.
+func translationMatches(e *sessionTranslation, kind, model string, modelOK bool) bool {
+	if e.Kind != kind {
+		return false
+	}
+	return !modelOK || e.Model == model
+}
+
+// lookupTranslation returns the stored translation of that source hash into that language that
+// still matches (isLegacyTranslation / translationMatches). resolve is called AT MOST ONCE, and
+// only when actually needed — a legacy entry matches without it, so a press that only touches
+// pre-103 entries (the common case right after an upgrade) never pays resolve's cost
+// (103-impl-review 軽12: resolve can shell out — see translateCacheModel — so calling it
+// unconditionally turned even an all-cache-hit press into up to 5 `auth status` calls whenever
+// the availability cache was cold). Callers share one memoized resolve (sync.OnceValues) across
+// a press so the write path reuses whatever the read path already resolved instead of
+// resolving twice.
+func lookupTranslation(name, hash, lang string, resolve func() (kind, model string, modelOK bool)) *sessionTranslation {
 	for _, e := range readSessionTranslations(name) {
 		if e.Hash != hash || e.Lang != lang {
 			continue
 		}
-		if e.Kind == "" && e.Model == "" {
+		if isLegacyTranslation(e) {
 			return e
 		}
-		if e.Kind != kind {
-			continue
+		kind, model, modelOK := resolve()
+		if translationMatches(e, kind, model, modelOK) {
+			return e
 		}
-		if pinnedOK && e.Model != pinnedModel {
-			continue
-		}
-		return e
 	}
 	return nil
 }
@@ -356,17 +380,35 @@ var translateOneShot = func(ctx context.Context, text, lang string) (reply, kind
 	return chatx.OneShotHeadlessRun(ctx, usagex.FeatureTranslate, chatx.OneShotProse, translatePersona, translatePrompt(text, lang), translateModel())
 }
 
-// translateCachePin resolves what the cache lookup needs to know about the CURRENT resolution
-// without starting a CLI: the backend kind (always cheap — resolveOneShot never shells out),
-// and whether the feature is pinned to one concrete model right now (as opposed to "default"/
-// "recommended", which ③ still resolves at call time the same way it always has — see
-// lookupTranslation's comment for why that path is deliberately not part of the key).
-func translateCachePin() (kind, pinnedModel string, pinnedOK bool) {
-	kind, model, configured, _ := chatx.ResolveOneShot(usagex.FeatureTranslate, chatx.OneShotProse)
-	if configured && model != "" && model != chatx.AssistantRecommendedModel {
-		return kind, model, true
+// translateCacheModel resolves what the cache key's model dimension needs to know about the
+// CURRENT resolution: the backend kind, and the SETTING-derived model when one exists — ① the
+// feature's own pin, or ② the shared tier default (chatx.ResolveOneShot's configured already
+// folds both in, docs/log/103-impl-review §3(b): resolveOneShot's `ok` comes from ② whenever ①
+// is unset, not just from ①). "recommended" is excluded — it tracks the live catalog, so
+// putting it in the key would evict on every press.
+//
+// This CAN shell out (chatx.ResolveOneShot -> oneShotKind -> headlessAgentAvailable's exec
+// fallback on a cold 1-minute cache), which is exactly why callers must defer it
+// (lookupTranslation's doc, 軽12) rather than call it unconditionally up front.
+func translateCacheModel() (kind, model string, modelOK bool) {
+	kind, m, configured, _ := chatx.ResolveOneShot(usagex.FeatureTranslate, chatx.OneShotProse)
+	if configured && m != "" && m != chatx.AssistantRecommendedModel {
+		return kind, m, true
 	}
 	return kind, "", false
+}
+
+// onceCacheModel memoizes translateCacheModel for one press — sync.OnceValues only covers two
+// return values, and this one has three. Every caller within a request shares the SAME
+// returned closure so the value resolves at most once (lookupTranslation's doc / 軽12).
+func onceCacheModel() func() (kind, model string, modelOK bool) {
+	var once sync.Once
+	var kind, model string
+	var modelOK bool
+	return func() (string, string, bool) {
+		once.Do(func() { kind, model, modelOK = translateCacheModel() })
+		return kind, model, modelOK
+	}
 }
 
 // cleanTranslation undoes the one thing the model does despite the persona: wrapping the whole
@@ -492,15 +534,18 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := translateTargetLang(req.To)
 	trigger := translateTrigger(req.Trigger)
-	// Cheap (no CLI started) — the feature's currently resolved backend, and whether it is
-	// pinned to a concrete model (docs/log/103 decision 8). Read once per press: reading it
-	// again per part would let the ANSWER for the same press disagree with itself if a
-	// preference changed mid-request.
-	pinKind, pinnedModel, pinnedOK := translateCachePin()
+	// Shared by every part of this press, and resolved AT MOST ONCE (sync.OnceValues): the read
+	// and write paths must use the exact same values (103-impl-review 重大4 — a run's ACTUAL
+	// kind/model used to be written while a separate prediction was read, and the two can
+	// disagree, e.g. agy's agyChatModel silently drops an id that fell out of the live catalog
+	// to "", which made a real account get 3 fresh generations for 3 presses of the same text
+	// with never a cache hit again). Deferred rather than called up front so a press that only
+	// touches legacy entries stays free of translateCacheModel's possible CLI probe (軽12).
+	resolveCacheModel := onceCacheModel()
 	out := make([]translatePart, 0, len(texts))
 	for _, text := range texts {
 		hash := translateHash(text)
-		if hit := lookupTranslation(name, hash, lang, pinKind, pinnedModel, pinnedOK); hit != nil {
+		if hit := lookupTranslation(name, hash, lang, resolveCacheModel); hit != nil {
 			out = append(out, translatePart{Hash: hash, Text: hit.Text, Cached: true})
 			continue
 		}
@@ -508,14 +553,14 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 		clean, err := translateShared(r.Context(), name+"\x00"+lang+"\x00"+hash, func() (string, error) {
 			// Asked again inside the flight: a run that finished between the lookup above and
 			// this moment has already paid for this text.
-			if hit := lookupTranslation(name, hash, lang, pinKind, pinnedModel, pinnedOK); hit != nil {
+			if hit := lookupTranslation(name, hash, lang, resolveCacheModel); hit != nil {
 				return hit.Text, nil
 			}
 			ran = true
 			ctx, cancel := context.WithTimeout(r.Context(), translatePartTimeout)
 			// The tag is the LEADER's: one run, one row, filed under the press that started it.
 			ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTranslate, Trigger: trigger, Ref: name})
-			reply, ranKind, ranModel, gerr := translateOneShot(ctx, text, lang)
+			reply, ranKind, _, gerr := translateOneShot(ctx, text, lang)
 			cancel()
 			if gerr != nil {
 				return "", gerr
@@ -526,8 +571,18 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 				// failures happened, and a waiter on this flight gets the same wording.
 				return "", fmt.Errorf("%w: %v", errTranslateUnusable, gerr)
 			}
+			// Model comes from resolveCacheModel — the SAME value the next lookup will read —
+			// never from what the run actually reported (OneShotHeadlessRun's own return is
+			// discarded here on purpose; see the comment above resolveCacheModel's declaration).
+			// Kind alone is taken from the run: it never drifts from the prediction (③ only
+			// refines the model within a kind), and using the actual value costs nothing.
+			_, cacheModel, cacheModelOK := resolveCacheModel()
+			model := ""
+			if cacheModelOK {
+				model = cacheModel
+			}
 			putTranslation(name, &sessionTranslation{
-				Hash: hash, Lang: lang, Kind: ranKind, Model: ranModel,
+				Hash: hash, Lang: lang, Kind: ranKind, Model: model,
 				Text: got, CreatedAt: time.Now().UnixMilli(),
 			})
 			return got, nil
@@ -552,6 +607,13 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 // Deliberately NOT part of the /messages poll payload: the mirror polls every second, and a
 // map of whole answers on every tick is the one shape that would make this feature cost
 // battery on a phone that never presses the button.
+//
+// This prefetch must apply the SAME match as the press (translationMatches) — before
+// 103-impl-review 重大1 it returned the plain `hash -> text` map regardless of Kind/Model, so a
+// feature pinned to a different agent/model since the last press showed one translation here
+// and a DIFFERENT one on the next press of the actual button (measured: opening the pane showed
+// the new pin's answer, pressing showed the cache hit under the old pin — same text, two
+// different translations, no way for a reader to tell which was "right").
 func handleSessionTranslations(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -559,9 +621,21 @@ func handleSessionTranslations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := translateTargetLang(r.URL.Query().Get("lang"))
+	resolveCacheModel := onceCacheModel()
 	entries := map[string]string{}
 	for _, e := range readSessionTranslations(name) {
-		if e.Lang == lang {
+		if e.Lang != lang {
+			continue
+		}
+		if _, done := entries[e.Hash]; done {
+			continue // a higher-priority (earlier) entry for this hash already matched
+		}
+		if isLegacyTranslation(e) {
+			entries[e.Hash] = e.Text
+			continue
+		}
+		kind, model, modelOK := resolveCacheModel()
+		if translationMatches(e, kind, model, modelOK) {
 			entries[e.Hash] = e.Text
 		}
 	}

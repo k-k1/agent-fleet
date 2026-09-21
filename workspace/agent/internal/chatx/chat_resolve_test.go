@@ -9,33 +9,17 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 // forceHeadlessAvailable pins headlessAgentAvailable's 1-minute cache for kind to v, without
 // touching real credentials or shelling out to a CLI. Restored via t.Cleanup so a later test in
-// this package never observes a stale forced value.
+// this package never observes a stale forced value. A thin wrapper over
+// SetHeadlessAvailableForTest — that one is exported (non-`_test.go`) for package main's own
+// pin-path tests (session_translate_test.go, 103-impl-review 中7); this package's tests are
+// in-package, so t.Cleanup is the natural shape here instead of a manual restore call.
 func forceHeadlessAvailable(t *testing.T, kind string, v bool) {
 	t.Helper()
-	headlessAvailMu.Lock()
-	prevAt, hadAt := headlessAvailAt[kind]
-	prevV, hadV := headlessAvail[kind]
-	headlessAvailAt[kind], headlessAvail[kind] = time.Now(), v
-	headlessAvailMu.Unlock()
-	t.Cleanup(func() {
-		headlessAvailMu.Lock()
-		defer headlessAvailMu.Unlock()
-		if hadAt {
-			headlessAvailAt[kind] = prevAt
-		} else {
-			delete(headlessAvailAt, kind)
-		}
-		if hadV {
-			headlessAvail[kind] = prevV
-		} else {
-			delete(headlessAvail, kind)
-		}
-	})
+	t.Cleanup(SetHeadlessAvailableForTest(kind, v))
 }
 
 func writeResolvePrefs(t *testing.T, body string) {

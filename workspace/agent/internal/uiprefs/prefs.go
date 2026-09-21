@@ -163,10 +163,21 @@ func PlanUpdate() bool {
 // assistance, docs/log/103 §103.3-3/§103.9). Before docs/log/103 the chat read
 // `sessionx.ReplySuggestEnabled` — the MIRROR's gate — through a ui-prefs key
 // (`replySuggest`) nothing ever wrote (docs/log/103-review §0.2), so the chat toggle silently
-// did nothing since the feature shipped. `assistantReplySuggestEnabled` is a real, own key now;
-// missing/invalid ⇒ true to match the pre-fix behaviour (which was, in effect, always on).
+// did nothing since the feature shipped. `assistantReplySuggestEnabled` is a real, own key now.
+//
+// Missing ⇒ fall back to the mirror's `replySuggestEnabled` (same shape as BranchSuggest falling
+// back to AutoTitleSuggest above): an explicit legacy OFF there must keep the chat's ✨ off too,
+// until the Console's own migration (settings.ts migrateAiAssistPrefs) writes the split key back
+// — that migration is in-memory and only reaches ui-prefs.json on the user's NEXT save, so
+// without this fallback the server enforces nothing in between (103-impl-review 重大5: the
+// exact failure §103.3-3 fixed on the mirror side, reappearing on the chat side). The read is
+// inlined rather than calling sessionx.ReplySuggestEnabled: sessionx imports uiprefs, not the
+// other way around.
 func ChatReplySuggest() bool {
-	v, ok := Read()["assistantReplySuggestEnabled"].(bool)
+	if v, ok := Read()["assistantReplySuggestEnabled"].(bool); ok {
+		return v
+	}
+	v, ok := Read()["replySuggestEnabled"].(bool)
 	return !ok || v
 }
 
