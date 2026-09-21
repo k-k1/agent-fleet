@@ -76,6 +76,10 @@ var mcpKnownKinds = map[string]bool{
 	// leaving it out meant an admin could not scope a tenant server to muse — the definition
 	// was refused at :232 with the kind unknown.
 	"muse": true,
+	// lcpp resolves ServerDefs itself, in-process, at the start of every turn (ADR 0093
+	// decision 6, 段2 の MCP wiring) rather than through a config file or the wire — a third
+	// shape, same non-effect on this list.
+	"lcpp": true,
 }
 
 // mcpServerStore is the narrow store view this feature needs: the definitions plus the

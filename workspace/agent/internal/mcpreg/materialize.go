@@ -59,7 +59,12 @@ var MaterializedKinds = []string{
 // other question is a mistake this repository has already made once and shipped — see
 // peerTargetAllowed's own header (sessionx/session_peer.go), where lcpp's absence from
 // MaterializedKinds silently forbade peer messages to it.
-var ServedKinds = append(append([]string(nil), MaterializedKinds...), session.KindMuse)
+//
+// lcpp is the third kind to diverge the same way, for a third reason: its own driver
+// (internal/agents/lcpp/mcp.go) resolves ForSession and calls internal/mcpc directly, in
+// process — no config file, no wire message, just a Go call at the start of every turn. It
+// belongs here and not in MaterializedKinds for the identical reason muse does.
+var ServedKinds = append(append([]string(nil), MaterializedKinds...), session.KindMuse, session.KindLcpp)
 
 // MaterializeResult is one kind's outcome, shaped for a log line and for a future
 // Console surface (docs/log/48 §11.3).

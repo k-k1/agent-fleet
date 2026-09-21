@@ -633,3 +633,113 @@ exact 化・Console 開放・MCP kind 許可リストを持ち込んだ。**決�
 ——付随して `GET /agents/lcpp/models` と `agentModels.ts` の `isDynamic` も足した（無いと起動時にモデル
 を選べず driver が "no model configured" で即失敗する）。中身の詳細は「決定 8 の実装で見つかったもの」
 節。
+
+### 段 2 の MCP 配線（決定 6 の外部 MCP 部分の実装記録）
+
+決定 6 の「`lcpp` は `mcpreg.knownKinds` に入るが `MaterializedKinds` には入らない」はここまで**文言
+だけ**で、コードは何も足していなかった（`knownKinds` に `session.KindLcpp` は無く、`internal/mcpc` を
+import する非テストのファイルは 0 件・`driver.go:481` は `harness.NewRegistry(harness.BuiltinTools()...)`
+のみ——組み込みツールしか登録していなかった）。この節はその配線を実装した記録。「`af` は他の CLI と
+同じく loopback の HTTP で回す」という段 0/1 の訂正（335 行め「覆った前提」節）はそのまま踏襲: `af` 専用
+コードは今回も足していない——`mcpreg.BuiltinAF` の stdio `ServerDef` を、他サーバと全く同じ経路
+（`mcpc.Manager`）で繋いだだけ。
+
+**足したもの。** `internal/agents/lcpp/mcp.go`（新規）と `driver.go` の `threadHandle`:
+
+- `threadHandle` に `mcpCtx`/`mcpCancel`/`mcpMgr *mcpc.Manager` を追加（`Resume` で構築、セッションの
+  一生と同じ寿命——ターンごとの `ctx` とは別物）。`mcpMgr` 自体の構築は I/O をしない（`mcpc.NewManager`
+  は ctx-watcher の goroutine を 1 本立てるだけ）ので、毎 `Resume` のコストは実質ゼロ。
+- `runTurn`（`driver.go:481` 付近）: レジストリを組む前に `mcpreg.ForSession(session.KindLcpp)` を読み、
+  `h.syncMCPServers(ctx, defs)` で `mcpMgr.Sync` に渡し、`h.mcpTools()` が返す `[]harness.Tool` を
+  `harness.BuiltinTools()` に足し込んでから `harness.NewRegistry` に渡す。**毎ターン**呼ぶ
+  （`mcpreg.ForSession` も含めて）——UpdateSettings が model/mode を「次ターンから反映」するのと同じ
+  規約で、有効化/無効化したサーバがそのまま次ターンに効く。
+- `mcpToolMutates(def) bool`（`mcp.go`）が決定 1 の「未知は止める側」を 1 か所に閉じ込める——今は常に
+  `true`。`mcpc` は MCP の `readOnlyHint` 等の注釈を一切読んでいない（`internal/mcpc` を grep して確認）
+  ので、機械的に「読み取り専用」と判定する手段が無く、ADR 0093 決定 5 の fail-closed（`Runtime.Approve
+  == nil` は `Mutates` を拒否）に合わせて安全側に倒した。将来 `readOnlyHint` を読む／allowlist を持つ
+  ようになったら、この関数の中身だけを差し替える。
+- `runMCPTool`（`mcp.go`）は `tools_bash.go` の `runBash` が自分の per-call タイムアウトに対して既に
+  やっている 3 分岐（我々自身のタイムアウト／呼び出し元 ctx の cancel／普通の失敗）をそのまま踏襲。
+  kind 別のタイムアウト表は探しても無かった（grep 済み）ので、`mcpToolCallTimeout = 60秒` を `lcpp` 自身
+  の既定値として `mcp.go` の 1 か所に定義した。
+- 接続失敗（`Sync` が返す `map[string]error`）はターンを落とさない: 毎回 `log.Printf` で残し、直前の
+  ターンと**シグネチャが変わった時だけ** `Store.AppendMCPSyncErrorNote`（`store.go` の新しい
+  `Note = "mcp_error"`）で 1 行記録する——壊れたサーバがそのまま何時間も放置されても、ストアが 1 ターン
+  1 行で際限なく伸びないようにする de-dup。ミラーへの描画は付けていない
+  （`NoteModelChange` と同じ理由——Part/Turn の形をまだ設計していない、この節の範囲外）。
+- `DropHandle` → `closeIdleResources`（旧 `closeStoreOnceIdle` を改名）が、ターンが止まるのを待ってから
+  `store.Close()` と `mcpMgr.Close()` を両方呼ぶ（stdio の子を確実に殺す）。`mcpCancel()` も呼ぶので、
+  ここを飛ばしても `mcpc.NewManager` 自身の ctx-watcher が保険として閉じる。
+
+**`ServedKinds` に足した理由。** `mcpreg.knownKinds` と `mcpreg.ServedKinds`（`materialize.go`）の両方に
+`session.KindLcpp` を足した——`MaterializedKinds` には**足していない**（書くファイルが無いのは muse と
+同じ）。`ServedKinds` は `sessionx/session_selfreport.go` の `selfReportToolAvailable` が直接読んでいる
+軸で、ここに乗ったことで `lcpp` セッションにも自己申告のヒント文（`af_report` を呼べという 1 行）が
+今回から付くようになった——狙った副作用であり、決定 2 の「出すのは有効化したサーバ＋`af`」の `af` 側が
+実際に効く条件そのもの。
+
+🔴 **CP と Console に同じ表が 2 つあり、両方直す必要があった。** `control-plane/internal/mcpsrv/mcp_server.go`
+の `mcpKnownKinds`（`mcpreg.knownKinds` の写し）と `console/src/features/settings/mcp/mcpWire.ts` の
+`MCP_KINDS` は独立した手書きの写しで、`control-plane/internal/mcpsrv/mcp_server_test.go` の
+`TestMcpKnownKindsMirrorsTheOtherTwoCopies` がドリフトを検出する——このテストは**あらかじめ** `"lcpp"`
+を期待リストに含んでいた（段 0/1 の時点で決定 6 を見越して書かれていた）ので、`workspace/agent` 側だけ
+直して `go test ./workspace/agent/...` が緑でも、`control-plane` 側は赤いまま黙って見落とすところだった
+（実際に一度落として確認した）。両方に `"lcpp": true` を足して緑にした。
+
+🔴 **`af` を有効にする＝毎ターン実プロセスを spawn する。** 他の kind（claude/codex/…）にとって
+「`af` が `ServedKinds` にいる」は config ファイルに書くだけで、実際に起動するかは CLI 側の判断
+（ツールを呼ぶまで起動しないことが多い）。`lcpp` は違う——`mcpMgr.Sync` は渡された `ServerDef` を
+**その場で dial（exec）する**。`af` は常に `Ready` な builtin（`builtin.go` の `ready: func(*secrets.Data)
+bool { return true }`）なので opt-out の手段が無く（`compose` の opt-out はテナント行にしか効かない）、
+**`lcpp` の毎ターンが `workspace-agent mcp-stdio --self-report --chromium-attach` を実プロセスとして
+spawn する**——モデルが `af` のツールを 1 度も呼ばなくても。試験ではこれを踏むと危険（後述）なので
+`AF_AGENT_INSTALLED_BIN=/bin/false` で無害化したが、**本番のコストとして次の段に持ち越す**: 毎ターンの
+ハンドシェイク（spawn + `server/discover` + `tools/list`）の実測レイテンシは未計測。
+
+**ツール定義の費用（実測、この配備）。** 実 `workspace-agent mcp-stdio --self-report --chromium-attach`
+に `mcpc.Connect` して `ToolDefs()` を JSON にしたもの（`--peer-messaging`/`--image-gen`/`--fleet-spawn`
+はどれも off——利用者ごとの設定に依るため、この数字は**最小構成**）:
+
+| 内訳 | 本数 | JSON バイト数 |
+|---|---:|---:|
+| `harness.BuiltinTools()`（既存の組み込み） | 9 | 3,635 |
+| `af`（`--self-report --chromium-attach` のみ） | 15 | 13,175 |
+| 合計（サーバ未登録でも `af` は常に乗る） | 24 | 16,810 |
+
+`af` 1 個だけで送信ペイロードが素の組み込み分の **約 3.6 倍**になる。利用者が `--peer-messaging`/
+`--image-gen`/`--fleet-spawn` を有効にした配備では `af` だけで 70 本超になる（別セッションの実測、この
+ADR の範囲外）。利用者登録の外部サーバはこの上にさらに乗る——今回の試験で使った偽サーバ 1 個（ツール
+2 本）で確認した以上の実測は取っていない。
+
+**試験と陽性対照。** `internal/agents/lcpp/mcp_test.go`（新規）。フェイクサーバは `internal/mcpc` の
+`helper_process_test.go` と同じ自己 re-exec トランポリン（`-test.run=TestHelperProcess`）を、この
+パッケージ用に別実装したもの（`mcpc` のそれは package-private で再利用できない）。
+
+- 🔴 **`mcpreg.ForSession(session.KindLcpp)` は無条件で `af` を含む**（上述）——「サーバを 1 つも有効化
+  していないときの試験」は素朴に書くと実 `workspace-agent` バイナリの spawn を踏む。CI では
+  `/usr/local/bin/workspace-agent` が存在しない環境もあり得て、その場合 `paths.ConfigExePath()` は
+  **volatile な `ExePath()` にフォールバックする**——つまり**このテストバイナリ自身**を `mcp-stdio ...`
+  引数で実行することになり、`-test.run` フィルタの無い `go test` 起動として**パッケージの全テストを
+  再帰的に走らせる**。`AF_AGENT_INSTALLED_BIN=/bin/false`（`paths.InstalledExePath` 自身の env 逃がし道）
+  で潰した——`af` の `Sync` は速く確実に失敗し、実バイナリは一切走らない。試験ファイル冒頭の
+  `mcpTestHome` にこの理由を書いた。
+- 陽性対照（`git checkout` ではなく Edit で当てて戻した。全て確認済み）:
+  - `driver.go` の `h.mcpTools()...` をレジストリ構築から外す → `TestMCPToolReachesRealServer`/
+    `TestMCPToolRequiresApprovalByDefault` が赤。
+  - `mcpToolMutates` を `false` 固定にする → `TestMCPToolRequiresApprovalByDefault` が赤（承認待ちに
+    ならない）。
+  - `syncMCPServers` の de-dup 判定を常に `true`（毎回書く）にする → `TestMCPSyncErrorDoesNotFailTurnAndIsNotedOnce`
+    が赤（2 ターンで note が 2 件）。
+  - `closeIdleResources` から `mcpMgr.Close()`（と `mcpCancel()`）を外す → `TestDropHandleKillsMCPStdioChild`
+    が赤（子プロセスが `DropHandle` 後も生きている——実際に 1 回、子プロセスが残った状態で赤を確認して
+    から kill した）。
+- 通し（`go test ./internal/agents/lcpp/... -count=1`）は 53 件全緑・0.5 秒前後。`control-plane`/
+  `console` は既存スイートに新規失敗なし（後述の CP ドリフト試験 1 件を除く）。
+- 実機の通し経路（配備済み Agent から実際に `lcpp` セッションを起こして LAN の llama-server まで）は
+  この節の範囲外——利用者の LAN の llama-server に自分から繋ぐなという指示のとおり、偽サーバのみで
+  試験した。実機測定は利用者側の担当。
+
+**範囲外にしたもの（決定どおり）。** プロジェクトスコープ（`mcpproj` 経由の `.mcp.json`）は今回触って
+いない——`lcpp` は他 kind の `.mcp.json` を読むだけの kind でも、コピー先の kind でもない（決定 6 の
+既存の文言のまま）。

@@ -61,6 +61,11 @@ var knownKinds = map[string]bool{
 	// muse takes its servers on the wire rather than from a config file (ADR 0095 decision
 	// 11), which changes nothing here: this list is about which kinds a DEFINITION may name.
 	session.KindMuse: true,
+	// lcpp resolves ServerDefs itself, in-process, at the start of every turn
+	// (internal/agents/lcpp's own mcp.go calls ForSession directly) rather than through a
+	// materializer or the wire — a third shape, but the same non-effect on this list (ADR 0093
+	// decision 6, 段2 の MCP wiring).
+	session.KindLcpp: true,
 }
 
 // ValidationError marks a refusal caused by the definition itself — the caller sent
