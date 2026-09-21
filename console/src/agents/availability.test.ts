@@ -84,7 +84,7 @@ describe("lcpp — launchable now (ADR 0093 stage 2: driver.go + store.go landed
     expect(repoLaunchKinds).toContain("lcpp");
   });
 
-  it("available() is unconditional — no sign-in exists for this kind (決定 10)", () => {
+  it("available() has no credential to check (決定 10) — only the on/off switch below gates it", () => {
     expect(AGENTS.lcpp.available({})).toBe(true);
     expect(AGENTS.lcpp.available({ conns: {} })).toBe(true);
     expect(AGENTS.lcpp.available({ conns: { lcpp: { connected: false } } })).toBe(true);
@@ -101,6 +101,23 @@ describe("lcpp — launchable now (ADR 0093 stage 2: driver.go + store.go landed
 
   it("is the only repo-launchable kind with no Terminal (CLI) route", () => {
     expect(repoLaunchKinds.filter((k) => AGENTS[k].terminalDriver === false)).toEqual(["lcpp"]);
+  });
+});
+
+describe("lcpp — on/off gate (docs/log/105 §106.2, the user's own display setting)", () => {
+  it("is admitted when the setting is missing or explicitly true — the opt-out default", () => {
+    expect(ready("lcpp", {})).toBe(true);
+    expect(ready("lcpp", { lcpp: {} })).toBe(true);
+    expect(ready("lcpp", { lcpp: { enabled: true } })).toBe(true);
+  });
+
+  it("is hidden only by an explicit enabled:false — this is the signpost half of the gate; the real refusal is server-side (session_handlers.go)", () => {
+    expect(ready("lcpp", { lcpp: { enabled: false } })).toBe(false);
+  });
+
+  it("does not affect any other kind's availability", () => {
+    expect(gate({ lcpp: { enabled: false } })).toEqual(["shell"]);
+    expect(gate({ lcpp: { enabled: false }, claude: { connected: true } })).toEqual(["claude", "shell"]);
   });
 });
 

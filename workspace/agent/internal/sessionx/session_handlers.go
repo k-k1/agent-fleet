@@ -32,6 +32,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // ManagedAlive reports a managed session's liveness — the runtime-handle
@@ -721,6 +722,16 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_driver", "unknown driver: "+req.Driver)
+		return
+	}
+	// lcpp can be turned off by the user's own display setting (ui-prefs lcppEnabled,
+	// docs/log/105 §106.2). registry.ts's available() is only the signpost that hides it from
+	// the launch menus; this is the actual gate, reached the same way as the model-hidden
+	// guard below (Console, the schedule, MCP create_session, or a direct POST /sessions all
+	// funnel through here) so turning lcpp off cannot be bypassed by any of them.
+	if kind := NormalizeKind(req.Kind); kind == session.KindLcpp && !uiprefs.LcppEnabled() {
+		httpx.WriteErr(w, http.StatusForbidden, "lcpp_disabled",
+			"llama.cpp は設定でオフになっています。設定 > エージェント > llama.cpp でオンにしてください。")
 		return
 	}
 	// Models the user disabled (ui-prefs hiddenModels — model_deny.go) are refused for every

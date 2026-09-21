@@ -356,6 +356,15 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.oc_env_placeholder": "ENV name (e.g. GROQ_API_KEY)",
   "agents.oc_key_value": "value for {env}",
   "agents.oc_key_fallback": "API key",
+  // llama.cpp (docs/log/105 §106.2). No sign-in and no version drift for this kind (ADR 0093
+  // decision 10), so the card is just on/off — unlike opencode's billing route there is
+  // nothing else to pick below it.
+  "agents.lcpp_enabled": "Use llama.cpp",
+  "agents.lcpp_enabled_off": "Off",
+  "agents.lcpp_enabled_on": "On",
+  "agents.lcpp_enabled_note_off":
+    "llama.cpp cannot be launched: it disappears from the launch menus and a direct API create is refused too (existing sessions keep running).",
+  "agents.lcpp_enabled_note_on": "llama.cpp can be launched. Pick the default model and any excluded ones in the behavior settings below.",
   "set.tab_cost": "Cloud cost",
   // --- 稼働時間 heatmap (docs/log/83) ---
   // ⚠️ Occupancy, never money. Cost Explorer only reports per day, so an hourly

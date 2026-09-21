@@ -73,7 +73,7 @@ export function ConnPaused() {
 // LaunchDefaults: the common, per-agent starting point. A repo's last-used values
 // still win in the launch dialog, so these are useful global defaults without
 // repeatedly overwriting deliberate per-repo choices.
-export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro" | "agy" | "opencode" | "copilot" }) {
+export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro" | "agy" | "opencode" | "copilot" | "lcpp" }) {
   const s = useSettings();
   const tr = useT();
   const desc = agentOf(kind);
