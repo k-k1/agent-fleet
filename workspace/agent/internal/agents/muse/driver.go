@@ -37,12 +37,17 @@ type managedDriver struct{ agentImpl }
 // capability table starts lying.
 //
 // Permissions is true, and muse is the first kind to declare it. Decision 13 calls it the one
-// genuinely new capability, and the condition for claiming it is the same one docs/log/76 sets
-// for Caps.PermissionChoice: a pending approval can actually be ANSWERED from the Console. It
-// can — the driver raises an approval-kind Interaction, the read layer sends it out as
-// `pendingApproval`, and the mirror's ApprovalCard answers it allow/deny through /respond. A
-// session blocked on a tool is the one state where an unanswerable dialog reads to the member
-// as a frozen session.
+// genuinely new capability, and what it declares is that this driver SUPPORTS the approval
+// Interaction kind: it raises one, the read layer sends it out as `pendingApproval`, and the
+// mirror's ApprovalCard answers it allow/deny through /respond. All of that is built and tested.
+//
+// ⚠️ It is not a promise that one will ever arrive. Measured (ADR 0095 P2-6), a muse session in
+// a Workspace raises no approval at all, because the sandbox waiver gate A forced leaves the
+// host's filesystem unrestricted and every tool call resolves `allow:policy` before the approval
+// layer. That is why `Caps.PermissionChoice` — the member-visible half, a launch control — is
+// FALSE while this stays true: this field has no consumer outside this process and promises the
+// member nothing, and the code it describes is correct and ready if the posture ever changes.
+// muse.go's Caps header carries the measurement.
 //
 // Questions is separately true and is a DIFFERENT channel: userInput/requested maps onto AF's
 // existing question interaction field for field. Fork stays false until the fork path is built.

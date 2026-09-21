@@ -222,49 +222,36 @@ func appendMissing(have, add []string) []string {
 // exists anyway, so there is no capability to narrow.
 var comfyDefaultOps = []Op{OpGenerate, OpEdit, OpInpaint}
 
-// comfyFamilyOpTable is every family whose template does NOT build the default three (ADR 0094
-// decision 3): which ops it can build at all. Every family through krea2 has an image-to-image
-// path (LoadImage + VAEEncode, plus SetLatentNoiseMask for a mask) alongside its plain generate
-// and so has no entry here.
+// comfyFamilyOps is ADR 0094 decision 3: which ops a family's template can build at all. Every
+// family through krea2 has an image-to-image path (LoadImage + VAEEncode, plus
+// SetLatentNoiseMask for a mask) alongside its plain generate — Qwen-Image-Edit is EDIT ONLY.
+// It has no path that starts from an empty latent (TextEncodeQwenImageEditPlus with no image
+// input is not a documented use of the node), and inpaint is left unclaimed on purpose: a mask
+// could be wired with SetLatentNoiseMask, but nobody on this deployment has run it, and ADR 0072
+// already paid the tuition for advertising an untested op as SD3.5 (decision 3).
 //
-// Qwen-Image-Edit is EDIT ONLY: it has no path that starts from an empty latent
-// (TextEncodeQwenImageEditPlus with no image input is not a documented use of the node).
-// qwen-image-2.1 is why this is a table and no longer a predicate (ADR 0098) — it is the first
-// family that instruction-edits AND generates from a prompt alone, so "instruction edit" stopped
-// being the same question as "which ops".
-//
-// Inpaint is left unclaimed for all three on purpose: a mask could be wired with
-// SetLatentNoiseMask, but nobody on this deployment has run it, and ADR 0072 already paid the
-// tuition for advertising an untested op as SD3.5 (decision 3).
-var comfyFamilyOpTable = map[comfyFamily][]Op{
-	ComfyFamilyQwenImageEdit2509: {OpEdit},
-	ComfyFamilyQwenImageEdit2511: {OpEdit},
-	ComfyFamilyQwenImage21:       {OpGenerate, OpEdit},
-}
-
-// comfyFamilyOps is the table above, with the permissive default for everything not in it.
+// qwen-image-2.1 is why this reads a declared list rather than "is it an instruction edit"
+// (ADR 0098): it is the first family that instruction-edits AND generates from a prompt alone, so
+// those two stopped being the same question.
 func comfyFamilyOps(family comfyFamily) []Op {
-	if ops, ok := comfyFamilyOpTable[family]; ok {
-		return ops
+	if r, ok := comfyFamilyRowFor(family); ok && len(r.Ops) > 0 {
+		return r.Ops
 	}
 	return comfyDefaultOps
 }
 
 // comfyFamilyInstructionEdit is "this family edits by instruction" — the picture conditions the
-// sampler and the denoise is fixed at 1 — which is the axis ADR 0094 decision 2 turns on, and not
-// the family name or the version. Both Qwen-Image-Edit topologies answer true, and so does
-// qwen-image-2.1, which edits the same way while also being able to generate.
+// sampler and the denoise is fixed at 1 — which is the axis ADR 0094 decision 2 turns on, not the
+// family name and not the version.
+//
+// 🔴 It reads FixedDenoiseEdit and NOT the wiring pointer, and the two are different questions
+// since ADR 0098: both Qwen-Image-Edit topologies go through comfyGraphQwenImageEdit, while
+// qwen-image-2.1 edits the same WAY through a builder of its own. Reading the pointer here would
+// hand that family a `strength` its sampler cannot spend, which is 実測 C's failure — the picture
+// comes back unedited with no error and no warning.
 func comfyFamilyInstructionEdit(family comfyFamily) bool {
-	return comfyFamilyEditOnly(family) || family == ComfyFamilyQwenImage21
-}
-
-// comfyFamilyEditOnly is the narrower fact the one above used to carry alone: a family whose
-// template has no path from an empty latent at all, so `op=generate` is not a thing to narrow but
-// a thing to refuse. It is what decisions 3 and 4 actually turn on — the ops a family offers, and
-// whether a size can reach its sampler — and qwen-image-2.1 separated the two by answering true to
-// instruction editing and false to both of these.
-func comfyFamilyEditOnly(family comfyFamily) bool {
-	return family == ComfyFamilyQwenImageEdit2509 || family == ComfyFamilyQwenImageEdit2511
+	r, ok := comfyFamilyRowFor(family)
+	return ok && r.FixedDenoiseEdit
 }
 
 // comfyFamilyStrength is ADR 0094 decision 2: whether Request.Strength reaches this family's
@@ -277,9 +264,10 @@ func comfyFamilyStrength(family comfyFamily) bool {
 	return !comfyFamilyInstructionEdit(family)
 }
 
-// comfyFamilyRefInputs is ADR 0094 decision 5: how many reference pictures a family's template
-// can actually READ, for every family that reads more than one. Every family through krea2 has one
-// LoadImage and nowhere to put a second, so they have no entry and the answer stays 1.
+// comfyFamilyMaxInputs is ADR 0094 decision 5: how many reference pictures a family's template
+// can actually READ. Every family through krea2 has one LoadImage and nowhere to put a second, so
+// the answer stays 1 for them; the instruction-edit families wire
+// TextEncodeQwenImageEditPlus's image2 and take 2 (P3).
 //
 // 🔴 The number and the code path move together — decision 5's own 「宣言と経路は同じフェーズに
 // 入れる」. Raising this without widening the upload and the template is not a smaller version of
@@ -294,24 +282,9 @@ func comfyFamilyStrength(family comfyFamily) bool {
 // 🔴 The number was NOT raised on the strength of "the wiring is a loop, so more must work". That
 // inference is what decision 3 forbade for inpaint, and until the run above this function
 // deliberately answered 2 with image3 unwired-by-absence.
-//
-// 🔴 qwen-image-2.1's 10 is a CITATION and not a measurement, and it is the one entry here that is
-// not backed by a run. TextEncodeQwenImage21 takes image_1..image_16; the official edit template
-// wires exactly ten of them (image_qwen_image_2_1_image_edit.json, read 2026-09-21), and its own
-// note says "Up to 10 reference images". Taking the published wiring is this repository's rule for
-// a family nobody has run yet — the same rule the recipe above it follows — but the paragraph above
-// is why it is called out rather than left to look like 3 does. A run that finds the tenth picture
-// ignored would make this the wrong number, and the place to correct it is here.
-var comfyFamilyRefInputs = map[comfyFamily]int{
-	ComfyFamilyQwenImageEdit2509: 3,
-	ComfyFamilyQwenImageEdit2511: 3,
-	ComfyFamilyQwenImage21:       10,
-}
-
-// comfyFamilyMaxInputs is the table above, with 1 for every family not in it.
 func comfyFamilyMaxInputs(family comfyFamily) int {
-	if n, ok := comfyFamilyRefInputs[family]; ok {
-		return n
+	if r, ok := comfyFamilyRowFor(family); ok && r.RefInputs > 0 {
+		return r.RefInputs
 	}
 	return 1
 }
@@ -322,13 +295,19 @@ func comfyFamilyMaxInputs(family comfyFamily) int {
 // row's own declared list — the one family where the family's answer wins over the row's, because
 // the row's list would otherwise offer a control that silently does nothing.
 //
-// ⚠️ comfyFamilyEditOnly and not comfyFamilyInstructionEdit: qwen-image-2.1 edits by instruction
-// and still HAS sizes, because its other op generates from an EmptyLatentImage the caller's size
-// fills in (comfyGraphQwenImage21). On its EDIT the size is ignored the same way — the canvas comes
-// from the encode node's own latent — and what says so there is the img2img size warning every
-// family already shares (comfy.go's sizeWarning), not this.
+// 🔴 Read off the op list and not off "does it edit by instruction" (ADR 0098). The two agreed
+// while every instruction-edit family was also edit-only; qwen-image-2.1 is not, and its GENERATE
+// path fills an EmptyLatentImage from whatever size is chosen. Answering true for it would delete
+// the size control from the one op that reads one. The derivation is the real statement of
+// decision 4: a size only ever reaches an EmptyLatentImage, so a family with no generate path has
+// nowhere to put one.
 func comfyFamilyHasNoSizes(family comfyFamily) bool {
-	return comfyFamilyEditOnly(family)
+	for _, op := range comfyFamilyOps(family) {
+		if op == OpGenerate {
+			return false
+		}
+	}
+	return true
 }
 
 // comfyFamilyKnobs is the subset of `steps cfg sampler scheduler negative strength` a family's
@@ -337,23 +316,17 @@ func comfyFamilyHasNoSizes(family comfyFamily) bool {
 // (decision 5) so the form greys a field out on the AGENT's word rather than on a second copy of
 // this table that can disagree with the graphs.
 //
-// It is derived from the templates and must be read next to them: flux1 and klein fold guidance
-// into the conditioning, so the number a model card calls "CFG" is a different knob there;
-// klein's Flux2Scheduler takes a size and not a schedule name; and the three distilled families
-// sample at cfg 1, where a negative branch cancels out exactly (comfyFamilyTakesNegative).
+// The sampler half is the row's own (comfyFamilyRow.SamplerKnobs, declared next to the recipe it
+// describes); `negative` and `strength` are appended here from the same answers Caps gives, so
+// the form and the capability cannot disagree about either.
+//
+// 🔴 The copy is not ceremony. Six rows share one backing array (comfyKnobsSampled), and
+// appending to a slice this function does not own writes `negative` into every one of them the
+// day any row is declared with spare capacity. Today's literals have none, which is exactly what
+// makes it the kind of bug that arrives with an unrelated edit.
 func comfyFamilyKnobs(family comfyFamily) []string {
-	knobs := []string{"steps"}
-	switch family {
-	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima, ComfyFamilyKrea2,
-		ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511, ComfyFamilyQwenImage21:
-		knobs = append(knobs, "cfg", "sampler", "scheduler")
-	case ComfyFamilyZImage:
-		knobs = append(knobs, "cfg", "sampler", "scheduler")
-	case ComfyFamilyFlux1:
-		knobs = append(knobs, "sampler", "scheduler")
-	case ComfyFamilyFlux2Klein:
-		knobs = append(knobs, "sampler")
-	}
+	row, _ := comfyFamilyRowFor(family)
+	knobs := append([]string(nil), row.SamplerKnobs...)
 	if comfyFamilyTakesNegative(family) {
 		knobs = append(knobs, "negative")
 	}
@@ -428,39 +401,19 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 	if !ok || !comfyFamilyTakesNegative(family) {
 		return false
 	}
-	return comfyFamilyRecipes[family].with(conn.Params[model]).CFG != 1
+	return comfyFamilyRecipeFor(family).with(conn.Params[model]).CFG != 1
 }
 
-// comfyFamilyTakesNegative is which of the seven templates a negative prompt can actually move.
+// comfyFamilyTakesNegative is which of the templates a negative prompt can actually move — the
+// row's own Guided, where the reason each family answers as it does is written beside its recipe.
 //
-// 🔴 Only the GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
-// KSampler, klein's CFGGuider) or with FLUX.1's guidance folded into the conditioning
-// (BasicGuider, no negative input at all) — and at cfg 1 classifier-free guidance is
-// `uncond + 1*(cond - uncond)`, which is cond exactly. The negative words would ride in the graph,
-// cost a text encode, and change no pixel. Wiring them anyway and reporting the capability as
-// true is worse than refusing: the caller gets no warning, the picture looks right, and the thing
-// they asked to keep out is in it.
-//
-// ⚠️ This is the family's TEMPLATE, not the answer a member gets: anima and krea2 are here
+// ⚠️ It is the family's TEMPLATE, not the answer a member gets: anima and krea2 are guided
 // because their graphs encode a real negative, while their distilled variants (Anima-Turbo,
 // Krea 2 Turbo) declare cfg 1 and cancel it anyway. comfyModelTakesNegative is what puts the
 // two facts together, and it is the one every caller asks.
-//
-// Both Qwen-Image-Edit families are here too (ADR 0094 decision 12): they are GUIDED — 実測 A ran
-// cfg 4 and the edit was followed, 実測 E the same on 2511 — and their template gives the negative
-// branch its own TextEncodeQwenImageEditPlus encode rather than ConditioningZeroOut, so the
-// negative genuinely moves the picture. Leaving one off this list would make
-// comfyIgnoredParamWarnings answer with the DISTILLED wording ("folds its guidance into the
-// conditioning"), which is the opposite of what those two runs measured.
-//
-// qwen-image-2.1 rides in on the same predicate and is the anima/krea2 case rather than theirs: its
-// template gives the negative its own encode (TextEncodeQwenImage21 emits both conditionings from
-// one node), so a negative CAN move the picture — while its own recipe declares cfg 1, at which
-// comfyModelTakesNegative answers false for every row that does not raise it. The published
-// templates say exactly that: "negative_prompt: unused while cfg is 1."
 func comfyFamilyTakesNegative(family comfyFamily) bool {
-	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35 ||
-		family == ComfyFamilyAnima || family == ComfyFamilyKrea2 || comfyFamilyInstructionEdit(family)
+	r, ok := comfyFamilyRowFor(family)
+	return ok && r.Guided
 }
 
 // comfyNegativeFor composes the negative prompt one request samples against, out of the three
@@ -620,7 +573,7 @@ func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
 // with the catalogue row laid over it, field by field — the same merge the template does, which
 // is why it is that function and not a second reading of the same two sources.
 func comfyEffectiveDefaults(conn EngineConn, family comfyFamily, model string) EngineParams {
-	r := comfyFamilyRecipes[family].with(conn.Params[model])
+	r := comfyFamilyRecipeFor(family).with(conn.Params[model])
 	return EngineParams{Steps: r.Steps, CFG: r.CFG, Sampler: r.Sampler, Scheduler: r.Scheduler}
 }
 

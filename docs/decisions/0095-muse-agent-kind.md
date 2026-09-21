@@ -162,7 +162,7 @@ the store. That makes the at-rest reader simpler (one file to tail) and is also 
 accounting fix of Decision 10 possible at all. v1 renders subagent activity as tool-shaped items
 on the parent turn and does not open a pane per child.
 
-### Decision 5 — the sandbox is turned off, and the approval gate is what remains
+### Decision 5 — the sandbox is turned off, and the approval gate goes with it
 
 `muse serve --disable-sandbox`. Measured, bubblewrap cannot build a sandbox in a Workspace
 container (`move_mount` → EACCES), and with the sandbox on and unusable **every shell command the
@@ -176,6 +176,19 @@ trusting it. Approvals are
 orthogonal and stay on: approval mode is selected per session on the wire, and AF answers
 `approval/requested` through `approval/decide`, mapping the launch-time permission choice
 (docs/log/76) onto `untrusted` | `on-request` | `never`.
+
+> 🔴 **Corrected by measurement, P2-6 (2026-09-21). "Approvals are orthogonal and stay on" is
+> false, and it is the one sentence in this ADR that a reader must not act on.** Approvals are
+> not orthogonal to the sandbox at all: `--disable-sandbox` resolves the host's committed
+> permission profile to `filesystem.mode: "unrestricted"` with no rules and
+> `local_command_network.mode: "enabled"`, and with nothing restricted every tool call resolves
+> `policy_decision: "allow:policy"` before the approval layer is consulted. Measured with real
+> turns under `approvalMode: "onRequest"`, a muse session ran an in-workspace `tool:bash` **and**
+> wrote a file outside `workspaceRoot` entirely, with zero `approval/requested`. It is also not
+> narrowable: `--disable-write`, `--disable-shell` and `--sandbox-network <mode>` leave that
+> profile byte-identical while this flag is set. So the sandbox waiver takes the tool gate with
+> it, `Caps.PermissionChoice` is false, and the guide says a muse session reaches this container
+> the way `shell` does. The full record, including what the wire still honours, is in P2-6.
 
 This is a waiver, and the ADR states it as one: inside a Workspace the container **is** the
 boundary, and the same is already true of every other kind, none of which sandboxes itself.
@@ -1851,3 +1864,94 @@ here, the card would have shown an uncoloured, unlabelled badge. So this row lan
 server half — status, the four routes on both `routes.go` files, the CP allow-list — and the
 Console surface package gains the card, where it also gets the screenshot that P2-5's approval
 card is still owed.
+
+### P2-6 addendum: the two turn-only homework items, and what the first turn found instead
+
+The Consequences above left two things owed that no free oracle could answer: clamp 5's
+equivalent check over `muse serve`, and clamp 6's effect. Five real prompts were spent (the
+member authorised four to six). One is answered; the other turned out to be unanswerable, for a
+reason worth more than the answer.
+
+The instrument, because it is reusable: a throwaway `HOME` carrying **fake** `~/.claude` and
+`~/.codex` markers, `XDG_DATA_HOME` in the throwaway so the durable log is readable, and
+`XDG_CONFIG_HOME` pointed at the member's **real** `~/.config` so muse finds their credential
+without it being copied — a copy can take a token refresh with it and sign the member out of the
+original. The member's `settings.json` was never written; it carries no foreign-context clamps,
+which is what makes the environment variable isolable as the only difference between arms.
+
+**✅ Homework 1 — clamp 5 works over `serve`, and it was argued for a real reason.** With
+`MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=0` the planted `~/.claude/CLAUDE.md` marker
+appears in the durable log; with `=1` it does not. The env route is now measured on `serve`, not
+inferred from `exec`.
+
+Two methodological findings came with it, and both would have produced a false green:
+
+- 🔴 **The model's reply is not the oracle — the durable log is.** Asked to list the tokens it
+  could see, the model answered without the marker in *both* arms. A test reading the reply would
+  have found the two arms identical and "proved" a clamp that was never exercised.
+- **The banner is not the oracle over `serve` either.** "Including your Claude Code and Codex
+  personal rules" never appears in a `serve` durable log, in either arm; on `exec` it was one of
+  the two signals. Only the planted marker distinguishes them.
+- The `~/.codex/AGENTS.md` marker appeared in **neither** arm, so what `serve` assembles is
+  narrower than the banner's wording implies. Not concluded as "Codex is not read" — the path it
+  would read was not established, only that this one was not it.
+
+**🔴 Homework 2 — clamp 6 cannot be measured, because no approval can happen.** A turn that ran
+`echo` got its tool executed with zero `approval/requested`, under an explicit
+`approvalMode: "onRequest"`. The durable log says why, and the answer is not the mode:
+`runtime.session.permission_profile_committed` records `approval: "on_request"` (so AF's mode was
+accepted), while the tool call carries `policy_decision: "allow:policy"` — a policy allowed it
+before the approval layer. The committed `resolved_snapshot` for AF's exact launch is:
+
+```
+approval: "on_request"
+filesystem: { mode: "unrestricted", rules: [], workspace_roots: [], protected_metadata: false }
+local_command_network: { mode: "enabled", targets: [] }
+reviewer: "human"
+```
+
+Five session-start-only arms (free, no turns) isolate the cause and close the escape routes:
+
+| launch | filesystem | rules | local network |
+|---|---|---|---|
+| `--disable-sandbox --trust-workspace` | `unrestricted` | 0 | `enabled` |
+| `--disable-sandbox --trust-workspace --sandbox-network proxy-only` | `unrestricted` | 0 | `enabled` |
+| `--disable-sandbox --trust-workspace --disable-write` | `unrestricted` | 0 | `enabled` |
+| `--disable-sandbox --trust-workspace --disable-write --disable-shell` | `unrestricted` | 0 | `enabled` |
+| `--trust-workspace --sandbox-network restricted` (no waiver) | `managed` | 6 | `restricted` |
+
+So: **`--disable-sandbox` is the whole cause, and it overrides every narrower posture flag.**
+`--trust-workspace` changes the profile not at all — its help text says it only "load[s] each
+session workspace's skills and rules", which matches, and AF's reason for passing it is intact.
+A second turn confirmed the consequence past any doubt about workspace trust: a `tool:write_file`
+to `/tmp`, **outside `workspaceRoot` entirely**, also resolved `allow:policy` and wrote the file
+with no approval.
+
+The chain is therefore closed and permanent under the current host contract: gate A's AppArmor
+finding forces `--disable-sandbox`; that flag flattens the permission profile; a flat profile
+policy-allows every tool; a policy-allowed tool never reaches the approval layer. `MUSE_DISABLE_
+APPROVAL_JUDGE` stays set on the strength of its name and stays **unverifiable here** — not
+merely unverified.
+
+Three smaller wire facts from the same arms, all free:
+
+- **`ApprovalMode` has four values on the wire** — `allowAll`, `promptUnmatched`, `onRequest`,
+  `denyUnmatched` — and the host's own `component_ceilings.approval` lists three
+  (`on_request`, `prompt_unmatched`, `allow_all`), so `denyUnmatched` is on the protocol but not
+  in this backend's ceiling. AF maps two and says why it maps no more.
+- **The two layers disagree about the mode.** The started session echoes what was asked
+  (`session.approvalMode.mode`, source `startup`) for all four values, while the committed
+  enforcement profile reports `approval: "on_request"` for all four. Which governs is not
+  settled; under the waiver it does not matter, and AF keeps sending the mode because it costs
+  nothing and is already right if the posture ever changes.
+- `muse serve --help` states outright that "Approval mode ... is selected on the wire, so there
+  is no approval flag here", which confirms the route AF uses is the only one.
+
+**What landed as a result.** `Caps.PermissionChoice` is now **false** — the member-visible half,
+a launch control whose two settings would behave identically. `Capabilities.Permissions` stays
+**true**: it declares that the driver supports the approval Interaction kind, which is built,
+tested and correct, and it has no consumer outside the Agent process, so it promises the member
+nothing. The approval card and interaction code stay exactly as P2-5 left them, ready for a
+posture that can raise one. `guide/ref/agents.md` gains footnote 13 in both languages, and it is
+the one row where a dash means less safety rather than a missing feature: a muse session reaches
+this container the way `shell` does.

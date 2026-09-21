@@ -809,6 +809,50 @@ func TestComfyWorkflowQwenImageEditMatchesGoldenFixture(t *testing.T) {
 	}
 }
 
+// The family is READ back off a finished picture through SaveImage's filename_prefix
+// (comfyFamilyFromPrefix), which is what fills the reproduction record's `family` — so every
+// template's prefix has to be one comfyFamilyFromPrefix recognises, for EVERY family.
+//
+// Nothing pinned this before, and the hole is the shape a golden fixture cannot see: the goldens
+// compare a prefix to a string that was written down at the same time, so a prefix the reader
+// does not recognise matches its own fixture happily. Measured while consolidating the family
+// declarations (ADR 0094 未解決 4): dropping flux2-klein's short name left `af-klein` on every
+// picture it makes and unreadable by the reader, with the whole suite green.
+func TestEveryFamilysPrefixIsReadableBack(t *testing.T) {
+	files := map[comfyFamily]comfyFiles{}
+	for _, c := range comfyFamilyFixtures {
+		files[c.family] = c.files
+	}
+	for _, c := range comfyQwenEditFamilies {
+		files[c.family] = c.files
+	}
+	// In neither fixture list because its graph is not either shape (ADR 0098), and this check
+	// reaches every family in the vocabulary by design.
+	files[ComfyFamilyQwenImage21] = comfyQwen21Files
+	for _, family := range comfyFamilies {
+		t.Run(string(family), func(t *testing.T) {
+			f, ok := files[family]
+			if !ok {
+				t.Fatalf("%s is in no fixture list, so this check silently stops measuring it", family)
+			}
+			p := comfyGoldenParams
+			p.Op, p.Images = OpEdit, []string{"af-photo.png"}
+			g, err := comfyBuildGraph(family, f, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(%s) = %v", family, err)
+			}
+			prefix := stringOf(g["save"].Inputs["filename_prefix"])
+			if prefix == "" {
+				t.Fatalf("%s's SaveImage names no filename_prefix", family)
+			}
+			if got := comfyFamilyFromPrefix(prefix); got != string(family) {
+				t.Errorf("comfyFamilyFromPrefix(%q) = %q, want %q — a picture this template makes"+
+					" records a family nobody can read back", prefix, got, family)
+			}
+		})
+	}
+}
+
 // The second reference (ADR 0094 decision 5, P3), wired the way 実測 D measured it and not the
 // way it reads at first glance. Three things have to hold together and each fails silently on its
 // own — an extra reference that is dropped, scaled, or attached to one side only all produce a
@@ -1299,7 +1343,7 @@ func TestComfyWorkflowQwenImage21LoadersAndDenoise(t *testing.T) {
 
 // The recipe is the published KSampler's, and the two templates agree on it.
 func TestComfyWorkflowQwenImage21RecipeIsTheTemplates(t *testing.T) {
-	r := comfyFamilyRecipes[ComfyFamilyQwenImage21]
+	r := comfyFamilyRecipeFor(ComfyFamilyQwenImage21)
 	if r.Steps != 25 || r.CFG != 1 || r.Sampler != "euler" || r.Scheduler != "simple" {
 		t.Errorf("recipe = %+v, want the shipped templates' 25 / cfg 1 / euler / simple", r)
 	}
@@ -1362,5 +1406,65 @@ func TestComfyWorkflowQwenImage21RefusesMissingFiles(t *testing.T) {
 		if _, err := comfyBuildGraph(ComfyFamilyQwenImage21, c.files, comfyGoldenParams); err == nil {
 			t.Errorf("a row with no %s built a graph", c.name)
 		}
+	}
+}
+
+// The implication the two fields owe each other (ADR 0098): editing through
+// comfyGraphQwenImageEdit is editing at a fixed denoise 1, so a row carrying the wiring must also
+// carry FixedDenoiseEdit. The reverse is deliberately NOT true — qwen-image-2.1 edits that way
+// through a builder of its own — which is exactly why they are two fields, and why the one-way
+// direction is worth pinning: a third instruction-edit topology added to the wiring and forgotten
+// here would be handed a `strength` its sampler cannot spend, and 実測 C is what that returns (the
+// same graph at denoise 0.6, unedited, with no error anywhere).
+func TestInstructionEditWiringImpliesAFixedDenoise(t *testing.T) {
+	var wired int
+	for _, r := range comfyFamilyRows {
+		if r.InstructionEdit == nil {
+			continue
+		}
+		wired++
+		if !r.FixedDenoiseEdit {
+			t.Errorf("%s carries the edit wiring but not FixedDenoiseEdit: strength would reach a"+
+				" sampler that samples at 1 regardless", r.Family)
+		}
+	}
+	if wired == 0 {
+		t.Fatal("no row carries the edit wiring, so this check measures nothing")
+	}
+	// The other direction, as the control: at least one family is a fixed-denoise edit WITHOUT the
+	// wiring, or the two fields could be collapsed again and this test would not notice.
+	var unwired int
+	for _, r := range comfyFamilyRows {
+		if r.FixedDenoiseEdit && r.InstructionEdit == nil {
+			unwired++
+		}
+	}
+	if unwired == 0 {
+		t.Error("every fixed-denoise family also carries the wiring — the two fields are the same" +
+			" question again, and comfyFamilyInstructionEdit could go back to reading the pointer")
+	}
+}
+
+// Ops and "can a size reach this family" are one declaration, not two (ADR 0098). The derivation
+// is the statement: a size only ever reaches an EmptyLatentImage, which only a generate path
+// builds.
+func TestFamilySizesFollowTheOpList(t *testing.T) {
+	for _, family := range comfyFamilies {
+		generates := false
+		for _, op := range comfyFamilyOps(family) {
+			if op == OpGenerate {
+				generates = true
+			}
+		}
+		if got := comfyFamilyHasNoSizes(family); got == generates {
+			t.Errorf("%s: ops=%v but hasNoSizes=%v", family, comfyFamilyOps(family), got)
+		}
+	}
+	// Named, so the table above cannot quietly become all-true or all-false.
+	if !comfyFamilyHasNoSizes(ComfyFamilyQwenImageEdit2511) {
+		t.Error("an edit-only family must still refuse sizes (ADR 0094 decision 4)")
+	}
+	if comfyFamilyHasNoSizes(ComfyFamilyQwenImage21) || comfyFamilyHasNoSizes(ComfyFamilySDXL) {
+		t.Error("a family with a generate path reads sizes")
 	}
 }

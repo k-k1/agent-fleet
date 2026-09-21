@@ -28,7 +28,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | —¹¹ | — | — |
 | Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | —¹¹ | — | — |
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | —¹¹ | — | — |
-| Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
 | Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —¹¹ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
 | Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | ✓ | — |
@@ -169,3 +169,12 @@ wants it installs it on demand.
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
 internal format rather than a readable transcript, so it is not the source here.
+
+¹³ 🔴 A muse session asks for no tool approvals, so there is nothing to choose to skip —
+and this is the one row where the dash means *less* safety, not a missing feature. Muse
+Code's own sandbox cannot be built inside a Workspace container (the container's security
+profile refuses it), and the flag that turns the sandbox off also leaves the session's
+filesystem and local network unrestricted: every tool call is allowed by policy before any
+approval is considered. Measured, a muse turn wrote a file outside its working copy with no
+prompt. So treat a muse session as having the same reach over this container as `shell`
+does, and read the warning above as applying to it in full.

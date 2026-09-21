@@ -155,7 +155,7 @@ MSP は 1 プロセスで複数セッションを抱えられる（`session/list
 穴を埋める唯一の材料でもある。v1 では subagent の活動を親ターン上のツール型の項目として描き、子ごとの
 ペインは作らない。
 
-### 決定 5 — サンドボックスは切る。残る門は承認である
+### 決定 5 — サンドボックスは切る。承認の門もそれと一緒に落ちる
 
 `muse serve --disable-sandbox`。実測のとおり Workspace のコンテナでは bubblewrap がサンドボックスを
 組めず（`move_mount` → EACCES）、サンドボックスが ON のまま使えないと **エージェントが走らせるシェル
@@ -168,6 +168,19 @@ Console 上では健康に見えたまま、シェルを触る仕事だけが静
 まま残す。承認モードはセッションごとにワイヤ上で選ばれ、AF は `approval/requested` に
 `approval/decide` で答え、起動時の許可選択（docs/log/76）を `untrusted` | `on-request` | `never` に
 写す。
+
+> 🔴 **実測で訂正（P2-6・2026-09-21）。「承認はこれと直交するので ON のまま残す」は誤りであり、
+> この ADR で読者が絶対に鵜呑みにしてはいけない唯一の一文である。** 承認はサンドボックスと直交して
+> いない: `--disable-sandbox` はホストの確定した権限プロファイルを
+> `filesystem.mode: "unrestricted"`（規則 0 本）・`local_command_network.mode: "enabled"` に解決し、
+> 何も制限されていないので**どのツール呼び出しも承認層に届く前に `policy_decision: "allow:policy"`
+> になる**。`approvalMode: "onRequest"` 下の実ターンで測定したところ、muse のセッションは作業コピー内の
+> `tool:bash` と、`workspaceRoot` の外にあるファイルへの書き込みの**両方**を、
+> `approval/requested` 0 件で実行した。しかも狭めることもできない: このフラグがある間、
+> `--disable-write`・`--disable-shell`・`--sandbox-network <mode>` はそのプロファイルを 1 バイトも
+> 変えない。つまりサンドボックスの免除はツールの門を一緒に持って行く。`Caps.PermissionChoice` は
+> false にし、ガイドには「muse のセッションはこのコンテナに対して `shell` と同じ届き方をする」と
+> 書いた。ワイヤ側が今も honour しているものを含む全記録は P2-6 にある。
 
 これは免除であり、ADR として免除と明記する。Workspace の中では箱そのものが境界であり、それは他の 9 種別
 ——どれも自分をサンドボックスしない——でも既に同じである。
@@ -1711,3 +1724,88 @@ stdout と stderr は 1 本のパイプ、それ以外——`Clean`・`WaitFor`�
 よってこの行は**サーバ側の全部**——状態・両 `routes.go` の 4 本・CP の許可リスト——を着地させ、
 Console 面のパッケージがカードを引き受ける。そこで P2-5 の承認カードが負っているスクリーンショット
 も一緒に取れる。
+
+### P2-6 追補: ターンでしか測れない宿題 2 件と、1 本目が代わりに見つけたもの
+
+上の Consequences には、無料の神託では答えられない 2 件が残っていた——締め付け 5 の `muse serve`
+側の同等確認と、締め付け 6 の効き目。実プロンプトを 5 本使った（利用者の許可は 4〜6 本）。1 件は
+答えが出た。もう 1 件は**測れないことが分かった**——そしてその理由は答えよりも重い。
+
+計測の道具立て（再利用できるので書き残す）: 投げ捨て `HOME` に**偽の** `~/.claude` と `~/.codex`
+マーカーを植え、`XDG_DATA_HOME` も投げ捨て側にして耐久ログを読めるようにし、`XDG_CONFIG_HOME`
+だけ利用者の**本物**の `~/.config` に向けて資格情報を複製せずに見つけさせる——複製はトークンの
+更新を持って行って元のサインインを失わせかねない。利用者の `settings.json` は一度も書いていない。
+そこに他 CLI 文脈の締め付けが入っていないことが、env 変数を唯一の差として切り出せる理由である。
+
+**✅ 宿題 1 — 締め付け 5 は `serve` でも効く。そして「論証止まり」だったのには理由があった。**
+`MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=0` では植えた `~/.claude/CLAUDE.md` のマーカーが
+耐久ログに現れ、`=1` では現れない。env 経路は `exec` からの推測ではなく `serve` の実測になった。
+
+一緒に出た方法論の発見が 2 つあり、どちらも**偽の緑**を作るものだった:
+
+- 🔴 **神託はモデルの返答ではなく耐久ログである。** 「見えている AFPROBE で始まる語を挙げよ」と
+  聞いたのに、モデルは**どちらの腕でも**マーカーを出さずに答えた。返答を読む試験なら両腕は同一に
+  見え、一度も効かせていない締め付けを「効いた」と結論していた。
+- **バナーも `serve` では神託にならない。** "Including your Claude Code and Codex personal rules"
+  は `serve` の耐久ログにはどちらの腕でも現れない（`exec` では 2 つの信号のうち 1 つだった）。
+  両腕を区別するのは植えたマーカーだけである。
+- `~/.codex/AGENTS.md` のマーカーは**どちらの腕でも**出なかった。つまり `serve` が組み立てる範囲は
+  バナーの言い方より狭い。ただし「Codex は読まれない」とは結論しない——読む側のパスを確かめて
+  いないので、「このパスではなかった」までである。
+
+**🔴 宿題 2 — 締め付け 6 は測れない。承認がそもそも起こり得ないからである。** `echo` を走らせる
+ターンは、明示的な `approvalMode: "onRequest"` の下で、`approval/requested` 0 件のままツールを
+実行した。耐久ログが理由を言っており、それはモードではない:
+`runtime.session.permission_profile_committed` は `approval: "on_request"` を記録している（AF の
+モードは受理されている）のに、ツール呼び出しには `policy_decision: "allow:policy"` が付く——承認層に
+届く前にポリシーが許している。AF の実際の起動で確定する `resolved_snapshot` はこうだった:
+
+```
+approval: "on_request"
+filesystem: { mode: "unrestricted", rules: [], workspace_roots: [], protected_metadata: false }
+local_command_network: { mode: "enabled", targets: [] }
+reviewer: "human"
+```
+
+session/start だけの 5 本（無料・ターン無し）が原因を切り出し、逃げ道を全部閉じた:
+
+| 起動 | filesystem | 規則 | ローカル網 |
+|---|---|---|---|
+| `--disable-sandbox --trust-workspace` | `unrestricted` | 0 | `enabled` |
+| `--disable-sandbox --trust-workspace --sandbox-network proxy-only` | `unrestricted` | 0 | `enabled` |
+| `--disable-sandbox --trust-workspace --disable-write` | `unrestricted` | 0 | `enabled` |
+| `--disable-sandbox --trust-workspace --disable-write --disable-shell` | `unrestricted` | 0 | `enabled` |
+| `--trust-workspace --sandbox-network restricted`（免除なし） | `managed` | 6 | `restricted` |
+
+すなわち **`--disable-sandbox` が原因の全部であり、より狭いフラグ全部を上書きする。**
+`--trust-workspace` はプロファイルを一切変えない——help の "load[s] each session workspace's skills
+and rules" どおりで、AF がこれを渡す理由はそのまま有効である。ワークスペースの信頼のせいではないか
+という疑いも 2 本目のターンが潰した: `workspaceRoot` の**完全に外**にある `/tmp` への
+`tool:write_file` も `allow:policy` になり、承認なしでファイルが書かれた。
+
+よって連鎖は閉じており、今のホスト契約の下では恒久である: 門 A の AppArmor の発見が
+`--disable-sandbox` を強制する → そのフラグが権限プロファイルを平らにする → 平らなプロファイルは
+どのツールもポリシーで許す → ポリシーで許されたツールは承認層に届かない。
+`MUSE_DISABLE_APPROVAL_JUDGE` は名前の根拠のまま設定を続け、**ここでは検証不能**のまま残る——
+「まだ検証していない」ではない。
+
+同じ 5 本から出たワイヤの小さい事実 3 つ（すべて無料）:
+
+- **`ApprovalMode` はワイヤ上 4 値**——`allowAll`・`promptUnmatched`・`onRequest`・`denyUnmatched`
+  ——で、ホスト自身の `component_ceilings.approval` は 3 値（`on_request`・`prompt_unmatched`・
+  `allow_all`）。つまり `denyUnmatched` はプロトコルにはあってこのバックエンドの上限には無い。
+  AF は 2 値だけ写し、それ以上写さない理由をコードに書いた。
+- **2 つの層がモードについて食い違う。** 開始したセッションは要求した値をそのまま返す
+  （`session.approvalMode.mode`・source `startup`）——4 値すべてで——のに、確定した強制プロファイルは
+  4 値すべてで `approval: "on_request"` と言う。どちらが支配するかは決着していない。免除の下では
+  どちらでも同じであり、AF はモードを送り続ける（費用 0 で、姿勢が変わればそのまま正しいから）。
+- `muse serve --help` が "Approval mode ... is selected on the wire, so there is no approval flag
+  here" と明言しており、AF の経路が唯一の経路であることを裏づける。
+
+**結果として着地したもの。** `Caps.PermissionChoice` は **false**——利用者に見える側、2 つの設定が
+同じ挙動になる起動操作だから。`Capabilities.Permissions` は **true のまま**: これは「ドライバが承認
+Interaction 種別を支えている」という宣言で、それは作ってあり試験もあり正しい。そして Agent
+プロセスの外に消費者が無いので、利用者に何も約束しない。承認カードと Interaction のコードは P2-5 の
+まま残す——承認を上げられる姿勢になったときにそのまま使える。`guide/ref/agents.md` は両言語に
+脚注 13 が付いた。あの表で「—」が**機能の不在ではなく安全側の薄さ**を意味する唯一の行であり、muse の
+セッションはこのコンテナに対して `shell` と同じ届き方をする。
