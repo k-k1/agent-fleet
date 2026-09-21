@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -805,6 +806,97 @@ func TestComfyWorkflowQwenImageEditMatchesGoldenFixture(t *testing.T) {
 					"overwrite the fixture and explain why in the commit.", c.family, path, got)
 			}
 		})
+	}
+}
+
+// Inpaint on an instruction-edit family (ADR 0094 decision 3, claimed after 実測 G / 実測 I). Every
+// assertion here is a way the picture comes back WRONG with no error anywhere, which is why they
+// are pinned one by one rather than left to the golden:
+//
+//   - the mask must go through a FluxKontextImageScale of its OWN. The picture's own scale node
+//     centre-crops to the nearest trained ratio; SetLatentNoiseMask only stretches. Measured on a
+//     1820x1024 input: the repainted band's edge sat 8 px from where the picture's map puts it,
+//     and routing the mask through this node moved it back (実測 I).
+//   - it must be ImageToMask on RED, not LoadImageMask. LoadImage's MASK output is `1.0 - alpha`,
+//     so an opaque black-and-white PNG arrives as an all-zero mask and repaints nothing.
+//   - the noise mask must reach the SAMPLER. A SetLatentNoiseMask that is built but not consumed
+//     is a full repaint of the whole picture, and the graph validates either way.
+func TestComfyWorkflowQwenImageEditInpaintScalesTheMaskWithThePicture(t *testing.T) {
+	for _, c := range comfyQwenEditFamilies {
+		t.Run(string(c.family), func(t *testing.T) {
+			p := comfyGoldenParams
+			p.Op, p.Images, p.Mask = OpInpaint, []string{"af-photo.png"}, "af-mask.png"
+			g, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
+			}
+			if got := g["maskimg"].Inputs["image"]; got != "af-mask.png" {
+				t.Errorf("maskimg.image = %v, want the mask file", got)
+			}
+			if cls := g["maskscale"].ClassType; cls != "FluxKontextImageScale" {
+				t.Errorf("maskscale = %q, want the same node the picture goes through — otherwise the"+
+					" mask is stretched over a frame the picture was cropped out of", cls)
+			}
+			if got := g["maskscale"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("maskimg", 0)) {
+				t.Errorf("maskscale.image = %v, want the mask's own LoadImage", got)
+			}
+			// The picture's scale node is a DIFFERENT one fed by the picture: one node for both
+			// would put the mask's pixels into the encode.
+			if got := g["scale"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("img", 0)) {
+				t.Errorf("scale.image = %v, want the picture's own LoadImage", got)
+			}
+			if cls, ch := g["mask"].ClassType, g["mask"].Inputs["channel"]; cls != "ImageToMask" || ch != "red" {
+				t.Errorf("mask = %s(channel=%v), want ImageToMask(channel=red) — alpha reads an opaque"+
+					" black-and-white PNG as an all-zero mask", cls, ch)
+			}
+			if got := g["mask"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("maskscale", 0)) {
+				t.Errorf("mask.image = %v, want the SCALED mask", got)
+			}
+			nm := g["noisemask"]
+			if nm.ClassType != "SetLatentNoiseMask" ||
+				!reflect.DeepEqual(nm.Inputs["samples"], comfyLink("enc", 0)) ||
+				!reflect.DeepEqual(nm.Inputs["mask"], comfyLink("mask", 0)) {
+				t.Errorf("noisemask = %+v, want SetLatentNoiseMask(enc, mask)", nm)
+			}
+			if got := g["ks"].Inputs["latent_image"]; !reflect.DeepEqual(got, comfyLink("noisemask", 0)) {
+				t.Errorf("ks.latent_image = %v, want the noise mask — built and not consumed repaints"+
+					" the whole picture with nothing to say so", got)
+			}
+			// Still 1: outside the mask is held by the mask, not by a partial denoise (decision 2).
+			if got := g["ks"].Inputs["denoise"]; got != 1 {
+				t.Errorf("denoise = %v, want 1", got)
+			}
+		})
+	}
+}
+
+// And an edit builds NONE of it: the four nodes appear only when the op asks for them, so the
+// golden for `op=edit` stays the graph this family has been running since P0.
+func TestComfyWorkflowQwenImageEditAddsNoMaskNodesForAPlainEdit(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op, p.Images, p.Mask = OpEdit, []string{"af-photo.png"}, "af-mask.png"
+	g, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, p)
+	if err != nil {
+		t.Fatalf("comfyBuildGraph() = %v", err)
+	}
+	for _, id := range []string{"maskimg", "maskscale", "mask", "noisemask"} {
+		if _, ok := g[id]; ok {
+			t.Errorf("an edit built %q — the mask only belongs to inpaint", id)
+		}
+	}
+	if got := g["ks"].Inputs["latent_image"]; !reflect.DeepEqual(got, comfyLink("enc", 0)) {
+		t.Errorf("ks.latent_image = %v, want the plain encode", got)
+	}
+}
+
+// An inpaint with no mask is refused in the caller's language rather than sampled as a full
+// repaint of the picture — the same refusal comfyRequestLatent gives the other families.
+func TestComfyWorkflowQwenImageEditInpaintNeedsAMask(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op, p.Images = OpInpaint, []string{"af-photo.png"}
+	_, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, p)
+	if err == nil || !strings.Contains(err.Error(), "mask") {
+		t.Fatalf("comfyBuildGraph() = %v, want a refusal naming the mask", err)
 	}
 }
 

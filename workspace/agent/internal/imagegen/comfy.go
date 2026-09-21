@@ -223,15 +223,19 @@ func appendMissing(have, add []string) []string {
 var comfyDefaultOps = []Op{OpGenerate, OpEdit, OpInpaint}
 
 // comfyFamilyOps is ADR 0094 decision 3: which ops a family's template can build at all. Every
-// family through krea2 has an image-to-image path (LoadImage + VAEEncode, plus
-// SetLatentNoiseMask for a mask) alongside its plain generate — Qwen-Image-Edit is EDIT ONLY.
-// It has no path that starts from an empty latent (TextEncodeQwenImageEditPlus with no image
-// input is not a documented use of the node), and inpaint is left unclaimed on purpose: a mask
-// could be wired with SetLatentNoiseMask, but nobody on this deployment has run it, and ADR 0072
-// already paid the tuition for advertising an untested op as SD3.5 (decision 3).
+// family through krea2 has an image-to-image path (LoadImage + VAEEncode, plus SetLatentNoiseMask
+// for a mask) alongside its plain generate — Qwen-Image-Edit has NO GENERATE. It has no path that
+// starts from an empty latent: TextEncodeQwenImageEditPlus with no image input is not a documented
+// use of the node.
+//
+// `inpaint` was unclaimed until somebody ran it, which is decision 3's own rule and the one ADR
+// 0072 paid for on SD3.5. It was run on 2026-09-21 (実測 G): the sign prompt sent with a mask that
+// does NOT cover the sign left the sign unchanged, where the same request without a mask changes
+// it — so the mask really is a gate even at a full denoise. comfyQwenEditNoiseMask is the wiring,
+// and it is not the same two nodes the other families use.
 func comfyFamilyOps(family comfyFamily) []Op {
 	if comfyFamilyInstructionEdit(family) {
-		return []Op{OpEdit}
+		return []Op{OpEdit, OpInpaint}
 	}
 	return comfyDefaultOps
 }
@@ -1034,6 +1038,20 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 			mask, err := p.uploadImage(ctx, conn, req, req.Mask)
 			if err != nil {
 				return Result{}, err
+			}
+			// 🔴 The instruction-edit families, and only they, need the mask to be the picture's
+			// own size. Their template sends BOTH through FluxKontextImageScale so that the crop
+			// it applies is the same for both (comfyQwenEditNoiseMask), and that node picks its
+			// target from the width and height it is given — a mask of some other shape resolves a
+			// different target and lands somewhere else, silently. Every other family stretches the
+			// mask over the whole frame with no crop, where a different size is still "the same
+			// region of the picture" and has always been allowed.
+			if comfyFamilyInstructionEdit(family) && mask.width > 0 && mask.height > 0 &&
+				(mask.width != params.Width || mask.height != params.Height) {
+				return Result{}, fmt.Errorf("the %s family needs the mask to be the input picture's own size"+
+					" (%dx%d), and this one is %dx%d — its frame is rescaled from the picture's aspect ratio,"+
+					" so a mask of another shape would be applied to a different area than the one drawn",
+					family, params.Width, params.Height, mask.width, mask.height)
 			}
 			params.Mask = mask.name
 		}
