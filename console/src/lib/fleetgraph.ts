@@ -67,8 +67,8 @@ export const normalizeState: GraphNormalizeState = (raw) => {
 };
 
 // The coarse band a state paints. Frozen shape (types/fleetgraph.ts comment) —
-// "stopped" and "archived" are NOT reachable through this table: they are
-// assigned directly by the builder for the stretch outside a lane's runs.
+// "stopped" is NOT reachable through this table: the builder assigns it directly
+// for the stretch between (and after) a lane's runs.
 export const segmentKindByState: SegmentKindByState = {
   working: "active",
   compacting: "active",
@@ -371,9 +371,13 @@ function segmentsForLane(
     if (run.t1 === null) continue; // still open: nothing after it to fill
     const isLast = i === runs.length - 1;
     if (isLast) {
-      if (presence === "archived") pushClippedKind(out, laneId, run.t1, to, "archived", from, to);
-      else if (presence === "stopped") pushClippedKind(out, laneId, run.t1, to, "stopped", from, to);
-      // presence === "gone": the line ends at run.t1, nothing drawn after it.
+      // Only "stopped" fills the stretch to the right edge. An ARCHIVED lane draws
+      // nothing past its × (decision 12's 2026-09-21 amendment, with the dashed tail the
+      // view used to add): a lane somebody folded away should not keep painting a band
+      // across the whole figure as loudly as a live one. That it is archived rather than
+      // gone is said in words, by the state chip in the label column.
+      if (presence === "stopped") pushClippedKind(out, laneId, run.t1, to, "stopped", from, to);
+      // presence === "archived" / "gone": the line ends at run.t1, nothing after it.
     } else {
       pushClippedKind(out, laneId, run.t1, runs[i + 1].t0, "stopped", from, to);
     }

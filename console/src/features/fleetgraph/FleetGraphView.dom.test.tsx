@@ -161,13 +161,46 @@ describe("FleetGraphView", () => {
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-edge-pt").length).toBeGreaterThan(0);
   });
 
-  it("clicking a known lane opens the session it names", async () => {
+  it("the NAME opens the session — the label column is the way in (ADR 0096 decision 17)", async () => {
     await render();
     const row = [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) => el.textContent?.includes("fleet-graph kickoff"));
     expect(row).toBeTruthy();
     await act(async () => row!.click());
     expect(openSessionFromList).toHaveBeenCalledTimes(1);
     expect(openSessionFromList.mock.calls[0][0]).toEqual(sessRoot);
+  });
+
+  it("clicking the LANE in the figure opens nothing — the canvas is a surface you grab", async () => {
+    await render();
+    const lanes = [...host.querySelectorAll<SVGGElement>("svg.fgraph-svg .fgraph-lane-hit")];
+    expect(lanes.length).toBeGreaterThan(0); // the rows are drawn; it is the click that is gone
+    await act(async () => {
+      for (const g of lanes) g.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      // The wide invisible band is what a finger actually lands on, so press that too.
+      for (const hit of host.querySelectorAll("svg.fgraph-svg .fgraph-hit")) {
+        hit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      }
+    });
+    expect(openSessionFromList).not.toHaveBeenCalled();
+  });
+
+  it("an archived lane draws nothing past its × — no dashed tail, no grey band", async () => {
+    await render();
+    // fx-child2 is the archived lane in the fixture (death, then archived:true).
+    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-tail.archived")).toHaveLength(0);
+    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-seg.archived")).toHaveLength(0);
+    // A STOPPED lane keeps its dashed tail: the amendment is about archived alone.
+    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-tail.stopped").length).toBeGreaterThan(0);
+  });
+
+  it("the activity band is coloured by STATE, with no per-kind colour written onto it", async () => {
+    await render();
+    const bands = [...host.querySelectorAll<SVGRectElement>("svg.fgraph-svg .fgraph-seg")];
+    expect(bands.length).toBeGreaterThan(0);
+    // The kind colour used to arrive as an inline `--seg-color` custom property on the
+    // "active" band. Its absence is what says the band now reads from the state palette
+    // (.fgraph-seg.active → --accent), the same one the row's chip uses.
+    for (const b of bands) expect(b.getAttribute("style")).toBeNull();
   });
 
   it("hides archived lanes when the toggle turns them off, without touching React state", async () => {

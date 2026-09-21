@@ -4,8 +4,10 @@ English | [日本語](0096-fleet-session-graph.ja.md)
 
 - Status: **adopted, implemented** (P0–P2, 2026-09-20). P1 ran as three parallel lanes (S-BE,
   S-LOGIC, S-VIEW) and P2 merged them. Five post-ship UI adjustments **added the ways in to
-  decision 10 and decisions 14–16** (2026-09-20; measurements in
-  [docs/101](../log/101-fleet-session-graph.md) §101.11). What is left is P3 (filter by
+  decision 10 and decisions 14–16** (2026-09-20, §101.11), and a further pass **amended
+  decisions 11 and 12, supplemented 16 and added decision 17** (2026-09-21, §101.12);
+  the measurements for both are in [docs/101](../log/101-fleet-session-graph.md).
+  What is left is P3 (filter by
   conversation id, the cross-tenant overview, collapsing a spawn's excerpt onto its arrow) and
   measuring whether the activity ledger needs write buffering. The design and the measurements are
   [docs/101](../log/101-fleet-session-graph.md).
@@ -340,6 +342,18 @@ graph (`lib/gitgraph.ts` / `features/scm/CommitGraph.tsx`) is the structural tem
 plus inline SVG — the same choice as 0027 decision 1. Colours come from the kind palette, with every twin
 grep-checked (memory `kind-color-css-checklist`).
 
+🔥 **The activity band, however, is coloured by STATE and not by kind** (user's call, the 2026-09-21
+amendment). It takes `stateInfo()`'s own colours: **working = `--accent`, waiting = `--warn`, idle =
+`--muted2`**. The first version painted that one band in the agent's kind colour, which **disagreed with
+the state chip on the same row** (decision 15): a codex lane sitting on a question drew a green bar next
+to an amber chip — the figure and the chip saying different things about the same instant. **Which agent
+it is stays readable** from the lane LINE (`--lane-color`) and the kind icon in the label column.
+- Consequence (intended): the band covers the line, so **the kind colour is largely invisible over a
+  stretch the session was working**. Reading "who is running" off a colour is the label column's job now.
+- Check it with numbers, not eyes: have **the browser resolve** the band's `fill` and
+  `.session-state.working`'s `color` and compare them (`console/scripts/fleetgraph/check.mjs`). A test
+  that compared two `var()` names passes while the two variables point at different colours.
+
 ### Decision 12 — the line style says whether it is still there: stopped is dashed, archived is faintly dashed, gone ends at the ×
 
 A lane's horizontal line is drawn four ways (the user's instruction, 2026-09-20).
@@ -348,10 +362,19 @@ A lane's horizontal line is drawn four ways (the user's instruction, 2026-09-20)
 |---|---|---|
 | Running | solid, with the activity band | running now (pulses at the right edge) |
 | Stopped (resumable) | **dashed** from the × to the right edge | still listed. **It can be resumed** |
-| Archived | faintly dashed | folded away, restorable |
+| Archived | **ends at the ×** (no line and no band past it) | folded away; that it is restorable is said **in words by the label column's chip** |
 | Pruned / deleted | **ends** at the × (the line does not continue) | gone; only the lineage line remains |
 
-**One rule: dashed = still there (resumable); ending = gone.** In every case the × is not "when it ended"
+🔥 **Archived moved from "faintly dashed" to "ends there" on 2026-09-21** (user's instruction), for two
+reasons. ① **A lane somebody folded away was still drawn to the right-hand edge** — taking as much of the
+figure's width as a live one, with both the faint dashes and a grey `SegmentKind: "archived"` band. ② **The
+line style no longer has to carry that distinction**: decision 15 put a state chip in the label column, and
+it says "archived" in a word, which reads more reliably than the difference between two weights of dash.
+**A stopped (resumable) lane keeps its dashes**: that one says something you can act on right now.
+`"archived"` was **removed from `SegmentKind`** — a vocabulary word nothing produces any more leaves a
+branch in the view that can never run.
+
+**One rule: dashed = still there (resumable); ending = gone, or folded away.** In every case the × is not "when it ended"
 but "**when its end was first observed**" (`Meta.StoppedAt` is filled lazily — the same property as the
 observation story in decision 3), and the figure says so in the ×'s tooltip.
 
@@ -464,6 +487,44 @@ vertical included, into a time pan (user's report, 2026-09-20). Both break when 
 - 🔥 **An empty window is a place, not an error state.** Replacing the whole figure with an empty-state
   card took the axis (where am I?) and the gesture handlers (how do I get back?) with it — one flick left
   a pane whose only working control was "reset". The body is always drawn; the card sits under the axis.
+
+**The 2026-09-21 supplement — make it a surface you grab** (user's instruction).
+
+- **A drag moves both axes.** Sideways is time; up and down scrolls the lane list, by moving `scrollTop`
+  by hand — the canvas carries `touch-action: none` (below), so the browser no longer does it for us.
+- **Two fingers pinch the time axis.** The **time axis only** (user's call): scaling the row height too
+  would drag the label column, the chips and the fold controls along with it.
+- 🔥 **`touch-action` is `none`, not `pan-y`.** A gesture the browser keeps for itself is a gesture it also
+  **stops delivering as pointer events**. Handling both the pinch and the vertical drag means taking the
+  whole surface. **The label column stays `auto`**, so an ordinary flick over the names still scrolls
+  natively — this does not take everything.
+- 🔥 **It collides with the phone's "swipe left to change session".** The canvas opts out by name with
+  `data-no-swipe` (`app/swipeGuard.ts`). Escaping by passing for a horizontal scroller instead would make
+  the decision depend on what happens to be in the figure.
+- **The window's arithmetic moved to `features/fleetgraph/viewport.ts`** (`clampWindow`, `panByPx`,
+  `zoomAt`, `pinchSpanFactor`), because **that is where the signs collect**: a wheel moves the VIEWPORT, a
+  drag moves the CONTENT, and a pinch's finger ratio is INVERTED to become a span factor. Three gestures,
+  three directions — and **getting one wrong only ever looks like "it does not move"**, because the clamp
+  pins the window against "now". Each direction has a failing test.
+- **Zoom is anchored under the pointer or the fingers** (`zoomAt`'s `fraction`). Fixed at the right edge,
+  the instant being pinched slides away from the fingers. The **clamp still beats the anchor**: when the
+  right edge would pass "now", the anchor is what gives.
+
+### Decision 17 — a lane in the figure does not open on click; the NAME is what opens a session
+
+The canvas's lanes (the line, the activity band, the row's hit band) **open nothing on click or tap**
+(user's instruction, 2026-09-21). **The label column's name opens it**, still by decision 9's rule: beside
+when there is room, a new pane on Ctrl/⌘ or the middle button.
+
+- **The reason is decision 16.** The canvas became **a surface you grab**. When the surface you grab and
+  the surface you open are the same, **a finger meaning to pan opens a session** — and since that opens a
+  pane, it also loses the place in the figure you were reading. The capture-phase click swallow already
+  covers a press that MOVED; a press that does not move looks exactly like a deliberate tap, so the two
+  roles are split by place instead.
+- **Arrows stay clickable** (they open a conversation or a lane). Aiming at a thin line is deliberate and
+  cannot be confused with a pan.
+- **The row's hover highlight stays.** It says which row the pointer is on, not that the row can be
+  pressed, and it is what lets the eye follow one lane across a dense figure.
 
 ## Options rejected
 

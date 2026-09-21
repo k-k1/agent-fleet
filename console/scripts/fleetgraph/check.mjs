@@ -17,7 +17,11 @@
 //   rows      label row i is still centred on lane line i (they drifted once before)
 //   chips     every lane's state chip is inside the label column, not spilling over it
 //   fold      "+" removes the family's rows and the parent's row says how many
-//   gestures  a vertical wheel scrolls the lane list; a horizontal one pans time
+//   gestures  a vertical wheel scrolls the lane list; a horizontal one pans time; a drag
+//             moves both axes; two fingers pinch the time axis
+//   colours   the activity band is the STATE palette, the same one the row's chip reads
+//   archived  a folded-away lane draws nothing past its ×
+//   lane tap  the lane opens nothing; the name in the label column still does
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -134,6 +138,48 @@ try {
   check(geom.chips.length === geom.labels.length - erased, "every lane row but the erased one carries a state chip", `${geom.chips.length} chips / ${geom.labels.length} rows, ${erased} erased`);
   check(erased > 0, "the fixture really has an erased lane (or the line above proves nothing)", `${erased}`);
 
+  // --- the band's palette (decision 11's amendment) ---------------------------------
+  // Resolved by the BROWSER, from both ends: the band's computed fill against the colour
+  // the working state chip computes. A test that compared two CSS var() names would pass
+  // while the two variables pointed at different colours.
+  const palette = await cdp.evaluate(`(() => {
+    const cs = (el) => el && getComputedStyle(el);
+    const band = document.querySelector("svg.fgraph-svg .fgraph-seg.active");
+    const probe = document.createElement("span");
+    probe.className = "session-state working";
+    probe.style.position = "absolute";
+    document.body.appendChild(probe);
+    const want = cs(probe).color;
+    probe.remove();
+    const waiting = document.querySelector("svg.fgraph-svg .fgraph-seg.waiting");
+    const probe2 = document.createElement("span");
+    probe2.className = "session-state question";
+    probe2.style.position = "absolute";
+    document.body.appendChild(probe2);
+    const wantWaiting = cs(probe2).color;
+    probe2.remove();
+    return {
+      active: band ? cs(band).fill : "",
+      want,
+      waiting: waiting ? cs(waiting).fill : "",
+      wantWaiting,
+      inlineStyled: [...document.querySelectorAll("svg.fgraph-svg .fgraph-seg")].filter((e) => e.getAttribute("style")).length,
+    };
+  })()`);
+  check(!!palette.active && palette.active === palette.want, "the working band is the same colour as the working state chip", `band ${palette.active} vs chip ${palette.want}`);
+  check(!palette.waiting || palette.waiting === palette.wantWaiting, "and the waiting band matches the question chip", `band ${palette.waiting} vs chip ${palette.wantWaiting}`);
+  check(palette.inlineStyled === 0, "no band carries an inline per-kind colour any more", `${palette.inlineStyled} styled`);
+
+  // --- archived draws nothing past its × (decision 12's amendment) -------------------
+  const archived = await cdp.evaluate(`(() => ({
+    tails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.archived").length,
+    bands: document.querySelectorAll("svg.fgraph-svg .fgraph-seg.archived").length,
+    stoppedTails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.stopped").length,
+    chips: [...document.querySelectorAll(".fgraph-label .session-state")].map((e) => e.textContent.trim()),
+  }))()`);
+  check(archived.tails === 0 && archived.bands === 0, "an archived lane draws no dashed tail and no grey band", `${archived.tails} tails / ${archived.bands} bands`);
+  check(archived.stoppedTails > 0, "a STOPPED lane still dashes to the right edge", `${archived.stoppedTails} stopped tails`);
+
   if (SHOT) await shot("");
 
   // --- the axis survives scrolling -------------------------------------------------
@@ -191,6 +237,82 @@ try {
   check(afterDrag.win !== afterHorizontal && afterDrag.win.includes("|"), "dragging the canvas pans the time window, and the scale survives an empty stretch", `${afterHorizontal} -> ${afterDrag.win}`);
   check(afterDrag.lanes === 0 ? afterDrag.empty : true, "an empty window says so, without losing the axis", `${afterDrag.lanes} lanes, empty-state=${afterDrag.empty}`);
   check(afterDrag.panes === panesBefore, "the drag did not open the lane it started on", `${panesBefore} -> ${afterDrag.panes} panes`);
+
+  // A plain, motionless press on a lane opens nothing either (ADR 0096 decision 17): the
+  // canvas is a surface you grab, and the NAME is what opens a session.
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: cx, y: cy, button: "left", clickCount: 1 });
+  await sleep(400);
+  const afterTap = await cdp.evaluate(`(() => ({ panes: document.querySelectorAll(".pane").length, graph: !!document.querySelector(".fgraph") }))()`);
+  check(afterTap.panes === panesBefore && afterTap.graph, "a tap on a lane opens nothing", `${afterTap.panes} panes, graph still up = ${afterTap.graph}`);
+
+  // --- a drag moves BOTH axes -------------------------------------------------------
+  await cdp.evaluate(`document.querySelectorAll(".fgraph-nav button")[2].click()`);
+  await sleep(500);
+  if (overflows) {
+    await cdp.evaluate(`document.querySelector(".fgraph-body").scrollTop = 0`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: cx, y: cy + 30, button: "left", clickCount: 1 });
+    for (let i = 1; i <= 5; i++) {
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: cx, y: cy + 30 - i * 12, button: "left", buttons: 1 });
+    }
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: cx, y: cy - 30, button: "left", clickCount: 1 });
+    await sleep(300);
+    const dragged = await cdp.evaluate(`document.querySelector(".fgraph-body").scrollTop`);
+    check(dragged > 0, "dragging up scrolls the lane list (the drag owns both axes)", `scrollTop=${dragged}`);
+    await cdp.evaluate(`document.querySelector(".fgraph-body").scrollTop = 0`);
+  } else {
+    skip("dragging up scrolls the lane list");
+  }
+
+  // --- two fingers pinch the time axis ------------------------------------------------
+  // Real touch points over CDP, not a synthesized wheel: the pinch is recognised from two
+  // POINTER streams, and `touch-action: none` on the canvas is what keeps the browser from
+  // eating them first. A check driven through the wheel would prove neither.
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+  await cdp.evaluate(`document.querySelectorAll(".fgraph-nav button")[2].click()`);
+  await sleep(500);
+  // The window's span in minutes, read off the axis: the captions are evenly spaced, so
+  // the gap between two of them times the number of gaps IS the span. Comparing the end
+  // captions alone would let a PAN pass as a zoom — they change either way.
+  const spanOf = `(() => {
+    // 0 = "cannot be read here", which the check reports rather than dividing by it. Past
+    // a 3-day span the captions become dates instead of HH:MM (axisTicks), so a run that
+    // zoomed the wrong way lands here — and "0 min" says so, where NaN would not.
+    const mins = [...document.querySelectorAll(".fgraph-axis-label")].map((e) => {
+      // \\d, not \d: this whole expression is a TEMPLATE LITERAL in this file, and an
+      // unrecognised escape there collapses to the bare letter — the regex reached the
+      // page as /^(d{1,2}):(d{2})$/ and matched nothing (measured: every span read 0).
+      const m = /^(\\d{1,2}):(\\d{2})$/.exec(e.textContent.trim());
+      return m ? Number(m[1]) * 60 + Number(m[2]) : NaN;
+    });
+    if (mins.length < 2 || mins.some((n) => Number.isNaN(n))) return 0;
+    let gap = mins[1] - mins[0];
+    if (gap < 0) gap += 24 * 60;            // the axis crossed midnight
+    return Math.round(gap * (mins.length - 1));
+  })()`;
+  const beforePinch = await cdp.evaluate(spanOf);
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: cx - 60, y: cy, id: 1 }, { x: cx + 60, y: cy, id: 2 }],
+  });
+  for (let i = 1; i <= 6; i++) {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: cx - 60 - i * 25, y: cy, id: 1 }, { x: cx + 60 + i * 25, y: cy, id: 2 }],
+    });
+    await sleep(20);
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await sleep(500);
+  const afterPinch = await cdp.evaluate(spanOf);
+  const pinchedAxis = await cdp.evaluate(`[...document.querySelectorAll(".fgraph-axis-label")].map((e) => e.textContent).join("|")`);
+  check(
+    beforePinch > 0 && afterPinch > 0 && afterPinch < beforePinch,
+    "spreading two fingers zooms the time axis IN (the span shrinks)",
+    `${beforePinch} min -> ${afterPinch} min`,
+  );
+  check(!!pinchedAxis && pinchedAxis.includes("|"), "and the axis still reads after the pinch", pinchedAxis);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
 
   // --- the family fold ---------------------------------------------------------------
   // Back to the default window first: the gesture checks above deliberately left it in the
