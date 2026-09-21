@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -35,6 +36,37 @@ const (
 	mcpHelperEnvFlag    = "LCPP_MCP_TEST_HELPER"
 	mcpHelperEnvPidFile = "LCPP_MCP_TEST_HELPER_PIDFILE"
 )
+
+// TestMain guards EVERY test in this package, not just this file's own, against a hazard
+// mcpTestHome's own doc comment explains in full: mcpreg.ForSession(session.KindLcpp) always
+// includes the "af" builtin (BuiltinAF.ready is unconditionally true), and driver.go's runTurn
+// dials whatever it returns — so ANY test in this package that runs a turn is affected, whether
+// or not its author knew MCP was involved at all.
+//
+// Two defenses, not one:
+//   - mcpServersForSession (mcp.go) is stubbed to return no servers at all, package-wide, by
+//     default. This is what makes existing driver_test.go tests see EXACTLY the same records
+//     they did before this PR (a real af that a test can't reach would still leave a NoteMCPError
+//     record behind, breaking their exact-record-count assertions, even once "no real spawn"
+//     is handled — this was found live: the first fix here only closed the recursive-spawn
+//     hazard below and PASSED locally, then broke driver_test.go's own record-count checks
+//     because af now legitimately, deterministically fails to connect in any test run).
+//   - AF_AGENT_INSTALLED_BIN=/bin/false is still set, belt and suspenders, for the few tests in
+//     THIS file that restore the real mcpServersForSession (mcpTestHome) to exercise it.
+//
+// Measured live: PR #869's first CI run had no /usr/local/bin/workspace-agent installed, so
+// paths.ConfigExePath() fell back to the volatile path — the TEST BINARY ITSELF — and every one
+// of driver_test.go's pre-existing tests (none of which know anything about MCP) exec'd this
+// same test binary as "af" with no -test.run filter: a full, unfiltered `go test` re-entry FROM
+// INSIDE a test, recursively. All ten blocked (no mcpSyncBudget existed yet at the time) and
+// failed. Setting both escape hatches once here, for the whole binary, before any test runs —
+// rather than per test — is the only way this stays closed for every test in this package,
+// present and future, not just the ones a change happens to touch.
+func TestMain(m *testing.M) {
+	os.Setenv("AF_AGENT_INSTALLED_BIN", "/bin/false")
+	mcpServersForSession = func(string) ([]mcpreg.ServerDef, error) { return nil, nil }
+	os.Exit(m.Run())
+}
 
 // TestHelperProcess is the trampoline: a normal `go test` run returns immediately (the env
 // flag is unset), so this adds no visible test of its own.
@@ -163,30 +195,37 @@ func registerFakeMCPServer(t *testing.T, name, pidFile string) {
 	}
 }
 
-// mcpTestHome is testHome plus the isolation every test in this file needs on top of it:
-// mcpreg.ForSession(session.KindLcpp) ALWAYS includes the builtin "af" server (builtin.go's
-// BuiltinAF.ready is unconditionally true, and knownKinds/ServedKinds now list lcpp — see this
-// PR's own def.go/materialize.go changes) — there is no opt-out for a builtin (compose's own
-// opted map only ever applies to TENANT rows). For every other served kind that is harmless: af
-// only gets WRITTEN into a config file, and it is the real CLI's own choice whether to ever
-// launch it. lcpp is different — mcp.go's syncMCPServers calls mcpc.Manager.Sync, which DIALS
-// (execs) every returned def immediately, every turn. Left alone, that would exec
-// paths.ConfigExePath() — the real installed workspace-agent binary in this dev container, or
-// (worse, in a CI container with none installed) THIS TEST BINARY ITSELF, which would run as a
-// plain, unfiltered `go test` invocation and execute every test in this package all over again.
-// AF_AGENT_INSTALLED_BIN overrides that resolution (paths.InstalledExePath's own env escape
-// hatch) to /bin/false: a real, harmless binary that starts and exits(1) immediately, so Sync
-// gets a fast, deterministic connect failure for "af" instead of spawning anything real.
+// mcpTestHome is testHome plus AF_SECRET_KEY isolation (mcpreg.Create needs both). It does NOT
+// set AF_AGENT_INSTALLED_BIN itself — TestMain (above) already does that once for the whole
+// package, which is what makes it safe for the pre-existing driver_test.go tests too, not just
+// this file's own.
+//
+// Why the isolation is needed at all: mcpreg.ForSession(session.KindLcpp) ALWAYS includes the
+// builtin "af" server (builtin.go's BuiltinAF.ready is unconditionally true, and
+// knownKinds/ServedKinds now list lcpp — this PR's own def.go/materialize.go changes) — there is
+// no opt-out for a builtin (compose's own opted map only ever applies to TENANT rows). For every
+// other served kind that is harmless: af only gets WRITTEN into a config file, and it is the
+// real CLI's own choice whether to ever launch it. lcpp is different — mcp.go's syncMCPServers
+// calls mcpc.Manager.Sync, which dials (execs) a def it does not already hold an open connection
+// for. Left alone, that would exec paths.ConfigExePath() — the real installed workspace-agent
+// binary in this dev container, or (in a CI container with none installed, as PR #869's own
+// first CI run measured) THIS TEST BINARY ITSELF, recursively.
 func mcpTestHome(t *testing.T) {
 	t.Helper()
 	testHome(t)
 	t.Setenv("AF_SECRET_KEY", "")
-	t.Setenv("AF_AGENT_INSTALLED_BIN", "/bin/false")
+	prev := mcpServersForSession
+	mcpServersForSession = mcpreg.ForSession
+	t.Cleanup(func() { mcpServersForSession = prev })
 }
 
-// TestMCPToolsAbsentWithNoServerEnabled is the acceptance condition's own baseline: with no MCP
-// server enabled, the tools sent to the engine are unaffected (no mcp__ prefixed entries), and
-// the turn behaves exactly as driver_test.go's plain TestDriverSendPersistsTurnAndCompletes.
+// TestMCPToolsAbsentWithNoServerEnabled is the acceptance condition's own baseline, but against
+// the REAL mcpreg.ForSession (mcpTestHome, unlike every other package test, restores it) rather
+// than TestMain's default stub: with no user server registered, "af" is still the one server
+// ForSession always returns (BuiltinAF.ready is unconditionally true), and it fails to connect
+// (AF_AGENT_INSTALLED_BIN=/bin/false) — the tools sent to the engine must still carry no mcp__
+// prefixed entries, proving an unreachable af never leaks a half-built tool into the model's own
+// list.
 func TestMCPToolsAbsentWithNoServerEnabled(t *testing.T) {
 	mcpTestHome(t)
 	var gotTools []harness.ToolDef
@@ -416,5 +455,75 @@ func waitForPidFile(t *testing.T, path string) int {
 			t.Fatalf("timed out waiting for %s", path)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestMCPUnreachableServerDoesNotSlowDownLaterTurns is the negative control sikdmnv's review
+// asked for: a server that never connects must not keep costing every future turn a real
+// connect attempt. `sort` is the fake server here (not runFakeMCPServer's own trampoline):
+// launched as a stdio child, it reads and buffers stdin but writes NOTHING until stdin closes
+// (unlike `cat`, which echoes immediately — tried first, and it back-fires: cat's own echo of
+// the client's request bounces back through dispatch's request/response split in stdio.go as a
+// bogus "response" carrying the client's own auto-reply error code, -32601, which the era
+// detection in handshake reads as a legitimate legacy-era signal and the handshake proceeds
+// down a different path entirely instead of ever timing out). `sort` stays silent for the whole
+// handshake wait — a real, budget-bounded timeout — and DOES exit the moment stdin closes
+// (unlike a genuinely hung process), so this test is not at the mercy of mcpc's unexported
+// stdioKillGrace escalation either (mcpSyncBudget's own doc comment explains why that would
+// otherwise add a fixed few seconds regardless of any shrinking done here).
+func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
+	mcpTestHome(t)
+	sortBin, err := exec.LookPath("sort")
+	if err != nil {
+		t.Skipf("sort not found: %v", err)
+	}
+
+	oldBudget, oldBackoff := mcpSyncBudget, mcpSyncBackoff
+	mcpSyncBudget = 150 * time.Millisecond
+	mcpSyncBackoff = 10 * time.Second // long enough to still be cooling down for turn 2 below
+	t.Cleanup(func() { mcpSyncBudget, mcpSyncBackoff = oldBudget, oldBackoff })
+
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "hangs", Transport: mcpreg.TransportStdio, Command: sortBin,
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindLcpp},
+	}); err != nil {
+		t.Fatalf("mcpreg.Create: %v", err)
+	}
+
+	client := &scriptedClient{turns: []harness.Turn{{Content: "one"}, {Content: "two"}}}
+	wireEngine(t, client)
+
+	h, err := NewDriver().Resume(testMeta(t, "sess-mcp-hang"))
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	turnDuration := func(prompt string) time.Duration {
+		t.Helper()
+		start := time.Now()
+		if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		waitState(t, h, agents.TurnCompleted, agents.TurnFailed)
+		return time.Since(start)
+	}
+
+	first := turnDuration("one")
+	second := turnDuration("two")
+
+	// The first turn genuinely pays (close to) the shrunk handshake budget — a sanity check
+	// that this test is exercising the timeout path at all, not silently failing fast for an
+	// unrelated reason (e.g. "sort" not being found would fail Resume/Create above instead).
+	if first < mcpSyncBudget/2 {
+		t.Fatalf("first turn = %v, expected it to pay close to the sync budget (%v) — is this test actually hitting the connect timeout?", first, mcpSyncBudget)
+	}
+	// ...and mcpSyncBudget actually CAPS that wait — without it, the first turn would instead
+	// pay mcpc's own uncapped defaultHandshakeTimeout (10s) against this same silent server.
+	if first > 10*mcpSyncBudget {
+		t.Fatalf("first turn = %v, expected it capped near the sync budget (%v) — is syncMCPServers still wrapping Sync in a timeout?", first, mcpSyncBudget)
+	}
+	// The second turn must be backed off entirely — no connect attempt, so no handshake wait.
+	if second >= first/2 {
+		t.Fatalf("second turn (%v) was not meaningfully faster than the first (%v) — a still-broken server should have been skipped by backoff, not retried", second, first)
 	}
 }

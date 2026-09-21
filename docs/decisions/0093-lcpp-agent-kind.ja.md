@@ -701,6 +701,58 @@ import する非テストのファイルは 0 件・`driver.go:481` は `harness
 `AF_AGENT_INSTALLED_BIN=/bin/false` によるテスト側の無害化（テストバイナリ自身の再帰 re-exec を防ぐ
 ため）はこの訂正と無関係に必要——そちらは変えていない。
 
+🔴🔴 **本物の製品欠陥（`sikdmnv` の指摘、CI で実測、2026-09-21）: 接続できないサーバはターンを毎回遅くする
+——上の訂正は「成功する場合」の話で、「失敗する場合」は別の欠陥として残っていた。** PR #869 の CI 初回
+実行（run 35614081914・`workspace-agent` ジョブ）で `lcpp` の**既存試験 10 本が全滅**した:
+`/usr/local/bin/workspace-agent` が無い CI では `paths.ConfigExePath()` が **volatile な `ExePath()`
+（＝テストバイナリ自身）にフォールバック**し、`af` の `Command` がテストバイナリ自身を指す——`dialStdio`
+がそれを `-test.run` フィルタ無しで exec し、**テストの中からパッケージ全体の `go test` を再帰的に
+起動する**格好になった。ログの `mcpc: af: context deadline exceeded` は、そのまま返ってこない子を
+10 秒のハンドシェイク既定値まで待った跡。ローカルは `/usr/local/bin/workspace-agent` が実在し速く
+失敗する（＝速く"成功"に見える）ため緑だった、という**環境差**。
+
+指摘の核心は環境差の指摘だけでは終わらない: `runTurn` は毎ターン `syncMCPServers` を同期で呼び、
+接続に失敗したサーバは `mcpMgr.servers` に入らないので**次のターンでも同じ `toConnect` に入り、また
+満額のハンドシェイク待ちを払う**。「spawn はセッション 1 回」は接続が**成功する**場合の性質であって、
+**失敗し続けるサーバがある配備では、`lcpp` の毎ターンが推論の前に接続タイムアウトぶん止まる**——
+これは実装時から存在した本物の欠陥で、CI がたまたま最初に踏んだだけだった。
+
+対応（PR #869 への追補コミット、3 点）:
+
+1. **`mcpSyncBudget`（既定 3 秒）**: `syncMCPServers` が `mcpMgr.Sync` に渡す `ctx` を
+   `context.WithTimeout(ctx, mcpSyncBudget)` で包み、定義側の `TimeoutMS` がどれだけ長くても
+   **セッション側の上限として**上書きする。🔴 ただし stdio で「接続は受けるが応答も stdin close にも
+   応じない」種類のハングには**完全な上限にならない**: `mcpc.Connect` はハンドシェイク失敗後
+   `Close()` を呼ぶが、そちらは `ctx` を受け取らず `stdio.go` の非公開 `stdioKillGrace`（既定 3 秒）
+   で `Kill()` に昇格するまで独自に待つ——この尾は budget を縮めても縮まらない。それでも無制限より
+   大幅に良く、かつ backoff（次点）で最悪でも 30 秒に 1 回しか払わない。
+2. **`mcpFailures`（backoff、既定 30 秒）**: 直前の `Sync` で失敗したサーバ名は、`next`（失敗時刻＋
+   30 秒）を過ぎるまで**その名前を `mcpMgr.Sync` に渡す `defs` から除外する**——接続を試みること自体を
+   スキップする。ストアへの記録（`NoteMCPError`）の重複排除も、この「現在壊れている」状態
+   （`h.mcpFailures`）を基準に取り直した——以前の実装は「今回 `Sync` に渡した defs の errs」だけを
+   シグネチャにしていたため、backoff で `defs` から除外されるたびにシグネチャが変わって見え、
+   復旧→再故障を繰り返しているかのように誤って重複記録するところだった。
+3. **既存試験の隔離を `TestMain` に一本化**: `AF_AGENT_INSTALLED_BIN=/bin/false` を個々の試験の
+   `t.Setenv` ではなく `internal/agents/lcpp` パッケージの `TestMain` で 1 回だけ設定——加えて
+   `mcpServersForSession`（`mcpreg.ForSession` を包む func-var の継ぎ目、`newHarnessClient` と同じ
+   作法）を `TestMain` で「サーバ 0 件」を返すスタブに差し替えた。🔴 **`AF_AGENT_INSTALLED_BIN` だけの
+   無害化では不十分**——`af` は無害化しても依然として**確実に失敗する**ため、`mcp_test.go` の外の
+   `driver_test.go` 全試験に `NoteMCPError` レコードが 1 本ずつ混入し、レコード件数を厳密に数えている
+   既存試験が壊れる（実際に手元で再現・確認済み）。`mcpTestHome`（この節の新規試験用ヘルパー）だけが
+   `mcpServersForSession` を実装に戻す——それ以外の全試験は「サーバ 0 件」という、この PR 以前と
+   バイト単位で同じ挙動を見る。
+
+陽性対照（Edit で当てて赤確認・戻して緑確認、追加分のみ列挙）:
+- `mcpFailures` の backoff 判定を無効化（`false &&` を足す）→ 新設の
+  `TestMCPUnreachableServerDoesNotSlowDownLaterTurns` が赤（2 ターン目が 1 ターン目と同じだけ遅い）。
+- `syncMCPServers` の `context.WithTimeout` を実質無制限に変える → 同じ試験が赤
+  （`waitState` 自身の 3 秒待ちでタイムアウトして落ちる——スイート全体は固まらない）。
+- `mcpc/manager_test.go` の `TestManager_SyncReconnectsOnDefChange` の条件に `true ||` を足す →
+  `TestManager_SyncIsANoOpWhenDefsAreUnchanged` が赤（既に前段の訂正で確認済み、再掲）。
+
+`mcpSyncBudget`/`mcpSyncBackoff` は `stdioKillGrace`（`mcpc/stdio.go`）と同じ理由で `const` ではなく
+`var`——試験が実時間を溶かさず縮められる。
+
 **ツール定義の費用（実測、この配備）。** 実 `workspace-agent mcp-stdio --self-report --chromium-attach`
 に `mcpc.Connect` して `ToolDefs()` を JSON にしたもの（`--peer-messaging`/`--image-gen`/`--fleet-spawn`
 はどれも off——利用者ごとの設定に依るため、この数字は**最小構成**）:
@@ -720,14 +772,10 @@ ADR の範囲外）。利用者登録の外部サーバはこの上にさらに�
 `helper_process_test.go` と同じ自己 re-exec トランポリン（`-test.run=TestHelperProcess`）を、この
 パッケージ用に別実装したもの（`mcpc` のそれは package-private で再利用できない）。
 
-- 🔴 **`mcpreg.ForSession(session.KindLcpp)` は無条件で `af` を含む**（上述）——「サーバを 1 つも有効化
-  していないときの試験」は素朴に書くと実 `workspace-agent` バイナリの spawn を踏む。CI では
-  `/usr/local/bin/workspace-agent` が存在しない環境もあり得て、その場合 `paths.ConfigExePath()` は
-  **volatile な `ExePath()` にフォールバックする**——つまり**このテストバイナリ自身**を `mcp-stdio ...`
-  引数で実行することになり、`-test.run` フィルタの無い `go test` 起動として**パッケージの全テストを
-  再帰的に走らせる**。`AF_AGENT_INSTALLED_BIN=/bin/false`（`paths.InstalledExePath` 自身の env 逃がし道）
-  で潰した——`af` の `Sync` は速く確実に失敗し、実バイナリは一切走らない。試験ファイル冒頭の
-  `mcpTestHome` にこの理由を書いた。
+- 🔴 **`mcpreg.ForSession(session.KindLcpp)` は無条件で `af` を含む**（上述）——最初の対策
+  （`AF_AGENT_INSTALLED_BIN=/bin/false` を各試験の `mcpTestHome` から）は CI の再帰 spawn は塞いだが
+  それだけでは足りず、後で `TestMain` ＋ `mcpServersForSession` スタブに置き換えた。理由と最終形は
+  「本物の製品欠陥」節（下）にまとめて書いた——ここでは重複させない。
 - 陽性対照（`git checkout` ではなく Edit で当てて戻した。全て確認済み）:
   - `driver.go` の `h.mcpTools()...` をレジストリ構築から外す → `TestMCPToolReachesRealServer`/
     `TestMCPToolRequiresApprovalByDefault` が赤。
@@ -738,8 +786,12 @@ ADR の範囲外）。利用者登録の外部サーバはこの上にさらに�
   - `closeIdleResources` から `mcpMgr.Close()`（と `mcpCancel()`）を外す → `TestDropHandleKillsMCPStdioChild`
     が赤（子プロセスが `DropHandle` 後も生きている——実際に 1 回、子プロセスが残った状態で赤を確認して
     から kill した）。
-- 通し（`go test ./internal/agents/lcpp/... -count=1`）は 53 件全緑・0.5 秒前後。`control-plane`/
-  `console` は既存スイートに新規失敗なし（後述の CP ドリフト試験 1 件を除く）。
+  - backoff とタイムアウト上限それぞれの陽性対照は「本物の製品欠陥」節に書いた。
+- 通し（`go test ./internal/agents/lcpp/... -count=1`）は 54 件全緑（`TestHelperProcess` 込み）・
+  0.5 秒前後——実時間を払う試験は `TestMCPUnreachableServerDoesNotSlowDownLaterTurns` のみで、
+  `mcpSyncBudget`/`mcpSyncBackoff` を試験用に縮めているので実質数百ミリ秒。`control-plane`/`console`
+  は既存スイートに新規失敗なし（後述の CP ドリフト試験 1 件を除く）。CI（run 35614081914 が赤だった
+  ジョブの再実行）で緑を確認してから報告する——このコミットの時点では未確認。
 - 実機の通し経路（配備済み Agent から実際に `lcpp` セッションを起こして LAN の llama-server まで）は
   この節の範囲外——利用者の LAN の llama-server に自分から繋ぐなという指示のとおり、偽サーバのみで
   試験した。実機測定は利用者側の担当。

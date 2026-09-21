@@ -20,7 +20,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpc"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -310,10 +309,17 @@ type threadHandle struct {
 	mcpCtx    context.Context
 	mcpCancel context.CancelFunc
 	mcpMgr    *mcpc.Manager
-	// mcpLastSyncErr is the most recent mcpMgr.Sync error set, keyed by server name (mcp.go's
-	// syncMCPServers) — compared turn to turn so a persistently broken server is only logged
-	// and noted once per STATE CHANGE, not once per turn forever.
-	mcpLastSyncErr map[string]string
+	// mcpFailures is the per-server backoff/error state syncMCPServers (mcp.go) maintains
+	// across turns: a server present here is known broken as of its own mcpFailure.err, and is
+	// skipped (not retried) until mcpFailure.next. See syncMCPServers' own doc comment for why
+	// this exists — a server that never connects must not cost every future turn a full
+	// connect attempt.
+	mcpFailures map[string]mcpFailure
+	// mcpLastNotedErr is the error signature (server name -> message) the store's most recent
+	// NoteMCPError record was built from — compared against the CURRENT mcpFailures snapshot
+	// every syncMCPServers call so a persistently broken server is only logged to the store
+	// once per STATE CHANGE, not once per turn forever.
+	mcpLastNotedErr map[string]string
 
 	// skipPerm is the resolved "skip permission confirmation" choice (docs/log/76), captured
 	// once at Resume from session.Meta/ui-prefs — the same resolution every other driver makes
@@ -514,7 +520,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	// turn (mcpreg.ForSession is re-read every turn, the same "次ターンから反映" convention
 	// UpdateSettings already uses for model/mode). A resolution failure or a per-server connect
 	// failure never fails the turn — see syncMCPServers' own doc comment.
-	mcpDefs, mcpErr := mcpreg.ForSession(session.KindLcpp)
+	mcpDefs, mcpErr := mcpServersForSession(session.KindLcpp)
 	if mcpErr != nil {
 		log.Printf("lcpp: %s: resolving MCP servers: %v", h.name, mcpErr)
 		mcpDefs = nil
