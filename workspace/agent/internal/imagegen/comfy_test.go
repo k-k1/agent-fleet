@@ -572,16 +572,17 @@ func qwenEditConn() EngineConn {
 	return c
 }
 
-// Named, Caps is STRICT per family: the new family offers edit only, takes no strength and no
-// size candidates — the opposite answer from the sdxl row on the same engine.
-func TestComfyCapsQwenImageEditIsEditOnlyAndTakesNoStrengthOrSizes(t *testing.T) {
+// Named, Caps is STRICT per family: the new family has NO generate, takes no strength and no
+// size candidates — the opposite answer from the sdxl row on the same engine. It does inpaint,
+// which it claimed only once somebody ran it (実測 G, ADR 0094 decision 3).
+func TestComfyCapsQwenImageEditHasNoGenerateAndTakesNoStrengthOrSizes(t *testing.T) {
 	p, _ := comfyStub(t, qwenEditConn(), nil)
 	caps := p.Caps("qwen-edit-row")
-	if caps.Supports(OpGenerate) || caps.Supports(OpInpaint) {
-		t.Errorf("ops = %v, want edit only", caps.Ops)
+	if caps.Supports(OpGenerate) {
+		t.Errorf("ops = %v, want no generate — there is no path from an empty latent", caps.Ops)
 	}
-	if !caps.Supports(OpEdit) {
-		t.Errorf("ops = %v, want edit among them", caps.Ops)
+	if !caps.Supports(OpEdit) || !caps.Supports(OpInpaint) {
+		t.Errorf("ops = %v, want edit and inpaint", caps.Ops)
 	}
 	if caps.Strength {
 		t.Error("qwen-image-edit-2509 must not advertise strength — its denoise is fixed at 1")
@@ -631,8 +632,8 @@ func TestComfyCapsEmptyModelIsAUnionAcrossEveryRow(t *testing.T) {
 		Files: map[string][]EngineFile{"qwen-edit-row": conn.Files["qwen-edit-row"]},
 	}, nil)
 	only := editOnly.Caps("")
-	if only.Supports(OpGenerate) || only.Supports(OpInpaint) {
-		t.Errorf("ops = %v, want edit only when that is the only family on the engine", only.Ops)
+	if only.Supports(OpGenerate) {
+		t.Errorf("ops = %v, want no generate when the edit-only family is all there is", only.Ops)
 	}
 	if only.Strength {
 		t.Error("strength = true, want false — nothing on this engine takes it")
@@ -890,6 +891,48 @@ func TestComfyInpaintUploadsTheMaskAndSetsTheNoiseMask(t *testing.T) {
 	// Inpaint stays at full denoise: the mask preserves what is outside it, not a partial one.
 	if ksIn["denoise"] != float64(1) {
 		t.Errorf("denoise = %v, want 1 for inpaint", ksIn["denoise"])
+	}
+}
+
+// The instruction-edit families need the mask to be the PICTURE's own size, and a mask of any
+// other shape is refused rather than applied somewhere else (ADR 0094 decision 3, 実測 I).
+//
+// Their template sends both through FluxKontextImageScale, which resolves its target from the
+// width and height it is handed — so two differently-shaped inputs resolve two different frames
+// and the mask lands on an area the caller did not draw, with no error and nothing in the picture
+// to show it. Every other family stretches the mask over the whole frame with no crop, where a
+// different size is still the same region; that is the positive control below.
+func TestComfyInstructionEditRefusesAMaskOfAnotherSize(t *testing.T) {
+	dir := t.TempDir()
+	in, mask := filepath.Join(dir, "photo.png"), filepath.Join(dir, "mask.png")
+	if err := os.WriteFile(in, tinyPNG(t, 64, 64), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mask, tinyPNG(t, 48, 64), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stub := func(conn EngineConn) *comfyProvider {
+		return comfyEditStub(t, conn,
+			func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseMultipartForm(8 << 20)
+				_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.png", "type": "input"})
+			},
+			func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+			})
+	}
+	req := Request{Op: OpInpaint, Prompt: "a hat", Model: "qwen-edit-row",
+		Inputs: []string{in}, Mask: mask}
+	_, err := stub(qwenEditConn()).Generate(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "48x64") || !strings.Contains(err.Error(), "64x64") {
+		t.Fatalf("Generate() = %v, want a refusal naming both sizes", err)
+	}
+
+	// The positive control: the SAME mismatched pair is fine on sdxl, so what is refused above is
+	// the family's own rule and not a new rule for everybody.
+	req.Model = "sdxl-base-1.0"
+	if _, err := stub(sdxlConn()).Generate(context.Background(), req); err != nil {
+		t.Fatalf("sdxl Generate() = %v, want the mismatch accepted — it has no scale node to disagree with", err)
 	}
 }
 

@@ -367,3 +367,56 @@ describe("参照画像の枚数 (ADR 0094 decision 5)", () => {
     expect(addRow(), "absent max_inputs must mean 1, the shape every route had").toBeFalsy();
   });
 });
+
+// ADR 0081 decision 9's own words: painting a mask needs a canvas this Console does not have, but
+// "a mask file passed by path works from day one". Until now it did not — the op selector offered
+// `inpaint` (every family claims it, and ADR 0094 added the instruction-edit pair) while nothing
+// in this feature ever set `mask`, so pressing it queued a job that failed at the Agent with
+// "inpaint needs a mask image". The member read that in the job list, not beside the field.
+describe("ADR 0081 決定 9: inpaint のマスク", () => {
+  const maskField = () =>
+    [...host.querySelectorAll(".igen-inputs")].find(
+      (d) => d.querySelector(".igen-label")?.textContent?.includes("マスク"),
+    ) ?? null;
+  const enqueue = () =>
+    [...host.querySelectorAll("button")].find((b) => b.className.includes("ui-btn-primary")) as HTMLButtonElement;
+  const trial = () =>
+    [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("試")) as HTMLButtonElement | undefined;
+
+  it("inpaint のときだけマスクの欄が出る", async () => {
+    await render(SDXL, { op: "generate" });
+    expect(maskField(), "generate has nothing to mask").toBeNull();
+    await render(SDXL, { op: "edit" });
+    expect(maskField(), "an edit has nowhere to put one — the Agent ignores it").toBeNull();
+    await render(SDXL, { op: "inpaint" });
+    expect(maskField(), "inpaint is the one op that needs it").not.toBeNull();
+  });
+
+  it("マスクが無いうちは投入も試しも押せない", async () => {
+    await render(SDXL, { op: "inpaint", inputs: ["photo.png"] });
+    expect(enqueue().disabled, "queuing without a mask is a job that fails at the Agent").toBe(true);
+    expect(trial()?.disabled, "a trial is a real run too").toBe(true);
+
+    // The positive control: the SAME form with a mask releases both, so what is held above is the
+    // mask and not something else about an inpaint.
+    await render(SDXL, { op: "inpaint", inputs: ["photo.png"], mask: "m.png" });
+    expect(enqueue().disabled).toBe(false);
+    expect(trial()?.disabled).toBe(false);
+  });
+
+  it("マスクは 1 枚で、そこで入力欄が消える", async () => {
+    await render(SDXL, { op: "inpaint", mask: "" });
+    expect(maskField()!.querySelector(".igen-row"), "no mask yet: the field is offered").toBeTruthy();
+    await render(SDXL, { op: "inpaint", mask: "m.png" });
+    expect(maskField()!.querySelector(".igen-row"), "one is the ceiling: offering a second is offering a refusal")
+      .toBeFalsy();
+  });
+
+  it("参照画像とマスクは別の欄で、同時に出る（取り違えの陰性対照）", async () => {
+    await render(SDXL, { op: "inpaint", inputs: ["photo.png"], mask: "m.png" });
+    const pickers = [...host.querySelectorAll(".igen-inputs")];
+    expect(pickers.length, "two pickers, not one doing double duty").toBe(2);
+    const shown = pickers.map((p) => [...p.querySelectorAll("li span[title]")].map((s) => s.getAttribute("title")));
+    expect(shown).toEqual([["photo.png"], ["m.png"]]);
+  });
+});

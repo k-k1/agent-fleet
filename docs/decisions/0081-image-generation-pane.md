@@ -392,6 +392,14 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   `POST /fs/upload` into `generated/console/inputs/`, then referenced by path), or type a path.
   `strength` is the slider the existing `Slider` control draws; a mask is P2 (painting needs a canvas
   the Console does not have; a mask file by path works from day one).
+  🟢 **The "works from day one" half landed on 2026-09-21**: one path field, shown only for
+  `op=inpaint`, reusing the reference images' own `InputPicker` at `max=1`. **Painting a mask is
+  still P2.**
+  🔴 Until then it was a hole: the op selector offers `model.ops` verbatim while nothing in this
+  feature ever set `mask`, so choosing `inpaint` produced an Agent refusal ("inpaint needs a mask
+  image") — and on the QUEUE route that arrives as a **failed job**, read in the job list rather
+  than beside the field to change. Hence the enqueue and trial buttons are **held** until there is
+  a mask.
 - On `edit` the input's own dimensions win over the size field, with the existing warning; the form
   shows the size field disabled with the input's dimensions in it, so the user reads the rule instead
   of the warning.

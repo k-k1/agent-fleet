@@ -202,6 +202,17 @@ describe("投入する本文", () => {
     expect(buildRequest({ ...d, negative: "blurry" }).negativePrompt).toBe("blurry");
   });
 
+  // ADR 0081 決定 9: マスクはパスで渡す。op が inpaint のときだけ送るのは、draft がマスクを
+  // 覚えたまま op だけ戻る経路があるから——見えなくなった欄の値がエンジンまで届くのが穴になる。
+  it("マスクは inpaint のときだけ送る", () => {
+    const withMask = { ...d, mask: "generated/console/inputs/m.png" };
+    expect(buildRequest({ ...withMask, op: "inpaint" }).mask).toBe("generated/console/inputs/m.png");
+    // 陽性対照ではなく陰性対照のほう: 同じ draft でも op が違えば付かない。
+    expect(buildRequest({ ...withMask, op: "edit" }).mask).toBeUndefined();
+    expect(buildRequest({ ...withMask, op: "generate" }).mask).toBeUndefined();
+    expect(buildRequest({ ...d, op: "inpaint" }).mask).toBeUndefined();
+  });
+
   it("random のときは seed を送らない", () => {
     expect(buildRequest({ ...d, seedPolicy: "random" }).seed).toBeUndefined();
   });

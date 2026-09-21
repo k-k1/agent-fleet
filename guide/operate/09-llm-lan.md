@@ -163,3 +163,32 @@ Same as the image engine in 07.
 
 Which target supports which of these is in
 [ref/deploy-targets.md](../ref/deploy-targets.md).
+
+## A member's own connection (docs/log/107)
+
+Everything above is a **deployment administrator's** choice — `AF_LLM_URL` is read once at
+CP startup and applies to every member. There is a second, independent way to point lcpp at
+a LAN llama-server, and it is a **member's own** choice: **Settings → Agents → llama.cpp**
+carries a URL field and an optional API key, saved from inside a running Workspace with no
+administrator action and no CP restart.
+
+- **Where it lives.** The connection is stored in the Workspace's own encrypted secrets
+  store (the same place git tokens and every other provider credential live) — never in
+  `ui-prefs.json`, which is plaintext. The API key is never echoed back by `GET
+  /connections`; the settings card only ever shows whether a connection is configured and
+  its URL.
+- **It always wins.** When a member has set their own connection, it is used for **that
+  member's** lcpp sessions instead of this deployment's `llm` engine — regardless of
+  whether the deployment runs one at all, and regardless of path A/B above. Clearing the
+  field reverts that member to exactly this deployment's own `llm` engine, unchanged.
+- 🔴 **It bypasses the Control Plane entirely, which means it bypasses the tenant admin's
+  `allow_engine_llm` gate (ADR 0084) too.** A tenant that
+  turned chat inference off for its members cannot stop a member from pointing their own
+  session at a LAN box they can reach — the same way nothing stops a member from running any
+  other tool against a server on their own network. This is a deliberate trade (docs/log/107),
+  not an oversight: there is no new gate to close it.
+- **The "check connection" button** dials the stored connection live and reports the
+  engine's build (`build_info`), its real context window, and the model ids it currently
+  serves — the same facts §"What the panel will and will not show you" above describes for
+  the deployment-wide path, read directly from the member's own box rather than through the
+  CP's gateway.

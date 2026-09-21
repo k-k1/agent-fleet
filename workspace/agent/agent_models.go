@@ -75,7 +75,21 @@ func emptyReason(enumerated, offered, final int) string {
 // (engines.go's engineCatalogRows) — the same "llm" catalog key lcpp/driver.go's runTurn
 // always resolves a token against. A deployment with no engines, or none of them
 // chat-capable, returns nil (the caller's "empty is a valid answer" path).
+//
+// A member's own connection (docs/log/107) is checked FIRST: when set, the launch menu is
+// built from THAT connection's GET {base}/v1/models, never the deployment's catalogue. This
+// must never block the launch menu — lcppMemberFetchModelsCached's own client carries a 3s
+// timeout, and a box that does not answer in time returns nil here exactly like "no models",
+// not an error (the opencode 10s-timeout lesson, docs/log/54).
 func lcppModels(ctx context.Context) []agents.ModelChoice {
+	if conn, ok := harnessMemberConn(); ok {
+		models := lcppMemberFetchModelsCached(ctx, conn)
+		list := make([]agents.ModelChoice, 0, len(models))
+		for _, m := range models {
+			list = append(list, agents.ModelChoice{ID: m.ID, Label: m.ID})
+		}
+		return list
+	}
 	for _, e := range engineCatalogRows(ctx) {
 		if e.Key != "llm" || e.api() != engineAPIChat {
 			continue

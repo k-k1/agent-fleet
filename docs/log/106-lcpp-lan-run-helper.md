@@ -1,7 +1,9 @@
 # 106. モデル目録から「LAN の別ホストで動かす」ための支援——設計(実装なし)
 
-- 状態: **検討のみ。コードは 1 行も変えていない。** 親セッション `sap4wtk`(駆動役)が単独で調査した。
-  子セッションは起こしていない。実装着手は利用者の判断を待つ。
+- 状態: **検討＋実測。** 親セッション(駆動役・`sikdmnv`)が単独で調査し、後日 §10 で**利用者が立てた
+  LAN の llama-server に対して契約テストを実機で回した**。その結果として直したのは 2 ファイルだけ
+  (`client.go` の `stream_options.include_usage`・`live_contract_test.go` の router/単機の分岐)。
+  §1〜§9 の設計部分は依然として**未実装**で、着手は利用者の判断を待つ。
 - 依頼(利用者の言葉): 「モデルカタログで検索したあと、ローカルネットワークの別ホストで DL して実行する
   ための補助(たとえば Linux のコマンドラインや Windows での実行方法など)するためのツールは作れないか。
   適したアプリがあればそれでもよい。」
@@ -30,13 +32,16 @@
    `fetch-models.sh` の jq)、窓の当て方が 1 か所(`engineFit.ts`)、上流の綴りが 1 か所
    (`EngineModelFile.Source` = `hf:<repo>/<file>`)。**足りないのは「それを 1 か所で文字列に描く」
    ことだけ**で、新しい知識は要らない(§4)。
-4. **引き継ぎの見立てのうち 3 件は上流で覆った。**(a) `--jinja` は `b10830` でも `master` でも
+4. **引き継ぎの見立てのうち 2 件は上流で覆った。**(a) `--jinja` は `b10830` でも `master` でも
    **既定 ON**——「無いと tool call が壊れる」は成立しない、(b) `chat_template` は**単機モードの
-   `/props` には出る**(出ないのは router 固有)、(c) `/v1/models` の `meta` は単機だと `n_ctx_train`
-   であって `n_ctx` ではない(§3)。
-5. **依頼 2(契約テストを素の llama.cpp へ向ける)は、宛先を変えるだけでは通らない。** URL の組み立ては
-   そのまま合うが、**3 つの assertion が router 前提**で書かれている(§7)。直しは小さいが、**「宛先だけ
-   差し替えれば回る」ではない**ことは着手前に知っておく必要がある。
+   `/props` には出る**(出ないのは router 固有)。どちらも §10 の実機で裏が取れた。
+   ⚠️ 本稿は当初 (c) として「`/v1/models` の `meta` は単機だと `n_ctx_train` だけ」とも書いたが、
+   **これは §10 の実測で誤りと分かった**(単機でも `meta.n_ctx` が来る)。上流 README の応答例が
+   古かったための誤りで、§3 の表と §10 に訂正を残す。
+5. **依頼 2(契約テストを素の llama.cpp へ向ける)は、宛先を変えるだけでは通らなかった——そして直った。**
+   1 回目は 6 軸のうち 3 軸が赤、**本物の欠陥は 1 つだけ**(stream の `usage`。原因は llama-server では
+   なく `client.go` が `include_usage` を送っていなかったこと)。2 ファイルを直して **2 回目は 6 軸すべて
+   緑・7.94 秒**(§10)。**素の llama.cpp で足りる**、が実測の答えである。
 6. 見積り **4〜6 セッション日**(段 0〜4・段ごとに独立に出せる)。**ADR は要らない**——ただし論点 1 つ
    (「目録が、この配備が持っていないモデルの実行手順を配る場所になる」)だけは決定として記録する
    価値がある(§9)。
@@ -66,7 +71,7 @@ PR #826 の `workspace/agent/internal/harness/live_contract_test.go`(ビルド�
 
 | 候補 | 軸1 `/props` | 軸2 窓 | 軸3 `input_tokens` | 軸4 `/control` | 軸5 tool_calls | 軸6 stream usage | 判定 |
 |---|---|---|---|---|---|---|---|
-| **素の `llama-server`** | ✅ | ✅(形は単機/router で違う) | ✅ | ✅ | ✅(族依存) | ⚠️(§7.3) | **合格** |
+| **素の `llama-server`** | ✅ | ✅(形は単機/router で違う) | ✅ | ✅ | ✅(族依存) | ✅(§10 で実測。ただし `include_usage` を送る側が要る) | **合格** |
 | Ollama | ❌ | △(`/api/show`) | ❌ | ❌ | ✅ | ? | 不合格 |
 | LM Studio | ❌ | ❌ | ❌ | ❌ | ✅ | ? | 不合格 |
 | Jan | ❌ | ❌ | ❌ | ❌ | ✅ | ? | 不合格 |
@@ -129,7 +134,7 @@ README が書いているので、`AF_LCPP_LIVE_BASE=http://host:port/upstream/<
 | `-c` は 8192 以上 | **据え置き**(#811 の実測。窓 3500 は 2 族で `ErrCompactionThrashing`)。**上流の根拠が 1 つ増えた**: 単機モードでは `/props` の `default_generation_settings.n_ctx` が実窓で、`-c` はそこに素直に出る | `docs/decisions/0093` 段 2 負債 3・上流 README |
 | `--api-key` を付けないと認証なし | **正しい**。`--api-key KEY`(カンマ区切りで複数可)/`--api-key-file`/env `LLAMA_API_KEY`。失効・追跡が効かない共有 bearer 1 本になるという 105 の指摘もそのまま成立する | 上流 README・[105](105-lcpp-console-toggle-and-lan-endpoint.md) |
 | `chat_template` は `/props` にも `/v1/models` にも出ない(段 2 負債 6) | **router 固有の話だった。** 上流 README の `GET /props` 応答例には **`chat_template` と `chat_template_caps` がある**。router では「どのモデルも載っていない router 自身」を describe するので消える。🔴 **LAN の単機サーバなら、GGUF に焼かれたテンプレを配備側から読める**——負債 6 は LAN 構成では解消しうる | 上流 README `GET /props` |
-| (引き継ぎに無かった) `/v1/models` の `meta` | 🔴 **単機モードの応答例に `n_ctx` は無い**。あるのは `n_ctx_train`(学習時の上限)・`n_vocab`・`n_params`・`size`。実窓は `/props` 側にある。**契約テストは `meta.n_ctx > 0` を要求している**ので、ここが単機では落ちる(§7.2) | 上流 README `GET /v1/models` |
+| (引き継ぎに無かった) `/v1/models` の `meta` | ⚠️ **この行は誤りだった(§10 で訂正)。** 上流 README の単機の応答例には `n_ctx` が無く `n_ctx_train` しか載っていないため「単機では実窓が読めない」と書いたが、**実機(b11067)は単機でも `meta.n_ctx=24064` を返す**。README の例が古い。実窓は `/props` と `/v1/models` の**両方**にあり、一致する | 上流 README `GET /v1/models`(古い)／**実測 §10**(正) |
 | (引き継ぎに無かった) router の `/props` | **`?model=` を付けると既定で autoload する**(`--no-models-autoload` / `?autoload=false` で抑止)。うちの `props()` はクエリを付けないので今日は安全だが、**「`/props` は箱を起こさない」は付け方次第**という条件付きの事実である | 上流 README router 節 |
 
 ---
@@ -292,7 +297,7 @@ Workspace のサンドボックス(GPU 無し・root 無し)で動かす設計�
 **偶然ではなく、gateway が `/v1` を前置する設計(`engineUpstreamPrefix`)と、llama-server の実配置が
 一致しているからである。** ここは無改修でよい。
 
-### 7.2 🔴 直さないと通らない 3 点
+### 7.2 🔴 直さないと通らない 3 点(予測。**§10 の実測で 1 と 3 は当たり、2 は外れた**)
 
 1. **`props_build_info_and_router_window_asymmetry`(`:372-`)は router 決め打ち。** `:395` が
    `role=="router" && model_path=="none" && n_ctx==0` を要求し、**単機サーバでは必ず落ちる**
@@ -300,8 +305,8 @@ Workspace のサンドボックス(GPU 無し・root 無し)で動かす設計�
    - router なら今の assertion、
    - 単機なら `default_generation_settings.n_ctx > 0` と `model_path != ""` を見る。
    `build_info` の確認は**どちらでも共通**(軸 1 はそのまま生きる)。
-2. **`/v1/models` の `meta.n_ctx`(`:420` 付近)は単機では空の可能性が高い。** 上流 README の単機の応答例に
-   あるのは `n_ctx_train`(§3)。**router 経路でだけ実施する assertion に降ろす**のが正しい直し方。
+2. ⚠️ **この予測は外れた。** 「`/v1/models` の `meta.n_ctx` は単機では空の可能性が高い」と書いたが、
+   実機は単機でも `meta.n_ctx=24064` を返した(§10)。**降ろす必要は無く、assertion はそのままでよい。**
 3. 🔴 **`streaming_usage_present`(`:224-`)は落ちる。** `chatRequest`(`client.go:121-129`)は
    **`stream_options.include_usage` を意図的に送っていない**——「gateway が入れるから」とコメントが
    明記している。入れているのは `askForStreamUsage`(`control-plane/engine_gateway.go:901-913`)で、
@@ -310,9 +315,10 @@ Workspace のサンドボックス(GPU 無し・root 無し)で動かす設計�
    - **本番には波及しない。** 105 の「LAN 行に差し替える」(`AF_LLM_URL`)を実装しても、`external` 行は
      同じ `serve()` を通る(`engine_gateway.go:1542-1548` の external 分岐は health の扱いだけ)ので、
      **`askForStreamUsage` は効き続ける。** 影響はこの**契約テスト固有**である。
-   - 直し方は 2 つ。(a) テスト側で直叩き用に `include_usage` を足す、(b) `chatRequest` に常時付ける
-     (二重指定は上流仕様上ただの上書きで無害)。**(b) は「ハーネス単体で素の llama-server にも繋がる」
-     という性質を買う**が、`client.go` のコメントの根拠を変える製品判断なので、利用者に訊く。
+   - 直し方は 2 つ。(a) テスト側で直叩き用に `include_usage` を足す、(b) `chatRequest` に常時付ける。
+     **§10 で (b) を採った**——`askForStreamUsage` は既に載っている body を触らないので本番の経路は
+     変わらず(`TestAskForStreamUsage`・`control-plane/engine_gateway_test.go:510` がそれを固定して
+     いる)、直結では有る無しの差そのものになるため。
 
 ### 7.3 運用上の前提 2 つ
 
@@ -387,7 +393,59 @@ go test ./internal/harness/ -tags manuallive -run TestManualLiveEngineContract -
 
 ---
 
-## 10. 付録——🔴 105 の要望 2「LAN への差し替え」は、今日すでにコード無しでできる
+## 10. 実測(2026-09-21)——素の llama-server に向けて契約テストを回した
+
+§7 は予測だった。**利用者が LAN 機(Windows ネイティブ・`192.168.0.113:28080`)に llama-server を立てたので、
+宛先を差し替えて実際に回した。GPU 課金はゼロ**(借用行を通らない)。
+
+- エンジン: **`build_info: b11067-932a68e06`**(この配備の借用先 `b10830-465e49b9c` より新しい)。
+- モデル: `-hf unsloth/gemma-4-12b-it-GGUF:Q4_K_M --no-mmproj --alias gemma-4-12b-it-q4_k_m -c 24000`。
+- 実測の窓: `default_generation_settings.n_ctx = 24064`(`-c 24000` を 64 の倍数に丸めた値)。`total_slots: 4`。
+
+### 1 回目(無改修)——6 軸のうち 3 軸が赤
+
+| 軸 | 結果 | 中身 |
+|---|---|---|
+| 1 `/props` の `build_info` | ✅ | `b11067-932a68e06` |
+| 2 router の非対称 | ❌ | **`role` 欄が存在しない**(`""`)。`model_path` は実パス、`n_ctx` は 24064。**単機では非対称そのものが起きない** |
+| 3 `input_tokens` の欄名 | ⚠️ | 欄名は ✅(`input_tokens=44`)。**突合だけ失敗**——比較相手の `prompt_tokens` が 0 だったため(軸 6 と同じ原因) |
+| 4 `/control` | ✅ | 空 body → 400 / model だけ → 400 / model+id+action → 200 `{"success":false}` |
+| 5 `tool_calls` | ✅ | gemma-4 が 2 ターンとも単発の有効な呼び出し(`read`・`ls`) |
+| 6 stream の `usage` | ❌ | **`PromptTokens=0`** |
+
+🔴 **本物の欠陥は軸 6 だけで、原因は llama-server ではなくこちらにあった。** `client.go` の `chatRequest` が
+`stream_options.include_usage` を**意図的に送っていなかった**(「gateway が注入するから」)。CP を通さず直に
+叩くと注入者がいないので、**usage が 1 つも来ないまま決定 8 の exact 集計が黙って 0 を読む**。
+`askForStreamUsage` 自身の実測コメント(「付けなければ usage のチャンクはそもそも来ない」)が、
+ここで初めて外から確認された形である。
+
+### 直した 2 点と 2 回目——**6 軸すべて緑(7.94 秒)**
+
+1. **`client.go`**: `stream_options.include_usage` を**常に**送る。CP 経由では `askForStreamUsage` が
+   「既にある body は触らない」ので**本番の経路は 1 バイトも変わらない**(`engine_gateway_test.go:510` の
+   `TestAskForStreamUsage` が、明示値を上書きしないことを固定している)。直結では、これが有る無しの差になる。
+2. **`live_contract_test.go`**: `/props` の `role` を読んで**router と単機で分岐**する。router なら従来の
+   非対称を要求し、単機なら `model_path` が実パスで `n_ctx > 0` であることを要求する。
+
+2 回目は `usage={PromptTokens:44 CompletionTokens:108}`、`input_tokens=44` が `prompt_tokens=44` と**一致**。
+
+### この実機だけが答えたこと(§3・§7 の予測の訂正を含む)
+
+- 🔴 **`/v1/models` の `meta.n_ctx` は単機でも来る(24064)。** §3 で「単機だと `n_ctx_train` だけ」と
+  書いたのは**上流 README の応答例が古かった**ためで、誤り。単機は `/props` と `/v1/models` の
+  **2 か所が一致する**(router は後者だけ)。契約テストの当該 assertion は router 専用に降ろす必要が無かった。
+- ✅ **`chat_template` は単機の `/props` に出る**(§3 の予測どおり)。**段 2 負債 6 は router 固有の制約**で、
+  LAN の単機構成では解消する。`chat_template_caps` も付き、この gemma-4 は
+  `supports_tool_calls: true` / `supports_parallel_tool_calls: true` / **`supports_preserve_reasoning: false`** /
+  `supports_reasoning_effort: false` と自己申告した——決定 4 の `DynamicEffort=false`(段 2 の実装記録)と整合する。
+- **`--alias` は効く**: `model_alias` と `/v1/models` の `id` がどちらも `gemma-4-12b-it-q4_k_m`。
+- `/health` は**認証免除**(200)だが `/props`・`/v1/models` は `--api-key` を要求する(401
+  `{"error":{"type":"authentication_error"}}`)。**到達確認と認証確認は別物**という点は運用文書に効く。
+- `/control` の 400 の文言は、空 body でも `"missing completion id"`(借用 router で観測した
+  「model name is missing」ではない)。**契約テストが status しか見ていないのは正しかった**。
+- 一度だけ `/control` の POST が `EOF` で切れ、`pollEngine` の再試行で通った。**LAN 直結でも再試行は要る**。
+
+## 11. 付録——🔴 105 の要望 2「LAN への差し替え」は、今日すでにコード無しでできる
 
 本稿の調査中に、[105](105-lcpp-console-toggle-and-lan-endpoint.md) §106.3 の前提が 1 つ覆ったので
 ここに記録する(105 は凍結済みなので書き換えない)。**105 は `engineLlmEnvRow` の新設(CP 側 1〜2
@@ -424,7 +482,7 @@ external レーンのまま AWS の機械(ecs/ctrl/ssm/activeParam)を 1 つも�
 パラメータ化だけで、見積りは**半日〜1 日**に下がる。運用者がいま LAN 機を立てるなら、**その日のうちに
 `AF_ENGINES_JSON` で切り替えられる**——コードのマージを待つ必要はない。
 
-## 11. 分からなかったこと(実行していない検査)
+## 12. 分からなかったこと(実行していない検査)
 
 - **llama-swap の `/upstream/:model_id/` 素通しが 6 軸を満たすか**(§2.4)。実験は
   `AF_LCPP_LIVE_BASE=http://host:port/upstream/<model>/v1` で契約テストを 1 回回すだけ。

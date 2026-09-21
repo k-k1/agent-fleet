@@ -141,3 +141,18 @@ describe("絵のプロパティを下書きへ読み込む", () => {
     expect(out.jobs).toBe(12);
   });
 });
+
+// ADR 0081 決定 9: マスクはパス 1 本。壊れた値でも空文字に落ちるだけで、throw しない。
+describe("マスク", () => {
+  it("保存された draft から読み直せる", () => {
+    expect(parseDraft(JSON.stringify({ mask: "generated/console/inputs/m.png" })).mask).toBe(
+      "generated/console/inputs/m.png",
+    );
+  });
+
+  it("空の draft では空文字で、文字列でない値も空文字になる", () => {
+    expect(emptyDraft().mask).toBe("");
+    expect(parseDraft(JSON.stringify({ mask: 7 })).mask).toBe("");
+    expect(parseDraft("{}").mask).toBe("");
+  });
+});

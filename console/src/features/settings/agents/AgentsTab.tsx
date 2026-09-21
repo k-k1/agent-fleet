@@ -258,7 +258,7 @@ export function AgentsTab() {
             agents={agents}
             updateAgents={updateAgents}
           />
-          <LcppCard />
+          <LcppCard running={running} st={conns?.lcpp} reload={reload} />
           <MuseCard running={running} st={conns?.muse} reload={reload} />
           {running && agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
         </>

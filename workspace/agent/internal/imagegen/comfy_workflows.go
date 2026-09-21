@@ -32,6 +32,7 @@ package imagegen
 // picture with the LoRA than without" (ADR 0072 phase P3), on real hardware.
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -630,9 +631,14 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// Guided, and the evidence is 実測 A and 実測 E: both ran cfg 4 and the edit was followed, and
 	// the template gives the negative branch its own TextEncodeQwenImageEditPlus encode rather
 	// than ConditioningZeroOut, so the negative genuinely moves the picture (decision 12).
-	Guided:           true,
-	InstructionEdit:  &comfyQwenEditWiring{Shift: 3},
-	FixedDenoiseEdit: true, Ops: []Op{OpEdit}, RefInputs: 3,
+	Guided:          true,
+	InstructionEdit: &comfyQwenEditWiring{Shift: 3},
+	// inpaint since 実測 G / 実測 I (ADR 0094 decision 3, unresolved 2): a mask that does NOT cover
+	// the sign left the sign unchanged where the same request without one changes it, so the mask
+	// is a real gate even at a full denoise. The wiring is comfyQwenEditNoiseMask, which is NOT
+	// comfyRequestLatent's two nodes — the mask has to go through the picture's own
+	// FluxKontextImageScale or it lands on a frame the picture was cropped out of.
+	FixedDenoiseEdit: true, Ops: []Op{OpEdit, OpInpaint}, RefInputs: 3,
 }, {
 	Family: ComfyFamilyQwenImageEdit2511,
 	// The official 2511 template's KSampler, same LoRA-switch false branch: steps 40, cfg 4,
@@ -645,8 +651,11 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// in how the sampler descends, and a fifth of 40 is the same kind of guess as every entry
 	// above that no picture answered.
 	TrialSteps: 8, Guided: true,
-	InstructionEdit:  &comfyQwenEditWiring{Shift: 3.1, RefMethod: "index_timestep_zero"},
-	FixedDenoiseEdit: true, Ops: []Op{OpEdit}, RefInputs: 3,
+	InstructionEdit: &comfyQwenEditWiring{Shift: 3.1, RefMethod: "index_timestep_zero"},
+	// inpaint for the same reason 2509 claims it: one builder, one wiring (comfyQwenEditNoiseMask).
+	// 実測 G and I ran on 2509; this one rides the SAME code path rather than a parallel one, which
+	// is the only kind of family ADR 0094 decision 5 allows to inherit a measurement.
+	FixedDenoiseEdit: true, Ops: []Op{OpEdit, OpInpaint}, RefInputs: 3,
 }, {
 	Family: ComfyFamilyQwenImage21,
 	// 🔴 Not run on a GPU here. These are the KSampler widgets BOTH of ComfyUI's shipped templates
@@ -1266,13 +1275,16 @@ type comfyQwenEditWiring struct {
 }
 
 func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (comfyGraph, error) {
-	// The image is required only when Op says this IS an edit. Generate() never reaches this
-	// builder with anything else (Caps.Ops refuses generate/inpaint before comfyBuildGraph is
+	// The image is required only when Op says this IS an edit or an inpaint. Generate() never
+	// reaches this builder with anything else (Caps.Ops refuses generate before comfyBuildGraph is
 	// called at all), but Studio()'s own sanity probe (comfyParams{Prompt: "x"}, Op == "") has to
 	// keep succeeding on a row whose files are all declared — the same reason none of the other
 	// families' generate path demands one either.
-	if p.Op == OpEdit && p.image(0) == "" {
+	if p.isImageToImage() && p.image(0) == "" {
 		return nil, fmt.Errorf("%s needs an input image, and none reached the graph", p.Op)
+	}
+	if p.Op == OpInpaint && p.Mask == "" {
+		return nil, errors.New("inpaint needs a mask image, and none reached the graph")
 	}
 	// Refused rather than defaulted: the zero value is shift 0 and no reference-method node, which
 	// is not a topology anybody has run — it would build, sample, and hand back a degraded picture
@@ -1329,18 +1341,57 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 	g["norm"] = comfyNode{ClassType: "CFGNorm", Inputs: map[string]any{"model": comfyLink("ms", 0), "strength": 1}}
 	g["enc"] = comfyNode{ClassType: "VAEEncode", Inputs: map[string]any{
 		"pixels": comfyLink("scale", 0), "vae": comfyLink("vae", 0)}}
+	latent := comfyLink("enc", 0)
+	if p.Op == OpInpaint {
+		latent = comfyQwenEditNoiseMask(g, p)
+	}
 	r := p.recipe(comfyFamilyRecipeFor(family))
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		// Fixed at 1, not p.denoise(): 実測 C is decision 2's whole reason — the same graph at
-		// denoise 0.6 comes back unedited, with no error and no warning.
+		// denoise 0.6 comes back unedited, with no error and no warning. Inpaint keeps it too — the
+		// area outside the mask is held by the noise mask, not by a partial denoise, which is the
+		// same rule comfyParams.denoise states for every other family.
 		"denoise": 1,
 		"model":   comfyLink("norm", 0), "positive": pos, "negative": neg,
-		"latent_image": comfyLink("enc", 0)}}
+		"latent_image": latent}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-" + comfyFamilyPrefixName(family), "images": comfyLink("dec", 0)}}
 	return g, nil
+}
+
+// comfyQwenEditNoiseMask is this family's inpaint (ADR 0094 decision 3, claimed after 実測 G and
+// 実測 I): the caller's mask confines a FULL denoise to the area they drew, and the conditioning
+// still sees the whole unmasked picture, which is what makes the repaint agree with the scene
+// around it.
+//
+// 🔴 The mask goes through the SAME FluxKontextImageScale the picture does, and that is the whole
+// reason this is not comfyRequestLatent's two nodes. The picture is not merely resized: the node
+// CENTRE-CROPS to the nearest trained aspect ratio and then resizes (comfy.utils.common_upscale,
+// crop="center"), while SetLatentNoiseMask's mask is only stretched to the latent's shape, with no
+// crop at all. Feed the mask in raw and the two maps disagree by the cropped band — measured on a
+// 1820x1024 input (cropped to 1820x984, then 1392x752): the repainted band's edge landed 8 px away
+// from where the picture's own map puts it, and sending the mask through this node moved it back.
+// Zero at the centre of the frame and worst at the edges, with nothing anywhere to say so.
+//
+// Running the mask through it works because the node reads only the picture's width and height,
+// and the mask is refused unless it has the SAME ones (comfyCheckInputs) — so it resolves the same
+// target resolution and applies the same crop.
+//
+// ImageToMask on the red channel, not LoadImageMask, for the reason comfyRequestLatent states:
+// LoadImage's own MASK output is `1.0 - alpha`, so an ordinary opaque black-and-white PNG would
+// arrive as an all-zero mask and repaint nothing at all, with no error anywhere. Red is the
+// channel verbatim — white is the area to repaint.
+func comfyQwenEditNoiseMask(g comfyGraph, p comfyParams) []any {
+	g["maskimg"] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.Mask}}
+	g["maskscale"] = comfyNode{ClassType: "FluxKontextImageScale", Inputs: map[string]any{
+		"image": comfyLink("maskimg", 0)}}
+	g["mask"] = comfyNode{ClassType: "ImageToMask", Inputs: map[string]any{
+		"image": comfyLink("maskscale", 0), "channel": "red"}}
+	g["noisemask"] = comfyNode{ClassType: "SetLatentNoiseMask", Inputs: map[string]any{
+		"samples": comfyLink("enc", 0), "mask": comfyLink("mask", 0)}}
+	return comfyLink("noisemask", 0)
 }
 
 // --- Qwen-Image 2.1 — ComfyUI's own shipped templates, NOT YET RUN ON THIS DEPLOYMENT'S HARDWARE

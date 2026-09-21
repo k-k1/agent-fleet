@@ -118,15 +118,27 @@ func toWireTools(tools []ToolDef) []wireToolDef {
 	return out
 }
 
-// chatRequest is the streaming /v1/chat/completions body. stream_options.include_usage
-// is deliberately NOT set here: the gateway injects it itself
-// (control-plane/engine_gateway.go's askForStreamUsage), so setting it again would only
-// duplicate what the gateway already guarantees.
+// chatRequest is the streaming /v1/chat/completions body. stream_options.include_usage is
+// always asked for, by this client itself.
+//
+// Through the Control Plane it changes nothing: askForStreamUsage
+// (control-plane/engine_gateway.go) adds the same flag and deliberately leaves a body that
+// already carries it alone. Sent STRAIGHT at a llama-server it is the difference between
+// having usage and not: nobody injects anything, and llama-server then ends the stream with
+// no usage chunk at all. Measured 2026-09-21 against a LAN llama-server (b11067-932a68e06,
+// gemma-4-12b-it): every streamed turn came back PromptTokens=0, which is decision 8's exact
+// accounting silently reading zero rather than failing (docs/log/106 §7).
 type chatRequest struct {
-	Model    string        `json:"model"`
-	Messages []wireMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
-	Tools    []wireToolDef `json:"tools,omitempty"`
+	Model         string         `json:"model"`
+	Messages      []wireMessage  `json:"messages"`
+	Stream        bool           `json:"stream"`
+	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+	Tools         []wireToolDef  `json:"tools,omitempty"`
+}
+
+// streamOptions is OpenAI's `stream_options`, of which only include_usage is used here.
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // streamChunk is one `data: …` line of an OpenAI-compatible chat.completion.chunk, wide
@@ -225,7 +237,9 @@ func readHTTPError(status int, body []byte) error {
 // only once at least one real content/tool-call/usage chunk has actually been read.
 func (c *client) Send(ctx context.Context, messages []Message, tools []ToolDef) (Turn, error) {
 	req, err := c.newRequest(ctx, "/chat/completions", chatRequest{
-		Model: c.model, Messages: toWireMessages(messages), Stream: true, Tools: toWireTools(tools),
+		Model: c.model, Messages: toWireMessages(messages), Stream: true,
+		StreamOptions: &streamOptions{IncludeUsage: true},
+		Tools:         toWireTools(tools),
 	})
 	if err != nil {
 		return Turn{}, err

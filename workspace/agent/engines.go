@@ -36,6 +36,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -972,13 +973,215 @@ func engineImageDescriptions(e engineCatalogRow) map[string]string {
 	return out
 }
 
+// --- llama.cpp: the member's own LAN connection (docs/log/107) ------------------------
+//
+// A member can point THEIR lcpp sessions straight at a LAN llama-server (or router),
+// bypassing the deployment's own "llm" engine role and the Control Plane entirely — which
+// also means the tenant's allow_engine_llm gate (ADR 0084) has nothing to say about a direct
+// connection; the guide says so in plain language rather than leaving it to be discovered.
+// secrets.Data.Lcpp holds the connection (URL always normalized without a trailing "/v1",
+// connections.go's normalizeLcppURL); harnessEngineToken/Window/Available below and
+// lcppModels (agent_models.go) all check it FIRST, falling back to the deployment's own
+// catalogue-backed path (engineCatalogRows) only when it is unset — an empty connection
+// means today's behavior, unchanged (docs/log/107 decision 1).
+//
+// lcppMemberClient is deliberately its own short-timeout client, separate from engineHTTP's
+// 20s: every call here is a synchronous UI action (building a launch menu, or the settings
+// card's "check connection" button) against a LAN box that may simply be off or asleep, and
+// must fail fast rather than hang the caller — the same lesson opencode's 10s enumeration
+// timeout taught when it blanked the whole launch menu (docs/log/54).
+var lcppMemberClient = &http.Client{Timeout: 3 * time.Second}
+
+// lcppMemberBase strips a trailing "/v1" the same way normalizeLcppURL (connections.go)
+// already did before storing — belt and suspenders, since nothing enforces that every future
+// writer of secrets.LcppConn goes through that one path.
+func lcppMemberBase(url string) string {
+	return strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(url), "/"), "/v1")
+}
+
+// harnessMemberConn reads the member's own lcpp connection, if any is configured. ok is
+// false on a store error or an empty/unset URL — both read as "no member connection",
+// falling through to the deployment's own engine.
+func harnessMemberConn() (secrets.LcppConn, bool) {
+	s, err := secrets.Load()
+	if err != nil || s.Lcpp == nil || strings.TrimSpace(s.Lcpp.URL) == "" {
+		return secrets.LcppConn{}, false
+	}
+	return *s.Lcpp, true
+}
+
+// lcppMemberProps is GET {base}/props's relevant shape — the same fields
+// workspace/agent/internal/harness/live_contract_test.go's propsResponse pins against a real
+// llama-server, minus Role/ModelPath (this side never needs to tell router from single-model
+// apart; lcppMemberWindow's /props-then-/v1/models fallback below handles both the same way
+// enginePropsAugmentRouterWindow does for the CP-proxied path).
+type lcppMemberProps struct {
+	BuildInfo                 string `json:"build_info"`
+	DefaultGenerationSettings struct {
+		NCtx int `json:"n_ctx"`
+	} `json:"default_generation_settings"`
+}
+
+// lcppMemberProbeProps reads /props directly against the member's own connection — never
+// through the Control Plane, which this connection bypasses entirely. ok is false on
+// anything but a clean 200 with a readable body: the box is asleep, off, or unreachable.
+func lcppMemberProbeProps(ctx context.Context, conn secrets.LcppConn) (props lcppMemberProps, ok bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lcppMemberBase(conn.URL)+"/props", nil)
+	if err != nil {
+		return lcppMemberProps{}, false
+	}
+	if conn.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+conn.APIKey)
+	}
+	resp, err := lcppMemberClient.Do(req)
+	if err != nil {
+		return lcppMemberProps{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return lcppMemberProps{}, false
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&props) != nil {
+		return lcppMemberProps{}, false
+	}
+	return props, true
+}
+
+// lcppMemberModel is one entry of GET {base}/v1/models, as answered by the member's own
+// connection: the id, and the window /v1/models reports for it (data[].meta.n_ctx) — the
+// field a ROUTER's /props cannot itself carry (docs/log/106 §axis 2).
+type lcppMemberModel struct {
+	ID   string
+	NCtx int
+}
+
+// lcppMemberFetchModels reads GET {base}/v1/models directly against the member's own
+// connection. ok is false on anything but a clean 200 with a readable body.
+func lcppMemberFetchModels(ctx context.Context, conn secrets.LcppConn) (models []lcppMemberModel, ok bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lcppMemberBase(conn.URL)+"/v1/models", nil)
+	if err != nil {
+		return nil, false
+	}
+	if conn.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+conn.APIKey)
+	}
+	resp, err := lcppMemberClient.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	var out struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Meta struct {
+				NCtx int `json:"n_ctx"`
+			} `json:"meta"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out) != nil {
+		return nil, false
+	}
+	list := make([]lcppMemberModel, 0, len(out.Data))
+	for _, m := range out.Data {
+		if m.ID == "" {
+			continue
+		}
+		list = append(list, lcppMemberModel{ID: m.ID, NCtx: m.Meta.NCtx})
+	}
+	return list, true
+}
+
+// lcppMemberWindow is the member-connection counterpart of harnessEngineWindowUncached: read
+// /props's own default_generation_settings.n_ctx first (a single-model llama-server — the
+// common case, and what docs/log/106 §10's live LAN run actually measured), and fall back to
+// GET {base}/v1/models' data[].meta.n_ctx ONLY when /props came back windowless — a router's
+// own /props describes the router, not the loaded model, exactly the asymmetry
+// enginePropsAugmentRouterWindow (control-plane/engine_gateway.go) reads around for the
+// CP-proxied path. 0 when neither answered anything usable.
+func lcppMemberWindow(ctx context.Context, conn secrets.LcppConn) int {
+	if props, ok := lcppMemberProbeProps(ctx, conn); ok && props.DefaultGenerationSettings.NCtx > 0 {
+		return props.DefaultGenerationSettings.NCtx
+	}
+	models, ok := lcppMemberFetchModels(ctx, conn)
+	if !ok {
+		return 0
+	}
+	for _, m := range models {
+		if m.NCtx > 0 {
+			return m.NCtx
+		}
+	}
+	return 0
+}
+
+// lcppMemberModelsCacheTTL bounds how stale the member's own /v1/models answer may get.
+// Unlike harnessEngineWindow, this enumeration (lcppModels' launch-menu path, called on every
+// tools/list) is NOT already sitting behind a cache of its own — without one, a LAN box that
+// merely went to sleep would pay a full round trip (bounded by lcppMemberClient's 3s timeout)
+// on every single launch-menu build.
+const lcppMemberModelsCacheTTL = 30 * time.Second
+
+var lcppMemberModelsCache struct {
+	mu    sync.Mutex
+	at    time.Time
+	value []lcppMemberModel
+}
+
+// lcppMemberFetchModelsCached is lcppMemberFetchModels behind lcppMemberModelsCacheTTL. A
+// failed fetch is cached exactly like an empty answer (nil) — the same "nothing to correct"
+// rule harnessEngineWindowCache already follows — so a box that is off does not cost every
+// launch-menu build its own 3s timeout.
+func lcppMemberFetchModelsCached(ctx context.Context, conn secrets.LcppConn) []lcppMemberModel {
+	lcppMemberModelsCache.mu.Lock()
+	if time.Since(lcppMemberModelsCache.at) < lcppMemberModelsCacheTTL {
+		v := lcppMemberModelsCache.value
+		lcppMemberModelsCache.mu.Unlock()
+		return v
+	}
+	lcppMemberModelsCache.mu.Unlock()
+
+	models, ok := lcppMemberFetchModels(ctx, conn)
+	if !ok {
+		models = nil
+	}
+	lcppMemberModelsCache.mu.Lock()
+	lcppMemberModelsCache.value = models
+	lcppMemberModelsCache.at = time.Now()
+	lcppMemberModelsCache.mu.Unlock()
+	return models
+}
+
+// lcppMemberCacheReset drops the short caches keyed off the member's OWN connection
+// (harnessEngineWindowCache's "llm" entry, lcppMemberModelsCache) — connections.go's PUT/
+// DELETE /connections/lcpp call this so a member who just changed the URL is not stuck
+// looking at the PREVIOUS connection's cached window/models for the rest of the TTL.
+func lcppMemberCacheReset() {
+	harnessEngineWindowCache.Delete("llm")
+	lcppMemberModelsCache.mu.Lock()
+	lcppMemberModelsCache.at = time.Time{}
+	lcppMemberModelsCache.value = nil
+	lcppMemberModelsCache.mu.Unlock()
+}
+
 // --- ADR 0093 phase 1's LLM client (internal/harness) --------------------------------
 
 // harnessEngineToken fills harness.EngineToken: an absolute base URL ending at the
 // gateway's own .../v1 mount plus a bearer, exactly what engineSessionEnv/engineImageConn
 // already build for opencode and imagegen. key is "llm" for the chat role; session scopes
 // the token and its usage attribution the same way engineToken's other callers do.
+//
+// A member's own connection (docs/log/107) is checked FIRST and, when present, always wins
+// over the deployment's engine — decision 1: the member's setting always wins, and clearing
+// it reverts to exactly today's behavior.
 func harnessEngineToken(ctx context.Context, key, session string) (harness.EngineConn, bool) {
+	if key == "llm" {
+		if conn, ok := harnessMemberConn(); ok {
+			return harness.EngineConn{BaseURL: lcppMemberBase(conn.URL) + "/v1", Token: conn.APIKey}, true
+		}
+	}
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
 	if base == "" {
 		return harness.EngineConn{}, false
@@ -1030,6 +1233,11 @@ func harnessEngineWindow(ctx context.Context, key string) int {
 }
 
 func harnessEngineWindowUncached(ctx context.Context, key string) int {
+	if key == "llm" {
+		if conn, ok := harnessMemberConn(); ok {
+			return lcppMemberWindow(ctx, conn)
+		}
+	}
 	for _, e := range engineCatalogRows(ctx) {
 		if e.Key != key || e.api() != engineAPIChat {
 			continue
@@ -1047,7 +1255,16 @@ func harnessEngineWindowUncached(ctx context.Context, key string) int {
 // /internal/engine/catalog omits an engine whose catalogue is empty entirely, not just its
 // models list) — so existence in this loop already means "has at least one enabled model",
 // and no separate len(Models) check is needed on top of it.
+//
+// A member's own connection (docs/log/107) always answers true without asking anything — a
+// configured URL is by itself "this member intends to use lcpp", the same way an unset one
+// falls through to whatever the catalogue says.
 func harnessEngineAvailable(ctx context.Context, key string) bool {
+	if key == "llm" {
+		if _, ok := harnessMemberConn(); ok {
+			return true
+		}
+	}
 	for _, e := range engineCatalogRows(ctx) {
 		if e.Key == key && e.api() == engineAPIChat {
 			return true

@@ -392,6 +392,17 @@ export const settings = {
   "agents.lcpp_enabled_note_off":
     "llama.cpp を起動できません。起動導線から消え、直接 API を叩いても拒否されます（既存のセッションは動き続けます）。",
   "agents.lcpp_enabled_note_on": "llama.cpp を起動できます。既定モデル・使わないモデルは下の動作設定で選べます。",
+  // 自分の接続先（docs/log/107）。設定すると、この配備の llm エンジンより優先し、Control Plane を経由せず
+  // 直結する——テナント管理者の可否（ADR 0084 の allow_engine_llm）を迂回するので、その旨をここで明記する。
+  "agents.lcpp_conn_title": "自分の接続先",
+  "agents.lcpp_conn_note":
+    "LAN の llama-server に直結します。設定すると、この配備のエンジンより優先されます。Control Plane を経由しないため、テナント管理者の可否設定は効きません。空にすると今日の挙動（配備のエンジン）に戻ります。",
+  "agents.lcpp_conn_url_placeholder": "http://192.168.0.10:8080",
+  "agents.lcpp_conn_key_placeholder": "API キー（任意）",
+  "agents.lcpp_conn_check": "接続を確認",
+  "agents.lcpp_conn_checking": "確認中…",
+  "agents.lcpp_conn_check_failed": "確認に失敗: {msg}",
+  "agents.lcpp_conn_check_result": "build {build} ・ 窓 {nctx} ・ モデル: {models}",
   "set.tab_cost": "クラウド費用",
   // --- 稼働時間ヒートマップ（docs/log/83）---
   // ⚠️ ここは占有であって金額ではない。実費は日単位でしか取れないので、時間別の金額は

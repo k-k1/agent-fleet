@@ -432,6 +432,13 @@ func buildMux() *http.ServeMux {
 	// sites.
 	mux.HandleFunc("PUT /connections/jira/oauth", handleJiraOAuthStore)
 	mux.HandleFunc("PUT /connections/jira/site", handlePutJiraSite)
+	// llama.cpp member connection (docs/log/107): a member's own LAN llama-server, stored in
+	// the encrypted secrets store like every other connection here — never in ui-prefs.json
+	// (plaintext). check dials the STORED connection live (build_info + n_ctx + model ids);
+	// put/delete never do (shape validation only — see connections.go's own doc comment).
+	mux.HandleFunc("PUT /connections/lcpp", handlePutLcppConn)
+	mux.HandleFunc("DELETE /connections/lcpp", handleDeleteLcppConn)
+	mux.HandleFunc("POST /connections/lcpp/check", handleCheckLcppConn)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
 	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)
