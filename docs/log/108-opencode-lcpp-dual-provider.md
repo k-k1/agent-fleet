@@ -305,7 +305,7 @@ provider ブロック(§1)とは何の関係も無い。したがって:
 |---|---|---|---|---|
 | 0 | **コード変更ゼロ。** メンバーが `opencode.jsonc` の `provider` に `"llamacpp-lan"`(仮名)を手で追加し、§2.2 の「custom」プリセット(`OpencodeCard.tsx:33,496-499`)で任意の env 名(`AF_ENGINE_TOKEN` 以外)に自分の LAN キーを保存する | **0日**(今日できる) | メンバーが実際に両方の provider を launch メニューで選べる(実機1回) | ファイルを戻すだけ |
 | 1 | `EngineProvider` 構造体(`engine.go:47-71`)に新フィールド `APIKeyEnv string` を追加(空なら今日どおり `EngineProviderKeyEnv`="AF_ENGINE_TOKEN" にフォールバック)。`engineProviderEntry`(`engine.go:259-312`)の `apiKey` 組み立てを `e.APIKeyEnv` があればそれを使う形に直す。既存の呼び出し元(`workspace/agent/engines.go:337-342`)は `APIKeyEnv` を設定しないので配備側 provider の挙動は不変 | 0.5〜1日 | **新規試験1本を書き、それが緑になること**(既存試験が無改修で緑、だけでは不十分——後述) | Go のみ、`APIKeyEnv` を消せば1に戻る |
-| 2 | `secrets.Data.Lcpp`(§2.1)を正本のまま再利用し、af 自身が2本目の `opencode.EngineProvider{Provider: "llamacpp-member", APIKeyEnv: "AF_LCPP_MEMBER_TOKEN", …}` を書く経路を足す。`AF_LCPP_MEMBER_TOKEN` の値は `secrets.Data.Opencode` を経由せず `secrets.Data.Lcpp.APIKey` から直接 `env()`(`auth.go:45-81`)/`BuildLaunch`(`opencode.go:154-172`)へ注入する一行を足す(`EngineEnv` が `AF_ENGINE_TOKEN` を注入している場所と同じ並び)。モデル一覧は既存の `lcppMemberFetchModelsCached`(`engines.go:1137-1146`)を再利用——新しいポーリングは足さない | 1日 | 段0で確認した実機と同じ launch メニューが、コード生成で再現される。かつ `secrets.Data.Opencode` に `AF_LCPP_MEMBER_TOKEN` 相当のキーが**一切書かれない**ことを確認する試験 | 経路を1つ削るだけ、段0はそのまま生きる |
+| 2 | `secrets.Data.Lcpp`(§2.1)を正本のまま再利用し、af 自身が2本目の `opencode.EngineProvider{Provider: "llamacpp-member", APIKeyEnv: "AF_LCPP_MEMBER_TOKEN", …}` を書く経路を足す。`AF_LCPP_MEMBER_TOKEN` の値は `secrets.Data.Opencode` を経由せず `secrets.Data.Lcpp.APIKey` から直接 `env()`(`auth.go:45-81`)と `BuildLaunch`(`opencode.go:154-172`)の**両方**へ注入経路を追加する(managed/tmux の2経路それぞれに手当てが要り、`EngineEnv` が `AF_ENGINE_TOKEN` を注入しているのと同様、経路ごとに試験を伴う——1行では済まない)。モデル一覧は既存の `lcppMemberFetchModelsCached`(`engines.go:1137-1146`)を再利用——新しいポーリングは足さない | 1日 | 段0で確認した実機と同じ launch メニューが、コード生成で再現される。かつ `secrets.Data.Opencode` に `AF_LCPP_MEMBER_TOKEN` 相当のキーが**一切書かれない**ことを確認する試験 | 経路を1つ削るだけ、段0はそのまま生きる |
 | 3 | Console 可視化——§5.3 のどちらかの形で pill/カードに反映 | 1〜1.5日 | メンバーが押さなくても両方の状態が分かる | i18n・dom テストのみ |
 | 4 | 実機受け入れ(利用者のLAN機で1往復・usage が非ゼロで記録されることを確認・tool call 生存確認) | 半日+運用者の実機 | §3.3 の未検証点がすべて実測で決着する | — |
 
@@ -393,8 +393,13 @@ Agent の起動のたびに新規採番される——`RotateAFServerName`(53-69
 ### 7.4 web MCP——利用者指定により af 系ツールで代替。外部 web 検索 MCP は未登録・未実測
 
 利用者の指定により、この検証では独立した web 検索 MCP の代わりに af 系ツールを使う
-構成を取った。**外部の web 検索 MCP は登録されておらず、実測もしていない**。opencode/
-lcpp のどちらにも組み込みの web 検索ツールは無い(§0・§1 の調査範囲で確認した限り)。
+構成を取った。**外部の web 検索 MCP は登録されておらず、実測もしていない**。確認できて
+いるのは **lcpp harness 側の組み込みツール**(`BuiltinTools`、
+`workspace/agent/internal/harness/builtins.go:7-19`)が
+`read`・`write`・`edit`・`ls`・`glob`・`grep`・`bash`・`ask_user`・`todo_write` の
+**9本**で、web 検索に相当するものが無いことだけ——**opencode CLI 自身が内蔵ツールとして
+web 検索を持つかどうかは本調査の対象外**であり、確認していない(opencode はここでは
+provider/使用量/pill の観点でしか読んでおらず、その組み込みツール一覧までは調べていない)。
 
 ### 7.5 空欄のまま残る項目
 
