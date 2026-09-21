@@ -86,10 +86,15 @@ llama-server -hf <repo>:<quant> --alias <catalogue id> -c <window> -ngl 99 --jin
              --host 0.0.0.0 --port 8080 --api-key <key>
 ```
 
-- 🔴 **`--alias` is close to mandatory.** This deployment sends the catalogue's **id**
-  as `model` on every request, so the request never arrives unless the alias matches
-  it (without `--alias`, a single-model server's `/v1/models` reports whatever path
-  was passed to `-hf`/`-m` as its id).
+- **`--alias` is for telling models apart, not for getting through.** Measured
+  (2026-09-21, a single-model `b11067`): **a single-model llama-server does not read the
+  request's `model` field at all** — the right alias, a nonsense name and an empty string
+  all answer 200 from the same model. So a mismatched alias still infers fine. Give one
+  anyway, because **without `--alias` the id in `/v1/models` is the path passed to
+  `-hf`/`-m`**, and that is the name the launch menu, the catalogue and the transcript are
+  left with. 🔴 **Router mode (several models behind `--models-preset` and friends) is the
+  opposite: there the `model` field is what picks the model**, and a name that matches
+  nothing does not arrive.
 - `-c` (the window) has to be at least the `context_tokens` you register for this row
   in the catalogue — 8192 or more is a reasonable floor.
 - Without `--host 0.0.0.0` the server only answers on loopback. **Give `--port`
