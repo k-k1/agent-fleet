@@ -57,6 +57,10 @@ type threadHandle struct {
 	inter    *agents.Interaction
 	pending  *pendingAsk // what inter is waiting on, in muse's own vocabulary
 	events   chan agents.Event
+
+	// streaming holds the item/delta fragments of items that have not completed yet, keyed
+	// by item id. In memory only — see onDelta.
+	streaming map[string]string
 }
 
 // pendingAsk is the wire identity of the thing an Interaction is standing in for. Two
@@ -253,6 +257,30 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		}
 		h.onStatus(p)
 
+	case msp.NotificationItemStarted:
+		var p msp.ItemStartedParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.onItem(p.Item)
+
+	case msp.NotificationItemUpdated, msp.NotificationItemCompleted:
+		// Both carry a whole item; `completed` is the last word on it and `updated` is a
+		// revision of one already recorded. The store folds them by revision on read, so
+		// they take the same path in.
+		var p msp.ItemCompletedParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.onItem(p.Item)
+
+	case msp.NotificationItemDelta:
+		var p msp.ItemDeltaParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.onDelta(p)
+
 	case msp.NotificationApprovalRequested:
 		var p msp.ApprovalRequestParams
 		if json.Unmarshal(params, &p) != nil {
@@ -273,6 +301,52 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	case msp.NotificationUserInputSettled:
 		h.clearAsk(func(p *pendingAsk) bool { return !p.isApproval() })
 	}
+}
+
+// onItem persists one item and drops any streaming buffer it had. A store failure is logged
+// once and never fails the turn: the host owns the conversation of record, and refusing to
+// carry on because AF could not mirror a line would trade a rendering gap for a dead session.
+func (h *threadHandle) onItem(it msp.Item) {
+	h.mu.Lock()
+	delete(h.streaming, it.ItemID)
+	sid := h.slotSid
+	h.mu.Unlock()
+	if err := openStore(sid).Append(it); err != nil {
+		log.Printf("muse: %s: transcript append: %v", h.name, err)
+	}
+}
+
+// onDelta accumulates a streaming fragment. Deltas are NOT persisted: the `item/completed`
+// that follows carries the whole text, so writing every fragment would multiply the store by
+// the streaming granularity and then be thrown away. They live in memory only, and Transcript
+// overlays them so the mirror streams while the turn runs.
+func (h *threadHandle) onDelta(p msp.ItemDeltaParams) {
+	// The schema names which member a delta extends; a delta for anything but the item's own
+	// text is not something the mirror can splice, so it is dropped rather than appended to
+	// the wrong field.
+	if p.Field != nil && *p.Field != "" && *p.Field != "text" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.streaming == nil {
+		h.streaming = map[string]string{}
+	}
+	h.streaming[p.ItemID] += p.Delta
+}
+
+// streamingText returns a copy of the in-flight fragments, for Transcript's overlay.
+func (h *threadHandle) streamingText() map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.streaming) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(h.streaming))
+	for k, v := range h.streaming {
+		out[k] = v
+	}
+	return out
 }
 
 // onRequest answers the server-initiated form of the two must-answer prompts.

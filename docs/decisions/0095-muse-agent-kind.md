@@ -1620,3 +1620,54 @@ what the fake host cannot — that the spawn argv, the child environment, the ha
 rather than spawning a second child for one session, that a Resume after a drop *reloads* the
 stored session instead of silently splitting the member's history, and that a killed child
 turns into a dead handle. It stops before a turn, so it spends no quota.
+
+### P2-3: the transcript, and a correction to decision 4's at-rest half
+
+The third work package: the live `item/*` stream, the mirror's turn model, subagent items —
+and one premise of decision 4 that measurement overturned.
+
+🔴 **`session.jsonl` does not hold the wire's records.** Decision 4 reads: "when it is not [up],
+the read layer parses `~/.local/share/muse/sessions/YYYY/MM/DD/<sid>/session.jsonl`, which is
+append-only and holds the same records." Measured on a real run, it is append-only and it is
+not the same records. It is an event-sourced **runtime** log in muse's internal vocabulary:
+`runtime.session` / `runtime.session.task` envelopes carrying `started`,
+`model_request_configured`, `provider_request_options_configured`, `model_response_created`,
+`assistant_message_committed`, `goal_usage_attribution`, `terminal` and so on — 43 of the 68
+records in a single one-prompt echo session were `runtime.session`. There is no `Item` in the
+file. A reader for it would be exactly the transcript reverse-engineering the Consequences
+section claims this kind does not need, against an internal format with no stability promise.
+
+The protocol's own answer is `session/read`, which returns `SessionHistory.items` — the stable
+surface. It is not usable here for a reason that is about Agent Fleet, not about muse:
+`Agent.Transcript` is called from the usage aggregation as well as the mirror
+(`sessionx/session_usage.go`), so a fleet-wide usage query would spawn one 73 MiB host per
+muse session.
+
+**So the at-rest half is AF's own store**, the shape ADR 0093 decision 3 already uses for lcpp:
+an append-only log of the items AF saw, under `muse-transcripts/<slot sid>.jsonl`, written from
+the live stream and read back by `Transcript`. The difference from lcpp is worth stating, since
+the two look alike: there the store IS the conversation, here the host owns it and this is a
+mirror of what AF observed. What that costs is a turn that ran while AF was not watching —
+which under decision 2 (managed-only, AF is the only writer) can only happen if the Agent died
+mid-turn, and `session/read` on the next Resume is the documented way to backfill it. Nothing
+in the decision's reasoning about the session id changes; only the file it named.
+
+Three smaller findings the implementation pinned:
+
+- **Items are revised, so the store folds on read, not on write.** An `item/started`, any
+  number of `item/delta`s and an `item/completed` share an `itemId` and carry a rising
+  `revision`. Keeping one line per item would mean a read-modify-write, which loses a
+  concurrent append on a crash; appending every observation and folding by revision on read
+  does not. Order is first-seen order, because sorting by revision or id reshuffles a turn
+  whose tool call completed after the text that follows it.
+- **Deltas are not persisted.** The `item/completed` that follows carries the whole text, so
+  writing every fragment would multiply the store by the streaming granularity and then throw
+  it away. They live in memory and `Transcript` overlays them, which is what makes the mirror
+  stream.
+- **Turn grouping is not `turnId`.** A user message opens a user turn and closes the open
+  assistant one; assistant-side items fold into a single assistant turn. Items do carry a
+  `turnId`, but a steered turn carries items from before and after the injection and a
+  compaction between turns carries none at all, so grouping on it would drop them.
+
+`Caps.CanTranscript` is therefore true, and the guide's capability table says a stopped muse
+session shows its history — with the footnote that says whose copy it is.

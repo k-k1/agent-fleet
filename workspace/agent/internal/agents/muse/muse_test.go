@@ -21,10 +21,12 @@ func TestKindAndCaps(t *testing.T) {
 	if !c.PermissionChoice {
 		t.Error("PermissionChoice must be true, or POST /sessions refuses skip_permissions=false")
 	}
-	// A cap is a claim about a path that exists. Neither the transcript reader nor the fork
-	// path is built, so claiming them would show the member an affordance that does nothing.
-	if c.CanTranscript || c.CanFork || c.CanForkAt {
-		t.Error("a cap was claimed for a path that is not implemented yet")
+	if !c.CanTranscript {
+		t.Error("CanTranscript must be true: Transcript reads a store the item stream fills")
+	}
+	// A cap is a claim about a path that exists, and the fork path is not built.
+	if c.CanFork || c.CanForkAt {
+		t.Error("a fork cap was claimed for a path that is not implemented yet")
 	}
 }
 
@@ -35,9 +37,19 @@ func TestBuildLaunchAlwaysRefuses(t *testing.T) {
 	}
 }
 
-func TestTranscriptHasNoGenericSourceYet(t *testing.T) {
-	if _, ok := New().Transcript(session.Meta{}); ok {
-		t.Error("Transcript reported a source before the reader exists")
+// A session that has never spoken has an empty history, not a missing one: ok=false would
+// make the read layer fall back as if this kind had no transcript source at all.
+func TestTranscriptOfAnUntouchedSessionIsEmptyNotAbsent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	td, ok := New().Transcript(session.Meta{Kind: session.KindMuse, Name: "never-spoke", Dir: t.TempDir()})
+	if !ok {
+		t.Fatal("Transcript reported no source for a session that simply has no history yet")
+	}
+	if len(td.Turns) != 0 {
+		t.Errorf("%d turns for a session that never spoke", len(td.Turns))
+	}
+	if td.Path == "" {
+		t.Error("Path is empty; the Console shows it as the transcript's location")
 	}
 }
 

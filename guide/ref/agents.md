@@ -19,8 +19,8 @@ because "does this apply to a plain shell session?" is a real question.
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Managed execution (no terminal) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | — |
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
-| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —¹¹ | — | — |
-| Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | —¹¹ | — | — |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓¹² | — | — |
 | Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
 | Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | —¹¹ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
@@ -165,3 +165,7 @@ Managed.
 marked with this footnote are the parts still to come; they will fill in as each lands.
 Muse Code is also proprietary, so it is not included in the image — a deployment that
 wants it installs it on demand.
+
+¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
+session still shows its history. Muse Code's own session file is a runtime log in its
+internal format rather than a readable transcript, so it is not the source here.
