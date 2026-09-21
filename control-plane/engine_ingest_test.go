@@ -1407,3 +1407,34 @@ func TestIngestHistorySaysWhichCatalogueRowStillUsesTheFile(t *testing.T) {
 		t.Errorf("a key no row points at claimed a user: %v", v)
 	}
 }
+
+// The licence classifier reads a NAME as well as words, and this is the pair that made that
+// necessary (ADR 0098). Nothing in "qwen-research" says non-commercial, so before the needle the
+// Qwen Research License read as `unknown` — the honest answer for terms nobody has read, and the
+// wrong one for terms that say "FOR NON-COMMERCIAL PURPOSES ONLY" in §2a.
+//
+// ⚠️ The `unknown` cases below are the guard, not filler. `unknown` is a real answer here (ADR
+// 0072 decision 10: the alternative is a list of every licence in the world, and a wrong "yes" is
+// the expensive direction), so a needle that widened into "any licence with a name" would take
+// these too.
+func TestCommercialUseReadsNamedNonCommercialLicences(t *testing.T) {
+	for _, tc := range []struct{ license, name, want string }{
+		// Measured 2026-09-21 on Hugging Face: Qwen/Qwen-Image-2.1's cardData is exactly this
+		// pair, and the LICENSE file in that repository is the Qwen RESEARCH LICENSE AGREEMENT.
+		{"other", "qwen-research", "no"},
+		{"other", "Qwen Research License Agreement", "no"},
+		// The two directions that already worked, as the control.
+		{"apache-2.0", "", "yes"},
+		{"other", "flux-1-dev-non-commercial-license", "no"},
+		// 🔴 Still `unknown`, and must stay so: a bare `other` is a licence nobody read, and a
+		// research-flavoured word in some OTHER vendor's name is not this one's terms.
+		{"other", "", "unknown"},
+		{"other", "some-research-friendly-license", "unknown"},
+		{"", "", "unknown"},
+	} {
+		got := engineCommercialUse(engineResolved{License: tc.license, LicenseName: tc.name})
+		if got != tc.want {
+			t.Errorf("commercialUse(%q / %q) = %q, want %q", tc.license, tc.name, got, tc.want)
+		}
+	}
+}

@@ -63,6 +63,23 @@ func TestFamilyGuessOnlyAnswersWhatTheProviderCanRun(t *testing.T) {
 		// Civitai ranks highest today, and a wrong family would silence `base_model_missing` —
 		// the row's only mark that it cannot generate.
 		{"LTXV 2.5", ""},
+		// 🔴 The Qwen pair, and the two lines have to be read together (ADR 0098). `Qwen 2` is
+		// Civitai's string for Qwen-Image 2.1 and carries nothing else — measured 2026-09-21,
+		// `types=Checkpoint` answers five rows and all five are that model. The bare `Qwen` is
+		// the junk drawer next to it: the same query under that string answers Qwen-Image,
+		// Qwen-Image-2512, all three Qwen-Image-Edit versions and a text encoder. Five
+		// architectures, so it must keep answering nothing.
+		{"Qwen 2", "qwen-image-2.1"},
+		{"Qwen2", "qwen-image-2.1"},
+		{"Qwen", ""},
+		{"Qwen-Image", ""},
+		{"Qwen-Image-Edit-2511", ""},
+		// 🔴 Whole-match, not a substring: these are Qwen model names an upstream really does
+		// publish, and none of them is this image family. A needle would take all three and
+		// silence `base_model_missing` on a row the template cannot load.
+		{"Qwen 2.5", ""},
+		{"Qwen2-VL", ""},
+		{"Qwen 2.5 VL 7B", ""},
 		{"", ""},
 	} {
 		if got := engineFamilyGuess("comfy", tc.upstream); got != tc.want {

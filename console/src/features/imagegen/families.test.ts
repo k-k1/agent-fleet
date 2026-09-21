@@ -19,6 +19,7 @@ describe("族カードの選択", () => {
       "krea2",
       "qwen-image-edit-2509",
       "qwen-image-edit-2511",
+      "qwen-image-2.1",
     ]);
   });
 
@@ -67,6 +68,16 @@ describe("族カードの選択", () => {
   it("2509 と 2511 は steps が違う（上流のテンプレートがそうなっている）", () => {
     expect(familyCard("qwen-image-edit-2509")?.steps).toEqual([20, 20]);
     expect(familyCard("qwen-image-edit-2511")?.steps).toEqual([40, 40]);
+  });
+
+  // 🔴 ADR 0098: 指示編集の方言でありながら sizes を持つ唯一の族。生成もできるからで、
+  // ここを空にすると生成側の寸法の選択肢が画面から消える（決定 4 の例外ではない）。
+  it("qwen-image-2.1 は sentences 方言だが sizes を持つ（生成もする族）", () => {
+    const card = familyCard("qwen-image-2.1");
+    expect(card?.dialect).toBe("sentences");
+    expect(card?.sizes).toHaveLength(5);
+    expect(card?.steps).toEqual([25, 50]);
+    expect(card?.cfg).toEqual([1, 4]);
   });
 });
 

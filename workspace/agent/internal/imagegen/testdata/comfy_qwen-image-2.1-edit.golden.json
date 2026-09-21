@@ -1,0 +1,99 @@
+{
+  "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+      "device": "default",
+      "type": "qwen_image"
+    }
+  },
+  "dec": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "ks",
+        0
+      ],
+      "vae": [
+        "vae",
+        0
+      ]
+    }
+  },
+  "enc": {
+    "class_type": "TextEncodeQwenImage21",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "image_1": [
+        "img1",
+        0
+      ],
+      "negative_prompt": "",
+      "prompt": "a red fox sitting on a mossy rock in a misty forest at dawn, detailed fur, soft light",
+      "resolution": 1024,
+      "vae": [
+        "vae",
+        0
+      ]
+    }
+  },
+  "img1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "af-photo.png"
+    }
+  },
+  "ks": {
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+        "enc",
+        2
+      ],
+      "model": [
+        "unet",
+        0
+      ],
+      "negative": [
+        "enc",
+        1
+      ],
+      "positive": [
+        "enc",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 1234,
+      "steps": 25
+    }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "af-qwen-image-2.1",
+      "images": [
+        "dec",
+        0
+      ]
+    }
+  },
+  "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+    }
+  }
+}

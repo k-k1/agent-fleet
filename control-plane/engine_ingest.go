@@ -1567,7 +1567,14 @@ func engineCommercialUse(r engineResolved) string {
 	name := strings.ToLower(r.LicenseName + " " + r.License)
 	switch {
 	case strings.Contains(name, "non-commercial"), strings.Contains(name, "noncommercial"),
-		strings.Contains(name, "-nc"), strings.Contains(name, "cc-by-nc"):
+		strings.Contains(name, "-nc"), strings.Contains(name, "cc-by-nc"),
+		// 🔴 A NAME, not a word: nothing in "qwen-research" says non-commercial, and the needles
+		// above therefore answered `unknown` for it. Measured 2026-09-21 — Hugging Face's cardData
+		// for Qwen/Qwen-Image-2.1 is `license: other`, `license_name: qwen-research`, and the
+		// LICENSE file in that repository grants rights "FOR NON-COMMERCIAL PURPOSES ONLY"
+		// (Qwen RESEARCH LICENSE AGREEMENT §2a). `unknown` is a real answer for a licence nobody
+		// read; it is the wrong answer for one somebody did.
+		strings.Contains(name, "qwen-research"), strings.Contains(name, "qwen research"):
 		return "no"
 	case strings.Contains(name, "apache-2.0"), strings.Contains(name, "mit"),
 		strings.Contains(name, "openrail++"), strings.Contains(name, "creativeml-openrail-m"),

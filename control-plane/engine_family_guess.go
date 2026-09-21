@@ -111,6 +111,27 @@ var engineFamilyRules = []engineFamilyRule{
 	// would be a trap waiting for the day that order changes. The digit is what separates the
 	// two products, so it is part of the needle.
 	{family: "krea2", any: []string{"krea2"}},
+	// 🔴 qwen-image-2.1 matches WHOLE, for anima's reason one step further. The string is Civitai's
+	// own `Qwen 2`, which normalises to `qwen2`; as a SUBSTRING that needle would take every
+	// `Qwen 2.5 …` and `Qwen2-VL …` spelling an upstream might publish, each time silencing
+	// `base_model_missing` on a row this template cannot load.
+	//
+	// 🟢 This is the one Qwen string a rule is safe on, and the measurement is the whole argument
+	// (2026-09-21, `types=Checkpoint` against the live API, both lists COMPLETE rather than sampled):
+	//
+	//	baseModels=Qwen 2  ->  5 checkpoints, every one of them Qwen-Image 2.1
+	//	baseModels=Qwen    ->  20+ checkpoints spanning FIVE architectures — Qwen-Image,
+	//	                       Qwen-Image-2512, Qwen-Image-Edit / 2509 / 2511, and a
+	//	                       `Qwen-3-0.6B base/anima` that is not an image model at all
+	//
+	// So `qwen` and `qwen2` are not a family and its version: they are a junk drawer and a name.
+	// The paragraph below is what the first line of that table buys, and it still stands.
+	//
+	// ⚠️ The residual risk is a FUTURE Qwen-Image release published under this same `Qwen 2` — the
+	// suggestion would then offer 2.1's template for a topology it does not load. That is the
+	// `Flux.2 Klein 9B-base` shape of trap, it cannot be pre-empted by a needle, and what answers
+	// it is re-measuring this table rather than trusting it.
+	{family: "qwen-image-2.1", equal: []string{"qwen2"}},
 	// 🔴 No rule for either qwen-image-edit family here, on purpose. Measured 2026-09-20, Civitai
 	// publishes the bare `Qwen` as baseModel for every Qwen-Image-Edit row found — the SAME
 	// string Qwen-Image itself (text-to-image, ADR 0094's rejected "却下した案") would publish,
@@ -119,6 +140,12 @@ var engineFamilyRules = []engineFamilyRule{
 	// own opening rule: a wrong family silences `base_model_missing` on a row that cannot
 	// generate). It would also have to pick BETWEEN 2509 and 2511 from a string that names
 	// neither. engineFamilyUpstreams below carries hf only for the same reason.
+	//
+	// 🔴 Re-measured 2026-09-21 while the rule above was written, and the string is looser than
+	// 2026-09-20 recorded: `baseModels=Qwen&types=Checkpoint` answers Qwen-Image, Qwen-Image-2512,
+	// all three Qwen-Image-Edit versions AND a `Qwen-3-0.6B base/anima` row, which is a text
+	// encoder. One string, five architectures. Whatever a rule here guessed, it would be wrong
+	// about most of what carries the string.
 }
 
 // engineFamilyFromUpstream is the table above applied to one string, before the vocabulary is
@@ -214,6 +241,19 @@ var engineFamilyUpstreams = map[string]engineFamilyUpstream{
 	// suggests neither: a row browsed as 2511 is loaded by the 2511 template, and a 2509 LoRA
 	// listed under it would be offered for a graph it was not trained against.
 	"qwen-image-edit-2511": {hf: "Qwen/Qwen-Image-Edit-2511"},
+	// 🔴 The one Qwen family that DOES have a Civitai entry, and the measurement is why: this
+	// version publishes `Qwen 2` rather than the bare `Qwen` its siblings share, and
+	// `baseModels=Qwen 2&types=Checkpoint` answers FIVE rows and all five are Qwen-Image 2.1
+	// (2026-09-21, the complete list and not a page of one). A string that names exactly one
+	// architecture is a string this list can carry.
+	//
+	// ⚠️ Some of those rows are the CLOSED API version and carry nothing to download — the same
+	// shape Krea 2's Civitai page has. Browsing finds them; the ingest has no source for them, and
+	// that is the upstream's answer rather than a spelling to fix here.
+	//
+	// hf is the publisher's own repository: measured, `base_model:Qwen/Qwen-Image-2.1` answers
+	// derivatives (the Comfy-Org mirror and several GGUF conversions).
+	"qwen-image-2.1": {civitai: []string{"Qwen 2"}, hf: "Qwen/Qwen-Image-2.1"},
 }
 
 // engineFamilyValidFor answers whether `family` is a member of the vocabulary this request could
