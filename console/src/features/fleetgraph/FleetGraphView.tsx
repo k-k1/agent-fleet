@@ -88,6 +88,9 @@ const DRAG_SLOP_PX = 4;
 // than the deadzone is a resting hand rather than a pinch. Both numbers are the ones the
 // browser pane's recognizer settled on (features/browser/touch.ts) — a second figure for
 // the same physical gesture would only be a second thing to tune.
+// How far above its lane an arrow from outside the figure starts. Under one row (34px), so
+// the stub never reaches into the row above and cannot be read as belonging to it.
+const EXT_STUB_PX = 16;
 const PINCH_MIN_SPAN_PX = 24;
 const PINCH_DEADZONE = 0.04;
 
@@ -926,9 +929,27 @@ function ArrowGlyph({
   clickable: boolean;
   onOpen: (e: ClickMods) => void;
 }) {
-  const EDGE_Y = TOP_PAD - 14;
-  const y0 = arrow.fromRow == null ? EDGE_Y : topY(arrow.fromRow);
-  const y1 = arrow.toRow == null ? EDGE_Y : topY(arrow.toRow);
+  // An end with no row at all is an EXTERNAL actor (decision 8-2): a person, a chat
+  // conversation, the scheduler, a bridge. It is drawn as a short stub just above the
+  // lane it touches — NOT as a line to the figure's top edge, which is what it used to be.
+  //
+  // 🔥 Measured on a real 78-lane fleet: an instruction from `user` to a lane near the
+  // bottom drew a 2,649px line through a 2,688px figure, and with 51 of them the figure
+  // was a picket fence of vertical lines with the lanes lost behind it
+  // (console/scripts/fleetgraph/arrows.mjs, docs/log/101 §101.13). The top edge never
+  // carried any information anyway — "it came from outside" is said by the dot at the
+  // stub's far end, the arrow's own colour and its tooltip, all of which work at any
+  // fleet size. The nine-lane fixture could not show this: at nine rows the line IS short.
+  //
+  // `fromRow ?? toRow` is the lane the stub hangs off. It is null only when BOTH ends are
+  // external, which the builder never produces (instruct/report/peer always name a lane,
+  // and a family arrow with an unknown parent is dropped before it reaches here) — the
+  // fallback keeps such an arrow visible at the top rather than collapsing it to nothing.
+  const laneRow = arrow.fromRow ?? arrow.toRow;
+  const anchorY = laneRow == null ? TOP_PAD + EXT_STUB_PX : topY(laneRow);
+  const outsideY = anchorY - EXT_STUB_PX;
+  const y0 = arrow.fromRow == null ? outsideY : topY(arrow.fromRow);
+  const y1 = arrow.toRow == null ? outsideY : topY(arrow.toRow);
   const variantCls = isFamilyArrow(arrow.variant) ? "family" : arrow.variant;
   const title =
     tr(ARROW_KEY[arrow.variant], arrow.variant === "peer" ? { intent: arrow.label ?? "" } : {}) +
@@ -942,7 +963,7 @@ function ArrowGlyph({
     >
       <title>{title}</title>
       <line x1={arrow.x} x2={arrow.x} y1={y0} y2={y1} markerEnd="url(#fgraph-arrowhead)" />
-      {(arrow.fromRow == null || arrow.toRow == null) && <circle className="fgraph-edge-pt" cx={arrow.x} cy={EDGE_Y} r={2.5} />}
+      {(arrow.fromRow == null || arrow.toRow == null) && <circle className="fgraph-edge-pt" cx={arrow.x} cy={outsideY} r={2.5} />}
     </g>
   );
 }
