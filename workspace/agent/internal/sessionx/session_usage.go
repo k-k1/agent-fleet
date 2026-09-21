@@ -12,6 +12,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -68,6 +69,7 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 		u := AggregateUsage(UsageTurns(m))
 		u.Name, u.Display, u.Kind = m.Name, session.Display(m), string(m.Kind)
 		overlayKiroLiveUsage(m, &u)
+		overlayMuseLiveUsage(m, &u)
 		out = append(out, u)
 	}
 	if nameFilter != "" && len(out) == 0 {
@@ -105,6 +107,38 @@ func overlayKiroLiveUsage(m session.Meta, u *sessionUsage) {
 		Model:        model,
 	}
 	u.Cumulative.Credits = credits
+}
+
+// overlayMuseLiveUsage fills a running managed muse session's context from the live
+// MSP handle (ADR 0095 P2-16). MSP delivers session/contextUsage around every turn:
+// usedTokens is exact (counted-once) and windowTokens is the host's basis limit, absent
+// when the basis has no limit. No live handle / no notification yet ⇒ unchanged — honest.
+func overlayMuseLiveUsage(m session.Meta, u *sessionUsage) {
+	if m.Kind != session.KindMuse {
+		return
+	}
+	used, win, ok := muse.ManagedContext(m.Name)
+	if !ok {
+		return
+	}
+	window := muse.MuseDefaultWindow
+	windowSource := "estimated"
+	if win != nil && *win > 0 {
+		window = int(*win)
+		windowSource = "recorded"
+	}
+	tokens := int(used)
+	var pct float64
+	if window > 0 {
+		pct = float64(tokens) / float64(window) * 100
+	}
+	u.Context = &usagex.ContextUsage{
+		Tokens:       tokens,
+		Fresh:        tokens, // single segment — MSP carries no cache-read/create breakdown
+		Window:       window,
+		WindowSource: windowSource,
+		Pct:          pct,
+	}
 }
 
 // UsageTurns loads the full transcript for aggregation: claude via its jsonl

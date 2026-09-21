@@ -75,6 +75,13 @@ type threadHandle struct {
 	// streaming holds the item/delta fragments of items that have not completed yet, keyed
 	// by item id. In memory only — see onDelta.
 	streaming map[string]string
+
+	// Live context fill (session/contextUsage). Separate lock from mu so onNotify
+	// can record context without contending with turn plumbing. Read by ManagedContext.
+	ctxMu       sync.Mutex
+	ctxUsed     int64  // usedTokens from the latest session/contextUsage notification
+	ctxWindow   *int64 // windowTokens; nil when the basis carries no limit
+	ctxHasUsage bool   // false until the first notification arrives
 }
 
 // pendingAsk is the wire identity of the thing an Interaction is standing in for. Two
@@ -362,6 +369,19 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 
 	case msp.NotificationUserInputSettled:
 		h.clearAsk(func(p *pendingAsk) bool { return !p.isApproval() })
+
+	case msp.NotificationSessionContextUsage:
+		// Context-window pressure for THIS session — stored on the handle, not process-wide.
+		// windowTokens is absent when the basis has no limit; never fabricate a value for it.
+		var p msp.SessionContextUsageParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.ctxMu.Lock()
+		h.ctxUsed = p.UsedTokens
+		h.ctxWindow = p.WindowTokens
+		h.ctxHasUsage = true
+		h.ctxMu.Unlock()
 
 	case msp.NotificationUsageChanged:
 		// Unsolicited, and about the ACCOUNT rather than this session — so it is recorded
