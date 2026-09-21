@@ -98,12 +98,17 @@ function localStamp(iso: string): string {
 }
 
 /** The member's own lcpp connection (docs/log/107 follow-up), as far as this pill needs it:
- *  the URL (for the tooltip) and the last OBSERVED reachability. `undefined` reachable means
- *  "never observed", same distinction connections.go's lcppStatus draws — this must not be
- *  read as false. */
+ *  the URL (for the tooltip), the last OBSERVED reachability, and the model that observation
+ *  actually found. `undefined` reachable means "never observed", same distinction
+ *  connections.go's lcppStatus draws — this must not be read as false. `model`/`modelCount`
+ *  (2026-09-21 addendum): a member can swap the LAN box under the SAME saved URL, and a
+ *  single-model llama-server does not read the request's own `model` field at all — so without
+ *  this, nothing on screen would ever say the box now answers as something else. */
 export interface MemberChatConn {
   url?: string;
   reachable?: boolean;
+  model?: string;
+  modelCount?: number;
 }
 
 /** Store-connected pill group — what TopBar renders. Starts the REST-fallback poll once per
@@ -120,7 +125,9 @@ export function EnginesPill() {
   useEffect(() => startEnginesPolling(), []);
   const conns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
   const lcpp = conns?.lcpp;
-  const memberChat: MemberChatConn | undefined = lcpp?.connected ? { url: lcpp.url, reachable: lcpp.reachable } : undefined;
+  const memberChat: MemberChatConn | undefined = lcpp?.connected
+    ? { url: lcpp.url, reachable: lcpp.reachable, model: lcpp.model, modelCount: lcpp.model_count }
+    : undefined;
   return <EnginesPillView rows={rows || []} memberChat={memberChat} />;
 }
 
@@ -175,7 +182,13 @@ function MemberChatPill({ conn }: { conn: MemberChatConn }) {
   const tone = MEMBER_STATE_TONE[word];
   const roleLabel = tr(ROLE_LABEL_KEY.chat);
   const stateLabel = tr(MEMBER_STATE_KEY[word]);
-  const summary = [roleLabel, stateLabel, conn.url].filter(Boolean).join(tr("ui.sep"));
+  // The model the last observation actually found (docs/log/107, 2026-09-21 addendum): a
+  // member can swap the LAN box under the SAME URL, and a single-model llama-server does not
+  // read the request's own `model` field, so this is the only thing that can catch a swap.
+  const modelLine = conn.model
+    ? tr("engine.member_model") + conn.model + (conn.modelCount && conn.modelCount > 1 ? tr("engine.member_model_more", { n: conn.modelCount - 1 }) : "")
+    : undefined;
+  const summary = [roleLabel, stateLabel, conn.url, modelLine].filter(Boolean).join(tr("ui.sep"));
 
   return (
     <div className="engine-pill-wrap" ref={ref}>
@@ -200,6 +213,7 @@ function MemberChatPill({ conn }: { conn: MemberChatConn }) {
           <div className="engine-row">
             <div className="engine-row-line muted">{tr("engine.member_conn_hint")}</div>
             {conn.url && <div className="engine-row-line mono">{conn.url}</div>}
+            {modelLine && <div className="engine-row-line">{modelLine}</div>}
           </div>
         </div>
       )}

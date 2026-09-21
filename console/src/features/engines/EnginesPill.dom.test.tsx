@@ -302,3 +302,42 @@ describe("engine pill — the member's own lcpp connection (docs/log/107 follow-
     expect(imagesPill).not.toBeNull();
   });
 });
+
+describe("engine pill — the model behind the member connection (docs/log/107, 2026-09-21 addendum)", () => {
+  // A member can swap the LAN box under the SAME saved URL, and a single-model llama-server
+  // does not read the request's own `model` field — so this is the only thing on screen that
+  // can catch a swap. It rides in the tooltip (title) so it is visible without opening.
+  it("a single observed model rides in the tooltip beside the URL", async () => {
+    await render([], { url: "http://box:9931", reachable: true, model: "gemma-4-12b-it-q4_k_m" });
+    const title = pills()[0].getAttribute("title") || "";
+    expect(title).toContain("box:9931");
+    expect(title).toContain("gemma-4-12b-it-q4_k_m");
+  });
+
+  it("shows a count when the observation found more than one model (a router)", async () => {
+    await render([], { url: "http://box:9931", reachable: true, model: "gemma-4-12b-it-q4_k_m", modelCount: 3 });
+    const title = pills()[0].getAttribute("title") || "";
+    expect(title).toMatch(/ほか 2 件|\+2 more/);
+  });
+
+  // Positive control for the count guard: a single model must not draw a "+0 more"/"ほか 0 件".
+  it("draws no count suffix for a single model", async () => {
+    await render([], { url: "http://box:9931", reachable: true, model: "gemma-4-12b-it-q4_k_m", modelCount: 1 });
+    const title = pills()[0].getAttribute("title") || "";
+    expect(title).not.toMatch(/ほか|more/);
+  });
+
+  // No model observed yet: nothing model-shaped rides in the tooltip.
+  it("omits the model entirely when unknown", async () => {
+    await render([], { url: "http://box:9931", reachable: true });
+    const title = pills()[0].getAttribute("title") || "";
+    expect(title).not.toMatch(/モデル|Model:/);
+  });
+
+  it("the popover also shows the model, on its own line", async () => {
+    await render([], { url: "http://box:9931", reachable: true, model: "gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m" });
+    await openPopover(pills()[0]);
+    const lines = Array.from(host.querySelectorAll(".engine-row-line")).map((n) => n.textContent);
+    expect(lines.some((t) => t?.includes("gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m"))).toBe(true);
+  });
+});

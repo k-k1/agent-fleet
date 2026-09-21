@@ -1145,6 +1145,7 @@ func lcppMemberFetchModelsCached(ctx context.Context, conn secrets.LcppConn) []l
 
 	models, ok := lcppMemberFetchModels(ctx, conn)
 	lcppMemberRecordReachable(ok)
+	lcppMemberRecordModel(models)
 	if !ok {
 		models = nil
 	}
@@ -1156,16 +1157,28 @@ func lcppMemberFetchModelsCached(ctx context.Context, conn secrets.LcppConn) []l
 }
 
 // lcppMemberReachable remembers the outcome of the last actual attempt to reach the member's
-// lcpp connection: recorded by lcppMemberFetchModelsCached's real fetch (the launch-menu path,
-// called on every tools/list) and by handleCheckLcppConn's explicit "check connection" button
-// (connections.go). connections.go's lcppStatus READS this but never dials on its own — GET
-// /connections is a hot path several Console screens poll on every open (RepoPicker,
-// HandoffModal, the key launch menu), and paying a LAN round trip there would slow all of them.
+// lcpp connection — and, alongside it, which model that attempt found — recorded by
+// lcppMemberFetchModelsCached's real fetch (the launch-menu path, called on every tools/list)
+// and by handleCheckLcppConn's explicit "check connection" button (connections.go).
+// connections.go's lcppStatus READS this but never dials on its own — GET /connections is a hot
+// path several Console screens poll on every open (RepoPicker, HandoffModal, the key launch
+// menu), and paying a LAN round trip there would slow all of them.
+//
+// model/modelCount exist because a member can swap the LAN box under the same saved URL — a
+// live run measured it (docs/log/107's 2026-09-21 addendum): a single-model llama-server does
+// not read the request's own `model` field at all (any string, or none, answers 200), so a
+// member who keeps using an old model NAME after the box behind the URL changed gets served by
+// whatever is ACTUALLY loaded now, silently. Naming the model the last real /v1/models read
+// actually found is the only way the screen can catch that up. modelCount is >1 for a router
+// (docs/log/106 §axis 2 — this deployment's own borrowed engine runs one), so a member reading
+// "and N more" knows there was a choice, not that the count is a mistake.
 var lcppMemberReachable struct {
-	mu    sync.Mutex
-	known bool
-	ok    bool
-	at    time.Time
+	mu         sync.Mutex
+	known      bool
+	ok         bool
+	at         time.Time
+	model      string // the first id from the last successful /v1/models read; "" = not known
+	modelCount int    // how many models that read returned (meaningless when model == "")
 }
 
 // lcppMemberRecordReachable records one observation. Called only from a real dial — never from
@@ -1176,6 +1189,25 @@ func lcppMemberRecordReachable(ok bool) {
 	lcppMemberReachable.known = true
 	lcppMemberReachable.ok = ok
 	lcppMemberReachable.at = time.Now()
+	lcppMemberReachable.mu.Unlock()
+}
+
+// lcppMemberRecordModel records the model found on the last successful /v1/models read — see
+// the doc comment on lcppMemberReachable for why this exists. Called alongside
+// lcppMemberRecordReachable, from the SAME dial's own models slice, so the model can never be
+// older than the reachable bit sitting beside it. An empty slice (the call failed, OR it
+// genuinely succeeded with nothing loaded) clears the previous name rather than leaving a stale
+// one behind — exactly the bug this was added to catch: a swapped box must not go on showing
+// the OLD model's name just because nothing has overwritten it yet.
+func lcppMemberRecordModel(models []lcppMemberModel) {
+	lcppMemberReachable.mu.Lock()
+	if len(models) > 0 {
+		lcppMemberReachable.model = models[0].ID
+		lcppMemberReachable.modelCount = len(models)
+	} else {
+		lcppMemberReachable.model = ""
+		lcppMemberReachable.modelCount = 0
+	}
 	lcppMemberReachable.mu.Unlock()
 }
 
@@ -1190,11 +1222,21 @@ func lcppMemberObservedReachable() (ok, known bool) {
 	return lcppMemberReachable.ok, lcppMemberReachable.known
 }
 
+// lcppMemberObservedModel reports the model id and count from the last successful /v1/models
+// read. ok is false whenever no model is known — nothing has observed one yet, or the last
+// dial's own models read came back empty — and connections.go's lcppStatus must omit the field
+// entirely in that case, the same "absence, not a lie" rule lcppMemberObservedReachable follows.
+func lcppMemberObservedModel() (model string, count int, ok bool) {
+	lcppMemberReachable.mu.Lock()
+	defer lcppMemberReachable.mu.Unlock()
+	return lcppMemberReachable.model, lcppMemberReachable.modelCount, lcppMemberReachable.model != ""
+}
+
 // lcppMemberCacheReset drops the short caches keyed off the member's OWN connection
 // (harnessEngineWindowCache's "llm" entry, lcppMemberModelsCache, lcppMemberReachable) —
 // connections.go's PUT/DELETE /connections/lcpp call this so a member who just changed the URL
-// is not stuck looking at the PREVIOUS connection's cached window/models/reachability for the
-// rest of the TTL (or forever, in lcppMemberReachable's case, since nothing else expires it).
+// is not stuck looking at the PREVIOUS connection's cached window/models/reachability/model for
+// the rest of the TTL (or forever, in lcppMemberReachable's case, since nothing else expires it).
 func lcppMemberCacheReset() {
 	harnessEngineWindowCache.Delete("llm")
 	lcppMemberModelsCache.mu.Lock()
@@ -1205,6 +1247,8 @@ func lcppMemberCacheReset() {
 	lcppMemberReachable.known = false
 	lcppMemberReachable.ok = false
 	lcppMemberReachable.at = time.Time{}
+	lcppMemberReachable.model = ""
+	lcppMemberReachable.modelCount = 0
 	lcppMemberReachable.mu.Unlock()
 }
 

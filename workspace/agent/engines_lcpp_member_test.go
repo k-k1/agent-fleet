@@ -326,3 +326,101 @@ func TestLcppMemberCacheResetClearsReachableObservation(t *testing.T) {
 		t.Error("known = true after lcppMemberCacheReset, want false (unknown)")
 	}
 }
+
+// --- lcppMemberReachable's model (docs/log/107, 2026-09-21 addendum) -----------------------
+//
+// A member can swap the LAN box under the SAME saved URL. A live run measured that a
+// single-model llama-server does not read the request's `model` field at all (any string, or
+// none, answers 200) — so without this, a member who keeps the old model name selected gets
+// served by whatever is now actually loaded, and nothing on screen says so.
+
+func TestLcppMemberFetchModelsCachedRecordsModelOnSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"gemma-4-12b-it-q4_k_m"},{"id":"qwen3.8-27b"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	lcppMemberSetConn(t, srv.URL, "")
+
+	lcppModels(context.Background())
+	model, count, ok := lcppMemberObservedModel()
+	if !ok || model != "gemma-4-12b-it-q4_k_m" || count != 2 {
+		t.Errorf("model=%q count=%d ok=%v, want gemma-4-12b-it-q4_k_m, 2, true", model, count, ok)
+	}
+}
+
+// An unreachable box (or one that answers with no models) clears the model rather than leaving
+// a stale name behind — the exact failure this was added to catch.
+func TestLcppMemberFetchModelsCachedClearsModelOnFailure(t *testing.T) {
+	lcppMemberSetConn(t, "http://127.0.0.1:1", "") // nothing listens here
+	lcppModels(context.Background())
+	model, _, ok := lcppMemberObservedModel()
+	if ok || model != "" {
+		t.Errorf("model=%q ok=%v, want \"\", false", model, ok)
+	}
+}
+
+// The swap scenario itself: a box that answered with model A, then — under the SAME connection,
+// a fresh dial outside the cache TTL — answers with model B. The observation must report B, not
+// a stale A.
+func TestLcppMemberFetchModelsCachedSwapUpdatesModel(t *testing.T) {
+	var modelID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"` + modelID + `"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	lcppMemberSetConn(t, srv.URL, "")
+
+	modelID = "gemma-4-12b-it-q4_k_m"
+	lcppModels(context.Background())
+	if model, _, _ := lcppMemberObservedModel(); model != "gemma-4-12b-it-q4_k_m" {
+		t.Fatalf("setup: model = %q, want gemma-4-12b-it-q4_k_m", model)
+	}
+
+	// Force past the 30s cache TTL so the next lcppModels call dials again rather than serving
+	// the first answer — the same thing that happens for real once the cache entry ages out.
+	modelID = "gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m"
+	lcppMemberModelsCache.mu.Lock()
+	lcppMemberModelsCache.at = time.Now().Add(-lcppMemberModelsCacheTTL - time.Second)
+	lcppMemberModelsCache.mu.Unlock()
+
+	lcppModels(context.Background())
+	if model, count, ok := lcppMemberObservedModel(); !ok || model != "gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m" || count != 1 {
+		t.Errorf("after the swap: model=%q count=%d ok=%v, want the NEW model, 1, true", model, count, ok)
+	}
+}
+
+// A cache hit must not re-record the model either — same reasoning as the reachable cache-hit
+// test above: the recorded fact is "the last real dial's own models list", not "whatever this
+// function happened to return most recently including from cache".
+func TestLcppMemberFetchModelsCachedCacheHitDoesNotReRecordModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("dialed the server on what should have been a cache hit")
+	}))
+	t.Cleanup(srv.Close)
+	lcppMemberSetConn(t, srv.URL, "")
+
+	lcppMemberRecordReachable(true)
+	lcppMemberRecordModel([]lcppMemberModel{{ID: "seeded-model"}})
+	lcppMemberModelsCache.mu.Lock()
+	lcppMemberModelsCache.at = time.Now()
+	lcppMemberModelsCache.value = []lcppMemberModel{{ID: "seeded-model"}}
+	lcppMemberModelsCache.mu.Unlock()
+
+	lcppModels(context.Background())
+	if model, count, ok := lcppMemberObservedModel(); !ok || model != "seeded-model" || count != 1 {
+		t.Errorf("model=%q count=%d ok=%v, want the seeded observation untouched", model, count, ok)
+	}
+}
+
+func TestLcppMemberCacheResetClearsModelObservation(t *testing.T) {
+	lcppMemberSetConn(t, "http://box:9931", "")
+	lcppMemberRecordModel([]lcppMemberModel{{ID: "m1"}, {ID: "m2"}})
+	if _, _, ok := lcppMemberObservedModel(); !ok {
+		t.Fatal("setup: model not recorded")
+	}
+
+	lcppMemberCacheReset()
+	if model, count, ok := lcppMemberObservedModel(); ok || model != "" || count != 0 {
+		t.Errorf("model=%q count=%d ok=%v after lcppMemberCacheReset, want \"\", 0, false", model, count, ok)
+	}
+}
