@@ -27,6 +27,7 @@ const (
 	KindShell    = "shell"
 	KindSSM      = "ssm"
 	KindLcpp     = "lcpp"
+	KindMuse     = "muse"
 )
 
 // Driver (docs/log/27 §2, §9.2, ADR 0015): a session's control route. tui is the traditional

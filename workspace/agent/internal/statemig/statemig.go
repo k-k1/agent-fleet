@@ -93,6 +93,12 @@ var Entries = []string{
 	// idempotency ledger, keyed by session name, same shape as the other *-msgledger entries).
 	// Never existed under .config — introduced directly under AgentStateDir.
 	"lcpp-msgledger",
+	// muse's own ClientMessageID ledger, same shape as the other *-msgledger entries, and the
+	// map from a slot to the Muse Code session it opened (id plus the transcript path
+	// session/start reported). Both were introduced directly under AgentStateDir and never
+	// existed under .config.
+	"muse-msgledger",
+	"muse-sessions",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
 	"bridge-approvals",

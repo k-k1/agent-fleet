@@ -8,37 +8,37 @@ updated: "2026-09"
 
 English | [日本語](agents.ja.md)
 
-Ten session kinds exist. Eight drive (or are meant to drive) a coding agent — lcpp is
-managed-only and has no Terminal (CLI) route at all, see the footnote on that row;
+Eleven session kinds exist. Nine drive (or are meant to drive) a coding agent — lcpp and
+muse are managed-only and have no Terminal (CLI) route at all, see the footnote on that row;
 `shell` and `ssm` are terminals with no agent behind them, and they are in the table
 because "does this apply to a plain shell session?" is a real question.
 
 ✓ = supported, — = not supported or not applicable.
 
-| Capability | claude | codex | opencode | copilot | cursor | kiro | agy | lcpp | shell | ssm |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Managed execution (no terminal) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | ✓ | ✓ |
-| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | — | — |
-| Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | — | — |
-| Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — |
-| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — | — |
-| Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | — | — |
-| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | — | — |
-| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | — | — |
-| Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | — | — |
-| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
-| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | — | — |
-| Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | — | — |
-| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | — | — |
-| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — |
+| Capability | claude | codex | opencode | copilot | cursor | kiro | agy | lcpp | muse | shell | ssm |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Managed execution (no terminal) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | — |
+| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —¹¹ | — | — |
+| Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | —¹¹ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | —¹¹ | — | — |
+| Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
+| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | —¹¹ | — | — |
+| Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | —¹¹ | — | — |
+| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | —¹¹ | — | — |
+| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | —¹¹ | — | — |
+| Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —¹¹ | — | — |
+| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | ✓ | — |
+| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
+| Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | —¹¹ | — | — |
+| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | —¹¹ | — | — |
+| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
 
 ¹ copilot's model list depends on the plan: Free offers only "Auto (Copilot picks)".
 
@@ -65,11 +65,12 @@ tree in the repository are still offered to them by injection.
 instructions, so it is the one kind that cannot receive them. It still appears in the
 settings list, with that reason shown.
 
-⁹ lcpp (ADR 0093's own llama.cpp harness) is the first kind with no Terminal (CLI)
-route at all, by design — there is no vendor CLI to put in a pane, only a managed
-runtime this process runs in-process. Creating an lcpp session with no driver
-specified defaults it to Managed rather than trying (and failing) to launch a
-terminal.
+⁹ lcpp (ADR 0093's own llama.cpp harness) and muse (Meta's Muse Code) have no Terminal
+(CLI) route at all, by design. lcpp has no vendor CLI to put in a pane, only a managed
+runtime this process runs in-process; muse has one, but its session protocol already
+carries more than a pane would show, so Agent Fleet drives that instead. Creating a
+session of either kind with no driver specified defaults it to Managed rather than
+trying (and failing) to launch a terminal.
 
 ¹⁰ lcpp drives no CLI to write your instructions into. Instead, the harness reads the
 same fleet/your-own/project instruction layers itself and folds them into the system
@@ -78,7 +79,7 @@ prompt on every turn.
 ## How to sign in
 
 | Kind | Sign-in |
-|---|---|
+|---|:--:|---|
 | claude | OAuth: approve in your browser, then paste the code back. Shows the account email and plan once connected. |
 | codex | A ChatGPT subscription via device code (turn on device-code authentication in ChatGPT's security settings first), or an OpenAI API key. |
 | opencode | Two controls. **"Use opencode"** (off by default; while off, stored keys and sign-ins are ignored) and **"opencode.ai billing"** (None (my own keys) / Free models only / Go (subscription) / Zen (metered)). The latter decides how opencode.ai is used only — the providers you connect yourself stay in the list on every choice. Keys are the API key of whichever LLM provider you want, stored as an environment variable (presets fill the name in; several at once). |
@@ -92,7 +93,7 @@ prompt on every turn.
 ## States shown in the mirror
 
 | Kind | States |
-|---|---|
+|---|:--:|---|
 | claude | Working / Question / Plan ready / Awaiting permission / Ready |
 | codex | Working / Question / Plan ready / Ready |
 | opencode | Working / Question / Ready |
@@ -159,3 +160,8 @@ Managed.
 > runs, and without asking each time in permission-skipping modes. `shell` and `ssm`
 > run what you send verbatim. Keep backups, use least-privilege credentials, and lean
 > on the approval gates.
+
+¹¹ muse is being built (ADR 0095) and is not offered in the launch menu yet. The rows
+marked with this footnote are the parts still to come; they will fill in as each lands.
+Muse Code is also proprietary, so it is not included in the image — a deployment that
+wants it installs it on demand.
