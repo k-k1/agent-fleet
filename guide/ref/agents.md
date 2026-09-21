@@ -24,7 +24,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | ✓¹⁴ | — | — |
 | Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
-| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | —¹¹ | — | — |
+| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ | — | — |
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | —¹¹ | — | — |
 | Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
@@ -196,11 +196,11 @@ connection card offers it, ~299MB into your home), and you have to be signed in 
 unauthenticated session would accept work and then fail every turn.
 
 The rows carrying this footnote are the ones Agent Fleet has not built for muse. They are not
-blocked by Muse Code: the protocol carries a context gauge and image attachments, and the
-handoff and bridge paths are not written per agent at all. They are simply unverified here, and
-this table only ticks a row that was seen to work end to end — which is why the worktree and
-scheduled-run rows are now ticked and these are not: those two were watched working, on a real
-muse session, before the tick was written.
+blocked by Muse Code: the protocol carries image attachments, and the handoff and bridge paths
+are not written per agent at all. They are simply unverified here, and this table only ticks a
+row that was seen to work end to end — which is why the worktree, scheduled-run and context
+gauge rows are now ticked and these are not: those were watched working, on a real muse session,
+before the tick was written.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its

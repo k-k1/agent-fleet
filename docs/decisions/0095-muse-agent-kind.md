@@ -7,9 +7,9 @@ English | [日本語](0095-muse-agent-kind.ja.md)
   P2-15 — every row of the work-package table below, plus the MCP wire route no row owned, the
   fork path, the two guide paragraphs the decisions promised, and the three live turns that
   ticked two capability rows and found a 401 in the af server's own environment).
-  P2-16 (context-usage gauge) wired the backend — `handle.go`, `context.go`, `overlayMuseLiveUsage` —
-  but the `contextBar` cap and guide row remain `—` until a real turn is spent and the value
-  observed end-to-end in the running Agent (2026-09-22).
+  P2-16 (context-usage gauge) wired and live-verified (2026-09-22): `usedTokens=21747`,
+  `windowTokens=1007997` on the wire (`windowSource=recorded`), turn completed in 6.7 s.
+  `caps.contextBar` flipped to `true` and guide row updated to ✓.
   The kind is offered in the launch menu behind its two preconditions (the proprietary
   binary installed, a credential stored). What is NOT built is named in the guide's own capability
   table and in the closing section, so an unticked row there means "not built", never "still
@@ -2573,7 +2573,7 @@ kind to managed at create time (`session_handlers.go:707`), so CP's list is an o
 front of an axis that is already named on the other side. A list that cannot drift into a defect
 is not worth a change here.
 
-### P2-16: context-usage gauge — backend wired, live turn not yet spent
+### P2-16: context-usage gauge — wired and live-verified (2026-09-22)
 
 **What the work-package asked for.** `session/contextUsage` (MSP's live context-window
 pressure notification, `SessionContextUsageParams`: `usedTokens`, optional `windowTokens`,
@@ -2600,16 +2600,22 @@ Six new tests in `context_test.go`: before-notification guard, notification reco
 `windowTokens`), `windowTokens` absent → fallback, latest-wins snapshot, no-handle guards for
 both `ManagedContext` and `ContextFill`.
 
-**What remains unverified — `contextBar` is still `false`.**
+**Live verification — 2026-09-22 (1 real subscription turn).**
 
-`session/contextUsage` fires only around a real turn, so the end-to-end path (MSP host →
-handle → `ManagedContext` → ContextBar rendered in the mirror) requires a real subscription
-turn to confirm. One turn against the member's account is what the tick costs. Until that turn
-is spent and the value observed in the running Agent (the oracle is the AF store and the
-ContextBar render, not the model's output), `caps.contextBar` stays `false` in `registry.ts`
-and the guide row stays `—¹¹`.
+`TestLiveContextUsage` in `live_test.go`: throwaway HOME with `.config/muse` symlinked to the
+real credential (kiro pattern — never copies the token), prompt `"1"`, 90 s deadline.
 
-The three seams to check on that one turn:
-1. `ManagedContext` returns ok=true with non-zero `usedTokens` after the turn completes.
-2. The chat mirror's `/messages` response carries a `context` block (`tokens`, `window`).
-3. The ContextBar renders in the Console (or `get_session_usage` reports it via MCP).
+Measured on the wire:
+
+| Field | Value |
+|---|---|
+| `usedTokens` | **21,747** |
+| `windowTokens` | **1,007,997** (on the wire — `windowSource=recorded`) |
+| `windowTokens` absent? | No — the host carried it in this turn |
+| Turn state | `completed` |
+| Elapsed | **6.70 s** |
+| `auth.json` sha256 | identical before/after (symlink, not a copy) |
+
+`ManagedContext` returned `ok=true` with the measured values. The ContextBar path is now
+end-to-end verified. `caps.contextBar` flipped to `true` in `registry.ts` and the guide row
+updated to ✓.

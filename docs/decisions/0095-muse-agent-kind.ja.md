@@ -8,9 +8,9 @@
   2 件、そして能力 2 行を ✓ にし af サーバ自身の環境の 401 を見つけた実ターン 3 本）。種別は 2 つの前提（プロプライエタリのバイナリが導入済み・資格情報がある）の先で起動
   メニューに出る。**作られていないもの**はガイドの能力表と末尾節に名指してあり、あそこの空欄は
   「まだ検討中」ではなく「まだ作っていない」を意味する。
-  P2-16（コンテキスト使用量ゲージ）はバックエンドを配線済み（`handle.go`・`context.go`・
-  `overlayMuseLiveUsage`）だが、`contextBar` cap とガイドの行は実ターンを 1 本消費して稼働中の
-  Agent でエンドツーエンドを観測するまで `—` のまま（2026-09-22）。
+  P2-16（コンテキスト使用量ゲージ）実機確認済み（2026-09-22）: `usedTokens=21747`・
+  `windowTokens=1007997`（ワイヤ上に在り、`windowSource=recorded`）・6.7 秒で完了。
+  `caps.contextBar` を `true` に反転し、ガイドの行を ✓ に更新した。
   以下の決定の `file:line` は当時の develop `06ea94d3` で読んだもので、実測が動かした箇所は実装記録が
   訂正している。◎ は Workspace のコンテナで **Muse Code 1.3.0-R3401.1** を実測したもの、△ はベンダ
   文献のみ、× は未測。再現手順は「実機プローブの再現」節にある。
@@ -2376,7 +2376,7 @@ P2-12）。よって冒頭の Status は *adopted* である。見積りは 22�
 （`session_handlers.go:707`）ので、CP の一覧は既に反対側で名前の付いた軸の手前に置かれた最適化に
 過ぎない。欠陥へずれようがない一覧は、ここで変える価値が無い。
 
-### P2-16: コンテキスト使用量ゲージ — バックエンド配線済み・実ターン未消費
+### P2-16: コンテキスト使用量ゲージ — 配線済み・実機確認済み（2026-09-22）
 
 **作業パッケージが求めたもの。** `session/contextUsage`（MSP のライブなコンテキスト窓圧力通知。
 `SessionContextUsageParams`＝`usedTokens`・省略可能な `windowTokens`・`pressure`）を AF の
@@ -2402,15 +2402,21 @@ P2-12）。よって冒頭の Status は *adopted* である。見積りは 22�
 `windowTokens` 無しでフォールバック・最新スナップショット優先・ハンドル無しの場合の
 `ManagedContext` と `ContextFill` のガード。
 
-**未確認のまま残るもの——`contextBar` は引き続き `false`。**
+**実機確認——2026-09-22（実サブスクリプション 1 ターン）。**
 
-`session/contextUsage` は実ターンの周りでしか発火しないため、エンドツーエンドの経路
-（MSP ホスト → handle → `ManagedContext` → ミラーの ContextBar 描画）の確認には実際の
-サブスクリプションターンが 1 本必要である。そのターンを消費して稼働中の Agent でその値を
-観測する（神託はモデルの返答ではなく AF のストアと ContextBar のレンダリング）まで、
-`registry.ts` の `caps.contextBar` は `false` のまま、ガイドの行も `—¹¹` のまま。
+`live_test.go` の `TestLiveContextUsage`: 投げ捨て HOME に `.config/muse` をシンボリックリンク
+（kiro パターン——トークンをコピーしない）、プロンプト `"1"`、90 秒タイムアウト。
 
-その 1 ターンで確認すべき 3 つの継ぎ目:
-1. ターン完了後に `ManagedContext` が ok=true かつ `usedTokens` が非ゼロを返す。
-2. チャットミラーの `/messages` レスポンスが `context` ブロック（`tokens`・`window`）を持つ。
-3. Console の ContextBar が描画される（あるいは MCP の `get_session_usage` がそれを報告する）。
+ワイヤ上の計測値:
+
+| フィールド | 値 |
+|---|---|
+| `usedTokens` | **21,747** |
+| `windowTokens` | **1,007,997**（ワイヤ上に在り・`windowSource=recorded`）|
+| `windowTokens` なし？ | なし——このターンでホストが送ってきた |
+| ターン状態 | `completed` |
+| 経過時間 | **6.70 秒** |
+| `auth.json` sha256 | 前後で同一（シンボリックリンクのみ・コピーなし）|
+
+`ManagedContext` は計測値で ok=true を返した。ContextBar の経路がエンドツーエンドで確認済み。
+`caps.contextBar` を `registry.ts` で `true` に反転し、ガイドの行を ✓ に更新した。

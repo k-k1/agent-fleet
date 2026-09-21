@@ -642,9 +642,10 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       // route that could fail the check, since every session is managed.
       forkAt: true,
       forkAtManagedOnly: false,
-      // contextBar / slashSkills are still false because their own work packages are not built
-      // yet, NOT because the protocol lacks them: MSP carries session/contextUsage. A cap is a
-      // claim about a path measured end to end, so each flips with its package.
+      // contextBar: session/contextUsage is wired (ADR 0095 P2-16). Live-verified: usedTokens=21747
+      // windowTokens=1007997 (recorded on the wire) after a real turn on 2026-09-22.
+      contextBar: true,
+      // slashSkills: still false — its own work package is not built yet.
       runsInDir: true,
       launchableFromRepo: true,
     }),

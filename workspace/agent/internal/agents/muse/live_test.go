@@ -1,6 +1,9 @@
 package muse
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -533,6 +536,133 @@ func clientAndSid(th agents.ThreadHandle) (*msp.Client, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.cl, h.sid
+}
+
+// isolateHomeKeepMuseAuth points HOME at a throwaway dir (isolating AF state and the
+// member's ~/.claude/CLAUDE.md) while symlinking the muse config directory so the CLI
+// still logs in. We never copy the credential — the symlink lets muse read its OWN file.
+// XDG_DATA_HOME is also thrown away so no existing muse sessions pollute the store.
+func isolateHomeKeepMuseAuth(t *testing.T) {
+	t.Helper()
+	real, _ := os.UserHomeDir()
+	home := t.TempDir()
+	if real != "" {
+		src := filepath.Join(real, ".config", "muse")
+		if _, err := os.Stat(src); err == nil {
+			dst := filepath.Join(home, ".config", "muse")
+			_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+			_ = os.Symlink(src, dst)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+}
+
+// fileSHA256 returns the hex SHA-256 digest of the named file.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// waitMuseTurn polls h.Snapshot until the turn finishes (completed or failed) or timeout.
+// It waits for TurnRunning first (the handle starts in TurnCompleted/idle after Resume),
+// so it will not exit early on the initial idle state.
+func waitMuseTurn(t *testing.T, h *threadHandle, timeout time.Duration) agents.TurnState {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	seenRunning := false
+	for time.Now().Before(deadline) {
+		snap, _ := h.Snapshot()
+		switch snap.TurnState {
+		case agents.TurnRunning, agents.TurnWaitingInteraction, agents.TurnInterrupting:
+			seenRunning = true
+		case agents.TurnCompleted, agents.TurnFailed:
+			if seenRunning {
+				return snap.TurnState
+			}
+			// Initial idle state — keep polling until the turn actually starts.
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	snap, _ := h.Snapshot()
+	t.Logf("turn timed out after %v (last state: %s, seenRunning: %v)", timeout, snap.TurnState, seenRunning)
+	return snap.TurnState
+}
+
+// TestLiveContextUsage spends exactly ONE subscription turn to verify that MSP
+// emits session/contextUsage and that ManagedContext returns real data after the turn.
+// This is the P2-16 end-to-end live check: caps.contextBar must not be flipped until
+// this test passes.
+//
+// Security invariants:
+//   - The member's ~/.config/muse/auth.json is accessed via symlink only — never copied.
+//   - HOME is thrown away so ~/.claude/CLAUDE.md is not sent to Meta as context.
+//   - SHA-256 of auth.json is compared before and after to confirm no modification.
+func TestLiveContextUsage(t *testing.T) {
+	liveGate(t)
+	if !readCredential().Present {
+		t.Skip("not signed in to muse: a real turn requires valid credentials")
+	}
+
+	// Capture the real auth.json path and hash BEFORE HOME is swapped out.
+	realHome, _ := os.UserHomeDir()
+	realAuthJSON := filepath.Join(realHome, ".config", "muse", "auth.json")
+	hashBefore, err := fileSHA256(realAuthJSON)
+	if err != nil {
+		t.Fatalf("sha256 before: %v", err)
+	}
+
+	isolateHomeKeepMuseAuth(t) // HOME now points at a throwaway with a symlink to muse config
+
+	dir := filepath.Join(os.Getenv("HOME"), "ws")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "muse-live-ctx-" + filepath.Base(os.Getenv("HOME"))
+	t.Cleanup(func() { DropHandle(name) })
+	m := session.Meta{Kind: session.KindMuse, Name: name, Dir: dir, Driver: session.DriverManaged}
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if err := th.Send(agents.TurnInput{Prompt: "1"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	finalState := waitMuseTurn(t, th.(*threadHandle), 90*time.Second)
+	t.Logf("turn finished with state: %s", finalState)
+
+	// The oracle: ManagedContext must return ok=true with real data.
+	used, win, ok := ManagedContext(name)
+	if !ok {
+		t.Error("ManagedContext ok=false after a real turn: session/contextUsage did not arrive on the wire")
+	} else {
+		winDesc, winSource := "absent (nil)", "estimated → MuseDefaultWindow fallback"
+		if win != nil {
+			winDesc = fmt.Sprintf("%d", *win)
+			winSource = "recorded (wire carried windowTokens)"
+		}
+		t.Logf("session/contextUsage confirmed: usedTokens=%d windowTokens=%s windowSource=%s",
+			used, winDesc, winSource)
+	}
+
+	// Safety check: auth.json must be identical before and after.
+	hashAfter, err := fileSHA256(realAuthJSON)
+	if err != nil {
+		t.Fatalf("sha256 after: %v", err)
+	}
+	if hashBefore != hashAfter {
+		t.Errorf("auth.json was modified during the test (before=%s after=%s)", hashBefore, hashAfter)
+	}
 }
 
 // The fork, against the real host, for free: a whole-conversation fork of a session with no
