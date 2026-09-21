@@ -547,6 +547,17 @@ func lcppStatus(s *secrets.Data) map[string]any {
 		if ok, known := lcppMemberObservedReachable(); known {
 			out["reachable"] = ok
 		}
+		// model/model_count: the model the last real /v1/models read actually found — see
+		// lcppMemberReachable's doc comment (engines.go) for why this exists: a member can swap
+		// the LAN box under the same URL, and a single-model llama-server does not read the
+		// request's own `model` field, so nothing else would ever surface the change. Omitted
+		// entirely when no model is known, same "absence, not a lie" rule as reachable above.
+		if model, count, ok := lcppMemberObservedModel(); ok {
+			out["model"] = model
+			if count > 1 {
+				out["model_count"] = count
+			}
+		}
 	}
 	return out
 }
@@ -646,6 +657,7 @@ func handleCheckLcppConn(w http.ResponseWriter, r *http.Request) {
 	// launch-menu path yet still learns the answer the moment somebody presses this button.
 	reachable := propsOK || modelsOK
 	lcppMemberRecordReachable(reachable)
+	lcppMemberRecordModel(models)
 	if !reachable {
 		httpx.WriteErr(w, http.StatusBadGateway, "lcpp_check_failed", "the connection did not answer /props or /v1/models")
 		return

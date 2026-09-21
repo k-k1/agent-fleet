@@ -130,6 +130,17 @@ export function LcppCard({ running, st, reload }: { running: boolean; st: Provid
               {reachable !== undefined && !check && (
                 <p className={"ps-note" + (reachable ? "" : " ps-note-warn")}>
                   {tr(reachable ? "agents.lcpp_conn_reachable" : "agents.lcpp_conn_unreachable")}
+                  {/* The model the last real /v1/models read actually found (docs/log/107,
+                      2026-09-21 addendum) — a member can swap the LAN box under the SAME URL,
+                      and a single-model llama-server does not read the request's own `model`
+                      field, so this is the only thing on screen that can catch a swap. */}
+                  {reachable && st?.model && (
+                    <>
+                      {tr("ui.sep")}
+                      {tr("agents.lcpp_conn_model") + st.model}
+                      {st.model_count && st.model_count > 1 ? tr("agents.lcpp_conn_model_more", { n: st.model_count - 1 }) : null}
+                    </>
+                  )}
                 </p>
               )}
               <div className="p-body">

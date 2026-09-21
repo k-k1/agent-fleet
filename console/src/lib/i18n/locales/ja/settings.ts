@@ -407,6 +407,10 @@ export const settings = {
   // 前者はまだ一度も確認していないだけ。カードは前者のとき自動で1回だけ確認する（LcppCard 冒頭のコメント）。
   "agents.lcpp_conn_reachable": "届いています",
   "agents.lcpp_conn_unreachable": "届いていません",
+  // 直近の観測が見つけたモデル（docs/log/107・2026-09-21 追補）。単機の llama-server は要求の
+  // model 欄を読まないので、箱を入れ替えても画面だけがこれで気づける——prefix として結合する。
+  "agents.lcpp_conn_model": "モデル: ",
+  "agents.lcpp_conn_model_more": " ほか {n} 件",
   "set.tab_cost": "クラウド費用",
   // --- 稼働時間ヒートマップ（docs/log/83）---
   // ⚠️ ここは占有であって金額ではない。実費は日単位でしか取れないので、時間別の金額は

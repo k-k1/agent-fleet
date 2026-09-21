@@ -412,6 +412,11 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   // The card auto-checks once in the former case (see the comment atop LcppCard).
   "agents.lcpp_conn_reachable": "Reachable",
   "agents.lcpp_conn_unreachable": "Not reachable",
+  // The model the last observation actually found (docs/log/107, 2026-09-21 addendum). A
+  // single-model llama-server does not read the request's own `model` field, so this line is
+  // the only thing that can catch a swapped box — concatenated as a prefix.
+  "agents.lcpp_conn_model": "Model: ",
+  "agents.lcpp_conn_model_more": " (+{n} more)",
   "set.tab_cost": "Cloud cost",
   // --- 稼働時間 heatmap (docs/log/83) ---
   // ⚠️ Occupancy, never money. Cost Explorer only reports per day, so an hourly

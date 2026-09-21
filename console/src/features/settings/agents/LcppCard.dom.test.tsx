@@ -111,6 +111,57 @@ describe("LcppCard — a connection already known to be reachable/unreachable", 
   });
 });
 
+describe("LcppCard — the model behind the reachable observation (docs/log/107, 2026-09-21 addendum)", () => {
+  // A member can swap the LAN box under the same saved URL, and a single-model llama-server
+  // does not read the request's own `model` field — so this line is the only thing that can
+  // catch a swap. It must show WITHOUT dialing again, same as the reachable line itself.
+  it("shows a single observed model next to 'reachable'", async () => {
+    await mount({ enabled: true, connected: true, url: "http://box:9931", reachable: true, model: "gemma-4-12b-it-q4_k_m" });
+    expect(checkCalls().length).toBe(0);
+    expect(text()).toContain("gemma-4-12b-it-q4_k_m");
+  });
+
+  it("shows a count when the observation found more than one model (a router)", async () => {
+    await mount({
+      enabled: true,
+      connected: true,
+      url: "http://box:9931",
+      reachable: true,
+      model: "gemma-4-12b-it-q4_k_m",
+      model_count: 3,
+    });
+    expect(text()).toMatch(/ほか 2 件|\+2 more/);
+  });
+
+  // Positive control for the count guard: a SINGLE model must not draw a "+0 more"/"ほか 0 件".
+  it("draws no count suffix for a single model", async () => {
+    await mount({
+      enabled: true,
+      connected: true,
+      url: "http://box:9931",
+      reachable: true,
+      model: "gemma-4-12b-it-q4_k_m",
+      model_count: 1,
+    });
+    expect(text()).not.toMatch(/ほか|more/);
+  });
+
+  // No model observed yet: nothing model-shaped renders, and reachable itself still does.
+  it("omits the model line entirely when unknown", async () => {
+    await mount({ enabled: true, connected: true, url: "http://box:9931", reachable: true });
+    expect(text()).toMatch(/届いています|Reachable/);
+    expect(text()).not.toMatch(/モデル|Model:/);
+  });
+
+  // A model name must not be attributed to an UNREACHABLE box — an observation that failed
+  // carries no model (engines.go's lcppMemberRecordModel clears it), but this pins the display
+  // side too: even if `model` somehow rode along on the wire, unreachable must not show it.
+  it("does not show a model name when unreachable", async () => {
+    await mount({ enabled: true, connected: true, url: "http://box:9931", reachable: false, model: "stale-name" });
+    expect(text()).not.toContain("stale-name");
+  });
+});
+
 describe("LcppCard — the manual check button still works", () => {
   it("pressing it dials once and reloads", async () => {
     const reload = await mount({ enabled: true, connected: true, url: "http://box:9931", reachable: true });

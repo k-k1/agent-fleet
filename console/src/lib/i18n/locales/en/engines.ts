@@ -39,4 +39,9 @@ export const engines: Record<keyof typeof jaEngines, string> = {
   "engine.state_member_unreachable": "Not reachable",
   "engine.state_member_unknown": "Checking",
   "engine.member_conn_hint": "Your own connection. Not this deployment's engine.",
+  // The model the last observation actually found (2026-09-21 addendum). A single-model
+  // llama-server does not read the request's own `model` field, so this is the only place a
+  // swapped box would show up — concatenated as a prefix.
+  "engine.member_model": "Model: ",
+  "engine.member_model_more": " (+{n} more)",
 };

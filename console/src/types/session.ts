@@ -218,6 +218,16 @@ export interface ProviderConn {
   // drawn differently from `false` ("observed, and it did not answer") — collapsing the two
   // would read as unreachable for every member the moment their workspace starts.
   reachable?: boolean;
+  // lcpp (docs/log/107, 2026-09-21 addendum): the model id from the last successful
+  // /v1/models read against the member's own connection, and how many that read returned.
+  // Exists because a member can swap the LAN box under the SAME saved URL — a live run
+  // measured that a single-model llama-server does not read the request's own `model` field
+  // at all, so without this a member who kept the OLD name selected would silently be served
+  // by whatever is actually loaded now. `model` absent = no model observed yet (same
+  // absence-not-a-lie rule as `reachable`); `model_count` absent = the last read found exactly
+  // one (a router, docs/log/106 §axis 2, can answer with several).
+  model?: string;
+  model_count?: number;
   // opencode: the selected billing route (docs/log/54). "free" is a tier that launches with
   // no authentication at all, so the launch gate reads this and allows opencode even when
   // not connected. "off" is the opposite: an explicit disable that closes the launch gate

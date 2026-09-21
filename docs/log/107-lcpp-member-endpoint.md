@@ -244,3 +244,68 @@ python3 scripts/docs-check.py                        # 442 files, 0 error(s), 0 
 ——ログに実際の `/home/dev/.local/bin/muse`（テストが `t.Setenv("HOME", t.TempDir())` で隔離した
 はずの経路の外）が出てくる、この worktree の環境固有の汚染に見える）で、`lcpp` 関連の試験は
 `Lcpp` で絞った再実行・フルスイートのどちらでも全数green。事前存在の問題として PR 本文にも書く。
+（追記: `origin/develop` を取り込んだあと再実行したところ緑になった——`abda93b3e test(agent):
+install-muse の試験を PATH から muse を外して隔離する` が本 PR とは無関係に develop 側で解決済み。）
+
+## 追補 2（2026-09-21・同日 2 回目）——`[agent-fleet:peer from=sikdmnv intent=request]`: モデル名も観測に含める
+
+- 依頼の背景（実機で今日起きたこと）: 利用者が LAN の箱を入れ替え、
+  `gemma-4-12b-it-q4_k_m` → `gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m` に変わったが
+  **画面は何も言わなかった**。加えて実測（PR #865 と同じ日の実測）で、単機の llama-server は
+  要求の `model` 欄をまったく読まない（でたらめな名前でも空文字でも 200 を返す）ため、
+  **古いモデル名を選んだままでも気づかずに別のモデルと話し続けられる**。`reachable` が
+  true/false だけでは、この入れ替えは見えない。
+
+### やったこと（追加ダイヤルなし）
+
+`workspace/agent/engines.go:1164` の `lcppMemberReachable` 観測に `model string`・
+`modelCount int` を足した（`engines.go:1196` あたり）。**新しいダイヤルは 1 つも足していない**
+——既存の2箇所が既に `/v1/models` を読んでいたので、その戻り値をそのまま記録するだけ:
+
+- `lcppMemberFetchModelsCached`（`engines.go:1146` 付近）が実際にダイヤルしたとき、
+  `lcppMemberRecordReachable(ok)` の直後に `lcppMemberRecordModel(models)` を呼ぶ。
+- `handleCheckLcppConn`（`connections.go:648` 付近）も同様、自分が読んだ `models` をそのまま渡す。
+
+`lcppMemberRecordModel`（`engines.go:1200` あたり）は**先頭の id と件数**だけを記録する——
+複数モデル（router、`--models-preset`/`--models-max`。この配備の借用エンジンがまさにその形。
+docs/log/106 §axis 2）のときは件数も残す。**空の応答（ダイヤル失敗、または本当に 0 件）は
+前回の名前を上書きして消す**——古い名前を残すことが、まさに今回捕まえたかった不具合だから。
+
+`lcppStatus`（`connections.go:535`）は `lcppMemberObservedModel()` を読むだけで、
+未観測なら `model` キーごと省略（`reachable` と同じ「不在＝不明、false とは別物」の規則）。
+単一モデルのときは `model_count` を省略し（件数が 1 は言うまでもない事実なので乗せない）、
+複数のときだけ乗せる。
+
+`GET /connections` が新しくダイヤルしないことの既存試験
+（`TestHandleConnectionsGetNeverDialsLcppConnection`）は無変更のまま緑。
+
+Console 側: `LcppCard.tsx` の「既に分かっている reachable」行にモデル名を並べて出す
+（`agents.lcpp_conn_model`/`_more`）。`EnginesPill.tsx` の `MemberChatPill` はツールチップと
+ポップオーバー両方にモデル名を出す（`engine.member_model`/`_more`）。どちらも「未観測」なら
+何も出さない——`reachable` の規則をそのまま踏襲。
+
+### 陽性対照（Edit で外す→赤→Edit で戻す）
+
+| 外した箇所 | 赤くなった試験 |
+|---|---|
+| `lcppMemberRecordModel` の `if len(models) > 0` を `if false && ...` に | `TestLcppMemberFetchModelsCachedRecordsModelOnSuccess`・`TestLcppMemberFetchModelsCachedSwapUpdatesModel`・`TestLcppMemberFetchModelsCachedCacheHitDoesNotReRecordModel` |
+| `lcppStatus` の `model_count` の `count > 1` ガードを外して常に出す | `TestLcppStatusModelPresentSingle` |
+| `EnginesPill.tsx` の `MemberChatPill` の `modelLine` 計算を `false && conn.model` に | `a single observed model rides in the tooltip beside the URL`・`shows a count when the observation found more than one model`・`the popover also shows the model, on its own line` |
+| `LcppCard.tsx` のモデル行の条件に `false &&` を追加 | `shows a single observed model next to 'reachable'`・`shows a count when the observation found more than one model` |
+
+### 周辺の事実 2 つ（依頼にあった確認）
+
+- **複数モデルは実在する**——llama.cpp の router モード。本追補の文言・試験はどこにも
+  「単機前提」を書いていない（`modelCount`/件数の扱いは最初から複数を前提に設計した）。
+- **guide 09 の `--alias` 訂正（PR #865）との整合**——本稿・本追補のどこにも `--alias` や
+  「model 欄が一致しないと届かない」という誤った記述はない（grep で確認済み）。もともと
+  この PR は `--alias` に触れていないので、揃える対象の記述自体が存在しなかった。
+
+### 検証
+
+```
+cd workspace/agent && go test ./... -count=1 -p 2   # exit 0（develop 統合後）
+cd console && npx tsc --noEmit -p . && npm run i18n:lint && npm test  # 別途記録
+gofmt -l .                                           # 空
+python3 scripts/docs-check.py                        # 別途記録
+```

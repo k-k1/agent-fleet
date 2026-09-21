@@ -355,6 +355,130 @@ func TestHandleCheckLcppConnRecordsObservationOnFailure(t *testing.T) {
 	}
 }
 
+// --- lcppStatus's "model"/"model_count" fields (2026-09-21 addendum) -----------------------
+//
+// A member can swap the LAN box under the same saved URL. A live run measured that a
+// single-model llama-server ignores the request's own `model` field entirely (any string, or
+// none, answers 200) — so without this, a member who kept the old model selected would be
+// served by whatever is actually loaded now, with nothing on screen saying it changed.
+
+// No model observed yet: the field is absent, not an empty string — same "unknown, not a lie"
+// rule as reachable.
+func TestLcppStatusModelOmittedWhenUnknown(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://box:9931"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := secrets.Load()
+	out := lcppStatus(s)
+	if _, present := out["model"]; present {
+		t.Errorf("model = %v, want absent", out["model"])
+	}
+	if _, present := out["model_count"]; present {
+		t.Errorf("model_count = %v, want absent", out["model_count"])
+	}
+}
+
+// A single-model observation: model is set, model_count is OMITTED (not 1) — the count only
+// earns its place on the wire when it says something a member could not assume.
+func TestLcppStatusModelPresentSingle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://box:9931"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lcppMemberRecordModel([]lcppMemberModel{{ID: "gemma-4-12b-it-q4_k_m"}})
+
+	s, _ := secrets.Load()
+	out := lcppStatus(s)
+	if out["model"] != "gemma-4-12b-it-q4_k_m" {
+		t.Errorf("model = %v, want gemma-4-12b-it-q4_k_m", out["model"])
+	}
+	if _, present := out["model_count"]; present {
+		t.Errorf("model_count = %v, want absent for a single model", out["model_count"])
+	}
+}
+
+// A router observation (docs/log/106 §axis 2): model_count rides along so a member reading the
+// first id knows it is one of several, not the only one.
+func TestLcppStatusModelPresentMultiple(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://box:9931"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lcppMemberRecordModel([]lcppMemberModel{{ID: "gemma-4-12b-it-q4_k_m"}, {ID: "qwen3.8-27b"}})
+
+	s, _ := secrets.Load()
+	out := lcppStatus(s)
+	if out["model"] != "gemma-4-12b-it-q4_k_m" {
+		t.Errorf("model = %v, want the first id", out["model"])
+	}
+	if out["model_count"] != 2 {
+		t.Errorf("model_count = %v, want 2", out["model_count"])
+	}
+}
+
+// handleCheckLcppConn's own dial records the model too — the explicit "check connection" button
+// teaches the observation just like the launch-menu path does.
+func TestHandleCheckLcppConnRecordsModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	srv := lcppCheckServer(t,
+		`{"build_info":"b1","default_generation_settings":{"n_ctx":1024}}`,
+		`{"data":[{"id":"gemma-4-12b-it-q4_k_m"}]}`)
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: srv.URL, APIKey: "sk-member"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	handleCheckLcppConn(w, httptest.NewRequest("POST", "/connections/lcpp/check", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	s, _ := secrets.Load()
+	if out := lcppStatus(s); out["model"] != "gemma-4-12b-it-q4_k_m" {
+		t.Errorf("model = %v after a successful check, want gemma-4-12b-it-q4_k_m", out["model"])
+	}
+}
+
+// The swap itself, end to end through lcppStatus: an observed model A, then a fresh check
+// against a box now answering with model B — lcppStatus must report B, never a stale A.
+func TestLcppStatusReflectsASwappedModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lcppMemberCacheReset()
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Lcpp = &secrets.LcppConn{URL: "http://box:9931"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	lcppMemberRecordModel([]lcppMemberModel{{ID: "gemma-4-12b-it-q4_k_m"}})
+	s, _ := secrets.Load()
+	if out := lcppStatus(s); out["model"] != "gemma-4-12b-it-q4_k_m" {
+		t.Fatalf("setup: model = %v, want the old model", out["model"])
+	}
+
+	lcppMemberRecordModel([]lcppMemberModel{{ID: "gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m"}})
+	if out := lcppStatus(s); out["model"] != "gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m" {
+		t.Errorf("model = %v, want the NEW model — the observation must not carry the old name forward", out["model"])
+	}
+}
+
 // --- acceptance: GET /connections never dials the member's own lcpp connection -------------
 
 // The absolute condition the parent task set: handleConnectionsGet must be able to answer

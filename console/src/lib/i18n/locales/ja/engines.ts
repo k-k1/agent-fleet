@@ -41,4 +41,8 @@ export const engines = {
   "engine.state_member_unreachable": "届いていません",
   "engine.state_member_unknown": "確認中",
   "engine.member_conn_hint": "自分の接続先です。この配備のエンジンではありません。",
+  // 直近の観測が見つけたモデル（2026-09-21 追補）。単機の llama-server は要求の model 欄を
+  // 読まないので、箱を入れ替えてもここでしか気づけない——prefix として結合する。
+  "engine.member_model": "モデル: ",
+  "engine.member_model_more": " ほか {n} 件",
 };
