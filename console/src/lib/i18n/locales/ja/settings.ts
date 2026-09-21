@@ -355,6 +355,14 @@ export const settings = {
   "agents.oc_env_placeholder": "ENV 名 (例 GROQ_API_KEY)",
   "agents.oc_key_value": "{env} の値",
   "agents.oc_key_fallback": "API キー",
+  // llama.cpp（docs/log/105 §106.2）。サインインも版差分も無い kind（ADR 0093 決定 10）なので
+  // このカードにあるのは on/off だけ——opencode の課金経路の選択とは違い、下に選ぶものは無い。
+  "agents.lcpp_enabled": "llama.cpp を使う",
+  "agents.lcpp_enabled_off": "オフ",
+  "agents.lcpp_enabled_on": "オン",
+  "agents.lcpp_enabled_note_off":
+    "llama.cpp を起動できません。起動導線から消え、直接 API を叩いても拒否されます（既存のセッションは動き続けます）。",
+  "agents.lcpp_enabled_note_on": "llama.cpp を起動できます。既定モデル・使わないモデルは下の動作設定で選べます。",
   "set.tab_cost": "クラウド費用",
   // --- 稼働時間ヒートマップ（docs/log/83）---
   // ⚠️ ここは占有であって金額ではない。実費は日単位でしか取れないので、時間別の金額は

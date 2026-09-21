@@ -26,6 +26,7 @@ import { CopilotCard } from "./CopilotCard.tsx";
 import { KiroCard } from "./KiroCard.tsx";
 import { AgyCard } from "./AgyCard.tsx";
 import { OpencodeCard } from "./OpencodeCard.tsx";
+import { LcppCard } from "./LcppCard.tsx";
 
 // AgentsTab is the per-agent home. Each card is split into two levels so the two
 // concerns read as a hierarchy rather than one flat block:
@@ -256,6 +257,7 @@ export function AgentsTab() {
             agents={agents}
             updateAgents={updateAgents}
           />
+          <LcppCard />
           {running && agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
         </>
       )}
