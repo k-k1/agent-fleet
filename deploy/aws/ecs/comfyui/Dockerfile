@@ -3,12 +3,19 @@
 # The community image measured for ADR 0072 (ghcr.io/lecode-official/comfyui-docker) bakes
 # ComfyUI v0.8.2 and checks out v0.34.0 at CONTAINER START, which cost 20-26 seconds of NAT-
 # dependent git+pip work on every cold start on top of a 205-second, 5.36 GB pull. This image
-# bakes the pinned COMFYUI_REF (currently v0.35.2) directly so a cold start pays for neither.
+# bakes the pinned COMFYUI_REF (currently v0.37.0) directly so a cold start pays for neither.
 #
 # ⚠️ The revision is pinned on purpose (ADR 0071 decision 6: this deployment tracks upstream
-# revisions explicitly, never `latest`) — bump COMFYUI_REF deliberately, rebuild via
-# .github/workflows/comfyui-image.yml, and re-run the golden workflow-template tests, because
-# ComfyUI's node graph API has no version-to-version compatibility promise (ADR 0072 decision 4).
+# revisions explicitly, never `latest`) — bump COMFYUI_REF deliberately and rebuild via
+# .github/workflows/comfyui-image.yml, because ComfyUI's node graph API has no
+# version-to-version compatibility promise (ADR 0072 decision 4).
+#
+# 🔴 The golden workflow-template tests do NOT measure a bump: they compare this repository's own
+# JSON against its own recorded JSON, so they stay green no matter what upstream did to the nodes
+# that JSON names. What measures it is the definition of every node class the Agent emits, read at
+# both tags — the ~33 `ClassType` literals in workspace/agent/internal/imagegen/comfy_workflows.go
+# against `NODE_CLASS_MAPPINGS` and the V3 `node_id=` schemas in nodes.py and comfy_extras/ (ADR
+# 0098 "What was measured" carries the v0.35.2 → v0.37.0 run of it).
 #
 # No ComfyUI-Manager: it exists to install custom nodes at runtime from inside the UI, which is
 # both unreachable (P2 ships no pane — that is P5) and the one thing a pinned, golden-tested
@@ -30,7 +37,7 @@
 # anything less than two weeks old).
 FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
 
-ARG COMFYUI_REF=v0.35.2
+ARG COMFYUI_REF=v0.37.0
 
 LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
       org.opencontainers.image.description="Agent Fleet's pinned ComfyUI build for the image engine role (ADR 0072 P2)" \
