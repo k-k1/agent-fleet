@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionPlanFile, sessionSettings, downloadURL } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionApprove, sessionPlanRespond, sessionPlanFile, sessionSettings, downloadURL } from "../../core/api/client.ts";
 import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
@@ -82,7 +82,7 @@ import { ForkAtModal } from "./ForkAtModal.tsx";
 import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
-import { PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
+import { ApprovalCard, PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
 import { CarriedBlock } from "./CarriedBlock.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
@@ -92,7 +92,8 @@ import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
 import { TranscriptView } from "./transcript/TranscriptView.tsx";
 import { useStableBlockIds } from "./transcript/blockIdentity.ts";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
-import type { Group, Part, Question, TaskItem, Turn } from "./transcript/types.ts";
+import type { Group, Part, PendingApproval, Question, TaskItem, Turn } from "./transcript/types.ts";
+import { isPendingApproval } from "./transcript/types.ts";
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
 import { TaskChecklist, planTitle } from "./transcript/blocks.tsx";
 import { useMarksController } from "./transcript/useMarks.ts";
@@ -241,6 +242,10 @@ export function MirrorView({
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
+  // A MANAGED session's tool approval. Kept apart from pendingPerm because the two are
+  // answered by different mechanisms — keystrokes into a pane versus /respond by id — and a
+  // managed session has no pane for the first one.
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   // Carried interaction (docs/log/75): what was on screen when the session was torn down.
   // Unlike the three pending states above there is no modal left, so the answer is delivered
   // as prose rather than keys. The server withholds `carried` while anything is pending, so
@@ -582,6 +587,7 @@ export function MirrorView({
             setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
             setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
             setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
+            setPendingApproval(isPendingApproval(d.pendingApproval) ? d.pendingApproval : null);
             setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
             // Mode comes from the terminal (paneMode) in real time, so trust every poll —
             // the optimistic set on click just gives instant feedback until this confirms.
@@ -695,9 +701,9 @@ export function MirrorView({
   // closure is fresh each time; leaving them out of the deps keeps unrelated re-renders (every
   // keystroke in the composer) from re-firing it.
   useLayoutEffect(() => {
-    scroll.applyFollow({ groups, loaded, busy, pending, pendingPlan, pendingPerm });
+    scroll.applyFollow({ groups, loaded, busy, pending, pendingPlan, pendingPerm: pendingPerm || (pendingApproval ? pendingApproval.id : null) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, pending, pendingPlan, pendingPerm, status, bgBusy, finalizing, pendingSends, queuedPrompts]);
+  }, [turns, pending, pendingPlan, pendingPerm, pendingApproval, status, bgBusy, finalizing, pendingSends, queuedPrompts]);
 
 
 
@@ -977,6 +983,27 @@ export function MirrorView({
     setTimeout(() => tickRef.current?.(), 400);
   };
 
+  // sendApproval answers a MANAGED session's pending tool approval. It mirrors sendRespond,
+  // including the rollback: a rejection must leave the card alive rather than clear it, because
+  // the tool is still blocked and the member would have no way back to it.
+  const sendApproval = async (id: string, allow: boolean): Promise<boolean> => {
+    if (sending) return false;
+    if (wsDown()) return false;
+    setSending(true);
+    const prev = statusRef.current;
+    statusRef.current = "working";
+    setStatus("working");
+    const res = await sessionApprove(session, id, allow).catch((): TurnResult => ({ ok: false }));
+    if (!res.ok) {
+      statusRef.current = prev;
+      setStatus(prev);
+      toast(res.message || tr("mirror.answer_send_failed"));
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+    return res.ok;
+  };
+
   // sendRespond answers a MANAGED session's pending question by interaction id —
   // a structured answer (docs/log/27 §5). A tui question is still answered by navigating the
   // TUI modal with sendKeys/sendSeq; the server rejects /respond for tui anyway.
@@ -1063,7 +1090,7 @@ export function MirrorView({
   // sending would type text + Enter, and that Enter selects the menu's default (approve /
   // allow), silently confirming it. A mode toggle would likewise mis-key the menu. So lock
   // the composer AND the mode chip while one is pending; act via the card's buttons.
-  const decisionPending = !!pendingPlan || !!pendingPerm;
+  const decisionPending = !!pendingPlan || !!pendingPerm || !!pendingApproval;
   const composerLocked = auqLocksComposer || decisionPending;
 
   // OS drag&drop anywhere on the pane attaches the dropped files (the composer is a
@@ -1875,7 +1902,7 @@ export function MirrorView({
               {tr("mirror.ws_stopped_history")}
             </div>
           )
-        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !carried && handoffs.length === 0 ? (
+        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !pendingApproval && !carried && handoffs.length === 0 ? (
           // handoffs.length === 0: with an empty transcript the proposals are the only
           // thing to show, and they now live inside renderGroups (which the empty branch
           // would skip).
@@ -1950,7 +1977,16 @@ export function MirrorView({
             onReview={() => void reviewPlanElsewhere(pendingPlan)}
           />
         )}
-        {pendingPerm && !pending && !pendingPlan && (
+        {pendingApproval && !pending && !pendingPlan && (
+          <ApprovalCard
+            agentName={agentName}
+            approval={pendingApproval}
+            sending={sending}
+            onAllow={() => void sendApproval(pendingApproval.id, true)}
+            onDeny={() => void sendApproval(pendingApproval.id, false)}
+          />
+        )}
+        {pendingPerm && !pendingApproval && !pending && !pendingPlan && (
           // Defense-in-depth: a question/plan always wins over a generic permission
           // dialog (the server already suppresses the permission in that case). This
           // guards against a poll race ever showing allow/deny over an AskUserQuestion,

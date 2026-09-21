@@ -1725,3 +1725,129 @@ through `muse exec`, and `serve` reads the same file but assembles context at tu
 `serve` arm is argued rather than measured), and clamp 6's effect — the approval judge has no
 settings key and no `serve` flag, so `MUSE_DISABLE_APPROVAL_JUDGE` is set on the strength of
 its name and needs an approval to observe.
+
+### P2-5: AF's first approval `Interaction`, and the card that answers it
+
+The fifth work package, and decision 13's own: `agents.InteractionApproval` exists, muse raises
+it, the read layer sends it out as `pendingApproval`, and the mirror answers it allow/deny
+through `/respond`. `Capabilities.Permissions` is now **true** — the first kind to declare it.
+
+**The survey that justified building it rather than reusing the question kind.** Agent Fleet
+already had a permission surface: `SessionState` has had a `permission` value since the hook
+route, and `PermissionCard` renders one. It cannot serve a managed kind, and not for a reason
+that could be patched: measured in the tree, its three buttons answer by driving a tmux modal
+— `sendKeys(["Enter"])`, `["Down","Enter"]`, `["Down","Down","Enter"]` — and a managed session
+has no pane for the keys to land in. That is the mechanism behind decision 13's "or not even
+there, for managed", and behind `Caps.PermissionChoice`'s condition that an approval must be
+answerable *from the Console*. Until this package, muse met that condition only by folding
+approvals into the question kind, which kept the command line and discarded the tool name, the
+protected-write marking, the judge escalation and the parsed argv of every stage.
+
+So the approval is its own kind, with its own payload and its own verb:
+
+| | question | approval |
+|---|---|---|
+| asks | choose an answer | may this tool run |
+| refusing | the agent carries on | this tool stops |
+| carries | `[]transcript.Question` | summary, tool, command, per-stage argv, protectedWrite, judgeEscalated |
+| answered by | `decision: "answer"` + picks | `decision: "allow"` / `"deny"` |
+| wire key | `pendingQuestions` | `pendingApproval` |
+
+**Two existing consumers had to learn the difference, and both were silently wrong before.**
+`applyManagedAnswerAll` (the operator's full-form answer tool) and `applyManagedQuestion` (the
+chat bridge's buttons) both guard on `Kind != "question"` and report "no pending question" /
+"already answered". Against an approval those are not merely unhelpful, they are the wrong
+fact: the session is blocked on a tool and the operator is told nothing is waiting. Both now
+name the approval and point at the control that answers it.
+
+The card offers exactly **allow and deny** — no scope selector, no "always allow". That is not
+a simplification: gate B1 measured `onRequest` mode presenting exactly two choices,
+`allow_once` and `abort`, so a third button would promise a persistence the runtime never
+agreed to. `pendingApproval` is also withheld from a stopped session, the same rule
+`pendingQuestions` follows: a card nobody can answer is worse than no card.
+
+⚠️ The card's rendering is covered by a dom test, not by a screenshot — no muse session can be
+launched yet (the binary is not installed and the kind is not in the launch menu), so nothing
+in this package was seen on screen. The visual check belongs with the Console surface package.
+
+### P2-6: the connection status, the login routes, and a login that must not have a terminal
+
+The sixth work package: what `GET /connections` says about muse, the device-code sign-in
+(start → poll), the API-key fallback, the disconnect, the same four paths on the Control
+Plane's proxy allow-list, and the credential gate in `Resume`.
+
+**Muse has no way to ask whether it is signed in.** No `whoami`, no `auth status`, and nothing
+on the wire either — the 47 methods carry no auth verb at all. What it has is one file,
+`~/.config/muse/auth.json`, so that is what AF reads. That turns out better than the precedent
+rather than worse: kiro and codex each spawn a child per probe and therefore cache the answer
+for 30 seconds, while a file read is cheap enough to do on every `/connections` poll, so a
+sign-in shows up on the next one instead of up to half a minute later.
+
+Three measurements decide how it is read, and each is a way a reasonable reader is confidently
+wrong. All three are on 1.3.0-R3401.1, and none of them cost a prompt.
+
+1. 🔴 **`api_key`'s presence does not mean metered billing — the account login writes one.** A
+   real device-code sign-in leaves `access_token`, `api_base_url`, `api_key`,
+   `mechanism: "oauth"`, `obtained_via: "device_code"`, `user_email` and `user_full_name` side
+   by side. `muse auth set --api-key-stdin` leaves `api_key` **alone**, with no `mechanism` and
+   no `obtained_via`. So a card keyed on the key's presence would tell every subscription
+   member they were being billed per use — the exact inversion of what decision 9 exists to
+   protect. The discriminator is `mechanism`, and the Agent derives `metered` from it so no
+   surface has to know this.
+2. 🔴 **`muse logout` does not remove the file.** It leaves `{"schema_version":1,
+   "providers":{}}` behind, mode 600. Connectedness is therefore "`providers.meta` carries a
+   credential", never "the file exists" — the latter reads as signed in forever after the first
+   logout.
+3. 🔴 **`muse auth set` REPLACES the whole provider entry.** Measured over a device-code-shaped
+   file, it left `api_key` as the only key: the access token, the mechanism and the e-mail all
+   gone. An API key written over an account login does not merely take priority for the next
+   turn, it destroys the sign-in. So the card's API-key route **refuses** while an account login
+   is stored (`409 account_login_present`) instead of warning: the member disconnects first, and
+   the two-step is the confirmation.
+
+**🔥 The login is the first in this tree that must run OFF a terminal, and a PTY silently breaks
+it.** Every existing connection card drives its CLI through `agents.StartFlow`, which is
+`pty.Start`. Measured on a PTY, `muse login` prints the device URL and then **stops** at
+"Press Enter to open it in your browser:" — it never begins polling Meta, and there is no
+browser in this container to open, nor anything to press the key. Off a TTY the same binary
+prints the URL and goes straight to "Waiting for approval…", self-polling exactly the way
+kiro's and cursor's flows do. `agents.StartPipeFlow` is that shape: stdin is `/dev/null`,
+stdout and stderr are one pipe, and everything else — `Clean`, `WaitFor`, the flow store and
+its TTL reaping — is unchanged. Its test carries the PTY arm as the control, because a pipe
+flow that quietly fell back to a PTY passes every assertion made on the pipe arm alone.
+
+Three smaller things the implementation settled:
+
+- **The poll's signal is the credential, not the child's last line.** Muse writes auth.json
+  before it says anything, and its wording is not a contract. But a child that has **exited**
+  without writing one is a finished failure (an expired code, a refused approval), and saying
+  so ends the card's poll instead of spinning to a 15-minute deadline for something that can no
+  longer happen. `Flow.Ended` is what reports it; an unknown flow id stays "not yet", because
+  the TTL reaper reaches that state too and it says nothing about the approval.
+- **`FlowStore` needed a `Get`.** A poll that only wants to look at a flow it will keep waiting
+  on cannot use `Take` and then `Put` it back: `Put` mints a **fresh** id, orphaning the one the
+  client is polling with. This was written the wrong way first and the second poll of every
+  login would have found nothing.
+- **`META_API_KEY` is reported, not acted on.** Muse's own `login --help` says it "always takes
+  priority over the account login", so a deployment that sets it makes `connected: true`,
+  `metered: false` and a per-use bill all true at once. AF neither injects one (decision 9 
+  settled that) nor strips a member's — stripping would silently override a deliberate choice —
+  so `env_key` exists to make the contradiction visible, because its failure mode is an invoice
+  rather than an error.
+
+**`Resume` now refuses without a credential**, after the clamp gate rather than before it: the
+clamps are the safety mechanism and must be applied on every path that could spawn a host, so a
+sign-in that arrives later must not find an unclamped file waiting for it. Without the gate an
+unauthenticated session accepts `session/start` and then ends **every** turn `authRequired`
+(P2-1) — healthy in the Console, unable to answer.
+
+⚠️ **The card itself moved to the Console-surface package, and the work-package table is wrong
+about that.** The table puts "connection card" in this row, but a card cannot be rendered
+honestly without three things the table files under Console surface: `SessionKind` (nothing
+renders without it), the registry descriptor `kindDisplayName` and the badge read from, and the
+kind's colour — which on the `--kind-lcpp` precedent means a measured hue clearing the ten
+existing kinds *and* the semantic colours in both themes, plus a headless render. Attempted
+here, the card would have shown an uncoloured, unlabelled badge. So this row landed the whole
+server half — status, the four routes on both `routes.go` files, the CP allow-list — and the
+Console surface package gains the card, where it also gets the screenshot that P2-5's approval
+card is still owed.

@@ -113,6 +113,10 @@ export const mirror = {
   "mirror.always_allow": "常に許可",
   "mirror.deny": "拒否",
   "mirror.perm_hint": "対象（ファイル・コマンド）や差分はターミナルで確認できます",
+  "mirror.approval_asking": "ツールの実行を求めています",
+  "mirror.approval_protected": "保護対象への書き込み",
+  "mirror.approval_escalated": "判断が委ねられました",
+  "mirror.approval_hint": "拒否するとこのツールだけが止まり、セッションは続きます。",
   "mirror.questioning": "質問中",
   "mirror.typing": "{name} が入力中",
   // 実行制御

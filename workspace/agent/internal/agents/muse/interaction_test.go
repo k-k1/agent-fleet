@@ -48,11 +48,23 @@ func TestApprovalArrivesAsANotification(t *testing.T) {
 	host.Notify(msp.NotificationApprovalRequested, approvalParams())
 
 	inter := waitInteraction(t, h)
+	if inter.Kind != agents.InteractionApproval {
+		t.Fatalf("kind = %q, want approval", inter.Kind)
+	}
 	if inter.Prompt != "rm -rf build" {
 		t.Errorf("prompt = %q, want the command", inter.Prompt)
 	}
-	if len(inter.Questions) != 1 || len(inter.Questions[0].Options) != 2 {
-		t.Fatalf("interaction = %+v", inter)
+	// The whole point of the approval kind: the subject survives instead of being folded into
+	// two labelled options.
+	req := inter.Approval
+	if req == nil {
+		t.Fatal("no approval payload")
+	}
+	if req.Summary != "rm -rf build" || req.Command != "rm -rf build" || req.Tool != "shell" {
+		t.Errorf("approval = %+v", req)
+	}
+	if len(inter.Questions) != 0 {
+		t.Errorf("an approval must not also carry questions: %+v", inter.Questions)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -135,7 +147,9 @@ func TestRespondDenyPicksTheAbortChoice(t *testing.T) {
 	}
 }
 
-// The interaction is built as a question, so the Console may answer it by option index too.
+// allow/deny is the verb, but an option index is still read as a pick rather than dropped:
+// the bridge and older surfaces answer everything that way, and silently treating their reply
+// as "deny" would refuse a tool the member allowed.
 func TestRespondByOptionIndexMapsOntoAllowAndDeny(t *testing.T) {
 	for idx, want := range map[int]string{0: "allow_once", 1: "abort"} {
 		h := &threadHandle{}
@@ -462,5 +476,125 @@ func TestSnapshotReportsTheThreadState(t *testing.T) {
 	}
 	if snap.Interaction == nil {
 		t.Error("the pending interaction is missing from the snapshot")
+	}
+}
+
+// A pipeline is several commands, and the member approving `a | b` is approving both. The
+// parsed argv of each stage is the only place the second one is visible.
+func TestApprovalCarriesTheStagesAndTheFlags(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	p := approvalParams()
+	p.ProtectedWrite = true
+	p.JudgeEscalated = true
+	p.Subject.Stages = []msp.ApprovalStage{
+		{Argv: []string{"rm", "-rf", "build"}, Position: 0, TotalStages: 2},
+		{Argv: []string{"tee", "/etc/passwd"}, Position: 1, TotalStages: 2},
+	}
+	host.Notify(msp.NotificationApprovalRequested, p)
+
+	req := waitInteraction(t, h).Approval
+	if req == nil {
+		t.Fatal("no approval payload")
+	}
+	if len(req.Stages) != 2 || req.Stages[1][0] != "tee" {
+		t.Errorf("stages = %v", req.Stages)
+	}
+	if !req.ProtectedWrite {
+		t.Error("protectedWrite was dropped; it is the runtime's own danger marking")
+	}
+	if !req.JudgeEscalated {
+		t.Error("judgeEscalated was dropped; it means the runtime was unsure")
+	}
+}
+
+// With no command the card still has to say something, or the member is asked to approve a
+// blank line.
+func TestApprovalWithoutACommandFallsBackToTheToolName(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	p := approvalParams()
+	p.Subject = msp.ApprovalSubject{Kind: "network"}
+	p.ToolName = "web_fetch"
+	host.Notify(msp.NotificationApprovalRequested, p)
+
+	req := waitInteraction(t, h).Approval
+	if req.Summary != "web_fetch" {
+		t.Errorf("summary = %q, want the tool name", req.Summary)
+	}
+}
+
+// The two channels must not be confused on the way out: an approval goes to PendingApproval
+// with its id, and never to Pending, where a surface would render option buttons for it.
+func TestTranscriptSeparatesApprovalsFromQuestions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	storesMu.Lock()
+	stores = map[string]*store{}
+	storesMu.Unlock()
+
+	m := metaFor(t, "muse-approve")
+	h := &threadHandle{name: m.Name, slotSid: slotSid(m)}
+	host := newTestHandle(t, h)
+	handlesMu.Lock()
+	handles[m.Name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, m.Name)
+		handlesMu.Unlock()
+	})
+
+	host.Notify(msp.NotificationApprovalRequested, approvalParams())
+	inter := waitInteraction(t, h)
+
+	td, ok := New().Transcript(m)
+	if !ok {
+		t.Fatal("Transcript reported no source")
+	}
+	if td.PendingApproval == nil {
+		t.Fatal("the approval did not reach PendingApproval")
+	}
+	if td.PendingApprovalID != inter.ID {
+		t.Errorf("PendingApprovalID = %q, want %q", td.PendingApprovalID, inter.ID)
+	}
+	if td.PendingApproval.Command != "rm -rf build" {
+		t.Errorf("approval = %+v", td.PendingApproval)
+	}
+	if len(td.Pending) != 0 {
+		t.Errorf("the approval also landed in Pending, where it renders as a question: %+v", td.Pending)
+	}
+}
+
+// ...and the inverse: a user-input prompt is a question and must not appear as an approval.
+func TestTranscriptKeepsUserInputAQuestion(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	storesMu.Lock()
+	stores = map[string]*store{}
+	storesMu.Unlock()
+
+	m := metaFor(t, "muse-ask")
+	h := &threadHandle{name: m.Name, slotSid: slotSid(m)}
+	host := newTestHandle(t, h)
+	handlesMu.Lock()
+	handles[m.Name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, m.Name)
+		handlesMu.Unlock()
+	})
+
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-1", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{{ID: "q1", Question: "which?"}},
+	})
+	waitInteraction(t, h)
+
+	td, _ := New().Transcript(m)
+	if len(td.Pending) != 1 {
+		t.Errorf("Pending = %+v, want the question", td.Pending)
+	}
+	if td.PendingApproval != nil {
+		t.Errorf("a question was surfaced as an approval: %+v", td.PendingApproval)
 	}
 }

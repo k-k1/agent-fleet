@@ -142,13 +142,13 @@ func TestEngineTableEnvRowPrecedence(t *testing.T) {
 		URL: "http://192.0.2.20:8188", Health: "/system_stats", Lifecycle: engineLifecycleExternal,
 	}
 
-	added := engineTableWithEnvRow(nil, env)
+	added := engineTableWithEnvRow(nil, env, "AF_COMFY_URL")
 	if len(added) != 1 || added[0] != env {
 		t.Fatalf("no row on that key: got %+v, want the synthesised one", added)
 	}
 
 	was := []engineDef{{Key: "image", URL: "http://192.0.2.9:8188", Lifecycle: engineLifecycleExternal}}
-	got := engineTableWithEnvRow(was, env)
+	got := engineTableWithEnvRow(was, env, "AF_COMFY_URL")
 	if len(got) != 1 || got[0].URL != env.URL {
 		t.Errorf("against an external row: got %+v, want the environment to win", got)
 	}
@@ -157,9 +157,191 @@ func TestEngineTableEnvRowPrecedence(t *testing.T) {
 	}
 
 	managed := []engineDef{{Key: "image", Service: "af-image", URL: "http://image.af.internal:8080"}}
-	got = engineTableWithEnvRow(managed, env)
+	got = engineTableWithEnvRow(managed, env, "AF_COMFY_URL")
 	if len(got) != 1 || got[0].Service != "af-image" || got[0].URL != "http://image.af.internal:8080" {
 		t.Errorf("against a managed row: got %+v, want the table to win", got)
+	}
+}
+
+// engineTableWithEnvRow's three log lines used to say "AF_COMFY_URL" no matter which variable
+// synthesised the row. Pinning the envVar argument reaches the log line, so a copy-paste that
+// hard-codes the string again shows up here rather than only in an operator's log at 3am.
+func TestEngineTableEnvRowLogNamesTheVariableThatWon(t *testing.T) {
+	env := engineDef{
+		Key: "llm", API: engineAPIChat, Provider: "llamacpp",
+		URL: "http://lan-host:8080", Health: "/health", WarmPath: "/models",
+		Lifecycle: engineLifecycleExternal,
+	}
+
+	var buf bytes.Buffer
+	defer captureLog(&buf)()
+	engineTableWithEnvRow(nil, env, "AF_LLM_URL")
+	if got := buf.String(); !strings.Contains(got, "AF_LLM_URL") || strings.Contains(got, "AF_COMFY_URL") {
+		t.Errorf("externally-managed log = %q, want it to name AF_LLM_URL and not AF_COMFY_URL", got)
+	}
+
+	buf.Reset()
+	was := []engineDef{{Key: "llm", URL: "http://192.0.2.9:8080", Lifecycle: engineLifecycleExternal}}
+	engineTableWithEnvRow(was, env, "AF_LLM_URL")
+	if got := buf.String(); !strings.Contains(got, "AF_LLM_URL") || strings.Contains(got, "AF_COMFY_URL") {
+		t.Errorf("replacing-external log = %q, want it to name AF_LLM_URL and not AF_COMFY_URL", got)
+	}
+
+	buf.Reset()
+	managed := []engineDef{{Key: "llm", Service: "af-llm", URL: "http://llm.af.internal:8080"}}
+	engineTableWithEnvRow(managed, env, "AF_LLM_URL")
+	if got := buf.String(); !strings.Contains(got, "AF_LLM_URL") || strings.Contains(got, "AF_COMFY_URL") {
+		t.Errorf("managed-row log = %q, want it to name AF_LLM_URL and not AF_COMFY_URL", got)
+	}
+}
+
+// --- AF_LLM_URL: the same shortcut as AF_COMFY_URL, for the chat role ------------
+
+// engineLlmEnvRow synthesises the row the 60-engines stack itself writes for the llm role
+// (deploy/aws/ecs/cfn/60-engines.yaml: health=/health, warmPath=/models, provider=llamacpp), so
+// that a LAN llama.cpp declared this way looks, to every downstream consumer, exactly like one
+// this deployment bought.
+func TestEngineLlmEnvRowMatchesTheStackWrittenShape(t *testing.T) {
+	t.Setenv("AF_LLM_URL", "")
+	if _, ok := engineLlmEnvRow(); ok {
+		t.Error("empty AF_LLM_URL synthesised a row")
+	}
+
+	t.Setenv("AF_LLM_URL", "http://lan-host:8080")
+	def, ok := engineLlmEnvRow()
+	if !ok {
+		t.Fatal("AF_LLM_URL synthesised no row")
+	}
+	if def.Key != "llm" || def.api() != engineAPIChat || def.Provider != "llamacpp" {
+		t.Errorf("def = %+v, want an llm/chat/llamacpp row", def)
+	}
+	if def.URL != "http://lan-host:8080" {
+		t.Errorf("url = %q, want the value of AF_LLM_URL", def.URL)
+	}
+	if def.Health != "/health" || def.WarmPath != "/models" {
+		t.Errorf("health=%q warmPath=%q, want /health and /models (a llama.cpp router answers "+
+			"/health with ok while holding no weights)", def.Health, def.WarmPath)
+	}
+	if !def.external() {
+		t.Errorf("lifecycle = %q, want external", def.Lifecycle)
+	}
+}
+
+// The capability end to end, in the shape docs/log/106 documents for operators: AF_LLM_URL alone
+// (no AF_ENGINES_JSON, no AWS) produces a working llm engine with the AF_ENGINE_API_KEY_LLM
+// bearer — the same variable TestEngineRegistryGivesAnExternalChatRowItsBearer already pins for
+// an inline table, so this is the near-zero-config path to the identical row.
+func TestEngineRegistryFromLlmURLAloneGivesItsBearer(t *testing.T) {
+	up := httptest.NewServer(bearerStub("lan-bearer"))
+	defer up.Close()
+
+	t.Setenv("AF_ENGINES_SSM_PARAM", "")
+	t.Setenv("AF_ENGINES_JSON", "")
+	t.Setenv("AF_COMFY_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "")
+	t.Setenv("AF_LLM_URL", up.URL)
+	t.Setenv("AF_ENGINE_API_KEY_LLM", "lan-bearer")
+
+	reg := newEngineRegistry(context.Background(), nil)
+	if reg == nil {
+		t.Fatal("AF_LLM_URL alone produced no registry")
+	}
+	e := reg.get("llm")
+	if e == nil {
+		t.Fatalf("no llm engine: %+v", reg.byKey)
+	}
+	if !e.def.external() || e.def.Provider != "llamacpp" || e.def.api() != engineAPIChat {
+		t.Errorf("def = %+v, want an external llamacpp chat row", e.def)
+	}
+	if e.apiKey != "lan-bearer" {
+		t.Errorf("apiKey = %q, want the value of AF_ENGINE_API_KEY_LLM", e.apiKey)
+	}
+	if e.ecs != nil || e.ctrl != nil || e.ssm != nil || e.activeParam != "" {
+		t.Error("the AF_LLM_URL row was wired to AWS")
+	}
+
+	g := engineGateway{reg: reg}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/llm/v1/chat/completions", strings.NewReader(`{}`))
+	r.SetPathValue("path", "chat/completions")
+	g.plain(rec, r, e, engineSessionClaims{Key: "llm"}, testMembership(), []byte(`{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A row hand-written as lifecycle "remote" in AF_ENGINES_JSON — the shape a table can declare
+// before the far fleet is even reachable (build refuses it at line ~858 without
+// AF_REMOTE_ENGINE_URL/_TOKEN) — is, like any other row notManagedHere() answers true for,
+// replaced by AF_LLM_URL exactly the way TestEngineTableEnvRowPrecedence pins AF_COMFY_URL
+// replacing a stale external row. This is the synchronous half of decision 1's predicate; the
+// asynchronous half (a role actually being borrowed live) is refreshed on its own two-minute poll
+// and out of scope for a table-merge test.
+func TestEngineRegistryLlmURLReplacesAHandWrittenRemoteRow(t *testing.T) {
+	up := httptest.NewServer(bearerStub("lan-bearer"))
+	defer up.Close()
+
+	t.Setenv("AF_ENGINES_SSM_PARAM", "")
+	t.Setenv("AF_COMFY_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "")
+	t.Setenv("AF_LLM_URL", up.URL)
+	t.Setenv("AF_ENGINE_API_KEY_LLM", "lan-bearer")
+	t.Setenv("AF_ENGINES_JSON", `{"engines":[
+	  {"key":"llm","api":"chat","lifecycle":"remote","url":"http://stale-remote.example:8080"}]}`)
+
+	reg := newEngineRegistry(context.Background(), nil)
+	if reg == nil {
+		t.Fatal("produced no registry")
+	}
+	e := reg.get("llm")
+	if e == nil {
+		t.Fatalf("no llm engine: %+v", reg.byKey)
+	}
+	if e.def.remote() {
+		t.Error("the llm row is still remote — AF_LLM_URL did not win against the hand-written row")
+	}
+	if !e.def.external() || e.def.URL != up.URL {
+		t.Errorf("def = %+v, want the external AF_LLM_URL row", e.def)
+	}
+	if e.apiKey != "lan-bearer" {
+		t.Errorf("apiKey = %q, want the value of AF_ENGINE_API_KEY_LLM", e.apiKey)
+	}
+	if e.remote != nil {
+		t.Error("the row still carries a remote handle after being replaced")
+	}
+}
+
+// notManagedHere() gates engineTableNeedsAWS as well as the reloader (decision 1). A row a
+// MANAGED table already serves must not be silently swapped for the LAN one, the same guarantee
+// TestEngineTableEnvRowPrecedence pins for AF_COMFY_URL against the image role.
+func TestEngineRegistryLlmURLIgnoredAgainstAManagedRow(t *testing.T) {
+	t.Setenv("AF_ENGINES_SSM_PARAM", "")
+	t.Setenv("AF_COMFY_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "")
+	t.Setenv("AF_LLM_URL", "http://lan-host:8080")
+	t.Setenv("AF_ENGINE_API_KEY_LLM", "")
+	t.Setenv("AF_ENGINES_JSON", `{"engines":[
+	  {"key":"llm","api":"chat","provider":"llamacpp","service":"af-llm",
+	   "url":"http://llm.af.internal:8080","health":"/health"}]}`)
+
+	var buf bytes.Buffer
+	defer captureLog(&buf)()
+	reg := newEngineRegistry(context.Background(), nil)
+	if reg == nil {
+		t.Fatal("produced no registry")
+	}
+	e := reg.get("llm")
+	if e == nil {
+		t.Fatalf("no llm engine: %+v", reg.byKey)
+	}
+	if e.def.external() || e.def.Service != "af-llm" {
+		t.Errorf("def = %+v, want the managed row untouched", e.def)
+	}
+	if got := buf.String(); !strings.Contains(got, "AF_LLM_URL") || !strings.Contains(got, "is ignored") {
+		t.Errorf("log = %q, want a line naming AF_LLM_URL as ignored", got)
 	}
 }
 

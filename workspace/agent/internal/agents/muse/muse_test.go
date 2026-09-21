@@ -67,9 +67,12 @@ func TestCapabilitiesDeclareOnlyWhatTheDriverImplements(t *testing.T) {
 	if c.DynamicMode {
 		t.Error("DynamicMode must be false: MSP has no plan-mode method")
 	}
-	// Permissions is AF's approval Interaction kind, which does not exist yet.
-	if c.Permissions {
-		t.Error("Permissions must stay false until AF has an approval Interaction kind")
+	// muse is the first kind to declare it. The condition is not "the wire carries approvals"
+	// but "a pending approval can be ANSWERED from the Console" — the driver raises an
+	// approval-kind Interaction, the read layer sends it out as pendingApproval, and the
+	// mirror's ApprovalCard answers it through /respond.
+	if !c.Permissions {
+		t.Error("Permissions must be true: the approval interaction and its card both exist")
 	}
 	if c.Fork {
 		t.Error("Fork must stay false until the fork path is built")

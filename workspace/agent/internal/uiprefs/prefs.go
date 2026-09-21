@@ -192,6 +192,18 @@ func OpencodeCatalog() string {
 	return opencode.CatalogPref(v)
 }
 
+// LcppEnabled is the user's own display setting for the lcpp kind (Settings > Agents >
+// llama.cpp, ui-prefs lcppEnabled, docs/log/105 §106.2). Missing/invalid ⇒ true: an opt-out
+// default, so upgrading a deployment that already launches lcpp today does not silently
+// start refusing it. handleConnectionsGet mirrors this into GET /connections as the
+// signpost registry.ts's available() hides the launch menus behind; HandleCreateSession is
+// the actual gate (session_handlers.go), enforced regardless of how the create arrived
+// (Console, af's MCP, or a direct POST /sessions).
+func LcppEnabled() bool {
+	v, ok := Read()["lcppEnabled"].(bool)
+	return !ok || v
+}
+
 // PeerMessaging is the ON/OFF for session-to-session messaging (docs/log/58 / ADR 0041,
 // ui-prefs peerMessaging). Missing/invalid ⇒ **false**: this one is opt-in, unlike
 // AutoTitleSuggest. Letting sessions type into each other widens the injection surface

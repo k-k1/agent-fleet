@@ -97,7 +97,13 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	}
 	h.mu.Lock()
 	if h.inter != nil {
+		// The two channels go out separately: an approval blocks a tool and takes
+		// allow/deny, a question takes an answer, and a surface that confused them would
+		// render the wrong control.
 		td.Pending = h.inter.Questions
+		if h.inter.Kind == agents.InteractionApproval {
+			td.PendingApproval, td.PendingApprovalID = h.inter.Approval, h.inter.ID
+		}
 	}
 	for _, in := range h.queue {
 		td.Queued = append(td.Queued, in.Prompt)
