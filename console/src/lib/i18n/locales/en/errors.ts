@@ -194,6 +194,14 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.opencode_unsupported": "opencode was not found (the image may be out of date).",
   "err.kiro_unsupported": "kiro-cli was not found (it may not be installed).",
   "err.cursor_unsupported": "cursor-agent was not found (the image may be out of date).",
+  "err.muse_unsupported": "Muse Code was not found (it may not be installed yet).",
+  // muse's sign-in runs as a child with no terminal, so this is not pty_failed (ADR 0095 decision 9).
+  "err.spawn_failed": "The agent's CLI could not be started.",
+  // 🔴 A refusal, not a failure: `muse auth set` replaces the whole provider entry, so writing an
+  // API key over an account sign-in loses the sign-in and moves the workspace onto metered billing.
+  "err.account_login_present":
+    "An account sign-in is already stored. Saving an API key would lose it and move this workspace from the flat-rate plan onto metered billing. Disconnect first if you want to use an API key.",
+  "err.auth_failed": "The API key could not be saved.",
   // These carry err.Error() as the whole message, so the catalogue supplies the human
   // framing and errDetail appends the raw cause after it.
   "err.oauth_start_failed": "Could not start the sign-in.",

@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -56,6 +57,9 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"cursor":    cursor.Status(),
 		"kiro":      kiro.Status(),
 		"agy":       agy.Status(),
+		// muse (ADR 0095): supported=false until the on-demand install lands the proprietary
+		// binary; connected reads ~/.config/muse/auth.json, so it needs no subprocess.
+		"muse": muse.Status(),
 		// copilot rides on the GitHub connection (docs/log/36 contract): no flow of its own.
 		"copilot":    copilot.Status(ghConnected),
 		"jira":       jiraStatus(s), // where work items are fetched from (docs/log/80 P1)

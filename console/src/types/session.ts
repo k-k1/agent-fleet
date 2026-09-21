@@ -188,6 +188,20 @@ export interface ProviderConn {
   expires_at?: string;
   expired?: boolean;
   days_left?: number;
+  // muse (ADR 0095 decision 9): which credential is stored, and what it costs.
+  //
+  // 🔴 `metered` is NOT derivable in the Console from anything else the card can see: muse's
+  // device-code account login writes an `api_key` of its own alongside the access token, so a
+  // surface that inferred "pay-as-you-go" from a key's presence would say it about every
+  // subscription member. The Agent derives it from muse's `mechanism` field and this is the
+  // answer — an account login rides the subscription, a pasted key bills per use.
+  //
+  // `env_key` is the contradiction case: META_API_KEY in the Workspace environment overrides
+  // the stored sign-in, so `connected` can be true, `metered` false, and the member still
+  // billed per use. AF reports it rather than acting on it (see auth.go's envKeySet).
+  mechanism?: "oauth" | "api_key" | string;
+  metered?: boolean;
+  env_key?: boolean;
   // opencode: the selected billing route (docs/log/54). "free" is a tier that launches with
   // no authentication at all, so the launch gate reads this and allows opencode even when
   // not connected. "off" is the opposite: an explicit disable that closes the launch gate
@@ -224,6 +238,11 @@ export interface ConnectionsStatus {
   // supported=false = the CLI is not installed (before on-demand install; ~855MB goes to the
   // per-user home).
   kiro?: ProviderConn;
+  // muse (ADR 0095): device-code sign-in. connected = ~/.config/muse/auth.json carries a Meta
+  // credential (a plain file read — muse has no whoami and no auth method on its wire);
+  // supported=false = the proprietary CLI is not installed (before the on-demand install).
+  // `mechanism` / `metered` / `env_key` are muse's own — see the fields on ProviderConn.
+  muse?: ProviderConn;
   [provider: string]: ProviderConn | undefined;
 }
 

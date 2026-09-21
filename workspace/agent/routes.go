@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
@@ -474,6 +475,13 @@ func buildMux() *http.ServeMux {
 	// install, GET polls its progress.
 	mux.HandleFunc("POST /connections/kiro/install", handleKiroInstall)
 	mux.HandleFunc("GET /connections/kiro/install", handleKiroInstall)
+	// muse login (ADR 0095 decision 9): a device flow, start -> poll like cursor/kiro — muse
+	// polls Meta itself and writes ~/.config/muse/auth.json once approved. api-key is the
+	// pay-as-you-go fallback and refuses to overwrite an account sign-in; see auth.go.
+	mux.HandleFunc("POST /connections/muse/start", muse.HandleStart)
+	mux.HandleFunc("POST /connections/muse/poll", muse.HandlePoll)
+	mux.HandleFunc("POST /connections/muse/api-key", muse.HandleAPIKey)
+	mux.HandleFunc("DELETE /connections/muse", muse.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/pagerduty", handlePutPagerDutyConn)
 	mux.HandleFunc("DELETE /connections/pagerduty", handleDeletePagerDutyConn)
 	mux.HandleFunc("PUT /connections/grafana", handlePutGrafanaConn)
