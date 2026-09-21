@@ -27,6 +27,12 @@ func TestPeerTargetAllowedExcludesShellAndSSM(t *testing.T) {
 	for _, kind := range []string{
 		session.KindClaude, session.KindCodex, session.KindOpencode,
 		session.KindCursor, session.KindKiro, session.KindAgy, session.KindCopilot,
+		// lcpp and muse carry no CLI config (ADR 0093 decision 6 / ADR 0095) and so are absent
+		// from mcpreg.MaterializedKinds, but both hold an ordinary conversation reached the same
+		// way every other kind's peer delivery works (agentRegistry) — being un-materialized is
+		// not the same question as being unreachable (session_peer.go's own doc comment on
+		// peerTargetAllowed). A regression here previously answered lcpp with peer_target_forbidden.
+		session.KindLcpp, session.KindMuse,
 	} {
 		if !peerTargetAllowed(kind) {
 			t.Errorf("peerTargetAllowed(%q) = false, want true", kind)
@@ -40,9 +46,15 @@ func TestPeerPolicyRejections(t *testing.T) {
 	session.WriteMeta(session.Meta{Name: "peerdst", Dir: t.TempDir(), Kind: session.KindCodex})
 	session.WriteMeta(session.Meta{Name: "peershell", Dir: t.TempDir(), Kind: session.KindShell})
 	session.WriteMeta(session.Meta{Name: "peergone", Dir: t.TempDir(), Kind: session.KindClaude, Archived: true})
+	session.WriteMeta(session.Meta{Name: "peerlcpp", Dir: t.TempDir(), Kind: session.KindLcpp})
 
 	if _, err := peerPolicy("peersrc", "peerdst"); err != nil {
 		t.Fatalf("claude → codex should be allowed, got %v", err)
+	}
+	// lcpp has no CLI config to materialize (ADR 0093 decision 6) but is an ordinary peer
+	// target — see peerTargetAllowed's own doc comment for the bug this pins.
+	if _, err := peerPolicy("peersrc", "peerlcpp"); err != nil {
+		t.Fatalf("claude → lcpp should be allowed, got %v", err)
 	}
 	for _, tc := range []struct{ from, to, wantCode string }{
 		{"peersrc", "peersrc", "peer_self"},

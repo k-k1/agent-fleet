@@ -684,7 +684,15 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 func (h *threadHandle) setState(st agents.TurnState) {
 	h.mu.Lock()
 	h.state = st
-	if st == agents.TurnRunning {
+	// runningSince has to be stamped on TurnStarting too, not only TurnRunning: the engine-wake
+	// wait lastSay reports (below) happens BEFORE runTurn ever reaches TurnRunning (it is inside
+	// harness.EngineToken/harness.Run, called while still TurnStarting). Leaving it unset for
+	// TurnStarting left h.runningSince at its zero value during exactly that wait, and
+	// time.Since(zero value) overflows time.Duration's own range (~292 years) rather than
+	// panicking — Sub clamps to the max representable Duration, so lastSay printed
+	// "エンジン起動待ち（9223372036秒）" (math.MaxInt64 ns, truncated to seconds) instead of the
+	// real elapsed time (found live 2026-09-21, the lcpp kind's first end-to-end run).
+	if st == agents.TurnStarting || st == agents.TurnRunning {
 		h.runningSince = time.Now()
 	}
 	h.mu.Unlock()
@@ -712,6 +720,14 @@ func (h *threadHandle) emit(e agents.Event) {
 // reply never flashes it.
 const wakingLastSayThreshold = 5 * time.Second
 
+// wakingLastSayCeiling is a sanity cap, not a real bound on how long a turn may run: no genuine
+// wait this driver produces (engineWakeRetryBudget's 10 minutes, plus generation) comes anywhere
+// close to it. Its only job is to catch runningSince reading as its zero value — an unset or
+// misordered stamp — before elapsed is shown to anyone, rather than printing whatever
+// time.Since(zero value) clamps to (time.Duration's own ~292-year ceiling: the exact shape of the
+// bug this guards, see setState's own doc comment).
+const wakingLastSayCeiling = 24 * time.Hour
+
 // lastSay is ADR 0093 decision 4's v1 cold-start signal: "working ＋ 『エンジン起動待ち（n
 // 秒）』の last-say 行で出す". There is no per-token hook from harness.Client.Send today, so
 // this cannot distinguish "still waiting for the engine to wake" from "generating a long
@@ -725,8 +741,11 @@ func (h *threadHandle) lastSay() string {
 	if st != agents.TurnRunning && st != agents.TurnStarting {
 		return ""
 	}
+	if since.IsZero() {
+		return ""
+	}
 	elapsed := time.Since(since)
-	if elapsed < wakingLastSayThreshold {
+	if elapsed < wakingLastSayThreshold || elapsed > wakingLastSayCeiling {
 		return ""
 	}
 	return fmt.Sprintf("エンジン起動待ち（%d秒）", int(elapsed.Seconds()))

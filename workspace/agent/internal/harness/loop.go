@@ -179,8 +179,12 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 		} else {
 			consecutiveCompactions = 0
 		}
-		turn, err := client.Send(ctx, send, tools)
-		if err != nil {
+		var turn Turn
+		if err := retryEngineWake(ctx, func() error {
+			var serr error
+			turn, serr = client.Send(ctx, send, tools)
+			return serr
+		}); err != nil {
 			return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions}, err
 		}
 		full = append(full, Message{
@@ -278,8 +282,12 @@ func maybeCompact(ctx context.Context, client Client, rt *Runtime, tools []ToolD
 	}
 
 	send = BuildSendMessages(sysPrompt, full)
-	tokens, err := client.InputTokens(ctx, send, tools)
-	if err != nil {
+	var tokens int
+	if err = retryEngineWake(ctx, func() error {
+		var ierr error
+		tokens, ierr = client.InputTokens(ctx, send, tools)
+		return ierr
+	}); err != nil {
 		return nil, full, false, err
 	}
 	if !NeedsCompaction(tokens, reserved, window) {
