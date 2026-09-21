@@ -64,14 +64,43 @@ func TestMuseParseVersionTakesTheBuildID(t *testing.T) {
 	}
 }
 
+// 🔴 museTestHome is the isolation the temp HOME alone does not buy. `musePresent` falls back
+// to `exec.LookPath("muse")` on purpose — a muse baked somewhere else on PATH must not be
+// re-downloaded — so on a machine that HAS muse installed (a developer's workspace after the
+// on-demand install, which is every workspace this feature was measured in) every test below
+// would find the real binary through the process PATH, take the "already installed" path, and
+// pass or fail for reasons that have nothing to do with the code under test. Measured: three of
+// them went red here for exactly that, while CI stayed green because CI has no muse.
+//
+// The fix keeps the fallback exercised and makes the only muse it can find the fixture's: PATH
+// becomes the test's own bin directory plus every current entry that does NOT hold a muse.
+// Emptying PATH instead would be hermetic and wrong — the installer shells out to `curl`, so a
+// bare PATH turns a checksum test into a "curl not found" test.
+func museTestHome(t *testing.T) (home, binDir string) {
+	t.Helper()
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+	binDir = filepath.Join(home, ".local", "bin")
+	keep := []string{binDir}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		if fileExecutable(filepath.Join(dir, "muse")) {
+			continue
+		}
+		keep = append(keep, dir)
+	}
+	t.Setenv("PATH", strings.Join(keep, string(filepath.ListSeparator)))
+	return home, binDir
+}
+
 // fakeMuseHome sets up HOME with a stub `muse` reporting ver from `--version`, plus a
 // versions.json pinning muse=pin. Returns ~/.local/bin. ver=="" makes `--version` print
 // nothing, which is the museUnknownVer path.
 func fakeMuseHome(t *testing.T, ver, pin string) string {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	binDir := filepath.Join(home, ".local", "bin")
+	home, binDir := museTestHome(t)
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -187,8 +216,7 @@ func TestMuseVersionMarkerNeverOverridesTheBinary(t *testing.T) {
 // A missing pin is an error, not a silent no-op: without it the installer has no URL to fetch
 // and no checksum to verify, and "did nothing" would look like success to the HTTP route.
 func TestInstallMuseRefusesWithoutAPin(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home, _ := museTestHome(t)
 	pins := filepath.Join(home, "versions.json")
 	if err := os.WriteFile(pins, []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -330,8 +358,7 @@ func TestInstallMuseVerifiesTheChecksum(t *testing.T) {
 
 	setup := func(t *testing.T, pinnedSha string) string {
 		t.Helper()
-		home := t.TempDir()
-		t.Setenv("HOME", home)
+		home, binDir := museTestHome(t)
 		pins := filepath.Join(home, "versions.json")
 		if err := os.WriteFile(pins, []byte(`{"muse":"1.3.0-R3401.1","muse_sha256":"`+pinnedSha+`"}`), 0o644); err != nil {
 			t.Fatal(err)
@@ -340,7 +367,7 @@ func TestInstallMuseVerifiesTheChecksum(t *testing.T) {
 		buildPinsPath = pins
 		museDownloadURL = func(string, string) string { return "file://" + artifact }
 		t.Cleanup(func() { buildPinsPath, museDownloadURL = origPins, origURL })
-		return filepath.Join(home, ".local", "bin", "muse")
+		return filepath.Join(binDir, "muse")
 	}
 
 	t.Run("a hash that does not match is refused and nothing is placed", func(t *testing.T) {
