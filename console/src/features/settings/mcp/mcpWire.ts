@@ -8,7 +8,7 @@
 // non-agent session kinds (shell / ssm) run no MCP client, so they are not offered.
 // How a kind RECEIVES its servers is not this list's business: every kind here but muse gets a
 // native config file written for it, and muse takes them on the wire at session start.
-export const MCP_KINDS = ["claude", "codex", "opencode", "cursor", "kiro", "copilot", "agy", "muse"] as const;
+export const MCP_KINDS = ["claude", "codex", "opencode", "cursor", "kiro", "copilot", "agy", "muse", "lcpp"] as const;
 
 // The stand-in the agent sends for every stored secret value. Sending it back
 // unchanged keeps the stored value (mcpreg.MergeSecrets), so the Console can edit a

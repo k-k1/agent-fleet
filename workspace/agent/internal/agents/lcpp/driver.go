@@ -19,6 +19,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpc"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -94,15 +95,22 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		handlesMu.Unlock()
 		return h, nil
 	}
+	mcpCtx, mcpCancel := context.WithCancel(context.Background())
 	h := &threadHandle{
-		name:     m.Name,
-		sid:      sid,
-		cwd:      m.CWD(),
-		store:    Open(sid),
-		events:   make(chan agents.Event, 64),
-		state:    agents.TurnCompleted,
-		settings: agents.ThreadSettings{Model: m.Model, Effort: m.Effort, Mode: m.Mode},
-		skipPerm: agents.SkipPermissions(m),
+		name:      m.Name,
+		sid:       sid,
+		cwd:       m.CWD(),
+		store:     Open(sid),
+		events:    make(chan agents.Event, 64),
+		state:     agents.TurnCompleted,
+		settings:  agents.ThreadSettings{Model: m.Model, Effort: m.Effort, Mode: m.Mode},
+		skipPerm:  agents.SkipPermissions(m),
+		mcpCtx:    mcpCtx,
+		mcpCancel: mcpCancel,
+		// mcpMgr's own servers are dialed lazily, on the first runTurn's syncMCPServers call, not
+		// here: constructing the Manager itself does no I/O (mcpc.NewManager just starts a
+		// ctx-watcher goroutine), so this stays as cheap as every other Resume field. See mcp.go.
+		mcpMgr: mcpc.NewManager(mcpCtx),
 	}
 	handles[m.Name] = h
 	handlesMu.Unlock()
@@ -192,20 +200,22 @@ func DropHandle(name string) {
 	}
 	_ = h.Interrupt()
 	// Close the store's cached write handle (Store.Close's own doc comment: optional, but
-	// this IS the "eventual session-shutdown path" it names) only once any turn Interrupt just
-	// cancelled has actually finished appending — closing synchronously here would race
-	// runTurn's own post-Run persistence still in flight on another goroutine and could drop
-	// that turn's final records (a write to an already-closed *os.File fails). Bounded and
-	// off the caller's own goroutine, so DropHandle itself stays the fast, synchronous call
-	// every existing caller (stop/halt/archive/recreate) already expects.
-	go h.closeStoreOnceIdle()
+	// this IS the "eventual session-shutdown path" it names) and the MCP manager (mcpMgr.Close,
+	// killing any stdio children — decision 6's "子プロセスを取り残さないこと") only once any
+	// turn Interrupt just cancelled has actually finished: closing either synchronously here
+	// would race runTurn's own post-Run persistence, or an in-flight tools/call, still running
+	// on another goroutine (a write to an already-closed *os.File fails; a tools/call against a
+	// just-killed stdio child errors instead of completing). Bounded and off the caller's own
+	// goroutine, so DropHandle itself stays the fast, synchronous call every existing caller
+	// (stop/halt/archive/recreate) already expects.
+	go h.closeIdleResources()
 }
 
-// closeStoreIdleWait bounds closeStoreOnceIdle's poll — generous next to an ordinary tool
-// round trip, short next to leaving the fd open indefinitely.
+// closeStoreIdleWait bounds closeIdleResources' poll — generous next to an ordinary tool round
+// trip, short next to leaving a store fd or an MCP stdio child open indefinitely.
 const closeStoreIdleWait = 10 * time.Second
 
-func (h *threadHandle) closeStoreOnceIdle() {
+func (h *threadHandle) closeIdleResources() {
 	deadline := time.Now().Add(closeStoreIdleWait)
 	for time.Now().Before(deadline) {
 		h.mu.Lock()
@@ -219,6 +229,10 @@ func (h *threadHandle) closeStoreOnceIdle() {
 	if err := h.store.Close(); err != nil {
 		log.Printf("lcpp: closing store for %s: %v", h.name, err)
 	}
+	if err := h.mcpMgr.Close(); err != nil {
+		log.Printf("lcpp: closing mcp manager for %s: %v", h.name, err)
+	}
+	h.mcpCancel()
 }
 
 // RemoveLedger drops the ClientMessageID ledger (/stop only — halt/archive can be resumed).
@@ -285,6 +299,27 @@ type threadHandle struct {
 	// out to avoid. DropHandle below closes it (Store.Close's own doc comment: optional, but
 	// this is precisely the "eventual session-shutdown path" it was written for).
 	store *Store
+
+	// mcpCtx/mcpCancel bound mcpMgr's whole SESSION lifetime, unlike runTurn's own per-turn ctx
+	// (the cancel field below): they live from Resume until closeIdleResources, so a connected
+	// stdio server survives across turns instead of redialing every single one. mcpc.NewManager's
+	// own ctx-watcher goroutine closes every attached server if mcpCtx is ever cancelled without
+	// an explicit mcpMgr.Close() first — belt and suspenders for "stdio 子はセッションと共に死ぬ
+	// こと" (the ADR 0093 段2 MCP wiring instruction's own wording).
+	mcpCtx    context.Context
+	mcpCancel context.CancelFunc
+	mcpMgr    *mcpc.Manager
+	// mcpFailures is the per-server backoff/error state syncMCPServers (mcp.go) maintains
+	// across turns: a server present here is known broken as of its own mcpFailure.err, and is
+	// skipped (not retried) until mcpFailure.next. See syncMCPServers' own doc comment for why
+	// this exists — a server that never connects must not cost every future turn a full
+	// connect attempt.
+	mcpFailures map[string]mcpFailure
+	// mcpLastNotedErr is the error signature (server name -> message) the store's most recent
+	// NoteMCPError record was built from — compared against the CURRENT mcpFailures snapshot
+	// every syncMCPServers call so a persistently broken server is only logged to the store
+	// once per STATE CHANGE, not once per turn forever.
+	mcpLastNotedErr map[string]string
 
 	// skipPerm is the resolved "skip permission confirmation" choice (docs/log/76), captured
 	// once at Resume from session.Meta/ui-prefs — the same resolution every other driver makes
@@ -478,7 +513,20 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	} else {
 		rt.Approve = h.approve
 	}
-	reg := harness.NewRegistry(harness.BuiltinTools()...)
+
+	// MCP wiring (ADR 0093 決定6, 段2): resolve this turn's enabled servers and reconcile the
+	// session-lifetime manager against them BEFORE building the registry, so h.mcpTools() below
+	// reflects whatever is live right now — including a server enabled/disabled since the last
+	// turn (mcpreg.ForSession is re-read every turn, the same "次ターンから反映" convention
+	// UpdateSettings already uses for model/mode). A resolution failure or a per-server connect
+	// failure never fails the turn — see syncMCPServers' own doc comment.
+	mcpDefs, mcpErr := mcpServersForSession(session.KindLcpp)
+	if mcpErr != nil {
+		log.Printf("lcpp: %s: resolving MCP servers: %v", h.name, mcpErr)
+		mcpDefs = nil
+	}
+	h.syncMCPServers(ctx, mcpDefs)
+	reg := harness.NewRegistry(append(harness.BuiltinTools(), h.mcpTools()...)...)
 
 	h.setState(agents.TurnRunning)
 	result, runErr := harness.Run(ctx, client, reg, rt, before)

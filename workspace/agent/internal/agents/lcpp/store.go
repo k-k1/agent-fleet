@@ -44,6 +44,14 @@ type Note string
 const (
 	NoteCompaction  Note = "compaction"
 	NoteModelChange Note = "model_change"
+	// NoteMCPError records that syncMCPServers (mcp.go) could not connect one or more of this
+	// turn's enabled MCP servers — bookkeeping only (Full excludes it, the same as
+	// NoteModelChange). No mirror rendering is added for it, for the identical reason
+	// NoteModelChange's own doc comment on Transcript below gives: no Part/Turn shape has been
+	// designed for it yet, and inventing one is out of this package's scope. It exists so the
+	// failure is at least recorded rather than silently dropped — mcp.go also logs it via
+	// log.Printf on every occurrence, which is the operator-visible half of that.
+	NoteMCPError Note = "mcp_error"
 )
 
 // Record is one append-only JSONL line. Every field beyond ID/TS/Kind is meaningful for only
@@ -295,6 +303,12 @@ func (s *Store) AppendMessage(m harness.Message) (Record, error) {
 // own doc comment).
 func (s *Store) AppendModelChangeNote(model string) (Record, error) {
 	return s.append(Record{Kind: KindSystemNote, Note: NoteModelChange, Model: model})
+}
+
+// AppendMCPSyncErrorNote records one turn's MCP connection failures (mcp.go's syncMCPServers) —
+// see NoteMCPError's own doc comment for why this has no mirror rendering yet.
+func (s *Store) AppendMCPSyncErrorNote(content string) (Record, error) {
+	return s.append(Record{Kind: KindSystemNote, Note: NoteMCPError, Content: content})
 }
 
 // AppendUsage records one turn's exact token accounting (decision 8: this kind never
