@@ -808,6 +808,47 @@ func TestComfyWorkflowQwenImageEditMatchesGoldenFixture(t *testing.T) {
 	}
 }
 
+// The family is READ back off a finished picture through SaveImage's filename_prefix
+// (comfyFamilyFromPrefix), which is what fills the reproduction record's `family` — so every
+// template's prefix has to be one comfyFamilyFromPrefix recognises, for EVERY family.
+//
+// Nothing pinned this before, and the hole is the shape a golden fixture cannot see: the goldens
+// compare a prefix to a string that was written down at the same time, so a prefix the reader
+// does not recognise matches its own fixture happily. Measured while consolidating the family
+// declarations (ADR 0094 未解決 4): dropping flux2-klein's short name left `af-klein` on every
+// picture it makes and unreadable by the reader, with the whole suite green.
+func TestEveryFamilysPrefixIsReadableBack(t *testing.T) {
+	files := map[comfyFamily]comfyFiles{}
+	for _, c := range comfyFamilyFixtures {
+		files[c.family] = c.files
+	}
+	for _, c := range comfyQwenEditFamilies {
+		files[c.family] = c.files
+	}
+	for _, family := range comfyFamilies {
+		t.Run(string(family), func(t *testing.T) {
+			f, ok := files[family]
+			if !ok {
+				t.Fatalf("%s is in no fixture list, so this check silently stops measuring it", family)
+			}
+			p := comfyGoldenParams
+			p.Op, p.Images = OpEdit, []string{"af-photo.png"}
+			g, err := comfyBuildGraph(family, f, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(%s) = %v", family, err)
+			}
+			prefix := stringOf(g["save"].Inputs["filename_prefix"])
+			if prefix == "" {
+				t.Fatalf("%s's SaveImage names no filename_prefix", family)
+			}
+			if got := comfyFamilyFromPrefix(prefix); got != string(family) {
+				t.Errorf("comfyFamilyFromPrefix(%q) = %q, want %q — a picture this template makes"+
+					" records a family nobody can read back", prefix, got, family)
+			}
+		})
+	}
+}
+
 // The second reference (ADR 0094 decision 5, P3), wired the way 実測 D measured it and not the
 // way it reads at first glance. Three things have to hold together and each fails silently on its
 // own — an extra reference that is dropped, scaled, or attached to one side only all produce a

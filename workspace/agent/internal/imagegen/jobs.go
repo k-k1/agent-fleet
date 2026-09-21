@@ -96,35 +96,17 @@ func validSeedPolicy(p string) bool {
 	return p == "" || p == SeedRandom || p == SeedFixed || p == SeedSequence
 }
 
-// comfyTrialSteps is the step count a trial run samples at, per family (ADR 0081 decision 11).
-// They are guesses until the live run (unresolved 7): the number wanted is the smallest one at
-// which the composition is still recognisable, which only a picture can answer.
-//
-// flux2-klein is already at its family recipe's 4 — a distilled 4-step model has no cheaper
-// setting — so a trial there differs from the batch in nothing but where it sits in the queue.
-var comfyTrialSteps = map[comfyFamily]int{
-	ComfyFamilySD15:       10,
-	ComfyFamilySDXL:       10,
-	ComfyFamilySD35:       12,
-	ComfyFamilyFlux1:      8,
-	ComfyFamilyZImage:     4,
-	ComfyFamilyFlux2Klein: 4,
-	// A third of the family's 30, rather than SDXL's 10 out of 20: the model card's floor for
-	// the undistilled versions is 30 steps, so a trial at 10 would be judging a composition this
-	// family does not produce at 10.
-	ComfyFamilyAnima: 12,
-	// krea2's own recipe is already 8, the distilled value — so for a Turbo row a trial is the
-	// batch (the klein case above). It is left here for the Raw rows, where it is the family's
-	// published 52 cut to a sixth.
-	ComfyFamilyKrea2: 8,
-	// ADR 0094 実測 B: the same 2509 graph at 8 steps still followed the instruction (63.2 s vs
-	// 実測 A's 226.2 s at the family's own 20) — measured, not guessed like the others above.
-	ComfyFamilyQwenImageEdit2509: 8,
-	// Carried over from 2509's measurement rather than scaled with the recipe (2511 samples at 40
-	// where 2509 samples at 20). The two graphs differ in where the reference latents enter, not
-	// in how the sampler descends, and a fifth of 40 is the same kind of guess as every entry
-	// above — except that this one has a sibling that was measured.
-	ComfyFamilyQwenImageEdit2511: 8,
+// comfyTrialStepsFor is the step count a trial run samples at (ADR 0081 decision 11), declared
+// with the rest of the family on comfyFamilyRow. False is a family with no row — the caller's own
+// steps are then left alone, which is what the map this replaced did on a miss. A family whose
+// recipe is already as cheap as a trial (klein, krea2) declares that number rather than nothing,
+// so "no row" and "nothing cheaper to run" stay different answers.
+func comfyTrialStepsFor(family comfyFamily) (int, bool) {
+	r, ok := comfyFamilyRowFor(family)
+	if !ok || r.TrialSteps <= 0 {
+		return 0, false
+	}
+	return r.TrialSteps, true
 }
 
 // --- the records --------------------------------------------------------------------------
@@ -288,7 +270,7 @@ func (q *jobQueue) Enqueue(ctx context.Context, spec JobSpec) (EnqueueResult, er
 	if spec.Trial {
 		req.Count = 1
 		if !spec.FullSteps {
-			if steps, ok := comfyTrialSteps[comfyFamily(family)]; ok {
+			if steps, ok := comfyTrialStepsFor(comfyFamily(family)); ok {
 				if req.Params != nil {
 					fullSteps = req.Params.Steps
 				}

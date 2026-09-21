@@ -240,8 +240,12 @@ func comfyFamilyOps(family comfyFamily) []Op {
 // 2, 3 and 4 all turn on — not the family name, and not the version. Both Qwen-Image-Edit
 // topologies answer true and every future one will; they are separate families because their
 // GRAPHS differ (ADR 0094 decision 6), while everything a caller can ask about them is the same.
+//
+// It reads the row's wiring rather than naming the families, so that a family this predicate
+// answers true for is exactly a family comfyGraphQwenImageEdit can build (comfyFamilyRow).
 func comfyFamilyInstructionEdit(family comfyFamily) bool {
-	return family == ComfyFamilyQwenImageEdit2509 || family == ComfyFamilyQwenImageEdit2511
+	r, ok := comfyFamilyRowFor(family)
+	return ok && r.InstructionEdit != nil
 }
 
 // comfyFamilyStrength is ADR 0094 decision 2: whether Request.Strength reaches this family's
@@ -294,23 +298,17 @@ func comfyFamilyHasNoSizes(family comfyFamily) bool {
 // (decision 5) so the form greys a field out on the AGENT's word rather than on a second copy of
 // this table that can disagree with the graphs.
 //
-// It is derived from the templates and must be read next to them: flux1 and klein fold guidance
-// into the conditioning, so the number a model card calls "CFG" is a different knob there;
-// klein's Flux2Scheduler takes a size and not a schedule name; and the three distilled families
-// sample at cfg 1, where a negative branch cancels out exactly (comfyFamilyTakesNegative).
+// The sampler half is the row's own (comfyFamilyRow.SamplerKnobs, declared next to the recipe it
+// describes); `negative` and `strength` are appended here from the same answers Caps gives, so
+// the form and the capability cannot disagree about either.
+//
+// 🔴 The copy is not ceremony. Six rows share one backing array (comfyKnobsSampled), and
+// appending to a slice this function does not own writes `negative` into every one of them the
+// day any row is declared with spare capacity. Today's literals have none, which is exactly what
+// makes it the kind of bug that arrives with an unrelated edit.
 func comfyFamilyKnobs(family comfyFamily) []string {
-	knobs := []string{"steps"}
-	switch family {
-	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima, ComfyFamilyKrea2,
-		ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511:
-		knobs = append(knobs, "cfg", "sampler", "scheduler")
-	case ComfyFamilyZImage:
-		knobs = append(knobs, "cfg", "sampler", "scheduler")
-	case ComfyFamilyFlux1:
-		knobs = append(knobs, "sampler", "scheduler")
-	case ComfyFamilyFlux2Klein:
-		knobs = append(knobs, "sampler")
-	}
+	row, _ := comfyFamilyRowFor(family)
+	knobs := append([]string(nil), row.SamplerKnobs...)
 	if comfyFamilyTakesNegative(family) {
 		knobs = append(knobs, "negative")
 	}
@@ -385,33 +383,19 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 	if !ok || !comfyFamilyTakesNegative(family) {
 		return false
 	}
-	return comfyFamilyRecipes[family].with(conn.Params[model]).CFG != 1
+	return comfyFamilyRecipeFor(family).with(conn.Params[model]).CFG != 1
 }
 
-// comfyFamilyTakesNegative is which of the seven templates a negative prompt can actually move.
+// comfyFamilyTakesNegative is which of the templates a negative prompt can actually move — the
+// row's own Guided, where the reason each family answers as it does is written beside its recipe.
 //
-// 🔴 Only the GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
-// KSampler, klein's CFGGuider) or with FLUX.1's guidance folded into the conditioning
-// (BasicGuider, no negative input at all) — and at cfg 1 classifier-free guidance is
-// `uncond + 1*(cond - uncond)`, which is cond exactly. The negative words would ride in the graph,
-// cost a text encode, and change no pixel. Wiring them anyway and reporting the capability as
-// true is worse than refusing: the caller gets no warning, the picture looks right, and the thing
-// they asked to keep out is in it.
-//
-// ⚠️ This is the family's TEMPLATE, not the answer a member gets: anima and krea2 are here
+// ⚠️ It is the family's TEMPLATE, not the answer a member gets: anima and krea2 are guided
 // because their graphs encode a real negative, while their distilled variants (Anima-Turbo,
 // Krea 2 Turbo) declare cfg 1 and cancel it anyway. comfyModelTakesNegative is what puts the
 // two facts together, and it is the one every caller asks.
-//
-// Both Qwen-Image-Edit families are here too (ADR 0094 decision 12): they are GUIDED — 実測 A ran
-// cfg 4 and the edit was followed, 実測 E the same on 2511 — and their template gives the negative
-// branch its own TextEncodeQwenImageEditPlus encode rather than ConditioningZeroOut, so the
-// negative genuinely moves the picture. Leaving one off this list would make
-// comfyIgnoredParamWarnings answer with the DISTILLED wording ("folds its guidance into the
-// conditioning"), which is the opposite of what those two runs measured.
 func comfyFamilyTakesNegative(family comfyFamily) bool {
-	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35 ||
-		family == ComfyFamilyAnima || family == ComfyFamilyKrea2 || comfyFamilyInstructionEdit(family)
+	r, ok := comfyFamilyRowFor(family)
+	return ok && r.Guided
 }
 
 // comfyNegativeFor composes the negative prompt one request samples against, out of the three
@@ -571,7 +555,7 @@ func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
 // with the catalogue row laid over it, field by field — the same merge the template does, which
 // is why it is that function and not a second reading of the same two sources.
 func comfyEffectiveDefaults(conn EngineConn, family comfyFamily, model string) EngineParams {
-	r := comfyFamilyRecipes[family].with(conn.Params[model])
+	r := comfyFamilyRecipeFor(family).with(conn.Params[model])
 	return EngineParams{Steps: r.Steps, CFG: r.CFG, Sampler: r.Sampler, Scheduler: r.Scheduler}
 }
 
