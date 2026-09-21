@@ -2,8 +2,10 @@
 
 English | [日本語](0093-lcpp-agent-kind.ja.md)
 
-- Status: **adopted** (2026-09-21). Phase 2 landed on develop through PR #816, #818, #821, #823,
-  #824, #825 and #826. Every `file:line` below was read on
+- Status: **adopted** (2026-09-21). Phase 2 lands on develop through PR #816, #818, #821, #823,
+  #824, #825, #826 and **#829** (Decision 8's exact usage, Console opening, the MCP kind
+  allowlist). **#829 is not yet merged into develop as this line is written** — its content is
+  recorded under "Phase 2 implementation record". Every `file:line` below was read on
   `951bb402` (develop at the time); the inventory behind it, table by table, is
   `docs/log/99-lcpp-agent-kind.md`, which stays the working record while this ADR carries the
   decisions and the options rejected.
@@ -22,9 +24,9 @@ English | [日本語](0093-lcpp-agent-kind.ja.md)
   total 17) are at the end, under "Decision 9's gate judgment (2026-09-20)"; the known debt Phase 2
   must carry is under "Debt carried into Phase 2"; what Phase 2's implementation changed against the
   decisions, and where the nine debt items stand, is under "Phase 2 implementation record
-  (2026-09-21)". 🔴 **Decision 8 (exact usage) and making the kind launchable in Console are not part
-  of Phase 2's seven PRs and, as this document is written, are being worked on in parallel by another
-  session** — recorded as in progress under "Phase 2 implementation record".
+  (2026-09-21)". 🔴 **Decision 8 (exact usage) and making the kind launchable in Console are submitted as
+  PR #829 by another session** (not yet merged into develop as this line is written) — its
+  content is recorded under "Phase 2 implementation record".
 - The request is one sentence: **can our own harness — a process that talks to llama-server's API
   directly instead of driving a vendor CLI — be a session kind of Agent Fleet, and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements
@@ -315,8 +317,9 @@ string-contract tests.
   **Complete** — PR #816 (kind vessel, no-terminal-route gate), #818 (transcript store), #821
   (storage location reconsidered, write-handle reuse), #823 (qwen3-coder settled), #824 (Console
   wiring), #825 (managed driver), #826 (real-engine contract test). ⚠️ **Exact usage (Decision 8)
-  and making the kind launchable in Console are not in the seven PRs above and are being worked on
-  by another session as Phase 2's last step** (details under "Phase 2 implementation record") | — |
+  and making the kind launchable in Console are not in the seven PRs above and are submitted as
+  PR #829 by another session** (not yet merged into develop as this line is written — details
+  under "Phase 2 implementation record") | — |
 
 ## Open questions (answer before Phase 1)
 
@@ -637,7 +640,10 @@ certain to be hit by Phase 2's own work.
 
 ## Phase 2 implementation record (2026-09-21)
 
-Phase 2 is on develop (#816, #818, #821, #823, #824, #825, #826). **No decision text changed.** What
+Phase 2 is on develop (#816, #818, #821, #823, #824, #825, #826). Decision 8's exact usage, Console
+opening and the MCP kind allowlist are submitted as PR #829 (not yet merged into develop as this
+line is written — what follows about it was confirmed by reading the PR branch's own code
+directly, only the merge itself is still ahead). **No decision text changed.** What
 follows records what the implementation and the live runs added to those decisions, and what they
 changed — the same format as the phase 0/1 implementation record.
 
@@ -678,6 +684,37 @@ changed — the same format as the phase 0/1 implementation record.
   "so that losing home does not also lose login credentials" — a rationale that does not apply to
   `lcpp` (`docs/log/99` §15.1.1).
 
+### What implementing Decision 8 found (PR #829)
+
+- 🔴 **A missing half of the wire.** `session.ContextUsage` (the Go side) had no `Window`/
+  `WindowSource` fields, even though the TS side's `SessionContextUsage` **already declared both**
+  and the Go side had simply never filled them
+  (`workspace/agent/internal/session/session.go`). Not a hardware defect — **a type-definition
+  asymmetry found only by actually implementing Decision 8** — recorded as something the
+  implementation found, not something only a live engine found. `Window int` and
+  `WindowSource string` were added on the Go side and `wire.golden` updated.
+- **The implementation of Decision 8 itself matches the decision text.** `usage_fold.go`'s
+  `usageMeasuredForKind` adds `KindLcpp` to `exact`, the store's `Record` gained `Window`, and
+  `AppendUsage(u, window)` was extended — `window` is simply the `harness.EngineWindow` value the
+  driver's `runTurn` already called for its own purposes; no new engine call. `WireLive` builds
+  `li.Context` from `Store.LastUsage()` (a disk read only) and names `WindowSource="recorded"`
+  only when `window>0` — left empty rather than impersonating `WindowGuess` when unresolved.
+- 🔴 **The double-counting guard landed, but raw token duplication remains.** `usage_price.go`'s
+  `usagePriceOf` gained an early return for `kind == KindLcpp` that always answers `price=0`,
+  `src="gpu-billed"` (it never consults the catalog or the builtin table, so a self-hosted model
+  name colliding with a real one never picks up that provider's price). This means **there is no
+  double-counted cost**. Raw **token counts**, however, still appear in both the `feature=session`
+  row and the `feature=engine.llm` row, and duplicate under a `by=kind` aggregation. 🔴 **This is
+  not a problem `lcpp` created** — `handleEngineUsage`
+  (`workspace/agent/engines.go:1098-1116`)'s `Kind` is resolved from the session via
+  `engineSessionKind(req.Session)`, so **the same thing already happens whenever opencode uses a
+  self-hosted engine** (confirmed against the real code by the session doing the work). Decision
+  8's wording, "the same tokens are not counted twice", was implemented **as the mechanism it
+  specified (zero price)**, but that mechanism does not match the state the wording was actually
+  aiming for (raw tokens not duplicating either) — recording that gap honestly as part of the
+  implementation record. Raw-token duplication is an existing condition in a different layer
+  (`handleEngineUsage`'s `Kind` resolution) and stays out of scope for Phase 2's own body of work.
+
 ### Where the nine debt items carried into Phase 2 stand (2026-09-21)
 
 Numbers match "Debt carried into Phase 2" above.
@@ -716,11 +753,31 @@ Numbers match "Debt carried into Phase 2" above.
   (`driver.go:709-732`) shows "waiting for the engine (n s)" based purely on seconds elapsed since the
   turn started — it does not read the engine's own wake signal (`engine_waking` itself). This is the
   same v1 simplification Decision 4 accepted (#825).
+- 🔴 **The end-to-end path is unverified.** Actually starting an `lcpp` session from a deployed
+  Agent and running one real round trip has never been confirmed, throughout all of Phase 2. The
+  harness alone has 16 live runs, the driver has a scripted-client test, and the contract test
+  (#826) runs against a real engine — but **only the create → driver → harness → engine path
+  itself stays unverified**. The reason is structural: fixing the source in a worktree does not
+  change what answers this session's own `af` tools, because that is a **deployed Agent binary**,
+  and nothing changes for it before a rebuild and redeploy. The two remaining paths — (i) a
+  dev-deploy using deployment credentials (out of reach under organizational policy) and (ii)
+  running a second Agent inside this container (explicitly forbidden by workspace policy) — were
+  **both deliberately not taken**, knowing the credentials existed in the environment and choosing
+  not to use them. **The user's own judgement was to record this as a residual and move to
+  adopted anyway** — to be confirmed end to end at the next deployment opportunity.
+- **Raw token counts appear in both the `feature=session` row and the `feature=engine.llm` row and
+  duplicate.** See "What implementing Decision 8 found" above — `$` is 0 on both, so there is no
+  double-counted cost, and this is not something `lcpp` created (the same thing already happens
+  when opencode uses a self-hosted engine).
 
-### In progress as Phase 2's last step
+### Phase 2's last step (PR #829)
 
-🔴 **Decision 8 (exact usage) and making the kind launchable in Console are not on develop as this is
-written.** `workspace/agent/usage_fold.go`'s exact set has no `"lcpp"` entry, and
-`console/src/agents/registry.ts`'s `lcpp.available` is still `() => false` (comment: "Registered
-(ADR 0093) but not launchable yet"). Another session is reported to be working on both in parallel —
-the decision to move this ADR to *adopted* was made without them. Update this section once they land.
+🔴 **Decision 8 (exact usage) and making the kind launchable in Console are submitted as PR #829,
+but it is not yet merged into develop as this line is written.** `usage_fold.go`'s exact set gains
+`KindLcpp`, `console/src/agents/registry.ts`'s `lcpp.available` becomes `() => true` with `lcpp`
+added to `repoLaunchKinds`, and `mcpx/mcp_stdio.go`'s kind allowlist gains `lcpp` (without it,
+`create_session`/`list_models` cannot be used for `lcpp` at all) — alongside `GET
+/agents/lcpp/models` and `agentModels.ts`'s `isDynamic` (without these, no model can be chosen at
+launch and the driver fails immediately with "no model configured"). Details are under "What
+implementing Decision 8 found". **Once merged, remove the "not yet merged" notes from this section,
+the status line, and the phases table.**
