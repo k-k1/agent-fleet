@@ -354,6 +354,11 @@ func TestHandleChatPlanSetNoticeOnlyWhenAsked(t *testing.T) {
 // AGENT_TOKEN (docs/log/103-review 重大2 — the same failure shape as §103.3-3's reply-suggest
 // key bug). This hits the route directly, the same way the peer's verification plan asks for.
 func TestHandleChatPlanRefreshGatedByPlanUpdate(t *testing.T) {
+	// If planUpdateEnabled's gate ever falls through (a bug, or the same mutation shape
+	// 103-final-review 観察A caught on the chat ✨ gate), the conversation below has a real
+	// message, so refreshPlan would reach OneShotHeadless and run a real vendor CLI — see
+	// blockRealCLI's doc in chat_suggest_reply_test.go for the measured incident this guards.
+	blockRealCLI(t)
 	home := withTempHome(t)
 	prefsDir := filepath.Join(home, ".config", "agent-fleet")
 	if err := os.MkdirAll(prefsDir, 0o700); err != nil {

@@ -21,6 +21,20 @@ func writeSuggestReplyPrefs(t *testing.T, body string) {
 	}
 }
 
+// blockRealCLI makes exec.Command("claude"/"codex"/"opencode"/"cursor"/"agy", …) fail to find
+// its binary for the rest of this test, by pointing PATH at an empty directory. Every test in
+// this file expects an early-exit response (a feature gate, or the no_content check) WITHOUT
+// ever reaching generation. If a bug — or a mutation exercising exactly that bug — ever lets the
+// gate fall through anyway, this guarantees the fallthrough fails safely instead of running a
+// real CLI and spending real tokens: 103-final-review 観察A measured exactly that happening,
+// a gate mutation reaching an actual Claude Haiku 4.5 reply. The AF_*_LIVE-gated tests elsewhere
+// in this package (chat_oneshot_test.go etc.) opt into the real binary deliberately and are not
+// in this file, so they are unaffected.
+func blockRealCLI(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+}
+
 func suggestRepliesRequest(t *testing.T, id string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/chat/conversations/"+id+"/suggest-replies", nil)
@@ -36,6 +50,7 @@ func suggestRepliesRequest(t *testing.T, id string) *httptest.ResponseRecorder {
 // missing-key default). The two features are independently switched now
 // (`assistantReplySuggestEnabled`): this proves the chat's OWN key gates it...
 func TestHandleChatSuggestRepliesGatedByItsOwnKey(t *testing.T) {
+	blockRealCLI(t)
 	writeSuggestReplyPrefs(t, `{"assistantReplySuggestEnabled":false,"replySuggestEnabled":true}`)
 	c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{
 		{Role: "user", Content: "そのまま進めて"},
@@ -55,6 +70,7 @@ func TestHandleChatSuggestRepliesGatedByItsOwnKey(t *testing.T) {
 // the NEXT check (no_content) rather than reaching a real model call — this test's whole point
 // is which 400 comes back, not what generation does.
 func TestHandleChatSuggestRepliesIgnoresMirrorKey(t *testing.T) {
+	blockRealCLI(t)
 	writeSuggestReplyPrefs(t, `{"assistantReplySuggestEnabled":true,"replySuggestEnabled":false}`)
 	c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
 	if err := SaveConv(c); err != nil {
@@ -77,6 +93,7 @@ func TestHandleChatSuggestRepliesIgnoresMirrorKey(t *testing.T) {
 // button while `POST .../suggest-replies` (reachable by anything holding AGENT_TOKEN) still
 // runs, the same failure shape §103.3-3 fixed on the mirror side.
 func TestHandleChatSuggestRepliesFallsBackToMirrorKeyBeforeConsoleMigrationLands(t *testing.T) {
+	blockRealCLI(t)
 	writeSuggestReplyPrefs(t, `{"replySuggestEnabled":false}`)
 	c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{
 		{Role: "user", Content: "そのまま進めて"},
