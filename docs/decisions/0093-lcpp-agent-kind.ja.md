@@ -790,8 +790,8 @@ ADR の範囲外）。利用者登録の外部サーバはこの上にさらに�
 - 通し（`go test ./internal/agents/lcpp/... -count=1`）は 54 件全緑（`TestHelperProcess` 込み）・
   0.5 秒前後——実時間を払う試験は `TestMCPUnreachableServerDoesNotSlowDownLaterTurns` のみで、
   `mcpSyncBudget`/`mcpSyncBackoff` を試験用に縮めているので実質数百ミリ秒。`control-plane`/`console`
-  は既存スイートに新規失敗なし（後述の CP ドリフト試験 1 件を除く）。CI（run 35614081914 が赤だった
-  ジョブの再実行）で緑を確認してから報告する——このコミットの時点では未確認。
+  は既存スイートに新規失敗なし（後述の CP ドリフト試験 1 件を除く）。CI（run 35617795561、
+  35614081914 が赤だった `workspace-agent` ジョブの次の実行）で緑を確認済み——7 チェック全通過。
 - 実機の通し経路（配備済み Agent から実際に `lcpp` セッションを起こして LAN の llama-server まで）は
   この節の範囲外——利用者の LAN の llama-server に自分から繋ぐなという指示のとおり、偽サーバのみで
   試験した。実機測定は利用者側の担当。
