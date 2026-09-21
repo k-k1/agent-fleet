@@ -581,6 +581,62 @@ func TestTranslatePinRoutesToPinnedKindAndInvalidatesOnModelChange(t *testing.T)
 	}
 }
 
+// TestTranslateWriteKeyUsesResolvedKindNotRunKind is the regression test for 103-final-review
+// 中1 / commit 9465d035: the write side must take Kind from resolveCacheModel(), the SAME
+// resolution the next lookup will compare against — never from what the run itself reported.
+// Before that fix, Kind alone still took the run's value while Model already took the resolved
+// value, so a run that reported a different kind than the current resolution wrote a row no
+// future lookup could ever match: every press of the same text ran the model again, forever
+// (103-final-review measured this as "3 presses, 3 runs" via agy's agyChatModel silently
+// dropping a catalog-miss id to ""; the stub below reproduces the same shape — run and
+// resolution disagreeing on kind — without needing a live CLI).
+func TestTranslateWriteKeyUsesResolvedKindNotRunKind(t *testing.T) {
+	const name = "tr-kind-drift"
+	seedTranslateSession(t, name)
+
+	calls := 0
+	prev := translateOneShot
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
+		calls++
+		// The run claims codex; nothing is pinned and nothing is authenticated in this test
+		// binary, so resolution falls through to DefaultHeadlessOrder[0] ("claude") — the drift
+		// this test exists to catch.
+		return "訳:" + text, "codex", "", nil
+	}
+	t.Cleanup(func() { translateOneShot = prev })
+
+	body := `{"to":"ja","parts":[{"text":"kind drift test"}]}`
+	decodeTranslate(t, translateCall(t, name, body))
+	if calls != 1 {
+		t.Fatalf("first press: calls=%d, want 1", calls)
+	}
+
+	stored, err := os.ReadFile(sessionTranslationsPath(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The row must carry the RESOLVED kind (claude), never the run's own claim (codex) — a row
+	// keyed on a kind no lookup will ever predict is written once and never read again.
+	if !strings.Contains(string(stored), `"kind":"claude"`) {
+		t.Fatalf("stored row must use the resolved kind, not the run's reported kind: %s", stored)
+	}
+	if strings.Contains(string(stored), `"kind":"codex"`) {
+		t.Fatalf("stored row must not carry the run's own reported kind: %s", stored)
+	}
+
+	second := decodeTranslate(t, translateCall(t, name, body))
+	if !second.Parts[0].Cached || calls != 1 {
+		t.Fatalf("re-pressing the same text must hit the cache the first write made: cached=%v calls=%d",
+			second.Parts[0].Cached, calls)
+	}
+
+	third := decodeTranslate(t, translateCall(t, name, body))
+	if !third.Parts[0].Cached || calls != 1 {
+		t.Fatalf("third press must still hit the cache, not run a third time: cached=%v calls=%d",
+			third.Parts[0].Cached, calls)
+	}
+}
+
 // TestTranslateTierModelChangeMissesCache is the permanent version of the probe
 // 103-impl-review ran by hand (中8): ② (the shared tier default, aiProseModels — no per-feature
 // pin at all) is also part of the cache key, not just ① (an explicit pin). Without this,
