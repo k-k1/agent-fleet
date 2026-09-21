@@ -35,7 +35,7 @@ and **use it while customising it**. Upstream's tutorial is
 **This family is a different KIND of model from every one this deployment holds.** All eight
 existing families make a picture from text, and `op=edit` bolts `LoadImage` → `VAEEncode` onto
 that family's graph and runs the sampler at a `denoise` below 1, which is how much of the
-caller's picture changes — **partial-denoise img2img** (`comfy_workflows.go:301`,
+caller's picture changes — **partial-denoise img2img** (`comfy_workflows.go:302`,
 `comfyRequestLatent`; the default is `comfyEditDenoise = 0.6`, line 300).
 
 Qwen-Image-Edit is an **instruction editor**, and what preserves the original comes from somewhere
@@ -75,14 +75,14 @@ the existing convention for a family with one encoder), and the VAE is the Qwen-
 same key anima and krea2 already hold**.
 
 The vocabulary is declared twice, in the CP (`engine_catalog.go:170`) and in the Agent
-(`comfy_workflows.go:400`), and `engine_catalog_test.go` reads the Agent's source to keep them
+(`comfy_workflows.go:401`), and `engine_catalog_test.go` reads the Agent's source to keep them
 equal. **Add it in both.**
 
 ### Decision 2 — This family does not take `strength`. Its `denoise` is fixed at 1
 
 🔴 **Run C is the whole of this decision.** The same seed and the same prompt, with `denoise` at
 0.6, came back with the sign unchanged — **and nothing said so**. Today's edit path returns 0.6 by
-default (`denoise()`, `comfy_workflows.go:269`), so **dropping this family into it makes "I asked
+default (`denoise()`, `comfy_workflows.go:270`), so **dropping this family into it makes "I asked
 for an edit and nothing happened" the default behaviour**.
 
 - Make `Caps.Strength` a per-family answer (it is `true` for everything today, `comfy.go:144`) and
@@ -103,7 +103,7 @@ for an edit and nothing happened" the default behaviour**.
   empty.
 
   So **the Caps handed to `requestWarnings` is the row that actually ran** — `Run`
-  (`imagegen.go:927`) and the queue's `finish` (`jobs.go:471`) pass `Caps(res.Model)`.
+  (`imagegen.go:927`) and the queue's `finish` (`jobs.go:473`) pass `Caps(res.Model)`.
   🟢 **A strength-shaped twin on the provider side is rejected** (this ADR's first draft asked for
   one): it patches a core mistake inside comfy alone, **the same mistake was already live for
   `negative`**, and the next capability that becomes per-model would repeat it. One fix in the core
@@ -113,26 +113,51 @@ for an edit and nothing happened" the default behaviour**.
 - ADR 0069's rule for adding a word ("is there no way around it for the caller") **points the other
   way here**: it is not that the caller has no workaround, it is that the knob has no meaning.
 
-### Decision 3 — `Ops` becomes a property of the family. This one is edit-only
+### Decision 3 — `Ops` becomes a property of the family. This one has no `generate`
 
 `comfy.go:121` answers `[generate, edit, inpaint]` for every model. Qwen-Image-Edit **cannot work
 without an input image** (with no image the encoder is plain text conditioning, which is not a use
-upstream documents). Make `Ops` per family and let this one claim `[edit]` alone.
+upstream documents). Make `Ops` per family and let this one not claim `generate` at all.
 
-It does **not** claim `inpaint`. A mask could be added with `SetLatentNoiseMask` and the graph
-would validate, but nobody here has run it — **a capability this deployment has not measured is
-not one it declares** (the lesson SD3.5 charged us in ADR 0072).
+`inpaint` was **not claimed at drafting**. A mask could be added with `SetLatentNoiseMask` and the
+graph would validate, but nobody here had run it — **a capability this deployment has not measured
+is not one it declares** (the lesson SD3.5 charged us in ADR 0072).
+
+🟢 **It was run on 2026-09-21, so it is claimed (実測 G and I, unresolved 2).** `Ops` is
+`[edit, inpaint]`. The evidence is the control, not the happy path: the prompt that changes the
+sign, sent with a mask that does NOT cover the sign, leaves it unchanged, while the same request
+with no mask changes it — the mask really is a gate even at a full denoise.
+
+🔴 **The wiring is NOT the two nodes the other eight families use** (`comfyQwenEditNoiseMask`).
+The picture goes through `FluxKontextImageScale`, which **centre-crops** to the nearest trained
+ratio before resizing, while `SetLatentNoiseMask`'s mask is only stretched to the latent's shape
+with no crop — **the two maps disagree**. Measured (実測 I) on an 1820x1024 input (cropped to
+1820x984, then 1392x752): the repainted band's edge sat **8 px** from where the picture's own map
+puts it. Sending the mask through the same `FluxKontextImageScale` moves it back (`LoadImage` →
+`FluxKontextImageScale` → `ImageToMask`(red) → `SetLatentNoiseMask`). The error is zero at the
+centre of the frame and worst at the edges, and **nothing warns about it**.
+
+🔴 **For the same reason the mask must be the picture's own size, or it is refused** (`Generate`
+in `comfy.go`). That node resolves its target from the width and height it is handed, so a mask of
+another shape resolves a different frame and **repaints somewhere the caller did not draw**. The
+other families have no crop, where a different size is still the same relative region — so this
+restriction belongs to this family alone.
+
+⚠️ **qwen-image-2.1 (ADR 0098) does not inherit the claim.** 2509 and 2511 may share a measurement
+because they share a builder and a wiring (`comfyQwenEditNoiseMask`), not because their names look
+alike. 2.1 has a template of its own and no `FluxKontextImageScale` at all — **a capability this
+deployment has not measured is not one it declares** applies there unchanged.
 
 ### Decision 4 — `size` offers no choices for this family, and the row cannot override it
 
 The output size is `FluxKontextImageScale` picking the nearest entry of
 `PREFERRED_KONTEXT_RESOLUTIONS` by the **input's aspect ratio** (read off the node's v0.35.2 source;
 the five runs went 1024² in → 1024² out, which — being all square — does **not** evidence the ratio
-table). `comfySizesFor` (`comfy.go:585`) answers **empty** for this family, and a `size` that
+table). `comfySizesFor` (`comfy.go:605`) answers **empty** for this family, and a `size` that
 arrives anyway is refused the way decision 2 refuses `strength`.
 
 🔴 **The row's own `sizes` are not honoured either.** `comfySizesFor` returns `conn.Sizes[model]`
-ahead of the family's list (`comfy.go:584`), so an empty family answer alone would still let an
+ahead of the family's list (`comfy.go:604`), so an empty family answer alone would still let an
 operator's declared presets through. This family is the one case where **the family wins over the
 row** — the point is not to offer a value that cannot take effect, and that reason belongs in this
 line of the ADR.
@@ -149,8 +174,8 @@ potted plant from the second picture entered the first scene with its colour and
 Make `Caps.MaxInputs` (fixed at 1, `comfy.go:134`) per family.
 
 🔴 **Declaring 2 does not carry a second image.** Today `p.uploadImage(…, req.Inputs[0])`
-(`comfy.go:1016`) uploads **one**, and `comfyParams.Image` is a single string
-(`comfy_workflows.go:139`). `comfyCheckInputs` (`comfy.go:1102`) only tests
+(`comfy.go:1036`) uploads **one**, and `comfyParams.Image` is a single string
+(`comfy_workflows.go:140`). `comfyCheckInputs` (`comfy.go:1136`) only tests
 `len(req.Inputs) > caps.MaxInputs`, so raising the number alone lets a second image **pass the check
 and go unused** — run C's failure mode exactly: a wrong picture with no warning. Therefore:
 
@@ -164,7 +189,7 @@ and go unused** — run C's failure mode exactly: a wrong picture with no warnin
   **the node takes image1..image3** — a family ceiling, not a step towards a larger one.
 
 ⚠️ **`MaxInputs` is not on the wire** (`providerStatus` has no field for it; the only place it
-reaches the outside is the refusal at `comfy.go:1102`). For the pane to state the limit, P3 has to
+reaches the outside is the refusal at `comfy.go:1136`). For the pane to state the limit, P3 has to
 add the field.
 
 🟢 **Done in P3.** `comfyFamilyMaxInputs` answers 3 for the instruction-edit families (run F above), and the path
@@ -203,7 +228,7 @@ a lie).
   meaningless the day 2512 arrives with 2509's wiring. **A family name points at the version that
   first shipped that topology; it is not an alias for a version** — that sentence goes into the
   ingest UI's family selector.
-- ⚠️ **The cost: one LoRA row per family.** `comfyResolveLoras` (`comfy.go:656`) matches `base_model`
+- ⚠️ **The cost: one LoRA row per family.** `comfyResolveLoras` (`comfy.go:676`) matches `base_model`
   exactly, so the Lightning LoRA has to be registered twice. "Leave Lightning to the row" (rejected,
   below) stops being one row the moment the family splits.
 - The number: one family is about **12 declarations** (`engineComfyFamilies`,
@@ -240,7 +265,7 @@ physical size, and `engine_class.go:37` says why) it always asks for `confirm_vr
 
 **Measured** (`/system_stats`, raw): `vram_total` 23,659,151,360 B = **22,563 MiB**, `vram_free`
 1,783,934,774 B = 1,701 MiB, so **20,862 MiB in use** — inside the rung. The conditions were
-**1024², batch 1, one reference image**. `comfyMaxBatch` is 4 (`comfy.go:641`) and **that range was
+**1024², batch 1, one reference image**. `comfyMaxBatch` is 4 (`comfy.go:661`) and **that range was
 not measured** — re-measure in P3, where the second reference opens (decision 5).
 
 Do **not** change the formula — subtracting a text encoder would be a lie for other families. Who
@@ -383,23 +408,23 @@ the same shape:
 - **Judging** (at generation) is `Caps(model)` — `imagegen.go:847`'s `capsOf` already asks
   `p.Caps(req.Model)`, so a request that names a model is already right.
 - 🔴 **With no model named, comfy's own model resolution has to read `req.Op`.** The union only
-  keeps the provider in the candidates: `comfy.go:934-947` resolves an empty `req.Model` to
+  keeps the provider in the candidates: `comfy.go:954-967` resolves an empty `req.Model` to
   `DefaultModel()` — the warm row — and answers `the self-hosted image engine cannot do generate`
   on `!caps.Supports(req.Op)`. `Run` files that under attempts and **`continue`s**
   (`imagegen.go:903-905`), i.e. **falls through to the next provider, which spends a member's
   plan**, and `recordUsage` (`imagegen.go:899`) writes a failed row on the way. So when the warm
   row's family does not claim the op, resolve to **the first enabled row that does** and say so
-  with `comfySwitchWarning` (`comfy.go:792`). A checkpoint switch costs 1-2.5 minutes (measured),
+  with `comfySwitchWarning` (`comfy.go:812`). A checkpoint switch costs 1-2.5 minutes (measured),
   which is explainable; silently billing another plan is not. **P0's third criterion is only
   testable once this exists.**
 
 ### Decision 12 — There are SIX per-family properties. Dropping `cfg` and `negative` produces a false warning
 
-`comfyFamilyKnobs` (`comfy.go:309`) and `comfyFamilyTakesNegative` (`comfy.go:396`) enumerate
+`comfyFamilyKnobs` (`comfy.go:329`) and `comfyFamilyTakesNegative` (`comfy.go:416`) enumerate
 families in a hard-coded switch, and **an unregistered family falls to the default**. Forgetting a new
 family there means:
 
-- `comfyFamilyKnobs` answers `["steps"]`, so `comfyIgnoredParamWarnings` (`comfy.go:355`) returns
+- `comfyFamilyKnobs` answers `["steps"]`, so `comfyIgnoredParamWarnings` (`comfy.go:375`) returns
   "cfg=4 was not applied: the qwen-image-edit family folds its guidance into the conditioning" —
   **the opposite of run A**, which edited at cfg 4;
 - `comfyFamilyTakesNegative` answers false, so `Caps.Negative` and the pane's negative field
@@ -480,23 +505,23 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   two `comfyFamilyRecipes` rows — **2511's shift 3.1 has no field in `comfyRecipe`**, so it is either
   a literal in the template or a fifth field; decide when implementing), `comfy.go` (the six
   properties of decisions 11 and 12), `props.go` (decision 10), `comfyFamilyRow.TrialSteps`
-  (`comfy_workflows.go:475`; it was `jobs.go`'s `comfyTrialSteps` until 未解決 4's consolidation)
-  (**omitting it fails `TestEveryFamilyHasTrialSteps`**, `comfy_test.go:1764`; run B's 8 steps /
+  (`comfy_workflows.go:487`; it was `jobs.go`'s `comfyTrialSteps` until 未解決 4's consolidation)
+  (**omitting it fails `TestEveryFamilyHasTrialSteps`**, `comfy_test.go:1807`; run B's 8 steps /
   63.2 s is the citation), `mcpx/mcp_stdio.go:1132` (the `op` enum and its description — the first
   case where which ops exist depends on the model; the reference-image argument is **`inputs`**, not
   `images`, `maxItems` 5). 🔴 **`strength`'s description (`mcp_stdio.go:1227-1231`) is rewritten
   too**: it is offered on the union, so "0.6 when omitted" alone walks an agent into a 400 every
   time — it has to say that some checkpoints refuse it, and that the answer is a 400. **P3's second image lands here too**: make `comfyParams` plural
-  (`comfy_workflows.go:139`'s `Image string`), call `uploadImage` more than once (`comfy.go:1016`
+  (`comfy_workflows.go:140`'s `Image string`), call `uploadImage` more than once (`comfy.go:1036`
   takes `req.Inputs[0]` alone), wire `image2`, and fix the singular wording of `comfyCheckInputs`'
-  refusal (`comfy.go:1102`).
+  refusal (`comfy.go:1136`).
 - **Wire**: `ops` on `modelStatus`, `strength` in `Knobs` (decision 12), and the Console's mirror of
   both: `wire.ts:37`'s `Knob` is a **closed union**
   (`"steps" | "cfg" | "sampler" | "scheduler" | "negative"`), so it will not compile until the type
   changes, and `ImagegenModel` (`wire.ts:90`, `knobs?: Knob[]`) has no `ops`. 🔴 **Three comments
   spell that vocabulary out** — `providerStatus.Strength` (`http.go:108-115`, "No union is needed:
   it is per provider, not per model", which decisions 2 and 11 make false), `comfyFamilyKnobs`
-  (`comfy.go:295-309`) and `modelStatus.Knobs` (`http.go:170-173`). All three say "a subset of those
+  (`comfy.go:315-329`) and `modelStatus.Knobs` (`http.go:170-173`). All three say "a subset of those
   five words", so **the same change rewrites all three**.
 - **CP**: `engine_catalog.go` (two words, required flags), `engine_family_parts.go` (the table), and
   `engine_class.go` is **left alone** (decision 8).
@@ -646,12 +671,14 @@ counts only providers that were tried and failed, so **nothing is said**. Before
    not been measured for quality. **Not measured in P1** (the maintainer's call), so this stays open.
 2. **Whether `inpaint` can be claimed** (deferred in decision 3). `SetLatentNoiseMask` on top of a
    denoise-1 instruction edit was unmeasured.
-   🔵 **Measured (2026-09-21, dev deployment, L4 24GB, 2509, 20 steps — run G). The mask works.**
-   Whether to CLAIM it is the maintainer's call and it has **not been claimed**; decision 3 stands
-   as written.
+   🟢 **Closed (2026-09-21). Measured, fixed, and claimed** — decision 3 carries it (`Ops` is
+   `[edit, inpaint]`). Run G showed the gate works on a square input; run I, on a non-square one,
+   found that **the mask and the picture were on different maps** and closed it. Both are below.
+
+   🔵 **Run G (dev deployment, L4 24GB, 2509, 20 steps). The mask works.**
 
    The graph is this repository's own golden (`testdata/comfy_qwen-image-edit-2509.golden.json`)
-   with the **same two nodes** `comfyRequestLatent` (`comfy_workflows.go:301`) already builds for
+   with the **same two nodes** `comfyRequestLatent` (`comfy_workflows.go:302`) already builds for
    the other eight families inserted (`LoadImageMask` channel=red → `SetLatentNoiseMask` →
    KSampler's `latent_image`). Nothing else but the image name, the prompt and the seed differs.
    All four ran at seed 42 against the same input picture.
@@ -671,18 +698,28 @@ counts only providers that were tried and failed, so **nothing is said**. Before
    reference conditioning (`TextEncodeQwenImageEditPlus`) still sees the WHOLE unmasked picture,
    which is also why the repainted area agrees with the scene around it.
 
-   🔴 **One danger is still unmeasured, and it has to be closed before the claim: a non-square
-   input.** `FluxKontextImageScale` REMAKES image1 at the nearest trained ratio, while
-   `LoadImageMask` reads the mask at its own size and `SetLatentNoiseMask` stretches it to the
-   latent's shape. At 1024²→1024² — every run above — the two coincide and nothing shows. **On an
-   input whose ratio changes, a mask the caller drew over their own picture is stretched onto a
-   different frame**, with no error and no warning: 実測 C's shape of lie. How far a thin mask
-   bleeds at the latent's 8× granularity is unmeasured too.
+   🔵 **Run I (same day, non-square). The danger was real, and it was 8 px.**
+   The same scene at **1820x1024** (1.7773) — built by extending the 1024² picture's own flat
+   edges, so the sign and the mug are the original pixels — through the same four runs.
 
-   Cost of the path: `comfyGraphQwenImageEdit` (`comfy_workflows.go:1193`) does not go through
-   `comfyRequestLatent`, so the two mask nodes belong in that template; `Ops` is `comfyFamilyOps`
-   and the `p.Mask` intake is shared with the other families. **Per decision 3's own rule, the
-   claim and the path go in the same phase.**
+   - **The frame came back 1392x752** (1.8511). The ratio changed, which means
+     `FluxKontextImageScale` is `common_upscale(crop="center")`: it **centre-crops first** and then
+     resizes. Corroborated: rebuilding the input as "crop 20 px, then resize" and comparing it
+     against the output leaves nothing above a difference of 40 except the sign's lettering (the
+     unmasked run's only changed region is bbox (524,234,866,322)).
+   - **The gate still works off-square.** The mug's mask with the sign's prompt left the sign OPEN.
+   - 🔴 **But the mask was on a different map.** Repainting a band of flat wall (input y 0..200)
+     and reading its lower edge: **row 140 without the fix, row 132 with it** (predicted: 146.9 for
+     a plain stretch, 137.6 for crop-and-resize). **The 8 px difference matches the predicted 9.3**,
+     and in the predicted direction.
+   - **The fix** is to send the mask through the picture's own `FluxKontextImageScale` (`LoadImage`
+     → `FluxKontextImageScale` → `ImageToMask`(red) → `SetLatentNoiseMask`). Handed the same width
+     and height it resolves the same target, so the two maps agree by construction — and that
+     sameness is enforced at intake (decision 3).
+
+   ⚠️ How far a thin mask bleeds at the latent's 8× granularity is still unmeasured. It is also why
+   run I's edges sit about 7 px ahead of the prediction in both arms, together with reading the
+   boundary at the 50% crossing.
 3. 🟢 **Closed (2026-09-21, run H). Thin host RAM is not eaten by repeated switching.**
    The 2509 row was rebuilt from the objects still in S3 (no re-download), **both families
    enabled**, and the rung pinned to `g6-od` so the card was certainly an L4. The box reported
@@ -841,7 +878,7 @@ came off was the REACH of the decisions, and three names in the code.
   (one with a version, one without) breaks the day 2512 arrives with 2509's wiring. Its cost (one
   LoRA row per family) is now stated.
 - 🟡 **Decision 4 was losing to the row's `sizes` and to the Console's default list**
-  (`comfy.go:584`, `families.ts:179`).
+  (`comfy.go:604`, `families.ts:179`).
 - 🟡 **Decision 9's "past 12 families" trigger measured the wrong thing** (families unrelated to
   editing would fire it). It now counts duplication, and names the table-driven middle step.
 - 🟡 **Three names were wrong**: the `op` enum is in `mcp_stdio.go:1132`, not `mcp_imagegen.go`; the
@@ -898,7 +935,7 @@ comment rewrite: `providerStatus.Strength` (`http.go:108-115`) still claims "No 
 per provider, not per model", which decisions 2 and 11 make false.
 
 🟢 The review's sweep of "what else reads `Caps("")`" is worth recording: five call sites take an
-unnamed model (`http.go:230`, `imagegen.go:847`, `:821`, `:856` and **`jobs.go:471`** — the last one
+unnamed model (`http.go:230`, `imagegen.go:847`, `:821`, `:856` and **`jobs.go:473`** — the last one
 this ADR had never named).
 
 ⚠️ **Its conclusion that "no warning is lost" was wrong.** It counted the negative correctly and
@@ -914,7 +951,7 @@ fixed.
 
 - 🟡 **Adding a wire field touches three more places**: `wire.ts:37`'s `Knob` is a closed union (it
   will not compile until the type changes) and `ImagegenModel` has no `ops`; and two more comments
-  spell the same vocabulary out (`comfy.go:295-309`, `http.go:170-173`) where the consequences named
+  spell the same vocabulary out (`comfy.go:315-329`, `http.go:170-173`) where the consequences named
   only `http.go:108-115`.
 - 🟡 **Decision 2's 400 has two homes** (`http.go:449`, `jobs_http.go:115`). With only one, the pane
   gets a failed job instead of a refusal and P0's second criterion holds on one route only. Decision
@@ -940,7 +977,7 @@ criteria (1)-(4) wait for a deployment. The seams worth knowing, for whoever pic
   code** from the out-of-range `bad_strength`, and decision 4's size refusal has the same shape
   (`bad_size_family`).
 - The warning for the route that cannot be refused lives in the CORE: `requestWarnings` is handed
-  the Caps of the row that actually ran (`imagegen.go:927`, `jobs.go:471`). The provider-side twin
+  the Caps of the row that actually ran (`imagegen.go:927`, `jobs.go:473`). The provider-side twin
   this ADR's first draft asked for was deleted in #779 (comfy.go −73 lines).
 - Decision 12's op re-read is the Console's pure `remappedOp` (`draft.ts:65`).
 
