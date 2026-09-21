@@ -415,6 +415,16 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && len(td.Pending) > 0 {
 		resp["pendingQuestions"] = td.Pending
 	}
+	// A tool approval awaiting allow/deny. It is deliberately a separate key from
+	// `pendingPermission`, which is the TUI route's message string and is answered by driving
+	// the pane with keystrokes — a managed session has no pane, so a surface that confused the
+	// two would render allow/deny buttons that send keys into nothing (ADR 0095 decision 13).
+	if alive && td.PendingApproval != nil {
+		resp["pendingApproval"] = map[string]any{
+			"id":      td.PendingApprovalID,
+			"request": td.PendingApproval,
+		}
+	}
 	// The interaction that was awaiting an answer when the session was folded away
 	// (docs/log/75 §75.6). It goes out under the same key, and under the same "not while
 	// something is pending" rule, as claude's /messages — without this, the carried interaction

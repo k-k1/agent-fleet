@@ -522,6 +522,16 @@ export const sessionRespond = (
     answers,
   }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
+// sessionApprove answers a MANAGED session's pending tool approval by interaction id.
+// It is deliberately separate from sessionRespond: an approval takes allow/deny, not an
+// answer, and a TUI session's permission dialog is driven by keystrokes instead — the Agent
+// answers respond_unsupported for those.
+export const sessionApprove = (session: string, id: string, allow: boolean): Promise<TurnResult> =>
+  apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", {
+    id,
+    decision: allow ? "allow" : "deny",
+  }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
+
 // sessionSettings updates a MANAGED session's dynamic thread settings (docs/log/27 §9.4-3:
 // changing model / effort / mode on a running session). An empty field means "leave
 // unchanged". TUI sessions use each CLI's own in-session settings instead.

@@ -441,15 +441,14 @@ const museAuthRequired = "authRequired"
 
 // --- approvals and questions -------------------------------------------------
 
-// onApproval turns a pending approval into an Interaction.
+// onApproval turns a pending approval into an approval-kind Interaction.
 //
-// It is built as the QUESTION kind, the same reuse kiro's ACP session/request_permission and
-// lcpp's own approval gate already make, because AF has no approval Interaction kind yet:
-// agents.Interaction.Kind still documents "approval" as future work and nothing reads that
-// vocabulary. The cost is named rather than hidden — the wire carries toolName, rawArgs,
-// judgeEscalated, protectedWrite and the parsed argv of every stage, and folding it into two
-// labelled options discards all but the command line. Building the real kind is ADR 0095
-// decision 13's own work package.
+// This is the kind ADR 0095 decision 13 calls AF's first: an approval asks whether a tool may
+// run, and refusing it stops that tool, so it carries the SUBJECT rather than a list of
+// options. Folding it into a two-option question — the reuse kiro's ACP
+// session/request_permission and lcpp's own gate make — would keep the command line and
+// discard the tool name, the protected-write marking, the judge escalation and the parsed
+// argv of every stage of a pipeline, which is most of what a member decides with.
 func (h *threadHandle) onApproval(p msp.ApprovalRequestParams) {
 	ask := &pendingAsk{approvalID: p.ApprovalID, requirement: p.CurrentRequirementID}
 	for _, c := range p.AvailableChoices {
@@ -465,18 +464,26 @@ func (h *threadHandle) onApproval(p msp.ApprovalRequestParams) {
 		}
 	}
 	summary := approvalSummary(p)
-	inter := &agents.Interaction{
-		ID:     "approval-" + p.ApprovalID,
-		Kind:   "question",
-		Prompt: summary,
-		Questions: []transcript.Question{{
-			ID:       "approval-" + p.ApprovalID,
-			Header:   "承認",
-			Question: summary,
-			Options:  []transcript.Option{{Label: "許可"}, {Label: "拒否"}},
-		}},
+	req := &agents.ApprovalRequest{
+		Summary:        summary,
+		Tool:           p.ToolName,
+		ProtectedWrite: p.ProtectedWrite,
+		JudgeEscalated: p.JudgeEscalated,
 	}
-	h.setAsk(ask, inter)
+	if p.Subject.Command != nil {
+		req.Command = *p.Subject.Command
+	}
+	for _, st := range p.Subject.Stages {
+		if len(st.Argv) > 0 {
+			req.Stages = append(req.Stages, st.Argv)
+		}
+	}
+	h.setAsk(ask, &agents.Interaction{
+		ID:       "approval-" + p.ApprovalID,
+		Kind:     agents.InteractionApproval,
+		Prompt:   summary,
+		Approval: req,
+	})
 }
 
 // approvalSummary renders what the member has to decide about. The shell subject carries the
@@ -500,7 +507,7 @@ func approvalSummary(p msp.ApprovalRequestParams) string {
 // onUserInput maps a user-input prompt onto AF's question Interaction, which it fits field
 // for field — this is the channel AF already has, and it is a different one from approvals.
 func (h *threadHandle) onUserInput(p msp.UserInputRequestParams) {
-	inter := &agents.Interaction{ID: "ask-" + p.UserInputID, Kind: "question"}
+	inter := &agents.Interaction{ID: "ask-" + p.UserInputID, Kind: agents.InteractionQuestion}
 	for _, q := range p.Questions {
 		tq := transcript.Question{ID: q.ID, Header: q.Header, Question: q.Question}
 		for _, o := range q.Options {

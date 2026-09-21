@@ -169,3 +169,34 @@ export interface TurnTtsWiring {
   resume: () => void;
   stop: () => void;
 }
+
+/** A tool approval awaiting allow/deny on a managed session (`pendingApproval` in the
+ *  /messages response).
+ *
+ *  Distinct from `pendingPermission`, which is the TUI route's message string and is answered
+ *  by driving the pane with keystrokes. A managed session has no pane, so the two are never
+ *  interchangeable: this one is answered by interaction id through /respond. */
+export interface PendingApproval {
+  id: string;
+  request: {
+    /** Always present: the command for a shell approval, the tool name otherwise. */
+    summary: string;
+    tool?: string;
+    command?: string;
+    /** Parsed argv per pipeline stage, in order. */
+    stages?: string[][];
+    /** The runtime's own marking of a dangerous write. */
+    protectedWrite?: boolean;
+    /** A runtime-side judge escalated this rather than deciding it — the runtime was unsure. */
+    judgeEscalated?: boolean;
+  };
+}
+
+/** isPendingApproval narrows an untyped poll payload. The card renders `summary` unconditionally,
+ *  so a payload without one would show an empty approval — refusing it here is what keeps the
+ *  member from being asked to allow a blank line. */
+export function isPendingApproval(v: unknown): v is PendingApproval {
+  if (!v || typeof v !== "object") return false;
+  const o = v as { id?: unknown; request?: { summary?: unknown } };
+  return typeof o.id === "string" && !!o.id && typeof o.request?.summary === "string" && !!o.request.summary;
+}

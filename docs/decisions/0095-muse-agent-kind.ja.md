@@ -1593,3 +1593,46 @@ subagent 無し。その条件で「締め付け前後」を比べると、ど�
 同じファイルを読むがコンテキストの組み立てはターン時なので、serve 側は実測でなく論証）。および
 締め付け 6 の効き目——承認ジャッジには設定鍵も serve のフラグも無いので、`MUSE_DISABLE_APPROVAL_JUDGE`
 は名前の根拠だけで設定しており、観測には承認が 1 回要る。
+
+### P2-5: AF 初の承認 `Interaction` と、それに答えるカード
+
+5 つ目の作業パッケージであり、決定 13 そのもの。`agents.InteractionApproval` が存在し、muse が
+それを上げ、読み取り層が `pendingApproval` として送り出し、ミラーが `/respond` 経由で許可／拒否に
+答える。`Capabilities.Permissions` はこれで **true**——宣言する最初の kind になった。
+
+**question 種別の流用でなく作ることを裏づけた調査。** Agent Fleet には既に権限の面があった。
+`SessionState` には hook 経路の時代から `permission` の値があり、`PermissionCard` がそれを描く。
+それが managed に使えないのは、直せる類の理由ではない: ツリーで実測したとおり、あのカードの 3 つの
+ボタンは tmux のモーダルをキーで駆動する——`sendKeys(["Enter"])`・`["Down","Enter"]`・
+`["Down","Down","Enter"]`——そして managed セッションにはキーの落ちるペインが無い。これが決定 13 の
+「managed では（ペインにすら）存在しない」の正体であり、`Caps.PermissionChoice` の条件が
+「**Console から**答えられること」である理由でもある。このパッケージまで、muse がその条件を満たして
+いたのは承認を question 種別に畳むことによってだけで、それはコマンド行を残して、ツール名・
+保護対象書き込みの印・ジャッジの委譲・各ステージの解析済み argv を捨てていた。
+
+よって承認は独自の種別・独自の積荷・独自の動詞を持つ:
+
+| | question | approval |
+|---|---|---|
+| 問うこと | 答えを選ぶ | このツールを走らせてよいか |
+| 拒否すると | エージェントは続行 | そのツールが止まる |
+| 運ぶもの | `[]transcript.Question` | summary・tool・command・ステージ別 argv・protectedWrite・judgeEscalated |
+| 答え方 | `decision: "answer"` ＋ 選択 | `decision: "allow"` ／ `"deny"` |
+| ワイヤ鍵 | `pendingQuestions` | `pendingApproval` |
+
+**既存の消費者 2 つがこの違いを学ぶ必要があり、どちらも以前は静かに間違っていた。**
+`applyManagedAnswerAll`（オペレーターの一括回答ツール）と `applyManagedQuestion`（チャット
+ブリッジのボタン）はどちらも `Kind != "question"` で門を張り、「質問はありません」「もう回答済み
+です」と返す。承認に対してそれは単に不親切なのではなく**事実が逆**である——セッションはツールで
+ブロックされているのに、オペレーターは「何も待っていない」と告げられる。両方とも承認を名指し、
+答えられる操作を案内するようにした。
+
+カードが出す選択肢は**許可と拒否のちょうど 2 つ**——scope の選択も「常に許可」も無い。これは
+簡略化ではない: 門 B1 は `onRequest` モードが `allow_once` と `abort` のちょうど 2 つを提示すると
+実測しており、3 つ目のボタンはランタイムが同意していない永続性を約束することになる。
+`pendingApproval` は停止中のセッションには出さない——`pendingQuestions` と同じ規則で、
+誰も答えられないカードは無いより悪いからである。
+
+⚠️ カードの描画は dom テストで担保しており、スクリーンショットではない。muse セッションはまだ起動
+できない（バイナリ未導入・起動メニューに無い）ので、このパッケージのものは画面で見ていない。目視の
+確認は Console 面のパッケージが担う。

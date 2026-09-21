@@ -209,6 +209,14 @@ type TranscriptData struct {
 	// request_user_input / opencode question tool), or nil. Surfaced like claude's
 	// pending questions so the Console can render it interactively.
 	Pending []transcript.Question
+	// PendingApproval is the tool approval currently awaiting allow/deny, or nil. It is a
+	// DIFFERENT channel from Pending: a question asks the member to choose and the agent
+	// carries on either way, while an approval blocks a tool until it is answered. Only a
+	// kind whose approval can actually be answered from the Console fills it — for a TUI kind
+	// the dialog lives in the pane and is driven by keystrokes instead.
+	PendingApproval *ApprovalRequest
+	// PendingApprovalID is the Interaction id POST /sessions/{name}/respond answers it by.
+	PendingApprovalID string
 	// Queued are prompts typed into the RUNNING turn but not yet injected as a user
 	// message (opencode's session_input rows awaiting promotion) — surfaced as the
 	// mirror's "queued" badge, like claude's queue-operation reconstruction.
