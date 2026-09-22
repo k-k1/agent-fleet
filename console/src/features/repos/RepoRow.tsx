@@ -48,6 +48,9 @@ export interface RepoRowProps {
    * muted count of stopped ones. The caller decides the scope (own folder while
    * the node is open; descendants folded in while collapsed). */
   sess?: { alive: number; total: number };
+  /** At least one session this row currently HIDES carries an unseen notification. Only a
+   * folded node passes it: while the sessions are on screen they wear their own dot. */
+  unread?: boolean;
   onOpen: (e?: RMouseEvent) => void;
   /** Plain click on the card toggles the node's fold (SCM moved to the right-click
    * menu). Ctrl/⌘/middle-click still opens Source Control in a split. */
@@ -86,7 +89,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onStopSessions, aliveCount = 0 }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -248,6 +251,12 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </span>
               )}
             </span>
+          )}
+          {/* A folded node hides its session rows, so their unread dot rolls up here next
+              to the tally — same reason the tally folds descendants in. */}
+          {unread && (
+            <span className="unread-dot" role="img"
+              aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />
           )}
           {/* Session tally: alive count (green) wins; otherwise stopped count in
               muted — so a folded project still shows what's running inside. */}

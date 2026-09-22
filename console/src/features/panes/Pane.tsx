@@ -10,6 +10,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { useUnreadSessions } from "../notifications/unread.ts";
 import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -310,6 +311,9 @@ function PopulatedPane({
   const showPopout = popoutTabMode !== "popout" && canPopout(pane);
   const ctlCount = (showPopout ? 1 : 0) + (canWrap ? 1 : 0) + (canClose ? 1 : 0);
   const views: PaneView[] = cell.views;
+  // Sessions with an unseen notification, for the tab dots below. One set for the whole
+  // strip: the per-tab hook form would be a hook count that changes with the tab count.
+  const unreadSessions = useUnreadSessions();
   // Never expose the runtime session slug in the tab strip: sessions have a
   // user-facing title, and unloaded metadata should read as a neutral state
   // until it arrives instead of briefly leaking an opaque identifier.
@@ -383,9 +387,15 @@ function PopulatedPane({
   // unrelated ancestor re-render, e.g. the left-rail drawer toggling, was
   // otherwise redoing this on every tab for every unrelated repaint).
   const tabInfo = useMemo(
-    () => views.map((view) => ({ view, label: tabLabel(view), state: tabState(view), kic: tabKindIcon(view) })),
+    () => views.map((view) => ({
+      view, label: tabLabel(view), state: tabState(view), kic: tabKindIcon(view),
+      // Never on the selected tab: it is on screen, so the acknowledgement is already on its
+      // way (wireNotificationReadOnVisibleSessions) and the flag would otherwise linger for a
+      // round-trip — or for as long as the Control Plane is unreachable.
+      unread: !!view.session && view.id !== cell.selectedViewId && unreadSessions.has(view.session),
+    })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [views, sessionByName, sharedById, chatTitles, tr],
+    [views, cell.selectedViewId, sessionByName, sharedById, chatTitles, tr, unreadSessions],
   );
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, cell.id);
@@ -473,7 +483,7 @@ function PopulatedPane({
           // the left-button tab drag.
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
         >
-          {tabInfo.map(({ view, label, state, kic }) => {
+          {tabInfo.map(({ view, label, state, kic, unread }) => {
             // Only session tabs get a menu; SCM/file tabs and a stopped workspace keep the
             // browser default. Resolved once here so right-click and the menu key look at the
             // same decision.
@@ -541,6 +551,16 @@ function PopulatedPane({
                   }}
                   onClick={() => selectTab(view.id)}
                 >
+                  {/* Unread dot — a notification for this tab's session that nobody has
+                      looked at. In the flow rather than pinned to an icon's corner the way
+                      the rail row does it: a session tab showing the mirror has neither a
+                      state chip nor a kind badge to hang it on, and a tab is a fixed-width
+                      box, so the 12px it takes shortens only its own title. The selected
+                      tab never shows one — being on screen is what clears the flag. */}
+                  {unread && (
+                    <span className="unread-dot" role="img"
+                      aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />
+                  )}
                   {state && (
                     <span className={cx("pane-tab-state", state.cls)} title={state.text}>
                       <Icon name={state.icon} spin={state.spin} />

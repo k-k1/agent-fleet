@@ -8,6 +8,8 @@ import { createRoot, type Root } from "react-dom/client";
 
 const { SessionRow } = await import("./SessionRow.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { useNotificationStore } = await import("../notifications/store.ts");
+type FleetNotification = import("../notifications/store.ts").FleetNotification;
 type Session = import("../../types/session.ts").Session;
 
 let root: Root | null = null;
@@ -26,8 +28,16 @@ const render = async (over: Partial<Session>): Promise<void> => {
 
 const chip = () => host.querySelector<HTMLElement>(".session-state");
 
+const notify = (targetID: string, seen: boolean): FleetNotification => ({
+  seq: 1, id: "e1", kind: "answer-ready", target: { type: "session", id: targetID },
+  displayName: targetID, payload: {}, createdAt: "2026-09-22T00:00:00Z", seen,
+});
+
+const dot = () => host.querySelector<HTMLElement>(".unread-dot");
+
 beforeEach(() => {
   localStorage.clear();
+  useNotificationStore.setState({ items: [] });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -67,5 +77,36 @@ describe("SessionRow state chip", () => {
   it("leaves a question showing its own wording", async () => {
     await render({ state: "question" });
     expect(chip()?.textContent?.trim()).toBe(t("state.question"));
+  });
+});
+
+// The unread dot: a notification for this session that nobody has opened yet. It rides the kind
+// icon's CORNER rather than a column of its own — a leading dot would indent the unread rows
+// alone and break the icon alignment down a narrow rail — so the test pins where it sits, not
+// just that it exists. It also has to survive the stopped-row dimming, which is an opacity on
+// .sess-kic: a dot nested inside would fade with the icon it marks.
+describe("SessionRow unread dot", () => {
+  it("marks a session whose notification is still unseen", async () => {
+    useNotificationStore.setState({ items: [notify("s1", false)] });
+    await render({});
+    expect(dot()).not.toBeNull();
+    expect(dot()?.getAttribute("aria-label")).toBe(t("noti.unread_session"));
+    expect(dot()?.parentElement?.className).toBe("sess-kic-wrap");
+    expect(dot()?.closest(".sess-kic")).toBeNull();
+  });
+
+  it("shows nothing once the notification is seen, or when it belongs to another session", async () => {
+    useNotificationStore.setState({ items: [notify("s1", true)] });
+    await render({});
+    expect(dot()).toBeNull();
+    useNotificationStore.setState({ items: [notify("other", false)] });
+    await render({});
+    expect(dot()).toBeNull();
+  });
+
+  it("stays on a stopped row — a report that arrived as the session folded away is exactly the one to chase", async () => {
+    useNotificationStore.setState({ items: [notify("s1", false)] });
+    await render({ alive: false });
+    expect(dot()).not.toBeNull();
   });
 });

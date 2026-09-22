@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { setLocale } from "../../lib/i18n/index.ts";
 import type { FleetNotification } from "./store.ts";
-import { unseenSessionEventIDs } from "./read.ts";
+import { hasUnreadFor, unreadSessionKey, unreadSessionNames, unseenSessionEventIDs } from "./read.ts";
 import { notificationRowSubtitle, notificationWording } from "./wording.ts";
 
 const event = (id: string, targetID: string, seen = false, type = "session"): FleetNotification => ({
@@ -25,6 +25,39 @@ describe("unseenSessionEventIDs", () => {
     ];
     expect(unseenSessionEventIDs(items, "active")).toEqual(["e1"]);
     expect(unseenSessionEventIDs(items, "")).toEqual([]);
+  });
+});
+
+// The dot on a rail row / pane tab / folded node is this set. Two properties carry it: only a
+// SESSION target may put a name in (a usage or workspace notification has no row to mark), and
+// the selector value has to be comparable — a fresh Set per poll would re-render the whole rail
+// every 5 seconds whether or not anything changed.
+describe("which sessions still carry an unseen notification", () => {
+  it("takes unseen session targets only, deduplicated and sorted", () => {
+    const items = [
+      event("e1", "beta"),
+      event("e2", "alpha"),
+      event("e3", "alpha"),
+      event("e4", "seen-one", true),
+      event("e5", "claude", false, "usage"),
+      event("e6", ""),
+    ];
+    expect(unreadSessionNames(items)).toEqual(["alpha", "beta"]);
+    expect(unreadSessionKey(items)).toBe("alpha\nbeta");
+  });
+
+  it("orders the key by name, so the same set is the same string", () => {
+    const a = [event("e1", "alpha"), event("e2", "beta")];
+    const b = [event("e2", "beta"), event("e1", "alpha")];
+    expect(unreadSessionKey(a)).toBe(unreadSessionKey(b));
+  });
+
+  it("hasUnreadFor answers for one row without building the set", () => {
+    const items = [event("e1", "alpha"), event("e2", "beta", true)];
+    expect(hasUnreadFor(items, "alpha")).toBe(true);
+    expect(hasUnreadFor(items, "beta")).toBe(false);
+    expect(hasUnreadFor(items, "gone")).toBe(false);
+    expect(hasUnreadFor(items, "")).toBe(false);
   });
 });
 
