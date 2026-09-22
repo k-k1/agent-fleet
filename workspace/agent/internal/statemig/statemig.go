@@ -111,9 +111,12 @@ var Entries = []string{
 	"bridge-operator-slack.json",
 	"bridge-threads.json",
 	"bridge-threads-slack.json",
-	// Notifications, instruction ledger, browser handoffs.
+	// Notifications, instruction ledger, browser handoffs, and the per-turn answer-ready
+	// deduplication key (completion-key — introduced directly under AgentStateDir, never
+	// existed under .config; statemig no-ops when the source is absent).
 	"notification-outbox",
 	"notification-markers",
+	"completion-key",
 	"instr-ledger",
 	"browser-handoff-ledger",
 	// Per-boot / per-run state of the CLIs themselves.

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -61,6 +62,36 @@ func TestAnswerReadyNotDuplicatedByPutOnce(t *testing.T) {
 	events := notice.List()
 	if len(events) != 1 || events[0].Kind != chatx.ReportKindAnswerReady {
 		t.Fatalf("answer-ready duplicated: got %d events: %+v", len(events), events)
+	}
+}
+
+// TestAnswerReadyAfterStatusRemoveIsStillDeduped guards the cross-second duplicate
+// case: pane heal calls status.Remove mid-turn, which clears observedEnds. A second
+// PersistTurnEndReason falls back to time.Now(), and if more than one RFC3339 second
+// has elapsed the TurnEndAt changes — without this fix a new PutOnce key would fire
+// again. The completion key lives in a separate store that Remove does not touch, so
+// the first value always wins.
+func TestAnswerReadyAfterStatusRemoveIsStillDeduped(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-heal-dedup", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Test"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	// First end-of-turn flush: writes completion key = time.Now() second 1.
+	status.PersistTurnEndReason(sid, "idle", "")
+	RecordSessionNotification(sid, "working", "idle", "the answer")
+
+	// Pane heal fires: wipes statusFiles, observedEnds — but NOT the completion key.
+	status.Remove(sid)
+
+	// Second flush after more than one RFC3339 second: PersistTurnEndReason would
+	// produce a different TurnEndAt, which was the previous (broken) PutOnce key.
+	time.Sleep(1100 * time.Millisecond)
+	status.PersistTurnEndReason(sid, "idle", "")
+	RecordSessionNotification(sid, "", "idle", "the answer")
+
+	if events := notice.List(); len(events) != 1 {
+		t.Fatalf("answer-ready duplicated across a status.Remove: got %d events: %+v", len(events), events)
 	}
 }
 
