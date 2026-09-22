@@ -7,6 +7,12 @@
 // and the marked rows are checked against the code", and this is what makes that true of more
 // than two rows.
 //
+// Two rows joined the mapping after it found them disagreeing: lcpp's "Model choice at launch"
+// and "Context usage gauge" were `—` in the table while both caps were true, because the lcpp
+// column landed (PR #816) before the model picker (#824) and the context gauge (#829) were
+// built and nobody went back. The table was the stale side, and in the misleading direction —
+// StartModal refuses to launch lcpp until a model is picked (ADR 0093, corrected 2026-09-22).
+//
 // 🔴 A row is mapped here only when the row and the cap mean the SAME thing for every kind.
 // Several rows deliberately do not, and UNMAPPED_ROWS names them with the reason — a row whose
 // `—` is qualified by a footnote ("no transcript under Managed, but the CLI route keeps one") is
@@ -28,6 +34,8 @@ const ROW_TO_CAP: Record<string, keyof AgentCaps> = {
   "Reasoning effort": "effort",
   "Image paste": "imagePaste",
   "Fork from a past message": "forkAt",
+  "Model choice at launch": "model",
+  "Context usage gauge": "contextBar",
   "Choosing to skip permission prompts": "permissionChoice",
   "Scheduled (unattended) runs": "scheduledRuns",
   "Usable as the assistant chat": "headlessChat",
@@ -40,9 +48,7 @@ const UNMAPPED_ROWS: Record<string, string> = {
   "Terminal (CLI) execution": "a driver route, not a cap",
   "Read-only history while stopped":
     "cursor's — is qualified (footnote 3: nothing under Managed, a readable history over the CLI route), while caps.transcript is the Console affordance and is true",
-  "Model choice at launch": "lcpp: caps.model is true (DynamicModel) and the guide cell is — (unresolved, ADR 0093)",
   "Plan mode": "caps.planMode is the TUI mode-cycle toggle; the row is the feature, which copilot/cursor/lcpp have by another route",
-  "Context usage gauge": "lcpp: caps.contextBar is true (ADR 0093 decision 8) and the guide cell is — (unresolved)",
   "Copy the conversation into a new session": "server-side fork, no Console cap",
   "Skill / command picker": "the row is NATIVE enumeration (footnote 4); caps.slashSkills is also true for foreign-only kinds",
   "Handoff to another session": "a server capability, not a Console cap",

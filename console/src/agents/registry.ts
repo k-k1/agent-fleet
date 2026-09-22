@@ -25,7 +25,11 @@ export interface AgentCaps {
   effort: boolean; // offers a reasoning-effort selector when the chosen driver supports it
   tuiEffort: boolean; // the TUI launch command can pin effort (managed uses Driver capabilities)
   tuiStartMode: boolean; // the TUI launch command can start deterministically in plan/normal
-  contextBar: boolean; // shows the context-window token gauge
+  // shows the context-window token gauge. Declaration-only: nothing branches on it, because
+  // ContextBar renders from the session's own context payload whatever the kind is. Keep it
+  // anyway — guideTable.test.ts checks the guide's row against it, which is what caught the
+  // lcpp column still saying "no gauge" after #829 built one (ADR 0093, corrected 2026-09-22).
+  contextBar: boolean;
   imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
   // composer offers the skill/command picker (GET /sessions/{name}/skills — docs/log/50).
   // Native listings: claude/codex/opencode scan filesystem conventions; cursor serves

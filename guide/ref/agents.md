@@ -21,10 +21,10 @@ because "does this apply to a plain shell session?" is a real question.
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
 | Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓¹² | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | ✓¹⁴ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | ✓¹⁹ | ✓¹⁴ | — | — |
 | Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
-| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ | — | — |
+| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | — |
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | ✓ | — | — |
 | Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
@@ -263,3 +263,9 @@ reached costs you its tools for that turn and never the turn itself — the fail
 in the conversation rather than on every turn. One consequence of lcpp running the tools itself:
 **every tool an integration server offers asks for your permission before it runs**, because
 nothing in the MCP protocol tells Agent Fleet which of them only read.
+
+¹⁹ lcpp's model list is your own llama.cpp server's, so it has no "let the tool decide" entry
+the way the vendor CLIs do — a launch waits until you pick one. Which model you pick is the
+cost decision on this kind: on one measured benchmark the same task took 29 turns on one
+family and 164 on another, and both finished it correctly. Swapping models later does not buy
+a new instance (see "lcpp: what hardware measurement found" above).
