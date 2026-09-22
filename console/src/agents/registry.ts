@@ -650,9 +650,11 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       // contextBar: session/contextUsage is wired (ADR 0095 P2-16). Live-verified: usedTokens=21747
       // windowTokens=1007997 (recorded on the wire) after a real turn on 2026-09-22.
       contextBar: true,
-      // headlessChat: the backend is implemented (ADR 0095 P2-20) but not yet live-verified;
-      // this cap will flip to true once a real chat turn is confirmed end-to-end.
-      // slashSkills: still false — its own work package is not built yet.
+      // headlessChat: `muse exec --json`, one process per turn (ADR 0095 P2-20). Live-verified
+      // 2026-09-22 (P2-21), two subscription turns: a real reply came back, and asked in a
+      // second turn which word it had been told to say, the session resumed through
+      // --session-id answered from the first turn's context.
+      headlessChat: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),

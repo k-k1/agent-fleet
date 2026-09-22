@@ -79,6 +79,25 @@ func SafeDefaultModel(cl *msp.Client) string {
 	return modelsSafe
 }
 
+// SafeDefaultExecModel is SafeDefaultModel for a caller that holds no connection: the
+// assistant chat drives `muse exec`, a process per turn, so there is no client to ask.
+//
+// 🔴 It exists because exec falls back to the same contributor default a session does, and
+// nothing in the chat path was resolving a model at all: a conversation the member never
+// pinned a model on carries "", chatx passes no --model, and the turn runs on the catalog's
+// `isDefault` row. Measured on 1.3.0-R3401.1 (ADR 0095 P2-21): with no --model the session
+// store records `modelId: "muse-spark-1.3-contributor"`.
+//
+// "" means the catalog could not be read at all. The caller must refuse the turn rather than
+// send no --model — that is the whole point, and it is the one place this differs from
+// SafeDefaultModel, whose caller holds a session that already has a model.
+func SafeDefaultExecModel() string {
+	Models() // refreshes the shared cache (a live host if there is one, else a probe)
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	return modelsSafe
+}
+
 // effortChoices is what the picker offers for reasoning effort, and it is the generated wire
 // enum rather than a list of its own (msp.ReasoningEffortValues, schema order — which is also
 // the order `muse --help` prints). Every model gets the same set: effort is a per-turn
