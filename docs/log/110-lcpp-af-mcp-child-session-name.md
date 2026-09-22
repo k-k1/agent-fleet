@@ -71,24 +71,54 @@ muse の `mcpServerConfig`（`internal/agents/muse/mcp.go`）・codex の `codex
 
 ## 影響範囲（AF_SESSION_NAME 依存の session-bound af tools）
 
-`mcpOwningSession()` を呼ぶ 11 箇所すべてが、lcpp の builtin af 子プロセスでは
-今回の修正まで解決不能だった。2 つの壊れ方がある:
+初稿はここで「`mcpOwningSession()` を呼ぶ 11 箇所すべてが」と書いた直後に `af_report` を
+その一覧へ含めており、`af_report` は実は呼ばない、と自分で注記する自己矛盾があった
+（レビュー指摘）。`rg -n "mcpOwningSession\(\)" mcp_stdio.go mcp_imagegen.go` の生の呼出
+箇所（関数定義そのものを除く 11 行）を 1 本ずつ、どの `tools/call` ケース／`tools/list`
+判定から辿り着くか対応づけた上で、(a) 直接依存・(b) 明示引数検証（呼ばない）・
+(c) degrade-only の 3 つに分け直す。推測で名前を足していない——後段の表の右列は
+すべて実際にその関数を呼んでいるコードの行番号。
 
-**ツール呼び出しがエラーを返す（`tools/call` が `mcpToolErr` で失敗）**:
-`af_report`（正確には `a.Session` を検証するだけで `mcpOwningSession` は呼ばないが、後述
-「未解決」参照）・`list_child_sessions`・`list_peer_sessions`・`send_to_peer_session`・
-`propose_session_handoff`・`af_stop_after_turn`（`session` 引数省略時のフォールバック）・
-`create_session`（`selfReportOnly()` 時の `parent` 決定・ADR 0073 の provenance/idempotency
-scope/report route/worktree default 全部の起点）。
+### (a) mcpOwningSession 直接依存——解決できないと呼び出し／広告そのものがブロックされる
 
-**ツールが `tools/list` に広告されない（黙って消える）**: `generate_image`
-（`mcpImageGenAdvertise`、親が最初に報告した症状そのもの）。
+| tools/call の名前 | 経路 | 呼出行 | 失敗時の挙動 |
+|---|---|---|---|
+| `generate_image` | `mcpImageGenAdvertise()`（`tools/list` 判定） | `mcp_stdio.go:1474` | **広告されない**（ツールが `tools/list` に一切出ない——親が最初に報告した症状そのもの） |
+| `generate_image` | `mcpGenerateImage()`（`tools/call` 本体） | `mcp_imagegen.go:210` | `mcpToolErr`。advertise を素通りした呼び出し（未広告でも名前を直接呼べば届く）への保険で、通常経路では advertise 側で先に止まる |
+| `list_child_sessions` | `case "list_child_sessions"` | `mcp_stdio.go:2433` | `mcpToolErr` |
+| `list_peer_sessions` | `case "list_peer_sessions"` | `mcp_stdio.go:2439` | `mcpToolErr` |
+| `send_to_peer_session` | `case "send_to_peer_session"` | `mcp_stdio.go:2460` | `mcpToolErr` |
+| `propose_session_handoff` | `case "propose_session_handoff"` | `mcp_stdio.go:2508` | `mcpToolErr` |
+| `create_session` | `case "create_session"`、`selfReportOnly()` のときだけ | `mcp_stdio.go:2789` | `mcpToolErr`（`parent` を決められない＝ADR 0073 の provenance/idempotency scope/report route/worktree default 全部の起点） |
+| `stop_session` / `stop_session_after_turn` / `resume_session` / `rename_child_session` / `get_session_output` | 5 ケースとも共通ゲート `sessionDriveAllowed(a.Name)` 経由（`selfReportOnly()` のときだけ） | ゲート自体の呼出は `mcp_stdio.go:1081`、5 ケースの呼び出し元は `2946`/`2974`/`3049`/`3078`/`3221` | `sessionDriveAllowed` が返すエラーがそのまま `mcpToolErr` になる。**初稿はこの 5 つを丸ごと書き漏らしていた**——af_report の自己矛盾と対になる本体の抜け |
+| `af_stop_after_turn` | `case "af_stop_after_turn"`、モデルが `session` 引数を**省略した**ときだけの fallback | `mcp_stdio.go:2561` | `mcpToolErr`。**引数を渡された場合はこの行に到達せず (b) 側で完結する**（下表） |
 
-**degrade だけで失敗はしない（既存の設計どおり）**: `get_session_output` のカーソル
-（`outputCursorScope`——解決不能なら `""`＝カーソル記憶なしに戻るだけ）・Chromium Attach
-View の引き渡し通知（`request_browser_action`/`set_chromium_control_mode` 系の
-handoff——`sessionName` を省くだけで呼び出し自体は失敗しない、`browser_handoff_ledger.go`
-のコメントどおり best-effort）。
+### (b) 明示引数検証——mcpOwningSession を呼ばない
+
+| tools/call の名前 | 実際の依存 | 呼出行 |
+|---|---|---|
+| `af_report` | `session.ValidName(a.Session)` のみ。フォールバック無し | `mcp_stdio.go:2539` |
+| `af_stop_after_turn`（`session` 引数を渡した場合） | 同じく `session.ValidName(name)` で通過し、`mcpOwningSession()` の行（2561）には到達しない | `mcp_stdio.go:2557`-`2558` |
+
+`mcpSourceSession`（`RunStdio` が起動時に一度読む `os.Getenv("AF_SESSION_NAME")`、
+`mcp_stdio.go:180`）を **tool ケースが直接参照している箇所は無い**——`grep -n
+"mcpSourceSession" mcp_stdio.go` の結果は代入 1 箇所（180）と `mcpOwningSession()`
+自身の第一分岐 1 箇所（3331-3332）だけ。つまり「起動時 `mcpSourceSession`」は (a) の
+実装の中の入力であって、それを個別に読む第三のツール集合は存在しない——初稿の書き方
+（「呼ぶ箇所」とだけ言って (a) と別扱いするかのように読めた点)を今回訂正する。
+
+### (c) degrade-only——解決できなくても呼び出し自体は成功する
+
+| 経路 | 呼出行 | 失敗時の挙動 |
+|---|---|---|
+| `outputCursorScope()`（`mcpSessionOutput` 内、`get_session_output` の tail カーソル記憶） | `mcp_stdio.go:3302`（`mcpSessionOutput` からの呼出は `3771`） | `""` を返しカーソル記憶なしに戻るだけ。**`get_session_output` 自体は (a) の `sessionDriveAllowed` ゲートを別途持つ**ので、この経路はゲートを通過した後の二次的な質の劣化——同じツールに (a) と (c) の依存が両方乗っている形 |
+| `mcpRequestBrowserAction()`（`request_browser_action`） | `mcp_stdio.go:3529` | `sessionName` を省いて通知するだけ、呼び出し自体は失敗しない（`browser_handoff_ledger.go` のコメントどおり best-effort）。`set_chromium_control_mode` は `mcpOwningSession` を一切呼ばない（grep 上、依存なし） |
+
+まとめると、lcpp の builtin af 子は今回の修正まで (a) の 9 ツール（`get_session_output`
+の内訳を 1 として数えると計 10 の tools/call 名・11 の呼出箇所）すべてで解決不能
+だった——`generate_image` は advertise 段階で完全に消え、残りは呼べても即エラー。
+(b) の 2 つ（`af_report`・引数付き `af_stop_after_turn`）は今回の修正の影響を受けない
+（後述「未解決」）。(c) の 2 つは壊れたままでも気づかれにくい形で動作は継続していた。
 
 ## 検証
 
@@ -145,6 +175,26 @@ handoff——`sessionName` を省くだけで呼び出し自体は失敗しな�
    空 map を作ってその場で書き込む」（in-place 変異）に変えて実行 →
    `TestInjectSessionNameCopiesOnlyBuiltinAF` が赤（呼び出し元の元の `Env` map に
    `AF_SESSION_NAME` が書き込まれてしまっている）。Edit で戻して確認。
+
+## 追記（レビュー指摘の訂正）
+
+初稿の「影響範囲」節は「`mcpOwningSession()` を呼ぶ 11 箇所すべてが」と書いた直後の一覧に
+`af_report` を含め、かつ同じ一覧の中でそれを「呼ばない」と注記する自己矛盾を含んでいた。
+`sessionDriveAllowed` 経由で依存している 5 ツール（`stop_session` /
+`stop_session_after_turn` / `resume_session` / `rename_child_session` /
+`get_session_output`）も丸ごと欠落していた。「影響範囲」節を (a) 直接依存・(b) 明示引数
+検証（呼ばない）・(c) degrade-only の 3 分類に全面的に書き直し、全 11 呼出行を
+`tools/call`/`tools/list` の対応するケースへ 1 対 1 で対応づけた（推測で名前を足していない
+——各行は実際にその関数を呼んでいるコードの行番号）。`get_session_output` と
+`generate_image` はそれぞれ (a) を 2 経路持つ二重依存であることも今回明確化した。
+
+このドキュメント自身の修正のみで、`workspace/agent` 配下のコード（`mcp.go`/`driver.go`/
+`mcp_test.go`）は変更していない。念のためすべてパイプ無し・`echo $?` で直接確認:
+
+- `python3 scripts/docs-check.py` → **exit 0**、`445 files, 0 error(s), 0 warning(s)`
+- `go test ./internal/agents/lcpp/... -count=1` → **exit 0**、`Go test: 60 passed in 1
+  packages`
+- `go test ./... -count=1 -p 2` → **exit 0**、`Go test: 3952 passed in 51 packages`
 
 既知の赤（本件と無関係と確認済み、`internal/agents/lcpp` の既存の仕組み）:
 
