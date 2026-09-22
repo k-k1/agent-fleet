@@ -774,3 +774,36 @@ allowlist gains `lcpp` (without it, `create_session`/`list_models` could not be 
 all) — alongside `GET /agents/lcpp/models` and `agentModels.ts`'s `isDynamic` (without these, no
 model could be chosen at launch and the driver would fail immediately with "no model configured").
 Details are under "What implementing Decision 8 found".
+
+### Correction (2026-09-23): two capability rows the table never caught up with
+
+`guide/ref/agents.md` said `—` for lcpp's **"Model choice at launch"** and **"Context usage
+gauge"**. Both were wrong, and had been since the moment the features landed.
+
+The order explains it. The lcpp column was added in PR #816; the model picker was opened in
+#824 and the context gauge built in #829 — the paragraph directly above this one even records
+the picker's wiring ("without these, no model could be chosen at launch"). Nothing went back to
+the table, and nothing checked: `scripts/docs-check.py` compares the table to the Go `Caps()`
+for three rows only (`CanFork`, `CanForkAt`, `PermissionChoice`), and neither of these is one of
+them.
+
+🔴 The model row was wrong in the misleading direction. lcpp is the one kind whose catalogue has
+no "let the tool decide" entry (`requiresConcreteModel` in `console/src/lib/agentModels.ts`), so
+`StartModal` does not merely offer a model — it refuses to launch until one is picked. A reader
+checking the table before their first session was told the opposite of a requirement. The guide's
+own lcpp prose contradicted it too, describing model families and model swapping across sixteen
+measured runs. The cell is now `✓¹⁹`, and footnote 19 says the list is the member's own server's
+and that the choice is the cost decision on this kind.
+
+The gauge row is `✓`. `WireLive` fills `li.Context` from `Store.LastUsage()` and names
+`WindowSource="recorded"` when the window resolved (decision 8), pinned by
+`TestWireLiveContextRecordedWindow` and its unresolved-window twin, and the end-to-end run of
+2026-09-21 recorded `window: 262144` in the transcript — the ADR's own motivating evidence that
+`WindowGuess` is never consulted.
+
+What keeps it from happening again is `console/src/agents/guideTable.test.ts` (ADR 0095 P2-22):
+it now maps nine rows of the table onto Console caps for every kind, so a table cell and a cap
+cannot disagree without a red build. Along the way it recorded something worth knowing about one
+of them: `caps.contextBar` has no reader anywhere in the Console — the gauge draws from the
+session's context payload whatever the kind — so that flag is documentation, and this test is
+now what makes it mean anything.

@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import type { ReactNode } from "react";
 
 interface Entry {
   name: string;
@@ -31,6 +32,9 @@ const fetchMock = vi.fn(async (url: string) => {
 vi.stubGlobal("fetch", fetchMock);
 
 const { GalleryView } = await import("./GalleryView.tsx");
+const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
+const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
+const { setLocale } = await import("../../lib/i18n/index.ts");
 const { useLayoutStore, wireLayoutHistory } = await import("../../layout/store.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { allViews, freshLayout } = await import("../../layout/ops.ts");
@@ -63,10 +67,20 @@ const render = async (props: Partial<Parameters<typeof GalleryView>[0]> = {}) =>
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root.render(<GalleryView paneId={paneId} path={path} {...props} />);
+    root.render(withProviders(<GalleryView paneId={paneId} path={path} {...props} />));
   });
   return paneId;
 };
+
+/** The view takes the shared toast and confirm through their hooks (a right-click delete asks
+ *  the same confirm the file tree asks), so the providers are part of mounting it at all —
+ *  every render in this file goes through here, including the handful that build their own
+ *  root to control when the listing answers. */
+const withProviders = (el: ReactNode): ReactNode => (
+  <ToastProvider>
+    <ConfirmProvider>{el}</ConfirmProvider>
+  </ToastProvider>
+);
 
 // Image cards only: the grid now starts with "Up" and the subfolders, and every assertion
 // below is about pictures. Folder cards have their own test.
@@ -95,6 +109,10 @@ const back = (): Promise<void> =>
   });
 
 beforeEach(() => {
+  // The locale comes from settings and its default depends on the environment (jsdom reports
+  // en-US); these tests assert on catalogue wording, so pin it — the view reaches the session
+  // open helpers now, and those pull settings.ts, which applies a locale on import.
+  setLocale("ja");
   setDPR(2);
   listings = 0;
   fetchMock.mockClear();
@@ -455,7 +473,7 @@ describe("画像ギャラリーのペイン", () => {
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-      root.render(<GalleryView paneId={paneId} path="gen" />);
+      root.render(withProviders(<GalleryView paneId={paneId} path="gen" />));
     });
     // The grid branch would draw "Up" alone here (folders/images are both empty on a null
     // listing) — a partial page that reads as stuck rather than loading.
@@ -528,7 +546,7 @@ describe("画像ギャラリーのペイン", () => {
     // from the old one — with the new folder's path glued onto its file names.
     fetchMock.mockImplementationOnce((() => new Promise(() => {})) as never);
     await act(async () => {
-      root.render(<GalleryView paneId={paneId} path="gen/sub" />);
+      root.render(withProviders(<GalleryView paneId={paneId} path="gen/sub" />));
     });
     expect(cards()).toHaveLength(0);
     expect(thumbs()).toHaveLength(0);

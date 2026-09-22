@@ -21,15 +21,15 @@ because "does this apply to a plain shell session?" is a real question.
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
 | Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓¹² | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | ✓¹⁴ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | ✓¹⁹ | ✓¹⁴ | — | — |
 | Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
-| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ | — | — |
+| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | — |
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | ✓ | — | — |
 | Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
-| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —⁴ | — | — |
+| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | ✓⁴ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
@@ -51,10 +51,17 @@ as Terminal (CLI) does persist a readable history. kiro, by contrast, keeps a re
 transcript even under Managed.
 
 ⁴ The picker lists what the CLI can discover and launch by itself, and copilot, kiro,
-agy, lcpp and muse have no verified mechanism for that (lcpp drives no CLI at all, so
-there is nothing of its own to discover; muse's own protocol does carry one, and Agent
-Fleet has not built that half yet). Skills written to another convention's `SKILL.md`
-tree in the repository are still offered to them by injection — measured for muse.
+agy and lcpp have no verified mechanism for that (lcpp drives no CLI at all, so there is
+nothing of its own to discover). Skills written to another convention's `SKILL.md` tree in
+the repository are still offered to them by injection.
+
+muse is the exception on this row, and it is a different mechanism from the other ✓s: its
+own protocol carries the list, so what the picker offers is the running session's own
+answer — Muse Code's bundled skills, plugin skills, your own under `~/.config/muse/skills`,
+and the working copy's `.agents/skills/`. Picking one sends it as a skill invocation rather
+than as the text of its name, which is what makes it run. It needs a running session,
+because the list belongs to the session; before that, and for a stopped one, the injection
+route is what remains.
 
 ⁵ kiro accepts an effort flag but exposes no per-model picker.
 
@@ -195,7 +202,9 @@ assistant's choice of agent: Muse Code is proprietary and not included in the im
 to be installed on demand (the Muse Code connection card offers it, ~299MB into your home), and
 you have to be signed in — an unauthenticated session would accept work and then fail every
 turn. As the assistant, muse answers one prompt per turn as its own headless run, and it
-remembers the conversation: ask a follow-up and it has the earlier turns.
+remembers the conversation: ask a follow-up and it has the earlier turns. It answers rather than
+acts — Agent Fleet runs those turns with shell, file writing and web tools switched off, and
+measured twice, a chat turn asked to write a file made no tool call and wrote nothing.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
@@ -254,3 +263,9 @@ reached costs you its tools for that turn and never the turn itself — the fail
 in the conversation rather than on every turn. One consequence of lcpp running the tools itself:
 **every tool an integration server offers asks for your permission before it runs**, because
 nothing in the MCP protocol tells Agent Fleet which of them only read.
+
+¹⁹ lcpp's model list is your own llama.cpp server's, so it has no "let the tool decide" entry
+the way the vendor CLIs do — a launch waits until you pick one. Which model you pick is the
+cost decision on this kind: on one measured benchmark the same task took 29 turns on one
+family and 164 on another, and both finished it correctly. Swapping models later does not buy
+a new instance (see "lcpp: what hardware measurement found" above).

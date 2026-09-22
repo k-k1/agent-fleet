@@ -709,7 +709,7 @@ func (h *threadHandle) startTurn(in agents.TurnInput) error {
 	params := msp.TurnStartParams{
 		CommandID: msp.NewCommandID(),
 		SessionID: sid,
-		Input:     inputParts(in),
+		Input:     skillPart(cl, sid, inputParts(in)),
 	}
 	if e := reasoningEffort(effort); e != nil {
 		params.ReasoningEffort = e
@@ -734,7 +734,7 @@ func (h *threadHandle) steerNow(in agents.TurnInput, turnID string) error {
 		CommandID:      msp.NewCommandID(),
 		SessionID:      sid,
 		ExpectedTurnID: turnID,
-		Input:          inputParts(in),
+		Input:          skillPart(cl, sid, inputParts(in)),
 	}, callTimeout, nil)
 }
 

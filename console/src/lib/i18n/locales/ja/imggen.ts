@@ -197,4 +197,7 @@ export const imggen = {
   "imggen.props_copied": "コピーしました",
   "imggen.props_copy_failed": "コピーできませんでした",
   "imggen.props_open_gen": "画像生成で開く",
+  "imggen.props_session": "生成したセッション",
+  "imggen.props_open_session": "「{name}」を開く",
+  "imggen.props_session_gone": "このセッションはもう開けません",
 };

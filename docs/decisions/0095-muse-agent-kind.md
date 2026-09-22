@@ -24,7 +24,10 @@ English | [日本語](0095-muse-agent-kind.ja.md)
   last footnote-11 row and `caps.headlessChat` are ✓. The negative control of that pair also
   found the chat path taking the catalogue's `-contributor` default — the one route decision 6
   clamp 8 did not cover — now gated by `muse.SafeDefaultExecModel`, which refuses the turn rather
-  than fall back.
+  than fall back. P2-22 then measured what an assistant turn can touch (no tool call, no file,
+  twice) and gave the capability table a test that reads it, and P2-23 built the last unbuilt
+  row: the skill picker's native half over `skill/list`, with one turn proving the host expands
+  a `skill` input part.
   The kind is offered in the launch menu behind its two preconditions (the proprietary
   binary installed, a credential stored). What is NOT built is named in the guide's own capability
   table and in the closing section, so an unticked row there means "not built", never "still
@@ -2897,3 +2900,105 @@ the first row would not pass.
   chat turn records the requested model and no totals — the usage chip does not move for it.
 - The capability table is still cross-checked against the code for the fork rows and the
   permission-skip rows only. A cap reverted in `registry.ts` still passes every Console test.
+
+### P2-22: what the assistant chat can touch, and the table that now checks itself (2026-09-22)
+
+P2-21 closed the row and left two things open. Both are closed here — the first with two declared
+subscription turns, the second with no turns at all.
+
+**Do `--disable-shell` and `--disable-write` bind over `muse exec`?**
+
+The free half first, and it is a trap worth naming. Run the chat provider's own argv under
+`--provider echo` and read the session log's `model_request_configured` record:
+
+| arm | `web_search` | `bash` / `bash_input` | `write_file` / `edit_file` |
+|---|---|---|---|
+| the product's argv (`--disable-shell --disable-write --disable-web-tools`) | **gone** | present | present |
+| no flags (control) | present | present | present |
+
+`toolset.mode` is `all` and `toolset.source` is `default` in both arms. So `--disable-web-tools`
+filters that list and the other two do not — which reads like "the clamps are decorative", and
+🔥 **that reading is wrong**. Two live turns through `museChat.Send`, the second one insisting
+("do not decide in advance whether your tools work; actually invoke write_file, then report the
+error verbatim"), both ended the same way:
+
+- no file at the target path, in a throwaway directory;
+- **no tool call at all** — the session log's `tool_name` and `tool_call_id` are empty and the
+  only task kinds are `model.meta.response` and `session_name.allocate`;
+- the model itself said writing and shell were disabled for the session.
+
+So the record above is not a readout of what the model is offered, and `active_tools` must not be
+used as one. What is measured is narrower than "the clamp is enforced" and it is what the guide
+now says: an assistant chat turn made no tool call and wrote nothing, twice. What is still
+**unmeasured** is a runtime refusal, because nothing ever reached the runtime — "enforced" and
+"instructed" remain indistinguishable from here, and a future release that stops telling the
+model the tools are off would be caught only by `TestMuseChatLiveWriteClamp` /
+`TestMuseChatLiveWriteClampForced`, which is why both live on in the repo rather than in a log.
+
+**The capability table now checks itself** (`console/src/agents/guideTable.test.ts`).
+
+P2-21 recorded that reverting muse's `headlessChat` passed all 318 Console test files. It no
+longer does: the new test parses the table out of `guide/ref/agents.md` and compares seven rows
+against `registry.ts` caps for all eleven kinds, asserts the English and Japanese tables carry
+cell-for-cell identical marks, and asserts every row of the table is either mapped or listed in
+`UNMAPPED_ROWS` with a reason — so a renamed row cannot quietly leave the check. Mutation-checked:
+`headlessChat: false` turns it red.
+
+🔴 **It found drift outside muse on its first run.** `lcpp`'s cells for "Model choice at launch"
+and "Context usage gauge" are `—`, while `caps.model` and `caps.contextBar` are both `true` in
+`registry.ts` with reasons written beside them (`DynamicModel`; ADR 0093 decision 8, "WireLive now
+reports it, WindowSource=recorded"). One of the two is wrong and it is ADR 0093's to settle, so
+those rows are named in `UNMAPPED_ROWS` rather than pinned to either answer. Three further rows
+are unmapped because the row and the cap genuinely differ in meaning — "Read-only history while
+stopped" (cursor's `—` is qualified by footnote 3), "Plan mode" (the cap is the TUI mode-cycle
+key) and "Skill / command picker" (the row is NATIVE enumeration; the cap is also true for the
+foreign-injection kinds).
+
+### P2-23: the skill picker's native half — the last unbuilt row (2026-09-22)
+
+Footnote 4 named muse among the kinds with "no verified mechanism", with the honest qualifier
+that muse's protocol carries one and AF had not built it. It is built.
+
+**Enumeration is free, and that is not a detail.** `skill/list` is a query, and `session/start`
+accepts a FAKE credential (the same property gate B1 found), so the whole read side was measured
+without touching the subscription. On this account a session answers seven rows: five bundled
+(`create-skill`, `doctor`, `grill`, `manage-settings`, `plan`), a plugin skill in BOTH spellings
+(`threejs` and `threejs:threejs` — the wire says a plugin contributes its bare-name winner and
+its qualified form), and, once a working copy has one, the project skill under `.agents/skills/`
+with `source: project`. The clamped foreign-reader skills (`resume-claude` and friends) are
+absent, which is the settings writer's work showing up on the wire.
+
+The two spellings are collapsed by `(pluginId, displayName)` rather than by splitting on ":" —
+a qualified row whose bare twin is missing is kept, because a skill whose bare name ANOTHER
+plugin won has no other way in, and dropping it would hide a skill rather than a duplicate.
+
+**🔴 Invocation needed a real turn, and it is why `skillPart` exists.** Over MSP a leading slash
+is text: the typed dispatch that expands `/plan` is the TUI's own, and the host expands only a
+`skill` input part whose selector it resolves. So the driver rewrites a leading `/selector` into
+that part — but only when the selector is one `skill/list` actually returned, so that a member
+whose message opens with "/tmp/notes.md is stale" keeps their sentence.
+
+One subscription turn proves the other end. A project skill was planted whose body says "reply
+with exactly the word PLUM-ORBIT"; the session was sent `/af-probe`, exactly what the picker
+inserts. The transcript's assistant turn is `"PLUM-ORBIT"` — a word that exists nowhere but in
+that file, so the host expanded the skill rather than being handed its name. `auth.json`'s
+sha256 is unchanged.
+
+**What the endpoint does now.** `GET /sessions/{name}/skills` asks the live host for muse and maps
+the wire's scope onto the picker's three sources (`bundled` and `plugin` both become "cli", which
+is what that column means to a reader, and an unknown future scope lands there too). When the
+native list is non-empty, `.agents/skills` leaves the foreign set — muse resolves that convention
+itself, and offering both would give one skill a native row and an injection row. When it is
+empty (no live host), everything falls back to exactly what muse had before, which is the case
+that matters for a stopped session.
+
+⚠️ **A mutation test that passed, and what it taught.** The first version of the endpoint test
+could not see the convention exclusion at all: the fixture's skill had the same name in its
+frontmatter as the host's selector, so the name-dedupe that runs anyway hid the difference, and
+deleting `nativeConvs` kept the test green. The fixture now carries a frontmatter name the
+native list does not use (`importer-legacy`), and the mutation fails it. A green mutation is the
+test's problem, not the mutation's.
+
+**Not built, deliberately.** `skill/changed` is not subscribed, because there is no cache to
+invalidate: the picker asks the running host each time it opens, which is a round trip to a
+process that already exists. A cache is what would make that notification necessary.
