@@ -114,11 +114,20 @@ muse の `mcpServerConfig`（`internal/agents/muse/mcp.go`）・codex の `codex
 | `outputCursorScope()`（`mcpSessionOutput` 内、`get_session_output` の tail カーソル記憶） | `mcp_stdio.go:3302`（`mcpSessionOutput` からの呼出は `3771`） | `""` を返しカーソル記憶なしに戻るだけ。**`get_session_output` 自体は (a) の `sessionDriveAllowed` ゲートを別途持つ**ので、この経路はゲートを通過した後の二次的な質の劣化——同じツールに (a) と (c) の依存が両方乗っている形 |
 | `mcpRequestBrowserAction()`（`request_browser_action`） | `mcp_stdio.go:3529` | `sessionName` を省いて通知するだけ、呼び出し自体は失敗しない（`browser_handoff_ledger.go` のコメントどおり best-effort）。`set_chromium_control_mode` は `mcpOwningSession` を一切呼ばない（grep 上、依存なし） |
 
-まとめると、lcpp の builtin af 子は今回の修正まで (a) の 9 ツール（`get_session_output`
-の内訳を 1 として数えると計 10 の tools/call 名・11 の呼出箇所）すべてで解決不能
-だった——`generate_image` は advertise 段階で完全に消え、残りは呼べても即エラー。
-(b) の 2 つ（`af_report`・引数付き `af_stop_after_turn`）は今回の修正の影響を受けない
-（後述「未解決」）。(c) の 2 つは壊れたままでも気づかれにくい形で動作は継続していた。
+まとめると、`mcpOwningSession()` の全 11 呼出箇所は (a) 直接依存 9 箇所（`generate_image`
+向け 2・`list_child_sessions`/`list_peer_sessions`/`send_to_peer_session`/
+`propose_session_handoff`/`create_session` 向け各 1 で計 5・`sessionDriveAllowed` の
+共有ゲート 1・`af_stop_after_turn` の fallback 1）と (c) degrade-only 2 箇所
+（`get_session_output` のカーソル・`request_browser_action` の handoff 通知）に分かれる。
+tools/call の名前で数えると (a) は `generate_image`・`list_child_sessions`・
+`list_peer_sessions`・`send_to_peer_session`・`propose_session_handoff`・`create_session`・
+`af_stop_after_turn`・`sessionDriveAllowed` 配下の `stop_session`/
+`stop_session_after_turn`/`resume_session`/`rename_child_session`/`get_session_output`
+の計 12 名——lcpp の builtin af 子は今回の修正までこの 12 名すべてで解決不能だった
+（`generate_image` は advertise 段階で完全に消え、残りは呼べても即エラー）。(b) の 2 つ
+（`af_report`・引数付き `af_stop_after_turn`）は `mcpOwningSession` を呼ばないので今回の
+修正の影響を受けない（後述「未解決」）。(c) の 2 つは壊れたままでも気づかれにくい形で
+動作は継続していた。
 
 ## 検証
 
