@@ -37,7 +37,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
 | Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
-| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓¹⁷ | — | — |
+| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓¹⁸ | ✓¹⁷ | — | — |
 | Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
 
 ¹ copilot's model list depends on the plan: Free offers only "Auto (Copilot picks)".
@@ -237,7 +237,8 @@ run with the workspace trusted — and note that Muse Code treats `AGENTS.md` an
 a precedence, not a sum: with both present it uses `AGENTS.md` and says it is skipping the
 other.
 
-¹⁷ muse is the one kind whose integration servers Agent Fleet does not write into a
+¹⁷ muse is one of the two kinds (lcpp is the other — footnote 18) whose integration servers
+Agent Fleet does not write into a
 configuration file: they are handed to Muse Code when the session starts, which means the set
 can differ per session rather than being one list for your whole workspace. Two things follow.
 A server you add starts being used by sessions launched **after** the change — a running
@@ -245,3 +246,12 @@ session keeps the set it was given. And each server starts when the session's fi
 not when the session opens, so a brand-new session shows nothing connected until you send
 something. Every server is passed as optional, so one that fails to start costs you that
 integration and not the session.
+
+¹⁸ lcpp has no configuration file either — it drives no vendor CLI, so the enabled servers are
+read at the **start of every turn** and connected by Agent Fleet itself. A server you enable or
+disable therefore takes effect on the next turn of a session that is already open; you do not
+have to restart it (this is where lcpp differs from muse, footnote 17). A server that cannot be
+reached costs you its tools for that turn and never the turn itself — the failure is noted once
+in the conversation rather than on every turn. One consequence of lcpp running the tools itself:
+**every tool an integration server offers asks for your permission before it runs**, because
+nothing in the MCP protocol tells Agent Fleet which of them only read.
