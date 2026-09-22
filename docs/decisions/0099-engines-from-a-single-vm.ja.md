@@ -2,8 +2,10 @@
 
 [English](0099-engines-from-a-single-vm.md) | 日本語
 
-- Status: **proposed**（2026-09-22）。実装は無い。この形でスタックを立てたことも、請求を読んだことも
-  まだ無い。
+- Status: **proposed**（2026-09-22）・**同日レビュー済み**（末尾の「レビュー」）。実装は無い。
+  この形でスタックを立てたことも、請求を読んだこともまだ無い。🔄 **決定 3・4・5・6・7・10 は
+  そのレビューで訂正した**——各決定に「何が動いたか」と「どの指摘が動かしたか」を書いてある。
+  **P0 はレビューの門が閉じるまで始めない。**
 - **この文書のために測ったものは何も無い。** 数字にはすべて出所を書いた——
   (a) このリポジトリに既にある実測（`docs/log/67` §67.3・`deploy/aws/ecs/pause.sh`・ADR 0074/0075/0077）、
   (b) 2026-09-22 に読んだテンプレートとコード（「確認した出典」に file:line）、
@@ -78,12 +80,21 @@ VM は、エンジン VPC の中の住所も、箱を買ってよい身元も持
 | タスクがすること | 出口 |
 |---|---|
 | モデル実体の取得、数十 GB（`fetch-models.sh:99`） | **S3 ゲートウェイエンドポイント＝無料**（`00-network.yaml:167`）。ECR のレイヤ実体も S3 |
-| active set の読みと pending の書き、1 周につき小さな SSM 2 回（`fetch-models.sh:79,105,142`） | 今日は NAT ゲートウェイ |
-| ingest タスクの Hugging Face / Civitai からのダウンロード | 今日は NAT ゲートウェイ（`engine_ingest.go:1068,1660` が `AssignPublicIp: DISABLED` を直書き） |
+| active set の読みと pending の書き——SSM。「1 周 2 回」ではなく監視の反復ごと（`fetch-models.sh:74-80,105,141-149`） | 今日は NAT ゲートウェイ |
+| llm の `--api-key`（SSM）と ingest のトークン（Secrets Manager）をタスク開始時に実行ロールで解決（`60-engines.yaml:592-655,727-739`） | 今日は NAT ゲートウェイ |
+| ingest タスクの Hugging Face / Civitai からのダウンロード | 今日は NAT ゲートウェイ（`engine_ingest.go:1060-1069,1652-1661` が `AssignPublicIp: DISABLED` を直書き） |
+
+🔄 **そして以上はタスクの ENI だけの話である。** レビュー R3 が、タスクが走る前に**箱**が必要と
+するものを足した: ECS エージェントの制御・テレメトリ、ECR の認証とマニフェスト（レイヤの実体は
+S3 で無料だが、それ以外は違う）、全コンテナの `awslogs` 配送
+（`60-engines.yaml:501-510,681-710,804-834`）。足りていないインターフェースエンドポイントの名前は
+このリポジトリ自身が書いている——`ecr.api`・`ecr.dkr`・`logs`・`ssm`（`00-network.yaml:160-166`）。
+つまり「S3 エンドポイントがバイトを NAT から外す」は真で、**「越えるのは SSM 2 回だけ」は偽**だった。
 
 ADR 0079 はこの作業を後ろに回したとき、まさにこの問いを予告していた——*「採算は NAT ゲートウェイを
-避けられるかで決まる」*。その通りである。NAT ゲートウェイは**月 $36 ＋ $0.062/GB**、狙う床は
-小さいインスタンス 1 台ぶんだ。
+避けられるかで決まる」*。その通りである。NAT ゲートウェイは **$0.062/h＝この文書の 730 時間月で
+$45.26、＋ $0.062/GB**（本文の他所にある $36 は、配備が立ちっぱなしではなかった月の実請求から来た
+数字）。狙う床は小さいインスタンス 1 台ぶんだ。
 
 ## 決定
 
@@ -98,6 +109,13 @@ ADR 0079 はこの作業を後ろに回したとき、まさにこの問いを�
 
 これが無いと、どの代案も「エンジンスタックの規則にアドレスを名指しで書く」で終わる。再構築を
 跨いで保持できない値を、配備が抱えることになる。
+
+🔄 **初稿が書いていなかったことが 2 つある**（レビュー R2）。`SubnetId` は自由ではない——決定 4 で
+VM が出口になる以上、**IGW 経路を持つ public サブネット**に置かねばならない
+（`00-network.yaml:69-84,100-117`）。そして **2 枚の SG はどちらも転送パケットを通さない**:
+`CpSg` は ALB から CP ポートだけ（`00-network.yaml:186-197`）、公開グループは 22/80/443 だけで、
+private サブネットから転送されたパケットは private の送信元のまま届くので両方に弾かれる。
+VM には 3 つ目の規則——**2 つの private CIDR からの流入だけ**（`00-network.yaml:39-44`）——が要る。
 
 ### 2. エンジンを持つのは配備の性質であって、ランタイムの性質ではない
 
@@ -123,6 +141,18 @@ offers・active set・pending リーダ・ingester・稼働サンプラは、`ec
 確認のときだけ立て、終わったら消す。エンジン・モデルバケツ（ADR 0085 の台帳）・ECR・エンジン表は
 その往復で無傷なので、確認用の配備にかかるのはスタンドアップだけで、再取り込みは要らない。
 
+🔄 **バケツとエンジン表は「走れるエンジン」ではない。そう読める書き方をしたのが誤りだった**
+（レビュー R1・最も大きく効いた指摘）。**エンジンが何を載せるかは Control Plane 自身の DB にある**
+——有効フラグ・選択モデル・S3 キー・引数・ライセンス同意（`store/migrations/0057_engine_models.sql`）。
+起動時、CP は**自分の**カタログから active set を組み直し、**SSM を無条件に上書きする**
+（`engine_catalog.go:615-639`・呼び出しは `engines.go:964-968`）。まっさらな SQLite を持つ VM は
+**生き残っていた active set を空で上書きする**——エンジンは何も載せずに起き上がる。
+
+よってこの決定に欠けていた半分を足す: **カタログの正本は VM 側であり、確認用の配備はこの役を
+決して所有しない——ADR 0079 の `remote` で借りる。** これは決定 6 が必要としている答えと同じ
+なので、2 つは「runbook で 3 択」ではなく 1 本の規則になった。正本を逆向きに動かすことは可能だが、
+それは衝突規則つきのカタログ移送であり、リリース確認はそれを必要としない。
+
 `standup.sh` は今 `00-network 10-data 20-platform 30-ingress` を必須にしている
 （`standup.sh:130`）ので、エンジンの 3 点だけを立てる経路を足す。
 
@@ -134,12 +164,16 @@ VM は「誰かがエンジンを要求しうる間」は必ず立っていて�
 `PrivateEgress: nat-gateway | instance | none` を足し、NAT ゲートウェイのリソースを条件に入れる。
 
 - **$0 で、しかも量のあるバイトはそこを通らない**: モデル実体と ECR レイヤは S3 ゲートウェイ
-  エンドポイント（無料）を通るので、VM を越えるのは 1 周 2 回の SSM と、誰かがモデルを取り込む
-  ときのダウンロードだけ。
+  エンドポイント（無料）を通る。🔄 VM を越えるのは背景の訂正済みの一覧すべて（レビュー R3）——
+  監視ごとの SSM、ECR の認証とマニフェスト、ECS エージェントの通信、`awslogs` の配送、
+  タスク開始時の Secrets Manager、そして ingest のダウンロード。**バイトは小さいが、1 つでも
+  漏らすと箱は idle のまま起き上がり、理由はどこにも出ない。**
 - 壊れ方が正直である: VM が落ちていればエンジンは取得できない——そして VM が落ちているなら、
   エンジンを求めている者もいない。
 - 🔴 これは経路なので、壊れても誰も報告しない。この決定の完了確認は health ではなく、
-  **実モデルを 1 本、この経路で取り込むこと**である。
+  **冷えた状態の一式**である——2 つの private AZ の両方で箱を買い、ECR を冷えた状態で引き、
+  ログが届き、llm の鍵が SSM から解決され、実モデルを 1 本取り込む。モデルのダウンロード
+  「だけ」では足りない。
 
 管理されたものが欲しい配備のために、NAT ゲートウェイはパラメータ 1 つ隣に残る。
 
@@ -156,22 +190,48 @@ VM 用に EC2 信頼の役＋インスタンスプロファイルを持ち、CP 
 RDS シークレット・スロットプールの文を抱えていて、ec2-single の配備には使い道が無い。そして
 シェルを取れば誰でも読める VM の上の資格情報は、小さい方の集合であるべきだ。
 
+🔄 **「CpTaskRole より小さい」は境界ではない**（レビュー R4——設計の穴ではなく**セキュリティ欠陥**
+だった唯一の指摘）。このホストでは Control Plane は**ホストネットワークのコンテナ**
+（`docker-compose.yml`）で、各ワークスペースは同じデーモン上の別コンテナであり自前の外向きを持つ
+（`runtime_docker.go:280-303`）。インスタンスプロファイルの資格情報は `169.254.169.254` から
+読むので、**ワークスペースのコンテナは Control Plane と同じ資格情報に手が届く**——しかもその
+資格情報は fleet を買え、エンジンと ingest の役を PassRole できる
+（`60-engines.yaml:288-302,318-341`）。ADR 0071 決定 4(a) はワークスペースをエンジンの
+ネットワークから遠ざけるために在る。購買権を渡すのは、その決定が拒んでいるものより悪い。
+
+閉じ方は 2 つ、どちらも「覚えておく」ではなく宣言する:
+
+- VM に `MetadataOptions: { HttpTokens: required, HttpPutResponseHopLimit: 1 }`。ホストネット
+  ワークの CP は 1 ホップなので役を読めるが、ブリッジのワークスペースは 2 ホップで読めない。
+  🔴 **`40-ec2-pool` と `60-engines` の 2 より意図的に厳しい**（`40-ec2-pool.yaml:123-125`・
+  `60-engines.yaml:451,521`）——あちらは余分な 1 ホップを要するタスクを抱えており、このホストは
+  要求が逆である。
+- 文は `EcsDrive` を丸写しせず**エンジンの操作を列挙する**。あの文は `*` に対してサービス削除と
+  タスク定義登録まで許している（`20-platform.yaml:197-227`）。
+
+そして P0 のこの決定の試験は**陰性対照**である: ワークスペースのコンテナの中から metadata を
+`curl` して、トークンが取れないこと。
+
+🔄 **Cost Explorer はこの役から外す**（レビュー R6）。`dockerFactory.CostProfile()` は
+`Available:false` を返し（`internal/runtime/profiles.go:362`）、`startCloudCostPoller` はそれで
+Cost Explorer を作る前に return する（`cloudcost.go:112-115`）。docker の CP ではあの権限は
+死んだコードである。何を失うかは決定 10 に書いた。
+
 ### 6. 🔥 1 つのエンジン役に、Control Plane は 1 つだけ
 
 同じエンジン表を読む Control Plane が 2 つあると、両方が同じサービスの desired count を動かし、
 両方が同じ起動テンプレートで箱を買い、両方が active set を書く。コードにこれを検出する仕組みは
 無い。運用者に見えるのは「起動した数秒後に止まるエンジン」である。
 
-したがって、エンジンの 3 点が生きているアカウントでリリース確認のために ECS 構成を立てるときは、
-次のどれか 1 つが必ず真であること:
+🔄 **初稿は逃げ道を 3 つ並べて選択を runbook に預けていた。決定 3 の訂正がそれを決める:
+役を持つのは VM で、リリース確認の配備は `lifecycle: "remote"` で借りる**（ADR 0079）——
+両方の配備が同時に絵を出せる唯一の形であり、カタログを動かさない唯一の形でもある。
 
-- その間 VM の Control Plane を止める、
-- VM 側のエンジンを `off` にして ECS 配備が持つ、
-- ECS 配備が `lifecycle: "remote"` で VM から借りる（ADR 0079）——両方の配備が同時に絵を出せる
-  唯一の形。
-
-これはコードではなく runbook に書く: 安い検出（「別の CP がこのサービスを見ているか」）は
-ほとんどの時間 0 のものを見に行くだけだし、高い検出（エンジン表のリース）は他に使い道が無い。
+🔄 そして**閉じる方向で失敗させる**必要がある。散文では守れないからだ（レビュー R5）: 各 Control
+Plane は自分のプロセスで自分のコントローラ goroutine を起こし（`engines.go:1001-1009`）、2 つは
+別のストアを持ち、リースはどこにも無い。安い番人は宣言である——エンジン表が所有者を名乗り、
+Control Plane は他人の名前が付いた行を管理せず、`standup.sh` は VM が持つ行を主張する配備の
+スタンドアップを拒む。条件付きリースは高い版で、1 人が運用する 2 配備には要らない。
 
 ### 7. 🔥 VM を止めるのは、エンジンを止めたあと
 
@@ -182,6 +242,12 @@ RDS シークレット・スロットプールの文を抱えていて、ec2-sin
 だから停止手順は: エンジンを `off`（または idle 停止を待つ）→ 箱が走っていないことを確認 →
 VM を停止。夜間停止を自動化する（決定 10 の P2）なら、自動化がこの順序を実行するのであって、
 `stop-instances` 単体ではない。
+
+🔄 **そしてそれは「手順書の箇条書き」ではなくコマンド 1 本である**（レビュー R5）。コントローラは
+`context.Background()` で走っている（`engines.go:1007-1008`）ので、VM の停止に引っ掛けられる
+quiesce フックが無い——ホストが消えることに気づく者がいない。P2 は「全ての管理役を off にし、
+ECS と fleet がゼロになるまで待ち、それから `StopInstances` を呼ぶ」停止を 1 本出し、夜間
+スケジュールは**それ**を呼ぶ。API を直接呼ぶ経路は作らない。
 
 ### 8. `AF_ENGINE_SUBNETS`——`AF_ECS_SUBNETS` は他の全部でワークスペースのプールを意味するから
 
@@ -215,28 +281,55 @@ ADR 0079 はこの作業を後ろに回したとき、その試験まで書い�
 3. モデルを 1 本、VM の経路を通る ingest で取り込む;
 4. **Cost Explorer の 3 日ぶん**を、同じ 3 日ぶんの ECS の床と比べる。GPU 時間は両方から除く。
 
+🔄 **読む場所は AWS のコンソールであって、我々の画面ではない**（レビュー R6）。製品のコスト
+ビューはランタイムの `CostProfile` で門番されていて、docker は「請求書は無い」と申告する。
+つまり af-sandbox を ec2-single にすると、**利用者ごとのコストビューは消え**、エンジンの
+`af-role` 行は集計されず、この Control Plane はコスト配分タグを有効化しない。
+`guide/ref/deploy-targets.md` の能力表が既にそう書いている（「利用者ごとの費用按分」は ECS の行）
+ので、これは欠陥ではなく**記録すべき喪失**である——その機能を保つ配備は、リリース前に立てる方だ。
+VM でも欲しいなら、コスト能力をワークスペースのランタイムから切り離すコード変更が要る。
+この ADR はそれを提案しない。
+
 ## 定価でいくらか（算術であって、請求書ではない）
 
 月あたり・ap-northeast-1・730 時間。GPU は両側から除いてある: 買うコードは両方同じで、ADR 0074 の
 実測（`g6.xlarge` $1.1672/h、ADR 0077 以降はその上に載る managed-instances 手数料が無い）は
 ここでは変わらない。
 
-| | 毎日立っている ECS 構成 | この ADR |
-|---|---:|---:|
-| NAT ゲートウェイ | ~$36 | **$0**（決定 4） |
-| ALB | ~$18 | $0 |
-| RDS（db.t4g.micro） | ~$18 | $0（SQLite） |
-| EFS | ~$6 | $0 |
-| CP の Fargate ＋ スロットとそのボリューム | 使用量 | $0（VM の上のコンテナ） |
-| VM | — | $63（`t4g.large`）/ **$31（`t4g.medium`）** |
-| その EBS ＋ 公開 IPv4 | — | ~$14 |
-| `20-platform` ＋ `60-engines` の常設 | 両方同じ | ~$5〜15（ECR・モデルバケツ・名前空間・secrets） |
-| **止められない床** | **~$78** | **~$10**（停止中の VM はその EBS だけ） |
+| | 使った単価 | 毎日立っている ECS 構成 | この ADR |
+|---|---|---:|---:|
+| NAT ゲートウェイ | $0.062/h ＋ $0.062/GB | **$45** ＋ 通信 | **$0**（決定 4） |
+| ALB | $0.0243/h ＋ LCU | ~$18 ＋ LCU | $0 |
+| RDS（db.t4g.micro） | $0.024/h ＋ ストレージ | ~$20 | $0（SQLite） |
+| EFS | 容量ぶん | ~$6 | $0 |
+| CP の Fargate | 0.25〜0.5 vCPU | ~$7〜22 | $0（VM の上のコンテナ） |
+| スロットとそのボリューム | 使用量 | 使用量 | $0（VM の上のコンテナ） |
+| VM | `t4g.large` $0.0864/h・`t4g.medium` $0.0432/h | — | $63 / **$31** |
+| その EBS | gp3 $0.096/GiB・月——**今のテンプレートの既定は 30 GiB**（`ec2-single/cfn.yaml:27-29`）。home を持つ compose ホストはもっと要る | — | 30 GiB で $3・150 GiB で $14 |
+| 公開 IPv4 | $0.005/h | 両方 | $3.6 |
+| `20-platform` ＋ `60-engines` の常設 | 保管＋名前空間＋secrets | 両方同じ | ~$5〜15（ECR 6 本・staging とモデルの 2 バケツ・Cloud Map・secrets 2 本・ロググループ） |
+| Route53 ホストゾーン | $0.50/ゾーン・月 | 両方 | 両方 |
+| **停止中に残る床** | | **~$78**——`teardown.sh` 以外に消す手段が無い | **EBS・EIP・ゾーン・バケツ** |
+
+🔄 この表は **730 時間月の定価の算術であり、定価そのものはこのリポジトリからは検証できない**
+（レビュー R7）。レビューが強いた訂正が 2 つ: NAT の行は書いてある単価どおりなら $45.26 である
+（本文の他所の $36 は、配備が立ちっぱなしではなかった月の実請求から来ている）。そして
+「停止中の床 $10」は誤りで、EIP・ホストゾーン・バケツ・ECR は止まらない。
+
+🔄 **耐久性は値付けされていない。これは丸め誤差ではなく、決めていない決定である**（レビュー R8）。
+VM のボリュームは `DeleteOnTermination: true`（`ec2-single/cfn.yaml:66-68`）で、同梱の
+`backup.sh` はローカルのディレクトリに tar を書くだけ——**そこに今やエンジンのカタログが乗る**
+（決定 3）。床にホスト外の保管先と EBS スナップショットの予定を足すか、「ボリュームを 1 本失えば
+カタログと全ワークスペースの home が消える」と正面から書くか、どちらかである。
 
 最後の行がこの決定である。24/7 の `t4g.large` は ECS の床とほぼ同額——**この ADR は、存在するだけでは
 元が取れない**。元が取れるのは床を**選べるようになる**ことによってだ: インスタンスを適正化し、
-Graviton にし（両イメージとも既にマルチアーキ——`release.sh:67`）、GPU を貸していない夜は API 1 回で
-配備ごと止める。ECS 構成には最後のそれができない。
+GPU を貸していない夜は API 1 回で配備ごと止める。ECS 構成には最後のそれができない。
+🔄 **Graviton は能力であって、出荷済みの成果物ではない**（レビュー R9）: `WS_PLATFORMS` /
+`CP_PLATFORMS` は既定が空で、これまでの全リリースはビルドホストのアーキだけを publish している
+（`release.sh:65-75`）。ec2-single のテンプレートも `t3` と amd64 の AMI しか受け付けない
+（`ec2-single/cfn.yaml:22-33`）。P2 の節約は、マルチアーキのタグを publish し、CLI を含む
+ワークスペースイメージ全体を arm64 で動かすことを条件とする。
 
 ## 却下した案
 
@@ -247,7 +340,9 @@ Graviton にし（両イメージとも既にマルチアーキ——`release.sh
 | **自宅からエンジン VPC へトンネルを掘り**、AWS 側に配備を置かない | ADR 0079 が理由つきで却下済み（インスタンスは短命・Cloud Map 経由・SG は CP しか通さない）。しかも安くならない: トンネルには VPC 内に常時起動の箱が要り、それはこの ADR の VM そのもので、配備が無いぶん機能だけ減る |
 | **ECS の af-sandbox から借り続け、もっと強く pause する** | `pause.sh` のヘッダ自身が残るものを書いている: NAT・ALB・RDS・EFS。しかも休止中の配備は GPU を貸せない——貸すために立てているのに |
 | **Caddy の代わりに ACM** | 決定 9 |
-| **NAT ゲートウェイの代わりに SSM インターフェースエンドポイント** | 1 AZ で月 ~$9、しかも決着しない: ingest タスクは依然としてインターネットが要るので、何らかの NAT が残る。決定 4 の経路が不安定だった場合の退避先 |
+| **NAT ゲートウェイの代わりに SSM インターフェースエンドポイント** | 1 AZ で月 ~$9、しかも決着しない: レビュー R3 の完全な一覧を満たすには `ecr.api`・`ecr.dkr`・`logs` にも要り、置き換えるはずの NAT ゲートウェイより高くつく（`00-network.yaml:160-166` が既にそう書いている） |
+| 🔄 **稼働する窓のあいだだけ NAT ゲートウェイを作る**（レビュー R10） | 管理されたものと保持した EIP を残したまま、エンジンや ingest が動いている間だけ課金される。P1 では採らず退避先に置く: 既に 527〜586 秒あるコールドスタートの前に CloudFormation の往復が増え、そして「消し忘れられるもの」が 1 つ増える——この ADR が相手にしている失敗そのものである |
+| 🔄 **小さな NAT インスタンスを別に立てる**（レビュー R10） | private サブネットの外向きをアプリの VM に結びつけるのが許容できないと分かった場合の、信頼性側の答え。インスタンスと当てるべきパッチが 1 つ増えるので、採用ではなく記録にとどめる |
 | **リリースの合間は af-sandbox を丸ごと畳む** | 可能な限り安い答えで、今日実際にやっていること——実測請求が 16 日で $9 なのはそのためである。代償は毎日の GPU で、それこそが払っている対象 |
 | **自宅のホストに GPU を買う** | このリポジトリの範囲外。そして毎日重く使うなら正直これが最安である: ADR 0076 は LAN の ComfyUI を既に支えており、ADR 0093 の llm 役にも同じ扱いが要る。P2 がインスタンスの大きさに金を使う前に、もう一度決め直す価値がある |
 
@@ -279,20 +374,27 @@ Graviton にし（両イメージとも既にマルチアーキ——`release.sh
    （`workspace/Dockerfile:27`）が、中に入れている各 CLI は別の問いで、P2 の節約はその答えに乗る。
 5. **2 つの構成が名前をどう分け合うか。** 1 つの FQDN を EIP と ALB の間で振り替えるか、確認用の
    配備に別ホスト名を与えて OAuth のリダイレクトを別に登録するか。
-6. **費用の按分は生き残るか。** `60-engines` がエンジン資源に `af-role` を打つのでエンジンの行は
-   解決できるはず。VM は「全ワークスペースを載せた、タグの無いインスタンス 1 台」で、これは
-   `docs/log/67` が既に警告している「77.7% は共有」の形そのものである。
+6. 🔄 **答えが出た。しかもこの ADR に不利な答えである: 費用の按分は生き残らない。** docker の
+   ランタイムではコストビューが off（決定 10）。残る問いは「VM に AWS 請求の能力を別途与える
+   （コード変更）か、この配備の請求は AWS のコンソールで読むと割り切るか」である。
 7. **4 GB で足りるか**——CP・Caddy・ワークスペース 1 つ・NAT 経路。ec2-single の README は
    `WS_MEMORY` を下げれば `t3.medium` で動くと既に書いている。
 
 ## フェーズ
 
-- **P0——動く。ネットワークは何も変えない。** `ec2-single` に VPC 配置・2 枚目の SG・
-  インスタンスプロファイルを足し、`standup.sh` にエンジン 3 点の経路を足し、`AF_ENGINE_SUBNETS` を
-  入れる。NAT ゲートウェイは今のまま。完了条件は、VM の Control Plane が買って止めた箱の上で
-  セッションが絵を 1 枚出すこと。
+- 🔄 **P0 には門がある。** 始める前に、レビューの門が挙げる 4 点をこの文書の中で閉じること:
+  カタログの正本（決定 3）・資格情報の配り方（決定 5）・閉じる方向で失敗する単一所有者（決定 6）・
+  コストビューが消えることを認めた完了条件（決定 10）。4 つとも本文に書いた。残っているのは
+  **誰もまだ走らせていない**ということである。
+- **P0——動く。ネットワークは何も変えない。** `ec2-single` に public サブネットへの VPC 配置・
+  決定 1 の SG 群・IMDSv2＋ホップ上限 1・インスタンスプロファイルを足し、`standup.sh` にエンジン
+  3 点の経路を足し、`AF_ENGINE_SUBNETS` を入れる。NAT ゲートウェイは今のまま。完了条件は、
+  VM の Control Plane が買って止めた箱の上でセッションが絵を 1 枚出すこと、**かつ**ワークスペースの
+  コンテナが IMDS のトークンを取れないこと。
 - **P1——NAT ゲートウェイを外す。** `PrivateEgress` と VM の経路。完了条件は、NAT ゲートウェイを
-  削除した状態で ingest と borrow が両方通り、3 日ぶんの請求が手元にあること。
+  削除した状態で決定 4 の「冷えた一式」が 2 つの private AZ の両方で通ること——箱・冷えた ECR・
+  ログ・SSM の鍵・ingest のトークン・モデル 1 本・自宅からの borrow——そして 3 日ぶんの請求が
+  手元にあること。
 - **P2——床を選ぶ。** インスタンスの系統と大きさ、決定 7 の順序を守った夜間停止、image 役だけの
   Spot（ADR 0075 の切り分け: 中断された会話と中断された絵は同じではない）。
 - **P3——任意。P1 が「経路が問題だ」と言った場合だけ。** active set をモデルバケツに publish して
@@ -303,31 +405,44 @@ Graviton にし（両イメージとも既にマルチアーキ——`release.sh
 
 ## 確認した出典（2026-09-22・このリポジトリ）
 
+🔄 この表の全行をレビューが開き直し、6 行はここに書いてあることを言っていなかった。訂正後の
+場所が下で、行ごとの判定はレビュー R11 にある。
+
 | 主張 | 場所 |
 |---|---|
-| レジストリが要るのは表と AWS 資格情報だけ | `control-plane/engines.go:721-775` |
+| レジストリの起動時の門が要るのは表と AWS 資格情報 | `control-plane/engines.go:721-775` |
+| ……ストア・クラスタ・ingest・active set の publish・サブネットは残りの部分 | `control-plane/engines.go:800-869,945-987` |
 | エンジンのクラスタは既に別変数 | `control-plane/engines.go:812` |
-| 買った箱を置くサブネットは `AF_ECS_SUBNETS` から来る | `control-plane/engines.go:609` |
-| AWS を任意にしているのは external/remote 行 | `control-plane/engines.go:705-715` |
+| 買った箱を置くサブネットは `AF_ECS_SUBNETS` から来る | `control-plane/engines.go:609-616` |
+| AWS を任意にしているのは external/remote 行。読み込みの門は後者 | `control-plane/engines.go:705-715`・`:752-775` |
+| カタログは CP の DB で、active set は起動時に publish し直される | `control-plane/internal/store/migrations/0057_engine_models.sql`・`control-plane/engine_catalog.go:615-639`・`control-plane/engines.go:964-968` |
 | エンジンは CP の SG を import で許している | `deploy/aws/ecs/cfn/60-engines.yaml:422-433` |
-| エンジンサービスは `awsvpc`・private サブネット・公開 IP 無し | `deploy/aws/ecs/cfn/60-engines.yaml:768-776` |
-| CP のエンジン IAM は import した役に貼られている | `deploy/aws/ecs/cfn/60-engines.yaml:279-300,350-378` |
-| `ec2:CreateFleet` は CP のもの | `deploy/aws/ecs/cfn/60-engines.yaml:321` |
+| エンジンサービスは `awsvpc`・private サブネット・公開 IP 無し（llm・image） | `deploy/aws/ecs/cfn/60-engines.yaml:768-776`・`:878-885` |
+| CP のエンジン IAM は import した役に貼られている | `deploy/aws/ecs/cfn/60-engines.yaml:278-341` |
+| 同じ仕組みが import した**実行**ロールに secret の読みを貼る | `deploy/aws/ecs/cfn/60-engines.yaml:350-384` |
+| VM が丸写ししてはいけない広い ECS 操作 | `deploy/aws/ecs/cfn/20-platform.yaml:197-227` |
+| `ec2:CreateFleet` は CP のもの | `deploy/aws/ecs/cfn/60-engines.yaml:318-322` |
+| 箱の側の ECS エージェント・ECR の引き・`awslogs` | `deploy/aws/ecs/cfn/60-engines.yaml:501-510,681-710,804-834` |
+| llm の鍵と ingest のトークンはタスク開始時に解決される | `deploy/aws/ecs/cfn/60-engines.yaml:592-655,727-739` |
 | `20-platform` の import は VPC id だけ | `deploy/aws/ecs/cfn/20-platform.yaml:139` |
-| `20-platform` に時間課金は無い | `deploy/aws/ecs/cfn/20-platform.yaml:34-210` |
-| NAT ゲートウェイと無料の S3 ゲートウェイエンドポイント | `deploy/aws/ecs/cfn/00-network.yaml:136-172` |
-| public サブネットは既に起動時に公開 IP を付ける | `deploy/aws/ecs/cfn/00-network.yaml:75,83` |
-| fetch サイドカーの S3 と SSM 呼び出し | `deploy/aws/ecs/engine-tools/fetch-models.sh:79,99,105,142` |
-| ingest タスクの `AssignPublicIp` は定数 | `control-plane/engine_ingest.go:1068,1660` |
-| `standup.sh` が必須にしているもの | `deploy/aws/ecs/standup.sh:130` |
-| 休止しても残るものと、順序の教訓 | `deploy/aws/ecs/pause.sh`（ヘッダ） |
-| 唯一の実測請求 | `docs/log/67-member-cloud-cost.md` §67.3 |
-| ec2-single は既定 VPC の VM 上の compose・インスタンスプロファイル無し | `deploy/aws/ec2-single/cfn.yaml` |
-| RDS ではなく SQLite | `deploy/compose/.env.example:374` |
-| Caddy が ACME で TLS を終端する | `deploy/compose/Caddyfile:14-16` |
-| 両イメージとも arm64 をビルドする | `deploy/compose/release.sh:67-72` |
-| この ADR が変える能力表 | `guide/ref/deploy-targets.md` |
-| この ADR の正体である「後回しにした案」 | `docs/decisions/0079-remote-engine-from-another-deployment.md:564` |
+| `20-platform` に時間課金のリソースは無い（保管・リクエスト課金は否定していない） | `deploy/aws/ecs/cfn/20-platform.yaml:34-149` |
+| NAT ゲートウェイ・無料の S3 ゲートウェイエンドポイント・なお NAT を通るもの | `deploy/aws/ecs/cfn/00-network.yaml:119-173`（特に `:160-166`） |
+| private の CIDR・public サブネット・IGW 経路 | `deploy/aws/ecs/cfn/00-network.yaml:39-44,69-84,100-117` |
+| `CpSg` は ALB からしか通さない | `deploy/aws/ecs/cfn/00-network.yaml:186-197` |
+| fetch サイドカー: pending の put・S3 の get・active の get・監視ループ | `deploy/aws/ecs/engine-tools/fetch-models.sh:74-80,92-103,105,141-149` |
+| ingest タスクの `AssignPublicIp` は定数 | `control-plane/engine_ingest.go:1060-1069,1652-1661` |
+| ワークスペースのコンテナは自前の外向きを持つ／CP はホストネットワーク | `control-plane/internal/runtime/runtime_docker.go:280-303`・`deploy/compose/docker-compose.yml` |
+| 今日の VM に IMDS の制限は無い。他所は 2 ホップ | `deploy/aws/ec2-single/cfn.yaml:59-73`・`deploy/aws/ecs/cfn/40-ec2-pool.yaml:123-125`・`deploy/aws/ecs/cfn/60-engines.yaml:451,521` |
+| docker は請求書が無いと申告し、ポーラはそれで return する | `control-plane/internal/runtime/profiles.go:362`・`control-plane/cloudcost.go:112-115` |
+| `standup.sh` が必須にしているもの | `deploy/aws/ecs/standup.sh:126-135` |
+| 休止しても残るものと、順序の教訓 | `deploy/aws/ecs/pause.sh:8-26` |
+| 唯一の実測請求 | `docs/log/67-member-cloud-cost.md:54-80` |
+| ec2-single: 既定 VPC・インスタンスプロファイル無し・`DeleteOnTermination`・t3 と amd64 のみ | `deploy/aws/ec2-single/cfn.yaml:22-33,50-73` |
+| RDS ではなく SQLite | `deploy/compose/.env.example:373-374` |
+| Caddy は公開ホストを reverse proxy する。Let's Encrypt と明言しているのは runbook | `deploy/compose/Caddyfile:14-16`・`deploy/aws/ec2-single/README.md:77-79` |
+| arm64 は**既定 off の opt-in**＝今日マルチアーキで出ているイメージは無い | `deploy/compose/release.sh:65-75,147-187` |
+| この ADR が変える能力表 | `guide/ref/deploy-targets.md:28-57` |
+| この ADR の正体である「後回しにした案」 | `docs/decisions/0079-remote-engine-from-another-deployment.md:556-564` |
 
 ## レビュー（2026-09-22・P0 の前）
 

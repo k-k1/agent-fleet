@@ -2,8 +2,11 @@
 
 English | [日本語](0099-engines-from-a-single-vm.ja.md)
 
-- Status: **proposed** (2026-09-22). Nothing is implemented. No stack has been stood up in
-  this shape and no bill has been read against it.
+- Status: **proposed** (2026-09-22), **reviewed the same day** — see "Review" at the end.
+  Nothing is implemented. No stack has been stood up in this shape and no bill has been read
+  against it. 🔄 **Decisions 3, 4, 5, 6, 7 and 10 were corrected by that review**; each one says
+  what moved and which finding moved it, and **P0 does not start until the review's gate is
+  closed**.
 - **Nothing was measured for this document.** Every figure says where it comes from —
   (a) measurements already in this repository (`docs/log/67` §67.3, `deploy/aws/ecs/pause.sh`,
   ADR 0074/0075/0077), (b) templates and code read on 2026-09-22 (file:line under "Sources
@@ -84,12 +87,22 @@ What it actually needs:
 | What the task does | How it gets out |
 |---|---|
 | pulls model objects, tens of GB (`fetch-models.sh:99`) | **S3 gateway endpoint — free** (`00-network.yaml:167`), and ECR layer blobs are S3 too |
-| reads the active set and writes the pending set, two small SSM calls per loop (`fetch-models.sh:79,105,142`) | today: the NAT gateway |
-| the ingest task's downloads from Hugging Face / Civitai | today: the NAT gateway (`engine_ingest.go:1068,1660` hard-code `AssignPublicIp: DISABLED`) |
+| reads the active set, writes the pending set — SSM, at every watch iteration rather than twice per loop (`fetch-models.sh:74-80,105,141-149`) | today: the NAT gateway |
+| resolves the llm `--api-key` (SSM) and the ingest tokens (Secrets Manager) at task start, through the execution role (`60-engines.yaml:592-655,727-739`) | today: the NAT gateway |
+| the ingest task's downloads from Hugging Face / Civitai | today: the NAT gateway (`engine_ingest.go:1060-1069,1652-1661` hard-code `AssignPublicIp: DISABLED`) |
+
+🔄 **And that is only the task's ENI.** The review's R3 added what the *box* needs before a task
+runs at all: the ECS agent's control and telemetry channels, ECR authentication and manifests
+(the layer bytes are S3 and therefore free, the rest is not), and `awslogs` delivery for every
+container (`60-engines.yaml:501-510,681-710,804-834`). This repository already names the missing
+interface endpoints — `ecr.api`, `ecr.dkr`, `logs`, `ssm` (`00-network.yaml:160-166`). So "the
+S3 endpoint takes the bytes off the NAT" is true and **"only two SSM calls cross it" was not**.
 
 ADR 0079 predicted this exact question when it reordered this work: *"its economics turn on
-whether a NAT gateway can be avoided"*. They do: the NAT gateway is about **$36 a month plus
-$0.062 a gigabyte**, against a target floor of one small instance.
+whether a NAT gateway can be avoided"*. They do: the NAT gateway is **$0.062/hour = $45.26 for
+this document's 730-hour month, plus $0.062 a gigabyte** (the $36 quoted from a measured invoice
+is a month in which the deployment was not up the whole time), against a target floor of one
+small instance.
 
 ## Decisions
 
@@ -105,6 +118,14 @@ opens to "the Control Plane", the Control Plane is now a VM, and the sentence st
 
 Without it, every alternative ends in editing the engine stack's security rules to name an
 address — which is the thing a deployment cannot hold across a rebuild.
+
+🔄 **Two things this decision as first written did not say** (review R2). The `SubnetId` is not
+free: the VM has to sit in a **public subnet whose route table carries the IGW route**
+(`00-network.yaml:69-84,100-117`), because decision 4 makes it the way out. And **neither of its
+two groups admits a forwarded packet**: `CpSg` admits the ALB on the CP port alone
+(`00-network.yaml:186-197`) and the public group admits 22/80/443 — a packet forwarded from a
+private subnet keeps that private source and is dropped by both. The VM therefore needs a third
+rule, ingress from the two private CIDRs (`00-network.yaml:39-44`), scoped to nothing else.
 
 ### 2. Owning an engine is a property of the deployment, not of the runtime
 
@@ -132,6 +153,21 @@ The engines, the models bucket (ADR 0085's ledger), the ECR repositories and the
 survive that cycle untouched, so the verification deployment costs a stand-up and not a
 re-ingest.
 
+🔄 **The bucket and the table are not a runnable engine, and this decision was wrong to imply
+they were** (review R1, and it is the finding that changes the most). **What an engine loads
+lives in the Control Plane's own database** — the enabled bit, the selected model, the S3 keys,
+the arguments, the licence acceptance (`store/migrations/0057_engine_models.sql`). At boot the
+Control Plane rebuilds the active set from *its* catalogue and **overwrites the SSM parameter
+unconditionally** (`engine_catalog.go:615-639`, called from `engines.go:964-968`). A VM with a
+fresh SQLite database therefore publishes an **empty active set over the surviving one**, and
+the engine comes up holding nothing.
+
+So this decision gains its missing half: **the VM's catalogue is the authority, and a release
+deployment never owns these roles — it borrows them with ADR 0079's `remote` lifecycle.** That
+is the same answer decision 6 needs, so the two are now one rule rather than a runbook choice
+between three. Moving the authority the other way is possible but is a catalogue migration with
+a conflict rule, and nothing about verifying a release requires it.
+
 `standup.sh` today requires `00-network 10-data 20-platform 30-ingress`
 (`standup.sh:130`); it gains a way to stand up the engine trio alone.
 
@@ -144,12 +180,17 @@ is the only always-on box in the design. So it is the default route of the priva
 resources behind a condition.
 
 - **$0, and the bytes that matter never touch it**: model objects and ECR layers go through
-  the S3 gateway endpoint (free), so what crosses the VM is two SSM calls per poll and, when
-  somebody takes a model in, the ingest download.
+  the S3 gateway endpoint (free). 🔄 What crosses the VM is everything else in the background's
+  corrected list (review R3) — SSM per watch iteration, ECR authentication and manifests, the
+  ECS agent's channels, `awslogs` delivery, Secrets Manager at task start, and the ingest
+  download. Small in bytes, load-bearing in kind: **miss one and the box comes up idle with
+  nothing anywhere saying why.**
 - The failure mode is honest: if the VM is down, no engine can fetch — and if the VM is down,
   nothing is asking for an engine.
-- 🔴 It is a route, so nothing reports it broken. The completion test for this decision is an
-  ingest of a real model through it, not a health check.
+- 🔴 It is a route, so nothing reports it broken. The completion test for this decision is a
+  **cold** one — a GPU box bought from both private AZs, a cold ECR pull, logs arriving, the
+  llm key resolved from SSM, and an ingest of a real model — not a health check, and not a
+  model download alone.
 
 A NAT gateway stays one parameter away for a deployment that wants the managed thing.
 
@@ -167,6 +208,34 @@ the engines log group, Cost Explorer read).
 EFS, RDS-secret and slot-pool statements that an ec2-single deployment has no use for, and a
 credential on a VM that anyone with shell access can read should carry the smaller set.
 
+🔄 **"Smaller than `CpTaskRole`" is not a boundary** (review R4, and it is the one finding that
+is a security defect rather than a design gap). On this host the Control Plane is a
+**host-network container** (`docker-compose.yml`) and every workspace is another container on
+the same daemon with outbound access of its own (`runtime_docker.go:280-303`). Instance-profile
+credentials are read from `169.254.169.254`, so **a workspace container reaches the same
+credential the Control Plane does** — and that credential can buy fleets and pass the engine
+and ingest roles (`60-engines.yaml:288-302,318-341`). ADR 0071 decision 4(a) exists to keep a
+workspace off the engine's network; handing it a purchasing credential is worse than the thing
+that decision refuses.
+
+Two things close it, and both are declared rather than remembered:
+
+- `MetadataOptions: { HttpTokens: required, HttpPutResponseHopLimit: 1 }` on the VM. The
+  host-network Control Plane is one hop and still reads the role; a bridge-network workspace is
+  two and cannot. 🔴 Deliberately **stricter than `40-ec2-pool` and `60-engines`, which both use
+  2** (`40-ec2-pool.yaml:123-125`, `60-engines.yaml:451,521`) — they have tasks that need the
+  extra hop, and this host has the opposite requirement.
+- The statements are **enumerated for the engine operations**, not copied from `EcsDrive`, which
+  allows service deletion and task-definition registration on `*` (`20-platform.yaml:197-227`).
+
+And the P0 test for this decision is a **negative** one: from inside a workspace container,
+`curl` the metadata endpoint and fail to get a token.
+
+🔄 **Cost Explorer comes off this role** (review R6). `dockerFactory.CostProfile()` reports
+`Available:false` (`internal/runtime/profiles.go:362`) and `startCloudCostPoller` returns before
+building a Cost Explorer client when it is (`cloudcost.go:112-115`), so on a docker Control
+Plane those permissions are dead code. What that costs is stated in decision 10.
+
 ### 6. 🔥 One engine role has exactly one Control Plane
 
 Two Control Planes that both read the same engine table will both move the same service's
@@ -174,17 +243,18 @@ desired count, both buy boxes on the same launch template, and both write the ac
 Nothing in the code detects it; what the operator sees is an engine that stops seconds after
 it starts.
 
-So when the ECS build is stood up for a release check against an account whose engine trio is
-live, exactly one of these is true:
+🔄 **The first draft offered three ways out and left the choice to a runbook. Decision 3's
+correction settles it: the VM owns the roles, and a release deployment borrows them with
+`lifecycle: "remote"`** (ADR 0079) — the only variant where both deployments can serve pictures
+at once, and the only one that does not move a catalogue.
 
-- the VM's Control Plane is stopped for the duration, or
-- the VM's engines are set to `off` and the ECS deployment owns them, or
-- the ECS deployment declares them `lifecycle: "remote"` and borrows from the VM (ADR 0079),
-  which is the only variant where both deployments can serve pictures at once.
-
-This belongs in the runbook, not in code: the cheap detection ("is another CP polling this
-service") is a poll of something that is 0 most of the time, and the expensive one is a lease
-in the engine table that nothing else needs.
+🔄 And it must **fail closed**, because prose does not (review R5): each Control Plane starts
+its own controller goroutine from its own process (`engines.go:1001-1009`), the two have
+different stores, and there is no lease anywhere. The cheap guard is a declaration: the engine
+table names the owner, the Control Plane refuses to manage a row that names somebody else, and
+`standup.sh` refuses to stand up a release deployment that claims rows the VM owns. A
+conditional lease is the expensive version and is not needed for two deployments one person
+operates.
 
 ### 7. 🔥 The VM is stopped only after its engines are
 
@@ -196,6 +266,12 @@ would have stopped it is the controller inside the VM.
 Therefore the stop procedure is: engines to `off` (or wait for the idle stop), confirm no box
 is running, then stop the VM. If night-stopping the VM is automated (decision 10's P2), the
 automation performs those steps and not `stop-instances` alone.
+
+🔄 **And it is one command, not a list** (review R5). The controllers run on
+`context.Background()` (`engines.go:1007-1008`), so a VM shutdown has no quiesce hook to hang
+this on: there is nothing that notices the host going away. P2 ships a single stop that sets
+every managed role off, polls ECS and the fleet to zero, and only then calls `StopInstances` —
+and the night schedule calls *that*, never the API directly.
 
 ### 8. `AF_ENGINE_SUBNETS`, because `AF_ECS_SUBNETS` means the workspace pool everywhere else
 
@@ -233,29 +309,58 @@ same image, more cheaply"**. Concretely, all of:
 4. **three days of Cost Explorer**, compared against the same three days' worth of the ECS
    floor, with the GPU hours excluded from both sides.
 
+🔄 **Read in the AWS console, not in ours** (review R6). The product's own cost view is gated on
+the runtime's `CostProfile`, and docker declares no invoice — so moving af-sandbox to ec2-single
+**turns the per-member cost view off**, stops the `af-role` engine rows being polled, and stops
+this Control Plane activating cost-allocation tags. `guide/ref/deploy-targets.md` already says
+as much in its capability table ("cost attribution per member" is an ECS row), which is why this
+is a recorded loss rather than a defect: the deployment that keeps that feature is the one being
+verified before a release. If it is wanted on the VM, the cost capability has to be separated
+from the workspace runtime, and that is a code change this ADR does not propose.
+
 ## What this costs, at list price (arithmetic, not an invoice)
 
 Per month, ap-northeast-1, 730 hours. The GPU is excluded from both columns: it is bought by
 the same code on both and ADR 0074's measurement ($1.1672/h for `g6.xlarge`, and with ADR 0077
 there is no managed-instances fee on top of it) does not change here.
 
-| | ECS build, up every day | this ADR |
-|---|---:|---:|
-| NAT gateway | ~$36 | **$0** (decision 4) |
-| ALB | ~$18 | $0 |
-| RDS (db.t4g.micro) | ~$18 | $0 (SQLite) |
-| EFS | ~$6 | $0 |
-| CP Fargate + slot instances and their volumes | usage | $0 (containers on the VM) |
-| the VM | — | $63 (`t4g.large`) / **$31 (`t4g.medium`)** |
-| its EBS + public IPv4 | — | ~$14 |
-| `20-platform` + `60-engines` standing | same on both | ~$5–15 (ECR, models bucket, namespace, secrets) |
-| **floor that cannot be stopped** | **~$78** | **~$10** (a stopped VM is its EBS) |
+| | rate used | ECS build, up every day | this ADR |
+|---|---|---:|---:|
+| NAT gateway | $0.062/h + $0.062/GB | **$45** + data | **$0** (decision 4) |
+| ALB | $0.0243/h + LCU | ~$18 + LCU | $0 |
+| RDS (db.t4g.micro) | $0.024/h + storage | ~$20 | $0 (SQLite) |
+| EFS | by the gigabyte | ~$6 | $0 |
+| CP Fargate | 0.25–0.5 vCPU | ~$7–22 | $0 (a container on the VM) |
+| slot instances and their volumes | usage | usage | $0 (containers on the VM) |
+| the VM | $0.0864/h `t4g.large`, $0.0432/h `t4g.medium` | — | $63 / **$31** |
+| its EBS | $0.096/GiB-month gp3 — **30 GiB is today's template default** (`ec2-single/cfn.yaml:27-29`), and a compose host holding homes wants more | — | $3 at 30 GiB, $14 at 150 GiB |
+| public IPv4 | $0.005/h | in both | $3.6 |
+| `20-platform` + `60-engines` standing | storage + namespace + secrets | same on both | ~$5–15 (six ECR repositories, the staging and models buckets, Cloud Map, two secrets, the log group) |
+| Route53 hosted zone | $0.50/zone-month | in both | in both |
+| **floor while stopped** | | **~$78** — nothing but `teardown.sh` removes it | **the EBS, the EIP, the zone and the buckets** |
 
-The last row is the decision. A `t4g.large` up 24/7 is roughly break-even against the ECS
+🔄 The figures are **list-price arithmetic over a 730-hour month, and the prices themselves are
+not verifiable from this repository** (review R7). Two corrections the review forced: the NAT
+line is $45.26 at the stated rate — the $36 elsewhere in this document comes from a measured
+invoice for a month the deployment was mostly down — and the "stopped floor" is not $10, because
+the EIP, the hosted zone, the buckets and the ECR repositories do not stop.
+
+🔄 **Durability is not priced at all, and that is a decision owed rather than a rounding error**
+(review R8). The VM's volume is `DeleteOnTermination: true` (`ec2-single/cfn.yaml:66-68`) and
+the supplied `backup.sh` writes a tarball to a local directory — **which now holds the engine
+catalogue** (decision 3). Either the floor gains an off-host target and an EBS snapshot
+schedule, or the ADR states plainly that losing one volume loses the catalogue and every
+workspace home.
+
+The last row is still the decision. A `t4g.large` up 24/7 is roughly break-even against the ECS
 floor — **this ADR does not pay for itself by existing**. It pays when the floor becomes
-choosable: right-size the instance, run Graviton (both images are already multi-arch —
-`release.sh:67`), and stop the whole deployment with one API call on the nights it is not
-lending a GPU, which the ECS build cannot do at all.
+choosable: right-size the instance, and stop the whole deployment with one API call on the
+nights it is not lending a GPU, which the ECS build cannot do at all. 🔄 **Graviton is a
+capability, not a published artefact** (review R9): `WS_PLATFORMS` / `CP_PLATFORMS` default
+empty, so every release so far is the build host's architecture alone (`release.sh:65-75`), and
+the ec2-single template accepts only `t3` types against an amd64 AMI (`ec2-single/cfn.yaml:22-33`).
+P2's saving is conditional on publishing a multi-arch tag and running the whole workspace image,
+CLIs included, on arm64.
 
 ## Rejected alternatives
 
@@ -266,7 +371,9 @@ lending a GPU, which the ECS build cannot do at all.
 | **A tunnel from the home fleet into the engine VPC**, no AWS-side deployment at all | ADR 0079 rejected it on its merits (the instances are short-lived, addressed through Cloud Map, and their SG admits the CP only). It also does not save anything: the tunnel needs an always-on box in the VPC, which is the VM this ADR already has — minus the deployment |
 | **Keep borrowing from an ECS af-sandbox and just pause it harder** | `pause.sh`'s own header says what is left: NAT, ALB, RDS, EFS. A paused deployment also cannot lend a GPU, which is the reason it is up |
 | **ACM instead of Caddy** | Decision 9 |
-| **An SSM interface endpoint instead of the NAT gateway** | ~$9/month for one AZ, and it does not finish the job: the ingest task still needs the internet, so a NAT of some kind stays. It is the fallback if decision 4's route proves unreliable |
+| **An SSM interface endpoint instead of the NAT gateway** | ~$9/month for one AZ, and it does not finish the job: with review R3's full list, `ecr.api`, `ecr.dkr` and `logs` would each need one too, which costs more than the NAT gateway it replaces (`00-network.yaml:160-166` already says so) |
+| 🔄 **A NAT gateway created only for the activity window** (review R10) | Keeps the managed thing and its retained EIP, and bills only while an engine or an ingest is running. Rejected for P1 and kept as the fallback: it puts a CloudFormation round trip in front of a cold start that is already 527–586 s, and it is one more thing that can be left running — the failure this ADR is about |
+| 🔄 **A separate tiny NAT instance** (review R10) | The reliability answer if coupling the private subnets' egress to the application VM proves unacceptable. It costs another instance and another thing to patch, so it is recorded rather than chosen |
 | **Tear af-sandbox down entirely between releases** | The cheapest possible answer and the one in use today — it is what makes the measured bill $9 for 16 days. It costs the daily GPU, which is the thing being paid for |
 | **Buy a GPU for the host at home** | Out of this repository's scope, and honestly the cheapest answer if the daily use is heavy: ADR 0076 already supports a LAN ComfyUI, and ADR 0093's llm role would need the same treatment. Worth re-deciding before P2 spends money on instance sizing |
 
@@ -299,20 +406,29 @@ lending a GPU, which the ECS build cannot do at all.
    saving depends on the answer.
 5. **How do the two builds share a name?** One FQDN moved between an EIP and an ALB, or a
    second hostname for the verification deployment with its own OAuth redirect registered.
-6. **Does cost attribution survive?** `60-engines` stamps `af-role` on the engine resources, so
-   engine rows should still resolve; the VM is one untagged instance carrying every workspace,
-   which is exactly the "77.7% is shared" shape `docs/log/67` already warns about.
+6. 🔄 **Answered, and not in this ADR's favour: cost attribution does not survive.** The cost
+   view is off on a docker runtime (decision 10), so what is left is whether the VM should get
+   an AWS-billing capability of its own — a code change — or whether the bill is simply read in
+   the AWS console for this deployment.
 7. **Is 4 GB enough** for the CP, Caddy, one workspace container and a NAT path? The ec2-single
    README already says `t3.medium` works with `WS_MEMORY` lowered.
 
 ## Phases
 
-- **P0 — it works, and nothing about the network changes.** `ec2-single` gains VPC placement,
-  the second security group and an instance profile; `standup.sh` gains the engine-trio path;
-  `AF_ENGINE_SUBNETS` lands. The NAT gateway stays exactly as it is. Done when a session on the
-  VM generates a picture on a box the VM's Control Plane bought and stopped.
-- **P1 — take the NAT gateway out.** `PrivateEgress` and the VM's route. Done when an ingest
-  and a borrow both complete with the NAT gateway deleted, and three days of bill are in hand.
+- 🔄 **P0 is gated.** Before any of it starts, the four items the review's gate names are
+  closed in this document: the catalogue authority (decision 3), the credential delivery
+  (decision 5), one owner that fails closed (decision 6), and a completion test that admits the
+  cost view is dark (decision 10). All four are now written; what remains is that **nobody has
+  run them.**
+- **P0 — it works, and nothing about the network changes.** `ec2-single` gains VPC placement in
+  a public subnet, the security groups of decision 1, IMDSv2 with a hop limit of 1 and an
+  instance profile; `standup.sh` gains the engine-trio path; `AF_ENGINE_SUBNETS` lands. The NAT
+  gateway stays exactly as it is. Done when a session on the VM generates a picture on a box the
+  VM's Control Plane bought and stopped, **and** a workspace container is refused an IMDS token.
+- **P1 — take the NAT gateway out.** `PrivateEgress` and the VM's route. Done when the cold
+  matrix of decision 4 passes from both private AZs — box, ECR pull, logs, the SSM key, the
+  ingest tokens, a model taken in, and a borrow from the home fleet — with the NAT gateway
+  deleted, and three days of bill are in hand.
 - **P2 — choose the floor.** Instance family and size, the night stop with decision 7's order,
   Spot for the image role only (ADR 0075's split: an interrupted conversation is not the same
   as an interrupted picture).
@@ -324,31 +440,44 @@ lending a GPU, which the ECS build cannot do at all.
 
 ## Sources checked (2026-09-22, this repository)
 
+🔄 Every row here was opened again by the review and six of them did not say what this table
+claimed; the corrected locations are below, and the row-by-row verdicts are review R11.
+
 | Claim | Where |
 |---|---|
-| the registry needs a table and AWS credentials, and nothing else | `control-plane/engines.go:721-775` |
+| the registry's boot gate needs a table and AWS credentials… | `control-plane/engines.go:721-775` |
+| …and the store, cluster, ingest, catalogue publication and subnets are the rest of it | `control-plane/engines.go:800-869,945-987` |
 | the engines' cluster is already a separate variable | `control-plane/engines.go:812` |
-| the subnets a bought box goes in come from `AF_ECS_SUBNETS` | `control-plane/engines.go:609` |
-| an external/remote row is what makes AWS optional | `control-plane/engines.go:705-715` |
+| the subnets a bought box goes in come from `AF_ECS_SUBNETS` | `control-plane/engines.go:609-616` |
+| an external/remote row is what makes AWS optional; the load gate is the second range | `control-plane/engines.go:705-715`, `:752-775` |
+| the catalogue is the CP's database, and the active set is republished at boot | `control-plane/internal/store/migrations/0057_engine_models.sql`, `control-plane/engine_catalog.go:615-639`, `control-plane/engines.go:964-968` |
 | the engine admits the CP's security group, by import | `deploy/aws/ecs/cfn/60-engines.yaml:422-433` |
-| the engine service is `awsvpc`, private subnets, no public IP | `deploy/aws/ecs/cfn/60-engines.yaml:768-776` |
-| the CP's engine IAM is attached to an imported role | `deploy/aws/ecs/cfn/60-engines.yaml:279-300,350-378` |
-| `ec2:CreateFleet` is the CP's, on this stack | `deploy/aws/ecs/cfn/60-engines.yaml:321` |
+| the engine services are `awsvpc`, private subnets, no public IP (llm, then image) | `deploy/aws/ecs/cfn/60-engines.yaml:768-776`, `:878-885` |
+| the CP's engine IAM is attached to an imported role | `deploy/aws/ecs/cfn/60-engines.yaml:278-341` |
+| the same mechanism attaches secret reads to the imported **execution** role | `deploy/aws/ecs/cfn/60-engines.yaml:350-384` |
+| the broad ECS control the VM must not copy | `deploy/aws/ecs/cfn/20-platform.yaml:197-227` |
+| `ec2:CreateFleet` is the CP's, on this stack | `deploy/aws/ecs/cfn/60-engines.yaml:318-322` |
+| the ECS agent, the ECR pull and `awslogs` on the box | `deploy/aws/ecs/cfn/60-engines.yaml:501-510,681-710,804-834` |
+| the llm key and the ingest tokens resolve at task start | `deploy/aws/ecs/cfn/60-engines.yaml:592-655,727-739` |
 | `20-platform` imports only the VPC id | `deploy/aws/ecs/cfn/20-platform.yaml:139` |
-| `20-platform` bills nothing by the hour | `deploy/aws/ecs/cfn/20-platform.yaml:34-210` |
-| the NAT gateway and the free S3 gateway endpoint | `deploy/aws/ecs/cfn/00-network.yaml:136-172` |
-| public subnets already map a public IP on launch | `deploy/aws/ecs/cfn/00-network.yaml:75,83` |
-| the fetch sidecar's S3 and SSM calls | `deploy/aws/ecs/engine-tools/fetch-models.sh:79,99,105,142` |
-| the ingest task's `AssignPublicIp` is a constant | `control-plane/engine_ingest.go:1068,1660` |
-| what `standup.sh` requires | `deploy/aws/ecs/standup.sh:130` |
-| what pausing leaves behind, and the order that matters | `deploy/aws/ecs/pause.sh` (header) |
-| the one measured invoice | `docs/log/67-member-cloud-cost.md` §67.3 |
-| ec2-single is compose on a VM, default VPC, no instance profile | `deploy/aws/ec2-single/cfn.yaml` |
-| SQLite rather than RDS | `deploy/compose/.env.example:374` |
-| Caddy terminates TLS with ACME | `deploy/compose/Caddyfile:14-16` |
-| both images build for arm64 | `deploy/compose/release.sh:67-72` |
-| the capability table this changes | `guide/ref/deploy-targets.md` |
-| the reordered alternative this ADR is | `docs/decisions/0079-remote-engine-from-another-deployment.md:564` |
+| `20-platform` has no hourly resource — storage and request charges are not disproved | `deploy/aws/ecs/cfn/20-platform.yaml:34-149` |
+| the NAT gateway, the free S3 gateway endpoint, and what still crosses the NAT | `deploy/aws/ecs/cfn/00-network.yaml:119-173`, especially `:160-166` |
+| the private CIDRs, the public subnets and the IGW route | `deploy/aws/ecs/cfn/00-network.yaml:39-44,69-84,100-117` |
+| `CpSg` admits the ALB alone | `deploy/aws/ecs/cfn/00-network.yaml:186-197` |
+| the fetch sidecar: pending put, S3 get, active get, and the watch loop | `deploy/aws/ecs/engine-tools/fetch-models.sh:74-80,92-103,105,141-149` |
+| the ingest task's `AssignPublicIp` is a constant | `control-plane/engine_ingest.go:1060-1069,1652-1661` |
+| the workspace container has outbound of its own; the CP is host-network | `control-plane/internal/runtime/runtime_docker.go:280-303`, `deploy/compose/docker-compose.yml` |
+| IMDS is unconstrained on the VM today, and 2 hops elsewhere | `deploy/aws/ec2-single/cfn.yaml:59-73`, `deploy/aws/ecs/cfn/40-ec2-pool.yaml:123-125`, `deploy/aws/ecs/cfn/60-engines.yaml:451,521` |
+| docker declares no invoice, and the poller returns on that | `control-plane/internal/runtime/profiles.go:362`, `control-plane/cloudcost.go:112-115` |
+| what `standup.sh` requires | `deploy/aws/ecs/standup.sh:126-135` |
+| what pausing leaves behind, and the order that matters | `deploy/aws/ecs/pause.sh:8-26` |
+| the one measured invoice | `docs/log/67-member-cloud-cost.md:54-80` |
+| ec2-single: default VPC, no instance profile, `DeleteOnTermination`, t3 and amd64 only | `deploy/aws/ec2-single/cfn.yaml:22-33,50-73` |
+| SQLite rather than RDS | `deploy/compose/.env.example:373-374` |
+| Caddy reverse-proxies the public host; the Let's Encrypt statement is the runbook's | `deploy/compose/Caddyfile:14-16`, `deploy/aws/ec2-single/README.md:77-79` |
+| arm64 is **opt-in and off by default**, so no published image is multi-arch today | `deploy/compose/release.sh:65-75,147-187` |
+| the capability table this changes | `guide/ref/deploy-targets.md:28-57` |
+| the reordered alternative this ADR is | `docs/decisions/0079-remote-engine-from-another-deployment.md:556-564` |
 
 ## Review (2026-09-22, before P0)
 
