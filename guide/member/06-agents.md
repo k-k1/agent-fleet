@@ -69,11 +69,11 @@ and rolls in the cross-cutting features covered elsewhere in this guide — work
 | Reasoning-effort control | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | — | — |
 | Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | — | ✓ | — | — |
-| Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | —⁵ | — | — |
-| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —⁵ | — | — |
+| Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | ✓ | — | — |
+| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —⁵ | — | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | —⁵ | — | — |
 | WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — | ✓ | — | — |
 
@@ -90,8 +90,9 @@ transcript even under Managed, so a stopped kiro session still shows its history
 ⁴ lcpp and muse have no Terminal (CLI) route — lcpp has no vendor CLI to put in a pane;
 muse drives the session protocol directly. Sessions of either kind default to Managed.
 
-⁵ Agent Fleet has not yet built this for muse (not blocked by the protocol — simply not
-verified end to end).
+⁵ muse has no assistant-chat backend — this is written per agent and the muse
+implementation does not exist yet. Every other muse row was ticked only after it was
+observed working on a real session.
 
 The WS-bar usage chip needs an account-level limit to show — opencode
 (bring-your-own provider API keys), cursor, and kiro expose none. **lcpp** and **muse**
