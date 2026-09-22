@@ -4,6 +4,7 @@ package sessionx
 // restore / recreate.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,15 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
+
+// LcppLiveModels is lcpp's live-catalog seam: workspace/agent's main package (agent_models.go's
+// lcppModels) is the only thing that knows how to reach the chat-engine catalog or a member's
+// own llama.cpp connection, and internal/sessionx must not learn the Control Plane exists to
+// ask for one — the same reason internal/harness's EngineToken/EngineWindow are func-vars
+// rather than direct calls (docs/log/93's own seam). nil until main's init wires it; nil is a
+// valid "nothing known yet" answer, matching resolveLiveModel's own handling of an empty
+// catalog (docs/log/109).
+var LcppLiveModels func(ctx context.Context) []agents.ModelChoice
 
 // ManagedAlive reports a managed session's liveness — the runtime-handle
 // counterpart of tmuxx.HasSession (docs/log/27 P2/P3; each kind implements it in its own package).
@@ -734,6 +744,26 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			"llama.cpp は設定でオフになっています。設定 > エージェント > llama.cpp でオンにしてください。")
 		return
 	}
+	// lcpp has no CLI-picked "own default" the way codex/opencode do. This is not because
+	// llama-server itself demands a model name on every request — measured live
+	// (docs/log/107's 2026-09-21 addendum), a single-model instance ignores the request's own
+	// `model` field entirely (any string, or none, answers 200) — it is the Agent's own
+	// requirement: a router deployment (`--models-max`, ADR 0093 decision 7's own measured
+	// `role: "router"`) DOES dispatch on this field, the id pins the session to one entry of
+	// the model list the launch menu itself is built from (there is no vendor "tier alias" the
+	// way claude has), and it is the Console's only record of which model a conversation
+	// believes it is talking to (engines.go's lcppMemberReachable doc comment: a member
+	// swapping the LAN box under an unchanged URL is served by whatever loaded now, silently,
+	// unless something recorded the name it meant to use). So unlike every other kind,
+	// req.Model=="" is never a valid launch here, and letting it through used to reach worktree
+	// creation and the managed driver before failing, with the session left holding only the
+	// user's own first message (docs/log/109). Refused up front, before any side effect, the
+	// same place the disabled/hidden-model guards already sit.
+	if kind := NormalizeKind(req.Kind); kind == session.KindLcpp && strings.TrimSpace(req.Model) == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_model",
+			"llama.cpp セッションにはモデルの指定が必須です（CLI 自身の既定は存在しません）")
+		return
+	}
 	// Models the user disabled (ui-prefs hiddenModels — model_deny.go) are refused for every
 	// kind, before any side effect (clone / worktree). This create is reached not only from
 	// the Console launch flow but from the schedule (CP scheduler) and MCP create_session,
@@ -775,6 +805,23 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 				httpx.WriteErr(w, http.StatusBadRequest, "bad_model", retiredModelError(requested, choices))
 				return
 			}
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
+			return
+		}
+		req.Model = model
+	} else if NormalizeKind(req.Kind) == session.KindLcpp && strings.TrimSpace(req.Model) != "" {
+		// Membership check only, for consistency with the other live-catalog kinds above —
+		// never a rejection of an explicit id just because the catalog could not be reached
+		// (LcppLiveModels nil, or the member/deployment engine not answering): resolveLiveModel
+		// itself passes an empty catalog straight through unchanged (docs/log/109), which is
+		// the right call here too — the create-time guard above already refused "no model at
+		// all"; this only catches a typo'd or since-retired id when the catalog IS known.
+		var choices []agents.ModelChoice
+		if LcppLiveModels != nil {
+			choices = FilterVisibleModels(session.KindLcpp, LcppLiveModels(r.Context()))
+		}
+		model, err := resolveLiveModel(req.Model, choices)
+		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
 			return
 		}

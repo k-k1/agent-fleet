@@ -40,7 +40,7 @@ func TestCreateSessionDefaultsManagedOnlyKindToManaged(t *testing.T) {
 	defer srv.Close()
 
 	var created session.Session
-	do(t, srv, "POST", "/sessions", map[string]any{"dir": dir, "kind": "lcpp"}, http.StatusCreated, &created)
+	do(t, srv, "POST", "/sessions", map[string]any{"dir": dir, "kind": "lcpp", "model": "test-model"}, http.StatusCreated, &created)
 	m, ok := session.ReadMeta(created.Name)
 	if !ok {
 		t.Fatal("meta not persisted")

@@ -8,6 +8,9 @@
   2 件、そして能力 2 行を ✓ にし af サーバ自身の環境の 401 を見つけた実ターン 3 本）。種別は 2 つの前提（プロプライエタリのバイナリが導入済み・資格情報がある）の先で起動
   メニューに出る。**作られていないもの**はガイドの能力表と末尾節に名指してあり、あそこの空欄は
   「まだ検討中」ではなく「まだ作っていない」を意味する。
+  P2-16（コンテキスト使用量ゲージ）実機確認済み（2026-09-22）: `usedTokens=21747`・
+  `windowTokens=1007997`（ワイヤ上に在り、`windowSource=recorded`）・6.7 秒で完了。
+  `caps.contextBar` を `true` に反転し、ガイドの行を ✓ に更新した。
   以下の決定の `file:line` は当時の develop `06ea94d3` で読んだもので、実測が動かした箇所は実装記録が
   訂正している。◎ は Workspace のコンテナで **Muse Code 1.3.0-R3401.1** を実測したもの、△ はベンダ
   文献のみ、× は未測。再現手順は「実機プローブの再現」節にある。
@@ -2372,3 +2375,48 @@ P2-12）。よって冒頭の Status は *adopted* である。見積りは 22�
 無害である理由の方が面白い——Agent 側が作成時に `ManagedOnly` の kind を managed へ既定する
 （`session_handlers.go:707`）ので、CP の一覧は既に反対側で名前の付いた軸の手前に置かれた最適化に
 過ぎない。欠陥へずれようがない一覧は、ここで変える価値が無い。
+
+### P2-16: コンテキスト使用量ゲージ — 配線済み・実機確認済み（2026-09-22）
+
+**作業パッケージが求めたもの。** `session/contextUsage`（MSP のライブなコンテキスト窓圧力通知。
+`SessionContextUsageParams`＝`usedTokens`・省略可能な `windowTokens`・`pressure`）を AF の
+セッション使用量に載せ、Console のコンテキストゲージが muse セッションでも出るようにする。
+
+**作ったもの（実ターン不要）。**
+
+- `handle.go` — 専用の `ctxMu` ロックで保護する 3 フィールドを追加（`ctxUsed int64`・
+  `ctxWindow *int64`・`ctxHasUsage bool`）。`onNotify` に `msp.NotificationSessionContextUsage`
+  の case を追加してデコード・保存する。`ctxWindow` はワイヤに `windowTokens` が無い場合 nil——
+  値は捏造しない。
+- `context.go`（新規）— `ManagedContext(name)` が `(usedTokens, windowTokens, ok)` を返す。
+  ok=false は最初の通知が来るまで継続するので、ターン完了前はゲージを出さない。また
+  `agentImpl` に `agents.ContextReporter`（`ContextFill`）を実装し、チャットミラーの
+  ContextBar がライブ値を拾えるようにする。窓の定数 `MuseDefaultWindow = 1,007,997`（muse-spark
+  の全 4 モデルで実測）。`windowTokens` がワイヤにある場合はその値を優先する。
+- `sessionx/session_usage.go` — `overlayMuseLiveUsage`（`overlayKiroLiveUsage` の並列）を追加し、
+  一括 `/sessions/usage` の context ブロックを `muse.ManagedContext` から埋める。窓ソースは
+  ワイヤが提供した場合 `"recorded"`、フォールバックを使った場合 `"estimated"`。
+
+**テスト（`go test ./...` 全体 51 パッケージ 3940 本で全緑）:**
+`context_test.go` に 6 本の新規テスト: 通知前ガード・通知が記録される（`windowTokens` あり）・
+`windowTokens` 無しでフォールバック・最新スナップショット優先・ハンドル無しの場合の
+`ManagedContext` と `ContextFill` のガード。
+
+**実機確認——2026-09-22（実サブスクリプション 1 ターン）。**
+
+`live_test.go` の `TestLiveContextUsage`: 投げ捨て HOME に `.config/muse` をシンボリックリンク
+（kiro パターン——トークンをコピーしない）、プロンプト `"1"`、90 秒タイムアウト。
+
+ワイヤ上の計測値:
+
+| フィールド | 値 |
+|---|---|
+| `usedTokens` | **21,747** |
+| `windowTokens` | **1,007,997**（ワイヤ上に在り・`windowSource=recorded`）|
+| `windowTokens` なし？ | なし——このターンでホストが送ってきた |
+| ターン状態 | `completed` |
+| 経過時間 | **6.70 秒** |
+| `auth.json` sha256 | 前後で同一（シンボリックリンクのみ・コピーなし）|
+
+`ManagedContext` は計測値で ok=true を返した。ContextBar の経路がエンドツーエンドで確認済み。
+`caps.contextBar` を `registry.ts` で `true` に反転し、ガイドの行を ✓ に更新した。

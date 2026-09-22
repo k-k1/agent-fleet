@@ -52,6 +52,15 @@ const (
 	// failure is at least recorded rather than silently dropped — mcp.go also logs it via
 	// log.Printf on every occurrence, which is the operator-visible half of that.
 	NoteMCPError Note = "mcp_error"
+	// NoteTurnError records that runTurn (driver.go) refused to even call the engine — a
+	// missing model, or no self-hosted engine reachable. Unlike NoteMCPError/NoteModelChange
+	// this DOES get a mirror rendering (transcriptFromRecords below), as a Part{Kind:"error"}
+	// turn — the same Console block codex/opencode's own errors.go targets for a comparable
+	// turn-level failure. Without it, a precondition failure left only the user's own prompt
+	// in the store (AppendUser always runs first, so the turn is durably recorded before
+	// anything can fail) with nothing explaining why nothing followed — a session that reads
+	// as silently ignored rather than one that visibly failed (docs/log/109).
+	NoteTurnError Note = "turn_error"
 )
 
 // Record is one append-only JSONL line. Every field beyond ID/TS/Kind is meaningful for only
@@ -311,6 +320,12 @@ func (s *Store) AppendMCPSyncErrorNote(content string) (Record, error) {
 	return s.append(Record{Kind: KindSystemNote, Note: NoteMCPError, Content: content})
 }
 
+// AppendTurnErrorNote records that runTurn could not even start this turn — see
+// NoteTurnError's own doc comment.
+func (s *Store) AppendTurnErrorNote(content string) (Record, error) {
+	return s.append(Record{Kind: KindSystemNote, Note: NoteTurnError, Content: content})
+}
+
 // AppendUsage records one turn's exact token accounting (decision 8: this kind never
 // estimates). u is copied so the caller's own variable can't alias the stored pointer.
 // window is the context-window size the turn actually ran against (driver.go's own
@@ -531,13 +546,23 @@ func transcriptFromRecords(recs []Record) []transcript.Turn {
 				delete(sites, r.ToolCallID) // a ToolCallID answers exactly one call
 			}
 		case KindSystemNote:
-			if r.Note == NoteCompaction {
+			switch r.Note {
+			case NoteCompaction:
 				// Same convention claude's own compaction summary uses (transcript.go's
 				// Turn.Compact doc comment): a collapsible "context compacted" block, not an
 				// ordinary user prompt.
 				turns = append(turns, transcript.Turn{
 					Role: "user", Compact: true, TS: r.TS, AnchorID: r.ID, Idx: len(turns),
 					Parts: []transcript.Part{{Kind: "text", Text: r.Content}},
+					Text:  r.Content,
+				})
+			case NoteTurnError:
+				// See NoteTurnError's own doc comment: the one system-note kind that gets a
+				// mirror rendering, as an error block on its own synthetic assistant turn (the
+				// preceding KindUser record is the prompt this failure answers).
+				turns = append(turns, transcript.Turn{
+					Role: "assistant", TS: r.TS, AnchorID: r.ID, Idx: len(turns),
+					Parts: []transcript.Part{{Kind: "error", Text: r.Content}},
 					Text:  r.Content,
 				})
 			}

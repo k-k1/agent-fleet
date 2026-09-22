@@ -17,9 +17,11 @@ vi.mock("../chat/api.ts", () => ({ assistantList: vi.fn(async () => ({ assistant
 // api has to answer differently per path, so it funnels through one replaceable mock (an empty
 // array by default).
 const apiGet = vi.fn(async (_path: string): Promise<unknown> => []);
+const apiPost = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({}));
 vi.mock("../../core/api/client.ts", () => ({
   api: (path: string) => apiGet(path),
-  apiJSON: vi.fn(async () => ({})),
+  apiJSON: (...a: unknown[]) => apiPost(...a),
+  isTransientErr: () => false,
   errText: (e: { message?: string }) => e?.message || "",
   errDetail: (e: { message?: string }) => e?.message || "",
   pasteImage: vi.fn(),
@@ -52,14 +54,14 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
-async function mount(): Promise<void> {
+async function mount(kinds: string[] = ["claude"]): Promise<void> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <StartModal kinds={["claude"]} onClose={() => {}} onPickRepo={onPickRepo} />
+        <StartModal kinds={kinds} onClose={() => {}} onPickRepo={onPickRepo} />
       </ToastProvider>,
     );
   });
@@ -76,6 +78,8 @@ beforeEach(async () => {
   onPickRepo.mockReset();
   apiGet.mockReset();
   apiGet.mockImplementation(async () => []);
+  apiPost.mockReset();
+  apiPost.mockImplementation(async () => ({}));
   useReposStore.setState({ repos: [] });
   await mount();
 });
@@ -172,5 +176,48 @@ describe("StartModal — SSM host card subtitle", () => {
     const opts = [...document.querySelectorAll("option")].map((o) => o.textContent || "");
     const withAcct = opts.filter((tx) => tx.includes(t("start.ssm_acct", { id: "123456789012" })));
     expect(withAcct.length).toBe(9);
+  });
+});
+
+// The home stage's own launch button — a separate component from LaunchModal.tsx with its own
+// model state wiring, so a copy-paste mistake there would not be caught by LaunchModal's own
+// tests. lcpp has no CLI-picked own default (docs/log/109): unlike codex/opencode, launching it
+// with no model selected used to POST model="" and fail the very first turn silently.
+describe("StartModal — home stage lcpp model requirement (docs/log/109)", () => {
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("disables Begin while the lcpp catalog is empty, then sends the auto-picked model", async () => {
+    unmount();
+    apiGet.mockImplementation(async (path: string) =>
+      path.includes("agents/lcpp/models") ? { models: [] } : [],
+    );
+    await mount(["lcpp"]);
+    await click(rowFor(t("start.home_title")));
+    await settle();
+    expect(footButton(t("launch.launch")).disabled).toBe(true);
+
+    unmount();
+    apiGet.mockImplementation(async (path: string) =>
+      path.includes("agents/lcpp/models") ? { models: [{ id: "m1", label: "m1" }] } : [],
+    );
+    // Stop startWork right after it captures the POST body, before it reaches session-opening
+    // code this test does not mock (open.ts).
+    apiPost.mockImplementation(async (...a: unknown[]) =>
+      a[0] === "api/sessions" ? { error: { message: "stop-here" } } : {},
+    );
+    await mount(["lcpp"]);
+    await click(rowFor(t("start.home_title")));
+    await settle();
+    expect(footButton(t("launch.launch")).disabled).toBe(false);
+
+    await click(footButton(t("launch.launch")));
+    const call = apiPost.mock.calls.find((c) => c[0] === "api/sessions");
+    expect(call?.[2]).toMatchObject({ model: "m1" });
   });
 });
