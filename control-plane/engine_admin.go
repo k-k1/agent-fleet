@@ -76,6 +76,7 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// routes below, so there is one answer to "may this person take a model in" and not two.
 	mux.HandleFunc("GET /api/admin/engines", a.withIngestAdmin(a.get))
 	mux.HandleFunc("PUT /api/admin/engines/{key}", a.withSuperAdmin(a.put))
+	mux.HandleFunc("PUT /api/admin/engines/{key}/idle", a.withSuperAdmin(a.putIdle))
 	mux.HandleFunc("GET /api/admin/engines/{key}/hourly", a.withSuperAdmin(a.uptime))
 	// Whose work the engine was doing (ADR 0079 open question 7). A separate route from
 	// /hourly next door because it answers a separate question: that one says the GPU was up,
@@ -214,7 +215,7 @@ func (a engineAdminAPI) get(w http.ResponseWriter, r *http.Request, g engineInge
 // before the catalogue existed and what a client written against it still reads.
 func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[string]any {
 	mode := e.mode(ctx)
-	cfg := e.controlCfg()
+	cfg := e.controlCfg(ctx)
 	catalogue := e.catalog.list(ctx)
 	ids := []string{}
 	modelRows := []map[string]any{}
@@ -297,6 +298,7 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// AF_ENGINE_<KEY>_WINDOW_SEC, and it is the window the START decision is made on.
 		row["window_secs"] = int(cfg.window.Seconds())
 		row["idle_secs"] = int(engineIdleWindow(cfg).Seconds())
+		row["idle_min_secs"] = int(cfg.deadline.Seconds())
 	}
 	// The families this provider dispatches on, so the panel can offer a CHOICE instead of a
 	// free-text box that lets an upstream display name through (ADR 0072 decision 2). Absent
@@ -505,7 +507,53 @@ func (a engineAdminAPI) uptime(w http.ResponseWriter, r *http.Request, _ store.I
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, buildEngineHourly(key, rows, fromDay, toDay, e.controlCfg()))
+	writeJSON(w, http.StatusOK, buildEngineHourly(key, rows, fromDay, toDay, e.controlCfg(r.Context())))
+}
+
+const (
+	engineIdleMinSeconds = 60
+	engineIdleMaxSeconds = 24 * 60 * 60
+)
+
+// putIdle changes how long an on-demand GPU may sit unused before it is stopped.
+func (a engineAdminAPI) putIdle(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if e.def.notManagedHere() {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"engine " + key + " is externally managed and has no local idle timer"})
+		return
+	}
+	var b struct {
+		IdleSecs int `json:"idle_secs"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	minimum := engineIdleMinSeconds
+	if deadline := int(engineControlCfgFor(e.def).deadline.Seconds()); deadline > minimum {
+		minimum = deadline
+	}
+	if b.IdleSecs < minimum || b.IdleSecs > engineIdleMaxSeconds {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			fmt.Sprintf("idle_secs must be between %d and %d", minimum, engineIdleMaxSeconds)})
+		return
+	}
+	if a.settings == nil {
+		writeAPIErr(w, internalErr(errors.New("settings store is unavailable")))
+		return
+	}
+	if err := a.settings.SetSetting(r.Context(), engineSettingsFor(key).idle, strconv.Itoa(b.IdleSecs)); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	a.audit(r.Context(), ident, "engine."+key+".idle", strconv.Itoa(b.IdleSecs))
+	writeJSON(w, http.StatusOK, a.row(r.Context(), e))
 }
 
 // engineDisplayState is ttsDisplayState's twin, for the same reason: right after OFF is

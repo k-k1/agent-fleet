@@ -708,6 +708,26 @@ describe("EnginesAdminView", () => {
     expect(text).not.toContain("あと");
   });
 
+  it("saves the on-demand idle window in minutes", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [row({ mode: "ondemand", idle_secs: 900, idle_min_secs: 600 })],
+    });
+    apiJSON.mockResolvedValue({ ...row(), idle_secs: 1800, idle_min_secs: 600 });
+    await mount();
+
+    const input = host!.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(input.value).toBe("15");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "30");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(btn("保存"));
+
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/idle", "PUT", { idle_secs: 1800 });
+  });
+
   // 🔴 The one number on this panel that can be confidently wrong. The rolling count lives in
   // the control plane's memory, so a CP replaced two minutes ago answers "0 requests in the
   // last 5 minutes" while somebody is mid-conversation with the engine.

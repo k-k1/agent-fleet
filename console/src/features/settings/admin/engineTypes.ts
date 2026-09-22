@@ -676,6 +676,7 @@ export type EngineRow = {
    *  off, already stopped, or no demand mark yet — see engineStopETA. Never render a fallback. */
   stop_eta?: string;
   idle_secs?: number;
+  idle_min_secs?: number;
   window_secs?: number;
   window_units?: number;
   window_counted_secs?: number;

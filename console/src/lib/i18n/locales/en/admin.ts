@@ -596,6 +596,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // Shown when there is no countdown to give (it is stopped, so there is nothing to stop).
   // A different claim from a time, and without it a stopped engine shows no window at all.
   "admin.engines_idle_policy": "Stops itself {d} after nobody is using it",
+  "admin.engines_idle_label": "Stop after",
+  "admin.engines_idle_minutes": "minutes",
+  "admin.engines_idle_hint": "Time from the last use until shutdown. Use at least {m} minutes so the engine is not stopped while starting.",
   "admin.engines_recent": "Requests in the last {m} min: {n}",
   // 🔴 The count lives in this control plane's memory and nowhere else, so it resets to 0 when
   // the CP is replaced. Say so whenever less than a full window has been counted; the
