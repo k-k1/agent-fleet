@@ -99,6 +99,45 @@ export function resolveChromium(explicit = "") {
   );
 }
 
+/** Wait for the tab to exist and return its CDP target.
+ *
+ *  The debugging port opens BEFORE the first tab does: `/json/list` answers, with a list that
+ *  has no `type === "page"` in it yet. Reading that list once and taking `.find(...)` blew up
+ *  as `Cannot read properties of undefined (reading 'webSocketDebuggerUrl')` — measured twice
+ *  on CI (2026-09-20 PR #806, 2026-09-22 PR #878), both times on a PR that touched no console
+ *  file at all, and both times green on a re-run. Its fingerprint is SPEED: the step fails
+ *  ~0.8s in, where the other known flake here (a docx check that misses its first document)
+ *  takes the full 15s of an `until` timeout. So: wait for the tab, the same way the port above
+ *  is waited for.
+ *
+ *  `fetchList` and `pause` are injected so the wait can be driven without a browser.
+ *
+ *  @param {number} port
+ *  @param {{ tries?: number,
+ *            fetchList?: (() => Promise<{type: string, webSocketDebuggerUrl?: string}[]>) | null,
+ *            pause?: (ms: number) => Promise<void> }} [opts]
+ */
+export async function pickPageTarget(port, { tries = 100, fetchList = null, pause = sleep } = {}) {
+  const list = fetchList || (async () => (await fetch(`http://127.0.0.1:${port}/json/list`)).json());
+  let last = "";
+  for (let i = 0; i < tries; i++) {
+    try {
+      const targets = await list();
+      const page = targets.find((t) => t.type === "page" && t.webSocketDebuggerUrl);
+      if (page) return page;
+      // Say what WAS there. An endpoint answering with only a `browser` target and one
+      // answering with nothing at all are different failures, and neither is visible
+      // from the message this used to throw.
+      last = `saw ${targets.length} target(s): ${targets.map((t) => t.type).join(", ") || "none"}`;
+    } catch (e) {
+      // The port is open, the endpoint is not serving yet: also "not there yet".
+      last = `/json/list did not answer: ${e.message}`;
+    }
+    await pause(100);
+  }
+  throw new Error(`chromium opened a debugging port but never a page target (${last})`);
+}
+
 /** Start headless Chromium and return a handle with CDP connected. */
 export async function startBrowser({ chromium = "", size = "1000,760" } = {}) {
   const bin = resolveChromium(chromium);
@@ -128,8 +167,7 @@ export async function startBrowser({ chromium = "", size = "1000,760" } = {}) {
   }
   if (!port) throw new Error(`chromium did not open a debugging port (${bin})`);
 
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-  const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl);
+  const ws = new WebSocket((await pickPageTarget(port)).webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
   let id = 0;
   const pending = new Map();
