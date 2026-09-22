@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -390,11 +391,10 @@ func TestHandleSessionSkills(t *testing.T) {
 		}
 	}
 
-	// muse, whose picker used to be EMPTY: it was in no case of the switch at all, so it fell
-	// to the default (no-skills) bucket and the composer offered a muse session nothing —
-	// including the repository's own skills, which reach it by the same injection route as the
-	// four kinds above (ADR 0095 P2-14). Native enumeration over MSP's `skill/list` is the
-	// unbuilt half, and until it exists these entries must be foreign-shaped.
+	// muse with NO live host: `skill/list` has no session to ask about, so the picker falls back
+	// to the foreign (injection) entries — which is also what muse had before P2-23 built the
+	// native half. The fallback matters more than it looks: a native list that does not exist
+	// must not claim `.agents/skills`, or a stopped session's picker would lose them entirely.
 	session.WriteMeta(session.Meta{Name: "sk_muse", Dir: dir, Kind: session.KindMuse})
 	rec = get("sk_muse")
 	resp.Skills = nil
@@ -437,5 +437,65 @@ func TestSessionSkillsRouteRegistered(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/sessions/x/skills", nil)
 	if _, pattern := mux.Handler(req); pattern != "GET /sessions/{name}/skills" {
 		t.Errorf("resolved to %q", pattern)
+	}
+}
+
+// The native half for muse (ADR 0095 P2-23): rows come off MSP's `skill/list`, are invocable as
+// "/selector " (the driver turns that into a `skill` part), and take `.agents/skills` OUT of the
+// foreign entries — muse resolves that convention itself, so offering it twice would give the
+// member a native row and an injection row for one skill.
+func TestMuseNativeSkills(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	dir := t.TempDir()
+	// The frontmatter name deliberately differs from the selector the host reports. A tree whose
+	// names agree would be deduped by name alone, and this test would pass with the convention
+	// exclusion removed — measured by mutation, which is why it is written this way.
+	writeFile(t, filepath.Join(dir, ".agents", "skills", "importer", "SKILL.md"),
+		"---\nname: importer-legacy\ndescription: 取り込み\n---\nbody")
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "scout", "SKILL.md"),
+		"---\nname: scout\ndescription: 調査\n---\nbody")
+
+	orig := museNativeSkills
+	museNativeSkills = func(string) []muse.Skill {
+		return []muse.Skill{
+			{Selector: "importer", DisplayName: "importer", Description: "取り込み", Source: "project"},
+			{Selector: "plan", DisplayName: "plan", Description: "計画", Source: "bundled"},
+			{Selector: "acme:deploy", DisplayName: "deploy", Description: "配備", Source: "plugin", ArgumentHint: "<env>"},
+		}
+	}
+	t.Cleanup(func() { museNativeSkills = orig })
+
+	session.WriteMeta(session.Meta{Name: "sk_muse_live", Dir: dir, Kind: session.KindMuse})
+	req := httptest.NewRequest(http.MethodGet, "/sessions/sk_muse_live/skills", nil)
+	req.SetPathValue("name", "sk_muse_live")
+	rec := httptest.NewRecorder()
+	HandleSessionSkills(rec, req)
+	var resp struct{ Skills []sessionSkill }
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	byName := map[string]sessionSkill{}
+	for _, s := range resp.Skills {
+		byName[s.Name] = s
+	}
+	if s := byName["importer"]; s.Invoke != "/importer " || s.Source != "project" || s.Path != "" {
+		t.Errorf("project skill = %#v", s)
+	}
+	if s := byName["plan"]; s.Invoke != "/plan " || s.Source != "cli" {
+		t.Errorf("bundled skill = %#v", s)
+	}
+	// A plugin skill's scope is "came with the tool", and its argument hint survives the mapping.
+	if s := byName["acme:deploy"]; s.Source != "cli" || s.ArgumentHint != "<env>" {
+		t.Errorf("plugin skill = %#v", s)
+	}
+	// The other convention still arrives by injection…
+	if s := byName["scout"]; s.Path == "" || s.Invoke != "" {
+		t.Errorf("scout should still be foreign: %#v", s)
+	}
+	// …and .agents/skills does not, because the native list already owns it — not even under a
+	// name the native list does not use.
+	if s, ok := byName["importer-legacy"]; ok {
+		t.Errorf("`.agents/skills` was offered as a foreign entry as well: %#v", s)
 	}
 }

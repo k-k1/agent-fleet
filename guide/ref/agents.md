@@ -29,7 +29,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
-| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —⁴ | — | — |
+| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | ✓⁴ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
@@ -51,10 +51,17 @@ as Terminal (CLI) does persist a readable history. kiro, by contrast, keeps a re
 transcript even under Managed.
 
 ⁴ The picker lists what the CLI can discover and launch by itself, and copilot, kiro,
-agy, lcpp and muse have no verified mechanism for that (lcpp drives no CLI at all, so
-there is nothing of its own to discover; muse's own protocol does carry one, and Agent
-Fleet has not built that half yet). Skills written to another convention's `SKILL.md`
-tree in the repository are still offered to them by injection — measured for muse.
+agy and lcpp have no verified mechanism for that (lcpp drives no CLI at all, so there is
+nothing of its own to discover). Skills written to another convention's `SKILL.md` tree in
+the repository are still offered to them by injection.
+
+muse is the exception on this row, and it is a different mechanism from the other ✓s: its
+own protocol carries the list, so what the picker offers is the running session's own
+answer — Muse Code's bundled skills, plugin skills, your own under `~/.config/muse/skills`,
+and the working copy's `.agents/skills/`. Picking one sends it as a skill invocation rather
+than as the text of its name, which is what makes it run. It needs a running session,
+because the list belongs to the session; before that, and for a stopped one, the injection
+route is what remains.
 
 ⁵ kiro accepts an effort flag but exposes no per-model picker.
 

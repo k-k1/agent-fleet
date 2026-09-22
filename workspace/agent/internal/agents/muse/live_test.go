@@ -856,3 +856,100 @@ func intPtr(p *int64) string {
 	}
 	return fmt.Sprintf("%d", *p)
 }
+
+// TestLiveNativeSkillFires spends ONE subscription turn on the half of the skill picker that no
+// free probe can answer (ADR 0095 P2-23).
+//
+// `skill/list` costs nothing — `session/start` accepts a fake credential, so enumeration was
+// measured without touching the account. What needs a real turn is the other direction: whether
+// the HOST expands a `skill` input part, which is the only route AF has (a leading slash is
+// plain text over MSP; the expansion the TUI does is the TUI's).
+//
+// 🔥 The oracle is a word that exists ONLY in the skill's body. Asking the model whether it ran
+// the skill would be asking it to describe its own prompt; a marker it can only have read is the
+// difference between "expanded" and "was handed the literal string /af-probe".
+func TestLiveNativeSkillFires(t *testing.T) {
+	liveGate(t)
+	if !readCredential().Present {
+		t.Skip("not signed in to muse: a real turn requires valid credentials")
+	}
+
+	realHome, _ := os.UserHomeDir()
+	realAuthJSON := filepath.Join(realHome, ".config", "muse", "auth.json")
+	hashBefore, err := fileSHA256(realAuthJSON)
+	if err != nil {
+		t.Fatalf("sha256 before: %v", err)
+	}
+
+	isolateHomeKeepMuseAuth(t)
+
+	dir := filepath.Join(os.Getenv("HOME"), "ws")
+	skillDir := filepath.Join(dir, ".agents", "skills", "af-probe")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const marker = "PLUM-ORBIT"
+	body := "---\nname: af-probe\ndescription: Agent Fleet probe skill\n---\n\n" +
+		"Reply with exactly the word " + marker + " and nothing else. Use no tools.\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	name := "muse-live-skill-" + filepath.Base(os.Getenv("HOME"))
+	t.Cleanup(func() { DropHandle(name) })
+	m := session.Meta{Kind: session.KindMuse, Name: name, Dir: dir, Driver: session.DriverManaged}
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	// Free half: the project skill has to be in the catalogue before there is any point
+	// invoking it, and its selector is what the picker will send.
+	var selectors []string
+	found := false
+	for _, s := range Skills(name) {
+		selectors = append(selectors, s.Selector+"("+s.Source+")")
+		if s.Selector == "af-probe" {
+			found = true
+			if s.Source != "project" {
+				t.Errorf("af-probe source = %q, want project", s.Source)
+			}
+		}
+	}
+	t.Logf("skill/list: %v", selectors)
+	if !found {
+		t.Fatal("the project skill is not in skill/list: there is nothing to invoke")
+	}
+
+	// The turn. What the composer sends is exactly what the picker inserts.
+	if err := th.Send(agents.TurnInput{Prompt: "/af-probe"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if st := waitMuseTurn(t, th.(*threadHandle), 120*time.Second); st != agents.TurnCompleted {
+		t.Fatalf("turn finished in state %s", st)
+	}
+
+	td, ok := agentImpl{}.Transcript(m)
+	if !ok {
+		t.Fatal("no transcript after the turn")
+	}
+	var reply string
+	for _, turn := range td.Turns {
+		if turn.Role == "assistant" {
+			reply += turn.Text
+		}
+	}
+	t.Logf("assistant said: %q", strings.TrimSpace(reply))
+	if !strings.Contains(strings.ToUpper(reply), marker) {
+		t.Errorf("the skill did not fire: the reply carries no %s, so the host was handed text rather than a skill part", marker)
+	}
+
+	hashAfter, err := fileSHA256(realAuthJSON)
+	if err != nil {
+		t.Fatalf("sha256 after: %v", err)
+	}
+	if hashBefore != hashAfter {
+		t.Errorf("auth.json was modified during the test (before=%s after=%s)", hashBefore, hashAfter)
+	}
+}
