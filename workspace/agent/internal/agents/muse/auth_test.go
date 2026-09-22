@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -376,13 +377,16 @@ func TestHandlePollReportsAnExitedLoginChild(t *testing.T) {
 	}
 	deadID := loginFlows.Put(dead)
 	defer loginFlows.Take(deadID)
-	var body string
-	for range 100 {
-		body = post(t, HandlePoll, `{"flow_id":"`+deadID+`"}`).Body.String()
-		if strings.Contains(body, "failed") {
-			break
-		}
+	// Wait until the drain goroutine observes EOF — i.e. the child has exited and all
+	// output is buffered. Only then can HandlePoll reliably report the failure.
+	// Polling HandlePoll before Ended() is true races the drain goroutine (the 100-iteration
+	// tight loop could complete before the child even starts on a loaded runner).
+	select {
+	case <-dead.WaitEnded():
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for dead login child to exit")
 	}
+	body := post(t, HandlePoll, `{"flow_id":"`+deadID+`"}`).Body.String()
 	if !strings.Contains(body, `"failed":true`) || !strings.Contains(body, "device code expired") {
 		t.Fatalf("an exited login child was not reported: %s", body)
 	}
