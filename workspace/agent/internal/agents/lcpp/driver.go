@@ -448,7 +448,6 @@ func (h *threadHandle) pump() {
 // a compaction fires inside the same Run call).
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.sid)
-	defer func() { agents.MarkTurnEnd(h.sid, h.currentState()) }()
 	h.setState(agents.TurnStarting)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -466,13 +465,13 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	st := h.store
 	if _, err := st.AppendUser(in.Prompt); err != nil {
 		log.Printf("lcpp: persisting user turn: %v", err)
-		h.setState(agents.TurnFailed)
+		h.finishTurn(agents.TurnFailed)
 		return
 	}
 	before, err := st.Full()
 	if err != nil {
 		log.Printf("lcpp: reading history: %v", err)
-		h.setState(agents.TurnFailed)
+		h.finishTurn(agents.TurnFailed)
 		return
 	}
 
@@ -555,16 +554,16 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 
 	switch {
 	case interrupted:
-		h.setState(agents.TurnCancelled)
+		h.finishTurn(agents.TurnCancelled)
 	case runErr != nil:
 		var ee *harness.EngineError
 		if errors.As(runErr, &ee) && ee.Retryable() {
-			h.setState(agents.TurnAborted) // e.g. engine_waking timeout — a resend can still work
+			h.finishTurn(agents.TurnAborted) // e.g. engine_waking timeout — a resend can still work
 		} else {
-			h.setState(agents.TurnFailed)
+			h.finishTurn(agents.TurnFailed)
 		}
 	default:
-		h.setState(agents.TurnCompleted)
+		h.finishTurn(agents.TurnCompleted)
 	}
 }
 
@@ -579,7 +578,7 @@ func (h *threadHandle) failTurn(st *Store, msg string) {
 	if _, err := st.AppendTurnErrorNote(msg); err != nil {
 		log.Printf("lcpp: %s: persisting turn error note: %v", h.name, err)
 	}
-	h.setState(agents.TurnFailed)
+	h.finishTurn(agents.TurnFailed)
 }
 
 // Interrupt cancels the running turn's context and clears the queued follow-ups. A blocked
@@ -744,6 +743,17 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 }
 
 // --- small helpers --------------------------------------------------------------
+
+// finishTurn writes the status file before setting the terminal state so that any
+// caller waking on the emitted event (WireLive, sessionx's DriveState, tests) sees
+// status=idle in status.Read immediately — not the stale "working" MarkTurnStart wrote.
+// Calling MarkTurnEnd after setState (e.g. via a defer) lets the event fire first and
+// introduces a window where TurnCompleted is visible but status.Read still returns
+// "working" (the shape TestDriverSendPersistsTurnAndCompletes's status assertion catches).
+func (h *threadHandle) finishTurn(st agents.TurnState) {
+	agents.MarkTurnEnd(h.sid, st)
+	h.setState(st)
+}
 
 func (h *threadHandle) setState(st agents.TurnState) {
 	h.mu.Lock()

@@ -33,6 +33,7 @@ type Flow struct {
 	mu      sync.Mutex
 	out     strings.Builder
 	ended   bool
+	endedCh chan struct{} // closed once, by drain, when it observes EOF
 	Created time.Time
 }
 
@@ -46,7 +47,7 @@ func StartFlow(cmd *exec.Cmd) (*Flow, error) {
 	}
 	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 50, Cols: 4000}) // wide => URL on one line
 
-	f := &Flow{Ptmx: ptmx, Cmd: cmd, Created: time.Now()}
+	f := &Flow{Ptmx: ptmx, Cmd: cmd, endedCh: make(chan struct{}), Created: time.Now()}
 	go f.drain(ptmx)
 	return f, nil
 }
@@ -79,7 +80,7 @@ func StartPipeFlow(cmd *exec.Cmd) (*Flow, error) {
 	// child exits — which is what Ended reports on.
 	_ = wr.Close()
 
-	f := &Flow{Cmd: cmd, rd: rd, Created: time.Now()}
+	f := &Flow{Cmd: cmd, rd: rd, endedCh: make(chan struct{}), Created: time.Now()}
 	go f.drain(rd)
 	return f, nil
 }
@@ -99,6 +100,7 @@ func (f *Flow) drain(src *os.File) {
 			f.mu.Lock()
 			f.ended = true
 			f.mu.Unlock()
+			close(f.endedCh)
 			return
 		}
 	}
@@ -112,6 +114,17 @@ func (f *Flow) Ended() bool {
 	defer f.mu.Unlock()
 	return f.ended
 }
+
+// WaitEnded returns a channel that is closed the moment drain observes EOF on the
+// child's output handle. Use it instead of a busy-poll on Ended() when you need to
+// block until the child is definitely gone:
+//
+//	select {
+//	case <-f.WaitEnded():
+//	case <-time.After(5 * time.Second):
+//	    // hung guard
+//	}
+func (f *Flow) WaitEnded() <-chan struct{} { return f.endedCh }
 
 // Clean returns the accumulated PTY output with ANSI/control noise removed.
 func (f *Flow) Clean() string {
