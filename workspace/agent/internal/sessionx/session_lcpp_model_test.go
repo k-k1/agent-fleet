@@ -1,12 +1,15 @@
 package sessionx
 
 // Regression tests for docs/log/109: unlike codex/opencode, lcpp has no CLI-picked "own
-// default" — llama-server always needs to be told exactly which model file to load — so
-// POST /sessions kind=lcpp with no model used to sail straight through to worktree creation
-// and the managed driver, and the driver then failed the very first turn with only the
-// user's own prompt left in the store (svcnyrc's reproduction). These pin the create-time
-// guard (before any side effect), the live-catalog membership check for an explicit id, and
-// that every other kind is left untouched.
+// default". This is not because llama-server itself demands a model name on every request —
+// a single-model instance ignores the request's own `model` field entirely (measured live,
+// docs/log/107's 2026-09-21 addendum) — it is the Agent's own requirement (a router
+// deployment DOES dispatch on it, and the id is the only record of which catalog entry a
+// session means). So POST /sessions kind=lcpp with no model used to sail straight through to
+// worktree creation and the managed driver, and the driver then failed the very first turn
+// with only the user's own prompt left in the store (svcnyrc's reproduction). These pin the
+// create-time guard (before any side effect), the live-catalog membership check for an
+// explicit id, and that every other kind is left untouched.
 
 import (
 	"context"

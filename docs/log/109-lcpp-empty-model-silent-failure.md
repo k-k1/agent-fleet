@@ -93,26 +93,43 @@ Console からは「送ったのに何も返ってこない」ようにしか見
 
 ## 検証
 
-- Go（`workspace/agent` から）: `go build ./...`・`go vet ./...`・`go test ./... -count=1 -p 2`
-  → 3949 件全緑（新規 9 件含む：`session_lcpp_model_test.go` 6 件・`driver_test.go` 3 件）。
-  `gofmt -l .` は空。
-  - 既存の `session_lcpp_managed_test.go` / `session_lcpp_toggle_test.go` /
-    `session_managed_only_test.go` は、lcpp を model 無しで POST していたため今回の 400 ガードで
-    赤くなった——`model: "test-model"` を足して修正（意図した回帰）。
-  - 変異試験: `requiresConcreteModel`・`canLaunch`（LaunchModal）・`homeModelPending`
-    （StartModal）・`useAutoConcreteModel` の呼び出し（AgentCardParts）を一時的に無効化 or
-    真偽反転し、対応する新規試験が赤に落ちることを確認して Edit で戻した。
-- Console（`console` から）: `npx tsc --noEmit -p .` クリーン、`npx oxlint -c .oxlintrc.json src`
-  警告 0、`npm test`（node + dom 両プロジェクト）3320 件全緑（新規 20 件超含む：
-  `agentModels.dom.test.tsx`・`LaunchModal.dom.test.tsx`・`StartModal.dom.test.tsx`・
-  `LcppCard.dom.test.tsx`）。
-- 既知の赤（本件と無関係と確認済み）:
-  - `internal/agents/lcpp` の driver 系試験は `-count=5`（同一プロセス内で同名セッションを
-    繰り返す）で赤になる——原因はグローバル `handles` map がセッション名だけをキーにしており、
-    テストの繰り返しで前回の（既に破棄された一時ディレクトリを指す）ハンドルを再利用してしまう
-    こと。本件が触っていない既存試験 `TestDriverSendPersistsTurnAndCompletes` を単独で
-    `-count=5` にかけて同じ壊れ方をすることを確認済み——本件由来ではない、既存のテスト分離の
-    問題（別件）。
+初稿はここを `npm test 2>&1 | tail -150` / `go test ... 2>&1 | tail -30`（バックグラウンド化された
+結果をそう表示していた）で確認したと書いていたが、これは `tail` の exit code を拾ってしまう
+（AGENTS.md「パイプ無し exit code」）——しかも Console と Go の重い試験を同時に走らせていた。
+レビュー指摘を受け、パイプ無し・逐次（Console 完了後に Go を開始）でやり直した実際のコマンドと
+exit code は次のとおり（すべて `echo $?` で直接確認、`| tail` は使っていない）:
+
+- `cd console && npm test`（vitest run。`vite.config.js:132` の `maxWorkers: 2` が worker 上限を
+  既に絞っているので追加フラグ無し）→ **exit 0**、`Test Files 314 passed | 1 skipped (315)` /
+  `Tests 3320 passed | 1 skipped (3321)`（新規 20 件超含む：`agentModels.dom.test.tsx`・
+  `LaunchModal.dom.test.tsx`・`StartModal.dom.test.tsx`・`LcppCard.dom.test.tsx`）。
+- （Console 完了後に）`cd workspace/agent && go build ./...` → **exit 0**。
+- `go vet ./...` → **exit 0**。
+- `go test ./... -count=1 -p 2` → **exit 0**、`Go test: 3949 passed in 51 packages`
+  （新規 9 件含む：`session_lcpp_model_test.go` 6 件・`driver_test.go` 3 件）。
+- `out=$(gofmt -l .); echo "[$out]"` → `[]`（出力を読む。exit code だけでは未整形を見落とす）。
+- 既存の `session_lcpp_managed_test.go` / `session_lcpp_toggle_test.go` /
+  `session_managed_only_test.go` は、lcpp を model 無しで POST していたため今回の 400 ガードで
+  赤くなった——`model: "test-model"` を足して修正（意図した回帰）。
+- 変異試験: `requiresConcreteModel`・`canLaunch`（LaunchModal）・`homeModelPending`
+  （StartModal）・`useAutoConcreteModel` の呼び出し（AgentCardParts）を一時的に無効化 or
+  真偽反転し、対応する新規試験が赤に落ちることを確認して Edit で戻した。
+
+既知の赤（本件と無関係と確認済み、単独 `-count=5` の生の結果）:
+
+- `cd internal/agents/lcpp && go test -run 'TestDriverSendPersistsTurnAndCompletes' -count=5 -v .`
+  → **exit 1**、`1 passed, 4 failed`（毎回 `driver_test.go:149: unexpected records: []`）。この
+  試験は本件で一切触っていない既存試験——原因はグローバル `handles` map
+  （`internal/agents/lcpp/driver.go` の `handles map[string]*threadHandle`）がセッション名
+  だけをキーにしており、`-count=N` が同一プロセス内で同じ名前のテストを繰り返すと、2 回目以降の
+  `Resume` が 1 回目の（`t.TempDir()` が既に片付けたディレクトリを指す）ハンドルを再利用して
+  しまうこと。
+- 同じ原因で、本件の新規試験 3 本（`TestDriverSendWithNoModelRecordsVisibleError` /
+  `TestDriverSendWithNoEngineSeamRecordsVisibleError` /
+  `TestDriverSendWithUnreachableEngineRecordsVisibleError`）も単独 `-count=5` では
+  **exit 1**、`3 passed, 12 failed`（同じ `records = [], want [user, turn-error note]`）になる
+  ことを確認した——新しい壊れ方ではなく、上と同じ既存の仕組みに同じ形で乗っているだけ。
+  `-count=1`（通常の CI・上の全体実行）では両方とも緑。
 
 ## 未解決 / 範囲外
 
