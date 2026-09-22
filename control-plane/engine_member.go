@@ -107,7 +107,7 @@ func (e *engineRuntimeState) memberSourceRow(ctx context.Context) (map[string]an
 		row["lifecycle"] = e.def.lifecycle()
 		return row, true
 	}
-	cfg := e.controlCfg()
+	cfg := e.controlCfg(ctx)
 	row["idle_secs"] = int(engineIdleWindow(cfg).Seconds())
 	// The controller's OWN last tick, never a fresh e.ecs.view(ctx) here — see
 	// engineController.memberSnapshot for why a member request must not pay a second

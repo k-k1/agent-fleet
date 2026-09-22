@@ -54,7 +54,7 @@ const (
 //
 // engineSettings names the settings rows one engine owns. `negative` is empty for VOICEVOX,
 // which has nothing to exclude from a voice — a row name that is never read and never written.
-type engineSettings struct{ mode, modeAt, demandAt, negative string }
+type engineSettings struct{ mode, modeAt, demandAt, negative, idle string }
 
 // ttsEngineSettings is the VOICEVOX engine's row names. tts.go writes two of them directly
 // (the admin toggle), so they are named in one place rather than spelled out twice.
@@ -599,6 +599,22 @@ func newEngineController(eng *engineECS, keys engineSettings, warmup func(contex
 	}
 }
 
+func engineControlCfgWithStoredIdle(ctx context.Context, cfg engineControlCfg, settings store.SettingsStore, key string) engineControlCfg {
+	if settings == nil || key == "" {
+		return cfg
+	}
+	v, err := settings.GetSetting(ctx, key)
+	if err != nil || strings.TrimSpace(v) == "" {
+		return cfg
+	}
+	seconds, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || seconds < engineIdleMinSeconds || seconds > engineIdleMaxSeconds {
+		return cfg
+	}
+	cfg.idle = time.Duration(seconds) * time.Second
+	return cfg
+}
+
 // newTTSController is newEngineController for the VOICEVOX engine, plus the one wiring that
 // must not be left to a caller: an engine this controller starts and stops is exactly the
 // engine whose readiness has to wait for a warm-up, and a gate somebody forgot to attach
@@ -757,7 +773,8 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 	snap.unwarmedSince = latestTime(view.lastStart, c.watchSince, c.lastWarmAt)
 	c.mu.Unlock()
 
-	action, reason := decideEngineAction(now, snap, c.cfg)
+	cfg := engineControlCfgWithStoredIdle(ctx, c.cfg, c.settings, c.keys.idle)
+	action, reason := decideEngineAction(now, snap, cfg)
 	// The gate is consulted after the decision, never inside it: what it does — waiting for a
 	// box of the previous instance class to leave, and re-applying the class — is an act with
 	// AWS in it, and decideEngineAction is a pure function over one snapshot (ADR 0074).
