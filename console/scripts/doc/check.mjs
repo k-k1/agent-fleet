@@ -232,9 +232,10 @@ const PANE = `JSON.stringify({
 // (DocPreview.tsx). Same signal the broken-file check below waits on.
 const settled = (s) => !!s.md || s.status.includes("ダウンロード");
 // How long to poll. `until` exits as soon as the condition holds, so a larger value costs nothing
-// on a fast machine. Locally doc:check completes in ~2.5-2.9 s; on a busy GitHub runner the WASM
-// init exceeded 15 s (the old 150-try limit), failing on a randomly-chosen document across two
-// consecutive CI runs (PR #893). 600 tries = 60 s gives 4× headroom with the same fast-path.
+// on a fast machine. Locally doc:check completes in ~2.5-2.9 s; on a busy GitHub runner the
+// conversion did not settle within 15 s (the old 150-try limit) for a randomly-chosen document
+// across two consecutive CI runs (PR #893; .wasm was served 200 both times). 600 tries = 60 s
+// gives 4× headroom with the same fast-path.
 const DOC_TRIES = 600;
 // Why there is no body. Waiting on the body alone runs the whole deadline for any failure and
 // then reports "missing: …", which cannot tell a conversion that came out wrong from a WASM that

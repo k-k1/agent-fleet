@@ -59,6 +59,28 @@ const INK_FN = `((el) => {
 })`;
 const inkOf = (sel) => `${INK_FN}(document.querySelector(${JSON.stringify(sel)}))`;
 
+// How long to poll. `until` exits as soon as the condition holds, so larger values cost nothing
+// on a fast machine. Locally pdf:check completes in ~5 s (3 runs, all 15 checks OK).
+//
+// PDF_LOAD_TRIES (30 s): page-layout waits where .pdfview.is-failed is an early-exit terminal.
+// Failures — a PDF that never loads — exit the same instant the banner appears, so raising this
+// limit does not delay failure detection. Only the happy-path upper bound grows.
+const PDF_LOAD_TRIES = 300;
+// PDF_BEHAVIOR_TRIES (15 s): behavior waits (ink, scroll, zoom, canvas release) that run after
+// the PDF is confirmed loaded and have no failure terminal. Locally these settle in < 200 ms;
+// 15 s = ~75× headroom. If any of these exceeds 15 s the PDF rendered but the feature is broken.
+const PDF_BEHAVIOR_TRIES = 150;
+
+// Returns the page count, or -1 when .pdfview.is-failed has appeared. Used for the "N pages
+// laid out" waits so a PDF that fails to load exits immediately instead of spinning to the limit.
+const PAGES_OR_FAILED = `(() => { if (document.querySelector('.pdfview.is-failed')) return -1;
+  return document.querySelectorAll('.pdfview-page').length; })()`;
+// Returns inkOf(sel), or -2 when .pdfview.is-failed has appeared. Used for the ink wait on
+// assets.pdf: if the page-count wait already detected failure this exits immediately rather than
+// spinning for 30 s. (-1 is "canvas not found/unsized" from inkOf; -2 is the failure sentinel.)
+const inkOrFailed = (sel) =>
+  `(() => { if (document.querySelector('.pdfview.is-failed')) return -2; return ${inkOf(sel)}; })()`;
+
 // ---- Working directory ------------------------------------------------------
 const www = fs.mkdtempSync(path.join(os.tmpdir(), "af-pdfcheck-"));
 process.on("exit", () => fs.rmSync(www, { recursive: true, force: true }));
@@ -226,8 +248,8 @@ try {
   );
 
   // 1. Six page frames appear and the metadata reaches the parent.
-  const pages = await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 6);
-  check(pages === 6, "six pages are laid out", `pages=${pages}`);
+  const pages = await until(b.evaluate, PAGES_OR_FAILED, (n) => n === 6 || n < 0, PDF_LOAD_TRIES);
+  check(pages === 6, "six pages are laid out", pages < 0 ? "PDF failed to load" : `pages=${pages}`);
   const meta = await b.evaluate("window.__meta && window.__meta.pages");
   check(meta === 6, "onMeta reports the page count", `meta=${meta}`);
 
@@ -244,14 +266,14 @@ try {
   // (measured: 1.07%-3.35% on a bare run). It also has to hold in CI, where the runner has no
   // Japanese fonts, renders tofu and reads 1.65% (see the notes in headless.mjs). Ink only ever
   // says that something was drawn.
-  const inked = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001);
+  const inked = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001, PDF_BEHAVIOR_TRIES);
   check(inked > 0.001, "text is drawn on page 1", `ink=${(inked * 100).toFixed(2)}%`);
 
   // 3. The page number, and how it follows scrolling.
   const first = await b.evaluate("document.querySelector('.pdfview-pageno').textContent");
   check(/^1 \//.test(first), "starts on page 1", `bar=${JSON.stringify(first)}`);
   await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 2000");
-  const moved = await until(b.evaluate, "document.querySelector('.pdfview-pageno').textContent", (s) => !/^1 \//.test(s));
+  const moved = await until(b.evaluate, "document.querySelector('.pdfview-pageno').textContent", (s) => !/^1 \//.test(s), PDF_BEHAVIOR_TRIES);
   check(!/^1 \//.test(moved), "the page number advances on scroll", `bar=${JSON.stringify(moved)}`);
 
   // 4. Zooming preserves the reading position (the page number).
@@ -262,6 +284,7 @@ try {
     b.evaluate,
     "document.querySelector('.pdfview-page').getBoundingClientRect().width",
     (w) => w > width0 + 1,
+    PDF_BEHAVIOR_TRIES,
   );
   check(width1 > width0 + 1, "+ makes the page larger", `${Math.round(width0)} -> ${Math.round(width1)}`);
   const after = await b.evaluate("document.querySelector('.pdfview-pageno').textContent");
@@ -287,6 +310,7 @@ try {
     b.evaluate,
     "[...document.querySelectorAll('.pdfview-canvas')].filter((c) => c.width === 0).length",
     (n) => n > 0,
+    PDF_BEHAVIOR_TRIES,
   );
   check(freed > 0, "off-screen pages release their canvas", `freed=${freed}`);
 
@@ -300,8 +324,8 @@ try {
   // Two halves: the request count is > 0, and none of those requests 404s. "No 404s" alone
   // passes trivially — never requesting anything also produces zero 404s.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/assets.pdf`);
-  await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 1);
-  const inkedAsset = await until(b.evaluate, inkOf(".pdfview-canvas"), (v) => v > 0.001);
+  await until(b.evaluate, PAGES_OR_FAILED, (n) => n === 1 || n < 0, PDF_LOAD_TRIES);
+  const inkedAsset = await until(b.evaluate, inkOrFailed(".pdfview-canvas"), (v) => v > 0.001 || v < -1, PDF_LOAD_TRIES);
   const asked = requests.filter((r) => r.path.startsWith(ASSET_PREFIX));
   const missed = asked.filter((r) => r.status !== 200);
   const kinds = new Set(asked.map((r) => r.path.slice(ASSET_PREFIX.length).split("/")[0]));
@@ -315,11 +339,12 @@ try {
     "the bundled assets are served (no 404)",
     missed.length ? `404: ${[...new Set(missed.map((r) => r.path))].slice(0, 3).join(" ")}` : `all ${asked.length} requests 200`,
   );
-  check(inkedAsset > 0.001, "text is drawn for a PDF without embedded fonts too", `ink=${(inkedAsset * 100).toFixed(2)}%`);
+  check(inkedAsset > 0.001, "text is drawn for a PDF without embedded fonts too",
+    inkedAsset < -1 ? "PDF failed to load" : `ink=${(inkedAsset * 100).toFixed(2)}%`);
 
   // 8. A corrupt PDF states a reason instead of showing a blank surface.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/broken.pdf`);
-  const failed = await until(b.evaluate, "document.querySelector('.pdfview.is-failed')?.textContent || ''", (s) => !!s);
+  const failed = await until(b.evaluate, "document.querySelector('.pdfview.is-failed')?.textContent || ''", (s) => !!s, PDF_BEHAVIOR_TRIES);
   check(!!failed, "a corrupt PDF shows a reason", JSON.stringify(failed));
 } finally {
   b.close();
