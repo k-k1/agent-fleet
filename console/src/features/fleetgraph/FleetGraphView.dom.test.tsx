@@ -336,4 +336,39 @@ describe("FleetGraphView", () => {
       expect(Math.min(Number(line.getAttribute("y1")), Number(line.getAttribute("y2")))).toBe(cy);
     }
   });
+
+  it("a finger whose pointerup never arrived does not kill the next drag", async () => {
+    await render();
+    const canvas = host.querySelector<HTMLDivElement>(".fgraph-canvas")!;
+    const pointer = (type: string, id: number, x: number, y: number, isPrimary = true) =>
+      canvas.dispatchEvent(
+        new PointerEvent(type, { bubbles: true, pointerId: id, pointerType: "touch", isPrimary, clientX: x, clientY: y, buttons: 1 }),
+      );
+
+    // The leak: a touch pointer is implicitly captured to the element it went down on, and
+    // a zoom re-renders that element away (an activity band's key carries its clipped
+    // times), so the up is delivered to a node that has left the document. One of these is
+    // enough to make every later ONE-finger drag look like half a pinch — measured on a
+    // phone as "scrolling stopped working entirely" (docs/log/101 §101.14).
+    await act(async () => {
+      pointer("pointerdown", 9901, 100, 100);
+    });
+
+    // A fresh, ordinary one-finger drag. It must be treated as a drag, not as the second
+    // finger of a pinch that will never complete.
+    const seen: number[] = [];
+    const body = host.querySelector<HTMLDivElement>(".fgraph-body")!;
+    Object.defineProperty(body, "scrollTop", {
+      configurable: true,
+      get: () => 0,
+      set: (v: number) => seen.push(v),
+    });
+    await act(async () => {
+      pointer("pointerdown", 7, 200, 300);
+      pointer("pointermove", 7, 200, 260);
+      pointer("pointermove", 7, 200, 220);
+      pointer("pointerup", 7, 200, 220);
+    });
+    expect(seen.length).toBeGreaterThan(0);
+  });
 });

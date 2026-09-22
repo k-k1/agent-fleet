@@ -62,6 +62,15 @@
   display: flex;
   flex-direction: column;
   overflow: auto;
+  /* 🔥 `pan-y` on the whole figure, not just the canvas: touch-action is intersected down
+     the ancestor chain, so this forbids a PAGE pinch-zoom anywhere inside the figure while
+     leaving native vertical scrolling alone. Without it a two-finger gesture that strays
+     onto the label column (168px of a 430px phone) is a gesture the figure never claimed,
+     and the browser zooms the page instead — after which a finger drag pans the visual
+     viewport rather than the lane list, and the figure reads as "scrolling stopped"
+     until the user pinches back out. index.html sets no `user-scalable=no`, and
+     app/viewport.ts is written around page zoom being a state that happens. */
+  touch-action: pan-y;
 }
 /* The time axis, pinned to the top of the scroll box (it used to be the last thing in the
    canvas, i.e. below every lane). `top: 0` is what keeps it readable while the lane list

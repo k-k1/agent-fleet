@@ -7,8 +7,9 @@ English | [日本語](0096-fleet-session-graph.ja.md)
   decision 10 and decisions 14–16** (2026-09-20, §101.11), and a further pass **amended
   decisions 11 and 12, supplemented 16 and added decision 17** (2026-09-21, §101.12). **Decision
   8-2 was then amended** after a real 78-lane fleet showed the arrows from outside the figure
-  running its full height (2026-09-21, §101.13). What is left is P3 (filter by conversation id,
-  the cross-tenant overview, collapsing a spawn's excerpt onto its arrow) and measuring whether
+  running its full height (2026-09-21, §101.13), and **decision 16 took a second supplement**
+  after a real phone stopped scrolling entirely (2026-09-22, §101.14). What is left is P3
+  (filter by conversation id, the cross-tenant overview, collapsing a spawn's excerpt onto its arrow) and measuring whether
   the activity ledger needs write buffering. The design and every measurement are in
   [docs/101](../log/101-fleet-session-graph.md).
 - What it replaces: [0027](0027-operator-interaction-graph.md) (the vertical operator↔session sequence
@@ -526,6 +527,40 @@ vertical included, into a time pan (user's report, 2026-09-20). Both break when 
 - **Zoom is anchored under the pointer or the fingers** (`zoomAt`'s `fraction`). Fixed at the right edge,
   the instant being pinched slides away from the fingers. The **clamp still beats the anchor**: when the
   right edge would pass "now", the anchor is what gives.
+
+**The 2026-09-22 supplement — write the finger bookkeeping assuming it WILL leak** (a real phone stopped
+scrolling altogether).
+
+On the user's phone, a minute of pinching and scrolling left the figure **unable to scroll at all**, and it
+did not recover. The cause is **one finger left in the book that never reported going up**.
+
+- **Why it leaks.** A touch pointer is **implicitly captured to the element it went down on**, and this
+  figure **re-renders that element away**: an activity band's React key carries its **clipped** start and
+  end, so every zoom replaces the `<rect>`s under the fingers. The pointerup is then delivered to a node
+  that has left the document, and the view never hears it.
+- **Why it is fatal.** With one entry leaked, every later **one-finger drag has two fingers in the book**.
+  It takes the pinch branch, one "finger" never moves, the ratio stays inside the deadzone, and the
+  handler returns — **nothing happens**. Zoom and scroll are both dead until a reload.
+- **Three independent guards**, because the leak cannot be prevented from here with certainty, only made
+  harmless:
+  1. **a PRIMARY pointerdown clears the book** — a primary pointer means a new gesture, so whatever is
+     left is stale by definition;
+  2. **a pinch captures both fingers onto the canvas** — a pinch is never a click, so taking them is free,
+     and it moves delivery off the elements being re-rendered;
+  3. **anything not heard from for `STALE_POINTER_MS`** is dropped when a new gesture starts.
+- 🔥 **A gesture this view cannot name must still move something.** Returning when the pinch could not be
+  measured is what turned the leak into a figure that did nothing at all. It now falls through to the pan.
+  Never leave a branch whose only symptom to the user is "it is broken".
+- 🔥 **Do not let a pinch escape to a PAGE zoom.** `index.html` sets no `user-scalable=no`, and
+  `app/viewport.ts` is written around page pinch-zoom being a state that happens. `touch-action` is
+  intersected up the ancestor chain, so **`.fgraph-body` carries `pan-y`**: no pinch anywhere inside the
+  figure can start a page zoom, and native vertical scrolling still works. With `none` on the canvas alone,
+  a two-finger gesture that strays onto the **label column — 168px of a 430px phone** — is one the figure
+  never claims, the browser zooms the page, and from then on a finger drag pans the visual viewport rather
+  than the lane list. That reads as "scrolling stopped" too.
+- **Checked by `console/scripts/fleetgraph/gestures.mjs`** (real touches, repeated, at phone size).
+  📌 **CDP's synthesized touches reproduce neither the implicit-capture retargeting nor a page zoom**, so
+  the leaked state is **built** by dispatching a `PointerEvent` directly, and then measured.
 
 ### Decision 17 — a lane in the figure does not open on click; the NAME is what opens a session
 
