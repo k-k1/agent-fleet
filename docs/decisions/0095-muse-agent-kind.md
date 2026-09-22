@@ -2788,9 +2788,10 @@ The session id is identical across all events of one exec. `run.terminal.complet
 `terminal != "completed"` carries the failure reason. The `payload.text` on the terminal event
 is the authoritative complete reply; delta accumulation is a fallback.
 
-**Console side.** `muse` added to `ASSISTANT_AGENT_KINDS` in `console/src/lib/settings.ts`, and
-`caps.headlessChat: true` in `console/src/agents/registry.ts` (same flip as the other CLI-backed
-kinds). The guide table and footnote ¹¹ updated to ✓.
+**Console side.** `muse` added to `ASSISTANT_AGENT_KINDS` in `console/src/lib/settings.ts`.
+`caps.headlessChat` is left `false` until live-verified; the guide table row stays `—¹¹` and
+footnote ¹¹ updated to describe the "built but not yet live-verified" state.
+`chatx/chat_providers_muse_live_test.go` (see below) is the gate: run it, then flip both.
 
 **Exports added to `internal/agents/muse/program.go`:**
 
@@ -2801,5 +2802,11 @@ kinds). The guide table and footnote ¹¹ updated to ✓.
 
 **No live turn was spent on P2-20.** The parent task's instruction explicitly listed this as
 subscription-gated work requiring user consent before running a real turn against the Meta API.
-The provider is implemented and wired; end-to-end verification (a real chat turn through the
-assistant modal) is deferred until the member chooses to test it.
+The provider is implemented and wired; end-to-end verification is deferred until the member
+approves the turn count.
+
+`chatx/chat_providers_muse_live_test.go` holds the `MUSE_LIVE=1`-gated skeleton: turn 1 checks
+that a real reply arrives and `MuseSessionID` is captured; turn 2 checks that `--session-id`
+continuity works (the model echoes back a word planted in turn 1); turn 3 checks that
+`--disable-shell/write` prevents filesystem writes. When the live test passes, `caps.headlessChat`
+flips to `true` in `registry.ts` and the guide row flips to ✓.

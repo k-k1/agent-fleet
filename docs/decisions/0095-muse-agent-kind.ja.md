@@ -2521,3 +2521,44 @@ P2-12）。よって冒頭の Status は *adopted* である。見積りは 22�
 
 `ManagedContext` は計測値で ok=true を返した。ContextBar の経路がエンドツーエンドで確認済み。
 `caps.contextBar` を `registry.ts` で `true` に反転し、ガイドの行を ✓ に更新した。
+
+### P2-20: アシスタントチャット——`muse exec --json` で実装（ADR 0095 P2-20）
+
+**実装内容。**
+
+`chatx/chat_providers_muse.go` を新規作成し、`chatx.ChatProvider.Send` を実装する `museChat` 構造体を追加した。
+ターンごとに `muse exec` を 1 回呼び出し、最初のイベントの `stream.id` からセッション ID を取得して次ターン以降の `--session-id` に渡すことで会話の継続性を実現する（実測: 同じ ID を渡した 2 回目の exec で `Session match: True` がトレースに出ることを確認済み）。
+
+アーキテクチャ上の決定:
+
+- **`muse exec --json`**（`muse serve` over MSP ではなく）。アシスタントチャットは薄い Q&A レイヤーで、ターンをまたいで管理するライフサイクルも専用ペインもない。`exec` はターンごとに起動・終了し、これは他の CLI バック型プロバイダ（codex・cursor・opencode）と同じ形である。MSP-over-serve は会話ごとにプロセスを常駐させる必要があり、マネージドセッションドライバと同等の複雑さになる一方、ターン単位での利得はない。
+
+- **継続性には `--session-id`・`--no-session-log` は使わない**。この 2 つのフラグは競合する——muse は `--no-session-log` が一緒にあると `--session-id` を受け付けない（"a session id needs retained logging; remove --no-session-log"）。セッション ID は `ChatConversation.MuseSessionID` に保持し、各ターン後に会話レコードに書き戻す。メンバーのセッション一覧への混入は `XDG_DATA_HOME`（エージェント状態ディレクトリのサブディレクトリを指す）で回避する。
+
+- **全クランプをすべての exec の前に適用**。`muse.EnsureClamps()`（マネージドドライバの `Resume` と同じ契約）はバイナリを呼び出す前に `settings.json` を書く。`muse.ChildEnv()`（パッケージ非公開の `childEnv` の公開ラッパーとして新規追加）が env ルートのクランプを渡す: `MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=1`・6 本のオブザーバー無効化変数・`MUSE_NO_AUTO_UPDATE=1`。`--no-foreign-personal-context`（exec 専用フラグ・serve にはない）が argv レベルでの多重防護を担う。
+
+- **プロンプトは `--prompt-file` 経由**。ペルソナの前文とプロンプトを一時ファイルに書き（リターン時に削除）、argv の長さ制限を回避する。マネージドドライバがコンテキスト注入に使うパターンと同じ。
+
+- **セキュリティ姿勢フラグ**: `--disable-shell`・`--disable-write`・`--disable-web-tools`・`--approval-mode never`・`--approval-judge off`。アシスタントチャットは Q&A 専用でホストを変更してはならない。
+
+**ワイヤフォーマット（Muse Code 1.3.0-R3401.1・`--provider echo` および実モデルで実測）。**
+
+`--json` の出力は 1 行 1 JSON オブジェクト:
+
+```json
+{"stream":{"kind":"session","id":"<uuid>"},...,"payload_type":"run.output.delta","payload":{"text":"…"}}
+{"stream":{"kind":"session","id":"<uuid>"},...,"payload_type":"run.terminal.completed","payload":{"terminal":"completed","text":"<full reply>","reason":null}}
+```
+
+セッション ID は 1 回の exec の全イベントで同一。`terminal != "completed"` の `run.terminal.completed` には失敗理由が入る。terminal イベントの `payload.text` が権威ある完全な返答で、デルタの累積はフォールバック。
+
+**Console 側。** `console/src/lib/settings.ts` の `ASSISTANT_AGENT_KINDS` に `"muse"` を追加した。`caps.headlessChat` は実測が済むまで立てない。
+
+**`internal/agents/muse/program.go` への追加エクスポート:**
+
+- `ChildEnv(base []string) []string` — `childEnv` の薄いラッパー。`chatx` は兄弟パッケージなので exec がパッケージ外で動く。
+- `HasCredential() bool` — `readCredential().Present` の薄いラッパー。プロバイダの `museAvailable()` で使う（可用性チェックはネットワーク呼び出しを使ってはならない）。
+
+**P2-20 では実ターンを使っていない。** 親タスクの指示に Meta API への実ターンには利用者の同意が要ると明記されていたため。プロバイダは実装・配線済み。エンドツーエンド検証（アシスタントモーダルからの実際のチャットターン）は利用者がテストを選択した時点に持ち越す。
+
+`chatx/chat_providers_muse_live_test.go` にスケルトン（`MUSE_LIVE=1` ガード付き）を追加した: 1 ターン目で PONG が返りセッション ID が取得できること、2 ターン目で `--session-id` 継続が機能すること（前のターンの内容を踏まえた返答）、`--disable-shell/write` で書き込みツールが遮断されること。実ターンを打ったときにこのテストを走らせてから ✓ にする。
