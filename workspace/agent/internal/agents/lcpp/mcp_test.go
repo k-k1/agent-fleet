@@ -99,6 +99,9 @@ func runFakeMCPServer() {
 		{"name": "touch", "description": "creates an empty file at path", "inputSchema": map[string]any{
 			"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}},
 		}},
+		{"name": "whoami", "description": "returns this child's own AF_SESSION_NAME env var", "inputSchema": map[string]any{
+			"type": "object", "properties": map[string]any{},
+		}},
 	}
 	for {
 		line, ok := r()
@@ -135,6 +138,11 @@ func runFakeMCPServer() {
 				_ = os.WriteFile(path, []byte("touched"), 0o600)
 				write(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{
 					"content": []map[string]any{{"type": "text", "text": "touched"}},
+					"isError": false,
+				}})
+			case "whoami":
+				write(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{
+					"content": []map[string]any{{"type": "text", "text": os.Getenv(sessionNameEnvVar)}},
 					"isError": false,
 				}})
 			default:
@@ -182,6 +190,30 @@ func fakeMCPServerDef(t *testing.T, name, pidFile string) mcpreg.ServerDef {
 	}
 	return mcpreg.ServerDef{
 		Name: name, Transport: mcpreg.TransportStdio, Command: bin,
+		Args: []string{"-test.run=TestHelperProcess"}, Env: env,
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindLcpp},
+	}
+}
+
+// fakeBuiltinAFDef is fakeMCPServerDef's twin for the ONE def identified as the builtin af
+// server (Origin+ID, the pair injectSessionName and attach.go's own extraEnvVars key on — see
+// injectSessionName's own doc comment for why not Name). It is never handed to mcpreg.Create:
+// Create always stamps Origin=OriginUser and mints a fresh ID (store.go), so a builtin row
+// cannot be produced through the registry's own write path at all — these tests hand it
+// straight to the mcpServersForSession stub instead, the same seam TestMain itself uses.
+func fakeBuiltinAFDef(t *testing.T, pidFile string) mcpreg.ServerDef {
+	t.Helper()
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	env := map[string]string{mcpHelperEnvFlag: "1"}
+	if pidFile != "" {
+		env[mcpHelperEnvPidFile] = pidFile
+	}
+	return mcpreg.ServerDef{
+		ID: mcpreg.BuiltinAF, Origin: mcpreg.OriginBuiltin, Name: mcpreg.AFServerName(),
+		Transport: mcpreg.TransportStdio, Command: bin,
 		Args: []string{"-test.run=TestHelperProcess"}, Env: env,
 		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindLcpp},
 	}
@@ -438,6 +470,146 @@ func TestDropHandleKillsMCPStdioChild(t *testing.T) {
 			t.Fatalf("MCP stdio child (pid %d) is still alive after DropHandle", pid)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestInjectSessionNameCopiesOnlyBuiltinAF is injectSessionName's own unit test (mcp.go): it
+// must add AF_SESSION_NAME to exactly the def identified as builtin af (Origin+ID), leave every
+// other def's Env byte-for-byte as ForSession returned it, and never mutate the CALLER's own
+// Env map in place — a later reader of that same map (mcpreg.Load's row, a second call against
+// the same registry snapshot, another session's copy of the same defs slice) must not see this
+// call's name leak in.
+func TestInjectSessionNameCopiesOnlyBuiltinAF(t *testing.T) {
+	builtinEnv := map[string]string{"PRESET": "keep-me"}
+	builtin := mcpreg.ServerDef{ID: mcpreg.BuiltinAF, Origin: mcpreg.OriginBuiltin, Name: "af", Env: builtinEnv}
+	externalEnv := map[string]string{"OTHER": "untouched"}
+	external := mcpreg.ServerDef{ID: "user-1", Origin: mcpreg.OriginUser, Name: "af", Env: externalEnv}
+
+	out := injectSessionName([]mcpreg.ServerDef{builtin, external}, "sess-x")
+	if len(out) != 2 {
+		t.Fatalf("len(out) = %d, want 2", len(out))
+	}
+	if got := out[0].Env[sessionNameEnvVar]; got != "sess-x" {
+		t.Fatalf("builtin af Env[%s] = %q, want %q", sessionNameEnvVar, got, "sess-x")
+	}
+	if got := out[0].Env["PRESET"]; got != "keep-me" {
+		t.Fatalf("builtin af Env[PRESET] = %q, want preserved %q", got, "keep-me")
+	}
+	// A user-registered server named "af" by coincidence (Origin=OriginUser, not the builtin's
+	// OriginBuiltin+BuiltinAF pair) must be left alone — identification is never by Name.
+	if _, ok := out[1].Env[sessionNameEnvVar]; ok {
+		t.Fatalf("non-builtin server (Name coincidentally \"af\") unexpectedly got %s injected: %+v", sessionNameEnvVar, out[1].Env)
+	}
+	if len(out[1].Env) != 1 || out[1].Env["OTHER"] != "untouched" {
+		t.Fatalf("non-builtin server Env = %+v, want untouched {OTHER: untouched}", out[1].Env)
+	}
+
+	if _, ok := builtinEnv[sessionNameEnvVar]; ok {
+		t.Fatalf("injectSessionName mutated the caller's own Env map in place: %+v", builtinEnv)
+	}
+	if len(builtinEnv) != 1 {
+		t.Fatalf("original builtin Env map grew in place: %+v", builtinEnv)
+	}
+
+	// A second call against the SAME original defs, with a DIFFERENT name, must not see any
+	// trace of the first call — the source defs stay clean for every later/concurrent caller.
+	out2 := injectSessionName([]mcpreg.ServerDef{builtin, external}, "sess-y")
+	if got := out2[0].Env[sessionNameEnvVar]; got != "sess-y" {
+		t.Fatalf("second call: builtin af Env[%s] = %q, want %q", sessionNameEnvVar, got, "sess-y")
+	}
+}
+
+// TestInjectSessionNameNoopWithoutAName covers the guard: an unresolved/empty session name (the
+// same "" mcpOwningSession's own cwd fallback already tolerates) must leave defs untouched rather
+// than stamping an empty AF_SESSION_NAME that would make mcpOwningSession fail worse than the
+// pre-fix "unset" case did.
+func TestInjectSessionNameNoopWithoutAName(t *testing.T) {
+	defs := []mcpreg.ServerDef{{ID: mcpreg.BuiltinAF, Origin: mcpreg.OriginBuiltin, Env: map[string]string{"X": "1"}}}
+	out := injectSessionName(defs, "")
+	if len(out) != 1 || out[0].Env[sessionNameEnvVar] != "" || out[0].Env["X"] != "1" {
+		t.Fatalf("empty session name must be a no-op, got %+v", out)
+	}
+}
+
+// TestMCPBuiltinAFChildLearnsOwningSessionName is the process-boundary regression: the builtin
+// af MCP child lcpp spawns (mcpc/stdio.go's dialStdio, exec'd directly from the Agent daemon's
+// own goroutine — there is no vendor CLI or per-session process boundary here the way tmux gives
+// a TERMINAL claude session, or a thread config gives codex) must see the OWNING session's own
+// name, matching mcpOwningSession's contract (mcpx/mcp_stdio.go) so generate_image and the other
+// session-bound af tools resolve instead of silently going missing from tools/list.
+//
+// An ordinary EXTERNAL server runs alongside it in the very same turn as the live negative
+// control: its child must come back with the Agent daemon's own (unmodified) env, proving the
+// injection is scoped to the one def identified as builtin af even at the real process boundary,
+// not merely in the unit test above. Both defs are reused as the SAME Go values across two
+// sequential sessions (the same shape mcpreg.ForSession/mcpreg.Load can return turn after turn),
+// which is what proves cross-session isolation is real rather than an artifact of building a
+// fresh def per session. The driving test process's own AF_SESSION_NAME is set to a THIRD,
+// unrelated sentinel first, so none of these results could be explained by "os.Environ() already
+// happened to carry the right value" — only by lcpp's own explicit hand-down (or its absence).
+func TestMCPBuiltinAFChildLearnsOwningSessionName(t *testing.T) {
+	mcpTestHome(t)
+	const daemonSentinel = "daemon-own-env-must-never-leak-into-a-session-child"
+	t.Setenv(sessionNameEnvVar, daemonSentinel)
+
+	afDef := fakeBuiltinAFDef(t, "")
+	extDef := fakeMCPServerDef(t, "ext", "")
+	mcpServersForSession = func(string) ([]mcpreg.ServerDef, error) {
+		return []mcpreg.ServerDef{afDef, extDef}, nil
+	}
+
+	afWhoami := mcpc.PrefixToolName(afDef.Name, "whoami")
+	extWhoami := mcpc.PrefixToolName("ext", "whoami")
+
+	run := func(sessionName string) (afGot, extGot string) {
+		t.Helper()
+		client := &scriptedClient{turns: []harness.Turn{
+			{ToolCalls: []harness.ToolCall{
+				{ID: "call-af", Name: afWhoami, Arguments: "{}"},
+				{ID: "call-ext", Name: extWhoami, Arguments: "{}"},
+			}, Finish: harness.FinishToolCalls},
+			{Content: "done"},
+		}}
+		wireEngine(t, client)
+
+		m := testMeta(t, sessionName)
+		h, err := NewDriver().Resume(m)
+		if err != nil {
+			t.Fatalf("Resume: %v", err)
+		}
+		if err := h.Send(agents.TurnInput{Prompt: "whoami"}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		waitState(t, h, agents.TurnCompleted, agents.TurnFailed)
+
+		recs, _, err := Open(sidFor(m)).Records()
+		if err != nil {
+			t.Fatalf("Records: %v", err)
+		}
+		results := map[string]string{}
+		for _, r := range recs {
+			if r.Kind == KindToolResult {
+				results[r.ToolCallID] = r.Content
+			}
+		}
+		DropHandle(m.Name)
+		return results["call-af"], results["call-ext"]
+	}
+
+	afA, extA := run("sess-af-whoami-a")
+	if afA != "sess-af-whoami-a" {
+		t.Fatalf("session a: builtin af child's own AF_SESSION_NAME = %q, want the owning session's name %q", afA, "sess-af-whoami-a")
+	}
+	if extA != daemonSentinel {
+		t.Fatalf("session a: external MCP server's own AF_SESSION_NAME = %q, want the daemon's unmodified env (%q) — injection must not reach non-builtin defs", extA, daemonSentinel)
+	}
+
+	afB, extB := run("sess-af-whoami-b")
+	if afB != "sess-af-whoami-b" {
+		t.Fatalf("session b: builtin af child's own AF_SESSION_NAME = %q, want %q (must not bleed session a's name or the daemon's own)", afB, "sess-af-whoami-b")
+	}
+	if extB != daemonSentinel {
+		t.Fatalf("session b: external MCP server's own AF_SESSION_NAME = %q, want the daemon's unmodified env (%q)", extB, daemonSentinel)
 	}
 }
 
