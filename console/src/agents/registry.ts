@@ -610,6 +610,11 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     terminalDriver: false,
     tuiMemoryCost: "",
     caps: caps({
+      // Live-verified 2026-09-22 (ADR 0095 P2-17), one subscription turn: the driver reads the
+      // attached file and sends an MSP `image` part, the host echoed the attachment back on the
+      // userMessage item (type=image, mediaType=image/png), and the model reported a token that
+      // exists only in that PNG's pixels — never in the prompt.
+      imagePaste: true,
       // Measured end to end on 2026-09-21 (ADR 0095 P2-14): a `once` schedule fired into a
       // running muse session, the prompt arrived carrying the schedule source, and the session
       // answered it. lcpp's row is still off because nobody has watched one.

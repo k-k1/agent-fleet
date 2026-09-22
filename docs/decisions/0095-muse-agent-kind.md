@@ -10,6 +10,10 @@ English | [日本語](0095-muse-agent-kind.ja.md)
   P2-16 (context-usage gauge) wired and live-verified (2026-09-22): `usedTokens=21747`,
   `windowTokens=1007997` on the wire (`windowSource=recorded`), turn completed in 6.7 s.
   `caps.contextBar` flipped to `true` and guide row updated to ✓.
+  P2-17 (image paste) live-verified (2026-09-22): the host echoed `type="image"
+  mediaType="image/png"` back on the userMessage item and the model read a token that exists
+  only in the PNG's pixels, so `caps.imagePaste` and that guide row are ✓ too. Three rows still
+  carry footnote 11: handoff, the chat bridge, use as the assistant chat.
   The kind is offered in the launch menu behind its two preconditions (the proprietary
   binary installed, a credential stored). What is NOT built is named in the guide's own capability
   table and in the closing section, so an unticked row there means "not built", never "still
@@ -2529,6 +2533,40 @@ screenshot must never send a turn that mentions nothing. Six-arm mutation sweep,
 sweep also deleted a branch it proved was untestable (a `stat`-size check the post-read length
 check already covered). The Console cap stays OFF and the guide row stays `—`: ticking it is one
 turn with a real image, and this table ticks what was watched.
+
+### P2-17: image paste — ticked, on one turn and two oracles (2026-09-22)
+
+P2-15 built the driver half (`inputParts` reads an attached `.png/.jpg/.gif/.webp` and sends a
+real MSP `image` part) and deliberately left the row `—`: the wire shape was pinned by unit
+tests and a six-arm mutation sweep, but whether the vendor's host ACCEPTS those bytes and shows
+them to the model is not something AF can assert about itself. One subscription turn settled it
+(`TestLiveImagePasteReachesTheModel`, turn completed in 7.9 s).
+
+**Two oracles, and the wire one comes first.** The host echoes attachment METADATA back on the
+userMessage item (`Item.Attachments`; base64 payloads are deliberately not echoed on the view),
+and AF's own store keeps the whole item — so "the host took an image" is answerable without
+reading a word the model wrote:
+
+```
+host echoed an attachment: type="image" mediaType="image/png"
+```
+
+The second arm is the model's reply, and it is admissible here in a way it is not for a clamp:
+the token was rendered INTO the PNG's pixels and appears nowhere in the prompt, so reproducing
+it is positive evidence that the image was rendered for the model. Absence would have proved
+nothing; presence cannot be faked by an echo.
+
+⚠️ **The probe image has to be rendered before the HOME is thrown away.** Pillow lives in the
+member's user site-packages, so rendering after `isolateHomeKeepMuseAuth` makes the test skip
+itself with "No module named PIL" — and a live check that silently stops running is worse than
+one that fails. Caught by running it: the first attempt skipped instead of spending the turn.
+
+Everything else is P2-16's shape: throwaway HOME (so no `~/.claude` rules reach Meta), muse
+config reached by symlink and never copied, auth.json sha256 identical before and after.
+
+With this, `caps.imagePaste` is true and the guide row is ✓. Three rows still carry footnote 11
+— handoff, the chat bridge, use as the assistant chat — and the first of those is waiting on a
+deploy carrying P2-15's 401 fix rather than on anybody looking.
 
 ### Phase 2 closed: what is built, what is not, and one thing found next door
 
