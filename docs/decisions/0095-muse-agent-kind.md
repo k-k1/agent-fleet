@@ -18,6 +18,13 @@ English | [日本語](0095-muse-agent-kind.ja.md)
   reach the Agent API (`PROPOSE-OK`, and `generate_image` is advertised), so handoff is ✓ and
   two rows remain: the chat bridge (unverified; its oracle is the member's own Discord channel)
   and use as the assistant chat, which turns out to be UNBUILT rather than unwatched.
+  P2-20 built that one (`muse exec --json`, one process per turn) and P2-21 (2026-09-22)
+  live-verified it in the two subscription turns it declared beforehand: a real reply, and a
+  second turn resuming through `--session-id` that answered from the first turn's context. The
+  last footnote-11 row and `caps.headlessChat` are ✓. The negative control of that pair also
+  found the chat path taking the catalogue's `-contributor` default — the one route decision 6
+  clamp 8 did not cover — now gated by `muse.SafeDefaultExecModel`, which refuses the turn rather
+  than fall back.
   The kind is offered in the launch menu behind its two preconditions (the proprietary
   binary installed, a credential stored). What is NOT built is named in the guide's own capability
   table and in the closing section, so an unticked row there means "not built", never "still
@@ -2819,3 +2826,74 @@ that a real reply arrives and `MuseSessionID` is captured; turn 2 checks that `-
 continuity works (the model echoes back a word planted in turn 1); turn 3 checks that
 `--disable-shell/write` prevents filesystem writes. When the live test passes, `caps.headlessChat`
 flips to `true` in `registry.ts` and the guide row flips to ✓.
+
+### P2-21: assistant chat — live-verified, and the model gate the negative control exposed (2026-09-22)
+
+**Two subscription turns, declared before they were spent, and two is what it cost.** Both ran
+in one `TestMuseChatLive` (8.90 s wall), against a throwaway `HOME` with `~/.config/muse`
+symlinked — never copied — and `auth.json`'s sha256 identical before and after.
+
+| | turn 1 — negative control | turn 2 — the product path |
+|---|---|---|
+| argv | P2-20's, **no `--model`** | `museChat.Send`, `--session-id` + `--model` |
+| reply | `"PONG"` | `"PONG"` (recalled from turn 1) |
+| session | id captured from `stream.id` | same id, unchanged |
+| store recorded | **`muse-spark-1.3-contributor`** | **`muse-spark-1.3`** |
+
+So the row the guide has been waiting on is answered: a real reply arrives, and a second turn
+through `--session-id` answers *from the first turn's context* — the model was asked which word
+it had been told to say, not asked to repeat itself.
+
+**🔥 The oracle is the session store, not the reply.** `muse exec` writes its durable projection
+under `museChatDataHome()/muse/sessions/.msp-view-v1/<sid>/*.json`, and the `model` / `modelId`
+members there are the host's own record of what ran. A model asked which model it is answers
+from its training data. The live test compares the SET of ids in that store before and after
+turn 2 rather than reading one path, because the projection format is the vendor's and is not a
+contract AF can pin.
+
+**What the negative control found.** P2-20 shipped a chat path with no model resolution at all:
+`chatModelFor` returns `c.Model` for a muse conversation (`chat.go:478`), `recommendedAssistantModel`
+has no muse case (`chat.go:426`), so a conversation the member never pinned a model on carried
+`""` and the exec went out with no `--model`. Measured at zero quota through `model/list`, the
+account's catalogue is four rows and `isDefault: true` sits on `muse-spark-1.3-contributor`,
+whose description is the product-improvement sentence — and turn 1 confirms the host really does
+take it. That is decision 6 clamp 8 failing on the one route the managed driver does not cover,
+and it contradicted a sentence already published in the guide (footnote 14: "Agent Fleet does not
+pick it for you").
+
+**The fix, and why it refuses rather than falls back.** `muse.SafeDefaultExecModel()` resolves
+the catalogue's first non-data-sharing row for a caller that holds no MSP client (the managed
+`SafeDefaultModel` needs one; `muse exec` has none). `museChatModel` uses it when the member
+pinned nothing, and when the catalogue cannot be read at all it **refuses the turn**: returning
+`""` there is exactly the bug, since an exec with no `--model` is the contributor default. A
+member who wants a contributor model still picks one — both twins stay in the picker.
+
+**Console.** `caps.headlessChat` is `true`. `recommendedModelId` gained a muse case so the
+Settings › AI row says "recommended (currently: muse-spark-1.3)" instead of "Default", which is
+what the Agent will actually run. Its first draft was wrong and the new dom test caught it: the
+options list opens with the `""` (Default) row, and `""` has no `-contributor` suffix, so the
+finder returned it.
+
+**Guide.** The muse cell of "Usable as the assistant chat" is `✓¹¹` in both languages. Footnote
+11 keeps its first half — the on-demand install and the sign-in, now said of the assistant's
+agent picker as well as the launch menu — and loses the "not yet live-verified" paragraph;
+keeping the number leaves footnotes 12-18 alone. Footnote 14 gained the assistant chat's half of
+the contributor rule.
+
+**Tests.** `chat_providers_muse_test.go` is new: the JSONL parser (terminal text beats deltas, a
+failed terminal surfaces, the run stream's id is not the session's) and the model gate. The gate
+test was mutation-checked — replacing the refusal with `return "", nil` fails it, and the file's
+sha256 was compared after the revert. `AiModelRow.dom.test.tsx` gained two muse cases, with the
+mock catalogue ordered contributor-FIRST on purpose so that a recommendation which merely took
+the first row would not pass.
+
+**What this did not measure.**
+
+- The third turn of P2-20's skeleton (that `--disable-write` stops a chat turn writing files) was
+  dropped, not deferred-and-forgotten: it would cost a turn, and P2-6 already measured that under
+  the sandbox waiver those flags change nothing over `serve`. Whether they bind over `exec` is
+  unmeasured, and the assistant chat should not be assumed to be write-proof.
+- `muse exec` reports no token counts (only `serve`'s `session/tokenUsage` does), so an assistant
+  chat turn records the requested model and no totals — the usage chip does not move for it.
+- The capability table is still cross-checked against the code for the fork rows and the
+  permission-skip rows only. A cap reverted in `registry.ts` still passes every Console test.

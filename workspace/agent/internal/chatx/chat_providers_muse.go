@@ -18,6 +18,7 @@ package chatx
 // Clamps: EnsureClamps writes settings.json before every exec (same contract as the managed
 // driver's Resume), and --no-foreign-personal-context plus the env vars from ChildEnv close
 // the foreign-personal-context and observer gates that are available on exec but not on serve.
+// The eighth clamp is the model: see museChatModel, and never send an exec without --model.
 
 import (
 	"bytes"
@@ -48,7 +49,10 @@ func museAvailable() bool {
 
 func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.StartTurn()
-	model := chatModelFor(c, session.KindMuse)
+	model, err := museChatModel(c)
+	if err != nil {
+		return "", err
+	}
 	call := usagex.Call{Kind: session.KindMuse, ModelReq: model}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 
@@ -72,10 +76,8 @@ func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 	}
 	f.Close()
 
-	args := museChatBaseArgs()
-	if model != "" {
-		args = append(args, "--model", model)
-	}
+	// Always present: museChatModel refuses the turn rather than return "" (clamp 8).
+	args := append(museChatBaseArgs(), "--model", model)
 	if c.MuseSessionID != "" {
 		args = append(args, "--session-id", c.MuseSessionID)
 	}
@@ -103,6 +105,29 @@ func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 	// does). Record only the requested model; usage ledger gets no totals this turn.
 	c.NoteTurnModel(model)
 	return reply, nil
+}
+
+// museChatModel resolves the --model for one chat turn, and refuses the turn when it cannot.
+//
+// 🔴 An empty model is not "let the CLI decide" here, the way it is for every other kind.
+// `muse exec` with no --model runs the catalog's `isDefault` row, and that row is the
+// `-contributor` twin — the same model at the same price, except that the vendor says those
+// conversations may be used to improve the product (ADR 0095 decision 6 clamp 8). The managed
+// driver has resolved a safe default since P2-3; the chat path shipped without one, so until
+// P2-21 an assistant conversation the member never pinned a model on ran on the contributor
+// model (measured: the session store recorded `muse-spark-1.3-contributor`).
+//
+// Refusing beats falling back. The member who WANTS a contributor model picks it in
+// Settings › AI › Muse Code, where both twins are listed; what AF must never do is choose it
+// for someone who chose nothing.
+func museChatModel(c *ChatConversation) (string, error) {
+	if model := chatModelFor(c, session.KindMuse); model != "" {
+		return model, nil
+	}
+	if model := muse.SafeDefaultExecModel(); model != "" {
+		return model, nil
+	}
+	return "", errors.New("muse: モデル目録を読めないため、ターンを実行できません（モデル未指定のまま実行すると会話が製品改善に使われうる contributor モデルになります。Settings › AI › Muse Code でモデルを選んでください）")
 }
 
 // museChatBaseArgs is the shared argv prefix for a muse exec turn. Flags in order:
