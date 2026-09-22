@@ -30,7 +30,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
 | Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —⁴ | — | — |
-| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
@@ -195,12 +195,11 @@ proprietary and not included in the image, so it has to be installed on demand (
 connection card offers it, ~299MB into your home), and you have to be signed in — an
 unauthenticated session would accept work and then fail every turn.
 
-The rows carrying this footnote are the ones Agent Fleet has not built for muse — handing a
-conversation off, the chat bridge and use as the assistant chat. They are not blocked by Muse
-Code: none of those three paths is written per agent at all. They are simply unverified here,
-and this table only ticks a row that was seen to work end to end — which is why the worktree,
-scheduled-run, context-gauge and image-paste rows are now ticked and these three are not: each
-of those was watched working, on a real muse session, before the tick was written.
+The two rows carrying this footnote are the chat bridge and use as the assistant chat. The
+bridge is not blocked by anything muse-specific — it keys on the kind of notification, not on
+the agent — and it is simply unverified here. Use as the assistant chat is different: that one
+IS written per agent, and muse has no backend for it yet, so it is unbuilt rather than
+unwatched. Every other row was ticked only after it was seen working on a real muse session.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
