@@ -2607,6 +2607,44 @@ MSP for a conversation that is NOT an AF session — the lifecycle is the new pa
 `--provider echo` cannot back a real assistant and there is no other headless one-shot. That is
 a package of its own, not a flag.
 
+### P2-19: the chat bridge, ticked by the only oracle that exists — a person looking
+
+The bridge row could not be settled from inside the container, and P2-18 said so. It was
+settled the way it had to be: Discord turned on for one short turn, and the member reporting
+what appeared in the channel.
+
+```
+t=0s   prompt sent to the muse session
+t=5s   bridge-queue: 1 entry      (enqueued)
+t=8s   bridge-queue: 1 entry
+t=9s   bridge-queue: 0 entries    (taken and delivered)
+```
+
+and in the channel, at 20:40: *"セッションが入力待ちになりました「ADR0095 P2-18 引き継ぎ/ブリッジ
+検証（muse）」（Muse Code）"* with the session link. That is the whole claim of the row — a muse
+session's completion reaches the member's chat — so it is ✓.
+
+**What the AF-side trace is worth, and what it is not.** "The queue grew by one and drained in
+four seconds" is consistent with delivery and inconsistent with nothing having been enqueued,
+but it cannot distinguish delivery from a retry-exhausted drop (both end in an empty queue).
+The channel is the only place the answer exists. That is worth stating because it is the same
+shape as P2-6's lesson about the durable log: when every local store empties itself on success,
+absence is not evidence, and the remaining oracle may be a human one.
+
+⚠️ **One defect found by turning it on**, and it is not muse's: the SAME notification arrives
+several times over for a claude (pane-driven) session — identical body, repeated. The muse turn
+produced exactly one queue entry, so the multiplicity is upstream of the sender, in the
+notification the status path emits. `RecordSessionNotification`'s answer-ready arm fires on
+`state == "idle" && (previous == "working" || previous == "")`, and the `previous == ""` half is
+deliberate — the pane-reading idle heal calls `status.Remove(sid)`, and without that arm a real
+Stop after a removed marker was dropped on the floor. So a second idle hook after a removal
+re-fires the same completion. `notice.PutOnce` exists for exactly this and is not used here.
+Handed to its own session with the reproduction, the candidate key and the regression it must
+not reintroduce.
+
+With this the capability table has one muse row left, and it is not "unwatched": use as the
+assistant chat is unbuilt (P2-18).
+
 ### Phase 2 closed: what is built, what is not, and one thing found next door
 
 Every row of the work-package table is landed (P2-1 … P2-11 and P2-13, plus P2-12 for the MCP
