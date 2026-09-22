@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // TestAgentKindAndCaps pins the facts the server-side gates (sessionx's create default, the
@@ -117,5 +118,53 @@ func TestTranscriptEmptyStoreIsOkTrue(t *testing.T) {
 	}
 	if len(td.Turns) != 0 || td.Pending != nil || td.Queued != nil {
 		t.Fatalf("Transcript = %+v, want an empty conversation", td)
+	}
+}
+
+// TestTranscriptFeedsTheChangedFilesAggregation walks the whole chain a changed-files row is
+// made of, in one test: a recorded `edit` tool call → the transcript part (fileedits.go) →
+// what sessionx folds (transcript.FileEditsInTurn). The middle step is where this kind used
+// to stop, and the last step is the one that fails QUIETLY — absEditPath drops a relative
+// path when Turn.Cwd is empty, so a parser that works and a Cwd that is missing produce the
+// same empty strip as no parser at all.
+func TestTranscriptFeedsTheChangedFilesAggregation(t *testing.T) {
+	testHome(t)
+	m := session.Meta{Name: "files-sess", Dir: t.TempDir()}
+	s := Open(sidFor(m))
+	if _, err := s.AppendUser("fix it"); err != nil {
+		t.Fatalf("AppendUser: %v", err)
+	}
+	if _, err := s.AppendMessage(harness.Message{
+		Role: harness.RoleAssistant, Content: "editing",
+		ToolCalls: []harness.ToolCall{
+			{ID: "c1", Name: "edit", Arguments: `{"path":"a.go","old_string":"old\n","new_string":"new\n"}`},
+			{ID: "c2", Name: "bash", Arguments: `{"command":"go build ./..."}`},
+		},
+	}); err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+
+	td, ok := New().Transcript(m)
+	if !ok {
+		t.Fatal("Transcript ok = false")
+	}
+	for _, tn := range td.Turns {
+		if tn.Cwd != m.CWD() {
+			t.Fatalf("turn %d Cwd = %q, want %q — a relative edit path cannot be anchored without it",
+				tn.Idx, tn.Cwd, m.CWD())
+		}
+	}
+
+	var edits []transcript.FileEdit
+	for _, tn := range td.Turns {
+		edits = append(edits, transcript.FileEditsInTurn(tn)...)
+	}
+	// One record, not two: the bash call in the same turn is the negative control.
+	if len(edits) != 1 {
+		t.Fatalf("FileEditsInTurn over the session = %+v, want exactly the one edit call", edits)
+	}
+	got := edits[0]
+	if got.Path != "a.go" || got.Cwd != m.CWD() || got.Verb != "edit" || got.Added != 1 || got.Removed != 1 {
+		t.Fatalf("folded edit = %+v, want a.go under %q as edit +1 -1", got, m.CWD())
 	}
 }

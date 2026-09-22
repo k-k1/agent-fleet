@@ -565,3 +565,71 @@ func TestAStoppedSessionOffersNoApproval(t *testing.T) {
 		t.Error("a stopped session offered an approval nobody can answer")
 	}
 }
+
+// fakeEditingAgent is a registered kind whose transcript contains one edit-family tool part
+// and one plain trace. The kind slot it borrows is just a seat in the registry — what is
+// under test is the GENERIC /messages path every store-backed kind (codex, opencode, lcpp,
+// muse) shares, not that kind's own parser.
+type fakeEditingAgent struct {
+	agents.Agent
+	cwd string
+}
+
+func (fakeEditingAgent) Kind() string { return session.KindMuse }
+func (fakeEditingAgent) Caps() agents.Caps {
+	return agents.Caps{CanTranscript: true, ManagedOnly: true}
+}
+func (fakeEditingAgent) BuildLaunch(session.Meta, agents.LaunchOpts) (agents.LaunchPlan, error) {
+	return agents.LaunchPlan{}, errors.New("no terminal route")
+}
+func (fakeEditingAgent) WireLive(session.Meta, bool) agents.LiveInfo { return agents.LiveInfo{} }
+func (fakeEditingAgent) ClearResume(string)                          {}
+func (a fakeEditingAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
+	return agents.TranscriptData{Turns: []transcript.Turn{
+		{Role: "user", Text: "直して", Idx: 0, TS: "2026-09-22T10:00:00Z", Cwd: a.cwd},
+		{Role: "assistant", Idx: 1, TS: "2026-09-22T10:00:05Z", Cwd: a.cwd, Parts: []transcript.Part{
+			{Kind: "tool", Tool: "edit", File: "a.go",
+				Edits: []transcript.Edit{{Old: "old\n", New: "new\n"}}},
+			{Kind: "tool", Tool: "bash", Info: "go build ./..."},
+		}},
+		{Role: "assistant", Idx: 2, TS: "2026-09-22T10:00:09Z", Cwd: a.cwd, Text: "直しました"},
+	}}, true
+}
+
+// The changed-files strip (decisions/0049) is fed by `files` on /messages and by nothing else,
+// so a kind that fills Part.File must see it come out the other end of the generic path. The
+// bash part is the negative control: only edit-family parts count, or the list names files
+// nobody touched. The turn's Cwd is what anchors the relative path — without it the row is
+// dropped silently, which looks exactly like a session that edited nothing.
+func TestGenericMessagesEmitsChangedFiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	prev := agentRegistry[session.KindMuse]
+	agentRegistry[session.KindMuse] = fakeEditingAgent{cwd: dir}
+	t.Cleanup(func() { agentRegistry[session.KindMuse] = prev })
+
+	m := session.Meta{Name: "slot-changed-files", Dir: dir, Kind: session.KindMuse,
+		Driver: session.DriverManaged}
+	session.WriteMeta(m)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/sessions/"+m.Name+"/messages", nil)
+	handleGenericMessages(rec, req, m, true, "idle")
+
+	var resp struct {
+		Files []transcript.FileTouch `json:"files"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(resp.Files) != 1 {
+		t.Fatalf("files = %+v, want exactly the one edited file: %s", resp.Files, rec.Body.String())
+	}
+	got := resp.Files[0]
+	if !strings.HasSuffix(got.Path, "a.go") {
+		t.Errorf("path = %q, want the edited file", got.Path)
+	}
+	if got.Verb != "edit" || got.Count != 1 || got.Added != 1 || got.Removed != 1 {
+		t.Errorf("row = %+v, want one edit call, +1 -1", got)
+	}
+}
