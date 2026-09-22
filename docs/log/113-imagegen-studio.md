@@ -10,7 +10,10 @@
 - **改訂 2（同日・3 巡目の回答）**: 判断 7 件のうち 1・3〜7 は案どおりで決着。2 は
   「**試走させる余地は残したい。`generate_image` の不満はプロンプトが見えないこと**」を受けて
   D2 に**下書きどおりに走る試走ツール**を足した。加えて **inpaint をスタジオで扱う**（D13）と
-  **モデル・族ごとの知識を貯める**（D14）を足した。
+  **モデル・ファミリーごとの知識を貯める**（D14）を足した。
+- **改訂 3（同日・4 巡目）**: 用語は用語集どおり**ファミリー**（`family`・画面の文言は「系統」）に
+  揃えた（初稿の「族」は略記）。D14 の 1 モデル 1 ファイルを**節を持つ文書**に改め（「1 行では
+  足りない」）、D7 に**編集履歴と巻き戻し**（会話の過去の時点の下書きを見て戻す）を足した。
 - 関連: [ADR 0081](../decisions/0081-image-generation-pane.ja.md)（今のペイン。本稿はその
   決定 6・7 を覆し、1〜5・8〜12 は継ぐ）/ [ADR 0080](../decisions/0080-image-gallery-pane.ja.md)
   （絵を見る場所）/ [ADR 0069](../decisions/0069-image-generation-providers.ja.md)（決定 8
@@ -68,13 +71,13 @@ ADR 0081 は「LLM を挟まずに」を表題にした。**本稿でもそれ�
 - **プロンプト支援（層 B）は `askAssistant()` 1 発**（`prompthelp.ts:41-87` が英語の指示文
   1 通を組み、JSON `{prompt,negative,note}` を求め、`parseProposal` が解析、モーダルで
   「使う／プロンプトだけ／捨てる」）。会話は残らず、2 回目は 1 回目を知らない。
-- **族の知識は 2 か所に割れている**。「その族が読む摘み」は Agent（`knobs`・`comfy.go:329-358`）、
-  「その族の方言・品質接頭辞・推奨範囲」は Console の i18n（`families.ts:42-177`・11 族）。
+- **ファミリーの知識は 2 か所に割れている**。「そのファミリーが読む摘み」は Agent（`knobs`・`comfy.go:329-358`）、
+  「そのファミリーの方言・品質接頭辞・推奨範囲」は Console の i18n（`families.ts:42-177`・11 ファミリー）。
   ADR 0098 の qwen-image-2.1 は Agent 側 `2a7a29ab3` と Console 側 `dda33988c` の 2 コミットで
   両方触った。
 - Agent の要求語彙は十分に広い（`jobs_http.go:28-59`）: prompt / negativePrompt / size / count /
   inputs / mask / model / loras / seed / strength / params{steps,cfg,sampler,scheduler} / label /
-  out_dir / jobs / seed_policy / trial / full_steps。族が読まない値は**警告で返る**
+  out_dir / jobs / seed_policy / trial / full_steps。ファミリーが読まない値は**警告で返る**
   （`comfy.go:375-399`）。**本稿は語彙を 1 語も足さない。**
 - ペインはワークスペースに 1 枚（決定 6「的の欄は無い」）。
 
@@ -139,7 +142,7 @@ Agent に**スタジオ**（`~/.config/agent-fleet/imagegen/studios/<id>.json`�
 
 ### D2 — エージェントが下書きを動かす契約は、セッション側 af サーバの MCP ツール 2 本
 
-`get_image_studio`（下書き・錠・モデルの事実＝族／読める摘み／サイズ／既定値／LoRA と
+`get_image_studio`（下書き・錠・モデルの事実＝ファミリー／読める摘み／サイズ／既定値／LoRA と
 トリガー語・直近の結果と警告・版の要約）と `set_image_draft`（**部分更新**。書いた欄だけ
 変え、`null` で消す。検証は投入と同じ `spec()`。錠の欄は落として結果に理由を返す。結果は
 適用後の下書きと「生成するのは利用者です。押してもらってください」の 1 行）。
@@ -153,7 +156,7 @@ Agent に**スタジオ**（`~/.config/agent-fleet/imagegen/studios/<id>.json`�
 **3 本目: `run_image_trial`（改訂 2）。** 利用者の「試走させる余地は残したい」と「`generate_image`
 の不満はプロンプトが見えないこと」は同じ答えになる——**引数を持たないツール**にする。
 走るのは**いまペインに見えている下書きそのもの**（`set_image_draft` で書いた物・錠・人が
-直した欄・参照画像・マスク込み）で、試走の規則（1 枚・キュー先頭・族の試走 steps・
+直した欄・参照画像・マスク込み）で、試走の規則（1 枚・キュー先頭・ファミリーの試走 steps・
 `generated/console/trial/`・待ち 3 枚まで＝`imagegenTrialMax`・`jobs.go:48-51`）はボタンの
 試走と同一。結果はパス・seed・警告・所要時間で返り、**試走枠にも同時に出る**。
 エージェントが絵を見るかは自分の判断（Read はツールカードとして転写に出るので見えない
@@ -179,7 +182,7 @@ Agent に**スタジオ**（`~/.config/agent-fleet/imagegen/studios/<id>.json`�
 |---|---|
 | `prompt` `negative` `params{steps,cfg,sampler,scheduler}` `size` `loras[{name,weight}]` `strength` `op` `inputs`（改訂 2） | `model` `seed`/`seed_policy` `jobs`(N) `count`(batch) `out_dir` `label` `mask` |
 
-- `model` を人側に置く理由: 切替は**族の切替**＝読める摘み・サイズ・ネガティブの可否が全部
+- `model` を人側に置く理由: 切替は**ファミリーの切替**＝読める摘み・サイズ・ネガティブの可否が全部
   変わり、冷えたエンジンなら 1 枚目に数分かかる。エージェントは `set_image_draft` に
   `suggest_model` を書ける——ペインは**提案カード**（「切り替える」ボタン付き）で出す。押すのは人。
   （判断 1・決着）
@@ -208,7 +211,7 @@ locked: cfg
 model facts: family sdxl; dialect tag-list; quality prefix "masterpiece, best quality"; negative read;
   knobs steps cfg sampler scheduler negative; sizes 1024x1024 1216x832 …; defaults steps 28 cfg 5 euler_ancestral normal
   (sent when the model changed since the last turn; otherwise: "unchanged — get_image_studio for details")
-since last turn: human edited prompt; generated v4 → #12 seed 815723004 21s warnings [lora_trigger_missing], #13 …
+since last turn: human edited prompt; human rewound the draft to #9; generated v4 → #12 seed 815723004 21s warnings [lora_trigger_missing], #13 …
 rule: change the draft only through set_image_draft; the human presses Generate.
 ```
 
@@ -225,16 +228,16 @@ rule: change the draft only through set_image_draft; the human presses Generate.
   人格（D10）は「編集の前に `get_image_studio` を呼べ」とは**言わない**——前置で足りる
   ターンにツール往復 1 回を余計に払わせない。
 
-### D5 — 族の方言・品質接頭辞・推奨範囲を Agent の族表に移す（Console の `FAMILY_CARDS` を畳む）
+### D5 — ファミリーの方言・品質接頭辞・推奨範囲を Agent のファミリー表に移す（Console の `FAMILY_CARDS` を畳む）
 
 `comfyFamilyRow`（`comfy_workflows.go:460-556`）に `Dialect`（tags / prose）・
 `QualityPrefixes []string`・`StepsRange`・`CFGRange` を足し、`GET /imagegen/status` の
-`modelStatus` に出す。Console の族カードはそれを描くだけになり（i18n には方言名の訳語だけ
+`modelStatus` に出す。Console のファミリーカードはそれを描くだけになり（i18n には方言名の訳語だけ
 残る）、`get_image_studio` と D4 の「model facts」も同じ行から組む。
 
-- 理由: ADR 0081 決定 4「何を読むかは族が決め、言葉で言う」を、読む摘み以外にも広げるだけ。
+- 理由: ADR 0081 決定 4「何を読むかはファミリーが決め、言葉で言う」を、読む摘み以外にも広げるだけ。
   今は 2 か所（§2.1）。
-- 却下: Console が族カードの文を送る。Console が文脈を組む形に戻る。
+- 却下: Console がファミリーカードの文を送る。Console が文脈を組む形に戻る。
 
 ### D6 — 「結果を見ながら」の「見る」は 2 段: 人は常に、エージェントは押したときだけ
 
@@ -253,6 +256,21 @@ rule: change the draft only through set_image_draft; the human presses Generate.
 - **版**（version）: 生成ボタン（試走・投入）を押した瞬間の下書きの写し。スタジオの
   `versions[]`（下書き・押した時刻・ジョブ／グループ id・上限 200）。エージェントの編集だけ
   では版にならない——「押した」が人の判断の単位で、比べたいのはそこ。
+- **編集履歴**（改訂 3）: 版とは別に、**下書きが変わるたび**（`set_image_draft`・人の PUT・
+  巻き戻し）に 1 件を `draft_log[]` に積む——時刻・書き手（`agent` はセッション名とターンの
+  時刻・`human`・`rewind ← #n`）・変わった欄と前後の値・その時点の下書きの**全文**（1 KB 弱・
+  上限 500 件、古い物は版に紐づく物だけ残す）。「会話の過去の時点でプロンプトがどうだったか」は
+  この列で答える。
+  - **見る**: ミラーの転写で、`set_image_draft` のツールカードを「下書きを更新: cfg 7→5・
+    prompt +3 語」の専用カードに描き（ツール名と時刻で `draft_log` の 1 件に結ぶ）、
+    人の編集と巻き戻しも同じ列に小さな行で出す。中列の頭に「編集履歴」（一覧・差分表示）。
+  - **巻き戻す**: カードと一覧の「この時点に戻す」→ `POST …/rewind {entry}`＝その全文を
+    いまの下書きにし、`draft_log` に `rewind ← #n` を積む（履歴は消さない・redo は
+    「巻き戻しの巻き戻し」）。錠は巻き戻しの対象外（錠は人の意思で、下書きの中身ではない）。
+    次のターンの前置（D4）に「human rewound the draft to #n」と出るので、エージェントは
+    自分の直前の編集が捨てられたことを知る。
+  - 版と編集履歴の関係: 版＝編集履歴のうち「押した」印の付いた 1 件。履歴パネルの絵から
+    「この設定に戻す」も同じ `rewind` を通る（経路 1 本）。
 - **絵の履歴**: Agent に `GET /imagegen/history?studio=<id>&before=&limit=` を足す。
   裏は `generated/console/history.jsonl`（`store.go` がサイドカーを書くときに 1 行追記・
   無ければサイドカーを走査して再生成）。行はサイドカーの要約（パス・seed・サイズ・model・
@@ -314,7 +332,7 @@ rule: change the draft only through set_image_draft; the human presses Generate.
 - lcpp kind（ADR 0093）のセッションは CLI ログインの無い会員の答え（ADR 0081 未解決 3）。
   冷えた lcpp の 45 秒ホールド（`engine_waking`）は Managed のドライバが既に扱う範囲。
 
-### D11 — 層 B（`PromptHelpModal`）は畳む。層 A（族カード・トリガー語チップ・錠付きネガティブ）は残す
+### D11 — 層 B（`PromptHelpModal`）は畳む。層 A（ファミリーカード・トリガー語チップ・錠付きネガティブ）は残す
 
 「プロンプトを書いて」は会話の最初の発言そのもの。モーダルと `prompthelp.ts` は消す
 （`askAssistant` の他の利用者＝メモ整理・TTS 要約は無関係）。層 A は D5 で出所が Agent に
@@ -339,7 +357,7 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 - **マスクは人だけ**（D3）。キャンバスの成果物は 111 のとおり `draft.mask` に入るパス 1 本、
   ワイヤも Agent も変更なし。ストロークはスタジオに残す（111 §2-5「試走後も保持」——
   111 が `draft` に置き場が無いと指摘した穴は、スタジオの `mask_strokes` で塞ぐ）。
-- **指示文はエージェント**（指示編集の族は「看板の文字を CLOSED に」の自然文が prompt で、
+- **指示文はエージェント**（指示編集のファミリーは「看板の文字を CLOSED に」の自然文が prompt で、
   ここが会話の得意な所）。試走は人のボタンでもエージェントの `run_image_trial` でも、
   **マスク込みの下書き**で走る（マスク無しの inpaint は投入と同じく拒む＝`needs_mask` の番人）。
 - 🔴 **111 の 🔴（クロップ帯の出所が無い）は、クロップ廃止で消える見込み**。log 112 と
@@ -350,7 +368,7 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 - 111 §9 の 🟡 3 件（ストロークの置き場・白紙判定・下絵の読み込み失敗）は実装時に決める。
   置き場だけは上のとおりスタジオ。
 
-### D14 — モデル・族ごとの知識を貯める。置き場はファイル、書き手は人とエージェント（改訂 2）
+### D14 — モデル・ファミリーごとの知識を貯める。置き場はファイル、書き手は人とエージェント（改訂 2）
 
 「この checkpoint は cfg 4 が良い」「`masterpiece` を入れると崩れる」「この LoRA は 0.6 が
 上限」——生成のたびに分かることを、次のスタジオでも次のエージェントでも使えるようにする。
@@ -359,30 +377,42 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 
 | 層 | 誰が書く | 置き場 | 読む物 |
 |---|---|---|---|
-| 0 族の事実 | 開発者 | Agent の族表（D5） | 族カード・`model facts` |
+| 0 ファミリーの事実 | 開発者 | Agent のファミリー表（D5） | ファミリーカード・`model facts` |
 | 1 テナントの注記 | 管理者 | カタログ行 `prompt_notes`（ADR 0081 未解決 2・P1） | 同上（行から） |
-| 2 **ワークスペースの知識（本決定）** | **人・エージェント** | **`<knowledge root>/{families,models}/<key>.md`** | 族カード「メモ」・`get_image_studio`・D4 の前置 |
+| 2 **ワークスペースの知識（本決定）** | **人・エージェント** | **`<knowledge root>/{families,models}/<key>.md`** | ファミリーカード「メモ」・`get_image_studio`・D4 の前置 |
 | 3 スタジオの会話 | エージェント | 転写 | そのスタジオだけ |
 
 **層 2 の形**:
 
-- **markdown ファイル 1 モデル 1 本・1 族 1 本**。行は箇条書き 1 件ずつ、先頭に日付と書き手
-  （`2026-09-23 human` / `2026-09-23 agent s24yagr v7`）、任意で根拠（版 id・絵のパス）。
+- **markdown ファイル 1 モデル 1 本・1 ファミリー 1 本。1 行ではなく節を持つ文書**（改訂 3）。
+  節は 4 つで、順序は固定:
+  ```
+  # illustrious-v2
+  ## 要約            ← 1 KB まで。前置（D4）に載る唯一の節。人かエージェントが書き直す
+  ## 設定            ← 効く steps / cfg / sampler / サイズ・LoRA の上限重み・ネガティブの型
+  ## プロンプト      ← 効く書き方・効かない語・品質接頭辞の要否・方言の癖（例文つき）
+  ## 記録            ← 追記のみ。1 件 1 段落。日付・書き手・根拠（版 id・絵のパス）
+  - 2026-09-23 human: cfg 7 で肌が焼ける。5 が上限 — v12 `generated/console/image-…png`
+  - 2026-09-23 agent s24yagr: `masterpiece` を入れると構図が崩れる（試走 3 回・v7〜v9）
+  ```
   ファイルにする理由: エージェントは Read/Edit で普通に読み書きでき（kind を選ばない）、
-  人は Files ペインで直せ、**git に入れれば班で共有できる**。
+  人は Files ペインで直せ、**git に入れれば班で共有できる**。節の名前は Agent が知っていて、
+  読む側（`get_image_studio`・ファミリーカード）は節ごとに切り出す。無い節は空として扱う。
 - **knowledge root は 2 段**: 既定は `~/.config/agent-fleet/imagegen/knowledge/`（ワークスペース
   私有・recreate を生きる）。スタジオごとに**リポジトリ内のフォルダ**（例
   `<repo>/.agent-fleet/imagegen/knowledge/`）へ切り替えられ、そこにあれば**両方読み、書き先は
   スタジオの設定**。班で貯めたい人はリポジトリ、独りで貯めたい人は既定。
-- **書く口は MCP `add_image_knowledge {scope: model|family, key, note, evidence?}`** を推奨
-  （鍵の正規化＝モデル id と族 id・日付と書き手の刻印・1 件 500 字上限・追記のみ）。
-  エージェントが Edit で直接書いても壊れない形（行指向）にしておく。**消す・直すのは人**
-  （Files ペイン、または族カードの「メモ」から）。
+- **書く口は 2 つ**: 「記録」への追記は MCP `add_image_knowledge {scope: model|family, key,
+  note, evidence?}`（鍵の正規化＝モデル id とファミリー id・日付と書き手の刻印・1 件 2,000 字
+  上限・追記のみ）。「要約」「設定」「プロンプト」の書き直しはエージェントの Edit と人の
+  Files ペイン（普通のファイル）。エージェントには「記録が溜まったら、利用者に確認して要約を
+  書き直す」と人格で言う。**消すのは人**。
 - **人格の規則**: 「利用者が『覚えて』と言ったとき、または利用者が試走の結果に良し悪しを
   言ったときに書く。推測で書かない。」——エージェントが毎ターン書くと層 2 が転写の写しになる。
-- **読む側**: `get_image_studio` と D4 の `model facts` に、いま選んでいるモデルと族のファイルの
-  **末尾 20 件**（上限 2 KB）を載せる。全文は Read で読める。族カードには「メモ n 件」の
-  折り畳み。
+- **読む側**: D4 の前置（`model facts`）には**「要約」節だけ**（モデル・ファミリー各 1 KB）。
+  `get_image_studio` には「要約」「設定」「プロンプト」の全文と「記録」の末尾 20 件
+  （合計 8 KB 上限・超えたら古い記録から落とす）。それ以上は Read で読める（パスを返す）。
+  ファミリーカードの「メモ」は 4 節をそのまま描き、記録の根拠に絵のパスがあればサムネイルを出す。
 - **層 1 への昇格**は P2: 管理者がワークスペースの知識を見て `prompt_notes` に写す導線
   （CP の中継に載せるので [cp-session-wire-relay-drops-fields] の型）。
 
@@ -393,7 +423,7 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 ```
 ┌ 画像生成スタジオ「港の夕暮れ」▾ ─ [モデル ▾ ●warm] [すぐ描けます] [履歴] [ギャラリー] ┐
 │ 会話  claude · opus · high  ⟳  │ 設定（下書き）           │ 結果                │
-│ ─────────────────────────────  │ 族カード（折り畳み）      │ 試走枠  seed 8157…  │
+│ ─────────────────────────────  │ ファミリーカード（折り畳み）      │ 試走枠  seed 8157…  │
 │ 🧑 docs/chars/aoi.md を読んで   │ プロンプト        🔒     │ [この seed] [見せる] │
 │    その子を港の夕暮れに         │ ┌ 1girl, blue hair, … ┐  │ ───────────────     │
 │ 🤖 ▸ Read docs/chars/aoi.md    │ │ (変更を縁取り)       │  │ 12/40 ▓▓▓░░ 残 8分  │
@@ -412,7 +442,7 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 - **左＝`MirrorView` をそのまま埋める**（`session` を渡す）。思考・ツールカード（Read した
   資料・`set_image_draft` の呼び出し）・添付・停止・resume を書き直さないため。頭に kind・
   モデル・effort のチップと「エージェントを替える」（新しいセッションを結び直す）。
-- **中＝今の `GenerateForm` を「下書きの編集面」として再利用**（`Knobbed`・族カード・
+- **中＝今の `GenerateForm` を「下書きの編集面」として再利用**（`Knobbed`・ファミリーカード・
   トリガー語チップ・`InputPicker`・スライダー）。足すのは欄ごとの 🔒 と、変更ハイライト。
   **モデル選択はペイン頭に上げる**——スタジオの「主語」で、D3 の「人だけ」を位置で言う。
 - **右＝試走枠・グループ行・結果カード（今の部品）＋履歴**。履歴は下に続く一覧で、
@@ -420,7 +450,9 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 - マスク描画（log 111）は中列の「上級 → 参照画像」の隣（111 §3 の P2a と同じ場所）。
   入口は右列の結果カード・履歴の「この部分を直す」（D13）。`needs_mask` のときは中列の
   参照画像ブロックが「マスクを塗ってください」と言い、試走・投入のボタンは押せない。
-- 族カードの下に「メモ n 件」（D14・層 2 の末尾 20 件・追記欄・Files ペインで開く）。
+- ファミリーカードの下に「メモ」（D14・4 節・追記欄・Files ペインで開く）。
+- 中列の頭に「編集履歴」（D7・時刻順・書き手・差分・「この時点に戻す」）。左列の転写では
+  `set_image_draft` のカードに同じボタン。
 - ペイン頭の「⚙」にスタジオの設定: エージェントの試走を許す（既定 ON）・知識の書き先
   （既定／リポジトリのフォルダ）。
 - スマホ（ミラー）は対象外のまま。タブ畳みで 1 列にはなる。
@@ -456,10 +488,11 @@ Agent の口（全部 CP の中継リストに 1 行ずつ）:
 | `GET /imagegen/history` | D7 |
 
 | `POST /imagegen/studios/{id}/trial` | 下書きどおりの試走（`run_image_trial` の裏。ボタンの試走も同じ口に寄せる） |
-| `GET /imagegen/knowledge?model=&family=` / `POST /imagegen/knowledge` | D14 層 2 の読み（末尾 n 件）と追記 |
+| `GET /imagegen/knowledge?model=&family=` / `POST /imagegen/knowledge` | D14 層 2 の読み（節ごと）と「記録」への追記 |
+| `GET /imagegen/studios/{id}/draft-log?before=&limit=` / `POST /imagegen/studios/{id}/rewind {entry}` | D7 の編集履歴と巻き戻し |
 
 スタジオの JSON には `agent_trial bool`（既定 true）・`knowledge_root string`（空＝既定）・
-`mask_strokes`（D13）も持つ。
+`mask_strokes`（D13）・`draft_log[]`（D7・上限 500）も持つ。
 
 MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだけ広告）: `get_image_studio`・
 `set_image_draft`・`run_image_trial`（`agent_trial` のときだけ）・`add_image_knowledge`。
@@ -492,9 +525,9 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
 
 - **P0（芯）**: D1 / D2（試走ツール込み）/ D3 / D4 / D9（Managed）/ D10 / D12 と、画面の
   3 列（MirrorView 埋め込み・起動ダイアログの部分集合・錠・ハイライト・状態チップ・
-  スタジオ設定の 2 項目）。履歴は**版の一覧**だけ。D5（族表の移設）は P0 に入れる——
+  スタジオ設定の 2 項目）。履歴は**版の一覧**だけ。D5（ファミリー表の移設）は P0 に入れる——
   入れないと `get_image_studio` の「model facts」を Console の表から写すことになる。
-  D11（層 B の撤去）も P0。**D14 の層 2 も P0**（ファイルと `add_image_knowledge`・族カードの
+  D11（層 B の撤去）も P0。**D14 の層 2 も P0**（ファイルと `add_image_knowledge`・ファミリーカードの
   「メモ」。読み口が `get_image_studio` に要るので後付けにすると契約が 2 度変わる）。
   `op=edit` の指示編集（参照画像あり・マスク無し）は D3 の `op`/`inputs` 解放で P0 に入る。
 - **P1**: D7 の絵の履歴（`history.jsonl`・`GET /imagegen/history`・戻す／参照／並べる）、
@@ -529,7 +562,7 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
   別に作る必要があり、P1 に回す。TUI を対象外にはしない。
 - **下書きを `localStorage` に置いたまま、ペインがツール結果を拾う。** ポップアウト・スマホ・
   再読み込みで真実が割れる（D1）。
-- **エージェントに `model` を書かせる**（D3）。族の切替と冷えたエンジンの起床を、人が
+- **エージェントに `model` を書かせる**（D3）。ファミリーの切替と冷えたエンジンの起床を、人が
   気付かないまま起こす。
 - **エージェントの編集ごとに版を切る**（D7）。比べたいのは「押した」単位。
 - **履歴を Agent のジョブ一覧の拡大で作る。** メモリ上で再起動に消える物を伸ばしても
@@ -542,7 +575,7 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
 
 **決着（3 巡目・2026-09-23）**: 1 model は人だけ ✓／2 試走はエージェントにも許す
 （`run_image_trial`・引数無し＝プロンプトは常に見える）✓／3 Managed 先行・TUI は P1 ✓／
-4 スタジオ id は別 ✓／5 押した 1 回＝版 ✓／6 モーダル撤去 ✓／7 族表を Agent へ ✓。
+4 スタジオ id は別 ✓／5 押した 1 回＝版 ✓／6 モーダル撤去 ✓／7 ファミリー表を Agent へ ✓。
 
 **残っている確認**:
 
@@ -579,7 +612,7 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
   止まっている間の `set_image_draft` は無いので下書きは動かない——ペインは「エージェントは
   停止中（発言で起きます）」を出す。
 - **`engineCatalogModelRow` は運ばない欄を黙って落とす**（[cp-session-wire-relay-drops-fields]）。
-  D5 は Agent の族表（CP を通らない）に置くので当たらない。
+  D5 は Agent のファミリー表（CP を通らない）に置くので当たらない。
 - **モジュールスコープのキャッシュは dom テスト間で漏れる**（[module-scope-cache-leaks-across-dom-tests]）
   ——`available.ts` をスタジオ id 付きで拡張するなら鍵に id を入れる。
 - **純関数の試験は `api.ts` を import できない**（ADR 0081 レーン C）——`wire.ts` に型、
@@ -599,5 +632,13 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
   消える。
 - **知識ファイルの鍵はモデル id**（表示名でない・[engine-model-catalog-adr0072]「`base_model`
   は表示名」）。カタログ行が消えたモデルのファイルは残す（読めるが「今は無いモデル」と出す）。
+- **編集履歴の全文 500 件 ≒ 500 KB がスタジオの JSON に載る**＝`fstore` の 1 ファイルが太る。
+  読み口は `draft-log` で頁分けし、スタジオ本体の GET には直近 20 件だけ載せる（2 秒
+  ポーリングの ETag が毎回外れない）。
+- **巻き戻しは「エージェントの直前の編集を捨てる」操作**。前置に載せないと、エージェントは
+  次のターンで自分の編集が生きている前提で話す（「計画」の原文キャリーフォワードが
+  「強く間違える」のと同じ向き）。
+- **知識の「要約」節は前置の固定費**。1 KB の上限は読む側で切り、切れたら「要約が長すぎます」
+  をファミリーカードに出す（黙って切らない）。
 - **`op`/`inputs` の解放は番人と対**: エージェントが書く `inputs` は `BrowseWritablePath` の
   内側だけ受け、外は `set_image_draft` の結果で断る。投入時にも同じ検証が走る（二重は意図）。
