@@ -285,10 +285,50 @@ ADR 0079 はこの作業を後ろに回したとき、その試験まで書い�
 ビューはランタイムの `CostProfile` で門番されていて、docker は「請求書は無い」と申告する。
 つまり af-sandbox を ec2-single にすると、**利用者ごとのコストビューは消え**、エンジンの
 `af-role` 行は集計されず、この Control Plane はコスト配分タグを有効化しない。
-`guide/ref/deploy-targets.md` の能力表が既にそう書いている（「利用者ごとの費用按分」は ECS の行）
-ので、これは欠陥ではなく**記録すべき喪失**である——その機能を保つ配備は、リリース前に立てる方だ。
-VM でも欲しいなら、コスト能力をワークスペースのランタイムから切り離すコード変更が要る。
-この ADR はそれを提案しない。
+`guide/ref/deploy-targets.md` の能力表が既にそう書いている（「利用者ごとの費用按分」は ECS の行）。
+🔄 **とはいえ大半は残せる——決定 11**（請求をワークスペースのランタイムから切り離す）。
+本当に失うのは利用者ごとの半分だけであり、上の完了確認は決定 11 が入ったあとの管理者向け
+コストビューで読む。
+
+### 11. 🔄 コストビューは残す——ランタイムから導出するのをやめ、配備が請求を宣言する
+
+レビュー R6 は「今は off である」という点で正しい。そして決定 10 は、それを**コードの性質**では
+なく**この配備の性質**として記録してしまった点で誤りだった。`cloudCostProfile()` はランタイムの
+ファクトリに訊き（`cost_profile.go:31-36`）、`dockerFactory` は「運用者自身のハードウェアだ。
+読むべき請求書は無い」と答える（`profiles.go:361-362`）。これは地下室の docker については真で、
+**エンジンを持つアカウントの EC2 の上の docker については偽**である。ec2-single は後者であり、
+`guide/ref/deploy-targets.md` 自身が「`ec2-single` は独立したランタイムではない——VM の上の
+`docker` である」と書いている。
+
+だから**配備が宣言する**。決定 2 がエンジンを宣言するのと同じ形で、ADR 0053 が言う理由で:
+`.env` に `AF_CLOUD_COST=aws`、起動時に 1 回読み、ランタイムには知りようがなかった profile を作る。
+
+| | ec2-single では |
+|---|---|
+| 配備全体の合計・サービス別・日別 | **残る**——Cost Explorer はアカウントに答えるのであって、ランタイムに答えるのではない |
+| 役別（`af-role`）の切り口 → `engine-llm` / `engine-image` | **残る。そしてこれがこの ADR の目的の行である**——「昨夜の GPU はいくらだったか」（`cloudcost.go:172,304-349`） |
+| 利用者ごとの按分——`/api/cost/me` と会員カード | **消える。しかもゼロを出すのではなく隠さねばならない** |
+
+🔴 危ないのは最後の行だけである。このホストでは `af-membership` を担ぐものが何も無い——
+1 台のインスタンスが全ワークスペースをコンテナとして走らせている。`Available: true` だけを立てると
+会員カードが描かれ（`SettingsDialog.tsx:232`・`TenantDialog.tsx:98`）、ゼロで埋まる——
+`cost_profile.go` のヘッダが拒んでいるまさにその失敗（「ゼロだらけの画面はバグに見えるか、
+もっと悪いことに『あなたは無料だ』に見える」）。答えは profile が既に持っている: `Attributable` は
+「本当にタグを担いでいるもの」の一覧で、ここでは**空**であり、Console は会員側の節を `available`
+ではなくその**長さ**で門番する。この欄は今どこからも読まれていない（`CloudCostView.tsx:26` が
+型に書いているだけ）ので、機能ではなく 3 行と dom テスト 1 本である。
+
+見たいものが空にならないように、あと 2 つ:
+
+- **VM が自分のテンプレートで `af-role` を担ぐ**こと。さもないとホスト自身のインスタンス時間は
+  税と並んでタグ無しの共有バケツに落ちる。
+- アカウント側の前提は変わらない（「IAM ユーザー／ロールの請求情報アクセス」）。そして Cost
+  Explorer の要求自体が**月 $1.2 ほど**かかる（`cloudcost.go:109`）——月 $80 を削る文書は、
+  それを隠さず書くべきである。
+
+却下: **導出すること**（「AWS 資格情報＋ここが管理する行があれば請求がある」）。多くの場合正しく、
+資格情報が他人の払うアカウントのものだったときに静かに誤る。この形に対するこのリポジトリの規則は
+「lifecycle は宣言であって推論ではない」である（ADR 0053・ADR 0076 決定 1）。
 
 ## 定価でいくらか（算術であって、請求書ではない）
 
@@ -374,9 +414,10 @@ GPU を貸していない夜は API 1 回で配備ごと止める。ECS 構成�
    （`workspace/Dockerfile:27`）が、中に入れている各 CLI は別の問いで、P2 の節約はその答えに乗る。
 5. **2 つの構成が名前をどう分け合うか。** 1 つの FQDN を EIP と ALB の間で振り替えるか、確認用の
    配備に別ホスト名を与えて OAuth のリダイレクトを別に登録するか。
-6. 🔄 **答えが出た。しかもこの ADR に不利な答えである: 費用の按分は生き残らない。** docker の
-   ランタイムではコストビューが off（決定 10）。残る問いは「VM に AWS 請求の能力を別途与える
-   （コード変更）か、この配備の請求は AWS のコンソールで読むと割り切るか」である。
+6. 🔄 **答えは半分ずつ出た。** 役別・サービス別のビューは請求を宣言すれば残る（決定 11）。
+   **利用者ごとの按分は残らない**——このホストでは `af-membership` を担ぐものが無いからである。
+   測って確かめるべきことは「タグの付いた資源がエンジンの箱と VM しかない配備で、役別の切り口が
+   実際に埋まるか」に変わった。
 7. **4 GB で足りるか**——CP・Caddy・ワークスペース 1 つ・NAT 経路。ec2-single の README は
    `WS_MEMORY` を下げれば `t3.medium` で動くと既に書いている。
 
@@ -388,9 +429,11 @@ GPU を貸していない夜は API 1 回で配備ごと止める。ECS 構成�
   **誰もまだ走らせていない**ということである。
 - **P0——動く。ネットワークは何も変えない。** `ec2-single` に public サブネットへの VPC 配置・
   決定 1 の SG 群・IMDSv2＋ホップ上限 1・インスタンスプロファイルを足し、`standup.sh` にエンジン
-  3 点の経路を足し、`AF_ENGINE_SUBNETS` を入れる。NAT ゲートウェイは今のまま。完了条件は、
-  VM の Control Plane が買って止めた箱の上でセッションが絵を 1 枚出すこと、**かつ**ワークスペースの
-  コンテナが IMDS のトークンを取れないこと。
+  3 点の経路を足し、`AF_ENGINE_SUBNETS` を入れる。NAT ゲートウェイは今のまま。🔄 決定 11 の
+  3 点（`AF_CLOUD_COST`・会員側の節を `Attributable` で門番・VM に `af-role`）もここに入る——
+  完了確認をそのビューで読むからである。完了条件は、VM の Control Plane が買って止めた箱の上で
+  セッションが絵を 1 枚出すこと、**かつ**ワークスペースのコンテナが IMDS のトークンを取れないこと、
+  **かつ**管理者のコストビューにその絵の `engine-image` の行が出ること。
 - **P1——NAT ゲートウェイを外す。** `PrivateEgress` と VM の経路。完了条件は、NAT ゲートウェイを
   削除した状態で決定 4 の「冷えた一式」が 2 つの private AZ の両方で通ること——箱・冷えた ECR・
   ログ・SSM の鍵・ingest のトークン・モデル 1 本・自宅からの borrow——そして 3 日ぶんの請求が
@@ -434,6 +477,10 @@ GPU を貸していない夜は API 1 回で配備ごと止める。ECS 構成�
 | ワークスペースのコンテナは自前の外向きを持つ／CP はホストネットワーク | `control-plane/internal/runtime/runtime_docker.go:280-303`・`deploy/compose/docker-compose.yml` |
 | 今日の VM に IMDS の制限は無い。他所は 2 ホップ | `deploy/aws/ec2-single/cfn.yaml:59-73`・`deploy/aws/ecs/cfn/40-ec2-pool.yaml:123-125`・`deploy/aws/ecs/cfn/60-engines.yaml:451,521` |
 | docker は請求書が無いと申告し、ポーラはそれで return する | `control-plane/internal/runtime/profiles.go:362`・`control-plane/cloudcost.go:112-115` |
+| profile はランタイムのファクトリから来る／`Attributable` は「タグを担ぐもの」 | `control-plane/cost_profile.go:31-36`・`control-plane/internal/runtime/profiles.go:266-283` |
+| 役別の 2 本目の問い合わせ＝ここで生き残る切り口 | `control-plane/cloudcost.go:172,304-349` |
+| 会員側の節は今 `available` で門番され、`attributable` はどこからも読まれていない | `console/src/features/settings/SettingsDialog.tsx:232`・`console/src/features/settings/TenantDialog.tsx:98`・`console/src/features/cost/CloudCostView.tsx:26` |
+| Cost Explorer 自身の月 ~$1.2 | `control-plane/cloudcost.go:109` |
 | `standup.sh` が必須にしているもの | `deploy/aws/ecs/standup.sh:126-135` |
 | 休止しても残るものと、順序の教訓 | `deploy/aws/ecs/pause.sh:8-26` |
 | 唯一の実測請求 | `docs/log/67-member-cloud-cost.md:54-80` |

@@ -313,10 +313,52 @@ same image, more cheaply"**. Concretely, all of:
 the runtime's `CostProfile`, and docker declares no invoice — so moving af-sandbox to ec2-single
 **turns the per-member cost view off**, stops the `af-role` engine rows being polled, and stops
 this Control Plane activating cost-allocation tags. `guide/ref/deploy-targets.md` already says
-as much in its capability table ("cost attribution per member" is an ECS row), which is why this
-is a recorded loss rather than a defect: the deployment that keeps that feature is the one being
-verified before a release. If it is wanted on the VM, the cost capability has to be separated
-from the workspace runtime, and that is a code change this ADR does not propose.
+as much in its capability table ("cost attribution per member" is an ECS row). 🔄 **Most of it
+is kept anyway — see decision 11**, which separates the bill from the workspace runtime; what
+genuinely does not survive is the per-member half, and the completion test above is read in the
+Console's admin cost view once that decision lands.
+
+### 11. 🔄 The cost view is kept, by declaring the bill instead of deriving it from the runtime
+
+Review R6 is right that the view is off today, and decision 10 was wrong to record that as a
+property of this deployment rather than of the code. `cloudCostProfile()` asks the runtime
+factory (`cost_profile.go:31-36`) and `dockerFactory` answers "the operator's own hardware.
+There is no invoice to read" (`profiles.go:361-362`). That is true of docker in a basement and
+false of docker on an EC2 instance in the account that owns the engines — and ec2-single is the
+second one, which `guide/ref/deploy-targets.md` already says in as many words ("`ec2-single` is
+not a separate runtime profile — it is `docker` on a VM").
+
+So the deployment **declares** it, the way decision 2 declares engines and for the reason ADR
+0053 gives: `AF_CLOUD_COST=aws` in the `.env`, read once, producing a profile the runtime could
+not have known by itself.
+
+| | on ec2-single |
+|---|---|
+| the deployment's total, by service, by day | **kept** — Cost Explorer answers for the account, not for a runtime |
+| the by-role cut, `af-role` → `engine-llm` / `engine-image` | **kept, and it is the row this ADR exists for**: "what did the GPU cost last night" (`cloudcost.go:172,304-349`) |
+| per-member attribution — `/api/cost/me` and the member card | **gone, and it has to be hidden rather than zeroed** |
+
+🔴 The last row is the whole risk. Nothing on this host carries `af-membership`: one instance
+runs every workspace as a container. `Available: true` on its own would draw the member card
+(`SettingsDialog.tsx:232`, `TenantDialog.tsx:98`) and fill it with zeros — the exact failure
+`cost_profile.go`'s header refuses, "a screen full of zeros that looks like a bug, or worse,
+like 'you cost nothing'". The profile already carries the answer: `Attributable` is the list of
+what really carries the tag, it is **empty** here, and the Console gates the member sections on
+its length rather than on `available`. Nothing reads that field today — `CloudCostView.tsx:26`
+declares it and no view consults it — so this is three lines and a dom test, not a feature.
+
+Two things keep the view from being empty of the thing it is for:
+
+- **the VM carries `af-role` in its own template**, or the host's instance-hours land untagged
+  in the shared bucket next to the tax;
+- the account prerequisite is unchanged ("IAM user and role access to Billing Information"), and
+  the Cost Explorer requests cost about **$1.2 a month** (`cloudcost.go:109`) — a document
+  about saving $80 should say that out loud rather than hide it.
+
+Rejected: **deriving it** ("AWS credentials plus a row managed here means there is a bill").
+Right most of the time, and silently wrong when the credential belongs to an account somebody
+else pays for. The house rule for this exact shape is that a lifecycle is declared and never
+inferred (ADR 0053; ADR 0076 decision 1).
 
 ## What this costs, at list price (arithmetic, not an invoice)
 
@@ -406,10 +448,10 @@ CLIs included, on arm64.
    saving depends on the answer.
 5. **How do the two builds share a name?** One FQDN moved between an EIP and an ALB, or a
    second hostname for the verification deployment with its own OAuth redirect registered.
-6. 🔄 **Answered, and not in this ADR's favour: cost attribution does not survive.** The cost
-   view is off on a docker runtime (decision 10), so what is left is whether the VM should get
-   an AWS-billing capability of its own — a code change — or whether the bill is simply read in
-   the AWS console for this deployment.
+6. 🔄 **Answered in two halves.** The by-role and by-service view is kept by declaring the bill
+   (decision 11); **per-member attribution is not**, because nothing on this host carries
+   `af-membership`. What is left to measure is whether the by-role cut is actually populated on
+   a deployment whose only tagged resources are the engine boxes and the VM.
 7. **Is 4 GB enough** for the CP, Caddy, one workspace container and a NAT path? The ec2-single
    README already says `t3.medium` works with `WS_MEMORY` lowered.
 
@@ -423,8 +465,11 @@ CLIs included, on arm64.
 - **P0 — it works, and nothing about the network changes.** `ec2-single` gains VPC placement in
   a public subnet, the security groups of decision 1, IMDSv2 with a hop limit of 1 and an
   instance profile; `standup.sh` gains the engine-trio path; `AF_ENGINE_SUBNETS` lands. The NAT
-  gateway stays exactly as it is. Done when a session on the VM generates a picture on a box the
-  VM's Control Plane bought and stopped, **and** a workspace container is refused an IMDS token.
+  gateway stays exactly as it is. 🔄 Decision 11's three pieces land here too — `AF_CLOUD_COST`,
+  the member sections gated on `Attributable`, and `af-role` on the VM — because the completion
+  test is read in that view. Done when a session on the VM generates a picture on a box the VM's
+  Control Plane bought and stopped, **and** a workspace container is refused an IMDS token,
+  **and** the admin cost view shows an `engine-image` row for that picture.
 - **P1 — take the NAT gateway out.** `PrivateEgress` and the VM's route. Done when the cold
   matrix of decision 4 passes from both private AZs — box, ECR pull, logs, the SSM key, the
   ingest tokens, a model taken in, and a borrow from the home fleet — with the NAT gateway
@@ -469,6 +514,10 @@ claimed; the corrected locations are below, and the row-by-row verdicts are revi
 | the workspace container has outbound of its own; the CP is host-network | `control-plane/internal/runtime/runtime_docker.go:280-303`, `deploy/compose/docker-compose.yml` |
 | IMDS is unconstrained on the VM today, and 2 hops elsewhere | `deploy/aws/ec2-single/cfn.yaml:59-73`, `deploy/aws/ecs/cfn/40-ec2-pool.yaml:123-125`, `deploy/aws/ecs/cfn/60-engines.yaml:451,521` |
 | docker declares no invoice, and the poller returns on that | `control-plane/internal/runtime/profiles.go:362`, `control-plane/cloudcost.go:112-115` |
+| the profile comes from the runtime factory, and `Attributable` is what carries the tag | `control-plane/cost_profile.go:31-36`, `control-plane/internal/runtime/profiles.go:266-283` |
+| the by-role pass, which is the cut that survives here | `control-plane/cloudcost.go:172,304-349` |
+| the member sections are gated on `available` today, and nothing reads `attributable` | `console/src/features/settings/SettingsDialog.tsx:232`, `console/src/features/settings/TenantDialog.tsx:98`, `console/src/features/cost/CloudCostView.tsx:26` |
+| Cost Explorer's own ~$1.2/month | `control-plane/cloudcost.go:109` |
 | what `standup.sh` requires | `deploy/aws/ecs/standup.sh:126-135` |
 | what pausing leaves behind, and the order that matters | `deploy/aws/ecs/pause.sh:8-26` |
 | the one measured invoice | `docs/log/67-member-cloud-cost.md:54-80` |
