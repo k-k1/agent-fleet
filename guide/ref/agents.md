@@ -33,7 +33,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
 | Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
@@ -195,11 +195,13 @@ proprietary and not included in the image, so it has to be installed on demand (
 connection card offers it, ~299MB into your home), and you have to be signed in — an
 unauthenticated session would accept work and then fail every turn.
 
-The two rows carrying this footnote are the chat bridge and use as the assistant chat. The
-bridge is not blocked by anything muse-specific — it keys on the kind of notification, not on
-the agent — and it is simply unverified here. Use as the assistant chat is different: that one
-IS written per agent, and muse has no backend for it yet, so it is unbuilt rather than
-unwatched. Every other row was ticked only after it was seen working on a real muse session.
+The one row carrying this footnote is use as the assistant chat, and it is unbuilt rather than
+unwatched: that surface IS written per agent (a `chatx` provider per kind, plus the Console's
+own list of assistant-capable kinds) and muse has no backend in either. Every other row was
+ticked only after it was seen working on a real muse session — including the chat bridge, where
+the oracle was the member's own channel: a muse session's completion notice arrived in Discord,
+which is the only place that answer exists, because the queue and the outbox both empty
+themselves on success.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
