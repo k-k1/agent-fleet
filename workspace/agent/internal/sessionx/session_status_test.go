@@ -33,6 +33,37 @@ func feedStatusHook(t *testing.T, state, stdinJSON string) {
 	_ = r.Close()
 }
 
+// TestAnswerReadyNotDuplicatedByPutOnce is the negative-control / regression test
+// for the Discord bridge receiving the same answer 3+ times. The pane-based idle
+// heal (WireLive) can wipe the working marker (status.Remove) mid-turn; if the
+// heal fires more than once, or if a second Stop hook arrives before the next
+// UserPromptSubmit, the previous=="" arm fires again and the same notification
+// body is enqueued a second time.
+//
+// Fix: answer-ready uses notice.PutOnce with TurnEndAt as the key, so every
+// duplicate within the same RFC3339 second is absorbed by the marker file.
+// This test calls RecordSessionNotification twice for the same completed turn
+// (same TurnEndAt, same second) and expects exactly one answer-ready notification.
+func TestAnswerReadyNotDuplicatedByPutOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-putonce", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Test"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	// Completed turn: PersistTurnEndReason sets TurnEndAt = time.Now().
+	status.PersistTurnEndReason(sid, "idle", "")
+
+	// First call: the legitimate one — must fire.
+	RecordSessionNotification(sid, "working", "idle", "the answer")
+	// Second call: spurious duplicate (heal wiped the marker, another idle hook).
+	RecordSessionNotification(sid, "", "idle", "the answer")
+
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != chatx.ReportKindAnswerReady {
+		t.Fatalf("answer-ready duplicated: got %d events: %+v", len(events), events)
+	}
+}
+
 func TestWorkingToIdleQueuesDurableNotification(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	m := session.Meta{Name: "s1", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
