@@ -83,6 +83,19 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.usage.refresh": "Refresh",
   "wsbar.usage.open_page": "Open usage page",
   "wsbar.usage.breakdown": "Usage by feature",
+  // Folding (app/usageChipPlan.ts): the bar keeps the agents in recent use, the rest sit
+  // behind one "+N" chip. Pin / always-fold live in each chip's own dropdown.
+  "wsbar.usage.fold_title": "Usage chips folded away: {names} (click to open)",
+  "wsbar.usage.fold_pop_title": "Folded agents",
+  "wsbar.usage.fold_hint":
+    "The bar keeps the usage chips of the agents you used most recently. Each chip's “On the WS bar” control can keep it out or always fold it away.",
+  "wsbar.usage.place_label": "On the WS bar",
+  "wsbar.usage.place_pin": "Always show",
+  "wsbar.usage.place_pin_title": "Keep this chip on the WS bar even when the agent hasn't been used lately",
+  "wsbar.usage.place_auto": "Auto",
+  "wsbar.usage.place_auto_title": "Show on the WS bar only while this is one of the recently used agents (default)",
+  "wsbar.usage.place_fold": "Always fold",
+  "wsbar.usage.place_fold_title": "Always keep this chip inside the “+N” popover — including when it nears its cap",
   "wsbar.usage.unavailable_title": "{name} usage — not captured yet. Open the usage page to check.",
   "wsbar.usage.unavailable_note":
     "Usage is captured automatically when {name} runs (nothing captured yet). Run {name} once and it appears here. You can also check the exact numbers on the usage page below.",

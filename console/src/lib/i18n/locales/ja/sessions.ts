@@ -86,6 +86,19 @@ export const sessions = {
   "wsbar.usage.refresh": "更新",
   "wsbar.usage.open_page": "使用状況ページを開く",
   "wsbar.usage.breakdown": "機能別の内訳",
+  // 折りたたみ（app/usageChipPlan.ts）。バーに残るのは直近に使ったエージェントだけで、
+  // 残りは「+N」チップの中。固定／折りたたみは各チップのドロップダウンから。
+  "wsbar.usage.fold_title": "使用量を折りたたみ中: {names}（押すと開きます）",
+  "wsbar.usage.fold_pop_title": "折りたたみ中のエージェント",
+  "wsbar.usage.fold_hint":
+    "バーには直近に使ったエージェントの使用量だけを残しています。各チップの「WSバーでの表示」から、常に出す／常に畳むを選べます。",
+  "wsbar.usage.place_label": "WSバーでの表示",
+  "wsbar.usage.place_pin": "常に出す",
+  "wsbar.usage.place_pin_title": "このチップを常に WS バーに出す（直近に使っていなくても）",
+  "wsbar.usage.place_auto": "自動",
+  "wsbar.usage.place_auto_title": "直近に使ったエージェントのときだけ WS バーに出す（既定）",
+  "wsbar.usage.place_fold": "常に畳む",
+  "wsbar.usage.place_fold_title": "このチップは常に「+N」の中に畳む（上限に近づいても表には出しません）",
   "wsbar.usage.unavailable_title": "{name} 使用量 — まだ取得できていません。使用状況ページで確認してください。",
   "wsbar.usage.unavailable_note":
     "使用量は{name}の実行時に自動取得されます（まだ取得されていません）。{name}を一度動かすと表示されます。正確な数値は下の使用状況ページでも確認できます。",
