@@ -2602,10 +2602,19 @@ someone does.
 closing section of Phase 2 grouped it with "paths not written per agent at all" — wrong: the
 assistant chat is a per-kind provider (`chatx`'s `claudeChat` / `codexChat` / `opencodeChat` /
 `agyChat` / `cursorChat`, and lcpp has its own `lcppChat`), plus `ASSISTANT_AGENT_KINDS` on the
-Console side. muse is in neither. Building it means a `museChat` that drives `muse serve` over
-MSP for a conversation that is NOT an AF session — the lifecycle is the new part, since
-`--provider echo` cannot back a real assistant and there is no other headless one-shot. That is
-a package of its own, not a flag.
+Console side. muse is in neither.
+
+⚠️ **Correction (measured the same day, at no quota cost): the sizing in the first version of
+this paragraph was wrong.** It said a `museChat` would have to drive `muse serve` over MSP and
+invent a host lifecycle, "since `--provider echo` cannot back a real assistant and there is no
+other headless one-shot". There is: `muse exec` runs one prompt headlessly on the DEFAULT `meta`
+provider — `--provider echo` is the credential-free mode of that same command, which is why the
+clamp probes use it. It carries what a chat backend needs: `--json` (JSONL events), `--model`,
+`--reasoning-effort`, `--no-foreign-personal-context` (the clamp `serve` lacks), `--approval-mode`,
+`--max-model-steps`, `--no-session-log` — and **`--session-id <uuid>`, which continues an
+existing conversation**: two echo runs with the same id land in one `sessions/…/<id>/session.jsonl`
+carrying both turns. So the shape is the ordinary one — one exec per assistant message, history
+kept by the id, exactly how the other providers work — not a lifecycle project.
 
 ### P2-19: the chat bridge, ticked by the only oracle that exists — a person looking
 

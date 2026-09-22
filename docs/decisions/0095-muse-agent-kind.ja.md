@@ -2396,10 +2396,19 @@ PROPOSE-OK
 段 2 の終わりの節はこれを「そもそもエージェントごとに書かれていない経路」に分類していたが、誤りで
 ある: アシスタントチャットは**エージェントごとの provider**（`chatx` の `claudeChat` /
 `codexChat` / `opencodeChat` / `agyChat` / `cursorChat`。lcpp も自分の `lcppChat` を持つ）＋
-Console 側の `ASSISTANT_AGENT_KINDS` でできていて、muse はそのどちらにも居ない。作るなら
-`museChat` が MSP 越しに `muse serve` を駆動することになるが、対象の会話は **AF のセッションでは
-ない**のでライフサイクルが新しい仕事になる（`--provider echo` は本物のアシスタントを背負えず、
-ほかに headless の一発経路が無い）。フラグではなく、独立したパッケージである。
+Console 側の `ASSISTANT_AGENT_KINDS` でできていて、muse はそのどちらにも居ない。
+
+⚠️ **訂正（同日・枠ゼロで実測）: この段落の最初の版に書いた見積もりは誤りだった。** そこには
+「`museChat` は MSP 越しに `muse serve` を駆動してライフサイクルを新設することになる——
+`--provider echo` は本物のアシスタントを背負えず、ほかに headless の一発経路が無いから」と書いた。
+**在る**: `muse exec` は既定の `meta` プロバイダで 1 プロンプトを headless に走らせる
+（`--provider echo` は同じコマンドの資格情報不要モードで、締め付けの検証がそれを使っている）。
+チャットのバックエンドに要るものは揃っている: `--json`（JSONL イベント）・`--model`・
+`--reasoning-effort`・`--no-foreign-personal-context`（`serve` に無い締め付け）・`--approval-mode`・
+`--max-model-steps`・`--no-session-log`。そして **`--session-id <uuid>` は既存の会話を継続する**
+——同じ id で echo を 2 回走らせると、1 つの `sessions/…/<id>/session.jsonl` に両方のターンが入る。
+つまり形は普通で（アシスタントの 1 メッセージ＝1 exec、履歴は id が持つ。他の provider と同じ）、
+ライフサイクルの新規開発ではない。
 
 ### P2-19: チャットブリッジ——唯一在る神託＝人が見ること、で ✓ にした
 
