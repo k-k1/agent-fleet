@@ -328,3 +328,167 @@ Graviton にし（両イメージとも既にマルチアーキ——`release.sh
 | 両イメージとも arm64 をビルドする | `deploy/compose/release.sh:67-72` |
 | この ADR が変える能力表 | `guide/ref/deploy-targets.md` |
 | この ADR の正体である「後回しにした案」 | `docs/decisions/0079-remote-engine-from-another-deployment.md:564` |
+
+## レビュー（2026-09-22・P0 の前）
+
+`07cad1f29` に対して、AWS には触れず、配備も測らずに確認した。判定: **まだ P0 に入っては
+いけない。** docker の Control Plane から ECS のエンジンサービスを流用すること自体は成立し、
+新しいエンジン実行器も要らない。しかし提案の所有境界はコードの境界と一致していない。モデル台帳は
+Control Plane の DB にあり、docker ランタイムは AWS 費用の仕組みを止め、NAT インスタンスの経路は
+受信規則と必須の外向き先を欠き、IMDS を明示的に隔離しなければ VM の役は購入資格情報をコンテナへ
+露出する。いずれも実装の細部ではなく、設計への入力である。
+
+### 重大
+
+- **R1. エンジン表とモデルバケットだけではエンジンは動かない。モデル台帳は Control Plane の
+  DB に属する。** `engine_models` が enabled、selected/default、S3 key、引数、ライセンス受諾、
+  サイズ情報を持つ（`control-plane/internal/store/migrations/0057_engine_models.sql:14-26,38-62`、
+  `control-plane/internal/store/migrations/0058_engine_ingest.sql:40-53`）。
+  起動時、managed 行は `mgr.store` からその行を読み（`control-plane/engines.go:800-807,945-957`）、
+  手元のカタログから active set を組み（`control-plane/engine_catalog.go:82-104,425-467`）、SSM を
+  無条件に上書きする（`control-plane/engine_catalog.go:615-639`、呼び出しは
+  `control-plane/engines.go:964-968`）。したがって新しい SQLite で起動した ec2-single CP は、残って
+  いた active set を**空で上書きする**。逆に `10-data` を消すと、既定の `Persistence=delete` では
+  RDS も消える。`retain` が残すのは、このテンプレートに復元パラメータが無い最終 snapshot だけで
+  ある（`deploy/aws/ecs/cfn/10-data.yaml:64-66,157-174`）。決定 3 の「バケットとエンジン表が残る」
+  では足りない。P0 の前に台帳の唯一の権威と、両方向の引き渡し規則を決める必要がある。最小で安全な
+  形は VM の SQLite 台帳を権威のままにし、リリース確認側は ADR 0079 で役を借りること。確認側 CP に
+  所有させるなら、明示的な台帳移行と競合規則が要る。
+
+- **R2. 決定 4 の NAT インスタンスは、書かれたままでは最初の packet を通さない。** VM に付けるのは
+  公開 SG と `CpSg` だけだが、`CpSg` は ALB から CP port だけを許し
+  （`deploy/aws/ecs/cfn/00-network.yaml:186-197`）、公開 SG は 22/80/443 だけを許す
+  （`deploy/aws/ec2-single/cfn.yaml:50-57`）。転送 packet の送信元は private subnet のままなので、
+  どちらの SG にも入れない。private の 2 CIDR（`deploy/aws/ecs/cfn/00-network.yaml:39-44`）だけを
+  許す NAT 専用 ingress が要る。また VM を IGW route のある public subnet に固定しなければならない
+  （`deploy/aws/ecs/cfn/00-network.yaml:69-84,100-117`）。任意の `SubnetId` では足りない。P1 の
+  受け入れ試験は ingest より先に、両 private AZ から route・SG・DNS を証明しなければならない。
+
+- **R3. 決定 4 の外向き一覧は、壊れるほど不完全である。** このリポジトリ自身が、存在しない interface
+  endpoint として `ecr.api`・`ecr.dkr`・`logs`・`ssm` を挙げている
+  （`deploy/aws/ecs/cfn/00-network.yaml:160-166`）。GPU host は ECS agent を起動し
+  （`deploy/aws/ecs/cfn/60-engines.yaml:501-510`）、task image は ECR から来て、全 container が
+  `awslogs` を使う（`deploy/aws/ecs/cfn/60-engines.yaml:681-710,697-702,734-739,804-834,
+  821-826,847-852`）。ingest は container 起動前に Secrets Manager の secret を解決する
+  （`deploy/aws/ecs/cfn/60-engines.yaml:592-655`）。任意の llm key も SSM の task secret である
+  （`deploy/aws/ecs/cfn/60-engines.yaml:727-739`）。S3 が NAT から外すのは layer/model の**バイト**で
+  あって、ECR 認証・manifest、ECS agent、log 配送、SSM、Secrets Manager ではない。Cloud Map 登録は
+  task 側 API 呼び出しではなく ECS service の配線で（`deploy/aws/ecs/cfn/60-engines.yaml:741-750,
+  752-775,854-884`）、custom health もそこに宣言される。host の時刻同期経路を裏付ける repo 内の
+  根拠は**見つからず、未確認**である。P1 は実モデルの取得だけでなく、冷えた GPU host、冷えた ECR
+  pull、log 到着、SSM secret の llm key、ingest secret、service discovery を試す必要がある。
+
+- **R4. 決定 5 は、資格情報の境界無しに高価値の資格情報を multi-tenant container host へ置く。**
+  Workspace は意図的に NAT 付きの外向きを持ち（`control-plane/internal/runtime/runtime_docker.go:
+  280-303`）、CP 自身は host-network container である（`deploy/compose/docker-compose.yml:17-44`）。
+  現在の VM は IMDSv2 も hop limit も宣言していない（`deploy/aws/ec2-single/cfn.yaml:59-73`）。CP
+  container に instance profile の資格情報を渡すには通常 metadata を container から届くようにするが、
+  workspace network から `169.254.169.254` を明示的に拒まなければ member も同じ資格情報を読める。
+  提案する役は fleet を買い engine instance role を pass でき
+  （`deploy/aws/ecs/cfn/60-engines.yaml:318-341`）、pass 可能な task role で ingest を起動できる
+  （`deploy/aws/ecs/cfn/60-engines.yaml:288-302`）。「CpTaskRole より小さい」は境界にならない。P0
+  には、IMDSv2 と試験済みの hop/firewall 境界、または CP process だけが届く credential proxy という
+  具体的な配送設計が要る。さらに `CpTaskRole` の広い `EcsDrive`——`*` に対する service 削除と task
+  definition 登録まで含む——をコピーしてはならない（`deploy/aws/ecs/cfn/20-platform.yaml:197-227`）。
+  engine 操作を列挙し、workspace container から拒まれる負の試験を足すべきである。
+
+- **R5. 決定 6 と 7 は、請求を生む invariant を文章だけに預けている。** 各 CP は自分の controller
+  goroutine を起動し（`control-plane/engines.go:1001-1009`）、route 登録は process ごとに registry を
+  1 つ作る（`control-plane/engine_gateway.go:191-205`）。配備をまたぐ lease は無い。2 つの CP は store
+  も別なので mode と demand の行でも協調できない。P0 前に所有を fail closed にするべきである。
+  エンジン表の明示的な controller identity と必須の一致 env は安い設定 guard になり、設定を重複させた
+  場合まで防ぐなら conditional lease が要る。購入 policy は選んだ所有者だけへ貼り、`standup.sh` は
+  同じ managed 行を宣言する確認 CP を拒むべきである。停止についても、controller は
+  `context.Background()` で走る（`control-plane/engines.go:1007-1008`）ため VM shutdown に quiesce hook
+  が無い。全 managed role を off にし、ECS/fleet が 0 になるまで poll してからだけ `StopInstances` を
+  呼ぶ 1 本の停止 command または systemd shutdown unit を出し、直接停止は失敗または明瞭な警告に
+  しなければならない。
+
+### 中
+
+- **R6. docker ランタイムは、この ADR が頼る費用検証と tag 有効化そのものを無効にする。**
+  `dockerFactory.CostProfile` は `Available:false` を返し
+  （`control-plane/internal/runtime/profiles.go:361-365`）、その場合 `startCloudCostPoller` は Cost
+  Explorer を作る前に return する（`control-plane/cloudcost.go:99-128`）。したがって VM role の Cost
+  Explorer read/update は死んだ権限である。費用 tab は隠れ、engine の `af-role` 行は poll されず、
+  cost allocation tag もこの CP から有効化されない。これは測定待ちではなく実コード変更である。
+  workspace runtime から費用能力を分離し（例えば明示的な AWS billing profile）、docker-on-EC2 を
+  試験する必要がある。
+
+- **R7. 費用表は内部の算術が合わず、like-for-like でもない。** 草案自身が東京の NAT を
+  `$0.062/h` とするなら、同じ 730 時間では `$45.26` であって `~$36` ではない
+  （`docs/decisions/0099-engines-from-a-single-vm.md:24-29,243`）。EBS + public IP の `~$14` は rate も
+  volume size も示さないが、現テンプレートの既定は 30 GiB である
+  （`deploy/aws/ec2-single/cfn.yaml:27-29,66-68`）。停止時の床の文は、残る EIP・Route53・Cloud Map・
+  Secrets・ECR・S3 を落としている。実測請求には既に hosted zone・regional transfer・public IPv4・
+  RDS storage/DNS/Secrets/snapshot 等の残差がある（`docs/log/67-member-cloud-cost.md:57-75`）。
+  `20-platform` は staging bucket と ECR repository 6 個を作り
+  （`deploy/aws/ecs/cfn/20-platform.yaml:34-56,58-131`）、`60-engines` は model bucket と log group を
+  retain する（`deploy/aws/ecs/cfn/60-engines.yaml:386-419`）。さらに常時 lender の ECS 構成には CP
+  Fargate task が要るのに表では「usage」のまま、VM 列は CP と Workspace の両方を供給する host を
+  含む。同じ workload で表を作り直し、日付付き URL または保存した price sheet で単価を列挙し、
+  data 量・request 数を明記して、稼働時と停止時を分けるべきである。AWS 定価そのものは**この
+  リポジトリからは確認不能**だった。
+
+- **R8. 耐久性を決めずに費用 0 としている。** VM volume は `DeleteOnTermination:true`
+  （`deploy/aws/ec2-single/cfn.yaml:66-68`）。同梱 backup は呼び手が選ぶ local directory の tarball で、
+  SQLite 台帳を含む（`deploy/compose/backup.sh:4-18,33-58`）。off-host の宛先も EBS snapshot schedule
+  も無い。実用的な床には S3/EBS snapshot の storage・request・transfer を含めるか、1 回の
+  instance/volume 喪失で台帳と全 Workspace を失うことを明記して受け入れなければならない。これは
+  決定 3 の「周期を越えて残る」も運用上不完全にする。
+
+- **R9. Graviton は能力であって、現在の artifact の保証ではない。** 引用された release の行が
+  言うのは `WS_PLATFORMS` / `CP_PLATFORMS` を設定したときだけ multi-arch で publish することと、
+  両方の既定が空であること（`deploy/compose/release.sh:65-75,147-187`）。現 ec2-single template は
+  t3 と amd64 AMI しか受け付けない（`deploy/aws/ec2-single/cfn.yaml:22-33`）。
+  `workspace/Dockerfile` は Agent を cross compile するが（`workspace/Dockerfile:15-29`）、同梱 CLI が
+  動くかは ADR 自身が残した別の未確認事項である。P2 の節約は publish 済み manifest の検査と arm64
+  での workspace image 全体の実行を条件にするべきで、「両 image が arm64 を build する」という
+  出典表の主張は引用行に対して強すぎる。
+
+- **R10. より安い／単純な 2 案を明示的に比較する価値がある。** 第 1 は managed NAT gateway を
+  残し、engine/ingest の活動窓だけ作って EIP は retain する案。数分の cold-start orchestration と
+  引き換えに利用中の時間課金だけとなり、host の route/patch 運用を避ける。第 2 はリリース確認中も
+  VM を唯一の engine owner にし、ECS CP は ADR 0079 の既存 `remote` lifecycle を使う案。台帳移送と
+  二重 controller も避けられる。現在の却下表には「もっと pause」と常設 SSM endpoint はあるが
+  （`docs/decisions/0099-engines-from-a-single-vm.md:260-271`）、どちらも無い。application VM と外向きを
+  結合する信頼性・隔離が受け入れられない場合の退避として、小さな NAT 専用 instance も記録する
+  価値がある。
+
+### 軽
+
+- **R11. 「確認した出典」表は、まだ決定の監査可能な根拠になっていない。** 記載位置を全行開いた。
+  結果は下表のとおり。「一部」は引用内容は実在するが主張全体を支えない、という意味である。
+
+| 行 | 判定 | 引用位置が実際に示すもの／正しい位置 |
+|---|---|---|
+| registry に必要なのは表 + AWS だけ | **誤り** | `control-plane/engines.go:721-775` は起動 gate と client だけ。store・cluster・ingest・catalogue publish・subnet は `:800-869,812,945-987` |
+| engine cluster は別変数 | 正しい | `control-plane/engines.go:812` はそのまま `firstEnv("AF_ENGINE_ECS_CLUSTER", "AF_ECS_CLUSTER")` |
+| 購入箱の subnet | 正しいが行が狭い | 読むのは `control-plane/engines.go:609-616`（特に `:611`）。function header だけではない |
+| external/remote なら AWS は任意 | 正しい | `control-plane/engines.go:705-715`、load gate は `:752-775` |
+| EngineSg は CpSg を許す | 正しい | `deploy/aws/ecs/cfn/60-engines.yaml:422-433` |
+| service は awsvpc/private/public IP 無し | **一部** | 引用 `:768-776` は llm だけ。image は `:878-885`、ingest は `control-plane/engine_ingest.go:1060-1069,1652-1661` |
+| CP engine IAM は import role に貼る | **一部／範囲誤り** | CP policy は `60-engines.yaml:278-341`。`:350-384` は secret read を import した **execution** role に貼る。基礎 ECS 制御は `20-platform.yaml:197-227` |
+| `ec2:CreateFleet` は CP 権限 | 正しい | `deploy/aws/ecs/cfn/60-engines.yaml:318-322` |
+| `20-platform` の import は VPC id だけ | 正しい | 唯一の `Fn::ImportValue` は `deploy/aws/ecs/cfn/20-platform.yaml:139` |
+| `20-platform` は時間課金 0 | **一部** | `:34-149` は S3・ECR・Cloud Map・ECS を示す。ECS cluster の時間 resource は無いが storage/namespace/request 課金が無い根拠にはならない |
+| NAT + S3 gateway endpoint | 正しい | `deploy/aws/ecs/cfn/00-network.yaml:119-173`。`:165-166` は NAT に残る通信も名指す |
+| public subnet は public IP を map | 正しい | `deploy/aws/ecs/cfn/00-network.yaml:69-84` |
+| fetch sidecar の S3 + SSM | **主張が不正確** | Put は `fetch-models.sh:74-80`、S3 は `:92-103`、Get は `:105` と各 watch の `:141-149`。「loop ごとに 2 回」ではない |
+| ingest public IP は定数 | 正しい | `control-plane/engine_ingest.go:1060-1069,1652-1661` |
+| standup の必須 stack | 正しい | `deploy/aws/ecs/standup.sh:126-135` |
+| pause の残存物と順序 | 正しい | `deploy/aws/ecs/pause.sh:8-26` |
+| 実測請求 | 正しい | `docs/log/67-member-cloud-cost.md:54-80` |
+| ec2-single の形 | 正しい | default-VPC/no-profile は `deploy/aws/ec2-single/cfn.yaml:50-73`。`VpcId`・`SubnetId`・`IamInstanceProfile` の宣言は無い |
+| SQLite | 正しい | `deploy/compose/.env.example:373-374` |
+| Caddy ACME | **一部** | `deploy/compose/Caddyfile:14-16` は public host と reverse proxy。Let's Encrypt の明記は `deploy/aws/ec2-single/README.md:77-79` |
+| 両 image は arm64 build | **記述どおりなら誤り** | `deploy/compose/release.sh:65-75` は既定が空の opt-in 変数。build branch は `:147-187` |
+| 能力表 | 正しいが範囲無し | 現在の行と脚注は `guide/ref/deploy-targets.md:28-57` |
+| ADR 0079 の後回し案 | 正しい | `docs/decisions/0079-remote-engine-from-another-deployment.md:556-564` |
+
+### P0 前の門
+
+ADR が台帳の権威を選び、隔離された資格情報配送を定め、controller 1 つを fail closed にし、P0 の
+完了試験に docker の cost profile と Workspace→CP の画像経路を足すまで P0 には入れない。P1 には
+さらに NAT SG/public subnet の設計と、上の cold-start 外向き matrix が要る。このレビューでは AWS
+定価・時刻同期・実経路のいずれも確認していない。

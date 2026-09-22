@@ -349,3 +349,182 @@ lending a GPU, which the ECS build cannot do at all.
 | both images build for arm64 | `deploy/compose/release.sh:67-72` |
 | the capability table this changes | `guide/ref/deploy-targets.md` |
 | the reordered alternative this ADR is | `docs/decisions/0079-remote-engine-from-another-deployment.md:564` |
+
+## Review (2026-09-22, before P0)
+
+The proposal was checked against `07cad1f29`, without touching AWS or measuring a deployment.
+Verdict: **do not start P0 yet.** Reusing the ECS engine services from a docker Control Plane is
+feasible and does not require a new engine executor, but the proposed ownership boundary is not
+the one the code has. The model catalogue lives in the Control Plane database, docker suppresses
+the AWS cost subsystem, the NAT-instance path is missing both an ingress rule and several required
+egress destinations, and the VM role would expose a purchasing credential to containers unless
+IMDS is isolated explicitly. These are design inputs, not implementation details.
+
+### Critical
+
+- **R1. The engine table and models bucket do not constitute a runnable engine; the model
+  catalogue belongs to the Control Plane database.** `engine_models` holds the enabled bit,
+  selected/default model, S3 keys, arguments, licence acceptance and sizing metadata
+  (`control-plane/internal/store/migrations/0057_engine_models.sql:14-26,38-62`,
+  `control-plane/internal/store/migrations/0058_engine_ingest.sql:40-53`). At boot a managed
+  row reads those rows from `mgr.store` (`control-plane/engines.go:800-807,945-957`), builds the
+  active set from the local catalogue (`control-plane/engine_catalog.go:82-104,425-467`), and
+  overwrites SSM unconditionally (`control-plane/engine_catalog.go:615-639`, called at
+  `control-plane/engines.go:964-968`). An ec2-single CP with a fresh SQLite database therefore
+  publishes an **empty active set over the surviving one**. Conversely, deleting `10-data` deletes
+  RDS in the default `Persistence=delete` shape, while `retain` leaves only a final snapshot that
+  this template has no restore parameter for (`deploy/aws/ecs/cfn/10-data.yaml:64-66,157-174`).
+  Decision 3's claim that the bucket and engine table survive the release cycle is not enough.
+  Before P0 the ADR must choose one catalogue authority and a bidirectional hand-off rule. The
+  smallest safe shape is for the VM's SQLite catalogue to remain authoritative and for a release
+  deployment to borrow the roles through ADR 0079; making the release CP own them requires an
+  explicit catalogue migration and conflict rule.
+
+- **R2. Decision 4's NAT instance does not pass the first packet as written.** The VM is assigned
+  only its public security group and `CpSg`, but `CpSg` admits only the ALB on the CP port
+  (`deploy/aws/ecs/cfn/00-network.yaml:186-197`) and the public group admits only 22/80/443
+  (`deploy/aws/ec2-single/cfn.yaml:50-57`). Forwarded packets retain a private-subnet source, so
+  neither group admits them. The design needs a separate NAT ingress rule scoped to the two
+  private CIDRs (`deploy/aws/ecs/cfn/00-network.yaml:39-44`) and must pin the VM to a public subnet
+  whose table has the IGW route (`deploy/aws/ecs/cfn/00-network.yaml:69-84,100-117`); an arbitrary
+  `SubnetId` is not sufficient. P1's acceptance test must first prove routing, SG and DNS from
+  both private AZs, before testing ingest.
+
+- **R3. The egress inventory in decision 4 is materially incomplete.** This repository itself
+  says that the missing interface endpoints are `ecr.api`, `ecr.dkr`, `logs` and `ssm`
+  (`deploy/aws/ecs/cfn/00-network.yaml:160-166`). GPU hosts must start the ECS agent
+  (`deploy/aws/ecs/cfn/60-engines.yaml:501-510`), task images come from ECR and every container
+  uses `awslogs` (`deploy/aws/ecs/cfn/60-engines.yaml:681-710,697-702,734-739,804-834,821-826,
+  847-852`), and ingest resolves Secrets Manager secrets before the containers start
+  (`deploy/aws/ecs/cfn/60-engines.yaml:592-655`). The optional llm key is also an SSM task secret
+  (`deploy/aws/ecs/cfn/60-engines.yaml:727-739`). S3 removes layer/model *bytes* from the NAT, not
+  ECR authentication/manifests, ECS agent traffic, log delivery, SSM or Secrets Manager. Cloud Map
+  registration is ECS-service wiring (`deploy/aws/ecs/cfn/60-engines.yaml:741-750,752-775,
+  854-884`) rather than a task-side API call; custom health is likewise declared there. Repository
+  evidence for the host's time-sync path was **not found and remains unverified**. The P1 test must
+  include a cold GPU host, cold ECR pulls, log arrival, an SSM-secret llm key, ingest secrets and
+  service discovery—not only a model download.
+
+- **R4. Decision 5 puts a high-value credential on a multi-tenant container host without a
+  credential boundary.** Workspaces deliberately have outbound NAT
+  (`control-plane/internal/runtime/runtime_docker.go:280-303`) and the CP itself is a host-network
+  container (`deploy/compose/docker-compose.yml:17-44`). The current VM declares no IMDSv2 or hop
+  limit at all (`deploy/aws/ec2-single/cfn.yaml:59-73`). Giving the CP container instance-profile
+  credentials normally requires making metadata reachable from a container; unless workspace
+  networks are explicitly denied `169.254.169.254`, a member can read the same credentials. The
+  proposed role can buy fleets and pass the engine instance role
+  (`deploy/aws/ecs/cfn/60-engines.yaml:318-341`) and can run ingest with a passable task role
+  (`deploy/aws/ecs/cfn/60-engines.yaml:288-302`), so “smaller than CpTaskRole” is not an adequate
+  boundary. P0 needs a concrete credential-delivery design: IMDSv2 plus a tested hop/firewall
+  boundary, or a credential proxy available only to the CP process. Also do not copy `CpTaskRole`'s
+  broad `EcsDrive` statement, which includes service deletion and task-definition registration on
+  `*` (`deploy/aws/ecs/cfn/20-platform.yaml:197-227`); enumerate the engine operations and add a
+  negative test from a workspace container.
+
+- **R5. Decisions 6 and 7 leave bill-producing invariants to prose.** Each CP starts its own
+  controller goroutine (`control-plane/engines.go:1001-1009`) and route registration constructs a
+  registry per process (`control-plane/engine_gateway.go:191-205`); there is no cross-deployment
+  lease. The two CPs also have different stores, so their mode and demand rows cannot coordinate.
+  Make ownership fail closed before P0: an explicit controller identity in the engine table plus a
+  required matching env value is a cheap configuration guard, while a conditional lease is needed
+  if protection against duplicated configuration is required. In addition, attach the purchasing
+  policy to only the selected owner and make `standup.sh` refuse a release CP that declares the
+  same managed rows. For stopping, the controllers run on `context.Background()`
+  (`control-plane/engines.go:1007-1008`), so VM shutdown has no quiesce hook. Ship one stop command
+  or systemd shutdown unit that sets every managed role off, polls ECS/fleets to zero, and only then
+  calls `StopInstances`; direct stopping must fail or print an unmistakable warning.
+
+### Medium
+
+- **R6. The docker runtime disables the very cost verification and tag activation this ADR relies
+  on.** `dockerFactory.CostProfile` returns `Available:false`
+  (`control-plane/internal/runtime/profiles.go:361-365`), and `startCloudCostPoller` returns before
+  constructing Cost Explorer whenever that flag is false (`control-plane/cloudcost.go:99-128`).
+  Thus Cost Explorer read/update permission on the VM role is dead code: the cost tab is hidden,
+  engine `af-role` rows are not polled, and cost-allocation tags are not activated by this CP. This
+  is a real code change, not an open measurement question. Cost capability must be separated from
+  workspace runtime (for example an explicit AWS-billing profile), with the docker-on-EC2 case
+  tested.
+
+- **R7. The cost table is neither internally arithmetically consistent nor like-for-like.** The
+  draft states a Tokyo NAT rate of `$0.062/h`, which is `$45.26` for its own 730-hour month, not
+  `~$36` (`docs/decisions/0099-engines-from-a-single-vm.md:24-29,243`). The `~$14` EBS + public-IP
+  row gives neither rates nor a volume size even though the current template defaults to 30 GiB
+  (`deploy/aws/ec2-single/cfn.yaml:27-29,66-68`), and the stopped-floor sentence omits the retained
+  EIP, Route53, Cloud Map, Secrets, ECR and S3. The measured bill already contains hosted-zone,
+  regional-transfer, public-IPv4 and a residual of RDS storage/DNS/Secrets/snapshots
+  (`docs/log/67-member-cloud-cost.md:57-75`). `20-platform` creates a staging bucket and six ECR
+  repositories (`deploy/aws/ecs/cfn/20-platform.yaml:34-56,58-131`), while `60-engines` retains the
+  model bucket and log group (`deploy/aws/ecs/cfn/60-engines.yaml:386-419`). Finally, an always-on
+  ECS lender needs the CP Fargate task, but the comparison leaves it as “usage”; the VM column
+  includes the host that supplies CP **and** workspaces. Rebuild the table for the same workload,
+  list hourly/unit rates with dated URLs or a captured price sheet, state data volumes and request
+  counts, and show both running and stopped cases. AWS list prices themselves were **not
+  verifiable from this repository**.
+
+- **R8. Durability has been priced as zero rather than decided.** The VM volume is
+  `DeleteOnTermination:true` (`deploy/aws/ec2-single/cfn.yaml:66-68`). The supplied backup is a
+  tarball in a caller-selected local directory and includes the SQLite catalogue
+  (`deploy/compose/backup.sh:4-18,33-58`); no off-host target or EBS snapshot schedule is present.
+  A usable floor must either include S3/EBS-snapshot storage, requests and transfer, or explicitly
+  accept that one instance/volume loss removes the catalogue and every workspace. This also makes
+  decision 3's “survives the cycle” claim operationally incomplete.
+
+- **R9. Graviton is a capability, not a current artefact guarantee.** The cited release lines say
+  that multi-arch publication occurs only when `WS_PLATFORMS` / `CP_PLATFORMS` are set; both default
+  empty (`deploy/compose/release.sh:65-75,147-187`). The current ec2-single template accepts only
+  t3 types and an amd64 AMI (`deploy/aws/ec2-single/cfn.yaml:22-33`). `workspace/Dockerfile` does
+  cross-compile the Agent (`workspace/Dockerfile:15-29`), but the installed CLI binaries are the
+  separate unverified question the ADR already records. P2 savings must be conditional on inspecting
+  the published manifests and running the full workspace image on arm64; the source-table claim
+  “both images build for arm64” is too strong for the cited lines.
+
+- **R10. Two cheaper/simpler alternatives deserve an explicit comparison.** First, keep the
+  managed NAT gateway but create it only for an engine/ingest activity window, retaining its EIP;
+  this trades minutes of cold-start orchestration for hourly billing only during use and avoids
+  host routing/patching. Second, keep the VM as the sole engine owner during release verification
+  and make the ECS CP use ADR 0079's existing `remote` lifecycle, which also avoids catalogue
+  transfer and the dual-controller hazard. The present rejected list mentions only “pause it
+  harder” and a permanent SSM endpoint (`docs/decisions/0099-engines-from-a-single-vm.md:260-271`),
+  not either shape. A separate tiny NAT instance is also worth recording as the reliability/
+  isolation fallback if coupling egress to the application VM proves unacceptable.
+
+### Light
+
+- **R11. The `Sources checked` table is not yet an auditable basis for the decisions.** Each row
+  was opened at the stated location. The result is below; “partial” means the cited text exists but
+  does not support the whole claim.
+
+| Row | Verdict | What the cited location actually establishes / corrected location |
+|---|---|---|
+| registry needs only table + AWS | **wrong** | `control-plane/engines.go:721-775` covers the boot gate and clients only; store, cluster, ingest, catalogue publication and subnets are at `:800-869,812,945-987` |
+| separate engine cluster variable | correct | `control-plane/engines.go:812` is exactly `firstEnv("AF_ENGINE_ECS_CLUSTER", "AF_ECS_CLUSTER")` |
+| bought-box subnets | correct, narrow line | the read is `control-plane/engines.go:609-616` (especially `:611`), not the function header alone |
+| external/remote makes AWS optional | correct | `control-plane/engines.go:705-715`; the load gate is `:752-775` |
+| EngineSg admits CpSg | correct | `deploy/aws/ecs/cfn/60-engines.yaml:422-433` |
+| services are awsvpc/private/no public IP | **partial** | cited `:768-776` is llm only; image is `:878-885`, ingest is `control-plane/engine_ingest.go:1060-1069,1652-1661` |
+| CP engine IAM attaches to imported role | **partial/wrong range** | CP policy attachment is `60-engines.yaml:278-341`; `:350-384` attaches secret reads to the imported **execution** role; base ECS control is `20-platform.yaml:197-227` |
+| `ec2:CreateFleet` is CP permission | correct | `deploy/aws/ecs/cfn/60-engines.yaml:318-322` |
+| `20-platform` imports only VPC id | correct | the one `Fn::ImportValue` is `deploy/aws/ecs/cfn/20-platform.yaml:139` |
+| `20-platform` has no hourly bill | **partial** | `:34-149` shows S3, ECR, Cloud Map and ECS; no ECS-cluster hourly resource, but storage/namespace/request charges are not disproved |
+| NAT + S3 gateway endpoint | correct | `deploy/aws/ecs/cfn/00-network.yaml:119-173`; `:165-166` also names traffic still using NAT |
+| public subnets map public IP | correct | `deploy/aws/ecs/cfn/00-network.yaml:69-84` |
+| fetch sidecar S3 + SSM calls | **claim misstated** | Put is `fetch-models.sh:74-80`, S3 is `:92-103`, Get is `:105` and every watch iteration at `:141-149`; it is not “two calls per loop” |
+| ingest public IP constant | correct | `control-plane/engine_ingest.go:1060-1069,1652-1661` |
+| standup required stacks | correct | `deploy/aws/ecs/standup.sh:126-135` |
+| pause residue and order | correct | `deploy/aws/ecs/pause.sh:8-26` |
+| measured invoice | correct | `docs/log/67-member-cloud-cost.md:54-80` |
+| ec2-single shape | correct | default-VPC/no-profile facts are visible at `deploy/aws/ec2-single/cfn.yaml:50-73`; the template does not declare `VpcId`, `SubnetId` or `IamInstanceProfile` |
+| SQLite | correct | `deploy/compose/.env.example:373-374` |
+| Caddy ACME | **partial** | `deploy/compose/Caddyfile:14-16` shows a public host and reverse proxy; the repository's explicit Let's Encrypt statement is `deploy/aws/ec2-single/README.md:77-79` |
+| both images build for arm64 | **wrong as stated** | `deploy/compose/release.sh:65-75` documents opt-in variables whose defaults are empty; build branches are `:147-187` |
+| capability table | correct but unscoped | exact current row and footnotes are `guide/ref/deploy-targets.md:28-57` |
+| ADR 0079 reordered alternative | correct | `docs/decisions/0079-remote-engine-from-another-deployment.md:556-564` |
+
+### Gate before P0
+
+P0 may start only after the ADR chooses the catalogue authority, specifies isolated credential
+delivery, makes one controller fail closed, and corrects the P0 completion test to include the
+docker cost profile and workspace-to-CP image path. P1 additionally needs the NAT SG/public-subnet
+design and the full cold-start egress matrix above. No AWS price, time-sync behaviour or live route
+was verified in this review.
