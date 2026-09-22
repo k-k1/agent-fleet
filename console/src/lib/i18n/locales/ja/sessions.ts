@@ -117,8 +117,6 @@ export const sessions = {
   "wsbar.close_all_title": "全ペインを閉じる",
   "wsbar.overview": "セッション一覧",
   "wsbar.overview_title": "稼働中のセッションをカードで一望する",
-  "wsbar.fleetgraph": "俯瞰図",
-  "wsbar.fleetgraph_title": "レーン＝セッション・横軸＝時間でフリート全体を眺める",
   "wsbar.imagegen": "画像生成",
   "wsbar.imagegen_title": "エージェントを介さずに ComfyUI で絵を作る",
   // オーバーフロー／プレビュー／リソース

@@ -91,6 +91,9 @@ const DRAG_SLOP_PX = 4;
 // How far above its lane an arrow from outside the figure starts. Under one row (34px), so
 // the stub never reaches into the row above and cannot be read as belonging to it.
 const EXT_STUB_PX = 16;
+// A finger in the book that has not been heard from for this long, when a NEW gesture
+// starts, is not on the glass: its pointerup was lost. See onPointerDown.
+const STALE_POINTER_MS = 2000;
 const PINCH_MIN_SPAN_PX = 24;
 const PINCH_DEADZONE = 0.04;
 
@@ -153,6 +156,17 @@ const ARROW_KEY: Record<ArrowVariant, MsgKey> = {
   report: "fgraph.arrow_report",
   peer: "fgraph.arrow_peer",
 };
+
+// setPointerCapture throws (InvalidStateError) for a pointer that is no longer active —
+// which is precisely the case this view has to survive — so every call is guarded. A
+// capture that cannot be taken is not worth failing a gesture over.
+function capturePointer(el: HTMLElement, id: number): void {
+  try {
+    el.setPointerCapture?.(id);
+  } catch {
+    /* the pointer went away between the event and here */
+  }
+}
 
 // "Family" edges (spawn/fork/handoff) connect lanes at birth; the other three are
 // conversation-shaped round trips. Kept apart visually so a dense figure still reads at
@@ -279,6 +293,8 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
   interface DragPoint {
     x: number;
     y: number;
+    /** When this finger was last heard from — see the pruning in `onPointerDown`. */
+    at: number;
   }
   const pointersRef = useRef(new Map<number, DragPoint>());
   const movedRef = useRef(false);
@@ -292,17 +308,41 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
     return { span: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2 };
   };
 
+  // 🔥 A finger that never reports going up is what killed this figure on a real phone:
+  // one leaked entry means every later ONE-finger drag has two fingers in the book, is
+  // read as half a pinch, and does nothing at all. The user met it within a minute of
+  // pinching and scrolling, and it never recovered (docs/log/101 §101.14).
+  //
+  // It leaks because a touch pointer is implicitly captured to the element it went down
+  // on, and this figure re-renders that element away mid-gesture: an activity band's React
+  // key carries its CLIPPED start and end, so every zoom replaces the bands under the
+  // fingers. The pointerup is then delivered to a node that has left the document.
+  //
+  // Three independent guards, because the leak cannot be prevented from here with
+  // certainty — only made harmless:
+  //   1. a PRIMARY pointer going down starts a new gesture, so the book is cleared first;
+  //   2. a pinch captures both fingers onto the canvas, which moves their delivery off the
+  //      elements being re-rendered for the rest of the gesture;
+  //   3. anything not heard from for STALE_POINTER_MS when a new gesture starts is not on
+  //      the glass any more.
   const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
     // Only the primary button drags; a right-click belongs to the context menu, and the
     // middle one to "open in a new pane" on the targets that still open something.
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const now = Date.now();
+    if (e.isPrimary) pointersRef.current.clear();
+    else for (const [id, p] of pointersRef.current) if (now - p.at > STALE_POINTER_MS) pointersRef.current.delete(id);
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY, at: now });
     if (pointersRef.current.size === 2) {
       const p = pinchSpan();
       pinchRef.current = p && p.span > PINCH_MIN_SPAN_PX ? { span: p.span } : null;
       // A second finger ends the drag: promoting one of a pinch's fingers back to a pan
       // when the other lifts would jump the window by however far they had spread.
       movedRef.current = true;
+      // A pinch is never a click, so capture both fingers now. Until this, neither was
+      // captured — a pinch skips the pan branch where the capture used to happen — and
+      // both relied on the implicit capture this figure keeps pulling out from under them.
+      for (const id of pointersRef.current.keys()) capturePointer(e.currentTarget, id);
     }
   };
 
@@ -311,19 +351,25 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
     if (!prev) return;
     const dx = e.clientX - prev.x;
     const dy = e.clientY - prev.y;
-    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY, at: Date.now() });
 
     if (pointersRef.current.size >= 2) {
       const p = pinchSpan();
       const start = pinchRef.current;
-      if (!p || !start || p.span <= PINCH_MIN_SPAN_PX) return;
-      const ratio = p.span / start.span;
-      // A resting hand is not a pinch: without a deadzone the figure creeps while two
-      // fingers merely sit on the glass.
-      if (Math.abs(ratio - 1) < PINCH_DEADZONE) return;
-      pinchRef.current = { span: p.span };
-      zoom(pinchSpanFactor(ratio), fractionAt(p.midX));
-      return;
+      // A pinch that cannot be measured falls THROUGH to the pan below rather than
+      // returning. Returning is what turned a stale entry into a figure that did nothing
+      // at all: a gesture this view cannot name must still move something, or the only
+      // symptom the user gets is "it is broken".
+      if (p && start && p.span > PINCH_MIN_SPAN_PX) {
+        const ratio = p.span / start.span;
+        // A resting hand is not a pinch: without a deadzone the figure creeps while two
+        // fingers merely sit on the glass.
+        if (Math.abs(ratio - 1) >= PINCH_DEADZONE) {
+          pinchRef.current = { span: p.span };
+          zoom(pinchSpanFactor(ratio), fractionAt(p.midX));
+        }
+        return;
+      }
     }
 
     if (!movedRef.current && Math.hypot(dx, dy) < DRAG_SLOP_PX) return;
@@ -331,7 +377,7 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
       movedRef.current = true;
       // Captured only once the press IS a drag: capturing on pointerdown would steal the
       // pointer from every plain click on an arrow.
-      if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+      capturePointer(e.currentTarget, e.pointerId);
     }
     // The finger carries the CONTENT: dragging right shows earlier time, dragging down
     // shows earlier rows. Both are the opposite sign from the wheel above.

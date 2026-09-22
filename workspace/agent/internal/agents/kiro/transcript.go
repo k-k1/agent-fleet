@@ -109,7 +109,9 @@ type block struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// toolUseData is the toolUse block payload.
+// toolUseData is the toolUse block payload. The edit-family fields (everything below
+// FilePath) are read by fileedits.go, which also documents that kiro ships TWO spellings of
+// the same write tool.
 type toolUseData struct {
 	ToolUseID string `json:"toolUseId"`
 	Name      string `json:"name"`
@@ -118,6 +120,15 @@ type toolUseData struct {
 		Purpose  string `json:"__tool_use_purpose"`
 		Path     string `json:"path"`
 		FilePath string `json:"file_path"`
+		// v2 (camelCase) — what --agent-engine v2, the engine this kind pins, records.
+		Content string `json:"content"`
+		OldStr  string `json:"oldStr"`
+		NewStr  string `json:"newStr"`
+		// Legacy (snake_case) — the fs_write spelling still carried in the binary's tool
+		// catalogue, kept so a session on the older engine is not silently blank.
+		FileText  string `json:"file_text"`
+		OldString string `json:"old_str"`
+		NewString string `json:"new_str"`
 	} `json:"input"`
 }
 
@@ -225,7 +236,14 @@ func parseTranscript(path string) []transcript.Turn {
 							info = alt
 						}
 					}
-					cur.Parts = append(cur.Parts, transcript.Part{Kind: "tool", Tool: tu.Name, Info: clip(info)})
+					p := transcript.Part{Kind: "tool", Tool: tu.Name, Info: clip(info)}
+					// A write call additionally carries its target and before/after, which is
+					// what the changed-files strip counts and what opens the trace as a diff
+					// (fileedits.go).
+					if f, verb, es := toolEdits(tu); f != "" {
+						p.File, p.Verb, p.Edits = f, verb, es
+					}
+					cur.Parts = append(cur.Parts, p)
 					if tu.ToolUseID != "" {
 						toolIdx[tu.ToolUseID] = len(cur.Parts) - 1
 					}

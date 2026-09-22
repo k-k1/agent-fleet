@@ -25,6 +25,7 @@ import type { RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { useUnreadSessions } from "../notifications/unread.ts";
 
 /** Deepest level that still adds indentation; below it nodes stay at this inset. */
 const MAX_INDENT_DEPTH = 3;
@@ -96,6 +97,14 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
       sessTotal += cs.length;
     }
   }
+  // Unread dot, folded in the same way and for the same reason as the tally: while the node
+  // is collapsed its row is the only thing on screen for every session underneath, so a dot
+  // down there has to surface here or it is simply invisible. While open the rows carry
+  // their own and repeating it on the head would say nothing new.
+  const unreadSessions = useUnreadSessions();
+  const unread =
+    !open &&
+    [...mine, ...below.flatMap((f) => sessionsInFolder(sessions, f))].some((s) => unreadSessions.has(s.name));
   const row = (s: Session) => (
     <SessionRow
       key={s.name}
@@ -135,6 +144,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
             node={n}
             onToggle={openState.toggle}
             sess={{ alive: sessAlive, total: sessTotal }}
+            unread={unread}
             stoppedCount={stoppedMine.length}
             onArchiveStopped={() => void actions.archiveStopped(stoppedMine)}
           />

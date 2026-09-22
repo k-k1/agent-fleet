@@ -316,9 +316,9 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.278
-ARG OPENCODE_VERSION=1.18.31
+ARG OPENCODE_VERSION=1.18.32
 ARG CODEX_VERSION=0.155.1
-ARG COPILOT_VERSION=1.0.86
+ARG COPILOT_VERSION=1.0.87
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -344,10 +344,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.7
-ARG AGY_RELEASE_BUILD=6731160148115456
-ARG AGY_SHA256_X64=e410dd56d8c213ef12643d3ff5eaaab57a17e05bbf72e9415322f23879fc4a18
-ARG AGY_SHA256_ARM64=8ddbb669158de1d1bc4c1fe5c130dca8f51da80d62569a54a4133f06768a723b
+ARG AGY_VERSION=1.2.8
+ARG AGY_RELEASE_BUILD=4907747922280448
+ARG AGY_SHA256_X64=244752206d1f65c01aff489628f1df51f1a3fddacaa8ed74984661ebb6d09136
+ARG AGY_SHA256_ARM64=85ea71929436711e4b0332026508ee4e7ddb05192f24f1774dfbed879255fc6e
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \

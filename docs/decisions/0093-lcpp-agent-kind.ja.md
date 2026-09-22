@@ -799,3 +799,63 @@ ADR の範囲外）。利用者登録の外部サーバはこの上にさらに�
 **範囲外にしたもの（決定どおり）。** プロジェクトスコープ（`mcpproj` 経由の `.mcp.json`）は今回触って
 いない——`lcpp` は他 kind の `.mcp.json` を読むだけの kind でも、コピー先の kind でもない（決定 6 の
 既存の文言のまま）。
+
+### 段 2 の後: 「このセッションが変更したファイル」帯への配線（ADR 0049 / docs/log/68）
+
+ミラーのヘッド直下の変更ファイル帯と、ターンのツール痕をその場で開く差分が `lcpp` では出ていなかった。
+**Console 側の kind ゲートではない**——帯は `/messages` が同梱する `files` が空なら描かないだけで
+（`FileChangeStrip.tsx`）、差分は `p.edits` の有無しか見ない（`blocks.tsx`）。Agent 側の集計
+（`sessionx/session_files.go` → `transcript.FileEditsInTurn`）は `Part.File` が空のツール部品を捨てるので、
+**転写を組む側が `File`/`Edits` を埋めていない kind は 1 行も出ない**。
+
+実測した当時のカバレッジ: `claude` / `codex` / `opencode` / `cursor` / `copilot` は埋めている
+（それぞれの `transcript.go`）。埋めていないのは `lcpp` / `muse` / `kiro` / `agy` の 4 つ。
+`docs/log/68` §68.2.1 の表が `kiro / agy` しか ✕ に挙げていないのは、その表が `lcpp`・`muse` より
+前に書かれたからで、**表に載っていないことが「対応済み」を意味しない**。
+
+**足したもの。** `internal/agents/lcpp/fileedits.go`（新規）の `toolEdits` と、その 2 か所の呼び出し:
+
+- 組み込みの `write`（`{path, content}`）と `edit`（`{path, old_string, new_string, replace_all}`）は
+  claude の `Write`/`Edit` とほぼ同型で、材料は最初から `ToolCall.Arguments` に全部入っていた——
+  `store.go` の `transcriptFromRecords` が `Tool`/`Info`/`Output` しか写していなかっただけ。
+- `Verb` は申告しない。`transcript.EditVerb` に任せると `edit` は before があるので `edit`、`write` は
+  純粋な挿入なので `add` になる。**既存ファイルへの上書きも `add` と読める**が、呼び出しが before-image を
+  運んでいない以上これが正直な縮退で、claude の `Write`・opencode の `write` が既に同じ形を出している。
+- `bash` は読まない。`sed -i` も確かにファイルを変えるが、引数のどこにも対象が書いておらず、
+  推測すると誰も触っていないファイルが一覧に並ぶ。
+
+🔥 **静かな第 2 の穴は `Turn.Cwd` だった。** 組み込みツールのパスはセッションの作業ディレクトリ相対
+（`harness/cwd.go` が全ツールをそこに閉じ込めている）で、集計側の `absEditPath` は **cwd の無い相対パスを
+黙って捨てる**。つまりパーサだけ直しても帯は空のままで、しかも「パースできていない」と「本当に何も
+編集していない」は画面上まったく同じに見える。ストアは cwd を記録していないので、`agent.go` の
+`Transcript(m)` が `m.CWD()`（driver が harness の `Runtime.Cwd` に渡しているのと同じ値）を全ターンに
+入れる。副作用として転写の先頭に cwd のコンテキスト行が 1 本出て、エージェントの文中の相対リンクが
+`baseDir` で解決するようになる——どちらも codex/opencode が既に出しているものと同じ。
+
+**試験と陽性対照。** `fileedits_test.go`（新規）と、`store_test.go` / `agent_test.go` へ各 1 本:
+
+- `TestToolEditsNamesTheFileTheBuiltinWrote` が唯一の本物の継ぎ目——**同じ引数 JSON を
+  `harness.BuiltinTools()` の実物のツールに実行させ**、パーサが名指したパスをディスクから読み直して
+  中身を突き合わせる。引数名が `path` → `file_path` に変わったら赤になる（実際に変異させて確認）。
+- `TestEveryMutatingPathTakingBuiltinIsParsed` は後から増える組み込みツール用のドリフト番人:
+  `Mutates` かつ引数に `path` を宣言しているツールは定義上 edit 系なので、パーサが知らなければ赤。
+  `bash` はこの規則に当たらない（`command` しか取らない）ことを陰性対照として固定した。
+- `TestTranscriptFeedsTheChangedFilesAggregation` は記録 → 転写 → `FileEditsInTurn` の鎖を 1 本で通す。
+  `Cwd` の穴はここでしか捕まらない。
+- 最後の 1 区間（畳み込み → `/messages` の `files`）は kind 非依存の共通経路なのに試験が無かったので、
+  `sessionx` に `TestGenericMessagesEmitsChangedFiles` を足した——偽 kind を 1 つ登録して
+  `handleGenericMessages` の応答に行が出ることを見る（`codex`/`opencode`/`lcpp`/`muse` 共通の経路）。
+  陽性対照は同じくターンの `Cwd` を空にする変異（`files` が `[]` になる）。
+- 陽性対照 3 件（いずれも赤を実見してから戻した）: `cwd := m.CWD()` を `""` にする／`store.go` の
+  `toolEdits` の結果を捨てる／`edit` の `path` タグを `file_path` に改名する。
+
+**範囲外。** `muse` / `kiro` / `agy`（同じ穴が残っている）、`bash` 経由の編集、外部 MCP ツールによる編集、
+`replace_all` を出現回数ぶんのハンクに展開すること（claude の `Edit` も 1 件として数える）。
+
+**この節の作業とは無関係に見つかった既存の不安定試験。** `TestDriverSendPersistsTurnAndCompletes`
+（`driver_test.go`）は **HEAD そのまま（本節の変更を 1 行も入れない複製ツリー）で 12 回中 4 回・別の
+20 回で 2 回**落ちる。落ち方は 2 通りで、`waitState` が `completed` を見た直後に
+(i) `Open(sidFor(m)).Records()` が空、(ii) `status.Read` が `working`。原因は**待っている同期点と
+検査している副作用が別物**であること——メモリ上の `TurnState` は `setState` が即座に立てるが、
+ステータスファイルとストアはその外側で書かれる。`lcpp` の driver 試験には同族の不安定試験が既に
+1 件知られている（再起動通知）。本節では直していない。

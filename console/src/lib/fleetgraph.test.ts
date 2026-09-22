@@ -442,6 +442,18 @@ describe("buildFleetGraph — erased lanes (decision 6)", () => {
     const model = buildFleetGraph(page, new Map(), { from: 0, to: 5000 });
     expect(laneOf(model, "sPhantom")).toBeUndefined();
   });
+
+  it("a root that exists only as another lane's originSession pointer, with a bare state event touching it in-window, still draws no phantom row (facts.get(id)!.presence must not crash)", () => {
+    const page = mkPage(
+      [birth("orphan2", 1000, { origin: "session", originSession: "ghost2" })],
+      [stateEv("ghost2", 1500, "working")], // touches ghost2 in-window without naming an arrow endpoint
+    );
+    expect(() => buildFleetGraph(page, sessMap(mkSession("orphan2")), { from: 0, to: 5000 })).not.toThrow();
+    const model = buildFleetGraph(page, sessMap(mkSession("orphan2")), { from: 0, to: 5000 });
+    expect(laneOf(model, "ghost2")).toBeUndefined();
+    const lane = laneOf(model, "orphan2");
+    expect(isKnown(lane) && lane.rootId).toBe("ghost2");
+  });
 });
 
 describe("buildFleetGraph — label never puts the bare slug on screen alone (decision 5)", () => {

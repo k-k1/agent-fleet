@@ -38,6 +38,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -72,6 +73,12 @@ func init() {
 	harness.EngineToken = harnessEngineToken
 	harness.EngineWindow = harnessEngineWindow
 	harness.EngineAvailable = harnessEngineAvailable
+	// The same seam shape again, for HandleCreateSession's own explicit-model validation
+	// (docs/log/109): internal/sessionx must not learn the Control Plane or a member's own
+	// llama.cpp connection exist any more than internal/harness may, so it gets the live
+	// catalog through a func-var. lcppModels (agent_models.go) already has this exact
+	// signature.
+	sessionx.LcppLiveModels = lcppModels
 }
 
 // The API families the CP's catalogue reports. Chat engines become opencode providers; images

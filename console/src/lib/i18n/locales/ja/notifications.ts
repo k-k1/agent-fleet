@@ -102,6 +102,8 @@ export const notifications = {
   "noti.allow_desktop": "デスクトップ通知を許可",
   "noti.empty": "通知はありません",
   "noti.unread": "未読",
+  "noti.unread_session": "未読の通知があります",
+  "noti.mark_all_read": "すべて既読にする",
   "noti.replay": "音声で再生",
   "noti.dismiss": "消す",
   "notif.handoff_offer.title": "引き継ぎが届きました",

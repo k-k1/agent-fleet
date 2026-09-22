@@ -104,6 +104,8 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "noti.allow_desktop": "Allow desktop notifications",
   "noti.empty": "No notifications",
   "noti.unread": "Unread",
+  "noti.unread_session": "Unread notification",
+  "noti.mark_all_read": "Mark all as read",
   "noti.replay": "Play as audio",
   "noti.dismiss": "Dismiss",
   "notif.handoff_offer.title": "A handoff arrived",

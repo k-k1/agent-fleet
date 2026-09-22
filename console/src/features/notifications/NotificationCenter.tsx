@@ -62,12 +62,15 @@ export function NotificationCenter() {
   }, [open, items.length, logItems.length]);
   // Badge counts both unseen server notifications and unseen local toast-log entries.
   const unseen = unseenCount + logItems.reduce((n, i) => (i.seen ? n : n + 1), 0);
-  const show = () => {
-    setOpen((v) => !v);
-    if (!open) {
-      if (maxSeq) void useNotificationStore.getState().markSeen(maxSeq);
-      useToastLog.getState().markAllSeen();
-    }
+  // Opening the center is NOT an acknowledgement. The same unseen flag now draws the
+  // per-session dots (rail rows, background pane tabs, folded nodes), so clearing everything
+  // on a glance at the bell would wipe the dot of every session the user never opened —
+  // which is the one thing those dots exist to survive. Acknowledging is explicit:
+  // activating a row (which navigates to it), showing the session in a pane, or this button.
+  const show = () => setOpen((v) => !v);
+  const markAllSeen = () => {
+    if (maxSeq) void useNotificationStore.getState().markSeen(maxSeq);
+    useToastLog.getState().markAllSeen();
   };
   // Keyboard: Ctrl/⌘+K g n toggles the center just like clicking the bell.
   useOpenSignal("notifications", show);
@@ -92,12 +95,22 @@ export function NotificationCenter() {
     {open && <section className="notification-panel" role="dialog" aria-label={tr("noti.center")}>
       <header>
         <div className="notification-titles"><strong>{tr("noti.notifications")}</strong><span>{tr("noti.past_7_days")}</span></div>
-        <button type="button" className={"notification-mute" + (s.ttsSessionNotify ? " on" : "")}
-          title={s.ttsSessionNotify ? tr("noti.tts_on") : tr("noti.tts_off")}
-          aria-label={tr("noti.tts_aria")} aria-pressed={s.ttsSessionNotify}
-          onClick={() => setSetting("ttsSessionNotify", !s.ttsSessionNotify)}>
-          <Icon name={s.ttsSessionNotify ? "unmute" : "mute"} /><span>{tr("noti.tts_label")}</span>
-        </button>
+        <div className="notification-head-actions">
+          <button type="button" className={"notification-mute" + (s.ttsSessionNotify ? " on" : "")}
+            title={s.ttsSessionNotify ? tr("noti.tts_on") : tr("noti.tts_off")}
+            aria-label={tr("noti.tts_aria")} aria-pressed={s.ttsSessionNotify}
+            onClick={() => setSetting("ttsSessionNotify", !s.ttsSessionNotify)}>
+            <Icon name={s.ttsSessionNotify ? "unmute" : "mute"} /><span>{tr("noti.tts_label")}</span>
+          </button>
+          {/* Icon-only: the panel is 380px wide and the voice toggle beside it already
+              carries a word. Disabled rather than hidden, so the control does not appear
+              and vanish as notifications arrive. */}
+          <button type="button" className="notification-readall" disabled={unseen === 0}
+            title={tr("noti.mark_all_read")} aria-label={tr("noti.mark_all_read")}
+            onClick={markAllSeen}>
+            <Icon name="check-all" />
+          </button>
+        </div>
       </header>
       {"Notification" in window && Notification.permission === "default" &&
         <button className="notification-permission" onClick={() => void Notification.requestPermission()}>{tr("noti.allow_desktop")}</button>}

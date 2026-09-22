@@ -14,6 +14,7 @@ import { orphanSessions } from "../../lib/project.ts";
 import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRailRoving } from "./useRailRoving.ts";
+import { useUnreadSessions } from "../notifications/unread.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 export const OtherSessionsSection = memo(function OtherSessionsSection() {
@@ -32,6 +33,10 @@ export const OtherSessionsSection = memo(function OtherSessionsSection() {
     .filter((s) => !wset || sessionInSet(wset, s))
     .filter((s) => sessionMatches(s, nq));
 
+  // Collapsed, the header is all that is left of these rows — roll their unread dot up.
+  const unreadSessions = useUnreadSessions();
+  const unread = orphans.some((s) => unreadSessions.has(s.name));
+
   // Nothing loose → no section at all (keeps the rail's foot clean).
   if (orphans.length === 0) return null;
 
@@ -41,6 +46,7 @@ export const OtherSessionsSection = memo(function OtherSessionsSection() {
       title={tr("pj.other_sessions")}
       icon="terminal"
       count={orphans.length}
+      unread={unread}
       actions={
         <IconButton
           icon="archive"

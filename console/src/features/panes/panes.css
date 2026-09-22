@@ -174,6 +174,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A background tab whose session has an unseen notification leads with span.unread-dot,
+   ahead of the state chip below — its rule lives in sessions.css, next to the rail row that
+   shows the same dot. */
 .pane-tab-state {
   flex: none;
   display: inline-flex;

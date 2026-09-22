@@ -156,7 +156,8 @@ func parseTranscript(f *os.File) []transcript.Turn {
 			}
 		case s.Source == "MODEL", s.Type == "ERROR_MESSAGE":
 			// A tool step (type = tool name), or a surfaced SYSTEM error.
-			out := strings.TrimSpace(stepMetaLineRe.ReplaceAllString(s.Content, ""))
+			body := strings.TrimSpace(stepMetaLineRe.ReplaceAllString(s.Content, ""))
+			out := body
 			if s.Type == "RUN_COMMAND" {
 				out = stripCommandIndent(out)
 			}
@@ -166,7 +167,14 @@ func parseTranscript(f *os.File) []transcript.Turn {
 			if cur == nil {
 				cur = &transcript.Turn{Role: "assistant", Idx: line}
 			}
-			cur.Parts = append(cur.Parts, transcript.Part{Kind: "tool", Tool: s.Type, Output: out})
+			p := transcript.Part{Kind: "tool", Tool: s.Type, Output: out}
+			// A step that wrote a file says so in its own prose, which is the only
+			// coordinate agy records (fileedits.go). Read from the untruncated body: the
+			// diff it carries can sit past toolOutputMax.
+			if f, verb, es := stepEdit(body); f != "" {
+				p.File, p.Verb, p.Edits = f, verb, es
+			}
+			cur.Parts = append(cur.Parts, p)
 		default:
 			// SYSTEM bookkeeping (CONVERSATION_HISTORY / CHECKPOINT / SYSTEM_MESSAGE):
 			// model-facing context management, not conversation content.

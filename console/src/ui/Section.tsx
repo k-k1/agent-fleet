@@ -5,12 +5,16 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
+import { useT } from "../lib/i18n/index.ts";
 
 interface SectionProps {
   id?: string;
   title?: ReactNode;
   icon?: string;
   count?: number;
+  /** Unread-notification dot, shown only while collapsed: like `count`, it is a signal
+   *  about contents the fold has hidden. */
+  unread?: boolean;
   actions?: ReactNode;
   defaultOpen?: boolean;
   /** Controlled mode: pass `open` (+ `onToggle`) and the section renders that
@@ -23,7 +27,8 @@ interface SectionProps {
 
 const storeKey = (id: string) => `af-section-${id}`;
 
-export function Section({ id, title, icon, count, actions, defaultOpen = true, open: openProp, onToggle, children }: SectionProps) {
+export function Section({ id, title, icon, count, unread, actions, defaultOpen = true, open: openProp, onToggle, children }: SectionProps) {
+  const tr = useT();
   const [openState, setOpen] = useState(() => {
     if (!id) return defaultOpen;
     const v = localStorage.getItem(storeKey(id));
@@ -65,6 +70,7 @@ export function Section({ id, title, icon, count, actions, defaultOpen = true, o
           {icon && <Icon name={icon} />}
           <span className="ui-section-title">{title}</span>
           {count != null && count > 0 && <span className="ui-section-count">{count}</span>}
+          {!open && unread && <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} />}
         </button>
         <span className="ui-section-actions">{actions}</span>
       </div>

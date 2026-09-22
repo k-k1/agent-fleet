@@ -39,7 +39,12 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
     // user excluded it in settings — "gone" and "hidden" are different things, and adding it
     // back would resurrect a model the user hid (launching it is refused by the Agent's own
     // guard anyway, so offering the choice would be a lie).
-    if (hidden) return options;
+    //
+    // An empty model is never rescued: for a kind with a Default entry "" already IS present
+    // in options, and for a kind with none (requiresConcreteModel — lcpp) there is nothing to
+    // rescue, only a not-yet-resolved selection about to be auto-picked
+    // (useAutoConcreteModel) — appending ["", ""] here would flash a blank row in the combo.
+    if (hidden || !model) return options;
     return options.some(([v]) => v === model) ? options : [...options, [model, model] as ModelOption];
   }, [kind, model, options, hidden]);
 

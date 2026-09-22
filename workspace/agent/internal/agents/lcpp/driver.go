@@ -448,7 +448,6 @@ func (h *threadHandle) pump() {
 // a compaction fires inside the same Run call).
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.sid)
-	defer func() { agents.MarkTurnEnd(h.sid, h.currentState()) }()
 	h.setState(agents.TurnStarting)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -466,31 +465,28 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	st := h.store
 	if _, err := st.AppendUser(in.Prompt); err != nil {
 		log.Printf("lcpp: persisting user turn: %v", err)
-		h.setState(agents.TurnFailed)
+		h.finishTurn(agents.TurnFailed)
 		return
 	}
 	before, err := st.Full()
 	if err != nil {
 		log.Printf("lcpp: reading history: %v", err)
-		h.setState(agents.TurnFailed)
+		h.finishTurn(agents.TurnFailed)
 		return
 	}
 
 	model := strings.TrimSpace(settings.Model)
 	if model == "" {
-		log.Printf("lcpp: %s: no model configured for this session", h.name)
-		h.setState(agents.TurnFailed)
+		h.failTurn(st, "モデルが設定されていません。セッション設定でモデルを選んでください。")
 		return
 	}
 	if harness.EngineToken == nil {
-		log.Printf("lcpp: %s: this Agent build has no self-hosted engines configured", h.name)
-		h.setState(agents.TurnFailed)
+		h.failTurn(st, "この配備には自己ホスト型エンジンが設定されていません。")
 		return
 	}
 	conn, ok := harness.EngineToken(ctx, engineKey, h.sid)
 	if !ok {
-		log.Printf("lcpp: %s: no self-hosted chat engine is reachable", h.name)
-		h.setState(agents.TurnFailed)
+		h.failTurn(st, "チャット用エンジンに接続できません。しばらくしてから再送してください。")
 		return
 	}
 	client := newHarnessClient(conn, model)
@@ -525,6 +521,11 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		log.Printf("lcpp: %s: resolving MCP servers: %v", h.name, mcpErr)
 		mcpDefs = nil
 	}
+	// The builtin af server needs this session's own name to resolve its owner
+	// (mcpOwningSession) once dialStdio spawns it — see injectSessionName's own doc comment for
+	// why the Agent daemon has to hand it down explicitly here rather than it already being in
+	// the child's inherited environment.
+	mcpDefs = injectSessionName(mcpDefs, h.name)
 	h.syncMCPServers(ctx, mcpDefs)
 	reg := harness.NewRegistry(append(harness.BuiltinTools(), h.mcpTools()...)...)
 
@@ -553,17 +554,31 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 
 	switch {
 	case interrupted:
-		h.setState(agents.TurnCancelled)
+		h.finishTurn(agents.TurnCancelled)
 	case runErr != nil:
 		var ee *harness.EngineError
 		if errors.As(runErr, &ee) && ee.Retryable() {
-			h.setState(agents.TurnAborted) // e.g. engine_waking timeout — a resend can still work
+			h.finishTurn(agents.TurnAborted) // e.g. engine_waking timeout — a resend can still work
 		} else {
-			h.setState(agents.TurnFailed)
+			h.finishTurn(agents.TurnFailed)
 		}
 	default:
-		h.setState(agents.TurnCompleted)
+		h.finishTurn(agents.TurnCompleted)
 	}
+}
+
+// failTurn ends runTurn as TurnFailed for a precondition it could not even attempt to satisfy
+// (no model configured, no engine reachable) AND persists msg as a visible NoteTurnError
+// record (store.go's own doc comment). Without the note, a precondition failure here would
+// leave the store holding only the user's own prompt — AppendUser above always runs first, so
+// the turn is durably recorded before anything can fail — with nothing explaining why no
+// reply ever came (docs/log/109).
+func (h *threadHandle) failTurn(st *Store, msg string) {
+	log.Printf("lcpp: %s: %s", h.name, msg)
+	if _, err := st.AppendTurnErrorNote(msg); err != nil {
+		log.Printf("lcpp: %s: persisting turn error note: %v", h.name, err)
+	}
+	h.finishTurn(agents.TurnFailed)
 }
 
 // Interrupt cancels the running turn's context and clears the queued follow-ups. A blocked
@@ -728,6 +743,17 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 }
 
 // --- small helpers --------------------------------------------------------------
+
+// finishTurn writes the status file before setting the terminal state so that any
+// caller waking on the emitted event (WireLive, sessionx's DriveState, tests) sees
+// status=idle in status.Read immediately — not the stale "working" MarkTurnStart wrote.
+// Calling MarkTurnEnd after setState (e.g. via a defer) lets the event fire first and
+// introduces a window where TurnCompleted is visible but status.Read still returns
+// "working" (the shape TestDriverSendPersistsTurnAndCompletes's status assertion catches).
+func (h *threadHandle) finishTurn(st agents.TurnState) {
+	agents.MarkTurnEnd(h.sid, st)
+	h.setState(st)
+}
 
 func (h *threadHandle) setState(st agents.TurnState) {
 	h.mu.Lock()
