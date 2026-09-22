@@ -619,13 +619,15 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       // running muse session, the prompt arrived carrying the schedule source, and the session
       // answered it. lcpp's row is still off because nobody has watched one.
       scheduledRuns: true,
-      // Foreign entries only, the same bucket as copilot/kiro/agy/lcpp — and for muse that is
-      // a statement about AF, not about the kind: MSP publishes `skill/list` and a `skill`
-      // input part, and nothing drives them yet (ADR 0095 P2-14). Until something does, the
-      // picker offers the repository's own SKILL.md trees by injection, which is what the
-      // cap turns on; slashSkillsManaged stays off because it gates NATIVE entries in a
-      // paneless session and muse has none to gate.
+      // Native entries now, not foreign-only: the session's own host answers MSP's `skill/list`
+      // and the driver turns the picker's "/selector" into a `skill` input part, which is the
+      // only spelling the host expands (ADR 0095 P2-23). The repository's other conventions
+      // still arrive by injection on top, as they do for every chat kind.
       slashSkills: true,
+      // …and those native entries have to show in a PANELESS session, which every muse session
+      // is. Live-verified 2026-09-22, one subscription turn: a project skill under
+      // `.agents/skills/` fired through the wire and the model answered from its body.
+      slashSkillsManaged: true,
       chat: true, // the only way to open a session with no pane at all (open.ts's caps.chat gate)
       transcript: true, // Caps.CanTranscript: AF's own item store, read live or stopped
       // 🔴 permissionChoice is FALSE, and not for want of a card. Measured (ADR 0095 P2-6), a muse
