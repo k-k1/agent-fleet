@@ -337,6 +337,99 @@ func TestDriverPlanModeDropsMutatesTools(t *testing.T) {
 // TestDriverUpdateSettingsModel is the positive control for DynamicModel: a model change
 // takes effect on the NEXT turn (the harness client is rebuilt with the new model string)
 // and is recorded as a model-change system note.
+// assertUserOnlyPlusVisibleError is the shared shape docs/log/109's three precondition
+// failures (no model, no engine seam, engine unreachable) must all leave behind: the user's
+// own prompt (AppendUser always runs first) PLUS a NoteTurnError record that actually renders
+// — never just the former. A session that stops at record 1 is exactly the silent-failure bug:
+// the user's message sits there forever with nothing explaining why no reply ever came.
+func assertUserOnlyPlusVisibleError(t *testing.T, m session.Meta) {
+	t.Helper()
+	recs, _, err := Open(sidFor(m)).Records()
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	if len(recs) != 2 || recs[0].Kind != KindUser {
+		t.Fatalf("records = %+v, want [user, turn-error note]", recs)
+	}
+	if recs[1].Kind != KindSystemNote || recs[1].Note != NoteTurnError || strings.TrimSpace(recs[1].Content) == "" {
+		t.Fatalf("second record = %+v, want a non-empty NoteTurnError", recs[1])
+	}
+	turns, err := Open(sidFor(m)).Transcript()
+	if err != nil {
+		t.Fatalf("Transcript: %v", err)
+	}
+	if len(turns) != 2 || turns[1].Role != "assistant" || len(turns[1].Parts) != 1 || turns[1].Parts[0].Kind != "error" {
+		t.Fatalf("transcript turns = %+v, want a rendered error turn (not silently dropped)", turns)
+	}
+}
+
+// TestDriverSendWithNoModelRecordsVisibleError is the positive control for the missing-model
+// precondition (the exact shape of svcnyrc's reproduction, docs/log/109): the server-side
+// create-time guard (session_handlers.go) refuses this at launch now, but a session created
+// before that guard existed, or one whose model was cleared via UpdateSettings(ClearModel)
+// after launch, must not silently eat the user's next message either.
+func TestDriverSendWithNoModelRecordsVisibleError(t *testing.T) {
+	testHome(t)
+	// Deliberately built by hand rather than via testMeta (which sets Model: "test-model"),
+	// matching a legacy/direct-POST session that bypassed the create-time guard.
+	m := session.Meta{Name: "sess-no-model", Dir: t.TempDir(), Kind: session.KindLcpp}
+
+	d := NewDriver()
+	h, err := d.Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitState(t, h, agents.TurnFailed)
+	assertUserOnlyPlusVisibleError(t, m)
+}
+
+// TestDriverSendWithNoEngineSeamRecordsVisibleError covers the second precondition
+// (harness.EngineToken == nil — a build with no self-hosted engines wired at all).
+func TestDriverSendWithNoEngineSeamRecordsVisibleError(t *testing.T) {
+	testHome(t)
+	oldToken := harness.EngineToken
+	harness.EngineToken = nil
+	t.Cleanup(func() { harness.EngineToken = oldToken })
+
+	m := testMeta(t, "sess-no-engine-seam")
+	d := NewDriver()
+	h, err := d.Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitState(t, h, agents.TurnFailed)
+	assertUserOnlyPlusVisibleError(t, m)
+}
+
+// TestDriverSendWithUnreachableEngineRecordsVisibleError covers the third precondition
+// (harness.EngineToken answers ok=false — no self-hosted chat engine currently reachable).
+func TestDriverSendWithUnreachableEngineRecordsVisibleError(t *testing.T) {
+	testHome(t)
+	oldToken := harness.EngineToken
+	harness.EngineToken = func(context.Context, string, string) (harness.EngineConn, bool) {
+		return harness.EngineConn{}, false
+	}
+	t.Cleanup(func() { harness.EngineToken = oldToken })
+
+	m := testMeta(t, "sess-engine-unreachable")
+	d := NewDriver()
+	h, err := d.Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitState(t, h, agents.TurnFailed)
+	assertUserOnlyPlusVisibleError(t, m)
+}
+
 func TestDriverUpdateSettingsModel(t *testing.T) {
 	testHome(t)
 	var gotConnModel string

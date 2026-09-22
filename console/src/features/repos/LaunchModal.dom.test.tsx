@@ -21,10 +21,17 @@ let served: Branch[] = [];
 // Folder listing for the working-directory picker (api/fs/tree). Keyed by the browsed
 // home-relative path so a click into a folder can serve that folder's children.
 let tree: Record<string, string[]> = {};
+// The lcpp launch model catalog (GET /agents/lcpp/models — agentModels.ts's fetchModels).
+// Empty by default so tests that don't care about lcpp's model picker see the ordinary
+// "nothing fetched yet" shape; docs/log/109's own tests set this per case.
+let lcppModels: { id: string; label: string }[] = [];
 const apiMock = vi.fn(async (url: string) => {
   if (url.includes("fs/tree")) {
     const path = decodeURIComponent(new URLSearchParams(url.split("?")[1]).get("path") || "");
     return { entries: (tree[path] || []).map((name) => ({ name, type: "dir" })) };
+  }
+  if (url.includes("agents/lcpp/models")) {
+    return { models: lcppModels };
   }
   return { branches: served };
 });
@@ -156,6 +163,7 @@ beforeEach(() => {
     { name: "develop", unix: 2 },
     { name: "busy", unix: 1, worktree_path: "/home/dev/repos/app@busy" },
   ];
+  lcppModels = [];
   apiMock.mockClear();
   onLaunch = vi.fn<Launch>(async () => ({ ok: true }));
   host = document.createElement("div");
@@ -385,5 +393,49 @@ describe("LaunchModal driver choice — terminalDriver gate", () => {
     await expand("More");
     expect(buttons().find((b) => b.textContent?.includes("Terminal (CLI)"))).toBeUndefined();
     expect(buttons().find((b) => b.textContent?.includes("Managed (recommended)"))).toBeUndefined();
+  });
+});
+
+// lcpp has no CLI-picked own default (docs/log/109): unlike codex/opencode, launching it with
+// no model selected used to POST model="" and fail the very first turn silently. These pin the
+// Console-side half of the fix: launch stays disabled until the live catalog resolves, the
+// picker auto-selects the sole entry rather than offering an empty Default, and the launch
+// actually sends the auto-picked id.
+describe("LaunchModal lcpp model requirement (docs/log/109)", () => {
+  it("auto-picks the sole catalog model once it resolves and sends it on launch", async () => {
+    lcppModels = [{ id: "m1", label: "m1" }];
+    await render(["lcpp"]);
+    await settle();
+    expect(byText("Start in a worktree").disabled).toBe(false);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().model).toBe("m1");
+  });
+
+  it("offers no Default entry in the model combo for lcpp", async () => {
+    lcppModels = [{ id: "m1", label: "m1" }];
+    await render(["lcpp"]);
+    await settle();
+    const input = must(
+      document.querySelector<HTMLInputElement>('input[aria-label="lcpp model"]'),
+      "lcpp model combo input",
+    );
+    await act(async () => {
+      input.focus();
+    });
+    const rows = [...document.querySelectorAll(".model-combo-item")].map((r) => r.textContent);
+    expect(rows).toEqual(["m1"]);
+  });
+
+  it("stays disabled when the lcpp catalog comes back empty", async () => {
+    lcppModels = [];
+    await render(["lcpp"]);
+    await settle();
+    expect(byText("Start in a worktree").disabled).toBe(true);
+  });
+
+  it("does not require a model pick at all for a kind with a real CLI default — negative control", async () => {
+    await render(["claude"]);
+    await settle();
+    expect(byText("Start in a worktree").disabled).toBe(false);
   });
 });

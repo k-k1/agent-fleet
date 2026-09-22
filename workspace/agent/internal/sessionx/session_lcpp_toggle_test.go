@@ -73,7 +73,7 @@ func TestCreateSessionAllowsLcppWhenSettingMissing(t *testing.T) {
 	defer srv.Close()
 
 	var created session.Session
-	do(t, srv, "POST", "/sessions", map[string]any{"dir": dir, "kind": "lcpp"}, http.StatusCreated, &created)
+	do(t, srv, "POST", "/sessions", map[string]any{"dir": dir, "kind": "lcpp", "model": "test-model"}, http.StatusCreated, &created)
 }
 
 // TestCreateSessionAllowsLcppWhenExplicitlyEnabled is the explicit-on twin of the above: the
@@ -92,7 +92,7 @@ func TestCreateSessionAllowsLcppWhenExplicitlyEnabled(t *testing.T) {
 	defer srv.Close()
 
 	var created session.Session
-	do(t, srv, "POST", "/sessions", map[string]any{"dir": dir, "kind": "lcpp"}, http.StatusCreated, &created)
+	do(t, srv, "POST", "/sessions", map[string]any{"dir": dir, "kind": "lcpp", "model": "test-model"}, http.StatusCreated, &created)
 }
 
 // TestCreateSessionDisabledLcppLeavesOtherKindsUnaffected is the negative control: turning

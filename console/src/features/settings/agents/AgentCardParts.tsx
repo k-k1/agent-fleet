@@ -4,7 +4,7 @@ import { Button } from "../../../ui/Button.tsx";
 import { ModelPicker } from "../../../ui/ModelPicker.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { agentLaunchDefault, useSettings, setSettings, ASSISTANT_RECOMMENDED_MODEL, CLAUDE_MODELS } from "../../../lib/settings.ts";
-import { useEffortOptions, useModelOptions, type ModelOption } from "../../../lib/agentModels.ts";
+import { useAutoConcreteModel, useEffortOptions, useModelOptions, type ModelOption } from "../../../lib/agentModels.ts";
 import { modelMatchesHidden } from "../../../lib/modelDeny.ts";
 import { forgetHiddenRepoModels } from "../../../lib/repoLast.ts";
 import { agentOf, nonPlanModeLabel } from "../../../agents/registry.ts";
@@ -104,6 +104,11 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
       ...(kind === "claude" ? { defaultModel: next.model } : {}),
     });
   };
+  // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): a stored
+  // default of "" is not a valid choice the way it is for codex/opencode, so once the live
+  // catalog settles, auto-pick its first entry here too — this row uses Choice/Select
+  // directly rather than ModelPicker, so it needs its own call.
+  useAutoConcreteModel(kind, row.model, (model) => update({ model, effort: "" }));
   return (
     <>
       <SettingRow label={tr("agents.default_model")}>

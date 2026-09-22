@@ -28,9 +28,26 @@ interface ModelDescriptor {
   defaultEffort: string;
 }
 
+// requiresConcreteModel names the one dynamic kind (today: lcpp) whose catalog has no "let the
+// CLI pick" entry. This is NOT because llama-server itself demands a model name on every
+// request — measured live (docs/log/107's 2026-09-21 addendum), a single-model instance
+// ignores the request's own `model` field entirely (any string, or none, answers 200) — it is
+// the Agent's own choice to require one: a router deployment (`--models-max`, ADR 0093
+// decision 7's own measured `role: "router"`) DOES dispatch on this field, the id is what pins
+// the session to one entry of the model list the launch menu itself is built from (GET
+// /agents/lcpp/models — there is no vendor "tier alias" the way claude has), and it is the
+// only record of which model a conversation believes it is talking to (the same drift a member
+// swapping the LAN box under an unchanged URL can otherwise hide). Checked by every launch
+// entry point (LaunchModal, StartModal, quick launch, the Settings default row) so none of them
+// can send an empty model for this kind (docs/log/109).
+export function requiresConcreteModel(kind: string): boolean {
+  return kind === "lcpp";
+}
+
 // Resolved lazily (not a module-level constant) so the "Default" label reflects the
-// current locale and updates on language switch.
-const defaultOnly = (): ModelOption[] => [["", t("ui.default")]];
+// current locale and updates on language switch. A kind with no CLI-picked default gets no
+// Default entry at all — offering one would be a choice that can never actually be launched.
+const defaultOnly = (kind: string): ModelOption[] => (requiresConcreteModel(kind) ? [] : [["", t("ui.default")]]);
 const isDynamic = (kind: string) =>
   kind === "codex" ||
   kind === "opencode" ||
@@ -160,7 +177,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
           throw new Error("empty"); // workspace stopped / CLI absent — retry next open
         }
         emptyReasons.delete(kind);
-        const full = [...defaultOnly(), ...opts];
+        const full = [...defaultOnly(kind), ...opts];
         descriptors.set(kind, desc);
         if (cacheable) cache.set(kind, full);
         else inflight.delete(kind);
@@ -173,7 +190,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
         // previous answer must not be left standing as an explanation of this one. The
         // "empty" throw above is not that case — it IS the answer, reason and all.
         if (!(e instanceof Error && e.message === "empty")) emptyReasons.delete(kind);
-        return defaultOnly();
+        return defaultOnly(kind);
       });
     inflight.set(kind, p);
   }
@@ -249,7 +266,7 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
 // has no picker (caps.model false). Dynamic kinds resolve asynchronously: Default-only
 // first, the full list once fetched.
 export function useModelOptions(kind: string): ModelOption[] | null {
-  const [opts, setOpts] = useState<ModelOption[]>(() => cache.get(kind) || defaultOnly());
+  const [opts, setOpts] = useState<ModelOption[]>(() => cache.get(kind) || defaultOnly(kind));
   // The opencode catalog is SHAPED server-side by this preference (Go first / hide the
   // metered twins), so a change has to refetch — otherwise the picker keeps showing the
   // old list until the Console is reloaded.
@@ -259,7 +276,7 @@ export function useModelOptions(kind: string): ModelOption[] | null {
   useEffect(() => {
     if (!isDynamic(kind)) return;
     let alive = true;
-    setOpts(cache.get(kind) || defaultOnly()); // reset stale options from a previous kind
+    setOpts(cache.get(kind) || defaultOnly(kind)); // reset stale options from a previous kind
     void fetchModels(kind).then((l) => alive && setOpts(l));
     return () => {
       alive = false;
@@ -275,6 +292,35 @@ export function useModelOptions(kind: string): ModelOption[] | null {
   }
   if (isDynamic(kind)) return visibleModelOptions(s.hiddenModels, kind, opts);
   return null;
+}
+
+// useAutoConcreteModel is the launch dialogs' auto-pick guard for a kind with no CLI-picked
+// own default (requiresConcreteModel — today: lcpp): once the live catalog settles with at
+// least one entry AND the caller's own model state is still "", it fires onChange with the
+// first entry, so a launch dialog never sits there offering an empty selection that can never
+// actually be sent (docs/log/109). A no-op for every other kind, and a no-op once `model` is
+// non-empty (a stored per-repo/global default, or an earlier auto-pick) — never overrides a
+// deliberate choice.
+export function useAutoConcreteModel(kind: string, model: string, onChange: (model: string) => void): void {
+  const options = useModelOptions(kind);
+  useEffect(() => {
+    if (!requiresConcreteModel(kind) || model) return;
+    const first = options?.find(([id]) => id)?.[0];
+    if (first) onChange(first);
+  }, [kind, model, options, onChange]);
+}
+
+// resolveQuickLaunchModel is quick launch's (RepoRowConnected's ▼ / right-click, which has no
+// mounted picker to react to a catalog fetch) counterpart to useAutoConcreteModel: when
+// `resolved` (repoLast.ts's resolveModel chain) came back empty for a kind that requires a
+// concrete model, await the live catalog once and return its first entry. Returns `resolved`
+// unchanged for every other kind, and "" (never a fabricated id) when the catalog itself turns
+// out empty — the caller's own POST then reaches the server's create-time guard, which is the
+// authoritative refusal for that case (docs/log/109).
+export async function resolveQuickLaunchModel(kind: string, resolved: string): Promise<string> {
+  if (resolved || !requiresConcreteModel(kind)) return resolved;
+  const options = await fetchModels(kind);
+  return options.find(([id]) => id)?.[0] || "";
 }
 
 // useOpencodeAppliedRoute returns the billing route the Agent actually shaped the launch list

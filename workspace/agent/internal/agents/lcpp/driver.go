@@ -478,19 +478,16 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 
 	model := strings.TrimSpace(settings.Model)
 	if model == "" {
-		log.Printf("lcpp: %s: no model configured for this session", h.name)
-		h.setState(agents.TurnFailed)
+		h.failTurn(st, "モデルが設定されていません。セッション設定でモデルを選んでください。")
 		return
 	}
 	if harness.EngineToken == nil {
-		log.Printf("lcpp: %s: this Agent build has no self-hosted engines configured", h.name)
-		h.setState(agents.TurnFailed)
+		h.failTurn(st, "この配備には自己ホスト型エンジンが設定されていません。")
 		return
 	}
 	conn, ok := harness.EngineToken(ctx, engineKey, h.sid)
 	if !ok {
-		log.Printf("lcpp: %s: no self-hosted chat engine is reachable", h.name)
-		h.setState(agents.TurnFailed)
+		h.failTurn(st, "チャット用エンジンに接続できません。しばらくしてから再送してください。")
 		return
 	}
 	client := newHarnessClient(conn, model)
@@ -564,6 +561,20 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	default:
 		h.setState(agents.TurnCompleted)
 	}
+}
+
+// failTurn ends runTurn as TurnFailed for a precondition it could not even attempt to satisfy
+// (no model configured, no engine reachable) AND persists msg as a visible NoteTurnError
+// record (store.go's own doc comment). Without the note, a precondition failure here would
+// leave the store holding only the user's own prompt — AppendUser above always runs first, so
+// the turn is durably recorded before anything can fail — with nothing explaining why no
+// reply ever came (docs/log/109).
+func (h *threadHandle) failTurn(st *Store, msg string) {
+	log.Printf("lcpp: %s: %s", h.name, msg)
+	if _, err := st.AppendTurnErrorNote(msg); err != nil {
+		log.Printf("lcpp: %s: persisting turn error note: %v", h.name, err)
+	}
+	h.setState(agents.TurnFailed)
 }
 
 // Interrupt cancels the running turn's context and clears the queued follow-ups. A blocked

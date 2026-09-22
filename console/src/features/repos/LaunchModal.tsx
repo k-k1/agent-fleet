@@ -24,7 +24,7 @@ import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
-import { useEffortOptions } from "../../lib/agentModels.ts";
+import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
 import type { LaunchSectionKey } from "./launchPrefs.ts";
@@ -292,6 +292,13 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const hasPermChoice = agentOf(kind).caps.permissionChoice;
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
+  // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
+  // catalog settles, auto-pick its first entry rather than leaving the picker on an empty
+  // selection nothing can launch with.
+  useAutoConcreteModel(kind, model, (next) => {
+    setModel(next);
+    setEffort("");
+  });
 
   // Summaries for the folded sections — one line that says what will happen without opening
   // them. Location is what git will actually do (create a new working copy, or run in this
@@ -428,7 +435,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   };
   const submit = () => void start(false);
   // Existing-branch mode is only launchable once a branch is picked.
-  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch);
+  // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
+  // still loading, or came back empty — must not launch with an empty model (docs/log/109).
+  const modelPending = hasModel && requiresConcreteModel(kind) && !model;
+  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.

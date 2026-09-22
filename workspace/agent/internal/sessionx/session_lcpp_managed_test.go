@@ -41,7 +41,7 @@ func TestLcppForkThroughRealDriverCopiesStore(t *testing.T) {
 	srv := lcppTestServer(t)
 
 	var created session.Session
-	do(t, srv, "POST", "/sessions", map[string]any{"dir": t.TempDir(), "kind": "lcpp"}, http.StatusCreated, &created)
+	do(t, srv, "POST", "/sessions", map[string]any{"dir": t.TempDir(), "kind": "lcpp", "model": "test-model"}, http.StatusCreated, &created)
 
 	srcMeta, ok := session.ReadMeta(created.Name)
 	if !ok {
@@ -88,7 +88,7 @@ func TestLcppRecreateThroughRealDriverStartsEmpty(t *testing.T) {
 	srv := lcppTestServer(t)
 
 	var created session.Session
-	do(t, srv, "POST", "/sessions", map[string]any{"dir": t.TempDir(), "kind": "lcpp"}, http.StatusCreated, &created)
+	do(t, srv, "POST", "/sessions", map[string]any{"dir": t.TempDir(), "kind": "lcpp", "model": "test-model"}, http.StatusCreated, &created)
 	origMeta, _ := session.ReadMeta(created.Name)
 	origSid := session.UUID(origMeta.Dir, origMeta.Name)
 	if _, err := lcpp.Open(origSid).AppendUser("do not carry me over"); err != nil {
