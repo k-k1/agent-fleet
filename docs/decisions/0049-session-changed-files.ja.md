@@ -156,3 +156,72 @@ part を足し続けるので、畳むと**ポーリングの度に同じ編集�
   （`openDiff` / `sessionFiles`）、`CommandPalette.tsx` にモード 1 つ、i18n は en/ja 両方。
 - 既存の面（`FilesChanges` / `ChangesView` / パレットの `changed`）は**変えない**。
   軸が違うものとして並存する。
+
+## 実装記録（2026-09-22）— 残り 4 kind の配線と、そのための上流契約の実測
+
+決定 8 の「`Part.File` を埋めて対応 kind に入れる」を、残っていた `lcpp` / `kiro` / `muse` /
+`agy` の 4 つに対して行った記録（`lcpp` は ADR 0093 の実装記録節にも書いた）。
+
+**出発点の事実。** 帯が出ない kind を見たときに **Console を疑ってはいけない**。帯も、ツール痕を
+その場で開く差分も、完全にデータ駆動である——帯は `/messages` の `files` が空なら描かず
+（`FileChangeStrip.tsx`）、差分は `p.edits` の有無しか見ない（`blocks.tsx`）。kind による門は
+どこにも無い。出ない原因は必ず「転写を組む側が `Part.File`/`Edits` を埋めていない」ことで、
+`transcript.FileEditsInTurn` が `File` 空のツール部品を捨てるところで静かに終わっている。
+
+### 実測した上流契約（2026-09-22・各 kind の実セッションを 1 本ずつ起こして採取）
+
+各 kind で「ファイル作成ツールで作る → 置換ツールで書き換える」だけをさせ、**その kind 自身の
+ストア**を読んだ。どれも机上では出せない形をしていた。
+
+| kind | ツール名 | 引数 | パス |
+|---|---|---|---|
+| kiro | `write` | `command: create` + `content` / `command: strReplace` + `oldStr`・`newStr` | 絶対 |
+| muse | `write_file` / `edit_file` | `{content, path}` / `{find, path, replace}` | 絶対 |
+| agy | （無し） | **引数を一切記録しない**——ステップ本文の散文のみ | 絶対 |
+
+🔥 **kiro は「目録に載っている綴り」と「実際に記録される綴り」が違う。** kiro-cli のバイナリが
+持つツール目録は `fs_write`（snake_case・`file_text`／`old_str`／`new_str`、コマンドは
+`create`/`str_replace`/`insert`/`append`）だが、この kind が固定している `--agent-engine v2` が
+**実際に JSONL へ書くのは `write`（camelCase・`content`／`oldStr`／`newStr`、コマンドは
+`create`/`strReplace`/`insert`）**だった。目録だけを読んで実装していたら、全セッションで帯が空の
+まま——しかも「パースできていない」と「本当に何も編集していない」は画面上で区別が付かない。
+両方の綴りを読むようにした。
+
+🔥 **agy はステップ種別で判定できない。** `docs/log/32`（2026-07）は作成/編集が `CODE_ACTION` に
+なると記録しているが、2026-09 の実測では**同じ操作がすべて `GENERIC`** で記録された。残る手掛かりは
+agy がモデル向けに書く散文だけである。
+
+```
+作成: "Created file file:///abs/path.txt with requested content."
+編集: "The following changes were made by the replace_file_content tool to: /abs/path.txt. …"
+      ＋ [diff_block_start] … [diff_block_end] の unified diff（＝差分本体は手に入る）
+読み: "File Path: `file:///abs/path.txt`\nTotal Lines: 2 …"   ← 数えてはいけない
+```
+
+これは agy の状態判定と同じ**上流のテキスト契約**で、上流が文を書き換えれば静かに壊れる。
+2 つで担保した: どちらのパターンも**ステップ本文の先頭に固定**（コマンド出力の中に同じ文が
+引用されていても反応しない）、読み取りステップを陰性対照として試験に固定。
+
+### 判断
+
+- **`Verb` を申告するのは「導出が間違う」ときだけ。** `create`/`write_file` は before が無いので
+  `EditVerb` が `add` と導出して正しい。`insert`/`append` と `edit_file` は before が無くても
+  **既存ファイルへの編集**なので、明示的に `edit` と申告する（放置すると「追加」と出る）。
+- **読み取りツールは名前で門前払い。** `read`/`fsRead`/`read_file` はパスを同じくらい目立つ形で
+  持つので、名前の allowlist を通さないと「触っていないファイル」が並ぶ。各 kind の試験で陰性対照。
+- **形が実測できていないものは足さない。** muse の `apply_patch`・`delete_file`（バイナリ内の
+  mutator 集合にはある）と、kiro の `delete_file`/`fs_append` は引数の形を測っていないので入れない。
+  推測で入れると、パスの無い行が増えるだけになる。
+- **muse の `patchSummary`（サーバー側が数えた added/removed）は使わない。** 帯の `+N −M` は
+  **行が開く差分と同じ before/after** から数えないと食い違うため（決定 1 の周辺・`EditStat`)。
+- **どの kind も turn の `Cwd` は足していない**——3 kind とも絶対パスで記録されることを実測した。
+  `lcpp` だけは相対パスなので `Cwd` が必須で、そちらは ADR 0093 側に書いた。
+
+### 試験
+
+各 kind に `fileedits.go` と `fileedits_test.go` を新設。**実セッションから採った生のペイロードを
+そのまま定数に置いた**（手で書いた fixture では、上の「目録と実際の綴りの違い」を取りこぼす）。
+鎖の末端（`FileEditsInTurn` が畳む形）まで 1 本で通す試験を kind ごとに 1 本。
+
+陽性対照（いずれも赤を実見してから戻した）: kiro の許可名から `write` を外す／muse の `find` を
+`old` に改名する／agy の作成パターンの先頭固定を外す（**読み取りステップまで拾って陰性対照が赤**）。

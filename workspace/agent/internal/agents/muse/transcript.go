@@ -268,6 +268,11 @@ func toolPart(it msp.Item) transcript.Part {
 		p.Info = transcript.Clip(*it.Args)
 	}
 	p.Output = transcript.CapOutput(str(it.VisibleOutput))
+	// An edit-family call additionally carries its target and before/after, which is what the
+	// changed-files strip counts and what opens the trace as a diff (fileedits.go).
+	if f, verb, es := toolEdits(p.Tool, str(it.Args)); f != "" {
+		p.File, p.Verb, p.Edits = f, verb, es
+	}
 	// A failed tool call whose output is empty would otherwise render as a blank result,
 	// which reads as "it worked and said nothing".
 	if p.Output == "" && it.Status != msp.ItemStatusCompleted {

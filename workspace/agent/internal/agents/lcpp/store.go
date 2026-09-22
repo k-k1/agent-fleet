@@ -525,7 +525,15 @@ func transcriptFromRecords(recs []Record) []transcript.Turn {
 				t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: r.Content})
 			}
 			for _, tc := range r.ToolCalls {
-				t.Parts = append(t.Parts, transcript.Part{Kind: "tool", Tool: tc.Name, Info: transcript.Clip(tc.Arguments)})
+				p := transcript.Part{Kind: "tool", Tool: tc.Name, Info: transcript.Clip(tc.Arguments)}
+				// Edit-family calls additionally carry their target and before/after, which is
+				// what the changed-files strip counts and what opens the trace as a diff
+				// (fileedits.go). Verb is left to transcript.EditVerb: an `edit` has an Old and
+				// reads as an edit, a `write` is pure insertion and reads as an add.
+				if f, es := toolEdits(tc.Name, tc.Arguments); len(es) > 0 {
+					p.File, p.Edits = f, es
+				}
+				t.Parts = append(t.Parts, p)
 				if tc.ID != "" {
 					sites[tc.ID] = toolCallSite{turn: len(turns), part: len(t.Parts) - 1}
 				}

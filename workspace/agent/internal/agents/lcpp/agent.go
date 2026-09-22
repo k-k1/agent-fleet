@@ -107,6 +107,16 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	if err != nil {
 		return agents.TranscriptData{}, false
 	}
+	// The store records no working directory of its own, but every builtin tool resolved its
+	// path argument against this one (driver.go hands the harness Runtime the same m.CWD()),
+	// and the changed-files aggregation silently drops a relative edit path from a turn with
+	// no Cwd (sessionx absEditPath). It is a property of the session, not of a turn, so every
+	// turn carries it — the mirror then also resolves relative links in the agent's own prose
+	// against it (TranscriptTurn baseDir).
+	cwd := m.CWD()
+	for i := range turns {
+		turns[i].Cwd = cwd
+	}
 	td := agents.TranscriptData{Turns: turns, Path: st.Path()}
 	h := handleFor(m.Name)
 	if h == nil {

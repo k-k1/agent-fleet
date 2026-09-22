@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // testHome redirects paths.HomeDir (and so sessionsDir) at a scratch directory for the
@@ -648,5 +649,50 @@ func TestAppendMessageUnknownRole(t *testing.T) {
 	s := Open("sid-9")
 	if _, err := s.AppendMessage(harness.Message{Role: harness.Role("bogus")}); err == nil {
 		t.Fatal("AppendMessage with an unrecognized role must error, not silently drop it")
+	}
+}
+
+// TestTranscriptToolPartsCarryTheirEdits pins what Transcript() puts on an edit-family tool
+// part. Only File+Edits make the mirror open the trace as a diff and make the changed-files
+// strip count the call at all (transcript.FileEditsInTurn skips a tool part with no File);
+// every other tool stays the one-line trace it was, which is the negative control that keeps
+// the strip from listing files nobody edited.
+func TestTranscriptToolPartsCarryTheirEdits(t *testing.T) {
+	testHome(t)
+	s := Open("sid-edits")
+	if _, err := s.AppendMessage(harness.Message{
+		Role: harness.RoleAssistant, Content: "editing",
+		ToolCalls: []harness.ToolCall{
+			{ID: "c1", Name: "write", Arguments: `{"path":"new.txt","content":"one\ntwo\n"}`},
+			{ID: "c2", Name: "edit", Arguments: `{"path":"a.go","old_string":"old\n","new_string":"new\n"}`},
+			{ID: "c3", Name: "read", Arguments: `{"path":"b.go"}`},
+		},
+	}); err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+	turns, err := s.Transcript()
+	if err != nil {
+		t.Fatalf("Transcript: %v", err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("Transcript() len = %d, want 1: %+v", len(turns), turns)
+	}
+	byTool := map[string]transcript.Part{}
+	for _, p := range turns[0].Parts {
+		if p.Kind == "tool" {
+			byTool[p.Tool] = p
+		}
+	}
+	if len(byTool) != 3 {
+		t.Fatalf("tool parts = %+v, want all three calls rendered", byTool)
+	}
+	if got := byTool["write"]; got.File != "new.txt" || len(got.Edits) != 1 || got.Edits[0].New != "one\ntwo\n" {
+		t.Fatalf("write part = %+v, want new.txt with its content as the after-image", got)
+	}
+	if got := byTool["edit"]; got.File != "a.go" || len(got.Edits) != 1 || got.Edits[0].Old != "old\n" {
+		t.Fatalf("edit part = %+v, want a.go with both sides", got)
+	}
+	if got := byTool["read"]; got.File != "" || got.Edits != nil {
+		t.Fatalf("read part = %+v, want a plain trace — a read is not a change", got)
 	}
 }
