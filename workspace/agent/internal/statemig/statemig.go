@@ -126,6 +126,12 @@ var Entries = []string{
 	"chat-wd",
 	"chat-codex",
 	"chat-claude",
+	// Isolated XDG_DATA_HOME for muse exec assistant-chat turns (ADR 0095 P2-20). Keeps the
+	// chat sessions out of `muse session list`. Never existed under .config — introduced
+	// directly under AgentStateDir — so run() no-ops on a source that was never there.
+	// Existing Workspaces start with it empty, which is correct: the only thing lost is
+	// muse-exec session history for previous chat turns, and there were none.
+	"chat-muse-data",
 	// The fleet session graph's ledgers (ADR 0096). Never existed under .config —
 	// introduced after the move — but every AgentStateDir-resolving name is required to be
 	// listed here (statemig_drift_test.go): run() no-ops on a source that was never there.
