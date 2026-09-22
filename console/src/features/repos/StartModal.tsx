@@ -16,6 +16,7 @@ import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings, setSetting } from "../../lib/settings.ts";
+import { requiresConcreteModel, useAutoConcreteModel } from "../../lib/agentModels.ts";
 import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { groupedRepos } from "../../lib/project.ts";
@@ -300,6 +301,14 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     setStartMode(resolveStartMode(k, "", d.startMode));
     setSkipPerm(undefined);
   }, [kinds, kind, settings]);
+  // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
+  // catalog settles, auto-pick its first entry rather than leaving the picker on an empty
+  // selection nothing can launch with.
+  useAutoConcreteModel(kind, model, (next) => {
+    setModel(next);
+    setEffort("");
+  });
+  const homeModelPending = agentOf(kind).caps.model && requiresConcreteModel(kind) && !model;
   const startHome = async () => {
     if (busy) return;
     setBusy(true);
@@ -641,7 +650,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               {tr("common.cancel")}
             </Button>
-            <Button variant="primary" onClick={() => void startHome()} disabled={busy}>
+            <Button variant="primary" onClick={() => void startHome()} disabled={busy || homeModelPending}>
               {busy ? tr("launch.launching") : tr("launch.launch")}
             </Button>
           </footer>

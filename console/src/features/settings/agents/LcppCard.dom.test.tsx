@@ -11,10 +11,16 @@ import { createRoot, type Root } from "react-dom/client";
 
 const apiJSON = vi.fn();
 const raw = vi.fn();
+// The Behavior disclosure's launch-defaults row (AgentCardParts.tsx's LaunchDefaults) is the
+// only thing here that calls the plain GET `api` — for lcpp's live model catalog. Overridden
+// completely (nothing else in this component touches it) so opening that section never makes a
+// real network call.
+let lcppModels: { id: string; label: string }[] = [];
 vi.mock("../../../core/api/client.ts", async (importActual) => ({
   ...(await importActual<typeof import("../../../core/api/client.ts")>()),
   apiJSON: (...args: unknown[]) => apiJSON(...args),
   raw: (...args: unknown[]) => raw(...args),
+  api: async (path: string) => (path.includes("agents/lcpp/models") ? { models: lcppModels } : {}),
 }));
 const toast = vi.fn();
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
@@ -48,6 +54,7 @@ async function mount(st: ProviderConn | undefined, reload = vi.fn()) {
 beforeEach(() => {
   apiJSON.mockImplementation(() => Promise.resolve({ ok: true, build_info: "b1", n_ctx: 4096, models: ["m1"] }));
   raw.mockImplementation(() => Promise.resolve({}));
+  lcppModels = [];
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -178,5 +185,31 @@ describe("LcppCard — the manual check button still works", () => {
     });
     expect(checkCalls().length).toBe(1);
     expect(reload).toHaveBeenCalled();
+  });
+});
+
+// The Behavior disclosure's "Default model" row (docs/log/109): lcpp has no CLI-picked own
+// default, so a stored default of "" is not a valid choice the way it is for codex/opencode —
+// this row uses Choice/Select directly rather than ModelPicker, so it needs its own
+// useAutoConcreteModel call (AgentCardParts.tsx), separate from the launch dialogs'.
+describe("LcppCard — Behavior disclosure's default-model row auto-picks (docs/log/109)", () => {
+  it("auto-picks the sole catalog entry as the stored default once it resolves", async () => {
+    lcppModels = [{ id: "m1", label: "m1" }];
+    const { getSettings, setSettings } = await import("../../../lib/settings.ts");
+    setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, lcpp: { model: "", effort: "", startMode: "normal", skipPermissions: true } } });
+
+    await mount(undefined);
+    const disclosure = [...(host?.querySelectorAll("button") ?? [])].find((b) => /behavior/i.test(b.textContent || ""));
+    expect(disclosure).toBeTruthy();
+    await act(async () => {
+      disclosure!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getSettings().agentLaunchDefaults.lcpp?.model).toBe("m1");
   });
 });
