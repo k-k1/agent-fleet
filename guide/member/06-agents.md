@@ -94,6 +94,15 @@ muse drives the session protocol directly. Sessions of either kind default to Ma
 implementation does not exist yet. Every other muse row was ticked only after it was
 observed working on a real session.
 
+Usage chips add up, so the bar keeps only the **two agents you used most recently**. The
+rest fold into a **"+N"** chip on the right and open from inside it (a folded chip keeps
+reading its usage, so opening the popover costs no fresh fetch). A chip near its cap
+(95% or more, or holding a Full reset) comes back onto the bar even if you have not run
+that agent lately. Each chip's dropdown has an **"On the WS bar"** control — **Always
+show** / **Auto** (default) / **Always fold**: pin a third agent if you want it on the bar
+permanently, and note that "Always fold" keeps it folded even near its cap. On a phone the
+chips already sit in the ⋯ overflow as a list, so nothing is folded there.
+
 The WS-bar usage chip needs an account-level limit to show — opencode
 (bring-your-own provider API keys), cursor, and kiro expose none. **lcpp** and **muse**
 have no Terminal (CLI) route — sessions of either kind default to Managed. **muse**
