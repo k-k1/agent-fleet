@@ -2897,3 +2897,56 @@ the first row would not pass.
   chat turn records the requested model and no totals — the usage chip does not move for it.
 - The capability table is still cross-checked against the code for the fork rows and the
   permission-skip rows only. A cap reverted in `registry.ts` still passes every Console test.
+
+### P2-22: what the assistant chat can touch, and the table that now checks itself (2026-09-22)
+
+P2-21 closed the row and left two things open. Both are closed here — the first with two declared
+subscription turns, the second with no turns at all.
+
+**Do `--disable-shell` and `--disable-write` bind over `muse exec`?**
+
+The free half first, and it is a trap worth naming. Run the chat provider's own argv under
+`--provider echo` and read the session log's `model_request_configured` record:
+
+| arm | `web_search` | `bash` / `bash_input` | `write_file` / `edit_file` |
+|---|---|---|---|
+| the product's argv (`--disable-shell --disable-write --disable-web-tools`) | **gone** | present | present |
+| no flags (control) | present | present | present |
+
+`toolset.mode` is `all` and `toolset.source` is `default` in both arms. So `--disable-web-tools`
+filters that list and the other two do not — which reads like "the clamps are decorative", and
+🔥 **that reading is wrong**. Two live turns through `museChat.Send`, the second one insisting
+("do not decide in advance whether your tools work; actually invoke write_file, then report the
+error verbatim"), both ended the same way:
+
+- no file at the target path, in a throwaway directory;
+- **no tool call at all** — the session log's `tool_name` and `tool_call_id` are empty and the
+  only task kinds are `model.meta.response` and `session_name.allocate`;
+- the model itself said writing and shell were disabled for the session.
+
+So the record above is not a readout of what the model is offered, and `active_tools` must not be
+used as one. What is measured is narrower than "the clamp is enforced" and it is what the guide
+now says: an assistant chat turn made no tool call and wrote nothing, twice. What is still
+**unmeasured** is a runtime refusal, because nothing ever reached the runtime — "enforced" and
+"instructed" remain indistinguishable from here, and a future release that stops telling the
+model the tools are off would be caught only by `TestMuseChatLiveWriteClamp` /
+`TestMuseChatLiveWriteClampForced`, which is why both live on in the repo rather than in a log.
+
+**The capability table now checks itself** (`console/src/agents/guideTable.test.ts`).
+
+P2-21 recorded that reverting muse's `headlessChat` passed all 318 Console test files. It no
+longer does: the new test parses the table out of `guide/ref/agents.md` and compares seven rows
+against `registry.ts` caps for all eleven kinds, asserts the English and Japanese tables carry
+cell-for-cell identical marks, and asserts every row of the table is either mapped or listed in
+`UNMAPPED_ROWS` with a reason — so a renamed row cannot quietly leave the check. Mutation-checked:
+`headlessChat: false` turns it red.
+
+🔴 **It found drift outside muse on its first run.** `lcpp`'s cells for "Model choice at launch"
+and "Context usage gauge" are `—`, while `caps.model` and `caps.contextBar` are both `true` in
+`registry.ts` with reasons written beside them (`DynamicModel`; ADR 0093 decision 8, "WireLive now
+reports it, WindowSource=recorded"). One of the two is wrong and it is ADR 0093's to settle, so
+those rows are named in `UNMAPPED_ROWS` rather than pinned to either answer. Three further rows
+are unmapped because the row and the cap genuinely differ in meaning — "Read-only history while
+stopped" (cursor's `—` is qualified by footnote 3), "Plan mode" (the cap is the TUI mode-cycle
+key) and "Skill / command picker" (the row is NATIVE enumeration; the cap is also true for the
+foreign-injection kinds).

@@ -195,7 +195,9 @@ assistant's choice of agent: Muse Code is proprietary and not included in the im
 to be installed on demand (the Muse Code connection card offers it, ~299MB into your home), and
 you have to be signed in — an unauthenticated session would accept work and then fail every
 turn. As the assistant, muse answers one prompt per turn as its own headless run, and it
-remembers the conversation: ask a follow-up and it has the earlier turns.
+remembers the conversation: ask a follow-up and it has the earlier turns. It answers rather than
+acts — Agent Fleet runs those turns with shell, file writing and web tools switched off, and
+measured twice, a chat turn asked to write a file made no tool call and wrote nothing.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
