@@ -12,7 +12,6 @@ import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../core/st
 import { useLayoutStore } from "../layout/store.ts";
 import { openSessionsOverview } from "../features/overview/open.ts";
 import { openImagegen } from "../features/imagegen/open.ts";
-import { openFleetGraph } from "../features/fleetgraph/open.ts";
 import { useImagegenAvailable } from "../features/imagegen/available.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -1561,19 +1560,6 @@ export function WsBar() {
       >
         <Icon name="dashboard" />
         <span className="lbl">{tr("wsbar.overview")}</span>
-      </button>
-      {/* The fleet session graph (ADR 0096 decision 10), beside the overview because it is
-          the other view of the same surface — and because until this button existed the
-          figure had no entry point at all outside the leader key and the command palette:
-          the rail's layout map carries one, and that map hides itself while there is a
-          single pane, which is the most ordinary state there is. */}
-      <button
-        className="ghost ws-split ws-fleetgraph"
-        title={tr("wsbar.fleetgraph_title") + hintSuffix("open.fleetgraph")}
-        onClick={() => openFleetGraph()}
-      >
-        <Icon name="graph" />
-        <span className="lbl">{tr("wsbar.fleetgraph")}</span>
       </button>
       {/* The image-generation studio (ADR 0081), beside the overview for the same reason:
           it is a pane, and the layout map's copy of this button hides itself while there is

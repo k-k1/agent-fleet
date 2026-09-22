@@ -112,8 +112,6 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.close_all_title": "Close all panes",
   "wsbar.overview": "Sessions",
   "wsbar.overview_title": "See every running session as a card",
-  "wsbar.fleetgraph": "Graph",
-  "wsbar.fleetgraph_title": "See the whole fleet: lanes are sessions, time runs left to right",
   "wsbar.imagegen": "Images",
   "wsbar.imagegen_title": "Make pictures with ComfyUI, without an agent in the loop",
   "wsbar.more_title": "Resource info / opencode web / preview",
