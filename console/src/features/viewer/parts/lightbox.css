@@ -104,8 +104,17 @@
   max-width: min(420px, calc(100vw - 24px));
   max-height: calc(100vh - 96px);
   overflow: auto;
-  background: var(--panel-bg, rgba(20, 20, 20, 0.92));
-  color: var(--fg, #eee);
+  /* The surface has to come from the THEME, not from the backdrop this panel floats over.
+     `--panel-bg` is declared nowhere (tokens.css has --panel / --panel2 / --bar), so a
+     `var(--panel-bg, rgba(20, 20, 20, 0.92))` fallback handed every theme the dark literal
+     while the text kept var(--fg) — #1c2024 on near-black in light mode, which made the whole
+     table unreadable. A token that does not exist never announces itself; only the colour does.
+     Kept slightly translucent so the picture still shows through, as it did before. */
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  color: var(--fg);
+  /* The panel is a light block over a dark backdrop in light mode; the border alone does not
+     lift it off the picture. */
+  box-shadow: 0 6px 20px color-mix(in srgb, #000 35%, transparent);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -114,6 +123,45 @@
 
 .imgprops-msg {
   color: var(--muted);
+}
+
+/* Which session generated the picture, and the way back to it. Above the source line and
+   outside the record's own rows on purpose: it is resolved from the picture's FOLDER, so it is
+   the one thing this panel can still answer when the record is missing or unreadable. */
+.imgprops-madeby {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 4px;
+}
+
+.imgprops-madeby-label {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.imgprops-madeby-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 1px 4px;
+  color: var(--accent);
+  font: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.imgprops-madeby-go:hover {
+  border-color: var(--border);
+  background: var(--hover-bg);
 }
 
 .imgprops-src {
@@ -172,5 +220,5 @@
 }
 
 .mirror-lightbox-props.on {
-  color: var(--accent, #58a6ff);
+  color: var(--accent);
 }

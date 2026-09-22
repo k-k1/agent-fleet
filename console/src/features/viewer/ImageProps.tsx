@@ -18,6 +18,8 @@ import { useT } from "../../lib/i18n/index.ts";
 import { toast } from "../../ui/toast.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { imageProperties, type ImageProperties } from "../imagegen/api.ts";
+import { folderOf } from "../imagegen/generatedBy.ts";
+import { openGeneratingSession, useGeneratingSession } from "../imagegen/useGeneratingSession.ts";
 import { currentDraft, openImagegen } from "../imagegen/open.ts";
 import { draftFromProperties } from "../imagegen/draft.ts";
 
@@ -55,6 +57,7 @@ export function ImageProps({ path }: { path: string }) {
   const tr = useT();
   const [props, setProps] = useState<ImageProperties | null>(null);
   const [err, setErr] = useState("");
+  const madeBy = useGeneratingSession(folderOf(path));
 
   useEffect(() => {
     let alive = true;
@@ -83,13 +86,59 @@ export function ImageProps({ path }: { path: string }) {
       .catch(() => toast(tr("imggen.props_copy_failed"), { kind: "error" }));
   };
 
-  if (err) return <div className="imgprops imgprops-msg">{err}</div>;
-  if (!props) return <div className="imgprops imgprops-msg">{tr("imggen.props_loading")}</div>;
-  if (props.source === "none") return <div className="imgprops imgprops-msg">{tr("imggen.props_none")}</div>;
+  /** Jump to the conversation that made this picture. A session that cannot be opened at all
+   *  (stopped, no transcript, folder gone) says so rather than swallowing the click. */
+  const jump = (split: boolean) => {
+    if (!madeBy) return;
+    if (!openGeneratingSession(madeBy.name, split)) toast(tr("imggen.props_session_gone"), { kind: "info" });
+  };
+
+  // The session that generated this picture is known from its FOLDER, not from the record —
+  // so it is drawn in every branch below, including the ones where the record is missing or
+  // unreadable. A vendor-route PNG carries no chunk at all, and "which conversation made this"
+  // is exactly the question left when the settings cannot be recovered.
+  const head = madeBy && (
+    <div className="imgprops-madeby">
+      <span className="imgprops-madeby-label">{tr("imggen.props_session")}</span>
+      <button
+        type="button"
+        className="imgprops-madeby-go"
+        title={tr("imggen.props_open_session", { name: madeBy.label })}
+        onClick={(e) => jump(e.ctrlKey || e.metaKey)}
+        onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+        onAuxClick={(e) => e.button === 1 && jump(true)}
+      >
+        <Icon name="comment-discussion" /> {madeBy.label}
+      </button>
+    </div>
+  );
+
+  if (err)
+    return (
+      <div className="imgprops">
+        {head}
+        <div className="imgprops-msg">{err}</div>
+      </div>
+    );
+  if (!props)
+    return (
+      <div className="imgprops">
+        {head}
+        <div className="imgprops-msg">{tr("imggen.props_loading")}</div>
+      </div>
+    );
+  if (props.source === "none")
+    return (
+      <div className="imgprops">
+        {head}
+        <div className="imgprops-msg">{tr("imggen.props_none")}</div>
+      </div>
+    );
 
   const rows = rowsOf(props, tr as (k: string, v?: Record<string, unknown>) => string);
   return (
     <div className="imgprops">
+      {head}
       <div className="imgprops-src">
         {tr("imggen.props_source")}:{" "}
         {tr(props.source === "sidecar" ? "imggen.props_source_sidecar" : "imggen.props_source_png")}
