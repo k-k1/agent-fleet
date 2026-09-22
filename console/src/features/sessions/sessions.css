@@ -129,6 +129,33 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Unread-notification marker: a session the notification center still holds an unseen
+   event for. Defined once here and reused by the pane tab strip (panes.css .pane-tab-unread),
+   the repo row and the rail section headers — the same rule that already lets those places
+   borrow .sess-kic. --del is the console's one danger colour and is already what the bell's
+   own badge is painted in (topbar.css .notification-badge), so the dot matches the count it
+   belongs to; it deliberately does NOT introduce a colour into the kind palette. */
+.unread-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--del);
+}
+/* In a rail row the dot rides the kind icon's corner instead of taking a column: the rail is
+   narrow, and a leading dot would indent the unread rows alone, breaking the icon alignment
+   down the list. It sits OUTSIDE .sess-kic so the stopped-row dimming (opacity, below) fades
+   the icon without fading the dot. */
+.sess-kic-wrap {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+}
+.sess-kic-wrap > .unread-dot {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+}
 /* Leading kind icon — a small tinted square whose color IS the kind (the old
    text kind-tag is gone from rows; panes/archive still use it). Palette matches
    terminal.css .kind-tag. */

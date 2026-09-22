@@ -23,6 +23,7 @@ import { useSessionsStore } from "./store.ts";
 import { openSessionFromList } from "./open.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
+import { useSessionUnread } from "../notifications/unread.ts";
 import type { SessionActions } from "./useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -79,6 +80,10 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // when its own family colour changes. A stripe, never a fill: hover / selection /
   // the active row and the working-set dimming all own the row's background.
   const lineage = useSessionsStore((st) => lineageColorOf(st.sessions, s.name));
+  // An unseen notification for this session (the notification center's own unread flag,
+  // per member and shared across devices). Clears the moment the session is shown in a
+  // visible pane, so the dot means "something came back and nobody has looked".
+  const unread = useSessionUnread(s.name);
 
   return (
     <li
@@ -134,9 +139,16 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           openSessionFromList(s, true, running);
         }}
       >
-        {/* Leading kind icon: color says claude/codex/… so the text tag is gone. */}
-        <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
-          <Icon name={kindIcon(s.kind)} />
+        {/* Leading kind icon: color says claude/codex/… so the text tag is gone. It also
+            carries the unread dot — a notification for this session that nobody has opened
+            yet. Pinned to the icon's corner instead of taking a column of its own: the rail
+            is narrow, and a leading dot would indent the unread rows alone and break the
+            icon alignment down the list. */}
+        <span className="sess-kic-wrap">
+          <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+            <Icon name={kindIcon(s.kind)} />
+          </span>
+          {unread && <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />}
         </span>
         <span className="sess-l1">{displayName(s)}</span>
         {/* Branch drift: the working copy left the branch this session started

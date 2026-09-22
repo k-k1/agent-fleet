@@ -4,7 +4,7 @@ import { pushHealthy } from "../../core/push/events.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { toast } from "../../ui/toast.ts";
 import { t as tr } from "../../lib/i18n/index.ts";
-import { activePane } from "../../layout/ops.ts";
+import { activePane, allPanes } from "../../layout/ops.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -55,6 +55,10 @@ export function replayNotification(n: FleetNotification): void {
 
 async function deliver(n: FleetNotification): Promise<void> {
   if (n.seen) return;
+  // Narrower on purpose than the read marking below (which covers every visible pane):
+  // suppression here costs the user an OS notification, and the layout says nothing about
+  // whether the browser tab is even on screen — while it is hidden this is the only channel
+  // left. Swallowing one per open pane would turn a background window into a silent one.
   const active = activePane(useLayoutStore.getState().layout)?.session;
   if (n.target.type === "session" && active === n.target.id) {
     return;
@@ -241,14 +245,21 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   },
 }));
 
-// Opening a session is an explicit acknowledgement of every pending event for that
-// session. Watch both sides: layout changes catch navigation/history, notification
-// changes catch an event that arrives while its session is already active.
-export function wireNotificationReadOnActiveSession(): () => void {
+// Showing a session is an explicit acknowledgement of every pending event for it — and
+// showing means every VISIBLE pane, not only the focused one. allPanes is the selected view
+// of each cell, i.e. exactly what is on screen: a session sitting in a second pane, or on
+// the selected tab of another cell, is being looked at, and leaving its unread dot up would
+// mark as "not looked at" something the user can see. The dot on a pane tab is what makes
+// this matter — under the old active-pane-only rule every unfocused pane wore one.
+// Watch both sides: layout changes catch navigation/history and tab selection, notification
+// changes catch an event that arrives while its session is already on screen.
+export function wireNotificationReadOnVisibleSessions(): () => void {
   const pending = new Set<string>();
   const sync = () => {
-    const sessionName = activePane(useLayoutStore.getState().layout)?.session || "";
-    const ids = unseenSessionEventIDs(useNotificationStore.getState().items, sessionName)
+    const items = useNotificationStore.getState().items;
+    // The same session can occupy two panes, so dedupe before posting the acknowledgement.
+    const ids = [...new Set(allPanes(useLayoutStore.getState().layout)
+      .flatMap((p) => unseenSessionEventIDs(items, p.session || "")))]
       .filter((id) => !pending.has(id));
     if (!ids.length) return;
     ids.forEach((id) => pending.add(id));

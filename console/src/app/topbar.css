@@ -95,6 +95,14 @@
 .notification-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .notification-titles { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .notification-titles span { color: var(--muted); font-size: 11px; }
+.notification-head-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+/* Mark-all-read. Opening the center no longer acknowledges anything (the per-session dots in
+   the rail and the tab strip read the same flag), so this is the only bulk clear — icon-only,
+   because the panel is 380px wide and the voice toggle next to it already carries a word. */
+.notification-readall { flex: 0 0 auto; display: inline-flex; align-items: center; padding: 5px 6px; border: 1px solid var(--border2, var(--border)); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
+.notification-readall .codicon { font-size: 13px; }
+.notification-readall:hover:not(:disabled) { color: var(--fg); background: var(--hover-bg); }
+.notification-readall:disabled { opacity: .45; cursor: default; }
 /* Audio-notification (ttsSessionNotify) quick toggle — mirrors Settings > Text-to-speech. */
 .notification-mute { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--border2, var(--border)); border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
 .notification-mute .codicon { font-size: 13px; }
