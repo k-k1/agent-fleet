@@ -115,7 +115,7 @@ an AWS Builder ID or a Kiro plan → **kiro**.
 
 All of them show the conversation, let you answer from the mirror, and hand a
 conversation off to another agent. The differences that most often decide it in
-practice are the context gauge (claude / codex / opencode / kiro), image paste, and
+practice are the context gauge (claude / codex / opencode / kiro / muse), image paste, and
 whether you want Managed execution — Codex and opencode carry no per-session process
 at all, which is what makes them comfortable to run many of at once.
 

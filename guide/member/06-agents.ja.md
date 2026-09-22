@@ -34,7 +34,7 @@ ChatGPTやOpenAI APIを使うなら **codex**、複数プロバイダのAPIキ�
 Cursor のプランを持っているなら **cursor**、AWS Builder ID（や Kiro プラン）を使うなら
 **kiro**、という
 選び方になります。いずれも会話表示、質問への回答、他エージェントへの
-会話の引き継ぎに対応します（コンテキストゲージは claude / codex / opencode / kiro）。
+会話の引き継ぎに対応します（コンテキストゲージは claude / codex / opencode / kiro / muse）。
 
 Codex / opencode / copilot / cursor / kiro の**マネージド実行**は、会話画面から普段の操作を完結できます
 （Codex / opencode はセッションごとの追加プロセスを持たないため並行作業向き。copilot / cursor / kiro は
@@ -226,7 +226,7 @@ GitHub を連携すると自動的に「接続済み」になります**（「Gi
 
 ## コンテキスト残量を見る
 
-claude / codex / opencode / kiro のセッションでは、画面上部に **「コンテキスト」**（狭いときは
+claude / codex / opencode / kiro / muse のセッションでは、画面上部に **「コンテキスト」**（狭いときは
 `ctx`）のゲージが出ます。今の会話が使っているトークン量と上限、そのうちキャッシュ再利用・
 新規キャッシュ・未キャッシュの内訳は、表示にマウスを重ねると確認できます。上限に近づくと
 「まもなく自動圧縮される可能性があります」と警告が出ます。長い作業で「急に文脈が

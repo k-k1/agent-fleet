@@ -35,7 +35,7 @@ to switch between API keys from multiple providers, pick **opencode**; if you ha
 GitHub Copilot subscription, pick **copilot**; if you have a Cursor plan, pick
 **cursor**; if you use an AWS Builder ID (or Kiro plan), pick **kiro**. They all support
 the conversation view, answering questions, and handing a conversation off to another
-agent; the context gauge is on claude / codex / opencode / kiro.
+agent; the context gauge is on claude / codex / opencode / kiro / muse.
 
 **Managed execution** for Codex / opencode / copilot / cursor / kiro lets you handle your everyday
 work entirely from the conversation view (Codex / opencode carry no extra per-session
@@ -228,7 +228,7 @@ email. Connecting with an API key is not supported.
 
 ## Checking remaining context
 
-In claude / codex / opencode / kiro sessions, a **"Context"** gauge (`ctx` when the screen is
+In claude / codex / opencode / kiro / muse sessions, a **"Context"** gauge (`ctx` when the screen is
 narrow) appears at the top. Hover over it to see how many tokens the current conversation
 is using, the limit, and the breakdown into cache reuse, new cache writes, and uncached.
 As you approach the limit, a "May be auto-compacted soon" warning appears. If a long

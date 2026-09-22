@@ -110,7 +110,7 @@ ChatGPT や OpenAI API なら **codex**、複数プロバイダの API キーを
 **cursor**、AWS Builder ID（や Kiro プラン）なら **kiro**。
 
 どれも会話表示・ミラーからの回答・他エージェントへの引き継ぎに対応します。実際に
-決め手になりやすい差は、コンテキストゲージ（claude / codex / opencode / kiro）、
+決め手になりやすい差は、コンテキストゲージ（claude / codex / opencode / kiro / muse）、
 画像貼り付け、そしてマネージド実行が要るかどうか——**Codex と opencode は
 セッション毎のプロセスを持たない**ので、数を並べても重くなりません。
 
