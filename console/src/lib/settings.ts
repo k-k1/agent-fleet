@@ -764,7 +764,7 @@ export const DEFAULT_MODEL = "sonnet";
 // Headless-chat backend kinds in the built-in priority order (mirrors the Agent's
 // defaultHeadlessOrder; agy last — its free-plan quota is scarce). Display labels
 // come from the agent registry (assistantName), not i18n.
-export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy"] as const;
+export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy", "muse"] as const;
 export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 
 // 🔴 STATIC FALLBACK ONLY (ADR 0082 decision 3). The list this deployment's fleet actually

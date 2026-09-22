@@ -2734,3 +2734,72 @@ Measured on the wire:
 `ManagedContext` returned `ok=true` with the measured values. The ContextBar path is now
 end-to-end verified. `caps.contextBar` flipped to `true` in `registry.ts` and the guide row
 updated to ✓.
+
+### P2-20: assistant chat — built with `muse exec --json` (ADR 0095 P2-20)
+
+**What was built.**
+
+`chatx/chat_providers_muse.go` — a new `museChat` struct implementing `chatx.ChatProvider.Send`.
+One `muse exec` call per turn; session continuity comes from the session id captured from the
+first event's `stream.id` field and passed via `--session-id` on subsequent turns (measured:
+the second exec carries `Session match: True` in its trace when the same id is provided).
+
+Architecture decisions:
+
+- **`muse exec --json`** rather than `muse serve` over MSP. The assistant chat is a thin Q&A
+  layer; it has no lifecycle to manage across turns, no tool loop, and no pane of its own. `exec`
+  starts and exits once per turn, which is exactly the shape the other CLI-backed providers
+  (codex, cursor, opencode) use. MSP-over-serve would require a resident process per
+  conversation, the same complexity as the managed session driver, for no turn-by-turn gain.
+
+- **`--session-id` for continuity, no `--no-session-log`**. The two flags conflict — muse rejects
+  `--session-id` when `--no-session-log` is also present ("a session id needs retained logging;
+  remove --no-session-log"). Session ids are stored in `ChatConversation.MuseSessionID` and
+  written back to the conversation record after each turn. Isolation from the member's own
+  session list is achieved via `XDG_DATA_HOME` (pointed at an agent-state subdirectory), so the
+  chat sessions do not appear in `muse session list`.
+
+- **Clamps applied at every exec.** `muse.EnsureClamps()` (same contract as the managed driver's
+  `Resume`) writes `settings.json` before the binary is invoked, preventing a member who edits
+  settings between turns from running an unclamped assistant. `muse.ChildEnv()` (new exported
+  wrapper around the package-private `childEnv`) supplies the env-route clamps:
+  `MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=1`, the six observer silencing vars, and
+  `MUSE_NO_AUTO_UPDATE=1`. `--no-foreign-personal-context` (exec-only flag, not on serve) adds
+  the belt-and-braces at the argv level.
+
+- **Prompt via `--prompt-file`**. The persona preamble and prompt are written to a temp file
+  (deleted on return). This avoids argv-length limits for long persona texts and matches the
+  pattern the managed driver uses for context injection.
+
+- **Security posture flags**: `--disable-shell`, `--disable-write`, `--disable-web-tools`,
+  `--approval-mode never`, `--approval-judge off`. The assistant chat is Q&A only; it must not
+  mutate the host or browse the web.
+
+**Wire format (measured on Muse Code 1.3.0-R3401.1 with `--provider echo` and a real model).**
+
+Each line of `--json` output is a JSON object:
+
+```json
+{"stream":{"kind":"session","id":"<uuid>"},...,"payload_type":"run.output.delta","payload":{"text":"…"}}
+{"stream":{"kind":"session","id":"<uuid>"},...,"payload_type":"run.terminal.completed","payload":{"terminal":"completed","text":"<full reply>","reason":null}}
+```
+
+The session id is identical across all events of one exec. `run.terminal.completed` with
+`terminal != "completed"` carries the failure reason. The `payload.text` on the terminal event
+is the authoritative complete reply; delta accumulation is a fallback.
+
+**Console side.** `muse` added to `ASSISTANT_AGENT_KINDS` in `console/src/lib/settings.ts`, and
+`caps.headlessChat: true` in `console/src/agents/registry.ts` (same flip as the other CLI-backed
+kinds). The guide table and footnote ¹¹ updated to ✓.
+
+**Exports added to `internal/agents/muse/program.go`:**
+
+- `ChildEnv(base []string) []string` — thin wrapper over `childEnv`, needed because `chatx` is a
+  sibling package and the exec runs outside the `muse` package.
+- `HasCredential() bool` — thin wrapper over `readCredential().Present`, used by
+  `museAvailable()` in the provider (the availability check must not spend a network call).
+
+**No live turn was spent on P2-20.** The parent task's instruction explicitly listed this as
+subscription-gated work requiring user consent before running a real turn against the Meta API.
+The provider is implemented and wired; end-to-end verification (a real chat turn through the
+assistant modal) is deferred until the member chooses to test it.

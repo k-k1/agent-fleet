@@ -116,6 +116,15 @@ func childEnv(base []string) []string {
 	return env
 }
 
+// ChildEnv returns base with the muse-specific clamp environment variables applied. It is
+// the exported surface for chatx's assistant-chat provider, which runs exec outside this
+// package (ADR 0095 P2-20).
+func ChildEnv(base []string) []string { return childEnv(base) }
+
+// HasCredential reports whether a muse credential is stored on disk. It does not make a
+// network call — the same check the Status map's "connected" field uses.
+func HasCredential() bool { return readCredential().Present }
+
 // observerVars are the six reminder observers. Read out of the binary's string table on
 // 1.3.0-R3401.1; a name that stops existing in 1.4 silently stops clamping, which is what the
 // drift check is for.

@@ -122,6 +122,10 @@ type ChatConversation struct {
 	// first turn (cursor CREATEs a chat under a fresh valid v4) and echoed back in the
 	// -p result's session_id — see cursorChat.
 	CursorSessionID string `json:"cursor_session_id,omitempty"`
+	// MuseSessionID is the muse session UUID, extracted from the first --json event's
+	// stream.id on the first turn and passed via --session-id on subsequent turns so the
+	// host's own conversation history carries context (ADR 0095 P2-20).
+	MuseSessionID string `json:"muse_session_id,omitempty"`
 	// Provider cursors are the number of canonical Messages already represented in
 	// each native provider session. A provider that returns after fallback receives
 	// the intervening user/assistant turns before the new prompt, instead of resuming
@@ -131,6 +135,7 @@ type ChatConversation struct {
 	OpencodeMessageCursor int `json:"opencode_message_cursor,omitempty"`
 	AgyMessageCursor      int `json:"agy_message_cursor,omitempty"`
 	CursorMessageCursor   int `json:"cursor_message_cursor,omitempty"`
+	MuseMessageCursor     int `json:"muse_message_cursor,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
 	// claude so it can inspect the user's workspace (docs/log/19 Q1). Legacy field kept for
 	// conversations created before assistants (Q2); new conversations drive tools via the
