@@ -565,6 +565,122 @@ func TestTranscriptSeparatesApprovalsFromQuestions(t *testing.T) {
 	}
 }
 
+// After the member answers a question, a re-delivery of the same userInput/requested must be
+// dropped. Without the guard the card reappears until userInput/settled arrives, which may
+// be seconds later on a busy connection.
+func TestRedeliveredUserInputAfterAnswerDoesNotRestoreTheCard(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodUserInputAnswer, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-redelivery", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{{ID: "q1", Question: "which?"}},
+	})
+	inter := waitInteraction(t, h)
+
+	if err := h.Respond(agents.InteractionReply{
+		ID: inter.ID, Decision: agents.DecisionAnswer,
+		Answers: []agents.InteractionAnswer{{Options: []int{0}}},
+	}); err != nil {
+		t.Fatalf("respond: %v", err)
+	}
+	host.WaitForMethod(msp.MethodUserInputAnswer) // answer was sent
+
+	// Re-deliver the same prompt (settled notification still in flight).
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-redelivery", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{{ID: "q1", Question: "which?"}},
+	})
+	time.Sleep(100 * time.Millisecond)
+	h.mu.Lock()
+	still := h.inter
+	h.mu.Unlock()
+	if still != nil {
+		t.Error("re-delivering the same userInput/requested after the answer re-armed the card")
+	}
+}
+
+// A new userInput/requested with a DIFFERENT id must still raise a card after the previous
+// one was answered — the settled-ID guard must not block genuine new questions.
+func TestNewUserInputAfterAnswerStillRaisesACard(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodUserInputAnswer, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-first", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{{ID: "q1"}},
+	})
+	inter := waitInteraction(t, h)
+	if err := h.Respond(agents.InteractionReply{ID: inter.ID, Decision: agents.DecisionAnswer}); err != nil {
+		t.Fatalf("respond: %v", err)
+	}
+	host.WaitForMethod(msp.MethodUserInputAnswer)
+
+	// New question with a different id.
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-second", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{{ID: "q2", Question: "next?"}},
+	})
+	next := waitInteraction(t, h)
+	if next.ID != "ask-ui-second" {
+		t.Errorf("new card id = %q, want ask-ui-second", next.ID)
+	}
+}
+
+// Same re-delivery guard for the approval channel.
+func TestRedeliveredApprovalAfterAnswerDoesNotRestoreTheCard(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodApprovalDecide, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Notify(msp.NotificationApprovalRequested, approvalParams())
+	inter := waitInteraction(t, h)
+
+	if err := h.Respond(agents.InteractionReply{ID: inter.ID, Decision: agents.DecisionAllow}); err != nil {
+		t.Fatalf("respond: %v", err)
+	}
+	host.WaitForMethod(msp.MethodApprovalDecide)
+
+	host.Notify(msp.NotificationApprovalRequested, approvalParams()) // same id: re-delivery
+	time.Sleep(100 * time.Millisecond)
+	h.mu.Lock()
+	still := h.inter
+	h.mu.Unlock()
+	if still != nil {
+		t.Error("re-delivering the same approval/requested after the answer re-armed the card")
+	}
+}
+
+// A new approval with a DIFFERENT id must raise a card even after the previous one was decided.
+func TestNewApprovalAfterAnswerStillRaisesACard(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodApprovalDecide, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Notify(msp.NotificationApprovalRequested, approvalParams()) // id "ap-1"
+	inter := waitInteraction(t, h)
+	if err := h.Respond(agents.InteractionReply{ID: inter.ID, Decision: agents.DecisionAllow}); err != nil {
+		t.Fatalf("respond: %v", err)
+	}
+	host.WaitForMethod(msp.MethodApprovalDecide)
+
+	// New approval with a different id.
+	p2 := approvalParams()
+	p2.ApprovalID = "ap-2"
+	p2.CurrentRequirementID.ApprovalID = "ap-2"
+	host.Notify(msp.NotificationApprovalRequested, p2)
+	next := waitInteraction(t, h)
+	if next.ID != "approval-ap-2" {
+		t.Errorf("new card id = %q, want approval-ap-2", next.ID)
+	}
+}
+
 // ...and the inverse: a user-input prompt is a question and must not appear as an approval.
 func TestTranscriptKeepsUserInputAQuestion(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
