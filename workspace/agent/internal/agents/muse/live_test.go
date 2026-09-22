@@ -703,3 +703,156 @@ func TestLiveSessionForkReturnsANewSession(t *testing.T) {
 	}
 	t.Logf("forked %s -> %s (path %s)", srcID, res.Session.SessionID, res.Session.Path)
 }
+
+// TestLiveImagePasteReachesTheModel spends exactly ONE subscription turn on the last thing
+// standing between the image-paste work (P2-15) and its row in the capability table: whether a
+// pasted image actually REACHES the model. The driver half — reading the file and sending an
+// MSP `image` part — is pinned by unit tests; what only the vendor can answer is whether the
+// host accepts those bytes and shows them to the model.
+//
+// 🔴 Two oracles, and the wire one comes first. The host echoes attachment METADATA back on the
+// userMessage item (`Item.Attachments`, base64 payloads deliberately not echoed), and AF stores
+// the whole item — so "the host took an image" is answerable without reading a word the model
+// wrote. The model's reply is the second arm, and it is admissible here in a way it is not for
+// a clamp: the token exists ONLY inside the PNG's pixels, never in the prompt, so reproducing it
+// is positive evidence that the bytes were rendered for the model rather than absence-evidence.
+//
+// Same security invariants as TestLiveContextUsage: throwaway HOME (so no ~/.claude rules go to
+// Meta), muse config reached by symlink and never copied, auth.json hashed before and after.
+func TestLiveImagePasteReachesTheModel(t *testing.T) {
+	liveGate(t)
+	if !readCredential().Present {
+		t.Skip("not signed in to muse: a real turn requires valid credentials")
+	}
+
+	realHome, _ := os.UserHomeDir()
+	realAuthJSON := filepath.Join(realHome, ".config", "muse", "auth.json")
+	hashBefore, err := fileSHA256(realAuthJSON)
+	if err != nil {
+		t.Fatalf("sha256 before: %v", err)
+	}
+
+	// 🔴 The image is rendered BEFORE HOME is thrown away. Pillow lives in the member's user
+	// site-packages (~/.local/lib/python3*/site-packages), so a throwaway HOME hides it and the
+	// whole test skips itself with "no module named PIL" — a live check that silently stops
+	// running is worse than one that fails.
+	// ⚠️ Not named `token`: gitleaks' generic-api-key rule fires on `token = "<high entropy>"`
+	// and turned the secret-scan job red for a word that is drawn into a PNG.
+	const probeWord = "AFPROBE-IMG-7K2"
+	png := renderProbeWordPNG(t, filepath.Join(t.TempDir(), "probe.png"), probeWord)
+
+	isolateHomeKeepMuseAuth(t)
+
+	dir := filepath.Join(os.Getenv("HOME"), "ws")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	name := "muse-live-img-" + filepath.Base(os.Getenv("HOME"))
+	t.Cleanup(func() { DropHandle(name) })
+	m := session.Meta{Kind: session.KindMuse, Name: name, Dir: dir, Driver: session.DriverManaged}
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	// ⚠️ The prompt must never contain the token: it is what makes the model's answer evidence
+	// rather than an echo.
+	err = th.Send(agents.TurnInput{
+		Prompt:      "Read the attached image and reply with only the characters written in it. No other words.",
+		Attachments: []string{png},
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	finalState := waitMuseTurn(t, th.(*threadHandle), 3*time.Minute)
+	t.Logf("turn finished with state: %s", finalState)
+
+	// Arm 1 — the wire: the host echoed an image attachment back on the user's own item.
+	items, err := openStore(slotSid(m)).Items()
+	if err != nil {
+		t.Fatalf("read the item store: %v", err)
+	}
+	attached := false
+	for _, it := range items {
+		if it.Kind != msp.ItemKindUserMessage {
+			continue
+		}
+		for _, a := range it.Attachments {
+			attached = true
+			t.Logf("host echoed an attachment: type=%q mediaType=%q width=%s height=%s",
+				a.Type, a.MediaType, intPtr(a.Width), intPtr(a.Height))
+			if a.MediaType != "image/png" {
+				t.Errorf("mediaType = %q, want image/png (what the driver sent)", a.MediaType)
+			}
+		}
+	}
+	if !attached {
+		t.Error("no attachment on any userMessage item: the host recorded no image for this turn")
+	}
+
+	// Arm 2 — the model: the token lives only in the PNG's pixels.
+	td, ok := New().Transcript(m)
+	if !ok {
+		t.Fatal("no transcript for the session that just ran a turn")
+	}
+	read := false
+	for _, turn := range td.Turns {
+		if turn.Role == "assistant" && strings.Contains(turn.Text, probeWord) {
+			read = true
+		}
+	}
+	if !read {
+		var got []string
+		for _, turn := range td.Turns {
+			if turn.Role == "assistant" {
+				got = append(got, turn.Text)
+			}
+		}
+		t.Errorf("the model did not report %q, so the pixels did not reach it; assistant said: %q", probeWord, got)
+	}
+
+	hashAfter, err := fileSHA256(realAuthJSON)
+	if err != nil {
+		t.Fatalf("sha256 after: %v", err)
+	}
+	if hashBefore != hashAfter {
+		t.Errorf("auth.json was modified during the test (before=%s after=%s)", hashBefore, hashAfter)
+	}
+}
+
+// renderProbeWordPNG draws word into a PNG sized to the text. It shells out to python3/Pillow
+// because what this test needs is an image a MODEL can read, and a hand-built PNG of coloured
+// squares would test the transport while leaving "did it actually see it" to a guess.
+func renderProbeWordPNG(t *testing.T, path, word string) string {
+	t.Helper()
+	const script = `
+import sys
+from PIL import Image, ImageDraw, ImageFont
+path, word = sys.argv[1], sys.argv[2]
+f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
+box = ImageDraw.Draw(Image.new("RGB", (10, 10))).textbbox((0, 0), word, font=f)
+img = Image.new("RGB", (box[2]-box[0]+80, box[3]-box[1]+80), "white")
+ImageDraw.Draw(img).text((40-box[0], 40-box[1]), word, fill="black", font=f)
+img.save(path)
+`
+	cmd := exec.Command("python3", "-c", script, path, word)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("cannot render the probe image (python3/Pillow/DejaVu needed): %v\n%s", err, out)
+	}
+	st, err := os.Stat(path)
+	if err != nil || st.Size() == 0 {
+		t.Skipf("the probe image was not written: %v", err)
+	}
+	return path
+}
+
+// intPtr renders an optional wire integer for a log line. The schema marks width/height "when
+// known", so "absent" has to be distinguishable from 0 — and printing the pointer itself (what
+// %v does) puts an address in the measurement record.
+func intPtr(p *int64) string {
+	if p == nil {
+		return "absent"
+	}
+	return fmt.Sprintf("%d", *p)
+}
