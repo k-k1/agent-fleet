@@ -14,6 +14,10 @@ English | [日本語](0095-muse-agent-kind.ja.md)
   mediaType="image/png"` back on the userMessage item and the model read a token that exists
   only in the PNG's pixels, so `caps.imagePaste` and that guide row are ✓ too. Three rows still
   carry footnote 11: handoff, the chat bridge, use as the assistant chat.
+  P2-18 (2026-09-22) re-measured the handoff row once the env fix was deployed — the af tools
+  reach the Agent API (`PROPOSE-OK`, and `generate_image` is advertised), so handoff is ✓ and
+  two rows remain: the chat bridge (unverified; its oracle is the member's own Discord channel)
+  and use as the assistant chat, which turns out to be UNBUILT rather than unwatched.
   The kind is offered in the launch menu behind its two preconditions (the proprietary
   binary installed, a credential stored). What is NOT built is named in the guide's own capability
   table and in the closing section, so an unticked row there means "not built", never "still
@@ -2567,6 +2571,41 @@ config reached by symlink and never copied, auth.json sha256 identical before an
 With this, `caps.imagePaste` is true and the guide row is ✓. Three rows still carry footnote 11
 — handoff, the chat bridge, use as the assistant chat — and the first of those is waiting on a
 deploy carrying P2-15's 401 fix rather than on anybody looking.
+
+### P2-18: the last three rows — one ticked, one owed to a human, one genuinely unbuilt
+
+The deploy that carried P2-15's env fix landed (the running Agent's binary contains
+`ForwardEnvNames`), so the 401 that blocked the handoff row could be re-measured. One
+subscription turn, in a real AF muse session, asked for two things: which af tools are in its
+list, and a `propose_session_handoff` call.
+
+```
+af_report, generate_image, propose_session_handoff, add_memo
+PROPOSE-OK
+```
+
+**Handoff is ✓.** The proposal was created ("引き継ぎ案を利用者へ提示しました…") — the tool now
+reaches the Agent API instead of answering `401 missing or invalid agent token`. The same line
+closes the other debt P2-15 left: `generate_image` is advertised to a muse session, which it can
+only be when the loopback status GET succeeds (`mcpImageGenAdvertise`), so the environment
+forwarding is confirmed end to end rather than by unit test alone.
+
+**The chat bridge is not AF's to settle from inside the box.** It keys on the notification KIND
+(`answer-ready` / `question` / `permission-request` / `exit` / `session-report`), never on the
+agent kind, and this workspace has Discord connected with all five keys enabled. But both
+observable stores are *drained* on success — the notification outbox and the bridge queue were
+empty before and after — so "delivered" and "never enqueued" look identical from here. The
+honest oracle is the channel itself, which is the member's to look at. The row stays `—` until
+someone does.
+
+🔴 **Use as the assistant chat is UNBUILT, not unwatched, and the ADR said otherwise.** The
+closing section of Phase 2 grouped it with "paths not written per agent at all" — wrong: the
+assistant chat is a per-kind provider (`chatx`'s `claudeChat` / `codexChat` / `opencodeChat` /
+`agyChat` / `cursorChat`, and lcpp has its own `lcppChat`), plus `ASSISTANT_AGENT_KINDS` on the
+Console side. muse is in neither. Building it means a `museChat` that drives `muse serve` over
+MSP for a conversation that is NOT an AF session — the lifecycle is the new part, since
+`--provider echo` cannot back a real assistant and there is no other headless one-shot. That is
+a package of its own, not a flag.
 
 ### Phase 2 closed: what is built, what is not, and one thing found next door
 
