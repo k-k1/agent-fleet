@@ -49,8 +49,8 @@ var ChatProviders = map[string]ChatProvider{
 	session.KindCursor:   cursorChat{},
 	// lcppKind is NOT a session.Kind* constant (ADR 0093 phase 1 §2 — the kind is not
 	// registered yet; see chat_providers_lcpp.go's header comment for where and why).
-	lcppKind:            lcppChat{},
-	session.KindMuse:    museChat{},
+	lcppKind:         lcppChat{},
+	session.KindMuse: museChat{},
 }
 
 // --- backend availability (claude-less workspaces, docs/log/19) ----------------------
