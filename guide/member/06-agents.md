@@ -13,8 +13,9 @@ be running).
 ## Supported agents and how to choose
 
 Six major CLI coding agents are supported (the experimental Antigravity (agy) slot is
-covered in [08](10-integrations.md)). Connection changes take effect immediately; behavior
-settings apply **from each agent's new sessions**.
+covered in [08](10-integrations.md); the Managed-only lcpp and muse are in the feature
+matrix below). Connection changes take effect immediately; behavior settings apply **from
+each agent's new sessions**.
 
 | | claude | codex | opencode | copilot | cursor | kiro |
 |--|--------|-------|----------|---------|--------|------|
@@ -52,29 +53,29 @@ new session ([02](02-sessions.md)).
 
 ## Feature matrix (all agent kinds)
 
-The table at the top compares the six main agents. This one adds Antigravity (agy) and
-the non-agent session kinds (shell / SSM), and rolls in the cross-cutting features
-covered elsewhere in this guide — worktrees ([04](03-code.md)), scheduled runs and the
-chat bridge ([11](08-organising.md), [08](10-integrations.md)). ✓ = supported,
-— = not applicable / not supported.
+The table at the top compares the six main CLI agents. This one adds Antigravity (agy),
+the Managed-only agents (lcpp and muse), and the non-agent session kinds (shell / SSM),
+and rolls in the cross-cutting features covered elsewhere in this guide — worktrees
+([04](03-code.md)), scheduled runs and the chat bridge ([11](08-organising.md),
+[08](10-integrations.md)). ✓ = supported, — = not applicable / not supported.
 
-| Capability | claude | codex | cursor | copilot | kiro | agy | opencode | shell | ssm |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Managed (paneless) execution | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | — |
-| Reasoning-effort control | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — | — |
-| Plan mode | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — |
-| Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | — | — |
-| Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
-| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
-| WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — | — |
+| Capability | claude | codex | cursor | copilot | kiro | agy | opencode | lcpp | muse | shell | ssm |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Managed (paneless) execution | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | — | — |
+| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁴ | —⁴ | ✓ | ✓ |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Reasoning-effort control | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — | ✓ | — | — |
+| Plan mode | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | — | — |
+| Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | — | ✓ | — | — |
+| Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | —⁵ | — | — |
+| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —⁵ | — | — |
+| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —⁵ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | —⁵ | — | — |
+| WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — | ✓ | — | — |
 
 ¹ copilot's model choice is plan-dependent (Free = Auto only).
 
@@ -86,10 +87,21 @@ session has no history to show (the live mirror works while running, and running
 as Terminal (CLI) does persist a readable history). kiro, by contrast, persists a readable
 transcript even under Managed, so a stopped kiro session still shows its history.
 
+⁴ lcpp and muse have no Terminal (CLI) route — lcpp has no vendor CLI to put in a pane;
+muse drives the session protocol directly. Sessions of either kind default to Managed.
+
+⁵ Agent Fleet has not yet built this for muse (not blocked by the protocol — simply not
+verified end to end).
+
 The WS-bar usage chip needs an account-level limit to show — opencode
-(bring-your-own provider API keys), cursor, and kiro expose none. **shell** is a raw shell and
-**ssm** is a remote login over AWS SSM — both are terminal-only with no conversation,
-state model, or notifications.
+(bring-your-own provider API keys), cursor, and kiro expose none. **lcpp** and **muse**
+have no Terminal (CLI) route — sessions of either kind default to Managed. **muse**
+requires on-demand installation (~299 MB) and a sign-in before it appears in the launch
+menu. 🔴 A muse session asks for no tool approvals — every tool call is allowed before any
+approval is considered, giving it the same reach over this workspace as `shell` (read the
+autonomous execution note above with that in mind). **shell** is a raw shell and **ssm**
+is a remote login over AWS SSM — both are terminal-only with no conversation, state model,
+or notifications.
 
 **Default model for the assistant chat** — each assistant can pin its own model, and
 claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost tiers are
@@ -226,6 +238,45 @@ email. Connecting with an API key is not supported.
 - The image paste, Plan mode, and the WS-bar usage chip are not supported for kiro, and it
   can't be used as the left-pane assistant chat.
 
+## Muse Code
+
+**Muse Code** is a Managed-only session kind. Before it appears in the launch menu, two
+things must be true:
+
+1. On the **Muse Code** card in ⚙Settings → "Agents", press **"Install"** to download Muse
+   Code (~299 MB, stored once in your home directory).
+2. Then press **"Sign in"** to authenticate with your Muse Code account.
+
+The **Behaviour** settings on the same card let you set the model (Agent Fleet selects the
+newest model without the "-contributor" clause by default — see
+[Agents reference](../ref/agents.md) for what the `-contributor` models mean) and the
+reasoning effort.
+
+> 🔴 **A muse session asks for no tool approvals.** Every tool call is allowed before any
+> approval is considered — the sandbox cannot be built inside this Workspace container.
+> Treat a muse session as having the same reach over this workspace as a `shell` session.
+
+For details on what Agent Fleet cannot see inside a muse session (its own scheduled runs,
+cross-session messaging, and session list), see [Agents reference](../ref/agents.md#muse-what-agent-fleet-does-not-see).
+
+## lcpp
+
+**lcpp** is the fleet's own llama.cpp engine — no sign-in or separate installation is
+needed. Launch it like any other session kind from the session dialog.
+
+What to expect before your first session:
+
+- **The first turn can take minutes.** When the engine instance is stopped, waking it is a
+  genuine cold start (roughly 3.5–7 minutes). Subsequent turns are fast while the
+  instance stays warm.
+- **Choose a context window of 8000 tokens or more.** At smaller windows, some model
+  families trigger compaction loops the harness deliberately breaks out of.
+- **Stick to a verified model family.** Qwen3, GPT-OSS, and Gemma are confirmed to work;
+  `llama-3.1-8b-instruct` does not (no Llama-specific tool-call parser in this build).
+
+For full details — measured turn counts by model family, cold-start timings, and the
+reasoning behind the window guidance — see [Agents reference](../ref/agents.md#lcpp-what-hardware-measurement-found).
+
 ## Checking remaining context
 
 In claude / codex / opencode / kiro / muse sessions, a **"Context"** gauge (`ctx` when the screen is
@@ -265,9 +316,9 @@ Instructions come in three layers, and this setting is the **middle** one.
 
 - **It is never committed to a repository.** It affects you, not your colleagues.
 - It applies to **sessions started from now on**. Running sessions keep what they read at start.
-- It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro. **Cursor is the only
-  one that can't take it**, and it still appears in the list with the reason (Cursor keeps User Rules in
-  your Cursor account, with no local per-user place for instructions).
+- It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro / lcpp / muse.
+  **Cursor is the only one that can't take it**, and it still appears in the list with the reason
+  (Cursor keeps User Rules in your Cursor account, with no local per-user place for instructions).
 - Each row shows **which file it was written to** and **whether it is actually in effect**. When
   something saved but isn't in effect, that row says why.
 - There is a length limit: this text rides along in **every session's context, every time**, so
