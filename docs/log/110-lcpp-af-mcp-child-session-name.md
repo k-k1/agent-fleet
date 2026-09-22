@@ -220,19 +220,37 @@ tools/call の名前で数えると (a) は `generate_image`・`list_child_sessi
 
 ## 未解決 / 範囲外
 
-- **af_report / propose_session_handoff / send_to_peer_session は、この修正だけでは
-  lcpp から実用にならない可能性が残る。** `af_report` は `mcpOwningSession()` を呼ばず、
-  モデル自身が渡す `a.Session` 引数を検証するだけ——つまりモデルが自分のセッション名を
-  何らかの手段で知っている必要がある。人間向けの案内文（`handoffReportBackNote()`,
-  `mcp_stdio.go:595`）は「プロンプトに `$AF_SESSION_NAME` を書け」と教えるが、これは
-  シェル変数の展開を前提にした文言で、`internal/harness/tools_bash.go` の bash ツール
-  （`exec.CommandContext(runCtx, "bash", "-c", cmd)`、`cmd.Env` 未設定＝これも Agent
-  デーモン自身の env をそのまま継承）は **同じ理由で** `AF_SESSION_NAME` を持たない
-  ——`echo $AF_SESSION_NAME` は空を返す。`h.name` はシステムプロンプトにもツール引数にも
-  一切埋め込まれていない（`internal/agents/lcpp/*.go` を `h.name` で grep した限り、ログ
-  出力以外の使用箇所なし）。今回の修正が解決したのは「MCP 子プロセス自身がオーナーを
-  名乗れるか」であって、「モデルが自分の名前を知る手段」は別の欠けている継ぎ目——
-  今回の依頼（af MCP 子への env 伝播）の範囲外と判断し、別件として記録するに留める。
+- **モデルが自分のセッション名を明示引数として知る必要が残る継ぎ目は `af_report` だけ
+  ——`propose_session_handoff` と `send_to_peer_session` は今回の修正で実用経路が回復
+  している。** レビュー指摘を受けて schema/dispatch を実コードで再確認した:
+  - `propose_session_handoff`（`mcpStdioSelfReportTools`、`mcp_stdio.go:646`）の
+    `inputSchema` は `prompt`/`title` の 2 つだけが `required`（`mcp_stdio.go:659-660` の
+    2 フィールド、`required` 宣言は `662`）。オーナー（＝提案元セッション自身）は
+    `case "propose_session_handoff"` の中で `name, err := mcpOwningSession()`
+    （`mcp_stdio.go:2508`）がサーバー側だけで解決し、モデルは一切渡さない。今回の修正で
+    この呼出が解決するようになったので、このツールはフルに回復する。
+  - `send_to_peer_session`（`mcp_stdio.go:730`）の `name` 引数は schema の説明文自体が
+    「Destination session name (the name from list_peer_sessions)」（`mcp_stdio.go:752`）
+    ——**宛先**であって自分の名前ではない。送信元（`from`/`peer_from`）は
+    `case "send_to_peer_session"` 内の `self, err := mcpOwningSession()`
+    （`mcp_stdio.go:2460`）がサーバー側だけで解決する（`mcp_stdio.go:2479`）。宛先候補は
+    同じく `mcpOwningSession()` で自分を除外する `list_peer_sessions`
+    （`mcp_stdio.go:2439`）が返す一覧から得るので、モデルは他セッションの名前を知って
+    いれば足り、自分の名前を知る必要はない。こちらもフルに回復する。
+  - `af_report`（`mcp_stdio.go:666`）だけが違う: schema の説明文自体が「The server writes
+    the body, so pass only your own session name」（`mcp_stdio.go:672`）と明記しており、
+    `case "af_report"` は `session.ValidName(a.Session)`（`mcp_stdio.go:2539`）を検証する
+    だけで `mcpOwningSession()` を一切呼ばない——サーバー側に解決する経路そのものが無い。
+    人間向けの案内文（`handoffReportBackNote()`, `mcp_stdio.go:595`）は「プロンプトに
+    `$AF_SESSION_NAME` を書け」と教えるが、これはシェル変数の展開を前提にした文言で、
+    `internal/harness/tools_bash.go` の bash ツール（`exec.CommandContext(runCtx, "bash",
+    "-c", cmd)`、`cmd.Env` 未設定＝これも Agent デーモン自身の env をそのまま継承）は
+    **同じ理由で** `AF_SESSION_NAME` を持たない——`echo $AF_SESSION_NAME` は空を返す。
+    `h.name` はシステムプロンプトにもツール引数にも一切埋め込まれていない
+    （`internal/agents/lcpp/*.go` を `h.name` で grep した限り、ログ出力以外の使用箇所
+    なし）。今回の修正が解決したのは「MCP 子プロセス自身がオーナーを名乗れるか」であって、
+    `af_report` に限っては「モデルが自分の名前を知る手段」も別に要る——これは今回の依頼
+    （af MCP 子への env 伝播）の範囲外と判断し、別件として記録するに留める。
 - `create_session` の `parent` 決定・`list_child_sessions`/`list_peer_sessions` は
   実際に子/兄弟セッションを立てないと end-to-end では検証していない（単体+プロセス境界の
   試験で `mcpOwningSession` が正しい名前を返すことまでは確認済み）。
