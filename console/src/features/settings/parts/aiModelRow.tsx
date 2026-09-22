@@ -31,6 +31,20 @@ function recommendedModelId(kind: AiAgentKind, tier: AiModelTier, ids: string[],
       return ids.includes("opencode-go/glm-5.2") ? "opencode-go/glm-5.2" : "opencode/nemotron-3-ultra-free";
     case "agy":
       return "Gemini 3.5 Flash (Medium)";
+    case "muse":
+      // Muse Code lists a "-contributor" twin of every model: the same model at the same price,
+      // except that the vendor may use those conversations to improve the product. Both twins
+      // stay in this dropdown — picking one is a choice a member is allowed to make — but what
+      // "recommended" resolves to is the newest row WITHOUT that clause, so that choosing
+      // nothing is never the data-sharing choice (ADR 0095 decision 6 clamp 8, P2-21).
+      //
+      // The Agent decides the same thing for itself when a chat turn carries no model
+      // (muse.SafeDefaultExecModel), and it is the authority: it reads the catalogue's
+      // descriptions as well as the ids. This row has only the ids, so the suffix is the
+      // signal — a false positive costs a recommendation, never a conversation.
+      // `id &&` is load-bearing: the options list opens with the "" row (Default), which has no
+      // suffix and would otherwise be "the newest model without the clause".
+      return ids.find((id) => id && !id.endsWith("-contributor")) || "";
     default:
       return "";
   }

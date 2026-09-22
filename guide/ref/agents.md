@@ -34,7 +34,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | ✓¹¹ | — | — |
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
 | Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
 | Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓¹⁸ | ✓¹⁷ | — | — |
@@ -190,14 +190,12 @@ them knowing that no Agent Fleet screen will show what happened.
 > run what you send verbatim. Keep backups, use least-privilege credentials, and lean
 > on the approval gates.
 
-¹¹ Two things have to be true before muse appears in the launch menu: Muse Code is
-proprietary and not included in the image, so it has to be installed on demand (the Muse Code
-connection card offers it, ~299MB into your home), and you have to be signed in — an
-unauthenticated session would accept work and then fail every turn.
-
-The one row carrying this footnote is use as the assistant chat. The `chatx` backend is
-implemented (`muse exec --json`, ADR 0095 P2-20) but not yet live-verified — the row will flip
-to ✓ after a real chat turn is confirmed end-to-end.
+¹¹ Two things have to be true before muse appears — in the launch menu, and equally in the
+assistant's choice of agent: Muse Code is proprietary and not included in the image, so it has
+to be installed on demand (the Muse Code connection card offers it, ~299MB into your home), and
+you have to be signed in — an unauthenticated session would accept work and then fail every
+turn. As the assistant, muse answers one prompt per turn as its own headless run, and it
+remembers the conversation: ask a follow-up and it has the earlier turns.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
@@ -218,6 +216,10 @@ sessions, to improve the product. It is Muse Code's own default. Agent Fleet doe
 for you: a session launched on **Default** runs on the newest model without that clause, and
 the twins stay in the picker for anyone who wants one. Settings › Agents › Muse Code ›
 Behaviour is where you choose, and the reasoning effort (`none` … `ultra`) sits beside it.
+
+The assistant chat follows the same rule, under Settings › AI: left on the recommendation it
+runs on the newest model without the clause, and if the catalogue cannot be read at all the
+turn is refused rather than quietly run on Muse Code's default.
 
 ¹⁵ The muse chip shows what a running muse session last observed, not a number Agent Fleet
 can go and fetch: Muse Code reports its own subscription usage over the session protocol, and
