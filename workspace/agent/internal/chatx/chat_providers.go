@@ -49,7 +49,8 @@ var ChatProviders = map[string]ChatProvider{
 	session.KindCursor:   cursorChat{},
 	// lcppKind is NOT a session.Kind* constant (ADR 0093 phase 1 §2 — the kind is not
 	// registered yet; see chat_providers_lcpp.go's header comment for where and why).
-	lcppKind: lcppChat{},
+	lcppKind:         lcppChat{},
+	session.KindMuse: museChat{},
 }
 
 // --- backend availability (claude-less workspaces, docs/log/19) ----------------------
@@ -109,6 +110,8 @@ var headlessAvailCheck = func(kind string) bool {
 		// enabled model right now; see lcppEngineAvailable's own comment for why that is
 		// the whole check (the Control Plane's catalogue already drops an engine with none).
 		return lcppEngineAvailable()
+	case session.KindMuse:
+		return museAvailable()
 	}
 	return false
 }
@@ -320,6 +323,8 @@ func ChatProviderKind(c *ChatConversation, prov ChatProvider) string {
 		return session.KindCursor
 	case lcppChat:
 		return lcppKind
+	case museChat:
+		return session.KindMuse
 	default:
 		return c.Agent // test/custom provider: best truthful fallback available
 	}

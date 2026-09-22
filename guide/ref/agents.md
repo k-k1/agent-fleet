@@ -195,13 +195,9 @@ proprietary and not included in the image, so it has to be installed on demand (
 connection card offers it, ~299MB into your home), and you have to be signed in — an
 unauthenticated session would accept work and then fail every turn.
 
-The one row carrying this footnote is use as the assistant chat, and it is unbuilt rather than
-unwatched: that surface IS written per agent (a `chatx` provider per kind, plus the Console's
-own list of assistant-capable kinds) and muse has no backend in either. Every other row was
-ticked only after it was seen working on a real muse session — including the chat bridge, where
-the oracle was the member's own channel: a muse session's completion notice arrived in Discord,
-which is the only place that answer exists, because the queue and the outbox both empty
-themselves on success.
+The one row carrying this footnote is use as the assistant chat. The `chatx` backend is
+implemented (`muse exec --json`, ADR 0095 P2-20) but not yet live-verified — the row will flip
+to ✓ after a real chat turn is confirmed end-to-end.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
