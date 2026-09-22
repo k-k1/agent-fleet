@@ -15,9 +15,10 @@ English | [日本語](0094-instruction-edit-image-models.ja.md)
   g6.xlarge / L4 24GB, ComfyUI 0.35.2, five runs on 2026-09-20). The "Measured" section is that
   record, and **decisions 2, 3, 4 and 5 each rest on it**.
   🟢 The number is settled (develop holds up to 0093).
-  🔄 **Revised (2026-09-23): stop centre-cropping; shrink the whole picture to the table's size** —
-  the "Revision" section at the end. Decisions 3 and 4, "Rejected" and open item 2 carry a pointer
-  where they stand. **Decided, not built.**
+  🔄 **Revised (2026-09-23): stop centre-cropping; shrink the whole picture instead** — the
+  "Revision" section at the end. Decisions 3 and 4, "Rejected" and open item 2 carry a pointer where
+  they stand. **Conditional, not built** (the target size is provisional until the cause of the soft
+  photos is isolated).
 - Related: [0072](0072-engine-model-catalog.md) (the per-family templates, `base_model` dispatch
   and the file-role vocabulary — this ADR adds two words to the first and none to the last) /
   [0069](0069-image-generation-providers.md) (`generate_image`'s vocabulary, and the `strength`
@@ -173,8 +174,8 @@ line of the ADR.
 
 🔴 **Dropping `FluxKontextImageScale` to honour `size` is rejected** — see below.
 
-🔄 **Revised (2026-09-23): the frame is still the nearest table entry, but the picture is shrunk whole
-instead of cropped.** `size` is still not offered ("Revision" at the end).
+🔄 **Revised (2026-09-23): the picture is shrunk whole instead of cropped.** The target size is provisionally
+the nearest table entry; `size` is still not offered ("Revision" at the end).
 
 ### Decision 5 — `MaxInputs` becomes per family. P0 stays at one; the second image opens with its path in P3
 
@@ -499,8 +500,9 @@ counts only providers that were tried and failed, so **nothing is said**. Before
 - **Removing `FluxKontextImageScale` to honour `size`.** The output size becomes free, but leaves
   the ratio table upstream says it trained on. That trades quality for a knob — and **the result of
   removing it was not measured**. Decision 4 prefers saying "it does not apply".
-  🔄 **Measured on 2026-09-23**: off the table, photos go soft — the worry was right. `size` is still not
-  honoured; the revision stops only the cropping ("Revision" at the end).
+  🔄 **2026-09-23**: this option (a free pixel budget) was not measured. What was measured keeps 1 MP and
+  frees only the ratio; two photos went soft, cause not yet isolated ("Revision" at the end). `size` is
+  still not honoured.
 - **Making the Lightning LoRA (4 steps) the family default.** Fast, but it assumes cfg 1, where the
   negative prompt stops moving the picture (`comfyModelTakesNegative` would answer false). Leave it
   to the row, exactly as Krea 2 Turbo is left.
@@ -728,7 +730,7 @@ counts only providers that were tried and failed, so **nothing is said**. Before
      and height it resolves the same target, so the two maps agree by construction — and that
      sameness is enforced at intake (decision 3).
      🔄 **The revision (2026-09-23) makes this fix unnecessary** — without the crop both are plain
-     stretches (log 112 §11, T3: 15.9 px → 3.0 px).
+     stretches (log 112 §11, T3: 6.6 px → 3.0 px).
 
    ⚠️ How far a thin mask bleeds at the latent's 8× granularity is still unmeasured. It is also why
    run I's edges sit about 7 px ahead of the prediction in both arms, together with reading the
@@ -1026,12 +1028,13 @@ list — **a control taken before trusting the reading**.
 - **Decision 8's two corrections** (folded into decision 8): declaring the number does not clear the
   prompt, and the file-sum estimate buys a bigger box.
 
-## Revision — stop centre-cropping; shrink the whole picture to the table's size (2026-09-23)
+## Revision — stop centre-cropping; shrink the whole picture instead (2026-09-23, conditional)
 
-**Decided by the user, not built yet.** The measurements behind it are
-[docs/log/112](../log/112-kontext-crop-necessity.md) (§3–5: four pairs, eight runs; §11–§12: the
-extra runs taken before building). Decisions 3 and 4, "Rejected" and open item 2 are left as
-written, each with a 🔄 pointer here — so that what they rested on at the time stays readable.
+**The direction is the user's decision; it is conditional until the cause below is isolated, and
+nothing is built.** The measurements behind it are [docs/log/112](../log/112-kontext-crop-necessity.md)
+(§3–5: four pairs, eight runs; §11–§12: the extra runs taken before building). Decisions 3 and 4,
+"Rejected" and open item 2 are left as written, each with a 🔄 pointer here — so that what they
+rested on at the time stays readable.
 
 ### Why it changes
 
@@ -1039,93 +1042,122 @@ written, each with a 🔄 pointer here — so that what they rested on at the ti
    off the top and the bottom; on 3:1 it is 22% of the width, gone without a word. The mask-painting
    UI (ADR 0081 P2, [log 111](../log/111-inpaint-mask-canvas-p2.md)) would have to draw that band,
    and the ratio table needed to locate it exists nowhere in this repository (111 §9, first 🔴).
-2. **The model does not need the crop.** At the same table size, 1392x752, a photo delivered
-   **cropped** (today's wiring) and one delivered **whole and shrunk** keep the same texture
-   (gradient-energy ratio — blind to a shift, lowered by blur — **1.0297 vs 1.0300** at seed 602,
-   **1.0172 vs 1.0134** at seed 607; log 112 §12, R3 and R4).
-3. **What matters is landing on a table size.** Off the table, the photo goes soft — **0.8974** at
-   1408x736, **0.8823** at 1376x736, where a σ≈1.0 Gaussian blur scores 0.874. Moving the aspect
-   stretch from +2.30% to −0.02% does not change it (R1), so the cause is being **off the table**, not
-   the stretch. The illustration subjects (A–D, T1) did not drop off the table — **a loss that does
-   not show on a picture with no texture**, which is exactly what 112 §1–8 missed first.
+2. **The model does not need the crop.** At the same 1392x752, a photo delivered **cropped** (today's
+   wiring) and one delivered **whole and shrunk** keep the same texture (gradient-energy ratio — blind
+   to a shift, lowered by blur — **1.0297 vs 1.0300** at seed 602, **1.0172 vs 1.0134** at seed 607;
+   log 112 §12, R3 and R4; they agree tile by tile on a 3x3 grid too). **This claim alone is strong.**
+3. 🔴 **Some sizes do make photos soft, and the cause is not isolated yet.** 0.8974 at 1408x736,
+   0.8823 at 1376x736, where a σ≈1.0 Gaussian blur scores 0.874. Moving the stretch from +2.30% to
+   −0.02% does not change it (R1), so the stretch is not it. At least three explanations remain, and
+   none contradicts the four photo points:
+   - **Table**: outside `PREFERRED_KONTEXT_RESOLUTIONS`.
+   - **Grid** (found by a separate review session): `TextEncodeQwenImageEditPlus` re-scales image1
+     **itself** to ~1 MP in multiples of 8 before encoding the reference latent (ComfyUI v0.37.0
+     `nodes_qwen.py`). Unless the size handed in is a **fixed point** of that rounding, the
+     generated latent and the reference latent sit on patch grids (latent/2) one row or column
+     apart. 1392x752 is a fixed point (87x47 both); 1408x736 → reference 1416x744 (88x46 vs 89x47);
+     1376x736 → 1400x752 (86x46 vs 88x47). Reference position ids are centred, so the offset is zero
+     at the top left and up to one patch (16 px) at the bottom right — and per-tile ratios skew the
+     same way, on the two off-table arms only (top row 0.91–0.99, bottom 0.74–0.94). The
+     illustrations' 1376x768 references at 1368x768 but still lands on 86x48 both sides, which also
+     explains "the illustrations did not drop".
+   - **Height**: both off-table arms are 736 tall; the on-table ones are 752.
+   🔴 **If the grid explanation holds, the table's own 1248x832 (3:2), 1504x688 and their two portrait
+   mirrors are not fixed points, and photos at those sizes are soft with today's wiring.** Four runs
+   are under way to separate them (1400x752: off table, fixed point; 1424x752: off table, not fixed,
+   752 tall; a 3:2 photo through today's wiring; the same photo at 1264x832: off table, fixed point).
+   **Until they report, the target-size rule under "What was decided" is provisional.**
 
-→ The worry the "Rejected" entry named (leaving the table stakes quality) **was right, for photos**.
-This revision keeps that guard and stops **only the cropping**.
+→ The "Rejected" entry was the option that **honours `size`** (a free pixel budget). What was
+measured here keeps 1 MP and frees only the ratio. **A different option was measured**, so this
+neither confirms nor overturns that rejection.
 
 ### What was decided
 
 | What changes | How |
 |---|---|
-| How the frame is chosen (decision 4) | `FluxKontextImageScale` stays **only to pick the size**. The width and height of `img → FluxKontextImageScale → GetImageSize` are wired into `ImageScale(image=img, upscale_method="lanczos", crop="disabled")`, and that output feeds `enc.pixels` / `pos.image1` / `neg.image1`. The input is **not cut**; the **whole** picture shrinks to the nearest table size |
-| Where the ratio table lives | **Nowhere of ours.** It stays inside the pinned ComfyUI node, so decision 9's "the pin stops meaning anything" does not apply. `GetImageSize` is in v0.37.0's `comfy_extras/nodes_images.py` (`RETURN_NAMES=("width","height","batch_size")`, INT) |
-| Mask wiring (decision 3) | `maskscale` goes. Picture and mask are both plain stretches, so the two maps agree by construction (measured: edge error **15.9 px → 3.0 px**, log 112 §11, T3) |
+| Stop cropping (decision 4) | The input is **not cut**; the whole picture is shrunk and fed to `enc.pixels` / `pos.image1` / `neg.image1` (`ImageScale(crop="disabled")`). Point 2 above is the reason, and **it does not depend on how the cause is isolated** |
+| The size it shrinks to | **Provisional: the nearest table entry**, by wiring the width and height of `img → FluxKontextImageScale → GetImageSize` into `ImageScale`. If the grid explanation wins, this becomes "a fixed point of `TextEncodeQwenImageEditPlus`'s rounding" (and the table is then not needed at all) |
+| Where the ratio table lives | **Nowhere of ours.** It stays inside the pinned ComfyUI node, so decision 9's "the pin stops meaning anything" does not apply. `GetImageSize` is in v0.37.0's `comfy_extras/nodes_images.py` (a V3 node whose outputs are `IO.Int.Output` width, height and batch_size) |
+| Mask wiring (decision 3) | `maskscale` goes. Picture and mask are both plain stretches, so the two maps agree by construction (measured: edge error **6.6 px → 3.0 px**, log 112 §11, T3; 3 px is inside the repaint's transition band. The 15.9 px in §11's table compares the control against the **no-crop** map's prediction, a map the control does not follow by design, so it is not a comparison) |
 | Mask size restriction (decision 3) | **Lifted.** Its reason (the crop splitting the two maps) is gone, so this family returns to the other families' "same relative region" |
-| `size` (decision 4) | **Unchanged.** The output is still the nearest table size and the caller cannot choose it; no `sizes` are offered |
+| `size` (decision 4) | **Unchanged.** The caller cannot choose the size; no `sizes` are offered |
 | Extra references (decision 5) | **Unchanged.** They never went through `FluxKontextImageScale` |
 
-🔴 **Extreme ratios are shrunk to the table too** (the user's call). The cost is geometric
-distortion, large once outside the table's range:
+🔴 **Extreme ratios are shrunk to the target size too** (the user's call). The cost is geometric
+distortion, large once outside the table's range (values below assume the provisional "nearest
+table entry"):
 
 | Input | Nearest table entry | Horizontal change |
 |---|---|---|
-| 1:1, 3:2, 21:9 | the same ratio is in the table | 0% |
+| 1:1, 21:9 | the same ratio is in the table | 0% |
+| 3:2 | 1248x832 (same ratio — but **not a fixed point** under the grid explanation) | 0% |
 | 4:3 | 1184x880 | +0.91% |
 | **16:9** (1820x1024) | 1392x752 | **+4.15%** |
 | 1496x800 (R3's photo) | 1392x752 | −1.01% |
 | 9:16 (portrait) | 752x1392 | −3.96% |
-| **Worst inside the table's range** (input ratio ≈1.085) | 1104x944 | **+7.80%** |
+| **Worst inside the table's range** (input ratio ≈0.927; its mirror ≈1.085 is the same) | 944x1104 | **7.81%** |
 | **3:1** | 1568x672 | **−22.2%** |
 
-Neither cropping (losing the edges) nor going off the table (a soft photo) was chosen instead,
-because this makes **a rule with no exceptions**: for every input, the whole uploaded picture is
-edited, and what was painted sits at the same relative position in the output. The mask UI no
-longer draws a band and no longer needs a ratio table.
+Cropping (losing the edges) was not kept because this makes **a rule with no exceptions**: for every
+input, the whole uploaded picture is edited, and what was painted sits at the same relative position
+in the output. The mask UI no longer draws a band and no longer needs a ratio table.
 
 ### Rejected (in this revision)
 
-- **Qwen-Image 2.1's size rule** (keep the ratio, ~1 MP, multiples of 32). This was "option 2" as
-  first adopted in log 112 §8, and it matches ComfyUI v0.37.0's `TextEncodeQwenImage21`
-  (`round(sqrt(res²·ratio)/32)*32`). **It leaves the table, and photos go soft** (point 3 above).
+- **Cropping extreme ratios as before.** One exception, and the mask UI is back to drawing "this
+  input has a band".
 - **The Agent holding the ratio table and computing the size.** That walks straight into decision 9's
   second hazard: the table belongs to the ComfyUI version, and the pin has already moved (0.35.2 →
   0.37.0 in ADR 0098). Going through `GetImageSize` avoids holding it.
-- **Cropping extreme ratios as before.** One exception, and the mask UI is back to drawing "this
-  input has a band".
-- **Letting extreme ratios leave the table.** Photos go soft (point 3).
+- ⏸ **Qwen-Image 2.1's size rule** (keep the ratio, ~1 MP, multiples of 32 — the formula in ComfyUI
+  v0.37.0's `TextEncodeQwenImage21` and in diffusers' `QwenImageEditPlusPipeline.calculate_dimensions`)
+  and ⏸ **letting extreme ratios leave the table** are **on hold**. Two photos went soft, but no
+  reason can be written until the cause (table, grid or height) is isolated. If the grid
+  explanation wins, many multiple-of-32 sizes are fixed points (1376x768, for one), and this could
+  come back as the first choice rather than a rejection.
 
 ### Consequences (what building it touches)
 
 - `comfy_workflows.go:1306` (`g["scale"]`) — `FluxKontextImageScale` becomes the node that picks the
-  size; `GetImageSize` and `ImageScale(crop="disabled")` are added, and the three seams move.
-- `comfy_workflows.go:1386` (`comfyQwenEditNoiseMask`) — `maskscale` goes.
-- `comfy.go:1065` — the branch refusing a mask whose size differs from the picture's goes.
-- The goldens `comfy_qwen-image-edit-2509.golden.json` / `…-2511.golden.json`, and the mask-wiring
-  test from `comfy_workflows_test.go:817` (which asserts `maskscale` is a `FluxKontextImageScale`).
+  size (or goes), and `ImageScale(crop="disabled")` is added; the three seams move. The comment
+  just above (`:1307-1311`, "that node exists to fix the FRAME") is rewritten too.
+- `comfy_workflows.go:1386` (`comfyQwenEditNoiseMask`) — `maskscale` goes, and so does its doc
+  comment's reasoning (`:1369-1385`, "applies the same crop").
+- `comfy.go:1065` — the branch refusing a mask whose size differs from the picture's goes, with the
+  reasoning at `:1058-1064` and the error string.
+- The goldens `comfy_qwen-image-edit-2509.golden.json` / `…-2511.golden.json`, the mask-wiring test
+  from `comfy_workflows_test.go:817` (which asserts `maskscale` is a `FluxKontextImageScale`) and its
+  comment (`:813-824`).
 - [log 111](../log/111-inpaint-mask-canvas-p2.md) §2 constraint 2 and §9's first 🔴 **lose their
   subject** with this revision; the mask-canvas design is rewritten from there.
 
 Live acceptance (through the Agent's own route): (a) the banded input (log 112 §5's magenta/cyan)
 keeps its bands in the output; (b) R3's photo scores the same gradient-energy ratio as today's
 wiring; (c) with a mask, the edge error is at T3's level; (d) a graph carrying the `GetImageSize`
-links passes the engine's validation.
+links passes the engine's validation; (e) **16:9 (+4.15%) and 3:1 (−22%) photos** score at (b)'s
+level.
 
 ### Open (for this revision)
 
-1. 🔴 **Can `GetImageSize`'s INTs be linked into `ImageScale`'s width and height?** ComfyUI's API
-   format should let a widget value be replaced by a link, but **this deployment has not checked**.
-   If not, the fallback is "the Agent holds the table, plus a test comparing it with upstream's at
-   every pin bump" — which reverses a rejection above, so it gets decided again then.
+1. 🔴 **Isolate why photos went soft** (point 3 above): table, grid or height. The result decides
+   the target size and gives the two held rejections a reason. Under the grid explanation, **today's
+   3:2 wiring is also something to fix**.
 2. 🔴 **Should the output be put back to the input's ratio?** (Waiting on the user.) As drafted, a
    16:9 photo comes back 4.15% wider and a 3:1 one 22% narrower. One more `ImageScale` after the
    decode, back to the input's ratio, would make **the returned picture the same shape as the
    uploaded one**, and keeps the mask's "same relative position". The recommendation is to put it
-   back.
-3. **Stretch versus texture.** Only −1.01% was measured (R3, R4). A photo at +4.15% (16:9), +7.80% or
-   −22% was not. R1 showed that ±2.3% does not matter *between two off-table sizes*; a large stretch
-   *onto* a table size is a different question.
-4. **One photo scene, two seeds.** The second photo (R2) replaced most of the frame, and the metric
-   was dominated by the edit itself (log 112 §12).
-5. **2509 has not been measured on a photo** (only T1's illustration).
-6. **Not carried over to ADR 0098's Qwen-Image 2.1.** 2.1's own template uses the rounding above, but
-   "off the table, photos go soft" was measured on 2511, and whether 2.1 has a trained table at all
-   is unknown.
+   back. ⚠️ Doing so makes 3:1 a **double lanczos** (−22%, then +28% back); that texture needs
+   measuring too.
+3. **Can `GetImageSize`'s INTs be linked into `ImageScale`'s width and height?** — **yes by the
+   source, not yet on this deployment.** ComfyUI v0.37.0's input validation in `execution.py` treats
+   any list value as a link whether or not the input is a widget, checks the output type (`INT`)
+   against the input type (`INT`), and applies min/max only on the literal-value branch. Linking a
+   V3 node's output is already proven in production by today's golden (`FluxKontextImageScale` →
+   `VAEEncode`). Acceptance (d) confirms it.
+4. **Stretch versus texture.** Only −1.01% was measured (R3, R4). Acceptance (e) covers it.
+5. **One photo scene, two seeds** (the isolating runs add a second scene). The second photo (R2)
+   replaced most of the frame, and the metric was dominated by the edit itself (log 112 §12).
+6. **2509 has not been measured on a photo** (only T1's illustration).
+7. **Not carried over to ADR 0098's Qwen-Image 2.1.** 2.1 re-scales its references itself through
+   `TextEncodeQwenImage21`, a different arrangement; point 3 was measured on 2511.
