@@ -322,17 +322,21 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		// answer-ready is a terminal event that fires exactly once per turn-end.
 		// notice.Put fires for every call, so a spurious second idle hook (heal wipe
 		// → status.Remove → another Stop arriving before UserPromptSubmit) would
-		// enqueue a duplicate bridge message with the same body. PutOnce with
-		// TurnEndAt as the key absorbs any duplicate that lands in the same RFC3339
-		// second, which covers every observed duplicate pattern. Interim events
-		// (question / plan-approval / permission) use plain Put — they have their
-		// own "previous != state" guards and do not carry turn bodies.
+		// enqueue a duplicate bridge message with the same body. PutOnce with the
+		// completion key absorbs duplicates: the key is written once by
+		// PersistTurnEndReason (idempotent) and is stored in a separate file that
+		// status.Remove does NOT clear, so it survives pane-heal wipes even when the
+		// second idle hook fires in a different RFC3339 second. The key is cleared
+		// when the next working state is persisted (Persist("working")), so the next
+		// turn-end gets a fresh key. Interim events (question / plan-approval /
+		// permission) use plain Put — they have their own "previous != state" guards
+		// and do not carry turn bodies.
 		if kind == chatx.ReportKindAnswerReady {
-			at := ev.CreatedAt
-			if st, ok := status.Read(sid); ok && st.TurnEndAt != "" {
-				at = st.TurnEndAt
+			key := ev.CreatedAt
+			if k, ok := status.ReadCompletionKey(sid); ok && k != "" {
+				key = k
 			}
-			_ = notice.PutOnce("answer-ready:"+m.Name+":"+at, ev)
+			_ = notice.PutOnce("answer-ready:"+m.Name+":"+key, ev)
 		} else {
 			_ = notice.Put(ev)
 		}
