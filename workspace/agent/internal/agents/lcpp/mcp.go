@@ -32,6 +32,59 @@ import (
 // NoteMCPError record in every unrelated driver_test.go test that runs a turn.
 var mcpServersForSession = mcpreg.ForSession
 
+// sessionNameEnvVar is the variable a session-side af MCP server reads to learn its owner
+// (mcpx.mcpOwningSession's AF_SESSION_NAME contract). Named here rather than imported: it is
+// mcpreg's own unexported sessionNameVar (thread_codex.go), duplicated as a literal the same way
+// every other reader of this contract already does (mcpx.RunStdio, session_tmux.go).
+const sessionNameEnvVar = "AF_SESSION_NAME"
+
+// injectSessionName returns defs with this session's own name added to the builtin af
+// definition's Env, so the stdio child dialStdio (mcpc/stdio.go) spawns can resolve its owning
+// session (mcpOwningSession) the way generate_image and every other session-bound af tool
+// require.
+//
+// Why this is needed at all: dialStdio starts a child's environment from os.Environ() — the
+// Agent DAEMON's own process environment, not any one session's — and appends only def.Env on
+// top. Unlike a TERMINAL session's CLI (which gets AF_SESSION_NAME from its tmux launch env and
+// simply inherits it down to whatever it execs) or codex/muse (which ride a per-session THREAD
+// or WIRE config the vendor host applies before spawning its own children), lcpp calls
+// mcpc.Manager.Sync directly from the Agent daemon's own goroutine — there is no per-session
+// process boundary for AF_SESSION_NAME to already be sitting in when dialStdio reads
+// os.Environ(). So the daemon must hand it down explicitly, the same way muse's mcpServerConfig
+// (internal/agents/muse/mcp.go) and codex's codexAFThreadEntry (mcpreg/thread_codex.go) each
+// already do for their own transport.
+//
+// defs is whatever mcpServersForSession(session.KindLcpp) returned — mcpreg's own registry
+// rows, potentially read again unchanged on a later turn or by a different session. This MUST
+// NOT mutate any ServerDef or its Env map in place: doing so would write one session's name into
+// a struct/map another call site might still be holding (mcpreg.Load's builtinDefs builds a
+// fresh slice per call today, but nothing about this function may depend on that staying true).
+// Only the one def identified as the builtin af server gets a copy; every other def — including
+// a user's own external MCP server, even one also named "af" by coincidence — passes through by
+// value, unmodified, exactly as ForSession returned it.
+//
+// Identification is by Origin+ID (mcpreg.OriginBuiltin + mcpreg.BuiltinAF), the same pair
+// attach.go's own extraEnvVars and thread_codex.go's CodexThreadServers key on — never by Name,
+// which a repository can shadow (docs/log/48 §8.4's AFServerName renames the row, not the ID).
+func injectSessionName(defs []mcpreg.ServerDef, name string) []mcpreg.ServerDef {
+	if name == "" || len(defs) == 0 {
+		return defs
+	}
+	out := make([]mcpreg.ServerDef, len(defs))
+	for i, d := range defs {
+		if d.Origin == mcpreg.OriginBuiltin && d.ID == mcpreg.BuiltinAF {
+			env := make(map[string]string, len(d.Env)+1)
+			for k, v := range d.Env {
+				env[k] = v
+			}
+			env[sessionNameEnvVar] = name
+			d.Env = env
+		}
+		out[i] = d
+	}
+	return out
+}
+
 // mcpToolCallTimeout bounds one MCP tools/call. mcpc.Server.CallTool applies no timeout of its
 // own by design (server.go's own doc comment: segment E is the one that knows the session kind
 // driving the tool loop, so giving CallTool a ctx with the deadline it wants is E's job). No

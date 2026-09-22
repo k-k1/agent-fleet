@@ -522,6 +522,11 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		log.Printf("lcpp: %s: resolving MCP servers: %v", h.name, mcpErr)
 		mcpDefs = nil
 	}
+	// The builtin af server needs this session's own name to resolve its owner
+	// (mcpOwningSession) once dialStdio spawns it — see injectSessionName's own doc comment for
+	// why the Agent daemon has to hand it down explicitly here rather than it already being in
+	// the child's inherited environment.
+	mcpDefs = injectSessionName(mcpDefs, h.name)
 	h.syncMCPServers(ctx, mcpDefs)
 	reg := harness.NewRegistry(append(harness.BuiltinTools(), h.mcpTools()...)...)
 
