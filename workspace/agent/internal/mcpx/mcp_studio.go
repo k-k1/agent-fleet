@@ -181,11 +181,16 @@ func mcpRunImageTrial(req mcpReq, studio, self string) []byte {
 		if j, ok := studioTrialJob(jobID); ok {
 			switch j.State {
 			case "done":
-				return mcpStructuredResult(req.ID, map[string]any{
+				value := map[string]any{
 					"version": pressed.Version, "job": jobID, "files": j.Files,
 					"warnings": append([]string{}, j.Warnings...), "elapsed_ms": j.ElapsedMS,
 					"note": "パスは試走の絵。確かめる必要があるときだけ開くこと。warnings は実際に起きたこと。",
-				})
+				}
+				// The seed this picture came out at — what "make a variation of THIS one" needs.
+				if len(j.Files) > 0 && j.Files[0].Seed != nil {
+					value["seed"] = *j.Files[0].Seed
+				}
+				return mcpStructuredResult(req.ID, value)
 			case "failed", "cancelled":
 				return mcpToolErr(req.ID, "試走 "+pressed.Version+" は失敗しました: "+firstNonEmpty(j.Error, j.State))
 			}
@@ -200,10 +205,17 @@ func mcpRunImageTrial(req mcpReq, studio, self string) []byte {
 	}
 }
 
+type studioTrialFile struct {
+	Path   string `json:"path"`
+	Seed   *int64 `json:"seed,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+}
+
 type studioTrialJobWire struct {
 	ID        string            `json:"id"`
 	State     string            `json:"state"`
-	Files     []json.RawMessage `json:"files"`
+	Files     []studioTrialFile `json:"files"`
 	Warnings  []string          `json:"warnings"`
 	ElapsedMS int64             `json:"elapsed_ms"`
 	Error     string            `json:"error"`

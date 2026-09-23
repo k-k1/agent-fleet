@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // studioDraftKeys is every key of ImageStudioDraft, in its declaration order — the order a
@@ -24,6 +25,10 @@ var studioDraftKeys = []string{
 	"mask", "loras", "seed", "strength", "params", "label", "out_dir", "jobs", "seed_policy",
 	"full_steps", "suggest_model",
 }
+
+// studioShortTextMax bounds the short free-text fields (title, label, out_dir), which ride on
+// every get_image_studio answer and are not the prompt, the one text worth its size.
+const studioShortTextMax = 200
 
 // studioMaxInputs bounds the references a draft may name; the widest family reads ten.
 const studioMaxInputs = 16
@@ -53,8 +58,15 @@ func validateDraftField(key string, raw json.RawMessage) string {
 		return ""
 	}
 	switch key {
-	case "provider", "model", "prompt", "negativePrompt", "aspectRatio", "label", "out_dir", "suggest_model":
+	case "provider", "model", "prompt", "negativePrompt", "aspectRatio", "suggest_model":
 		return str()
+	case "label", "out_dir":
+		if msg := str(); msg != "" {
+			return msg
+		}
+		if utf8.RuneCountInString(s) > studioShortTextMax {
+			return fmt.Sprintf("at most %d characters", studioShortTextMax)
+		}
 	case "op":
 		if msg := str(); msg != "" {
 			return msg
@@ -200,6 +212,14 @@ func applyDraftPatch(d ImageStudioDraft, patch map[string]json.RawMessage, autho
 				Detail: "only the user sets this field" + map[bool]string{true: "; propose a model with suggest_model", false: ""}[k == "model"]})
 			continue
 		}
+		if k == "params" && !isJSONNull(raw) {
+			merged, bad, ok := mergeDraftParams(cur["params"], raw, author)
+			dropped = append(dropped, bad...)
+			if !ok {
+				continue
+			}
+			raw = merged
+		}
 		if !isJSONNull(raw) {
 			if msg := validateDraftField(k, raw); msg != "" {
 				dropped = append(dropped, DroppedField{Field: k, Reason: dropInvalid, Detail: msg})
@@ -222,6 +242,53 @@ func applyDraftPatch(d ImageStudioDraft, patch map[string]json.RawMessage, autho
 	return next, draftChanges(d, next), dropped
 }
 
+// studioParamKeys are the params a person may set; the agent may set the first four (decision 4
+// names steps, cfg, sampler and scheduler). clip_skip rides along for the member because the
+// catalogue carries it.
+var studioParamKeys = []string{"steps", "cfg", "sampler", "scheduler", "clip_skip"}
+
+// mergeDraftParams is params' own merge patch, one level down: the sampler overlay is four
+// independent knobs, and "cfg 5" from the agent must not erase the steps and sampler the member
+// set. A null sub-key clears that knob; an empty result clears params. ok is false when nothing
+// is to be applied (the value was not an object).
+func mergeDraftParams(cur, patch json.RawMessage, author string) (json.RawMessage, []DroppedField, bool) {
+	var sub map[string]json.RawMessage
+	if err := json.Unmarshal(patch, &sub); err != nil || sub == nil {
+		return nil, []DroppedField{{Field: "params", Reason: dropInvalid, Detail: "params is an object of steps, cfg, sampler and scheduler"}}, false
+	}
+	allowed := studioParamKeys
+	if author == studioAuthorAgent {
+		allowed = studioParamKeys[:4]
+	}
+	merged := map[string]json.RawMessage{}
+	if len(cur) > 0 {
+		_ = json.Unmarshal(cur, &merged)
+	}
+	var dropped []DroppedField
+	keys := make([]string, 0, len(sub))
+	for k := range sub {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		switch {
+		case !slices.Contains(allowed, k) && slices.Contains(studioParamKeys, k):
+			dropped = append(dropped, DroppedField{Field: "params." + k, Reason: dropHumanOnly, Detail: "only the user sets this"})
+		case !slices.Contains(allowed, k):
+			dropped = append(dropped, DroppedField{Field: "params." + k, Reason: dropInvalid, Detail: "no such param"})
+		case isJSONNull(sub[k]):
+			delete(merged, k)
+		default:
+			merged[k] = sub[k]
+		}
+	}
+	if len(merged) == 0 {
+		return json.RawMessage("null"), dropped, true
+	}
+	b, _ := json.Marshal(merged)
+	return b, dropped, true
+}
+
 // draftChanges lists the fields that differ between two drafts, in declaration order, with
 // their values either side (absent for an empty one).
 func draftChanges(before, after ImageStudioDraft) []DraftChange {
@@ -229,6 +296,18 @@ func draftChanges(before, after ImageStudioDraft) []DraftChange {
 	var out []DraftChange
 	for _, k := range studioDraftKeys {
 		if bytes.Equal(a[k], b[k]) {
+			continue
+		}
+		if k == "params" {
+			// Per knob, so the history reads "params.cfg 7 → 5" rather than two whole objects.
+			pa, pb := map[string]json.RawMessage{}, map[string]json.RawMessage{}
+			_ = json.Unmarshal(a[k], &pa)
+			_ = json.Unmarshal(b[k], &pb)
+			for _, sk := range studioParamKeys {
+				if !bytes.Equal(pa[sk], pb[sk]) {
+					out = append(out, DraftChange{Field: "params." + sk, Before: pa[sk], After: pb[sk]})
+				}
+			}
 			continue
 		}
 		out = append(out, DraftChange{Field: k, Before: a[k], After: b[k]})

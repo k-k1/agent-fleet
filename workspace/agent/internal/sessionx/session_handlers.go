@@ -1041,7 +1041,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// 0100 decision 2 ③): a Managed create sends the persona synchronously below, and its first
 	// get_image_studio is refused unless the studio already names this session back.
 	if studio != "" {
-		if ref := bindStudioOnCreate(studio, name); ref != nil {
+		if ref := bindStudioOnCreate(studio, meta); ref != nil {
 			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 			return
 		}

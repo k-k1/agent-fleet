@@ -302,3 +302,21 @@ func TestCreateClearsTheStudioOfTheSessionItReplaced(t *testing.T) {
 		t.Fatalf("a claim on another studio was cleared (now %q)", m.Studio)
 	}
 }
+
+// A create that would bind a session whose MCP child cannot tell which session it serves is
+// refused before anything is bound or launched (ADR 0100 decision 8).
+func TestStudioCreateRefusesSessionsThatCannotTellWhoTheyAre(t *testing.T) {
+	old := imagegen.BindStudioSession
+	called := false
+	imagegen.BindStudioSession = func(string, string, string) (string, error) { called = true; return "", nil }
+	t.Cleanup(func() { imagegen.BindStudioSession = old })
+	ref := bindStudioOnCreate("0b9d1f2e-7c4a-4e1b-9a3d-5f6e7a8b9c0d",
+		session.Meta{Name: "slot09", Kind: session.KindOpencode, Driver: session.DriverManaged})
+	if ref == nil || ref.Code != "studio_kind_unsupported" || called {
+		t.Fatalf("refusal = %+v, bound = %v", ref, called)
+	}
+	if ref := bindStudioOnCreate("0b9d1f2e-7c4a-4e1b-9a3d-5f6e7a8b9c0d",
+		session.Meta{Name: "slot09", Kind: session.KindOpencode}); ref != nil || !called {
+		t.Fatalf("an opencode Terminal session was refused: %+v", ref)
+	}
+}

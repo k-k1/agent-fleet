@@ -15,7 +15,11 @@ var launchTmuxFn = startSessionTmux
 
 // bindStudioOnCreate points the studio at the session being created (ADR 0100 decision 2 ③),
 // answering the refusal to write when it cannot.
-func bindStudioOnCreate(studio, name string) *SpawnRefusal {
+func bindStudioOnCreate(studio string, meta session.Meta) *SpawnRefusal {
+	name := meta.Name
+	if why := imagegen.StudioSessionUnsupported(meta.Kind, meta.DriverKind()); why != "" {
+		return &SpawnRefusal{Status: http.StatusConflict, Code: "studio_kind_unsupported", Message: why}
+	}
 	if imagegen.BindStudioSession == nil {
 		return &SpawnRefusal{Status: http.StatusNotImplemented, Code: "studio_unavailable",
 			Message: "this Agent has no image studio store, so a session cannot be bound to one"}
