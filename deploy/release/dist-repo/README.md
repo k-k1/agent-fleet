@@ -31,6 +31,13 @@ Key features:
 - **Nine agent kinds, one console** — run Claude Code / Codex / GitHub Copilot /
   Antigravity / Cursor / Kiro / OpenCode / Muse Code sessions, and llama.cpp sessions on
   the fleet's own chat engine, side by side, with per-session model choice. CLI versions are pinned to verified combinations (opt-in self-update).
+- **Agents that work together, across kinds** — a session can start child sessions of
+  any other kind (claude handing a review to codex, codex farming a subtask out to
+  opencode), each in its own worktree; it steers them, reads their output and gets one
+  report back when they finish. Sessions also send each other short messages directly,
+  and a stopped one is resumed to receive it. Both are opt-in per workspace
+  (Settings › Agents › Session), and the fleet graph draws the whole family — who
+  started whom, what passed between them, and when each one was working.
 - **Parallel sessions on real git repos** — clone over HTTPS (GitHub /
   Bitbucket tokens or OAuth device flow) with **Git LFS, submodules (incl.
   nested) and git-worktree support**; run multiple sessions per repo isolated
@@ -65,9 +72,7 @@ Key features:
   drive the fleet: start and steer multiple agent sessions, orchestrate work
   across different agents and hand tasks over between them with summarized
   context, and act as an **SRE assistant** through PagerDuty / Grafana /
-  CloudWatch integrations and AWS SSM login sessions to your servers. Sessions
-  can also send each other short notes directly (opt-in; they cross agent kinds,
-  and a stopped peer is resumed to receive one).
+  CloudWatch integrations and AWS SSM login sessions to your servers.
 - **Scheduled execution** — have the assistant schedule recurring agent runs in
   plain language ("every weekday at 9:00, review yesterday's changes"): the
   control plane fires them on a wall-clock (cron / interval / one-off, timezone-
