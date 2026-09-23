@@ -895,3 +895,74 @@ provider に渡さない原本用の欄を置き、`Enqueue` が各 `jobRec` へ
 
 **総評**: 原本の受渡し経路と、Agent 再起動後に残る `pending` の回収が決まるまでは、
 **proposed で実装へ渡せない**。ほかの改訂 5 の契約と日英対応は成立している。
+
+## 10. 改訂 6 の再レビュー（2026-09-23）
+
+- 対象: `temp/s24yagr` の `212939779` をこの worktree に取り込んだ後の
+  [ADR 0100 日本語](../decisions/0100-image-generation-studio.ja.md) と
+  [英訳](../decisions/0100-image-generation-studio.md)。§0〜§9 は変更していない。
+- 順序: 改訂後の日英本文を前回の指摘から独立して通読し、追加契約を現行コードに当てた
+  （10.1）。次に §9 の 🔴S・T・🟡P・Q を個別に判定した（10.2）。実 CLI は起動していない。
+- **反映済み**は元の論点に答えたこと、**不十分**は同じ論点を破る経路が残ること、
+  **未反映**は変更が無いことを指す。
+
+### 10.1 改訂後の本文から新たに見つけた点
+
+**新規 🔴 は 0 件。** `JobSpec` から `jobRec` への 3 欄の写しは、現行の
+`Enqueue` が `JobSpec.Request` から各 `jobRec` を作り、worker は `jobRec.req` だけを
+provider に渡す順序と合う（ADR 日本語:173-185／英語:195-207、
+`workspace/agent/internal/imagegen/jobs.go:214-229,318-342,426-437`）。
+`pending` の起動時回収も、メタが home volume に残り、TUI 配達の goroutine は Agent と
+共に消える構造に合う（ADR 日本語:116-128／英語:128-142、
+`workspace/agent/internal/session/meta.go:17-43`、`sessionx/session_handlers.go:1047-1053`）。
+
+#### 🟡R browse root が home でも、固定コピーとアップロード先の親は一致しない
+
+決定 4 は「browse root が home のときだけ親が同じ」と言い換えた
+（ADR 日本語:175-178／英語:197-200）。しかし固定コピーは
+`~/.cache/agent-fleet/generated/console/inputs/<set>/`、アップロードは browse root 相対の
+`generated/console/inputs/` なので、既定の browse root が home でも、実パスは
+`~/.cache/agent-fleet/generated/console/inputs/` と `~/generated/console/inputs/` で別。
+`generatedRootDir()` は `.cache/agent-fleet/generated` を明示し
+（`workspace/agent/internal/imagegen/store.go:28-34`）、`browseRoot()` の既定は home
+（`workspace/agent/fs.go:23-33`）、`InputPicker` は browse root 相対のパスを送る
+（`console/src/features/imagegen/parts/InputPicker.tsx:3-16,56-71`）。固定コピーの絶対パスと
+掃除範囲は明記済みなので、位置の説明を「常に別の場所」に直せば足りる。
+
+#### 🟡S `press_result` の最初の有効行を選ぶ前に、部分追記の末尾を処理する
+
+決定 9 は同じ版 id の `press_result` が複数あれば最初を採る
+（ADR 日本語:277-283／英語:312-320）。これは**完全な行が重複した**場合の答え。
+追記が JSON の途中で失敗した後に同じファイルへ再試行を追記すると、不完全な断片と
+新しい JSON が 1 行につながり、どちらも有効行として読めない可能性がある。
+追記専用 JSONL と即再試行を両立させる実装では、失敗時に末尾の不完全行を切り戻すか、
+読取側で有効行を回収する規則が要る。`studios/<id>.log.jsonl` はこの ADR で新設する
+（日本語:262-280）ので、現行コードにはまだその処理が無い。
+
+#### 日英対応と確認済みの決定
+
+改訂 6 の追加文は、`JobSpec` の 3 欄・`Enqueue` の写し・起動時の `pending` 回収・
+`press_result` の重複規則・末尾の対応表まで日英で条件と数値が対応する
+（ADR 日本語:26-28,116-128,173-185,269-283,449-455／
+英語:31-34,128-142,195-207,303-320,505-511）。🟡R は訳の差ではなく両言語の
+同じ事実誤認。決定 1・3・5〜8・10〜12 と背景の既存主張に、今回の追加文と
+衝突する新しい箇所を見つけなかった。
+
+### 10.2 §9 の指摘を 1 件ずつ照合
+
+| 前回 | 判定 | 改訂 6 の根拠と残る点 |
+|---|---|---|
+| 🔴S | **反映済み** | `JobSpec.InputSet/InputOrigins/MaskOrigin` を記録専用とし、`Enqueue` が各 `jobRec` へ写す（ADR 日本語:173-185）。provider に渡る `Request` はコピーのパスだけ |
+| 🔴T | **反映済み** | Agent 起動時に旧プロセスの `pending` を `unknown` に回収すると定め、再送の重複可能性も明記（日本語:116-128） |
+
+前回 🔴S・T は **反映済み 2／不十分 0／未反映 0**。
+
+| 前回 | 判定 | 改訂 6 の根拠と残る点 |
+|---|---|---|
+| 🟡P | **不十分** | browse root が home なら親が同じと直した（ADR 日本語:175-178）が、`.cache/agent-fleet` の有無で既定時も別（🟡R） |
+| 🟡Q | **不十分** | 完全な `press_result` の重複は最初の行へ畳む（日本語:277-283）。部分追記に続く再試行の行破損は未定義（🟡S） |
+
+前回 🟡P・Q は **反映済み 0／不十分 2／未反映 0**。
+
+**総評**: 新規 🔴 は無く、🔴S・T は反映済み。🟡R・S を実装時に扱う前提で、
+**ADR として proposed で提示できる**。固定コピーの位置説明は本文でも訂正が望ましい。
