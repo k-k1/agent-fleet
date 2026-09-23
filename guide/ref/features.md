@@ -38,7 +38,7 @@ If a feature ships and does not appear here, it is not done
 | Changed files | member | strip under the mirror header | [09 Working with others](../member/09-collaboration.md) |
 | Context usage gauge | member | session header | [06 Agents](../member/06-agents.md) |
 | Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [02 Sessions](../member/02-sessions.md#reading-an-answer-in-your-own-language-translation) |
-| Have a session generate an image (`generate_image`) | member | any session, by asking | [02 Sessions](../member/02-sessions.md#having-a-session-generate-an-image) |
+| Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [02 Sessions](../member/02-sessions.md#having-a-session-generate-an-image) |
 | Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [02 Sessions](../member/02-sessions.md#starting-sessions-from-a-session-child-sessions) |
 | Abort detection and auto-resume | member | automatic | [09 Working with others](../member/09-collaboration.md) |
 
@@ -57,6 +57,8 @@ If a feature ships and does not appear here, it is not done
 | Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [04 Files](../member/04-files.md#image-generation) |
 | Edit and inpaint — reference pictures, a mask file, instruction-edit models | member | image generation → Advanced → Operation | [04 Files](../member/04-files.md#image-generation) |
 | LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [04 Files](../member/04-files.md#image-generation) |
+| Image studio — refine the draft by talking to an agent, a person presses generate (edit history, versions, picture history) | member | image generation → Attach an agent | [04 Files](../member/04-files.md#studio-refine-the-draft-by-talking-to-an-agent) |
+| Image knowledge notes — four sections per model and per family, in `~/imagegen-knowledge/` | member | image generation → Notes, or the file tree | [04 Files](../member/04-files.md#studio-refine-the-draft-by-talking-to-an-agent) |
 | Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [04 Files](../member/04-files.md#image-gallery) |
 | Gallery card menu — copy, rename, delete, jump to the session that made it | member | gallery card → right-click | [Icons, badges and menus](../member/badges-and-menus.md#cards-in-the-image-gallery) |
 | Browser pane for a local web app | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
