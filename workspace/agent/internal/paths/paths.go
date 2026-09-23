@@ -233,3 +233,12 @@ func ValidIDSegment(id string) bool {
 	}
 	return true
 }
+
+// ImagegenStudiosDir holds the image studios, one `<id>.json` each (ADR 0100 decision 2), plus
+// each studio's append-only `<id>.log.jsonl`. Under AgentConfigDir because a studio is
+// user-authored content a Workspace must not lose, and inside the Files pane's denylist on
+// purpose: the draft is edited through the studio, never as a file. Two processes read it —
+// the Agent that owns it and the session's MCP child, which decides what to advertise from it
+// without a round trip — so the path lives here rather than in either package. The id is a
+// ValidIDSegment.
+func ImagegenStudiosDir() string { return filepath.Join(AgentConfigDir(), "imagegen", "studios") }

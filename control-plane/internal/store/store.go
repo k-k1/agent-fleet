@@ -783,6 +783,8 @@ type SessionRow struct {
 	// mirror is the list's only source, so anything not recorded here did not happen as
 	// far as the Console is concerned.
 	Carried string
+	// Studio is the image studio the session is bound to (ADR 0100 decision 2), "" for none.
+	Studio string
 }
 
 type SessionShare struct {

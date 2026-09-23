@@ -39,7 +39,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1042,7 +1041,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	// a guessed size would be the soft picture that rule exists to prevent. A file that cannot be
 	// read at all is left to uploadImage, which says so by name.
 	if params.isImageToImage() && comfyFamilyInstructionEdit(family) && len(req.Inputs) > 0 {
-		if raw, err := os.ReadFile(req.Inputs[0]); err == nil {
+		if raw, err := readRequestFile(req.Inputs[0]); err == nil {
 			if _, _, ok := comfyPictureSize(raw); !ok {
 				return Result{}, fmt.Errorf("the %s family needs to read the input picture's size, and %s is not"+
 					" a PNG, JPEG, WebP or GIF it can decode — convert it to one of those and try again",
@@ -1190,9 +1189,9 @@ type comfyUpload struct {
 // decided to rename, and a graph naming the file it MEANT to upload would fail validation against
 // a directory listing that has the other one.
 func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, req Request, path string) (comfyUpload, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readRequestFile(path)
 	if err != nil {
-		return comfyUpload{}, fmt.Errorf("could not read %s: %w", path, err)
+		return comfyUpload{}, err
 	}
 	if len(raw) > comfyMaxUpload {
 		return comfyUpload{}, fmt.Errorf("%s is %d bytes, over this route's %d-byte limit for one picture",

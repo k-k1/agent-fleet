@@ -552,6 +552,16 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 			Strength: body.Strength, Params: body.Params,
 		},
 	}
+	// The same gate as the queue's (ADR 0100 decision 4), and here it matters more: the codex and
+	// agy routes hand the path to a child process, which opens it after every check of ours. The
+	// set lives exactly as long as this synchronous call.
+	staged, st, err := stageRequestInputs(job.Request)
+	if err != nil {
+		writeGenerateErr(w, err)
+		return
+	}
+	defer removeInputSet(st.Set)
+	job.Request = staged
 	out, err := Run(r.Context(), job)
 	if err != nil {
 		writeGenerateErr(w, err)
@@ -569,6 +579,10 @@ func writeGenerateErr(w http.ResponseWriter, err error) {
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "imagegen_no_provider", err.Error())
 	case errors.Is(err, ErrUnknownProvider):
 		httpx.WriteErr(w, http.StatusBadRequest, "imagegen_unknown_provider", err.Error())
+	case errors.Is(err, errBadInput):
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_input", err.Error())
+	case errors.Is(err, errNoBrowseRoot):
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "no_browse_root", err.Error())
 	default:
 		httpx.WriteErr(w, http.StatusBadGateway, "imagegen_failed", err.Error())
 	}

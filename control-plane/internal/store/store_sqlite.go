@@ -1744,9 +1744,9 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried); err != nil {
+			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio); err != nil {
 			return err
 		}
 	}
@@ -1755,7 +1755,7 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried
+		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -1764,7 +1764,7 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 	var out []SessionRow
 	for rows.Next() {
 		r := SessionRow{WorkspaceID: workspaceID}
-		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried); err != nil {
+		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

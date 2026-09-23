@@ -79,6 +79,54 @@ export function spawnParentOf(text: string): string | null {
   return SPAWN_ENVELOPE_RE.exec(text)?.[1] ?? null;
 }
 
+// STUDIO_SIGNAL_PREFIX opens the one line the image studio appends to a message it sends
+// (ADR 0100 decision 5): "[studio v4 · draft changed · 2 new results → get_image_studio]". It is
+// addressed to the agent, so the transcript drops it before anything reads the turn — render,
+// copy and fork-at all start from groupTurns' output. Always the LAST line, and never starting
+// with "<", which isNoise would read as a system line and hide the member's whole message. The Go
+// copy is StudioSignalPrefix (workspace/agent/internal/imagegen/studio_signal.go), and a Go test
+// holds the two equal.
+export const STUDIO_SIGNAL_PREFIX = "[studio ";
+// Both ends are matched, so a member's own "[studio lighting reference]" last line is kept.
+export const STUDIO_SIGNAL_SUFFIX = "→ get_image_studio]";
+
+// stripStudioSignal removes that line from the end of a message, with the blank space before
+// it. Only the last line is looked at: the same words anywhere else are the member's own.
+export function stripStudioSignal(text: string): string {
+  const body = text.replace(/[ \t\r\n]+$/, "");
+  const i = body.lastIndexOf("\n");
+  const last = body.slice(i + 1);
+  if (!last.replace(/^[ \t]+/, "").startsWith(STUDIO_SIGNAL_PREFIX) || !last.endsWith(STUDIO_SIGNAL_SUFFIX)) return text;
+  return i < 0 ? "" : body.slice(0, i).replace(/[ \t\r\n]+$/, "");
+}
+
+// withoutStudioSignal is stripStudioSignal over a user turn's text and its text parts. A part
+// that was nothing but the signal is dropped, so a turn that was only the signal has no parts
+// left and groupTurns skips it like any empty turn.
+function withoutStudioSignal(t: Turn): Turn {
+  if (t.role !== "user") return t;
+  const text = stripStudioSignal(t.text || "");
+  let parts = t.parts;
+  if (Array.isArray(t.parts)) {
+    let changed = false;
+    const next: Part[] = [];
+    for (const p of t.parts) {
+      if (p.kind === "text" && typeof p.text === "string") {
+        const stripped = stripStudioSignal(p.text);
+        if (stripped !== p.text) {
+          changed = true;
+          if (stripped) next.push({ ...p, text: stripped });
+          continue;
+        }
+      }
+      next.push(p);
+    }
+    if (changed) parts = next;
+  }
+  if (text === (t.text || "") && parts === t.parts) return t;
+  return { ...t, text, parts };
+}
+
 // A `!`-run shell command is logged by Claude as a user turn `<bash-input>cmd</bash-input>`,
 // its result as the next user turn `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`.
 // These are hidden by isNoise; parseBashInput/parseBashOutput recover the command + result
@@ -219,7 +267,8 @@ function originsOf(t: Turn, parts: Part[]): string[] {
 // before the text being read. The footer must not claim that as the reply's time.
 export function groupTurns(turns: Turn[]): Group[] {
   const out: Group[] = [];
-  for (const t of turns) {
+  for (const raw of turns) {
+    const t = withoutStudioSignal(raw);
     // A child agent's raw prompt, reasoning, chatter and tool log are implementation
     // detail. The parent Agent/Task/spawn_agent call is rendered as one delegation card
     // instead, keeping the main conversation readable without hiding that delegation
