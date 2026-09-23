@@ -18,7 +18,7 @@ import (
 // sampler, and the agent may not set a knob outside decision 4's four.
 func TestStudioParamsMergeByKnob(t *testing.T) {
 	withStudios(t)
-	s := createStudio(t, `{"params":{"steps":30,"cfg":7,"sampler":"euler"}}`)
+	s := createStudio(t, `{"model":"sdxl-base","params":{"steps":30,"cfg":7,"sampler":"euler"}}`)
 	bindForTest(t, s.ID, "s1")
 	_, res := putStudio(t, s.ID, `{"author":"agent","session":"s1","draft":{"params":{"cfg":5,"clip_skip":2,"weight":3}}}`)
 	p := res.Studio.Draft.Params

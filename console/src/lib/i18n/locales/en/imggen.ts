@@ -295,6 +295,7 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.memo_saved": "Notes saved",
   "imggen.memo_save_failed": "Could not save the notes",
   "imggen.memo_changed": "The agent or the Files pane changed the notes first. Reload them and edit again",
+  "imggen.agent_needs_model": "Choose a model in the model field above first. Prompts are written differently for each model, so the conversation with the agent starts once one is chosen.",
   "imggen.draft_card": "Draft updated",
   "imggen.draft_card_unmatched": "Could not tell which edit this was (see the edit history in the middle column)",
 };

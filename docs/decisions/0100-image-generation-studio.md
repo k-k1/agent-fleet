@@ -36,6 +36,9 @@ English | [日本語](0100-image-generation-studio.ja.md)
   §10 — **0 new red**, 2 yellow). Fixed copies and uploads always live in different places; a partial
   trailing JSONL line is truncated by the writer and skipped by readers. The reviewer's verdict:
   presentable as proposed.
+- **Revision 9 (2026-09-24)**: the user's decision. Prompts are written differently per model
+  (SDXL-family, anima and Qwen-Image are built differently), so **the studio's conversation does not
+  start until a model is chosen**. Decisions 2, 3 and 5 changed.
 - **Revision 8 (2026-09-24)**: fixes a contradiction the P0 implementation review
   ([114-adr-0100-impl-review](../log/114-adr-0100-impl-review.md) §4 🟡B1, §7 🔵A4) and the P0
   integration found. **muse has no Terminal** (Managed only), so decision 8's "Terminal-only until
@@ -129,8 +132,8 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   tmp→rename (`fstore` has neither locking nor atomicity). The edit log (decision 9) is a separate file.
 - Without a session the pane keeps working on today's `localStorage` draft. **The studio is created
   the moment "attach an agent" is pressed** (revision 2), in this order: ① create the studio (moving
-  the `localStorage` draft in; `provider` is the ready row id the pane resolved, `model` may be
-  empty) → ② `GET …/persona` → ③ create the session with `studio` in the request; the Agent writes
+  the `localStorage` draft in; `provider` is the ready row id the pane resolved; **`model` is required** — without one
+  "attach" cannot be pressed, revision 9) → ② `GET …/persona` → ③ create the session with `studio` in the request; the Agent writes
   `Studio` into the meta and binds the studio's `session` **before launch**, then delivers
   `initial_prompt`. If ③ fails the studio remains unbound (the draft is not lost). Delivery of the
   first turn (the persona) is reported through **a meta field `InitialPromptState`** (`pending` /
@@ -154,9 +157,9 @@ studio id. Versions and the edit log live in a separate file (decision 9).
 | Tool | What it does |
 |---|---|
 | `get_image_studio` | draft, locks, **since last call** (human edits, rewinds, new results — at most 5 plus "N more"), model facts (family, knobs read, sizes, defaults, LoRAs with trigger words), the knowledge "summary" section, version summary. 8 KB cap |
-| `set_image_draft` | **partial update**: only the fields written change, `null` clears. **Validation on save is per field** (types, allow-lists, caps, locks, the path guard) and **an incomplete draft is allowed** (an empty prompt can be saved). Whole-request validation (`spec()`'s `bad_prompt` etc.) runs at enqueue and trial time. Locked fields are dropped with a reason |
+| `set_image_draft` | **partial update**: only the fields written change, `null` clears. **Validation on save is per field** (types, allow-lists, caps, locks, the path guard) and **an incomplete draft is allowed** (an empty prompt can be saved). Whole-request validation (`spec()`'s `bad_prompt` etc.) runs at enqueue and trial time. Locked fields are dropped with a reason. **With no model chosen the whole write is refused** (409 `no_model`, revision 9) |
 | `run_image_trial` | **takes no arguments**. Runs the draft stored in the studio (including `provider` and `model` — exactly the row the pane selected; **never** falls back to the Agent's default provider or warm model). Refuses with a reason when `model` is missing ("choose a model"), when `op=inpaint` with an empty `mask`, or when `spec()` fails. One picture, head of the queue, the family's trial steps, at most 3 waiting. **Waits at most 120 s** (a warm engine answers in 8–21 s; shorter than codex's 600 s) and sends the same **10-second progress heartbeat** as `generate_image` (opencode cuts a silent call at 60 s, `mcp_imagegen.go:222-228`): in time it returns path, seed, warnings and elapsed; otherwise the job id and "the result arrives in `get_image_studio`'s since". The job and the version remain and show in the trial slot |
-| `add_image_knowledge` | appends to decision 12's "record" section (scope, key, note, evidence) |
+| `add_image_knowledge` | appends to decision 12's "record" section (scope, key, note, evidence). **The key is only the studio's model (scope model) or its family (scope family)**; refused with no model chosen (revision 9) |
 
 - Advertised **only while the owning session is bound to a studio** (`Studio` on the meta that
   `mcpOwningSession()` resolves). tools/list is per request and `list_changed` fires every minute, so
@@ -246,6 +249,10 @@ depend on the cue (a message typed in a Terminal pane has none).
   single place to strip (`splitPastedImages` handles only the trailing attachment note; auto-title reads
   the first 400 characters), and it would stay in the transcript and be re-sent every turn (on lcpp,
   most of the window within ten turns).
+- **A model switch means a rewrite** (revision 9): when the user changed `model` since the last
+  `get_image_studio`, its note tells the agent to rewrite the prompt for the new model (its dialect,
+  quality prefixes and knowledge) rather than edit the old one. SDXL-family, anima and Qwen-Image
+  prompts are built differently; touching up the old prompt does not get there.
 - The cue is added only to messages sent from the mirror's composer (not to memo delivery, peer
   messages or scheduled runs). On TUI it is added **after** `buildImagePrompt` weaves attachment paths
   in, so it stays last.
@@ -542,3 +549,10 @@ conversation.
 |---|---|
 | 🟡B1 muse is not "Terminal-only" but unattachable in P0 (contradicting decision 8's own "only lcpp and muse carry `false`") | decision 8: states that lcpp and muse never appear among the TUI candidates; adds muse to the excluded Managed kinds with the reasons (Managed-only; its scrubbed MCP environment cannot reach the af server) and the P1 condition for opening it. Phases: muse leaves the prerequisite line and P1 gains the condition |
 | 🔵A4 the refusal for muse tells it to use Terminal | decision 8: names the Agent's refusal (409 `studio_kind_unsupported`) and how the launch dialog blocks it (the Agent's wording already says "cannot be bound for now", PR #926) |
+
+## Changed in revision 9 (2026-09-24, the user's decision, PR #932's walkthrough)
+
+| Trigger | Change |
+|---|---|
+| In the walkthrough the conversation went ahead with no model, and a "remember this" record used the provider's name (`agy`) as a family | decision 2: attaching needs a model (the Console disables the button, and holds a bound agent's composer with the reason if the model is cleared later). decision 3: `set_image_draft` answers 409 `no_model` with no model; `add_image_knowledge` keys only to the studio's model or its family (else 409 `wrong_key`; the member's records from the notes are not checked) |
+| Prompt structure differs by family | decision 5: when the user switches the model, the next `get_image_studio` note tells the agent to rewrite for the new model |

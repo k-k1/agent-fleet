@@ -297,6 +297,7 @@ export const imggen = {
   "imggen.memo_saved": "メモを保存しました",
   "imggen.memo_save_failed": "メモを保存できませんでした",
   "imggen.memo_changed": "エージェントかファイルペインが先に書き換えました。読み直してから編集してください",
+  "imggen.agent_needs_model": "先に上のモデル欄でモデルを選んでください。プロンプトの書き方はモデルごとに違うので、モデルが決まるまでエージェントとの会話は始められません。",
   "imggen.draft_card": "下書きを更新",
   "imggen.draft_card_unmatched": "どの編集かを特定できません（中列の編集履歴を見てください）",
 };

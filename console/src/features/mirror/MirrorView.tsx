@@ -143,6 +143,7 @@ export function MirrorView({
   headerActions,
   signal,
   toolCard,
+  composerBlock,
 }: {
   paneId: string;
   session: string;
@@ -159,6 +160,9 @@ export function MirrorView({
   signal?: MirrorSignal;
   /** A host's own card for some tool calls (see TranscriptCaps.toolCard). */
   toolCard?: TranscriptCaps["toolCard"];
+  /** Why this host holds the composer shut, drawn in its place (the image studio with no model
+   *  chosen, ADR 0100 revision 9). Absent → the composer as usual. */
+  composerBlock?: ReactNode;
 }) {
   const settings = useSettings();
   // Per-agent descriptor: how this session's assistant signs its turns, and which
@@ -2074,6 +2078,8 @@ export function MirrorView({
             }}
           />
         )
+      ) : composerBlock ? (
+        composerBlock
       ) : !running ? (
         // Workspace stopped (or not yet running): the agent is down, so the composer can't
         // deliver a prompt — a send would just 502. When the WS stops, the sessions poll

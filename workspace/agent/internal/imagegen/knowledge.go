@@ -14,6 +14,7 @@ package imagegen
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -427,10 +428,56 @@ func HandleKnowledge(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &body) {
 		return
 	}
+	if body.Session != "" {
+		if code, msg := agentKnowledgeTarget(r.Context(), body); code != "" {
+			httpx.WriteErr(w, http.StatusConflict, code, msg)
+			return
+		}
+	}
 	k, err := appendKnowledgeRecord(body, studioNow())
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_knowledge", err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, k)
+}
+
+// agentKnowledgeTarget checks an agent's record against its studio: what a prompt does depends
+// on the model, so a finding belongs to the model the studio has chosen or to that model's
+// family — never to a key the agent made up (measured: with no model chosen, an agent filed its
+// note under the provider's name as if it were a family). The member's own records, from the
+// pane's notes, name their document directly and are not checked here.
+func agentKnowledgeTarget(ctx context.Context, in KnowledgeAdd) (code, msg string) {
+	var draft *ImageStudioDraft
+	for _, s := range listStudios() {
+		if s.Session != in.Session {
+			continue
+		}
+		if rec, err := loadStudio(s.ID); err == nil {
+			draft = &rec.Draft
+		}
+		break
+	}
+	if draft == nil {
+		return "studio_not_bound", "this session is not bound to an image studio"
+	}
+	if draft.Model == "" {
+		return "no_model", studioNoModelMessage
+	}
+	key := strings.TrimSpace(in.Key)
+	switch in.Scope {
+	case KnowledgeModel:
+		if key != draft.Model {
+			return "wrong_key", fmt.Sprintf("record under the studio's model %q, or its family", draft.Model)
+		}
+	case KnowledgeFamily:
+		facts, _ := studioModelFactsFor(ctx, *draft)
+		if facts == nil || facts.Family == "" {
+			return "wrong_key", fmt.Sprintf("the family of %q is not known; record under the model (scope model, key %q)", draft.Model, draft.Model)
+		}
+		if key != facts.Family {
+			return "wrong_key", fmt.Sprintf("record under the studio's model's family %q, or the model %q", facts.Family, draft.Model)
+		}
+	}
+	return "", ""
 }

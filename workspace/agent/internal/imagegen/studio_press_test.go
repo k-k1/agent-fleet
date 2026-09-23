@@ -372,6 +372,8 @@ func TestStudioPersonaFollowsTheLocale(t *testing.T) {
 
 func TestKnowledgeRecordsAreAppendedAndTheRestKept(t *testing.T) {
 	withStudios(t)
+	s := createStudio(t, `{"provider":"comfy","model":"org/sdxl-base"}`)
+	bindForTest(t, s.ID, "s1")
 	add := func(body string) (int, Knowledge) {
 		rec := studioDo(t, HandleKnowledge, http.MethodPost, "/imagegen/knowledge", body)
 		var k Knowledge

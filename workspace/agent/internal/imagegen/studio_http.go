@@ -159,6 +159,14 @@ func handleStudioPut(w http.ResponseWriter, r *http.Request, id string) {
 			"this session is not the one bound to the studio; the user can bind it again from the studio pane")
 		return
 	}
+	// Prompts are written for a model: the words, the dialect and the knobs that work all change
+	// with it, so an agent drafting before the member has chosen one is drafting for nothing.
+	// The pane does not start the conversation without a model; this holds when the member
+	// clears it afterwards.
+	if body.Author == studioAuthorAgent && rec.Draft.Model == "" {
+		httpx.WriteErr(w, http.StatusConflict, "no_model", studioNoModelMessage)
+		return
+	}
 	draft, changes, dropped := applyDraftPatch(rec.Draft, body.Draft, body.Author, rec.Locks)
 	touched := len(changes) > 0
 	rec.Draft = draft
@@ -378,3 +386,8 @@ func HandleStudioDraftLog(w http.ResponseWriter, r *http.Request) {
 	limit = min(limit, 200)
 	httpx.WriteJSON(w, http.StatusOK, draftLogPage(readStudioLog(id), before, limit))
 }
+
+// studioNoModelMessage is the refusal an agent gets for writing to a studio with no model. The
+// agent relays it to the member, so it says what to do.
+const studioNoModelMessage = "no model is chosen in the studio; ask the user to pick one in the studio pane first " +
+	"(prompts are written for a model, so the draft and the knowledge wait for it)"
