@@ -50,7 +50,6 @@ Keeping it current:
 - **[engines]** The engine pill names the loaded model, says "In use" while a request runs, and when it was last used
 - **[gallery]** Card right-click menu (copy path / name, rename, delete, open the generating session); the lightbox's information panel follows the theme; pictures pasted into the chat open in the same lightbox
 - **[sessions]** The changed-files band appears for llama.cpp, Kiro, Muse Code and Antigravity sessions
-- **[mirror]** claude's thinking appears in the mirror, and usage is counted once per response
 
 **Fixed**
 
@@ -58,6 +57,7 @@ Keeping it current:
 - **[usage]** Context usage of a session on the fleet's own chat engine was a guess; it reads the window the engine actually loaded
 - **[engines]** The fit verdict of a chat model's quantisation could be wrong; it is read from the file itself and stays with the row
 - **[engines]** Taking a model in: an undeclared `llm` file offered only Delete (now Register too); editing the id on the plan card failed as a stale plan; the dialog planned twice and flickered; a split family's part colliding with another family's file is detected while planning; moving a misplaced file always failed (needs the `60-engines` update)
+- **[mirror]** A claude session's mirror went silent during a long run of tools while the terminal kept narrating: the narration is claude's thinking (summarised on Fable 5.1 / Opus 5.5), which the mirror dropped; it shows as a collapsible Thinking block, and usage is counted once per response
 - **[integrations / Discord]** The same "answer ready" notification could be sent twice
 - **[mirror]** Copying a quote lost its paragraph breaks; swiping a wide table sideways on a phone opened the left pane
 
