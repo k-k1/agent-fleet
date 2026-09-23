@@ -186,6 +186,34 @@ type modelStatus struct {
 	SourceURL   string `json:"source_url,omitempty"`
 	// TypicalMS is how long a picture on THIS checkpoint usually takes, measured.
 	TypicalMS int64 `json:"typical_ms,omitempty"`
+	familyAdvice
+}
+
+// familyAdvice is the family row's advice to a person writing a prompt (ADR 0100 decision 7),
+// on the status route for the pane's family card and in get_image_studio's model facts. Empty
+// for a model whose family has no row: a card invented for it would advise on a dialect nobody
+// checked.
+type familyAdvice struct {
+	Dialect         string    `json:"dialect,omitempty"`
+	QualityPrefixes []string  `json:"quality_prefixes,omitempty"`
+	StepsRange      []int     `json:"steps_range,omitempty"`
+	CFGRange        []float64 `json:"cfg_range,omitempty"`
+	TrialSteps      int       `json:"trial_steps,omitempty"`
+}
+
+func familyAdviceFor(family string) familyAdvice {
+	r, ok := comfyFamilyRowFor(comfyFamily(family))
+	if !ok {
+		return familyAdvice{}
+	}
+	out := familyAdvice{Dialect: string(r.Dialect), QualityPrefixes: r.QualityPrefixes, TrialSteps: r.TrialSteps}
+	if r.StepsRange != [2]int{} {
+		out.StepsRange = r.StepsRange[:]
+	}
+	if r.CFGRange != [2]float64{} {
+		out.CFGRange = r.CFGRange[:]
+	}
+	return out
 }
 
 // loraStatus is one entry of providerStatus.Loras — see imagegen.LoraInfo. baseModel rides along
@@ -316,6 +344,7 @@ func applyStudio(ctx context.Context, p Provider, st *providerStatus) {
 			Knobs: m.Knobs, Ops: ops, MaxInputs: m.MaxInputs,
 			LicenseName: m.LicenseName, LicenseURL: m.LicenseURL,
 			SourceURL: m.SourceURL, TypicalMS: jobs.typicalFor(p.ID(), m.ID),
+			familyAdvice: familyAdviceFor(m.Family),
 		})
 	}
 	st.Loras = make([]loraStatus, 0, len(s.Loras))

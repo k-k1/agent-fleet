@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -861,6 +862,15 @@ func TestStatusReportsTheMemberFacingCatalogue(t *testing.T) {
 	if len(m.Sizes) == 0 {
 		t.Error("sizes are missing")
 	}
+	// ADR 0100 decision 7: the family card is drawn from the Agent's row, under the JSON names the
+	// Console reads.
+	raw := rec.Body.String()
+	for _, key := range []string{`"dialect":"tags"`, `"quality_prefixes":["masterpiece, best quality"`,
+		`"steps_range":[20,40]`, `"cfg_range":[5,9]`, `"trial_steps":10`} {
+		if !strings.Contains(raw, key) {
+			t.Errorf("status lacks %s: %s", key, raw)
+		}
+	}
 	if len(st.Samplers) == 0 || len(st.Schedulers) == 0 {
 		t.Error("the sampler and scheduler allow-lists are missing: the form would offer a name this Agent refuses")
 	}
@@ -869,6 +879,27 @@ func TestStatusReportsTheMemberFacingCatalogue(t *testing.T) {
 	}
 	if len(st.Loras) != 1 || len(st.Loras[0].TrainedWords) != 1 || st.Loras[0].Weight != 0.7 {
 		t.Errorf("loras = %+v, want the trigger words and the declared strength", st.Loras)
+	}
+}
+
+// Every family says how a prompt is written for it and where its steps sit, and a cfg range
+// exactly when its template reads cfg (ADR 0100 decision 7) — a range for a knob the graph
+// ignores would advise a number that changes nothing.
+func TestFamilyRowsCarryTheirAdvice(t *testing.T) {
+	for _, r := range comfyFamilyRows {
+		if r.Dialect != comfyDialectTags && r.Dialect != comfyDialectSentences {
+			t.Errorf("%s: dialect %q", r.Family, r.Dialect)
+		}
+		if r.StepsRange[0] <= 0 || r.StepsRange[0] > r.StepsRange[1] {
+			t.Errorf("%s: steps range %v", r.Family, r.StepsRange)
+		}
+		readsCFG := slices.Contains(r.SamplerKnobs, "cfg")
+		if hasRange := r.CFGRange != [2]float64{}; hasRange != readsCFG {
+			t.Errorf("%s: cfg range %v but the template reads cfg = %v", r.Family, r.CFGRange, readsCFG)
+		}
+		if r.Dialect == comfyDialectSentences && len(r.QualityPrefixes) > 0 {
+			t.Errorf("%s: quality prefixes on a sentence family", r.Family)
+		}
 	}
 }
 
