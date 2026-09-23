@@ -78,11 +78,38 @@ func newCleanupID(now time.Time, slug string) string {
 
 // writeCleanupArchive persists the manifest + jsonl payloads as <id>.tar.gz plus a
 // sidecar <id>.json. payloads maps a tar entry name → bytes.
-func writeCleanupArchive(m cleanupManifest, payloads map[string][]byte) error {
+//
+// It never overwrites an archive: the id is only second-precise, so two deletes of the same
+// name in one second produced the same id and the second write replaced the first (and a
+// cleanup of the loser could then purge the winner's only copy). The tarball is created with
+// O_EXCL, and a taken id gets a -2, -3, … suffix — m.ID is updated to the id actually written.
+func writeCleanupArchive(m *cleanupManifest, payloads map[string][]byte) error {
 	dir := cleanupStoreDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	base := m.ID
+	var f *os.File
+	for n := 1; ; n++ {
+		if n > 1 {
+			m.ID = fmt.Sprintf("%s-%d", base, n)
+		}
+		var err error
+		f, err = os.OpenFile(filepath.Join(dir, m.ID+".tar.gz"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) || n >= 100 {
+			return err
+		}
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = f.Close()
+			_ = os.Remove(filepath.Join(dir, m.ID+".tar.gz"))
+		}
+	}()
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
@@ -107,9 +134,13 @@ func writeCleanupArchive(m cleanupManifest, payloads map[string][]byte) error {
 	if err := gw.Close(); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, m.ID+".tar.gz"), buf.Bytes(), 0o600); err != nil {
+	if _, err := f.Write(buf.Bytes()); err != nil {
 		return err
 	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	ok = true
 	// Sidecar manifest for listing; best-effort (the tar.gz is the source of truth).
 	_ = os.WriteFile(filepath.Join(dir, m.ID+".json"), mj, 0o600)
 	return nil
@@ -266,44 +297,59 @@ func restoreLeftHalfDone(id string) bool {
 	return false
 }
 
-func purgeCleanupArchive(id string) error {
+// purgeCleanupArchive removes one archive and returns its manifest. It does not touch the
+// managed ledgers: whether a session's ledger may go depends on every OTHER archive too, which
+// the caller checks once for everything it purged (dropPurgedLedgers).
+func purgeCleanupArchive(id string) (cleanupManifest, error) {
+	var man cleanupManifest
 	if filepath.Base(id) != id || strings.Contains(id, "..") {
-		return fmt.Errorf("invalid archive id")
+		return man, fmt.Errorf("invalid archive id")
 	}
 	// A mark alone does not block: only a session actually left half back does. So a mark
 	// that outlived its reason (an earlier attempt placed a transcript, and the session was
 	// since deleted again) never makes the archive impossible to purge.
 	if _, err := os.Lstat(restoringMarker(id)); err == nil {
 		if restoreLeftHalfDone(id) {
-			return errRestoreIncomplete
+			return man, errRestoreIncomplete
 		}
 		_ = os.Remove(restoringMarker(id))
 	}
-	var man cleanupManifest
 	if b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json")); err == nil {
 		_ = json.Unmarshal(b, &man)
 	}
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
 	if err := os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
-		return err
+		return man, err
 	}
-	dropPurgedLedgers(man)
-	return nil
+	return man, nil
 }
 
 // dropPurgedLedgers removes the managed kinds' ClientMessageID ledger of each session a purged
 // archive held. The trash keeps the ledger because a session in it can still be restored and
 // resumed (ADR 0101 decision 1); once the archive is purged nothing can bring the session back,
 // so the ledger is what is left over. A session whose meta exists (restored since) keeps its
-// ledger. If the same session sits in a second archive (deleted, restored, deleted again),
-// restoring that one comes back without the ledger — which is what every delete did before.
-func dropPurgedLedgers(man cleanupManifest) {
+// ledger, and so does one that another archive still holds (deleted, restored, deleted again):
+// restoring that archive must find its ledger, or a resumed managed session could run a
+// message it had already run. The remaining archives are read once for the whole batch.
+func dropPurgedLedgers(purged []cleanupManifest) {
+	held := map[string]bool{}
+	for _, a := range listCleanupArchives() {
+		for _, s := range a.Sessions {
+			held[s.Name] = true
+		}
+	}
+	for _, man := range purged {
+		dropLedgersOf(man, held)
+	}
+}
+
+func dropLedgersOf(man cleanupManifest, held map[string]bool) {
 	for _, s := range man.Sessions {
 		var meta session.Meta
 		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
 			continue
 		}
-		if _, ok := session.ReadMeta(meta.Name); ok {
+		if _, ok := session.ReadMeta(meta.Name); ok || held[meta.Name] {
 			continue
 		}
 		sessionx.RemoveManagedLedger(meta)

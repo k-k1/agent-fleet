@@ -37,6 +37,9 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.locked_sessions":
     "This working copy hosts sessions that are locked against deletion; removing it would leave them unresumable. Unlock those sessions first.",
   "err.worktree_remove_failed": "Failed to remove the worktree.",
+  "err.session_resumed": "The session was resumed while it was being moved to the trash, so it was not deleted.",
+  "err.sessions_trash_failed":
+    "Couldn't move this working copy's shell/ssm sessions to the trash, so the working copy was not deleted (check the free disk space).",
   "err.branch_unmerged":
     "This branch is not fully merged, so it was not deleted. Merge or push it first.",
   "err.branch_not_in_head":

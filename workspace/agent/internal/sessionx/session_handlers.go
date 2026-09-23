@@ -1337,6 +1337,11 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 // maps (ERR_TEXT); session_running is the one handleDeleteSession has always returned.
 const (
 	TrashErrRunning = "session_running"
+	// TrashErrResumed: the session came back to life (or its transcript grew) while it was
+	// being moved to the trash, so nothing was deleted. Its own code, not session_running: a
+	// Console that answers session_running by stopping and retrying must not stop a session
+	// someone just resumed.
+	TrashErrResumed = "session_resumed"
 	TrashErrArchive = "archive_failed"
 	TrashErrStop    = "tmux_failed"
 )
@@ -1347,7 +1352,7 @@ func WriteTrashErr(w http.ResponseWriter, code string, err error) {
 	switch code {
 	case errCodeLocked:
 		status = http.StatusForbidden
-	case TrashErrRunning:
+	case TrashErrRunning, TrashErrResumed:
 		status = http.StatusConflict
 	case "not_found":
 		status = http.StatusNotFound
@@ -1565,9 +1570,17 @@ func HandleRestoreSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	m.Archived = false
-	m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
-	session.WriteMeta(m)
+	// Under the meta lock, on the meta as it is now: a lock set, or a delete, since the read
+	// above must not be rolled back (ADR 0101).
+	m, ok = UpdateSessionMeta(name, func(m *session.Meta) bool {
+		m.Archived = false
+		m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
+		return true
+	})
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
 	// Restore only un-hides the row (§101.8: it never starts anything — `wireSession(m,
 	// false)` below is a STOPPED session). RecordRevive belongs to the branch in
 	// HandleListSessions that observes the slot actually come back alive.

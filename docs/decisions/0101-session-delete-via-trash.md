@@ -47,6 +47,12 @@ The Agent's `trashSession` becomes the only route.
    managed ledger and status records. **If the archive fails, nothing is removed.**
 4. Leave the worktree alone (decision 3).
 
+Deletes of one name run one at a time, and archive ids never overwrite each other. Right before removing, under the
+meta lock, it checks again for a lock, a running session, or a transcript that grew since it was archived; any of
+them removes nothing and withdraws the archive (409 `session_resumed`). A deleted meta is not written back by a
+stale snapshot in that process (only a restore from the trash brings it back). See the review record,
+docs/log/115-review.md.
+
 `POST /sessions/{name}/stop` and `DELETE /sessions/{name}` (with or without `reclaim`) both go through it.
 `DELETE` refuses a live session with 409; `/stop` and `DELETE …?stop=1` first stop it the way halt does.
 `/stop` stays as a compatibility name so that an older Console is safe too; a new Console uses
@@ -76,11 +82,14 @@ without `prune_sessions` makes no difference (the parameter is accepted and igno
 | locked | the delete is refused with 403 (as before) |
 | on the shelf | untouched |
 | stopped AI session | **moved to the shelf** |
-| stopped shell / ssm | **moved to the trash** (decision 1 — a shell without a working directory is not worth shelving) |
+| stopped shell / ssm | **moved to the trash** (decision 1 — a shell without a working directory is not worth shelving), BEFORE the working copy is removed; if that fails, the working copy is not removed either (500 `sessions_trash_failed`) |
 
 The person deleting a worktree decided about the working copy, not about throwing conversations away.
 Throwing one away is a separate operation: deleting it from the shelf. The confirmation does not offer a
 "shelf / trash" choice (shelf to trash is one press).
+
+A working-copy delete runs from its guards to settling its sessions inside a deletion gate that the lock endpoints
+also take, so a lock set during the delete either takes effect before it or waits until it is over.
 
 A session whose working folder is gone can still be read, on the shelf or in the list, but not resumed
 ("Folder missing").

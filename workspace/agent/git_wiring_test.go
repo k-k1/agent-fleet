@@ -52,6 +52,8 @@ func TestGitWiringIsLive(t *testing.T) {
 		"ShelveSession": func(t *testing.T) { sameGitFunc(t, w.ShelveSession, sessionx.ArchiveSession) },
 		"TrashSession":  func(t *testing.T) { sameGitFunc(t, w.TrashSession, trashStoppedSession) },
 
+		"WithDeletionGate": func(t *testing.T) { sameGitFunc(t, w.WithDeletionGate, sessionx.WithDeletionGate) },
+
 		"RepoJobActive": func(t *testing.T) { sameGitFunc(t, w.RepoJobActive, repoJobActive) },
 		// StartRepoJob alone is not the real function: it goes through an adapter that
 		// repacks the sink (startGitRepoJob in git_wiring.go). Check that it IS that
@@ -108,6 +110,7 @@ func TestGitWiringIsLive(t *testing.T) {
 		"ErrCodeHasWorktrees":          func(t *testing.T) { sameGitCode(t, w.ErrCodeHasWorktrees, errCodeHasWorktrees) },
 		"ErrCodeLocked":                func(t *testing.T) { sameGitCode(t, w.ErrCodeLocked, errCodeLocked) },
 		"ErrCodeLockedSessions":        func(t *testing.T) { sameGitCode(t, w.ErrCodeLockedSessions, errCodeLockedSessions) },
+		"ErrCodeSessionsTrashFailed":   func(t *testing.T) { sameGitCode(t, w.ErrCodeSessionsTrashFailed, errCodeSessionsTrashFailed) },
 	}
 
 	// Cross-check the set of checks against Deps' field set. A new field always fails

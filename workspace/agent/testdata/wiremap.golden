@@ -123,11 +123,11 @@ internal/chatx/chat_report.go HandleChatReport x1 {reported}
 internal/chatx/chat_suggest_reply.go HandleChatSuggestReplies x1 {suggestions}
 internal/chatx/chat_title.go HandleChatSuggestTitle x1 {suggestedTitle}
 internal/gitx/git.go HandleCloneRepo x1 {job}
-internal/gitx/git.go HandleDeleteRepo x3 {deleted}
 internal/gitx/git.go HandleInitRepo x1 {repo}
 internal/gitx/git.go HandleListRepos x1 {repos}
 internal/gitx/git.go HandleRepoBranches x1 {branches,current}
 internal/gitx/git.go WriteBranchInUse x1 {error}
+internal/gitx/git.go handleDeleteRepoGated x3 {deleted}
 internal/gitx/git_identity.go HandleGitProviderIdentityPut x1 {email,host,name}
 internal/gitx/git_identity.go HandleGlobalIdentityGet x1 {email,name}
 internal/gitx/git_identity.go HandleRepoIdentityGet x1 {effective,override,provider,source}

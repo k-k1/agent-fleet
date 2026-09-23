@@ -88,6 +88,7 @@ func testDeps() Deps {
 		ManagedAlive:        func(session.Meta) bool { unreached("ManagedAlive"); return false },
 		ShelveSession:       func(session.Meta) { unreached("ShelveSession") },
 		TrashSession:        func(session.Meta) error { unreached("TrashSession"); return nil },
+		WithDeletionGate:    func(fn func()) { fn() },
 		RepoJobActive:       func(string) bool { unreached("RepoJobActive"); return false },
 		StartRepoJob: func(string, string, string, string, func(context.Context, RepoJobSink) error) any {
 			unreached("StartRepoJob")
@@ -112,6 +113,7 @@ func testDeps() Deps {
 		ErrCodeHasWorktrees:          "gitx-test-has_worktrees",
 		ErrCodeLocked:                "gitx-test-locked",
 		ErrCodeLockedSessions:        "gitx-test-locked_sessions",
+		ErrCodeSessionsTrashFailed:   "gitx-test-sessions_trash_failed",
 	}
 }
 

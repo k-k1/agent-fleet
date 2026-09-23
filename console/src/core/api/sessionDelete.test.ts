@@ -17,7 +17,9 @@ vi.stubGlobal("sessionStorage", {
 });
 vi.stubGlobal("document", { baseURI: "http://localhost/" });
 vi.stubGlobal("window", { fetch: vi.fn(), addEventListener: () => {}, removeEventListener: () => {} });
-const fetchSpy = vi.fn(async () => new Response("{}"));
+// Answers per URL; the default is 200.
+const answers: Response[] = [];
+const fetchSpy = vi.fn(async () => answers.shift() ?? new Response("{}"));
 vi.stubGlobal("fetch", fetchSpy);
 
 let client: typeof import("./client.ts");
@@ -35,5 +37,28 @@ describe("sessionDelete", () => {
       "DELETE api/sessions/s%201?reclaim=1",
       "DELETE api/sessions/s2?reclaim=1&stop=1",
     ]);
+  });
+
+  it("with stop, an older Agent's 409 session_running is answered by halting and trying once more", async () => {
+    fetchSpy.mockClear();
+    const running = () => new Response(JSON.stringify({ error: { code: "session_running", message: "" } }), { status: 409 });
+    answers.push(running());
+    const res = await client.sessionDelete("s3", { stop: true });
+    expect(res.ok).toBe(true);
+    const calls = fetchSpy.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([u, o]) => `${o.method} ${String(u).replace("http://localhost/", "")}`)).toEqual([
+      "DELETE api/sessions/s3?reclaim=1&stop=1",
+      "POST api/sessions/s3/halt",
+      "DELETE api/sessions/s3?reclaim=1&stop=1",
+    ]);
+  });
+
+  it("does not halt a session that was resumed mid-delete (session_resumed), nor without stop", async () => {
+    fetchSpy.mockClear();
+    answers.push(new Response(JSON.stringify({ error: { code: "session_resumed", message: "" } }), { status: 409 }));
+    expect((await client.sessionDelete("s4", { stop: true })).status).toBe(409);
+    answers.push(new Response(JSON.stringify({ error: { code: "session_running", message: "" } }), { status: 409 }));
+    expect((await client.sessionDelete("s5")).status).toBe(409);
+    expect(fetchSpy.mock.calls.length).toBe(2);
   });
 });

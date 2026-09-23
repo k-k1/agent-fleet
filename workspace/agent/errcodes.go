@@ -39,6 +39,9 @@ const (
 	// because it would have taken locked sessions down with it.
 	errCodeLocked         = "locked"
 	errCodeLockedSessions = "locked_sessions"
+	// Deleting a working copy moves its shell / ssm sessions to the trash first (ADR 0101); if
+	// one cannot be (a full disk), the working copy is left as it is and this is the answer.
+	errCodeSessionsTrashFailed = "sessions_trash_failed"
 )
 
 // Stable codes for the user-facing errors (docs/log/28 P3). The backend message is a

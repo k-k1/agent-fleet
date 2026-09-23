@@ -36,6 +36,9 @@ export const errors = {
   "err.locked_sessions":
     "この作業コピーには削除ロック中のセッションがあります。削除すると再開できなくなるため、先にそのセッションのロックを解除してください。",
   "err.worktree_remove_failed": "worktree の削除に失敗しました。",
+  "err.session_resumed": "ごみ箱へ移している間にセッションが再開されたため、削除しませんでした。",
+  "err.sessions_trash_failed":
+    "作業コピーの shell/ssm セッションをごみ箱へ移せなかったため、作業コピーは削除していません（ディスクの空きを確認してください）。",
   "err.branch_unmerged":
     "このブランチはまだマージされていないため削除しませんでした。マージか push をしてから削除してください。",
   "err.branch_not_in_head":

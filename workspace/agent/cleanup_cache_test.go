@@ -62,7 +62,7 @@ func TestCacheScanSeesRealCleanupArchive(t *testing.T) {
 			ID: newCleanupID(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), "sarch01"), Reason: "delete_session",
 			Sessions: []cleanupArchivedSession{{Name: m.Name, Kind: m.Kind, Meta: marshalMeta(m)}},
 		}
-		if err := writeCleanupArchive(man, map[string][]byte{"sessions/x/00.jsonl": []byte("{}\n")}); err != nil {
+		if err := writeCleanupArchive(&man, map[string][]byte{"sessions/x/00.jsonl": []byte("{}\n")}); err != nil {
 			t.Fatal(err)
 		}
 		if dropSidecar {
@@ -186,7 +186,7 @@ func archivedSession(t *testing.T, name string) (string, session.Meta) {
 			JSONLPaths: []string{jsonl}, JSONLNames: []string{"sessions/x/00.jsonl"},
 		}},
 	}
-	if err := writeCleanupArchive(man, map[string][]byte{"sessions/x/00.jsonl": []byte("{}\n")}); err != nil {
+	if err := writeCleanupArchive(&man, map[string][]byte{"sessions/x/00.jsonl": []byte("{}\n")}); err != nil {
 		t.Fatal(err)
 	}
 	return man.ID, m
@@ -250,7 +250,7 @@ func TestRestoreLosesToAPurge(t *testing.T) {
 		close(done)
 	}()
 	<-staged // the archive has been read and the transcript staged
-	if perr := purgeCleanupArchive(id); perr != nil {
+	if _, perr := purgeCleanupArchive(id); perr != nil {
 		t.Fatal(perr)
 	}
 	close(proceed)
@@ -470,7 +470,7 @@ func TestRestoreThatChangedNothingLeavesNoMark(t *testing.T) {
 	if _, err := os.Lstat(restoringMarker(id)); !os.IsNotExist(err) {
 		t.Fatalf("a restore that changed nothing left its mark: %v", err)
 	}
-	if err := purgeCleanupArchive(id); err != nil {
+	if _, err := purgeCleanupArchive(id); err != nil {
 		t.Fatalf("purge after restores that changed nothing: %v", err)
 	}
 }
@@ -483,7 +483,7 @@ func TestStaleMarkDoesNotBlockPurge(t *testing.T) {
 	if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := purgeCleanupArchive(id); err != nil {
+	if _, err := purgeCleanupArchive(id); err != nil {
 		t.Fatalf("stale mark blocked the purge: %v", err)
 	}
 	if _, err := os.Lstat(restoringMarker(id)); !os.IsNotExist(err) {
@@ -497,7 +497,7 @@ func TestStaleMarkDoesNotBlockPurge(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "srest13.jsonl"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := purgeCleanupArchive(id2); !errors.Is(err, errRestoreIncomplete) {
+	if _, err := purgeCleanupArchive(id2); !errors.Is(err, errRestoreIncomplete) {
 		t.Fatalf("half-done restore: err = %v, want errRestoreIncomplete", err)
 	}
 }
@@ -534,7 +534,7 @@ func TestUnreadableMarkedArchiveIsKept(t *testing.T) {
 	if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := purgeCleanupArchive(id); !errors.Is(err, errRestoreIncomplete) {
+	if _, err := purgeCleanupArchive(id); !errors.Is(err, errRestoreIncomplete) {
 		t.Fatalf("err = %v, want errRestoreIncomplete", err)
 	}
 }

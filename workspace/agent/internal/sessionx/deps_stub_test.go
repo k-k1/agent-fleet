@@ -128,6 +128,7 @@ func gitxStubDeps() gitx.Deps {
 	d.LiveSessionsInDir = LiveSessionsInDir
 	d.LockedSessionsInDir = LockedSessionsInDir
 	d.ShelveSession = ArchiveSession
+	d.WithDeletionGate = WithDeletionGate
 	d.ManagedAlive = ManagedAlive
 
 	// Like main's scratch.go, do nothing when AF_WS_SCRATCH is unset (a plain no-op would

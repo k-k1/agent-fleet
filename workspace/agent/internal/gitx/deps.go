@@ -76,6 +76,11 @@ type Deps struct {
 	ShelveSession func(m session.Meta)
 	TrashSession  func(m session.Meta) error
 
+	// WithDeletionGate runs fn inside the gate the lock endpoints also take, so a working-copy
+	// delete and a lock on it (or on a session in it) never interleave (ADR 0101). A plain
+	// "call fn" would bring back the window in which a lock is accepted and then deleted anyway.
+	WithDeletionGate func(fn func())
+
 	// --- Import jobs (repo_jobs.go) ---
 	//
 	// A clone outlives the request, so it runs as a background job (docs/log/78). The
@@ -120,6 +125,7 @@ type Deps struct {
 	ErrCodeHasWorktrees          string
 	ErrCodeLocked                string
 	ErrCodeLockedSessions        string
+	ErrCodeSessionsTrashFailed   string
 }
 
 var deps Deps
@@ -163,6 +169,7 @@ func Configure(d Deps) {
 	errCodeHasWorktrees = d.ErrCodeHasWorktrees
 	errCodeLocked = d.ErrCodeLocked
 	errCodeLockedSessions = d.ErrCodeLockedSessions
+	errCodeSessionsTrashFailed = d.ErrCodeSessionsTrashFailed
 }
 
 // unwired decides what counts as "not wired". Besides the zero value, an empty map counts
@@ -194,6 +201,7 @@ var (
 	errCodeHasWorktrees          string
 	errCodeLocked                string
 	errCodeLockedSessions        string
+	errCodeSessionsTrashFailed   string
 )
 
 // What follows are thin delegations under the same names the code used before the move, so
@@ -215,6 +223,8 @@ func managedAlive(m session.Meta) bool { return deps.ManagedAlive(m) }
 func shelveSession(m session.Meta) { deps.ShelveSession(m) }
 
 func trashSession(m session.Meta) error { return deps.TrashSession(m) }
+
+func withDeletionGate(fn func()) { deps.WithDeletionGate(fn) }
 
 func repoJobActive(name string) bool { return deps.RepoJobActive(name) }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -40,11 +41,30 @@ func WriteMeta(m Meta) {
 	if err := os.MkdirAll(MetaDir(), 0o700); err != nil {
 		return
 	}
+	metaWriteMu.Lock()
+	defer metaWriteMu.Unlock()
+	if deletedMetas[MetaPath(m.Name)] {
+		// Deleted (moved to the trash, ADR 0101) since the caller read it. Every writer works
+		// from a snapshot it read earlier — the list's stopped stamp, a title suggestion that
+		// took seconds, a restore from the shelf — and writing that back would bring the row
+		// back with its transcript already in the trash. Names are never reused, so a deleted
+		// name stays deleted until a restore from the trash (CreateMetaIfAbsent) clears it.
+		return
+	}
 	if b, err := json.Marshal(m); err == nil {
 		_ = os.WriteFile(MetaPath(m.Name), b, 0o600)
 	}
 	rememberCWD(m)
 }
+
+// metaWriteMu orders WriteMeta against the removal of a meta, and deletedMetas remembers which
+// meta files a person deleted in this process (keyed by path, so a test's temporary directory
+// never shadows another's). Together they make "read a meta, work, write it back" safe against
+// a delete landing in between, at every one of the writers at once.
+var (
+	metaWriteMu  sync.Mutex
+	deletedMetas = map[string]bool{}
+)
 
 // CreateMetaIfAbsent writes m only when no meta of that name exists, and reports whether it
 // did. For the cleanup restore: an archived meta is a snapshot, and a live meta of the same
@@ -69,12 +89,16 @@ func CreateMetaIfAbsent(m Meta) (created bool, err error) {
 	if werr != nil || cerr != nil {
 		return false, errors.Join(werr, cerr)
 	}
+	metaWriteMu.Lock()
+	defer metaWriteMu.Unlock()
 	if err := os.Link(tmp.Name(), MetaPath(m.Name)); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return false, nil
 		}
 		return false, err
 	}
+	// A restore from the trash is the one way a deleted name comes back.
+	delete(deletedMetas, MetaPath(m.Name))
 	rememberCWD(m)
 	return true, nil
 }
@@ -111,7 +135,10 @@ func RemoveMeta(name string) { _ = os.Remove(MetaPath(name)) }
 // best-effort and logged, never fatal: the meta is already gone by the time this runs, so
 // failing the request over it would be strictly worse than a leftover lineage row.
 func RemoveMetaAndLineage(name string) {
+	metaWriteMu.Lock()
+	deletedMetas[MetaPath(name)] = true
 	RemoveMeta(name)
+	metaWriteMu.Unlock()
 	if err := fleetgraph.EraseLineage(name); err != nil {
 		log.Printf("fleet-graph: erase lineage for %s: %v", name, err)
 	}

@@ -36,6 +36,8 @@ func gitDeps() gitx.Deps {
 		ShelveSession: sessionx.ArchiveSession,
 		TrashSession:  trashStoppedSession,
 
+		WithDeletionGate: sessionx.WithDeletionGate,
+
 		RepoJobActive: repoJobActive,
 		StartRepoJob:  startGitRepoJob,
 
@@ -59,6 +61,7 @@ func gitDeps() gitx.Deps {
 		ErrCodeHasWorktrees:          errCodeHasWorktrees,
 		ErrCodeLocked:                errCodeLocked,
 		ErrCodeLockedSessions:        errCodeLockedSessions,
+		ErrCodeSessionsTrashFailed:   errCodeSessionsTrashFailed,
 	}
 }
 

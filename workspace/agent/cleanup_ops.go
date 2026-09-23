@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -88,6 +89,16 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 // is short-lived on purpose and its retention is the tenant's setting, which a trash with no
 // expiry would override.
 func trashSession(m session.Meta, stop bool) (string, string, error) {
+	// One delete of a name at a time: two in the same second used to race each other's archive
+	// (the loser saw the meta gone and purged what it took for its own copy — the only one).
+	unlock := lockTrashName(m.Name)
+	defer unlock()
+	// Re-read under that lock: the caller's meta may be from before a delete that just finished.
+	cur, ok := session.ReadMeta(m.Name)
+	if !ok {
+		return "", "not_found", errors.New("no such session: " + m.Name)
+	}
+	m = cur
 	if m.Locked {
 		return "", errCodeLocked, errors.New("session is locked against deletion; unlock it first")
 	}
@@ -107,32 +118,37 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 	}
 	// Called after the halt so the final events written on exit are in the transcript first.
 	finalizeSessionUsage(m)
+	// What the archive is about to hold. Taken BEFORE reading, so the archive holds at least
+	// this much; anything beyond it at removal time was written after, and is not in the gz.
+	before := transcriptSizes(m)
 	arch, err := archiveSessionForDelete(m)
 	if err != nil {
 		return "", sessionx.TrashErrArchive, err
 	}
-	// The lock is checked again at the point of removal, under the meta lock: the check above
-	// read a snapshot, and archiving a large transcript takes a while. A session locked in
-	// between stays exactly as it was, and the archive just written goes (it would be a
-	// duplicate of a session that still exists).
-	locked, gone := false, false
+	if trashAfterArchive != nil {
+		trashAfterArchive(m)
+	}
+	// Checked again at the point of removal, under the meta lock: archiving a large transcript
+	// takes a while, and in that time the session may have been locked, resumed (it is running
+	// again, or its transcript grew), or deleted by something else. In each case nothing is
+	// removed, and the archive just written goes — it would be a stale duplicate.
+	abort, code, why := false, "", ""
 	sessionx.WithSessionMetaLock(func() {
 		cur, ok := session.ReadMeta(m.Name)
 		switch {
 		case !ok:
-			gone = true
+			abort, code, why = true, "not_found", "the session was deleted by another request meanwhile"
 		case cur.Locked:
-			locked = true
+			abort, code, why = true, errCodeLocked, "session is locked against deletion; unlock it first"
+		case sessionx.SessionAlive(cur) || transcriptGrew(m, before):
+			abort, code, why = true, sessionx.TrashErrResumed, "the session was resumed while it was being moved to the trash; nothing was deleted"
 		default:
 			session.RemoveMetaAndLineage(m.Name) // a person's delete (ADR 0096 decision 6)
 		}
 	})
-	if locked || gone {
-		sessionx.WithCleanupLock(func() { _ = purgeCleanupArchive(arch) })
-		if locked {
-			return "", errCodeLocked, errors.New("session is locked against deletion; unlock it first")
-		}
-		return "", "not_found", errors.New("the session was deleted by another request meanwhile")
+	if abort {
+		sessionx.WithCleanupLock(func() { _, _ = purgeCleanupArchive(arch) })
+		return "", code, errors.New(why)
 	}
 	// Now that the conversation is safely bundled and the meta is gone, delete the live jsonl(s).
 	if m.Kind == session.KindClaude {
@@ -147,6 +163,55 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 	removeTerminalHistory(m.Name)
 	invalidateCleanupUsage() // the trash just grew
 	return arch, "", nil
+}
+
+// trashAfterArchive is a test seam: it runs between writing the archive and the final check,
+// where a resume or a lock can land. Nil in production.
+var trashAfterArchive func(m session.Meta)
+
+// trashNameLocks serialises trashSession per session name.
+var trashNameLocks = struct {
+	mu sync.Mutex
+	m  map[string]*sync.Mutex
+}{m: map[string]*sync.Mutex{}}
+
+func lockTrashName(name string) func() {
+	trashNameLocks.mu.Lock()
+	l, ok := trashNameLocks.m[name]
+	if !ok {
+		l = &sync.Mutex{}
+		trashNameLocks.m[name] = l
+	}
+	trashNameLocks.mu.Unlock()
+	l.Lock()
+	return l.Unlock
+}
+
+// transcriptSizes is the size of each transcript file of a claude session (other kinds keep
+// their conversation in their own store, which the trash does not take).
+func transcriptSizes(m session.Meta) map[string]int64 {
+	out := map[string]int64{}
+	if m.Kind != session.KindClaude {
+		return out
+	}
+	_, _, matched := claude.TranscriptRead(session.UUID(m.Dir, m.Name))
+	for _, p := range matched {
+		if fi, err := os.Stat(p); err == nil {
+			out[p] = fi.Size()
+		}
+	}
+	return out
+}
+
+// transcriptGrew reports whether a transcript file appeared or grew since before was taken —
+// i.e. whether the conversation has lines the archive does not.
+func transcriptGrew(m session.Meta, before map[string]int64) bool {
+	for p, size := range transcriptSizes(m) {
+		if was, ok := before[p]; !ok || size > was {
+			return true
+		}
+	}
+	return false
 }
 
 // trashStoppedSession is trashSession for a session that must already be stopped (gitx's
@@ -195,7 +260,7 @@ func archiveSessionForDelete(m session.Meta) (string, error) {
 		ID: newCleanupID(nowUTC(), idSlug(m.Name)), At: nowUTC().Format(time.RFC3339),
 		Reason: "delete_session", Sessions: []cleanupArchivedSession{as},
 	}
-	if err := writeCleanupArchive(man, payloads); err != nil {
+	if err := writeCleanupArchive(&man, payloads); err != nil {
 		return "", err
 	}
 	return man.ID, nil
@@ -248,13 +313,13 @@ func handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 		Reason:   "delete_branch",
 		Branches: []cleanupArchivedBranch{{Repo: r.PathValue("name"), Name: branch, SHA: sha}},
 	}
-	if err := writeCleanupArchive(man, nil); err != nil {
+	if err := writeCleanupArchive(&man, nil); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "archive_failed", err.Error())
 		return
 	}
 	// -d (not -D): git refuses if the branch isn't merged, so unmerged work is protected.
 	if out, err := gitx.Combined(dir, "branch", "-d", branch); err != nil {
-		_ = purgeCleanupArchive(man.ID) // nothing was deleted — don't leave a stale archive
+		_, _ = purgeCleanupArchive(man.ID) // nothing was deleted — don't leave a stale archive
 		httpx.WriteErr(w, http.StatusConflict, "branch_unmerged",
 			"branch is not fully merged; not deleted (push/merge it, or delete in the Console): "+strings.TrimSpace(out))
 		return
@@ -351,6 +416,7 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 	cutoff := nowUTC().Add(-time.Duration(days) * 24 * time.Hour)
 	purged, kept := 0, 0
 	var bytes int64
+	var gone []cleanupManifest
 	for _, m := range listCleanupArchives() {
 		at, err := time.Parse(time.RFC3339, m.At)
 		if err != nil {
@@ -361,14 +427,17 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var perr error
-		sessionx.WithCleanupLock(func() { perr = purgeCleanupArchive(m.ID) })
+		var man cleanupManifest
+		sessionx.WithCleanupLock(func() { man, perr = purgeCleanupArchive(m.ID) })
 		if perr != nil {
 			kept++
 			continue
 		}
+		gone = append(gone, man)
 		purged++
 		bytes += m.Bytes
 	}
+	dropPurgedLedgers(gone)
 	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"purged": purged, "bytes": bytes, "kept": kept})
 }
@@ -376,7 +445,8 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var err error
-	sessionx.WithCleanupLock(func() { err = purgeCleanupArchive(id) })
+	var man cleanupManifest
+	sessionx.WithCleanupLock(func() { man, err = purgeCleanupArchive(id) })
 	if errors.Is(err, errRestoreIncomplete) {
 		httpx.WriteErr(w, http.StatusConflict, "restore_incomplete", err.Error())
 		return
@@ -385,6 +455,7 @@ func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "purge_failed", err.Error())
 		return
 	}
+	dropPurgedLedgers([]cleanupManifest{man})
 	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"purged": id})
 }
