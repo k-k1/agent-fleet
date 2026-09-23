@@ -19,6 +19,11 @@ English | [日本語](0100-image-generation-studio.ja.md)
   included) ever sees the original path; the trial tool gets a heartbeat; the version id is reserved
   before enqueue; the generated root becomes an allowed source; decision 1 has two exceptions.
   Appended to the table at the end.
+- **Revision 4 (2026-09-23)**: folds in the fourth pass ([113-adr-review](../log/113-adr-review.md) §7 —
+  4 new red, 3 yellow). Fixed copies are keyed by an **input-set id, not the job id**, and `Request`
+  gains record-only origin fields; a press is **a full-draft line before enqueue plus a result line
+  after**; first-turn delivery is a meta field the pane reads; TUI candidates are
+  `terminalDriver !== false`. Appended to the table at the end.
 - Number: `develop` tops out at 0098; 0099 is taken by two unmerged branches (`temp/sidv2bw`,
   `temp/sjys6nk`), hence 0100.
 - Related: [0081](0081-image-generation-pane.md) (today's image-generation pane; this ADR overturns
@@ -83,8 +88,10 @@ out wrong were corrected by the review):
 "Without an LLM in the loop" (0081) still holds for generation. The agent touches the **draft**; a
 person presses Generate; what runs is 0081's job queue unchanged. The vocabulary, validation, jobs,
 trials, groups, cancel, EMA, sidecars, `props`, usage rows and the CP's seven relay lines stay as they
-are. **Two exceptions**: decision 4's guard (`inputs`/`mask` validated and copied at enqueue) and
-decision 9's `POST …/press` (one more entry point calling the same queue function).
+are. **Two exceptions**: decision 4's guard (`inputs`/`mask` validated and copied at enqueue — `Request`
+gains record-only origin fields and "copy before enqueue" enters the job-building order) and
+decision 9's `POST …/press` (one more entry point calling the same queue function). The wire
+vocabulary does not change.
 
 ### Decision 2 — A "studio" lives in the Agent, has its own id, and binds one session
 
@@ -109,11 +116,14 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   the `localStorage` draft in; `provider` is the ready row id the pane resolved, `model` may be
   empty) → ② `GET …/persona` → ③ create the session with `studio` in the request; the Agent writes
   `Studio` into the meta and binds the studio's `session` **before launch**, then delivers
-  `initial_prompt`. If ③ fails the studio remains unbound (the draft is not lost). If creation
-  succeeds but the first turn fails to send (today this is only logged and success is returned,
-  `session_handlers.go:1014-1035`), the create response carries a `warning` and the pane offers
-  "persona not delivered — resend" (a resend is the first turn again). **Nothing an ADR 0081 user
-  has today is lost.**
+  `initial_prompt`. If ③ fails the studio remains unbound (the draft is not lost). Delivery of the
+  first turn (the persona) is reported through **a meta field `InitialPromptState`** (`delivered` /
+  `failed` / `unknown`) that the pane reads (revision 4): Managed sends inside the create handler
+  and can write it synchronously; TUI delivers from a goroutine independent of the response
+  (`session_handlers.go:1050`, `session_io.go:848-920`) and only logs when it cannot confirm, so the
+  deliverer writes the field. The pane sees it through the studio poll and offers "persona not
+  delivered / unconfirmed — resend" on `failed`, or on `unknown` after 60 s (a resend is the first
+  turn again). **Nothing an ADR 0081 user has today is lost.**
 
 ### Decision 3 — The contract is four tools on the session-side af MCP server. `generate_image` is not advertised
 
@@ -166,16 +176,21 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   check (TOCTOU). And a provider does not necessarily read the file itself: codex hands the reference
   path to a **separate process** via `-i` (`codex.go:173-180`) and agy passes it inside the prompt
   (`agy.go:449-458`), so however the Agent pins its own open, the child opens the original later.
-  Therefore **at enqueue, each `inputs`/`mask` entry is read through a root-pinned open (the
-  `openat2NoSymlinks` shape) and copied into a job-private fixed copy under
-  `generated/console/inputs/<job>/`; `JobSpec` holds only the copies' paths**. No provider ever sees
-  the original path (not comfy's pre-read `comfy.go:1045`, its upload `:1193`, `openai_compat.go:404`,
-  codex nor agy). "A provider never receives a request path" is enforced by the type
-  (`JobSpec.Inputs` is the copy type). Allowed sources are **the browse root and the generated root
-  `~/.cache/agent-fleet/generated/`** (the default output lives outside the browse root, `store.go:28-34`,
-  so "use as reference" must not refuse the user's own pictures where `AF_BROWSE_ROOT` is not home);
-  the denylist is shared with the Files pane. Copies are deleted when the job ends (the sidecar records
-  the original path). Not opened before the guard lands.
+  Therefore **before enqueue** (revision 4: the job id is assigned inside `Enqueue`, `jobs.go:297-327`,
+  so copies cannot be per job), each `inputs`/`mask` entry is read through a root-pinned open (the
+  `openat2NoSymlinks` shape) and copied into an **input set**
+  `~/.cache/agent-fleet/generated/console/inputs/<set>/` (set id assigned by the Agent; an absolute path
+  under the generated root; same parent as user uploads but a separate level). `Request` keeps **the
+  copies handed to the provider (`Inputs`, `Mask`) and the origins recorded in the sidecar
+  (`InputOrigins`, `MaskOrigin`) in separate fields** (today one value serves both,
+  `jobs.go:426-461, 477-511`). No provider ever sees the original path (not comfy's pre-read
+  `comfy.go:1045`, its upload `:1193`, `openai_compat.go:404`, codex nor agy). Allowed sources are
+  **the browse root and the generated root** (the default output lives outside the browse root,
+  `store.go:28-34`, so "use as reference" must not refuse the user's own pictures where
+  `AF_BROWSE_ROOT` is not home); the denylist is shared with the Files pane. Cleanup: delete
+  synchronously when enqueue fails, delete when the group's last job ends, and delete every set under
+  `inputs/` at startup (the queue is in memory, nothing survives; today's sweep looks only at `trial/`,
+  `store.go:170-195`, so this is added). Not opened before the guard lands.
 - `mask` is person-only (painted by hand). **`needs_mask` is not a stored flag but a derived value**
   (`op=inpaint` and `mask` empty) that `get_image_studio` reports read-only — it clears the moment a
   person places a mask (revision 2). The agent only writes `op=inpaint`; the pane shows the way. In P0
@@ -240,8 +255,9 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
   pulling, Managed and TUI differ only in how attachments travel and in launch/resume. The kind list
   has **a different source per execution method** (revision 2): Managed candidates come from
   `managedDrivers`, TUI candidates from the Console's `repoLaunchKinds` (`agents/registry.ts:760`)
-  filtered to kinds with `terminalDriver` (shell excluded; claude and agy exist only there). A single
-  list would drop claude.
+  filtered by **`terminalDriver !== false`** minus shell (the field is optional and absent means
+  allowed; only lcpp and muse carry `false`, `registry.ts:134-148, 566, 614` — filtering on truthiness
+  or presence would drop claude and agy). A single list would drop claude.
 - **Worktree on by default** is the only way to make cwd-based identity unambiguous for the kinds that
   guess. Off is allowed only for **kind × execution-method pairs where `AF_SESSION_NAME` arrives on
   every path**: Terminal (all kinds) and lcpp. **codex Managed is not one of them** — a fresh thread
@@ -265,14 +281,17 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
   the agent's trial). Appended to the same JSONL as **independent events** (`kind: "press"`, full
   draft, seed policy, job/group id, author, `error` on failure) — pressing twice without editing yields
   two press entries. With a studio, a press is one Console call,
-  `POST /imagegen/studios/{id}/press {trial|enqueue…}`. The Agent's order (revision 3): ① **reserve
-  the version id** (nothing written yet) → ② enqueue through today's queue function with `studio` and
-  `version` on the `JobSpec` (the worker may start before the response, `jobs.go:297-342`; the
-  sidecar takes `version` from the `JobSpec`, so the picture↔version link holds even if the log line
-  never lands) → ③ write the one press line with the returned job/group id or the failure. If the
-  Agent dies between ② and ③ the in-memory queue dies too, so either no picture appears or it appears
-  with `version` in its sidecar — at startup a `history.jsonl` row whose `version` is absent from the
-  log gets a synthesised press line with `recovered: true`. The vocabulary, validation and queue of
+  `POST /imagegen/studios/{id}/press {trial|enqueue…}`. The Agent's order (revision 4): ① **write the
+  `press` line** (version id, full draft, seed policy, author, time pressed — everything "restore
+  these settings" needs lives here) → ② fixed copies (decision 4) → ③ enqueue through today's queue
+  function with `studio` and `version` on the `JobSpec` (the worker may start before the response,
+  `jobs.go:297-342`; the sidecar takes `version` from the `JobSpec`) → ④ **write the `press_result`
+  line** (version id, job/group id, or `error`). A version's state is derived from the presence and
+  content of its `press_result`. If the Agent dies after ① a version without `press_result` remains —
+  at startup the sidecars are scanned (independently of whether `history.jsonl` exists or is
+  truncated): if a picture with that `version` exists a `press_result` is synthesised, otherwise a
+  `lost` one is written. Sidecars carry no full draft (`props.go:42-90`; the negative is the composed
+  value), so the restore source is always line ①. The vocabulary, validation and queue of
   `POST /imagegen/jobs` are unchanged (decision 1's second exception). Without a studio a press still
   goes to `/imagegen/jobs`. No "pressed" mark is ever added to an edit entry.
 - **Picture history**: `GET /imagegen/history?studio=&before=&limit=` backed by
@@ -434,3 +453,13 @@ conversation.
 | 🔴J a press line written after the response cannot reach the picture | decision 9: reserve the version id before enqueue and carry it on `JobSpec`; synthesise on recovery |
 | 🔴K a repo browse root refuses the user's own pictures as references | decision 4: allowed sources are the browse root plus the generated root |
 | 🟡E–I | fingerprint is computed by the child → rely on the watcher; the notes view edits everything when the root is not home; TUI candidates from `repoLaunchKinds` with `terminalDriver`; first-turn send failure → `warning` + resend; decision 1 has two exceptions |
+
+## Changed in revision 4 (2026-09-23, [113-adr-review](../log/113-adr-review.md) §7)
+
+| Finding | Change |
+|---|---|
+| 🔴L per-job copies cannot exist before the id is assigned; provider and record share one field | decision 4: input-set id, copied before enqueue; `Request` gains record-only origins (`InputOrigins`, `MaskOrigin`); named in decision 1's exception |
+| 🔴M a `recovered` line cannot be built from sidecars | decision 9: a press is a full-draft line before enqueue plus a result line after; restore always reads the former; sidecars scanned at startup |
+| 🔴N a TUI first-turn failure cannot ride the create response | decision 2: the deliverer writes `InitialPromptState` on the meta; the pane reads it (resend on `unknown` after 60 s) |
+| 🔴O filtering on `terminalDriver` truthiness drops claude and agy | decision 8: `terminalDriver !== false` minus shell |
+| 🟡J–L | copy cleanup (synchronous on failure, at group end, all at startup); absolute path under the generated root; ja/en parity confirmed |

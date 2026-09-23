@@ -16,6 +16,10 @@
   反映。参照画像は**投入時に固定コピー**へ写して provider に原本のパスを渡さない（CLI 子プロセスも
   含む）、試走ツールに heartbeat、版 id は投入前に予約、生成物 root を参照の許可 root に、
   決定 1 の例外は 2 件。末尾の対応表に追記。
+- **改訂 4（2026-09-23）**: 4 巡目（[113-adr-review](../log/113-adr-review.md) §7・新規 🔴 4・🟡 3）を
+  反映。固定コピーは**ジョブ id でなく入力セット id**で持ち `Request` に原本の記録欄を足す、press は
+  **投入前の全文行＋投入後の結果行**の 2 行、初回ターンの配達状態はメタの欄でペインが読む、TUI 候補は
+  `terminalDriver !== false`。末尾の対応表に追記。
 - 番号: `develop` の最大は 0098。0099 は未マージの 2 ブランチ（`temp/sidv2bw`・`temp/sjys6nk`）が
   取っているので 0100。
 - 関連: [0081](0081-image-generation-pane.ja.md)（今の画像生成ペイン。本 ADR は決定 6・7 を覆し、
@@ -76,8 +80,9 @@ ADR 0081 のペインは「LLM を挟まずに」絵を量産する。プロン�
 「LLM を挟まずに」（0081）は生成については変わらない。エージェントが触るのは**下書き**で、
 生成ボタンを押すのは人、押したときに走るのは 0081 のジョブキューそのもの。`POST /imagegen/jobs` の
 語彙・検証・ジョブ・試走・グループ・取消・EMA・サイドカー・`props`・使用量・CP の中継 7 行は
-そのまま。**例外は 2 件**: 決定 4 の番人（`inputs`/`mask` を投入時に検査して固定コピーへ写す）と、
-決定 9 の `POST …/press`（同じキュー関数を呼ぶ入口が 1 つ増える）。
+そのまま。**例外は 2 件**: 決定 4 の番人（`inputs`/`mask` を投入時に検査して固定コピーへ写す——
+`Request` に原本の記録欄が増え、ジョブを組む順序に「投入前にコピー」が入る）と、決定 9 の
+`POST …/press`（同じキュー関数を呼ぶ入口が 1 つ増える）。ワイヤの語彙は変わらない。
 
 ### 決定 2 — 「スタジオ」を Agent に置く。セッションとは別の id で、セッションを 1 本結ぶ
 
@@ -101,9 +106,12 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
   画面が解決した ready な行の id、`model` は空でも良い）→ ② `GET …/persona` → ③ セッション作成要求に
   `studio` を渡し、Agent は**起動より前に**メタへ `Studio` を書き、スタジオの `session` を結んでから
   `initial_prompt` を送る。③ が失敗したらスタジオは結び無しで残る（下書きは失わない）。
-  作成は成功したが初回ターンの送信が失敗したとき（現行は記録だけで成功を返す・
-  `session_handlers.go:1014-1035`）は、作成の応答に `warning` を載せ、ペインが「人格を送れません
-  でした・再送」を出す（再送＝初回ターンとして送り直す）。
+  初回ターン（人格）の配達は**メタの欄 `InitialPromptState`**（`delivered` / `failed` / `unknown`）
+  でペインが読む（改訂 4）: Managed は作成処理の中で `h.Send` するので同期に書け、TUI は応答と
+  独立した goroutine で配達し（`session_handlers.go:1050`・`session_io.go:848-920`）確認できなくても
+  記録だけなので、配達側がこの欄を書く。ペインはスタジオのポーリングでこの欄を見て、`failed` か
+  60 秒経っても `unknown` なら「人格を送れませんでした／確認できません・再送」を出す（再送＝
+  初回ターンとして送り直す）。
   **ADR 0081 の利用者は何も失わない。**
 
 ### 決定 3 — 契約はセッション側 af MCP サーバのツール 4 本。`generate_image` は広告しない
@@ -148,16 +156,19 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
   1 手。**前提は投入側の番人**（改訂 3 で形を変えた）——`spec()` の文字列検査だけでは検査後に
   symlink を差し替えられる（TOCTOU）。しかも provider は自分で読むとは限らない: codex は参照パスを
   `-i` で**別プロセス**に渡し（`codex.go:173-180`）、agy はプロンプトの文字列で渡す（`agy.go:449-458`）
-  ので、Agent 側の open をどう固めても子が後で原本を開く。したがって**投入時に、要求の `inputs`／
-  `mask` を root 固定の open（`openat2NoSymlinks` と同型）で読み、ジョブ私有の固定コピー
-  `generated/console/inputs/<job>/` に写し、`JobSpec` にはコピーのパスだけを入れる**。provider は
-  原本のパスを一度も見ない（comfy の事前読取り `comfy.go:1045`・アップロード `:1193`・
-  `openai_compat.go:404`・codex・agy のどれも）。「provider は要求のパスを受け取らない」を型で守る
-  （`JobSpec.Inputs` はコピーの型）。読める元は **browse root と生成物 root
-  `~/.cache/agent-fleet/generated/`** の 2 つ（既定の出力先は browse root の外＝`store.go:28-34`・
-  `AF_BROWSE_ROOT` が home でない配備で「参照にする」が自分の絵を拒まないため）、拒否リストは
-  Files ペインと共有。コピーはジョブの終了後に消す（サイドカーが原本のパスを記録する）。
-  番人が入るまで解放しない。
+  ので、Agent 側の open をどう固めても子が後で原本を開く。したがって**投入の前に**（改訂 4:
+  ジョブ id は `Enqueue` の中で採番される `jobs.go:297-327` ので、ジョブ単位にはできない）、要求の
+  `inputs`／`mask` を root 固定の open（`openat2NoSymlinks` と同型）で読み、**入力セット**
+  `~/.cache/agent-fleet/generated/console/inputs/<set>/`（set id は Agent が採番・生成物 root の絶対
+  パス・利用者のアップロード先と親は同じだが別階層）に写す。`Request` は **provider に渡す
+  コピー（`Inputs`・`Mask`）と、サイドカーに記録する原本（`InputOrigins`・`MaskOrigin`）を別の欄**で
+  持つ（今は同じ値を両方に使っている `jobs.go:426-461, 477-511`）。provider は原本のパスを一度も
+  見ない（comfy の事前読取り `comfy.go:1045`・アップロード `:1193`・`openai_compat.go:404`・codex・
+  agy のどれも）。読める元は **browse root と生成物 root** の 2 つ（既定の出力先は browse root の外
+  ＝`store.go:28-34`・`AF_BROWSE_ROOT` が home でない配備で「参照にする」が自分の絵を拒まないため）、
+  拒否リストは Files ペインと共有。掃除: 投入が失敗したら同期に消す、グループの最後のジョブが
+  終わったら消す、起動時は `inputs/` の全セットを消す（キューはメモリなので生き残りは無い・
+  今の掃除は `trial/` しか見ない `store.go:170-195` ため足す）。番人が入るまで解放しない。
 - `mask` は人だけ（塗るのは人の手）。**`needs_mask` は保存する旗ではなく導出値**（`op=inpaint` かつ
   `mask` が空）で、`get_image_studio` が読みだけで返す——人がマスクを置けば消える（改訂 2）。
   エージェントは `op=inpaint` を書くだけで良く、ペインが導線を出す。P0 の導線は**既存のマスクの
@@ -213,8 +224,9 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 - **claude は TUI しか無い。** 「高度な推論」を claude（Opus）で満たすには TUI が P0 に要る。
   決定 5 が pull なので Managed と TUI の差は添付の渡し方と起動・resume の手順だけ。kind 一覧は
   **実行方式ごとに出所が違う**（改訂 2）: Managed の候補は `managedDrivers`、TUI の候補は Console の
-  `repoLaunchKinds`（`agents/registry.ts:760`）のうち `terminalDriver` を持つ kind（shell は除く・
-  claude と agy はここにだけ居る）。1 つの表から引くと claude が落ちる。
+  `repoLaunchKinds`（`agents/registry.ts:760`）のうち **`terminalDriver !== false`** の kind から
+  shell を除いた物（欄は省略＝可で、false を持つのは lcpp と muse だけ・`registry.ts:134-148, 566, 614`。
+  真偽や欄の有無で絞ると claude と agy が落ちる）。1 つの表から引くと claude が落ちる。
 - **worktree 既定 ON** は、af サーバが自分のセッションを cwd で推測する kind で推測を一意にする
   唯一の手段。OFF を選べるのは **kind × 実行方式のすべての経路で `AF_SESSION_NAME` が届く組**
   だけ: Terminal（全 kind）と lcpp。**codex Managed は不可**——新規スレッドには届くが、Agent の
@@ -236,15 +248,17 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 - **版**: 生成ボタン（人の試走・投入・エージェントの試走）を押した瞬間の写し。同じ JSONL に
   **独立した追記イベント**（`kind: "press"`・下書きの全文・seed 方針・ジョブ／グループ id・書き手・
   失敗なら `error`）として積む——編集せずに 2 回押せば press が 2 件。スタジオがあるときの押下は
-  Console が `POST /imagegen/studios/{id}/press {trial|enqueue…}` を 1 回呼ぶ。Agent の順序（改訂 3）:
-  ① **版 id を予約**（ファイルには書かない）→ ② `studio` と `version` を `JobSpec` に載せて今の
+  Console が `POST /imagegen/studios/{id}/press {trial|enqueue…}` を 1 回呼ぶ。Agent の順序（改訂 4）:
+  ① **`press` 行を書く**（版 id・下書きの全文・seed 方針・書き手・押した時刻＝「この設定に戻す」に
+  要る物は全部ここ）→ ② 固定コピー（決定 4）→ ③ `studio` と `version` を `JobSpec` に載せて今の
   キュー関数へ投入（worker は応答前に走り出す・`jobs.go:297-342`。サイドカーは `JobSpec` の
-  `version` から書くので、log に行が無くても絵と版の対応は落ちない）→ ③ 返ったジョブ／グループ id
-  か失敗を持って press 1 行を書く。②と③の間に Agent が落ちた場合、キューもメモリなので絵は
-  出ないか出てもサイドカーに `version` がある——起動時に `history.jsonl` の `version` が log に無い
-  行を見つけたら `recovered: true` の press 行を合成する。`POST /imagegen/jobs` の語彙も検証も
-  キューも変わらない（決定 1 の例外 2）。スタジオ無しの押下は今どおり `/imagegen/jobs`。
-  「押した印」を編集行に付けることはしない。
+  `version` から書く）→ ④ **`press_result` 行を書く**（版 id・ジョブ／グループ id、失敗なら
+  `error`）。版の状態は `press_result` の有無と中身から導く。①の後に落ちたら `press_result` の無い
+  版が残る——起動時に、サイドカーを走査して（`history.jsonl` の有無や末尾欠けに依らない）その
+  `version` の絵があれば `press_result` を合成し、無ければ `lost` の `press_result` を書く。
+  サイドカーは下書き全文を持たない（`props.go:42-90`・負の指示は合成後の値）ので、復元の元は
+  常に①の行。`POST /imagegen/jobs` の語彙も検証もキューも変わらない（決定 1 の例外 2）。
+  スタジオ無しの押下は今どおり `/imagegen/jobs`。「押した印」を編集行に付けることはしない。
 - **絵の履歴**: `GET /imagegen/history?studio=&before=&limit=`。裏は `generated/console/history.jsonl`
   （サイドカーを書くときに 1 行追記・無ければ走査して再生成）。サイドカーとこの行は `studio` と
   `version`（press の id）を持つ＝**絵と版の対応は永続**で、Agent 再起動を跨ぐ。操作は「この設定に
@@ -386,3 +400,13 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 | 🔴J 応答後の press 追記では絵に版 id が渡らない | 決定 9: 版 id を投入前に予約し `JobSpec` に載せる。落ちたら起動時に合成 |
 | 🔴K browse root が repo の配備で自分の絵を参照に戻せない | 決定 4: 読める元は browse root＋生成物 root |
 | 🟡E〜I | 指紋は子が計算＝watcher に揃える／home 固定時の編集面は「メモ」／TUI 候補は `repoLaunchKinds` の `terminalDriver`／初回ターン送信失敗は `warning`＋再送／決定 1 の例外は 2 件 |
+
+## 改訂 4 で変えたこと（2026-09-23・[113-adr-review](../log/113-adr-review.md) §7）
+
+| 指摘 | 変更 |
+|---|---|
+| 🔴L ジョブ別コピーは採番の順序で作れず、provider 用と記録用が同じ欄 | 決定 4: 入力セット id で投入前に写す。`Request` に原本の記録欄（`InputOrigins`・`MaskOrigin`）。決定 1 の例外に明記 |
+| 🔴M `recovered` 行をサイドカーから合成できない | 決定 9: press は投入前の全文行と投入後の結果行の 2 行。復元の元は常に前者。起動時はサイドカーを走査 |
+| 🔴N TUI の初回ターン失敗は作成応答に載らない | 決定 2: メタの `InitialPromptState` を配達側が書き、ペインが読む（60 秒で unknown なら再送） |
+| 🔴O `terminalDriver` の真偽で絞ると claude・agy が落ちる | 決定 8: `terminalDriver !== false` から shell を除く |
+| 🟡J〜L | コピーの掃除（失敗時同期・グループ終了・起動時全消し）／置き場を生成物 root の絶対パスで／日英対応は確認済み |
