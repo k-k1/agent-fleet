@@ -558,3 +558,133 @@ S4 の 3×3 タイル比:
 | `zz-exp-qwen-image-edit-2511` enabled | `False` ✓ |
 | `vram_need_mib` / `vram_need_model` | 17,774 MiB / krea2_raw_fp8_scaled ✓ |
 | `class_is_default` / `class_default` | `True` / `g4dn-spot` ✓ |
+
+## 14. PR #913 実機受け入れ（ADR 0094 改訂 — `comfyQwenEditSize` + crop 廃止）
+
+PR #913（`temp/souwt3c`・`dde0b609b`）の変更点:
+
+- `scale` ノードを `FluxKontextImageScale`（中央クロップあり）→ `ImageScale(crop="disabled", lanczos)` に差し替え。寸法は `comfyQwenEditSize(input_W, input_H)` が返す不動点値。
+- inpaint 配線から `maskscale`（`FluxKontextImageScale`）を除去。`LoadImage(mask) → ImageToMask(red) → SetLatentNoiseMask(enc)` に直結。
+- `comfyPictureSize` を追加（EXIF Orientation 5–8 で W/H を交換）。
+
+**測定対象エンジン**: g6e.xlarge（L40S 46GB）、model: `zz-exp-qwen-image-edit-2511`（fp8mixed）。seeds 701+。
+
+---
+
+### (a) 帯生存テスト（1820×1024 → 1368×768）
+
+入力: `input_wide_bands.png`（上端 20px マゼンタ・下端 20px シアン）。プロンプト: 看板の文字を CLOSED に変更。
+
+| 腕 | scale ノード | 出力寸法 | マゼンタ率（上端 25px） | シアン率（下端 25px） | 帯の生存 |
+|---|---|---|---|---|---|
+| test（PR#913） | ImageScale 1368×768 | 1368×768 | **0.600** | **0.600** | **生存 ✓** |
+| neg ctrl | FluxKontextImageScale | 1392×752 | 0.000 | 0.000 | クロップ ✓ |
+
+PR#913 は帯を保持（rate 0.60）、FluxKontext は帯を切り落とす（rate 0.00）。クロップ廃止の効果を確認。
+
+---
+
+### (b) T2 写真 勾配エネルギー比（1496×800 → 1400×752）
+
+入力: `out_t2_krea2.png`（1496×800）。`comfyQwenEditSize(1496, 800) = (1400, 752)`（不動点）。編集ボックス: (880, 165, 1230, 465)。プロンプト: 赤いマグを白い磁器ティーポットに置換。
+
+| 腕 | 寸法 | エネルギー比 | 備考 |
+|---|---|---|---|
+| test（PR#913） | 1400×752 | **1.091** | 不動点 → S1（1.029）水準 ✓ |
+| neg ctrl（FluxKontext） | 1392×752 | 0.9997 | 1392×752 も不動点のため比は近接 |
+
+受け入れ基準「1.0 前後（S1 ≈ 1.03 の再現）」: **PASS**。FluxKontext 負の対照は同様に高比率だが、これは 16:9 比率では FluxKontext も不動点サイズ（1392×752）を偶然選ぶため（§13 S1/S2 で実証済みの構造）。
+
+---
+
+### (c) inpaint 境界ずれ（1820×1024 → 1368×768、maskscale 廃止）
+
+入力: `input_wide.png` + `wide_mask_band.png`（上端 200 行がマスク）。プロンプト: 壁の上部を明るい緑色に塗る。seed=708。
+
+| 測定項目 | 値 |
+|---|---|
+| 出力寸法 | 1368×768 |
+| 入力マスク境界 | y=200（1820×1024 座標） |
+| 期待出力境界（比例） | y=200×768/1024 = 150px |
+| 実測出力境界 | y=147px |
+| **境界ずれ** | **3px** ≈ T3（3.0px） ✓ |
+
+PR#913 の `SetLatentNoiseMask` 直結配線は、T3 の maskscale 廃止変異と同一の 3px ずれ。クロップなし比例マッピングの予測（150px）と一致。**PASS**。
+
+---
+
+### (d) 3:2 写真エネルギー比（1536×1024 → 1256×840）
+
+入力: `out_s0_krea2.png`（1536×1024）。`comfyQwenEditSize(1536, 1024) = (1256, 840)`（不動点）。編集ボックス: (480, 320, 1080, 740)。
+
+§13 比較: S3（FluxKontext → 1248×832 = 非不動点）= 0.405、S4（ImageScale → 1264×832 = 不動点）= 0.776。
+
+| 腕 | 寸法 | エネルギー比 | S3 との差 |
+|---|---|---|---|
+| test-d1（PR#913 seed=701） | 1256×840 | **0.6734** | +0.268 ↑ |
+| test-d2（PR#913 seed=702） | 1256×840 | **0.6290** | +0.224 ↑ |
+| neg ctrl（FluxKontext seed=701） | 1248×832 | 0.3952 | —（S3 再現） |
+| **d-mean（2 seeds）** | | **0.651** | +0.246 vs S3 |
+
+1256×840 は S4（1264×832）と異なる不動点。d-mean=0.651 はいずれも S3（0.405）を明確に上回る（> 0.55 基準 ✓）。**PASS**。
+
+---
+
+### (e) 新規 krea2 写真での編集（16:9 / 3:1）
+
+krea2 t2i で新規生成: seed=703（1820×1024）、seed=704（1920×640）。編集プロンプト: 赤いマグを白いティーポットに置換。
+
+| 腕 | 入力寸法 | 出力寸法（固定点） | エネルギー比 | 負の対照比 |
+|---|---|---|---|---|
+| 16:9 test（PR#913） | 1820×1024 | 1368×768 | 0.7134 | — |
+| 16:9 neg（FluxKontext） | 1820×1024 | 1392×752 | 0.7164 | — |
+| 3:1  test（PR#913） | 1920×640 | 1776×592 | 0.9596 | — |
+| 3:1  neg（FluxKontext） | 1920×640 | 1568×672 | 0.9852 | — |
+
+16:9 test ≈ neg（0.713 vs 0.716）: 16:9 比率では FluxKontext も固定点サイズ（1392×752、1568×672）を選ぶため両腕で品質差なし。いずれの比率も比は >> S3（0.405）。
+
+受け入れ基準: ratio > 0.60（S3 劣化水準を明確に上回る）かつ test ≥ neg×0.85（FluxKontext 対比で退行なし）。**PASS**。
+
+---
+
+### (f) EXIF Orientation=6 JPEG（縦位置 JPEG）
+
+`out_t2_krea2.png`（1496×800 横）を横位置で保存し EXIF Orientation=6 を付与した `orient6_t2.jpg` を使用。
+
+`comfyPictureSize` は Orientation=6 を検出し W/H を交換 → 有効寸法 (800, 1496)（縦位置）。`comfyQwenEditSize(800, 1496) = (752, 1400)`（縦位置の不動点）。
+
+| 測定項目 | 値 |
+|---|---|
+| 入力 JPEG stored サイズ | 1496×800 |
+| EXIF Orientation タグ | 6 |
+| `ImageScale` 指定寸法 | 752×1400（縦位置不動点） |
+| **出力サイズ** | **752×1400** ✓ |
+| 縦位置か | H(1400) > W(752) → **True** ✓ |
+
+出力は縦位置 752×1400。潰れなし。**PASS**。
+
+---
+
+### 受け入れ結果サマリ
+
+| テスト | 内容 | 数値 | 合否 |
+|---|---|---|---|
+| (a) | 帯生存（クロップ廃止）| test rate=0.60 / neg rate=0.00 | ✓ PASS |
+| (b) | T2 勾配エネルギー比 | 1.091（目標 ≈ 1.03） | ✓ PASS |
+| (c) | inpaint 境界ずれ | 3px（目標 T3 = 3px） | ✓ PASS |
+| (d) | S0 3:2 エネルギー比（2 seed） | 0.651 mean（目標 > 0.55） | ✓ PASS |
+| (e) | 新 krea2 写真 16:9 / 3:1 | 0.713 / 0.960（退行なし） | ✓ PASS |
+| (f) | EXIF Orientation=6 縦位置 | 752×1400（縦位置 ✓） | ✓ PASS |
+
+**全 (a)–(f) PASS**。
+
+### 後片付け確認（§14 実測後）
+
+`PUT /api/admin/engines/image/models/zz-exp-qwen-image-edit-2511 {"enabled":false}` で無効化。
+
+| 確認項目 | 結果 |
+|---|---|
+| `zz-exp-qwen-image-edit-2511` enabled | `False` ✓ |
+| `vram_need_mib` / `vram_need_model` | 17,774 MiB / krea2_raw_fp8_scaled ✓ |
+| `class_is_default` / `class_default` | `True` / `g4dn-spot` ✓ |
+| step_locked | `None`（固定なし） ✓ |
