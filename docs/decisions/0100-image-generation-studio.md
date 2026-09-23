@@ -10,6 +10,10 @@ English | [日本語](0100-image-generation-studio.ja.md)
   gpt-6-sol), [113-adr-review](../log/113-adr-review.md) (9 red, 12 yellow, 1 blue). Decisions 3, 4,
   8, 9 and 12 gained their missing contracts, a minimal picture history moved into P0, and the
   prerequisites were regrouped. The changes are listed at the end under "Changed in revision 1".
+- **Revision 2 (2026-09-23)**: folds in the same reviewer's second pass ([113-adr-review](../log/113-adr-review.md)
+  §5 — 7 new red, 3 yellow). Fixed: the call right after re-binding, the guard's coverage, the trial
+  tool's wait, `needs_mask`, the press write order, studio creation order, the source of the kind list.
+  Appended to the table at the end.
 - Number: `develop` tops out at 0098; 0099 is taken by two unmerged branches (`temp/sidv2bw`,
   `temp/sjys6nk`), hence 0100.
 - Related: [0081](0081-image-generation-pane.md) (today's image-generation pane; this ADR overturns
@@ -65,7 +69,7 @@ out wrong were corrected by the review):
 - The centre crop of instruction edit is gone (ADR 0094 revision #907, implementation #913, live
   acceptance in [log 112 §14](../log/112-kontext-crop-necessity.md) = #914). The mask canvas can start
   on log 111 §10's design. A mask-by-path field already exists in today's pane (PR #854,
-  `GenerateForm.tsx:96-100`).
+  `GenerateForm.tsx:468-476`; the "cannot press without a mask" check is at `:94-100`).
 
 ## Decisions
 
@@ -94,8 +98,13 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   session DB mirror — an unlisted field is dropped silently.
 - Keep the body small; write it under an in-memory lock (the chat store's `LockConv` shape) with
   tmp→rename (`fstore` has neither locking nor atomicity). The edit log (decision 9) is a separate file.
-- Without a session the pane keeps working on today's `localStorage` draft; the first message creates
-  the studio and moves the draft in. **Nothing an ADR 0081 user has today is lost.**
+- Without a session the pane keeps working on today's `localStorage` draft. **The studio is created
+  the moment "attach an agent" is pressed** (revision 2), in this order: ① create the studio (moving
+  the `localStorage` draft in; `provider` is the ready row id the pane resolved, `model` may be
+  empty) → ② `GET …/persona` → ③ create the session with `studio` in the request; the Agent writes
+  `Studio` into the meta and binds the studio's `session` **before launch**, then delivers
+  `initial_prompt`. If ③ fails the studio remains unbound (the draft is not lost). **Nothing an ADR
+  0081 user has today is lost.**
 
 ### Decision 3 — The contract is four tools on the session-side af MCP server. `generate_image` is not advertised
 
@@ -103,7 +112,7 @@ studio id. Versions and the edit log live in a separate file (decision 9).
 |---|---|
 | `get_image_studio` | draft, locks, **since last call** (human edits, rewinds, new results — at most 5 plus "N more"), model facts (family, knobs read, sizes, defaults, LoRAs with trigger words), the knowledge "summary" section, version summary. 8 KB cap |
 | `set_image_draft` | **partial update**: only the fields written change, `null` clears. **Validation on save is per field** (types, allow-lists, caps, locks, the path guard) and **an incomplete draft is allowed** (an empty prompt can be saved). Whole-request validation (`spec()`'s `bad_prompt` etc.) runs at enqueue and trial time. Locked fields are dropped with a reason |
-| `run_image_trial` | **takes no arguments**. Runs the draft stored in the studio (including `provider` and `model` — exactly the row the pane selected; **never** falls back to the Agent's default provider or warm model). Refuses with a reason when `model` is missing, `needs_mask` is set, or `spec()` fails. One picture, head of the queue, the family's trial steps, at most 3 waiting. Returns path, seed, warnings, elapsed. If the tool's own limit is hit (600 s on codex) it answers "still running (job id)"; the job and the version remain and show in the trial slot |
+| `run_image_trial` | **takes no arguments**. Runs the draft stored in the studio (including `provider` and `model` — exactly the row the pane selected; **never** falls back to the Agent's default provider or warm model). Refuses with a reason when `model` is missing ("choose a model"), when `op=inpaint` with an empty `mask`, or when `spec()` fails. One picture, head of the queue, the family's trial steps, at most 3 waiting. **Waits at most 120 s** (a warm engine answers in 8–21 s; shorter than every client's cap, codex's 600 s included): in time it returns path, seed, warnings and elapsed; otherwise the job id and "the result arrives in `get_image_studio`'s since". The job and the version remain and show in the trial slot |
 | `add_image_knowledge` | appends to decision 12's "record" section (scope, key, note, evidence) |
 
 - Advertised **only while the owning session is bound to a studio** (`Studio` on the meta that
@@ -112,8 +121,12 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   unmeasured — the acceptance run measures it). The decision reads only the meta, never `status`,
   so a slow Agent cannot make the tools flicker.
 - **`generate_image` is not advertised to a studio session** — `mcpImageGenAdvertise()` excludes it
-  when the owning session's meta carries `Studio`, and the call-side check reads the same set (the
-  existing "refuse anything not in the last advertised list" applies unchanged). **The guarantee covers
+  when the owning session's meta carries `Studio`. But the call-side check reads **the last
+  remembered tools/list** (`mcp_stdio.go:547-565`), so between a re-binding and the next tools/list
+  the old set still contains it. **The boundary is a re-check at call time**: before running
+  `generate_image` the server re-reads the owning session's meta and refuses with a reason if
+  `Studio` is set (exclusion from advertising is what the user sees; the re-check is the guarantee).
+  On re-binding the Agent bumps the tool fingerprint so `list_changed` fires sooner. **The guarantee covers
   the af path** (enqueuing N pictures into the studio's queue, and `generate_image`); a CLI's own
   built-in image tools (codex's `image_gen` etc., ADR 0069) are outside the advertised set and this
   ADR does not restrict them. **No tool enqueues N pictures.**
@@ -140,20 +153,26 @@ studio id. Versions and the edit log live in a separate file (decision 9).
 - `op` and `inputs` go to the agent: "change the sign in this picture to CLOSED" is one move across
   op, reference and instruction. **Precondition: the enqueue-side guard** — a string check in
   `spec()` (inside the browse root plus the Files pane denylist) is not enough on its own, because a
-  symlink can be swapped after the check (TOCTOU), so **the place that actually reads (the comfy
-  upload) opens the file root-pinned, like `openat2NoSymlinks`**. Not opened before the guard lands.
-- `mask` is person-only (painted by hand). The agent may set `needs_mask: true`; the pane shows the way.
-  In P0 that way is **the existing mask-by-path field** (PR #854 — a person points at an existing mask
+  symlink can be swapped after the check (TOCTOU), so **every place that reads a request path**
+  (comfy's size pre-read `comfy.go:1045`, its upload `:1193`, `openai_compat.go:404`, codex's reference
+  read, any future provider) goes through **one helper, `openRequestFile`** (a root-pinned open like
+  `openat2NoSymlinks`). "A provider never calls `os.ReadFile` on a request path" is pinned by an
+  AST-walking test (the same shape as the tool-name literal test). Not opened before the guard lands.
+- `mask` is person-only (painted by hand). **`needs_mask` is not a stored flag but a derived value**
+  (`op=inpaint` and `mask` empty) that `get_image_studio` reports read-only — it clears the moment a
+  person places a mask (revision 2). The agent only writes `op=inpaint`; the pane shows the way. In P0
+  that way is **the existing mask-by-path field** (PR #854 — a person points at an existing mask
   image); the canvas is P1 (decision 11). So `op=inpaint` can be written in P0, but nothing runs until
-  a person has placed a mask.
+  a person has placed a mask (the person's buttons keep stopping on an empty `mask`, as today).
 - **Per-field locks** (🔒). Writes to a locked field are dropped with a reason. No automatic locks.
 
 ### Decision 5 — The agent pulls context. The Console appends one visible cue line. Nothing is prepended
 
 The persona says "on every message, call `get_image_studio` first". **The persona comes from the
 Agent** (`GET /imagegen/studios/{id}/persona`, composed in the user's language); the Console passes it
-verbatim as `initial_prompt` in the "attach an agent" create request. On re-binding it is sent as the
-new session's first turn; on resume it is not sent. The Console appends one line
+verbatim as `initial_prompt` in the "attach an agent" create request (in decision 2's order: studio
+first, `Studio` on the meta, then the first turn — otherwise `get_image_studio` is not advertised on
+that turn). On re-binding it is sent as the new session's first turn; on resume it is not sent. The Console appends one line
 (≈30 tokens) at the **end** of the message:
 `[studio v4 · draft changed · 2 new results · rewind #9 → get_image_studio]`. The call does not
 depend on the cue (a message typed in a Terminal pane has none).
@@ -201,7 +220,9 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
 
 - **claude is TUI-only.** Meeting "deep reasoning" with claude (Opus) puts TUI in P0. With decision 5
   pulling, Managed and TUI differ only in how attachments travel and in launch/resume. The kind list
-  comes from `managedDrivers`.
+  has **a different source per execution method** (revision 2): Managed candidates come from
+  `managedDrivers`, TUI candidates from the launch dialog's TUI kind table (claude and agy exist only
+  there). A single list would drop claude.
 - **Worktree on by default** is the only way to make cwd-based identity unambiguous for the kinds that
   guess. Off is allowed only for **kind × execution-method pairs where `AF_SESSION_NAME` arrives on
   every path**: Terminal (all kinds) and lcpp. **codex Managed is not one of them** — a fresh thread
@@ -223,9 +244,14 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
   The rewind entry's before/after are "now" and "the restored point".
 - **Versions**: the draft as it was when a Generate button was pressed (a person's trial or batch, or
   the agent's trial). Appended to the same JSONL as **independent events** (`kind: "press"`, full
-  draft, seed policy, job/group id, author) — pressing twice without editing yields two press entries;
-  a press whose enqueue failed is kept with `error`. No "pressed" mark is ever added to an edit entry
-  (that would violate append-only).
+  draft, seed policy, job/group id, author, `error` on failure) — pressing twice without editing yields
+  two press entries. **Written after the enqueue answers** (revision 2): with a studio, a press is one
+  Console call, `POST /imagegen/studios/{id}/press {trial|enqueue…}`; the Agent enqueues through
+  today's queue function internally and then writes the press line with the returned job/group id or
+  the failure (two requests could not put the id on the first line). The vocabulary, validation and
+  queue of `POST /imagegen/jobs` are unchanged — **decision 1's second exception** is "one more entry
+  point calling the same function". Without a studio a press still goes to `/imagegen/jobs`. No
+  "pressed" mark is ever added to an edit entry.
 - **Picture history**: `GET /imagegen/history?studio=&before=&limit=` backed by
   `generated/console/history.jsonl` (one line appended with each sidecar; rebuilt from sidecars if
   missing). The sidecar and that line carry `studio` and `version` (the press id), so **the link
@@ -256,10 +282,12 @@ Four layers: 0 family facts (the Agent's table, decision 7) / 1 tenant notes (ca
 `prompt_notes`, 0081 open item 2, P1) / **2 workspace knowledge (this decision)** / 3 the studio's
 conversation.
 
-- Layer 2 is **`<browse root>/imagegen-knowledge/{families,models}/<key>.md`** (the default browse
-  root is home, i.e. `~/imagegen-knowledge/`; deriving the location from the browse root keeps it
-  visible in the Files pane even where `AF_BROWSE_ROOT` is changed. Outside the denylist; recreate
-  deletes only `~/repos`). One file per model and per family, **four sections** (summary
+- Layer 2 is **`~/imagegen-knowledge/{families,models}/<key>.md`** (fixed directly under home;
+  outside the denylist; recreate deletes only `~/repos`). **Durability wins over visibility**
+  (revision 2): deriving the location from the browse root would delete the knowledge along with a
+  browse root pointed under `~/repos`. Where the browse root is not home the folder is not shown in
+  the Files pane, but the pane's notes, `add_image_knowledge` and Read still work (only direct editing
+  in the Files pane is lost). One file per model and per family, **four sections** (summary
   ≤1 KB, settings, prompts, record = append-only). The record is written through
   `add_image_knowledge`; the other sections through the agent's Edit and the person's Files pane.
   **Only a person deletes.** The agent writes only when told "remember this" or when the person judges
@@ -358,3 +386,16 @@ conversation.
 | 🔴8 the guard lacks symlink/TOCTOU handling | decision 4, prerequisite ①: root-pinned open where the file is read |
 | 🔴9 `op=inpaint` writable in P0 but the mask UI is P1 | decision 4: P0 uses the existing mask-by-path field; canvas in P1 |
 | 🟡1–12 | cue scope; rewind vs locks; binding truth; three identity states; vocabulary list; line refs; browse root; prerequisites regrouped; the P0 agent does not see pictures; canvas acceptance; 0022 revision; direct reference to log 112 §14 |
+
+## Changed in revision 2 (2026-09-23, [113-adr-review](../log/113-adr-review.md) §5)
+
+| Finding | Change |
+|---|---|
+| 🔴A right after re-binding the old advertised set still allows `generate_image` | decision 3: re-read the owning session's meta at call time and refuse; exclusion is UX, the re-check is the guarantee |
+| 🔴B the root-pinned open covered only comfy's upload | decision 4: every request-path read goes through one helper; pinned by an AST test |
+| 🔴C an answer after the 600 s cap never reaches the client | decision 3: wait at most 120 s, then return the job id; the result arrives in `get_image_studio`'s since |
+| 🔴D nothing clears `needs_mask` | decision 4: derived, not stored (`op=inpaint` and empty `mask`) |
+| 🔴E a press line cannot hold the id and the failure | decision 9: one `POST …/press` request enqueues first, then writes (decision 1's second exception) |
+| 🔴F studio creation vs `initial_prompt` order | decisions 2, 5: create the studio on "attach" → persona → create the session with `studio` → bind before the first turn |
+| 🔴G a kind list from `managedDrivers` alone drops claude | decision 8: separate sources for Managed and TUI |
+| 🟡A–C | mask field line ref; knowledge root fixed under home (durability first); on migration `provider` is the resolved row id and an empty `model` only refuses the trial |
