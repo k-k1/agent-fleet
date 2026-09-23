@@ -589,3 +589,119 @@ Console は結び済みを成功と見ても最初の人格ターンが無い。
 | 🟡C | **反映済み** | 移行時の `provider` は画面が解決した ready 行 id、空 `model` の試走だけ拒否（日本語:94-99,107） |
 
 前回 🟡A〜C は **反映済み 3／不十分 0／未反映 0**。
+
+## 7. 改訂 3 の再レビュー（2026-09-23）
+
+- 対象: `temp/s24yagr` の `d5b0db721` をこの worktree に取り込んだ後の
+  [ADR 0100 日本語](../decisions/0100-image-generation-studio.ja.md) と
+  [英訳](../decisions/0100-image-generation-studio.md)。§0〜§6 は変更していない。
+- 順序: 改訂後の日英本文をまず独立して通読し、追加契約を実コードの流れに当てた（7.1）。
+  次に §6 の 🔴H〜K・🟡E〜I を 1 件ずつ判定した（7.2）。実 CLI は起動していない。
+- 判定は ADR の契約についてのもの。**反映済み**は元の論点への答えが成立、
+  **不十分**は同じ論点を破る経路が残る、**未反映**は変更が無い、を意味する。
+
+### 7.1 改訂後の本文から新たに見つけた点
+
+#### 🔴L 「ジョブ別コピー」と `JobSpec.Inputs` は現行キューの順序では同時に作れない
+
+決定 4 は投入時に `generated/console/inputs/<job>/` へ**ジョブ私有**のコピーを置き、
+`JobSpec.Inputs` を「コピーの型」にして provider には原本パスを渡さず、サイドカーには
+原本パスを記録するとする（ADR 日本語:147-160／英語:163-178）。現行の `JobSpec` に
+`Inputs` 欄は無く、`Request.Inputs []string` と `Request.Mask` を内包する
+（`agent/internal/imagegen/jobs.go:214-229`、`imagegen.go:76-85`）。ジョブ id は
+`Enqueue` の**内部**で初めて採番される（`jobs.go:297-327`）。したがって呼出し前に
+`JobSpec` へ `<job>` のコピーを入れることはできない。さらに worker が provider に渡す
+`jobRec.req` と、サイドカーに写す `jobRec.req.Inputs/Mask` は現在**同じ値**
+（同:426-461,477-511）。コピーへ置換するだけでは、サイドカーが終了後に消すコピーを
+原本として記録する。逆に原本を保持すると provider に渡る。**ジョブ id を作った後、
+worker を起こす前に各ジョブのコピーを作り、provider 用の型とサイドカー用の原本パスを
+別に保持する**順序・型を決める必要がある。`mask` にも同じ分離が要る。
+決定 1 の「ジョブはそのまま」（日本語:74-80）と、決定 9 の「キューも変わらない」
+（日本語:236-247）は、このジョブ構築順序と記録形を変える範囲を例外として認めるべきである。
+
+#### 🔴M `recovered: true` の press 行をサイドカーから復元できない
+
+決定 9 は press を**下書き全文・seed 方針・書き手・ジョブ／グループ id**の 1 行とし、
+投入と追記の間に落ちたら `history.jsonl` の `version` から同じ id の
+`recovered: true` 行を合成する（ADR 日本語:236-250／英語:264-280）。しかし
+サイドカーの `ImageProps` は生成結果の記録であり、下書き全文・`seed_policy`・`jobs`・
+`out_dir`・書き手を持たない（`agent/internal/imagegen/props.go:42-90`）。特に
+`Negative` は**合成後**の値で、元の下書きとは異なる（`jobs.go:477-511`）。
+その情報だけでは「この設定に戻す」に使える press を合成できない。
+また絵と sidecar の書込みは先で、`history.jsonl` は別の追記ファイルなので、落ちる時点に
+よっては sidecar があるのに index 行だけ無い。index が存在するが末尾を欠く場合は
+「無ければ走査して再生成」（ADR 日本語:248-250）にも該当しない。
+**投入前に復旧用の下書き全文を永続化する**か、sidecar 自体へその全文を持たせ、
+起動時は index の有無によらず sidecar と log を突き合わせる契約が要る。
+
+#### 🔴N TUI の初回ターン失敗を作成応答の `warning` に載せられない
+
+決定 2 は初回ターン送信が失敗したとき、作成応答に `warning` を載せてペインに再送を
+出す（ADR 日本語:99-107／英語:107-116）。Managed は作成処理内で `h.Send` するが、
+**TUI は応答と独立した goroutine で配達し、応答は完了を待たない**
+（`agent/internal/sessionx/session_handlers.go:1014-1053`）。配達関数は最大 30 秒ずつ
+起動・composer を待ち、失敗を返さず、確認できなくてもログだけ書く
+（`agent/internal/sessionx/session_io.go:848-896,902-920`）。TUI を P0 に含める決定 8
+（ADR 日本語:207-225）では、作成応答時にまだ結果が存在せず、失敗を `warning` に
+含められない。**TUI は配達状態を後からペインへ通知・照会できる口**を定め、
+確認不能時の再送をどう扱うか決める必要がある。
+
+#### 🔴O `terminalDriver` の真偽で絞ると claude・agy が落ちる
+
+決定 8 は TUI 候補を `repoLaunchKinds` のうち `terminalDriver` を**持つ** kind とする
+（ADR 日本語:213-217／英語:239-244）。現行 `terminalDriver?: boolean` は
+**省略または true が Terminal 可**、false だけが不可（`con/agents/registry.ts:134-148`）。
+`claude`・`agy` はこの欄を省略し、false を持つのは lcpp・muse だけ
+（同:187-220,318-350,566,614）。`filter(k => agentOf(k).terminalDriver)` や
+欄の存在検査を実装すれば、必要な claude と agy が落ちる。**`terminalDriver !== false`**
+で絞り、shell を別に除く、と式まで決める必要がある。
+
+#### 🟡J 固定コピーの失敗・中断時の掃除を決める
+
+決定 4 はコピーを「ジョブの終了後に消す」（ADR 日本語:151-160／英語:169-178）。
+投入途中で数枚のコピーに失敗した場合と、worker の途中で Agent が落ちた場合は
+終了処理が走らない。現行の `sweepGeneratedNow` は `generated/console` 配下を
+**trial 以外は走査しない**（`agent/internal/imagegen/store.go:170-195`）ため、
+home に残った `<job>` ディレクトリは recreate を跨いで貯まる。enqueue の失敗では
+同期的に消し、起動時には残った私有コピーを走査して消す規則が必要。
+
+#### 🟡K 固定コピーの置き場を絶対 root で書く
+
+決定 4 の `generated/console/inputs/<job>/`（ADR 日本語:151-159）は、現行の
+`InputPicker` が `/fs/upload` へ使う **browse root 相対の**
+`generated/console/inputs/` と同じ表記（`con/features/imagegen/parts/InputPicker.tsx:1-16,56-72`）。
+一方、決定 4 の生成物 root は `~/.cache/agent-fleet/generated/`、既定の画像も
+そこに置かれる（`agent/internal/imagegen/store.go:28-34,50-53`）。browse root が
+home 以外なら 2 つは別の場所である。固定コピーの絶対 root を明示すると、
+利用者アップロードや Files ペインへの露出・掃除範囲を取り違えずに実装できる。
+
+#### 🟡L 改訂 3 の日英対応と体裁
+
+改訂 3 の 4 件の 🔴、5 件の 🟡、決定 1・2・3・4・8・9・12、影響と P0 前提、末尾の
+対応表は日英で条件・数値・行数が一致する（ADR 日本語:15-18,74-160,207-287,
+304-388／英語:17-21,81-178,233-325,345-436）。新たな訳落ち・訳し過ぎや
+根拠行のずれは見つからない。上の L〜O は両言語に同じく残る。
+
+### 7.2 §6 の指摘を 1 件ずつ照合
+
+| 前回 | 判定 | 改訂 3 の根拠と残る点 |
+|---|---|---|
+| 🔴H | **不十分** | 原本を固定コピーへ写す契約は追加（ADR 日本語:147-160）。`JobSpec.Inputs` の時点と provider／sidecar の二重表現は 🔴L |
+| 🔴I | **反映済み** | 試走にも 10 秒の progress heartbeat を追加（日本語:115） |
+| 🔴J | **反映済み** | 投入前に版 id を予約して job へ渡す（日本語:236-246）。異常終了時の全文復旧は新規 🔴M |
+| 🔴K | **反映済み** | browse root と生成物 root の 2 つを安全な参照元にした（日本語:151-160） |
+
+前回 🔴H〜K は **反映済み 3（I・J・K）／不十分 1（H）／未反映 0**。
+
+| 前回 | 判定 | 改訂 3 の根拠と残る点 |
+|---|---|---|
+| 🟡E | **反映済み** | 指紋は MCP 子が計算し、広告更新は watcher に揃えた（ADR 日本語:122-128） |
+| 🟡F | **反映済み** | home 以外の browse root ではペインの「メモ」が 4 節を編集すると明記（日本語:272-280） |
+| 🟡G | **不十分** | `repoLaunchKinds` を示した（日本語:213-217）が、`terminalDriver` の省略＝可が抜ける 🔴O |
+| 🟡H | **不十分** | `warning`＋再送を足した（日本語:99-107）が、TUI の非同期配達は 🔴N |
+| 🟡I | **反映済み** | 決定 1 を例外 2 件にした（日本語:74-80） |
+
+前回 🟡E〜I は **反映済み 3（E・F・I）／不十分 2（G・H）／未反映 0**。
+
+**総評**: 決定の骨格と日英対応は ADR として成立しているが、🔴L〜O の契約を補うまでは
+proposed として実装へ渡すには早い。主にコピーと履歴のデータの持ち方、TUI の成立条件を直す必要がある。
