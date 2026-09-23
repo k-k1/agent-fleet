@@ -154,4 +154,22 @@ describe("CleanupModal cache section", () => {
     expect(row.textContent).toContain("（一部）");
     expect(row.textContent).toContain("一部だけ");
   });
+
+  it("keeps the partial mark on a keep row that could clear nothing", async () => {
+    candidates = [
+      cacheRow("pasted", {
+        action: undefined,
+        safety: "keep",
+        truncated: true,
+        unreadable: 1,
+        reason_key: "clean.reason.cache_unreadable",
+        bytes: undefined,
+        dirs: undefined,
+      }),
+    ];
+    await render();
+    const row = document.querySelector(".clean-type-cache")!.closest(".clean-row")!;
+    expect(row.textContent).toContain("読めないフォルダあり");
+    expect(row.textContent).toContain("（一部）");
+  });
 });

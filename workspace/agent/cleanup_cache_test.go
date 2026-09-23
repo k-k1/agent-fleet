@@ -297,3 +297,63 @@ func TestRestoreWritesAMissingTranscript(t *testing.T) {
 		t.Fatalf("transcript = %q, %v", got, err)
 	}
 }
+
+// TestRestoreNeverReplacesATranscriptThatAppears (fourth review, serious): a transcript that
+// shows up after the restore's first check — while it stages — still wins. Placing is a hard
+// link, which fails on an existing file; a rename would have replaced it.
+func TestRestoreNeverReplacesATranscriptThatAppears(t *testing.T) {
+	cacheTestHome(t)
+	id, m := archivedSession(t, "srest05")
+	live := filepath.Join(os.Getenv("HOME"), "srest05.jsonl")
+	newer := []byte("{}\n{\"turn\":2}\n")
+	restoreAfterStage = func() {
+		if err := os.WriteFile(live, newer, 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { restoreAfterStage = nil })
+	if _, err := restoreCleanupArchive(id); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(live); !bytes.Equal(got, newer) {
+		t.Fatalf("the transcript that appeared was replaced with %q", got)
+	}
+	if _, ok := session.ReadMeta(m.Name); !ok {
+		t.Fatal("the meta did not come back")
+	}
+	if left, _ := filepath.Glob(filepath.Join(os.Getenv("HOME"), ".restore-*")); len(left) != 0 {
+		t.Fatalf("staging files left behind: %v", left)
+	}
+}
+
+// TestRestoreIsAllOrNothing (fourth review, medium): when a transcript cannot be placed, the
+// restore fails and brings no meta back — not a session with a hole where its conversation was.
+func TestRestoreIsAllOrNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory anyway")
+	}
+	cacheTestHome(t)
+	home := os.Getenv("HOME")
+	id, m := archivedSession(t, "srest06")
+	restoreAfterStage = func() {
+		// Staged already; now the destination directory stops accepting new names.
+		if err := os.Chmod(home, 0o500); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() {
+		restoreAfterStage = nil
+		_ = os.Chmod(home, 0o700)
+	})
+	_, err := restoreCleanupArchive(id)
+	_ = os.Chmod(home, 0o700)
+	if err == nil {
+		t.Fatal("a restore that could not place its transcript succeeded")
+	}
+	if _, ok := session.ReadMeta(m.Name); ok {
+		t.Fatal("the meta came back without its transcript")
+	}
+	if _, serr := os.Stat(filepath.Join(home, "srest06.jsonl")); !os.IsNotExist(serr) {
+		t.Fatalf("a transcript was placed by a failed restore: %v", serr)
+	}
+}

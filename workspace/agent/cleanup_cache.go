@@ -179,6 +179,12 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 			u.Orphans = usageOrphans{}
 			break
 		}
+		if found.Stalled {
+			// Nothing could be judged, so there is no figure to show — not a zero.
+			u.Orphans = usageOrphans{}
+			u.Truncated = true
+			break
+		}
 		u.Orphans.Bytes += found.Bytes
 		u.Orphans.Files += found.Files
 		u.Orphans.Dirs += len(found.Dirs)

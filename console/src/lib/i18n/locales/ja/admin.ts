@@ -1227,7 +1227,8 @@ export const admin = {
   "clean.reason.branch_merged": "マージ済みローカルブランチ（親に取り込み済み。削除しても復元可）",
   "clean.reason.cache_orphan": "削除済みセッション／会話のキャッシュ（ごみ箱にも無く、もう参照されない。削除は元に戻せない）",
   "clean.reason.cache_unsafe": "読めないセッション情報かごみ箱があり、参照の有無を判定できない（何も消さない）",
-  "clean.reason.cache_unreadable": "中身を読めないフォルダがあり、それは対象外（権限かファイルシステムの確認が必要。点検し直しても変わらない）",
+  "clean.reason.cache_unreadable": "中身を読めないフォルダがあり、それは対象外（そのフォルダは点検し直しても対象にならない。権限かファイルシステムの確認が必要）",
+  "clean.reason.cache_stalled": "セッション情報とごみ箱が多すぎて参照の有無を判定できない（点検し直しても変わらない。ごみ箱を整理すると進む）",
   "clean.reason.cache_partial": "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
   // 同じ理由の「状態バッジ＋補足」分解版（行の2行目表示用。badge が無いキーは全文へフォールバック）。
   "clean.reason_badge.locked": "ロック中",
@@ -1257,7 +1258,9 @@ export const admin = {
   "clean.reason_badge.cache_unsafe": "判定不可",
   "clean.reason_hint.cache_unsafe": "読めないセッション情報かごみ箱があるため、何も消しません",
   "clean.reason_badge.cache_unreadable": "読めないフォルダあり",
-  "clean.reason_hint.cache_unreadable": "中身を読めないフォルダは対象外です。点検し直しても変わりません（権限かファイルシステムを確認してください）。元に戻せません",
+  "clean.reason_hint.cache_unreadable": "中身を読めないフォルダは、点検し直しても対象になりません（権限かファイルシステムを確認してください）。削除は元に戻せません",
+  "clean.reason_badge.cache_stalled": "判定できない",
+  "clean.reason_hint.cache_stalled": "セッション情報とごみ箱が多すぎて判定できません。点検し直しても変わりません。ごみ箱を整理すると進みます",
   "clean.reason_badge.cache_partial": "一部だけ",
   "clean.reason_hint.cache_partial": "件数が多いため上限まで点検した分だけが対象です。削除後にもう一度点検すると残りが出ます。元に戻せません",
 };

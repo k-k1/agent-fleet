@@ -100,6 +100,9 @@ type CacheOrphans struct {
 	// read. Unlike Truncated this does not go away by scanning again; it needs the
 	// permissions or the filesystem looked at.
 	Unreadable int
+	// Stalled = the session records and the trash alone exceed the budget, so nothing could
+	// be judged at all. Surveying again does not help; a smaller trash does.
+	Stalled bool
 }
 
 // CacheScanMaxEntries is the default budget of one scan: how many directory entries it may
@@ -154,7 +157,7 @@ func RemoveCacheOrphans(feature string, now time.Time) (CacheOrphans, error) {
 	if err != nil {
 		return CacheOrphans{Feature: feature}, err
 	}
-	out := CacheOrphans{Feature: feature, Truncated: found.Truncated, Unreadable: found.Unreadable}
+	out := CacheOrphans{Feature: feature, Truncated: found.Truncated, Unreadable: found.Unreadable, Stalled: found.Stalled}
 	for _, d := range found.Dirs {
 		// Relative to the pinned directory: whatever happens to the path in the meantime,
 		// this cannot reach outside it (os.Root does not follow a link out of its root).
@@ -225,70 +228,87 @@ func scanCacheOrphans(r *os.Root, feature string, now time.Time, budget *int) (C
 		b := CacheScanMaxEntries
 		budget = &b
 	}
-	// Everything below spends the budget — the listing, every meta and archive the
-	// reachability check reads, every chat lookup, every entry walked — so the whole scan,
-	// and the time it holds the cleanup lock, is bounded.
-	if *budget <= 0 {
-		out.Truncated = true
+	// Everything below spends the budget — every meta and archive the reachability check
+	// reads, the listing, every chat lookup, every entry walked — so the whole scan, and the
+	// time it holds the cleanup lock, is bounded.
+	//
+	// Reachability comes first and must fit whole: without it nothing can be judged. If the
+	// session records and the trash alone exceed the budget, surveying again cannot help —
+	// that is Stalled, not Truncated.
+	reachable, err := reachableSessionIDs(budget)
+	if errors.Is(err, errBudget) {
+		out.Stalled = true
 		return out, nil
+	}
+	if err != nil {
+		return out, err
 	}
 	top, err := r.Open(".")
 	if err != nil {
 		return out, err
 	}
-	entries, err := readDirBudget(top, budget)
-	top.Close()
-	if errors.Is(err, errBudget) {
-		out.Truncated = true
-		return out, nil
-	}
-	if err != nil {
-		return out, err
-	}
-	reachable, err := reachableSessionIDs(budget)
-	if errors.Is(err, errBudget) {
-		out.Truncated = true
-		return out, nil
-	}
-	if err != nil {
-		return out, err
-	}
+	defer top.Close()
 	cutoff := now.Add(-cacheOrphanGrace)
 	root := filepath.Join(CacheRoot(), feature)
-	for _, e := range entries {
-		if *budget <= 0 {
-			out.Truncated = true
-			break
+	// The listing is consumed a chunk at a time and each chunk judged before the next is
+	// read, so a cut-off scan still yields every directory it finished. Deleting those is what
+	// makes the next survey progress: they are gone from the head of the listing, and the
+	// budget reaches further. (It cannot progress past a head of more reachable or fresh
+	// directories than the budget — hundreds of thousands of live sessions — which is not a
+	// cache anyone has.)
+	for {
+		// At most half of what is left goes on listing, so the walk of the directories just
+		// listed always has budget of its own. Listing a full chunk first could spend it all
+		// and leave the first directory unwalkable — a scan that stops at the same place
+		// every time.
+		n := min(readDirChunk, *budget/2)
+		if *budget > 0 && n == 0 {
+			n = 1
 		}
-		// ReadDir reports a symlinked entry as a link, not a directory, so links to
-		// elsewhere are never candidates.
-		if !e.IsDir() {
-			continue
+		if n <= 0 {
+			if more, err := top.ReadDir(1); !(errors.Is(err, io.EOF) && len(more) == 0) {
+				out.Truncated = true
+			}
+			return out, nil
 		}
-		name := e.Name()
-		if !orphanName(feature, name, reachable) {
-			continue
+		chunk, err := top.ReadDir(n)
+		*budget -= len(chunk)
+		for _, e := range chunk {
+			// ReadDir reports a symlinked entry as a link, not a directory, so links to
+			// elsewhere are never candidates.
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if !orphanName(feature, name, reachable) {
+				continue
+			}
+			bytes, files, newest, walked := dirStats(r, name, budget)
+			// Not walked to the end, so it may hold a fresh file the walk never saw: neither
+			// counted nor deleted. The two reasons are told apart because they are fixed in
+			// different ways — a budget by surveying again, a read error only by a person.
+			if walked == walkBudget {
+				out.Truncated = true
+				return out, nil
+			}
+			if walked == walkUnreadable {
+				out.Unreadable++
+				continue
+			}
+			if newest.After(cutoff) {
+				continue
+			}
+			out.Dirs = append(out.Dirs, CacheOrphanDir{Name: name, Path: filepath.Join(root, name), Bytes: bytes, Files: files})
+			out.Bytes += bytes
+			out.Files += files
 		}
-		bytes, files, newest, walked := dirStats(r, name, budget)
-		// Not walked to the end, so it may hold a fresh file the walk never saw: neither
-		// counted nor deleted. The two reasons are told apart because they are fixed in
-		// different ways — a budget by surveying again, a read error only by a person.
-		if walked == walkBudget {
-			out.Truncated = true
-			break
+		if errors.Is(err, io.EOF) {
+			return out, nil
 		}
-		if walked == walkUnreadable {
-			out.Unreadable++
-			continue
+		if err != nil {
+			return out, err
 		}
-		if newest.After(cutoff) {
-			continue
-		}
-		out.Dirs = append(out.Dirs, CacheOrphanDir{Name: name, Path: filepath.Join(root, name), Bytes: bytes, Files: files})
-		out.Bytes += bytes
-		out.Files += files
 	}
-	return out, nil
 }
 
 // orphanName decides one directory name. Only the two shapes we write are ever candidates:

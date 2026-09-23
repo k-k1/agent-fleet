@@ -488,8 +488,10 @@ func TestCacheOrphansBudgetCoversReachability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Truncated || len(got.Dirs) != 0 {
-		t.Fatalf("truncated=%v dirs=%v — want a partial answer that decides nothing", got.Truncated, orphanNames(got))
+	// The records alone exceed the budget: nothing can be judged, and surveying again would
+	// not change it — Stalled, not Truncated.
+	if !got.Stalled || got.Truncated || len(got.Dirs) != 0 {
+		t.Fatalf("stalled=%v truncated=%v dirs=%v — want a stalled answer that decides nothing", got.Stalled, got.Truncated, orphanNames(got))
 	}
 }
 
@@ -560,5 +562,38 @@ func TestReadDirBudgetIsABound(t *testing.T) {
 	got, err = readDirPathBudget(dir, &budget)
 	if err != nil || len(got) != 2500 {
 		t.Fatalf("exact budget: %d entries, err %v", len(got), err)
+	}
+}
+
+// TestCacheOrphansProgressAcrossSurveys (fourth review ②): a cache larger than one scan's
+// budget is cleared over several presses — each takes what it finished, and the next reaches
+// further, instead of stopping at the same place forever.
+func TestCacheOrphansProgressAcrossSurveys(t *testing.T) {
+	f := newCacheFixture(t)
+	old := CacheScanMaxEntries
+	t.Cleanup(func() { CacheScanMaxEntries = old })
+	for i := 0; i < 12; i++ {
+		f.dir(t, CacheFeaturePasted, sid(metaFor(fmt.Sprintf("sgone%02d", i))), 1)
+	}
+	CacheScanMaxEntries = 6 // a dir costs 2 (its listing slot and its file); 12 need 24
+	removed, presses := 0, 0
+	for ; presses < 20; presses++ {
+		got, err := RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Dirs) == 0 && got.Truncated {
+			t.Fatalf("press %d took nothing and stopped at its budget: no progress", presses+1)
+		}
+		removed += len(got.Dirs)
+		if !got.Truncated {
+			break
+		}
+	}
+	if removed != 12 {
+		t.Fatalf("removed %d of 12 over %d presses", removed, presses+1)
+	}
+	if presses == 0 {
+		t.Fatal("one press took everything: the budget did not bind, so this proved nothing")
 	}
 }

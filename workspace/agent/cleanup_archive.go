@@ -18,8 +18,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -191,6 +193,46 @@ func purgeCleanupArchive(id string) error {
 
 // restoreCleanupArchive replays an archive: re-create each branch ref (name→sha, if
 // absent) and each session (meta + jsonl written back). Returns per-item outcomes.
+// stageNextTo writes data to a temporary file in dest's directory — the same filesystem, so
+// placing it is a link or a rename, never a copy.
+func stageNextTo(dest string, data []byte) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".restore-*")
+	if err != nil {
+		return "", err
+	}
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(tmp.Name())
+		return "", errors.Join(werr, cerr)
+	}
+	return tmp.Name(), nil
+}
+
+// placeNoReplace puts tmp at dest unless something is already there, in which case that
+// file wins (created=false). A hard link is the atomic "create only if absent": a rename
+// would silently replace a transcript that appeared after the last check. Where the
+// filesystem has no hard links, it falls back to check-then-rename.
+func placeNoReplace(tmp, dest string) (created bool, err error) {
+	err = os.Link(tmp, dest)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	if _, lerr := os.Lstat(dest); lerr == nil {
+		return false, nil
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // restoreAfterStage, when set, runs after a restore has read its archive and staged the
 // transcripts and before it takes the cleanup lock. Tests only: it is the point a purge has to
 // win at to exercise the race.
@@ -204,12 +246,17 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	restored := map[string]any{"sessions": []string{}, "branches": []string{}}
 	var sessions, branches []string
 	var metas []session.Meta
-	// Transcripts are staged next to their destination and only moved into place under the
-	// cleanup lock, together with the metas. Writing them straight to their paths first would
-	// leave a restore that then loses to a purge having already changed files it was about to
-	// report as not restored.
+	// Transcripts are staged next to their destination and only placed under the cleanup lock,
+	// together with the metas. It is all or nothing: a restore that cannot stage or place
+	// every transcript changes nothing and fails, rather than bringing a session back with a
+	// hole where its conversation was, or reporting a restore that did not happen.
 	type stagedFile struct{ tmp, dest string }
 	var staged []stagedFile
+	dropStaged := func() {
+		for _, f := range staged {
+			_ = os.Remove(f.tmp)
+		}
+	}
 	for _, s := range m.Sessions {
 		var meta session.Meta
 		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
@@ -230,18 +277,12 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			if _, err := os.Lstat(dest); err == nil {
 				continue
 			}
-			_ = os.MkdirAll(filepath.Dir(dest), 0o700)
-			tmp, err := os.CreateTemp(filepath.Dir(dest), ".restore-*")
+			tmp, err := stageNextTo(dest, data)
 			if err != nil {
-				continue
+				dropStaged()
+				return nil, fmt.Errorf("archive %s: cannot stage %s: %w", id, dest, err)
 			}
-			_, werr := tmp.Write(data)
-			cerr := tmp.Close()
-			if werr != nil || cerr != nil {
-				_ = os.Remove(tmp.Name())
-				continue
-			}
-			staged = append(staged, stagedFile{tmp: tmp.Name(), dest: dest})
+			staged = append(staged, stagedFile{tmp: tmp, dest: dest})
 		}
 		metas = append(metas, meta)
 		sessions = append(sessions, s.Name)
@@ -255,32 +296,34 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	// the cleanup survey and the Machine tab behind it. So the archive is checked again here —
 	// a purge that won the race means a cache delete may already have run, and bringing the
 	// conversation back without its files is the one outcome this lock exists to prevent.
-	var purged bool
+	var handErr error
 	sessionx.WithCleanupLock(func() {
 		if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
-			purged = true
+			handErr = fmt.Errorf("archive %s was purged while it was being restored", id)
 			return
 		}
-		for i, f := range staged {
-			// Something may have appeared at the path while this was staging; it wins too.
-			if _, err := os.Lstat(f.dest); err == nil {
-				continue
+		var placed []string
+		for _, f := range staged {
+			created, err := placeNoReplace(f.tmp, f.dest)
+			if err != nil {
+				// Undo what this restore created, so the failure leaves no half-restore.
+				for _, p := range placed {
+					_ = os.Remove(p)
+				}
+				handErr = fmt.Errorf("archive %s: cannot place %s: %w", id, f.dest, err)
+				return
 			}
-			if os.Rename(f.tmp, f.dest) == nil {
-				staged[i].tmp = "" // moved; nothing left to drop
+			if created {
+				placed = append(placed, f.dest)
 			}
 		}
 		for _, meta := range metas {
 			session.WriteMeta(meta)
 		}
 	})
-	for _, f := range staged {
-		if f.tmp != "" {
-			_ = os.Remove(f.tmp)
-		}
-	}
-	if purged {
-		return nil, fmt.Errorf("archive %s was purged while it was being restored", id)
+	dropStaged() // placed ones are hard links or already moved; what is left is temporary
+	if handErr != nil {
+		return nil, handErr
 	}
 	for _, b := range m.Branches {
 		dir, ok := gitx.ResolveRepoDir(b.Repo)

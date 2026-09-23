@@ -302,12 +302,14 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
         <span className="clean-type clean-type-cache">{tr("clean.type_cache")}</span>
         <span className="clean-target" title={c.id}>
           {cacheLabel(c.id)}
-          {c.bytes != null && c.dirs != null && (
+          {/* The partial mark stands on its own: a keep row (nothing it could clear) is
+              exactly where "there is more it did not reach" must still be visible. */}
+          {(c.bytes != null && c.dirs != null) || c.truncated ? (
             <span className="clean-size">
-              {tr("clean.cache_size", { dirs: c.dirs, size: humanSize(c.bytes) })}
+              {c.bytes != null && c.dirs != null ? tr("clean.cache_size", { dirs: c.dirs, size: humanSize(c.bytes) }) : ""}
               {c.truncated ? tr("clean.cache_partial") : ""}
             </span>
-          )}
+          ) : null}
         </span>
         <span className="clean-act">{c.action ? (tMaybe("clean.action_" + c.action) ?? c.action) : ""}</span>
         <span className="clean-reason">

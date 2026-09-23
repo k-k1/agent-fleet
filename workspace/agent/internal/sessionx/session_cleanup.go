@@ -89,6 +89,7 @@ const (
 	cleanReasonCacheUnsafe  = "clean.reason.cache_unsafe"
 	cleanReasonCachePartial = "clean.reason.cache_partial"
 	cleanReasonCacheUnread  = "clean.reason.cache_unreadable"
+	cleanReasonCacheStalled = "clean.reason.cache_stalled"
 )
 
 var cleanupReasonJA = map[string]string{
@@ -106,7 +107,8 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonCacheOrphan:  "削除済みセッション／会話のキャッシュ（ごみ箱にも無く、もう参照されない。削除は元に戻せない）",
 	cleanReasonCacheUnsafe:  "読めないセッション情報かごみ箱があり、参照の有無を判定できない（何も消さない）",
 	cleanReasonCachePartial: "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
-	cleanReasonCacheUnread:  "中身を読めないフォルダがあり、それは対象外（権限かファイルシステムの確認が必要。点検し直しても変わらない）",
+	cleanReasonCacheUnread:  "中身を読めないフォルダがあり、それは対象外（そのフォルダは点検し直しても対象にならない。権限かファイルシステムの確認が必要）",
+	cleanReasonCacheStalled: "セッション情報とごみ箱が多すぎて参照の有無を判定できない（点検し直しても変わらない。ごみ箱を整理すると進む）",
 }
 
 // cleanupReasonText resolves a reason key to its source-language sentence. An unknown key
@@ -284,6 +286,8 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 		// to act on, so it wins over a budget cut, which the next survey resolves by itself.
 		reason := cleanReasonCacheOrphan
 		switch {
+		case found.Stalled:
+			reason = cleanReasonCacheStalled
 		case found.Unreadable > 0:
 			reason = cleanReasonCacheUnread
 		case found.Truncated:
