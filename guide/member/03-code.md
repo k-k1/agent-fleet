@@ -122,6 +122,7 @@ depending on state and location.
 - **Share…** — share this working copy's (project's) sessions with another member ([02](02-sessions.md#sharing-a-conversation-shared-sessions))
 - **Assignment to a working set** ([02](02-sessions.md#narrowing-the-view-with-working-sets))
 - Per-kind session launch: claude, codex, opencode, shell, and so on
+- **Stop the sessions below** — stops every session running in that copy and in the copies nested under it, from one modal ([02](02-sessions.md#stopping-and-tidying-up-sessions))
 - **Delete the working copy** (only for working copies that can be deleted)
 
 ## Commit in the commit graph view
@@ -161,7 +162,9 @@ Diffs can be folded per file, and you can adjust how they are shown with "Expand
 When you no longer need a working copy, use **"Delete the working copy"** from the repository
 row's right-click menu or from the delete action in the commit graph header. Only the local
 working copy is removed; history and the remote remain. If there are uncommitted / unpushed
-changes, a second confirmation ("Force delete") warns you that they will be lost.
+changes, a second confirmation ("Force delete") warns you that they will be lost. If sessions are
+still running in it, the confirmation offers to stop them first rather than turning you away
+([02](02-sessions.md#clearing-one-finished-job-deleting-a-working-copy)).
 
 ## Push and authentication
 

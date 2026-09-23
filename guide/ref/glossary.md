@@ -52,5 +52,6 @@ thing.
 | S3 Bucket | ledger / object store | The tab ("Bucket") that lists what the deployment's storage actually holds — including objects no catalogue row declares — and lets you register, move or delete them |
 | Image generation (pane) | imagegen studio | The pane that makes pictures on the deployment's ComfyUI without an agent: trial run, batches, seeds, LoRAs |
 | Image gallery | gallery pane | A folder's pictures as cards, with folders, covers, counts and an enlarged view |
+| Fleet graph | fleetgraph pane | One lane per session, time running left to right: which session started which, what passed between them, and when each was working, waiting or idle. The elapsed counterpart of the sessions overview |
 | LoRA | LoRA adapter | A small add-on trained against one family that steers a checkpoint's style or subject. Listed only for the family it matches |
 | Trigger words | trigger words | The words a LoRA needs in the prompt to do anything. Shown on its row before you pick it, and added as chips when you do |
