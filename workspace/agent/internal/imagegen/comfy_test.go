@@ -387,8 +387,17 @@ func TestComfyAwaitHistoryPollsUntilComplete(t *testing.T) {
 // what each poll sees, so a test can make the box go away mid-poll.
 func comfyPollStub(t *testing.T, historyHandler http.HandlerFunc) *comfyProvider {
 	t.Helper()
+	return comfyPollStubWithQueue(t, historyHandler, nil)
+}
+
+// comfyPollStubWithQueue is comfyPollStub with a /queue as well; nil leaves it unrouted (404).
+func comfyPollStubWithQueue(t *testing.T, historyHandler, queueHandler http.HandlerFunc) *comfyProvider {
+	t.Helper()
 	const promptID = "af-test-prompt"
 	mux := http.NewServeMux()
+	if queueHandler != nil {
+		mux.HandleFunc("/engine/image/v1/queue", queueHandler)
+	}
 	mux.HandleFunc("/engine/image/v1/prompt", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": promptID})
 	})
@@ -508,6 +517,47 @@ func TestComfyAwaitHistoryReportsALostQueueAfterARestart(t *testing.T) {
 	}
 	if ctx.Err() != nil {
 		t.Error("the request's own budget ran out: the loss was polled for rather than reported")
+	}
+}
+
+// A wake is not a restart. The gateway answers engine_waking for a box that is running but too
+// busy to answer its health probe — measured on a T4 editing at 34.8 s/step (ADR 0098 P3) — and
+// the prompt is then still in /queue, not in /history. Reporting it lost would end a picture the
+// engine goes on to finish.
+func TestComfyAwaitHistoryKeepsPollingAPromptStillQueuedAfterAWake(t *testing.T) {
+	oldMin, oldMax := sdcppRetryMin, sdcppRetryMax
+	oldPoll := comfyPollEvery
+	sdcppRetryMin, sdcppRetryMax = time.Millisecond, 5*time.Millisecond
+	comfyPollEvery = time.Millisecond
+	t.Cleanup(func() {
+		sdcppRetryMin, sdcppRetryMax = oldMin, oldMax
+		comfyPollEvery = oldPoll
+	})
+
+	var polls int32
+	p := comfyPollStubWithQueue(t, func(w http.ResponseWriter, r *http.Request) {
+		switch n := atomic.AddInt32(&polls, 1); {
+		case n == 1:
+			comfyWaking(w)
+		case n < 4:
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			comfyHistoryDone(w)
+		}
+	}, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"queue_running": []any{[]any{0, "af-test-prompt", map[string]any{}, map[string]any{}, []any{}}},
+			"queue_pending": []any{},
+		})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	res, err := p.Generate(ctx, Request{Op: OpGenerate, Prompt: "a fox"})
+	if err != nil {
+		t.Fatalf("Generate() = %v, want the picture the engine was still making", err)
+	}
+	if len(res.Images) != 1 {
+		t.Errorf("images = %d, want 1", len(res.Images))
 	}
 }
 
