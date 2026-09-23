@@ -122,7 +122,9 @@ Reads out replies from sessions and assistants.
 - **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself
   lives in the "Chat integration" tab ([08](10-integrations.md)).
 - **Allow desktop notifications** — asks the browser for permission.
-- History is in the **notification centre** (last 7 days), opened from the bell in the top bar.
+- History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
+  you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
+  ([02](02-sessions.md#reading-state-badges-and-notifications)).
 
 ### Assistant
 
@@ -217,6 +219,8 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
 
 Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
+**llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
+the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
 **Sessions** group holds **session-to-session messaging**, **fleet observation from sessions**,
 **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.

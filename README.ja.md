@@ -7,7 +7,8 @@
 **ノートを閉じても、エージェントは動き続けます。**
 
 Agent Fleet は、AI コーディングエージェント——Claude Code / Codex CLI / GitHub Copilot
-CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode——を、チームでブラウザから共有して
+CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code、そしてフリート自身の
+llama.cpp ハーネス——を、チームでブラウザから共有して
 使うためのサービスです。メンバーごとに隔離された環境（cgroup で CPU とメモリを制限した
 Docker コンテナ、Docker を使わない native 版では bubblewrap のサンドボックス）が与えられ、
 そこに持続するホームと自分の作業コピーがあります。セッションの起動も、追跡も、操縦も
@@ -83,8 +84,8 @@ TLS は Caddy が Let's Encrypt で自動取得し、サインインは Control 
 - **セッション** — 会話・設定・実行状態をまとめた論理単位で、作業コピーに結びついています。
   端末があるとは限りません: Codex / OpenCode / Copilot / Cursor / Kiro は既定で
   **マネージド**実行（会話画面から操る。Codex と OpenCode はセッションごとの CLI プロセス
-  すら持たない共有ランタイムで動きます）で、Claude / Antigravity と素の shell / SSM が
-  端末を使います。
+  すら持たない共有ランタイムで動きます）、llama.cpp と Muse Code はマネージド実行だけで、
+  Claude / Antigravity と素の shell / SSM が端末を使います。
 
 ## ライセンス
 

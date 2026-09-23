@@ -20,7 +20,7 @@ Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 
 Agent Fleet is a self-hosted web console for running AI coding agents
 (Claude Code, Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI,
-Kiro, OpenCode) as a managed fleet. Each member gets an isolated workspace — a
+Kiro, OpenCode, Muse Code, and the fleet's own llama.cpp harness) as a managed fleet. Each member gets an isolated workspace — a
 Docker container with cgroup CPU/memory quotas (or a bubblewrap-sandboxed
 rootfs in the native edition) with a persistent home and git working copies —
 and starts, drives and monitors agent sessions from the browser. A Go control plane orchestrates the
@@ -28,9 +28,9 @@ workspaces.
 
 Key features:
 
-- **Seven agent CLIs, one console** — run Claude Code / Codex / GitHub Copilot /
-  Antigravity / Cursor / Kiro / OpenCode sessions side by side, with per-session model
-  choice. CLI versions are pinned to verified combinations (opt-in self-update).
+- **Nine agent kinds, one console** — run Claude Code / Codex / GitHub Copilot /
+  Antigravity / Cursor / Kiro / OpenCode / Muse Code sessions, and llama.cpp sessions on
+  the fleet's own chat engine, side by side, with per-session model choice. CLI versions are pinned to verified combinations (opt-in self-update).
 - **Parallel sessions on real git repos** — clone over HTTPS (GitHub /
   Bitbucket tokens or OAuth device flow) with **Git LFS, submodules (incl.
   nested) and git-worktree support**; run multiple sessions per repo isolated
@@ -127,23 +127,23 @@ Not every capability is available on every agent CLI — some are gated by what 
 upstream CLI exposes. This matrix is the quick reference (✓ = supported,
 — = not applicable / not supported):
 
-| Capability | Claude | Codex | Cursor | Copilot | Kiro | Antigravity | OpenCode | Shell |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Managed (paneless) execution | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
-| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓ | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — |
-| Reasoning-effort control | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — |
-| Plan mode | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — |
-| Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | — |
-| Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — |
-| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — |
-| WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — |
+| Capability | Claude | Codex | Cursor | Copilot | Kiro | Antigravity | OpenCode | llama.cpp | Muse Code | Shell |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Managed (paneless) execution | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | — |
+| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁴ | —⁴ | ✓ |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Reasoning-effort control | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — | ✓ | — |
+| Plan mode | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
+| Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | ✓ | — |
+| Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | ✓ | — |
+| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | ✓ | — |
+| WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — | ✓ | — |
 
 ¹ Copilot's model choice is plan-dependent (Free = Auto only).
 
@@ -154,6 +154,12 @@ no separate control. Kiro accepts an effort flag but exposes no per-model effort
 session has no history to show (the live mirror works while running, and running Cursor
 as Terminal (CLI) does persist a readable history). Kiro, by contrast, persists a readable
 transcript even under managed execution, so a stopped Kiro session still shows its history.
+
+⁴ llama.cpp and Muse Code are managed-only: llama.cpp is the fleet's own harness on the
+deployment's chat engine (or on a llama-server on your LAN), with no CLI to put in a pane;
+Muse Code is installed on demand into your home and driven over its own session protocol.
+Muse's OS sandbox cannot run in a workspace, so a Muse session never asks before running a
+tool.
 
 The WS-bar usage chip needs an account-level limit to show — opencode (bring-your-own
 provider API keys), Cursor and Kiro expose none. **SSM** sessions (remote login over AWS SSM)
@@ -331,8 +337,9 @@ What changed in each version is in the notes on every release, indexed in
 - The distributed images and rootfs are a **lean build**: the agent CLIs
   (Claude Code / Codex / GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode) are
   not bundled. On first start each user fetches verified, pinned versions from
-  the respective upstream and signs in with their own account. This distribution
-  intentionally does not redistribute the proprietary CLIs.
+  the respective upstream and signs in with their own account. Muse Code is not bundled
+  either: it is fetched into a user's home only when that user asks for it. This
+  distribution intentionally does not redistribute the proprietary CLIs.
 - For attribution of the bundled OSS, see the `NOTICE` file inside each tar.
 
 ## Disclaimer — autonomous agent execution

@@ -53,7 +53,7 @@ trash) — [02](02-sessions.md#tidying-up-in-bulk-cleanup).
 ### A session won't resume / is shown struck through
 
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
-(typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode cannot resume from this state.
+(typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse cannot resume from this state.
 Start the same work over as a new session. shell falls back to home and resumes if the
 working folder is missing ([02](02-sessions.md)).
 
@@ -203,7 +203,7 @@ To use a specific Claude release (a full id such as `claude-opus-4-8`), register
 
 ### The launch dialog offers only "Default"
 
-The agents with a live catalog (codex / opencode / copilot / cursor / kiro / agy) fetch their
+The agents with a live catalog (codex / opencode / copilot / cursor / kiro / agy / lcpp / muse) fetch their
 model list when the dialog opens, so **"Loading models…" for a moment is normal** — wait for
 it before concluding anything. What the picker says once it settles is the answer:
 

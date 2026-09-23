@@ -45,8 +45,13 @@ which stays the source of truth.
 | Per-user home volume (EC2 target) | 50 GiB | `AF_ECS_EC2_HOME_GB` |
 | Graceful stop | 30 s | `AF_STOP_GRACE_SEC` |
 | Start timeout (AWS targets) | 300 s | `AF_ECS_START_TIMEOUT_SEC` |
+| Stopped session kept in the list | 7 days | `AF_SESSION_STOPPED_TTL` — then it moves to the archive, never deleted, and its working copy stays; a session locked against deletion stays in the list |
 | Cloud-cost window | 7 days | `AF_CLOUD_COST_WINDOW_DAYS` |
 | Idle sweep | on | `AF_IDLE_SWEEP_INTERVAL` — **`0` switches the reaper off entirely**, so nothing is ever stopped for being idle |
+
+The self-hosted engines' own auto-stop is not in this table: **Stop after** is set per role under
+Admin → Inference engines, and a saved value wins over the engine stack's default from the
+controller's next pass ([admin/04](../admin/04-mcp-egress.md)).
 
 ## Set per tenant
 

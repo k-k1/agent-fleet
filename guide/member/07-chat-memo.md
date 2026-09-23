@@ -24,7 +24,8 @@ Start a conversation with **+ (New chat)** in the **Assistants** section. Send w
 (you can switch to Enter-to-send in settings). The other side's messages are labeled
 "Assistant", yours "You", and "Thinking…" appears while it's working. You can also
 **paste an image** into the input field and send it along (for example, showing a
-screenshot and asking about it).
+screenshot and asking about it). Its thumbnail — before you send, and in the sent message —
+opens enlarged in the same lightbox the gallery uses.
 
 ### Purpose-built assistants and translation
 
@@ -126,7 +127,7 @@ and what comes next (order, dependencies), and a long conversation stops driftin
 
 ## Reading and replying to a running agent's conversation
 
-claude, codex, cursor, copilot, kiro, agy, and opencode sessions can be driven from the **Chat** view. With Terminal (CLI)
+claude, codex, cursor, copilot, kiro, agy, opencode, lcpp and muse sessions can be driven from the **Chat** view. With Terminal (CLI)
 execution, switch with **Chat ⇄ Terminal** at the top of the pane; with Managed execution
 you use only the chat view from the start. In the chat view the
 exchange reads as **per-turn Markdown**, and you can reply right there. It suits

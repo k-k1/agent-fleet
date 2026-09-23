@@ -28,6 +28,8 @@ If a feature ships and does not appear here, it is not done
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [05 Terminal](../member/05-terminal.md) |
 | Resume a stopped session | member | left pane → the session | [02 Sessions](../member/02-sessions.md) |
 | Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [02 Sessions](../member/02-sessions.md) |
+| Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [02 Sessions](../member/02-sessions.md#seeing-how-sessions-relate-over-time-the-fleet-graph) |
+| Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [02 Sessions](../member/02-sessions.md#stopping-and-tidying-up-sessions) |
 | Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md) |
 | Fork from a past message | member | mirror, on a past message | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents |
 | Hand a session to another member | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md) |
@@ -52,8 +54,10 @@ If a feature ships and does not appear here, it is not done
 | `.drawio` diagrams | member | Files → a `.drawio` file | [04 Files](../member/04-files.md) |
 | PDF and Office document preview | member | Files → that document | [04 Files](../member/04-files.md) |
 | Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [04 Files](../member/04-files.md#image-generation) |
+| Edit and inpaint — reference pictures, a mask file, instruction-edit models | member | image generation → Advanced → Operation | [04 Files](../member/04-files.md#image-generation) |
 | LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [04 Files](../member/04-files.md#image-generation) |
 | Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [04 Files](../member/04-files.md#image-gallery) |
+| Gallery card menu — copy, rename, delete, jump to the session that made it | member | gallery card → right-click | [Icons, badges and menus](../member/badges-and-menus.md#cards-in-the-image-gallery) |
 | Browser pane for a local web app | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
 | Preview subdomains (minted on every start) | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md) |
 | Attach to a Chromium the agent owns | member | a link the agent hands you | [10 Going further](../member/10-integrations.md) |
@@ -67,6 +71,7 @@ If a feature ships and does not appear here, it is not done
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [02 Sessions](../member/02-sessions.md); [repos.md](repos.md) for what each provider contributes |
 | Scheduled (unattended) runs | member | Schedules | [08 Fleet operator](../member/08-organising.md) |
 | Notification centre | member | top bar | [12 Settings](../member/12-settings.md) |
+| Red dot on a session with an unread notification | member | left pane, tabs | [02 Sessions](../member/02-sessions.md#reading-state-badges-and-notifications) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [07 Chat & memo](../member/07-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [10 Advanced](../member/10-integrations.md) |
