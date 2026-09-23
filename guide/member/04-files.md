@@ -319,7 +319,8 @@ agent never paints a batch on its own.
 - **Execution method** — Managed and Terminal (CLI) both work. claude is Terminal (CLI) only (it
   has no Managed mode). **opencode cannot be attached as Managed** (sessions share one af
   connection there, so a write cannot be traced to the session that made it; Terminal (CLI) is
-  fine). copilot, cursor, kiro and muse are Terminal (CLI) only for now.
+  fine). copilot, cursor and kiro are Terminal (CLI) only for now. muse, which only runs as
+  Managed, cannot be attached yet.
 - **Worktree is On by default**, so the agent can tell for certain which studio's session it is.
   Only Terminal (CLI) and lcpp let you turn it off. From inside a worktree the agent **cannot see
   uncommitted material** in your original working copy — commit what you want it to read.
