@@ -276,8 +276,12 @@ func HandleStudioBind(w http.ResponseWriter, r *http.Request) {
 		writeStudio(w, rec)
 		return
 	}
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_session", "invalid session name: "+name)
+		return
+	}
 	m, ok := session.ReadMeta(name)
-	if !session.ValidName(name) || !ok {
+	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "no such session: "+name)
 		return
 	}
