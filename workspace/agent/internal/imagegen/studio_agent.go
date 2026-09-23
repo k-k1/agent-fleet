@@ -27,6 +27,12 @@ const studioAgentViewMax = 8 * 1024
 // studioSinceMax is how many changes since the last call are spelled out; the rest is a count.
 const studioSinceMax = 5
 
+// studioAgentTextMax is what the prompt and the negative are cut to when the view is over its cap.
+const studioAgentTextMax = 2500
+
+// studioNewsErrorMax bounds one failure's message in the since list.
+const studioNewsErrorMax = 300
+
 type studioAgentView struct {
 	Studio     string           `json:"studio"`
 	Title      string           `json:"title,omitempty"`
@@ -115,17 +121,44 @@ type studioVersionBrief struct {
 
 func handleStudioAgentView(w http.ResponseWriter, r *http.Request, id string) {
 	self := r.URL.Query().Get("session")
+	view, ok := studioAgentViewLocked(w, id, self)
+	if !ok {
+		return
+	}
+	// The model's facts ask the provider's catalogue, which can be slow on a cold deployment,
+	// so they are gathered after the studio's lock is let go: a member's edit must not wait on it.
+	view.Model, view.Models = studioModelFactsFor(r.Context(), view.Draft)
+	if view.Model != nil && view.Model.Family != "" {
+		if k, err := readKnowledge(KnowledgeFamily, view.Model.Family); err == nil && k.Summary != "" {
+			view.Knowledge = append(view.Knowledge, studioKnowledgeBrief{Scope: k.Scope, Key: k.Key, Summary: k.Summary, Truncated: k.SummaryTruncated})
+		}
+	}
+	if view.Draft.Model != "" {
+		if k, err := readKnowledge(KnowledgeModel, view.Draft.Model); err == nil && k.Summary != "" {
+			view.Knowledge = append(view.Knowledge, studioKnowledgeBrief{Scope: k.Scope, Key: k.Key, Summary: k.Summary, Truncated: k.SummaryTruncated})
+		}
+	}
+	body := fitStudioAgentView(&view)
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+// studioAgentViewLocked is the part of the view that reads the studio, under its lock: the
+// draft, the news since the last call, and moving the read ledger. The ledger moves without
+// touching UpdatedAt — a read is not an edit, and moving the version would make the pane's next
+// save look stale.
+func studioAgentViewLocked(w http.ResponseWriter, id, self string) (studioAgentView, bool) {
 	unlock := lockStudio(id)
 	defer unlock()
 	rec, err := loadStudio(id)
 	if err != nil {
 		writeStudioErr(w, err)
-		return
+		return studioAgentView{}, false
 	}
 	if self == "" || self != rec.Session {
 		httpx.WriteErr(w, http.StatusConflict, "studio_not_bound",
 			"this session is not the one bound to the studio; the user can bind it again from the studio pane")
-		return
+		return studioAgentView{}, false
 	}
 	entries := readStudioLog(id)
 	history := readHistory()
@@ -143,22 +176,7 @@ func handleStudioAgentView(w http.ResponseWriter, r *http.Request, id string) {
 			view.UserFields = append(view.UserFields, k)
 		}
 	}
-	view.Model, view.Models = studioModelFactsFor(r.Context(), rec.Draft)
-	if view.Model != nil {
-		if k, err := readKnowledge(KnowledgeFamily, view.Model.Family); err == nil && view.Model.Family != "" && k.Summary != "" {
-			view.Knowledge = append(view.Knowledge, studioKnowledgeBrief{Scope: k.Scope, Key: k.Key, Summary: k.Summary, Truncated: k.SummaryTruncated})
-		}
-	}
-	if rec.Draft.Model != "" {
-		if k, err := readKnowledge(KnowledgeModel, rec.Draft.Model); err == nil && k.Summary != "" {
-			view.Knowledge = append(view.Knowledge, studioKnowledgeBrief{Scope: k.Scope, Key: k.Key, Summary: k.Summary, Truncated: k.SummaryTruncated})
-		}
-	}
-	body := fitStudioAgentView(&view)
-
-	// The read ledger moves only after the answer is built, and without touching UpdatedAt: a
-	// read is not an edit, and moving the version would make the pane's next save look stale.
-	next := studioSeen{At: studioNow().UTC().Format(time.RFC3339), History: len(history)}
+	next := studioSeen{At: studioNow().UTC().Format(time.RFC3339), History: len(history.Items), HistoryGen: history.Generation}
 	if n := len(entries); n > 0 {
 		next.Seq = entries[n-1].Seq
 	}
@@ -167,15 +185,14 @@ func handleStudioAgentView(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	rec.Seen[self] = next
 	_ = saveStudio(rec)
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(body)
+	return view, true
 }
 
 // studioSinceFor is decision 5's "since last call": the member's edits and presses, rewinds,
 // another session's edits, failures, and the pictures that arrived — not this session's own
 // edits, which it already knows. The first call reports nothing but the fact that it is first:
 // the draft itself is the whole state, and a history of how it got there is not news.
-func studioSinceFor(id, self string, entries []DraftLogEntry, history []HistoryItem, seen studioSeen, had bool) studioSince {
+func studioSinceFor(id, self string, entries []DraftLogEntry, history historyIndex, seen studioSeen, had bool) studioSince {
 	if !had {
 		return studioSince{First: true, Items: []studioNews{}}
 	}
@@ -198,18 +215,20 @@ func studioSinceFor(id, self string, entries []DraftLogEntry, history []HistoryI
 			log = append(log, studioNews{Kind: "press", At: e.At, By: studioAuthorLabel(e), Version: e.Version})
 		case DraftLogPressResult:
 			if e.State == pressFailed || e.State == pressLost {
-				results = append(results, studioNews{Kind: "failed", At: e.At, Version: e.Version, Error: e.Error})
+				results = append(results, studioNews{Kind: "failed", At: e.At, Version: e.Version, Error: truncateRunes(e.Error, studioNewsErrorMax)})
 			}
 		}
 	}
 	for _, j := range jobs.List().Jobs {
 		if j.Studio == id && j.State == string(JobFailed) && j.FinishedAt >= seen.At {
-			results = append(results, studioNews{Kind: "failed", At: j.FinishedAt, Version: j.Version, Error: j.Error})
+			results = append(results, studioNews{Kind: "failed", At: j.FinishedAt, Version: j.Version, Error: truncateRunes(j.Error, studioNewsErrorMax)})
 		}
 	}
-	if seen.History < len(history) {
-		for _, it := range history[seen.History:] {
-			if it.Studio == id {
+	// Across a rebuild of the index the line numbers mean nothing; the pictures of that gap are
+	// in the history pane, and the next call counts from the new generation.
+	if seen.HistoryGen == history.Generation && seen.History < len(history.Items) {
+		for _, it := range history.Items[seen.History:] {
+			if it.Path != "" && it.Studio == id {
 				results = append(results, studioNews{Kind: "result", At: it.CreatedAt, Version: it.Version, Path: it.Path})
 			}
 		}
@@ -382,20 +401,36 @@ func fitStudioAgentView(v *studioAgentView) []byte {
 		v.Truncated = true
 		b = enc()
 	}
-	// Last: the draft's own long texts, cut to what still fits.
-	for len(b) > studioAgentViewMax {
-		over := len(b) - studioAgentViewMax
-		switch {
-		case len(v.Draft.Prompt) >= len(v.Draft.NegativePrompt) && v.Draft.Prompt != "":
-			v.Draft.Prompt = truncateRunes(v.Draft.Prompt, max(len(v.Draft.Prompt)-over-16, 0)) + "…"
-		case v.Draft.NegativePrompt != "":
-			v.Draft.NegativePrompt = truncateRunes(v.Draft.NegativePrompt, max(len(v.Draft.NegativePrompt)-over-16, 0)) + "…"
-		default:
-			v.Knowledge, v.Since.Items, v.Versions, v.Models = nil, nil, nil, nil
-			return enc()
+	// Then the optional parts go whole — the dropped news counted into `more`, so nothing
+	// disappears without a number — and the draft's two long texts are cut once each to a fixed
+	// length. Every step here is taken once, so the function always ends.
+	if len(b) > studioAgentViewMax {
+		v.Since.More += len(v.Since.Items)
+		v.Since.Items = []studioNews{}
+		v.Knowledge, v.Versions, v.Models = nil, nil, nil
+		if v.Model != nil {
+			v.Model.Loras, v.Model.Sizes, v.Model.QualityPrefixes = nil, nil, nil
 		}
 		b = enc()
 	}
+	for _, text := range []*string{&v.Draft.Prompt, &v.Draft.NegativePrompt} {
+		if len(b) <= studioAgentViewMax {
+			return b
+		}
+		if len(*text) > studioAgentTextMax {
+			*text = truncateRunes(*text, studioAgentTextMax) + "…"
+			b = enc()
+		}
+	}
+	if len(b) <= studioAgentViewMax {
+		return b
+	}
+	// Last: a fixed short answer. What is still too large is something no cap above bounds, and
+	// an agent told so can ask the user; a view that never ends holds the studio's lock.
+	b, _ = json.Marshal(map[string]any{
+		"studio": v.Studio, "truncated": true, "agent_trial": v.AgentTrial,
+		"note": "The studio is too large to show. Ask the user to shorten the prompt or the other long fields.",
+	})
 	return b
 }
 

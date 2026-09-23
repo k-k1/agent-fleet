@@ -175,7 +175,17 @@ func appendKnowledgeRecord(in KnowledgeAdd, now time.Time) (Knowledge, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return Knowledge{}, err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".knowledge-*")
+	// The member owns this file: a symlink they made (to share one document between two keys,
+	// or to keep it in a repository) is written THROUGH, and the file keeps its mode. A rename
+	// onto the link's own name would replace the link with a copy.
+	target, mode := path, os.FileMode(0o600)
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		target = real
+	}
+	if info, err := os.Stat(target); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".knowledge-*")
 	if err != nil {
 		return Knowledge{}, err
 	}
@@ -184,11 +194,16 @@ func appendKnowledgeRecord(in KnowledgeAdd, now time.Time) (Knowledge, error) {
 		os.Remove(tmp.Name())
 		return Knowledge{}, err
 	}
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return Knowledge{}, err
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmp.Name())
 		return Knowledge{}, err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := os.Rename(tmp.Name(), target); err != nil {
 		os.Remove(tmp.Name())
 		return Knowledge{}, err
 	}

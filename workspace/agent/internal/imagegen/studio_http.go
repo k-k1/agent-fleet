@@ -4,11 +4,13 @@ package imagegen
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -91,7 +93,8 @@ func HandleStudios(w http.ResponseWriter, r *http.Request) {
 	// an edit; a value the pane kept that no longer passes is left behind rather than refusing
 	// the whole studio.
 	draft, changes, _ := applyDraftPatch(ImageStudioDraft{}, draftToMap(body.Draft), studioAuthorHuman, nil)
-	rec := &studioRec{ImageStudio: ImageStudio{ID: id, Title: strings.TrimSpace(body.Title), Draft: draft, AgentTrial: true}}
+	rec := &studioRec{ImageStudio: ImageStudio{ID: id, Title: truncateRunes(strings.TrimSpace(body.Title), studioShortTextMax),
+		Draft: draft, AgentTrial: true}}
 	touchStudio(rec)
 	rec.CreatedAt = rec.UpdatedAt
 	if err := saveStudio(rec); err != nil {
@@ -164,10 +167,12 @@ func handleStudioPut(w http.ResponseWriter, r *http.Request, id string) {
 		dropped = append(dropped, DroppedField{Field: field, Reason: dropHumanOnly, Detail: "only the user sets this"})
 	}
 	if body.Title != nil {
-		if human {
-			rec.Title, touched = strings.TrimSpace(*body.Title), true
-		} else {
+		if !human {
 			humanOnly("title")
+		} else if t := strings.TrimSpace(*body.Title); utf8.RuneCountInString(t) > studioShortTextMax {
+			dropped = append(dropped, DroppedField{Field: "title", Reason: dropInvalid, Detail: fmt.Sprintf("at most %d characters", studioShortTextMax)})
+		} else {
+			rec.Title, touched = t, true
 		}
 	}
 	if body.Locks != nil {
@@ -283,6 +288,10 @@ func HandleStudioBind(w http.ResponseWriter, r *http.Request) {
 	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "no such session: "+name)
+		return
+	}
+	if why := StudioSessionUnsupported(m.Kind, m.DriverKind()); why != "" {
+		httpx.WriteErr(w, http.StatusConflict, "studio_kind_unsupported", why)
 		return
 	}
 	if m.Studio != "" && m.Studio != id {

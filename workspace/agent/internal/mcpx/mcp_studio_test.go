@@ -261,6 +261,16 @@ func TestRunImageTrialWaitsForItsJob(t *testing.T) {
 	if !strings.Contains(out, "/p/trial.png") || !strings.Contains(out, `v3`) {
 		t.Fatalf("trial = %s", out)
 	}
+	var res struct {
+		Result struct {
+			Structured struct {
+				Seed *int64 `json:"seed"`
+			} `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Result.Structured.Seed == nil || *res.Result.Structured.Seed != 42 {
+		t.Errorf("the trial's own seed is not in the answer: %s", out)
+	}
 	if len(*pressed) != 1 || !strings.Contains((*pressed)[0], `"mode":"agent_trial"`) ||
 		!strings.Contains((*pressed)[0], `"session":"slot01"`) || strings.Contains((*pressed)[0], "sneaky") {
 		t.Fatalf("press = %v, want the agent trial with the session and no arguments of the call", *pressed)

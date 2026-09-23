@@ -64,7 +64,8 @@ type studioSeen struct {
 	// History is how many lines the picture history had: the lines after it are the pictures
 	// that arrived since. A line count rather than a time, because a picture's time is when its
 	// job was queued, and a job queued before the last call can finish after it.
-	History int `json:"history"`
+	History    int    `json:"history"`
+	HistoryGen string `json:"history_gen,omitempty"`
 }
 
 var studioLocks sync.Map // id -> *sync.Mutex
@@ -188,6 +189,25 @@ func studioSessionAlive(name string) bool {
 	}
 	_, ok := session.ReadMeta(name)
 	return ok
+}
+
+// StudioSessionUnsupported says why a session of this kind and execution method cannot be bound
+// to a studio, or "" when it can (ADR 0100 decision 8). The studio tools trust the MCP child's
+// idea of which session it is serving, and these children cannot tell: opencode's Managed child
+// is shared by every session of its folder, so another session could write the draft; copilot,
+// cursor, kiro and muse Managed children are not told their session name yet. Their Terminal
+// sessions are told, and are fine.
+func StudioSessionUnsupported(kind, driver string) string {
+	if driver != session.DriverManaged {
+		return ""
+	}
+	switch kind {
+	case session.KindOpencode:
+		return "an opencode Managed session shares its MCP server with the other sessions of its folder, so it cannot be bound to an image studio; use the Terminal execution method"
+	case session.KindCopilot, session.KindCursor, session.KindKiro, session.KindMuse:
+		return "a " + kind + " Managed session cannot tell the image studio tools which session it is yet, so it cannot be bound to an image studio; use the Terminal execution method"
+	}
+	return ""
 }
 
 // bindStudioSession is BindStudioSession — see its contract in studio.go.
