@@ -66,16 +66,21 @@ func rebindStudioOnRecreate(m *session.Meta, previous string) {
 
 // clearReplacedStudio drops the studio from the stopped session a create just took it from,
 // under the meta lock, and only while that meta still names this studio.
-func clearReplacedStudio(name, studio string) {
+func clearReplacedStudio(name, studio string) { SetSessionStudio(name, studio, "") }
+
+// SetSessionStudio moves a session's Meta.Studio from `from` to `to` under the meta lock, and
+// leaves a meta that names anything else by then alone. It is imagegen.SessionStudioCAS: the
+// studio store writes the binding's truth on its own side and this copy for advertising.
+func SetSessionStudio(name, from, to string) {
 	if name == "" || !session.ValidName(name) {
 		return
 	}
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
 	m, ok := session.ReadMeta(name)
-	if !ok || m.Studio != studio {
+	if !ok || m.Studio != from || from == to {
 		return
 	}
-	m.Studio = ""
+	m.Studio = to
 	session.WriteMeta(m)
 }

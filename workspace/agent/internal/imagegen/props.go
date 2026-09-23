@@ -80,6 +80,10 @@ type ImageProps struct {
 	Group string `json:"group,omitempty"`
 	Label string `json:"label,omitempty"`
 	Trial bool   `json:"trial,omitempty"`
+	// Studio and Version are the studio press that made the picture (ADR 0100 decision 9) — the
+	// permanent link from a picture to the draft it was made from, which the studio's log holds.
+	Studio  string `json:"studio,omitempty"`
+	Version string `json:"version,omitempty"`
 	// ElapsedMS is what this picture cost in wall-clock time, which is the number the estimate
 	// on the next one is built from.
 	ElapsedMS int64    `json:"elapsed_ms,omitempty"`
