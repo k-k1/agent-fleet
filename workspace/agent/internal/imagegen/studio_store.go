@@ -204,7 +204,10 @@ func StudioSessionUnsupported(kind, driver string) string {
 	switch kind {
 	case session.KindOpencode:
 		return "an opencode Managed session shares its MCP server with the other sessions of its folder, so it cannot be bound to an image studio; use the Terminal execution method"
-	case session.KindCopilot, session.KindCursor, session.KindKiro, session.KindMuse:
+	case session.KindMuse:
+		// muse has no Terminal execution method to point at.
+		return "a muse session cannot tell the image studio tools which session it is yet, so it cannot be bound to an image studio for now"
+	case session.KindCopilot, session.KindCursor, session.KindKiro:
 		return "a " + kind + " Managed session cannot tell the image studio tools which session it is yet, so it cannot be bound to an image studio; use the Terminal execution method"
 	}
 	return ""
