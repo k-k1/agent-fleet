@@ -153,12 +153,16 @@
     }
   },
   "scale": {
-    "class_type": "FluxKontextImageScale",
+    "class_type": "ImageScale",
     "inputs": {
+      "crop": "disabled",
+      "height": 1024,
       "image": [
         "img",
         0
-      ]
+      ],
+      "upscale_method": "lanczos",
+      "width": 1024
     }
   },
   "unet": {

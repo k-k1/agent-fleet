@@ -17,7 +17,8 @@ English | [日本語](0094-instruction-edit-image-models.ja.md)
   🟢 The number is settled (develop holds up to 0093).
   🔄 **Revised (2026-09-23): stop centre-cropping; shrink the whole picture to the encoder's rounding
   fixed point** — the "Revision" section at the end. Decisions 3 and 4, "Rejected" and open item 2
-  carry a pointer where they stand. **Decided, not built.** 🔴 **Today's wiring very likely makes 3:2
+  carry a pointer where they stand. **Built; not yet accepted on
+  hardware** ("Implementation" at the end of the revision). 🔴 **Today's wiring very likely makes 3:2
   photos, among others, soft** (the revision's point 3; one measured pair; fixed as part of building it).
 - Related: [0072](0072-engine-model-catalog.md) (the per-family templates, `base_model` dispatch
   and the file-role vocabulary — this ADR adds two words to the first and none to the last) /
@@ -1030,7 +1031,7 @@ list — **a control taken before trusting the reading**.
 
 ## Revision — stop centre-cropping; shrink the whole picture to the encoder's rounding fixed point (2026-09-23)
 
-**Decided by the user, not built yet.** The measurements behind it are
+**Decided by the user and built; not yet accepted on hardware.** The measurements behind it are
 [docs/log/112](../log/112-kontext-crop-necessity.md) (§3–5: four pairs, eight runs; §11–§13: the
 extra runs taken before building — §13 is PR #906). Decisions 3 and 4, "Rejected" and open item 2
 are left as written, each with a 🔄 pointer here — so that what they rested on at the time stays
@@ -1194,3 +1195,28 @@ JPEG** (Orientation 6, say) comes back portrait and unsqueezed.
    reference its own index — checked against upstream by the review; not measured on hardware).
 5. **Not carried over to ADR 0098's Qwen-Image 2.1.** 2.1 re-scales its references through
    `TextEncodeQwenImage21`, a different arrangement; point 3 was measured on 2511.
+
+### Implementation (2026-09-23; not yet accepted on hardware)
+
+- **The size rule**: `comfyQwenEditRefSize` in `comfy_qwenedit_size.go` (upstream's formula in the same
+  order, with `math.RoundToEven`) and `comfyQwenEditSize` (iterates to the fixed point, stops at 16
+  steps). The graph's `scale` is now `ImageScale(lanczos, crop="disabled")`, and
+  `FluxKontextImageScale` is gone from this family's graph (the golden diff is that one node).
+- **How the size is read**: `comfyPictureSize` in `comfy_picture_size.go` reads EXIF Orientation
+  (JPEG APP1, PNG eXIf, WebP EXIF) and swaps width and height for 5–8. `golang.org/x/image/webp` is
+  registered (v0.31.0, the newest that keeps `golang.org/x/text` at today's v0.29.0). The orientation
+  applies to every family's size, but only this family's shrink, klein's schedule and the size
+  warning actually use one, and each is more correct matching the orientation ComfyUI sees.
+- **Unreadable sizes**: `Generate` refuses them **before** uploading (the upload is the call that wakes
+  a stopped engine).
+- **Mask**: `maskscale` and the size restriction are gone.
+- **Tests**: a table computed by upstream's own Python; every integer width over ratios 1:4–4:1 is
+  "a fixed point, at most 1.6% off"; orientation on a rotated JPEG (APP1 written in Go) and on PNG and
+  WebP written by PIL (expected values are PIL's own `exif_transpose`); an unreadable size is refused
+  with zero uploads (positive control: the same file goes through on sdxl). **Positive controls**:
+  going back to the cropping wiring, ignoring orientation, letting an unreadable size through and
+  swapping width and height each turned different tests red, and were put back.
+- The ComfyUI pin-bump note (in `deploy/aws/ecs/comfyui/Dockerfile`) gains reading the upstream
+  function `comfyQwenEditRefSize` copies.
+
+**Live acceptance (a)–(f) is still to do** (it needs a GPU box).

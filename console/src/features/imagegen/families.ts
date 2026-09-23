@@ -136,8 +136,8 @@ export const FAMILY_CARDS: FamilyCard[] = [
     cfg: [4, 4],
     trialSteps: 8,
     // Empty means the size field does not draw at all (sizeOptions), not "use the megapixel
-    // list": the output size is decided by FluxKontextImageScale from the INPUT picture's own
-    // aspect ratio, so no candidate here would reach the sampler (decision 4).
+    // list": the output size follows the INPUT picture's own size (the Agent's comfyQwenEditSize),
+    // so no candidate here would reach the sampler (decision 4).
     sizes: [],
   },
   {

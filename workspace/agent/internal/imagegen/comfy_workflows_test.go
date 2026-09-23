@@ -810,19 +810,20 @@ func TestComfyWorkflowQwenImageEditMatchesGoldenFixture(t *testing.T) {
 	}
 }
 
-// Inpaint on an instruction-edit family (ADR 0094 decision 3, claimed after 実測 G / 実測 I). Every
-// assertion here is a way the picture comes back WRONG with no error anywhere, which is why they
-// are pinned one by one rather than left to the golden:
+// Inpaint on an instruction-edit family (ADR 0094 decision 3, claimed after 実測 G / 実測 I; its
+// wiring revised on 2026-09-23). Every assertion here is a way the picture comes back WRONG with
+// no error anywhere, which is why they are pinned one by one rather than left to the golden:
 //
-//   - the mask must go through a FluxKontextImageScale of its OWN. The picture's own scale node
-//     centre-crops to the nearest trained ratio; SetLatentNoiseMask only stretches. Measured on a
-//     1820x1024 input: the repainted band's edge sat 8 px from where the picture's map puts it,
-//     and routing the mask through this node moved it back (実測 I).
+//   - nothing in the graph may crop. The mask is only stretched over the latent by
+//     SetLatentNoiseMask, so a picture that is cropped (FluxKontextImageScale, or ImageScale with
+//     crop="center") lands on a different frame from its mask: measured on a 1820x1024 input, the
+//     repainted band's edge sat 6.6 px off with the crop and 3 px without it (docs/log/112 §11).
+//   - the mask has no scaling node of its own: its own stretch and the picture's are the same map.
 //   - it must be ImageToMask on RED, not LoadImageMask. LoadImage's MASK output is `1.0 - alpha`,
 //     so an opaque black-and-white PNG arrives as an all-zero mask and repaints nothing.
 //   - the noise mask must reach the SAMPLER. A SetLatentNoiseMask that is built but not consumed
 //     is a full repaint of the whole picture, and the graph validates either way.
-func TestComfyWorkflowQwenImageEditInpaintScalesTheMaskWithThePicture(t *testing.T) {
+func TestComfyWorkflowQwenImageEditInpaintStretchesTheMaskWithThePicture(t *testing.T) {
 	for _, c := range comfyQwenEditFamilies {
 		t.Run(string(c.family), func(t *testing.T) {
 			p := comfyGoldenParams
@@ -831,27 +832,24 @@ func TestComfyWorkflowQwenImageEditInpaintScalesTheMaskWithThePicture(t *testing
 			if err != nil {
 				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
 			}
+			for id, n := range g {
+				if n.ClassType == "FluxKontextImageScale" || n.Inputs["crop"] == "center" {
+					t.Errorf("%s is %s(crop=%v): a cropped picture no longer shares its mask's map", id,
+						n.ClassType, n.Inputs["crop"])
+				}
+			}
 			if got := g["maskimg"].Inputs["image"]; got != "af-mask.png" {
 				t.Errorf("maskimg.image = %v, want the mask file", got)
 			}
-			if cls := g["maskscale"].ClassType; cls != "FluxKontextImageScale" {
-				t.Errorf("maskscale = %q, want the same node the picture goes through — otherwise the"+
-					" mask is stretched over a frame the picture was cropped out of", cls)
-			}
-			if got := g["maskscale"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("maskimg", 0)) {
-				t.Errorf("maskscale.image = %v, want the mask's own LoadImage", got)
-			}
-			// The picture's scale node is a DIFFERENT one fed by the picture: one node for both
-			// would put the mask's pixels into the encode.
-			if got := g["scale"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("img", 0)) {
-				t.Errorf("scale.image = %v, want the picture's own LoadImage", got)
+			if _, ok := g["maskscale"]; ok {
+				t.Errorf("maskscale is back: the mask needs no scaling of its own once the picture is not cropped")
 			}
 			if cls, ch := g["mask"].ClassType, g["mask"].Inputs["channel"]; cls != "ImageToMask" || ch != "red" {
 				t.Errorf("mask = %s(channel=%v), want ImageToMask(channel=red) — alpha reads an opaque"+
 					" black-and-white PNG as an all-zero mask", cls, ch)
 			}
-			if got := g["mask"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("maskscale", 0)) {
-				t.Errorf("mask.image = %v, want the SCALED mask", got)
+			if got := g["mask"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("maskimg", 0)) {
+				t.Errorf("mask.image = %v, want the mask's own LoadImage", got)
 			}
 			nm := g["noisemask"]
 			if nm.ClassType != "SetLatentNoiseMask" ||
