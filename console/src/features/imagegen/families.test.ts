@@ -75,7 +75,10 @@ describe("族カードの選択", () => {
   it("qwen-image-2.1 は sentences 方言だが sizes を持つ（生成もする族）", () => {
     const card = familyCard("qwen-image-2.1");
     expect(card?.dialect).toBe("sentences");
-    expect(card?.sizes).toHaveLength(5);
+    // 1024 級の 5 つ＋その倍の辺の 5 つ（ADR 0098 未解決 3・2048² は実機で通った）。既定は 1024²。
+    expect(card?.sizes).toHaveLength(10);
+    expect(card?.sizes[0]).toBe("1024x1024");
+    expect(card?.sizes).toContain("2048x2048");
     expect(card?.steps).toEqual([25, 50]);
     expect(card?.cfg).toEqual([1, 4]);
   });

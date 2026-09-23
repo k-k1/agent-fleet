@@ -139,6 +139,10 @@ type comfyParams struct {
 	// the count was already refused against Caps.MaxInputs (comfyCheckInputs) before any upload.
 	Images []string
 	Mask   string
+	// Transparent is the caller's `background=transparent`. Only a family that decodes an alpha
+	// channel reads it (comfyFamilyRow.Alpha); for it, anything else — auto, opaque, unset —
+	// means the alpha is stripped before the save.
+	Transparent bool
 	// Loras are already resolved against the catalogue and checked against this model's family
 	// (comfyResolveLoras) — a template applies them, it does not decide whether they fit.
 	Loras []comfyLora
@@ -550,6 +554,16 @@ type comfyFamilyRow struct {
 	// pictures pass comfyCheckInputs, are never wired, and the caller gets a picture that ignored
 	// them with no warning anywhere (実測 C's shape of lie).
 	RefInputs int
+	// Alpha is whether this family's VAE decodes to FOUR channels — a picture with an alpha
+	// channel, which SaveImage keeps. Only qwen-image-2.1 (ADR 0098): every other family's
+	// decode is RGB, so a transparent background is something they cannot produce at all.
+	//
+	// 🔴 It decides two things, and both would lie without it: the template strips the alpha
+	// unless the caller asked for `background=transparent` (measured: an ordinary photograph
+	// comes back with alpha 252-255 on 47 % of its pixels — up to 1.2 % see-through, and enough
+	// to keep every thumbnail a PNG, fs_thumb.go's opaque()), and comfyWarnings stops saying
+	// "opaque produced" to a caller who got exactly the transparency they asked for.
+	Alpha bool
 }
 
 // comfyFamilyRows is the vocabulary itself, ordered oldest architecture first — which is the
@@ -682,6 +696,21 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// through its own builder at a fixed denoise 1, which is the field below, and it also
 	// generates — the first family here to do both.
 	FixedDenoiseEdit: true, Ops: []Op{OpGenerate, OpEdit},
+	// The model's own "native transparency": 64 latent channels decode to RGBA. Measured on the
+	// dev deployment 2026-09-23 (ADR 0098 P2) — a transparent-background request came back with
+	// 17.6 % of its pixels at alpha 0, and an ordinary photograph came back RGBA as well.
+	Alpha: true,
+	// The megapixel list, and then the same five shapes at twice the side: the templates' note
+	// says the model renders 2048² directly. Measured through the Agent on the dev deployment
+	// 2026-09-23 (ADR 0098 Open 3, an L40S): 2048x2048 came back whole in 116 s against 44 s for
+	// 1024², at a peak of 19,592 MiB in use — one subject, no tiling. Only the square was run; the
+	// other four are smaller in pixels (the ladder is 1216x832's own ratios, doubled, and the
+	// square sits exactly on imagegenMaxPixels), and all are multiples of 32 for the 16x latent.
+	// The first entry stays 1024² so a request naming no size costs what it did.
+	Sizes: []string{
+		"1024x1024", "1152x896", "896x1152", "1216x832", "832x1216",
+		"2048x2048", "2304x1792", "1792x2304", "2432x1664", "1664x2432",
+	},
 	// 🔴 A CITATION, not a measurement, and the one entry in this column that is not backed by a
 	// run. The node takes image_1..image_16; the official edit template wires exactly ten and its
 	// note says "Up to 10 reference images". Taking the published wiring is this repository's rule
@@ -1444,6 +1473,17 @@ func comfyQwenEditNoiseMask(g comfyGraph, p comfyParams) []any {
 // keeps it — it hands the raw array to PIL, so a 4-channel picture is saved as a PNG with its
 // alpha (nodes.py, save_images). What SaveImage also does, and this route depends on, is write the
 // `prompt` PNG chunk that readImageProps reads (ADR 0094 P2).
+//
+// 🔴 The alpha reaches the save only when the caller asked for `background=transparent`.
+// Otherwise SplitImageWithAlpha (comfy_extras/nodes_compositing.py: `image[..., :3]`, a no-op on
+// a 3-channel picture) drops it first, because the model writes an alpha channel on EVERY
+// picture: an ordinary photograph came back with alpha 252-255 on 47 % of its pixels (ADR 0098
+// P2) — invisible on screen, up to 1.2 % see-through over a background, and one pixel below 255
+// is enough to make every thumbnail of it a PNG five to eight times a JPEG's size. Stripping in
+// the graph rather than re-encoding here keeps the `prompt` chunk SaveImage writes.
+// ⚠️ What lies under an alpha of 0 is not white: a transparent-background picture measured a
+// flat purple there (about 163,58,206). A caller who asks for transparency in the PROMPT but
+// not in `background` gets that colour as the background.
 func comfyGraphQwenImage21(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if f.DiffusionModel == "" {
 		return nil, errComfyMissingFile("qwen-image-2.1", "diffusion model")
@@ -1514,8 +1554,13 @@ func comfyGraphQwenImage21(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{
 		"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
+	out := comfyLink("dec", 0)
+	if !p.Transparent {
+		g["rgb"] = comfyNode{ClassType: "SplitImageWithAlpha", Inputs: map[string]any{"image": out}}
+		out = comfyLink("rgb", 0)
+	}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
-		"filename_prefix": "af-" + comfyFamilyPrefixName(ComfyFamilyQwenImage21), "images": comfyLink("dec", 0)}}
+		"filename_prefix": "af-" + comfyFamilyPrefixName(ComfyFamilyQwenImage21), "images": out}}
 	return g, nil
 }
 

@@ -948,9 +948,9 @@ func TestEveryFamilysPrefixIsReadableBack(t *testing.T) {
 // own — an extra reference that is dropped, scaled, or attached to one side only all produce a
 // picture with no error anywhere:
 //
-//   - image2 is a LoadImage of its own, NOT routed through FluxKontextImageScale. That node fixes
-//     the FRAME, and the frame is image1's; scaling a borrowed object to the first picture's
-//     aspect ratio crops away the thing the caller asked for.
+//   - image2 is a LoadImage of its own, NOT routed through the scale node. That node fixes the
+//     FRAME, and the frame is image1's; the encoder gives each extra reference its own index
+//     rather than a place on image1's grid.
 //   - it reaches BOTH encodes. CFG subtracts the two conditionings, so a reference on one side
 //     only leaves its own encoding in the difference.
 //   - the latent still comes from scaled image1, so the output keeps the edited picture's size.
@@ -1261,6 +1261,8 @@ func TestComfyWorkflowQwenImage21MatchesGoldenFixtures(t *testing.T) {
 	}{
 		{"t2i", func(p *comfyParams) {}},
 		{"edit", func(p *comfyParams) { p.Op, p.Images = OpEdit, []string{"af-photo.png"} }},
+		// The one request that keeps the decode's alpha: no SplitImageWithAlpha before the save.
+		{"t2i-transparent", func(p *comfyParams) { p.Transparent = true }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

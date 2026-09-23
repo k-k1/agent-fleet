@@ -464,6 +464,18 @@ func (g comfyReadGraph) props() ImageProps {
 		out.Inputs = []string{stringOf(n.Inputs["image"])}
 		out.Op = string(OpEdit)
 	}
+	// qwen-image-2.1 names its references img1..imgN, in the caller's order (ADR 0098). The
+	// fallback above finds only the first of them by class; a reproduction needs every one.
+	if _, ok := g["img1"]; ok {
+		out.Inputs = nil
+		for i := 1; ; i++ {
+			n, ok := g[fmt.Sprintf("img%d", i)]
+			if !ok || n.Class != "LoadImage" {
+				break
+			}
+			out.Inputs = append(out.Inputs, stringOf(n.Inputs["image"]))
+		}
+	}
 	if _, n, ok := g.node("mask", "LoadImageMask"); ok {
 		out.Mask = stringOf(n.Inputs["image"])
 		out.Op = string(OpInpaint)
@@ -485,6 +497,14 @@ var comfyTextEncodeFields = map[string]string{
 	"TextEncodeQwenImageEditPlus": "prompt",
 }
 
+// comfyTextEncodeSlotFields is the text encode that answers BOTH conditionings from one node, so
+// the field is chosen by the output slot the sampler's edge names rather than by the class:
+// TextEncodeQwenImage21 emits positive on 0 and negative on 1 (ADR 0098). Read by class alone,
+// every qwen-image-2.1 picture came back with no prompt at all.
+var comfyTextEncodeSlotFields = map[string][]string{
+	"TextEncodeQwenImage21": {"prompt", "negative_prompt"},
+}
+
 // textBehind follows one of the sampler's conditioning inputs back to the text encode that feeds
 // it, through the guidance, guider and reference-latent nodes that sit in between on the FLUX and
 // instruction-edit families. Bounded, because a graph from elsewhere may be a cycle and this is
@@ -492,6 +512,7 @@ var comfyTextEncodeFields = map[string]string{
 func (g comfyReadGraph) textBehind(from comfyReadNode, inputs ...string) string {
 	for _, in := range inputs {
 		id, ok := linkTarget(from.Inputs[in])
+		slot := linkSlot(from.Inputs[in])
 		for hop := 0; ok && hop < 6; hop++ {
 			n, exists := g[id]
 			if !exists {
@@ -500,13 +521,19 @@ func (g comfyReadGraph) textBehind(from comfyReadNode, inputs ...string) string 
 			if field, isText := comfyTextEncodeFields[n.Class]; isText {
 				return stringOf(n.Inputs[field])
 			}
+			if fields, isText := comfyTextEncodeSlotFields[n.Class]; isText {
+				if slot < 0 || slot >= len(fields) {
+					return ""
+				}
+				return stringOf(n.Inputs[fields[slot]])
+			}
 			// The one hop that matters on each family: FluxGuidance's `conditioning`,
 			// BasicGuider's / CFGGuider's `conditioning` or `positive`, and — on 2511 —
 			// FluxKontextMultiReferenceLatentMethod's `conditioning`.
 			next := ""
 			for _, key := range []string{"conditioning", "positive", "negative"} {
 				if t, ok2 := linkTarget(n.Inputs[key]); ok2 {
-					next = t
+					next, slot = t, linkSlot(n.Inputs[key])
 					break
 				}
 			}
@@ -517,6 +544,19 @@ func (g comfyReadGraph) textBehind(from comfyReadNode, inputs ...string) string 
 		}
 	}
 	return ""
+}
+
+// linkSlot reads the output slot of a graph edge `[node id, slot]`, -1 when it is not one.
+func linkSlot(v any) int {
+	pair, ok := v.([]any)
+	if !ok || len(pair) < 2 {
+		return -1
+	}
+	f, ok := pair[1].(float64)
+	if !ok {
+		return -1
+	}
+	return int(f)
 }
 
 // linkTarget reads a graph edge `[node id, slot]`.
