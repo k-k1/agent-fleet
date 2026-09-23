@@ -1964,6 +1964,7 @@ export function MirrorView({
             onOpenPlan={openPlan}
             onError={(m) => toast(m)}
             onDone={() => setCarried(null)}
+            translate={translate}
           />
         )}
         {pendingPlan && (
@@ -2044,6 +2045,7 @@ export function MirrorView({
               managed ? (answers) => sendRespond(pending[0]?.id || "", answers) : undefined
             }
             onCancel={() => void sendInterrupt()}
+            translate={translate}
           />
         )}
         {busy && !pending && <TypingRow agentName={agentName} sending={sending} onStop={() => void sendInterrupt()} />}
