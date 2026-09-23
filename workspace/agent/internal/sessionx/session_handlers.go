@@ -1609,7 +1609,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	rebindStudioOnRecreate(&newMeta, m.Name)
 	undoStudio := func() {
 		if newMeta.Studio != "" && imagegen.BindStudioSession != nil {
-			_ = imagegen.BindStudioSession(newMeta.Studio, m.Name, newMeta.Name)
+			_, _ = imagegen.BindStudioSession(newMeta.Studio, m.Name, newMeta.Name)
 		}
 	}
 	if newMeta.DriverKind() == session.DriverManaged {

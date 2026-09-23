@@ -22,14 +22,14 @@ import (
 // The move is conditional on what the studio names now:
 //   - previous == "": a create. Refused with ErrStudioNotFound when there is no such studio, and
 //     with ErrStudioBound when it names another session that is still alive; a stopped or
-//     deleted one is replaced. The store clears the REPLACED session's Meta.Studio itself, under
-//     sessionx's meta lock, in the same call: left in place, that session would resume claiming
-//     a studio that no longer names it — refused by every studio tool and by generate_image, and
-//     routed by the pane to somebody else's studio.
+//     deleted one is replaced, and its name comes back as `replaced`. The caller (sessionx, which
+//     owns the meta lock this package cannot reach) clears that session's Meta.Studio: left in
+//     place, it would resume claiming a studio that no longer names it — refused by every studio
+//     tool and by generate_image, and routed by the pane to somebody else's studio.
 //   - previous != "": a recreate (session is the new slot) or the rollback of a failed launch
 //     (session is "" or the old slot). Applied only while the studio still names previous;
-//     otherwise ErrStudioBound and nothing changes.
-var BindStudioSession func(studio, session, previous string) error
+//     otherwise ErrStudioBound and nothing changes. `replaced` is always "" here.
+var BindStudioSession func(studio, session, previous string) (replaced string, err error)
 
 // The refusals BindStudioSession answers with, typed so the create can answer 404 and 409.
 var (

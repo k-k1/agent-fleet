@@ -20,8 +20,10 @@ func bindStudioOnCreate(studio, name string) *SpawnRefusal {
 		return &SpawnRefusal{Status: http.StatusNotImplemented, Code: "studio_unavailable",
 			Message: "this Agent has no image studio store, so a session cannot be bound to one"}
 	}
-	switch err := imagegen.BindStudioSession(studio, name, ""); {
+	replaced, err := imagegen.BindStudioSession(studio, name, "")
+	switch {
 	case err == nil:
+		clearReplacedStudio(replaced, studio)
 		return nil
 	case errors.Is(err, imagegen.ErrStudioNotFound):
 		return &SpawnRefusal{Status: http.StatusNotFound, Code: "no_studio", Message: err.Error()}
@@ -39,7 +41,7 @@ func unbindStudioAfterFailedLaunch(studio, name string) {
 	if studio == "" || imagegen.BindStudioSession == nil {
 		return
 	}
-	if err := imagegen.BindStudioSession(studio, "", name); err != nil {
+	if _, err := imagegen.BindStudioSession(studio, "", name); err != nil {
 		log.Printf("studio %s: unbind after the failed launch of %s: %v", studio, name, err)
 	}
 }
@@ -56,8 +58,24 @@ func rebindStudioOnRecreate(m *session.Meta, previous string) {
 		m.Studio = ""
 		return
 	}
-	if err := imagegen.BindStudioSession(m.Studio, m.Name, previous); err != nil {
+	if _, err := imagegen.BindStudioSession(m.Studio, m.Name, previous); err != nil {
 		log.Printf("studio %s: not moved from %s to %s on recreate: %v", m.Studio, previous, m.Name, err)
 		m.Studio = ""
 	}
+}
+
+// clearReplacedStudio drops the studio from the stopped session a create just took it from,
+// under the meta lock, and only while that meta still names this studio.
+func clearReplacedStudio(name, studio string) {
+	if name == "" || !session.ValidName(name) {
+		return
+	}
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	m, ok := session.ReadMeta(name)
+	if !ok || m.Studio != studio {
+		return
+	}
+	m.Studio = ""
+	session.WriteMeta(m)
 }
