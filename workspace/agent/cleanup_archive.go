@@ -192,19 +192,53 @@ var errRestoreIncomplete = errors.New("a restore of this archive did not finish;
 // Written before anything is placed and removed only when every session is back.
 func restoringMarker(id string) string { return filepath.Join(cleanupStoreDir(), id+".restoring") }
 
+// manifestAtHead reads manifest.json, the first entry writeCleanupArchive writes, from the
+// archive's tarball and stops there.
+func manifestAtHead(id string) (cleanupManifest, error) {
+	var m cleanupManifest
+	f, err := os.Open(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
+	if err != nil {
+		return m, err
+	}
+	defer f.Close()
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		return m, err
+	}
+	defer gr.Close()
+	tr := tar.NewReader(gr)
+	h, err := tr.Next()
+	if err != nil {
+		return m, err
+	}
+	if h.Name != "manifest.json" || h.Size < 0 || h.Size > 4<<20 {
+		return m, fmt.Errorf("archive %s: no manifest at its head", id)
+	}
+	b, err := io.ReadAll(tr)
+	if err != nil {
+		return m, err
+	}
+	return m, json.Unmarshal(b, &m)
+}
+
 // errRestoreStopped wraps a restore that stopped part way: it reports what failed, promises
 // nothing was undone, and that restoring again is safe and finishes the job.
 var errRestoreStopped = errors.New("the restore stopped part way; nothing was undone, and restoring again is safe")
 
 // restoreLeftHalfDone reports whether any session in archive id is half back: a transcript at
 // its destination with no meta. Only that state needs the archive kept — a session whose meta
-// is back is reachable by it, and one with neither is untouched. An archive that cannot be
-// read counts as half done, which errs toward keeping it.
+// is back is reachable by it, and one with neither is untouched.
+//
+// An archive whose manifest cannot be read at all counts as half done, erring toward keeping
+// it: that is the one case a purge can be refused for good, and ADR 0097 says so. It is also
+// the case where nothing else could be done with the archive — a restore needs the same
+// manifest. Only the manifest is read (the sidecar, else the tarball's first entry), never
+// the transcripts behind it, because this runs under the cleanup lock.
 func restoreLeftHalfDone(id string) bool {
 	var m cleanupManifest
 	b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json"))
 	if err != nil || json.Unmarshal(b, &m) != nil {
-		if m, _, err = readCleanupArchive(id); err != nil {
+		if m, err = manifestAtHead(id); err != nil {
 			return true
 		}
 	}
@@ -361,7 +395,7 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 		_, statErr := os.Lstat(restoringMarker(id))
 		markedBefore := statErr == nil
 		if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
-			handErr = fmt.Errorf("archive %s: cannot mark the restore: %w", id, err)
+			handErr = fmt.Errorf("%w: archive %s: cannot mark the restore: %w", errRestoreStopped, id, err)
 			return
 		}
 		changed := false

@@ -103,6 +103,9 @@ type CacheOrphans struct {
 	// Stalled = the session records and the trash alone exceed the budget, so nothing could
 	// be judged at all. Surveying again does not help; a smaller trash does.
 	Stalled bool
+	// Unjudged counts session-keyed directories left alone because the session store itself
+	// is missing: every session would look gone, so none is judged.
+	Unjudged int
 	// Stuck = the budget ran out before a single directory was finished — a folder too big to
 	// walk, or too much ahead of it in the listing. The listing order is the same every time,
 	// so pressing again would stop at the same place: unlike Truncated, this needs a person.
@@ -161,7 +164,7 @@ func RemoveCacheOrphans(feature string, now time.Time) (CacheOrphans, error) {
 	if err != nil {
 		return CacheOrphans{Feature: feature}, err
 	}
-	out := CacheOrphans{Feature: feature, Truncated: found.Truncated, Unreadable: found.Unreadable, Stalled: found.Stalled, Stuck: found.Stuck}
+	out := CacheOrphans{Feature: feature, Truncated: found.Truncated, Unreadable: found.Unreadable, Stalled: found.Stalled, Stuck: found.Stuck, Unjudged: found.Unjudged}
 	for _, d := range found.Dirs {
 		// Relative to the pinned directory: whatever happens to the path in the meantime,
 		// this cannot reach outside it (os.Root does not follow a link out of its root).
@@ -249,7 +252,7 @@ func scanCacheOrphansOnce(r *os.Root, feature string, now time.Time, budget *int
 	// Reachability comes first and must fit whole: without it nothing can be judged. If the
 	// session records and the trash alone exceed the budget, surveying again cannot help —
 	// that is Stalled, not Truncated.
-	reachable, err := reachableSessionIDs(budget)
+	reachable, metaStoreOK, err := reachableSessionIDs(budget)
 	if errors.Is(err, errBudget) {
 		out.Stalled = true
 		return out, nil
@@ -295,6 +298,11 @@ func scanCacheOrphansOnce(r *os.Root, feature string, now time.Time, budget *int
 				continue
 			}
 			name := e.Name()
+			if sidPattern.MatchString(name) && !metaStoreOK {
+				// A session directory with no session store to judge it against.
+				out.Unjudged++
+				continue
+			}
 			if !orphanName(feature, name, reachable, chatOK) {
 				continue
 			}
@@ -358,21 +366,25 @@ func chatStoreOK() bool {
 // and each session a cleanup archive would restore. It fails rather than under-counting —
 // a meta or an archive it cannot read would otherwise make that session's files look
 // orphaned.
-func reachableSessionIDs(budget *int) (map[string]bool, error) {
-	ids := map[string]bool{}
+func reachableSessionIDs(budget *int) (ids map[string]bool, metaStoreOK bool, err error) {
+	ids = map[string]bool{}
 
-	// The session store must be there. A missing one — an unmounted volume, a migration that
-	// stopped half way — would make every session look gone. (This runs only when the cache
-	// directory exists, and nothing lands there before a session's meta does.)
-	if fi, err := os.Stat(session.MetaDir()); err != nil || !fi.IsDir() {
-		return nil, ErrCacheScanUnsafe
+	// Without the session store, no session can be judged: a missing one — an unmounted
+	// volume, a migration that stopped half way — would make every session look gone. It is
+	// also simply absent on a workspace that never had a session, whose cache can still hold
+	// assistant-chat pastes. So its absence is reported (metaStoreOK=false) rather than
+	// failing the scan, and only the session-keyed directories go unjudged.
+	fi, statErr := os.Stat(session.MetaDir())
+	metaStoreOK = statErr == nil && fi.IsDir()
+	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return nil, false, ErrCacheScanUnsafe
 	}
 	ents, err := readDirPathBudget(session.MetaDir(), budget)
 	if errors.Is(err, errBudget) {
-		return nil, err
+		return nil, false, err
 	}
 	if err != nil {
-		return nil, ErrCacheScanUnsafe
+		return nil, false, ErrCacheScanUnsafe
 	}
 	for _, e := range ents {
 		name, ok := strings.CutSuffix(e.Name(), ".json")
@@ -382,7 +394,7 @@ func reachableSessionIDs(budget *int) (map[string]bool, error) {
 		// A meta that cannot be read is exactly the session we would mistake for gone.
 		m, ok := session.ReadMeta(name)
 		if !ok {
-			return nil, ErrCacheScanUnsafe
+			return nil, false, ErrCacheScanUnsafe
 		}
 		// Two keys, because the writers do not agree on which name they use: the paste
 		// endpoint keys by the name in the URL — the meta's FILE name (session_paste.go) —
@@ -390,25 +402,17 @@ func reachableSessionIDs(budget *int) (map[string]bool, error) {
 		// are the same for every meta the Agent writes; if one ever is not, both stay safe.
 		ids[session.UUID(m.Dir, name)] = true
 		ids[session.UUID(m.Dir, m.Name)] = true
-		// A fork's history carries its ancestors' pasted paths (session.Meta.ForkSids). Forks
-		// made before ForkSids existed name only their parent, and only claude's ForkFrom is in
-		// this id space — the parent's own UUID — so that one is honoured too.
-		for _, sid := range m.ForkSids {
-			ids[sid] = true
-		}
-		if sidPattern.MatchString(m.ForkFrom) {
-			ids[m.ForkFrom] = true
-		}
+		addForkAncestry(ids, m)
 	}
 
 	archived, err := archivedSessionIDs(budget)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for id := range archived {
 		ids[id] = true
 	}
-	return ids, nil
+	return ids, metaStoreOK, nil
 }
 
 // archiveManifest is the part of cleanup_archive.go's manifest this reader needs.
@@ -446,6 +450,9 @@ func archivedSessionIDs(budget *int) (map[string]bool, error) {
 				continue
 			}
 			ids[session.UUID(meta.Dir, meta.Name)] = true
+			// A fork in the trash still holds its ancestors' paths: restoring it would bring
+			// them back into use. Same rule as a live meta (reachableSessionIDs).
+			addForkAncestry(ids, meta)
 		}
 	}
 	for id := range sidecars {
@@ -609,4 +616,18 @@ func dirStats(r *os.Root, name string, budget *int) (bytes int64, files int, new
 		}
 	}
 	return bytes, files, newest, walkComplete
+}
+
+// addForkAncestry adds the sessions m was forked from. A fork's history carries its
+// ancestors' pasted paths (session.Meta.ForkSids). Forks made before ForkSids existed name
+// only their parent, through ForkFrom — for claude usually the parent's own UUID (not always:
+// once the parent's sid drifted it is claude's own id). Any value of that shape is kept;
+// keeping one too many is harmless.
+func addForkAncestry(ids map[string]bool, m session.Meta) {
+	for _, sid := range m.ForkSids {
+		ids[sid] = true
+	}
+	if sidPattern.MatchString(m.ForkFrom) {
+		ids[m.ForkFrom] = true
+	}
 }

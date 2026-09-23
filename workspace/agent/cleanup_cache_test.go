@@ -517,3 +517,41 @@ func TestStoppedRestoreIsA409(t *testing.T) {
 		t.Fatalf("status %d body %s, want 409 restore_incomplete", rec.Code, rec.Body)
 	}
 }
+
+// TestUnreadableMarkedArchiveIsKept (eighth review L1/L3b): a marked archive whose manifest
+// cannot be read at all is kept — the one refusal ADR 0097 allows to be permanent.
+func TestUnreadableMarkedArchiveIsKept(t *testing.T) {
+	cacheTestHome(t)
+	if err := os.MkdirAll(cleanupStoreDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id := "20260901-000000-broken"
+	for name, b := range map[string][]byte{id + ".json": []byte("{"), id + ".tar.gz": []byte("not gzip")} {
+		if err := os.WriteFile(filepath.Join(cleanupStoreDir(), name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := purgeCleanupArchive(id); !errors.Is(err, errRestoreIncomplete) {
+		t.Fatalf("err = %v, want errRestoreIncomplete", err)
+	}
+}
+
+// TestRestoreThatCannotMarkIsStopped (eighth review L4): failing to write the mark is a
+// stopped restore like any other — 409, the same message.
+func TestRestoreThatCannotMarkIsStopped(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory anyway")
+	}
+	cacheTestHome(t)
+	id, _ := archivedSession(t, "srest15")
+	if err := os.Chmod(cleanupStoreDir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(cleanupStoreDir(), 0o700) })
+	if _, err := restoreCleanupArchive(id); !errors.Is(err, errRestoreStopped) {
+		t.Fatalf("err = %v, want errRestoreStopped", err)
+	}
+}

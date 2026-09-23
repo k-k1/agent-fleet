@@ -190,7 +190,8 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 		u.Orphans.Bytes += found.Bytes
 		u.Orphans.Files += found.Files
 		u.Orphans.Dirs += len(found.Dirs)
-		u.Truncated = u.Truncated || found.Truncated
+		// Session folders left unjudged (no session store) make the figure a lower bound too.
+		u.Truncated = u.Truncated || found.Truncated || found.Unjudged > 0
 	}
 
 	tents, _ := os.ReadDir(cleanupStoreDir())

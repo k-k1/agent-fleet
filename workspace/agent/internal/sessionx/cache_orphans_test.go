@@ -708,14 +708,18 @@ func TestForkSidsCarryTheWholeChain(t *testing.T) {
 // TestCacheOrphansNeedTheStores (seventh review M3): a missing session store makes every
 // session look gone, a missing chat store every chat — so neither is judged without it.
 func TestCacheOrphansNeedTheStores(t *testing.T) {
-	t.Run("session store missing: refused", func(t *testing.T) {
+	t.Run("session store missing: session folders left unjudged", func(t *testing.T) {
 		f := newCacheFixture(t)
 		f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
 		if err := os.Remove(session.MetaDir()); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil); !errors.Is(err, ErrCacheScanUnsafe) {
-			t.Fatalf("err = %v, want ErrCacheScanUnsafe", err)
+		got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Dirs) != 0 || got.Unjudged != 1 {
+			t.Fatalf("orphans = %v unjudged=%d, want nothing offered and one unjudged", orphanNames(got), got.Unjudged)
 		}
 	})
 	t.Run("chat store missing: chats kept, sessions still judged", func(t *testing.T) {
@@ -772,4 +776,68 @@ func TestCacheOrphansNeedTheStores(t *testing.T) {
 			t.Fatalf("orphans = %v — a lookup that failed is not proof the conversation is gone", orphanNames(got))
 		}
 	})
+}
+
+// TestCacheOrphansTrashedForkKeepsAncestors (eighth review, medium 1): a fork in the trash
+// would bring its ancestors' paths back into use on restore, so it protects them as a live
+// fork does.
+func TestCacheOrphansTrashedForkKeepsAncestors(t *testing.T) {
+	f := newCacheFixture(t)
+	a := metaFor("sforka1")
+	b := metaFor("sforkb1")
+	b.ForkSids = forkSids(a)
+	if err := os.MkdirAll(CleanupArchiveDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(CleanupArchiveDir(), "b.json"), manifestWith(t, b), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.dir(t, CacheFeaturePasted, sid(a), 1)
+	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Dirs) != 0 {
+		t.Fatalf("orphans = %v — the ancestor of a trashed fork was offered", orphanNames(got))
+	}
+}
+
+// TestCacheOrphansWithoutSessionStore (eighth review, medium 2): a workspace that never had a
+// session has no session store but may have assistant-chat pastes. Those are still judged;
+// only session folders are left alone, and the row says why.
+func TestCacheOrphansWithoutSessionStore(t *testing.T) {
+	f := newCacheFixture(t)
+	if err := os.Remove(session.MetaDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(chatx.ChatDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gone := "chat-" + chatx.RandUUID()
+	f.dir(t, CacheFeaturePasted, gone, 1)
+	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
+	if err != nil {
+		t.Fatalf("a workspace with no sessions yet: %v", err)
+	}
+	if g := orphanNames(got); len(g) != 1 || g[0] != gone || got.Unjudged != 0 {
+		t.Fatalf("orphans = %v unjudged=%d, want the gone chat and nothing unjudged", g, got.Unjudged)
+	}
+	// A session folder with no store to judge it: left alone, counted, and named on the row.
+	f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
+	rows := cacheCleanupCandidates(time.Now())
+	if len(rows) != 1 || rows[0].Action != "delete_cache" || rows[0].Dirs != 1 || rows[0].Unjudged != 1 ||
+		rows[0].ReasonKey != cleanReasonCacheNoStore {
+		t.Fatalf("rows = %+v, want the chat offered and the session folder unjudged", rows)
+	}
+}
+
+// TestForkMetaRecordsAncestry (eighth review L3a): what a fork writes carries the chain the
+// scan relies on — not only the helper that builds it.
+func TestForkMetaRecordsAncestry(t *testing.T) {
+	src := metaFor("sfsrc01")
+	src.ForkSids = []string{sid(metaFor("sfgrand"))}
+	m := forkMeta(src, "sfnew01", "title", "", "")
+	if len(m.ForkSids) != 2 || m.ForkSids[0] != sid(metaFor("sfgrand")) || m.ForkSids[1] != sid(src) {
+		t.Fatalf("forkMeta ForkSids = %v", m.ForkSids)
+	}
 }

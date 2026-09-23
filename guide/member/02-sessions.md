@@ -284,8 +284,8 @@ things stop for you first**.
 - **Cache of deleted sessions** — files you pasted or attached into a session, and images codex
   looked at, stay on disk after the session is deleted. Once the session (or assistant chat) is
   gone **and not in the trash**, nothing can refer to them again; they are listed here, one row per
-  kind with its size, and **"Delete all"** removes them. Anything a trashed session — or a fork of the
-  session — could still need is left alone.
+  kind with its size, and **"Delete all"** removes them. Anything a trashed session, or a fork made
+  from the session (live or trashed), could still need is left alone.
 
 Every candidate carries a **safety** rating and a reason. You can also pick them off one by one.
 

@@ -65,6 +65,8 @@ type cleanupCandidate struct {
 	// Stuck = the scan behind a "cache" row could not finish a single folder within its
 	// budget, and would stop at the same place again.
 	Stuck bool `json:"stuck,omitempty"`
+	// Unjudged counts session folders left alone because the session store is missing.
+	Unjudged int `json:"unjudged,omitempty"`
 }
 
 // The "reason" of a candidate is text WE generate for the user to read, so per ADR 0033
@@ -94,6 +96,7 @@ const (
 	cleanReasonCacheUnread  = "clean.reason.cache_unreadable"
 	cleanReasonCacheStalled = "clean.reason.cache_stalled"
 	cleanReasonCacheStuck   = "clean.reason.cache_stuck"
+	cleanReasonCacheNoStore = "clean.reason.cache_no_store"
 )
 
 var cleanupReasonJA = map[string]string{
@@ -113,6 +116,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonCachePartial: "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
 	cleanReasonCacheUnread:  "中身を読めないフォルダがあり、それは対象外（そのフォルダは点検し直しても対象にならない。権限かファイルシステムの確認が必要）",
 	cleanReasonCacheStalled: "セッション情報とごみ箱が多すぎて参照の有無を判定できない（点検し直しても変わらない。ごみ箱を整理すると進む）",
+	cleanReasonCacheNoStore: "セッションの保存先が見つからないので、セッションのフォルダは判定しない（チャットの分だけが対象。保存先が戻れば点検できる）",
 	cleanReasonCacheStuck:   "点検の上限までに 1 つも判定できない（大きすぎるフォルダか、手前に多数のフォルダがある。点検し直しても同じ所で止まるので ~/.cache/agent-fleet を手で確認する）",
 }
 
@@ -294,7 +298,7 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 				// than show nothing, which would read as "nothing to tidy".
 				out = append(out, cleanupCandidate{
 					Type: "cache", ID: feature, Safety: "keep",
-					Truncated: found.Truncated, Unreadable: found.Unreadable, Stuck: found.Stuck,
+					Truncated: found.Truncated, Unreadable: found.Unreadable, Stuck: found.Stuck, Unjudged: found.Unjudged,
 					ReasonKey: reason, Reason: cleanupReasonText(reason),
 				})
 			}
@@ -303,7 +307,7 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 		out = append(out, cleanupCandidate{
 			Type: "cache", Action: "delete_cache", ID: feature, Safety: "safe",
 			Bytes: found.Bytes, Files: found.Files, Dirs: len(found.Dirs),
-			Truncated: found.Truncated, Unreadable: found.Unreadable, Stuck: found.Stuck,
+			Truncated: found.Truncated, Unreadable: found.Unreadable, Stuck: found.Stuck, Unjudged: found.Unjudged,
 			ReasonKey: reason, Reason: cleanupReasonText(reason),
 		})
 	}
@@ -311,7 +315,8 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 }
 
 // cacheReason picks the note a cache row carries — the one whose fix comes first. Too many
-// records to judge anything at all; then folders that could not be read (a definite fault a
+// records to judge anything at all; then no session store to judge sessions against; then
+// folders that could not be read (a definite fault a
 // person must fix); then a scan that could not finish anything (look by hand); then a budget
 // cut the next press resolves. The other states still ride on the row's own fields, so the
 // Console can show that part was left unchecked.
@@ -319,6 +324,8 @@ func cacheReason(found CacheOrphans) string {
 	switch {
 	case found.Stalled:
 		return cleanReasonCacheStalled
+	case found.Unjudged > 0:
+		return cleanReasonCacheNoStore
 	case found.Unreadable > 0:
 		return cleanReasonCacheUnread
 	case found.Stuck:

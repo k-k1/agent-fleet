@@ -39,6 +39,8 @@ export interface CleanupCandidate {
   unreadable?: number;
   // The scan could not finish a single folder and would stop at the same place again.
   stuck?: boolean;
+  // Session folders left alone because the session store is missing.
+  unjudged?: number;
 }
 
 // One working copy: a linked worktree, or the clone itself (the base copy, isWorktree false).

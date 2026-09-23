@@ -174,14 +174,17 @@ not: the cleanup modal's **"Cache of deleted sessions"** removes `~/.cache/agent
 a restore brings back. These directories belong only to sessions that are already beyond restore.
 There are two rules, one per kind of owner (`internal/sessionx/cache_orphans.go`):
 - **A session's directory** (`pasted/<sid>`, `codex-view-image/<sid>`) is offered only when its UUID
-  is in **no session meta** (live, stopped or shelved), **in no archive in the trash**, and **in no
-  living session's fork ancestry**. A session name is a random slug that is never reused and the
+  is in **no session meta** (live, stopped or shelved), **in no archive in the trash**, and **in the
+  fork ancestry of no session in either**. A session name is a random slug that is never reused and the
   UUID is a pure function of (dir, name), so such a UUID can never be named again — except through a
   fork, whose copied history still holds its ancestors' pasted paths: a fork records every ancestor
-  (`Meta.ForkSids`), and a claude fork made before that is covered by its `ForkFrom`, which is the
-  parent's UUID. Anything a trashed session could still need stays until that archive is purged.
-  The session store itself must be there; a missing one (an unmounted volume) stops the scan
-  rather than making every session look gone.
+  (`Meta.ForkSids`), and a claude fork made before that is covered by its `ForkFrom`, which is
+  usually the parent's UUID (not once the parent's sid had drifted). A fork in the trash protects
+  its ancestors too, since restoring it brings their paths back into use. Anything a trashed
+  session could still need stays until that archive is purged. Without the session store (an
+  unmounted volume, or a workspace that never had a session) no session folder is judged —
+  every session would look gone — while chat folders still are. Paths a model copied into free
+  text (a handoff prompt, say) are outside every rule here.
 - **An assistant chat's directory** (`pasted/chat-<id>`) is offered only when the conversation store
   is there and the conversation file **provably does not exist** (ENOENT from a stat — any other
   failure keeps it). Chats are not sessions and have no trash — deleting a chat
@@ -239,7 +242,9 @@ reads a whole archive into memory.
   cannot be purged** (409), because it is what keeps that session's cache reachable. A marker written
   before anything is placed records that a restore is under way; it is removed on success, and a
   failure that changed nothing leaves none. A marker alone never blocks: the purge checks for an
-  actually half-back session, so an archive is never made impossible to purge. The purge and the cache delete take the same lock. So a delete can never scan a session
+  actually half-back session, so an archive is only ever held for as long as that lasts — except
+  one whose manifest cannot be read at all, which is kept, since nothing (restore included) could
+  tell what it holds. The purge and the cache delete take the same lock. So a delete can never scan a session
   that is in neither place, and a restore that lost a race to a purge fails instead of bringing a
   conversation back without its files.
 
