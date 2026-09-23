@@ -1619,7 +1619,11 @@ export function sessionsBig(locale, lanes) {
 
 // ---- image studio (ADR 0100) -------------------------------------------------------------
 // One studio, bound to the claude session above, a few edits in, one trial pressed. The shapes
-// are console/src/features/imagegen/wire.ts (ImageStudio*, DraftLog*, Knowledge*).
+// are console/src/features/imagegen/wire.ts (ImageStudio*, DraftLog*, Knowledge*), and the
+// values are what the real Agent answers (checked against it on 2026-09-24): versions are
+// `v<N>` per studio, a params change is one row per knob (`params.cfg`), pictures and knowledge
+// files come back as absolute paths, and a claude transcript carries no output or input summary
+// for af's tools.
 
 export const STUDIO_ID = "5f0c2d1e-8a4b-4c3d-9e2f-1a2b3c4d5e6f";
 
@@ -1656,12 +1660,12 @@ const studioLog = (reads) => {
       session: "swnd7qa",
       changes: [
         { field: "prompt", before: "1girl, harbour at dusk", after: studioDraft(false).prompt },
-        { field: "params", before: { steps: 28, cfg: 7 }, after: { steps: 28, cfg: 5 } },
+        { field: "params.cfg", before: 7, after: 5 },
       ],
       draft: studioDraft(false),
     },
-    { seq: 7, kind: "press", at: ago(10), author: "human", version: "v-7c1e", mode: "trial", draft: studioDraft(false) },
-    { seq: 8, kind: "press_result", at: ago(10), version: "v-7c1e", jobs: ["t1"], state: "ok" },
+    { seq: 7, kind: "press", at: ago(10), author: "human", version: "v2", mode: "trial", draft: studioDraft(false) },
+    { seq: 8, kind: "press_result", at: ago(10), version: "v2", jobs: ["t1"], state: "ok" },
   ];
   // From the second read on, the agent has answered "darker": the pane's poll picks the edit
   // up and outlines the fields it moved.
@@ -1702,22 +1706,25 @@ export function imagegenStudios(locale) {
   };
 }
 
+// A page is oldest first, as the Agent slices it.
 export function imagegenDraftLog() {
   return {
     entries: [
-      { seq: 4, kind: "edit", at: ago(16), author: "agent", changes: [{ field: "size", before: "", after: "1216x832" }], draft: studioDraft(false) },
       { seq: 3, kind: "edit", at: ago(18), author: "human", changes: [{ field: "model", before: "", after: "illustrious-v2" }], draft: studioDraft(false) },
+      { seq: 4, kind: "edit", at: ago(16), author: "agent", session: "swnd7qa", changes: [{ field: "size", after: "1216x832" }], draft: studioDraft(false) },
     ],
   };
 }
+
+const MEMBER_HOME = "/home/dev";
 
 export function imagegenHistory() {
   const iso = (secAgo) => new Date(NOW.getTime() - secAgo * 1000).toISOString();
   return {
     items: [
-      { path: "generated/console/trial/image-1757900000-1.png", studio: STUDIO_ID, version: "v-7c1e", created_at: iso(600), trial: true },
-      { path: "generated/console/image-1757912-1.png", studio: STUDIO_ID, version: "v-5a90", created_at: iso(3600) },
-      { path: "generated/console/image-1757911-1.png", studio: STUDIO_ID, version: "v-5a90", created_at: iso(3660) },
+      { path: `${MEMBER_HOME}/.cache/agent-fleet/generated/console/trial/image-1757900000-1.png`, studio: STUDIO_ID, version: "v2", created_at: iso(600), trial: true },
+      { path: `${MEMBER_HOME}/.cache/agent-fleet/generated/console/image-1757912-1.png`, studio: STUDIO_ID, version: "v1", created_at: iso(3600) },
+      { path: `${MEMBER_HOME}/.cache/agent-fleet/generated/console/image-1757911-1.png`, studio: STUDIO_ID, version: "v1", created_at: iso(3660) },
     ],
   };
 }
@@ -1727,11 +1734,14 @@ export function imagegenKnowledge(locale, scope, key) {
   return {
     scope,
     key,
-    path: `imagegen-knowledge/${scope === "family" ? "families" : "models"}/${key}.md`,
+    path: `${MEMBER_HOME}/imagegen-knowledge/${scope === "family" ? "families" : "models"}/${encodeURIComponent(key)}.md`,
+    // The browse root is home here, so the Files pane reaches the file.
+    files_path: `imagegen-knowledge/${scope === "family" ? "families" : "models"}/${encodeURIComponent(key)}.md`,
+    version: "3f9c1a7e5b2d4c60",
     summary: ja ? "タグを重要な順に。cfg は 5 前後が肌の質感に合う。" : "Tags, most important first. cfg around 5 suits skin.",
     settings: "steps 28 / dpmpp_2m karras",
     prompts: ja ? "夜景は `dim light, lanterns` を足すと空が潰れない。" : "For night scenes add `dim light, lanterns` so the sky does not crush.",
-    records: ja ? "- 2026-09-20: cfg 7 は肌が硬い（v-5a90）" : "- 2026-09-20: cfg 7 makes the skin stiff (v-5a90)",
+    records: ja ? "- 2026-09-20 · agent swnd7qa: cfg 7 は肌が硬い (根拠: v1)" : "- 2026-09-20 · agent swnd7qa: cfg 7 makes the skin stiff (evidence: v1)",
   };
 }
 
@@ -1759,9 +1769,9 @@ export function studioTurns(locale) {
       model: "claude-opus-5",
       text: "",
       parts: [
-        { kind: "tool", tool: "mcp__af__get_image_studio", info: "v5", output: "{…}" },
+        { kind: "tool", tool: "mcp__af_40ed9852__get_image_studio" },
         { kind: "tool", tool: "Read", info: "docs/chars/aoi.md", output: ja ? "31 行を読み込みました" : "read 31 lines" },
-        { kind: "tool", tool: "mcp__af__set_image_draft", info: "prompt, params", output: "v6" },
+        { kind: "tool", tool: "mcp__af_40ed9852__set_image_draft" },
         {
           kind: "text",
           text: ja
@@ -1780,7 +1790,8 @@ export function studioTurns(locale) {
       model: "claude-opus-5",
       text: "",
       parts: [
-        { kind: "tool", tool: "mcp__af__set_image_draft", info: "prompt", output: "v9" },
+        { kind: "tool", tool: "mcp__af_40ed9852__get_image_studio" },
+        { kind: "tool", tool: "mcp__af_40ed9852__set_image_draft" },
         { kind: "text", text: ja ? "灯りと薄暗さの指定を足しました。" : "Added dim light and lanterns." },
       ],
     },
