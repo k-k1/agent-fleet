@@ -25,7 +25,6 @@ These do not vary by deployment.
 | Browser pane: frame rate | 12 fps while visible | Not usable for video |
 | Browser pane: hidden page retention | 60 seconds | After that the page is released and rebuilt from the saved port and path on return |
 | Browser pane: console messages kept | 200 | Oldest are dropped; this is not a persistent log |
-| Stopped session kept in the list | 7 days | Moved to the archive — never deleted, and its working copy stays; a session locked against deletion stays in the list |
 
 > **Why the title limit is worth naming.** It used to differ per layer: a handoff
 > proposal accepted 512 bytes, showed it on the card and in the launch dialog and let
@@ -46,6 +45,7 @@ which stays the source of truth.
 | Per-user home volume (EC2 target) | 50 GiB | `AF_ECS_EC2_HOME_GB` |
 | Graceful stop | 30 s | `AF_STOP_GRACE_SEC` |
 | Start timeout (AWS targets) | 300 s | `AF_ECS_START_TIMEOUT_SEC` |
+| Stopped session kept in the list | 7 days | `AF_SESSION_STOPPED_TTL` — then it moves to the archive, never deleted, and its working copy stays; a session locked against deletion stays in the list |
 | Cloud-cost window | 7 days | `AF_CLOUD_COST_WINDOW_DAYS` |
 | Idle sweep | on | `AF_IDLE_SWEEP_INTERVAL` — **`0` switches the reaper off entirely**, so nothing is ever stopped for being idle |
 

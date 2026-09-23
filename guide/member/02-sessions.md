@@ -326,7 +326,7 @@ they are, so **archiving the sessions and deleting the copies happen in one go**
 
 ## When you can — and can't — resume
 
-Stopped sessions can be opened and resumed with a click. However, claude / codex / cursor / copilot / kiro / agy / opencode
+Stopped sessions can be opened and resumed with a click. However, claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse
 **cannot resume if the working folder they were launched in is gone**. In that case the state
 display becomes **"Folder missing — can't resume"**, and the row is struck through and can no
 longer be clicked ("Can't resume — the working folder no longer exists"). The typical case is
@@ -476,7 +476,7 @@ moved or copied — only **what you see** changes.
 
 ## Handing a conversation off (handoff)
 
-From the **⋯** menu of a running claude, codex, cursor, copilot, kiro, agy, or opencode session, choose
+From the **⋯** menu of a running claude, codex, cursor, copilot, kiro, agy, opencode, or muse session, choose
 **"Hand off to another agent…"** and pick the **target agent** in the handoff modal that
 opens. Rather than handing over the whole original
 conversation as is, the **fleet operator** reads the source session's situation and drafts a
@@ -543,7 +543,7 @@ is why `/list-agents` does nothing here; use the Agent Fleet version above inste
 
 | | Claude Code's | Agent Fleet's |
 |---|---|---|
-| Which agents you can reach | claude only | claude / codex / opencode / cursor / kiro / agy / copilot |
+| Which agents you can reach | claude only | claude / codex / opencode / cursor / kiro / agy / copilot / lcpp / muse |
 | A stopped session | Can't be reached | **Resumed, then delivered** |
 | Record of it | One collapsed line in the terminal | A badge with the sender in the chat view |
 | Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |

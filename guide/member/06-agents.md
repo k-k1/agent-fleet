@@ -74,7 +74,7 @@ and rolls in the cross-cutting features covered elsewhere in this guide — work
 | Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | —⁵ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | ✓⁵ | — | — |
 | WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — | ✓ | — | — |
 
 ¹ copilot's model choice is plan-dependent (Free = Auto only).
@@ -90,9 +90,10 @@ transcript even under Managed, so a stopped kiro session still shows its history
 ⁴ lcpp and muse have no Terminal (CLI) route — lcpp has no vendor CLI to put in a pane;
 muse drives the session protocol directly. Sessions of either kind default to Managed.
 
-⁵ muse has no assistant-chat backend — this is written per agent and the muse
-implementation does not exist yet. Every other muse row was ticked only after it was
-observed working on a real session.
+⁵ As the assistant, muse answers one prompt per turn as its own headless run and remembers
+the conversation; it answers rather than acts (shell, file writing and web tools are off for
+those turns). It needs Muse Code installed and signed in first — see the connection card below.
+Every muse row was ticked only after it was observed working on a real session.
 
 Usage chips add up, so the bar keeps only the **two agents you used most recently**. The
 rest fold into a **"+N"** chip on the right and open from inside it (a folded chip keeps

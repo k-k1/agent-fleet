@@ -32,18 +32,18 @@ Keeping it current:
 
 **New / Improved**
 
-- **[agent kinds]** llama.cpp sessions: the fleet's own harness on the deployment's chat engine, with no CLI and no terminal pane; tools, MCP servers, approvals and exact usage in the mirror; "Use llama.cpp" in Settings › Agents, and "Your own connection" points it at a LAN llama-server, which takes priority and whose reachability the card and the engine pill show
+- **[agent kinds]** llama.cpp sessions: the fleet's own harness on the deployment's chat engine, with no CLI and no terminal pane; tools, MCP servers, approvals and exact usage in the mirror; on from the start ("Use llama.cpp" in Settings › Agents switches it off), and "Your own connection" points it at a LAN llama-server, which takes priority and whose reachability the card and the engine pill show
 - **[agent kinds]** Muse Code sessions: a one-time install into your home from the Settings › Agents card, sign-in with a Meta account from the browser or with an API key, then launched like any other agent; questions, usage and context gauge, skills, MCP servers, fork and handoff go through the mirror; its OS sandbox cannot run in a workspace, so it never asks before running a tool
 - **[sessions]** A fleet graph behind the sessions overview's "Graph" switch: one lane per session on a time axis with start, stop, spawn, messages, reports and the current state; families fold, archived lanes can be shown, the window pans and zooms from the last 24 hours
 - **[image generation]** Editing by instruction: the Qwen-Image-Edit families (2509 / 2511) take a sentence, up to three reference pictures and a mask for inpainting; waking and generating are timed separately; reproduction info carries prompt, negative and size; Qwen-Image 2.1 joins the families
 - **[sessions]** A stopped session whose window runs out moves to the archive with its conversation instead of being deleted, and a worktree no longer disappears with its session (the cleanup dialog reclaims it)
-- **[settings › AI assist]** Reply suggestions (mirror and chat), plan refresh and translation each have their own on/off, agent and model; a feature that is off hides its button
+- **[settings › AI assistance]** Each AI-assistance feature — title, branch name and reply suggestions, file edit suggestions, work-plan update, answer translation — has its own on/off, agent and model; a feature that is off hides its button
 - **[plans]** "Review in another session" on a plan rejects it and starts a review session with the agent you pick, which checks the plan against the code and answers in a fixed format
 - **[engines]** "Stop after" per role on the engines panel replaces the fixed GPU idle window
 - **[engines]** A Spot offer is bought only for a role where a super admin ticked "Accept interruption"; a pinned Spot offer without it is skipped and the role chooses automatically
 - **[engines]** A registered model's card offers "Other versions…" / "Other sizes…" — the same publisher's other versions or quantisations with size and fit — and taking one in creates a new row
 - **[sessions]** Stop every session under a repository or worktree from its right-click menu, now or after the turn, with the reason for any that cannot be stopped
-- **[opencode]** "Use opencode" switches it off entirely (gone from the launch menus, API create refused), and the billing choice gains "None (my own keys)" on which the opencode.ai key is never injected
+- **[opencode]** The card separates "Use opencode" (Off in a new workspace; off, it is gone from the launch menus and API create is refused) from the billing choice, which gains "None (my own keys)" on which the opencode.ai key is never injected
 - **[notifications]** A red dot on a session with an unread notification; "Mark all as read" in the notification centre
 - **[start flow]** The model list says "Loading models…" and, when empty, why (all excluded, billing route, workspace just started)
 - **[usage]** The WS bar keeps the usage chips of the two most recently used agents and folds the rest into "+N"; each chip can be kept on the bar or always folded
