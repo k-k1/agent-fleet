@@ -317,7 +317,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.280
 ARG OPENCODE_VERSION=1.18.32
-ARG CODEX_VERSION=0.156.0
+ARG CODEX_VERSION=0.156.1
 ARG COPILOT_VERSION=1.0.88
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
