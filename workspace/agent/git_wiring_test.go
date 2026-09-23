@@ -6,7 +6,7 @@ package main
 // that points at the wrong thing. Three shapes are reachable in practice:
 //
 //   - `RepoLocked` pinned to `return false`    → the deletion lock disappears entirely
-//   - `WorktreeHasSessions` pinned to `false`  → deletes the worktree of a running session
+//   - `TrashSession` pinned to a no-op          → a deleted working copy leaves shell rows pointing at nothing
 //   - `ErrCodeBranchInUse` spelled differently → the Console shows the raw code (i18n misses)
 //
 // Each is a one-line edit to the wiring. Coverage did not drop in the extraction (before it
@@ -47,10 +47,10 @@ func TestGitWiringIsLive(t *testing.T) {
 
 		"LiveSessionsInDir":   func(t *testing.T) { sameGitFunc(t, w.LiveSessionsInDir, sessionx.LiveSessionsInDir) },
 		"LockedSessionsInDir": func(t *testing.T) { sameGitFunc(t, w.LockedSessionsInDir, sessionx.LockedSessionsInDir) },
-		"WorktreeHasSessions": func(t *testing.T) { sameGitFunc(t, w.WorktreeHasSessions, sessionx.WorktreeHasSessions) },
 		"ManagedAlive":        func(t *testing.T) { sameGitFunc(t, w.ManagedAlive, sessionx.ManagedAlive) },
 
-		"FinalizeSessionUsage": func(t *testing.T) { sameGitFunc(t, w.FinalizeSessionUsage, finalizeSessionUsage) },
+		"ShelveSession": func(t *testing.T) { sameGitFunc(t, w.ShelveSession, sessionx.ArchiveSession) },
+		"TrashSession":  func(t *testing.T) { sameGitFunc(t, w.TrashSession, trashStoppedSession) },
 
 		"RepoJobActive": func(t *testing.T) { sameGitFunc(t, w.RepoJobActive, repoJobActive) },
 		// StartRepoJob alone is not the real function: it goes through an adapter that

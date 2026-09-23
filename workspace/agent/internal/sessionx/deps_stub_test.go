@@ -121,13 +121,13 @@ func gitxStubDeps() gitx.Deps {
 
 	// What main's git_wiring.go wires from sessionx is wired here to the same implementation.
 	// It is the real one, not a copy, so checks that reach it through gitx
-	// (TestMaybePruneWorktreeKeeps and the like) look at exactly what production looks at.
+	// (TestEnsureWorktree and the like) look at exactly what production looks at.
 	d.AbsPath = AbsPath
 	d.RepoLocked = RepoLocked
 	d.LockedRepoDirs = LockedRepoDirs
 	d.LiveSessionsInDir = LiveSessionsInDir
 	d.LockedSessionsInDir = LockedSessionsInDir
-	d.WorktreeHasSessions = WorktreeHasSessions
+	d.ShelveSession = ArchiveSession
 	d.ManagedAlive = ManagedAlive
 
 	// Like main's scratch.go, do nothing when AF_WS_SCRATCH is unset (a plain no-op would

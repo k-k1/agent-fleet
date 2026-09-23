@@ -104,9 +104,10 @@ func RemoveMeta(name string) { _ = os.Remove(MetaPath(name)) }
 
 // RemoveMetaAndLineage is RemoveMeta plus erasing the session's fleet-graph lineage row
 // (ADR 0096 decision 6: an explicit, person-initiated forgetting of a session means
-// "deleted", not "still has a line in the graph"). Use this — never bare RemoveMeta — for
-// every path that forgets a meta because someone asked to: /stop, DELETE /sessions/{name}
-// (with or without ?reclaim=1), and a working-copy delete's session collateral. Erasure is
+// "deleted", not "still has a line in the graph"). Its one caller is main's trashSession
+// (ADR 0101 decision 1), which every delete goes through — DELETE /sessions/{name}, its old
+// name /stop, and the shell / ssm of a deleted working copy — after the gz archive is
+// written. Never call it from anywhere else: that would be a delete skipping the trash. Erasure is
 // best-effort and logged, never fatal: the meta is already gone by the time this runs, so
 // failing the request over it would be strictly worse than a leftover lineage row.
 func RemoveMetaAndLineage(name string) {

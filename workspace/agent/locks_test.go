@@ -34,9 +34,9 @@ func lockMux() *http.ServeMux {
 	return mux
 }
 
-// TestSessionLockRefusesDeletion: a locked session survives BOTH manual delete paths
-// — /stop (the Console's Delete, which forgets the meta) and DELETE ?reclaim=1 (jsonl
-// reclaim) — while archive (reversible) still works. Unlocking restores deletability.
+// TestSessionLockRefusesDeletion: a locked session survives BOTH delete routes — /stop (the
+// old name of the Console's Delete) and DELETE — while archive (reversible) still works.
+// Unlocking restores deletability. Both routes end in the trash (ADR 0101).
 func TestSessionLockRefusesDeletion(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -231,42 +231,6 @@ func TestRepoDeleteRefusedByLockedSession(t *testing.T) {
 	}
 	if !session.DirExists(dir) {
 		t.Fatal("working copy was removed despite a locked session living in it")
-	}
-}
-
-// TestWorktreeLockBlocksAutoPrune: maybePruneWorktree drops a clean, session-less
-// worktree on its own (no user action) — the lock must stop that automatic path too.
-func TestWorktreeLockBlocksAutoPrune(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
-
-	parent := filepath.Join(home, "repos", "app")
-	gitInit(t, parent)
-	wt := filepath.Join(home, "repos", "app@wt")
-	cmd := exec.Command("git", "-C", parent, "worktree", "add", "-b", "wt", wt)
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("worktree add: %v: %s", err, out)
-	}
-
-	if err := sessionx.SetRepoLock(wt, true); err != nil {
-		t.Fatal(err)
-	}
-	gitx.MaybePruneWorktree(wt)
-	if !session.DirExists(wt) {
-		t.Fatal("locked worktree was auto-pruned")
-	}
-	// Same call once unlocked removes it — proving the test's prune really would fire.
-	if err := sessionx.SetRepoLock(wt, false); err != nil {
-		t.Fatal(err)
-	}
-	gitx.MaybePruneWorktree(wt)
-	if session.DirExists(wt) {
-		t.Fatal("unlocked clean worktree should have been pruned")
 	}
 }
 

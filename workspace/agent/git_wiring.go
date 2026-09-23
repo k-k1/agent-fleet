@@ -31,10 +31,10 @@ func gitDeps() gitx.Deps {
 
 		LiveSessionsInDir:   sessionx.LiveSessionsInDir,
 		LockedSessionsInDir: sessionx.LockedSessionsInDir,
-		WorktreeHasSessions: sessionx.WorktreeHasSessions,
 		ManagedAlive:        sessionx.ManagedAlive,
 
-		FinalizeSessionUsage: finalizeSessionUsage,
+		ShelveSession: sessionx.ArchiveSession,
+		TrashSession:  trashStoppedSession,
 
 		RepoJobActive: repoJobActive,
 		StartRepoJob:  startGitRepoJob,

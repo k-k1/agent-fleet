@@ -33,6 +33,8 @@ interface CleanupArchive {
   reason?: string;
   sessions?: { name: string; display?: string }[];
   branches?: { repo: string; name: string }[];
+  /** Size of the archive's tarball (what purging it reclaims). */
+  bytes?: number;
 }
 
 interface CleanupModalProps {

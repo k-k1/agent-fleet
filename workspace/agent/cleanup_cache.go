@@ -108,6 +108,10 @@ type cleanupUsage struct {
 	Trash   struct {
 		Bytes    int64 `json:"bytes"`
 		Archives int   `json:"archives"`
+		// Oldest is the date (YYYY-MM-DD, UTC) of the oldest archive, "" when the trash is
+		// empty — with nothing expiring on its own (ADR 0097), how far back it goes is what
+		// tells a person whether "delete permanently: older ones" is worth pressing.
+		Oldest string `json:"oldest,omitempty"`
 	} `json:"trash"`
 	// Truncated = the walk hit its entry cap; the figures are lower bounds.
 	Truncated  bool   `json:"truncated,omitempty"`
@@ -207,6 +211,14 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 		}
 		if strings.HasSuffix(e.Name(), ".tar.gz") {
 			u.Trash.Archives++
+			// Archive ids start with their UTC time (newCleanupID), so the name alone dates them.
+			if len(e.Name()) >= 15 {
+				if at, err := time.Parse("20060102-150405", e.Name()[:15]); err == nil {
+					if d := at.Format("2006-01-02"); u.Trash.Oldest == "" || d < u.Trash.Oldest {
+						u.Trash.Oldest = d
+					}
+				}
+			}
 		}
 	}
 	u.Truncated = u.Truncated || budget <= 0

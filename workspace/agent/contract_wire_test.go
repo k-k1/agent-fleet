@@ -83,7 +83,7 @@ func agentContractFamilies() []contractFamily {
 			binding: cleanupManifestBinding,
 			tsPath:  "../../console/src/features/sessions/CleanupModal.tsx",
 			tsName:  "CleanupArchive",
-			tsKeys:  keySet("id", "at", "reason", "sessions", "branches"),
+			tsKeys:  keySet("id", "at", "reason", "sessions", "branches", "bytes"),
 			tsOnly:  map[string]string{},
 			goOnly: map[string]string{
 				"worktrees": "[gap] cleanupManifest emits it but the Console's CleanupArchive does not declare it (the list of worktrees a cleanup deleted never reaches the screen).",
@@ -224,7 +224,7 @@ var branchInfoBinding = map[string]string{
 
 var cleanupManifestBinding = map[string]string{
 	"ID": "id", "At": "at", "Reason": "reason", "Sessions": "sessions",
-	"Branches": "branches", "Worktrees": "worktrees",
+	"Branches": "branches", "Worktrees": "worktrees", "Bytes": "bytes",
 }
 
 var browserAttachmentBinding = map[string]string{

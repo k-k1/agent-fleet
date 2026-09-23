@@ -8,7 +8,8 @@ package main
 //   - branch:  its name + tip SHA — a merged branch's commits already live in the
 //              target's object store, so recording the ref is enough to recreate it.
 // A worktree's working files are reconstructable from git (delete_worktree refuses
-// dirty/ahead), so they are NOT archived — only the sessions/branch tied to it are.
+// dirty/ahead), so they are NOT archived. Deleting a worktree moves its stopped AI sessions to
+// the shelf and its shell / ssm to this trash (ADR 0101 decision 4).
 //
 // Each archive is a self-contained <id>.tar.gz (manifest.json + jsonl files inside),
 // with a sidecar <id>.json manifest for cheap listing without extracting.
@@ -64,6 +65,9 @@ type cleanupManifest struct {
 	Sessions  []cleanupArchivedSession `json:"sessions,omitempty"`
 	Branches  []cleanupArchivedBranch  `json:"branches,omitempty"`
 	Worktrees []string                 `json:"worktrees,omitempty"` // names removed (informational)
+	// Bytes is the size of the archive's tarball, filled in by listCleanupArchives for the
+	// trash tab (what a purge reclaims). Never written into the archive itself.
+	Bytes int64 `json:"bytes,omitempty"`
 }
 
 // newCleanupID builds a sortable, unique archive id. now is passed in (never
@@ -133,6 +137,9 @@ func listCleanupArchives() []cleanupManifest {
 		}
 		var m cleanupManifest
 		if json.Unmarshal(b, &m) == nil && m.ID != "" {
+			if info, err := os.Stat(filepath.Join(cleanupStoreDir(), m.ID+".tar.gz")); err == nil {
+				m.Bytes = info.Size()
+			}
 			out = append(out, m)
 		}
 	}
@@ -272,8 +279,35 @@ func purgeCleanupArchive(id string) error {
 		}
 		_ = os.Remove(restoringMarker(id))
 	}
+	var man cleanupManifest
+	if b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json")); err == nil {
+		_ = json.Unmarshal(b, &man)
+	}
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
-	return os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
+	if err := os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
+		return err
+	}
+	dropPurgedLedgers(man)
+	return nil
+}
+
+// dropPurgedLedgers removes the managed kinds' ClientMessageID ledger of each session a purged
+// archive held. The trash keeps the ledger because a session in it can still be restored and
+// resumed (ADR 0101 decision 1); once the archive is purged nothing can bring the session back,
+// so the ledger is what is left over. A session whose meta exists (restored since) keeps its
+// ledger. If the same session sits in a second archive (deleted, restored, deleted again),
+// restoring that one comes back without the ledger — which is what every delete did before.
+func dropPurgedLedgers(man cleanupManifest) {
+	for _, s := range man.Sessions {
+		var meta session.Meta
+		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
+			continue
+		}
+		if _, ok := session.ReadMeta(meta.Name); ok {
+			continue
+		}
+		sessionx.RemoveManagedLedger(meta)
+	}
 }
 
 // restoreCleanupArchive replays an archive: re-create each branch ref (name→sha, if
