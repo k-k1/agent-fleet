@@ -7,6 +7,17 @@ English | [日本語](115-session-delete-via-trash.ja.md)
   answered the decisions in §7, an ADR is written first and implementation follows.
 - Number: 114 is taken on another branch (`114-adr-0100-impl-review.md` on `temp/sajiob7`), so this is 115.
 - docs/log is normally Japanese only. This proposal comes as an en/ja pair because the user asked for it.
+- 🔴 **Addendum 2026-09-24 (same day, at implementation)**: the user took the recommended option on all six
+  decisions of §7; they became ADR 0101 and were implemented. **Only D1's "put the terminal history into the
+  trash" was dropped.** Reading `terminal_history.go` while implementing showed that the terminal history is
+  short-lived on purpose (`/tmp` by default; its retention is the tenant's setting
+  `AF_TERMINAL_HISTORY_RETENTION_DAYS`, where 0 is a policy of deleting it), and a trash with no expiry would
+  break that policy. The proposal looked only at "it is a shell's only content" and never checked the retention
+  policy. Restoring a shell / ssm from the trash brings back its row (meta) only. Also, the managed kinds'
+  ClientMessageID ledger now stays while the session is in the trash and is removed when the archive is purged
+  (a session in the trash can be restored and resumed). D7 (counting the existing transcripts) is deferred:
+  unless claude's sid re-mapping (`LiveSID`), forks and subagent files are counted correctly, the figure the
+  decision rests on would be wrong.
 - Starting point (the user's policy):
   1. **Every** session delete goes through the trash (the gz safety net).
   2. **Deleting a worktree and deleting a session are separate operations.**

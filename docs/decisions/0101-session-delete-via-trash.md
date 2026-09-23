@@ -101,7 +101,9 @@ figure in Settings → Machine gains the count and the oldest date.
 
 Transcripts left by `/stop`, `prune_sessions` and the TTL prune before ADR 0097 cannot be put back into the
 trash: their names are unknown. They cannot be told apart from transcripts that were never fleet sessions
-(claude run by hand in a shell, for example) either. Count them first, then decide (docs/log/115 §D7 (a)–(c)).
+(claude run by hand in a shell, for example) either. Count them first, then decide (docs/log/115 §D7 (a)–(c)). **The counting is not in this change**: unless
+claude's sid re-mapping (`LiveSID`), forks and subagent files are handled correctly the count itself would be
+wrong, so it comes separately.
 
 ## Rejected
 

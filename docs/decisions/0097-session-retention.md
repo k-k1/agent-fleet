@@ -252,3 +252,17 @@ reads a whole archive into memory.
 `generated/` is outside this: pictures are products, and they already age out after 30 days.
 The Open item about the shelf's inventory is partly answered: Settings → Machine now shows the
 trash's size and opens the cleanup modal.
+
+## Addendum (2026-09-24) — the background's "only" was wrong; decision 2 holds from ADR 0101
+
+The background says the auto prune "was the only delete that skipped the trash". At the same time,
+`POST /sessions/{name}/stop` (the shell / ssm row delete, the bulk tidies, the image studio's switch) and
+`DELETE /repos/{name}?prune_sessions=1` (cleanup ② and MCP `delete_worktree`) also forgot the meta and
+skipped the trash, so decision 2's "true without exception" did not hold. The inventory is in
+docs/log/115 §115.1.
+
+[ADR 0101](0101-session-delete-via-trash.md) fixes it. There is now one route that forgets a session's meta,
+`trashSession`, and it archives to gz before removing anything — decision 2 holds without exception from
+there. Decision 5 (worktrees leave the sweep) now extends to a person's delete as well: deleting a session no
+longer deletes its worktree (`MaybePruneWorktree` is gone), and deleting a worktree moves its stopped AI
+sessions to the shelf.
