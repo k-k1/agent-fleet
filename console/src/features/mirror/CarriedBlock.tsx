@@ -18,6 +18,8 @@ import { sessionCarriedAnswer } from "../../core/api/client.ts";
 import type { CarriedInteraction, CarriedAnswerInput } from "../../core/api/client.ts";
 import { PendingQuestions } from "./PendingQuestions.tsx";
 import { carriedDraftKey } from "./questionDraft.ts";
+import { useQuestionTranslate } from "./questionTranslate.ts";
+import type { TranscriptTranslateWiring } from "./useTranslate.ts";
 import { PlanBlock } from "./transcript/blocks.tsx";
 
 export function CarriedBlock({
@@ -27,6 +29,7 @@ export function CarriedBlock({
   onDone,
   onError,
   onOpenPlan,
+  translate,
 }: {
   carried: CarriedInteraction;
   session: string;
@@ -35,8 +38,14 @@ export function CarriedBlock({
   onDone: () => void;
   onError: (message: string) => void;
   onOpenPlan?: (plan: string) => void;
+  translate?: TranscriptTranslateWiring;
 }) {
   const [sending, setSending] = useState(false);
+  const tx = useQuestionTranslate(
+    carried.kind === "question" ? translate : undefined,
+    carried.questions || [],
+    carried.text || "",
+  );
   const [feedback, setFeedback] = useState("");
 
   // Returns whether the answer actually left: the question card puts its draft back on a
@@ -75,7 +84,7 @@ export function CarriedBlock({
         <div className="mt-carried-note muted">
           <Icon name="info" /> {tr("mirror.carried_note")}
         </div>
-        {carried.text && <div className="mt-carried-text">{carried.text}</div>}
+        {carried.text && <div className="mt-carried-text">{tx?.lead ?? carried.text}</div>}
         {carried.kind === "question" && (
           <PendingQuestions
             questions={carried.questions || []}
@@ -88,6 +97,7 @@ export function CarriedBlock({
             onCancel={() => void send({ decision: "discard" })}
             cancelLabel={tr("mirror.carried_discard")}
             submitLabel={tr("mirror.carried_send")}
+            translate={tx}
           />
         )}
         {carried.kind === "plan" && (
