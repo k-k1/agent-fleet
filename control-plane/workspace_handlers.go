@@ -697,6 +697,17 @@ type sessionWire struct {
 	// is stopped could only open a pane that cannot load.
 	GeneratedImages     int    `json:"generatedImages,omitempty"`
 	GeneratedImagesPath string `json:"generatedImagesPath,omitempty"`
+	// Studio: the image studio this session is bound to (ADR 0100 decision 2). The Console
+	// sends a studio session to the studio pane instead of the mirror, so a gap here opens
+	// the same conversation in two panes that overwrite each other's draft and echo. It has a
+	// DB-mirror column: which studio a session belongs to does not change while the
+	// Workspace is stopped, and the pane has to route correctly on the first paint.
+	Studio string `json:"studio,omitempty"`
+	// InitialPromptState: how far the create's initial prompt got — pending / delivered /
+	// failed / unknown (ADR 0100 decision 2). The studio pane offers a resend on it, and never
+	// while it is pending. No DB-mirror column: a delivery only happens in a running
+	// Workspace, and the Agent turns a pending it can no longer finish into unknown on start.
+	InitialPromptState string `json:"initialPromptState,omitempty"`
 }
 
 func fmtStarted(createdAt string) string {
@@ -723,7 +734,7 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 				rows = append(rows, store.SessionRow{
 					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
-					Carried: s.Carried,
+					Carried: s.Carried, Studio: s.Studio,
 				})
 			}
 			_ = a.mgr.store.ReplaceSessions(ctx, res.ws.ID, rows)
@@ -743,6 +754,8 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 			// Surface "something is still waiting for an answer" even while the
 			// workspace is stopped (docs/log/75 §75.6.5).
 			Carried: r0.Carried,
+			// Which studio a session belongs to decides which pane opens it.
+			Studio: r0.Studio,
 			// Container is down: we can't check the dir, so assume resumable; the
 			// Agent re-checks and refuses on actual attach if the dir is gone.
 			Resumable: true,

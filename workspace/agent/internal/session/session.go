@@ -191,9 +191,14 @@ type Session struct {
 	// also gets it the live state and the archived/TTL filtering the list already applies.
 	Origin        string `json:"origin,omitempty"`
 	OriginSession string `json:"originSession,omitempty"`
-	Repo          string `json:"repo"` // working dir basename (display)
-	WorkingCopyID string `json:"workingCopyId,omitempty"`
-	Title         string `json:"title"` // user-supplied display title (optional, any kind)
+	// Studio / InitialPromptState mirror Meta's (ADR 0100 decision 2): which image studio this
+	// session is bound to, and how far its initial prompt got. The studio pane reads both off
+	// the list; the Control Plane's sessionWire has to carry them too or they vanish there.
+	Studio             string `json:"studio,omitempty"`
+	InitialPromptState string `json:"initialPromptState,omitempty"`
+	Repo               string `json:"repo"` // working dir basename (display)
+	WorkingCopyID      string `json:"workingCopyId,omitempty"`
+	Title              string `json:"title"` // user-supplied display title (optional, any kind)
 	// TitleSetBy mirrors Meta.TitleSetBy ("user" | "parent" | ""): who last set Title. It
 	// rides the wire so a reader outside this process can tell a name the user chose from one
 	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;
@@ -515,6 +520,19 @@ type Meta struct {
 	OriginConv string `json:"originConv,omitempty"`
 	// OriginSession names the session that raised this one (ADR 0073). See Origin above.
 	OriginSession string `json:"originSession,omitempty"`
+	// Studio is the image studio this session is bound to (ADR 0100 decision 2), "" for none.
+	// It is a COPY kept for advertising the studio tools: the truth of the binding is the
+	// studio's own `session`, and the two cannot be written atomically, so every studio tool
+	// checks the studio side again when it is called. Fork does not inherit it (one studio,
+	// one session); recreate does, because it is the same slot started empty.
+	Studio string `json:"studio,omitempty"`
+	// InitialPromptState is how far the create's initial_prompt got (ADR 0100 decision 2):
+	// "" when there was none, pending from the create until the delivery finishes, then
+	// delivered / failed / unknown (the delivery ended without evidence either way). The studio
+	// pane reads it to decide whether to offer a resend; while it is pending a resend would be
+	// a second persona turn, so none is offered. A pending left by a previous Agent process can
+	// never finish — RecoverPendingInitialPrompts turns it into unknown at start.
+	InitialPromptState string `json:"initialPromptState,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached
@@ -522,6 +540,14 @@ type Meta struct {
 	// the aws CLI obtains them via SSO at launch and caches them in the home volume.
 	SSM *SSMMeta `json:"ssm,omitempty"`
 }
+
+// The values of Meta.InitialPromptState.
+const (
+	InitialPromptPending   = "pending"
+	InitialPromptDelivered = "delivered"
+	InitialPromptFailed    = "failed"
+	InitialPromptUnknown   = "unknown"
+)
 
 // SSMMeta is the persisted, non-secret description of an SSM login target.
 type SSMMeta struct {

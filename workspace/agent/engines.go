@@ -64,6 +64,10 @@ func init() {
 	// inside that package would be a second copy of a security decision.
 	imagegen.BrowsePath = safeBrowsePath
 	imagegen.BrowseWritablePath = safeWritableBrowsePath
+	// The reference-image gate (ADR 0100 decision 4) reads beneath the browse root itself and
+	// refuses the same denylist the file tree does.
+	imagegen.BrowseRootDir = browseRoot
+	imagegen.PathDenied = isDenied
 	// Which Agent wrote a graph is provenance the sidecar carries and nothing else can: the
 	// templates change between releases and the record outlives the binary.
 	imagegen.Build = buildVersion

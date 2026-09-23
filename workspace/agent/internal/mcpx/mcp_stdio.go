@@ -411,6 +411,9 @@ func mcpStdioToolList() []map[string]any {
 		if offer, ok := mcpImageGenAdvertise(); ok {
 			tools = append(tools, mcpStdioImageGenTools(offer)...)
 		}
+		if offer, ok := mcpStudioAdvertise(); ok {
+			tools = append(tools, mcpStdioStudioTools(offer)...)
+		}
 		return tools
 	}
 	if writeEnabled() {
@@ -1109,6 +1112,93 @@ func sessionDriveAllowed(name string) error {
 // TestImageGenToolNameMatchesConstant holds the two spellings together.
 const mcpToolGenerateImage = "generate_image"
 
+// mcpStdioStudioTools — the image studio's four tools (ADR 0100 decision 3), offered only to a
+// session bound to a studio, or one whose identity cannot be told apart (mcpStudioAdvertise).
+// The names are spelled out as literals for the same AST scan as generate_image's.
+//
+// The descriptions are English and short: they are a fixed cost on every turn of every studio
+// session. set_image_draft declares clearing as a `clear` list rather than a nullable type,
+// because Gemini-family clients refuse type arrays; an explicit null is still accepted.
+func mcpStdioStudioTools(offer studioOffer) []map[string]any {
+	noArgs := map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{}}
+	tools := []map[string]any{
+		{
+			"name": "get_image_studio",
+			"description": "Agent Fleet image studio: read the draft you are working on with the user - its fields, which are locked, " +
+				"what changed since your last call (the user's edits, rewinds, new results), the model's facts and the knowledge summary. " +
+				"Call it FIRST on every user message, before answering.",
+			"inputSchema": noArgs,
+		},
+		{
+			"name": "set_image_draft",
+			"description": "Agent Fleet image studio: change fields of the draft. Only the fields you send change; list fields in `clear` to empty them. " +
+				"The model, seed, jobs, count, out_dir, label and mask are the user's - propose a model with suggest_model instead. " +
+				"A locked field is not changed and the answer says so. Generating is the user's button, not yours.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"prompt":         map[string]any{"type": "string"},
+					"negativePrompt": map[string]any{"type": "string"},
+					"size":           map[string]any{"type": "string", "description": "<width>x<height>"},
+					"op":             map[string]any{"type": "string", "enum": []string{"generate", "edit", "inpaint", "outpaint", "remove_background", "upscale"}},
+					"strength":       map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+					"inputs":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Reference image paths, under the file browser's root (usually home) or the generated-images folder (not /tmp)"},
+					"params": map[string]any{
+						"type": "object", "additionalProperties": false,
+						"properties": map[string]any{
+							"steps":     map[string]any{"type": "integer", "minimum": 1},
+							"cfg":       map[string]any{"type": "number", "minimum": 0},
+							"sampler":   map[string]any{"type": "string"},
+							"scheduler": map[string]any{"type": "string"},
+						},
+					},
+					"loras": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object", "additionalProperties": false,
+							"properties": map[string]any{
+								"name":   map[string]any{"type": "string"},
+								"weight": map[string]any{"type": "number"},
+							},
+							"required": []string{"name"},
+						},
+					},
+					"suggest_model": map[string]any{"type": "string"},
+					"clear": map[string]any{
+						"type": "array", "items": map[string]any{"type": "string",
+							"enum": []string{"prompt", "negativePrompt", "size", "op", "strength", "inputs", "params", "loras", "suggest_model"}},
+					},
+				},
+			},
+		},
+		{
+			"name": "add_image_knowledge",
+			"description": "Agent Fleet image studio: append a note to the knowledge kept for a model or a family - only when the user asks you " +
+				"to remember something, or has just judged a result good or bad. Say what worked or failed and on what evidence.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"scope":    map[string]any{"type": "string", "enum": []string{"family", "model"}},
+					"key":      map[string]any{"type": "string", "minLength": 1, "description": "The family name or the model id"},
+					"note":     map[string]any{"type": "string", "minLength": 1},
+					"evidence": map[string]any{"type": "string"},
+				},
+				"required": []string{"scope", "key", "note"},
+			},
+		},
+	}
+	if offer.agentTrial {
+		tools = append(tools, map[string]any{
+			"name": "run_image_trial",
+			"description": "Agent Fleet image studio: make ONE quick trial picture from the draft exactly as saved - it takes no arguments, so " +
+				"what runs is always what the user sees. Waits up to 2 minutes; a slower picture arrives in get_image_studio later. " +
+				"Each call wakes a GPU: do not repeat it to compare small changes.",
+			"inputSchema": noArgs,
+		})
+	}
+	return tools
+}
+
 // mcpStdioImageGenTools — the image generation tool, advertised only under
 // `--self-report --image-gen` AND only to the sessions mcpImageGenAdvertise picks.
 //
@@ -1145,7 +1235,8 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			"items": map[string]any{"type": "string"},
 			"description": fmt.Sprintf(
 				"Absolute paths of reference images (up to %d), for editing or as a style reference."+
-					" A model may take fewer, and then the call is refused by name",
+					" A model may take fewer, and then the call is refused by name."+
+					" Only files under the file browser's root (usually home) or the generated-images folder are read; copy one from /tmp there first",
 				maxInputsOrDefault(offer.MaxInputs))},
 	}
 	// mask goes with inpaint and nothing else. A mask handed to a route that has no mask
@@ -1475,6 +1566,12 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 	if err != nil {
 		// Without a session name the Agent cannot key the output directory or the usage row,
 		// so the tool has nowhere to put its result.
+		return offer, false
+	}
+	// A studio session makes pictures with the person's button, not this tool (ADR 0100
+	// decision 3). Leaving it out is only how it looks; mcpGenerateImage checks again, because
+	// the call side trusts the tools/list the client last saw, which can predate the binding.
+	if studioBoundSession(self) {
 		return offer, false
 	}
 	st, err := agentImageGenStatus(self)
@@ -2414,6 +2511,8 @@ func mcpStdioCall(req mcpReq) []byte {
 	}
 
 	switch p.Name {
+	case "get_image_studio", "set_image_draft", "run_image_trial", "add_image_knowledge":
+		return mcpStudioCall(req, p.Name, p.Args)
 	case mcpToolGenerateImage:
 		return mcpGenerateImage(req, imageGenArgs{
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,

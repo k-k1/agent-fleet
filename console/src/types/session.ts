@@ -79,6 +79,12 @@ export interface Session {
   // NOT a "is this unattended" predicate — `origin` is a separate axis and a handoff
   // proposal keeps origin=user while carrying this (ADR 0073 決定 1 の 2026-09-10 補遺).
   originSession?: string;
+  // The image studio this session is bound to (ADR 0100 decision 2); such a session opens in
+  // the studio pane, not the mirror. Absent for an ordinary session.
+  studio?: string;
+  // How far the create's initial prompt got (ADR 0100 decision 2). The studio pane offers a
+  // resend on failed / unknown, and never while it is pending.
+  initialPromptState?: "pending" | "delivered" | "failed" | "unknown";
   model?: string; // claude model
   context?: SessionContextUsage; // claude context-window usage (the Agent's session.ContextUsage)
   branch?: string; // git branch the working copy was on when the session started

@@ -501,6 +501,21 @@ func registerImagegenRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/imagegen/props", rest)        // a picture's resolved request (sidecar, else PNG chunk)
 	mux.HandleFunc("POST /api/imagegen/groups/{id}", rest) // pause / resume / skip / cancel a batch (decision 12)
 	mux.HandleFunc("POST /api/imagegen/queue", rest)       // the same, over every group at once
+	// The image studio (ADR 0100): relayed the same way. The body of a studio PUT carries
+	// If-Match, which the relay's header clone passes through untouched.
+	mux.HandleFunc("GET /api/imagegen/studios", rest)                // list the studios
+	mux.HandleFunc("POST /api/imagegen/studios", rest)               // create one from the pane's draft
+	mux.HandleFunc("GET /api/imagegen/studios/{id}", rest)           // one studio, polled by its pane
+	mux.HandleFunc("PUT /api/imagegen/studios/{id}", rest)           // merge-patch the draft
+	mux.HandleFunc("DELETE /api/imagegen/studios/{id}", rest)        // delete draft and versions; pictures stay
+	mux.HandleFunc("POST /api/imagegen/studios/{id}/bind", rest)     // attach or detach a session
+	mux.HandleFunc("POST /api/imagegen/studios/{id}/press", rest)    // trial or enqueue, recorded as a version
+	mux.HandleFunc("POST /api/imagegen/studios/{id}/rewind", rest)   // restore the draft of an earlier entry
+	mux.HandleFunc("GET /api/imagegen/studios/{id}/draft-log", rest) // the edit log, paged
+	mux.HandleFunc("GET /api/imagegen/studios/{id}/persona", rest)   // the first turn for a new session
+	mux.HandleFunc("GET /api/imagegen/history", rest)                // pictures, newest first
+	mux.HandleFunc("GET /api/imagegen/knowledge", rest)              // one knowledge document
+	mux.HandleFunc("POST /api/imagegen/knowledge", rest)             // append to its records
 }
 
 // Assistant templates (docs/log/19 Q2) — configurable chat personas, proxied verbatim.

@@ -430,3 +430,213 @@ export function fleetProvider(st: ImagegenStatus | null): ImagegenProvider | nul
 export function resolveFleetProvider(providers: ImagegenProvider[], providerId: string): ImagegenProvider | null {
   return providers.find((p) => p.id === providerId) || providers[0] || null;
 }
+
+// --- ADR 0100: the image studio -------------------------------------------------------------
+//
+// The Agent's copy is `workspace/agent/internal/imagegen/studio.go` (ImageStudio*, DraftLog*,
+// Knowledge*); the JSON keys below are its tags. A draft uses POST /imagegen/jobs' own keys, so
+// a press turns it into a job with no translation — camelCase where that route inherited it.
+
+/** The draft fields the agent may write (decision 4). Every other field is the member's. */
+export const STUDIO_AGENT_FIELDS = [
+  "prompt",
+  "negativePrompt",
+  "params",
+  "size",
+  "loras",
+  "strength",
+  "op",
+  "inputs",
+  "suggest_model",
+] as const;
+
+/** The studio's draft. Every field may be missing: an unfinished draft is allowed (decision 3). */
+export interface StudioDraft {
+  /** The ready provider row the pane resolved; a trial never falls back to another one. */
+  provider?: string;
+  model?: string;
+  op?: string;
+  prompt?: string;
+  negativePrompt?: string;
+  size?: string;
+  aspectRatio?: string;
+  count?: number;
+  inputs?: string[];
+  mask?: string;
+  loras?: LoraRef[];
+  seed?: number;
+  strength?: number;
+  params?: EngineParams;
+  label?: string;
+  out_dir?: string;
+  jobs?: number;
+  seed_policy?: SeedPolicy;
+  /** The pane's "trial at full steps" (ADR 0081 decision 11). The member's field. */
+  full_steps?: boolean;
+  /** The agent's proposal for `model`, which only the member sets; shown as a card. */
+  suggest_model?: string;
+}
+
+/** One studio as stored (decision 2). */
+export interface Studio {
+  id: string;
+  title: string;
+  draft: StudioDraft;
+  /** Draft fields the agent may not change, by key. */
+  locks?: string[];
+  /** The bound session, the truth of the binding. Absent when none. */
+  session?: string;
+  /** "Let the agent run a trial" (decision 3, on by default). */
+  agent_trial: boolean;
+  /** Canvas strokes (decision 11, P1), opaque to the Agent. */
+  mask_strokes?: unknown;
+  created_at: string;
+  /** Also the version a PUT sends as If-Match. */
+  updated_at: string;
+}
+
+/** GET /imagegen/studios/{id}: the stored studio plus what is derived from it. */
+export interface StudioWire extends Studio {
+  /** op=inpaint with no mask — derived on every read, never stored (decision 4). */
+  needs_mask?: boolean;
+  /** The newest edit-log entries (at most 20), newest last; the rest via draft-log. */
+  recent_log?: DraftLogEntry[];
+  error?: ApiError;
+}
+
+export interface StudioSummary {
+  id: string;
+  title: string;
+  session?: string;
+  updated_at: string;
+}
+
+export interface StudioList {
+  studios: StudioSummary[];
+  error?: ApiError;
+}
+
+/** POST /imagegen/studios: the pane moves its localStorage draft in. */
+export interface StudioCreate {
+  title?: string;
+  draft: StudioDraft;
+}
+
+/** PUT /imagegen/studios/{id}: a merge patch — an absent key is unchanged, null clears it. */
+export interface StudioPatch {
+  draft?: { [K in keyof StudioDraft]?: StudioDraft[K] | null };
+  author: "human" | "agent";
+  session?: string;
+  title?: string;
+  locks?: string[];
+  agent_trial?: boolean;
+  mask_strokes?: unknown;
+}
+
+/** Why a patch left a field alone: kept apart so "locked" and "invalid" read differently. */
+export interface DroppedField {
+  field: string;
+  reason: "locked" | "human_only" | "invalid";
+  detail?: string;
+}
+
+export interface StudioPatchResult {
+  studio: StudioWire;
+  dropped?: DroppedField[];
+  error?: ApiError;
+}
+
+export type DraftLogKind = "edit" | "press" | "press_result" | "rewind";
+
+/** Which button made a version. */
+export type PressMode = "trial" | "enqueue" | "agent_trial";
+
+/** One line of the studio's edit log (decision 9). A reader takes the FIRST press_result per
+ *  version and ignores later ones. */
+export interface DraftLogEntry {
+  seq: number;
+  kind: DraftLogKind;
+  at: string;
+  author?: "agent" | "human" | "rewind";
+  session?: string;
+  changes?: DraftChange[];
+  draft?: StudioDraft;
+  /** The seq a rewind restored. */
+  rewind_to?: number;
+  /** The press's id; a picture's sidecar and history row carry it. */
+  version?: string;
+  mode?: PressMode;
+  group?: string;
+  jobs?: string[];
+  state?: "ok" | "failed" | "recovered" | "lost";
+  error?: string;
+}
+
+export interface DraftChange {
+  field: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface DraftLogPage {
+  entries: DraftLogEntry[];
+  /** The seq to ask for next; absent when there is nothing older. */
+  before?: number;
+  error?: ApiError;
+}
+
+export interface StudioPressResult {
+  version: string;
+  group?: string;
+  jobs?: { id: string; position: number }[];
+  /** false: the job runs but its press_result line did not append — show "record pending". */
+  recorded: boolean;
+  error?: ApiError;
+}
+
+/** The first turn a new session is sent, in the member's language (decision 5). */
+export interface StudioPersona {
+  prompt: string;
+  lang: string;
+  error?: ApiError;
+}
+
+export interface HistoryItem {
+  path: string;
+  studio?: string;
+  version?: string;
+  created_at: string;
+  trial?: boolean;
+}
+
+export interface HistoryPage {
+  items: HistoryItem[];
+  before?: string;
+  error?: ApiError;
+}
+
+export type KnowledgeScope = "family" | "model";
+
+/** One document of ~/imagegen-knowledge in its four sections (decision 12). */
+export interface Knowledge {
+  scope: KnowledgeScope;
+  key: string;
+  path: string;
+  summary: string;
+  settings: string;
+  prompts: string;
+  records: string;
+  summary_truncated?: boolean;
+  error?: ApiError;
+}
+
+/** POST /imagegen/knowledge — appends to "records" only. */
+export interface KnowledgeAdd {
+  scope: KnowledgeScope;
+  key: string;
+  note: string;
+  evidence?: string;
+}
+
+/** needs_mask as the Agent derives it, for a pane that has edited the draft locally. */
+export const studioNeedsMask = (d: StudioDraft): boolean => d.op === "inpaint" && !(d.mask ?? "").trim();
