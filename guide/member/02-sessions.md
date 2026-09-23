@@ -675,6 +675,8 @@ the new list **without a restart**.
   missing route is still available from that session's own built-in tool** — including "make
   the same prompt on both so I can compare", which is one call to each. Only when no route is
   left does the tool itself disappear.
+- **A session attached to an image studio does not get it.** There the agent refines the draft
+  and a person presses generate ([04 Files](04-files.md#studio-refine-the-draft-by-talking-to-an-agent)).
 - **Which route draws it is a list of rows.** **Settings > Agents > Session > "Image provider
   order"** ranks every image route this workspace can reach: the deployment's own engines, each
   under its own name (with **ComfyUI** or **OpenAI-compatible** in brackets), and the CLI routes

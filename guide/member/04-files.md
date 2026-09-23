@@ -188,7 +188,7 @@ the Agent's job, and the Agent lives in the workspace.
 To see **all of them at once**, an **"Open generated images"** button opens the parent folder from
 four places: the **minimap's button row**, the leader key **`g g`** (and the command palette), the
 **Files** section header in the left pane, and the **image-generation pane's header**. It opens on
-a page of cards: one folder per session, plus the studio's own output (`console`). A session's
+a page of cards: one folder per session, plus the image-generation pane's output (`console`). A session's
 folder is labelled with **the session's name and its image count**, not its internal id. Inside
 such a folder the breadcrumb row carries a button with that session's name, and pressing it opens
 the conversation the pictures came from (it is absent once the session is gone).
@@ -205,8 +205,9 @@ result's warnings rather than dropped in silence. What a session cannot see is w
 you: each checkpoint's own published numbers as the placeholders, the fields its family does not
 read greyed out, and a trial run before you commit forty.
 
-**Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. It is one
-pane per workspace — opening it again focuses the one you have.
+**Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. Opening it
+again focuses the pane you have. To refine the draft in conversation with an agent, turn the same
+pane into a **studio** ([below](#studio-refine-the-draft-by-talking-to-an-agent)).
 
 **Before you generate**
 
@@ -290,7 +291,7 @@ The pane polls only while something is unfinished, and stops while the tab is in
 The default folder is `generated/console/`, which the gallery lists like any other and which is
 **never swept** — you pressed the button for each of these. **Output folder** under Advanced puts
 a run somewhere of your own naming. Every picture is written with a small record beside it, so
-enlarging one anywhere in the Console (the studio, the gallery, a shared file in the mirror) and
+enlarging one anywhere in the Console (this pane, the gallery, a shared file in the mirror) and
 pressing **Properties** shows the model, seed, size, steps, cfg, sampler, scheduler, LoRAs and
 both prompts, each row with a copy button, plus **copy all as JSON** and **open in image
 generation**, which loads the fields back into the form. Pictures made by an agent before this
@@ -298,13 +299,92 @@ existed can still be read: the graph ComfyUI embeds in the PNG carries the same 
 from the vendor routes (codex, agy) carry nothing, and the panel says that rather than showing
 empty rows.
 
-**Having the prompt written for you**
+### Studio — refine the draft by talking to an agent
 
-**"Write the prompt for me"** asks your assistant **once**, with the family's dialect, the model's
-description and your LoRAs' trigger words already in the question. The answer comes back as a
-**proposal**: use it, use the prompt only, or discard it. Nothing is applied until you press, and
-no model is called unless you press the button. A member who has never signed in to any CLI has
-no assistant to run, and everything above still works without it.
+The form above makes pictures on its own. A **studio** is the way to refine what is in that form
+— the **draft** — in conversation with a session's agent. Say "read `docs/chars/aoi.md` and put
+her in a harbour at dusk", then "darker", and the agent reads the material and rewrites the draft.
+**A person always presses the generate buttons**, and pressing runs the same queue as above — the
+agent never paints a batch on its own.
+
+**Attaching an agent**
+
+- Pressing **Attach an agent** turns the form's current contents into the draft of a new studio,
+  starts one session and binds it. Merely opening the pane creates no session. If the session
+  fails to start, the studio and its draft stay, unbound.
+- You choose what you choose when starting any session: agent, model, effort, execution method,
+  repository, subfolder, worktree, and permission prompts. **There is no prompt field** — the
+  first turn is the studio's description of the agent's role. Until it arrives the pane says it
+  is sending it, and it offers **Resend** only when sending failed or could not be confirmed.
+- **Execution method** — Managed and Terminal (CLI) both work. claude is Terminal (CLI) only (it
+  has no Managed mode). **opencode cannot be attached as Managed** (sessions share one af
+  connection there, so a write cannot be traced to the session that made it; Terminal (CLI) is
+  fine). copilot, cursor and kiro are Terminal (CLI) only for now. muse, which only runs as
+  Managed, cannot be attached yet.
+- **Worktree is On by default**, so the agent can tell for certain which studio's session it is.
+  Only Terminal (CLI) and lcpp let you turn it off. From inside a worktree the agent **cannot see
+  uncommitted material** in your original working copy — commit what you want it to read.
+- **Switch agent** rebinds the studio to a new session at any time (sonnet to opus, claude to
+  codex). The draft, the edit history and the versions belong to the studio and stay. Opening a
+  studio's session opens this pane, not the mirror.
+
+**The draft changes as you talk**
+
+- The left column is the conversation (the same view as the mirror), the middle one the draft,
+  the right one results and history. A narrow pane folds them into **Conversation / Settings /
+  Results** tabs.
+- The agent can rewrite the prompt, the negative, steps / cfg / sampler / scheduler, the size,
+  the LoRAs, the operation, the reference images and "how much to change the original". A field
+  it moved stays outlined until you next touch it.
+- **Model, seed, count, output folder, label and mask image are yours alone.** Switching the
+  model switches the family, and with it which fields are read, the sizes, and how long the first
+  picture waits.
+- **Locks (🔒)** — per field. A write to a locked field is dropped for that field only and the
+  agent is told why. Nothing locks itself.
+- A message you send from the conversation carries one short trailing cue that tells the agent
+  "the draft changed, there are new results". The conversation view does not show it.
+
+**People press trial and enqueue**
+
+- The agent can only **trial**, and only **the draft exactly as it is on screen, one picture** —
+  it has no way to pass anything of its own. The studio setting **Allow the agent to trial**
+  (On by default) turns that off.
+- **Enqueueing N pictures is yours alone.**
+- **`generate_image` is not available to a studio's session** (the agent does not see it, and a
+  call is refused), so this pane is the one road to a picture. A CLI's own built-in image tool
+  (codex's, for instance) is outside that limit.
+
+**Edit history, rewind and versions**
+
+- **Edit history** — one entry each time the draft changes: the time, who wrote it (the agent,
+  you, or a rewind), and each changed field before and after. **Restore this point** is on the
+  middle column's **Edit history** and on the "Draft updated" cards in the conversation. Nothing
+  is deleted — the restore is itself an entry. Being your action, it restores every field
+  including locked ones, and leaves the locks as they are.
+- **Versions** — a copy of the draft at the moment someone pressed trial, enqueue, or the
+  agent's trial. What you want to compare is "what was pressed", so editing alone makes no
+  version, and pressing twice without editing makes two.
+
+**Picture history and "Restore these settings"**
+
+- The right column's **History** lists the studio's pictures, newest first. Each picture
+  remembers the version it came from, and that survives a Workspace restart.
+- **Restore these settings** puts back the draft that picture was made from (an edit-history entry,
+  like any rewind). **Use as reference** places it as the next edit's reference image.
+- You can have as many studios as you like and switch between them at the top of the pane.
+  Deleting a studio deletes its draft, edit history and versions; **the pictures stay**.
+
+**Knowledge notes**
+
+- There is one note per model and one per family, grown by the agent and you together. They live
+  in **`~/imagegen-knowledge/`** as `families/<family>.md` and `models/<model>.md`, each in four
+  sections: **Summary** (short; the agent reads it every time), **Settings**, **Prompts** and
+  **Records** (append-only).
+- The agent writes only when told to remember something, or when it judges a result good or bad.
+  **Deleting is yours.**
+- They are ordinary files, so you can open and edit them from the file tree, and being outside
+  `~/repos` they survive a Recreate. On a deployment whose file tree does not show the whole home
+  folder they do not appear there; edit all four sections in the pane's **Notes** instead.
 
 ## Editing a file
 
