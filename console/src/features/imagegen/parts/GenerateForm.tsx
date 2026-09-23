@@ -12,12 +12,13 @@
 //      when pressed; the administrator's negative is a chip that cannot be removed and is
 //      never merged into the textarea, so what is in the box is what the person wrote.
 import { useMemo } from "react";
-import type { KeyboardEvent as RKeyboardEvent } from "react";
+import type { KeyboardEvent as RKeyboardEvent, ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { Slider } from "../../settings/parts/controls.tsx";
 import { loraTriggers, loraWeight, type ImagegenLora, type ImagegenModel, type ImagegenProvider, type Knob } from "../wire.ts";
-import { familyCard, sizeOptions } from "../families.ts";
+import { familyFacts, sizeOptions } from "../families.ts";
+import type { StudioKey } from "../studioSync.ts";
 import { MAX_BATCH, MAX_JOBS, OPS, type ImagegenDraft } from "../draft.ts";
 import { InputPicker } from "./InputPicker.tsx";
 
@@ -45,7 +46,16 @@ interface Props {
   queueFull: boolean;
   onTrial: () => void;
   onEnqueue: () => void;
-  onPromptHelp: () => void;
+  /** The studio's per-field locks (ADR 0100 decision 4). Absent: the studio-less pane, no locks. */
+  locks?: readonly string[];
+  onToggleLock?: (key: StudioKey) => void;
+  /** Keys the agent moved and the member has not touched since (decision 6). */
+  highlight?: ReadonlySet<string>;
+  /** The provider and model pickers sit in the pane's head (ADR 0100 §4: the model is the
+   *  member's, and its place says so), so the form leaves them out. */
+  modelInHead?: boolean;
+  /** Drawn right under the family card: the studio's knowledge memo. */
+  familyExtra?: ReactNode;
 }
 
 export function GenerateForm({
@@ -65,10 +75,18 @@ export function GenerateForm({
   queueFull,
   onTrial,
   onEnqueue,
-  onPromptHelp,
+  locks,
+  onToggleLock,
+  highlight,
+  modelInHead = false,
+  familyExtra,
 }: Props) {
   const tr = useT();
-  const card = familyCard(model?.family);
+  const card = familyFacts(model);
+  // The lock toggle and the agent outline for one studio key; nothing without a studio.
+  const lk = (k: StudioKey): ReactNode =>
+    locks && onToggleLock ? <LockToggle locked={locks.includes(k)} onToggle={() => onToggleLock(k)} /> : null;
+  const hl = (k: StudioKey): string => (highlight?.has(k) ? " igen-hl" : "");
   const family = model?.family || "";
   // Undeclared knobs = an Agent from before this ADR. Everything stays enabled; see the
   // header comment for why that is the safe direction.
@@ -132,59 +150,26 @@ export function GenerateForm({
   const stepsPh = model?.params?.steps != null ? tr("imggen.default_ph", { v: model.params.steps }) : tr("imggen.default_ph_none");
   const cfgPh = model?.params?.cfg != null ? tr("imggen.default_ph", { v: model.params.cfg }) : tr("imggen.default_ph_none");
 
-  // ADR 0082 unresolved question 2: shown only when there is a REAL choice — one fleet row is
-  // not a choice (the same "more than one" rule the model/LoRA pickers already follow). `value`
-  // reads the ALREADY-RESOLVED `provider` prop (ImagegenView's resolveFleetProvider) rather than
-  // re-deriving it here, the same "parent resolves, child reads" split `model` already follows.
-  const providerKindLabel = (kind?: string): string =>
-    kind === "comfy" ? tr("agents.image_kind_comfy") : kind === "openai-compat" ? tr("agents.image_kind_openai_compat") : "";
-
   return (
     <div className="igen-form" onKeyDown={onKeyDown}>
-      {fleetProviders.length > 1 && (
-        <label className="igen-field">
-          <span className="igen-label">{tr("imggen.provider")}</span>
-          <select
-            className="ds-select"
-            value={provider?.id || ""}
-            onChange={(e) => patch({ providerId: e.target.value })}
-          >
-            {fleetProviders.map((p) => {
-              const kindLabel = providerKindLabel(p.kind);
-              return (
-                <option key={p.id} value={p.id}>
-                  {kindLabel ? `${p.id} (${kindLabel})` : p.id}
-                </option>
-              );
-            })}
-          </select>
-        </label>
+      {!modelInHead && (
+        <ModelSelect
+          draft={draft}
+          patch={patch}
+          fleetProviders={fleetProviders}
+          provider={provider}
+          models={models}
+        />
       )}
-      <label className="igen-field">
-        <span className="igen-label">{tr("imggen.model")}</span>
-        <select
-          className="ds-select"
-          value={draft.model}
-          disabled={!models.length}
-          onChange={(e) => patch({ model: e.target.value })}
-        >
-          <option value="">{models.length ? tr("imggen.model_none") : tr("imggen.no_models")}</option>
-          {/* The name, not the id (ADR 0090). The value stays the id — it is what the generation
-              names — and an option has no room for both, so the id is dropped rather than
-              doubled up: a member never sees an S3 key, so for them the id buys nothing. */}
-          {models.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label || m.id}
-              {m.warm ? " ●" : ""}
-            </option>
-          ))}
-        </select>
-      </label>
 
       {model && <FamilyCardBlock model={model} onQuality={append} />}
+      {familyExtra}
 
-      <label className="igen-field">
-        <span className="igen-label">{tr("imggen.prompt")}</span>
+      <label className={"igen-field" + hl("prompt")}>
+        <span className="igen-label">
+          {tr("imggen.prompt")}
+          {lk("prompt")}
+        </span>
         <textarea
           className="igen-prompt"
           rows={5}
@@ -209,14 +194,11 @@ export function GenerateForm({
           ))}
         </div>
       )}
-      <div className="igen-row igen-help-row">
-        <button type="button" className="ui-btn ui-btn-ghost" onClick={onPromptHelp}>
-          <Icon name="sparkle" /> {tr("imggen.help_open")}
-        </button>
-      </div>
-
-      <label className="igen-field">
-        <span className="igen-label">{tr("imggen.negative")}</span>
+      <label className={"igen-field" + hl("negativePrompt")}>
+        <span className="igen-label">
+          {tr("imggen.negative")}
+          {lk("negativePrompt")}
+        </span>
         <textarea
           className="igen-negative"
           rows={2}
@@ -242,7 +224,7 @@ export function GenerateForm({
       )}
 
       <div className="igen-grid">
-        <Knobbed label={tr("imggen.steps")} on={reads("steps")} family={family}>
+        <Knobbed label={tr("imggen.steps")} on={reads("steps")} family={family} lock={lk("params")} extra={hl("params")}>
           <input
             className="ds-input"
             type="number"
@@ -254,7 +236,7 @@ export function GenerateForm({
             onChange={(e) => patch({ steps: e.target.value })}
           />
         </Knobbed>
-        <Knobbed label={tr("imggen.cfg")} on={reads("cfg")} family={family}>
+        <Knobbed label={tr("imggen.cfg")} on={reads("cfg")} family={family} lock={lk("params")} extra={hl("params")}>
           <input
             className="ds-input"
             type="number"
@@ -267,7 +249,7 @@ export function GenerateForm({
             onChange={(e) => patch({ cfg: e.target.value })}
           />
         </Knobbed>
-        <Knobbed label={tr("imggen.sampler")} on={reads("sampler")} family={family}>
+        <Knobbed label={tr("imggen.sampler")} on={reads("sampler")} family={family} lock={lk("params")} extra={hl("params")}>
           {/* The options are the AGENT's allow-list: a name it does not know is refused with
               400, and the catalogue overlay's silent fallback does not apply to a member's
               typed value (decision 4). */}
@@ -285,7 +267,7 @@ export function GenerateForm({
             ))}
           </select>
         </Knobbed>
-        <Knobbed label={tr("imggen.scheduler")} on={reads("scheduler")} family={family}>
+        <Knobbed label={tr("imggen.scheduler")} on={reads("scheduler")} family={family} lock={lk("params")} extra={hl("params")}>
           <select
             className="ds-select"
             value={draft.scheduler}
@@ -304,8 +286,11 @@ export function GenerateForm({
             aspect ratio (sizes: []) does not draw the field at all, rather than a disabled one
             offering candidates that would silently do nothing. */}
         {sizes.length > 0 && (
-          <label className="igen-field">
-            <span className="igen-label">{tr("imggen.size")}</span>
+          <label className={"igen-field" + hl("size")}>
+            <span className="igen-label">
+              {tr("imggen.size")}
+              {lk("size")}
+            </span>
             <select
               className="ds-select"
               value={draft.size}
@@ -362,8 +347,11 @@ export function GenerateForm({
         </label>
       </div>
 
-      <div className="igen-loras">
-        <span className="igen-label">{tr("imggen.loras")}</span>
+      <div className={"igen-loras" + hl("loras")}>
+        <span className="igen-label">
+          {tr("imggen.loras")}
+          {lk("loras")}
+        </span>
         {usable.length === 0 ? (
           <span className="igen-hint">{tr("imggen.lora_none")}</span>
         ) : (
@@ -422,8 +410,11 @@ export function GenerateForm({
             />
             <span className="igen-hint">{tr("imggen.batch_hint")}</span>
           </label>
-          <label className="igen-field">
-            <span className="igen-label">{tr("imggen.op")}</span>
+          <label className={"igen-field" + hl("op")}>
+            <span className="igen-label">
+              {tr("imggen.op")}
+              {lk("op")}
+            </span>
             {/* This MODEL's own ops (ADR 0094 decision 12), not the fixed OPS list — an Agent
                 that predates the ADR sends no `ops` at all, and the fallback keeps every op
                 selectable exactly as before (the same "no signal, assume the old shape" rule
@@ -460,11 +451,14 @@ export function GenerateForm({
             {/* ADR 0094 decision 5 (P3): the ceiling is the chosen model's, because it is the
                 family that decides how many references its template can read. Absent = an Agent
                 from before the ADR, and 1 is what every route took then. */}
-            <InputPicker
-              paths={draft.inputs}
-              max={model?.max_inputs ?? 1}
-              onChange={(inputs) => patch({ inputs })}
-            />
+            <div className={"igen-lockwrap" + hl("inputs")}>
+              {lk("inputs") && <span className="igen-lockrow">{lk("inputs")}</span>}
+              <InputPicker
+                paths={draft.inputs}
+                max={model?.max_inputs ?? 1}
+                onChange={(inputs) => patch({ inputs })}
+              />
+            </div>
             {/* The mask is one path, in the same currency and through the same drop zone as the
                 references above. Only on an inpaint: on an edit the Agent has nowhere to put it,
                 and the stored draft keeps the value for the next time the op comes back. */}
@@ -480,8 +474,11 @@ export function GenerateForm({
                 fixed by construction) does not draw the slider — the same "no candidate, don't
                 offer a control that does nothing" rule the size field above follows. */}
             {reads("strength") && (
-              <label className="igen-field">
-                <span className="igen-label">{tr("imggen.strength")}</span>
+              <label className={"igen-field" + hl("strength")}>
+                <span className="igen-label">
+                  {tr("imggen.strength")}
+                  {lk("strength")}
+                </span>
                 <Slider value={draft.strength} min={0} max={1} step={0.05} onChange={(v) => patch({ strength: v })} />
               </label>
             )}
@@ -499,7 +496,7 @@ export function GenerateForm({
               ? tr("imggen.mask_needed")
               : trialFull
               ? tr("imggen.trial_full")
-              : tr("imggen.trial_title") + (card ? ` (${tr("imggen.family_trial", { n: card.trialSteps })})` : "")
+              : tr("imggen.trial_title") + (card?.trialSteps ? ` (${tr("imggen.family_trial", { n: card.trialSteps })})` : "")
           }
           onClick={onTrial}
         >
@@ -534,17 +531,24 @@ function Knobbed({
   label,
   on,
   family,
+  lock,
+  extra = "",
   children,
 }: {
   label: string;
   on: boolean;
   family: string;
+  lock?: ReactNode;
+  extra?: string;
   children: React.ReactNode;
 }) {
   const tr = useT();
   return (
-    <label className={"igen-field" + (on ? "" : " off")}>
-      <span className="igen-label">{label}</span>
+    <label className={"igen-field" + (on ? "" : " off") + extra}>
+      <span className="igen-label">
+        {label}
+        {lock}
+      </span>
       {children}
       {!on && <span className="igen-hint">{tr("imggen.knob_off", { family })}</span>}
     </label>
@@ -555,7 +559,7 @@ function Knobbed({
  *  (decision 7). Content only — the knobs it describes are still the Agent's word. */
 function FamilyCardBlock({ model, onQuality }: { model: ImagegenModel; onQuality: (s: string) => void }) {
   const tr = useT();
-  const card = familyCard(model.family);
+  const card = familyFacts(model);
   return (
     <details className="igen-family" open>
       <summary>
@@ -566,12 +570,17 @@ function FamilyCardBlock({ model, onQuality }: { model: ImagegenModel; onQuality
         <p className="igen-hint">{tr("imggen.family_unknown")}</p>
       ) : (
         <>
-          <p>{tr(card.dialect === "tags" ? "imggen.family_dialect_tags" : "imggen.family_dialect_sentences")}</p>
+          {card.dialect && (
+            <p>{tr(card.dialect === "tags" ? "imggen.family_dialect_tags" : "imggen.family_dialect_sentences")}</p>
+          )}
           <p className="igen-hint">
-            {tr("imggen.family_steps", { lo: card.steps[0], hi: card.steps[1] })}
-            {card.cfg && <> · {tr("imggen.family_cfg", { lo: card.cfg[0], hi: card.cfg[1] })}</>}
-            {" · "}
-            {tr("imggen.family_trial", { n: card.trialSteps })}
+            {[
+              card.steps && tr("imggen.family_steps", { lo: card.steps[0], hi: card.steps[1] }),
+              card.cfg && tr("imggen.family_cfg", { lo: card.cfg[0], hi: card.cfg[1] }),
+              card.trialSteps && tr("imggen.family_trial", { n: card.trialSteps }),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
           <p className="igen-hint">
             {tr(
@@ -617,5 +626,101 @@ function FamilyCardBlock({ model, onQuality }: { model: ImagegenModel; onQuality
         </p>
       )}
     </details>
+  );
+}
+
+/**
+ * The provider and model pickers. In the studio they sit in the pane's head; in the
+ * studio-less pane, at the top of the form as before.
+ */
+export function ModelSelect({
+  draft,
+  patch,
+  fleetProviders,
+  provider,
+  models,
+  compact = false,
+}: {
+  draft: ImagegenDraft;
+  patch: (p: Partial<ImagegenDraft>) => void;
+  fleetProviders: ImagegenProvider[];
+  provider: ImagegenProvider | null;
+  models: ImagegenModel[];
+  compact?: boolean;
+}) {
+  const tr = useT();
+  // ADR 0082 unresolved question 2: shown only when there is a REAL choice — one fleet row is
+  // not a choice (the same "more than one" rule the model/LoRA pickers already follow). `value`
+  // reads the ALREADY-RESOLVED `provider` prop (ImagegenView's resolveFleetProvider) rather than
+  // re-deriving it here, the same "parent resolves, child reads" split `model` already follows.
+  const providerKindLabel = (kind?: string): string =>
+    kind === "comfy" ? tr("agents.image_kind_comfy") : kind === "openai-compat" ? tr("agents.image_kind_openai_compat") : "";
+  return (
+    <>
+      {fleetProviders.length > 1 && (
+        <label className={"igen-field" + (compact ? " compact" : "")}>
+          <span className="igen-label">{tr("imggen.provider")}</span>
+          <select className="ds-select" value={provider?.id || ""} onChange={(e) => patch({ providerId: e.target.value })}>
+            {fleetProviders.map((p) => {
+              const kindLabel = providerKindLabel(p.kind);
+              return (
+                <option key={p.id} value={p.id}>
+                  {kindLabel ? `${p.id} (${kindLabel})` : p.id}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+      )}
+      <label className={"igen-field" + (compact ? " compact" : "")}>
+        <span className="igen-label">{tr("imggen.model")}</span>
+        <select
+          className="ds-select"
+          value={draft.model}
+          disabled={!models.length}
+          onChange={(e) => patch({ model: e.target.value })}
+        >
+          <option value="">{models.length ? tr("imggen.model_none") : tr("imggen.no_models")}</option>
+          {/* The name, not the id (ADR 0090). The value stays the id — it is what the generation
+              names — and an option has no room for both, so the id is dropped rather than
+              doubled up: a member never sees an S3 key, so for them the id buys nothing. */}
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label || m.id}
+              {m.warm ? " ●" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+    </>
+  );
+}
+
+/** 🔒 on a field the agent may write (ADR 0100 decision 4). A span with the button role, not a
+ *  <button>: it sits inside the field's <label>, and a label forwards a click on its text to its
+ *  first labelable descendant — which a real button would be, turning every click on the
+ *  field's name into a lock toggle. */
+function LockToggle({ locked, onToggle }: { locked: boolean; onToggle: () => void }) {
+  const tr = useT();
+  const act = (e: { preventDefault: () => void; stopPropagation: () => void }) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onToggle();
+  };
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-pressed={locked}
+      className={"igen-lock" + (locked ? " on" : "")}
+      title={tr(locked ? "imggen.lock_on" : "imggen.lock_off")}
+      aria-label={tr(locked ? "imggen.lock_on" : "imggen.lock_off")}
+      onClick={act}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") act(e);
+      }}
+    >
+      <Icon name={locked ? "lock" : "unlock"} />
+    </span>
   );
 }

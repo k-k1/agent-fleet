@@ -79,13 +79,14 @@ export type PaneContent =
    */
   | { kind: "gallery"; galleryPath: string; sort?: "new" | "name"; galleryFocus?: string; gallerySession?: string }
   /**
-   * The image-generation studio (ADR 0081): a form, a queue and its results. It carries no
-   * field at all — deliberately. The form is a localStorage draft (`af.imagegen-draft.<ws>`)
-   * because the layout store is not a place for a 2 kB prompt, and the queue is the Agent's,
-   * so a tab switch that unmounts the view loses nothing that one poll does not restore.
-   * `sameTarget` is therefore "same kind": opening it twice focuses the one that exists.
+   * The image-generation studio (ADR 0081, ADR 0100 decision 10): a form, a queue and its
+   * results, and — once an agent is attached — the studio it edits with the member. `studioId`
+   * is the Agent's studio (a UUID); null is the studio-less pane whose form is the
+   * localStorage draft (`af.imagegen-draft.<ws>`), as before ADR 0100. The draft itself never
+   * lives here: the layout store is not a place for a 2 kB prompt.
+   * `sameTarget` is the studio id, and null matches null, so the studio-less pane stays one.
    */
-  | { kind: "imagegen" }
+  | { kind: "imagegen"; studioId: string | null }
   /**
    * The fleet session graph (ADR 0096): every session as a lane, time on the horizontal
    * axis. `showArchived` is the pane's own toggle, same reasoning as `sessions.showStopped`
