@@ -6,6 +6,10 @@ English | [日本語](0100-image-generation-studio.ja.md)
   [docs/log/113](../log/113-imagegen-studio.md) (five rounds of design plus a read-only review by
   another session, [113-review](../log/113-review.md) — 7 red, 12 yellow — already folded in).
   Nothing is implemented.
+- **Revision 1 (2026-09-23)**: folds in the ADR review by another session, `semvs2b` (codex /
+  gpt-6-sol), [113-adr-review](../log/113-adr-review.md) (9 red, 12 yellow, 1 blue). Decisions 3, 4,
+  8, 9 and 12 gained their missing contracts, a minimal picture history moved into P0, and the
+  prerequisites were regrouped. The changes are listed at the end under "Changed in revision 1".
 - Number: `develop` tops out at 0098; 0099 is taken by two unmerged branches (`temp/sidv2bw`,
   `temp/sjys6nk`), hence 0100.
 - Related: [0081](0081-image-generation-pane.md) (today's image-generation pane; this ADR overturns
@@ -32,10 +36,12 @@ with Bash and Edit disallowed, on the chat's default model with no effort knob
 Facts that shaped the design (verified on the 2026-09-23 tree from `e55feb37`; the claims that turned
 out wrong were corrected by the review):
 
-- The Agent's request vocabulary (`jobs_http.go:28-59`) — prompt / negativePrompt / size / count /
-  inputs / mask / model / loras / seed / strength / params / label / out_dir / jobs / seed_policy /
-  trial / full_steps — is enough. **This ADR adds no word.** But `inputs`/`mask` have **no path
-  guard**: `spec()` copies them through and `comfy.go:1186-1187` uploads whatever `os.ReadFile` returns.
+- The Agent's request vocabulary (`jobs_http.go:28-59`) — provider / op / prompt / negativePrompt /
+  size / aspectRatio / background / count / inputs / mask / model / loras / seed / strength / params /
+  label / out_dir / jobs / seed_policy / trial / full_steps — is enough. **This ADR adds no word.**
+  But `inputs`/`mask` have **no path guard**: `spec()` copies them through and `comfy.go:1193` uploads
+  whatever `os.ReadFile` returns. The Files pane reads through the FD-based, symlink-refusing
+  `openat2NoSymlinks` (`fs_fd_linux.go:192`) — the model for the guard.
 - The draft lives in `localStorage` (`draft.ts:106`); the server does not know it. History is the
   Agent's in-memory job list (500 finished, lost on restart) plus per-picture sidecars.
 - Family knowledge is split: the knobs a family reads live in the Agent (`comfy.go:329-358`), the
@@ -48,13 +54,18 @@ out wrong were corrected by the review):
   muse guess from cwd (`mcp_stdio.go:3309-3359`); opencode's af child is shared per directory.
 - tools/list is **rebuilt per request** and `list_changed` is sent every minute
   (`mcp_stdio.go:286-298, 480-545`).
-- The chat assistant cannot call `generate_image` (an owning session is required, `mcp_stdio.go:166-170`).
+- The chat assistant cannot call `generate_image` (the chat-side af server has no `--self-report`, so
+  `mcpImageGenEnabled` is false, `mcp_stdio.go:166-170`). On the session side the ui-prefs "image
+  generation" toggle arrives as `--image-gen`, and `mcpImageGenAdvertise()` (`:1470`) resolves the
+  owning session before advertising.
 - Of the Managed turn's `attachments` (`POST /sessions/{name}/turn`), only opencode, codex and muse read
   them; copilot / cursor / kiro / lcpp drop them silently.
 - `~/.config/agent-fleet` is on the Files pane denylist (`fs.go:126`) and the workspace policy tells
   agents not to touch it.
-- The centre crop of instruction edit is gone (ADR 0094 revision #907, implementation #913, acceptance
-  #914). The mask canvas can start on log 111 §10's design.
+- The centre crop of instruction edit is gone (ADR 0094 revision #907, implementation #913, live
+  acceptance in [log 112 §14](../log/112-kontext-crop-necessity.md) = #914). The mask canvas can start
+  on log 111 §10's design. A mask-by-path field already exists in today's pane (PR #854,
+  `GenerateForm.tsx:96-100`).
 
 ## Decisions
 
@@ -68,14 +79,17 @@ are. **The one exception** is decision 4's guard (path validation of `inputs`/`m
 ### Decision 2 — A "studio" lives in the Agent, has its own id, and binds one session
 
 The Agent keeps a **studio** (`~/.config/agent-fleet/imagegen/studios/<id>.json`): `id / title /
-draft / locks / versions[] / session / agent_trial / mask_strokes / created_at / updated_at`. **The
-studio is the truth for the draft**; `localStorage` only remembers the last opened studio id.
+draft (including provider and model) / locks / session / agent_trial / mask_strokes / created_at /
+updated_at`. **The studio is the truth for the draft**; `localStorage` only remembers the last opened
+studio id. Versions and the edit log live in a separate file (decision 9).
 
 - Why not the session name: swapping the agent (sonnet→opus, claude→codex), a session too old to
   resume, deleting a session to tidy the list — in every case the draft and versions must survive.
   The studio is primary; the session is "who it is bound to right now".
-- The session meta gets a back-reference `Studio` (next to `Origin`). **Fork does not inherit it**
-  (one studio, one session). The field has to be carried through the three `Meta{…}` literals
+- The session meta gets a back-reference `Studio` (next to `Origin`). **The studio's `session` is
+  the truth of the binding**; the meta is a copy for advertising — the two cannot be written
+  atomically, so a tool call is also checked on the studio side ("is the caller the current
+  binding?") and refused otherwise. **Fork does not inherit it** (one studio, one session). The field has to be carried through the three `Meta{…}` literals
   (create / fork / recreate), the Agent's `wireSession`, **the CP's `sessionWire`** and the stopped-
   session DB mirror — an unlisted field is dropped silently.
 - Keep the body small; write it under an in-memory lock (the chat store's `LockConv` shape) with
@@ -88,8 +102,8 @@ studio is the truth for the draft**; `localStorage` only remembers the last open
 | Tool | What it does |
 |---|---|
 | `get_image_studio` | draft, locks, **since last call** (human edits, rewinds, new results — at most 5 plus "N more"), model facts (family, knobs read, sizes, defaults, LoRAs with trigger words), the knowledge "summary" section, version summary. 8 KB cap |
-| `set_image_draft` | **partial update**: only the fields written change, `null` clears. Validated by the same `spec()` as enqueue. Locked fields are dropped with a reason |
-| `run_image_trial` | **takes no arguments**. Runs a trial of exactly the draft the pane shows (one picture, head of the queue, the family's trial steps, at most 3 waiting). Returns path, seed, warnings, elapsed. Also appears in the trial slot |
+| `set_image_draft` | **partial update**: only the fields written change, `null` clears. **Validation on save is per field** (types, allow-lists, caps, locks, the path guard) and **an incomplete draft is allowed** (an empty prompt can be saved). Whole-request validation (`spec()`'s `bad_prompt` etc.) runs at enqueue and trial time. Locked fields are dropped with a reason |
+| `run_image_trial` | **takes no arguments**. Runs the draft stored in the studio (including `provider` and `model` — exactly the row the pane selected; **never** falls back to the Agent's default provider or warm model). Refuses with a reason when `model` is missing, `needs_mask` is set, or `spec()` fails. One picture, head of the queue, the family's trial steps, at most 3 waiting. Returns path, seed, warnings, elapsed. If the tool's own limit is hit (600 s on codex) it answers "still running (job id)"; the job and the version remain and show in the trial slot |
 | `add_image_knowledge` | appends to decision 12's "record" section (scope, key, note, evidence) |
 
 - Advertised **only while the owning session is bound to a studio** (`Studio` on the meta that
@@ -97,12 +111,19 @@ studio is the truth for the draft**; `localStorage` only remembers the last open
   re-binding takes effect within a minute on kinds that honour the notification (which kinds do is
   unmeasured — the acceptance run measures it). The decision reads only the meta, never `status`,
   so a slow Agent cannot make the tools flicker.
-- **`generate_image` is not advertised to a studio session** — "a person presses Generate" is
-  guaranteed by the advertised set, not by a promise in the persona. **No tool enqueues N pictures.**
+- **`generate_image` is not advertised to a studio session** — `mcpImageGenAdvertise()` excludes it
+  when the owning session's meta carries `Studio`, and the call-side check reads the same set (the
+  existing "refuse anything not in the last advertised list" applies unchanged). **The guarantee covers
+  the af path** (enqueuing N pictures into the studio's queue, and `generate_image`); a CLI's own
+  built-in image tools (codex's `image_gen` etc., ADR 0069) are outside the advertised set and this
+  ADR does not restrict them. **No tool enqueues N pictures.**
   The agent may run a trial because the user's complaint about `generate_image` was "the prompt is
   invisible": with an argument-less tool, what runs is always what is on screen. Per studio, "let the
   agent run trials" (default on).
-- When identity is ambiguous (decision 8) the tools **refuse with a reason** rather than vanish.
+- Three identity states: owning session **resolved and bound to a studio** → advertise; **resolved
+  and not bound** → do not advertise; **unresolvable** (ambiguous cwd guess, decision 8) → advertise
+  the studio tools and **refuse with a reason when called** (if they vanished, the agent would only
+  say "no such tool").
 - MCP over a fenced block in the transcript: every session kind speaks af MCP, transcript parsing is
   nine kinds wide, a tool call lands mid-turn in real time, and the description cost is paid only by
   studio sessions.
@@ -117,14 +138,22 @@ studio is the truth for the draft**; `localStorage` only remembers the last open
   support all change — and a cold engine costs minutes on the first picture. The agent may write
   `suggest_model`; the pane shows a proposal card.
 - `op` and `inputs` go to the agent: "change the sign in this picture to CLOSED" is one move across
-  op, reference and instruction. **Precondition: the enqueue-side guard** (inside the browse root plus
-  the Files pane denylist). Not opened before the guard lands.
+  op, reference and instruction. **Precondition: the enqueue-side guard** — a string check in
+  `spec()` (inside the browse root plus the Files pane denylist) is not enough on its own, because a
+  symlink can be swapped after the check (TOCTOU), so **the place that actually reads (the comfy
+  upload) opens the file root-pinned, like `openat2NoSymlinks`**. Not opened before the guard lands.
 - `mask` is person-only (painted by hand). The agent may set `needs_mask: true`; the pane shows the way.
+  In P0 that way is **the existing mask-by-path field** (PR #854 — a person points at an existing mask
+  image); the canvas is P1 (decision 11). So `op=inpaint` can be written in P0, but nothing runs until
+  a person has placed a mask.
 - **Per-field locks** (🔒). Writes to a locked field are dropped with a reason. No automatic locks.
 
 ### Decision 5 — The agent pulls context. The Console appends one visible cue line. Nothing is prepended
 
-The persona says "on every message, call `get_image_studio` first". The Console appends one line
+The persona says "on every message, call `get_image_studio` first". **The persona comes from the
+Agent** (`GET /imagegen/studios/{id}/persona`, composed in the user's language); the Console passes it
+verbatim as `initial_prompt` in the "attach an agent" create request. On re-binding it is sent as the
+new session's first turn; on resume it is not sent. The Console appends one line
 (≈30 tokens) at the **end** of the message:
 `[studio v4 · draft changed · 2 new results · rewind #9 → get_image_studio]`. The call does not
 depend on the cue (a message typed in a Terminal pane has none).
@@ -133,6 +162,9 @@ depend on the cue (a message typed in a Terminal pane has none).
   single place to strip (`splitPastedImages` handles only the trailing attachment note; auto-title reads
   the first 400 characters), and it would stay in the transcript and be re-sent every turn (on lcpp,
   most of the window within ten turns).
+- The cue is added only to messages sent from the mirror's composer (not to memo delivery, peer
+  messages or scheduled runs). On TUI it is added **after** `buildImagePrompt` weaves attachment paths
+  in, so it stays last.
 - Why the end: it does not reach auto-title. Strippers live in two places — the transcript model layer
   (`mirror/transcript/model.ts`) and the Go side (reply suggestions, branch names) — sharing one
   constant; the heading must not start with `<` (`isNoise`).
@@ -171,8 +203,10 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
   pulling, Managed and TUI differ only in how attachments travel and in launch/resume. The kind list
   comes from `managedDrivers`.
 - **Worktree on by default** is the only way to make cwd-based identity unambiguous for the kinds that
-  guess. Kinds that receive `AF_SESSION_NAME` (claude, fresh codex, lcpp, Terminal) may turn it off
-  (to read uncommitted material).
+  guess. Off is allowed only for **kind × execution-method pairs where `AF_SESSION_NAME` arrives on
+  every path**: Terminal (all kinds) and lcpp. **codex Managed is not one of them** — a fresh thread
+  receives it, but a thread resumed after the Agent's daemon was replaced falls back to the cwd guess
+  (`mcp_stdio.go:3311-3340`). The launch UI states that a worktree cannot see uncommitted material.
 - **opencode Managed is excluded from studios** (Terminal is fine): its af child is shared by every
   session in the directory, so `set_image_draft` could run from another conversation. Delivering
   `AF_SESSION_NAME` to copilot / cursor / kiro / muse children is P0 prerequisite work; until then
@@ -183,14 +217,22 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
 - **Edit log** `draft_log`: one entry per draft change (time; author = agent turn / human /
   `rewind ← #n`; changed fields with before/after; the full draft at that point). Append-only JSONL in
   a sibling file (`studios/<id>.log.jsonl`). In the transcript the `set_image_draft` tool card renders
-  as "draft updated: cfg 7→5" with **"rewind to here"** (`POST …/rewind`; nothing is deleted, locks
-  are untouched, the next `get_image_studio` reports it in `since`).
+  as "draft updated: cfg 7→5" with **"rewind to here"** (`POST …/rewind`; nothing is deleted; the
+  next `get_image_studio` reports it in `since`). A rewind is a **person's** action, so it restores
+  every field including locked ones while the lock flags stay set (locks guard against the agent).
+  The rewind entry's before/after are "now" and "the restored point".
 - **Versions**: the draft as it was when a Generate button was pressed (a person's trial or batch, or
-  the agent's trial). A version is the edit-log entry carrying the "pressed" mark.
+  the agent's trial). Appended to the same JSONL as **independent events** (`kind: "press"`, full
+  draft, seed policy, job/group id, author) — pressing twice without editing yields two press entries;
+  a press whose enqueue failed is kept with `error`. No "pressed" mark is ever added to an edit entry
+  (that would violate append-only).
 - **Picture history**: `GET /imagegen/history?studio=&before=&limit=` backed by
   `generated/console/history.jsonl` (one line appended with each sidecar; rebuilt from sidecars if
-  missing). Actions: "restore these settings" (the same `rewind`), "use as reference", "show", "compare"
-  (up to four). Retention as in 0081 decision 3.
+  missing). The sidecar and that line carry `studio` and `version` (the press id), so **the link
+  between picture and version is durable** across Agent restarts. Actions: "restore these settings"
+  (the same `rewind`), "use as reference", "show", "compare" (up to four). Retention as in 0081
+  decision 3. **The list and "restore" are P0** (the user's "keep a history" includes pictures);
+  "compare" is P1.
 
 ### Decision 10 — Several studios; the pane holds a studio id
 
@@ -214,8 +256,10 @@ Four layers: 0 family facts (the Agent's table, decision 7) / 1 tenant notes (ca
 `prompt_notes`, 0081 open item 2, P1) / **2 workspace knowledge (this decision)** / 3 the studio's
 conversation.
 
-- Layer 2 is **`~/imagegen-knowledge/{families,models}/<key>.md`** (outside the denylist, visible in
-  the Files pane, survives recreate). One file per model and per family, **four sections** (summary
+- Layer 2 is **`<browse root>/imagegen-knowledge/{families,models}/<key>.md`** (the default browse
+  root is home, i.e. `~/imagegen-knowledge/`; deriving the location from the browse root keeps it
+  visible in the Files pane even where `AF_BROWSE_ROOT` is changed. Outside the denylist; recreate
+  deletes only `~/repos`). One file per model and per family, **four sections** (summary
   ≤1 KB, settings, prompts, record = append-only). The record is written through
   `add_image_knowledge`; the other sections through the agent's Edit and the person's Files pane.
   **Only a person deletes.** The agent writes only when told "remember this" or when the person judges
@@ -223,7 +267,10 @@ conversation.
 - Sharing into a repository is an **explicit export** (a per-studio write target inside the repository
   was rejected: it pollutes other sessions' `git status`).
 - **Later, add the folder to ADR 0022's snapshot roots** (the user's request: "diff-managed in git,
-  like claude's memory"). Diff, restore, export and import come for free (P2).
+  like claude's memory"). The **machinery** for diff, restore, export and import is reusable, but 0022's
+  glob allowlist, symlink exclusion, import range check and full-history secret scan need **this root
+  declared** (take only `families/*.md` and `models/*.md`, define the restore scope and the UI name) —
+  filed as a P2 revision of 0022.
 
 ## Options rejected
 
@@ -245,8 +292,9 @@ conversation.
 
 ## Consequences
 
-- **Agent**: `internal/imagegen/studio.go` (store, lock, JSONL edit log, versions, rewind, knowledge
-  read/write, trial endpoint), the guard in `spec()`, four `comfyFamilyRow` fields and `modelStatus`,
+- **Agent**: `internal/imagegen/studio.go` (store, lock, JSONL edit log and press events, rewind,
+  knowledge read/write, trial endpoint, persona endpoint), the guard in `spec()` plus the root-pinned
+  open on the comfy side, the exclusion in `mcpImageGenAdvertise`, four `comfyFamilyRow` fields and `modelStatus`,
   `history.jsonl`, `session.Meta.Studio` (five places), four tools in `mcp_stdio.go` (names as string
   literals), `AF_SESSION_NAME` delivery for copilot / cursor / kiro / muse, the Go-side cue stripper,
   routes and golden.
@@ -263,15 +311,24 @@ conversation.
 
 ## Phases
 
-- **P0 prerequisites**: ① the `inputs`/`mask` guard, ② `AF_SESSION_NAME` delivery for copilot /
-  cursor / kiro / muse, ③ the cue-line strippers (transcript model layer and Go).
-- **P0**: decisions 1–5, 7, 8, 10, 12 (layer 2), and decision 9's edit log and versions. The three-column
-  pane. Removal of layer B. Instruction edit (reference, no mask) arrives with decision 4's opening.
-- **P1**: decision 9's picture history and "compare", decision 6's "show", the model proposal card, the
-  wand icon, the ledger `Ref`, the lcpp system-prompt persona, draft save/load as files, **decision 11's
-  inpaint** (canvas per log 111 §10).
+- **P0 prerequisites**: ① the `inputs`/`mask` guard (the `spec()` check plus the root-pinned open on
+  the comfy side) — precondition for decision 4's `op`/`inputs` opening; ② the cue-line strippers
+  (transcript model layer and Go) — precondition for emitting the cue. `AF_SESSION_NAME` delivery for
+  copilot / cursor / kiro / muse is **not a P0-wide prerequisite but the condition for opening that
+  kind's Managed mode to studios** (Terminal-only until then) — claude TUI, fresh codex Managed,
+  Terminal of every kind and lcpp close the P0 loop on their own.
+- **P0**: decisions 1–5, 7, 8, 10, 12 (layer 2), and decision 9's edit log, press events and **the
+  picture-history list with "restore"**. The three-column pane. Removal of layer B. Instruction edit
+  (with references) and inpaint with a mask placed through the existing path field arrive with
+  decision 4's opening. **The P0 agent does not see pictures** (the person's observations travel as
+  words) — showing is P1 (decision 6).
+- **P1**: decision 9's "compare", decision 6's "show", opening copilot / cursor / kiro / muse Managed,
+  the model proposal card, the wand icon, the ledger `Ref`, the lcpp system-prompt persona, draft
+  save/load as files, **decision 11's canvas** (log 111 §10; ComfyUI families only; acceptance once each
+  on Chromium and iOS Safari; the `openai_compat` path stays unmeasured and out of scope).
 - **P2**: sweeps from the conversation (a proposed matrix the person enqueues), promotion to layer 1,
-  **git diff management of knowledge** (ADR 0022 roots), a claude Managed driver (separate ADR).
+  **git diff management of knowledge** (filed as an ADR 0022 revision), a claude Managed driver
+  (separate ADR).
 
 ## Unresolved
 
@@ -282,3 +339,22 @@ conversation.
 3. **Tier-2 (workspace stop) fires during generation** — the reaper does not see imagegen jobs. A hole
    since 0081; filed separately.
 4. **The summary cap (1 KB) and the 8 KB `get_image_studio` cap are guesses.** Tuned on the live run.
+5. **A CLI's built-in image tools other than `generate_image`** (codex's `image_gen`, agy) remain
+   usable in a studio. Restricting them is a per-kind configuration matter, outside this ADR.
+6. **Repair when only one side of studio/meta got written** (decision 2): the studio is the truth and
+   the two are reconciled at startup. The procedure is decided in implementation.
+
+## Changed in revision 1 (2026-09-23, [113-adr-review](../log/113-adr-review.md))
+
+| Finding | Change |
+|---|---|
+| 🔴1 an empty draft cannot be partially updated | decision 3: per-field validation on save, whole-request validation at enqueue/trial |
+| 🔴2 the argument-less trial is not guaranteed to match the screen | decisions 2, 3: the draft carries `provider` and `model`; no fallback to defaults; refusal conditions and the timeout answer defined |
+| 🔴3 wiring and scope of hiding `generate_image` | decision 3: exclusion in `mcpImageGenAdvertise`; the guarantee covers the af path; CLI built-ins are unresolved 5 |
+| 🔴4 "version = pressed mark" conflicts with append-only JSONL | decision 9: press events are independent entries |
+| 🔴5 no durable picture history in P0 | decision 9, phases: list and "restore" in P0; picture↔version link durable via sidecars |
+| 🔴6 worktree off is ambiguous on codex resume | decision 8: off only for Terminal and lcpp |
+| 🔴7 no persona injection contract | decision 5: the Agent composes it, the Console passes `initial_prompt`; re-binding sends it as the first turn |
+| 🔴8 the guard lacks symlink/TOCTOU handling | decision 4, prerequisite ①: root-pinned open where the file is read |
+| 🔴9 `op=inpaint` writable in P0 but the mask UI is P1 | decision 4: P0 uses the existing mask-by-path field; canvas in P1 |
+| 🟡1–12 | cue scope; rewind vs locks; binding truth; three identity states; vocabulary list; line refs; browse root; prerequisites regrouped; the P0 agent does not see pictures; canvas acceptance; 0022 revision; direct reference to log 112 §14 |
