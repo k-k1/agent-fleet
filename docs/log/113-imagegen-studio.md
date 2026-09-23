@@ -14,6 +14,11 @@
 - **改訂 3（同日・4 巡目）**: 用語は用語集どおり**ファミリー**（`family`・画面の文言は「系統」）に
   揃えた（初稿の「族」は略記）。D14 の 1 モデル 1 ファイルを**節を持つ文書**に改め（「1 行では
   足りない」）、D7 に**編集履歴と巻き戻し**（会話の過去の時点の下書きを見て戻す）を足した。
+- **改訂 4（同日・レビュー反映）**: 別セッション `sds6jyw`（Opus）が読み取り専用でレビュー
+  （[113-review.md](113-review.md)・🔴 7・🟡 12）。§2 の事実主張の 2 割が誤りで、どれも芯に
+  刺さっていた。直した物は §10 にまとめ、本文は該当の決定を書き換えた（**前置をやめて pull に**・
+  **TUI を P0 に**・worktree 既定 ON・番人の追加・知識の置き場）。§8 の問いはレビューの 5 件に
+  差し替えた。
 - 関連: [ADR 0081](../decisions/0081-image-generation-pane.ja.md)（今のペイン。本稿はその
   決定 6・7 を覆し、1〜5・8〜12 は継ぐ）/ [ADR 0080](../decisions/0080-image-gallery-pane.ja.md)
   （絵を見る場所）/ [ADR 0069](../decisions/0069-image-generation-providers.ja.md)（決定 8
@@ -84,27 +89,38 @@ ADR 0081 は「LLM を挟まずに」を表題にした。**本稿でもそれ�
 ### 2.2 セッション（器になる側）
 
 - **Managed の 1 ターンは `POST /sessions/{name}/turn {op:"start", prompt, attachments[]}`**
-  （`session_turn.go:49-58`）。`attachments` は**絶対パスの一級の添付**で、Managed のドライバが
-  API の添付に変換する（TUI は Console が本文にパスを織り込む）。プロンプトは Agent の
-  `sendManagedPrompt`（`session_carried.go:333`）1 関数を通る＝**前置する場所がある**。
-- **Managed ドライバは 9 kind 全部にある**（`internal/agents/{agy,claude,codex,copilot,cursor,kiro,lcpp,muse,opencode}`・
-  `driverOf`＝`session_turn.go:44`）。モデル・effort・思考モードはセッションのメタ
+  （`session_turn.go:49-58`）。`attachments` は**一級の添付だが kind による**——opencode は全ファイル、
+  codex は画像だけ、muse は画像を base64、**copilot・cursor・kiro・lcpp は読まずに捨てる**
+  （レビュー 🔴7・`agents/driver.go:21-24`）。🔴（レビュー訂正）プロンプトの口は 1 つではない:
+  `/turn` は `h.Send` を直に呼び（`session_turn.go:158-162`）、`sendManagedPrompt`（`session_carried.go:333`）
+  の呼び出し元は carried の回答 1 か所だけ。ほかに bridge・`/input`・`initial_prompt` の口がある
+  ＝**前置を 1 か所で入れる場所は無い**（D4 が pull に変わった理由）。
+- 🔴（レビュー訂正）**Managed ドライバは 7 kind**（opencode・codex・copilot・cursor・kiro・lcpp・muse＝
+  `managedDrivers`・`session_turn.go:33-41`）。**claude と agy には無い**（`session_handlers.go:722-731` が
+  `driver_unsupported` で断る・ADR 0015 の範囲外）。初稿の「9 kind 全部」は `internal/agents/` の
+  ディレクトリ数を数えた誤り。モデル・effort・思考モードはセッションのメタ
   （`session.Meta.Model/Effort/Mode`・`session.go:386-391`）で、動的変更が再起動を生きる。
-- **セッション側 af MCP サーバは自分のセッション名を知っている**（`AF_SESSION_NAME`→
-  `mcpSourceSession`・`mcp_stdio.go` `RunStdio`・`mcpOwningSession` `:3330`）。ツールの
-  広告はこの名で引いたメタで決められる。`generate_image` は ui-prefs の「画像生成」トグルが
+- **セッション側 af MCP サーバは `AF_SESSION_NAME` で自分を知る**（`mcpSourceSession`・
+  `mcpOwningSession` `mcp_stdio.go:3309-3359`）——🔴（レビュー訂正）**届くのは Terminal 全 kind・
+  codex Managed の新規スレッド・lcpp だけ**。opencode Managed（af 子をディレクトリ単位で共有）・
+  copilot／cursor／kiro Managed・muse は届かず、**cwd で推測**する（同じ cwd に生きたセッションが
+  2 本あると曖昧＝ツールが消える）。tools/list は**要求ごとに組み直され**、`list_changed` を
+  1 分ごとに送る（`mcp_stdio.go:286-298, 480-545`）＝接続時のスナップショットではない。`generate_image` は ui-prefs の「画像生成」トグルが
   `--image-gen` として起動引数に載るときだけ広告（`ui_prefs.go:286`・`mcp_stdio.go:166-170`）。
   MCP 設定は kind ごとに materialize 時に書かれる（`MaterializeAll`・`mcp_materialize.go:46`）。
 - **ミラーはどの kind の転写も描く**（思考・ツールカード・共有ファイルカード・添付）。
-  本文に織り込まれた添付の指示文は `splitPastedImages` で剥がして描く
-  （`transcript/TranscriptTurn.tsx:433`）＝**前置した状態ブロックも同じ場所で剥がせる**。
-  `MirrorView` は `session` 名を受ける部品（`MirrorView.tsx:126-146`）。
+  🔴（レビュー訂正）`splitPastedImages`（`lib/pastedImages.ts:45-66`）は**末尾の添付指示文**を切る
+  専用で、先頭のブロックは剥がせず、Managed のターンは通らない。生の本文を読む口は他に
+  自動タイトル（先頭 400 字・`session_title.go:278-284`）・コピー・入力履歴・fork-at がある。
+  `MirrorView` は `session` 名を受ける部品（`MirrorView.tsx:126-146`・`Pane.tsx:691-701` が唯一の
+  マウント点）。
 - セッションのメタに `Origin`/`OriginSession`（ADR 0073・`session.go:192-193`）がある＝
   「何のために生まれたか」を持つ前例。
 - アイドル停止（ADR 0055・log 75）: 在席でなく・アイドル時計が古く・machineBusy 無しで止まる。
   **生成ジョブは Agent の物なのでセッションが止まっても走る**。止まったセッションはミラーの
   `onResume` で起こす。
-- セッションは**枠**を消費する（子は 6 まで・停止しても枠は戻らない・削除は利用者だけ）。
+- 🔴（レビュー訂正）「枠」は **spawn の子**（`origin=session`）だけの物（`session_spawn.go:49-60`・
+  既定 3・上限 6・アーカイブで戻る）。人が起動するスタジオのセッションには当たらない。
 
 ### 2.3 アシスタントチャット（初稿の器・却下の根拠だけ）
 
@@ -189,44 +205,52 @@ Agent に**スタジオ**（`~/.config/agent-fleet/imagegen/studios/<id>.json`�
 - `op` と `inputs` をエージェント側に移した理由（改訂 2・D13）: 「この絵の看板の文字を
   CLOSED にして」は op を `edit` に変え、参照にその絵を置き、指示文を書く 1 手であり、
   3 つを人に分けて押させると会話の意味が無い。`inputs` に置けるのは**そのスタジオの履歴・
-  結果・ワークスペース内のパス**だけ（`BrowseWritablePath` の内側＝投入と同じ番人）。
+  結果・ワークスペース内のパス**だけ。🔴（レビュー）**投入側にその番人は今日無い**——`spec()` は
+  `inputs`/`mask` を素通しし、comfy は `os.ReadFile` でそのまま上げる（`jobs_http.go:157`・
+  `comfy.go:1186-1187`）。**番人（browse root の内側＋`fs.go:126` の拒否リスト）を `spec()` に足す
+  のが P0 の前提作業**で、`op`/`inputs` の解放はそれまで開けない（§8-4）。D12 の唯一の例外。
 - `mask` は人だけ: 塗るのは人の手（log 111 のキャンバス）。エージェントは
   `set_image_draft` に `needs_mask: true` を書け、ペインは「マスクを塗ってください」の
   導線を出す。
 - `seed` `N` `out_dir` は「生成のボタン」の一部であり下書きの内容ではない。
 - **欄ごとの錠**（🔒）をフォームに置く。錠の掛かった欄への書き込みは Agent が落とし、ツールの
-  結果に「cfg は固定のため無視」と返し、次のターンの前置（D4）にも「locked: cfg」と書く。
+  結果に「cfg は固定のため無視」と返し、次の `get_image_studio`（D4）にも「locked: cfg」と出す。
   自動の錠（手編集で自動ロック）は作らない——利用者が意図しない錠が増えて「言うことを
   聞かない」になる。
 
-### D4 — 文脈は Agent が Managed のターンに毎回前置する。ミラーは剥がして描く
+### D4 — 文脈はエージェントが引く（pull）。Console は見える 1 行を添える。前置はしない（改訂 4）
 
-`sendManagedPrompt` の手前（`POST /sessions/{name}/turn` の `op:"start"`）で、結ばれた
-スタジオがあれば次の 1 ブロックを前置する:
+初稿〜改訂 3 は「Agent が Managed のターンに状態ブロックを毎回前置し、ミラーが剥がす」だった。
+レビューで前提が 3 つ崩れた: ① 前置を入れる 1 か所が無い（`/turn` は `h.Send` 直・口は 4 つ・
+🔴2）、② 剥がす場所も無い（`splitPastedImages` は末尾専用・タイトル／コピー／fork が生の本文を
+読む・🔴4）、③ 転写に残って毎ターン再送される＝lcpp では 10 ターンで窓の大半（🟡B）。
+どれも「作れば直る」が、3 つ直して得る物が「ツール往復 1 回の節約」では釣り合わない。
+
+**決定**: 状態は `get_image_studio` で**エージェントが引く**。人格（D10）は「発言を受けたら
+まず `get_image_studio` を呼び、下書き・錠・直近の結果・巻き戻しを読んでから答える」と言う。
+Console は発言の**末尾**に 1 行を添える:
 
 ```
-[image studio state]
-draft: {"model":"illustrious-v2","prompt":"…","negative":"…","params":{…},"size":"1216x832","loras":[…]}
-locked: cfg
-model facts: family sdxl; dialect tag-list; quality prefix "masterpiece, best quality"; negative read;
-  knobs steps cfg sampler scheduler negative; sizes 1024x1024 1216x832 …; defaults steps 28 cfg 5 euler_ancestral normal
-  (sent when the model changed since the last turn; otherwise: "unchanged — get_image_studio for details")
-since last turn: human edited prompt; human rewound the draft to #9; generated v4 → #12 seed 815723004 21s warnings [lora_trigger_missing], #13 …
-rule: change the draft only through set_image_draft; the human presses Generate.
+（発言本文）
+
+[studio v4 · 下書きが変わった · 新しい結果 2 · 巻き戻し #9 → get_image_studio]
 ```
 
-- **毎ターン**にする理由: 下書きは 1 KB 弱で、**人が生成ボタンを押すたびに変わる**（結果・
-  警告・手編集）。差分だけ送ると「前回何を送ったか」の帳簿が要り、狂うと古い下書きを
-  自信を持って上書きする。**下書き・錠・直近の結果は毎回全文**、モデルの事実（変わらない
-  物）だけ「モデルが替わったとき」に送る——帳簿は「最後に送ったモデル id」1 つで済む。
-- 1 ターン 400〜700 トークンの固定費。**転写にはそのまま載る**（CLI が記録する user メッセージ
-  は送った物）ので、ミラーは `splitPastedImages` と同じ位置で `[image studio state]` を
-  剥がし、代わりに「状態を送りました（v4・結果 2 件）」の小さなチップにする。
-- **TUI（Terminal）実行方式では前置しない**（打鍵がそのまま画面に出る）。P0 は
-  **Managed 専用**、TUI は P1（D9 の「TUI で使えるか」）。
-- 前置と `get_image_studio` の役割分担: 前置は「いま何が変わったか」、ツールは「全部」。
-  人格（D10）は「編集の前に `get_image_studio` を呼べ」とは**言わない**——前置で足りる
-  ターンにツール往復 1 回を余計に払わせない。
+- **末尾**にする理由: 自動タイトルは先頭 400 字を読む（`session_title.go:278-284`）ので末尾なら
+  効かない。転写モデル（`mirror/transcript/model.ts:52-80`＝peer／spawn 封筒を解析している層）に
+  この 1 行の剥がし手を置き、描画・コピー・fork-at はそこを通す。Go 側（返信候補・ブランチ名
+  提案）にも同じ定数で 1 つ。**30 トークン**なので、剥がし損ねても害は小さい。
+- 1 行は「何が変わったか」の**合図**であって内容ではない。内容はツール結果（`get_image_studio`）
+  ——**変わっていなくても呼ぶ**（合図の有無で呼ぶ／呼ばないを分けると、合図の欠落＝TUI の
+  Terminal ペインから打った発言で壊れる）。
+- `get_image_studio` の答えは: 下書き（全文）・錠・**since last call**（人の編集・巻き戻し・
+  新しい結果を**最大 5 件＋「他 N 件」**・🟡B）・モデルの事実（ファミリー・読める摘み・サイズ・
+  既定値・LoRA とトリガー語）・知識の「要約」節（D14）・版の要約。帳簿は**（スタジオ, セッション）
+  の組で「最後に読んだ位置」**（🟡C: スタジオに付けると結び替えた新しいエージェントが取り
+  こぼす）。上限 8 KB。
+- Managed と TUI で**同じ**。Managed の添付（D6）だけが違う。
+- lcpp は毎ターン system prompt を組み直す（`agents/lcpp/driver.go:504`→`harness/systemprompt.go:42-59`）
+  ので、lcpp に限り人格と「要約」節をそこへ置ける（🔵・累積しない）。P1。
 
 ### D5 — ファミリーの方言・品質接頭辞・推奨範囲を Agent のファミリー表に移す（Console の `FAMILY_CARDS` を畳む）
 
@@ -243,9 +267,13 @@ rule: change the draft only through set_image_draft; the human presses Generate.
 
 - 人: 結果カードと試走枠はフォームの隣（今のまま）。**変更点のハイライト**——エージェントの
   `set_image_draft` で動いた欄は次に人が触るまで縁取り。カードから「この絵の設定に戻す」。
-- エージェント: 結果カードの **「この絵をエージェントに見せる」** で、次のターンの
-  `attachments[]` にその絵の絶対パスを積む（Managed の一級の添付・`session_turn.go:53-56`）。
-  vision の無い kind／モデルでは理由付きで無効（ミラーの `canAttach` 相当の判定を借りる）。
+- エージェント: 結果カードの **「この絵をエージェントに見せる」** で、次のターンに絵を渡す。
+  渡し方は kind の能力で決める（🔴7）: Managed で一級の添付を読むのは opencode（全ファイル）と
+  codex（画像）と muse（画像 base64）だけで、**copilot・cursor・kiro・lcpp は黙って捨てる**。
+  それらと TUI では本文にパスを織り込む今の形（`lib/pastedImages.ts`）。vision の無い
+  kind／モデルでは理由付きで無効——判定はミラーと同じ `agent.caps.imagePaste`
+  （`MirrorView.tsx:157`）に**添付の可否**を 1 欄足して使う（`canAttach` という判定は無い）。
+  能力表は `guideTable.test.ts` の突き合わせに載せる。
   **押していないのに絵を送ることは無い**（ADR 0069 決定 8）——絵 1 枚は入力トークン
   1,000 前後で、毎ターン自動で付けると 40 枚の量産中に 40 回払う。
 - 「この絵を言葉で記述」（絵→プロンプト）は同じ添付で「この絵をプロンプトにして」と
@@ -267,7 +295,7 @@ rule: change the draft only through set_image_draft; the human presses Generate.
   - **巻き戻す**: カードと一覧の「この時点に戻す」→ `POST …/rewind {entry}`＝その全文を
     いまの下書きにし、`draft_log` に `rewind ← #n` を積む（履歴は消さない・redo は
     「巻き戻しの巻き戻し」）。錠は巻き戻しの対象外（錠は人の意思で、下書きの中身ではない）。
-    次のターンの前置（D4）に「human rewound the draft to #n」と出るので、エージェントは
+    次の `get_image_studio`（D4）の since に「human rewound the draft to #n」と出るので、エージェントは
     自分の直前の編集が捨てられたことを知る。
   - 版と編集履歴の関係: 版＝編集履歴のうち「押した」印の付いた 1 件。履歴パネルの絵から
     「この設定に戻す」も同じ `rewind` を通る（経路 1 本）。
@@ -293,37 +321,41 @@ rule: change the draft only through set_image_draft; the human presses Generate.
   別のレールは作らない。
 - スタジオの削除＝下書きと版の削除（絵は残る）。セッションの削除は結びを外すだけ（D1）。
 
-### D9 — セッションは要るときだけ。Managed を先に、TUI は P1。会話無しの量産は今のまま動く
+### D9 — セッションは要るときだけ。Managed と TUI を同じ P0 で。worktree は既定 ON（改訂 4）
 
 ペインを開いただけではセッションを作らない。左の会話欄は「エージェントを付ける」の空状態で、
 フォームは `localStorage` の下書きで動き、生成もできる（今日の使い方）。
-**「エージェントを付ける」で起動ダイアログの部分集合**（kind・モデル・effort／思考・
-リポジトリ＝cwd・subdir・permission skip）を出し、**Managed** で起動する。
+**「エージェントを付ける」は起動ダイアログの部品**（`ModelPicker`／`EffortPicker`／`SubdirPicker`／
+`BranchList`＝`StartModal.tsx:627` と同じ「埋め込まず部品だけ使う」形・🟡L）で作る: kind・
+モデル・effort／思考・実行方式（Managed／Terminal）・リポジトリ＝cwd・subdir・**worktree（既定 ON）**・
+permission skip。prompt 欄は無し（初回指示は人格）。
 
-- Managed を先にする理由: D4 の前置は Managed の口にしか無い。D6 の添付も Managed だけ一級。
-  ミラーが画面なので TUI のペインは要らない。
-- **TUI でも使える（P1・判断 3 の問い「TUI では使えない？」への答え）。** 失うのは
-  「見えない前置」だけで、契約（D2 のツール）はセッション側 af サーバの物なので TUI でも
-  同じに動き、ミラーは TUI セッションのために生まれた部品なので左列もそのまま。差分は 3 つ:
-  ① 前置の代わりに Console が入力の先頭に**見える 1 行**を付ける
-  （`[studio v4: 結果 2 件・cfg 固定・get_image_studio で全文]`＝30 トークン・打鍵として画面に出る）、
-  ② 添付は本文にパスを織り込む今の形（`lib/pastedImages.ts`）、③ セッションの起動と
-  resume は TUI の手順。人格は TUI 向けに「ターンの最初に `get_image_studio` を呼べ」を足す。
-  Terminal ペインで直接打った発言にも ① は付かないが、ツールで読めるので壊れはしない。
-- **cwd はリポジトリ**（`list_repos` の物・任意・既定は前回のスタジオと同じ）。「資料を
-  見ながら」はここで成立する。**worktree は既定で作らない**——スタジオは読む側で、書くのは
-  頼まれたときだけ（人格・D10）。同じ作業コピーで別セッションが動いているときは起動ダイアログが
-  今どおり警告する。
+- **claude は TUI しか無い**（🔴1）。「高度な推論」を claude（Opus）で満たすなら TUI が P0 に要る。
+  D4 が pull になったので Managed と TUI の差は「添付の渡し方」（D6）と起動・resume の手順だけで、
+  **同じ P0 に入る**。kind 一覧は `managedDrivers` から引く（手書きの表は古くなる）。
+  claude の Managed ドライバ（ADR 0015 の範囲外判断を覆す）は別 ADR＝§8-1 (c)。
+- **worktree は既定 ON**（🔴3）。理由は「他のセッションと作業コピーを分ける」だけでなく、
+  **af サーバが自分のセッションを cwd で推測する kind**（opencode／copilot／cursor／kiro Managed・
+  muse）で推測を一意にする唯一の手段だから。「資料を見ながら」は worktree でも成り立つ
+  （未コミットの資料は見えない＝§8-2）。初稿の「同じ作業コピーで別セッションが動いていると
+  起動ダイアログが警告する」は**存在しなかった**（あるのは同じブランチの二重チェックアウトの拒否）。
+- **opencode の Managed はスタジオの kind から外す**（Terminal は可）: af 子をディレクトリ単位で
+  複数セッションが共有するので、**別のセッションから `set_image_draft` が走り得る**（🔴3）。
+  copilot／cursor／kiro／muse は `AF_SESSION_NAME` を子へ届ける改修（各ドライバの `cmd.Env`／
+  muse は `session/start.config.mcpServers.env`）を **P0 の前提作業**に入れ、届くまでは
+  Terminal 限定。スタジオのツールは曖昧なとき**広告から消すのでなく呼ばれたら理由付きで断る**
+  （消えるとエージェントは「そんなツールは無い」と言うだけ）。
+- **cwd はリポジトリ**（`list_repos` の物・任意・既定は前回のスタジオと同じ）。
 - **ADR 0081 の利用者は何も失わない。**
 
-### D10 — 人格は初回指示（initial prompt）＋ツール説明文＋毎ターンの 1 行
+### D10 — 人格は初回指示（initial prompt）＋ツール説明文＋末尾の合図 1 行
 
 セッションには会話ごとの system prompt の口が無い（user 指示層は人単位・ADR 0042）。
 人格は**初回指示**として送る（`create_session` の `initial_prompt` と同じ経路）:
 役割、**「生成はしない。できない。利用者が押す」**、方言に従う、リポジトリの資料は頼まれたら
 読む（キャラクター設定・スタイルガイド・過去のプロンプト）、ファイルは頼まれない限り書かない、
-利用者の言語で話す、変更は `set_image_draft` で。圧縮で初回指示が薄れても、**D4 の末尾 1 行と
-ツール説明文**が契約を毎ターン言い直す。
+利用者の言語で話す、**発言を受けたらまず `get_image_studio`**、変更は `set_image_draft` で。
+圧縮で初回指示が薄れても、**D4 の合図 1 行とツール説明文**が契約を毎ターン言い直す。
 
 - モデル・effort・思考はセッションの物（起動ダイアログ・実行中の動的変更）。「高度な推論」は
   ここで選ぶ。log 103 の機能別指定には**乗せない**（単発生成でなくセッションのターン）。
@@ -360,11 +392,12 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 - **指示文はエージェント**（指示編集のファミリーは「看板の文字を CLOSED に」の自然文が prompt で、
   ここが会話の得意な所）。試走は人のボタンでもエージェントの `run_image_trial` でも、
   **マスク込みの下書き**で走る（マスク無しの inpaint は投入と同じく拒む＝`needs_mask` の番人）。
-- 🔴 **111 の 🔴（クロップ帯の出所が無い）は、クロップ廃止で消える見込み**。log 112 と
-  ADR 0094 の改訂（PR #904・**条件付き**＝格子説の切り分け待ち・`sovai4k` が実測中）が
-  「中央クロップをやめ、候補表の寸法へ全体を縮める」なら、キャンバスは**入力全体＝出力全体**で、
-  帯を見せる作りも比率表も要らない。**確定前にキャンバスを着工しない**——確定しなければ
-  111 §9 の三択に戻る。
+- **111 の 🔴（クロップ帯の出所が無い）は、クロップ廃止で消える**。ADR 0094 の改訂（PR #904・
+  取り込み済み・**縮める先の寸法だけが条件付き**）は、どの仮説でも「中央クロップをやめ、全体を
+  縮める」で変わらない（🟡J）。キャンバスが知るべきは「入力全体が出力全体に写る」ことだけで、
+  寸法には依存しない（マスクは入力の座標で塗り、Agent が同じ比で縮める）。
+  **待つのは仮説の決着ではなく、クロップを外す実装の出荷**（出荷中の配線はまだ切っている＝
+  今キャンバスを出すと帯の問題に戻る）。出荷されれば 111 §9 の三択は「帯を見せない」に落ちる。
 - 111 §9 の 🟡 3 件（ストロークの置き場・白紙判定・下絵の読み込み失敗）は実装時に決める。
   置き場だけは上のとおりスタジオ。
 
@@ -379,7 +412,7 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 |---|---|---|---|
 | 0 ファミリーの事実 | 開発者 | Agent のファミリー表（D5） | ファミリーカード・`model facts` |
 | 1 テナントの注記 | 管理者 | カタログ行 `prompt_notes`（ADR 0081 未解決 2・P1） | 同上（行から） |
-| 2 **ワークスペースの知識（本決定）** | **人・エージェント** | **`<knowledge root>/{families,models}/<key>.md`** | ファミリーカード「メモ」・`get_image_studio`・D4 の前置 |
+| 2 **ワークスペースの知識（本決定）** | **人・エージェント** | **`<knowledge root>/{families,models}/<key>.md`** | ファミリーカード「メモ」・`get_image_studio`（要約節） |
 | 3 スタジオの会話 | エージェント | 転写 | そのスタジオだけ |
 
 **層 2 の形**:
@@ -388,7 +421,7 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
   節は 4 つで、順序は固定:
   ```
   # illustrious-v2
-  ## 要約            ← 1 KB まで。前置（D4）に載る唯一の節。人かエージェントが書き直す
+  ## 要約            ← 1 KB まで。get_image_studio が毎回返す唯一の節。人かエージェントが書き直す
   ## 設定            ← 効く steps / cfg / sampler / サイズ・LoRA の上限重み・ネガティブの型
   ## プロンプト      ← 効く書き方・効かない語・品質接頭辞の要否・方言の癖（例文つき）
   ## 記録            ← 追記のみ。1 件 1 段落。日付・書き手・根拠（版 id・絵のパス）
@@ -398,10 +431,14 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
   ファイルにする理由: エージェントは Read/Edit で普通に読み書きでき（kind を選ばない）、
   人は Files ペインで直せ、**git に入れれば班で共有できる**。節の名前は Agent が知っていて、
   読む側（`get_image_studio`・ファミリーカード）は節ごとに切り出す。無い節は空として扱う。
-- **knowledge root は 2 段**: 既定は `~/.config/agent-fleet/imagegen/knowledge/`（ワークスペース
-  私有・recreate を生きる）。スタジオごとに**リポジトリ内のフォルダ**（例
-  `<repo>/.agent-fleet/imagegen/knowledge/`）へ切り替えられ、そこにあれば**両方読み、書き先は
-  スタジオの設定**。班で貯めたい人はリポジトリ、独りで貯めたい人は既定。
+- **knowledge root**: 🔴（レビュー）初稿の `~/.config/agent-fleet/…` は **Files ペインの拒否リスト
+  （`fs.go:126`）にあり、ワークスペース方針もエージェントに触るなと言う場所**＝「人は Files ペインで
+  直せ・エージェントは Edit で」が成り立たない。既定は**拒否リスト外のホーム配下**——案は
+  `~/imagegen-knowledge/`（見える・recreate は `~/repos` しか消さない・§8-3）。
+  **リポジトリへは「共有したいときに明示で書き出す」**（P1 の `*.imagedraft.json` と同じ扱い）——
+  スタジオごとにリポジトリ内フォルダを書き先にする案は、他のセッションの `git status`・commit・
+  ブランチ切替の拒否に知識ファイルが混ざるので却下（🟡K）。読みは両方（既定＋リポジトリに
+  あれば）。
 - **書く口は 2 つ**: 「記録」への追記は MCP `add_image_knowledge {scope: model|family, key,
   note, evidence?}`（鍵の正規化＝モデル id とファミリー id・日付と書き手の刻印・1 件 2,000 字
   上限・追記のみ）。「要約」「設定」「プロンプト」の書き直しはエージェントの Edit と人の
@@ -409,8 +446,8 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
   書き直す」と人格で言う。**消すのは人**。
 - **人格の規則**: 「利用者が『覚えて』と言ったとき、または利用者が試走の結果に良し悪しを
   言ったときに書く。推測で書かない。」——エージェントが毎ターン書くと層 2 が転写の写しになる。
-- **読む側**: D4 の前置（`model facts`）には**「要約」節だけ**（モデル・ファミリー各 1 KB）。
-  `get_image_studio` には「要約」「設定」「プロンプト」の全文と「記録」の末尾 20 件
+- **読む側**: `get_image_studio` の毎回の答えには**「要約」節だけ**（モデル・ファミリー各 1 KB）、
+  求められれば（`full: true`）「要約」「設定」「プロンプト」の全文と「記録」の末尾 20 件
   （合計 8 KB 上限・超えたら古い記録から落とす）。それ以上は Read で読める（パスを返す）。
   ファミリーカードの「メモ」は 4 節をそのまま描き、記録の根拠に絵のパスがあればサムネイルを出す。
 - **層 1 への昇格**は P2: 管理者がワークスペースの知識を見て `prompt_notes` に写す導線
@@ -461,8 +498,8 @@ inpaint の 1 手は「参照画像 → マスク → 指示文 → 試走 → �
 
 ### 5.1 Agent
 
-スタジオのストア `internal/imagegen/studio.go`（`fstore` の read-modify-write を使う・
-[fstore-no-read-modify-write]）:
+スタジオのストア `internal/imagegen/studio.go`（🟡E: `fstore` には錠も原子的書き込みも**無い**——
+チャットの `LockConv`（`chat_store.go:24-30`）と同じメモリ上の錠＋tmp→rename で書く）:
 
 ```go
 type Studio struct {
@@ -470,8 +507,10 @@ type Studio struct {
     Draft   ImageDraft   // assistant-writable subset of jobRequest + model (D3)
     Locks   []string
     Versions []ImageVersion // capped 200
-    LastSentModel string     // D4: the one ledger the preamble keeps
     CreatedAt, UpdatedAt int64
+    // draft_log lives in a sibling append-only JSONL (studios/<id>.log.jsonl), never here:
+    // 500 entries ≒ 500 KB rewritten on every 500 ms PUT is the wrong shape (review 🟡E).
+    // "last read position" per (studio, session) is a small map here (D4, review 🟡C).
 }
 ```
 
@@ -491,40 +530,56 @@ Agent の口（全部 CP の中継リストに 1 行ずつ）:
 | `GET /imagegen/knowledge?model=&family=` / `POST /imagegen/knowledge` | D14 層 2 の読み（節ごと）と「記録」への追記 |
 | `GET /imagegen/studios/{id}/draft-log?before=&limit=` / `POST /imagegen/studios/{id}/rewind {entry}` | D7 の編集履歴と巻き戻し |
 
-スタジオの JSON には `agent_trial bool`（既定 true）・`knowledge_root string`（空＝既定）・
-`mask_strokes`（D13）・`draft_log[]`（D7・上限 500）も持つ。
+スタジオの JSON には `agent_trial bool`（既定 true）・`mask_strokes`（D13）も持つ。`draft_log` は
+別ファイル（上・直近 20 件だけ本体の GET に載せ、残りは `draft-log` で頁分け）。
+
+セッションのメタ `Studio` は構造体に足すだけでは足りない（🟡I）: 作成・fork・recreate の `Meta{…}`
+リテラル（`session_handlers.go:992-998, 1225-1236, 1566-1573`）が欄を列挙する。**fork は引き継がない**
+（1 スタジオ 1 セッション）。Console が杖を出すには Agent の `wireSession`・**CP の `sessionWire`**
+（`workspace_handlers.go:545-706`・無い欄は黙って落ちる＝[cp-session-wire-relay-drops-fields]）・停止中の
+DB ミラーの 3 か所に欄を通す。新しい口は `cp/routes.go` と **`cp/testdata/routes.golden`**・
+`workspace/agent/routes.go` の 3 か所。
 
 MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだけ広告）: `get_image_studio`・
 `set_image_draft`・`run_image_trial`（`agent_trial` のときだけ）・`add_image_knowledge`。
 中身は上の口を `agentGET/agentDo` で叩くだけ（`set_chat_plan` と同じ形）。**ツール名は
 文字列リテラルで書く**（§9）。
 
-`sendManagedPrompt` の手前に `injectStudioState(m, prompt)`（D4）。
+前置は無い（D4）。Console の合図 1 行は `POST /sessions/{name}/turn`（Managed）と
+`POST /sessions/{name}/input`（TUI）の本文末尾に Console が付ける。
 
 ### 5.2 ターンの流れ
 
 1. 人が発言 → Console `POST /sessions/{name}/turn {op:"start", prompt, attachments}`（今と同じ）。
-2. Agent がメタの `Studio` を見て状態ブロックを前置（D4）。
+2. 本文末尾に Console の合図 1 行（D4）。エージェントは `get_image_studio` で状態を読む。
 3. エージェントが資料を読み、`set_image_draft` を呼ぶ → Agent が検証・錠・適用・
    `UpdatedAt` 更新 → ツール結果に適用後の下書きと落ちた欄。
 4. ペインは 2 秒ポーリング（ジョブ一覧と同じ周期・`ETag` 304）で `GET /imagegen/studios/{id}`
    を読み、`UpdatedAt` が進んでいればフォームを更新・ハイライト。
 5. 人がフォームを直す → `PUT`（デバウンス 500 ms・`If-Match` で版競合を検出）。
 6. 人が生成 → `POST …/versions`（写し）→ `POST /imagegen/jobs`（`studio`・`version` 付き）。
-7. 結果は今の 2 秒ポーリング。次のターンの前置「since last turn」に載る。
+7. 結果は今の 2 秒ポーリング。次の `get_image_studio` の「since last call」に載る。
 
 ### 5.3 費用
 
-- 会話 1 ターン＝そのセッションの kind・モデル 1 ターン（今の記帳）。D4 の前置 400〜700
-  トークンと、資料を読んだ分。絵の添付は押したときだけ（D6）。
+- 会話 1 ターン＝そのセッションの kind・モデル 1 ターン（今の記帳）。`get_image_studio` の
+  往復 1 回（≤ 8 KB・多くは 1〜2 KB）と、資料を読んだ分。絵の添付は押したときだけ（D6）。
+  合図 1 行は転写に残って累積するが 30 トークン。
 - 生成＝今まで通り GPU 時間（`tool.imagegen`・Images/Pixels）。
-- セッション枠 1 つ。使い終わったら**停止**でなく**削除／アーカイブ**しないと枠は戻らない——
-  ペインの「エージェントを外す」はアーカイブまで行う（下書きはスタジオに残る・D1）。
+- 「枠」は当たらない（§2.2 訂正）。使い終わったスタジオのセッションを**アーカイブ**するのは
+  一覧の整理のため（下書きはスタジオに残る・D1）。
+- 🟡G **段 2（ワークスペース停止）は生成中でも止める**——reaper の busy は `RepoJobs` だけを
+  見て imagegen のジョブを見ない（`cp/reaper.go:570`・`session_activity.go:72-102`）。止まると
+  **メモリ上の未完了ジョブは消える**。ADR 0081 からある穴だが、スタジオは眺める時間を長くする。
+  **別件で起票**（未完了ジョブを段 2 の busy に数える）。
 
 ## 6. 段階
 
-- **P0（芯）**: D1 / D2（試走ツール込み）/ D3 / D4 / D9（Managed）/ D10 / D12 と、画面の
-  3 列（MirrorView 埋め込み・起動ダイアログの部分集合・錠・ハイライト・状態チップ・
+- **P0 の前提作業（改訂 4）**: ① `inputs`/`mask` の番人を `spec()` に足す（🔴5・生成経路への
+  唯一の追加）、② copilot／cursor／kiro／muse の Managed で `AF_SESSION_NAME` を af 子へ届ける
+  （🔴3・届くまでその kind は Terminal 限定）、③ 転写モデル層の合図 1 行の剥がし手（D4）。
+- **P0（芯）**: D1 / D2（試走ツール込み）/ D3 / D4（pull）/ D9（Managed と TUI）/ D10 / D12 と、
+  画面の 3 列（MirrorView 埋め込み・起動ダイアログの部品・錠・ハイライト・合図チップ・
   スタジオ設定の 2 項目）。履歴は**版の一覧**だけ。D5（ファミリー表の移設）は P0 に入れる——
   入れないと `get_image_studio` の「model facts」を Console の表から写すことになる。
   D11（層 B の撤去）も P0。**D14 の層 2 も P0**（ファイルと `add_image_knowledge`・ファミリーカードの
@@ -532,12 +587,12 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
   `op=edit` の指示編集（参照画像あり・マスク無し）は D3 の `op`/`inputs` 解放で P0 に入る。
 - **P1**: D7 の絵の履歴（`history.jsonl`・`GET /imagegen/history`・戻す／参照／並べる）、
   D6 の「見せる」、モデル提案カード（D3）、D8 のレール導線・杖アイコン、台帳の `Ref`、
-  **TUI 実行方式**（D9・見える 1 行＋pull）、スマホのタブ畳み、**下書きをリポジトリの
+  lcpp の system prompt 経由の人格（D4 🔵）、スマホのタブ畳み、**下書きをリポジトリの
   ファイルに保存／読込**（`*.imagedraft.json`＝プロンプト集を git で持つ導線。生きている
   下書きをリポジトリに置かないのは §7）、**D13 の inpaint**（「この部分を直す」の入口・
   `needs_mask` の番人・キャンバス＝**クロップ廃止の確定が前提**）。
 - **P2**: 会話からのスイープ（「cfg を 3 通り」→ エージェントが**行列の提案**を書き、人が
-  「投入」）、D14 層 1 への昇格、TUI の Terminal ペインからの発言への 1 行付与。
+  「投入」）、D14 層 1 への昇格、claude の Managed ドライバ（別 ADR・§8-1 (c)）。
 
 ## 7. 却下した案
 
@@ -555,11 +610,9 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
 - **スタジオ＝セッション名（別 id を持たない）。** エージェントを替えた瞬間・枠を空けるために
   消した瞬間に下書きと版が消える（D1）。
 - **生きている下書きをリポジトリのファイルにし、エージェントは Edit で直す。** 版管理も
-  プロンプト集も git に乗る魅力はあるが、500 ms デバウンスの書き込みで作業コピーが常に汚れ、
-  `session-changed-files` の追跡が下書きの往復で埋まり、検証と錠がファイルの読み側に回って
+  プロンプト集も git に乗る魅力はあるが、500 ms デバウンスの書き込みで作業コピーが常に汚れ
+  （`GET /fs/changes`＝`git status` に常に出る・🟡K）、検証と錠がファイルの読み側に回って
   「投入時に 400 にならない値だけ」（D2）を守れない。**保存／読込は P1 の明示操作**に留める。
-- **TUI 実行方式を P0 に入れる。** 前置が打鍵として画面に出るので、見える 1 行＋pull の形（D9）を
-  別に作る必要があり、P1 に回す。TUI を対象外にはしない。
 - **下書きを `localStorage` に置いたまま、ペインがツール結果を拾う。** ポップアウト・スマホ・
   再読み込みで真実が割れる（D1）。
 - **エージェントに `model` を書かせる**（D3）。ファミリーの切替と冷えたエンジンの起床を、人が
@@ -570,33 +623,43 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
 - **スタジオ専用のセッション一覧**（D8）。一覧が 2 つになる。
 - **生成結果を毎ターン自動で添付**（D6）。見えないプラン消費。
 - **ペインを MirrorView と別に書き直す。** 思考・ツールカード・添付・resume を失う。
+- **Agent が Managed のターンに状態ブロックを前置する（初稿〜改訂 3 の D4）。** 入れる 1 か所も
+  剥がす 1 か所も無く、転写に残って毎ターン再送される（🔴2・🔴4・🟡B）。
+- **スタジオごとにリポジトリ内フォルダを知識の書き先にする（改訂 3 の D14）。** 他のセッションの
+  `git status` と commit に混ざる（🟡K）。書き出しは明示操作に。
 
 ## 8. 利用者への確認
 
-**決着（3 巡目・2026-09-23）**: 1 model は人だけ ✓／2 試走はエージェントにも許す
-（`run_image_trial`・引数無し＝プロンプトは常に見える）✓／3 Managed 先行・TUI は P1 ✓／
-4 スタジオ id は別 ✓／5 押した 1 回＝版 ✓／6 モーダル撤去 ✓／7 ファミリー表を Agent へ ✓。
+**決着済み（3 巡目）**: model は人だけ／試走はエージェントにも（引数無し）／別 id／押した 1 回＝版／
+モーダル撤去／ファミリー表を Agent へ／用語はファミリー。
 
-**残っている確認**:
+**レビュー（113-review.md §4）で出た 5 件**。推奨を添える。
 
-1. **D14 の書き先の既定**——ワークスペース私有（`~/.config/agent-fleet/…`）を既定にし、
-   班で共有したいスタジオだけリポジトリのフォルダへ切り替える、で良いか。逆（リポジトリ
-   既定）だと cwd の無いスタジオ（D9 でリポジトリ未指定）に書き先が無い。
-2. **D14 のエージェントの書き込み条件**——「覚えて」と言われたとき・結果に良し悪しを
-   言ったときだけ、で良いか（毎ターン自動で書かせない）。
-3. **D3 の `op`/`inputs` 解放**——エージェントが参照画像を置き替えられる（スタジオの履歴・
-   結果・ワークスペース内のパスに限る）で良いか。
-4. **D13 の順序**——キャンバスはクロップ廃止（PR #904 の条件付き改訂）の確定を待つ、で良いか。
-   待たずに始めるなら 111 §9 の三択（自前表／Agent が配る／帯を見せない）を先に決める。
+1. **claude でスタジオを使うか（🔴1）**——(a) P0 は Managed 7 kind で claude は後、(b) **TUI を P0 に
+   入れて claude を初日から**、(c) claude の Managed ドライバを作る（ADR 0015 の見直し・別 ADR）。
+   **推奨 (b)**。D4 を pull にしたので追加費用はほぼ無い。(c) は欲しければ後で。
+2. **worktree を既定 ON にし、opencode の Managed をスタジオから外す（🔴3）**で良いか。
+   未コミットの資料は worktree から見えない——「資料を見ながら」の資料が未コミットのことが
+   多いなら、worktree OFF を**その kind が `AF_SESSION_NAME` を受け取れるとき（claude／codex 新規／
+   lcpp／Terminal）だけ**許す形にする。**推奨: 既定 ON・受け取れる kind では OFF を選べる**。
+3. **知識の既定の置き場（🔴6）**——`~/imagegen-knowledge/`（見える・Files ペインで開ける）か、
+   ファイルをやめて MCP＋専用 UI か。**推奨: ファイルで `~/imagegen-knowledge/`**（kind を選ばない・
+   git に写せる）。
+4. **`op`/`inputs` の解放は番人（🔴5）が入るまで保留**で良いか。**推奨: 保留＝番人を P0 の
+   前提作業にする**（人のボタンにも同じ穴がある）。
+5. **D13 の条件を「クロップを外す実装の出荷」に変える（🟡J）**で良いか。**推奨: 変える**。
 
 ## 9. 踏みどころ（実装前に知っておく罠）
 
-- **前置ブロックは転写に載る。** ミラーが剥がすのは描画だけで、転写・圧縮・要約には残る。
-  ブロックの語彙は毎回同じ見出し `[image studio state]` にし、剥がす側は見出しから空行までを
-  1 塊として落とす（`splitPastedImages` と同じ位置・同じ試験の形）。
-- **ツールの広告集合は接続時のスナップショット**（[imagegen-model-enum-snapshot]）。
-  「エージェントを付ける」の順は **スタジオ作成 → メタに `Studio` → セッション起動**。逆だと
-  最初の接続で 2 本のツールが無い。結び直しはセッションの再起動（resume）を伴う。
+- **合図 1 行は転写に載る。** 剥がすのは転写モデル層（`model.ts`）と Go 側（返信候補・ブランチ名）の
+  2 か所で、見出しは定数 1 つを共有。`<` で始めない（`isNoise` が user ターンを丸ごと隠す
+  `model.ts:22-41`）。
+- **ツールの広告は要求ごとに組み直され、`list_changed` が 1 分ごとに飛ぶ**（🟡A・初稿の
+  「接続時のスナップショット・結び直しは resume」は悲観しすぎ）。通知を尊重する kind なら
+  1 分以内、尊重しない kind は resume——**kind ごとの尊重の有無は未測定**（claude 以外）＝P0 の
+  受け入れで測る。🟡 `generate_image` の可否は status の 3 秒タイムアウトで落ちて指紋が変わる
+  （`mcp_stdio.go:1480-1482`）——スタジオの判定はメタの読みだけで済ませ、status と切り離す
+  （Agent が遅いときにツールが点滅しない）。
 - **muse は af サーバに届かない**（環境を洗う）——直るまで kind 一覧で無効（D2）。
 - **`If-Match` 無しの PUT は競合を黙って潰す。** 人のデバウンス書き込みとエージェントの
   `set_image_draft` が同じ 500 ms に重なる。`UpdatedAt` を版として `If-Match` に載せ、
@@ -605,12 +668,9 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
   「不正な値」を分ける。
 - **`sameTarget` をスタジオ id にすると `null` のペインが 2 枚開ける。** null 同士は同じ的
   （D8）。
-- **枠は停止で戻らない。** 「エージェントを外す」はアーカイブまで（§5.3）。俯瞰図（ADR 0096）
-  にスタジオのレーンが並ぶのは正しい振る舞いで、隠さない。
-- **アイドル停止**（ADR 0055）: 生成中は machineBusy でない（ジョブは Agent の物）。
-  40 枚を眺めている 20 分でセッションが止まるのは仕様で、次の発言で resume する。
-  止まっている間の `set_image_draft` は無いので下書きは動かない——ペインは「エージェントは
-  停止中（発言で起きます）」を出す。
+- **枠は当たらない**（§2.2 訂正）。「エージェントを外す」がアーカイブまで行くのは一覧の整理。
+- **アイドル停止**（ADR 0055）: 段 1（セッション停止）は生成中でも起きる（ジョブは Agent の物・
+  次の発言で resume）。**段 2（ワークスペース停止）は未完了ジョブを見ない**（§5.3 🟡G・別件）。
 - **`engineCatalogModelRow` は運ばない欄を黙って落とす**（[cp-session-wire-relay-drops-fields]）。
   D5 は Agent のファミリー表（CP を通らない）に置くので当たらない。
 - **モジュールスコープのキャッシュは dom テスト間で漏れる**（[module-scope-cache-leaks-across-dom-tests]）
@@ -625,9 +685,16 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
   連打すると 4 枚目で断られる＝正しい。ツール結果に「3 枚待ちです。結果を見てから」と書き、
   リトライさせない。試走 1 枚は温かい L4 で 8〜21 秒、冷えていれば分単位——ツールの
   待ちは `generate_image` と同じ 33 分の上限＋10 秒ごとの progress（`mcp_imagegen.go:205-228`）。
-- **「エージェントの試走を許す」トグルは広告集合を変える**＝結び直し（セッションの再接続）
-  まで効かない。ペインはそう言う（ui-prefs の `--image-gen` と同じ文言）。
-- **層 2 の知識は前置に載る＝毎ターンの固定費。** 末尾 20 件・2 KB の上限を**書く側でなく
+- **「エージェントの試走を許す」トグルは広告集合を変える**＝`list_changed` を尊重する kind なら
+  1 分以内、しない kind は resume まで効かない。ペインはそう言う。
+- **試走の枠 3 はワークスペース共通**（`jobs.go:186, 345-353`・🟡D）: 全スタジオのエージェント・人の
+  ボタン・他のペインが同じ 3 枠を取り合い、新しい物が先頭に入る。429 の文言をスタジオ文脈で
+  書き直す（「他の試走が 3 枚待っています」）。🔵 エージェントの試走はスタジオごとに 1 枚まで。
+  **codex の MCP 上限は 600 秒**（`mcp_imagegen.go:202-203`）＝冷えたエンジンの 16 分は入らない。
+- **同じセッションをミラーペインでも開くと状態が衝突する**（🟡F）: 入力の下書き
+  `af.mirror-draft.<session>`・添付の下書き・送信エコー・起動シードが後勝ちで潰し合う。
+  スタジオに結ばれたセッションをミラーで開こうとしたら imagegen ペインへ寄せる。
+- **層 2 の知識の要約は `get_image_studio` に毎回載る＝ターンごとの固定費。** 末尾 20 件・2 KB の上限を**書く側でなく
   読む側**で切る（ファイルは伸びてよい）。上限を書く側で切ると人が Files ペインで書いた分が
   消える。
 - **知識ファイルの鍵はモデル id**（表示名でない・[engine-model-catalog-adr0072]「`base_model`
@@ -635,10 +702,35 @@ MCP（`mcp_stdio.go`・セッション側・スタジオに結ばれたときだ
 - **編集履歴の全文 500 件 ≒ 500 KB がスタジオの JSON に載る**＝`fstore` の 1 ファイルが太る。
   読み口は `draft-log` で頁分けし、スタジオ本体の GET には直近 20 件だけ載せる（2 秒
   ポーリングの ETag が毎回外れない）。
-- **巻き戻しは「エージェントの直前の編集を捨てる」操作**。前置に載せないと、エージェントは
+- **巻き戻しは「エージェントの直前の編集を捨てる」操作**。since に載せないと、エージェントは
   次のターンで自分の編集が生きている前提で話す（「計画」の原文キャリーフォワードが
   「強く間違える」のと同じ向き）。
-- **知識の「要約」節は前置の固定費**。1 KB の上限は読む側で切り、切れたら「要約が長すぎます」
+- **知識の「要約」節は毎回の答えの固定費**。1 KB の上限は読む側で切り、切れたら「要約が長すぎます」
   をファミリーカードに出す（黙って切らない）。
 - **`op`/`inputs` の解放は番人と対**: エージェントが書く `inputs` は `BrowseWritablePath` の
   内側だけ受け、外は `set_image_draft` の結果で断る。投入時にも同じ検証が走る（二重は意図）。
+
+## 10. レビューで変えたこと（2026-09-23・`sds6jyw`・[113-review.md](113-review.md)）
+
+| 指摘 | 何を変えたか |
+|---|---|
+| 🔴1 claude／agy に Managed 無し | D9: TUI を P0 に。§2.2 の「9 kind」を 7 に訂正。kind 一覧は `managedDrivers` から |
+| 🔴2 前置を入れる 1 か所が無い | **D4 を pull に**（`get_image_studio`＋Console の合図 1 行）。前置は §7 へ |
+| 🔴3 5 kind で af 子が自分を知らない | D9: worktree 既定 ON・opencode Managed を除外・`AF_SESSION_NAME` の配達を P0 前提作業に・曖昧なら断る |
+| 🔴4 `splitPastedImages` は末尾専用 | D4: 合図は末尾・剥がし手は転写モデル層と Go 側の 2 か所 |
+| 🔴5 `inputs`/`mask` に番人が無い | D3・§6: 番人を `spec()` に足すのを P0 前提作業に。D12 の唯一の例外 |
+| 🔴6 `~/.config/agent-fleet` は触れない | D14: 既定を `~/imagegen-knowledge/` 案に（§8-3）・リポジトリは明示の書き出しだけ |
+| 🔴7 4 kind は添付を捨てる | D6: kind の能力で渡し方を決め、`imagePaste` の隣に添付可否を 1 欄 |
+| 🟡A 広告は要求ごと | §9 を訂正。尊重の有無は kind ごとに未測定＝受け入れで測る |
+| 🟡B 前置の累積 | D4 pull で消滅。since は 5 件＋「他 N 件」。lcpp は system prompt へ（P1） |
+| 🟡C 帳簿の付け先 | (スタジオ, セッション) の組 |
+| 🟡D 試走の枠は共通・codex 600 秒 | §9 |
+| 🟡E `draft_log` と fstore | 別ファイルの JSONL・本体は錠＋tmp→rename |
+| 🟡F ミラーとの同居 | §9・imagegen ペインへ寄せる |
+| 🟡G 段 2 は生成中でも止める | §5.3・別件で起票 |
+| 🟡H 枠は子だけ | §2.2・§5.3・§9 を訂正 |
+| 🟡I メタ `Studio` は 5 か所・CP の `sessionWire` | §5.1 |
+| 🟡J #904 は取り込み済み | D13 の条件を「実装の出荷」に（§8-5） |
+| 🟡K リポジトリ内フォルダの汚れ | D14・§7 |
+| 🟡L 起動ダイアログの部品 | D9 |
+
