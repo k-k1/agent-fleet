@@ -509,7 +509,7 @@ it shows up in the left pane, the sessions overview and the fleet graph like any
 
 **It is off by default.** Turn it on in **Settings > Agents > Session > "Starting sessions from
 sessions"**. The change applies to **sessions started from then on**; sessions already running
-keep their current tools until they restart. Under it, **"Children per session"** (default 3)
+keep their current tools until they restart. Under it, **"Children per session"** (1–10, default 3)
 sets **how many children one session may have at a time**. The limit is per parent, not per
 workspace, so two parents can each have that many. **A slot frees when you delete or archive a
 child**, or when a child left stopped is archived on its own after the usual window
