@@ -290,4 +290,13 @@ export const imggen = {
   "imggen.memo_add_ph": "気づいたこと（例: cfg 5 より上だと肌が硬くなる）",
   "imggen.memo_failed": "メモを読めませんでした",
   "imggen.memo_add_failed": "メモに足せませんでした",
+  "imggen.memo_edit": "編集",
+  "imggen.memo_edit_hint": "この配備ではメモのファイルがファイルペインに出ないため、4 節をここで編集します",
+  "imggen.memo_save": "保存",
+  "imggen.memo_cancel": "やめる",
+  "imggen.memo_saved": "メモを保存しました",
+  "imggen.memo_save_failed": "メモを保存できませんでした",
+  "imggen.memo_changed": "エージェントかファイルペインが先に書き換えました。読み直してから編集してください",
+  "imggen.draft_card": "下書きを更新",
+  "imggen.draft_card_unmatched": "どの編集かを特定できません（中列の編集履歴を見てください）",
 };

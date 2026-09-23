@@ -663,6 +663,8 @@ export function ImagegenView({
                 session={session}
                 active={active}
                 signal={studioId ? studio.signal : undefined}
+                log={studio.log}
+                onRewind={studio.rewind}
                 onAttach={() => setAttachOpen("attach")}
                 onReplace={() => setAttachOpen("replace")}
               />

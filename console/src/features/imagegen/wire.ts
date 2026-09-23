@@ -637,7 +637,24 @@ export interface Knowledge {
   prompts: string;
   records: string;
   summary_truncated?: boolean;
+  /** `path` relative to the browse root — what the Files pane opens. Absent when the browse
+   *  root is not home: the pane then edits the four sections itself (decision 12). */
+  files_path?: string;
+  /** The content as read; a KnowledgeEdit names it. Absent while there is no file yet. */
+  version?: string;
   error?: ApiError;
+}
+
+/** PUT /imagegen/knowledge — the pane's editor, all four sections at once. Refused with 412
+ *  `knowledge_changed` when the file moved since `version` was read. */
+export interface KnowledgeEdit {
+  scope: KnowledgeScope;
+  key: string;
+  version: string;
+  summary: string;
+  settings: string;
+  prompts: string;
+  records: string;
 }
 
 /** POST /imagegen/knowledge — appends to "records" only. */

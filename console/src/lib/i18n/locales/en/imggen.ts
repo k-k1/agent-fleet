@@ -288,4 +288,13 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.memo_add_ph": "What you noticed (e.g. above cfg 5 the skin turns stiff)",
   "imggen.memo_failed": "Could not read the notes",
   "imggen.memo_add_failed": "Could not add to the notes",
+  "imggen.memo_edit": "Edit",
+  "imggen.memo_edit_hint": "In this deployment the notes file is not in the Files pane, so its four sections are edited here",
+  "imggen.memo_save": "Save",
+  "imggen.memo_cancel": "Cancel",
+  "imggen.memo_saved": "Notes saved",
+  "imggen.memo_save_failed": "Could not save the notes",
+  "imggen.memo_changed": "The agent or the Files pane changed the notes first. Reload them and edit again",
+  "imggen.draft_card": "Draft updated",
+  "imggen.draft_card_unmatched": "Could not tell which edit this was (see the edit history in the middle column)",
 };

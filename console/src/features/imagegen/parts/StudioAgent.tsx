@@ -1,7 +1,7 @@
 // StudioAgent — the studio's left column (ADR 0100 §4): the bound session's mirror, embedded
 // as it is (thinking, tool cards, attachments, stop and resume come with it), under a head that
 // names the agent and offers to switch it. Without a session, the way to attach one.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiJSON, errText } from "../../../core/api/client.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -14,7 +14,10 @@ import { isManagedSession } from "../../../types/session.ts";
 import { MirrorView, type MirrorSignal } from "../../mirror/MirrorView.tsx";
 import { openSessionTerminalSplit } from "../../sessions/open.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
-import { studioPersona } from "../api.ts";
+import { studioPersona, type DraftLogEntry } from "../api.ts";
+import { draftCallEntry, isStudioDraftTool } from "../studioSync.ts";
+import { DraftCallCard } from "./DraftCallCard.tsx";
+import type { TranscriptCaps } from "../../mirror/transcript/capabilities.ts";
 
 export function StudioAgent({
   paneId,
@@ -22,6 +25,8 @@ export function StudioAgent({
   session,
   active,
   signal,
+  log,
+  onRewind,
   onAttach,
   onReplace,
 }: {
@@ -30,6 +35,9 @@ export function StudioAgent({
   session: string;
   active: boolean;
   signal?: MirrorSignal;
+  /** The studio's edit log as the pane knows it: what a set_image_draft card is drawn from. */
+  log: DraftLogEntry[];
+  onRewind: (seq: number) => unknown;
   onAttach: () => void;
   onReplace: () => void;
 }) {
@@ -44,6 +52,18 @@ export function StudioAgent({
   // leaves `failed`/`unknown` on the meta; without this the button stays, and every press
   // delivers the persona again. Per session: a new agent starts with its own state.
   const [resentFor, setResentFor] = useState("");
+  // decision 9: a set_image_draft call is drawn as the edit it wrote. A new function whenever
+  // the log moves, so the conversation repaints its cards (the mirror memoizes on it).
+  const toolCard = useCallback<NonNullable<TranscriptCaps["toolCard"]>>(
+    (p, turn, nth) =>
+      isStudioDraftTool(p.tool) ? (
+        <DraftCallCard
+          entry={draftCallEntry(log, session, { turnTs: turn.ts, turnEndTs: turn.endTs, nth, output: p.output })}
+          onRewind={onRewind}
+        />
+      ) : null,
+    [log, session, onRewind],
+  );
   useEffect(() => {
     if (meta?.alive === true) setAttached(true);
     else if (meta?.alive === false) setAttached(false);
@@ -145,6 +165,7 @@ export function StudioAgent({
             })();
           }}
           signal={signal}
+          toolCard={toolCard}
         />
       </div>
     </div>
