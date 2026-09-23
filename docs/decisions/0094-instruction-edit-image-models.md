@@ -17,8 +17,8 @@ English | [日本語](0094-instruction-edit-image-models.ja.md)
   🟢 The number is settled (develop holds up to 0093).
   🔄 **Revised (2026-09-23): stop centre-cropping; shrink the whole picture to the encoder's rounding
   fixed point** — the "Revision" section at the end. Decisions 3 and 4, "Rejected" and open item 2
-  carry a pointer where they stand. **Decided, not built.** 🔴 **Today's wiring already makes 3:2
-  photos, among others, soft** (the revision's point 3; fixed as part of building it).
+  carry a pointer where they stand. **Decided, not built.** 🔴 **Today's wiring very likely makes 3:2
+  photos, among others, soft** (the revision's point 3; one measured pair; fixed as part of building it).
 - Related: [0072](0072-engine-model-catalog.md) (the per-family templates, `base_model` dispatch
   and the file-role vocabulary — this ADR adds two words to the first and none to the last) /
   [0069](0069-image-generation-providers.md) (`generate_image`'s vocabulary, and the `strength`
@@ -501,8 +501,8 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   the ratio table upstream says it trained on. That trades quality for a knob — and **the result of
   removing it was not measured**. Decision 4 prefers saying "it does not apply".
   🔄 **2026-09-23**: this option (a free pixel budget) was not measured. What was measured keeps 1 MP and
-  frees only the ratio; the photos that went soft were traced to the encoder's grid misalignment
-  ("Revision" at the end). `size` is still not honoured.
+  frees only the ratio; the photos that went soft were at sizes that are not fixed points of the
+  encoder's rounding ("Revision" at the end). `size` is still not honoured.
 - **Making the Lightning LoRA (4 steps) the family default.** Fast, but it assumes cfg 1, where the
   negative prompt stops moving the picture (`comfyModelTakesNegative` would answer false). Leave it
   to the row, exactly as Krea 2 Turbo is left.
@@ -1035,7 +1035,8 @@ list — **a control taken before trusting the reading**.
 extra runs taken before building — §13 is PR #906). Decisions 3 and 4, "Rejected" and open item 2
 are left as written, each with a 🔄 pointer here — so that what they rested on at the time stays
 readable. This section was rewritten twice on the same day ("shrink to the nearest table entry" →
-made conditional by a review → its present form after four isolating runs).
+made conditional by a review → its present form after four isolating runs). A second review then
+softened the claim about the mechanism and added how orientation and unreadable sizes are handled.
 
 ### Why it changes
 
@@ -1047,13 +1048,12 @@ made conditional by a review → its present form after four isolating runs).
    wiring) and one delivered **whole and shrunk** keep the same texture (gradient-energy ratio — blind
    to a shift, lowered by blur — **1.0297 vs 1.0300** at seed 602, **1.0172 vs 1.0134** at seed 607;
    log 112 §12, R3 and R4; they agree tile by tile on a 3x3 grid too).
-3. **Photos go soft when the reference latent and the generated latent sit on different grids.**
-   `TextEncodeQwenImageEditPlus` re-scales image1 **itself** to ~1 MP in multiples of 8 before
-   encoding the reference latent (ComfyUI v0.37.0 `nodes_qwen.py`: `s=sqrt(1024²/(w·h))`,
-   `round(w·s/8)*8`, `round(h·s/8)*8`). Unless the size handed in is a **fixed point** of that
-   rounding, the generated latent made from `enc.pixels` and the reference latent land on patch
-   grids (latent/2) one row or column apart. All eight photo points follow this, and both "inside or
-   outside the ratio table" and "height" were refuted (log 112 §12–§13):
+3. **Photos go soft when the size handed in is not a fixed point of the encoder's rounding
+   (measured).** `TextEncodeQwenImageEditPlus` re-scales image1 **itself** to ~1 MP in multiples of 8
+   before encoding the reference latent (ComfyUI v0.37.0 `nodes_qwen.py`: `s=sqrt(1024²/(w·h))`,
+   `round(w·s/8)*8`, `round(h·s/8)*8`, re-sampled with `common_upscale`'s `"area"`). The eight photo
+   points split on "fixed point or not", and both "inside or outside the ratio table" and "height"
+   were refuted (log 112 §12–§13):
 
    | Size | In table | Fixed point | Photo | Gradient-energy ratio |
    |---|---|---|---|---|
@@ -1064,16 +1064,34 @@ made conditional by a review → its present form after four isolating runs).
    | **1248x832 (S3, today's wiring, 3:2)** | **yes** | no | 1536x1024 | **0.4053** |
    | 1264x832 (S4) | no | yes | same | **0.7759** |
 
-   (Calibration: on the 1496x800 photo a σ1.0 blur scores 0.874; on the 1536x1024 photo σ0.7 scores
-   0.547. S3 and S4 are the same photo and seed, neither is cropped — the size is the only
-   difference.) The illustrations (A–D, T1) held up off the table because 1376x768 happens to align
-   its grids, not only because a picture without texture has none to lose.
+   (Calibration: on the 1496x800 photo a σ1.0 blur scores 0.874; on the 1536x1024 photo, measured at
+   1248x832, σ0.7 scores 0.594. S3 and S4 are the same photo and seed, neither is cropped — the size
+   is the only difference. But their latents differ in shape, so the same seed is not the same noise,
+   and seed-to-seed spread on this photo was not measured. S4 itself falls on the "soft" side of the
+   threshold fixed before the isolating runs (0.92 or below).)
 
-🔴 **Today's wiring has this defect too.** Four of the table's seventeen entries — **1248x832,
-1504x688, 832x1248, 688x1504** — are not fixed points, and their patch counts differ too (the same
-shape as the four non-fixed points measured). Strictly, 1328x800 and its mirror are not fixed points
-either, but their latent is one row and column off with the patch counts still matching — a shape
-not measured, so it is not counted here (the new rule picks strict fixed points, which avoids both). Photos at input ratios 1.42–1.58 (which
+   **The mechanism is not settled.** Two candidates, both consistent with the photo points:
+   - **Grid misalignment**: the generated latent made from `enc.pixels` and the reference latent land
+     on patch grids (latent/2) one row or column apart. The spatial skew this predicts (aligned at
+     the top left, worse towards the bottom right) was weak in S2 and absent in S3.
+   - **The reference itself going soft** (found by the second review): an `area` re-sample
+     (`adaptive_avg_pool`) at a scale near 1 averages almost every pixel with its neighbour. Building
+     only the reference, without a GPU, scores **0.45** for S3, 0.76 for S2, 0.75 for the T2 mutant
+     and **1.00** at a fixed point (reproduced by the parent with the same implementation). That fits
+     S3's even, frame-wide drop.
+   There is an exception: 1376x768 (the A–C and T1 mutants, R2's mutant 1) is not a fixed point and
+   its reference softens to 0.81–0.86, yet the output did not drop (R2's mutant 1 scored 0.843 against
+   its control's 0.836). **The rule works under either mechanism** — at a fixed point there is
+   neither a re-sample nor a grid offset.
+
+🔴 **Today's wiring very likely has this defect too.** Four of the table's seventeen entries —
+**1248x832, 1504x688, 832x1248, 688x1504** — are not fixed points and their patch counts differ too:
+the same shape as the four points that went soft (1408x736, 1376x736, 1424x752, 1248x832). Only
+1248x832 was measured directly, as one pair (S3, one seed); 1504x688 and the two portrait entries are
+inferred. 1328x800 and its mirror are not strict fixed points either and their reference softens to
+0.50–0.75, but their patch counts match — the shape of 1376x768, which did not drop — so they are not
+counted here (**unsettled**; 1328x800 serves input ratios 1.58–1.756). The new rule picks strict fixed
+points, which avoids both. Photos at input ratios 1.42–1.58 (which
 includes the 3:2 of most DSLRs), 2.10–2.26 and their portrait mirrors **are coming back soft today**
 (S3). The user decided to fix it as part of building this revision.
 
@@ -1086,7 +1104,9 @@ neither confirms nor overturns that rejection.
 | What changes | How |
 |---|---|
 | Stop cropping (decision 4) | The input is **not cut**; the whole picture is shrunk and fed to `enc.pixels` / `pos.image1` / `neg.image1` (`ImageScale(crop="disabled")`) |
-| The size it shrinks to (decision 4) | **The input's size with `TextEncodeQwenImageEditPlus`'s own rounding applied until it stops moving** (a fixed point). The Agent computes it from image1's size (`params.Width` / `params.Height`, already read at `comfy.go:1050`) and writes it into `ImageScale`'s width and height. Swept over ratios 0.25–4.0 at four input widths it **always converges (in three steps at most)**, with **at most 1.48% aspect distortion**, and it is **by construction** the size the encoder makes for its reference |
+| The size it shrinks to (decision 4) | **The input's size with `TextEncodeQwenImageEditPlus`'s own rounding applied until it stops moving** (a fixed point). The Agent computes it from image1's size (`params.Width` / `params.Height`, already read at `comfy.go:1050`) and writes it into `ImageScale`'s width and height. Swept over ratios 0.25–4.0 it **always converges (in three steps at most)**, with **at most 1.52% aspect distortion** (ratio 3.819 → 2016x520). Outside that range it grows to 2.2% at ratio 8, 3.0% at 16 and 6.2% at 64 (six steps), which a no-crop rule accepts. Iteration **stops at 16 steps** and refuses if it has not converged (no such input has been found). The shrink uses **`upscale_method="lanczos"`** (every run measured used lanczos). The result is **by construction** the size the encoder makes for its reference |
+| How the size is read | 🔴 **Compute from the size after orientation is applied.** The Agent reads the size with `image.DecodeConfig` (`comfy.go:1196-1197`), which ignores EXIF Orientation, while ComfyUI's `LoadImage` applies `ImageOps.exif_transpose` (`nodes.py`). Taken naively, an Orientation 5–8 phone JPEG (header 4032x3024, actually portrait) squeezes a portrait picture into a landscape frame (~77% ratio error) — an accident today's `FluxKontextImageScale` cannot have, because it reads the tensor. Recommended: the Agent reads EXIF Orientation and swaps width and height for 5–8 (no re-encode; ComfyUI does the rotation). The method is settled when building |
+| Inputs whose size cannot be read | 🔴 Uploads accept `.webp` (`comfy.go:1260`), but imagegen registers only the gif, jpeg and png decoders, so a webp reads as size 0 (harmless today, because the size is not used). Recommended: register `golang.org/x/image/webp`'s `DecodeConfig`. An input whose size still cannot be read is **refused** for this family rather than shrunk to a guessed size. The method is settled when building |
 | `FluxKontextImageScale` and the ratio table | **Neither is used**; the node leaves the graph. There is no table to hold and no table size to read through `GetImageSize` |
 | Where the rounding formula lives | Copied into the Agent (three lines of arithmetic). 🔴 Decision 9's pin hazard remains here — the formula belongs to the ComfyUI version. **The pin-bump check** (ADR 0098's procedure: read the definition diff of every node we emit) gains `TextEncodeQwenImageEditPlus`'s reference rescale. Unlike a table, a change shows up in that diff |
 | Mask wiring (decision 3) | `maskscale` goes. Picture and mask are both plain stretches, so the two maps agree by construction (measured: edge error **6.6 px → 3.0 px**, log 112 §11, T3; 3 px is inside the repaint's transition band. The 15.9 px in §11's table compares the control against the **no-crop** map's prediction, which it does not follow by design) |
@@ -1105,10 +1125,10 @@ Aspect distortion, against the first draft's "nearest table entry":
 | 9:16 (1080x1920) | 752x1392, −3.96% | 768x1368, −0.19% |
 | 3:1 (1920x640) | 1568x672, **−22.2%** | 1776x592, 0% |
 | 4:1 (2048x512) | 1568x672, **−41.7%** | 2048x512, 0% |
-| **Worst over ratios 0.25–4.0** | **−41.7%** | **1.48%** |
+| **Worst over ratios 0.25–4.0** | **−41.7%** | **1.52%** |
 
 So the two questions the earlier decision left open **mostly lose their subject**: "shrink extreme
-ratios to the table too" now costs at most 1.48%, and "put the output back to the input's ratio" is
+ratios to the table too" now costs at most 1.52%, and "put the output back to the input's ratio" is
 no longer needed (it would be a re-scale of 1.5% or less, for little gain).
 
 ### Rejected (in this revision)
@@ -1125,7 +1145,7 @@ no longer needed (it would be a re-scale of 1.5% or less, for little gain).
 - **The Agent holding the ratio table, or reading table sizes through `GetImageSize`.** Four of the
   table's sizes are themselves wrong; there is no longer a reason to use the table.
 - **Cropping extreme ratios as before.** One exception, and the mask UI is back to drawing "this
-  input has a band" — and with distortion at 1.48% at most there is nothing to crop for.
+  input has a band" — and with distortion at 1.52% at most there is nothing to crop for.
 
 ### Consequences (what building it touches)
 
@@ -1133,8 +1153,11 @@ no longer needed (it would be a re-scale of 1.5% or less, for little gain).
   is handed the fixed-point size, and the three seams move. The comment just above (`:1307-1311`,
   "that node exists to fix the FRAME") is rewritten too.
 - A new function computes the fixed point, with a unit test asserting "converges over ratios
-  0.25–4.0, the result is a fixed point, distortion at most 1.5%". Its comment names where the formula
-  came from (`nodes_qwen.py`, v0.37.0).
+  0.25–4.0, the result is a fixed point, distortion at most 1.6%". Its comment names where the formula
+  came from (`nodes_qwen.py`, v0.37.0). The expected values are a table built in Python with upstream's
+  own `round` (round-half-to-even): the review checked that no W,H ≤ 20000 lands exactly on a rounding
+  boundary, so Go's `math.Round` agrees — the table is there to catch a mis-copied formula (axis order,
+  `int(1024*1024)`).
 - `comfy_workflows.go:1386` (`comfyQwenEditNoiseMask`) — `maskscale` goes, and so does its doc
   comment's reasoning (`:1369-1385`, "applies the same crop").
 - `comfy.go:1065` — the branch refusing a mask whose size differs from the picture's goes, with the
@@ -1145,25 +1168,29 @@ no longer needed (it would be a re-scale of 1.5% or less, for little gain).
   comment (`:813-824`).
 - The ComfyUI pin-bump procedure (ADR 0098) gains an item: read `TextEncodeQwenImageEditPlus`'s
   reference-rescale formula.
+- The remaining comments that assume `FluxKontextImageScale`: `comfy.go:295` and `:602`,
+  `comfy_workflows.go:640`, `:1220` and `:1465`, `console/src/features/imagegen/families.ts:139`.
 - [log 111](../log/111-inpaint-mask-canvas-p2.md) §2 constraint 2 and §9's first 🔴 **lose their
   subject** with this revision; the mask-canvas design is rewritten from there.
 
 Live acceptance (through the Agent's own route): (a) the banded input (log 112 §5's magenta/cyan)
 keeps its bands in the output; (b) R3's photo (1496x800 → 1400x752) scores around 1.0; (c) with a
-mask, the edge error is at T3's level; (d) **the 3:2 photo (S0) scores at S4's level or better** —
-the check that today's S3 (0.4053) is fixed; (e) 16:9 and 3:1 photos score at (b)'s level.
+mask, the edge error is at T3's level; (d) **the 3:2 photo (S0), over two seeds or more, scores at S4's
+level or better** — the check that today's S3 (0.4053) is fixed; the rule picks 1256x840, a size not
+measured and not S4's 1264x832; (e) 16:9 and 3:1 photos score at (b)'s level; (f) **an EXIF-rotated
+JPEG** (Orientation 6, say) comes back portrait and unsqueezed.
 
 ### Open (for this revision)
 
-1. **The mechanism itself is not proven.** Eight photo points, two scenes and three seeds agree with
-   the grid explanation, and no more. The spatial skew it predicted (aligned at the top left, worse
-   towards the bottom right) was weak in S2 and absent in S3 (which dropped evenly). Acceptance (d)
-   and (e) are the chance to check the rule itself on hardware.
+1. **The mechanism is not settled** (grid misalignment, or the reference itself going soft — point 3
+   above). Eight photo points, two scenes and three seeds split on "fixed point or not", and no more.
+   Acceptance (d) and (e) are the chance to check the rule itself on hardware.
 2. **S4 does not reach 1.0 either** (0.7759). The S0 photo is dense with fine wood grain, and the model
    loses texture there even at a fixed point. This revision fixes the gap from S3 to S4, not beyond it.
 3. **2509 has not been measured on a photo** (only T1's illustration). It uses the same encoder node,
    so the same rule should hold — an inference.
 4. **Extra references were not measured.** They are re-scaled by the same encoder into reference
-   latents, but only image1 has to share a grid with the generated latent (an inference).
+   latents, but only image1 has to share a grid with the generated latent (`index_timestep_zero` gives each
+   reference its own index — checked against upstream by the review; not measured on hardware).
 5. **Not carried over to ADR 0098's Qwen-Image 2.1.** 2.1 re-scales its references through
    `TextEncodeQwenImage21`, a different arrangement; point 3 was measured on 2511.
