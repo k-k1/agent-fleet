@@ -36,11 +36,14 @@ export function StudioAgent({
   const tr = useT();
   const toast = useToast();
   const meta = useSessionsStore((s) => (session ? s.sessions.find((x) => x.name === session) ?? null : null));
-  // The list has arrived at least once; before that a missing row is not "gone".
-  const loaded = useSessionsStore((s) => s.sessions.length > 0);
+  const loaded = useSessionsStore((s) => s.loaded);
   const startSession = useSessionsStore((s) => s.start);
   const [attached, setAttached] = useState(meta?.alive === true);
   const [resending, setResending] = useState(false);
+  // The Agent moves InitialPromptState only out of `pending`, so a resend that went through
+  // leaves `failed`/`unknown` on the meta; without this the button stays, and every press
+  // delivers the persona again. Per session: a new agent starts with its own state.
+  const [resentFor, setResentFor] = useState("");
   useEffect(() => {
     if (meta?.alive === true) setAttached(true);
     else if (meta?.alive === false) setAttached(false);
@@ -86,7 +89,10 @@ export function StudioAgent({
       }
       const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/input`, "POST", { prompt: p.prompt, when_ready: true });
       if (r?.error) toast(errText(r.error) || tr("imggen.persona_failed"), { kind: "error" });
-      else toast(tr("imggen.persona_resent"), { kind: "info" });
+      else {
+        setResentFor(session);
+        toast(tr("imggen.persona_resent"), { kind: "info" });
+      }
     } catch {
       toast(tr("imggen.persona_failed"), { kind: "error" });
     } finally {
@@ -112,7 +118,7 @@ export function StudioAgent({
           <Icon name="loading" spin /> {tr("imggen.persona_pending")}
         </div>
       )}
-      {(state === "failed" || state === "unknown") && (
+      {(state === "failed" || state === "unknown") && resentFor !== session && (
         <div className="igen-persona failed">
           <Icon name="warning" /> {tr(state === "failed" ? "imggen.persona_state_failed" : "imggen.persona_state_unknown")}
           <button type="button" className="ui-btn ui-btn-sm" disabled={resending} onClick={() => void resend()}>

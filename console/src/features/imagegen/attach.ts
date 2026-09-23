@@ -11,7 +11,7 @@
 // it with the attach button still there.
 import { apiJSON, errDetail, errText, raw } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
-import { createStudio, studioPersona, type StudioDraft } from "./api.ts";
+import { bindStudio, createStudio, studioPersona, type StudioDraft } from "./api.ts";
 import type { AttachOpts } from "./parts/AttachAgentModal.tsx";
 
 export interface AttachResult {
@@ -27,13 +27,22 @@ export async function attachAgent(p: {
   draft: () => StudioDraft;
   title?: string;
   opts: AttachOpts;
-  /** "Switch agents": the session the studio is bound to now. Stopped first, because the Agent
-   *  refuses to take a studio from a session that is still alive (409 studio_bound). */
+  /** "Switch agents": the session the studio is bound to now. Unbound before the create, because
+   *  the Agent refuses to take a studio from a session that is still alive (409 studio_bound). */
   replacing?: string;
 }): Promise<AttachResult> {
   let studioId = p.studioId;
-  if (p.replacing) {
-    await raw(`api/sessions/${encodeURIComponent(p.replacing)}/stop`, { method: "POST" }).catch(() => undefined);
+  if (p.replacing && studioId) {
+    // Unbind first, and wait for it: the create refuses a studio still bound to a live session
+    // (409 studio_bound), and a stop does not finish before this returns. Unbound, the old
+    // session's tools are refused by the studio at once; stopping it is then only tidying.
+    try {
+      const u = await bindStudio(studioId, "");
+      if (!u || u.error) return { studioId, error: (u?.error && errText(u.error)) || t("imggen.attach_failed") };
+    } catch {
+      return { studioId, error: t("err.network") };
+    }
+    void raw(`api/sessions/${encodeURIComponent(p.replacing)}/stop`, { method: "POST" }).catch(() => undefined);
   }
   if (!studioId) {
     try {

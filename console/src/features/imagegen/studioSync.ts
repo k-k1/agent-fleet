@@ -150,13 +150,43 @@ export function changedKeys(a: StudioDraft | null | undefined, b: StudioDraft | 
  * The merge patch that turns `base` (the studio as last read) into `next` (the form's draft):
  * changed keys carry their new value, keys the form cleared carry null. Null for "nothing to
  * send", so the debounce does not PUT an empty patch and move `updated_at` for nothing.
+ *
+ * `base` is first read the way the form reads it, so a value the form cannot tell from its
+ * default (an explicit `op: "generate"`, `strength: 0.6`) is not sent back as null — that would
+ * log a member's edit nobody made.
+ *
+ * `params` is merged one level deep on the Agent (RFC 7386), so a knob the member cleared must be
+ * named with an explicit null: sending the remaining knobs alone leaves the cleared one in place.
  */
 export function draftPatch(base: StudioDraft | null | undefined, next: StudioDraft): StudioPatch["draft"] | null {
-  const keys = changedKeys(base, next).filter((k) => k !== "suggest_model");
+  const norm = studioFromForm(formFromStudio(base));
+  const keys = changedKeys(norm, next).filter((k) => k !== "suggest_model");
   if (!keys.length) return null;
   const out: Record<string, unknown> = {};
-  for (const k of keys) out[k] = next[k] === undefined ? null : next[k];
+  for (const k of keys) {
+    if (k === "params") {
+      const p: Record<string, unknown> = { ...(next.params || {}) };
+      for (const sub of Object.keys(norm.params || {})) if (!(sub in p)) p[sub] = null;
+      out.params = p;
+      continue;
+    }
+    out[k] = next[k] === undefined ? null : next[k];
+  }
   return out as StudioPatch["draft"];
+}
+
+/**
+ * The form rebuilt on a studio that moved while the member's edit was unsent (a 412): the
+ * studio's values everywhere except the keys the member was changing, which keep the member's
+ * text. The next save then carries only those keys, against the new version.
+ */
+export function rebaseForm(form: ImagegenDraft, pending: readonly string[], fresh: StudioDraft): ImagegenDraft {
+  const out = formFromStudio(fresh) as unknown as Record<keyof ImagegenDraft, unknown>;
+  const mine = form as unknown as Record<keyof ImagegenDraft, unknown>;
+  for (const f of Object.keys(FORM_TO_STUDIO) as (keyof ImagegenDraft)[]) {
+    if (pending.includes(FORM_TO_STUDIO[f])) out[f] = mine[f];
+  }
+  return out as unknown as ImagegenDraft;
 }
 
 /**
@@ -344,8 +374,6 @@ export function studioSignal(s: SignalSince, w: SignalWords): string {
   return `${STUDIO_SIGNAL_PREFIX}${parts.join(" · ")} ${STUDIO_SIGNAL_SUFFIX}`;
 }
 
-/** The text to send: the member's message with the signal as its LAST line. */
-export const withSignal = (prompt: string, signal: string): string => (signal ? `${prompt.replace(/\s+$/, "")}\n\n${signal}` : prompt);
 
 // --- attaching an agent (decision 8) -------------------------------------------------------
 

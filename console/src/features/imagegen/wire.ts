@@ -2,7 +2,7 @@
 //
 // Split from `api.ts` (which holds the fetch calls) for one concrete reason: `api.ts` imports
 // the shared client, which touches `localStorage` at module scope, and the node test project
-// has no DOM. Every pure module here — jobs, draft, prompthelp — needs these shapes and none
+// has no DOM. Every pure module here — jobs, draft, studioSync — needs these shapes and none
 // of them needs a fetch, so the types live in a module with no runtime imports at all.
 //
 // **These names are the Agent's JSON tags** (`workspace/agent/internal/imagegen/{jobs.go,
