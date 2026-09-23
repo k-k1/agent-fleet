@@ -39,7 +39,7 @@ vi.mock("./api.ts", () => ({
 }));
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
-import { useStudio, type StudioState } from "./useStudio.ts";
+import { forgetStudioState, useStudio, type StudioState } from "./useStudio.ts";
 
 const ID = "0f8e2a4c-1b2d-4e5f-8a9b-0c1d2e3f4a5b";
 let host: HTMLDivElement;
@@ -143,5 +143,18 @@ describe("useStudio: 縁取り（決定 6）", () => {
     expect([...st.highlight]).toEqual(["prompt"]);
     await act(async () => st.patchForm({ prompt: "c" }));
     expect([...st.highlight]).toEqual([]);
+  });
+});
+
+describe("forgetStudioState", () => {
+  it("削除したスタジオの縁取りと合図の位置だけを消す", async () => {
+    await mount();
+    localStorage.setItem(`af.imagegen-seen.${ID}`, "{}");
+    localStorage.setItem(`af.imagegen-signal.${ID}.s1`, "3");
+    localStorage.setItem("af.imagegen-seen.other", "{}");
+    forgetStudioState(ID);
+    expect(localStorage.getItem(`af.imagegen-seen.${ID}`)).toBeNull();
+    expect(localStorage.getItem(`af.imagegen-signal.${ID}.s1`)).toBeNull();
+    expect(localStorage.getItem("af.imagegen-seen.other")).toBe("{}");
   });
 });

@@ -61,6 +61,18 @@ interface Seen {
 const seenKey = (id: string) => `af.imagegen-seen.${id}`;
 const signalKey = (id: string, session: string) => `af.imagegen-signal.${id}.${session}`;
 
+/** Forget a deleted studio's per-studio state: its outlines and every agent's signal position. */
+export function forgetStudioState(id: string): void {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && (k === seenKey(id) || k.startsWith(`af.imagegen-signal.${id}.`))) localStorage.removeItem(k);
+    }
+  } catch {
+    /* a blocked store has nothing to forget */
+  }
+}
+
 function readJSON<T>(key: string): T | null {
   try {
     const v = localStorage.getItem(key);

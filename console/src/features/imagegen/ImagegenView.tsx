@@ -66,7 +66,7 @@ import { StudioHistory, type PictureActions } from "./parts/StudioHistory.tsx";
 import { attachAgent } from "./attach.ts";
 import { lastStudio, rememberStudio } from "./open.ts";
 import { historyByPath, pressSeqOf, studioFromForm } from "./studioSync.ts";
-import { useStudio } from "./useStudio.ts";
+import { forgetStudioState, useStudio } from "./useStudio.ts";
 import "./imagegen.css";
 
 /** Decision 2's cadence. Only ever runs while something is unfinished AND the tab is shown. */
@@ -403,6 +403,7 @@ export function ImagegenView({
       return;
     }
     rememberStudio(null);
+    forgetStudioState(studioId);
     void readStudios();
     // The bound session's meta loses its studio on the Agent; the rail's wand follows.
     void refreshSessions();
