@@ -482,4 +482,4 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 | 指摘 | 変更 |
 |---|---|
 | 🟡B1 muse は「Terminal 限定」ではなく P0 では付けられない（決定 8 の中で「false を持つのは lcpp と muse」と食い違う） | 決定 8: TUI の候補に lcpp と muse が出ないことを明記。「Managed を外す」の並びに muse を足し、理由（Managed しか無い・MCP 子の環境を洗うので af サーバに届かない）と P1 の開放条件を書いた。フェーズの前提作業から muse を外し、P1 に条件を足した |
-| 🔵A4 muse の断りの文言が「Terminal を使って」と言う | 決定 8 に Agent の断り（409 `studio_kind_unsupported`）と起動ダイアログの塞ぎ方を明記（文言は実装側で直す） |
+| 🔵A4 muse の断りの文言が「Terminal を使って」と言う | 決定 8 に Agent の断り（409 `studio_kind_unsupported`）と起動ダイアログの塞ぎ方を明記（Agent の文言は PR #926 で「いまは付けられない」に直っている） |

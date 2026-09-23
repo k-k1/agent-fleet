@@ -541,4 +541,4 @@ conversation.
 | Finding | Change |
 |---|---|
 | 🟡B1 muse is not "Terminal-only" but unattachable in P0 (contradicting decision 8's own "only lcpp and muse carry `false`") | decision 8: states that lcpp and muse never appear among the TUI candidates; adds muse to the excluded Managed kinds with the reasons (Managed-only; its scrubbed MCP environment cannot reach the af server) and the P1 condition for opening it. Phases: muse leaves the prerequisite line and P1 gains the condition |
-| 🔵A4 the refusal for muse tells it to use Terminal | decision 8: names the Agent's refusal (409 `studio_kind_unsupported`) and how the launch dialog blocks it (the wording is the implementation's to fix) |
+| 🔵A4 the refusal for muse tells it to use Terminal | decision 8: names the Agent's refusal (409 `studio_kind_unsupported`) and how the launch dialog blocks it (the Agent's wording already says "cannot be bound for now", PR #926) |
