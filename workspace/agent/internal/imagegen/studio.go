@@ -22,7 +22,10 @@ import (
 // The move is conditional on what the studio names now:
 //   - previous == "": a create. Refused with ErrStudioNotFound when there is no such studio, and
 //     with ErrStudioBound when it names another session that is still alive; a stopped or
-//     deleted one is replaced.
+//     deleted one is replaced. The store clears the REPLACED session's Meta.Studio itself, under
+//     sessionx's meta lock, in the same call: left in place, that session would resume claiming
+//     a studio that no longer names it — refused by every studio tool and by generate_image, and
+//     routed by the pane to somebody else's studio.
 //   - previous != "": a recreate (session is the new slot) or the rollback of a failed launch
 //     (session is "" or the old slot). Applied only while the studio still names previous;
 //     otherwise ErrStudioBound and nothing changes.

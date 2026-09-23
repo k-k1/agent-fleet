@@ -1073,7 +1073,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeCreated(meta)
 		return
 	}
-	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
+	if err := launchTmuxFn(meta, req.SSMForceLogin); err != nil {
 		unbindStudioAfterFailedLaunch(studio, name)
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
@@ -1639,7 +1639,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
 		return
 	}
-	if err := startSessionTmux(newMeta, false); err != nil {
+	if err := launchTmuxFn(newMeta, false); err != nil {
 		undoStudio()
 		// Un-archive the old session so a launch failure doesn't silently drop it from
 		// the active list.

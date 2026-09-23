@@ -9,6 +9,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
+// launchTmuxFn is startSessionTmux behind a seam for the create and recreate paths, so a test
+// can make the launch fail and see the studio binding handed back (the rollback only runs then).
+var launchTmuxFn = startSessionTmux
+
 // bindStudioOnCreate points the studio at the session being created (ADR 0100 decision 2 ③),
 // answering the refusal to write when it cannot.
 func bindStudioOnCreate(studio, name string) *SpawnRefusal {

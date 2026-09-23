@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -213,5 +214,67 @@ func TestListSnapshotKeepsStudioAndInitialPromptState(t *testing.T) {
 	m, _ := session.ReadMeta("a")
 	if m.InitialPromptState != session.InitialPromptDelivered || m.Studio != studioID || m.StoppedAt == "" {
 		t.Fatalf("meta = %+v, want the newer state and studio kept and StoppedAt written", m)
+	}
+}
+
+// The rollbacks only run when a launch fails, so they are driven with a launch that fails: the
+// studio is handed back with a CONDITIONAL move naming the slot that never started.
+func TestStudioBindingIsHandedBackWhenTheLaunchFails(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := launchTmuxFn
+	launchTmuxFn = func(session.Meta, bool) error { return errors.New("no tmux today") }
+	t.Cleanup(func() { launchTmuxFn = orig })
+
+	t.Run("create", func(t *testing.T) {
+		binds := stubStudioBind(t, nil)
+		code, raw := env.create(map[string]any{"kind": "claude", "dir": repo, "studio": studioID})
+		if code != http.StatusInternalServerError {
+			t.Fatalf("create = %d %s, want the launch failure", code, raw)
+		}
+		if len(*binds) != 2 || (*binds)[0].previous != "" || (*binds)[1].studio != studioID ||
+			(*binds)[1].session != "" || (*binds)[1].previous != (*binds)[0].session {
+			t.Fatalf("binds = %+v, want the bind and then (studio, \"\", that session)", *binds)
+		}
+	})
+	t.Run("recreate", func(t *testing.T) {
+		env.fixture(session.Meta{Name: "old2", Kind: session.KindClaude, Dir: repo, Studio: studioID})
+		binds := stubStudioBind(t, nil)
+		code, raw := roundtrip(t, env.srv, "POST", "/sessions/old2/recreate", nil)
+		if code != http.StatusInternalServerError {
+			t.Fatalf("recreate = %d %s, want the launch failure", code, raw)
+		}
+		if len(*binds) != 2 || (*binds)[0].previous != "old2" ||
+			(*binds)[1] != (studioBindCall{studioID, "old2", (*binds)[0].session, true}) {
+			t.Fatalf("binds = %+v, want the move to the new slot and then (studio, old2, new slot)", *binds)
+		}
+	})
+}
+
+// With no studio store there is nobody to move the studio to the new slot, so the new slot
+// must not claim it.
+func TestRecreateWithoutAStudioStoreStartsUnbound(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.fixture(session.Meta{Name: "old3", Kind: session.KindClaude, Dir: repo, Studio: studioID})
+	old := imagegen.BindStudioSession
+	imagegen.BindStudioSession = nil
+	t.Cleanup(func() { imagegen.BindStudioSession = old })
+	code, raw := roundtrip(t, env.srv, "POST", "/sessions/old3/recreate", nil)
+	if code != http.StatusOK {
+		t.Fatalf("recreate = %d %s", code, raw)
+	}
+	var recreated session.Session
+	if err := json.Unmarshal(raw, &recreated); err != nil {
+		t.Fatal(err)
+	}
+	if rm, _ := session.ReadMeta(recreated.Name); rm.Studio != "" {
+		t.Fatalf("recreate with no store kept studio %q", rm.Studio)
 	}
 }
