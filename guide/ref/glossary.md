@@ -32,6 +32,7 @@ thing.
 | Shared session | session share | Showing a conversation read-only to another member of the same tenant |
 | Handoff | handoff | Passing a conversation to a new session, or to another member |
 | Fork | fork at message | Starting a new session from a past point in an existing conversation |
+| Child session | spawn / origin `session` | A session another session started and handed a task to. The parent may list, watch, stop, resume and rename the children it started, and nothing else; deleting one is yours. See [02 Sessions](../member/02-sessions.md#starting-sessions-from-a-session-child-sessions) |
 | Work item | work item | An issue, ticket or pull request pulled in from a provider. See [repos.md](repos.md) |
 | Memo queue | memo | Instructions parked now and sent to a session later, in a batch |
 | Cleanup / trash | cleanup / shelf | The sweep of stopped sessions, stale worktrees and merged branches. What it removes is stashed and can be restored |

@@ -39,6 +39,7 @@ If a feature ships and does not appear here, it is not done
 | Context usage gauge | member | session header | [06 Agents](../member/06-agents.md) |
 | Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [02 Sessions](../member/02-sessions.md#reading-an-answer-in-your-own-language-translation) |
 | Have a session generate an image (`generate_image`) | member | any session, by asking | [02 Sessions](../member/02-sessions.md#having-a-session-generate-an-image) |
+| Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [02 Sessions](../member/02-sessions.md#starting-sessions-from-a-session-child-sessions) |
 | Abort detection and auto-resume | member | automatic | [09 Working with others](../member/09-collaboration.md) |
 
 ## Working with code
