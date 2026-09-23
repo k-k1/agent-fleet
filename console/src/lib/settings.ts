@@ -649,6 +649,11 @@ export interface Settings {
   // Detected reliably while the Console tab is open; a reset that happened while it was closed
   // notifies exactly once on the next open.
   usageResetNotify: boolean;
+  // Notify (OS notification and voice) when a CHILD session — one another session spawned
+  // (origin "session") — finishes a turn and waits for input. Its parent is the one waiting on
+  // that turn, so a fleet of children otherwise pings once per child turn. Questions and
+  // permission requests from a child still notify: nobody but a person can answer those.
+  childIdleNotify: boolean;
   // Convert English words to katakana before handing them to VOICEVOX (docs/log/24, the CP's
   // enkana preprocessing), so English is read plausibly in a Japanese accent without leaving
   // Zundamon's voice. It is a transliteration based on the CMU pronouncing dictionary, so a word
@@ -1137,6 +1142,7 @@ const DEFAULTS: Settings = {
   ttsStereoByPane: true,
   ttsSessionNotify: false,
   usageResetNotify: true,
+  childIdleNotify: true,
   ttsEnglishKana: true,
   ttsUserDict: "",
   ttsCacheSec: 900, // 15 minutes
