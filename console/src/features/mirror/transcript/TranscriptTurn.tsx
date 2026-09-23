@@ -216,6 +216,8 @@ function TranscriptTurnImpl({
           answered={!!item.p.answer}
           answer={item.p.answer}
           declined={item.p.declined}
+          translate={caps.translate}
+          autoTranslate={autoTranslate && foldWork}
         />
       ) : item.p.kind === "plan" ? (
         // A historical plan — show the outcome, open in a pane when this view can (the

@@ -95,11 +95,15 @@ export interface QuestionTranslateView {
  * the card already reads in the reader's language (the same looksForeign test as an answer).
  * `lead` is the prose shown above the questions (the managed session's pendingText, a carried
  * interaction's text); it goes out as a second part and is displayed like a turn's prose.
+ * `autoEligible` is the transcript's "arrived while the reader was watching" (TranscriptView
+ * arrivedAfter): without it, opening a long session with automatic translation on would press
+ * for every question in its history.
  */
 export function useQuestionTranslate(
   tx: TranscriptTranslateWiring | undefined,
   qs: Question[],
   lead = "",
+  autoEligible = true,
 ): QuestionTranslateView | undefined {
   const source = tx ? questionTranslateSource(qs) : "";
   const texts = [lead.trim() ? lead : "", source].filter((s) => s !== "");
@@ -108,10 +112,10 @@ export function useQuestionTranslate(
   const offered =
     !!tx && !!key && !!source && (shown || !!tx.get(source) || looksForeign(texts.join("\n\n"), tx.lang));
 
-  // Settings > AI assistance "translate automatically" is the reader's standing press. A card
-  // is by definition a finished turn waiting for them, so it qualifies on sight; useTranslate's
+  // Settings > AI assistance "translate automatically" is the reader's standing press. A pending
+  // card is by definition a finished turn waiting for them, so it qualifies on sight; useTranslate's
   // autoPress latches per key, so the second-by-second re-render cannot fire it twice.
-  const auto = offered && !!tx?.auto && !shown;
+  const auto = offered && autoEligible && !!tx?.auto && !shown;
   const args = useRef({ key, texts });
   args.current = { key, texts };
   useEffect(() => {

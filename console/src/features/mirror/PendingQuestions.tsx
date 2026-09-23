@@ -22,7 +22,7 @@ import { t as tr } from "../../lib/i18n/index.ts";
 import type { InteractionAnswer } from "../../core/api/client.ts";
 import { buildClaudeSubmit, buildMenuSeq, buildRespondAnswers } from "./questionKeys.ts";
 import { useQuestionDraft } from "./questionDraft.ts";
-import { OptionBody, hasPreview } from "./transcript/blocks.tsx";
+import { OptionBody, TranslateToggle, hasPreview } from "./transcript/blocks.tsx";
 import type { QuestionTranslateView } from "./questionTranslate.ts";
 import type { Question } from "./transcript/types.ts";
 
@@ -276,25 +276,7 @@ export function PendingQuestions({
             <Icon name="close" /> {cancelLabel || tr("mirror.question_cancel")}
           </button>
         )}
-        {translate && (
-          <>
-            {translate.error && (
-              <span className="mt-translate-err" title={translate.error}>
-                {translate.error}
-              </span>
-            )}
-            <button
-              type="button"
-              className={"ghost xs mt-translate" + (translate.shown ? " on" : "")}
-              title={tr(translate.shown ? "mirror.translate_off_title" : "mirror.translate_title")}
-              disabled={translate.busy}
-              onClick={translate.toggle}
-            >
-              <Icon name={translate.busy ? "loading" : "globe"} spin={translate.busy} />{" "}
-              {tr(translate.shown ? "mirror.translate_off" : "mirror.translate")}
-            </button>
-          </>
-        )}
+        {translate && <TranslateToggle view={translate} />}
         {!menu && (
           // The only way an answer leaves the card: enabled once every question has a pick
           // or free text (canSubmit), which for a single question means one option chosen.
