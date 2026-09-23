@@ -83,7 +83,9 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		case name != "" && strings.HasSuffix(p, "/fork"):
 			return "session.fork", name, true
 		case name != "" && strings.HasSuffix(p, "/stop"):
-			return "session.stop", name, true
+			// /stop is the old name of deleting a session (it moves it to the trash, ADR 0101),
+			// so it is recorded as the delete it is.
+			return "session.delete", name, true
 		}
 	case http.MethodGet:
 		// Reads are not audited, with one exception: memory export is the only path that
@@ -103,6 +105,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "repo.job.cancel", strings.TrimPrefix(p, "/api/repo-jobs/"), true
 		case name != "" && p == "/api/repos/"+name:
 			return "repo.delete", name, true
+		case name != "" && p == "/api/sessions/"+name:
+			// Deleting a session (to the trash, ADR 0101). Before, the Console deleted through
+			// /stop, which was audited; moving it to DELETE must not drop it from the log.
+			return "session.delete", name, true
 		}
 	}
 	return "", "", false
