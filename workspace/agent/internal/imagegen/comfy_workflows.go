@@ -1464,11 +1464,19 @@ func comfyGraphQwenImage21(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// Every reference goes in as a bare LoadImage, image_1 included — unlike the edit families next
 	// door there is no FluxKontextImageScale to fit them into a frame, because this node does that
 	// resizing itself (one `resolution` for all of them, aspect preserved, rounded to 32).
+	//
+	// 🔴 The key is `images.image_N`, not `image_N`. The references are a V3 Autogrow group named
+	// `images`, and the API-format id of each member is the group and the member joined by a dot
+	// (comfy_api/latest/_io.py, finalize_prefix). `image_N` is only the label the editor shows.
+	// Measured on the dev deployment 2026-09-23: the bare spelling passes /prompt validation —
+	// an unknown optional key is not refused there — and then dies inside the node with
+	// `TextEncodeQwenImage21.execute() got an unexpected keyword argument 'image_1'`, so every
+	// edit of this family failed while text-to-image worked.
 	refs := map[string]any{}
 	for n := range p.Images {
 		id := fmt.Sprintf("img%d", n+1)
 		g[id] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.image(n)}}
-		refs[fmt.Sprintf("image_%d", n+1)] = comfyLink(id, 0)
+		refs[fmt.Sprintf("images.image_%d", n+1)] = comfyLink(id, 0)
 	}
 	// One node encodes BOTH conditionings, so there is no positive/negative pair to keep in step —
 	// and p.Negative directly rather than comfyNegativeText(p), for the reason the edit families
