@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.23.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.0) — 2026-09-23
+
+Two new kinds of session: **llama.cpp**, driven by the fleet's own harness on the deployment's
+chat engine or on a llama-server of your own, and **Muse Code**, Meta's coding agent. Around them,
+a fleet graph that draws every session as a lane on a time axis, picture editing by instruction
+with masks and reference pictures, AI assist that can be pinned per feature to an agent and a
+model, and stopped sessions that move to the archive instead of being deleted.
+
 ## [0.22.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.22.1) — 2026-09-18
 
 One fix, for `ecs-ec2` deployments that run the fleet's own inference engines. Taking a model
