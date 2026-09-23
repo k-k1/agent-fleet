@@ -839,6 +839,78 @@ func TestComfyEditUploadsTheInputAndNamesItInTheGraph(t *testing.T) {
 	}
 }
 
+// The size an img2img warning names is the one the picture was MADE at, read off the output. ADR
+// 0098 P2 measured the gap: a 1216x832 reference through Qwen-Image 2.1's 1024² budget comes back
+// 1248x832, and the warning used to name 1216x832 — and said nothing at all to a caller who had
+// asked for 1216x832 and received 1248x832.
+func TestComfyImg2ImgSizeWarningNamesTheMeasuredOutput(t *testing.T) {
+	out := func(w, h int) Image { return Image{Width: w, Height: h} }
+	cases := []struct {
+		name           string
+		w, h, inW, inH int
+		out            Image
+		want           []string // substrings; empty = no warning
+	}{
+		{"the caller asked for the input's size and the family rescaled it", 1216, 832, 1216, 832, out(1248, 832),
+			[]string{"1216x832", "made it at 1248x832"}},
+		{"another size asked, the family rescaled", 1024, 1024, 1216, 832, out(1248, 832),
+			[]string{"input picture (1216x832)", "made it at 1248x832"}},
+		{"another size asked, the input's own kept", 1024, 1024, 640, 480, out(640, 480),
+			[]string{"keeps the input picture's own 640x480"}},
+		{"the picture came out at the size asked", 1248, 832, 1216, 832, out(1248, 832), nil},
+		{"the output could not be read: fall back to the input", 1024, 1024, 640, 480, out(0, 0),
+			[]string{"keeps the input picture's own 640x480"}},
+		{"nothing measured at all", 1024, 1024, 0, 0, out(0, 0), nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := comfyImg2ImgSizeWarning("SIZE", OpEdit, c.w, c.h, c.inW, c.inH, c.out)
+			if len(c.want) == 0 {
+				if got != "" {
+					t.Errorf("warning = %q, want none", got)
+				}
+				return
+			}
+			for _, sub := range c.want {
+				if !strings.Contains(got, sub) {
+					t.Errorf("warning = %q, want it to contain %q", got, sub)
+				}
+			}
+		})
+	}
+}
+
+// The same through the provider: the stub's /view answers a 2x3 PNG for a 640x480 input, and a
+// caller who asked for 640x480 is told the size that actually came back.
+func TestComfyEditWarnsWhenTheEngineRescaledTheInputsOwnSize(t *testing.T) {
+	in := filepath.Join(t.TempDir(), "photo.png")
+	if err := os.WriteFile(in, tinyPNG(t, 640, 480), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := comfyEditStub(t, sdxlConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "photo.png", "subfolder": "", "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+	res, err := p.Generate(context.Background(), Request{
+		Op: OpEdit, Prompt: "make it snow", Inputs: []string{in}, Size: "640x480",
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	found := false
+	for _, warning := range res.Warnings {
+		if strings.Contains(warning, "640x480") && strings.Contains(warning, "made it at 2x3") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want the measured 2x3 named beside the input's 640x480", res.Warnings)
+	}
+}
+
 // inpaint adds the mask, and the mask is read off the RED channel: LoadImage's own MASK output is
 // 1-alpha, so an opaque black-and-white PNG through the alpha path would repaint nothing at all
 // and say nothing about it.
@@ -1924,4 +1996,83 @@ func comfyShortClocks(t *testing.T, wake, run time.Duration) func() {
 	oldWake, oldRun, oldPoll := engineTimeout, engineRunTimeout, comfyPollEvery
 	engineTimeout, engineRunTimeout, comfyPollEvery = wake, run, time.Millisecond
 	return func() { engineTimeout, engineRunTimeout, comfyPollEvery = oldWake, oldRun, oldPoll }
+}
+
+// --- ADR 0098 Open 4: the alpha channel Qwen-Image 2.1 writes on every picture ----------------
+
+func qwen21Conn() EngineConn {
+	return EngineConn{
+		Models:    []string{"qwen-21-row", "sdxl-base-1.0"},
+		BaseModel: map[string]string{"qwen-21-row": "qwen-image-2.1", "sdxl-base-1.0": "sdxl"},
+		Files: map[string][]EngineFile{
+			"qwen-21-row": {
+				{Flag: "--diffusion-model", Name: "qwen_image_2.1_int8_convrot.safetensors"},
+				{Flag: "--clip_l", Name: "qwen3vl_8b_int8_convrot.safetensors"},
+				{Flag: "--vae", Name: "qwen_image_2.1_vae_bf16.safetensors"},
+			},
+			"sdxl-base-1.0": {{Name: "sd_xl_base_1.0.safetensors"}},
+		},
+	}
+}
+
+// The alpha reaches the save only on `background=transparent`, and only then is "opaque produced"
+// withheld — for the one family whose decode has an alpha to keep. Every other background (unset,
+// auto, opaque) strips it, and a family without one still warns exactly as before.
+func TestComfyQwen21KeepsAlphaOnlyWhenTransparencyWasAskedFor(t *testing.T) {
+	const opaqueWarning = "opaque produced"
+	cases := []struct {
+		model, background string
+		wantStrip         bool
+		wantWarn          bool
+	}{
+		{"qwen-21-row", "", true, false},
+		{"qwen-21-row", "auto", true, false},
+		{"qwen-21-row", "opaque", true, false},
+		{"qwen-21-row", "transparent", false, false},
+		{"qwen-21-row", " Transparent ", false, false},
+		{"sdxl-base-1.0", "transparent", false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.model+"/"+c.background, func(t *testing.T) {
+			var graph map[string]any
+			p, _ := comfyStub(t, qwen21Conn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+				graph, _ = body["prompt"].(map[string]any)
+				_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+			})
+			res, err := p.Generate(context.Background(), Request{
+				Op: OpGenerate, Prompt: "a fox", Model: c.model, Background: c.background})
+			if err != nil {
+				t.Fatalf("Generate() = %v", err)
+			}
+			save, _ := graph["save"].(map[string]any)
+			in, _ := save["inputs"].(map[string]any)
+			link, _ := in["images"].([]any)
+			stripped := len(link) == 2 && link[0] == "rgb"
+			if _, has := graph["rgb"]; has != stripped {
+				t.Fatalf("an rgb node exists = %v but the save reads it = %v: %v", has, stripped, save)
+			}
+			if stripped != c.wantStrip {
+				t.Errorf("alpha stripped before the save = %v, want %v (save = %v)", stripped, c.wantStrip, save)
+			}
+			warned := false
+			for _, w := range res.Warnings {
+				if strings.Contains(w, opaqueWarning) {
+					warned = true
+				}
+			}
+			if warned != c.wantWarn {
+				t.Errorf("warned %q = %v, want %v: %v", opaqueWarning, warned, c.wantWarn, res.Warnings)
+			}
+		})
+	}
+}
+
+// Alpha is declared on exactly the one family measured to write it. A second family gaining the
+// flag without a template that strips would hand every caller its stray alpha back.
+func TestComfyOnlyQwen21DeclaresAlpha(t *testing.T) {
+	for _, r := range comfyFamilyRows {
+		if r.Alpha != (r.Family == ComfyFamilyQwenImage21) {
+			t.Errorf("%s: Alpha = %v", r.Family, r.Alpha)
+		}
+	}
 }
