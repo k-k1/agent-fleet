@@ -187,6 +187,11 @@ func serve() {
 	// Image-generation input sets (ADR 0100 decision 4) belong to jobs in a queue that lives in
 	// memory, so none of them can still be needed after a restart.
 	imagegen.ClearInputSets()
+	// A session whose initial prompt was still being typed when the previous process ended
+	// would read "sending" forever (ADR 0100 decision 2); settle those as unknown.
+	if n := sessionx.RecoverPendingInitialPrompts(); n > 0 {
+		log.Printf("initial-prompt: %d pending delivery(ies) from the previous process marked unknown", n)
+	}
 	// Codex sessions use a shared local app-server when available (from P3 on, the
 	// RuntimeSupervisor in codex.Serve() owns the daemon). AF attaches a read-only
 	// observer per loaded thread: compaction state, rate limits, and the model-switch

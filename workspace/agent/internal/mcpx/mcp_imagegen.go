@@ -211,6 +211,12 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	if err != nil {
 		return mcpToolErr(req.ID, err.Error())
 	}
+	// The boundary of ADR 0100 decision 3: a session bound to a studio since the client's last
+	// tools/list still has this tool in the set the call side checks against, so the binding is
+	// read again here, from the meta, on every call.
+	if studioBoundSession(self) {
+		return mcpToolErr(req.ID, mcpStudioNoGenerateImage)
+	}
 	body, _ := json.Marshal(map[string]any{
 		"session": self, "op": a.op, "provider": a.provider, "prompt": a.prompt,
 		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,

@@ -850,6 +850,13 @@ func deliverInitialPrompt(name, prompt string) {
 	if prompt == "" {
 		return
 	}
+	settleInitialPrompt(name, typeInitialPrompt(name, prompt))
+}
+
+// typeInitialPrompt is deliverInitialPrompt's work, answering how it ended as an
+// InitialPromptState: failed when nothing could be typed, delivered when a turn was seen to
+// start, unknown when it was typed and no evidence came either way.
+func typeInitialPrompt(name, prompt string) string {
 	tn := session.TmuxName(name)
 	// Wait for tmux + a resolvable pane id (the agent process is up). Cap ~30s to match
 	// the Console's give-up budget, polling on the same cadence.
@@ -863,7 +870,7 @@ func deliverInitialPrompt(name, prompt string) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if pane == "" {
-		return
+		return session.InitialPromptFailed
 	}
 	// Alive ≠ ready to type: text sent into the boot screen is simply eaten (verified
 	// live with a cold opencode — a fixed 2.5s beat lost the prompt). Wait until the CLI
@@ -900,7 +907,7 @@ func deliverInitialPrompt(name, prompt string) {
 		base = deliveryBaseline(meta)
 	}
 	if typeLineAndSubmit(name, pane, prompt) != nil {
-		return
+		return session.InitialPromptFailed
 	}
 	// A freshly booted CLI can coalesce the paste and swallow the Enter that arrives
 	// inside the paste window (the Console's seedSubmit nudges for the same reason).
@@ -917,8 +924,12 @@ func deliverInitialPrompt(name, prompt string) {
 	if metaOK && base.logs != nil {
 		if err := confirmPromptDelivery(meta, pane, prompt, base); err != nil {
 			log.Printf("initial prompt delivery UNCONFIRMED for %s: %v", name, err)
+			return session.InitialPromptUnknown
 		}
+		return session.InitialPromptDelivered
 	}
+	// No transcript to look for the turn in: typed, and nothing to say whether it landed.
+	return session.InitialPromptUnknown
 }
 
 // disconnectRemoteControl best-effort disconnects an active claude.ai Remote

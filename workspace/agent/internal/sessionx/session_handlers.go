@@ -30,6 +30,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -397,6 +398,10 @@ type CreateReq struct {
 	// SSMForceLogin: run `aws sso logout` + `aws sso login` unconditionally at launch
 	// (skip the cached-token short-circuit) so the user re-authenticates. One-shot.
 	SSMForceLogin bool `json:"ssm_force_login"`
+	// Studio binds the new session to an image studio (ADR 0100 decision 2): written onto the
+	// meta BEFORE the launch, so the first turn already sees the studio tools. Only the Console
+	// sends it; a session starting another session may not (see HandleCreateSession).
+	Studio string `json:"studio,omitempty"`
 }
 
 // resolveLiveModel turns a picker label or a short, unambiguous family name into
@@ -990,6 +995,20 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			ssm.Region = ssm.SSORegion
 		}
 	}
+	studio := strings.TrimSpace(req.Studio)
+	if studio != "" {
+		// A studio is bound by a person pressing "attach an agent" in the studio pane. A session
+		// raising a child must not hand it someone's studio: the binding is what the studio's
+		// draft tools trust.
+		if spawnParent != "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_studio", "a session cannot start a session bound to an image studio")
+			return
+		}
+		if !paths.ValidIDSegment(studio) {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_studio", "invalid studio id: "+studio)
+			return
+		}
+	}
 	origin, originConv, originSession := CreateOrigin(&req)
 	meta := session.Meta{
 		Name: name, Dir: req.Dir, Subdir: subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
@@ -997,6 +1016,12 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv, OriginSession: originSession,
+		Studio: studio,
+	}
+	// pending from the first write of the meta: the pane must not offer a resend while the
+	// delivery below may still be typing (ADR 0100 decision 2).
+	if strings.TrimSpace(req.InitialPrompt) != "" {
+		meta.InitialPromptState = session.InitialPromptPending
 	}
 	// Armed here, before either launch path delivers the initial prompt (docs/log/85): the
 	// arm's instant is also the lower bound its completion evidence is cut by, and the launch
@@ -1027,9 +1052,12 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
 			if err := h.Send(agents.TurnInput{Prompt: p}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
+				meta.InitialPromptState = session.InitialPromptFailed
 			} else {
 				markSessionWorking(name)
+				meta.InitialPromptState = session.InitialPromptDelivered
 			}
+			settleInitialPrompt(name, meta.InitialPromptState)
 		}
 		writeCreated(meta)
 		return
@@ -1226,6 +1254,8 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
+		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
+		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
 		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the
 		// source's origin would blend it into "sessions a human opened" and hide the spend
 		// handoffs add. The originating conversation IS inherited from the parent, so a
@@ -1555,6 +1585,10 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
+		// The same slot keeps its studio (ADR 0100 decision 2). The studio's own `session` still
+		// names the old slot until the studio store follows the rename, and until it does the
+		// studio tools refuse — the call-time check exists for exactly this gap.
+		Studio: m.Studio,
 	}
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)

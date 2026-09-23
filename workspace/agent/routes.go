@@ -144,6 +144,21 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /imagegen/queue", imagegen.HandleQueueOp)
 	// What a picture was made from: the sidecar, else the PNG's own prompt chunk (decision 3).
 	mux.HandleFunc("GET /imagegen/props", imagegen.HandleProps)
+	// The image studio (ADR 0100): the draft, its edit log and presses, the persona, the picture
+	// history and the knowledge documents. All proxied by the CP, like the queue above.
+	mux.HandleFunc("GET /imagegen/studios", imagegen.HandleStudios)
+	mux.HandleFunc("POST /imagegen/studios", imagegen.HandleStudios)
+	mux.HandleFunc("GET /imagegen/studios/{id}", imagegen.HandleStudio)
+	mux.HandleFunc("PUT /imagegen/studios/{id}", imagegen.HandleStudio)
+	mux.HandleFunc("DELETE /imagegen/studios/{id}", imagegen.HandleStudio)
+	mux.HandleFunc("POST /imagegen/studios/{id}/bind", imagegen.HandleStudioBind)
+	mux.HandleFunc("POST /imagegen/studios/{id}/press", imagegen.HandleStudioPress)
+	mux.HandleFunc("POST /imagegen/studios/{id}/rewind", imagegen.HandleStudioRewind)
+	mux.HandleFunc("GET /imagegen/studios/{id}/draft-log", imagegen.HandleStudioDraftLog)
+	mux.HandleFunc("GET /imagegen/studios/{id}/persona", imagegen.HandleStudioPersona)
+	mux.HandleFunc("GET /imagegen/history", imagegen.HandleHistory)
+	mux.HandleFunc("GET /imagegen/knowledge", imagegen.HandleKnowledge)
+	mux.HandleFunc("POST /imagegen/knowledge", imagegen.HandleKnowledge)
 	// Memo image attachments (docs/log/21 image attachments) — membership-scoped, so keyed to the
 	// container rather than a session (memo_paste.go). CP proxies /api/memos/* here.
 	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)
