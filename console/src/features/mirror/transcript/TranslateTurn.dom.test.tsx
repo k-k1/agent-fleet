@@ -360,3 +360,50 @@ describe("the mirror's automatic translation", () => {
     expect(tx.autoKeys).toHaveLength(0);
   });
 });
+
+// A message from another session is a user turn nobody on this side wrote: the sending agent's
+// language, not the reader's. The envelope is machine-facing (peerSenderOf reads it back), so it
+// is never sent and stays verbatim in front of the translated body.
+describe("translating a message from another session", () => {
+  const ENVELOPE = "[agent-fleet:peer from=s-abc intent=question reply=required]";
+  const BODY = "Can you check whether the migration ran on the dev deployment?";
+  const peer = (text: string, source?: string): Turn[] => [
+    { role: "user", text, idx: 1, anchorId: "u1", ts: "2026-09-13T10:00:00Z", source },
+  ];
+  const bubble = (): HTMLElement => host!.querySelector<HTMLElement>(".mirror-turn.user .markdown")!;
+
+  it("sends only the body and shows the envelope untouched in front of the translation", () => {
+    const tx = wiring();
+    const caps = capsWith(tx);
+    const turns = peer(ENVELOPE + "\n" + BODY, "peer");
+    const el = render(turns, caps);
+    act(() => el.querySelector<HTMLButtonElement>(".mt-translate")!.click());
+    act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={{ ...caps }} />));
+    expect(tx.calls).toEqual([[BODY]]);
+    expect(bubble().textContent).toBe(ENVELOPE + "\n\n訳: " + BODY);
+    // The badge still reads the sender from the (untranslated) envelope.
+    expect(el.querySelector(".mt-peer")!.textContent).toContain("s-abc");
+  });
+
+  it("covers the spawn envelope too", () => {
+    const tx = wiring();
+    render(peer("[agent-fleet:spawn from=s-parent]\n" + BODY, "spawn"), capsWith(tx));
+    act(() => host!.querySelector<HTMLButtonElement>(".mt-translate")!.click());
+    expect(tx.calls).toEqual([[BODY]]);
+  });
+
+  it("is offered while the session is working — a message is whole the moment it lands", () => {
+    const el = render(peer(ENVELOPE + "\n" + BODY, "peer"), capsWith(wiring()), true);
+    expect(el.querySelector(".mt-translate")).not.toBeNull();
+  });
+
+  it("is never offered on the reader's own prompt, whatever its language", () => {
+    const el = render(peer(BODY), capsWith(wiring()));
+    expect(el.querySelector(".mt-translate")).toBeNull();
+  });
+
+  it("is not offered on a message already in the reader's language", () => {
+    const el = render(peer(ENVELOPE + "\n" + JAPANESE, "peer"), capsWith(wiring()));
+    expect(el.querySelector(".mt-translate")).toBeNull();
+  });
+});

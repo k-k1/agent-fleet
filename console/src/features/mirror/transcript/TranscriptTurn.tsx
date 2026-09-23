@@ -20,7 +20,7 @@ import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
 import { looksForeign, translatableTexts, turnTranslateKey } from "../translate.ts";
 import { authResolved, footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
-import { foldParts, peerIntentOf, peerSenderOf, spawnParentOf, spendOf } from "./model.ts";
+import { foldParts, peerIntentOf, peerSenderOf, spawnParentOf, spendOf, splitSessionEnvelope } from "./model.ts";
 import { paintTurnMarks } from "./markPaint.ts";
 import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Group, Part } from "./types.ts";
@@ -117,6 +117,29 @@ function TranscriptTurnImpl({
   }
   const workOpen = work.current.open;
   const edited = isUser ? [] : turnFiles(turn.parts);
+  // Peer origin (docs/log/58 / ADR 0041): ANOTHER SESSION typed into this one. Neither the
+  // user nor the operator sent it, and this badge is its ONLY visualisation — the
+  // sender's name exists nowhere else on this side except the server-built envelope
+  // prefix, so read it back from the text.
+  //
+  // An envelope alone is enough to count as peer, even without the origin tag (source). The tag
+  // comes from a separate store the server writes at injection time, and it goes missing in two
+  // ways (docs/log/58 §58.15): a turn fetched before that record was written stays tagless
+  // forever (incremental polling never refetches a turn it already holds), and on a long-lived
+  // session the record is pushed out past its cap. The envelope is always prepended to the body
+  // by the server (callers never build it), so as evidence for display it ranks with the tag —
+  // and it is the only trace left when the tag is gone.
+  //
+  // Some arrivals have no envelope: claude's own cross-session channel (docs/log/58 §58.16) does
+  // not go through AF. There the Agent recovers the sender from the transcript's `origin.name`
+  // and puts it in `peerFrom`, so read the envelope first and fall back to that.
+  const peerFrom = isUser ? (peerSenderOf(turn.text ?? "") ?? turn.peerFrom ?? null) : null;
+  const fromPeer = isUser && (turn.source === "peer" || !!peerFrom);
+  const peerIntent = fromPeer ? peerIntentOf(turn.text ?? "") : null;
+  // Spawn origin (ADR 0073): this session's launch task came from ANOTHER SESSION's
+  // create_session. Read the envelope first, like peer, so the badge survives a missing tag.
+  const spawnParent = isUser ? spawnParentOf(turn.text ?? "") : null;
+  const fromSpawn = isUser && (turn.source === "spawn" || !!spawnParent);
   // Copy and translate both follow what the reader can actually see. A folded turn hides its
   // work-process text (the intermediate replies between tool calls, e.g. "途中応答31件"), and
   // neither the clipboard nor a translation request should reach past that fold: the reader
@@ -128,8 +151,14 @@ function TranscriptTurnImpl({
   // Per-answer translation (docs/log/97). The key is derived from the prose itself rather than
   // from turn.idx, which shifts when an older page is prepended — with an index key the reader's
   // translation would jump to a different answer.
-  const tx = isUser ? undefined : caps.translate;
-  const txTexts = tx ? translatableTexts({ parts: visibleParts }) : [];
+  //
+  // A user turn is the reader's own words and is never offered — except a message another
+  // session sent (peer, spawn): that one is written in whatever language the sending agent
+  // drifted into, exactly like an answer. Only its body is sent; the envelope stays verbatim.
+  const fromSession = fromPeer || fromSpawn;
+  const envelope = fromSession && !turn.bash && !turn.cmd ? splitSessionEnvelope(turn.text || "") : null;
+  const tx = isUser ? (envelope?.body.trim() ? caps.translate : undefined) : caps.translate;
+  const txTexts = !tx ? [] : envelope ? [envelope.body] : translatableTexts({ parts: visibleParts });
   const txKey = tx ? turnTranslateKey(txTexts) : "";
   const txShown = !!txKey && !!tx?.shown(txKey);
   const translatedOf = (p: Part): string | undefined =>
@@ -143,7 +172,8 @@ function TranscriptTurnImpl({
     !!tx &&
     !!txKey &&
     !turn.pending &&
-    foldWork &&
+    // A user turn is whole the moment it lands; only an answer can still be streaming.
+    (isUser || foldWork) &&
     (txShown || !!tx.get(txTexts[0]) || looksForeign(txTexts.join("\n\n"), tx.lang));
   // The press the reader did not make (docs/log/97 §97.12). `foldWork` — already part of the
   // condition above — is false exactly while the live exchange is streaming, so "the turn just
@@ -161,7 +191,12 @@ function TranscriptTurnImpl({
   // Copy follows what the reader is looking at: with the translation on screen, handing them
   // back the English they could not read would be a surprise.
   const copyParts = visibleParts;
-  const copyText = txShown
+  // A session message shown translated: the envelope as it was, then the translated body.
+  const envelopeTx = envelope && txShown ? tx?.get(envelope.body) : undefined;
+  const userText = envelopeTx !== undefined ? (envelope!.head ? envelope!.head + "\n\n" : "") + envelopeTx : turn.text || "";
+  const copyText = isUser
+    ? userText
+    : txShown
     ? textOfParts(copyParts.map((p) => ({ ...p, text: translatedOf(p) ?? p.text })))
     : split
       ? textOfParts(copyParts)
@@ -300,29 +335,6 @@ function TranscriptTurnImpl({
   // the turn was cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
   // unattributed 「続けて」 in the transcript is the most confusing kind of injected turn.
   const fromAutoResume = isUser && turn.source === "auto-resume";
-  // Peer origin (docs/log/58 / ADR 0041): ANOTHER SESSION typed into this one. Neither the
-  // user nor the operator sent it, and this badge is its ONLY visualisation — the
-  // sender's name exists nowhere else on this side except the server-built envelope
-  // prefix, so read it back from the text.
-  //
-  // An envelope alone is enough to count as peer, even without the origin tag (source). The tag
-  // comes from a separate store the server writes at injection time, and it goes missing in two
-  // ways (docs/log/58 §58.15): a turn fetched before that record was written stays tagless
-  // forever (incremental polling never refetches a turn it already holds), and on a long-lived
-  // session the record is pushed out past its cap. The envelope is always prepended to the body
-  // by the server (callers never build it), so as evidence for display it ranks with the tag —
-  // and it is the only trace left when the tag is gone.
-  //
-  // Some arrivals have no envelope: claude's own cross-session channel (docs/log/58 §58.16) does
-  // not go through AF. There the Agent recovers the sender from the transcript's `origin.name`
-  // and puts it in `peerFrom`, so read the envelope first and fall back to that.
-  const peerFrom = isUser ? (peerSenderOf(turn.text ?? "") ?? turn.peerFrom ?? null) : null;
-  const fromPeer = isUser && (turn.source === "peer" || !!peerFrom);
-  const peerIntent = fromPeer ? peerIntentOf(turn.text ?? "") : null;
-  // Spawn origin (ADR 0073): this session's launch task came from ANOTHER SESSION's
-  // create_session. Read the envelope first, like peer, so the badge survives a missing tag.
-  const spawnParent = isUser ? spawnParentOf(turn.text ?? "") : null;
-  const fromSpawn = isUser && (turn.source === "spawn" || !!spawnParent);
   // Chat-bridge origin (docs/log/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -432,7 +444,7 @@ function TranscriptTurnImpl({
           (() => {
             // Split off any pasted-image references so the bubble shows the user's words
             // plus clickable thumbnails, not the machine-facing paths.
-            const { text, images, files } = splitPastedImages(turn.text || "");
+            const { text, images, files } = splitPastedImages(userText);
             return (
               <>
                 {text && (
