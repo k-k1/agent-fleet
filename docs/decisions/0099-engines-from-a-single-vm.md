@@ -7,6 +7,10 @@ English | [日本語](0099-engines-from-a-single-vm.ja.md)
   against it. 🔄 **Decisions 3, 4, 5, 6, 7 and 10 were corrected by that review**; each one says
   what moved and which finding moved it, and **P0 does not start until the review's gate is
   closed**.
+- 🔄 **On hold behind a cheaper first step (2026-09-23).** Before any of this is built, the ECS
+  build is run as it is and paused by hand whenever it is not in use — see "The operational
+  alternative goes first". This ADR is taken up again only if two weeks of that bill say the
+  difference is worth the work and the review's risks.
 - **Nothing was measured for this document.** Every figure says where it comes from —
   (a) measurements already in this repository (`docs/log/67` §67.3, `deploy/aws/ecs/pause.sh`,
   ADR 0074/0075/0077), (b) templates and code read on 2026-09-22 (file:line under "Sources
@@ -404,6 +408,46 @@ the ec2-single template accepts only `t3` types against an amd64 AMI (`ec2-singl
 P2's saving is conditional on publishing a multi-arch tag and running the whole workspace image,
 CLIs included, on arm64.
 
+## The operational alternative goes first
+
+Added 2026-09-23. The question put to this ADR was whether the whole thing could be covered by
+operation instead: keep the ECS build, stop what costs money when it is not in use, start it
+when it is — the database included.
+
+It can, and it goes first, because of what it does **not** need. Running the ECS build every
+day means the build a release is verified on is the one in daily use; the cost view and the
+per-member attribution stay as they are (decision 11 is not needed); and none of the review's
+heavy findings arises — no catalogue hand-off (R1), no NAT instance (R2, R3), no purchasing
+credential on a container host (R4), no second Control Plane (R5). The code it takes is
+`pause.sh`, and that code has now been written:
+
+- **the database is stopped** last on the way down and started first on the way up
+  (`--keep-db` leaves it), because a CP that starts before it answers 500;
+- 🔴 **the engines' GPU boxes are no longer stranded.** `pause.sh` never looked at them: pausing
+  while a box was up removed the only controller that ends one, at ~$28 a day for a g6.xlarge.
+  It now waits for the CP's idle stop (or ends them with `--fast`), and after the CP is down a
+  sweep terminates any box still alive;
+- **`--status` flags RDS's own restart**: AWS starts a stopped instance again after 7 days, and
+  a database running under a paused CP is almost always that.
+
+What it cannot do is the floor. AWS has no "stop" for a NAT gateway or a load balancer, only
+delete, so they bill while paused. List-price arithmetic from `pause.sh`'s measured $2.6 a day,
+less the RDS instance's compute (~$0.6 a day for db.t4g.micro):
+
+| per month, used U hours a day | floor while paused | U = 4 | up all day |
+|---|---:|---:|---:|
+| A. `pause.sh` with the database stopped | ~$60 | ~$78 | ~$165 |
+| B. A, plus NAT and ALB deleted and re-created through CloudFormation conditions | ~$20–30 | ~$48 | ~$165 |
+| C. this ADR | ~$10–25 | ~$30 | ~$80 |
+
+And it costs time: nothing can be borrowed while the deployment is paused, and the first
+picture after `--up` waits for the database (5–10 minutes), the CP, and the engine's cold start
+(9–10 minutes). That suits planned blocks of work and not a single picture on a whim.
+
+So the order is: run A for two weeks and read the bill in Cost Explorer. If the difference to C
+is the ~$50 a month the table predicts, decide then whether it pays for this ADR's work and its
+review's risks — or whether B, which keeps a single build, is the better middle.
+
 ## Rejected alternatives
 
 | Alternative | Why not |
@@ -411,7 +455,7 @@ CLIs included, on arm64.
 | **Make the VM itself a GPU instance** and run the engines as compose sidecars | `g6.xlarge` 24/7 is about $850/month. The whole point of ADR 0071's controller is that the GPU is asleep most of the day |
 | **A new engine lifecycle that runs a container on a plain EC2 box, no ECS at all** | It buys nothing: an ECS cluster and its services at desired count 0 bill $0. It would re-implement the ladder, the offers, the placement, the fetch sidecar and the active set — ADR 0071/0072/0074/0075/0077 — to save a line item that is already zero |
 | **A tunnel from the home fleet into the engine VPC**, no AWS-side deployment at all | ADR 0079 rejected it on its merits (the instances are short-lived, addressed through Cloud Map, and their SG admits the CP only). It also does not save anything: the tunnel needs an always-on box in the VPC, which is the VM this ADR already has — minus the deployment |
-| **Keep borrowing from an ECS af-sandbox and just pause it harder** | `pause.sh`'s own header says what is left: NAT, ALB, RDS, EFS. A paused deployment also cannot lend a GPU, which is the reason it is up |
+| **Keep borrowing from an ECS af-sandbox and just pause it harder** | 🔄 **No longer rejected — it goes first** (the section above). What the first draft said stays true: NAT and ALB are left, and a paused deployment cannot lend a GPU. What it missed is that neither makes the approach wrong for planned use, and that it carries none of this ADR's risks |
 | **ACM instead of Caddy** | Decision 9 |
 | **An SSM interface endpoint instead of the NAT gateway** | ~$9/month for one AZ, and it does not finish the job: with review R3's full list, `ecr.api`, `ecr.dkr` and `logs` would each need one too, which costs more than the NAT gateway it replaces (`00-network.yaml:160-166` already says so) |
 | 🔄 **A NAT gateway created only for the activity window** (review R10) | Keeps the managed thing and its retained EIP, and bills only while an engine or an ingest is running. Rejected for P1 and kept as the fallback: it puts a CloudFormation round trip in front of a cold start that is already 527–586 s, and it is one more thing that can be left running — the failure this ADR is about |
