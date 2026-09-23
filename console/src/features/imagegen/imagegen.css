@@ -302,6 +302,28 @@
   color: var(--muted);
 }
 
+/* A set_image_draft call in the conversation: the edit it wrote, not a faint trace. */
+.igen-callcard {
+  margin: 4px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.igen-callcard-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.igen-callcard-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ── pictures and notes ────────────────────────────────────────────── */
 
 .igen-verbs {
@@ -352,6 +374,24 @@
   white-space: pre-wrap;
   max-height: 160px;
   overflow: auto;
+}
+
+/* The four-section editor, where the Files pane cannot reach the notes file. */
+.igen-memo-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.igen-memo-edit .igen-memo-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.igen-memo-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .igen-memo-add {
@@ -899,4 +939,15 @@
   background: var(--code-bg, rgba(127, 127, 127, 0.08));
   padding: 6px 8px;
   border-radius: 4px;
+}
+
+/* The composer's place while no model is chosen (ADR 0100 revision 9). */
+.igen-needs-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--warn);
+  border-top: 1px solid var(--border);
 }

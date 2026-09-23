@@ -119,7 +119,7 @@ func TestStudioSavesEachFieldOnItsOwn(t *testing.T) {
 
 func TestStudioAgentIsHeldToItsFieldsAndTheLocks(t *testing.T) {
 	withStudios(t)
-	s := createStudio(t, `{"provider":"comfy","prompt":"a cat","negativePrompt":"blurry"}`)
+	s := createStudio(t, `{"provider":"comfy","model":"sdxl-base","prompt":"a cat","negativePrompt":"blurry"}`)
 	bindForTest(t, s.ID, "s1")
 	if code, _ := putStudio(t, s.ID, `{"author":"human","locks":["prompt","nope"]}`); code != http.StatusOK {
 		t.Fatal(code)
@@ -134,7 +134,7 @@ func TestStudioAgentIsHeldToItsFieldsAndTheLocks(t *testing.T) {
 		t.Fatalf("dropped = %+v, want prompt locked, model and title the user's", res.Dropped)
 	}
 	d := res.Studio.Draft
-	if d.Prompt != "a cat" || d.Model != "" || d.Params == nil || d.Params.CFG != 5 || d.SuggestModel != "sdxl-base" || d.NegativePrompt != "" {
+	if d.Prompt != "a cat" || d.Model != "sdxl-base" || d.Params == nil || d.Params.CFG != 5 || d.SuggestModel != "sdxl-base" || d.NegativePrompt != "" {
 		t.Fatalf("draft = %+v", d)
 	}
 	if !slices.Equal(res.Studio.Locks, []string{"prompt"}) {

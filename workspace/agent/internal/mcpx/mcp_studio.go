@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -47,10 +48,36 @@ func readStudioFile(id string) (studioFile, bool) {
 	return f, true
 }
 
-// studioBoundSession reports whether the session's meta names a studio.
-func studioBoundSession(name string) bool {
-	m, ok := session.ReadMeta(name)
-	return ok && m.Studio != ""
+// studioBoundSession reports whether the session is bound to a studio.
+func studioBoundSession(name string) bool { return sessionStudio(name) != "" }
+
+// sessionStudio is the studio the session is bound to, "" for none. The meta's Studio is the copy
+// this process advertises from, but a Managed create starts the CLI — and this process answers
+// its first tools/list — BEFORE the meta is written; only the studio's own `session` is written
+// first (decision 2 ③). Measured with codex Managed: that first list lacked the studio tools, and
+// codex never lists again, so the session could not reach its studio at all. With no meta yet,
+// the studio naming this session back is the answer.
+func sessionStudio(name string) string {
+	if m, ok := session.ReadMeta(name); ok {
+		return m.Studio
+	}
+	if !session.ValidName(name) {
+		return ""
+	}
+	ents, err := os.ReadDir(paths.ImagegenStudiosDir())
+	if err != nil {
+		return ""
+	}
+	for _, e := range ents {
+		id, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || e.IsDir() {
+			continue
+		}
+		if f, ok := readStudioFile(id); ok && f.Session == name {
+			return id
+		}
+	}
+	return ""
 }
 
 // mcpStudioAdvertise decides whether this session is offered the studio tools, in the three
@@ -73,11 +100,11 @@ func mcpStudioAdvertise() (studioOffer, bool) {
 		}
 		return studioOffer{}, false
 	}
-	m, ok := session.ReadMeta(self)
-	if !ok || m.Studio == "" {
+	studio := sessionStudio(self)
+	if studio == "" {
 		return studioOffer{}, false
 	}
-	f, _ := readStudioFile(m.Studio)
+	f, _ := readStudioFile(studio)
 	return studioOffer{agentTrial: f.AgentTrial}, true
 }
 
@@ -103,18 +130,18 @@ func mcpStudioCall(req mcpReq, name string, args json.RawMessage) []byte {
 	if err != nil {
 		return mcpToolErr(req.ID, "このセッションがどの画像スタジオに結ばれているか特定できません: "+err.Error())
 	}
-	m, ok := session.ReadMeta(self)
-	if !ok || m.Studio == "" {
+	bound := sessionStudio(self)
+	if bound == "" {
 		return mcpToolErr(req.ID, "このセッションは画像スタジオに結ばれていません")
 	}
-	f, ok := readStudioFile(m.Studio)
+	f, ok := readStudioFile(bound)
 	if !ok || f.Session != self {
 		return mcpToolErr(req.ID, "このセッションと画像スタジオの結びが変わりました。スタジオのペインから結び直してください")
 	}
 	if name == "run_image_trial" && !f.AgentTrial {
 		return mcpToolErr(req.ID, "このスタジオではエージェントの試走が許可されていません（スタジオの設定で切り替えられます）")
 	}
-	studio := url.PathEscape(m.Studio)
+	studio := url.PathEscape(bound)
 	var (
 		method = http.MethodGet
 		path   string

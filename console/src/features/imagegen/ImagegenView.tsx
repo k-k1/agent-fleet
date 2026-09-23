@@ -362,6 +362,12 @@ export function ImagegenView({
 
   const attach = useCallback(
     async (o: AttachOpts): Promise<boolean> => {
+      // Prompts are written for a model (revision 9): the button is disabled without one, and
+      // this holds if the member clears it while the dialog is open.
+      if (!draft.model.trim()) {
+        toast(tr("imggen.agent_needs_model"), { kind: "error" });
+        return false;
+      }
       const r = await attachAgent({
         studioId,
         // The pane's resolved row, not the draft's possibly-stale pick (decision 2: a trial never
@@ -385,7 +391,7 @@ export function ImagegenView({
       }
       return !!r.session;
     },
-    [studioId, draft, provider, attachOpen, studio, toast, refreshSessions, readStudios, openStudio, key],
+    [studioId, draft, provider, attachOpen, studio, toast, tr, refreshSessions, readStudios, openStudio, key],
   );
 
   const removeStudio = useCallback(async () => {
@@ -663,6 +669,9 @@ export function ImagegenView({
                 session={session}
                 active={active}
                 signal={studioId ? studio.signal : undefined}
+                log={studio.log}
+                onRewind={studio.rewind}
+                needsModel={!draft.model.trim()}
                 onAttach={() => setAttachOpen("attach")}
                 onReplace={() => setAttachOpen("replace")}
               />

@@ -171,6 +171,15 @@ func studioAgentViewLocked(w http.ResponseWriter, id, self string) (studioAgentV
 		Note: "Change the draft with set_image_draft. Generating is the user's button; " +
 			"run_image_trial makes one trial picture when allowed. Pictures are files: open one only when you need to look.",
 	}
+	if from, to, ok := studioModelSwitch(entries, self, seen, had); ok && rec.Draft.Model != "" {
+		view.Note = fmt.Sprintf("The user switched the model from %q to %q. Prompts are built differently per model and family "+
+			"(tags or sentences, quality prefixes, what the negative does): read `model` and `knowledge` below and rewrite the prompt "+
+			"for the new model, rather than editing the old one. ", from, to) + view.Note
+	}
+	if rec.Draft.Model == "" {
+		view.Note = "No model is chosen. Prompts are written for a model, so set_image_draft and add_image_knowledge are refused " +
+			"until the user picks one in the studio pane: ask them to (you may propose one with the choices in `models`)."
+	}
 	for _, k := range studioDraftKeys {
 		if !slices.Contains(ImageStudioAgentFields, k) {
 			view.UserFields = append(view.UserFields, k)
@@ -458,6 +467,7 @@ func studioPersona(lang, title string) string {
 			"and what changed since your last call (the user's edits, rewinds, new pictures).\n" +
 			"- Change the draft only with set_image_draft. Locked fields and the user's fields (model, seed, jobs, count, out_dir, label, mask) " +
 			"are not yours; propose a model with suggest_model.\n" +
+			"- Prompts are written for a model. While no model is chosen, change nothing and record nothing: ask the user to pick one.\n" +
 			"- You do not generate. The user presses the generate button. If trials are allowed, run_image_trial makes one quick picture.\n" +
 			"- Read files in the repository only when the user asks you to.\n" +
 			"- Do not write files unless the user asks you to.\n" +
@@ -473,9 +483,40 @@ func studioPersona(lang, title string) string {
 		"（利用者の編集・巻き戻し・新しい絵）が分かります。\n" +
 		"- 下書きの変更は set_image_draft だけで行います。錠の欄と利用者の欄（model・seed・jobs・count・out_dir・label・mask）は" +
 		"変えられません。モデルは suggest_model で提案してください。\n" +
+		"- プロンプトはモデルごとに書き方が違います。モデルが選ばれていない間は下書きを変えず記録もせず、モデルを選ぶよう頼んでください。\n" +
 		"- 生成はしません。生成ボタンは利用者が押します。試走が許可されていれば run_image_trial で 1 枚だけ試せます。\n" +
 		"- リポジトリ内の資料は、頼まれたときに読んでください。\n" +
 		"- ファイルは、頼まれない限り書かないでください。\n" +
 		"- 利用者が結果の良し悪しを言ったときや「覚えて」と言われたときは add_image_knowledge で記録してください。\n" +
 		"日本語で答えてください。まず get_image_studio を呼び、1〜2 文で挨拶してください。"
+}
+
+// studioModelSwitch reports a model change since this session last read the studio: the model
+// it wrote the prompt for is no longer the one it runs on. from is the model before the first
+// such change, to the one after the last.
+func studioModelSwitch(entries []DraftLogEntry, self string, seen studioSeen, had bool) (from, to string, ok bool) {
+	if !had {
+		return "", "", false
+	}
+	for _, e := range entries {
+		if e.Seq <= seen.Seq || (e.Author == studioAuthorAgent && e.Session == self) {
+			continue
+		}
+		if e.Kind != DraftLogEdit && e.Kind != DraftLogRewind {
+			continue
+		}
+		for _, c := range e.Changes {
+			if c.Field != "model" {
+				continue
+			}
+			var b, a string
+			_ = json.Unmarshal(c.Before, &b)
+			_ = json.Unmarshal(c.After, &a)
+			if !ok {
+				from, ok = b, true
+			}
+			to = a
+		}
+	}
+	return from, to, ok && from != to
 }

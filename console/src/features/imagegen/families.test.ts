@@ -29,6 +29,12 @@ describe("族の事実（ADR 0100 決定 7: Agent の表から読むだけ）", 
     expect(familyFacts(null)).toBeNull();
   });
 
+  // anima はタグと文章の併記（ADR 0100 改訂 9）。知らない値は描かない。
+  it("併記の方言を通し、知らない方言は捨てる", () => {
+    expect(familyFacts({ id: "m", dialect: "mixed", steps_range: [30, 50] })?.dialect).toBe("mixed");
+    expect(familyFacts({ id: "m", dialect: "prose" as never, steps_range: [30, 50] })?.dialect).toBeUndefined();
+  });
+
   it("壊れた範囲は捨てる", () => {
     expect(familyFacts({ id: "m", dialect: "tags", steps_range: [1] as unknown as [number, number] })?.steps).toBeUndefined();
   });

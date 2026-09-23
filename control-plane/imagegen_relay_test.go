@@ -60,6 +60,10 @@ func TestImagegenRoutesRelayVerbatim(t *testing.T) {
 			status: 200, reply: `{"items":[]}`},
 		{name: "knowledge append", method: "POST", path: "/imagegen/knowledge",
 			body: `{"scope":"family","key":"sdxl","note":"n"}`, status: 501, reply: `{"error":{"code":"not_implemented"}}`},
+		// The notes editor's refusal when the file moved under it (ADR 0100 decision 12).
+		{name: "knowledge edit carries the 412", method: "PUT", path: "/imagegen/knowledge",
+			body:   `{"scope":"model","key":"m","version":"abc","summary":"s","settings":"","prompts":"","records":""}`,
+			status: 412, reply: `{"error":{"code":"knowledge_changed"}}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

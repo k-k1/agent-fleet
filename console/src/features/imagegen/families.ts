@@ -35,7 +35,7 @@ const familySizes = (family: string | undefined | null): string[] | undefined =>
 
 /** The family facts a card draws, as the Agent reported them on the model row. */
 export interface FamilyFacts {
-  dialect?: "tags" | "sentences";
+  dialect?: "tags" | "sentences" | "mixed";
   quality: string[];
   steps?: [number, number];
   cfg?: [number, number];
@@ -53,7 +53,8 @@ export function familyFacts(model: ImagegenModel | null | undefined): FamilyFact
     Array.isArray(v) && v.length === 2 && v.every((n) => typeof n === "number" && Number.isFinite(n))
       ? [v[0] as number, v[1] as number]
       : undefined;
-  const dialect = model.dialect === "tags" || model.dialect === "sentences" ? model.dialect : undefined;
+  const dialect =
+    model.dialect === "tags" || model.dialect === "sentences" || model.dialect === "mixed" ? model.dialect : undefined;
   const quality = Array.isArray(model.quality_prefixes) ? model.quality_prefixes.filter((q) => typeof q === "string" && q) : [];
   const steps = range(model.steps_range);
   const cfg = range(model.cfg_range);

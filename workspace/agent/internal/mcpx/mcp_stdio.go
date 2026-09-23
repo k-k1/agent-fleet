@@ -1173,13 +1173,15 @@ func mcpStdioStudioTools(offer studioOffer) []map[string]any {
 		},
 		{
 			"name": "add_image_knowledge",
-			"description": "Agent Fleet image studio: append a note to the knowledge kept for a model or a family - only when the user asks you " +
-				"to remember something, or has just judged a result good or bad. Say what worked or failed and on what evidence.",
+			"description": "Agent Fleet image studio: append a note to the knowledge kept for the studio's model or its family - only when the " +
+				"user asks you to remember something, or has just judged a result good or bad. Say what worked or failed and on what evidence. " +
+				"Prompts behave differently per model, so the key is the model the studio has chosen (scope model) or that model's family " +
+				"(scope family); with no model chosen it is refused - ask the user to pick one.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"scope":    map[string]any{"type": "string", "enum": []string{"family", "model"}},
-					"key":      map[string]any{"type": "string", "minLength": 1, "description": "The family name or the model id"},
+					"key":      map[string]any{"type": "string", "minLength": 1, "description": "The studio's model id (scope model) or its family (scope family), as get_image_studio shows them"},
 					"note":     map[string]any{"type": "string", "minLength": 1},
 					"evidence": map[string]any{"type": "string"},
 				},

@@ -8,7 +8,7 @@
 // types.ts, and the two only coexisted before because a value and a type can share a
 // name inside one file. Split across modules that overlap would be a trap.
 
-import { memo, useEffect, useReducer, useRef } from "react";
+import { Fragment, memo, useEffect, useReducer, useRef, type ReactNode } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
@@ -207,6 +207,43 @@ function TranscriptTurnImpl({
   const liftedFiles = split
     ? turn.parts.slice(0, split.at).flatMap((p, i) => (p.kind === "userfile" ? [{ p, i }] : []))
     : [];
+  // The host's own cards for tool calls (caps.toolCard), by position in turn.parts. Like a shared
+  // file they are a result the reader came for, so they are lifted out of the work fold too.
+  const toolCards = new Map<number, ReactNode>();
+  if (!isUser && caps.toolCard) {
+    const nth: Record<string, number> = {};
+    turn.parts.forEach((p, i) => {
+      if (p.kind !== "tool") return;
+      const name = p.tool || "";
+      const n = nth[name] ?? 0;
+      nth[name] = n + 1;
+      const card = caps.toolCard!(p, turn, n);
+      if (card != null) toolCards.set(i, card);
+    });
+  }
+  const liftedCards = split ? [...toolCards].filter(([i]) => i < split.at) : [];
+  // A run of tool traces with the carded calls taken out: each card stands on its own, and the
+  // traces between two cards stay one foldable run.
+  const renderToolRun = (tools: { p: Part; i: number }[], base: number, liftCards: boolean) => {
+    if (!toolCards.size) return <ToolRun key={"tr" + (base + tools[0].i)} tools={tools} onOpenDiff={caps.openDiff} />;
+    const out: ReactNode[] = [];
+    let run: { p: Part; i: number }[] = [];
+    const flush = () => {
+      if (run.length) out.push(<ToolRun key={"tr" + (base + run[0].i)} tools={run} onOpenDiff={caps.openDiff} />);
+      run = [];
+    };
+    for (const t of tools) {
+      const card = toolCards.get(base + t.i);
+      if (card === undefined) {
+        run.push(t);
+        continue;
+      }
+      flush();
+      if (!liftCards) out.push(<Fragment key={"tc" + (base + t.i)}>{card}</Fragment>);
+    }
+    flush();
+    return out;
+  };
   const renderUserFile = (p: Part, key: number) =>
     // Files the agent shared via SendUserFile, and the picture cards af's generate_image
     // synthesizes from its result — a panel; a card opens in a pane, an image card enlarges
@@ -238,7 +275,7 @@ function TranscriptTurnImpl({
       // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
       // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
       item.kind === "toolrun" ? (
-        <ToolRun key={"tr" + (base + item.tools[0].i)} tools={item.tools} onOpenDiff={caps.openDiff} />
+        renderToolRun(item.tools, base, liftFiles)
       ) : item.p.kind === "question" ? (
         // A question from the transcript is history, never clickable. "Answered" is claimed
         // only when the answer is actually here: claude writes the tool_use at ASK time,
@@ -502,6 +539,9 @@ function TranscriptTurnImpl({
                 folded away, in a summary that counts only tools and interim texts. Same reason
                 the edited-file chips below report the turn's writes without unfolding it. */}
             {liftedFiles.map(({ p, i }) => renderUserFile(p, i))}
+            {liftedCards.map(([i, card]) => (
+              <Fragment key={"tc" + i}>{card}</Fragment>
+            ))}
             {renderAssistantParts(turn.parts.slice(split.at), false, split.at)}
           </>
         ) : (

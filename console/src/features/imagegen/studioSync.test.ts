@@ -7,10 +7,12 @@ import {
   agentTouched,
   changedKeys,
   describeChange,
+  draftCallEntry,
   draftPatch,
   foldSince,
   formFromStudio,
   isLockable,
+  isStudioDraftTool,
   mergeForm,
   pressSeqOf,
   rebaseForm,
@@ -203,5 +205,51 @@ describe("エージェントを付ける: kind の候補（決定 8）", () => {
     expect(worktreeOptional("claude", "tui")).toBe(true);
     expect(worktreeOptional("lcpp", "managed")).toBe(true);
     expect(worktreeOptional("codex", "managed")).toBe(false);
+  });
+});
+
+describe("the set_image_draft card", () => {
+  it("knows af's tool behind every client's namespace, and nobody else's", () => {
+    for (const n of ["set_image_draft", "mcp__af_1a2b3c4d__set_image_draft", "af_1a2b3c4d_set_image_draft", "mcp__af__set_image_draft"])
+      expect(isStudioDraftTool(n), n).toBe(true);
+    for (const n of ["get_image_studio", "mcp__other__set_image_draft", "my_set_image_draft", undefined]) expect(isStudioDraftTool(n), String(n)).toBe(false);
+  });
+
+  const edit = (seq: number, at: string, session = "sa", author: "agent" | "human" = "agent"): DraftLogEntry => ({
+    seq,
+    kind: "edit",
+    at,
+    author,
+    session: author === "agent" ? session : undefined,
+    changes: [{ field: "params.cfg", before: 7, after: seq }],
+    draft: {},
+  });
+  const log = [
+    edit(1, "2026-09-24T01:00:00Z", "", "human"),
+    edit(2, "2026-09-24T01:00:05Z"),
+    edit(3, "2026-09-24T01:00:07Z"),
+    edit(4, "2026-09-24T01:00:08Z", "sb"),
+    edit(5, "2026-09-24T01:05:00Z"),
+  ];
+
+  it("takes the nth edit this session wrote from the turn's start", () => {
+    const turn = { turnTs: "2026-09-24T01:00:03Z", turnEndTs: "2026-09-24T01:00:06Z" };
+    expect(draftCallEntry(log, "sa", { ...turn, nth: 0 })?.seq).toBe(2);
+    // The edit lands after the turn's last row: within the slack it is still this turn's.
+    expect(draftCallEntry(log, "sa", { ...turn, nth: 1 })?.seq).toBe(3);
+    // The next turn's edit is not borrowed, and another session's never is.
+    expect(draftCallEntry(log, "sa", { ...turn, nth: 2 })).toBeNull();
+    expect(draftCallEntry(log, "sb", { ...turn, nth: 0 })?.seq).toBe(4);
+  });
+
+  it("prefers the tool's own result when the transcript carries it", () => {
+    const output = JSON.stringify({ studio: { recent_log: [edit(2, "2026-09-24T01:00:05Z"), edit(3, "2026-09-24T01:00:07Z")] } });
+    expect(draftCallEntry(log, "sa", { turnTs: "2026-09-24T01:00:03Z", nth: 0, output })?.seq).toBe(3);
+    // A refusal is prose: the time match answers instead.
+    expect(draftCallEntry(log, "sa", { turnTs: "2026-09-24T01:00:03Z", nth: 0, output: "refused" })?.seq).toBe(2);
+  });
+
+  it("says it cannot tell rather than guessing without a time", () => {
+    expect(draftCallEntry(log, "sa", { nth: 0 })).toBeNull();
   });
 });
