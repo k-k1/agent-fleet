@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -79,11 +80,11 @@ func TestRecreateDropsAStudioItCannotTakeOver(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.fixture(session.Meta{Name: "old1", Kind: session.KindClaude, Dir: repo, Studio: studioID})
-	stubStudioBind(t, func(_, _, previous string) error {
+	stubStudioBind(t, func(_, _, previous string) (string, error) {
 		if previous != "" {
-			return imagegen.ErrStudioBound
+			return "", imagegen.ErrStudioBound
 		}
-		return nil
+		return "", nil
 	})
 	code, raw := roundtrip(t, env.srv, "POST", "/sessions/old1/recreate", nil)
 	if code != http.StatusOK {
@@ -107,14 +108,14 @@ func TestCreateWithAStudioThatCannotBeBound(t *testing.T) {
 	}
 	for _, c := range []struct {
 		name string
-		hook func(string, string, string) error
+		hook func(string, string, string) (string, error)
 		nil_ bool
 		code int
 		want string
 	}{
 		{name: "no store", nil_: true, code: http.StatusNotImplemented, want: "studio_unavailable"},
-		{name: "no such studio", hook: func(string, string, string) error { return imagegen.ErrStudioNotFound }, code: http.StatusNotFound, want: "no_studio"},
-		{name: "bound elsewhere", hook: func(string, string, string) error { return imagegen.ErrStudioBound }, code: http.StatusConflict, want: "studio_bound"},
+		{name: "no such studio", hook: func(string, string, string) (string, error) { return "", imagegen.ErrStudioNotFound }, code: http.StatusNotFound, want: "no_studio"},
+		{name: "bound elsewhere", hook: func(string, string, string) (string, error) { return "", imagegen.ErrStudioBound }, code: http.StatusConflict, want: "studio_bound"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if c.nil_ {
@@ -143,17 +144,17 @@ type studioBindCall struct {
 
 // stubStudioBind installs the studio store's bind hook for one test, recording every call and
 // whether the session's meta already existed when it was made.
-func stubStudioBind(t *testing.T, answer func(studio, session, previous string) error) *[]studioBindCall {
+func stubStudioBind(t *testing.T, answer func(studio, session, previous string) (string, error)) *[]studioBindCall {
 	t.Helper()
 	calls := &[]studioBindCall{}
 	old := imagegen.BindStudioSession
-	imagegen.BindStudioSession = func(studio, name, previous string) error {
+	imagegen.BindStudioSession = func(studio, name, previous string) (string, error) {
 		_, onDisk := session.ReadMeta(name)
 		*calls = append(*calls, studioBindCall{studio, name, previous, onDisk})
 		if answer != nil {
 			return answer(studio, name, previous)
 		}
-		return nil
+		return "", nil
 	}
 	t.Cleanup(func() { imagegen.BindStudioSession = old })
 	return calls
@@ -213,5 +214,91 @@ func TestListSnapshotKeepsStudioAndInitialPromptState(t *testing.T) {
 	m, _ := session.ReadMeta("a")
 	if m.InitialPromptState != session.InitialPromptDelivered || m.Studio != studioID || m.StoppedAt == "" {
 		t.Fatalf("meta = %+v, want the newer state and studio kept and StoppedAt written", m)
+	}
+}
+
+// The rollbacks only run when a launch fails, so they are driven with a launch that fails: the
+// studio is handed back with a CONDITIONAL move naming the slot that never started.
+func TestStudioBindingIsHandedBackWhenTheLaunchFails(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := launchTmuxFn
+	launchTmuxFn = func(session.Meta, bool) error { return errors.New("no tmux today") }
+	t.Cleanup(func() { launchTmuxFn = orig })
+
+	t.Run("create", func(t *testing.T) {
+		binds := stubStudioBind(t, nil)
+		code, raw := env.create(map[string]any{"kind": "claude", "dir": repo, "studio": studioID})
+		if code != http.StatusInternalServerError {
+			t.Fatalf("create = %d %s, want the launch failure", code, raw)
+		}
+		if len(*binds) != 2 || (*binds)[0].previous != "" || (*binds)[1].studio != studioID ||
+			(*binds)[1].session != "" || (*binds)[1].previous != (*binds)[0].session {
+			t.Fatalf("binds = %+v, want the bind and then (studio, \"\", that session)", *binds)
+		}
+	})
+	t.Run("recreate", func(t *testing.T) {
+		env.fixture(session.Meta{Name: "old2", Kind: session.KindClaude, Dir: repo, Studio: studioID})
+		binds := stubStudioBind(t, nil)
+		code, raw := roundtrip(t, env.srv, "POST", "/sessions/old2/recreate", nil)
+		if code != http.StatusInternalServerError {
+			t.Fatalf("recreate = %d %s, want the launch failure", code, raw)
+		}
+		if len(*binds) != 2 || (*binds)[0].previous != "old2" ||
+			(*binds)[1] != (studioBindCall{studioID, "old2", (*binds)[0].session, true}) {
+			t.Fatalf("binds = %+v, want the move to the new slot and then (studio, old2, new slot)", *binds)
+		}
+	})
+}
+
+// With no studio store there is nobody to move the studio to the new slot, so the new slot
+// must not claim it.
+func TestRecreateWithoutAStudioStoreStartsUnbound(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.fixture(session.Meta{Name: "old3", Kind: session.KindClaude, Dir: repo, Studio: studioID})
+	old := imagegen.BindStudioSession
+	imagegen.BindStudioSession = nil
+	t.Cleanup(func() { imagegen.BindStudioSession = old })
+	code, raw := roundtrip(t, env.srv, "POST", "/sessions/old3/recreate", nil)
+	if code != http.StatusOK {
+		t.Fatalf("recreate = %d %s", code, raw)
+	}
+	var recreated session.Session
+	if err := json.Unmarshal(raw, &recreated); err != nil {
+		t.Fatal(err)
+	}
+	if rm, _ := session.ReadMeta(recreated.Name); rm.Studio != "" {
+		t.Fatalf("recreate with no store kept studio %q", rm.Studio)
+	}
+}
+
+// A create that takes a studio over from a stopped session clears that session's claim, so it
+// does not resume pointing at a studio that no longer names it. Another studio's claim stays.
+func TestCreateClearsTheStudioOfTheSessionItReplaced(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const other = "11111111-2222-4333-8444-555555555555"
+	env.fixture(session.Meta{Name: "stale1", Kind: session.KindClaude, Dir: repo, Studio: studioID})
+	env.fixture(session.Meta{Name: "stale2", Kind: session.KindClaude, Dir: repo, Studio: other})
+	replaced := "stale1"
+	stubStudioBind(t, func(string, string, string) (string, error) { return replaced, nil })
+	env.createOK(map[string]any{"kind": "claude", "dir": repo, "studio": studioID})
+	if m, _ := session.ReadMeta("stale1"); m.Studio != "" {
+		t.Fatalf("replaced session still claims studio %q", m.Studio)
+	}
+	replaced = "stale2" // a store answering a name whose meta names another studio
+	env.createOK(map[string]any{"kind": "claude", "dir": repo, "studio": studioID})
+	if m, _ := session.ReadMeta("stale2"); m.Studio != other {
+		t.Fatalf("a claim on another studio was cleared (now %q)", m.Studio)
 	}
 }
