@@ -36,7 +36,7 @@ to switch between API keys from multiple providers, pick **opencode**; if you ha
 GitHub Copilot subscription, pick **copilot**; if you have a Cursor plan, pick
 **cursor**; if you use an AWS Builder ID (or Kiro plan), pick **kiro**. They all support
 the conversation view, answering questions, and handing a conversation off to another
-agent; the context gauge is on claude / codex / opencode / kiro / muse.
+agent; the context gauge is on claude / codex / opencode / kiro / lcpp / muse.
 
 **Managed execution** for Codex / opencode / copilot / cursor / kiro lets you handle your everyday
 work entirely from the conversation view (Codex / opencode carry no extra per-session
@@ -65,16 +65,16 @@ and rolls in the cross-cutting features covered elsewhere in this guide — work
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁴ | —⁴ | ✓ | ✓ |
 | Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Reasoning-effort control | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | — | — |
-| Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | — | ✓ | — | — |
+| Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | ✓ | — | — |
 | Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | ✓ | — | — |
 | Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | —⁵ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | ✓⁵ | — | — |
 | WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — | ✓ | — | — |
 
 ¹ copilot's model choice is plan-dependent (Free = Auto only).
@@ -90,9 +90,10 @@ transcript even under Managed, so a stopped kiro session still shows its history
 ⁴ lcpp and muse have no Terminal (CLI) route — lcpp has no vendor CLI to put in a pane;
 muse drives the session protocol directly. Sessions of either kind default to Managed.
 
-⁵ muse has no assistant-chat backend — this is written per agent and the muse
-implementation does not exist yet. Every other muse row was ticked only after it was
-observed working on a real session.
+⁵ As the assistant, muse answers one prompt per turn as its own headless run and remembers
+the conversation; it answers rather than acts (shell, file writing and web tools are off for
+those turns). It needs Muse Code installed and signed in first — see the connection card below.
+Every muse row was ticked only after it was observed working on a real session.
 
 Usage chips add up, so the bar keeps only the **two agents you used most recently**. The
 rest fold into a **"+N"** chip on the right and open from inside it (a folded chip keeps
@@ -253,14 +254,25 @@ email. Connecting with an API key is not supported.
 **Muse Code** is a Managed-only session kind. Before it appears in the launch menu, two
 things must be true:
 
-1. On the **Muse Code** card in ⚙Settings → "Agents", press **"Install"** to download Muse
-   Code (~299 MB, stored once in your home directory).
-2. Then press **"Sign in"** to authenticate with your Muse Code account.
+1. On the **Muse Code** card in ⚙Settings → "Agents", press **"Install Muse Code"** (about 299 MB
+   into your home, once; the sign-in screen appears by itself when it finishes). When a newer
+   pinned build is available the card says so and offers **"Update Muse Code"** — until you press
+   it the installed build keeps being used, and running muse sessions stay on the old build until
+   they are restarted.
+2. Then sign in. **"Sign in with your Meta account"** shows an authorize link and a code to approve
+   in your browser — nothing to paste back; this is the subscription route. **"Use an API key"** is
+   the pay-as-you-go route: saving a key removes a stored account sign-in and moves you onto
+   per-use billing, so disconnect first if you are signed in with an account.
 
 The **Behaviour** settings on the same card let you set the model (Agent Fleet selects the
 newest model without the "-contributor" clause by default — see
 [Agents reference](../ref/agents.md) for what the `-contributor` models mean) and the
 reasoning effort.
+
+In a running muse session the **`/`** button beside the input lists the session's own skills —
+Muse Code's bundled ones, plugin skills, yours under `~/.config/muse/skills`, and the working
+copy's `.agents/skills/` — and picking one runs it
+([07](07-chat-memo.md#calling-a-skill-or-a-command)).
 
 > 🔴 **A muse session asks for no tool approvals.** Every tool call is allowed before any
 > approval is considered — the sandbox cannot be built inside this Workspace container.
@@ -273,6 +285,18 @@ cross-session messaging, and session list), see [Agents reference](../ref/agents
 
 **lcpp** is the fleet's own llama.cpp engine — no sign-in or separate installation is
 needed. Launch it like any other session kind from the session dialog.
+
+Its card in ⚙Settings → "Agents" has two controls. **"Use llama.cpp"** (On by default) is the
+switch: Off takes it out of the launch menus and refuses a launch by any other route, while
+sessions already running keep going. **"Your own connection"** points your sessions at a
+llama-server on your own network instead of the deployment's engine: enter its URL (and an API
+key if it wants one), press **"Check connection"** to see its build, context window and models,
+and the launch dialog's model list becomes that server's. While it is set, lcpp sessions connect
+straight to it — the tenant administrator's engine permission does not apply — and the **Chat**
+pill in the top bar reports that connection (**Connected** / **Not reachable** / **Checking**,
+and the model it found) rather than the deployment's engine
+([badges](badges-and-menus.md#the-engine-pills-in-the-top-bar)). Clear the fields to go back to
+the deployment's engine.
 
 What to expect before your first session:
 
@@ -289,7 +313,7 @@ reasoning behind the window guidance — see [Agents reference](../ref/agents.md
 
 ## Checking remaining context
 
-In claude / codex / opencode / kiro / muse sessions, a **"Context"** gauge (`ctx` when the screen is
+In claude / codex / opencode / kiro / lcpp / muse sessions, a **"Context"** gauge (`ctx` when the screen is
 narrow) appears at the top. Hover over it to see how many tokens the current conversation
 is using, the limit, and the breakdown into cache reuse, new cache writes, and uncached.
 As you approach the limit, a "May be auto-compacted soon" warning appears. If a long

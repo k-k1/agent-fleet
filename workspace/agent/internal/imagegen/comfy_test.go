@@ -387,8 +387,17 @@ func TestComfyAwaitHistoryPollsUntilComplete(t *testing.T) {
 // what each poll sees, so a test can make the box go away mid-poll.
 func comfyPollStub(t *testing.T, historyHandler http.HandlerFunc) *comfyProvider {
 	t.Helper()
+	return comfyPollStubWithQueue(t, historyHandler, nil)
+}
+
+// comfyPollStubWithQueue is comfyPollStub with a /queue as well; nil leaves it unrouted (404).
+func comfyPollStubWithQueue(t *testing.T, historyHandler, queueHandler http.HandlerFunc) *comfyProvider {
+	t.Helper()
 	const promptID = "af-test-prompt"
 	mux := http.NewServeMux()
+	if queueHandler != nil {
+		mux.HandleFunc("/engine/image/v1/queue", queueHandler)
+	}
 	mux.HandleFunc("/engine/image/v1/prompt", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": promptID})
 	})
@@ -508,6 +517,47 @@ func TestComfyAwaitHistoryReportsALostQueueAfterARestart(t *testing.T) {
 	}
 	if ctx.Err() != nil {
 		t.Error("the request's own budget ran out: the loss was polled for rather than reported")
+	}
+}
+
+// A wake is not a restart. The gateway answers engine_waking for a box that is running but too
+// busy to answer its health probe — measured on a T4 editing at 34.8 s/step (ADR 0098 P3) — and
+// the prompt is then still in /queue, not in /history. Reporting it lost would end a picture the
+// engine goes on to finish.
+func TestComfyAwaitHistoryKeepsPollingAPromptStillQueuedAfterAWake(t *testing.T) {
+	oldMin, oldMax := sdcppRetryMin, sdcppRetryMax
+	oldPoll := comfyPollEvery
+	sdcppRetryMin, sdcppRetryMax = time.Millisecond, 5*time.Millisecond
+	comfyPollEvery = time.Millisecond
+	t.Cleanup(func() {
+		sdcppRetryMin, sdcppRetryMax = oldMin, oldMax
+		comfyPollEvery = oldPoll
+	})
+
+	var polls int32
+	p := comfyPollStubWithQueue(t, func(w http.ResponseWriter, r *http.Request) {
+		switch n := atomic.AddInt32(&polls, 1); {
+		case n == 1:
+			comfyWaking(w)
+		case n < 4:
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			comfyHistoryDone(w)
+		}
+	}, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"queue_running": []any{[]any{0, "af-test-prompt", map[string]any{}, map[string]any{}, []any{}}},
+			"queue_pending": []any{},
+		})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	res, err := p.Generate(ctx, Request{Op: OpGenerate, Prompt: "a fox"})
+	if err != nil {
+		t.Fatalf("Generate() = %v, want the picture the engine was still making", err)
+	}
+	if len(res.Images) != 1 {
+		t.Errorf("images = %d, want 1", len(res.Images))
 	}
 }
 
@@ -839,6 +889,78 @@ func TestComfyEditUploadsTheInputAndNamesItInTheGraph(t *testing.T) {
 	}
 }
 
+// The size an img2img warning names is the one the picture was MADE at, read off the output. ADR
+// 0098 P2 measured the gap: a 1216x832 reference through Qwen-Image 2.1's 1024² budget comes back
+// 1248x832, and the warning used to name 1216x832 — and said nothing at all to a caller who had
+// asked for 1216x832 and received 1248x832.
+func TestComfyImg2ImgSizeWarningNamesTheMeasuredOutput(t *testing.T) {
+	out := func(w, h int) Image { return Image{Width: w, Height: h} }
+	cases := []struct {
+		name           string
+		w, h, inW, inH int
+		out            Image
+		want           []string // substrings; empty = no warning
+	}{
+		{"the caller asked for the input's size and the family rescaled it", 1216, 832, 1216, 832, out(1248, 832),
+			[]string{"1216x832", "made it at 1248x832"}},
+		{"another size asked, the family rescaled", 1024, 1024, 1216, 832, out(1248, 832),
+			[]string{"input picture (1216x832)", "made it at 1248x832"}},
+		{"another size asked, the input's own kept", 1024, 1024, 640, 480, out(640, 480),
+			[]string{"keeps the input picture's own 640x480"}},
+		{"the picture came out at the size asked", 1248, 832, 1216, 832, out(1248, 832), nil},
+		{"the output could not be read: fall back to the input", 1024, 1024, 640, 480, out(0, 0),
+			[]string{"keeps the input picture's own 640x480"}},
+		{"nothing measured at all", 1024, 1024, 0, 0, out(0, 0), nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := comfyImg2ImgSizeWarning("SIZE", OpEdit, c.w, c.h, c.inW, c.inH, c.out)
+			if len(c.want) == 0 {
+				if got != "" {
+					t.Errorf("warning = %q, want none", got)
+				}
+				return
+			}
+			for _, sub := range c.want {
+				if !strings.Contains(got, sub) {
+					t.Errorf("warning = %q, want it to contain %q", got, sub)
+				}
+			}
+		})
+	}
+}
+
+// The same through the provider: the stub's /view answers a 2x3 PNG for a 640x480 input, and a
+// caller who asked for 640x480 is told the size that actually came back.
+func TestComfyEditWarnsWhenTheEngineRescaledTheInputsOwnSize(t *testing.T) {
+	in := filepath.Join(t.TempDir(), "photo.png")
+	if err := os.WriteFile(in, tinyPNG(t, 640, 480), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := comfyEditStub(t, sdxlConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "photo.png", "subfolder": "", "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+	res, err := p.Generate(context.Background(), Request{
+		Op: OpEdit, Prompt: "make it snow", Inputs: []string{in}, Size: "640x480",
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	found := false
+	for _, warning := range res.Warnings {
+		if strings.Contains(warning, "640x480") && strings.Contains(warning, "made it at 2x3") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want the measured 2x3 named beside the input's 640x480", res.Warnings)
+	}
+}
+
 // inpaint adds the mask, and the mask is read off the RED channel: LoadImage's own MASK output is
 // 1-alpha, so an opaque black-and-white PNG through the alpha path would repaint nothing at all
 // and say nothing about it.
@@ -894,15 +1016,41 @@ func TestComfyInpaintUploadsTheMaskAndSetsTheNoiseMask(t *testing.T) {
 	}
 }
 
-// The instruction-edit families need the mask to be the PICTURE's own size, and a mask of any
-// other shape is refused rather than applied somewhere else (ADR 0094 decision 3, 実測 I).
-//
-// Their template sends both through FluxKontextImageScale, which resolves its target from the
-// width and height it is handed — so two differently-shaped inputs resolve two different frames
-// and the mask lands on an area the caller did not draw, with no error and nothing in the picture
-// to show it. Every other family stretches the mask over the whole frame with no crop, where a
-// different size is still the same region; that is the positive control below.
-func TestComfyInstructionEditRefusesAMaskOfAnotherSize(t *testing.T) {
+// qwenEditRun drives Generate for the instruction-edit row against a stub engine, and answers with
+// the graph the engine was sent and how many uploads it took.
+func qwenEditRun(t *testing.T, req Request) (map[string]any, int, error) {
+	t.Helper()
+	var graph map[string]any
+	uploads := 0
+	p := comfyEditStub(t, qwenEditConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			uploads++
+			_ = r.ParseMultipartForm(8 << 20)
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.png", "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			graph, _ = body["prompt"].(map[string]any)
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+	_, err := p.Generate(context.Background(), req)
+	return graph, uploads, err
+}
+
+func qwenEditScaleSize(t *testing.T, graph map[string]any) (any, any) {
+	t.Helper()
+	scale, _ := graph["scale"].(map[string]any)
+	in, _ := scale["inputs"].(map[string]any)
+	if scale["class_type"] != "ImageScale" || in["crop"] != "disabled" {
+		t.Fatalf("scale = %v, want ImageScale with crop disabled", scale)
+	}
+	return in["width"], in["height"]
+}
+
+// A mask of another size than the picture is accepted on the instruction-edit families, as it is
+// on every other one (ADR 0094 decision 3, revised 2026-09-23). The refusal it replaces existed
+// because FluxKontextImageScale cropped the picture and not the mask; with the picture shrunk whole,
+// both are plain stretches of the same frame.
+func TestComfyInstructionEditAcceptsAMaskOfAnotherSize(t *testing.T) {
 	dir := t.TempDir()
 	in, mask := filepath.Join(dir, "photo.png"), filepath.Join(dir, "mask.png")
 	if err := os.WriteFile(in, tinyPNG(t, 64, 64), 0o600); err != nil {
@@ -911,28 +1059,66 @@ func TestComfyInstructionEditRefusesAMaskOfAnotherSize(t *testing.T) {
 	if err := os.WriteFile(mask, tinyPNG(t, 48, 64), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stub := func(conn EngineConn) *comfyProvider {
-		return comfyEditStub(t, conn,
-			func(w http.ResponseWriter, r *http.Request) {
-				_ = r.ParseMultipartForm(8 << 20)
-				_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.png", "type": "input"})
-			},
-			func(w http.ResponseWriter, r *http.Request, body map[string]any) {
-				_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
-			})
+	graph, _, err := qwenEditRun(t, Request{Op: OpInpaint, Prompt: "a hat", Model: "qwen-edit-row",
+		Inputs: []string{in}, Mask: mask})
+	if err != nil {
+		t.Fatalf("Generate() = %v, want a 48x64 mask on a 64x64 picture accepted", err)
 	}
-	req := Request{Op: OpInpaint, Prompt: "a hat", Model: "qwen-edit-row",
-		Inputs: []string{in}, Mask: mask}
-	_, err := stub(qwenEditConn()).Generate(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "48x64") || !strings.Contains(err.Error(), "64x64") {
-		t.Fatalf("Generate() = %v, want a refusal naming both sizes", err)
+	// 64x64 is below the encoder's budget, so its fixed point is 1024x1024 — the size comes from
+	// the picture that was uploaded, not from a default.
+	if w, h := qwenEditScaleSize(t, graph); w != float64(1024) || h != float64(1024) {
+		t.Errorf("scale = %vx%v, want 1024x1024", w, h)
+	}
+}
+
+// A picture whose size cannot be read is refused BEFORE anything is uploaded: the upload is the
+// call that wakes a stopped engine, and a guessed size is the soft picture comfyQwenEditSize
+// exists to prevent. The positive control is the same file on sdxl, which never needed the size.
+func TestComfyInstructionEditRefusesAPictureOfUnknownSize(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "photo.webp")
+	if err := os.WriteFile(in, []byte("RIFF\x00\x00\x00\x00WEBPnot really"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := Request{Op: OpEdit, Prompt: "a hat", Model: "qwen-edit-row", Inputs: []string{in}}
+	_, uploads, err := qwenEditRun(t, req)
+	if err == nil || !strings.Contains(err.Error(), "size") {
+		t.Fatalf("Generate() = %v, want a refusal about the picture's size", err)
+	}
+	if uploads != 0 {
+		t.Errorf("%d uploads before the refusal, want 0 — the upload is what wakes the engine", uploads)
 	}
 
-	// The positive control: the SAME mismatched pair is fine on sdxl, so what is refused above is
-	// the family's own rule and not a new rule for everybody.
 	req.Model = "sdxl-base-1.0"
-	if _, err := stub(sdxlConn()).Generate(context.Background(), req); err != nil {
-		t.Fatalf("sdxl Generate() = %v, want the mismatch accepted — it has no scale node to disagree with", err)
+	p := comfyEditStub(t, sdxlConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseMultipartForm(8 << 20)
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.webp", "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+	if _, err := p.Generate(context.Background(), req); err != nil {
+		t.Fatalf("sdxl Generate() = %v, want the same file accepted — that family never reads the size", err)
+	}
+}
+
+// A phone JPEG stored landscape with Orientation 6 is a portrait picture to ComfyUI's LoadImage,
+// which applies exif_transpose. Sized from the raw header it would be squeezed into a landscape
+// frame by the shrink, with no error anywhere.
+func TestComfyInstructionEditSizesARotatedJPEGUpright(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "phone.jpg")
+	if err := os.WriteFile(in, jpegWithOrientation(t, 1600, 1200, 6), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	graph, _, err := qwenEditRun(t, Request{Op: OpEdit, Prompt: "a hat", Model: "qwen-edit-row", Inputs: []string{in}})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	wantW, wantH, _ := comfyQwenEditSize(1200, 1600)
+	if w, h := qwenEditScaleSize(t, graph); w != float64(wantW) || h != float64(wantH) {
+		t.Errorf("scale = %vx%v, want %dx%d — the upright 1200x1600, not the stored 1600x1200", w, h, wantW, wantH)
 	}
 }
 
@@ -1924,4 +2110,83 @@ func comfyShortClocks(t *testing.T, wake, run time.Duration) func() {
 	oldWake, oldRun, oldPoll := engineTimeout, engineRunTimeout, comfyPollEvery
 	engineTimeout, engineRunTimeout, comfyPollEvery = wake, run, time.Millisecond
 	return func() { engineTimeout, engineRunTimeout, comfyPollEvery = oldWake, oldRun, oldPoll }
+}
+
+// --- ADR 0098 Open 4: the alpha channel Qwen-Image 2.1 writes on every picture ----------------
+
+func qwen21Conn() EngineConn {
+	return EngineConn{
+		Models:    []string{"qwen-21-row", "sdxl-base-1.0"},
+		BaseModel: map[string]string{"qwen-21-row": "qwen-image-2.1", "sdxl-base-1.0": "sdxl"},
+		Files: map[string][]EngineFile{
+			"qwen-21-row": {
+				{Flag: "--diffusion-model", Name: "qwen_image_2.1_int8_convrot.safetensors"},
+				{Flag: "--clip_l", Name: "qwen3vl_8b_int8_convrot.safetensors"},
+				{Flag: "--vae", Name: "qwen_image_2.1_vae_bf16.safetensors"},
+			},
+			"sdxl-base-1.0": {{Name: "sd_xl_base_1.0.safetensors"}},
+		},
+	}
+}
+
+// The alpha reaches the save only on `background=transparent`, and only then is "opaque produced"
+// withheld — for the one family whose decode has an alpha to keep. Every other background (unset,
+// auto, opaque) strips it, and a family without one still warns exactly as before.
+func TestComfyQwen21KeepsAlphaOnlyWhenTransparencyWasAskedFor(t *testing.T) {
+	const opaqueWarning = "opaque produced"
+	cases := []struct {
+		model, background string
+		wantStrip         bool
+		wantWarn          bool
+	}{
+		{"qwen-21-row", "", true, false},
+		{"qwen-21-row", "auto", true, false},
+		{"qwen-21-row", "opaque", true, false},
+		{"qwen-21-row", "transparent", false, false},
+		{"qwen-21-row", " Transparent ", false, false},
+		{"sdxl-base-1.0", "transparent", false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.model+"/"+c.background, func(t *testing.T) {
+			var graph map[string]any
+			p, _ := comfyStub(t, qwen21Conn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+				graph, _ = body["prompt"].(map[string]any)
+				_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+			})
+			res, err := p.Generate(context.Background(), Request{
+				Op: OpGenerate, Prompt: "a fox", Model: c.model, Background: c.background})
+			if err != nil {
+				t.Fatalf("Generate() = %v", err)
+			}
+			save, _ := graph["save"].(map[string]any)
+			in, _ := save["inputs"].(map[string]any)
+			link, _ := in["images"].([]any)
+			stripped := len(link) == 2 && link[0] == "rgb"
+			if _, has := graph["rgb"]; has != stripped {
+				t.Fatalf("an rgb node exists = %v but the save reads it = %v: %v", has, stripped, save)
+			}
+			if stripped != c.wantStrip {
+				t.Errorf("alpha stripped before the save = %v, want %v (save = %v)", stripped, c.wantStrip, save)
+			}
+			warned := false
+			for _, w := range res.Warnings {
+				if strings.Contains(w, opaqueWarning) {
+					warned = true
+				}
+			}
+			if warned != c.wantWarn {
+				t.Errorf("warned %q = %v, want %v: %v", opaqueWarning, warned, c.wantWarn, res.Warnings)
+			}
+		})
+	}
+}
+
+// Alpha is declared on exactly the one family measured to write it. A second family gaining the
+// flag without a template that strips would hand every caller its stray alpha back.
+func TestComfyOnlyQwen21DeclaresAlpha(t *testing.T) {
+	for _, r := range comfyFamilyRows {
+		if r.Alpha != (r.Family == ComfyFamilyQwenImage21) {
+			t.Errorf("%s: Alpha = %v", r.Family, r.Alpha)
+		}
+	}
 }

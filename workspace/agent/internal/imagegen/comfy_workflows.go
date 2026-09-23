@@ -139,6 +139,10 @@ type comfyParams struct {
 	// the count was already refused against Caps.MaxInputs (comfyCheckInputs) before any upload.
 	Images []string
 	Mask   string
+	// Transparent is the caller's `background=transparent`. Only a family that decodes an alpha
+	// channel reads it (comfyFamilyRow.Alpha); for it, anything else — auto, opaque, unset —
+	// means the alpha is stripped before the save.
+	Transparent bool
 	// Loras are already resolved against the catalogue and checked against this model's family
 	// (comfyResolveLoras) — a template applies them, it does not decide whether they fit.
 	Loras []comfyLora
@@ -550,6 +554,16 @@ type comfyFamilyRow struct {
 	// pictures pass comfyCheckInputs, are never wired, and the caller gets a picture that ignored
 	// them with no warning anywhere (実測 C's shape of lie).
 	RefInputs int
+	// Alpha is whether this family's VAE decodes to FOUR channels — a picture with an alpha
+	// channel, which SaveImage keeps. Only qwen-image-2.1 (ADR 0098): every other family's
+	// decode is RGB, so a transparent background is something they cannot produce at all.
+	//
+	// 🔴 It decides two things, and both would lie without it: the template strips the alpha
+	// unless the caller asked for `background=transparent` (measured: an ordinary photograph
+	// comes back with alpha 252-255 on 47 % of its pixels — up to 1.2 % see-through, and enough
+	// to keep every thumbnail a PNG, fs_thumb.go's opaque()), and comfyWarnings stops saying
+	// "opaque produced" to a caller who got exactly the transparency they asked for.
+	Alpha bool
 }
 
 // comfyFamilyRows is the vocabulary itself, ordered oldest architecture first — which is the
@@ -635,9 +649,8 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	InstructionEdit: &comfyQwenEditWiring{Shift: 3},
 	// inpaint since 実測 G / 実測 I (ADR 0094 decision 3, unresolved 2): a mask that does NOT cover
 	// the sign left the sign unchanged where the same request without one changes it, so the mask
-	// is a real gate even at a full denoise. The wiring is comfyQwenEditNoiseMask, which is NOT
-	// comfyRequestLatent's two nodes — the mask has to go through the picture's own
-	// FluxKontextImageScale or it lands on a frame the picture was cropped out of.
+	// is a real gate even at a full denoise. The wiring is comfyQwenEditNoiseMask: the mask onto
+	// the latent the scaled picture was encoded to, not onto an empty one.
 	FixedDenoiseEdit: true, Ops: []Op{OpEdit, OpInpaint}, RefInputs: 3,
 }, {
 	Family: ComfyFamilyQwenImageEdit2511,
@@ -683,6 +696,21 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// through its own builder at a fixed denoise 1, which is the field below, and it also
 	// generates — the first family here to do both.
 	FixedDenoiseEdit: true, Ops: []Op{OpGenerate, OpEdit},
+	// The model's own "native transparency": 64 latent channels decode to RGBA. Measured on the
+	// dev deployment 2026-09-23 (ADR 0098 P2) — a transparent-background request came back with
+	// 17.6 % of its pixels at alpha 0, and an ordinary photograph came back RGBA as well.
+	Alpha: true,
+	// The megapixel list, and then the same five shapes at twice the side: the templates' note
+	// says the model renders 2048² directly. Measured through the Agent on the dev deployment
+	// 2026-09-23 (ADR 0098 Open 3, an L40S): 2048x2048 came back whole in 116 s against 44 s for
+	// 1024², at a peak of 19,592 MiB in use — one subject, no tiling. Only the square was run; the
+	// other four are smaller in pixels (the ladder is 1216x832's own ratios, doubled, and the
+	// square sits exactly on imagegenMaxPixels), and all are multiples of 32 for the 16x latent.
+	// The first entry stays 1024² so a request naming no size costs what it did.
+	Sizes: []string{
+		"1024x1024", "1152x896", "896x1152", "1216x832", "832x1216",
+		"2048x2048", "2304x1792", "1792x2304", "2432x1664", "1664x2432",
+	},
 	// 🔴 A CITATION, not a measurement, and the one entry in this column that is not backed by a
 	// run. The node takes image_1..image_16; the official edit template wires exactly ten and its
 	// note says "Up to 10 reference images". Taking the published wiring is this repository's rule
@@ -1217,8 +1245,8 @@ func comfyGraphKrea2(f comfyFiles, p comfyParams) (comfyGraph, error) {
 // Node graph (ported from the official templates and RUN — 実測 A on 2509, 実測 E on 2511, plus
 // P0's live acceptance of 2509 through this Agent's own route): UNETLoader +
 // CLIPLoader(type=qwen_image) + VAELoader load the three declared files; LoadImage's output is
-// rescaled by FluxKontextImageScale to the nearest of the model's trained aspect ratios
-// (decision 4 — this is also why no `size` reaches these families) and that SAME scaled picture
+// shrunk whole by ImageScale to comfyQwenEditSize (decision 4 as revised on 2026-09-23 — the size
+// follows the picture, which is also why no `size` reaches these families) and that SAME picture
 // feeds both TextEncodeQwenImageEditPlus encodes (positive and negative — the negative is a real
 // encode, not ConditioningZeroOut, because 実測 A ran at cfg 4, a guided recipe) and a VAEEncode
 // that gives KSampler its starting latent's shape. ModelSamplingAuraFlow + CFGNorm patch the model
@@ -1303,12 +1331,24 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 		"img":  {ClassType: "LoadImage", Inputs: map[string]any{"image": p.image(0)}},
 	}
 	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
-	g["scale"] = comfyNode{ClassType: "FluxKontextImageScale", Inputs: map[string]any{"image": comfyLink("img", 0)}}
+	// The whole picture, shrunk — never cropped — to a fixed point of the encoder's own rescale
+	// (comfyQwenEditSize has the measurements). Studio()'s probe carries no picture and no size,
+	// and any square answer keeps it building; an edit that reached here without a size is a bug
+	// upstream of this function, since Generate refuses such a picture before it wakes the engine.
+	sw, sh := p.Width, p.Height
+	if !p.isImageToImage() && (sw <= 0 || sh <= 0) {
+		sw, sh = comfyQwenEditRefPixelsSide, comfyQwenEditRefPixelsSide
+	}
+	fw, fh, ok := comfyQwenEditSize(sw, sh)
+	if !ok {
+		return nil, fmt.Errorf("%s cannot size a %dx%d picture for its encoder", family, p.Width, p.Height)
+	}
+	g["scale"] = comfyNode{ClassType: "ImageScale", Inputs: map[string]any{
+		"image": comfyLink("img", 0), "upscale_method": "lanczos", "width": fw, "height": fh, "crop": "disabled"}}
 	// The extra references, exactly as 実測 D wired them (ADR 0094 decision 5): a bare LoadImage
-	// each, straight into the encode. They do NOT go through FluxKontextImageScale — that node
-	// exists to fix the FRAME the picture is made in, and the frame is image1's alone; the others
-	// are things to look at, and scaling them to the first one's aspect ratio would crop away the
-	// object the caller is asking to borrow. The latent still comes from scaled image1 below.
+	// each, straight into the encode. They are not scaled here: the frame is image1's alone, the
+	// others are things to look at, and the encoder gives each reference its own index rather
+	// than a place on image1's grid. The latent still comes from scaled image1 below.
 	refs := map[string]any{}
 	for n := 1; n < len(p.Images); n++ {
 		id := fmt.Sprintf("img%d", n+1)
@@ -1366,18 +1406,11 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 // still sees the whole unmasked picture, which is what makes the repaint agree with the scene
 // around it.
 //
-// 🔴 The mask goes through the SAME FluxKontextImageScale the picture does, and that is the whole
-// reason this is not comfyRequestLatent's two nodes. The picture is not merely resized: the node
-// CENTRE-CROPS to the nearest trained aspect ratio and then resizes (comfy.utils.common_upscale,
-// crop="center"), while SetLatentNoiseMask's mask is only stretched to the latent's shape, with no
-// crop at all. Feed the mask in raw and the two maps disagree by the cropped band — measured on a
-// 1820x1024 input (cropped to 1820x984, then 1392x752): the repainted band's edge landed 8 px away
-// from where the picture's own map puts it, and sending the mask through this node moved it back.
-// Zero at the centre of the frame and worst at the edges, with nothing anywhere to say so.
-//
-// Running the mask through it works because the node reads only the picture's width and height,
-// and the mask is refused unless it has the SAME ones (comfyCheckInputs) — so it resolves the same
-// target resolution and applies the same crop.
+// The mask needs no scaling node of its own. SetLatentNoiseMask stretches it over the latent, and
+// the picture is itself a plain stretch of the whole input (no crop), so both land on the same
+// relative region — measured on a 1820x1024 input: the repainted band's edge within 3 px of where
+// the picture's map puts it, inside the repaint's own transition band (docs/log/112 §11, T3). A
+// mask of another size is still the same relative region, as it is for every other family.
 //
 // ImageToMask on the red channel, not LoadImageMask, for the reason comfyRequestLatent states:
 // LoadImage's own MASK output is `1.0 - alpha`, so an ordinary opaque black-and-white PNG would
@@ -1385,10 +1418,8 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 // channel verbatim — white is the area to repaint.
 func comfyQwenEditNoiseMask(g comfyGraph, p comfyParams) []any {
 	g["maskimg"] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.Mask}}
-	g["maskscale"] = comfyNode{ClassType: "FluxKontextImageScale", Inputs: map[string]any{
-		"image": comfyLink("maskimg", 0)}}
 	g["mask"] = comfyNode{ClassType: "ImageToMask", Inputs: map[string]any{
-		"image": comfyLink("maskscale", 0), "channel": "red"}}
+		"image": comfyLink("maskimg", 0), "channel": "red"}}
 	g["noisemask"] = comfyNode{ClassType: "SetLatentNoiseMask", Inputs: map[string]any{
 		"samples": comfyLink("enc", 0), "mask": comfyLink("mask", 0)}}
 	return comfyLink("noisemask", 0)
@@ -1442,6 +1473,17 @@ func comfyQwenEditNoiseMask(g comfyGraph, p comfyParams) []any {
 // keeps it — it hands the raw array to PIL, so a 4-channel picture is saved as a PNG with its
 // alpha (nodes.py, save_images). What SaveImage also does, and this route depends on, is write the
 // `prompt` PNG chunk that readImageProps reads (ADR 0094 P2).
+//
+// 🔴 The alpha reaches the save only when the caller asked for `background=transparent`.
+// Otherwise SplitImageWithAlpha (comfy_extras/nodes_compositing.py: `image[..., :3]`, a no-op on
+// a 3-channel picture) drops it first, because the model writes an alpha channel on EVERY
+// picture: an ordinary photograph came back with alpha 252-255 on 47 % of its pixels (ADR 0098
+// P2) — invisible on screen, up to 1.2 % see-through over a background, and one pixel below 255
+// is enough to make every thumbnail of it a PNG five to eight times a JPEG's size. Stripping in
+// the graph rather than re-encoding here keeps the `prompt` chunk SaveImage writes.
+// ⚠️ What lies under an alpha of 0 is not white: a transparent-background picture measured a
+// flat purple there (about 163,58,206). A caller who asks for transparency in the PROMPT but
+// not in `background` gets that colour as the background.
 func comfyGraphQwenImage21(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if f.DiffusionModel == "" {
 		return nil, errComfyMissingFile("qwen-image-2.1", "diffusion model")
@@ -1462,13 +1504,21 @@ func comfyGraphQwenImage21(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	}
 	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
 	// Every reference goes in as a bare LoadImage, image_1 included — unlike the edit families next
-	// door there is no FluxKontextImageScale to fit them into a frame, because this node does that
-	// resizing itself (one `resolution` for all of them, aspect preserved, rounded to 32).
+	// door there is no ImageScale to fit image_1 into a frame, because this node does that resizing
+	// itself (one `resolution` for all of them, aspect preserved, rounded to 32).
+	//
+	// 🔴 The key is `images.image_N`, not `image_N`. The references are a V3 Autogrow group named
+	// `images`, and the API-format id of each member is the group and the member joined by a dot
+	// (comfy_api/latest/_io.py, finalize_prefix). `image_N` is only the label the editor shows.
+	// Measured on the dev deployment 2026-09-23: the bare spelling passes /prompt validation —
+	// an unknown optional key is not refused there — and then dies inside the node with
+	// `TextEncodeQwenImage21.execute() got an unexpected keyword argument 'image_1'`, so every
+	// edit of this family failed while text-to-image worked.
 	refs := map[string]any{}
 	for n := range p.Images {
 		id := fmt.Sprintf("img%d", n+1)
 		g[id] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.image(n)}}
-		refs[fmt.Sprintf("image_%d", n+1)] = comfyLink(id, 0)
+		refs[fmt.Sprintf("images.image_%d", n+1)] = comfyLink(id, 0)
 	}
 	// One node encodes BOTH conditionings, so there is no positive/negative pair to keep in step —
 	// and p.Negative directly rather than comfyNegativeText(p), for the reason the edit families
@@ -1504,8 +1554,13 @@ func comfyGraphQwenImage21(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{
 		"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
+	out := comfyLink("dec", 0)
+	if !p.Transparent {
+		g["rgb"] = comfyNode{ClassType: "SplitImageWithAlpha", Inputs: map[string]any{"image": out}}
+		out = comfyLink("rgb", 0)
+	}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
-		"filename_prefix": "af-" + comfyFamilyPrefixName(ComfyFamilyQwenImage21), "images": comfyLink("dec", 0)}}
+		"filename_prefix": "af-" + comfyFamilyPrefixName(ComfyFamilyQwenImage21), "images": out}}
 	return g, nil
 }
 

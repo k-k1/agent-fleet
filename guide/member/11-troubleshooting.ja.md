@@ -53,7 +53,7 @@ Claude Code 自身のセッション間メッセージ（cross-session messaging
 ### セッションが再開できない／打ち消し線になっている
 
 状態が **「フォルダ無し — 再開不可」** なら、そのセッションの**作業フォルダが消えて**います
-（worktree ごと削除した後などが典型）。claude / codex / cursor / copilot / kiro / agy / opencode はこの状態から再開できません。
+（worktree ごと削除した後などが典型）。claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse はこの状態から再開できません。
 同じ内容を新しいセッションとして起動し直してください。shell は作業フォルダが無ければ
 ホームに戻って再開します（[02](02-sessions.ja.md)）。
 
@@ -199,7 +199,7 @@ Claude で特定のリリース（`claude-opus-4-8` のような完全 ID）を�
 
 ### 起動ダイアログに「既定」しか出ない
 
-カタログを実時間で引くエージェント（codex / opencode / copilot / cursor / kiro / agy）は、
+カタログを実時間で引くエージェント（codex / opencode / copilot / cursor / kiro / agy / lcpp / muse）は、
 ダイアログを開いたときにモデル一覧を取りに行きます。**しばらく「モデル一覧を取得して
 います…」と出るのは正常**なので、まずそれが消えるまで待ってください。消えたあとに
 ピッカーが出す文言が答えです。

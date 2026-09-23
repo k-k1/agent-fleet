@@ -3,6 +3,14 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.23.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.0) — 2026-09-23
+
+セッションの種類が 2 つ増えました。**llama.cpp** は、配備のチャットエンジンか自分の
+llama-server の上でフリート自身のハーネスが動くもの、**Muse Code** は Meta のコーディング
+エージェントです。あわせて、全セッションを時間軸のレーンとして描く俯瞰図、マスクと参照画像を
+使った指示による画像編集、機能ごとにエージェントとモデルを固定できる AI補助、そして期限が来ても
+消えずにアーカイブへ移る停止セッションが入りました。
+
 ## [0.22.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.22.1) — 2026-09-18
 
 修正 1 件で、対象は自前の推論エンジンを動かす `ecs-ec2` の配備です。エンジンツールの

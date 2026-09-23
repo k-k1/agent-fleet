@@ -24,6 +24,7 @@ import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -449,20 +450,13 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
 
   // --- the right-click menu -------------------------------------------------------------
   // Closed by an outside click / Escape / the window losing focus, the same three ways the
-  // file tree's menu closes. Registered on `document` rather than on the pane: the menu is
-  // portalled to <body> and a click landing anywhere else must dismiss it.
+  // file tree's menu closes. The outside click only closes it (useDismiss swallows it).
+  useDismiss(menuRef, !!menu, () => setMenu(null));
   useEffect(() => {
     if (!menu) return;
     const shut = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && shut();
-    document.addEventListener("mousedown", shut);
-    document.addEventListener("keydown", onKey);
     window.addEventListener("blur", shut);
-    return () => {
-      document.removeEventListener("mousedown", shut);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", shut);
-    };
+    return () => window.removeEventListener("blur", shut);
   }, [menu]);
   // Clamped on EVERY render, not once on open: the JSX re-applies the raw cursor coords as
   // inline style each time, and this view re-renders on its own (the files tick, a running

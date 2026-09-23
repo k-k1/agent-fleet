@@ -16,6 +16,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { SelectionFloat } from "../../../ui/SelectionFloat.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 import { placeFixed } from "../../../lib/placeFixed.ts";
+import { useDismiss } from "../../../lib/useDismiss.ts";
 import { useSelectionCapture } from "../../../lib/selectionCapture.ts";
 import { selectionAnchor } from "../../viewer/quoteMarks.ts";
 import { MARK_CLASS } from "./markPaint.ts";
@@ -104,10 +105,7 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const el = (e.target as Element | null)?.closest?.<HTMLElement>("mark." + MARK_CLASS);
-      if (!el) {
-        if (!(e.target as Element | null)?.closest?.(".tmark-card")) setCard(null);
-        return;
-      }
+      if (!el) return;
       const mark = marks.find(el.dataset.markId || "");
       if (!mark) return;
       const rect = el.getBoundingClientRect();
@@ -116,6 +114,8 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
     document.addEventListener("click", onClick);
     return () => document.removeEventListener("click", onClick);
   }, [marks]);
+  // Pressing anywhere outside the open card only closes it.
+  useDismiss(cardRef, !!card, () => setCard(null));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

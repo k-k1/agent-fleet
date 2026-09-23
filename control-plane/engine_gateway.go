@@ -1580,6 +1580,12 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	}
 	view, err := e.ecs.view(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The caller's own wait ended mid-read: "not yet", so ensureReady's loop reports the
+			// wait running out (errEngineWaking, which a client retries) rather than a service
+			// that could not be read (engine_unavailable, which it does not).
+			return nil
+		}
 		return fmt.Errorf("could not read the engine service: %w", err)
 	}
 	if view.state == "none" {

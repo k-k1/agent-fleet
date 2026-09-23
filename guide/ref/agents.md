@@ -31,7 +31,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
 | Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | ✓⁴ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | ✓¹¹ | — | — |
@@ -95,6 +95,8 @@ prompt on every turn.
 | cursor | Open the authorize link and approve in your browser. There is no code to paste. A Cursor account is required; API keys are not accepted. |
 | kiro | Device flow: open the link with the confirmation code and approve (Builder ID, Google, GitHub…). API keys are not accepted. The CLI is large and is installed on demand the first time unless the deployment bakes it in. |
 | agy | Sign in from its card in the agent settings. |
+| lcpp | None — the deployment's engine needs no sign-in. Its card has **"Use llama.cpp"** (the switch; Off removes it from the launch menus and refuses a launch by any route) and **"Your own connection"** (URL, optional API key, **"Check connection"**), which points sessions at a llama-server on your own network instead of the deployment's engine. |
+| muse | **"Install Muse Code"** once (about 299 MB into your home), then **"Sign in with your Meta account"** (approve in the browser — no code to paste; the subscription route) or **"Use an API key"** (per-use billing; saving a key removes a stored account sign-in). |
 | shell | Not applicable. |
 | ssm | Uses the workspace's AWS SSM connection. |
 
