@@ -273,6 +273,7 @@ POST /api/imagegen/jobs
 DELETE /api/imagegen/jobs/{id}
 GET /api/imagegen/knowledge
 POST /api/imagegen/knowledge
+PUT /api/imagegen/knowledge
 GET /api/imagegen/props
 POST /api/imagegen/queue
 GET /api/imagegen/status
