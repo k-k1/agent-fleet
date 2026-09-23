@@ -34,7 +34,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | Timing | What |
 |---|---|
 | **Immediately** | Display, keys, speech, notifications; adding and removing connections |
-| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, fleet observation, image generation, MCP servers |
+| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
 
@@ -221,10 +221,12 @@ Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor /
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
 **llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
 the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
-**Sessions** group holds **session-to-session messaging**, **fleet observation from sessions**,
+**Sessions** group holds **session-to-session messaging**, **starting sessions from sessions** (with
+**children per session**), **fleet observation from sessions**,
 **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
 → [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions),
+[02 Sessions](02-sessions.md#starting-sessions-from-a-session-child-sessions),
 [02 Sessions](02-sessions.md#having-a-session-generate-an-image)
 
 ### Git hosting
@@ -319,7 +321,7 @@ scale.
 
 - **Range** — 24 hours / 7 days / 30 days.
 - **Split by** — feature / agent / model / session origin (started by a person, created by the operator, created
-  by a schedule, handoff) / trigger (user, automatic, schedule, operator, bridge …).
+  by a schedule, handoff, started by a session) / trigger (user, automatic, schedule, operator, bridge …).
 - **Metric** — tokens spent / number of calls / cache reads / **API-equivalent cost (estimated)** — tokens ×
   each model's published API list price (cache writes ×1.25, cache reads ×0.1), shown with a `≈`. **It is not
   what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read

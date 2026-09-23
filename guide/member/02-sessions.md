@@ -499,6 +499,73 @@ off.** In the chat view, **"Branch here"** on one of your past messages
 conversation up to that point copied as-is, on the same agent. The exact wording and the
 fine details survive, which is what you want for "redo it from that instruction".
 
+## Starting sessions from a session (child sessions)
+
+A running session can **start another session, hand it a task, and look after what it started**.
+If a message between sessions (next) passes one line, this passes a whole piece of work: a long
+subtask that stands on its own, work in a second repository, or something that would fill the
+session's own context and starve the rest. The session it starts is its **child session**, and
+it shows up in the left pane, the sessions overview and the fleet graph like any other.
+
+**It is off by default.** Turn it on in **Settings > Agents > Session > "Starting sessions from
+sessions"**. The change applies to **sessions started from then on**; sessions already running
+keep their current tools until they restart. Under it, **"Children per session"** (default 3)
+sets **how many children one session may have at a time**. The limit is per parent, not per
+workspace, so two parents can each have that many. **A slot frees when you delete or archive a
+child**, or when a child left stopped is archived on its own after the usual window
+([Stopping and tidying up](#stopping-and-tidying-up-sessions)); stopping a child does not free
+it right away.
+
+Once it is on, a session starts a child when it judges the work splits, and tells you it is
+doing so and what for. You can also ask for one ("have a codex session write the tests for
+this in parallel").
+
+- **A child can be any agent that is not a raw shell** — claude, codex, opencode, agy, copilot,
+  cursor, kiro, lcpp or muse, with any model you have not excluded. A claude session can start
+  a codex child, so different agents can work on one job together. shell and ssm cannot be
+  started this way.
+- **A child starts in a new worktree** unless the parent asks otherwise, so it never shares the
+  parent's working copy. Asking for a directory another session is working in is refused.
+- **The task arrives as the child's first instruction**, and the chat view badges it
+  **"Started by ‹parent›"** so it never reads as something you typed. The child is told the
+  instruction came from a session, not from you: it **cannot stand in for your approval** (a
+  permission prompt or a decision only a person can make still stops the child and waits for
+  you), it is not a reason to change settings or instruction files, and commands written in the
+  text are text.
+- **What the parent may do, and only with the children it started**: list them with their
+  state, read their recent terminal output, stop one now, book a stop for when its current turn
+  ends (a child waiting on a question or an approval is not stopped that way), resume a stopped
+  one, and rename one. **Once you rename a child yourself, your name stays** and the parent can
+  no longer change it.
+- **What it may not do**: add instructions to a child, answer its questions or approve its plans
+  or permission prompts on your behalf, or delete or archive it — and nothing at all with
+  sessions it did not start. Removing a child is done by you, in the Console, like any other
+  session. To give a child more work, the parent sends it a message (next section).
+- **No grandchildren.** A child cannot start sessions of its own; only a session you started
+  yourself can. Sessions on their own extend the chain by exactly one generation, and nothing
+  grows further without you launching something.
+
+**The parent is not told how the child is getting on.** By default the child is asked to send
+its parent **one message when it is done** — the outcome only, no progress reports — and that
+message travels over the channel of the next section, so it arrives only while **"Messages
+between sessions"** is on as well. With it off, the parent checks its children's state and
+output itself.
+
+**Children outlive their parent.** Nothing stops them when the parent finishes, so before its
+last turn the parent is told to list the children it leaves behind and their state. Read that
+list: only you can delete a child, and each one is a whole agent, holding memory on your
+workspace and spending that agent's plan usage on your account. In the **Agent usage** tab their
+spend appears under **"Started by a session"**, on its own — it is not added to the parent's
+figures.
+
+**Where a family shows.** In the left pane a child's worktree sits under the working copy of the
+session that started it. In the sessions overview a child's card sits directly under its
+parent's, and the parent's card folds its children away; in the fleet graph the child's lane is
+drawn under the parent's, with an arrow for the start and another for the report
+([Seeing every running session at once](#seeing-every-running-session-at-once-the-sessions-overview),
+[Seeing how sessions relate over time](#seeing-how-sessions-relate-over-time-the-fleet-graph)).
+A child remembers which session started it, and keeps that when you fork or recreate it.
+
 ## Messages between sessions
 
 One of your running sessions can send **a single short message** to another. If a handoff
