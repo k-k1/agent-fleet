@@ -5,6 +5,8 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -42,6 +44,39 @@ func WriteMeta(m Meta) {
 		_ = os.WriteFile(MetaPath(m.Name), b, 0o600)
 	}
 	rememberCWD(m)
+}
+
+// CreateMetaIfAbsent writes m only when no meta of that name exists, and reports whether it
+// did. For the cleanup restore: an archived meta is a snapshot, and a live meta of the same
+// name — a session already restored, then locked, renamed or run since — is newer and must
+// not be rolled back to it. The meta is written to a temporary name first and hard-linked
+// into place, which fails if the name exists: atomic, and never a half-written meta on disk.
+func CreateMetaIfAbsent(m Meta) (created bool, err error) {
+	if err := os.MkdirAll(MetaDir(), 0o700); err != nil {
+		return false, err
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return false, err
+	}
+	tmp, err := os.CreateTemp(MetaDir(), ".meta-*.tmp")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp.Name())
+	_, werr := tmp.Write(b)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		return false, errors.Join(werr, cerr)
+	}
+	if err := os.Link(tmp.Name(), MetaPath(m.Name)); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	rememberCWD(m)
+	return true, nil
 }
 
 func ReadMeta(name string) (Meta, bool) {

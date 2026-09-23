@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
@@ -210,6 +211,7 @@ func handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	// payload stays ONE map literal at the write site: wiremap_golden_test.go goldens the key
 	// set by parsing this literal, and a map built up over several statements leaves the
 	// response with no coverage at all.
+	invalidateCleanupUsage() // the trash just grew
 	remote, remoteErr := "", ""
 	if wantRemote {
 		state, err := deleteRemoteBranch(dir, branch)
@@ -265,17 +267,32 @@ func handleListCleanupArchives(w http.ResponseWriter, r *http.Request) {
 
 func handleRestoreCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// restoreCleanupArchive takes the cleanup lock itself, for the meta hand-over only.
 	restored, err := restoreCleanupArchive(id)
+	if errors.Is(err, errRestoreStopped) {
+		// Not "no such archive": it exists, part of it may be back, and restoring again is
+		// what finishes it — the Console says so.
+		invalidateCleanupUsage()
+		httpx.WriteErr(w, http.StatusConflict, "restore_incomplete", err.Error())
+		return
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "restore_failed", err.Error())
 		return
 	}
+	invalidateCleanupUsage() // restored sessions take their cache off the orphan count
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"restored": restored})
 }
 
 func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := purgeCleanupArchive(id); err != nil {
+	var err error
+	sessionx.WithCleanupLock(func() { err = purgeCleanupArchive(id) })
+	if errors.Is(err, errRestoreIncomplete) {
+		httpx.WriteErr(w, http.StatusConflict, "restore_incomplete", err.Error())
+		return
+	}
+	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "purge_failed", err.Error())
 		return
 	}

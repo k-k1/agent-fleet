@@ -59,15 +59,25 @@ func handleDeleteCacheOrphans(w http.ResponseWriter, r *http.Request) {
 	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, cacheDeleteResult{
 		Feature: feature, Dirs: len(removed.Dirs), Files: removed.Files, Bytes: removed.Bytes,
+		Truncated: removed.Truncated, Unreadable: removed.Unreadable,
+		Stalled: removed.Stalled, Stuck: removed.Stuck,
 	})
 }
 
-// cacheDeleteResult is what a delete_cache reclaimed.
+// cacheDeleteResult is what a delete_cache reclaimed. Truncated = the scan stopped at its
+// budget, so only part was taken and the next survey lists the rest; Unreadable = folders
+// left out because something inside could not be read.
 type cacheDeleteResult struct {
-	Feature string `json:"feature"`
-	Dirs    int    `json:"dirs"`
-	Files   int    `json:"files"`
-	Bytes   int64  `json:"bytes"`
+	Feature    string `json:"feature"`
+	Dirs       int    `json:"dirs"`
+	Files      int    `json:"files"`
+	Bytes      int64  `json:"bytes"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	Unreadable int    `json:"unreadable,omitempty"`
+	// Stalled / Stuck: nothing could be taken, and pressing again will not change that —
+	// said here so a 200 with zero is not read as "nothing left".
+	Stalled bool `json:"stalled,omitempty"`
+	Stuck   bool `json:"stuck,omitempty"`
 }
 
 type usagePart struct {
@@ -83,6 +93,9 @@ type usageOrphans struct {
 	Bytes int64 `json:"bytes"`
 	Files int   `json:"files"`
 	Dirs  int   `json:"dirs"`
+	// Unjudged counts session folders not judged because the session store is missing, so
+	// the figure covers the chat folders only. Its own field: it is not "too many files".
+	Unjudged int `json:"unjudged,omitempty"`
 }
 
 type cleanupUsage struct {
@@ -165,16 +178,23 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 		u.Cache.Files += p.Files
 	}
 
+	// Each orphan scan gets the same budget a delete would, not what the walk above left over:
+	// a large cache would otherwise leave nothing for reachability and show "can't tell" for
+	// a figure the cleanup itself can compute. Each is bounded on its own, and so is the time
+	// it holds the cleanup lock. A feature that cannot be judged makes the figure unknown
+	// rather than a lower bound mixed with a zero.
 	u.Orphans.OK = true
 	for _, feature := range sessionx.CacheOrphanFeatures {
-		found, err := sessionx.ScanCacheOrphans(feature, now)
-		if err != nil {
+		found, err := sessionx.ScanCacheOrphans(feature, now, nil)
+		if err != nil || found.Stalled || found.Stuck {
 			u.Orphans = usageOrphans{}
 			break
 		}
 		u.Orphans.Bytes += found.Bytes
 		u.Orphans.Files += found.Files
 		u.Orphans.Dirs += len(found.Dirs)
+		u.Orphans.Unjudged += found.Unjudged
+		u.Truncated = u.Truncated || found.Truncated
 	}
 
 	tents, _ := os.ReadDir(cleanupStoreDir())
@@ -189,7 +209,7 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 			u.Trash.Archives++
 		}
 	}
-	u.Truncated = budget <= 0
+	u.Truncated = u.Truncated || budget <= 0
 	return u
 }
 

@@ -244,7 +244,7 @@ function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own
 // The /cleanup/usage answer (workspace/agent/cleanup_cache.go).
 interface CleanupUsage {
   cache?: { bytes: number; files: number; parts?: { name: string; bytes: number; files: number }[] };
-  orphans?: { ok: boolean; bytes: number; files: number; dirs: number };
+  orphans?: { ok: boolean; bytes: number; files: number; dirs: number; unjudged?: number };
   trash?: { bytes: number; archives: number };
   truncated?: boolean;
 }
@@ -328,6 +328,9 @@ function DiskSection() {
             </Button>
           </div>
           {u.truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
+          {/* Its own note: not "too many files" — the session folders were not judged at all
+              because the session store is missing, so the figure above is the chats' only. */}
+          {!!u.orphans?.unjudged && <p className="muted ds-sub">{tr("machine.disk_orphans_unjudged")}</p>}
           <p className="muted ds-sub">{tr("machine.disk_note")}</p>
         </>
       )}

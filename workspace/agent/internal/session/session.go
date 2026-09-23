@@ -479,6 +479,13 @@ type Meta struct {
 	// conversation. Once that exists, later launches resume normally and ForkFrom
 	// is ignored — a restart never re-forks. Empty for non-forked sessions.
 	ForkFrom string `json:"forkFrom,omitempty"`
+	// ForkSids is every session this one was forked from, nearest last, as session UUIDs
+	// (session.UUID of each ancestor). A fork's conversation is a copy of its source's, so the
+	// absolute paths the source's prompts point at — its pasted files under
+	// ~/.cache/agent-fleet/pasted/<sid> — are in this session's history too, and in its own
+	// forks' after it. The cache orphan scan keeps those directories while any descendant
+	// lives. Unlike ForkFrom it is kept for good and is the same id space for every kind.
+	ForkSids []string `json:"forkSids,omitempty"`
 	// ForkAt narrows ForkFrom to a POINT in the source conversation: this session
 	// carries the source's history up to — but NOT including — the anchored turn
 	// (docs/log/55 §55.3). The value is whatever the kind's ForkAtResolver produced from the

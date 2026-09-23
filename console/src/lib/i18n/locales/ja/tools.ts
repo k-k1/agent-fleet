@@ -263,6 +263,7 @@ export const tools = {
   "machine.disk_trash": "掃除のごみ箱",
   "machine.disk_trash_of": "{size}（{count} 件）",
   "machine.disk_open_cleanup": "掃除を開く",
+  "machine.disk_orphans_unjudged": "セッションの保存先が見つからないので、「うち削除済みの分」はチャットの分だけです（セッションの分は数えていません）。",
   "machine.disk_truncated": "ファイルが多すぎるため途中で数えるのをやめました。実際はこれより多い値です。",
   "machine.disk_note":
     "Agent Fleet 自身が ~/.cache/agent-fleet に溜めるものだけを数えています（作業コピーやツールのキャッシュは含みません）。生成した画像は 30 日、サムネイルは 14 日で自動的に消えます。削除済みセッションの分とごみ箱は、掃除から片付けられます。",

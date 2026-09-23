@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1260,24 +1261,8 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	title, _ := CleanTitle(forkTitle(src))
 	// The driver is inherited: forking a managed session stays managed (copied through the
 	// runtime's fork API, docs/log/27 P2), while tui keeps the CLI fork launch.
-	meta := session.Meta{
-		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
-		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
-		Repo:      filepath.Base(src.Dir),
-		Branch:    gitx.GitCurrentBranch(src.Dir),
-		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
-		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
-		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
-		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the
-		// source's origin would blend it into "sessions a human opened" and hide the spend
-		// handoffs add. The originating conversation IS inherited from the parent, so a
-		// handoff from an operator-started session stays traceable in the same chain.
-		// OriginSession rides along only for a source in an unattended chain (forkLineage):
-		// forking a child keeps the lineage, so the successor still cannot spawn, while its
-		// origin=handoff keeps it out of the parent's steering set. Forking a session a person
-		// launched from a handoff proposal inherits nothing — see forkLineage.
-		Origin: session.OriginHandoff, OriginConv: src.OriginConv, OriginSession: forkLineage(src),
-	}
+	meta := forkMeta(src, forkName, title, forkFrom, forkAt)
+
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title, meta.Name)
 	}
@@ -1653,4 +1638,36 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	recordFleetGraphBirth(newMeta)
 	handOverSpawnLineage(m.Name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
+}
+
+// forkSids is the ancestry a fork of src records: src's own, then src. The whole chain, not
+// just the parent — a fork of a fork carries the grandparent's pasted paths too
+// (session.Meta.ForkSids).
+func forkSids(src session.Meta) []string {
+	return append(slices.Clone(src.ForkSids), session.UUID(src.Dir, src.Name))
+}
+
+// forkMeta is the meta a fork of src starts with. Its own function so what a fork records —
+// the ancestry the cache orphan scan relies on above all — can be checked without driving a
+// real fork, which needs a real source conversation.
+func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) session.Meta {
+	return session.Meta{
+		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
+		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
+		Repo:      filepath.Base(src.Dir),
+		Branch:    gitx.GitCurrentBranch(src.Dir),
+		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
+		ForkSids: forkSids(src),
+		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
+		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
+		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the
+		// source's origin would blend it into "sessions a human opened" and hide the spend
+		// handoffs add. The originating conversation IS inherited from the parent, so a
+		// handoff from an operator-started session stays traceable in the same chain.
+		// OriginSession rides along only for a source in an unattended chain (forkLineage):
+		// forking a child keeps the lineage, so the successor still cannot spawn, while its
+		// origin=handoff keeps it out of the parent's steering set. Forking a session a person
+		// launched from a handoff proposal inherits nothing — see forkLineage.
+		Origin: session.OriginHandoff, OriginConv: src.OriginConv, OriginSession: forkLineage(src),
+	}
 }
