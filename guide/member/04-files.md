@@ -265,8 +265,9 @@ pane per workspace — opening it again focuses the one you have.
   picture 2 and the duck from picture 3 on the table"). Every other model reads one. On a model with no slider, how much changes is decided by the instruction itself.
   These models offer **Edit** and **Inpaint** only — there is no Generate, since they cannot work
   without a picture — so choosing one while the operation is set to Generate switches it and says
-  so (**"… does not support the previous operation — switched to Edit"**). Their mask must be the
-  picture's own size; one that is not comes back as a failed job. An edited picture's
+  so (**"… does not support the previous operation — switched to Edit"**). The whole picture is
+  edited — it is scaled to the model's size, never cropped — and a mask of another size is
+  stretched over it, so it marks the same region either way. An edited picture's
   properties record the prompt, the negative and the size, as a generated one's do. **Qwen-Image 2.1** does both:
   it generates from a prompt alone, with the size fields, and edits by instruction with up to
   **ten** reference pictures.
