@@ -795,6 +795,12 @@ export async function chatStream(
 // authority.
 export const sessionSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/lock`, "POST", { locked });
+// Delete a session: the Agent moves it to the cleanup trash, where it can be restored
+// (ADR 0101). stop = stop it first if it is running (otherwise a running one answers 409).
+// reclaim=1 is for an Agent older than ADR 0101, where a DELETE without it forgot the
+// session WITHOUT the trash; a current Agent ignores it.
+export const sessionDelete = (name: string, opts: { stop?: boolean } = {}): Promise<Response> =>
+  raw(`api/sessions/${encodeURIComponent(name)}?reclaim=1${opts.stop ? "&stop=1" : ""}`, { method: "DELETE" });
 // Attention beacon (docs/log/75 P3): tells the Workspace's idle clock that a person is
 // touching the Console right now. The response is ignored — a dropped presence record is
 // picked up by the next action. auto-start is not allowed, so this never wakes a stopped

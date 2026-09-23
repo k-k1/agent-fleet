@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { api, raw, rawJSON } from "../../core/api/client.ts";
+import { api, raw, rawJSON, sessionDelete } from "../../core/api/client.ts";
 
 interface SsmLoginModalProps {
   name: string;
@@ -74,11 +74,14 @@ export function SsmLoginModal({ name, start = false, force = false, onReady, onC
   }, [name]);
 
   const cancel = async () => {
-    // Fresh create (New Session): /stop removes the just-created session entirely.
-    // Resume (`start`): the session already existed — /halt stops it but KEEPS the
-    // meta/row, so aborting the login doesn't delete the user's session.
+    // Fresh create (New Session): delete the just-created session (it goes to the trash like
+    // every delete, ADR 0101 — a meta-only entry). Resume (`start`): the session already
+    // existed — /halt stops it but KEEPS the meta/row, so aborting the login doesn't delete
+    // the user's session.
     try {
-      await raw(`api/sessions/${encodeURIComponent(name)}/${start ? "halt" : "stop"}`, { method: "POST" });
+      await (start
+        ? raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" })
+        : sessionDelete(name, { stop: true }));
     } catch {
       /* best effort */
     }

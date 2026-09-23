@@ -13,7 +13,10 @@ import { createRoot, type Root } from "react-dom/client";
 const raw = vi.fn();
 vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
-  return { ...real, raw: (...a: unknown[]) => raw(...a) };
+  // sessionDelete is recorded through the same spy, as the request it sends.
+  const sessionDelete = (name: string, opts: { stop?: boolean } = {}) =>
+    raw(`api/sessions/${encodeURIComponent(name)}?reclaim=1${opts.stop ? "&stop=1" : ""}`, { method: "DELETE" });
+  return { ...real, raw: (...a: unknown[]) => raw(...a), sessionDelete };
 });
 vi.mock("../../layout/store.ts", () => ({
   useLayoutStore: (sel: (s: unknown) => unknown) => sel({ closeSessionPanes: vi.fn() }),
@@ -122,10 +125,10 @@ describe("作業コピー削除モーダル", () => {
     ]);
   });
 
-  it("shell は棚に上げず stop で忘れる", async () => {
+  it("shell は棚に上げずごみ箱へ移す（ADR 0101）", async () => {
     await render(node(repo("app@a")), [sess("s1", "app@a", { kind: "shell" })]);
     await click(runButton());
-    expect(sent()[0]).toBe("POST api/sessions/s1/stop");
+    expect(sent()[0]).toBe("DELETE api/sessions/s1?reclaim=1&stop=1");
   });
 
   it("要確認の行はチェックして初めて実行され、force=true が付く", async () => {

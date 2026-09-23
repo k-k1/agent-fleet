@@ -18,7 +18,7 @@ import type { CSSProperties } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { raw, errText } from "../../core/api/client.ts";
+import { raw, errText, sessionDelete } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -114,8 +114,15 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
    *  landed — a row whose sessions could not be cleared is NOT deleted: removing the folder
    *  under a session that still has a meta leaves a row pointing at nothing. */
   const clearSessions = async (p: CopyPlan): Promise<string> => {
-    const call = async (s: Session, ep: "archive" | "stop") => {
-      const res = await raw(`api/sessions/${enc(s.name)}/${ep}`, { method: "POST" }).catch(() => null);
+    // AI sessions go to the archive; shell / ssm to the trash (restorable, ADR 0101). The Agent
+    // would do the same for whatever is left when the copy is deleted — doing it here first
+    // gives each row its own progress and error.
+    const call = async (s: Session, op: "archive" | "delete") => {
+      const res = await (
+        op === "archive"
+          ? raw(`api/sessions/${enc(s.name)}/archive`, { method: "POST" })
+          : sessionDelete(s.name, { stop: true })
+      ).catch(() => null);
       if (!res?.ok) {
         const j = await res?.json().catch(() => null);
         return j?.error ? errText(j.error) : tr("rp.del.session_failed_generic", { name: s.name });
@@ -129,7 +136,7 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
       if (err) return err;
     }
     for (const s of forget) {
-      const err = await call(s, "stop");
+      const err = await call(s, "delete");
       if (err) return err;
     }
     return "";

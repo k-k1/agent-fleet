@@ -217,7 +217,7 @@ describe("MachineView", () => {
         ],
       },
       orphans: { ok: true, bytes: 102 * 2 ** 20, files: 344, dirs: 125 },
-      trash: { bytes: 486 * 2 ** 20, archives: 1082 },
+      trash: { bytes: 486 * 2 ** 20, archives: 1082, oldest: "2026-07-26" },
     };
     const { useSettingsUI } = await import("../store.ts");
     const { useSessionUI } = await import("../../sessions/ui.ts");
@@ -231,7 +231,7 @@ describe("MachineView", () => {
     expect(text).toContain("codex の画像");
     expect(text).not.toContain("empty"); // a zero-byte part is not a line item
     expect(text).toContain("うち削除済みの分");
-    expect(text).toContain("486 MB（1082 件）");
+    expect(text).toContain("486 MB（1082 件）・最古 2026-07-26");
 
     const btn = [...host!.querySelectorAll("button")].find((b) => b.textContent?.includes("掃除を開く"))!;
     await act(async () => {

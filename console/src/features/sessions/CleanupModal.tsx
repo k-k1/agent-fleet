@@ -37,6 +37,11 @@ interface CleanupArchive {
   bytes?: number;
 }
 
+/** "Delete permanently: older ones" in the trash tab (ADR 0101 decision 6). A person presses it —
+ *  nothing in the trash expires on its own (ADR 0097) — so a fixed window is enough; the point is
+ *  not to pick hundreds of rows one by one. */
+const PURGE_OLDER_DAYS = 30;
+
 interface CleanupModalProps {
   onClose?: () => void;
   onChanged?: () => void;
@@ -65,7 +70,9 @@ function runAction(c: CleanupCandidate): Promise<Response> {
     case "delete_session":
       return raw(`api/sessions/${enc(c.id)}?reclaim=1`, { method: "DELETE" });
     case "delete_worktree":
-      return raw(`api/repos/${enc(c.id)}?prune_sessions=1`, { method: "DELETE" });
+      // The Agent shelves the stopped AI sessions in it and trashes its shell / ssm itself
+      // (ADR 0101 decision 4). prune_sessions=1 would make an Agent older than that FORGET them.
+      return raw(`api/repos/${enc(c.id)}`, { method: "DELETE" });
     case "delete_branch":
       return raw(`api/repos/${enc(c.id)}/branch?branch=${enc(c.branch || "")}`, { method: "DELETE" });
     case "delete_cache":
@@ -274,6 +281,49 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
         toast(res?.status === 409 ? t("clean.purge_restore_incomplete") : t("clean.purge_failed"));
       }
       await loadArchives();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Archives past the window, by their write time (at is the Agent's RFC3339). One without a
+  // parseable at is left out: the Agent would not purge it either.
+  const oldArchives = useMemo(() => {
+    if (!archives) return [];
+    const cutoff = Date.now() - PURGE_OLDER_DAYS * 24 * 60 * 60 * 1000;
+    return archives.filter((a) => {
+      const at = a.at ? Date.parse(a.at) : NaN;
+      return Number.isFinite(at) && at < cutoff;
+    });
+  }, [archives]);
+  const oldBytes = oldArchives.reduce((n, a) => n + (a.bytes || 0), 0);
+
+  const purgeOld = async () => {
+    const ok = await askConfirm({
+      title: tr("clean.purge_old_title", { days: PURGE_OLDER_DAYS }),
+      body: tr("clean.purge_old_body", { count: oldArchives.length, size: humanSize(oldBytes) }),
+      confirmLabel: tr("clean.purge_do"),
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await raw(`api/cleanup/archives?older_than_days=${PURGE_OLDER_DAYS}`, { method: "DELETE" }).catch(
+        () => null,
+      );
+      const j = res?.ok ? await res.json().catch(() => null) : null;
+      if (!j) {
+        toast(t("clean.purge_failed"));
+      } else {
+        // kept = archives a restore left half done: the Agent keeps them, as the single purge does.
+        toast(
+          j.kept
+            ? t("clean.purge_old_done_kept", { count: j.purged ?? 0, kept: j.kept })
+            : t("clean.purge_old_done", { count: j.purged ?? 0, size: humanSize(j.bytes ?? 0) }),
+        );
+      }
+      await loadArchives();
+      onChanged?.();
     } finally {
       setBusy(false);
     }
@@ -597,35 +647,52 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
             ) : archives.length === 0 ? (
               <div className="clean-empty">{tr("clean.archives_empty")}</div>
             ) : (
-              <ul className="clean-list">
-                {archives.map((a) => (
-                  <li key={a.id} className="clean-row clean-archive-row">
-                    {/* at is the Agent's RFC3339 (UTC), so render it as a locale date-time
-                        rather than reusing the raw value in the viewer's timezone. When at
-                        is missing, id is not a valid date and fmtDateTime returns it as-is. */}
-                    <span className="clean-arch-when">{fmtDateTime(a.at || a.id, DATETIME_FULL)}</span>
-                    <span className="clean-arch-what">
-                      {a.reason === "delete_branch"
-                        ? tr("clean.archive_reason_delete_branch")
-                        : tr("clean.archive_reason_delete_session")}
-                      {a.sessions && a.sessions.length > 0
-                        ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
-                        : ""}
-                      {a.branches && a.branches.length > 0
-                        ? " · " + tr("clean.archive_branches_n", { count: a.branches.length })
-                        : ""}
+              <>
+                {oldArchives.length > 0 && (
+                  <div className="clean-toolbar">
+                    <span className="muted">
+                      {tr("clean.purge_old_hint", {
+                        days: PURGE_OLDER_DAYS,
+                        count: oldArchives.length,
+                        size: humanSize(oldBytes),
+                      })}
                     </span>
-                    <span className="clean-arch-actions">
-                      <Button variant="ghost" onClick={() => void restore(a.id)} disabled={busy}>
-                        {tr("clean.restore")}
-                      </Button>
-                      <Button variant="danger" onClick={() => void purge(a.id)} disabled={busy}>
-                        {tr("clean.purge")}
-                      </Button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
+                    <span className="clean-toolbar-spacer" />
+                    <Button variant="danger" onClick={() => void purgeOld()} disabled={busy}>
+                      {tr("clean.purge_old", { days: PURGE_OLDER_DAYS })}
+                    </Button>
+                  </div>
+                )}
+                <ul className="clean-list">
+                  {archives.map((a) => (
+                    <li key={a.id} className="clean-row clean-archive-row">
+                      {/* at is the Agent's RFC3339 (UTC), so render it as a locale date-time
+                          rather than reusing the raw value in the viewer's timezone. When at
+                          is missing, id is not a valid date and fmtDateTime returns it as-is. */}
+                      <span className="clean-arch-when">{fmtDateTime(a.at || a.id, DATETIME_FULL)}</span>
+                      <span className="clean-arch-what">
+                        {a.reason === "delete_branch"
+                          ? tr("clean.archive_reason_delete_branch")
+                          : tr("clean.archive_reason_delete_session")}
+                        {a.sessions && a.sessions.length > 0
+                          ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
+                          : ""}
+                        {a.branches && a.branches.length > 0
+                          ? " · " + tr("clean.archive_branches_n", { count: a.branches.length })
+                          : ""}
+                      </span>
+                      <span className="clean-arch-actions">
+                        <Button variant="ghost" onClick={() => void restore(a.id)} disabled={busy}>
+                          {tr("clean.restore")}
+                        </Button>
+                        <Button variant="danger" onClick={() => void purge(a.id)} disabled={busy}>
+                          {tr("clean.purge")}
+                        </Button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </div>
         )}

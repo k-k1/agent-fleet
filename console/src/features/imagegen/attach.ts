@@ -35,14 +35,16 @@ export async function attachAgent(p: {
   if (p.replacing && studioId) {
     // Unbind first, and wait for it: the create refuses a studio still bound to a live session
     // (409 studio_bound), and a stop does not finish before this returns. Unbound, the old
-    // session's tools are refused by the studio at once; stopping it is then only tidying.
+    // session's tools are refused by the studio at once; folding it away is then only tidying.
+    // It goes to the archive, not away: its conversation stays readable there, and deleting it
+    // is a person's call from the archive like any other (ADR 0101 decision 2).
     try {
       const u = await bindStudio(studioId, "");
       if (!u || u.error) return { studioId, error: (u?.error && errText(u.error)) || t("imggen.attach_failed") };
     } catch {
       return { studioId, error: t("err.network") };
     }
-    void raw(`api/sessions/${encodeURIComponent(p.replacing)}/stop`, { method: "POST" }).catch(() => undefined);
+    void raw(`api/sessions/${encodeURIComponent(p.replacing)}/archive`, { method: "POST" }).catch(() => undefined);
   }
   if (!studioId) {
     try {

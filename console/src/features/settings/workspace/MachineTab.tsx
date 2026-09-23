@@ -245,7 +245,8 @@ function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own
 interface CleanupUsage {
   cache?: { bytes: number; files: number; parts?: { name: string; bytes: number; files: number }[] };
   orphans?: { ok: boolean; bytes: number; files: number; dirs: number; unjudged?: number };
-  trash?: { bytes: number; archives: number };
+  /** oldest = YYYY-MM-DD of the oldest archive; nothing in the trash expires on its own. */
+  trash?: { bytes: number; archives: number; oldest?: string };
   truncated?: boolean;
 }
 
@@ -319,6 +320,7 @@ function DiskSection() {
             <Row label={tr("machine.disk_trash")}>
               <span className="mv-val">
                 {tr("machine.disk_trash_of", { size: humanSize(u.trash.bytes), count: u.trash.archives })}
+                {u.trash.oldest ? tr("machine.disk_trash_oldest", { date: u.trash.oldest }) : ""}
               </span>
             </Row>
           )}

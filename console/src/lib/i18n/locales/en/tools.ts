@@ -265,6 +265,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.disk_orphans_unknown": "Can't tell",
   "machine.disk_trash": "Cleanup trash",
   "machine.disk_trash_of": "{size} ({count} archives)",
+  "machine.disk_trash_oldest": ", oldest {date}",
   "machine.disk_open_cleanup": "Open cleanup",
   "machine.disk_orphans_unjudged": "The session store is missing, so \"Of which deleted\" covers chats only (session folders were not counted).",
   "machine.disk_truncated": "There were too many files to count them all; the real figures are higher.",
