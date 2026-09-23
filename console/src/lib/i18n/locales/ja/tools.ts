@@ -233,6 +233,7 @@ export const tools = {
   "machine.memory": "メモリ",
   "machine.mem_of_box": "{n}（インスタンスの搭載 {box}）",
   "machine.home_disk": "home ディスク",
+  "machine.home_disk_fs": "home のファイルシステム全体",
   "machine.src_measured": "実測",
   "machine.src_declared": "設定上",
   "machine.next_start_box": "設定が変更されています。次に起動すると {type} になります。",
@@ -240,7 +241,7 @@ export const tools = {
   "machine.note_own_box":
     "このインスタンスはあなた専用です。vCPU とメモリはまるごと使えます（メモリはホスト側の常駐分を差し引いた上限が入ります）。",
   "machine.note_shared_host":
-    "ホストは他の利用者と共有です。表示しているのはこのコンテナに割り当てられた分で、インスタンスそのものの搭載量ではありません。",
+    "ホストは他の利用者と共有です。vCPU とメモリはこのコンテナに割り当てられた分で、インスタンスそのものの搭載量ではありません。ディスクは home があるファイルシステム全体の値で、このワークスペース以外の分も含みます。",
   "machine.usage_title": "使用状況",
   "machine.usage_window": "直近 {n} 分",
   "machine.usage_of": "{used} / {total}（{pct}%）",
@@ -248,6 +249,23 @@ export const tools = {
   "machine.usage_oom": "この間にメモリ不足でプロセスが強制終了されました（コンテナ自体は生きています）。",
   "machine.usage_note":
     "4 秒ごとに 1 点、最大 1 時間ぶん。値が変わらない間もグラフは進みます（変化が無いことは制御側が保証しています）。取得できなかった時間は線を切って表しています。",
+  "machine.disk_title": "Agent Fleet が使っているディスク",
+  "machine.disk_failed": "ディスクの内訳を取得できませんでした。",
+  "machine.disk_cache": "キャッシュ（~/.cache/agent-fleet）",
+  "machine.disk_part_generated": "生成した画像",
+  "machine.disk_part_thumbs": "サムネイル",
+  "machine.disk_part_pasted": "貼り付け・添付したファイル",
+  "machine.disk_part_codex_view_image": "codex が読んだ画像",
+  "machine.disk_part_memo_images": "メモの画像",
+  "machine.disk_part_other": "その他",
+  "machine.disk_orphans": "うち削除済みセッションの分",
+  "machine.disk_orphans_unknown": "判定できません",
+  "machine.disk_trash": "掃除のごみ箱",
+  "machine.disk_trash_of": "{size}（{count} 件）",
+  "machine.disk_open_cleanup": "掃除を開く",
+  "machine.disk_truncated": "ファイルが多すぎるため途中で数えるのをやめました。実際はこれより多い値です。",
+  "machine.disk_note":
+    "Agent Fleet 自身が溜めるものだけを数えています（作業コピーやツールのキャッシュは含みません）。生成した画像は 30 日、サムネイルは 14 日で自動的に消えます。削除済みセッションの分とごみ箱は、掃除から片付けられます。",
   "machine.note_who_changes":
     "サイズとマシンの種類はテナント管理者が決めます。変更は次にワークスペースを起動したときに反映されます。",
 

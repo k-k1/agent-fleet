@@ -390,10 +390,18 @@ administrator's to set.
 - A size or class your admin changes applies **at the next start**, so when the running instance and the
   configuration disagree, **both** are shown.
 - **Usage** — a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
-  home disk's usage. **The ceilings are the rows above** — this workspace's memory limit and its core
+  home disk's usage. **The disk figure is only yours on an instance of your own**; on a shared host it is
+  the whole filesystem home sits on (labelled so, and never coloured as a warning), because other
+  members fill it too. **The ceilings are the rows above** — this workspace's memory limit and its core
   count — so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
   unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
   it could not read**, and it says so when a process was killed for memory during the window.
+- **Disk used by Agent Fleet** — what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
+  down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
+  sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after
+  14 on their own; **"Open cleanup"** closes Settings and opens the cleanup modal, where the deleted
+  sessions' share and the trash can be tidied up ([02 Sessions](02-sessions.md#tidying-up-in-bulk-cleanup)).
+  Working copies and tool caches are not counted here.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain

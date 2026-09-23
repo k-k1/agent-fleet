@@ -82,6 +82,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	mux.HandleFunc("GET /cleanup/usage", handleCleanupUsage)
+	mux.HandleFunc("DELETE /cleanup/cache/{feature}", handleDeleteCacheOrphans)
 	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites
 	// on deletion (/stop forgetting the metadata, DELETE, collateral from deleting a working
 	// copy) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -27,10 +28,11 @@ import (
 //   - "keep":   do NOT auto-clean (live sessions, uncommitted/unpushed work) — needs
 //     the user to stop/push/force in the Console.
 //
-// action names the tool that acts on it ("archive_session" / "delete_worktree"), or
+// action names the tool that acts on it ("archive_session" / "delete_worktree" /
+// "delete_cache" — the last is a Console action only, the assistant has no tool for it), or
 // "" when there is no assistant action (informational — orphan panes, archived rows).
 type cleanupCandidate struct {
-	Type    string `json:"type"` // "session" | "worktree"
+	Type    string `json:"type"` // "session" | "worktree" | "branch" | "cache"
 	Action  string `json:"action,omitempty"`
 	ID      string `json:"id"` // session name, or repo base name (delete_worktree arg)
 	Display string `json:"display,omitempty"`
@@ -49,6 +51,11 @@ type cleanupCandidate struct {
 	Safety    string `json:"safety"` // safe | review | keep
 	ReasonKey string `json:"reason_key,omitempty"`
 	Reason    string `json:"reason"`
+	// Bytes / Files size a "cache" row (what the delete reclaims); Dirs counts the
+	// per-session directories it covers. 0 on every other type.
+	Bytes int64 `json:"bytes,omitempty"`
+	Files int   `json:"files,omitempty"`
+	Dirs  int   `json:"dirs,omitempty"`
 }
 
 // The "reason" of a candidate is text WE generate for the user to read, so per ADR 0033
@@ -72,6 +79,8 @@ const (
 	cleanReasonWtMerged     = "clean.reason.wt_merged"
 	cleanReasonWtUnmerged   = "clean.reason.wt_unmerged"
 	cleanReasonBranchMerged = "clean.reason.branch_merged"
+	cleanReasonCacheOrphan  = "clean.reason.cache_orphan"
+	cleanReasonCacheUnsafe  = "clean.reason.cache_unsafe"
 )
 
 var cleanupReasonJA = map[string]string{
@@ -86,6 +95,8 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonWtMerged:     "マージ済み・クリーン（親に取り込み済み）",
 	cleanReasonWtUnmerged:   "クリーンだが未マージ（固有コミットあり。削除でブランチは残るが要確認）",
 	cleanReasonBranchMerged: "マージ済みローカルブランチ（親に取り込み済み。削除しても復元可）",
+	cleanReasonCacheOrphan:  "削除済みセッション／会話のキャッシュ（ごみ箱にも無く、もう参照されない。削除は元に戻せない）",
+	cleanReasonCacheUnsafe:  "読めないセッション情報かごみ箱があり、参照の有無を判定できない（何も消さない）",
 }
 
 // cleanupReasonText resolves a reason key to its source-language sentence. An unknown key
@@ -231,9 +242,42 @@ func HandleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	out = append(out, cacheCleanupCandidates(time.Now())...)
+
 	counts := map[string]int{"safe": 0, "review": 0, "keep": 0}
 	for _, c := range out {
 		counts[c.Safety]++
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"candidates": out, "counts": counts})
+}
+
+// cacheCleanupCandidates turns the cache orphan scan (cache_orphans.go) into one row per
+// feature — hundreds of per-session directories as hundreds of rows would bury the rest of
+// the survey, and nobody picks among them: they are all equally unreachable.
+//
+// Graded safe: "provably done" is the grade's other half, and unreachable is provable here.
+// It is the one delete in this list with no gz trash behind it — images do not compress and
+// the restore reads a whole archive into memory — so the reason text says it cannot be undone.
+// An unprovable scan is shown as keep rather than hidden, like a locked session.
+func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
+	var out []cleanupCandidate
+	for _, feature := range CacheOrphanFeatures {
+		found, err := ScanCacheOrphans(feature, now)
+		if err != nil {
+			out = append(out, cleanupCandidate{
+				Type: "cache", ID: feature, Safety: "keep",
+				ReasonKey: cleanReasonCacheUnsafe, Reason: cleanupReasonText(cleanReasonCacheUnsafe),
+			})
+			continue
+		}
+		if len(found.Dirs) == 0 {
+			continue
+		}
+		out = append(out, cleanupCandidate{
+			Type: "cache", Action: "delete_cache", ID: feature, Safety: "safe",
+			Bytes: found.Bytes, Files: found.Files, Dirs: len(found.Dirs),
+			ReasonKey: cleanReasonCacheOrphan, Reason: cleanupReasonText(cleanReasonCacheOrphan),
+		})
+	}
+	return out
 }

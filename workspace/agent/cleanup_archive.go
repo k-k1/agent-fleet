@@ -27,11 +27,14 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
-func cleanupStoreDir() string { return filepath.Join(paths.AgentDataDir(), "cleanup") }
+// cleanupStoreDir is sessionx's CleanupArchiveDir: the cache orphan scan reads the same
+// directory to learn which sessions a restore could bring back, and one definition keeps
+// the two from drifting apart.
+func cleanupStoreDir() string { return sessionx.CleanupArchiveDir() }
 
 // cleanupArchivedSession is one session captured in an archive: enough to restore the
 // listed row (meta) and the conversation (jsonl payloads, stored as tar entries).

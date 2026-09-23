@@ -97,6 +97,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	session.RemoveMetaAndLineage(name) // a person's delete either way (ADR 0096 decision 6)
 	removeSessionSideFiles(name)
+	invalidateCleanupUsage() // the trash just grew
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": name, "archive": arch})
 }
 
@@ -278,6 +279,7 @@ func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "purge_failed", err.Error())
 		return
 	}
+	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"purged": id})
 }
 
