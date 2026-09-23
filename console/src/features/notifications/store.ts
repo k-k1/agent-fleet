@@ -16,6 +16,7 @@ import { openSharedSession } from "../sharing/open.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
 import { unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
+import { childIdleMuted } from "./childIdle.ts";
 
 export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsupported";
 export interface FleetNotification {
@@ -63,6 +64,8 @@ async function deliver(n: FleetNotification): Promise<void> {
   if (n.target.type === "session" && active === n.target.id) {
     return;
   }
+  // The row stays in the center (and its unread count); only the interruption is dropped.
+  if (n.kind === "answer-ready" && n.target.type === "session" && childIdleMuted(n.target.id)) return;
   const text = notificationWording(n);
   const s = getSettings();
   const deviceDelivery = n.kind !== "usage-reset" || s.usageResetNotify;
