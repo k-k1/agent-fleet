@@ -571,7 +571,7 @@ function FamilyCardBlock({ model, onQuality }: { model: ImagegenModel; onQuality
       ) : (
         <>
           {card.dialect && (
-            <p>{tr(card.dialect === "tags" ? "imggen.family_dialect_tags" : "imggen.family_dialect_sentences")}</p>
+            <p>{tr(`imggen.family_dialect_${card.dialect}` as "imggen.family_dialect_tags")}</p>
           )}
           <p className="igen-hint">
             {[

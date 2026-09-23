@@ -278,7 +278,9 @@ new attachment flag next to `agent.caps.imagePaste`, and the capability table jo
 
 `comfyFamilyRow` gains `Dialect`, `QualityPrefixes`, `StepsRange`, `CFGRange`, surfaced through
 `modelStatus` in `GET /imagegen/status`. The Console's family card merely renders them (only
-translations stay in i18n). `get_image_studio`'s "model facts" come from the same row. This extends
+translations stay in i18n). The dialect takes three values — `tags`, `sentences` and `mixed` (tags and
+sentences together, Anima) — and the agent also gets `dialect_how`, the dialect as an instruction
+(revision 9: `mixed` alone does not say what goes where). `get_image_studio`'s "model facts" come from the same row. This extends
 0081 decision 4 ("the family decides what it reads and says so") beyond knobs. ADR 0098's
 qwen-image-2.1 touched both sides in two commits — that duplication is folded. Layer B
 (`PromptHelpModal`, `prompthelp.ts`) is removed: "write the prompt for me" is the first message of
@@ -555,4 +557,5 @@ conversation.
 | Trigger | Change |
 |---|---|
 | In the walkthrough the conversation went ahead with no model, and a "remember this" record used the provider's name (`agy`) as a family | decision 2: attaching needs a model (the Console disables the button, and holds a bound agent's composer with the reason if the model is cleared later). decision 3: `set_image_draft` answers 409 `no_model` with no model; `add_image_knowledge` keys only to the studio's model or its family (else 409 `wrong_key`; the member's records from the notes are not checked) |
+| Anima is controlled more finely with sentences alongside the tags (the user) | decision 7: a `mixed` dialect, and Anima uses it; the agent gets `dialect_how` (tags for the subject and attributes, sentences for composition, positions and light) |
 | Prompt structure differs by family | decision 5: when the user switches the model, the next `get_image_studio` note tells the agent to rewrite for the new model |

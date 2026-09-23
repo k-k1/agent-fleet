@@ -243,6 +243,8 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 
 `comfyFamilyRow` に `Dialect`・`QualityPrefixes`・`StepsRange`・`CFGRange` を足し、`GET /imagegen/status`
 の `modelStatus` に出す。Console のファミリーカードはそれを描くだけ（i18n には訳語だけ残る）。
+方言は `tags`・`sentences`・`mixed`（タグと文章の併記＝Anima）の 3 値で、エージェントには値に加えて
+書き方の指示文 `dialect_how` も渡す（改訂 9。`mixed` は値だけではどこに何を書くかが伝わらない）。
 `get_image_studio` の「モデルの事実」も同じ行から組む。0081 決定 4「何を読むかはファミリーが決め、
 言葉で言う」を読む摘み以外に広げる。ADR 0098 の qwen-image-2.1 は Agent 側と Console 側の
 2 コミットで両方触った——その二重を畳む。層 B（`PromptHelpModal`・`prompthelp.ts`）は撤去する
@@ -494,4 +496,5 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 | きっかけ | 変更 |
 |---|---|
 | 通し確認でモデル未選択のまま会話が進み、「覚えて」の記録がプロバイダ名（`agy`）をファミリーとして使った | 決定 2: 付けるにはモデルが要る（Console はボタンを塞ぎ、結ばれた後にモデルが外れたら入力欄を理由付きで止める）。決定 3: `set_image_draft` はモデル未選択なら 409 `no_model`。`add_image_knowledge` の鍵はスタジオのモデルかそのファミリーだけ（違えば 409 `wrong_key`・人のメモからの記録は対象外） |
+| Anima は文章併記でより緻密に制御できる（利用者） | 決定 7: 方言に `mixed` を足して Anima をそれに。エージェントには `dialect_how`（要素・属性はタグ、構図・位置関係・光は文章） |
 | プロンプトの組み立てはファミリーで別物 | 決定 5: 人がモデルを替えたら、次の `get_image_studio` の note で「新しいモデルの書き方で書き直す」と伝える |

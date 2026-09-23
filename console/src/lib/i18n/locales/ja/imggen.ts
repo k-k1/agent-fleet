@@ -28,6 +28,7 @@ export const imggen = {
   "imggen.family_unknown": "この系統の手引きはまだありません。",
   "imggen.family_dialect_tags": "書き方: 単語をカンマで並べます（大事なものから先に）。文章では書きません。",
   "imggen.family_dialect_sentences": "書き方: 描きたい絵を 1〜2 文の文章で書きます。単語の羅列にはしません。",
+  "imggen.family_dialect_mixed": "書き方: タグと文章を併記します。品質の接頭辞と、人物・服・色などはタグで先に並べ、構図・位置関係・光は 1〜2 文で書き足します。併記するほど細かく効きます。",
   "imggen.family_quality": "定番の頭",
   "imggen.family_negative_yes": "ネガティブは効きます。",
   "imggen.family_negative_no": "この系統はネガティブを読みません（送っても捨てられます）。",

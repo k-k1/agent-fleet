@@ -194,7 +194,10 @@ type modelStatus struct {
 // for a model whose family has no row: a card invented for it would advise on a dialect nobody
 // checked.
 type familyAdvice struct {
-	Dialect         string    `json:"dialect,omitempty"`
+	Dialect string `json:"dialect,omitempty"`
+	// DialectHow is Dialect as an instruction (comfyDialectHow). The pane draws its own words
+	// for the three values; an agent reading get_image_studio gets this.
+	DialectHow      string    `json:"dialect_how,omitempty"`
 	QualityPrefixes []string  `json:"quality_prefixes,omitempty"`
 	StepsRange      []int     `json:"steps_range,omitempty"`
 	CFGRange        []float64 `json:"cfg_range,omitempty"`
@@ -206,7 +209,7 @@ func familyAdviceFor(family string) familyAdvice {
 	if !ok {
 		return familyAdvice{}
 	}
-	out := familyAdvice{Dialect: string(r.Dialect), QualityPrefixes: r.QualityPrefixes, TrialSteps: r.TrialSteps}
+	out := familyAdvice{Dialect: string(r.Dialect), DialectHow: comfyDialectHow(r.Dialect), QualityPrefixes: r.QualityPrefixes, TrialSteps: r.TrialSteps}
 	if r.StepsRange != [2]int{} {
 		out.StepsRange = r.StepsRange[:]
 	}

@@ -28,6 +28,7 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.family_unknown": "There is no guidance for this family yet.",
   "imggen.family_dialect_tags": "Dialect: comma-separated tags, most important first. Not sentences.",
   "imggen.family_dialect_sentences": "Dialect: one or two sentences describing the picture. Not a tag list.",
+  "imggen.family_dialect_mixed": "Dialect: tags and sentences together. Quality prefix and tags for the subject and its attributes first, then one or two sentences for composition, positions and light. Using both controls the picture more finely.",
   "imggen.family_quality": "Usual prefix",
   "imggen.family_negative_yes": "The negative prompt reaches this family.",
   "imggen.family_negative_no": "This family ignores the negative prompt (it is dropped).",

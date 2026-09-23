@@ -105,7 +105,10 @@ export interface ImagegenModel {
   /** ADR 0100 decision 7: the family's facts, from the Agent's family table rather than a
    *  second copy in the Console. Absent on an Agent that predates it; the card then says it has
    *  no guide for the family instead of guessing. */
-  dialect?: "tags" | "sentences";
+  /** "mixed": tags and sentences in one prompt (anima) — finer control than either alone. */
+  dialect?: "tags" | "sentences" | "mixed";
+  /** The dialect as an instruction, for get_image_studio's reader; the card draws its own words. */
+  dialect_how?: string;
   quality_prefixes?: string[];
   steps_range?: [number, number];
   /** Absent for a family that does not read cfg. */
