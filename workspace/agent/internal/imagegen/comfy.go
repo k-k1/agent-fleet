@@ -1467,8 +1467,10 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 			}
 			// An UNKNOWN prompt id is normal while the picture is being made — ComfyUI's history
 			// holds finished prompts only, and the queued one lives in /queue. It stops being
-			// normal once this engine has restarted under us.
-			if !known && sawWaking {
+			// normal once this engine has restarted under us — and a wake alone does not prove
+			// that: the gateway also answers engine_waking for a box that is up but too busy to
+			// answer its health probe (a T4 editing at 35 s/step), so /queue is asked first.
+			if !known && sawWaking && !p.stillQueued(ctx, conn, promptID) {
 				return comfyHistory{}, fmt.Errorf(
 					"the image engine restarted while this picture was being made, and the queued request did not survive it (%s)"+
 						" — ask again; nothing was generated", lastWaking)
@@ -1480,6 +1482,14 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 		case <-time.After(wait):
 		}
 	}
+}
+
+// stillQueued is whether the engine still holds this prompt, asked only after a wake was seen.
+// An answer that cannot be read counts as "no": the restart is then reported as before, which
+// is the direction that stops the wait rather than letting it run silent to the budget.
+func (p *comfyProvider) stillQueued(ctx context.Context, conn EngineConn, promptID string) bool {
+	held, err := p.queueHolds(ctx, conn, promptID)
+	return err == nil && held
 }
 
 // comfyPollTimedOut names the engine's own last word when the wait ran out during a wake, so a
@@ -1698,27 +1708,48 @@ func (p *comfyProvider) Cancel(ctx context.Context, upstream string) error {
 // SECOND element is the prompt id (server.py's own queue tuple); anything shaped otherwise is
 // skipped rather than guessed at.
 func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[string]bool, error) {
+	pending, _, err := p.queue(ctx, conn)
+	return pending, err
+}
+
+// queueHolds reports whether the engine still has this prompt, running or waiting its turn.
+func (p *comfyProvider) queueHolds(ctx context.Context, conn EngineConn, promptID string) (bool, error) {
+	pending, running, err := p.queue(ctx, conn)
+	if err != nil {
+		return false, err
+	}
+	return pending[promptID] || running[promptID], nil
+}
+
+// queue reads GET /queue into its two sets of prompt ids: pending, then running.
+func (p *comfyProvider) queue(ctx context.Context, conn EngineConn) (map[string]bool, map[string]bool, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL(conn, "/queue"), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
 	body, status, _, err := engineHTTPAttempt(p.client, httpReq)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if status >= 300 {
-		return nil, fmt.Errorf("the image engine's /queue answered %d %s: %s",
+		return nil, nil, fmt.Errorf("the image engine's /queue answered %d %s: %s",
 			status, http.StatusText(status), engineErrText(body))
 	}
 	var doc struct {
+		Running [][]any `json:"queue_running"`
 		Pending [][]any `json:"queue_pending"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	return comfyQueueIDs(doc.Pending), comfyQueueIDs(doc.Running), nil
+}
+
+// comfyQueueIDs is the prompt ids out of one of /queue's lists.
+func comfyQueueIDs(entries [][]any) map[string]bool {
 	out := map[string]bool{}
-	for _, entry := range doc.Pending {
+	for _, entry := range entries {
 		if len(entry) < 2 {
 			continue
 		}
@@ -1726,7 +1757,7 @@ func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[
 			out[id] = true
 		}
 	}
-	return out, nil
+	return out
 }
 
 // postCancel sends one cancel call. It does NOT go through sendWithWake: a 503 engine_waking
