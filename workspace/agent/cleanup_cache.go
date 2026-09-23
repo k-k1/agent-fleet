@@ -93,6 +93,9 @@ type usageOrphans struct {
 	Bytes int64 `json:"bytes"`
 	Files int   `json:"files"`
 	Dirs  int   `json:"dirs"`
+	// Unjudged counts session folders not judged because the session store is missing, so
+	// the figure covers the chat folders only. Its own field: it is not "too many files".
+	Unjudged int `json:"unjudged,omitempty"`
 }
 
 type cleanupUsage struct {
@@ -190,8 +193,8 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 		u.Orphans.Bytes += found.Bytes
 		u.Orphans.Files += found.Files
 		u.Orphans.Dirs += len(found.Dirs)
-		// Session folders left unjudged (no session store) make the figure a lower bound too.
-		u.Truncated = u.Truncated || found.Truncated || found.Unjudged > 0
+		u.Orphans.Unjudged += found.Unjudged
+		u.Truncated = u.Truncated || found.Truncated
 	}
 
 	tents, _ := os.ReadDir(cleanupStoreDir())

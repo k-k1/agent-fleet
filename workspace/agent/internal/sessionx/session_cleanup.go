@@ -116,7 +116,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonCachePartial: "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
 	cleanReasonCacheUnread:  "中身を読めないフォルダがあり、それは対象外（そのフォルダは点検し直しても対象にならない。権限かファイルシステムの確認が必要）",
 	cleanReasonCacheStalled: "セッション情報とごみ箱が多すぎて参照の有無を判定できない（点検し直しても変わらない。ごみ箱を整理すると進む）",
-	cleanReasonCacheNoStore: "セッションの保存先が見つからないので、セッションのフォルダは判定しない（チャットの分だけが対象。保存先が戻れば点検できる）",
+	cleanReasonCacheNoStore: "セッションの保存先が見つからないので、セッションのフォルダは判定しない（チャットの分だけが対象。保存先が戻れば点検できる。元に戻せない）",
 	cleanReasonCacheStuck:   "点検の上限までに 1 つも判定できない（大きすぎるフォルダか、手前に多数のフォルダがある。点検し直しても同じ所で止まるので ~/.cache/agent-fleet を手で確認する）",
 }
 

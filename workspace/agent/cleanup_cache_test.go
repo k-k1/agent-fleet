@@ -555,3 +555,23 @@ func TestRestoreThatCannotMarkIsStopped(t *testing.T) {
 		t.Fatalf("err = %v, want errRestoreStopped", err)
 	}
 }
+
+// TestUsageSaysWhatWasNotJudged (ninth review L1): with no session store, session folders are
+// not judged — reported as that, not as "too many files", which would call the whole cache
+// figure a lower bound for the wrong reason.
+func TestUsageSaysWhatWasNotJudged(t *testing.T) {
+	cacheTestHome(t)
+	if err := os.Remove(session.MetaDir()); err != nil {
+		t.Fatal(err)
+	}
+	oldCacheDir(t, sessionx.CacheFeaturePasted, session.UUID("/d", "sgone01"), 5)
+	rec := httptest.NewRecorder()
+	handleCleanupUsage(rec, httptest.NewRequest(http.MethodGet, "/cleanup/usage", nil))
+	var u cleanupUsage
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+	if u.Truncated || !u.Orphans.OK || u.Orphans.Unjudged != 1 || u.Orphans.Dirs != 0 {
+		t.Fatalf("truncated=%v orphans=%+v — want unjudged=1, not a truncated walk", u.Truncated, u.Orphans)
+	}
+}

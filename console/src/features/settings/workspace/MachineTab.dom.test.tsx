@@ -255,4 +255,15 @@ describe("MachineView", () => {
     const text = await mount(shared);
     expect(text).toContain("ディスクの内訳を取得できませんでした");
   });
+
+  it("says the session share was not counted, rather than that there were too many files", async () => {
+    answers.byPath["api/cleanup/usage"] = {
+      cache: { bytes: 10, files: 1, parts: [] },
+      orphans: { ok: true, bytes: 10, files: 1, dirs: 1, unjudged: 2 },
+      trash: { bytes: 0, archives: 0 },
+    };
+    const text = await mount(shared);
+    expect(text).toContain("チャットの分だけです");
+    expect(text).not.toContain("ファイルが多すぎる");
+  });
 });

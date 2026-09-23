@@ -205,10 +205,11 @@ reads a whole archive into memory.
   lets the next press get further); a cut that finished none — a folder too big to walk, or too
   many ahead of it — marks it stuck (the next press would stop at the same place; a person has to
   look); a read error marks it as having unreadable folders (those stay out however often it is
-  surveyed); and session records plus trash too large for the budget mark it as unable to judge at
-  all (tidying the trash is what helps). When several apply, the row names the one to fix first —
-  unable to judge, then unreadable, then stuck, then partial — and still marks that part went
-  unchecked. Both meta names protect a directory: the file name
+  surveyed); a missing session store marks it as having no store (session folders are not judged,
+  chat folders still are); and session records plus trash too large for the budget mark it as
+  unable to judge at all (tidying the trash is what helps). When several apply, the row names the
+  one to fix first — unable to judge, then no store, then unreadable, then stuck, then partial —
+  and still marks that part went unchecked. Both meta names protect a directory: the file name
   the paste endpoint keys by, and the name inside it that codex keys by.
 - **It cannot act outside the cache.** The feature directory must not itself be a symlink, and it
   is pinned by file descriptor (`os.Root`) for the whole scan and delete, so a swap in between
