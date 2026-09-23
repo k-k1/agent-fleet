@@ -193,10 +193,12 @@ reads a whole archive into memory.
 - The scan **deletes nothing it cannot prove unreachable**. An unreadable meta or archive stops it
   outright. A directory the walk could not read to the end — an I/O error, or the entry budget
   running out — is neither counted nor deleted. The states are reported apart, because they are
-  fixed apart: a budget cut marks the row partial (the next press continues), a read error marks
-  it as having unreadable folders (those stay out however often it is surveyed; a person has to
-  look), and session records plus trash too large for the budget mark it as unable to judge at all
-  (tidying the trash is what helps). Both meta names protect a directory: the file name
+  fixed apart: a budget cut that still finished some folders marks the row partial (deleting them
+  lets the next press get further); a cut that finished none — a folder too big to walk — marks it
+  stuck (the next press would stop at the same place; a person has to look); a read error marks it
+  as having unreadable folders (those stay out however often it is surveyed); and session records
+  plus trash too large for the budget mark it as unable to judge at all (tidying the trash is what
+  helps). Both meta names protect a directory: the file name
   the paste endpoint keys by, and the name inside it that codex keys by.
 - **It cannot act outside the cache.** The feature directory must not itself be a symlink, and it
   is pinned by file descriptor (`os.Root`) for the whole scan and delete, so a swap in between
@@ -208,17 +210,23 @@ reads a whole archive into memory.
   work done, not a count taken after a directory of a million entries has already been read into
   memory. The cache is judged chunk by chunk, and a listing chunk never takes more than half of
   what is left, so a cut-off scan still yields the directories it finished; deleting them moves
-  the next press further along instead of stopping at the same place every time. A scan that
+  the next press further along. When it finished none, that is the stuck state above, not a
+  promise of progress. A scan that
   runs out says so: the cleanup row is marked partial (or becomes a keep row if nothing could be
   decided), and a delete reports what it took so the next survey shows the rest.
 - **It does not race a restore.** A restore reads the archive and stages the transcripts beside
   their destinations outside the cleanup lock, then — under it — checks that the archive still
-  exists, places the staged transcripts and writes the metas back. It is all or nothing: a restore
-  that lost to a purge, or could not stage or place a transcript, has changed nothing and fails.
-  A transcript already at the destination is kept, never rolled back to the archived copy
-  (restoring the same archive twice used to overwrite the turns taken since the first restore);
-  placing is a hard link, which fails on an existing file, so one that appears mid-restore is
-  kept too. The purge and the cache delete take the same lock. So a delete can never scan a session
+  exists, places the staged transcripts and writes the metas back. A restore that lost to a purge
+  has changed nothing and fails.
+- **A restore never destroys and never overstates.** It removes or replaces nothing it did not
+  create in that call. A transcript already at the destination is kept, never rolled back to the
+  archived copy (restoring the same archive twice used to overwrite the turns taken since the
+  first restore). Placing is a hard link, which fails on an existing file, so one that appears
+  mid-restore is kept too; there is no rename fallback, because a rename replaces. When a step
+  fails — a transcript that cannot be placed, a meta that cannot be written — the restore stops
+  there and reports it rather than claiming the session is back. It does not try to undo what it
+  already placed (that would mean deleting a file another process may be appending to);
+  restoring again is safe and finishes the job. The purge and the cache delete take the same lock. So a delete can never scan a session
   that is in neither place, and a restore that lost a race to a purge fails instead of bringing a
   conversation back without its files.
 

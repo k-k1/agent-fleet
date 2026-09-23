@@ -512,10 +512,13 @@ func TestCacheCandidatePartial(t *testing.T) {
 		got[0].ReasonKey != cleanReasonCachePartial {
 		t.Fatalf("rows = %+v, want one partial delete row covering the one checked dir", got)
 	}
+	// No budget at all: nothing finished, and the next survey would end the same way — a
+	// keep row that says pressing again will not help, not "partial".
 	CacheScanMaxEntries = 0
 	got = cacheCleanupCandidates(time.Now())
-	if len(got) != 1 || got[0].Action != "" || got[0].Safety != "keep" || !got[0].Truncated {
-		t.Fatalf("rows = %+v, want one keep row that offers nothing", got)
+	if len(got) != 1 || got[0].Action != "" || got[0].Safety != "keep" || got[0].Truncated ||
+		got[0].ReasonKey != cleanReasonCacheStuck {
+		t.Fatalf("rows = %+v, want one stuck keep row that offers nothing", got)
 	}
 }
 
@@ -595,5 +598,43 @@ func TestCacheOrphansProgressAcrossSurveys(t *testing.T) {
 	}
 	if presses == 0 {
 		t.Fatal("one press took everything: the budget did not bind, so this proved nothing")
+	}
+}
+
+// TestCacheOrphansOversizedFolderIsStuck (fifth review, medium): a single folder bigger than a
+// scan can walk stops every scan at the same place. That is reported as stuck — pressing again
+// will not help — instead of as partial, which promises progress.
+func TestCacheOrphansOversizedFolderIsStuck(t *testing.T) {
+	f := newCacheFixture(t)
+	old := CacheScanMaxEntries
+	t.Cleanup(func() { CacheScanMaxEntries = old })
+	d := f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
+	for i := 0; i < 10; i++ {
+		p := filepath.Join(d, fmt.Sprintf("f%02d.png", i))
+		if err := os.WriteFile(p, []byte{1}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, f.old, f.old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(d, f.old, f.old); err != nil {
+		t.Fatal(err)
+	}
+	CacheScanMaxEntries = 8
+	for press := 1; press <= 2; press++ {
+		got, err := RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Stuck || got.Truncated || len(got.Dirs) != 0 {
+			t.Fatalf("press %d: stuck=%v truncated=%v dirs=%v — want stuck, nothing taken", press, got.Stuck, got.Truncated, orphanNames(got))
+		}
+	}
+	// The positive control: with room to walk it, the same folder goes.
+	CacheScanMaxEntries = old
+	got, err := RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+	if err != nil || got.Stuck || len(got.Dirs) != 1 {
+		t.Fatalf("default budget: stuck=%v dirs=%v err=%v", got.Stuck, orphanNames(got), err)
 	}
 }

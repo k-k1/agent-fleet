@@ -212,25 +212,20 @@ func stageNextTo(dest string, data []byte) (string, error) {
 	return tmp.Name(), nil
 }
 
+// linkFile is os.Link; a var only so a test can make it fail.
+var linkFile = os.Link
+
 // placeNoReplace puts tmp at dest unless something is already there, in which case that
-// file wins (created=false). A hard link is the atomic "create only if absent": a rename
-// would silently replace a transcript that appeared after the last check. Where the
-// filesystem has no hard links, it falls back to check-then-rename.
-func placeNoReplace(tmp, dest string) (created bool, err error) {
-	err = os.Link(tmp, dest)
-	if err == nil {
-		return true, nil
+// file wins. A hard link is the atomic "create only if absent". There is deliberately no
+// fallback: a rename would silently replace a transcript that appeared after the last check,
+// so where a link cannot be made the restore fails and says why (EFS and local disks have
+// hard links).
+func placeNoReplace(tmp, dest string) error {
+	err := linkFile(tmp, dest)
+	if err == nil || errors.Is(err, fs.ErrExist) {
+		return nil
 	}
-	if errors.Is(err, fs.ErrExist) {
-		return false, nil
-	}
-	if _, lerr := os.Lstat(dest); lerr == nil {
-		return false, nil
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		return false, err
-	}
-	return true, nil
+	return err
 }
 
 // restoreAfterStage, when set, runs after a restore has read its archive and staged the
@@ -247,9 +242,13 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	var sessions, branches []string
 	var metas []session.Meta
 	// Transcripts are staged next to their destination and only placed under the cleanup lock,
-	// together with the metas. It is all or nothing: a restore that cannot stage or place
-	// every transcript changes nothing and fails, rather than bringing a session back with a
-	// hole where its conversation was, or reporting a restore that did not happen.
+	// together with the metas. A restore never removes or replaces anything it did not create
+	// in this call, and it never reports a session as back unless its meta was written. When a
+	// step fails it stops there and says so: transcripts it already placed stay (a transcript
+	// with no meta is inert), and running the restore again finishes the job — a transcript
+	// already at its path is kept, and the metas are simply written again. Undoing a placed
+	// transcript instead would mean deleting a file some other process may already be
+	// appending to.
 	type stagedFile struct{ tmp, dest string }
 	var staged []stagedFile
 	dropStaged := func() {
@@ -302,26 +301,21 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			handErr = fmt.Errorf("archive %s was purged while it was being restored", id)
 			return
 		}
-		var placed []string
 		for _, f := range staged {
-			created, err := placeNoReplace(f.tmp, f.dest)
-			if err != nil {
-				// Undo what this restore created, so the failure leaves no half-restore.
-				for _, p := range placed {
-					_ = os.Remove(p)
-				}
-				handErr = fmt.Errorf("archive %s: cannot place %s: %w", id, f.dest, err)
+			if err := placeNoReplace(f.tmp, f.dest); err != nil {
+				handErr = fmt.Errorf("archive %s: cannot place %s (no session was restored; restoring again is safe): %w", id, f.dest, err)
 				return
 			}
-			if created {
-				placed = append(placed, f.dest)
+		}
+		for i, meta := range metas {
+			if err := session.WriteMetaChecked(meta); err != nil {
+				handErr = fmt.Errorf("archive %s: restored %d of %d sessions, then could not write %s (restoring again is safe): %w",
+					id, i, len(metas), meta.Name, err)
+				return
 			}
 		}
-		for _, meta := range metas {
-			session.WriteMeta(meta)
-		}
 	})
-	dropStaged() // placed ones are hard links or already moved; what is left is temporary
+	dropStaged() // placed ones are hard links, so the staging names are only temporary
 	if handErr != nil {
 		return nil, handErr
 	}

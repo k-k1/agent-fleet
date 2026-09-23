@@ -103,6 +103,10 @@ type CacheOrphans struct {
 	// Stalled = the session records and the trash alone exceed the budget, so nothing could
 	// be judged at all. Surveying again does not help; a smaller trash does.
 	Stalled bool
+	// Stuck = the budget ran out before a single directory was finished — a folder too big to
+	// walk, or too much ahead of it in the listing. The listing order is the same every time,
+	// so pressing again would stop at the same place: unlike Truncated, this needs a person.
+	Stuck bool
 }
 
 // CacheScanMaxEntries is the default budget of one scan: how many directory entries it may
@@ -157,7 +161,7 @@ func RemoveCacheOrphans(feature string, now time.Time) (CacheOrphans, error) {
 	if err != nil {
 		return CacheOrphans{Feature: feature}, err
 	}
-	out := CacheOrphans{Feature: feature, Truncated: found.Truncated, Unreadable: found.Unreadable, Stalled: found.Stalled}
+	out := CacheOrphans{Feature: feature, Truncated: found.Truncated, Unreadable: found.Unreadable, Stalled: found.Stalled, Stuck: found.Stuck}
 	for _, d := range found.Dirs {
 		// Relative to the pinned directory: whatever happens to the path in the meantime,
 		// this cannot reach outside it (os.Root does not follow a link out of its root).
@@ -223,6 +227,16 @@ func openFeatureRoot(feature string) (*os.Root, error) {
 var errBudget = errors.New("cache scan budget exhausted")
 
 func scanCacheOrphans(r *os.Root, feature string, now time.Time, budget *int) (CacheOrphans, error) {
+	out, err := scanCacheOrphansOnce(r, feature, now, budget)
+	// Cut short with nothing finished: the next scan starts at the same place and ends the
+	// same way. Say that, rather than "partial", which promises the next press gets further.
+	if err == nil && out.Truncated && len(out.Dirs) == 0 {
+		out.Truncated, out.Stuck = false, true
+	}
+	return out, err
+}
+
+func scanCacheOrphansOnce(r *os.Root, feature string, now time.Time, budget *int) (CacheOrphans, error) {
 	out := CacheOrphans{Feature: feature}
 	if budget == nil {
 		b := CacheScanMaxEntries

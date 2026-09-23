@@ -60,6 +60,7 @@ func handleDeleteCacheOrphans(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, cacheDeleteResult{
 		Feature: feature, Dirs: len(removed.Dirs), Files: removed.Files, Bytes: removed.Bytes,
 		Truncated: removed.Truncated, Unreadable: removed.Unreadable,
+		Stalled: removed.Stalled, Stuck: removed.Stuck,
 	})
 }
 
@@ -73,6 +74,10 @@ type cacheDeleteResult struct {
 	Bytes      int64  `json:"bytes"`
 	Truncated  bool   `json:"truncated,omitempty"`
 	Unreadable int    `json:"unreadable,omitempty"`
+	// Stalled / Stuck: nothing could be taken, and pressing again will not change that —
+	// said here so a 200 with zero is not read as "nothing left".
+	Stalled bool `json:"stalled,omitempty"`
+	Stuck   bool `json:"stuck,omitempty"`
 }
 
 type usagePart struct {
@@ -179,7 +184,7 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 			u.Orphans = usageOrphans{}
 			break
 		}
-		if found.Stalled {
+		if found.Stalled || found.Stuck {
 			// Nothing could be judged, so there is no figure to show — not a zero.
 			u.Orphans = usageOrphans{}
 			u.Truncated = true

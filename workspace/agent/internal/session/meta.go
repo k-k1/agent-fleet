@@ -34,14 +34,23 @@ func MetaDir() string {
 
 func MetaPath(name string) string { return filepath.Join(MetaDir(), name+".json") }
 
-func WriteMeta(m Meta) {
+func WriteMeta(m Meta) { _ = WriteMetaChecked(m) }
+
+// WriteMetaChecked is WriteMeta for a caller that has to know it worked — the cleanup
+// restore, which must not report a session as back when its meta never reached the disk.
+func WriteMetaChecked(m Meta) error {
 	if err := os.MkdirAll(MetaDir(), 0o700); err != nil {
-		return
+		return err
 	}
-	if b, err := json.Marshal(m); err == nil {
-		_ = os.WriteFile(MetaPath(m.Name), b, 0o600)
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(MetaPath(m.Name), b, 0o600); err != nil {
+		return err
 	}
 	rememberCWD(m)
+	return nil
 }
 
 func ReadMeta(name string) (Meta, bool) {

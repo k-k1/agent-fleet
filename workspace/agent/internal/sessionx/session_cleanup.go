@@ -90,6 +90,7 @@ const (
 	cleanReasonCachePartial = "clean.reason.cache_partial"
 	cleanReasonCacheUnread  = "clean.reason.cache_unreadable"
 	cleanReasonCacheStalled = "clean.reason.cache_stalled"
+	cleanReasonCacheStuck   = "clean.reason.cache_stuck"
 )
 
 var cleanupReasonJA = map[string]string{
@@ -109,6 +110,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonCachePartial: "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
 	cleanReasonCacheUnread:  "中身を読めないフォルダがあり、それは対象外（そのフォルダは点検し直しても対象にならない。権限かファイルシステムの確認が必要）",
 	cleanReasonCacheStalled: "セッション情報とごみ箱が多すぎて参照の有無を判定できない（点検し直しても変わらない。ごみ箱を整理すると進む）",
+	cleanReasonCacheStuck:   "大きすぎるフォルダがあり、点検の上限までに 1 つも見終わらない（点検し直しても同じ所で止まる。~/.cache/agent-fleet のそのフォルダを手で確認する）",
 }
 
 // cleanupReasonText resolves a reason key to its source-language sentence. An unknown key
@@ -288,6 +290,8 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 		switch {
 		case found.Stalled:
 			reason = cleanReasonCacheStalled
+		case found.Stuck:
+			reason = cleanReasonCacheStuck
 		case found.Unreadable > 0:
 			reason = cleanReasonCacheUnread
 		case found.Truncated:

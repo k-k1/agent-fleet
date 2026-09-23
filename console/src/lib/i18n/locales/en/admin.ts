@@ -1237,6 +1237,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason.cache_orphan": "Cache of deleted sessions or chats (not in the trash and no longer referenced; deleting cannot be undone)",
   "clean.reason.cache_unsafe": "A session record or trash archive could not be read, so what is still referenced is unknown (nothing is deleted)",
   "clean.reason.cache_unreadable": "Some folders could not be read and are left out (surveying again will not bring those in; check the permissions or the filesystem)",
+  "clean.reason.cache_stuck": "A folder is too big to finish checking within the limit (surveying again stops at the same place; look at that folder under ~/.cache/agent-fleet by hand)",
   "clean.reason.cache_stalled": "Too many session records and trash archives to tell what is still referenced (surveying again will not help; tidying the trash will)",
   "clean.reason.cache_partial": "Too many to check at once; only what was checked is covered (survey again after deleting to see the rest; cannot be undone)",
   // The same reasons split into "state badge + hint" (row line 2; keys without a badge fall back to the sentence).
@@ -1268,6 +1269,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason_hint.cache_unsafe": "A session record or trash archive could not be read, so nothing is deleted",
   "clean.reason_badge.cache_unreadable": "Unreadable folders",
   "clean.reason_hint.cache_unreadable": "Folders whose contents could not be read stay out even if you survey again (check the permissions or the filesystem). Deleting cannot be undone",
+  "clean.reason_badge.cache_stuck": "Folder too big",
+  "clean.reason_hint.cache_stuck": "Not a single folder could be finished within the limit. Surveying again stops at the same place — look at that folder under ~/.cache/agent-fleet by hand",
   "clean.reason_badge.cache_stalled": "Can't judge",
   "clean.reason_hint.cache_stalled": "Too many session records and trash archives to judge. Surveying again will not help; tidying the trash will",
   "clean.reason_badge.cache_partial": "Partial",

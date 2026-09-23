@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -326,9 +327,10 @@ func TestRestoreNeverReplacesATranscriptThatAppears(t *testing.T) {
 	}
 }
 
-// TestRestoreIsAllOrNothing (fourth review, medium): when a transcript cannot be placed, the
-// restore fails and brings no meta back — not a session with a hole where its conversation was.
-func TestRestoreIsAllOrNothing(t *testing.T) {
+// TestRestoreFailsLoudlyAndRetries (fourth/fifth review): when a transcript cannot be placed
+// the restore fails and brings no meta back — and once the cause is gone, restoring again
+// finishes the job.
+func TestRestoreFailsLoudlyAndRetries(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes into a read-only directory anyway")
 	}
@@ -347,13 +349,57 @@ func TestRestoreIsAllOrNothing(t *testing.T) {
 	})
 	_, err := restoreCleanupArchive(id)
 	_ = os.Chmod(home, 0o700)
+	restoreAfterStage = nil
 	if err == nil {
 		t.Fatal("a restore that could not place its transcript succeeded")
 	}
 	if _, ok := session.ReadMeta(m.Name); ok {
 		t.Fatal("the meta came back without its transcript")
 	}
-	if _, serr := os.Stat(filepath.Join(home, "srest06.jsonl")); !os.IsNotExist(serr) {
-		t.Fatalf("a transcript was placed by a failed restore: %v", serr)
+	if _, err := restoreCleanupArchive(id); err != nil {
+		t.Fatalf("restoring again after the cause was gone: %v", err)
+	}
+	if _, ok := session.ReadMeta(m.Name); !ok {
+		t.Fatal("the retry did not bring the meta back")
+	}
+	if got, err := os.ReadFile(filepath.Join(home, "srest06.jsonl")); err != nil || string(got) != "{}\n" {
+		t.Fatalf("transcript after retry = %q, %v", got, err)
+	}
+}
+
+// TestRestoreHasNoReplacingFallback (fifth review, serious): where a hard link cannot be made,
+// the restore fails instead of falling back to a rename that could replace a live transcript.
+func TestRestoreHasNoReplacingFallback(t *testing.T) {
+	cacheTestHome(t)
+	id, m := archivedSession(t, "srest07")
+	linkFile = func(string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
+	t.Cleanup(func() { linkFile = os.Link })
+	if _, err := restoreCleanupArchive(id); err == nil {
+		t.Fatal("a restore that could not link succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "srest07.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("a transcript was placed without a link: %v", err)
+	}
+	if _, ok := session.ReadMeta(m.Name); ok {
+		t.Fatal("the meta came back")
+	}
+}
+
+// TestRestoreReportsAMetaItCouldNotWrite (fifth review, medium): the restore does not claim a
+// session is back when its meta never reached the disk.
+func TestRestoreReportsAMetaItCouldNotWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory anyway")
+	}
+	cacheTestHome(t)
+	id, _ := archivedSession(t, "srest08")
+	locked := filepath.Join(os.Getenv("HOME"), "locked")
+	if err := os.Mkdir(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(locked, "sessions"))
+	if _, err := restoreCleanupArchive(id); err == nil {
+		t.Fatal("a restore whose meta could not be written reported success")
 	}
 }
