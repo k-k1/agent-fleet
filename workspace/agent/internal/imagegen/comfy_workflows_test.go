@@ -1333,9 +1333,12 @@ func TestComfyWorkflowQwenImage21TakesItsLatentFromTheOpsOwnSource(t *testing.T)
 	}
 }
 
-// Ten references, named the way the node names them. `image_1` and not `image1` — the edit
-// families next door take the second spelling, the two nodes are different nodes, and a wrong key
-// is silently dropped by ComfyUI rather than refused.
+// Ten references, named the way the API names them: `images.image_1`, the Autogrow group and its
+// member joined by a dot. 🔴 This test used to assert the bare `image_1` — the label the editor
+// shows — and so pinned the bug instead of catching it: /prompt accepts the unknown key, and the
+// node dies at run time with "unexpected keyword argument 'image_1'" (measured on the dev
+// deployment, 2026-09-23). The edit families next door take `image1` with no underscore and no
+// group; the two nodes are different nodes.
 func TestComfyWorkflowQwenImage21WiresEveryReferenceOntoTheOneEncode(t *testing.T) {
 	p := comfyGoldenParams
 	p.Op = OpEdit
@@ -1358,8 +1361,14 @@ func TestComfyWorkflowQwenImage21WiresEveryReferenceOntoTheOneEncode(t *testing.
 		if n, ok := g[node]; !ok || n.ClassType != "LoadImage" || n.Inputs["image"] != p.Images[i] {
 			t.Fatalf("%s = %+v, want a LoadImage of %s", node, g[node], p.Images[i])
 		}
-		if got := comfyLinkAt(t, g, fmt.Sprintf("enc.image_%d", i+1)); got[0] != node {
-			t.Errorf("enc.image_%d reads %v, want %s", i+1, got, node)
+		if got := comfyLinkAt(t, g, fmt.Sprintf("enc.images.image_%d", i+1)); got[0] != node {
+			t.Errorf("enc.images.image_%d reads %v, want %s", i+1, got, node)
+		}
+	}
+	// The spelling that failed on real hardware must not come back under any number.
+	for key := range enc.Inputs {
+		if strings.HasPrefix(key, "image") && !strings.HasPrefix(key, "images.") {
+			t.Errorf("enc has input %q: the node takes its references only as `images.image_N`", key)
 		}
 	}
 	// No FluxKontextImageScale anywhere: this node does its own resizing from `resolution`, and

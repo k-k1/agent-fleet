@@ -2,13 +2,14 @@
 
 English | [日本語](0098-qwen-image-21-family.ja.md)
 
-- Status: **proposed, and built in the same change** (2026-09-21). The code is in the tree and the
-  tests are green, but **nothing here has been run on a GPU** — and it cannot be until the
-  prerequisite below lands, so "built" means the templates and the vocabulary, not a picture.
-- 🔴 **Prerequisite (P0): the ComfyUI pin has to move to v0.37.0.** `TextEncodeQwenImage21` does
-  not exist before that tag, so a row of this family reaches the engine and is refused at
-  `/prompt` validation. That bump is a separate change (see "Phases"), and nothing in this ADR
-  works without it.
+- Status: **proposed, and built in the same change** (2026-09-21). **P2 was run on the dev
+  deployment on 2026-09-23** (see "P2 on real hardware"): text-to-image passed first time, and
+  EVERY edit failed on a wrong input key that the goldens had pinned rather than caught. The fix
+  and its live positive control are recorded there.
+- 🔴 **Prerequisite (P0): the ComfyUI pin at v0.37.0** — landed in #859 (the image) and #860 (the
+  template default). `TextEncodeQwenImage21` does not exist before that tag, so on an engine still
+  pulling an older one a row of this family is refused at `/prompt` validation. ⚠️ A running stack
+  keeps its old `ImageComfyImageTag` through `update.sh`; the tag has to be named once.
 - Every upstream fact below was MEASURED against the live APIs and the pinned engine's own source
   on 2026-09-21. The measurements are in "What was measured"; where a number was taken from a
   published graph rather than from a run, the text says so at the point it is used.
@@ -285,6 +286,74 @@ new one; it is listed under "Open" instead of being fixed inside this change.
   ADR 0094 P1 had to learn (declare the hypothesis first so the intended rung is still a candidate,
   or the file-sum floor buys the bigger card and then measures on it). The int8 set totals about
   16.1 GiB, which would put the floor near the 22,000 rung before any measurement.
+
+## P2 on real hardware (2026-09-23)
+
+Run on the dev deployment: Control Plane and Agent `0.22.2-dev-ea8ecbe9` (which carries this ADR's
+code), engine `af-comfyui:v0.37.0`, on a box the ladder had already bought — a g6e.xlarge (L40S
+48GB). Everything went through the production routes: the panel's ingest API, the catalogue row,
+and the Agent's own `POST /imagegen/generate`, which builds its graph with `comfyGraphQwenImage21`.
+
+**Ingest — one press, as designed.** `…/ingest/resolve` on the int8 diffusion model came back with
+all three parts planned (17.28 GB to download), `commercial_use: "no"` and `license_name:
+qwen-research` — decision 6's classifier working on the live row. The press took about 15 minutes
+for the three downloads. The row's `vram_need_mib` is the file-sum floor, 16,482, and enabling it
+asked for `confirm_vram` because the engine's selected class is the T4 rung (14,500) — the same gate
+ADR 0094 P1 met.
+
+**What the Agent advertises for the row** is decision 3 as written: `ops: [generate, edit]`,
+`max_inputs: 10`, `knobs: [steps, cfg, sampler, scheduler]` — `negative` gone because the recipe's
+cfg is 1, `strength` gone because the denoise is fixed — and the megapixel size list.
+
+**Text-to-image: passed.**
+
+| request | result | engine |
+|---|---|---|
+| `1216x832`, a photograph | HTTP 200, 59.6 s end to end, a `1216x832` PNG | `latent_shapes=[(1, 64, 52, 76)]`, 58.1 s |
+| `1024x1024`, the templates' RGBA wording | HTTP 200, 27.3 s | `(1, 64, 64, 64)`, 26.0 s |
+
+The engine's own log confirms the model's shape: 64 channels at a downscale of 16, reached from the
+4-channel `EmptyLatentImage` by `fix_empty_latent_channels`'s spatial half. The size the caller
+named reached the output, which is decision 2's generate half.
+
+The RGBA request came back transparent: 17.6 % of pixels at alpha 0, the rest along soft edges.
+⚠️ The ordinary photograph came back RGBA as well, with alpha between **252 and 255** (47 % of the
+pixels below 255). Invisible on screen, but composited over a background it is up to 1.2 %
+see-through. That is the first measured answer to Open 4, and it is a property of the model's
+decode rather than of `SaveImage`.
+
+**Edit: failed, every time, on a key this ADR's own tests pinned.** The first two-reference edit
+returned HTTP 502 in 1.2 s, and the engine's log said why:
+
+```
+TextEncodeQwenImage21.execute() got an unexpected keyword argument 'image_1'
+```
+
+The references are a V3 **Autogrow** group named `images`, and the API-format id of each member is
+the group and the member joined by a dot — `images.image_1` (`comfy_api/latest/_io.py`,
+`finalize_prefix`). `image_1` is only the label the editor draws; the published template's JSON
+carries both, and the template builder took the wrong one. `/prompt` accepts an unknown optional
+key, so the graph validated and failed inside the node. Generate never reaches the loop, which is
+why only the edit half was broken.
+
+🔴 The goldens were green throughout, and one test (`…WiresEveryReferenceOntoTheOneEncode`)
+asserted the bare key — it pinned the bug. This is Open 1 happening exactly as written: a golden
+fixes the graph's shape, and the shape was what was wrong.
+
+**The fix, and its positive control on the same box.** The builder now writes `images.image_N`, and
+the test asserts it and refuses any other `image*` key. The graph the FIXED builder emits for the
+same request — the fox as `image_1`, the transparent scarf as `image_2` — was submitted straight to
+the engine through the gateway (the deployed Agent still carries the old builder): `execution_success`
+in about 35 s, the scarf wrapped round the fox's neck, the forest, rock, light and framing unchanged.
+
+The output was **1248x832** for a `1216x832` first reference: the node rescales to the 1024² budget
+at multiples of 32 (`round(sqrt(1024²·1.4615)/32)·32 = 1248`). That is the measured size of Open 2's
+imprecision — the img2img warning would name 1216x832.
+
+**Not taken, on purpose.** No `vram_mib`: the L40S has room to spare, so the reading would be the
+whole file set resident — exactly the value ADR 0094 decision 8 says is not a value of that field.
+And the blocking route's edit through the Agent is still owed: it needs a deployment carrying the
+fix.
 
 ## Consequences
 
