@@ -111,7 +111,30 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 	if err != nil {
 		return "", sessionx.TrashErrArchive, err
 	}
-	// Now that the conversation is safely bundled, delete the live jsonl(s) + meta.
+	// The lock is checked again at the point of removal, under the meta lock: the check above
+	// read a snapshot, and archiving a large transcript takes a while. A session locked in
+	// between stays exactly as it was, and the archive just written goes (it would be a
+	// duplicate of a session that still exists).
+	locked, gone := false, false
+	sessionx.WithSessionMetaLock(func() {
+		cur, ok := session.ReadMeta(m.Name)
+		switch {
+		case !ok:
+			gone = true
+		case cur.Locked:
+			locked = true
+		default:
+			session.RemoveMetaAndLineage(m.Name) // a person's delete (ADR 0096 decision 6)
+		}
+	})
+	if locked || gone {
+		sessionx.WithCleanupLock(func() { _ = purgeCleanupArchive(arch) })
+		if locked {
+			return "", errCodeLocked, errors.New("session is locked against deletion; unlock it first")
+		}
+		return "", "not_found", errors.New("the session was deleted by another request meanwhile")
+	}
+	// Now that the conversation is safely bundled and the meta is gone, delete the live jsonl(s).
 	if m.Kind == session.KindClaude {
 		if _, _, matched := claude.TranscriptRead(session.UUID(m.Dir, m.Name)); len(matched) > 0 {
 			for _, p := range matched {
@@ -120,7 +143,6 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 		}
 	}
 	sessionx.ForgetRuntime(m)
-	session.RemoveMetaAndLineage(m.Name) // a person's delete (ADR 0096 decision 6)
 	removeSessionSideFiles(m.Name)
 	removeTerminalHistory(m.Name)
 	invalidateCleanupUsage() // the trash just grew
@@ -331,7 +353,11 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 	var bytes int64
 	for _, m := range listCleanupArchives() {
 		at, err := time.Parse(time.RFC3339, m.At)
-		if err != nil || !at.Before(cutoff) {
+		if err != nil {
+			kept++ // no readable date: it cannot be said to be old, so it stays, and says so
+			continue
+		}
+		if !at.Before(cutoff) {
 			continue
 		}
 		var perr error

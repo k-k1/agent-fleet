@@ -162,17 +162,32 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 func WriteSessionMetaKeepingLock(m session.Meta) session.Meta {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
-	if current, ok := session.ReadMeta(m.Name); ok {
-		m.Locked = current.Locked
-		m.KeepAwakeUntil = current.KeepAwakeUntil
-		m.StopAfterTurnAt = current.StopAfterTurnAt
-		// Written by the initial-prompt delivery goroutine and by a studio bind, both of which
-		// can land between the list's read and this write.
-		m.InitialPromptState = current.InitialPromptState
-		m.Studio = current.Studio
+	current, ok := session.ReadMeta(m.Name)
+	if !ok {
+		// Gone since the caller read it: the session was deleted (moved to the trash, ADR 0101)
+		// in between. Writing the snapshot back would bring the row back, with its transcript
+		// already in the trash — so write nothing.
+		return m
 	}
+	m.Locked = current.Locked
+	m.KeepAwakeUntil = current.KeepAwakeUntil
+	m.StopAfterTurnAt = current.StopAfterTurnAt
+	// Written by the initial-prompt delivery goroutine and by a studio bind, both of which
+	// can land between the list's read and this write.
+	m.InitialPromptState = current.InitialPromptState
+	m.Studio = current.Studio
 	session.WriteMeta(m)
 	return m
+}
+
+// WithSessionMetaLock runs fn holding the lock every meta read-modify-write above takes. The
+// trash forgets a meta inside it, after re-reading the lock, so a lock set while the archive
+// was being written is honoured and no snapshot write can land between the check and the
+// removal.
+func WithSessionMetaLock(fn func()) {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	fn()
 }
 
 // keepAwakeMaxHours caps how far one pin can extend. Extending is just pressing again, and

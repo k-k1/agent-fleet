@@ -1349,6 +1349,8 @@ func WriteTrashErr(w http.ResponseWriter, code string, err error) {
 		status = http.StatusForbidden
 	case TrashErrRunning:
 		status = http.StatusConflict
+	case "not_found":
+		status = http.StatusNotFound
 	}
 	httpx.WriteErr(w, status, code, err.Error())
 }
@@ -1357,7 +1359,11 @@ func WriteTrashErr(w http.ResponseWriter, code string, err error) {
 // resumable state and return the meta as written. Deleting with ?stop=1 stops through it, so
 // a delete folds a live session away by exactly the steps halt uses (the carry-over promoted
 // first, agy given its graceful quit).
-func HaltSession(m session.Meta) (session.Meta, error) { return haltSessionMeta(m) }
+//
+// It does NOT promote the carry-over (docs/log/75 P5): promoting is what tells a person "this
+// session is waiting for your answer", and the session is about to go to the trash — the
+// notice would point at a session that is gone.
+func HaltSession(m session.Meta) (session.Meta, error) { return haltSession(m, false) }
 
 // ForgetRuntime drops what the Agent holds in memory and in status files for a session it is
 // about to forget: the managed handle, the live-state and exit records, the carried-over
@@ -1418,13 +1424,19 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 // ordering that was learned the hard way — the carry-over promoted before the process that
 // holds the interaction dies, the bridge disconnected before the pane goes, agy given its
 // graceful quit — and a second folding path silently misses them (ADR 0055 decision 12).
-func haltSessionMeta(m session.Meta) (session.Meta, error) {
+func haltSessionMeta(m session.Meta) (session.Meta, error) { return haltSession(m, true) }
+
+// haltSession is haltSessionMeta with the carry-over promotion made optional: true for every
+// halt that leaves a resumable row behind, false only for a delete (HaltSession).
+func haltSession(m session.Meta, promote bool) (session.Meta, error) {
 	name := m.Name
 	if m.DriverKind() == session.DriverManaged {
 		// Promote the carry-over BEFORE DropHandle (docs/log/75 P5): a pending Interaction
 		// lives only inside the runtime handle and is gone the moment it is dropped —
 		// calling later finds ManagedAlive false and gets nothing.
-		PromoteCarriedFor(m)
+		if promote {
+			PromoteCarriedFor(m)
+		}
 		// halt on managed means dropping the runtime handle; the daemon is shared, so it
 		// keeps running. The meta stays, so the row reads as stopped (resumable) — the same
 		// semantics as tui's kill-session. DropHandle aborts the running turn.
@@ -1448,7 +1460,9 @@ func haltSessionMeta(m session.Meta) (session.Meta, error) {
 	// state is the on-disk pending-* files and can still be read later, but kiro's approval
 	// panel exists only as text in the pane and is gone after kill-session. Promoting is
 	// idempotent for claude, and the status.Remove below does not erase the carry-over.
-	PromoteCarriedFor(m)
+	if promote {
+		PromoteCarriedFor(m)
+	}
 	// Kinds that only flush their resume state on a graceful exit (agy) get a
 	// chance to quit on their own; true = the pane already ended, skip the kill.
 	stopped := false
@@ -1522,7 +1536,19 @@ func ArchiveSession(m session.Meta) {
 	// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
 	// session again at the end of a turn nobody armed.
 	m.StopAfterTurnAt = ""
-	session.WriteMeta(m)
+	// Re-read under the lock: the meta above is a snapshot (a working-copy delete passes one
+	// from ListMetas), and a blind write would roll back a lock set meanwhile — or bring back
+	// a session deleted meanwhile.
+	sessionLockMu.Lock()
+	current, ok := session.ReadMeta(name)
+	if ok {
+		m.Locked = current.Locked
+		session.WriteMeta(m)
+	}
+	sessionLockMu.Unlock()
+	if !ok {
+		return
+	}
 	fleetgraph.RecordArchived(name, true) // write site ④, part 2: AFTER the death above, never before
 }
 
