@@ -117,6 +117,8 @@ share any AI-provider credentials.
 | **Split panes** — mirror, live terminal and working-tree changes side by side; each pane can also pop out into its own tab. | **Real git, in the console** — commit graph beside the selected commit's diff, plus staging and commit, per working copy and worktree. |
 | ![Usage tab: a stacked per-feature token chart over 30 days, KPI tiles for tokens, calls, cache reads, API-equivalent cost and unmeasured calls, and breakdowns by feature, agent and model](docs/img/usage-en.webp) | ![A terminal pane attached to a shell session, showing a build and a git status run](docs/img/terminal-en.webp) |
 | **See where the tokens went** — per feature, per agent and per model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. |
+| ![Sessions overview: one card per running session, grouped by repository, with the state chip, model and context usage on each](docs/img/overview-en.webp) | ![Fleet graph: one lane per session on a time axis, children under their parent, arrows for what passed between sessions, and each lane's state chip](docs/img/fleetgraph-en.webp) |
+| **Every running session at a glance** — one card per session, grouped by repository and family; the ones waiting on you are coloured so they stand out. | **The fleet over time** — one lane per session, children under their parent, and arrows for what passed between them; pan and zoom through the day. |
 
 <sub>Screenshots use a demo dataset; the same views in Japanese are in
 [README.ja.md](README.ja.md).</sub>
