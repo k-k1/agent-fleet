@@ -36,6 +36,10 @@ English | [日本語](0100-image-generation-studio.ja.md)
   §10 — **0 new red**, 2 yellow). Fixed copies and uploads always live in different places; a partial
   trailing JSONL line is truncated by the writer and skipped by readers. The reviewer's verdict:
   presentable as proposed.
+- **Revision 8 (2026-09-24)**: fixes a contradiction the P0 implementation review
+  ([114-adr-0100-impl-review](../log/114-adr-0100-impl-review.md) §4 🟡B1, §7 🔵A4) and the P0
+  integration found. **muse has no Terminal** (Managed only), so decision 8's "Terminal-only until
+  then" does not apply to it: in P0 muse cannot be attached to a studio at all.
 - Number: `develop` tops out at 0098; 0099 is taken by two unmerged branches (`temp/sidv2bw`,
   `temp/sjys6nk`), hence 0100.
 - Related: [0081](0081-image-generation-pane.md) (today's image-generation pane; this ADR overturns
@@ -285,16 +289,22 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
   `managedDrivers`, TUI candidates from the Console's `repoLaunchKinds` (`agents/registry.ts:760`)
   filtered by **`terminalDriver !== false`** minus shell (the field is optional and absent means
   allowed; only lcpp and muse carry `false`, `registry.ts:134-148, 566, 614` — filtering on truthiness
-  or presence would drop claude and agy). A single list would drop claude.
+  or presence would drop claude and agy). A single list would drop claude. **lcpp and muse never appear
+  among the TUI candidates** (revision 8).
 - **Worktree on by default** is the only way to make cwd-based identity unambiguous for the kinds that
   guess. Off is allowed only for **kind × execution-method pairs where `AF_SESSION_NAME` arrives on
   every path**: Terminal (all kinds) and lcpp. **codex Managed is not one of them** — a fresh thread
   receives it, but a thread resumed after the Agent's daemon was replaced falls back to the cwd guess
   (`mcp_stdio.go:3311-3340`). The launch UI states that a worktree cannot see uncommitted material.
-- **opencode Managed is excluded from studios** (Terminal is fine): its af child is shared by every
-  session in the directory, so `set_image_draft` could run from another conversation. Delivering
-  `AF_SESSION_NAME` to copilot / cursor / kiro / muse children is P0 prerequisite work; until then
-  those kinds are Terminal-only.
+- **opencode Managed and muse are excluded from studios** (opencode is fine in Terminal): opencode's af
+  child is shared by every session in the directory, so `set_image_draft` could run from another
+  conversation. Delivering `AF_SESSION_NAME` to copilot / cursor / kiro children is P0 prerequisite
+  work; until then those kinds are Terminal-only. **muse is Managed-only** (`managedDrivers` in
+  `session_turn.go`, `terminalDriver: false` in `registry.ts`) and scrubs its MCP child's environment,
+  so the af server answers 401 — with no Terminal to fall back on, **it cannot be attached in P0**
+  (revision 8; the Agent refuses the create-time binding and bind with 409
+  `studio_kind_unsupported`, and the launch dialog blocks it with the reason). Opening it takes both
+  `AF_SESSION_NAME` delivery and an environment that reaches the af child (P1).
 
 ### Decision 9 — Three histories: edits, versions, pictures
 
@@ -423,7 +433,7 @@ conversation.
 - **P0 prerequisites**: ① the `inputs`/`mask` guard (root-pinned open and fixed copy at enqueue, every
   provider) — precondition for decision 4's `op`/`inputs` opening; ② the cue-line strippers
   (transcript model layer and Go) — precondition for emitting the cue. `AF_SESSION_NAME` delivery for
-  copilot / cursor / kiro / muse is **not a P0-wide prerequisite but the condition for opening that
+  copilot / cursor / kiro is **not a P0-wide prerequisite but the condition for opening that
   kind's Managed mode to studios** (Terminal-only until then) — claude TUI, fresh codex Managed,
   Terminal of every kind and lcpp close the P0 loop on their own.
 - **P0**: decisions 1–5, 7, 8, 10, 12 (layer 2), and decision 9's edit log, press events and **the
@@ -431,7 +441,8 @@ conversation.
   (with references) and inpaint with a mask placed through the existing path field arrive with
   decision 4's opening. **The P0 agent does not see pictures** (the person's observations travel as
   words) — showing is P1 (decision 6).
-- **P1**: decision 9's "compare", decision 6's "show", opening copilot / cursor / kiro / muse Managed,
+- **P1**: decision 9's "compare", decision 6's "show", opening copilot / cursor / kiro / muse Managed
+  (for muse, also an environment that reaches the af child — revision 8),
   the model proposal card, the wand icon, the ledger `Ref`, the lcpp system-prompt persona, draft
   save/load as files, **decision 11's canvas** (log 111 §10; ComfyUI families only; acceptance once each
   on Chromium and iOS Safari; the `openai_compat` path stays unmeasured and out of scope).
@@ -524,3 +535,10 @@ conversation.
 |---|---|
 | 🟡R even the default browse root puts fixed copies and uploads under different parents | decision 4: corrected to "always a different place" (`~/.cache/agent-fleet/generated/…` vs `~/generated/…`) |
 | 🟡S a retry after a partial append corrupts a JSONL line | decision 9: the writer truncates to the last newline on failure; readers drop unparsable lines |
+
+## Changed in revision 8 (2026-09-24, [114-adr-0100-impl-review](../log/114-adr-0100-impl-review.md) §4, §7)
+
+| Finding | Change |
+|---|---|
+| 🟡B1 muse is not "Terminal-only" but unattachable in P0 (contradicting decision 8's own "only lcpp and muse carry `false`") | decision 8: states that lcpp and muse never appear among the TUI candidates; adds muse to the excluded Managed kinds with the reasons (Managed-only; its scrubbed MCP environment cannot reach the af server) and the P1 condition for opening it. Phases: muse leaves the prerequisite line and P1 gains the condition |
+| 🔵A4 the refusal for muse tells it to use Terminal | decision 8: names the Agent's refusal (409 `studio_kind_unsupported`) and how the launch dialog blocks it (the wording is the implementation's to fix) |

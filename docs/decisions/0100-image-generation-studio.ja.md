@@ -29,6 +29,9 @@
 - **改訂 7（2026-09-23）**: 7 巡目（[113-adr-review](../log/113-adr-review.md) §10・**新規 🔴 0**・🟡 2）を
   反映して締めた。固定コピーとアップロード先は常に別の場所、JSONL の末尾の不完全行は書く側が
   切り戻し読む側も捨てる。レビュー役の総評は「proposed として提示できる」。
+- **改訂 8（2026-09-24）**: P0 実装のレビュー（[114-adr-0100-impl-review](../log/114-adr-0100-impl-review.md)
+  §4 🟡B1・§7 🔵A4）と P0 の統合で見つかった食い違いを直した。**muse には Terminal が無い**（Managed
+  だけ）ので、決定 8 の「届くまで Terminal 限定」は muse には当たらず、P0 ではスタジオに付けられない。
 - 番号: `develop` の最大は 0098。0099 は未マージの 2 ブランチ（`temp/sidv2bw`・`temp/sjys6nk`）が
   取っているので 0100。
 - 関連: [0081](0081-image-generation-pane.ja.md)（今の画像生成ペイン。本 ADR は決定 6・7 を覆し、
@@ -251,15 +254,20 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
   **実行方式ごとに出所が違う**（改訂 2）: Managed の候補は `managedDrivers`、TUI の候補は Console の
   `repoLaunchKinds`（`agents/registry.ts:760`）のうち **`terminalDriver !== false`** の kind から
   shell を除いた物（欄は省略＝可で、false を持つのは lcpp と muse だけ・`registry.ts:134-148, 566, 614`。
-  真偽や欄の有無で絞ると claude と agy が落ちる）。1 つの表から引くと claude が落ちる。
+  真偽や欄の有無で絞ると claude と agy が落ちる）。1 つの表から引くと claude が落ちる。**TUI の候補に
+  lcpp と muse は出ない**（改訂 8）。
 - **worktree 既定 ON** は、af サーバが自分のセッションを cwd で推測する kind で推測を一意にする
   唯一の手段。OFF を選べるのは **kind × 実行方式のすべての経路で `AF_SESSION_NAME` が届く組**
   だけ: Terminal（全 kind）と lcpp。**codex Managed は不可**——新規スレッドには届くが、Agent の
   デーモンが差し替わった後の resume で cwd 推測へ落ちる（`mcp_stdio.go:3311-3340`）。起動 UI は
   「worktree では未コミットの資料は見えない」と明示する。
-- **opencode の Managed はスタジオから外す**（Terminal は可）: af 子を複数セッションが共有し、別の
-  セッションから `set_image_draft` が走り得る。copilot／cursor／kiro／muse は `AF_SESSION_NAME` を
-  子へ届ける改修を P0 の前提作業にし、届くまで Terminal 限定。
+- **opencode の Managed と muse はスタジオから外す**（opencode は Terminal なら可）: opencode は af 子を
+  複数セッションが共有し、別のセッションから `set_image_draft` が走り得る。copilot／cursor／kiro は
+  `AF_SESSION_NAME` を子へ届ける改修を P0 の前提作業にし、届くまで Terminal 限定。**muse は Managed
+  しか無い**（`session_turn.go` の `managedDrivers`・`registry.ts` の `terminalDriver: false`）うえ、
+  MCP 子の環境を洗うので af サーバに届かない（401）＝逃げ道の Terminal が無く、**P0 では付けられない**
+  （改訂 8。Agent は作成時の結びと bind で 409 `studio_kind_unsupported` を返し、起動ダイアログは理由付きで
+  塞ぐ）。開放には `AF_SESSION_NAME` の配達と、af 子に届く環境の両方が要る（P1）。
 
 ### 決定 9 — 履歴は 3 つ。編集履歴・版・絵
 
@@ -368,14 +376,15 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 
 - **P0 の前提作業**: ① `inputs`/`mask` の番人（投入時の root 固定 open と固定コピー・全 provider）＝
   決定 4 の `op`/`inputs` 解放の前提、② 合図 1 行の剥がし手（転写モデル層・Go）＝合図を出す前提。
-  copilot／cursor／kiro／muse の `AF_SESSION_NAME` 配達は **P0 全体の前提ではなく、その kind の
+  copilot／cursor／kiro の `AF_SESSION_NAME` 配達は **P0 全体の前提ではなく、その kind の
   Managed をスタジオに開放する条件**（届くまで Terminal 限定）——claude TUI・codex Managed 新規・
   Terminal 全 kind・lcpp だけで P0 の輪は閉じる。
 - **P0**: 決定 1〜5・7・8・10・12（層 2）と、決定 9 の編集履歴・press・**絵の履歴の一覧と
   「この設定に戻す」**。画面の 3 列。層 B の撤去。指示編集（参照あり）と、既存のパス欄でマスクを
   置く inpaint は決定 4 の解放で入る。**P0 のエージェントは絵を見ない**（人の観察を言葉で渡す）
   ——見せるのは P1（決定 6）。
-- **P1**: 決定 9 の「並べる」、決定 6 の「見せる」、copilot／cursor／kiro／muse Managed の開放、モデル提案カード、杖アイコン、台帳の
+- **P1**: 決定 9 の「並べる」、決定 6 の「見せる」、copilot／cursor／kiro／muse Managed の開放（muse は
+  af 子に届く環境も・改訂 8）、モデル提案カード、杖アイコン、台帳の
   `Ref`、lcpp の system prompt 経由の人格、下書きのファイル保存／読込、**決定 11 のキャンバス**
   （log 111 §10・対象は ComfyUI のファミリー・受け入れは Chromium と iOS Safari で各 1 回、
   `openai_compat` 経路は未測定のまま対象外）。
@@ -467,3 +476,10 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 |---|---|
 | 🟡R 既定の browse root でも固定コピーとアップロード先の親は別 | 決定 4: 「常に別の場所」に訂正（`~/.cache/agent-fleet/generated/…` と `~/generated/…`） |
 | 🟡S 部分追記の後の再試行で JSONL の行が壊れる | 決定 9: 書く側は失敗時に末尾を最後の改行まで切り戻し、読む側は解析できない行を捨てる |
+
+## 改訂 8 で変えたこと（2026-09-24・[114-adr-0100-impl-review](../log/114-adr-0100-impl-review.md) §4・§7）
+
+| 指摘 | 変更 |
+|---|---|
+| 🟡B1 muse は「Terminal 限定」ではなく P0 では付けられない（決定 8 の中で「false を持つのは lcpp と muse」と食い違う） | 決定 8: TUI の候補に lcpp と muse が出ないことを明記。「Managed を外す」の並びに muse を足し、理由（Managed しか無い・MCP 子の環境を洗うので af サーバに届かない）と P1 の開放条件を書いた。フェーズの前提作業から muse を外し、P1 に条件を足した |
+| 🔵A4 muse の断りの文言が「Terminal を使って」と言う | 決定 8 に Agent の断り（409 `studio_kind_unsupported`）と起動ダイアログの塞ぎ方を明記（文言は実装側で直す） |
