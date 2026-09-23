@@ -21,6 +21,7 @@
 // disabled one invites a support question. Blocks degrade to a self-contained rendering
 // instead (e.g. ToolTrace expands the diff inline when `openDiff` is missing).
 
+import type { ReactNode } from "react";
 import type { Group, Part, TurnTtsWiring } from "./types.ts";
 import type { TranscriptMarksWiring } from "./useMarks.ts";
 import type { TranscriptTranslateWiring } from "../useTranslate.ts";
@@ -108,6 +109,13 @@ export interface TranscriptCaps {
    * owner's tokens, so a recipient reads the answer as it was written.
    */
   translate?: TranscriptTranslateWiring;
+  /**
+   * A card of the host's own for one tool call, drawn in place of its faint trace and kept out
+   * of the "work" fold (the image studio's set_image_draft, ADR 0100 decision 9). `nth` counts
+   * the calls of the same tool before this one in the turn. null → the ordinary trace. Absent →
+   * every tool is a trace.
+   */
+  toolCard?: (p: Part, turn: Group, nth: number) => ReactNode | null;
 
   // ── Display preferences ───────────────────────────────────────────────────────
   /** Show the agent's chain-of-thought expanded (per-kind behaviour setting, default off). */

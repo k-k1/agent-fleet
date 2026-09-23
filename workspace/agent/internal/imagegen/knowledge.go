@@ -6,12 +6,17 @@ package imagegen
 // visibility: a browse root under ~/repos would lose the knowledge on the next recreate. Outside
 // the Files pane's denylist on purpose, so the member can open and edit it there.
 //
-// Only the records section is written through the Agent (add_image_knowledge), and only by
-// appending. The others are edited by hand or with the agent's own Edit, and are never
-// rewritten here — which is also why the summary's size limit is applied when it is READ.
+// The agent writes the records section through the Agent (add_image_knowledge), and only by
+// appending; the others are its own Edit's. The member edits the file in the Files pane — or,
+// when the browse root is not home and the Files pane cannot reach it, through the pane's notes
+// editor (PUT, all four sections at once, refused when the file changed since it was read). The
+// summary's size limit is applied when it is READ, since neither writer is held to it.
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -107,12 +112,16 @@ func knowledgeTemplate(key string) string {
 	return b.String()
 }
 
-func readKnowledge(scope, key string) (Knowledge, error) {
+func readKnowledge(scope, key string) (Knowledge, error) { return readKnowledgeCut(scope, key, true) }
+
+// readKnowledgeCut reads scope/key; cut applies the summary's read limit. Only the pane's editor
+// reads it whole: an edit saved from a cut summary would delete the rest of it.
+func readKnowledgeCut(scope, key string, cut bool) (Knowledge, error) {
 	path, err := knowledgeFile(scope, key)
 	if err != nil {
 		return Knowledge{}, err
 	}
-	k := Knowledge{Scope: scope, Key: strings.TrimSpace(key), Path: path}
+	k := Knowledge{Scope: scope, Key: strings.TrimSpace(key), Path: path, FilesPath: knowledgeFilesPath(path)}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return k, nil
@@ -120,16 +129,41 @@ func readKnowledge(scope, key string) (Knowledge, error) {
 	if err != nil {
 		return k, err
 	}
+	k.Version = knowledgeVersion(b)
 	s := parseKnowledge(string(b))
 	k.Summary, k.Settings, k.Prompts, k.Records = s[0], s[1], s[2], s[3]
-	if len(k.Summary) > knowledgeSummaryMax {
-		cut := knowledgeSummaryMax
-		for cut > 0 && !utf8.RuneStart(k.Summary[cut]) {
-			cut--
+	if cut && len(k.Summary) > knowledgeSummaryMax {
+		at := knowledgeSummaryMax
+		for at > 0 && !utf8.RuneStart(k.Summary[at]) {
+			at--
 		}
-		k.Summary, k.SummaryTruncated = k.Summary[:cut], true
+		k.Summary, k.SummaryTruncated = k.Summary[:at], true
 	}
 	return k, nil
+}
+
+// knowledgeVersion names a file's content for KnowledgeEdit's check. A hash rather than the
+// mtime: the agent's Edit and the Files pane can both write within the same clock tick.
+func knowledgeVersion(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
+}
+
+// knowledgeFilesPath is path as the Files pane names it, or "" when the pane cannot open it:
+// outside the browse root, or under a denylisted folder of it.
+func knowledgeFilesPath(path string) string {
+	if BrowseRootDir == nil || PathDenied == nil {
+		return ""
+	}
+	rel, err := filepath.Rel(filepath.Clean(BrowseRootDir()), path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return ""
+	}
+	rel = filepath.ToSlash(rel)
+	if PathDenied(rel) {
+		return ""
+	}
+	return rel
 }
 
 var knowledgeMu sync.Mutex
@@ -171,9 +205,100 @@ func appendKnowledgeRecord(in KnowledgeAdd, now time.Time) (Knowledge, error) {
 	} else if err != nil {
 		return Knowledge{}, err
 	}
-	out := insertKnowledgeRecord(src, line)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := writeKnowledgeFile(path, insertKnowledgeRecord(src, line)); err != nil {
 		return Knowledge{}, err
+	}
+	return readKnowledge(in.Scope, in.Key)
+}
+
+// errKnowledgeChanged refuses a KnowledgeEdit made over a version that is no longer the file's.
+var errKnowledgeChanged = errors.New("the notes changed since they were read; read them again and reapply the edit")
+
+// editKnowledge replaces the four sections of scope/key, when the file is still the version the
+// editor read. The title and anything before the first section are kept, and each section keeps
+// the heading spelling the file already uses.
+func editKnowledge(in KnowledgeEdit) (Knowledge, error) {
+	path, err := knowledgeFile(in.Scope, in.Key)
+	if err != nil {
+		return Knowledge{}, err
+	}
+	knowledgeMu.Lock()
+	defer knowledgeMu.Unlock()
+	src, err := os.ReadFile(path)
+	cur := ""
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		src = []byte(knowledgeTemplate(strings.TrimSpace(in.Key)))
+	case err != nil:
+		return Knowledge{}, err
+	default:
+		cur = knowledgeVersion(src)
+	}
+	if in.Version != cur {
+		return Knowledge{}, errKnowledgeChanged
+	}
+	body := [4]string{in.Summary, in.Settings, in.Prompts, in.Records}
+	if n := utf8.RuneCountInString(strings.Join(body[:], "")); n > knowledgeEditMax {
+		return Knowledge{}, fmt.Errorf("the notes are at most %d characters (got %d)", knowledgeEditMax, n)
+	}
+	if err := writeKnowledgeFile(path, rebuildKnowledge(src, body)); err != nil {
+		return Knowledge{}, err
+	}
+	return readKnowledge(in.Scope, in.Key)
+}
+
+// knowledgeEditMax bounds what the pane's editor may write: a document every studio turn reads
+// the summary of, not a place for pasted logs.
+const knowledgeEditMax = 64 * 1024
+
+// rebuildKnowledge is src with its four sections replaced by body, in the fixed order. A section
+// heading the file already has keeps its spelling; a missing one follows the file's language
+// (English when any of its headings is), else the member's.
+func rebuildKnowledge(src []byte, body [4]string) []byte {
+	var found [4]string
+	sawEN, sawJA := false, false
+	var pre strings.Builder
+	inPre := true
+	for _, line := range strings.SplitAfter(string(src), "\n") {
+		if i := knowledgeHeadingIndex(line); i >= 0 {
+			inPre = false
+			found[i] = strings.TrimSpace(strings.TrimPrefix(strings.TrimRight(line, " \t\r\n"), "## "))
+			if strings.EqualFold(found[i], knowledgeHeadings[i][1]) {
+				sawEN = true
+			} else {
+				sawJA = true
+			}
+			continue
+		}
+		if inPre {
+			pre.WriteString(line)
+		}
+	}
+	english := sawEN || (!sawJA && studioLocale() == "en")
+	blocks := []string{}
+	if t := strings.TrimRight(pre.String(), "\n"); t != "" {
+		blocks = append(blocks, t)
+	}
+	for i, pair := range knowledgeHeadings {
+		h := found[i]
+		if h == "" {
+			h = pair[0]
+			if english {
+				h = pair[1]
+			}
+		}
+		blocks = append(blocks, "## "+h)
+		if t := strings.TrimSpace(strings.ReplaceAll(body[i], "\r\n", "\n")); t != "" {
+			blocks = append(blocks, t)
+		}
+	}
+	return []byte(strings.Join(blocks, "\n\n") + "\n")
+}
+
+// writeKnowledgeFile replaces the file at path with out.
+func writeKnowledgeFile(path string, out []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
 	}
 	// The member owns this file: a symlink they made (to share one document between two keys,
 	// or to keep it in a repository) is written THROUGH, and the file keeps its mode. A rename
@@ -187,27 +312,27 @@ func appendKnowledgeRecord(in KnowledgeAdd, now time.Time) (Knowledge, error) {
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(target), ".knowledge-*")
 	if err != nil {
-		return Knowledge{}, err
+		return err
 	}
 	if _, err := tmp.Write(out); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
-		return Knowledge{}, err
+		return err
 	}
 	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
-		return Knowledge{}, err
+		return err
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmp.Name())
-		return Knowledge{}, err
+		return err
 	}
 	if err := os.Rename(tmp.Name(), target); err != nil {
 		os.Remove(tmp.Name())
-		return Knowledge{}, err
+		return err
 	}
-	return readKnowledge(in.Scope, in.Key)
+	return nil
 }
 
 // insertKnowledgeRecord puts line at the end of the records section: before the next of the
@@ -268,11 +393,30 @@ func lastLine(b []byte) string {
 	return string(b)
 }
 
-// HandleKnowledge answers GET /imagegen/knowledge?scope=&key= (one document, by section) and
-// POST (KnowledgeAdd: append to the records section — the only write this route makes).
+// HandleKnowledge answers GET /imagegen/knowledge?scope=&key=[&full=1] (one document, by section;
+// full skips the summary's read limit, for the editor), POST
+// (KnowledgeAdd: append to the records section) and PUT (KnowledgeEdit: the pane's editor).
 func HandleKnowledge(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		var body KnowledgeEdit
+		if !httpx.DecodeJSON(w, r, &body) {
+			return
+		}
+		k, err := editKnowledge(body)
+		if errors.Is(err, errKnowledgeChanged) {
+			httpx.WriteErr(w, http.StatusPreconditionFailed, "knowledge_changed", err.Error())
+			return
+		}
+		if err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_knowledge", err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, k)
+		return
+	}
 	if r.Method == http.MethodGet {
-		k, err := readKnowledge(r.URL.Query().Get("scope"), r.URL.Query().Get("key"))
+		q := r.URL.Query()
+		k, err := readKnowledgeCut(q.Get("scope"), q.Get("key"), q.Get("full") != "1")
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_knowledge", err.Error())
 			return
@@ -284,10 +428,56 @@ func HandleKnowledge(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &body) {
 		return
 	}
+	if body.Session != "" {
+		if code, msg := agentKnowledgeTarget(r.Context(), body); code != "" {
+			httpx.WriteErr(w, http.StatusConflict, code, msg)
+			return
+		}
+	}
 	k, err := appendKnowledgeRecord(body, studioNow())
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_knowledge", err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, k)
+}
+
+// agentKnowledgeTarget checks an agent's record against its studio: what a prompt does depends
+// on the model, so a finding belongs to the model the studio has chosen or to that model's
+// family — never to a key the agent made up (measured: with no model chosen, an agent filed its
+// note under the provider's name as if it were a family). The member's own records, from the
+// pane's notes, name their document directly and are not checked here.
+func agentKnowledgeTarget(ctx context.Context, in KnowledgeAdd) (code, msg string) {
+	var draft *ImageStudioDraft
+	for _, s := range listStudios() {
+		if s.Session != in.Session {
+			continue
+		}
+		if rec, err := loadStudio(s.ID); err == nil {
+			draft = &rec.Draft
+		}
+		break
+	}
+	if draft == nil {
+		return "studio_not_bound", "this session is not bound to an image studio"
+	}
+	if draft.Model == "" {
+		return "no_model", studioNoModelMessage
+	}
+	key := strings.TrimSpace(in.Key)
+	switch in.Scope {
+	case KnowledgeModel:
+		if key != draft.Model {
+			return "wrong_key", fmt.Sprintf("record under the studio's model %q, or its family", draft.Model)
+		}
+	case KnowledgeFamily:
+		facts, _ := studioModelFactsFor(ctx, *draft)
+		if facts == nil || facts.Family == "" {
+			return "wrong_key", fmt.Sprintf("the family of %q is not known; record under the model (scope model, key %q)", draft.Model, draft.Model)
+		}
+		if key != facts.Family {
+			return "wrong_key", fmt.Sprintf("record under the studio's model's family %q, or the model %q", facts.Family, draft.Model)
+		}
+	}
+	return "", ""
 }

@@ -29,6 +29,11 @@
 - **改訂 7（2026-09-23）**: 7 巡目（[113-adr-review](../log/113-adr-review.md) §10・**新規 🔴 0**・🟡 2）を
   反映して締めた。固定コピーとアップロード先は常に別の場所、JSONL の末尾の不完全行は書く側が
   切り戻し読む側も捨てる。レビュー役の総評は「proposed として提示できる」。
+- **改訂 9（2026-09-24）**: 利用者の判断。プロンプトの書き方はモデルごとに違う（SDXL 系・anima・
+  Qwen-Image 系では組み立てが別物）ので、**モデルを選ぶまでスタジオの会話を始めない**。決定 2・3・5 を変えた。
+- **改訂 8（2026-09-24）**: P0 実装のレビュー（[114-adr-0100-impl-review](../log/114-adr-0100-impl-review.md)
+  §4 🟡B1・§7 🔵A4）と P0 の統合で見つかった食い違いを直した。**muse には Terminal が無い**（Managed
+  だけ）ので、決定 8 の「届くまで Terminal 限定」は muse には当たらず、P0 ではスタジオに付けられない。
 - 番号: `develop` の最大は 0098。0099 は未マージの 2 ブランチ（`temp/sidv2bw`・`temp/sjys6nk`）が
   取っているので 0100。
 - 関連: [0081](0081-image-generation-pane.ja.md)（今の画像生成ペイン。本 ADR は決定 6・7 を覆し、
@@ -113,7 +118,7 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
   錠も原子性も無い）。編集履歴（決定 9）は別ファイル。
 - セッションが無いうちは今の `localStorage` 下書きで動く。**スタジオは「エージェントを付ける」を
   押した瞬間に作る**（改訂 2）——順序は ① スタジオ作成（`localStorage` の下書きを移す。`provider` は
-  画面が解決した ready な行の id、`model` は空でも良い）→ ② `GET …/persona` → ③ セッション作成要求に
+  画面が解決した ready な行の id。**`model` は必須**＝モデルが選ばれていなければ「付ける」は押せない・改訂 9）→ ② `GET …/persona` → ③ セッション作成要求に
   `studio` を渡し、Agent は**起動より前に**メタへ `Studio` を書き、スタジオの `session` を結んでから
   `initial_prompt` を送る。③ が失敗したらスタジオは結び無しで残る（下書きは失わない）。
   初回ターン（人格）の配達は**メタの欄 `InitialPromptState`**（`pending` / `delivered` / `failed` /
@@ -136,9 +141,9 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
 | ツール | 何をするか |
 |---|---|
 | `get_image_studio` | 下書き・錠・**since last call**（人の編集・巻き戻し・新しい結果を最大 5 件＋「他 N 件」）・モデルの事実（ファミリー・読める摘み・サイズ・既定値・LoRA とトリガー語）・知識の「要約」節・版の要約。上限 8 KB |
-| `set_image_draft` | **部分更新**。書いた欄だけ変え、`null` で消す。**保存時の検証は欄ごと**（型・許可表・上限・錠・パスの番人）で、**未完成の下書きを許す**（prompt が空でも保存できる）。完成した要求の検証（`spec()` の `bad_prompt` 等）は投入と試走のときに掛かる。錠の欄は落として理由を返す |
+| `set_image_draft` | **部分更新**。書いた欄だけ変え、`null` で消す。**保存時の検証は欄ごと**（型・許可表・上限・錠・パスの番人）で、**未完成の下書きを許す**（prompt が空でも保存できる）。完成した要求の検証（`spec()` の `bad_prompt` 等）は投入と試走のときに掛かる。錠の欄は落として理由を返す。**モデル未選択なら書き込みごと断る**（409 `no_model`・改訂 9） |
 | `run_image_trial` | **引数を持たない**。走るのはスタジオに保存された下書き（`provider`・`model` を含む＝画面が選んだ行そのもの。Agent の既定 provider や warm モデルへ**落とさない**）。`model` が無い（「モデルを選んでください」）・`op=inpaint` で `mask` が空・`spec()` を通らないときは理由付きで断る。1 枚・キュー先頭・ファミリーの試走 steps・待ち 3 枚まで。**待つのは最長 120 秒**（温かいエンジンは 8〜21 秒で返る。codex の 600 秒より短い）で、`generate_image` と同じ **10 秒ごとの progress heartbeat** を送る（opencode は通知が無いと 60 秒で切る・`mcp_imagegen.go:222-228`）。間に合えばパス・seed・警告・所要時間、間に合わなければジョブ id と「結果は `get_image_studio` の since に出る」を返す。ジョブと版は残って試走枠に出る |
-| `add_image_knowledge` | 決定 12 の「記録」節へ追記（scope・key・note・evidence） |
+| `add_image_knowledge` | 決定 12 の「記録」節へ追記（scope・key・note・evidence）。**鍵はスタジオのモデル（scope model）かそのファミリー（scope family）だけ**、モデル未選択なら断る（改訂 9） |
 
 - 広告は**そのセッションがスタジオに結ばれているときだけ**（`mcpOwningSession()` のメタに `Studio`）。
   tools/list は要求ごと・`list_changed` 1 分なので、結び直しは通知を尊重する kind なら 1 分以内に効く
@@ -215,6 +220,9 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
 - 前置しない理由: 入れる 1 か所が無く（`/turn` は `h.Send` 直）、剥がす 1 か所も無く
   （`splitPastedImages` は末尾の添付指示文専用・自動タイトルは先頭 400 字を読む）、転写に残って
   毎ターン再送される（lcpp は 10 ターンで窓の大半）。
+- **モデルを替えたら書き直させる**（改訂 9）: 前回の `get_image_studio` から人が `model` を替えていれば、
+  note で「前のモデルの書き方を直すのでなく、新しいモデル（`model` の方言・品質接頭辞と知識）で書き直す」と
+  伝える。SDXL 系・anima・Qwen-Image 系はプロンプトの組み立てが別物で、前のプロンプトの手直しでは届かない。
 - 合図が付くのはミラーの composer から送る発言だけ（メモの流し込み・peer・予約実行には付かない）。
   TUI では添付のパスを織り込む `buildImagePrompt` の**後**に付けて末尾を保つ。
 - 末尾にする理由: 自動タイトルに効かない。剥がし手は転写モデル層（`mirror/transcript/model.ts`）と
@@ -235,6 +243,8 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 
 `comfyFamilyRow` に `Dialect`・`QualityPrefixes`・`StepsRange`・`CFGRange` を足し、`GET /imagegen/status`
 の `modelStatus` に出す。Console のファミリーカードはそれを描くだけ（i18n には訳語だけ残る）。
+方言は `tags`・`sentences`・`mixed`（タグと文章の併記＝Anima）の 3 値で、エージェントには値に加えて
+書き方の指示文 `dialect_how` も渡す（改訂 9。`mixed` は値だけではどこに何を書くかが伝わらない）。
 `get_image_studio` の「モデルの事実」も同じ行から組む。0081 決定 4「何を読むかはファミリーが決め、
 言葉で言う」を読む摘み以外に広げる。ADR 0098 の qwen-image-2.1 は Agent 側と Console 側の
 2 コミットで両方触った——その二重を畳む。層 B（`PromptHelpModal`・`prompthelp.ts`）は撤去する
@@ -251,15 +261,20 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
   **実行方式ごとに出所が違う**（改訂 2）: Managed の候補は `managedDrivers`、TUI の候補は Console の
   `repoLaunchKinds`（`agents/registry.ts:760`）のうち **`terminalDriver !== false`** の kind から
   shell を除いた物（欄は省略＝可で、false を持つのは lcpp と muse だけ・`registry.ts:134-148, 566, 614`。
-  真偽や欄の有無で絞ると claude と agy が落ちる）。1 つの表から引くと claude が落ちる。
+  真偽や欄の有無で絞ると claude と agy が落ちる）。1 つの表から引くと claude が落ちる。**TUI の候補に
+  lcpp と muse は出ない**（改訂 8）。
 - **worktree 既定 ON** は、af サーバが自分のセッションを cwd で推測する kind で推測を一意にする
   唯一の手段。OFF を選べるのは **kind × 実行方式のすべての経路で `AF_SESSION_NAME` が届く組**
   だけ: Terminal（全 kind）と lcpp。**codex Managed は不可**——新規スレッドには届くが、Agent の
   デーモンが差し替わった後の resume で cwd 推測へ落ちる（`mcp_stdio.go:3311-3340`）。起動 UI は
   「worktree では未コミットの資料は見えない」と明示する。
-- **opencode の Managed はスタジオから外す**（Terminal は可）: af 子を複数セッションが共有し、別の
-  セッションから `set_image_draft` が走り得る。copilot／cursor／kiro／muse は `AF_SESSION_NAME` を
-  子へ届ける改修を P0 の前提作業にし、届くまで Terminal 限定。
+- **opencode の Managed と muse はスタジオから外す**（opencode は Terminal なら可）: opencode は af 子を
+  複数セッションが共有し、別のセッションから `set_image_draft` が走り得る。copilot／cursor／kiro は
+  `AF_SESSION_NAME` を子へ届ける改修を P0 の前提作業にし、届くまで Terminal 限定。**muse は Managed
+  しか無い**（`session_turn.go` の `managedDrivers`・`registry.ts` の `terminalDriver: false`）うえ、
+  MCP 子の環境を洗うので af サーバに届かない（401）＝逃げ道の Terminal が無く、**P0 では付けられない**
+  （改訂 8。Agent は作成時の結びと bind で 409 `studio_kind_unsupported` を返し、起動ダイアログは理由付きで
+  塞ぐ）。開放には `AF_SESSION_NAME` の配達と、af 子に届く環境の両方が要る（P1）。
 
 ### 決定 9 — 履歴は 3 つ。編集履歴・版・絵
 
@@ -368,14 +383,15 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 
 - **P0 の前提作業**: ① `inputs`/`mask` の番人（投入時の root 固定 open と固定コピー・全 provider）＝
   決定 4 の `op`/`inputs` 解放の前提、② 合図 1 行の剥がし手（転写モデル層・Go）＝合図を出す前提。
-  copilot／cursor／kiro／muse の `AF_SESSION_NAME` 配達は **P0 全体の前提ではなく、その kind の
+  copilot／cursor／kiro の `AF_SESSION_NAME` 配達は **P0 全体の前提ではなく、その kind の
   Managed をスタジオに開放する条件**（届くまで Terminal 限定）——claude TUI・codex Managed 新規・
   Terminal 全 kind・lcpp だけで P0 の輪は閉じる。
 - **P0**: 決定 1〜5・7・8・10・12（層 2）と、決定 9 の編集履歴・press・**絵の履歴の一覧と
   「この設定に戻す」**。画面の 3 列。層 B の撤去。指示編集（参照あり）と、既存のパス欄でマスクを
   置く inpaint は決定 4 の解放で入る。**P0 のエージェントは絵を見ない**（人の観察を言葉で渡す）
   ——見せるのは P1（決定 6）。
-- **P1**: 決定 9 の「並べる」、決定 6 の「見せる」、copilot／cursor／kiro／muse Managed の開放、モデル提案カード、杖アイコン、台帳の
+- **P1**: 決定 9 の「並べる」、決定 6 の「見せる」、copilot／cursor／kiro／muse Managed の開放（muse は
+  af 子に届く環境も・改訂 8）、モデル提案カード、杖アイコン、台帳の
   `Ref`、lcpp の system prompt 経由の人格、下書きのファイル保存／読込、**決定 11 のキャンバス**
   （log 111 §10・対象は ComfyUI のファミリー・受け入れは Chromium と iOS Safari で各 1 回、
   `openai_compat` 経路は未測定のまま対象外）。
@@ -467,3 +483,18 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 |---|---|
 | 🟡R 既定の browse root でも固定コピーとアップロード先の親は別 | 決定 4: 「常に別の場所」に訂正（`~/.cache/agent-fleet/generated/…` と `~/generated/…`） |
 | 🟡S 部分追記の後の再試行で JSONL の行が壊れる | 決定 9: 書く側は失敗時に末尾を最後の改行まで切り戻し、読む側は解析できない行を捨てる |
+
+## 改訂 8 で変えたこと（2026-09-24・[114-adr-0100-impl-review](../log/114-adr-0100-impl-review.md) §4・§7）
+
+| 指摘 | 変更 |
+|---|---|
+| 🟡B1 muse は「Terminal 限定」ではなく P0 では付けられない（決定 8 の中で「false を持つのは lcpp と muse」と食い違う） | 決定 8: TUI の候補に lcpp と muse が出ないことを明記。「Managed を外す」の並びに muse を足し、理由（Managed しか無い・MCP 子の環境を洗うので af サーバに届かない）と P1 の開放条件を書いた。フェーズの前提作業から muse を外し、P1 に条件を足した |
+| 🔵A4 muse の断りの文言が「Terminal を使って」と言う | 決定 8 に Agent の断り（409 `studio_kind_unsupported`）と起動ダイアログの塞ぎ方を明記（Agent の文言は PR #926 で「いまは付けられない」に直っている） |
+
+## 改訂 9 で変えたこと（2026-09-24・利用者の判断・PR #932 の通し確認）
+
+| きっかけ | 変更 |
+|---|---|
+| 通し確認でモデル未選択のまま会話が進み、「覚えて」の記録がプロバイダ名（`agy`）をファミリーとして使った | 決定 2: 付けるにはモデルが要る（Console はボタンを塞ぎ、結ばれた後にモデルが外れたら入力欄を理由付きで止める）。決定 3: `set_image_draft` はモデル未選択なら 409 `no_model`。`add_image_knowledge` の鍵はスタジオのモデルかそのファミリーだけ（違えば 409 `wrong_key`・人のメモからの記録は対象外） |
+| Anima は文章併記でより緻密に制御できる（利用者） | 決定 7: 方言に `mixed` を足して Anima をそれに。エージェントには `dialect_how`（要素・属性はタグ、構図・位置関係・光は文章） |
+| プロンプトの組み立てはファミリーで別物 | 決定 5: 人がモデルを替えたら、次の `get_image_studio` の note で「新しいモデルの書き方で書き直す」と伝える |

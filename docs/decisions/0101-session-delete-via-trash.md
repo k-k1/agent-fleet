@@ -63,7 +63,7 @@ same name).
 
 AI session rows still get no "Delete" (shelve, then delete from the shelf — the two steps stay). The shell /
 ssm "Delete", and the shell/ssm handling of the bulk tidy, the orphan tidy and "Delete the working copy", go
-through decision 1. The image studio's "Switch agents" **shelves** the previous session.
+through decision 1. The image studio's "Switch agents" **stops** the previous session instead of deleting it (`/halt`; develop's c7fe0ccd9 made the same call first).
 
 ### Decision 3 — deleting a session never deletes a worktree
 

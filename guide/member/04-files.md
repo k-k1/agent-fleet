@@ -220,7 +220,8 @@ pane into a **studio** ([below](#studio-refine-the-draft-by-talking-to-an-agent)
   (with roughly how long the first picture will take), **the engine is starting**, or **no
   engine available**.
 - **The family card** — under the model, one line per thing that family expects: whether it
-  wants a tag list or sentences, the prefix that dialect usually opens with (offered as a chip
+  wants a tag list, sentences, or both (Anima takes both: tags for the subject, a sentence or two
+  for composition and positions, which controls it more finely), the prefix that dialect usually opens with (offered as a chip
   — nothing is ever written into your prompt on its own), whether a negative prompt reaches it
   at all, and the step and cfg ranges worth staying inside. The families the catalogue knows
   run from SD 1.5 and SDXL to FLUX, Anima and Krea 2, the instruction-edit models Qwen-Image-Edit
@@ -312,6 +313,10 @@ agent never paints a batch on its own.
 - Pressing **Attach an agent** turns the form's current contents into the draft of a new studio,
   starts one session and binds it. Merely opening the pane creates no session. If the session
   fails to start, the studio and its draft stay, unbound.
+- **Choose a model first.** Prompts are written differently per model (SDXL-family, anima and
+  Qwen-Image prompts are built differently), so the button stays disabled until one is chosen. Clear
+  the model after attaching and the conversation's input is held until you choose again; switch to
+  another model and the agent rewrites the prompt for it.
 - You choose what you choose when starting any session: agent, model, effort, execution method,
   repository, subfolder, worktree, and permission prompts. **There is no prompt field** — the
   first turn is the studio's description of the agent's role. Until it arrives the pane says it
@@ -380,7 +385,8 @@ agent never paints a batch on its own.
   in **`~/imagegen-knowledge/`** as `families/<family>.md` and `models/<model>.md`, each in four
   sections: **Summary** (short; the agent reads it every time), **Settings**, **Prompts** and
   **Records** (append-only).
-- The agent writes only when told to remember something, or when it judges a result good or bad.
+- The agent writes only when told to remember something, or when it judges a result good or bad,
+  and only to the document of the model the studio has chosen or of that model's family.
   **Deleting is yours.**
 - They are ordinary files, so you can open and edit them from the file tree, and being outside
   `~/repos` they survive a Recreate. On a deployment whose file tree does not show the whole home

@@ -426,3 +426,66 @@ export const worktreeOptional = (kind: string, driver: StudioDriver): boolean =>
 
 /** The history items the studio's pictures were made from, keyed by path. */
 export const historyByPath = (items: HistoryItem[]): Map<string, HistoryItem> => new Map(items.map((i) => [i.path, i]));
+
+// --- the set_image_draft card (decision 9) ------------------------------------------------
+
+/**
+ * Whether a transcript tool name is af's set_image_draft. A client namespaces af's tools behind
+ * a server name that changes every boot (`mcp__af_1a2b3c4d__set_image_draft` in claude,
+ * `af_1a2b3c4d_set_image_draft` in opencode), and kiro keeps the bare name — the same shapes
+ * mcpreg.IsAFToolName accepts on the Agent.
+ */
+export const isStudioDraftTool = (tool: string | undefined): boolean =>
+  !!tool && /^(?:(?:mcp__)?(?:af_[0-9a-f]{8}|af)[-_.]+)?set_image_draft$/.test(tool.trim());
+
+/** Where one set_image_draft call sits in the transcript. */
+export interface DraftCall {
+  /** When the assistant turn holding the call started (the transcript's `ts`). */
+  turnTs?: string;
+  /** When it ended, from agents that record one (opencode, copilot). */
+  turnEndTs?: string;
+  /** Which set_image_draft call of that turn this is, from 0. */
+  nth: number;
+  /** The tool's result, from agents whose transcript carries one (codex, opencode). */
+  output?: string;
+}
+
+const ms = (iso: string | undefined): number => (iso ? Date.parse(iso) : NaN);
+const DRAFT_CALL_SLACK_MS = 10_000;
+
+/**
+ * The edit-log entry one set_image_draft call wrote, or null when it cannot be told.
+ *
+ * The tool's own result names it exactly: set_image_draft answers with the studio after the
+ * write, whose newest edit by this session is the one. Where the transcript does not carry the
+ * result (claude), the call is matched on time and order instead: the nth agent edit by this
+ * session at or after the turn's start (and before its end, when the turn has one). A call whose
+ * every field was dropped writes no entry, which can shift the later calls of the same turn onto
+ * the next one — the one imprecision of the time match, and the reason an exact result wins.
+ */
+export function draftCallEntry(entries: DraftLogEntry[] | undefined, session: string, call: DraftCall): DraftLogEntry | null {
+  const mine = [...(entries || [])]
+    .filter((e) => e.kind === "edit" && e.author === "agent" && (!session || e.session === session))
+    .sort((a, b) => a.seq - b.seq);
+  if (call.output) {
+    try {
+      const out = JSON.parse(call.output) as { studio?: { recent_log?: DraftLogEntry[] } };
+      const log = (out.studio?.recent_log || []).filter((e) => e.kind === "edit" && e.author === "agent" && (!session || e.session === session));
+      const last = log.reduce<DraftLogEntry | null>((m, e) => (!m || e.seq > m.seq ? e : m), null);
+      if (last) return mine.find((e) => e.seq === last.seq) || last;
+    } catch {
+      /* an error result is prose: fall back to the time match */
+    }
+  }
+  const from = ms(call.turnTs);
+  if (Number.isNaN(from)) return null;
+  // The end is the turn's last transcript row, which can be the tool call itself: the edit it
+  // wrote lands a moment after. The slack covers that and is far shorter than a reply and a
+  // new prompt, which is what separates this turn's edits from the next one's.
+  const to = ms(call.turnEndTs) + DRAFT_CALL_SLACK_MS;
+  const inTurn = mine.filter((e) => {
+    const at = ms(e.at);
+    return at >= from && (Number.isNaN(to) || at <= to);
+  });
+  return inTurn[call.nth] || null;
+}

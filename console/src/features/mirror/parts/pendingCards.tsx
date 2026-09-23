@@ -5,6 +5,8 @@ import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { PlanBlock } from "../transcript/blocks.tsx";
 import { PendingQuestions } from "../PendingQuestions.tsx";
 import { questionDraftKey } from "../questionDraft.ts";
+import { useQuestionTranslate } from "../questionTranslate.ts";
+import type { TranscriptTranslateWiring } from "../useTranslate.ts";
 import type { InteractionAnswer } from "../../../core/api/client.ts";
 import type { PendingApproval, Question } from "../transcript/types.ts";
 
@@ -195,6 +197,7 @@ export function QuestionCard({
   onSubmitSeq,
   onRespond,
   onCancel,
+  translate,
 }: {
   agentName: string;
   session: string;
@@ -210,10 +213,13 @@ export function QuestionCard({
   onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void | Promise<boolean | void>;
   onRespond?: (answers: InteractionAnswer[]) => void | Promise<boolean | void>;
   onCancel: () => void;
+  translate?: TranscriptTranslateWiring;
 }) {
+  const tx = useQuestionTranslate(translate, questions, pendingText);
+  const lead = tx?.lead ?? pendingText;
   return (
     <PendingTurn agentName={agentName} note={tr("mirror.questioning")}>
-      {pendingText && <MarkdownView source={pendingText} repo={repo} onOpenFile={onOpenFile} />}
+      {lead && <MarkdownView source={lead} repo={repo} onOpenFile={onOpenFile} />}
       <PendingQuestions
         key={"pq-" + (questions[0]?.question || "")}
         questions={questions}
@@ -229,6 +235,7 @@ export function QuestionCard({
         answerMode={answerMode}
         multiPage={multiPage}
         writeIn={writeIn}
+        translate={tx}
       />
     </PendingTurn>
   );

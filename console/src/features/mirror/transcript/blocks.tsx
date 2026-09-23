@@ -26,6 +26,8 @@ import { lineDiff, type DiffEdit } from "../../viewer/DiffView.tsx";
 import { previewBody } from "../optionPreview.ts";
 import { parseQuestionAnswers, resolveAnswer } from "../questionAnswers.ts";
 import { planOutcome } from "../planDecision.ts";
+import { useQuestionTranslate, type QuestionTranslateView } from "../questionTranslate.ts";
+import type { TranscriptTranslateWiring } from "../useTranslate.ts";
 import { planKey, removePlanComment, unsentComments, usePlanComments } from "../planComments.ts";
 import type { Group, Part, Question, QuestionOption, TaskItem, TurnTtsWiring } from "./types.ts";
 
@@ -845,6 +847,8 @@ export function QuestionBlock({
   answered,
   answer,
   declined,
+  translate,
+  autoTranslate = false,
 }: {
   questions?: Question[];
   answered?: boolean;
@@ -854,6 +858,10 @@ export function QuestionBlock({
   // Rendering `answer` as if it were a pick would parse to nothing but still badge
   // it answered — the exact "answered but not recognized" confusion this fixes.
   declined?: boolean;
+  // The per-answer translation wiring (docs/log/97); absent = no button (the shared view).
+  translate?: TranscriptTranslateWiring;
+  // The turn arrived while the reader was watching (TranscriptView arrivedAfter).
+  autoTranslate?: boolean;
 }) {
   const norm = (answer || "").trim();
   // Per-question answers, so each card shows its OWN reply instead of the whole raw
@@ -863,6 +871,11 @@ export function QuestionBlock({
   const pairs = parseQuestionAnswers(norm, qs.map((q) => q.question));
   const answerAt = (qi: number) => (pairs.length ? pairs[qi] || "" : norm);
   const wide = hasPreview(qs);
+  // Display only, like the pending card: the answer is matched against the ORIGINAL labels
+  // (resolveAnswer below), and the translated option at the same index is what is drawn. The
+  // user's own free-text answer is never translated — it is what they wrote.
+  const tx = useQuestionTranslate(translate, qs, "", autoTranslate);
+  const shownQs = tx?.questions ?? qs;
   return (
     <div className={"mt-question" + (answered ? " answered" : "") + (declined ? " declined" : "")}>
       {qs.map((qn, qi) => {
@@ -882,7 +895,7 @@ export function QuestionBlock({
           <div className="mq" key={qi}>
             <div className="mq-head">
               <Icon name="comment-discussion" />
-              {qn.header && <span className="mq-header">{qn.header}</span>}
+              {qn.header && <span className="mq-header">{shownQs[qi]?.header || qn.header}</span>}
               {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select_ok")}</span>}
               {answered && (
                 <span className={"mq-done muted" + (declined ? " declined" : "")}>
@@ -890,20 +903,21 @@ export function QuestionBlock({
                 </span>
               )}
             </div>
-            {qn.question && <div className="mq-text">{qn.question}</div>}
+            {qn.question && <div className="mq-text">{shownQs[qi]?.question || qn.question}</div>}
             <div className={"mq-options" + (wide ? " wide" : "")}>
               {opts.map((o, oi) => {
                 const sel = chosenSet.has(o.label);
+                const od = shownQs[qi]?.options?.[oi] ?? o;
                 return (
                   <button
                     type="button"
                     className={"mq-opt" + (sel ? " selected" : "")}
                     key={oi}
                     disabled
-                    title={o.description || o.label}
+                    title={od.description || od.label}
                   >
                     <span className="mq-mark">{qn.multiSelect ? (sel ? "☑" : "☐") : sel ? "◉" : "○"}</span>
-                    <OptionBody o={o} />
+                    <OptionBody o={od} />
                   </button>
                 );
               })}
@@ -925,7 +939,36 @@ export function QuestionBlock({
           </div>
         );
       })}
+      {tx && (
+        <div className="mq-tx-row">
+          <TranslateToggle view={tx} />
+        </div>
+      )}
     </div>
+  );
+}
+
+/** The translate button of a question card, pending or answered — the same look and wording as
+ *  a turn's (TranscriptTurn), with the failure next to it. */
+export function TranslateToggle({ view }: { view: QuestionTranslateView }) {
+  return (
+    <>
+      {view.error && (
+        <span className="mt-translate-err" title={view.error}>
+          {view.error}
+        </span>
+      )}
+      <button
+        type="button"
+        className={"ghost xs mt-translate" + (view.shown ? " on" : "")}
+        title={tr(view.shown ? "mirror.translate_off_title" : "mirror.translate_title")}
+        disabled={view.busy}
+        onClick={view.toggle}
+      >
+        <Icon name={view.busy ? "loading" : "globe"} spin={view.busy} />{" "}
+        {tr(view.shown ? "mirror.translate_off" : "mirror.translate")}
+      </button>
+    </>
   );
 }
 

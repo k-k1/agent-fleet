@@ -291,3 +291,33 @@ func TestRunImageTrialReportsAFailureAndATimeout(t *testing.T) {
 		t.Fatalf("slow trial = %s, want the job id and where the result will show", out)
 	}
 }
+
+// A Managed create starts the CLI before the meta is written, and the CLI lists the tools at
+// once: with no meta yet, the studio naming the session is what decides — studio tools offered,
+// generate_image withheld. Measured with codex Managed, which never lists again.
+func TestStudioToolsBeforeTheMetaIsWritten(t *testing.T) {
+	withSessionSurface(t, "slot01")
+	mcpImageGenEnabled = true
+	stubImageGenStatus(t, mcpImageGenStatus{
+		Enabled: true, Ready: true, Provider: "codex", Kind: "claude", Ops: []string{"generate"},
+	})
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	if !studioAdvertised()[mcpToolGenerateImage] {
+		t.Fatal("generate_image not advertised without a studio: the check below would prove nothing")
+	}
+	writeStudioFileForTest(t, studioFile{Session: "slot01", AgentTrial: true})
+	got := studioAdvertised()
+	if !got["get_image_studio"] || !got["run_image_trial"] {
+		t.Errorf("advertised %v: want the studio tools while the meta is not written yet", got)
+	}
+	if got["generate_image"] {
+		t.Error("generate_image advertised to a session its studio names")
+	}
+	// Another session's studio is not this one's.
+	writeStudioFileForTest(t, studioFile{Session: "slot02", AgentTrial: true})
+	if studioAdvertised()["get_image_studio"] {
+		t.Error("studio tools offered for a studio that names another session")
+	}
+}

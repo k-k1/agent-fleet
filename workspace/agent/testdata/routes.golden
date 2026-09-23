@@ -172,6 +172,7 @@ POST /imagegen/jobs
 DELETE /imagegen/jobs/{id}
 GET /imagegen/knowledge
 POST /imagegen/knowledge
+PUT /imagegen/knowledge
 GET /imagegen/props
 POST /imagegen/queue
 GET /imagegen/status

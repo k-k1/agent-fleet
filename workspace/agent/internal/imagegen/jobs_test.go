@@ -887,7 +887,7 @@ func TestStatusReportsTheMemberFacingCatalogue(t *testing.T) {
 // ignores would advise a number that changes nothing.
 func TestFamilyRowsCarryTheirAdvice(t *testing.T) {
 	for _, r := range comfyFamilyRows {
-		if r.Dialect != comfyDialectTags && r.Dialect != comfyDialectSentences {
+		if comfyDialectHow(r.Dialect) == "" {
 			t.Errorf("%s: dialect %q", r.Family, r.Dialect)
 		}
 		if r.StepsRange[0] <= 0 || r.StepsRange[0] > r.StepsRange[1] {
@@ -936,5 +936,17 @@ func TestEveryFamilyHasARecipe(t *testing.T) {
 		if !ok || r.Recipe.Steps == 0 || r.Recipe.Sampler == "" {
 			t.Errorf("%s has no usable recipe: %+v", f, r.Recipe)
 		}
+	}
+}
+
+// anima's model card documents tags, captions, or both, and both together is its finest control:
+// the family says so, and the advice an agent reads says which part goes in which form.
+func TestAnimaIsWrittenInTagsAndSentences(t *testing.T) {
+	a := familyAdviceFor(string(ComfyFamilyAnima))
+	if a.Dialect != string(comfyDialectMixed) || !strings.Contains(a.DialectHow, "sentences") || !strings.Contains(a.DialectHow, "tags") {
+		t.Errorf("anima advice = %+v", a)
+	}
+	if sd := familyAdviceFor(string(ComfyFamilySDXL)); sd.Dialect != string(comfyDialectTags) || strings.Contains(sd.DialectHow, "AND sentences") {
+		t.Errorf("sdxl advice = %+v", sd)
 	}
 }

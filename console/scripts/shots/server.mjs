@@ -265,7 +265,7 @@ const re = [
   [/^\/api\/imagegen\/props$/, (m, q) => fx.imagegenProps(LOCALE, q.get("path") || "")],
   [/^\/api\/imagegen\/studios\/[^/]+\/draft-log$/, () => fx.imagegenDraftLog()],
   [/^\/api\/imagegen\/studios\/[^/]+\/persona$/, () => fx.imagegenPersona(LOCALE)],
-  [/^\/api\/imagegen\/studios\/[^/]+\/press$/, () => ({ version: "v-demo", jobs: [{ id: "t2", position: 0 }], recorded: true })],
+  [/^\/api\/imagegen\/studios\/[^/]+\/press$/, () => ({ version: "v3", jobs: [{ id: "t2", position: 0 }], recorded: true })],
   [/^\/api\/imagegen\/studios\/[^/]+\/(rewind|bind)$/, () => fx.imagegenStudio(LOCALE, studioReads)],
   [
     /^\/api\/imagegen\/studios\/[^/]+$/,

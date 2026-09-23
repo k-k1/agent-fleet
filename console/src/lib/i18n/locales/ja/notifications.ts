@@ -94,6 +94,10 @@ export const notifications = {
   "noti.tts_off": "音声通知：オフ（クリックでオン）",
   "noti.tts_aria": "セッションの音声通知",
   "noti.tts_label": "音声通知",
+  "noti.session_title": "セッションの通知",
+  "noti.child_idle_notify": "子セッションの入力待ちを通知",
+  "noti.note_child_idle_notify":
+    "別のセッションが create_session で起動した子セッションが、ターンを終えて入力待ちになったときのブラウザ通知と音声通知です。オフにすると鳴らさず、通知センターに記録だけ残します（未読数にも数えます）。子の結果は親セッションが受け取るので、子を多く走らせるときの通知の多さを抑えられます。子からの確認・許可の要求は、人が答えるしかないのでオフでも通知します。",
   "noti.audio_title": "音声通知",
   "noti.svc_title": "サービス通知",
   "noti.svc_ws_stopped": "ワークスペースを起動すると、接続済みサービスの通知を切り替えられます。",

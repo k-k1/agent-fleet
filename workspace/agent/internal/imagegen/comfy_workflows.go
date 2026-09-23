@@ -579,13 +579,35 @@ type comfyFamilyRow struct {
 	CFGRange        [2]float64
 }
 
-// comfyDialect is how a family's prompt is written: a comma-separated tag list, or sentences.
+// comfyDialect is how a family's prompt is written: a comma-separated tag list, sentences, or
+// both at once. The three are built differently, not worded differently — which is why a studio
+// agent is told to rewrite rather than edit when the member switches family (ADR 0100 revision 9).
 type comfyDialect string
 
 const (
 	comfyDialectTags      comfyDialect = "tags"
 	comfyDialectSentences comfyDialect = "sentences"
+	// comfyDialectMixed is tags for the subject and its attributes, plus sentences for what tags
+	// cannot say — composition, who is where, the light. A family trained on both controls a
+	// picture more finely with both than with either alone.
+	comfyDialectMixed comfyDialect = "mixed"
 )
+
+// comfyDialectHow is the dialect as an instruction, for the agent that has to write in it: the
+// bare value is a label, and "mixed" in particular says nothing about which part goes where.
+func comfyDialectHow(d comfyDialect) string {
+	switch d {
+	case comfyDialectTags:
+		return "Comma-separated tags, most important first, quality prefix at the front. No sentences."
+	case comfyDialectSentences:
+		return "Natural-language sentences describing the picture. No tag lists or quality tags."
+	case comfyDialectMixed:
+		return "Tags AND sentences in one prompt: quality prefix and tags for the subject and its attributes first, " +
+			"then one or two sentences for composition, positions and relations, and light. Using both gives finer " +
+			"control than either alone; put in a sentence what a tag cannot say."
+	}
+	return ""
+}
 
 // comfyFamilyRows is the vocabulary itself, ordered oldest architecture first — which is the
 // order an operator's selector offers them in. The Control Plane validates catalogue rows
@@ -655,10 +677,11 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// undistilled versions is 30 steps, so a trial at 10 would be judging a composition this
 	// family does not produce at 10.
 	TrialSteps: 12, Guided: true,
-	// Danbooru tags, captions, or both — the model card documents all three; tags are what a
-	// prompt is most often wrong in. The card's own prefix, and the shorter one it tells
-	// Anima-Aesthetic users to prefer (without score_* tags), so the advice holds for both.
-	Dialect:         comfyDialectTags,
+	// Danbooru tags, captions, or both — the model card documents all three, and both together is
+	// the finest control: tags pin the subject, a caption places it. The card's own prefix, and
+	// the shorter one it tells Anima-Aesthetic users to prefer (without score_* tags), so the
+	// advice holds for both.
+	Dialect:         comfyDialectMixed,
 	QualityPrefixes: []string{"masterpiece, best quality, score_7, safe", "masterpiece, best quality"},
 	StepsRange:      [2]int{30, 50}, CFGRange: [2]float64{4, 5},
 }, {

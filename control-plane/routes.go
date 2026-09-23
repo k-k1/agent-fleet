@@ -517,6 +517,7 @@ func registerImagegenRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/imagegen/history", rest)                // pictures, newest first
 	mux.HandleFunc("GET /api/imagegen/knowledge", rest)              // one knowledge document
 	mux.HandleFunc("POST /api/imagegen/knowledge", rest)             // append to its records
+	mux.HandleFunc("PUT /api/imagegen/knowledge", rest)              // the notes editor, all four sections
 }
 
 // Assistant templates (docs/log/19 Q2) — configurable chat personas, proxied verbatim.

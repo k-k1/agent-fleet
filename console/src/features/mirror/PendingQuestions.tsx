@@ -22,7 +22,8 @@ import { t as tr } from "../../lib/i18n/index.ts";
 import type { InteractionAnswer } from "../../core/api/client.ts";
 import { buildClaudeSubmit, buildMenuSeq, buildRespondAnswers } from "./questionKeys.ts";
 import { useQuestionDraft } from "./questionDraft.ts";
-import { OptionBody, hasPreview } from "./transcript/blocks.tsx";
+import { OptionBody, TranslateToggle, hasPreview } from "./transcript/blocks.tsx";
+import type { QuestionTranslateView } from "./questionTranslate.ts";
 import type { Question } from "./transcript/types.ts";
 
 // What a submit path reports back. Resolving `false` means the answer never left (the
@@ -44,6 +45,7 @@ export function PendingQuestions({
   answerMode = "claude",
   multiPage = false,
   writeIn = false,
+  translate,
 }: {
   questions: Question[];
   // Where this card's half-finished answer is kept while the view is gone (questionDraft).
@@ -89,6 +91,9 @@ export function PendingQuestions({
   // is why this is its own flag and not folded into claude's free-text path, whose row
   // IS the field (type straight into it).
   writeIn?: boolean;
+  // translate: the card's translate button (questionTranslate.ts). Display only — selection,
+  // drafts and every submit path keep working on the original questions.
+  translate?: QuestionTranslateView;
 }) {
   const qs = questions || [];
   // The picked labels and the per-question free-text ("Type something"; filled → that
@@ -190,13 +195,14 @@ export function PendingQuestions({
     });
 
   const wide = hasPreview(qs);
+  const shownQs = translate?.questions ?? qs;
   return (
     <div className="mt-question">
       {qs.map((qn, qi) => (
         <div className="mq" key={qi}>
           <div className="mq-head">
             <Icon name="comment-discussion" />
-            {qn.header && <span className="mq-header">{qn.header}</span>}
+            {qn.header && <span className="mq-header">{shownQs[qi]?.header || qn.header}</span>}
             {qs.length > 1 && (
               <span className="mq-page muted">
                 {qi + 1}/{qs.length}
@@ -204,7 +210,7 @@ export function PendingQuestions({
             )}
             {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select")}</span>}
           </div>
-          {qn.question && <div className="mq-text">{qn.question}</div>}
+          {qn.question && <div className="mq-text">{shownQs[qi]?.question || qn.question}</div>}
           <div className={"mq-options" + (wide ? " wide" : "")}>
             {(qn.options || []).map((o, oi) => {
               const checked = (sel[qi] || []).includes(o.label);
@@ -213,6 +219,7 @@ export function PendingQuestions({
               // again clears it (toggle), so a misclick is undone in the card instead of
               // needing the turn interrupted.
               const pick = () => toggle(qi, o.label, qn.multiSelect);
+              const od = shownQs[qi]?.options?.[oi] ?? o;
               return (
                 <button
                   type="button"
@@ -220,12 +227,12 @@ export function PendingQuestions({
                   key={oi}
                   disabled={sending || (menu && !menuDrivable)}
                   onClick={pick}
-                  title={o.description || o.label}
+                  title={od.description || od.label}
                 >
                   {/* The marker is shown on every form now: with the send deferred, what
                       is currently picked is state the user has to be able to SEE. */}
                   <span className="mq-mark">{qn.multiSelect ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}</span>
-                  <OptionBody o={o} />
+                  <OptionBody o={od} />
                 </button>
               );
             })}
@@ -269,6 +276,7 @@ export function PendingQuestions({
             <Icon name="close" /> {cancelLabel || tr("mirror.question_cancel")}
           </button>
         )}
+        {translate && <TranslateToggle view={translate} />}
         {!menu && (
           // The only way an answer leaves the card: enabled once every question has a pick
           // or free text (canSubmit), which for a single question means one option chosen.
