@@ -2,7 +2,7 @@
 // the locks, the agent highlight, the versions, the signal line and the kind candidates.
 import { describe, expect, it } from "vitest";
 import { emptyDraft } from "./draft.ts";
-import { stripStudioSignal } from "../mirror/transcript/model.ts";
+import { stripStudioSignal, withStudioSignal } from "../mirror/transcript/model.ts";
 import {
   agentTouched,
   changedKeys,
@@ -13,12 +13,12 @@ import {
   isLockable,
   mergeForm,
   pressSeqOf,
+  rebaseForm,
   studioFromForm,
   studioKindChoices,
   studioSignal,
   toggleLock,
   versionsOf,
-  withSignal,
   worktreeOptional,
 } from "./studioSync.ts";
 import type { DraftLogEntry, StudioDraft } from "./wire.ts";
@@ -64,6 +64,25 @@ describe("フォームとスタジオの下書き", () => {
     expect(draftPatch(base, { ...base })).toBeNull();
     // suggest_model is the agent's proposal, never sent back by the form.
     expect(draftPatch({ suggest_model: "x" }, {})).toBeNull();
+  });
+
+  // RFC 7386 は params を 1 段深く merge する: 消した摘みは null で名指さないと残る（レビュー 🔴C1）。
+  it("params の摘みを 1 つ消すと、その摘みを null で送る", () => {
+    const base: StudioDraft = { params: { steps: 30, cfg: 7, sampler: "euler" } };
+    expect(draftPatch(base, { params: { steps: 30, cfg: 7 } })).toEqual({ params: { steps: 30, cfg: 7, sampler: null } });
+    expect(draftPatch(base, {})).toEqual({ params: { steps: null, cfg: null, sampler: null } });
+  });
+
+  it("フォームが既定と区別できない値は null で送り返さない（人の編集を捏造しない）", () => {
+    expect(draftPatch({ op: "generate", strength: 0.6, prompt: "a" }, { prompt: "a" })).toBeNull();
+  });
+
+  it("412 の後: 新しいスタジオの上に人が変えていた鍵だけ載せ直す", () => {
+    const form = { ...emptyDraft(), prompt: "mine", cfg: "5", label: "old" };
+    const out = rebaseForm(form, ["prompt"], { prompt: "agent", params: { cfg: 9 }, label: "new" });
+    expect(out.prompt).toBe("mine");
+    expect(out.cfg).toBe("9");
+    expect(out.label).toBe("new");
   });
 
   it("鍵の順序は差分にしない", () => {
@@ -149,7 +168,7 @@ describe("合図 1 行（決定 5）", () => {
   it("[studio で始まり → get_image_studio] で終わる最終行で、転写の剥がし手が落とす", () => {
     const sig = studioSignal({ seq: 12, draftChanged: true, newResults: 2 }, words);
     expect(sig).toBe("[studio v12 · draft changed · 2 new results → get_image_studio]");
-    const sent = withSignal("もっと暗く\n", sig);
+    const sent = withStudioSignal("もっと暗く\n", sig);
     expect(sent.split("\n").pop()).toBe(sig);
     expect(stripStudioSignal(sent)).toBe("もっと暗く");
   });

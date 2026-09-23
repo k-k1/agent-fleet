@@ -17,6 +17,7 @@ import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { downloadURL, errText, getTenant, isTransientErr } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
+import { allViews } from "../../layout/ops.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -52,7 +53,7 @@ import {
   type StudioSummary,
 } from "./api.ts";
 import { anyLive, buildRequest, engineState, foldGroups } from "./jobs.ts";
-import { draftFromProperties, draftKey, loadDraft, remappedOp, saveDraft, type ImagegenDraft } from "./draft.ts";
+import { draftFromProperties, draftKey, emptyDraft, loadDraft, remappedOp, saveDraft, type ImagegenDraft } from "./draft.ts";
 import { noteImagegenStatus } from "./available.ts";
 import { GenerateForm, ModelSelect } from "./parts/GenerateForm.tsx";
 import { JobList } from "./parts/JobList.tsx";
@@ -63,7 +64,7 @@ import { KnowledgeMemo } from "./parts/KnowledgeMemo.tsx";
 import { StudioAgent } from "./parts/StudioAgent.tsx";
 import { StudioHistory, type PictureActions } from "./parts/StudioHistory.tsx";
 import { attachAgent } from "./attach.ts";
-import { rememberStudio } from "./open.ts";
+import { lastStudio, rememberStudio } from "./open.ts";
 import { historyByPath, pressSeqOf, studioFromForm } from "./studioSync.ts";
 import { useStudio } from "./useStudio.ts";
 import "./imagegen.css";
@@ -338,12 +339,26 @@ export function ImagegenView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneCount]);
 
+  // Switch this pane to another studio — unless another pane already has it, which is then
+  // focused instead: two panes on one studio are what decision 10's sameTarget exists to stop
+  // (their debounced saves would race each other on every keystroke).
   const openStudio = useCallback(
     (id: string | null) => {
-      if (id !== studioId) setPaneTarget(paneId, { content: { kind: "imagegen", studioId: id } });
+      if (id === studioId) return;
+      const st = useLayoutStore.getState();
+      const other = allViews(st.layout).find(
+        (v) => v.id !== paneId && v.content.kind === "imagegen" && v.content.studioId === id,
+      );
+      if (other) st.selectTab(other.id);
+      else setPaneTarget(paneId, { content: { kind: "imagegen", studioId: id } });
     },
     [paneId, studioId, setPaneTarget],
   );
+
+  // A studio the Agent says is gone is not the one to reopen next time.
+  useEffect(() => {
+    if (studioId && studio.missing && lastStudio() === studioId) rememberStudio(null);
+  }, [studioId, studio.missing]);
 
   const attach = useCallback(
     async (o: AttachOpts): Promise<boolean> => {
@@ -357,6 +372,12 @@ export function ImagegenView({
       });
       if (r.error) toast(r.error, { kind: "error" });
       if (r.session) void refreshSessions();
+      // The draft moved into the new studio (decision 2); left behind, it would reappear in the
+      // studio-less pane as a second copy that no longer syncs with anything.
+      if (r.studioId && !studioId) {
+        saveDraft(key, emptyDraft());
+        setDraft(emptyDraft());
+      }
       if (r.studioId) {
         void readStudios();
         if (r.studioId !== studioId) openStudio(r.studioId);
@@ -364,7 +385,7 @@ export function ImagegenView({
       }
       return !!r.session;
     },
-    [studioId, draft, provider, attachOpen, studio, toast, refreshSessions, readStudios, openStudio],
+    [studioId, draft, provider, attachOpen, studio, toast, refreshSessions, readStudios, openStudio, key],
   );
 
   const removeStudio = useCallback(async () => {
@@ -383,8 +404,10 @@ export function ImagegenView({
     }
     rememberStudio(null);
     void readStudios();
+    // The bound session's meta loses its studio on the Agent; the rail's wand follows.
+    void refreshSessions();
     openStudio(null);
-  }, [studioId, confirm, tr, toast, readStudios, openStudio]);
+  }, [studioId, confirm, tr, toast, readStudios, openStudio, refreshSessions]);
 
   // "Back to this picture's settings": the press its version names, through the same rewind
   // as the edit history. The log page on screen may not reach that far back, so older pages

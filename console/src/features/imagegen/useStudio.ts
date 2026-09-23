@@ -35,6 +35,7 @@ import {
   formFromStudio,
   lastSeq,
   mergeForm,
+  rebaseForm,
   studioFromForm,
   studioKeysOf,
   studioSignal,
@@ -44,16 +45,45 @@ import {
 
 const POLL_MS = 2000;
 const DEBOUNCE_MS = 500;
+/** A save that got no answer (network, 5xx) is retried on this schedule, then left dirty. */
+const RETRY_MS = [2000, 5000, 15000, 30000];
+/** The first read of a studio, retried while the Agent restarts (a 502) rather than given up. */
+const FIRST_READ_RETRY_MS = 3000;
 
-// Where the signal left off, per (studio, session): the agent that was attached last must not
-// have its "since" reset by a remount, and a newly attached one starts from where it joined.
-// Keyed by both ids, so a test (or a second studio) never reads another's position.
-const signalled = new Map<string, number>();
+// Per-studio state that outlives the pane (a reopen, a reload): the edit-log position the pane
+// has seen and the outlines the member has not cleared yet (decision 6), and per (studio,
+// session) where the signal left off. In localStorage, keyed by the ids, so two studios or two
+// agents never read each other's.
+interface Seen {
+  seq: number;
+  keys: string[];
+}
+const seenKey = (id: string) => `af.imagegen-seen.${id}`;
+const signalKey = (id: string, session: string) => `af.imagegen-signal.${id}.${session}`;
+
+function readJSON<T>(key: string): T | null {
+  try {
+    const v = localStorage.getItem(key);
+    return v ? (JSON.parse(v) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeJSON(key: string, v: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(v));
+  } catch {
+    /* a blocked store only forgets the outlines */
+  }
+}
 
 export interface StudioState {
   studio: StudioWire | null;
   /** The studio could not be read: gone (404) or the Agent refused. */
   failed: string | null;
+  /** The Agent answered that there is no such studio. */
+  missing: boolean;
   form: ImagegenDraft;
   patchForm: (p: Partial<ImagegenDraft>) => void;
   locks: string[];
@@ -78,8 +108,11 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   const toast = useToast();
   const [studio, setStudio] = useState<StudioWire | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
   const [form, setForm] = useState<ImagegenDraft>(() => formFromStudio(null));
-  const [highlight, setHighlight] = useState<Set<StudioKey>>(() => new Set());
+  const [highlight, setHighlight] = useState<Set<StudioKey>>(
+    () => new Set((id ? readJSON<Seen>(seenKey(id))?.keys || [] : []) as StudioKey[]),
+  );
   const [older, setOlder] = useState<DraftLogEntry[]>([]);
   const [olderCursor, setOlderCursor] = useState<number | null>(null);
   const [recordPending, setRecordPending] = useState<Set<string>>(() => new Set());
@@ -90,7 +123,13 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   const dirtyRef = useRef(false);
   const timerRef = useRef(0);
   const inflightRef = useRef<Promise<void> | null>(null);
-  const seenSeqRef = useRef(-1);
+  const retryRef = useRef(0);
+  // -1 = no baseline yet: the first read is the baseline unless this studio was seen before.
+  const seenSeqRef = useRef(id ? (readJSON<Seen>(seenKey(id))?.seq ?? -1) : -1);
+
+  useEffect(() => {
+    if (id && seenSeqRef.current >= 0) writeJSON(seenKey(id), { seq: seenSeqRef.current, keys: [...highlight] });
+  }, [id, highlight, studio?.updated_at]);
 
   // How a fresh studio reaches the form: replace it (first read, rewind, lost race), merge the
   // keys that moved (a poll), or keep it (the member typed while a save was in flight).
@@ -114,6 +153,10 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
     try {
       const r = await getStudio(id);
       if (!r || r.error) {
+        const code = r?.error?.code || "";
+        // A gateway error is the Agent restarting, not an answer about the studio.
+        if (/bad_gateway|unavailable|timeout|agent_down/.test(code)) return null;
+        setMissing(/not_found|no_studio/.test(code));
         setFailed(r?.error ? errText(r.error) || tr("imggen.studio_read_failed") : tr("imggen.studio_read_failed"));
         return null;
       }
@@ -128,14 +171,31 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
     if (r) adopt(r, baseRef.current == null ? "replace" : "merge");
   }, [read, adopt]);
 
+  // The first read, retried until it lands: a 502 while the Agent restarts must not leave the
+  // pane on an empty form that the member then types over.
   useEffect(() => {
     if (!opts.running) return;
-    void reload();
+    let alive = true;
+    let t = 0;
+    const attempt = async () => {
+      await reload();
+      if (alive && !baseRef.current) t = window.setTimeout(() => void attempt(), FIRST_READ_RETRY_MS);
+    };
+    void attempt();
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
   }, [opts.running, reload]);
 
   // One PUT, carrying the form's pending draft edit and any `extra` (locks, the trial toggle).
+  // Three outcomes besides success, answered differently:
+  //   - 412: the agent (or another pane) wrote first. Re-read, lay the member's pending keys back
+  //     over the new studio, and send again against the new version — nothing typed is lost.
+  //   - no answer / 5xx: keep the edit and retry on a backoff.
+  //   - any other refusal: say so and show the studio as it stands.
   const put = useCallback(
-    async (extra: Omit<StudioPatch, "author"> = {}): Promise<void> => {
+    async (extra: Omit<StudioPatch, "author"> = {}, attempt = 0): Promise<void> => {
       const base = baseRef.current;
       if (!base) return;
       const sentForm = formRef.current;
@@ -143,20 +203,37 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
       dirtyRef.current = false;
       if (!draft && !Object.keys(extra).length) return;
       const body: StudioPatch = { author: "human", ...extra, ...(draft ? { draft } : {}) };
-      let r;
-      try {
-        r = await patchStudio(id, body, base.updated_at);
-      } catch {
-        dirtyRef.current = true; // network: keep it for the next attempt
+      const r = await patchStudio(id, body, base.updated_at);
+      if (r.status === 412) {
+        const fresh = await read();
+        if (!fresh) {
+          if (draft) dirtyRef.current = true;
+          scheduleRetry();
+          return;
+        }
+        const pending = Object.keys(draftPatch(base.draft, studioFromForm(formRef.current)) || {});
+        adopt(fresh, "keep");
+        const rebased = rebaseForm(formRef.current, pending, fresh.draft);
+        formRef.current = rebased;
+        setForm(rebased);
+        if (pending.length) dirtyRef.current = true;
+        if (attempt < 2) await put(extra, attempt + 1);
+        else scheduleRetry();
         return;
       }
-      if (!r || r.error) {
-        // Lost the race, or refused: the studio as it now stands wins, and the member sees it.
-        toast(r?.error ? errText(r.error) || tr("imggen.studio_save_failed") : tr("imggen.studio_save_failed"), { kind: "error" });
+      if (r.status === 0 || r.status >= 500) {
+        if (draft) dirtyRef.current = true;
+        if (!draft) toast(tr("imggen.studio_save_failed"), { kind: "error" });
+        else scheduleRetry();
+        return;
+      }
+      if (r.error || r.status >= 400 || !r.studio) {
+        toast(r.error ? errText(r.error) || tr("imggen.studio_save_failed") : tr("imggen.studio_save_failed"), { kind: "error" });
         const fresh = await read();
         if (fresh) adopt(fresh, "replace");
         return;
       }
+      retryRef.current = 0;
       for (const d of r.dropped || []) {
         toast(
           tr(d.reason === "locked" ? "imggen.dropped_locked" : d.reason === "human_only" ? "imggen.dropped_human_only" : "imggen.dropped_invalid", {
@@ -171,9 +248,21 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
       adopt(r.studio, typedSince ? "keep" : "merge");
       if (typedSince) dirtyRef.current = true;
     },
+    // scheduleRetry is hoisted below and only reads refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [id, read, adopt, toast, tr],
   );
 
+  // The debounce, re-armed after a save that got no answer — so a failed save is not left
+  // sitting dirty (which also holds the poll off) until the member happens to type again.
+  function scheduleRetry() {
+    const wait = RETRY_MS[Math.min(retryRef.current, RETRY_MS.length - 1)];
+    retryRef.current++;
+    window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => void flushRef.current(), wait);
+  }
+
+  const flushRef = useRef<() => Promise<void>>(async () => {});
   const flush = useCallback(async (): Promise<void> => {
     window.clearTimeout(timerRef.current);
     timerRef.current = 0;
@@ -185,6 +274,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
     inflightRef.current = p;
     await p;
   }, [put]);
+  flushRef.current = flush;
 
   const patchForm = useCallback(
     (p: Partial<ImagegenDraft>) => {
@@ -315,18 +405,20 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   logRef.current = log;
   const session = studio?.session || "";
   // The agent joined at the log as it stood then; what happens after is what it has not seen.
+  const hasLog = !!studio;
   useEffect(() => {
-    const key = `${id}:${session}`;
-    if (session && !signalled.has(key)) signalled.set(key, lastSeq(logRef.current));
-  }, [id, session]);
+    if (!id || !session || !hasLog) return;
+    const key = signalKey(id, session);
+    if (readJSON<number>(key) == null) writeJSON(key, lastSeq(logRef.current));
+  }, [id, session, hasLog]);
   const signal = useMemo<MirrorSignal>(() => {
-    const key = `${id}:${session}`;
+    const key = signalKey(id, session);
     let pendingSeq = 0;
     return {
       line: () => {
         const entries = logRef.current;
-        if (!signalled.has(key)) signalled.set(key, lastSeq(entries));
-        const since = foldSince(entries, signalled.get(key) ?? 0);
+        const from = readJSON<number>(key) ?? lastSeq(entries);
+        const since = foldSince(entries, from);
         pendingSeq = since.seq;
         return studioSignal(since, {
           draftChanged: tr("imggen.signal_draft_changed"),
@@ -335,7 +427,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
         });
       },
       sent: () => {
-        signalled.set(key, pendingSeq);
+        writeJSON(key, pendingSeq);
       },
     };
   }, [id, session, tr]);
@@ -343,6 +435,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   return {
     studio,
     failed,
+    missing,
     form,
     patchForm,
     locks: studio?.locks || [],
