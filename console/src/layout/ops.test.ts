@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Cell, Layout, OpenTarget, View } from "./types.ts";
 import * as ops from "./ops.ts";
-import { normalizeStored } from "./migrate.ts";
+import { normalizeStored, validateStoredContent } from "./migrate.ts";
 
 const target = (name: string): OpenTarget => ({ content: { kind: "terminal", chat: false }, session: name });
 const view = (id: string, session = id): View => ({ id, session, content: { kind: "terminal", chat: false }, wrap: null });
@@ -267,5 +267,24 @@ describe("freshLayout", () => {
     expect(l.cols[0].cells).toHaveLength(1);
     expect(l.cols[0].cells[0].views).toEqual([]);
     expect(l.activeCellId).toBe(l.cols[0].cells[0].id);
+  });
+});
+
+describe("image studio pane (ADR 0100 decision 10)", () => {
+  const id = "0f8e2a4c-1b2d-4e5f-8a9b-0c1d2e3f4a5b";
+  it("a stored pane keeps a UUID studio id and drops anything else to the studio-less pane", () => {
+    expect(validateStoredContent({ kind: "imagegen", studioId: id })).toEqual({ kind: "imagegen", studioId: id });
+    expect(validateStoredContent({ kind: "imagegen", studioId: "../x" })).toEqual({ kind: "imagegen", studioId: null });
+    // A layout written before the ADR has no field at all.
+    expect(validateStoredContent({ kind: "imagegen" })).toEqual({ kind: "imagegen", studioId: null });
+  });
+
+  it("the same studio is the same target, and null matches null", () => {
+    const pane = (studioId: string | null): View => ({ id: "p", session: null, content: { kind: "imagegen", studioId }, wrap: null });
+    expect(ops.sameTarget(pane(null), { content: { kind: "imagegen", studioId: null } })).toBe(true);
+    expect(ops.sameTarget(pane(id), { content: { kind: "imagegen", studioId: id } })).toBe(true);
+    expect(ops.sameTarget(pane(id), { content: { kind: "imagegen", studioId: null } })).toBe(false);
+    const l = layout([cell("g", [{ ...pane(null), id: "p1" }, { ...pane(id), id: "p2" }])]);
+    expect(ops.allViews(ops.openInTab(l, { content: { kind: "imagegen", studioId: null } }))).toHaveLength(2);
   });
 });

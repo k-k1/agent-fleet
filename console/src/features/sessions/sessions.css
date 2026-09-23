@@ -235,8 +235,10 @@
 
 /* Deletion lock (docs/log/45) lock badge — marks a row as pinned against deletion. Muted
    rather than a warning colour: this is the user's intent, not a fault. Assistant
-   conversation rows (.chat-row) use the same class. */
-.sess-lock {
+   conversation rows (.chat-row) use the same class. The image-studio wand (ADR 0100) is the
+   same quiet kind of mark. */
+.sess-lock,
+.sess-studio {
   flex: none;
   color: var(--muted);
   font-size: 11px;

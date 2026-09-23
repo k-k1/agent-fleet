@@ -90,6 +90,12 @@ export const STUDIO_SIGNAL_PREFIX = "[studio ";
 // Both ends are matched, so a member's own "[studio lighting reference]" last line is kept.
 export const STUDIO_SIGNAL_SUFFIX = "→ get_image_studio]";
 
+// withStudioSignal puts the signal after a message as its LAST line — the only place
+// stripStudioSignal looks. An empty signal leaves the message alone.
+export function withStudioSignal(prompt: string, signal: string): string {
+  return signal ? `${prompt.replace(/[ \t\r\n]+$/, "")}\n\n${signal}` : prompt;
+}
+
 // stripStudioSignal removes that line from the end of a message, with the blank space before
 // it. Only the last line is looked at: the same words anywhere else are the member's own.
 export function stripStudioSignal(text: string): string {

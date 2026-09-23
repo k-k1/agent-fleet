@@ -5,7 +5,7 @@ import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, se
 import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
-import { buildImagePrompt } from "../../lib/pastedImages.ts";
+import { composerSend } from "./composerSend.ts";
 import { MEMO_DND_MIME } from "../memo/dnd.ts";
 import {
   useSettings,
@@ -103,6 +103,14 @@ import { useTranslate } from "./useTranslate.ts";
 
 const q = encodeURIComponent;
 
+/** What a host that owns a signal line hands the composer (see MirrorView's `signal`). */
+export interface MirrorSignal {
+  /** The line to append now, or "" for none. */
+  line: () => string;
+  /** The send carrying it was accepted. */
+  sent: () => void;
+}
+
 // Transcript window size (jsonl lines) for the initial tail load and each backward page.
 // The server clamps it; matches docs/decisions/0009 (P2).
 const WINDOW = 400;
@@ -133,6 +141,7 @@ export function MirrorView({
   readOnly = false,
   onResume,
   headerActions,
+  signal,
 }: {
   paneId: string;
   session: string;
@@ -144,6 +153,9 @@ export function MirrorView({
   onResume?: () => void;
   /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
   headerActions?: ReactNode;
+  /** The image studio's signal line (ADR 0100 decision 5), appended as the LAST line of what a
+   *  composer send puts on the wire. Only the composer: seeds, peers and schedules carry none. */
+  signal?: MirrorSignal;
 }) {
   const settings = useSettings();
   // Per-agent descriptor: how this session's assistant signs its turns, and which
@@ -843,7 +855,12 @@ export function MirrorView({
   // (buildImagePrompt), so composer sends pass the text the user actually typed — the
   // attachment chips come back too, and restoring the path-bearing text would duplicate the
   // paths on the next attempt.
-  const sendPrompt = async (text: string, attachments?: string[], restoreText?: string): Promise<boolean> => {
+  const sendPrompt = async (
+    text: string,
+    attachments?: string[],
+    restoreText?: string,
+    wire?: string,
+  ): Promise<boolean> => {
     const t = (text || "").trim();
     // sendingRef (not the `sending` state alone) guards re-entrancy: two invocations
     // arriving in the same task both read `sending` before either commit lands, but the
@@ -869,7 +886,9 @@ export function MirrorView({
     // is busy — reconciled away once its real user turn appears in the transcript.
     const echoId = nextEchoId();
     applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments, at: Date.now() }]);
-    const res = await postInput(t, op, attachments);
+    // The echo keeps the member's words; only the wire carries the studio signal, which the
+    // transcript strips again before the echo is reconciled against it (composerSend).
+    const res = await postInput(wire || t, op, attachments);
     if (!res.ok) {
       // The send was not accepted: keeping the echo would make it look sent, so drop it,
       // toast the reason and restore the draft that send() already cleared — without
@@ -1183,8 +1202,10 @@ export function MirrorView({
     const staged = attachments; // restored on failure (revive, below)
     const paths = attachments.map((a) => a.path);
     // managed passes them as wire attachments (the driver converts them into API attachments,
-    // docs/log/27 §10.2-3); tui weaves the paths into the prompt body.
-    const prompt = managed ? text : buildImagePrompt(text, paths, agent.id);
+    // docs/log/27 §10.2-3); tui weaves the paths into the prompt body, and the studio signal
+    // follows as the last line (composerSend).
+    const line = signal?.line() || "";
+    const out = composerSend(text, paths, agent.id, managed, line);
     setHistIdx(null);
     setDraft("");
     clearAttachments();
@@ -1195,7 +1216,8 @@ export function MirrorView({
     // Restore the attachments too when the send is refused. Restoring only the text is the
     // worst outcome: the message is back, so the user re-sends believing it is the same turn,
     // and sends one with no images.
-    if (!(await sendPrompt(prompt, managed ? paths : undefined, text))) attach.revive(staged);
+    if (!(await sendPrompt(out.echo, out.attachments, text, out.wire))) attach.revive(staged);
+    else if (line) signal?.sent();
     if (!coarsePointer()) inputRef.current?.focus();
   };
 
