@@ -1,9 +1,8 @@
 package imagegen
 
 // The image studio's contract (ADR 0100): the stored shape, the edit log and the knowledge
-// document, frozen as types before the store, the pane and the MCP tools are written against
-// them in parallel. The handlers in studio_http.go answer 501 until the store lands; what is
-// fixed here is the vocabulary every one of those lanes speaks.
+// document — the vocabulary the store (studio_store.go and its neighbours), the pane and the MCP
+// tools all speak.
 //
 // The Console's copy of these types is console/src/features/imagegen/wire.ts (ImageStudio*,
 // DraftLog*, Knowledge*). Keep the two in step by hand; the JSON keys are the contract.

@@ -192,6 +192,9 @@ func serve() {
 	if n := sessionx.RecoverPendingInitialPrompts(); n > 0 {
 		log.Printf("initial-prompt: %d pending delivery(ies) from the previous process marked unknown", n)
 	}
+	// The image studios: install the store, settle a binding written on one side only, and give
+	// every press the previous process left without a result one (ADR 0100 decisions 2 and 9).
+	imagegen.StartStudios()
 	// Codex sessions use a shared local app-server when available (from P3 on, the
 	// RuntimeSupervisor in codex.Serve() owns the daemon). AF attaches a read-only
 	// observer per loaded thread: compaction state, rate limits, and the model-switch
