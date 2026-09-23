@@ -189,7 +189,7 @@ describe("MachineView", () => {
   it("calls a shared host's disk the whole filesystem, and does not tint it", async () => {
     nearlyFull();
     const text = await mount(shared);
-    expect(text).toContain("home のファイルシステム全体");
+    expect(text).toContain("ディスク全体");
     expect(text).not.toContain("home ディスク");
     const bar = [...host!.querySelectorAll(".mu-chart")].find((el) => el.querySelector(".mu-bar"))!;
     expect(bar.className).not.toMatch(/is-(warn|crit)/);
@@ -200,7 +200,7 @@ describe("MachineView", () => {
     nearlyFull();
     const text = await mount(ec2);
     expect(text).toContain("home ディスク");
-    expect(text).not.toContain("home のファイルシステム全体");
+    expect(text).not.toContain("ディスク全体");
     const bar = [...host!.querySelectorAll(".mu-chart")].find((el) => el.querySelector(".mu-bar"))!;
     expect(bar.className).toContain("is-crit");
   });
@@ -228,9 +228,9 @@ describe("MachineView", () => {
     expect(text).toContain("Agent Fleet が使っているディスク");
     expect(text).toContain("生成した画像");
     expect(text).toContain("1.5 GB");
-    expect(text).toContain("codex が読んだ画像");
+    expect(text).toContain("codex の画像");
     expect(text).not.toContain("empty"); // a zero-byte part is not a line item
-    expect(text).toContain("うち削除済みセッションの分");
+    expect(text).toContain("うち削除済みの分");
     expect(text).toContain("486 MB（1082 件）");
 
     const btn = [...host!.querySelectorAll("button")].find((b) => b.textContent?.includes("掃除を開く"))!;
