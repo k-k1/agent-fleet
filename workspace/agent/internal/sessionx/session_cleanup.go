@@ -262,7 +262,7 @@ func HandleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 	var out []cleanupCandidate
 	for _, feature := range CacheOrphanFeatures {
-		found, err := ScanCacheOrphans(feature, now)
+		found, err := ScanCacheOrphans(feature, now, nil)
 		if err != nil {
 			out = append(out, cleanupCandidate{
 				Type: "cache", ID: feature, Safety: "keep",

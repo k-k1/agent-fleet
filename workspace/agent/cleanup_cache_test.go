@@ -63,7 +63,7 @@ func TestCacheScanSeesRealCleanupArchive(t *testing.T) {
 			}
 		}
 		oldCacheDir(t, sessionx.CacheFeaturePasted, session.UUID(m.Dir, m.Name), 5)
-		got, err := sessionx.ScanCacheOrphans(sessionx.CacheFeaturePasted, time.Now())
+		got, err := sessionx.ScanCacheOrphans(sessionx.CacheFeaturePasted, time.Now(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,5 +163,37 @@ func TestHandleCleanupUsage(t *testing.T) {
 	invalidateCleanupUsage()
 	if got := get().Cache.Bytes; got != 1035 {
 		t.Fatalf("after invalidation cache = %d, want 1035", got)
+	}
+}
+
+// TestRestoreAndPurgeTakeTheCleanupLock (review ③, the main side): both trash operations
+// wait for the cleanup lock, so a cache delete can never scan between a restore reading an
+// archive and writing the meta back.
+func TestRestoreAndPurgeTakeTheCleanupLock(t *testing.T) {
+	cacheTestHome(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
+	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/cleanup/archives/none/restore", nil),
+		httptest.NewRequest(http.MethodDelete, "/cleanup/archives/none", nil),
+	} {
+		done := make(chan struct{})
+		sessionx.WithCleanupLock(func() {
+			go func() {
+				mux.ServeHTTP(httptest.NewRecorder(), req)
+				close(done)
+			}()
+			select {
+			case <-done:
+				t.Fatalf("%s %s ran while the cleanup lock was held", req.Method, req.URL.Path)
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s %s never ran after the lock was released", req.Method, req.URL.Path)
+		}
 	}
 }

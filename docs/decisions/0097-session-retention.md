@@ -162,3 +162,35 @@ being no reason to delete automatically at all.
 - **The shelf's inventory is invisible.** A count and a size in the cleanup modal would let
   someone decide to reclaim. Not in this ADR: decision 2's entrance already exists, so this is a
   display question, not a feature.
+
+## Addendum (2026-09-23) — the cache of deleted sessions is the one delete without the gz archive
+
+Decision 2 says a deletion always goes through the gz archive. PR #919 adds a delete that does
+not: the cleanup modal's **"Cache of deleted sessions"** removes `~/.cache/agent-fleet/pasted/<sid>`
+(files pasted or attached into a session), `pasted/chat-<id>` (the same for an assistant chat) and
+`codex-view-image/<sid>` (images codex's view_image read) once nothing can refer to them.
+
+**Why this is an exception and not a breach.** Decision 2 protects *a session's substance* — what
+a restore brings back. These directories belong only to sessions that are already beyond restore:
+the scan (`internal/sessionx/cache_orphans.go`) offers a directory only when its UUID is in **no
+session meta** (live, stopped or shelved) **and in no archive in the trash**. A session name is a
+random slug that is never reused and the UUID is a pure function of (dir, name), so such a UUID
+can never be named again. Anything a trashed session could still need stays until that archive is
+purged. Archiving the images instead would not work anyway: they do not compress, and a restore
+reads a whole archive into memory.
+
+**What still holds.**
+- It is **a person's action**, like every other delete here: nothing removes these on a timer.
+- It is graded **safe** because "provably done" is that grade's other half, and unreachable is
+  provable. It is the only safe row that cannot be undone, so its action label, its reason and
+  the confirm dialog all say so.
+- The scan **deletes nothing when it cannot prove reachability**: an unreadable meta or archive,
+  a feature directory that is a symlink (review ①), or a directory its entry budget did not walk
+  to the end (review ④). Both meta names protect a directory — the file name the paste endpoint
+  keys by and the name inside it that codex keys by (review ②). Restore, purge and the cache
+  delete share one lock, so a delete cannot scan between a restore reading an archive and
+  writing its meta back (review ③).
+
+`generated/` is outside this: pictures are products, and they already age out after 30 days.
+The Open item about the shelf's inventory is partly answered: Settings → Machine now shows the
+trash's size and opens the cleanup modal.

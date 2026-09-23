@@ -165,9 +165,11 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 		u.Cache.Files += p.Files
 	}
 
+	// The orphan scan spends the same budget the walk above left over, so the whole answer
+	// is bounded — and so is how long it holds the cleanup lock.
 	u.Orphans.OK = true
 	for _, feature := range sessionx.CacheOrphanFeatures {
-		found, err := sessionx.ScanCacheOrphans(feature, now)
+		found, err := sessionx.ScanCacheOrphans(feature, now, &budget)
 		if err != nil {
 			u.Orphans = usageOrphans{}
 			break
@@ -175,6 +177,7 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 		u.Orphans.Bytes += found.Bytes
 		u.Orphans.Files += found.Files
 		u.Orphans.Dirs += len(found.Dirs)
+		u.Truncated = u.Truncated || found.Truncated
 	}
 
 	tents, _ := os.ReadDir(cleanupStoreDir())
@@ -189,7 +192,7 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 			u.Trash.Archives++
 		}
 	}
-	u.Truncated = budget <= 0
+	u.Truncated = u.Truncated || budget <= 0
 	return u
 }
 

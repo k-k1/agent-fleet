@@ -210,6 +210,7 @@ func handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	// payload stays ONE map literal at the write site: wiremap_golden_test.go goldens the key
 	// set by parsing this literal, and a map built up over several statements leaves the
 	// response with no coverage at all.
+	invalidateCleanupUsage() // the trash just grew
 	remote, remoteErr := "", ""
 	if wantRemote {
 		state, err := deleteRemoteBranch(dir, branch)
@@ -265,7 +266,11 @@ func handleListCleanupArchives(w http.ResponseWriter, r *http.Request) {
 
 func handleRestoreCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	restored, err := restoreCleanupArchive(id)
+	// Under the cleanup lock: a cache delete must not scan between this reading the archive
+	// and writing the meta back (sessionx.WithCleanupLock).
+	var restored map[string]any
+	var err error
+	sessionx.WithCleanupLock(func() { restored, err = restoreCleanupArchive(id) })
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "restore_failed", err.Error())
 		return
@@ -275,7 +280,9 @@ func handleRestoreCleanupArchive(w http.ResponseWriter, r *http.Request) {
 
 func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := purgeCleanupArchive(id); err != nil {
+	var err error
+	sessionx.WithCleanupLock(func() { err = purgeCleanupArchive(id) })
+	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "purge_failed", err.Error())
 		return
 	}

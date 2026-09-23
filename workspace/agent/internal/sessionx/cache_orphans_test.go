@@ -155,7 +155,7 @@ func TestScanCacheOrphansReachability(t *testing.T) {
 	f.dir(t, CacheFeaturePasted, "chat-"+goneConv, 20)
 	f.dir(t, CacheFeaturePasted, "not-ours", 30) // a name we never write: never ours to delete
 
-	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now())
+	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestScanCacheOrphansGrace(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(d, "a.png"), now, now); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ScanCacheOrphans(CacheFeatureCodexViewImage, now)
+	got, err := ScanCacheOrphans(CacheFeatureCodexViewImage, now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestScanCacheOrphansGrace(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(d, "a.png"), f.old, f.old); err != nil {
 		t.Fatal(err)
 	}
-	got, err = ScanCacheOrphans(CacheFeatureCodexViewImage, now)
+	got, err = ScanCacheOrphans(CacheFeatureCodexViewImage, now, nil)
 	if err != nil || len(got.Dirs) != 1 {
 		t.Fatalf("old directory not listed: %v %v", orphanNames(got), err)
 	}
@@ -207,7 +207,7 @@ func TestScanCacheOrphansRefusesWhatItCannotRead(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(session.MetaDir(), "sbroken.json"), []byte("{"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now()); !errors.Is(err, ErrCacheScanUnsafe) {
+		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil); !errors.Is(err, ErrCacheScanUnsafe) {
 			t.Fatalf("err = %v, want ErrCacheScanUnsafe", err)
 		}
 	})
@@ -220,7 +220,7 @@ func TestScanCacheOrphansRefusesWhatItCannotRead(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(CleanupArchiveDir(), "bad.tar.gz"), []byte("not gzip"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now()); !errors.Is(err, ErrCacheScanUnsafe) {
+		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil); !errors.Is(err, ErrCacheScanUnsafe) {
 			t.Fatalf("err = %v, want ErrCacheScanUnsafe", err)
 		}
 	})
@@ -291,5 +291,138 @@ func TestCacheCleanupCandidates(t *testing.T) {
 	// row is only for a subtree that has directories the scan could not clear.
 	if len(got) != 1 || got[0].ID != CacheFeaturePasted {
 		t.Fatalf("rows = %+v, want one keep row for pasted", got)
+	}
+}
+
+// TestCacheOrphansFeatureSymlink (review ①): a feature directory that is a link would make
+// ReadDir and RemoveAll act on wherever it points. That is refused; a link further up — a
+// ~/.cache kept on persistent storage — is legitimate and keeps working.
+func TestCacheOrphansFeatureSymlink(t *testing.T) {
+	t.Run("feature dir is a link: refused, target untouched", func(t *testing.T) {
+		f := newCacheFixture(t)
+		elsewhere := filepath.Join(f.home, "elsewhere")
+		victim := filepath.Join(elsewhere, sid(metaFor("sgone01")))
+		if err := os.MkdirAll(victim, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(victim, f.old, f.old); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(CacheRoot(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(elsewhere, filepath.Join(CacheRoot(), CacheFeaturePasted)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil); !errors.Is(err, ErrCacheScanUnsafe) {
+			t.Fatalf("scan through a linked feature dir: err = %v, want ErrCacheScanUnsafe", err)
+		}
+		if _, err := RemoveCacheOrphans(CacheFeaturePasted, time.Now()); err == nil {
+			t.Fatal("remove through a linked feature dir was accepted")
+		}
+		if _, err := os.Stat(victim); err != nil {
+			t.Fatalf("the link's target was deleted: %v", err)
+		}
+	})
+	t.Run("~/.cache is a link: still works", func(t *testing.T) {
+		f := newCacheFixture(t)
+		store := filepath.Join(f.home, "persistent-cache")
+		if err := os.MkdirAll(store, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(store, filepath.Join(f.home, ".cache")); err != nil {
+			t.Fatal(err)
+		}
+		dead := f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 3)
+		got, err := RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+		if err != nil || len(got.Dirs) != 1 {
+			t.Fatalf("removed %v, err %v — want the one dead dir", orphanNames(got), err)
+		}
+		if _, err := os.Stat(dead); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("dead dir survived: %v", err)
+		}
+	})
+}
+
+// TestCacheOrphansMetaNameMismatch (review ②): the paste endpoint keys by the meta's FILE
+// name, codex by the name inside it. A meta whose two names differ keeps both directories.
+func TestCacheOrphansMetaNameMismatch(t *testing.T) {
+	f := newCacheFixture(t)
+	inside := metaFor("sinside")
+	if err := os.MkdirAll(session.MetaDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// File sfile01.json holding Name "sinside".
+	if err := os.WriteFile(filepath.Join(session.MetaDir(), "sfile01.json"), []byte(marshalMetaT(t, inside)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	byFile := f.dir(t, CacheFeaturePasted, session.UUID(inside.Dir, "sfile01"), 1)
+	byInside := f.dir(t, CacheFeaturePasted, sid(inside), 1)
+	got, err := RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Dirs) != 0 {
+		t.Fatalf("removed %v from a live session", orphanNames(got))
+	}
+	for _, p := range []string{byFile, byInside} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s was removed: %v", p, err)
+		}
+	}
+}
+
+// TestCacheCleanupLock (review ③): a restore or purge holding the cleanup lock keeps a
+// cache delete from scanning until it is done.
+func TestCacheCleanupLock(t *testing.T) {
+	newCacheFixture(t)
+	done := make(chan struct{})
+	WithCleanupLock(func() {
+		go func() {
+			_, _ = RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+			close(done)
+		}()
+		select {
+		case <-done:
+			t.Fatal("a cache delete ran while the cleanup lock was held")
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cache delete never ran after the lock was released")
+	}
+}
+
+// TestCacheOrphansBudget (review ④): the scan stops when its budget runs out, says so, and
+// never lists a directory it did not walk to the end — that one could hold a fresh file.
+func TestCacheOrphansBudget(t *testing.T) {
+	f := newCacheFixture(t)
+	for _, n := range []string{"sgone01", "sgone02", "sgone03"} {
+		d := f.dir(t, CacheFeaturePasted, sid(metaFor(n)), 1)
+		p := filepath.Join(d, "b.png") // two files per dir: 3 entries with the dir itself
+		if err := os.WriteFile(p, []byte{1}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, f.old, f.old); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(d, f.old, f.old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	budget := 4 // one whole dir (3 entries) and a third of the next
+	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), &budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated || len(got.Dirs) != 1 || got.Files != 2 {
+		t.Fatalf("truncated=%v dirs=%v files=%d, want truncated with the one complete dir", got.Truncated, orphanNames(got), got.Files)
+	}
+	// The positive control: with the default budget all three are listed and nothing is cut.
+	got, err = ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
+	if err != nil || got.Truncated || len(got.Dirs) != 3 {
+		t.Fatalf("default budget: truncated=%v dirs=%d err=%v", got.Truncated, len(got.Dirs), err)
 	}
 }
