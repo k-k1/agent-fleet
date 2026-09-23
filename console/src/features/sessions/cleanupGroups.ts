@@ -15,8 +15,8 @@
 import { compareText } from "../../lib/intl.ts";
 
 export interface CleanupCandidate {
-  type: "session" | "worktree" | "branch";
-  action?: "archive_session" | "delete_session" | "delete_worktree" | "delete_branch";
+  type: "session" | "worktree" | "branch" | "cache";
+  action?: "archive_session" | "delete_session" | "delete_worktree" | "delete_branch" | "delete_cache";
   id: string;
   display?: string;
   kind?: string;
@@ -29,6 +29,10 @@ export interface CleanupCandidate {
   safety: "safe" | "review" | "keep";
   reason_key?: string;
   reason: string;
+  // A "cache" row only: what its delete reclaims, and how many per-session folders that is.
+  bytes?: number;
+  files?: number;
+  dirs?: number;
 }
 
 // One working copy: a linked worktree, or the clone itself (the base copy, isWorktree false).
@@ -51,7 +55,9 @@ export interface CleanupRepoGroup {
 
 // Row order inside a working copy: the copy itself, then the branches left behind, then
 // the sessions in it — coarse to fine, which is also the order a cleanup is done in.
-const TYPE_ORDER: Record<CleanupCandidate["type"], number> = { worktree: 0, branch: 1, session: 2 };
+// "cache" rows never reach the tree (the modal lists them on their own), the entry is only
+// here because the record must be total.
+const TYPE_ORDER: Record<CleanupCandidate["type"], number> = { worktree: 0, branch: 1, session: 2, cache: 3 };
 const SAFETY_ORDER: Record<CleanupCandidate["safety"], number> = { safe: 0, review: 1, keep: 2 };
 
 const baseRepo = (folder: string) => {

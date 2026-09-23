@@ -410,6 +410,18 @@
   color: var(--warn);
 }
 
+/* Disk breakdown (MachineTab DiskSection): a cache part is a line item under the cache
+   total, so it is indented and quiet; the button to the cleanup sits under the figures it
+   acts on. */
+.mv-sub {
+  padding-left: 12px;
+  color: var(--muted);
+}
+
+.mv-actions {
+  margin: 8px 0 4px;
+}
+
 /* Machine tab — the usage charts (MachineTab UsageSection). The level class tints the whole
    block through currentColor, which is what the chart's stroke and fill follow. */
 .mu-chart {

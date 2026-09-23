@@ -1,0 +1,295 @@
+package sessionx
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
+
+// cacheFixture is a home with one cache subtree populated and every kind of owner the scan
+// has to recognise. All files are back-dated past the grace window unless a test says not.
+type cacheFixture struct {
+	home string
+	old  time.Time
+}
+
+func newCacheFixture(t *testing.T) *cacheFixture {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", "")
+	return &cacheFixture{home: home, old: time.Now().Add(-48 * time.Hour)}
+}
+
+// dir makes <feature>/<name>/a.png (size n) and back-dates both.
+func (f *cacheFixture) dir(t *testing.T, feature, name string, n int) string {
+	t.Helper()
+	d := filepath.Join(CacheRoot(), feature, name)
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(d, "a.png")
+	if err := os.WriteFile(p, bytes.Repeat([]byte{1}, n), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range []string{p, d} {
+		if err := os.Chtimes(x, f.old, f.old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return d
+}
+
+func metaFor(name string) session.Meta {
+	return session.Meta{Name: name, Dir: "/home/dev/repos/app", Kind: session.KindClaude}
+}
+
+func sid(m session.Meta) string { return session.UUID(m.Dir, m.Name) }
+
+func marshalMetaT(t *testing.T, m session.Meta) string {
+	t.Helper()
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// writeTarball writes <id>.tar.gz with manifest.json first, and no sidecar.
+func writeTarball(t *testing.T, id string, manifest []byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	if err := tw.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0o600, Size: int64(len(manifest))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(CleanupArchiveDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(CleanupArchiveDir(), id+".tar.gz"), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func manifestWith(t *testing.T, metas ...session.Meta) []byte {
+	t.Helper()
+	type s struct {
+		Name string `json:"name"`
+		Meta string `json:"meta"`
+	}
+	var ss []s
+	for _, m := range metas {
+		ss = append(ss, s{Name: m.Name, Meta: marshalMetaT(t, m)})
+	}
+	b, err := json.Marshal(map[string]any{"id": "x", "sessions": ss})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func orphanNames(o CacheOrphans) []string {
+	var out []string
+	for _, d := range o.Dirs {
+		out = append(out, d.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestScanCacheOrphansReachability is the whole rule in one fixture: every owner that can
+// still name a directory keeps it, and only the two provably-gone ones are listed.
+func TestScanCacheOrphansReachability(t *testing.T) {
+	f := newCacheFixture(t)
+
+	live := metaFor("slive01")
+	session.WriteMeta(live)
+	shelved := metaFor("sshelf1")
+	shelved.Archived = true
+	session.WriteMeta(shelved)
+
+	// A deleted session still in the trash, once with a sidecar, once tarball-only (the
+	// sidecar is best-effort on the writing side).
+	inTrash := metaFor("strash1")
+	if err := os.MkdirAll(CleanupArchiveDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(CleanupArchiveDir(), "a1.json"), manifestWith(t, inTrash), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inTarball := metaFor("stball1")
+	writeTarball(t, "a2", manifestWith(t, inTarball))
+
+	gone := metaFor("sgone01")
+
+	liveConv := &chatx.ChatConversation{ID: chatx.RandUUID(), Agent: "claude", Messages: []chatx.ChatMessage{}}
+	if err := chatx.SaveConv(liveConv); err != nil {
+		t.Fatal(err)
+	}
+	goneConv := chatx.RandUUID()
+
+	for _, m := range []session.Meta{live, shelved, inTrash, inTarball, gone} {
+		f.dir(t, CacheFeaturePasted, sid(m), 100)
+	}
+	f.dir(t, CacheFeaturePasted, "chat-"+liveConv.ID, 10)
+	f.dir(t, CacheFeaturePasted, "chat-"+goneConv, 20)
+	f.dir(t, CacheFeaturePasted, "not-ours", 30) // a name we never write: never ours to delete
+
+	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"chat-" + goneConv, sid(gone)}
+	sort.Strings(want)
+	if g := orphanNames(got); len(g) != 2 || g[0] != want[0] || g[1] != want[1] {
+		t.Fatalf("orphans = %v, want %v", g, want)
+	}
+	if got.Bytes != 120 || got.Files != 2 {
+		t.Fatalf("totals = %d bytes / %d files, want 120 / 2", got.Bytes, got.Files)
+	}
+}
+
+// TestScanCacheOrphansGrace: a directory touched inside the grace window is left alone even
+// when nothing owns it.
+func TestScanCacheOrphansGrace(t *testing.T) {
+	f := newCacheFixture(t)
+	d := f.dir(t, CacheFeatureCodexViewImage, sid(metaFor("sfresh1")), 5)
+	now := time.Now()
+	if err := os.Chtimes(filepath.Join(d, "a.png"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ScanCacheOrphans(CacheFeatureCodexViewImage, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Dirs) != 0 {
+		t.Fatalf("a fresh directory was listed: %v", orphanNames(got))
+	}
+	// The positive control: the same directory, once it is old, is listed.
+	if err := os.Chtimes(filepath.Join(d, "a.png"), f.old, f.old); err != nil {
+		t.Fatal(err)
+	}
+	got, err = ScanCacheOrphans(CacheFeatureCodexViewImage, now)
+	if err != nil || len(got.Dirs) != 1 {
+		t.Fatalf("old directory not listed: %v %v", orphanNames(got), err)
+	}
+}
+
+// TestScanCacheOrphansRefusesWhatItCannotRead: an unreadable meta or archive would make its
+// session's files look orphaned, so the scan fails instead of guessing.
+func TestScanCacheOrphansRefusesWhatItCannotRead(t *testing.T) {
+	t.Run("meta", func(t *testing.T) {
+		f := newCacheFixture(t)
+		f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
+		if err := os.MkdirAll(session.MetaDir(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(session.MetaDir(), "sbroken.json"), []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now()); !errors.Is(err, ErrCacheScanUnsafe) {
+			t.Fatalf("err = %v, want ErrCacheScanUnsafe", err)
+		}
+	})
+	t.Run("archive", func(t *testing.T) {
+		f := newCacheFixture(t)
+		f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
+		if err := os.MkdirAll(CleanupArchiveDir(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(CleanupArchiveDir(), "bad.tar.gz"), []byte("not gzip"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now()); !errors.Is(err, ErrCacheScanUnsafe) {
+			t.Fatalf("err = %v, want ErrCacheScanUnsafe", err)
+		}
+	})
+}
+
+// TestRemoveCacheOrphans deletes exactly what the scan lists, and nothing outside the one
+// feature it was asked for.
+func TestRemoveCacheOrphans(t *testing.T) {
+	f := newCacheFixture(t)
+	live := metaFor("slive01")
+	session.WriteMeta(live)
+	keep := f.dir(t, CacheFeaturePasted, sid(live), 7)
+	dead := f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 9)
+	otherFeature := f.dir(t, CacheFeatureCodexViewImage, sid(metaFor("sgone02")), 11)
+
+	got, err := RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Dirs) != 1 || got.Bytes != 9 {
+		t.Fatalf("removed %v (%d bytes), want the one dead dir (9 bytes)", orphanNames(got), got.Bytes)
+	}
+	if _, err := os.Stat(dead); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dead dir still there: %v", err)
+	}
+	for _, p := range []string{keep, otherFeature} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s was removed: %v", p, err)
+		}
+	}
+	if _, err := RemoveCacheOrphans("../..", time.Now()); err == nil {
+		t.Fatal("an unknown feature was accepted")
+	}
+}
+
+// TestCacheCleanupCandidates: one row per feature with something to take, a keep row when
+// the scan cannot be trusted, nothing when there is nothing.
+func TestCacheCleanupCandidates(t *testing.T) {
+	f := newCacheFixture(t)
+	if got := cacheCleanupCandidates(time.Now()); len(got) != 0 {
+		t.Fatalf("empty cache produced rows: %+v", got)
+	}
+	f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 3)
+	f.dir(t, CacheFeaturePasted, sid(metaFor("sgone02")), 4)
+	got := cacheCleanupCandidates(time.Now())
+	if len(got) != 1 {
+		t.Fatalf("rows = %+v, want one pasted row", got)
+	}
+	c := got[0]
+	if c.Type != "cache" || c.Action != "delete_cache" || c.ID != CacheFeaturePasted || c.Safety != "safe" ||
+		c.Dirs != 2 || c.Bytes != 7 || c.ReasonKey != cleanReasonCacheOrphan {
+		t.Fatalf("row = %+v", c)
+	}
+
+	if err := os.MkdirAll(session.MetaDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(session.MetaDir(), "sbroken.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = cacheCleanupCandidates(time.Now())
+	for _, c := range got {
+		if c.Action != "" || c.Safety != "keep" || c.ReasonKey != cleanReasonCacheUnsafe {
+			t.Fatalf("unsafe scan offered an action: %+v", c)
+		}
+	}
+	// codex-view-image does not exist in this home: nothing to judge, so no row. The keep
+	// row is only for a subtree that has directories the scan could not clear.
+	if len(got) != 1 || got[0].ID != CacheFeaturePasted {
+		t.Fatalf("rows = %+v, want one keep row for pasted", got)
+	}
+}

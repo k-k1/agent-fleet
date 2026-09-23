@@ -651,3 +651,5 @@
   .clean-reason { grid-row: 3; grid-column: 2 / -1; flex-wrap: wrap; }
   .clean-reason-text { white-space: normal; }
 }
+/* A cache row's size, after its name. */
+.clean-size { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 8px; font-variant-numeric: tabular-nums; }

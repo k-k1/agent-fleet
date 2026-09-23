@@ -8,6 +8,9 @@
 //     survey still reports them (the assistant/operator has no shelf UI), we filter.
 //     Rows are nested repo → working copy (cleanupGroups.ts) so a dozen worktrees of one
 //     repo read as one repo, and each group shows what goes away together.
+//     Below the two stages, unnumbered (③ is the shelf's final reclaim): the cache left
+//     behind by sessions that are gone for good, one sized row per cache — the only delete
+//     here with no trash behind it, so it says so.
 //   Trash — the gz safety net that delete_session/delete_branch write before removing
 //     anything: restore (undo) or purge (reclaim for good).
 import { useEffect, useMemo, useState } from "react";
@@ -19,6 +22,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, rawJSON, raw } from "../../core/api/client.ts";
 import { t, tMaybe, useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
+import { humanSize } from "../../lib/filemeta.ts";
 import { cleanupReasonParts } from "./cleanupReason.ts";
 import { groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
 import { useSessionUI } from "./ui.ts";
@@ -62,10 +66,16 @@ function runAction(c: CleanupCandidate): Promise<Response> {
       return raw(`api/repos/${enc(c.id)}?prune_sessions=1`, { method: "DELETE" });
     case "delete_branch":
       return raw(`api/repos/${enc(c.id)}/branch?branch=${enc(c.branch || "")}`, { method: "DELETE" });
+    case "delete_cache":
+      return raw(`api/cleanup/cache/${enc(c.id)}`, { method: "DELETE" });
     default:
       return Promise.resolve(new Response(null, { status: 400 }));
   }
 }
+
+// The display name of a cache row's id ("pasted", "codex-view-image"). An id this Console
+// does not know (an Agent newer than it) shows as itself.
+export const cacheLabel = (id: string) => tMaybe("clean.cache_feature_" + id.replace(/-/g, "_")) ?? id;
 
 export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const [tab, setTab] = useState<"candidates" | "archives">("candidates");
@@ -98,7 +108,8 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const visible = useMemo(() => (items || []).filter((c) => !isShelfRow(c)), [items]);
   const shelfCount = (items?.length ?? 0) - visible.length;
   const stage1 = useMemo(() => visible.filter((c) => c.type === "session"), [visible]);
-  const stage2 = useMemo(() => visible.filter((c) => c.type !== "session"), [visible]);
+  const stage2 = useMemo(() => visible.filter((c) => c.type !== "session" && c.type !== "cache"), [visible]);
+  const cacheRows = useMemo(() => visible.filter((c) => c.type === "cache"), [visible]);
   const actionable = useMemo(
     () => visible.filter((c) => c.action && c.safety !== "keep"),
     [visible],
@@ -174,9 +185,14 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
 
   const runSelected = () => {
     const targets = actionable.filter((c) => checked.has(rowKey(c)));
+    // The general body promises a trash; a cache delete has none, so a selection that
+    // includes one says that too.
+    const body = targets.some((c) => c.action === "delete_cache")
+      ? tr("clean.confirm_body") + " " + tr("clean.confirm_body_cache")
+      : tr("clean.confirm_body");
     return runTargets(targets, {
       title: tr("clean.confirm_title", { count: targets.length }),
-      body: tr("clean.confirm_body"),
+      body,
       confirmLabel: tr("clean.confirm_do", { count: targets.length }),
     });
   };
@@ -212,6 +228,17 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
       title: tr("clean.stage2_confirm_title"),
       body: tr("clean.stage2_confirm_body", { count: stage2Safe.length }),
       confirmLabel: tr("clean.confirm_do", { count: stage2Safe.length }),
+    });
+
+  // Cache one-shot: every cache row that has an action (a scan the Agent could not trust
+  // comes as keep, with none).
+  const cacheTargets = useMemo(() => cacheRows.filter((c) => c.action && c.safety !== "keep"), [cacheRows]);
+  const cacheBytes = cacheTargets.reduce((n, c) => n + (c.bytes || 0), 0);
+  const runCache = () =>
+    runTargets(cacheTargets, {
+      title: tr("clean.cache_stage_confirm_title"),
+      body: tr("clean.cache_stage_confirm_body", { size: humanSize(cacheBytes) }),
+      confirmLabel: tr("clean.confirm_do", { count: cacheTargets.length }),
     });
 
   const restore = async (id: string) => {
@@ -254,6 +281,38 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const openShelf = () => {
     onClose?.();
     openArchived();
+  };
+
+  // One row of the flat cache list: the same columns as a tree row, with the size where a
+  // tree row names its target.
+  const renderCacheRow = (c: CleanupCandidate) => {
+    const key = rowKey(c);
+    const selectable = !!c.action && c.safety !== "keep";
+    const reason = cleanupReasonParts(c);
+    return (
+      <li key={key} className={"clean-row" + (selectable ? "" : " is-keep")}>
+        {selectable ? (
+          <label className="clean-check">
+            <input type="checkbox" checked={checked.has(key)} disabled={busy} onChange={() => toggle(key)} />
+          </label>
+        ) : (
+          <span className="clean-check" aria-hidden="true" />
+        )}
+        <span className={"clean-badge clean-badge-" + c.safety}>{tMaybe("clean.safety_" + c.safety) ?? c.safety}</span>
+        <span className="clean-type clean-type-cache">{tr("clean.type_cache")}</span>
+        <span className="clean-target" title={c.id}>
+          {cacheLabel(c.id)}
+          {c.bytes != null && c.dirs != null && (
+            <span className="clean-size">{tr("clean.cache_size", { dirs: c.dirs, size: humanSize(c.bytes) })}</span>
+          )}
+        </span>
+        <span className="clean-act">{c.action ? (tMaybe("clean.action_" + c.action) ?? c.action) : ""}</span>
+        <span className="clean-reason">
+          {reason.badge && <span className="clean-reason-badge">{reason.badge}</span>}
+          {reason.text && <span className="clean-reason-text">{reason.text}</span>}
+        </span>
+      </li>
+    );
   };
 
   // One stage's repo → working copy → rows tree. `prefix` namespaces the collapse
@@ -479,6 +538,28 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                     <p className="clean-stage-empty">{tr("clean.stage2_empty")}</p>
                   ) : (
                     renderTree(repos2, "2|")
+                  )}
+                </section>
+
+                <section className="clean-stage">
+                  <div className="clean-stage-head">
+                    <span className="clean-stage-title">{tr("clean.cache_stage_title")}</span>
+                    <span className="clean-toolbar-spacer" />
+                    <Button
+                      small
+                      variant="danger"
+                      disabled={busy || cacheTargets.length === 0}
+                      title={tr("clean.cache_stage_run_title")}
+                      onClick={() => void runCache()}
+                    >
+                      {tr("clean.cache_stage_run")}
+                      {cacheTargets.length ? tr("common.paren", { v: humanSize(cacheBytes) }) : ""}
+                    </Button>
+                  </div>
+                  {cacheRows.length === 0 ? (
+                    <p className="clean-stage-empty">{tr("clean.cache_stage_empty")}</p>
+                  ) : (
+                    <ul className="clean-list clean-rows">{cacheRows.map(renderCacheRow)}</ul>
                   )}
                 </section>
 

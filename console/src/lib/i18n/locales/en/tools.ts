@@ -236,6 +236,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.memory": "Memory",
   "machine.mem_of_box": "{n} (instance has {box})",
   "machine.home_disk": "home disk",
+  "machine.home_disk_fs": "Whole disk",
   "machine.src_measured": "measured",
   "machine.src_declared": "configured",
   "machine.next_start_box": "The settings have changed — the next start will use {type}.",
@@ -243,7 +244,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.note_own_box":
     "This instance is yours alone, so its vCPUs and memory are all yours (the memory limit is the instance's RAM less what is held back for its own daemons).",
   "machine.note_shared_host":
-    "The host is shared with other members. These are this container's own figures, not the machine's.",
+    "The host is shared with other members. The vCPUs and memory are this container's own figures, not the machine's. The disk is the whole filesystem home sits on, including more than this workspace.",
   "machine.usage_title": "Usage",
   "machine.usage_window": "last {n} min",
   "machine.usage_of": "{used} / {total} ({pct}%)",
@@ -251,6 +252,23 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.usage_oom": "A process was killed for memory during this window (the container itself survived).",
   "machine.usage_note":
     "One sample every 4 seconds, up to an hour. The chart keeps moving while a value is unchanged — the control plane is what guarantees it is unchanged — and breaks the line for any period it could not read.",
+  "machine.disk_title": "Disk used by Agent Fleet",
+  "machine.disk_failed": "Couldn't read the disk breakdown.",
+  "machine.disk_cache": "Cache",
+  "machine.disk_part_generated": "Generated",
+  "machine.disk_part_thumbs": "Thumbnails",
+  "machine.disk_part_pasted": "Pasted files",
+  "machine.disk_part_codex_view_image": "codex images",
+  "machine.disk_part_memo_images": "Memo images",
+  "machine.disk_part_other": "Other",
+  "machine.disk_orphans": "Of which deleted",
+  "machine.disk_orphans_unknown": "Can't tell",
+  "machine.disk_trash": "Cleanup trash",
+  "machine.disk_trash_of": "{size} ({count} archives)",
+  "machine.disk_open_cleanup": "Open cleanup",
+  "machine.disk_truncated": "There were too many files to count them all; the real figures are higher.",
+  "machine.disk_note":
+    "Counts only what Agent Fleet itself stores under ~/.cache/agent-fleet (not working copies or tool caches). Generated images expire after 30 days and thumbnails after 14. The deleted sessions' share and the trash can be tidied up from Cleanup.",
   "machine.note_who_changes":
     "The size and the kind of machine are set by your tenant administrator, and a change applies the next time the workspace starts.",
 

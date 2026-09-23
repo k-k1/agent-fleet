@@ -281,6 +281,11 @@ things stop for you first**.
 - **① Tidy sessions** — **"Tidy all"** archives stopped AI sessions and deletes shell / SSM.
 - **② Delete working copies and branches** — **"Delete the safe ones"** removes only what was
   judged safe.
+- **Cache of deleted sessions** — files you pasted or attached into a session, and images codex
+  looked at, stay on disk after the session is deleted. Once the session (or assistant chat) is
+  gone **and not in the trash**, nothing can refer to them again; they are listed here, one row per
+  kind with its size, and **"Delete all"** removes them. Anything a trashed session could still
+  need is left alone.
 
 Every candidate carries a **safety** rating and a reason. You can also pick them off one by one.
 
@@ -297,7 +302,8 @@ The **⋯** menu on a session offers a **delete lock**, which takes it out of cl
 they are removed. The **"Trash (restore)"** tab of the cleanup modal **restores** them, and
 **"Delete permanently"** reclaims the space once you are sure. **Only deleting a worktree cannot
 be undone** — and even then only the working copy goes; the history, the remote and the branch
-remain.
+remain. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
+it only ever covers sessions that are already gone for good.
 
 Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
 browser). "Delete old ones" in the archive list removes items older than 30 days from the list.
