@@ -10,6 +10,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -199,10 +200,13 @@ func ReplySuggestWindow(b *strings.Builder, msgs []ReplyMsg) {
 func ReplySuggestPrompt(turns []transcript.Turn, lang string) string {
 	real := make([]ReplyMsg, 0, len(turns))
 	for _, t := range turns {
-		if t.Sidechain || t.Compact || t.Text == "" {
+		// The studio's signal line is addressed to the agent, not a thing the member said, and a
+		// reply suggestion built on it answers the signal (ADR 0100 decision 5).
+		text := imagegen.StripStudioSignal(t.Text)
+		if t.Sidechain || t.Compact || text == "" {
 			continue
 		}
-		real = append(real, ReplyMsg{t.Role, t.Text})
+		real = append(real, ReplyMsg{t.Role, text})
 	}
 	var b strings.Builder
 	b.WriteString(ReplySuggestInstructions(lang, ReplyCounterpartSession))

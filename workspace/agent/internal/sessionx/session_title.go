@@ -23,6 +23,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -212,6 +213,9 @@ const (
 func titleSuggestPrompt(turns []transcript.Turn, lang string) string {
 	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
+		// The studio's signal line is addressed to the agent (ADR 0100 decision 5); a title or a
+		// branch name taken from it names the signal instead of the work.
+		t.Text = imagegen.StripStudioSignal(t.Text)
 		if t.Sidechain || t.Compact || t.Text == "" {
 			continue
 		}
@@ -306,6 +310,9 @@ func writeConversationWindow(b *strings.Builder, real []transcript.Turn) {
 func BranchSuggestPrompt(turns []transcript.Turn) string {
 	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
+		// The studio's signal line is addressed to the agent (ADR 0100 decision 5); a title or a
+		// branch name taken from it names the signal instead of the work.
+		t.Text = imagegen.StripStudioSignal(t.Text)
 		if t.Sidechain || t.Compact || t.Text == "" {
 			continue
 		}
