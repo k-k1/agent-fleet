@@ -294,6 +294,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.stop_after_turn_hint": "Stops this session once the turn it is running ends — the resumable stop, so the conversation stays. It will not stop while a question is waiting or work is still going, and a new instruction releases it.",
   "srow.unlock": "Unlock (allow deletion)",
   "srow.locked_badge": "Locked against deletion (skipped by cleanup, and stays in this list)",
+  "srow.studio_badge": "Bound to an image studio (opens the studio)",
   "srow.locked_hint": "Locked against deletion. Unlock it first.",
   "srow.archive": "Archive (remove from the list)",
   "srow.recreate": "Recreate (current conversation goes to the archive)",

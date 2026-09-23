@@ -102,6 +102,16 @@ export interface ImagegenModel {
   license_url?: string;
   source_url?: string;
   typical_ms?: number;
+  /** ADR 0100 decision 7: the family's facts, from the Agent's family table rather than a
+   *  second copy in the Console. Absent on an Agent that predates it; the card then says it has
+   *  no guide for the family instead of guessing. */
+  dialect?: "tags" | "sentences";
+  quality_prefixes?: string[];
+  steps_range?: [number, number];
+  /** Absent for a family that does not read cfg. */
+  cfg_range?: [number, number];
+  /** The steps a trial runs at (ADR 0081 decision 11). */
+  trial_steps?: number;
 }
 
 export interface ImagegenLora {

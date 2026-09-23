@@ -10,6 +10,7 @@ import { downloadURL } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import type { Job, StoredFile } from "../api.ts";
+import { PictureVerbs, type PictureActions } from "./StudioHistory.tsx";
 
 /** The same longest edge the gallery and the mirror ask for. Do not "tune" it here. */
 const THUMB = 512;
@@ -85,10 +86,13 @@ export function ResultCards({
   items,
   onZoom,
   onAgain,
+  actions,
 }: {
   items: ResultItem[];
   onZoom: (path: string) => void;
   onAgain: (item: ResultItem, sameSeed: boolean) => void;
+  /** The studio's verbs on a picture (ADR 0100 decision 9); absent in the studio-less pane. */
+  actions?: PictureActions;
 }) {
   const tr = useT();
   return (
@@ -123,6 +127,7 @@ export function ResultCards({
                   <button type="button" className="ui-btn ui-btn-ghost" onClick={() => onAgain({ file, job }, false)}>
                     {tr("imggen.again_new_seed")}
                   </button>
+                  {actions && <PictureVerbs path={file.path} actions={actions} />}
                 </div>
               </div>
             );
