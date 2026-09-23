@@ -139,7 +139,7 @@ upstream CLI exposes. This matrix is the quick reference (✓ = supported,
 | Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | ✓ | — |
 | Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | ✓ | — |
 | Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
-| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |
+| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | ✓ | — |

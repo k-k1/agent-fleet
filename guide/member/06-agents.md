@@ -71,7 +71,7 @@ and rolls in the cross-cutting features covered elsewhere in this guide — work
 | Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | ✓ | — | — |
 | Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | ✓ | — | — |
 | Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | ✓⁵ | — | — |
