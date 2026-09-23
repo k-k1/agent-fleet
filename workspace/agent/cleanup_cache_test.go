@@ -385,21 +385,66 @@ func TestRestoreHasNoReplacingFallback(t *testing.T) {
 	}
 }
 
-// TestRestoreReportsAMetaItCouldNotWrite (fifth review, medium): the restore does not claim a
-// session is back when its meta never reached the disk.
-func TestRestoreReportsAMetaItCouldNotWrite(t *testing.T) {
+// TestRestoreKeepsTheLiveMeta (sixth review, serious): restoring an archive whose session is
+// already back does not roll its meta back to the archived snapshot — a lock set since, for
+// one, stays set.
+func TestRestoreKeepsTheLiveMeta(t *testing.T) {
+	cacheTestHome(t)
+	id, m := archivedSession(t, "srest09")
+	if _, err := restoreCleanupArchive(id); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := session.ReadMeta(m.Name)
+	live.Locked = true
+	live.Title = "renamed since"
+	session.WriteMeta(live)
+	if _, err := restoreCleanupArchive(id); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := session.ReadMeta(m.Name)
+	if !got.Locked || got.Title != "renamed since" {
+		t.Fatalf("meta rolled back to the archive: locked=%v title=%q", got.Locked, got.Title)
+	}
+}
+
+// TestPurgeWaitsForAnUnfinishedRestore (sixth review, medium): after a restore that stopped
+// half way, the archive cannot be purged — it is what keeps the session's cache reachable
+// while its transcript is already back. Finishing the restore lifts that.
+func TestPurgeWaitsForAnUnfinishedRestore(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes into a read-only directory anyway")
 	}
 	cacheTestHome(t)
-	id, _ := archivedSession(t, "srest08")
-	locked := filepath.Join(os.Getenv("HOME"), "locked")
-	if err := os.Mkdir(locked, 0o500); err != nil {
+	id, _ := archivedSession(t, "srest10")
+	metaDir := session.MetaDir()
+	if err := os.MkdirAll(metaDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
-	t.Setenv("AF_SESSIONS_DIR", filepath.Join(locked, "sessions"))
+	if err := os.Chmod(metaDir, 0o500); err != nil { // the meta cannot be written
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(metaDir, 0o700) })
 	if _, err := restoreCleanupArchive(id); err == nil {
 		t.Fatal("a restore whose meta could not be written reported success")
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/cleanup/archives/"+id, nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("purge during an unfinished restore: status %d, want 409", rec.Code)
+	}
+	if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
+		t.Fatalf("the archive was purged: %v", err)
+	}
+	// Finish the restore; then the purge goes through.
+	_ = os.Chmod(metaDir, 0o700)
+	if _, err := restoreCleanupArchive(id); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/cleanup/archives/"+id, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("purge after the restore finished: status %d", rec.Code)
 	}
 }

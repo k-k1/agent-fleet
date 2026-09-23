@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
@@ -279,6 +280,10 @@ func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var err error
 	sessionx.WithCleanupLock(func() { err = purgeCleanupArchive(id) })
+	if errors.Is(err, errRestoreIncomplete) {
+		httpx.WriteErr(w, http.StatusConflict, "restore_incomplete", err.Error())
+		return
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "purge_failed", err.Error())
 		return

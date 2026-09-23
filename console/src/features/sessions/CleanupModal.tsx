@@ -264,7 +264,12 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
     if (!ok) return;
     setBusy(true);
     try {
-      await raw(`api/cleanup/archives/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+      // A refusal has to be seen: the one the Agent gives on purpose (409) is an archive
+      // whose restore did not finish, which only restoring it again resolves.
+      const res = await raw(`api/cleanup/archives/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => null);
+      if (!res || !res.ok) {
+        toast(res?.status === 409 ? t("clean.purge_restore_incomplete") : t("clean.purge_failed"));
+      }
       await loadArchives();
     } finally {
       setBusy(false);
@@ -304,10 +309,10 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
           {cacheLabel(c.id)}
           {/* The partial mark stands on its own: a keep row (nothing it could clear) is
               exactly where "there is more it did not reach" must still be visible. */}
-          {(c.bytes != null && c.dirs != null) || c.truncated ? (
+          {(c.bytes != null && c.dirs != null) || c.truncated || c.stuck ? (
             <span className="clean-size">
               {c.bytes != null && c.dirs != null ? tr("clean.cache_size", { dirs: c.dirs, size: humanSize(c.bytes) }) : ""}
-              {c.truncated ? tr("clean.cache_partial") : ""}
+              {c.truncated || c.stuck ? tr("clean.cache_partial") : ""}
             </span>
           ) : null}
         </span>

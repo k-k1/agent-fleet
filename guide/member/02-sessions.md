@@ -300,7 +300,8 @@ The **⋯** menu on a session offers a **delete lock**, which takes it out of cl
 
 **Deleting too much is recoverable.** Sessions and branches are stashed in the **trash** before
 they are removed. The **"Trash (restore)"** tab of the cleanup modal **restores** them, and
-**"Delete permanently"** reclaims the space once you are sure. **Only deleting a worktree cannot
+**"Delete permanently"** reclaims the space once you are sure (if a restore of that archive stopped
+part way, restore it again first — deleting it is refused until then). **Only deleting a worktree cannot
 be undone** — and even then only the working copy goes; the history, the remote and the branch
 remain. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
 it only ever covers sessions that are already gone for good.

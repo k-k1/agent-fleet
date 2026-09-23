@@ -638,3 +638,24 @@ func TestCacheOrphansOversizedFolderIsStuck(t *testing.T) {
 		t.Fatalf("default budget: stuck=%v dirs=%v err=%v", got.Stuck, orphanNames(got), err)
 	}
 }
+
+// TestCacheReasonOrder (sixth review, minor): when states coincide the row names the one to
+// fix first, and an unreadable folder is never hidden behind "too big".
+func TestCacheReasonOrder(t *testing.T) {
+	cases := []struct {
+		found CacheOrphans
+		want  string
+	}{
+		{CacheOrphans{}, cleanReasonCacheOrphan},
+		{CacheOrphans{Truncated: true}, cleanReasonCachePartial},
+		{CacheOrphans{Stuck: true}, cleanReasonCacheStuck},
+		{CacheOrphans{Stuck: true, Unreadable: 1}, cleanReasonCacheUnread},
+		{CacheOrphans{Truncated: true, Unreadable: 2}, cleanReasonCacheUnread},
+		{CacheOrphans{Stalled: true, Unreadable: 1}, cleanReasonCacheStalled},
+	}
+	for _, c := range cases {
+		if got := cacheReason(c.found); got != c.want {
+			t.Errorf("cacheReason(%+v) = %s, want %s", c.found, got, c.want)
+		}
+	}
+}

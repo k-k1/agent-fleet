@@ -183,9 +183,21 @@ func readCleanupArchive(id string) (cleanupManifest, map[string][]byte, error) {
 }
 
 // purgeCleanupArchive permanently removes an archive (reclaims its space for good).
+// errRestoreIncomplete refuses a purge while a restore of the same archive has not finished:
+// transcripts it placed may already point at the session's cache, and with neither the meta
+// nor the archive left, the cache scan would take that cache as orphaned.
+var errRestoreIncomplete = errors.New("a restore of this archive did not finish; restore it again first")
+
+// restoringMarker is the file that says a restore of archive id started and has not finished.
+// Written before anything is placed and removed only when every session is back.
+func restoringMarker(id string) string { return filepath.Join(cleanupStoreDir(), id+".restoring") }
+
 func purgeCleanupArchive(id string) error {
 	if filepath.Base(id) != id || strings.Contains(id, "..") {
 		return fmt.Errorf("invalid archive id")
+	}
+	if _, err := os.Lstat(restoringMarker(id)); err == nil {
+		return errRestoreIncomplete
 	}
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
 	return os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
@@ -301,6 +313,13 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			handErr = fmt.Errorf("archive %s was purged while it was being restored", id)
 			return
 		}
+		// Mark the restore as under way before anything is placed. Until it is removed below,
+		// the archive cannot be purged, so whatever this restore leaves half done stays
+		// reachable through the archive.
+		if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
+			handErr = fmt.Errorf("archive %s: cannot mark the restore: %w", id, err)
+			return
+		}
 		for _, f := range staged {
 			if err := placeNoReplace(f.tmp, f.dest); err != nil {
 				handErr = fmt.Errorf("archive %s: cannot place %s (no session was restored; restoring again is safe): %w", id, f.dest, err)
@@ -308,12 +327,15 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			}
 		}
 		for i, meta := range metas {
-			if err := session.WriteMetaChecked(meta); err != nil {
+			// An existing meta is newer than the archived snapshot — a session already
+			// restored and then locked, renamed or run — and is kept as it is.
+			if _, err := session.CreateMetaIfAbsent(meta); err != nil {
 				handErr = fmt.Errorf("archive %s: restored %d of %d sessions, then could not write %s (restoring again is safe): %w",
 					id, i, len(metas), meta.Name, err)
 				return
 			}
 		}
+		_ = os.Remove(restoringMarker(id))
 	})
 	dropStaged() // placed ones are hard links, so the staging names are only temporary
 	if handErr != nil {

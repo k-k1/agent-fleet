@@ -62,6 +62,9 @@ type cleanupCandidate struct {
 	// Unreadable counts orphan folders a "cache" row leaves out because something inside
 	// could not be read — a state that surveying again does not change.
 	Unreadable int `json:"unreadable,omitempty"`
+	// Stuck = the scan behind a "cache" row could not finish a single folder within its
+	// budget, and would stop at the same place again.
+	Stuck bool `json:"stuck,omitempty"`
 }
 
 // The "reason" of a candidate is text WE generate for the user to read, so per ADR 0033
@@ -110,7 +113,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonCachePartial: "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
 	cleanReasonCacheUnread:  "中身を読めないフォルダがあり、それは対象外（そのフォルダは点検し直しても対象にならない。権限かファイルシステムの確認が必要）",
 	cleanReasonCacheStalled: "セッション情報とごみ箱が多すぎて参照の有無を判定できない（点検し直しても変わらない。ごみ箱を整理すると進む）",
-	cleanReasonCacheStuck:   "大きすぎるフォルダがあり、点検の上限までに 1 つも見終わらない（点検し直しても同じ所で止まる。~/.cache/agent-fleet のそのフォルダを手で確認する）",
+	cleanReasonCacheStuck:   "点検の上限までに 1 つも判定できない（大きすぎるフォルダか、手前に多数のフォルダがある。点検し直しても同じ所で止まるので ~/.cache/agent-fleet を手で確認する）",
 }
 
 // cleanupReasonText resolves a reason key to its source-language sentence. An unknown key
@@ -284,26 +287,14 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 			})
 			continue
 		}
-		// Which note the row carries. A folder that could not be read is the one a person has
-		// to act on, so it wins over a budget cut, which the next survey resolves by itself.
-		reason := cleanReasonCacheOrphan
-		switch {
-		case found.Stalled:
-			reason = cleanReasonCacheStalled
-		case found.Stuck:
-			reason = cleanReasonCacheStuck
-		case found.Unreadable > 0:
-			reason = cleanReasonCacheUnread
-		case found.Truncated:
-			reason = cleanReasonCachePartial
-		}
+		reason := cacheReason(found)
 		if len(found.Dirs) == 0 {
 			if reason != cleanReasonCacheOrphan {
 				// Nothing it could clear, but something it could not judge: say so rather
 				// than show nothing, which would read as "nothing to tidy".
 				out = append(out, cleanupCandidate{
 					Type: "cache", ID: feature, Safety: "keep",
-					Truncated: found.Truncated, Unreadable: found.Unreadable,
+					Truncated: found.Truncated, Unreadable: found.Unreadable, Stuck: found.Stuck,
 					ReasonKey: reason, Reason: cleanupReasonText(reason),
 				})
 			}
@@ -312,9 +303,28 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 		out = append(out, cleanupCandidate{
 			Type: "cache", Action: "delete_cache", ID: feature, Safety: "safe",
 			Bytes: found.Bytes, Files: found.Files, Dirs: len(found.Dirs),
-			Truncated: found.Truncated, Unreadable: found.Unreadable,
+			Truncated: found.Truncated, Unreadable: found.Unreadable, Stuck: found.Stuck,
 			ReasonKey: reason, Reason: cleanupReasonText(reason),
 		})
 	}
 	return out
+}
+
+// cacheReason picks the note a cache row carries — the one whose fix comes first. Too many
+// records to judge anything at all; then folders that could not be read (a definite fault a
+// person must fix); then a scan that could not finish anything (look by hand); then a budget
+// cut the next press resolves. The other states still ride on the row's own fields, so the
+// Console can show that part was left unchecked.
+func cacheReason(found CacheOrphans) string {
+	switch {
+	case found.Stalled:
+		return cleanReasonCacheStalled
+	case found.Unreadable > 0:
+		return cleanReasonCacheUnread
+	case found.Stuck:
+		return cleanReasonCacheStuck
+	case found.Truncated:
+		return cleanReasonCachePartial
+	}
+	return cleanReasonCacheOrphan
 }

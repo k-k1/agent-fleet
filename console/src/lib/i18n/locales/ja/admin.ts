@@ -1213,6 +1213,8 @@ export const admin = {
   "clean.purge_title": "ごみ箱のアーカイブを完全に削除しますか？",
   "clean.purge_body": "このアーカイブは元に戻せなくなります（容量を回収します）。",
   "clean.purge_do": "完全に削除",
+  "clean.purge_failed": "完全に削除できませんでした。",
+  "clean.purge_restore_incomplete": "このアーカイブの復元が途中で止まっています。もう一度「復元」してから削除してください。",
   // 掃除候補の「理由」（Agent は clean.reason.* のキーだけを返す・ADR 0033）。
   "clean.reason.locked": "ロック中（削除保護。解除するまで掃除対象外）",
   "clean.reason.archived": "アーカイブ済み（自動では消えない。削除で回収可・復元可）",
@@ -1228,7 +1230,7 @@ export const admin = {
   "clean.reason.cache_orphan": "削除済みセッション／会話のキャッシュ（ごみ箱にも無く、もう参照されない。削除は元に戻せない）",
   "clean.reason.cache_unsafe": "読めないセッション情報かごみ箱があり、参照の有無を判定できない（何も消さない）",
   "clean.reason.cache_unreadable": "中身を読めないフォルダがあり、それは対象外（そのフォルダは点検し直しても対象にならない。権限かファイルシステムの確認が必要）",
-  "clean.reason.cache_stuck": "大きすぎるフォルダがあり、点検の上限までに 1 つも見終わらない（点検し直しても同じ所で止まる。~/.cache/agent-fleet のそのフォルダを手で確認する）",
+  "clean.reason.cache_stuck": "点検の上限までに 1 つも判定できない（大きすぎるフォルダか、手前に多数のフォルダがある。点検し直しても同じ所で止まるので ~/.cache/agent-fleet を手で確認する）",
   "clean.reason.cache_stalled": "セッション情報とごみ箱が多すぎて参照の有無を判定できない（点検し直しても変わらない。ごみ箱を整理すると進む）",
   "clean.reason.cache_partial": "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
   // 同じ理由の「状態バッジ＋補足」分解版（行の2行目表示用。badge が無いキーは全文へフォールバック）。
@@ -1260,8 +1262,8 @@ export const admin = {
   "clean.reason_hint.cache_unsafe": "読めないセッション情報かごみ箱があるため、何も消しません",
   "clean.reason_badge.cache_unreadable": "読めないフォルダあり",
   "clean.reason_hint.cache_unreadable": "中身を読めないフォルダは、点検し直しても対象になりません（権限かファイルシステムを確認してください）。削除は元に戻せません",
-  "clean.reason_badge.cache_stuck": "大きすぎるフォルダ",
-  "clean.reason_hint.cache_stuck": "点検の上限までに 1 つも見終わりません。点検し直しても同じ所で止まるので、~/.cache/agent-fleet のそのフォルダを手で確認してください",
+  "clean.reason_badge.cache_stuck": "進めない",
+  "clean.reason_hint.cache_stuck": "点検の上限までに 1 つも判定できません（大きすぎるフォルダか、手前に多数のフォルダがある）。点検し直しても同じ所で止まるので、~/.cache/agent-fleet を手で確認してください",
   "clean.reason_badge.cache_stalled": "判定できない",
   "clean.reason_hint.cache_stalled": "セッション情報とごみ箱が多すぎて判定できません。点検し直しても変わりません。ごみ箱を整理すると進みます",
   "clean.reason_badge.cache_partial": "一部だけ",

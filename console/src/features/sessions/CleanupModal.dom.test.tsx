@@ -11,6 +11,9 @@ import { createRoot, type Root } from "react-dom/client";
 let candidates: unknown[] = [];
 let writes: { url: string; method: string }[] = [];
 
+let archives: unknown[] = [];
+let purgeStatus = 200;
+
 const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
   const u = String(url);
   const method = String(opts?.method || "GET");
@@ -18,11 +21,12 @@ const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
   const body = u.includes("sessions/cleanup")
     ? { candidates }
     : u.includes("cleanup/archives")
-      ? { archives: [] }
+      ? { archives }
       : {};
+  const status = method === "DELETE" && u.includes("cleanup/archives/") ? purgeStatus : 200;
   return {
-    ok: true,
-    status: 200,
+    ok: status < 400,
+    status,
     statusText: "OK",
     headers: { get: () => null },
     text: async () => JSON.stringify(body),
@@ -87,6 +91,8 @@ beforeEach(() => {
   g.IS_REACT_ACT_ENVIRONMENT = true;
   setLocale("ja");
   writes = [];
+  archives = [];
+  purgeStatus = 200;
   fetchMock.mockClear();
 });
 afterEach(() => {
@@ -171,5 +177,17 @@ describe("CleanupModal cache section", () => {
     const row = document.querySelector(".clean-type-cache")!.closest(".clean-row")!;
     expect(row.textContent).toContain("読めないフォルダあり");
     expect(row.textContent).toContain("（一部）");
+  });
+
+  it("says why a purge was refused when a restore of the archive did not finish", async () => {
+    candidates = [];
+    archives = [{ id: "20260901-000000-x", at: "2026-09-01T00:00:00Z", reason: "delete_session", sessions: [{ name: "x" }] }];
+    purgeStatus = 409;
+    await render();
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
+    await click(buttonByText("完全に削除"));
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".ui-confirm-actions button")];
+    await click(buttons[1]);
+    expect(document.body.textContent).toContain("復元が途中で止まっています");
   });
 });

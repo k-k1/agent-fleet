@@ -37,6 +37,8 @@ export interface CleanupCandidate {
   truncated?: boolean;
   // Orphan folders a "cache" row leaves out because something inside could not be read.
   unreadable?: number;
+  // The scan could not finish a single folder and would stop at the same place again.
+  stuck?: boolean;
 }
 
 // One working copy: a linked worktree, or the clone itself (the base copy, isWorktree false).
