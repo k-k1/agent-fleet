@@ -166,6 +166,10 @@ func WriteSessionMetaKeepingLock(m session.Meta) session.Meta {
 		m.Locked = current.Locked
 		m.KeepAwakeUntil = current.KeepAwakeUntil
 		m.StopAfterTurnAt = current.StopAfterTurnAt
+		// Written by the initial-prompt delivery goroutine and by a studio bind, both of which
+		// can land between the list's read and this write.
+		m.InitialPromptState = current.InitialPromptState
+		m.Studio = current.Studio
 	}
 	session.WriteMeta(m)
 	return m
@@ -270,4 +274,39 @@ func AbsPath(p string) string {
 		return r
 	}
 	return filepath.Clean(p)
+}
+
+// settleInitialPrompt records how the create's initial prompt ended (ADR 0100 decision 2).
+// It moves the state only out of pending: the same delivery code also serves prompts that are
+// not a create's initial one (a carried interaction, a stopped session's first input), and
+// those must not invent a state for a session that never had one.
+func settleInitialPrompt(name, state string) {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	m, ok := session.ReadMeta(name)
+	if !ok || m.InitialPromptState != session.InitialPromptPending {
+		return
+	}
+	m.InitialPromptState = state
+	session.WriteMeta(m)
+}
+
+// RecoverPendingInitialPrompts turns every pending initial prompt into unknown. Called once at
+// Agent start: the delivery goroutine died with the previous process, the meta did not, and a
+// state nothing will ever settle would hold the studio pane on "sending" forever. A resend
+// after this may deliver the persona twice; the persona is a statement of role, and reading
+// it twice does no harm, where never being able to resend does.
+func RecoverPendingInitialPrompts() int {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	n := 0
+	for _, m := range session.ListMetas() {
+		if m.InitialPromptState != session.InitialPromptPending {
+			continue
+		}
+		m.InitialPromptState = session.InitialPromptUnknown
+		session.WriteMeta(m)
+		n++
+	}
+	return n
 }

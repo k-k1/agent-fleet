@@ -34,7 +34,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | Timing | What |
 |---|---|
 | **Immediately** | Display, keys, speech, notifications; adding and removing connections |
-| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, fleet observation, image generation, MCP servers |
+| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
 
@@ -122,7 +122,9 @@ Reads out replies from sessions and assistants.
 - **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself
   lives in the "Chat integration" tab ([08](10-integrations.md)).
 - **Allow desktop notifications** — asks the browser for permission.
-- History is in the **notification centre** (last 7 days), opened from the bell in the top bar.
+- History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
+  you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
+  ([02](02-sessions.md#reading-state-badges-and-notifications)).
 
 ### Assistant
 
@@ -217,10 +219,14 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
 
 Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
-**Sessions** group holds **session-to-session messaging**, **fleet observation from sessions**,
+**llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
+the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
+**Sessions** group holds **session-to-session messaging**, **starting sessions from sessions** (with
+**children per session**), **fleet observation from sessions**,
 **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
 → [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions),
+[02 Sessions](02-sessions.md#starting-sessions-from-a-session-child-sessions),
 [02 Sessions](02-sessions.md#having-a-session-generate-an-image)
 
 ### Git hosting
@@ -315,7 +321,7 @@ scale.
 
 - **Range** — 24 hours / 7 days / 30 days.
 - **Split by** — feature / agent / model / session origin (started by a person, created by the operator, created
-  by a schedule, handoff) / trigger (user, automatic, schedule, operator, bridge …).
+  by a schedule, handoff, started by a session) / trigger (user, automatic, schedule, operator, bridge …).
 - **Metric** — tokens spent / number of calls / cache reads / **API-equivalent cost (estimated)** — tokens ×
   each model's published API list price (cache writes ×1.25, cache reads ×0.1), shown with a `≈`. **It is not
   what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read
@@ -386,10 +392,18 @@ administrator's to set.
 - A size or class your admin changes applies **at the next start**, so when the running instance and the
   configuration disagree, **both** are shown.
 - **Usage** — a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
-  home disk's usage. **The ceilings are the rows above** — this workspace's memory limit and its core
+  home disk's usage. **The disk figure is only yours on an instance of your own**; on a shared host it is
+  the whole filesystem home sits on (labelled so, and never coloured as a warning), because other
+  members fill it too. **The ceilings are the rows above** — this workspace's memory limit and its core
   count — so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
   unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
   it could not read**, and it says so when a process was killed for memory during the window.
+- **Disk used by Agent Fleet** — what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
+  down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
+  sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after
+  14 on their own; **"Open cleanup"** closes Settings and opens the cleanup modal, where the deleted
+  sessions' share and the trash can be tidied up ([02 Sessions](02-sessions.md#tidying-up-in-bulk-cleanup)).
+  Working copies and tool caches are not counted here.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain

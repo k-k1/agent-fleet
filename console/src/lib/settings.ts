@@ -590,6 +590,13 @@ export interface Settings {
   // a pin survives the learned data being pruned and the order stays the one the user chose
   // (lib/quickReplies).
   quickRepliesPinned: string[];
+  // WS bar agent-usage chips: which agents keep a permanent slot on the bar (session kinds).
+  // The bar otherwise shows the two most recently used and folds the rest behind one "+N" chip
+  // (app/usageChipPlan.ts). Both lists are the user overriding that ranking — pinning is how you
+  // ask for a third chip, so there is no separate count setting.
+  usageChipsPinned: string[];
+  // Agents whose chip always sits in the folded popover, however recently they were used.
+  usageChipsFolded: string[];
   // Branch-name template for launching from a work item (docs/log/80 P2). The placeholders are
   // {key} (PROJ-123 / issue-45) and {slug} (an ASCII slug from the title, empty for Japanese).
   // Empty string = the default, feature/{key}-{slug}. Clearing this does NOT fall back to the
@@ -764,7 +771,7 @@ export const DEFAULT_MODEL = "sonnet";
 // Headless-chat backend kinds in the built-in priority order (mirrors the Agent's
 // defaultHeadlessOrder; agy last — its free-plan quota is scarce). Display labels
 // come from the agent registry (assistantName), not i18n.
-export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy"] as const;
+export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy", "muse"] as const;
 export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 
 // 🔴 STATIC FALLBACK ONLY (ADR 0082 decision 3). The list this deployment's fleet actually
@@ -1161,6 +1168,9 @@ const DEFAULTS: Settings = {
   quickReplies: {},
   quickRepliesHidden: [],
   quickRepliesPinned: [],
+  // Empty = nothing overridden: the WS bar ranks the usage chips by recent use on its own.
+  usageChipsPinned: [],
+  usageChipsFolded: [],
   workItemBranchTemplate: "",
   workingSets: [],
   workingSetActive: "",

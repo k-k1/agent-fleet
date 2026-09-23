@@ -4,7 +4,8 @@
 //   tenant/superAdmin            → core/store/tenant
 //   layout/splitRight/splitDown/resetToTerminal/activePaneId → layout/store
 //   openNewSession               → features/sessions/store (tick signal)
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactElement } from "react";
+import { createPortal } from "react-dom";
 import { api, previewURL } from "../core/api/client.ts";
 import { onPush, pushHealthy } from "../core/push/events.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
@@ -12,7 +13,6 @@ import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../core/st
 import { useLayoutStore } from "../layout/store.ts";
 import { openSessionsOverview } from "../features/overview/open.ts";
 import { openImagegen } from "../features/imagegen/open.ts";
-import { openFleetGraph } from "../features/fleetgraph/open.ts";
 import { useImagegenAvailable } from "../features/imagegen/available.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -34,6 +34,8 @@ import { t, tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
 import { fmtGiB as fg } from "../lib/bytes.ts";
 import { useUsageResetNotify } from "./usageResetNotify.ts";
+import { AUTO_INLINE, noteSessionKinds, planUsageChips, readKindStamps, type KindStamps } from "./usageChipPlan.ts";
+import { setSettings, useSettings } from "../lib/settings.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { browserTarget } from "../features/browser/target.ts";
 
@@ -415,7 +417,9 @@ interface UsageSource {
   manageURL?: string;
 }
 
-const USAGE_SOURCES: UsageSource[] = [
+// Exported for WsBarUsageFold.dom.test.tsx: the folding is a property of the chips as a
+// GROUP, so the test mounts the real chips inside the real group rather than a stand-in.
+export const USAGE_SOURCES: UsageSource[] = [
   {
     endpoint: "api/claude/usage",
     key: "usage-claude",
@@ -455,10 +459,106 @@ const USAGE_SOURCES: UsageSource[] = [
   },
 ];
 
+// --- usage-chip folding ---------------------------------------------------------------
+// Five agents expose subscription limits and five chips is most of the bar's right half,
+// so the bar keeps the agents actually in use and folds the rest behind one "+N" chip.
+// WHERE each chip goes is decided by the group (UsageChipFold) from the ranking in
+// app/usageChipPlan.ts; WHETHER a chip has anything to show is only known inside the chip,
+// which is why each one reports itself up here instead of the group asking.
+//
+// A folded chip is not unmounted — it stays exactly where it was in the tree, keeping its
+// reading and its 5-minute poll, and renders through a portal into the popover's body. So
+// "+N" is a move, not a second fetch: unmounting it would cost an extra request per open
+// and, worse, the group could not know a hidden chip had gone near its cap.
+interface ChipReport {
+  visible: boolean;
+  urgent: boolean;
+}
+interface FoldCtxValue {
+  report(kind: string, state: ChipReport): void;
+  slot(kind: string): "bar" | "fold";
+  openFold(): void;
+  host: HTMLElement | null; // the popover body, non-null only while it is open
+}
+const FoldCtx = createContext<FoldCtxValue | null>(null);
+
+// useChipSlot: where this chip draws itself. MUST be called before a chip's early return —
+// a chip with nothing to show still has to report that, or the group would count it.
+// Outside a group (the phone's ⋯ overflow, which is already a vertical list with room)
+// there is no context and every chip stays put.
+//
+// `reveal` is for the keyboard commands (Ctrl/⌘+K g c / g x / g a): a folded chip renders
+// nothing until the popover holding it is open, so toggling it from the keyboard has to
+// open that popover too — otherwise the shortcut silently does nothing for exactly the
+// agents the user reaches for least often, which is where a shortcut is most useful.
+function useChipSlot(kind: string, visible: boolean, urgent: boolean) {
+  const ctx = useContext(FoldCtx);
+  const report = ctx?.report;
+  useEffect(() => {
+    report?.(kind, { visible, urgent });
+  }, [report, kind, visible, urgent]);
+  const slot = ctx ? ctx.slot(kind) : ("bar" as const);
+  return {
+    slot,
+    host: ctx?.host || null,
+    reveal: () => slot === "fold" && ctx?.openFold(),
+  };
+}
+
+// placeChip: render the chip where the group put it. The folded copy carries the agent's
+// name (the popover is a list, not a row of glyphs) — always in the markup, shown by CSS
+// only inside the popover, so moving a chip never re-renders different children.
+function placeChip(slot: "bar" | "fold", host: HTMLElement | null, chip: ReactElement) {
+  if (slot !== "fold") return chip;
+  return host ? createPortal(chip, host) : null;
+}
+
+const PLACE_MODES = [
+  { mode: "pin", key: "wsbar.usage.place_pin", titleKey: "wsbar.usage.place_pin_title" },
+  { mode: "auto", key: "wsbar.usage.place_auto", titleKey: "wsbar.usage.place_auto_title" },
+  { mode: "fold", key: "wsbar.usage.place_fold", titleKey: "wsbar.usage.place_fold_title" },
+] as const satisfies readonly { mode: string; key: MsgKey; titleKey: MsgKey }[];
+
+// UsageChipPlace: the user's override of the ranking, in the chip's own dropdown — that is
+// the surface you are looking at the moment you think "I never use this one". Pinning is
+// also how you ask for a third chip on the bar, which is why there is no count setting.
+function UsageChipPlace({ kind }: { kind: string }) {
+  const tr = useT();
+  const s = useSettings();
+  const pinned = (s.usageChipsPinned || []).includes(kind);
+  const folded = (s.usageChipsFolded || []).includes(kind);
+  const mode = pinned ? "pin" : folded ? "fold" : "auto";
+  const without = (list: string[]) => (list || []).filter((k) => k !== kind);
+  const pick = (m: "pin" | "auto" | "fold") =>
+    setSettings({
+      usageChipsPinned: m === "pin" ? [...without(s.usageChipsPinned), kind] : without(s.usageChipsPinned),
+      usageChipsFolded: m === "fold" ? [...without(s.usageChipsFolded), kind] : without(s.usageChipsFolded),
+    });
+  return (
+    <div className="wu-place">
+      <span className="wu-label">{tr("wsbar.usage.place_label")}</span>
+      <div className="wu-place-seg">
+        {PLACE_MODES.map((m) => (
+          <button
+            key={m.mode}
+            type="button"
+            className={"ghost" + (mode === m.mode ? " on" : "")}
+            aria-pressed={mode === m.mode}
+            title={tr(m.titleKey)}
+            onClick={() => pick(m.mode)}
+          >
+            {tr(m.key)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // UsageChip: a compact per-agent limit chip (glyph + the two window percentages) that
 // opens a dropdown with each window's bar + reset + a reload. Renders null until the
 // agent's endpoint answers with data, so it self-hides for agents the user doesn't use.
-function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null }) {
+export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null }) {
   const tr = useT();
   const fiveLabel = tr(src.fiveLabelKey);
   const weekLabel = tr(src.weekLabelKey);
@@ -466,8 +566,13 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
-  // Keyboard: Ctrl/⌘+K g c / g x toggles this agent's usage popover.
-  useOpenSignal(src.key, () => setOpen((o) => !o));
+  // Keyboard: Ctrl/⌘+K g c / g x toggles this agent's usage popover. `reveal` (declared
+  // below, once the chip knows where it sits) opens the fold popover first when this chip
+  // lives inside it — the callback runs from an effect, so reading it here is safe.
+  useOpenSignal(src.key, () => {
+    setOpen((o) => !o);
+    reveal();
+  });
   // Notify when a constrained limit window resets (5-hour / weekly). Runs whether or
   // not the dropdown is open — the chip stays mounted while the workspace is up.
   useUsageResetNotify(src, usage, refresh);
@@ -484,12 +589,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const fullResets = (usage?.resetCredits?.credits || [])
     .filter((r): r is { expiresAt: string } => !!r?.expiresAt && !isNaN(new Date(r.expiresAt).getTime()))
     .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
-  // Hide the chip only when the user isn't signed into this agent (nothing to show, and
-  // never will be). If they ARE signed in but the (unofficial, rate-limited) reading is
-  // momentarily unavailable, keep a degraded chip so it never vanishes on a transient
-  // failure — its dropdown links out to the vendor's own usage page to check manually.
   const unavailable = !uh && !uw && !resetCount;
-  if (unavailable && !usage?.authed) return null;
 
   // If any window is near its cap (utilization >= NEAR_MAX_PCT), show when it clears
   // instead of the %. Only near-cap windows are candidates, and exactly one is shown: the
@@ -503,6 +603,17 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const bind = nearMax.length
     ? nearMax.reduce((a, b) => (new Date(a.resetsAt).getTime() <= new Date(b.resetsAt).getTime() ? a : b))
     : null;
+
+  // Computed before the early return below, because useChipSlot is a hook: a chip with
+  // nothing to show has to say so rather than skip its turn. `bind` moved above the return
+  // for the same reason — the group promotes a near-cap chip onto the bar.
+  const visible = !(unavailable && !usage?.authed);
+  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount);
+  // Hide the chip only when the user isn't signed into this agent (nothing to show, and
+  // never will be). If they ARE signed in but the (unofficial, rate-limited) reading is
+  // momentarily unavailable, keep a degraded chip so it never vanishes on a transient
+  // failure — its dropdown links out to the vendor's own usage page to check manually.
+  if (!visible) return null;
 
   const label = unavailable
     ? "—"
@@ -521,7 +632,9 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
         })
       : tr("wsbar.usage.title", { name: kindLabel(src.kind) });
 
-  return (
+  return placeChip(
+    slot,
+    host,
     <div className="ws-usage-wrap" ref={ref}>
       {/* Same badge look as the Sessions-list kind badge: reuse kind-tag + the kind
           color, then reset the button chrome (ws-usage-btn). */}
@@ -533,6 +646,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
         onClick={() => setOpen((o) => !o)}
       >
         <Icon name={kindIcon(src.kind)} />
+        <span className="ws-usage-name">{kindLabel(src.kind)}</span>
         <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         {!!resetCount && (
           <span className={"ws-reset-count" + (fullResets.length && new Date(fullResets[0].expiresAt).getTime() - Date.now() <= 7 * 86400000 ? " warn" : "")}
@@ -579,6 +693,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
             )}
           </div>
           {!unavailable && src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
+          <UsageChipPlace kind={src.kind} />
           <UsageBreakdownLink onNavigate={() => setOpen(false)} />
           {src.manageURL && (
             <a className="wu-manage" href={src.manageURL} target="_blank" rel="noopener">
@@ -587,7 +702,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
           )}
         </div>
       )}
-    </div>
+    </div>,
   );
 }
 
@@ -599,14 +714,18 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
 // exactly like the other agents'. The chip numbers are the first group's (Gemini —
 // agy's default-model pool); the dropdown lists every group's windows. Self-hides
 // while agy isn't signed in (authed:false), same rule as the generic chip.
-function AgyUsageChip({ tenant }: { tenant: string | null }) {
+export function AgyUsageChip({ tenant }: { tenant: string | null }) {
   const tr = useT();
   const { usage, refreshing, refresh } = useUsage(tenant, "api/connections/agy/usage");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
-  // Keyboard: Ctrl/⌘+K g a toggles this popover (g c / g x = Claude / Codex).
-  useOpenSignal("usage-agy", () => setOpen((o) => !o));
+  // Keyboard: Ctrl/⌘+K g a toggles this popover (g c / g x = Claude / Codex). See the
+  // generic chip for why `reveal` is read before its declaration.
+  useOpenSignal("usage-agy", () => {
+    setOpen((o) => !o);
+    reveal();
+  });
 
   // Flatten groups into rows: per group the weekly window, then the 5h one.
   const used = (remainingPct: number) => Math.round(Math.min(100, Math.max(0, 100 - remainingPct)));
@@ -621,7 +740,6 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
       });
   }
   const unavailable = wins.length === 0;
-  if (unavailable && !usage?.authed) return null;
 
   // Near the cap: any window >= NEAR_MAX_PCT switches the chip to the earliest reset time
   // among the constrained windows (same rule as UsageChip).
@@ -629,6 +747,11 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
   const bind = nearMax.length
     ? nearMax.reduce((a, b) => (new Date(a.resetsAt!).getTime() <= new Date(b.resetsAt!).getTime() ? a : b))
     : null;
+
+  // Report before the early return (see useChipSlot), same as the generic chip.
+  const visible = !(unavailable && !usage?.authed);
+  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind);
+  if (!visible) return null;
 
   // Chip numbers: the first group (Gemini), 5h% / weekly% — same order as the other chips.
   const g0 = usage?.ok && Array.isArray(usage.groups) ? usage.groups[0] : null;
@@ -651,7 +774,9 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
         })
       : tr("wsbar.usage.title", { name: "Antigravity" });
 
-  return (
+  return placeChip(
+    slot,
+    host,
     <div className="ws-usage-wrap" ref={ref}>
       <button
         type="button"
@@ -661,6 +786,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
         onClick={() => setOpen((o) => !o)}
       >
         <Icon name={kindIcon("agy")} />
+        <span className="ws-usage-name">{kindLabel("agy")}</span>
         <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         <Icon name="chevron-down" />
       </button>
@@ -689,10 +815,11 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
             </button>
           </div>
+          <UsageChipPlace kind="agy" />
           <UsageBreakdownLink onNavigate={() => setOpen(false)} />
         </div>
       )}
-    </div>
+    </div>,
   );
 }
 
@@ -701,13 +828,16 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
 // returns structured {plan, sku, resetsAt, quotas:[{id, remainingPct, ...}]}. Each
 // quota pool (chat / completions / premium_interactions, plan-dependent) shares the
 // one monthly reset date. The plan is shown in the popover (the user asked to see it).
-function CopilotUsageChip({ tenant }: { tenant: string | null }) {
+export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
   const tr = useT();
   const { usage, refreshing, refresh } = useUsage(tenant, "api/copilot/usage");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
-  useOpenSignal("usage-copilot", () => setOpen((o) => !o));
+  useOpenSignal("usage-copilot", () => {
+    setOpen((o) => !o);
+    reveal();
+  });
 
   const used = (remainingPct: number) => Math.round(Math.min(100, Math.max(0, 100 - remainingPct)));
   // Localized pool names; unknown ids fall back to the raw id.
@@ -724,12 +854,16 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
   const resetsAt: string | undefined = usage?.resetsAt;
   const wins = quotas.map((q) => ({ label: poolLabel(q.id), pct: used(q.remainingPct), resetsAt }));
   const unavailable = wins.length === 0;
-  if (unavailable && !usage?.authed) return null;
 
   const nearMax = wins.filter((w) => w.pct >= NEAR_MAX_PCT && w.resetsAt);
   const bind = nearMax.length
     ? nearMax.reduce((a, b) => (new Date(a.resetsAt!).getTime() <= new Date(b.resetsAt!).getTime() ? a : b))
     : null;
+
+  // Report before the early return (see useChipSlot), same as the generic chip.
+  const visible = !(unavailable && !usage?.authed);
+  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind);
+  if (!visible) return null;
 
   // Chip number: the primary pool's used% (quotas are pre-ordered by the backend —
   // premium first on paid plans, else chat).
@@ -747,7 +881,9 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
       : tr("wsbar.usage.copilot.title");
   const plan: string = usage?.plan || "";
 
-  return (
+  return placeChip(
+    slot,
+    host,
     <div className="ws-usage-wrap" ref={ref}>
       <button
         type="button"
@@ -757,6 +893,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
         onClick={() => setOpen((o) => !o)}
       >
         <Icon name={kindIcon("copilot")} />
+        <span className="ws-usage-name">{kindLabel("copilot")}</span>
         <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         <Icon name="chevron-down" />
       </button>
@@ -787,6 +924,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
             </button>
           </div>
+          <UsageChipPlace kind="copilot" />
           <UsageBreakdownLink onNavigate={() => setOpen(false)} />
           {/* Manage link on its own row (same as the generic UsageChip) — cramming it
               into wu-foot alongside the fetched-at line and refresh broke the layout. */}
@@ -795,7 +933,96 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
           </a>
         </div>
       )}
-    </div>
+    </div>,
+  );
+}
+
+// The chips in bar order. Every agent that can ever show a limit chip is listed, whether or
+// not it has a reading — the ranking needs the full order to break ties, and each chip
+// reports its own visibility anyway.
+const USAGE_CHIP_ORDER: string[] = [...USAGE_SOURCES.map((s) => s.kind as string), "copilot", "agy"];
+
+// UsageChipFold: the group that decides which chips keep a slot on the bar. It owns the
+// "+N" chip, the popover the folded chips portal into, and the ranking; the chips
+// themselves only report what they are (see useChipSlot).
+export function UsageChipFold({ children }: { children: ReactElement }) {
+  const tr = useT();
+  const [reports, setReports] = useState<Record<string, ChipReport>>({});
+  const [open, setOpen] = useState(false);
+  const [host, setHost] = useState<HTMLDivElement | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, open, () => setOpen(false));
+  const settings = useSettings();
+
+  // Stable identity: a report() that changed every render would re-fire every chip's
+  // effect, and the returned state keeps the same object when nothing moved so a steady
+  // bar does not re-render on each poll.
+  const report = useCallback((kind: string, state: ChipReport) => {
+    setReports((cur) => {
+      const prev = cur[kind];
+      if (prev && prev.visible === state.visible && prev.urgent === state.urgent) return cur;
+      return { ...cur, [kind]: state };
+    });
+  }, []);
+
+  // Rank by recent use, off the session list the Console already polls. The selector
+  // returns a string so this component only re-renders when the ranking's input changed,
+  // not on every published list.
+  const useKey = useSessionsStore((s) =>
+    s.sessions.map((x) => `${x.kind}:${x.alive ? 1 : 0}:${x.createdAt || ""}`).join("|"),
+  );
+  const [stamps, setStamps] = useState<KindStamps>(readKindStamps);
+  useEffect(() => {
+    setStamps(noteSessionKinds(useSessionsStore.getState().sessions));
+  }, [useKey]);
+
+  const plan = planUsageChips({
+    order: USAGE_CHIP_ORDER,
+    visible: USAGE_CHIP_ORDER.filter((k) => reports[k]?.visible),
+    urgent: USAGE_CHIP_ORDER.filter((k) => reports[k]?.urgent),
+    pinned: settings.usageChipsPinned,
+    folded: settings.usageChipsFolded,
+    stamps,
+    inline: AUTO_INLINE,
+  });
+  const foldSet = new Set(plan.fold);
+  const value: FoldCtxValue = {
+    report,
+    slot: (kind) => (foldSet.has(kind) ? "fold" : "bar"),
+    openFold: () => setOpen(true),
+    host,
+  };
+
+  return (
+    <FoldCtx.Provider value={value}>
+      {children}
+      {plan.fold.length > 0 && (
+        <div className="ws-usage-wrap ws-fold" ref={ref}>
+          <button
+            type="button"
+            className="ghost ws-fold-btn"
+            title={tr("wsbar.usage.fold_title", {
+              names: plan.fold.map((k) => kindLabel(k as SessionKind)).join(tr("common.list_sep")),
+            })}
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+          >
+            +{plan.fold.length}
+            <Icon name="chevron-down" />
+          </button>
+          {open && (
+            <div className="ws-fold-pop">
+              <div className="wu-title">{tr("wsbar.usage.fold_pop_title")}</div>
+              {/* The folded chips portal in here. setHost is a state setter, so its identity
+                  is stable — a fresh ref callback each render would detach and re-attach the
+                  node on every one of them. */}
+              <div className="ws-fold-list" ref={setHost} />
+              <div className="wu-note muted">{tr("wsbar.usage.fold_hint")}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </FoldCtx.Provider>
   );
 }
 
@@ -1230,9 +1457,9 @@ export function WsBar() {
     </div>
   );
 
-  // Subscription-usage chips, one per agent that exposes limits (Claude, Codex,
-  // Antigravity — display order matches the agent order). Each self-hides until its
-  // endpoint answers, so a claude-only user sees one chip, a user of all sees three.
+  // Subscription-usage chips, one per agent that exposes limits (Claude, Codex, muse,
+  // Copilot, Antigravity — display order matches the agent order). Each self-hides until
+  // its endpoint answers, so a claude-only user sees one chip, a user of all sees five.
   // The 8px bar gap spaces them (no manual dividers needed).
   const usageChips = (
     <>
@@ -1562,19 +1789,6 @@ export function WsBar() {
         <Icon name="dashboard" />
         <span className="lbl">{tr("wsbar.overview")}</span>
       </button>
-      {/* The fleet session graph (ADR 0096 decision 10), beside the overview because it is
-          the other view of the same surface — and because until this button existed the
-          figure had no entry point at all outside the leader key and the command palette:
-          the rail's layout map carries one, and that map hides itself while there is a
-          single pane, which is the most ordinary state there is. */}
-      <button
-        className="ghost ws-split ws-fleetgraph"
-        title={tr("wsbar.fleetgraph_title") + hintSuffix("open.fleetgraph")}
-        onClick={() => openFleetGraph()}
-      >
-        <Icon name="graph" />
-        <span className="lbl">{tr("wsbar.fleetgraph")}</span>
-      </button>
       {/* The image-generation studio (ADR 0081), beside the overview for the same reason:
           it is a pane, and the layout map's copy of this button hides itself while there is
           only one pane. Shown only while the fleet has an image engine to offer (decision 1):
@@ -1614,7 +1828,9 @@ export function WsBar() {
         </div>
       ) : (
         <>
-          {usageChips}
+          {/* Desktop only: on a phone these already sit in the ⋯ overflow, a vertical list
+              with room for all of them — folding a list into a list would only bury them. */}
+          <UsageChipFold>{usageChips}</UsageChipFold>
           {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
             <button

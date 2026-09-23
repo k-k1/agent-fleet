@@ -167,6 +167,10 @@ handed to the loader, so a file in a subfolder (`checkpoints/sdxl/x.safetensors`
 arrives as `x.safetensors` and fails with `Value not in list`. Subfolders are not
 supported yet.
 
+A row of the **Qwen-Image 2.1** family needs a ComfyUI of **v0.37.0 or newer** on that
+machine — the node it encodes with first appears there. On an older one the row registers
+and enables, and every request fails at the engine.
+
 ## What a picture keeps out
 
 Three places say what should NOT be drawn, and they are added together rather than overriding
@@ -185,8 +189,9 @@ A row that declares its own replaces that default rather than being added to it.
 something to steer away from. They are not a gate, a determined prompt outweighs them, and — most
 importantly — **the distilled families ignore them completely**: Z-Image and FLUX.2 klein
 sample at cfg 1, where the negative branch cancels out exactly, and FLUX.1 has no negative
-input at all. The words reach the guided families — SD 1.5, SDXL, SD3.5, Anima, Krea 2 — and
-even there a checkpoint whose row declares cfg 1 (a Turbo variant) cancels them the same way.
+input at all. The words reach the guided families — SD 1.5, SDXL, SD3.5, Anima, Krea 2,
+Qwen-Image-Edit 2509 / 2511 — and even there a row at cfg 1 cancels them the same way: a Turbo
+variant, or Krea 2 and Qwen-Image 2.1, whose recipes start at cfg 1 unless the row raises it.
 A request answered by a model that ignores them **says so in its warnings**, naming the
 family. If a deployment needs a guarantee about what can be produced, this is not where it
 lives.

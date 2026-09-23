@@ -97,6 +97,42 @@ func TestEngineAdminModes(t *testing.T) {
 	}
 }
 
+func TestEngineAdminIdleWindow(t *testing.T) {
+	st := testSettingsStore(t)
+	reg, e := newAdminTestRegistry(t, &engineTestECS{}, st)
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+
+	put := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPut, "/api/admin/engines/image/idle", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.putIdle(rec, r, store.Identity{ID: "u1"})
+		return rec
+	}
+
+	rec := put(`{"idle_secs":1800}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put idle = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got, _ := st.GetSetting(t.Context(), engineSettingsFor("image").idle); got != "1800" {
+		t.Fatalf("stored idle = %q, want 1800", got)
+	}
+	if got := e.controlCfg(t.Context()).idle; got != 30*time.Minute {
+		t.Fatalf("effective idle = %s, want 30m", got)
+	}
+	var row map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["idle_secs"] != float64(1800) {
+		t.Fatalf("answer idle_secs = %v, want 1800", row["idle_secs"])
+	}
+
+	if bad := put(`{"idle_secs":60}`); bad.Code != http.StatusBadRequest {
+		t.Fatalf("idle shorter than the start deadline = %d, want 400", bad.Code)
+	}
+}
+
 // The mode decides whether the engine is IN /internal/engine/catalog at all, and the Agent
 // caches that answer for ten minutes — so this route has to PUSH the change to running
 // Workspaces exactly as enabling a model does. Without it, `off` leaves every open session

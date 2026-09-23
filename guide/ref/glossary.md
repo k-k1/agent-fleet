@@ -32,6 +32,7 @@ thing.
 | Shared session | session share | Showing a conversation read-only to another member of the same tenant |
 | Handoff | handoff | Passing a conversation to a new session, or to another member |
 | Fork | fork at message | Starting a new session from a past point in an existing conversation |
+| Child session | spawn / origin `session` | A session another session started and handed a task to. The parent may list, watch, stop, resume and rename the children it started, and nothing else; deleting one is yours. See [02 Sessions](../member/02-sessions.md#starting-sessions-from-a-session-child-sessions) |
 | Work item | work item | An issue, ticket or pull request pulled in from a provider. See [repos.md](repos.md) |
 | Memo queue | memo | Instructions parked now and sent to a session later, in a batch |
 | Cleanup / trash | cleanup / shelf | The sweep of stopped sessions, stale worktrees and merged branches. What it removes is stashed and can be restored |
@@ -52,5 +53,6 @@ thing.
 | S3 Bucket | ledger / object store | The tab ("Bucket") that lists what the deployment's storage actually holds — including objects no catalogue row declares — and lets you register, move or delete them |
 | Image generation (pane) | imagegen studio | The pane that makes pictures on the deployment's ComfyUI without an agent: trial run, batches, seeds, LoRAs |
 | Image gallery | gallery pane | A folder's pictures as cards, with folders, covers, counts and an enlarged view |
+| Fleet graph | fleetgraph pane | One lane per session, time running left to right: which session started which, what passed between them, and when each was working, waiting or idle. The elapsed counterpart of the sessions overview |
 | LoRA | LoRA adapter | A small add-on trained against one family that steers a checkpoint's style or subject. Listed only for the family it matches |
 | Trigger words | trigger words | The words a LoRA needs in the prompt to do anything. Shown on its row before you pick it, and added as chips when you do |

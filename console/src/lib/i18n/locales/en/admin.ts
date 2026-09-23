@@ -596,6 +596,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // Shown when there is no countdown to give (it is stopped, so there is nothing to stop).
   // A different claim from a time, and without it a stopped engine shows no window at all.
   "admin.engines_idle_policy": "Stops itself {d} after nobody is using it",
+  "admin.engines_idle_label": "Stop after",
+  "admin.engines_idle_minutes": "minutes",
+  "admin.engines_idle_hint": "Time from the last use until shutdown. Use at least {m} minutes so the engine is not stopped while starting.",
   "admin.engines_recent": "Requests in the last {m} min: {n}",
   // 🔴 The count lives in this control plane's memory and nowhere else, so it resets to 0 when
   // the CP is replaced. Say so whenever less than a full window has been counted; the
@@ -1147,7 +1150,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // === Cleanup panel (features/sessions/CleanupModal.tsx, docs/log/32) ===
   "clean.title": "Clean up",
   "clean.open": "Open cleanup (survey & tidy)",
-  "clean.subtitle": "Survey and tidy up accumulated stopped sessions, unneeded worktrees and merged branches.",
+  "clean.subtitle": "Survey and tidy up accumulated stopped sessions, unneeded worktrees, merged branches and the cache of deleted sessions.",
   "clean.loading": "Surveying…",
   "clean.empty": "Nothing to clean up.",
   "clean.reload": "Re-survey",
@@ -1173,6 +1176,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.type_session": "Session",
   "clean.type_worktree": "Worktree",
   "clean.type_branch": "Branch",
+  "clean.type_cache": "Cache",
   "clean.col_target": "Target",
   "clean.col_reason": "Reason",
   "clean.select_all_safe": "Select all safe",
@@ -1189,6 +1193,17 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.action_delete_session": "Delete (with conversation, recoverable)",
   "clean.action_delete_worktree": "Delete worktree",
   "clean.action_delete_branch": "Delete branch",
+  "clean.action_delete_cache": "Delete (cannot be undone)",
+  "clean.cache_feature_pasted": "Pasted and attached files",
+  "clean.cache_feature_codex_view_image": "Images codex viewed",
+  "clean.cache_size": "{dirs} folders · {size}",
+  "clean.cache_stage_title": "Cache of deleted sessions",
+  "clean.cache_stage_run": "Delete all",
+  "clean.cache_stage_run_title": "Deletes cache nothing refers to any more (it does not go to the trash)",
+  "clean.cache_stage_empty": "No cache to tidy up.",
+  "clean.cache_stage_confirm_title": "Delete the cache of deleted sessions",
+  "clean.cache_stage_confirm_body": "Deletes {size}. Only sessions and chats that are deleted and not in the trash are affected, but this cannot be undone.",
+  "clean.confirm_body_cache": "Deleting cache skips the trash and cannot be undone.",
   "clean.confirm_title": "Clean up the {count} selected item(s)?",
   "clean.confirm_body": "Deleted sessions and branches are moved to the trash for recovery. Deleting a worktree can't be undone (uncommitted/unpushed work is protected).",
   "clean.confirm_do": "Clean up {count}",
@@ -1218,6 +1233,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason.wt_merged": "Merged and clean (already in the parent)",
   "clean.reason.wt_unmerged": "Clean but unmerged (has its own commits; the branch survives deletion, but check first)",
   "clean.reason.branch_merged": "Merged local branch (already in the parent; recoverable after deletion)",
+  "clean.reason.cache_orphan": "Cache of deleted sessions or chats (not in the trash and no longer referenced; deleting cannot be undone)",
+  "clean.reason.cache_unsafe": "A session record or trash archive could not be read, so what is still referenced is unknown (nothing is deleted)",
   // The same reasons split into "state badge + hint" (row line 2; keys without a badge fall back to the sentence).
   "clean.reason_badge.locked": "Locked",
   "clean.reason_hint.locked": "Delete-protected; not a cleanup target until unlocked",
@@ -1241,4 +1258,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason_hint.wt_unmerged": "Clean but has its own commits; the branch survives deletion — check first",
   "clean.reason_badge.branch_merged": "Merged branch",
   "clean.reason_hint.branch_merged": "Already in the parent; recoverable after deletion",
+  "clean.reason_badge.cache_orphan": "Unreferenced",
+  "clean.reason_hint.cache_orphan": "The session or chat is deleted and not in the trash; deleting cannot be undone",
+  "clean.reason_badge.cache_unsafe": "Can't tell",
+  "clean.reason_hint.cache_unsafe": "A session record or trash archive could not be read, so nothing is deleted",
 };

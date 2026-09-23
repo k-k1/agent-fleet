@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 514
+# count: 530
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -35,6 +35,7 @@ GET /api/admin/engines/{key}/attribution
 PUT /api/admin/engines/{key}/class
 POST /api/admin/engines/{key}/discover
 GET /api/admin/engines/{key}/hourly
+PUT /api/admin/engines/{key}/idle
 POST /api/admin/engines/{key}/ingest
 POST /api/admin/engines/{key}/ingest/files
 POST /api/admin/engines/{key}/ingest/resolve
@@ -152,6 +153,8 @@ GET /api/claude/usage
 GET /api/cleanup/archives
 DELETE /api/cleanup/archives/{id}
 POST /api/cleanup/archives/{id}/restore
+DELETE /api/cleanup/cache/{feature}
+GET /api/cleanup/usage
 GET /api/codex/settings
 PUT /api/codex/settings
 GET /api/codex/usage
@@ -264,12 +267,25 @@ GET /api/git-oauth
 GET /api/git/identity
 PUT /api/git/identity
 POST /api/imagegen/groups/{id}
+GET /api/imagegen/history
 GET /api/imagegen/jobs
 POST /api/imagegen/jobs
 DELETE /api/imagegen/jobs/{id}
+GET /api/imagegen/knowledge
+POST /api/imagegen/knowledge
 GET /api/imagegen/props
 POST /api/imagegen/queue
 GET /api/imagegen/status
+GET /api/imagegen/studios
+POST /api/imagegen/studios
+DELETE /api/imagegen/studios/{id}
+GET /api/imagegen/studios/{id}
+PUT /api/imagegen/studios/{id}
+POST /api/imagegen/studios/{id}/bind
+GET /api/imagegen/studios/{id}/draft-log
+GET /api/imagegen/studios/{id}/persona
+POST /api/imagegen/studios/{id}/press
+POST /api/imagegen/studios/{id}/rewind
 GET /api/internal-git/repos
 POST /api/internal-git/repos
 DELETE /api/internal-git/repos/{name}

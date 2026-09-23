@@ -7,6 +7,10 @@
 //   5. stopped: it says these are next-start values instead of showing nothing
 //   6. the usage charts read their ceilings from the machine above (memory limit, core
 //      count), which is the reason they are on this tab and not only in the WS bar
+//   7. the home disk figure is only called "yours" (and only tinted) on a box of your own;
+//      elsewhere it is the whole filesystem
+//   8. the disk breakdown is what Agent Fleet stores, and its button swaps Settings for the
+//      cleanup modal
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,8 +18,10 @@ import { MachineView } from "./MachineTab.tsx";
 import type { WsMachine } from "../../../lib/machine.ts";
 import { __test as feed } from "../../../core/store/wsStatsFeed.ts";
 
+// Per-path answers; anything unlisted gets {} (what an Agent without the endpoint amounts to).
+const answers = vi.hoisted(() => ({ byPath: {} as Record<string, unknown> }));
 vi.mock("../../../core/api/client.ts", () => ({
-  api: () => Promise.resolve({}),
+  api: (path: string) => Promise.resolve(answers.byPath[path] ?? {}),
   apiJSON: () => Promise.resolve({}),
   getTenant: () => "default",
 }));
@@ -39,6 +45,7 @@ const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 beforeEach(() => {
   g.IS_REACT_ACT_ENVIRONMENT = true;
   feed.reset();
+  answers.byPath = {};
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -167,5 +174,85 @@ describe("MachineView", () => {
     feed.sample();
     const text = await mount({ runtime: "ecs-ec2", running: false, declared: ec2.declared });
     expect(text).not.toContain("使用状況");
+  });
+
+  const shared: WsMachine = {
+    runtime: "docker",
+    running: true,
+    measured: { arch: "x86_64", vcpu: 8, mem_max: 10737418240, disk_total: 500 * 2 ** 30 },
+  };
+  const nearlyFull = () => {
+    feed.setLatest({ running: true, mem_used: 1, mem_max: 10737418240, cpu_pct: 5, disk_used: 475 * 2 ** 30, disk_total: 500 * 2 ** 30 });
+    feed.sample();
+  };
+
+  it("calls a shared host's disk the whole filesystem, and does not tint it", async () => {
+    nearlyFull();
+    const text = await mount(shared);
+    expect(text).toContain("ディスク全体");
+    expect(text).not.toContain("home ディスク");
+    const bar = [...host!.querySelectorAll(".mu-chart")].find((el) => el.querySelector(".mu-bar"))!;
+    expect(bar.className).not.toMatch(/is-(warn|crit)/);
+  });
+
+  it("calls a dedicated box's disk its own, and warns when it fills", async () => {
+    // The positive control for the test above: same 95%, own box — label and tint both flip.
+    nearlyFull();
+    const text = await mount(ec2);
+    expect(text).toContain("home ディスク");
+    expect(text).not.toContain("ディスク全体");
+    const bar = [...host!.querySelectorAll(".mu-chart")].find((el) => el.querySelector(".mu-bar"))!;
+    expect(bar.className).toContain("is-crit");
+  });
+
+  it("breaks down what Agent Fleet stores and opens the cleanup in place of Settings", async () => {
+    answers.byPath["api/cleanup/usage"] = {
+      cache: {
+        bytes: 1900 * 2 ** 20,
+        files: 9000,
+        parts: [
+          { name: "generated", bytes: 1500 * 2 ** 20, files: 1400 },
+          { name: "codex-view-image", bytes: 102 * 2 ** 20, files: 96 },
+          { name: "empty", bytes: 0, files: 0 },
+        ],
+      },
+      orphans: { ok: true, bytes: 102 * 2 ** 20, files: 344, dirs: 125 },
+      trash: { bytes: 486 * 2 ** 20, archives: 1082 },
+    };
+    const { useSettingsUI } = await import("../store.ts");
+    const { useSessionUI } = await import("../../sessions/ui.ts");
+    useSettingsUI.setState({ settingsOpen: true });
+    useSessionUI.setState({ cleanupOpen: false });
+
+    const text = await mount(shared);
+    expect(text).toContain("Agent Fleet が使っているディスク");
+    expect(text).toContain("生成した画像");
+    expect(text).toContain("1.5 GB");
+    expect(text).toContain("codex の画像");
+    expect(text).not.toContain("empty"); // a zero-byte part is not a line item
+    expect(text).toContain("うち削除済みの分");
+    expect(text).toContain("486 MB（1082 件）");
+
+    const btn = [...host!.querySelectorAll("button")].find((b) => b.textContent?.includes("掃除を開く"))!;
+    await act(async () => {
+      btn.click();
+    });
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    expect(useSessionUI.getState().cleanupOpen).toBe(true);
+  });
+
+  it("says so when the Agent cannot tell what is still referenced", async () => {
+    answers.byPath["api/cleanup/usage"] = {
+      cache: { bytes: 10, files: 1, parts: [] },
+      orphans: { ok: false, bytes: 0, files: 0, dirs: 0 },
+      trash: { bytes: 0, archives: 0 },
+    };
+    const text = await mount(shared);
+    expect(text).toContain("判定できません");
+  });
+
+  it("reports a failure instead of spinning when the Agent has no breakdown", async () => {
+    const text = await mount(shared);
+    expect(text).toContain("ディスクの内訳を取得できませんでした");
   });
 });

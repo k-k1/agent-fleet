@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1258,5 +1260,123 @@ func TestEngineServedModelCountsSwaps(t *testing.T) {
 	e.noteServed("", true)
 	if m, n := e.servedModel(); m != "qwen3-coder-30b-a3b" || n != 2 {
 		t.Errorf("a failed answer changed the served model: (%q, %d)", m, n)
+	}
+}
+
+// --- a caller's hang-up is not the service's answer (ADR 0098 P3) -----------------
+
+// ctxHonouringECS answers DescribeServices the way the SDK does when the context it was given
+// ends mid-call: the operation error wrapping the context's own.
+type ctxHonouringECS struct {
+	engineTestECS
+	describes int
+}
+
+func (f *ctxHonouringECS) DescribeServices(ctx context.Context, in *ecs.DescribeServicesInput, o ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
+	f.describes++
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("operation error ECS: DescribeServices, %w", err)
+	}
+	return f.engineTestECS.DescribeServices(ctx, in, o...)
+}
+
+// The unit of the incident: one caller that hung up must not leave its "context canceled" in the
+// cache for the next caller, whose context is fine.
+func TestEngineViewDoesNotCacheACallersOwnCancellation(t *testing.T) {
+	api := &ctxHonouringECS{engineTestECS: engineTestECS{desired: 1, running: 1}}
+	e := &engineECS{api: api, key: "image", cluster: "c", service: "af-image"}
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.view(gone); err == nil {
+		t.Fatal("a cancelled caller got an answer; the stub is not exercising the case")
+	}
+	v, err := e.view(context.Background())
+	if err != nil {
+		t.Fatalf("view() = %v, want the service's own answer — the previous caller's hang-up was served from the cache", err)
+	}
+	if v.state != "running" {
+		t.Errorf("state = %q, want running", v.state)
+	}
+	if api.describes != 2 {
+		t.Errorf("describes = %d, want 2 (the second caller has to ask for itself)", api.describes)
+	}
+}
+
+// A genuine service error is still cached: the TTL exists so one misconfiguration does not
+// become a throttle, and that has to survive the exception above.
+func TestEngineViewStillCachesAServiceError(t *testing.T) {
+	api := &failingDescribeECS{}
+	e := &engineECS{api: api, key: "image", cluster: "c", service: "af-image"}
+	for range 3 {
+		if _, err := e.view(context.Background()); err == nil {
+			t.Fatal("view() = nil error, want the service's")
+		}
+	}
+	if api.describes != 1 {
+		t.Errorf("describes = %d, want 1 (the error is cached for the TTL)", api.describes)
+	}
+}
+
+type failingDescribeECS struct {
+	engineTestECS
+	describes int
+}
+
+func (f *failingDescribeECS) DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
+	f.describes++
+	return nil, errors.New("AccessDeniedException")
+}
+
+// The incident end to end, at the gateway's readiness gate. A box that is running but too busy to
+// answer its health probe once, and a cache holding another caller's cancellation: the request has
+// to wait the busy moment out and go through, not be told the engine "did not come up in time".
+func TestEngineReadyIsNotEndedByAnotherCallersCancellation(t *testing.T) {
+	oldPoll := engineReadyPoll
+	engineReadyPoll = 10 * time.Millisecond
+	t.Cleanup(func() { engineReadyPoll = oldPoll })
+
+	var probes int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&probes, 1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	api := &ctxHonouringECS{engineTestECS: engineTestECS{desired: 1, running: 1}}
+	eng := newTestEngine(t, srv.URL, api)
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = eng.ecs.view(gone)
+
+	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+	defer done()
+	if err := (engineGateway{}).ensureReady(ctx, eng); err != nil {
+		t.Fatalf("ensureReady() = %v, want the running box to be used once it answers", err)
+	}
+}
+
+// The request's OWN wait ending while the service is being read is the wait running out, and the
+// client has to be told that in the code it retries on — not "could not read the engine service".
+func TestEngineReadyOwnDeadlineMidReadIsWaking(t *testing.T) {
+	oldPoll := engineReadyPoll
+	engineReadyPoll = 10 * time.Millisecond
+	t.Cleanup(func() { engineReadyPoll = oldPoll })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	eng := newTestEngine(t, srv.URL, &ctxHonouringECS{engineTestECS: engineTestECS{desired: 1, running: 1}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := (engineGateway{}).ensureReady(ctx, eng)
+	if !errors.Is(err, errEngineWaking) {
+		t.Fatalf("ensureReady() = %v, want errEngineWaking", err)
 	}
 }

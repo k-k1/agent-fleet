@@ -323,6 +323,105 @@ button.wu-reload {
   gap: 4px;
   font-size: 12px;
 }
+/* Where this chip sits on the bar (pin / auto / always fold). A quiet row above the
+   deep links: it is a preference, not a reading, so it must not compete with the bars. */
+.wu-place {
+  display: flex;
+  flex-direction: column; /* stacked: three labels + a caption do not fit one 280px row */
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2, var(--border));
+  font-size: 12px;
+}
+.wu-place-seg {
+  display: flex;
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 7px;
+  overflow: hidden;
+}
+.wu-place-seg button {
+  flex: 1;
+  margin: 0;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+  color: var(--muted);
+  cursor: pointer;
+}
+.wu-place-seg button + button {
+  border-left: 1px solid var(--border2, var(--border));
+}
+.wu-place-seg button.on {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+/* The "+N" chip and the popover the folded chips move into (app/usageChipPlan.ts). */
+.ws-fold-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ws-fold-btn .codicon {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.ws-fold-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: min(88vw, 300px);
+  padding: 12px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  white-space: normal;
+}
+.ws-fold-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+/* A folded chip is the SAME element, moved here by a portal — so its own dropdown would
+   still try to float over the bar. Inside this list it expands in place instead, which is
+   also why the list must not clip: an accordion, not a popover over a popover. */
+.ws-fold-list .ws-usage-wrap {
+  display: flex;
+  flex-direction: column;
+  position: static;
+}
+/* Written against the element for the same reason as button.ws-usage-btn above: the plain
+   class loses to .wsbar button and the row would stay centred. */
+.ws-fold-list button.ws-usage-btn {
+  justify-content: flex-start;
+  width: 100%;
+}
+.ws-fold-list .ws-usage-pop {
+  position: static;
+  width: auto;
+  margin-top: 6px;
+  padding: 10px;
+  box-shadow: none;
+  background: transparent;
+}
+/* The agent's name: dead weight on the bar (the glyph and colour say it there), the only
+   way to read the list here. Always in the markup so folding never swaps children. */
+.ws-usage-name {
+  display: none;
+}
+.ws-fold-list .ws-usage-name {
+  display: inline;
+  margin-right: 2px;
+}
 /* Snapshot note (codex): explains the reading isn't live, in place of a refresh button. */
 .wu-note {
   margin-top: 8px;

@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../core/api/client.ts";
+import { Button } from "../../../ui/Button.tsx";
+import { humanSize } from "../../../lib/filemeta.ts";
+import { useSettingsUI } from "../store.ts";
+import { useSessionUI } from "../../sessions/ui.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
-import { useT } from "../../../lib/i18n/index.ts";
+import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
 import { TrendChart } from "../../../ui/TrendChart.tsx";
 import { useWsStatsSeries } from "../../../core/store/wsStatsFeed.ts";
@@ -127,7 +131,7 @@ export function MachineView({ d }: { d: WsMachine }) {
           </Row>
         )}
         {disk.value > 0 && (
-          <Row label={tr("machine.home_disk")}>
+          <Row label={tr(own || !disk.measured ? "machine.home_disk" : "machine.home_disk_fs")}>
             <span className="mv-val">
               {gib(disk.value)}
               {src(disk)}
@@ -142,7 +146,8 @@ export function MachineView({ d }: { d: WsMachine }) {
         <p className="muted ds-sub">{own ? tr("machine.note_own_box") : tr("machine.note_shared_host")}</p>
         <p className="muted ds-sub">{tr("machine.note_who_changes")}</p>
       </section>
-      {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} />}
+      {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} own={own} />}
+      {d.running && <DiskSection />}
     </div>
   );
 }
@@ -156,7 +161,7 @@ export function MachineView({ d }: { d: WsMachine }) {
 //
 // The samples come from wsStatsFeed, which keeps its own clock — see that module for why the
 // push stream alone cannot produce a moving chart.
-function UsageSection({ memMax, vcpu }: { memMax: number; vcpu: number }) {
+function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own: boolean }) {
   const tr = useT();
   const samples = useWsStatsSeries();
   const last = samples[samples.length - 1];
@@ -209,11 +214,15 @@ function UsageSection({ memMax, vcpu }: { memMax: number; vcpu: number }) {
         <TrendChart points={samples.map((s) => ({ t: s.t, v: s.cpu }))} max={cpuCeil} spanMs={spanMs} />
       </div>
       {/* Disk is a level, not a rate: it moves in steps over hours, so a trend line of it
-          says nothing a bar does not. */}
+          says nothing a bar does not.
+          The figure is a statfs of the filesystem home sits on. Only on a box of one's own is
+          that one's own disk; elsewhere it is the whole host (or the shared EFS), so it is
+          labelled as such and never tinted — a warning colour would say "you did this" about
+          a number other people fill. */}
       {diskPct != null && last.diskUsed != null && last.diskTotal != null && (
-        <div className={"mu-chart" + lvl(diskPct, 80, 92)}>
+        <div className={"mu-chart" + (own ? lvl(diskPct, 80, 92) : "")}>
           <div className="mu-head">
-            <span className="mu-k">{tr("machine.home_disk")}</span>
+            <span className="mu-k">{tr(own ? "machine.home_disk" : "machine.home_disk_fs")}</span>
             <span className="mu-v">
               {tr("machine.usage_of", {
                 used: fmtGiB(last.diskUsed) + " GiB",
@@ -228,6 +237,100 @@ function UsageSection({ memMax, vcpu }: { memMax: number; vcpu: number }) {
         </div>
       )}
       <p className="muted ds-sub">{tr("machine.usage_note")}</p>
+    </section>
+  );
+}
+
+// The /cleanup/usage answer (workspace/agent/cleanup_cache.go).
+interface CleanupUsage {
+  cache?: { bytes: number; files: number; parts?: { name: string; bytes: number; files: number }[] };
+  orphans?: { ok: boolean; bytes: number; files: number; dirs: number };
+  trash?: { bytes: number; archives: number };
+  truncated?: boolean;
+}
+
+// DiskSection — what Agent Fleet itself has piled up on the disk, and the way to the
+// cleanup that gives it back.
+//
+// Not the home disk figure above: that is the whole filesystem, and outside a dedicated box
+// mostly other people's. A cleanup button next to it would promise to move a number it
+// barely touches. These rows are exactly what the cleanup modal can reclaim (the cache of
+// deleted sessions, the trash) plus what ages out on its own (generated images, thumbnails),
+// so the button and the numbers answer the same question.
+//
+// Measured on demand by the Agent (a du), held there for 30 seconds — never on the 4-second
+// stats path.
+function DiskSection() {
+  const tr = useT();
+  const [u, setU] = useState<CleanupUsage | null>(null);
+  const [err, setErr] = useState(false);
+  const closeSettings = useSettingsUI((s) => s.closeSettings);
+  const openCleanup = useSessionUI((s) => s.openCleanup);
+
+  useEffect(() => {
+    let cancelled = false;
+    api("api/cleanup/usage")
+      .then((res: CleanupUsage & { error?: unknown }) => {
+        if (cancelled) return;
+        // An Agent older than the endpoint answers with an error or without the fields.
+        if (!res || res.error || !res.cache) throw new Error("");
+        setU(res);
+      })
+      .catch(() => !cancelled && setErr(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The cleanup modal is another modal: close this one first rather than stack two.
+  const open = () => {
+    closeSettings();
+    openCleanup();
+  };
+
+  const partLabel = (name: string) =>
+    name ? (tMaybe("machine.disk_part_" + name.replace(/-/g, "_")) ?? name) : tr("machine.disk_part_other");
+
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("machine.disk_title")}</h4>
+      {err ? (
+        <p className="muted ds-sub">{tr("machine.disk_failed")}</p>
+      ) : !u || !u.cache ? (
+        <p className="muted ds-sub">{tr("common.loading")}</p>
+      ) : (
+        <>
+          <Row label={tr("machine.disk_cache")}>
+            <span className="mv-val">{humanSize(u.cache.bytes)}</span>
+          </Row>
+          {(u.cache.parts || [])
+            .filter((p) => p.bytes > 0)
+            .map((p) => (
+              <Row key={p.name || "-"} label={<span className="mv-sub">{partLabel(p.name)}</span>}>
+                <span className="mv-val">{humanSize(p.bytes)}</span>
+              </Row>
+            ))}
+          <Row label={tr("machine.disk_orphans")}>
+            <span className="mv-val">
+              {u.orphans?.ok ? humanSize(u.orphans.bytes) : tr("machine.disk_orphans_unknown")}
+            </span>
+          </Row>
+          {u.trash && (
+            <Row label={tr("machine.disk_trash")}>
+              <span className="mv-val">
+                {tr("machine.disk_trash_of", { size: humanSize(u.trash.bytes), count: u.trash.archives })}
+              </span>
+            </Row>
+          )}
+          <div className="mv-actions">
+            <Button small icon="trash" onClick={open}>
+              {tr("machine.disk_open_cleanup")}
+            </Button>
+          </div>
+          {u.truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
+          <p className="muted ds-sub">{tr("machine.disk_note")}</p>
+        </>
+      )}
     </section>
   );
 }

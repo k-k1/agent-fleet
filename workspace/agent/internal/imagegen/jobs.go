@@ -126,6 +126,12 @@ type jobRec struct {
 	dir    string
 	outRel string
 	req    Request
+	// inputSet, inputOrigins and maskOrigin are the RECORD of what the caller named, copied from
+	// the JobSpec (ADR 0100 decision 4). req holds only the input set's copies, and req is what
+	// the provider is given; these feed the sidecar and the wire, never a provider.
+	inputSet     string
+	inputOrigins []string
+	maskOrigin   string
 	// fullSteps is what the BATCH would run at when this is a trial — the form's own steps, kept
 	// so the sidecar records both what ran and what the keeper would be made with.
 	fullSteps int
@@ -156,6 +162,9 @@ type groupRec struct {
 	// aborted is decision 12's "cancel": the queued jobs are gone and the group is closed, but
 	// the pictures already made stay and the row says "12 of 40 made".
 	aborted bool
+	// inputSet is the input set every job of the group reads, removed when the last of them is
+	// over. Cleared once removed, so the removal happens once.
+	inputSet string
 }
 
 // --- the queue ------------------------------------------------------------------------------
@@ -226,6 +235,34 @@ type JobSpec struct {
 	// FullSteps turns decision 11's step reduction off, for the case where the trial IS the
 	// picture.
 	FullSteps bool
+	// InputSet, InputOrigins and MaskOrigin are record-only (ADR 0100 decision 4): the input set
+	// Request's copies live in, and the paths the caller originally named. They are NOT part of
+	// Request on purpose — Request is the provider's argument, and whatever is on it reaches the
+	// provider. Enqueue copies them onto every jobRec. Filled by stageJobSpec.
+	InputSet     string
+	InputOrigins []string
+	MaskOrigin   string
+}
+
+// errUnstagedInputs is Enqueue refusing a spec whose references never went through the gate.
+// No caller should reach it; it exists so that a new entry point that forgets stageJobSpec
+// fails loudly instead of handing the provider the caller's own path.
+var errUnstagedInputs = errors.New("reference images were not staged")
+
+// stageJobSpec runs the gate over spec's references (inputs.go) and returns the spec with
+// Request naming the copies and the record-only fields filled. A spec with no reference comes
+// back unchanged. The caller owns the set from here: if Enqueue then fails, it removes the set
+// itself (removeInputSet), because Enqueue never saw a group to hang it on.
+func stageJobSpec(spec JobSpec) (JobSpec, error) {
+	req, st, err := stageRequestInputs(spec.Request)
+	if err != nil {
+		return spec, err
+	}
+	spec.Request = req
+	spec.InputSet = st.Set
+	spec.InputOrigins = st.Origins
+	spec.MaskOrigin = st.MaskOrigin
+	return spec, nil
 }
 
 // EnqueueResult is what POST /imagegen/jobs answers: the group, and every job with the position
@@ -251,6 +288,9 @@ var (
 // Enqueue admits the whole batch or none of it (ADR 0081 decision 2): the cap judges the request
 // as submitted, so a caller never gets 17 of the 40 they asked for and has to work out which.
 func (q *jobQueue) Enqueue(ctx context.Context, spec JobSpec) (EnqueueResult, error) {
+	if spec.InputSet == "" && (len(spec.Request.Inputs) > 0 || strings.TrimSpace(spec.Request.Mask) != "") {
+		return EnqueueResult{}, errUnstagedInputs
+	}
 	prov, err := fleetProviderFor(ctx, spec.Provider)
 	if err != nil {
 		return EnqueueResult{}, err
@@ -308,7 +348,7 @@ func (q *jobQueue) Enqueue(ctx context.Context, spec JobSpec) (EnqueueResult, er
 	q.seq++
 	g := &groupRec{
 		id: fmt.Sprintf("g%d", q.seq), label: strings.TrimSpace(spec.Label),
-		trial: spec.Trial, created: jobsNow(), total: n,
+		trial: spec.Trial, created: jobsNow(), total: n, inputSet: spec.InputSet,
 	}
 	q.groups[g.id] = g
 	q.groupOrder = append(q.groupOrder, g.id)
@@ -323,6 +363,7 @@ func (q *jobQueue) Enqueue(ctx context.Context, spec JobSpec) (EnqueueResult, er
 			id: fmt.Sprintf("j%d", q.seq), group: g.id, label: g.label, trial: spec.Trial,
 			created: jobsNow(), provider: prov.ID(), model: model, family: family,
 			dir: dir, outRel: outRel, req: one, fullSteps: fullSteps, state: JobQueued,
+			inputSet: spec.InputSet, inputOrigins: spec.InputOrigins, maskOrigin: spec.MaskOrigin,
 		}
 		q.byID[j.id] = j
 		admitted = append(admitted, j)
@@ -485,7 +526,7 @@ func (q *jobQueue) propsFor(j *jobRec, res Result) ImageProps {
 	props := ImageProps{
 		Provider: res.Provider, Model: res.Model, Family: j.family,
 		Op: string(j.req.Op), Prompt: j.req.Prompt,
-		Size: j.req.Size, Strength: j.req.Strength, Inputs: j.req.Inputs, Mask: j.req.Mask,
+		Size: j.req.Size, Strength: j.req.Strength, Inputs: j.inputOrigins, Mask: j.maskOrigin,
 		Loras: j.req.Loras, Job: j.id, Group: j.group, Label: j.label, Trial: j.trial,
 		ElapsedMS: elapsed, Warnings: res.Warnings, Agent: Build,
 		CreatedAt: j.created.UTC().Format(time.RFC3339),
@@ -579,7 +620,32 @@ func (q *jobQueue) finish(j *jobRec, files []StoredFile, warnings []string, err 
 	q.finished = append(q.finished, j)
 	q.trimFinishedLocked()
 	q.signalLocked(j.provider)
+	set := q.releaseInputSetLocked(j.group)
 	q.mu.Unlock()
+	removeInputSet(set)
+}
+
+// releaseInputSetLocked answers the input set to remove when group gid has no job left that
+// could still read it, and "" otherwise. Every way a job ends has to ask: a queued job cancelled
+// on its own, or by its group's cancel, never passes through finish.
+func (q *jobQueue) releaseInputSetLocked(gid string) string {
+	g := q.groups[gid]
+	if g == nil || g.inputSet == "" {
+		return ""
+	}
+	for _, j := range q.pending {
+		if j.group == gid {
+			return ""
+		}
+	}
+	for _, j := range q.running {
+		if j.group == gid {
+			return ""
+		}
+	}
+	set := g.inputSet
+	g.inputSet = ""
+	return set
 }
 
 // trimFinishedLocked keeps the finished list bounded. A job that falls off the end leaves byID
@@ -722,7 +788,9 @@ func (q *jobQueue) Cancel(id string) error {
 		j.finished = jobsNow()
 		q.finished = append(q.finished, j)
 		q.trimFinishedLocked()
+		set := q.releaseInputSetLocked(j.group)
 		q.mu.Unlock()
+		removeInputSet(set)
 		return nil
 	}
 	j.cancelled = true
@@ -818,7 +886,9 @@ func (q *jobQueue) GroupOp(id, op string) error {
 			asks = append(asks, [2]string{j.provider, j.upstream})
 		}
 	}
+	set := q.releaseInputSetLocked(id)
 	q.mu.Unlock()
+	removeInputSet(set)
 	for _, a := range asks {
 		_ = q.askProviderCancel(a[0], a[1])
 	}
@@ -1106,7 +1176,7 @@ func (q *jobQueue) wireOf(j *jobRec, position int) jobWire {
 		Trial: j.trial, Provider: j.provider, Model: j.model, Family: j.family,
 		Op: string(j.req.Op), Prompt: j.req.Prompt, Negative: j.req.NegativePrompt,
 		Seed: j.req.Seed, Size: j.req.Size, Count: j.req.Count, Params: j.req.Params,
-		Loras: j.req.Loras, Strength: j.req.Strength, Inputs: j.req.Inputs,
+		Loras: j.req.Loras, Strength: j.req.Strength, Inputs: j.inputOrigins,
 		FullSteps: j.fullSteps, OutDir: j.outRel,
 		CreatedAt: j.created.UTC().Format(time.RFC3339),
 		Files:     j.files, Warnings: j.warnings, Error: j.failure,

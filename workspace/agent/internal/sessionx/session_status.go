@@ -319,7 +319,27 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 				ev.Payload["questions"] = q
 			}
 		}
-		_ = notice.Put(ev)
+		// answer-ready is a terminal event that fires exactly once per turn-end.
+		// notice.Put fires for every call, so a spurious second idle hook (heal wipe
+		// → status.Remove → another Stop arriving before UserPromptSubmit) would
+		// enqueue a duplicate bridge message with the same body. PutOnce with the
+		// completion key absorbs duplicates: the key is written once by
+		// PersistTurnEndReason (idempotent) and is stored in a separate file that
+		// status.Remove does NOT clear, so it survives pane-heal wipes even when the
+		// second idle hook fires in a different RFC3339 second. The key is cleared
+		// when the next working state is persisted (Persist("working")), so the next
+		// turn-end gets a fresh key. Interim events (question / plan-approval /
+		// permission) use plain Put — they have their own "previous != state" guards
+		// and do not carry turn bodies.
+		if kind == chatx.ReportKindAnswerReady {
+			key := ev.CreatedAt
+			if k, ok := status.ReadCompletionKey(sid); ok && k != "" {
+				key = k
+			}
+			_ = notice.PutOnce("answer-ready:"+m.Name+":"+key, ev)
+		} else {
+			_ = notice.Put(ev)
+		}
 		// One-shot session report to the operator conversation that armed this
 		// session (docs/log/30). Only TERMINAL events CONSUME the arm: an instruction's
 		// one report must be its COMPLETION, so an interim attention event must not

@@ -102,6 +102,12 @@ var (
 	// recording it can never overwrite one — see ObservedTurnEnd for why that separation is
 	// load-bearing rather than tidy.
 	observedEnds = fstore.JSON[observedEnd](paths.AgentStateDir, "session-turn-end", ".json")
+	// completionKeys stores the stable answer-ready deduplication key for the current turn-end.
+	// Written by PersistTurnEndReason (idempotent — first write wins) and cleared by Persist
+	// when state is "working" (new turn starts). Deliberately NOT cleared by Remove so the key
+	// survives pane-heal wipes (HealIdle → status.Remove) that occur between the two idle hook
+	// firings that cause Discord bridge message duplicates (docs/log/XXX).
+	completionKeys = fstore.Strings(paths.AgentStateDir, "completion-key", ".txt")
 )
 
 // observedEnd is an end of turn a poll saw, tagged with the SessionStatus.Rev of the record
@@ -153,7 +159,12 @@ func ExitReasonFor(code, sig int, oom bool) string {
 // Persist writes {state, ts} keyed by sid. Errors are logged (not
 // swallowed): a failed write leaves the Console's working / answered badge silently
 // stale, so a log line is the only breadcrumb the write ever failed.
-func Persist(sid, state string) { persist(sid, SessionStatus{State: state}) }
+func Persist(sid, state string) {
+	persist(sid, SessionStatus{State: state})
+	if state == "working" {
+		RemoveCompletionKey(sid) // new turn started; the next end will mint a fresh key
+	}
+}
 
 // TurnEndReasonFailed / TurnEndReasonAborted are the qualifiers PersistTurnEndReason
 // accepts (see SessionStatus.TurnEndReason). Their values are the wire contract with
@@ -185,7 +196,24 @@ func PersistTurnEndReason(sid, state, reason string) {
 		at = time.Now().Format(time.RFC3339)
 	}
 	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason})
+	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
 }
+
+// WriteCompletionKey sets the answer-ready dedup key for the current turn-end.
+// Idempotent: if a key is already present the existing one is kept, so the first value
+// always wins even when status.Remove is called between two PersistTurnEndReason calls.
+func WriteCompletionKey(sid, key string) {
+	if _, ok := completionKeys.Read(sid); ok {
+		return
+	}
+	_ = completionKeys.Write(sid, key)
+}
+
+// ReadCompletionKey reads the answer-ready dedup key set by WriteCompletionKey.
+func ReadCompletionKey(sid string) (string, bool) { return completionKeys.Read(sid) }
+
+// RemoveCompletionKey clears the answer-ready dedup key.
+func RemoveCompletionKey(sid string) { completionKeys.Remove(sid) }
 
 // TurnEndUnrecorded reports whether sid has a turn in flight whose end has not been observed
 // yet, i.e. whether reading the live state could record anything at all. It is the CHEAP half

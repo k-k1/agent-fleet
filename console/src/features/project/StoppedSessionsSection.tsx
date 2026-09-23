@@ -11,6 +11,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { useUnreadSessions } from "../notifications/unread.ts";
 
 export const StoppedSessionsSection = memo(function StoppedSessionsSection() {
   const tr = useT();
@@ -24,10 +25,14 @@ export const StoppedSessionsSection = memo(function StoppedSessionsSection() {
   const wset = useActiveWorkingSet();
   const shown = wset ? sessions.filter((s) => sessionInSet(wset, s)) : sessions;
 
+  // Collapsed, the header is all that is left of these rows — roll their unread dot up.
+  const unreadSessions = useUnreadSessions();
+  const unread = shown.some((s) => unreadSessions.has(s.name));
+
   if (shown.length === 0) return null;
 
   return (
-    <Section id="stopped-sessions" title={tr("pj.session_history")} icon="history" count={shown.length}>
+    <Section id="stopped-sessions" title={tr("pj.session_history")} icon="history" count={shown.length} unread={unread}>
       <ul className="sess-list">
         {shown.map((s) => (
           <SessionRow

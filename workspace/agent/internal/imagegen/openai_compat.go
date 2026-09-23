@@ -38,7 +38,6 @@ import (
 	"image"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -401,9 +400,9 @@ func openaiCompatEditRequest(ctx context.Context, conn EngineConn, req Request) 
 // a file it wants edited), so the failure to read it is reported with the path in it — "no such
 // file" with no name is the least actionable answer there is.
 func openaiCompatAttach(mw *multipart.Writer, field, path string) error {
-	b, err := os.ReadFile(path)
+	b, err := readRequestFile(path)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", path, err)
+		return err
 	}
 	w, err := mw.CreateFormFile(field, filepath.Base(path))
 	if err != nil {

@@ -17,6 +17,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -948,18 +949,12 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   };
 
   // Context menu: open at the cursor; close on outside click / Escape / blur.
+  useDismiss(menuRef, !!menu, () => setMenu(null));
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", onKey);
     window.addEventListener("blur", close);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", close);
-    };
+    return () => window.removeEventListener("blur", close);
   }, [menu]);
   // Clamp EVERY render, before paint: the JSX re-applies the raw cursor coords
   // as inline style on each re-render (store polls re-render this component

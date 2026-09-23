@@ -36,13 +36,15 @@ interface RepoRowConnectedProps {
   onToggle?: () => void;
   /** Session tally badge (see RepoRow.sess) — computed by the owning node. */
   sess?: { alive: number; total: number };
+  /** Unread-notification dot for the sessions this row currently hides (see RepoRow.unread). */
+  unread?: boolean;
   /** Bulk-archive stopped sessions (right-click menu). The owning node (RepoNode) passes a
    * count and a handler scoped to the sessions directly under this folder. */
   onArchiveStopped?: () => void;
   stoppedCount?: number;
 }
 
-export function RepoRowConnected({ r, ctx, node, onToggle, sess, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
+export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
   const settings = useSettings(); // default model for a claude launch
   const tr = useT();
   const toast = useToast();
@@ -94,6 +96,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, onArchiveStoppe
       active={ctx.scmRepo === r.name}
       selected={r.name === ctx.activeRepo}
       sess={sess}
+      unread={unread}
       onArchiveStopped={onArchiveStopped}
       stoppedCount={stoppedCount}
       // Bulk stop: the whole subtree's live sessions, planned per row in the modal.

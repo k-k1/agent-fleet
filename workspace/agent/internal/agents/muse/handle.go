@@ -70,7 +70,12 @@ type threadHandle struct {
 	settings agents.ThreadSettings
 	inter    *agents.Interaction
 	pending  *pendingAsk // what inter is waiting on, in muse's own vocabulary
-	events   chan agents.Event
+	// settledUserInputID and settledApprovalID block re-deliveries after an answer; one per
+	// channel is enough because IDs are unique per session — only the last settled prompt can
+	// arrive again before the host sends userInput/settled or approval/resolved.
+	settledUserInputID string
+	settledApprovalID  string
+	events             chan agents.Event
 
 	// streaming holds the item/delta fragments of items that have not completed yet, keyed
 	// by item id. In memory only — see onDelta.
@@ -542,6 +547,12 @@ const museAuthRequired = "authRequired"
 // discard the tool name, the protected-write marking, the judge escalation and the parsed
 // argv of every stage of a pipeline, which is most of what a member decides with.
 func (h *threadHandle) onApproval(p msp.ApprovalRequestParams) {
+	h.mu.Lock()
+	settled := h.settledApprovalID
+	h.mu.Unlock()
+	if p.ApprovalID == settled {
+		return // re-delivery after Respond cleared the ask; approval/resolved is still in flight
+	}
 	ask := &pendingAsk{approvalID: p.ApprovalID, requirement: p.CurrentRequirementID}
 	for _, c := range p.AvailableChoices {
 		switch c.Decision {
@@ -599,6 +610,12 @@ func approvalSummary(p msp.ApprovalRequestParams) string {
 // onUserInput maps a user-input prompt onto AF's question Interaction, which it fits field
 // for field — this is the channel AF already has, and it is a different one from approvals.
 func (h *threadHandle) onUserInput(p msp.UserInputRequestParams) {
+	h.mu.Lock()
+	settled := h.settledUserInputID
+	h.mu.Unlock()
+	if p.UserInputID == settled {
+		return // re-delivery after Respond cleared the ask; userInput/settled is still in flight
+	}
 	inter := &agents.Interaction{ID: "ask-" + p.UserInputID, Kind: agents.InteractionQuestion}
 	for _, q := range p.Questions {
 		tq := transcript.Question{ID: q.ID, Header: q.Header, Question: q.Question}
@@ -633,6 +650,11 @@ func (h *threadHandle) clearAsk(match func(*pendingAsk) bool) {
 	if h.pending == nil || !match(h.pending) {
 		h.mu.Unlock()
 		return
+	}
+	if h.pending.isApproval() {
+		h.settledApprovalID = h.pending.approvalID
+	} else {
+		h.settledUserInputID = h.pending.userInputID
 	}
 	h.pending, h.inter = nil, nil
 	if h.running {
@@ -687,7 +709,7 @@ func (h *threadHandle) startTurn(in agents.TurnInput) error {
 	params := msp.TurnStartParams{
 		CommandID: msp.NewCommandID(),
 		SessionID: sid,
-		Input:     inputParts(in),
+		Input:     skillPart(cl, sid, inputParts(in)),
 	}
 	if e := reasoningEffort(effort); e != nil {
 		params.ReasoningEffort = e
@@ -712,7 +734,7 @@ func (h *threadHandle) steerNow(in agents.TurnInput, turnID string) error {
 		CommandID:      msp.NewCommandID(),
 		SessionID:      sid,
 		ExpectedTurnID: turnID,
-		Input:          inputParts(in),
+		Input:          skillPart(cl, sid, inputParts(in)),
 	}, callTimeout, nil)
 }
 

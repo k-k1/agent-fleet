@@ -625,6 +625,13 @@ export const buildFleetGraph: BuildFleetGraph = (
   };
   const included = (id: LaneId): boolean => {
     if (!overlapsWindow(id)) return false;
+    // A root introduced only through another lane's originSession pointer (decision 9,
+    // `resolveRoots` walking `parentOf` past the candidate set) can reach here with no
+    // birth, no live session, and no arrow ever naming it — touched only by a bare
+    // state/resync event on some unrelated occasion. That id has no LaneFacts (decision 6
+    // reserves a factless row for arrow-named/erased ids only), so drawing it as a lane
+    // would read `facts.get(id)!.presence` off undefined in step 7/8 below.
+    if (!facts.has(id) && !erasedIds.has(id)) return false;
     const presence = facts.get(id)?.presence ?? "gone"; // erased -> gone
     if (!showArchived && presence === "archived") return false;
     if (touchedIds && !touchedIds.has(id)) return false;

@@ -27,7 +27,7 @@ value you set is not the value in force, look one layer out.
 |---|---|
 | Display | language, theme, density |
 | Keyboard | shortcuts and rebinding |
-| Agents | connecting each agent, its default model, models to exclude, per-agent behaviour |
+| Agents | connecting each agent, its default model, models to exclude, per-agent behaviour; llama.cpp on / off and your own llama-server connection; Muse Code install and sign-in; the Session group — messages between sessions, starting sessions from sessions and children per session, image generation |
 | Agent instructions | text added to every agent you start in this workspace |
 | Agent memory | version management, rollback, import / export of an agent's memory |
 | Assistant | the assistant chat's agent and model |

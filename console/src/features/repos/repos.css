@@ -490,7 +490,8 @@
 }
 /* Session tally badge: how many sessions live in this working copy (and, while
    the node is folded, in its worktrees too). Green ●n = alive; plain muted n =
-   stopped only. */
+   stopped only. A folded node also rolls its sessions' unread-notification dot up
+   to just before this badge (span.unread-dot — rule in sessions.css). */
 .repo-sess-badge {
   flex: none;
   font-size: 10px;

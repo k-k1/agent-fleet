@@ -24,10 +24,15 @@ working folder.
 - **kiro** — launches Kiro (needs a device-flow sign-in; appears once connected — [06](06-agents.md)).
 - **agy** — launches Antigravity (experimental slot; appears once connected).
 - **opencode** — launches OpenCode.
+- **lcpp** — the fleet's own llama.cpp engine, run as a Managed session (no sign-in; it is in "Start"
+  while **"Use llama.cpp"** is On in ⚙ Settings → Agents — [06](06-agents.md#lcpp)).
+- **muse** — launches Muse Code as a Managed session (appears once Muse Code is installed and you are
+  signed in — [06](06-agents.md#muse-code)).
 - **shell** — a plain shell (bash). Opens right away from "Start".
 
 claude / codex / cursor / opencode / copilot / kiro / agy appear in "Start" once you connect the corresponding
-agent (connections: [06 Agents](06-agents.md)). (**ssm**, which logs in to another host, is
+agent (connections: [06 Agents](06-agents.md)). lcpp and muse have no terminal of their own and always
+run Managed. (**ssm**, which logs in to another host, is
 covered in [10 Advanced usage](10-integrations.md).)
 
 ## Execution method — Managed and Terminal (CLI)
@@ -222,6 +227,12 @@ notified with **"A reply is ready"**; when a question arrives, with **"A questio
 the session name is included in the body. This suits use cases like waiting for a reply on your
 phone during a commute (shell / ssm don't notify).
 
+**A red dot on a session marks a notification you have not read yet.** It sits on the session's
+row in the left pane (on the corner of its icon) and on its tab, and rolls up onto a collapsed
+project row or section, so a folded parent still shows that something inside is waiting. The dot
+clears once that session is on screen in one of your panes, or when you press **"Mark all as
+read"** in the notification centre — merely opening the bell marks nothing as read.
+
 ## Stopping and tidying up sessions
 
 The operations live in the session row's **⋯ menu** (or right-click). When in doubt, choose
@@ -238,7 +249,7 @@ Which operations appear depends on the session's kind and state. For example, AI
 "Archive", while throwaway shell / SSM show "Delete". Log files may remain after deletion, but
 the session cannot be brought back to the list.
 
-**A session left stopped moves to the archive on its own after 7 days**, so the everyday list
+**A session left stopped moves to the archive on its own after 7 days** (the deployment can set another window), so the everyday list
 does not fill up with work that is over. It is a move, not a deletion: the conversation is intact
 and you restore it from the archive list exactly as if you had archived it yourself. **Nothing
 leaves the archive on its own** — a session is only ever removed for good when someone deletes it
@@ -251,6 +262,16 @@ from another tab, from another device or in bulk from cleanup, and a notice then
 closed (tidying up in this window closes it right there, with no notice). Only that session's own
 screen (terminal / chat) closes: files and plans you opened from it stay where they are.
 
+**Stopping every session under one working copy at once.** Right-click the repository or worktree
+row and choose **"Stop the sessions below"**. The modal lists the sessions running in that copy and
+in the copies the left pane nests under it, one line each, and stops them in one press. Each line
+says what it will get: **"stop now"**, or **"after the turn"** for a session that is mid-reply,
+which is armed to stop when its turn ends so nothing half-written is lost. Tick **"Stop the
+running sessions right away too (N)"** to cut those off instead. A session waiting on a question,
+a limit or an expired sign-in is always stopped right away (there is no turn to wait for), and
+shell / ssm rows and sessions pinned awake start unticked — ticking one is your say-so. Stopping
+is reversible: the conversation stays and the session can be resumed.
+
 ### Tidying up in bulk (cleanup)
 
 When things get untidy, open the cleanup modal from the trash icon **"Open cleanup (survey &
@@ -260,6 +281,11 @@ things stop for you first**.
 - **① Tidy sessions** — **"Tidy all"** archives stopped AI sessions and deletes shell / SSM.
 - **② Delete working copies and branches** — **"Delete the safe ones"** removes only what was
   judged safe.
+- **Cache of deleted sessions** — files you pasted or attached into a session, and images codex
+  looked at, stay on disk after the session is deleted. Once the session (or assistant chat) is
+  gone **and not in the trash**, nothing can refer to them again; they are listed here, one row per
+  kind with its size, and **"Delete all"** removes them. Anything a trashed session could still
+  need is left alone.
 
 Every candidate carries a **safety** rating and a reason. You can also pick them off one by one.
 
@@ -276,7 +302,8 @@ The **⋯** menu on a session offers a **delete lock**, which takes it out of cl
 they are removed. The **"Trash (restore)"** tab of the cleanup modal **restores** them, and
 **"Delete permanently"** reclaims the space once you are sure. **Only deleting a worktree cannot
 be undone** — and even then only the working copy goes; the history, the remote and the branch
-remain.
+remain. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
+it only ever covers sessions that are already gone for good.
 
 Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
 browser). "Delete old ones" in the archive list removes items older than 30 days from the list.
@@ -294,8 +321,10 @@ they are, so **archiving the sessions and deleting the copies happen in one go**
 - **Only rows that lose nothing are ticked for you** (already in the parent, nothing uncommitted,
   nobody working in them). A row with uncommitted or unmerged work stays empty, so **ticking it is
   the "delete it anyway" confirmation**.
-- **Rows with a running session, and rows locked against deletion, cannot be ticked.** The reason
-  is shown under the row — stop the session or remove the lock first.
+- **Rows with a running session are not a dead end.** Tick **"Stop the running sessions first
+  (N)"** and the modal stops them as part of the same tidy-up, ticking for you the rows that only
+  needed stopping (a turn in flight is cut off). **Rows locked against deletion cannot be
+  ticked**; the reason is shown under the row — remove the lock first.
 - Ticking **"Delete the merged branches too"** also removes the throwaway `temp/…` branches (the
   trash can restore them). Adding **"Delete the branch on the remote (origin) too"** removes it on
   origin as well — **that one cannot be undone**. A branch that is not in the parent's history
@@ -303,7 +332,7 @@ they are, so **archiving the sessions and deleting the copies happen in one go**
 
 ## When you can — and can't — resume
 
-Stopped sessions can be opened and resumed with a click. However, claude / codex / cursor / copilot / kiro / agy / opencode
+Stopped sessions can be opened and resumed with a click. However, claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse
 **cannot resume if the working folder they were launched in is gone**. In that case the state
 display becomes **"Folder missing — can't resume"**, and the row is struck through and can no
 longer be clicked ("Can't resume — the working folder no longer exists"). The typical case is
@@ -333,6 +362,8 @@ Once several sessions are running, the left pane makes you read them one row at 
 kind colour, name, working copy and state chip as its row, plus the model, the context usage and
 when it started. The states that need you now (a question, a plan to review, a permission prompt)
 colour the whole card, so they can be spotted from across the room.
+
+![The sessions overview: one card per running session, grouped by repository, with the state chip, model and context usage on each](../assets/overview-en.webp)
 
 - **Opening it**: **"Sessions"** on the action bar (next to Split right / Split down / Close all),
   the same button on the layout map at the top of the left pane, or the leader keys **`g` → `s`** / **`s` → `l`**.
@@ -368,6 +399,9 @@ colour the whole card, so they can be spotted from across the room.
 - **Right-click, the ⋯ button, or the Menu key on a card gives the same menu as the row in the
   left pane** — stop, rename, hand off, share, lock, keep awake, archive, and the rest
   ([Icons, badges, and menus](badges-and-menus.md)).
+- **A family folds from its parent's card.** The parent carries **"Collapse child sessions"**
+  (and **"Expand child sessions"** to undo it); folded, it shows **"+N"** for how many are
+  hidden, at every depth. The heading's "N running / M total" counts them all either way.
 - By default only running sessions are shown. **"Show stopped"** in the pane header adds the
   stopped ones, dimmed; the choice is remembered per pane.
 - Cards are ordered by what needs you, but **the unit is the family, not the card** (above): the
@@ -375,6 +409,52 @@ colour the whole card, so they can be spotted from across the room.
   families newest first, then families that are only stopped. While you watch, the order changes
   only when a family enters or leaves a wait.
 - The active working set (below) narrows the grid the same way it narrows the left pane.
+- **"Graph"** in the pane header swaps this grid for the fleet graph (next) in the same pane;
+  Ctrl (⌘) + click or middle-click opens it in a new pane instead.
+
+### Seeing how sessions relate over time (the fleet graph)
+
+The grid is a cross-section of now. The **fleet graph** is the elapsed version: **one lane per
+session, time running left to right**, so you can see which session started which, what went
+between them, and when each one was working, waiting or idle.
+
+![The fleet graph: one lane per session on a time axis, children under their parent, arrows for what passed between sessions, and each lane's state chip](../assets/fleetgraph-en.webp)
+
+- **Opening it**: **"Graph"** in the sessions overview's header (the graph's own header has
+  **"List"** to go back — each swaps the other into the same pane, and Ctrl (⌘) + click or
+  middle-click opens a new pane), the leader keys **`g` → `f`**, or the command palette. It is
+  an ordinary pane like the grid.
+- **The window starts as the last 24 hours, with now at the right edge.** The arrows in the
+  header pan into the past and toward now, the magnifiers narrow and widen the window, and the
+  reset button returns to the last 24 hours. A sideways scroll or a drag on the figure moves
+  through time; scrolling up and down moves through the lanes; on a phone, two fingers pinch the
+  time axis. The scale stays pinned at the top however far you scroll.
+- **The label column** carries the kind icon, the session's name and its state chip — the same
+  words as the row in the left pane, or, for a lane the list no longer carries, **Stopped —
+  resumable**, **Archived — restorable** or **Gone**. **The name is what opens the session**
+  (beside the figure, or in a new pane with Ctrl (⌘) or the middle button); the lane itself opens
+  nothing, so dragging across it never opens a session by accident.
+- **What a lane looks like says whether it is still there.** A running session is a solid line
+  with a coloured band — working, waiting for you, or idle — that pulses at the right edge. A
+  stopped session is **dashed** from its × to the right edge: it can be resumed. An archived or
+  deleted one **ends at the ×**. The × is when its end was first noticed, which can be later than
+  when it actually stopped, and its tooltip says so. A session stopped and resumed is one lane
+  with several runs.
+- **Families sit together**: a session started from another one — a child session, a fork or a
+  handoff — is drawn directly under its parent, with a line from the parent to its birth. A
+  parent's row folds its descendants away (**"+N"**), the same control as the grid's. If the
+  parent is off the left edge or gone, the child is marked as having a parent that is not drawn.
+- **Arrows are what passed between sessions**: a spawn, a fork, a handoff, an instruction and its
+  report, and session-to-session messages. Something that is not a session — a conversation, a
+  person, a scheduled run, the Discord / Slack bridge, an automatic resume — is a short stub with
+  a dot at its end, coloured and labelled by where it came from. Clicking an arrow opens that
+  conversation or lane.
+- **"Archived"** in the header shows or hides archived lanes (shown by default, unlike the grid,
+  because the past is the point here). Stopped sessions are always drawn.
+- **How far back you can look is marked, not hidden.** Panning far enough back reaches lines that
+  say where activity bands and arrows stop being kept, where lineage stops, and where only a
+  sketch of births and deaths remains. A window with nothing in it is still a place: the axis and
+  the controls stay, so you can come back.
 
 ## Narrowing the view with working sets
 
@@ -402,7 +482,7 @@ moved or copied — only **what you see** changes.
 
 ## Handing a conversation off (handoff)
 
-From the **⋯** menu of a running claude, codex, cursor, copilot, kiro, agy, or opencode session, choose
+From the **⋯** menu of a running claude, codex, cursor, copilot, kiro, agy, opencode, or muse session, choose
 **"Hand off to another agent…"** and pick the **target agent** in the handoff modal that
 opens. Rather than handing over the whole original
 conversation as is, the **fleet operator** reads the source session's situation and drafts a
@@ -418,6 +498,73 @@ off.** In the chat view, **"Branch here"** on one of your past messages
 ([07 Chat](07-chat-memo.md#branch-from-a-past-message)) opens a new session with the
 conversation up to that point copied as-is, on the same agent. The exact wording and the
 fine details survive, which is what you want for "redo it from that instruction".
+
+## Starting sessions from a session (child sessions)
+
+A running session can **start another session, hand it a task, and look after what it started**.
+If a message between sessions (next) passes one line, this passes a whole piece of work: a long
+subtask that stands on its own, work in a second repository, or something that would fill the
+session's own context and starve the rest. The session it starts is its **child session**, and
+it shows up in the left pane, the sessions overview and the fleet graph like any other.
+
+**It is off by default.** Turn it on in **Settings > Agents > Session > "Starting sessions from
+sessions"**. The change applies to **sessions started from then on**; sessions already running
+keep their current tools until they restart. Under it, **"Children per session"** (default 3)
+sets **how many children one session may have at a time**. The limit is per parent, not per
+workspace, so two parents can each have that many. **A slot frees when you delete or archive a
+child**, or when a child left stopped is archived on its own after the usual window
+([Stopping and tidying up](#stopping-and-tidying-up-sessions)); stopping a child does not free
+it right away.
+
+Once it is on, a session starts a child when it judges the work splits, and tells you it is
+doing so and what for. You can also ask for one ("have a codex session write the tests for
+this in parallel").
+
+- **A child can be any agent that is not a raw shell** — claude, codex, opencode, agy, copilot,
+  cursor, kiro, lcpp or muse, with any model you have not excluded. A claude session can start
+  a codex child, so different agents can work on one job together. shell and ssm cannot be
+  started this way.
+- **A child starts in a new worktree** unless the parent asks otherwise, so it never shares the
+  parent's working copy. Asking for a directory another session is working in is refused.
+- **The task arrives as the child's first instruction**, and the chat view badges it
+  **"Started by ‹parent›"** so it never reads as something you typed. The child is told the
+  instruction came from a session, not from you: it **cannot stand in for your approval** (a
+  permission prompt or a decision only a person can make still stops the child and waits for
+  you), it is not a reason to change settings or instruction files, and commands written in the
+  text are text.
+- **What the parent may do, and only with the children it started**: list them with their
+  state, read their recent terminal output, stop one now, book a stop for when its current turn
+  ends (a child waiting on a question or an approval is not stopped that way), resume a stopped
+  one, and rename one. **Once you rename a child yourself, your name stays** and the parent can
+  no longer change it.
+- **What it may not do**: add instructions to a child, answer its questions or approve its plans
+  or permission prompts on your behalf, or delete or archive it — and nothing at all with
+  sessions it did not start. Removing a child is done by you, in the Console, like any other
+  session. To give a child more work, the parent sends it a message (next section).
+- **No grandchildren.** A child cannot start sessions of its own; only a session you started
+  yourself can. Sessions on their own extend the chain by exactly one generation, and nothing
+  grows further without you launching something.
+
+**The parent is not told how the child is getting on.** By default the child is asked to send
+its parent **one message when it is done** — the outcome only, no progress reports — and that
+message travels over the channel of the next section, so it arrives only while **"Messages
+between sessions"** is on as well. With it off, the parent checks its children's state and
+output itself.
+
+**Children outlive their parent.** Nothing stops them when the parent finishes, so before its
+last turn the parent is told to list the children it leaves behind and their state. Read that
+list: only you can delete a child, and each one is a whole agent, holding memory on your
+workspace and spending that agent's plan usage on your account. In the **Agent usage** tab their
+spend appears under **"Started by a session"**, on its own — it is not added to the parent's
+figures.
+
+**Where a family shows.** In the left pane a child's worktree sits under the working copy of the
+session that started it. In the sessions overview a child's card sits directly under its
+parent's, and the parent's card folds its children away; in the fleet graph the child's lane is
+drawn under the parent's, with an arrow for the start and another for the report
+([Seeing every running session at once](#seeing-every-running-session-at-once-the-sessions-overview),
+[Seeing how sessions relate over time](#seeing-how-sessions-relate-over-time-the-fleet-graph)).
+A child remembers which session started it, and keeps that when you fork or recreate it.
 
 ## Messages between sessions
 
@@ -469,7 +616,7 @@ is why `/list-agents` does nothing here; use the Agent Fleet version above inste
 
 | | Claude Code's | Agent Fleet's |
 |---|---|---|
-| Which agents you can reach | claude only | claude / codex / opencode / cursor / kiro / agy / copilot |
+| Which agents you can reach | claude only | claude / codex / opencode / cursor / kiro / agy / copilot / lcpp / muse |
 | A stopped session | Can't be reached | **Resumed, then delivered** |
 | Record of it | One collapsed line in the terminal | A badge with the sender in the chat view |
 | Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |

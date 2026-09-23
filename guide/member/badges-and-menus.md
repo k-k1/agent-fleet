@@ -12,7 +12,7 @@ workspace state.
 
 ## Session display
 
-The colored icon at the start of a row indicates the kind: `claude`, `codex`, `cursor`, `copilot`, `kiro`, `agy`, `opencode`, `shell`, or `ssm`.
+The colored icon at the start of a row indicates the kind: `claude`, `codex`, `cursor`, `copilot`, `kiro`, `agy`, `opencode`, `lcpp`, `muse`, `shell`, or `ssm`.
 Hover over the state icon at the end of the row to see the state name. States that need action from you are
 shown as text as well, not just an icon.
 
@@ -35,7 +35,10 @@ shown as text as well, not just an icon.
 | Force-killed / Crashed | A SIGKILL, a signal, a non-zero exit, or similar was detected |
 
 The speaker icon means an answer is being read aloud; the warning plus a branch name means the working copy has
-switched to a branch different from the one it started on.
+switched to a branch different from the one it started on. A **red dot on the corner of the kind icon** (and on
+the session's tab) is a notification for that session you have not read yet; a collapsed project row or section
+shows it for anything folded inside. It clears when the session is on screen, or with **"Mark all as read"**
+in the notification centre ([02](02-sessions.md#reading-state-badges-and-notifications)).
 
 A row can also carry **"Shared"** (visible to another member —
 [02](02-sessions.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
@@ -69,7 +72,7 @@ something is waiting.
 
 **In use** means this deployment is holding somebody's request right now — a session is waiting
 for an answer. **Ready** means the model is in VRAM and can answer at once, with nobody using it.
-**Running** is the step before that: the box is up, but the model is still loading, so a request
+**Running** is the step before that: the instance is up, but the model is still loading, so a request
 would wait.
 
 Press the pill and a popover opens. Where the role has one engine, its state sits at the right of
@@ -87,6 +90,12 @@ models, only one is loaded at a time, and whoever asks for the other one waits f
 the popover says so before you ask. The image-generation pane's
 header says the same four things for the engine it is about to use
 ([04](04-files.md#image-generation)).
+
+When you have set **your own llama.cpp connection** in ⚙ Settings → Agents
+([06](06-agents.md#lcpp)), the **Chat** pill reports that connection instead of the deployment's
+engine: **Connected**, **Not reachable** or **Checking**, and its popover says **"Your own
+connection. Not this deployment's engine."** together with the model the last check found
+(**"Model: …"**).
 
 ## Other badges
 
@@ -123,7 +132,9 @@ a new one in the same place. When there is no working folder, resume, handoff, a
 
 You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
 Fast-Forward (on a worktree, **"Fast-forward from the parent"**), project settings, **Share…**, **assignment to
-a working set**, launch a session by kind, and delete the working copy. Delete opens a confirmation
+a working set**, launch a session by kind, **stop the sessions below**, and delete the working copy. Stop
+opens a modal listing the sessions running in that row and in the copies nested under it
+([02](02-sessions.md#stopping-and-tidying-up-sessions)); Delete opens a confirmation
 that also lists the copies nested under that row
 ([02](02-sessions.md#clearing-one-finished-job-deleting-a-working-copy)). A normal click expands / collapses the row.
 Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
@@ -135,6 +146,16 @@ Files additionally show "Open in reader" and "Download". Folders and **image fil
 **"Open in gallery"** (never other file types; from an image it opens the parent folder's gallery with that
 image enlarged — [04](04-files.md#image-gallery)). To hand a file to a session or an assistant, open the
 file and use "Send" in the viewer.
+
+### Cards in the image gallery
+
+A picture's card offers **copy the path**, **copy the file name**, **rename the file** (within the same
+folder — a slash is refused) and **delete the file** (through a confirmation). A folder's card offers the
+same for the folder, plus **"Open in another pane"** (a plain click moves this pane into it), and deleting
+a folder takes everything in it. Where the folder holds a session's generated images, **"Open …, the
+session that generated this"** jumps to that conversation, and the same name sits in the breadcrumb row
+as a button; neither appears once that session is gone. The menu opens from a right-click, the Menu key or
+Shift+F10 ([04](04-files.md#image-gallery)).
 
 ### Assistants
 

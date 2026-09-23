@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -31,6 +32,67 @@ func feedStatusHook(t *testing.T, state, stdinJSON string) {
 	defer func() { os.Stdin = orig }()
 	RunSessionStatusHook([]string{state})
 	_ = r.Close()
+}
+
+// TestAnswerReadyNotDuplicatedByPutOnce is the negative-control / regression test
+// for the Discord bridge receiving the same answer 3+ times. The pane-based idle
+// heal (WireLive) can wipe the working marker (status.Remove) mid-turn; if the
+// heal fires more than once, or if a second Stop hook arrives before the next
+// UserPromptSubmit, the previous=="" arm fires again and the same notification
+// body is enqueued a second time.
+//
+// Fix: answer-ready uses notice.PutOnce with TurnEndAt as the key, so every
+// duplicate within the same RFC3339 second is absorbed by the marker file.
+// This test calls RecordSessionNotification twice for the same completed turn
+// (same TurnEndAt, same second) and expects exactly one answer-ready notification.
+func TestAnswerReadyNotDuplicatedByPutOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-putonce", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Test"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	// Completed turn: PersistTurnEndReason sets TurnEndAt = time.Now().
+	status.PersistTurnEndReason(sid, "idle", "")
+
+	// First call: the legitimate one — must fire.
+	RecordSessionNotification(sid, "working", "idle", "the answer")
+	// Second call: spurious duplicate (heal wiped the marker, another idle hook).
+	RecordSessionNotification(sid, "", "idle", "the answer")
+
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != chatx.ReportKindAnswerReady {
+		t.Fatalf("answer-ready duplicated: got %d events: %+v", len(events), events)
+	}
+}
+
+// TestAnswerReadyAfterStatusRemoveIsStillDeduped guards the cross-second duplicate
+// case: pane heal calls status.Remove mid-turn, which clears observedEnds. A second
+// PersistTurnEndReason falls back to time.Now(), and if more than one RFC3339 second
+// has elapsed the TurnEndAt changes — without this fix a new PutOnce key would fire
+// again. The completion key lives in a separate store that Remove does not touch, so
+// the first value always wins.
+func TestAnswerReadyAfterStatusRemoveIsStillDeduped(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-heal-dedup", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Test"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	// First end-of-turn flush: writes completion key = time.Now() second 1.
+	status.PersistTurnEndReason(sid, "idle", "")
+	RecordSessionNotification(sid, "working", "idle", "the answer")
+
+	// Pane heal fires: wipes statusFiles, observedEnds — but NOT the completion key.
+	status.Remove(sid)
+
+	// Second flush after more than one RFC3339 second: PersistTurnEndReason would
+	// produce a different TurnEndAt, which was the previous (broken) PutOnce key.
+	time.Sleep(1100 * time.Millisecond)
+	status.PersistTurnEndReason(sid, "idle", "")
+	RecordSessionNotification(sid, "", "idle", "the answer")
+
+	if events := notice.List(); len(events) != 1 {
+		t.Fatalf("answer-ready duplicated across a status.Remove: got %d events: %+v", len(events), events)
+	}
 }
 
 func TestWorkingToIdleQueuesDurableNotification(t *testing.T) {

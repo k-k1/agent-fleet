@@ -21,20 +21,20 @@ because "does this apply to a plain shell session?" is a real question.
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | —⁹ | ✓ | ✓ |
 | Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓¹² | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | ✓¹⁴ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | ✓¹⁹ | ✓¹⁴ | — | — |
 | Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
-| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ | — | — |
-| Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | —¹¹ | — | — |
+| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | — |
+| Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | ✓ | — | — |
 | Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
 | Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | —¹³ | — | — |
-| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | —⁴ | — | — |
-| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
-| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | ✓⁴ | — | — |
+| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | —¹¹ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | —¹¹ | — | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | ✓¹¹ | — | — |
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
 | Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
 | Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓¹⁸ | ✓¹⁷ | — | — |
@@ -51,10 +51,17 @@ as Terminal (CLI) does persist a readable history. kiro, by contrast, keeps a re
 transcript even under Managed.
 
 ⁴ The picker lists what the CLI can discover and launch by itself, and copilot, kiro,
-agy, lcpp and muse have no verified mechanism for that (lcpp drives no CLI at all, so
-there is nothing of its own to discover; muse's own protocol does carry one, and Agent
-Fleet has not built that half yet). Skills written to another convention's `SKILL.md`
-tree in the repository are still offered to them by injection — measured for muse.
+agy and lcpp have no verified mechanism for that (lcpp drives no CLI at all, so there is
+nothing of its own to discover). Skills written to another convention's `SKILL.md` tree in
+the repository are still offered to them by injection.
+
+muse is the exception on this row, and it is a different mechanism from the other ✓s: its
+own protocol carries the list, so what the picker offers is the running session's own
+answer — Muse Code's bundled skills, plugin skills, your own under `~/.config/muse/skills`,
+and the working copy's `.agents/skills/`. Picking one sends it as a skill invocation rather
+than as the text of its name, which is what makes it run. It needs a running session,
+because the list belongs to the session; before that, and for a stopped one, the injection
+route is what remains.
 
 ⁵ kiro accepts an effort flag but exposes no per-model picker.
 
@@ -88,6 +95,8 @@ prompt on every turn.
 | cursor | Open the authorize link and approve in your browser. There is no code to paste. A Cursor account is required; API keys are not accepted. |
 | kiro | Device flow: open the link with the confirmation code and approve (Builder ID, Google, GitHub…). API keys are not accepted. The CLI is large and is installed on demand the first time unless the deployment bakes it in. |
 | agy | Sign in from its card in the agent settings. |
+| lcpp | None — the deployment's engine needs no sign-in. Its card has **"Use llama.cpp"** (the switch; Off removes it from the launch menus and refuses a launch by any route) and **"Your own connection"** (URL, optional API key, **"Check connection"**), which points sessions at a llama-server on your own network instead of the deployment's engine. |
+| muse | **"Install Muse Code"** once (about 299 MB into your home), then **"Sign in with your Meta account"** (approve in the browser — no code to paste; the subscription route) or **"Use an API key"** (per-use billing; saving a key removes a stored account sign-in). |
 | shell | Not applicable. |
 | ssm | Uses the workspace's AWS SSM connection. |
 
@@ -190,17 +199,14 @@ them knowing that no Agent Fleet screen will show what happened.
 > run what you send verbatim. Keep backups, use least-privilege credentials, and lean
 > on the approval gates.
 
-¹¹ Two things have to be true before muse appears in the launch menu: Muse Code is
-proprietary and not included in the image, so it has to be installed on demand (the Muse Code
-connection card offers it, ~299MB into your home), and you have to be signed in — an
-unauthenticated session would accept work and then fail every turn.
-
-The rows carrying this footnote are the ones Agent Fleet has not built for muse. They are not
-blocked by Muse Code: the protocol carries image attachments, and the handoff and bridge paths
-are not written per agent at all. They are simply unverified here, and this table only ticks a
-row that was seen to work end to end — which is why the worktree, scheduled-run and context
-gauge rows are now ticked and these are not: those were watched working, on a real muse session,
-before the tick was written.
+¹¹ Two things have to be true before muse appears — in the launch menu, and equally in the
+assistant's choice of agent: Muse Code is proprietary and not included in the image, so it has
+to be installed on demand (the Muse Code connection card offers it, ~299MB into your home), and
+you have to be signed in — an unauthenticated session would accept work and then fail every
+turn. As the assistant, muse answers one prompt per turn as its own headless run, and it
+remembers the conversation: ask a follow-up and it has the earlier turns. It answers rather than
+acts — Agent Fleet runs those turns with shell, file writing and web tools switched off, and
+measured twice, a chat turn asked to write a file made no tool call and wrote nothing.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
@@ -221,6 +227,10 @@ sessions, to improve the product. It is Muse Code's own default. Agent Fleet doe
 for you: a session launched on **Default** runs on the newest model without that clause, and
 the twins stay in the picker for anyone who wants one. Settings › Agents › Muse Code ›
 Behaviour is where you choose, and the reasoning effort (`none` … `ultra`) sits beside it.
+
+The assistant chat follows the same rule, under Settings › AI: left on the recommendation it
+runs on the newest model without the clause, and if the catalogue cannot be read at all the
+turn is refused rather than quietly run on Muse Code's default.
 
 ¹⁵ The muse chip shows what a running muse session last observed, not a number Agent Fleet
 can go and fetch: Muse Code reports its own subscription usage over the session protocol, and
@@ -255,3 +265,9 @@ reached costs you its tools for that turn and never the turn itself — the fail
 in the conversation rather than on every turn. One consequence of lcpp running the tools itself:
 **every tool an integration server offers asks for your permission before it runs**, because
 nothing in the MCP protocol tells Agent Fleet which of them only read.
+
+¹⁹ lcpp's model list is your own llama.cpp server's, so it has no "let the tool decide" entry
+the way the vendor CLIs do — a launch waits until you pick one. Which model you pick is the
+cost decision on this kind: on one measured benchmark the same task took 29 turns on one
+family and 164 on another, and both finished it correctly. Swapping models later does not buy
+a new instance (see "lcpp: what hardware measurement found" above).

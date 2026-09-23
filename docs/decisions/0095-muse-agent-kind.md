@@ -10,6 +10,24 @@ English | [日本語](0095-muse-agent-kind.ja.md)
   P2-16 (context-usage gauge) wired and live-verified (2026-09-22): `usedTokens=21747`,
   `windowTokens=1007997` on the wire (`windowSource=recorded`), turn completed in 6.7 s.
   `caps.contextBar` flipped to `true` and guide row updated to ✓.
+  P2-17 (image paste) live-verified (2026-09-22): the host echoed `type="image"
+  mediaType="image/png"` back on the userMessage item and the model read a token that exists
+  only in the PNG's pixels, so `caps.imagePaste` and that guide row are ✓ too. Three rows still
+  carry footnote 11: handoff, the chat bridge, use as the assistant chat.
+  P2-18 (2026-09-22) re-measured the handoff row once the env fix was deployed — the af tools
+  reach the Agent API (`PROPOSE-OK`, and `generate_image` is advertised), so handoff is ✓ and
+  two rows remain: the chat bridge (unverified; its oracle is the member's own Discord channel)
+  and use as the assistant chat, which turns out to be UNBUILT rather than unwatched.
+  P2-20 built that one (`muse exec --json`, one process per turn) and P2-21 (2026-09-22)
+  live-verified it in the two subscription turns it declared beforehand: a real reply, and a
+  second turn resuming through `--session-id` that answered from the first turn's context. The
+  last footnote-11 row and `caps.headlessChat` are ✓. The negative control of that pair also
+  found the chat path taking the catalogue's `-contributor` default — the one route decision 6
+  clamp 8 did not cover — now gated by `muse.SafeDefaultExecModel`, which refuses the turn rather
+  than fall back. P2-22 then measured what an assistant turn can touch (no tool call, no file,
+  twice) and gave the capability table a test that reads it, and P2-23 built the last unbuilt
+  row: the skill picker's native half over `skill/list`, with one turn proving the host expands
+  a `skill` input part.
   The kind is offered in the launch menu behind its two preconditions (the proprietary
   binary installed, a credential stored). What is NOT built is named in the guide's own capability
   table and in the closing section, so an unticked row there means "not built", never "still
@@ -2530,6 +2548,122 @@ sweep also deleted a branch it proved was untestable (a `stat`-size check the po
 check already covered). The Console cap stays OFF and the guide row stays `—`: ticking it is one
 turn with a real image, and this table ticks what was watched.
 
+### P2-17: image paste — ticked, on one turn and two oracles (2026-09-22)
+
+P2-15 built the driver half (`inputParts` reads an attached `.png/.jpg/.gif/.webp` and sends a
+real MSP `image` part) and deliberately left the row `—`: the wire shape was pinned by unit
+tests and a six-arm mutation sweep, but whether the vendor's host ACCEPTS those bytes and shows
+them to the model is not something AF can assert about itself. One subscription turn settled it
+(`TestLiveImagePasteReachesTheModel`, turn completed in 7.9 s).
+
+**Two oracles, and the wire one comes first.** The host echoes attachment METADATA back on the
+userMessage item (`Item.Attachments`; base64 payloads are deliberately not echoed on the view),
+and AF's own store keeps the whole item — so "the host took an image" is answerable without
+reading a word the model wrote:
+
+```
+host echoed an attachment: type="image" mediaType="image/png"
+```
+
+The second arm is the model's reply, and it is admissible here in a way it is not for a clamp:
+the token was rendered INTO the PNG's pixels and appears nowhere in the prompt, so reproducing
+it is positive evidence that the image was rendered for the model. Absence would have proved
+nothing; presence cannot be faked by an echo.
+
+⚠️ **The probe image has to be rendered before the HOME is thrown away.** Pillow lives in the
+member's user site-packages, so rendering after `isolateHomeKeepMuseAuth` makes the test skip
+itself with "No module named PIL" — and a live check that silently stops running is worse than
+one that fails. Caught by running it: the first attempt skipped instead of spending the turn.
+
+Everything else is P2-16's shape: throwaway HOME (so no `~/.claude` rules reach Meta), muse
+config reached by symlink and never copied, auth.json sha256 identical before and after.
+
+With this, `caps.imagePaste` is true and the guide row is ✓. Three rows still carry footnote 11
+— handoff, the chat bridge, use as the assistant chat — and the first of those is waiting on a
+deploy carrying P2-15's 401 fix rather than on anybody looking.
+
+### P2-18: the last three rows — one ticked, one owed to a human, one genuinely unbuilt
+
+The deploy that carried P2-15's env fix landed (the running Agent's binary contains
+`ForwardEnvNames`), so the 401 that blocked the handoff row could be re-measured. One
+subscription turn, in a real AF muse session, asked for two things: which af tools are in its
+list, and a `propose_session_handoff` call.
+
+```
+af_report, generate_image, propose_session_handoff, add_memo
+PROPOSE-OK
+```
+
+**Handoff is ✓.** The proposal was created ("引き継ぎ案を利用者へ提示しました…") — the tool now
+reaches the Agent API instead of answering `401 missing or invalid agent token`. The same line
+closes the other debt P2-15 left: `generate_image` is advertised to a muse session, which it can
+only be when the loopback status GET succeeds (`mcpImageGenAdvertise`), so the environment
+forwarding is confirmed end to end rather than by unit test alone.
+
+**The chat bridge is not AF's to settle from inside the box.** It keys on the notification KIND
+(`answer-ready` / `question` / `permission-request` / `exit` / `session-report`), never on the
+agent kind, and this workspace has Discord connected with all five keys enabled. But both
+observable stores are *drained* on success — the notification outbox and the bridge queue were
+empty before and after — so "delivered" and "never enqueued" look identical from here. The
+honest oracle is the channel itself, which is the member's to look at. The row stays `—` until
+someone does.
+
+🔴 **Use as the assistant chat is UNBUILT, not unwatched, and the ADR said otherwise.** The
+closing section of Phase 2 grouped it with "paths not written per agent at all" — wrong: the
+assistant chat is a per-kind provider (`chatx`'s `claudeChat` / `codexChat` / `opencodeChat` /
+`agyChat` / `cursorChat`, and lcpp has its own `lcppChat`), plus `ASSISTANT_AGENT_KINDS` on the
+Console side. muse is in neither.
+
+⚠️ **Correction (measured the same day, at no quota cost): the sizing in the first version of
+this paragraph was wrong.** It said a `museChat` would have to drive `muse serve` over MSP and
+invent a host lifecycle, "since `--provider echo` cannot back a real assistant and there is no
+other headless one-shot". There is: `muse exec` runs one prompt headlessly on the DEFAULT `meta`
+provider — `--provider echo` is the credential-free mode of that same command, which is why the
+clamp probes use it. It carries what a chat backend needs: `--json` (JSONL events), `--model`,
+`--reasoning-effort`, `--no-foreign-personal-context` (the clamp `serve` lacks), `--approval-mode`,
+`--max-model-steps`, `--no-session-log` — and **`--session-id <uuid>`, which continues an
+existing conversation**: two echo runs with the same id land in one `sessions/…/<id>/session.jsonl`
+carrying both turns. So the shape is the ordinary one — one exec per assistant message, history
+kept by the id, exactly how the other providers work — not a lifecycle project.
+
+### P2-19: the chat bridge, ticked by the only oracle that exists — a person looking
+
+The bridge row could not be settled from inside the container, and P2-18 said so. It was
+settled the way it had to be: Discord turned on for one short turn, and the member reporting
+what appeared in the channel.
+
+```
+t=0s   prompt sent to the muse session
+t=5s   bridge-queue: 1 entry      (enqueued)
+t=8s   bridge-queue: 1 entry
+t=9s   bridge-queue: 0 entries    (taken and delivered)
+```
+
+and in the channel, at 20:40: *"セッションが入力待ちになりました「ADR0095 P2-18 引き継ぎ/ブリッジ
+検証（muse）」（Muse Code）"* with the session link. That is the whole claim of the row — a muse
+session's completion reaches the member's chat — so it is ✓.
+
+**What the AF-side trace is worth, and what it is not.** "The queue grew by one and drained in
+four seconds" is consistent with delivery and inconsistent with nothing having been enqueued,
+but it cannot distinguish delivery from a retry-exhausted drop (both end in an empty queue).
+The channel is the only place the answer exists. That is worth stating because it is the same
+shape as P2-6's lesson about the durable log: when every local store empties itself on success,
+absence is not evidence, and the remaining oracle may be a human one.
+
+⚠️ **One defect found by turning it on**, and it is not muse's: the SAME notification arrives
+several times over for a claude (pane-driven) session — identical body, repeated. The muse turn
+produced exactly one queue entry, so the multiplicity is upstream of the sender, in the
+notification the status path emits. `RecordSessionNotification`'s answer-ready arm fires on
+`state == "idle" && (previous == "working" || previous == "")`, and the `previous == ""` half is
+deliberate — the pane-reading idle heal calls `status.Remove(sid)`, and without that arm a real
+Stop after a removed marker was dropped on the floor. So a second idle hook after a removal
+re-fires the same completion. `notice.PutOnce` exists for exactly this and is not used here.
+Handed to its own session with the reproduction, the candidate key and the regression it must
+not reintroduce.
+
+With this the capability table has one muse row left, and it is not "unwatched": use as the
+assistant chat is unbuilt (P2-18).
+
 ### Phase 2 closed: what is built, what is not, and one thing found next door
 
 Every row of the work-package table is landed (P2-1 … P2-11 and P2-13, plus P2-12 for the MCP
@@ -2619,3 +2753,252 @@ Measured on the wire:
 `ManagedContext` returned `ok=true` with the measured values. The ContextBar path is now
 end-to-end verified. `caps.contextBar` flipped to `true` in `registry.ts` and the guide row
 updated to ✓.
+
+### P2-20: assistant chat — built with `muse exec --json` (ADR 0095 P2-20)
+
+**What was built.**
+
+`chatx/chat_providers_muse.go` — a new `museChat` struct implementing `chatx.ChatProvider.Send`.
+One `muse exec` call per turn; session continuity comes from the session id captured from the
+first event's `stream.id` field and passed via `--session-id` on subsequent turns (measured:
+the second exec carries `Session match: True` in its trace when the same id is provided).
+
+Architecture decisions:
+
+- **`muse exec --json`** rather than `muse serve` over MSP. The assistant chat is a thin Q&A
+  layer; it has no lifecycle to manage across turns, no tool loop, and no pane of its own. `exec`
+  starts and exits once per turn, which is exactly the shape the other CLI-backed providers
+  (codex, cursor, opencode) use. MSP-over-serve would require a resident process per
+  conversation, the same complexity as the managed session driver, for no turn-by-turn gain.
+
+- **`--session-id` for continuity, no `--no-session-log`**. The two flags conflict — muse rejects
+  `--session-id` when `--no-session-log` is also present ("a session id needs retained logging;
+  remove --no-session-log"). Session ids are stored in `ChatConversation.MuseSessionID` and
+  written back to the conversation record after each turn. Isolation from the member's own
+  session list is achieved via `XDG_DATA_HOME` (pointed at an agent-state subdirectory), so the
+  chat sessions do not appear in `muse session list`.
+
+- **Clamps applied at every exec.** `muse.EnsureClamps()` (same contract as the managed driver's
+  `Resume`) writes `settings.json` before the binary is invoked, preventing a member who edits
+  settings between turns from running an unclamped assistant. `muse.ChildEnv()` (new exported
+  wrapper around the package-private `childEnv`) supplies the env-route clamps:
+  `MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=1`, the six observer silencing vars, and
+  `MUSE_NO_AUTO_UPDATE=1`. `--no-foreign-personal-context` (exec-only flag, not on serve) adds
+  the belt-and-braces at the argv level.
+
+- **Prompt via `--prompt-file`**. The persona preamble and prompt are written to a temp file
+  (deleted on return). This avoids argv-length limits for long persona texts and matches the
+  pattern the managed driver uses for context injection.
+
+- **Security posture flags**: `--disable-shell`, `--disable-write`, `--disable-web-tools`,
+  `--approval-mode never`, `--approval-judge off`. The assistant chat is Q&A only; it must not
+  mutate the host or browse the web.
+
+**Wire format (measured on Muse Code 1.3.0-R3401.1 with `--provider echo` and a real model).**
+
+Each line of `--json` output is a JSON object:
+
+```json
+{"stream":{"kind":"session","id":"<uuid>"},...,"payload_type":"run.output.delta","payload":{"text":"…"}}
+{"stream":{"kind":"session","id":"<uuid>"},...,"payload_type":"run.terminal.completed","payload":{"terminal":"completed","text":"<full reply>","reason":null}}
+```
+
+The session id is identical across all events of one exec. `run.terminal.completed` with
+`terminal != "completed"` carries the failure reason. The `payload.text` on the terminal event
+is the authoritative complete reply; delta accumulation is a fallback.
+
+**Console side.** `muse` added to `ASSISTANT_AGENT_KINDS` in `console/src/lib/settings.ts`.
+`caps.headlessChat` is left `false` until live-verified; the guide table row stays `—¹¹` and
+footnote ¹¹ updated to describe the "built but not yet live-verified" state.
+`chatx/chat_providers_muse_live_test.go` (see below) is the gate: run it, then flip both.
+
+**Exports added to `internal/agents/muse/program.go`:**
+
+- `ChildEnv(base []string) []string` — thin wrapper over `childEnv`, needed because `chatx` is a
+  sibling package and the exec runs outside the `muse` package.
+- `HasCredential() bool` — thin wrapper over `readCredential().Present`, used by
+  `museAvailable()` in the provider (the availability check must not spend a network call).
+
+**No live turn was spent on P2-20.** The parent task's instruction explicitly listed this as
+subscription-gated work requiring user consent before running a real turn against the Meta API.
+The provider is implemented and wired; end-to-end verification is deferred until the member
+approves the turn count.
+
+`chatx/chat_providers_muse_live_test.go` holds the `MUSE_LIVE=1`-gated skeleton: turn 1 checks
+that a real reply arrives and `MuseSessionID` is captured; turn 2 checks that `--session-id`
+continuity works (the model echoes back a word planted in turn 1); turn 3 checks that
+`--disable-shell/write` prevents filesystem writes. When the live test passes, `caps.headlessChat`
+flips to `true` in `registry.ts` and the guide row flips to ✓.
+
+### P2-21: assistant chat — live-verified, and the model gate the negative control exposed (2026-09-22)
+
+**Two subscription turns, declared before they were spent, and two is what it cost.** Both ran
+in one `TestMuseChatLive` (8.90 s wall), against a throwaway `HOME` with `~/.config/muse`
+symlinked — never copied — and `auth.json`'s sha256 identical before and after.
+
+| | turn 1 — negative control | turn 2 — the product path |
+|---|---|---|
+| argv | P2-20's, **no `--model`** | `museChat.Send`, `--session-id` + `--model` |
+| reply | `"PONG"` | `"PONG"` (recalled from turn 1) |
+| session | id captured from `stream.id` | same id, unchanged |
+| store recorded | **`muse-spark-1.3-contributor`** | **`muse-spark-1.3`** |
+
+So the row the guide has been waiting on is answered: a real reply arrives, and a second turn
+through `--session-id` answers *from the first turn's context* — the model was asked which word
+it had been told to say, not asked to repeat itself.
+
+**🔥 The oracle is the session store, not the reply.** `muse exec` writes its durable projection
+under `museChatDataHome()/muse/sessions/.msp-view-v1/<sid>/*.json`, and the `model` / `modelId`
+members there are the host's own record of what ran. A model asked which model it is answers
+from its training data. The live test compares the SET of ids in that store before and after
+turn 2 rather than reading one path, because the projection format is the vendor's and is not a
+contract AF can pin.
+
+**What the negative control found.** P2-20 shipped a chat path with no model resolution at all:
+`chatModelFor` returns `c.Model` for a muse conversation (`chat.go:478`), `recommendedAssistantModel`
+has no muse case (`chat.go:426`), so a conversation the member never pinned a model on carried
+`""` and the exec went out with no `--model`. Measured at zero quota through `model/list`, the
+account's catalogue is four rows and `isDefault: true` sits on `muse-spark-1.3-contributor`,
+whose description is the product-improvement sentence — and turn 1 confirms the host really does
+take it. That is decision 6 clamp 8 failing on the one route the managed driver does not cover,
+and it contradicted a sentence already published in the guide (footnote 14: "Agent Fleet does not
+pick it for you").
+
+**The fix, and why it refuses rather than falls back.** `muse.SafeDefaultExecModel()` resolves
+the catalogue's first non-data-sharing row for a caller that holds no MSP client (the managed
+`SafeDefaultModel` needs one; `muse exec` has none). `museChatModel` uses it when the member
+pinned nothing, and when the catalogue cannot be read at all it **refuses the turn**: returning
+`""` there is exactly the bug, since an exec with no `--model` is the contributor default. A
+member who wants a contributor model still picks one — both twins stay in the picker.
+
+**Console.** `caps.headlessChat` is `true`. `recommendedModelId` gained a muse case so the
+Settings › AI row says "recommended (currently: muse-spark-1.3)" instead of "Default", which is
+what the Agent will actually run. Its first draft was wrong and the new dom test caught it: the
+options list opens with the `""` (Default) row, and `""` has no `-contributor` suffix, so the
+finder returned it.
+
+**Guide.** The muse cell of "Usable as the assistant chat" is `✓¹¹` in both languages. Footnote
+11 keeps its first half — the on-demand install and the sign-in, now said of the assistant's
+agent picker as well as the launch menu — and loses the "not yet live-verified" paragraph;
+keeping the number leaves footnotes 12-18 alone. Footnote 14 gained the assistant chat's half of
+the contributor rule.
+
+**Tests.** `chat_providers_muse_test.go` is new: the JSONL parser (terminal text beats deltas, a
+failed terminal surfaces, the run stream's id is not the session's) and the model gate. The gate
+test was mutation-checked — replacing the refusal with `return "", nil` fails it, and the file's
+sha256 was compared after the revert. `AiModelRow.dom.test.tsx` gained two muse cases, with the
+mock catalogue ordered contributor-FIRST on purpose so that a recommendation which merely took
+the first row would not pass.
+
+**What this did not measure.**
+
+- The third turn of P2-20's skeleton (that `--disable-write` stops a chat turn writing files) was
+  dropped, not deferred-and-forgotten: it would cost a turn, and P2-6 already measured that under
+  the sandbox waiver those flags change nothing over `serve`. Whether they bind over `exec` is
+  unmeasured, and the assistant chat should not be assumed to be write-proof.
+- `muse exec` reports no token counts (only `serve`'s `session/tokenUsage` does), so an assistant
+  chat turn records the requested model and no totals — the usage chip does not move for it.
+- The capability table is still cross-checked against the code for the fork rows and the
+  permission-skip rows only. A cap reverted in `registry.ts` still passes every Console test.
+
+### P2-22: what the assistant chat can touch, and the table that now checks itself (2026-09-22)
+
+P2-21 closed the row and left two things open. Both are closed here — the first with two declared
+subscription turns, the second with no turns at all.
+
+**Do `--disable-shell` and `--disable-write` bind over `muse exec`?**
+
+The free half first, and it is a trap worth naming. Run the chat provider's own argv under
+`--provider echo` and read the session log's `model_request_configured` record:
+
+| arm | `web_search` | `bash` / `bash_input` | `write_file` / `edit_file` |
+|---|---|---|---|
+| the product's argv (`--disable-shell --disable-write --disable-web-tools`) | **gone** | present | present |
+| no flags (control) | present | present | present |
+
+`toolset.mode` is `all` and `toolset.source` is `default` in both arms. So `--disable-web-tools`
+filters that list and the other two do not — which reads like "the clamps are decorative", and
+🔥 **that reading is wrong**. Two live turns through `museChat.Send`, the second one insisting
+("do not decide in advance whether your tools work; actually invoke write_file, then report the
+error verbatim"), both ended the same way:
+
+- no file at the target path, in a throwaway directory;
+- **no tool call at all** — the session log's `tool_name` and `tool_call_id` are empty and the
+  only task kinds are `model.meta.response` and `session_name.allocate`;
+- the model itself said writing and shell were disabled for the session.
+
+So the record above is not a readout of what the model is offered, and `active_tools` must not be
+used as one. What is measured is narrower than "the clamp is enforced" and it is what the guide
+now says: an assistant chat turn made no tool call and wrote nothing, twice. What is still
+**unmeasured** is a runtime refusal, because nothing ever reached the runtime — "enforced" and
+"instructed" remain indistinguishable from here, and a future release that stops telling the
+model the tools are off would be caught only by `TestMuseChatLiveWriteClamp` /
+`TestMuseChatLiveWriteClampForced`, which is why both live on in the repo rather than in a log.
+
+**The capability table now checks itself** (`console/src/agents/guideTable.test.ts`).
+
+P2-21 recorded that reverting muse's `headlessChat` passed all 318 Console test files. It no
+longer does: the new test parses the table out of `guide/ref/agents.md` and compares seven rows
+against `registry.ts` caps for all eleven kinds, asserts the English and Japanese tables carry
+cell-for-cell identical marks, and asserts every row of the table is either mapped or listed in
+`UNMAPPED_ROWS` with a reason — so a renamed row cannot quietly leave the check. Mutation-checked:
+`headlessChat: false` turns it red.
+
+🔴 **It found drift outside muse on its first run.** `lcpp`'s cells for "Model choice at launch"
+and "Context usage gauge" are `—`, while `caps.model` and `caps.contextBar` are both `true` in
+`registry.ts` with reasons written beside them (`DynamicModel`; ADR 0093 decision 8, "WireLive now
+reports it, WindowSource=recorded"). One of the two is wrong and it is ADR 0093's to settle, so
+those rows are named in `UNMAPPED_ROWS` rather than pinned to either answer. Three further rows
+are unmapped because the row and the cap genuinely differ in meaning — "Read-only history while
+stopped" (cursor's `—` is qualified by footnote 3), "Plan mode" (the cap is the TUI mode-cycle
+key) and "Skill / command picker" (the row is NATIVE enumeration; the cap is also true for the
+foreign-injection kinds).
+
+### P2-23: the skill picker's native half — the last unbuilt row (2026-09-22)
+
+Footnote 4 named muse among the kinds with "no verified mechanism", with the honest qualifier
+that muse's protocol carries one and AF had not built it. It is built.
+
+**Enumeration is free, and that is not a detail.** `skill/list` is a query, and `session/start`
+accepts a FAKE credential (the same property gate B1 found), so the whole read side was measured
+without touching the subscription. On this account a session answers seven rows: five bundled
+(`create-skill`, `doctor`, `grill`, `manage-settings`, `plan`), a plugin skill in BOTH spellings
+(`threejs` and `threejs:threejs` — the wire says a plugin contributes its bare-name winner and
+its qualified form), and, once a working copy has one, the project skill under `.agents/skills/`
+with `source: project`. The clamped foreign-reader skills (`resume-claude` and friends) are
+absent, which is the settings writer's work showing up on the wire.
+
+The two spellings are collapsed by `(pluginId, displayName)` rather than by splitting on ":" —
+a qualified row whose bare twin is missing is kept, because a skill whose bare name ANOTHER
+plugin won has no other way in, and dropping it would hide a skill rather than a duplicate.
+
+**🔴 Invocation needed a real turn, and it is why `skillPart` exists.** Over MSP a leading slash
+is text: the typed dispatch that expands `/plan` is the TUI's own, and the host expands only a
+`skill` input part whose selector it resolves. So the driver rewrites a leading `/selector` into
+that part — but only when the selector is one `skill/list` actually returned, so that a member
+whose message opens with "/tmp/notes.md is stale" keeps their sentence.
+
+One subscription turn proves the other end. A project skill was planted whose body says "reply
+with exactly the word PLUM-ORBIT"; the session was sent `/af-probe`, exactly what the picker
+inserts. The transcript's assistant turn is `"PLUM-ORBIT"` — a word that exists nowhere but in
+that file, so the host expanded the skill rather than being handed its name. `auth.json`'s
+sha256 is unchanged.
+
+**What the endpoint does now.** `GET /sessions/{name}/skills` asks the live host for muse and maps
+the wire's scope onto the picker's three sources (`bundled` and `plugin` both become "cli", which
+is what that column means to a reader, and an unknown future scope lands there too). When the
+native list is non-empty, `.agents/skills` leaves the foreign set — muse resolves that convention
+itself, and offering both would give one skill a native row and an injection row. When it is
+empty (no live host), everything falls back to exactly what muse had before, which is the case
+that matters for a stopped session.
+
+⚠️ **A mutation test that passed, and what it taught.** The first version of the endpoint test
+could not see the convention exclusion at all: the fixture's skill had the same name in its
+frontmatter as the host's selector, so the name-dedupe that runs anyway hid the difference, and
+deleting `nativeConvs` kept the test green. The fixture now carries a frontmatter name the
+native list does not use (`importer-legacy`), and the mutation fails it. A green mutation is the
+test's problem, not the mutation's.
+
+**Not built, deliberately.** `skill/changed` is not subscribed, because there is no cache to
+invalidate: the picker asks the running host each time it opens, which is a round trip to a
+process that already exists. A cache is what would make that notification necessary.

@@ -161,7 +161,10 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
 - **Cards** — click the card to **enlarge** (← / → move through the folder, and "3 / 12" tells you
   where you are; **on a phone, swipe left and right** to move — only at fit, because while you are
   zoomed in a drag pans the picture); the button in the corner **opens it in the file pane**. Just
-  looking never costs you a pane.
+  looking never costs you a pane. **Right-click a card** (or press the Menu key) for copy path /
+  copy name, rename and delete — on a folder, also "Open in another pane" — and, in a session's
+  folder, a jump to the session that generated the pictures
+  ([menus](badges-and-menus.md#cards-in-the-image-gallery)).
 - **Refresh** — on open, on returning to the tab, and every 20 seconds while a session is running.
   New arrivals get the same highlight as the file tree, so you see a generation land. "Refresh" in
   the header re-reads at any time.
@@ -186,7 +189,9 @@ To see **all of them at once**, an **"Open generated images"** button opens the 
 four places: the **minimap's button row**, the leader key **`g g`** (and the command palette), the
 **Files** section header in the left pane, and the **image-generation pane's header**. It opens on
 a page of cards: one folder per session, plus the studio's own output (`console`). A session's
-folder is labelled with **the session's name and its image count**, not its internal id.
+folder is labelled with **the session's name and its image count**, not its internal id. Inside
+such a folder the breadcrumb row carries a button with that session's name, and pressing it opens
+the conversation the pictures came from (it is absent once the session is gone).
 
 ## Image generation
 
@@ -217,7 +222,8 @@ pane per workspace — opening it again focuses the one you have.
   wants a tag list or sentences, the prefix that dialect usually opens with (offered as a chip
   — nothing is ever written into your prompt on its own), whether a negative prompt reaches it
   at all, and the step and cfg ranges worth staying inside. The families the catalogue knows
-  run from SD 1.5 and SDXL to FLUX, Anima and Krea 2, and **the default size follows the family**
+  run from SD 1.5 and SDXL to FLUX, Anima and Krea 2, the instruction-edit models Qwen-Image-Edit
+  (2509 and 2511) and Qwen-Image 2.1, and **the default size follows the family**
   — SD 1.5 starts at 512 rather than the megapixel square the others share, because asking it
   for more gives you a doubled subject, not an error.
 - **Fields a family does not read are disabled, with the reason on them.** `flux1` and
@@ -249,12 +255,22 @@ pane per workspace — opening it again focuses the one you have.
 - **Operation** under Advanced switches **Generate** to **Edit** or **Inpaint**. An edit takes
   **reference images** (a path in the workspace, or a file dropped onto the field) and a slider,
   **"How much of the input to change"**, from 0 to 1; the size fields step aside, because on an
-  edit the input's own dimensions win.
+  edit the input's own dimensions win. **Inpaint** adds a **"Mask (white is repainted)"** field
+  that takes one file the same way (a path, or a file dropped onto it); until a mask is set,
+  neither the trial nor the batch can be sent — **"Inpaint needs a mask image"**.
 - **How many reference pictures you may add depends on the model.** The field's heading counts
   them ("2 of 2"), and at the ceiling the add field itself goes away. The instruction-edit models
   — the kind you ask in words, "change the sign to CLOSED" — read **three**: the **first is the
   picture being redrawn** and the **rest are things to bring into it** ("put the plant from
   picture 2 and the duck from picture 3 on the table"). Every other model reads one. On a model with no slider, how much changes is decided by the instruction itself.
+  These models offer **Edit** and **Inpaint** only — there is no Generate, since they cannot work
+  without a picture — so choosing one while the operation is set to Generate switches it and says
+  so (**"… does not support the previous operation — switched to Edit"**). The whole picture is
+  edited — it is scaled to the model's size, never cropped — and a mask of another size is
+  stretched over it, so it marks the same region either way. An edited picture's
+  properties record the prompt, the negative and the size, as a generated one's do. **Qwen-Image 2.1** does both:
+  it generates from a prompt alone, with the size fields, and edits by instruction with up to
+  **ten** reference pictures.
 
 **While it runs**
 
@@ -263,7 +279,9 @@ against the usual duration — it stops short of the end rather than claiming a 
 has seen), and roughly how long is left. **Pause**, **resume**, **skip the current picture** and
 **abort** all act on the group; the ✕ on a line cancels that one picture. Pausing everything
 still lets trials through — that is what pausing is for. A batch left paused long enough lets the
-engine go to sleep, and the row says so.
+engine go to sleep, and the row says so. The row also names the phase the current picture is in
+— **starting the engine**, **uploading**, **sampling**, **fetching** — with its own seconds, and a
+picture that had to wait for the engine to start still gets its full time to sample afterwards.
 
 The pane polls only while something is unfinished, and stops while the tab is in the background.
 

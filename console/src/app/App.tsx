@@ -57,7 +57,7 @@ import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 import { TenantDialog } from "../features/settings/TenantDialog.tsx";
 import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
 import { StartHost } from "../features/repos/StartHost.tsx";
-import { startNotificationPolling, useNotificationStore, wireNotificationReadOnActiveSession } from "../features/notifications/store.ts";
+import { startNotificationPolling, useNotificationStore, wireNotificationReadOnVisibleSessions } from "../features/notifications/store.ts";
 import { WhichKey } from "../features/keys/WhichKey.tsx";
 import { CommandPalette } from "../features/keys/CommandPalette.tsx";
 import { CheatSheet } from "../features/keys/CheatSheet.tsx";
@@ -313,7 +313,7 @@ export function App() {
     const stopRepoJobsPoll = startRepoJobsPolling();
     const stopChatPoll = startChatPolling();
     const stopNotificationPoll = startNotificationPolling();
-    const unNotificationRead = wireNotificationReadOnActiveSession();
+    const unNotificationRead = wireNotificationReadOnVisibleSessions();
     void (async () => {
       await useTenantStore.getState().init();
       await hydrateUIPrefs();

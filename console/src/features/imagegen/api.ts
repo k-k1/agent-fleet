@@ -16,6 +16,19 @@ import type {
   ImagegenStatus,
   JobsResponse,
   QueueOp,
+  DraftLogPage,
+  HistoryPage,
+  Knowledge,
+  KnowledgeAdd,
+  KnowledgeScope,
+  PressMode,
+  StudioCreate,
+  StudioList,
+  StudioPatch,
+  StudioPatchResult,
+  StudioPersona,
+  StudioPressResult,
+  StudioWire,
 } from "./wire.ts";
 import type { ApiError } from "../../core/api/client.ts";
 
@@ -45,3 +58,60 @@ export const imagegenQueueOp = (op: QueueOp): Promise<{ error?: ApiError }> =>
  */
 export const imageProperties = (path: string): Promise<ImageProperties> =>
   api(`api/imagegen/props?path=${encodeURIComponent(path)}`);
+
+// --- ADR 0100: the image studio -------------------------------------------------------------
+
+const studioPath = (id: string, rest = "") => `api/imagegen/studios/${encodeURIComponent(id)}${rest}`;
+
+export const listStudios = (): Promise<StudioList> => api("api/imagegen/studios");
+
+export const createStudio = (body: StudioCreate): Promise<StudioWire> => apiJSON("api/imagegen/studios", "POST", body);
+
+export const getStudio = (id: string): Promise<StudioWire> => api(studioPath(id));
+
+/** Merge-patch the studio. `ifMatch` is the `updated_at` the pane last read: a write that lost
+ *  a race is refused rather than silently overwriting the agent's (or the member's) edit. */
+export const patchStudio = (id: string, body: StudioPatch, ifMatch: string): Promise<StudioPatchResult> =>
+  api(studioPath(id), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "If-Match": ifMatch },
+    body: JSON.stringify(body),
+  });
+
+/** Deletes the draft and its versions; the pictures stay. */
+export const deleteStudio = (id: string): Promise<Response> => raw(studioPath(id), { method: "DELETE" });
+
+/** Attach a session, or detach with an empty one. */
+export const bindStudio = (id: string, session: string): Promise<StudioWire> =>
+  apiJSON(studioPath(id, "/bind"), "POST", { session });
+
+export const pressStudio = (id: string, mode: PressMode): Promise<StudioPressResult> =>
+  apiJSON(studioPath(id, "/press"), "POST", { mode });
+
+export const rewindStudio = (id: string, to: number): Promise<StudioWire> =>
+  apiJSON(studioPath(id, "/rewind"), "POST", { to });
+
+export const studioDraftLog = (id: string, before?: number, limit?: number): Promise<DraftLogPage> => {
+  const q = new URLSearchParams();
+  if (before) q.set("before", String(before));
+  if (limit) q.set("limit", String(limit));
+  const qs = q.toString();
+  return api(studioPath(id, "/draft-log") + (qs ? `?${qs}` : ""));
+};
+
+export const studioPersona = (id: string): Promise<StudioPersona> => api(studioPath(id, "/persona"));
+
+export const imagegenHistory = (opts: { studio?: string; before?: string; limit?: number } = {}): Promise<HistoryPage> => {
+  const q = new URLSearchParams();
+  if (opts.studio) q.set("studio", opts.studio);
+  if (opts.before) q.set("before", opts.before);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return api("api/imagegen/history" + (qs ? `?${qs}` : ""));
+};
+
+export const imagegenKnowledge = (scope: KnowledgeScope, key: string): Promise<Knowledge> =>
+  api(`api/imagegen/knowledge?scope=${encodeURIComponent(scope)}&key=${encodeURIComponent(key)}`);
+
+export const addImagegenKnowledge = (body: KnowledgeAdd): Promise<{ error?: ApiError }> =>
+  apiJSON("api/imagegen/knowledge", "POST", body);
