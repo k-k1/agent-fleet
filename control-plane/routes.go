@@ -487,7 +487,7 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 // credential that does not exist and a second copy of the family dispatch. The gateway is not
 // touched — cancel reaches ComfyUI over the pass-through the Agent already uses.
 //
-// All seven are plain REST. The queue is what makes that possible (decision 2): enqueueing
+// All of them are plain REST. The queue is what makes that possible (decision 2): enqueueing
 // answers at once and the browser polls, so nothing here waits out a cold start behind the
 // ALB's 60-second idle timeout the way the blocking `POST /imagegen/generate` would. That
 // route stays off this list on purpose — it is the MCP tool's door, not the pane's.
