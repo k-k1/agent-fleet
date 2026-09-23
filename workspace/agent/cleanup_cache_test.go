@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -20,6 +22,10 @@ func cacheTestHome(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", "")
+	// A real home always has the session store; the scan refuses to judge without one.
+	if err := os.MkdirAll(session.MetaDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	invalidateCleanupUsage()
 	t.Cleanup(invalidateCleanupUsage)
 	return home
@@ -446,5 +452,68 @@ func TestPurgeWaitsForAnUnfinishedRestore(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/cleanup/archives/"+id, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("purge after the restore finished: status %d", rec.Code)
+	}
+}
+
+// TestRestoreThatChangedNothingLeavesNoMark (seventh review M1): a restore that can never
+// succeed — here, no hard links — must not leave its archive impossible to purge.
+func TestRestoreThatChangedNothingLeavesNoMark(t *testing.T) {
+	cacheTestHome(t)
+	id, _ := archivedSession(t, "srest11")
+	linkFile = func(string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
+	t.Cleanup(func() { linkFile = os.Link })
+	for i := 0; i < 3; i++ {
+		if _, err := restoreCleanupArchive(id); !errors.Is(err, errRestoreStopped) {
+			t.Fatalf("attempt %d: err = %v, want errRestoreStopped", i+1, err)
+		}
+	}
+	if _, err := os.Lstat(restoringMarker(id)); !os.IsNotExist(err) {
+		t.Fatalf("a restore that changed nothing left its mark: %v", err)
+	}
+	if err := purgeCleanupArchive(id); err != nil {
+		t.Fatalf("purge after restores that changed nothing: %v", err)
+	}
+}
+
+// TestStaleMarkDoesNotBlockPurge (seventh review M1): a mark whose half-done state is gone —
+// the transcript an earlier attempt placed was removed since — lets the purge through.
+func TestStaleMarkDoesNotBlockPurge(t *testing.T) {
+	cacheTestHome(t)
+	id, _ := archivedSession(t, "srest12")
+	if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := purgeCleanupArchive(id); err != nil {
+		t.Fatalf("stale mark blocked the purge: %v", err)
+	}
+	if _, err := os.Lstat(restoringMarker(id)); !os.IsNotExist(err) {
+		t.Fatal("the purge left the mark behind")
+	}
+	// The positive control: with the transcript back and no meta, the same mark blocks.
+	id2, _ := archivedSession(t, "srest13")
+	if err := os.WriteFile(restoringMarker(id2), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "srest13.jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := purgeCleanupArchive(id2); !errors.Is(err, errRestoreIncomplete) {
+		t.Fatalf("half-done restore: err = %v, want errRestoreIncomplete", err)
+	}
+}
+
+// TestStoppedRestoreIsA409 (seventh review L4): a restore that stopped part way is not "no
+// such archive" — it answers 409 restore_incomplete, which the Console explains.
+func TestStoppedRestoreIsA409(t *testing.T) {
+	cacheTestHome(t)
+	id, _ := archivedSession(t, "srest14")
+	linkFile = func(string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
+	t.Cleanup(func() { linkFile = os.Link })
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/cleanup/archives/"+id+"/restore", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "restore_incomplete") {
+		t.Fatalf("status %d body %s, want 409 restore_incomplete", rec.Code, rec.Body)
 	}
 }

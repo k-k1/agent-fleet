@@ -13,6 +13,7 @@ let writes: { url: string; method: string }[] = [];
 
 let archives: unknown[] = [];
 let purgeStatus = 200;
+let restoreStatus = 200;
 
 const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
   const u = String(url);
@@ -23,7 +24,12 @@ const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
     : u.includes("cleanup/archives")
       ? { archives }
       : {};
-  const status = method === "DELETE" && u.includes("cleanup/archives/") ? purgeStatus : 200;
+  const status =
+    method === "DELETE" && u.includes("cleanup/archives/")
+      ? purgeStatus
+      : method === "POST" && u.includes("/restore")
+        ? restoreStatus
+        : 200;
   return {
     ok: status < 400,
     status,
@@ -93,6 +99,7 @@ beforeEach(() => {
   writes = [];
   archives = [];
   purgeStatus = 200;
+  restoreStatus = 200;
   fetchMock.mockClear();
 });
 afterEach(() => {
@@ -189,5 +196,15 @@ describe("CleanupModal cache section", () => {
     const buttons = [...document.querySelectorAll<HTMLButtonElement>(".ui-confirm-actions button")];
     await click(buttons[1]);
     expect(document.body.textContent).toContain("復元が途中で止まっています");
+  });
+
+  it("says a restore that stopped part way can simply be run again", async () => {
+    candidates = [];
+    archives = [{ id: "20260901-000000-y", at: "2026-09-01T00:00:00Z", reason: "delete_session", sessions: [{ name: "y" }] }];
+    restoreStatus = 409;
+    await render();
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
+    await click(document.querySelector<HTMLButtonElement>(".clean-arch-actions button"));
+    expect(document.body.textContent).toContain("もう一度「復元」すると続きから終わります");
   });
 });

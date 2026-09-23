@@ -1210,6 +1210,7 @@ export const admin = {
   "clean.purge": "完全に削除",
   "clean.restored": "復元しました。",
   "clean.restore_failed": "復元できませんでした。",
+  "clean.restore_incomplete": "復元が途中で止まりました。戻した分はそのままです。もう一度「復元」すると続きから終わります。",
   "clean.purge_title": "ごみ箱のアーカイブを完全に削除しますか？",
   "clean.purge_body": "このアーカイブは元に戻せなくなります（容量を回収します）。",
   "clean.purge_do": "完全に削除",

@@ -29,6 +29,10 @@ func newCacheFixture(t *testing.T) *cacheFixture {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", "")
+	// A real home always has the session store; the scan refuses to judge without one.
+	if err := os.MkdirAll(session.MetaDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	return &cacheFixture{home: home, old: time.Now().Add(-48 * time.Hour)}
 }
 
@@ -658,4 +662,114 @@ func TestCacheReasonOrder(t *testing.T) {
 			t.Errorf("cacheReason(%+v) = %s, want %s", c.found, got, c.want)
 		}
 	}
+}
+
+// TestCacheOrphansKeepForkAncestors (seventh review M2): a fork's history carries its
+// ancestors' pasted paths, so their directories stay while any descendant lives — through
+// ForkSids for the whole chain, and through a claude fork's ForkFrom for forks made before it.
+func TestCacheOrphansKeepForkAncestors(t *testing.T) {
+	f := newCacheFixture(t)
+	grand, parent := metaFor("sgrand1"), metaFor("sparent")
+	child := metaFor("schild1")
+	child.ForkSids = forkSids(metaFor("sparent")) // as if parent had no ancestry
+	child.ForkSids = append([]string{sid(grand)}, child.ForkSids...)
+	session.WriteMeta(child)
+	legacy := metaFor("slegacy")
+	legacyParent := metaFor("slparnt")
+	legacy.ForkFrom = sid(legacyParent) // claude: the source slot's sid
+	session.WriteMeta(legacy)
+	gone := metaFor("sgone01")
+	for _, m := range []session.Meta{grand, parent, legacyParent, gone} {
+		f.dir(t, CacheFeaturePasted, sid(m), 1)
+	}
+	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := orphanNames(got); len(g) != 1 || g[0] != sid(gone) {
+		t.Fatalf("orphans = %v, want only the unrelated %s", g, sid(gone))
+	}
+}
+
+// TestForkSidsCarryTheWholeChain: a fork of a fork records both ancestors, nearest last.
+func TestForkSidsCarryTheWholeChain(t *testing.T) {
+	a := metaFor("sa00001")
+	b := metaFor("sb00001")
+	b.ForkSids = forkSids(a)
+	got := forkSids(b)
+	if len(got) != 2 || got[0] != sid(a) || got[1] != sid(b) {
+		t.Fatalf("forkSids = %v, want [%s %s]", got, sid(a), sid(b))
+	}
+	if len(b.ForkSids) != 1 {
+		t.Fatal("forkSids modified its source's slice")
+	}
+}
+
+// TestCacheOrphansNeedTheStores (seventh review M3): a missing session store makes every
+// session look gone, a missing chat store every chat — so neither is judged without it.
+func TestCacheOrphansNeedTheStores(t *testing.T) {
+	t.Run("session store missing: refused", func(t *testing.T) {
+		f := newCacheFixture(t)
+		f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
+		if err := os.Remove(session.MetaDir()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil); !errors.Is(err, ErrCacheScanUnsafe) {
+			t.Fatalf("err = %v, want ErrCacheScanUnsafe", err)
+		}
+	})
+	t.Run("chat store missing: chats kept, sessions still judged", func(t *testing.T) {
+		f := newCacheFixture(t)
+		f.dir(t, CacheFeaturePasted, "chat-"+chatx.RandUUID(), 1)
+		dead := sid(metaFor("sgone01"))
+		f.dir(t, CacheFeaturePasted, dead, 1)
+		got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g := orphanNames(got); len(g) != 1 || g[0] != dead {
+			t.Fatalf("orphans = %v, want only %s — no chat judged without a chat store", g, dead)
+		}
+	})
+	t.Run("conversation file unreadable: kept", func(t *testing.T) {
+		f := newCacheFixture(t)
+		id := chatx.RandUUID()
+		if err := os.MkdirAll(chatx.ChatDir(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(chatx.ConvPath(id), []byte("not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.dir(t, CacheFeaturePasted, "chat-"+id, 1)
+		gone := "chat-" + chatx.RandUUID()
+		f.dir(t, CacheFeaturePasted, gone, 1)
+		got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g := orphanNames(got); len(g) != 1 || g[0] != gone {
+			t.Fatalf("orphans = %v, want only %s — an unparseable conversation is still one", g, gone)
+		}
+	})
+	t.Run("conversation cannot be looked at: kept", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a 000 directory anyway")
+		}
+		f := newCacheFixture(t)
+		if err := os.MkdirAll(chatx.ChatDir(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		f.dir(t, CacheFeaturePasted, "chat-"+chatx.RandUUID(), 1)
+		if err := os.Chmod(chatx.ChatDir(), 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(chatx.ChatDir(), 0o700) })
+		got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Dirs) != 0 {
+			t.Fatalf("orphans = %v — a lookup that failed is not proof the conversation is gone", orphanNames(got))
+		}
+	})
 }

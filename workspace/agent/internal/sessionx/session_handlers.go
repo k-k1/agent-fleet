@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1226,6 +1227,7 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
+		ForkSids: forkSids(src),
 		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the
 		// source's origin would blend it into "sessions a human opened" and hide the spend
 		// handoffs add. The originating conversation IS inherited from the parent, so a
@@ -1597,4 +1599,11 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	recordFleetGraphBirth(newMeta)
 	handOverSpawnLineage(m.Name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
+}
+
+// forkSids is the ancestry a fork of src records: src's own, then src. The whole chain, not
+// just the parent — a fork of a fork carries the grandparent's pasted paths too
+// (session.Meta.ForkSids).
+func forkSids(src session.Meta) []string {
+	return append(slices.Clone(src.ForkSids), session.UUID(src.Dir, src.Name))
 }

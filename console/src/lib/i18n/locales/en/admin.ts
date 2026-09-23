@@ -1219,6 +1219,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.purge": "Delete permanently",
   "clean.restored": "Restored.",
   "clean.restore_failed": "Couldn't restore.",
+  "clean.restore_incomplete": "The restore stopped part way. What came back stays; restore again to finish it.",
   "clean.purge_title": "Permanently delete this trash archive?",
   "clean.purge_body": "This archive can no longer be restored (reclaims its space).",
   "clean.purge_do": "Delete permanently",

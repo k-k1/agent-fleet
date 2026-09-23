@@ -192,12 +192,51 @@ var errRestoreIncomplete = errors.New("a restore of this archive did not finish;
 // Written before anything is placed and removed only when every session is back.
 func restoringMarker(id string) string { return filepath.Join(cleanupStoreDir(), id+".restoring") }
 
+// errRestoreStopped wraps a restore that stopped part way: it reports what failed, promises
+// nothing was undone, and that restoring again is safe and finishes the job.
+var errRestoreStopped = errors.New("the restore stopped part way; nothing was undone, and restoring again is safe")
+
+// restoreLeftHalfDone reports whether any session in archive id is half back: a transcript at
+// its destination with no meta. Only that state needs the archive kept — a session whose meta
+// is back is reachable by it, and one with neither is untouched. An archive that cannot be
+// read counts as half done, which errs toward keeping it.
+func restoreLeftHalfDone(id string) bool {
+	var m cleanupManifest
+	b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json"))
+	if err != nil || json.Unmarshal(b, &m) != nil {
+		if m, _, err = readCleanupArchive(id); err != nil {
+			return true
+		}
+	}
+	for _, s := range m.Sessions {
+		var meta session.Meta
+		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
+			continue
+		}
+		if _, ok := session.ReadMeta(meta.Name); ok {
+			continue
+		}
+		for _, p := range s.JSONLPaths {
+			if _, err := os.Lstat(p); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func purgeCleanupArchive(id string) error {
 	if filepath.Base(id) != id || strings.Contains(id, "..") {
 		return fmt.Errorf("invalid archive id")
 	}
+	// A mark alone does not block: only a session actually left half back does. So a mark
+	// that outlived its reason (an earlier attempt placed a transcript, and the session was
+	// since deleted again) never makes the archive impossible to purge.
 	if _, err := os.Lstat(restoringMarker(id)); err == nil {
-		return errRestoreIncomplete
+		if restoreLeftHalfDone(id) {
+			return errRestoreIncomplete
+		}
+		_ = os.Remove(restoringMarker(id))
 	}
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
 	return os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
@@ -232,12 +271,15 @@ var linkFile = os.Link
 // fallback: a rename would silently replace a transcript that appeared after the last check,
 // so where a link cannot be made the restore fails and says why (EFS and local disks have
 // hard links).
-func placeNoReplace(tmp, dest string) error {
-	err := linkFile(tmp, dest)
-	if err == nil || errors.Is(err, fs.ErrExist) {
-		return nil
+func placeNoReplace(tmp, dest string) (created bool, err error) {
+	err = linkFile(tmp, dest)
+	if err == nil {
+		return true, nil
 	}
-	return err
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 // restoreAfterStage, when set, runs after a restore has read its archive and staged the
@@ -313,27 +355,42 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			handErr = fmt.Errorf("archive %s was purged while it was being restored", id)
 			return
 		}
-		// Mark the restore as under way before anything is placed. Until it is removed below,
-		// the archive cannot be purged, so whatever this restore leaves half done stays
-		// reachable through the archive.
+		// Mark the restore as under way before anything is placed. While the mark stands and
+		// something is left half done, the archive cannot be purged, so that half stays
+		// reachable through the archive (purgeCleanupArchive).
+		_, statErr := os.Lstat(restoringMarker(id))
+		markedBefore := statErr == nil
 		if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
 			handErr = fmt.Errorf("archive %s: cannot mark the restore: %w", id, err)
 			return
 		}
+		changed := false
+		// A failure that changed nothing, on an archive no earlier attempt left half done,
+		// leaves no mark: otherwise a restore that can never succeed (a filesystem without
+		// hard links) would make its archive impossible to purge.
+		stop := func(err error) {
+			if !changed && !markedBefore {
+				_ = os.Remove(restoringMarker(id))
+			}
+			handErr = fmt.Errorf("%w: %w", errRestoreStopped, err)
+		}
 		for _, f := range staged {
-			if err := placeNoReplace(f.tmp, f.dest); err != nil {
-				handErr = fmt.Errorf("archive %s: cannot place %s (no session was restored; restoring again is safe): %w", id, f.dest, err)
+			created, err := placeNoReplace(f.tmp, f.dest)
+			if err != nil {
+				stop(fmt.Errorf("cannot place %s: %w", f.dest, err))
 				return
 			}
+			changed = changed || created
 		}
 		for i, meta := range metas {
 			// An existing meta is newer than the archived snapshot — a session already
 			// restored and then locked, renamed or run — and is kept as it is.
-			if _, err := session.CreateMetaIfAbsent(meta); err != nil {
-				handErr = fmt.Errorf("archive %s: restored %d of %d sessions, then could not write %s (restoring again is safe): %w",
-					id, i, len(metas), meta.Name, err)
+			created, err := session.CreateMetaIfAbsent(meta)
+			if err != nil {
+				stop(fmt.Errorf("restored %d of %d sessions, then could not write %s: %w", i, len(metas), meta.Name, err))
 				return
 			}
+			changed = changed || created
 		}
 		_ = os.Remove(restoringMarker(id))
 	})

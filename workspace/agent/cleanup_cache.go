@@ -175,19 +175,16 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 		u.Cache.Files += p.Files
 	}
 
-	// The orphan scan spends the same budget the walk above left over, so the whole answer
-	// is bounded — and so is how long it holds the cleanup lock.
+	// Each orphan scan gets the same budget a delete would, not what the walk above left over:
+	// a large cache would otherwise leave nothing for reachability and show "can't tell" for
+	// a figure the cleanup itself can compute. Each is bounded on its own, and so is the time
+	// it holds the cleanup lock. A feature that cannot be judged makes the figure unknown
+	// rather than a lower bound mixed with a zero.
 	u.Orphans.OK = true
 	for _, feature := range sessionx.CacheOrphanFeatures {
-		found, err := sessionx.ScanCacheOrphans(feature, now, &budget)
-		if err != nil {
+		found, err := sessionx.ScanCacheOrphans(feature, now, nil)
+		if err != nil || found.Stalled || found.Stuck {
 			u.Orphans = usageOrphans{}
-			break
-		}
-		if found.Stalled || found.Stuck {
-			// Nothing could be judged, so there is no figure to show — not a zero.
-			u.Orphans = usageOrphans{}
-			u.Truncated = true
 			break
 		}
 		u.Orphans.Bytes += found.Bytes

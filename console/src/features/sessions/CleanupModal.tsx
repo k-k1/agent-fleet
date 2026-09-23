@@ -245,7 +245,8 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
     setBusy(true);
     try {
       const res = await rawJSON(`api/cleanup/archives/${encodeURIComponent(id)}/restore`, "POST");
-      toast(res.ok ? t("clean.restored") : t("clean.restore_failed"));
+      // 409 = it stopped part way: nothing was undone, and restoring again finishes it.
+      toast(res.ok ? t("clean.restored") : res.status === 409 ? t("clean.restore_incomplete") : t("clean.restore_failed"));
       await loadArchives();
       await loadCandidates();
       onChanged?.();

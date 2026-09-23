@@ -174,12 +174,17 @@ not: the cleanup modal's **"Cache of deleted sessions"** removes `~/.cache/agent
 a restore brings back. These directories belong only to sessions that are already beyond restore.
 There are two rules, one per kind of owner (`internal/sessionx/cache_orphans.go`):
 - **A session's directory** (`pasted/<sid>`, `codex-view-image/<sid>`) is offered only when its UUID
-  is in **no session meta** (live, stopped or shelved) **and in no archive in the trash**. A session
-  name is a random slug that is never reused and the UUID is a pure function of (dir, name), so such
-  a UUID can never be named again. Anything a trashed session could still need stays until that
-  archive is purged.
-- **An assistant chat's directory** (`pasted/chat-<id>`) is offered only when the conversation file
-  **provably does not exist** (ENOENT). Chats are not sessions and have no trash — deleting a chat
+  is in **no session meta** (live, stopped or shelved), **in no archive in the trash**, and **in no
+  living session's fork ancestry**. A session name is a random slug that is never reused and the
+  UUID is a pure function of (dir, name), so such a UUID can never be named again — except through a
+  fork, whose copied history still holds its ancestors' pasted paths: a fork records every ancestor
+  (`Meta.ForkSids`), and a claude fork made before that is covered by its `ForkFrom`, which is the
+  parent's UUID. Anything a trashed session could still need stays until that archive is purged.
+  The session store itself must be there; a missing one (an unmounted volume) stops the scan
+  rather than making every session look gone.
+- **An assistant chat's directory** (`pasted/chat-<id>`) is offered only when the conversation store
+  is there and the conversation file **provably does not exist** (ENOENT from a stat — any other
+  failure keeps it). Chats are not sessions and have no trash — deleting a chat
   removes its file outright — so there is no archive to consult; a file that exists but cannot be
   parsed keeps its directory.
 - A directory of any other name is never offered. Archiving the images instead would not work anyway: they do not compress, and a restore
@@ -207,7 +212,8 @@ reads a whole archive into memory.
   cannot aim the delete elsewhere. Symlinks further up (a `~/.cache` kept on persistent storage via
   `AF_WS_KEEP_DIRS`) are trusted: they are the workspace's own setup.
 - **It is bounded.** One entry budget (500,000 by default) pays for everything — listing the cache,
-  every meta and archive read for reachability, every chat lookup, every entry walked. Directories
+  every meta and archive read for reachability, every entry walked (a chat check is one stat, paid
+  with the listing entry it belongs to). Directories
   are listed at most 1,024 entries at a time and charged as they are read, so the budget bounds the
   work done, not a count taken after a directory of a million entries has already been read into
   memory. The cache is judged chunk by chunk, and a listing chunk never takes more than half of
@@ -228,9 +234,12 @@ reads a whole archive into memory.
   fails — a transcript that cannot be placed, a meta that cannot be written — the restore stops
   there and reports it rather than claiming the session is back. It does not try to undo what it
   already placed (that would mean deleting a file another process may be appending to);
-  restoring again is safe and finishes the job. Until it does, **the archive cannot be purged**
-  (409): a marker written before anything is placed and removed only on success keeps the
-  archive — and with it the session's cache — in place while a transcript may already be back. The purge and the cache delete take the same lock. So a delete can never scan a session
+  restoring again is safe and finishes the job, and the Console says so (409 restore_incomplete).
+  While a session of the archive is **half back** — a transcript at its path, no meta — **the archive
+  cannot be purged** (409), because it is what keeps that session's cache reachable. A marker written
+  before anything is placed records that a restore is under way; it is removed on success, and a
+  failure that changed nothing leaves none. A marker alone never blocks: the purge checks for an
+  actually half-back session, so an archive is never made impossible to purge. The purge and the cache delete take the same lock. So a delete can never scan a session
   that is in neither place, and a restore that lost a race to a purge fails instead of bringing a
   conversation back without its files.
 

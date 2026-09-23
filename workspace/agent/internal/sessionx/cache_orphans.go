@@ -264,6 +264,7 @@ func scanCacheOrphansOnce(r *os.Root, feature string, now time.Time, budget *int
 	defer top.Close()
 	cutoff := now.Add(-cacheOrphanGrace)
 	root := filepath.Join(CacheRoot(), feature)
+	chatOK := chatStoreOK()
 	// The listing is consumed a chunk at a time and each chunk judged before the next is
 	// read, so a cut-off scan still yields every directory it finished. Deleting those is what
 	// makes the next survey progress: they are gone from the head of the listing, and the
@@ -294,7 +295,7 @@ func scanCacheOrphansOnce(r *os.Root, feature string, now time.Time, budget *int
 				continue
 			}
 			name := e.Name()
-			if !orphanName(feature, name, reachable) {
+			if !orphanName(feature, name, reachable, chatOK) {
 				continue
 			}
 			bytes, files, newest, walked := dirStats(r, name, budget)
@@ -328,21 +329,29 @@ func scanCacheOrphansOnce(r *os.Root, feature string, now time.Time, budget *int
 // orphanName decides one directory name. Only the two shapes we write are ever candidates:
 // a session UUID, and (pasted only) chat-<conversation id>. Any other name is somebody
 // else's and stays.
-func orphanName(feature, name string, reachable map[string]bool) bool {
+func orphanName(feature, name string, reachable map[string]bool, chatStoreOK bool) bool {
 	if sidPattern.MatchString(name) {
 		return !reachable[name]
 	}
 	if feature == CacheFeaturePasted && strings.HasPrefix(name, "chat-") {
 		id := strings.TrimPrefix(name, "chat-")
-		if !paths.ValidIDSegment(id) {
+		// Only a conversation that is provably gone, in a store that is provably there: a
+		// missing store (an unmounted volume under a kept ~/.config) would make every chat look
+		// gone. A file that exists — readable or not — is still somebody's conversation.
+		if !chatStoreOK || !paths.ValidIDSegment(id) {
 			return false
 		}
-		_, err := chatx.LoadConv(id)
-		// Only a conversation that is provably gone. A file that exists but does not parse
-		// is still somebody's conversation.
+		_, err := os.Lstat(chatx.ConvPath(id))
 		return errors.Is(err, fs.ErrNotExist)
 	}
 	return false
+}
+
+// chatStoreOK reports whether the conversation store is there to be asked. It follows links:
+// ~/.config may legitimately be one onto persistent storage.
+func chatStoreOK() bool {
+	fi, err := os.Stat(chatx.ChatDir())
+	return err == nil && fi.IsDir()
 }
 
 // reachableSessionIDs is every session UUID something can still name: each meta on disk,
@@ -352,6 +361,12 @@ func orphanName(feature, name string, reachable map[string]bool) bool {
 func reachableSessionIDs(budget *int) (map[string]bool, error) {
 	ids := map[string]bool{}
 
+	// The session store must be there. A missing one — an unmounted volume, a migration that
+	// stopped half way — would make every session look gone. (This runs only when the cache
+	// directory exists, and nothing lands there before a session's meta does.)
+	if fi, err := os.Stat(session.MetaDir()); err != nil || !fi.IsDir() {
+		return nil, ErrCacheScanUnsafe
+	}
 	ents, err := readDirPathBudget(session.MetaDir(), budget)
 	if errors.Is(err, errBudget) {
 		return nil, err
@@ -375,6 +390,15 @@ func reachableSessionIDs(budget *int) (map[string]bool, error) {
 		// are the same for every meta the Agent writes; if one ever is not, both stay safe.
 		ids[session.UUID(m.Dir, name)] = true
 		ids[session.UUID(m.Dir, m.Name)] = true
+		// A fork's history carries its ancestors' pasted paths (session.Meta.ForkSids). Forks
+		// made before ForkSids existed name only their parent, and only claude's ForkFrom is in
+		// this id space — the parent's own UUID — so that one is honoured too.
+		for _, sid := range m.ForkSids {
+			ids[sid] = true
+		}
+		if sidPattern.MatchString(m.ForkFrom) {
+			ids[m.ForkFrom] = true
+		}
 	}
 
 	archived, err := archivedSessionIDs(budget)

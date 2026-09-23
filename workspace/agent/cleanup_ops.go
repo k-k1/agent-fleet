@@ -269,10 +269,18 @@ func handleRestoreCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// restoreCleanupArchive takes the cleanup lock itself, for the meta hand-over only.
 	restored, err := restoreCleanupArchive(id)
+	if errors.Is(err, errRestoreStopped) {
+		// Not "no such archive": it exists, part of it may be back, and restoring again is
+		// what finishes it — the Console says so.
+		invalidateCleanupUsage()
+		httpx.WriteErr(w, http.StatusConflict, "restore_incomplete", err.Error())
+		return
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "restore_failed", err.Error())
 		return
 	}
+	invalidateCleanupUsage() // restored sessions take their cache off the orphan count
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"restored": restored})
 }
 
