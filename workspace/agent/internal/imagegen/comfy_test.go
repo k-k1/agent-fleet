@@ -1016,15 +1016,41 @@ func TestComfyInpaintUploadsTheMaskAndSetsTheNoiseMask(t *testing.T) {
 	}
 }
 
-// The instruction-edit families need the mask to be the PICTURE's own size, and a mask of any
-// other shape is refused rather than applied somewhere else (ADR 0094 decision 3, 実測 I).
-//
-// Their template sends both through FluxKontextImageScale, which resolves its target from the
-// width and height it is handed — so two differently-shaped inputs resolve two different frames
-// and the mask lands on an area the caller did not draw, with no error and nothing in the picture
-// to show it. Every other family stretches the mask over the whole frame with no crop, where a
-// different size is still the same region; that is the positive control below.
-func TestComfyInstructionEditRefusesAMaskOfAnotherSize(t *testing.T) {
+// qwenEditRun drives Generate for the instruction-edit row against a stub engine, and answers with
+// the graph the engine was sent and how many uploads it took.
+func qwenEditRun(t *testing.T, req Request) (map[string]any, int, error) {
+	t.Helper()
+	var graph map[string]any
+	uploads := 0
+	p := comfyEditStub(t, qwenEditConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			uploads++
+			_ = r.ParseMultipartForm(8 << 20)
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.png", "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			graph, _ = body["prompt"].(map[string]any)
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+	_, err := p.Generate(context.Background(), req)
+	return graph, uploads, err
+}
+
+func qwenEditScaleSize(t *testing.T, graph map[string]any) (any, any) {
+	t.Helper()
+	scale, _ := graph["scale"].(map[string]any)
+	in, _ := scale["inputs"].(map[string]any)
+	if scale["class_type"] != "ImageScale" || in["crop"] != "disabled" {
+		t.Fatalf("scale = %v, want ImageScale with crop disabled", scale)
+	}
+	return in["width"], in["height"]
+}
+
+// A mask of another size than the picture is accepted on the instruction-edit families, as it is
+// on every other one (ADR 0094 decision 3, revised 2026-09-23). The refusal it replaces existed
+// because FluxKontextImageScale cropped the picture and not the mask; with the picture shrunk whole,
+// both are plain stretches of the same frame.
+func TestComfyInstructionEditAcceptsAMaskOfAnotherSize(t *testing.T) {
 	dir := t.TempDir()
 	in, mask := filepath.Join(dir, "photo.png"), filepath.Join(dir, "mask.png")
 	if err := os.WriteFile(in, tinyPNG(t, 64, 64), 0o600); err != nil {
@@ -1033,28 +1059,66 @@ func TestComfyInstructionEditRefusesAMaskOfAnotherSize(t *testing.T) {
 	if err := os.WriteFile(mask, tinyPNG(t, 48, 64), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stub := func(conn EngineConn) *comfyProvider {
-		return comfyEditStub(t, conn,
-			func(w http.ResponseWriter, r *http.Request) {
-				_ = r.ParseMultipartForm(8 << 20)
-				_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.png", "type": "input"})
-			},
-			func(w http.ResponseWriter, r *http.Request, body map[string]any) {
-				_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
-			})
+	graph, _, err := qwenEditRun(t, Request{Op: OpInpaint, Prompt: "a hat", Model: "qwen-edit-row",
+		Inputs: []string{in}, Mask: mask})
+	if err != nil {
+		t.Fatalf("Generate() = %v, want a 48x64 mask on a 64x64 picture accepted", err)
 	}
-	req := Request{Op: OpInpaint, Prompt: "a hat", Model: "qwen-edit-row",
-		Inputs: []string{in}, Mask: mask}
-	_, err := stub(qwenEditConn()).Generate(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "48x64") || !strings.Contains(err.Error(), "64x64") {
-		t.Fatalf("Generate() = %v, want a refusal naming both sizes", err)
+	// 64x64 is below the encoder's budget, so its fixed point is 1024x1024 — the size comes from
+	// the picture that was uploaded, not from a default.
+	if w, h := qwenEditScaleSize(t, graph); w != float64(1024) || h != float64(1024) {
+		t.Errorf("scale = %vx%v, want 1024x1024", w, h)
+	}
+}
+
+// A picture whose size cannot be read is refused BEFORE anything is uploaded: the upload is the
+// call that wakes a stopped engine, and a guessed size is the soft picture comfyQwenEditSize
+// exists to prevent. The positive control is the same file on sdxl, which never needed the size.
+func TestComfyInstructionEditRefusesAPictureOfUnknownSize(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "photo.webp")
+	if err := os.WriteFile(in, []byte("RIFF\x00\x00\x00\x00WEBPnot really"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := Request{Op: OpEdit, Prompt: "a hat", Model: "qwen-edit-row", Inputs: []string{in}}
+	_, uploads, err := qwenEditRun(t, req)
+	if err == nil || !strings.Contains(err.Error(), "size") {
+		t.Fatalf("Generate() = %v, want a refusal about the picture's size", err)
+	}
+	if uploads != 0 {
+		t.Errorf("%d uploads before the refusal, want 0 — the upload is what wakes the engine", uploads)
 	}
 
-	// The positive control: the SAME mismatched pair is fine on sdxl, so what is refused above is
-	// the family's own rule and not a new rule for everybody.
 	req.Model = "sdxl-base-1.0"
-	if _, err := stub(sdxlConn()).Generate(context.Background(), req); err != nil {
-		t.Fatalf("sdxl Generate() = %v, want the mismatch accepted — it has no scale node to disagree with", err)
+	p := comfyEditStub(t, sdxlConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseMultipartForm(8 << 20)
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.webp", "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+	if _, err := p.Generate(context.Background(), req); err != nil {
+		t.Fatalf("sdxl Generate() = %v, want the same file accepted — that family never reads the size", err)
+	}
+}
+
+// A phone JPEG stored landscape with Orientation 6 is a portrait picture to ComfyUI's LoadImage,
+// which applies exif_transpose. Sized from the raw header it would be squeezed into a landscape
+// frame by the shrink, with no error anywhere.
+func TestComfyInstructionEditSizesARotatedJPEGUpright(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "phone.jpg")
+	if err := os.WriteFile(in, jpegWithOrientation(t, 1600, 1200, 6), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	graph, _, err := qwenEditRun(t, Request{Op: OpEdit, Prompt: "a hat", Model: "qwen-edit-row", Inputs: []string{in}})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	wantW, wantH, _ := comfyQwenEditSize(1200, 1600)
+	if w, h := qwenEditScaleSize(t, graph); w != float64(wantW) || h != float64(wantH) {
+		t.Errorf("scale = %vx%v, want %dx%d — the upright 1200x1600, not the stored 1600x1200", w, h, wantW, wantH)
 	}
 }
 

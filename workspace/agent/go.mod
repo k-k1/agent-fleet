@@ -7,6 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	golang.org/x/image v0.31.0
 	golang.org/x/sys v0.44.0
 	modernc.org/sqlite v1.53.0
 )

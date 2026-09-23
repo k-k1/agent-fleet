@@ -298,7 +298,7 @@ func comfyFamilyMaxInputs(family comfyFamily) int {
 }
 
 // comfyFamilyHasNoSizes is ADR 0094 decision 4: Qwen-Image-Edit's output size is decided by
-// FluxKontextImageScale from the INPUT PICTURE's own aspect ratio, so no size a request or a
+// comfyQwenEditSize from the INPUT PICTURE's own size, so no size a request or a
 // catalogue row could name would reach the sampler at all. comfySizesFor checks this BEFORE the
 // row's own declared list — the one family where the family's answer wins over the row's, because
 // the row's list would otherwise offer a control that silently does nothing.
@@ -605,8 +605,8 @@ func comfySortedNames(set map[string]bool) []string {
 // decision 2 exists to prevent.
 //
 // 🔴 One family wins even over the row's OWN declaration (ADR 0094 decision 4,
-// comfyFamilyHasNoSizes): Qwen-Image-Edit's output size is decided by FluxKontextImageScale from
-// the input picture's aspect ratio, so a row's `sizes` there would offer a control that silently
+// comfyFamilyHasNoSizes): Qwen-Image-Edit's output size is decided by comfyQwenEditSize from
+// the input picture's own size, so a row's `sizes` there would offer a control that silently
 // does nothing. That check runs BEFORE conn.Sizes[model] for exactly that reason.
 func comfySizesFor(conn EngineConn, model string) []string {
 	family, ok := comfyFamilyFor(conn, model)
@@ -1037,6 +1037,19 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	// keeps klein's schedule honest — Flux2Scheduler derives its shift from a width and height,
 	// and an edit's size is the input picture's, not the caller's.
 	var inW, inH int
+	// An instruction-edit family shrinks the picture to a size computed from its own (comfyQwenEditSize),
+	// so a picture whose size cannot be read is refused HERE, before the upload wakes the engine —
+	// a guessed size would be the soft picture that rule exists to prevent. A file that cannot be
+	// read at all is left to uploadImage, which says so by name.
+	if params.isImageToImage() && comfyFamilyInstructionEdit(family) && len(req.Inputs) > 0 {
+		if raw, err := os.ReadFile(req.Inputs[0]); err == nil {
+			if _, _, ok := comfyPictureSize(raw); !ok {
+				return Result{}, fmt.Errorf("the %s family needs to read the input picture's size, and %s is not"+
+					" a PNG, JPEG, WebP or GIF it can decode — convert it to one of those and try again",
+					family, req.Inputs[0])
+			}
+		}
+	}
 	if params.isImageToImage() {
 		req.reportPhase(PhaseUploading)
 		for _, in := range req.Inputs {
@@ -1046,9 +1059,8 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 			}
 			params.Images = append(params.Images, up.name)
 			// The FIRST reference decides the output's dimensions, and only it: every family that
-			// reads a second one composes it INTO the first one's frame (FluxKontextImageScale
-			// scales image1 and the rest ride the same latent), so measuring the others here would
-			// report a size no picture ever had.
+			// reads a second one composes it INTO the first one's frame (the latent is made from
+			// image1 alone), so measuring the others here would report a size no picture ever had.
 			if len(params.Images) == 1 && up.width > 0 && up.height > 0 {
 				inW, inH = up.width, up.height
 				params.Width, params.Height = up.width, up.height
@@ -1059,20 +1071,8 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 			if err != nil {
 				return Result{}, err
 			}
-			// 🔴 The instruction-edit families, and only they, need the mask to be the picture's
-			// own size. Their template sends BOTH through FluxKontextImageScale so that the crop
-			// it applies is the same for both (comfyQwenEditNoiseMask), and that node picks its
-			// target from the width and height it is given — a mask of some other shape resolves a
-			// different target and lands somewhere else, silently. Every other family stretches the
-			// mask over the whole frame with no crop, where a different size is still "the same
-			// region of the picture" and has always been allowed.
-			if comfyFamilyInstructionEdit(family) && mask.width > 0 && mask.height > 0 &&
-				(mask.width != params.Width || mask.height != params.Height) {
-				return Result{}, fmt.Errorf("the %s family needs the mask to be the input picture's own size"+
-					" (%dx%d), and this one is %dx%d — its frame is rescaled from the picture's aspect ratio,"+
-					" so a mask of another shape would be applied to a different area than the one drawn",
-					family, params.Width, params.Height, mask.width, mask.height)
-			}
+			// Every family stretches the mask over the whole frame with no crop, so a mask of
+			// another size is still "the same region of the picture" and is allowed everywhere.
 			params.Mask = mask.name
 		}
 	}
@@ -1199,8 +1199,8 @@ func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, req Re
 			path, len(raw), comfyMaxUpload)
 	}
 	up := comfyUpload{name: comfyUploadName(raw, path)}
-	if cfg, _, err := image.DecodeConfig(bytes.NewReader(raw)); err == nil {
-		up.width, up.height = cfg.Width, cfg.Height
+	if w, h, ok := comfyPictureSize(raw); ok {
+		up.width, up.height = w, h
 	}
 
 	var buf bytes.Buffer
@@ -1603,8 +1603,8 @@ func comfyCacheWarning(hist comfyHistory) string {
 // four is reproducible only under seed+1 and never under the seed the request carried.
 // comfyImg2ImgSizeWarning tells a caller who named a size on an image-to-image op that the
 // picture was not made at it. The frame follows the first reference, but not always at that
-// reference's own pixels: the instruction-edit families rescale it (FluxKontextImageScale picks
-// the nearest of its preferred resolutions; Qwen-Image 2.1's encode resizes to a 1024² budget at
+// reference's own pixels: the instruction-edit families rescale it (2509 and 2511 shrink it to a
+// fixed point of their encoder's own rescale, comfyQwenEditSize; Qwen-Image 2.1's encode resizes to a 1024² budget at
 // multiples of 32, so a 1216x832 reference comes back 1248x832 — ADR 0098 P2). The size named is
 // therefore the one MEASURED off the output rather than one computed from the family: a
 // re-derivation of each node's arithmetic here would be a second copy that drifts silently the
