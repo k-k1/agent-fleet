@@ -7,7 +7,8 @@ English | [日本語](README.ja.md)
 **Close your laptop. The agents keep working.**
 
 Agent Fleet lets a team share AI coding agents — Claude Code, Codex CLI, GitHub Copilot
-CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode — from one browser console. Each member
+CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode, Muse Code, and the fleet's own llama.cpp
+harness — from one browser console. Each member
 gets an isolated per-user environment (a Docker container with cgroup CPU/memory quotas,
 or a bubblewrap sandbox in the Docker-less native edition) with a persistent home and its
 own git working copies, and starts, follows and steers agent sessions from the browser.
@@ -85,7 +86,8 @@ with [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh) (`local` = Docker, `ws
   tied to a working copy. It does not imply a terminal: Codex / OpenCode / Copilot /
   Cursor / Kiro default to a **managed** execution method driven from the chat view
   (Codex and OpenCode run on a shared runtime with no per-session CLI process at all),
-  while Claude / Antigravity and the plain shell / SSM sessions use a terminal.
+  llama.cpp and Muse Code are managed only, while Claude / Antigravity and the plain
+  shell / SSM sessions use a terminal.
 
 ## License
 

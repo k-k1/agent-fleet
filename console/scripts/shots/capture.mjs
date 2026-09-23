@@ -150,6 +150,26 @@ const SCENES = [
     settle: 1200,
   },
   {
+    // The sessions overview (ADR 0078): every running session as a card, grouped by
+    // repository and family. Shot for the user guide (guide/assets/), not the README.
+    name: "overview",
+    sections: FOCUS_TREE,
+    width: 1600,
+    height: 700,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "sessions", showStopped: false })])], colRatios: [1], activeId: "p0" },
+    settle: 1200,
+  },
+  {
+    // The fleet graph (ADR 0096): one lane per session on a time axis, archived lanes
+    // shown, as the pane opens by default. Shot for the user guide (guide/assets/).
+    name: "fleetgraph",
+    sections: FOCUS_TREE,
+    width: 1600,
+    height: 620,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "fleetgraph", showArchived: true })])], colRatios: [1], activeId: "p0" },
+    settle: 1500,
+  },
+  {
     name: "split",
     sections: SHOW_TOOLS,
     width: 1600,

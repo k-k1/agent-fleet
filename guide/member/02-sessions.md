@@ -357,6 +357,8 @@ kind colour, name, working copy and state chip as its row, plus the model, the c
 when it started. The states that need you now (a question, a plan to review, a permission prompt)
 colour the whole card, so they can be spotted from across the room.
 
+![The sessions overview: one card per running session, grouped by repository, with the state chip, model and context usage on each](../assets/overview-en.webp)
+
 - **Opening it**: **"Sessions"** on the action bar (next to Split right / Split down / Close all),
   the same button on the layout map at the top of the left pane, or the leader keys **`g` → `s`** / **`s` → `l`**.
   It is an ordinary pane: split it, tab it, pop it out, and it is there again after a reload.
@@ -409,6 +411,8 @@ colour the whole card, so they can be spotted from across the room.
 The grid is a cross-section of now. The **fleet graph** is the elapsed version: **one lane per
 session, time running left to right**, so you can see which session started which, what went
 between them, and when each one was working, waiting or idle.
+
+![The fleet graph: one lane per session on a time axis, children under their parent, arrows for what passed between sessions, and each lane's state chip](../assets/fleetgraph-en.webp)
 
 - **Opening it**: **"Graph"** in the sessions overview's header (the graph's own header has
   **"List"** to go back — each swaps the other into the same pane, and Ctrl (⌘) + click or
