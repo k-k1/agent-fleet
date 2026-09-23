@@ -25,8 +25,10 @@
   キャンバスは log 111 §10 の設計で着工できる）。**ADR 0100 に起こした**
   （[0100](../decisions/0100-image-generation-studio.ja.md)）。本稿はその根拠と経緯。
 - **改訂 6（同日）**: ADR 0100 を別セッション `semvs2b`（codex / gpt-6-sol）がレビュー
-  （[113-adr-review](113-adr-review.md)・🔴 9・🟡 12・🔵 1）。ADR 側で反映した（ADR 末尾「改訂 1 で
-  変えたこと」）。本稿の本文は書き換えない——ADR が正本になった。
+  （[113-adr-review](113-adr-review.md)）。**7 巡回した**——🔴 は 9→7→4→4→3→2→0、各巡の反映は
+  ADR 末尾「改訂 1〜7 で変えたこと」。指摘の 8 割は「型は正しいが本番でその形にならない」
+  （原本パスの置き場・採番の順序・非同期配達・クライアント側のタイムアウト）で、どれも実コードの
+  file:line で裏取りできた。本稿の本文は書き換えない——ADR が正本になった。
 - 関連: [ADR 0081](../decisions/0081-image-generation-pane.ja.md)（今のペイン。本稿はその
   決定 6・7 を覆し、1〜5・8〜12 は継ぐ）/ [ADR 0080](../decisions/0080-image-gallery-pane.ja.md)
   （絵を見る場所）/ [ADR 0069](../decisions/0069-image-generation-providers.ja.md)（決定 8

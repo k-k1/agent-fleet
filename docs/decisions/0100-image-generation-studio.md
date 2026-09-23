@@ -32,6 +32,10 @@ English | [日本語](0100-image-generation-studio.ja.md)
   2 new red, 2 yellow). Origins travel as **record-only `JobSpec` fields that `Enqueue` copies into each
   `jobRec`**; at Agent startup a leftover `pending` is reclaimed as `unknown`; the fixed-copy location
   wording; folding duplicate `press_result` lines.
+- **Revision 7 (2026-09-23)**: closes with the seventh pass ([113-adr-review](../log/113-adr-review.md)
+  §10 — **0 new red**, 2 yellow). Fixed copies and uploads always live in different places; a partial
+  trailing JSONL line is truncated by the writer and skipped by readers. The reviewer's verdict:
+  presentable as proposed.
 - Number: `develop` tops out at 0098; 0099 is taken by two unmerged branches (`temp/sidv2bw`,
   `temp/sjys6nk`), hence 0100.
 - Related: [0081](0081-image-generation-pane.md) (today's image-generation pane; this ADR overturns
@@ -197,7 +201,8 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   `openat2NoSymlinks` shape) and copied into an **input set**
   `~/.cache/agent-fleet/generated/console/inputs/<set>/` (set id assigned by the Agent; an absolute path
   under the generated root; user uploads go to the browse-root-relative `generated/console/inputs/`,
-  `fs.go:475-496`, so the parents coincide only when the browse root is home). **`Request` (the
+  `fs.go:475-496`, `InputPicker.tsx:16`, which even with the default browse root = home resolves to
+  `~/generated/console/inputs/` — **always a different place**, with a different sweep scope). **`Request` (the
   provider argument type, `imagegen.go:53-85`) carries only the copies** (`Inputs`, `Mask`). How the
   origins travel (revision 6): **`JobSpec` gets record-only fields the provider never receives —
   `InputSet`, `InputOrigins`, `MaskOrigin` — and `Enqueue`, when it builds each `jobRec` from
@@ -314,7 +319,10 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
   running) the response says `recorded: false`, the pane shows that version as "record pending", and
   the Agent retries the write once immediately. Several `press_result` lines for one version id are
   possible (retry, startup reconciliation), so **readers take the first `press_result` per version id
-  and ignore the rest**. A version's state is derived from the presence and
+  and ignore the rest**. So that a retry after an append that failed mid-JSON never glues a fragment
+  to the new line, **the writer truncates the file back to the last newline before rewriting, and
+  readers drop any line that does not parse without counting it** (`studios/<id>.log.jsonl` is new in
+  this ADR; no such handling exists yet). A version's state is derived from the presence and
   content of its `press_result`. If the Agent dies after ① a version without `press_result` remains —
   at startup the sidecars are scanned (independently of whether `history.jsonl` exists or is
   truncated): if a picture with that `version` exists a `press_result` is synthesised, otherwise a
@@ -509,3 +517,10 @@ conversation.
 | 🔴S no path for the origins to reach `jobRec` | decision 4: record-only `JobSpec` fields (`InputSet`, `InputOrigins`, `MaskOrigin`) that `Enqueue` copies into each `jobRec` |
 | 🔴T a restart leaves `pending` forever, no resend | decision 2: reclaim `pending` as `unknown` at startup; a doubled persona is harmless |
 | 🟡P, Q | the parents coincide only when the browse root is home; duplicate `press_result` lines fold to the first per version id |
+
+## Changed in revision 7 (2026-09-23, [113-adr-review](../log/113-adr-review.md) §10, 0 red)
+
+| Finding | Change |
+|---|---|
+| 🟡R even the default browse root puts fixed copies and uploads under different parents | decision 4: corrected to "always a different place" (`~/.cache/agent-fleet/generated/…` vs `~/generated/…`) |
+| 🟡S a retry after a partial append corrupts a JSONL line | decision 9: the writer truncates to the last newline on failure; readers drop unparsable lines |

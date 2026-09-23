@@ -26,6 +26,9 @@
 - **改訂 6（2026-09-23）**: 6 巡目（[113-adr-review](../log/113-adr-review.md) §9・新規 🔴 2・🟡 2）を
   反映。原本の受渡しは **`JobSpec` の記録専用欄→`Enqueue` が各 `jobRec` へ写す**、Agent 起動時に前
   プロセスの `pending` を `unknown` に回収、固定コピーの位置説明、`press_result` 重複の畳み方。
+- **改訂 7（2026-09-23）**: 7 巡目（[113-adr-review](../log/113-adr-review.md) §10・**新規 🔴 0**・🟡 2）を
+  反映して締めた。固定コピーとアップロード先は常に別の場所、JSONL の末尾の不完全行は書く側が
+  切り戻し読む側も捨てる。レビュー役の総評は「proposed として提示できる」。
 - 番号: `develop` の最大は 0098。0099 は未マージの 2 ブランチ（`temp/sidv2bw`・`temp/sjys6nk`）が
   取っているので 0100。
 - 関連: [0081](0081-image-generation-pane.ja.md)（今の画像生成ペイン。本 ADR は決定 6・7 を覆し、
@@ -174,8 +177,9 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
   ジョブ id は `Enqueue` の中で採番される `jobs.go:297-327` ので、ジョブ単位にはできない）、要求の
   `inputs`／`mask` を root 固定の open（`openat2NoSymlinks` と同型）で読み、**入力セット**
   `~/.cache/agent-fleet/generated/console/inputs/<set>/`（set id は Agent が採番・生成物 root の絶対
-  パス。利用者のアップロード先は browse root 相対の `generated/console/inputs/`＝`fs.go:475-496` で、
-  browse root が home のときだけ親が同じ）に写す。**`Request`（provider の引数型・`imagegen.go:53-85`）
+  パス。利用者のアップロード先は browse root 相対の `generated/console/inputs/`＝`fs.go:475-496`・
+  `InputPicker.tsx:16` で、既定の browse root＝home でも実パスは `~/generated/console/inputs/`＝
+  **常に別の場所**。掃除範囲も別）に写す。**`Request`（provider の引数型・`imagegen.go:53-85`）
   にはコピーのパスだけ**（`Inputs`・`Mask`）を入れる。原本の受渡し（改訂 6）: **`JobSpec` に
   provider に渡さない記録専用欄 `InputSet`・`InputOrigins`・`MaskOrigin` を置き、`Enqueue` が
   `JobSpec.Request` から `jobRec` を作るとき（`jobs.go:214-229, 318-326`）に、この 3 欄も各 `jobRec` へ
@@ -278,7 +282,10 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
   `error`）。④が失敗したら（投入は成功し worker は走っている）応答に `recorded: false` を返し、
   ペインはその版を「記録保留」で出し、Agent はすぐ 1 度書き直しを試みる。同じ版 id の
   `press_result` が複数あり得る（再試行・起動時の補完）ので、**読む側は版 id ごとに最初の
-  `press_result` を採り、後続は無視する**。版の状態は `press_result`
+  `press_result` を採り、後続は無視する**。追記が JSON の途中で失敗した後の再試行が断片と
+  つながらないよう、**書く側は追記に失敗したらファイル末尾を最後の改行まで切り戻してから
+  書き直し、読む側は解析できない行を捨てて数えない**（`studios/<id>.log.jsonl` は本 ADR で新設・
+  現行コードに処理は無い）。版の状態は `press_result`
   の有無と中身から導く。①の後に落ちたら `press_result` の無い版が残る——起動時に、サイドカーを走査して（`history.jsonl` の有無や末尾欠けに依らない）その
   `version` の絵があれば `press_result` を合成し、無ければ `lost` の `press_result` を書く。
   サイドカーは下書き全文を持たない（`props.go:42-90`・負の指示は合成後の値）ので、復元の元は
@@ -453,3 +460,10 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 | 🔴S 原本パスが `jobRec` へ届く経路が無い | 決定 4: `JobSpec` に記録専用欄（`InputSet`・`InputOrigins`・`MaskOrigin`）を置き `Enqueue` が各 `jobRec` へ写す |
 | 🔴T 再起動で `pending` が永続し再送不能 | 決定 2: 起動時に `pending` を `unknown` へ回収。二重の人格は害が無い |
 | 🟡P・Q | 固定コピーとアップロード先の親は browse root が home のときだけ同じ／`press_result` の重複は版 id ごとに最初の 1 件を採る |
+
+## 改訂 7 で変えたこと（2026-09-23・[113-adr-review](../log/113-adr-review.md) §10・🔴 0）
+
+| 指摘 | 変更 |
+|---|---|
+| 🟡R 既定の browse root でも固定コピーとアップロード先の親は別 | 決定 4: 「常に別の場所」に訂正（`~/.cache/agent-fleet/generated/…` と `~/generated/…`） |
+| 🟡S 部分追記の後の再試行で JSONL の行が壊れる | 決定 9: 書く側は失敗時に末尾を最後の改行まで切り戻し、読む側は解析できない行を捨てる |
