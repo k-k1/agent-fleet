@@ -56,6 +56,9 @@ type cleanupCandidate struct {
 	Bytes int64 `json:"bytes,omitempty"`
 	Files int   `json:"files,omitempty"`
 	Dirs  int   `json:"dirs,omitempty"`
+	// Truncated = the scan behind a "cache" row stopped at its entry budget: the row covers
+	// only what was looked at, a delete takes only that, and the next survey shows the rest.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // The "reason" of a candidate is text WE generate for the user to read, so per ADR 0033
@@ -81,6 +84,7 @@ const (
 	cleanReasonBranchMerged = "clean.reason.branch_merged"
 	cleanReasonCacheOrphan  = "clean.reason.cache_orphan"
 	cleanReasonCacheUnsafe  = "clean.reason.cache_unsafe"
+	cleanReasonCachePartial = "clean.reason.cache_partial"
 )
 
 var cleanupReasonJA = map[string]string{
@@ -97,6 +101,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonBranchMerged: "マージ済みローカルブランチ（親に取り込み済み。削除しても復元可）",
 	cleanReasonCacheOrphan:  "削除済みセッション／会話のキャッシュ（ごみ箱にも無く、もう参照されない。削除は元に戻せない）",
 	cleanReasonCacheUnsafe:  "読めないセッション情報かごみ箱があり、参照の有無を判定できない（何も消さない）",
+	cleanReasonCachePartial: "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
 }
 
 // cleanupReasonText resolves a reason key to its source-language sentence. An unknown key
@@ -271,12 +276,24 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 			continue
 		}
 		if len(found.Dirs) == 0 {
+			if found.Truncated {
+				// Stopped before it could clear anything: say so rather than show nothing,
+				// which would read as "nothing to tidy".
+				out = append(out, cleanupCandidate{
+					Type: "cache", ID: feature, Safety: "keep", Truncated: true,
+					ReasonKey: cleanReasonCachePartial, Reason: cleanupReasonText(cleanReasonCachePartial),
+				})
+			}
 			continue
+		}
+		reason := cleanReasonCacheOrphan
+		if found.Truncated {
+			reason = cleanReasonCachePartial
 		}
 		out = append(out, cleanupCandidate{
 			Type: "cache", Action: "delete_cache", ID: feature, Safety: "safe",
-			Bytes: found.Bytes, Files: found.Files, Dirs: len(found.Dirs),
-			ReasonKey: cleanReasonCacheOrphan, Reason: cleanupReasonText(cleanReasonCacheOrphan),
+			Bytes: found.Bytes, Files: found.Files, Dirs: len(found.Dirs), Truncated: found.Truncated,
+			ReasonKey: reason, Reason: cleanupReasonText(reason),
 		})
 	}
 	return out

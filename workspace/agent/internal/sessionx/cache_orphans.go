@@ -102,7 +102,8 @@ type CacheOrphans struct {
 // visit before it stops. The measured cache is ~9k files; this only bites on something
 // pathological (or an EFS home), where holding the cleanup lock for minutes is worse than
 // an answer that says it is partial.
-const CacheScanMaxEntries = 500_000
+// A var only so a test can shrink it.
+var CacheScanMaxEntries = 500_000
 
 var sidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -126,23 +127,34 @@ func WithCleanupLock(fn func()) {
 func ScanCacheOrphans(feature string, now time.Time, budget *int) (CacheOrphans, error) {
 	cleanupMu.Lock()
 	defer cleanupMu.Unlock()
-	return scanCacheOrphans(feature, now, budget)
+	r, err := openFeatureRoot(feature)
+	if err != nil || r == nil {
+		return CacheOrphans{Feature: feature}, err
+	}
+	defer r.Close()
+	return scanCacheOrphans(r, feature, now, budget)
 }
 
 // RemoveCacheOrphans re-scans and deletes what is still unreachable. It returns what it
-// removed; a directory that fails to delete is left out of the totals.
+// removed; a directory that fails to delete is left out of the totals. Truncated says the
+// scan stopped at its budget, so a press did not take everything and another one can.
 func RemoveCacheOrphans(feature string, now time.Time) (CacheOrphans, error) {
 	cleanupMu.Lock()
 	defer cleanupMu.Unlock()
-	found, err := scanCacheOrphans(feature, now, nil)
+	r, err := openFeatureRoot(feature)
+	if err != nil || r == nil {
+		return CacheOrphans{Feature: feature}, err
+	}
+	defer r.Close()
+	found, err := scanCacheOrphans(r, feature, now, nil)
 	if err != nil {
 		return CacheOrphans{Feature: feature}, err
 	}
 	out := CacheOrphans{Feature: feature, Truncated: found.Truncated}
 	for _, d := range found.Dirs {
-		// The root was checked not to be a link when the scan began; check again right
-		// before each removal, so a swap in between cannot aim RemoveAll elsewhere.
-		if !realDir(filepath.Dir(d.Path)) || os.RemoveAll(d.Path) != nil {
+		// Relative to the pinned directory: whatever happens to the path in the meantime,
+		// this cannot reach outside it (os.Root does not follow a link out of its root).
+		if r.RemoveAll(d.Name) != nil {
 			continue
 		}
 		out.Dirs = append(out.Dirs, d)
@@ -161,71 +173,104 @@ func validCacheFeature(feature string) bool {
 	return false
 }
 
-// realDir reports whether path is a directory itself, not a symlink to one.
-func realDir(path string) bool {
+// openFeatureRoot pins one feature directory by file descriptor, so the scan and the
+// delete act on exactly the directory that was checked. nil, nil = it does not exist.
+//
+// The feature directory itself must be a real directory. If it were a link, the scan and
+// the delete would act on wherever it points and remove UUID-named folders there. Links
+// further up the path (~/.cache kept on persistent storage via AF_WS_KEEP_DIRS) are trusted:
+// what they lead to is this user's own cache, put there by the workspace's own setup. The
+// Lstat and the open are two calls, so the opened directory is compared with the one that
+// was checked — a swap in between is refused rather than followed.
+func openFeatureRoot(feature string) (*os.Root, error) {
+	if !validCacheFeature(feature) {
+		return nil, errors.New("unknown cache feature: " + feature)
+	}
+	path := filepath.Join(CacheRoot(), feature)
 	fi, err := os.Lstat(path)
-	return err == nil && fi.IsDir()
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !fi.IsDir() {
+		return nil, ErrCacheScanUnsafe
+	}
+	r, err := os.OpenRoot(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if pinned, err := r.Stat("."); err != nil || !os.SameFile(fi, pinned) {
+		r.Close()
+		return nil, ErrCacheScanUnsafe
+	}
+	return r, nil
 }
 
-func scanCacheOrphans(feature string, now time.Time, budget *int) (CacheOrphans, error) {
+// errBudget is reachableSessionIDs running out of budget: nothing can be decided, which
+// the scan reports as a truncated answer with no directories rather than as an error.
+var errBudget = errors.New("cache scan budget exhausted")
+
+func scanCacheOrphans(r *os.Root, feature string, now time.Time, budget *int) (CacheOrphans, error) {
 	out := CacheOrphans{Feature: feature}
-	if !validCacheFeature(feature) {
-		return out, errors.New("unknown cache feature: " + feature)
-	}
 	if budget == nil {
 		b := CacheScanMaxEntries
 		budget = &b
 	}
-	root := filepath.Join(CacheRoot(), feature)
-	// The feature directory must be a real directory. If it were a link, ReadDir and
-	// RemoveAll would follow it and delete UUID-named folders wherever it points. Links
-	// further up (~/.cache kept on persistent storage via AF_WS_KEEP_DIRS) are legitimate —
-	// what they lead to is still this cache — so only the last hop is checked.
-	if fi, err := os.Lstat(root); errors.Is(err, fs.ErrNotExist) {
-		return out, nil
-	} else if err != nil {
-		return out, err
-	} else if !fi.IsDir() {
-		return out, ErrCacheScanUnsafe
-	}
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, fs.ErrNotExist) {
+	// Everything below spends the budget — the listing, every meta and archive the
+	// reachability check reads, every chat lookup, every entry walked — so the whole scan,
+	// and the time it holds the cleanup lock, is bounded.
+	if *budget <= 0 {
+		out.Truncated = true
 		return out, nil
 	}
+	entries, err := fs.ReadDir(r.FS(), ".")
 	if err != nil {
 		return out, err
 	}
-	reachable, err := reachableSessionIDs()
+	reachable, err := reachableSessionIDs(budget)
+	if errors.Is(err, errBudget) {
+		out.Truncated = true
+		return out, nil
+	}
 	if err != nil {
 		return out, err
 	}
 	cutoff := now.Add(-cacheOrphanGrace)
+	root := filepath.Join(CacheRoot(), feature)
 	for _, e := range entries {
-		// ReadDir reports a symlinked entry as a link, not a directory, so links to
-		// elsewhere are never candidates (RemoveAll on one would only drop the link anyway).
-		if !e.IsDir() {
-			continue
-		}
 		if *budget <= 0 {
 			out.Truncated = true
 			break
+		}
+		*budget--
+		// ReadDir reports a symlinked entry as a link, not a directory, so links to
+		// elsewhere are never candidates.
+		if !e.IsDir() {
+			continue
 		}
 		name := e.Name()
 		if !orphanName(feature, name, reachable) {
 			continue
 		}
-		dir := filepath.Join(root, name)
-		bytes, files, newest, complete := dirStats(dir, budget)
+		bytes, files, newest, complete := dirStats(r, name, budget)
 		if !complete {
-			// A directory not walked to the end may hold a fresh file the walk never
-			// reached; it is neither counted nor deleted.
+			// Not walked to the end — the budget ran out or something could not be read —
+			// so it may hold a fresh file the walk never saw. Neither counted nor deleted.
 			out.Truncated = true
-			break
+			if *budget <= 0 {
+				break
+			}
+			continue
 		}
 		if newest.After(cutoff) {
 			continue
 		}
-		out.Dirs = append(out.Dirs, CacheOrphanDir{Name: name, Path: dir, Bytes: bytes, Files: files})
+		out.Dirs = append(out.Dirs, CacheOrphanDir{Name: name, Path: filepath.Join(root, name), Bytes: bytes, Files: files})
 		out.Bytes += bytes
 		out.Files += files
 	}
@@ -256,7 +301,7 @@ func orphanName(feature, name string, reachable map[string]bool) bool {
 // and each session a cleanup archive would restore. It fails rather than under-counting —
 // a meta or an archive it cannot read would otherwise make that session's files look
 // orphaned.
-func reachableSessionIDs() (map[string]bool, error) {
+func reachableSessionIDs(budget *int) (map[string]bool, error) {
 	ids := map[string]bool{}
 
 	ents, err := os.ReadDir(session.MetaDir())
@@ -264,6 +309,10 @@ func reachableSessionIDs() (map[string]bool, error) {
 		return nil, ErrCacheScanUnsafe
 	}
 	for _, e := range ents {
+		if *budget <= 0 {
+			return nil, errBudget
+		}
+		*budget--
 		name, ok := strings.CutSuffix(e.Name(), ".json")
 		if e.IsDir() || !ok {
 			continue
@@ -281,7 +330,7 @@ func reachableSessionIDs() (map[string]bool, error) {
 		ids[session.UUID(m.Dir, m.Name)] = true
 	}
 
-	archived, err := archivedSessionIDs()
+	archived, err := archivedSessionIDs(budget)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +351,7 @@ type archiveManifest struct {
 // one, else manifest.json from inside <id>.tar.gz (the sidecar is written best-effort, the
 // tarball is the source of truth). A session whose meta does not parse is skipped — the
 // restore skips it too, so it cannot come back.
-func archivedSessionIDs() (map[string]bool, error) {
+func archivedSessionIDs(budget *int) (map[string]bool, error) {
 	ids := map[string]bool{}
 	dir := CleanupArchiveDir()
 	ents, err := os.ReadDir(dir)
@@ -312,6 +361,12 @@ func archivedSessionIDs() (map[string]bool, error) {
 	if err != nil {
 		return nil, ErrCacheScanUnsafe
 	}
+	// Every archive file costs one unit whether or not it is read, so a trash of thousands
+	// of archives is paid for up front.
+	if *budget < len(ents) {
+		return nil, errBudget
+	}
+	*budget -= len(ents)
 	sidecars := map[string]bool{}
 	for _, e := range ents {
 		if strings.HasSuffix(e.Name(), ".json") {
@@ -383,23 +438,27 @@ func manifestFromTarball(path string) (archiveManifest, error) {
 	return m, json.Unmarshal(b, &m)
 }
 
-// dirStats walks one directory: total bytes, file count, and the newest mtime seen
-// (directories included, so an upload in progress counts). It spends one unit of budget per
-// entry; complete is false when the budget ran out before the walk did.
-func dirStats(dir string, budget *int) (bytes int64, files int, newest time.Time, complete bool) {
+// dirStats walks one directory inside the pinned root: total bytes, file count, and the
+// newest mtime seen (directories included, so an upload in progress counts). It spends one
+// unit of budget per entry. complete is false when the budget ran out or anything along the
+// way could not be read — a directory or a file's info that failed may be exactly the fresh
+// upload the grace window exists for.
+func dirStats(r *os.Root, name string, budget *int) (bytes int64, files int, newest time.Time, complete bool) {
 	complete = true
-	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+	_ = fs.WalkDir(r.FS(), name, func(_ string, d fs.DirEntry, err error) error {
 		if *budget <= 0 {
 			complete = false
-			return filepath.SkipAll
+			return fs.SkipAll
 		}
 		*budget--
 		if err != nil {
-			return nil
+			complete = false
+			return fs.SkipAll
 		}
 		info, err := d.Info()
 		if err != nil {
-			return nil
+			complete = false
+			return fs.SkipAll
 		}
 		if info.ModTime().After(newest) {
 			newest = info.ModTime()

@@ -198,6 +198,7 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	}
 	restored := map[string]any{"sessions": []string{}, "branches": []string{}}
 	var sessions, branches []string
+	var metas []session.Meta
 	for _, s := range m.Sessions {
 		var meta session.Meta
 		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
@@ -214,8 +215,27 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			_ = os.MkdirAll(filepath.Dir(s.JSONLPaths[i]), 0o700)
 			_ = os.WriteFile(s.JSONLPaths[i], data, 0o600)
 		}
-		session.WriteMeta(meta)
+		metas = append(metas, meta)
 		sessions = append(sessions, s.Name)
+	}
+	// Only the hand-over is under the cleanup lock: from here on the meta, not the archive,
+	// keeps these sessions' cache reachable. Reading the archive and writing the transcripts
+	// above can take a while on a large archive, and holding the lock through them would stall
+	// the cleanup survey and the Machine tab behind it. So the archive is checked again here —
+	// a purge that won the race means a cache delete may already have run, and bringing the
+	// conversation back without its files is the one outcome this lock exists to prevent.
+	var purged bool
+	sessionx.WithCleanupLock(func() {
+		if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
+			purged = true
+			return
+		}
+		for _, meta := range metas {
+			session.WriteMeta(meta)
+		}
+	})
+	if purged {
+		return nil, fmt.Errorf("archive %s was purged while it was being restored", id)
 	}
 	for _, b := range m.Branches {
 		dir, ok := gitx.ResolveRepoDir(b.Repo)

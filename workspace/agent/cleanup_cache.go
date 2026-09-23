@@ -59,15 +59,18 @@ func handleDeleteCacheOrphans(w http.ResponseWriter, r *http.Request) {
 	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, cacheDeleteResult{
 		Feature: feature, Dirs: len(removed.Dirs), Files: removed.Files, Bytes: removed.Bytes,
+		Truncated: removed.Truncated,
 	})
 }
 
-// cacheDeleteResult is what a delete_cache reclaimed.
+// cacheDeleteResult is what a delete_cache reclaimed. Truncated = the scan stopped at its
+// budget, so only part was taken and the next survey lists the rest.
 type cacheDeleteResult struct {
-	Feature string `json:"feature"`
-	Dirs    int    `json:"dirs"`
-	Files   int    `json:"files"`
-	Bytes   int64  `json:"bytes"`
+	Feature   string `json:"feature"`
+	Dirs      int    `json:"dirs"`
+	Files     int    `json:"files"`
+	Bytes     int64  `json:"bytes"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type usagePart struct {

@@ -146,4 +146,12 @@ describe("CleanupModal cache section", () => {
     expect(text).toContain("ごみ箱へ退避");
     expect(text).toContain("キャッシュの削除はごみ箱を経由せず");
   });
+
+  it("marks a row whose scan stopped at its budget as partial", async () => {
+    candidates = [cacheRow("pasted", { truncated: true, reason_key: "clean.reason.cache_partial" })];
+    await render();
+    const row = document.querySelector(".clean-type-cache")!.closest(".clean-row")!;
+    expect(row.textContent).toContain("（一部）");
+    expect(row.textContent).toContain("一部だけ");
+  });
 });

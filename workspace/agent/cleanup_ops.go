@@ -266,11 +266,8 @@ func handleListCleanupArchives(w http.ResponseWriter, r *http.Request) {
 
 func handleRestoreCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	// Under the cleanup lock: a cache delete must not scan between this reading the archive
-	// and writing the meta back (sessionx.WithCleanupLock).
-	var restored map[string]any
-	var err error
-	sessionx.WithCleanupLock(func() { restored, err = restoreCleanupArchive(id) })
+	// restoreCleanupArchive takes the cleanup lock itself, for the meta hand-over only.
+	restored, err := restoreCleanupArchive(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "restore_failed", err.Error())
 		return

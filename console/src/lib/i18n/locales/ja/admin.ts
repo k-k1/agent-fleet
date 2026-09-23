@@ -1188,6 +1188,7 @@ export const admin = {
   "clean.cache_feature_pasted": "貼り付け・添付したファイル",
   "clean.cache_feature_codex_view_image": "codex が読んだ画像",
   "clean.cache_size": "{dirs} 件・{size}",
+  "clean.cache_partial": "（一部）",
   "clean.cache_stage_title": "削除済みセッションのキャッシュ",
   "clean.cache_stage_run": "まとめて削除",
   "clean.cache_stage_run_title": "もうどこからも参照されないキャッシュを削除します（ごみ箱には入りません）",
@@ -1226,6 +1227,7 @@ export const admin = {
   "clean.reason.branch_merged": "マージ済みローカルブランチ（親に取り込み済み。削除しても復元可）",
   "clean.reason.cache_orphan": "削除済みセッション／会話のキャッシュ（ごみ箱にも無く、もう参照されない。削除は元に戻せない）",
   "clean.reason.cache_unsafe": "読めないセッション情報かごみ箱があり、参照の有無を判定できない（何も消さない）",
+  "clean.reason.cache_partial": "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
   // 同じ理由の「状態バッジ＋補足」分解版（行の2行目表示用。badge が無いキーは全文へフォールバック）。
   "clean.reason_badge.locked": "ロック中",
   "clean.reason_hint.locked": "削除保護。解除するまで掃除対象外",
@@ -1253,4 +1255,6 @@ export const admin = {
   "clean.reason_hint.cache_orphan": "セッション・会話は削除済みでごみ箱にも無い。削除は元に戻せません",
   "clean.reason_badge.cache_unsafe": "判定不可",
   "clean.reason_hint.cache_unsafe": "読めないセッション情報かごみ箱があるため、何も消しません",
+  "clean.reason_badge.cache_partial": "一部だけ",
+  "clean.reason_hint.cache_partial": "件数が多いため上限まで点検した分だけが対象です。削除後にもう一度点検すると残りが出ます。元に戻せません",
 };

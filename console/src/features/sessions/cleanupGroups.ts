@@ -33,6 +33,8 @@ export interface CleanupCandidate {
   bytes?: number;
   files?: number;
   dirs?: number;
+  // The scan behind a "cache" row stopped at its budget: the row covers only part.
+  truncated?: boolean;
 }
 
 // One working copy: a linked worktree, or the clone itself (the base copy, isWorktree false).

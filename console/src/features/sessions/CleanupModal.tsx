@@ -303,7 +303,10 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
         <span className="clean-target" title={c.id}>
           {cacheLabel(c.id)}
           {c.bytes != null && c.dirs != null && (
-            <span className="clean-size">{tr("clean.cache_size", { dirs: c.dirs, size: humanSize(c.bytes) })}</span>
+            <span className="clean-size">
+              {tr("clean.cache_size", { dirs: c.dirs, size: humanSize(c.bytes) })}
+              {c.truncated ? tr("clean.cache_partial") : ""}
+            </span>
           )}
         </span>
         <span className="clean-act">{c.action ? (tMaybe("clean.action_" + c.action) ?? c.action) : ""}</span>

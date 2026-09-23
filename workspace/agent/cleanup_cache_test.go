@@ -166,16 +166,35 @@ func TestHandleCleanupUsage(t *testing.T) {
 	}
 }
 
-// TestRestoreAndPurgeTakeTheCleanupLock (review ③, the main side): both trash operations
-// wait for the cleanup lock, so a cache delete can never scan between a restore reading an
-// archive and writing the meta back.
+// archivedSession writes a real cleanup archive holding one session and returns its id.
+func archivedSession(t *testing.T, name string) (string, session.Meta) {
+	t.Helper()
+	m := session.Meta{Name: name, Dir: "/home/dev/repos/app", Kind: session.KindClaude}
+	jsonl := filepath.Join(os.Getenv("HOME"), name+".jsonl")
+	man := cleanupManifest{
+		ID: newCleanupID(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), name), Reason: "delete_session",
+		Sessions: []cleanupArchivedSession{{
+			Name: m.Name, Kind: m.Kind, Meta: marshalMeta(m),
+			JSONLPaths: []string{jsonl}, JSONLNames: []string{"sessions/x/00.jsonl"},
+		}},
+	}
+	if err := writeCleanupArchive(man, map[string][]byte{"sessions/x/00.jsonl": []byte("{}\n")}); err != nil {
+		t.Fatal(err)
+	}
+	return man.ID, m
+}
+
+// TestRestoreAndPurgeTakeTheCleanupLock (review ③): the purge, and the restore's meta
+// hand-over, wait for the cleanup lock — so a cache delete can never scan in the gap between
+// a restore reading an archive and writing the meta back.
 func TestRestoreAndPurgeTakeTheCleanupLock(t *testing.T) {
 	cacheTestHome(t)
+	id, m := archivedSession(t, "srest01")
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
 	for _, req := range []*http.Request{
-		httptest.NewRequest(http.MethodPost, "/cleanup/archives/none/restore", nil),
+		httptest.NewRequest(http.MethodPost, "/cleanup/archives/"+id+"/restore", nil),
 		httptest.NewRequest(http.MethodDelete, "/cleanup/archives/none", nil),
 	} {
 		done := make(chan struct{})
@@ -186,14 +205,44 @@ func TestRestoreAndPurgeTakeTheCleanupLock(t *testing.T) {
 			}()
 			select {
 			case <-done:
-				t.Fatalf("%s %s ran while the cleanup lock was held", req.Method, req.URL.Path)
-			case <-time.After(100 * time.Millisecond):
+				t.Fatalf("%s %s finished while the cleanup lock was held", req.Method, req.URL.Path)
+			case <-time.After(150 * time.Millisecond):
 			}
 		})
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			t.Fatalf("%s %s never ran after the lock was released", req.Method, req.URL.Path)
+			t.Fatalf("%s %s never finished after the lock was released", req.Method, req.URL.Path)
 		}
+	}
+	if _, ok := session.ReadMeta(m.Name); !ok {
+		t.Fatal("the restore did not bring the meta back")
+	}
+}
+
+// TestRestoreLosesToAPurge (re-review ③): the restore reads the archive outside the lock, so
+// a purge can win the race. Then the cache may already be gone, and the restore must not
+// bring the conversation back without it.
+func TestRestoreLosesToAPurge(t *testing.T) {
+	cacheTestHome(t)
+	id, m := archivedSession(t, "srest02")
+	var err error
+	done := make(chan struct{})
+	sessionx.WithCleanupLock(func() {
+		go func() {
+			_, err = restoreCleanupArchive(id)
+			close(done)
+		}()
+		time.Sleep(150 * time.Millisecond) // the restore has read the archive and is waiting
+		if perr := purgeCleanupArchive(id); perr != nil {
+			t.Fatal(perr)
+		}
+	})
+	<-done
+	if err == nil {
+		t.Fatal("a restore of a purged archive succeeded")
+	}
+	if _, ok := session.ReadMeta(m.Name); ok {
+		t.Fatal("the meta came back without its archive")
 	}
 }

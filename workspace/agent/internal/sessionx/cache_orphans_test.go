@@ -426,3 +426,88 @@ func TestCacheOrphansBudget(t *testing.T) {
 		t.Fatalf("default budget: truncated=%v dirs=%d err=%v", got.Truncated, len(got.Dirs), err)
 	}
 }
+
+// TestCacheOrphansUnreadableInside (re-review ④): a directory the walk cannot fully read may
+// hide a fresh upload, so it is neither listed nor deleted — and the answer says it is partial.
+func TestCacheOrphansUnreadableInside(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 000 directory anyway")
+	}
+	f := newCacheFixture(t)
+	d := f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
+	hidden := filepath.Join(d, "sub")
+	if err := os.Mkdir(hidden, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hidden, 0o700) })
+	for _, p := range []string{hidden, d} {
+		if err := os.Chtimes(p, f.old, f.old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Dirs) != 0 || !got.Truncated {
+		t.Fatalf("removed %v truncated=%v — want nothing removed and a partial answer", orphanNames(got), got.Truncated)
+	}
+	if _, err := os.Stat(d); err != nil {
+		t.Fatalf("partly unreadable dir was removed: %v", err)
+	}
+	// The positive control: readable again, the same directory goes.
+	if err := os.Chmod(hidden, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(hidden, f.old, f.old); err != nil {
+		t.Fatal(err)
+	}
+	got, err = RemoveCacheOrphans(CacheFeaturePasted, time.Now())
+	if err != nil || len(got.Dirs) != 1 {
+		t.Fatalf("readable dir not removed: %v %v", orphanNames(got), err)
+	}
+}
+
+// TestCacheOrphansBudgetCoversReachability (re-review ②): reading metas and archives spends
+// the budget too; when it runs out there, nothing is decided and the answer says so.
+func TestCacheOrphansBudgetCoversReachability(t *testing.T) {
+	f := newCacheFixture(t)
+	f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
+	for _, n := range []string{"slive01", "slive02", "slive03", "slive04", "slive05"} {
+		session.WriteMeta(metaFor(n))
+	}
+	// The dead directory alone costs 3 (its listing slot, itself, its file) and would fit;
+	// the five metas do not. So only charging the metas can make this come back partial.
+	budget := 3
+	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), &budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated || len(got.Dirs) != 0 {
+		t.Fatalf("truncated=%v dirs=%v — want a partial answer that decides nothing", got.Truncated, orphanNames(got))
+	}
+}
+
+// TestCacheCandidatePartial (re-review ①): a scan cut short still offers what it fully
+// checked, but the row says it is partial; one that could check nothing is a keep row.
+func TestCacheCandidatePartial(t *testing.T) {
+	f := newCacheFixture(t)
+	old := CacheScanMaxEntries
+	t.Cleanup(func() { CacheScanMaxEntries = old })
+	for _, n := range []string{"sgone01", "sgone02"} {
+		f.dir(t, CacheFeaturePasted, sid(metaFor(n)), 1)
+	}
+	// One entry for the first listing slot and two for its walk (dir + file): the first
+	// directory completes, the second never starts.
+	CacheScanMaxEntries = 3
+	got := cacheCleanupCandidates(time.Now())
+	if len(got) != 1 || got[0].Action != "delete_cache" || !got[0].Truncated || got[0].Dirs != 1 ||
+		got[0].ReasonKey != cleanReasonCachePartial {
+		t.Fatalf("rows = %+v, want one partial delete row covering the one checked dir", got)
+	}
+	CacheScanMaxEntries = 0
+	got = cacheCleanupCandidates(time.Now())
+	if len(got) != 1 || got[0].Action != "" || got[0].Safety != "keep" || !got[0].Truncated {
+		t.Fatalf("rows = %+v, want one keep row that offers nothing", got)
+	}
+}
