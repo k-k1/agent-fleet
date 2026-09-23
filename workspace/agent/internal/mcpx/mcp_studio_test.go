@@ -167,3 +167,55 @@ func TestGenerateImageRefusedInAStudioSession(t *testing.T) {
 		t.Fatalf("generate_image in a studio session = %s, want the studio refusal", out)
 	}
 }
+
+// An agent's relative reference means its own working folder, not the browse root the Agent
+// resolves relative paths against: the MCP child makes it absolute before relaying.
+func TestRelativeReferencesAreMadeAbsoluteFromTheSessionFolder(t *testing.T) {
+	cwd, _ := os.Getwd()
+	want := filepath.Join(cwd, "docs/ref.png")
+
+	t.Run("set_image_draft", func(t *testing.T) {
+		withSessionSurface(t, "slot01")
+		bindStudioForTest(t, "slot01", true)
+		got := make(chan map[string]any, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			got <- body
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		t.Cleanup(srv.Close)
+		u, _ := url.Parse(srv.URL)
+		t.Setenv("AGENT_ADDR", u.Host)
+		mcpStudioCall(mcpReq{ID: json.RawMessage("1")}, "set_image_draft",
+			json.RawMessage(`{"prompt":"snow","inputs":["docs/ref.png","/abs/x.png"]}`))
+		body := <-got
+		draft, _ := body["draft"].(map[string]any)
+		inputs, _ := draft["inputs"].([]any)
+		if len(inputs) != 2 || inputs[0] != want || inputs[1] != "/abs/x.png" || draft["prompt"] != "snow" {
+			t.Fatalf("relayed draft = %v, want inputs [%s /abs/x.png] and the rest untouched", draft, want)
+		}
+	})
+	t.Run("generate_image", func(t *testing.T) {
+		withSessionSurface(t, "slot01")
+		mcpImageGenEnabled = true
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+		session.WriteMeta(session.Meta{Name: "slot01", Kind: session.KindClaude})
+		got := make(chan map[string]any, 1)
+		stubAgentForImageGen(t, mcpImageGenStatus{Enabled: true, Ready: true, Provider: "codex", Kind: "claude", Ops: []string{"edit"}},
+			func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				got <- body
+				http.Error(w, `{"error":{"code":"x","message":"stop here"}}`, http.StatusBadGateway)
+			})
+		mcpGenerateImage(mcpReq{ID: json.RawMessage("1")}, imageGenArgs{op: "edit", prompt: "snow", inputs: []string{"docs/ref.png"}, mask: "m.png"})
+		body := <-got
+		inputs, _ := body["inputs"].([]any)
+		if len(inputs) != 1 || inputs[0] != want || body["mask"] != filepath.Join(cwd, "m.png") {
+			t.Fatalf("relayed inputs/mask = %v / %v, want absolute from %s", body["inputs"], body["mask"], cwd)
+		}
+	})
+}

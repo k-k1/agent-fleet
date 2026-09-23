@@ -471,6 +471,8 @@ export interface StudioDraft {
   out_dir?: string;
   jobs?: number;
   seed_policy?: SeedPolicy;
+  /** The pane's "trial at full steps" (ADR 0081 decision 11). The member's field. */
+  full_steps?: boolean;
   /** The agent's proposal for `model`, which only the member sets; shown as a card. */
   suggest_model?: string;
 }

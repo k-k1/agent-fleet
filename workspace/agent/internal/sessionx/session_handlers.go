@@ -29,6 +29,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -1036,6 +1037,15 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.ReportTo != "" {
 		req.InitialPrompt = withSelfReportHint(req.InitialPrompt, meta)
 	}
+	// The studio's own `session` is written BEFORE the session is published or launched (ADR
+	// 0100 decision 2 ③): a Managed create sends the persona synchronously below, and its first
+	// get_image_studio is refused unless the studio already names this session back.
+	if studio != "" {
+		if ref := bindStudioOnCreate(studio, name); ref != nil {
+			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+			return
+		}
+	}
 	if meta.DriverKind() == session.DriverManaged {
 		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
 		// runtime. The first prompt needs no boot-screen scraping and can just be sent
@@ -1043,6 +1053,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		d, _ := driverOf(meta)
 		h, err := mcpx.StartManagedSession(d, meta)
 		if err != nil {
+			unbindStudioAfterFailedLaunch(studio, name)
 			writeRuntimeErr(w, err)
 			return
 		}
@@ -1063,6 +1074,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
+		unbindStudioAfterFailedLaunch(studio, name)
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
@@ -1585,17 +1597,25 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
-		// The same slot keeps its studio (ADR 0100 decision 2). The studio's own `session` still
-		// names the old slot until the studio store follows the rename, and until it does the
-		// studio tools refuse — the call-time check exists for exactly this gap.
+		// The same slot keeps its studio (ADR 0100 decision 2); rebindStudioOnRecreate below moves
+		// the studio's own `session` over, or drops this copy when it cannot.
 		Studio: m.Studio,
 	}
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
 	}
+	// The new slot takes the studio over before it launches, for the same reason as a create;
+	// a launch that fails hands it back to the old slot.
+	rebindStudioOnRecreate(&newMeta, m.Name)
+	undoStudio := func() {
+		if newMeta.Studio != "" && imagegen.BindStudioSession != nil {
+			_ = imagegen.BindStudioSession(newMeta.Studio, m.Name, newMeta.Name)
+		}
+	}
 	if newMeta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(newMeta)
 		if !ok {
+			undoStudio()
 			// Same as fork: silently skipping the launch when the driver is missing would
 			// fake alive=true.
 			m.Archived = false
@@ -1606,6 +1626,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err := mcpx.StartManagedSession(d, newMeta); err != nil {
+			undoStudio()
 			m.Archived = false
 			session.WriteMeta(m)
 			fleetgraph.RecordArchived(m.Name, false)
@@ -1619,6 +1640,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := startSessionTmux(newMeta, false); err != nil {
+		undoStudio()
 		// Un-archive the old session so a launch failure doesn't silently drop it from
 		// the active list.
 		m.Archived = false

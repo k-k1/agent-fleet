@@ -208,6 +208,7 @@ describe("stripStudioSignal", () => {
     // The member's own words: not the last line, or not a whole line.
     expect(stripStudioSignal(signal + "\nこれは本文")).toBe(signal + "\nこれは本文");
     expect(stripStudioSignal("本文 [studio v1]")).toBe("本文 [studio v1]");
+    expect(stripStudioSignal("参考にして\n[studio lighting reference]")).toBe("参考にして\n[studio lighting reference]");
     expect(stripStudioSignal("[agent-fleet:peer from=a] 直して")).toBe("[agent-fleet:peer from=a] 直して");
   });
 

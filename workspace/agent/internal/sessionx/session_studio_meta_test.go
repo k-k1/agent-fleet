@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -25,6 +26,7 @@ func TestCreateCarriesStudioAndInitialPromptState(t *testing.T) {
 	orig := deliverInitialPromptFn
 	deliverInitialPromptFn = func(string, string) {} // never settles: the state stays pending
 	t.Cleanup(func() { deliverInitialPromptFn = orig })
+	binds := stubStudioBind(t, nil)
 
 	created := env.createOK(map[string]any{"kind": "claude", "dir": repo, "studio": studioID, "initial_prompt": "persona"})
 	if created.Studio != studioID || created.InitialPromptState != session.InitialPromptPending {
@@ -33,6 +35,11 @@ func TestCreateCarriesStudioAndInitialPromptState(t *testing.T) {
 	m, ok := session.ReadMeta(created.Name)
 	if !ok || m.Studio != studioID || m.InitialPromptState != session.InitialPromptPending {
 		t.Fatalf("meta studio/state = %q/%q (ok=%v)", m.Studio, m.InitialPromptState, ok)
+	}
+	// The studio was pointed at the session BEFORE the session existed anywhere: no meta on
+	// disk yet when the hook ran, so no launch and no first turn can have preceded it.
+	if len(*binds) != 1 || (*binds)[0] != (studioBindCall{studioID, created.Name, "", false}) {
+		t.Fatalf("binds = %+v, want one create-time bind with no meta written yet", *binds)
 	}
 
 	plain := env.createOK(map[string]any{"kind": "claude", "dir": repo})
@@ -57,6 +64,99 @@ func TestCreateCarriesStudioAndInitialPromptState(t *testing.T) {
 	if rm, _ := session.ReadMeta(recreated.Name); rm.Studio != studioID || rm.InitialPromptState != "" {
 		t.Fatalf("recreate studio/state = %q/%q, want the studio kept and no initial prompt", rm.Studio, rm.InitialPromptState)
 	}
+	last := (*binds)[len(*binds)-1]
+	if last != (studioBindCall{studioID, recreated.Name, created.Name, false}) {
+		t.Fatalf("recreate bind = %+v, want the studio moved from the old slot to the new one", last)
+	}
+}
+
+// A recreate whose studio has moved on starts unbound rather than claiming a studio that does
+// not name it back (every studio tool and generate_image would refuse it).
+func TestRecreateDropsAStudioItCannotTakeOver(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.fixture(session.Meta{Name: "old1", Kind: session.KindClaude, Dir: repo, Studio: studioID})
+	stubStudioBind(t, func(_, _, previous string) error {
+		if previous != "" {
+			return imagegen.ErrStudioBound
+		}
+		return nil
+	})
+	code, raw := roundtrip(t, env.srv, "POST", "/sessions/old1/recreate", nil)
+	if code != http.StatusOK {
+		t.Fatalf("recreate = %d %s", code, raw)
+	}
+	var recreated session.Session
+	if err := json.Unmarshal(raw, &recreated); err != nil {
+		t.Fatal(err)
+	}
+	if rm, _ := session.ReadMeta(recreated.Name); rm.Studio != "" || recreated.Studio != "" {
+		t.Fatalf("recreate kept studio %q (wire %q) it could not take over", rm.Studio, recreated.Studio)
+	}
+}
+
+// A create naming a studio is refused, not started half-bound, when the studio cannot be bound.
+func TestCreateWithAStudioThatCannotBeBound(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		hook func(string, string, string) error
+		nil_ bool
+		code int
+		want string
+	}{
+		{name: "no store", nil_: true, code: http.StatusNotImplemented, want: "studio_unavailable"},
+		{name: "no such studio", hook: func(string, string, string) error { return imagegen.ErrStudioNotFound }, code: http.StatusNotFound, want: "no_studio"},
+		{name: "bound elsewhere", hook: func(string, string, string) error { return imagegen.ErrStudioBound }, code: http.StatusConflict, want: "studio_bound"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.nil_ {
+				old := imagegen.BindStudioSession
+				imagegen.BindStudioSession = nil
+				t.Cleanup(func() { imagegen.BindStudioSession = old })
+			} else {
+				stubStudioBind(t, c.hook)
+			}
+			before := len(session.ListMetas())
+			code, raw := env.create(map[string]any{"kind": "claude", "dir": repo, "studio": studioID})
+			if code != c.code || !strings.Contains(string(raw), c.want) {
+				t.Fatalf("create = %d %s, want %d %s", code, raw, c.code, c.want)
+			}
+			if n := len(session.ListMetas()); n != before {
+				t.Fatalf("a refused create left a session behind (%d metas, was %d)", n, before)
+			}
+		})
+	}
+}
+
+type studioBindCall struct {
+	studio, session, previous string
+	metaOnDisk                bool
+}
+
+// stubStudioBind installs the studio store's bind hook for one test, recording every call and
+// whether the session's meta already existed when it was made.
+func stubStudioBind(t *testing.T, answer func(studio, session, previous string) error) *[]studioBindCall {
+	t.Helper()
+	calls := &[]studioBindCall{}
+	old := imagegen.BindStudioSession
+	imagegen.BindStudioSession = func(studio, name, previous string) error {
+		_, onDisk := session.ReadMeta(name)
+		*calls = append(*calls, studioBindCall{studio, name, previous, onDisk})
+		if answer != nil {
+			return answer(studio, name, previous)
+		}
+		return nil
+	}
+	t.Cleanup(func() { imagegen.BindStudioSession = old })
+	return calls
 }
 
 func TestSpawnedCreateMayNotBindAStudio(t *testing.T) {

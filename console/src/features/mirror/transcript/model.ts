@@ -87,6 +87,8 @@ export function spawnParentOf(text: string): string | null {
 // copy is StudioSignalPrefix (workspace/agent/internal/imagegen/studio_signal.go), and a Go test
 // holds the two equal.
 export const STUDIO_SIGNAL_PREFIX = "[studio ";
+// Both ends are matched, so a member's own "[studio lighting reference]" last line is kept.
+export const STUDIO_SIGNAL_SUFFIX = "→ get_image_studio]";
 
 // stripStudioSignal removes that line from the end of a message, with the blank space before
 // it. Only the last line is looked at: the same words anywhere else are the member's own.
@@ -94,7 +96,7 @@ export function stripStudioSignal(text: string): string {
   const body = text.replace(/[ \t\r\n]+$/, "");
   const i = body.lastIndexOf("\n");
   const last = body.slice(i + 1);
-  if (!last.replace(/^[ \t]+/, "").startsWith(STUDIO_SIGNAL_PREFIX) || !last.endsWith("]")) return text;
+  if (!last.replace(/^[ \t]+/, "").startsWith(STUDIO_SIGNAL_PREFIX) || !last.endsWith(STUDIO_SIGNAL_SUFFIX)) return text;
   return i < 0 ? "" : body.slice(0, i).replace(/[ \t\r\n]+$/, "");
 }
 

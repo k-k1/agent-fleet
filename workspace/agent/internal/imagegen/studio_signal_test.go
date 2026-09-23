@@ -15,6 +15,8 @@ func TestStripStudioSignal(t *testing.T) {
 		// The member's own words, not the signal: not the last line, or not a whole line.
 		{"[studio v1 → get_image_studio]\nこれは本文", "[studio v1 → get_image_studio]\nこれは本文"},
 		{"本文 [studio v1]", "本文 [studio v1]"},
+		// A whole bracketed last line of the member's own that is not the signal.
+		{"参考にして\n[studio lighting reference]", "参考にして\n[studio lighting reference]"},
 		{"本文\n[studio v1 はまだ閉じていない", "本文\n[studio v1 はまだ閉じていない"},
 		{"[agent-fleet:peer from=a] 直して", "[agent-fleet:peer from=a] 直して"},
 		{"", ""},
@@ -37,6 +39,10 @@ func TestStudioSignalPrefixMatchesTheConsole(t *testing.T) {
 	}
 	if string(m[1]) != StudioSignalPrefix {
 		t.Fatalf("Console prefix %q, Go prefix %q", m[1], StudioSignalPrefix)
+	}
+	s := regexp.MustCompile(`export const STUDIO_SIGNAL_SUFFIX = "([^"]*)";`).FindSubmatch(src)
+	if s == nil || string(s[1]) != StudioSignalSuffix {
+		t.Fatalf("Console suffix %q, Go suffix %q", s, StudioSignalSuffix)
 	}
 	if StudioSignalPrefix[0] == '<' {
 		t.Fatal("the prefix starts with '<', which the mirror's isNoise hides as a system line")
