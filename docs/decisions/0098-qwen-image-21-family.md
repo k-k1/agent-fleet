@@ -6,6 +6,8 @@ English | [日本語](0098-qwen-image-21-family.ja.md)
   deployment on 2026-09-23** (see "P2 on real hardware"): text-to-image passed first time, and
   EVERY edit failed on a wrong input key that the goldens had pinned rather than caught. The fix
   and its live positive control are recorded there.
+- **P3 was run the same day** (see "P3 on real hardware"): the family fits a T4 but samples 25x
+  slower there, so no `vram_mib` is declared and the file-sum floor stands.
 - 🔴 **Prerequisite (P0): the ComfyUI pin at v0.37.0** — landed in #859 (the image) and #860 (the
   template default). `TextEncodeQwenImage21` does not exist before that tag, so on an engine still
   pulling an older one a row of this family is refused at `/prompt` validation. ⚠️ A running stack
@@ -352,8 +354,51 @@ imprecision — the img2img warning would name 1216x832.
 
 **Not taken, on purpose.** No `vram_mib`: the L40S has room to spare, so the reading would be the
 whole file set resident — exactly the value ADR 0094 decision 8 says is not a value of that field.
-And the blocking route's edit through the Agent is still owed: it needs a deployment carrying the
-fix.
+
+**The fix through the Agent, after it was deployed (2026-09-23, `0.22.2-dev-ef644598`).** The same
+two-reference edit, sent to the Agent's own `POST /imagegen/generate` rather than to the gateway:
+HTTP 200 in 35.7 s, a `1248x832` picture — and **pixel-identical** to the gateway positive control
+above (maximum per-channel difference 0). The deployed Agent builds exactly the graph the fixed
+builder emits, which closes the edit half of P2.
+
+## P3 on real hardware — the T4 question (2026-09-23)
+
+The one `vram_mib` worth taking was the one that could change what the deployment buys. The
+file-sum floor (16,482 MiB) already selects the 22,000 rung, so a reading on an L4 or an L40S would
+buy the same box; only a value that fits the **T4 rung** (g4dn, 14,500 declared, $0.34/h — the
+engine's default class) moves the purchase. So the run was done ADR 0094 P1's reverse way:
+declare a hypothesis (`vram_mib: 14000`) so the rung is a candidate, pin the class to `g4dn-spot`,
+replace the box, and read the engine's own `/system_stats` once a second.
+
+| | generate, 1024² | edit, two references |
+|---|---|---|
+| result | HTTP 200, a clean picture | the engine finished; the picture followed the instruction |
+| sampling | **8.75 s/step**, prompt 249 s | **34.8 s/step**, about 15 minutes |
+| peak VRAM in use (of 14,912) | 11,863 MiB, 3,048 free | 13,757 MiB, 1,154 free |
+| peak host RAM (of 15,791) | 13,720 MiB | 13,738 MiB |
+
+It **fits**, and the card was tight — the text encoder was evicted after encoding and the weights
+were streamed in and out through the edit — so by ADR 0094 decision 8 these ARE values of the
+field. The T4 has no bfloat16, and the engine said so: `model weight dtype torch.bfloat16, manual
+cast: torch.float32`. The picture quality survives the fp32 compute (the edit differs from the
+L40S run by at most 94 in a channel and reads the same); the time does not.
+
+**Decision: declare nothing.** Against the same edit on the g22 rung (35 s at $1.35/h, about
+$0.013), the T4 costs about $0.085 for one edit — the hourly rate is a quarter, the time is
+twenty-five times — and 15 minutes sits on the Agent's own 15-minute run budget. Declaring 13,757
+would make the ladder buy the slower AND dearer card whenever this row sets the engine's need. The
+row keeps the floor, and the measurement stays here as the reason rather than in `vram_mib`.
+(Today krea2's 17,774 sets the engine's need anyway; the declaration would have bitten the day
+that row is switched off.)
+
+⚠️ **The edit on the T4 did not come back through the Agent.** At 74 s the Agent answered
+HTTP 502: `/history` returned 503 because the Control Plane's `DescribeServices` call was cancelled,
+and a 503 on `/history` is not retried (the gap ADR 0072's P2 follow-up already names). The engine
+kept going and finished, and the picture was fetched from the gateway. That is a slow-card failure
+of the polling path, not of this family, and it is left to that gap rather than fixed here.
+
+The engine was put back as it was: hypothesis withdrawn (`vram_mib: 0`), class unpinned, box
+replaced — the ladder bought a g6e.xlarge on `g22-spot` again.
 
 ## Consequences
 
