@@ -8,6 +8,10 @@ English | [日本語](0098-qwen-image-21-family.ja.md)
   and its live positive control are recorded there.
 - **P3 was run the same day** (see "P3 on real hardware"): the family fits a T4 but samples 25x
   slower there, so no `vram_mib` is declared and the file-sum floor stands.
+- **The Open items were followed up the same day** (see "The Open items, followed up"): the
+  img2img size warning names the size measured off the output, 2048-class sizes are offered after
+  a 2048² run, the alpha channel is stripped unless `background=transparent` was asked for, and
+  the prompt enhancers are left unwired with the reasons recorded.
 - 🔴 **Prerequisite (P0): the ComfyUI pin at v0.37.0** — landed in #859 (the image) and #860 (the
   template default). `TextEncodeQwenImage21` does not exist before that tag, so on an engine still
   pulling an older one a row of this family is refused at `/prompt` validation. ⚠️ A running stack
@@ -268,10 +272,11 @@ Symmetrical with ADR 0094 decision 4's `comfySizeRefusal`, and wrong here: this 
 sizes, so the pane draws a size picker, and refusing by value would reject every edit the pane sends.
 The existing img2img warning is the right seam and already fires.
 
-⚠️ That warning names the INPUT picture's own dimensions, while this family resizes to the
-`resolution` budget — so the number it reports is approximate. It is approximate for the 0094
-families too (FluxKontextImageScale rescales), so this is a pre-existing imprecision rather than a
-new one; it is listed under "Open" instead of being fixed inside this change.
+⚠️ That warning named the INPUT picture's own dimensions, while this family resizes to the
+`resolution` budget — so the number it reported was approximate. It was approximate for the 0094
+families too (FluxKontextImageScale rescales), so this was a pre-existing imprecision rather than a
+new one; it was listed under "Open" and has since been fixed for every family (see "The Open
+items, followed up").
 
 ## Phases
 
@@ -400,6 +405,111 @@ of the polling path, not of this family, and it is left to that gap rather than 
 The engine was put back as it was: hypothesis withdrawn (`vram_mib: 0`), class unpinned, box
 replaced — the ladder bought a g6e.xlarge on `g22-spot` again.
 
+## The Open items, followed up (2026-09-23)
+
+The four items P2 left open, taken on the dev deployment (`0.22.2-dev-ef644598`, the engine on a
+g6e.xlarge / L40S, nothing on the GPU ladder touched) and in code. The requests went through the
+Agent's own `POST /imagegen/generate`; the one graph the deployed Agent cannot yet build went
+straight to the gateway, as in P2.
+
+### Open 2 — the img2img size warning now names the size the picture was MADE at
+
+The warning used to name the first reference's own dimensions, which is wrong twice over on the
+families that rescale: a 1216x832 reference here comes back 1248x832 (the encode's 1024² budget at
+multiples of 32), and a caller who asked for exactly 1216x832 was told nothing at all, because the
+size asked for equalled the input's.
+
+Computing each family's canvas was the option this item asked about, and it was not taken. It would
+mean re-deriving the arithmetic of two nodes (FluxKontextImageScale's preferred-resolution pick,
+TextEncodeQwenImage21's budget and rounding) in Go — a second copy that the next pin bump changes
+silently. The route already decodes every output's header (`viewOne`), so the warning is now
+composed after the fetch from the MEASURED size of the first picture (`comfyImg2ImgSizeWarning`):
+it fires whenever the size asked for differs from the size made, names the input's dimensions
+(what the caller can actually change) and the output's, and falls back to the input's alone if
+the output could not be read. It covers the 0094 families too — no per-family code.
+
+### Open 3 — native 2K: offered, after one run
+
+| request (through the Agent) | result | end to end | peak VRAM in use (of 45,457) |
+|---|---|---|---|
+| `1024x1024`, the fox, seed 1234 (the model loads here) | HTTP 200, a clean picture | 44.2 s | 16,706 MiB |
+| `2048x2048`, the same | HTTP 200, one subject, no tiling, fine fur detail | 116.3 s | 19,592 MiB |
+
+2048² was already inside the route's ceiling — `imagegenMaxPixels` is 4<<20, exactly 2048², and
+the check is `>` — so the only thing stopping a member was the list. This family's row now declares
+its own `Sizes`: the five megapixel presets, then the same five shapes at twice the side
+(`2048x2048`, `2304x1792`, `1792x2304`, `2432x1664`, `1664x2432`). Only the square was run; the
+other four are fewer pixels than it, and every side is a multiple of 32 for the 16x latent. The
+first entry stays 1024², so a request that names no size costs what it did. The Console's
+fallback card (`families.ts`) carries the same ten.
+
+The price is time rather than memory: about 2.6x the 1024² end-to-end time on this card, and the
+2048² peak (19.6 GB) is still under the 22,000 rung the file-sum floor already buys. It was not
+run on a T4; P3's timings there make 2K on that card a quarter-hour per picture at best.
+
+### Open 4 — RGBA: stripped unless asked for, and the consumers checked
+
+**Downstream of the engine, nothing breaks on transparency.** The props reader walks PNG chunks
+without decoding and ignores the colour type; the thumbnailer (`fs_thumb.go`) chooses JPEG only for
+an opaque picture and keeps PNG with alpha otherwise, never compositing onto black; the Console's
+cards show the panel tint through transparency and the lightbox a checker; no canvas flattens to
+JPEG; and every `LoadImage` wires only its IMAGE output, so an RGBA picture sent back as a
+reference never becomes a mask by accident.
+
+**The cost was the near-opaque photograph.** One pixel below 255 makes `Opaque()` false, so every
+thumbnail of an ordinary picture from this family was a PNG (five to eight times a JPEG) and the
+lightbox served the 1-2 MB original instead of its preview — and composited over a background it
+was up to 1.2 % see-through.
+
+**Decision (the user's): opaque unless transparency was asked for.** A new row field, `Alpha`,
+declares the one family whose decode carries an alpha channel. For it the template puts
+`SplitImageWithAlpha` (`image[..., :3]`, a no-op on three channels) between the decode and the
+save unless the request says `background=transparent`, and `comfyWarnings` stops telling that
+caller "opaque produced". Stripping in the graph rather than re-encoding in the Agent keeps the
+`prompt` chunk SaveImage writes. Checked on the engine: the stripped graph saved an `RGB` PNG with
+the chunk intact, pixel-identical to the RGB channels of the same request's RGBA output.
+
+⚠️ What lies under an alpha of 0 is not white: the transparent-background picture from P2 holds a
+flat purple there (about 163,58,206). A caller who asks for transparency in the prompt but not in
+`background` now gets that purple as the background. `generate_image` has the `background`
+argument; **the Console's generate form does not**, so from the pane this family is now opaque
+only (Open 6).
+
+**Found on the way: props lost this family's prompt.** `TextEncodeQwenImage21` emits both
+conditionings from one node, with the prompt in `prompt` and the negative in `negative_prompt`, and
+the props reader chose the field by class — so every picture of this family, generate or edit,
+came back with no prompt (read off the dev deployment's own output). The field is now chosen by the
+output slot the sampler's edge names, and the references are read as `img1..imgN` in order rather
+than the first `LoadImage` found.
+
+### Open 5 — the prompt enhancers: wireable, not wired
+
+The Comfy-Org mirror's README says the `qwen3.5_9b_…_pe_{t2i,i2i}` files are "to be used with the
+TextGenerate node", and at v0.37.0 that is true with core nodes alone: a Qwen3.5 state dict is
+detected by shape whatever the CLIPLoader's type (`comfy/sd.py`, the `QWEN35_*` branch), the 9B
+config carries an `lm_head`, and `TextGenerate` → `RegexReplace` (drop the `<think>` block) →
+`JsonExtractString` (`rewritten_prompt`) → the encode's `prompt` is a graph /prompt accepts. The
+upstream model cards (`Qwen/Qwen-Image-2.1-PE-T2I` / `-I2I`) ship a `system_prompt.txt` (10 KB and
+18 KB) and answer a JSON object after a thinking block.
+
+It is not wired, for four reasons, each measured off the files rather than a run:
+
+- **Memory.** Each enhancer is 9.47 GB at int8, beside the 16.5 GB this row already holds. ComfyUI
+  can evict between the two, but the file-sum floor rises from 16,482 to about 25,500 MiB — past
+  the 22,000 rung this family runs on today.
+- **Time.** The upstream example enables thinking with `max_new_tokens=24000`. A thinking 9B model
+  in front of every picture is minutes of text generation on a card bought for images.
+- **It decides the frame.** The T2I answer carries `wh_ratio` — the enhancer picks the aspect
+  ratio — which contradicts the size the caller named; the I2I answer's `ratio_follow` is the
+  same question for edits.
+- **It fails silent.** `JsonExtractString` returns an empty string on a parse failure, so an
+  enhancer that answers anything but clean JSON would sample the picture from an empty prompt, with
+  no error and no warning.
+
+And the route already has a better enhancer in front of it: `generate_image` is called by an agent
+that IS a language model. If this is taken up, the cheaper shape is to give that caller the
+upstream system prompt (the knowledge layer for this family) rather than a second model on the GPU.
+
 ## Consequences
 
 - The vocabulary is now eleven families, and the four copies of it (Agent constants, CP
@@ -410,6 +520,9 @@ replaced — the ladder bought a g6e.xlarge on `g22-spot` again.
   zero values gets the permissive default — three ops, one reference, `strength` offered — rather
   than an error. That is the same shape `TrialSteps` already had, and it is covered the same way:
   by tests that walk the whole vocabulary rather than by a list of families.
+- `comfyFamilyRow` gained a fourth field in the follow-up, `Alpha`, declared on this family alone
+  (a test pins that). A family added later whose decode also writes alpha has to declare it AND
+  strip in its template, or every caller gets the stray alpha back.
 - The engine image pin is now load-bearing for a family that is in the catalogue vocabulary. Until
   P0 lands, an operator can register and enable a `qwen-image-2.1` row and every screen will say it
   is complete; it fails at `/prompt`, loudly, with a node-type error.
@@ -419,18 +532,18 @@ replaced — the ladder bought a g6e.xlarge on `g22-spot` again.
 
 ## Open
 
-1. **Nothing has been run.** The recipe, the reference count, the shift and the whole edit path are
-   citations from published graphs. The goldens pin the graph's SHAPE, which is exactly the claim
-   that was true of SD3.5 while it could not produce a single picture (ADR 0072 P2 残作業 5).
-2. **The img2img size warning reports the input's own dimensions**, not the size the picture is
-   actually made at after the `resolution` resize. Pre-existing and shared with the 0094 families.
-3. **Native 2K is unexercised.** The templates' note says 2048² is supported directly and suggests a
-   4-megapixel ResolutionSelector for it; `comfyMegapixelSizes` stops at 1024-class presets, so a
-   member cannot ask for it. Whether to widen the size list for this family is a question a run
-   should answer first.
-4. **RGBA end to end is unverified.** The model writes an alpha channel and `SaveImage` keeps it,
-   but nothing downstream of the engine — the props reader, the gallery, the mirror's cards — has
-   been checked against a PNG with transparency.
-5. **The prompt-enhancer models are unused.** `qwen3.5_9b_…_pe_{t2i,i2i}` ship beside the encoder
-   and are a documented part of the official pipeline. They are not in the ComfyUI templates, and
-   nothing here declares them.
+1. ~~**Nothing has been run.**~~ Answered by P2 and P3. The recipe, the reference count and the
+   shift are still the published graph's numbers; the whole path now runs.
+2. ~~**The img2img size warning reports the input's own dimensions.**~~ Fixed for every family: the
+   warning names the size measured off the output (see "The Open items, followed up").
+3. ~~**Native 2K is unexercised.**~~ 2048² run through the Agent; the family now offers 2048-class
+   sizes.
+4. ~~**RGBA end to end is unverified.**~~ The consumers were checked, and the alpha is stripped
+   unless `background=transparent` was asked for.
+5. **The prompt-enhancer models are unused — now on purpose.** Wireable with core nodes; not wired
+   for memory, time, the aspect ratio it imposes and a silent empty-prompt failure. The cheaper
+   shape, if wanted, is the upstream system prompt handed to the calling agent.
+6. **Transparency is unreachable from the Console.** The generate form has no `background`
+   control, so the pane now always gets this family's opaque output; only `generate_image` can ask
+   for `background=transparent`. A reproduction from props cannot either: `ImageProps` carries no
+   background (a transparent picture is recognisable only by the missing `SplitImageWithAlpha`).

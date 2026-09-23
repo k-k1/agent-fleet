@@ -262,6 +262,12 @@ func comfyFamilyInstructionEdit(family comfyFamily) bool {
 // itself, not through how far a partial denoise is allowed to travel — so a caller's strength has
 // nowhere to go. 実測 C is the same failure this exists to prevent: the same request at denoise
 // 0.6 came back unedited, with no error and no warning.
+// comfyFamilyAlpha is comfyFamilyRow.Alpha: whether the family's decode carries an alpha channel.
+func comfyFamilyAlpha(family comfyFamily) bool {
+	r, ok := comfyFamilyRowFor(family)
+	return ok && r.Alpha
+}
+
 func comfyFamilyStrength(family comfyFamily) bool {
 	return !comfyFamilyInstructionEdit(family)
 }
@@ -1007,6 +1013,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		Op: req.Op, Prompt: req.Prompt, Negative: comfyNegativeFor(conn, model, req),
 		Seed: seed, Width: w, Height: h,
 		BatchSize: count, Loras: loras, Strength: req.Strength,
+		Transparent: strings.EqualFold(strings.TrimSpace(req.Background), "transparent"),
 		// The catalogue row for THIS model with the caller's own overlay laid over it, field by
 		// field (ADR 0081 decision 4). What the template then does with it is one more merge —
 		// family recipe ← this — so the whole order is recipe ← row ← request, and a caller who
@@ -1029,7 +1036,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	// needing. Reading the picture's real dimensions here rather than trusting req.Size is what
 	// keeps klein's schedule honest — Flux2Scheduler derives its shift from a width and height,
 	// and an edit's size is the input picture's, not the caller's.
-	var sizeWarning string
+	var inW, inH int
 	if params.isImageToImage() {
 		req.reportPhase(PhaseUploading)
 		for _, in := range req.Inputs {
@@ -1043,10 +1050,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 			// scales image1 and the rest ride the same latent), so measuring the others here would
 			// report a size no picture ever had.
 			if len(params.Images) == 1 && up.width > 0 && up.height > 0 {
-				if req.Size != "" && req.Size != "auto" && (up.width != w || up.height != h) {
-					sizeWarning = fmt.Sprintf(
-						"size=%s requested, but %s keeps the input picture's own %dx%d", req.Size, req.Op, up.width, up.height)
-				}
+				inW, inH = up.width, up.height
 				params.Width, params.Height = up.width, up.height
 			}
 		}
@@ -1102,7 +1106,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		return Result{}, err
 	}
 
-	warnings := comfyWarnings(req)
+	warnings := comfyWarnings(req, family)
 	if ignored := comfyNegativeIgnoredWarning(conn, model, family); ignored != "" {
 		warnings = append(warnings, ignored)
 	}
@@ -1111,8 +1115,10 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if switchWarning != "" {
 		warnings = append(warnings, switchWarning)
 	}
-	if sizeWarning != "" {
-		warnings = append(warnings, sizeWarning)
+	if params.isImageToImage() && req.Size != "" && req.Size != "auto" {
+		if sw := comfyImg2ImgSizeWarning(req.Size, req.Op, w, h, inW, inH, images[0]); sw != "" {
+			warnings = append(warnings, sw)
+		}
 	}
 	if cached := comfyCacheWarning(hist); cached != "" {
 		warnings = append(warnings, cached)
@@ -1309,10 +1315,12 @@ func (p *comfyProvider) sendWithWake(ctx context.Context, conn EngineConn, req R
 	}
 }
 
-// comfyWarnings is what this route knows it cannot honour, mirroring sdcppWarnings.
-func comfyWarnings(req Request) []string {
+// comfyWarnings is what this route knows it cannot honour, mirroring sdcppWarnings. Per family,
+// because one family CAN honour a transparent background (comfyFamilyRow.Alpha) — telling that
+// caller "opaque produced" over a picture with 17 % of its pixels at alpha 0 was a false warning.
+func comfyWarnings(req Request, family comfyFamily) []string {
 	var out []string
-	if b := strings.ToLower(strings.TrimSpace(req.Background)); b == "transparent" {
+	if b := strings.ToLower(strings.TrimSpace(req.Background)); b == "transparent" && !comfyFamilyAlpha(family) {
 		out = append(out, "background=transparent requested, opaque produced (this engine's checkpoints have no alpha channel)")
 	}
 	return out
@@ -1593,6 +1601,36 @@ func comfyCacheWarning(hist comfyHistory) string {
 // seed is the graph's own, and each picture is stamped with seed+i (ADR 0081 decision 3): that
 // is how ComfyUI derives a batch's noise from one number, so the second picture of a batch of
 // four is reproducible only under seed+1 and never under the seed the request carried.
+// comfyImg2ImgSizeWarning tells a caller who named a size on an image-to-image op that the
+// picture was not made at it. The frame follows the first reference, but not always at that
+// reference's own pixels: the instruction-edit families rescale it (FluxKontextImageScale picks
+// the nearest of its preferred resolutions; Qwen-Image 2.1's encode resizes to a 1024² budget at
+// multiples of 32, so a 1216x832 reference comes back 1248x832 — ADR 0098 P2). The size named is
+// therefore the one MEASURED off the output rather than one computed from the family: a
+// re-derivation of each node's arithmetic here would be a second copy that drifts silently the
+// day a pin bump changes it, while the decoded PNG is the fact itself.
+//
+// The input's size still leads the sentence, because it is what the caller controls — the only
+// way to steer the frame on these ops is to crop or scale the picture that goes in. An output
+// whose dimensions could not be read falls back to naming the input alone.
+func comfyImg2ImgSizeWarning(size string, op Op, w, h, inW, inH int, out Image) string {
+	outW, outH := out.Width, out.Height
+	if outW <= 0 || outH <= 0 {
+		outW, outH = inW, inH
+	}
+	if outW <= 0 || outH <= 0 || (outW == w && outH == h) {
+		return ""
+	}
+	if outW == inW && outH == inH {
+		return fmt.Sprintf("size=%s requested, but %s keeps the input picture's own %dx%d", size, op, inW, inH)
+	}
+	if inW <= 0 || inH <= 0 {
+		return fmt.Sprintf("size=%s requested, but %s made the picture at %dx%d", size, op, outW, outH)
+	}
+	return fmt.Sprintf("size=%s requested, but %s follows the input picture (%dx%d) and the engine made it at %dx%d",
+		size, op, inW, inH, outW, outH)
+}
+
 func (p *comfyProvider) fetchImages(ctx context.Context, conn EngineConn, hist comfyHistory, seed int64) ([]Image, error) {
 	var out []Image
 	for _, o := range hist.Outputs {

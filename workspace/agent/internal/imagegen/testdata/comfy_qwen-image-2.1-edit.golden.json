@@ -73,12 +73,21 @@
       "steps": 25
     }
   },
+  "rgb": {
+    "class_type": "SplitImageWithAlpha",
+    "inputs": {
+      "image": [
+        "dec",
+        0
+      ]
+    }
+  },
   "save": {
     "class_type": "SaveImage",
     "inputs": {
       "filename_prefix": "af-qwen-image-2.1",
       "images": [
-        "dec",
+        "rgb",
         0
       ]
     }

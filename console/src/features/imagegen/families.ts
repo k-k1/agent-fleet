@@ -172,7 +172,9 @@ export const FAMILY_CARDS: FamilyCard[] = [
     // Not empty, unlike its two neighbours: this family generates as well as edits, and the
     // generate path fills an EmptyLatentImage from whatever size is picked. On an EDIT the size is
     // ignored the same way it is for them — the canvas follows the first reference picture.
-    sizes: DEFAULT_SIZES,
+    // The second five are the same shapes at twice the side (ADR 0098 Open 3: 2048² measured
+    // whole on the dev deployment). Mirrors this family's `Sizes` in the Agent.
+    sizes: [...DEFAULT_SIZES, "2048x2048", "2304x1792", "1792x2304", "2432x1664", "1664x2432"],
   },
 ];
 

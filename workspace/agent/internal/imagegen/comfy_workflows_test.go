@@ -1263,6 +1263,8 @@ func TestComfyWorkflowQwenImage21MatchesGoldenFixtures(t *testing.T) {
 	}{
 		{"t2i", func(p *comfyParams) {}},
 		{"edit", func(p *comfyParams) { p.Op, p.Images = OpEdit, []string{"af-photo.png"} }},
+		// The one request that keeps the decode's alpha: no SplitImageWithAlpha before the save.
+		{"t2i-transparent", func(p *comfyParams) { p.Transparent = true }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
