@@ -24,6 +24,10 @@ English | [日本語](0100-image-generation-studio.ja.md)
   gains record-only origin fields; a press is **a full-draft line before enqueue plus a result line
   after**; first-turn delivery is a meta field the pane reads; TUI candidates are
   `terminalDriver !== false`. Appended to the table at the end.
+- **Revision 5 (2026-09-23)**: folds in the fifth pass ([113-adr-review](../log/113-adr-review.md) §8 —
+  3 new red, 3 yellow). Origin fields move from `Request` to **the queue record (`jobRec`)**; decision
+  9's `press` field list is aligned with the execution order; `InitialPromptState` gains `pending` and
+  no resend is offered while delivery is in progress. Appended to the table at the end.
 - Number: `develop` tops out at 0098; 0099 is taken by two unmerged branches (`temp/sidv2bw`,
   `temp/sjys6nk`), hence 0100.
 - Related: [0081](0081-image-generation-pane.md) (today's image-generation pane; this ADR overturns
@@ -88,10 +92,10 @@ out wrong were corrected by the review):
 "Without an LLM in the loop" (0081) still holds for generation. The agent touches the **draft**; a
 person presses Generate; what runs is 0081's job queue unchanged. The vocabulary, validation, jobs,
 trials, groups, cancel, EMA, sidecars, `props`, usage rows and the CP's seven relay lines stay as they
-are. **Two exceptions**: decision 4's guard (`inputs`/`mask` validated and copied at enqueue — `Request`
-gains record-only origin fields and "copy before enqueue" enters the job-building order) and
-decision 9's `POST …/press` (one more entry point calling the same queue function). The wire
-vocabulary does not change.
+are. **Two exceptions**: decision 4's guard (`inputs`/`mask` validated and copied at enqueue — the
+queue record `jobRec` gains record-only origin fields and "copy before enqueue" enters the
+job-building order) and decision 9's `POST …/press` (one more entry point calling the same queue
+function). Neither the wire vocabulary nor the provider argument type `Request` changes.
 
 ### Decision 2 — A "studio" lives in the Agent, has its own id, and binds one session
 
@@ -117,13 +121,17 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   empty) → ② `GET …/persona` → ③ create the session with `studio` in the request; the Agent writes
   `Studio` into the meta and binds the studio's `session` **before launch**, then delivers
   `initial_prompt`. If ③ fails the studio remains unbound (the draft is not lost). Delivery of the
-  first turn (the persona) is reported through **a meta field `InitialPromptState`** (`delivered` /
-  `failed` / `unknown`) that the pane reads (revision 4): Managed sends inside the create handler
-  and can write it synchronously; TUI delivers from a goroutine independent of the response
-  (`session_handlers.go:1050`, `session_io.go:848-920`) and only logs when it cannot confirm, so the
-  deliverer writes the field. The pane sees it through the studio poll and offers "persona not
-  delivered / unconfirmed — resend" on `failed`, or on `unknown` after 60 s (a resend is the first
-  turn again). **Nothing an ADR 0081 user has today is lost.**
+  first turn (the persona) is reported through **a meta field `InitialPromptState`** (`pending` /
+  `delivered` / `failed` / `unknown`) that the pane reads (revisions 4, 5): creation writes `pending`
+  and the deliverer writes one of the other three when it finishes. Managed sends inside the create
+  handler, so it settles synchronously. TUI delivers from a goroutine independent of the response
+  (`session_handlers.go:1050`, `session_io.go:848-920`): it waits up to 30 s for the pane and 30 s for
+  the composer before typing, then tries confirmation twice for 12 s each (`session_delivery.go:41-47,
+  108-141`) — **the field stays `pending` until that finishes**, the pane shows "delivering the
+  persona" and **offers no resend** (flipping to `unknown` on a timer would let the original
+  goroutine send later and run the persona turn twice). Only `failed` and `unknown` (finished but
+  unconfirmed) show "persona not delivered / unconfirmed — resend" (a resend is the first turn
+  again). **Nothing an ADR 0081 user has today is lost.**
 
 ### Decision 3 — The contract is four tools on the session-side af MCP server. `generate_image` is not advertised
 
@@ -180,17 +188,22 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   so copies cannot be per job), each `inputs`/`mask` entry is read through a root-pinned open (the
   `openat2NoSymlinks` shape) and copied into an **input set**
   `~/.cache/agent-fleet/generated/console/inputs/<set>/` (set id assigned by the Agent; an absolute path
-  under the generated root; same parent as user uploads but a separate level). `Request` keeps **the
-  copies handed to the provider (`Inputs`, `Mask`) and the origins recorded in the sidecar
-  (`InputOrigins`, `MaskOrigin`) in separate fields** (today one value serves both,
-  `jobs.go:426-461, 477-511`). No provider ever sees the original path (not comfy's pre-read
+  under the generated root; same parent as user uploads but a separate level). **`Request` (the
+  provider argument type, `imagegen.go:53-85`) carries only the copies** (`Inputs`, `Mask`); **the
+  origins live in record-only fields of the queue record `jobRec`** (`InputOrigins`, `MaskOrigin`)
+  (revision 5: `JobSpec` embeds the whole `Request` and the worker hands that same value to
+  `prov.Generate`, `jobs.go:214-229, 318-326, 426-437`, so origin fields on `Request` would reach the
+  provider). The sidecar is written from `jobRec`'s origin fields (today one `Request` value serves
+  both, `jobs.go:477-511`). No provider ever sees the original path (not comfy's pre-read
   `comfy.go:1045`, its upload `:1193`, `openai_compat.go:404`, codex nor agy). Allowed sources are
   **the browse root and the generated root** (the default output lives outside the browse root,
   `store.go:28-34`, so "use as reference" must not refuse the user's own pictures where
   `AF_BROWSE_ROOT` is not home); the denylist is shared with the Files pane. Cleanup: delete
-  synchronously when enqueue fails, delete when the group's last job ends, and delete every set under
-  `inputs/` at startup (the queue is in memory, nothing survives; today's sweep looks only at `trial/`,
-  `store.go:170-195`, so this is added). Not opened before the guard lands.
+  synchronously when enqueue fails, delete when the group's last job ends (**cancelling a queued job
+  or a group bypasses `q.finish`**, `jobs.go:701-726, 781-800`, so both cancel paths get the end check
+  too), and delete every set under `inputs/` at startup (the queue is in memory, nothing survives;
+  today's sweep looks only at `trial/`, `store.go:170-195`, so this is added). Not opened before the
+  guard lands.
 - `mask` is person-only (painted by hand). **`needs_mask` is not a stored flag but a derived value**
   (`op=inpaint` and `mask` empty) that `get_image_studio` reports read-only — it clears the moment a
   person places a mask (revision 2). The agent only writes `op=inpaint`; the pane shows the way. In P0
@@ -278,15 +291,18 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
   every field including locked ones while the lock flags stay set (locks guard against the agent).
   The rewind entry's before/after are "now" and "the restored point".
 - **Versions**: the draft as it was when a Generate button was pressed (a person's trial or batch, or
-  the agent's trial). Appended to the same JSONL as **independent events** (`kind: "press"`, full
-  draft, seed policy, job/group id, author, `error` on failure) — pressing twice without editing yields
-  two press entries. With a studio, a press is one Console call,
+  the agent's trial). Appended to the same JSONL as **two independent events**: `kind: "press"`
+  (version id, full draft, seed policy, author, time pressed — only what is known before enqueue) and
+  `kind: "press_result"` (version id, job/group id, or `error` — what is known after) — pressing twice
+  without editing yields two press entries. With a studio, a press is one Console call,
   `POST /imagegen/studios/{id}/press {trial|enqueue…}`. The Agent's order (revision 4): ① **write the
   `press` line** (version id, full draft, seed policy, author, time pressed — everything "restore
   these settings" needs lives here) → ② fixed copies (decision 4) → ③ enqueue through today's queue
   function with `studio` and `version` on the `JobSpec` (the worker may start before the response,
   `jobs.go:297-342`; the sidecar takes `version` from the `JobSpec`) → ④ **write the `press_result`
-  line** (version id, job/group id, or `error`). A version's state is derived from the presence and
+  line** (version id, job/group id, or `error`). If ④ fails (the enqueue succeeded and the worker is
+  running) the response says `recorded: false`, the pane shows that version as "record pending", and
+  the Agent retries the write once immediately. A version's state is derived from the presence and
   content of its `press_result`. If the Agent dies after ① a version without `press_result` remains —
   at startup the sidecars are scanned (independently of whether `history.jsonl` exists or is
   truncated): if a picture with that `version` exists a `press_result` is synthesised, otherwise a
@@ -365,8 +381,9 @@ conversation.
 
 - **Agent**: `internal/imagegen/studio.go` (store, lock, JSONL edit log and press events, rewind,
   knowledge read/write, trial endpoint, persona endpoint), the fixed copy at enqueue (root-pinned
-  open, two allowed roots, the `JobSpec.Inputs` type), the exclusion in `mcpImageGenAdvertise` plus the
-  call-time re-check, four `comfyFamilyRow` fields and `modelStatus`,
+  open, two allowed roots, input sets, `jobRec` origin fields, cleanup including the cancel paths),
+  the exclusion in `mcpImageGenAdvertise` plus the call-time re-check, the meta's
+  `InitialPromptState`, four `comfyFamilyRow` fields and `modelStatus`,
   `history.jsonl`, `session.Meta.Studio` (five places), four tools in `mcp_stdio.go` (names as string
   literals), `AF_SESSION_NAME` delivery for copilot / cursor / kiro / muse, the Go-side cue stripper,
   routes and golden.
@@ -463,3 +480,12 @@ conversation.
 | 🔴N a TUI first-turn failure cannot ride the create response | decision 2: the deliverer writes `InitialPromptState` on the meta; the pane reads it (resend on `unknown` after 60 s) |
 | 🔴O filtering on `terminalDriver` truthiness drops claude and agy | decision 8: `terminalDriver !== false` minus shell |
 | 🟡J–L | copy cleanup (synchronous on failure, at group end, all at startup); absolute path under the generated root; ja/en parity confirmed |
+
+## Changed in revision 5 (2026-09-23, [113-adr-review](../log/113-adr-review.md) §8)
+
+| Finding | Change |
+|---|---|
+| 🔴P origin fields on `Request` reach the provider | decisions 4, 1, consequences: origins on the queue record `jobRec`; `Request` carries copies only |
+| 🔴Q the `press` field list still holds post-enqueue values | decision 9: fields split between `press` (pre-enqueue) and `press_result` (post-enqueue) |
+| 🔴R resending on a 60 s `unknown` during TUI delivery doubles the turn | decision 2: `pending` added; no resend until delivery finishes |
+| 🟡M–O | consequences aligned with the type; cleanup covers both cancel paths; a failed `press_result` write answers `recorded: false` and shows "record pending" |

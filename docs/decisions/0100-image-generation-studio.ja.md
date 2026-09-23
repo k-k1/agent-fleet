@@ -20,6 +20,9 @@
   反映。固定コピーは**ジョブ id でなく入力セット id**で持ち `Request` に原本の記録欄を足す、press は
   **投入前の全文行＋投入後の結果行**の 2 行、初回ターンの配達状態はメタの欄でペインが読む、TUI 候補は
   `terminalDriver !== false`。末尾の対応表に追記。
+- **改訂 5（2026-09-23）**: 5 巡目（[113-adr-review](../log/113-adr-review.md) §8・新規 🔴 3・🟡 3）を
+  反映。原本の記録欄は `Request` でなく**キューの記録（`jobRec`）**に置く、決定 9 の `press` 行の欄一覧を
+  実行順に揃える、`InitialPromptState` に `pending` を足して送信処理中の再送を禁じる。末尾の対応表に追記。
 - 番号: `develop` の最大は 0098。0099 は未マージの 2 ブランチ（`temp/sidv2bw`・`temp/sjys6nk`）が
   取っているので 0100。
 - 関連: [0081](0081-image-generation-pane.ja.md)（今の画像生成ペイン。本 ADR は決定 6・7 を覆し、
@@ -81,8 +84,9 @@ ADR 0081 のペインは「LLM を挟まずに」絵を量産する。プロン�
 生成ボタンを押すのは人、押したときに走るのは 0081 のジョブキューそのもの。`POST /imagegen/jobs` の
 語彙・検証・ジョブ・試走・グループ・取消・EMA・サイドカー・`props`・使用量・CP の中継 7 行は
 そのまま。**例外は 2 件**: 決定 4 の番人（`inputs`/`mask` を投入時に検査して固定コピーへ写す——
-`Request` に原本の記録欄が増え、ジョブを組む順序に「投入前にコピー」が入る）と、決定 9 の
-`POST …/press`（同じキュー関数を呼ぶ入口が 1 つ増える）。ワイヤの語彙は変わらない。
+キューの記録 `jobRec` に原本の記録欄が増え、ジョブを組む順序に「投入前にコピー」が入る）と、決定 9 の
+`POST …/press`（同じキュー関数を呼ぶ入口が 1 つ増える）。ワイヤの語彙も、provider の引数型
+`Request` も変わらない。
 
 ### 決定 2 — 「スタジオ」を Agent に置く。セッションとは別の id で、セッションを 1 本結ぶ
 
@@ -106,12 +110,15 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
   画面が解決した ready な行の id、`model` は空でも良い）→ ② `GET …/persona` → ③ セッション作成要求に
   `studio` を渡し、Agent は**起動より前に**メタへ `Studio` を書き、スタジオの `session` を結んでから
   `initial_prompt` を送る。③ が失敗したらスタジオは結び無しで残る（下書きは失わない）。
-  初回ターン（人格）の配達は**メタの欄 `InitialPromptState`**（`delivered` / `failed` / `unknown`）
-  でペインが読む（改訂 4）: Managed は作成処理の中で `h.Send` するので同期に書け、TUI は応答と
-  独立した goroutine で配達し（`session_handlers.go:1050`・`session_io.go:848-920`）確認できなくても
-  記録だけなので、配達側がこの欄を書く。ペインはスタジオのポーリングでこの欄を見て、`failed` か
-  60 秒経っても `unknown` なら「人格を送れませんでした／確認できません・再送」を出す（再送＝
-  初回ターンとして送り直す）。
+  初回ターン（人格）の配達は**メタの欄 `InitialPromptState`**（`pending` / `delivered` / `failed` /
+  `unknown`）でペインが読む（改訂 4・5）: 作成時に `pending` を書き、配達側が終わりに残り 3 つの
+  どれかを書く。Managed は作成処理の中で `h.Send` するので同期に確定する。TUI は応答と独立した
+  goroutine で配達し（`session_handlers.go:1050`・`session_io.go:848-920`）、pane を最大 30 秒・
+  composer を最大 30 秒待ってから打ち、確認を 12 秒×2 回まで試す（`session_delivery.go:41-47, 108-141`）
+  ——**この処理が終わるまでは `pending` のまま**で、ペインは「人格を送っています」を出し**再送を
+  出さない**（時間で `unknown` に倒すと、元の goroutine が後から送って人格ターンが二重になる）。
+  `failed` と `unknown`（処理が終わったが確認できなかった）で初めて「人格を送れませんでした／
+  確認できません・再送」を出す（再送＝初回ターンとして送り直す）。
   **ADR 0081 の利用者は何も失わない。**
 
 ### 決定 3 — 契約はセッション側 af MCP サーバのツール 4 本。`generate_image` は広告しない
@@ -160,15 +167,19 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
   ジョブ id は `Enqueue` の中で採番される `jobs.go:297-327` ので、ジョブ単位にはできない）、要求の
   `inputs`／`mask` を root 固定の open（`openat2NoSymlinks` と同型）で読み、**入力セット**
   `~/.cache/agent-fleet/generated/console/inputs/<set>/`（set id は Agent が採番・生成物 root の絶対
-  パス・利用者のアップロード先と親は同じだが別階層）に写す。`Request` は **provider に渡す
-  コピー（`Inputs`・`Mask`）と、サイドカーに記録する原本（`InputOrigins`・`MaskOrigin`）を別の欄**で
-  持つ（今は同じ値を両方に使っている `jobs.go:426-461, 477-511`）。provider は原本のパスを一度も
-  見ない（comfy の事前読取り `comfy.go:1045`・アップロード `:1193`・`openai_compat.go:404`・codex・
-  agy のどれも）。読める元は **browse root と生成物 root** の 2 つ（既定の出力先は browse root の外
+  パス・利用者のアップロード先と親は同じだが別階層）に写す。**`Request`（provider の引数型・
+  `imagegen.go:53-85`）にはコピーのパスだけ**（`Inputs`・`Mask`）を入れ、**原本のパスはキューの
+  記録 `jobRec` の記録専用欄（`InputOrigins`・`MaskOrigin`）**に置く（改訂 5: `JobSpec` は `Request` を
+  丸ごと持ち worker が同じ値を `prov.Generate` に渡す `jobs.go:214-229, 318-326, 426-437` ので、
+  `Request` に原本欄を足すと provider にも渡る）。サイドカーは `jobRec` の原本欄から書く（今は
+  `Request` の同じ値を両方に使っている `jobs.go:477-511`）。provider は原本のパスを一度も見ない
+  （comfy の事前読取り `comfy.go:1045`・アップロード `:1193`・`openai_compat.go:404`・codex・agy の
+  どれも）。読める元は **browse root と生成物 root** の 2 つ（既定の出力先は browse root の外
   ＝`store.go:28-34`・`AF_BROWSE_ROOT` が home でない配備で「参照にする」が自分の絵を拒まないため）、
   拒否リストは Files ペインと共有。掃除: 投入が失敗したら同期に消す、グループの最後のジョブが
-  終わったら消す、起動時は `inputs/` の全セットを消す（キューはメモリなので生き残りは無い・
-  今の掃除は `trial/` しか見ない `store.go:170-195` ため足す）。番人が入るまで解放しない。
+  終わったら消す（**待機中の個別取消・グループ取消は `q.finish` を通らない** `jobs.go:701-726, 781-800`
+  ので、その 2 経路にも終了判定を付ける）、起動時は `inputs/` の全セットを消す（キューはメモリなので
+  生き残りは無い・今の掃除は `trial/` しか見ない `store.go:170-195` ため足す）。番人が入るまで解放しない。
 - `mask` は人だけ（塗るのは人の手）。**`needs_mask` は保存する旗ではなく導出値**（`op=inpaint` かつ
   `mask` が空）で、`get_image_studio` が読みだけで返す——人がマスクを置けば消える（改訂 2）。
   エージェントは `op=inpaint` を書くだけで良く、ペインが導線を出す。P0 の導線は**既存のマスクの
@@ -246,15 +257,17 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
   錠の旗はそのまま残す（錠はエージェントに対する物）。巻き戻し行の before/after は「いま」と
   「戻した先」。
 - **版**: 生成ボタン（人の試走・投入・エージェントの試走）を押した瞬間の写し。同じ JSONL に
-  **独立した追記イベント**（`kind: "press"`・下書きの全文・seed 方針・ジョブ／グループ id・書き手・
-  失敗なら `error`）として積む——編集せずに 2 回押せば press が 2 件。スタジオがあるときの押下は
+  **独立した追記イベント 2 行**として積む: `kind: "press"`（版 id・下書きの全文・seed 方針・書き手・
+  押した時刻＝投入前に分かる物だけ）と `kind: "press_result"`（版 id・ジョブ／グループ id、失敗なら
+  `error`＝投入後に分かる物）——編集せずに 2 回押せば press が 2 件。スタジオがあるときの押下は
   Console が `POST /imagegen/studios/{id}/press {trial|enqueue…}` を 1 回呼ぶ。Agent の順序（改訂 4）:
   ① **`press` 行を書く**（版 id・下書きの全文・seed 方針・書き手・押した時刻＝「この設定に戻す」に
   要る物は全部ここ）→ ② 固定コピー（決定 4）→ ③ `studio` と `version` を `JobSpec` に載せて今の
   キュー関数へ投入（worker は応答前に走り出す・`jobs.go:297-342`。サイドカーは `JobSpec` の
   `version` から書く）→ ④ **`press_result` 行を書く**（版 id・ジョブ／グループ id、失敗なら
-  `error`）。版の状態は `press_result` の有無と中身から導く。①の後に落ちたら `press_result` の無い
-  版が残る——起動時に、サイドカーを走査して（`history.jsonl` の有無や末尾欠けに依らない）その
+  `error`）。④が失敗したら（投入は成功し worker は走っている）応答に `recorded: false` を返し、
+  ペインはその版を「記録保留」で出し、Agent はすぐ 1 度書き直しを試みる。版の状態は `press_result`
+  の有無と中身から導く。①の後に落ちたら `press_result` の無い版が残る——起動時に、サイドカーを走査して（`history.jsonl` の有無や末尾欠けに依らない）その
   `version` の絵があれば `press_result` を合成し、無ければ `lost` の `press_result` を書く。
   サイドカーは下書き全文を持たない（`props.go:42-90`・負の指示は合成後の値）ので、復元の元は
   常に①の行。`POST /imagegen/jobs` の語彙も検証もキューも変わらない（決定 1 の例外 2）。
@@ -318,8 +331,9 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 ## 影響
 
 - **Agent**: `internal/imagegen/studio.go`（ストア・錠・JSONL の編集履歴と press・巻き戻し・知識の
-  読み書き・試走の口・人格の口）、投入時の固定コピー（root 固定 open・許可 root 2 つ・
-  `JobSpec.Inputs` の型）、`mcpImageGenAdvertise` の除外と実行前の再検査、`comfyFamilyRow` の 4 欄と `modelStatus`、`history.jsonl`、
+  読み書き・試走の口・人格の口）、投入時の固定コピー（root 固定 open・許可 root 2 つ・入力セット・
+  `jobRec` の原本欄・取消経路を含む掃除）、`mcpImageGenAdvertise` の除外と実行前の再検査、
+  メタの `InitialPromptState`、`comfyFamilyRow` の 4 欄と `modelStatus`、`history.jsonl`、
   `session.Meta.Studio`（5 か所）、`mcp_stdio.go` のツール 4 本（名前は文字列リテラル）、
   copilot／cursor／kiro／muse への `AF_SESSION_NAME` 配達、合図 1 行の Go 側の剥がし手、routes と golden。
 - **CP**: スタジオ・履歴・知識の中継、`sessionWire` の `studio` 欄、`routes.golden`。
@@ -410,3 +424,12 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 | 🔴N TUI の初回ターン失敗は作成応答に載らない | 決定 2: メタの `InitialPromptState` を配達側が書き、ペインが読む（60 秒で unknown なら再送） |
 | 🔴O `terminalDriver` の真偽で絞ると claude・agy が落ちる | 決定 8: `terminalDriver !== false` から shell を除く |
 | 🟡J〜L | コピーの掃除（失敗時同期・グループ終了・起動時全消し）／置き場を生成物 root の絶対パスで／日英対応は確認済み |
+
+## 改訂 5 で変えたこと（2026-09-23・[113-adr-review](../log/113-adr-review.md) §8）
+
+| 指摘 | 変更 |
+|---|---|
+| 🔴P `Request` の原本欄は provider にも渡る | 決定 4・1・影響: 原本欄はキューの記録 `jobRec` に。`Request` はコピーだけ |
+| 🔴Q `press` 行の欄一覧に投入後の値が残る | 決定 9: `press`（投入前の物）と `press_result`（投入後の物）の 2 行に欄を分けて書き直し |
+| 🔴R 送信処理中の 60 秒 `unknown` で再送すると二重ターン | 決定 2: `pending` を足し、配達処理が終わるまで再送を出さない |
+| 🟡M〜O | 影響欄の型を揃える／掃除に取消 2 経路を含める／`press_result` の追記失敗は `recorded: false` と「記録保留」 |
