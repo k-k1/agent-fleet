@@ -26,6 +26,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
@@ -183,6 +184,9 @@ func serve() {
 	// replacement, idle-stop). Unless a surviving marker is restored as "interrupted", a
 	// half-made working copy comes back into the list looking like an ordinary repository.
 	sweepRepoJobMarkers()
+	// Image-generation input sets (ADR 0100 decision 4) belong to jobs in a queue that lives in
+	// memory, so none of them can still be needed after a restart.
+	imagegen.ClearInputSets()
 	// Codex sessions use a shared local app-server when available (from P3 on, the
 	// RuntimeSupervisor in codex.Serve() owns the daemon). AF attaches a read-only
 	// observer per loaded thread: compaction state, rate limits, and the model-switch
