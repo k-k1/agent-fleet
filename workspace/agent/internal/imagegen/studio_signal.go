@@ -9,18 +9,24 @@ import "strings"
 // The line is always LAST, and the prefix never starts with "<": the mirror's isNoise hides a
 // user turn whose text starts with "<" outright (console/src/features/mirror/transcript/model.ts),
 // and the automatic title reads the opening of the first turns, which a trailing line leaves
-// alone. The Console's copy of this constant is STUDIO_SIGNAL_PREFIX in that model.ts;
-// studio_signal_test.go holds the two equal.
+// alone. The Console's copies are STUDIO_SIGNAL_PREFIX / STUDIO_SIGNAL_SUFFIX in that model.ts;
+// studio_signal_test.go holds them equal.
 const StudioSignalPrefix = "[studio "
+
+// StudioSignalSuffix closes the line. Matching both ends, not just "[studio " and "]", is what
+// keeps a member's own last line — "[studio lighting reference]" — from being taken for the
+// signal and silently dropped from every session's transcript.
+const StudioSignalSuffix = "→ get_image_studio]"
 
 // StripStudioSignal removes the studio signal line from the end of a message, and the blank
 // space before it. Only the last line is looked at: the same words anywhere else are the
-// member's own text. Anything that is not a whole "[studio …]" line comes back untouched.
+// member's own text. Anything that is not a whole "[studio … → get_image_studio]" line comes
+// back untouched.
 func StripStudioSignal(text string) string {
 	body := strings.TrimRight(text, " \t\r\n")
 	i := strings.LastIndexByte(body, '\n')
 	last := body[i+1:]
-	if !strings.HasPrefix(strings.TrimLeft(last, " \t"), StudioSignalPrefix) || !strings.HasSuffix(last, "]") {
+	if !strings.HasPrefix(strings.TrimLeft(last, " \t"), StudioSignalPrefix) || !strings.HasSuffix(last, StudioSignalSuffix) {
 		return text
 	}
 	if i < 0 {

@@ -124,8 +124,16 @@ func mcpStudioCall(req mcpReq, name string, args json.RawMessage) []byte {
 		path = "/imagegen/studios/" + studio + "?view=agent&session=" + url.QueryEscape(self)
 	case "set_image_draft":
 		method, path = http.MethodPut, "/imagegen/studios/"+studio
-		body, _ = json.Marshal(map[string]any{"author": "agent", "session": self, "draft": json.RawMessage(nonEmptyArgs(args))})
+		body, _ = json.Marshal(map[string]any{"author": "agent", "session": self, "draft": draftWithAbsoluteInputs(args)})
 	case "run_image_trial":
+		// The press answers at once with the job; waiting for the picture is this process's job,
+		// not the Agent's: poll GET /imagegen/jobs for that job for at most 120 s (decision 3),
+		// then answer with the path, seed, warnings and time, or with the job id and "the result
+		// arrives in get_image_studio". The heartbeat is what keeps opencode, which cuts a silent
+		// call at 60 s, on the line meanwhile (mcp_imagegen.go). The polling lands with the
+		// studio store; the press and the heartbeat are the contract.
+		stop := startProgressHeartbeat(req, "試走しています…")
+		defer stop()
 		method, path = http.MethodPost, "/imagegen/studios/"+studio+"/press"
 		body, _ = json.Marshal(map[string]any{"mode": "agent_trial", "session": self})
 	case "add_image_knowledge":
@@ -145,6 +153,49 @@ func mcpStudioCall(req mcpReq, name string, args json.RawMessage) []byte {
 	return mcpResult(req.ID, map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": out}},
 	})
+}
+
+// draftWithAbsoluteInputs is set_image_draft's arguments with each reference in `inputs` made
+// absolute from this process's working folder — see absFromCWD.
+func draftWithAbsoluteInputs(args json.RawMessage) json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(nonEmptyArgs(args), &m) != nil {
+		return nonEmptyArgs(args)
+	}
+	var inputs []string
+	if raw, ok := m["inputs"]; ok && json.Unmarshal(raw, &inputs) == nil {
+		b, _ := json.Marshal(absFromCWDAll(inputs))
+		m["inputs"] = b
+	}
+	out, _ := json.Marshal(m)
+	return out
+}
+
+// absFromCWD makes an agent's relative path absolute from this process's working folder, which
+// is the session's own. The Agent resolves a relative reference against the browse root
+// (internal/imagegen/inputs.go) because the Console sends browse-root paths; an agent means its
+// cwd, and `docs/ref.png` from a session in a repository would otherwise silently name
+// ~/docs/ref.png.
+func absFromCWD(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(cwd, p)
+}
+
+func absFromCWDAll(ps []string) []string {
+	if ps == nil {
+		return nil
+	}
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = absFromCWD(p)
+	}
+	return out
 }
 
 func nonEmptyArgs(args json.RawMessage) json.RawMessage {

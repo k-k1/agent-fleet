@@ -1142,7 +1142,7 @@ func mcpStdioStudioTools(offer studioOffer) []map[string]any {
 					"size":           map[string]any{"type": "string", "description": "<width>x<height>"},
 					"op":             map[string]any{"type": "string", "enum": []string{"generate", "edit", "inpaint", "outpaint", "remove_background", "upscale"}},
 					"strength":       map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-					"inputs":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Reference image paths"},
+					"inputs":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Reference image paths, under the file browser's root (usually home) or the generated-images folder (not /tmp)"},
 					"params": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"properties": map[string]any{
@@ -1235,7 +1235,8 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			"items": map[string]any{"type": "string"},
 			"description": fmt.Sprintf(
 				"Absolute paths of reference images (up to %d), for editing or as a style reference."+
-					" A model may take fewer, and then the call is refused by name",
+					" A model may take fewer, and then the call is refused by name."+
+					" Only files under the file browser's root (usually home) or the generated-images folder are read; copy one from /tmp there first",
 				maxInputsOrDefault(offer.MaxInputs))},
 	}
 	// mask goes with inpaint and nothing else. A mask handed to a route that has no mask

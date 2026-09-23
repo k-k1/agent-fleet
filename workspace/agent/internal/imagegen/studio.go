@@ -8,7 +8,31 @@ package imagegen
 // The Console's copy of these types is console/src/features/imagegen/wire.ts (ImageStudio*,
 // DraftLog*, Knowledge*). Keep the two in step by hand; the JSON keys are the contract.
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
+
+// BindStudioSession moves a studio's `session` — the truth of the binding (decision 2) — and
+// is how a session create and a recreate bind BEFORE the session is published or launched, so
+// the first turn's get_image_studio already finds the studio naming it back. The studio store
+// installs it; nil means this Agent has no store, and a create that asks for a studio is refused
+// rather than started half-bound.
+//
+// The move is conditional on what the studio names now:
+//   - previous == "": a create. Refused with ErrStudioNotFound when there is no such studio, and
+//     with ErrStudioBound when it names another session that is still alive; a stopped or
+//     deleted one is replaced.
+//   - previous != "": a recreate (session is the new slot) or the rollback of a failed launch
+//     (session is "" or the old slot). Applied only while the studio still names previous;
+//     otherwise ErrStudioBound and nothing changes.
+var BindStudioSession func(studio, session, previous string) error
+
+// The refusals BindStudioSession answers with, typed so the create can answer 404 and 409.
+var (
+	ErrStudioNotFound = errors.New("no such image studio")
+	ErrStudioBound    = errors.New("the image studio is bound to another session")
+)
 
 // ImageStudioDraft is the studio's draft: one request as the member is composing it. The keys are
 // POST /imagegen/jobs' own (jobRequest), so pressing a button turns a draft into a job without a
@@ -37,6 +61,10 @@ type ImageStudioDraft struct {
 	OutDir         string        `json:"out_dir,omitempty"`
 	Jobs           int           `json:"jobs,omitempty"`
 	SeedPolicy     string        `json:"seed_policy,omitempty"`
+	// FullSteps is the pane's "trial at full steps" (ADR 0081 decision 11). The member's, like
+	// jobs and seed: it decides what a press costs, and moving a draft into a studio must not
+	// lose it (decision 2, "nobody using ADR 0081 loses anything").
+	FullSteps bool `json:"full_steps,omitempty"`
 	// SuggestModel is the agent's proposal for Model, which only a person may set (decision 4);
 	// the pane shows it as a card.
 	SuggestModel string `json:"suggest_model,omitempty"`

@@ -220,7 +220,7 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	body, _ := json.Marshal(map[string]any{
 		"session": self, "op": a.op, "provider": a.provider, "prompt": a.prompt,
 		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,
-		"count": a.count, "inputs": a.inputs, "mask": a.mask, "model": a.model,
+		"count": a.count, "inputs": absFromCWDAll(a.inputs), "mask": absFromCWD(a.mask), "model": a.model,
 		"loras": a.loras, "seed": a.seed, "negativePrompt": a.negativePrompt,
 		"strength": a.strength, "params": a.params,
 	})
