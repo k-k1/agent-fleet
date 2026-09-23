@@ -192,19 +192,27 @@ reads a whole archive into memory.
   the confirm dialog all say so.
 - The scan **deletes nothing it cannot prove unreachable**. An unreadable meta or archive stops it
   outright. A directory the walk could not read to the end — an I/O error, or the entry budget
-  running out — is neither counted nor deleted. Both meta names protect a directory: the file name
+  running out — is neither counted nor deleted. The two are reported apart: a budget cut marks the
+  row partial (the next survey continues), a read error marks it as having unreadable folders
+  (surveying again will not help; a person has to look). Both meta names protect a directory: the file name
   the paste endpoint keys by, and the name inside it that codex keys by.
 - **It cannot act outside the cache.** The feature directory must not itself be a symlink, and it
   is pinned by file descriptor (`os.Root`) for the whole scan and delete, so a swap in between
   cannot aim the delete elsewhere. Symlinks further up (a `~/.cache` kept on persistent storage via
   `AF_WS_KEEP_DIRS`) are trusted: they are the workspace's own setup.
 - **It is bounded.** One entry budget (500,000 by default) pays for everything — listing the cache,
-  every meta and archive read for reachability, every chat lookup, every entry walked. A scan that
+  every meta and archive read for reachability, every chat lookup, every entry walked. Directories
+  are listed 1,024 entries at a time and charged as they are read, so the budget bounds the work
+  done, not a count taken after a directory of a million entries has already been read into
+  memory. A scan that
   runs out says so: the cleanup row is marked partial (or becomes a keep row if nothing could be
   decided), and a delete reports what it took so the next survey shows the rest.
-- **It does not race a restore.** A restore reads the archive and writes the transcripts outside
-  the cleanup lock, then — under it — checks that the archive still exists and writes the metas
-  back. The purge and the cache delete take the same lock. So a delete can never scan a session
+- **It does not race a restore.** A restore reads the archive and stages the transcripts beside
+  their destinations outside the cleanup lock, then — under it — checks that the archive still
+  exists, moves the staged transcripts into place and writes the metas back. A restore that lost
+  to a purge has changed nothing. A transcript already at the destination is kept, never rolled
+  back to the archived copy (restoring the same archive twice used to overwrite the turns taken
+  since the first restore). The purge and the cache delete take the same lock. So a delete can never scan a session
   that is in neither place, and a restore that lost a race to a purge fails instead of bringing a
   conversation back without its files.
 

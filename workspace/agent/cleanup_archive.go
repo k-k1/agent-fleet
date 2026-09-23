@@ -191,6 +191,11 @@ func purgeCleanupArchive(id string) error {
 
 // restoreCleanupArchive replays an archive: re-create each branch ref (name→sha, if
 // absent) and each session (meta + jsonl written back). Returns per-item outcomes.
+// restoreAfterStage, when set, runs after a restore has read its archive and staged the
+// transcripts and before it takes the cleanup lock. Tests only: it is the point a purge has to
+// win at to exercise the race.
+var restoreAfterStage func()
+
 func restoreCleanupArchive(id string) (map[string]any, error) {
 	m, payloads, err := readCleanupArchive(id)
 	if err != nil {
@@ -199,6 +204,12 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	restored := map[string]any{"sessions": []string{}, "branches": []string{}}
 	var sessions, branches []string
 	var metas []session.Meta
+	// Transcripts are staged next to their destination and only moved into place under the
+	// cleanup lock, together with the metas. Writing them straight to their paths first would
+	// leave a restore that then loses to a purge having already changed files it was about to
+	// report as not restored.
+	type stagedFile struct{ tmp, dest string }
+	var staged []stagedFile
 	for _, s := range m.Sessions {
 		var meta session.Meta
 		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
@@ -212,14 +223,34 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			if !ok {
 				continue
 			}
-			_ = os.MkdirAll(filepath.Dir(s.JSONLPaths[i]), 0o700)
-			_ = os.WriteFile(s.JSONLPaths[i], data, 0o600)
+			dest := s.JSONLPaths[i]
+			// A transcript already at the path is the live one — this archive restored once
+			// before and the session has moved on since, or the agent rewrote it. It is at least
+			// as new as the archived copy, so it is kept rather than rolled back.
+			if _, err := os.Lstat(dest); err == nil {
+				continue
+			}
+			_ = os.MkdirAll(filepath.Dir(dest), 0o700)
+			tmp, err := os.CreateTemp(filepath.Dir(dest), ".restore-*")
+			if err != nil {
+				continue
+			}
+			_, werr := tmp.Write(data)
+			cerr := tmp.Close()
+			if werr != nil || cerr != nil {
+				_ = os.Remove(tmp.Name())
+				continue
+			}
+			staged = append(staged, stagedFile{tmp: tmp.Name(), dest: dest})
 		}
 		metas = append(metas, meta)
 		sessions = append(sessions, s.Name)
 	}
+	if restoreAfterStage != nil {
+		restoreAfterStage()
+	}
 	// Only the hand-over is under the cleanup lock: from here on the meta, not the archive,
-	// keeps these sessions' cache reachable. Reading the archive and writing the transcripts
+	// keeps these sessions' cache reachable. Reading the archive and staging the transcripts
 	// above can take a while on a large archive, and holding the lock through them would stall
 	// the cleanup survey and the Machine tab behind it. So the archive is checked again here —
 	// a purge that won the race means a cache delete may already have run, and bringing the
@@ -230,10 +261,24 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			purged = true
 			return
 		}
+		for i, f := range staged {
+			// Something may have appeared at the path while this was staging; it wins too.
+			if _, err := os.Lstat(f.dest); err == nil {
+				continue
+			}
+			if os.Rename(f.tmp, f.dest) == nil {
+				staged[i].tmp = "" // moved; nothing left to drop
+			}
+		}
 		for _, meta := range metas {
 			session.WriteMeta(meta)
 		}
 	})
+	for _, f := range staged {
+		if f.tmp != "" {
+			_ = os.Remove(f.tmp)
+		}
+	}
 	if purged {
 		return nil, fmt.Errorf("archive %s was purged while it was being restored", id)
 	}

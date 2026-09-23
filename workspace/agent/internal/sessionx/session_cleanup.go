@@ -59,6 +59,9 @@ type cleanupCandidate struct {
 	// Truncated = the scan behind a "cache" row stopped at its entry budget: the row covers
 	// only what was looked at, a delete takes only that, and the next survey shows the rest.
 	Truncated bool `json:"truncated,omitempty"`
+	// Unreadable counts orphan folders a "cache" row leaves out because something inside
+	// could not be read — a state that surveying again does not change.
+	Unreadable int `json:"unreadable,omitempty"`
 }
 
 // The "reason" of a candidate is text WE generate for the user to read, so per ADR 0033
@@ -85,6 +88,7 @@ const (
 	cleanReasonCacheOrphan  = "clean.reason.cache_orphan"
 	cleanReasonCacheUnsafe  = "clean.reason.cache_unsafe"
 	cleanReasonCachePartial = "clean.reason.cache_partial"
+	cleanReasonCacheUnread  = "clean.reason.cache_unreadable"
 )
 
 var cleanupReasonJA = map[string]string{
@@ -102,6 +106,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonCacheOrphan:  "削除済みセッション／会話のキャッシュ（ごみ箱にも無く、もう参照されない。削除は元に戻せない）",
 	cleanReasonCacheUnsafe:  "読めないセッション情報かごみ箱があり、参照の有無を判定できない（何も消さない）",
 	cleanReasonCachePartial: "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
+	cleanReasonCacheUnread:  "中身を読めないフォルダがあり、それは対象外（権限かファイルシステムの確認が必要。点検し直しても変わらない）",
 }
 
 // cleanupReasonText resolves a reason key to its source-language sentence. An unknown key
@@ -275,24 +280,31 @@ func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
 			})
 			continue
 		}
+		// Which note the row carries. A folder that could not be read is the one a person has
+		// to act on, so it wins over a budget cut, which the next survey resolves by itself.
+		reason := cleanReasonCacheOrphan
+		switch {
+		case found.Unreadable > 0:
+			reason = cleanReasonCacheUnread
+		case found.Truncated:
+			reason = cleanReasonCachePartial
+		}
 		if len(found.Dirs) == 0 {
-			if found.Truncated {
-				// Stopped before it could clear anything: say so rather than show nothing,
-				// which would read as "nothing to tidy".
+			if reason != cleanReasonCacheOrphan {
+				// Nothing it could clear, but something it could not judge: say so rather
+				// than show nothing, which would read as "nothing to tidy".
 				out = append(out, cleanupCandidate{
-					Type: "cache", ID: feature, Safety: "keep", Truncated: true,
-					ReasonKey: cleanReasonCachePartial, Reason: cleanupReasonText(cleanReasonCachePartial),
+					Type: "cache", ID: feature, Safety: "keep",
+					Truncated: found.Truncated, Unreadable: found.Unreadable,
+					ReasonKey: reason, Reason: cleanupReasonText(reason),
 				})
 			}
 			continue
 		}
-		reason := cleanReasonCacheOrphan
-		if found.Truncated {
-			reason = cleanReasonCachePartial
-		}
 		out = append(out, cleanupCandidate{
 			Type: "cache", Action: "delete_cache", ID: feature, Safety: "safe",
-			Bytes: found.Bytes, Files: found.Files, Dirs: len(found.Dirs), Truncated: found.Truncated,
+			Bytes: found.Bytes, Files: found.Files, Dirs: len(found.Dirs),
+			Truncated: found.Truncated, Unreadable: found.Unreadable,
 			ReasonKey: reason, Reason: cleanupReasonText(reason),
 		})
 	}

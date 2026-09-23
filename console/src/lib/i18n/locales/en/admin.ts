@@ -1236,6 +1236,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason.branch_merged": "Merged local branch (already in the parent; recoverable after deletion)",
   "clean.reason.cache_orphan": "Cache of deleted sessions or chats (not in the trash and no longer referenced; deleting cannot be undone)",
   "clean.reason.cache_unsafe": "A session record or trash archive could not be read, so what is still referenced is unknown (nothing is deleted)",
+  "clean.reason.cache_unreadable": "Some folders could not be read and are left out (check the permissions or the filesystem; surveying again will not change it)",
   "clean.reason.cache_partial": "Too many to check at once; only what was checked is covered (survey again after deleting to see the rest; cannot be undone)",
   // The same reasons split into "state badge + hint" (row line 2; keys without a badge fall back to the sentence).
   "clean.reason_badge.locked": "Locked",
@@ -1264,6 +1265,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason_hint.cache_orphan": "The session or chat is deleted and not in the trash; deleting cannot be undone",
   "clean.reason_badge.cache_unsafe": "Can't tell",
   "clean.reason_hint.cache_unsafe": "A session record or trash archive could not be read, so nothing is deleted",
+  "clean.reason_badge.cache_unreadable": "Unreadable folders",
+  "clean.reason_hint.cache_unreadable": "Folders whose contents could not be read are left out; surveying again will not change that (check the permissions or the filesystem). Cannot be undone",
   "clean.reason_badge.cache_partial": "Partial",
   "clean.reason_hint.cache_partial": "Too many to check at once; only what was checked is covered. Survey again after deleting to see the rest. Cannot be undone",
 };

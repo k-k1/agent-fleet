@@ -94,8 +94,12 @@ type CacheOrphans struct {
 	Files   int
 	// Truncated = the entry budget ran out before every directory was looked at. Dirs holds
 	// only directories that were walked to the end, so it is still safe to delete; the totals
-	// are a lower bound.
+	// are a lower bound, and the next scan picks up where this one could not reach.
 	Truncated bool
+	// Unreadable counts orphan directories left out because something inside could not be
+	// read. Unlike Truncated this does not go away by scanning again; it needs the
+	// permissions or the filesystem looked at.
+	Unreadable int
 }
 
 // CacheScanMaxEntries is the default budget of one scan: how many directory entries it may
@@ -150,7 +154,7 @@ func RemoveCacheOrphans(feature string, now time.Time) (CacheOrphans, error) {
 	if err != nil {
 		return CacheOrphans{Feature: feature}, err
 	}
-	out := CacheOrphans{Feature: feature, Truncated: found.Truncated}
+	out := CacheOrphans{Feature: feature, Truncated: found.Truncated, Unreadable: found.Unreadable}
 	for _, d := range found.Dirs {
 		// Relative to the pinned directory: whatever happens to the path in the meantime,
 		// this cannot reach outside it (os.Root does not follow a link out of its root).
@@ -228,7 +232,16 @@ func scanCacheOrphans(r *os.Root, feature string, now time.Time, budget *int) (C
 		out.Truncated = true
 		return out, nil
 	}
-	entries, err := fs.ReadDir(r.FS(), ".")
+	top, err := r.Open(".")
+	if err != nil {
+		return out, err
+	}
+	entries, err := readDirBudget(top, budget)
+	top.Close()
+	if errors.Is(err, errBudget) {
+		out.Truncated = true
+		return out, nil
+	}
 	if err != nil {
 		return out, err
 	}
@@ -247,7 +260,6 @@ func scanCacheOrphans(r *os.Root, feature string, now time.Time, budget *int) (C
 			out.Truncated = true
 			break
 		}
-		*budget--
 		// ReadDir reports a symlinked entry as a link, not a directory, so links to
 		// elsewhere are never candidates.
 		if !e.IsDir() {
@@ -257,14 +269,16 @@ func scanCacheOrphans(r *os.Root, feature string, now time.Time, budget *int) (C
 		if !orphanName(feature, name, reachable) {
 			continue
 		}
-		bytes, files, newest, complete := dirStats(r, name, budget)
-		if !complete {
-			// Not walked to the end — the budget ran out or something could not be read —
-			// so it may hold a fresh file the walk never saw. Neither counted nor deleted.
+		bytes, files, newest, walked := dirStats(r, name, budget)
+		// Not walked to the end, so it may hold a fresh file the walk never saw: neither
+		// counted nor deleted. The two reasons are told apart because they are fixed in
+		// different ways — a budget by surveying again, a read error only by a person.
+		if walked == walkBudget {
 			out.Truncated = true
-			if *budget <= 0 {
-				break
-			}
+			break
+		}
+		if walked == walkUnreadable {
+			out.Unreadable++
 			continue
 		}
 		if newest.After(cutoff) {
@@ -304,15 +318,14 @@ func orphanName(feature, name string, reachable map[string]bool) bool {
 func reachableSessionIDs(budget *int) (map[string]bool, error) {
 	ids := map[string]bool{}
 
-	ents, err := os.ReadDir(session.MetaDir())
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	ents, err := readDirPathBudget(session.MetaDir(), budget)
+	if errors.Is(err, errBudget) {
+		return nil, err
+	}
+	if err != nil {
 		return nil, ErrCacheScanUnsafe
 	}
 	for _, e := range ents {
-		if *budget <= 0 {
-			return nil, errBudget
-		}
-		*budget--
 		name, ok := strings.CutSuffix(e.Name(), ".json")
 		if e.IsDir() || !ok {
 			continue
@@ -354,19 +367,14 @@ type archiveManifest struct {
 func archivedSessionIDs(budget *int) (map[string]bool, error) {
 	ids := map[string]bool{}
 	dir := CleanupArchiveDir()
-	ents, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return ids, nil
+	// Every archive file costs one unit whether or not it is read.
+	ents, err := readDirPathBudget(dir, budget)
+	if errors.Is(err, errBudget) {
+		return nil, err
 	}
 	if err != nil {
 		return nil, ErrCacheScanUnsafe
 	}
-	// Every archive file costs one unit whether or not it is read, so a trash of thousands
-	// of archives is paid for up front.
-	if *budget < len(ents) {
-		return nil, errBudget
-	}
-	*budget -= len(ents)
 	sidecars := map[string]bool{}
 	for _, e := range ents {
 		if strings.HasSuffix(e.Name(), ".json") {
@@ -438,36 +446,109 @@ func manifestFromTarball(path string) (archiveManifest, error) {
 	return m, json.Unmarshal(b, &m)
 }
 
+// readDirChunk is how many entries one directory read asks for. Listing in chunks is what
+// makes the budget a bound on work done rather than a count taken afterwards: a single
+// ReadDir of a directory with a million entries reads all of them into memory before a
+// single one can be charged.
+const readDirChunk = 1024
+
+// dirLister is *os.File and the files an os.Root opens.
+type dirLister interface {
+	ReadDir(n int) ([]fs.DirEntry, error)
+}
+
+// readDirBudget lists a directory chunk by chunk, charging one unit per entry. It returns
+// errBudget when the budget runs out before the listing does.
+func readDirBudget(f dirLister, budget *int) ([]fs.DirEntry, error) {
+	var out []fs.DirEntry
+	for {
+		n := readDirChunk
+		if *budget < n {
+			n = *budget
+		}
+		if n <= 0 {
+			// Out of budget: complete only if there is nothing left to read.
+			if more, err := f.ReadDir(1); errors.Is(err, io.EOF) && len(more) == 0 {
+				return out, nil
+			}
+			return out, errBudget
+		}
+		ents, err := f.ReadDir(n)
+		*budget -= len(ents)
+		out = append(out, ents...)
+		if errors.Is(err, io.EOF) {
+			return out, nil
+		}
+		if err != nil {
+			return out, err
+		}
+	}
+}
+
+// readDirPathBudget is readDirBudget on a path; a directory that does not exist is empty.
+func readDirPathBudget(path string, budget *int) ([]fs.DirEntry, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return readDirBudget(f, budget)
+}
+
+// walkResult says how far dirStats got.
+type walkResult int
+
+const (
+	walkComplete   walkResult = iota
+	walkBudget                // the budget ran out
+	walkUnreadable            // something inside could not be listed or stat'ed
+)
+
 // dirStats walks one directory inside the pinned root: total bytes, file count, and the
-// newest mtime seen (directories included, so an upload in progress counts). It spends one
-// unit of budget per entry. complete is false when the budget ran out or anything along the
-// way could not be read — a directory or a file's info that failed may be exactly the fresh
-// upload the grace window exists for.
-func dirStats(r *os.Root, name string, budget *int) (bytes int64, files int, newest time.Time, complete bool) {
-	complete = true
-	_ = fs.WalkDir(r.FS(), name, func(_ string, d fs.DirEntry, err error) error {
-		if *budget <= 0 {
-			complete = false
-			return fs.SkipAll
-		}
-		*budget--
+// newest mtime seen (directories included, so an upload in progress counts). Every entry
+// costs one unit of budget, charged as each chunk is read. Links are never followed — an
+// os.Root would not follow one out of the root anyway, and inside it a link is not our file.
+func dirStats(r *os.Root, name string, budget *int) (bytes int64, files int, newest time.Time, result walkResult) {
+	self, err := r.Lstat(name)
+	if err != nil {
+		return 0, 0, newest, walkUnreadable
+	}
+	newest = self.ModTime()
+	stack := []string{name}
+	for len(stack) > 0 {
+		dir := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		f, err := r.Open(dir)
 		if err != nil {
-			complete = false
-			return fs.SkipAll
+			return bytes, files, newest, walkUnreadable
 		}
-		info, err := d.Info()
+		ents, err := readDirBudget(f, budget)
+		f.Close()
+		if errors.Is(err, errBudget) {
+			return bytes, files, newest, walkBudget
+		}
 		if err != nil {
-			complete = false
-			return fs.SkipAll
+			return bytes, files, newest, walkUnreadable
 		}
-		if info.ModTime().After(newest) {
-			newest = info.ModTime()
+		for _, e := range ents {
+			info, err := e.Info()
+			if err != nil {
+				return bytes, files, newest, walkUnreadable
+			}
+			if info.ModTime().After(newest) {
+				newest = info.ModTime()
+			}
+			switch {
+			case e.IsDir():
+				stack = append(stack, filepath.Join(dir, e.Name()))
+			case e.Type().IsRegular():
+				bytes += info.Size()
+				files++
+			}
 		}
-		if d.Type().IsRegular() {
-			bytes += info.Size()
-			files++
-		}
-		return nil
-	})
-	return bytes, files, newest, complete
+	}
+	return bytes, files, newest, walkComplete
 }

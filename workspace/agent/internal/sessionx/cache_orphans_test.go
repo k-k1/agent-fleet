@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -412,7 +413,9 @@ func TestCacheOrphansBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	budget := 4 // one whole dir (3 entries) and a third of the next
+	// Listing the three dirs costs 3, walking one (two files) costs 2: the first completes and
+	// the second cannot start.
+	budget := 5
 	got, err := ScanCacheOrphans(CacheFeaturePasted, time.Now(), &budget)
 	if err != nil {
 		t.Fatal(err)
@@ -427,8 +430,9 @@ func TestCacheOrphansBudget(t *testing.T) {
 	}
 }
 
-// TestCacheOrphansUnreadableInside (re-review ④): a directory the walk cannot fully read may
-// hide a fresh upload, so it is neither listed nor deleted — and the answer says it is partial.
+// TestCacheOrphansUnreadableInside (re-review ④, third review ②): a directory the walk cannot
+// fully read may hide a fresh upload, so it is neither listed nor deleted — and it is counted
+// as unreadable, not as a budget cut.
 func TestCacheOrphansUnreadableInside(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a 000 directory anyway")
@@ -449,8 +453,9 @@ func TestCacheOrphansUnreadableInside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Dirs) != 0 || !got.Truncated {
-		t.Fatalf("removed %v truncated=%v — want nothing removed and a partial answer", orphanNames(got), got.Truncated)
+	// A read error is its own state, not a budget cut: surveying again would not help.
+	if len(got.Dirs) != 0 || got.Truncated || got.Unreadable != 1 {
+		t.Fatalf("removed %v truncated=%v unreadable=%d — want nothing removed, one unreadable", orphanNames(got), got.Truncated, got.Unreadable)
 	}
 	if _, err := os.Stat(d); err != nil {
 		t.Fatalf("partly unreadable dir was removed: %v", err)
@@ -509,5 +514,51 @@ func TestCacheCandidatePartial(t *testing.T) {
 	got = cacheCleanupCandidates(time.Now())
 	if len(got) != 1 || got[0].Action != "" || got[0].Safety != "keep" || !got[0].Truncated {
 		t.Fatalf("rows = %+v, want one keep row that offers nothing", got)
+	}
+}
+
+// TestCacheCandidateUnreadable (third review ②): a folder that cannot be read gets its own
+// note, which says surveying again will not help — not the budget's "survey again".
+func TestCacheCandidateUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 000 directory anyway")
+	}
+	f := newCacheFixture(t)
+	d := f.dir(t, CacheFeaturePasted, sid(metaFor("sgone01")), 1)
+	f.dir(t, CacheFeaturePasted, sid(metaFor("sgone02")), 1)
+	hidden := filepath.Join(d, "sub")
+	if err := os.Mkdir(hidden, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hidden, 0o700) })
+	got := cacheCleanupCandidates(time.Now())
+	if len(got) != 1 || got[0].Action != "delete_cache" || got[0].Dirs != 1 || got[0].Unreadable != 1 ||
+		got[0].Truncated || got[0].ReasonKey != cleanReasonCacheUnread {
+		t.Fatalf("rows = %+v, want the readable dir offered with the unreadable note", got)
+	}
+}
+
+// TestReadDirBudgetIsABound (third review ③): the budget limits what is READ, not what is
+// counted after reading everything — a huge directory is listed a chunk at a time.
+func TestReadDirBudgetIsABound(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 2500; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%04d", i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	budget := 100
+	got, err := readDirPathBudget(dir, &budget)
+	if !errors.Is(err, errBudget) {
+		t.Fatalf("err = %v, want errBudget", err)
+	}
+	if len(got) > 100 {
+		t.Fatalf("read %d entries on a budget of 100", len(got))
+	}
+	// Exactly enough budget is enough: running out on the last entry is not a cut.
+	budget = 2500
+	got, err = readDirPathBudget(dir, &budget)
+	if err != nil || len(got) != 2500 {
+		t.Fatalf("exact budget: %d entries, err %v", len(got), err)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -220,29 +221,79 @@ func TestRestoreAndPurgeTakeTheCleanupLock(t *testing.T) {
 	}
 }
 
-// TestRestoreLosesToAPurge (re-review ③): the restore reads the archive outside the lock, so
-// a purge can win the race. Then the cache may already be gone, and the restore must not
-// bring the conversation back without it.
+// TestRestoreLosesToAPurge (re-review ③, third review ①④): a purge that wins the race makes
+// the restore fail — and a failed restore has changed nothing: no meta, no transcript, and a
+// transcript already at the path is exactly as it was.
 func TestRestoreLosesToAPurge(t *testing.T) {
 	cacheTestHome(t)
 	id, m := archivedSession(t, "srest02")
+	live := filepath.Join(os.Getenv("HOME"), "srest02.jsonl")
+	staged := make(chan struct{})
+	proceed := make(chan struct{})
+	restoreAfterStage = func() {
+		close(staged)
+		<-proceed
+	}
+	t.Cleanup(func() { restoreAfterStage = nil })
+
 	var err error
 	done := make(chan struct{})
-	sessionx.WithCleanupLock(func() {
-		go func() {
-			_, err = restoreCleanupArchive(id)
-			close(done)
-		}()
-		time.Sleep(150 * time.Millisecond) // the restore has read the archive and is waiting
-		if perr := purgeCleanupArchive(id); perr != nil {
-			t.Fatal(perr)
-		}
-	})
+	go func() {
+		_, err = restoreCleanupArchive(id)
+		close(done)
+	}()
+	<-staged // the archive has been read and the transcript staged
+	if perr := purgeCleanupArchive(id); perr != nil {
+		t.Fatal(perr)
+	}
+	close(proceed)
 	<-done
 	if err == nil {
 		t.Fatal("a restore of a purged archive succeeded")
 	}
 	if _, ok := session.ReadMeta(m.Name); ok {
 		t.Fatal("the meta came back without its archive")
+	}
+	if _, serr := os.Stat(live); !os.IsNotExist(serr) {
+		t.Fatalf("a failed restore left the transcript behind: %v", serr)
+	}
+	if left, _ := filepath.Glob(filepath.Join(os.Getenv("HOME"), ".restore-*")); len(left) != 0 {
+		t.Fatalf("staging files left behind: %v", left)
+	}
+}
+
+// TestRestoreKeepsTheLiveTranscript (third review ①): restoring an archive whose session is
+// already back — and has moved on — must not roll its transcript back to the archived copy.
+func TestRestoreKeepsTheLiveTranscript(t *testing.T) {
+	cacheTestHome(t)
+	id, m := archivedSession(t, "srest03")
+	live := filepath.Join(os.Getenv("HOME"), "srest03.jsonl")
+	newer := []byte("{}\n{\"turn\":2}\n")
+	if err := os.WriteFile(live, newer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restoreCleanupArchive(id); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(live)
+	if !bytes.Equal(got, newer) {
+		t.Fatalf("the live transcript was rolled back to %q", got)
+	}
+	if _, ok := session.ReadMeta(m.Name); !ok {
+		t.Fatal("the meta did not come back")
+	}
+}
+
+// TestRestoreWritesAMissingTranscript is the positive control for the two above: with no
+// transcript at the path and no purge, the archived one is put back.
+func TestRestoreWritesAMissingTranscript(t *testing.T) {
+	cacheTestHome(t)
+	id, _ := archivedSession(t, "srest04")
+	if _, err := restoreCleanupArchive(id); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "srest04.jsonl"))
+	if err != nil || string(got) != "{}\n" {
+		t.Fatalf("transcript = %q, %v", got, err)
 	}
 }
