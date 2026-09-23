@@ -127,18 +127,30 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 		t.Fatalf("drift = %v cur=%q, want true/drifted", s.BranchDrift, s.CurrentBranch)
 	}
 
-	// #1 auto-cleanup: stopping the last (clean) session in the worktree forgets its
-	// meta and auto-removes the worktree — no manual delete needed. The stray branch
-	// above left no uncommitted/unpushed work, so it qualifies.
+	// Deleting the last session of the worktree moves it to the trash and leaves the worktree
+	// alone (ADR 0101 decision 3): it used to auto-remove a clean worktree on the way out, so a
+	// session restored from the trash could come back to a folder that was gone.
 	if code := httpStatus(t, srv, "POST", "/sessions/"+created.Name+"/stop", nil); code != http.StatusOK {
 		t.Fatalf("stop = %d, want 200", code)
 	}
-	if _, err := os.Stat(wantDir); err == nil {
-		t.Fatalf("worktree dir still exists after stopping its last session (auto-prune failed)")
+	if _, ok := session.ReadMeta(created.Name); ok {
+		t.Fatalf("meta still there after the delete")
 	}
-	// The parent is untouched by the auto-prune.
+	if !trashHolds(t, created.Name) {
+		t.Fatalf("the deleted session is not in the trash")
+	}
+	if !gitx.IsGitRepo(wantDir) {
+		t.Fatalf("worktree was removed along with its last session")
+	}
+	// The working copy goes only when a person deletes it.
+	if code := httpStatus(t, srv, "DELETE", "/repos/app@feat-x?force=true", nil); code != http.StatusOK {
+		t.Fatalf("delete worktree = %d, want 200", code)
+	}
+	if _, err := os.Stat(wantDir); err == nil {
+		t.Fatalf("worktree dir still exists after deleting it")
+	}
 	if !gitx.IsGitRepo(parent) {
-		t.Fatalf("parent working copy damaged by worktree prune")
+		t.Fatalf("parent working copy damaged by the worktree delete")
 	}
 }
 

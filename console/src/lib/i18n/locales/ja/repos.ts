@@ -305,7 +305,7 @@ export const repos = {
   "rp.del.remote": "リモート（origin）のブランチも削除する",
   "rp.del.remote_hint": "これだけは取り消せません",
   "rp.del.summary": "作業コピー {copies} 件を削除 / セッション {archive} 件をアーカイブ",
-  "rp.del.summary_forget": " / シェル {count} 件を破棄",
+  "rp.del.summary_forget": " / シェル {count} 件をごみ箱へ",
   "rp.del.summary_branches": " / ブランチ {count} 件を削除",
   "rp.del.force_warn": "未コミット・未 push を含む {count} 件を強制削除します。元に戻せません。",
   "rp.del.run": "アーカイブして削除（{count}）",

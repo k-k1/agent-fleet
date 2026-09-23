@@ -192,10 +192,37 @@ describe("CleanupModal cache section", () => {
     purgeStatus = 409;
     await render();
     await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
-    await click(buttonByText("完全に削除"));
+    // The row's own button: once this archive is past the "older ones" window, the bulk button
+    // above the list says 完全に削除 too.
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-arch-actions button")[1]);
     const buttons = [...document.querySelectorAll<HTMLButtonElement>(".ui-confirm-actions button")];
     await click(buttons[1]);
     expect(document.body.textContent).toContain("復元が途中で止まっています");
+  });
+
+  it("offers to purge the archives past the window in one press, and only then (ADR 0101)", async () => {
+    candidates = [];
+    const recent = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    archives = [
+      { id: "20200101-000000-old1", at: "2020-01-01T00:00:00Z", reason: "delete_session", bytes: 2 * 2 ** 20 },
+      { id: "20200102-000000-old2", at: "2020-01-02T00:00:00Z", reason: "delete_session", bytes: 1 * 2 ** 20 },
+      { id: "recent", at: recent, reason: "delete_session", bytes: 5 * 2 ** 20 },
+    ];
+    await render();
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
+    expect(document.querySelector(".clean-toolbar")?.textContent).toContain("30 日より古いアーカイブ 2 件（3.0 MB）");
+    await click(buttonByText("30 日より古いものを完全に削除"));
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".ui-confirm-actions button")];
+    await click(buttons[1]);
+    expect(writes).toContainEqual({ url: expect.stringContaining("cleanup/archives?older_than_days=30"), method: "DELETE" });
+
+    // Nothing past the window: no bulk button at all.
+    await act(async () => root.unmount());
+    host.remove();
+    archives = [{ id: "recent", at: recent, reason: "delete_session", bytes: 5 * 2 ** 20 }];
+    await render();
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
+    expect(document.querySelector(".clean-toolbar")).toBeNull();
   });
 
   it("says a restore that stopped part way can simply be run again", async () => {

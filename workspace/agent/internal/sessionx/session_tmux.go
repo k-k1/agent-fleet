@@ -173,16 +173,3 @@ func LockedSessionsInDir(metas []session.Meta, dir string) []string {
 	sort.Strings(names)
 	return names
 }
-
-// WorktreeHasSessions reports whether ANY session meta (live, stopped, or archived)
-// still has its cwd at or under dir. Auto-pruning a worktree checks this first so a
-// working copy that a stopped/archived session could still resume or restore into is
-// never removed out from under it.
-func WorktreeHasSessions(dir string) bool {
-	for _, m := range session.ListMetas() {
-		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
-			return true
-		}
-	}
-	return false
-}

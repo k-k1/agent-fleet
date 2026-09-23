@@ -36,7 +36,7 @@ func TestCleanupArchiveRoundTrip(t *testing.T) {
 			JSONLPaths: []string{jsonlPath}, JSONLNames: []string{"sessions/slot42/00.jsonl"},
 		}},
 	}
-	if err := writeCleanupArchive(man, map[string][]byte{"sessions/slot42/00.jsonl": want}); err != nil {
+	if err := writeCleanupArchive(&man, map[string][]byte{"sessions/slot42/00.jsonl": want}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +70,7 @@ func TestCleanupArchiveRoundTrip(t *testing.T) {
 	}
 
 	// Purge removes it for good.
-	if err := purgeCleanupArchive(man.ID); err != nil {
+	if _, err := purgeCleanupArchive(man.ID); err != nil {
 		t.Fatal(err)
 	}
 	if len(listCleanupArchives()) != 0 {
@@ -83,7 +83,7 @@ func TestCleanupArchiveIDTraversalGuard(t *testing.T) {
 	if _, _, err := readCleanupArchive("../etc/passwd"); err == nil {
 		t.Fatal("expected traversal id to be rejected")
 	}
-	if err := purgeCleanupArchive("../../x"); err == nil {
+	if _, err := purgeCleanupArchive("../../x"); err == nil {
 		t.Fatal("expected traversal purge to be rejected")
 	}
 }

@@ -42,7 +42,7 @@ export async function attachAgent(p: {
     } catch {
       return { studioId, error: t("err.network") };
     }
-    // /halt, not /stop: /stop forgets the session — its conversation leaves the list for good —
+    // /halt, not /stop: /stop deletes the session (to the trash, ADR 0101) —
     // while switching agents only ends this one's turn at the studio. Halted, it stays resumable
     // (the Console's own stop button is the same call).
     void raw(`api/sessions/${encodeURIComponent(p.replacing)}/halt`, { method: "POST" }).catch(() => undefined);

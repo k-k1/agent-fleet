@@ -33,7 +33,10 @@ func TestAuditActionTarget(t *testing.T) {
 		{"POST", "/api/repos/foo/parent-ff", "foo", "git.parent_ff", "foo", true},
 		{"POST", "/api/sessions", "", "session.create", "", true},
 		{"POST", "/api/sessions/s1/fork", "s1", "session.fork", "s1", true},
-		{"POST", "/api/sessions/s1/stop", "s1", "session.stop", "s1", true},
+		{"POST", "/api/sessions/s1/stop", "s1", "session.delete", "s1", true},
+		{"DELETE", "/api/sessions/s1", "s1", "session.delete", "s1", true},
+		{"DELETE", "/api/sessions/s1?stop=1", "s1", "session.delete", "s1", true},
+		{"DELETE", "/api/sessions/s1/marks", "s1", "", "", false},
 		// Not auditable (reads, non-change mutations, unlisted ops):
 		{"GET", "/api/fs/file?path=a", "", "", "", false},
 		{"GET", "/api/fs/tree", "", "", "", false},

@@ -307,7 +307,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.del.remote": "Delete the branch on the remote (origin) too",
   "rp.del.remote_hint": "this one cannot be undone",
   "rp.del.summary": "delete {copies} working copies / archive {archive} sessions",
-  "rp.del.summary_forget": " / discard {count} shells",
+  "rp.del.summary_forget": " / move {count} shells to the trash",
   "rp.del.summary_branches": " / delete {count} branches",
   "rp.del.force_warn": "{count} of them are force-deleted with uncommitted or unpushed work. This cannot be undone.",
   "rp.del.run": "Archive and delete ({count})",

@@ -46,6 +46,7 @@ func sessionDeps() sessionx.Deps {
 		MaybeFoldSessionUsage: maybeFoldSessionUsage,
 
 		RemoveTerminalHistory: removeTerminalHistory,
+		TrashSession:          trashSession,
 
 		ToolchainShellPrefix: toolchainShellPrefix,
 

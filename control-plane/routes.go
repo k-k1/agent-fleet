@@ -345,6 +345,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/cleanup/archives", rest)
 	mux.HandleFunc("POST /api/cleanup/archives/{id}/restore", rest)
 	mux.HandleFunc("DELETE /api/cleanup/archives/{id}", rest)
+	mux.HandleFunc("DELETE /api/cleanup/archives", rest) // ?older_than_days=N (ADR 0101 decision 6)
 	mux.HandleFunc("GET /api/cleanup/usage", rest)
 	mux.HandleFunc("DELETE /api/cleanup/cache/{feature}", rest)
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used

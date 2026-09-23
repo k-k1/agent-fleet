@@ -80,15 +80,16 @@ func testDeps() Deps {
 		},
 
 		// --- the 15 not reached in the measurement ---
-		AbsPath:              func(s string) string { unreached("AbsPath"); return s },
-		RepoLocked:           func(string) bool { unreached("RepoLocked"); return false },
-		LockedRepoDirs:       func() map[string]bool { unreached("LockedRepoDirs"); return nil },
-		LiveSessionsInDir:    func(string) []string { unreached("LiveSessionsInDir"); return nil },
-		LockedSessionsInDir:  func([]session.Meta, string) []string { unreached("LockedSessionsInDir"); return nil },
-		WorktreeHasSessions:  func(string) bool { unreached("WorktreeHasSessions"); return false },
-		ManagedAlive:         func(session.Meta) bool { unreached("ManagedAlive"); return false },
-		FinalizeSessionUsage: func(session.Meta) { unreached("FinalizeSessionUsage") },
-		RepoJobActive:        func(string) bool { unreached("RepoJobActive"); return false },
+		AbsPath:             func(s string) string { unreached("AbsPath"); return s },
+		RepoLocked:          func(string) bool { unreached("RepoLocked"); return false },
+		LockedRepoDirs:      func() map[string]bool { unreached("LockedRepoDirs"); return nil },
+		LiveSessionsInDir:   func(string) []string { unreached("LiveSessionsInDir"); return nil },
+		LockedSessionsInDir: func([]session.Meta, string) []string { unreached("LockedSessionsInDir"); return nil },
+		ManagedAlive:        func(session.Meta) bool { unreached("ManagedAlive"); return false },
+		ShelveSession:       func(session.Meta) { unreached("ShelveSession") },
+		TrashSession:        func(session.Meta) error { unreached("TrashSession"); return nil },
+		WithDeletionGate:    func(fn func()) { fn() },
+		RepoJobActive:       func(string) bool { unreached("RepoJobActive"); return false },
 		StartRepoJob: func(string, string, string, string, func(context.Context, RepoJobSink) error) any {
 			unreached("StartRepoJob")
 			return nil
@@ -112,6 +113,7 @@ func testDeps() Deps {
 		ErrCodeHasWorktrees:          "gitx-test-has_worktrees",
 		ErrCodeLocked:                "gitx-test-locked",
 		ErrCodeLockedSessions:        "gitx-test-locked_sessions",
+		ErrCodeSessionsTrashFailed:   "gitx-test-sessions_trash_failed",
 	}
 }
 

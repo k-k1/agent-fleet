@@ -60,3 +60,12 @@ so a conversation worth keeping or a long-lived working copy could disappear in 
   with the worktree.
 - **Adding a confirmation dialogue on every deletion**: it does nothing for automatic deletion, and
   only adds confirmation fatigue on the manual side.
+
+## Addendum (2026-09-24) — "worktree auto prune" is gone
+
+Of the automatic deletion routes the context and decision 2 list, the stopped-TTL prune became "move to the
+shelf" in ADR 0097, and the auto prune of a worktree with no sessions left (`MaybePruneWorktree`) was removed by
+[ADR 0101](0101-session-delete-via-trash.md) decision 3. Worktrees are removed only by a person (cleanup ②,
+delete the working copy, MCP `delete_worktree`), and the lock still applies to all of them. A session's lock
+still applies both to deleting it (moving it to the trash) and to the collateral of deleting its worktree
+(moving it to the shelf or the trash).

@@ -2,7 +2,7 @@
 // drive a session row wherever it renders (the flat list AND the per-working-copy
 // nodes of the project tree). Each op hits the Agent, then refreshes the store and
 // closes any stale panes; confirmations and error toasts are built in.
-import { raw, sessionSetLock, sessionKeepAwake, sessionStopAfterTurn } from "../../core/api/client.ts";
+import { raw, sessionDelete, sessionSetLock, sessionKeepAwake, sessionStopAfterTurn } from "../../core/api/client.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -17,10 +17,21 @@ import { t, useT, getLocale } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import type { Session } from "../../types/session.ts";
 
+/** One row of a bulk tidy: an AI session goes to the archive, a shell / ssm to the trash
+ *  (stopped first if it runs). Both are restorable (ADR 0101). Never throws. */
+const tidyOne = (s: Session, op: "archive" | "delete") =>
+  (op === "archive"
+    ? raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" })
+    : sessionDelete(s.name, { stop: true })
+  )
+    .then((res) => ({ s, ok: res.ok }))
+    .catch(() => ({ s, ok: false }));
+
 export interface SessionActions {
   /** Hide from the list but KEEP it (restorable). Live sessions stop first. */
   archive(s: Session): Promise<void>;
-  /** Delete outright (shell/ssm — no conversation worth keeping). Irreversible. */
+  /** Delete (shell/ssm — AI rows archive instead): moves it to the cleanup trash, stopping it
+   *  first if it runs. Restorable from the trash (ADR 0101). */
   deleteSession(s: Session): Promise<void>;
   /** Toggle the deletion lock (docs/log/45). While on, this row cannot be removed by any
    *  deletion path — Console, cleanup, the operator — and the stopped-TTL sweep leaves it in
@@ -79,7 +90,7 @@ export function useSessionActions(): SessionActions {
       }))
     )
       return;
-    const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" });
+    const res = await sessionDelete(s.name, { stop: true });
     if (!res.ok) {
       toast(t("common.delete_failed"));
       return;
@@ -149,7 +160,7 @@ export function useSessionActions(): SessionActions {
             {alive > 0 ? <> {tr("sess.tidy_orphans_alive", { count: alive })}</> : null}
             <br />
             <Trans k="sess.tidy_orphans_restore" components={[<strong />]} />
-            {ephemeral.length > 0 ? <> {tr("sess.tidy_orphans_irreversible")}</> : null}
+            {ephemeral.length > 0 ? <> {tr("sess.tidy_orphans_trash")}</> : null}
           </>
         ),
         confirmLabel: tr("sess.cleanup_confirm"),
@@ -157,17 +168,13 @@ export function useSessionActions(): SessionActions {
       }))
     )
       return;
-    // /archive hides but KEEPS the meta/jsonl (restorable); /stop forgets it
-    // (shell/ssm delete). Best-effort per session so one failure doesn't abort
+    // /archive hides but KEEPS the meta/jsonl (restorable); delete moves shell/ssm to the
+    // trash (also restorable, ADR 0101). Best-effort per session so one failure doesn't abort
     // the rest — mirrors the per-row archive / delete. Count the successes and toast the
     // result: if every call 403s or 409s, saying nothing looks like it worked.
-    const call = (s: Session, ep: "archive" | "stop") =>
-      raw(`api/sessions/${encodeURIComponent(s.name)}/${ep}`, { method: "POST" })
-        .then((res) => ({ s, ok: res.ok }))
-        .catch(() => ({ s, ok: false }));
     const results = await Promise.all([
-      ...keepable.map((s) => call(s, "archive")),
-      ...ephemeral.map((s) => call(s, "stop")),
+      ...keepable.map((s) => tidyOne(s, "archive")),
+      ...ephemeral.map((s) => tidyOne(s, "delete")),
     ]);
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;
@@ -196,13 +203,9 @@ export function useSessionActions(): SessionActions {
       }))
     )
       return;
-    const call = (s: Session, ep: "archive" | "stop") =>
-      raw(`api/sessions/${encodeURIComponent(s.name)}/${ep}`, { method: "POST" })
-        .then((res) => ({ s, ok: res.ok }))
-        .catch(() => ({ s, ok: false }));
     const results = await Promise.all([
-      ...keepable.map((s) => call(s, "archive")),
-      ...ephemeral.map((s) => call(s, "stop")),
+      ...keepable.map((s) => tidyOne(s, "archive")),
+      ...ephemeral.map((s) => tidyOne(s, "delete")),
     ]);
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;

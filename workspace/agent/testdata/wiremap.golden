@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 211
+# count: 212
 agent_instructions.go handleUserNotesPreview x1 {content,exists,kind,path}
 agent_models.go handleAgentModels x1 {models,reason,route} cond{reason,route}
 agent_rtk.go handleAgentRTKGain x1 {available}
@@ -20,9 +20,9 @@ assistants.go handleAssistantDelete x1 {ok}
 assistants.go handleAssistantsList x1 {assistants}
 cleanup_ops.go handleDeleteBranch x1 {archive,deleted,remote,remote_error}
 cleanup_ops.go handleDeleteSession x1 {archive,deleted}
-cleanup_ops.go handleDeleteSession x1 {deleted}
 cleanup_ops.go handleListCleanupArchives x1 {archives}
 cleanup_ops.go handlePurgeCleanupArchive x1 {purged}
+cleanup_ops.go handlePurgeOldCleanupArchives x1 {bytes,kept,purged}
 cleanup_ops.go handleRestoreCleanupArchive x1 {restored}
 connections.go handleCheckLcppConn x1 {build_info,models,n_ctx,ok}
 connections.go handleConnectionsGet x1 {agy,aws,bitbucket,claude,cloudwatch,codex,copilot,cursor,discord,github,grafana,internal,jira,kiro,lcpp,muse,opencode,pagerduty,slack,svn}
@@ -123,11 +123,11 @@ internal/chatx/chat_report.go HandleChatReport x1 {reported}
 internal/chatx/chat_suggest_reply.go HandleChatSuggestReplies x1 {suggestions}
 internal/chatx/chat_title.go HandleChatSuggestTitle x1 {suggestedTitle}
 internal/gitx/git.go HandleCloneRepo x1 {job}
-internal/gitx/git.go HandleDeleteRepo x3 {deleted}
 internal/gitx/git.go HandleInitRepo x1 {repo}
 internal/gitx/git.go HandleListRepos x1 {repos}
 internal/gitx/git.go HandleRepoBranches x1 {branches,current}
 internal/gitx/git.go WriteBranchInUse x1 {error}
+internal/gitx/git.go handleDeleteRepoGated x3 {deleted}
 internal/gitx/git_identity.go HandleGitProviderIdentityPut x1 {email,host,name}
 internal/gitx/git_identity.go HandleGlobalIdentityGet x1 {email,name}
 internal/gitx/git_identity.go HandleRepoIdentityGet x1 {effective,override,provider,source}
@@ -169,6 +169,7 @@ internal/sessionx/session_handlers.go HandleIdempotencyLookup x1 {status}
 internal/sessionx/session_handlers.go HandleListArchived x1 {sessions}
 internal/sessionx/session_handlers.go HandleListSessions x1 {repoJobs,sessions}
 internal/sessionx/session_handlers.go HandleSessionCatalog x1 {sessions}
+internal/sessionx/session_handlers.go HandleStopSession x1 {archive,deleted,stopped}
 internal/sessionx/session_handlers.go HandleStopSession x1 {stopped}
 internal/sessionx/session_handoff_proposal.go HandleSessionHandoffProposal x1 {proposals}
 internal/sessionx/session_handoff_proposal.go HandleSessionHandoffProposal x2 {proposal}
