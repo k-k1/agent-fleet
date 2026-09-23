@@ -23,6 +23,9 @@
 - **改訂 5（2026-09-23）**: 5 巡目（[113-adr-review](../log/113-adr-review.md) §8・新規 🔴 3・🟡 3）を
   反映。原本の記録欄は `Request` でなく**キューの記録（`jobRec`）**に置く、決定 9 の `press` 行の欄一覧を
   実行順に揃える、`InitialPromptState` に `pending` を足して送信処理中の再送を禁じる。末尾の対応表に追記。
+- **改訂 6（2026-09-23）**: 6 巡目（[113-adr-review](../log/113-adr-review.md) §9・新規 🔴 2・🟡 2）を
+  反映。原本の受渡しは **`JobSpec` の記録専用欄→`Enqueue` が各 `jobRec` へ写す**、Agent 起動時に前
+  プロセスの `pending` を `unknown` に回収、固定コピーの位置説明、`press_result` 重複の畳み方。
 - 番号: `develop` の最大は 0098。0099 は未マージの 2 ブランチ（`temp/sidv2bw`・`temp/sjys6nk`）が
   取っているので 0100。
 - 関連: [0081](0081-image-generation-pane.ja.md)（今の画像生成ペイン。本 ADR は決定 6・7 を覆し、
@@ -118,7 +121,11 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
   ——**この処理が終わるまでは `pending` のまま**で、ペインは「人格を送っています」を出し**再送を
   出さない**（時間で `unknown` に倒すと、元の goroutine が後から送って人格ターンが二重になる）。
   `failed` と `unknown`（処理が終わったが確認できなかった）で初めて「人格を送れませんでした／
-  確認できません・再送」を出す（再送＝初回ターンとして送り直す）。
+  確認できません・再送」を出す（再送＝初回ターンとして送り直す）。**Agent の起動時に、メタが
+  `pending` のセッションはすべて `unknown` に回収する**（改訂 6: 配達の goroutine はプロセスと共に
+  消え、メタはファイルに残る `session/meta.go:17-43`。回収しないと永久に「送っています」）。回収後の
+  再送で人格が二重に届くことはあり得るが、人格は「役割の宣言」で二重に読ませても害は無く、
+  永久に送れないより良い。
   **ADR 0081 の利用者は何も失わない。**
 
 ### 決定 3 — 契約はセッション側 af MCP サーバのツール 4 本。`generate_image` は広告しない
@@ -167,12 +174,15 @@ updated_at`。**下書きの真実はスタジオ**。`localStorage` は「最�
   ジョブ id は `Enqueue` の中で採番される `jobs.go:297-327` ので、ジョブ単位にはできない）、要求の
   `inputs`／`mask` を root 固定の open（`openat2NoSymlinks` と同型）で読み、**入力セット**
   `~/.cache/agent-fleet/generated/console/inputs/<set>/`（set id は Agent が採番・生成物 root の絶対
-  パス・利用者のアップロード先と親は同じだが別階層）に写す。**`Request`（provider の引数型・
-  `imagegen.go:53-85`）にはコピーのパスだけ**（`Inputs`・`Mask`）を入れ、**原本のパスはキューの
-  記録 `jobRec` の記録専用欄（`InputOrigins`・`MaskOrigin`）**に置く（改訂 5: `JobSpec` は `Request` を
-  丸ごと持ち worker が同じ値を `prov.Generate` に渡す `jobs.go:214-229, 318-326, 426-437` ので、
-  `Request` に原本欄を足すと provider にも渡る）。サイドカーは `jobRec` の原本欄から書く（今は
-  `Request` の同じ値を両方に使っている `jobs.go:477-511`）。provider は原本のパスを一度も見ない
+  パス。利用者のアップロード先は browse root 相対の `generated/console/inputs/`＝`fs.go:475-496` で、
+  browse root が home のときだけ親が同じ）に写す。**`Request`（provider の引数型・`imagegen.go:53-85`）
+  にはコピーのパスだけ**（`Inputs`・`Mask`）を入れる。原本の受渡し（改訂 6）: **`JobSpec` に
+  provider に渡さない記録専用欄 `InputSet`・`InputOrigins`・`MaskOrigin` を置き、`Enqueue` が
+  `JobSpec.Request` から `jobRec` を作るとき（`jobs.go:214-229, 318-326`）に、この 3 欄も各 `jobRec` へ
+  写す**。worker が `prov.Generate` に渡すのは `jobRec.req`（＝コピーだけ）で、サイドカーは
+  `jobRec` の原本欄から書く（今は `Request` の同じ値を両方に使っている `jobs.go:477-511`）。
+  `JobSpec` に原本欄を足しても provider には届かない——`Request` に入れると届く
+  （改訂 5: `jobs.go:426-437`）。provider は原本のパスを一度も見ない
   （comfy の事前読取り `comfy.go:1045`・アップロード `:1193`・`openai_compat.go:404`・codex・agy の
   どれも）。読める元は **browse root と生成物 root** の 2 つ（既定の出力先は browse root の外
   ＝`store.go:28-34`・`AF_BROWSE_ROOT` が home でない配備で「参照にする」が自分の絵を拒まないため）、
@@ -266,7 +276,9 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
   キュー関数へ投入（worker は応答前に走り出す・`jobs.go:297-342`。サイドカーは `JobSpec` の
   `version` から書く）→ ④ **`press_result` 行を書く**（版 id・ジョブ／グループ id、失敗なら
   `error`）。④が失敗したら（投入は成功し worker は走っている）応答に `recorded: false` を返し、
-  ペインはその版を「記録保留」で出し、Agent はすぐ 1 度書き直しを試みる。版の状態は `press_result`
+  ペインはその版を「記録保留」で出し、Agent はすぐ 1 度書き直しを試みる。同じ版 id の
+  `press_result` が複数あり得る（再試行・起動時の補完）ので、**読む側は版 id ごとに最初の
+  `press_result` を採り、後続は無視する**。版の状態は `press_result`
   の有無と中身から導く。①の後に落ちたら `press_result` の無い版が残る——起動時に、サイドカーを走査して（`history.jsonl` の有無や末尾欠けに依らない）その
   `version` の絵があれば `press_result` を合成し、無ければ `lost` の `press_result` を書く。
   サイドカーは下書き全文を持たない（`props.go:42-90`・負の指示は合成後の値）ので、復元の元は
@@ -433,3 +445,11 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 | 🔴Q `press` 行の欄一覧に投入後の値が残る | 決定 9: `press`（投入前の物）と `press_result`（投入後の物）の 2 行に欄を分けて書き直し |
 | 🔴R 送信処理中の 60 秒 `unknown` で再送すると二重ターン | 決定 2: `pending` を足し、配達処理が終わるまで再送を出さない |
 | 🟡M〜O | 影響欄の型を揃える／掃除に取消 2 経路を含める／`press_result` の追記失敗は `recorded: false` と「記録保留」 |
+
+## 改訂 6 で変えたこと（2026-09-23・[113-adr-review](../log/113-adr-review.md) §9）
+
+| 指摘 | 変更 |
+|---|---|
+| 🔴S 原本パスが `jobRec` へ届く経路が無い | 決定 4: `JobSpec` に記録専用欄（`InputSet`・`InputOrigins`・`MaskOrigin`）を置き `Enqueue` が各 `jobRec` へ写す |
+| 🔴T 再起動で `pending` が永続し再送不能 | 決定 2: 起動時に `pending` を `unknown` へ回収。二重の人格は害が無い |
+| 🟡P・Q | 固定コピーとアップロード先の親は browse root が home のときだけ同じ／`press_result` の重複は版 id ごとに最初の 1 件を採る |

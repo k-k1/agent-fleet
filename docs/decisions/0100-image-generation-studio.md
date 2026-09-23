@@ -28,6 +28,10 @@ English | [日本語](0100-image-generation-studio.ja.md)
   3 new red, 3 yellow). Origin fields move from `Request` to **the queue record (`jobRec`)**; decision
   9's `press` field list is aligned with the execution order; `InitialPromptState` gains `pending` and
   no resend is offered while delivery is in progress. Appended to the table at the end.
+- **Revision 6 (2026-09-23)**: folds in the sixth pass ([113-adr-review](../log/113-adr-review.md) §9 —
+  2 new red, 2 yellow). Origins travel as **record-only `JobSpec` fields that `Enqueue` copies into each
+  `jobRec`**; at Agent startup a leftover `pending` is reclaimed as `unknown`; the fixed-copy location
+  wording; folding duplicate `press_result` lines.
 - Number: `develop` tops out at 0098; 0099 is taken by two unmerged branches (`temp/sidv2bw`,
   `temp/sjys6nk`), hence 0100.
 - Related: [0081](0081-image-generation-pane.md) (today's image-generation pane; this ADR overturns
@@ -131,7 +135,11 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   persona" and **offers no resend** (flipping to `unknown` on a timer would let the original
   goroutine send later and run the persona turn twice). Only `failed` and `unknown` (finished but
   unconfirmed) show "persona not delivered / unconfirmed — resend" (a resend is the first turn
-  again). **Nothing an ADR 0081 user has today is lost.**
+  again). **At Agent startup every session whose meta says `pending` is reclaimed as `unknown`**
+  (revision 6: the delivery goroutine dies with the process while the meta persists on disk,
+  `session/meta.go:17-43`; without reclaiming it the pane would say "delivering" forever). A resend
+  after reclaiming may deliver the persona twice; the persona is a role statement, harmless when read
+  twice, and better than never being deliverable. **Nothing an ADR 0081 user has today is lost.**
 
 ### Decision 3 — The contract is four tools on the session-side af MCP server. `generate_image` is not advertised
 
@@ -188,13 +196,15 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   so copies cannot be per job), each `inputs`/`mask` entry is read through a root-pinned open (the
   `openat2NoSymlinks` shape) and copied into an **input set**
   `~/.cache/agent-fleet/generated/console/inputs/<set>/` (set id assigned by the Agent; an absolute path
-  under the generated root; same parent as user uploads but a separate level). **`Request` (the
-  provider argument type, `imagegen.go:53-85`) carries only the copies** (`Inputs`, `Mask`); **the
-  origins live in record-only fields of the queue record `jobRec`** (`InputOrigins`, `MaskOrigin`)
-  (revision 5: `JobSpec` embeds the whole `Request` and the worker hands that same value to
-  `prov.Generate`, `jobs.go:214-229, 318-326, 426-437`, so origin fields on `Request` would reach the
-  provider). The sidecar is written from `jobRec`'s origin fields (today one `Request` value serves
-  both, `jobs.go:477-511`). No provider ever sees the original path (not comfy's pre-read
+  under the generated root; user uploads go to the browse-root-relative `generated/console/inputs/`,
+  `fs.go:475-496`, so the parents coincide only when the browse root is home). **`Request` (the
+  provider argument type, `imagegen.go:53-85`) carries only the copies** (`Inputs`, `Mask`). How the
+  origins travel (revision 6): **`JobSpec` gets record-only fields the provider never receives —
+  `InputSet`, `InputOrigins`, `MaskOrigin` — and `Enqueue`, when it builds each `jobRec` from
+  `JobSpec.Request` (`jobs.go:214-229, 318-326`), copies those three fields into the `jobRec`**. The
+  worker hands `jobRec.req` (copies only) to `prov.Generate`; the sidecar is written from `jobRec`'s
+  origin fields (today one `Request` value serves both, `jobs.go:477-511`). Origin fields on `JobSpec`
+  do not reach the provider; on `Request` they would (revision 5, `jobs.go:426-437`). No provider ever sees the original path (not comfy's pre-read
   `comfy.go:1045`, its upload `:1193`, `openai_compat.go:404`, codex nor agy). Allowed sources are
   **the browse root and the generated root** (the default output lives outside the browse root,
   `store.go:28-34`, so "use as reference" must not refuse the user's own pictures where
@@ -302,7 +312,9 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
   `jobs.go:297-342`; the sidecar takes `version` from the `JobSpec`) → ④ **write the `press_result`
   line** (version id, job/group id, or `error`). If ④ fails (the enqueue succeeded and the worker is
   running) the response says `recorded: false`, the pane shows that version as "record pending", and
-  the Agent retries the write once immediately. A version's state is derived from the presence and
+  the Agent retries the write once immediately. Several `press_result` lines for one version id are
+  possible (retry, startup reconciliation), so **readers take the first `press_result` per version id
+  and ignore the rest**. A version's state is derived from the presence and
   content of its `press_result`. If the Agent dies after ① a version without `press_result` remains —
   at startup the sidecars are scanned (independently of whether `history.jsonl` exists or is
   truncated): if a picture with that `version` exists a `press_result` is synthesised, otherwise a
@@ -489,3 +501,11 @@ conversation.
 | 🔴Q the `press` field list still holds post-enqueue values | decision 9: fields split between `press` (pre-enqueue) and `press_result` (post-enqueue) |
 | 🔴R resending on a 60 s `unknown` during TUI delivery doubles the turn | decision 2: `pending` added; no resend until delivery finishes |
 | 🟡M–O | consequences aligned with the type; cleanup covers both cancel paths; a failed `press_result` write answers `recorded: false` and shows "record pending" |
+
+## Changed in revision 6 (2026-09-23, [113-adr-review](../log/113-adr-review.md) §9)
+
+| Finding | Change |
+|---|---|
+| 🔴S no path for the origins to reach `jobRec` | decision 4: record-only `JobSpec` fields (`InputSet`, `InputOrigins`, `MaskOrigin`) that `Enqueue` copies into each `jobRec` |
+| 🔴T a restart leaves `pending` forever, no resend | decision 2: reclaim `pending` as `unknown` at startup; a doubled persona is harmless |
+| 🟡P, Q | the parents coincide only when the browse root is home; duplicate `press_result` lines fold to the first per version id |
