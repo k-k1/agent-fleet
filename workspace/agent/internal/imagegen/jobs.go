@@ -132,6 +132,11 @@ type jobRec struct {
 	inputSet     string
 	inputOrigins []string
 	maskOrigin   string
+	// studio and version are the press this job came from (ADR 0100 decision 9), empty for a job
+	// posted to /imagegen/jobs directly. They go to the sidecar and the picture history, which is
+	// what keeps "which press made this picture" across a restart.
+	studio  string
+	version string
 	// fullSteps is what the BATCH would run at when this is a trial — the form's own steps, kept
 	// so the sidecar records both what ran and what the keeper would be made with.
 	fullSteps int
@@ -242,6 +247,11 @@ type JobSpec struct {
 	InputSet     string
 	InputOrigins []string
 	MaskOrigin   string
+	// Studio and Version name the studio press this spec came from (ADR 0100 decision 9) —
+	// record-only like the three above. The version id is reserved before the enqueue, so the
+	// pictures carry it even when the press_result line never gets written.
+	Studio  string
+	Version string
 }
 
 // errUnstagedInputs is Enqueue refusing a spec whose references never went through the gate.
@@ -364,6 +374,7 @@ func (q *jobQueue) Enqueue(ctx context.Context, spec JobSpec) (EnqueueResult, er
 			created: jobsNow(), provider: prov.ID(), model: model, family: family,
 			dir: dir, outRel: outRel, req: one, fullSteps: fullSteps, state: JobQueued,
 			inputSet: spec.InputSet, inputOrigins: spec.InputOrigins, maskOrigin: spec.MaskOrigin,
+			studio: spec.Studio, version: spec.Version,
 		}
 		q.byID[j.id] = j
 		admitted = append(admitted, j)
@@ -528,6 +539,7 @@ func (q *jobQueue) propsFor(j *jobRec, res Result) ImageProps {
 		Op: string(j.req.Op), Prompt: j.req.Prompt,
 		Size: j.req.Size, Strength: j.req.Strength, Inputs: j.inputOrigins, Mask: j.maskOrigin,
 		Loras: j.req.Loras, Job: j.id, Group: j.group, Label: j.label, Trial: j.trial,
+		Studio: j.studio, Version: j.version,
 		ElapsedMS: elapsed, Warnings: res.Warnings, Agent: Build,
 		CreatedAt: j.created.UTC().Format(time.RFC3339),
 	}
@@ -1099,6 +1111,9 @@ type jobWire struct {
 	Files      []StoredFile `json:"files,omitempty"`
 	Warnings   []string     `json:"warnings,omitempty"`
 	Error      string       `json:"error,omitempty"`
+	// Studio and Version are the studio press the job came from (ADR 0100 decision 9).
+	Studio  string `json:"studio,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 type groupWire struct {
@@ -1180,6 +1195,7 @@ func (q *jobQueue) wireOf(j *jobRec, position int) jobWire {
 		FullSteps: j.fullSteps, OutDir: j.outRel,
 		CreatedAt: j.created.UTC().Format(time.RFC3339),
 		Files:     j.files, Warnings: j.warnings, Error: j.failure,
+		Studio: j.studio, Version: j.version,
 		TypicalMS: int64(q.typical[typicalKeyFine(j.provider, j.model, j.req.Size, stepsOf(j.req))]),
 	}
 	if !j.started.IsZero() {
