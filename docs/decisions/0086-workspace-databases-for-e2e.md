@@ -3,6 +3,7 @@
 English | [日本語](0086-workspace-databases-for-e2e.ja.md)
 
 - Status: **proposed** (2026-09-16). Nothing is implemented.
+  Status update (2026-09-24): P0 (Postgres and the `af-db` CLI) and P1 (MySQL and the Console card) are implemented and were accepted on 2026-09-17 (the sections "P0 accepted" and "P1 accepted" below). They landed through #719, with fixes and additions in #721, #726, #729, #735 and #741 (`workspace/agent/internal/afdb/`). P2 is decided by demand, as written.
 - **What was measured, and where.** Both servers were really installed and started in a
   Workspace container on 2026-09-16 — a docker-runtime development deployment, x86_64, a
   10 GiB cgroup limit and 8 CPUs — and every number under "Measured" came out of that run.

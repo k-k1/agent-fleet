@@ -46,11 +46,21 @@ WS_MEMORY="${WS_MEMORY:-5g}"
 # every workspace at /usr/lib/jvm (docker runtime only).
 WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
 # The host-run Control Plane is not built from control-plane/Dockerfile, so it does
-# not have the baked docs tree. Point staging at this checkout by default — at guide/,
-# which is the whole of what a container receives (ADR 0064). docs/ is the developer
-# tree and contains none of the shelves, so it would stage nothing and leave the
-# Console's 「利用ガイド」 opening a file that does not exist.
-AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/guide}"
+# not have the baked docs tree. Build it from this checkout's guide/, which is the
+# whole of what a container receives (ADR 0064). docs/ is the developer tree and
+# contains none of the shelves, so it would stage nothing and leave the Console's
+# 「利用ガイド」 opening a file that does not exist.
+# Not guide/ itself: what a container receives is the STAGED guide
+# (deploy/release/stage-docs.sh), which adds the runbooks and the release history and
+# rewrites the links that reach them. Served raw, those links point at
+# ../../deploy/... and the Console's 「利用ガイド」 reports "file not found". So stage it
+# here the way the images do, into the data dir, unless the caller named a tree. The
+# stage is taken at launch: an edit under guide/ shows after the next launch.
+if [ -z "${AF_DOCS_DIR:-}" ]; then
+  AF_DOCS_DIR="$WS_DATA/guide-staged"
+  rm -rf "$AF_DOCS_DIR"
+  bash "$ROOT/deploy/release/stage-docs.sh" "$AF_DOCS_DIR" >/dev/null
+fi
 WS_JDK="${WS_JDK:-1}"                  # 1=provision shared JDKs / 0=skip (rely on on-demand install-jdk)
 RTK_VERSION="${RTK_VERSION:-}"         # override the baked rtk version (empty = Dockerfile's ARG pin)
 DEV_KEY="${DEV_USER:-dev}"

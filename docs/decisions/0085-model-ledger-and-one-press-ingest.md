@@ -5,6 +5,7 @@ English | [日本語](0085-model-ledger-and-one-press-ingest.ja.md)
 - Status: **drafted** (2026-09-15). Not built. Every "exists" / "does not exist" claim below was
   checked by grep on `57ac9515` (develop plus PR #691, which this ADR assumes merged first) and
   every "measured" claim was read off af-sandbox's admin API the same day.
+  Status update (2026-09-24): built, all merged on 2026-09-15. P1 (CP) landed as #695 (the one-press ingest, `control-plane/engine_plan.go`) and #696 / #697 (the bucket read as the ledger), P2 (Console) as #694, and P3 as #704 (the grace routes and fields removed, `plan_token` required). Whether the measurements P1 and P2 name were run on af-sandbox is not recorded here.
 - Supersedes, in part: [0072](0072-engine-model-catalog.md) decision 6's request shape (the caller
   names the S3 key; `attach` / `replace` / `reuse_s3_key` as three request modes) and the four
   2026-09-15 addenda's remedies (`POST …/models/{id}/parts`, `main_file_fix`, the job-history

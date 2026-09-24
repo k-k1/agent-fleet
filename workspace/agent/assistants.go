@@ -50,7 +50,34 @@ func ensureBuiltinKnowledge() string {
 	if b, err := knowledgeFS.ReadFile("knowledge/af-usage.md"); err == nil {
 		_ = os.WriteFile(filepath.Join(dir, "agent-fleet-usage.md"), b, 0o600)
 	}
+	_ = os.WriteFile(filepath.Join(dir, "agent-fleet-version.md"), []byte(runningVersionDoc(buildVersion)), 0o600)
 	return dir
+}
+
+// runningVersionDoc tells the builtin assistants which release this workspace runs, so
+// "what changed since my version" can be answered against the release history in the
+// guide (ref/releases). It is the Agent's own build, i.e. the workspace image: the
+// Control Plane may already be newer (the "restart required" badge), which is why the
+// text says "this workspace" rather than "this deployment".
+func runningVersionDoc(v string) string {
+	// Dev images are stamped "dev" or "<next>-dev-<sha>"; neither names a published release.
+	if v == "" || strings.Contains(v, "dev") {
+		label := ""
+		if v != "" && v != "dev" {
+			label = " (" + v + ")"
+		}
+		return "# Running version\n\n" +
+			"This workspace runs a development build" + label + ", not a published release. It may contain " +
+			"changes newer than the latest entry in the release history; say so rather " +
+			"than naming a release.\n\n" +
+			"このワークスペースは開発ビルド" + label + "で動いていて、公開されたリリースではありません。" +
+			"更新履歴の最新版より新しい変更を含むことがあるので、版を断定せずそう伝えてください。\n"
+	}
+	return "# Running version\n\n" +
+		"This workspace runs Agent Fleet " + v + ". The Control Plane can be newer until " +
+		"the workspace is restarted.\n\n" +
+		"このワークスペースは Agent Fleet " + v + " で動いています。ワークスペースを再起動するまでは、" +
+		"Control Plane のほうが新しい版のことがあります。\n"
 }
 
 // --- HTTP handlers ---
@@ -184,19 +211,20 @@ func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// assistantDeps is the only place the two main-only things (the //go:embed knowledge and the
-// chat family's default agent) are passed to internal/assistants, and they are passed as
-// arguments.
+// assistantDeps is the only place the main-only things (the //go:embed knowledge, the
+// shipped user guide's path and the chat family's default agent) are passed to
+// internal/assistants, and they are passed as arguments.
 //
 // Assignment to package-variable hooks in init was tried first: mutation testing during
 // review deleted those two lines and every test in main stayed green, because a dependency
 // the compiler used to enforce had become a runtime assignment that can be removed silently.
 // A struct with exported fields has the same hole — leave one field out and it still
-// compiles. Only a two-argument NewDeps turns a forgotten dependency into a compile error.
+// compiles. Only NewDeps' positional arguments turn a forgotten dependency into a compile error.
 // Do not add assistants calls that bypass this function.
 func assistantDeps() assistants.Deps {
 	return assistants.NewDeps(
 		ensureBuiltinKnowledge,       // //go:embed stays in main
+		agentFleetDocsRoot,           // the staged guide (fs.go)
 		chatx.PreferredHeadlessAgent, // lives in the chat family
 	)
 }

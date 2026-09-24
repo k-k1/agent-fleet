@@ -2,6 +2,7 @@ package mcpx
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -218,4 +220,104 @@ func TestRelativeReferencesAreMadeAbsoluteFromTheSessionFolder(t *testing.T) {
 			t.Fatalf("relayed inputs/mask = %v / %v, want absolute from %s", body["inputs"], body["mask"], cwd)
 		}
 	})
+}
+
+// stubStudioAgent answers the press and a job list that reports the job in `states` order, one
+// state per poll, and remembers the press body.
+func stubStudioAgent(t *testing.T, states ...string) *[]string {
+	t.Helper()
+	var pressed []string
+	poll := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/press"):
+			b, _ := io.ReadAll(r.Body)
+			pressed = append(pressed, r.URL.Path+" "+string(b))
+			_, _ = w.Write([]byte(`{"version":"v3","group":"g1","jobs":[{"id":"j7","position":1}],"recorded":true}`))
+		case r.URL.Path == "/imagegen/jobs":
+			st := states[min(poll, len(states)-1)]
+			poll++
+			_, _ = w.Write([]byte(`{"jobs":[{"id":"j6","state":"done"},{"id":"j7","state":"` + st +
+				`","files":[{"path":"/p/trial.png","seed":42}],"elapsed_ms":900,"error":"boom"}]}`))
+		default:
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+	oldWait, oldPoll := mcpStudioTrialWait, mcpStudioTrialPoll
+	mcpStudioTrialPoll = time.Millisecond
+	t.Cleanup(func() { mcpStudioTrialWait, mcpStudioTrialPoll = oldWait, oldPoll })
+	return &pressed
+}
+
+// run_image_trial takes no arguments, presses as the agent, and waits for THAT job.
+func TestRunImageTrialWaitsForItsJob(t *testing.T) {
+	withSessionSurface(t, "slot01")
+	bindStudioForTest(t, "slot01", true)
+	pressed := stubStudioAgent(t, "queued", "running", "done")
+	out := string(mcpStudioCall(mcpReq{ID: json.RawMessage("1")}, "run_image_trial", json.RawMessage(`{"prompt":"sneaky"}`)))
+	if !strings.Contains(out, "/p/trial.png") || !strings.Contains(out, `v3`) {
+		t.Fatalf("trial = %s", out)
+	}
+	var res struct {
+		Result struct {
+			Structured struct {
+				Seed *int64 `json:"seed"`
+			} `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Result.Structured.Seed == nil || *res.Result.Structured.Seed != 42 {
+		t.Errorf("the trial's own seed is not in the answer: %s", out)
+	}
+	if len(*pressed) != 1 || !strings.Contains((*pressed)[0], `"mode":"agent_trial"`) ||
+		!strings.Contains((*pressed)[0], `"session":"slot01"`) || strings.Contains((*pressed)[0], "sneaky") {
+		t.Fatalf("press = %v, want the agent trial with the session and no arguments of the call", *pressed)
+	}
+}
+
+func TestRunImageTrialReportsAFailureAndATimeout(t *testing.T) {
+	withSessionSurface(t, "slot01")
+	bindStudioForTest(t, "slot01", true)
+	stubStudioAgent(t, "running", "failed")
+	if out := string(mcpStudioCall(mcpReq{ID: json.RawMessage("1")}, "run_image_trial", nil)); !strings.Contains(out, "boom") || !strings.Contains(out, "isError") {
+		t.Fatalf("failed trial = %s", out)
+	}
+	stubStudioAgent(t, "waking")
+	mcpStudioTrialWait = 20 * time.Millisecond
+	out := string(mcpStudioCall(mcpReq{ID: json.RawMessage("1")}, "run_image_trial", nil))
+	if !strings.Contains(out, "j7") || !strings.Contains(out, "get_image_studio") || strings.Contains(out, "isError") {
+		t.Fatalf("slow trial = %s, want the job id and where the result will show", out)
+	}
+}
+
+// A Managed create starts the CLI before the meta is written, and the CLI lists the tools at
+// once: with no meta yet, the studio naming the session is what decides — studio tools offered,
+// generate_image withheld. Measured with codex Managed, which never lists again.
+func TestStudioToolsBeforeTheMetaIsWritten(t *testing.T) {
+	withSessionSurface(t, "slot01")
+	mcpImageGenEnabled = true
+	stubImageGenStatus(t, mcpImageGenStatus{
+		Enabled: true, Ready: true, Provider: "codex", Kind: "claude", Ops: []string{"generate"},
+	})
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	if !studioAdvertised()[mcpToolGenerateImage] {
+		t.Fatal("generate_image not advertised without a studio: the check below would prove nothing")
+	}
+	writeStudioFileForTest(t, studioFile{Session: "slot01", AgentTrial: true})
+	got := studioAdvertised()
+	if !got["get_image_studio"] || !got["run_image_trial"] {
+		t.Errorf("advertised %v: want the studio tools while the meta is not written yet", got)
+	}
+	if got["generate_image"] {
+		t.Error("generate_image advertised to a session its studio names")
+	}
+	// Another session's studio is not this one's.
+	writeStudioFileForTest(t, studioFile{Session: "slot02", AgentTrial: true})
+	if studioAdvertised()["get_image_studio"] {
+		t.Error("studio tools offered for a studio that names another session")
+	}
 }

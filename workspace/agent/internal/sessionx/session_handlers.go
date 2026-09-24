@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -116,8 +117,9 @@ func dropManagedRuntime(m session.Meta) {
 	}
 }
 
-// removeManagedLedger drops the ClientMessageID ledger on /stop, discarding the slot's
-// identity with it. halt/archive do not call it: those can be resumed.
+// removeManagedLedger drops the ClientMessageID ledger, discarding the slot's identity with
+// it. Only purging a trash archive calls it (through RemoveManagedLedger): halt, archive and
+// the trash itself keep it, because each of those can still be resumed.
 func removeManagedLedger(m session.Meta) {
 	switch m.Kind {
 	case session.KindOpencode:
@@ -218,8 +220,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			// is reversible, so the lock does not have to refuse it; it stays here because a
 			// pinned row is one the user wants to keep SEEING, and the shelf is out of sight.
 			//
-			// No MaybePruneWorktree: the session is still restorable, and restoring one whose
-			// working copy was deleted underneath it is worse than a worktree left standing.
+			// No worktree removal here (nor on any delete, ADR 0101 decision 3): the session is
+			// still restorable, and restoring one whose working copy was deleted underneath it is
+			// worse than a worktree left standing.
 			// The cleanup survey (session_cleanup.go) proposes those, with a person deciding.
 			finalizeSessionUsage(m) // fold into the usage ledger at the same moment as before (docs/log/46 §3-b)
 			m.Archived = true
@@ -1041,7 +1044,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// 0100 decision 2 ③): a Managed create sends the persona synchronously below, and its first
 	// get_image_studio is refused unless the studio already names this session back.
 	if studio != "" {
-		if ref := bindStudioOnCreate(studio, name); ref != nil {
+		if ref := bindStudioOnCreate(studio, meta); ref != nil {
 			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 			return
 		}
@@ -1260,24 +1263,8 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	title, _ := CleanTitle(forkTitle(src))
 	// The driver is inherited: forking a managed session stays managed (copied through the
 	// runtime's fork API, docs/log/27 P2), while tui keeps the CLI fork launch.
-	meta := session.Meta{
-		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
-		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
-		Repo:      filepath.Base(src.Dir),
-		Branch:    gitx.GitCurrentBranch(src.Dir),
-		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
-		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
-		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
-		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the
-		// source's origin would blend it into "sessions a human opened" and hide the spend
-		// handoffs add. The originating conversation IS inherited from the parent, so a
-		// handoff from an operator-started session stays traceable in the same chain.
-		// OriginSession rides along only for a source in an unattended chain (forkLineage):
-		// forking a child keeps the lineage, so the successor still cannot spawn, while its
-		// origin=handoff keeps it out of the parent's steering set. Forking a session a person
-		// launched from a handoff proposal inherits nothing — see forkLineage.
-		Origin: session.OriginHandoff, OriginConv: src.OriginConv, OriginSession: forkLineage(src),
-	}
+	meta := forkMeta(src, forkName, title, forkFrom, forkAt)
+
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title, meta.Name)
 	}
@@ -1306,8 +1293,14 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 }
 
-// HandleStopSession kills the tmux session and forgets its meta so it stops
-// appearing in the list. Tolerates an already-exited session (meta only).
+// HandleStopSession is the old name of "delete this session": it stops the session if it is
+// running and moves it to the trash (ADR 0101 decision 1). The name stays so a Console older
+// than the Agent still lands in the trash; a current Console sends DELETE /sessions/{name}?stop=1,
+// which is the same thing. Stopping WITHOUT losing the row is /halt.
+//
+// It never touches the working copy (ADR 0101 decision 3): until then a delete that left a
+// clean worktree without sessions removed it on the way out, so a session restored from the
+// trash could come back to a folder that was gone.
 func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -1321,55 +1314,82 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	// /stop FORGETS the meta — it is the Console's delete. A locked session (docs/log/45)
-	// refuses it; stopping without losing the row is /halt, which stays open.
-	if hadMeta && meta.Locked {
-		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
-			"session is locked against deletion; unlock it first (or use /halt to stop it and keep the row)")
-		return
-	}
-	if hadMeta {
-		status.Remove(session.UUID(meta.Dir, name))
-		status.RemoveExit(name)
-		dropManagedRuntime(meta) // managed: abort the running turn and forget the handle
-		removeManagedLedger(meta)
-	}
-	if live {
+	if !hadMeta {
+		// A pane with no meta (an orphan) has nothing to put in the trash: end it, that is all.
 		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 			return
 		}
-	}
-	if hadMeta {
-		// fold-on-delete (docs/log/46 §3-b): /stop is the Console's delete and forgets the
-		// meta right after, so the session leaves ListMetas and is never folded again (even
-		// with its transcript still on disk). The ordinary fold leaves the open trailing turn
-		// alone, so without finalizing here that last turn never reaches the ledger. Called
-		// after killing tmux so the final events written on exit are in the transcript first.
-		finalizeSessionUsage(meta)
-	}
-	if live {
-		// A deliberate stop of a RUNNING session is also the end of a run (write site ②);
-		// an already-stopped one already got its DeathEvent from HandleListSessions'
-		// first-observed branch, so recording again here would just duplicate it.
 		fleetgraph.RecordDeath(name, "", 0, 0)
+		removeTerminalHistory(name)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"stopped": name})
+		return
 	}
-	status.RemoveCarried(session.UUID(meta.Dir, name))
-	session.RemoveMetaAndLineage(name) // /stop is a person's delete (ADR 0096 decision 6)
-	removeTerminalHistory(name)
-	// Stopping forgets the session; if it was the last one in a worktree and that
-	// worktree is clean, auto-remove it so worktrees don't pile up (no-op otherwise).
-	if hadMeta {
-		gitx.MaybePruneWorktree(meta.Dir)
+	arch, code, err := trashSession(meta, true)
+	if err != nil {
+		WriteTrashErr(w, code, err)
+		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stopped": name})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stopped": name, "deleted": name, "archive": arch})
 }
+
+// Error codes of TrashSession besides the shared errCodeLocked. Stable strings the Console
+// maps (ERR_TEXT); session_running is the one handleDeleteSession has always returned.
+const (
+	TrashErrRunning = "session_running"
+	// TrashErrResumed: the session came back to life (or its transcript grew) while it was
+	// being moved to the trash, so nothing was deleted. Its own code, not session_running: a
+	// Console that answers session_running by stopping and retrying must not stop a session
+	// someone just resumed.
+	TrashErrResumed = "session_resumed"
+	TrashErrArchive = "archive_failed"
+	TrashErrStop    = "tmux_failed"
+)
+
+// WriteTrashErr turns TrashSession's error code into the HTTP answer.
+func WriteTrashErr(w http.ResponseWriter, code string, err error) {
+	status := http.StatusInternalServerError
+	switch code {
+	case errCodeLocked:
+		status = http.StatusForbidden
+	case TrashErrRunning, TrashErrResumed:
+		status = http.StatusConflict
+	case "not_found":
+		status = http.StatusNotFound
+	}
+	httpx.WriteErr(w, status, code, err.Error())
+}
+
+// HaltSession is haltSessionMeta for package main: stop a running session into the stopped,
+// resumable state and return the meta as written. Deleting with ?stop=1 stops through it, so
+// a delete folds a live session away by exactly the steps halt uses (the carry-over promoted
+// first, agy given its graceful quit).
+//
+// It does NOT promote the carry-over (docs/log/75 P5): promoting is what tells a person "this
+// session is waiting for your answer", and the session is about to go to the trash — the
+// notice would point at a session that is gone.
+func HaltSession(m session.Meta) (session.Meta, error) { return haltSession(m, false) }
+
+// ForgetRuntime drops what the Agent holds in memory and in status files for a session it is
+// about to forget: the managed handle, the live-state and exit records, the carried-over
+// question. Called by the trash after the session's archive is written.
+func ForgetRuntime(m session.Meta) {
+	sid := session.UUID(m.Dir, m.Name)
+	dropManagedRuntime(m)
+	status.Remove(sid)
+	status.RemoveExit(m.Name)
+	status.RemoveCarried(sid)
+}
+
+// RemoveManagedLedger is removeManagedLedger for package main. The trash keeps the ledger (a
+// session in it can be restored and resumed); purging the archive is what drops it.
+func RemoveManagedLedger(m session.Meta) { removeManagedLedger(m) }
 
 // HandleHaltSession stops a RUNNING session into the stopped (resumable) state: it
 // kills the live tmux but KEEPS the meta visible (Archived stays false), so the row
 // stays listed and the user can resume it later (claude --resume). This is the
-// button counterpart of quitting in the terminal — distinct from /stop (which also
-// forgets the meta = removes it from the list) and /archive (which hides it).
+// button counterpart of quitting in the terminal — distinct from /stop (the old name of
+// delete: it moves the session to the trash) and /archive (which hides it).
 // An optional JSON body {"disarm_report":true} additionally cancels a pending
 // one-shot operator report (docs/log/30) — sent by the MCP stop_session tool, whose stop
 // means "instruction cancelled"; the Console halt sends no body and keeps the arm.
@@ -1409,13 +1429,19 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 // ordering that was learned the hard way — the carry-over promoted before the process that
 // holds the interaction dies, the bridge disconnected before the pane goes, agy given its
 // graceful quit — and a second folding path silently misses them (ADR 0055 decision 12).
-func haltSessionMeta(m session.Meta) (session.Meta, error) {
+func haltSessionMeta(m session.Meta) (session.Meta, error) { return haltSession(m, true) }
+
+// haltSession is haltSessionMeta with the carry-over promotion made optional: true for every
+// halt that leaves a resumable row behind, false only for a delete (HaltSession).
+func haltSession(m session.Meta, promote bool) (session.Meta, error) {
 	name := m.Name
 	if m.DriverKind() == session.DriverManaged {
 		// Promote the carry-over BEFORE DropHandle (docs/log/75 P5): a pending Interaction
 		// lives only inside the runtime handle and is gone the moment it is dropped —
 		// calling later finds ManagedAlive false and gets nothing.
-		PromoteCarriedFor(m)
+		if promote {
+			PromoteCarriedFor(m)
+		}
 		// halt on managed means dropping the runtime handle; the daemon is shared, so it
 		// keeps running. The meta stays, so the row reads as stopped (resumable) — the same
 		// semantics as tui's kill-session. DropHandle aborts the running turn.
@@ -1439,7 +1465,9 @@ func haltSessionMeta(m session.Meta) (session.Meta, error) {
 	// state is the on-disk pending-* files and can still be read later, but kiro's approval
 	// panel exists only as text in the pane and is gone after kill-session. Promoting is
 	// idempotent for claude, and the status.Remove below does not erase the carry-over.
-	PromoteCarriedFor(m)
+	if promote {
+		PromoteCarriedFor(m)
+	}
 	// Kinds that only flush their resume state on a graceful exit (agy) get a
 	// chance to quit on their own; true = the pane already ended, skip the kill.
 	stopped := false
@@ -1465,7 +1493,7 @@ func haltSessionMeta(m session.Meta) (session.Meta, error) {
 
 // HandleArchiveSession hides a session from the active list but KEEPS its meta (and
 // jsonl), so it can be restored later. Kills the live tmux session if any. This is
-// the non-destructive counterpart to stop (which forgets the meta).
+// the non-destructive counterpart to delete (which moves the session to the trash).
 func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -1477,6 +1505,16 @@ func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	ArchiveSession(m)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
+}
+
+// ArchiveSession is the archive itself, without the HTTP shell: fold the session away
+// (killing a live pane or dropping the managed handle) and move it to the shelf. Deleting a
+// working copy calls it too, for the stopped AI sessions that lived in it (ADR 0101
+// decision 4): the working copy goes, the conversation stays on the shelf.
+func ArchiveSession(m session.Meta) {
+	name := m.Name
 	// Captured BEFORE the kill below: HandleListSessions (write site ②) never sees this
 	// session again once it is archived (`if m.Archived { continue }`), so this is the
 	// ONLY chance to record that a run actually ended here. Skipping it for an
@@ -1503,9 +1541,20 @@ func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 	// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
 	// session again at the end of a turn nobody armed.
 	m.StopAfterTurnAt = ""
-	session.WriteMeta(m)
+	// Re-read under the lock: the meta above is a snapshot (a working-copy delete passes one
+	// from ListMetas), and a blind write would roll back a lock set meanwhile — or bring back
+	// a session deleted meanwhile.
+	sessionLockMu.Lock()
+	current, ok := session.ReadMeta(name)
+	if ok {
+		m.Locked = current.Locked
+		session.WriteMeta(m)
+	}
+	sessionLockMu.Unlock()
+	if !ok {
+		return
+	}
 	fleetgraph.RecordArchived(name, true) // write site ④, part 2: AFTER the death above, never before
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
 }
 
 // HandleRestoreSession brings an archived session back into the active list as a
@@ -1521,9 +1570,17 @@ func HandleRestoreSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	m.Archived = false
-	m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
-	session.WriteMeta(m)
+	// Under the meta lock, on the meta as it is now: a lock set, or a delete, since the read
+	// above must not be rolled back (ADR 0101).
+	m, ok = UpdateSessionMeta(name, func(m *session.Meta) bool {
+		m.Archived = false
+		m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
+		return true
+	})
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
 	// Restore only un-hides the row (§101.8: it never starts anything — `wireSession(m,
 	// false)` below is a STOPPED session). RecordRevive belongs to the branch in
 	// HandleListSessions that observes the slot actually come back alive.
@@ -1653,4 +1710,36 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	recordFleetGraphBirth(newMeta)
 	handOverSpawnLineage(m.Name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
+}
+
+// forkSids is the ancestry a fork of src records: src's own, then src. The whole chain, not
+// just the parent — a fork of a fork carries the grandparent's pasted paths too
+// (session.Meta.ForkSids).
+func forkSids(src session.Meta) []string {
+	return append(slices.Clone(src.ForkSids), session.UUID(src.Dir, src.Name))
+}
+
+// forkMeta is the meta a fork of src starts with. Its own function so what a fork records —
+// the ancestry the cache orphan scan relies on above all — can be checked without driving a
+// real fork, which needs a real source conversation.
+func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) session.Meta {
+	return session.Meta{
+		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
+		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
+		Repo:      filepath.Base(src.Dir),
+		Branch:    gitx.GitCurrentBranch(src.Dir),
+		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
+		ForkSids: forkSids(src),
+		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
+		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
+		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the
+		// source's origin would blend it into "sessions a human opened" and hide the spend
+		// handoffs add. The originating conversation IS inherited from the parent, so a
+		// handoff from an operator-started session stays traceable in the same chain.
+		// OriginSession rides along only for a source in an unattended chain (forkLineage):
+		// forking a child keeps the lineage, so the successor still cannot spawn, while its
+		// origin=handoff keeps it out of the parent's steering set. Forking a session a person
+		// launched from a handoff proposal inherits nothing — see forkLineage.
+		Origin: session.OriginHandoff, OriginConv: src.OriginConv, OriginSession: forkLineage(src),
+	}
 }

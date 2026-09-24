@@ -404,7 +404,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "delete_worktree", minScope: scopeWrite,
-			desc: "Delete an unneeded worktree (working copy). Acts on a list_cleanup_candidates action=delete_worktree item (merged & clean = safe, clean-but-unmerged = review). A worktree with uncommitted/unpushed changes is protected and refused (keep — force-delete it in the Console). Deleting it also tidies up the stopped sessions that lived there; only the local working copy is removed (history, remote and branch stay). Destructive — confirm which worktree with the user before running.",
+			desc: "Delete an unneeded worktree (working copy). Acts on a list_cleanup_candidates action=delete_worktree item (merged & clean = safe, clean-but-unmerged = review). A worktree with uncommitted/unpushed changes is protected and refused (keep — force-delete it in the Console). Its stopped AI sessions move to the archive (the shelf) and its shell/ssm to the cleanup trash — both restorable, no conversation is lost; only the local working copy is removed (history, remote and branch stay). Destructive — confirm which worktree with the user before running.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"name": map[string]any{"type": "string", "description": "worktree name (the id of a list_cleanup_candidates worktree candidate)"},
 			}, "required": []string{"name"}},
@@ -413,7 +413,9 @@ func memberTools() []mcpTool {
 				if err := a.cp.ScheduleGuardErr(ctx, res.MV.MembershipID, name, ""); err != nil {
 					return "", err
 				}
-				return a.cp.AgentText(ctx, res.RT, "DELETE", "/repos/"+url.PathEscape(name)+"?prune_sessions=1", nil)
+				// No prune_sessions: the Agent shelves the sessions itself (ADR 0101 decision 4), and
+				// on an Agent older than that the flag FORGOT them without the trash.
+				return a.cp.AgentText(ctx, res.RT, "DELETE", "/repos/"+url.PathEscape(name), nil)
 			},
 		},
 		{
@@ -425,6 +427,8 @@ func memberTools() []mcpTool {
 				if err := a.cp.ScheduleGuardErr(ctx, res.MV.MembershipID, "", name); err != nil {
 					return "", err
 				}
+				// reclaim=1 is for an Agent older than ADR 0101, where a DELETE without it skipped
+				// the trash; a current Agent always goes through the trash.
 				return a.cp.AgentText(ctx, res.RT, "DELETE", "/sessions/"+url.PathEscape(name)+"?reclaim=1", nil)
 			},
 		},

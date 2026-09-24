@@ -345,6 +345,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/cleanup/archives", rest)
 	mux.HandleFunc("POST /api/cleanup/archives/{id}/restore", rest)
 	mux.HandleFunc("DELETE /api/cleanup/archives/{id}", rest)
+	mux.HandleFunc("DELETE /api/cleanup/archives", rest) // ?older_than_days=N (ADR 0101 decision 6)
 	mux.HandleFunc("GET /api/cleanup/usage", rest)
 	mux.HandleFunc("DELETE /api/cleanup/cache/{feature}", rest)
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
@@ -487,7 +488,7 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 // credential that does not exist and a second copy of the family dispatch. The gateway is not
 // touched — cancel reaches ComfyUI over the pass-through the Agent already uses.
 //
-// All seven are plain REST. The queue is what makes that possible (decision 2): enqueueing
+// All of them are plain REST. The queue is what makes that possible (decision 2): enqueueing
 // answers at once and the browser polls, so nothing here waits out a cold start behind the
 // ALB's 60-second idle timeout the way the blocking `POST /imagegen/generate` would. That
 // route stays off this list on purpose — it is the MCP tool's door, not the pane's.
@@ -516,6 +517,7 @@ func registerImagegenRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/imagegen/history", rest)                // pictures, newest first
 	mux.HandleFunc("GET /api/imagegen/knowledge", rest)              // one knowledge document
 	mux.HandleFunc("POST /api/imagegen/knowledge", rest)             // append to its records
+	mux.HandleFunc("PUT /api/imagegen/knowledge", rest)              // the notes editor, all four sections
 }
 
 // Assistant templates (docs/log/19 Q2) — configurable chat personas, proxied verbatim.

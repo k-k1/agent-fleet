@@ -45,6 +45,7 @@ import { EngineAddView } from "../settings/admin/adminEngineAdd.tsx";
 import { SessionsOverview } from "../overview/SessionsOverview.tsx";
 import { GalleryView } from "../gallery/GalleryView.tsx";
 import { ImagegenView } from "../imagegen/ImagegenView.tsx";
+import { StudioRedirect } from "../imagegen/parts/StudioRedirect.tsx";
 import { FleetGraphView } from "../fleetgraph/FleetGraphView.tsx";
 import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
 import { useSharedSessionsStore } from "../sharing/store.ts";
@@ -687,7 +688,12 @@ function PopulatedPane({
           />
         </div>
       )}
-      {showMirror && (
+      {showMirror && sessionMeta?.studio && (
+        // ADR 0100 decision 10: a studio's session is driven from the studio pane. Two mirrors
+        // on one session overwrite each other's composer draft, attachments and send echo.
+        <StudioRedirect studioId={sessionMeta.studio} headerActions={tabHeaderActions} />
+      )}
+      {showMirror && !sessionMeta?.studio && (
         <MirrorView
           paneId={pane.id}
           session={pane.session!}
@@ -797,7 +803,15 @@ function PopulatedPane({
           headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "imagegen" && <ImagegenView headerActions={tabHeaderActions} />}
+      {pane.content.kind === "imagegen" && (
+        <ImagegenView
+          key={pane.content.studioId ?? ""}
+          paneId={pane.id}
+          studioId={pane.content.studioId}
+          active={single || active}
+          headerActions={tabHeaderActions}
+        />
+      )}
       {pane.content.kind === "fleetgraph" && (
         <FleetGraphView
           paneId={pane.id}

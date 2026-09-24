@@ -5,6 +5,7 @@ English | [日本語](0041-cross-session-messaging.ja.md)
 - Status: adopted, not implemented (design only; the implementation is P1–P3 in docs/58. **The P0
   measurements are complete**, and as a result decision 1 was reverted from "open it" to "do not
   enable it")
+  Status update (2026-09-24): P1 is implemented and was verified on hardware on 2026-08-10 — `list_peer_sessions` / `send_to_peer_session` behind `--peer-messaging`, the envelope, the destination policy and the rate limit (commits d5b2a0a98, 9f5fc56ca; `workspace/agent/internal/mcpx/mcp_stdio.go`); docs/58 §58.12 has the run. P2 (receiver-side accept / hold / refuse) is not built.
 - See also: [58-cross-session-messaging.md](../log/58-cross-session-messaging.md) /
   [51-session-report-v2-ledger.md](../log/51-session-report-v2-ledger.md) (the owner of the arm and the ledger) /
   [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md) (decision 5: self-reporting is a timing signal only) /

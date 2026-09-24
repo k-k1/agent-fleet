@@ -10,6 +10,7 @@ English | [日本語](0082-many-image-engines-at-once.ja.md)
   `fallbackWarnings` wording, and the absence of `/object_info` from the tree; all hold.
   Corrected passages are marked *(review)* — the ADR 0069 number upheld, and the line citations
   for `providerIsFleet` and the drag UI.
+- Follow-ups: #962
 - **Nothing was measured for this document.** Every claim is either (a) read out of this
   repository's code on 2026-09-14 — the lines are listed under "Sources checked" — or (b) a
   measurement an earlier ADR made, cited where it is used. The one number that matters most to

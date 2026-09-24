@@ -40,5 +40,8 @@ link into `docs/` (the other direction is free). See [CONVENTIONS §2](CONVENTIO
   documents never link here.
 - [HANDOFF.md](HANDOFF.md) — the development host's own runtime state and local
   conventions. Changes daily.
+- **Open work** — follow-ups, residual work, acceptance runs not yet done — lives in
+  GitHub issues, not in the prose of a decision record or a journal
+  ([CONVENTIONS §10](CONVENTIONS.md)).
 - [roadmap.md](roadmap.md) / [CHANGELOG-handoff.md](CHANGELOG-handoff.md) — the
   forward-looking plan, and the dated work log.

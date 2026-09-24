@@ -47,6 +47,24 @@ export function repos(locale) {
 export function sessions(locale) {
   return [
     {
+      // Bound to the image studio (ADR 0100): the wand in the row, and the studio pane's
+      // left column embeds its mirror.
+      name: "swnd7qa",
+      kind: "claude",
+      driver: "tui",
+      title: L(locale, "港の夕暮れのイラスト", "Harbour at dusk"),
+      repo: "picture-book",
+      dir: "~/repos/picture-book",
+      path: "/home/dev/repos/picture-book",
+      state: "idle",
+      alive: true,
+      model: "claude-opus-5",
+      worktree: true,
+      createdAt: ago(20),
+      studio: STUDIO_ID,
+      initialPromptState: "delivered",
+    },
+    {
       name: "sk4rq2f",
       kind: "claude",
       driver: "tui",
@@ -362,6 +380,9 @@ export function ptyScreen(locale) {
 // ---- the remaining endpoints the shell polls ---------------------------------------
 
 export function messages(locale, session) {
+  if (session === "swnd7qa") {
+    return { name: session, messages: studioTurns(locale), cursor: 4, status: "idle", alive: true, reset: true, firstLine: 0, hasMore: false, jsonlLines: 4, jsonlMtime: ago(1) };
+  }
   if (session !== "sk4rq2f") return { name: session, messages: [], cursor: 0, status: "", alive: true, reset: true };
   return {
     name: session,
@@ -582,6 +603,12 @@ export function imagegenStatus(locale) {
             params: { steps: 28, cfg: 6, sampler: "dpmpp_2m", scheduler: "karras" },
             negative: "worst quality, low quality",
             knobs: ["steps", "cfg", "sampler", "scheduler", "negative"],
+            // ADR 0100 decision 7: the family's facts, from the Agent's family table.
+            dialect: "tags",
+            quality_prefixes: ["masterpiece, best quality", "score_9, score_8_up, score_7_up"],
+            steps_range: [20, 40],
+            cfg_range: [5, 9],
+            trial_steps: 10,
             license_name: "CreativeML Open RAIL++-M",
             license_url: "https://example.com/license",
             source_url: "https://example.com/model",
@@ -593,6 +620,10 @@ export function imagegenStatus(locale) {
             sizes: ["1024x1024", "1216x832"],
             params: { steps: 20, sampler: "euler", scheduler: "simple" },
             knobs: ["steps", "sampler", "scheduler"],
+            dialect: "sentences",
+            quality_prefixes: [],
+            steps_range: [16, 32],
+            trial_steps: 8,
           },
         ],
         loras: [
@@ -1584,4 +1615,185 @@ export function sessionsBig(locale, lanes) {
     });
   }
   return out;
+}
+
+// ---- image studio (ADR 0100) -------------------------------------------------------------
+// One studio, bound to the claude session above, a few edits in, one trial pressed. The shapes
+// are console/src/features/imagegen/wire.ts (ImageStudio*, DraftLog*, Knowledge*), and the
+// values are what the real Agent answers (checked against it on 2026-09-24): versions are
+// `v<N>` per studio, a params change is one row per knob (`params.cfg`), pictures and knowledge
+// files come back as absolute paths, and a claude transcript carries no output or input summary
+// for af's tools.
+
+export const STUDIO_ID = "5f0c2d1e-8a4b-4c3d-9e2f-1a2b3c4d5e6f";
+
+const studioDraft = (dark) => ({
+  provider: "comfy",
+  model: "illustrious-v2",
+  prompt: dark
+    ? "1girl, blue hair, school uniform, harbour at dusk, dim light, lanterns, masterpiece, best quality"
+    : "1girl, blue hair, school uniform, harbour at dusk, masterpiece, best quality",
+  negativePrompt: "extra fingers",
+  size: "1216x832",
+  params: { steps: 28, cfg: 5, sampler: "dpmpp_2m", scheduler: "karras" },
+  loras: [{ name: "add-detail", weight: 0.8 }],
+  seed_policy: "fixed",
+  seed: 815723004,
+  jobs: 40,
+});
+
+const studioLog = (reads) => {
+  const log = [
+    {
+      seq: 5,
+      kind: "edit",
+      at: ago(14),
+      author: "human",
+      changes: [{ field: "negativePrompt", before: "", after: "extra fingers" }],
+      draft: studioDraft(false),
+    },
+    {
+      seq: 6,
+      kind: "edit",
+      at: ago(12),
+      author: "agent",
+      session: "swnd7qa",
+      changes: [
+        { field: "prompt", before: "1girl, harbour at dusk", after: studioDraft(false).prompt },
+        { field: "params.cfg", before: 7, after: 5 },
+      ],
+      draft: studioDraft(false),
+    },
+    { seq: 7, kind: "press", at: ago(10), author: "human", version: "v2", mode: "trial", draft: studioDraft(false) },
+    { seq: 8, kind: "press_result", at: ago(10), version: "v2", jobs: ["t1"], state: "ok" },
+  ];
+  // From the second read on, the agent has answered "darker": the pane's poll picks the edit
+  // up and outlines the fields it moved.
+  if (reads > 1) {
+    log.push({
+      seq: 9,
+      kind: "edit",
+      at: ago(1),
+      author: "agent",
+      session: "swnd7qa",
+      changes: [{ field: "prompt", before: studioDraft(false).prompt, after: studioDraft(true).prompt }],
+      draft: studioDraft(true),
+    });
+  }
+  return log;
+};
+
+export function imagegenStudio(locale, reads) {
+  return {
+    id: STUDIO_ID,
+    title: L(locale, "港の夕暮れ", "Harbour at dusk"),
+    draft: studioDraft(reads > 1),
+    locks: ["negativePrompt"],
+    session: "swnd7qa",
+    agent_trial: true,
+    created_at: ago(30),
+    updated_at: reads > 1 ? ago(1) : ago(12),
+    recent_log: studioLog(reads),
+  };
+}
+
+export function imagegenStudios(locale) {
+  return {
+    studios: [
+      { id: STUDIO_ID, title: L(locale, "港の夕暮れ", "Harbour at dusk"), session: "swnd7qa", updated_at: ago(1) },
+      { id: "0b7d9e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d", title: L(locale, "表紙の案", "Cover ideas"), updated_at: ago(60 * 26) },
+    ],
+  };
+}
+
+// A page is oldest first, as the Agent slices it.
+export function imagegenDraftLog() {
+  return {
+    entries: [
+      { seq: 3, kind: "edit", at: ago(18), author: "human", changes: [{ field: "model", before: "", after: "illustrious-v2" }], draft: studioDraft(false) },
+      { seq: 4, kind: "edit", at: ago(16), author: "agent", session: "swnd7qa", changes: [{ field: "size", after: "1216x832" }], draft: studioDraft(false) },
+    ],
+  };
+}
+
+const MEMBER_HOME = "/home/dev";
+
+export function imagegenHistory() {
+  const iso = (secAgo) => new Date(NOW.getTime() - secAgo * 1000).toISOString();
+  return {
+    items: [
+      { path: `${MEMBER_HOME}/.cache/agent-fleet/generated/console/trial/image-1757900000-1.png`, studio: STUDIO_ID, version: "v2", created_at: iso(600), trial: true },
+      { path: `${MEMBER_HOME}/.cache/agent-fleet/generated/console/image-1757912-1.png`, studio: STUDIO_ID, version: "v1", created_at: iso(3600) },
+      { path: `${MEMBER_HOME}/.cache/agent-fleet/generated/console/image-1757911-1.png`, studio: STUDIO_ID, version: "v1", created_at: iso(3660) },
+    ],
+  };
+}
+
+export function imagegenKnowledge(locale, scope, key) {
+  const ja = locale === "ja";
+  return {
+    scope,
+    key,
+    path: `${MEMBER_HOME}/imagegen-knowledge/${scope === "family" ? "families" : "models"}/${encodeURIComponent(key)}.md`,
+    // The browse root is home here, so the Files pane reaches the file.
+    files_path: `imagegen-knowledge/${scope === "family" ? "families" : "models"}/${encodeURIComponent(key)}.md`,
+    version: "3f9c1a7e5b2d4c60",
+    summary: ja ? "タグを重要な順に。cfg は 5 前後が肌の質感に合う。" : "Tags, most important first. cfg around 5 suits skin.",
+    settings: "steps 28 / dpmpp_2m karras",
+    prompts: ja ? "夜景は `dim light, lanterns` を足すと空が潰れない。" : "For night scenes add `dim light, lanterns` so the sky does not crush.",
+    records: ja ? "- 2026-09-20 · agent swnd7qa: cfg 7 は肌が硬い (根拠: v1)" : "- 2026-09-20 · agent swnd7qa: cfg 7 makes the skin stiff (evidence: v1)",
+  };
+}
+
+export function imagegenPersona(locale) {
+  return {
+    prompt: L(
+      locale,
+      "あなたは画像生成スタジオの相棒です。発言を受けたらまず get_image_studio を呼んでください。",
+      "You are the image studio's partner. On every message, call get_image_studio first.",
+    ),
+    lang: locale,
+  };
+}
+
+// The studio's conversation: the agent read a character sheet and filled the draft.
+export function studioTurns(locale) {
+  const ja = locale === "ja";
+  const say = (idx, min, text) => ({ role: "user", idx, ts: ago(min), text, parts: [{ kind: "text", text }] });
+  return [
+    say(1, 13, ja ? "docs/chars/aoi.md を読んで、その子を港の夕暮れに" : "Read docs/chars/aoi.md and put her in a harbour at dusk"),
+    {
+      role: "assistant",
+      idx: 2,
+      ts: ago(12),
+      model: "claude-opus-5",
+      text: "",
+      parts: [
+        { kind: "tool", tool: "mcp__af_40ed9852__get_image_studio" },
+        { kind: "tool", tool: "Read", info: "docs/chars/aoi.md", output: ja ? "31 行を読み込みました" : "read 31 lines" },
+        { kind: "tool", tool: "mcp__af_40ed9852__set_image_draft" },
+        {
+          kind: "text",
+          text: ja
+            ? "青髪と制服の指定を入れ、cfg を 7 から 5 に下げました。生成は押してください。"
+            : "Added the blue hair and the uniform, and lowered cfg from 7 to 5. Press generate when ready.",
+        },
+      ],
+    },
+    // The studio's signal line rides the wire and the transcript strips it: this turn renders
+    // as "darker" alone.
+    say(3, 2, (ja ? "もっと暗く" : "Darker") + "\n\n[studio v8 · " + (ja ? "新しい結果 1" : "1 new results") + " → get_image_studio]"),
+    {
+      role: "assistant",
+      idx: 4,
+      ts: ago(1),
+      model: "claude-opus-5",
+      text: "",
+      parts: [
+        { kind: "tool", tool: "mcp__af_40ed9852__get_image_studio" },
+        { kind: "tool", tool: "mcp__af_40ed9852__set_image_draft" },
+        { kind: "text", text: ja ? "灯りと薄暗さの指定を足しました。" : "Added dim light and lanterns." },
+      ],
+    },
+  ];
 }

@@ -15,6 +15,17 @@ import { useSessionsStore } from "./store.ts";
 import { rotatableSessions, rotateTarget } from "./rotate.ts";
 import type { RotateTarget } from "./rotate.ts";
 import type { Session } from "../../types/session.ts";
+import { openImagegen } from "../imagegen/open.ts";
+
+// A session bound to an image studio opens in the studio pane (ADR 0100 decision 10), which
+// embeds its mirror: a second mirror on the same session would fight it over the composer
+// draft, the attachments and the send echo. True when it was routed there.
+function openStudioOf(name: string, split: boolean, studio?: string): boolean {
+  const id = studio ?? useSessionsStore.getState().sessions.find((s) => s.name === name)?.studio;
+  if (!id) return false;
+  openImagegen({ studioId: id, newPane: split });
+  return true;
+}
 
 export function openSessionTerminal(name: string): void {
   useLayoutStore.getState().openTarget({ content: { kind: "terminal", chat: false }, session: name });
@@ -33,10 +44,12 @@ export function openSessionTerminalSplit(name: string): void {
 // by default — alive: the PTY still attaches in the background; stopped: the
 // history shows read-only without resuming ("resume and continue" resumes explicitly).
 export function openSessionChat(name: string): void {
+  if (openStudioOf(name, false)) return;
   useLayoutStore.getState().openTarget({ content: { kind: "terminal", chat: true }, session: name });
 }
 
 export function openSessionChatSplit(name: string): void {
+  if (openStudioOf(name, true)) return;
   useLayoutStore.getState().openTargetInNew({ content: { kind: "terminal", chat: true }, session: name });
 }
 
@@ -45,6 +58,7 @@ export function openSessionChatSplit(name: string): void {
 // a row in the left rail (SessionRow), so that other routes in — rotating by swipe — do not
 // land on a different surface.
 export function openSessionDefault(s: Session): void {
+  if (openStudioOf(s.name, false, s.studio)) return;
   (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(s.name);
 }
 
@@ -62,6 +76,7 @@ export function openSessionDefault(s: Session): void {
 // running = whether the workspace is running. Returns false when nothing could be opened, so
 // the caller does not silently let a click do nothing.
 export function openSessionFromList(s: Session, split: boolean, running: boolean): boolean {
+  if (openStudioOf(s.name, split, s.studio)) return true;
   const caps = agentOf(s.kind).caps;
   if (s.alive) {
     (caps.chat

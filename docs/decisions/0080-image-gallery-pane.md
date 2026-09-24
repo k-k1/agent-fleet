@@ -4,6 +4,7 @@ English | [日本語](0080-image-gallery-pane.ja.md)
 
 - Status: **accepted** (drafted 2026-09-13; accepted the same day with the review's corrections
   folded in).
+- Follow-ups: #961
 - Related: [0049](0049-session-changed-files.md) decision 4 and [0046](0046-drawio-viewer.md)
   (**do not add a `PaneKind`; add one more face to an existing pane** — this ADR argues the
   exception) / [0078](0078-sessions-overview-pane.md) (the nearest precedent: one pane kind, the

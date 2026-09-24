@@ -127,12 +127,15 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 	}
 	ok = true
 
-	m, found := session.ReadMeta(name)
-	if !found || m.Title != "" || m.SuggestedTitle != "" || m.SuggestedTitleDismissed {
-		return // gone, or resolved by the user while we were generating
-	}
-	m.SuggestedTitle = title
-	session.WriteMeta(m)
+	// Gone, or resolved by the user while we were generating: write nothing. Under the meta
+	// lock, so a lock or a delete that landed during the seconds of generation is not undone.
+	UpdateSessionMeta(name, func(m *session.Meta) bool {
+		if m.Title != "" || m.SuggestedTitle != "" || m.SuggestedTitleDismissed {
+			return false
+		}
+		m.SuggestedTitle = title
+		return true
+	})
 }
 
 // titleLang picks the language the suggested title is WRITTEN in: the Console display

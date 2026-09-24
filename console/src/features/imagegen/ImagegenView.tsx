@@ -1,6 +1,10 @@
-// ImagegenView — the image-generation studio (ADR 0081). A pane like the others: a ViewHead,
-// the tabbed grid's header actions, and no state of its own that a tab switch could lose —
-// the form is a localStorage draft and the queue is the Agent's (decision 6).
+// ImagegenView — the image-generation studio (ADR 0081, ADR 0100). A pane like the others: a
+// ViewHead, the tabbed grid's header actions, and no state of its own that a tab switch could
+// lose — the queue is the Agent's (decision 6), and the draft is either the Agent's studio
+// (`studioId`) or, in the studio-less pane, a localStorage draft.
+//
+// Three columns (ADR 0100 §4): the bound session's mirror, the draft, and the results with the
+// studio's picture history. A narrow pane folds them into tabs.
 //
 // The polling rule is decision 2's and is the whole reason this screen is affordable: **2 s
 // while any job is unfinished, nothing otherwise, and nothing while the tab is hidden.** A
@@ -12,6 +16,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { downloadURL, errText, getTenant, isTransientErr } from "../../core/api/client.ts";
+import { useLayoutStore } from "../../layout/store.ts";
+import { allViews } from "../../layout/ops.ts";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
+import { useSessionsStore } from "../sessions/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -23,8 +31,13 @@ import { IconButton } from "../../ui/Button.tsx";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import {
+  deleteStudio,
   fleetProviders,
+  imageProperties,
   imagegenCancelJob,
+  imagegenHistory,
+  listStudios,
+  studioDraftLog,
   imagegenEnqueue,
   imagegenGroupOp,
   imagegenJobs,
@@ -35,27 +48,56 @@ import {
   type ImagegenStatus,
   type Job,
   type JobGroup,
-  type Knob,
+  type HistoryItem,
+  type PressMode,
+  type StudioSummary,
 } from "./api.ts";
 import { anyLive, buildRequest, engineState, foldGroups } from "./jobs.ts";
-import { draftKey, loadDraft, remappedOp, saveDraft, type ImagegenDraft } from "./draft.ts";
+import { draftFromProperties, draftKey, emptyDraft, loadDraft, remappedOp, saveDraft, type ImagegenDraft } from "./draft.ts";
 import { noteImagegenStatus } from "./available.ts";
-import { GenerateForm } from "./parts/GenerateForm.tsx";
+import { GenerateForm, ModelSelect } from "./parts/GenerateForm.tsx";
 import { JobList } from "./parts/JobList.tsx";
-import { PromptHelpModal } from "./parts/PromptHelpModal.tsx";
 import { ResultCards, TrialSlot, resultsOf } from "./parts/ResultCards.tsx";
+import { AttachAgentModal, type AttachOpts } from "./parts/AttachAgentModal.tsx";
+import { DraftLog } from "./parts/DraftLog.tsx";
+import { KnowledgeMemo } from "./parts/KnowledgeMemo.tsx";
+import { StudioAgent } from "./parts/StudioAgent.tsx";
+import { StudioHistory, type PictureActions } from "./parts/StudioHistory.tsx";
+import { attachAgent } from "./attach.ts";
+import { lastStudio, rememberStudio } from "./open.ts";
+import { historyByPath, pressSeqOf, studioFromForm } from "./studioSync.ts";
+import { forgetStudioState, useStudio } from "./useStudio.ts";
 import "./imagegen.css";
 
 /** Decision 2's cadence. Only ever runs while something is unfinished AND the tab is shown. */
 const POLL_MS = 2000;
 
-export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
+/** The picture history's page size. */
+const HISTORY_PAGE = 24;
+
+export function ImagegenView({
+  paneId = "",
+  studioId = null,
+  active = true,
+  headerActions,
+}: {
+  paneId?: string;
+  /** The Agent's studio this pane edits; null is the studio-less pane (ADR 0100 decision 10). */
+  studioId?: string | null;
+  active?: boolean;
+  headerActions?: ReactNode;
+}) {
   const tr = useT();
   const toast = useToast();
+  const confirm = useConfirm();
   const running = useWorkspaceStore((s) => wsRunning(s.state));
+  const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
+  const refreshSessions = useSessionsStore((s) => s.refresh);
 
   const key = useMemo(() => draftKey(getTenant()), []);
-  const [draft, setDraft] = useState<ImagegenDraft>(() => loadDraft(key));
+  const [localDraft, setDraft] = useState<ImagegenDraft>(() => loadDraft(key));
+  const studio = useStudio(studioId ?? "", { running: running && !!studioId });
+  const draft = studioId ? studio.form : localDraft;
   const [status, setStatus] = useState<ImagegenStatus | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [groups, setGroups] = useState<JobGroup[]>([]);
@@ -69,13 +111,19 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
   const [caps, setCaps] = useState({ queued: 0, queueMax: 0, trialPending: 0, trialMax: 0 });
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [zoomPath, setZoomPath] = useState<string | null>(null);
+  const [attachOpen, setAttachOpen] = useState<"attach" | "replace" | null>(null);
+  const [logOpen, setLogOpen] = useState(false);
+  // The narrow pane's tab (ADR 0100 §4); ignored while the three columns fit.
+  const [tab, setTab] = useState<"chat" | "form" | "out">("form");
+  const [studios, setStudios] = useState<StudioSummary[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyBefore, setHistoryBefore] = useState("");
   // The bar's running segment fills against the clock, so the row needs a tick of its own.
   // It advances only alongside a poll, never on a timer of its own.
   const [now, setNow] = useState(() => Date.now());
 
-  const patch = useCallback(
+  const patchLocal = useCallback(
     (p: Partial<ImagegenDraft>) => {
       setDraft((d) => {
         const next = { ...d, ...p };
@@ -84,6 +132,37 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
       });
     },
     [key],
+  );
+  const patchStudioForm = studio.patchForm;
+  const patch = studioId ? patchStudioForm : patchLocal;
+
+  // Remember the studio this browser has open, for the next plain "open image generation".
+  useEffect(() => {
+    if (studioId) rememberStudio(studioId);
+  }, [studioId]);
+
+  const readStudios = useCallback(async () => {
+    try {
+      const r = await listStudios();
+      if (r && !r.error && Array.isArray(r.studios)) setStudios(r.studios);
+    } catch {
+      /* the picker keeps what it had */
+    }
+  }, []);
+
+  const readHistory = useCallback(
+    async (more = false) => {
+      if (!studioId) return;
+      try {
+        const r = await imagegenHistory({ studio: studioId, limit: HISTORY_PAGE, ...(more && historyBefore ? { before: historyBefore } : {}) });
+        if (!r || r.error) return;
+        setHistory((h) => (more ? [...h, ...(r.items || [])] : r.items || []));
+        setHistoryBefore(r.before || "");
+      } catch {
+        /* a transient 502 keeps the list */
+      }
+    },
+    [studioId, historyBefore],
   );
 
   // A draft written by "open in image generation" (the lightbox's properties bar) landed in
@@ -133,7 +212,14 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
     if (!running) return;
     void readStatus();
     void readJobs();
-  }, [running, readStatus, readJobs]);
+    void readStudios();
+    // readHistory's identity follows its cursor; the first page is read once per studio.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, readStatus, readJobs, readStudios]);
+  useEffect(() => {
+    if (running && studioId) void readHistory(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, studioId]);
 
   // The poller. Its whole contract is in the guard: something unfinished, the tab visible,
   // the workspace up. `live` is recomputed from the list every render, so the last finished
@@ -174,7 +260,6 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
   const schedulers = provider?.schedulers || [];
   const loraWeightMax = provider?.lora_weight_max || 2;
   const alwaysNegative = provider?.negative_always || "";
-  const negativeReaches = !model?.knobs || model.knobs.includes("negative" as Knob);
   const state = engineState(status, jobs, model);
   // 0 on either side means "nothing measured", so the hint falls back to "several minutes"
   // rather than claiming the engine starts instantly.
@@ -213,6 +298,22 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
         return;
       }
       setBusy(true);
+      // ADR 0100 decision 9: with a studio, a press is one POST that records the version and
+      // enqueues the studio's own draft — the form's pending edit is flushed first.
+      if (studioId) {
+        const mode: PressMode = trial ? "trial" : "enqueue";
+        const r = await studio.press(mode);
+        setBusy(false);
+        if (!r) return;
+        toast(
+          r.recorded === false
+            ? tr("imggen.press_record_pending", { n: r.jobs?.length ?? 1 })
+            : tr("imggen.enqueued", { n: r.jobs?.length ?? (trial ? 1 : draft.jobs) }),
+          { kind: "info" },
+        );
+        await readJobs();
+        return;
+      }
       try {
         const r = await imagegenEnqueue(buildRequest(draft, { trial, provider: provider?.id, model }));
         if (r?.error) {
@@ -227,8 +328,145 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
         setBusy(false);
       }
     },
-    [draft, provider, model, readJobs, toast, tr],
+    [draft, provider, model, readJobs, toast, tr, studioId, studio],
   );
+
+  // The finished pictures of this studio arrive through the job list; re-read the history page
+  // when the count of finished jobs moves, never on a timer of its own.
+  const doneCount = useMemo(() => jobs.filter((j) => j.state === "done").length, [jobs]);
+  useEffect(() => {
+    if (studioId && doneCount) void readHistory(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doneCount]);
+
+  // Switch this pane to another studio — unless another pane already has it, which is then
+  // focused instead: two panes on one studio are what decision 10's sameTarget exists to stop
+  // (their debounced saves would race each other on every keystroke).
+  const openStudio = useCallback(
+    (id: string | null) => {
+      if (id === studioId) return;
+      const st = useLayoutStore.getState();
+      const other = allViews(st.layout).find(
+        (v) => v.id !== paneId && v.content.kind === "imagegen" && v.content.studioId === id,
+      );
+      if (other) st.selectTab(other.id);
+      else setPaneTarget(paneId, { content: { kind: "imagegen", studioId: id } });
+    },
+    [paneId, studioId, setPaneTarget],
+  );
+
+  // A studio the Agent says is gone is not the one to reopen next time.
+  useEffect(() => {
+    if (studioId && studio.missing && lastStudio() === studioId) rememberStudio(null);
+  }, [studioId, studio.missing]);
+
+  const attach = useCallback(
+    async (o: AttachOpts): Promise<boolean> => {
+      // Prompts are written for a model (revision 9): the button is disabled without one, and
+      // this holds if the member clears it while the dialog is open.
+      if (!draft.model.trim()) {
+        toast(tr("imggen.agent_needs_model"), { kind: "error" });
+        return false;
+      }
+      const r = await attachAgent({
+        studioId,
+        // The pane's resolved row, not the draft's possibly-stale pick (decision 2: a trial never
+        // falls back to another provider, so the studio must name the one on screen).
+        draft: () => studioFromForm({ ...draft, providerId: provider?.id || "" }),
+        opts: o,
+        replacing: attachOpen === "replace" ? studio.studio?.session : undefined,
+      });
+      if (r.error) toast(r.error, { kind: "error" });
+      if (r.session) void refreshSessions();
+      // The draft moved into the new studio (decision 2); left behind, it would reappear in the
+      // studio-less pane as a second copy that no longer syncs with anything.
+      if (r.studioId && !studioId) {
+        saveDraft(key, emptyDraft());
+        setDraft(emptyDraft());
+      }
+      if (r.studioId) {
+        void readStudios();
+        if (r.studioId !== studioId) openStudio(r.studioId);
+        else void studio.reload();
+      }
+      return !!r.session;
+    },
+    [studioId, draft, provider, attachOpen, studio, toast, tr, refreshSessions, readStudios, openStudio, key],
+  );
+
+  const removeStudio = useCallback(async () => {
+    if (!studioId) return;
+    const ok = await confirm({
+      title: tr("imggen.studio_delete_title"),
+      body: tr("imggen.studio_delete_body"),
+      confirmLabel: tr("imggen.studio_delete"),
+      danger: true,
+    });
+    if (!ok) return;
+    const r = await deleteStudio(studioId).catch(() => null);
+    if (!r || !r.ok) {
+      toast(tr("imggen.studio_delete_failed"), { kind: "error" });
+      return;
+    }
+    rememberStudio(null);
+    forgetStudioState(studioId);
+    void readStudios();
+    // The bound session's meta loses its studio on the Agent; the rail's wand follows.
+    void refreshSessions();
+    openStudio(null);
+  }, [studioId, confirm, tr, toast, readStudios, openStudio, refreshSessions]);
+
+  // "Back to this picture's settings": the press its version names, through the same rewind
+  // as the edit history. The log page on screen may not reach that far back, so older pages
+  // are read until it does. A picture with no version (made before the studio, or elsewhere)
+  // falls back to its recovered properties, written as the member's own edit.
+  const restorePicture = useCallback(
+    async (path: string, version?: string) => {
+      if (!studioId) return;
+      const v = version || historyByPath(history).get(path)?.version;
+      if (v) {
+        let seq = pressSeqOf(studio.log, v);
+        let before = studio.log.length ? Math.min(...studio.log.map((e) => e.seq)) : 0;
+        for (let i = 0; seq == null && before > 0 && i < 10; i++) {
+          const page = await studioDraftLog(studioId, before, 200).catch(() => null);
+          if (!page || page.error) break;
+          seq = pressSeqOf(page.entries, v);
+          before = page.before || 0;
+        }
+        if (seq != null) {
+          await studio.rewind(seq);
+          return;
+        }
+      }
+      try {
+        const props = await imageProperties(path);
+        if (!props || props.source === "none") {
+          toast(tr("imggen.pic_restore_none"), { kind: "info" });
+          return;
+        }
+        patch(draftFromProperties(draft, props));
+      } catch {
+        toast(tr("imggen.pic_restore_none"), { kind: "info" });
+      }
+    },
+    [studioId, history, studio, draft, patch, toast, tr],
+  );
+
+  const pictureActions: PictureActions | undefined = studioId
+    ? {
+        onRestore: (path, version) => void restorePicture(path, version),
+        onReference: (path) => {
+          const ops = model?.ops?.length ? model.ops : ["edit"];
+          patch({ op: ops.includes("edit") ? "edit" : ops.find((o) => o !== "generate") || "edit", inputs: [path] });
+          toast(tr("imggen.pic_reference_done"), { kind: "info" });
+        },
+        // P0: the mask is the existing path field; painting it is P1 (decision 11).
+        onFix: (path) => {
+          patch({ op: "inpaint", inputs: [path], mask: "" });
+          toast(tr("imggen.pic_fix_done"), { kind: "info" });
+        },
+      }
+    : undefined;
 
   const groupOp = useCallback(
     async (id: string, op: GroupOp) => {
@@ -282,6 +520,34 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
             : tr("imggen.engine_cold_hint_unknown")
           : tr("imggen.engine_ready");
 
+  const session = studio.studio?.session || "";
+  const studioTitle = (s: { title?: string; id: string }) => s.title || tr("imggen.studio_untitled", { id: s.id.slice(0, 8) });
+  const form = (
+    <GenerateForm
+      draft={draft}
+      patch={patch}
+      fleetProviders={fleetProviderList}
+      provider={provider}
+      models={models}
+      loras={loras}
+      model={model}
+      samplers={samplers}
+      schedulers={schedulers}
+      loraWeightMax={loraWeightMax}
+      alwaysNegative={alwaysNegative}
+      busy={busy || state === "unavailable"}
+      trialFull={trialFull}
+      queueFull={queueFull}
+      onTrial={() => void submit(true)}
+      onEnqueue={() => void submit(false)}
+      modelInHead
+      {...(studioId
+        ? { locks: studio.locks, onToggleLock: studio.toggleLock, highlight: studio.highlight as ReadonlySet<string> }
+        : {})}
+      familyExtra={model ? <KnowledgeMemo family={model.family} model={model.id} /> : null}
+    />
+  );
+
   return (
     <div className="igen">
       <ViewHead
@@ -310,6 +576,29 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
         <span className="view-title">
           <Icon name="wand" /> {tr("imggen.title")}
         </span>
+        {/* The studio this pane edits (ADR 0100 decision 10). "No studio" is the pane of old,
+            its draft in this browser only. */}
+        <select
+          className="ds-select igen-studio-pick"
+          aria-label={tr("imggen.studio_pick")}
+          value={studioId ?? ""}
+          onChange={(e) => openStudio(e.target.value || null)}
+        >
+          <option value="">{tr("imggen.studio_none")}</option>
+          {studioId && !studios.some((s) => s.id === studioId) && studio.studio && (
+            <option value={studioId}>{studioTitle(studio.studio)}</option>
+          )}
+          {studios.map((s) => (
+            <option key={s.id} value={s.id}>
+              {studioTitle(s)}
+              {s.session ? " ●" : ""}
+            </option>
+          ))}
+        </select>
+        {/* The model is the member's (decision 4); its place in the head says so. */}
+        <span className="igen-head-model">
+          <ModelSelect draft={draft} patch={patch} fleetProviders={fleetProviderList} provider={provider} models={models} compact />
+        </span>
         <span className={"igen-engine igen-engine-" + state} title={engineLine}>
           <span className="igen-dot" />
           {state === "ready"
@@ -326,68 +615,133 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
         {/* Never "$0.00": comfy's CostUSD is 0 by construction and the attribution lives in
             the administrator's hourly table (decision 10). */}
         <span className="igen-cost muted">{tr("imggen.cost_note")}</span>
+        {studioId && studio.studio && (
+          <details className="igen-studio-menu">
+            <summary title={tr("imggen.studio_settings")}>
+              <Icon name="gear" />
+            </summary>
+            <div className="igen-studio-menu-body">
+              <label className="igen-fullsteps">
+                <input
+                  type="checkbox"
+                  checked={studio.studio.agent_trial}
+                  onChange={(e) => studio.setAgentTrial(e.target.checked)}
+                />
+                {tr("imggen.studio_agent_trial")}
+              </label>
+              <span className="igen-hint">{tr("imggen.studio_agent_trial_hint")}</span>
+              <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" onClick={() => void removeStudio()}>
+                <Icon name="trash" /> {tr("imggen.studio_delete")}
+              </button>
+            </div>
+          </details>
+        )}
       </ViewHead>
-      {failed && !status ? (
+      {studioId && studio.failed && !studio.studio ? (
+        <EmptyState icon="warning" title={tr("imggen.studio_read_failed")} hint={studio.failed}>
+          <button type="button" className="ui-btn" onClick={() => openStudio(null)}>
+            {tr("imggen.studio_open_none")}
+          </button>
+        </EmptyState>
+      ) : failed && !status ? (
         <EmptyState icon="warning" title={tr("imggen.engine_unavailable")} />
       ) : (
-        <div className="igen-body">
-          <div className="igen-col-form">
-            <GenerateForm
-              draft={draft}
-              patch={patch}
-              fleetProviders={fleetProviderList}
-              provider={provider}
-              models={models}
-              loras={loras}
-              model={model}
-              samplers={samplers}
-              schedulers={schedulers}
-              loraWeightMax={loraWeightMax}
-              alwaysNegative={alwaysNegative}
-              busy={busy || state === "unavailable"}
-              trialFull={trialFull}
-              queueFull={queueFull}
-              onTrial={() => void submit(true)}
-              onEnqueue={() => void submit(false)}
-              onPromptHelp={() => setHelpOpen(true)}
-            />
+        <>
+          <div className="igen-tabs" role="tablist">
+            {(["chat", "form", "out"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                role="tab"
+                aria-selected={tab === k}
+                className={"igen-tab" + (tab === k ? " active" : "")}
+                onClick={() => setTab(k)}
+              >
+                {tr(`imggen.tab_${k}` as "imggen.tab_chat")}
+              </button>
+            ))}
           </div>
-          <div className="igen-col-out">
-            <TrialSlot item={latestTrial} onZoom={setZoomPath} onUseSeed={useSeed} />
-            <JobList
-              rows={rows}
-              queuePaused={queuePaused}
-              queued={caps.queued}
-              queueMax={caps.queueMax}
-              now={now}
-              onGroupOp={(id, op) => void groupOp(id, op)}
-              onQueueOp={(op) => void queueOp(op)}
-              onCancelJob={(id) => void cancelJob(id)}
-            />
-            <ResultCards
-              items={results}
-              onZoom={setZoomPath}
-              onAgain={(item, sameSeed) => {
-                const seed = item.file.seed ?? item.job.seed ?? null;
-                if (sameSeed && seed != null) patch({ seed: String(seed), seedPolicy: "fixed" });
-                else patch({ seedPolicy: "random" });
-                void submit(true);
-              }}
-            />
+          <div className="igen-body igen-studio" data-tab={tab}>
+            <div className="igen-col-agent">
+              <StudioAgent
+                paneId={paneId}
+                studioId={studioId}
+                session={session}
+                active={active}
+                signal={studioId ? studio.signal : undefined}
+                log={studio.log}
+                onRewind={studio.rewind}
+                needsModel={!draft.model.trim()}
+                onAttach={() => setAttachOpen("attach")}
+                onReplace={() => setAttachOpen("replace")}
+              />
+            </div>
+            <div className="igen-col-form">
+              {studioId && (
+                <div className="igen-form-head">
+                  <button
+                    type="button"
+                    className={"ui-btn ui-btn-ghost ui-btn-sm" + (logOpen ? " active" : "")}
+                    aria-expanded={logOpen}
+                    onClick={() => setLogOpen((v) => !v)}
+                  >
+                    <Icon name="history" /> {tr("imggen.log_title")}
+                  </button>
+                  {studio.highlight.size > 0 && <span className="igen-hl-note">{tr("imggen.hl_note")}</span>}
+                </div>
+              )}
+              {studioId && logOpen && (
+                <DraftLog
+                  log={studio.log}
+                  recordPending={studio.recordPending}
+                  hasOlder={studio.hasOlder}
+                  onOlder={() => void studio.loadOlder()}
+                  onRewind={(seq) => void studio.rewind(seq)}
+                />
+              )}
+              {form}
+            </div>
+            <div className="igen-col-out">
+              <TrialSlot item={latestTrial} onZoom={setZoomPath} onUseSeed={useSeed} />
+              <JobList
+                rows={rows}
+                queuePaused={queuePaused}
+                queued={caps.queued}
+                queueMax={caps.queueMax}
+                now={now}
+                onGroupOp={(id, op) => void groupOp(id, op)}
+                onQueueOp={(op) => void queueOp(op)}
+                onCancelJob={(id) => void cancelJob(id)}
+              />
+              <ResultCards
+                items={results}
+                onZoom={setZoomPath}
+                actions={pictureActions}
+                onAgain={(item, sameSeed) => {
+                  const seed = item.file.seed ?? item.job.seed ?? null;
+                  if (sameSeed && seed != null) patch({ seed: String(seed), seedPolicy: "fixed" });
+                  else patch({ seedPolicy: "random" });
+                  void submit(true);
+                }}
+              />
+              {studioId && pictureActions && (
+                <StudioHistory
+                  items={history}
+                  hasMore={!!historyBefore}
+                  onMore={() => void readHistory(true)}
+                  onZoom={setZoomPath}
+                  actions={pictureActions}
+                />
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
-      {helpOpen && (
-        <PromptHelpModal
-          model={model}
-          loras={loras.filter((l) => draft.loras.some((x) => x.name === l.name))}
-          alwaysNegative={alwaysNegative}
-          negativeReaches={negativeReaches}
-          onClose={() => setHelpOpen(false)}
-          onUse={(prompt, negative) => {
-            patch(negative === null ? { prompt } : { prompt, negative });
-            setHelpOpen(false);
-          }}
+      {attachOpen && (
+        <AttachAgentModal
+          replacing={attachOpen === "replace" ? session : undefined}
+          onClose={() => setAttachOpen(null)}
+          onAttach={attach}
         />
       )}
       {zoomPath &&

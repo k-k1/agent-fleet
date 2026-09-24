@@ -15,7 +15,11 @@ var launchTmuxFn = startSessionTmux
 
 // bindStudioOnCreate points the studio at the session being created (ADR 0100 decision 2 ③),
 // answering the refusal to write when it cannot.
-func bindStudioOnCreate(studio, name string) *SpawnRefusal {
+func bindStudioOnCreate(studio string, meta session.Meta) *SpawnRefusal {
+	name := meta.Name
+	if why := imagegen.StudioSessionUnsupported(meta.Kind, meta.DriverKind()); why != "" {
+		return &SpawnRefusal{Status: http.StatusConflict, Code: "studio_kind_unsupported", Message: why}
+	}
 	if imagegen.BindStudioSession == nil {
 		return &SpawnRefusal{Status: http.StatusNotImplemented, Code: "studio_unavailable",
 			Message: "this Agent has no image studio store, so a session cannot be bound to one"}
@@ -66,16 +70,21 @@ func rebindStudioOnRecreate(m *session.Meta, previous string) {
 
 // clearReplacedStudio drops the studio from the stopped session a create just took it from,
 // under the meta lock, and only while that meta still names this studio.
-func clearReplacedStudio(name, studio string) {
+func clearReplacedStudio(name, studio string) { SetSessionStudio(name, studio, "") }
+
+// SetSessionStudio moves a session's Meta.Studio from `from` to `to` under the meta lock, and
+// leaves a meta that names anything else by then alone. It is imagegen.SessionStudioCAS: the
+// studio store writes the binding's truth on its own side and this copy for advertising.
+func SetSessionStudio(name, from, to string) {
 	if name == "" || !session.ValidName(name) {
 		return
 	}
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
 	m, ok := session.ReadMeta(name)
-	if !ok || m.Studio != studio {
+	if !ok || m.Studio != from || from == to {
 		return
 	}
-	m.Studio = ""
+	m.Studio = to
 	session.WriteMeta(m)
 }

@@ -1,9 +1,12 @@
 package main
 
 import (
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 )
 
 // TestOperatorPersonaShellGuards pins option C: the operator MAY launch shell
@@ -115,6 +118,35 @@ func TestBuiltinPersonasFollowUILocale(t *testing.T) {
 	for _, a := range assistants.Builtins(assistantDeps()) {
 		if !hasJapanese(a.Persona) {
 			t.Errorf("%s persona under the ja locale is not Japanese:\n%s", a.ID, a.Persona)
+		}
+	}
+}
+
+// TestEnsureBuiltinKnowledgeWritesRunningVersion: the builtin assistants answer "what
+// changed since my version" from agent-fleet-version.md next to the usage summary. A dev
+// build must never read as a published release (it may be newer than the latest entry in
+// the release history), and a release build must carry its number.
+func TestEnsureBuiltinKnowledgeWritesRunningVersion(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	old := buildVersion
+	defer func() { buildVersion = old }()
+
+	for _, c := range []struct {
+		v, want, not string
+	}{
+		{"0.23.0", "Agent Fleet 0.23.0", "development build"},
+		{"dev", "development build", "Agent Fleet dev"},
+		{"0.24.0-dev-abc1234", "development build (0.24.0-dev-abc1234)", "runs Agent Fleet"},
+	} {
+		buildVersion = c.v
+		dir := ensureBuiltinKnowledge()
+		b, err := os.ReadFile(filepath.Join(dir, "agent-fleet-version.md"))
+		if err != nil {
+			t.Fatalf("%s: version file not written: %v", c.v, err)
+		}
+		got := string(b)
+		if !strings.Contains(got, c.want) || strings.Contains(got, c.not) {
+			t.Errorf("%s: version doc = %q, want it to contain %q and not %q", c.v, got, c.want, c.not)
 		}
 	}
 }

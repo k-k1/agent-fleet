@@ -3,6 +3,7 @@
 English | [日本語](0010-internal-git-provider.ja.md)
 
 - Status: **adopted, P1 implemented**. The design is [reference/internal-git-provider](../build/91-internal-git.md).
+  Status update (2026-09-24): P2 and P3 are implemented as well (2026-07-07) — P2 is rename, the per-tenant repository quota and the sequential GC job (commit c289be983; `control-plane/internal_git.go`, `git_gc.go`); P3 is Git LFS with its batch API, basic transfer, byte quota, orphan collection and lock API (commits 4423a9c1f, c9e476f5d; `control-plane/git_lfs.go`, `git_lfs_locks.go`). Browsing without cloning is implemented too (`internal_git_browse.go`). The current list is [build/91](../build/91-internal-git.md) §91.9.
 - See also: [0001](0001-self-host-vs-saas.md) (SaaS abandoned, self-hosting) / [0003](0003-ssh-to-connections.md) (git auth = Connections) /
   [0005](0005-envelope-custodian.md) (envelope encryption) / [architecture](../build/01-architecture.md)
 

@@ -159,13 +159,17 @@ func testDeps() Deps {
 			return "export TZ=" + session.ShellQuote(defaultTimezone) + "; "
 		},
 
-		// --- the 7 not reached in the measurement (reaching one fails) ---
+		// --- the 8 not reached in the measurement (reaching one fails) ---
 		EnvOr:                 func(k, d string) string { unreached("EnvOr"); return d },
 		MaxUploadBytes:        func() int64 { unreached("MaxUploadBytes"); return 0 },
 		FinalizeSessionUsage:  func(session.Meta) { unreached("FinalizeSessionUsage") },
 		MaybeFoldSessionUsage: func() { unreached("MaybeFoldSessionUsage") },
 		RemoveTerminalHistory: func(string) { unreached("RemoveTerminalHistory") },
-		MCPConvID:             func() string { unreached("MCPConvID"); return "" },
+		TrashSession: func(session.Meta, bool) (string, string, error) {
+			unreached("TrashSession")
+			return "", "", nil
+		},
+		MCPConvID: func() string { unreached("MCPConvID"); return "" },
 		RunOperatorTurn: func(conv, text string) (string, error) {
 			unreached("RunOperatorTurn")
 			return "", nil

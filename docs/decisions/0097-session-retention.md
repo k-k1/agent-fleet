@@ -162,3 +162,107 @@ being no reason to delete automatically at all.
 - **The shelf's inventory is invisible.** A count and a size in the cleanup modal would let
   someone decide to reclaim. Not in this ADR: decision 2's entrance already exists, so this is a
   display question, not a feature.
+
+## Addendum (2026-09-23) — the cache of deleted sessions is the one delete without the gz archive
+
+Decision 2 says a deletion always goes through the gz archive. PR #919 adds a delete that does
+not: the cleanup modal's **"Cache of deleted sessions"** removes `~/.cache/agent-fleet/pasted/<sid>`
+(files pasted or attached into a session), `pasted/chat-<id>` (the same for an assistant chat) and
+`codex-view-image/<sid>` (images codex's view_image read) once nothing can refer to them.
+
+**Why this is an exception and not a breach.** Decision 2 protects *a session's substance* — what
+a restore brings back. These directories belong only to sessions that are already beyond restore.
+There are two rules, one per kind of owner (`internal/sessionx/cache_orphans.go`):
+- **A session's directory** (`pasted/<sid>`, `codex-view-image/<sid>`) is offered only when its UUID
+  is in **no session meta** (live, stopped or shelved), **in no archive in the trash**, and **in the
+  fork ancestry of no session in either**. A session name is a random slug that is never reused and the
+  UUID is a pure function of (dir, name), so such a UUID can never be named again — except through a
+  fork, whose copied history still holds its ancestors' pasted paths: a fork records every ancestor
+  (`Meta.ForkSids`), and a claude fork made before that is covered by its `ForkFrom`, which is
+  usually the parent's UUID (not once the parent's sid had drifted). A fork in the trash protects
+  its ancestors too, since restoring it brings their paths back into use. Anything a trashed
+  session could still need stays until that archive is purged. Without the session store (an
+  unmounted volume, or a workspace that never had a session) no session folder is judged —
+  every session would look gone — while chat folders still are. Paths a model copied into free
+  text (a handoff prompt, say) are outside every rule here.
+- **An assistant chat's directory** (`pasted/chat-<id>`) is offered only when the conversation store
+  is there and the conversation file **provably does not exist** (ENOENT from a stat — any other
+  failure keeps it). Chats are not sessions and have no trash — deleting a chat
+  removes its file outright — so there is no archive to consult; a file that exists but cannot be
+  parsed keeps its directory.
+- A directory of any other name is never offered. Archiving the images instead would not work anyway: they do not compress, and a restore
+reads a whole archive into memory.
+
+**What still holds.**
+- It is **a person's action**, like every other delete here: nothing removes these on a timer.
+- It is graded **safe** because "provably done" is that grade's other half, and unreachable is
+  provable. It is the only safe row that cannot be undone, so its action label, its reason and
+  the confirm dialog all say so.
+- The scan **deletes nothing it cannot prove unreachable**. An unreadable meta or archive stops it
+  outright. A directory the walk could not read to the end — an I/O error, or the entry budget
+  running out — is neither counted nor deleted. The states are reported apart, because they are
+  fixed apart: a budget cut that still finished some folders marks the row partial (deleting them
+  lets the next press get further); a cut that finished none — a folder too big to walk, or too
+  many ahead of it — marks it stuck (the next press would stop at the same place; a person has to
+  look); a read error marks it as having unreadable folders (those stay out however often it is
+  surveyed); a missing session store marks it as having no store (session folders are not judged,
+  chat folders still are); and session records plus trash too large for the budget mark it as
+  unable to judge at all (tidying the trash is what helps). When several apply, the row names the
+  one to fix first — unable to judge, then no store, then unreadable, then stuck, then partial —
+  and still marks that part went unchecked. Both meta names protect a directory: the file name
+  the paste endpoint keys by, and the name inside it that codex keys by.
+- **It cannot act outside the cache.** The feature directory must not itself be a symlink, and it
+  is pinned by file descriptor (`os.Root`) for the whole scan and delete, so a swap in between
+  cannot aim the delete elsewhere. Symlinks further up (a `~/.cache` kept on persistent storage via
+  `AF_WS_KEEP_DIRS`) are trusted: they are the workspace's own setup.
+- **It is bounded.** One entry budget (500,000 by default) pays for everything — listing the cache,
+  every meta and archive read for reachability, every entry walked (a chat check is one stat, paid
+  with the listing entry it belongs to). Directories
+  are listed at most 1,024 entries at a time and charged as they are read, so the budget bounds the
+  work done, not a count taken after a directory of a million entries has already been read into
+  memory. The cache is judged chunk by chunk, and a listing chunk never takes more than half of
+  what is left, so a cut-off scan still yields the directories it finished; deleting them moves
+  the next press further along. When it finished none, that is the stuck state above, not a
+  promise of progress. A scan that
+  runs out says so: the cleanup row is marked partial (or becomes a keep row if nothing could be
+  decided), and a delete reports what it took so the next survey shows the rest.
+- **It does not race a restore.** A restore reads the archive and stages the transcripts beside
+  their destinations outside the cleanup lock, then — under it — checks that the archive still
+  exists, places the staged transcripts and writes the metas back. A restore that lost to a purge
+  has changed nothing and fails.
+- **A restore never destroys and never overstates.** It removes or replaces nothing it did not
+  create in that call. A transcript or a meta already at the destination is kept, never rolled back
+  to the archived snapshot (restoring the same archive twice used to overwrite the turns taken
+  since the first restore, and a lock set since); the meta is created only if absent, atomically. Placing is a hard link, which fails on an existing file, so one that appears
+  mid-restore is kept too; there is no rename fallback, because a rename replaces. When a step
+  fails — a transcript that cannot be placed, a meta that cannot be written — the restore stops
+  there and reports it rather than claiming the session is back. It does not try to undo what it
+  already placed (that would mean deleting a file another process may be appending to);
+  restoring again is safe and finishes the job, and the Console says so (409 restore_incomplete).
+  While a session of the archive is **half back** — a transcript at its path, no meta — **the archive
+  cannot be purged** (409), because it is what keeps that session's cache reachable. A marker written
+  before anything is placed records that a restore is under way; it is removed on success, and a
+  failure that changed nothing leaves none. A marker alone never blocks: the purge checks for an
+  actually half-back session, so an archive is only ever held for as long as that lasts — except
+  one whose manifest cannot be read at all, which is kept, since nothing (restore included) could
+  tell what it holds. The purge and the cache delete take the same lock. So a delete can never scan a session
+  that is in neither place, and a restore that lost a race to a purge fails instead of bringing a
+  conversation back without its files.
+
+`generated/` is outside this: pictures are products, and they already age out after 30 days.
+The Open item about the shelf's inventory is partly answered: Settings → Machine now shows the
+trash's size and opens the cleanup modal.
+
+## Addendum (2026-09-24) — the background's "only" was wrong; decision 2 holds from ADR 0101
+
+The background says the auto prune "was the only delete that skipped the trash". At the same time,
+`POST /sessions/{name}/stop` (the shell / ssm row delete, the bulk tidies, the image studio's switch) and
+`DELETE /repos/{name}?prune_sessions=1` (cleanup ② and MCP `delete_worktree`) also forgot the meta and
+skipped the trash, so decision 2's "true without exception" did not hold. The inventory is in
+docs/log/115 §115.1.
+
+[ADR 0101](0101-session-delete-via-trash.md) fixes it. There is now one route that forgets a session's meta,
+`trashSession`, and it archives to gz before removing anything — decision 2 holds without exception from
+there. Decision 5 (worktrees leave the sweep) now extends to a person's delete as well: deleting a session no
+longer deletes its worktree (`MaybePruneWorktree` is gone), and deleting a worktree moves its stopped AI
+sessions to the shelf.

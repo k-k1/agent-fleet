@@ -564,6 +564,49 @@ type comfyFamilyRow struct {
 	// to keep every thumbnail a PNG, fs_thumb.go's opaque()), and comfyWarnings stops saying
 	// "opaque produced" to a caller who got exactly the transparency they asked for.
 	Alpha bool
+	// Dialect, QualityPrefixes, StepsRange and CFGRange are how a person writes for this family
+	// (ADR 0100 decision 7): the prompt's dialect, the quality prefixes its model cards print, and
+	// the published ranges the steps and cfg sit in. They are advice and nothing reads them to
+	// build a graph; they live here so the pane's family card and get_image_studio's model facts
+	// are drawn from the same row as the knobs, rather than from a second table in the Console
+	// that a new family has to remember.
+	//
+	// CFGRange is zero for a family whose template does not read cfg (flux1, klein), which is the
+	// same fact SamplerKnobs states.
+	Dialect         comfyDialect
+	QualityPrefixes []string
+	StepsRange      [2]int
+	CFGRange        [2]float64
+}
+
+// comfyDialect is how a family's prompt is written: a comma-separated tag list, sentences, or
+// both at once. The three are built differently, not worded differently — which is why a studio
+// agent is told to rewrite rather than edit when the member switches family (ADR 0100 revision 9).
+type comfyDialect string
+
+const (
+	comfyDialectTags      comfyDialect = "tags"
+	comfyDialectSentences comfyDialect = "sentences"
+	// comfyDialectMixed is tags for the subject and its attributes, plus sentences for what tags
+	// cannot say — composition, who is where, the light. A family trained on both controls a
+	// picture more finely with both than with either alone.
+	comfyDialectMixed comfyDialect = "mixed"
+)
+
+// comfyDialectHow is the dialect as an instruction, for the agent that has to write in it: the
+// bare value is a label, and "mixed" in particular says nothing about which part goes where.
+func comfyDialectHow(d comfyDialect) string {
+	switch d {
+	case comfyDialectTags:
+		return "Comma-separated tags, most important first, quality prefix at the front. No sentences."
+	case comfyDialectSentences:
+		return "Natural-language sentences describing the picture. No tag lists or quality tags."
+	case comfyDialectMixed:
+		return "Tags AND sentences in one prompt: quality prefix and tags for the subject and its attributes first, " +
+			"then one or two sentences for composition, positions and relations, and light. Using both gives finer " +
+			"control than either alone; put in a sentence what a tag cannot say."
+	}
+	return ""
 }
 
 // comfyFamilyRows is the vocabulary itself, ordered oldest architecture first — which is the
@@ -581,18 +624,29 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// Stops at 768 on the long side for the reason the Sizes field states: 512x768 is the
 	// portrait every model card for this family prints, and past it the duplication starts.
 	Sizes: []string{"512x512", "512x768", "768x512", "640x512", "512x640"},
+	// Same tag dialect as SDXL: SD1.5 fine-tunes are overwhelmingly booru-tagged, and this is the
+	// prefix their cards print.
+	Dialect: comfyDialectTags, QualityPrefixes: []string{"masterpiece, best quality"},
+	StepsRange: [2]int{20, 30}, CFGRange: [2]float64{6, 9},
 }, {
 	Family:       ComfyFamilySDXL,
 	Recipe:       comfyRecipe{Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"},
 	SamplerKnobs: comfyKnobsSampled, TrialSteps: 10, Guided: true,
+	// Two dialects share the family: base/Illustrious/NoobAI take `masterpiece, best quality`,
+	// Pony takes the score tags. Both are offered and the card says which is which.
+	Dialect:         comfyDialectTags,
+	QualityPrefixes: []string{"masterpiece, best quality", "score_9, score_8_up, score_7_up"},
+	StepsRange:      [2]int{20, 40}, CFGRange: [2]float64{5, 9},
 }, {
 	Family:       ComfyFamilySD35,
 	Recipe:       comfyRecipe{Steps: 28, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "sgm_uniform"},
 	SamplerKnobs: comfyKnobsSampled, TrialSteps: 12, Guided: true,
+	Dialect: comfyDialectSentences, StepsRange: [2]int{24, 40}, CFGRange: [2]float64{3.5, 6},
 }, {
 	Family:       ComfyFamilyFlux1,
 	Recipe:       comfyRecipe{Steps: 20, Sampler: "euler", Scheduler: "simple"},
 	SamplerKnobs: []string{"steps", "sampler", "scheduler"}, TrialSteps: 8,
+	Dialect: comfyDialectSentences, StepsRange: [2]int{16, 32},
 }, {
 	Family:       ComfyFamilyFlux2Klein,
 	Recipe:       comfyRecipe{Steps: 4, Sampler: "euler"},
@@ -600,10 +654,13 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// The recipe's own 4: a distilled 4-step model has no cheaper trial. See the field.
 	TrialSteps: 4,
 	Prefix:     "klein",
+	Dialect:    comfyDialectSentences,
+	StepsRange: [2]int{4, 8},
 }, {
 	Family:       ComfyFamilyZImage,
 	Recipe:       comfyRecipe{Steps: 8, CFG: 1, Sampler: "res_multistep", Scheduler: "simple"},
 	SamplerKnobs: comfyKnobsSampled, TrialSteps: 4,
+	Dialect: comfyDialectSentences, StepsRange: [2]int{6, 12}, CFGRange: [2]float64{1, 2},
 }, {
 	Family: ComfyFamilyAnima,
 	// 🔴 Not run on a GPU here either. ComfyUI's own shipped template for the family
@@ -620,6 +677,13 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// undistilled versions is 30 steps, so a trial at 10 would be judging a composition this
 	// family does not produce at 10.
 	TrialSteps: 12, Guided: true,
+	// Danbooru tags, captions, or both — the model card documents all three, and both together is
+	// the finest control: tags pin the subject, a caption places it. The card's own prefix, and
+	// the shorter one it tells Anima-Aesthetic users to prefer (without score_* tags), so the
+	// advice holds for both.
+	Dialect:         comfyDialectMixed,
+	QualityPrefixes: []string{"masterpiece, best quality, score_7, safe", "masterpiece, best quality"},
+	StepsRange:      [2]int{30, 50}, CFGRange: [2]float64{4, 5},
 }, {
 	Family: ComfyFamilyKrea2,
 	// 🔴 Not run on a GPU here, and this one points the OTHER way from anima's: these are the
@@ -633,6 +697,10 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// The recipe is already 8, so for a Turbo row a trial IS the batch (klein's case). It is kept
 	// for the Raw rows, where it is the family's published 52 cut to a sixth.
 	TrialSteps: 8, Guided: true,
+	// No quality-tag convention: trained for aesthetics, and its own enhancer rewrites a short
+	// prompt into a paragraph. The ranges span both modes — Turbo (8, cfg 1) and Raw (52, real
+	// guidance) — because a family cannot say which mode a row is.
+	Dialect: comfyDialectSentences, StepsRange: [2]int{8, 52}, CFGRange: [2]float64{1, 4.5},
 }, {
 	Family: ComfyFamilyQwenImageEdit2509,
 	// The official 2509 template's KSampler, LoRA-switch false branch (ADR 0094 実測): steps 20,
@@ -652,6 +720,9 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// is a real gate even at a full denoise. The wiring is comfyQwenEditNoiseMask: the mask onto
 	// the latent the scaled picture was encoded to, not onto an empty one.
 	FixedDenoiseEdit: true, Ops: []Op{OpEdit, OpInpaint}, RefInputs: 3,
+	// Instruction editing: the prompt is a sentence describing the change. The recipe is the only
+	// published setting, so the "range" is the recipe itself.
+	Dialect: comfyDialectSentences, StepsRange: [2]int{20, 20}, CFGRange: [2]float64{4, 4},
 }, {
 	Family: ComfyFamilyQwenImageEdit2511,
 	// The official 2511 template's KSampler, same LoRA-switch false branch: steps 40, cfg 4,
@@ -669,6 +740,7 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// 実測 G and I ran on 2509; this one rides the SAME code path rather than a parallel one, which
 	// is the only kind of family ADR 0094 decision 5 allows to inherit a measurement.
 	FixedDenoiseEdit: true, Ops: []Op{OpEdit, OpInpaint}, RefInputs: 3,
+	Dialect: comfyDialectSentences, StepsRange: [2]int{40, 40}, CFGRange: [2]float64{4, 4},
 }, {
 	Family: ComfyFamilyQwenImage21,
 	// 🔴 Not run on a GPU here. These are the KSampler widgets BOTH of ComfyUI's shipped templates
@@ -719,6 +791,10 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// so the difference is named here rather than left to look alike. A run that finds the tenth
 	// picture ignored makes this the wrong number, and this is where it is corrected.
 	RefInputs: 10,
+	// Sentences, and edit instructions name their references inline as `<image1>`. 25 is where
+	// both templates start and 50 the top of their note's range; cfg is raised above 1 only
+	// together with a negative prompt.
+	Dialect: comfyDialectSentences, StepsRange: [2]int{25, 50}, CFGRange: [2]float64{1, 4},
 }}
 
 // comfyKnobsSampled is `steps cfg sampler scheduler` — every knob a plain KSampler reads, which

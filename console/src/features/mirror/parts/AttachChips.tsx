@@ -12,17 +12,24 @@ export function AttachChips({
   attachments,
   pasting,
   onRemove,
+  onOpen,
 }: {
   attachments: Attachment[];
   pasting: boolean;
   onRemove: (i: number) => void;
+  /** Opens an image chip in the host's lightbox; the host owns that state (and Back). */
+  onOpen?: (url: string) => void;
 }) {
   if (!attachments.length && !pasting) return null;
   return (
     <div className="mirror-attach">
       {attachments.map((a, i) => (
         <div className={"ma-chip" + (a.image ? "" : " ma-file")} key={a.id}>
-          {a.image ? (
+          {a.image && onOpen ? (
+            <button type="button" className="ma-thumb-btn" title={tr("chat.click_to_zoom")} onClick={() => onOpen(a.url)}>
+              <img className="ma-thumb" src={a.url} alt="" />
+            </button>
+          ) : a.image ? (
             <img className="ma-thumb" src={a.url} alt="" />
           ) : (
             <span className="ma-fname" title={a.name}>

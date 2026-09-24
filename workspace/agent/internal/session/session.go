@@ -74,16 +74,16 @@ const (
 // point that says the number out loud, so no caller is ever told a figure that is not in force.
 const SpawnChildLimitDefault = 3
 
-// SpawnChildLimitMax is the largest value the setting may take (ADR 0073 decision 6, amendment
-// 2026-09-10). A live claude session measures 340-435 MB and this host's cgroup is 10 GiB
-// (docs/log/88 §88.9.2), so six children plus their parent is under a third of the host —
+// SpawnChildLimitMax is the largest value the setting may take (ADR 0073 decision 6, amendments
+// 2026-09-10 and 2026-09-24). A live claude session measures 340-435 MB and this host's cgroup is
+// 10 GiB (docs/log/88 §88.9.2), so ten children plus their parent is under half of the host —
 // leaving room for the sessions the user opened themselves.
 //
 // The ceiling has to be well under what the host can hold, because this budget is PER PARENT and
-// nothing bounds their number: two parents at six is already thirteen agents. Refusing to have an
+// nothing bounds their number: two parents at ten is already twenty-two agents. Refusing to have an
 // upper bound at all would give back the one property the limit exists for — a ceiling a refusal
 // can name before the host runs out of memory instead of after.
-const SpawnChildLimitMax = 6
+const SpawnChildLimitMax = 10
 
 // SpawnChildLimitPref answers the user's configured child limit, RAW: whatever number is stored,
 // or 0 for missing or malformed. Wired by internal/uiprefs, which cannot be imported from here
@@ -479,6 +479,13 @@ type Meta struct {
 	// conversation. Once that exists, later launches resume normally and ForkFrom
 	// is ignored — a restart never re-forks. Empty for non-forked sessions.
 	ForkFrom string `json:"forkFrom,omitempty"`
+	// ForkSids is every session this one was forked from, nearest last, as session UUIDs
+	// (session.UUID of each ancestor). A fork's conversation is a copy of its source's, so the
+	// absolute paths the source's prompts point at — its pasted files under
+	// ~/.cache/agent-fleet/pasted/<sid> — are in this session's history too, and in its own
+	// forks' after it. The cache orphan scan keeps those directories while any descendant
+	// lives. Unlike ForkFrom it is kept for good and is the same id space for every kind.
+	ForkSids []string `json:"forkSids,omitempty"`
 	// ForkAt narrows ForkFrom to a POINT in the source conversation: this session
 	// carries the source's history up to — but NOT including — the anchored turn
 	// (docs/log/55 §55.3). The value is whatever the kind's ForkAtResolver produced from the

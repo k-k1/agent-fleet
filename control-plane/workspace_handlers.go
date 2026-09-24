@@ -687,6 +687,11 @@ type sessionWire struct {
 	// unaffected — the Agent is authoritative whenever the Workspace runs and reports them
 	// with their lineage intact.
 	OriginSession string `json:"originSession,omitempty"`
+	// Origin: who raised the session (ADR 0073) — "session" marks a child another session
+	// spawned, the one thing originSession cannot say (a fork or a launched handoff proposal
+	// carries a lineage too). The Console's "don't notify when a child session is waiting for
+	// input" setting reads it; absent here that setting silently does nothing.
+	Origin string `json:"origin,omitempty"`
 	// GeneratedImages / GeneratedImagesPath: how many images this session has generated and
 	// the folder holding them, browse-root relative (ADR 0080 decision 8). They are what the
 	// Console's "Generated images (N)" entry turns on, so a gap here does not degrade the

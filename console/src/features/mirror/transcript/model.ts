@@ -79,6 +79,18 @@ export function spawnParentOf(text: string): string | null {
   return SPAWN_ENVELOPE_RE.exec(text)?.[1] ?? null;
 }
 
+// splitSessionEnvelope separates the envelope line AF prepends to a message from another session
+// (peer or spawn) from the message itself. The body is what a reader may want translated; the
+// envelope is machine-facing — its keys are parsed back by peerSenderOf / peerIntentOf — and must
+// reach the screen untouched, so it is never sent to the translator. A text with no envelope (a
+// claude-native cross-session message, docs/log/58 §58.16) is all body.
+const SESSION_ENVELOPE_RE = /^\[agent-fleet:(?:peer|spawn) [^\]]*\][ \t]*(?:\r?\n)*/;
+export function splitSessionEnvelope(text: string): { head: string; body: string } {
+  const m = SESSION_ENVELOPE_RE.exec(text);
+  if (!m) return { head: "", body: text };
+  return { head: m[0].trimEnd(), body: text.slice(m[0].length) };
+}
+
 // STUDIO_SIGNAL_PREFIX opens the one line the image studio appends to a message it sends
 // (ADR 0100 decision 5): "[studio v4 · draft changed · 2 new results → get_image_studio]". It is
 // addressed to the agent, so the transcript drops it before anything reads the turn — render,
@@ -89,6 +101,12 @@ export function spawnParentOf(text: string): string | null {
 export const STUDIO_SIGNAL_PREFIX = "[studio ";
 // Both ends are matched, so a member's own "[studio lighting reference]" last line is kept.
 export const STUDIO_SIGNAL_SUFFIX = "→ get_image_studio]";
+
+// withStudioSignal puts the signal after a message as its LAST line — the only place
+// stripStudioSignal looks. An empty signal leaves the message alone.
+export function withStudioSignal(prompt: string, signal: string): string {
+  return signal ? `${prompt.replace(/[ \t\r\n]+$/, "")}\n\n${signal}` : prompt;
+}
 
 // stripStudioSignal removes that line from the end of a message, with the blank space before
 // it. Only the last line is looked at: the same words anywhere else are the member's own.

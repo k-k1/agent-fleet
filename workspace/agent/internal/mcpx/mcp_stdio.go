@@ -1173,13 +1173,15 @@ func mcpStdioStudioTools(offer studioOffer) []map[string]any {
 		},
 		{
 			"name": "add_image_knowledge",
-			"description": "Agent Fleet image studio: append a note to the knowledge kept for a model or a family - only when the user asks you " +
-				"to remember something, or has just judged a result good or bad. Say what worked or failed and on what evidence.",
+			"description": "Agent Fleet image studio: append a note to the knowledge kept for the studio's model or its family - only when the " +
+				"user asks you to remember something, or has just judged a result good or bad. Say what worked or failed and on what evidence. " +
+				"Prompts behave differently per model, so the key is the model the studio has chosen (scope model) or that model's family " +
+				"(scope family); with no model chosen it is refused - ask the user to pick one.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"scope":    map[string]any{"type": "string", "enum": []string{"family", "model"}},
-					"key":      map[string]any{"type": "string", "minLength": 1, "description": "The family name or the model id"},
+					"key":      map[string]any{"type": "string", "minLength": 1, "description": "The studio's model id (scope model) or its family (scope family), as get_image_studio shows them"},
 					"note":     map[string]any{"type": "string", "minLength": 1},
 					"evidence": map[string]any{"type": "string"},
 				},
@@ -2227,9 +2229,9 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		// Stopping relays to /halt, which is resumable. The destructive /stop (which also
-		// forgets the meta) is deliberately not exposed: the advertised tool set is the
-		// gate, so irreversible operations stay in the Console.
+		// Stopping relays to /halt, which is resumable. /stop is the old name of "delete this
+		// session" (it moves it to the trash, ADR 0101) and is deliberately not this tool:
+		// deleting is delete_session, which the operator confirms first.
 		"name":        "stop_session",
 		"description": "指定セッションを停止する（停止中＝再開可能。会話履歴と作業ディレクトリは保持され、resume_session や Console から再開できる）。暴走している・不要になった・リソースを空けたいセッションを畳む時に呼ぶ。実行中の作業は中断され、そのセッションへの未達の自動報告は取り消される。実行前に『どのセッションを止めるか』を一言添えて利用者に確認すること。",
 		"inputSchema": map[string]any{
@@ -2282,7 +2284,7 @@ var mcpStdioWriteTools = []map[string]any{
 	{
 		"name": "delete_worktree",
 		"description": "不要になった worktree（作業コピー）を削除する。list_cleanup_candidates で action=delete_worktree の候補（マージ済みクリーン＝safe、未マージだがクリーン＝review）を片付ける時に使う。" +
-			"未コミット/未pushの変更がある worktree は保護のため削除できない（keep 候補。Console で強制削除するよう案内する）。削除でその worktree に紐づく停止中セッションも一覧から整理される。ローカルの作業コピーだけが消え、履歴・リモート・ブランチは残る。破壊的操作なので、どの worktree を消すかを一言添えて実行前に必ず利用者へ確認すること。",
+			"未コミット/未pushの変更がある worktree は保護のため削除できない（keep 候補。Console で強制削除するよう案内する）。その worktree の停止中の AI セッションはアーカイブ（棚）へ移り、shell/ssm はごみ箱へ入る（どちらも復元できる。会話は消えない）。ローカルの作業コピーだけが消え、履歴・リモート・ブランチは残る。破壊的操作なので、どの worktree を消すかを一言添えて実行前に必ず利用者へ確認すること。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -3208,10 +3210,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err := bridgeApprovalGate(approvalLabel("delete_worktree"), a.Name); err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
-		// prune_sessions=1 also clears the stopped metas attached to it. No force: a dirty or
-		// ahead worktree stays protected and is refused by the Agent, which returns the
-		// reason (push first, or force it from the Console).
-		out, err := agentDo(http.MethodDelete, "/repos/"+url.PathEscape(a.Name)+"?prune_sessions=1", nil)
+		// The Agent shelves the stopped AI sessions in it and trashes its shell / ssm on every
+		// delete (ADR 0101 decision 4), so no flag is sent. No force: a dirty or ahead worktree
+		// stays protected and is refused by the Agent, which returns the reason (push first,
+		// or force it from the Console).
+		out, err := agentDo(http.MethodDelete, "/repos/"+url.PathEscape(a.Name), nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "worktree の削除に失敗しました: "+err.Error())
 		}
@@ -3226,9 +3229,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err := bridgeApprovalGate(approvalLabel("delete_session"), a.Name); err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
-		// reclaim=1 reclaims the jsonl too. It is moved to the gz safety net before deletion,
-		// so it stays restorable.
-		out, err := agentDo(http.MethodDelete, "/sessions/"+url.PathEscape(a.Name)+"?reclaim=1", nil)
+		// Every delete moves the meta and jsonl to the gz trash before removing them (ADR 0101),
+		// so it stays restorable. A running session is refused (no stop=1: stopping is a
+		// separate, confirmed step).
+		out, err := agentDo(http.MethodDelete, "/sessions/"+url.PathEscape(a.Name), nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの削除に失敗しました: "+err.Error())
 		}

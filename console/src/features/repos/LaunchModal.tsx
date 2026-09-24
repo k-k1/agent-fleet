@@ -13,6 +13,7 @@
 // values the launch will actually use, so nothing is ever launched from a setting the fold
 // hid.
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { KeyboardEvent, ClipboardEvent, ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -30,6 +31,9 @@ import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
 import type { LaunchSectionKey } from "./launchPrefs.ts";
 import { launchAttachKey, useLaunchPrompt } from "./launchDraft.ts";
 import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
+import { AttachChips } from "../mirror/parts/AttachChips.tsx";
+import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
+import { useBackClose } from "../../lib/backClose.ts";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { api } from "../../core/api/client.ts";
@@ -368,6 +372,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   };
 
   const removeImage = (i: number) => attach.remove(i);
+  // The staged image shown enlarged, if any. Esc and Back peel it before the dialog: both
+  // are layered stacks, and this layer joins after the Modal's.
+  const [zoom, setZoom] = useState<string | null>(null);
+  useBackClose(zoom ? () => setZoom(null) : undefined, !!zoom);
 
   // {{repo}}/{{branch}}/{{path}} auto-embed from this repo's row context.
   const expand = (body: string) =>
@@ -583,18 +591,11 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
               )}
             </span>
           </span>
-          {images.length > 0 && (
-            <div className="mirror-attach">
-              {images.map((im, i) => (
-                <div className="ma-chip" key={im.id}>
-                  <img className="ma-thumb" src={im.url} alt="" />
-                  <button type="button" className="ma-del" title={tr("common.delete")} onClick={() => removeImage(i)}>
-                    <Icon name="close" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <AttachChips attachments={images} pasting={false} onRemove={removeImage} onOpen={setZoom} />
+          {/* Rendered inside the Modal's panel (the portal keeps the React tree), so a click on
+              the lightbox's backdrop stops at the panel instead of also closing the dialog. */}
+          {zoom &&
+            createPortal(<ImageLightbox src={zoom} className="over-modal" onClose={() => setZoom(null)} />, document.body)}
           <textarea
             ref={textRef}
             value={prompt}

@@ -19,6 +19,9 @@
   background: color-mix(in srgb, #000 72%, transparent);
   cursor: zoom-out;
 }
+.mirror-lightbox.over-modal {
+  z-index: 110;
+}
 .mirror-lightbox img {
   max-width: 100%;
   max-height: 100%;

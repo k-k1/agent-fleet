@@ -243,11 +243,13 @@ The operations live in the session row's **⋯ menu** (or right-click). When in 
 | Pause the work for now and continue later | **Stop** | Stays in the list as "Stopped" | Open it from the list to resume |
 | Clear a finished job out of the everyday list | **Archive** | Hidden from the list with the conversation kept | Can be restored from the archive list |
 | Start just the conversation over in the same place | **Recreate** | Archives the current conversation and opens a new one | The old conversation can be restored from the archive |
-| Remove a throwaway shell / SSM from the list | **Delete** | Disappears from the list | Cannot be undone |
+| Remove a throwaway shell / SSM from the list | **Delete** | Moves to the trash and leaves the list | Can be restored from the cleanup trash |
 
 Which operations appear depends on the session's kind and state. For example, AI sessions show
-"Archive", while throwaway shell / SSM show "Delete". Log files may remain after deletion, but
-the session cannot be brought back to the list.
+"Archive", while throwaway shell / SSM show "Delete". To get rid of an AI session, archive it and
+delete it from the archive list. **Every session delete, whichever way you do it, stashes the
+session in the trash first.** Deleting a session also never deletes its working copy (worktree):
+working copies are removed only by "Delete the working copy" below or by cleanup ②.
 
 **A session left stopped moves to the archive on its own after 7 days** (the deployment can set another window), so the everyday list
 does not fill up with work that is over. It is a move, not a deletion: the conversation is intact
@@ -278,14 +280,14 @@ When things get untidy, open the cleanup modal from the trash icon **"Open clean
 tidy)"** in the **Repositories** heading. It is split into two stages so that **the riskier
 things stop for you first**.
 
-- **① Tidy sessions** — **"Tidy all"** archives stopped AI sessions and deletes shell / SSM.
+- **① Tidy sessions** — **"Tidy all"** archives stopped AI sessions and moves shell / SSM to the trash.
 - **② Delete working copies and branches** — **"Delete the safe ones"** removes only what was
   judged safe.
 - **Cache of deleted sessions** — files you pasted or attached into a session, and images codex
   looked at, stay on disk after the session is deleted. Once the session (or assistant chat) is
   gone **and not in the trash**, nothing can refer to them again; they are listed here, one row per
-  kind with its size, and **"Delete all"** removes them. Anything a trashed session could still
-  need is left alone.
+  kind with its size, and **"Delete all"** removes them. Anything a trashed session, or a fork made
+  from the session (live or trashed), could still need is left alone.
 
 Every candidate carries a **safety** rating and a reason. You can also pick them off one by one.
 
@@ -300,13 +302,17 @@ The **⋯** menu on a session offers a **delete lock**, which takes it out of cl
 
 **Deleting too much is recoverable.** Sessions and branches are stashed in the **trash** before
 they are removed. The **"Trash (restore)"** tab of the cleanup modal **restores** them, and
-**"Delete permanently"** reclaims the space once you are sure. **Only deleting a worktree cannot
+**"Delete permanently"** reclaims the space once you are sure (if a restore of that archive stopped
+part way, restore it again first — deleting it is refused until then). The trash never empties on its
+own; when it has grown, **"Delete permanently: older than 30 days"** in the trash tab reclaims it in
+one go (its size is also shown in **Settings → Machine**). **Only deleting a worktree cannot
 be undone** — and even then only the working copy goes; the history, the remote and the branch
-remain. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
+remain. The stopped AI sessions that lived in it **move to the archive** (the conversation stays
+readable, but it cannot resume without its folder), and shell / SSM move to the trash. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
 it only ever covers sessions that are already gone for good.
 
 Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
-browser). "Delete old ones" in the archive list removes items older than 30 days from the list.
+browser). "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
 
 You can also ask the fleet operator to do the same survey and tidy-up from chat
 ([11](08-organising.md)).
@@ -316,7 +322,8 @@ You can also ask the fleet operator to do the same survey and tidy-up from chat
 Cleanup surveys the **whole workspace**. When what you want to clear is **one finished job** — a
 parent worktree and the worktrees of the child sessions it spawned — right-click that row and
 choose **"Delete the working copy"**. The copies the left pane nests under that row are listed as
-they are, so **archiving the sessions and deleting the copies happen in one go**.
+they are, so **archiving the sessions and deleting the copies happen in one go** (stopped AI sessions
+go to the archive, shell / SSM to the trash).
 
 - **Only rows that lose nothing are ticked for you** (already in the parent, nothing uncommitted,
   nobody working in them). A row with uncommitted or unmerged work stays empty, so **ticking it is
@@ -509,7 +516,7 @@ it shows up in the left pane, the sessions overview and the fleet graph like any
 
 **It is off by default.** Turn it on in **Settings > Agents > Session > "Starting sessions from
 sessions"**. The change applies to **sessions started from then on**; sessions already running
-keep their current tools until they restart. Under it, **"Children per session"** (default 3)
+keep their current tools until they restart. Under it, **"Children per session"** (1–10, default 3)
 sets **how many children one session may have at a time**. The limit is per parent, not per
 workspace, so two parents can each have that many. **A slot frees when you delete or archive a
 child**, or when a child left stopped is archived on its own after the usual window
@@ -674,6 +681,8 @@ the new list **without a restart**.
   missing route is still available from that session's own built-in tool** — including "make
   the same prompt on both so I can compare", which is one call to each. Only when no route is
   left does the tool itself disappear.
+- **A session attached to an image studio does not get it.** There the agent refines the draft
+  and a person presses generate ([04 Files](04-files.md#studio-refine-the-draft-by-talking-to-an-agent)).
 - **Which route draws it is a list of rows.** **Settings > Agents > Session > "Image provider
   order"** ranks every image route this workspace can reach: the deployment's own engines, each
   under its own name (with **ComfyUI** or **OpenAI-compatible** in brackets), and the CLI routes

@@ -1,86 +1,42 @@
-// The family cards (ADR 0081 decision 7, layer A) and the size list.
+// The family facts as read off the Agent's model row (ADR 0100 decision 7) and the size list.
 //
-// The card is advice, so the only thing a test can hold is that it is the RIGHT card and
-// that an unknown family gets none — an invented card would advise on a dialect nobody
-// checked, which is worse than no card at all.
+// The card is advice, so the only thing a test can hold is that it reads what the Agent said
+// and that nothing is invented when it said nothing.
 import { describe, expect, it } from "vitest";
-import { FAMILY_CARDS, familyCard, parseSize, sizeOptions } from "./families.ts";
+import { familyFacts, parseSize, sizeOptions } from "./families.ts";
 
-describe("族カードの選択", () => {
-  it("族の数だけ一つずつ", () => {
-    expect(FAMILY_CARDS.map((c) => c.id)).toEqual([
-      "sd15",
-      "sdxl",
-      "sd35",
-      "flux1",
-      "flux2-klein",
-      "zimage",
-      "anima",
-      "krea2",
-      "qwen-image-edit-2509",
-      "qwen-image-edit-2511",
-      "qwen-image-2.1",
-    ]);
+describe("族の事実（ADR 0100 決定 7: Agent の表から読むだけ）", () => {
+  it("模型行の 4 欄と試走 steps をそのまま読む", () => {
+    expect(
+      familyFacts({
+        id: "m",
+        dialect: "tags",
+        quality_prefixes: ["masterpiece, best quality", ""],
+        steps_range: [20, 40],
+        cfg_range: [5, 9],
+        trial_steps: 10,
+      }),
+    ).toEqual({ dialect: "tags", quality: ["masterpiece, best quality"], steps: [20, 40], cfg: [5, 9], trialSteps: 10 });
   });
 
-  it("krea2 は蒸留版と非蒸留版の両端を出す（行が params でどちらかを宣言する）", () => {
-    expect(familyCard("krea2")?.dialect).toBe("sentences");
-    expect(familyCard("krea2")?.steps).toEqual([8, 52]);
-    expect(familyCard("krea2")?.quality).toEqual([]);
+  it("cfg を読まない族は cfg の範囲を持たない", () => {
+    expect(familyFacts({ id: "m", dialect: "sentences", steps_range: [16, 32] })?.cfg).toBeUndefined();
   });
 
-  it("anima は tags 方言で、推奨接頭辞を 2 つ持つ", () => {
-    expect(familyCard("anima")?.dialect).toBe("tags");
-    // Aesthetic 版は score_* を使わない、という model card の但し書きが chip 2 つの理由。
-    expect(familyCard("anima")?.quality).toHaveLength(2);
-    expect(familyCard("anima")?.cfg).toEqual([4, 5]);
+  // 勝手に手引きを作らない: 族の名前だけでは何も言わない（Console に第 2 の表は無い）。
+  it("Agent が何も言わなければ null（族の名前だけでは作らない）", () => {
+    expect(familyFacts({ id: "m", family: "sdxl" })).toBeNull();
+    expect(familyFacts(null)).toBeNull();
   });
 
-  it("base_model で引ける（大小・空白は無視）", () => {
-    expect(familyCard("sdxl")?.dialect).toBe("tags");
-    expect(familyCard(" SDXL ")?.id).toBe("sdxl");
-    expect(familyCard("flux2-klein")?.trialSteps).toBe(4);
+  // anima はタグと文章の併記（ADR 0100 改訂 9）。知らない値は描かない。
+  it("併記の方言を通し、知らない方言は捨てる", () => {
+    expect(familyFacts({ id: "m", dialect: "mixed", steps_range: [30, 50] })?.dialect).toBe("mixed");
+    expect(familyFacts({ id: "m", dialect: "prose" as never, steps_range: [30, 50] })?.dialect).toBeUndefined();
   });
 
-  it("知らない族・空は null（勝手に手引きを作らない）", () => {
-    expect(familyCard("pixart")).toBeNull();
-    expect(familyCard("")).toBeNull();
-    expect(familyCard(undefined)).toBeNull();
-  });
-
-  it("cfg を読まない族には推奨範囲が無い", () => {
-    expect(familyCard("flux1")?.cfg).toBeUndefined();
-    expect(familyCard("flux2-klein")?.cfg).toBeUndefined();
-    expect(familyCard("sdxl")?.cfg).toEqual([5, 9]);
-  });
-
-  // ADR 0094: 指示編集は文章の方言で、sizes は空（出力寸法は入力画像のアスペクト比が決める）。
-  // 2 つの族で同じなのは、別族である理由がグラフの配線（決定 6）であって手引きではないから。
-  it.each(["qwen-image-edit-2509", "qwen-image-edit-2511"])("%s は sentences 方言で sizes が空", (id) => {
-    const card = familyCard(id);
-    expect(card?.dialect).toBe("sentences");
-    expect(card?.sizes).toEqual([]);
-    expect(card?.trialSteps).toBe(8);
-  });
-
-  // 🔴 上流が 2511 で steps を倍にした（実測 E は 40 steps で 393.8 秒）。両族で同じ数字を
-  // 出すと、族を分けた意味がカードから消える。
-  it("2509 と 2511 は steps が違う（上流のテンプレートがそうなっている）", () => {
-    expect(familyCard("qwen-image-edit-2509")?.steps).toEqual([20, 20]);
-    expect(familyCard("qwen-image-edit-2511")?.steps).toEqual([40, 40]);
-  });
-
-  // 🔴 ADR 0098: 指示編集の方言でありながら sizes を持つ唯一の族。生成もできるからで、
-  // ここを空にすると生成側の寸法の選択肢が画面から消える（決定 4 の例外ではない）。
-  it("qwen-image-2.1 は sentences 方言だが sizes を持つ（生成もする族）", () => {
-    const card = familyCard("qwen-image-2.1");
-    expect(card?.dialect).toBe("sentences");
-    // 1024 級の 5 つ＋その倍の辺の 5 つ（ADR 0098 未解決 3・2048² は実機で通った）。既定は 1024²。
-    expect(card?.sizes).toHaveLength(10);
-    expect(card?.sizes[0]).toBe("1024x1024");
-    expect(card?.sizes).toContain("2048x2048");
-    expect(card?.steps).toEqual([25, 50]);
-    expect(card?.cfg).toEqual([1, 4]);
+  it("壊れた範囲は捨てる", () => {
+    expect(familyFacts({ id: "m", dialect: "tags", steps_range: [1] as unknown as [number, number] })?.steps).toBeUndefined();
   });
 });
 
@@ -116,6 +72,16 @@ describe("大きさの選択肢", () => {
   it.each(["qwen-image-edit-2509", "qwen-image-edit-2511"])("%s は行の宣言があっても空のまま", (id) => {
     expect(sizeOptions(["1024x1024"], id)).toEqual([]);
     expect(sizeOptions(undefined, id)).toEqual([]);
+  });
+});
+
+describe("qwen-image-2.1 の既定寸法", () => {
+  // ADR 0098: 指示編集の族でありながら生成もするので寸法を持つ。空にすると生成側の選択肢が消える。
+  it("1024 級の 5 つ＋その倍の辺の 5 つ", () => {
+    const s = sizeOptions(undefined, "qwen-image-2.1");
+    expect(s).toHaveLength(10);
+    expect(s[0]).toBe("1024x1024");
+    expect(s).toContain("2048x2048");
   });
 });
 

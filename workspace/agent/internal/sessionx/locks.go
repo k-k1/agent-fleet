@@ -136,6 +136,9 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	// Not inside a working-copy delete: see WithDeletionGate.
+	deletionGate.Lock()
+	defer deletionGate.Unlock()
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
 	m, ok := session.ReadMeta(name)
@@ -162,17 +165,60 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 func WriteSessionMetaKeepingLock(m session.Meta) session.Meta {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
-	if current, ok := session.ReadMeta(m.Name); ok {
-		m.Locked = current.Locked
-		m.KeepAwakeUntil = current.KeepAwakeUntil
-		m.StopAfterTurnAt = current.StopAfterTurnAt
-		// Written by the initial-prompt delivery goroutine and by a studio bind, both of which
-		// can land between the list's read and this write.
-		m.InitialPromptState = current.InitialPromptState
-		m.Studio = current.Studio
+	current, ok := session.ReadMeta(m.Name)
+	if !ok {
+		// Gone since the caller read it: the session was deleted (moved to the trash, ADR 0101)
+		// in between. Writing the snapshot back would bring the row back, with its transcript
+		// already in the trash — so write nothing.
+		return m
 	}
+	m.Locked = current.Locked
+	m.KeepAwakeUntil = current.KeepAwakeUntil
+	m.StopAfterTurnAt = current.StopAfterTurnAt
+	// Written by the initial-prompt delivery goroutine and by a studio bind, both of which
+	// can land between the list's read and this write.
+	m.InitialPromptState = current.InitialPromptState
+	m.Studio = current.Studio
 	session.WriteMeta(m)
 	return m
+}
+
+// UpdateSessionMeta is a read-modify-write of one meta under the same lock: fn edits the meta
+// as it is on disk NOW, and returns false to write nothing. A handler that read the meta earlier
+// and wrote its snapshot back would roll back a deletion lock set in between. Reports whether
+// it wrote (false also when the meta is gone).
+func UpdateSessionMeta(name string, fn func(m *session.Meta) bool) (session.Meta, bool) {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	m, ok := session.ReadMeta(name)
+	if !ok || !fn(&m) {
+		return m, false
+	}
+	session.WriteMeta(m)
+	return m, true
+}
+
+// deletionGate serialises a working-copy delete (gitx.HandleDeleteRepo, from its guards to
+// settling its sessions) against the lock endpoints. Without it a lock set while `git worktree
+// remove` ran was answered "locked" and the folder was deleted anyway (ADR 0101). Order: the
+// gate is always taken first, never while holding sessionLockMu or lockMu.
+var deletionGate sync.Mutex
+
+// WithDeletionGate runs fn inside the deletion gate (gitx takes it through its deps).
+func WithDeletionGate(fn func()) {
+	deletionGate.Lock()
+	defer deletionGate.Unlock()
+	fn()
+}
+
+// WithSessionMetaLock runs fn holding the lock every meta read-modify-write above takes. The
+// trash forgets a meta inside it, after re-reading the lock, so a lock set while the archive
+// was being written is honoured and no snapshot write can land between the check and the
+// removal.
+func WithSessionMetaLock(fn func()) {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	fn()
 }
 
 // keepAwakeMaxHours caps how far one pin can extend. Extending is just pressing again, and
@@ -230,6 +276,8 @@ func HandleRepoLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	deletionGate.Lock() // not inside a working-copy delete: see WithDeletionGate
+	defer deletionGate.Unlock()
 	if err := SetRepoLock(dir, req.Locked); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "lock_save", err.Error())
 		return

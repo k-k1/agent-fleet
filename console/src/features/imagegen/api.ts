@@ -20,6 +20,7 @@ import type {
   HistoryPage,
   Knowledge,
   KnowledgeAdd,
+  KnowledgeEdit,
   KnowledgeScope,
   PressMode,
   StudioCreate,
@@ -70,13 +71,27 @@ export const createStudio = (body: StudioCreate): Promise<StudioWire> => apiJSON
 export const getStudio = (id: string): Promise<StudioWire> => api(studioPath(id));
 
 /** Merge-patch the studio. `ifMatch` is the `updated_at` the pane last read: a write that lost
- *  a race is refused rather than silently overwriting the agent's (or the member's) edit. */
-export const patchStudio = (id: string, body: StudioPatch, ifMatch: string): Promise<StudioPatchResult> =>
-  api(studioPath(id), {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "If-Match": ifMatch },
-    body: JSON.stringify(body),
-  });
+ *  a race is refused (412) rather than silently overwriting the agent's (or the member's) edit.
+ *  The status comes back with the body because the caller answers 412, a 5xx and a refusal three
+ *  different ways; 0 is a request that never got an answer. */
+export const patchStudio = async (
+  id: string,
+  body: StudioPatch,
+  ifMatch: string,
+): Promise<StudioPatchResult & { status: number }> => {
+  let r: Response;
+  try {
+    r = await raw(studioPath(id), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": ifMatch },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: 0 } as StudioPatchResult & { status: number };
+  }
+  const parsed = (await r.json().catch(() => ({}))) as StudioPatchResult;
+  return { ...parsed, status: r.status };
+};
 
 /** Deletes the draft and its versions; the pictures stay. */
 export const deleteStudio = (id: string): Promise<Response> => raw(studioPath(id), { method: "DELETE" });
@@ -110,8 +125,26 @@ export const imagegenHistory = (opts: { studio?: string; before?: string; limit?
   return api("api/imagegen/history" + (qs ? `?${qs}` : ""));
 };
 
-export const imagegenKnowledge = (scope: KnowledgeScope, key: string): Promise<Knowledge> =>
-  api(`api/imagegen/knowledge?scope=${encodeURIComponent(scope)}&key=${encodeURIComponent(key)}`);
+/** `full` reads the summary past its 1 KB limit — only for the editor, which would otherwise
+ *  save the cut copy over the rest. */
+export const imagegenKnowledge = (scope: KnowledgeScope, key: string, full = false): Promise<Knowledge> =>
+  api(`api/imagegen/knowledge?scope=${encodeURIComponent(scope)}&key=${encodeURIComponent(key)}${full ? "&full=1" : ""}`);
 
 export const addImagegenKnowledge = (body: KnowledgeAdd): Promise<{ error?: ApiError }> =>
   apiJSON("api/imagegen/knowledge", "POST", body);
+
+/** Replace the four sections; the status comes back so the editor can tell 412 apart. */
+export const editImagegenKnowledge = async (body: KnowledgeEdit): Promise<Knowledge & { status: number }> => {
+  let r: Response;
+  try {
+    r = await raw("api/imagegen/knowledge", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: 0 } as Knowledge & { status: number };
+  }
+  const parsed = (await r.json().catch(() => ({}))) as Knowledge;
+  return { ...parsed, status: r.status };
+};

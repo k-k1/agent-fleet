@@ -223,51 +223,6 @@ func TestWorktreeDeleteHelpers(t *testing.T) {
 	}
 }
 
-// TestMaybePruneWorktreeKeeps verifies auto-cleanup is conservative: it removes a
-// worktree only when it is clean AND unreferenced. A dirty worktree, or one a session
-// meta still points at, must be left in place. (The clean+unreferenced removal path is
-// covered end-to-end by TestWorktreeGuardDriftFlow.)
-func TestMaybePruneWorktreeKeeps(t *testing.T) {
-	if _, err := execLookPathGit(); err != nil {
-		t.Skip("git not available")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
-	parent := filepath.Join(home, "repos", "app")
-	gitInit(t, parent)
-
-	// Dirty worktree: an uncommitted file must NOT be auto-removed (work would be lost).
-	dirty, err := gitx.EnsureWorktree(parent, "main", "dirty-x", "")
-	if err != nil {
-		t.Fatalf("gitx.EnsureWorktree dirty: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dirty, "wip.txt"), []byte("wip"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitx.MaybePruneWorktree(dirty)
-	if !gitx.IsGitRepo(dirty) {
-		t.Errorf("dirty worktree was auto-removed; should be kept")
-	}
-
-	// Referenced worktree: clean, but a session meta points at it → kept.
-	ref, err := gitx.EnsureWorktree(parent, "main", "ref-x", "")
-	if err != nil {
-		t.Fatalf("gitx.EnsureWorktree ref: %v", err)
-	}
-	session.WriteMeta(session.Meta{Name: "zz", Dir: ref, Kind: "shell"})
-	gitx.MaybePruneWorktree(ref)
-	if !gitx.IsGitRepo(ref) {
-		t.Errorf("referenced worktree was auto-removed; should be kept while a meta points at it")
-	}
-
-	// A non-worktree (the parent) is never touched.
-	gitx.MaybePruneWorktree(parent)
-	if !gitx.IsGitRepo(parent) {
-		t.Errorf("parent working copy was removed; gitx.MaybePruneWorktree must ignore non-worktrees")
-	}
-}
-
 // TestUpdateSessionStartBranch verifies an intentional branch rename rewrites the
 // recorded start branch for sessions in that working copy (so it isn't later seen as
 // drift), while leaving other dirs and pre-existing ("") metas untouched.

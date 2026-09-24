@@ -76,6 +76,15 @@ type Deps struct {
 	// would leave files silently undeleted, so the zero value is not allowed here either.
 	RemoveTerminalHistory func(name string)
 
+	// --- The trash (cleanup_ops.go) ---
+	//
+	// The one way a session's meta is forgotten (ADR 0101 decision 1): archive it to the gz
+	// trash, then remove it. The archive lives in main (cleanup_archive.go) with its restore
+	// and purge, so /stop reaches it through here. stop = halt a running session first
+	// (otherwise a running one is refused with TrashErrRunning). code is "" or a stable error
+	// code (errCodeLocked / TrashErr*).
+	TrashSession func(m session.Meta, stop bool) (archive, code string, err error)
+
 	// --- Toolchains (env_toolchains.go) ---
 	ToolchainShellPrefix func() string
 
@@ -198,6 +207,10 @@ func isSvnRepo(dir string) bool { return deps.IsSvnRepo(dir) }
 func repoJobsRunning() int { return deps.RepoJobsRunning() }
 
 func removeTerminalHistory(name string) { deps.RemoveTerminalHistory(name) }
+
+func trashSession(m session.Meta, stop bool) (string, string, error) {
+	return deps.TrashSession(m, stop)
+}
 
 func finalizeSessionUsage(m session.Meta) { deps.FinalizeSessionUsage(m) }
 

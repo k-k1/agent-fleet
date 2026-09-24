@@ -8,7 +8,8 @@ package main
 //   - branch:  its name + tip SHA — a merged branch's commits already live in the
 //              target's object store, so recording the ref is enough to recreate it.
 // A worktree's working files are reconstructable from git (delete_worktree refuses
-// dirty/ahead), so they are NOT archived — only the sessions/branch tied to it are.
+// dirty/ahead), so they are NOT archived. Deleting a worktree moves its stopped AI sessions to
+// the shelf and its shell / ssm to this trash (ADR 0101 decision 4).
 //
 // Each archive is a self-contained <id>.tar.gz (manifest.json + jsonl files inside),
 // with a sidecar <id>.json manifest for cheap listing without extracting.
@@ -18,8 +19,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,6 +65,9 @@ type cleanupManifest struct {
 	Sessions  []cleanupArchivedSession `json:"sessions,omitempty"`
 	Branches  []cleanupArchivedBranch  `json:"branches,omitempty"`
 	Worktrees []string                 `json:"worktrees,omitempty"` // names removed (informational)
+	// Bytes is the size of the archive's tarball, filled in by listCleanupArchives for the
+	// trash tab (what a purge reclaims). Never written into the archive itself.
+	Bytes int64 `json:"bytes,omitempty"`
 }
 
 // newCleanupID builds a sortable, unique archive id. now is passed in (never
@@ -72,11 +78,38 @@ func newCleanupID(now time.Time, slug string) string {
 
 // writeCleanupArchive persists the manifest + jsonl payloads as <id>.tar.gz plus a
 // sidecar <id>.json. payloads maps a tar entry name → bytes.
-func writeCleanupArchive(m cleanupManifest, payloads map[string][]byte) error {
+//
+// It never overwrites an archive: the id is only second-precise, so two deletes of the same
+// name in one second produced the same id and the second write replaced the first (and a
+// cleanup of the loser could then purge the winner's only copy). The tarball is created with
+// O_EXCL, and a taken id gets a -2, -3, … suffix — m.ID is updated to the id actually written.
+func writeCleanupArchive(m *cleanupManifest, payloads map[string][]byte) error {
 	dir := cleanupStoreDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	base := m.ID
+	var f *os.File
+	for n := 1; ; n++ {
+		if n > 1 {
+			m.ID = fmt.Sprintf("%s-%d", base, n)
+		}
+		var err error
+		f, err = os.OpenFile(filepath.Join(dir, m.ID+".tar.gz"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) || n >= 100 {
+			return err
+		}
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = f.Close()
+			_ = os.Remove(filepath.Join(dir, m.ID+".tar.gz"))
+		}
+	}()
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
@@ -101,9 +134,13 @@ func writeCleanupArchive(m cleanupManifest, payloads map[string][]byte) error {
 	if err := gw.Close(); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, m.ID+".tar.gz"), buf.Bytes(), 0o600); err != nil {
+	if _, err := f.Write(buf.Bytes()); err != nil {
 		return err
 	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	ok = true
 	// Sidecar manifest for listing; best-effort (the tar.gz is the source of truth).
 	_ = os.WriteFile(filepath.Join(dir, m.ID+".json"), mj, 0o600)
 	return nil
@@ -131,6 +168,9 @@ func listCleanupArchives() []cleanupManifest {
 		}
 		var m cleanupManifest
 		if json.Unmarshal(b, &m) == nil && m.ID != "" {
+			if info, err := os.Stat(filepath.Join(cleanupStoreDir(), m.ID+".tar.gz")); err == nil {
+				m.Bytes = info.Size()
+			}
 			out = append(out, m)
 		}
 	}
@@ -181,16 +221,186 @@ func readCleanupArchive(id string) (cleanupManifest, map[string][]byte, error) {
 }
 
 // purgeCleanupArchive permanently removes an archive (reclaims its space for good).
-func purgeCleanupArchive(id string) error {
+// errRestoreIncomplete refuses a purge while a restore of the same archive has not finished:
+// transcripts it placed may already point at the session's cache, and with neither the meta
+// nor the archive left, the cache scan would take that cache as orphaned.
+var errRestoreIncomplete = errors.New("a restore of this archive did not finish; restore it again first")
+
+// restoringMarker is the file that says a restore of archive id started and has not finished.
+// Written before anything is placed and removed only when every session is back.
+func restoringMarker(id string) string { return filepath.Join(cleanupStoreDir(), id+".restoring") }
+
+// manifestAtHead reads manifest.json, the first entry writeCleanupArchive writes, from the
+// archive's tarball and stops there.
+func manifestAtHead(id string) (cleanupManifest, error) {
+	var m cleanupManifest
+	f, err := os.Open(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
+	if err != nil {
+		return m, err
+	}
+	defer f.Close()
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		return m, err
+	}
+	defer gr.Close()
+	tr := tar.NewReader(gr)
+	h, err := tr.Next()
+	if err != nil {
+		return m, err
+	}
+	if h.Name != "manifest.json" || h.Size < 0 || h.Size > 4<<20 {
+		return m, fmt.Errorf("archive %s: no manifest at its head", id)
+	}
+	b, err := io.ReadAll(tr)
+	if err != nil {
+		return m, err
+	}
+	return m, json.Unmarshal(b, &m)
+}
+
+// errRestoreStopped wraps a restore that stopped part way: it reports what failed, promises
+// nothing was undone, and that restoring again is safe and finishes the job.
+var errRestoreStopped = errors.New("the restore stopped part way; nothing was undone, and restoring again is safe")
+
+// restoreLeftHalfDone reports whether any session in archive id is half back: a transcript at
+// its destination with no meta. Only that state needs the archive kept — a session whose meta
+// is back is reachable by it, and one with neither is untouched.
+//
+// An archive whose manifest cannot be read at all counts as half done, erring toward keeping
+// it: that is the one case a purge can be refused for good, and ADR 0097 says so. It is also
+// the case where nothing else could be done with the archive — a restore needs the same
+// manifest. Only the manifest is read (the sidecar, else the tarball's first entry), never
+// the transcripts behind it, because this runs under the cleanup lock.
+func restoreLeftHalfDone(id string) bool {
+	var m cleanupManifest
+	b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json"))
+	if err != nil || json.Unmarshal(b, &m) != nil {
+		if m, err = manifestAtHead(id); err != nil {
+			return true
+		}
+	}
+	for _, s := range m.Sessions {
+		var meta session.Meta
+		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
+			continue
+		}
+		if _, ok := session.ReadMeta(meta.Name); ok {
+			continue
+		}
+		for _, p := range s.JSONLPaths {
+			if _, err := os.Lstat(p); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// purgeCleanupArchive removes one archive and returns its manifest. It does not touch the
+// managed ledgers: whether a session's ledger may go depends on every OTHER archive too, which
+// the caller checks once for everything it purged (dropPurgedLedgers).
+func purgeCleanupArchive(id string) (cleanupManifest, error) {
+	var man cleanupManifest
 	if filepath.Base(id) != id || strings.Contains(id, "..") {
-		return fmt.Errorf("invalid archive id")
+		return man, fmt.Errorf("invalid archive id")
+	}
+	// A mark alone does not block: only a session actually left half back does. So a mark
+	// that outlived its reason (an earlier attempt placed a transcript, and the session was
+	// since deleted again) never makes the archive impossible to purge.
+	if _, err := os.Lstat(restoringMarker(id)); err == nil {
+		if restoreLeftHalfDone(id) {
+			return man, errRestoreIncomplete
+		}
+		_ = os.Remove(restoringMarker(id))
+	}
+	if b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json")); err == nil {
+		_ = json.Unmarshal(b, &man)
 	}
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
-	return os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
+	if err := os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
+		return man, err
+	}
+	return man, nil
+}
+
+// dropPurgedLedgers removes the managed kinds' ClientMessageID ledger of each session a purged
+// archive held. The trash keeps the ledger because a session in it can still be restored and
+// resumed (ADR 0101 decision 1); once the archive is purged nothing can bring the session back,
+// so the ledger is what is left over. A session whose meta exists (restored since) keeps its
+// ledger, and so does one that another archive still holds (deleted, restored, deleted again):
+// restoring that archive must find its ledger, or a resumed managed session could run a
+// message it had already run. The remaining archives are read once for the whole batch.
+func dropPurgedLedgers(purged []cleanupManifest) {
+	held := map[string]bool{}
+	for _, a := range listCleanupArchives() {
+		for _, s := range a.Sessions {
+			held[s.Name] = true
+		}
+	}
+	for _, man := range purged {
+		dropLedgersOf(man, held)
+	}
+}
+
+func dropLedgersOf(man cleanupManifest, held map[string]bool) {
+	for _, s := range man.Sessions {
+		var meta session.Meta
+		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
+			continue
+		}
+		if _, ok := session.ReadMeta(meta.Name); ok || held[meta.Name] {
+			continue
+		}
+		sessionx.RemoveManagedLedger(meta)
+	}
 }
 
 // restoreCleanupArchive replays an archive: re-create each branch ref (name→sha, if
 // absent) and each session (meta + jsonl written back). Returns per-item outcomes.
+// stageNextTo writes data to a temporary file in dest's directory — the same filesystem, so
+// placing it is a link or a rename, never a copy.
+func stageNextTo(dest string, data []byte) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".restore-*")
+	if err != nil {
+		return "", err
+	}
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(tmp.Name())
+		return "", errors.Join(werr, cerr)
+	}
+	return tmp.Name(), nil
+}
+
+// linkFile is os.Link; a var only so a test can make it fail.
+var linkFile = os.Link
+
+// placeNoReplace puts tmp at dest unless something is already there, in which case that
+// file wins. A hard link is the atomic "create only if absent". There is deliberately no
+// fallback: a rename would silently replace a transcript that appeared after the last check,
+// so where a link cannot be made the restore fails and says why (EFS and local disks have
+// hard links).
+func placeNoReplace(tmp, dest string) (created bool, err error) {
+	err = linkFile(tmp, dest)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+// restoreAfterStage, when set, runs after a restore has read its archive and staged the
+// transcripts and before it takes the cleanup lock. Tests only: it is the point a purge has to
+// win at to exercise the race.
+var restoreAfterStage func()
+
 func restoreCleanupArchive(id string) (map[string]any, error) {
 	m, payloads, err := readCleanupArchive(id)
 	if err != nil {
@@ -198,6 +408,22 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	}
 	restored := map[string]any{"sessions": []string{}, "branches": []string{}}
 	var sessions, branches []string
+	var metas []session.Meta
+	// Transcripts are staged next to their destination and only placed under the cleanup lock,
+	// together with the metas. A restore never removes or replaces anything it did not create
+	// in this call, and it never reports a session as back unless its meta was written. When a
+	// step fails it stops there and says so: transcripts it already placed stay (a transcript
+	// with no meta is inert), and running the restore again finishes the job — a transcript
+	// already at its path is kept, and the metas are simply written again. Undoing a placed
+	// transcript instead would mean deleting a file some other process may already be
+	// appending to.
+	type stagedFile struct{ tmp, dest string }
+	var staged []stagedFile
+	dropStaged := func() {
+		for _, f := range staged {
+			_ = os.Remove(f.tmp)
+		}
+	}
 	for _, s := range m.Sessions {
 		var meta session.Meta
 		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
@@ -211,11 +437,80 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			if !ok {
 				continue
 			}
-			_ = os.MkdirAll(filepath.Dir(s.JSONLPaths[i]), 0o700)
-			_ = os.WriteFile(s.JSONLPaths[i], data, 0o600)
+			dest := s.JSONLPaths[i]
+			// A transcript already at the path is the live one — this archive restored once
+			// before and the session has moved on since, or the agent rewrote it. It is at least
+			// as new as the archived copy, so it is kept rather than rolled back.
+			if _, err := os.Lstat(dest); err == nil {
+				continue
+			}
+			tmp, err := stageNextTo(dest, data)
+			if err != nil {
+				dropStaged()
+				return nil, fmt.Errorf("archive %s: cannot stage %s: %w", id, dest, err)
+			}
+			staged = append(staged, stagedFile{tmp: tmp, dest: dest})
 		}
-		session.WriteMeta(meta)
+		metas = append(metas, meta)
 		sessions = append(sessions, s.Name)
+	}
+	if restoreAfterStage != nil {
+		restoreAfterStage()
+	}
+	// Only the hand-over is under the cleanup lock: from here on the meta, not the archive,
+	// keeps these sessions' cache reachable. Reading the archive and staging the transcripts
+	// above can take a while on a large archive, and holding the lock through them would stall
+	// the cleanup survey and the Machine tab behind it. So the archive is checked again here —
+	// a purge that won the race means a cache delete may already have run, and bringing the
+	// conversation back without its files is the one outcome this lock exists to prevent.
+	var handErr error
+	sessionx.WithCleanupLock(func() {
+		if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
+			handErr = fmt.Errorf("archive %s was purged while it was being restored", id)
+			return
+		}
+		// Mark the restore as under way before anything is placed. While the mark stands and
+		// something is left half done, the archive cannot be purged, so that half stays
+		// reachable through the archive (purgeCleanupArchive).
+		_, statErr := os.Lstat(restoringMarker(id))
+		markedBefore := statErr == nil
+		if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
+			handErr = fmt.Errorf("%w: archive %s: cannot mark the restore: %w", errRestoreStopped, id, err)
+			return
+		}
+		changed := false
+		// A failure that changed nothing, on an archive no earlier attempt left half done,
+		// leaves no mark: otherwise a restore that can never succeed (a filesystem without
+		// hard links) would make its archive impossible to purge.
+		stop := func(err error) {
+			if !changed && !markedBefore {
+				_ = os.Remove(restoringMarker(id))
+			}
+			handErr = fmt.Errorf("%w: %w", errRestoreStopped, err)
+		}
+		for _, f := range staged {
+			created, err := placeNoReplace(f.tmp, f.dest)
+			if err != nil {
+				stop(fmt.Errorf("cannot place %s: %w", f.dest, err))
+				return
+			}
+			changed = changed || created
+		}
+		for i, meta := range metas {
+			// An existing meta is newer than the archived snapshot — a session already
+			// restored and then locked, renamed or run — and is kept as it is.
+			created, err := session.CreateMetaIfAbsent(meta)
+			if err != nil {
+				stop(fmt.Errorf("restored %d of %d sessions, then could not write %s: %w", i, len(metas), meta.Name, err))
+				return
+			}
+			changed = changed || created
+		}
+		_ = os.Remove(restoringMarker(id))
+	})
+	dropStaged() // placed ones are hard links, so the staging names are only temporary
+	if handErr != nil {
+		return nil, handErr
 	}
 	for _, b := range m.Branches {
 		dir, ok := gitx.ResolveRepoDir(b.Repo)

@@ -1,9 +1,8 @@
 package imagegen
 
 // The image studio's contract (ADR 0100): the stored shape, the edit log and the knowledge
-// document, frozen as types before the store, the pane and the MCP tools are written against
-// them in parallel. The handlers in studio_http.go answer 501 until the store lands; what is
-// fixed here is the vocabulary every one of those lanes speaks.
+// document — the vocabulary the store (studio_store.go and its neighbours), the pane and the MCP
+// tools all speak.
 //
 // The Console's copy of these types is console/src/features/imagegen/wire.ts (ImageStudio*,
 // DraftLog*, Knowledge*). Keep the two in step by hand; the JSON keys are the contract.
@@ -279,10 +278,31 @@ type Knowledge struct {
 	// SummaryTruncated says the summary was cut at the read limit, so the pane can say so
 	// instead of hiding it.
 	SummaryTruncated bool `json:"summary_truncated,omitempty"`
+	// FilesPath is Path relative to the browse root, the form the Files pane opens; "" when the
+	// file is outside it (a browse root that is not home). The pane then edits the four sections
+	// itself (decision 12), since the member has no other way to reach them.
+	FilesPath string `json:"files_path,omitempty"`
+	// Version identifies the file's content as read ("" when there is none yet). A KnowledgeEdit
+	// names it, so an edit made over the agent's Edit or an add_image_knowledge is refused rather
+	// than silently undoing it.
+	Version string `json:"version,omitempty"`
+}
+
+// KnowledgeEdit is PUT /imagegen/knowledge: the pane's editor for a document the Files pane
+// cannot reach (decision 12). All four sections are replaced — records included, because
+// removing a record is the member's to do and this is their only way to it here.
+type KnowledgeEdit struct {
+	Scope    string `json:"scope"`
+	Key      string `json:"key"`
+	Version  string `json:"version"`
+	Summary  string `json:"summary"`
+	Settings string `json:"settings"`
+	Prompts  string `json:"prompts"`
+	Records  string `json:"records"`
 }
 
 // KnowledgeAdd is POST /imagegen/knowledge — add_image_knowledge's append to the "records"
-// section. Nothing else is written through this route.
+// section. The agent writes nothing else through the Agent; the other sections are its Edit's.
 type KnowledgeAdd struct {
 	Scope    string `json:"scope"`
 	Key      string `json:"key"`

@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -46,10 +48,36 @@ func readStudioFile(id string) (studioFile, bool) {
 	return f, true
 }
 
-// studioBoundSession reports whether the session's meta names a studio.
-func studioBoundSession(name string) bool {
-	m, ok := session.ReadMeta(name)
-	return ok && m.Studio != ""
+// studioBoundSession reports whether the session is bound to a studio.
+func studioBoundSession(name string) bool { return sessionStudio(name) != "" }
+
+// sessionStudio is the studio the session is bound to, "" for none. The meta's Studio is the copy
+// this process advertises from, but a Managed create starts the CLI — and this process answers
+// its first tools/list — BEFORE the meta is written; only the studio's own `session` is written
+// first (decision 2 ③). Measured with codex Managed: that first list lacked the studio tools, and
+// codex never lists again, so the session could not reach its studio at all. With no meta yet,
+// the studio naming this session back is the answer.
+func sessionStudio(name string) string {
+	if m, ok := session.ReadMeta(name); ok {
+		return m.Studio
+	}
+	if !session.ValidName(name) {
+		return ""
+	}
+	ents, err := os.ReadDir(paths.ImagegenStudiosDir())
+	if err != nil {
+		return ""
+	}
+	for _, e := range ents {
+		id, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || e.IsDir() {
+			continue
+		}
+		if f, ok := readStudioFile(id); ok && f.Session == name {
+			return id
+		}
+	}
+	return ""
 }
 
 // mcpStudioAdvertise decides whether this session is offered the studio tools, in the three
@@ -72,11 +100,11 @@ func mcpStudioAdvertise() (studioOffer, bool) {
 		}
 		return studioOffer{}, false
 	}
-	m, ok := session.ReadMeta(self)
-	if !ok || m.Studio == "" {
+	studio := sessionStudio(self)
+	if studio == "" {
 		return studioOffer{}, false
 	}
-	f, _ := readStudioFile(m.Studio)
+	f, _ := readStudioFile(studio)
 	return studioOffer{agentTrial: f.AgentTrial}, true
 }
 
@@ -102,18 +130,18 @@ func mcpStudioCall(req mcpReq, name string, args json.RawMessage) []byte {
 	if err != nil {
 		return mcpToolErr(req.ID, "このセッションがどの画像スタジオに結ばれているか特定できません: "+err.Error())
 	}
-	m, ok := session.ReadMeta(self)
-	if !ok || m.Studio == "" {
+	bound := sessionStudio(self)
+	if bound == "" {
 		return mcpToolErr(req.ID, "このセッションは画像スタジオに結ばれていません")
 	}
-	f, ok := readStudioFile(m.Studio)
+	f, ok := readStudioFile(bound)
 	if !ok || f.Session != self {
 		return mcpToolErr(req.ID, "このセッションと画像スタジオの結びが変わりました。スタジオのペインから結び直してください")
 	}
 	if name == "run_image_trial" && !f.AgentTrial {
 		return mcpToolErr(req.ID, "このスタジオではエージェントの試走が許可されていません（スタジオの設定で切り替えられます）")
 	}
-	studio := url.PathEscape(m.Studio)
+	studio := url.PathEscape(bound)
 	var (
 		method = http.MethodGet
 		path   string
@@ -126,16 +154,7 @@ func mcpStudioCall(req mcpReq, name string, args json.RawMessage) []byte {
 		method, path = http.MethodPut, "/imagegen/studios/"+studio
 		body, _ = json.Marshal(map[string]any{"author": "agent", "session": self, "draft": draftWithAbsoluteInputs(args)})
 	case "run_image_trial":
-		// The press answers at once with the job; waiting for the picture is this process's job,
-		// not the Agent's: poll GET /imagegen/jobs for that job for at most 120 s (decision 3),
-		// then answer with the path, seed, warnings and time, or with the job id and "the result
-		// arrives in get_image_studio". The heartbeat is what keeps opencode, which cuts a silent
-		// call at 60 s, on the line meanwhile (mcp_imagegen.go). The polling lands with the
-		// studio store; the press and the heartbeat are the contract.
-		stop := startProgressHeartbeat(req, "試走しています…")
-		defer stop()
-		method, path = http.MethodPost, "/imagegen/studios/"+studio+"/press"
-		body, _ = json.Marshal(map[string]any{"mode": "agent_trial", "session": self})
+		return mcpRunImageTrial(req, studio, self)
 	case "add_image_knowledge":
 		var in map[string]any
 		_ = json.Unmarshal(nonEmptyArgs(args), &in)
@@ -153,6 +172,108 @@ func mcpStudioCall(req mcpReq, name string, args json.RawMessage) []byte {
 	return mcpResult(req.ID, map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": out}},
 	})
+}
+
+// The agent trial's wait (decision 3). The press answers at once with the job; waiting for the
+// picture is this process's, polling the queue, for at most mcpStudioTrialWait. 120 s because a
+// warm engine answers in 8-21 s and a cold one takes minutes — past the wait, the job id and "it
+// arrives in get_image_studio" are a better answer than holding the agent's turn.
+var (
+	mcpStudioTrialWait = 120 * time.Second
+	mcpStudioTrialPoll = 2 * time.Second
+)
+
+func mcpRunImageTrial(req mcpReq, studio, self string) []byte {
+	// The heartbeat keeps opencode, which cuts a silent call at 60 s, on the line meanwhile
+	// (mcp_imagegen.go).
+	stop := startProgressHeartbeat(req, "試走しています…")
+	defer stop()
+	body, _ := json.Marshal(map[string]any{"mode": "agent_trial", "session": self})
+	out, err := agentDo(http.MethodPost, "/imagegen/studios/"+studio+"/press", body)
+	if err != nil {
+		return mcpToolErr(req.ID, "試走できませんでした: "+agentErrDetail(err))
+	}
+	var pressed struct {
+		Version string `json:"version"`
+		Jobs    []struct {
+			ID string `json:"id"`
+		} `json:"jobs"`
+	}
+	if json.Unmarshal([]byte(out), &pressed) != nil || len(pressed.Jobs) == 0 {
+		return mcpToolErr(req.ID, "試走の結果を読み取れませんでした")
+	}
+	jobID := pressed.Jobs[0].ID
+	deadline := time.Now().Add(mcpStudioTrialWait)
+	for {
+		if j, ok := studioTrialJob(jobID); ok {
+			switch j.State {
+			case "done":
+				value := map[string]any{
+					"version": pressed.Version, "job": jobID, "files": j.Files,
+					"warnings": append([]string{}, j.Warnings...), "elapsed_ms": j.ElapsedMS,
+					"note": "パスは試走の絵。確かめる必要があるときだけ開くこと。warnings は実際に起きたこと。",
+				}
+				// The seed this picture came out at — what "make a variation of THIS one" needs.
+				if len(j.Files) > 0 && j.Files[0].Seed != nil {
+					value["seed"] = *j.Files[0].Seed
+				}
+				return mcpStructuredResult(req.ID, value)
+			case "failed", "cancelled":
+				return mcpToolErr(req.ID, "試走 "+pressed.Version+" は失敗しました: "+firstNonEmpty(j.Error, j.State))
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return mcpStructuredResult(req.ID, map[string]any{
+				"version": pressed.Version, "job": jobID, "state": "running",
+				"note": "試走はまだ終わっていません（エンジンが起動中のことがあります）。結果は次の get_image_studio の since に出ます。呼び直さないでください。",
+			})
+		}
+		time.Sleep(min(mcpStudioTrialPoll, time.Until(deadline)))
+	}
+}
+
+type studioTrialFile struct {
+	Path   string `json:"path"`
+	Seed   *int64 `json:"seed,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+}
+
+type studioTrialJobWire struct {
+	ID        string            `json:"id"`
+	State     string            `json:"state"`
+	Files     []studioTrialFile `json:"files"`
+	Warnings  []string          `json:"warnings"`
+	ElapsedMS int64             `json:"elapsed_ms"`
+	Error     string            `json:"error"`
+}
+
+// studioTrialJob finds one job in the queue's list. A failed read is "not yet": the wait is
+// bounded, and a transient error must not turn a running trial into a reported failure.
+func studioTrialJob(id string) (studioTrialJobWire, bool) {
+	out, err := agentGET("/imagegen/jobs")
+	if err != nil {
+		return studioTrialJobWire{}, false
+	}
+	var list struct {
+		Jobs []studioTrialJobWire `json:"jobs"`
+	}
+	if json.Unmarshal([]byte(out), &list) != nil {
+		return studioTrialJobWire{}, false
+	}
+	for _, j := range list.Jobs {
+		if j.ID == id {
+			return j, true
+		}
+	}
+	return studioTrialJobWire{}, false
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // draftWithAbsoluteInputs is set_image_draft's arguments with each reference in `inputs` made

@@ -38,6 +38,399 @@
   min-width: 0;
 }
 
+/* ── the studio's three columns (ADR 0100 §4) ───────────────────────── */
+
+/* Each column scrolls on its own: the conversation keeps its place while the draft and the
+   results move, which one shared scroller cannot do. */
+.igen-body.igen-studio {
+  grid-template-columns: minmax(300px, 1.1fr) minmax(320px, 1fr) minmax(280px, 0.9fr);
+  overflow: hidden;
+}
+
+.igen-studio > .igen-col-form,
+.igen-studio > .igen-col-out {
+  overflow: auto;
+  min-height: 0;
+  /* Room for the agent outline (.igen-hl), which a scrolling column would otherwise clip. */
+  padding: 4px 6px;
+}
+
+.igen-col-agent {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  padding-right: 10px;
+}
+
+/* The tab strip exists only for the narrow pane. */
+.igen-tabs {
+  display: none;
+}
+
+@container paneview (max-width: 720px) {
+  .igen-body.igen-studio {
+    grid-template-columns: 1fr;
+  }
+  .igen-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 6px 12px 0;
+  }
+  .igen-studio[data-tab="chat"] > .igen-col-form,
+  .igen-studio[data-tab="chat"] > .igen-col-out,
+  .igen-studio[data-tab="form"] > .igen-col-agent,
+  .igen-studio[data-tab="form"] > .igen-col-out,
+  .igen-studio[data-tab="out"] > .igen-col-agent,
+  .igen-studio[data-tab="out"] > .igen-col-form {
+    display: none;
+  }
+  .igen-col-agent {
+    border-right: none;
+    padding-right: 0;
+  }
+}
+
+.igen-tab {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.igen-tab.active {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.igen-agent {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.igen-agent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+}
+
+.igen-agent-head .igen-chip {
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.igen-agent-spacer {
+  flex: 1;
+}
+
+/* The mirror lays itself out to fill its parent, as it does in a pane of its own. */
+.igen-agent-mirror {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.igen-persona {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.igen-persona.failed {
+  color: var(--warn);
+}
+
+.igen-head-model {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.igen-head-model .igen-field.compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}
+
+.igen-studio-pick {
+  max-width: 220px;
+}
+
+.igen-studio-menu {
+  position: relative;
+}
+
+.igen-studio-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.igen-studio-menu-body {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.igen-form-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.igen-hl-note {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* A field the agent moved and the member has not touched since (decision 6). An outline, not
+   a fill: the field's own colours still say whether it is disabled. */
+.igen-hl {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.igen-lock {
+  display: inline-flex;
+  margin-left: 6px;
+  cursor: pointer;
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+.igen-lock.on {
+  color: var(--accent);
+}
+
+.igen-lockwrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.igen-lockrow {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── edit history (decision 9) ─────────────────────────────────────── */
+
+.igen-log {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.igen-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.igen-log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.igen-log-seq,
+.igen-log-time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.igen-log-who.agent {
+  color: var(--accent);
+}
+
+.igen-log-state {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.igen-log-state.failed,
+.igen-log-state.lost,
+.igen-log-state.record_pending {
+  color: var(--warn);
+}
+
+.igen-log-rewind {
+  margin-left: auto;
+}
+
+.igen-log-changes {
+  margin: 2px 0 0 18px;
+  padding: 0;
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  color: var(--muted);
+}
+
+/* A set_image_draft call in the conversation: the edit it wrote, not a faint trace. */
+.igen-callcard {
+  margin: 4px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.igen-callcard-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.igen-callcard-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ── pictures and notes ────────────────────────────────────────────── */
+
+.igen-verbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.igen-memo {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.igen-memo > summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.igen-memo-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.igen-memo-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.igen-memo-path {
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.igen-memo-cap {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-memo-text {
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow: auto;
+}
+
+/* The four-section editor, where the Files pane cannot reach the notes file. */
+.igen-memo-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.igen-memo-edit .igen-memo-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.igen-memo-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.igen-memo-add {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.igen-memo-input {
+  flex: 1;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+}
+
+.igen-attach-blocked {
+  margin: 4px 0 0 16px;
+  padding: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-attach-wt {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.igen-redirect {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 /* ── header ─────────────────────────────────────────────────────────── */
 
 .igen-engine {
@@ -546,4 +939,15 @@
   background: var(--code-bg, rgba(127, 127, 127, 0.08));
   padding: 6px 8px;
   border-radius: 4px;
+}
+
+/* The composer's place while no model is chosen (ADR 0100 revision 9). */
+.igen-needs-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--warn);
+  border-top: 1px solid var(--border);
 }

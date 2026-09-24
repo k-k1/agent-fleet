@@ -536,3 +536,74 @@ func TestPreviewBringsALargePictureDownToTheAskedSize(t *testing.T) {
 		t.Errorf("preview is %dx%d, want 2000x1500 (4000/2048 rounds to 2)", cfg.Width, cfg.Height)
 	}
 }
+
+// countThumbCache is the number of entries in the thumbnail cache — the quantity that must
+// not grow while somebody looks at the cache folder itself.
+func countThumbCache(t *testing.T) int {
+	t.Helper()
+	ents, err := os.ReadDir(thumbCacheDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatal(err)
+	}
+	return len(ents)
+}
+
+// A gallery opened on the cache folder asks for a thumbnail of every entry. Answering would
+// write a new entry per card, the next listing would find those too, and the folder would
+// fill without end. Entries are served as they are.
+func TestThumbCacheFolderIsNotThumbnailed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_BROWSE_ROOT", home)
+	if err := os.MkdirAll(thumbCacheDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	orig := noisyPNG(t, filepath.Join(thumbCacheDir(), "entry.png"), 800, 600, false)
+
+	rel := ".cache/agent-fleet/thumbs/entry.png"
+	for _, q := range []string{"path=" + rel + "&thumb=64", "path=" + rel + "&preview=1024"} {
+		if got := download(t, q).Body.Bytes(); !bytes.Equal(got, orig) {
+			t.Fatalf("%s: served %d bytes, want the original %d", q, len(got), len(orig))
+		}
+	}
+	if n := countThumbCache(t); n != 1 {
+		t.Fatalf("cache holds %d entries after viewing it, want 1 (the entry itself)", n)
+	}
+
+	warmThumbDir(thumbCacheDir(), 64)
+	warmThumbList([]string{filepath.Join(thumbCacheDir(), "entry.png")}, 64)
+	if n := countThumbCache(t); n != 1 {
+		t.Fatalf("warming the cache folder wrote %d entries, want none", n-1)
+	}
+}
+
+// The cache may be reached through a symlink (~/.cache onto persistent storage), and so may
+// the path a caller hands in. Either spelling must still be recognised.
+func TestInThumbCacheSeesThroughSymlinks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	real := t.TempDir()
+	if err := os.Symlink(real, filepath.Join(home, ".cache")); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(real, "agent-fleet", "thumbs", "x.jpg")
+	if err := os.MkdirAll(filepath.Dir(inside), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{inside, filepath.Join(thumbCacheDir(), "x.jpg"), thumbCacheDir()} {
+		if !inThumbCache(p) {
+			t.Errorf("inThumbCache(%q) = false, want true", p)
+		}
+	}
+	for _, p := range []string{filepath.Join(home, "shot.png"), filepath.Join(real, "agent-fleet", "thumbs-old", "x.jpg"), ""} {
+		if inThumbCache(p) {
+			t.Errorf("inThumbCache(%q) = true, want false", p)
+		}
+	}
+}

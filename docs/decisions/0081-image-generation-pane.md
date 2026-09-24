@@ -9,6 +9,8 @@ English | [日本語](0081-image-generation-pane.ja.md)
   decision 2, the family and the seed the PNG chunk really gives, the thumbnail's small-file exception,
   the lightbox's `path`, and five line anchors). **P0 built the same day** in #625 / #626 / #627 without a
   GPU; the wire as built is in "P0 as built" below, and the live run is still owed.
+  Status update (2026-09-24): P1 is not planned as listed. ADR 0100 changed its direction — sweeps moved to ADR 0100's P2, and the draft the session's agent edits replaces `POST /imagegen/suggest`. The gallery's "Open in image generation" was built; the rest of the list (presets, the queue journal, per-step progress and preview frames, and so on) waits until someone asks for it.
+- Follow-ups: #956
 - See also: [0069](0069-image-generation-providers.md) (the provider abstraction this pane drives;
   open question 1 deferred the job shape — this ADR takes it up) /
   [0072](0072-engine-model-catalog.md) (the catalogue rows, `params`, `negative_prompt`, the five comfy families) /

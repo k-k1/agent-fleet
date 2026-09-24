@@ -11,7 +11,7 @@
 // — which is what lets the shared-session view mount the same blocks without a route to
 // somebody else's Workspace. See capabilities.ts for the rule about absent callbacks.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
@@ -26,6 +26,8 @@ import { lineDiff, type DiffEdit } from "../../viewer/DiffView.tsx";
 import { previewBody } from "../optionPreview.ts";
 import { parseQuestionAnswers, resolveAnswer } from "../questionAnswers.ts";
 import { planOutcome } from "../planDecision.ts";
+import { useQuestionTranslate, type QuestionTranslateView } from "../questionTranslate.ts";
+import type { TranscriptTranslateWiring } from "../useTranslate.ts";
 import { planKey, removePlanComment, unsentComments, usePlanComments } from "../planComments.ts";
 import type { Group, Part, Question, QuestionOption, TaskItem, TurnTtsWiring } from "./types.ts";
 
@@ -251,6 +253,12 @@ export function CompactBlock({
 // (Settings > Agents > each card; off by default). Like WorkDisclosure it holds the open/closed
 // state locally, so a click is never undone by a re-render; only a change to the setting
 // re-syncs to defaultOpen, so an already-open mirror picks it up at once.
+//
+// Kept compact because a busy turn interleaves many short thoughts with tool rows: a separate
+// head row plus a closing strip used to cost two lines of chrome around a one-line thought.
+// So the head is a one-line preview while closed, and while open it shrinks to the lightbulb in
+// the body's left gutter (still the toggle). The bottom close is only rendered once the body is
+// tall enough that its head can scroll away (THINKING_FOOT_MIN_PX).
 export function ThinkingBlock({
   text,
   defaultOpen,
@@ -266,10 +274,12 @@ export function ThinkingBlock({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const head = useRef<HTMLButtonElement>(null);
+  const [body, long] = useTallerThan(THINKING_FOOT_MIN_PX);
   useEffect(() => {
     setOpen(defaultOpen);
   }, [defaultOpen]);
   if (!text) return null;
+  const label = tr("mirror.thinking_label");
   return (
     <section className={"mirror-thinking mirror-disclosure" + (open ? " open" : "")}>
       <button
@@ -277,22 +287,70 @@ export function ThinkingBlock({
         ref={head}
         className="mirror-thinking-head"
         aria-expanded={open}
+        aria-label={label}
+        title={label}
         onClick={() => setOpen((value) => !value)}
       >
         <Icon name="lightbulb" />
-        <span className="mth-title">{tr("mirror.thinking_label")}</span>
+        <span className="mth-title">{label}</span>
+        <span className="mth-preview">{thinkingPreview(text)}</span>
       </button>
       <DisclosureContent open={open} className="mirror-thinking-body">
-        <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} />
-        <DisclosureFoot
-          onClose={() => {
-            setOpen(false);
-            revealHead(head.current);
-          }}
-        />
+        <div ref={body}>
+          <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} />
+        </div>
+        {long && (
+          <DisclosureFoot
+            onClose={() => {
+              setOpen(false);
+              revealHead(head.current);
+            }}
+          />
+        )}
       </DisclosureContent>
     </section>
   );
+}
+
+// Below this body height the gutter toggle at the top is still within reach of where the
+// reader finished, so a closing strip at the bottom would be pure chrome (~10 lines of prose).
+export const THINKING_FOOT_MIN_PX = 240;
+
+// useTallerThan reports whether the element given the returned callback ref is taller than px,
+// following resizes (pane width, streamed text). A callback ref rather than an effect on a ref
+// object: the element can mount after the component does (a thinking part that arrives empty).
+// The body keeps its natural height while the disclosure is closed (the clipping happens on the
+// grid track above it), so the answer is already right at the moment it opens.
+export function useTallerThan(px: number): [(el: HTMLElement | null) => void, boolean] {
+  const [taller, setTaller] = useState(false);
+  const observer = useRef<ResizeObserver | null>(null);
+  const attach = useCallback(
+    (el: HTMLElement | null) => {
+      observer.current?.disconnect();
+      observer.current = null;
+      if (!el) return;
+      const check = () => setTaller(el.getBoundingClientRect().height > px);
+      check();
+      observer.current = new ResizeObserver(check);
+      observer.current.observe(el);
+    },
+    [px],
+  );
+  return [attach, taller];
+}
+
+// thinkingPreview flattens the reasoning Markdown into the one line the closed head shows (CSS
+// adds the ellipsis). Only the markup that would read as noise is dropped — emphasis markers,
+// code ticks, heading/quote/list leaders — never underscores, which live inside identifiers.
+export function thinkingPreview(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, ""))
+    .join(" ")
+    .replace(/\*\*|`+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 400);
 }
 
 // ErrorBlock renders a turn that ended in a provider-side error instead of an answer
@@ -845,6 +903,8 @@ export function QuestionBlock({
   answered,
   answer,
   declined,
+  translate,
+  autoTranslate = false,
 }: {
   questions?: Question[];
   answered?: boolean;
@@ -854,6 +914,10 @@ export function QuestionBlock({
   // Rendering `answer` as if it were a pick would parse to nothing but still badge
   // it answered — the exact "answered but not recognized" confusion this fixes.
   declined?: boolean;
+  // The per-answer translation wiring (docs/log/97); absent = no button (the shared view).
+  translate?: TranscriptTranslateWiring;
+  // The turn arrived while the reader was watching (TranscriptView arrivedAfter).
+  autoTranslate?: boolean;
 }) {
   const norm = (answer || "").trim();
   // Per-question answers, so each card shows its OWN reply instead of the whole raw
@@ -863,6 +927,11 @@ export function QuestionBlock({
   const pairs = parseQuestionAnswers(norm, qs.map((q) => q.question));
   const answerAt = (qi: number) => (pairs.length ? pairs[qi] || "" : norm);
   const wide = hasPreview(qs);
+  // Display only, like the pending card: the answer is matched against the ORIGINAL labels
+  // (resolveAnswer below), and the translated option at the same index is what is drawn. The
+  // user's own free-text answer is never translated — it is what they wrote.
+  const tx = useQuestionTranslate(translate, qs, "", autoTranslate);
+  const shownQs = tx?.questions ?? qs;
   return (
     <div className={"mt-question" + (answered ? " answered" : "") + (declined ? " declined" : "")}>
       {qs.map((qn, qi) => {
@@ -882,7 +951,7 @@ export function QuestionBlock({
           <div className="mq" key={qi}>
             <div className="mq-head">
               <Icon name="comment-discussion" />
-              {qn.header && <span className="mq-header">{qn.header}</span>}
+              {qn.header && <span className="mq-header">{shownQs[qi]?.header || qn.header}</span>}
               {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select_ok")}</span>}
               {answered && (
                 <span className={"mq-done muted" + (declined ? " declined" : "")}>
@@ -890,20 +959,21 @@ export function QuestionBlock({
                 </span>
               )}
             </div>
-            {qn.question && <div className="mq-text">{qn.question}</div>}
+            {qn.question && <div className="mq-text">{shownQs[qi]?.question || qn.question}</div>}
             <div className={"mq-options" + (wide ? " wide" : "")}>
               {opts.map((o, oi) => {
                 const sel = chosenSet.has(o.label);
+                const od = shownQs[qi]?.options?.[oi] ?? o;
                 return (
                   <button
                     type="button"
                     className={"mq-opt" + (sel ? " selected" : "")}
                     key={oi}
                     disabled
-                    title={o.description || o.label}
+                    title={od.description || od.label}
                   >
                     <span className="mq-mark">{qn.multiSelect ? (sel ? "☑" : "☐") : sel ? "◉" : "○"}</span>
-                    <OptionBody o={o} />
+                    <OptionBody o={od} />
                   </button>
                 );
               })}
@@ -925,7 +995,36 @@ export function QuestionBlock({
           </div>
         );
       })}
+      {tx && (
+        <div className="mq-tx-row">
+          <TranslateToggle view={tx} />
+        </div>
+      )}
     </div>
+  );
+}
+
+/** The translate button of a question card, pending or answered — the same look and wording as
+ *  a turn's (TranscriptTurn), with the failure next to it. */
+export function TranslateToggle({ view }: { view: QuestionTranslateView }) {
+  return (
+    <>
+      {view.error && (
+        <span className="mt-translate-err" title={view.error}>
+          {view.error}
+        </span>
+      )}
+      <button
+        type="button"
+        className={"ghost xs mt-translate" + (view.shown ? " on" : "")}
+        title={tr(view.shown ? "mirror.translate_off_title" : "mirror.translate_title")}
+        disabled={view.busy}
+        onClick={view.toggle}
+      >
+        <Icon name={view.busy ? "loading" : "globe"} spin={view.busy} />{" "}
+        {tr(view.shown ? "mirror.translate_off" : "mirror.translate")}
+      </button>
+    </>
   );
 }
 

@@ -22,6 +22,7 @@ updated: "2026-08"
 | [limits.md](limits.ja.md) | 既定はいくつ？ 上限は？ |
 | [glossary.md](glossary.ja.md) | この言葉は画面とコードで何を指す？ |
 | [browser-pane.md](browser-pane.ja.md) | 動いている Web アプリを人にどう見せる？ |
+| [更新履歴](../../deploy/release/notes/SUMMARY.ja.md) | いつ入った？ どの版で直った？ |
 
 ## 表の読み方
 

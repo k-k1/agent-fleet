@@ -5,10 +5,13 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -38,10 +41,66 @@ func WriteMeta(m Meta) {
 	if err := os.MkdirAll(MetaDir(), 0o700); err != nil {
 		return
 	}
+	metaWriteMu.Lock()
+	defer metaWriteMu.Unlock()
+	if deletedMetas[MetaPath(m.Name)] {
+		// Deleted (moved to the trash, ADR 0101) since the caller read it. Every writer works
+		// from a snapshot it read earlier — the list's stopped stamp, a title suggestion that
+		// took seconds, a restore from the shelf — and writing that back would bring the row
+		// back with its transcript already in the trash. Names are never reused, so a deleted
+		// name stays deleted until a restore from the trash (CreateMetaIfAbsent) clears it.
+		return
+	}
 	if b, err := json.Marshal(m); err == nil {
 		_ = os.WriteFile(MetaPath(m.Name), b, 0o600)
 	}
 	rememberCWD(m)
+}
+
+// metaWriteMu orders WriteMeta against the removal of a meta, and deletedMetas remembers which
+// meta files a person deleted in this process (keyed by path, so a test's temporary directory
+// never shadows another's). Together they make "read a meta, work, write it back" safe against
+// a delete landing in between, at every one of the writers at once.
+var (
+	metaWriteMu  sync.Mutex
+	deletedMetas = map[string]bool{}
+)
+
+// CreateMetaIfAbsent writes m only when no meta of that name exists, and reports whether it
+// did. For the cleanup restore: an archived meta is a snapshot, and a live meta of the same
+// name — a session already restored, then locked, renamed or run since — is newer and must
+// not be rolled back to it. The meta is written to a temporary name first and hard-linked
+// into place, which fails if the name exists: atomic, and never a half-written meta on disk.
+func CreateMetaIfAbsent(m Meta) (created bool, err error) {
+	if err := os.MkdirAll(MetaDir(), 0o700); err != nil {
+		return false, err
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return false, err
+	}
+	tmp, err := os.CreateTemp(MetaDir(), ".meta-*.tmp")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp.Name())
+	_, werr := tmp.Write(b)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		return false, errors.Join(werr, cerr)
+	}
+	metaWriteMu.Lock()
+	defer metaWriteMu.Unlock()
+	if err := os.Link(tmp.Name(), MetaPath(m.Name)); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	// A restore from the trash is the one way a deleted name comes back.
+	delete(deletedMetas, MetaPath(m.Name))
+	rememberCWD(m)
+	return true, nil
 }
 
 func ReadMeta(name string) (Meta, bool) {
@@ -69,13 +128,17 @@ func RemoveMeta(name string) { _ = os.Remove(MetaPath(name)) }
 
 // RemoveMetaAndLineage is RemoveMeta plus erasing the session's fleet-graph lineage row
 // (ADR 0096 decision 6: an explicit, person-initiated forgetting of a session means
-// "deleted", not "still has a line in the graph"). Use this — never bare RemoveMeta — for
-// every path that forgets a meta because someone asked to: /stop, DELETE /sessions/{name}
-// (with or without ?reclaim=1), and a working-copy delete's session collateral. Erasure is
+// "deleted", not "still has a line in the graph"). Its one caller is main's trashSession
+// (ADR 0101 decision 1), which every delete goes through — DELETE /sessions/{name}, its old
+// name /stop, and the shell / ssm of a deleted working copy — after the gz archive is
+// written. Never call it from anywhere else: that would be a delete skipping the trash. Erasure is
 // best-effort and logged, never fatal: the meta is already gone by the time this runs, so
 // failing the request over it would be strictly worse than a leftover lineage row.
 func RemoveMetaAndLineage(name string) {
+	metaWriteMu.Lock()
+	deletedMetas[MetaPath(name)] = true
 	RemoveMeta(name)
+	metaWriteMu.Unlock()
 	if err := fleetgraph.EraseLineage(name); err != nil {
 		log.Printf("fleet-graph: erase lineage for %s: %v", name, err)
 	}

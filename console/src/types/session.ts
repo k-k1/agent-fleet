@@ -79,6 +79,10 @@ export interface Session {
   // NOT a "is this unattended" predicate — `origin` is a separate axis and a handoff
   // proposal keeps origin=user while carrying this (ADR 0073 決定 1 の 2026-09-10 補遺).
   originSession?: string;
+  // Who raised this session (ADR 0073): "user" | "operator" | "schedule" | "handoff" |
+  // "session" | "unknown". "session" is a child another session spawned with create_session —
+  // the only reliable "child" test, since a fork or a launched handoff carries originSession too.
+  origin?: string;
   // The image studio this session is bound to (ADR 0100 decision 2); such a session opens in
   // the studio pane, not the mirror. Absent for an ordinary session.
   studio?: string;

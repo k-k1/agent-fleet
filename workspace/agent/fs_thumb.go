@@ -317,6 +317,44 @@ func thumbCacheDir() string {
 	return filepath.Join(homeDir(), ".cache", "agent-fleet", "thumbs")
 }
 
+// inThumbCache reports whether full is inside the thumbnail cache itself. Nothing there may
+// be thumbnailed: a thumbnail of a cache entry is a NEW cache entry, so a gallery opened on
+// the cache folder grows it with every card and every `warm`, and each re-list then finds
+// more pictures to thumbnail — the folder never stops filling. The entries are already
+// preview-sized, so serving them as they are loses nothing.
+//
+// Both spellings are compared because either side may reach the file through a symlink
+// (~/.cache can be one onto persistent storage).
+func inThumbCache(full string) bool {
+	if full == "" {
+		return false
+	}
+	dir := thumbCacheDir()
+	if pathWithin(full, dir) {
+		return true
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
+	realFull, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		// The file itself may be gone; its directory still says where it was.
+		d, derr := filepath.EvalSymlinks(filepath.Dir(full))
+		if derr != nil {
+			return false
+		}
+		realFull = filepath.Join(d, filepath.Base(full))
+	}
+	return pathWithin(realFull, realDir)
+}
+
+// pathWithin is a lexical "p is dir or below it" on cleaned absolute paths.
+func pathWithin(p, dir string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(p))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func thumbCacheKey(display string, size int64, modTime time.Time, edge int, mode thumbMode) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d", display, size, modTime.UnixNano(), edge, mode)))
 	return hex.EncodeToString(sum[:])
@@ -445,7 +483,7 @@ func warmThumbFile(full string, edge int) {
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil || fi.IsDir() {
+	if err != nil || fi.IsDir() || inThumbCache(full) {
 		return
 	}
 	thumbnail(f, full, fi.Size(), fi.ModTime(), edge, modeDownscale)
@@ -480,7 +518,7 @@ func warmThumbList(paths []string, edge int) {
 // background. Newest first because that is the gallery's default order — the top of the
 // grid is what somebody is looking at while this runs.
 func warmThumbDir(full string, edge int) {
-	if edge <= 0 {
+	if edge <= 0 || inThumbCache(full) {
 		return
 	}
 	warmed.mu.Lock()

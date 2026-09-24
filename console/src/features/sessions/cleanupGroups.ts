@@ -33,6 +33,14 @@ export interface CleanupCandidate {
   bytes?: number;
   files?: number;
   dirs?: number;
+  // The scan behind a "cache" row stopped at its budget: the row covers only part.
+  truncated?: boolean;
+  // Orphan folders a "cache" row leaves out because something inside could not be read.
+  unreadable?: number;
+  // The scan could not finish a single folder and would stop at the same place again.
+  stuck?: boolean;
+  // Session folders left alone because the session store is missing.
+  unjudged?: number;
 }
 
 // One working copy: a linked worktree, or the clone itself (the base copy, isWorktree false).

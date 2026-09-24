@@ -35,6 +35,7 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   what had to be measured before a decision could stand is listed under *Open questions*, each
   decision naming the question it depends on. What was measured afterwards is in two sections —
   *Resolved by measurement* (ComfyUI) and *P0 measurements* (the implementation).
+- Follow-ups: #964
 - Revised the same day: **vLLM and ComfyUI were weighed, and the licence, gating and file sizes of
   the candidate models (SD3 / SD3.5 / FLUX.1 / FLUX.2 klein / Z-Image / Qwen-Image) were taken
   from the HF API** (Context: "Candidate models", "vLLM and ComfyUI"). Three consequences:

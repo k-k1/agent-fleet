@@ -315,7 +315,7 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 
 // TestMCPCleanupToolsRelay covers the cleanup tools: list_cleanup_candidates is a
 // READ tool → GET /sessions/cleanup; archive_session (write) → POST .../archive;
-// delete_worktree (write) → DELETE /repos/{name}?prune_sessions=1 and NEVER force.
+// delete_worktree (write) → DELETE /repos/{name} with no flags, and NEVER force.
 func TestMCPCleanupToolsRelay(t *testing.T) {
 	type hit struct{ method, path, query string }
 	got := make(chan hit, 3)
@@ -375,16 +375,17 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 	if h.method != "DELETE" || h.path != "/repos/app@wip-x" {
 		t.Fatalf("delete_worktree hit %s %s", h.method, h.path)
 	}
-	if h.query != "prune_sessions=1" {
-		t.Fatalf("delete_worktree query = %q, want prune_sessions=1 (and NO force)", h.query)
+	if h.query != "" {
+		t.Fatalf("delete_worktree query = %q, want none (the Agent shelves the sessions itself, ADR 0101; and NO force)", h.query)
 	}
 	if strings.Contains(h.query, "force") {
 		t.Fatalf("delete_worktree must never send force: %q", h.query)
 	}
 
-	// delete_session reclaims (jsonl) → DELETE /sessions/{name}?reclaim=1.
+	// delete_session → DELETE /sessions/{name}: the trash (ADR 0101). Never stop=1 — the
+	// operator deletes stopped sessions only; stopping is its own confirmed step.
 	call("delete_session", "slot9")
-	if h = awaitHit(t, got, "delete_session"); h.method != "DELETE" || h.path != "/sessions/slot9" || h.query != "reclaim=1" {
+	if h = awaitHit(t, got, "delete_session"); h.method != "DELETE" || h.path != "/sessions/slot9" || h.query != "" {
 		t.Fatalf("delete_session hit %s %s?%s", h.method, h.path, h.query)
 	}
 	// delete_branch → DELETE /repos/{repo}/branch?branch=<name> (slash-safe query).

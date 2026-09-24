@@ -82,11 +82,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	mux.HandleFunc("DELETE /cleanup/archives", handlePurgeOldCleanupArchives) // "older ones" (ADR 0101 decision 6)
 	mux.HandleFunc("GET /cleanup/usage", handleCleanupUsage)
 	mux.HandleFunc("DELETE /cleanup/cache/{feature}", handleDeleteCacheOrphans)
 	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites
-	// on deletion (/stop forgetting the metadata, DELETE, collateral from deleting a working
-	// copy) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one
+	// on deletion (DELETE and its old name /stop, and the shell / ssm a deleted working copy
+	// sends to the trash) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one
 	// the user wants to keep seeing (ADR 0097). Manual halt / archive still go through.
 	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
 	// Keep-awake pin (docs/log/75): shields the session and the Workspace from idle auto-stop
@@ -159,6 +160,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /imagegen/history", imagegen.HandleHistory)
 	mux.HandleFunc("GET /imagegen/knowledge", imagegen.HandleKnowledge)
 	mux.HandleFunc("POST /imagegen/knowledge", imagegen.HandleKnowledge)
+	mux.HandleFunc("PUT /imagegen/knowledge", imagegen.HandleKnowledge)
 	// Memo image attachments (docs/log/21 image attachments) — membership-scoped, so keyed to the
 	// container rather than a session (memo_paste.go). CP proxies /api/memos/* here.
 	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)

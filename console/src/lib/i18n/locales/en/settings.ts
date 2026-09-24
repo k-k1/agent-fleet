@@ -161,7 +161,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
     "Lets a session start another session, hand it a task, and look after the ones it started — listing them, reading their output, stopping and resuming them. It cannot instruct, answer for or delete any session. How many children it may have is set below (deleting or archiving one frees its slot). No grandchildren and no shell sessions. Each child is a whole agent's memory and quota, billed to you. Applies to sessions started from now on. Default OFF.",
   "agents.spawn_child_limit": "Children per session",
   "agents.note_spawn_child_limit":
-    "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child is a whole agent's memory. Default 3.",
+    "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child is a whole agent's memory. 1–10, default 3.",
   "agents.image_generation": "Image generation",
   "agents.note_image_generation":
     "Lets a session generate an image from a prompt (the generate_image tool). It uses a connected CLI's own image generation, spending that plan's usage each time. Applies to sessions started from now on. Default OFF.",

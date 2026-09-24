@@ -136,18 +136,21 @@ const SCENES = [
     settle: 2500,
   },
   {
-    // The image-generation studio (ADR 0081): the form on the left, the trial slot, a batch
-    // mid-run and its results on the right. The stub answers the widened status and a queue
-    // with 12 of 40 done, which is the state the screen is designed around.
+    // The image-generation studio (ADR 0081, ADR 0100): the bound claude session's mirror on
+    // the left, the studio's draft in the middle (the negative locked), and the trial slot, a
+    // batch mid-run, the results and the studio's pictures on the right. The stub's second read
+    // of the studio carries one more agent edit, so the settle outlasts the pane's 2 s poll and
+    // the prompt field is outlined as the agent's.
     name: "imagegen",
     sections: FOCUS_TREE,
-    width: 1600,
+    width: 1800,
     height: 1000,
-    layout: { cols: [col("c0", [pane("p0", null, { kind: "imagegen" })])], colRatios: [1], activeId: "p0" },
-    // The pane's model select starts empty (the draft is per browser), so the shot needs one
-    // chosen — otherwise the family card, the LoRAs and the knobs are all absent.
-    storage: { "af.imagegen-draft.demo": JSON.stringify({ model: "illustrious-v2", prompt: "1girl, harbour at dusk, masterpiece, best quality", size: "1216x832", jobs: 40, seedPolicy: "sequence", seed: "815723004", loras: [{ name: "add-detail", weight: 0.8 }] }) },
-    settle: 1200,
+    layout: {
+      cols: [col("c0", [pane("p0", null, { kind: "imagegen", studioId: "5f0c2d1e-8a4b-4c3d-9e2f-1a2b3c4d5e6f" })])],
+      colRatios: [1],
+      activeId: "p0",
+    },
+    settle: 3500,
   },
   {
     // The sessions overview (ADR 0078): every running session as a card, grouped by
