@@ -348,6 +348,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/cleanup/archives", rest) // ?older_than_days=N (ADR 0101 decision 6)
 	mux.HandleFunc("GET /api/cleanup/usage", rest)
 	mux.HandleFunc("DELETE /api/cleanup/cache/{feature}", rest)
+	mux.HandleFunc("GET /api/cleanup/tool-caches", rest)
+	mux.HandleFunc("DELETE /api/cleanup/tool-caches/{name}", rest)
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	mux.HandleFunc("POST /api/sessions/{name}/input", rest)

@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -40,6 +41,12 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// Session-side MCP tools need a provider-neutral owner identity. Native IDs differ
 	// across CLIs, while this slug is stable for every Agent Fleet session.
 	plan.Env = append(plan.Env, "AF_SESSION_NAME="+m.Name)
+	// The session's throwaway directory (docs/log/116), created here so the path is real
+	// by the time the CLI reads it; removed when the session is deleted. A failure to create
+	// it does not block the launch — the variable is simply not set.
+	if wd := paths.SessionWorkDir(m.Name); wd != "" && os.MkdirAll(wd, 0o700) == nil {
+		plan.Env = append(plan.Env, "AF_WORK_DIR="+wd)
+	}
 	// Inject the database client environment (PG* / MYSQL_* / AF_DB_URL_POSTGRES) for
 	// whichever engines are running, so `psql` and `mysql` connect with no arguments.
 	// Silent when absent — do not block session launch on db state.

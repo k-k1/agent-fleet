@@ -29,11 +29,12 @@ skip and say so.
   disk that vanishes on **stop**: an empty `node_modules` link is expected, so **run installs
   unconditionally**. Never put tracked files or uncommitted work on `/scratch`.
   Details: `notes/environment.md`.
-- **Throwaway files go in `~/.af-work/<session>/`** — `$AF_SESSION_NAME`, or your working copy's
-  directory name where that is unset (Managed sessions) — for probes, review checkouts, bundles,
-  screenshots, scratch clones. Never loose in `~` or `~/.cache`: nobody can tell later whose they
-  were and they pile up by the hundred. `/tmp` is shared and wiped on restart. Delete the
-  directory when the task is done. Details: `notes/environment.md`.
+- **Throwaway files go in `$AF_WORK_DIR`** (probes, review checkouts, bundles, screenshots,
+  scratch clones) — `~/.af-work/<session>/`, created at launch and **deleted with the session**.
+  Where it is unset (Managed sessions), use `~/.af-work/<working copy's directory name>/` and
+  delete it yourself. Never loose in `~` or `~/.cache`: nobody can tell later whose they were
+  and they pile up by the hundred. `/tmp` is shared and wiped on restart.
+  Details: `notes/environment.md`.
 
 ## Do not
 - Leave uncommitted changes; store credentials in plaintext (connections live under Settings >

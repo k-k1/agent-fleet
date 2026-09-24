@@ -273,6 +273,21 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.disk_truncated": "There were too many files to count them all; the real figures are higher.",
   "machine.disk_note":
     "Counts only what Agent Fleet itself stores under ~/.cache/agent-fleet (not working copies or tool caches). Generated images expire after 30 days and thumbnails after 14. The deleted sessions' share and the trash can be tidied up from Cleanup.",
+  "machine.tool_title": "Tool caches",
+  "machine.tool_measure": "Measure",
+  "machine.tool_measuring": "Measuring…",
+  "machine.tool_failed": "Couldn't measure the tool caches.",
+  "machine.tool_none": "No tool caches found.",
+  "machine.tool_empty": "Empty",
+  "machine.tool_busy": "In use (pid {pids})",
+  "machine.tool_confirm_title": "Empty the {name} cache?",
+  "machine.tool_confirm_body":
+    "{size} will be deleted. The cache is rebuilt on its own; the next build or install that needs it is slower once.",
+  "machine.tool_emptied": "Emptied {name} ({size}).",
+  "machine.tool_in_use": "{name} is in use by a running build or install. Try again when it finishes.",
+  "machine.tool_empty_failed": "Couldn't empty {name}: ",
+  "machine.tool_note":
+    "Caches that go, npm, uv and pip keep in your home. They grow without limit and are never emptied automatically. Measuring reads every file, so it runs only when you press the button.",
   "machine.note_who_changes":
     "The size and the kind of machine are set by your tenant administrator, and a change applies the next time the workspace starts.",
 

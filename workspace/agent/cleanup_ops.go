@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"os"
@@ -223,15 +224,20 @@ func trashStoppedSession(m session.Meta) error {
 }
 
 // removeSessionSideFiles drops the per-session side files keyed by session NAME —
-// handoff proposals (session-handoffs/), transcript marks (session-marks/) and the cached
-// answer translations (session-translations/). They are annotations about a conversation
-// that is being deleted, not part of it, so they do not go into the archive and a restore
-// does not bring them back. (Names are never reused — they are random slugs — so the files
+// handoff proposals (session-handoffs/), transcript marks (session-marks/), the cached
+// answer translations (session-translations/) and the throwaway ~/.af-work/<name>. They are
+// annotations about a conversation that is being deleted, or scratch made for it, not part of
+// it, so they do not go into the archive and a restore does not bring them back. (Names are never reused — they are random slugs — so the files
 // would not resurface on another session; they would only sit on disk for ever.)
 func removeSessionSideFiles(name string) {
 	sessionx.RemoveHandoffProposals(name)
 	sessionx.RemoveSessionMarks(name)
 	removeSessionTranslations(name)
+	// The throwaway directory ($AF_WORK_DIR) goes too: by definition nothing in it is
+	// meant to outlive the session (docs/log/116).
+	if wd := paths.SessionWorkDir(name); wd != "" {
+		_ = os.RemoveAll(wd)
+	}
 }
 
 // archiveSessionForDelete bundles a session's meta + jsonl(s) into a cleanup archive
