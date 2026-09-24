@@ -262,9 +262,8 @@ interface CleanupUsage {
   truncated?: boolean;
 }
 
-/** Cache parts that hold pictures, so "open in the gallery" means something. Not thumbs: a
- *  gallery over the thumbnail cache would make thumbnails of the thumbnails. */
-const IMAGE_PARTS = new Set(["generated", "codex-view-image", "pasted", "memo-images"]);
+/** Cache parts that hold pictures, so "open in the gallery" means something. */
+const IMAGE_PARTS = new Set(["generated", "thumbs", "codex-view-image", "pasted", "memo-images"]);
 
 /** Ctrl/⌘ and the middle button open beside, as everywhere else in the Console. */
 const besideClick = (e: RMouseEvent) => e.ctrlKey || e.metaKey || e.button === 1;

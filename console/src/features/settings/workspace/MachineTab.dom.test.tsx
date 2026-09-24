@@ -274,9 +274,9 @@ describe("MachineView", () => {
     expect(useSettingsUI.getState().settingsOpen).toBe(false);
     expect(useFilesStore.getState().reveal).toMatchObject({ path: ".cache/agent-fleet/generated", focus: true });
 
-    // A gallery button on the picture folder only — not on thumbs, not on the cache total.
+    // A gallery button on the picture folders (thumbnails included) — not on the cache total.
     const galleryButtons = [...host!.querySelectorAll("button")].filter((b) => b.textContent?.includes("ギャラリーで開く"));
-    expect(galleryButtons.length).toBe(1);
+    expect(galleryButtons.length).toBe(2);
     useSettingsUI.setState({ settingsOpen: true });
     const openTarget = vi.fn();
     const before = useLayoutStore.getState().openTarget;
