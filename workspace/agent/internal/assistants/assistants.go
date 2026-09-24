@@ -54,6 +54,10 @@ type Deps struct {
 	// knowledgeDir materializes the embedded builtin knowledge and returns its path
 	// (main's ensureBuiltinKnowledge, since the //go:embed stays in main).
 	knowledgeDirFn func() string
+	// docsDir is the shipped user guide (main's agentFleetDocsRoot): the whole guide/
+	// tree plus the release history staged into ref/releases. The embedded USAGE doc is
+	// a summary that says the guide is the source of truth, so the builtins read both.
+	docsDirFn func() string
 	// defaultAgent is the preferred AVAILABLE headless backend for builtins
 	// (main's preferredHeadlessAgent, which lives in the chat family).
 	defaultAgentFn func() string
@@ -61,11 +65,18 @@ type Deps struct {
 
 // NewDeps is the only entry point that assembles Deps: forgetting either argument is a
 // compile error. A nil argument panics here, and a zero-value Deps{} panics at use.
-func NewDeps(knowledgeDir, defaultAgent func() string) Deps {
-	if knowledgeDir == nil || defaultAgent == nil {
+func NewDeps(knowledgeDir, docsDir, defaultAgent func() string) Deps {
+	if knowledgeDir == nil || docsDir == nil || defaultAgent == nil {
 		panic("assistants.NewDeps: nil argument (wiring forgotten)")
 	}
-	return Deps{knowledgeDirFn: knowledgeDir, defaultAgentFn: defaultAgent}
+	return Deps{knowledgeDirFn: knowledgeDir, docsDirFn: docsDir, defaultAgentFn: defaultAgent}
+}
+
+func (d Deps) docsDir() string {
+	if d.docsDirFn == nil {
+		panic("assistants: zero-value Deps (not built through NewDeps)")
+	}
+	return d.docsDirFn()
 }
 
 func (d Deps) knowledgeDir() string {
@@ -164,6 +175,8 @@ func PersonaFor(ja, en, lang string) string {
 // Agent Fleet, grounded in the materialized USAGE knowledge and the read-only tools.
 const afAssistantPersona = "あなたは Agent Fleet の利用を案内する専任アシスタントです（案内役・観測役、読み取り専用）。" +
 	"知識として読み込んだ利用ガイド（agent-fleet-usage.md）を根拠に、使い方・操作手順・運用上の注意を簡潔に案内してください。" +
+	"要約で足りないときは、知識として渡した利用ガイド本体（README.ja.md から辿る member/ admin/ operate/ ref/ の各章）を読みます。" +
+	"何がいつ入った・どの版で直った・最近何が変わったかを聞かれたら、更新履歴 ref/releases/SUMMARY.ja.md（新しい版から順の 1 行索引）を引き、詳しくは同じ場所の版ごとのノートを読みます。いま動いている版は agent-fleet-version.md にあります。版と日付は推測せず、履歴に書かれたものだけを答えてください。" +
 	"利用者のワークスペースの状態を聞かれたら、推測せず list_my_sessions / get_session_status / get_session_output ツールで実際の状態を確認してから答えてください。溜まっているメモを聞かれたら list_memos で確認します。" +
 	"エージェントの使用量やレート制限（あとどれくらい使えるか・制限がいつ解除されるか）を聞かれたら、get_agent_usage で実際の値を確認してから答えます（claude / codex のみ。opencode には使用量ソースがありません）。" +
 	"セッションごとのコンテキスト使用量や累積消費トークンを聞かれたら、get_session_usage で実際の値を確認してから答えます。" +
@@ -175,6 +188,8 @@ const afAssistantPersona = "あなたは Agent Fleet の利用を案内する専
 // find.
 const afAssistantPersonaEN = "You are the assistant dedicated to guiding people through Agent Fleet (a guide and an observer, read-only). " +
 	"Ground what you say — how to use it, the steps to take, the operational caveats — in the usage guide loaded as knowledge (agent-fleet-usage.md), and keep it concise. " +
+	"When that summary is not enough, read the full user guide also loaded as knowledge (the member/ admin/ operate/ ref/ chapters, reached from README.md). " +
+	"When you are asked what arrived when, which release fixed something, or what changed recently, look it up in the release history ref/releases/SUMMARY.md (a one-line index, newest release first) and read that release's own notes next to it for detail. The release this workspace runs is in agent-fleet-version.md. Never guess a version or a date: answer only with what the history says. " +
 	"When you are asked about the state of the user's workspace, do not guess: check the real state with the list_my_sessions / get_session_status / get_session_output tools before you answer. When you are asked about queued memos, check with list_memos. " +
 	"When you are asked about an agent's usage or rate limit (how much is left, when the limit lifts), check the real numbers with get_agent_usage before you answer (claude / codex only — opencode has no usage source). " +
 	"When you are asked about a session's context usage or cumulative token spend, check the real numbers with get_session_usage before you answer. " +
@@ -268,26 +283,28 @@ const AFAssistantID = "af"
 // are resolved for display by the Console catalog (assistant.<id>.name/.desc, docs/log/28
 // P3), so they stay here in the source language.
 func Builtins(d Deps) []Assistant {
-	know := d.knowledgeDir()
+	// Knowledge dirs that do not exist are skipped per turn (chatx knowledgeDirs), so a
+	// workspace whose guide was never staged still gets the embedded summary.
+	know := []string{d.knowledgeDir(), d.docsDir()}
 	lang := uiprefs.Locale()
 	return []Assistant{
 		{
 			ID: AFAssistantID, Name: "Agent Fleet アシスタント", Icon: "rocket",
 			Description: "こんにちは。Agent Fleet の使い方を案内します。操作手順や、今のワークスペースの状態（動いているセッションなど）を実際に確認しながらお答えします。",
 			Builtin:     true, Agent: d.defaultAgent(), Persona: PersonaFor(afAssistantPersona, afAssistantPersonaEN, lang),
-			Tools: ToolsAFRead, Knowledge: []string{know},
+			Tools: ToolsAFRead, Knowledge: know,
 		},
 		{
 			ID: "operator", Name: "フリート・オペレーター", Icon: "broadcast",
 			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。不要になったセッションの停止・再開もできます。メモキューの確認・追加・一括送信もできます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
 			Builtin:     true, Agent: d.defaultAgent(), Persona: PersonaFor(OperatorPersona, OperatorPersonaEN, lang),
-			Tools: ToolsAFWrite, Knowledge: []string{know},
+			Tools: ToolsAFWrite, Knowledge: know,
 		},
 		{
 			ID: "sre", Name: "SRE アシスタント", Icon: "pulse",
 			Description: "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch・AWS を接続しておくと、開いているインシデントやメトリクス・ログ、AWS 側の実構成を実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
 			Builtin:     true, Agent: d.defaultAgent(), Persona: PersonaFor(srePersona, srePersonaEN, lang),
-			Tools: ToolsAFRead, Integrations: []string{integrationPagerDuty, integrationGrafana, integrationCloudWatch, integrationAWS}, Knowledge: []string{know},
+			Tools: ToolsAFRead, Integrations: []string{integrationPagerDuty, integrationGrafana, integrationCloudWatch, integrationAWS}, Knowledge: know,
 		},
 	}
 }

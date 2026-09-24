@@ -16,7 +16,16 @@ SUMMARY.ja.md Japanese — same content
 `SUMMARY*.md` are not release bodies: they are the cross-release index, one line per
 item, tagged with the area each item belongs to. They are updated as part of
 publishing (step 2 below) and `release-gate` fails when a ledger row has no section
-in them. How to write a section is documented at the top of the file itself.
+in them. How to write a section is in [Keeping SUMMARY current](#keeping-summary-current)
+below.
+
+**These files are also shipped in the user guide.** `deploy/release/stage-docs.sh` copies
+`SUMMARY*.md` and the notes of every version in `index.tsv` into the staged guide at
+`ref/releases/`, where the Console's user guide and the builtin assistants read them. So
+anything written here is read inside every workspace too: links must stay inside this
+directory (a relative link to anything else is dead in the staged copy, and the staging
+script fails the build on one), and the notes of versions that were never published stay
+out because the ledger, not the presence of a file, decides what is copied.
 
 Same convention as the READMEs: English is canonical, Japanese sits alongside as
 `.ja.md`. A missing `<version>.md` fails the publish; a missing `.ja.md` only omits
@@ -59,6 +68,25 @@ Do **not** put the download links, asset names or the rootfs tag in these files:
 `notes-body.sh` appends that footer, because the rootfs content hash is only known at
 build time.
 
+## Keeping SUMMARY current
+
+- Add the new version's section at the top **as part of publishing** (step 2 of
+  [Publishing a version](#publishing-a-version)); `release-gate` fails when a ledger row
+  has no section in `SUMMARY.md` or `SUMMARY.ja.md`. The two move together.
+- One line per item, condensed from that version's notes, each starting with its area
+  tag (`**[mirror]**` / `**[ミラー]**`). Upgrade steps stay in the notes and do not come
+  here.
+- The **CLI pins** line lists only the agent CLIs whose pin moved in that version;
+  no line means nothing moved. Take the values from the build commit rather than
+  from the prepared notes — a pin bump can land between writing them and publishing:
+  `git show <build-commit>:workspace/Dockerfile | grep -E '^ARG (CLAUDE_CODE|OPENCODE|CODEX|COPILOT|AGY|CURSOR|KIRO|RTK)_VERSION='`
+  diffed against the previous version's build commit.
+- Only versions in `index.tsv` belong here. Notes exist for a couple of versions that
+  were prepared and then never published (0.8.1, 0.12.5); the ledger, not the presence
+  of a file, says what shipped.
+- The file's own header is read by users (it ships in the guide), so maintainer
+  instructions like these stay in this README.
+
 ## Rendering
 
 ```sh
@@ -82,7 +110,8 @@ that concern this directory:
 
 1. Write `<version>.md` and `<version>.ja.md`.
 2. Add the version's section to `SUMMARY.md` and `SUMMARY.ja.md` (CLI pins read from
-   the build commit, not from the notes — see the file's own header).
+   the build commit, not from the notes — see
+   [Keeping SUMMARY current](#keeping-summary-current)).
 3. Append the row to `index.tsv` (version, publish date, build commit).
 4. Run `deploy/release/gen-changelog.sh` and commit the regenerated
    `dist-repo/CHANGELOG*.md`.

@@ -22,6 +22,7 @@ of each fact, readable from four directions.
 | [limits.md](limits.md) | What is the default, and what is the ceiling? |
 | [glossary.md](glossary.md) | What is this word, on screen and in the code? |
 | [browser-pane.md](browser-pane.md) | How do I show a running web app to a person? |
+| [Release history](../../deploy/release/notes/SUMMARY.md) | When did it ship? Which release fixed it? |
 
 ## How to read these tables
 

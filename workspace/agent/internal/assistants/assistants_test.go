@@ -16,9 +16,11 @@ func TestBuiltinsUseInjectedDeps(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // keep uiprefs.Locale() off the real home's ui-prefs.json
 
 	const knowPath = "/tmp/af-knowledge-probe"
+	const docsPath = "/tmp/af-docs-probe"
 	const agentKind = "codex-probe"
 	got := Builtins(NewDeps(
 		func() string { return knowPath },
+		func() string { return docsPath },
 		func() string { return agentKind },
 	))
 
@@ -29,8 +31,10 @@ func TestBuiltinsUseInjectedDeps(t *testing.T) {
 		if a.Agent != agentKind {
 			t.Errorf("%s: Agent = %q, want %q (DefaultAgent is not wired up)", a.ID, a.Agent, agentKind)
 		}
-		if len(a.Knowledge) != 1 || a.Knowledge[0] != knowPath {
-			t.Errorf("%s: Knowledge = %v, want [%s] (KnowledgeDir is not wired up)", a.ID, a.Knowledge, knowPath)
+		// Order matters only for reading; both must be there and neither may stand in
+		// for the other (two func() string arguments swap without a compile error).
+		if len(a.Knowledge) != 2 || a.Knowledge[0] != knowPath || a.Knowledge[1] != docsPath {
+			t.Errorf("%s: Knowledge = %v, want [%s %s] (KnowledgeDir / DocsDir is not wired up)", a.ID, a.Knowledge, knowPath, docsPath)
 		}
 		if a.Persona == "" {
 			t.Errorf("%s: Persona is empty", a.ID)
@@ -66,11 +70,12 @@ func fmtOf(v any) string {
 
 func TestNewDepsRejectsNil(t *testing.T) {
 	for _, c := range []struct {
-		name       string
-		know, agnt func() string
+		name             string
+		know, docs, agnt func() string
 	}{
-		{"knowledgeDir is nil", nil, func() string { return "claude" }},
-		{"defaultAgent is nil", func() string { return "/k" }, nil},
+		{"knowledgeDir is nil", nil, func() string { return "/d" }, func() string { return "claude" }},
+		{"docsDir is nil", func() string { return "/k" }, nil, func() string { return "claude" }},
+		{"defaultAgent is nil", func() string { return "/k" }, func() string { return "/d" }, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			defer func() {
@@ -78,7 +83,7 @@ func TestNewDepsRejectsNil(t *testing.T) {
 					t.Fatal("passed nil but no panic")
 				}
 			}()
-			_ = NewDeps(c.know, c.agnt)
+			_ = NewDeps(c.know, c.docs, c.agnt)
 		})
 	}
 }
