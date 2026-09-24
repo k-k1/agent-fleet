@@ -1144,10 +1144,11 @@ func opencodeErrText(name, msg, ref string) string {
 // under a per-conversation isolated HOME (chatAgyHome) that shares ONLY the OAuth
 // token with the user's real ~/.gemini. `-p` auto-denies tool prompts (docs/log/32
 // D-5); the isolated home's permissions.allow re-opens exactly the chat contract:
-// the read tools plus `mcp(<server>/*)` for each granted server (rule syntax
-// reverse-engineered from the binary and live-verified 2026-07-20). Command/write
-// tools stay auto-denied — no --dangerously-skip-permissions. No usage events, so
-// the context gauge stays empty (Context = nil).
+// the knowledge dirs, URL reads, and `mcp(<server>/*)` for each granted server (rule
+// syntax reverse-engineered from the binary and live-verified 2026-07-20), and
+// permissions.deny hard-denies commands and writes (agyChatDenyRules —
+// on agy ≥1.2 a soft-deny kills the whole turn). No --dangerously-skip-permissions.
+// No usage events, so the context gauge stays empty (Context = nil).
 type agyChat struct{}
 
 func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
@@ -1169,9 +1170,11 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	// agy may refresh the OAuth token via tmp+rename, replacing the symlink with a
 	// diverging real file — fold a rotated token back to the shared one (as for codex).
 	defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
+		return "", fmt.Errorf("agy execution failed: %s", agyStderrOr(stderr.Bytes(), err.Error()))
 	}
 	if c.AgyConversationID == "" {
 		// First turn: adopt the conversation this run just recorded for its private
@@ -1181,11 +1184,27 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	}
 	reply := strings.TrimRight(strings.TrimSpace(string(out)), "\n")
 	if reply == "" {
-		return "", errors.New("no response from agy")
+		// agy ≥1.2 ends a -p turn with exit 0 and an empty stdout when a tool needed a
+		// permission print mode cannot prompt for, and says which one only on stderr
+		// ("jetski: no output produced — a tool required the "read_file" permission …").
+		return "", errors.New(agyStderrOr(stderr.Bytes(), "no response from agy"))
 	}
 	call.OK = true
 	c.NoteTurnModel(model) // only what --model carried (agy names no model)
 	return reply, nil
+}
+
+// agyStderrOr is agy's stderr as one bounded message, or fallback when it printed
+// nothing. cmd.Stderr is set, so exec.ExitError carries no stderr for cliErr to read.
+func agyStderrOr(stderr []byte, fallback string) string {
+	s := strings.TrimSpace(string(stderr))
+	if s == "" {
+		return fallback
+	}
+	if len(s) > 500 {
+		s = s[:500] + "…"
+	}
+	return s
 }
 
 // agyChatArgs builds the argv for one agy chat turn: flags first, the prompt as
@@ -1232,7 +1251,7 @@ func agyChatModel(model string, catalog []agents.ModelChoice) string {
 //   - home/.gemini/antigravity-cli/antigravity-oauth-token — symlink to the real
 //     token (login is the ONLY shared state; agy resolves config from $HOME).
 //   - settings.json / config/config.json — workspace trust for wd, telemetry off,
-//     and permissions.allow (both files carry it: the effective location has
+//     and permissions allow/deny (both files carry them: the effective location has
 //     shifted between builds, docs/log/32 D-5, and an extra copy is harmless).
 //   - config/mcp_config.json — the granted MCP servers. agy's spawned MCP servers
 //     inherit its env, so each entry pins env.HOME back to the REAL home (the af
@@ -1253,15 +1272,15 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 		}
 	}
 	reconcileChatCreds(agy.TokenPath(), filepath.Join(cliDir, "antigravity-oauth-token"))
-	allow := agyChatAllowRules(c)
+	perms := map[string]any{"allow": agyChatAllowRules(c), "deny": agyChatDenyRules}
 	settings := map[string]any{
 		"enableTelemetry":   false,
 		"trustedWorkspaces": []string{wd},
-		"permissions":       map[string]any{"allow": allow},
+		"permissions":       perms,
 	}
 	files := map[string]map[string]any{
 		filepath.Join(cliDir, "settings.json"):   settings,
-		filepath.Join(cfgDir, "config.json"):     {"permissions": map[string]any{"allow": allow}},
+		filepath.Join(cfgDir, "config.json"):     {"permissions": perms},
 		filepath.Join(cfgDir, "mcp_config.json"): {"mcpServers": agyChatServers(c)},
 	}
 	for p, v := range files {
@@ -1276,19 +1295,37 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 	return home, wd, nil
 }
 
-// agyChatAllowRules is the permissions.allow set for a chat's agy: the read-only
-// file tools (knowledge dirs stay readable) plus `mcp(<server>/*)` per granted
-// server. Everything else — command execution, writes — stays auto-denied by -p,
-// which IS the chat contract. Rule syntax verified live (mcp(af) and bare tool
-// names do NOT match; docs/log/32 §headlessChat).
+// agyChatAllowRules is the permissions.allow set for a chat's agy: `read_file(<dir>)`
+// per knowledge dir, `read_url(*)` (parity with claude's chat, which keeps WebFetch —
+// chatToolLimits), and `mcp(<server>/*)` per granted server. Rule syntax verified
+// live (mcp(af) and bare tool names do NOT match — agy drops them from settings.json;
+// docs/log/32 §headlessChat). Anything else a turn reaches for is either hard-denied
+// (agyChatDenyRules) or, outside the knowledge dirs, soft-denied by print mode.
 func agyChatAllowRules(c *ChatConversation) []string {
-	allow := []string{"read_file", "list_dir", "grep_search", "find_files", "codebase_search"}
+	var allow []string
+	for _, d := range c.knowledgeDirs() {
+		allow = append(allow, "read_file("+d+")")
+	}
+	allow = append(allow, "read_url(*)")
+	n := len(allow)
 	for name := range agyChatServers(c) {
 		allow = append(allow, "mcp("+name+"/*)")
 	}
-	sort.Strings(allow[5:]) // deterministic file content across turns
+	sort.Strings(allow[n:]) // deterministic file content across turns
 	return allow
 }
+
+// agyChatDenyRules hard-denies what the chat contract never grants. They are not
+// redundant with print mode's own refusal: agy ≥1.2 (measured on 1.2.9) answers a
+// permission it cannot prompt for by ENDING the turn — exit 0, empty stdout, the
+// reason only on stderr — so one reach for a shell command (the model does this
+// unprompted, e.g. to look around before calling an MCP tool) lost the whole reply
+// as "no response from agy". A deny rule is reported back to the model instead,
+// and it answers in text. write_file must be listed too: it is not print-mode gated
+// at all, so with commands denied the model falls back to it and does write files
+// (measured: /tmp and $HOME). Targets: command takes `*`, write_file a directory
+// prefix.
+var agyChatDenyRules = []string{"command(*)", "write_file(/)"}
 
 // agyChatExe resolves the binary serving mcp-stdio/mcp-run in agy's mcp_config —
 // indirected so the live test can point it at the installed workspace-agent
