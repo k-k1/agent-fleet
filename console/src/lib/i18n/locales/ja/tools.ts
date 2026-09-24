@@ -264,6 +264,8 @@ export const tools = {
   "machine.disk_trash_of": "{size}（{count} 件）",
   "machine.disk_trash_oldest": "・最古 {date}",
   "machine.disk_open_cleanup": "掃除を開く",
+  "machine.disk_open_gallery": "ギャラリーで開く",
+  "machine.disk_reveal": "{path} を左ペインのファイルで開く",
   "machine.disk_orphans_unjudged": "セッションの保存先が見つからないので、「うち削除済みの分」はチャットの分だけです（セッションの分は数えていません）。",
   "machine.disk_truncated": "ファイルが多すぎるため途中で数えるのをやめました。実際はこれより多い値です。",
   "machine.disk_note":

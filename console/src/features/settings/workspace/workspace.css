@@ -422,6 +422,52 @@
   margin: 8px 0 4px;
 }
 
+/* Where a disk figure lives (MachineTab PlaceLine): the path after the size, quiet and
+   monospace, a link into the left pane's file tree; picture folders also get a gallery button.
+   The path takes what is left of the row and ellipsises — the full path is in the title. */
+.mv-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mv-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: left;
+}
+
+button.mv-path {
+  cursor: pointer;
+}
+
+button.mv-path:hover,
+button.mv-path:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* The size ahead of a path gets a fixed width, so the paths start in one column; the gallery
+   button goes to the row's right edge, so the buttons do too. */
+.mv-val.mv-size {
+  min-width: 6.5em;
+}
+
+.mv-place > .ui-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 /* Machine tab — the usage charts (MachineTab UsageSection). The level class tints the whole
    block through currentColor, which is what the chart's stroke and fill follow. */
 .mu-chart {

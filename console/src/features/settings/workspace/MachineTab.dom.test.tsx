@@ -241,6 +241,54 @@ describe("MachineView", () => {
     expect(useSessionUI.getState().cleanupOpen).toBe(true);
   });
 
+  it("shows where each figure lives, opens it in the file tree, and picture folders in the gallery", async () => {
+    answers.byPath["api/cleanup/usage"] = {
+      cache: {
+        bytes: 1600 * 2 ** 20,
+        files: 9000,
+        path: "~/.cache/agent-fleet",
+        browse: ".cache/agent-fleet",
+        parts: [
+          { name: "generated", bytes: 1500 * 2 ** 20, files: 1400, path: "~/.cache/agent-fleet/generated", browse: ".cache/agent-fleet/generated" },
+          { name: "thumbs", bytes: 100 * 2 ** 20, files: 900, path: "~/.cache/agent-fleet/thumbs", browse: ".cache/agent-fleet/thumbs" },
+        ],
+      },
+      orphans: { ok: true, bytes: 0, files: 0, dirs: 0 },
+      // Outside the browse root: readable, but nothing to open it with.
+      trash: { bytes: 10, archives: 1, path: "/data/cleanup" },
+    };
+    const { useSettingsUI } = await import("../store.ts");
+    const { useFilesStore } = await import("../../files/store.ts");
+    const { useLayoutStore } = await import("../../../layout/store.ts");
+    useSettingsUI.setState({ settingsOpen: true });
+    const text = await mount(shared);
+    expect(text).toContain("~/.cache/agent-fleet/generated");
+    expect(text).toContain("/data/cleanup");
+
+    const paths = [...host!.querySelectorAll<HTMLElement>(".mv-path")];
+    expect(paths.find((el) => el.textContent === "/data/cleanup")!.tagName).toBe("SPAN"); // not a link
+    const gen = paths.find((el) => el.textContent === "~/.cache/agent-fleet/generated")!;
+    await act(async () => {
+      gen.click();
+    });
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    expect(useFilesStore.getState().reveal).toMatchObject({ path: ".cache/agent-fleet/generated", focus: true });
+
+    // A gallery button on the picture folder only — not on thumbs, not on the cache total.
+    const galleryButtons = [...host!.querySelectorAll("button")].filter((b) => b.textContent?.includes("ギャラリーで開く"));
+    expect(galleryButtons.length).toBe(1);
+    useSettingsUI.setState({ settingsOpen: true });
+    const openTarget = vi.fn();
+    const before = useLayoutStore.getState().openTarget;
+    useLayoutStore.setState({ openTarget });
+    await act(async () => {
+      galleryButtons[0].click();
+    });
+    useLayoutStore.setState({ openTarget: before });
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    expect(openTarget).toHaveBeenCalledWith({ content: { kind: "gallery", galleryPath: ".cache/agent-fleet/generated" } });
+  });
+
   it("says so when the Agent cannot tell what is still referenced", async () => {
     answers.byPath["api/cleanup/usage"] = {
       cache: { bytes: 10, files: 1, parts: [] },

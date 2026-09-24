@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
+import type { MouseEvent as RMouseEvent } from "react";
 import { api } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { humanSize } from "../../../lib/filemeta.ts";
 import { useSettingsUI } from "../store.ts";
 import { useSessionUI } from "../../sessions/ui.ts";
+import { useFilesStore } from "../../files/store.ts";
+import { useLeftRail } from "../../../core/store/leftRail.ts";
+import { openGallery } from "../../gallery/open.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
@@ -241,13 +245,67 @@ function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own
   );
 }
 
+/** Where a figure lives (usagePlace in cleanup_cache.go): path to read ("~/…"), browse = the
+ *  same folder relative to the browse root, which the file tree and the gallery take ("" or
+ *  absent when it is outside the root, or the Agent predates the field). */
+interface Place {
+  path?: string;
+  browse?: string;
+}
+
 // The /cleanup/usage answer (workspace/agent/cleanup_cache.go).
 interface CleanupUsage {
-  cache?: { bytes: number; files: number; parts?: { name: string; bytes: number; files: number }[] };
+  cache?: { bytes: number; files: number; parts?: ({ name: string; bytes: number; files: number } & Place)[] } & Place;
   orphans?: { ok: boolean; bytes: number; files: number; dirs: number; unjudged?: number };
   /** oldest = YYYY-MM-DD of the oldest archive; nothing in the trash expires on its own. */
-  trash?: { bytes: number; archives: number; oldest?: string };
+  trash?: { bytes: number; archives: number; oldest?: string } & Place;
   truncated?: boolean;
+}
+
+/** Cache parts that hold pictures, so "open in the gallery" means something. Not thumbs: a
+ *  gallery over the thumbnail cache would make thumbnails of the thumbnails. */
+const IMAGE_PARTS = new Set(["generated", "codex-view-image", "pasted", "memo-images"]);
+
+/** Ctrl/⌘ and the middle button open beside, as everywhere else in the Console. */
+const besideClick = (e: RMouseEvent) => e.ctrlKey || e.metaKey || e.button === 1;
+
+// PlaceLine — a figure's folder: the path (a click opens that folder in the left pane's file
+// tree and focuses it) and, for picture folders, the way into the gallery. Both leave the
+// settings modal first — what they open is behind it.
+function PlaceLine({ place, gallery }: { place?: Place; gallery?: boolean }) {
+  const tr = useT();
+  const closeSettings = useSettingsUI((s) => s.closeSettings);
+  if (!place?.path) return null;
+  const browse = place.browse;
+  const reveal = () => {
+    if (!browse) return;
+    closeSettings();
+    useLeftRail.getState().ensureOpen();
+    useFilesStore.getState().revealInFiles(browse, { focus: true });
+  };
+  const toGallery = (e: RMouseEvent) => {
+    if (!browse) return;
+    closeSettings();
+    openGallery(browse, { newPane: besideClick(e) });
+  };
+  return (
+    <span className="mv-place">
+      {browse ? (
+        <button type="button" className="mv-path" title={tr("machine.disk_reveal", { path: place.path })} onClick={reveal}>
+          {place.path}
+        </button>
+      ) : (
+        <span className="mv-path is-static" title={place.path}>
+          {place.path}
+        </span>
+      )}
+      {gallery && browse && (
+        <Button small icon="file-media" onClick={toGallery} onAuxClick={toGallery}>
+          {tr("machine.disk_open_gallery")}
+        </Button>
+      )}
+    </span>
+  );
 }
 
 // DiskSection — what Agent Fleet itself has piled up on the disk, and the way to the
@@ -302,13 +360,17 @@ function DiskSection() {
       ) : (
         <>
           <Row label={tr("machine.disk_cache")}>
-            <span className="mv-val">{humanSize(u.cache.bytes)}</span>
+            <span className="mv-val mv-size">{humanSize(u.cache.bytes)}</span>
+            <PlaceLine place={u.cache} />
           </Row>
           {(u.cache.parts || [])
             .filter((p) => p.bytes > 0)
             .map((p) => (
               <Row key={p.name || "-"} label={<span className="mv-sub">{partLabel(p.name)}</span>}>
-                <span className="mv-val">{humanSize(p.bytes)}</span>
+                <span className="mv-val mv-size">{humanSize(p.bytes)}</span>
+                {/* The unnamed part is the loose files at the cache root: its place is the root,
+                    already on the line above. */}
+                {p.name && <PlaceLine place={p} gallery={IMAGE_PARTS.has(p.name)} />}
               </Row>
             ))}
           <Row label={tr("machine.disk_orphans")}>
@@ -322,6 +384,7 @@ function DiskSection() {
                 {tr("machine.disk_trash_of", { size: humanSize(u.trash.bytes), count: u.trash.archives })}
                 {u.trash.oldest ? tr("machine.disk_trash_oldest", { date: u.trash.oldest }) : ""}
               </span>
+              <PlaceLine place={u.trash} />
             </Row>
           )}
           <div className="mv-actions">
