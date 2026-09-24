@@ -20,6 +20,7 @@ English | [日本語](0094-instruction-edit-image-models.ja.md)
   carry a pointer where they stand. **Built; not yet accepted on
   hardware** ("Implementation" at the end of the revision). 🔴 **Today's wiring very likely makes 3:2
   photos, among others, soft** (the revision's point 3; one measured pair; fixed as part of building it).
+  Status update (2026-09-25): open item 1 (the Lightning LoRA's quality) waits for a trigger — it is measured side by side on 2509 and 2511 when a deployment registers a Lightning LoRA row, or when 2511's 40 steps (393.8 s) are reported as too slow.
 - Related: [0072](0072-engine-model-catalog.md) (the per-family templates, `base_model` dispatch
   and the file-role vocabulary — this ADR adds two words to the first and none to the last) /
   [0069](0069-image-generation-providers.md) (`generate_image`'s vocabulary, and the `strength`

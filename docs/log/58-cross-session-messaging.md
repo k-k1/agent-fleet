@@ -2,6 +2,7 @@
 
 > 状態: **P1 実装済み・実機検証済み**（2026-08-10。P0/P1 の実測は §58.12。
 > ネイティブ経路は有効化しない〔§58.10〕。残＝P2 受信側制御 / P3 台帳・俯瞰図）
+> → P3（台帳・俯瞰図の peer エッジ）は ADR 0096 の fleetgraph（`workspace/agent/internal/fleetgraph/writer.go` の `RecordPeer`）で実質済み（2026-09-25）
 > 2026-08-18: 冗長さの抑制として**種別（`intent`）と返信規律**を追加（§58.14）
 > 意思決定: [decisions/0041](../decisions/0041-cross-session-messaging.ja.md)
 > 関連: [51-session-report-v2-ledger.md](51-session-report-v2-ledger.md)（arm と台帳の所有者） /
