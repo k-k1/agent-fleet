@@ -88,7 +88,11 @@ jobs:
           # made it in. The negative half is the one that matters — shipping only one
           # directory fails safe, but a mistake in stage-docs.sh would put the internal
           # work journals in front of customers.
-          docker run --rm --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
+          # The gate builds 0.0.0-ci, which is not a ledger version; the newest ledger
+          # row is what must have made it into ref/releases.
+          LATEST="$(awk -F'\t' '$1 !~ /^(#|$)/ {v=$1} END {print v}' deploy/release/notes/index.tsv)"
+          test -n "$LATEST"
+          docker run --rm -e LATEST="$LATEST" --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
             set -e
             d=/usr/local/share/agent-fleet/docs
             for s in member admin operate ref assets; do test -d "$d/$s"; done
@@ -96,6 +100,12 @@ jobs:
             # so an operator can read them from inside a workspace.
             test -f "$d/operate/runbooks/compose.md"
             test -f "$d/operate/runbooks/aws-ecs.md"
+            # The release history is copied in too (ref/releases): every ledger version,
+            # and not the notes of versions that were never published.
+            test -f "$d/ref/releases/SUMMARY.md" && test -f "$d/ref/releases/SUMMARY.ja.md"
+            test -f "$d/ref/releases/$LATEST.md"
+            test ! -e "$d/ref/releases/0.8.1.md" && test ! -e "$d/ref/releases/index.tsv"
+            test ! -e "$d/ref/releases/README.md"
             test ! -e "$d/log" && test ! -e "$d/decisions" && test ! -e "$d/build"
             test ! -e "$d/use" && test ! -e "$d/guide" && test ! -e "$d/dev"
             test ! -e "$d/CONVENTIONS.md" && test ! -e "$d/HANDOFF.md"

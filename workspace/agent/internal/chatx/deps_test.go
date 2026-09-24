@@ -103,7 +103,7 @@ func testDeps() Deps {
 		VisibleModelIDs:     func(_ string, ids []string) []string { return ids },
 
 		AssistantDeps: func() assistants.Deps {
-			return assistants.NewDeps(func() string { return "" }, func() string { return session.KindClaude })
+			return assistants.NewDeps(func() string { return "" }, func() string { return "" }, func() string { return session.KindClaude })
 		},
 		// Create the same location main's ensureBuiltinKnowledge does
 		// (chat_verb_test.go checks that a conversation carries this path in Knowledge).
