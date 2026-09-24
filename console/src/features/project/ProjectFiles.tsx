@@ -23,6 +23,7 @@ import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
 import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
+import { MiddleEllipsis } from "../files/MiddleEllipsis.tsx";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
@@ -1083,7 +1084,9 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                 (fresh.size && r.segPaths.some((p) => fresh.has(p)) ? " fs-new" : "")
               }
               style={{ paddingLeft: 4 + r.depth * 14 }}
-              title={isDir ? undefined : tr("proj.open_new_pane")}
+              // The full path first: a long name is cut in the middle, and this is
+              // the one place it reads whole.
+              title={isDir ? r.path : r.path + "\n" + tr("proj.open_new_pane")}
               onClick={(e) => {
                 if (!isDir && (e.ctrlKey || e.metaKey)) {
                   setSelected(r.path);
@@ -1113,7 +1116,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                   )}
                 </span>
                 <span className="fs-name">
-                  {r.name}
+                  <MiddleEllipsis text={r.name} />
                   {r.sub ? <span className="fs-sub"> {r.sub}</span> : null}
                 </span>
                 {/* A worktree's branch, outside .fs-name so the two shrink
@@ -1153,7 +1156,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                   {isOpen ? "▾" : "▸"}
                 </button>
                 <span className="fs-ic"><DirIcon open={isOpen} /></span>
-                <span className="fs-name">{r.name}</span>
+                <span className="fs-name"><MiddleEllipsis text={r.name} /></span>
               </div>
             );
           })}
