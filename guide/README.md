@@ -20,12 +20,12 @@ Start wherever you fit.
 may use it, per agent, per repository kind, per deployment target and per role. What a
 word means is in the [Glossary](ref/glossary.md).
 
+**The [release history](../deploy/release/notes/SUMMARY.md)** is what changed in each
+release — which release a feature arrived in and which one fixed a problem, one line per
+item, newest release first, with each release's full notes one click away.
+
 If you would rather never open a terminal, the [Simple guide](member/lite.md) is the
 short way round.
-
-What changed in each release, and in which release a feature arrived or a problem was
-fixed, is in the [release history](../deploy/release/notes/SUMMARY.md) — one line per
-item, newest release first, with each release's full notes one click away.
 
 While your workspace is running you can open this guide in the Console at any time,
 from **"User guide"** in the account menu.
