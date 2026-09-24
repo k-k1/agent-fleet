@@ -296,6 +296,7 @@ export const repos = {
   "rp.del.sessions_n": "セッション {count} 件",
   "rp.del.sessions_n_alive": "セッション {count} 件（稼働 {alive}）",
   "rp.del.no_sessions": "セッション無し",
+  "rp.del.sessions_more": "ほか {count} 件",
   "rp.del.why_alive_stop": "稼働中のセッション {count} 件を先に停止します",
   "rp.del.stop_alive": "稼働中のセッションを先に停止してから削除する（{count} 件）",
   "rp.del.stop_alive_hint": "実行中のターンは中断されます",

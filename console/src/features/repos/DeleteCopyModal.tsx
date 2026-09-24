@@ -27,6 +27,8 @@ import { useReposStore } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
+import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { kindIcon } from "../../lib/sessionkind.ts";
 import {
   planTree,
   defaultSelection,
@@ -40,6 +42,10 @@ import {
 } from "./deleteTree.ts";
 
 const enc = encodeURIComponent;
+
+/** Sessions named under a row before the rest collapse into "+N". A spawned copy has one or
+ *  two; a long list would push the grades — the dialog's actual argument — off screen. */
+const SESSIONS_SHOWN = 3;
 
 /** Grade → badge label. A lookup rather than a composed key, so tsc still checks all three. */
 const GRADE_LABEL = {
@@ -258,6 +264,32 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
                   </span>
                   <span className={"wcdel-grade wcdel-grade-" + grade}>{tr(GRADE_LABEL[grade])}</span>
                 </label>
+                {/* Folder and branch slugs are random, so the sessions' names are the only
+                    thing on the row that says what the copy was FOR. Live ones carry their
+                    state, since they are what the "stop them first" tick would cut. */}
+                {p.sessions.length > 0 && (
+                  <ul className="wcdel-sessions">
+                    {p.sessions.slice(0, SESSIONS_SHOWN).map((s) => {
+                      const st = s.alive ? stateInfo(s) : null;
+                      return (
+                        <li key={s.name} className="wcdel-session" title={s.name}>
+                          <Icon name={kindIcon(s.kind)} className="wcdel-session-kind" />
+                          <span className="wcdel-session-name">{displayName(s)}</span>
+                          {st && (
+                            <span className={"session-state " + st.cls} title={st.text}>
+                              <Icon name={st.icon} spin={st.spin} /> {st.short ?? st.text}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                    {p.sessions.length > SESSIONS_SHOWN && (
+                      <li className="wcdel-session-more">
+                        {tr("rp.del.sessions_more", { count: p.sessions.length - SESSIONS_SHOWN })}
+                      </li>
+                    )}
+                  </ul>
+                )}
                 {why.key && !res && <p className="wcdel-why">{tr(why.key, { count: why.count })}</p>}
                 {res && (
                   <p className={"wcdel-result" + (res.ok ? "" : " is-failed")}>
