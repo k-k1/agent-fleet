@@ -162,6 +162,14 @@ func TestHandleCleanupUsage(t *testing.T) {
 	if u.Trash.Bytes != 210 || u.Trash.Archives != 1 {
 		t.Fatalf("trash = %+v", u.Trash)
 	}
+	// Each figure says where it lives: "~/…" to read, browse-root relative to open.
+	if g := u.Cache.Parts[0]; g.Path != "~/.cache/agent-fleet/generated" || g.Browse != ".cache/agent-fleet/generated" {
+		t.Fatalf("generated place = %q / %q", g.Path, g.Browse)
+	}
+	if u.Cache.Path != "~/.cache/agent-fleet" || u.Trash.Path != "~/.local/share/agent-fleet/cleanup" ||
+		u.Trash.Browse != ".local/share/agent-fleet/cleanup" {
+		t.Fatalf("cache place = %q, trash place = %q / %q", u.Cache.Path, u.Trash.Path, u.Trash.Browse)
+	}
 
 	// Held for a while — a new file does not show — until something invalidates it.
 	oldCacheDir(t, "thumbs", "x", 5)
@@ -573,5 +581,20 @@ func TestUsageSaysWhatWasNotJudged(t *testing.T) {
 	}
 	if u.Truncated || !u.Orphans.OK || u.Orphans.Unjudged != 1 || u.Orphans.Dirs != 0 {
 		t.Fatalf("truncated=%v orphans=%+v — want unjudged=1, not a truncated walk", u.Truncated, u.Orphans)
+	}
+}
+
+// A folder outside the browse root keeps its readable path but has nothing the Console could
+// open it by (the file tree and the gallery only reach inside the browse root).
+func TestPlaceOfOutsideTheBrowseRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_BROWSE_ROOT", filepath.Join(home, "repos"))
+	p := placeOf(filepath.Join(home, ".cache", "agent-fleet"))
+	if p.Path != "~/.cache/agent-fleet" || p.Browse != "" {
+		t.Fatalf("outside the root: %+v", p)
+	}
+	if p := placeOf(filepath.Join(home, "repos", "x")); p.Browse != "x" {
+		t.Fatalf("inside the root: %+v", p)
 	}
 }

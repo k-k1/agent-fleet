@@ -84,6 +84,31 @@ type usagePart struct {
 	Name  string `json:"name"`
 	Bytes int64  `json:"bytes"`
 	Files int    `json:"files"`
+	usagePlace
+}
+
+// usagePlace says where a figure lives, so the Machine tab can show the folder and open it
+// (in the Files tree, or as a gallery). Path is for reading (home shown as "~"); Browse is the
+// same folder relative to the browse root, which is what the Console's file tree and gallery
+// take — "" when the folder lies outside the browse root and cannot be opened from there.
+type usagePlace struct {
+	Path   string `json:"path,omitempty"`
+	Browse string `json:"browse,omitempty"`
+}
+
+func placeOf(abs string) usagePlace {
+	p := usagePlace{Path: abs}
+	if home := homeDir(); home != "" {
+		if abs == home {
+			p.Path = "~"
+		} else if strings.HasPrefix(abs, home+string(filepath.Separator)) {
+			p.Path = "~/" + abs[len(home)+1:]
+		}
+	}
+	if rel, err := filepath.Rel(browseRoot(), abs); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		p.Browse = filepath.ToSlash(rel)
+	}
+	return p
 }
 
 // usageOrphans is the part of the cache a delete_cache can take. OK false = the scan could
@@ -103,6 +128,7 @@ type cleanupUsage struct {
 		Bytes int64       `json:"bytes"`
 		Files int         `json:"files"`
 		Parts []usagePart `json:"parts"`
+		usagePlace
 	} `json:"cache"`
 	Orphans usageOrphans `json:"orphans"`
 	Trash   struct {
@@ -112,6 +138,7 @@ type cleanupUsage struct {
 		// empty — with nothing expiring on its own (ADR 0097), how far back it goes is what
 		// tells a person whether "delete permanently: older ones" is worth pressing.
 		Oldest string `json:"oldest,omitempty"`
+		usagePlace
 	} `json:"trash"`
 	// Truncated = the walk hit its entry cap; the figures are lower bounds.
 	Truncated  bool   `json:"truncated,omitempty"`
@@ -158,7 +185,7 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 
 	root := sessionx.CacheRoot()
 	ents, _ := os.ReadDir(root)
-	var loose usagePart
+	loose := usagePart{usagePlace: placeOf(root)} // files directly under the root: its place is the root
 	for _, e := range ents {
 		p := filepath.Join(root, e.Name())
 		if !e.IsDir() {
@@ -168,10 +195,11 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 			}
 			continue
 		}
-		part := usagePart{Name: e.Name()}
+		part := usagePart{Name: e.Name(), usagePlace: placeOf(p)}
 		part.Bytes, part.Files = walkSize(p, &budget)
 		u.Cache.Parts = append(u.Cache.Parts, part)
 	}
+	u.Cache.usagePlace = placeOf(root)
 	if loose.Files > 0 {
 		// Files directly under the root belong to no feature; "" is the Console's "other".
 		u.Cache.Parts = append(u.Cache.Parts, loose)
@@ -201,6 +229,7 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 		u.Truncated = u.Truncated || found.Truncated
 	}
 
+	u.Trash.usagePlace = placeOf(cleanupStoreDir())
 	tents, _ := os.ReadDir(cleanupStoreDir())
 	for _, e := range tents {
 		if e.IsDir() {
