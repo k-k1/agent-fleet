@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.23.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.1) — 2026-09-24
+
+An image studio, where a session's agent rewrites the generation draft as you talk and a person
+presses generate, and session deletion that always goes through the trash and never takes a
+worktree with it. Around them, a cleanup for the cache deleted sessions leave behind, a view of
+the disk Agent Fleet uses, translation for questions and peer messages, and selectable text in PDFs.
+
 ## [0.23.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.0) — 2026-09-23
 
 Two new kinds of session: **llama.cpp**, driven by the fleet's own harness on the deployment's
