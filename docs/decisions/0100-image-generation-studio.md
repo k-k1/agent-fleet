@@ -6,6 +6,8 @@ English | [日本語](0100-image-generation-studio.ja.md)
   [docs/log/113](../log/113-imagegen-studio.md) (five rounds of design plus a read-only review by
   another session, [113-review](../log/113-review.md) — 7 red, 12 yellow — already folded in).
   Nothing is implemented.
+  Status update (2026-09-24): P0 is implemented. The prerequisites and the frozen contract landed as #924; the three lanes as #925 (CP relay), #926 (Agent, `workspace/agent/internal/imagegen/studio*.go`) and #927 (Console pane); and the integration with revision 8 as #932, merged on 2026-09-23. The P0 acceptance run on a deployment is #959; P1 is #960.
+- Follow-ups: #949, #956, #959, #960
 - **Revision 1 (2026-09-23)**: folds in the ADR review by another session, `semvs2b` (codex /
   gpt-6-sol), [113-adr-review](../log/113-adr-review.md) (9 red, 12 yellow, 1 blue). Decisions 3, 4,
   8, 9 and 12 gained their missing contracts, a minimal picture history moved into P0, and the

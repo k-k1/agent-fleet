@@ -6,6 +6,7 @@ English | [日本語](0062-preview-subdomain.ja.md)
   done** (2026-09-01, on the real acrt deployment; it turned up two pitfalls, both now in the guide —
   docs/81 §13.1). What is left is **Vite's HMR**. The design and the history are in
   [docs/81](../log/81-preview-subdomain.md).
+- Follow-ups: #968
 - Related: [0018-container-browser-pane.md](0018-container-browser-pane.md) (the workspace's own
   Chromium — the "look from inside" route; this is the "look from outside" route, and the two stand
   side by side) / [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md) (a
