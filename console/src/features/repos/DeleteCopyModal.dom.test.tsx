@@ -114,6 +114,23 @@ describe("作業コピー削除モーダル", () => {
     expect(rowFor("app@c").disabled).toBe(true);
   });
 
+  it("行の下にセッションの表示名を出し、稼働中のものは状態も出す（フォルダ名だけでは何の作業か分からない）", async () => {
+    await render(node(repo("app@a"), [node(repo("app@b"))]), [
+      sess("s1", "app@a", { title: "ログイン画面の修正" }),
+      sess("s2", "app@b", { title: "API のテスト追加", alive: true, state: "idle" }),
+      sess("s3", "app@b", { title: "t3" }),
+      sess("s4", "app@b", { title: "t4" }),
+      sess("s5", "app@b", { title: "t5" }),
+    ]);
+    const lines = [...document.querySelectorAll(".wcdel-sessions")].map((ul) =>
+      [...ul.querySelectorAll(".wcdel-session-name")].map((el) => el.textContent),
+    );
+    expect(lines).toEqual([["ログイン画面の修正"], ["API のテスト追加", "t3", "t4"]]);
+    const states = [...document.querySelectorAll(".wcdel-session")].map((li) => !!li.querySelector(".session-state"));
+    expect(states).toEqual([false, true, false, false]);
+    expect(document.querySelector(".wcdel-session-more")?.textContent).toMatch(/1/);
+  });
+
   it("停止中のセッションをアーカイブしてから、深い方の作業コピーから消す", async () => {
     await render(node(repo("app@a"), [node(repo("app@b"))]), [sess("s1", "app@a"), sess("s2", "app@b")]);
     await click(runButton());

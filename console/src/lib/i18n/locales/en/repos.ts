@@ -298,6 +298,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.del.sessions_n": "{count} session(s)",
   "rp.del.sessions_n_alive": "{count} session(s), {alive} running",
   "rp.del.no_sessions": "no sessions",
+  "rp.del.sessions_more": "+{count} more",
   "rp.del.why_alive_stop": "its {count} running session(s) are stopped first",
   "rp.del.stop_alive": "Stop the running sessions first ({count})",
   "rp.del.stop_alive_hint": "a turn in flight is cut off",
