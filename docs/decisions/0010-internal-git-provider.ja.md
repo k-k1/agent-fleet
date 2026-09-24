@@ -3,6 +3,7 @@
 [English](0010-internal-git-provider.md) | 日本語
 
 - 状態: **採用・P1 実装済み**。設計は [reference/internal-git-provider](../build/91-internal-git.ja.md)。
+  状態の更新（2026-09-24）: P2 と P3 も実装済み（2026-07-07）。P2 はリネーム・テナントごとのリポジトリ数上限・逐次で回す GC ジョブ（コミット c289be983、`control-plane/internal_git.go`・`git_gc.go`）、P3 は Git LFS（Batch API・basic 転送・容量上限・孤児の回収・ロック API。コミット 4423a9c1f・c9e476f5d、`control-plane/git_lfs.go`・`git_lfs_locks.go`）。clone なしの閲覧も実装済み（`internal_git_browse.go`）。現在の一覧は [build/91](../build/91-internal-git.ja.md) §91.9。
 - 関連: [0001](0001-self-host-vs-saas.ja.md)（SaaS 断念・自ホスト）/ [0003](0003-ssh-to-connections.ja.md)（git 認証＝Connections）/
   [0005](0005-envelope-custodian.ja.md)（封筒暗号）/ [architecture](../build/01-architecture.ja.md)
 

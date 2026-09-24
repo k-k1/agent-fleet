@@ -128,6 +128,9 @@ var fsDeny = map[string]bool{
 	// directories, pending-permission payloads. Moving it out of .config for the EFS I/O
 	// must not move it out of the denylist.
 	".local/state/agent-fleet": true,
+	// The data volume: terminal scrollback, the cleanup archive of removed sessions' transcripts,
+	// the usage ledger and the on-demand database data dirs.
+	".local/share/agent-fleet": true,
 	".ssh":                     true,
 	".git-credentials":         true,
 	".local/share/opencode":    true, // opencode auth.json (API keys) + session db

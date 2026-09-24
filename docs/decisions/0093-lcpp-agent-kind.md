@@ -25,6 +25,8 @@ English | [日本語](0093-lcpp-agent-kind.ja.md)
   decisions, and where the nine debt items stand, is under "Phase 2 implementation record
   (2026-09-21)". Decision 8 (exact usage) and making the kind launchable in Console landed through
   PR #829 — its content is recorded under "Phase 2 implementation record".
+  Status update (2026-09-24): the residual "the end-to-end path is unverified" (under "New residuals born during Phase 2") is closed. On 2026-09-21 the driving session started an `lcpp` session from a deployed Agent and completed a round trip on a warm instance (five transcript records, `window: 262144`); the three defects that run found — a 45-second abort on a cold instance, the wait display, and peer sends — were fixed in PR #840. The cold-instance fix is covered by tests; no hardware re-run of the cold path is recorded. Two residuals are not planned unless a measurement shows a cost: the "waking" last-say judged by elapsed time (the v1 simplification Decision 4 accepted) and debt 8, `InputTokens` on every iteration (#840 put it behind the wake retry; its cost has not been measured).
+- Follow-ups: #951, #952, #953, #954, #973
 - The request is one sentence: **can our own harness — a process that talks to llama-server's API
   directly instead of driving a vendor CLI — be a session kind of Agent Fleet, and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements

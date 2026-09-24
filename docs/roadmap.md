@@ -239,6 +239,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 > - **段1 = member 4 ツール**（`list_my_sessions`/`get_session_status`/`get_session_output`/`send_to_session`）+ PAT 発行/失効（Console）+ `/mcp`（Streamable HTTP）を実装・**E2E green でライブ稼働**（現状は [dev/03 §3.5 MCP サーバ](build/03-control-plane.md#35-mcp-サーバ)）。
 > - **admin read/write 実装・ライブ E2E green**（2026-07-01）: read=`list_workspaces`/`get_usage`/`list_sessions`、write=`stop_workspace`/`stop_session`/`set_user_quota`。PAT の tenant に固定し、live role（super_admin / その tenant の tenant_admin）で gate、write は `AuditLog`（`actor_kind=mcp`）へ記録。監査ログ書き込み（migration 0007 `audit_log` + `InsertAudit`/`ListAuditByTenant`）をここで導入。ライブ検証（運用者デプロイ）= super_admin PAT で全10ツール可視・`get_usage` に host stats／tenant_admin は admin ツール可視だが host stats 無し／plain member は member 4ツールのみ・admin ツールは 401／`set_user_quota` の write が `audit_log` へ `actor_kind=mcp` 記録、を確認。
 > - **残 = dangerous 段**（`rotate_key`/`recreate_workspace`/`stop_all_idle`、confirm+dry-run）。土台（鍵ローテ実装・idle 検出 P3-9・`tail_audit`）が未整備ゆえ後続。
+> - **dangerous 段は予定しない（2026-09-24）**: 求める声が無い。エージェントに鍵のローテーションや Workspace の一括停止をさせてよいかは、作る前にそれ自体の決定が要る。
 > - 設計確定は [decisions/0006](decisions/0006-mcp-unified.ja.md)、実装プランは [history/p3-6-mcp](log/p3-6-mcp.md)。
 
 CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面（メンバー自身の遠隔セッション駆動）を同一サーバで** role 出し分けする。
@@ -276,6 +277,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > Connect→Agent 到達（`POST /sessions` 受理）、DEK/token は平文 env になし。findings=大容量イメージ cold pull が Start の
 > healthz 待ち超過(→(A)対応済=非致命化)/CP SQLite ephemeral ゆえ再デプロイで状態消失(→(B)対応済=**段3a RDS Postgres Store**、
 > 共有 sqlStore＋?→$n rebind、Docker Postgres で conformance green、CP→RDS を CFN 配線)。残＝段3b(KMS custodian)・実 AWS 再検証。AWS 構成は [reference/aws](build/09-deploy.md)。
+> 段3b（KMS custodian）は Issue #969（2026-09-24）。オンプレ向けの Vault transit custodian は、オンプレの配備が求めるまで予定しない。
 
 各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](build/09-deploy.md)）。我々は両方を同梱（P3-10）。
 
@@ -297,6 +299,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 
 ## P3-8. デプロイ内 専用分離（機微部署・任意）
 > ▶ **未着手**（P3-7 後）。
+> **予定しない（2026-09-24）**: 求める配備が出るまで作らない。
 
 1 デプロイの中で、部署ごとに分離強度を変える。**既定=論理分離を先に**。大企業が内部に機微部署を持つ場合のみ。
 
@@ -315,6 +318,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 ## P3-9. 運用の成熟（社内・旧 Phase 4 を吸収）
 > ◐ **idle-stop 実装済**（[p3-9-idle-stop](log/p3-9-idle-stop.md)）+ **showback 段1+段2 実装済**（バックエンド + Console 使用量ダッシュボード、[p3-9-showback](log/p3-9-showback.md)、段2 は要目視確認）。
 > **auto-start（オンデマンド起動）実装済**（idle-stop の対＝scale-to-zero 完結、`AF_AUTOSTART`, 既定 on）。残＝観測 / egress 統制。バックアップ/復元は P3-10 段3 で実装済。
+> **egress 統制の現状（2026-09-24）**: 観測（log-only）の forward proxy・集計・監査、版付きの許可リストと人の承認、proxy の enforce スイッチは実装済み（`control-plane/egress.go` / `egress_policy.go` / `egress_proxy.go`、2026-07-05 のコミット 8d6c43324 から）。Workspace の通信を常にこの proxy へ通す配線（内部ネットワーク＋proxy の env 注入）は未実装なので、enforce はまだ Workspace を縛らない（`guide/operate/04-secure.md` の実装範囲の注記）。
 
 各社が自社デプロイを運用するための成熟。我々は機能と runbook を提供。
 
@@ -325,7 +329,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 | **idle-stop（scale-to-zero）** ✅ | オンプレ単一ホストは RAM 逼迫（運用メモ host-oom-fleet-risk）ゆえ**実運用上きわめて重要**（旧 Phase 4 C1 を前倒し）| **実装済**: 二段構え（第1段=idle claude を halt で resumable 化 / 第2段=冷えた WS を docker stop）。テナント別 timeout（super_admin 編集）。設計 [p3-9-idle-stop](log/p3-9-idle-stop.md)。**auto-start（停止中 WS をセッション作成/fork/再開・持ち越し回答・SSM 探索で自動起動、`AF_AUTOSTART` 既定 on。端末アタッチは後に対象外へ）実装済**。残= ECS desired=0（P3-7 と共通化）。 |
 | **バックアップ/復元** | **価値の本体は永続 home（資格情報・履歴・clone）**。home + DB のバックアップ/復元は必須機能 | オンプレ=ディスクスナップ/rsync、AWS=AWS Backup/S3。runbook 同梱。 |
 | **観測** ◐ | メトリクス・アラート。noisy-neighbor 防止（クォータ + cgroup で緩和）| 簡易ダッシュボード + CloudWatch（AWS 時）。**全ユーザーのセッション俯瞰**を admin UI に実装（`GET /api/admin/sessions`＝running は Agent live / stopped は DB ミラー、テナント横断・検索・5s ポーリング。super_admin=全社 / tenant_admin=自社）。 |
-| **egress 統制** | 情報持ち出し統制として egress allowlist | github/bitbucket/anthropic/claude.ai。 |
+| **egress 統制** ◐ | 情報持ち出し統制として egress allowlist | github/bitbucket/anthropic/claude.ai。 |
 
 ---
 

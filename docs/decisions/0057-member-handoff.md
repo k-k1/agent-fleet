@@ -3,6 +3,7 @@
 English | [日本語](0057-member-handoff.ja.md)
 
 - Status: **adopted, not implemented** (2026-08-24). The design and the implementation stages are in [docs/77](../log/77-member-handoff.md).
+  Status update (2026-09-24): P0 is implemented — offer, withdraw, accept and decline, the push gate and the inbox (PR #175, 2026-08-24, with the fix #176; `control-plane/session_handoff.go`, `control-plane/internal/store/store_handoff.go`, `console/src/features/sharing/HandoffInboxModal.tsx`). P1–P3 (docs/77 §77.14) are not built, and docs/77 records no end-to-end run with two accounts on a real fleet.
 - See also: [59-session-sharing.md](../log/59-session-sharing.md) (the underlying ACL, freezing the body, the discipline of expiry. There is no ADR; the design document is canonical) /
   [0041-cross-session-messaging.md](0041-cross-session-messaging.md) (messaging within one workspace — the source of the envelope, permission laundering, and "the valve you need once there are N senders") /
   [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md) (why the arm and the ledger are not touched)

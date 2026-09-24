@@ -5,6 +5,7 @@
 - 状態: **採用・P0〜P3 実装済み**（2026-08-31）。**Next.js での通し確認は済み**（2026-09-01・acrt
   実機。落とし穴 2 件が出て案内に反映 — docs/81 §13.1）。残るのは **Vite の HMR** だけ。
   設計と経緯は [docs/81](../log/81-preview-subdomain.md)。
+- Follow-ups: #968
 - 関連: [0018-container-browser-pane.md](0018-container-browser-pane.ja.md)（コンテナ内 Chromium ＝
   「中から見る」道。今回作るのは「外から見る」道で、別物として並立する） /
   [0047-tenant-network-restriction.md](0047-tenant-network-restriction.ja.md)（テナントの CIDR 制限は

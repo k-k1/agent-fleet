@@ -4,6 +4,7 @@ English | [日本語](0077-engine-boxes-bought-by-cp.ja.md)
 
 - Status: **accepted** (2026-09-12). P0's premises are measured, P1-P3 are implemented and have run
   on hardware (#573-#598); two items stay unmeasured, and the last revision section names them.
+- Follow-ups: #963
 - **Not one GPU was bought for this document.** Every number says where it comes from —
   (a) measurements in ADR 0045, 0070, 0071, 0074 and 0075, (b) facts read on 2026-09-12 out of this
   repository's code and templates and out of af-sandbox's read-only APIs, (c) things known only as

@@ -4,6 +4,7 @@
 
 - 状態: **accepted**（2026-09-24）。同じ変更で実装する。設計の経緯・入口の棚卸し・ごみ箱の実測は
   [docs/log/115](../log/115-session-delete-via-trash.ja.md)。§115.7 の判断 6 件は、利用者がすべて推奨案を選んだ。
+- Follow-ups: #950
 - 関連: [0097](0097-session-retention.ja.md)（停止セッションの保持。決定 2「削除は人の操作だけ・回収は常に
   gz 退避経由」を、この ADR で例外なく成り立たせる）／[0028](0028-deletion-lock.ja.md)（削除ロック）／
   [0096](0096-fleet-session-graph.ja.md) 決定 6（人の削除は系譜も消す。変えない）

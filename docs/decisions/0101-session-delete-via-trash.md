@@ -6,6 +6,7 @@ English | [日本語](0101-session-delete-via-trash.ja.md)
   entry points and the trash measurements are in
   [docs/log/115](../log/115-session-delete-via-trash.md). The user took the recommended option on all
   six decisions of §115.7.
+- Follow-ups: #950
 - Related: [0097](0097-session-retention.md) (retaining stopped sessions — this ADR makes its decision 2,
   "deleting is a person's action, and reclaiming always goes through the gz archive", true without
   exception) / [0028](0028-deletion-lock.md) (deletion lock) / [0096](0096-fleet-session-graph.md)
