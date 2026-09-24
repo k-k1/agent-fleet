@@ -135,6 +135,17 @@ The full build/reflect matrix is `docs/build/10-development.md`.
 The long form — 30 rules, each with the concrete defect behind it — is in the developer work
 journal for the 2026-09 parallel refactor.
 
+## Open work goes to a GitHub issue
+
+When a task leaves something undone — a phase you did not build, a finding you set aside
+for another PR, an acceptance run on real hardware that has not happened — **file an
+issue in English** (`gh issue create`) instead of writing "residual" or "not yet filed"
+into an ADR, a `docs/log/` journal, `roadmap.md` or your memory. Then point at it once:
+`Follow-ups: #N` under the ADR's Status line, or the issue number at the end of the
+journal's residual list. Keep the issue short and link the section that holds the
+evidence. An issue is public the moment it is filed and skips the secret scans, so no
+real hostnames, account IDs or tokens. Full rule: `docs/CONVENTIONS.md` §10.
+
 ## Running the Console tests
 
 **Always run them with `console/` as the working directory.** Invoking `npx vitest`

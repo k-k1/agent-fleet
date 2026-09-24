@@ -20,6 +20,7 @@ text age at different speeds, and **they must never share a file**:
 | Changes whenever the code changes — specs, procedures, capability tables | the shelves under `guide/`, and `docs/build/` |
 | Never changes again — a decision, a measurement, an incident, a retired option | `docs/decisions/`, or the frozen `docs/log/` |
 | Changes daily — what is running right now | `docs/HANDOFF.md` |
+| Open until someone closes it — follow-ups, residual work, unverified acceptance | GitHub issues (§10) |
 
 A file that mixes them cannot be reviewed for staleness, because there is no way to
 tell which sentences are supposed to still be true. If you catch yourself appending a
@@ -220,3 +221,26 @@ instruction to the writer, not guidance for the reader. **It goes here.**
 - **Write**: wire contracts, responsibilities, data flow, the shape of an extension.
 - **Do not write**: user-facing procedures (`guide/`); dated work records (`docs/log/`).
 - **Update trigger**: a contract changing.
+
+## 10. Open work is an issue, not a sentence
+
+A decision record and a journal are frozen, so "still to do" written in one of them can
+never be marked done — it stays in the prose forever and nobody can list what is still
+open. **Anything that is waiting for someone to do it is a GitHub issue.** That covers a
+phase that was not built, a finding set aside for another PR, an acceptance run on real
+hardware that has not happened, and a residual that a review left.
+
+- **Write issues in English.** The repository is public; the title and the first
+  paragraph must make sense to someone who has never read the journal.
+- **The issue is short; the evidence stays in the repository.** Link the ADR section or
+  the `docs/log/` section that holds the measurements instead of copying them. (Issues
+  may link into `log/`; §7 only binds the living shelves.)
+- **The record points at the issue, once.** An ADR lists its follow-ups on one line —
+  `Follow-ups: #123, #124` — under the Status line; a journal closes its residual list
+  with the issue numbers. Adding that line is not a rewrite of a frozen file.
+- **Code comments do not cite issues.** A comment carries the reason, not the history
+  (see `AGENTS.md`).
+- **An issue is published the moment it is filed**, and it bypasses the secret and
+  forbidden-token scans the repository runs. Write it as carefully as a public commit:
+  no hostnames of real deployments, account IDs, tokens or customer names.
+

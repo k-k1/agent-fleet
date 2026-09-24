@@ -37,5 +37,7 @@ updated: "2026-09"
   因果・上流 CLI の契約・何かを諦めた理由**——他のどこにも無い事実を引くために
   だけ存在します。現役の文書はここへリンクしません。
 - [HANDOFF.md](HANDOFF.md) — 開発ホストの稼働状態とホスト固有の作法。毎日変わります。
+- **未完の作業**（後続・残作業・未実施の受け入れ）は GitHub の Issue に置きます。
+  決定記録やジャーナルの文には残しません（[CONVENTIONS §10](CONVENTIONS.ja.md)）。
 - [roadmap.md](roadmap.md) / [CHANGELOG-handoff.md](CHANGELOG-handoff.md) —
   前向きの計画と、日付つきの作業ログ。
