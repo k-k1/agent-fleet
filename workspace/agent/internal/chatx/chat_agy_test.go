@@ -73,6 +73,10 @@ func TestAgyChatAllowRulesFollowToolGrant(t *testing.T) {
 	if !containsString(read, "read_file("+know+")") {
 		t.Fatalf("rules = %q, read_file(<knowledge dir>) missing", read)
 	}
+	// URL reads stay open like claude's WebFetch; without the rule a fetch ends the turn.
+	if !containsString(none, "read_url(*)") || !containsString(read, "read_url(*)") {
+		t.Fatalf("rules none=%q read=%q, read_url(*) missing", none, read)
+	}
 	for _, r := range read {
 		if strings.HasPrefix(r, "command") || strings.HasPrefix(r, "write_file") {
 			t.Fatalf("rules = %q must never allow command execution or writes", read)
@@ -84,10 +88,13 @@ func TestAgyChatAllowRulesFollowToolGrant(t *testing.T) {
 // the chat contract withholds must be a hard deny rule (and write_file is not
 // soft-denied at all — without the rule the model writes files).
 func TestAgyChatDenyRulesCoverContract(t *testing.T) {
-	for _, want := range []string{"command(*)", "write_file(/)", "read_url(*)"} {
+	for _, want := range []string{"command(*)", "write_file(/)"} {
 		if !containsString(agyChatDenyRules, want) {
 			t.Fatalf("deny = %q, missing %q", agyChatDenyRules, want)
 		}
+	}
+	if containsString(agyChatDenyRules, "read_url(*)") {
+		t.Fatalf("deny = %q, read_url must be allowed, not denied", agyChatDenyRules)
 	}
 }
 

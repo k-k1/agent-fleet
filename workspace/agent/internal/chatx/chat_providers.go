@@ -1144,9 +1144,9 @@ func opencodeErrText(name, msg, ref string) string {
 // under a per-conversation isolated HOME (chatAgyHome) that shares ONLY the OAuth
 // token with the user's real ~/.gemini. `-p` auto-denies tool prompts (docs/log/32
 // D-5); the isolated home's permissions.allow re-opens exactly the chat contract:
-// the knowledge dirs plus `mcp(<server>/*)` for each granted server (rule syntax
-// reverse-engineered from the binary and live-verified 2026-07-20), and
-// permissions.deny hard-denies commands, writes and URL reads (agyChatDenyRules —
+// the knowledge dirs, URL reads, and `mcp(<server>/*)` for each granted server (rule
+// syntax reverse-engineered from the binary and live-verified 2026-07-20), and
+// permissions.deny hard-denies commands and writes (agyChatDenyRules —
 // on agy ≥1.2 a soft-deny kills the whole turn). No --dangerously-skip-permissions.
 // No usage events, so the context gauge stays empty (Context = nil).
 type agyChat struct{}
@@ -1296,7 +1296,8 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 }
 
 // agyChatAllowRules is the permissions.allow set for a chat's agy: `read_file(<dir>)`
-// per knowledge dir plus `mcp(<server>/*)` per granted server. Rule syntax verified
+// per knowledge dir, `read_url(*)` (parity with claude's chat, which keeps WebFetch —
+// chatToolLimits), and `mcp(<server>/*)` per granted server. Rule syntax verified
 // live (mcp(af) and bare tool names do NOT match — agy drops them from settings.json;
 // docs/log/32 §headlessChat). Anything else a turn reaches for is either hard-denied
 // (agyChatDenyRules) or, outside the knowledge dirs, soft-denied by print mode.
@@ -1305,6 +1306,7 @@ func agyChatAllowRules(c *ChatConversation) []string {
 	for _, d := range c.knowledgeDirs() {
 		allow = append(allow, "read_file("+d+")")
 	}
+	allow = append(allow, "read_url(*)")
 	n := len(allow)
 	for name := range agyChatServers(c) {
 		allow = append(allow, "mcp("+name+"/*)")
@@ -1321,9 +1323,9 @@ func agyChatAllowRules(c *ChatConversation) []string {
 // as "no response from agy". A deny rule is reported back to the model instead,
 // and it answers in text. write_file must be listed too: it is not print-mode gated
 // at all, so with commands denied the model falls back to it and does write files
-// (measured: /tmp and $HOME). Targets: command/read_url take `*`, write_file a
-// directory prefix.
-var agyChatDenyRules = []string{"command(*)", "write_file(/)", "read_url(*)"}
+// (measured: /tmp and $HOME). Targets: command takes `*`, write_file a directory
+// prefix.
+var agyChatDenyRules = []string{"command(*)", "write_file(/)"}
 
 // agyChatExe resolves the binary serving mcp-stdio/mcp-run in agy's mcp_config —
 // indirected so the live test can point it at the installed workspace-agent
