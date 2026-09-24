@@ -270,6 +270,21 @@ export const tools = {
   "machine.disk_truncated": "ファイルが多すぎるため途中で数えるのをやめました。実際はこれより多い値です。",
   "machine.disk_note":
     "Agent Fleet 自身が ~/.cache/agent-fleet に溜めるものだけを数えています（作業コピーやツールのキャッシュは含みません）。生成した画像は 30 日、サムネイルは 14 日で自動的に消えます。削除済みセッションの分とごみ箱は、掃除から片付けられます。",
+  "machine.tool_title": "ツールのキャッシュ",
+  "machine.tool_measure": "測る",
+  "machine.tool_measuring": "測っています…",
+  "machine.tool_failed": "ツールのキャッシュを測れませんでした。",
+  "machine.tool_none": "ツールのキャッシュは見つかりませんでした。",
+  "machine.tool_empty": "空にする",
+  "machine.tool_busy": "使用中（pid {pids}）",
+  "machine.tool_confirm_title": "{name} のキャッシュを空にしますか？",
+  "machine.tool_confirm_body":
+    "{size} を削除します。キャッシュは自動で作り直されますが、次にそれを使うビルドやインストールが 1 回だけ遅くなります。",
+  "machine.tool_emptied": "{name} を空にしました（{size}）。",
+  "machine.tool_in_use": "{name} は実行中のビルドかインストールが使っています。終わってからもう一度押してください。",
+  "machine.tool_empty_failed": "{name} を空にできませんでした: ",
+  "machine.tool_note":
+    "go・npm・uv・pip がホームに溜めるキャッシュです。上限なく増え、自動では消えません。数えるには全ファイルを読むので、ボタンを押したときだけ測ります。",
   "machine.note_who_changes":
     "サイズとマシンの種類はテナント管理者が決めます。変更は次にワークスペースを起動したときに反映されます。",
 

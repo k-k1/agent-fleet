@@ -19,9 +19,12 @@ import type { WsMachine } from "../../../lib/machine.ts";
 import { __test as feed } from "../../../core/store/wsStatsFeed.ts";
 
 // Per-path answers; anything unlisted gets {} (what an Agent without the endpoint amounts to).
-const answers = vi.hoisted(() => ({ byPath: {} as Record<string, unknown> }));
+const answers = vi.hoisted(() => ({ byPath: {} as Record<string, unknown>, calls: [] as string[] }));
 vi.mock("../../../core/api/client.ts", () => ({
-  api: (path: string) => Promise.resolve(answers.byPath[path] ?? {}),
+  api: (path: string, opts?: RequestInit) => {
+    answers.calls.push((opts?.method ?? "GET") + " " + path);
+    return Promise.resolve(answers.byPath[path] ?? {});
+  },
   apiJSON: () => Promise.resolve({}),
   getTenant: () => "default",
 }));
@@ -46,6 +49,7 @@ beforeEach(() => {
   g.IS_REACT_ACT_ENVIRONMENT = true;
   feed.reset();
   answers.byPath = {};
+  answers.calls = [];
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -313,5 +317,40 @@ describe("MachineView", () => {
     const text = await mount(shared);
     expect(text).toContain("チャットの分だけです");
     expect(text).not.toContain("ファイルが多すぎる");
+  });
+
+  it("measures the tool caches only on a press, and empties one after confirming", async () => {
+    answers.byPath["api/cleanup/tool-caches"] = {
+      caches: [
+        { name: "go-build", bytes: 34 * 2 ** 30, files: 400000, path: "~/.cache/go-build" },
+        { name: "npm", bytes: 41 * 2 ** 30, files: 900000, busy: [4242], path: "~/.npm/_cacache" },
+      ],
+    };
+    answers.byPath["api/cleanup/tool-caches/go-build"] = { name: "go-build", bytes: 34 * 2 ** 30, files: 400000 };
+    let text = await mount(shared);
+    expect(text).toContain("ツールのキャッシュ");
+    expect(answers.calls).not.toContain("GET api/cleanup/tool-caches"); // a walk of 10^5 files waits for the press
+
+    const buttons = () => [...document.body.querySelectorAll("button")];
+    await act(async () => {
+      buttons().find((b) => b.textContent === "測る")!.click();
+    });
+    text = host!.textContent || "";
+    expect(text).toContain("go-build");
+    expect(text).toContain("使用中（pid 4242）");
+    // Only go-build offers "empty": npm is in use.
+    expect(buttons().filter((b) => b.textContent === "空にする")).toHaveLength(1);
+
+    await act(async () => {
+      buttons().find((b) => b.textContent === "空にする")!.click();
+    });
+    expect(document.body.querySelector(".confirm-title")?.textContent).toBe("go-build のキャッシュを空にしますか？");
+    expect(answers.calls.some((c) => c.startsWith("DELETE"))).toBe(false);
+    await act(async () => {
+      (document.body.querySelector(".confirm-actions button:last-child") as HTMLButtonElement).click();
+    });
+    expect(answers.calls).toContain("DELETE api/cleanup/tool-caches/go-build");
+    expect(host!.textContent).toContain("go-build を空にしました");
+    expect(document.body.querySelector(".confirm-title")).toBeNull();
   });
 });

@@ -404,6 +404,11 @@ administrator's to set.
   14 on their own; **"Open cleanup"** closes Settings and opens the cleanup modal, where the deleted
   sessions' share and the trash can be tidied up ([02 Sessions](02-sessions.md#tidying-up-in-bulk-cleanup)).
   Working copies and tool caches are not counted here.
+- **Tool caches** — the caches go, npm, uv and pip keep in your home (`~/.cache/go-build`,
+  `~/.npm/_cacache`, …). They grow without limit (tens of GB is common) and are never emptied
+  automatically. **"Measure"** counts them (it reads every file, so only on a press); **"Empty"** deletes
+  one after a confirmation. The next build or install that needs it is slower once. A cache a running
+  build or install is using shows **"In use"** and cannot be emptied until that finishes.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain

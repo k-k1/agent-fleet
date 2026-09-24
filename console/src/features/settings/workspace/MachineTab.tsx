@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { api } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
+import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { humanSize } from "../../../lib/filemeta.ts";
 import { useSettingsUI } from "../store.ts";
 import { useSessionUI } from "../../sessions/ui.ts";
@@ -152,6 +153,7 @@ export function MachineView({ d }: { d: WsMachine }) {
       </section>
       {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} own={own} />}
       {d.running && <DiskSection />}
+      {d.running && <ToolCacheSection />}
     </div>
   );
 }
@@ -397,6 +399,105 @@ function DiskSection() {
           {!!u.orphans?.unjudged && <p className="muted ds-sub">{tr("machine.disk_orphans_unjudged")}</p>}
           <p className="muted ds-sub">{tr("machine.disk_note")}</p>
         </>
+      )}
+    </section>
+  );
+}
+
+// The /cleanup/tool-caches answer (workspace/agent/tool_caches.go).
+interface ToolCacheRow extends Place {
+  name: string;
+  bytes: number;
+  files: number;
+  /** pids that could be using the cache; the Agent refuses to empty it while non-empty. */
+  busy?: number[];
+}
+
+// ToolCacheSection — the go / npm / uv / pip caches in home, and emptying one (docs/log/116).
+//
+// Not part of DiskSection: those rows are Agent Fleet's own and are walked when the tab
+// opens. These run to hundreds of thousands of files, so they are measured only on a press.
+// Nothing here runs on a timer — neither Go nor npm can evict by age, so emptying means all
+// of it, and when to pay the slower next build is the person's call.
+function ToolCacheSection() {
+  const tr = useT();
+  // The outcome of the last "empty", said under the rows it changed.
+  const [msg, setMsg] = useState("");
+  const [rows, setRows] = useState<ToolCacheRow[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
+  const [err, setErr] = useState(false);
+  const [confirm, setConfirm] = useState<ToolCacheRow | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const measure = async () => {
+    setMeasuring(true);
+    setErr(false);
+    try {
+      const res = await api("api/cleanup/tool-caches");
+      // An Agent older than the endpoint answers with an error.
+      if (!res || res.error || !Array.isArray(res.caches)) throw new Error("");
+      setRows(res.caches);
+      setTruncated(!!res.truncated);
+    } catch {
+      setErr(true);
+    } finally {
+      setMeasuring(false);
+    }
+  };
+
+  const empty = async (row: ToolCacheRow) => {
+    setBusy(true);
+    try {
+      const res = await api("api/cleanup/tool-caches/" + encodeURIComponent(row.name), { method: "DELETE" });
+      if (res?.error?.code === "cache_in_use") setMsg(tr("machine.tool_in_use", { name: row.name }));
+      else if (res?.error) setMsg(tr("machine.tool_empty_failed", { name: row.name }) + (res.error.message ?? res.error.code));
+      else setMsg(tr("machine.tool_emptied", { name: row.name, size: humanSize(res?.bytes ?? row.bytes) }));
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+    }
+    await measure();
+  };
+
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("machine.tool_title")}</h4>
+      {err && <p className="muted ds-sub">{tr("machine.tool_failed")}</p>}
+      {rows && rows.length === 0 && <p className="muted ds-sub">{tr("machine.tool_none")}</p>}
+      {rows?.map((r) => (
+        <Row key={r.name} label={r.name}>
+          <span className="mv-val mv-size">{humanSize(r.bytes)}</span>
+          <PlaceLine place={r} />
+          {r.busy?.length ? (
+            <span className="muted">{tr("machine.tool_busy", { pids: r.busy.join(", ") })}</span>
+          ) : (
+            r.bytes > 0 && (
+              <Button small icon="trash" onClick={() => setConfirm(r)}>
+                {tr("machine.tool_empty")}
+              </Button>
+            )
+          )}
+        </Row>
+      ))}
+      <div className="mv-actions">
+        <Button small icon="refresh" onClick={measure} disabled={measuring}>
+          {measuring ? tr("machine.tool_measuring") : tr("machine.tool_measure")}
+        </Button>
+      </div>
+      {msg && <p className="ds-sub">{msg}</p>}
+      {truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
+      <p className="muted ds-sub">{tr("machine.tool_note")}</p>
+      {confirm && (
+        <ConfirmDialog
+          title={tr("machine.tool_confirm_title", { name: confirm.name })}
+          confirmLabel={tr("machine.tool_empty")}
+          busy={busy}
+          onConfirm={() => empty(confirm)}
+          onCancel={() => setConfirm(null)}
+        >
+          <p>{tr("machine.tool_confirm_body", { size: humanSize(confirm.bytes) })}</p>
+        </ConfirmDialog>
       )}
     </section>
   );
