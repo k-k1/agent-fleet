@@ -64,15 +64,40 @@ func TestAgyChatAllowRulesFollowToolGrant(t *testing.T) {
 	if containsString(none, "mcp(af/*)") {
 		t.Fatalf("tools=none rules = %q, must not allow af", none)
 	}
-	if !containsString(none, "read_file") {
-		t.Fatalf("tools=none rules = %q, read tools missing", none)
-	}
-	read := agyChatAllowRules(&ChatConversation{Tools: assistants.ToolsAFRead})
+	know := t.TempDir()
+	read := agyChatAllowRules(&ChatConversation{Tools: assistants.ToolsAFRead, Knowledge: []string{know}})
 	if !containsString(read, "mcp(af/*)") {
 		t.Fatalf("tools=af_read rules = %q, mcp(af/*) missing", read)
 	}
-	if containsString(read, "command") {
-		t.Fatalf("rules = %q must never allow command execution", read)
+	// A bare tool name matches nothing (agy drops it); the knowledge dir must be the target.
+	if !containsString(read, "read_file("+know+")") {
+		t.Fatalf("rules = %q, read_file(<knowledge dir>) missing", read)
+	}
+	for _, r := range read {
+		if strings.HasPrefix(r, "command") || strings.HasPrefix(r, "write_file") {
+			t.Fatalf("rules = %q must never allow command execution or writes", read)
+		}
+	}
+}
+
+// agy ≥1.2 ends a -p turn with no output when a tool hits a soft-deny, so everything
+// the chat contract withholds must be a hard deny rule (and write_file is not
+// soft-denied at all — without the rule the model writes files).
+func TestAgyChatDenyRulesCoverContract(t *testing.T) {
+	for _, want := range []string{"command(*)", "write_file(/)", "read_url(*)"} {
+		if !containsString(agyChatDenyRules, want) {
+			t.Fatalf("deny = %q, missing %q", agyChatDenyRules, want)
+		}
+	}
+}
+
+func TestAgyStderrOr(t *testing.T) {
+	if got := agyStderrOr([]byte("  \n"), "no response from agy"); got != "no response from agy" {
+		t.Fatalf("empty stderr = %q, want fallback", got)
+	}
+	msg := `jetski: no output produced — a tool required the "read_file" permission`
+	if got := agyStderrOr([]byte(msg+"\n"), "no response from agy"); got != msg {
+		t.Fatalf("stderr = %q, want %q", got, msg)
 	}
 }
 
@@ -117,6 +142,7 @@ func TestChatAgyHomeWritesIsolatedConfig(t *testing.T) {
 		TrustedWorkspaces []string `json:"trustedWorkspaces"`
 		Permissions       struct {
 			Allow []string `json:"allow"`
+			Deny  []string `json:"deny"`
 		} `json:"permissions"`
 	}
 	b, err := os.ReadFile(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"))
@@ -134,6 +160,9 @@ func TestChatAgyHomeWritesIsolatedConfig(t *testing.T) {
 	}
 	if !containsString(settings.Permissions.Allow, "mcp(af/*)") {
 		t.Fatalf("allow = %v, mcp(af/*) missing", settings.Permissions.Allow)
+	}
+	if !containsString(settings.Permissions.Deny, "command(*)") {
+		t.Fatalf("deny = %v, command(*) missing", settings.Permissions.Deny)
 	}
 	var mcp struct {
 		Servers map[string]json.RawMessage `json:"mcpServers"`
