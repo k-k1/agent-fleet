@@ -47,6 +47,89 @@
 .pdfview-canvas {
   display: block;
 }
+/* Text layer: transparent spans over the canvas at the glyph positions, so the page can be
+   selected and copied. Ported from pdfjs-dist/web/pdf_viewer.css (.textLayer) without the
+   highlight / annotation parts; TextLayer sizes the spans from these custom properties, so a
+   rule dropped here misplaces the selection rather than failing visibly. */
+.pdfview-page {
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+.pdfview-page .textLayer {
+  color-scheme: only light;
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  -webkit-text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.pdfview-page .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.pdfview-page .textLayer > :not(.markedContent),
+.pdfview-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.pdfview-page .textLayer .markedContent {
+  display: contents;
+}
+.pdfview-page .textLayer span[role="img"] {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+.pdfview-page .textLayer ::selection {
+  background: rgb(0 0 255 / 25%);
+  background: color-mix(in srgb, AccentColor, transparent 50%);
+  color: transparent;
+}
+.pdfview-page .textLayer br::selection {
+  background: transparent;
+}
+.pdfview-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pdfview-page .textLayer.selecting .endOfContent {
+  top: 0;
+}
+/* A page with /Rotate: TextLayer sizes the layer in unrotated page units and expects it turned. */
+.pdfview-page .textLayer[data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+.pdfview-page .textLayer[data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+.pdfview-page .textLayer[data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
 .pdfview-bar {
   display: flex;
   align-items: center;

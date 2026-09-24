@@ -5,14 +5,19 @@
 // narrow, so scrolling beats page buttons. Canvases of pages far from the viewport are dropped
 // to give their area back.
 //
+// Text is selectable and copyable through pdf.js's TextLayer: transparent spans laid over each
+// rendered page at the glyph positions, the same mechanism as the stock pdf.js viewer. It lives
+// and dies with the page's canvas.
+//
 // The bytes are fetched by pdf.js itself from the download endpoint (via `url`). That path
 // supports Range, so a large PDF starts rendering without loading the whole file into JS memory
 // (the Agent serves with http.ServeContent and the CP proxy relays the headers unchanged).
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { documentAssetParams, loadPdfjs } from "./pdfjs.ts";
+import { documentAssetParams, loadPdfjs, type Pdfjs } from "./pdfjs.ts";
+import { clipboardText } from "./pdfText.ts";
 import {
   anchorOf,
   canvasPixelRatio,
@@ -52,13 +57,25 @@ function failureOf(e: unknown): Failure {
   return "load";
 }
 
+/** Empties a page's text layer. Detached layers are fine: cancel() on a finished one is a no-op. */
+function dropTextLayer(layers: Map<number, TextLayer>, i: number, div: HTMLDivElement | undefined) {
+  layers.get(i)?.cancel();
+  layers.delete(i);
+  div?.replaceChildren();
+}
+
 export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   const tr = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasesRef = useRef(new Map<number, HTMLCanvasElement>());
   // Which page was rendered at which scale. A scale change makes every page due for a redraw.
   const renderedRef = useRef(new Map<number, number>());
+  // Text layer container per page, and the finished TextLayer filling it. A zoom updates the
+  // existing layer in place instead of rebuilding it, so the spans keep their identity.
+  const textDivsRef = useRef(new Map<number, HTMLDivElement>());
+  const textLayersRef = useRef(new Map<number, TextLayer>());
   const docRef = useRef<PDFDocumentProxy | null>(null);
+  const pdfjsRef = useRef<Pdfjs | null>(null);
   const jobRef = useRef<{ cancelled: boolean; task: RenderTask | null } | null>(null);
   const anchorRef = useRef<ScrollAnchor | null>(null);
   const onMetaRef = useRef(onMeta);
@@ -74,6 +91,17 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     canvasesRef.current.set(i, el);
     return () => {
       if (canvasesRef.current.get(i) === el) canvasesRef.current.delete(i);
+      renderedRef.current.delete(i);
+    };
+  }, []);
+
+  // Same identity rule as attachCanvas.
+  const attachText = useCallback((el: HTMLDivElement) => {
+    const i = Number(el.dataset.page);
+    textDivsRef.current.set(i, el);
+    return () => {
+      if (textDivsRef.current.get(i) === el) textDivsRef.current.delete(i);
+      dropTextLayer(textLayersRef.current, i, el);
       renderedRef.current.delete(i);
     };
   }, []);
@@ -112,10 +140,16 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     setScrollTop(0);
     renderedRef.current.clear();
     canvasesRef.current.clear();
+    for (const [i, layer] of textLayersRef.current) {
+      layer.cancel();
+      textDivsRef.current.get(i)?.replaceChildren();
+    }
+    textLayersRef.current.clear();
     docRef.current = null;
     const run = async () => {
       const pdfjs = await loadPdfjs();
       if (!alive) return;
+      pdfjsRef.current = pdfjs;
       const task = pdfjs.getDocument({ url: src, ...documentAssetParams() });
       opened = task;
       const doc = await task.promise;
@@ -214,7 +248,9 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     const job: { cancelled: boolean; task: RenderTask | null } = { cancelled: false, task: null };
     jobRef.current = job;
 
+    const pdfjs = pdfjsRef.current;
     const run = async () => {
+      if (!pdfjs) return;
       for (let i = range.start; i < range.end; i++) {
         if (job.cancelled) return;
         if (renderedRef.current.get(i) === scale) continue;
@@ -238,6 +274,39 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
         }
         job.task = null;
         if (job.cancelled) return;
+        // The text layer is laid out in CSS pixels (the canvas ratio above is only bitmap
+        // density); its font sizes follow --total-scale-factor on the page element.
+        const textDiv = textDivsRef.current.get(i);
+        if (textDiv) {
+          const textViewport = page.getViewport({ scale });
+          const existing = textLayersRef.current.get(i);
+          if (existing) {
+            existing.update({ viewport: textViewport });
+          } else {
+            dropTextLayer(textLayersRef.current, i, textDiv);
+            const layer = new pdfjs.TextLayer({
+              textContentSource: page.streamTextContent({ includeMarkedContent: true, disableNormalization: true }),
+              container: textDiv,
+              viewport: textViewport,
+            });
+            try {
+              await layer.render();
+            } catch {
+              dropTextLayer(textLayersRef.current, i, textDiv);
+              return; // cancelled or unreadable text; the canvas stays, the page is retried later
+            }
+            if (job.cancelled) {
+              dropTextLayer(textLayersRef.current, i, textDiv);
+              return;
+            }
+            // Without this block, dragging across a gap between lines jumps the selection to the
+            // end of the layer; `.selecting` stretches it over the whole page (see pdf.css).
+            const end = document.createElement("div");
+            end.className = "endOfContent";
+            textDiv.append(end);
+            textLayersRef.current.set(i, layer);
+          }
+        }
         renderedRef.current.set(i, scale);
       }
     };
@@ -257,8 +326,40 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
       canvas.width = 0;
       canvas.height = 0;
       renderedRef.current.delete(i);
+      dropTextLayer(textLayersRef.current, i, textDivsRef.current.get(i));
     }
   }, [range.start, range.end]);
+
+  // Selection support, mirroring pdf.js's TextLayerBuilder: `.selecting` while the pointer is
+  // down, and a copy handler that normalises what goes to the clipboard (pdfText.ts).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onDown = (e: MouseEvent) => {
+      (e.target as Element | null)?.closest(".textLayer")?.classList.add("selecting");
+    };
+    const onUp = () => {
+      for (const div of textDivsRef.current.values()) div.classList.remove("selecting");
+    };
+    const onCopy = (e: ClipboardEvent) => {
+      const selection = document.getSelection();
+      if (!selection || selection.isCollapsed || !e.clipboardData) return;
+      const pdfjs = pdfjsRef.current;
+      if (!pdfjs) return;
+      e.clipboardData.setData("text/plain", clipboardText(selection.toString(), pdfjs.normalizeUnicode));
+      e.preventDefault();
+    };
+    el.addEventListener("mousedown", onDown);
+    el.addEventListener("copy", onCopy);
+    document.addEventListener("pointerup", onUp);
+    window.addEventListener("blur", onUp);
+    return () => {
+      el.removeEventListener("mousedown", onDown);
+      el.removeEventListener("copy", onCopy);
+      document.removeEventListener("pointerup", onUp);
+      window.removeEventListener("blur", onUp);
+    };
+  }, []);
 
   // --- Controls ---------------------------------------------------------------
   const applyZoom = useCallback(
@@ -317,8 +418,13 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
         ) : (
           <div className="pdfview-doc" style={{ padding: PAGE_PAD, gap: PAGE_GAP }}>
             {layout.sizes.map((size, i) => (
-              <div className="pdfview-page" key={i} style={{ width: size.w, height: size.h }}>
+              <div
+                className="pdfview-page"
+                key={i}
+                style={{ width: size.w, height: size.h, "--total-scale-factor": scale } as CSSProperties}
+              >
                 <canvas className="pdfview-canvas" data-page={i} style={{ width: size.w, height: size.h }} ref={attachCanvas} />
+                <div className="textLayer" data-page={i} ref={attachText} />
               </div>
             ))}
           </div>
