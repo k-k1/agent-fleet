@@ -99,6 +99,12 @@ const inkUnderSpan = (page, re, dy = 0) => `(() => {
   for (let i = 0; i < d.length; i += 4) if (d[i + 3] >= 250 && (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200)) n++;
   return n / (d.length / 4);
 })()`;
+// Heading span height as a share of its page height. Every page's heading has the same style, so
+// this stays put across a zoom only if the span sizes follow the scale (--total-scale-factor).
+const headRatio = (page) => `(() => {
+  const pg = document.querySelectorAll('.pdfview-page')[${page}];
+  const sp = pg && [...pg.querySelectorAll('.textLayer span:not(.markedContent)')].find((e) => /^ページ$/.test(e.textContent));
+  return sp ? sp.getBoundingClientRect().height / pg.getBoundingClientRect().height : -1; })()`;
 const inkOrFailed = (sel) =>
   `(() => { if (document.querySelector('.pdfview.is-failed')) return -2; return ${inkOf(sel)}; })()`;
 
@@ -331,6 +337,8 @@ try {
     `clipboard=${JSON.stringify(copied)} (radicals in selection=${radicals(picked)}, on clipboard=${radicals(copied || "")})`);
   await b.evaluate("document.getSelection().removeAllRanges()");
 
+  const ratio0 = await b.evaluate(headRatio(0));
+
   // 3. The page number, and how it follows scrolling.
   const first = await b.evaluate("document.querySelector('.pdfview-pageno').textContent");
   check(/^1 \//.test(first), "starts on page 1", `bar=${JSON.stringify(first)}`);
@@ -356,6 +364,9 @@ try {
   const zoomedOn = await until(b.evaluate, inkUnderSpan(readIdx, "/ページ/"), (v) => v > 0.02, PDF_BEHAVIOR_TRIES);
   check(zoomedOn > 0.02, "after zooming the text layer still sits over the glyphs",
     `page ${readIdx + 1}: ink under heading span=${(zoomedOn * 100).toFixed(1)}%`);
+  const ratio1 = await b.evaluate(headRatio(readIdx));
+  check(ratio0 > 0 && Math.abs(ratio1 / ratio0 - 1) < 0.03, "the text layer's glyph size scales with the zoom",
+    `heading height / page height: ${ratio0.toFixed(4)} -> ${ratio1.toFixed(4)}`);
 
   // 5. Zoomed wider than the pane, the left edge of the page is still reachable (centred
   // overflow).
