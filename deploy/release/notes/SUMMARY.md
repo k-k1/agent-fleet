@@ -11,6 +11,30 @@ otherwise visible once the bullets are one line long.
 
 ---
 
+## [0.23.1](0.23.1.md) — 2026-09-24
+
+**CLI pins** — Claude Code 2.1.281, Codex 0.156.1, Antigravity 1.2.9, Kiro 2.23.1
+
+**New / Improved**
+
+- **[image generation]** Image studio: "Attach an agent" binds a session to the draft, the agent rewrites prompt, negative, steps, cfg, size, LoRAs and references as you talk, and a person presses generate; per-field locks, an edit history you can rewind to, model / seed / mask stay the person's, and "Switch agent" rebinds without losing the draft (claude, copilot, cursor and kiro as Terminal (CLI) only; opencode not as Managed; Muse Code not yet)
+- **[sessions]** Deleting any session goes to the trash and can be undone (shell and SSM too); deleting a session no longer deletes its worktree, and deleting a worktree moves its stopped sessions to the archive; the trash tab gains "Delete permanently: older than 30 days" and never empties on its own
+- **[cleanup]** The cleanup dialog clears the cache of deleted sessions (pasted images, images codex read) once nothing refers to it
+- **[settings › machine]** The disk Agent Fleet uses, with each folder's path; a path opens in the file tree, an image folder in the gallery
+- **[question cards]** A Translate button on pending and answered questions and on messages from other sessions that came in another language; answers are matched against the original
+- **[viewer]** Text in a PDF can be selected and copied
+- **[guide delivery]** The user guide carries every release's notes and this index, and the builtin assistants answer from them (in a new conversation)
+- **[sessions]** A session can run up to 10 children at once (was 6; default still 3)
+- **[notifications]** "Notify when a child session is waiting for input" can be turned off; questions and approvals from a child still notify
+- **[mirror]** Thinking blocks collapse to a one-line preview, and the close bar appears only on long ones
+- **[composer]** A pasted image chip opens in the lightbox, in the mirror's composer and the launch dialog
+- **[left pane › FILES]** Long file names are shortened in the middle, keeping the extension and the end of the name; the tooltip shows the full path
+
+**Fixed**
+
+- **[fleet operator]** The fleet operator and SRE assistant on Antigravity answered "no response from agy" whenever the model tried a command or read its reference material; they now answer, and agy's reason is shown when it fails
+- **[gallery]** Opening the thumbnail cache folder in the gallery kept making thumbnails of thumbnails
+
 ## [0.23.0](0.23.0.md) — 2026-09-23
 
 **CLI pins** — Claude Code 2.1.280, Codex 0.156.0, Copilot 1.0.88, OpenCode 1.18.32, Antigravity 1.2.8; Muse Code 1.3.0-R3401.1 (new, installed on demand)

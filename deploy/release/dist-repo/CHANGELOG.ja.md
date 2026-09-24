@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.23.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.1) — 2026-09-24
+
+画像生成のスタジオが入りました。セッションのエージェントが会話に合わせて生成の下書きを書き直し、
+生成のボタンは人が押します。あわせて、セッションの削除は必ずごみ箱を通り、worktree を道連れに
+しなくなりました。ほかに、削除済みセッションが残したキャッシュの掃除、Agent Fleet が使っている
+ディスクの内訳、質問と peer メッセージの翻訳、PDF の文字の選択が入りました。
+
 ## [0.23.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.0) — 2026-09-23
 
 セッションの種類が 2 つ増えました。**llama.cpp** は、配備のチャットエンジンか自分の
