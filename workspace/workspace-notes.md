@@ -45,6 +45,10 @@ skip and say so.
   bare: with no argument at all it **starts a second Agent**. To inspect it, ask it —
   `workspace-agent --version` / `--help` answer and exit, and any argument it does not know
   prints usage and exits 2 rather than booting.
+- Filing a GitHub issue — Agent Fleet's own tracker or a user's repository — is visible outside
+  this workspace: strip secrets, internal hostnames/URLs, and tenant/customer names from logs,
+  screenshots or error text before pasting them in, and describe the environment generically
+  instead. Where to file feedback on Agent Fleet itself is in the guide's Troubleshooting chapter.
 
 ## Git branches: stay on the branch the session started on
 - **Do not create, switch, or rename branches on your own initiative** — not even when the
