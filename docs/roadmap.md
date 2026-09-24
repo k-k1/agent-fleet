@@ -318,7 +318,8 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 ## P3-9. 運用の成熟（社内・旧 Phase 4 を吸収）
 > ◐ **idle-stop 実装済**（[p3-9-idle-stop](log/p3-9-idle-stop.md)）+ **showback 段1+段2 実装済**（バックエンド + Console 使用量ダッシュボード、[p3-9-showback](log/p3-9-showback.md)、段2 は要目視確認）。
 > **auto-start（オンデマンド起動）実装済**（idle-stop の対＝scale-to-zero 完結、`AF_AUTOSTART`, 既定 on）。残＝観測 / egress 統制。バックアップ/復元は P3-10 段3 で実装済。
-> **egress 統制の現状（2026-09-24）**: 観測（log-only）の forward proxy・集計・監査、版付きの許可リストと人の承認、proxy の enforce スイッチは実装済み（`control-plane/egress.go` / `egress_policy.go` / `egress_proxy.go`、2026-07-05 のコミット 8d6c43324 から）。Workspace の通信を常にこの proxy へ通す配線（内部ネットワーク＋proxy の env 注入）は未実装なので、enforce はまだ Workspace を縛らない（`guide/operate/04-secure.md` の実装範囲の注記）。
+> **観測: 汎用のメトリクス出力（Prometheus など）とオンプレのアラートは予定しない（2026-09-25）**: 求める配備が出るまで作らない。観測で実装済みなのは、管理者向けのセッション俯瞰（`GET /api/admin/sessions`）、Workspace のリソース計測（ADR 0058）、AWS の CloudWatch アラーム＋SNS メール（cfn `30-ingress` / `40-ec2-pool`）。
+> **egress 統制の現状（2026-09-24）**: 観測（log-only）の forward proxy・集計・監査、版付きの許可リストと人の承認、proxy の enforce スイッチは実装済み（`control-plane/egress.go` / `egress_policy.go` / `egress_proxy.go`、2026-07-05 のコミット 8d6c43324 から）。Workspace の通信を常にこの proxy へ通す配線（内部ネットワーク＋proxy の env 注入）は未実装なので、enforce はまだ Workspace を縛らない（`guide/operate/04-secure.md` の実装範囲の注記）。この配線は、配備が egress の遮断を要件にしたとき（例: セキュリティ審査）に作る（2026-09-25）。
 
 各社が自社デプロイを運用するための成熟。我々は機能と runbook を提供。
 
@@ -337,6 +338,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > ◐ **進行中**（提供モデルの核）。4 ターゲットの設計・実装記録は [docs/35](log/35-packaging.md)、**dist 配布は publish 運用中**
 > （0.1.0〜、リリースノートは `deploy/release/notes/`）。完了判定 = 第 2 デプロイをゼロから立てて E2E 通過
 > （[decisions/0001](decisions/0001-self-host-vs-saas.ja.md)）——未達。
+> **完了ゲートは書いたとおりに据え置く（2026-09-25）**: 第三者が dist の配布物と runbook だけを頼りにオンプレへ設置し、E2E を記録して通すこと。別の AWS アカウントに既にある 2 つ目の配備はこれを満たさない。実在する 2 社目のグループ会社か第三者を待つ。
 
 「グループ各社が自社でセルフホスト」を成立させる工程。機能（P3-1〜P3-9）を**他社の情シスが設置・運用・更新できる形**にする。
 

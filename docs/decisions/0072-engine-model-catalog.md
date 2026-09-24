@@ -35,6 +35,7 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   what had to be measured before a decision could stand is listed under *Open questions*, each
   decision naming the question it depends on. What was measured afterwards is in two sections —
   *Resolved by measurement* (ComfyUI) and *P0 measurements* (the implementation).
+  Status update (2026-09-25): "P3 … not started" above is out of date — P3 was built and closed on hardware on 2026-09-11 (image: "H3 — P2's remainder and P3, closed on hardware"; llm: "P3, the llm half" and "#513 and #518's llm half, closed on hardware"). Decision 5's second half, virtual model ids for llm (listed under P5), is not planned: it would make the gateway rewrite request bodies; revisit only if someone needs a per-request LoRA set on the llm role that a preset-pinned LoRA cannot serve.
 - Follow-ups: #964
 - Revised the same day: **vLLM and ComfyUI were weighed, and the licence, gating and file sizes of
   the candidate models (SD3 / SD3.5 / FLUX.1 / FLUX.2 klein / Z-Image / Qwen-Image) were taken

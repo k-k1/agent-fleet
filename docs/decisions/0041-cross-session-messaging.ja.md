@@ -5,6 +5,7 @@
 - 状態: 採用・未実装（設計のみ。実装は docs/58 の P1〜P3。**P0 の実測は完了**し、
   その結果として決定1 が「開ける」から「有効化しない」へ差し戻った）
   状態の更新（2026-09-24）: P1 は実装済みで、2026-08-10 に実機で確認した——`--peer-messaging` の下の `list_peer_sessions` / `send_to_peer_session`、封筒、宛先ポリシー、レート制限（コミット d5b2a0a98・9f5fc56ca、`workspace/agent/internal/mcpx/mcp_stdio.go`）。実機の記録は docs/58 §58.12。P2（受信側の accept / hold / refuse）は作っていない。
+  状態の更新（2026-09-25）: P2（受信側の accept / hold / refuse）は予定しない——1 つの Workspace の中のセッションはすべて同じ本人のものなので、拒む相手がいない。別の人のセッションから受け取る経路ができたときに再検討する。
 - 関連: [58-cross-session-messaging.md](../log/58-cross-session-messaging.md) /
   [51-session-report-v2-ledger.md](../log/51-session-report-v2-ledger.md)（arm と台帳の所有者） /
   [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.ja.md)（決定5: 申告はタイミング信号のみ） /

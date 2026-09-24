@@ -93,6 +93,12 @@ symptom always read as intermittent. Measured: with throttling the pre-fix bundl
   置くと、はみ出したボタンぶん（実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いて
   いるのに `gap=12px` になる（「返信を頭から」は末尾でも出るので、これが表に出た）。
 
+## Known
+
+- `--scenario working` rarely fails at the park step (observed once in 11 runs on 2026-09-12, not
+  reproduced in 10 reruns; this harness is not part of CI). On a second observation, try to reproduce
+  it under a heavier throttle — `--cpu 4` is already the default.
+
 ## 再現しなかったこと（残しておく）
 
 スワイプの指の `pointerdown` が `noteInteraction` の 600ms を武装したまま次のセッションへ

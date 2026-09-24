@@ -54,3 +54,7 @@
 メモ化は**渡す側が props を安定させている前提**で効く。`TranscriptTurn` の `memo()` は既定の浅い
 比較なので、`caps` か `turn` を毎レンダリング作り直した瞬間に黙って無効になる——この表の 3 行目が
 2 行目に戻ったら、まずそこを疑う。梯子そのものの単体試験は `src/features/mirror/pollCadence.test.ts`。
+
+転写を SSE で push する案は予定しない（2026-09-25）: 費用の大半は PR #599・#604（梯子・digest）と
+CP の ETag 304 で取れており、`/api/events` 自体も CP 側で 4 秒ごとにポーリングしている
+（`control-plane/events.go`）。電池の苦情が戻り、この検査でリクエスト数かバイト数が予算を超えたら再検討する。
