@@ -15,6 +15,7 @@ vi.mock("../../viewer/MarkdownView.tsx", () => ({
 }));
 
 import { TranscriptView } from "./TranscriptView.tsx";
+import { THINKING_FOOT_MIN_PX, thinkingPreview } from "./blocks.tsx";
 import { groupTurns } from "./model.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Part, Turn } from "./types.ts";
@@ -452,13 +453,48 @@ describe("an expanded work trace or thinking block closes from the bottom too", 
     expect(head.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("thinking: the bottom close folds it", () => {
+  // jsdom has no layout, so the body's height is stubbed: only a thought tall enough for its
+  // head to scroll away gets the bottom close (THINKING_FOOT_MIN_PX).
+  const stubHeight = (px: number) =>
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 100, px));
+
+  it("thinking: the bottom close folds a long one", () => {
+    const spy = stubHeight(THINKING_FOOT_MIN_PX + 1);
+    try {
+      const el = render(THINK_TURN, OWNER);
+      const head = el.querySelector<HTMLButtonElement>(".mirror-thinking-head")!;
+      act(() => head.click());
+      expect(head.getAttribute("aria-expanded")).toBe("true");
+      act(() => el.querySelector<HTMLButtonElement>(".mirror-thinking-body .mirror-disclosure-foot")!.click());
+      expect(head.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("thinking: a short one has no bottom close, only the gutter toggle", () => {
+    const spy = stubHeight(THINKING_FOOT_MIN_PX);
+    try {
+      const el = render(THINK_TURN, OWNER);
+      const head = el.querySelector<HTMLButtonElement>(".mirror-thinking-head")!;
+      act(() => head.click());
+      expect(el.querySelector(".mirror-thinking .mirror-disclosure-foot")).toBeNull();
+      act(() => head.click());
+      expect(head.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("thinking: the preview drops markup noise but keeps identifiers", () => {
+    expect(thinkingPreview("## Plan\n\n- check **`write_file`** next\n> then read_url")).toBe(
+      "Plan check write_file next then read_url",
+    );
+  });
+
+  it("thinking: the closed head previews the reasoning on one line", () => {
     const el = render(THINK_TURN, OWNER);
-    const head = el.querySelector<HTMLButtonElement>(".mirror-thinking-head")!;
-    act(() => head.click());
-    expect(head.getAttribute("aria-expanded")).toBe("true");
-    act(() => el.querySelector<HTMLButtonElement>(".mirror-thinking-body .mirror-disclosure-foot")!.click());
-    expect(head.getAttribute("aria-expanded")).toBe("false");
+    expect(el.querySelector(".mirror-thinking-head .mth-preview")?.textContent).toBe("まず前提を確かめる。");
   });
 });
 
