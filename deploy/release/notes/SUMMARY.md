@@ -2,27 +2,12 @@
 
 Every published release, newest first, with each new feature and each fix on one
 line. The per-version notes answer "is there anything in here for me?"; this file
-answers "when did X ship?" and "which release fixed Y?" without opening 30 files.
+answers "when did X ship?" and "which release fixed Y?" without opening every
+release's notes.
 
 Each line starts with the area it belongs to — **[preview]**, **[ecs-ec2]**,
 **[mirror]** — so a fix can be traced back to the feature it repairs, which is not
 otherwise visible once the bullets are one line long.
-
-Keeping it current:
-
-- Add the new version's section at the top **as part of publishing** (see the steps
-  in [README.md](README.md)); `release-gate` fails when a ledger row has no section
-  here. Japanese lives in [SUMMARY.ja.md](SUMMARY.ja.md) and moves with it.
-- One line per item, condensed from that version's notes. Upgrade steps stay in the
-  notes and do not come here.
-- The **CLI pins** line lists only the agent CLIs whose pin moved in that version;
-  no line means nothing moved. Take the values from the build commit rather than
-  from the prepared notes — a pin bump can land between writing them and publishing:
-  `git show <build-commit>:workspace/Dockerfile | grep -E '^ARG (CLAUDE_CODE|OPENCODE|CODEX|COPILOT|AGY|CURSOR|KIRO|RTK)_VERSION='`
-  diffed against the previous version's build commit.
-- Only versions in [index.tsv](index.tsv) belong here. Notes exist for a couple of
-  versions that were prepared and then never published (0.8.1, 0.12.5); the ledger,
-  not the presence of a file, says what shipped.
 
 ---
 

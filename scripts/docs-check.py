@@ -338,6 +338,12 @@ _RUNBOOK_REASON = (
     "rewrites this link to point there, so it stays live both ways: deploy/ on GitHub, "
     "runbooks/ in the container"
 )
+_RELEASES_REASON = (
+    "the release history stays next to the dist repo's release bodies it is rendered "
+    "into. deploy/release/stage-docs.sh copies SUMMARY*.md and every published "
+    "version's notes into ref/releases/ when shipping and rewrites this link to point "
+    "there (and fails the build on a link that would be dead in the copy)"
+)
 # Listed as individual paths. This used to be the prefix `deploy/`, which exempted the
 # six links to `deploy/compose/.env.example` along with the five runbooks that are
 # actually rewritten, leaving links that are dead inside the shipped tree reported as
@@ -349,6 +355,8 @@ CLOSURE_EXEMPT: dict[str, str] = {
     "deploy/local/README-wsl.md": _RUNBOOK_REASON,
     "deploy/aws/ecs/README.md": _RUNBOOK_REASON,
     "deploy/aws/ec2-single/README.md": _RUNBOOK_REASON,
+    "deploy/release/notes/SUMMARY.md": _RELEASES_REASON,
+    "deploy/release/notes/SUMMARY.ja.md": _RELEASES_REASON,
 }
 
 

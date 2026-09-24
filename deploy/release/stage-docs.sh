@@ -24,7 +24,15 @@
 #      `guide/operate/…` points at `../../deploy/compose/README.md`, which is right on
 #      GitHub and absent in a container; here it becomes `runbooks/compose.md`, which is
 #      right in a container. One source, correct in both places — and the reason
-#      check_closure grants deploy/ its single documented exemption.
+#      check_closure grants deploy/ its documented exemptions.
+#   4. deploy/release/notes -> <dest>/ref/releases/ — the release history: SUMMARY*.md
+#      (the one-line index) and the notes of every version in index.tsv. They stay in
+#      deploy/release/notes because that is also where the dist repo's release bodies
+#      and CHANGELOG are rendered from; copying them here is what lets the Console's user
+#      guide and the builtin assistants answer "what changed, and since when" from
+#      inside a workspace. Only ledger versions are copied: notes of versions that were
+#      prepared and never published are still in the directory, and the presence of a
+#      file is not what says a version shipped.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -100,4 +108,50 @@ rewrite_runbook_links() {  # <dir> <prefix>
 rewrite_runbook_links "$DEST/operate" "runbooks/"
 rewrite_runbook_links "$DEST/ref" "../operate/runbooks/"
 
-echo "==> staged docs: guide/ + ${#RUNBOOKS[@]} runbooks -> $DEST"
+# The same for the release history (step 4): the repository links reach it through
+# deploy/release/notes, the staged tree has it at ref/releases.
+rewrite_release_links() {  # <dir> <from> <to>
+  local dir="$1" from="$2" to="$3" f
+  [ -d "$dir" ] || return 0
+  while IFS= read -r -d "" f; do
+    sed -i -e "s#${from}deploy/release/notes/#${to}#g" "$f"
+  done < <(find "$dir" -maxdepth 1 -name "*.md" -print0)
+}
+rewrite_release_links "$DEST" "\.\./" "ref/releases/"
+rewrite_release_links "$DEST/ref" "\.\./\.\./" "releases/"
+rewrite_release_links "$DEST/member" "\.\./\.\./" "../ref/releases/"
+rewrite_release_links "$DEST/admin" "\.\./\.\./" "../ref/releases/"
+rewrite_release_links "$DEST/operate" "\.\./\.\./" "../ref/releases/"
+
+# --- 4. the release history ---------------------------------------------------
+NOTES="$ROOT/deploy/release/notes"
+REL="$DEST/ref/releases"
+mkdir -p "$REL"
+cp "$NOTES/SUMMARY.md" "$NOTES/SUMMARY.ja.md" "$REL/"
+n=0
+while IFS=$'\t' read -r v _date _commit; do
+  case "$v" in ''|\#*) continue ;; esac
+  [ -f "$NOTES/$v.md" ] || {
+    echo "ERROR: index.tsv lists $v but $NOTES/$v.md is missing" >&2
+    exit 1
+  }
+  cp "$NOTES/$v.md" "$REL/"
+  [ -f "$NOTES/$v.ja.md" ] && cp "$NOTES/$v.ja.md" "$REL/"
+  n=$((n + 1))
+done < "$NOTES/index.tsv"
+# Every relative link in the copy must land inside it. A note that links to README.md
+# or index.tsv (maintainer files that are not copied) would be dead for the reader,
+# and nothing else checks the staged tree.
+dead=0
+for f in "$REL"/*.md; do
+  while IFS= read -r target; do
+    case "$target" in http://*|https://*|mailto:*|\#*) continue ;; esac
+    [ -e "$REL/${target%%#*}" ] || {
+      echo "ERROR: ${f#"$DEST"/} links to '$target', which is not in the staged release history" >&2
+      dead=1
+    }
+  done < <(grep -oE '\]\([^) ]+\)' "$f" | sed -E 's/^\]\((.*)\)$/\1/')
+done
+[ "$dead" = 0 ] || exit 1
+
+echo "==> staged docs: guide/ + ${#RUNBOOKS[@]} runbooks + $n release notes -> $DEST"

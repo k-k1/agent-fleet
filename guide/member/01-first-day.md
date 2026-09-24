@@ -104,6 +104,8 @@ reload, this **does stop running sessions** — they become *stopped* and are re
 repositories and files are left untouched. There is no hurry: pick a moment that suits you.
 The badge disappears on its own once the workspace is back on the current version.
 
+What a release brought is in the [release history](../../deploy/release/notes/SUMMARY.md).
+
 ### End-of-first-day checklist
 
 - Did you commit and push the changes that matter? (Only what you pushed survives outside the workspace.)
