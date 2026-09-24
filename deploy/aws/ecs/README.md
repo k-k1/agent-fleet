@@ -1691,6 +1691,17 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
 ./standup.sh     --profile <p> --region <r> [--yes]    # build it back
 ```
 
+- **`pause.sh` stops everything AWS lets you stop, in the one order that strands nothing.**
+  Workspaces, then the slots and the engines' GPU boxes (waited for, or ended directly with
+  `--fast`), then the CP, then a sweep that terminates any engine box still alive — once the
+  CP is gone nothing else ever will, and a g6.xlarge left up is ~$28 a day. The RDS instance
+  is stopped last (`--keep-db` leaves it) and started first on `--up`, before the CP.
+  What stays: NAT, ALB, EFS, RDS storage and the homes' EBS — AWS has no "stop" for a NAT
+  gateway or a load balancer, only delete.
+  🔴 **AWS starts a stopped RDS instance again after 7 days.** `--status` warns when the
+  database is running under a paused CP; running `pause.sh` again stops it and restarts the
+  clock.
+
 - **`capture-env.sh` first, always.** It writes the parameters each stack was deployed
   with to `~/.config/agent-fleet/deploy/<profile>.<region>/` (outside the repository —
   the values are account-specific). The templates live here; **what was passed to them
