@@ -103,7 +103,7 @@ const inkUnderSpan = (page, re, dy = 0) => `(() => {
 // this stays put across a zoom only if the span sizes follow the scale (--total-scale-factor).
 const headRatio = (page) => `(() => {
   const pg = document.querySelectorAll('.pdfview-page')[${page}];
-  const sp = pg && [...pg.querySelectorAll('.textLayer span:not(.markedContent)')].find((e) => /^ページ$/.test(e.textContent));
+  const sp = pg && [...pg.querySelectorAll('.textLayer span:not(.markedContent)')].find((e) => /^\\d+$/.test(e.textContent));
   return sp ? sp.getBoundingClientRect().height / pg.getBoundingClientRect().height : -1; })()`;
 const inkOrFailed = (sel) =>
   `(() => { if (document.querySelector('.pdfview.is-failed')) return -2; return ${inkOf(sel)}; })()`;
@@ -299,7 +299,12 @@ try {
   // 9. Text selection. The layer's spans must sit over the glyphs: ink under the heading span,
   // and none under a same-sized rect in the margin above it (so a layer filling the whole page
   // cannot pass). The ink bound is low for the reason given in check 2 (tofu in CI).
-  const HEAD = "/^ページ$/";
+  //
+  // The anchor is the heading's page number, not its Japanese words: on a runner without
+  // Japanese fonts chromium prints them as .notdef glyphs with no Unicode, so the layer holds
+  // NULs there and only " 1" survives as text (measured with the CJK fonts hidden from
+  // fontconfig). The first all-digit span on a page is its heading number.
+  const HEAD = "/^\\d+$/";
   const onText = await until(b.evaluate, inkUnderSpan(0, HEAD), (v) => v > 0.02, PDF_BEHAVIOR_TRIES);
   const offText = await b.evaluate(inkUnderSpan(0, HEAD, -1.5));
   check(onText > 0.02 && offText >= 0 && offText < onText / 4, "the text layer sits over the glyphs of page 1",
@@ -308,24 +313,25 @@ try {
   // A real drag (Input events, not a scripted Range), so pointer-events, z-order and
   // user-select all take part. The selection starts empty, so a drag that did nothing fails.
   const empty = await b.evaluate("String(document.getSelection())");
-  // From the heading's first span to the last span on the same line.
+  // Across the whole heading line: every span sharing the number's top.
   const box = await b.evaluate(`(() => {
     const spans = [...document.querySelectorAll('.pdfview-page')[0].querySelectorAll('.textLayer span:not(.markedContent)')];
     const r = spans.find((e) => ${HEAD}.test(e.textContent)).getBoundingClientRect();
     const line = spans.map((e) => e.getBoundingClientRect()).filter((q) => q.width && Math.abs(q.top - r.top) < 2);
-    return { x0: r.left + 1, x1: Math.max(...line.map((q) => q.right)) - 1, y: r.top + r.height / 2 }; })()`);
+    return { x0: Math.min(...line.map((q) => q.left)) + 1, x1: Math.max(...line.map((q) => q.right)) - 1, y: r.top + r.height / 2 }; })()`);
   const mouse = (type, x, buttons) =>
     b.send("Input.dispatchMouseEvent", { type, x, y: box.y, button: "left", buttons, clickCount: 1 });
   await mouse("mousePressed", box.x0, 1);
   for (let k = 1; k <= 8; k++) await mouse("mouseMoved", box.x0 + ((box.x1 - box.x0) * k) / 8, 1);
   await mouse("mouseReleased", box.x1, 0);
   const picked = await b.evaluate("String(document.getSelection())");
-  check(empty === "" && /ページ\s*1/.test(picked), "dragging over the heading selects its text",
+  check(empty === "" && /\s1(\D|$)/.test(picked), "dragging over the heading selects its text",
     `before=${JSON.stringify(empty)} after=${JSON.stringify(picked)}`);
 
-  // Copy goes through PdfView's handler and lands as text/plain, normalised: chromium's PDFs map
-  // CJK ideographs to Kangxi radicals (U+2F00..U+2FDF, e.g. U+2F47 for the "day" ideograph),
-  // which look right and then fail every search they are pasted into.
+  // Copy goes through PdfView's handler and lands as text/plain, normalised (pdfText.ts). Which
+  // half gets exercised depends on the fonts: with Japanese fonts chromium's PDF maps ideographs
+  // to Kangxi radicals (U+2F47 for the "day" ideograph) that must be folded; without them the
+  // selection carries NULs that must be dropped. The detail line says which one ran.
   const copied = await b.evaluate(`(() => { let got = null;
     const grab = (e) => { got = e.clipboardData.getData('text/plain'); };
     document.addEventListener('copy', grab);
@@ -333,8 +339,13 @@ try {
     document.removeEventListener('copy', grab);
     return got; })()`);
   const radicals = (t) => (t.match(/[\u2f00-\u2fdf]/g) || []).length;
-  check(!!copied && /ページ\s*1/.test(copied) && radicals(copied) === 0, "copy puts the selected text on the clipboard, normalised",
-    `clipboard=${JSON.stringify(copied)} (radicals in selection=${radicals(picked)}, on clipboard=${radicals(copied || "")})`);
+  const nuls = (t) => t.split("\0").length - 1;
+  const clip = copied || "";
+  check(
+    /\s1(\D|$)/.test(clip) && radicals(clip) === 0 && nuls(clip) === 0 && (!/ページ/.test(picked) || /ページ/.test(clip)),
+    "copy puts the selected text on the clipboard, normalised",
+    `clipboard=${JSON.stringify(clip)} (radicals ${radicals(picked)} -> ${radicals(clip)}, NULs ${nuls(picked)} -> ${nuls(clip)})`,
+  );
   await b.evaluate("document.getSelection().removeAllRanges()");
 
   const ratio0 = await b.evaluate(headRatio(0));
@@ -361,7 +372,7 @@ try {
   check(after === before, "zooming does not change the page being read", `${before} -> ${after}`);
   // The text layer follows the zoom (TextLayer.update, not a rebuild) and still covers the glyphs.
   const readIdx = Number(after.split(" ")[0]) - 1;
-  const zoomedOn = await until(b.evaluate, inkUnderSpan(readIdx, "/ページ/"), (v) => v > 0.02, PDF_BEHAVIOR_TRIES);
+  const zoomedOn = await until(b.evaluate, inkUnderSpan(readIdx, HEAD), (v) => v > 0.02, PDF_BEHAVIOR_TRIES);
   check(zoomedOn > 0.02, "after zooming the text layer still sits over the glyphs",
     `page ${readIdx + 1}: ink under heading span=${(zoomedOn * 100).toFixed(1)}%`);
   const ratio1 = await b.evaluate(headRatio(readIdx));
