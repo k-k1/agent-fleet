@@ -53,6 +53,7 @@ type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
 let root: Root | null = null;
 let host: HTMLDivElement;
 let onLaunch: Mock<Launch>;
+let onClose: Mock<() => void>;
 
 // A missing element means the UI moved (a control changed section / label), which is the
 // thing these tests exist to catch — say so, instead of failing later on `undefined.click`.
@@ -89,7 +90,7 @@ async function render(kinds = ["claude"], extra: { repo?: string; initialPrompt?
         branch="main"
         kinds={kinds}
         initialPrompt={extra.initialPrompt}
-        onClose={() => {}}
+        onClose={onClose}
         onLaunch={onLaunch}
       />,
     );
@@ -166,6 +167,7 @@ beforeEach(() => {
   lcppModels = [];
   apiMock.mockClear();
   onLaunch = vi.fn<Launch>(async () => ({ ok: true }));
+  onClose = vi.fn<() => void>();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -327,6 +329,28 @@ describe("LaunchModal branch mode", () => {
 
     await reopen({ repo: "other" }); // never leaks into another repository
     expect(chips()).toHaveLength(0);
+  });
+
+  // A pasted screenshot is only a 56px chip; clicking it is how the user checks it is the right
+  // one. The lightbox sits above the dialog, and Esc / its backdrop peel it alone — closing the
+  // dialog with it would throw away the half-written launch.
+  it("enlarges a pasted image in a lightbox that closes without closing the dialog", async () => {
+    await render();
+    await pasteImage("shot.png");
+    await click(must(chips()[0].querySelector(".ma-thumb-btn"), "thumbnail button"));
+    const box = () => document.querySelector(".mirror-lightbox.over-modal");
+    expect(box()?.querySelector("img")?.getAttribute("src")).toMatch(/^blob:/);
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(box()).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await click(must(chips()[0].querySelector(".ma-thumb-btn"), "thumbnail button"));
+    await click(must(box(), "lightbox"));
+    expect(box()).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("hands the restored image to the launch, then forgets it", async () => {

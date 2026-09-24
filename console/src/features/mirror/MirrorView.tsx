@@ -2141,7 +2141,12 @@ export function MirrorView({
               onForget={suggest.forgetSuggestion}
             />
           )}
-          <AttachChips attachments={attachments} pasting={pasting} onRemove={removeAttachment} />
+          <AttachChips
+            attachments={attachments}
+            pasting={pasting}
+            onRemove={removeAttachment}
+            onOpen={(url) => setLightbox({ src: url })}
+          />
           {/* Ctrl+R history search. Full-width band above the input row; the match it is on is
               previewed in the textarea itself, so the two have to be read together. */}
           {histSearch.open && (
