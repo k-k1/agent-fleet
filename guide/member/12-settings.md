@@ -409,6 +409,8 @@ administrator's to set.
   automatically. **"Measure"** counts them (it reads every file, so only on a press); **"Empty"** deletes
   one after a confirmation. The next build or install that needs it is slower once. A cache a running
   build or install is using shows **"In use"** and cannot be emptied until that finishes.
+  Old versions of the Copilot and Cursor CLIs are not listed here: they are removed automatically when
+  the Workspace starts, keeping the current version, the pinned one, and any a running session still uses.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain

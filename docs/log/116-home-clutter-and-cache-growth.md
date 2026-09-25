@@ -82,3 +82,38 @@ HOME 113G、ボリューム使用率 84%。中身は性質の違う 2 種類に�
   - 場所は各ツールの変数（`GOCACHE`・`npm_config_cache`・`UV_CACHE_DIR`・`PIP_CACHE_DIR`）が Agent の環境にあればそれに従う。
     🔥 テストはこの 4 つを必ず一時ディレクトリへ向ける。向けないと、CI や手元でこれらが設定されていた場合に、
     テストが本物のキャッシュを空にする。
+
+## 追記: 古い CLI の版（#981、2026-09-25）
+
+同じ Workspace で、キャッシュとは別にもう 1 種類の肥大が見つかった。**使い終わった CLI の版**である。
+
+| CLI | 場所 | 残っていた版 | 量 |
+|---|---|---|---|
+| copilot | `~/.cache/copilot/pkg/linux-x64/<版>/` | 15（1.0.73〜1.0.88） | 2.7G |
+| cursor | `~/.local/share/cursor-agent/versions/<版>/` | 12（2026.07.20〜2026.09.23） | 4.6G |
+
+- copilot は、プラットフォーム用のバイナリが初回起動時に自分を `pkg/<版>` へ展開する（実測: 起動中のプロセスが
+  `pkg/1.0.88/app.js` を開いている）。cursor は、entrypoint のピン導入も上流の `install.sh` も `versions/<版>` に
+  展開して symlink を張り替えるだけである。どちらも古い版を消さない。home はイメージより長生きするため、
+  ピンを上げるたび、あるいは自己更新 opt-in で最新を取るたびに 1 版ずつ溜まる。
+- 起票時の「cursor がピンを越えて自己更新している」という観察は、この Workspace で自己更新 opt-in が ON だった
+  （`AF_AGENT_SELF_UPDATE=1`）ためで、設計どおりの動きだった。agy の自己更新問題とは別物である。
+
+**上の「案 2 は作らない」と矛盾しない理由**: 案 2 で自動掃除を見送ったのは、キャッシュは次のビルドがまた読むので、
+消すと遅くなるからだった。古い版は二度と読まれないので、消しても何も遅くならない。
+
+**実装**（`cli_version_prune.go`）: Agent の起動時に 1 回だけ、バックグラウンドで消す。版が変わるのは Agent より先に
+走る entrypoint の中だけなので、起動時の 1 回で足りる。CLI ごとに残す版は次のとおり。
+
+- launcher が今指している版（cursor は `~/.local/bin/{cursor-agent,agent}` の symlink、copilot は `@github/copilot` の `package.json`）
+- `versions.json` のピン（opt-in を OFF に戻したとき、entrypoint はピン版のディレクトリへ symlink を張り直すだけで、再ダウンロードしない）
+- `/proc/*/{exe,maps,fd}` のどれかがその版の下を指している版（実行中のセッション）
+
+判断できないときは、その CLI の版を 1 つも消さない。該当するのは、launcher が home の外を指しているとき、
+copilot の `package.json` が見つからないとき、動いている copilot のバイナリが差し替え済み（`(deleted)`）で版を
+特定できないとき。版の形をしていない名前と symlink には触らない。`versions.json` の無い環境（native ランタイムで
+他人のマシンの home を使う場合）でも何もしない。
+
+実機（この Workspace）: 古い cursor（2026.08.04）の node を動かしたまま実行したところ、23 版・5,805 MiB が消えた。
+残ったのは、copilot 1.0.88、cursor の 2026.08.04（使用中）・2026.09.15（ピン）・2026.09.23（現行）で、
+両方の CLI とも `--version` はそのまま動いた。

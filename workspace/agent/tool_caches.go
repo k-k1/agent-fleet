@@ -246,24 +246,27 @@ func emptyDir(dir string) (bytes int64, files int, err error) {
 		return 0, 0, err
 	}
 	for _, e := range ents {
-		p := filepath.Join(real, e.Name())
-		rerr := os.RemoveAll(p)
-		if rerr != nil {
-			// A tool may leave read-only directories (Go's module cache does), and RemoveAll
-			// cannot unlink inside one: open the rest of the tree up and try once more.
-			_ = filepath.WalkDir(p, func(q string, d os.DirEntry, werr error) error {
-				if werr == nil && d.IsDir() {
-					_ = os.Chmod(q, 0o700)
-				}
-				return nil
-			})
-			rerr = os.RemoveAll(p)
-		}
-		if rerr != nil && err == nil {
+		if rerr := removeTree(filepath.Join(real, e.Name())); rerr != nil && err == nil {
 			err = rerr
 		}
 	}
 	return bytes, files, err
+}
+
+// removeTree is os.RemoveAll that also gets through read-only directories: a tool may
+// leave them (Go's module cache does), and RemoveAll cannot unlink inside one, so open the
+// rest of the tree up and try once more.
+func removeTree(p string) error {
+	if os.RemoveAll(p) == nil {
+		return nil
+	}
+	_ = filepath.WalkDir(p, func(q string, d os.DirEntry, werr error) error {
+		if werr == nil && d.IsDir() {
+			_ = os.Chmod(q, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(p)
 }
 
 func joinInts(xs []int) string {
