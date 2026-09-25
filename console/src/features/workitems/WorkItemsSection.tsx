@@ -45,6 +45,7 @@ import {
   matchWorkItem,
   promptForItem,
   RAIL_VISIBLE,
+  railLabels,
   railWhen,
   repoForItem,
   sessionsForItem,
@@ -79,7 +80,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
   // The freed height is not filled back in.
   const repo = uniform.repo ? "" : item.repo;
   const assignee = uniform.assignee ? "" : item.assignee;
-  const labels = item.labels.slice(0, 2);
+  const labels = railLabels(item.labels);
   const meta = !!(repo || assignee || labels.length);
   const when = railWhen(item.updatedAt);
   return (
@@ -120,7 +121,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
           )}
         </div>
         {meta && (
-          <div className="wi-meta">
+          <div className="wi-meta" title={labels.length ? labels.join(", ") : undefined}>
             {repo && <span className="wi-repo">{repo}</span>}
             {assignee && <span className="wi-assignee">@{assignee}</span>}
             {labels.map((l) => (

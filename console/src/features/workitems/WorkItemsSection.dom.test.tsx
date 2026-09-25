@@ -138,6 +138,21 @@ describe("WorkItemsSection", () => {
     expect(host.querySelector(".wi-stamp")?.textContent || "").not.toBe("");
   });
 
+  it("draws every label on the row, priority first", async () => {
+    workItemList.mockResolvedValue({
+      items: [item({ labels: ["bug", "follow-up", "priority: high"] })],
+      queries: [query],
+      sessions: [],
+      fetchedAt: "2026-08-26T09:00:00Z",
+      running: true,
+    });
+    await render();
+    const chips = [...host.querySelectorAll(".wi-row .wi-label")].map((el) => el.textContent);
+    expect(chips).toEqual(["priority: high", "bug", "follow-up"]);
+    // The line ellipsises at its end, so the full set must still be reachable on hover.
+    expect(host.querySelector(".wi-meta")?.getAttribute("title")).toBe("priority: high, bug, follow-up");
+  });
+
   it("survives a row with null labels (this blanked the whole Console)", async () => {
     // The CP emitted a Go nil slice as JSON null; item.labels.slice(0, 2) in the row threw a
     // TypeError, and with no ErrorBoundary in the app the whole Console disappeared. The producer
