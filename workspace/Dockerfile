@@ -279,7 +279,7 @@ RUN set -eux; \
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
 # が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/log/35 §35.4.1）。
 ARG BAKE_RTK=1
-ARG RTK_VERSION=0.49.0
+ARG RTK_VERSION=0.50.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
