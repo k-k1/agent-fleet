@@ -940,7 +940,7 @@ export function MirrorView({
     if (!seed) return;
     seededRef.current = true;
     const echoId = nextEchoId();
-    applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, at: Date.now() }]);
+    applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, launch: true, at: Date.now() }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, stateSession]);
 

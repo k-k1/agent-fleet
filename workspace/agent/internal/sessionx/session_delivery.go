@@ -31,6 +31,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -122,10 +123,12 @@ func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySna
 		return fmt.Errorf("prompt was delivered to a background agent, not the session " +
 			"(the pane's input box was bound to an agent); return the pane to the main conversation and resend")
 	}
-	// Self-healing. The draft still visible in the composer means only Enter was eaten, so
+	// Self-healing. The draft still in the composer means only the submit was lost, so
 	// resend Enter (safe: if it was submitted after all, Enter on an empty composer is a
 	// no-op). The draft gone as well means the whole line was swallowed, so retype and submit
-	// it again - no evidence means nothing was submitted, so this cannot double-execute.
+	// it again. Retyping over a draft that is still there is what must never happen: the
+	// retyped copy is appended to it and one turn carries the prompt twice (measured on a
+	// work-item launch, where claude 2.1.282 held a multi-line draft for review).
 	if promptDraftVisible(tmuxx.CapturePane(session.TmuxName(m.Name)), prompt) {
 		log.Printf("delivery: %s composer still holds the prompt — resending Enter", m.Name)
 		_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
@@ -142,19 +145,84 @@ func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySna
 }
 
 // promptDraftVisible reports whether the captured pane still shows the typed prompt as
-// an unsubmitted composer draft. Best-effort pane heuristics: match the first line's
-// head against the tail region where the composer sits. The head is kept short
-// (12 runes, rune-safe) because the composer WRAPS long lines at pane width — a longer
-// needle can straddle a wrap point and false-negative. A false positive only costs a
-// harmless extra Enter (no-op on an empty composer); a false negative costs a retype,
-// which is safe because this path is only reached when no turn evidence exists.
+// an unsubmitted composer draft, or claude is holding it for review. Best-effort pane
+// heuristics, biased towards true: a false positive only costs a harmless extra Enter
+// (no-op on an empty composer), a false negative costs a retype appended to the draft.
+//
+// The draft is looked for in claude's composer — from its last "❯" line down to the rule
+// under it — rather than in a fixed tail, because a multi-line draft pushes its first line
+// above any fixed tail (a 5-line work-item prompt plus the footer did). Whitespace is
+// ignored on both sides, so a line the composer wrapped at pane width still matches. With
+// no composer on screen it falls back to the last few lines.
 func promptDraftVisible(captured, prompt string) bool {
-	first := strings.TrimSpace(strings.SplitN(prompt, "\n", 2)[0])
-	if first == "" || captured == "" {
+	head := squashSpace(strings.SplitN(prompt, "\n", 2)[0])
+	if head == "" || captured == "" {
 		return false
 	}
-	if r := []rune(first); len(r) > 12 {
-		first = string(r[:12])
+	if r := []rune(head); len(r) > 12 {
+		head = string(r[:12])
 	}
-	return strings.Contains(paneTail(captured, 6), first)
+	draft, above, ok := claudeComposer(captured)
+	if !ok {
+		return strings.Contains(squashSpace(paneTail(captured, 6)), head)
+	}
+	// claude 2.1.282 strips invisible characters from typed input and then HOLDS the draft
+	// ("Removed 1 invisible character · review and press Enter to send"); the Enter that
+	// arrived with the text does not submit it. The notice sits just above the composer.
+	if strings.Contains(above, "press Enter to send") {
+		return true
+	}
+	// A draft claude folded into a paste placeholder does not show its text.
+	return strings.Contains(draft, "[Pasted text") || strings.Contains(squashSpace(draft), head)
+}
+
+// claudeComposer splits a captured claude pane around its composer: draft is the last "❯"
+// line through the line before the rule below it, above is the first non-blank line above
+// the composer's top rule (where claude prints notices about the draft). ok is false when
+// no "❯" line is on screen.
+func claudeComposer(captured string) (draft, above string, ok bool) {
+	lines := strings.Split(captured, "\n")
+	top := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "❯") {
+			top = i
+			break
+		}
+	}
+	if top < 0 {
+		return "", "", false
+	}
+	end := len(lines)
+	for i := top + 1; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "─") {
+			end = i
+			break
+		}
+	}
+	draft = strings.TrimPrefix(strings.TrimSpace(strings.Join(lines[top:end], "\n")), "❯")
+	// Skip the composer's top rule, then take the next non-blank line.
+	sawRule := false
+	for i := top - 1; i >= 0; i-- {
+		t := strings.TrimSpace(lines[i])
+		if t == "" {
+			continue
+		}
+		if !sawRule && strings.HasPrefix(t, "─") {
+			sawRule = true
+			continue
+		}
+		above = t
+		break
+	}
+	return draft, above, true
+}
+
+// squashSpace drops every whitespace rune (NBSP included: claude draws "❯\u00a0").
+func squashSpace(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
 }

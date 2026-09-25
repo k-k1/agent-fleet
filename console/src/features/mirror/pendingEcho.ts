@@ -11,6 +11,12 @@ export interface PendingEcho {
   at?: number;
   /** When a stuck echo already forced a full transcript re-read (ms); one shot. */
   resyncedAt?: number;
+  /** The launch seed's display echo (launchSeed.ts). What reaches the transcript is not
+   * guaranteed to be the text the Console sent: the Agent may add lines (self-report hint,
+   * spawn envelope), the CLI may strip characters (claude 2.1.282 removes invisible ones),
+   * and a delivery retry once doubled it. A brand-new session's first user turn IS the
+   * launch prompt whatever its text, so this echo lands on any real user turn. */
+  launch?: boolean;
 }
 
 // How long an echo may sit at "Pending" on an IDLE session before we suspect our own
@@ -91,6 +97,7 @@ export function echoLanded(e: PendingEcho, turns: TranscriptTurn[], isNoise: (t:
     // logged after the send. isNoise hides that turn and its text never equals the typed
     // "/foo", so the text match below can never catch it.
     if (echoCmd && t.idx !== undefined && t.idx > e.sinceIdx && commandTurnName(t.text || "") === echoCmd) return true;
+    if (e.launch && !isNoise(t)) return true;
     if (isNoise(t) || !samePastedPrompt(t.text || "", e.text)) return false;
     if (t.idx !== undefined && t.idx > e.sinceIdx) return true;
     return !!e.attachmentPaths?.length && e.attachmentPaths.every((path) => (t.text || "").includes(path));
