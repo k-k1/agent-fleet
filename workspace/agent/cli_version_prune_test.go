@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 )
 
 // isolateCLIVersions points home, /proc, the npm roots and PATH lookup at temp dirs, so a
@@ -14,11 +15,14 @@ func isolateCLIVersions(t *testing.T) (home, proc string) {
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	proc = t.TempDir()
-	oldProc, oldRoots, oldLook := procRoot, npmGlobalRoots, lookPathFn
+	oldProc, oldRoots, oldLook, oldNow := procRoot, npmGlobalRoots, lookPathFn, pruneNow
 	procRoot = proc
 	npmGlobalRoots = func(h string) []string { return []string{filepath.Join(h, ".local/lib/node_modules")} }
 	lookPathFn = func(string) (string, error) { return "", os.ErrNotExist }
-	t.Cleanup(func() { procRoot, npmGlobalRoots, lookPathFn = oldProc, oldRoots, oldLook })
+	// Every version a test lays down is brand new; look at them from later on so they are
+	// past freshVersionAge. TestPruneLeavesFreshVersions puts the real clock back.
+	pruneNow = func() time.Time { return time.Now().Add(2 * freshVersionAge) }
+	t.Cleanup(func() { procRoot, npmGlobalRoots, lookPathFn, pruneNow = oldProc, oldRoots, oldLook, oldNow })
 	return home, proc
 }
 
@@ -378,4 +382,45 @@ func TestPruneKeepsCopilotPlatformPackageVersion(t *testing.T) {
 	pruneOldCLIVersions(home, map[string]string{})
 
 	assertVersions(t, copilotRoot(home), "1.0.88", "1.0.89")
+}
+
+// A version directory that changed moments ago may be an install racing the pass; it
+// stays until a later boot.
+func TestPruneLeavesFreshVersions(t *testing.T) {
+	home, _ := isolateCLIVersions(t)
+	installCursor(t, home, "2026.07.20-8cc9c0b")
+	installCursor(t, home, "2026.08.04-aaa8809")
+	installCursor(t, home, "2026.09.23-86fc751")
+	old := filepath.Join(cursorRoot(home), "2026.07.20-8cc9c0b")
+	then := time.Now().Add(-2 * freshVersionAge)
+	if err := os.Chtimes(old, then, then); err != nil {
+		t.Fatal(err)
+	}
+	pruneNow = time.Now
+
+	pruneOldCLIVersions(home, map[string]string{})
+
+	assertVersions(t, cursorRoot(home), "2026.08.04-aaa8809", "2026.09.23-86fc751")
+}
+
+// An install whose package.json cannot be read (unparsable, mid-install) leaves the current
+// version unknown, so no copilot version goes.
+func TestPruneKeepsCopilotWhenPackageUnreadable(t *testing.T) {
+	home, _ := isolateCLIVersions(t)
+	installCopilot(t, home, "1.0.73")
+	installCopilot(t, home, "1.0.88")
+	baked := t.TempDir()
+	npmGlobalRoots = func(h string) []string { return []string{filepath.Join(h, ".local/lib/node_modules"), baked} }
+	writeSized(t, filepath.Join(baked, "@github/copilot/npm-loader.js"), 4)
+	if err := os.WriteFile(filepath.Join(baked, "@github/copilot/package.json"), []byte(`{"version":"1.0.73"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".local/lib/node_modules/@github/copilot/package.json"), []byte(`{"vers`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := pruneOldCLIVersions(home, map[string]string{}); len(got) != 0 {
+		t.Fatalf("pruned %+v, want nothing", got)
+	}
+	assertVersions(t, copilotRoot(home), "1.0.73", "1.0.88")
 }

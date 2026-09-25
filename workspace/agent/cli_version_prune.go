@@ -34,6 +34,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // npmGlobalRoots are the node_modules trees a copilot install can live in (the lean
@@ -46,6 +47,12 @@ var npmGlobalRoots = func(home string) []string {
 // lookPathFn resolves a command on PATH; a var because tests must not find the real CLI
 // installed on the machine running them.
 var lookPathFn = exec.LookPath
+
+// freshVersionAge is how recently a version directory may have changed and still be left
+// alone; pruneNow is the clock it is measured against, a var so tests can move it.
+const freshVersionAge = time.Hour
+
+var pruneNow = time.Now
 
 var (
 	copilotVersionName = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$`)
@@ -173,17 +180,25 @@ func copilotCurrent(home string) ([]string, bool) {
 	}
 	var vers []string
 	for _, d := range dirs {
-		if v := packageVersion(filepath.Join(d, "package.json")); v != "" {
-			vers = append(vers, v)
-			// The platform package is what extracts into pkg/<ver>, and a copilot started
-			// after the /proc scan runs that version. It moves in lockstep with the wrapper,
-			// but keeping it too means a mismatch can never delete what a new session needs.
-			plats, _ := filepath.Glob(filepath.Join(d, "node_modules/@github/copilot-*/package.json"))
-			for _, pj := range plats {
-				if pv := packageVersion(pj); pv != "" {
-					vers = append(vers, pv)
-				}
+		v, err := packageVersion(filepath.Join(d, "package.json"))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			// Installed but unreadable (or mid-install): which version it is cannot be told.
+			return nil, false
+		}
+		vers = append(vers, v)
+		// The platform package is what extracts into pkg/<ver>, and a copilot started after
+		// the /proc scan runs that version. It moves in lockstep with the wrapper, but
+		// keeping it too means a mismatch can never delete what a new session needs.
+		plats, _ := filepath.Glob(filepath.Join(d, "node_modules/@github/copilot-*/package.json"))
+		for _, pj := range plats {
+			pv, err := packageVersion(pj)
+			if err != nil {
+				return nil, false
 			}
+			vers = append(vers, pv)
 		}
 	}
 	return vers, len(vers) > 0
@@ -200,22 +215,26 @@ func copilotExeVersion(exe string) (string, bool, bool) {
 	if clean != exe {
 		return "", true, false
 	}
-	v := packageVersion(filepath.Join(filepath.Dir(clean), "package.json"))
-	return v, true, v != ""
+	v, err := packageVersion(filepath.Join(filepath.Dir(clean), "package.json"))
+	return v, true, err == nil
 }
 
-func packageVersion(path string) string {
+// packageVersion reads the version out of a package.json; a file without one is an error.
+func packageVersion(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	var p struct {
 		Version string `json:"version"`
 	}
-	if json.Unmarshal(b, &p) != nil {
-		return ""
+	if err := json.Unmarshal(b, &p); err != nil {
+		return "", err
 	}
-	return p.Version
+	if p.Version == "" {
+		return "", fmt.Errorf("%s: no version", path)
+	}
+	return p.Version, nil
 }
 
 func readLinkAbs(link string) string {
@@ -277,6 +296,12 @@ func (s cliVersionStore) prune(pin string) []prunedVersion {
 			v := e.Name()
 			// DirEntry.IsDir is false for a symlink, which is not ours to follow.
 			if !e.IsDir() || keep[v] || !s.versionName.MatchString(v) {
+				continue
+			}
+			// A version that appeared moments ago may belong to an install racing this pass
+			// (npm run by hand, a first run extracting itself) that the scan above could not
+			// see yet; the next boot takes it if it is really old.
+			if info, err := e.Info(); err != nil || pruneNow().Sub(info.ModTime()) < freshVersionAge {
 				continue
 			}
 			dir := filepath.Join(root, v)
