@@ -26,6 +26,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -33,6 +34,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // npmGlobalRoots are the node_modules trees a copilot install can live in (the lean
@@ -219,14 +221,22 @@ func readLinkAbs(link string) string {
 	return filepath.Clean(t)
 }
 
-// versionUnder returns the first path component of p below root, or "".
+// versionUnder returns the first path component of p below root, or "". root is compared
+// both as written and resolved: /proc reports resolved paths, and ~/.cache or ~/.local/share
+// can be a symlink (onto $AF_WS_SCRATCH storage, say), so a running version would otherwise
+// go unrecognised.
 func versionUnder(root, p string) string {
-	rel, ok := strings.CutPrefix(p, root+string(filepath.Separator))
-	if !ok {
-		return ""
+	roots := []string{root}
+	if real, err := filepath.EvalSymlinks(root); err == nil && real != root {
+		roots = append(roots, real)
 	}
-	v, _, _ := strings.Cut(rel, string(filepath.Separator))
-	return v
+	for _, r := range roots {
+		if rel, ok := strings.CutPrefix(p, r+string(filepath.Separator)); ok {
+			v, _, _ := strings.Cut(rel, string(filepath.Separator))
+			return v
+		}
+	}
+	return ""
 }
 
 func (s cliVersionStore) prune(pin string) []prunedVersion {
@@ -241,9 +251,9 @@ func (s cliVersionStore) prune(pin string) []prunedVersion {
 	for _, v := range cur {
 		keep[v] = true
 	}
-	inUse, ok := s.versionsInUse()
-	if !ok {
-		log.Printf("cli-versions: %s is running at a version that cannot be told; keeping every version", s.name)
+	inUse, err := s.versionsInUse()
+	if err != nil {
+		log.Printf("cli-versions: %s: %v; keeping every version", s.name, err)
 		return nil
 	}
 	for v := range inUse {
@@ -275,8 +285,15 @@ func (s cliVersionStore) prune(pin string) []prunedVersion {
 }
 
 // versionsInUse collects the versions any process has its executable, a mapping or an open
-// file under. ok=false when a process is this CLI but its version cannot be told.
-func (s cliVersionStore) versionsInUse() (map[string]bool, bool) {
+// file under. It fails closed: an error when /proc cannot be listed, when one of our own
+// processes that could be this CLI cannot be read (a process that has since exited is
+// fine), or when a process is this CLI but its version cannot be told. Other users'
+// processes are skipped; they cannot be running a copy out of this home.
+//
+// A process that made itself non-dumpable (ssh-agent does) denies exe, maps and fd even to
+// its own user; failing closed on every such process would stop the prune for good, so its
+// still-readable cmdline decides whether it could be this CLI.
+func (s cliVersionStore) versionsInUse() (map[string]bool, error) {
 	used := map[string]bool{}
 	note := func(p string) {
 		p = strings.TrimSuffix(p, " (deleted)")
@@ -286,35 +303,85 @@ func (s cliVersionStore) versionsInUse() (map[string]bool, bool) {
 			}
 		}
 	}
-	ents, _ := os.ReadDir(procRoot)
+	ents, err := os.ReadDir(procRoot)
+	if err != nil {
+		return nil, err
+	}
+	uid := uint32(os.Getuid())
 	for _, e := range ents {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
 		pd := filepath.Join(procRoot, e.Name())
-		if exe, err := os.Readlink(filepath.Join(pd, "exe")); err == nil {
+		fi, err := os.Stat(pd)
+		if err != nil {
+			continue // exited
+		}
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Uid != uid {
+			continue
+		}
+		unreadable := func(err error) error {
+			if os.IsPermission(err) && !s.cmdlineMentions(pd) {
+				return nil
+			}
+			return fmt.Errorf("pid %s: %w", e.Name(), err)
+		}
+		exe, err := os.Readlink(filepath.Join(pd, "exe"))
+		switch {
+		case err == nil:
 			note(exe)
 			v, is, ok := s.exeVersion(exe)
 			if is && !ok {
-				return nil, false
+				return nil, fmt.Errorf("pid %s runs it at a version that cannot be told", e.Name())
 			}
 			if is {
 				used[v] = true
 			}
+		case !os.IsNotExist(err): // ENOENT: exited, a zombie or a kernel thread
+			if err := unreadable(err); err != nil {
+				return nil, err
+			}
+			continue
 		}
-		if b, err := os.ReadFile(filepath.Join(pd, "maps")); err == nil {
-			for _, line := range strings.Split(string(b), "\n") {
-				if i := strings.IndexByte(line, '/'); i >= 0 {
-					note(line[i:])
-				}
+		b, err := os.ReadFile(filepath.Join(pd, "maps"))
+		if err != nil && !os.IsNotExist(err) {
+			if err := unreadable(err); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if i := strings.IndexByte(line, '/'); i >= 0 {
+				note(line[i:])
 			}
 		}
-		fds, _ := os.ReadDir(filepath.Join(pd, "fd"))
+		fds, err := os.ReadDir(filepath.Join(pd, "fd"))
+		if err != nil && !os.IsNotExist(err) {
+			if err := unreadable(err); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		for _, fd := range fds {
-			if t, err := os.Readlink(filepath.Join(pd, "fd", fd.Name())); err == nil {
-				note(t)
+			t, err := os.Readlink(filepath.Join(pd, "fd", fd.Name()))
+			if err != nil && !os.IsNotExist(err) {
+				if err := unreadable(err); err != nil {
+					return nil, err
+				}
+				continue
 			}
+			note(t)
 		}
 	}
-	return used, true
+	return used, nil
+}
+
+// cmdlineMentions says whether a process's argv names this CLI anywhere; unreadable counts
+// as yes.
+func (s cliVersionStore) cmdlineMentions(pd string) bool {
+	b, err := os.ReadFile(filepath.Join(pd, "cmdline"))
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	return strings.Contains(string(b), s.name)
 }

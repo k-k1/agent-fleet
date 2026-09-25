@@ -260,3 +260,92 @@ func TestPruneAtBootNeedsVersionsJSON(t *testing.T) {
 
 	assertVersions(t, cursorRoot(home), "2026.07.20-8cc9c0b", "2026.09.23-86fc751")
 }
+
+// /proc reports resolved paths. With ~/.local/share a symlink onto other storage, a running
+// old cursor shows under the real directory and must still count as in use.
+func TestPruneMatchesProcPathsThroughSymlinkedRoots(t *testing.T) {
+	home, proc := isolateCLIVersions(t)
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".local"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, real, filepath.Join(home, ".local/share"))
+	installCursor(t, home, "2026.07.20-8cc9c0b")
+	installCursor(t, home, "2026.08.04-aaa8809")
+	installCursor(t, home, "2026.09.23-86fc751")
+	fakeProcFiles(t, proc, "100", filepath.Join(real, "cursor-agent/versions/2026.07.20-8cc9c0b/node"), nil, nil)
+	// A launcher written with the resolved path is the current version all the same.
+	mustSymlink(t, filepath.Join(real, "cursor-agent/versions/2026.09.23-86fc751/cursor-agent"),
+		filepath.Join(home, ".local/bin/cursor-agent"))
+
+	pruneOldCLIVersions(home, map[string]string{})
+
+	assertVersions(t, cursorRoot(home), "2026.07.20-8cc9c0b", "2026.09.23-86fc751")
+}
+
+// A process of ours that /proc will not show fails the pass closed when it could be the
+// CLI, and is passed over when its cmdline says it is something else (a non-dumpable
+// ssh-agent, say), so one such process does not stop the prune for good.
+func TestPruneFailsClosedOnUnreadableProc(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads through the permission bits this test relies on")
+	}
+	for _, tc := range []struct {
+		name    string
+		cmdline string
+		want    []string
+	}{
+		{"could be cursor", "/home/dev/.local/bin/cursor-agent", []string{"2026.07.20-8cc9c0b", "2026.09.23-86fc751"}},
+		{"something else", "ssh-agent", []string{"2026.09.23-86fc751"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, proc := isolateCLIVersions(t)
+			installCursor(t, home, "2026.07.20-8cc9c0b")
+			installCursor(t, home, "2026.09.23-86fc751")
+			fakeProc(t, proc, "100", tc.cmdline)
+			fd := filepath.Join(proc, "100/fd")
+			if err := os.MkdirAll(fd, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(fd, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(fd, 0o755) })
+
+			pruneOldCLIVersions(home, map[string]string{})
+
+			assertVersions(t, cursorRoot(home), tc.want...)
+		})
+	}
+}
+
+// Every place a copilot install can be counts as current — the home install, a baked one,
+// and whatever `copilot` on PATH resolves to — and every platform directory is pruned.
+func TestPruneCopilotInstallsAndPlatforms(t *testing.T) {
+	home, _ := isolateCLIVersions(t)
+	baked := t.TempDir()
+	npmGlobalRoots = func(h string) []string { return []string{filepath.Join(h, ".local/lib/node_modules"), baked} }
+	writePkg := func(dir, ver string) {
+		t.Helper()
+		writeSized(t, filepath.Join(dir, "npm-loader.js"), 8)
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"`+ver+`"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	installCopilot(t, home, "1.0.88")
+	writePkg(filepath.Join(baked, "@github/copilot"), "1.0.80")
+	other := t.TempDir()
+	writePkg(filepath.Join(other, "lib/node_modules/@github/copilot"), "1.0.85")
+	mustSymlink(t, filepath.Join(other, "lib/node_modules/@github/copilot/npm-loader.js"), filepath.Join(other, "bin/copilot"))
+	lookPathFn = func(string) (string, error) { return filepath.Join(other, "bin/copilot"), nil }
+	musl := filepath.Join(home, ".cache/copilot/pkg/linuxmusl-x64")
+	for _, v := range []string{"1.0.73", "1.0.80", "1.0.85", "1.0.88"} {
+		writeSized(t, filepath.Join(copilotRoot(home), v, "app.js"), 4)
+		writeSized(t, filepath.Join(musl, v, "app.js"), 4)
+	}
+
+	pruneOldCLIVersions(home, map[string]string{})
+
+	assertVersions(t, copilotRoot(home), "1.0.80", "1.0.85", "1.0.88")
+	assertVersions(t, musl, "1.0.80", "1.0.85", "1.0.88")
+}
