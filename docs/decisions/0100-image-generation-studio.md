@@ -7,6 +7,7 @@ English | [日本語](0100-image-generation-studio.ja.md)
   another session, [113-review](../log/113-review.md) — 7 red, 12 yellow — already folded in).
   Nothing is implemented.
   Status update (2026-09-24): P0 is implemented. The prerequisites and the frozen contract landed as #924; the three lanes as #925 (CP relay), #926 (Agent, `workspace/agent/internal/imagegen/studio*.go`) and #927 (Console pane); and the integration with revision 8 as #932, merged on 2026-09-23. The P0 acceptance run on a deployment is #959; P1 is #960.
+  Status update (2026-09-25): two facts in the context and in decision 8 no longer hold (#978, [docs/log/117](../log/117-managed-af-session-name-delivery.md)). copilot / cursor / kiro / muse Managed now deliver `AF_SESSION_NAME` to the af child; muse's af server already gets the Agent token on the wire (ADR 0095 P2-14). A codex Managed thread resumed into a replaced daemon keeps its name too: the "falls back to the cwd guess" below was measured against a live daemon only. Opening those kinds to studios and letting codex Managed turn the worktree off stay with #960.
 - Follow-ups: #949, #956, #959, #960
 - **Revision 1 (2026-09-23)**: folds in the ADR review by another session, `semvs2b` (codex /
   gpt-6-sol), [113-adr-review](../log/113-adr-review.md) (9 red, 12 yellow, 1 blue). Decisions 3, 4,
