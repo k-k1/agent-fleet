@@ -170,8 +170,17 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		if live[name] {
 			// Running: clear any prior stopped mark so resume resets the clock.
 			if m.StoppedAt != "" {
-				m.StoppedAt = ""
-				m = WriteSessionMetaKeepingLock(m)
+				cur, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+					if cur.Archived {
+						return false
+					}
+					cur.StoppedAt = ""
+					return true
+				})
+				if !ok {
+					continue // deleted or archived since ListMetas above
+				}
+				m = cur
 				// The slot became alive again (ADR 0096 write site ③) — NOT "something
 				// cleared StoppedAt", which HandleRestoreSession also does without starting
 				// anything (docs/log/101 §101.8). This is the one branch where the clearing
@@ -200,8 +209,17 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			// (docs/log/75 §75.6.3, trigger 2). It runs before the resume boot hook clears
 			// the payload: listing a stopped session always reaches this first.
 			PromoteCarriedFor(m)
-			m.StoppedAt = now.Format(time.RFC3339)
-			m = WriteSessionMetaKeepingLock(m)
+			cur, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+				if cur.Archived {
+					return false
+				}
+				cur.StoppedAt = now.Format(time.RFC3339)
+				return true
+			})
+			if !ok {
+				continue // deleted or archived since ListMetas above
+			}
+			m = cur
 			// The end of a run, AS OBSERVED (write site ②) — this poll is the first thing
 			// that noticed the pane is gone, which is not when it actually ended.
 			reason, code, signal := "", 0, 0
@@ -224,9 +242,23 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			// still restorable, and restoring one whose working copy was deleted underneath it is
 			// worse than a worktree left standing.
 			// The cleanup survey (session_cleanup.go) proposes those, with a person deciding.
-			finalizeSessionUsage(m) // fold into the usage ledger at the same moment as before (docs/log/46 §3-b)
-			m.Archived = true
-			WriteSessionMetaKeepingLock(m)
+			// The lock is judged again on the meta as it is now: one set since ListMetas above
+			// exempts the row just the same.
+			cur, wrote := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+				if cur.Locked || cur.Archived {
+					return false
+				}
+				cur.Archived = true
+				return true
+			})
+			if wrote {
+				finalizeSessionUsage(cur) // fold into the usage ledger at the same moment as before (docs/log/46 §3-b)
+				continue
+			}
+			if cur.Name == "" || cur.Archived {
+				continue // deleted or archived since ListMetas above
+			}
+			sessions = append(sessions, wireSession(cur, false)) // locked meanwhile: stays listed
 			continue
 		}
 		sessions = append(sessions, wireSession(m, false))
@@ -1447,11 +1479,8 @@ func haltSession(m session.Meta, promote bool) (session.Meta, error) {
 		// semantics as tui's kill-session. DropHandle aborts the running turn.
 		dropManagedRuntime(m)
 		status.Remove(session.UUID(m.Dir, name))
-		m.StoppedAt = time.Now().Format(time.RFC3339)
 		fleetgraph.RecordDeath(name, "", 0, 0) // halt: a deliberate stop, same as write site ②
-		// Re-merge the on-disk lock: the meta snapshot above is seconds old by now and a
-		// blind WriteMeta would roll back a lock the user flipped meanwhile.
-		return clearStopArm(WriteSessionMetaKeepingLock(m)), nil
+		return stampHalted(m), nil
 	}
 	tn := session.TmuxName(name)
 	if !tmuxx.HasSession(tn) {
@@ -1482,13 +1511,28 @@ func haltSession(m session.Meta, promote bool) (session.Meta, error) {
 	status.Remove(session.UUID(m.Dir, name))
 	// Stamp StoppedAt now so the prune TTL starts here (HandleListSessions would
 	// otherwise stamp it on the next poll; doing it here keeps the wire consistent).
-	// GracefulStop/kill above can take seconds, so re-merge the on-disk lock instead
-	// of writing back the stale snapshot (lost-update guard, same as list).
-	m.StoppedAt = time.Now().Format(time.RFC3339)
 	fleetgraph.RecordDeath(name, "", 0, 0) // halt: a deliberate stop, same as write site ②
-	// A stop consumes the arm whoever pressed it (docs/log/85): left on disk it would ride
-	// through the resume and fold the session away again at the end of a turn nobody armed.
-	return clearStopArm(WriteSessionMetaKeepingLock(m)), nil
+	return stampHalted(m), nil
+}
+
+// stampHalted records a halt on the meta as it is on disk now, not on m: m was read before a
+// kill / GracefulStop / DropHandle that can take seconds, and writing it back would roll back
+// whatever changed meanwhile — a deletion lock among them (issue #950). A stop also consumes
+// the arm whoever pressed it (docs/log/85): left on disk it would ride through the resume and
+// fold the session away again at the end of a turn nobody armed. m, stamped the same way, is
+// what comes back when the meta is gone (deleted meanwhile — nothing to write).
+func stampHalted(m session.Meta) session.Meta {
+	stoppedAt := time.Now().Format(time.RFC3339)
+	halt := func(cur *session.Meta) bool {
+		cur.StoppedAt = stoppedAt
+		cur.StopAfterTurnAt = ""
+		return true
+	}
+	if cur, ok := UpdateSessionMeta(m.Name, halt); ok {
+		return cur
+	}
+	halt(&m)
+	return m
 }
 
 // HandleArchiveSession hides a session from the active list but KEEPS its meta (and
@@ -1536,22 +1580,17 @@ func ArchiveSession(m session.Meta) {
 	if wasAlive {
 		fleetgraph.RecordDeath(name, "", 0, 0) // write site ④, part 1: end the run being folded away
 	}
-	m.Archived = true
-	// Archiving folds the session away too, so it consumes the stop-after-turn arm for the
-	// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
-	// session again at the end of a turn nobody armed.
-	m.StopAfterTurnAt = ""
-	// Re-read under the lock: the meta above is a snapshot (a working-copy delete passes one
-	// from ListMetas), and a blind write would roll back a lock set meanwhile — or bring back
-	// a session deleted meanwhile.
-	sessionLockMu.Lock()
-	current, ok := session.ReadMeta(name)
-	if ok {
-		m.Locked = current.Locked
-		session.WriteMeta(m)
-	}
-	sessionLockMu.Unlock()
-	if !ok {
+	// Written onto the meta as it is now: m is a snapshot (a working-copy delete passes one from
+	// ListMetas), and writing it back would roll back a lock set meanwhile — or bring back a
+	// session deleted meanwhile.
+	if _, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+		cur.Archived = true
+		// Archiving folds the session away too, so it consumes the stop-after-turn arm for the
+		// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
+		// session again at the end of a turn nobody armed.
+		cur.StopAfterTurnAt = ""
+		return true
+	}); !ok {
 		return
 	}
 	fleetgraph.RecordArchived(name, true) // write site ④, part 2: AFTER the death above, never before
@@ -1640,8 +1679,16 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	if wasAlive {
 		fleetgraph.RecordDeath(m.Name, "", 0, 0) // write site ④, part 1: end the run being folded away
 	}
-	m.Archived = true
-	session.WriteMeta(m)
+	// Onto the meta as it is now, not m: the kill above takes seconds, and m written back would
+	// roll back a lock set meanwhile (issue #950). Gone meanwhile = deleted, and a recreate of a
+	// deleted session would bring its slot back, so stop here.
+	if _, ok := UpdateSessionMeta(m.Name, func(cur *session.Meta) bool {
+		cur.Archived = true
+		return true
+	}); !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
 	fleetgraph.RecordArchived(m.Name, true) // write site ④, part 2: AFTER the death above, never before
 
 	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
@@ -1675,18 +1722,14 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 			undoStudio()
 			// Same as fork: silently skipping the launch when the driver is missing would
 			// fake alive=true.
-			m.Archived = false
-			session.WriteMeta(m)
-			fleetgraph.RecordArchived(m.Name, false)
+			unarchiveAfterFailedRecreate(m.Name)
 			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
 		if _, err := mcpx.StartManagedSession(d, newMeta); err != nil {
 			undoStudio()
-			m.Archived = false
-			session.WriteMeta(m)
-			fleetgraph.RecordArchived(m.Name, false)
+			unarchiveAfterFailedRecreate(m.Name)
 			writeRuntimeErr(w, err)
 			return
 		}
@@ -1700,9 +1743,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		undoStudio()
 		// Un-archive the old session so a launch failure doesn't silently drop it from
 		// the active list.
-		m.Archived = false
-		session.WriteMeta(m)
-		fleetgraph.RecordArchived(m.Name, false)
+		unarchiveAfterFailedRecreate(m.Name)
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
@@ -1710,6 +1751,18 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	recordFleetGraphBirth(newMeta)
 	handOverSpawnLineage(m.Name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
+}
+
+// unarchiveAfterFailedRecreate puts the old slot back on the active list when the successor
+// never launched, so a launch failure does not silently drop it. On the meta as it is now: the
+// failed launch took seconds, and a lock set meanwhile must survive (issue #950).
+func unarchiveAfterFailedRecreate(name string) {
+	if _, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+		cur.Archived = false
+		return true
+	}); ok {
+		fleetgraph.RecordArchived(name, false)
+	}
 }
 
 // forkSids is the ancestry a fork of src records: src's own, then src. The whole chain, not

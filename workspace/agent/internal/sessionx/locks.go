@@ -151,42 +151,18 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "locked": m.Locked})
 }
 
-// WriteSessionMetaKeepingLock writes a lifecycle-only update (currently the
-// StoppedAt bookkeeping from GET /sessions) without allowing an older snapshot
-// to overwrite the user's newer lock choice. Callers must use this rather than
-// session.WriteMeta when they started from a listed meta.
-//
-// The keep-awake pin (KeepAwakeUntil) gets the same treatment: the list is polled every few
-// seconds, so an older snapshot rolling back a pin pressed meanwhile looks to the user like
-// a button that did nothing — the same trap the lock already fell into once. So does the
-// stop-after-turn arm (docs/log/85), where losing the write is worse than a dead button: the
-// arm silently stops being honoured and the session the user expected to fold away keeps
-// running.
-func WriteSessionMetaKeepingLock(m session.Meta) session.Meta {
-	sessionLockMu.Lock()
-	defer sessionLockMu.Unlock()
-	current, ok := session.ReadMeta(m.Name)
-	if !ok {
-		// Gone since the caller read it: the session was deleted (moved to the trash, ADR 0101)
-		// in between. Writing the snapshot back would bring the row back, with its transcript
-		// already in the trash — so write nothing.
-		return m
-	}
-	m.Locked = current.Locked
-	m.KeepAwakeUntil = current.KeepAwakeUntil
-	m.StopAfterTurnAt = current.StopAfterTurnAt
-	// Written by the initial-prompt delivery goroutine and by a studio bind, both of which
-	// can land between the list's read and this write.
-	m.InitialPromptState = current.InitialPromptState
-	m.Studio = current.Studio
-	session.WriteMeta(m)
-	return m
-}
-
 // UpdateSessionMeta is a read-modify-write of one meta under the same lock: fn edits the meta
-// as it is on disk NOW, and returns false to write nothing. A handler that read the meta earlier
-// and wrote its snapshot back would roll back a deletion lock set in between. Reports whether
-// it wrote (false also when the meta is gone).
+// as it is on disk NOW, and returns false to write nothing. Reports whether it wrote (false also
+// when the meta is gone — deleted, so there is nothing to write back).
+//
+// Every write that starts from a meta read earlier goes through here, and fn sets only the
+// fields its caller owns (issue #950). Writing the earlier snapshot back instead — even with a
+// few fields re-merged from disk, which is what WriteSessionMetaKeepingLock used to do — rolls
+// back whatever another writer changed in between: a deletion lock set meanwhile (and the next
+// delete goes through), an archive, a rename, a keep-awake pin, a stop-after-turn arm. The
+// handlers that hold a snapshot are the slow ones (a kill, a relaunch, a driver RPC), so the
+// window is seconds, and the list polls every few. session.WriteMeta itself is left to the
+// first write of a new name; meta_write_sites_test.go freezes that.
 func UpdateSessionMeta(name string, fn func(m *session.Meta) bool) (session.Meta, bool) {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()

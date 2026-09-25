@@ -79,12 +79,11 @@ func SetSessionStudio(name, from, to string) {
 	if name == "" || !session.ValidName(name) {
 		return
 	}
-	sessionLockMu.Lock()
-	defer sessionLockMu.Unlock()
-	m, ok := session.ReadMeta(name)
-	if !ok || m.Studio != from || from == to {
-		return
-	}
-	m.Studio = to
-	session.WriteMeta(m)
+	UpdateSessionMeta(name, func(m *session.Meta) bool {
+		if m.Studio != from || from == to {
+			return false
+		}
+		m.Studio = to
+		return true
+	})
 }
