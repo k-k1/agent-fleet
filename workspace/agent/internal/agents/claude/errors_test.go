@@ -7,6 +7,10 @@ import "testing"
 // `error` and apiErrorStatus are read alongside it.
 const authErrText = "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue."
 
+// refreshStuckText is the measured (2026-09-25) failure of a token refresh another claude
+// process held or abandoned. It carries error:"server_error" and no status.
+const refreshStuckText = "Could not refresh your login because another Claude Code process is refreshing it (or exited mid-refresh) · Try again in a minute; if it keeps happening, close other Claude Code windows or sign in again with /login"
+
 func TestAPIErrorAuthRecord(t *testing.T) {
 	e := apiError{msg: authErrText, kind: "authentication_failed", status: 401}
 	if got, want := e.label(), "authentication_failed (HTTP 401)"; got != want {
@@ -40,6 +44,7 @@ func TestAPIErrorAuthEntries(t *testing.T) {
 		{"status only", apiError{msg: "something went wrong", status: 401}, true},
 		{"text only", apiError{msg: authErrText}, true},
 		{"invalid api key", apiError{msg: "API Error: Invalid API key · Please run /login"}, true},
+		{"stuck login refresh", apiError{msg: refreshStuckText, kind: "server_error"}, true},
 		// No re-authentication route for a failure it does not fix - the same real harm as
 		// making someone wait for a reset that never comes.
 		{"usage limit", apiError{msg: "You've hit your session limit · resets 9:30am (Asia/Tokyo)", kind: "rate_limit", status: 429}, false},
