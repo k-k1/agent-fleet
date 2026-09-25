@@ -68,18 +68,17 @@ func HandleSessionStopAfterTurn(w http.ResponseWriter, r *http.Request) {
 // serializing, a list that started before this call would put the old meta back and the arm
 // would vanish with no error anywhere.
 func setStopArm(name string, on bool) (session.Meta, bool) {
-	sessionLockMu.Lock()
-	defer sessionLockMu.Unlock()
-	m, ok := session.ReadMeta(name)
+	m, ok := UpdateSessionMeta(name, func(m *session.Meta) bool {
+		if on {
+			m.StopAfterTurnAt = time.Now().Format(time.RFC3339)
+		} else {
+			m.StopAfterTurnAt = ""
+		}
+		return true
+	})
 	if !ok {
 		return session.Meta{}, false
 	}
-	if on {
-		m.StopAfterTurnAt = time.Now().Format(time.RFC3339)
-	} else {
-		m.StopAfterTurnAt = ""
-	}
-	session.WriteMeta(m)
 	return m, true
 }
 

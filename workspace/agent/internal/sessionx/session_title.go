@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -552,26 +553,30 @@ func HandleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	m, ok := session.ReadMeta(name)
+	m, ok := UpdateSessionMeta(name, func(m *session.Meta) bool {
+		if m.SuggestedTitle == "" {
+			return false
+		}
+		m.Title = m.SuggestedTitle
+		m.SuggestedTitle = ""
+		m.SuggestedTitleDismissed = true // resolved — v1 never re-suggests for this session
+		// Accepting is the user choosing this name out of the banner, so it closes the title to a
+		// spawning parent exactly as the rename dialog does. Without it the one title a parent CAN
+		// overwrite is the one its child's user just pressed accept on.
+		m.TitleSetBy = session.TitleSetByUser
+		if AgentOf(m.Kind).Caps().UsesLabel {
+			m.Label = sessionLabelFor(m.Dir, m.Title, m.Name)
+		}
+		return true
+	})
 	if !ok {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
-		return
-	}
-	if m.SuggestedTitle == "" {
+		if m.Name == "" {
+			httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+			return
+		}
 		httpx.WriteErr(w, http.StatusBadRequest, "no_suggestion", "no suggested title to accept")
 		return
 	}
-	m.Title = m.SuggestedTitle
-	m.SuggestedTitle = ""
-	m.SuggestedTitleDismissed = true // resolved — v1 never re-suggests for this session
-	// Accepting is the user choosing this name out of the banner, so it closes the title to a
-	// spawning parent exactly as the rename dialog does. Without it the one title a parent CAN
-	// overwrite is the one its child's user just pressed accept on.
-	m.TitleSetBy = session.TitleSetByUser
-	if AgentOf(m.Kind).Caps().UsesLabel {
-		m.Label = sessionLabelFor(m.Dir, m.Title, m.Name)
-	}
-	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, SessionAlive(m)))
 }
 
@@ -690,32 +695,39 @@ func HandleSetTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "a parent rename needs a non-empty title")
 		return
 	}
-	m, found := session.ReadMeta(name)
-	if !found {
+	// The refusal is judged on the meta it would overwrite: a user rename landing between a
+	// separate read and the write would otherwise be overwritten by the parent it closes out.
+	var refusal *SpawnRefusal
+	m, ok := UpdateSessionMeta(name, func(m *session.Meta) bool {
+		if byParent {
+			if refusal = SpawnRenameRefusal(*m); refusal != nil {
+				return false
+			}
+		}
+		m.Title = title
+		m.SuggestedTitle = ""
+		m.SuggestedTitleDismissed = title != "" // clearing the title re-opens auto-suggestion
+		switch {
+		case byParent:
+			m.TitleSetBy = session.TitleSetByParent
+		case title == "":
+			m.TitleSetBy = "" // cleared — back to the state a fresh session is in, parent included
+		default:
+			m.TitleSetBy = session.TitleSetByUser
+		}
+		if AgentOf(m.Kind).Caps().UsesLabel {
+			m.Label = sessionLabelFor(m.Dir, m.Title, m.Name)
+		}
+		return true
+	})
+	if !ok {
+		if refusal != nil {
+			httpx.WriteErr(w, refusal.Status, refusal.Code, refusal.Message)
+			return
+		}
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if byParent {
-		if ref := SpawnRenameRefusal(m); ref != nil {
-			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-			return
-		}
-	}
-	m.Title = title
-	m.SuggestedTitle = ""
-	m.SuggestedTitleDismissed = title != "" // clearing the title re-opens auto-suggestion
-	switch {
-	case byParent:
-		m.TitleSetBy = session.TitleSetByParent
-	case title == "":
-		m.TitleSetBy = "" // cleared — back to the state a fresh session is in, parent included
-	default:
-		m.TitleSetBy = session.TitleSetByUser
-	}
-	if AgentOf(m.Kind).Caps().UsesLabel {
-		m.Label = sessionLabelFor(m.Dir, m.Title, m.Name)
-	}
-	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, SessionAlive(m)))
 }
 
@@ -859,9 +871,29 @@ func HandleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "rename_failed", out)
 		return
 	}
-	session.UpdateStartBranch(dir, newName)
+	updateStartBranch(dir, newName)
 	m, _ = session.ReadMeta(name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, SessionAlive(m)))
+}
+
+// updateStartBranch rewrites the recorded start branch (Meta.Branch) for every session whose
+// cwd is at or under dir, after an intentional `git branch -m` on that working copy — so the
+// rename isn't mistaken for branch drift (③). Only touches metas that carry a start branch;
+// leaves pre-existing ("") ones alone. ListMetas only picks the names: each write re-reads its
+// meta under the lock, so a lock set meanwhile is not rolled back (issue #950).
+func updateStartBranch(dir, branch string) {
+	for _, listed := range session.ListMetas() {
+		if listed.Dir != dir && !strings.HasPrefix(listed.Dir, dir+string(os.PathSeparator)) {
+			continue
+		}
+		UpdateSessionMeta(listed.Name, func(m *session.Meta) bool {
+			if m.Branch == "" || m.Branch == branch {
+				return false
+			}
+			m.Branch = branch
+			return true
+		})
+	}
 }
 
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,
@@ -888,13 +920,14 @@ func HandleDismissSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	m, ok := session.ReadMeta(name)
+	m, ok := UpdateSessionMeta(name, func(m *session.Meta) bool {
+		m.SuggestedTitle = ""
+		m.SuggestedTitleDismissed = true
+		return true
+	})
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	m.SuggestedTitle = ""
-	m.SuggestedTitleDismissed = true
-	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, SessionAlive(m)))
 }

@@ -169,19 +169,20 @@ func (s *spawnSlot) releaseLocked() {
 // holds. It is recorded in decision 6 rather than defended against here: defending would mean
 // keeping the slot charged to a session the user replaced on purpose.
 func handOverSpawnLineage(name string) {
-	// Re-read rather than writing back the copy the caller has held since before the launch:
-	// the recreate archived it seconds ago and anything that touched it in between would be
-	// undone by writing a stale snapshot.
-	old, ok := session.ReadMeta(name)
-	// Only a lineage that COSTS a slot is handed over. A session a person launched from a
-	// handoff proposal also carries origin_session (origin=user), and it holds no slot — for
-	// that one this would be pure loss: the superseded identity would forget who proposed it
-	// and nothing would be freed.
-	if !ok || !session.InUnattendedChain(old) {
-		return
-	}
-	old.OriginSession = ""
-	session.WriteMeta(old)
+	// Re-read under the lock rather than writing back the copy the caller has held since before
+	// the launch: the recreate archived it seconds ago and anything that touched it in between
+	// would be undone by writing a stale snapshot.
+	UpdateSessionMeta(name, func(old *session.Meta) bool {
+		// Only a lineage that COSTS a slot is handed over. A session a person launched from a
+		// handoff proposal also carries origin_session (origin=user), and it holds no slot — for
+		// that one this would be pure loss: the superseded identity would forget who proposed it
+		// and nothing would be freed.
+		if !session.InUnattendedChain(*old) {
+			return false
+		}
+		old.OriginSession = ""
+		return true
+	})
 }
 
 // forkLineage is the OriginSession a fork of src inherits (ADR 0073 decision 1).

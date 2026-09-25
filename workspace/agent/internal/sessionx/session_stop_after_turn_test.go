@@ -67,21 +67,23 @@ func TestStopAfterTurnArmAndRelease(t *testing.T) {
 	}
 }
 
-// The list is polled every few seconds, and it writes the meta back as a side effect. Without
-// the arm being carried through that merge, arming would look like it worked and then quietly
+// The list is polled every few seconds, and it writes the meta as a side effect (StoppedAt).
+// Were that write the list's own snapshot, arming would look like it worked and then quietly
 // stop being honoured — worse than a button that does nothing, because the row still says the
 // session is going to stop.
 func TestStopArmSurvivesALifecycleWriteback(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const name = "armed2"
-	stale := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
-	session.WriteMeta(stale)
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
 
 	postStopAfterTurn(t, name, `{"on":true}`)
-	// stale is the snapshot a list request read BEFORE the arm was pressed.
-	stale.StoppedAt = time.Now().Format(time.RFC3339)
-	if got := WriteSessionMetaKeepingLock(stale); got.StopAfterTurnAt == "" {
-		t.Fatal("a stale lifecycle write rolled the arm back")
+	HandleListSessions(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	m, _ := session.ReadMeta(name)
+	if m.StoppedAt == "" {
+		t.Fatal("the list did not stamp the stop, so this test exercised nothing")
+	}
+	if m.StopAfterTurnAt == "" {
+		t.Fatal("the list's lifecycle write rolled the arm back")
 	}
 }
 

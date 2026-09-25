@@ -164,19 +164,3 @@ func ListMetas() []Meta {
 	}
 	return out
 }
-
-// UpdateStartBranch rewrites the recorded start branch (Meta.Branch) for
-// every session whose cwd is at or under dir, after an intentional `git branch -m` on
-// that working copy — so the rename isn't mistaken for branch drift (③). Only touches
-// metas that carry a start branch; leaves pre-existing ("") ones alone.
-func UpdateStartBranch(dir, branch string) {
-	for _, m := range ListMetas() {
-		if m.Branch == "" || m.Branch == branch {
-			continue
-		}
-		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
-			m.Branch = branch
-			WriteMeta(m)
-		}
-	}
-}
