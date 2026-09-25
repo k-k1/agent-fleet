@@ -379,3 +379,14 @@ can be installed into your user area yourself (`pip install --user` persists).
 
 If this doesn't solve it, ask your team admin or IT department, including the symptom and
 (if any) the message that was shown. The internals are covered in the developer documentation.
+
+## Reporting a bug or requesting a feature
+
+If the problem looks like it's in Agent Fleet itself, rather than your team's setup, file it as
+a GitHub issue at <https://github.com/k-k1/agent-fleet/issues>. From a terminal session you can
+also ask the agent you're using to do this for you.
+
+**The repository is public.** Before pasting in logs, screenshots, or error text, strip out
+secrets, internal hostnames/URLs, tenant or customer names, and anything else about your
+organisation's environment that shouldn't be visible outside it — describe what happened in
+general terms instead.
