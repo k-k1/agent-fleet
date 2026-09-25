@@ -130,11 +130,32 @@ func ensureSessionTmux(name string, ssmForce bool) error {
 	if !ok {
 		return fmt.Errorf("no meta for session %s", name)
 	}
+	recallSettings(&m)
 	if err := startSessionTmux(m, ssmForce); err != nil {
 		log.Printf("resume %s: %v", name, err)
 		return err
 	}
 	return nil
+}
+
+// recallSettings folds what the conversation last ran with (the kind's SettingsRecaller) into
+// m before a TUI slot is relaunched, and persists it. Without it the launch flags carry the
+// creation-time settings and override any switch made in the terminal (#987).
+func recallSettings(m *session.Meta) {
+	r, ok := AgentOf(m.Kind).(agents.SettingsRecaller)
+	if !ok {
+		return
+	}
+	before := *m
+	rec := r.RecallSettings(*m)
+	if !rec.Apply(m) {
+		return
+	}
+	log.Printf("resume %s: settings from the conversation: model %q→%q effort %q→%q mode %q→%q",
+		m.Name, before.Model, m.Model, before.Effort, m.Effort, before.Mode, m.Mode)
+	// Only the recalled fields are written, so a meta write that landed since our read is not
+	// undone.
+	UpdateSessionMeta(m.Name, rec.Apply)
 }
 
 // LiveSessionsInDir returns the display names of running sessions whose cwd is at
