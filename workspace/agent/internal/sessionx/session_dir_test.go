@@ -236,7 +236,7 @@ func TestUpdateSessionStartBranch(t *testing.T) {
 	session.WriteMeta(session.Meta{Name: "c", Dir: dir, Branch: ""})                            // pre-existing
 	session.WriteMeta(session.Meta{Name: "d", Dir: filepath.Join(home, "repos", "other"), Branch: "main"})
 
-	session.UpdateStartBranch(dir, "feat/login")
+	updateStartBranch(dir, "feat/login")
 
 	get := func(n string) session.Meta { m, _ := session.ReadMeta(n); return m }
 	if b := get("a").Branch; b != "feat/login" {

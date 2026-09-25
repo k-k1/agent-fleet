@@ -764,25 +764,27 @@ var slashCmdRe = regexp.MustCompile(`^/[A-Za-z][\w-]*(\s|$)`)
 // desired-next-turn state. A user toggling directly in the terminal remains
 // invisible on 0.145+ because the upstream TUI exposes no textual state signal.
 func rememberCodexTUIMode(name, prompt string, keys []string) {
-	meta, ok := session.ReadMeta(name)
-	if !ok || meta.Kind != session.KindCodex || meta.DriverKind() == session.DriverManaged {
+	enter := strings.TrimSpace(prompt) == "/plan"
+	toggle := len(keys) == 1 && keys[0] == "BTab"
+	if !enter && !toggle {
 		return
 	}
-	mode := ""
-	switch {
-	case strings.TrimSpace(prompt) == "/plan":
-		mode = "plan"
-	case len(keys) == 1 && keys[0] == "BTab":
-		if meta.Mode == "plan" {
-			mode = "normal"
-		} else {
-			mode = "plan"
+	// The toggle reads the mode it flips under the lock, and the write sets only Mode: a meta
+	// read before it and written back whole would roll back a lock set meanwhile (issue #950).
+	UpdateSessionMeta(name, func(meta *session.Meta) bool {
+		if meta.Kind != session.KindCodex || meta.DriverKind() == session.DriverManaged {
+			return false
 		}
-	}
-	if mode != "" && meta.Mode != mode {
+		mode := "plan"
+		if !enter && meta.Mode == "plan" { // a BTab toggles; /plan always enters
+			mode = "normal"
+		}
+		if meta.Mode == mode {
+			return false
+		}
 		meta.Mode = mode
-		session.WriteMeta(meta)
-	}
+		return true
+	})
 }
 
 // typeLineAndSubmit types a literal line into the session's pane and submits it —

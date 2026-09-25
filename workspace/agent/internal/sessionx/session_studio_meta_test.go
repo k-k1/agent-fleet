@@ -203,14 +203,13 @@ func TestRecoverPendingInitialPromptsAtStart(t *testing.T) {
 	}
 }
 
-// The list writes StoppedAt from a snapshot it read seconds earlier; the delivery goroutine or a
-// bind may have written in between, and the snapshot must not roll that back.
-func TestListSnapshotKeepsStudioAndInitialPromptState(t *testing.T) {
+// A halt stamps StoppedAt after a kill that can take seconds; the delivery goroutine or a bind
+// may have written in between, and the halt's snapshot must not roll that back.
+func TestHaltSnapshotKeepsStudioAndInitialPromptState(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	stale := session.Meta{Name: "a", InitialPromptState: session.InitialPromptPending}
 	session.WriteMeta(session.Meta{Name: "a", InitialPromptState: session.InitialPromptDelivered, Studio: studioID})
-	stale.StoppedAt = "2026-09-23T10:00:00+09:00"
-	WriteSessionMetaKeepingLock(stale)
+	stampHalted(stale)
 	m, _ := session.ReadMeta("a")
 	if m.InitialPromptState != session.InitialPromptDelivered || m.Studio != studioID || m.StoppedAt == "" {
 		t.Fatalf("meta = %+v, want the newer state and studio kept and StoppedAt written", m)

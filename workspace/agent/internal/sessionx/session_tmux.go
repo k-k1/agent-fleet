@@ -110,10 +110,16 @@ func ensureSessionTmux(name string, ssmForce bool) error {
 			return err
 		}
 		// Resuming clears the stopped marking. The next list poll would clear it too, but a
-		// pre-halt StoppedAt surviving right after the /start response is confusing.
-		if m.StoppedAt != "" {
-			m.StoppedAt = ""
-			session.WriteMeta(m)
+		// pre-halt StoppedAt surviving right after the /start response is confusing. Cleared on
+		// the meta as it is now: the launch above takes seconds, and m written back would roll
+		// back a lock set meanwhile (issue #950).
+		if _, cleared := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+			if cur.StoppedAt == "" {
+				return false // a list poll got there first, and recorded the revive itself
+			}
+			cur.StoppedAt = ""
+			return true
+		}); cleared {
 			fleetgraph.RecordRevive(name) // write site ③: the slot became alive again
 		}
 		return nil

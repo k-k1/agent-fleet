@@ -9,7 +9,7 @@ import (
 
 // A snapshot written back after the session was deleted must not bring it back (ADR 0101):
 // the list handler, halt and the driver switch all read a meta, work for a while, then write
-// it through WriteSessionMetaKeepingLock / ArchiveSession — and a delete can land in between,
+// it through stampHalted / ArchiveSession — and a delete can land in between,
 // after which the row would reappear with its transcript already in the trash.
 func TestSnapshotWriteDoesNotResurrectADeletedSession(t *testing.T) {
 	home := t.TempDir()
@@ -21,9 +21,9 @@ func TestSnapshotWriteDoesNotResurrectADeletedSession(t *testing.T) {
 	snapshot, _ := session.ReadMeta(m.Name)
 	session.RemoveMeta(m.Name) // the delete lands between the read and the write
 
-	WriteSessionMetaKeepingLock(snapshot)
+	stampHalted(snapshot)
 	if _, ok := session.ReadMeta(m.Name); ok {
-		t.Fatal("WriteSessionMetaKeepingLock wrote a deleted session back")
+		t.Fatal("stampHalted wrote a deleted session back")
 	}
 	ArchiveSession(snapshot)
 	if _, ok := session.ReadMeta(m.Name); ok {
