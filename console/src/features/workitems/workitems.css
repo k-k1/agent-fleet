@@ -174,13 +174,14 @@
 .wi-meta > * {
   margin-right: 6px;
 }
-/* A filled badge in the label's own colour, set per badge by LabelBadge. The inset edge is
-   for fills close to the panel (GitHub's near-white and near-black labels), which would
-   otherwise lose their outline in one theme; it follows --fg so it flips with the theme. */
+/* A badge edged in the label's own colour (set per badge by LabelBadge) over a thin wash of
+   it. The text stays --fg, so the wash is capped where --fg still reads at 4.5:1 on the
+   worst case, a white label in the dark theme (measured: 28% gives 5.2:1, 32% is already at
+   4.5:1). A stronger wash needs a per-theme text colour instead. */
 .wi-label {
-  background: var(--wi-label-bg, transparent);
-  color: var(--wi-label-fg, inherit);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 22%, transparent);
+  border: 1px solid var(--wi-label-color, var(--border));
+  background: color-mix(in srgb, var(--wi-label-color, transparent) 28%, transparent);
+  color: var(--fg);
   border-radius: 8px;
   padding: 0 5px;
   font-weight: 500;

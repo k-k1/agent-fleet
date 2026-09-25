@@ -153,25 +153,23 @@ describe("WorkItemsSection", () => {
     expect(host.querySelector(".wi-meta")?.getAttribute("title")).toBe("priority: high, bug, follow-up");
   });
 
-  it("fills each label badge with its tracker colour, or a derived one, and readable text", async () => {
+  it("colours each label badge from its tracker colour, or a derived one", async () => {
     workItemList.mockResolvedValue({
-      items: [item({ labels: ["bug", "enhancement", "checkout"], labelColors: { bug: "5319e7", enhancement: "a2eeef" } })],
+      items: [item({ labels: ["bug", "enhancement", "checkout"], labelColors: { bug: "d73a4a", enhancement: "a2eeef" } })],
       queries: [query],
       sessions: [],
       fetchedAt: "2026-08-26T09:00:00Z",
       running: true,
     });
     await render();
-    const style = (name: string) => {
-      const el = [...host.querySelectorAll<HTMLElement>(".wi-row .wi-label")].find((e) => e.textContent === name)!;
-      return [el.style.getPropertyValue("--wi-label-bg"), el.style.getPropertyValue("--wi-label-fg")];
-    };
-    expect(style("bug")).toEqual(["#5319e7", "#ffffff"]);
-    expect(style("enhancement")).toEqual(["#a2eeef", "#000000"]);
-    // No tracker colour (Jira, or a row cached before colours were carried): still filled.
-    const [bg, fg] = style("checkout");
-    expect(bg).toMatch(/^#[0-9a-f]{6}$/);
-    expect(fg).toMatch(/^#(000000|ffffff)$/);
+    const color = (name: string) =>
+      [...host.querySelectorAll<HTMLElement>(".wi-row .wi-label")]
+        .find((e) => e.textContent === name)!
+        .style.getPropertyValue("--wi-label-color");
+    expect(color("bug")).toBe("#d73a4a");
+    expect(color("enhancement")).toBe("#a2eeef");
+    // No tracker colour (Jira, or a row cached before colours were carried): still coloured.
+    expect(color("checkout")).toMatch(/^#[0-9a-f]{6}$/);
   });
 
   it("survives a row with null labels (this blanked the whole Console)", async () => {
