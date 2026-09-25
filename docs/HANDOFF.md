@@ -87,7 +87,7 @@ curl -s http://127.0.0.1:8099/api/workspace            # {"state":"running"|"sto
 
 ## 6. コミット規約
 
-**正は [CONTRIBUTING.md](../CONTRIBUTING.md#commits--prs)**（形式・日本語・帰属トレーラ）。
+**正は [CONTRIBUTING.md](../CONTRIBUTING.md#commits--prs)**（形式・英語（コミット／PR／Issue）・帰属トレーラ）。
 このホスト固有の要点だけ:
 
 - **develop がトランク**（日常開発は develop へ直 push / 随時マージ・「完了」= develop マージ済。

@@ -8,9 +8,9 @@ follow the message format and attribution rules described there.
 These in particular are mandatory.
 
 - The subject line takes the form `<type>(<scope>): <summary>`.
-- **Write the subject summary and the body in Japanese.** (This is the maintainer's
-  working convention for the repository's own history; outside contributors may use
-  English — see CONTRIBUTING.)
+- **Write the subject summary and the body in English.** The same goes for PR titles
+  and descriptions and for GitHub issues. (Commits made before 2026-09-25 are in
+  Japanese; do not rewrite them.)
 - For a bug fix or a behaviour change, the body states the root cause, the fix, and
   how it was verified.
 - A commit an agent authored or materially contributed to carries a
@@ -37,10 +37,10 @@ one. Don't reach for `--no-verify`.
 ## Comments
 
 **Write every comment in English** — Go, TypeScript, CSS, SQL, shell alike. (Commit
-messages stay Japanese; see above.) Japanese belongs in user-visible strings, i18n
-catalogues, test fixtures and golden files — never in a comment. When a comment has to
-name a Japanese UI label, give the English term and put the literal in parentheses only
-when the reader needs it to find the string.
+messages, PRs and issues are English too; see above.) Japanese belongs in user-visible
+strings, i18n catalogues, test fixtures and golden files — never in a comment. When a
+comment has to name a Japanese UI label, give the English term and put the literal in
+parentheses only when the reader needs it to find the string.
 
 A comment earns its place by saying what the code cannot:
 
