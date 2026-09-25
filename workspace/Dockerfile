@@ -433,9 +433,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.23.1
-ARG KIRO_SHA256_X64=7b8689de625c123e9b5357265925ebd1d81be6e6d04fa81b25a85c2fce15f9a3
-ARG KIRO_SHA256_ARM64=c9603b82ea170ee616a10f308b04d4567bf6e02c59e9f452e13b3e1bc8095fbe
+ARG KIRO_VERSION=2.24.0
+ARG KIRO_SHA256_X64=dc34701a28f302b84ff2067d019394566eab0f7742dc529cbb90351e1ec02004
+ARG KIRO_SHA256_ARM64=2448d96fe8f77277abb3e29e9fb8909cc107fca834d6ed0cb5d0b6020d8fa7ee
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
