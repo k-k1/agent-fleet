@@ -114,7 +114,10 @@ func (p *pendingAsk) isApproval() bool { return p != nil && p.approvalID != "" }
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	cmd := exec.Command(Bin(), serveArgs()...)
 	cmd.Dir = h.dir
-	cmd.Env = childEnv(os.Environ())
+	// One host per session: this puts the name in the model's own shell as well, the way a
+	// Terminal session has it. The af server gets it on the wire (mcp.go), since muse scrubs
+	// its MCP children's environment.
+	cmd.Env = agents.WithSessionName(childEnv(os.Environ()), h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -230,7 +233,7 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	granted := h.sessionMCP
 	h.mu.Unlock()
 	if granted {
-		servers, err := sessionMCPServers()
+		servers, err := sessionMCPServers(h.name)
 		if err != nil {
 			log.Printf("muse: %s: MCP servers unavailable, starting without them: %v", h.name, err)
 		} else if len(servers) > 0 {

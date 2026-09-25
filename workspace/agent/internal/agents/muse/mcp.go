@@ -21,16 +21,17 @@ package muse
 import (
 	"os"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // sessionMCPServers renders the registry's session-scope definitions for this kind as MSP's
-// own config map. An error from the registry yields no servers and is reported to the caller,
+// own config map, stamped with the name of the session they are for. An error from the registry yields no servers and is reported to the caller,
 // which LOGS and launches anyway — the same posture materialisation takes for every other
 // kind: a broken integration must not cost the member their session.
-func sessionMCPServers() (map[string]msp.SessionMCPServerConfig, error) {
+func sessionMCPServers(owner string) (map[string]msp.SessionMCPServerConfig, error) {
 	defs, err := mcpreg.ForSession(session.KindMuse)
 	if err != nil {
 		return nil, err
@@ -40,7 +41,7 @@ func sessionMCPServers() (map[string]msp.SessionMCPServerConfig, error) {
 	}
 	out := make(map[string]msp.SessionMCPServerConfig, len(defs))
 	for _, d := range defs {
-		out[d.Name] = mcpServerConfig(d)
+		out[d.Name] = mcpServerConfig(d, owner)
 	}
 	return out, nil
 }
@@ -53,7 +54,7 @@ func sessionMCPServers() (map[string]msp.SessionMCPServerConfig, error) {
 // nowhere to put the choice either (`secrets.MCPServer` has `enabled`, `targets`, `kinds` and
 // `timeoutMs` and no `mode`), and decision 11 names adding one as out of scope rather than
 // leaving it to be discovered here.
-func mcpServerConfig(d mcpreg.ServerDef) msp.SessionMCPServerConfig {
+func mcpServerConfig(d mcpreg.ServerDef, owner string) msp.SessionMCPServerConfig {
 	mode := msp.SessionMCPServerModeOptional
 	cfg := msp.SessionMCPServerConfig{Mode: &mode}
 	if d.Transport == mcpreg.TransportHTTP {
@@ -94,6 +95,10 @@ func mcpServerConfig(d mcpreg.ServerDef) msp.SessionMCPServerConfig {
 	// passed in this map does not appear anywhere under muse's own store. It does reach the
 	// vendor's process — which already holds the whole Agent environment, being AF's own child.
 	for _, name := range mcpreg.ForwardEnvNames(d) {
+		if name == agents.SessionNameEnvVar {
+			// The Agent's own environment is no session's: the name is this session's, below.
+			continue
+		}
 		v := os.Getenv(name)
 		if v == "" {
 			continue
@@ -105,6 +110,15 @@ func mcpServerConfig(d mcpreg.ServerDef) msp.SessionMCPServerConfig {
 		if _, taken := cfg.Env[name]; !taken {
 			cfg.Env[name] = v
 		}
+	}
+	// The wire is per session, so it is the one place the af server can be told which session
+	// it serves (mcpx.mcpOwningSession); without it every session-bound af tool guesses from
+	// the working folder, which several sessions routinely share.
+	if d.Origin == mcpreg.OriginBuiltin && d.ID == mcpreg.BuiltinAF && owner != "" {
+		if cfg.Env == nil {
+			cfg.Env = map[string]string{}
+		}
+		cfg.Env[agents.SessionNameEnvVar] = owner
 	}
 	return cfg
 }

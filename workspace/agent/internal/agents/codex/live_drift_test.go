@@ -742,18 +742,17 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// TestLiveDriftCodexThreadMCPConfigAppliesOnResume closes the one gap Tier 1 cannot
-// reach. A managed session's MCP child learns which session it serves from the thread
-// config (docs/log/27 §9.3.1), and Tier 1 proves thread/start delivers it. But a session
-// that outlives an Agent restart comes back through thread/RESUME — and a thread has
-// no rollout to resume until a real turn has started, which is exactly what Tier 1
-// cannot buy. If resume ignored the config, every recovered managed session would
-// silently lose its AF_SESSION_NAME and propose_session_handoff would fall back to
-// guessing from cwd, with nothing in the logs to say so.
+// TestLiveDriftCodexThreadMCPConfigAppliesOnResume measures a resume into the daemon that
+// still holds the thread — the shape an Agent restart that adopts the daemon takes. A managed
+// session's MCP child learns which session it serves from the thread config (docs/log/27
+// §9.3.1), and a thread has no rollout to resume until a real turn has started, which Tier 1
+// cannot buy.
 //
 // Resuming with a DIFFERENT value than the thread started with is what makes this
-// conclusive: a probe carrying the NEW value proves resume re-applied the config
-// rather than the old child simply still being alive.
+// conclusive: codex answers a loaded thread as it is, so the new value must NOT appear. The
+// session keeps its name anyway, because the driver always resumes with the name it started
+// with. The resume into a REPLACED daemon, which does apply the config, is
+// TestLiveDriftCodexThreadMCPConfigAppliesOnColdResume.
 func TestLiveDriftCodexThreadMCPConfigAppliesOnResume(t *testing.T) {
 	liveCodexBin(t)
 	liveHome(t)
@@ -829,16 +828,14 @@ func TestLiveDriftCodexThreadMCPConfigAppliesOnResume(t *testing.T) {
 		t.Fatalf("threadResume(%s): %v", tid, err)
 	}
 
-	// MEASURED 2026-08-09, codex-cli 0.147.0: resume does NOT apply it. thread/start
-	// is the only place config.mcp_servers takes effect, so this asserts the
-	// LIMITATION — if codex ever starts honouring it, this fails and the degradation
-	// note in docs/log/27 §9.3.1 can be deleted.
+	// Measured on 0.147.0 and 0.156.1: a loaded thread keeps the configuration it started
+	// with. codex-rs thread_resume_inner returns a running thread before it reads the
+	// request's config at all.
 	for i := 0; i < 40; i++ {
 		if liveThreadMCPNames(t, cl, tid)[resumeServer] {
-			t.Fatalf("thread/resume now APPLIES config.mcp_servers (%q appeared for %s). "+
-				"Good news: a managed session recovered after a daemon restart would keep its "+
-				"AF_SESSION_NAME instead of degrading to the cwd fallback. Remove the "+
-				"degradation note in docs/log/27 §9.3.1 and flip this assertion.", resumeServer, tid)
+			t.Fatalf("resuming a LOADED thread now applies config.mcp_servers (%q appeared for %s). "+
+				"Harmless for the session name (the driver resumes with the same one), but the "+
+				"record in docs/log/117 no longer holds: re-measure and flip this assertion.", resumeServer, tid)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
@@ -846,9 +843,8 @@ func TestLiveDriftCodexThreadMCPConfigAppliesOnResume(t *testing.T) {
 		t.Fatalf("a child was spawned for the resumed thread after all — the inventory and the " +
 			"spawn disagree, so this measurement is not reading what it thinks it is")
 	}
-	t.Logf("resume ignores config.mcp_servers (0.147.0): a thread keeps the MCP configuration it " +
-		"was STARTED with, so identity survives an Agent restart that adopts the daemon, and is " +
-		"lost only when the daemon itself is replaced")
+	t.Logf("resuming a loaded thread ignores config.mcp_servers: it keeps the configuration it " +
+		"was STARTED with, which carries the same session name")
 
 	// Free follow-up while a resumed thread is in hand: can the settings channel carry
 	// what resume drops? Informational — a failure here is not a contract break, it is
@@ -865,6 +861,93 @@ func TestLiveDriftCodexThreadMCPConfigAppliesOnResume(t *testing.T) {
 			"re-assert the af entry after resume, the same way it re-asserts the bypass policies")
 	default:
 		t.Logf("thread/settings/update accepted mcp_servers but nothing changed — no repair channel")
+	}
+}
+
+// TestLiveDriftCodexThreadMCPConfigAppliesOnColdResume measures the case the test above
+// cannot: a thread resumed into a REPLACED daemon, where it is not loaded. The same-daemon
+// resume returns the running thread as it was started, so its answer says nothing about a
+// resume that has to rebuild the thread from its rollout — the shape every managed session
+// takes after a daemon crash or Restart, and the one that loses AF_SESSION_NAME if the config
+// is ignored there too.
+func TestLiveDriftCodexThreadMCPConfigAppliesOnColdResume(t *testing.T) {
+	liveCodexBin(t)
+	liveHome(t)
+
+	addr := fmt.Sprintf("ws://127.0.0.1:%d", freePort(t))
+	t.Setenv(appServerAddrEnv, addr)
+	defer Serve().Shutdown()
+
+	probes := t.TempDir()
+	work := t.TempDir()
+	m := session.Meta{Name: "live-drift-cold", Dir: work, Kind: session.KindCodex, Driver: session.DriverManaged}
+	probeDef := func(server string) []mcpreg.ServerDef {
+		return []mcpreg.ServerDef{{
+			ID: mcpreg.BuiltinAF, Name: server, Origin: mcpreg.OriginBuiltin,
+			Transport: mcpreg.TransportStdio, Command: "/bin/sh",
+			Args: []string{"-c",
+				`printf '%s' "${AF_SESSION_NAME-<unset>}" > "` + probes + `/$AF_SESSION_NAME"`},
+			Enabled: true,
+		}}
+	}
+	old := sessionMCPDefs
+	sessionMCPDefs = func() ([]mcpreg.ServerDef, error) { return probeDef(mcpreg.BuiltinAF), nil }
+	t.Cleanup(func() { sessionMCPDefs = old })
+
+	h, err := NewDriver().(interface {
+		Resume(session.Meta) (agents.ThreadHandle, error)
+	}).Resume(m)
+	if err != nil {
+		failAuthAware(t, "managed Resume (thread/start)", err, err.Error())
+	}
+	if got := liveWaitProbe(t, filepath.Join(probes, m.Name)); got != m.Name {
+		t.Fatalf("thread/start probe read %q, want %q", got, m.Name)
+	}
+	liveDriftTurn(t, h, "reply with exactly: pong")
+	tid := sids.Read(session.UUID(m.Dir, m.Name))
+	if tid == "" {
+		t.Fatal("no codex thread id recorded for the slot")
+	}
+	logTurnCost(t, "mcp-identity cold resume", tid)
+
+	// Replace the daemon: the new generation has never loaded tid.
+	Serve().Shutdown()
+	if healthy(addr) {
+		t.Fatalf("daemon at %s still answers after Shutdown", addr)
+	}
+	// Shutdown clears the address; without it Ensure would start on the shared default port.
+	t.Setenv(appServerAddrEnv, addr)
+	if _, _, err := Serve().Ensure(); err != nil {
+		t.Fatalf("Ensure (new daemon): %v", err)
+	}
+	cl, err := newAppClient(addr)
+	if err != nil {
+		t.Fatalf("app client: %v", err)
+	}
+	defer cl.close()
+	go cl.readLoop()
+
+	// A different server name and session name than the start used: the isolated HOME's
+	// config.toml has no MCP servers, so either can only come from this resume's config.
+	const resumed = "live-drift-cold-2"
+	const resumeServer = "af_cold_probe"
+	sessionMCPDefs = func() ([]mcpreg.ServerDef, error) { return probeDef(resumeServer), nil }
+	if _, err := threadResume(cl, tid, work, resumed); err != nil {
+		t.Fatalf("threadResume(%s) into the new daemon: %v", tid, err)
+	}
+	var inInventory bool
+	for i := 0; i < 40 && !inInventory; i++ {
+		inInventory = liveThreadMCPNames(t, cl, tid)[resumeServer]
+		time.Sleep(250 * time.Millisecond)
+	}
+	b, probeErr := os.ReadFile(filepath.Join(probes, resumed))
+	t.Logf("cold resume: inventory has %q = %v; probe %q (err %v)", resumeServer, inInventory, b, probeErr)
+	if !inInventory {
+		t.Fatalf("cold thread/resume did NOT apply config.mcp_servers: a managed session resumed " +
+			"into a replaced daemon loses AF_SESSION_NAME (docs/log/117)")
+	}
+	if probeErr == nil && string(b) != resumed {
+		t.Fatalf("resumed probe read %q, want %q", b, resumed)
 	}
 }
 

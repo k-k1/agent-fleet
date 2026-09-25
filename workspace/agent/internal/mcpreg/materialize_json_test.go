@@ -298,6 +298,36 @@ func TestCursorServersShape(t *testing.T) {
 	}
 }
 
+// TestCursorBuiltinsReferenceTheirEnv pins what makes the af server work under cursor at all.
+// cursor hands an MCP child HOME, PATH, SHELL and TERM only (measured), so an af entry without
+// `env` starts, lists its tools, and answers every call back to the Agent with a 401 — and has
+// no session name. The values must be REFERENCES cursor expands from its own environment:
+// writing them would put AGENT_TOKEN in a plaintext file.
+func TestCursorBuiltinsReferenceTheirEnv(t *testing.T) {
+	got := cursorServers([]ServerDef{
+		{Name: "af", ID: BuiltinAF, Origin: OriginBuiltin, Transport: TransportStdio,
+			Command: "/usr/local/bin/workspace-agent", Args: []string{"mcp-stdio", "--self-report"}},
+		{Name: "pagerduty", ID: BuiltinPagerDuty, Origin: OriginBuiltin, Transport: TransportStdio,
+			Command: "/usr/local/bin/workspace-agent", Args: []string{"mcp-run", "pagerduty"},
+			Env: map[string]string{"AF_SECRET_KEY": "explicit"}},
+		{Name: "wiki", Origin: OriginUser, Transport: TransportStdio, Command: "npx"},
+	})
+	af, _ := got["af"].(map[string]any)
+	env, _ := af["env"].(map[string]any)
+	for _, name := range []string{"AGENT_TOKEN", "AGENT_ADDR", "AF_SESSION_NAME", "AF_CP_BASE_URL", "AF_MEMO_TOKEN"} {
+		if env[name] != "${env:"+name+"}" {
+			t.Errorf("af env[%s] = %#v, want a ${env:} reference", name, env[name])
+		}
+	}
+	pd, _ := got["pagerduty"].(map[string]any)
+	if v := pd["env"].(map[string]any)["AF_SECRET_KEY"]; v != "explicit" {
+		t.Errorf("a definition's own value lost to the reference: %#v", v)
+	}
+	if _, ok := got["wiki"].(map[string]any)["env"]; ok {
+		t.Errorf("a user-registered server was handed AF's variables: %#v", got["wiki"])
+	}
+}
+
 func TestMaterializeAgyWritesGeminiConfig(t *testing.T) {
 	home := withTempCLIHomes(t)
 	if _, _, _, err := materializeAgy(p5Defs(), nil); err != nil {

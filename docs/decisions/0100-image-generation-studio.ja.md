@@ -6,6 +6,7 @@
   （5 巡の設計と、別セッションによるレビュー [113-review](../log/113-review.md)・🔴 7・🟡 12 を反映済み）。
   実装は無い。
   状態の更新（2026-09-24）: P0 は実装済み。前提と契約の凍結は #924、3 レーンは #925（CP の中継）・#926（Agent、`workspace/agent/internal/imagegen/studio*.go`）・#927（Console のペイン）、改訂 8 を含む統合は #932 で入った（2026-09-23 マージ）。配備での P0 の受け入れは #959、P1 は #960。
+  状態の更新（2026-09-25）: 前提と決定 8 にある事実のうち 2 つが成り立たなくなった（#978、[docs/log/117](../log/117-managed-af-session-name-delivery.md)）。copilot／cursor／kiro／muse の Managed は af 子へ `AF_SESSION_NAME` を届けるようになった。muse の af サーバには wire で Agent のトークンがすでに届いている（ADR 0095 P2-14）。codex Managed も、入れ替えた daemon へ resume した thread が名前を保つ。下の「cwd 推定へ縮退する」は、生きた daemon だけで測った結果だった。これらの kind をスタジオへ開くことと、codex Managed で worktree を OFF にできるようにすることは #960 で扱う。
 - Follow-ups: #949, #956, #959, #960
 - **改訂 1（2026-09-23）**: 別セッション `semvs2b`（codex / gpt-6-sol）の ADR レビュー
   [113-adr-review](../log/113-adr-review.md)（🔴 9・🟡 12・🔵 1）を反映。決定 3・4・8・9・12 の契約を

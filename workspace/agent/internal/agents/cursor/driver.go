@@ -357,7 +357,10 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Authentication is ambient: the CLI picks up ~/.config/cursor/auth.json itself
 	// (measured: a turn completes with no env injection). Only CI is stripped (ci_env.go).
-	cmd.Env = EnvWithoutCI(os.Environ())
+	// cursor scrubs its MCP children's environment (measured: they get HOME, PATH, SHELL and
+	// TERM only), so the name reaches the af server through the ${env:…} references mcpreg
+	// writes into ~/.cursor/mcp.json, which cursor expands from THIS process's environment.
+	cmd.Env = agents.WithSessionName(EnvWithoutCI(os.Environ()), h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

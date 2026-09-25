@@ -56,10 +56,29 @@ func cursorServers(defs []ServerDef) map[string]any {
 		if len(d.Args) > 0 {
 			e["args"] = anySlice(d.Args)
 		}
-		if len(d.Env) > 0 {
-			e["env"] = anyMap(d.Env)
+		if env := cursorStdioEnv(d); len(env) > 0 {
+			e["env"] = env
 		}
 		out[d.Name] = e
+	}
+	return out
+}
+
+// cursorStdioEnv is a stdio entry's `env`: the definition's own values, plus a reference to
+// every variable a builtin needs from AF (extraEnvVars).
+//
+// cursor scrubs its MCP children's environment — measured on 2026.09.23, the af child got
+// HOME, PATH, SHELL and TERM and nothing else — so without these the af server has no
+// AGENT_TOKEN (every call back to the Agent is a 401) and no AF_SESSION_NAME. cursor expands
+// `${env:NAME}` in this file from its own process environment (measured), which is how the
+// values get through without a secret being written to disk. An unset variable is left as the
+// literal `${env:NAME}`; mcpx.dropUnexpandedEnv clears those before anything reads them.
+func cursorStdioEnv(d ServerDef) map[string]any {
+	out := anyMap(d.Env)
+	for _, name := range extraEnvVars(d) {
+		if _, taken := out[name]; !taken {
+			out[name] = "${env:" + name + "}"
+		}
 	}
 	return out
 }

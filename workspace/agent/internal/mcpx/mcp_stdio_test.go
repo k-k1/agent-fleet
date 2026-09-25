@@ -756,7 +756,7 @@ func TestHandoffDescriptionMentionsReportBackOnlyWithPeerMessaging(t *testing.T)
 
 	mcpPeerMessagingEnabled = true
 	on := desc()
-	for _, want := range []string{"send_to_peer_session", "$AF_SESSION_NAME"} {
+	for _, want := range []string{"send_to_peer_session", "get_session_status with no name"} {
 		if !strings.Contains(on, want) {
 			t.Fatalf("description does not mention %q: %s", want, on)
 		}
