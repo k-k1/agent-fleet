@@ -177,6 +177,7 @@ func parseStdioFlags(args []string) {
 // --self-report with --chromium-attach adds the narrowly scoped Chromium Attach View
 // tools without granting any other read/write tool (docs/log/53 §53.8).
 func RunStdio(args []string) {
+	dropUnexpandedEnv()
 	mcpSourceSession = os.Getenv("AF_SESSION_NAME")
 	parseStdioFlags(args)
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
@@ -595,7 +596,8 @@ func handoffReportBackNote() string {
 	if !mcpPeerMessagingEnabled {
 		return ""
 	}
-	return " Only when you need to be told it is done, name your own session ($AF_SESSION_NAME) in the " +
+	return " Only when you need to be told it is done, name your own session (get_session_status with no name " +
+		"reports it) in the " +
 		"prompt and ask for one send_to_peer_session reply. A reply costs the successor a turn and resumes " +
 		"you if you have stopped, so keep it for fanning out to several successors and collecting the " +
 		"results; an ordinary handoff needs none, because the user sees the work in the Console."
@@ -672,16 +674,15 @@ func mcpStdioSelfReportTools() []map[string]any {
 				"Completion is detected anyway, so when in doubt do not call it. " +
 				"Do not call it while you are stopping to ask a question or wait for approval, or while work " +
 				"continues (an early report is ignored). " +
-				"The server writes the body, so pass only your own session name.",
+				"The server writes the body, so pass at most your own session name.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"session": map[string]any{
 						"type":        "string",
-						"description": "Your own session name (pass the value written in the instruction's [agent-fleet] note verbatim)",
+						"description": "Your own session name: the value written in the instruction's [agent-fleet] note, verbatim. Omit it and the server fills in the session it serves",
 					},
 				},
-				"required": []string{"session"},
 			},
 		},
 		{
@@ -801,9 +802,8 @@ func mcpStdioFleetObserveTools() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"name": map[string]any{"type": "string", "minLength": 1, "description": "Session name (the name from list_peer_sessions, or your own $AF_SESSION_NAME)"},
+					"name": map[string]any{"type": "string", "minLength": 1, "description": "Session name from list_peer_sessions. Omit it for your own session; the result's name is your session name"},
 				},
-				"required": []string{"name"},
 			},
 		},
 		{
@@ -2637,10 +2637,17 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !selfReportOnly() {
 			return mcpToolErr(req.ID, "af_report はセッション側の Agent Fleet サーバー専用です")
 		}
-		if !session.ValidName(a.Session) {
-			return mcpToolErr(req.ID, "session（自分のセッション名）が必要です")
+		name := a.Session
+		if !session.ValidName(name) {
+			// The argument only ever means "me", and a Managed model has no shell variable to
+			// read it from; the server knows whom it serves (mcpOwningSession).
+			resolved, err := mcpOwningSession()
+			if err != nil {
+				return mcpToolErr(req.ID, err.Error())
+			}
+			name = resolved
 		}
-		body, _ := json.Marshal(map[string]string{"name": a.Session, "kind": reportKindSelfReport})
+		body, _ := json.Marshal(map[string]string{"name": name, "kind": reportKindSelfReport})
 		if _, err := AgentPOST("/chat/report", body); err != nil {
 			return mcpToolErr(req.ID, "完了の申告に失敗しました: "+err.Error())
 		}
@@ -3311,10 +3318,20 @@ func mcpStdioCall(req mcpReq) []byte {
 	case "list_repos":
 		path = "/repos"
 	case "get_session_status":
-		if a.Name == "" {
+		name := a.Name
+		if name == "" && selfReportOnly() {
+			// A session asking about itself: this is also how a Managed model, which has no
+			// $AF_SESSION_NAME in its shell, learns its own name.
+			resolved, err := mcpOwningSession()
+			if err != nil {
+				return mcpToolErr(req.ID, err.Error())
+			}
+			name = resolved
+		}
+		if name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
-		path = "/sessions/" + url.PathEscape(a.Name) + "/status"
+		path = "/sessions/" + url.PathEscape(name) + "/status"
 	case "get_session_output":
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
@@ -3411,19 +3428,25 @@ func outputCursorScope() string {
 
 // mcpOwningSession names the session this MCP process serves.
 //
-// AF_SESSION_NAME is the contract, and it arrives two ways. TERMINAL sessions get it
-// from the tmux launch env (session_tmux.go), which codex forwards (mcpreg's
-// extraEnvVars) and claude inherits. MANAGED codex sessions get it from the THREAD
-// config instead (mcpreg.CodexThreadServers, docs/log/27 §9.3.1) — their MCP child is
-// spawned by the ONE shared daemon the Agent started, whose process env cannot carry
-// anything per-session. That config is applied by thread/START only: a thread resumed
-// into a REPLACED daemon comes back without it (measured, docs/log/27 §9.3.1) and lands in
-// the fallback below.
+// AF_SESSION_NAME is the contract. Each launch route delivers it through the one per-session
+// channel its host has (docs/log/117):
 //
-// MANAGED OPENCODE has neither: its MCP config is global and the child is spawned per
-// project directory, so sessions sharing a worktree share one child (measured 1.18.15,
-// contract_mcp_identity_test.go). Those callers land in the cwd fallback below, as do
-// codex threads whose config had to be omitted (unreadable registry).
+//   - TERMINAL: the tmux launch env (session_tmux.go), inherited by the CLI and forwarded by
+//     codex (mcpreg's extraEnvVars).
+//   - MANAGED codex: the THREAD config (mcpreg.CodexThreadServers). The daemon is shared, but
+//     thread/start, thread/fork and a resume into a daemon that has not loaded the thread all
+//     apply it; a resume into the daemon that already holds the thread keeps the one it started
+//     with, which is the same name.
+//   - MANAGED copilot / kiro / muse host / cursor: one vendor process per session, started with
+//     it in its environment. cursor scrubs its MCP children's environment, so its config file
+//     carries a `${env:…}` reference (mcpreg.cursorStdioEnv).
+//   - MANAGED muse: the session/start wire's `env`, since muse scrubs too.
+//   - lcpp: added to the builtin's definition in-process (agents/lcpp injectSessionName).
+//
+// MANAGED OPENCODE has no channel: its MCP config is global and the child is spawned per
+// project directory, so sessions sharing a worktree share one child (measured 1.18.32,
+// contract_mcp_identity_test.go; #989 tracks a plugin-hook route). Those callers land in the
+// cwd fallback below, as does any route whose registry could not be read.
 //
 // The fallback matches the working folder, which is not unique — several sessions
 // routinely share one worktree. Narrowing by liveness resolves the common shape (the
