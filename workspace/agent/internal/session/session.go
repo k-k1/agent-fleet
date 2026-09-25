@@ -389,9 +389,10 @@ type Meta struct {
 	// launched process starts deeper (see CWD). "" = start at Dir, the default.
 	Subdir string `json:"subdir,omitempty"`
 	Model  string `json:"model"`
-	// Effort / Mode are the desired managed-thread settings. They live beside Model
-	// so a successful dynamic change survives Agent/workspace restarts and is inherited
-	// by fork/recreate. TUI sessions leave both empty.
+	// Effort / Mode are the desired thread settings. They live beside Model so a change
+	// survives Agent/workspace restarts and is inherited by fork/recreate: a Managed change
+	// is written here by the settings endpoint, a switch made in a TUI is read back from the
+	// CLI's own store when the slot is resumed (agents.SettingsRecaller).
 	Effort string `json:"effort,omitempty"`
 	Mode   string `json:"mode,omitempty"`
 	// SkipPermissions is this session's answer to "skip the permission prompts?"

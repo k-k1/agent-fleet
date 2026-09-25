@@ -351,6 +351,11 @@ the conversation. After resuming, it continues with the execution method that wa
 **Ctrl+click** (or middle-click) opens it **in a new pane** while keeping your
 current view ([05 Terminal](05-terminal.md)).
 
+If you switched the model, effort or plan mode inside the terminal, the session **resumes on the
+last settings the conversation recorded** rather than the ones it was launched with. Except for
+claude, codex and kiro, a model switch with no message sent after it is not recorded by the CLI
+itself, so the session resumes on its launch model.
+
 Even while the workspace is stopped, **the list itself stays visible**. You can't operate on the
 contents, but you can check "which sessions were there" even from a phone.
 

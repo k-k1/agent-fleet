@@ -48,17 +48,24 @@ func fileTranscript(m session.Meta) agents.TranscriptData {
 		return agents.TranscriptData{} // no conversation yet (before launch) — an empty mirror
 	}
 	path := transcriptPath(sid)
-	td := agents.TranscriptData{Path: path, Turns: parseTranscript(path), Mode: modeOf(m)}
-	// The v2 JSONL does not write the model onto an assistant record (measured), so the launch
-	// model (fixed for the session) is stamped on every assistant turn to feed the mirror's
-	// model badge.
-	stampModel(td.Turns, displayModel(m.Model))
+	// <sid>.json holds the session's current model and agent, rewritten the moment `/model`
+	// or `/plan` switches them in the TUI; the meta only has what the session was launched
+	// (or last resumed) with.
+	live := agents.RecalledSettings{}
+	if b, err := os.ReadFile(sessionJSONPath(sid)); err == nil {
+		live = recallFrom(b)
+	}
+	cur := m
+	live.Apply(&cur)
+	td := agents.TranscriptData{Path: path, Turns: parseTranscript(path), Mode: modeOf(cur)}
+	// The v2 JSONL does not write the model onto an assistant record (measured), so the
+	// session's current model is stamped on every assistant turn to feed the mirror's model
+	// badge.
+	stampModel(td.Turns, displayModel(cur.Model))
 	return td
 }
 
-// modeOf normalizes the slot's launch mode for the mirror's plan indicator. kiro's
-// plan posture is launch-fixed (buildProgram drops --trust-all-tools for plan), so
-// meta.Mode is the truth.
+// modeOf normalizes the slot's mode for the mirror's plan indicator.
 func modeOf(m session.Meta) string {
 	if m.Mode == "plan" {
 		return "plan"

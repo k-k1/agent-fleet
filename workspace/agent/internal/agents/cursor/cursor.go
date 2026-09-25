@@ -10,7 +10,8 @@
 // (docs/log/32 202e439) cannot arise here by construction. The authoritative read source is
 // the Claude Code-compatible JSONL transcript (program.go transcriptPath), never the private
 // SQLite store (~/.cursor/chats/**/store.db): a change to opencode's store contract once
-// produced a false idle (docs/log/40 decision 3). Auth has its own flow, with credentials in
+// produced a false idle (docs/log/40 decision 3). The one exception is recall.go, which reads
+// the chat's model and mode once per resume and falls back to the meta on any failure. Auth has its own flow, with credentials in
 // ~/.config/cursor/auth.json (auth.go).
 package cursor
 
