@@ -153,10 +153,9 @@ func recallSettings(m *session.Meta) {
 	}
 	log.Printf("resume %s: settings from the conversation: model %q→%q effort %q→%q mode %q→%q",
 		m.Name, before.Model, m.Model, before.Effort, m.Effort, before.Mode, m.Mode)
-	// Persist onto a fresh read so a meta write that landed since our read is not undone.
-	if fresh, ok := session.ReadMeta(m.Name); ok && rec.Apply(&fresh) {
-		session.WriteMeta(fresh)
-	}
+	// Only the recalled fields are written, so a meta write that landed since our read is not
+	// undone.
+	UpdateSessionMeta(m.Name, rec.Apply)
 }
 
 // LiveSessionsInDir returns the display names of running sessions whose cwd is at
