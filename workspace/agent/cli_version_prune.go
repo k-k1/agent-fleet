@@ -34,7 +34,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // npmGlobalRoots are the node_modules trees a copilot install can live in (the lean
@@ -176,6 +175,15 @@ func copilotCurrent(home string) ([]string, bool) {
 	for _, d := range dirs {
 		if v := packageVersion(filepath.Join(d, "package.json")); v != "" {
 			vers = append(vers, v)
+			// The platform package is what extracts into pkg/<ver>, and a copilot started
+			// after the /proc scan runs that version. It moves in lockstep with the wrapper,
+			// but keeping it too means a mismatch can never delete what a new session needs.
+			plats, _ := filepath.Glob(filepath.Join(d, "node_modules/@github/copilot-*/package.json"))
+			for _, pj := range plats {
+				if pv := packageVersion(pj); pv != "" {
+					vers = append(vers, pv)
+				}
+			}
 		}
 	}
 	return vers, len(vers) > 0
@@ -285,14 +293,14 @@ func (s cliVersionStore) prune(pin string) []prunedVersion {
 }
 
 // versionsInUse collects the versions any process has its executable, a mapping or an open
-// file under. It fails closed: an error when /proc cannot be listed, when one of our own
-// processes that could be this CLI cannot be read (a process that has since exited is
-// fine), or when a process is this CLI but its version cannot be told. Other users'
-// processes are skipped; they cannot be running a copy out of this home.
+// file under. It fails closed: an error when /proc cannot be listed, when a process that
+// could be this CLI cannot be read (a process that has since exited is fine), or when a
+// process is this CLI but its version cannot be told.
 //
-// A process that made itself non-dumpable (ssh-agent does) denies exe, maps and fd even to
-// its own user; failing closed on every such process would stop the prune for good, so its
-// still-readable cmdline decides whether it could be this CLI.
+// Some processes deny exe, maps and fd: another user's (home is often world-readable, so
+// they could still be running a copy from it), or our own that made itself non-dumpable
+// (ssh-agent does). Failing closed on every such process would stop the prune for good, so
+// their still-readable cmdline decides whether they could be this CLI.
 func (s cliVersionStore) versionsInUse() (map[string]bool, error) {
 	used := map[string]bool{}
 	note := func(p string) {
@@ -307,19 +315,11 @@ func (s cliVersionStore) versionsInUse() (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	uid := uint32(os.Getuid())
 	for _, e := range ents {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
 		pd := filepath.Join(procRoot, e.Name())
-		fi, err := os.Stat(pd)
-		if err != nil {
-			continue // exited
-		}
-		if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Uid != uid {
-			continue
-		}
 		unreadable := func(err error) error {
 			if os.IsPermission(err) && !s.cmdlineMentions(pd) {
 				return nil

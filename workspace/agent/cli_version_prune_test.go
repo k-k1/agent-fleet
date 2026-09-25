@@ -349,3 +349,33 @@ func TestPruneCopilotInstallsAndPlatforms(t *testing.T) {
 	assertVersions(t, copilotRoot(home), "1.0.80", "1.0.85", "1.0.88")
 	assertVersions(t, musl, "1.0.80", "1.0.85", "1.0.88")
 }
+
+// Without a readable /proc nothing can be known to be unused.
+func TestPruneKeepsEverythingWithoutProc(t *testing.T) {
+	home, _ := isolateCLIVersions(t)
+	installCursor(t, home, "2026.07.20-8cc9c0b")
+	installCursor(t, home, "2026.09.23-86fc751")
+	procRoot = filepath.Join(t.TempDir(), "missing")
+
+	if got := pruneOldCLIVersions(home, map[string]string{}); len(got) != 0 {
+		t.Fatalf("pruned %+v, want nothing", got)
+	}
+	assertVersions(t, cursorRoot(home), "2026.07.20-8cc9c0b", "2026.09.23-86fc751")
+}
+
+// A copilot the Agent starts right after the scan runs its platform package's version,
+// so that one stays even if it ever differs from the wrapper's.
+func TestPruneKeepsCopilotPlatformPackageVersion(t *testing.T) {
+	home, _ := isolateCLIVersions(t)
+	installCopilot(t, home, "1.0.73")
+	installCopilot(t, home, "1.0.88")
+	writeSized(t, filepath.Join(copilotRoot(home), "1.0.89", "app.js"), 4)
+	plat := filepath.Join(home, ".local/lib/node_modules/@github/copilot/node_modules/@github/copilot-linux-x64/package.json")
+	if err := os.WriteFile(plat, []byte(`{"version":"1.0.89"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pruneOldCLIVersions(home, map[string]string{})
+
+	assertVersions(t, copilotRoot(home), "1.0.88", "1.0.89")
+}
