@@ -229,8 +229,8 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 			Assignee: firstNonEmpty(pr.Author.DisplayName, pr.Author.Nickname),
 			// A Bitbucket PR has no labels. A nil slice would marshal to JSON null, which the Console
 			// cannot treat as an array and renders as a blank screen (docs/log/80 §80.17.5).
-			Labels: []string{},
-			Repo:   repo, UpdatedAt: bitbucketTimeToRFC3339(pr.UpdatedOn),
+			Labels: []string{}, LabelColors: map[string]string{},
+			Repo: repo, UpdatedAt: bitbucketTimeToRFC3339(pr.UpdatedOn),
 		})
 	}
 	return out, nil

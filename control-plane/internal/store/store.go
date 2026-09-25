@@ -601,6 +601,7 @@ type WorkItem struct {
 	Kind, Key, Title, State, URL        string
 	Assignee                            string
 	Labels                              string // comma separated
+	LabelColors                         string // JSON object: label name -> "rrggbb"; "" when none
 	Repo                                string
 	UpdatedAt, FetchedAt                string
 }

@@ -7,7 +7,7 @@ import type { WorkItem, WorkItemSessionRef } from "./read.ts";
 const item: WorkItem = {
   id: "1", queryId: "q1", provider: "github", kind: "issue",
   key: "acme/web#45", title: "ログイン後に一覧が空になる", state: "open",
-  url: "https://github.com/acme/web/issues/45", assignee: "taro", labels: [],
+  url: "https://github.com/acme/web/issues/45", assignee: "taro", labels: [], labelColors: {},
   repo: "acme/web", updatedAt: "2026-08-26T00:00:00Z",
 };
 const session: WorkItemSessionRef = {

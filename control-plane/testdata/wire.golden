@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 216
+# count: 217
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -176,6 +176,7 @@ workItemDTO.assignee string
 workItemDTO.id string
 workItemDTO.key string
 workItemDTO.kind string
+workItemDTO.labelColors object
 workItemDTO.labels [string]
 workItemDTO.provider string
 workItemDTO.queryId string

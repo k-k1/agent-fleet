@@ -41,6 +41,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import type { Repo } from "../repos/store.ts";
 import { workItemDetail } from "./api.ts";
+import { LabelBadge } from "./LabelBadge.tsx";
 import {
   canComment,
   canReadLive,
@@ -391,9 +392,7 @@ export function WorkItemDetailModal({
               <dt>{tr("wi.detail_labels")}</dt>
               <dd className="wi-dlabels">
                 {view.labels.map((l) => (
-                  <span className="wi-label" key={l}>
-                    {l}
-                  </span>
+                  <LabelBadge key={l} name={l} color={view.labelColors[l] || item.labelColors[l]} />
                 ))}
               </dd>
             </>

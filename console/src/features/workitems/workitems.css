@@ -174,10 +174,17 @@
 .wi-meta > * {
   margin-right: 6px;
 }
+/* A badge edged in the label's own colour (set per badge by LabelBadge) over a thin wash of
+   it. The text stays --fg, so the wash is capped where --fg still reads at 4.5:1 on the
+   worst case, a white label in the dark theme (measured: 28% gives 5.2:1, 32% is already at
+   4.5:1). A stronger wash needs a per-theme text colour instead. */
 .wi-label {
-  border: 1px solid var(--border);
+  border: 1px solid var(--wi-label-color, var(--border));
+  background: color-mix(in srgb, var(--wi-label-color, transparent) 28%, transparent);
+  color: var(--fg);
   border-radius: 8px;
   padding: 0 5px;
+  font-weight: 500;
 }
 
 /* Started: shown while the ledger holds a row for this item. Pressing it opens that session. */
