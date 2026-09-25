@@ -174,10 +174,16 @@
 .wi-meta > * {
   margin-right: 6px;
 }
+/* A filled badge in the label's own colour, set per badge by LabelBadge. The inset edge is
+   for fills close to the panel (GitHub's near-white and near-black labels), which would
+   otherwise lose their outline in one theme; it follows --fg so it flips with the theme. */
 .wi-label {
-  border: 1px solid var(--border);
+  background: var(--wi-label-bg, transparent);
+  color: var(--wi-label-fg, inherit);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 22%, transparent);
   border-radius: 8px;
   padding: 0 5px;
+  font-weight: 500;
 }
 
 /* Started: shown while the ledger holds a row for this item. Pressing it opens that session. */

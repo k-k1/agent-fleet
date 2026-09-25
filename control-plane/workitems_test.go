@@ -119,7 +119,8 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	env.body = func() string {
 		return `{"items":[{"queryId":"ok","provider":"github","kind":"issue","key":"acme/web#9",
 		          "title":"新しい行","state":"open","url":"https://example.invalid/9",
-		          "labels":["bug"],"repo":"acme/web","updatedAt":"2026-08-26T00:00:00Z"}],
+		          "labels":["bug"],"labelColors":{"bug":"d73a4a"},
+		          "repo":"acme/web","updatedAt":"2026-08-26T00:00:00Z"}],
 		         "errors":[{"queryId":"ng","message":"github could not parse the query"}]}`
 	}
 	env.api.refreshNow(ctx, env.res, true)
@@ -130,6 +131,14 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Fatalf("want both the new row and the failed query's old row, got %d: %+v", len(items), items)
+	}
+	// The Agent's label colours survive the cache and reach the wire.
+	for _, it := range items {
+		if it.Key == "acme/web#9" {
+			if got := workItemToDTO(it).LabelColors["bug"]; got != "d73a4a" {
+				t.Errorf("bug colour through the cache = %q, want d73a4a", got)
+			}
+		}
 	}
 	queries, _ := env.st.ListWorkItemQueries(ctx, env.mid)
 	for _, q := range queries {
@@ -385,5 +394,12 @@ func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	}
 	if !strings.Contains(string(enc), `"labels":[]`) {
 		t.Errorf("want an empty array, got: %s", enc)
+	}
+	// A row cached before label_colors existed, or with an unreadable value, still carries {}.
+	for _, stored := range []string{"", "not json", "null"} {
+		enc, _ := json.Marshal(workItemToDTO(store.WorkItem{ID: "1", LabelColors: stored}))
+		if !strings.Contains(string(enc), `"labelColors":{}`) {
+			t.Errorf("label_colors %q: want labelColors {}, got: %s", stored, enc)
+		}
 	}
 }

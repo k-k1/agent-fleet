@@ -38,6 +38,7 @@ import { useWorkItemStore, startWorkItemPolling } from "./store.ts";
 import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
+import { LabelBadge } from "./LabelBadge.tsx";
 import {
   branchForItem,
   dedupeWorkItems,
@@ -125,9 +126,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
             {repo && <span className="wi-repo">{repo}</span>}
             {assignee && <span className="wi-assignee">@{assignee}</span>}
             {labels.map((l) => (
-              <span className="wi-label" key={l}>
-                {l}
-              </span>
+              <LabelBadge key={l} name={l} color={item.labelColors[l]} />
             ))}
           </div>
         )}

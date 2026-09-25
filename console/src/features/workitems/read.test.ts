@@ -39,6 +39,7 @@ const item = (over: Partial<WorkItem> = {}): WorkItem => ({
   url: "https://github.com/acme/web/issues/45",
   assignee: "taro",
   labels: ["bug"],
+  labelColors: {},
   repo: "acme/web",
   updatedAt: "2026-08-26T00:00:00Z",
   ...over,
@@ -461,6 +462,23 @@ describe("readWorkItems — survives a null array", () => {
       expect(Array.isArray(row.labels)).toBe(true);
       expect(() => row.labels.slice(0, 2)).not.toThrow();
     }
+  });
+
+  it("reads labelColors as a map of valid rrggbb only, and {} from an older CP", () => {
+    const { payload } = readWorkItems({
+      items: [
+        { ...item(), labelColors: { bug: "D73A4A", evil: "red;background:url(x)", n: 5 } },
+        { ...item(), id: "2", labelColors: undefined },
+        { ...item(), id: "3", labelColors: null },
+        { ...item(), id: "4", labelColors: ["d73a4a"] },
+      ],
+      queries: [],
+      fetchedAt: "",
+      running: true,
+    });
+    const [a, ...rest] = payload!.items;
+    expect(a.labelColors).toEqual({ bug: "d73a4a" });
+    for (const row of rest) expect(row.labelColors).toEqual({});
   });
 
   it("treats a missing string field on a row as a string", () => {

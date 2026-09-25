@@ -5,6 +5,7 @@
 // their own — they are the feature, the section is just their frame.
 import type { ApiError } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { normalizeHex } from "./labelColor.ts";
 
 export interface WorkItem {
   id: string;
@@ -20,6 +21,9 @@ export interface WorkItem {
   url: string;
   assignee: string;
   labels: string[];
+  /** Label name → the tracker's colour as "rrggbb". Only GitHub has them; a label missing here
+   * is drawn in a colour derived from its name. */
+  labelColors: Record<string, string>;
   /** "owner/name" when the provider has one — seeds the launch target. */
   repo: string;
   updatedAt: string;
@@ -81,6 +85,18 @@ export function readWorkItems(res: unknown): { payload: WorkItemPayload | null; 
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
+/** Keep only well-formed "rrggbb" entries. An older CP or Agent sends no map at all, and the
+ * colour lands in an inline style, so nothing unchecked gets through. */
+function readLabelColors(v: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [name, hex] of Object.entries(v as Record<string, unknown>)) {
+    const h = normalizeHex(hex);
+    if (h) out[name] = h;
+  }
+  return out;
+}
+
 /** Make one row safe to render.
  *
  * This exists because of a real white screen: Go marshals a nil slice as JSON `null`,
@@ -101,6 +117,7 @@ function normalizeItem(raw: unknown): WorkItem {
     url: str(r.url),
     assignee: str(r.assignee),
     labels: Array.isArray(r.labels) ? r.labels.filter((l): l is string => typeof l === "string") : [],
+    labelColors: readLabelColors(r.labelColors),
     repo: str(r.repo),
     updatedAt: str(r.updatedAt),
   };
@@ -134,6 +151,7 @@ export interface WorkItemDetail {
   author: string;
   assignee: string;
   labels: string[];
+  labelColors: Record<string, string>;
   repo: string;
   updatedAt: string;
   draft: boolean;
@@ -172,6 +190,7 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
       author: str(d.author),
       assignee: str(d.assignee),
       labels: Array.isArray(d.labels) ? d.labels.filter((l): l is string => typeof l === "string") : [],
+      labelColors: readLabelColors(d.labelColors),
       repo: str(d.repo),
       updatedAt: str(d.updatedAt),
       draft: !!d.draft,

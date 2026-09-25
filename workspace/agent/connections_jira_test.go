@@ -81,7 +81,7 @@ func TestParseJiraSearchIssues(t *testing.T) {
 	if rows[2].Labels == nil {
 		t.Error("a label-less issue produced a nil slice, which marshals as null")
 	}
-	if enc, _ := json.Marshal(rows[2]); strings.Contains(string(enc), `"labels":null`) {
+	if enc, _ := json.Marshal(rows[2]); strings.Contains(string(enc), `"labels":null`) || strings.Contains(string(enc), `"labelColors":null`) {
 		t.Errorf("row wire carries a null array: %s", enc)
 	}
 	// The body (description) is neither fetched nor returned (ADR 0061 decision 2).

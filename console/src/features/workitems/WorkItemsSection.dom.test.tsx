@@ -153,6 +153,27 @@ describe("WorkItemsSection", () => {
     expect(host.querySelector(".wi-meta")?.getAttribute("title")).toBe("priority: high, bug, follow-up");
   });
 
+  it("fills each label badge with its tracker colour, or a derived one, and readable text", async () => {
+    workItemList.mockResolvedValue({
+      items: [item({ labels: ["bug", "enhancement", "checkout"], labelColors: { bug: "5319e7", enhancement: "a2eeef" } })],
+      queries: [query],
+      sessions: [],
+      fetchedAt: "2026-08-26T09:00:00Z",
+      running: true,
+    });
+    await render();
+    const style = (name: string) => {
+      const el = [...host.querySelectorAll<HTMLElement>(".wi-row .wi-label")].find((e) => e.textContent === name)!;
+      return [el.style.getPropertyValue("--wi-label-bg"), el.style.getPropertyValue("--wi-label-fg")];
+    };
+    expect(style("bug")).toEqual(["#5319e7", "#ffffff"]);
+    expect(style("enhancement")).toEqual(["#a2eeef", "#000000"]);
+    // No tracker colour (Jira, or a row cached before colours were carried): still filled.
+    const [bg, fg] = style("checkout");
+    expect(bg).toMatch(/^#[0-9a-f]{6}$/);
+    expect(fg).toMatch(/^#(000000|ffffff)$/);
+  });
+
   it("survives a row with null labels (this blanked the whole Console)", async () => {
     // The CP emitted a Go nil slice as JSON null; item.labels.slice(0, 2) in the row threw a
     // TypeError, and with no ErrorBoundary in the app the whole Console disappeared. The producer
