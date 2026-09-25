@@ -279,7 +279,7 @@ RUN set -eux; \
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
 # が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/log/35 §35.4.1）。
 ARG BAKE_RTK=1
-ARG RTK_VERSION=0.49.0
+ARG RTK_VERSION=0.50.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -315,7 +315,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.281
+ARG CLAUDE_CODE_VERSION=2.1.282
 ARG OPENCODE_VERSION=1.18.32
 ARG CODEX_VERSION=0.156.1
 ARG COPILOT_VERSION=1.0.88
@@ -344,10 +344,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.9
-ARG AGY_RELEASE_BUILD=5905287731871744
-ARG AGY_SHA256_X64=d9850373f3df866011024a961fa9740cc4adaac060eebe9c70fbf263ac6b2624
-ARG AGY_SHA256_ARM64=8a63cf4c4f559e2ff91bd46fbdf015ca7937415805d0cff82015b9cb9dbbdfcd
+ARG AGY_VERSION=1.2.10
+ARG AGY_RELEASE_BUILD=4751581200121856
+ARG AGY_SHA256_X64=77cb69251292aa35b0b662f91f704f06dd787b72f7902a62db8c6d692989203e
+ARG AGY_SHA256_ARM64=b85fd6d22f763dd331bf86fde5fd33fc79ecf6ac1cb254b9c2b6519537f5694f
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -433,9 +433,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.23.1
-ARG KIRO_SHA256_X64=7b8689de625c123e9b5357265925ebd1d81be6e6d04fa81b25a85c2fce15f9a3
-ARG KIRO_SHA256_ARM64=c9603b82ea170ee616a10f308b04d4567bf6e02c59e9f452e13b3e1bc8095fbe
+ARG KIRO_VERSION=2.24.0
+ARG KIRO_SHA256_X64=dc34701a28f302b84ff2067d019394566eab0f7742dc529cbb90351e1ec02004
+ARG KIRO_SHA256_ARM64=2448d96fe8f77277abb3e29e9fb8909cc107fca834d6ed0cb5d0b6020d8fa7ee
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
