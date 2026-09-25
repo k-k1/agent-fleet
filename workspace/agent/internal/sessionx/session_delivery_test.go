@@ -3,7 +3,10 @@ package sessionx
 // The pure part of delivery verification: detecting a draft left in the composer, which is
 // what decides between re-sending Enter and retyping the whole prompt.
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPromptDraftVisible(t *testing.T) {
 	captured := "…transcript…\n" +
@@ -28,5 +31,48 @@ func TestPromptDraftVisible(t *testing.T) {
 	}
 	if promptDraftVisible("", "/scout") || promptDraftVisible(capturedLong, "") {
 		t.Fatal("empty capture or empty prompt must be false")
+	}
+}
+
+// The work-item launch that sent its prompt twice: claude held a 5-line draft for review, the
+// first line sat above the last 6 lines, and the retype was appended to the draft.
+func TestPromptDraftVisibleMultiLineHeldDraft(t *testing.T) {
+	prompt := "作業対象: k-k1/agent-fleet#978「Deliver AF_SESSION_NAME to Managed sessions (muse, ACP kinds, opencode; codex after daemon swap)」\n" +
+		"URL: https://github.com/k-k1/agent-fleet/issues/978\n\n" +
+		"本文とコメントは `gh issue view 978`（PR なら `gh pr view 978`）で読めます。\n" +
+		"まず状況を調べ、実装に入る前に方針を提示してください。"
+	screen := func(notice string) string {
+		return " ▐▛███▛█   Claude Code v2.1.282\n" +
+			notice + "\n" +
+			"──── [AF:sfwk7vk] #978 Deliver AF_SESSION_NAME to Managed sessions (muse, ACP… ─\n" +
+			"❯ 作業対象: k-k1/agent-fleet#978「Deliver AF_SESSION_NAME to Managed sessions\n" +
+			"  (muse, ACP kinds, opencode; codex after daemon swap)」\n" +
+			"  URL: https://github.com/k-k1/agent-fleet/issues/978\n" +
+			"\n" +
+			"  本文とコメントは `gh issue view 978`（PR なら `gh pr view 978`）で読めます。\n" +
+			"  まず状況を調べ、実装に入る前に方針を提示してください。\n" +
+			"────────────────────────────────────────────────────────────────────────────────\n" +
+			"  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+	}
+	if !promptDraftVisible(screen(""), prompt) {
+		t.Fatal("a multi-line draft whose first line is above the pane tail must still be detected")
+	}
+	// The hold notice alone is enough, even when the draft text cannot be matched.
+	held := strings.Replace(screen("Removed 1 invisible character · review and press Enter to send"), "作業対象", "作業対", 1)
+	if !promptDraftVisible(held, prompt) {
+		t.Fatal("claude holding the draft for review must read as a draft (resend Enter, never retype)")
+	}
+	pasted := "──── ─\n❯ [Pasted text #1 +5 lines]\n────\n  ⏵⏵ bypass permissions on\n"
+	if !promptDraftVisible(pasted, prompt) {
+		t.Fatal("a draft folded into a paste placeholder must read as a draft")
+	}
+}
+
+// Only the composer counts: the same prompt submitted earlier is in the scrollback as a
+// "❯ …" line too (the scheduler's reuse send repeats one prompt), and must not read as a draft.
+func TestPromptDraftVisibleIgnoresScrollback(t *testing.T) {
+	captured := "❯ /scout\n● done\n──────── [AF] 定時 ──\n❯ \n────────\n  ⏵⏵ bypass permissions on\n"
+	if promptDraftVisible(captured, "/scout") {
+		t.Fatal("an earlier submission above an empty composer must not read as a draft")
 	}
 }
