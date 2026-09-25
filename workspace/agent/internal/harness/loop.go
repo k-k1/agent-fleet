@@ -123,6 +123,11 @@ type Result struct {
 	// finished. An abort-stage trip does not add to this count; it surfaces as
 	// ErrRepeatedToolCall from Run instead.
 	RepeatWarnings int
+	// RepeatNameWarnings counts the turns the same-name gate (repeat.go) warned on:
+	// turns that extended a streak of one tool name past Runtime.RepeatNameWarnAfter.
+	// Those calls still ran; their results carry a notice. An abort surfaces as
+	// ErrRepeatedToolCall instead.
+	RepeatNameWarnings int
 	// Compactions counts how many times maybeCompact actually ran a summarization turn
 	// during this Run call — the in-loop counterpart of RepeatWarnings, for the same
 	// reason: a caller (or this package's own tests) needs to tell whether the new
@@ -150,19 +155,20 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 	full := append([]Message(nil), messages...)
 	gate := newRepeatGate(rt)
 	var tracker repeatTracker
-	var repeatWarnings, compactions, consecutiveCompactions int
+	var nameTracker nameStreakTracker
+	var repeatWarnings, repeatNameWarnings, compactions, consecutiveCompactions int
 	maxConsecutiveCompactions := defaultMaxConsecutiveCompactions
 	if rt != nil && rt.MaxConsecutiveCompactions > 0 {
 		maxConsecutiveCompactions = rt.MaxConsecutiveCompactions
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions}, err
+			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, err
 		}
 		tools := reg.Defs(rt.Plan)
 		send, compacted, fired, err := maybeCompact(ctx, client, rt, tools, full)
 		if err != nil {
-			return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions}, err
+			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, err
 		}
 		full = compacted
 		if fired {
@@ -173,7 +179,7 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 				// own doc comment: this state is exactly the live incident that spent 86
 				// Send calls (each a real completion) finding out the window would never be
 				// enough, one iteration at a time.
-				return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions},
+				return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions},
 					compactionThrashingErr(consecutiveCompactions)
 			}
 		} else {
@@ -185,13 +191,13 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 			turn, serr = client.Send(ctx, send, tools)
 			return serr
 		}); err != nil {
-			return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions}, err
+			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, err
 		}
 		full = append(full, Message{
 			Role: RoleAssistant, Content: turn.Content, Reasoning: turn.Reasoning, ToolCalls: turn.ToolCalls,
 		})
 		if len(turn.ToolCalls) == 0 {
-			return Result{Messages: full, Final: turn, RepeatWarnings: repeatWarnings, Compactions: compactions}, nil
+			return Result{Messages: full, Final: turn, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, nil
 		}
 
 		// Decide once per call, in order, BEFORE dispatching any of this turn's
@@ -230,7 +236,7 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 					repeatWarnings++
 				}
 			}
-			return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions}, repeatAbortErr(aborted, streak)
+			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, repeatAbortErr(aborted, streak)
 		}
 		for _, d := range decisions {
 			if d.action == repeatWarn {
@@ -238,9 +244,32 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 			}
 		}
 
+		// The same-name gate (repeat.go) catches what the exact-call gate above cannot:
+		// one tool called turn after turn with arguments that change every time.
+		nameStreak := nameTracker.note(turn.ToolCalls)
+		nameAction := gate.decideName(nameStreak)
+		if nameAction == repeatAbort {
+			name := turn.ToolCalls[0].Name
+			for _, call := range turn.ToolCalls {
+				full = append(full, toolResult(call, repeatNameAbortToolMessage(name, nameStreak)))
+			}
+			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions},
+				repeatNameAbortErr(name, nameStreak)
+		}
+
 		results, err := runToolCalls(ctx, reg, rt, turn.ToolCalls, decisions)
 		if err != nil {
-			return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions}, err
+			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, err
+		}
+		if nameAction == repeatWarn {
+			repeatNameWarnings++
+			notice := repeatNameWarnNotice(turn.ToolCalls[0].Name, nameStreak)
+			for i := range results {
+				// A call the exact-call gate already intercepted keeps its own error.
+				if decisions[i].action == repeatRun {
+					results[i].Content = notice + results[i].Content
+				}
+			}
 		}
 		full = append(full, results...)
 	}

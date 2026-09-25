@@ -23,11 +23,20 @@ package harness
 // (re-running `go test` after each edit, confirming a build twice) and far below the
 // 72-in-a-row failure it exists to catch.
 //
-// Known limitation: this gate only ever looks at an unbroken RUN of the same call
-// (repeatTracker resets on anything different in between). An A, B, A, B, ...
-// alternating pattern is never flagged, no matter how long it runs — not what the
-// measured incident did, but a gap this design leaves open on purpose rather than by
-// oversight.
+// That risk came true (ADR 0093 debt 2): on later live runs the gate fired zero times
+// while coder called one tool six turns running with different arguments each time. The
+// name-streak half of this file (nameStreakTracker) is the answer: it ignores arguments
+// and counts consecutive assistant turns that call only one tool name, with thresholds
+// set from every trial log in that series — the longest such run in a PASSING session
+// was 6 turns (gemma-4 `bash`, gpt-oss `read`), the incident was 72. Because the
+// arguments differ, each call may be genuine progress, so its warn stage still runs the
+// call and only prefixes the result with a notice; its abort stage stops Run exactly
+// like the exact-call gate's.
+//
+// Known limitation: both halves only ever look at an unbroken RUN (anything different in
+// between resets them). An A, B, A, B, ... alternating pattern is never flagged, no
+// matter how long it runs — not what the measured incidents did, but a gap left open on
+// purpose rather than by oversight.
 
 import (
 	"encoding/json"
@@ -55,6 +64,15 @@ var ErrRepeatedToolCall = errors.New("harness: same tool call repeated too many 
 const (
 	defaultRepeatWarnAfter  = 3
 	defaultRepeatAbortAfter = 8
+)
+
+// defaultRepeatNameWarnAfter and defaultRepeatNameAbortAfter are Runtime.
+// RepeatNameWarnAfter/RepeatNameAbortAfter's fallback for <=0. Warn is twice the longest
+// same-name run measured in a passing session (6 turns); abort stays far below the 72-turn
+// incident. Lowering either toward 6 starts interrupting sessions that were working.
+const (
+	defaultRepeatNameWarnAfter  = 12
+	defaultRepeatNameAbortAfter = 20
 )
 
 // repeatAction is what the gate decided about one ToolCall, based on the length of
@@ -128,11 +146,39 @@ func canonicalArgs(raw string) string {
 	return string(b)
 }
 
-// repeatGate is a Runtime's RepeatWarnAfter/RepeatAbortAfter/RepeatGateDisabled,
-// resolved once per Run (newRepeatGate) rather than re-read from rt on every call.
+// nameStreakTracker counts consecutive assistant turns whose tool calls all use one
+// tool name, whatever their arguments. It is kept per turn, not per call: one turn that
+// reads eight files in parallel is a single step, and the live logs the defaults come
+// from were counted in turns. A turn mixing tool names breaks the streak.
+type nameStreakTracker struct {
+	name  string
+	count int
+}
+
+// note folds one turn's calls into the tracker and returns the new streak length (0
+// for a turn that mixes tool names).
+func (t *nameStreakTracker) note(calls []ToolCall) int {
+	name := calls[0].Name
+	for _, c := range calls[1:] {
+		if c.Name != name {
+			t.name, t.count = "", 0
+			return 0
+		}
+	}
+	if name == t.name {
+		t.count++
+	} else {
+		t.name, t.count = name, 1
+	}
+	return t.count
+}
+
+// repeatGate is a Runtime's repeat-gate fields, resolved once per Run (newRepeatGate)
+// rather than re-read from rt on every call.
 type repeatGate struct {
-	warnAfter, abortAfter int
-	disabled              bool
+	warnAfter, abortAfter         int
+	nameWarnAfter, nameAbortAfter int
+	disabled                      bool
 }
 
 // newRepeatGate resolves rt's repeat-gate fields, applying defaultRepeatWarnAfter/
@@ -152,7 +198,18 @@ func newRepeatGate(rt *Runtime) repeatGate {
 	if abortAfter <= 0 {
 		abortAfter = defaultRepeatAbortAfter
 	}
-	return repeatGate{warnAfter: warnAfter, abortAfter: abortAfter}
+	nameWarnAfter := rt.RepeatNameWarnAfter
+	if nameWarnAfter <= 0 {
+		nameWarnAfter = defaultRepeatNameWarnAfter
+	}
+	nameAbortAfter := rt.RepeatNameAbortAfter
+	if nameAbortAfter <= 0 {
+		nameAbortAfter = defaultRepeatNameAbortAfter
+	}
+	return repeatGate{
+		warnAfter: warnAfter, abortAfter: abortAfter,
+		nameWarnAfter: nameWarnAfter, nameAbortAfter: nameAbortAfter,
+	}
 }
 
 // decide turns a streak length into what the loop should do about the call that just
@@ -167,6 +224,20 @@ func (g repeatGate) decide(streak int) repeatDecision {
 		return repeatDecision{action: repeatWarn, streak: streak}
 	default:
 		return repeatDecision{action: repeatRun, streak: streak}
+	}
+}
+
+// decideName is decide's counterpart for a same-name turn streak.
+func (g repeatGate) decideName(streak int) repeatAction {
+	switch {
+	case g.disabled:
+		return repeatRun
+	case streak >= g.nameAbortAfter:
+		return repeatAbort
+	case streak >= g.nameWarnAfter:
+		return repeatWarn
+	default:
+		return repeatRun
 	}
 }
 
@@ -207,5 +278,31 @@ func repeatAbortToolMessage(call, aborted ToolCall, streak int) string {
 	return fmt.Sprintf(
 		"error: not executed — this turn was stopped because %s was called with the exact same arguments %d times in a row, with nothing else in between.",
 		aborted.Name, streak,
+	)
+}
+
+// repeatNameWarnNotice is prefixed to the real result of each call in a turn that
+// extended a same-name streak past the warn stage. The call did run — its arguments
+// differ, so this may be genuine progress — which is why this is a notice in front of
+// the output rather than an "error:" in place of it.
+func repeatNameWarnNotice(name string, turns int) string {
+	return fmt.Sprintf(
+		"note: %s has now been the only tool called for %d turns in a row (with different arguments each time). If this is not getting closer to the goal, stop and change approach, or answer with what you have.\n\n",
+		name, turns,
+	)
+}
+
+// repeatNameAbortErr is the error Run returns once a same-name streak reaches
+// Runtime.RepeatNameAbortAfter.
+func repeatNameAbortErr(name string, turns int) error {
+	return fmt.Errorf("%s was the only tool called for %d turns in a row: %w", name, turns, ErrRepeatedToolCall)
+}
+
+// repeatNameAbortToolMessage answers every call of the turn that tripped the name
+// abort, for the same sendable-history reason as repeatAbortToolMessage.
+func repeatNameAbortToolMessage(name string, turns int) string {
+	return fmt.Sprintf(
+		"error: not executed — %s has been the only tool called for %d turns in a row. This session has been stopped.",
+		name, turns,
 	)
 }
