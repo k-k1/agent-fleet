@@ -391,12 +391,16 @@ func TestIdleWithNoRunningTurnDoesNotEndATurn(t *testing.T) {
 	}
 }
 
-// An undeclared notification must be dropped, not treated as a protocol error: the host emits
-// session/started, which the stable surface does not declare at all.
+// An undeclared notification must be dropped, not treated as a protocol error: a host can run
+// ahead of the bundle (1.3.0-R3401.1 emitted session/started before its bundle declared it).
 func TestUndeclaredNotificationIsIgnored(t *testing.T) {
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
-	host.Notify("session/started", map[string]any{"session": map[string]any{"sessionId": h.sid}})
+	if _, ok := msp.DeclaredNotification("session/notYetDeclared"); ok {
+		t.Fatal("pick a name the bundle does not declare")
+	}
+	host.Notify("session/notYetDeclared", map[string]any{"sessionId": h.sid})
+	host.Notify(msp.NotificationSessionStarted, map[string]any{"session": map[string]any{"sessionId": h.sid}})
 	host.Notify(msp.NotificationSessionStatusChanged, msp.SessionStatusChangedParams{
 		SessionID: h.sid, Status: msp.SessionStatusRunning,
 	})

@@ -303,9 +303,10 @@ func (h *threadHandle) watch(cmd *exec.Cmd, cl *msp.Client) {
 
 // onNotify runs on the client's read goroutine and must never block.
 //
-// The declared notification table is a decode map, not an allow-list: the host emits
-// `session/started` before the `session/start` response and that name is not in the schema at
-// all, so an unknown method is dropped rather than treated as a protocol error.
+// The declared notification table is a decode map, not an allow-list: a host can emit a
+// notification its bundle does not declare (1.3.0-R3401.1 sends `session/started` before the
+// `session/start` response), so an unknown method is dropped rather than treated as a protocol
+// error.
 func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	switch method {
 	case msp.NotificationTurnStarted:
