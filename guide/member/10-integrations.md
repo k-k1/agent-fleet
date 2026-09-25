@@ -259,8 +259,11 @@ AWS SDKs and build tools (Gradle, Maven, CDK, Terraform, …) can select them by
 - **The name** is the profile's label with every character other than letters, digits and `._@-` replaced by
   `-` (label `prod app` → profile `prod-app`). `af-aws-exec --list` prints the names.
 - The profiles sit in a **managed block** at the end of the file, between two `# agent-fleet` marker lines. Edit
-  them in Settings, not inside the block — the block is rewritten. Everything outside it is yours and is kept.
-  If you already defined a profile with the same name yourself, **your definition is used** and ours is left out.
+  them in Settings, not inside the block — the block is rewritten, and so is anything `aws configure set` writes
+  into it. Everything outside it is yours and is kept.
+  If you already defined a profile with the same name yourself (in `~/.aws/config` or `~/.aws/credentials`),
+  **your definition is used** and ours is left out. A profile labelled `default` is never exported: it would
+  change what every command without a profile runs as.
 - Changes arrive **within about five minutes**, at the next workspace start, or immediately when you run
   `af-aws-exec`.
 
@@ -284,8 +287,12 @@ af-aws-exec --profile <name> -- ./gradlew deploy
 af-aws-exec --profile <name> -- npx cdk deploy
 ```
 
-- It passes the profile's **short-lived** credentials to that one command through its environment only — nothing
-  is written to a file or printed — and prints the identity the command runs as.
+- It passes the profile's **short-lived** credentials to that one command through its environment only —
+  `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI
+  keeps its own login and role caches under `~/.aws`, as it always does.)
+- The profile must have an **account and role** set in Settings. A profile that also carries `role_arn`,
+  `source_profile`, `credential_process` or static keys is refused, because the AWS CLI would not use its SSO
+  login.
 - The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
   falling back. At a terminal it starts the device-code login for you; elsewhere (an agent's shell) it exits with
   code 3 and the login command to run.

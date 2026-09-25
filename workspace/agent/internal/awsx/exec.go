@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -41,7 +42,7 @@ var scrubbedEnv = []string{
 	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
 	"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
 	"AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME",
-	"AWS_EC2_METADATA_DISABLED",
+	"AWS_EC2_METADATA_DISABLED", "AWS_CREDENTIAL_FILE", "BOTO_CONFIG",
 }
 
 // baseEnv is environ minus scrubbedEnv, with IMDS turned off for every SDK that honours
@@ -59,6 +60,53 @@ func baseEnv(environ []string) []string {
 		}
 	}
 	return append(out, "AWS_EC2_METADATA_DISABLED=true")
+}
+
+// steerIsolatedConfig replaces an AWS_CONFIG_FILE that points at one of the Agent's own
+// isolated files (an SSM session pane exports its per-session config) with the default
+// config, where the exported profiles live. A config file the person chose themselves
+// is kept.
+func steerIsolatedConfig(env []string) []string {
+	aws := filepath.Dir(ConfigPath())
+	for i, kv := range env {
+		v, ok := strings.CutPrefix(kv, "AWS_CONFIG_FILE=")
+		if !ok {
+			continue
+		}
+		for _, d := range []string{"af-sessions", "af-ops"} {
+			if strings.HasPrefix(filepath.Clean(v), filepath.Join(aws, d)+string(filepath.Separator)) {
+				env[i] = "AWS_CONFIG_FILE=" + ConfigPath()
+			}
+		}
+	}
+	return env
+}
+
+// checkSSOProfile admits only a profile the CLI will resolve through its SSO provider
+// and nothing else. Having sso_session alone is not enough: botocore's SSO provider
+// only claims a profile that also names the account and role, and otherwise the chain
+// falls through to ~/.aws/credentials, credential_process and the rest (measured with
+// aws-cli 2.36.46: sso_session without an account plus a credential_process in
+// ~/.aws/credentials handed the child the process's keys). The assume-role and
+// web-identity providers run before SSO, so a profile carrying their keys is refused
+// too. `aws configure get` reads both the config and the credentials file.
+func checkSSOProfile(aws awsRunner, profile string) error {
+	get := func(k string) string {
+		v, _ := aws.out("configure", "get", k, "--profile", profile)
+		return v
+	}
+	if get("sso_session") == "" && get("sso_start_url") == "" {
+		return fmt.Errorf("profile %q is not an SSO profile in the AWS config (af-aws-exec only passes SSO credentials; see `af-aws-exec --list`)", profile)
+	}
+	if get("sso_account_id") == "" || get("sso_role_name") == "" {
+		return fmt.Errorf("profile %q has no SSO account and role; set both on the profile in Settings > SSM", profile)
+	}
+	for _, k := range []string{"role_arn", "source_profile", "credential_source", "credential_process", "web_identity_token_file", "aws_access_key_id"} {
+		if get(k) != "" {
+			return fmt.Errorf("profile %q also sets %s, so the AWS CLI would not use its SSO login; af-aws-exec refuses it", profile, k)
+		}
+	}
+	return nil
 }
 
 func envHas(environ []string, key string) bool {
@@ -110,15 +158,10 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if len(o.Argv) == 0 {
 		return "", nil, nil, errors.New("no command given after --")
 	}
-	env := baseEnv(environ)
+	env := steerIsolatedConfig(baseEnv(environ))
 	aws := awsRunner{bin: awsBin, env: env}
-
-	sso, _ := aws.out("configure", "get", "sso_session", "--profile", o.Profile)
-	if sso == "" {
-		sso, _ = aws.out("configure", "get", "sso_start_url", "--profile", o.Profile)
-	}
-	if sso == "" {
-		return "", nil, nil, fmt.Errorf("profile %q is not an SSO profile in the AWS config (af-aws-exec only passes SSO credentials; see `af-aws-exec --list`)", o.Profile)
+	if err := checkSSOProfile(aws, o.Profile); err != nil {
+		return "", nil, nil, err
 	}
 
 	creds, err := exportCreds(aws, o.Profile)
@@ -136,16 +179,6 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		}
 	}
 
-	if !o.Quiet && o.Stderr != nil {
-		if arn, err := aws.out("sts", "get-caller-identity", "--profile", o.Profile, "--query", "Arn", "--output", "text"); err == nil {
-			exp := ""
-			if creds.Expiration != "" {
-				exp = " (expires " + creds.Expiration + ")"
-			}
-			fmt.Fprintf(o.Stderr, "af-aws-exec: running as %s%s\n", arn, exp)
-		}
-	}
-
 	region := o.Region
 	if region == "" && !envHas(env, "AWS_REGION") && !envHas(env, "AWS_DEFAULT_REGION") {
 		region, _ = aws.out("configure", "get", "region", "--profile", o.Profile)
@@ -159,6 +192,19 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		"AWS_SESSION_TOKEN="+creds.SessionToken)
 	if creds.Expiration != "" {
 		env = append(env, "AWS_CREDENTIAL_EXPIRATION="+creds.Expiration)
+	}
+
+	// Ask with the exported credentials themselves, so the principal printed is the one
+	// the child will actually use rather than a second resolution of the profile.
+	if !o.Quiet && o.Stderr != nil {
+		who := awsRunner{bin: awsBin, env: env}
+		if arn, err := who.out("sts", "get-caller-identity", "--query", "Arn", "--output", "text"); err == nil {
+			exp := ""
+			if creds.Expiration != "" {
+				exp = " (expires " + creds.Expiration + ")"
+			}
+			fmt.Fprintf(o.Stderr, "af-aws-exec: running as %s%s\n", arn, exp)
+		}
 	}
 
 	prog, err := exec.LookPath(o.Argv[0])

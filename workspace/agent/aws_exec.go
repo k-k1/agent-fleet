@@ -76,11 +76,20 @@ func runAWSExec(args []string) {
 		if errors.Is(serr, awsx.ErrBridgeOff) {
 			fmt.Fprintln(os.Stderr, "af-aws-exec: this deployment does not export Settings profiles; ~/.aws/config is used as is")
 		}
-		for _, n := range res.Exported {
+		names := res.Exported
+		if serr != nil {
+			// Could not ask the CP: list what the file holds now rather than nothing.
+			names = awsx.ExportedIn(awsx.ConfigPath())
+		}
+		for _, n := range names {
 			fmt.Println(n)
 		}
 		for _, n := range res.Shadowed {
-			fmt.Printf("%s\t(your own definition in ~/.aws/config is used)\n", n)
+			if n == "default" {
+				fmt.Printf("%s\t(not exported: a Settings profile never becomes the default profile)\n", n)
+				continue
+			}
+			fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used)\n", n)
 		}
 		os.Exit(0)
 	}

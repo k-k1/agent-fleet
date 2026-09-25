@@ -66,8 +66,7 @@ func TestAWSProfilesBridgeListsOwnProfilesWithSessionNames(t *testing.T) {
 	}
 }
 
-// Another membership's token reads that membership's list, never this one's; a forged
-// or foreign-prefixed token is refused outright.
+// A forged or foreign-prefixed token is refused outright.
 func TestAWSProfilesBridgeRefusesBadTokens(t *testing.T) {
 	st, mgr, mv := bridgeEnv(t)
 	seedSSMProfile(t, st, mv.MembershipID, "mine")
@@ -76,15 +75,38 @@ func TestAWSProfilesBridgeRefusesBadTokens(t *testing.T) {
 		"missing":      "",
 		"forged tag":   mintAWSProfilesToken([]byte("wrong-key"), mv.MembershipID),
 		"other bridge": mintDocsToken(docsSignKey(mgr.tokenSignMaster()), mv.MembershipID),
+		"unknown":      mintAWSProfilesToken(awsProfilesSignKey(mgr.tokenSignMaster()), "no-such-membership"),
 	} {
 		if w := awsProfilesCall(mgr, tok); w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: code = %d, want 401", name, w.Code)
 		}
 	}
+}
 
-	other := mintAWSProfilesToken(awsProfilesSignKey(mgr.tokenSignMaster()), "no-such-membership")
-	if w := awsProfilesCall(mgr, other); w.Code != http.StatusUnauthorized {
-		t.Fatalf("unknown membership: code = %d, want 401", w.Code)
+// Another member's token reads that member's list and never this one's, and a
+// deactivated membership stops receiving anything on its next pull.
+func TestAWSProfilesBridgeIsScopedToTheLiveMembership(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, mv := bridgeEnv(t)
+	seedSSMProfile(t, st, mv.MembershipID, "mine")
+	other, _ := st.UpsertIdentity(ctx, "other@sub.co.jp", "other-sub-co-jp", "")
+	om, err := st.EnsureMembership(ctx, other.ID, mv.TenantID, "member")
+	if err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+	seedSSMProfile(t, st, om.ID, "theirs")
+
+	key := awsProfilesSignKey(mgr.tokenSignMaster())
+	w := awsProfilesCall(mgr, mintAWSProfilesToken(key, om.ID))
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"mine"`) || !strings.Contains(w.Body.String(), `"theirs"`) {
+		t.Fatalf("other member's pull: %d %s", w.Code, w.Body.String())
+	}
+
+	if err := st.SetMembershipStatus(ctx, mv.MembershipID, "inactive"); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	if w := awsProfilesCall(mgr, mintAWSProfilesToken(key, mv.MembershipID)); w.Code != http.StatusUnauthorized {
+		t.Fatalf("deactivated membership: code = %d, want 401 (%s)", w.Code, w.Body.String())
 	}
 }
 

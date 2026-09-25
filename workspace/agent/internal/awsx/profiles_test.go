@@ -192,3 +192,46 @@ func TestSyncPullsFromTheCPAndIsOffWithoutTheBridge(t *testing.T) {
 		t.Fatalf("config not written:\n%s", b)
 	}
 }
+
+// "default" is what every bare aws/SDK call uses; exporting it would move those calls off
+// the workload role onto an SSO login (measured with aws-cli 2.36.46).
+func TestApplyNeverExportsTheDefaultProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	res, err := Apply(path, []Profile{prof("default"), prof("prod")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	if strings.Contains(string(b), "[profile default]") || strings.Join(res.Exported, ",") != "prod" {
+		t.Fatalf("default exported: %+v\n%s", res, b)
+	}
+}
+
+// A static-key profile in ~/.aws/credentials is the member's own; an SSO block under the
+// same name would turn `aws --profile full` into an SSO profile.
+func TestApplyLeavesCredentialsFileProfilesAlone(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "credentials"), []byte("[full]\naws_access_key_id = AKIA\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Apply(filepath.Join(dir, "config"), []Profile{prof("full"), prof("prod")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(res.Shadowed, ",") != "full" || strings.Join(res.Exported, ",") != "prod" {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestExportedInReadsTheBlock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte(userConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(path, []Profile{prof("prod"), prof("sandbox")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ExportedIn(path), ","); got != "prod,sandbox" {
+		t.Fatalf("ExportedIn = %q (the member's own [profile mine] must not be listed)", got)
+	}
+}

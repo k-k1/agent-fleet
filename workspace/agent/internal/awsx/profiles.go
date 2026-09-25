@@ -57,7 +57,8 @@ type Profile struct {
 // SyncResult reports one sync for the log and for `af-aws-exec --list`.
 type SyncResult struct {
 	Exported []string // profile names now in the managed block
-	// Shadowed are profiles not exported because ~/.aws/config already defines the same
+	// Shadowed are profiles not exported because ~/.aws/config or ~/.aws/credentials
+	// already defines the same name, or because the name is "default" (see render).
 	// profile or sso-session name outside the block.
 	Shadowed []string
 	// Invalid are profiles refused by the INI allowlist (sessionx.RenderSSMConfig).
@@ -136,7 +137,11 @@ func Apply(path string, ps []Profile) (SyncResult, error) {
 	if fi, serr := os.Stat(target); serr == nil {
 		mode = fi.Mode().Perm()
 	}
-	next, res, err := render(string(old), ps)
+	// Names in the credentials file count as the member's own: the CLI merges both files
+	// per profile, so an SSO block under the same name would turn their working static-key
+	// profile into an SSO one.
+	creds, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "credentials"))
+	next, res, err := render(string(old), string(creds), ps)
 	if err != nil {
 		return res, err
 	}
@@ -203,13 +208,21 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 var sectionRe = regexp.MustCompile(`^\s*\[\s*([^\]]*?)\s*\]`)
 
 // render returns the config text with the managed block replaced by one holding ps.
-func render(old string, ps []Profile) (string, SyncResult, error) {
+func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	var res SyncResult
 	user, err := stripBlock(old)
 	if err != nil {
 		return old, res, err
 	}
 	profiles, ssoSessions := userSections(user)
+	credProfiles, _ := userSections(credentials)
+	for n := range credProfiles {
+		profiles[n] = true
+	}
+	// "default" is what every bare aws/SDK call resolves to. Exporting it would move
+	// those calls from whatever they use today (the workload role, for one) onto an SSO
+	// login, so a Settings profile labelled "default" is never exported.
+	profiles["default"] = true
 	var body strings.Builder
 	for _, p := range ps {
 		if profiles[p.Name] || ssoSessions["af-"+p.Name] {
@@ -306,7 +319,7 @@ func syncAndLog(why string) {
 		return
 	}
 	if len(res.Shadowed) > 0 {
-		log.Printf("aws profiles sync (%s): not exported, already defined in ~/.aws/config: %s", why, strings.Join(res.Shadowed, ", "))
+		log.Printf("aws profiles sync (%s): not exported, name already used in ~/.aws or reserved: %s", why, strings.Join(res.Shadowed, ", "))
 	}
 	if len(res.Invalid) > 0 {
 		log.Printf("aws profiles sync (%s): not exported, refused by validation: %s", why, strings.Join(res.Invalid, ", "))
@@ -314,4 +327,37 @@ func syncAndLog(why string) {
 	if res.Changed {
 		log.Printf("aws profiles sync (%s): %d profile(s) in ~/.aws/config", why, len(res.Exported))
 	}
+}
+
+// ExportedIn lists the profile names currently in the managed block of the config at
+// path, for `af-aws-exec --list` when the CP cannot be asked.
+func ExportedIn(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	s := string(b)
+	i := strings.Index(s, blockBegin)
+	if i < 0 {
+		return nil
+	}
+	j := strings.Index(s[i:], blockEnd)
+	if j < 0 {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(s[i:i+j], "\n") {
+		m := sectionRe.FindStringSubmatch(line)
+		if f := fieldsOf(m); len(f) == 2 && f[0] == "profile" {
+			out = append(out, f[1])
+		}
+	}
+	return out
+}
+
+func fieldsOf(m []string) []string {
+	if m == nil {
+		return nil
+	}
+	return strings.Fields(m[1])
 }
