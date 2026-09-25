@@ -651,7 +651,8 @@ export interface Settings {
   usageResetNotify: boolean;
   // Notify (OS notification and voice) when a CHILD session — one another session spawned
   // (origin "session") — finishes a turn and waits for input. Its parent is the one waiting on
-  // that turn, so a fleet of children otherwise pings once per child turn. Questions and
+  // that turn, so a fleet of children otherwise pings once per child turn. Off also marks the
+  // notification read on arrival (no dot, no unread count; the row stays). Questions and
   // permission requests from a child still notify: nobody but a person can answer those.
   childIdleNotify: boolean;
   // Convert English words to katakana before handing them to VOICEVOX (docs/log/24, the CP's

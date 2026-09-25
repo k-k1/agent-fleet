@@ -99,7 +99,7 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "noti.session_title": "Session notifications",
   "noti.child_idle_notify": "Notify when a child session is waiting for input",
   "noti.note_child_idle_notify":
-    "Browser and voice notifications for a child session — one another session started with create_session — finishing its turn and waiting for input. When off, nothing pops up or speaks; the notification is still recorded in the notification center (and counted as unread). The parent session collects its children's results, so this quiets a fleet of children. Questions and permission requests from a child still notify, since only a person can answer them.",
+    "Browser and voice notifications for a child session — one another session started with create_session — finishing its turn and waiting for input. When off, nothing pops up or speaks and the notification is marked read on arrival: no dot on the session and no unread count, while the notification center keeps it as a read row. The read mark applies on your other devices too. The parent session collects its children's results, so this quiets a fleet of children. Questions and permission requests from a child still notify, since only a person can answer them.",
   "noti.audio_title": "Audio notifications",
   "noti.svc_title": "Service notifications",
   "noti.svc_ws_stopped": "Start the workspace to toggle notifications for connected services.",

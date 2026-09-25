@@ -17,6 +17,8 @@ vi.mock("../../core/api/client.ts", async (orig) => ({
 
 const { useNotificationStore, wireNotificationReadOnVisibleSessions } = await import("./store.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
+const { useSessionsStore } = await import("../sessions/store.ts");
+const { setSetting } = await import("../../lib/settings.ts");
 type FleetNotification = import("./store.ts").FleetNotification;
 
 const view = (id: string, session: string): View => ({ id, session, content: { kind: "terminal", chat: false }, wrap: null });
@@ -87,5 +89,51 @@ describe("which sessions count as looked at", () => {
     useNotificationStore.setState({ items: [event("e9", "open")] });
     await Promise.resolve();
     expect(acked()).toEqual(["e9"]);
+  });
+});
+
+// childIdleNotify off: a spawned child's idle is acknowledged on arrival, wherever it is, so
+// it raises no dot — its question, and any other session's idle, still wait to be looked at.
+describe("a muted child's idle", () => {
+  const question = (id: string, session: string): FleetNotification => ({ ...event(id, session), kind: "question" });
+
+  beforeEach(() => {
+    useLayoutStore.setState({ layout: layout([cell("g1", [view("p1", "elsewhere")])]) });
+    useSessionsStore.setState({
+      sessions: [
+        { name: "child", kind: "claude", alive: true, origin: "session", originSession: "parent" },
+        { name: "parent", kind: "claude", alive: true, origin: "user" },
+      ],
+    });
+  });
+
+  afterEach(() => setSetting("childIdleNotify", true));
+
+  it("is acknowledged off screen when the setting is off", async () => {
+    setSetting("childIdleNotify", false);
+    useNotificationStore.setState({ items: [event("e1", "child"), question("e2", "child"), event("e3", "parent")] });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e1"]);
+  });
+
+  it("keeps its dot while the setting is on", async () => {
+    setSetting("childIdleNotify", true);
+    useNotificationStore.setState({ items: [event("e1", "child")] });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual([]);
+  });
+
+  it("is caught once the session list says it is a child", async () => {
+    setSetting("childIdleNotify", false);
+    useSessionsStore.setState({ sessions: [] });
+    useNotificationStore.setState({ items: [event("e1", "child")] });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual([]);
+    useSessionsStore.setState({ sessions: [{ name: "child", kind: "claude", alive: true, origin: "session" }] });
+    await Promise.resolve();
+    expect(acked()).toEqual(["e1"]);
   });
 });
