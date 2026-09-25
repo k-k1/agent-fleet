@@ -278,6 +278,17 @@ function better(a: WorkItem, b: WorkItem, rank: (s: string) => number): boolean 
  * which ADR 0061 decision 1 forbids. So the payload stays whole and the section folds. */
 export const RAIL_VISIBLE = 10;
 
+/** Every label of a row, in the order the rail draws them: priority labels first, the rest in
+ * the tracker's order.
+ *
+ * Never cap the count here. The row's meta line already ellipsises once at its end, and a cap
+ * silently dropped any label past it, the priority label included, while the filter still matched
+ * on it. Priority goes first so it survives that ellipsis. */
+export function railLabels(labels: string[]): string[] {
+  const isPriority = (l: string) => /^priority\b/i.test(l);
+  return [...labels.filter(isPriority), ...labels.filter((l) => !isPriority(l))];
+}
+
 /** Which meta fields carry no information for a given query's rows (docs/log/80 §80.18.2).
  *
  * The bug this fixes: a Jira query of `assignee = currentUser()` put the SAME

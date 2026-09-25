@@ -13,6 +13,7 @@ import {
   readWorkItemDetail,
   readWorkItems,
   reviewCounts,
+  railLabels,
   railWhen,
   relTime,
   repoForItem,
@@ -55,6 +56,17 @@ describe("readWorkItems", () => {
 
   it("survives a frame without sessions (an older CP)", () => {
     expect(readWorkItems({ items: [], queries: [] }).payload?.sessions).toEqual([]);
+  });
+});
+
+describe("railLabels", () => {
+  it("keeps every label and puts priority first", () => {
+    expect(railLabels(["bug", "follow-up", "priority: high"])).toEqual(["priority: high", "bug", "follow-up"]);
+  });
+
+  it("leaves the tracker's order alone when there is no priority label", () => {
+    expect(railLabels(["c", "a", "b"])).toEqual(["c", "a", "b"]);
+    expect(railLabels([])).toEqual([]);
   });
 });
 
