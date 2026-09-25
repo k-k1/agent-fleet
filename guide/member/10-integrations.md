@@ -251,6 +251,47 @@ choosing the **target host**.
 If authentication is needed, the `aws sso login` URL appears on a confirmation screen; approve it in another tab
 (never enter a code / URL you don't recognize).
 
+### Using the profiles from the terminal, SDKs and build tools
+
+Your profiles are also written into **`~/.aws/config`**, so `aws --profile <name>`, `AWS_PROFILE=<name>`, the
+AWS SDKs and build tools (Gradle, Maven, CDK, Terraform, …) can select them by name without you copying anything.
+
+- **The name** is the profile's label with every character other than letters, digits and `._@-` replaced by
+  `-` (label `prod app` → profile `prod-app`). `af-aws-exec --list` prints the names.
+- The profiles sit in a **managed block** at the end of the file, between two `# agent-fleet` marker lines. Edit
+  them in Settings, not inside the block — the block is rewritten. Everything outside it is yours and is kept.
+  If you already defined a profile with the same name yourself, **your definition is used** and ours is left out.
+- Changes arrive **within about five minutes**, at the next workspace start, or immediately when you run
+  `af-aws-exec`.
+
+**Logging in from a terminal.** Plain `aws sso login` opens a callback on `127.0.0.1` inside the workspace, which
+your browser cannot reach. Use the device-code flow instead:
+
+```sh
+aws sso login --profile <name> --use-device-code --no-browser
+```
+
+Open the URL it prints and approve the code — only a code you started yourself just now. The login is shared with
+SSM sessions of the same profile, so logging in once covers both.
+
+**Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
+role*). A command that relies on the default credential chain — no profile, a misspelled profile, or an expired
+login — can then quietly run as that role instead of as you. For deployments and anything else that must use your
+authorization, pass your credentials explicitly:
+
+```sh
+af-aws-exec --profile <name> -- ./gradlew deploy
+af-aws-exec --profile <name> -- npx cdk deploy
+```
+
+- It passes the profile's **short-lived** credentials to that one command through its environment only — nothing
+  is written to a file or printed — and prints the identity the command runs as.
+- The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
+  falling back. At a terminal it starts the device-code login for you; elsewhere (an agent's shell) it exits with
+  code 3 and the login command to run.
+- Credentials last as long as the SSO role session (often one hour). A longer command fails when they expire
+  rather than switching identity.
+
 ## Environment settings and recreating the workspace
 
 In **⚙ Settings → the "Toolchains" tab** you can adjust the workspace environment. Changes **apply to sessions /

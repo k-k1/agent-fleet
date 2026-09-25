@@ -21,6 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
@@ -152,6 +153,10 @@ func serve() {
 	// Backgrounded: it is a few hundred KB over the network and nothing at boot waits on
 	// it, but the Console's user guide and every agent's environment answers need it.
 	go syncWorkspaceDocs("agent boot")
+	// Export the member's SSO profiles (Settings → SSM) into ~/.aws/config so a plain
+	// `aws --profile <name>`, an SDK or a build tool can select them (issue #998).
+	// Backgrounded and fail-open like the MCP pull.
+	awsx.StartSync()
 	startTerminalHistoryJanitor()
 	// Route a managed driver's turn completion (it has no hooks) into the same
 	// notification/report path the hook route uses (the "answered" notice plus the
