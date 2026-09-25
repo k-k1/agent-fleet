@@ -166,6 +166,22 @@ func TestFailedDriverSwitchKeepsALockSetDuringTheRelaunch(t *testing.T) {
 	}
 }
 
+// A delete landing during the relaunch: the switch must not answer 200 for a session that is
+// gone, nor write it back.
+func TestDriverSwitchIntoADeletedSessionIsNotFound(t *testing.T) {
+	home := writebackEnv(t)
+	const name = "drvgone1"
+	session.WriteMeta(session.Meta{Name: name, Dir: home, Kind: session.KindCodex})
+	useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { session.RemoveMeta(name) }})
+
+	if w := callHandler(HandleSessionDriver, http.MethodPost, name, `{"driver":"managed"}`); w.Code != http.StatusNotFound {
+		t.Fatalf("driver switch = %d %s, want 404", w.Code, w.Body)
+	}
+	if _, ok := session.ReadMeta(name); ok {
+		t.Fatal("the switch wrote a deleted session back")
+	}
+}
+
 // POST /recreate whose successor fails to launch: the old slot is un-archived after the launch.
 func TestFailedRecreateKeepsALockSetDuringTheLaunch(t *testing.T) {
 	home := writebackEnv(t)

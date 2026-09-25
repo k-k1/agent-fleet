@@ -138,18 +138,27 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	// The stop/relaunch above takes seconds, so the switch is written onto the meta as it is
 	// now: m written back would roll back a lock set meanwhile (issue #950).
 	wasStopped := false
-	if cur, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+	cur, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
 		// Judged on disk too: a list poll during the switch may have stamped the stop (and
 		// recorded the death) that this revive answers.
 		wasStopped = cur.StoppedAt != ""
 		cur.Driver = m.Driver
 		cur.StoppedAt = ""
 		return true
-	}); ok {
-		m = cur
-	} else {
-		m.StoppedAt = ""
+	})
+	if !ok {
+		// Deleted during the relaunch: the delete halted whatever was running then, and the
+		// runtime started above has no meta to belong to. Stop it rather than answer 200 for a
+		// session that is gone.
+		if target == session.DriverManaged {
+			dropManagedRuntime(m)
+		} else {
+			_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(name))).Run()
+		}
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
 	}
+	m = cur
 	if wasStopped {
 		fleetgraph.RecordRevive(name) // write site ③: only when the slot really was stopped
 	}
