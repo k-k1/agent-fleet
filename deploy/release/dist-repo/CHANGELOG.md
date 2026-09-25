@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.23.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.2) — 2026-09-25
+
+Each terminal session gets its own scratch folder, removed along with the session, and
+**Settings › Machine** can empty the caches go, npm, uv and pip leave in your home. Around them,
+a child you asked not to be notified about no longer leaves a red dot behind, the working-copy
+delete shows which sessions run in each copy, and the Files pane no longer shows Agent Fleet's own
+data folder.
+
 ## [0.23.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.1) — 2026-09-24
 
 An image studio, where a session's agent rewrites the generation draft as you talk and a person

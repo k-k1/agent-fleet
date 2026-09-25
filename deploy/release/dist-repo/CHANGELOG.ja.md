@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.23.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.2) — 2026-09-25
+
+ターミナルのセッションごとに作業用のフォルダが付き、セッションと一緒に消えるようになりました。
+**設定 › マシン**では、go・npm・uv・pip がホームに溜めるキャッシュを空にできます。ほかに、通知
+しないと決めた子の入力待ちが赤いドットを残さなくなり、作業コピーの削除でそこで動くセッションが
+分かるようになり、ファイルペインから Agent Fleet 自身のデータのフォルダが見えなくなりました。
+
 ## [0.23.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.1) — 2026-09-24
 
 画像生成のスタジオが入りました。セッションのエージェントが会話に合わせて生成の下書きを書き直し、

@@ -11,6 +11,23 @@ otherwise visible once the bullets are one line long.
 
 ---
 
+## [0.23.2](0.23.2.md) — 2026-09-25
+
+**CLI pins** — Claude Code 2.1.282, Antigravity 1.2.10, Kiro 2.24.0
+
+**New / Improved**
+
+- **[sessions]** Each Terminal (CLI) session has its own scratch folder `$AF_WORK_DIR` (`~/.af-work/<session>/`), deleted with the session (not yet for Managed)
+- **[settings › machine]** Tool caches: measure and empty the go, npm, uv and pip caches in your home on a press; a cache in use by a running build cannot be emptied
+- **[cleanup]** The working-copy delete shows each copy's sessions (kind icon, display name, state chip on running ones)
+- **[guide delivery]** The guide's top page puts the release history in its own paragraph after the reference
+
+**Fixed**
+
+- **[notifications]** With "Notify when a child session is waiting for input" off, the child's input wait still left an unread dot on the row, the pane tab and the notification center; it is now marked read as it arrives
+- **[left pane › FILES]** The Files pane could open `~/.local/share/agent-fleet` (scrollback, cleanup archive, usage ledger); it is now blocked
+- **[ecs-ec2]** `pause.sh` left engine GPU instances running and billed; it now waits for or terminates them, sweeps leftovers after the CP stops, and stops the database too (`--keep-db` keeps it)
+
 ## [0.23.1](0.23.1.md) — 2026-09-24
 
 **CLI pins** — Claude Code 2.1.281, Codex 0.156.1, Antigravity 1.2.9, Kiro 2.23.1
