@@ -171,6 +171,9 @@ func syncProfiles(background bool) (SyncResult, error) {
 	// under the lock when it started, is above the one this run read before waiting, so
 	// the fetch started after this run did and cannot carry a list from before a Settings
 	// edit made just before it.
+	// The cost is deliberate: N jobs started together usually make two fetches, not one
+	// (the jobs that began waiting after the first fetch started share a second). Do not
+	// "optimize" that to one: a job started after a fetch began may postdate an edit.
 	if gen, seq := cacheGeneration(); gen != "" && gen != genBefore && seq > seqBefore {
 		if cached, cconf, ok := cachedList(); ok {
 			res, aerr := applyLocked(ConfigPath(), target, cached)
