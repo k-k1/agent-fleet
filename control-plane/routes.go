@@ -546,6 +546,11 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/ssm/hosts", ssm.withMembership(ssm.createHost))
 	mux.HandleFunc("PUT /api/ssm/hosts/{id}", ssm.withMembership(ssm.updateHost))
 	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", ssm.withMembership(ssm.deleteHost))
+	// The Agent's pull of the same profiles into ~/.aws/config (aws_profiles_bridge.go).
+	// Session-exempt via the /internal/ prefix; authenticated by AF_AWS_PROFILES_TOKEN.
+	exemptPrefix("/internal/")
+	awsp := newAWSProfilesBridgeAPI(cfg.mgr)
+	mux.HandleFunc("GET /internal/aws-profiles", awsp.list)
 }
 
 // Work item inbox (docs/log/80) — external tickets in the left rail. The list and the refresh

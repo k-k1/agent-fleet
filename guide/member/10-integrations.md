@@ -251,6 +251,95 @@ choosing the **target host**.
 If authentication is needed, the `aws sso login` URL appears on a confirmation screen; approve it in another tab
 (never enter a code / URL you don't recognize).
 
+### Using the profiles from the terminal, SDKs and build tools
+
+Your profiles are also written into **`~/.aws/config`**, so `aws --profile <name>`, the AWS SDKs and build tools
+(Gradle, Maven, CDK, Terraform, …) can select them by name without you copying anything. Prefer `--profile` (or a
+tool's own profile setting) to `AWS_PROFILE=<name>`: keys already exported in the shell (`AWS_ACCESS_KEY_ID` and
+friends) win over `AWS_PROFILE`, so it does not pin who a command runs as.
+
+- **The name** is the profile's label with every character other than letters, digits and `._@-` replaced by
+  `-` (label `prod app` → profile `prod-app`). `af-aws-exec --list` prints each name with its account, role and
+  label — pick by those, not by the name alone.
+- If two labels map to the same name (`prod app` and `prod-app`), **neither is exported** and `--list` says so:
+  either one could be the wrong account. Rename one of them in Settings.
+- The profiles sit in a **managed block** at the end of the file, between two `# agent-fleet` marker lines. Edit
+  them in Settings, not inside the block — the block is rewritten, and so is anything `aws configure set` writes
+  into it. Everything outside it is yours and is kept.
+  Only profiles with both an **account and a role** are exported. With neither, `aws --profile <name>` would not
+  use SSO at all and would quietly run as the workspace's own role; with only one it would fail. `--list` says
+  which is missing.
+  If a `[DEFAULT]` line in `~/.aws/config` would break a profile (a different region, a `role_arn` that would make
+  every profile assume that role, …), that profile is not exported, and `af-aws-exec --list` names the line.
+  If you already defined a profile with the same name yourself (in `~/.aws/config` or `~/.aws/credentials`),
+  **your definition is used** and ours is left out. A profile labelled `default` is never exported: it would
+  change what every command without a profile runs as.
+- Changes arrive **within about five minutes**, at the next workspace start, or immediately when you run
+  `af-aws-exec`.
+
+**Logging in from a terminal.** Plain `aws sso login` opens a callback on `127.0.0.1` inside the workspace, which
+your browser cannot reach. Use the device-code flow instead:
+
+```sh
+aws sso login --profile <name> --use-device-code --no-browser
+```
+
+Open the URL it prints and approve the code — only a code you started yourself just now. The login is shared with
+SSM sessions of the same profile, so logging in once covers both.
+
+**Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
+role*). A command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool
+with no profile setting — then quietly runs as that role instead of as you, in another account. (A named profile
+that is misspelled or logged out fails with an error instead.) For deployments, lookups in your accounts and
+anything else that must use your authorization, pass your credentials explicitly:
+
+```sh
+af-aws-exec --profile <name> -- ./gradlew deploy
+af-aws-exec --profile <name> -- npx cdk deploy
+```
+
+- It passes the profile's **short-lived** credentials to that one command through its environment only —
+  `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI
+  keeps its own login and role caches under `~/.aws`, as it always does.)
+- The profile must have an **account and role** set in Settings. A profile that also carries `role_arn` (even
+  empty) or a `web_identity_token_file` path is refused because the AWS CLI would then not use its SSO login. One that also carries
+  `source_profile`, `credential_source`, `credential_process`, static keys or an empty `web_identity_token_file`
+  (next to `role_arn` or not) (in `~/.aws/config` or
+  `~/.aws/credentials`) is refused too: the AWS CLI would still use SSO, but other SDKs and tools use those first,
+  so the one name would mean different identities to different tools. A tool that syncs credentials into
+  `~/.aws/credentials` under the same name (yawsso, for example) causes this; sync to another name. Keys under a
+  `[DEFAULT]` section count, since the CLI applies them to every profile, and so does an empty value. The credentials
+  are obtained through the profile's SSO login alone — from a minimal config holding only its SSO settings, with
+  endpoint overrides ignored — and then checked with AWS to be a session of that profile's permission-set role in
+  that account. `--profile default` is refused: name the SSO profile.
+- The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
+  falling back. At a terminal it starts the device-code login for you; elsewhere (an agent's shell) it exits with
+  code 3 and the login command to run.
+- The command gets an AWS config that defines **only the profile you chose** (it hands back the same short-lived
+  credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
+  works. A tool that names a different one — Terraform's `profile = "staging"`, `cdk deploy --profile staging`,
+  `AWS_PROFILE=staging` in a script — fails with "The config profile (staging) could not be found" instead of
+  quietly running as that other profile. If `af-aws-exec` cannot keep that config private (a home directory other
+  users can write to, for example) it gives the command an empty AWS config instead, with a warning: still isolated,
+  only a tool naming the same profile will not find it. If a script inside the command
+  replaces `AWS_ACCESS_KEY_ID` (after an `assume-role`, say), the chosen profile stops resolving there rather than
+  quietly meaning the new account; use the new credentials without `--profile`.
+- **When you see "could not be found"**, the tool is asking for another profile. Remove that profile setting from
+  the tool, or run it under that profile (`af-aws-exec --profile staging …`). Do not add `--keep-aws-config` to get
+  past it: that hands the tool your own `~/.aws` files and endpoint settings again, and it would then run as the
+  profile it names. Keep `--keep-aws-config` for tools that need other settings from those files.
+- **Region**: `--region` if you give it, otherwise a region already exported in your shell (`AWS_REGION`, then
+  `AWS_DEFAULT_REGION`), otherwise the profile's. The command gets it in both `AWS_REGION` and
+  `AWS_DEFAULT_REGION`, and the "running as" line shows it. A stale
+  `AWS_REGION` in your shell beats the profile's region, so give `--region` for deployments.
+- `--account <id>` refuses to run unless the profile is that AWS account. Put it in scripts, runbooks and agent
+  instructions for anything that deploys, so a wrong profile name stops before anything happens. For a profile that
+  is **not** one of your Settings profiles (one you defined yourself) `--account` is required.
+- A name that means two things is refused: two Settings labels that map to it, or your own `~/.aws` definition of
+  a Settings profile's name with a different account, role or sign-in portal.
+- Credentials last as long as the SSO role session (often one hour). A longer command fails when they expire
+  rather than switching identity.
+
 ## Environment settings and recreating the workspace
 
 In **⚙ Settings → the "Toolchains" tab** you can adjust the workspace environment. Changes **apply to sessions /
