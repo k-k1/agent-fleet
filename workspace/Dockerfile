@@ -315,9 +315,9 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.282
+ARG CLAUDE_CODE_VERSION=2.1.283
 ARG OPENCODE_VERSION=1.18.32
-ARG CODEX_VERSION=0.156.1
+ARG CODEX_VERSION=0.157.1
 ARG COPILOT_VERSION=1.0.88
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
@@ -344,10 +344,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.10
-ARG AGY_RELEASE_BUILD=4751581200121856
-ARG AGY_SHA256_X64=77cb69251292aa35b0b662f91f704f06dd787b72f7902a62db8c6d692989203e
-ARG AGY_SHA256_ARM64=b85fd6d22f763dd331bf86fde5fd33fc79ecf6ac1cb254b9c2b6519537f5694f
+ARG AGY_VERSION=1.2.11
+ARG AGY_RELEASE_BUILD=6016716732497920
+ARG AGY_SHA256_X64=c91c62c5e6fa954f5a7e1d7b9ad417d749db4aa60a4ba0b3d604dec1b645d190
+ARG AGY_SHA256_ARM64=01513bc61f9592353045ba801ebb407fbccb8984fcbfde591bc6b681b24e92bc
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -433,9 +433,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.24.0
-ARG KIRO_SHA256_X64=dc34701a28f302b84ff2067d019394566eab0f7742dc529cbb90351e1ec02004
-ARG KIRO_SHA256_ARM64=2448d96fe8f77277abb3e29e9fb8909cc107fca834d6ed0cb5d0b6020d8fa7ee
+ARG KIRO_VERSION=2.24.1
+ARG KIRO_SHA256_X64=89e26b61707a3a17bcf0d0dfa7043366d94b48bfe35e9605058bd5de4b7199ce
+ARG KIRO_SHA256_ARM64=95e149b0b5e2be3c6f56d4e5ed1bc5313d2596ef39255529a553027fd87abff5
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
@@ -450,12 +450,12 @@ ARG KIRO_SHA256_ARM64=2448d96fe8f77277abb3e29e9fb8909cc107fca834d6ed0cb5d0b6020d
 #   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url（匿名）
 #   curl -s "<manifest_url>" | jq .artifacts.x86_linux,.artifacts.aarch64_linux
 # sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
-# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 313,800,920 B / 281,942,104 B。
+# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 347,850,968 B / 307,828,824 B（1.4.0-R4161.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.3.0-R3401.1
-ARG MUSE_SHA256_X64=71b089d055dfe6e4562092bc484896b61bd96fd6ef9fef9da54a14aa174e2a33
-ARG MUSE_SHA256_ARM64=5e5ea2a3de3a3fabdff8982aec9423d20eaa7dad05df37efb4264356d0d2e223
+ARG MUSE_VERSION=1.4.0-R4161.1
+ARG MUSE_SHA256_X64=1b68bd4518d53a2aaff063915df4d141b0a205e6d79038299d04e3a14e85a5b9
+ARG MUSE_SHA256_ARM64=38a0e3b7f59825ffc60f7fae65ac9727cf9bbb47fe4e687cc29cede9deb8fabf
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。

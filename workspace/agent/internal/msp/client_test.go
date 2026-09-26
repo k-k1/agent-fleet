@@ -276,8 +276,8 @@ func TestSchemaDriftNamesBothFingerprints(t *testing.T) {
 }
 
 func TestDeclaredNotificationsCoverTheSchema(t *testing.T) {
-	if got := len(msp.DeclaredNotifications()); got != 31 {
-		t.Errorf("the schema declares %d notifications, want 31", got)
+	if got := len(msp.DeclaredNotifications()); got != 33 {
+		t.Errorf("the schema declares %d notifications, want 33", got)
 	}
 	typ, ok := msp.DeclaredNotification(msp.NotificationTurnCompleted)
 	if !ok || typ != "TurnCompletedParams" {
@@ -285,16 +285,19 @@ func TestDeclaredNotificationsCoverTheSchema(t *testing.T) {
 	}
 }
 
-// The host emits session/started before the session/start response, and the stable surface does
-// not declare it. This pins that asymmetry: the table is a decode map, and a dispatcher that
-// used it as an allow-list would reject the first notification of every session.
-func TestUndeclaredNotificationsExistOnTheWire(t *testing.T) {
-	if _, ok := msp.DeclaredNotification("session/started"); ok {
-		t.Error("the bundle now declares session/started; re-read ADR 0095 P2-1 finding 2 " +
-			"before relaxing the dispatcher")
-	}
-	if _, ok := msp.DeclaredNotification("session/closed"); ok {
-		t.Error("the bundle now declares session/closed; see ADR 0095 P2-1 finding 2")
+// session/started and session/closed were on the wire before the stable surface declared them
+// (1.3.0-R3401.1 emitted session/started ahead of the session/start response; the bundle from
+// 1.4.0-R4161.1 on declares both). Their params now decode, but the table stays a decode map:
+// a host still on 1.3.0 sends them undeclared, and the next undeclared name will arrive the
+// same way, so a dispatcher that used the table as an allow-list would reject real traffic.
+func TestLifecycleNotificationsAreDeclared(t *testing.T) {
+	for method, want := range map[string]string{
+		msp.NotificationSessionStarted: "SessionStartedParams",
+		msp.NotificationSessionClosed:  "SessionClosedParams",
+	} {
+		if typ, ok := msp.DeclaredNotification(method); !ok || typ != want {
+			t.Errorf("DeclaredNotification(%s) = %q, %v; want %q", method, typ, ok, want)
+		}
 	}
 }
 
