@@ -257,19 +257,14 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 				repeatNameAbortErr(name, nameStreak)
 		}
 
-		results, err := runToolCalls(ctx, reg, rt, turn.ToolCalls, decisions)
-		if err != nil {
-			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, err
-		}
+		var notice string
 		if nameAction == repeatWarn {
 			repeatNameWarnings++
-			notice := repeatNameWarnNotice(turn.ToolCalls[0].Name, nameStreak)
-			for i := range results {
-				// A call the exact-call gate already intercepted keeps its own error.
-				if decisions[i].action == repeatRun {
-					results[i].Content = notice + results[i].Content
-				}
-			}
+			notice = repeatNameWarnNotice(turn.ToolCalls[0].Name, nameStreak)
+		}
+		results, err := runToolCalls(ctx, reg, rt, turn.ToolCalls, decisions, notice)
+		if err != nil {
+			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, err
 		}
 		full = append(full, results...)
 	}
@@ -404,8 +399,10 @@ func compactionThrashingErr(consecutive int) error {
 // (computed up front so the tracker's streak reflects call order even though
 // execution itself is concurrent). A repeatWarn call never reaches executeOne at
 // all — its message is the gate's own synthetic error, not a real tool result,
-// because the point of the warn stage is that the call does NOT run again.
-func runToolCalls(ctx context.Context, reg *Registry, rt *Runtime, calls []ToolCall, decisions []repeatDecision) ([]Message, error) {
+// because the point of the warn stage is that the call does NOT run again. prefix
+// is the same-name gate's notice for this turn ("" when it is not warning), handed
+// to every call that does run.
+func runToolCalls(ctx context.Context, reg *Registry, rt *Runtime, calls []ToolCall, decisions []repeatDecision, prefix string) ([]Message, error) {
 	out := make([]Message, len(calls))
 	errs := make([]error, len(calls))
 	var wg sync.WaitGroup
@@ -417,7 +414,7 @@ func runToolCalls(ctx context.Context, reg *Registry, rt *Runtime, calls []ToolC
 		wg.Add(1)
 		go func(i int, call ToolCall) {
 			defer wg.Done()
-			out[i], errs[i] = executeOne(ctx, reg, rt, call)
+			out[i], errs[i] = executeOne(ctx, reg, rt, call, prefix)
 		}(i, call)
 	}
 	wg.Wait()
@@ -437,34 +434,46 @@ func isCancellation(err error) bool {
 // outcome (unknown tool, plan-mode refusal, declined approval, a failed Run) into
 // a RoleTool message rather than an error — the same "report the failure back to
 // the model" shape every CLI-driven kind already uses for a failed shell command.
-func executeOne(ctx context.Context, reg *Registry, rt *Runtime, call ToolCall) (Message, error) {
+// prefix (the same-name gate's notice, or "") goes in front of the output before
+// truncation, so the result still respects Runtime.MaxOutputBytes.
+func executeOne(ctx context.Context, reg *Registry, rt *Runtime, call ToolCall, prefix string) (Message, error) {
+	out, err := runOne(ctx, reg, rt, call)
+	if err != nil {
+		return Message{}, err
+	}
+	return toolResult(call, truncateOutput(prefix+out, rt.outputLimit())), nil
+}
+
+// runOne is executeOne's body: the tool's raw output or the error text standing in
+// for it; the only error it returns is a cancellation.
+func runOne(ctx context.Context, reg *Registry, rt *Runtime, call ToolCall) (string, error) {
 	tool, ok := reg.lookup(call.Name)
 	if !ok {
-		return toolResult(call, fmt.Sprintf("error: unknown tool %q", call.Name)), nil
+		return fmt.Sprintf("error: unknown tool %q", call.Name), nil
 	}
 	if tool.Mutates && rt.Plan {
-		return toolResult(call, fmt.Sprintf("error: %s is unavailable in plan mode", call.Name)), nil
+		return fmt.Sprintf("error: %s is unavailable in plan mode", call.Name), nil
 	}
 	if tool.Mutates {
 		if err := approve(ctx, rt, call, tool); err != nil {
 			if isCancellation(err) {
-				return Message{}, err
+				return "", err
 			}
 			var declined *declinedError
 			if errors.As(err, &declined) {
-				return toolResult(call, "declined: "+declined.Error()), nil
+				return "declined: " + declined.Error(), nil
 			}
-			return toolResult(call, "error: approval failed: "+err.Error()), nil
+			return "error: approval failed: " + err.Error(), nil
 		}
 	}
 	out, err := tool.Run(ctx, rt, call.Arguments)
 	if err != nil {
 		if isCancellation(err) {
-			return Message{}, err
+			return "", err
 		}
 		out = "error: " + err.Error()
 	}
-	return toolResult(call, truncateOutput(out, rt.outputLimit())), nil
+	return out, nil
 }
 
 func toolResult(call ToolCall, content string) Message {

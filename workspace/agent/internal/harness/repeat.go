@@ -282,12 +282,13 @@ func repeatAbortToolMessage(call, aborted ToolCall, streak int) string {
 }
 
 // repeatNameWarnNotice is prefixed to the real result of each call in a turn that
-// extended a same-name streak past the warn stage. The call did run — its arguments
-// differ, so this may be genuine progress — which is why this is a notice in front of
+// extended a same-name streak past the warn stage (a call the exact-call gate
+// intercepted keeps its own error instead). The call did run — with different
+// arguments it may be genuine progress — which is why this is a notice in front of
 // the output rather than an "error:" in place of it.
 func repeatNameWarnNotice(name string, turns int) string {
 	return fmt.Sprintf(
-		"note: %s has now been the only tool called for %d turns in a row (with different arguments each time). If this is not getting closer to the goal, stop and change approach, or answer with what you have.\n\n",
+		"note: %s has now been the only tool called for %d turns in a row. If this is not getting closer to the goal, stop and change approach, or answer with what you have.\n\n",
 		name, turns,
 	)
 }
