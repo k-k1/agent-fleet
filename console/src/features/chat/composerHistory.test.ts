@@ -18,6 +18,7 @@ describe("composerHistory", () => {
         msg("user", "Discord からの問い", { source: "discord" }),
         msg("user", "Slack からの問い", { source: "slack" }),
         msg("user", "朝の点検", { source: "schedule" }),
+        msg("user", "セッション「sabc」の会話を引き継いで…", { source: "handoff" }),
         msg("report", "sabc が完了しました", { session: "sabc" }),
         msg("notice", "自動ターンの上限に達しました"),
         msg("user", "  次は?  "),

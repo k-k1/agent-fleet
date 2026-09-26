@@ -620,7 +620,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     }
   };
 
-  const send = async (override?: string) => {
+  // source marks a turn the Console sends on the member's behalf (the handoff auto-send), so
+  // it stays out of the composer's ↑ history both locally and once stored.
+  const send = async (override?: string, source?: string) => {
     // Block a second turn on this conversation, whether it was started here or by another
     // pane whose turn is still running in the background (store busy).
     if (!paneKey || sending || compacting || (conversationId && storeBusy)) return;
@@ -668,7 +670,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     const prompt = buildImagePrompt(text, paths, chatAgent);
     // Optimistically show the user's turn (full prompt so pasted-image thumbnails render
     // immediately); the server echoes the full conversation on done.
-    const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now() };
+    const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now(), ...(source ? { source } : {}) };
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
     setHistIdx(null); // sending leaves history-recall mode
@@ -791,6 +793,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         },
       },
       ac.signal,
+      source,
     );
     // Abort/error paths emit no done event. Work playback must not outlive the turn.
     if (!streamDone) workTts.close();
@@ -812,7 +815,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     if (sending || compacting) return;
     const text = pendingAuto.text;
     setPendingAuto(null);
-    void sendRef.current(text);
+    void sendRef.current(text, "handoff");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sendRef is a stable ref
   }, [pendingAuto, conversationId, conv, sending, compacting]);
 

@@ -717,13 +717,16 @@ export async function chatStream(
   content: string,
   h: ChatStreamHandlers,
   signal?: AbortSignal,
+  // source: set when the Console sends on the member's behalf ("handoff"); stored on the user
+  // message so the composer's ↑ history skips it. Omitted for composer input.
+  source?: string,
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetch(rel(`api/chat/conversations/${encodeURIComponent(id)}/stream`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(source ? { content, source } : { content }),
       signal,
     });
   } catch {

@@ -46,7 +46,8 @@ export interface ChatMessage {
   report_kind?: string;
   report_reason?: string;
   // role==="user" that was not typed in the Console composer: "discord" / "slack" (the
-  // bridge's operator thread) or "schedule" (a scheduled fire). Absent = typed here.
+  // bridge's operator thread), "schedule" (a scheduled fire) or "handoff" (the Console's
+  // auto-sent session handoff). Absent = typed here.
   source?: string;
 }
 

@@ -39,3 +39,35 @@ func TestHandleAssistantTurnTagsSchedule(t *testing.T) {
 		t.Fatalf("messages = %+v, want a user turn with source=schedule first", c.Messages)
 	}
 }
+
+// TestHandleChatSendSource: the Console's auto-sent handoff is stored with source=handoff so the
+// composer's ↑ history skips it; any other value a client sends is dropped, not stored.
+func TestHandleChatSendSource(t *testing.T) {
+	withTempHome(t)
+	stubChatProvider(t, "claude", fakeChatProv{reply: "了解"})
+	for _, tc := range []struct{ source, want string }{
+		{"handoff", "handoff"},
+		{"discord", ""},
+		{"", ""},
+	} {
+		conv := &chatx.ChatConversation{ID: chatx.RandUUID(), Agent: "claude", Messages: []chatx.ChatMessage{}}
+		if err := chatx.SaveConv(conv); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"content":"引き継いで","source":"` + tc.source + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/chat/conversations/"+conv.ID+"/messages", strings.NewReader(body))
+		req.SetPathValue("id", conv.ID)
+		rec := httptest.NewRecorder()
+		chatx.HandleChatSend(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("source=%q: status = %d body=%s", tc.source, rec.Code, rec.Body)
+		}
+		c, err := chatx.LoadConv(conv.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Messages) == 0 || c.Messages[0].Role != "user" || c.Messages[0].Source != tc.want {
+			t.Fatalf("source=%q: messages = %+v, want user source=%q", tc.source, c.Messages, tc.want)
+		}
+	}
+}
