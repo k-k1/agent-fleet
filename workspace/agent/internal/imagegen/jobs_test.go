@@ -369,6 +369,58 @@ func TestPausedGroupIsSkippedAndOthersKeepRunning(t *testing.T) {
 	_ = other
 }
 
+// ActiveJobs is what keeps the workspace from being idle-stopped under the queue, so it has to
+// count exactly what a worker would still run: the running job and runnable pending ones, but
+// not a paused or aborted group, and under a queue-wide pause only trials.
+func TestActiveJobsCountsOnlyWorkThatWillRun(t *testing.T) {
+	q := withJobQueue(t)
+	p := newGateProvider(t)
+	withStubProvider(t, p)
+
+	if got := q.activeJobs(); got != 0 {
+		t.Fatalf("empty queue: ActiveJobs = %d, want 0", got)
+	}
+	enqueue(t, q, JobSpec{Request: Request{Prompt: "running"}})
+	waitFor(t, "the queue to start", func() bool { return len(p.begun) > 0 })
+	<-p.begun
+	if got := q.activeJobs(); got != 1 {
+		t.Fatalf("one running: ActiveJobs = %d, want 1", got)
+	}
+	batch := enqueue(t, q, JobSpec{Request: Request{Prompt: "batch"}, Jobs: 2})
+	if got := q.activeJobs(); got != 3 {
+		t.Fatalf("running + 2 queued: ActiveJobs = %d, want 3", got)
+	}
+	if err := q.GroupOp(batch.Group, "pause"); err != nil {
+		t.Fatalf("pause = %v", err)
+	}
+	if got := q.activeJobs(); got != 1 {
+		t.Fatalf("batch paused: ActiveJobs = %d, want 1 (a paused batch must not hold the workspace)", got)
+	}
+	if err := q.GroupOp(batch.Group, "resume"); err != nil {
+		t.Fatalf("resume = %v", err)
+	}
+	if err := q.QueueOp("pause"); err != nil {
+		t.Fatalf("queue pause = %v", err)
+	}
+	enqueue(t, q, JobSpec{Request: Request{Prompt: "trial"}, Trial: true})
+	if got := q.activeJobs(); got != 2 {
+		t.Fatalf("queue paused, one trial waiting: ActiveJobs = %d, want 2 (running + trial)", got)
+	}
+	if err := q.QueueOp("resume"); err != nil {
+		t.Fatalf("queue resume = %v", err)
+	}
+	if err := q.GroupOp(batch.Group, "cancel"); err != nil {
+		t.Fatalf("cancel = %v", err)
+	}
+	if got := q.activeJobs(); got != 2 {
+		t.Fatalf("batch aborted: ActiveJobs = %d, want 2 (running + trial)", got)
+	}
+	for i := 0; i < 2; i++ {
+		p.release <- struct{}{}
+	}
+	waitFor(t, "the queue to drain", func() bool { return q.activeJobs() == 0 })
+}
+
 // Abort removes every queued job of the group and interrupts the running one; the pictures
 // already made stay, and the group says so.
 func TestGroupCancelKeepsWhatWasAlreadyMade(t *testing.T) {
