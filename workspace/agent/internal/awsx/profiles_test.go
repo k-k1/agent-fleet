@@ -285,3 +285,10 @@ func TestSyncMarksAFetchThatCouldNotBeWritten(t *testing.T) {
 		t.Fatalf("res = %+v err = %v", res, err)
 	}
 }
+
+func TestNotExported(t *testing.T) {
+	got := NotExported(map[string]Profile{"b": {}, "a": {}, "c": {}}, []string{"c"})
+	if strings.Join(got, ",") != "a,b" {
+		t.Fatalf("got %v", got)
+	}
+}

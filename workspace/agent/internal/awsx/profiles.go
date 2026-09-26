@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -437,4 +438,21 @@ func CachedSettings() (map[string]Profile, []Conflict, bool) {
 func DescribeProfile(name string) (account, role string) {
 	k, _ := profileKeys(nil, name)
 	return k["sso_account_id"], k["sso_role_name"]
+}
+
+// NotExported lists the Settings names (sorted) missing from exported: the ones the
+// last sync left out, for --list when the CP cannot be asked now.
+func NotExported(settings map[string]Profile, exported []string) []string {
+	in := map[string]bool{}
+	for _, n := range exported {
+		in[n] = true
+	}
+	var out []string
+	for n := range settings {
+		if !in[n] {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

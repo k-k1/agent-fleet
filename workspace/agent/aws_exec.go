@@ -73,8 +73,13 @@ func runAWSExec(args []string) {
 		}
 		names := res.Exported
 		if !fresh {
-			// Could not ask the CP: list what the file holds now rather than nothing.
+			// Could not ask the CP: list what the file holds now rather than nothing,
+			// and mark the cached Settings names it does not hold as not exported so a
+			// shadowed name still shows both accounts.
 			names = awsx.ExportedIn(awsx.ConfigPath())
+			if !res.Fetched {
+				res.Shadowed = awsx.NotExported(res.Settings, names)
+			}
 		}
 		for _, n := range names {
 			acct, role := awsx.DescribeProfile(n)
