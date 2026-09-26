@@ -247,3 +247,41 @@ func TestExportedInReadsTheBlock(t *testing.T) {
 		t.Fatalf("ExportedIn = %q (the member's own [profile mine] must not be listed)", got)
 	}
 }
+
+// botocore reads [profile "prod"] as profile prod; a quoted header of the member's own
+// must shadow the Settings profile like an unquoted one (verified with aws-cli 2.36.46:
+// exporting over it moved every plain `aws --profile prod` to the Settings account).
+func TestApplyTreatsQuotedHeadersAsTheMembersOwn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	own := "[profile \"prod\"]\nsso_account_id = 999999999999\n\n[profile 'stg']\nregion = eu-west-1\n\n[sso-session \"af-dev\"]\nsso_region = us-east-1\n"
+	if err := os.WriteFile(path, []byte(own), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Apply(path, []Profile{prof("prod"), prof("stg"), prof("dev"), prof("ok")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(res.Shadowed, ",") != "prod,stg,dev" || strings.Join(res.Exported, ",") != "ok" {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+// When the CP answered but the file could not be written, the answer is still fresh.
+func TestSyncMarksAFetchThatCouldNotBeWritten(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// A directory where the config file should be makes the read fail.
+	if err := os.MkdirAll(filepath.Join(home, ".aws", "config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"profiles":[],"conflicts":[{"name":"app","labels":["app","App"]}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_x.y")
+	res, err := Sync()
+	if err == nil || !res.Fetched || len(res.Conflicts) != 1 {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+}

@@ -22,9 +22,12 @@ into ~/.aws/config). The credentials are passed to that one child process throug
 environment only. The container's workload role is blocked for the child: a missing or
 expired SSO login fails instead of silently running as another principal.
 
-  --account <id>     refuse unless the profile is this AWS account
-  --keep-aws-config  let the child read ~/.aws/config and ~/.aws/credentials (default: it
-                     gets empty ones, so a tool that names another profile fails loudly)
+  --account <id>     refuse unless the profile is this AWS account (required for a profile
+                     that is not one of your Settings profiles)
+  --keep-aws-config  give the child your own ~/.aws files and AWS_ENDPOINT_URL* settings.
+                     By default its config defines only the chosen profile, so a tool that
+                     names another one fails with "could not be found": fix the tool rather
+                     than reaching for this flag.
   --login            always start the device-code login when the SSO login is not usable
   --no-login         never prompt; exit 3 with the login command instead
                      (default: prompt only when stdin and stderr are a terminal)
@@ -41,13 +44,23 @@ func runAWSExec(args []string) {
 	fresh := serr == nil
 	switch {
 	case errors.Is(serr, awsx.ErrBridgeOff):
+	case serr != nil && res.Fetched:
+		// The CP answered but ~/.aws/config could not be written: its answer still
+		// decides what is ambiguous or shadowed.
+		fmt.Fprintf(os.Stderr, "af-aws-exec: could not update ~/.aws/config (%v)\n", serr)
 	case serr != nil:
-		fmt.Fprintf(os.Stderr, "af-aws-exec: could not refresh profiles from Settings (%v); using the last copy\n", serr)
 		if m, c, ok := awsx.CachedSettings(); ok {
 			res.Settings, res.Conflicts = m, c
+			fmt.Fprintf(os.Stderr, "af-aws-exec: could not refresh profiles from Settings (%v); checking against the last copy\n", serr)
+		} else {
+			fmt.Fprintf(os.Stderr, "af-aws-exec: could not refresh profiles from Settings (%v) and there is no earlier copy; "+
+				"only profiles run with --account are allowed\n", serr)
 		}
 	}
 	o.Settings, o.Conflicts = res.Settings, res.Conflicts
+	if exe, err := os.Executable(); err == nil {
+		o.CredentialHelper = exe + " aws-env-credentials"
+	}
 
 	if list {
 		if errors.Is(serr, awsx.ErrBridgeOff) {
@@ -142,6 +155,19 @@ func parseAWSExecArgs(args []string) (awsx.ExecOptions, bool) {
 		}
 	}
 	return o, list
+}
+
+// runAWSEnvCredentials is `workspace-agent aws-env-credentials`: the credential_process
+// of the one-profile config af-aws-exec gives its child. It prints the credentials that
+// are already in its own environment and nothing else, so it can only ever return what
+// af-aws-exec handed that child.
+func runAWSEnvCredentials(args []string) {
+	b, err := awsx.EnvCredentials(os.Environ())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "aws-env-credentials: "+err.Error())
+		os.Exit(1)
+	}
+	os.Stdout.Write(append(b, '\n'))
 }
 
 func awsExecFail(code int, msg string) {

@@ -143,9 +143,13 @@ directory belongs to someone else.
   have a workload role that a bare `aws` / SDK call falls back to. Anything that must run as the
   user (deploys, writes) goes through `af-aws-exec --profile <name> --account <id> -- <command>`
   (`--account` whenever the user named one; never guess a profile from its name alone — check
-  `af-aws-exec --list`). Exit 3 means the SSO login is missing: give the user `aws sso login
-  --profile <name> --use-device-code --no-browser` (plain `aws sso login` needs a localhost
-  callback that cannot work here) — never retry without the wrapper. Details: `member/10-integrations.md` in the user guide.
+  `af-aws-exec --list`). A child failing with "The config profile (X) could not be found" means
+  the tool names its own profile: remove that setting or run under X — **never add
+  `--keep-aws-config` to get past it**, that is exactly the wrong-profile run it prevents. Exit
+  3 means the SSO login is missing: give the user `aws sso login --profile <name>
+  --use-device-code --no-browser` (plain `aws sso login` needs a localhost callback that cannot
+  work here) — never retry without the wrapper. Details: `member/10-integrations.md` in the user
+  guide.
 
 ## Answering questions about this Workspace
 The user guide is at `/usr/local/share/agent-fleet/docs` (`member/` for people running agents,

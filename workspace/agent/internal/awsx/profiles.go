@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -70,6 +69,9 @@ type SyncResult struct {
 	// Conflicts are names two or more Settings labels sanitize to; the CP exports none of
 	// them.
 	Conflicts []Conflict
+	// Fetched is true when Settings and Conflicts came from the CP on this call, even if
+	// writing ~/.aws/config then failed: fresh answers must not be swapped for the cache.
+	Fetched bool
 }
 
 // Conflict is a profile name two or more Settings labels map to.
@@ -128,6 +130,7 @@ func Sync() (SyncResult, error) {
 		res.Settings[p.Name] = p
 	}
 	res.Conflicts = conflicts
+	res.Fetched = true
 	if err == nil {
 		saveSettingsCache(ps, conflicts)
 	}
@@ -228,8 +231,6 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-var sectionRe = regexp.MustCompile(`^\s*\[\s*([^\]]*?)\s*\]`)
-
 // render returns the config text with the managed block replaced by one holding ps.
 func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	var res SyncResult
@@ -237,8 +238,8 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	if err != nil {
 		return old, res, err
 	}
-	profiles, ssoSessions := userSections(user)
-	credProfiles, _ := userSections(credentials)
+	profiles, ssoSessions := configNames(user)
+	credProfiles := credentialsNames(credentials)
 	for n := range credProfiles {
 		profiles[n] = true
 	}
@@ -300,25 +301,34 @@ func stripBlock(s string) (string, error) {
 	return strings.TrimSuffix(s[:i], "\n") + after, nil
 }
 
-// userSections lists the profile and sso-session names the member defined themselves.
-func userSections(s string) (profiles, ssoSessions map[string]bool) {
+// configNames lists the profile and sso-session names a config file defines, as
+// botocore reads them ([profile "prod"] is prod).
+func configNames(s string) (profiles, ssoSessions map[string]bool) {
 	profiles, ssoSessions = map[string]bool{}, map[string]bool{}
-	for _, line := range strings.Split(s, "\n") {
-		m := sectionRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
+	scanINI(s, func(l iniLine) {
+		if !l.header {
+			return
 		}
-		f := strings.Fields(m[1])
-		switch {
-		case len(f) == 1:
-			profiles[f[0]] = true // [default] and friends
-		case len(f) == 2 && f[0] == "profile":
-			profiles[f[1]] = true
-		case len(f) == 2 && f[0] == "sso-session":
-			ssoSessions[f[1]] = true
+		switch kind, name := configSection(l.section); kind {
+		case "profile":
+			profiles[name] = true
+		case "sso-session":
+			ssoSessions[name] = true
 		}
-	}
+	})
 	return profiles, ssoSessions
+}
+
+// credentialsNames lists the profile names a credentials file defines: there a section
+// name is the profile name verbatim.
+func credentialsNames(s string) map[string]bool {
+	out := map[string]bool{}
+	scanINI(s, func(l iniLine) {
+		if l.header && l.section != "DEFAULT" {
+			out[l.section] = true
+		}
+	})
+	return out
 }
 
 // StartSync applies the member's profiles once at agent boot and then keeps polling.
@@ -372,20 +382,12 @@ func ExportedIn(path string) []string {
 		return nil
 	}
 	var out []string
-	for _, line := range strings.Split(s[i:i+j], "\n") {
-		m := sectionRe.FindStringSubmatch(line)
-		if f := fieldsOf(m); len(f) == 2 && f[0] == "profile" {
-			out = append(out, f[1])
+	scanINI(s[i:i+j], func(l iniLine) {
+		if kind, name := configSection(l.section); l.header && kind == "profile" {
+			out = append(out, name)
 		}
-	}
+	})
 	return out
-}
-
-func fieldsOf(m []string) []string {
-	if m == nil {
-		return nil
-	}
-	return strings.Fields(m[1])
 }
 
 // settingsCachePath keeps the last list the CP sent (non-secret, like the block), so the

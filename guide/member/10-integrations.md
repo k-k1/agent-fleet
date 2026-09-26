@@ -302,15 +302,20 @@ af-aws-exec --profile <name> -- npx cdk deploy
 - The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
   falling back. At a terminal it starts the device-code login for you; elsewhere (an agent's shell) it exits with
   code 3 and the login command to run.
-- The command gets **empty AWS config and credentials files**, so the credentials above are the only identity it
-  can find. A tool that names a profile of its own — Terraform's `profile = "staging"`, `cdk deploy --profile`,
-  `AWS_PROFILE` in a script — then fails with "profile could not be found" instead of quietly running as that other
-  profile. The region is passed in `AWS_REGION`. If a tool needs other settings from your `~/.aws` files, add
-  `--keep-aws-config`.
+- The command gets an AWS config that defines **only the profile you chose** (it hands back the same short-lived
+  credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
+  works. A tool that names a different one — Terraform's `profile = "staging"`, `cdk deploy --profile staging`,
+  `AWS_PROFILE=staging` in a script — fails with "The config profile (staging) could not be found" instead of
+  quietly running as that other profile. The region is passed in `AWS_REGION`.
+- **When you see "could not be found"**, the tool is asking for another profile. Remove that profile setting from
+  the tool, or run it under that profile (`af-aws-exec --profile staging …`). Do not add `--keep-aws-config` to get
+  past it: that hands the tool your own `~/.aws` files and endpoint settings again, and it would then run as the
+  profile it names. Keep `--keep-aws-config` for tools that need other settings from those files.
 - `--account <id>` refuses to run unless the profile is that AWS account. Put it in scripts, runbooks and agent
-  instructions for anything that deploys, so a wrong profile name stops before anything happens.
+  instructions for anything that deploys, so a wrong profile name stops before anything happens. For a profile that
+  is **not** one of your Settings profiles (one you defined yourself) `--account` is required.
 - A name that means two things is refused: two Settings labels that map to it, or your own `~/.aws` definition of
-  a Settings profile's name pointing at another account or role.
+  a Settings profile's name with a different account, role or sign-in portal.
 - Credentials last as long as the SSO role session (often one hour). A longer command fails when they expire
   rather than switching identity.
 
