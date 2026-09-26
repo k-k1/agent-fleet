@@ -163,7 +163,7 @@ tenant-wide side, so they are super_admin's domain). It has two stages.
 
 - **Session halt after** — a neglected session that no one has open is folded to
   "stopped (resumable)" once it exceeds this time. The conversation log remains, so it can be
-  resumed later. A session left stopped for 7 days (the deployment's `AF_SESSION_STOPPED_TTL`) is moved to the archive — never deleted, so it
+  resumed later. A session left stopped for 7 days is moved to the archive (each user can change the period, or turn it off, in Settings → Agents → Session; the deployment's `AF_SESSION_STOPPED_TTL` sets it for users who leave that at Default) — never deleted, so it
   can still be restored from there, and its working copy is left in place; a session locked
   against deletion stays in the list.
 - **Workspace stop after** — a workspace with no one connected and no running sessions has its

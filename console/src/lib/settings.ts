@@ -363,6 +363,12 @@ export interface Settings {
   // so a value hand-edited into ui-prefs cannot raise the ceiling. Offered as a fixed set of
   // choices rather than a free number precisely so the range is a property of the control.
   sessionSpawnChildLimit: number;
+  // How long a stopped session stays in the active list before it moves to the archive (ADR
+  // 0097; AgentsTab > Session). Days from STOPPED_ARCHIVE_DAYS, STOPPED_ARCHIVE_NEVER for "off",
+  // or 0 for "the deployment default" — AF_SESSION_STOPPED_TTL, else 7 days. 0 is stored rather
+  // than 7 so the deployment's env var still applies to a user who never picked a period. The
+  // Agent reads it on every session list, so a change applies on the next list with no restart.
+  sessionStoppedArchiveDays: number;
   // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
   // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
   // unmentioned providers append in the built-in order — so a list saved before a provider
@@ -819,6 +825,13 @@ export function imageProviderIsFleet(id: string): boolean {
 // budget lower than the user asked for rather than higher.
 export const SPAWN_CHILD_LIMITS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
+// The stopped-session archive periods a user may pick, in days (ADR 0097). Must equal the Agent's
+// session.StoppedArchiveDayChoices: the Agent reads any other number as "not set" and falls back
+// to the deployment default, so a button missing there would silently do nothing.
+export const STOPPED_ARCHIVE_DAYS = [1, 3, 7, 14, 30] as const;
+// "Do not auto-archive" — the Agent's session.StoppedArchiveNever.
+export const STOPPED_ARCHIVE_NEVER = -1;
+
 // imageProviderLabel names one row of the FALLBACK ordering list (see IMAGE_PROVIDERS_RANKED).
 // agy and codex are agent kinds and carry their own display name; the fleet's own engine is not
 // an agent at all — it is a service this deployment runs — so it has its own label rather than a
@@ -1076,6 +1089,7 @@ const DEFAULTS: Settings = {
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
+  sessionStoppedArchiveDays: 0, // the deployment default (ADR 0097)
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   lcppEnabled: true, // opt-out (docs/log/105 §106.2) — an existing deployment launches lcpp today

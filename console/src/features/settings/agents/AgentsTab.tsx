@@ -7,6 +7,8 @@ import {
   useSettings,
   setSetting,
   SPAWN_CHILD_LIMITS,
+  STOPPED_ARCHIVE_DAYS,
+  STOPPED_ARCHIVE_NEVER,
   normalizeImageProviderOrder,
   collapseImageProviderOrder,
   expandImageProviderOrder,
@@ -16,7 +18,7 @@ import {
 import { agentOf } from "../../../agents/registry.ts";
 import { useConnections } from "../parts/useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
-import { useT } from "../../../lib/i18n/index.ts";
+import { tCount, useT } from "../../../lib/i18n/index.ts";
 import { imagegenStatus } from "../../imagegen/api.ts";
 import { isPreAdr0082Status, type ImagegenProvider } from "../../imagegen/wire.ts";
 import { ClaudeCard } from "./ClaudeCard.tsx";
@@ -151,6 +153,22 @@ export function AgentsTab() {
   const sessionSettings = (
     <section className="ds-group">
       <h4 className="ds-title">{tr("agents.session")}</h4>
+      {/* The stopped-session archive period (ADR 0097). First because it applies to every
+          session, spawned or not; the note carries the child-slot consequence rather than the
+          row sitting under the steering switch. "Default" is its own choice, not 7: it defers to
+          the deployment's AF_SESSION_STOPPED_TTL, which the Console cannot see. */}
+      <Row label={tr("agents.stopped_archive")}>
+        <Choice
+          value={s.sessionStoppedArchiveDays}
+          options={[
+            [0, tr("agents.stopped_archive_default")],
+            ...STOPPED_ARCHIVE_DAYS.map((n): [number, string] => [n, tCount("agents.stopped_archive_days", n)]),
+            [STOPPED_ARCHIVE_NEVER, tr("agents.stopped_archive_never")],
+          ]}
+          onChange={(v) => setSetting("sessionStoppedArchiveDays", v)}
+        />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_stopped_archive")}</p>
       {/* Automatic title suggestions (autoTitleSuggest) moved to Settings > AI assist
           (docs/log/84). Here it looked like a session setting, but the one key also disabled the
           AI branch-name suggestion; each AI-generation on/off now has a single home. */}

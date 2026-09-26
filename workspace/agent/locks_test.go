@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // lockMux wires the routes the delete lock (docs/log/45) governs, so each test drives
@@ -160,6 +161,55 @@ func TestSessionLockSurvivesTTLSweep(t *testing.T) {
 	do(t, srv, "GET", "/sessions/archived", nil, http.StatusOK, &shelf)
 	if len(shelf.Sessions) != 1 || shelf.Sessions[0].Name != "dropme" {
 		t.Errorf("shelf = %+v, want the swept session listed for restore", shelf.Sessions)
+	}
+}
+
+// TestTTLSweepFollowsTheUsersSetting: the archive period is the user's setting (Settings >
+// Agents > Session) ahead of AF_SESSION_STOPPED_TTL, read on the list itself, so a change needs
+// no restart. The env var is set to 1s throughout: a row that survives it survived because the
+// setting won. The locked twin is exempt whatever the period.
+func TestTTLSweepFollowsTheUsersSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		days     int
+		archived bool // the unlocked row, stopped two days ago
+	}{
+		{"setting longer than the stop beats the env var", 3, false},
+		{"setting shorter than the stop archives", 1, true},
+		{"off never archives", session.StoppedArchiveNever, false},
+		{"a value the Console cannot produce falls back to the env var", 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+			t.Setenv("AF_SESSION_STOPPED_TTL", "1s")
+			if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(map[string]any{"sessionStoppedArchiveDays": tc.days})
+			if err := os.WriteFile(uiprefs.Path(), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(lockMux())
+			defer srv.Close()
+
+			dir := filepath.Join(home, "repos", "app")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			stopped := time.Now().Add(-48 * time.Hour).Format(time.RFC3339)
+			session.WriteMeta(session.Meta{Name: "keepme", Dir: dir, Kind: session.KindShell, StoppedAt: stopped, Locked: true})
+			session.WriteMeta(session.Meta{Name: "stale", Dir: dir, Kind: session.KindShell, StoppedAt: stopped})
+
+			do(t, srv, "GET", "/sessions", nil, http.StatusOK, nil)
+			if m, ok := session.ReadMeta("stale"); !ok || m.Archived != tc.archived {
+				t.Errorf("stale: archived=%v ok=%v, want archived=%v", m.Archived, ok, tc.archived)
+			}
+			if m, ok := session.ReadMeta("keepme"); !ok || m.Archived {
+				t.Errorf("locked row was archived: %+v ok=%v", m, ok)
+			}
+		})
 	}
 }
 

@@ -23,7 +23,10 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 }));
 
 const { AgentsTab } = await import("./AgentsTab.tsx");
-const { setSettings, settingsDefaults, IMAGE_PROVIDERS } = await import("../../../lib/settings.ts");
+const { setSettings, settingsDefaults, getSettings, IMAGE_PROVIDERS, STOPPED_ARCHIVE_NEVER } = await import(
+  "../../../lib/settings.ts"
+);
+const { t } = await import("../../../lib/i18n/index.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -158,5 +161,38 @@ describe("画像生成の優先順位（ADR 0082 P1）", () => {
       await Promise.resolve();
     });
     expect(orderRows()).toContain("Agent Fleet (self-hosted)");
+  });
+});
+
+describe("停止中セッションのアーカイブ期間（#982）", () => {
+  const archiveRow = (): HTMLElement => {
+    const row = Array.from(host!.querySelectorAll<HTMLElement>(".ds-row")).find(
+      (r) => r.querySelector(".ds-label")?.textContent === t("agents.stopped_archive"),
+    );
+    if (!row) throw new Error("no stopped-archive row");
+    return row;
+  };
+  const buttons = () => Array.from(archiveRow().querySelectorAll<HTMLButtonElement>(".seg-btn"));
+
+  // "Default" stores 0, not 7: the Agent then defers to the deployment's AF_SESSION_STOPPED_TTL,
+  // which a stored 7 would silently override for every user who never touched the row.
+  it("未設定なら「既定」が選ばれ、保存値は 0", async () => {
+    respond();
+    await mount();
+    const active = buttons().filter((b) => b.classList.contains("active"));
+    expect(active.map((b) => b.textContent)).toEqual([t("agents.stopped_archive_default")]);
+    expect(getSettings().sessionStoppedArchiveDays).toBe(0);
+  });
+
+  it("「しない」は -1、日数はその数を保存する", async () => {
+    respond();
+    await mount();
+    const off = buttons().find((b) => b.textContent === t("agents.stopped_archive_never"))!;
+    await act(async () => off.click());
+    expect(getSettings().sessionStoppedArchiveDays).toBe(STOPPED_ARCHIVE_NEVER);
+
+    const days = buttons().find((b) => b.textContent?.startsWith("14"))!;
+    await act(async () => days.click());
+    expect(getSettings().sessionStoppedArchiveDays).toBe(14);
   });
 });
