@@ -41,10 +41,10 @@ import (
 // real ones exec the CLI, and a test that did so would pass or fail by what is installed on the
 // machine running it (memory: test-path-leaks-real-binary).
 var (
-	codexModels     = codex.Models
-	codexRetiring   = codex.Retiring
-	agyModels       = agy.Models
-	museSafeDefault = muse.SafeDefaultExecModel
+	codexModels    = codex.Models
+	codexRetiring  = codex.Retiring
+	agyModels      = agy.Models
+	museSafeModels = muse.SafeExecModels
 )
 
 // visibility is one reading of the hidden-models setting, applied to candidates: the saved one
@@ -123,13 +123,25 @@ func recommendedModels(v visibility, kind string) RecommendedSet {
 	chat := recommendedAssistantModelV(v, kind)
 	if kind == session.KindMuse {
 		// museChatModel's own fallback: the newest non-contributor row (ADR 0095 P2-21).
-		chat = museSafeDefault()
+		chat = museSafeVisible(v)
 	}
 	return RecommendedSet{
 		Chat:  chat,
 		Prose: recommendedOneShotModelV(v, kind, OneShotProse),
 		Short: recommendedOneShotModelV(v, kind, OneShotShort),
 	}
+}
+
+// museSafeVisible is the newest non-data-sharing muse model this reading of the hidden-models
+// setting leaves visible; "" when there is none (the catalog unread, no safe row, or every safe
+// row hidden), and the chat then refuses the turn.
+func museSafeVisible(v visibility) string {
+	for _, id := range museSafeModels() {
+		if m := v.model(session.KindMuse, id); m != "" {
+			return m
+		}
+	}
+	return ""
 }
 
 // claude's tier aliases in the order each purpose prefers them. claude has no "let the CLI pick"

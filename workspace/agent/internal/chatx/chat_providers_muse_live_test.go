@@ -258,7 +258,10 @@ func TestMuseChatLive(t *testing.T) {
 
 	// The model gate (P2-21), read from the store and not from the answer: whatever turn 2
 	// added to the session's record has to be the safe model museChatModel resolved.
-	safe := muse.SafeDefaultExecModel()
+	safe := ""
+	if rows := muse.SafeExecModels(); len(rows) > 0 {
+		safe = rows[0]
+	}
 	afterTwo := museChatStoreModels(t, sid)
 	var added []string
 	for _, id := range afterTwo {
@@ -268,7 +271,7 @@ func TestMuseChatLive(t *testing.T) {
 	}
 	t.Logf("turn 2 added model ids %v (museChatModel resolved %q)", added, safe)
 	if safe == "" {
-		t.Fatal("SafeDefaultExecModel resolved nothing: the catalog has no non-data-sharing row")
+		t.Fatal("SafeExecModels resolved nothing: the catalog has no non-data-sharing row")
 	}
 	if !slices.Contains(afterTwo, safe) {
 		t.Errorf("the store has no record of %q after turn 2 (ids: %v)", safe, afterTwo)

@@ -2,6 +2,7 @@ package muse
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -143,7 +144,7 @@ func resetModelCatalogCache(t *testing.T) {
 	t.Helper()
 	modelsMu.Lock()
 	prevList, prevSafe, prevAt := modelsList, modelsSafe, modelsAt
-	modelsList, modelsSafe, modelsAt = nil, "", time.Time{}
+	modelsList, modelsSafe, modelsAt = nil, nil, time.Time{}
 	modelsMu.Unlock()
 	t.Cleanup(func() {
 		modelsMu.Lock()
@@ -166,8 +167,25 @@ func TestSafeDefaultSkipsTheVendorsContributorDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
-	if safe != "muse-spark-1.3" {
-		t.Errorf("safe default is %q, want the non-contributor row", safe)
+	if !slices.Equal(safe, []string{"muse-spark-1.3"}) {
+		t.Errorf("safe rows are %q, want the non-contributor row only", safe)
+	}
+}
+
+// Every safe row is kept, in catalog order, not just the first: the assistant chat skips the
+// ones the member hid, and only this package can tell a safe row from a sharing one.
+func TestSafeRowsKeepCatalogOrder(t *testing.T) {
+	cl, _ := catalogHost(t, `{"providerId":"meta","source":"providerCatalog","models":[
+		{"modelId":"muse-spark-1.3","displayLabel":"a","providerId":"meta"},
+		{"modelId":"muse-spark-1.3-contributor","displayLabel":"b","providerId":"meta"},
+		{"modelId":"muse-spark-1.2","displayLabel":"c","providerId":"meta"}]}`)
+
+	_, safe, err := modelsFrom(cl)
+	if err != nil {
+		t.Fatalf("modelsFrom: %v", err)
+	}
+	if !slices.Equal(safe, []string{"muse-spark-1.3", "muse-spark-1.2"}) {
+		t.Errorf("safe rows are %q, want both non-contributor rows, newest first", safe)
 	}
 }
 
@@ -184,8 +202,8 @@ func TestSafeDefaultReadsTheDescriptionNotOnlyTheSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
-	if safe != "muse-spark-1.3" {
-		t.Errorf("safe default is %q: the description's claim was ignored", safe)
+	if !slices.Equal(safe, []string{"muse-spark-1.3"}) {
+		t.Errorf("safe rows are %q: the description's claim was ignored", safe)
 	}
 }
 
@@ -201,8 +219,8 @@ func TestSafeDefaultIsEmptyWhenEveryRowShares(t *testing.T) {
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
-	if safe != "" {
-		t.Errorf("safe default is %q, want none", safe)
+	if len(safe) != 0 {
+		t.Errorf("safe rows are %q, want none", safe)
 	}
 }
 

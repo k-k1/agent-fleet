@@ -122,10 +122,19 @@ func (museChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 // for someone who chose nothing.
 func museChatModel(c *ChatConversation) (string, error) {
 	if model := chatModelFor(c, session.KindMuse); model != "" {
+		// A model the member hid is refused, as the launch guard refuses it for a session.
+		if visibleModel(session.KindMuse, model) == "" {
+			return "", errors.New("muse: モデル " + model + " は設定「使わないモデル」で除外されています。会話のモデルを変えるか、設定 > エージェント > 動作設定 で除外を解除してください。")
+		}
 		return model, nil
 	}
-	if model := muse.SafeDefaultExecModel(); model != "" {
+	if model := museSafeVisible(prefsVisibility); model != "" {
 		return model, nil
+	}
+	if len(museSafeModels()) > 0 {
+		// Never fall back to a data-sharing row or to no --model: both run the contributor
+		// default the safe pick exists to avoid.
+		return "", errors.New("muse: 製品改善に使われないモデルがすべて設定「使わないモデル」で除外されているため、ターンを実行できません。設定 > エージェント > 動作設定 で除外を解除するか、会話のモデルを選んでください。")
 	}
 	return "", errors.New("muse: モデル目録を読めないため、ターンを実行できません（モデル未指定のまま実行すると会話が製品改善に使われうる contributor モデルになります。Settings › AI › Muse Code でモデルを選んでください）")
 }
