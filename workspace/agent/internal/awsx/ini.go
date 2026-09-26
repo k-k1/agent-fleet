@@ -149,8 +149,12 @@ func readINISection(path string, pick func(section string) bool, keys map[string
 // (the credentials file). Messages use it so a user is sent to the line that set it.
 func readINISectionFrom(path string, pick func(section string) bool, keys, origin map[string]string, label string) error {
 	b, err := os.ReadFile(path)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
+	}
+	if err != nil {
+		// Unreadable is not absent: a profile there could decide who the CLI runs as.
+		return fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	if err := iniStrict(string(b)); err != nil {
 		return fmt.Errorf("the AWS CLI cannot read %s: %w", path, err)

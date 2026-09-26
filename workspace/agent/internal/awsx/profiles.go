@@ -241,7 +241,13 @@ func applyLocked(path, target string, ps []Profile) (SyncResult, error) {
 	// Names in the credentials file count as the member's own: the CLI merges both files
 	// per profile, so an SSO block under the same name would turn their working static-key
 	// profile into an SSO one.
-	creds, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "credentials"))
+	// Only a missing file counts as empty: an unreadable one (permissions, say) could hold
+	// a profile of the member's own that the block must not shadow, so it stops the sync
+	// with the block left as it is.
+	creds, cerr := os.ReadFile(filepath.Join(filepath.Dir(path), "credentials"))
+	if cerr != nil && !errors.Is(cerr, os.ErrNotExist) {
+		return SyncResult{}, fmt.Errorf("cannot read ~/.aws/credentials: %w", cerr)
+	}
 	next, res, err := render(string(old), string(creds), ps)
 	if err != nil {
 		return res, err

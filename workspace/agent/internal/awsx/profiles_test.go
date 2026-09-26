@@ -634,3 +634,26 @@ func TestSyncRemovesTheOldCacheFile(t *testing.T) {
 		t.Fatal("the old cache file is still there")
 	}
 }
+
+// An unreadable credentials file is not an empty one: it may hold the member's own
+// profile of a Settings name, so the sync stops and the block is left as it is.
+func TestApplyStopsOnAnUnreadableCredentialsFile(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads a mode-000 file")
+	}
+	dir := t.TempDir()
+	creds := filepath.Join(dir, "credentials")
+	if err := os.WriteFile(creds, []byte("[prod]\naws_access_key_id = AKIA\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Apply(filepath.Join(dir, "config"), []Profile{prof("prod")})
+	if err == nil || len(res.Exported) != 0 {
+		t.Fatalf("exported over an unreadable credentials file: %+v %v", res, err)
+	}
+	if _, serr := os.Stat(filepath.Join(dir, "config")); !os.IsNotExist(serr) {
+		t.Fatal("the config was written")
+	}
+	if _, _, kerr := profileKeysFrom([]string{"AWS_SHARED_CREDENTIALS_FILE=" + creds}, "prod"); kerr == nil {
+		t.Fatal("af-aws-exec's profile lookup treated the unreadable file as absent")
+	}
+}
