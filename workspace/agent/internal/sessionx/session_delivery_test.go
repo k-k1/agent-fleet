@@ -68,6 +68,41 @@ func TestPromptDraftVisibleMultiLineHeldDraft(t *testing.T) {
 	}
 }
 
+// The same launch on an 80x23 pane, captured 12 s later when the self-heal looks: the hold
+// notice has been replaced by another one, and the composer has scrolled the draft so its
+// first line is off screen. Only the prompt's end is left to match.
+func TestPromptDraftVisibleScrolledHeldDraft(t *testing.T) {
+	prompt := "作業対象: k-k1/agent-fleet#989「opencode Managed: identify the calling session through a tool.execute.before plugin」\n" +
+		"URL: https://github.com/k-k1/agent-fleet/issues/989\n\n" +
+		"本文とコメントは `gh issue view 989`（PR なら `gh pr view 989`）で読めます。\n" +
+		"まず状況を調べ、実装に入る前に方針を提示してください。"
+	captured := " ▐▛███▛█   Claude Code v2.1.283\n" +
+		"\n\n\n\n\n\n\n\n" +
+		"  tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and re…\n" +
+		"────── [AF:probe] #989 opencode Managed: identify the calling session through… ─\n" +
+		"❯ session through a tool.execute.before plugin」\n" +
+		"  URL: https://github.com/k-k1/agent-fleet/issues/989\n" +
+		"\n" +
+		"  本文とコメントは `gh issue view 989`（PR なら `gh pr view 989`）で読めます。\n" +
+		"  まず状況を調べ、実装に入る前に方針を提示してください。\n" +
+		"\n" +
+		"────────────────────────────────────────────────────────────────────────────────\n" +
+		"\n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+	if !promptDraftVisible(captured, prompt) {
+		t.Fatal("a draft scrolled so only its end is visible must still read as a draft")
+	}
+	submitted := strings.Replace(captured,
+		"❯ session through a tool.execute.before plugin」\n"+
+			"  URL: https://github.com/k-k1/agent-fleet/issues/989\n"+
+			"\n"+
+			"  本文とコメントは `gh issue view 989`（PR なら `gh pr view 989`）で読めます。\n"+
+			"  まず状況を調べ、実装に入る前に方針を提示してください。\n", "❯ \n", 1)
+	if promptDraftVisible(submitted, prompt) {
+		t.Fatal("an empty composer must not read as a draft")
+	}
+}
+
 // Only the composer counts: the same prompt submitted earlier is in the scrollback as a
 // "❯ …" line too (the scheduler's reuse send repeats one prompt), and must not read as a draft.
 func TestPromptDraftVisibleIgnoresScrollback(t *testing.T) {
