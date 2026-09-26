@@ -622,3 +622,44 @@ func TestResponsesCarryTheModelTheHostReported(t *testing.T) {
 		t.Fatalf("fork: got %q, want [model-a model-b]", got)
 	}
 }
+
+// session/setModel is applied at the next model call, so a switch reported mid-turn must not
+// relabel the turn in flight, and a later revision of an item keeps its first stamp.
+func TestAMidTurnSwitchKeepsTheTurnsModel(t *testing.T) {
+	newStore(t)
+	m := metaFor(t, "muse-midturn")
+	h := &threadHandle{name: m.Name, slotSid: slotSid(m)}
+	switchTo := func(model string) {
+		h.onNotify(msp.NotificationSessionModelChanged, []byte(`{"sessionId":"s","modelId":"`+model+`","source":"user","sourceRange":{},"viewCursor":"c"}`))
+	}
+	switchTo("model-a")
+	u := item(msp.ItemKindUserMessage, "u1", 1)
+	u.Text = sp("q")
+	h.onItem(u)
+	h.onNotify(msp.NotificationTurnStarted, []byte(`{"sessionId":"s","turnId":"t1"}`))
+	started := item(msp.ItemKindAgentMessage, "a1", 1)
+	started.Status = msp.ItemStatusInProgress
+	h.onItem(started)
+	switchTo("model-b")
+	tool := item(msp.ItemKindToolCall, "a2", 1) // first seen after the switch, same turn
+	tool.Tool = sp("shell")
+	h.onItem(tool)
+	done := item(msp.ItemKindAgentMessage, "a1", 2)
+	done.Text = sp("a")
+	h.onItem(done)
+	h.onNotify(msp.NotificationTurnCompleted, []byte(`{"sessionId":"s","turnId":"t1","terminal":"completed"}`))
+	late := item(msp.ItemKindAgentMessage, "a1", 3) // a re-send after the turn, stamped model-b
+	late.Text = sp("a")
+	h.onItem(late)
+
+	_, models, err := openStore(slotSid(m)).itemsWithModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if models["a1"] != "model-a" || models["a2"] != "model-a" {
+		t.Fatalf("a1=%q a2=%q, want model-a for both (the turn started on it)", models["a1"], models["a2"])
+	}
+	if h.turnModel != "" || h.model != "model-b" {
+		t.Fatalf("after the turn: turnModel=%q model=%q, want \"\" and model-b", h.turnModel, h.model)
+	}
+}

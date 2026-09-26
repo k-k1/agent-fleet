@@ -145,7 +145,8 @@ func (s *store) itemsWithModels() ([]msp.Item, map[string]string, error) {
 			continue
 		}
 		byID[r.Item.ItemID] = r.Item
-		if r.Model != "" {
+		// The first stamp wins: a later revision of the same item may arrive after a switch.
+		if _, stamped := models[r.Item.ItemID]; !stamped && r.Model != "" {
 			models[r.Item.ItemID] = r.Model
 		}
 	}

@@ -55,16 +55,20 @@ type threadHandle struct {
 	// unchanged" cannot express a three-valued bool.
 	bypass bool
 
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	cl     *msp.Client
-	sid    string // the muse session id (the UUIDv7 AF minted)
-	path   string // the session.jsonl session/start reported
-	model  string // the model the host last reported as selected; stamped on each stored item
-	alive  bool
-	state  agents.TurnState
-	turnID string // the running turn, for steer's expectedTurnId
+	mu    sync.Mutex
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	cl    *msp.Client
+	sid   string // the muse session id (the UUIDv7 AF minted)
+	path  string // the session.jsonl session/start reported
+	model string // the model the host last reported as selected
+	// turnModel is model as it stood when the running turn started, stamped on that turn's
+	// items: session/setModel is acknowledged at once but applied at the next model call, so
+	// the latest model would mislabel the call already in flight.
+	turnModel string
+	alive     bool
+	state     agents.TurnState
+	turnID    string // the running turn, for steer's expectedTurnId
 
 	running  bool
 	queue    []agents.TurnInput
@@ -329,6 +333,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		h.mu.Lock()
 		h.turnID, h.running = p.TurnID, true
 		h.state = agents.TurnRunning
+		h.turnModel = h.model
 		h.mu.Unlock()
 		agents.MarkTurnStart(h.slotSid)
 		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
@@ -339,6 +344,9 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 			return
 		}
 		h.finishTurn(p)
+		h.mu.Lock()
+		h.turnModel = ""
+		h.mu.Unlock()
 
 	case msp.NotificationSessionStatusChanged:
 		var p msp.SessionStatusChangedParams
@@ -431,7 +439,10 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 func (h *threadHandle) onItem(it msp.Item) {
 	h.mu.Lock()
 	delete(h.streaming, it.ItemID)
-	sid, model := h.slotSid, h.model
+	sid, model := h.slotSid, h.turnModel
+	if model == "" {
+		model = h.model
+	}
 	h.mu.Unlock()
 	if err := openStore(sid).AppendFrom(it, model); err != nil {
 		log.Printf("muse: %s: transcript append: %v", h.name, err)
