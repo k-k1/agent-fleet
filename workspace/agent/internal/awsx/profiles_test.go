@@ -613,3 +613,43 @@ func TestSyncFetchesUnderTheLock(t *testing.T) {
 		t.Fatalf("hits = %d after the lock was released", hits.Load())
 	}
 }
+
+// After a failed fetch, syncs within the cooldown go straight to the cache instead of
+// each waiting out the timeout under the lock; after it, the CP is asked again, and a
+// success clears the cooldown.
+func TestSyncCoolsDownAfterAnUnreachableCP(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
+	var hits atomic.Int32
+	var up atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if !up.Load() {
+			http.Error(w, "down", http.StatusBadGateway)
+			return
+		}
+		_, _ = w.Write([]byte(`{"profiles":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	for i := 0; i < 3; i++ {
+		if _, err := Sync(); err == nil {
+			t.Fatal("expected the CP to be unreachable")
+		}
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("the CP was asked %d times within the cooldown, want 1", n)
+	}
+	old := time.Now().Add(-unreachableCooldown - time.Second)
+	if err := os.Chtimes(unreachablePath(), old, old); err != nil {
+		t.Fatal(err)
+	}
+	up.Store(true)
+	if _, err := Sync(); err != nil || hits.Load() != 2 {
+		t.Fatalf("after the cooldown: err = %v, hits = %d", err, hits.Load())
+	}
+	if _, err := os.Stat(unreachablePath()); !os.IsNotExist(err) {
+		t.Fatal("a successful fetch did not clear the cooldown")
+	}
+}

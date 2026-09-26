@@ -135,8 +135,10 @@ func Fetch() ([]Profile, []Conflict, error) {
 	return wire.Profiles, wire.Conflicts, nil
 }
 
-// Sync pulls and applies. Fail-open: when the CP cannot be reached the file keeps the
-// previous block, so a CP blip never takes working profiles away.
+// Sync pulls and applies. When the CP cannot be reached it re-applies the last list the
+// CP gave (the cache) under today's rules, so a CP blip never takes a working profile
+// away, though a profile the files now break (a new [DEFAULT] line, say) is held back
+// offline just as it would be online. Without a cache the block is left as it is.
 func Sync() (SyncResult, error) {
 	if os.Getenv("AF_CP_BASE_URL") == "" || os.Getenv("AF_AWS_PROFILES_TOKEN") == "" {
 		return SyncResult{}, ErrBridgeOff
@@ -150,7 +152,7 @@ func Sync() (SyncResult, error) {
 		return SyncResult{}, lerr
 	}
 	defer unlock()
-	ps, conflicts, err := Fetch()
+	ps, conflicts, err := fetchUnlessCoolingDown()
 	if err != nil {
 		// The CP cannot be asked: re-apply the last list it gave, so the block follows
 		// what the files say now (a [DEFAULT] line added since, a profile of the
@@ -639,7 +641,8 @@ func saveSettingsCache(ps []Profile, conflicts []Conflict) error {
 	return writeAtomic(path, b, 0o600)
 }
 
-// cachedList is the last list the CP gave, as saved by a successful sync.
+// cachedList is the last list the CP gave: saved whenever a fetch succeeds, before the
+// block is written (see Sync), and bound to this membership (cacheOwner).
 func cachedList() ([]Profile, []Conflict, bool) {
 	b, err := os.ReadFile(settingsCachePath())
 	if err != nil {
@@ -670,4 +673,31 @@ func CachedSettings() (map[string]Profile, []Conflict, bool) {
 func DescribeProfile(name string) (account, role string) {
 	k, _ := profileKeys(nil, name)
 	return k["sso_account_id"], k["sso_role_name"]
+}
+
+// unreachableCooldown is how long after a failed fetch Sync goes straight to the cache.
+// The fetch runs under the config lock with a 10 s timeout, so while the CP is down every
+// af-aws-exec and the poll would otherwise wait out a full timeout each, one after the
+// other. Short enough that an edit in Settings is picked up soon after the CP is back.
+const unreachableCooldown = 30 * time.Second
+
+func unreachablePath() string { return filepath.Join(paths.AgentStateDir(), "aws-cp-unreachable") }
+
+// fetchUnlessCoolingDown is Fetch, except within unreachableCooldown of a failed fetch it
+// reports the CP unreachable without asking. The caller holds the config lock.
+func fetchUnlessCoolingDown() ([]Profile, []Conflict, error) {
+	if fi, err := os.Stat(unreachablePath()); err == nil && time.Since(fi.ModTime()) < unreachableCooldown {
+		return nil, nil, fmt.Errorf("the CP was unreachable %s ago; not asking again yet", time.Since(fi.ModTime()).Round(time.Second))
+	}
+	ps, conflicts, err := Fetch()
+	if err != nil {
+		if mkErr := os.MkdirAll(filepath.Dir(unreachablePath()), 0o700); mkErr == nil {
+			_ = os.WriteFile(unreachablePath(), nil, 0o600)
+			now := time.Now()
+			_ = os.Chtimes(unreachablePath(), now, now)
+		}
+		return nil, nil, err
+	}
+	_ = os.Remove(unreachablePath())
+	return ps, conflicts, nil
 }
