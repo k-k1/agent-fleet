@@ -13,7 +13,7 @@ import (
 // the fixed tier aliases (no live catalog — launch takes --model <alias>), served so
 // the MCP list_models resolves claude ids like the other kinds.
 func TestAgentModelsClaudeFixedAliases(t *testing.T) {
-	writeUIPrefs(t, `{}`)
+	writeUIPrefs(t, `{"hiddenModels":{}}`) // saved as "nothing hidden" (unsaved hides fable — see below)
 	req := httptest.NewRequest(http.MethodGet, "/agents/claude/models", nil)
 	req.SetPathValue("kind", "claude")
 	rec := httptest.NewRecorder()
@@ -48,7 +48,7 @@ func TestAgentModelsClaudeFixedAliases(t *testing.T) {
 }
 
 func TestAgentModelsClaudeIncludesRegisteredModels(t *testing.T) {
-	writeUIPrefs(t, `{"claudeCustomModels":["claude-opus-4-8"," claude-opus-4-7 ","CLAUDE-OPUS-4-8",42,"opus","bad model"]}`)
+	writeUIPrefs(t, `{"hiddenModels":{},"claudeCustomModels":["claude-opus-4-8"," claude-opus-4-7 ","CLAUDE-OPUS-4-8",42,"opus","bad model"]}`)
 	req := httptest.NewRequest(http.MethodGet, "/agents/claude/models", nil)
 	req.SetPathValue("kind", "claude")
 	rec := httptest.NewRecorder()

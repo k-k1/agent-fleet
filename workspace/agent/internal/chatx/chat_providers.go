@@ -1602,12 +1602,24 @@ var oneShotEnvModels = map[string]string{
 	session.KindAgy:      "AF_TITLE_MODEL_AGY",
 }
 
-// oneShotEnvModel is kind's operator override, "" when none is set.
+// oneShotEnvModel is kind's operator override, "" when none is set — or when it cannot be what
+// runs: a model the member hid ("models not to use" wins over the operator's default, as it does
+// at session launch), or, for agy, a name its catalog does not list (agyChatModel would drop it;
+// a display name is resolved to its id). Then the computed recommendation applies instead, and
+// that is what the screen names (#972 review, round 4).
 func oneShotEnvModel(kind string) string {
-	if name := oneShotEnvModels[kind]; name != "" {
-		return strings.TrimSpace(os.Getenv(name))
+	name := oneShotEnvModels[kind]
+	if name == "" {
+		return ""
 	}
-	return ""
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return ""
+	}
+	if kind == session.KindAgy {
+		return agyNamedModel(v)
+	}
+	return visibleModel(kind, v)
 }
 
 // recommendedOneShotModel is the "recommended" resolution for a tier — the Console shows the
@@ -1803,7 +1815,7 @@ func recommendedUtilityModel(kind string) string {
 	// listing rather than an entitlement (see OneShotHeadlessRun's opencode branch).
 	switch kind {
 	case session.KindClaude:
-		return visibleModel(kind, "haiku")
+		return claudeFirstVisible(claudeShortTiers)
 	case session.KindCodex:
 		ids, _ := codexRecommendIDs()
 		if m := cheapestListedModel(kind, ids); m != "" {

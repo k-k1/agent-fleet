@@ -140,3 +140,21 @@ func TestAssistantModelPrefDropsHidden(t *testing.T) {
 		t.Fatalf("assistantChatModelPref = %q, %v; want recommended", v, ok)
 	}
 }
+
+// #972 review round 4: a hidden-models setting that was never saved is the Console's default —
+// Fable excluded — on the Agent too. It used to read as "nothing hidden", so Fable was launchable
+// and listed to MCP while the settings screen said it was excluded. A saved empty list is a
+// choice and stays empty.
+func TestHiddenModelsUnsavedIsConsoleDefault(t *testing.T) {
+	writeUIPrefs(t, `{}`)
+	if !sessionx.ModelHidden("claude", "fable") || !sessionx.ModelHidden("claude", "claude-fable-5") {
+		t.Fatal("an unsaved setting must exclude fable, as the Console's defaults do")
+	}
+	if got := sessionx.HiddenModelsRaw("codex"); len(got) != 0 {
+		t.Fatalf("codex default = %v, want none", got)
+	}
+	writeUIPrefs(t, `{"hiddenModels":{}}`)
+	if sessionx.ModelHidden("claude", "fable") {
+		t.Fatal("a saved empty list must not bring the default back")
+	}
+}

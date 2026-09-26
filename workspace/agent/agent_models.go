@@ -201,6 +201,12 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		list[i].Provider = resolveModelProvider(r.PathValue("kind"), list[i].ID)
 	}
 	out := map[string]any{"models": list}
+	// The hidden-models entry this answer was computed under, verbatim from ui-prefs. The Console
+	// changes that setting locally at once and saves it 600 ms later (or not at all, before its
+	// first read of the server copy, or when the save fails), so an answer can reflect a list the
+	// screen no longer holds. It compares this with its own list and keeps only an answer that
+	// matches (#972 review, round 4) — cheaper and exact, where waiting for the save guessed.
+	out["appliedHidden"] = sessionx.HiddenModelsRaw(r.PathValue("kind"))
 	// What "recommended" resolves to on this kind, per tier (Issue #972) — the Agent's own
 	// answer, so the Console's "推奨（現在: X）" names the model that actually runs instead of
 	// re-deriving it. Only the kinds the assistant and AI assist can run; the rest have no

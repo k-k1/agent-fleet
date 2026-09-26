@@ -433,7 +433,7 @@ func recommendedCatalogModel(ids []string, target, fallback string) string {
 func recommendedAssistantModel(agent string) string {
 	switch agent {
 	case session.KindClaude:
-		return visibleModel(agent, "sonnet")
+		return claudeFirstVisible(claudeChatTiers)
 	case session.KindCodex:
 		return codexNewestLuna()
 	case session.KindOpencode:
@@ -472,7 +472,14 @@ func chatModel(c *ChatConversation) string {
 	if c.Model != "" {
 		return c.Model
 	}
-	return envOr("AF_CHAT_MODEL", defaultChatModel)
+	// A conversation with no model of its own (created before models were snapshotted) runs the
+	// deployment default — unless the member hid it, in which case the same recommendation a
+	// new conversation gets. claude's chat always passes --model, so without this check hiding
+	// "sonnet" still ran claude-sonnet-5 (#972 review, round 4).
+	if m := envOr("AF_CHAT_MODEL", defaultChatModel); visibleModel(session.KindClaude, m) != "" {
+		return m
+	}
+	return claudeFirstVisible(claudeChatTiers)
 }
 
 // chatModelFor resolves the --model for the backend that is ACTUALLY driving this turn.

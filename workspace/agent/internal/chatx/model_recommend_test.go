@@ -1,6 +1,7 @@
 package chatx
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -246,28 +247,77 @@ func TestCodexChatEmptyCatalogIsNotUnreadable(t *testing.T) {
 	}
 }
 
-// #972 review round 3: claude's chat always passes --model; with sonnet hidden the
-// recommendation is empty and chatModel fills in AF_CHAT_MODEL / defaultChatModel. The answer
-// must name that, not the CLI default.
-func TestRecommendedClaudeChatNamesWhatRuns(t *testing.T) {
+// #972 review rounds 3–4: claude's chat always passes --model. With sonnet hidden the
+// recommendation moves to the next visible tier, and a conversation with no model of its own no
+// longer falls back to claude-sonnet-5 (which "sonnet" hides too).
+func TestRecommendedClaudeSkipsHiddenTier(t *testing.T) {
 	prev := deps.VisibleModel
 	t.Cleanup(func() { deps.VisibleModel = prev })
 	deps.VisibleModel = func(_, model string) string {
-		if model == "sonnet" {
+		if strings.Contains(model, "sonnet") {
 			return ""
 		}
 		return model
 	}
 	t.Setenv("AF_CHAT_MODEL", "")
-	if got := RecommendedModels(session.KindClaude).Chat; got != defaultChatModel {
-		t.Fatalf("claude chat with sonnet hidden = %q, want %q (what chatModel runs)", got, defaultChatModel)
+	got := RecommendedModels(session.KindClaude)
+	if got.Chat != "opus" || got.Prose != "opus" || got.Short != "haiku" {
+		t.Fatalf("claude with sonnet hidden = %+v, want chat/prose opus, short haiku", got)
 	}
-	if got := chatModel(&ChatConversation{Model: ResolveChatModel(session.KindClaude, "")}); got != defaultChatModel {
-		t.Fatalf("the chat path runs %q", got)
+	if m := chatModel(&ChatConversation{}); m != "opus" {
+		t.Fatalf("a conversation with no model runs %q, want opus (not the hidden claude-sonnet-5)", m)
 	}
-	t.Setenv("AF_CHAT_MODEL", "claude-opus-5-5")
-	if got := RecommendedModels(session.KindClaude).Chat; got != "claude-opus-5-5" {
-		t.Fatalf("claude chat with AF_CHAT_MODEL = %q", got)
+	if m := chatModel(&ChatConversation{Model: ResolveChatModel(session.KindClaude, "")}); m != got.Chat {
+		t.Fatalf("a new conversation runs %q, the answer says %q", m, got.Chat)
+	}
+	// Short prefers haiku; hiding it moves to sonnet — here hidden too — then opus.
+	deps.VisibleModel = func(_, model string) string {
+		if model == "haiku" || model == "sonnet" {
+			return ""
+		}
+		return model
+	}
+	if got := RecommendedModels(session.KindClaude).Short; got != "opus" {
+		t.Fatalf("claude short with haiku and sonnet hidden = %q, want opus", got)
+	}
+}
+
+// #972 review round 4: an operator override the member hid, or an agy name the catalog does not
+// list, cannot be what runs — the computed recommendation applies and is what the screen names.
+// An agy display name is resolved to its catalog id.
+func TestOneShotEnvOverrideIsValidated(t *testing.T) {
+	useCatalogs(t, codexCatalog0926, nil, nil, codexPrices0926)
+	prev := deps.VisibleModel
+	t.Cleanup(func() { deps.VisibleModel = prev })
+	deps.VisibleModel = func(_, model string) string {
+		if model == "gpt-6-sol" {
+			return ""
+		}
+		return model
+	}
+	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-6-sol")
+	if got := RecommendedModels(session.KindCodex).Short; got != "gpt-6-luna" {
+		t.Fatalf("hidden override = %q, want the computed gpt-6-luna", got)
+	}
+	if m, auto := codexOneShotModel("", false, false, OneShotShort); m != "gpt-6-luna" || !auto {
+		t.Fatalf("unset with a hidden override = %q (auto=%v), want our own gpt-6-luna", m, auto)
+	}
+
+	prevAgy := agyModels
+	t.Cleanup(func() { agyModels = prevAgy })
+	agyModels = func() []agents.ModelChoice {
+		return []agents.ModelChoice{
+			{ID: "gemini-3.5-flash-medium", Label: "Gemini 3.5 Flash (Medium)"},
+			{ID: "gemini-3.7-flash-high", Label: "Gemini 3.7 Flash (High)"},
+		}
+	}
+	t.Setenv("AF_TITLE_MODEL_AGY", "Gemini 3.7 Flash (High)")
+	if got := RecommendedModels(session.KindAgy).Short; got != "gemini-3.7-flash-high" {
+		t.Fatalf("agy display-name override = %q, want its id", got)
+	}
+	t.Setenv("AF_TITLE_MODEL_AGY", "Gemini 9 Ultra")
+	if got := RecommendedModels(session.KindAgy).Short; got != "gemini-3.5-flash-medium" {
+		t.Fatalf("unlisted agy override = %q, want the computed Flash Medium", got)
 	}
 }
 

@@ -1675,31 +1675,8 @@ function scheduleServerSave(): void {
         if (res && typeof res === "object" && res.error) warnPrefsSaveFailed(res.error);
       })
       .catch((e) => warnPrefsSaveFailed(e))
-      .finally(() => {
-        saveInFlight = null;
-        notifyPrefsSettled();
-      });
+      .finally(() => { saveInFlight = null; });
   }, 600);
-}
-
-// Waiters for serverPrefsSettled, released once no save is debounced or in flight.
-let settledWaiters: (() => void)[] = [];
-
-function notifyPrefsSettled(): void {
-  if (saveTimer || saveInFlight) return;
-  const waiters = settledWaiters;
-  settledWaiters = [];
-  waiters.forEach((w) => w());
-}
-
-/** Resolves once this tab's last settings change has reached the server (or failed to), i.e.
- *  no debounced save is pending and none is in flight. For a read whose answer the Agent derives
- *  from ui-prefs: asked the moment a setting changes, it would answer from the value before the
- *  change, 600 ms earlier (the recommended model after hiding one — #972 review, round 3). Before
- *  the server copy has ever been read there is nothing to wait for (nothing is sent yet). */
-export function serverPrefsSettled(): Promise<void> {
-  if (!saveTimer && !saveInFlight) return Promise.resolve();
-  return new Promise((resolve) => settledWaiters.push(resolve));
 }
 
 function warnPrefsSaveFailed(err: unknown): void {

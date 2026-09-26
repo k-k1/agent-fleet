@@ -67,6 +67,34 @@ func ModelMatchesHidden(requested, hidden string) bool {
 	return strings.Contains("-"+r+"-", "-"+h+"-")
 }
 
+// defaultHiddenModels is the Console's DEFAULTS.hiddenModels (console/src/lib/settings.ts) — the
+// list a member has before the setting was ever saved: claude's Fable, charged as API credit on
+// a Claude Team plan. The two must change together. Without this the Agent read an unsaved
+// setting as "nothing hidden" while the settings screen said Fable was excluded — so Fable was
+// launchable (and listed to MCP list_models) for every member who had not saved a setting yet,
+// and an answer the Agent computed never matched the Console's own list (#972 review, round 4).
+var defaultHiddenModels = map[string][]string{"claude": {"fable"}}
+
+// HiddenModelsRaw is the kind's deny list as the member holds it — ui-prefs hiddenModels[kind]
+// verbatim (non-empty strings, in order), or defaultHiddenModels when the setting was never
+// saved — with no fail-safe applied. Never nil. It is also what GET /agents/{kind}/models echoes
+// as appliedHidden, compared against the Console's own list.
+func HiddenModelsRaw(kind string) []string {
+	out := []string{}
+	all, present := uiprefs.Read()["hiddenModels"]
+	if !present {
+		return append(out, defaultHiddenModels[kind]...)
+	}
+	byKind, _ := all.(map[string]any)
+	list, _ := byKind[kind].([]any)
+	for _, v := range list {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // HiddenModelsFor returns the effective deny list for a kind. ui-prefs is opaque JSON owned by
 // the Console, so a wrong type or broken content falls back to "nothing hidden".
 //
@@ -76,20 +104,7 @@ func ModelMatchesHidden(requested, hidden string) bool {
 // a live catalog need no such protection — for them "empty catalog = launch on the default" is
 // already a normal state.
 func HiddenModelsFor(kind string) []string {
-	raw, ok := uiprefs.Read()["hiddenModels"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	list, ok := raw[kind].([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(list))
-	for _, v := range list {
-		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-			out = append(out, s)
-		}
-	}
+	out := HiddenModelsRaw(kind)
 	if len(out) == 0 {
 		return nil
 	}

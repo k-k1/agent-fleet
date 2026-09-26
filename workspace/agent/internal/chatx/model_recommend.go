@@ -57,21 +57,34 @@ type RecommendedSet struct {
 // paths call, so the screen cannot show one model while another runs.
 func RecommendedModels(kind string) RecommendedSet {
 	chat := recommendedAssistantModel(kind)
-	switch {
-	case kind == session.KindMuse:
+	if kind == session.KindMuse {
 		// museChatModel's own fallback: the newest non-contributor row (ADR 0095 P2-21).
 		chat = museSafeDefault()
-	case kind == session.KindClaude && chat == "":
-		// claude's chat never runs without --model: an empty recommendation (sonnet hidden) is
-		// snapshotted onto the conversation and chatModel fills in AF_CHAT_MODEL or
-		// defaultChatModel. Say that, not "the CLI default" (#972 review, round 3).
-		chat = envOr("AF_CHAT_MODEL", defaultChatModel)
 	}
 	return RecommendedSet{
 		Chat:  chat,
 		Prose: recommendedOneShotModel(kind, OneShotProse),
 		Short: recommendedOneShotModel(kind, OneShotShort),
 	}
+}
+
+// claude's tier aliases in the order each purpose prefers them. claude has no "let the CLI pick"
+// entry the member could see (its picker is the four aliases), and its chat always passes
+// --model, so a hidden first choice moves to the next tier rather than to an unnamed CLI default
+// that may itself be the hidden model (#972 review, round 4). Hiding all four is ignored by the
+// hidden-models fail-safe (model_deny.go), so the first one is always the answer then.
+var (
+	claudeChatTiers  = []string{"sonnet", "opus", "haiku", "fable"}
+	claudeShortTiers = []string{"haiku", "sonnet", "opus", "fable"}
+)
+
+func claudeFirstVisible(tiers []string) string {
+	for _, t := range tiers {
+		if m := visibleModel(session.KindClaude, t); m != "" {
+			return m
+		}
+	}
+	return tiers[0]
 }
 
 // codexRecommendIDs is codex's live catalog as a recommendation may use it: minus hidden models

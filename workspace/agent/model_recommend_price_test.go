@@ -73,6 +73,7 @@ func TestRecommendPriceIDAgy(t *testing.T) {
 // Console draws "推奨（現在: X）" from — and it follows the hidden-models setting exactly as
 // the run paths do.
 func TestAgentModelsCarriesRecommended(t *testing.T) {
+	var applied []string
 	read := func() chatx.RecommendedSet {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/agents/claude/models", nil)
@@ -80,20 +81,31 @@ func TestAgentModelsCarriesRecommended(t *testing.T) {
 		rec := httptest.NewRecorder()
 		handleAgentModels(rec, req)
 		var got struct {
-			Recommended *chatx.RecommendedSet `json:"recommended"`
+			Recommended   *chatx.RecommendedSet `json:"recommended"`
+			AppliedHidden []string              `json:"appliedHidden"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Recommended == nil {
-			t.Fatalf("no recommended in %s (%v)", rec.Body.String(), err)
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Recommended == nil || got.AppliedHidden == nil {
+			t.Fatalf("no recommended/appliedHidden in %s (%v)", rec.Body.String(), err)
 		}
+		applied = got.AppliedHidden
 		return *got.Recommended
 	}
 	writeUIPrefs(t, `{}`)
 	if got, want := read(), (chatx.RecommendedSet{Chat: "sonnet", Prose: "sonnet", Short: "haiku"}); got != want {
 		t.Fatalf("recommended = %+v, want %+v", got, want)
 	}
-	writeUIPrefs(t, `{"hiddenModels":{"claude":["haiku"]}}`)
-	if got := read(); got.Short != "" {
-		t.Fatalf("short = %q with haiku hidden, want \"\" (the CLI default runs)", got.Short)
+	// Never saved: the Console's default list (fable), which the Agent now applies as well.
+	if len(applied) != 1 || applied[0] != "fable" {
+		t.Fatalf("appliedHidden = %v, want the default [fable]", applied)
+	}
+	// The answer says which hidden list it was computed under, verbatim, so the Console can
+	// tell an answer from before its own (not yet saved) change.
+	writeUIPrefs(t, `{"hiddenModels":{"claude":["haiku"," ",7]}}`)
+	if got := read(); got.Short != "sonnet" {
+		t.Fatalf("short = %q with haiku hidden, want the next tier sonnet", got.Short)
+	}
+	if len(applied) != 1 || applied[0] != "haiku" {
+		t.Fatalf("appliedHidden = %v, want [haiku]", applied)
 	}
 }
 
