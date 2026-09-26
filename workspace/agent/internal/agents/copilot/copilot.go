@@ -132,10 +132,10 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// repairs the ledger, so later SessionID reads point at the new conversation (sid.go).
 		resolveSid(m)
 		// Until the kind's own source exists (right after launch or the first prompt) it has
-		// no opinion; fall back to the stored status, as DriveState does, or the row reads as
-		// waiting for input while the chat chip says working.
-		if li.State = LiveState(m); li.State == "" {
-			li.State = status.LiveState(session.UUID(m.Dir, m.Name))
+		// no opinion, and the row would read as waiting for input while the prompt just sent
+		// is running. Only a fresh stored "working" fills that gap (status.RecentlyWorking).
+		if li.State = LiveState(m); li.State == "" && status.RecentlyWorking(session.UUID(m.Dir, m.Name)) {
+			li.State = "working"
 		}
 	}
 	if !alive && !session.DirExists(m.Dir) {

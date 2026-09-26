@@ -98,10 +98,10 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// here left State empty mid-turn, which the Console draws as waiting for input.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
-		// Before the conversation is adopted the DB has no opinion; fall back to the stored
-		// status, as DriveState does.
-		if li.State = LiveState(m); li.State == "" {
-			li.State = status.LiveState(session.UUID(m.Dir, m.Name))
+		// Before the conversation is adopted the DB has no opinion; only a fresh stored
+		// "working" fills that gap (status.RecentlyWorking).
+		if li.State = LiveState(m); li.State == "" && status.RecentlyWorking(session.UUID(m.Dir, m.Name)) {
+			li.State = "working"
 		}
 	}
 	// Capture on BOTH sides of alive. Alive polls adopt the UUID via the
