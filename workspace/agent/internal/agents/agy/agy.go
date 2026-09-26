@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // sids maps our deterministic slot sid to agy's conversation UUID, read back as
@@ -97,7 +98,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// here left State empty mid-turn, which the Console draws as waiting for input.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
-		li.State = LiveState(m)
+		// Before the conversation is adopted the DB has no opinion; fall back to the stored
+		// status, as DriveState does.
+		if li.State = LiveState(m); li.State == "" {
+			li.State = status.LiveState(session.UUID(m.Dir, m.Name))
+		}
 	}
 	// Capture on BOTH sides of alive. Alive polls adopt the UUID via the
 	// brain-dir diff as soon as the first prompt lands (what lights the live

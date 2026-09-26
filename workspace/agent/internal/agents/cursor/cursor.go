@@ -22,6 +22,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // sids maps our deterministic slot sid to the cursor chat UUID. Written at FRESH
@@ -72,8 +73,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// Liveness polling is where drift gets noticed (cursor has no hooks). resolveSid
 		// repairs the ledger, so later ChatID reads point at the new conversation (sid.go).
 		resolveSid(m)
-		if st := LiveState(m); st != "" {
-			li.State = st
+		// Until the kind's own source exists (right after launch or the first prompt) it has
+		// no opinion; fall back to the stored status, as DriveState does, or the row reads as
+		// waiting for input while the chat chip says working.
+		if li.State = LiveState(m); li.State == "" {
+			li.State = status.LiveState(session.UUID(m.Dir, m.Name))
 		}
 	}
 	if !alive && !session.DirExists(m.Dir) {
