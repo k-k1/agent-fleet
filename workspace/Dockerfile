@@ -686,7 +686,10 @@ COPY af-db.sh /usr/local/bin/af-db
 # アーキ変更後に利用者自身の ~/.local 導入物を同じ版で戻す（entrypoint から呼ばれる）。
 # entrypoint に埋めず別ファイルにしてあるのは、単体で走らせて検証できるようにするため。
 COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-arch-repair
+# Runs one command under one SSO profile's short-lived credentials, never the workload
+# role (issue #998). Same shape as af-db: the implementation is `workspace-agent aws-exec`.
+COPY af-aws-exec.sh /usr/local/bin/af-aws-exec
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # agent-fleet-caller.js (stamps the calling opencode session on af's MCP tools so a

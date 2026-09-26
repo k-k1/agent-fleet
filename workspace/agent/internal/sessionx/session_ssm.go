@@ -185,11 +185,22 @@ func validateSSMMeta(s session.SSMMeta) error {
 // non-secret SSM meta. Idempotent — rewritten on every (re)launch. Contains no
 // secrets (only the SSO start URL / account / role).
 func WriteSSMConfig(path string, s session.SSMMeta) error {
-	if err := validateSSMMeta(s); err != nil {
+	ini, err := RenderSSMConfig(s)
+	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
+	}
+	return os.WriteFile(path, []byte(ini), 0o600)
+}
+
+// RenderSSMConfig returns the sso-session + profile sections for s, validated. The
+// sso-session is named "af-<profile>" wherever it is written, so every file that
+// describes the same profile shares one cached SSO login.
+func RenderSSMConfig(s session.SSMMeta) (string, error) {
+	if err := validateSSMMeta(s); err != nil {
+		return "", err
 	}
 	region := s.Region
 	if region == "" {
@@ -212,7 +223,7 @@ func WriteSSMConfig(path string, s session.SSMMeta) error {
 	if region != "" {
 		fmt.Fprintf(&b, "region = %s\n", region)
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	return b.String(), nil
 }
 
 // buildSSMProgram assembles the pane command for an SSM session: refresh SSO creds

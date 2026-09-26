@@ -266,3 +266,24 @@ docs/log/115 §115.1.
 there. Decision 5 (worktrees leave the sweep) now extends to a person's delete as well: deleting a session no
 longer deletes its worktree (`MaybePruneWorktree` is gone), and deleting a worktree moves its stopped AI
 sessions to the shelf.
+
+## Addendum (2026-09-26) — the period is a user setting (#982)
+
+The seven days were a deployment env var (`AF_SESSION_STOPPED_TTL`), so neither a member nor an admin
+could move them without a redeploy. They are now a per-user choice in **Settings → Agents → Session**:
+Default / 1 / 3 / 7 / 14 / 30 days / Off, stored in ui-prefs as `sessionStoppedArchiveDays`.
+
+- **Precedence**: the setting, then `AF_SESSION_STOPPED_TTL`, then 7 days. "Default" stores 0, not 7,
+  so the env var still applies to every user who never picked a period; a value no button produces
+  reads as Default.
+- **Per user, no admin bound.** The period decides when a stopped child frees its slot (ADR 0073), but
+  that budget is per parent and belongs to the same user, so a long period only holds the user's own
+  slots. An admin ceiling would need a new CP → Agent channel and has no case yet.
+- **Off is allowed.** Decision 1 made the sweep non-destructive, so turning it off only lets the active
+  list grow. The child-budget refusal and `create_session`'s description then stop promising that a
+  stopped child frees its slot on its own.
+- **Live.** `session.StoppedTTL()` is read on every list, so a change applies on the next list with no
+  Agent restart. Shortening it moves the rows already past the new period to the shelf at once; the
+  Settings note says so. Decision 4 (a locked row is exempt) is unchanged.
+- Decision 6 now reads the figure off the setting: the refusal, the guide rows (ref/limits,
+  admin/02-limits) and the member guide name where it is changed.

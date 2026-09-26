@@ -151,6 +151,13 @@ export const settings = {
 
   // --- エージェント設定（features/settings/AgentsTab.tsx）---
   "agents.session": "セッション",
+  "agents.stopped_archive": "停止中セッションのアーカイブ",
+  "agents.stopped_archive_default": "既定",
+  "agents.stopped_archive_days_one": "{count} 日",
+  "agents.stopped_archive_days_other": "{count} 日",
+  "agents.stopped_archive_never": "しない",
+  "agents.note_stopped_archive":
+    "停止したままのセッションが一覧に残る期間です。過ぎるとアーカイブへ移ります。削除はされず、アーカイブからいつでも戻せます。削除ロック中のセッションは一覧に残ります。停止したままの子セッションはそれまで枠を持ち続け、「しない」ではアーカイブか削除をするまで持ち続けます。反映は次の一覧更新からで、短くすると新しい期間を過ぎているセッションはその場でまとめてアーカイブへ移ります。「既定」は配備の設定値で、配備で変えていなければ 7 日です。",
   "agents.peer_messaging": "セッション間メッセージ",
   "agents.note_peer_messaging":
     "セッションが、同じワークスペースの別のセッションへ短いメッセージを送れるようにします。停止中の相手は再開して届き、受け取った側には「利用者の指示ではない」と伝わります。反映は次に起動するセッションから。既定 OFF。",

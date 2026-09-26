@@ -161,7 +161,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	ttl := session.StoppedTTL()
+	ttl, autoArchive := session.StoppedTTL()
 	sessions := []session.Session{}
 	for name, m := range metas {
 		if m.Archived {
@@ -227,7 +227,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 				reason, code, signal = e.Reason, e.Code, e.Signal
 			}
 			fleetgraph.RecordDeath(name, reason, code, signal)
-		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl && !m.Locked {
+		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && autoArchive && now.Sub(t) > ttl && !m.Locked {
 			// The TTL MOVES the row to the shelf; it never deletes (ADR 0097). Deleting here
 			// reclaimed nothing — the transcript jsonl and the per-session side files are keyed
 			// off the meta and outlive it — so all it bought was an unrecoverable removal no

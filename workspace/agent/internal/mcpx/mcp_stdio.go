@@ -912,6 +912,16 @@ func memoWriteAllowed() bool {
 	return writeEnabled() || selfReportOnly()
 }
 
+// stoppedChildExpiryClause is the part of create_session's limits sentence that promises a
+// stopped child frees its slot by itself. Only true while auto-archive is on: with the user's
+// setting at "off" the promise would have a caller wait for a slot that never comes back.
+func stoppedChildExpiryClause() string {
+	if _, ok := session.StoppedTTL(); ok {
+		return ", or when one you left stopped expires"
+	}
+	return ""
+}
+
 // mcpStdioFleetSpawnTools — the ten session-steering tools, advertised only under
 // `--self-report --fleet-spawn` (ADR 0073). Written out here rather than reused from the
 // operator's list for the reasons in mcpStdioFleetObserveTools: the operator's text is Japanese
@@ -934,7 +944,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"It starts in a NEW worktree by default, so it never shares your working copy; pass " +
 				"worktree=false only for a directory nobody is working in. " +
 				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit()) + " children at a time (a slot frees when the user deletes or " +
-				"archives that child, or when one you left stopped expires - list_child_sessions shows what " +
+				"archives that child" + stoppedChildExpiryClause() + " - list_child_sessions shows what " +
 				"you have), a session you started cannot start its own, and shell sessions cannot be started " +
 				"from here. " +
 				"You are NOT told when it finishes: poll get_session_status, or leave report_back on and it " +
