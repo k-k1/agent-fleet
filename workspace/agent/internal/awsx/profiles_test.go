@@ -635,19 +635,29 @@ func TestSyncCoolsDownAfterAnUnreachableCP(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("AF_CP_BASE_URL", srv.URL)
 	for i := 0; i < 3; i++ {
-		if _, err := Sync(); err == nil {
+		if _, err := syncProfiles(true); err == nil {
 			t.Fatal("expected the CP to be unreachable")
 		}
 	}
 	if n := hits.Load(); n != 1 {
-		t.Fatalf("the CP was asked %d times within the cooldown, want 1", n)
+		t.Fatalf("the poll asked the CP %d times within the cooldown, want 1", n)
+	}
+	// An explicit run (af-aws-exec) always asks, cooldown or not: right after the CP
+	// recovers, a Settings change must not be answered from the older cache.
+	up.Store(true)
+	if res, err := Sync(); err != nil || !res.Fetched || hits.Load() != 2 {
+		t.Fatalf("explicit run within the cooldown: %+v %v hits=%d", res, err, hits.Load())
+	}
+	up.Store(false)
+	if _, err := syncProfiles(true); err == nil {
+		t.Fatal("expected the CP to be unreachable again")
 	}
 	old := time.Now().Add(-unreachableCooldown - time.Second)
 	if err := os.Chtimes(unreachablePath(), old, old); err != nil {
 		t.Fatal(err)
 	}
 	up.Store(true)
-	if _, err := Sync(); err != nil || hits.Load() != 2 {
+	if _, err := syncProfiles(true); err != nil || hits.Load() != 4 {
 		t.Fatalf("after the cooldown: err = %v, hits = %d", err, hits.Load())
 	}
 	if _, err := os.Stat(unreachablePath()); !os.IsNotExist(err) {
@@ -712,5 +722,33 @@ func TestSyncRemovesTheOldCacheFile(t *testing.T) {
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatal("the old cache file is still there")
+	}
+}
+
+// Reusing another run's answer needs proof that a fetch happened while this run waited
+// (the cache generation changed); a cache whose mtime is in the future (a clock step, a
+// restore) must not stop every run from asking the CP.
+func TestAFutureCacheMtimeDoesNotSkipTheFetch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"profiles":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
+	if err := saveSettingsCache([]Profile{prof("prod")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(24 * time.Hour)
+	if err := os.Chtimes(settingsCachePath(), future, future); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 2; i++ {
+		if res, err := Sync(); err != nil || len(res.Settings) != 0 || hits.Load() != int32(i) {
+			t.Fatalf("run %d: %+v %v hits=%d", i, res, err, hits.Load())
+		}
 	}
 }

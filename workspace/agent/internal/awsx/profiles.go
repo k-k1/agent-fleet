@@ -12,6 +12,7 @@
 package awsx
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -139,7 +140,13 @@ func Fetch() ([]Profile, []Conflict, error) {
 // CP gave (the cache) under today's rules, so a CP blip never takes a working profile
 // away, though a profile the files now break (a new [DEFAULT] line, say) is held back
 // offline just as it would be online. Without a cache the block is left as it is.
-func Sync() (SyncResult, error) {
+func Sync() (SyncResult, error) { return syncProfiles(false) }
+
+// syncProfiles is Sync; background (the poll) is the only caller that honours the
+// cooldown after an unreachable CP. An explicit run (af-aws-exec, --list) always asks
+// the CP: right after it recovers, a Settings change must be seen at once, not after the
+// cooldown with the old cache standing in for Settings.
+func syncProfiles(background bool) (SyncResult, error) {
 	if os.Getenv("AF_CP_BASE_URL") == "" || os.Getenv("AF_AWS_PROFILES_TOKEN") == "" {
 		return SyncResult{}, ErrBridgeOff
 	}
@@ -147,7 +154,7 @@ func Sync() (SyncResult, error) {
 	// (the CP's answer, or the cache when the CP cannot be asked), saving the cache and
 	// writing the block. Otherwise two runs can commit out of order: one that fetched
 	// (or read the cache) earlier could write its older list after a newer one.
-	waitStart := time.Now()
+	genBefore := cacheGeneration()
 	unlock, target, lerr := lockConfig(ConfigPath())
 	if lerr != nil {
 		return SyncResult{}, lerr
@@ -155,8 +162,10 @@ func Sync() (SyncResult, error) {
 	defer unlock()
 	// Another run that held the lock while this one waited has just asked the CP and
 	// cached the answer: use it rather than asking again, so parallel af-aws-exec runs
-	// (make -j8) share one fetch instead of queueing one each.
-	if fi, serr := os.Stat(settingsCachePath()); serr == nil && fi.ModTime().After(waitStart) {
+	// (make -j8) share one fetch instead of queueing one each. "Just" is proved by the
+	// cache's generation changing between before and after the lock (a fresh random id
+	// per successful fetch), never by clocks or mtimes.
+	if gen := cacheGeneration(); gen != "" && gen != genBefore {
 		if cached, cconf, ok := cachedList(); ok {
 			res, aerr := applyLocked(ConfigPath(), target, cached)
 			res.Settings = map[string]Profile{}
@@ -167,7 +176,7 @@ func Sync() (SyncResult, error) {
 			return res, aerr
 		}
 	}
-	ps, conflicts, err := fetchUnlessCoolingDown()
+	ps, conflicts, err := fetchUnlessCoolingDown(background)
 	if err != nil {
 		// The CP cannot be asked: re-apply the last list it gave, so the block follows
 		// what the files say now (a [DEFAULT] line added since, a profile of the
@@ -556,7 +565,7 @@ func StartSync() {
 }
 
 func syncAndLog(why string) {
-	res, err := Sync()
+	res, err := syncProfiles(true)
 	switch {
 	case errors.Is(err, ErrBridgeOff):
 		return
@@ -626,6 +635,8 @@ func settingsCachePath() string {
 }
 
 type settingsCache struct {
+	// Gen is a fresh random id per successful fetch; see syncProfiles.
+	Gen string `json:"gen"`
 	// Owner is a digest of the bridge token the list was fetched with. The token is
 	// per membership, so a cache left in a restored or shared home by another membership
 	// is never applied here.
@@ -644,15 +655,19 @@ func cacheOwner() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// saveSettingsCache writes the cache with a new generation every time, even for an
+// unchanged list: the generation is how a run that waited for the lock knows a fetch
+// just happened.
 func saveSettingsCache(ps []Profile, conflicts []Conflict) error {
-	b, err := json.Marshal(settingsCache{Owner: cacheOwner(), Profiles: ps, Conflicts: conflicts})
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	b, err := json.Marshal(settingsCache{Gen: hex.EncodeToString(nonce[:]), Owner: cacheOwner(), Profiles: ps, Conflicts: conflicts})
 	if err != nil {
 		return err
 	}
 	path := settingsCachePath()
-	if old, rerr := os.ReadFile(path); rerr == nil && string(old) == string(b) {
-		return nil
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -673,8 +688,9 @@ func cachedList() ([]Profile, []Conflict, bool) {
 	return c.Profiles, c.Conflicts, true
 }
 
-// CachedSettings returns the list saved by the last successful sync, for when the CP
-// cannot be asked now; ok is false when there is none.
+// CachedSettings returns the last list the CP gave (saved whenever a fetch succeeds, even
+// if writing the block then failed), for when the CP cannot be asked now; ok is false
+// when there is none for this membership.
 func CachedSettings() (map[string]Profile, []Conflict, bool) {
 	ps, conflicts, ok := cachedList()
 	if !ok {
@@ -693,18 +709,18 @@ func DescribeProfile(name string) (account, role string) {
 	return k["sso_account_id"], k["sso_role_name"]
 }
 
-// unreachableCooldown is how long after a failed fetch Sync goes straight to the cache.
-// The fetch runs under the config lock with a 10 s timeout, so while the CP is down every
-// af-aws-exec and the poll would otherwise wait out a full timeout each, one after the
-// other. Short enough that an edit in Settings is picked up soon after the CP is back.
+// unreachableCooldown is how long after a failed fetch the background poll goes straight
+// to the cache instead of spending the 10 s fetch timeout under the config lock, where
+// an af-aws-exec would queue behind it. Explicit runs never skip the fetch.
 const unreachableCooldown = 30 * time.Second
 
 func unreachablePath() string { return filepath.Join(paths.AgentStateDir(), "aws-cp-unreachable") }
 
-// fetchUnlessCoolingDown is Fetch, except within unreachableCooldown of a failed fetch it
-// reports the CP unreachable without asking. The caller holds the config lock.
-func fetchUnlessCoolingDown() ([]Profile, []Conflict, error) {
-	if fi, err := os.Stat(unreachablePath()); err == nil && time.Since(fi.ModTime()) < unreachableCooldown {
+// fetchUnlessCoolingDown is Fetch, except that for the background poll within
+// unreachableCooldown of a failed fetch it reports the CP unreachable without asking. The
+// caller holds the config lock.
+func fetchUnlessCoolingDown(background bool) ([]Profile, []Conflict, error) {
+	if fi, err := os.Stat(unreachablePath()); background && err == nil && time.Since(fi.ModTime()) < unreachableCooldown {
 		return nil, nil, fmt.Errorf("the CP was unreachable %s ago; not asking again yet", time.Since(fi.ModTime()).Round(time.Second))
 	}
 	ps, conflicts, err := Fetch()
@@ -718,4 +734,18 @@ func fetchUnlessCoolingDown() ([]Profile, []Conflict, error) {
 	}
 	_ = os.Remove(unreachablePath())
 	return ps, conflicts, nil
+}
+
+// cacheGeneration is the cache's generation id, or "" when there is no cache for this
+// membership.
+func cacheGeneration() string {
+	b, err := os.ReadFile(settingsCachePath())
+	if err != nil {
+		return ""
+	}
+	var c settingsCache
+	if json.Unmarshal(b, &c) != nil || c.Owner == "" || c.Owner != cacheOwner() {
+		return ""
+	}
+	return c.Gen
 }
