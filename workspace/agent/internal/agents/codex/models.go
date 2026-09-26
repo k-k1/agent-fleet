@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 var modelsMu sync.Mutex
 var modelsAt time.Time
 var modelsList []agents.ModelChoice
+var modelsRetiring map[string]bool
 
 func Models() []agents.ModelChoice {
 	modelsMu.Lock()
@@ -43,8 +45,41 @@ func Models() []agents.ModelChoice {
 		return modelsList
 	}
 	modelsList = list
+	modelsRetiring = parseRetiring(out)
 	modelsAt = time.Now()
 	return modelsList
+}
+
+// Retiring reports whether the catalog carries an `upgrade` for id — codex's own notice that
+// the model is being retired ("GPT-5.5 retires on October 14, 2026. Switch to GPT-5.6 Sol").
+// It stays in the picker (a member may still choose it until then), but is never what AF
+// recommends (Issue #972). Answers from the last Models() read; false before the first one.
+func Retiring(id string) bool {
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	return modelsRetiring[id]
+}
+
+// parseRetiring collects the slugs whose catalog entry names an upgrade target. Kept apart
+// from parseCatalog so the picker's ModelChoice (a wire type) does not grow a field only the
+// recommendation reads.
+func parseRetiring(b []byte) map[string]bool {
+	var doc struct {
+		Models []struct {
+			Slug    string          `json:"slug"`
+			Upgrade json.RawMessage `json:"upgrade"`
+		} `json:"models"`
+	}
+	if json.Unmarshal(b, &doc) != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, m := range doc.Models {
+		if u := strings.TrimSpace(string(m.Upgrade)); m.Slug != "" && u != "" && u != "null" {
+			out[m.Slug] = true
+		}
+	}
+	return out
 }
 
 // parseCatalog extracts the user-selectable models from a `codex debug models`

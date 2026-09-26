@@ -396,8 +396,9 @@ func ChatPersonaFor(lang string) string {
 const defaultChatModel = "claude-sonnet-5"
 
 // defaultCodexChatModel favors the high-volume Luna tier for conversational
-// assistants. Assistants that need deeper coding/reasoning can still pin gpt-5.6
-// explicitly in their template.
+// assistants. Assistants that need deeper coding/reasoning can still pin a Sol model
+// explicitly in their template. Only the fallback for when the live catalog cannot be read:
+// recommendedAssistantModel follows the newest "-luna" the catalog lists (Issue #972).
 const defaultCodexChatModel = "gpt-5.6-luna"
 
 // defaultOpencodeChatModel favors the capable general-purpose model in the
@@ -434,6 +435,9 @@ func recommendedAssistantModel(agent string) string {
 	case session.KindClaude:
 		return visibleModel(agent, "sonnet")
 	case session.KindCodex:
+		if m := newestTierModel(codexRecommendIDs(), "gpt-", "luna"); m != "" {
+			return m
+		}
 		return visibleModel(agent, defaultCodexChatModel)
 	case session.KindOpencode:
 		const goModel = "opencode-go/glm-5.2"

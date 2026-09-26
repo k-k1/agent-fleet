@@ -1771,15 +1771,28 @@ func ResolveOneShotModelCached(feature string, tier OneShotTier, kind string) (m
 func recommendedUtilityModel(kind string) string {
 	// A candidate excluded by the hidden-models setting (model_deny.go) is not auto-selected
 	// either.
+	//
+	// codex and agy follow the cheapest priced model their catalog lists (model_recommend.go),
+	// falling back to what they did before prices were read. claude needs no ranking: the
+	// "haiku" alias already moves to each new Haiku. opencode is deliberately NOT ranked: its
+	// cheapest rows are the $0 "-free" promotions, which are retired every few weeks and are a
+	// listing rather than an entitlement (see OneShotHeadlessRun's opencode branch).
 	switch kind {
 	case session.KindClaude:
 		return visibleModel(kind, "haiku")
 	case session.KindCodex:
-		return cheapOneShotModel(visibleModelIDs(kind, modelChoiceIDs(codex.Models())))
+		ids := codexRecommendIDs()
+		if m := cheapestListedModel(kind, ids); m != "" {
+			return m
+		}
+		return cheapOneShotModel(ids)
 	case session.KindOpencode:
 		const goModel = "opencode-go/deepseek-v4-flash"
 		return recommendedCatalogModel(visibleModelIDs(kind, opencode.Models()), goModel, "")
 	case session.KindAgy:
+		if m := cheapestListedModel(kind, agyRecommendIDs()); m != "" {
+			return m
+		}
 		return visibleModel(kind, defaultAgyChatModel)
 	}
 	return ""
@@ -1807,7 +1820,7 @@ func codexOneShotArgsFor(selected string) (args []string, autoPicked bool) {
 		args = append(args, "-m", selected)
 	} else if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
 		args = append(args, "-m", m) // explicit user choice: never second-guess it
-	} else if m := cheapOneShotModel(visibleModelIDs(session.KindCodex, modelChoiceIDs(codex.Models()))); m != "" {
+	} else if m := recommendedUtilityModel(session.KindCodex); m != "" {
 		args, autoPicked = append(args, "-m", m), true
 	}
 	return append(args, "-c", `model_reasoning_effort="low"`, "-"), autoPicked
@@ -2044,7 +2057,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		var args []string
 		m := selected
 		if !configured {
-			m = envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel)
+			// The same answer "recommended" gives (RecommendedModels), so a member who never
+			// opened the setting runs what the screen calls the recommendation.
+			m = envOr("AF_TITLE_MODEL_AGY", recommendedOneShotModel(kind, tier))
 		}
 		if m := agyChatModel(m, filterVisibleModels(session.KindAgy, agy.Models())); m != "" {
 			args = append(args, "--model", m)

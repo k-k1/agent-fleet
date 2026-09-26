@@ -321,6 +321,21 @@ kind, model, _ := resolveOneShot(feature, tier)
   決定 5（Y は Console が描く）を素直に伸ばすなら Console 側に推奨の解決が残るのが筋で、
   そのときは「Agent と同じ規則を 2 つ持つ」ことを引き受ける設計を別に書く必要がある。
   → Issue #972 に起票（2026-09-24）
+  🔴 **2026-09-26 追記: #972 で一本化した。「Y は Console が描く」は崩していない。**
+  Agent が推奨の **ID** を答え、Console はそれを自分のカタログの**ラベル**に当てるだけにした。
+  答えは `GET /agents/{kind}/models` の `recommended: {chat, prose, short}` に同乗させたので、
+  新しいエンドポイントもカタログ列挙も増えない（その画面は同じ応答を既に取っている）。
+  上で「繋ぐ形を決めていない」と書いた理由（feature 別 8 件と kind × tier 10 行の不一致）は、
+  feature 別のエンドポイントに繋ごうとしたから生じていた。kind ごとの一覧の応答に載せれば
+  kind × tier がそのまま出る。Console の `recommendedModelId` は削除した。
+  同時に、短文ティアの推奨を **models.dev の公表単価でいちばん安い、一覧にあるモデル**に変えた
+  （codex / agy。単価は Agent が 1 日 1 回取得する）。文章・チャットは名前の決まったティアの
+  最新版（codex は最新の `-luna`）。削除時点で、Console と Agent の推奨は 3 か所で
+  既にずれていた: muse（Console は ID 末尾だけ、Agent は説明文まで読む）、codex の文章
+  （Console は一覧に無ければ既定、Agent は確かめずに `-m`）、opencode（Console は課金ルートで
+  整形後の一覧、Agent は整形前）。加えて codex の短文は、一覧から `mini` が消えたため
+  「安い目印」の探索が何も拾わず、CLI 既定で走っていた（`gpt-6-luna` は `gpt-5.6-luna` の
+  入力半額なのに固定 ID のまま）。
 
 ## 103.12 レビューで変えたこと
 

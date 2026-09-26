@@ -197,6 +197,73 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
   return p;
 }
 
+/** What "recommended" resolves to on one kind, per tier — the Agent's own answer (the
+ *  `recommended` member of GET /agents/{kind}/models, chatx.RecommendedModels; Issue #972). ""
+ *  means the Agent passes no model, so the CLI's own default runs. */
+export interface RecommendedModels {
+  chat: string;
+  prose: string;
+  short: string;
+}
+
+function parseRecommended(v: unknown): RecommendedModels | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  const str = (x: unknown) => (typeof x === "string" ? x : "");
+  return { chat: str(r.chat), prose: str(r.prose), short: str(r.short) };
+}
+
+// Keyed by kind AND the kind's hidden-models list: hiding the recommended model moves the
+// Agent's answer (to the next cheapest, or to the CLI default), so an answer fetched under
+// another list is not this list's answer. Kept apart from fetchModels because claude has no
+// live catalog to fetch (CLAUDE_MODELS) yet still has a recommendation to ask for.
+const recommendedCache = new Map<string, RecommendedModels>();
+const recommendedInflight = new Map<string, Promise<RecommendedModels | null>>();
+
+/** Forgets every fetched recommendation. For dom tests: they mount the same kind under the same
+ *  hidden list case after case, so a module-scope answer from one case would be read back by
+ *  the next (memory: module-scope-cache-leaks-across-dom-tests). */
+export function clearRecommendedModels(): void {
+  recommendedCache.clear();
+  recommendedInflight.clear();
+}
+
+function fetchRecommended(kind: string, key: string): Promise<RecommendedModels | null> {
+  const hit = recommendedCache.get(key);
+  if (hit) return Promise.resolve(hit);
+  let p = recommendedInflight.get(key);
+  if (!p) {
+    p = requestModels(kind)
+      .then((d) => {
+        const r = parseRecommended(d?.recommended);
+        if (r) recommendedCache.set(key, r);
+        return r;
+      })
+      .finally(() => recommendedInflight.delete(key));
+    recommendedInflight.set(key, p);
+  }
+  return p;
+}
+
+// useRecommendedModels is the Agent's "recommended" for `kind` — null until it has answered
+// (or when it could not be reached), in which case a caller names no model rather than guess
+// one: the Console used to re-derive this itself (aiModelRow.tsx's recommendedModelId) and the
+// two drifted.
+export function useRecommendedModels(kind: string): RecommendedModels | null {
+  const hiddenModels = useSettings().hiddenModels;
+  const key = `${kind}|${JSON.stringify(hiddenModelsFor(hiddenModels, kind))}`;
+  const [rec, setRec] = useState<RecommendedModels | null>(() => recommendedCache.get(key) ?? null);
+  useEffect(() => {
+    let alive = true;
+    setRec(recommendedCache.get(key) ?? null);
+    void fetchRecommended(kind, key).then((r) => alive && setRec(r));
+    return () => {
+      alive = false;
+    };
+  }, [kind, key]);
+  return rec;
+}
+
 // modelProviderOf answers which company made a model, for the picker's brand mark. Read
 // straight off the fetched descriptors rather than through state: fetchModels fills them
 // before it resolves the options, so any render that can see a model in the list can see its

@@ -47,6 +47,7 @@ func init() {
 		FilterVisibleModels: sessionx.FilterVisibleModels,
 		VisibleModel:        sessionx.VisibleModel,
 		VisibleModelIDs:     sessionx.VisibleModelIDs,
+		ModelListPrice:      modelListPrice,
 
 		AssistantDeps:          assistantDeps,
 		EnsureBuiltinKnowledge: ensureBuiltinKnowledge,

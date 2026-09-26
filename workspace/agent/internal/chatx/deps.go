@@ -70,6 +70,10 @@ type Deps struct {
 	FilterVisibleModels func(kind string, list []agents.ModelChoice) []agents.ModelChoice
 	VisibleModel        func(kind, model string) string
 	VisibleModelIDs     func(kind string, ids []string) []string
+	// ModelListPrice is a comparable list price for one short one-shot on kind's billing route
+	// (model_recommend_price.go): ok=false when the catalog has no price for the id, or marks
+	// it deprecated. What recommendedUtilityModel ranks the live catalog by (Issue #972).
+	ModelListPrice func(kind, model string) (float64, bool)
 
 	// --- assistants.go (the //go:embed and the DI construction point stay in main) ---
 	AssistantDeps          func() assistants.Deps

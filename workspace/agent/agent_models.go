@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -200,6 +201,13 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		list[i].Provider = resolveModelProvider(r.PathValue("kind"), list[i].ID)
 	}
 	out := map[string]any{"models": list}
+	// What "recommended" resolves to on this kind, per tier (Issue #972) — the Agent's own
+	// answer, so the Console's "推奨（現在: X）" names the model that actually runs instead of
+	// re-deriving it. Only the kinds the assistant and AI assist can run; the rest have no
+	// "recommended" choice to explain.
+	if _, ok := chatx.ChatProviders[r.PathValue("kind")]; ok {
+		out["recommended"] = chatx.RecommendedModels(r.PathValue("kind"))
+	}
 	if route != "" {
 		out["route"] = route
 	}

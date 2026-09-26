@@ -101,6 +101,7 @@ func testDeps() Deps {
 		FilterVisibleModels: func(_ string, list []agents.ModelChoice) []agents.ModelChoice { return list },
 		VisibleModel:        func(_, model string) string { return model },
 		VisibleModelIDs:     func(_ string, ids []string) []string { return ids },
+		ModelListPrice:      func(kind, model string) (float64, bool) { return testModelListPrice(kind, model) },
 
 		AssistantDeps: func() assistants.Deps {
 			return assistants.NewDeps(func() string { return "" }, func() string { return "" }, func() string { return session.KindClaude })
@@ -212,7 +213,24 @@ func modelPrefForTest(key, kind string) (string, bool) {
 	return v, ok
 }
 
-func init() { Configure(testDeps()) }
+func init() {
+	Configure(testDeps())
+	// No test reaches a real CLI through the recommendation rules; the ones that need a
+	// catalog set it (model_recommend_test.go).
+	codexModels = func() []agents.ModelChoice { return nil }
+	codexRetiring = func(string) bool { return false }
+	agyModels = func() []agents.ModelChoice { return nil }
+	museSafeDefault = func() string { return "" }
+}
+
+// testPrices is what testModelListPrice answers, keyed "kind/model". Empty by default: no
+// prices, so every rule takes its fallback exactly as a workspace with no catalog does.
+var testPrices = map[string]float64{}
+
+func testModelListPrice(kind, model string) (float64, bool) {
+	p, ok := testPrices[kind+"/"+model]
+	return p, ok
+}
 
 // TestConfigureRejectsEveryMissingField drops one field at a time and checks that Configure
 // panics, for every field. A hand-written check grows a hole the moment a field is added

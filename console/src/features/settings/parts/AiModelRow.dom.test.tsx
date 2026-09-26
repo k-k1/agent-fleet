@@ -1,15 +1,15 @@
-// useResolvedModelLabel — 103-impl-review (a): the recommended label used to fall back to the
-// RAW recommended id when hidden models excluded it from the visible catalog (`|| recommended`
-// in aiModelRow.tsx), so a user who hid "haiku" saw "推奨（現在: haiku）" for a feature that
-// actually falls through to the CLI default (chat_providers.go's recommendedUtilityModel /
-// visibleModel). This pins the fix: a hidden recommendation resolves to ui.default instead.
+// useResolvedModelLabel — what "推奨（現在: X）" names. X is the Agent's own answer (the
+// `recommended` member of GET /agents/{kind}/models — Issue #972); the Console used to re-derive
+// it (recommendedModelId) and the two drifted. These pin that the label follows the Agent, never
+// a rule of its own, plus 103-impl-review (a): a recommendation the user hid resolves to
+// ui.default, which is what runs.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { t } from "../../../lib/i18n/index.ts";
 import { useResolvedModelLabel } from "./aiModelRow.tsx";
+import { clearRecommendedModels } from "../../../lib/agentModels.ts";
 
-// muse's catalogue is fetched (isDynamic), unlike claude's built-in list.
 const apiMock = vi.fn();
 vi.mock("../../../core/api/client.ts", () => ({
   api: (...a: unknown[]) => apiMock(...a),
@@ -40,8 +40,8 @@ async function render(value: string | undefined, Component = Probe): Promise<voi
   await act(async () => {
     root!.render(<Component value={value} />);
   });
-  // The muse catalogue arrives through a fetch, so let the promise chain and the effect it
-  // schedules settle before reading the label.
+  // The recommendation (and muse's catalogue) arrive through a fetch, so let the promise chain
+  // and the effect it schedules settle before reading the label.
   for (let i = 0; i < 5; i++) {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
@@ -49,17 +49,26 @@ async function render(value: string | undefined, Component = Probe): Promise<voi
   }
 }
 
+// What the Agent answers per kind. claude's list is the Console's own (CLAUDE_MODELS), so its
+// response is read for `recommended` only; muse's is a live catalogue.
+let agentAnswers: Record<string, unknown> = {};
+
 beforeEach(() => {
   localStorage.clear();
   setSetting("hiddenModels", {});
-  // Ordered contributor-FIRST on purpose: the rule is the suffix, not the position, and a
-  // recommendation that just took the catalogue's first row would pass with the real order.
-  apiMock.mockReset().mockResolvedValue({
-    models: [
-      { id: "muse-spark-1.3-contributor", label: "muse-spark-1.3-contributor" },
-      { id: "muse-spark-1.3", label: "muse-spark-1.3" },
-      { id: "muse-spark-1.2", label: "muse-spark-1.2" },
-    ],
+  agentAnswers = {
+    claude: { models: [], recommended: { chat: "sonnet", prose: "sonnet", short: "haiku" } },
+    muse: {
+      models: [
+        { id: "muse-spark-1.3-contributor", label: "muse-spark-1.3-contributor" },
+        { id: "muse-spark-1.3", label: "Muse Spark 1.3" },
+      ],
+      recommended: { chat: "muse-spark-1.3", prose: "", short: "" },
+    },
+  };
+  apiMock.mockReset().mockImplementation(async (p: string) => {
+    const kind = /^api\/agents\/([^/]+)\/models$/.exec(p)?.[1];
+    return kind ? (agentAnswers[kind] ?? null) : null;
   });
 });
 
@@ -67,6 +76,7 @@ afterEach(() => {
   act(() => root?.unmount());
   host.remove();
   root = null;
+  clearRecommendedModels();
 });
 
 describe("useResolvedModelLabel", () => {
@@ -77,11 +87,46 @@ describe("useResolvedModelLabel", () => {
 
   it("falls back to the CLI default when the recommended model is hidden, not the raw id", async () => {
     setSetting("hiddenModels", { claude: ["haiku"] });
+    // An answer the Agent gave before it saw the new hidden list: the label must not trust it.
     await render(undefined);
     // Must NOT read "推奨（現在: haiku）" — that is the exact bug: showing an excluded id as if
     // it would run, when the Agent's own visibleModel() falls through to the CLI default here.
     expect(host.textContent).not.toContain("haiku");
     expect(host.textContent).toBe(t("assistant.recommended_now", { model: t("ui.default") }));
+  });
+
+  it("names whatever the Agent recommends — the Console has no rule of its own", async () => {
+    // A model no rule in the Console could have produced: only the Agent's answer can put it here.
+    agentAnswers.claude = { models: [], recommended: { chat: "opus", prose: "opus", short: "claude-haiku-5-5" } };
+    await render(undefined);
+    expect(host.textContent).toBe(t("assistant.recommended_now", { model: "claude-haiku-5-5" }));
+  });
+
+  it("reads an empty recommendation as the CLI default", async () => {
+    agentAnswers.claude = { models: [], recommended: { chat: "", prose: "", short: "" } };
+    await render(undefined);
+    expect(host.textContent).toBe(t("assistant.recommended_now", { model: t("ui.default") }));
+  });
+
+  it("names no model while the Agent cannot be asked, rather than guess one", async () => {
+    agentAnswers = {};
+    await render(undefined);
+    expect(host.textContent).toBe(t("assistant.recommended"));
+  });
+
+  it("asks again when the hidden list changes, and shows the Agent's new answer", async () => {
+    await render(undefined);
+    expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Haiku" }));
+    agentAnswers.claude = { models: [], recommended: { chat: "sonnet", prose: "sonnet", short: "sonnet" } };
+    await act(async () => {
+      setSetting("hiddenModels", { claude: ["haiku"] });
+    });
+    for (let i = 0; i < 5; i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
+    expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Sonnet" }));
   });
 
   it("resolves an explicitly configured model to its own catalog label", async () => {
@@ -101,14 +146,13 @@ describe("useResolvedModelLabel", () => {
 });
 
 // ADR 0095 decision 6 clamp 8 / P2-21. Muse Code's catalogue carries a "-contributor" twin of
-// every model — same model, same price, except that the vendor may use those conversations to
-// improve the product — and it is the host's own default. Measured with a real turn: an exec
-// with no --model was recorded against muse-spark-1.3-contributor. The Agent resolves the safe
-// row for itself (muse.SafeDefaultExecModel); this is the label that has to agree with it.
+// every model and it is the host's own default. The Agent resolves the safe row
+// (muse.SafeDefaultExecModel, reading descriptions as well as ids); the label draws that answer
+// with the catalogue's own label.
 describe("useResolvedModelLabel for muse", () => {
-  it("recommends the newest model WITHOUT the product-improvement clause", async () => {
+  it("names the Agent's safe default with its catalogue label", async () => {
     await render(undefined, MuseProbe);
-    expect(host.textContent).toBe(t("assistant.recommended_now", { model: "muse-spark-1.3" }));
+    expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Muse Spark 1.3" }));
     expect(host.textContent).not.toContain("contributor");
   });
 

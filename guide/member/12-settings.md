@@ -159,8 +159,11 @@ the assistant conversation — they share an implementation, but they surface so
 - **Agent priority** — the CLI order used for assistance, ranked separately from the assistant. The chat wants
   the strongest model; assistance runs constantly and wants the cheapest one that works.
 - **Model for short labels** / **Model for prose** — short covers titles, branch names and reply suggestions;
-  prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults (a
-  lightweight model for short labels, one tier up for prose).
+  prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults.
+  "Recommended" for short labels is **the model with the lowest models.dev list price** among the ones that CLI
+  lists (codex and agy — a cheaper model that ships is picked up on its own); for prose it is a fixed tier one step
+  up. Without prices it falls back to the previous defaults. "Recommended (currently: …)" shows what it resolves
+  to right now.
 - **Features that use AI assistance** — one card per feature (8 in total). Turning one off hides its button
   entirely and folds away that card's agent/model rows.
   - **Session title suggestion** — the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
@@ -327,8 +330,8 @@ scale.
   what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read
   "—" (only claude's auxiliary calls return one). The measured figure is still there: hover the amount and it is
   shown alongside — never added to the estimate.
-- Rates come from a built-in table for Anthropic and from the **models.dev price catalog** (read from the copy
-  opencode keeps) for everything else. **Hover an amount to see which rate was used and where it came from.**
+- Rates come from a built-in table for Anthropic and from the **models.dev price catalog** for everything else.
+  The Agent fetches that catalog once a day (where it cannot, it reads the copy opencode keeps). **Hover an amount to see which rate was used and where it came from.**
   Consumption that went through opencode is priced at opencode's own rates — that is closer to what you actually pay.
 - Models missing from the catalog too are **not** estimated. That consumption is reported under "what is
   measurable" as "N% of the consumption runs on models with no price on file" — which is not an amount of 0.

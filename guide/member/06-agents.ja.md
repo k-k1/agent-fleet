@@ -113,7 +113,7 @@ WSバーの使用量チップはアカウント単位の残量枠がある場合
 
 **アシスタントチャットの既定モデル** — 各アシスタントで個別にモデルを指定でき、claude の
 既定はデプロイ全体で `AF_CHAT_MODEL` でも変更できます。会話用途のため高速・低コストの
-ティアを既定にしています: claude → Sonnet 5 · codex → `gpt-5.6-luna` · opencode →
+ティアを既定にしています: claude → Sonnet 5 · codex → 一覧にある最新の Luna（執筆時点で `gpt-6-luna`） · opencode →
 `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash · cursor → Cursor 自身の既定
 （Auto）。なお cursor のアシスタントは**読み取り専用**（`--mode ask`）です。kiro は
 アシスタントチャットとしては**利用できません**（headless チャットを持たないため）。

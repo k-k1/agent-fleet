@@ -265,6 +265,11 @@ func serve() {
 	// else waits on it; a deployment with no engines answers 404 and this is a no-op.
 	go syncEngineProviders()
 
+	// The Agent's own daily copy of the models.dev price catalog (Issue #972): the usage
+	// estimates and the cheapest-model recommendation read it even where opencode never ran.
+	// Best-effort and in the background; AF_MODELS_DEV_URL=off turns it off.
+	startModelsDevRefresh()
+
 	// Chat-bridge delivery loop (docs/log/37 P1): drains the on-disk queue that
 	// notice.Put / record-exit enqueue into (possibly from hook subprocesses)
 	// and pushes to the configured chat providers (Discord first).

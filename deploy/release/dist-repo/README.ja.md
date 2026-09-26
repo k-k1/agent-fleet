@@ -171,7 +171,7 @@ opencode（各自のプロバイダ API キー）・Cursor・Kiro にはその�
 デプロイ全体で `AF_CHAT_MODEL` でも変更できます。指定しなければ、会話用途に合う高速・
 低コストのティアを接続中のカタログから選ぶ「推奨」が使われます（設定画面に、そのとき
 何に解決されているかが表示されます。執筆時点では Claude → Sonnet 5 · Codex →
-`gpt-5.6-luna` · Antigravity → Gemini 3.5 Flash · Cursor → Cursor 自身の既定（Auto））。
+`gpt-6-luna` · Antigravity → Gemini 3.5 Flash · Cursor → Cursor 自身の既定（Auto））。
 なお Cursor のアシスタントは**読み取り専用**（`--mode ask`）です。
 Kiro はアシスタントチャットとしては**利用できません**（headless チャットを持たないため）。
 

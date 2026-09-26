@@ -17,10 +17,12 @@ vi.mock("../../../core/api/client.ts", () => ({
   api: (...a: unknown[]) => apiMock(...a),
   apiJSON: vi.fn(),
   raw: vi.fn(async () => new Response("")),
+  isTransientErr: () => false,
 }));
 
 const { AiAssistTab } = await import("./AiAssistTab.tsx");
 const { setSetting } = await import("../../../lib/settings.ts");
+const { clearRecommendedModels } = await import("../../../lib/agentModels.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -55,6 +57,7 @@ afterEach(() => {
   act(() => root?.unmount());
   host.remove();
   root = null;
+  clearRecommendedModels();
 });
 
 describe("AiAssistTab per-feature cards", () => {
