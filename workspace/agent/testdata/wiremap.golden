@@ -167,7 +167,7 @@ internal/sessionx/session_files.go HandleSessionCommittedFiles x1 {committed,rep
 internal/sessionx/session_handlers.go HandleArchiveSession x1 {archived}
 internal/sessionx/session_handlers.go HandleIdempotencyLookup x1 {status}
 internal/sessionx/session_handlers.go HandleListArchived x1 {sessions}
-internal/sessionx/session_handlers.go HandleListSessions x1 {repoJobs,sessions}
+internal/sessionx/session_handlers.go HandleListSessions x1 {imageJobs,repoJobs,sessions}
 internal/sessionx/session_handlers.go HandleSessionCatalog x1 {sessions}
 internal/sessionx/session_handlers.go HandleStopSession x1 {archive,deleted,stopped}
 internal/sessionx/session_handlers.go HandleStopSession x1 {stopped}

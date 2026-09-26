@@ -60,6 +60,12 @@ type Deps struct {
 	IsSvnRepo       func(dir string) bool
 	RepoJobsRunning func() int
 
+	// --- Image jobs (internal/imagegen) ---
+	//
+	// Queued or running image jobs keep the workspace awake the same way an import does; the
+	// count rides the session list because that is what the CP's reaper reads.
+	ImageJobsActive func() int
+
 	// --- Closing the usage ledger (usage_fold.go) ---
 	//
 	// Stopping or deleting a session closes its usage ledger. usage_fold.go stays in main:
@@ -205,6 +211,8 @@ func maxUploadBytes() int64 { return deps.MaxUploadBytes() }
 func isSvnRepo(dir string) bool { return deps.IsSvnRepo(dir) }
 
 func repoJobsRunning() int { return deps.RepoJobsRunning() }
+
+func imageJobsActive() int { return deps.ImageJobsActive() }
 
 func removeTerminalHistory(name string) { deps.RemoveTerminalHistory(name) }
 
