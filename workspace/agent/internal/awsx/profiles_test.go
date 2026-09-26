@@ -451,3 +451,42 @@ func TestApplyReportsAnUnwritableValueBeforeADEFAULTClash(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 }
+
+// The cache belongs to the membership whose bridge token fetched it: another token (a
+// restored or shared home) never gets it applied. And the CP's latest answer is cached
+// even when the block could not be written, so a later offline run does not fall back
+// to an older list.
+func TestSettingsCacheIsBoundAndAlwaysLatest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	answer := `{"profiles":[{"name":"prod","label":"prod","startUrl":"https://example.awsapps.com/start","ssoRegion":"ap-northeast-1","accountId":"111111111111","roleName":"Dev"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(answer)) }))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member-a")
+	if _, err := Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if m, _, ok := CachedSettings(); !ok || m["prod"].AccountID != "111111111111" {
+		t.Fatalf("own cache: %v %v", m, ok)
+	}
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member-b")
+	if _, _, ok := CachedSettings(); ok {
+		t.Fatal("another membership's cache was accepted")
+	}
+
+	// The CP now says account 222…, but the block cannot be written (a half block).
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member-a")
+	answer = strings.Replace(answer, "111111111111", "222222222222", 1)
+	path := filepath.Join(home, ".aws", "config")
+	b, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, []byte(string(b)[:strings.Index(string(b), blockEnd)]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Sync(); err == nil {
+		t.Fatal("expected the half block to fail the write")
+	}
+	if m, _, _ := CachedSettings(); m["prod"].AccountID != "222222222222" {
+		t.Fatalf("the cache kept the older answer: %v", m)
+	}
+}

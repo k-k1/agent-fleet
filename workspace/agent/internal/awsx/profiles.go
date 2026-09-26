@@ -12,6 +12,8 @@
 package awsx
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,9 +167,9 @@ func Sync() (SyncResult, error) {
 	}
 	res.Conflicts = conflicts
 	res.Fetched = true
-	if err == nil {
-		saveSettingsCache(ps, conflicts)
-	}
+	// Saved even when the block could not be written: it is the CP's latest answer, and
+	// a later offline run must not fall back to an older one.
+	saveSettingsCache(ps, conflicts)
 	return res, err
 }
 
@@ -509,6 +511,8 @@ func syncAndLog(why string) {
 	switch {
 	case errors.Is(err, ErrBridgeOff):
 		return
+	case err != nil && res.FromCache:
+		log.Printf("aws profiles sync (%s): %v; re-applied the last list from Settings", why, err)
 	case err != nil:
 		log.Printf("aws profiles sync (%s): %v (keeping ~/.aws/config as is)", why, err)
 		return
@@ -570,12 +574,26 @@ func settingsCachePath() string {
 }
 
 type settingsCache struct {
+	// Owner is a digest of the bridge token the list was fetched with. The token is
+	// per membership, so a cache left in a restored or shared home by another membership
+	// is never applied here.
+	Owner     string     `json:"owner"`
 	Profiles  []Profile  `json:"profiles"`
 	Conflicts []Conflict `json:"conflicts,omitempty"`
 }
 
+// cacheOwner is the digest the cache is bound to ("" when there is no bridge token).
+func cacheOwner() string {
+	tok := os.Getenv("AF_AWS_PROFILES_TOKEN")
+	if tok == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("af-aws-profiles-cache/v1\x00" + tok))
+	return hex.EncodeToString(sum[:])
+}
+
 func saveSettingsCache(ps []Profile, conflicts []Conflict) {
-	b, err := json.Marshal(settingsCache{Profiles: ps, Conflicts: conflicts})
+	b, err := json.Marshal(settingsCache{Owner: cacheOwner(), Profiles: ps, Conflicts: conflicts})
 	if err != nil {
 		return
 	}
@@ -593,7 +611,7 @@ func cachedList() ([]Profile, []Conflict, bool) {
 		return nil, nil, false
 	}
 	var c settingsCache
-	if json.Unmarshal(b, &c) != nil {
+	if json.Unmarshal(b, &c) != nil || c.Owner == "" || c.Owner != cacheOwner() {
 		return nil, nil, false
 	}
 	return c.Profiles, c.Conflicts, true
@@ -602,19 +620,15 @@ func cachedList() ([]Profile, []Conflict, bool) {
 // CachedSettings returns the list saved by the last successful sync, for when the CP
 // cannot be asked now; ok is false when there is none.
 func CachedSettings() (map[string]Profile, []Conflict, bool) {
-	b, err := os.ReadFile(settingsCachePath())
-	if err != nil {
-		return nil, nil, false
-	}
-	var c settingsCache
-	if json.Unmarshal(b, &c) != nil {
+	ps, conflicts, ok := cachedList()
+	if !ok {
 		return nil, nil, false
 	}
 	m := map[string]Profile{}
-	for _, p := range c.Profiles {
+	for _, p := range ps {
 		m[p.Name] = p
 	}
-	return m, c.Conflicts, true
+	return m, conflicts, true
 }
 
 // DescribeProfile returns the SSO account and role the member's AWS files give name.
