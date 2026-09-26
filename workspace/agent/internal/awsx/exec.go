@@ -347,9 +347,9 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if err := checkAmbiguous(o); err != nil {
 		return "", nil, nil, err
 	}
-	if kv, ok := o.DefaultClash[o.Profile]; ok && len(keys) == 0 {
-		return "", nil, nil, fmt.Errorf("profile %q is not exported: [DEFAULT] %s in ~/.aws/config differs from it, and the AWS CLI "+
-			"refuses a profile whose value differs from its sso-session's; remove that line from [DEFAULT]", o.Profile, kv)
+	if reason, ok := o.DefaultClash[o.Profile]; ok && len(keys) == 0 {
+		return "", nil, nil, fmt.Errorf("profile %q is not exported: [DEFAULT] %s (in ~/.aws/config); remove that line from [DEFAULT]",
+			o.Profile, reason)
 	}
 	if len(keys) == 0 {
 		return "", nil, nil, notDefined(env, o)

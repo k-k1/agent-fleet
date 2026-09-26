@@ -63,8 +63,9 @@ type SyncResult struct {
 	Shadowed []string
 	// Invalid are profiles refused by the INI allowlist (sessionx.RenderSSMConfig).
 	Invalid []string
-	// DefaultClash are profiles not exported because a [DEFAULT] key in ~/.aws/config
-	// would make the CLI refuse them, by name, with the key that clashes.
+	// DefaultClash are profiles not exported because a [DEFAULT] line in ~/.aws/config
+	// would make the CLI refuse them or run them as another role, by name, with that
+	// line and what it does (a ready-to-print reason).
 	DefaultClash map[string]string
 	Changed      bool
 	// Settings is every profile the CP sent, by name, so af-aws-exec can tell a name the
@@ -263,11 +264,11 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			res.Shadowed = append(res.Shadowed, p.Name)
 			continue
 		}
-		if k := defaultClash(defaults, p); k != "" {
+		if why := defaultClash(defaults, p); why != "" {
 			if res.DefaultClash == nil {
 				res.DefaultClash = map[string]string{}
 			}
-			res.DefaultClash[p.Name] = k + " = " + defaults[k]
+			res.DefaultClash[p.Name] = why
 			continue
 		}
 		ini, rerr := sessionx.RenderSSMConfig(session.SSMMeta{
@@ -300,13 +301,23 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	return b.String(), res, nil
 }
 
-// defaultClash names a [DEFAULT] key that would make the CLI refuse the exported profile
-// p, or "". [DEFAULT] lends its keys to both the profile and its sso-session, and
-// botocore refuses any key the two give with different values: a [DEFAULT] value for a
-// key only one of them sets differently is exactly that (measured: [DEFAULT] region
-// under a profile with its own region is "inconsistent between profile and
-// sso-session", exit 253). The keys are the ones RenderSSMConfig writes.
+// defaultClash says why a [DEFAULT] line in ~/.aws/config would break the exported
+// profile p, or "". [DEFAULT] lends its keys to both the profile and its sso-session:
+//   - botocore refuses any key the two give with different values, so a [DEFAULT] value
+//     for a key the block writes differently is a clash (measured: [DEFAULT] region under
+//     a profile with its own region is "inconsistent between profile and sso-session");
+//   - a [DEFAULT] role_arn (unless next to an empty web_identity_token_file) or a
+//     web_identity_token_file path takes every profile off SSO: the Settings name would
+//     then assume another role, possibly in another account (measured: the CLI goes to
+//     AssumeRole). Same rule as checkSSOProfile.
 func defaultClash(defaults map[string]string, p Profile) string {
+	webID, hasWebID := defaults["web_identity_token_file"]
+	if _, ok := defaults["role_arn"]; ok && !(hasWebID && webID == "") {
+		return fmt.Sprintf("role_arn = %q would make the AWS CLI assume that role instead of this SSO profile", defaults["role_arn"])
+	}
+	if hasWebID && webID != "" {
+		return fmt.Sprintf("web_identity_token_file = %q would make the AWS CLI use web identity instead of this SSO profile", webID)
+	}
 	region := p.Region
 	if region == "" {
 		region = p.SSORegion
@@ -328,7 +339,8 @@ func defaultClash(defaults map[string]string, p Profile) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		if v, ok := defaults[k]; ok && v != written[k] {
-			return k
+			return fmt.Sprintf("%s = %q differs from this profile's %q, and the AWS CLI refuses a profile whose value differs "+
+				"from its sso-session's", k, v, written[k])
 		}
 	}
 	return ""
@@ -408,8 +420,8 @@ func syncAndLog(why string) {
 	for _, c := range res.Conflicts {
 		log.Printf("aws profiles sync (%s): not exported, Settings labels %s all map to %q", why, strings.Join(c.Labels, " / "), c.Name)
 	}
-	for n, kv := range res.DefaultClash {
-		log.Printf("aws profiles sync (%s): not exported, [DEFAULT] %s in ~/.aws/config would make the AWS CLI refuse %q", why, kv, n)
+	for n, reason := range res.DefaultClash {
+		log.Printf("aws profiles sync (%s): %q not exported: [DEFAULT] %s (in ~/.aws/config)", why, n, reason)
 	}
 	if len(res.Invalid) > 0 {
 		log.Printf("aws profiles sync (%s): not exported, refused by validation: %s", why, strings.Join(res.Invalid, ", "))

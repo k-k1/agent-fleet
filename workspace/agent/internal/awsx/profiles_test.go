@@ -307,7 +307,40 @@ func TestApplyDoesNotExportAProfileADEFAULTKeyBreaks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.DefaultClash["prod"] != "region = eu-west-1" || strings.Join(res.Exported, ",") != "same" {
+	if !strings.HasPrefix(res.DefaultClash["prod"], `region = "eu-west-1" differs`) || strings.Join(res.Exported, ",") != "same" {
 		t.Fatalf("result = %+v", res)
+	}
+
+	// A [DEFAULT] role_arn or web identity path takes every profile off SSO: the Settings
+	// name would assume that role instead (measured: the CLI goes to AssumeRole). Next to
+	// an empty web_identity_token_file role_arn leaves the CLI on SSO.
+	for text, held := range map[string]bool{
+		"[DEFAULT]\nrole_arn = arn:aws:iam::333333333333:role/Other\nsource_profile = src\n": true,
+		"[DEFAULT]\nrole_arn =\n":                                                  true,
+		"[DEFAULT]\nweb_identity_token_file = /tmp/t\n":                            true,
+		"[DEFAULT]\nrole_arn = arn:aws:iam::1:role/x\nweb_identity_token_file =\n": false,
+		"[DEFAULT]\ncredential_process = /bin/x\n":                                 false, // the CLI stays on SSO; af-aws-exec's policy refuses it at run time
+		"[DEFAULT]\nregion =\n":                                                    true,
+	} {
+		path := filepath.Join(t.TempDir(), "config")
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := prof("prod")
+		res, err := Apply(path, []Profile{p})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, got := res.DefaultClash["prod"]; got != held {
+			t.Errorf("%q: held back = %v, want %v (%+v)", text, got, held, res)
+		}
+	}
+	// An empty value is quoted, not invisible.
+	path = filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("[DEFAULT]\nregion =\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := Apply(path, []Profile{prof("prod")}); !strings.HasPrefix(res.DefaultClash["prod"], `region = "" differs`) {
+		t.Fatalf("empty value: %q", res.DefaultClash["prod"])
 	}
 }
