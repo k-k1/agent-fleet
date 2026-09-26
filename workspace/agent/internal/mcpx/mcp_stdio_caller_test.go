@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -32,15 +33,24 @@ func callerTestEnv(t *testing.T, alive map[string]bool) (cwd string, probed *[]s
 	return cwd, probed
 }
 
+// callerPluginBody stands in for the shipped plugin: trust compares the installed copy with it.
+const callerPluginBody = "export const AgentFleetCaller = async () => ({})\n"
+
 func callerTrustEnv(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	src := filepath.Join(t.TempDir(), "agent-fleet-caller.js")
+	if err := os.WriteFile(src, []byte(callerPluginBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(opencode.SetCallerPluginSrcForTest(src))
 	plugin := filepath.Join(home, ".config", "opencode", "plugin")
 	if err := os.MkdirAll(plugin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(plugin, "agent-fleet-caller.js"), []byte("//"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(plugin, "agent-fleet-caller.js"), []byte(callerPluginBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	oldName, oldCaller := mcpAFServerName, mcpCallerSID
@@ -385,6 +395,13 @@ func TestMCPOwningSessionIgnoresStampThePluginDidNotGuarantee(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{"plugin rewritten", func(t *testing.T) {
+			p := filepath.Join(os.Getenv("HOME"), ".config", "opencode", "plugin", "agent-fleet-caller.js")
+			if err := os.WriteFile(p, []byte("//"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"opencode reads its config from elsewhere", func(t *testing.T) { t.Setenv("XDG_CONFIG_HOME", t.TempDir()) }},
 		{"legacy af server name", func(t *testing.T) { mcpAFServerName = func() string { return "af" } }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -414,6 +431,35 @@ func TestGenerateImageNotOfferedWhileASessionIsUnmapped(t *testing.T) {
 	writeOpencodeSlot(t, "ocfresh", cwd, "")
 	if got := mcpStampedFolderSessions(); got != nil {
 		t.Fatalf("mcpStampedFolderSessions() = %v, want nil while ocfresh has no mapping", got)
+	}
+}
+
+// Two live sessions mapped to one conversation (a stale mapping) cannot be told apart by any
+// stamp, so offering the tool would only promise refusals.
+func TestGenerateImageNotOfferedWhenMappingsCollide(t *testing.T) {
+	cwd, _ := callerTestEnv(t, map[string]bool{"ocfirst": true, "ocsecond": true})
+	writeOpencodeSlot(t, "ocfirst", cwd, "ses_same")
+	writeOpencodeSlot(t, "ocsecond", cwd, "ses_same")
+	if got := mcpStampedFolderSessions(); got != nil {
+		t.Fatalf("mcpStampedFolderSessions() = %v, want nil for two slots on one conversation", got)
+	}
+}
+
+// A session launched into a subdir runs its MCP child there, so the folder checks that decide
+// the owner and the studio offer have to see it (they compared the working copy root only).
+func TestSubdirSessionIsFoundByTheFolderChecks(t *testing.T) {
+	root, _ := callerTestEnv(t, map[string]bool{"subsess": true})
+	sub := filepath.Join(root, "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "subsess", Dir: root, Subdir: "pkg", Kind: "codex", Studio: "st-1"})
+	t.Chdir(sub)
+	if got, err := mcpListOwningSession(); err != nil || got != "subsess" {
+		t.Fatalf("cwd fallback from the subdir = %q, %v; want subsess", got, err)
+	}
+	if !studioBoundInThisFolder() {
+		t.Fatal("studioBoundInThisFolder() = false from the subdir of a studio session")
 	}
 }
 

@@ -3507,7 +3507,7 @@ func mcpResolveOwner(useStamp bool) (string, error) {
 	}
 	var found []string
 	for _, m := range session.ListMetas() {
-		if m.Archived || m.Dir != cwd || !session.ValidName(m.Name) {
+		if m.Archived || !mcpRunsIn(m, cwd) || !session.ValidName(m.Name) {
 			continue
 		}
 		found = append(found, m.Name)
@@ -3566,7 +3566,7 @@ func mcpCallerSession(cwd string) (string, bool) {
 		if m.Archived || m.Kind != session.KindOpencode || !session.ValidName(m.Name) {
 			continue
 		}
-		if m.Dir != cwd && m.CWD() != cwd {
+		if !mcpRunsIn(m, cwd) {
 			continue
 		}
 		if opencode.SlotSessionID(m) == mcpCallerSID {
@@ -3585,12 +3585,12 @@ func mcpCallerSession(cwd string) (string, bool) {
 
 // mcpCallerStampTrusted reports whether a stamp on a call can only have come from the plugin.
 // The plugin overwrites the reserved argument on af's tools, but it recognises them by the
-// rotated `af_<8 hex>` server name: under the legacy bare `af` name, or with the plugin removed,
-// the model's own value would arrive untouched and naming another session's id would be enough
+// rotated `af_<8 hex>` server name: under the legacy bare `af` name, or with the plugin removed
+// or altered, the model's own value would arrive untouched and naming another session's id would be enough
 // to act as it. The model shares this uid, so this is not a wall against a determined one — it
 // stops the reserved argument from being a door that a plain tool call opens.
 func mcpCallerStampTrusted() bool {
-	return mcpAFServerName() != mcpreg.BuiltinAF && opencode.CallerPluginInstalled()
+	return mcpAFServerName() != mcpreg.BuiltinAF && opencode.CallerPluginCurrent()
 }
 
 // mcpAFServerName is a seam: mcpreg remembers the name for the life of the process, so a test
@@ -3614,7 +3614,7 @@ func mcpStampedFolderSessions() []string {
 	var names []string
 	metas := map[string]session.Meta{}
 	for _, m := range session.ListMetas() {
-		if m.Archived || !session.ValidName(m.Name) || (m.Dir != cwd && m.CWD() != cwd) {
+		if m.Archived || !session.ValidName(m.Name) || !mcpRunsIn(m, cwd) {
 			continue
 		}
 		names = append(names, m.Name)
@@ -3624,14 +3624,24 @@ func mcpStampedFolderSessions() []string {
 	if !ok || len(alive) == 0 {
 		return nil
 	}
+	// Each live session needs its own mapped conversation: an unmapped one, or two mapped to the
+	// same id, is a caller no stamp can single out, and every call would be refused.
+	seen := map[string]bool{}
 	for _, n := range alive {
-		if m := metas[n]; m.Kind != session.KindOpencode || opencode.SlotSessionID(m) == "" {
+		m := metas[n]
+		id := opencode.SlotSessionID(m)
+		if m.Kind != session.KindOpencode || id == "" || seen[id] {
 			return nil
 		}
+		seen[id] = true
 	}
 	sort.Strings(alive)
 	return alive
 }
+
+// mcpRunsIn reports whether session m's agent — and so the MCP child it spawns — runs in cwd:
+// its working copy, or the subdir it was launched into (Meta.CWD).
+func mcpRunsIn(m session.Meta, cwd string) bool { return m.Dir == cwd || m.CWD() == cwd }
 
 // mcpAliveSessions keeps the names the Agent reports as alive. ok is false when any
 // probe failed — a partial answer must not narrow anything, since the missing one

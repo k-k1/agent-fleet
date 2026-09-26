@@ -114,7 +114,7 @@ func studioBoundInThisFolder() bool {
 		return false
 	}
 	for _, m := range session.ListMetas() {
-		if !m.Archived && m.Dir == cwd && m.Studio != "" {
+		if !m.Archived && mcpRunsIn(m, cwd) && m.Studio != "" {
 			return true
 		}
 	}
