@@ -253,8 +253,10 @@ If authentication is needed, the `aws sso login` URL appears on a confirmation s
 
 ### Using the profiles from the terminal, SDKs and build tools
 
-Your profiles are also written into **`~/.aws/config`**, so `aws --profile <name>`, `AWS_PROFILE=<name>`, the
-AWS SDKs and build tools (Gradle, Maven, CDK, Terraform, …) can select them by name without you copying anything.
+Your profiles are also written into **`~/.aws/config`**, so `aws --profile <name>`, the AWS SDKs and build tools
+(Gradle, Maven, CDK, Terraform, …) can select them by name without you copying anything. Prefer `--profile` (or a
+tool's own profile setting) to `AWS_PROFILE=<name>`: keys already exported in the shell (`AWS_ACCESS_KEY_ID` and
+friends) win over `AWS_PROFILE`, so it does not pin who a command runs as.
 
 - **The name** is the profile's label with every character other than letters, digits and `._@-` replaced by
   `-` (label `prod app` → profile `prod-app`). `af-aws-exec --list` prints each name with its account, role and
@@ -264,8 +266,9 @@ AWS SDKs and build tools (Gradle, Maven, CDK, Terraform, …) can select them by
 - The profiles sit in a **managed block** at the end of the file, between two `# agent-fleet` marker lines. Edit
   them in Settings, not inside the block — the block is rewritten, and so is anything `aws configure set` writes
   into it. Everything outside it is yours and is kept.
-  Only profiles with both an **account and a role** are exported: without them `aws --profile <name>` would not
-  use SSO at all and would quietly run as the workspace's own role.
+  Only profiles with both an **account and a role** are exported. With neither, `aws --profile <name>` would not
+  use SSO at all and would quietly run as the workspace's own role; with only one it would fail. `--list` says
+  which is missing.
   If a `[DEFAULT]` line in `~/.aws/config` would break a profile (a different region, a `role_arn` that would make
   every profile assume that role, …), that profile is not exported, and `af-aws-exec --list` names the line.
   If you already defined a profile with the same name yourself (in `~/.aws/config` or `~/.aws/credentials`),

@@ -317,7 +317,7 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 		b.WriteString("\n")
 	}
 	b.WriteString(blockBegin + "\n")
-	b.WriteString("# Use: aws --profile <name> ... / AWS_PROFILE=<name> / af-aws-exec --profile <name> -- <command>\n")
+	b.WriteString("# Use: aws --profile <name> ... / af-aws-exec --profile <name> --account <id> -- <command>\n")
 	b.WriteString(body.String())
 	b.WriteString("\n" + blockEnd + "\n")
 	return b.String(), res, nil
@@ -551,19 +551,23 @@ func DescribeProfile(name string) (account, role string) {
 	return k["sso_account_id"], k["sso_role_name"]
 }
 
-// NotExported lists the Settings names (sorted) missing from exported: the ones the
-// last sync left out, for --list when the CP cannot be asked now.
-func NotExported(settings map[string]Profile, exported []string) []string {
-	in := map[string]bool{}
-	for _, n := range exported {
-		in[n] = true
-	}
-	var out []string
+// ClassifyOffline runs the export rules against the files as they are now for the cached
+// Settings profiles, without writing anything: for --list when the CP cannot be asked,
+// so each profile the block lacks is reported with its real reason (shadowed,
+// incomplete, a [DEFAULT] clash) rather than lumped together.
+func ClassifyOffline(settings map[string]Profile) SyncResult {
+	names := make([]string, 0, len(settings))
 	for n := range settings {
-		if !in[n] {
-			out = append(out, n)
-		}
+		names = append(names, n)
 	}
-	sort.Strings(out)
-	return out
+	sort.Strings(names)
+	ps := make([]Profile, 0, len(names))
+	for _, n := range names {
+		ps = append(ps, settings[n])
+	}
+	path := ConfigPath()
+	old, _ := os.ReadFile(path)
+	creds, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "credentials"))
+	_, res, _ := render(string(old), string(creds), ps)
+	return res
 }

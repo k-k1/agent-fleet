@@ -79,8 +79,10 @@ func runAWSExec(args []string) {
 			// and mark the cached Settings names it does not hold as not exported so a
 			// shadowed name still shows both accounts.
 			names = awsx.ExportedIn(awsx.ConfigPath())
-			if !res.Fetched {
-				res.Shadowed = awsx.NotExported(res.Settings, names)
+			if !res.Fetched && res.Settings != nil {
+				off := awsx.ClassifyOffline(res.Settings)
+				res.Shadowed, res.SessionShadowed, res.Incomplete, res.DefaultClash, res.Invalid =
+					off.Shadowed, off.SessionShadowed, off.Incomplete, off.DefaultClash, off.Invalid
 			}
 		}
 		for _, n := range names {

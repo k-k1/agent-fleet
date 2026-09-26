@@ -292,10 +292,19 @@ func TestSyncMarksAFetchThatCouldNotBeWritten(t *testing.T) {
 	}
 }
 
-func TestNotExported(t *testing.T) {
-	got := NotExported(map[string]Profile{"b": {}, "a": {}, "c": {}}, []string{"c"})
-	if strings.Join(got, ",") != "a,b" {
-		t.Fatalf("got %v", got)
+// Offline, each cached Settings profile the block lacks gets its real reason.
+func TestClassifyOfflineGivesEachReason(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
+	if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte("[profile mine]\nregion = x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	half := prof("half")
+	half.RoleName = ""
+	res := ClassifyOffline(map[string]Profile{"mine": prof("mine"), "half": half, "ok": prof("ok")})
+	if strings.Join(res.Shadowed, ",") != "mine" || res.Incomplete["half"] == "" || strings.Join(res.Exported, ",") != "ok" {
+		t.Fatalf("result = %+v", res)
 	}
 }
 
