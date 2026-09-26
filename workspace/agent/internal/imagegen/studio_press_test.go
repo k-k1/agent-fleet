@@ -169,12 +169,19 @@ func TestAgentTrialRunsTheDraftAsOneTrialPicture(t *testing.T) {
 
 func TestStudioTrialPendingIsSaidInTheStudiosTerms(t *testing.T) {
 	withStudios(t)
-	withStudioProvider(t)
+	p := withStudioProvider(t)
 	s := createStudio(t, `{"provider":"comfy","model":"sdxl-base","prompt":"x"}`)
 	bindForTest(t, s.ID, "s1")
+	// The first trial must be running, not waiting, before the rest fill the three waiting
+	// places: only waiting trials count against the cap, and a worker that starts late would
+	// take one of them out between the last two presses and let the last one through.
+	if code, _, body := press(t, s.ID, `{"mode":"agent_trial","session":"s1"}`); code != http.StatusOK {
+		t.Fatalf("first trial = %d %s", code, body)
+	}
+	<-p.begun
 	var body string
 	var code int
-	for range imagegenTrialMax + 2 {
+	for range imagegenTrialMax + 1 {
 		code, _, body = press(t, s.ID, `{"mode":"agent_trial","session":"s1"}`)
 	}
 	if code != http.StatusTooManyRequests || !strings.Contains(body, "get_image_studio") {
