@@ -505,7 +505,7 @@ func TestOfflineSyncReadsTheCacheUnderTheLock(t *testing.T) {
 	mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
 	older := prof("prod")
 	older.AccountID = "111111111111"
-	if err := saveSettingsCache([]Profile{older}, nil); err != nil {
+	if err := saveSettingsCache([]Profile{older}, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	unlock, _, err := lockConfig(ConfigPath())
@@ -520,7 +520,7 @@ func TestOfflineSyncReadsTheCacheUnderTheLock(t *testing.T) {
 	time.Sleep(200 * time.Millisecond) // let it reach the lock
 	newer := prof("prod")
 	newer.AccountID = "222222222222"
-	if err := saveSettingsCache([]Profile{newer}, nil); err != nil {
+	if err := saveSettingsCache([]Profile{newer}, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	unlock()
@@ -541,7 +541,7 @@ func TestCacheSaveFailureAndFailedReapply(t *testing.T) {
 	t.Setenv("HOME", home)
 	mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
 	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
-	if err := saveSettingsCache([]Profile{prof("old")}, nil); err != nil {
+	if err := saveSettingsCache([]Profile{prof("old")}, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -569,7 +569,7 @@ func TestCacheSaveFailureAndFailedReapply(t *testing.T) {
 	srv.Close()
 
 	// Offline with a half block: the re-apply fails and FromCache stays false.
-	if err := saveSettingsCache([]Profile{prof("prod")}, nil); err != nil {
+	if err := saveSettingsCache([]Profile{prof("prod")}, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(ConfigPath(), []byte(blockBegin+"\n[profile x]\n"), 0o600); err != nil {
@@ -694,7 +694,7 @@ func TestSyncsWaitingForTheLockShareOneFetch(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond)
 	// What the lock holder would do: fetch and cache.
-	if err := saveSettingsCache([]Profile{prof("prod")}, nil); err != nil {
+	if err := saveSettingsCache([]Profile{prof("prod")}, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	unlock()
@@ -739,7 +739,7 @@ func TestAFutureCacheMtimeDoesNotSkipTheFetch(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("AF_CP_BASE_URL", srv.URL)
 	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
-	if err := saveSettingsCache([]Profile{prof("prod")}, nil); err != nil {
+	if err := saveSettingsCache([]Profile{prof("prod")}, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	future := time.Now().Add(24 * time.Hour)
@@ -750,5 +750,45 @@ func TestAFutureCacheMtimeDoesNotSkipTheFetch(t *testing.T) {
 		if res, err := Sync(); err != nil || len(res.Settings) != 0 || hits.Load() != int32(i) {
 			t.Fatalf("run %d: %+v %v hits=%d", i, res, err, hits.Load())
 		}
+	}
+}
+
+// A fetch that was already in flight when a run began may carry the list from before a
+// Settings edit made just before that run: its answer is not reused, the run asks the CP
+// itself (the user fixes prod in Settings and runs af-aws-exec while the poll fetches).
+func TestAFetchStartedBeforeTheRunIsNotReused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"profiles":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
+	inFlightSince := time.Now() // the lock holder's fetch started before the runs below
+	unlock, _, err := lockConfig(ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if res, err := Sync(); err != nil || len(res.Settings) != 0 {
+				t.Errorf("waiting run used the in-flight answer: %+v %v", res, err)
+			}
+		}()
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := saveSettingsCache([]Profile{prof("prod")}, nil, inFlightSince); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	wg.Wait()
+	if hits.Load() < 1 {
+		t.Fatalf("hits = %d: nobody asked the CP", hits.Load())
 	}
 }
