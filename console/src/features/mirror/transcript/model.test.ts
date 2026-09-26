@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   coalesceUserActions,
+  composerHistory,
   foldParts,
   groupTurns,
   isNoise,
@@ -195,6 +196,35 @@ describe("spawnParentOf", () => {
 
   it("ignores a name that is not a session name", () => {
     expect(spawnParentOf("[agent-fleet:spawn from=../etc] 直して")).toBeNull();
+  });
+});
+
+describe("composerHistory", () => {
+  it("keeps only what the user typed, oldest first, repeats folded", () => {
+    const signal = "[studio v4 · 下書きが変わった · 新しい結果 2 → get_image_studio]";
+    const history = composerHistory([
+      user("最初の依頼"),
+      asst("はい"),
+      user("運用者からの指示", { source: "operator" }),
+      user("定期実行のプロンプト", { source: "schedule" }),
+      user("手動の定期実行", { source: "schedule-manual" }),
+      user("continue", { source: "auto-resume" }),
+      user("Discord から", { source: "discord" }),
+      user("[agent-fleet:peer from=other intent=request reply=only-if-blocked] 直して", { source: "peer" }),
+      user("[agent-fleet:peer from=other intent=notice] まだ印の無い peer"),
+      user("[agent-fleet:spawn from=parent] 子への指示"),
+      user("claude のネイティブ経路", { source: "peer", peerFrom: "other" }),
+      user("This session is being continued from a previous conversation…", { compact: true }),
+      user("サブエージェントへの指示", { sidechain: true }),
+      user("<task-notification>done</task-notification>"),
+      user("<system-reminder>x</system-reminder>"),
+      user("<command-name>/review</command-name><command-args>123</command-args>"),
+      user("背景を夜にして\n" + signal),
+      user(signal),
+      user("  最初の依頼  "),
+      user("最初の依頼"),
+    ]);
+    expect(history).toEqual(["最初の依頼", "/review 123", "背景を夜にして", "最初の依頼"]);
   });
 });
 

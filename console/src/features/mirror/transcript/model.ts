@@ -182,6 +182,33 @@ export function parseCommand(t: Turn): { name: string; args: string } | null {
   return { name: name[1].trim(), args: args ? args[1].trim() : "" };
 }
 
+// composerHistory is what ↑/↓ and reverse-i-search walk in the composer: the prompts the user
+// typed, oldest first, consecutive repeats folded. Everything else that the CLI logs as a user
+// turn is left out, because recalling it would put words the user never wrote back into their
+// composer:
+//   * a turn with a source tag — the operator, a chat bridge, a schedule, auto-resume, another
+//     session (session_injections.go); "" is the only value that means the user's own input;
+//   * a peer/spawn envelope with no tag yet (fetched before the injection record, or claude's
+//     own cross-session channel before the parser named it);
+//   * compaction summaries, sidechain (subagent) turns and isNoise's system lines.
+// A slash command / skill run is kept in its re-typeable "/name args" form, and the image
+// studio's trailing signal line is dropped because the studio appended it, not the user.
+export function composerHistory(turns: Turn[]): string[] {
+  const out: string[] = [];
+  for (const t of turns) {
+    if (t.role !== "user" || t.source || t.compact || t.sidechain) continue;
+    const slash = parseCommand(t);
+    let s = "";
+    if (slash) s = slash.name + (slash.args ? " " + slash.args : "");
+    else if (t.text && !isNoise(t)) {
+      const text = t.text.trim();
+      if (peerSenderOf(text) === null && spawnParentOf(text) === null) s = stripStudioSignal(text).trim();
+    }
+    if (s && out[out.length - 1] !== s) out.push(s);
+  }
+  return out;
+}
+
 // mergeTurns folds a freshly fetched batch into the turns a view already holds, keyed by
 // `idx` — the turn's ABSOLUTE position in the transcript (claude: the jsonl line number;
 // store-backed agents: the turn index), which the Agent keeps stable across every window,

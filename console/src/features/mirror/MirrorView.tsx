@@ -94,7 +94,7 @@ import { useStableBlockIds } from "./transcript/blockIdentity.ts";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
 import type { Group, Part, PendingApproval, Question, TaskItem, Turn } from "./transcript/types.ts";
 import { isPendingApproval } from "./transcript/types.ts";
-import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
+import { coalesceUserActions, composerHistory, groupTurns, isNoise, latestContext, spendOf } from "./transcript/model.ts";
 import { TaskChecklist, planTitle } from "./transcript/blocks.tsx";
 import { useMarksController } from "./transcript/useMarks.ts";
 import { MarkStrip } from "./transcript/MarkStrip.tsx";
@@ -1443,17 +1443,9 @@ export function MirrorView({
     }
   };
   // Composer history = the user's own prompts in this conversation (so ↑ works even
-  // after a reload, not just for prompts typed since mount). Newest last. Slash-command /
-  // skill invocations are logged as system-tagged turns that isNoise hides from the transcript
-  // view, so they're recovered via parseCommand and pushed in their re-typeable "/name args"
-  // form — otherwise a skill run would vanish from ↑ recall entirely.
-  const history: string[] = [];
-  for (const t of turns) {
-    if (t.role !== "user") continue;
-    const slash = parseCommand(t);
-    const s = slash ? slash.name + (slash.args ? " " + slash.args : "") : t.text && !isNoise(t) ? t.text.trim() : "";
-    if (s && history[history.length - 1] !== s) history.push(s);
-  }
+  // after a reload, not just for prompts typed since mount). Injected turns — operator,
+  // schedule, peer, auto-resume … — are left out; see composerHistory.
+  const history = composerHistory(turns);
 
   // Recall the previous / next prompt from history (shared by ↑/↓ and the on-screen
   // buttons shown on phones, which have no arrow keys).
