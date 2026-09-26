@@ -307,22 +307,21 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			res.Incomplete[p.Name] = why
 			continue
 		}
+		// A Settings value the AWS config cannot hold comes before anything about the
+		// member's files: it needs fixing in Settings whatever the files say.
+		ini, rerr := renderProfile(p)
+		if rerr != nil {
+			if res.Invalid == nil {
+				res.Invalid = map[string]string{}
+			}
+			res.Invalid[p.Name] = InvalidReason(p, rerr)
+			continue
+		}
 		if why := defaultClash(defaults, p); why != "" {
 			if res.DefaultClash == nil {
 				res.DefaultClash = map[string]string{}
 			}
 			res.DefaultClash[p.Name] = why
-			continue
-		}
-		ini, rerr := sessionx.RenderSSMConfig(session.SSMMeta{
-			Profile: p.Name, StartURL: p.StartURL, SSORegion: p.SSORegion,
-			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region,
-		})
-		if rerr != nil {
-			if res.Invalid == nil {
-				res.Invalid = map[string]string{}
-			}
-			res.Invalid[p.Name] = rerr.Error()
 			continue
 		}
 		body.WriteString("\n")
@@ -345,6 +344,42 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	b.WriteString(body.String())
 	b.WriteString("\n" + blockEnd + "\n")
 	return b.String(), res, nil
+}
+
+func renderProfile(p Profile) (string, error) {
+	return sessionx.RenderSSMConfig(session.SSMMeta{
+		Profile: p.Name, StartURL: p.StartURL, SSORegion: p.SSORegion,
+		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region,
+	})
+}
+
+// invalidFields maps sessionx's allowlist fields to the words a user knows, the Settings
+// value, and what is allowed. The values are the CP's non-secret SSO settings.
+var invalidFields = []struct {
+	field, words, allowed string
+	value                 func(Profile) string
+}{
+	{"profile", "the profile name (from the Settings label)", "letters, digits and ._@- (at most 64)", func(p Profile) string { return p.Name }},
+	{"sso start url", "the start URL", "https:// followed by printable characters without spaces", func(p Profile) string { return p.StartURL }},
+	{"sso region", "the SSO region", "lower-case letters, digits and -", func(p Profile) string { return p.SSORegion }},
+	{"region", "the region", "lower-case letters, digits and -", func(p Profile) string { return p.Region }},
+	{"account id", "the account", "digits only", func(p Profile) string { return p.AccountID }},
+	{"role name", "the role name", "letters, digits and +=,.@_-", func(p Profile) string { return p.RoleName }},
+}
+
+// InvalidReason turns the allowlist's refusal of p (err, from RenderSSMConfig) into a
+// sentence naming the Settings field, its value and what an AWS config can hold.
+func InvalidReason(p Profile, err error) string {
+	msg := err.Error()
+	for _, f := range invalidFields {
+		switch {
+		case strings.HasSuffix(msg, "invalid "+f.field):
+			return fmt.Sprintf("%s %q has characters an AWS config cannot hold (allowed: %s); fix it in Settings > SSM", f.words, f.value(p), f.allowed)
+		case strings.HasSuffix(msg, f.field+" is required"):
+			return fmt.Sprintf("%s is missing; set it in Settings > SSM", f.words)
+		}
+	}
+	return "a Settings value cannot be written to the AWS config; check the profile in Settings > SSM"
 }
 
 // IncompleteReason says why a Settings profile without both an account and a role is

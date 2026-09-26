@@ -18,7 +18,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 // ExecOptions is one `af-aws-exec` invocation.
@@ -352,10 +351,8 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		if why := IncompleteReason(sp); why != "" {
 			return "", nil, nil, fmt.Errorf("profile %q is not exported: %s (Settings > SSM)", o.Profile, why)
 		}
-		if _, rerr := sessionx.RenderSSMConfig(session.SSMMeta{Profile: sp.Name, StartURL: sp.StartURL, SSORegion: sp.SSORegion,
-			AccountID: sp.AccountID, RoleName: sp.RoleName, Region: sp.Region}); rerr != nil && len(keys) == 0 {
-			return "", nil, nil, fmt.Errorf("profile %q is not exported: a Settings value cannot be written to the AWS config (%v); "+
-				"fix it in Settings > SSM", o.Profile, rerr)
+		if _, rerr := renderProfile(sp); rerr != nil && len(keys) == 0 {
+			return "", nil, nil, fmt.Errorf("profile %q is not exported: %s", o.Profile, InvalidReason(sp, rerr))
 		}
 	}
 	if reason, ok := o.DefaultClash[o.Profile]; ok && len(keys) == 0 {

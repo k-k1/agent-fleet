@@ -111,9 +111,10 @@ func TestApplyRefusesInjectedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
-	// The reason names the field, never the value (which here is the injection itself).
-	if strings.Contains(string(b), "credential_process") || len(res.Invalid) != 1 || res.Invalid["evil"] == "" ||
-		strings.Contains(res.Invalid["evil"], "credential_process") {
+	// The value is quoted with its newline escaped, so it cannot start a line of its own
+	// in a log or on a terminal.
+	if strings.Contains(string(b), "credential_process") || len(res.Invalid) != 1 ||
+		!strings.HasPrefix(res.Invalid["evil"], "the role name ") || strings.Contains(res.Invalid["evil"], "\n") {
 		t.Fatalf("injection not refused: %+v\n%s", res, b)
 	}
 }
@@ -430,5 +431,23 @@ func TestAProfileWithoutAccountAndRoleFallsToTheWorkloadRole(t *testing.T) {
 	out, _ := cmd.CombinedOutput()
 	if !strings.Contains(string(out), "ASIAWORKLOAD") {
 		t.Fatalf("expected the workload credentials (the hazard this test documents), got:\n%s", out)
+	}
+}
+
+// A Settings value the AWS config cannot hold is reported even when a [DEFAULT] line
+// would also hold the profile back: it needs fixing in Settings either way.
+func TestApplyReportsAnUnwritableValueBeforeADEFAULTClash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("[DEFAULT]\nregion = eu-west-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	colon := prof("colon")
+	colon.RoleName = "Dev:Ops"
+	res, err := Apply(path, []Profile{colon})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Invalid["colon"], `the role name "Dev:Ops"`) || res.DefaultClash["colon"] != "" {
+		t.Fatalf("result = %+v", res)
 	}
 }

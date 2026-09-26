@@ -104,7 +104,7 @@ func runAWSExec(args []string) {
 			fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used: account %s, role %s)\n", n, orNone(acct), orNone(role))
 		}
 		for n, reason := range res.Invalid {
-			fmt.Printf("%s\t(not exported: a Settings value cannot be written to the AWS config: %s)\n", n, reason)
+			fmt.Printf("%s\t(not exported: %s)\n", n, reason)
 		}
 		for n, reason := range res.Incomplete {
 			fmt.Printf("%s\t(not exported: %s)\n", n, reason)
