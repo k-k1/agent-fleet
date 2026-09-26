@@ -53,7 +53,7 @@ func TestRecommendPriceIDAgy(t *testing.T) {
 		"gemini-3.8-flash":             "gemini-3.8-flash",
 		"Gemini 3.8 Flash (Medium)":    "gemini-3.8-flash",
 		"claude-sonnet-4-6-thinking":   "claude-sonnet-4-6",
-		"Claude Sonnet 4.6 (Thinking)": "claude-sonnet-4.6",
+		"Claude Sonnet 4.6 (Thinking)": "claude-sonnet-4-6",
 	} {
 		if got := recommendPriceID(session.KindAgy, in); got != want {
 			t.Errorf("recommendPriceID(agy, %q) = %q, want %q", in, got, want)

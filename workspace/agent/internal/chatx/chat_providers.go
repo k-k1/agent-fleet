@@ -1798,32 +1798,47 @@ func recommendedUtilityModel(kind string) string {
 	return ""
 }
 
+// codexOneShotModel is the -m a codex one-shot runs with, and whether it is OUR pick (so a
+// failure may retry without it — CodexOneShotWithRetry). selected / configured / auto are what
+// OneShotHeadlessRun resolved from the settings, the "recommended" sentinel already replaced
+// (auto marks that). Nothing configured and no AF_TITLE_MODEL_CODEX ⇒ the recommendation,
+// exactly as "recommended" would give it. Configured — a model, or "" for the CLI default —
+// is used as is: "" must stay "no -m", not become the cheapest model (#972 review).
+func codexOneShotModel(selected string, configured, auto bool, tier OneShotTier) (string, bool) {
+	if !configured && os.Getenv("AF_TITLE_MODEL_CODEX") == "" {
+		m := recommendedOneShotModel(session.KindCodex, tier)
+		return m, m != ""
+	}
+	return selected, auto
+}
+
 // codexOneShotArgs is the argv for a codex one-shot. --ephemeral: a one-shot never
 // needs resume, so don't persist a thread even into the chat-only CODEX_HOME.
 //
 // The two savings knobs (docs/log/46 §1-a-2 / §2-b), mirroring what the claude path does:
-//   - -m <cheap model>: without it codex ran throwaway calls on whatever config.toml
-//     pins — on a real workspace gpt-5.6-luna. AF_TITLE_MODEL_CODEX still wins, and an
-//     empty pick (unknown catalog) falls back to today's "no -m" behaviour.
+//   - -m <model>: without it codex ran throwaway calls on whatever config.toml pins — on a
+//     real workspace gpt-5.6-luna. The CALLER picks it (OneShotHeadlessRun resolves the
+//     setting, "recommended" included); with none, AF_TITLE_MODEL_CODEX, else no -m.
+//     This function no longer picks one of its own: it could not tell "nobody chose" from
+//     "the member chose the CLI default", and re-picked the cheapest model for both
+//     (#972 review) — an explicit Default ran gpt-6-luna while the screen said Default.
 //   - -c model_reasoning_effort="low": the analog of MAX_THINKING_TOKENS=0. A title is
 //     not a reasoning problem, and the user's configured effort (often "high") would
 //     otherwise apply to every one-shot. "low" is supported by every listed model.
 //
 // The trailing "-" makes codex read the prompt from stdin; it must stay last.
-func codexOneShotArgs() (args []string, autoPicked bool) {
+func codexOneShotArgs() []string {
 	return codexOneShotArgsFor("")
 }
 
-func codexOneShotArgsFor(selected string) (args []string, autoPicked bool) {
-	args = []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
+func codexOneShotArgsFor(selected string) []string {
+	args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
 	if selected != "" {
 		args = append(args, "-m", selected)
 	} else if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
 		args = append(args, "-m", m) // explicit user choice: never second-guess it
-	} else if m := recommendedUtilityModel(session.KindCodex); m != "" {
-		args, autoPicked = append(args, "-m", m), true
 	}
-	return append(args, "-c", `model_reasoning_effort="low"`, "-"), autoPicked
+	return append(args, "-c", `model_reasoning_effort="low"`, "-")
 }
 
 // codexOneShotArgsNoModel strips OUR OWN -m pick for the one retry: a catalog entry the
@@ -1941,13 +1956,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		call.Kind = session.KindCodex
 		defer func() { _, _ = chatCodexHome() }()
 		full := headlessPrompt(persona, nil, prompt)
-		if !configured && os.Getenv("AF_TITLE_MODEL_CODEX") == "" {
-			selected = recommendedOneShotModel(kind, tier)
-			autoRecommended = selected != ""
-		}
-		args, autoPicked := codexOneShotArgsFor(selected)
-		autoPicked = autoPicked || autoRecommended
-		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
+		selected, autoRecommended = codexOneShotModel(selected, configured, autoRecommended, tier)
+		args := codexOneShotArgsFor(selected)
+		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoRecommended, full, runCodexOneShot)
 		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
 		return reply, "", "", err
 	case session.KindOpencode:

@@ -42,9 +42,16 @@ async function render(value: string | undefined, Component = Probe): Promise<voi
   });
   // The recommendation (and muse's catalogue) arrive through a fetch, so let the promise chain
   // and the effect it schedules settle before reading the label.
+  await settle();
+}
+
+// settle lets the fetch, its promise chain and the effect it schedules run — under fake timers
+// too (the retry tests), where a real setTimeout(0) would never fire.
+async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) {
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
+      if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+      else await new Promise((r) => setTimeout(r, 0));
     });
   }
 }
@@ -109,9 +116,38 @@ describe("useResolvedModelLabel", () => {
   });
 
   it("names no model while the Agent cannot be asked, rather than guess one", async () => {
-    agentAnswers = {};
-    await render(undefined);
-    expect(host.textContent).toBe(t("assistant.recommended"));
+    vi.useFakeTimers();
+    try {
+      agentAnswers = {};
+      await render(undefined);
+      expect(host.textContent).toBe(t("assistant.recommended"));
+      // Exhaust the retries inside this test, so none of them lands in the next one.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(host.textContent).toBe(t("assistant.recommended"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A workspace that is still booting answers 502 first; the label must not stay at a bare
+  // "推奨" until the settings are reopened (#972 review).
+  it("retries while the Agent is not reachable yet, then names its answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const answer = agentAnswers.claude;
+      agentAnswers = {};
+      await render(undefined);
+      expect(host.textContent).toBe(t("assistant.recommended"));
+      agentAnswers = { claude: answer };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Haiku" }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("asks again when the hidden list changes, and shows the Agent's new answer", async () => {
@@ -121,11 +157,7 @@ describe("useResolvedModelLabel", () => {
     await act(async () => {
       setSetting("hiddenModels", { claude: ["haiku"] });
     });
-    for (let i = 0; i < 5; i++) {
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 0));
-      });
-    }
+    await settle();
     expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Sonnet" }));
   });
 

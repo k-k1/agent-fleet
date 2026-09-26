@@ -46,8 +46,14 @@ func recommendPriceID(kind, model string) string {
 	s = strings.ReplaceAll(s, " ", "-")
 	for _, suf := range agyEffortSuffixes {
 		if base, ok := strings.CutSuffix(s, "-"+suf); ok {
-			return base
+			s = base
+			break
 		}
+	}
+	// Anthropic writes its versions with hyphens ("claude-sonnet-4-6"); agy's display names use
+	// a dot ("Claude Sonnet 4.6"). Gemini keeps the dot on both sides ("gemini-3.8-flash").
+	if strings.HasPrefix(s, "claude-") {
+		s = strings.ReplaceAll(s, ".", "-")
 	}
 	return s
 }

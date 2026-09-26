@@ -217,7 +217,12 @@ function parseRecommended(v: unknown): RecommendedModels | null {
 // Agent's answer (to the next cheapest, or to the CLI default), so an answer fetched under
 // another list is not this list's answer. Kept apart from fetchModels because claude has no
 // live catalog to fetch (CLAUDE_MODELS) yet still has a recommendation to ask for.
-const recommendedCache = new Map<string, RecommendedModels>();
+//
+// An answer is kept for RECOMMENDED_TTL_MS only: the Agent's own answer moves without any
+// Console action — a cheaper model ships, the daily price catalog changes, a model is retired —
+// and a Console left open for days would otherwise keep naming the old one (#972 review).
+const RECOMMENDED_TTL_MS = 10 * 60 * 1000;
+const recommendedCache = new Map<string, { rec: RecommendedModels; at: number }>();
 const recommendedInflight = new Map<string, Promise<RecommendedModels | null>>();
 
 /** Forgets every fetched recommendation. For dom tests: they mount the same kind under the same
@@ -228,18 +233,31 @@ export function clearRecommendedModels(): void {
   recommendedInflight.clear();
 }
 
-function fetchRecommended(kind: string, key: string): Promise<RecommendedModels | null> {
+function cachedRecommended(key: string): RecommendedModels | null {
   const hit = recommendedCache.get(key);
+  return hit && Date.now() - hit.at < RECOMMENDED_TTL_MS ? hit.rec : null;
+}
+
+// fetchRecommended retries on the same schedule as fetchModels: right after a workspace starts
+// the Agent is not listening yet and the CP answers 502, and giving up on the first one left
+// the label at a plain "推奨" until the settings were reopened (#972 review). A failure caches
+// nothing.
+function fetchRecommended(kind: string, key: string): Promise<RecommendedModels | null> {
+  const hit = cachedRecommended(key);
   if (hit) return Promise.resolve(hit);
   let p = recommendedInflight.get(key);
   if (!p) {
-    p = requestModels(kind)
-      .then((d) => {
-        const r = parseRecommended(d?.recommended);
-        if (r) recommendedCache.set(key, r);
-        return r;
-      })
-      .finally(() => recommendedInflight.delete(key));
+    p = (async () => {
+      for (let attempt = 0; ; attempt++) {
+        const r = parseRecommended((await requestModels(kind))?.recommended);
+        if (r) {
+          recommendedCache.set(key, { rec: r, at: Date.now() });
+          return r;
+        }
+        if (attempt >= MODELS_RETRY_MS.length) return null;
+        await sleep(MODELS_RETRY_MS[attempt]);
+      }
+    })().finally(() => recommendedInflight.delete(key));
     recommendedInflight.set(key, p);
   }
   return p;
@@ -252,10 +270,10 @@ function fetchRecommended(kind: string, key: string): Promise<RecommendedModels 
 export function useRecommendedModels(kind: string): RecommendedModels | null {
   const hiddenModels = useSettings().hiddenModels;
   const key = `${kind}|${JSON.stringify(hiddenModelsFor(hiddenModels, kind))}`;
-  const [rec, setRec] = useState<RecommendedModels | null>(() => recommendedCache.get(key) ?? null);
+  const [rec, setRec] = useState<RecommendedModels | null>(() => cachedRecommended(key));
   useEffect(() => {
     let alive = true;
-    setRec(recommendedCache.get(key) ?? null);
+    setRec(cachedRecommended(key));
     void fetchRecommended(kind, key).then((r) => alive && setRec(r));
     return () => {
       alive = false;

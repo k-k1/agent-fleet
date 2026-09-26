@@ -185,7 +185,7 @@ func TestRecommendedUtilityModelStableBackends(t *testing.T) {
 
 func TestCodexOneShotArgs(t *testing.T) {
 	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-5.4-mini") // do not depend on a catalogue fetch (real CLI)
-	args, _ := codexOneShotArgs()
+	args := codexOneShotArgs()
 	joined := strings.Join(args, " ")
 
 	if !hasFlagValue(args, "-m", "gpt-5.4-mini") {
@@ -204,10 +204,7 @@ func TestCodexOneShotArgs(t *testing.T) {
 
 func TestCodexOneShotArgsForSelectedModel(t *testing.T) {
 	t.Setenv("AF_TITLE_MODEL_CODEX", "env-model")
-	args, auto := codexOneShotArgsFor("ui-model")
-	if auto {
-		t.Fatal("an explicit UI model must not be treated as an automatic cheap-model pick")
-	}
+	args := codexOneShotArgsFor("ui-model")
 	if got := argValue(args, "-m"); got != "ui-model" {
 		t.Fatalf("model = %q, want ui-model", got)
 	}
@@ -224,7 +221,7 @@ func TestCodexOneShotLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	args, _ := codexOneShotArgs()
+	args := codexOneShotArgsFor(recommendedUtilityModel(session.KindCodex))
 	t.Logf("argv: codex %s", strings.Join(args, " "))
 	cmd := chatCodexCmd(ctx, nil, args...)
 	cmd.Stdin = strings.NewReader(headlessPrompt(titleSuggestPersona("ja"), nil,
@@ -276,11 +273,6 @@ func TestOpencodeOneShotLive(t *testing.T) {
 }
 
 func TestCodexOneShotFallsBackWhenPickIsOurs(t *testing.T) {
-	// A model the user named explicitly is respected (never dropped behind their back).
-	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-5.4-mini")
-	if _, auto := codexOneShotArgs(); auto {
-		t.Fatal("a model named explicitly through the environment must not count as our own pick")
-	}
 	// Dropping our own pick removes only -m and its value; everything else is unchanged.
 	got := codexOneShotArgsNoModel([]string{"exec", "-m", "gpt-5.4-mini", "-c", `model_reasoning_effort="low"`, "-"})
 	want := []string{"exec", "-c", `model_reasoning_effort="low"`, "-"}

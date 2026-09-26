@@ -151,3 +151,27 @@ func TestNewestTierModel(t *testing.T) {
 		}
 	}
 }
+
+// #972 review: a member who picked the CLI default ("" configured) must run with no -m, even
+// when a cheaper model is priced — the screen says Default. Only an unset setting (or the
+// "recommended" sentinel, resolved by the caller) gets the recommendation.
+func TestCodexOneShotModelRespectsExplicitDefault(t *testing.T) {
+	t.Setenv("AF_TITLE_MODEL_CODEX", "")
+	useCatalogs(t, codexCatalog0926, nil, nil, codexPrices0926)
+	if m, auto := codexOneShotModel("", true, false, OneShotShort); m != "" || auto {
+		t.Fatalf("explicit Default ran %q (auto=%v), want no -m", m, auto)
+	}
+	if args := codexOneShotArgsFor(""); argValue(args, "-m") != "" {
+		t.Fatalf("argv re-picked a model: %q", args)
+	}
+	if m, auto := codexOneShotModel("", false, false, OneShotShort); m != "gpt-6-luna" || !auto {
+		t.Fatalf("unset = %q (auto=%v), want the recommendation gpt-6-luna as our own pick", m, auto)
+	}
+	if m, auto := codexOneShotModel("gpt-6-sol", true, false, OneShotShort); m != "gpt-6-sol" || auto {
+		t.Fatalf("explicit model = %q (auto=%v)", m, auto)
+	}
+	t.Setenv("AF_TITLE_MODEL_CODEX", "env-model")
+	if m, _ := codexOneShotModel("", false, false, OneShotShort); m != "" {
+		t.Fatalf("with AF_TITLE_MODEL_CODEX the argv builder must be left to apply it, got %q", m)
+	}
+}
