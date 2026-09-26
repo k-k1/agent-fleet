@@ -56,9 +56,11 @@ func (e *slowEngine) handler() http.Handler {
 
 // engineTestECS is an ECS that starts stopped and reports RUNNING once desired is 1.
 type engineTestECS struct {
-	desired int32
-	running int32
-	updates int
+	desired   int32
+	running   int32
+	updates   int
+	events    []ecstypes.ServiceEvent
+	lastStart time.Time
 	// instance is the `af-role` attribute of the one container instance, if any ("engine-image").
 	// Empty means the cluster has none at all (ADR 0077 decision 3).
 	instance string
@@ -71,9 +73,14 @@ type engineTestECS struct {
 }
 
 func (f *engineTestECS) DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
-	return &ecs.DescribeServicesOutput{Services: []ecstypes.Service{{
+	s := ecstypes.Service{
 		Status: aws.String("ACTIVE"), DesiredCount: f.desired, RunningCount: f.running,
-	}}}, nil
+		Events: f.events,
+	}
+	if !f.lastStart.IsZero() {
+		s.Deployments = []ecstypes.Deployment{{Status: aws.String("PRIMARY"), UpdatedAt: aws.Time(f.lastStart)}}
+	}
+	return &ecs.DescribeServicesOutput{Services: []ecstypes.Service{s}}, nil
 }
 
 func (f *engineTestECS) UpdateService(_ context.Context, in *ecs.UpdateServiceInput, _ ...func(*ecs.Options)) (*ecs.UpdateServiceOutput, error) {
@@ -1378,5 +1385,71 @@ func TestEngineReadyOwnDeadlineMidReadIsWaking(t *testing.T) {
 	err := (engineGateway{}).ensureReady(ctx, eng)
 	if !errors.Is(err, errEngineWaking) {
 		t.Fatalf("ensureReady() = %v, want errEngineWaking", err)
+	}
+}
+
+func TestEngineReadyDeadlineReportsFreshServiceReason(t *testing.T) {
+	api := &ctxHonouringECS{engineTestECS: engineTestECS{
+		desired: 1,
+		events:  []ecstypes.ServiceEvent{{Message: aws.String("unable to place a task: no container instances met the placement constraints")}},
+	}}
+	eng := newTestEngine(t, "http://127.0.0.1:1", api)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	err := (engineGateway{}).ensureReady(ctx, eng)
+	if !errors.Is(err, errEngineWaking) {
+		t.Fatalf("ensureReady() = %v, want retryable errEngineWaking", err)
+	}
+	if !strings.Contains(err.Error(), "no container instances met the placement constraints") {
+		t.Fatalf("ensureReady() = %v, want the ECS service's reason", err)
+	}
+	if api.describes != 2 {
+		t.Errorf("DescribeServices called %d times, want a final read with a live context", api.describes)
+	}
+}
+
+func TestEnginePlainDeadlineReportsServiceReasonToCaller(t *testing.T) {
+	t.Setenv("AF_ENGINE_PLAIN_HOLD", "0")
+	api := &ctxHonouringECS{engineTestECS: engineTestECS{
+		desired: 1,
+		events:  []ecstypes.ServiceEvent{{Message: aws.String("unable to place a task: no container instances met the placement constraints")}},
+	}}
+	eng := newTestEngine(t, "http://127.0.0.1:1", api)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/engine/llm/v1/chat/completions", strings.NewReader("{}"))
+	(engineGateway{}).plain(rec, r, eng, engineSessionClaims{}, store.MembershipView{}, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if code := engineErrCode(t, rec.Body.Bytes()); code != "engine_waking" {
+		t.Errorf("code = %q, want retryable engine_waking", code)
+	}
+	if !strings.Contains(rec.Body.String(), "no container instances met the placement constraints") {
+		t.Errorf("the caller lost the service's reason: %s", rec.Body.String())
+	}
+}
+
+func TestEngineReadyDeadlineWithoutServiceReasonStillWakes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		api  engineECSAPI
+	}{
+		{"no events", &ctxHonouringECS{engineTestECS: engineTestECS{desired: 1}}},
+		{"old event", &ctxHonouringECS{engineTestECS: engineTestECS{
+			desired: 1, lastStart: time.Now(),
+			events: []ecstypes.ServiceEvent{{Message: aws.String("previous start failed"), CreatedAt: aws.Time(time.Now().Add(-time.Hour))}},
+		}}},
+		{"read failed", &failingDescribeECS{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eng := newTestEngine(t, "http://127.0.0.1:1", tc.api)
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer cancel()
+			err := (engineGateway{}).ensureReady(ctx, eng)
+			if !errors.Is(err, errEngineWaking) || strings.Contains(err.Error(), "ECS service reported") {
+				t.Fatalf("ensureReady() = %v, want the original retryable wait error", err)
+			}
+		})
 	}
 }
