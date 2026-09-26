@@ -231,17 +231,10 @@ function PopulatedPane({
   // Track liveness: alive → attach (connecting doesn't resume); stopped → detach
   // to read-only so nothing silently resumes. Runs only on an alive CHANGE, so a
   // user resume (attached=true while alive still false) isn't undone.
-  //
-  // While the SSM login modal runs for this session (#1025) the session is already alive
-  // (its pane runs `aws sso login`), but attaching then would resize the tmux window to
-  // this pane and can wrap the device URL the modal scrapes from it. Hold the attach until
-  // the modal closes; on ready the session is alive and it attaches here, on cancel the
-  // list is refreshed before the close (SessionModals) so a halted session stays detached.
-  const ssmLoginOpen = useSessionUI((u) => u.ssmResume?.name) === pane.session && sessionMeta?.kind === "ssm";
   useEffect(() => {
-    if (sessionMeta?.alive === true && !ssmLoginOpen) setAttached(true);
+    if (sessionMeta?.alive === true) setAttached(true);
     else if (sessionMeta?.alive === false) setAttached(false);
-  }, [sessionMeta?.alive, ssmLoginOpen]);
+  }, [sessionMeta?.alive]);
   // A managed (paneless) session (docs/log/27 §10) has no tmux pane, so the terminal is never
   // mounted and the mirror (chat) is permanently the primary UI.
   const managed = isManagedSession(sessionMeta);
@@ -303,7 +296,9 @@ function PopulatedPane({
   // A stopped SSM session goes through the login modal instead (#1025), the same route as
   // the rail menu's resume: it POSTs /start itself and shows the SSO device code when the
   // token has expired. Its onReady focuses this pane, and the attach follows from the alive
-  // effect above once the modal has closed and the session list reports the session running.
+  // effect above once the session list reports the session running. That can be before ready
+  // (the login runs inside the session's pane); the agent reads the device URL with
+  // `capture-pane -J`, so the resize an attach brings does not break it.
   const startSession = useSessionsStore((s) => s.start);
   const openSsmResume = useSessionUI((u) => u.openSsmResume);
   const [resuming, setResuming] = useState(false);

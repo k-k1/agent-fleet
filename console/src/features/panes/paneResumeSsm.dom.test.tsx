@@ -1,8 +1,7 @@
 // Regression guard for #1025: the pane's resume button on a stopped SSM session must go through
 // the SSO login modal (useSessionUI.openSsmResume), the same route as the rail menu's resume,
 // instead of POSTing /start directly and leaving the device code only inside the terminal.
-// A stopped shell session keeps resuming directly, and while the modal is open the pane holds
-// its attach (attaching resizes the tmux window the modal scrapes the device URL from).
+// A stopped shell session keeps resuming directly.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -74,15 +73,6 @@ describe("pane resume button on a stopped session", () => {
     expect(useSessionUI.getState().ssmResume).toEqual({ name: "s1", force: false });
     expect(start).not.toHaveBeenCalled();
     expect(stub().dataset.attached).toBe("false");
-  });
-
-  it("holds the attach while the modal is open and attaches once it closes", async () => {
-    await pressResume({ name: "s1", kind: "ssm", alive: false, title: "ssm" });
-    // The login runs inside the session's pane, so the list reports it alive mid-login.
-    await render({ name: "s1", kind: "ssm", alive: true, title: "ssm" });
-    expect(stub().dataset.attached).toBe("false");
-    await act(async () => useSessionUI.getState().close());
-    expect(stub().dataset.attached).toBe("true");
   });
 
   it("starts a shell session directly without the modal", async () => {
