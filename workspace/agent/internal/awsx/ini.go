@@ -21,6 +21,7 @@ type iniLine struct {
 	section    string // the raw section name the line belongs to (or opens)
 	key, value string // key lower-cased as configparser's optionxform does
 	cont       bool   // re-reported after a continuation line, not a new key
+	bad        bool   // neither a header nor a key: configparser's ParsingError
 }
 
 // scanINI walks text the way configparser does: lines are stripped before matching; a
@@ -63,6 +64,7 @@ func scanINI(text string, fn func(iniLine)) {
 		}
 		i := strings.IndexAny(t, "=:")
 		if i < 0 {
+			fn(iniLine{section: section, bad: true, value: t})
 			continue
 		}
 		optIndent = indent
@@ -112,6 +114,7 @@ func readINISection(path string, pick func(section string) bool, keys map[string
 	var sect map[string]string
 	scanINI(string(b), func(l iniLine) {
 		switch {
+		case l.bad:
 		case l.header && pick(l.section):
 			sect = map[string]string{}
 		case l.header:
@@ -139,13 +142,27 @@ func readINISection(path string, pick func(section string) bool, keys map[string
 // name that appears twice ([DEFAULT] may repeat) and a key given twice in one section
 // (measured with aws-cli 2.36.46: "Unable to parse config file", exit 255).
 func iniStrict(text string) error {
+	// The CLI decodes the files as UTF-8 without stripping a BOM: invalid bytes fail the
+	// read, and a BOM leaves the first line as no header at all.
+	if !utf8.ValidString(text) {
+		return errors.New("it is not valid UTF-8")
+	}
+	if strings.HasPrefix(text, "\ufeff") {
+		return errors.New("it starts with a byte-order mark (save it as UTF-8 without BOM)")
+	}
 	sections := map[string]bool{}
 	options := map[[2]string]bool{}
 	var err error
+	seenHeader := false
 	scanINI(text, func(l iniLine) {
 		switch {
 		case err != nil || l.cont:
+		case l.bad:
+			err = fmt.Errorf("the line %q is neither a [section] nor a key = value", l.value)
+		case !l.header && !seenHeader:
+			err = fmt.Errorf("%s is set before any [section]", l.key)
 		case l.header:
+			seenHeader = true
 			if sections[l.section] && l.section != "DEFAULT" {
 				err = fmt.Errorf("section [%s] appears twice", l.section)
 			}

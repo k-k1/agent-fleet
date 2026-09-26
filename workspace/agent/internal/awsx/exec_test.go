@@ -1007,3 +1007,39 @@ func TestLoginHintQuotesTheProfileName(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Files the CLI refuses to read are refused here too, whatever profile follows the
+// broken part. Each case is checked against iniStrict and, where installed, against
+// the real CLI (which must fail on it as well, or the case is wrong).
+func TestINIStrictRefusesWhatTheCLIRefuses(t *testing.T) {
+	good := "[profile p]\nsso_session = s\nregion = us-east-1\n"
+	cases := map[string]string{
+		"byte-order mark":      "\ufeff" + good,
+		"invalid UTF-8":        "[profile x]\nregion = \xff\n" + good,
+		"bare line":            "[profile x]\njust words\n" + good,
+		"key before a section": "region = us-east-1\n" + good,
+		"empty header":         "[]\n" + good,
+	}
+	aws, lookErr := exec.LookPath("aws")
+	for name, text := range cases {
+		if err := iniStrict(text); err == nil {
+			t.Errorf("%s: iniStrict accepted it", name)
+		}
+		if lookErr != nil {
+			continue
+		}
+		home := t.TempDir()
+		mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
+		if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(aws, "configure", "get", "region", "--profile", "p")
+		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+		if out, err := cmd.CombinedOutput(); err == nil {
+			t.Errorf("%s: the real CLI accepted it (%q), so refusing it would be a false positive", name, out)
+		}
+	}
+	if err := iniStrict(good); err != nil {
+		t.Fatalf("false positive: %v", err)
+	}
+}
