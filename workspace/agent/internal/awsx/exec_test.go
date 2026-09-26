@@ -1240,3 +1240,36 @@ func TestCheckSSOProfileStatesTheRightReason(t *testing.T) {
 		}
 	}
 }
+
+// A profile value that differs from its sso-session's is refused ("inconsistent between
+// profile and sso-session"), and an account and role that only the session gives do not
+// make the profile SSO (the CLI says "no credentials found"): both verified with
+// aws-cli 2.36.46.
+func TestPlanExecMergesTheSSOSessionLikeBotocore(t *testing.T) {
+	session := "[sso-session s]\nsso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-1\n" +
+		"sso_account_id = 123456789012\nsso_role_name = Dev\n\n"
+	for name, c := range map[string]struct {
+		profile string
+		want    string // "" = admitted
+	}{
+		"account and role only in the session": {"[profile prod]\nsso_session = s\n", "account (none)"},
+		"same account and role in both":        {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\n", ""},
+		"other account in the profile":         {"[profile prod]\nsso_session = s\nsso_account_id = 999999999999\nsso_role_name = Dev\n", "its sso-session"},
+		"other role in the profile":            {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Admin\n", "its sso-session"},
+	} {
+		bin, state := fakeAWS(t, ssoProfile)
+		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".aws", "config"), []byte(session+c.profile), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Account: "123456789012", Login: "never", Argv: []string{"true"}, Quiet: true})
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: refused: %v", name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		}
+	}
+}

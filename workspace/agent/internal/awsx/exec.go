@@ -760,15 +760,19 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 	if err := readINISection(expandHome(cfg), configPicker("sso-session", sso.Session), sess); err != nil {
 		return ssoInfo{}, err
 	}
-	sso.StartURL, sso.Region, sso.Scopes = sess["sso_start_url"], sess["sso_region"], sess["sso_registration_scopes"]
-	// botocore refuses a profile whose own sso_start_url / sso_region (set there, or
-	// inherited from [DEFAULT], empty included) differs from its sso-session's
-	// (measured: export-credentials exits 253). Refuse it too rather than pick one.
-	for _, f := range [][3]string{{"sso_start_url", keys["sso_start_url"], sso.StartURL}, {"sso_region", keys["sso_region"], sso.Region}} {
-		if _, set := keys[f[0]]; set && f[1] != f[2] {
-			return ssoInfo{}, fmt.Errorf("it sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", f[0], f[1], sso.Session, f[2])
+	// botocore takes the portal from the sso-session, and any SSO setting both the profile
+	// and the session give (set, inherited from [DEFAULT], or empty) must agree or the CLI
+	// refuses the profile (measured: "inconsistent between profile and sso-session",
+	// exit 253). The account and role still have to be on the profile itself: given only
+	// by the session, the CLI does not treat the profile as SSO at all (measured: "no
+	// credentials found"), so they are not borrowed from it here either.
+	for _, k := range []string{"sso_start_url", "sso_region", "sso_account_id", "sso_role_name", "sso_session"} {
+		sv, inSession := sess[k]
+		if pv, set := keys[k]; inSession && set && pv != sv {
+			return ssoInfo{}, fmt.Errorf("it sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", k, pv, sso.Session, sv)
 		}
 	}
+	sso.StartURL, sso.Region, sso.Scopes = sess["sso_start_url"], sess["sso_region"], sess["sso_registration_scopes"]
 	return sso, nil
 }
 
