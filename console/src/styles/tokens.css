@@ -127,7 +127,8 @@
      the other 9 --kind-* hues — but that value collided byte-for-byte with the Console's
      error/danger color (at the time --err was declared nowhere and #f85149 was a literal in
      imagegen, the diff/codegrid "removed" mark and the admin/tenant error text; --err above is
-     now the one error red, a softer step of the same hue).
+     now the one error red, a softer and slightly pinker red — Lab hue 20° vs 33° — which sits
+     closer to --kind-cursor: dE 13.4 dark, was 23.0 against #f85149).
      A kind badge in that exact red would read as an error state next to those, in the same
      screens.
      Comparison set widened to cover that: the 9 --kind-* hues PLUS the semantic colors sharing
@@ -273,7 +274,7 @@
   --btn-border: #c6cbd2;
   --ok: #146c2e; /* was #1a7f37: 4.0:1 on --active-bg (the running-session dot/badge) */
   --warn: #8a5b00; /* was #b7791f: 2.9:1 on --active-bg, 3.3:1 on --panel — the has-question / uncommitted chips */
-  --err: #a5281c; /* was #c0392b (as --del): 4.4:1 for deleted diff lines on their own red tint; now 5.69:1+ on every light surface */
+  --err: #a5281c; /* replaced #c0392b as --del (that one was 4.4:1 on its own red tint); 5.69:1+ on every light surface */
   --del: var(--err);
   --peer: #6b21a8; /* purple-800: 6.9:1 on --active-bg (#d7e6fb), 7.2:1 on --btn — the peer-origin badge */
   --active-bg: #d7e6fb;
