@@ -77,8 +77,11 @@ func HandleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 	buf := ""
 	if pane := tmuxx.SessionPaneID(session.TmuxName(name)); pane != "" {
 		// -S - captures the whole scrollback so the URL (early) and the SessionId line
-		// (later) are both visible regardless of pane size.
-		if out, err := tmuxx.Cmd("capture-pane", "-p", "-S", "-", "-t", pane).Output(); err == nil {
+		// (later) are both visible regardless of pane size. -J joins lines the pane
+		// wrapped: a narrow client (a phone, a split pane, or one attaching mid-login and
+		// resizing the window) wraps the device URL, and without it the regex took the
+		// first row as the whole URL — a broken link in the login modal (#1025).
+		if out, err := tmuxx.Cmd("capture-pane", "-p", "-J", "-S", "-", "-t", pane).Output(); err == nil {
 			buf = string(out)
 		}
 	}
