@@ -57,9 +57,15 @@ type RecommendedSet struct {
 // paths call, so the screen cannot show one model while another runs.
 func RecommendedModels(kind string) RecommendedSet {
 	chat := recommendedAssistantModel(kind)
-	if kind == session.KindMuse {
+	switch {
+	case kind == session.KindMuse:
 		// museChatModel's own fallback: the newest non-contributor row (ADR 0095 P2-21).
 		chat = museSafeDefault()
+	case kind == session.KindClaude && chat == "":
+		// claude's chat never runs without --model: an empty recommendation (sonnet hidden) is
+		// snapshotted onto the conversation and chatModel fills in AF_CHAT_MODEL or
+		// defaultChatModel. Say that, not "the CLI default" (#972 review, round 3).
+		chat = envOr("AF_CHAT_MODEL", defaultChatModel)
 	}
 	return RecommendedSet{
 		Chat:  chat,
@@ -73,9 +79,12 @@ func RecommendedModels(kind string) RecommendedSet {
 // be read at all — an empty result from a readable catalog means "nothing qualifies", which must
 // not be answered with a fixed id that may be retiring or absent (#972 review, round 2).
 func codexRecommendIDs() (ids []string, listed bool) {
-	all := modelChoiceIDs(codexModels())
-	ids = visibleModelIDs(session.KindCodex, all)
-	return slices.DeleteFunc(ids, codexRetiring), len(all) > 0
+	list := codexModels()
+	// nil = never read (codex.Models returns its last good list, nil before the first); a read
+	// that succeeded with nothing to list is an empty non-nil slice — still "listed", where the
+	// fixed id must not come back (#972 review, round 3).
+	ids = visibleModelIDs(session.KindCodex, modelChoiceIDs(list))
+	return slices.DeleteFunc(ids, codexRetiring), list != nil
 }
 
 // codexNewestLuna is codex's chat / prose recommendation: the newest "-luna" in the catalog,

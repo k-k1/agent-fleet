@@ -1590,9 +1590,33 @@ const (
 	OneShotProse
 )
 
+// oneShotEnvModels are the operator's per-kind overrides of the one-shot recommendation. They
+// used to apply only to a member with NO model setting, which the Console never leaves (its
+// defaults store "recommended" for every kind, and ui_prefs.go reads a missing entry the same
+// way) — so they were silently dead for everyone the settings screen could show. Folded into the
+// recommendation itself, they now take effect for "recommended" and show up as its answer
+// (#972 review, round 3).
+var oneShotEnvModels = map[string]string{
+	session.KindCodex:    "AF_TITLE_MODEL_CODEX",
+	session.KindOpencode: "AF_TITLE_MODEL_OPENCODE",
+	session.KindAgy:      "AF_TITLE_MODEL_AGY",
+}
+
+// oneShotEnvModel is kind's operator override, "" when none is set.
+func oneShotEnvModel(kind string) string {
+	if name := oneShotEnvModels[kind]; name != "" {
+		return strings.TrimSpace(os.Getenv(name))
+	}
+	return ""
+}
+
 // recommendedOneShotModel is the "recommended" resolution for a tier — the Console shows the
-// same split (Settings > AI assist, "short text" / "prose").
+// same split (Settings > AI assist, "short text" / "prose"). An operator override
+// (oneShotEnvModel) wins over the computed rules.
 func recommendedOneShotModel(kind string, tier OneShotTier) string {
+	if m := oneShotEnvModel(kind); m != "" {
+		return m
+	}
 	if tier == OneShotProse {
 		return recommendedAssistantModel(kind)
 	}
@@ -1803,18 +1827,15 @@ func recommendedUtilityModel(kind string) string {
 // selected / configured / auto are what OneShotHeadlessRun resolved from the settings, the
 // "recommended" sentinel already replaced (auto marks that).
 //
-//   - nothing configured ⇒ AF_TITLE_MODEL_CODEX (the operator's, never retried away), else the
-//     recommendation exactly as "recommended" gives it;
+//   - nothing configured ⇒ the recommendation exactly as "recommended" gives it (which is
+//     AF_TITLE_MODEL_CODEX when the operator set one — theirs, never retried away);
 //   - configured ⇒ used as is. "" — the member's explicit CLI default, or a recommendation that
 //     resolved to nothing — stays "no -m": neither the cheapest model nor the environment's
 //     model may stand in for it (#972 review, rounds 1 and 2).
 func codexOneShotModel(selected string, configured, auto bool, tier OneShotTier) (string, bool) {
 	if !configured {
-		if env := os.Getenv("AF_TITLE_MODEL_CODEX"); env != "" {
-			return env, false
-		}
 		m := recommendedOneShotModel(session.KindCodex, tier)
-		return m, m != ""
+		return m, m != "" && oneShotEnvModel(session.KindCodex) == ""
 	}
 	return selected, auto && selected != ""
 }
@@ -1947,7 +1968,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 	defer func() { kind, model = call.Kind, call.ModelReq }()
 	kind, selected, configured, _ := resolveOneShot(feature, tier)
 	selected = strings.TrimSpace(selected)
-	autoRecommended := selected == AssistantRecommendedModel
+	// Our own pick — retried without -m if it fails — only when the recommendation was computed;
+	// an operator's AF_TITLE_MODEL_* is theirs and is never dropped behind their back.
+	autoRecommended := selected == AssistantRecommendedModel && oneShotEnvModel(kind) == ""
 	if selected == AssistantRecommendedModel {
 		selected, configured = recommendedOneShotModel(kind, tier), true
 	}
@@ -1981,10 +2004,7 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
 		m := selected
 		if !configured {
-			m = os.Getenv("AF_TITLE_MODEL_OPENCODE")
-			if m == "" {
-				m = recommendedOneShotModel(kind, tier)
-			}
+			m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
 		}
 		if m != "" {
 			args = append(args, "--model", m)
@@ -2070,7 +2090,7 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		if !configured {
 			// The same answer "recommended" gives (RecommendedModels), so a member who never
 			// opened the setting runs what the screen calls the recommendation.
-			m = envOr("AF_TITLE_MODEL_AGY", recommendedOneShotModel(kind, tier))
+			m = recommendedOneShotModel(kind, tier)
 		}
 		if m := agyChatModel(m, filterVisibleModels(session.KindAgy, agy.Models())); m != "" {
 			args = append(args, "--model", m)

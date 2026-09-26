@@ -37,6 +37,8 @@ const apiMock = vi.fn(async (url: string) => {
 });
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
+  getUser: () => "",
   api: (...a: unknown[]) => apiMock(...(a as [string])),
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",

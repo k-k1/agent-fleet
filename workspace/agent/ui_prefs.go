@@ -159,11 +159,25 @@ func aiProseModelPref(kind string) (string, bool) {
 	return aiModelPref("aiProseModels", kind)
 }
 
+// A kind with no usable entry reads as "recommended", mirroring the Console (settings.ts's
+// migrateAiAssistPrefs + fillRecommendedModelMaps): the legacy map stands in only when the new
+// key is absent altogether — the Console copies it over whole then — and a kind missing from
+// whichever map applies, or hidden there, is "recommended", which is what the settings row
+// shows for it. Before this a missing entry was a third state the screen could not name: the
+// row said the CLI default while the one-shot ran a per-kind historical default or
+// AF_TITLE_MODEL_* (#972 review, round 3).
 func aiModelPref(key, kind string) (string, bool) {
-	if v, ok := assistantModelPref(key, kind); ok {
+	prefs := uiprefs.Read()
+	src := key
+	if _, ok := prefs[key].(map[string]any); !ok {
+		if _, legacy := prefs["assistantUtilityModels"].(map[string]any); legacy {
+			src = "assistantUtilityModels"
+		}
+	}
+	if v, ok := assistantModelPref(src, kind); ok {
 		return v, true
 	}
-	return assistantModelPref("assistantUtilityModels", kind)
+	return chatx.AssistantRecommendedModel, true
 }
 
 // aiFeatureAgentPref is the per-feature agent pin (Settings > AI assist, docs/log/103 decision

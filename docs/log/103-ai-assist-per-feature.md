@@ -336,6 +336,14 @@ kind, model, _ := resolveOneShot(feature, tier)
   整形後の一覧、Agent は整形前）。加えて codex の短文は、一覧から `mini` が消えたため
   「安い目印」の探索が何も拾わず、CLI 既定で走っていた（`gpt-6-luna` は `gpt-5.6-luna` の
   入力半額なのに固定 ID のまま）。
+  🔴 同日、レビュー 3 巡目を受けてもう 1 点: **モデル設定の「未設定」をやめ、「推奨」と読む**
+  （Agent の `aiModelPref` と Console の `fillRecommendedModelMaps` の両側）。未設定は画面が
+  「既定」と出す一方で実行は kind ごとの旧既定か `AF_TITLE_MODEL_*` という、画面に名前の無い
+  第 3 の状態だった（muse は既定値の表に入っておらず常にこれ、旧 `assistantUtilityModels` から
+  移行した表も kind が欠ける）。新規の利用者は既定値で全 kind が「推奨」なので、古い設定を
+  新しい設定と同じ意味にしただけで、書き戻しはしない（hydrate 時の PUT は所有者切り替えの
+  防御が禁じている）。`AF_TITLE_MODEL_{CODEX,OPENCODE,AGY}` は「推奨」の上書きとして
+  推奨の計算に入れた——以前は未設定の人にしか効かず、既定値が「推奨」の全員には効いていなかった。
 
 ## 103.12 レビューで変えたこと
 

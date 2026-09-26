@@ -14,6 +14,8 @@ import { AI_ASSIST_FEATURES } from "../../../lib/aiAssistFeatures.ts";
 
 const apiMock = vi.fn();
 vi.mock("../../../core/api/client.ts", () => ({
+  getTenant: () => "",
+  getUser: () => "",
   api: (...a: unknown[]) => apiMock(...a),
   apiJSON: vi.fn(),
   raw: vi.fn(async () => new Response("")),

@@ -14,8 +14,13 @@ func useCatalogs(t *testing.T, codexIDs, agyIDs []string, retiring map[string]bo
 	t.Cleanup(func() {
 		codexModels, codexRetiring, agyModels, testPrices = prevCodex, prevRetiring, prevAgy, prevPrices
 	})
+	// nil ids = a catalog that could not be read (nil, as codex.Models returns before its first
+	// good read); a non-nil empty slice = a read that listed nothing.
 	choices := func(ids []string) func() []agents.ModelChoice {
 		return func() []agents.ModelChoice {
+			if ids == nil {
+				return nil
+			}
 			out := make([]agents.ModelChoice, len(ids))
 			for i, id := range ids {
 				out[i] = agents.ModelChoice{ID: id, Label: id}
@@ -229,5 +234,58 @@ func TestCodexOneShotModelRespectsExplicitDefault(t *testing.T) {
 	}
 	if m, auto := codexOneShotModel("", true, true, OneShotShort); m != "" || auto {
 		t.Fatalf("empty recommendation with env = %q (auto=%v), want no -m and not ours", m, auto)
+	}
+}
+
+// #972 review round 3: a codex read that succeeded with nothing listed is not "no catalog" —
+// the fixed id must not come back as if it existed.
+func TestCodexChatEmptyCatalogIsNotUnreadable(t *testing.T) {
+	useCatalogs(t, []string{}, nil, nil, nil)
+	if got := recommendedAssistantModel(session.KindCodex); got != "" {
+		t.Fatalf("codex chat over an empty catalog = %q, want \"\"", got)
+	}
+}
+
+// #972 review round 3: claude's chat always passes --model; with sonnet hidden the
+// recommendation is empty and chatModel fills in AF_CHAT_MODEL / defaultChatModel. The answer
+// must name that, not the CLI default.
+func TestRecommendedClaudeChatNamesWhatRuns(t *testing.T) {
+	prev := deps.VisibleModel
+	t.Cleanup(func() { deps.VisibleModel = prev })
+	deps.VisibleModel = func(_, model string) string {
+		if model == "sonnet" {
+			return ""
+		}
+		return model
+	}
+	t.Setenv("AF_CHAT_MODEL", "")
+	if got := RecommendedModels(session.KindClaude).Chat; got != defaultChatModel {
+		t.Fatalf("claude chat with sonnet hidden = %q, want %q (what chatModel runs)", got, defaultChatModel)
+	}
+	if got := chatModel(&ChatConversation{Model: ResolveChatModel(session.KindClaude, "")}); got != defaultChatModel {
+		t.Fatalf("the chat path runs %q", got)
+	}
+	t.Setenv("AF_CHAT_MODEL", "claude-opus-5-5")
+	if got := RecommendedModels(session.KindClaude).Chat; got != "claude-opus-5-5" {
+		t.Fatalf("claude chat with AF_CHAT_MODEL = %q", got)
+	}
+}
+
+// #972 review round 3: the operator's AF_TITLE_MODEL_<KIND> is part of the recommendation — so
+// it takes effect for "recommended" (every Console default) and is what the screen names — and
+// it is never treated as our own pick to retry away.
+func TestOneShotEnvOverridesRecommendation(t *testing.T) {
+	useCatalogs(t, codexCatalog0926, nil, nil, codexPrices0926)
+	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-6-sol")
+	got := RecommendedModels(session.KindCodex)
+	if got.Short != "gpt-6-sol" || got.Prose != "gpt-6-sol" {
+		t.Fatalf("recommended with AF_TITLE_MODEL_CODEX = %+v, want gpt-6-sol for both one-shot tiers", got)
+	}
+	if m, auto := codexOneShotModel("", false, false, OneShotShort); m != "gpt-6-sol" || auto {
+		t.Fatalf("unset = %q (auto=%v), want the operator's model, not ours", m, auto)
+	}
+	t.Setenv("AF_TITLE_MODEL_CODEX", "")
+	if got := RecommendedModels(session.KindCodex).Short; got != "gpt-6-luna" {
+		t.Fatalf("without the override = %q", got)
 	}
 }
