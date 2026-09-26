@@ -1182,7 +1182,7 @@ func TestPlanExecRefusesAProfileThatContradictsItsSSOSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true})
-		if err == nil || !strings.Contains(err.Error(), "its sso-session") {
+		if err == nil || !strings.Contains(err.Error(), `profile "prod": it sets`) {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}

@@ -320,7 +320,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	// the definition found is not an SSO profile at all.
 	sso, err := resolveSSO(env, keys)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("profile %q: %w", o.Profile, err)
 	}
 	if err := checkIdentity(sso, o); err != nil {
 		return "", nil, nil, err
@@ -741,7 +741,7 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 	// (measured: export-credentials exits 253). Refuse it too rather than pick one.
 	for _, f := range [][3]string{{"sso_start_url", keys["sso_start_url"], sso.StartURL}, {"sso_region", keys["sso_region"], sso.Region}} {
 		if _, set := keys[f[0]]; set && f[1] != f[2] {
-			return ssoInfo{}, fmt.Errorf("profile sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", f[0], f[1], sso.Session, f[2])
+			return ssoInfo{}, fmt.Errorf("it sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", f[0], f[1], sso.Session, f[2])
 		}
 	}
 	return sso, nil
