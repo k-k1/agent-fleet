@@ -1234,7 +1234,7 @@ func (g engineGateway) plain(w http.ResponseWriter, r *http.Request, eng *engine
 		if errors.Is(start.err, errEngineWaking) {
 			w.Header().Set("Retry-After", strconv.Itoa(int(engineReadyPoll.Seconds()*2)))
 			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_waking",
-				"the fleet's own inference engine is starting; retry"})
+				"the fleet's own inference engine is starting; retry: " + start.err.Error()})
 			return
 		}
 		retry := int(engineReadyPoll.Seconds() * 10)
@@ -1559,11 +1559,35 @@ func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState)
 			// Wrapped, not replaced: the streaming path turns this into the text a person and a
 			// model both read, and the non-streaming one turns it into a code a client retries
 			// on. Both need to know it was the WAIT that ended, not the start that failed.
-			return fmt.Errorf("gave up waiting for the engine after %s: %w",
-				time.Since(waitStarted).Truncate(time.Second), errEngineWaking)
+			return engineReadyWaitError(ctx, eng, waitStarted)
 		case <-time.After(engineReadyPoll):
 		}
 	}
+}
+
+// engineReadyWaitError makes one bounded, fresh read after the wait expires. The caller's
+// context can no longer read ECS, and the cached view may predate the failed start.
+func engineReadyWaitError(ctx context.Context, eng *engineRuntimeState, waitedFrom time.Time) error {
+	base := fmt.Sprintf("gave up waiting for the engine after %s", time.Since(waitedFrom).Truncate(time.Second))
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s: %w", base, errEngineWaking)
+	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	view, err := eng.ecs.describe(readCtx)
+	if err == nil {
+		var reasons []string
+		for _, event := range view.events {
+			if !view.lastStart.IsZero() && (event.at.IsZero() || event.at.Before(view.lastStart)) {
+				continue
+			}
+			reasons = append(reasons, event.message)
+		}
+		if len(reasons) > 0 {
+			return fmt.Errorf("%s; ECS service reported: %s: %w", base, strings.Join(reasons, " | "), errEngineWaking)
+		}
+	}
+	return fmt.Errorf("%s: %w", base, errEngineWaking)
 }
 
 // ensureStarted moves the desired count to 1 when it is not there already. It reads the
