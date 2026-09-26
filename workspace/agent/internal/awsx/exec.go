@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -223,19 +224,23 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 	if keys["sso_account_id"] == "" || keys["sso_role_name"] == "" {
 		return fmt.Errorf("profile %q has no SSO account and role; set both on the profile in Settings > SSM", profile)
 	}
-	// Presence, not value: botocore's providers claim a profile by the key alone, so an
-	// empty `role_arn =` (set or inherited) still sends the CLI to assume-role
-	// (measured: "Partial credentials found in assume-role", exit 253).
+	// These take the profile away from SSO in the CLI itself. role_arn does by presence
+	// alone: an empty `role_arn =` (set or inherited) still sends the CLI to assume-role
+	// ("Partial credentials found in assume-role", exit 253). web_identity_token_file
+	// does only with a value; an empty one leaves the CLI on SSO and falls to the policy
+	// check below (both measured with aws-cli 2.36.46).
 	for _, k := range []string{"role_arn", "web_identity_token_file"} {
-		if _, set := keys[k]; set {
+		if v, set := keys[k]; set && (k == "role_arn" || v != "") {
 			return fmt.Errorf("profile %q also sets %s (in the profile, a [DEFAULT] section, or ~/.aws/credentials), so the AWS CLI "+
 				"would not use its SSO login; af-aws-exec refuses it", profile, k)
 		}
 	}
-	// These the CLI resolves after SSO, but the Go v2 and JS v3 SDKs (and tools built on
-	// them) take static keys, credential_process and credential_source first: the one
-	// profile name would mean different identities to different tools.
-	for _, k := range []string{"source_profile", "credential_source", "credential_process",
+	// These the CLI resolves after SSO, but not every SDK does: the Go v2 SDK takes static
+	// keys and credential_source before SSO, the JS v3 SDK static keys and
+	// credential_process, so the one profile name would mean different identities to
+	// different tools. Refusing them is a policy stricter than the CLI's, and the message
+	// says so.
+	for _, k := range []string{"web_identity_token_file", "source_profile", "credential_source", "credential_process",
 		"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
 		if _, set := keys[k]; set {
 			return fmt.Errorf("profile %q also sets %s (in the profile, a [DEFAULT] section, or ~/.aws/credentials); the AWS CLI would still use its SSO "+
@@ -766,23 +771,44 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 	if err := readINISection(expandHome(cfg), configPicker("sso-session", sso.Session), sess); err != nil {
 		return ssoInfo{}, err
 	}
-	// botocore takes the portal from the sso-session, and any SSO setting both the profile
-	// and the session give (set, inherited from [DEFAULT], or empty) must agree or the CLI
-	// refuses the profile (measured: "inconsistent between profile and sso-session",
-	// exit 253). The account and role still have to be on the profile itself: given only
-	// by the session, the CLI does not treat the profile as SSO at all (measured: "no
-	// credentials found"), so they are not borrowed from it here either.
-	for _, k := range []string{"sso_start_url", "sso_region", "sso_account_id", "sso_role_name", "sso_session"} {
-		sv, inSession := sess[k]
-		if pv, set := keys[k]; inSession && set && pv != sv {
-			return ssoInfo{}, fmt.Errorf("it sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", k, pv, sso.Session, sv)
+	// botocore merges the whole sso-session into the profile, and ANY key both give (an
+	// SSO field, region, even an unrelated one; set, inherited from [DEFAULT], or empty)
+	// must agree or the CLI refuses the profile (measured with aws-cli 2.36.46: "The value
+	// for region is inconsistent between profile (us-west-2) and sso-session (eu-west-1)",
+	// exit 253, for [DEFAULT] region = eu-west-1 under a profile with its own region).
+	shared := make([]string, 0, len(sess))
+	for k := range sess {
+		if _, set := keys[k]; set {
+			shared = append(shared, k)
 		}
 	}
-	// Say where they are when the session holds what the profile lacks: otherwise the
-	// user only sees "account (none)" and tries --account instead.
-	if (keys["sso_account_id"] == "" || keys["sso_role_name"] == "") && (sess["sso_account_id"] != "" || sess["sso_role_name"] != "") {
-		return ssoInfo{}, fmt.Errorf("sso_account_id / sso_role_name are only in [sso-session %s]; the AWS CLI needs them on the profile itself", sso.Session)
+	sort.Strings(shared)
+	for _, k := range shared {
+		if keys[k] != sess[k] {
+			return ssoInfo{}, fmt.Errorf("it sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", k, keys[k], sso.Session, sess[k])
+		}
 	}
+	// The account and role: the CLI treats the profile as SSO when at least one of them is
+	// on the profile, and then takes the other from the session (measured: account on the
+	// profile plus role in the session reaches the SSO token). With neither on the
+	// profile it is not SSO at all ("no credentials found"), so nothing is borrowed.
+	_, hasAcct := keys["sso_account_id"]
+	_, hasRole := keys["sso_role_name"]
+	switch {
+	case hasAcct || hasRole:
+		for _, k := range []string{"sso_account_id", "sso_role_name"} {
+			if _, set := keys[k]; !set {
+				if sv, ok := sess[k]; ok {
+					keys[k] = sv
+				}
+			}
+		}
+	case sess["sso_account_id"] != "" || sess["sso_role_name"] != "":
+		// Say where they are: otherwise the user only sees "no account" and looks in
+		// the wrong place.
+		return ssoInfo{}, fmt.Errorf("sso_account_id / sso_role_name are only in [sso-session %s]; the AWS CLI needs at least one of them on the profile itself", sso.Session)
+	}
+	sso.Account, sso.Role = keys["sso_account_id"], keys["sso_role_name"]
 	sso.StartURL, sso.Region, sso.Scopes = sess["sso_start_url"], sess["sso_region"], sess["sso_registration_scopes"]
 	return sso, nil
 }

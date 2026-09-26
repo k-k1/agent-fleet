@@ -283,8 +283,8 @@ af-aws-exec --profile <名前> -- npx cdk deploy
 - プロファイルの**短命な**資格情報を、そのコマンド 1 つの環境変数にだけ渡します。`af-aws-exec` 自身は資格情報を
   どこにも書かず、表示するのは実行する身元（ARN）だけです（AWS CLI は従来どおり `~/.aws` に自分のログインと
   ロールのキャッシュを持ちます）。
-- プロファイルには設定画面で**アカウントとロール**を入れておく必要があります。`role_arn` か
-  `web_identity_token_file` も持つプロファイルは断ります。AWS CLI がその SSO ログインを使わなくなるためです。
+- プロファイルには設定画面で**アカウントとロール**を入れておく必要があります。`role_arn`（空でも）か
+  パスの入った `web_identity_token_file` も持つプロファイルは断ります。AWS CLI がその SSO ログインを使わなくなるためです。
   `source_profile`・`credential_source`・`credential_process`・静的キー（`~/.aws/config` でも `~/.aws/credentials`
   でも）を持つプロファイルも断ります。AWS CLI は SSO を使いますが、他の SDK やツールはそちらを先に使うため、1 つの
   名前がツールごとに別の身元を指してしまうからです。資格情報を同じ名前で `~/.aws/credentials` に同期するツール

@@ -294,8 +294,8 @@ af-aws-exec --profile <name> -- npx cdk deploy
 - It passes the profile's **short-lived** credentials to that one command through its environment only —
   `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI
   keeps its own login and role caches under `~/.aws`, as it always does.)
-- The profile must have an **account and role** set in Settings. A profile that also carries `role_arn` or
-  `web_identity_token_file` is refused because the AWS CLI would not use its SSO login. One that also carries
+- The profile must have an **account and role** set in Settings. A profile that also carries `role_arn` (even
+  empty) or a `web_identity_token_file` path is refused because the AWS CLI would not use its SSO login. One that also carries
   `source_profile`, `credential_source`, `credential_process` or static keys (in `~/.aws/config` or
   `~/.aws/credentials`) is refused too: the AWS CLI would still use SSO, but other SDKs and tools use those first,
   so the one name would mean different identities to different tools. A tool that syncs credentials into

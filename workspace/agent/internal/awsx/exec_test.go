@@ -1224,19 +1224,21 @@ func TestLoginNeededMatchesOnlyTokenErrors(t *testing.T) {
 // SSO in the CLI itself; the others only in other SDKs and tools.
 func TestCheckSSOProfileStatesTheRightReason(t *testing.T) {
 	base := map[string]string{"sso_session": "s", "sso_account_id": "1", "sso_role_name": "r"}
-	for key, want := range map[string]string{
-		"role_arn":                "would not use its SSO login",
-		"web_identity_token_file": "would not use its SSO login",
-		"credential_process":      "would still use its SSO",
-		"aws_access_key_id":       "would still use its SSO",
-		"source_profile":          "would still use its SSO",
+	for _, c := range []struct{ key, value, want string }{
+		{"role_arn", "", "would not use its SSO login"}, // presence alone, even empty
+		{"role_arn", "arn:aws:iam::1:role/x", "would not use its SSO login"},
+		{"web_identity_token_file", "/tmp/t", "would not use its SSO login"},
+		{"web_identity_token_file", "", "would still use its SSO"}, // empty: the CLI stays on SSO
+		{"credential_process", "/bin/x", "would still use its SSO"},
+		{"aws_access_key_id", "AKIA", "would still use its SSO"},
+		{"source_profile", "x", "would still use its SSO"},
 	} {
-		k := map[string]string{key: ""}
+		k := map[string]string{c.key: c.value}
 		for kk, v := range base {
 			k[kk] = v
 		}
-		if err := checkSSOProfile(k, "p"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: err = %v, want %q", key, err, want)
+		if err := checkSSOProfile(k, "p"); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s=%q: err = %v, want %q", c.key, c.value, err, c.want)
 		}
 	}
 }
@@ -1246,16 +1248,19 @@ func TestCheckSSOProfileStatesTheRightReason(t *testing.T) {
 // make the profile SSO (the CLI says "no credentials found"): both verified with
 // aws-cli 2.36.46.
 func TestPlanExecMergesTheSSOSessionLikeBotocore(t *testing.T) {
-	session := "[sso-session s]\nsso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-1\n" +
-		"sso_account_id = 123456789012\nsso_role_name = Dev\n\n"
+	session := "[DEFAULT]\nregion = eu-west-1\n\n[sso-session s]\nsso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-1\n" +
+		"sso_account_id = 123456789012\nsso_role_name = Dev\nfoo = a\n\n"
 	for name, c := range map[string]struct {
 		profile string
 		want    string // "" = admitted
 	}{
-		"account and role only in the session": {"[profile prod]\nsso_session = s\n", "only in [sso-session s]"},
-		"same account and role in both":        {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\n", ""},
-		"other account in the profile":         {"[profile prod]\nsso_session = s\nsso_account_id = 999999999999\nsso_role_name = Dev\n", "its sso-session"},
-		"other role in the profile":            {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Admin\n", "its sso-session"},
+		"account and role only in the session":             {"[profile prod]\nsso_session = s\n", "only in [sso-session s]"},
+		"account on the profile, role only in the session": {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\n", ""},
+		"region differs from the session's [DEFAULT]":      {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\nregion = us-west-2\n", "region"},
+		"unrelated key differs":                            {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\nfoo = b\n", "foo"},
+		"same account and role in both":                    {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\n", ""},
+		"other account in the profile":                     {"[profile prod]\nsso_session = s\nsso_account_id = 999999999999\nsso_role_name = Dev\n", "its sso-session"},
+		"other role in the profile":                        {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Admin\n", "its sso-session"},
 	} {
 		bin, state := fakeAWS(t, ssoProfile)
 		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
