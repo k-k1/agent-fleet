@@ -63,7 +63,10 @@ type SyncResult struct {
 	Shadowed []string
 	// Invalid are profiles refused by the INI allowlist (sessionx.RenderSSMConfig).
 	Invalid []string
-	Changed bool
+	// DefaultClash are profiles not exported because a [DEFAULT] key in ~/.aws/config
+	// would make the CLI refuse them, by name, with the key that clashes.
+	DefaultClash map[string]string
+	Changed      bool
 	// Settings is every profile the CP sent, by name, so af-aws-exec can tell a name the
 	// member's own ~/.aws definition shadows from the Settings profile of that name.
 	Settings map[string]Profile
@@ -248,10 +251,23 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	// those calls from whatever they use today (the workload role, for one) onto an SSO
 	// login, so a Settings profile labelled "default" is never exported.
 	profiles["default"] = true
+	defaults := map[string]string{}
+	scanINI(user, func(l iniLine) {
+		if !l.header && !l.bad && l.section == "DEFAULT" {
+			defaults[l.key] = l.value
+		}
+	})
 	var body strings.Builder
 	for _, p := range ps {
 		if profiles[p.Name] || ssoSessions["af-"+p.Name] {
 			res.Shadowed = append(res.Shadowed, p.Name)
+			continue
+		}
+		if k := defaultClash(defaults, p); k != "" {
+			if res.DefaultClash == nil {
+				res.DefaultClash = map[string]string{}
+			}
+			res.DefaultClash[p.Name] = k + " = " + defaults[k]
 			continue
 		}
 		ini, rerr := sessionx.RenderSSMConfig(session.SSMMeta{
@@ -282,6 +298,40 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	b.WriteString(body.String())
 	b.WriteString("\n" + blockEnd + "\n")
 	return b.String(), res, nil
+}
+
+// defaultClash names a [DEFAULT] key that would make the CLI refuse the exported profile
+// p, or "". [DEFAULT] lends its keys to both the profile and its sso-session, and
+// botocore refuses any key the two give with different values: a [DEFAULT] value for a
+// key only one of them sets differently is exactly that (measured: [DEFAULT] region
+// under a profile with its own region is "inconsistent between profile and
+// sso-session", exit 253). The keys are the ones RenderSSMConfig writes.
+func defaultClash(defaults map[string]string, p Profile) string {
+	region := p.Region
+	if region == "" {
+		region = p.SSORegion
+	}
+	written := map[string]string{
+		"sso_session": "af-" + p.Name, "sso_start_url": p.StartURL, "sso_region": p.SSORegion,
+		"sso_registration_scopes": "sso:account:access", "region": region,
+	}
+	if p.AccountID != "" {
+		written["sso_account_id"] = p.AccountID
+	}
+	if p.RoleName != "" {
+		written["sso_role_name"] = p.RoleName
+	}
+	keys := make([]string, 0, len(written))
+	for k := range written {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if v, ok := defaults[k]; ok && v != written[k] {
+			return k
+		}
+	}
+	return ""
 }
 
 // stripBlock removes the managed block (and the blank line render put before it). A
@@ -357,6 +407,9 @@ func syncAndLog(why string) {
 	}
 	for _, c := range res.Conflicts {
 		log.Printf("aws profiles sync (%s): not exported, Settings labels %s all map to %q", why, strings.Join(c.Labels, " / "), c.Name)
+	}
+	for n, kv := range res.DefaultClash {
+		log.Printf("aws profiles sync (%s): not exported, [DEFAULT] %s in ~/.aws/config would make the AWS CLI refuse %q", why, kv, n)
 	}
 	if len(res.Invalid) > 0 {
 		log.Printf("aws profiles sync (%s): not exported, refused by validation: %s", why, strings.Join(res.Invalid, ", "))

@@ -292,3 +292,22 @@ func TestNotExported(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+// [DEFAULT] lends its keys to both the exported profile and its sso-session; a value
+// one of them sets differently makes the CLI refuse the profile, so it is not exported
+// and the reason is reported.
+func TestApplyDoesNotExportAProfileADEFAULTKeyBreaks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("[DEFAULT]\nregion = eu-west-1\noutput = json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	same := prof("same")
+	same.Region = "eu-west-1"
+	res, err := Apply(path, []Profile{prof("prod"), same})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.DefaultClash["prod"] != "region = eu-west-1" || strings.Join(res.Exported, ",") != "same" {
+		t.Fatalf("result = %+v", res)
+	}
+}

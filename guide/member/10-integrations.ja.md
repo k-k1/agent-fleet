@@ -286,7 +286,7 @@ af-aws-exec --profile <名前> -- npx cdk deploy
 - プロファイルには設定画面で**アカウントとロール**を入れておく必要があります。`role_arn`（空でも）か
   パスの入った `web_identity_token_file` も持つプロファイルは断ります。AWS CLI がその SSO ログインを使わなくなるためです。
   `source_profile`・`credential_source`・`credential_process`・静的キー（`~/.aws/config` でも `~/.aws/credentials`
-  でも）を持つプロファイルも断ります。AWS CLI は SSO を使いますが、他の SDK やツールはそちらを先に使うため、1 つの
+  でも）、空の `web_identity_token_file`（`role_arn` と一緒でも）を持つプロファイルも断ります。AWS CLI は SSO を使いますが、他の SDK やツールはそちらを先に使うため、1 つの
   名前がツールごとに別の身元を指してしまうからです。資格情報を同じ名前で `~/.aws/credentials` に同期するツール
   （yawsso など）が原因になるので、別の名前に同期してください。`[DEFAULT]` セクションのキーも（CLI がすべての
   プロファイルに適用するため）、値が空のキーも数えます。資格情報は、

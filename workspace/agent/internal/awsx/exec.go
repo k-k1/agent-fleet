@@ -48,6 +48,9 @@ type ExecOptions struct {
 	// definition shadows, or that two Settings labels share, be refused.
 	Settings  map[string]Profile
 	Conflicts []Conflict
+	// DefaultClash is SyncResult.DefaultClash: Settings profiles held back because a
+	// [DEFAULT] line would make the CLI refuse them, so the run can say why.
+	DefaultClash map[string]string
 
 	Stderr      io.Writer
 	Interactive bool // stdin and stderr are terminals
@@ -162,6 +165,12 @@ func envValue(env []string, key string) string {
 // through `aws configure get`: each of those is a CLI start (~0.8 s measured), and ten
 // of them put eight seconds in front of every af-aws-exec.
 func profileKeys(env []string, profile string) (map[string]string, error) {
+	keys, _, err := profileKeysFrom(env, profile)
+	return keys, err
+}
+
+// profileKeysFrom is profileKeys with where each key came from (see readINISectionFrom).
+func profileKeysFrom(env []string, profile string) (map[string]string, map[string]string, error) {
 	cfg := envValue(env, "AWS_CONFIG_FILE")
 	if cfg == "" {
 		cfg = ConfigPath()
@@ -170,14 +179,14 @@ func profileKeys(env []string, profile string) (map[string]string, error) {
 	if creds == "" {
 		creds = filepath.Join(filepath.Dir(ConfigPath()), "credentials")
 	}
-	keys := map[string]string{}
-	if err := readINISection(expandHome(cfg), configPicker("profile", profile), keys); err != nil {
-		return nil, err
+	keys, origin := map[string]string{}, map[string]string{}
+	if err := readINISectionFrom(expandHome(cfg), configPicker("profile", profile), keys, origin, ""); err != nil {
+		return nil, nil, err
 	}
-	if err := readINISection(expandHome(creds), credentialsPicker(profile), keys); err != nil {
-		return nil, err
+	if err := readINISectionFrom(expandHome(creds), credentialsPicker(profile), keys, origin, "~/.aws/credentials"); err != nil {
+		return nil, nil, err
 	}
-	return keys, nil
+	return keys, origin, nil
 }
 
 // checkSSOProfile admits only a profile the CLI will resolve through its SSO provider
@@ -228,9 +237,13 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 	// alone: an empty `role_arn =` (set or inherited) still sends the CLI to assume-role
 	// ("Partial credentials found in assume-role", exit 253). web_identity_token_file
 	// does only with a value; an empty one leaves the CLI on SSO and falls to the policy
-	// check below (both measured with aws-cli 2.36.46).
+	// check below (both measured with aws-cli 2.36.46). And role_arn next to an EMPTY
+	// web_identity_token_file leaves the CLI on SSO too: the assume-role provider skips a
+	// profile with that key and the web-identity one skips an empty value (measured).
+	webID, hasWebID := keys["web_identity_token_file"]
 	for _, k := range []string{"role_arn", "web_identity_token_file"} {
-		if v, set := keys[k]; set && (k == "role_arn" || v != "") {
+		v, set := keys[k]
+		if set && ((k == "role_arn" && !(hasWebID && webID == "")) || (k == "web_identity_token_file" && v != "")) {
 			return fmt.Errorf("profile %q also sets %s (in the profile, a [DEFAULT] section, or ~/.aws/credentials), so the AWS CLI "+
 				"would not use its SSO login; af-aws-exec refuses it", profile, k)
 		}
@@ -240,7 +253,7 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 	// credential_process, so the one profile name would mean different identities to
 	// different tools. Refusing them is a policy stricter than the CLI's, and the message
 	// says so.
-	for _, k := range []string{"web_identity_token_file", "source_profile", "credential_source", "credential_process",
+	for _, k := range []string{"role_arn", "web_identity_token_file", "source_profile", "credential_source", "credential_process",
 		"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
 		if _, set := keys[k]; set {
 			return fmt.Errorf("profile %q also sets %s (in the profile, a [DEFAULT] section, or ~/.aws/credentials); the AWS CLI would still use its SSO "+
@@ -327,19 +340,23 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, errors.New("af-aws-exec does not run under the default profile; name the SSO profile from Settings (`af-aws-exec --list`)")
 	}
 	env, steered := steerIsolatedConfig(baseEnv(environ))
-	keys, err := profileKeys(env, o.Profile)
+	keys, origin, err := profileKeysFrom(env, o.Profile)
 	if err != nil {
 		return "", nil, nil, err
 	}
 	if err := checkAmbiguous(o); err != nil {
 		return "", nil, nil, err
 	}
+	if kv, ok := o.DefaultClash[o.Profile]; ok && len(keys) == 0 {
+		return "", nil, nil, fmt.Errorf("profile %q is not exported: [DEFAULT] %s in ~/.aws/config differs from it, and the AWS CLI "+
+			"refuses a profile whose value differs from its sso-session's; remove that line from [DEFAULT]", o.Profile, kv)
+	}
 	if len(keys) == 0 {
 		return "", nil, nil, notDefined(env, o)
 	}
 	// Identity first: a colliding or shadowed name is the more useful answer even when
 	// the definition found is not an SSO profile at all.
-	sso, err := resolveSSO(env, keys)
+	sso, err := resolveSSO(env, keys, origin)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("profile %q: %w", o.Profile, err)
 	}
@@ -752,7 +769,7 @@ type ssoInfo struct {
 
 // resolveSSO reads the profile's SSO settings the way the CLI does: through its
 // sso-session section when it names one, from the profile itself otherwise.
-func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
+func resolveSSO(env []string, keys, origin map[string]string) (ssoInfo, error) {
 	sso := ssoInfo{Session: keys["sso_session"], Account: keys["sso_account_id"], Role: keys["sso_role_name"]}
 	// Present but empty is not absent: the CLI looks for an sso-session named "" and fails
 	// ("specified sso-session does not exist"), so it is no legacy profile either.
@@ -763,12 +780,12 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 		sso.StartURL, sso.Region = keys["sso_start_url"], keys["sso_region"]
 		return sso, nil
 	}
-	sess := map[string]string{}
+	sess, sessOrigin := map[string]string{}, map[string]string{}
 	cfg := envValue(env, "AWS_CONFIG_FILE")
 	if cfg == "" {
 		cfg = ConfigPath()
 	}
-	if err := readINISection(expandHome(cfg), configPicker("sso-session", sso.Session), sess); err != nil {
+	if err := readINISectionFrom(expandHome(cfg), configPicker("sso-session", sso.Session), sess, sessOrigin, ""); err != nil {
 		return ssoInfo{}, err
 	}
 	// botocore merges the whole sso-session into the profile, and ANY key both give (an
@@ -785,7 +802,10 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 	sort.Strings(shared)
 	for _, k := range shared {
 		if keys[k] != sess[k] {
-			return ssoInfo{}, fmt.Errorf("it sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", k, keys[k], sso.Session, sess[k])
+			// Say where each side's value is written: a value the session inherits from
+			// [DEFAULT] is not in its own section, where the user would look first.
+			return ssoInfo{}, fmt.Errorf("it sets %s = %q (%s) but its sso-session %q has %q (%s); the AWS CLI refuses that, "+
+				"remove one", k, keys[k], where(origin[k]), sso.Session, sess[k], where(sessOrigin[k]))
 		}
 	}
 	// The account and role: the CLI treats the profile as SSO when at least one of them is
@@ -811,6 +831,17 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 	sso.Account, sso.Role = keys["sso_account_id"], keys["sso_role_name"]
 	sso.StartURL, sso.Region, sso.Scopes = sess["sso_start_url"], sess["sso_region"], sess["sso_registration_scopes"]
 	return sso, nil
+}
+
+func where(origin string) string {
+	switch {
+	case origin == "":
+		return "set in the profile"
+	case strings.HasPrefix(origin, "[DEFAULT]"):
+		return "from " + origin
+	default:
+		return "in " + origin
+	}
 }
 
 // loginNeeded tells an export failure that a (re)login fixes from any other one. Only

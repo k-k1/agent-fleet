@@ -64,7 +64,7 @@ func runAWSExec(args []string) {
 				"only profiles run with --account are allowed\n", serr)
 		}
 	}
-	o.Settings, o.Conflicts = res.Settings, res.Conflicts
+	o.Settings, o.Conflicts, o.DefaultClash = res.Settings, res.Conflicts, res.DefaultClash
 	if exe, err := os.Executable(); err == nil {
 		o.CredentialHelper = exe + " aws-env-credentials"
 	}
@@ -105,6 +105,10 @@ func runAWSExec(args []string) {
 				continue
 			}
 			fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used: account %s, role %s)\n", n, orNone(acct), orNone(role))
+		}
+		for n, kv := range res.DefaultClash {
+			fmt.Printf("%s\t(not exported: [DEFAULT] %s in ~/.aws/config differs from this profile, and the AWS CLI refuses "+
+				"a profile whose value differs from its sso-session's; remove that line from [DEFAULT])\n", n, kv)
 		}
 		for _, c := range res.Conflicts {
 			fmt.Printf("%s\t(not exported: Settings labels %s all map to this name; rename all but one)\n", c.Name, strings.Join(c.Labels, " / "))

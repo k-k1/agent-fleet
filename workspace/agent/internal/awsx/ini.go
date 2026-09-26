@@ -139,6 +139,13 @@ func configSection(name string) (kind, profile string) {
 // refuses to parse is an error here too: acting on our reading of a file the CLI rejects
 // would be guessing.
 func readINISection(path string, pick func(section string) bool, keys map[string]string) error {
+	return readINISectionFrom(path, pick, keys, nil, "")
+}
+
+// readINISectionFrom is readINISection that also records, in origin (when not nil),
+// where each key came from: "[DEFAULT]", the section's own header, or label when given
+// (the credentials file). Messages use it so a user is sent to the line that set it.
+func readINISectionFrom(path string, pick func(section string) bool, keys, origin map[string]string, label string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -148,11 +155,12 @@ func readINISection(path string, pick func(section string) bool, keys map[string
 	}
 	defaults := map[string]string{}
 	var sect map[string]string
+	sectName := ""
 	scanINI(string(b), func(l iniLine) {
 		switch {
 		case l.bad:
 		case l.header && pick(l.section):
-			sect = map[string]string{}
+			sect, sectName = map[string]string{}, l.section
 		case l.header:
 		// Empty values are kept: `sso_account_id =` in a profile overrides the [DEFAULT]
 		// one and leaves it empty, as the CLI reads it (skipping it let the default
@@ -166,11 +174,24 @@ func readINISection(path string, pick func(section string) bool, keys map[string
 	if sect == nil {
 		return nil
 	}
+	own := "[" + sectName + "]"
+	if label != "" {
+		own = label
+	}
 	for k, v := range defaults {
 		keys[k] = v
+		if origin != nil {
+			origin[k] = "[DEFAULT]"
+			if label != "" {
+				origin[k] = "[DEFAULT] of " + label
+			}
+		}
 	}
 	for k, v := range sect {
 		keys[k] = v
+		if origin != nil {
+			origin[k] = own
+		}
 	}
 	return nil
 }

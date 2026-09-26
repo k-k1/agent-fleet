@@ -1232,8 +1232,16 @@ func TestCheckSSOProfileStatesTheRightReason(t *testing.T) {
 		{"credential_process", "/bin/x", "would still use its SSO"},
 		{"aws_access_key_id", "AKIA", "would still use its SSO"},
 		{"source_profile", "x", "would still use its SSO"},
+		// role_arn beside an empty web_identity_token_file: the CLI stays on SSO.
+		{"role_arn", "arn:aws:iam::1:role/x\x00web_identity_token_file=", "would still use its SSO"},
 	} {
-		k := map[string]string{c.key: c.value}
+		k := map[string]string{}
+		if key, extra, ok := strings.Cut(c.value, "\x00"); ok {
+			ek, ev, _ := strings.Cut(extra, "=")
+			k[c.key], k[ek] = key, ev
+		} else {
+			k[c.key] = c.value
+		}
 		for kk, v := range base {
 			k[kk] = v
 		}
@@ -1256,7 +1264,7 @@ func TestPlanExecMergesTheSSOSessionLikeBotocore(t *testing.T) {
 	}{
 		"account and role only in the session":             {"[profile prod]\nsso_session = s\n", "only in [sso-session s]"},
 		"account on the profile, role only in the session": {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\n", ""},
-		"region differs from the session's [DEFAULT]":      {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\nregion = us-west-2\n", "region"},
+		"region differs from the session's [DEFAULT]":      {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\nregion = us-west-2\n", `has "eu-west-1" (from [DEFAULT])`},
 		"unrelated key differs":                            {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\nfoo = b\n", "foo"},
 		"same account and role in both":                    {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\n", ""},
 		"other account in the profile":                     {"[profile prod]\nsso_session = s\nsso_account_id = 999999999999\nsso_role_name = Dev\n", "its sso-session"},
@@ -1296,5 +1304,15 @@ func TestRefusalsPointAtTheFix(t *testing.T) {
 	_, _, _, err = PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}})
 	if err == nil || !strings.Contains(err.Error(), "[DEFAULT]") {
 		t.Errorf("[DEFAULT] source_profile: %v", err)
+	}
+}
+
+// A Settings profile held back for a [DEFAULT] clash says so, not "not defined".
+func TestPlanExecExplainsADEFAULTClash(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "held", Settings: prodSettings, Login: "never", Argv: []string{"true"},
+		DefaultClash: map[string]string{"held": "region = eu-west-1"}})
+	if err == nil || !strings.Contains(err.Error(), "[DEFAULT] region = eu-west-1") {
+		t.Fatalf("err = %v", err)
 	}
 }
