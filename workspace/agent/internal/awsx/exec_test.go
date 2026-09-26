@@ -1252,7 +1252,7 @@ func TestPlanExecMergesTheSSOSessionLikeBotocore(t *testing.T) {
 		profile string
 		want    string // "" = admitted
 	}{
-		"account and role only in the session": {"[profile prod]\nsso_session = s\n", "account (none)"},
+		"account and role only in the session": {"[profile prod]\nsso_session = s\n", "only in [sso-session s]"},
 		"same account and role in both":        {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Dev\n", ""},
 		"other account in the profile":         {"[profile prod]\nsso_session = s\nsso_account_id = 999999999999\nsso_role_name = Dev\n", "its sso-session"},
 		"other role in the profile":            {"[profile prod]\nsso_session = s\nsso_account_id = 123456789012\nsso_role_name = Admin\n", "its sso-session"},
@@ -1271,5 +1271,25 @@ func TestPlanExecMergesTheSSOSessionLikeBotocore(t *testing.T) {
 		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
 			t.Errorf("%s: err = %v, want %q", name, err, c.want)
 		}
+	}
+}
+
+// Refusals point at the fix: a profile with no account says so rather than talking about
+// --account, and a key inherited from [DEFAULT] names that section as a place to look.
+func TestRefusalsPointAtTheFix(t *testing.T) {
+	bin, _ := fakeAWS(t, with(nil, "sso_account_id"))
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}})
+	if err == nil || !strings.Contains(err.Error(), "has no SSO account and role") || strings.Contains(err.Error(), "--account") {
+		t.Errorf("no account: %v", err)
+	}
+	bin, _ = fakeAWS(t, ssoProfile)
+	path := filepath.Join(os.Getenv("HOME"), ".aws", "config")
+	b, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, append([]byte("[DEFAULT]\nsource_profile = x\n\n"), b...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err = PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}})
+	if err == nil || !strings.Contains(err.Error(), "[DEFAULT]") {
+		t.Errorf("[DEFAULT] source_profile: %v", err)
 	}
 }

@@ -228,7 +228,8 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 	// (measured: "Partial credentials found in assume-role", exit 253).
 	for _, k := range []string{"role_arn", "web_identity_token_file"} {
 		if _, set := keys[k]; set {
-			return fmt.Errorf("profile %q also sets %s, so the AWS CLI would not use its SSO login; af-aws-exec refuses it", profile, k)
+			return fmt.Errorf("profile %q also sets %s (in the profile, a [DEFAULT] section, or ~/.aws/credentials), so the AWS CLI "+
+				"would not use its SSO login; af-aws-exec refuses it", profile, k)
 		}
 	}
 	// These the CLI resolves after SSO, but the Go v2 and JS v3 SDKs (and tools built on
@@ -237,7 +238,7 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 	for _, k := range []string{"source_profile", "credential_source", "credential_process",
 		"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
 		if _, set := keys[k]; set {
-			return fmt.Errorf("profile %q also sets %s (in ~/.aws/config or ~/.aws/credentials); the AWS CLI would still use its SSO "+
+			return fmt.Errorf("profile %q also sets %s (in the profile, a [DEFAULT] section, or ~/.aws/credentials); the AWS CLI would still use its SSO "+
 				"login, but other SDKs and tools may use %s first, so the name would mean different identities to different tools. "+
 				"Remove it from this profile; a tool that syncs credentials into ~/.aws/credentials under this name (yawsso, for "+
 				"one) writes it back, so sync to another name", profile, k, k)
@@ -490,6 +491,11 @@ func checkIdentity(sso ssoInfo, o ExecOptions) error {
 		}
 		return fmt.Errorf("profile %q in your own AWS config is %s, but the Settings profile %q is account %s, role %s, portal %s (%s); "+
 			"rename one of them so the name means one account", o.Profile, mine, sp.Label, sp.AccountID, sp.RoleName, sp.StartURL, sp.SSORegion)
+	}
+	// No account at all is checkSSOProfile's to report ("has no SSO account and role"):
+	// an --account message about "(none)" would send the user after the wrong fix.
+	if sso.Account == "" {
+		return nil
 	}
 	// A name that is not a Settings profile is one the member (or a typo) picked from
 	// their own files; without --account nothing says which account it was meant to be.
@@ -771,6 +777,11 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 		if pv, set := keys[k]; inSession && set && pv != sv {
 			return ssoInfo{}, fmt.Errorf("it sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", k, pv, sso.Session, sv)
 		}
+	}
+	// Say where they are when the session holds what the profile lacks: otherwise the
+	// user only sees "account (none)" and tries --account instead.
+	if (keys["sso_account_id"] == "" || keys["sso_role_name"] == "") && (sess["sso_account_id"] != "" || sess["sso_role_name"] != "") {
+		return ssoInfo{}, fmt.Errorf("sso_account_id / sso_role_name are only in [sso-session %s]; the AWS CLI needs them on the profile itself", sso.Session)
 	}
 	sso.StartURL, sso.Region, sso.Scopes = sess["sso_start_url"], sess["sso_region"], sess["sso_registration_scopes"]
 	return sso, nil
