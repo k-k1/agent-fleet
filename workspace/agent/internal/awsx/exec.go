@@ -143,14 +143,15 @@ func expandHome(p string) string {
 	return p
 }
 
+// envValue is getenv over env: the FIRST entry of a duplicated key, as C, Python and
+// Go's own os.Getenv resolve it, so this reads what the aws CLI will read.
 func envValue(env []string, key string) string {
-	v := ""
 	for _, kv := range env {
 		if k, val, _ := strings.Cut(kv, "="); k == key {
-			v = val // last wins, as the child would see it
+			return val
 		}
 	}
-	return v
+	return ""
 }
 
 // profileKeys returns the keys the CLI would merge for profile: its section of the
@@ -227,6 +228,25 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 		}
 	}
 	return nil
+}
+
+// setEnv sets each KEY=value in env, removing every earlier entry for that key. Never
+// append a variable that may already be there: getenv in C, Python and the AWS CLI
+// returns the FIRST entry of a duplicated key, so an appended AWS_REGION loses to the
+// caller's (measured with aws-cli 2.36.46: --region was ignored).
+func setEnv(env []string, kvs ...string) []string {
+	drop := map[string]bool{}
+	for _, kv := range kvs {
+		k, _, _ := strings.Cut(kv, "=")
+		drop[k] = true
+	}
+	out := make([]string, 0, len(env)+len(kvs))
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); !drop[k] {
+			out = append(out, kv)
+		}
+	}
+	return append(out, kvs...)
 }
 
 func envHas(environ []string, key string) bool {
@@ -354,20 +374,20 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		region = keys["region"]
 	}
 	if region != "" {
-		env = append(env, "AWS_REGION="+region, "AWS_DEFAULT_REGION="+region)
+		env = setEnv(env, "AWS_REGION="+region, "AWS_DEFAULT_REGION="+region)
 	}
 	if !o.KeepConfig {
 		if env, err = childEnv(env, o.Profile, o.CredentialHelper); err != nil {
 			return "", nil, nil, err
 		}
 	}
-	env = append(env,
+	env = setEnv(env,
 		execKeyIDVar+"="+creds.AccessKeyID,
 		"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 		"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
 		"AWS_SESSION_TOKEN="+creds.SessionToken)
 	if creds.Expiration != "" {
-		env = append(env, "AWS_CREDENTIAL_EXPIRATION="+creds.Expiration)
+		env = setEnv(env, "AWS_CREDENTIAL_EXPIRATION="+creds.Expiration)
 	}
 
 	// Confirm the credentials are a session of the profile's permission-set role in its
@@ -528,10 +548,12 @@ func childEnv(env []string, profile, helper string) ([]string, error) {
 	return append(out, "AWS_CONFIG_FILE="+cfg, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull), nil
 }
 
-// privateDir makes dir (0700) and insists it is a real directory owned by this user
-// with no access for anyone else: the child's credential_process is read from it, so a
-// symlink onto shared storage or a group-writable directory would let someone else
-// decide what the child runs.
+// privateDir makes dir (0700) and insists it is a real directory owned by this user,
+// reached through directories nobody else can change: the child's credential_process
+// is read from it, so if another user could replace it (a group-writable directory, or
+// one under a world-writable parent that ~/.aws links to) they would decide what the
+// child runs and receive its credentials. It returns the resolved path, so the writes
+// that follow do not pass through a link again.
 func privateDir(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
@@ -549,7 +571,25 @@ func privateDir(dir string) (string, error) {
 			return "", err
 		}
 	}
-	return dir, nil
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	// Every directory above: writable by others only with the sticky bit (as /tmp is),
+	// under which they still cannot rename what they do not own.
+	for p := filepath.Dir(real); ; p = filepath.Dir(p) {
+		pi, err := os.Stat(p)
+		if err != nil {
+			return "", err
+		}
+		if pi.Mode().Perm()&0o022 != 0 && pi.Mode()&os.ModeSticky == 0 {
+			return "", fmt.Errorf("%s is writable by other users, so %s under it is not private; tighten its permissions", p, dir)
+		}
+		if p == filepath.Dir(p) {
+			break
+		}
+	}
+	return real, nil
 }
 
 // execKeyIDVar pins the child's profile to the credentials af-aws-exec handed over: it

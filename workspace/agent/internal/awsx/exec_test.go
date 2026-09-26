@@ -123,11 +123,17 @@ var workloadEnv = []string{
 	"AWS_PROFILE=something-else",
 }
 
+// envMap maps env for assertions and panics on a duplicated key: getenv returns the
+// first entry, so a duplicate means the child may see a different value than the
+// last one (which is what a map would silently keep).
 func envMap(env []string) map[string]string {
 	m := map[string]string{}
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
-		m[k] = v // last wins, as for execve consumers that scan in order
+		if _, dup := m[k]; dup {
+			panic("duplicated environment variable " + k)
+		}
+		m[k] = v
 	}
 	return m
 }
@@ -347,6 +353,10 @@ region = us-east-1
 <NBSP>[profile decoy]
 sso_account_id = 222222222222
 
+[profile nb2]
+ foo = bar
+<NBSP>role_arn = arn:aws:iam::4:role/nb2
+
 [profile cont]
 region = us-east-1
 credential_process = /bin/a
@@ -376,7 +386,7 @@ credential_process = /bin/a
 	for _, k := range all {
 		asks = append(asks, ask{"prod", k})
 	}
-	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy"} {
+	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2"} {
 		for _, k := range few {
 			asks = append(asks, ask{p, k})
 		}
@@ -610,7 +620,7 @@ func TestEnvCredentials(t *testing.T) {
 		// Plain env credentials (a workload's, say) outside af-aws-exec.
 		"not from af-aws-exec": {"AWS_ACCESS_KEY_ID=ASIA1", "AWS_SECRET_ACCESS_KEY=s", "AWS_SESSION_TOKEN=t"},
 		// A script exported another account's keys after af-aws-exec started it.
-		"key changed": append(env, "AWS_ACCESS_KEY_ID=ASIAOTHER"),
+		"key changed": setEnv(env, "AWS_ACCESS_KEY_ID=ASIAOTHER"),
 	} {
 		if b, err := EnvCredentials(e); err == nil {
 			t.Errorf("%s: handed out %s", name, b)
@@ -874,5 +884,63 @@ func TestPlanExecRefusesAConfigTheCLICannotParse(t *testing.T) {
 	// What configparser allows: [DEFAULT] twice, a key continued over several lines.
 	if err := iniStrict("[DEFAULT]\na = 1\n[DEFAULT]\nb = 2\n[profile x]\ns3 =\n  a = 1\n  a = 2\n"); err != nil {
 		t.Fatalf("false positive: %v", err)
+	}
+}
+
+// Nested runs and a caller's own AWS_REGION: the child env holds each variable once, so
+// getenv (first entry wins) sees the values af-aws-exec set.
+func TestPlanExecNeverDuplicatesAChildVariable(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environ := append(workloadEnv, "AWS_REGION=us-east-1", "AWS_DEFAULT_REGION=us-east-1",
+		"AF_AWS_EXEC_KEY_ID=ASIAOUTER", "AWS_SESSION_TOKEN=outer", "AWS_CREDENTIAL_EXPIRATION=2020-01-01T00:00:00Z")
+	for _, keep := range []bool{false, true} {
+		_, _, env, err := PlanExec(bin, environ, ExecOptions{Profile: "prod", Settings: prodSettings, Region: "eu-central-1",
+			Login: "never", Argv: []string{"true"}, Quiet: true, KeepConfig: keep})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := envMap(env) // panics on a duplicate
+		if m["AWS_REGION"] != "eu-central-1" || m["AWS_DEFAULT_REGION"] != "eu-central-1" || m["AF_AWS_EXEC_KEY_ID"] != "ASIAFAKE" {
+			t.Fatalf("keep=%v: child env %v", keep, m)
+		}
+		if b, err := EnvCredentials(env); err != nil || !strings.Contains(string(b), "ASIAFAKE") {
+			t.Fatalf("keep=%v: nested credential_process: %s %v", keep, b, err)
+		}
+	}
+}
+
+// ~/.aws may be a link onto other storage (the workspace allows it), but not onto a
+// directory other users can write to: they could rename af-exec after the check and
+// plant their own credential_process.
+func TestChildEnvRefusesAWorldWritableParent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	shared := filepath.Join(home, "shared")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(home, ".aws")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := childEnv(nil, "prod", "/bin/true"); err == nil || !strings.Contains(err.Error(), "writable by other users") {
+		t.Fatalf("err = %v", err)
+	}
+	// The same link onto a private directory is fine, and the child config is written
+	// at the resolved path.
+	if err := os.Chmod(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env, err := childEnv(nil, "prod", "/bin/true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envMap(env)["AWS_CONFIG_FILE"]; got != filepath.Join(shared, "af-exec", "prod.config") {
+		t.Fatalf("AWS_CONFIG_FILE = %q", got)
 	}
 }

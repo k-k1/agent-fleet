@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // The AWS CLI reads its files with Python's configparser and then maps section names to
@@ -40,7 +41,8 @@ func scanINI(text string, fn func(iniLine)) {
 		if t == "" || t[0] == '#' || t[0] == ';' {
 			continue
 		}
-		indent := len(raw) - len(strings.TrimLeftFunc(raw, unicode.IsSpace))
+		// In characters, as Python counts: a no-break space is two bytes but one column.
+		indent := utf8.RuneCountInString(raw) - utf8.RuneCountInString(strings.TrimLeftFunc(raw, unicode.IsSpace))
 		if optIndent >= 0 && indent > optIndent {
 			if last.value == "" {
 				last.value = t
