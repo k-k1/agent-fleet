@@ -89,7 +89,9 @@ func TestApplyLeavesTheMembersOwnDefinitionAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(res.Shadowed, ",") != "prod,dev" || strings.Join(res.Exported, ",") != "ok" {
+	// "dev" collides only with the member's [sso-session af-dev]: reported apart, since
+	// there is no profile of theirs to "use".
+	if strings.Join(res.Shadowed, ",") != "prod" || strings.Join(res.SessionShadowed, ",") != "dev" || strings.Join(res.Exported, ",") != "ok" {
 		t.Fatalf("result = %+v", res)
 	}
 	b, _ := os.ReadFile(path)
@@ -265,7 +267,7 @@ func TestApplyTreatsQuotedHeadersAsTheMembersOwn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(res.Shadowed, ",") != "prod,stg,dev" || strings.Join(res.Exported, ",") != "ok" {
+	if strings.Join(res.Shadowed, ",") != "prod,stg" || strings.Join(res.SessionShadowed, ",") != "dev" || strings.Join(res.Exported, ",") != "ok" {
 		t.Fatalf("result = %+v", res)
 	}
 }
@@ -366,7 +368,9 @@ func TestApplyDoesNotExportAProfileWithoutAccountAndRole(t *testing.T) {
 			t.Fatal(err)
 		}
 		// ("ok" itself clashes with the [DEFAULT] account in the second case.)
-		if strings.Join(res.Incomplete, ",") != "norole,blank" || (defaults == "" && strings.Join(res.Exported, ",") != "ok") {
+		if !strings.Contains(res.Incomplete["blank"], "fall back to the workspace's own role") ||
+			res.Incomplete["norole"] != "Settings has an account but no role; set both" ||
+			(defaults == "" && strings.Join(res.Exported, ",") != "ok") {
 			t.Fatalf("defaults %q: result = %+v", defaults, res)
 		}
 	}

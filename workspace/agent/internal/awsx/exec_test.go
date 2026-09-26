@@ -1360,7 +1360,21 @@ func TestPlanExecExplainsAnIncompleteSettingsProfile(t *testing.T) {
 	bin, _ := fakeAWS(t, ssoProfile)
 	incomplete := map[string]Profile{"half": {Name: "half", Label: "half", AccountID: "123456789012"}}
 	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "half", Settings: incomplete, Login: "never", Argv: []string{"true"}})
-	if err == nil || !strings.Contains(err.Error(), "no account and role in Settings") {
+	if err == nil || !strings.Contains(err.Error(), "Settings has an account but no role; set both") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A Settings name whose sso-session name the member's own [sso-session] takes says so.
+func TestPlanExecExplainsASessionShadowedName(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	path := filepath.Join(os.Getenv("HOME"), ".aws", "config")
+	if err := os.WriteFile(path, []byte("[sso-session af-held]\nsso_start_url = https://other.awsapps.com/start\nsso_region = us-east-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]Profile{"held": {Name: "held", Label: "held", AccountID: "1", RoleName: "r"}}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "held", Settings: settings, Login: "never", Argv: []string{"true"}})
+	if err == nil || !strings.Contains(err.Error(), "[sso-session af-held]") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -347,9 +347,10 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if err := checkAmbiguous(o); err != nil {
 		return "", nil, nil, err
 	}
-	if sp, ok := o.Settings[o.Profile]; ok && (sp.AccountID == "" || sp.RoleName == "") {
-		return "", nil, nil, fmt.Errorf("profile %q has no account and role in Settings, so it is not exported (`aws --profile` "+
-			"would fall back to the workspace's own role); set both on the profile in Settings > SSM", o.Profile)
+	if sp, ok := o.Settings[o.Profile]; ok {
+		if why := IncompleteReason(sp); why != "" {
+			return "", nil, nil, fmt.Errorf("profile %q is not exported: %s (Settings > SSM)", o.Profile, why)
+		}
 	}
 	if reason, ok := o.DefaultClash[o.Profile]; ok && len(keys) == 0 {
 		return "", nil, nil, fmt.Errorf("profile %q is not exported: [DEFAULT] %s (in ~/.aws/config); remove that line from [DEFAULT]",
@@ -564,7 +565,13 @@ func notDefined(env []string, o ExecOptions) error {
 	}
 	msg := fmt.Sprintf("profile %q is not defined in %s or %s", o.Profile, cfg, creds)
 	if _, ok := o.Settings[o.Profile]; ok {
-		msg += " although Settings has it; check that AWS_CONFIG_FILE is not pointing elsewhere"
+		b, _ := os.ReadFile(expandHome(cfg))
+		if _, sessions := configNames(string(b)); sessions["af-"+o.Profile] {
+			msg += fmt.Sprintf(" although Settings has it: your [sso-session af-%s] in %s uses the name its sso-session needs, "+
+				"so it is not exported; rename that section", o.Profile, cfg)
+		} else {
+			msg += " although Settings has it; check that AWS_CONFIG_FILE is not pointing elsewhere"
+		}
 	} else {
 		msg += "; see `af-aws-exec --list` for the Settings profiles"
 	}

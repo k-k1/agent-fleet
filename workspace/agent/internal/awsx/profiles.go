@@ -63,10 +63,13 @@ type SyncResult struct {
 	Shadowed []string
 	// Invalid are profiles refused by the INI allowlist (sessionx.RenderSSMConfig).
 	Invalid []string
-	// Incomplete are Settings profiles without an account and a role, not exported: the
-	// CLI's SSO provider does not claim such a profile, so `aws --profile <name>` would
-	// fall through to the workspace's own (workload) role.
-	Incomplete []string
+	// Incomplete are Settings profiles without both an account and a role, not exported,
+	// by name, with the reason (IncompleteReason).
+	Incomplete map[string]string
+	// SessionShadowed are Settings profiles not exported because the member's own
+	// ~/.aws/config has an [sso-session af-<name>] section (the name this profile's
+	// sso-session needs) but no profile of that name.
+	SessionShadowed []string
 	// DefaultClash are profiles not exported because a [DEFAULT] line in ~/.aws/config
 	// would make the CLI refuse them or run them as another role, by name, with that
 	// line and what it does (a ready-to-print reason).
@@ -264,16 +267,23 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	})
 	var body strings.Builder
 	for _, p := range ps {
-		if profiles[p.Name] || ssoSessions["af-"+p.Name] {
+		if profiles[p.Name] {
 			res.Shadowed = append(res.Shadowed, p.Name)
+			continue
+		}
+		if ssoSessions["af-"+p.Name] {
+			res.SessionShadowed = append(res.SessionShadowed, p.Name)
 			continue
 		}
 		// Without an account and a role the CLI does not treat the profile as SSO at all
 		// and the default chain goes on to the container's role (measured with aws-cli
 		// 2.36.46 against a container-credentials endpoint: the rendered profile returned
 		// the workload credentials). Exporting the name would hand users that trap.
-		if p.AccountID == "" || p.RoleName == "" {
-			res.Incomplete = append(res.Incomplete, p.Name)
+		if why := IncompleteReason(p); why != "" {
+			if res.Incomplete == nil {
+				res.Incomplete = map[string]string{}
+			}
+			res.Incomplete[p.Name] = why
 			continue
 		}
 		if why := defaultClash(defaults, p); why != "" {
@@ -311,6 +321,24 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	b.WriteString(body.String())
 	b.WriteString("\n" + blockEnd + "\n")
 	return b.String(), res, nil
+}
+
+// IncompleteReason says why a Settings profile without both an account and a role is
+// not exported, or "". With neither, the CLI's SSO provider does not claim the profile
+// and `aws --profile <name>` falls through to the workspace's own (workload) role
+// (measured with aws-cli 2.36.46 against a container-credentials endpoint). With only
+// one, the CLI fails ("configured to use SSO but is missing required configuration"),
+// which is no fallback but no use either.
+func IncompleteReason(p Profile) string {
+	switch {
+	case p.AccountID == "" && p.RoleName == "":
+		return "no account and role in Settings; `aws --profile` would fall back to the workspace's own role"
+	case p.RoleName == "":
+		return "Settings has an account but no role; set both"
+	case p.AccountID == "":
+		return "Settings has a role but no account; set both"
+	}
+	return ""
 }
 
 // defaultClash says why a [DEFAULT] line in ~/.aws/config would break the exported
@@ -432,8 +460,11 @@ func syncAndLog(why string) {
 	for _, c := range res.Conflicts {
 		log.Printf("aws profiles sync (%s): not exported, Settings labels %s all map to %q", why, strings.Join(c.Labels, " / "), c.Name)
 	}
-	if len(res.Incomplete) > 0 {
-		log.Printf("aws profiles sync (%s): not exported, no account and role in Settings: %s", why, strings.Join(res.Incomplete, ", "))
+	for n, reason := range res.Incomplete {
+		log.Printf("aws profiles sync (%s): %q not exported: %s", why, n, reason)
+	}
+	for _, n := range res.SessionShadowed {
+		log.Printf("aws profiles sync (%s): %q not exported: ~/.aws/config has its own [sso-session af-%s]", why, n, n)
 	}
 	for n, reason := range res.DefaultClash {
 		log.Printf("aws profiles sync (%s): %q not exported: [DEFAULT] %s (in ~/.aws/config)", why, n, reason)

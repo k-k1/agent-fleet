@@ -106,8 +106,12 @@ func runAWSExec(args []string) {
 			}
 			fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used: account %s, role %s)\n", n, orNone(acct), orNone(role))
 		}
-		for _, n := range res.Incomplete {
-			fmt.Printf("%s\t(not exported: no account and role in Settings; `aws --profile` would fall back to the workspace's own role)\n", n)
+		for n, reason := range res.Incomplete {
+			fmt.Printf("%s\t(not exported: %s)\n", n, reason)
+		}
+		for _, n := range res.SessionShadowed {
+			fmt.Printf("%s\t(not exported: your [sso-session af-%s] in ~/.aws/config uses the name this profile's sso-session "+
+				"needs; rename that section)\n", n, n)
 		}
 		for n, reason := range res.DefaultClash {
 			fmt.Printf("%s\t(not exported: [DEFAULT] %s (in ~/.aws/config); remove that line from [DEFAULT])\n", n, reason)
