@@ -25,7 +25,7 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
 
 - **メタ永続**: per-session メタ（kind/dir/model/repo/createdAt/stoppedAt/Archived）を
   `~/.config/agent-fleet/sessions`（denylist 配下・home volume、`AF_SESSIONS_DIR`）に保存。
-  **Stop→Start を跨いで一覧と再開が生きる**。停止 TTL（`AF_SESSION_STOPPED_TTL`・既定 7d）を
+  **Stop→Start を跨いで一覧と再開が生きる**。停止 TTL（利用者設定 `sessionStoppedArchiveDays` → `AF_SESSION_STOPPED_TTL` → 7d の順）を
   過ぎた行は**自動でアーカイブへ移す**（消さない。ADR 0097）。
 - **一覧はメタ駆動 + driver ごとの live 状態マージ**。managed は runtime handle、tui は tmux を生存判定に使う。
   メタの無い生 `claude_*` tmux（孤児）も列挙し、ペインの起動コマンドから kind を sniff——

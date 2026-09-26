@@ -252,6 +252,18 @@ func SpawnChildLimit() int {
 	return int(v)
 }
 
+// StoppedArchiveDays is the user's stopped-session archive period (ADR 0097, ui-prefs
+// sessionStoppedArchiveDays): days, StoppedArchiveNever for "off", or 0 for missing or malformed.
+// RAW for the same reason as SpawnChildLimit — the choices and the fallback to the deployment
+// default belong to session.StoppedTTL.
+func StoppedArchiveDays() int {
+	v, ok := Read()["sessionStoppedArchiveDays"].(float64)
+	if !ok {
+		return 0
+	}
+	return int(v)
+}
+
 // mcpreg builds the session-side af server's launch args and must not read main's
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
 //
@@ -263,6 +275,7 @@ func init() {
 	mcpreg.PeerMessagingEnabled = PeerMessaging
 	mcpreg.FleetSpawnEnabled = FleetSpawn
 	session.SpawnChildLimitPref = SpawnChildLimit
+	session.StoppedArchiveDaysPref = StoppedArchiveDays
 }
 
 // imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,

@@ -126,6 +126,39 @@ func TestCreateSessionDescriptionStatesTheConfiguredLimit(t *testing.T) {
 	}
 }
 
+// create_session's limits sentence promises that a stopped child frees its slot on its own. That
+// is only true while auto-archive is on; with the user's archive setting at Off the promise
+// would have a caller wait for a slot that never comes back. Asserted both ways, so a clause
+// that is always (or never) there fails one of them.
+func TestCreateSessionDescriptionFollowsTheArchiveSetting(t *testing.T) {
+	withFleetSpawn(t, true)
+	old := session.StoppedArchiveDaysPref
+	t.Cleanup(func() { session.StoppedArchiveDaysPref = old })
+	const clause = "when one you left stopped expires"
+	for _, tc := range []struct {
+		days int
+		want bool
+	}{
+		{session.StoppedArchiveNever, false},
+		{7, true},
+		{0, true}, // Default: the deployment's period, which is always on
+	} {
+		session.StoppedArchiveDaysPref = func() int { return tc.days }
+		desc := ""
+		for _, tool := range mcpStdioToolList() {
+			if name, _ := tool["name"].(string); name == "create_session" {
+				desc, _ = tool["description"].(string)
+			}
+		}
+		if desc == "" {
+			t.Fatal("create_session is not advertised")
+		}
+		if got := strings.Contains(desc, clause); got != tc.want {
+			t.Errorf("archive days %d: description has the expiry clause = %v, want %v: %s", tc.days, got, tc.want, desc)
+		}
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {

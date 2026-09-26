@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -571,18 +572,60 @@ func (m Meta) DriverKind() string {
 	return m.Driver
 }
 
-// StoppedTTL is how long a stopped (exited) session stays in the ACTIVE list before it
-// is auto-archived (ADR 0097 — archived, never deleted, so the conversation is still
-// restorable from the shelf afterwards). Configurable; default 7d (metas now persist
-// across Stop→Start, so the window spans restarts). A session running at shutdown is
-// marked stopped on the next list after restart, starting its TTL then.
-func StoppedTTL() time.Duration {
-	if v := os.Getenv("AF_SESSION_STOPPED_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
+// StoppedArchiveDefault is the stopped-session archive period when neither the user's setting
+// nor AF_SESSION_STOPPED_TTL says otherwise (ADR 0097).
+const StoppedArchiveDefault = 7 * 24 * time.Hour
+
+// StoppedArchiveNever is the stored value for "do not auto-archive" (ui-prefs
+// sessionStoppedArchiveDays). Zero is taken: it is what a missing or malformed key reads as, and
+// that has to mean "the deployment default", not "never".
+const StoppedArchiveNever = -1
+
+// StoppedArchiveDayChoices are the periods, in days, a user may pick. The Console offers exactly
+// these (drift-tested against console/src/lib/settings.ts); anything else stored reads as unset.
+var StoppedArchiveDayChoices = []int{1, 3, 7, 14, 30}
+
+// StoppedArchiveDaysPref answers the user's archive-period setting RAW: the stored number, or 0
+// for missing or malformed. Wired by internal/uiprefs, which cannot be imported from here (it
+// depends on this package). Nil means nothing is wired, i.e. the deployment default.
+var StoppedArchiveDaysPref func() int
+
+// NormalizeStoppedArchiveDays narrows a stored value to a choice the Console offers, or 0 for
+// "not set". Out of range reads as unset rather than as the nearest choice, the same rule as
+// NormalizeSpawnChildLimit: a value no button produces is a hand-edited or stale prefs file.
+func NormalizeStoppedArchiveDays(n int) int {
+	if n == StoppedArchiveNever || slices.Contains(StoppedArchiveDayChoices, n) {
+		return n
+	}
+	return 0
+}
+
+// StoppedTTL is how long a stopped (exited) session stays in the ACTIVE list before it is
+// auto-archived (ADR 0097 — archived, never deleted, so the conversation is still restorable
+// from the shelf afterwards). ok=false means the user turned auto-archive off.
+//
+// Precedence: the user's setting (Settings > Agents > Session), then AF_SESSION_STOPPED_TTL, then
+// StoppedArchiveDefault. Call it when the period is needed, never once into a variable: the list
+// handler applies a changed setting on its next poll with no Agent restart, and a refusal that
+// quotes the period has to quote the one in force.
+//
+// The window spans Stop→Start (metas persist). A session running at shutdown is marked stopped
+// on the next list after restart, starting its TTL then.
+func StoppedTTL() (d time.Duration, ok bool) {
+	if StoppedArchiveDaysPref != nil {
+		switch n := NormalizeStoppedArchiveDays(StoppedArchiveDaysPref()); {
+		case n == StoppedArchiveNever:
+			return 0, false
+		case n > 0:
+			return time.Duration(n) * 24 * time.Hour, true
 		}
 	}
-	return 7 * 24 * time.Hour
+	if v := os.Getenv("AF_SESSION_STOPPED_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d, true
+		}
+	}
+	return StoppedArchiveDefault, true
 }
 
 // Display derives a human-readable session name, mirroring the Console's

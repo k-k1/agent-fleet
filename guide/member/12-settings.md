@@ -33,7 +33,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 
 | Timing | What |
 |---|---|
-| **Immediately** | Display, keys, speech, notifications; adding and removing connections |
+| **Immediately** | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh) |
 | **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
@@ -221,7 +221,7 @@ Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor /
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
 **llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
 the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
-**Sessions** group holds **session-to-session messaging**, **starting sessions from sessions** (with
+**Sessions** group holds **when stopped sessions are archived** (Default — the deployment's period, 7 days unless the deployment changed it — 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
 **children per session**), **fleet observation from sessions**,
 **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
@@ -484,6 +484,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | I keep typing the same preamble | Agent instructions |
 | Sign in to Claude / Codex | Agents |
 | Stop a model that bills extra from being picked | Agents (models you don't use) |
+| Keep stopped sessions in the list longer, or out of it sooner | Agents (archive stopped sessions after) |
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Let a session see what the other sessions are doing | Agents (fleet observation from sessions) |
 | Have a session leave you a note about what it noticed | Agents (fleet observation from sessions) |
