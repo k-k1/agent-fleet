@@ -283,7 +283,8 @@ func TestRunConsecutiveCompactionsResetsAfterARealRoundTrip(t *testing.T) {
 	turns = append(turns, Turn{Content: "done"})
 	client := &growingClient{turns: turns, summary: "summary of the blob-fetching so far"}
 	reg := NewRegistry(blobTool("blob", blob))
-	rt := &Runtime{Cwd: t.TempDir(), Window: 1000, MaxConsecutiveCompactions: 2}
+	// 20 turns of one tool would trip the same-name repeat gate; this test is about compaction.
+	rt := &Runtime{Cwd: t.TempDir(), Window: 1000, MaxConsecutiveCompactions: 2, RepeatGateDisabled: true}
 
 	res, err := Run(context.Background(), client, reg, rt, nil)
 	if err != nil {
