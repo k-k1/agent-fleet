@@ -316,7 +316,8 @@ af-aws-exec --profile <name> -- npx cdk deploy
   past it: that hands the tool your own `~/.aws` files and endpoint settings again, and it would then run as the
   profile it names. Keep `--keep-aws-config` for tools that need other settings from those files.
 - **Region**: `--region` if you give it, otherwise a region already exported in your shell (`AWS_REGION`, then
-  `AWS_DEFAULT_REGION`), otherwise the profile's. The "running as" line shows the region used. A stale
+  `AWS_DEFAULT_REGION`), otherwise the profile's. The command gets it in both `AWS_REGION` and
+  `AWS_DEFAULT_REGION`, and the "running as" line shows it. A stale
   `AWS_REGION` in your shell beats the profile's region, so give `--region` for deployments.
 - `--account <id>` refuses to run unless the profile is that AWS account. Put it in scripts, runbooks and agent
   instructions for anything that deploys, so a wrong profile name stops before anything happens. For a profile that

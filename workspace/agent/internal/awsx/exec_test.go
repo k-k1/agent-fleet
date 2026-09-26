@@ -850,7 +850,8 @@ func TestChildEnvFallsBackWhenTheDirectoryIsNotPrivate(t *testing.T) {
 		t.Setenv("HOME", home)
 		setup(t, home)
 		env, warn, err := childEnv(nil, "prod", "/bin/true")
-		if err != nil || !strings.Contains(warn, "empty AWS config") || envMap(env)["AWS_CONFIG_FILE"] != os.DevNull {
+		if err != nil || !strings.Contains(warn, "empty AWS config") || envMap(env)["AWS_CONFIG_FILE"] != os.DevNull ||
+			(name == "group-writable home" && !strings.Contains(warn, "chmod go-w "+home)) {
 			t.Errorf("%s: %v %q %v", name, envMap(env), warn, err)
 		}
 	}
@@ -974,18 +975,19 @@ func TestPlanExecRegionPrecedence(t *testing.T) {
 		env  []string
 		want string
 	}{
-		"profile":                 {"", nil, "us-west-2"},
-		"flag beats env":          {"eu-central-1", []string{"AWS_REGION=us-east-1"}, "eu-central-1"},
-		"exported beats profile":  {"", []string{"AWS_REGION=us-east-1"}, "us-east-1"},
-		"only AWS_DEFAULT_REGION": {"", []string{"AWS_DEFAULT_REGION=ap-south-1"}, "ap-south-1"},
+		"profile":                              {"", nil, "us-west-2"},
+		"flag beats env":                       {"eu-central-1", []string{"AWS_REGION=us-east-1"}, "eu-central-1"},
+		"exported beats profile":               {"", []string{"AWS_REGION=us-east-1"}, "us-east-1"},
+		"only AWS_DEFAULT_REGION":              {"", []string{"AWS_DEFAULT_REGION=ap-south-1"}, "ap-south-1"},
+		"AWS_REGION beats a different default": {"", []string{"AWS_REGION=us-east-1", "AWS_DEFAULT_REGION=ap-south-1"}, "us-east-1"},
 	} {
 		_, _, env, err := PlanExec(bin, append(workloadEnv, c.env...), ExecOptions{Profile: "prod", Settings: prodSettings,
 			Region: c.flag, Login: "never", Argv: []string{"true"}, Quiet: true})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if m := envMap(env); m["AWS_REGION"] != c.want {
-			t.Errorf("%s: AWS_REGION = %q, want %q", name, m["AWS_REGION"], c.want)
+		if m := envMap(env); m["AWS_REGION"] != c.want || m["AWS_DEFAULT_REGION"] != c.want {
+			t.Errorf("%s: AWS_REGION = %q, AWS_DEFAULT_REGION = %q, want %q", name, m["AWS_REGION"], m["AWS_DEFAULT_REGION"], c.want)
 		}
 	}
 }

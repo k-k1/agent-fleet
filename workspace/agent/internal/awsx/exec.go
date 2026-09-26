@@ -375,9 +375,13 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	// --region, then a region the caller exported (as for any aws command), then the
 	// profile's. AWS_DEFAULT_REGION alone is copied to AWS_REGION: the JS SDK and CDK
 	// read only the latter, and the child's config carries no region to fall back on.
+	// Both variables get the chosen region: some tools read only AWS_DEFAULT_REGION, and
+	// leaving a different one there would send them elsewhere.
 	region := o.Region
 	switch {
-	case region != "" || envHas(env, "AWS_REGION"):
+	case region != "":
+	case envHas(env, "AWS_REGION"):
+		region = envValue(env, "AWS_REGION")
 	case envHas(env, "AWS_DEFAULT_REGION"):
 		region = envValue(env, "AWS_DEFAULT_REGION")
 	default:
@@ -622,10 +626,10 @@ func privateDir(dir string) (string, error) {
 		}
 		ps, ok := pi.Sys().(*syscall.Stat_t)
 		if !ok || (int(ps.Uid) != os.Getuid() && ps.Uid != 0) {
-			return "", fmt.Errorf("%s belongs to another user, so %s under it is not private", p, dir)
+			return "", fmt.Errorf("%s belongs to another user, so %s under it is not private (it has to sit under directories you or root own)", p, dir)
 		}
 		if pi.Mode().Perm()&0o022 != 0 && pi.Mode()&os.ModeSticky == 0 {
-			return "", fmt.Errorf("%s is writable by its group or other users, so %s under it is not private", p, dir)
+			return "", fmt.Errorf("%s is writable by its group or other users, so %s under it is not private (`chmod go-w %s` fixes that)", p, dir, p)
 		}
 		if p == filepath.Dir(p) {
 			break
