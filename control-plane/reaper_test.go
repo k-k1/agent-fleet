@@ -22,6 +22,8 @@ type reaperFenceRuntime struct {
 	fenceRelease chan struct{}
 	endpoint     string
 	busy         atomic.Bool
+	repoJobs     atomic.Int32
+	imageJobs    atomic.Int32
 }
 
 type operationFenceGateStore struct {
@@ -59,7 +61,11 @@ func newReaperFenceRuntime(t *testing.T) *reaperFenceRuntime {
 		if r.busy.Load() {
 			state = "working"
 		}
-		_, _ = w.Write([]byte(`{"sessions":[{"name":"s","alive":true,"state":"` + state + `"}]}`))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sessions":  []map[string]any{{"name": "s", "alive": true, "state": state}},
+			"repoJobs":  r.repoJobs.Load(),
+			"imageJobs": r.imageJobs.Load(),
+		})
 	}))
 	r.endpoint = srv.URL
 	t.Cleanup(srv.Close)
@@ -191,6 +197,14 @@ func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 		}},
 		{name: "agent became busy", activate: func(_ *manager, rt *reaperFenceRuntime, _ store.Workspace) error {
 			rt.busy.Store(true)
+			return nil
+		}},
+		{name: "repository import started", activate: func(_ *manager, rt *reaperFenceRuntime, _ store.Workspace) error {
+			rt.repoJobs.Store(1)
+			return nil
+		}},
+		{name: "image job queued", activate: func(_ *manager, rt *reaperFenceRuntime, _ store.Workspace) error {
+			rt.imageJobs.Store(1)
 			return nil
 		}},
 	}
@@ -645,6 +659,37 @@ func TestReaperSweepReachesTier3OnAStoppedWorkspace(t *testing.T) {
 		if rt.begins.Load() != before {
 			t.Errorf("state %q was hibernated", state)
 		}
+	}
+}
+
+// Tier 2 must not stop a workspace whose only work is an image job: no session is busy and
+// nobody is watching, yet the queue — which lives in the Agent process — would be lost with
+// the container. Once the queue is empty the same workspace does stop, so the test cannot
+// pass by never stopping anything.
+func TestReaperSweepKeepsAWorkspaceWithAnImageJob(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-time.Hour))
+	rt := newReaperFenceRuntime(t)
+	close(rt.fenceRelease)
+	rt.imageJobs.Store(1)
+	mgr.rtFactory = stubFactory{rt: rt}
+	rp := &reaper{mgr: mgr, bootTime: time.Now().Add(-time.Hour)}
+	clocks := tierClocks{ws: time.Minute, wsOn: true}
+
+	rp.sweepWorkspace(ctx, ws, clocks, map[string]bool{})
+	if n := rt.stops.Load(); n != 0 {
+		t.Fatalf("Stop calls = %d with an image job in flight, want 0", n)
+	}
+	f, ok := mgr.idleForecastFor(ws.ID)
+	if !ok || len(f.Holders) != 1 || f.Holders[0].Kind != "imagejob" {
+		t.Errorf("forecast = %+v, want the image job as the one holder", f)
+	}
+
+	rt.imageJobs.Store(0)
+	rp.sweepWorkspace(ctx, ws, clocks, map[string]bool{})
+	if n := rt.stops.Load(); n != 1 {
+		t.Fatalf("Stop calls = %d once the queue is empty, want 1", n)
 	}
 }
 

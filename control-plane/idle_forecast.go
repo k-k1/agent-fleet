@@ -36,7 +36,8 @@ type idleForecast struct {
 type idleHolder struct {
 	// Kind: "working" (a turn is running) / "background" (background job or subagent) /
 	// "pin" (pinned against auto-stop) / "watching" (a human is touching it) / "recent"
-	// (recent activity) / "repojob" (a repository import is in flight — docs/log/78)
+	// (recent activity) / "repojob" (a repository import is in flight — docs/log/78) /
+	// "imagejob" (an image job is running or queued)
 	Kind    string `json:"kind"`
 	Session string `json:"session,omitempty"`
 	// Until is the pin's expiry, set only when Kind=="pin".
@@ -45,7 +46,7 @@ type idleHolder struct {
 
 // holdersOf builds the reasons not to stop from one sweep's session list and presence. A
 // pure function, fed the same inputs as the reaper's own decision and ordered the same way.
-func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs int) []idleHolder {
+func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs, imageJobs int) []idleHolder {
 	var out []idleHolder
 	for _, s := range sessions {
 		if !s.Alive {
@@ -73,6 +74,11 @@ func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs int
 		// mid-import looks like "holders empty, yet it sails past StopAt without
 		// stopping", which the operator cannot explain.
 		out = append(out, idleHolder{Kind: "repojob"})
+	}
+	if imageJobs > 0 {
+		// Session-less for the same reason: the queue belongs to the workspace, and a job
+		// enqueued from the Console has no session at all.
+		out = append(out, idleHolder{Kind: "imagejob"})
 	}
 	if watched {
 		// Placed after the session-derived reasons: "someone is watching" is not

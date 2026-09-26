@@ -566,8 +566,8 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 	// A repo import (docs/log/78) is work even with zero sessions. Miss it and the
 	// workspace stops in the middle of an hour-long clone/checkout, leaving a
 	// half-made working copy — the interruption is detectable, the lost time is not
-	// recoverable.
-	busy := env.RepoJobs > 0
+	// recoverable. An image job is the same case: the queue dies with the container.
+	busy := env.jobsRunning()
 	for _, s := range sessions {
 		if holdsWorkspace(s) {
 			busy = true
@@ -613,7 +613,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 	rp.mgr.putIdleForecast(ws.ID, idleForecast{
 		Enabled:    cl.wsOn,
 		StopAt:     base.Add(cl.ws),
-		Holders:    holdersOf(sessions, watched, now, env.RepoJobs),
+		Holders:    holdersOf(sessions, watched, now, env.RepoJobs, env.ImageJobs),
 		ObservedAt: now,
 	})
 	if !cl.wsOn {
@@ -700,12 +700,15 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 		log.Printf("idle-stop: refresh workspace %s: found=%v err=%v", ws.ContainerName, ok, err)
 		return
 	}
-	sessions, err := rp.mgr.agentSessions(lease.Context(), rt)
+	env, err := rp.mgr.agentSessionsEnv(lease.Context(), rt)
 	if err != nil {
 		log.Printf("idle-stop: refresh sessions %s: %v", ws.ContainerName, err)
 		return
 	}
-	for _, s := range sessions {
+	if env.jobsRunning() {
+		return
+	}
+	for _, s := range env.Sessions {
 		if holdsWorkspace(s) {
 			return
 		}

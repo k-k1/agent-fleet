@@ -458,12 +458,7 @@ func (q *jobQueue) take(provider string) *jobRec {
 		if j.provider != provider {
 			continue
 		}
-		// A queue-wide pause still lets trials through: pausing the batch in order to try
-		// something is the whole point.
-		if q.paused && !j.trial {
-			continue
-		}
-		if g := q.groups[j.group]; g != nil && (g.paused || g.aborted) {
+		if !q.runnableLocked(j) {
 			continue
 		}
 		q.pending = append(q.pending[:i], q.pending[i+1:]...)
@@ -473,6 +468,38 @@ func (q *jobQueue) take(provider string) *jobRec {
 		return j
 	}
 	return nil
+}
+
+// runnableLocked reports whether a worker may take pending job j now. take and ActiveJobs both
+// ask it, so "what the worker would run" and "what keeps the workspace awake" cannot drift.
+func (q *jobQueue) runnableLocked(j *jobRec) bool {
+	// A queue-wide pause still lets trials through: pausing the batch in order to try
+	// something is the whole point.
+	if q.paused && !j.trial {
+		return false
+	}
+	if g := q.groups[j.group]; g != nil && (g.paused || g.aborted) {
+		return false
+	}
+	return true
+}
+
+// ActiveJobs counts the jobs that are running or that a worker will take without anyone acting:
+// the Control Plane's idle reaper must not stop the workspace under them, because the queue lives
+// in this process and dies with it. Paused work is left out on purpose — a batch paused and
+// forgotten would otherwise keep the workspace billed indefinitely.
+func ActiveJobs() int { return jobs.activeJobs() }
+
+func (q *jobQueue) activeJobs() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	n := len(q.running)
+	for _, j := range q.pending {
+		if q.runnableLocked(j) {
+			n++
+		}
+	}
+	return n
 }
 
 func (q *jobQueue) run(j *jobRec) {

@@ -286,11 +286,14 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	})
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
-	// repoJobs is the only channel telling the CP "no session, but the workspace IS busy"
-	// (docs/log/78). An import takes minutes to hours while GET polling deliberately does
-	// not count as activity, so without this idle-stop kills a running clone / checkout.
+	// repoJobs and imageJobs are the only channels telling the CP "no session, but the
+	// workspace IS busy" (docs/log/78). An import takes minutes to hours while GET polling
+	// deliberately does not count as activity, so without this idle-stop kills a running
+	// clone / checkout; the image queue dies with the container the same way.
 	// The reaper reads this list on every sweep, so it costs no extra request.
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions, "repoJobs": repoJobsRunning()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"sessions": sessions, "repoJobs": repoJobsRunning(), "imageJobs": imageJobsActive(),
+	})
 }
 
 // HandleSessionCatalog is the sharing inventory. Unlike the ordinary list it

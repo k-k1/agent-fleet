@@ -10,9 +10,9 @@ package sessionx
 //	measured (wiring replaced by one that only counts with `p(name)`, one full run of the
 //	sessionx tests) ->
 //	  SplitFrontmatter=22 / BrowseRoot=14 / FirstNonEmpty=13 / ToolchainShellPrefix=5 /
-//	  IsSvnRepo=2 / RepoJobsRunning=1, and 0 for the other 7
+//	  IsSvnRepo=2 / RepoJobsRunning=1 / ImageJobsActive=1, and 0 for the other 7
 //
-// The 6 that are reached copy main's implementation verbatim (below). The 7 that are not
+// The 7 that are reached copy main's implementation verbatim (below). The 7 that are not
 // panic: a fake return value would silently go green on a lie once a future test does reach
 // here, so this errs on the side of making noise (the same shape as
 // internal/gitx/deps_test.go).
@@ -131,6 +131,10 @@ func testDeps() Deps {
 		// because this process has no ledger, not because "it is 0 in tests". A check that uses
 		// the ledger belongs in main.
 		RepoJobsRunning: func() int { p("RepoJobsRunning"); return 0 },
+
+		// The image queue lives in internal/imagegen, and this test binary enqueues nothing, so
+		// the real one returns 0 as well. A check that uses the queue belongs in imagegen.
+		ImageJobsActive: func() int { p("ImageJobsActive"); return 0 },
 
 		// A copy of env_toolchains.go, for the no-selection-file path only.
 		// It must not return the empty string: `defaultTimezone` is applied even with no

@@ -18,7 +18,10 @@ package main
 // "too large", and an empty error code sends `""` to the Console, where i18n cannot resolve it
 // and the raw developer message is exposed — both fail quietly.
 
-import "github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+)
 
 func init() { sessionx.Configure(sessionDeps()) }
 
@@ -41,6 +44,7 @@ func sessionDeps() sessionx.Deps {
 
 		IsSvnRepo:       isSvnRepo,
 		RepoJobsRunning: repoJobsRunning,
+		ImageJobsActive: imagegen.ActiveJobs,
 
 		FinalizeSessionUsage:  finalizeSessionUsage,
 		MaybeFoldSessionUsage: maybeFoldSessionUsage,
