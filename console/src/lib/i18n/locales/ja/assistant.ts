@@ -27,6 +27,7 @@ export const assistant = {
   "assistant.models": "アシスタントのモデル",
   "assistant.note_models":
     "ビルトインアシスタントが新しい会話で使うモデルです。優先順位で別の CLI に切り替わった場合も、その CLI の行で選んだモデルを使います。「推奨」は接続中のモデルから安全な既定を選び、現在の解決結果も表示します。",
+  "assistant.recommended": "推奨",
   "assistant.recommended_now": "推奨（現在: {model}）",
   "assistant.auto_turn": "セッション報告への自動応答",
   "assistant.note_auto_turn":

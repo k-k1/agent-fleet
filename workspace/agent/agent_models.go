@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -109,6 +111,15 @@ func lcppModels(ctx context.Context) []agents.ModelChoice {
 }
 
 func handleAgentModels(w http.ResponseWriter, r *http.Request) {
+	// The Console asks with its CURRENT settings (?hidden=… and, for opencode, ?catalog=…),
+	// which its debounced save may not have delivered here yet; the answer is computed for them,
+	// so it is exactly the answer for what that screen shows (#972 review, rounds 3–5). Without
+	// them — MCP list_models, an older Console — the saved ui-prefs apply, as before.
+	hiddenRaw, hiddenGiven := requestHiddenModels(r)
+	catalogPref := uiprefs.OpencodeCatalog()
+	if r.URL.Query().Has("catalog") {
+		catalogPref = opencode.CatalogPref(r.URL.Query().Get("catalog"))
+	}
 	var list []agents.ModelChoice
 	// route is the opencode billing route the list was actually shaped by — the selected one
 	// unless Catalog's empty-menu rescue had to ignore it. Empty for every other kind.
@@ -154,7 +165,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// say so rather than keep claiming the route the user chose (docs/log/103).
 		ids := opencode.Models()
 		enumerated = len(ids)
-		list, route = opencode.CatalogWithRoute(ids, uiprefs.OpencodeCatalog())
+		list, route = opencode.CatalogWithRoute(ids, catalogPref)
 	case "agy":
 		list = agy.Models()
 	case "copilot":
@@ -188,7 +199,11 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// Console picker and the MCP list_models meet, so one place covers both (the same
 	// shape as opencodeCatalog). An explicitly named hidden model is refused separately
 	// by the guard in handleCreateSession.
-	list = sessionx.FilterVisibleModels(r.PathValue("kind"), list)
+	if hiddenGiven {
+		list = sessionx.FilterVisibleModelsIn(sessionx.EffectiveHidden(r.PathValue("kind"), hiddenRaw), list)
+	} else {
+		list = sessionx.FilterVisibleModels(r.PathValue("kind"), list)
+	}
 	if list == nil {
 		list = []agents.ModelChoice{}
 	}
@@ -200,6 +215,17 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		list[i].Provider = resolveModelProvider(r.PathValue("kind"), list[i].ID)
 	}
 	out := map[string]any{"models": list}
+	// What "recommended" resolves to on this kind, per tier (Issue #972) — the Agent's own
+	// answer, so the Console's "推奨（現在: X）" names the model that actually runs instead of
+	// re-deriving it. Only the kinds the assistant and AI assist can run; the rest have no
+	// "recommended" choice to explain.
+	if _, ok := chatx.ChatProviders[r.PathValue("kind")]; ok {
+		if hiddenGiven {
+			out["recommended"] = chatx.RecommendedModelsWithHidden(r.PathValue("kind"), hiddenRaw)
+		} else {
+			out["recommended"] = chatx.RecommendedModels(r.PathValue("kind"))
+		}
+	}
 	if route != "" {
 		out["route"] = route
 	}
@@ -207,4 +233,30 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		out["reason"] = reason
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// requestHiddenModels reads ?hidden= — the Console's hiddenModels[kind] as a JSON array of
+// strings. ok=false when absent or malformed — not an array (`null` included: json.Unmarshal
+// accepts it into a nil slice), or an element that is not a string — and the saved ui-prefs
+// apply instead (#972 review, round 6). Blank strings are skipped, as the Console skips them.
+func requestHiddenModels(r *http.Request) (raw []string, ok bool) {
+	q := r.URL.Query()
+	if !q.Has("hidden") {
+		return nil, false
+	}
+	var vals []any
+	if json.Unmarshal([]byte(q.Get("hidden")), &vals) != nil || vals == nil {
+		return nil, false
+	}
+	raw = []string{}
+	for _, v := range vals {
+		s, isString := v.(string)
+		if !isString {
+			return nil, false
+		}
+		if strings.TrimSpace(s) != "" {
+			raw = append(raw, s)
+		}
+	}
+	return raw, true
 }

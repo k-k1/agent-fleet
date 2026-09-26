@@ -29,7 +29,7 @@ let host: HTMLDivElement | null = null;
  *  test that left it unset would read whichever answer the previous one happened to fetch. */
 function catalog(models: string[], route: string) {
   api.mockImplementation((path: string) => {
-    if (path === "api/agents/opencode/models") {
+    if (path.startsWith("api/agents/opencode/models")) {
       return Promise.resolve({ models: models.map((id) => ({ id, label: id })), route });
     }
     return Promise.resolve({});

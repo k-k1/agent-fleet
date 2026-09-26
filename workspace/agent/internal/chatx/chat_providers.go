@@ -1590,13 +1590,57 @@ const (
 	OneShotProse
 )
 
-// recommendedOneShotModel is the "recommended" resolution for a tier — the Console shows the
-// same split (Settings > AI assist, "short text" / "prose").
-func recommendedOneShotModel(kind string, tier OneShotTier) string {
-	if tier == OneShotProse {
-		return recommendedAssistantModel(kind)
+// oneShotEnvModels are the operator's per-kind overrides of the one-shot recommendation. They
+// used to apply only to a member with NO model setting, which the Console never leaves (its
+// defaults store "recommended" for every kind, and ui_prefs.go reads a missing entry the same
+// way) — so they were silently dead for everyone the settings screen could show. Folded into the
+// recommendation itself, they now take effect for "recommended" and show up as its answer
+// (#972 review, round 3).
+var oneShotEnvModels = map[string]string{
+	session.KindCodex:    "AF_TITLE_MODEL_CODEX",
+	session.KindOpencode: "AF_TITLE_MODEL_OPENCODE",
+	session.KindAgy:      "AF_TITLE_MODEL_AGY",
+}
+
+// oneShotEnvModel is kind's operator override, "" when none is set — or when it cannot be what
+// runs: a model the member hid ("models not to use" wins over the operator's default, as it does
+// at session launch), or, for agy, a name its catalog does not list (agyChatModel would drop it;
+// a display name is resolved to its id). Then the computed recommendation applies instead, and
+// that is what the screen names (#972 review, round 4).
+func oneShotEnvModel(kind string) string {
+	return oneShotEnvModelV(prefsVisibility, kind)
+}
+
+func oneShotEnvModelV(v visibility, kind string) string {
+	name := oneShotEnvModels[kind]
+	if name == "" {
+		return ""
 	}
-	return recommendedUtilityModel(kind)
+	m := strings.TrimSpace(os.Getenv(name))
+	if m == "" {
+		return ""
+	}
+	if kind == session.KindAgy {
+		return agyNamedModel(v, m)
+	}
+	return v.model(kind, m)
+}
+
+// recommendedOneShotModel is the "recommended" resolution for a tier — the Console shows the
+// same split (Settings > AI assist, "short text" / "prose"). An operator override
+// (oneShotEnvModel) wins over the computed rules.
+func recommendedOneShotModel(kind string, tier OneShotTier) string {
+	return recommendedOneShotModelV(prefsVisibility, kind, tier)
+}
+
+func recommendedOneShotModelV(v visibility, kind string, tier OneShotTier) string {
+	if m := oneShotEnvModelV(v, kind); m != "" {
+		return m
+	}
+	if tier == OneShotProse {
+		return recommendedAssistantModelV(v, kind)
+	}
+	return recommendedUtilityModelV(v, kind)
 }
 
 // oneShotModelPref reads the user's per-backend choice for a tier.
@@ -1769,48 +1813,77 @@ func ResolveOneShotModelCached(feature string, tier OneShotTier, kind string) (m
 // proves it is available; otherwise an empty result deliberately delegates to the
 // CLI default rather than risking a metered/unentitled Zen model.
 func recommendedUtilityModel(kind string) string {
+	return recommendedUtilityModelV(prefsVisibility, kind)
+}
+
+func recommendedUtilityModelV(v visibility, kind string) string {
 	// A candidate excluded by the hidden-models setting (model_deny.go) is not auto-selected
 	// either.
+	//
+	// codex and agy follow the cheapest priced model their catalog lists (model_recommend.go),
+	// falling back to what they did before prices were read. claude needs no ranking: the
+	// "haiku" alias already moves to each new Haiku. opencode is deliberately NOT ranked: its
+	// cheapest rows are the $0 "-free" promotions, which are retired every few weeks and are a
+	// listing rather than an entitlement (see OneShotHeadlessRun's opencode branch).
 	switch kind {
 	case session.KindClaude:
-		return visibleModel(kind, "haiku")
+		return claudeFirstVisible(v, claudeShortTiers)
 	case session.KindCodex:
-		return cheapOneShotModel(visibleModelIDs(kind, modelChoiceIDs(codex.Models())))
+		ids, _ := codexRecommendIDs(v)
+		if m := cheapestListedModel(kind, ids); m != "" {
+			return m
+		}
+		return cheapOneShotModel(ids)
 	case session.KindOpencode:
 		const goModel = "opencode-go/deepseek-v4-flash"
-		return recommendedCatalogModel(visibleModelIDs(kind, opencode.Models()), goModel, "")
+		return recommendedCatalogModel(v.ids(kind, opencode.Models()), goModel, "")
 	case session.KindAgy:
-		return visibleModel(kind, defaultAgyChatModel)
+		if m := cheapestListedModel(kind, agyRecommendIDs(v)); m != "" {
+			return m
+		}
+		return agyNamedModel(v, defaultAgyChatModel)
 	}
 	return ""
 }
 
-// codexOneShotArgs is the argv for a codex one-shot. --ephemeral: a one-shot never
+// codexOneShotModel is the -m a codex one-shot runs with ("" = none, the CLI default), and
+// whether it is OUR pick (so a failure may retry without it — CodexOneShotWithRetry).
+// selected / configured / auto are what OneShotHeadlessRun resolved from the settings, the
+// "recommended" sentinel already replaced (auto marks that).
+//
+//   - nothing configured ⇒ the recommendation exactly as "recommended" gives it (which is
+//     AF_TITLE_MODEL_CODEX when the operator set one — theirs, never retried away);
+//   - configured ⇒ used as is. "" — the member's explicit CLI default, or a recommendation that
+//     resolved to nothing — stays "no -m": neither the cheapest model nor the environment's
+//     model may stand in for it (#972 review, rounds 1 and 2).
+func codexOneShotModel(selected string, configured, auto bool, tier OneShotTier) (string, bool) {
+	if !configured {
+		m := recommendedOneShotModel(session.KindCodex, tier)
+		return m, m != "" && oneShotEnvModel(session.KindCodex) == ""
+	}
+	return selected, auto && selected != ""
+}
+
+// codexOneShotArgsFor is the argv for a codex one-shot. --ephemeral: a one-shot never
 // needs resume, so don't persist a thread even into the chat-only CODEX_HOME.
 //
 // The two savings knobs (docs/log/46 §1-a-2 / §2-b), mirroring what the claude path does:
-//   - -m <cheap model>: without it codex ran throwaway calls on whatever config.toml
-//     pins — on a real workspace gpt-5.6-luna. AF_TITLE_MODEL_CODEX still wins, and an
-//     empty pick (unknown catalog) falls back to today's "no -m" behaviour.
+//   - -m <model>: without it codex ran throwaway calls on whatever config.toml pins — on a
+//     real workspace gpt-5.6-luna. The CALLER picks it (codexOneShotModel); "" means no -m.
+//     This function no longer picks one of its own, nor reads AF_TITLE_MODEL_CODEX: it could
+//     not tell "nobody chose" from "the member chose the CLI default", and replaced both
+//     (#972 review) — an explicit Default ran gpt-6-luna while the screen said Default.
 //   - -c model_reasoning_effort="low": the analog of MAX_THINKING_TOKENS=0. A title is
 //     not a reasoning problem, and the user's configured effort (often "high") would
 //     otherwise apply to every one-shot. "low" is supported by every listed model.
 //
 // The trailing "-" makes codex read the prompt from stdin; it must stay last.
-func codexOneShotArgs() (args []string, autoPicked bool) {
-	return codexOneShotArgsFor("")
-}
-
-func codexOneShotArgsFor(selected string) (args []string, autoPicked bool) {
-	args = []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
+func codexOneShotArgsFor(selected string) []string {
+	args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
 	if selected != "" {
 		args = append(args, "-m", selected)
-	} else if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
-		args = append(args, "-m", m) // explicit user choice: never second-guess it
-	} else if m := cheapOneShotModel(visibleModelIDs(session.KindCodex, modelChoiceIDs(codex.Models()))); m != "" {
-		args, autoPicked = append(args, "-m", m), true
 	}
-	return append(args, "-c", `model_reasoning_effort="low"`, "-"), autoPicked
+	return append(args, "-c", `model_reasoning_effort="low"`, "-")
 }
 
 // codexOneShotArgsNoModel strips OUR OWN -m pick for the one retry: a catalog entry the
@@ -1919,7 +1992,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 	defer func() { kind, model = call.Kind, call.ModelReq }()
 	kind, selected, configured, _ := resolveOneShot(feature, tier)
 	selected = strings.TrimSpace(selected)
-	autoRecommended := selected == AssistantRecommendedModel
+	// Our own pick — retried without -m if it fails — only when the recommendation was computed;
+	// an operator's AF_TITLE_MODEL_* is theirs and is never dropped behind their back.
+	autoRecommended := selected == AssistantRecommendedModel && oneShotEnvModel(kind) == ""
 	if selected == AssistantRecommendedModel {
 		selected, configured = recommendedOneShotModel(kind, tier), true
 	}
@@ -1928,13 +2003,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		call.Kind = session.KindCodex
 		defer func() { _, _ = chatCodexHome() }()
 		full := headlessPrompt(persona, nil, prompt)
-		if !configured && os.Getenv("AF_TITLE_MODEL_CODEX") == "" {
-			selected = recommendedOneShotModel(kind, tier)
-			autoRecommended = selected != ""
-		}
-		args, autoPicked := codexOneShotArgsFor(selected)
-		autoPicked = autoPicked || autoRecommended
-		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
+		selected, autoRecommended = codexOneShotModel(selected, configured, autoRecommended, tier)
+		args := codexOneShotArgsFor(selected)
+		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoRecommended, full, runCodexOneShot)
 		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
 		return reply, "", "", err
 	case session.KindOpencode:
@@ -1957,10 +2028,7 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
 		m := selected
 		if !configured {
-			m = os.Getenv("AF_TITLE_MODEL_OPENCODE")
-			if m == "" {
-				m = recommendedOneShotModel(kind, tier)
-			}
+			m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
 		}
 		if m != "" {
 			args = append(args, "--model", m)
@@ -2044,7 +2112,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		var args []string
 		m := selected
 		if !configured {
-			m = envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel)
+			// The same answer "recommended" gives (RecommendedModels), so a member who never
+			// opened the setting runs what the screen calls the recommendation.
+			m = recommendedOneShotModel(kind, tier)
 		}
 		if m := agyChatModel(m, filterVisibleModels(session.KindAgy, agy.Models())); m != "" {
 			args = append(args, "--model", m)

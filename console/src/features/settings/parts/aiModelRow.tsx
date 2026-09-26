@@ -11,56 +11,25 @@ import { ASSISTANT_AGENT_KINDS, ASSISTANT_RECOMMENDED_MODEL } from "../../../lib
 import { agentOf } from "../../../agents/registry.ts";
 import { Row, Select } from "./controls.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { useHiddenModel, useModelOptions } from "../../../lib/agentModels.ts";
+import { useHiddenModel, useModelOptions, useRecommendedModels } from "../../../lib/agentModels.ts";
 
 export type AiModelTier = "chat" | "prose" | "short";
 
 export type AiAgentKind = (typeof ASSISTANT_AGENT_KINDS)[number];
 
-// Resolves kind x tier to a recommended model id. A function rather than a constant table
-// because it branches on the live catalog (the cheap-model search, the presence check on ids).
-function recommendedModelId(kind: AiAgentKind, tier: AiModelTier, ids: string[], cheap: string | undefined): string {
-  const short = tier === "short";
-  switch (kind) {
-    case "claude":
-      return short ? "haiku" : "sonnet";
-    case "codex":
-      return short ? cheap || "" : "gpt-5.6-luna";
-    case "opencode":
-      if (short) return ids.includes("opencode-go/deepseek-v4-flash") ? "opencode-go/deepseek-v4-flash" : "";
-      return ids.includes("opencode-go/glm-5.2") ? "opencode-go/glm-5.2" : "opencode/nemotron-3-ultra-free";
-    case "agy":
-      return "Gemini 3.5 Flash (Medium)";
-    case "muse":
-      // Muse Code lists a "-contributor" twin of every model: the same model at the same price,
-      // except that the vendor may use those conversations to improve the product. Both twins
-      // stay in this dropdown — picking one is a choice a member is allowed to make — but what
-      // "recommended" resolves to is the newest row WITHOUT that clause, so that choosing
-      // nothing is never the data-sharing choice (ADR 0095 decision 6 clamp 8, P2-21).
-      //
-      // The Agent decides the same thing for itself when a chat turn carries no model
-      // (muse.SafeDefaultExecModel), and it is the authority: it reads the catalogue's
-      // descriptions as well as the ids. This row has only the ids, so the suffix is the
-      // signal — a false positive costs a recommendation, never a conversation.
-      // `id &&` is load-bearing: the options list opens with the "" row (Default), which has no
-      // suffix and would otherwise be "the newest model without the clause".
-      return ids.find((id) => id && !id.endsWith("-contributor")) || "";
-    default:
-      return "";
-  }
-}
-
 // useResolvedModelLabel answers "what does this kind x tier x stored value actually show/run
 // as", for both AiModelRow's own "推奨（現在: X）" option label and AiFeatureCard's "いま使う
-// のは" line (docs/log/103 decision 5's Y — the Console draws it from the catalog it already
-// has, never from a guess the Agent cannot confirm).
+// のは" line (docs/log/103 decision 5's Y — the Console draws the NAME from the catalog it
+// already has).
 //
-// 103-impl-review (a): the recommended label used to fall back to the RAW recommended id when
-// hidden models excluded it from `live` (`|| recommended`) — showing "推奨（現在: haiku）" for a
-// user who put haiku in "models not to use", while the Agent's own visibleModel() falls through
-// to the CLI default in that exact case (chat_providers.go's recommendedUtilityModel). Fixed
-// here: a recommended id absent from the VISIBLE catalog resolves to ui.default, matching what
-// actually runs.
+// Which model "推奨" IS comes from the Agent (useRecommendedModels — Issue #972), the same
+// functions its run paths call. The Console used to re-derive it here (recommendedModelId) and
+// the two drifted: codex's newest cheap tier, muse's contributor twins, opencode's route-shaped
+// list. Until the Agent answers, the label names no model rather than guess one.
+//
+// 103-impl-review (a) still holds: a recommended id the user has hidden is shown as ui.default,
+// which is what runs (the Agent also re-asks under the new hidden list — the fetch is keyed by
+// it — but the check here makes the label right before that answer lands).
 // value is string | undefined, not just string, because the two carry different meanings a
 // caller can produce (103-final-review 中3): undefined ⇒ nothing decided this at any level, so
 // show what "推奨" resolves to; "" ⇒ something in the chain explicitly picked the CLI's own
@@ -69,15 +38,16 @@ function recommendedModelId(kind: AiAgentKind, tier: AiModelTier, ids: string[],
 export function useResolvedModelLabel(kind: AiAgentKind, tier: AiModelTier, value: string | undefined): string {
   const tr = useT();
   const live = useModelOptions(kind) || [["", tr("ui.default")]];
-  const ids = live.map(([id]) => id);
-  const cheap = ids.find((id) =>
-    ["mini", "flash", "lite", "small", "nano", "haiku"].some((x) => id.toLowerCase().includes(x)),
-  );
-  const recommended = recommendedModelId(kind, tier, ids, cheap);
-  const recommendedVisible = live.some(([id]) => id === recommended);
-  const recommendedLabel = recommendedVisible ? live.find(([id]) => id === recommended)![1] : tr("ui.default");
+  const recommendedSet = useRecommendedModels(kind);
+  const recommended = recommendedSet?.[tier];
+  const recommendedHidden = useHiddenModel(kind, recommended || "");
   if (value === undefined || value === ASSISTANT_RECOMMENDED_MODEL) {
-    return tr("assistant.recommended_now", { model: recommendedLabel });
+    if (recommended === undefined) return tr("assistant.recommended");
+    const model =
+      !recommended || recommendedHidden
+        ? tr("ui.default")
+        : live.find(([id]) => id === recommended)?.[1] || recommended;
+    return tr("assistant.recommended_now", { model });
   }
   if (value === "") return tr("ui.default");
   return live.find(([id]) => id === value)?.[1] || value;

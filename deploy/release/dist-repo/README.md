@@ -176,7 +176,7 @@ behave like Shell: terminal only, no conversation, and not tied to a workspace w
 default is also settable deployment-wide via `AF_CHAT_MODEL`. Pin nothing and it uses the
 "recommended" tier, picked from the connected catalogue to favour the fast, low-cost tiers
 that suit a conversation (the settings screen shows what it currently resolves to; at the
-time of writing Claude → Sonnet 5 · Codex → `gpt-5.6-luna` · Antigravity → Gemini 3.5 Flash
+time of writing Claude → Sonnet 5 · Codex → `gpt-6-luna` · Antigravity → Gemini 3.5 Flash
 · Cursor → its own default (Auto)). Cursor's assistant runs **read-only** (`--mode ask`).
 Kiro is **not** available as an assistant chat (it has no headless chat mode).
 

@@ -37,3 +37,19 @@ func TestParseCatalogBadJSON(t *testing.T) {
 		t.Fatal("want error on bad JSON")
 	}
 }
+
+// An `upgrade` on a catalog entry is codex's retirement notice; null or absent is not.
+func TestParseRetiring(t *testing.T) {
+	out := []byte(`{"models":[
+	  {"slug":"gpt-6-luna","upgrade":null},
+	  {"slug":"gpt-5.6-luna"},
+	  {"slug":"gpt-5.5","upgrade":{"model":"gpt-5.6-sol","retirement_at":"2026-10-14T19:00:00Z"}}
+	]}`)
+	got := parseRetiring(out)
+	if !got["gpt-5.5"] || got["gpt-6-luna"] || got["gpt-5.6-luna"] {
+		t.Fatalf("parseRetiring = %v, want only gpt-5.5", got)
+	}
+	if parseRetiring([]byte("not json")) != nil {
+		t.Fatal("a broken dump must mark nothing retiring")
+	}
+}

@@ -19,6 +19,8 @@ vi.mock("../chat/api.ts", () => ({ assistantList: vi.fn(async () => ({ assistant
 const apiGet = vi.fn(async (_path: string): Promise<unknown> => []);
 const apiPost = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({}));
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
+  getUser: () => "",
   api: (path: string) => apiGet(path),
   apiJSON: (...a: unknown[]) => apiPost(...a),
   isTransientErr: () => false,

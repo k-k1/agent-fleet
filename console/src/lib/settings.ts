@@ -1004,6 +1004,40 @@ export function normalizeAssistantOrder(v: unknown): string[] {
 // of splitting the keys is that they can move independently AFTER this migration runs, not that
 // they start apart (docs/log/103 §103.3-5: this function's own doc comment used to say the
 // opposite of what the code below does — fixed here, not just in the code).
+// The per-kind model maps whose missing entries mean "recommended" (fillRecommendedModelMaps).
+const RECOMMENDED_MODEL_MAPS = ["assistantModels", "aiShortModels", "aiProseModels"] as const;
+
+// fillRecommendedModelMaps gives every assistant kind an entry in the three per-kind model maps,
+// "recommended" where it has none, and says whether it added any. A missing entry was a state of
+// its own: the settings row showed it as the CLI default ("" — `map[kind] || ""`) while the Agent
+// ran its per-kind historical default or AF_TITLE_MODEL_*, so screen and run disagreed
+// (#972 review, round 3). The Agent now reads a missing entry as "recommended" as well
+// (ui_prefs.go), so this only has to make the screen say so; it never writes back. It arose wherever a map was shallow-merged over DEFAULTS — a legacy
+// assistantUtilityModels copy (migrateAiAssistPrefs) lacking a kind, or a kind added after the
+// map was first saved (muse). "recommended" is what DEFAULTS give a new member for every kind,
+// so this makes an older prefs file mean what a new one means. Explicit values, "" (the CLI
+// default) included, are never touched.
+export function fillRecommendedModelMaps(o: Record<string, unknown>): boolean {
+  let added = false;
+  for (const key of RECOMMENDED_MODEL_MAPS) {
+    const cur = o[key];
+    if (cur === undefined) continue; // absent: DEFAULTS supply the whole map
+    const map: Record<string, unknown> = cur && typeof cur === "object" && !Array.isArray(cur) ? { ...cur } : {};
+    let changed = false;
+    for (const kind of ASSISTANT_AGENT_KINDS) {
+      if (!(kind in map)) {
+        map[kind] = ASSISTANT_RECOMMENDED_MODEL;
+        changed = true;
+      }
+    }
+    if (changed) {
+      o[key] = map;
+      added = true;
+    }
+  }
+  return added;
+}
+
 export function migrateAiAssistPrefs(o: Record<string, unknown>): void {
   // Title suggestion moves to one key per feature. The old autoTitleSuggest covered sessions,
   // chats and branch names at once, so an explicit OFF is carried over to all three.
@@ -1119,6 +1153,7 @@ const DEFAULTS: Settings = {
     opencode: ASSISTANT_RECOMMENDED_MODEL,
     cursor: ASSISTANT_RECOMMENDED_MODEL,
     agy: ASSISTANT_RECOMMENDED_MODEL,
+    muse: ASSISTANT_RECOMMENDED_MODEL,
   },
   aiShortModels: {
     claude: ASSISTANT_RECOMMENDED_MODEL,
@@ -1126,6 +1161,7 @@ const DEFAULTS: Settings = {
     opencode: ASSISTANT_RECOMMENDED_MODEL,
     cursor: ASSISTANT_RECOMMENDED_MODEL,
     agy: ASSISTANT_RECOMMENDED_MODEL,
+    muse: ASSISTANT_RECOMMENDED_MODEL,
   },
   aiProseModels: {
     claude: ASSISTANT_RECOMMENDED_MODEL,
@@ -1133,6 +1169,7 @@ const DEFAULTS: Settings = {
     opencode: ASSISTANT_RECOMMENDED_MODEL,
     cursor: ASSISTANT_RECOMMENDED_MODEL,
     agy: ASSISTANT_RECOMMENDED_MODEL,
+    muse: ASSISTANT_RECOMMENDED_MODEL,
   },
   assistantAutoTurn: true,
   assistantAutoTurnLimit: 10,
@@ -1416,6 +1453,7 @@ function load(): Settings {
     // priority/model lists, an independent read-aloud language). Runs the same function as
     // hydrateUIPrefs().
     migrateAiAssistPrefs(saved);
+    fillRecommendedModelMaps(saved);
     const legacyClaudeModel = typeof saved.defaultModel === "string" ? saved.defaultModel : DEFAULT_MODEL;
     const rows = saved.agentLaunchDefaults && typeof saved.agentLaunchDefaults === "object"
       ? saved.agentLaunchDefaults
@@ -1776,6 +1814,10 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // AFTER the single-pin promotion: aiAssistOrder inherits from assistantAgentOrder, so calling
   // it first would leave a user who has only the legacy pin on the default order.
   migrateAiAssistPrefs(srv);
+  // Display only — nothing is written back: the Agent reads a missing entry as "recommended"
+  // too (ui_prefs.go's aiModelPref / assistantChatModelPref), and a PUT here would be the
+  // hydrate-time write the owner-switch guards below forbid.
+  fillRecommendedModelMaps(srv);
   // The opencode setting changed from "how to shape the list" to "which billing route to use".
   // Of the legacy values, "hide Zen" means intending to use Go only, so it maps to go; "Go
   // first" and "show all" mean wanting to see both, so they map to zen (the previous

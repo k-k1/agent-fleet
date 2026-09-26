@@ -9,8 +9,8 @@
 // cheaply caches both answers). Until the fetch lands (or when it fails) the picker
 // offers only Default, which launches the CLI on its own default model.
 import { useEffect, useState } from "react";
-import { api, isTransientErr } from "../core/api/client.ts";
-import { CLAUDE_MODELS, useSettings } from "./settings.ts";
+import { api, getTenant, getUser, isTransientErr } from "../core/api/client.ts";
+import { CLAUDE_MODELS, getSettings, useSettings } from "./settings.ts";
 import { hiddenModelsFor, isModelHidden, modelMatchesHidden } from "./modelDeny.ts";
 import { t } from "./i18n/index.ts";
 
@@ -57,7 +57,9 @@ const isDynamic = (kind: string) =>
   kind === "kiro" ||
   kind === "lcpp" ||
   kind === "muse";
-const cache = new Map<string, ModelOption[]>();
+// Per kind, the options last fetched and the identity they were fetched under (catalogIdent):
+// a hit counts only while that identity still holds.
+const cache = new Map<string, { ident: string; opts: ModelOption[] }>();
 const descriptors = new Map<string, ModelDescriptor[]>();
 const inflight = new Map<string, Promise<ModelOption[]>>();
 
@@ -113,9 +115,50 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** One request. Resolves to the parsed body, or null when it did not land — a thrown fetch, or
  *  a transient backend error (`http_502` while the workspace boots, any 5xx body). An empty
  *  `models` array is NOT this case: that is an answer, and it carries its own reason. */
-async function requestModels(kind: string): Promise<Record<string, unknown> | null> {
-  const d = await api(`api/agents/${kind}/models`).catch(() => null);
-  if (!d || isTransientErr(d) || !Array.isArray(d.models)) return null;
+/** One question to the Agent: whose (tenant, user) and under which settings (the hidden list,
+ *  opencode's billing route). The settings travel WITH the request (?hidden= / ?catalog=), so
+ *  the Agent answers for this tab's current setting even before its debounced save arrives —
+ *  the answer is a function of the question, and caching it under the question is exact
+ *  (#972 review, rounds 3–5: every scheme that matched a saved-prefs answer to the screen after
+ *  the fact had a race). */
+interface CatalogQuestion {
+  kind: string;
+  tenant: string;
+  user: string;
+  hidden: string; // JSON array of the kind's hidden-models entry, as this tab holds it
+  catalog: string; // opencode's billing route; "" for every other kind
+}
+
+function questionFor(kind: string): CatalogQuestion {
+  const s = getSettings();
+  const raw = s.hiddenModels?.[kind];
+  const hidden = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string" && !!v.trim()) : [];
+  return {
+    kind,
+    tenant: getTenant(),
+    user: getUser(),
+    hidden: JSON.stringify(hidden),
+    catalog: kind === "opencode" ? s.opencodeCatalog : "",
+  };
+}
+
+const questionKey = (q: CatalogQuestion): string => [q.tenant, q.user, q.kind, q.hidden, q.catalog].join("|");
+
+/** Is this tab still asking as the same tenant and user? api() sends whichever is current at
+ *  call time, so a question begun under one and retried after a switch would be answered by the
+ *  other's Agent. */
+const stillAsker = (q: CatalogQuestion): boolean => getTenant() === q.tenant && getUser() === q.user;
+
+/** One request. Resolves to the parsed body, or null when it did not land — a thrown fetch, or
+ *  a transient backend error (`http_502` while the workspace boots, any 5xx body) — or when the
+ *  tenant / user changed since the question was asked. An empty `models` array is NOT this case:
+ *  that is an answer, and it carries its own reason. */
+async function requestModels(q: CatalogQuestion): Promise<Record<string, unknown> | null> {
+  if (!stillAsker(q)) return null;
+  const params = new URLSearchParams({ hidden: q.hidden });
+  if (q.kind === "opencode") params.set("catalog", q.catalog);
+  const d = await api(`api/agents/${q.kind}/models?${params}`).catch(() => null);
+  if (!d || isTransientErr(d) || !Array.isArray(d.models) || !stillAsker(q)) return null;
   return d;
 }
 
@@ -132,16 +175,28 @@ async function requestModels(kind: string): Promise<Record<string, unknown> | nu
  *  lcppMemberModelsCacheTTL, and it drops that cache when the connection is saved or deleted). */
 const VOLATILE_MODEL_KINDS = new Set(["opencode", "lcpp"]);
 
+
+
+
+function cachedOptions(kind: string): ModelOption[] | undefined {
+  const hit = cache.get(kind);
+  return hit && hit.ident === questionKey(questionFor(kind)) ? hit.opts : undefined;
+}
+
 function fetchModels(kind: string): Promise<ModelOption[]> {
   const cacheable = !VOLATILE_MODEL_KINDS.has(kind);
-  const hit = cacheable ? cache.get(kind) : undefined;
+  const ident = questionKey(questionFor(kind));
+  const hit = cacheable ? cachedOptions(kind) : undefined;
   if (hit) return Promise.resolve(hit);
-  let p = inflight.get(kind);
+  const q = questionFor(kind);
+  const flight = ident;
+  let p = inflight.get(flight);
   if (!p) {
     p = (async () => {
       for (let attempt = 0; ; attempt++) {
-        const d = await requestModels(kind);
+        const d = await requestModels(q);
         if (d) return d;
+        if (!stillAsker(q)) throw new Error("moved"); // another tenant / user now: not ours to show
         if (attempt >= MODELS_RETRY_MS.length) {
           // Out of attempts. "Could not reach the Agent" is its own answer — the picker
           // must not fall back to naming the account's plan for it.
@@ -179,12 +234,12 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
         emptyReasons.delete(kind);
         const full = [...defaultOnly(kind), ...opts];
         descriptors.set(kind, desc);
-        if (cacheable) cache.set(kind, full);
-        else inflight.delete(kind);
+        if (cacheable) cache.set(kind, { ident, opts: full });
+        else inflight.delete(flight);
         return full;
       })
       .catch((e) => {
-        inflight.delete(kind);
+        inflight.delete(flight);
         if (kind === "opencode") opencodeRoute = "";
         // A fetch that did not land tells us nothing about why the menu is empty, so the
         // previous answer must not be left standing as an explanation of this one. The
@@ -192,9 +247,111 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
         if (!(e instanceof Error && e.message === "empty")) emptyReasons.delete(kind);
         return defaultOnly(kind);
       });
-    inflight.set(kind, p);
+    inflight.set(flight, p);
   }
   return p;
+}
+
+/** What "recommended" resolves to on one kind, per tier — the Agent's own answer (the
+ *  `recommended` member of GET /agents/{kind}/models, chatx.RecommendedModels; Issue #972). ""
+ *  means the Agent passes no model, so the CLI's own default runs. */
+export interface RecommendedModels {
+  chat: string;
+  prose: string;
+  short: string;
+}
+
+function parseRecommended(v: unknown): RecommendedModels | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  const str = (x: unknown) => (typeof x === "string" ? x : "");
+  return { chat: str(r.chat), prose: str(r.prose), short: str(r.short) };
+}
+
+// Keyed by tenant, user, kind AND the kind's hidden-models list: hiding the recommended model
+// moves the Agent's answer (to the next cheapest, or to the CLI default), so an answer fetched
+// under another list is not this list's answer — and the Console switches tenant (and user)
+// within one page load, where another tenant's Agent answers from another catalog (#972
+// review, round 3). Kept apart from fetchModels because claude has no
+// live catalog to fetch (CLAUDE_MODELS) yet still has a recommendation to ask for.
+//
+// An answer is kept for RECOMMENDED_TTL_MS only: the Agent's own answer moves without any
+// Console action — a cheaper model ships, the daily price catalog changes, a model is retired —
+// and a Console left open for days would otherwise keep naming the old one (#972 review).
+const RECOMMENDED_TTL_MS = 10 * 60 * 1000;
+const recommendedCache = new Map<string, { rec: RecommendedModels; at: number }>();
+const recommendedInflight = new Map<string, Promise<RecommendedModels | null>>();
+
+/** Forgets every fetched recommendation. For dom tests: they mount the same kind under the same
+ *  hidden list case after case, so a module-scope answer from one case would be read back by
+ *  the next (memory: module-scope-cache-leaks-across-dom-tests). */
+export function clearRecommendedModels(): void {
+  recommendedCache.clear();
+  recommendedInflight.clear();
+}
+
+function cachedRecommended(key: string): RecommendedModels | null {
+  const hit = recommendedCache.get(key);
+  return hit && Date.now() - hit.at < RECOMMENDED_TTL_MS ? hit.rec : null;
+}
+
+// fetchRecommended retries on the same schedule as fetchModels: right after a workspace starts
+// the Agent is not listening yet and the CP answers 502, and giving up on the first one left
+// the label at a plain "推奨" until the settings were reopened (#972 review). A failure caches
+// nothing.
+function fetchRecommended(q: CatalogQuestion): Promise<RecommendedModels | null> {
+  const key = questionKey(q);
+  const hit = cachedRecommended(key);
+  if (hit) return Promise.resolve(hit);
+  let p = recommendedInflight.get(key);
+  if (!p) {
+    p = (async () => {
+      for (let attempt = 0; ; attempt++) {
+        const r = parseRecommended((await requestModels(q))?.recommended);
+        if (r) {
+          recommendedCache.set(key, { rec: r, at: Date.now() });
+          return r;
+        }
+        if (!stillAsker(q) || attempt >= MODELS_RETRY_MS.length) return null;
+        await sleep(MODELS_RETRY_MS[attempt]);
+      }
+    })().finally(() => recommendedInflight.delete(key));
+    recommendedInflight.set(key, p);
+  }
+  return p;
+}
+
+// useRecommendedModels is the Agent's "recommended" for `kind` — null until it has answered
+// (or when it could not be reached), in which case a caller names no model rather than guess
+// one: the Console used to re-derive this itself (aiModelRow.tsx's recommendedModelId) and the
+// two drifted.
+export function useRecommendedModels(kind: string): RecommendedModels | null {
+  useSettings(); // re-render on a settings change: the question below reads them
+  const q = questionFor(kind);
+  const key = questionKey(q);
+  // The answer is held WITH the key it answers, and only returned for the current key: a
+  // different tenant, kind or hidden list is a different question, and even the one render
+  // between the key changing and an effect clearing the state must not show the old answer.
+  const [held, setHeld] = useState<{ key: string; rec: RecommendedModels } | null>(() => {
+    const rec = cachedRecommended(key);
+    return rec ? { key, rec } : null;
+  });
+  // round advances every RECOMMENDED_TTL_MS while mounted: a settings tab left open would
+  // otherwise keep the answer it opened with, however old (#972 review, round 2).
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    // A refresh round keeps showing the previous answer until the new one lands, and keeps it
+    // if the Agent cannot be reached — an older answer beats a label that names nothing.
+    void fetchRecommended(q).then((r) => alive && r && setHeld({ key, rec: r }));
+    const timer = setTimeout(() => setRound((n) => n + 1), RECOMMENDED_TTL_MS);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [kind, key, round]);
+  if (held?.key === key) return held.rec;
+  return cachedRecommended(key);
 }
 
 // modelProviderOf answers which company made a model, for the picker's brand mark. Read
@@ -266,22 +423,23 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
 // has no picker (caps.model false). Dynamic kinds resolve asynchronously: Default-only
 // first, the full list once fetched.
 export function useModelOptions(kind: string): ModelOption[] | null {
-  const [opts, setOpts] = useState<ModelOption[]>(() => cache.get(kind) || defaultOnly(kind));
-  // The opencode catalog is SHAPED server-side by this preference (Go first / hide the
-  // metered twins), so a change has to refetch — otherwise the picker keeps showing the
-  // old list until the Console is reloaded.
+  // Held with the identity it was fetched under, so the render right after a tenant / hidden /
+  // route change shows no list from before it (#972 review, round 4).
+  const [held, setHeld] = useState<{ ident: string; opts: ModelOption[] } | null>(null);
+  // The list is SHAPED server-side by settings (opencode's billing route, hidden models) and
+  // belongs to one tenant and user, so any change to those refetches (catalogIdent) — otherwise
+  // the picker keeps showing the old list until the Console is reloaded.
   const s = useSettings();
-  const catalogPref = s.opencodeCatalog;
-  const pref = kind === "opencode" ? catalogPref : "";
+  const ident = questionKey(questionFor(kind));
   useEffect(() => {
     if (!isDynamic(kind)) return;
     let alive = true;
-    setOpts(cache.get(kind) || defaultOnly(kind)); // reset stale options from a previous kind
-    void fetchModels(kind).then((l) => alive && setOpts(l));
+    void fetchModels(kind).then((l) => alive && setHeld({ ident, opts: l }));
     return () => {
       alive = false;
     };
-  }, [kind, pref]);
+  }, [kind, ident]);
+  const opts = (held?.ident === ident ? held.opts : undefined) || cachedOptions(kind) || defaultOnly(kind);
   // Drop the models the user hides (settings.hiddenModels). The Agent filters
   // /agents/{kind}/models with the same setting, but claude's fixed list lives in the Console
   // (CLAUDE_MODELS) and never goes through that fetch, so filter here too. Dynamic kinds are
@@ -353,20 +511,19 @@ export function useOpencodeAppliedRoute(): string {
 // fetchModels folds duplicates through cache / inflight, so calling it for the same kind as
 // useModelOptions still fetches once.
 export function useModelCatalogSettled(kind: string): boolean {
-  const [settled, setSettled] = useState(() => !isDynamic(kind) || cache.has(kind));
+  // Settled for the identity the list is fetched under (catalogIdent), not for the kind alone:
+  // after a tenant / hidden / route change the new list is in flight, and the note must wait.
+  const ident = questionKey(questionFor(kind));
+  const [settledFor, setSettledFor] = useState<string | null>(null);
   useEffect(() => {
-    if (!isDynamic(kind)) {
-      setSettled(true);
-      return;
-    }
+    if (!isDynamic(kind)) return;
     let alive = true;
-    setSettled(cache.has(kind));
-    void fetchModels(kind).then(() => alive && setSettled(true));
+    void fetchModels(kind).then(() => alive && setSettledFor(ident));
     return () => {
       alive = false;
     };
-  }, [kind]);
-  return settled;
+  }, [kind, ident]);
+  return !isDynamic(kind) || settledFor === ident || cachedOptions(kind) !== undefined;
 }
 
 // visibleModelOptions drops hidden models from the choices. "" (Default) is not an id, so it
@@ -386,7 +543,9 @@ function visibleModelOptions(
 // adds a value missing from the catalog back into the choices (ModelPicker / AssistantTab) is not
 // applied to hidden models: adding one back would resurrect a model the user hid.
 export function useHiddenModel(kind: string, model: string): boolean {
-  const hiddenModels = useSettings().hiddenModels;
-  const catalog = kind === "claude" ? CLAUDE_MODELS.map(([id]) => id) : undefined;
+  const { hiddenModels, claudeCustomModels } = useSettings();
+  // claude's fail-safe counts what its picker offers — the aliases AND registered models — as
+  // visibleModelOptions and the Agent's EffectiveHidden do (#972 review, round 5).
+  const catalog = kind === "claude" ? [...CLAUDE_MODELS.map(([id]) => id), ...claudeCustomModels] : undefined;
   return isModelHidden(hiddenModels, kind, model, catalog);
 }
