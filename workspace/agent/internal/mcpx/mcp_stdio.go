@@ -3594,6 +3594,12 @@ func mcpCallerSession(cwd string) (string, bool) {
 // into af's opencode entry only), not the Agent's current name: a copy of af's command
 // registered as bare `af` — a project opencode.json, a stale entry — has no such key, and a
 // child of a daemon adopted across an Agent restart keeps the rotated key it was started with.
+//
+// What it cannot stop is a config written to impersonate: whoever writes an MCP entry chooses
+// its child's whole environment, AF_MCP_SERVER_KEY included — and could just as well set
+// AF_SESSION_NAME, which mcpOwningSession believes before any of this. Identity delivered
+// through the environment is only as good as the config that delivers it; this check closes the
+// cases where nobody chose to lie.
 func mcpCallerStampTrusted() bool {
 	return mcpreg.IsRotatedAFServerName(os.Getenv(mcpreg.AFServerKeyEnv)) && opencode.CallerPluginCurrent()
 }
