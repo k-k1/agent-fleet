@@ -42,19 +42,23 @@ var (
 	modelSwitchRe    = regexp.MustCompile("changed setting `Model Selection` from (.+?) to (.+?)\\.(?:\\s|$)")
 )
 
-// modelSwitch reads the model switch note agy prefixes to a USER_INPUT. Only the
-// <USER_SETTINGS_CHANGE> block is searched: the same sentence inside <USER_REQUEST> is text
-// the user typed, not a switch.
+// modelSwitch reads the model switch notes agy prefixes to a USER_INPUT and returns the
+// model before the first and after the last. Only the <USER_SETTINGS_CHANGE> blocks ahead of
+// <USER_REQUEST> are searched: anything inside the request, tags included, is text the user
+// typed, not a switch.
 func modelSwitch(content string) (from, to string, ok bool) {
-	blk := settingsChangeRe.FindStringSubmatch(content)
-	if blk == nil {
-		return "", "", false
+	if i := strings.Index(content, "<USER_REQUEST>"); i >= 0 {
+		content = content[:i]
 	}
-	mm := modelSwitchRe.FindStringSubmatch(blk[1])
-	if mm == nil {
-		return "", "", false
+	for _, blk := range settingsChangeRe.FindAllStringSubmatch(content, -1) {
+		for _, mm := range modelSwitchRe.FindAllStringSubmatch(blk[1], -1) {
+			if !ok {
+				from, ok = strings.TrimSpace(mm[1]), true
+			}
+			to = strings.TrimSpace(mm[2])
+		}
 	}
-	return strings.TrimSpace(mm[1]), strings.TrimSpace(mm[2]), true
+	return from, to, ok
 }
 
 func recallFrom(rd io.Reader, byLabel map[string]string) agents.RecalledSettings {
