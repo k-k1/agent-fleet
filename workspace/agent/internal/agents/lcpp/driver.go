@@ -190,13 +190,19 @@ func ManagedBusy(name string) bool {
 // DropHandle detaches a managed session from its runtime: interrupt any running turn and
 // forget the handle. The store on disk is untouched, so a later Resume reattaches to the same
 // conversation with no data lost — there is no process to stop, only the in-memory handle.
-func DropHandle(name string) {
+func DropHandle(name string) { dropHandle(name) }
+
+// dropHandle is DropHandle returning a channel closed once closeIdleResources has finished
+// (nil when name had no handle), so a caller that must not leave the handle's resources
+// behind — a test's own cleanup, before the next test reuses the package-global map — can wait
+// for it instead of guessing a delay.
+func dropHandle(name string) <-chan struct{} {
 	handlesMu.Lock()
 	h := handles[name]
 	delete(handles, name)
 	handlesMu.Unlock()
 	if h == nil {
-		return
+		return nil
 	}
 	_ = h.Interrupt()
 	// Close the store's cached write handle (Store.Close's own doc comment: optional, but
@@ -208,7 +214,12 @@ func DropHandle(name string) {
 	// just-killed stdio child errors instead of completing). Bounded and off the caller's own
 	// goroutine, so DropHandle itself stays the fast, synchronous call every existing caller
 	// (stop/halt/archive/recreate) already expects.
-	go h.closeIdleResources()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.closeIdleResources()
+	}()
+	return done
 }
 
 // closeStoreIdleWait bounds closeIdleResources' poll — generous next to an ordinary tool round
