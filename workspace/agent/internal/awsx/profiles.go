@@ -147,11 +147,26 @@ func Sync() (SyncResult, error) {
 	// (the CP's answer, or the cache when the CP cannot be asked), saving the cache and
 	// writing the block. Otherwise two runs can commit out of order: one that fetched
 	// (or read the cache) earlier could write its older list after a newer one.
+	waitStart := time.Now()
 	unlock, target, lerr := lockConfig(ConfigPath())
 	if lerr != nil {
 		return SyncResult{}, lerr
 	}
 	defer unlock()
+	// Another run that held the lock while this one waited has just asked the CP and
+	// cached the answer: use it rather than asking again, so parallel af-aws-exec runs
+	// (make -j8) share one fetch instead of queueing one each.
+	if fi, serr := os.Stat(settingsCachePath()); serr == nil && fi.ModTime().After(waitStart) {
+		if cached, cconf, ok := cachedList(); ok {
+			res, aerr := applyLocked(ConfigPath(), target, cached)
+			res.Settings = map[string]Profile{}
+			for _, p := range cached {
+				res.Settings[p.Name] = p
+			}
+			res.Conflicts, res.Fetched = cconf, true
+			return res, aerr
+		}
+	}
 	ps, conflicts, err := fetchUnlessCoolingDown()
 	if err != nil {
 		// The CP cannot be asked: re-apply the last list it gave, so the block follows
@@ -187,6 +202,9 @@ func Sync() (SyncResult, error) {
 	}
 	applied, aerr := applyLocked(ConfigPath(), target, ps)
 	applied.Settings, applied.Conflicts, applied.Fetched = res.Settings, res.Conflicts, true
+	// An earlier build kept the cache in ~/.aws; remove that one file so no stray
+	// agent-fleet file stays in the member's directory.
+	_ = os.Remove(filepath.Join(filepath.Dir(ConfigPath()), ".agent-fleet-settings.json"))
 	return applied, aerr
 }
 

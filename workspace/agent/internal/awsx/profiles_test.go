@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -651,5 +652,65 @@ func TestSyncCoolsDownAfterAnUnreachableCP(t *testing.T) {
 	}
 	if _, err := os.Stat(unreachablePath()); !os.IsNotExist(err) {
 		t.Fatal("a successful fetch did not clear the cooldown")
+	}
+}
+
+// Runs that waited for the lock while another run fetched and cached the CP's answer use
+// that answer instead of each asking the CP again.
+func TestSyncsWaitingForTheLockShareOneFetch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"profiles":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
+	unlock, _, err := lockConfig(ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if res, err := Sync(); err != nil || !res.Fetched || res.Settings["prod"].AccountID != "123456789012" {
+				t.Errorf("waiting run: %+v %v", res, err)
+			}
+		}()
+	}
+	time.Sleep(200 * time.Millisecond)
+	// What the lock holder would do: fetch and cache.
+	if err := saveSettingsCache([]Profile{prof("prod")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	wg.Wait()
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("the CP was asked %d time(s) by runs that could use the fresh cache", n)
+	}
+}
+
+// The cache file an earlier build kept in ~/.aws is removed by a successful sync.
+func TestSyncRemovesTheOldCacheFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := filepath.Join(home, ".aws", ".agent-fleet-settings.json")
+	mustMkdir(t, filepath.Dir(old), 0o700)
+	if err := os.WriteFile(old, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"profiles":[]}`)) }))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
+	if _, err := Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatal("the old cache file is still there")
 	}
 }
