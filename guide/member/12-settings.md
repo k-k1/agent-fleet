@@ -40,7 +40,8 @@ Getting this wrong is what makes a setting look like it "didn't work".
 
 There are also **two storage scopes**. The theme, the surface colours and the main-area layout are stored **on
 this device only**; everything else (font, font size, …) is stored on the server and follows you to another PC
-or browser.
+or browser. If saving to the server fails, the top of the settings screen says your settings could not be
+saved; until then the agents act on the previous settings, so press **Retry**.
 
 ---
 

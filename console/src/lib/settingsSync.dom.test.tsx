@@ -204,3 +204,122 @@ describe("ui-prefs: the ACCUMULATED classification", () => {
     expect([s.isEmptyPref(0), s.isEmptyPref(false), s.isEmptyPref({ a: 1 }), s.isEmptyPref(["a"])]).toEqual([false, false, false, false]);
   });
 });
+
+// #1023 item 1: a failed save used to reach console.warn only, while the screen and the Agent
+// acted on different settings from then on.
+describe("ui-prefs: a save that does not land is shown", () => {
+  it("goes failed on an error answer and back to synced once a save lands", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    expect(s.prefsSyncState()).toBe("synced");
+    apiJSONMock.mockResolvedValueOnce({ error: { code: "http_413", message: "too large" } });
+    s.setSetting("chatSize", 17);
+    expect(s.prefsSyncState()).toBe("pending");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(s.prefsSyncState()).toBe("failed");
+    s.retryPrefsSync();
+    expect(s.prefsSyncState()).toBe("failed"); // stays shown until something lands
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).toHaveBeenCalledTimes(2);
+    expect(s.prefsSyncState()).toBe("synced");
+  });
+
+  it("goes failed on a thrown PUT too", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    apiJSONMock.mockRejectedValueOnce(new Error("network"));
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(s.prefsSyncState()).toBe("failed");
+  });
+
+  it("goes failed when the server copy stays unreadable with a change waiting", async () => {
+    apiMock.mockResolvedValue({ error: { code: "http_502" } });
+    const s = await freshSettings({});
+    expect(await s.hydrateUIPrefs()).toBe(false);
+    s.setSetting("chatSize", 17);
+    expect(s.prefsSyncState()).toBe("pending");
+    await vi.advanceTimersByTimeAsync(200_000); // every automatic hydrate retry used up
+    expect(s.prefsSyncState()).toBe("failed");
+    apiMock.mockResolvedValue({});
+    s.retryPrefsSync(); // reads the server copy, then sends the waiting change
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).toHaveBeenCalledTimes(1);
+    expect(s.prefsSyncState()).toBe("synced");
+  });
+
+  it("retries a failed save on refresh instead of letting the server copy overwrite it", async () => {
+    apiMock.mockResolvedValueOnce({ chatSize: 14 });
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    apiJSONMock.mockResolvedValueOnce({ error: { code: "http_500" } });
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(1_000);
+    apiMock.mockResolvedValueOnce({ chatSize: 14 });
+    await s.refreshUIPrefs(); // back in the foreground
+    expect(s.getSettings().chatSize).toBe(17);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((apiJSONMock.mock.calls[1] as [string, string, Record<string, unknown>])[2].chatSize).toBe(17);
+    expect(s.prefsSyncState()).toBe("synced");
+  });
+});
+
+// #1023 item 1: the local copy records whose server copy it was merged with. A key the server
+// has never held may be pushed back only for that owner — on a first boot the identity-switch
+// resync does not run, so without the record a previous account's localStorage could be PUT to
+// a new account (#972 tried the push without it and reverted).
+describe("ui-prefs: the owner of the local copy", () => {
+  const OWNER_KEY = "af-display-settings-owner";
+  const hidden = { claude: ["fable", "opus"] };
+
+  it("pushes back a key the server never held, for the recorded owner", async () => {
+    const s = await freshSettings({ hiddenModels: hidden });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({ chatSize: 14 }); // no hiddenModels key at all
+    await s.hydrateUIPrefs();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).toHaveBeenCalledTimes(1);
+    expect((apiJSONMock.mock.calls[0] as [string, string, Record<string, unknown>])[2].hiddenModels).toEqual(hidden);
+  });
+
+  it("drops another owner's accumulated data at the first hydrate and sends nothing of it", async () => {
+    const s = await freshSettings({ hiddenModels: hidden, workingSets: [{ id: "g1", name: "旧", repos: [], convs: [], sessions: [], schedules: [] }] });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u2");
+    apiMock.mockResolvedValueOnce({ workingSets: [] }); // empty on the server: the old self-heal path
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().workingSets).toEqual([]);
+    expect(s.getSettings().hiddenModels).toEqual({ claude: ["fable"] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (const call of apiJSONMock.mock.calls as [string, string, Record<string, unknown>][]) {
+      expect(call[2].workingSets).toEqual([]);
+      expect(call[2].hiddenModels).toEqual({ claude: ["fable"] });
+    }
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u2");
+  });
+
+  it("does not push a never-held key while the owner is unknown", async () => {
+    const s = await freshSettings({ hiddenModels: hidden });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => ""); // whoami has not answered yet
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).not.toHaveBeenCalled();
+    expect(s.getSettings().hiddenModels).toEqual(hidden); // kept locally, just not sent
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1");
+  });
+
+  it("does not push a never-held key when no owner was recorded (a copy from before the record)", async () => {
+    const s = await freshSettings({ hiddenModels: hidden });
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1"); // recorded from now on
+  });
+});
