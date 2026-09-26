@@ -458,7 +458,7 @@
   background: var(--warn, #d29922);
 }
 .igen-engine-unavailable .igen-dot {
-  background: var(--err, #f85149);
+  background: var(--err);
 }
 
 .igen-engine-hint,
@@ -505,7 +505,7 @@
 
 .igen-err {
   font-size: 11px;
-  color: var(--err, #f85149);
+  color: var(--err);
 }
 
 .igen-warn {
@@ -814,7 +814,7 @@
 }
 
 .igen-badge.failed {
-  color: var(--err, #f85149);
+  color: var(--err);
   border-color: currentColor;
 }
 
@@ -872,7 +872,7 @@
 }
 
 .igen-bar-failed {
-  background: var(--err, #f85149);
+  background: var(--err);
 }
 
 .igen-bar-running {
@@ -909,7 +909,7 @@
 }
 
 .igen-job-failed .igen-job-state {
-  color: var(--err, #f85149);
+  color: var(--err);
 }
 
 .igen-job-pos {

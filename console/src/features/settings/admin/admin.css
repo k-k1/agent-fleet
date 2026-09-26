@@ -110,7 +110,7 @@
 
 .egress-block {
   flex-shrink: 0;
-  color: #f85149;
+  color: var(--err);
   font-variant-numeric: tabular-nums;
 }
 

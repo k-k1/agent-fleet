@@ -498,7 +498,7 @@
   color: var(--ok);
 }
 .diff-body .dl.del {
-  background: rgba(248, 81, 73, 0.1);
+  background: color-mix(in srgb, var(--del) 10%, transparent);
   color: var(--del);
 }
 .diff-body .dl.hunk {

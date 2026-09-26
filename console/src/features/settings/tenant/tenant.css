@@ -445,8 +445,8 @@
 }
 
 .audit-action.cat-egress {
-  color: #f85149;
-  border-color: #8a2b28;
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
 }
 
 .audit-action.cat-claude {
