@@ -138,19 +138,19 @@ func Fetch() ([]Profile, []Conflict, error) {
 // Sync pulls and applies. Fail-open: when the CP cannot be reached the file keeps the
 // previous block, so a CP blip never takes working profiles away.
 func Sync() (SyncResult, error) {
-	ps, conflicts, err := Fetch()
-	if err != nil && errors.Is(err, ErrBridgeOff) {
-		return SyncResult{}, err
+	if os.Getenv("AF_CP_BASE_URL") == "" || os.Getenv("AF_AWS_PROFILES_TOKEN") == "" {
+		return SyncResult{}, ErrBridgeOff
 	}
-	// Choosing the list (the CP's answer, or the cache when the CP cannot be asked),
-	// writing the block and updating the cache happen under one lock across processes:
-	// otherwise an offline run that read the cache before a fresh run wrote the CP's
-	// newer answer could apply the older list last.
+	// Everything runs under one lock across processes: fetching the list, choosing it
+	// (the CP's answer, or the cache when the CP cannot be asked), saving the cache and
+	// writing the block. Otherwise two runs can commit out of order: one that fetched
+	// (or read the cache) earlier could write its older list after a newer one.
 	unlock, target, lerr := lockConfig(ConfigPath())
 	if lerr != nil {
 		return SyncResult{}, lerr
 	}
 	defer unlock()
+	ps, conflicts, err := Fetch()
 	if err != nil {
 		// The CP cannot be asked: re-apply the last list it gave, so the block follows
 		// what the files say now (a [DEFAULT] line added since, a profile of the
@@ -171,23 +171,21 @@ func Sync() (SyncResult, error) {
 		res.FromCache = true
 		return res, err
 	}
-	res, aerr := applyLocked(ConfigPath(), target, ps)
-	res.Settings = map[string]Profile{}
+	res := SyncResult{Settings: map[string]Profile{}, Conflicts: conflicts, Fetched: true}
 	for _, p := range ps {
 		res.Settings[p.Name] = p
 	}
-	res.Conflicts = conflicts
-	res.Fetched = true
-	// Saved even when the block could not be written: it is the CP's latest answer, and
-	// a later offline run must not fall back to an older one. If it cannot be saved the
-	// older cache is removed for the same reason.
+	// The cache is saved BEFORE the block is written, and the block is only written once
+	// it is: the cache is then never older than the block, so a later offline re-apply
+	// cannot put an older list back (fail closed: a cache that cannot be saved leaves
+	// the block as it is, and an older cache is removed).
 	if serr := saveSettingsCache(ps, conflicts); serr != nil {
 		_ = os.Remove(settingsCachePath())
-		if aerr == nil {
-			aerr = fmt.Errorf("could not save the Settings cache: %w", serr)
-		}
+		return res, fmt.Errorf("could not save the Settings cache (%w); ~/.aws/config was left as it is", serr)
 	}
-	return res, aerr
+	applied, aerr := applyLocked(ConfigPath(), target, ps)
+	applied.Settings, applied.Conflicts, applied.Fetched = res.Settings, res.Conflicts, true
+	return applied, aerr
 }
 
 // Apply rewrites the managed block of the config at path to hold ps. It writes only when
@@ -597,11 +595,14 @@ func ExportedIn(path string) []string {
 }
 
 // settingsCachePath keeps the last list the CP sent (non-secret, like the block), so the
-// shadow and collision checks in af-aws-exec still have something to check against when
-// the CP cannot be reached. The block alone cannot serve: shadowed and colliding names
-// are exactly the ones it leaves out.
+// shadow and collision checks in af-aws-exec, and the offline re-apply, still have
+// something to go on when the CP cannot be reached. The block alone cannot serve:
+// shadowed and colliding names are exactly the ones it leaves out. It lives in the
+// Agent's state directory, not under ~/.aws: the user may make ~/.aws read-only or link
+// it elsewhere, and a cache that can be neither replaced nor removed would be re-applied
+// stale.
 func settingsCachePath() string {
-	return filepath.Join(filepath.Dir(ConfigPath()), ".agent-fleet-settings.json")
+	return filepath.Join(paths.AgentStateDir(), "aws-settings.json")
 }
 
 type settingsCache struct {

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -543,7 +544,7 @@ func TestCacheSaveFailureAndFailedReapply(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"profiles":[]}`))
+		_, _ = w.Write([]byte(`{"profiles":[{"name":"prod","label":"prod","startUrl":"https://example.awsapps.com/start","ssoRegion":"ap-northeast-1","accountId":"123456789012","roleName":"Dev"}]}`))
 	}))
 	t.Setenv("AF_CP_BASE_URL", srv.URL)
 	// Make only the cache write fail: a non-empty directory where the cache file goes
@@ -552,9 +553,14 @@ func TestCacheSaveFailureAndFailedReapply(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustMkdir(t, filepath.Join(settingsCachePath(), "x"), 0o700)
+	before, _ := os.ReadFile(ConfigPath())
 	_, err := Sync()
 	if err == nil || !strings.Contains(err.Error(), "Settings cache") {
 		t.Fatalf("a failed cache save was not reported: %v", err)
+	}
+	// Fail closed: the block is not written past a cache that could not be saved.
+	if after, _ := os.ReadFile(ConfigPath()); string(after) != string(before) {
+		t.Fatalf("the block was written although the cache was not:\n%s", after)
 	}
 	if err := os.RemoveAll(settingsCachePath()); err != nil {
 		t.Fatal(err)
@@ -571,5 +577,39 @@ func TestCacheSaveFailureAndFailedReapply(t *testing.T) {
 	res, err := Sync()
 	if err == nil || res.FromCache {
 		t.Fatalf("failed re-apply reported as applied: %+v %v", res, err)
+	}
+}
+
+// The fetch itself waits for the lock, so two online runs cannot commit out of order (one
+// that fetched earlier writing its older list after a newer one).
+func TestSyncFetchesUnderTheLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"profiles":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
+	unlock, _, err := lockConfig(ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = Sync()
+		close(done)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	if n := hits.Load(); n != 0 {
+		unlock()
+		t.Fatalf("the CP was asked %d time(s) before the lock was free", n)
+	}
+	unlock()
+	<-done
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d after the lock was released", hits.Load())
 	}
 }
