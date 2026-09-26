@@ -37,10 +37,25 @@ func (agentImpl) RecallSettings(m session.Meta) agents.RecalledSettings {
 	return recallFrom(f, cachedModelIDsByLabel())
 }
 
-var modelChangeRe = regexp.MustCompile("changed setting `Model Selection` from .*? to (.+?)\\.(?:\\s|$)")
+var (
+	settingsChangeRe = regexp.MustCompile(`(?s)<USER_SETTINGS_CHANGE>(.*?)</USER_SETTINGS_CHANGE>`)
+	modelSwitchRe    = regexp.MustCompile("changed setting `Model Selection` from (.+?) to (.+?)\\.(?:\\s|$)")
+)
 
-// modelSwitchRe is modelChangeRe with the "from" side captured too.
-var modelSwitchRe = regexp.MustCompile("changed setting `Model Selection` from (.+?) to (.+?)\\.(?:\\s|$)")
+// modelSwitch reads the model switch note agy prefixes to a USER_INPUT. Only the
+// <USER_SETTINGS_CHANGE> block is searched: the same sentence inside <USER_REQUEST> is text
+// the user typed, not a switch.
+func modelSwitch(content string) (from, to string, ok bool) {
+	blk := settingsChangeRe.FindStringSubmatch(content)
+	if blk == nil {
+		return "", "", false
+	}
+	mm := modelSwitchRe.FindStringSubmatch(blk[1])
+	if mm == nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(mm[1]), strings.TrimSpace(mm[2]), true
+}
 
 func recallFrom(rd io.Reader, byLabel map[string]string) agents.RecalledSettings {
 	var r agents.RecalledSettings
@@ -51,8 +66,8 @@ func recallFrom(rd io.Reader, byLabel map[string]string) agents.RecalledSettings
 		if json.Unmarshal(sc.Bytes(), &s) != nil || s.Type != "USER_INPUT" {
 			continue
 		}
-		if mm := modelChangeRe.FindStringSubmatch(s.Content); mm != nil {
-			r.Model = modelID(strings.TrimSpace(mm[1]), byLabel)
+		if _, to, ok := modelSwitch(s.Content); ok {
+			r.Model = modelID(to, byLabel)
 		}
 		if mm := userRequestRe.FindStringSubmatch(s.Content); mm != nil {
 			r.Mode = "normal"

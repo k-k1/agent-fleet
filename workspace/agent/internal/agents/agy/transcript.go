@@ -72,7 +72,7 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	td.Turns = parseTranscript(f)
 	// A conversation that never switched models records none, so its turns carry the model
 	// the session was launched (or last resumed) with.
-	stampModel(td.Turns, modelLabel(m.Model, cachedModelIDsByLabel()))
+	stampModel(td.Turns, modelLabel(m.Model))
 	return td, true
 }
 
@@ -91,11 +91,14 @@ func stampModel(turns []transcript.Turn, model string) {
 
 // modelLabel is the inverse of modelID: the display name `agy models` lists for id, or id
 // itself when the catalog has not been fetched. The transcript's switch notes carry display
-// names, so both sources then read the same.
-func modelLabel(id string, byLabel map[string]string) string {
-	for label, v := range byLabel {
-		if v == id {
-			return label
+// names, so both sources then read the same. The catalog is walked in its listed order so an
+// id listed under two names always answers with the same one.
+func modelLabel(id string) string {
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	for _, c := range modelsList {
+		if c.ID == id {
+			return c.Label
 		}
 	}
 	return id
@@ -167,11 +170,11 @@ func parseTranscript(f *os.File) []transcript.Turn {
 			// agy writes no model on its own steps; the only record is the switch note it
 			// prefixes to the next prompt. The note's "from" is what answered every turn
 			// before it, so the first note also labels the turns already parsed.
-			if mm := modelSwitchRe.FindStringSubmatch(s.Content); mm != nil {
-				if from := strings.TrimSpace(mm[1]); model == "" && from != "None" {
+			if from, to, ok := modelSwitch(s.Content); ok {
+				if model == "" && from != "None" {
 					stampModel(turns, from)
 				}
-				model = strings.TrimSpace(mm[2])
+				model = to
 			}
 			text := s.Content
 			if m := userRequestRe.FindStringSubmatch(text); m != nil {

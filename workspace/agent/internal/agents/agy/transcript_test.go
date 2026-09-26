@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -144,6 +145,9 @@ func TestTranscriptStampsModelPerTurn(t *testing.T) {
 		{"a switch relabels only later turns; its from labels earlier ones", "gemini-3.1-pro-high",
 			[]string{userInput("", "hi"), planner, userInput(switchNote("Gemini 3.1 Pro (High)", "Gemini 3.6 Flash (High)"), "again"), planner},
 			[]string{"Gemini 3.1 Pro (High)", "Gemini 3.6 Flash (High)"}},
+		{"the sentence typed in a request is not a switch", "gemini-3.1-pro-high",
+			[]string{userInput("", "explain: "+switchNote("A", "B")), planner},
+			[]string{"gemini-3.1-pro-high"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			slot := "slot-model-" + tc.name
@@ -161,5 +165,22 @@ func TestTranscriptStampsModelPerTurn(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// Two display names for one id must not flip the badge between polls.
+func TestModelLabelFollowsCatalogOrder(t *testing.T) {
+	modelsMu.Lock()
+	saved := modelsList
+	modelsList = []agents.ModelChoice{{ID: "m", Label: "First"}, {ID: "m", Label: "Second"}}
+	modelsMu.Unlock()
+	t.Cleanup(func() { modelsMu.Lock(); modelsList = saved; modelsMu.Unlock() })
+	for range 20 {
+		if got := modelLabel("m"); got != "First" {
+			t.Fatalf("got %q, want First", got)
+		}
+	}
+	if got := modelLabel("unknown"); got != "unknown" {
+		t.Fatalf("uncatalogued id: got %q", got)
 	}
 }
