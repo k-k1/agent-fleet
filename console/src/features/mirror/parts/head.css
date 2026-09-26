@@ -27,8 +27,8 @@
 }
 .managed-settings-error {
   padding: 9px 11px;
-  border: 1px solid color-mix(in srgb, var(--del) 45%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--err) 45%, var(--border));
   border-radius: 6px;
-  color: var(--del);
-  background: color-mix(in srgb, var(--del) 8%, transparent);
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
 }

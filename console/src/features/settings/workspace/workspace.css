@@ -45,7 +45,7 @@
   font-size: 12px;
   /* Use the app's danger token (was a hardcoded pale pink that vanished on light
      theme and didn't match the confirm/toast danger language). */
-  color: var(--del);
+  color: var(--err);
 }
 
 .danger-zone-row {
@@ -78,7 +78,7 @@
 }
 
 .confirm-list .lose {
-  color: var(--del);
+  color: var(--err);
 }
 
 /* Internal git provider: the repo list inside its provider card (P2). */
@@ -480,7 +480,7 @@ button.mv-path:focus-visible {
 }
 
 .mu-chart.is-crit {
-  color: var(--danger, var(--warn));
+  color: var(--err);
 }
 
 .mu-head {
@@ -607,15 +607,15 @@ button.mv-path:focus-visible {
 }
 
 .db-state-error {
-  background: color-mix(in srgb, var(--del) 14%, transparent);
-  color: var(--del);
-  border-color: color-mix(in srgb, var(--del) 38%, transparent);
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 38%, transparent);
 }
 
 .db-engine-error {
   margin: 0;
   font-size: 11.5px;
-  color: var(--del);
+  color: var(--err);
   font-family: var(--mono, monospace);
 }
 
@@ -730,7 +730,7 @@ button.mv-path:focus-visible {
 }
 
 .db-btn-drop {
-  color: var(--del);
+  color: var(--err);
 }
 
 /* Create a database by name. The hint sits on the same flex line and wraps under
@@ -759,7 +759,7 @@ button.mv-path:focus-visible {
 }
 
 .db-create-bad {
-  color: var(--del);
+  color: var(--err);
 }
 
 /* Stop dropdown — floated below the Stop button; stays anchored left. */
@@ -798,5 +798,5 @@ button.mv-path:focus-visible {
 }
 
 .db-stop-item.db-stop-purge {
-  color: var(--del);
+  color: var(--err);
 }

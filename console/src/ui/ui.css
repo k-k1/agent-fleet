@@ -49,12 +49,12 @@
   color: var(--fg);
 }
 .ui-btn-danger {
-  color: var(--del);
-  border-color: color-mix(in srgb, var(--del) 45%, transparent);
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
 }
 .ui-btn-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--del) 16%, var(--btn));
-  border-color: color-mix(in srgb, var(--del) 65%, transparent);
+  background: color-mix(in srgb, var(--err) 16%, var(--btn));
+  border-color: color-mix(in srgb, var(--err) 65%, transparent);
 }
 .ui-iconbtn {
   padding: 3px 6px;
@@ -241,8 +241,8 @@
   font-size: 13px;
   box-shadow: 0 4px 16px color-mix(in srgb, #000 30%, transparent);
 }
-.ui-toast-error { border-left-color: var(--del); }
-.ui-toast-error > .codicon:first-child { color: var(--del); }
+.ui-toast-error { border-left-color: var(--err); }
+.ui-toast-error > .codicon:first-child { color: var(--err); }
 .ui-toast-warn { border-left-color: var(--warn); }
 .ui-toast-warn > .codicon:first-child { color: var(--warn); }
 .ui-toast-success { border-left-color: var(--ok); }
@@ -416,7 +416,7 @@
   cursor: default;
 }
 .ui-menu-item.danger {
-  color: var(--del);
+  color: var(--err);
 }
 .ui-menu-sep {
   height: 1px;

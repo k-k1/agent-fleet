@@ -85,17 +85,18 @@ const hue = (h) => {
 };
 
 // The comparison set: every kind hue plus the semantic colours that share these screens.
-// `--err` is declared nowhere, so `var(--err, #f85149)` always falls through to the literal —
-// which is why the literal, not a token, is in the set (the lcpp round found this).
+// `sem:err` is --err (which --del now aliases). When this sweep was first run --err was declared
+// nowhere and #f85149 was a literal in both themes (the lcpp round found this); the values now
+// follow tokens.css.
 const DARK = {
   claude: '#e0a45e', codex: '#4ec97a', cursor: '#d96ba1', agy: '#4285f4', kiro: '#a371f7',
   copilot: '#7d8590', opencode: '#aab4be', lcpp: '#d9c952', shell: '#46c9d0', ssm: '#6d8bf5',
-  'sem:err': '#f85149', 'sem:ok': '#67c23a', 'sem:warn': '#e6a23c', 'sem:accent': '#66ccff',
+  'sem:err': '#e06c75', 'sem:ok': '#67c23a', 'sem:warn': '#e6a23c', 'sem:accent': '#66ccff',
 };
 const LIGHT = {
   claude: '#8f4f13', codex: '#126b3b', cursor: '#a02a63', agy: '#0f5ec4', kiro: '#6b3ac9',
   copilot: '#30363d', opencode: '#575e68', lcpp: '#5c5400', shell: '#0f676d', ssm: '#2c39a3',
-  'sem:err': '#f85149', 'sem:ok': '#146c2e', 'sem:warn': '#8a5b00', 'sem:accent': '#1d4ed8',
+  'sem:err': '#a5281c', 'sem:ok': '#146c2e', 'sem:warn': '#8a5b00', 'sem:accent': '#1d4ed8',
 };
 // Every surface a kind badge is drawn on, so the contrast floor is the worst of them.
 const DARK_BG = { bg: '#1e1e1e', panel: '#181818', bar: '#111111', activeBg: '#20303a' };

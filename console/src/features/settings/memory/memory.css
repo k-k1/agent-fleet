@@ -189,7 +189,7 @@
 }
 
 .mem-warn {
-  color: var(--del, #e57373);
+  color: var(--err);
   font-size: 12px;
   margin: 4px 0;
 }
@@ -232,7 +232,7 @@
 }
 
 .mem-secrets code {
-  color: var(--del, #e57373);
+  color: var(--err);
 }
 
 @media (max-width: 760px) {

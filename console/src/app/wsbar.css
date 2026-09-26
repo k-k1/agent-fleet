@@ -176,7 +176,7 @@
   color: var(--warn);
 }
 .ws-graph.crit {
-  color: var(--del);
+  color: var(--err);
 }
 .ws-graph-k {
   text-transform: uppercase;
@@ -214,7 +214,7 @@ button.ws-usage-btn:hover {
 /* Near the cap: when the chip shows a reset time instead of a %, tint that value crit so
    being blocked reads at a glance (the outlined icon stays as it is). */
 .ws-usage-nums.crit {
-  color: var(--del);
+  color: var(--err);
   font-weight: 600;
 }
 .ws-reset-count {
@@ -282,7 +282,7 @@ button.ws-usage-btn:hover {
   color: var(--warn);
 }
 .wu-pct.crit {
-  color: var(--del);
+  color: var(--err);
 }
 .wu-bar {
   height: 6px;
@@ -301,7 +301,7 @@ button.ws-usage-btn:hover {
   background: var(--warn);
 }
 .wu-bar-fill.crit {
-  background: var(--del);
+  background: var(--err);
 }
 .wu-reset {
   font-size: 11px;

@@ -440,7 +440,7 @@
   opacity: 1;
 }
 .memo-cat-del:hover {
-  color: var(--del);
+  color: var(--err);
 }
 /* Drop target highlight while dragging a memo/category over a category. */
 .memo-cat.drop {

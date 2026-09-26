@@ -1,6 +1,6 @@
 /* Schedules rail section (docs/log/38 P5). Follows the memo-queue / notification rail idiom:
    dense rows, muted secondary text, tone-colored status dots keyed off the shared
-   --ok/--warn/--danger/--muted tokens, ghost icon-buttons that reveal on row hover. */
+   --ok/--warn/--err/--muted tokens, ghost icon-buttons that reveal on row hover. */
 
 .sched-list {
   display: flex;
@@ -50,7 +50,7 @@
   color: var(--warn);
 }
 .sched-dot.tone-danger {
-  color: var(--del);
+  color: var(--err);
 }
 .sched-dot.tone-muted {
   color: var(--muted);
@@ -247,7 +247,7 @@
   color: var(--warn);
 }
 .sched-run-label.tone-danger {
-  color: var(--del);
+  color: var(--err);
 }
 .sched-run-label.tone-muted {
   color: var(--muted);
