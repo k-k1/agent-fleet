@@ -90,7 +90,10 @@ When the login is needed, `--no-login` is not given and nobody is at a terminal,
 - "The state a check saw" is a snapshot read **before** the credentials are asked for, not after. If the
   cache file differs from that snapshot once the check has failed, a login may have landed in between: the
   run asks for the credentials once more instead of recording anything. Recording a later read would mark
-  a good login as unusable, and the request would then never resolve.
+  a good login as unusable, and the request would then never resolve. That one retry takes its own
+  snapshot under the same rule. If it fails and the file still matches that snapshot, the run records it
+  (joining, filing or re-filing as usual). If the cache moved yet again, the run records nothing, leaves
+  any existing request as it is, and goes on waiting; the next change is checked like any other.
 - **Only the Agent expires requests.** It drops a request 15 minutes after the last `af-aws-exec` asked for
   it, but never while an attempt it runs for that request is live (decision 3). The CLI never removes a
   request file: it cannot see the Agent's attempts.
