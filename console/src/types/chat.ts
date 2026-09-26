@@ -45,6 +45,10 @@ export interface ChatMessage {
   // qualifies the kind (turn-failed / turn-aborted / oom …) and names the exit label.
   report_kind?: string;
   report_reason?: string;
+  // role==="user" that was not typed in the Console composer: "discord" / "slack" (the
+  // bridge's operator thread), "schedule" (a scheduled fire) or "handoff" (the Console's
+  // auto-sent session handoff). Absent = typed here.
+  source?: string;
 }
 
 // Current context-window fill, captured server-side from the provider's usage events

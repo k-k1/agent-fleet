@@ -7,6 +7,7 @@ import { useBackClose } from "../../lib/backClose.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
+import { composerHistory } from "./composerHistory.ts";
 import { chatGet, chatStream, chatStop, chatCreate, chatCompact, chatSetAgent, assistantGet, chatPasteImage } from "./api.ts";
 import { errText, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
@@ -32,7 +33,7 @@ import { ContextBar } from "../mirror/ContextBar.tsx";
 import { ChatPlan } from "./ChatPlan.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
+import { buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -619,7 +620,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     }
   };
 
-  const send = async (override?: string) => {
+  // source marks a turn the Console sends on the member's behalf (the handoff auto-send), so
+  // it stays out of the composer's ↑ history both locally and once stored.
+  const send = async (override?: string, source?: string) => {
     // Block a second turn on this conversation, whether it was started here or by another
     // pane whose turn is still running in the background (store busy).
     if (!paneKey || sending || compacting || (conversationId && storeBusy)) return;
@@ -667,7 +670,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     const prompt = buildImagePrompt(text, paths, chatAgent);
     // Optimistically show the user's turn (full prompt so pasted-image thumbnails render
     // immediately); the server echoes the full conversation on done.
-    const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now() };
+    const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now(), ...(source ? { source } : {}) };
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
     setHistIdx(null); // sending leaves history-recall mode
@@ -790,6 +793,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         },
       },
       ac.signal,
+      source,
     );
     // Abort/error paths emit no done event. Work playback must not outlive the turn.
     if (!streamDone) workTts.close();
@@ -811,7 +815,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     if (sending || compacting) return;
     const text = pendingAuto.text;
     setPendingAuto(null);
-    void sendRef.current(text);
+    void sendRef.current(text, "handoff");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sendRef is a stable ref
   }, [pendingAuto, conversationId, conv, sending, compacting]);
 
@@ -830,14 +834,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   useEffect(() => () => stopTtsForReplacement(ttsRef.current?.ctl ?? null), []);
 
   // Composer history = the user's own prompts in this conversation, so ↑ recalls them even
-  // after a reload (built from conv, not just this mount). The visible words only — the
-  // machine-facing pasted-image instruction is stripped. Newest last, consecutive dupes folded.
-  const history: string[] = [];
-  for (const m of conv?.messages ?? []) {
-    if (m.role !== "user") continue;
-    const s = splitPastedImages(m.content).text.trim();
-    if (s && history[history.length - 1] !== s) history.push(s);
-  }
+  // after a reload (built from conv, not just this mount). Bridge / schedule turns are left out.
+  const history = composerHistory(conv?.messages ?? []);
 
   // The whole reply-suggestion set (candidates, pin menu, focus ring) lives in
   // parts/useChatSuggest. The call stays exactly where the original block was, so the

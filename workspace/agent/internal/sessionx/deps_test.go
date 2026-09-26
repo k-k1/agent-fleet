@@ -170,7 +170,7 @@ func testDeps() Deps {
 			return "", "", nil
 		},
 		MCPConvID: func() string { unreached("MCPConvID"); return "" },
-		RunOperatorTurn: func(conv, text string) (string, error) {
+		RunOperatorTurn: func(conv, text, source string) (string, error) {
 			unreached("RunOperatorTurn")
 			return "", nil
 		},

@@ -85,11 +85,11 @@ func TestRouteOperatorInbound(t *testing.T) {
 	hits, bodies, posted := captureDiscordBodies(t)
 
 	const boundUser = "U-owner"
-	var gotConv, gotText string
+	var gotConv, gotText, gotSource string
 	deps := ReceiverDeps{
 		Inject: func(string, string, string) (string, error) { return "", nil },
-		Operator: func(conv, text string) (string, error) {
-			gotConv, gotText = conv, text
+		Operator: func(conv, text, source string) (string, error) {
+			gotConv, gotText, gotSource = conv, text, source
 			return "フリートは2件稼働中です", nil
 		},
 	}
@@ -102,8 +102,8 @@ func TestRouteOperatorInbound(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("operator reply was never posted back")
 	}
-	if gotConv != "conv-abc" || gotText != "稼働状況は?" {
-		t.Fatalf("operator called with conv=%q text=%q (mention should be stripped)", gotConv, gotText)
+	if gotConv != "conv-abc" || gotText != "稼働状況は?" || gotSource != "discord" {
+		t.Fatalf("operator called with conv=%q text=%q source=%q (mention should be stripped)", gotConv, gotText, gotSource)
 	}
 	var reacted, replied bool
 	for _, h := range *hits {
@@ -132,7 +132,7 @@ func TestRouteOperatorInboundGate(t *testing.T) {
 	var called bool
 	deps := ReceiverDeps{
 		Inject:   func(string, string, string) (string, error) { return "", nil },
-		Operator: func(string, string) (string, error) { called = true; return "x", nil },
+		Operator: func(string, string, string) (string, error) { called = true; return "x", nil },
 	}
 	msg := func(id, author, content string, bot bool) gatewayMessage {
 		var m gatewayMessage

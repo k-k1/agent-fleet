@@ -21,6 +21,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -50,7 +51,7 @@ func handleAssistantTurn(w http.ResponseWriter, r *http.Request) {
 	// Usage ledger (ADR 0029 §3): the machinery is the bridge's, but what is being consumed is one
 	// chat turn run unattended by the scheduler, so count it as
 	// feature=assistant.chat / trigger=schedule.
-	reply, err := runOperatorTurnAs(id, req.Prompt, usagex.Tag{
+	reply, err := runOperatorTurnAs(id, req.Prompt, sessionx.TurnSourceSchedule, usagex.Tag{
 		Feature: usagex.FeatureAssistantChat, Trigger: usagex.TriggerSchedule, Ref: id,
 	})
 	if err != nil {
