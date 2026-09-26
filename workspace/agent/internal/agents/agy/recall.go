@@ -39,6 +39,9 @@ func (agentImpl) RecallSettings(m session.Meta) agents.RecalledSettings {
 
 var modelChangeRe = regexp.MustCompile("changed setting `Model Selection` from .*? to (.+?)\\.(?:\\s|$)")
 
+// modelSwitchRe is modelChangeRe with the "from" side captured too.
+var modelSwitchRe = regexp.MustCompile("changed setting `Model Selection` from (.+?) to (.+?)\\.(?:\\s|$)")
+
 func recallFrom(rd io.Reader, byLabel map[string]string) agents.RecalledSettings {
 	var r agents.RecalledSettings
 	sc := bufio.NewScanner(rd)
