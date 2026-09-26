@@ -640,7 +640,7 @@
   color: var(--warn);
 }
 .wi-dfacts dd.tone-bad {
-  color: var(--del);
+  color: var(--err);
 }
 .wi-dfacts dd.tone-muted {
   color: var(--muted);

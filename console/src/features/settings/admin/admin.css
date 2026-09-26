@@ -407,9 +407,9 @@
    made anyway, so this only has to be recognisable at the moment of reaching for it.
    (The shell's own `button.danger:hover` is a dark-theme fill; this is the light one too.) */
 .engines-model-actions button.danger:hover:not(:disabled) {
-  color: var(--del);
-  border-color: color-mix(in srgb, var(--del) 45%, var(--btn-border));
-  background: color-mix(in srgb, var(--del) 10%, var(--btn));
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, var(--btn-border));
+  background: color-mix(in srgb, var(--err) 10%, var(--btn));
 }
 
 /* The badges. One pill, four tones — a tone is a claim, so an unknown state keeps the neutral
@@ -449,9 +449,9 @@
 }
 
 .engines-model-tag.bad {
-  color: var(--del);
-  border-color: color-mix(in srgb, var(--del) 40%, var(--border));
-  background: color-mix(in srgb, var(--del) 10%, var(--bg));
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 40%, var(--border));
+  background: color-mix(in srgb, var(--err) 10%, var(--bg));
 }
 
 .engines-model-desc,
@@ -1060,9 +1060,9 @@ a.engines-model-source:hover {
 .engines-issue-person {
   margin: 8px 0;
   padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--del) 40%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--err) 40%, var(--border));
   border-radius: 6px;
-  background: color-mix(in srgb, var(--del) 8%, var(--bg));
+  background: color-mix(in srgb, var(--err) 8%, var(--bg));
 }
 
 .engines-issue-person p {
@@ -1249,7 +1249,7 @@ a.engines-model-source:hover {
 
 .engines-model-storage.present { color: var(--ok, #1a7f37); }
 .engines-model-storage.partial { color: var(--warn, #d29922); }
-.engines-model-storage.missing { color: var(--del); }
+.engines-model-storage.missing { color: var(--err); }
 
 /* Example art is deliberately a small trailing thumbnail, not a card background. A missing
    preview creates no box and no placeholder, so text cards keep their natural width. */

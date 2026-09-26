@@ -155,7 +155,7 @@
 
 /* Handoff to another member (docs/log/77 / ADR 0057). */
 .handoff-blocked {
-  color: var(--danger, #d33);
+  color: var(--err);
 }
 .handoff-prompt-edit {
   min-height: 12rem;

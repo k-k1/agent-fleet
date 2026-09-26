@@ -302,7 +302,7 @@
   opacity: 1;
 }
 .chg-discard {
-  color: var(--del);
+  color: var(--err);
 }
 .commitbox {
   display: flex;

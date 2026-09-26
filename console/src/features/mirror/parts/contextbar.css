@@ -86,13 +86,13 @@ working directory changed (.mirror-context / .mc-*)
   color: var(--warn);
 }
 .cb-full .cb-fresh {
-  background: var(--del);
+  background: var(--err);
 }
 .cb-full .cb-label {
-  color: var(--del);
+  color: var(--err);
 }
 .cb-full .cb-track {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--del) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--err) 55%, transparent);
 }
 /* Token-spend trend, merged onto the context row (chat only): a divider, then a
    Sparkline of each turn's newly-consumed tokens so heavy turns stand out. */
