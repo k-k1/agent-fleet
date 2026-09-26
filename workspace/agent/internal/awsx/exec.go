@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -26,6 +27,20 @@ type ExecOptions struct {
 	Login string
 	Quiet bool
 	Argv  []string
+	// Account, when set, must be the profile's SSO account; anything else is refused
+	// before a login or a credential is fetched. For scripts and agents that know which
+	// account a command belongs to.
+	Account string
+	// KeepConfig hands the child the member's own AWS config and credentials files. By
+	// default the child gets empty ones, so a tool that names a profile of its own
+	// (Terraform's `profile =`, a CDK --profile, AWS_PROFILE in a script) fails with
+	// "profile not found" instead of quietly running under that other profile.
+	KeepConfig bool
+	// Settings and Conflicts come from the sync that preceded the run (nil when the CP
+	// could not be asked). They let a Settings name that the member's own ~/.aws
+	// definition shadows, or that two Settings labels share, be refused.
+	Settings  map[string]Profile
+	Conflicts []Conflict
 
 	Stderr      io.Writer
 	Interactive bool // stdin and stderr are terminals
@@ -306,6 +321,11 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	}
 	env := steerIsolatedConfig(baseEnv(environ))
 	keys := profileKeys(env, o.Profile)
+	// Identity first: a colliding or shadowed name is the more useful answer even when
+	// the definition found is not an SSO profile at all.
+	if err := checkIdentity(keys, o); err != nil {
+		return "", nil, nil, err
+	}
 	if err := checkSSOProfile(keys, o.Profile); err != nil {
 		return "", nil, nil, err
 	}
@@ -352,6 +372,9 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if region != "" {
 		env = append(env, "AWS_REGION="+region, "AWS_DEFAULT_REGION="+region)
 	}
+	if !o.KeepConfig {
+		env = isolateChild(env)
+	}
 	env = append(env,
 		"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 		"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
@@ -390,6 +413,47 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, err
 	}
 	return prog, o.Argv, env, nil
+}
+
+// checkIdentity refuses the ways a correct-looking name can still mean the wrong
+// account: two Settings labels that map to it, the member's own ~/.aws definition of a
+// Settings name pointing somewhere else, and a caller-pinned account that does not match.
+func checkIdentity(keys map[string]string, o ExecOptions) error {
+	for _, c := range o.Conflicts {
+		if c.Name == o.Profile {
+			return fmt.Errorf("profile %q is ambiguous: Settings labels %s all map to it; rename all but one in Settings > SSM",
+				o.Profile, strings.Join(quoteAll(c.Labels), ", "))
+		}
+	}
+	if sp, ok := o.Settings[o.Profile]; ok && (sp.AccountID != keys["sso_account_id"] || sp.RoleName != keys["sso_role_name"]) {
+		return fmt.Errorf("profile %q in ~/.aws is %s/%s but the Settings profile %q is %s/%s; rename one so the name means one account",
+			o.Profile, keys["sso_account_id"], keys["sso_role_name"], sp.Label, sp.AccountID, sp.RoleName)
+	}
+	if o.Account != "" && o.Account != keys["sso_account_id"] {
+		return fmt.Errorf("profile %q is account %s, not the %s given with --account", o.Profile, keys["sso_account_id"], o.Account)
+	}
+	return nil
+}
+
+func quoteAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = strconv.Quote(s)
+	}
+	return out
+}
+
+// isolateChild points the child at empty AWS config and credentials files, so the only
+// identity it can find is the one af-aws-exec put in its environment.
+func isolateChild(env []string) []string {
+	out := make([]string, 0, len(env)+2)
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if k != "AWS_CONFIG_FILE" && k != "AWS_SHARED_CREDENTIALS_FILE" {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "AWS_CONFIG_FILE="+os.DevNull, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull)
 }
 
 // ssoOnlyProfile is the one profile name in the SSO-only config; the member's profile

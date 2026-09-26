@@ -58,12 +58,24 @@ type Profile struct {
 type SyncResult struct {
 	Exported []string // profile names now in the managed block
 	// Shadowed are profiles not exported because ~/.aws/config or ~/.aws/credentials
-	// already defines the same name, or because the name is "default" (see render).
-	// profile or sso-session name outside the block.
+	// already defines the same profile or sso-session name, or because the name is
+	// "default" (see render).
 	Shadowed []string
 	// Invalid are profiles refused by the INI allowlist (sessionx.RenderSSMConfig).
 	Invalid []string
 	Changed bool
+	// Settings is every profile the CP sent, by name, so af-aws-exec can tell a name the
+	// member's own ~/.aws definition shadows from the Settings profile of that name.
+	Settings map[string]Profile
+	// Conflicts are names two or more Settings labels sanitize to; the CP exports none of
+	// them.
+	Conflicts []Conflict
+}
+
+// Conflict is a profile name two or more Settings labels map to.
+type Conflict struct {
+	Name   string   `json:"name"`
+	Labels []string `json:"labels"`
 }
 
 // ConfigPath is the file the AWS CLI and SDKs read by default. AWS_CONFIG_FILE is
@@ -71,44 +83,55 @@ type SyncResult struct {
 // steer the managed block into that session's private file.
 func ConfigPath() string { return filepath.Join(paths.HomeDir(), ".aws", "config") }
 
-// Fetch pulls the member's profiles from the CP.
-func Fetch() ([]Profile, error) {
+// Fetch pulls the member's profiles from the CP, with the names it left out because
+// two labels collide.
+func Fetch() ([]Profile, []Conflict, error) {
 	base := strings.TrimRight(os.Getenv("AF_CP_BASE_URL"), "/")
 	token := os.Getenv("AF_AWS_PROFILES_TOKEN")
 	if base == "" || token == "" {
-		return nil, ErrBridgeOff
+		return nil, nil, ErrBridgeOff
 	}
 	req, err := http.NewRequest(http.MethodGet, base+"/internal/aws-profiles", nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("CP AWS profiles API error (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, nil, fmt.Errorf("CP AWS profiles API error (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var wire struct {
-		Profiles []Profile `json:"profiles"`
+		Profiles  []Profile  `json:"profiles"`
+		Conflicts []Conflict `json:"conflicts"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
-		return nil, fmt.Errorf("CP AWS profiles response is not JSON: %w", err)
+		return nil, nil, fmt.Errorf("CP AWS profiles response is not JSON: %w", err)
 	}
-	return wire.Profiles, nil
+	return wire.Profiles, wire.Conflicts, nil
 }
 
 // Sync pulls and applies. Fail-open: when the CP cannot be reached the file keeps the
 // previous block, so a CP blip never takes working profiles away.
 func Sync() (SyncResult, error) {
-	ps, err := Fetch()
+	ps, conflicts, err := Fetch()
 	if err != nil {
 		return SyncResult{}, err
 	}
-	return Apply(ConfigPath(), ps)
+	res, err := Apply(ConfigPath(), ps)
+	res.Settings = map[string]Profile{}
+	for _, p := range ps {
+		res.Settings[p.Name] = p
+	}
+	res.Conflicts = conflicts
+	if err == nil {
+		saveSettingsCache(ps, conflicts)
+	}
+	return res, err
 }
 
 // Apply rewrites the managed block of the config at path to hold ps. It writes only when
@@ -321,6 +344,9 @@ func syncAndLog(why string) {
 	if len(res.Shadowed) > 0 {
 		log.Printf("aws profiles sync (%s): not exported, name already used in ~/.aws or reserved: %s", why, strings.Join(res.Shadowed, ", "))
 	}
+	for _, c := range res.Conflicts {
+		log.Printf("aws profiles sync (%s): not exported, Settings labels %s all map to %q", why, strings.Join(c.Labels, " / "), c.Name)
+	}
 	if len(res.Invalid) > 0 {
 		log.Printf("aws profiles sync (%s): not exported, refused by validation: %s", why, strings.Join(res.Invalid, ", "))
 	}
@@ -360,4 +386,53 @@ func fieldsOf(m []string) []string {
 		return nil
 	}
 	return strings.Fields(m[1])
+}
+
+// settingsCachePath keeps the last list the CP sent (non-secret, like the block), so the
+// shadow and collision checks in af-aws-exec still have something to check against when
+// the CP cannot be reached. The block alone cannot serve: shadowed and colliding names
+// are exactly the ones it leaves out.
+func settingsCachePath() string {
+	return filepath.Join(filepath.Dir(ConfigPath()), ".agent-fleet-settings.json")
+}
+
+type settingsCache struct {
+	Profiles  []Profile  `json:"profiles"`
+	Conflicts []Conflict `json:"conflicts,omitempty"`
+}
+
+func saveSettingsCache(ps []Profile, conflicts []Conflict) {
+	b, err := json.Marshal(settingsCache{Profiles: ps, Conflicts: conflicts})
+	if err != nil {
+		return
+	}
+	path := settingsCachePath()
+	if old, rerr := os.ReadFile(path); rerr == nil && string(old) == string(b) {
+		return
+	}
+	_ = writeAtomic(path, b, 0o600)
+}
+
+// CachedSettings returns the list saved by the last successful sync, for when the CP
+// cannot be asked now; ok is false when there is none.
+func CachedSettings() (map[string]Profile, []Conflict, bool) {
+	b, err := os.ReadFile(settingsCachePath())
+	if err != nil {
+		return nil, nil, false
+	}
+	var c settingsCache
+	if json.Unmarshal(b, &c) != nil {
+		return nil, nil, false
+	}
+	m := map[string]Profile{}
+	for _, p := range c.Profiles {
+		m[p.Name] = p
+	}
+	return m, c.Conflicts, true
+}
+
+// DescribeProfile returns the SSO account and role the member's AWS files give name.
+func DescribeProfile(name string) (account, role string) {
+	k := profileKeys(nil, name)
+	return k["sso_account_id"], k["sso_role_name"]
 }

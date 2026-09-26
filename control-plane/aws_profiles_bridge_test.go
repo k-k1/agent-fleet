@@ -33,9 +33,9 @@ func seedSSMProfile(t *testing.T, st *store.SQL, membershipID, label string) {
 	}
 }
 
-// The member receives their own profiles under the same names an SSM session uses, and
-// a second label that sanitizes to an existing name is left out rather than emitted as a
-// duplicate section.
+// The member receives their own profiles under the same names an SSM session uses. Two
+// labels that sanitize to one name are both left out and reported: exporting either would
+// let `--profile prod-app` mean whichever sorted first.
 func TestAWSProfilesBridgeListsOwnProfilesWithSessionNames(t *testing.T) {
 	st, mgr, mv := bridgeEnv(t)
 	seedSSMProfile(t, st, mv.MembershipID, "prod app")
@@ -48,7 +48,8 @@ func TestAWSProfilesBridgeListsOwnProfilesWithSessionNames(t *testing.T) {
 		t.Fatalf("list: %d %s", w.Code, w.Body.String())
 	}
 	var got struct {
-		Profiles []awsProfileWire `json:"profiles"`
+		Profiles  []awsProfileWire     `json:"profiles"`
+		Conflicts []awsProfileConflict `json:"conflicts"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -57,10 +58,13 @@ func TestAWSProfilesBridgeListsOwnProfilesWithSessionNames(t *testing.T) {
 	for _, p := range got.Profiles {
 		names = append(names, p.Name)
 	}
-	if strings.Join(names, ",") != "prod-app,sandbox" {
-		t.Fatalf("names = %v, want [prod-app sandbox]", names)
+	if strings.Join(names, ",") != "sandbox" {
+		t.Fatalf("names = %v, want [sandbox]", names)
 	}
-	p := got.Profiles[1]
+	if len(got.Conflicts) != 1 || got.Conflicts[0].Name != "prod-app" || strings.Join(got.Conflicts[0].Labels, "|") != "prod app|prod-app" {
+		t.Fatalf("conflicts = %+v", got.Conflicts)
+	}
+	p := got.Profiles[0]
 	if p.StartURL == "" || p.SSORegion != "ap-northeast-1" || p.AccountID != "123456789012" || p.RoleName != "Dev" || p.Region != "us-west-2" {
 		t.Fatalf("profile fields not carried: %+v", p)
 	}

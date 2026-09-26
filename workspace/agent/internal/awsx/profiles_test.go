@@ -178,7 +178,7 @@ func TestSyncPullsFromTheCPAndIsOffWithoutTheBridge(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(`{"profiles":[{"name":"prod","label":"prod","startUrl":"https://example.awsapps.com/start","ssoRegion":"ap-northeast-1","accountId":"123456789012","roleName":"Dev"}]}`))
+		_, _ = w.Write([]byte(`{"profiles":[{"name":"prod","label":"prod","startUrl":"https://example.awsapps.com/start","ssoRegion":"ap-northeast-1","accountId":"123456789012","roleName":"Dev"}],"conflicts":[{"name":"app","labels":["app","App"]}]}`))
 	}))
 	defer srv.Close()
 	t.Setenv("AF_CP_BASE_URL", srv.URL+"/")
@@ -190,6 +190,18 @@ func TestSyncPullsFromTheCPAndIsOffWithoutTheBridge(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(home, ".aws", "config"))
 	if !strings.Contains(string(b), "[profile prod]") {
 		t.Fatalf("config not written:\n%s", b)
+	}
+	if res.Settings["prod"].AccountID != "123456789012" || len(res.Conflicts) != 1 || res.Conflicts[0].Name != "app" {
+		t.Fatalf("sync result: %+v", res)
+	}
+	// The last list survives for when the CP cannot be asked.
+	srv.Close()
+	if _, err := Sync(); err == nil {
+		t.Fatal("expected a fetch error with the CP gone")
+	}
+	m, c, ok := CachedSettings()
+	if !ok || m["prod"].RoleName != "Dev" || len(c) != 1 {
+		t.Fatalf("cached settings: %v %v %v", m, c, ok)
 	}
 }
 

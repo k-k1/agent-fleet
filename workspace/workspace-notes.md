@@ -141,10 +141,11 @@ directory belongs to someone else.
 - **AWS: the default credential chain may not be the user.** The user's Settings → SSM profiles
   are exported by name into `~/.aws/config` (`af-aws-exec --list`), but the container can also
   have a workload role that a bare `aws` / SDK call falls back to. Anything that must run as the
-  user (deploys, writes) goes through `af-aws-exec --profile <name> -- <command>`. Exit 3 means
-  the SSO login is missing: give the user `aws sso login --profile <name> --use-device-code
-  --no-browser` (plain `aws sso login` needs a localhost callback that cannot work here) — never
-  retry without the wrapper. Details: `member/10-integrations.md` in the user guide.
+  user (deploys, writes) goes through `af-aws-exec --profile <name> --account <id> -- <command>`
+  (`--account` whenever the user named one; never guess a profile from its name alone — check
+  `af-aws-exec --list`). Exit 3 means the SSO login is missing: give the user `aws sso login
+  --profile <name> --use-device-code --no-browser` (plain `aws sso login` needs a localhost
+  callback that cannot work here) — never retry without the wrapper. Details: `member/10-integrations.md` in the user guide.
 
 ## Answering questions about this Workspace
 The user guide is at `/usr/local/share/agent-fleet/docs` (`member/` for people running agents,

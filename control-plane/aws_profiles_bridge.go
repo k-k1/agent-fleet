@@ -86,7 +86,8 @@ type awsProfileWire struct {
 
 // awsProfilesResponse is the body of GET /internal/aws-profiles.
 type awsProfilesResponse struct {
-	Profiles []awsProfileWire `json:"profiles"`
+	Profiles  []awsProfileWire     `json:"profiles"`
+	Conflicts []awsProfileConflict `json:"conflicts,omitempty"`
 }
 
 type awsProfilesBridgeAPI struct{ mgr *manager }
@@ -117,25 +118,41 @@ func (a awsProfilesBridgeAPI) list(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, awsProfilesResponse{Profiles: awsProfilesWire(rows)})
+	ps, conflicts := awsProfilesWire(rows)
+	writeJSON(w, http.StatusOK, awsProfilesResponse{Profiles: ps, Conflicts: conflicts})
 }
 
-// awsProfilesWire maps rows to the wire list. Two labels can sanitize to the same
-// profile name ("prod app" / "prod-app"); the first row wins and the rest are left out,
-// because two [profile x] sections would make the aws CLI silently merge them.
-func awsProfilesWire(rows []store.SSMProfile) []awsProfileWire {
+// awsProfileConflict names a profile name that two or more Settings labels sanitize to
+// ("prod app" / "prod-app"), and those labels.
+type awsProfileConflict struct {
+	Name   string   `json:"name"`
+	Labels []string `json:"labels"`
+}
+
+// awsProfilesWire maps rows to the wire list. When two labels sanitize to the same
+// profile name, NEITHER is exported: keeping one would hand `--profile prod-app` to
+// whichever label happens to sort first, which may be the other account. The collision
+// is reported instead so the member can rename one.
+func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileConflict) {
+	labels := map[string][]string{}
+	for _, p := range rows {
+		n := ssmProfileName(p.Label)
+		labels[n] = append(labels[n], p.Label)
+	}
 	out := make([]awsProfileWire, 0, len(rows))
-	seen := map[string]bool{}
+	var conflicts []awsProfileConflict
 	for _, p := range rows {
 		name := ssmProfileName(p.Label)
-		if seen[name] {
+		if ls := labels[name]; len(ls) > 1 {
+			if ls[0] == p.Label {
+				conflicts = append(conflicts, awsProfileConflict{Name: name, Labels: ls})
+			}
 			continue
 		}
-		seen[name] = true
 		out = append(out, awsProfileWire{
 			Name: name, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
 			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region,
 		})
 	}
-	return out
+	return out, conflicts
 }

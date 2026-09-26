@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -12,7 +13,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const awsExecUsage = `usage: af-aws-exec --profile <name> [--region <region>] [--login|--no-login] [-q] -- <command> [args...]
+const awsExecUsage = `usage: af-aws-exec --profile <name> [--account <id>] [--region <region>] [--login|--no-login]
+                   [--keep-aws-config] [-q] -- <command> [args...]
        af-aws-exec --list
 
 Runs <command> with short-lived credentials of one SSO profile (Settings > SSM, exported
@@ -20,70 +22,49 @@ into ~/.aws/config). The credentials are passed to that one child process throug
 environment only. The container's workload role is blocked for the child: a missing or
 expired SSO login fails instead of silently running as another principal.
 
-  --login     always start the device-code login when the SSO login is not usable
-  --no-login  never prompt; exit 3 with the login command instead
-              (default: prompt only when stdin and stderr are a terminal)
-  --list      pull the profiles from Settings now and list them
-  -q          do not print the principal the command runs as
+  --account <id>     refuse unless the profile is this AWS account
+  --keep-aws-config  let the child read ~/.aws/config and ~/.aws/credentials (default: it
+                     gets empty ones, so a tool that names another profile fails loudly)
+  --login            always start the device-code login when the SSO login is not usable
+  --no-login         never prompt; exit 3 with the login command instead
+                     (default: prompt only when stdin and stderr are a terminal)
+  --list             pull the profiles from Settings now and list them with account and role
+  -q                 do not print the principal the command runs as
 `
 
 // runAWSExec is `workspace-agent aws-exec`, reached through the af-aws-exec PATH shim.
 // Exit codes: 2 usage, 3 SSO login required but not attempted, 1 anything else.
 func runAWSExec(args []string) {
-	o := awsx.ExecOptions{Login: "auto", Stderr: os.Stderr}
-	list := false
-	for len(args) > 0 {
-		a := args[0]
-		args = args[1:]
-		switch {
-		case a == "--":
-			o.Argv = args
-			args = nil
-		case a == "--profile" || a == "--region":
-			if len(args) == 0 {
-				awsExecFail(2, a+" needs a value")
-			}
-			if a == "--profile" {
-				o.Profile = args[0]
-			} else {
-				o.Region = args[0]
-			}
-			args = args[1:]
-		case strings.HasPrefix(a, "--profile="):
-			o.Profile = strings.TrimPrefix(a, "--profile=")
-		case strings.HasPrefix(a, "--region="):
-			o.Region = strings.TrimPrefix(a, "--region=")
-		case a == "--login":
-			o.Login = "always"
-		case a == "--no-login":
-			o.Login = "never"
-		case a == "-q" || a == "--quiet":
-			o.Quiet = true
-		case a == "--list":
-			list = true
-		case a == "-h" || a == "--help":
-			fmt.Print(awsExecUsage)
-			os.Exit(0)
-		default:
-			awsExecFail(2, "unknown argument "+a+" (put the command after --)")
-		}
-	}
+	o, list := parseAWSExecArgs(args)
 
 	res, serr := awsx.Sync()
-	if serr != nil && !errors.Is(serr, awsx.ErrBridgeOff) {
-		fmt.Fprintf(os.Stderr, "af-aws-exec: could not refresh profiles from Settings (%v); using ~/.aws/config as is\n", serr)
+	fresh := serr == nil
+	switch {
+	case errors.Is(serr, awsx.ErrBridgeOff):
+	case serr != nil:
+		fmt.Fprintf(os.Stderr, "af-aws-exec: could not refresh profiles from Settings (%v); using the last copy\n", serr)
+		if m, c, ok := awsx.CachedSettings(); ok {
+			res.Settings, res.Conflicts = m, c
+		}
 	}
+	o.Settings, o.Conflicts = res.Settings, res.Conflicts
+
 	if list {
 		if errors.Is(serr, awsx.ErrBridgeOff) {
 			fmt.Fprintln(os.Stderr, "af-aws-exec: this deployment does not export Settings profiles; ~/.aws/config is used as is")
 		}
 		names := res.Exported
-		if serr != nil {
+		if !fresh {
 			// Could not ask the CP: list what the file holds now rather than nothing.
 			names = awsx.ExportedIn(awsx.ConfigPath())
 		}
 		for _, n := range names {
-			fmt.Println(n)
+			acct, role := awsx.DescribeProfile(n)
+			label := ""
+			if sp, ok := res.Settings[n]; ok {
+				label = "\t(" + strconv.Quote(sp.Label) + ")"
+			}
+			fmt.Printf("%s\t%s\t%s%s\n", n, acct, role, label)
 		}
 		for _, n := range res.Shadowed {
 			if n == "default" {
@@ -91,6 +72,9 @@ func runAWSExec(args []string) {
 				continue
 			}
 			fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used)\n", n)
+		}
+		for _, c := range res.Conflicts {
+			fmt.Printf("%s\t(not exported: Settings labels %s all map to this name; rename all but one)\n", c.Name, strings.Join(c.Labels, " / "))
 		}
 		os.Exit(0)
 	}
@@ -114,6 +98,50 @@ func runAWSExec(args []string) {
 	if err := syscall.Exec(prog, argv, env); err != nil {
 		awsExecFail(1, "exec "+prog+": "+err.Error())
 	}
+}
+
+// parseAWSExecArgs reads the flags up to "--"; everything after it is the command.
+func parseAWSExecArgs(args []string) (awsx.ExecOptions, bool) {
+	o := awsx.ExecOptions{Login: "auto", Stderr: os.Stderr}
+	list := false
+	value := map[string]*string{"--profile": &o.Profile, "--region": &o.Region, "--account": &o.Account}
+	for len(args) > 0 {
+		a := args[0]
+		args = args[1:]
+		if a == "--" {
+			o.Argv = args
+			break
+		}
+		if k, v, ok := strings.Cut(a, "="); ok && value[k] != nil {
+			*value[k] = v
+			continue
+		}
+		if dst := value[a]; dst != nil {
+			if len(args) == 0 {
+				awsExecFail(2, a+" needs a value")
+			}
+			*dst, args = args[0], args[1:]
+			continue
+		}
+		switch a {
+		case "--login":
+			o.Login = "always"
+		case "--no-login":
+			o.Login = "never"
+		case "--keep-aws-config":
+			o.KeepConfig = true
+		case "-q", "--quiet":
+			o.Quiet = true
+		case "--list":
+			list = true
+		case "-h", "--help":
+			fmt.Print(awsExecUsage)
+			os.Exit(0)
+		default:
+			awsExecFail(2, "unknown argument "+a+" (put the command after --)")
+		}
+	}
+	return o, list
 }
 
 func awsExecFail(code int, msg string) {

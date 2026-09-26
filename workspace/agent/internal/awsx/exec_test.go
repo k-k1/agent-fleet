@@ -266,7 +266,7 @@ func TestPlanExecLooksPastAnSSMSessionsIsolatedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, env, err := PlanExec(bin, append(workloadEnv, "AWS_CONFIG_FILE="+isolated),
-			ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true})
+			ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true, KeepConfig: true})
 		if err != nil {
 			t.Fatalf("AWS_CONFIG_FILE=%s: %v", isolated, err)
 		}
@@ -437,7 +437,7 @@ func TestPlanExecSeesKeysInheritedFromDEFAULT(t *testing.T) {
 // could otherwise answer as STS), and none of the member's other keys. The child keeps
 // the member's own endpoint settings.
 func TestPlanExecObtainsCredentialsThroughAnSSOOnlyConfig(t *testing.T) {
-	bin, state := fakeAWS(t, with(map[string]string{"raw:endpoint_url = http://127.0.0.1:1": "", "raw:region = eu-west-1": ""}))
+	bin, state := fakeAWS(t, with(map[string]string{"raw:endpoint_url = http://127.0.0.1:1": "", "region": "eu-west-1"}))
 	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -506,6 +506,95 @@ func TestVerifierEnvKeepsSTSOffEndpointOverrides(t *testing.T) {
 		}
 		if n := run(verifierEnv(env, cfg)); n != 0 {
 			t.Fatalf("%s: the verifier env still sent %d request(s) to the override", name, n)
+		}
+	}
+}
+
+// By default the child gets empty config and credentials files, so a tool naming a
+// profile of its own fails instead of switching to it; --keep-aws-config keeps them.
+func TestPlanExecIsolatesTheChildsAWSFiles(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environ := append(workloadEnv, "AWS_SHARED_CREDENTIALS_FILE=/mine/credentials")
+	_, _, env, err := PlanExec(bin, environ, ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := envMap(env)
+	if m["AWS_CONFIG_FILE"] != os.DevNull || m["AWS_SHARED_CREDENTIALS_FILE"] != os.DevNull || m["AWS_REGION"] != "us-west-2" {
+		t.Fatalf("child env = %v", m)
+	}
+	_, _, env, err = PlanExec(bin, environ, ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true, KeepConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := envMap(env); m["AWS_SHARED_CREDENTIALS_FILE"] != "/mine/credentials" || m["AWS_CONFIG_FILE"] == os.DevNull {
+		t.Fatalf("--keep-aws-config child env = %v", m)
+	}
+}
+
+// Against the real CLI: in the isolated child env a named profile is not found, rather
+// than resolved from the member's files. Skipped where no aws CLI is installed.
+func TestIsolatedChildCannotReachAnotherProfile(t *testing.T) {
+	aws, err := exec.LookPath("aws")
+	if err != nil {
+		t.Skip("aws CLI not installed")
+	}
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte("[profile staging]\nregion = eu-west-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "AWS_PROFILE=staging"}
+	get := func(env []string) (string, error) {
+		cmd := exec.Command(aws, "configure", "get", "region")
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	if out, err := get(base); err != nil || out != "eu-west-1" {
+		t.Fatalf("control: %q %v", out, err)
+	}
+	if out, err := get(isolateChild(base)); err == nil || !strings.Contains(out, "could not be found") {
+		t.Fatalf("isolated child still resolved profile staging: %q %v", out, err)
+	}
+}
+
+func TestPlanExecRefusesAnAmbiguousOrMismatchedName(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	same := Profile{Name: "prod", Label: "prod", AccountID: "123456789012", RoleName: "Dev"}
+	other := Profile{Name: "prod", Label: "prod", AccountID: "999999999999", RoleName: "Dev"}
+	for name, c := range map[string]struct {
+		o    ExecOptions
+		want string // "" = admitted
+	}{
+		"matches Settings":           {ExecOptions{Settings: map[string]Profile{"prod": same}}, ""},
+		"not a Settings profile":     {ExecOptions{Settings: map[string]Profile{}}, ""},
+		"differs from Settings":      {ExecOptions{Settings: map[string]Profile{"prod": other}}, "rename one"},
+		"role differs":               {ExecOptions{Settings: map[string]Profile{"prod": {Name: "prod", AccountID: "123456789012", RoleName: "Admin"}}}, "rename one"},
+		"two labels":                 {ExecOptions{Conflicts: []Conflict{{Name: "prod", Labels: []string{"prod", "Prod"}}}}, "ambiguous"},
+		"two labels, none in ~/.aws": {ExecOptions{Conflicts: []Conflict{{Name: "gone", Labels: []string{"gone", "Gone"}}}}, "ambiguous"},
+		"account pinned, matches":    {ExecOptions{Account: "123456789012"}, ""},
+		"account pinned, differs":    {ExecOptions{Account: "999999999999"}, "--account"},
+	} {
+		o := c.o
+		o.Profile, o.Login, o.Argv, o.Quiet = "prod", "never", []string{"true"}, true
+		if len(o.Conflicts) > 0 {
+			o.Profile = o.Conflicts[0].Name
+		}
+		_, _, _, err := PlanExec(bin, workloadEnv, o)
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: refused: %v", name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
 		}
 	}
 }

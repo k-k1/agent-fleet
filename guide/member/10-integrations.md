@@ -257,7 +257,10 @@ Your profiles are also written into **`~/.aws/config`**, so `aws --profile <name
 AWS SDKs and build tools (Gradle, Maven, CDK, Terraform, …) can select them by name without you copying anything.
 
 - **The name** is the profile's label with every character other than letters, digits and `._@-` replaced by
-  `-` (label `prod app` → profile `prod-app`). `af-aws-exec --list` prints the names.
+  `-` (label `prod app` → profile `prod-app`). `af-aws-exec --list` prints each name with its account, role and
+  label — pick by those, not by the name alone.
+- If two labels map to the same name (`prod app` and `prod-app`), **neither is exported** and `--list` says so:
+  either one could be the wrong account. Rename one of them in Settings.
 - The profiles sit in a **managed block** at the end of the file, between two `# agent-fleet` marker lines. Edit
   them in Settings, not inside the block — the block is rewritten, and so is anything `aws configure set` writes
   into it. Everything outside it is yours and is kept.
@@ -299,6 +302,15 @@ af-aws-exec --profile <name> -- npx cdk deploy
 - The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
   falling back. At a terminal it starts the device-code login for you; elsewhere (an agent's shell) it exits with
   code 3 and the login command to run.
+- The command gets **empty AWS config and credentials files**, so the credentials above are the only identity it
+  can find. A tool that names a profile of its own — Terraform's `profile = "staging"`, `cdk deploy --profile`,
+  `AWS_PROFILE` in a script — then fails with "profile could not be found" instead of quietly running as that other
+  profile. The region is passed in `AWS_REGION`. If a tool needs other settings from your `~/.aws` files, add
+  `--keep-aws-config`.
+- `--account <id>` refuses to run unless the profile is that AWS account. Put it in scripts, runbooks and agent
+  instructions for anything that deploys, so a wrong profile name stops before anything happens.
+- A name that means two things is refused: two Settings labels that map to it, or your own `~/.aws` definition of
+  a Settings profile's name pointing at another account or role.
 - Credentials last as long as the SSO role session (often one hour). A longer command fails when they expire
   rather than switching identity.
 
