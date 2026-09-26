@@ -306,7 +306,9 @@ af-aws-exec --profile <name> -- npx cdk deploy
   credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
   works. A tool that names a different one — Terraform's `profile = "staging"`, `cdk deploy --profile staging`,
   `AWS_PROFILE=staging` in a script — fails with "The config profile (staging) could not be found" instead of
-  quietly running as that other profile. The region is passed in `AWS_REGION`.
+  quietly running as that other profile. The region is passed in `AWS_REGION`. If a script inside the command
+  replaces `AWS_ACCESS_KEY_ID` (after an `assume-role`, say), the chosen profile stops resolving there rather than
+  quietly meaning the new account; use the new credentials without `--profile`.
 - **When you see "could not be found"**, the tool is asking for another profile. Remove that profile setting from
   the tool, or run it under that profile (`af-aws-exec --profile staging …`). Do not add `--keep-aws-config` to get
   past it: that hands the tool your own `~/.aws` files and endpoint settings again, and it would then run as the

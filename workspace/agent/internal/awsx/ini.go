@@ -2,8 +2,10 @@ package awsx
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"unicode"
 )
 
 // The AWS CLI reads its files with Python's configparser and then maps section names to
@@ -17,6 +19,7 @@ type iniLine struct {
 	header     bool
 	section    string // the raw section name the line belongs to (or opens)
 	key, value string // key lower-cased as configparser's optionxform does
+	cont       bool   // re-reported after a continuation line, not a new key
 }
 
 // scanINI walks text the way configparser does: lines are stripped before matching; a
@@ -29,18 +32,22 @@ func scanINI(text string, fn func(iniLine)) {
 	section := ""
 	optIndent := -1 // indent of the last key, -1 when there is none to continue
 	var last iniLine
-	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		t := strings.TrimSpace(raw)
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	for _, raw := range strings.Split(text, "\n") {
+		// Python strips and measures indent on Unicode whitespace: a line led by a
+		// no-break space (pasted from a web page) continues the value above it.
+		t := strings.TrimFunc(raw, unicode.IsSpace)
 		if t == "" || t[0] == '#' || t[0] == ';' {
 			continue
 		}
-		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
+		indent := len(raw) - len(strings.TrimLeftFunc(raw, unicode.IsSpace))
 		if optIndent >= 0 && indent > optIndent {
 			if last.value == "" {
 				last.value = t
 			} else {
 				last.value += "\n" + t
 			}
+			last.cont = true
 			fn(last)
 			continue
 		}
@@ -83,11 +90,16 @@ func configSection(name string) (kind, profile string) {
 
 // readINISection collects the keys of the section that match picks in the file at path,
 // with configparser's [DEFAULT] keys under them. When several sections match, the last
-// one replaces the others, as botocore's profile map does.
-func readINISection(path string, pick func(section string) bool, keys map[string]string) {
+// one replaces the others, as botocore's profile map does. A file the AWS CLI itself
+// refuses to parse is an error here too: acting on our reading of a file the CLI rejects
+// would be guessing.
+func readINISection(path string, pick func(section string) bool, keys map[string]string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return
+		return nil
+	}
+	if err := iniStrict(string(b)); err != nil {
+		return fmt.Errorf("the AWS CLI cannot read %s: %w", path, err)
 	}
 	defaults := map[string]string{}
 	var sect map[string]string
@@ -105,7 +117,7 @@ func readINISection(path string, pick func(section string) bool, keys map[string
 		}
 	})
 	if sect == nil {
-		return
+		return nil
 	}
 	for k, v := range defaults {
 		keys[k] = v
@@ -113,6 +125,33 @@ func readINISection(path string, pick func(section string) bool, keys map[string
 	for k, v := range sect {
 		keys[k] = v
 	}
+	return nil
+}
+
+// iniStrict reports what configparser's strict mode (the CLI's) rejects: a section
+// name that appears twice ([DEFAULT] may repeat) and a key given twice in one section
+// (measured with aws-cli 2.36.46: "Unable to parse config file", exit 255).
+func iniStrict(text string) error {
+	sections := map[string]bool{}
+	options := map[[2]string]bool{}
+	var err error
+	scanINI(text, func(l iniLine) {
+		switch {
+		case err != nil || l.cont:
+		case l.header:
+			if sections[l.section] && l.section != "DEFAULT" {
+				err = fmt.Errorf("section [%s] appears twice", l.section)
+			}
+			sections[l.section] = true
+		default:
+			k := [2]string{l.section, l.key}
+			if options[k] {
+				err = fmt.Errorf("%s is set twice in [%s]", l.key, l.section)
+			}
+			options[k] = true
+		}
+	})
+	return err
 }
 
 // configPicker selects the config-file sections botocore reads as profile (or

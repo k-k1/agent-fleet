@@ -295,7 +295,9 @@ af-aws-exec --profile <名前> -- npx cdk deploy
   ファイルと `AWS_ENDPOINT_URL*` の上書きは渡しません。同じプロファイルを指定するツールはそのまま動きます。
   Terraform の `profile = "staging"`、`cdk deploy --profile staging`、スクリプト内の `AWS_PROFILE=staging` のように
   別のプロファイルを指定していると、黙ってそちらで動くのではなく「The config profile (staging) could not be found」
-  で失敗します。リージョンは `AWS_REGION` で渡します。
+  で失敗します。リージョンは `AWS_REGION` で渡します。コマンド内のスクリプトが `AWS_ACCESS_KEY_ID` を差し替えると
+  （`assume-role` の後など）、選んだプロファイルはそこでは解決できなくなります。黙って新しいアカウントを指すことは
+  ありません。新しい資格情報は `--profile` を付けずに使ってください。
 - **「could not be found」が出たら**、ツールが別のプロファイルを求めています。ツール側のプロファイル指定を外すか、
   そのプロファイルで実行してください（`af-aws-exec --profile staging …`）。これを通すために `--keep-aws-config` を
   付けないでください。あなたの `~/.aws` とエンドポイント設定がツールに戻り、ツールが指定したプロファイルで動いて

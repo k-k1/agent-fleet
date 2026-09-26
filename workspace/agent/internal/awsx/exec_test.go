@@ -207,7 +207,7 @@ func TestPlanExecLogsInWithTheDeviceCode(t *testing.T) {
 	if !strings.Contains(string(args), "--use-device-code") || !strings.Contains(string(args), "--profile "+ssoOnlyProfile) {
 		t.Fatalf("login args = %q", args)
 	}
-	if cfg, _ := os.ReadFile(filepath.Join(state, "seenConfig.sso-login")); !strings.Contains(string(cfg), "[sso-session af-prod]") {
+	if cfg, _ := os.ReadFile(filepath.Join(state, "seenConfig.sso-login")); !strings.Contains(string(cfg), `[sso-session "af-prod"]`) {
 		t.Fatalf("login config:\n%s", cfg)
 	}
 	if envMap(env)["AWS_ACCESS_KEY_ID"] != "ASIAFAKE" {
@@ -342,12 +342,20 @@ role_arn = arn:aws:iam::2:role/q2
 [profiles q3]
 region = ap-south-1
 
+[profile nb]
+region = us-east-1
+<NBSP>[profile decoy]
+sso_account_id = 222222222222
+
 [profile cont]
 region = us-east-1
 credential_process = /bin/a
   [profile hidden]
   role_arn = arn:aws:iam::3:role/hidden
 `
+	// A line led by a no-break space (pasted from a web page) is a continuation for
+	// configparser; spelled out here to keep the byte visible in the source.
+	conf = strings.ReplaceAll(conf, "<NBSP>", "\u00a0")
 	creds := "[prod]\naws_access_key_id: AKIAEXAMPLE\n\n[default]\ncredential_process = /bin/true\n"
 	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o700); err != nil {
 		t.Fatal(err)
@@ -368,7 +376,7 @@ credential_process = /bin/a
 	for _, k := range all {
 		asks = append(asks, ask{"prod", k})
 	}
-	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden"} {
+	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy"} {
 		for _, k := range few {
 			asks = append(asks, ask{p, k})
 		}
@@ -390,8 +398,8 @@ credential_process = /bin/a
 	}
 	wg.Wait()
 	for i, a := range asks {
-		if ours := profileKeys(env, a.profile)[a.key]; got[i] != ours {
-			t.Errorf("%s.%s: aws CLI says %q, profileKeys says %q", a.profile, a.key, got[i], ours)
+		if k, _ := profileKeys(env, a.profile); got[i] != k[a.key] {
+			t.Errorf("%s.%s: aws CLI says %q, profileKeys says %q", a.profile, a.key, got[i], k[a.key])
 		}
 	}
 }
@@ -481,7 +489,7 @@ func TestPlanExecObtainsCredentialsThroughAnSSOOnlyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[sso-session af-prod]\nsso_registration_scopes = sso:account:access\nsso_start_url = https://example.awsapps.com/start\n" +
+	want := "[sso-session \"af-prod\"]\nsso_registration_scopes = sso:account:access\nsso_start_url = https://example.awsapps.com/start\n" +
 		"sso_region = ap-northeast-1\n\n[profile sso]\nsso_session = af-prod\nsso_account_id = 123456789012\nsso_role_name = Dev\n"
 	for _, call := range []string{"configure-export-credentials", "sts-get-caller-identity"} {
 		cfg, _ := os.ReadFile(filepath.Join(state, "seenConfig."+call))
@@ -567,8 +575,12 @@ func TestPlanExecIsolatesTheChild(t *testing.T) {
 	if _, ok := m["AWS_ENDPOINT_URL_STS"]; ok {
 		t.Fatal("an endpoint override reached the child")
 	}
+	// The child's profile answers with exactly the credentials it was given.
+	if b, err := EnvCredentials(env); err != nil || !strings.Contains(string(b), `"AccessKeyId":"ASIAFAKE"`) {
+		t.Fatalf("the child's credential_process: %s %v", b, err)
+	}
 	cfg, _ := os.ReadFile(want)
-	if !strings.Contains(string(cfg), "[profile prod]\ncredential_process = /usr/local/bin/workspace-agent aws-env-credentials\n") ||
+	if !strings.Contains(string(cfg), "[profile \"prod\"]\ncredential_process = /usr/local/bin/workspace-agent aws-env-credentials\n") ||
 		strings.Count(string(cfg), "[") != 1 || strings.Contains(string(cfg), "ASIA") {
 		t.Fatalf("child config:\n%s", cfg)
 	}
@@ -588,12 +600,21 @@ func TestPlanExecIsolatesTheChild(t *testing.T) {
 }
 
 func TestEnvCredentials(t *testing.T) {
-	b, err := EnvCredentials([]string{"AWS_ACCESS_KEY_ID=ASIA1", "AWS_SECRET_ACCESS_KEY=s", "AWS_SESSION_TOKEN=t"})
+	env := []string{"AF_AWS_EXEC_KEY_ID=ASIA1", "AWS_ACCESS_KEY_ID=ASIA1", "AWS_SECRET_ACCESS_KEY=s", "AWS_SESSION_TOKEN=t"}
+	b, err := EnvCredentials(env)
 	if err != nil || string(b) != `{"Version":1,"AccessKeyId":"ASIA1","SecretAccessKey":"s","SessionToken":"t"}` {
 		t.Fatalf("%s %v", b, err)
 	}
-	if _, err := EnvCredentials([]string{"AWS_ACCESS_KEY_ID=AKIA", "AWS_SECRET_ACCESS_KEY=s"}); err == nil {
-		t.Fatal("credentials without a session token were handed out")
+	for name, e := range map[string][]string{
+		"no session token": {"AF_AWS_EXEC_KEY_ID=AKIA", "AWS_ACCESS_KEY_ID=AKIA", "AWS_SECRET_ACCESS_KEY=s"},
+		// Plain env credentials (a workload's, say) outside af-aws-exec.
+		"not from af-aws-exec": {"AWS_ACCESS_KEY_ID=ASIA1", "AWS_SECRET_ACCESS_KEY=s", "AWS_SESSION_TOKEN=t"},
+		// A script exported another account's keys after af-aws-exec started it.
+		"key changed": append(env, "AWS_ACCESS_KEY_ID=ASIAOTHER"),
+	} {
+		if b, err := EnvCredentials(e); err == nil {
+			t.Errorf("%s: handed out %s", name, b)
+		}
 	}
 }
 
@@ -735,5 +756,123 @@ func TestPlanExecReportsAnUndefinedProfile(t *testing.T) {
 		ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}})
 	if err == nil || !strings.Contains(err.Error(), "not defined in "+mine) || strings.Contains(err.Error(), "rename") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// Names with spaces: the generated headers are quoted, so the real CLI finds the
+// sso-session and the child's profile (it said "session missing" before). Skipped
+// where no aws CLI is installed.
+func TestGeneratedConfigsKeepNamesWithSpaces(t *testing.T) {
+	aws, err := exec.LookPath("aws")
+	if err != nil {
+		t.Skip("aws CLI not installed")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ini, err := ssoOnlyConfig(ssoInfo{Session: "my session", StartURL: "https://example.awsapps.com/start", Region: "ap-northeast-1",
+		Account: "123456789012", Role: "Dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(home, "sso.config")
+	if err := os.WriteFile(cfg, []byte(ini), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(aws, "configure", "export-credentials", "--profile", ssoOnlyProfile)
+	cmd.Env = verifierEnv([]string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}, cfg)
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), "Token for my session does not exist") {
+		t.Fatalf("the CLI did not reach the sso-session's token:\n%s", out)
+	}
+
+	helper := filepath.Join(home, "helper.sh")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nprintf '{\"Version\":1,\"AccessKeyId\":\"ASIASPACE\",\"SecretAccessKey\":\"s\",\"SessionToken\":\"t\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child, err := childEnv([]string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}, "my prod", helper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command(aws, "configure", "export-credentials", "--profile", "my prod")
+	cmd.Env = child
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "ASIASPACE") {
+		t.Fatalf("child profile with a space: %s %v", out, err)
+	}
+	if _, err := childEnv(nil, `bad"name`, helper); err == nil {
+		t.Fatal("a name the header cannot hold was accepted")
+	}
+}
+
+// The directory the child's credential_process is read from must be the user's own.
+func TestChildEnvRefusesALinkedOrSharedDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(home, "shared")
+	if err := os.MkdirAll(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(home, ".aws", "af-exec")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := childEnv(nil, "prod", "/bin/true"); err == nil || !strings.Contains(err.Error(), "not a link") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := os.Remove(filepath.Join(home, ".aws", "af-exec")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(home, ".aws", "af-exec"), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(home, ".aws", "af-exec"), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := childEnv(nil, "prod", "/bin/true"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(filepath.Join(home, ".aws", "af-exec")); fi.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %v", fi.Mode().Perm())
+	}
+}
+
+// Only the outer run's own isolation is undone for a nested run; a caller's own config
+// keeps the /dev/null credentials file they paired it with.
+func TestSteerKeepsACallersNullCredentialsFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	env, _ := steerIsolatedConfig([]string{"AWS_CONFIG_FILE=/work/project.config", "AWS_SHARED_CREDENTIALS_FILE=" + os.DevNull})
+	if m := envMap(env); m["AWS_CONFIG_FILE"] != "/work/project.config" || m["AWS_SHARED_CREDENTIALS_FILE"] != os.DevNull {
+		t.Fatalf("custom config: %v", m)
+	}
+	env, steered := steerIsolatedConfig([]string{"AWS_CONFIG_FILE=" + os.DevNull, "AWS_SHARED_CREDENTIALS_FILE=" + os.DevNull})
+	if m := envMap(env); !steered || m["AWS_CONFIG_FILE"] != ConfigPath() || m["AWS_SHARED_CREDENTIALS_FILE"] != "" {
+		t.Fatalf("nested: %v", m)
+	}
+}
+
+// A file the CLI refuses to parse is refused here too, instead of guessing from it.
+func TestPlanExecRefusesAConfigTheCLICannotParse(t *testing.T) {
+	for name, extra := range map[string]string{
+		"duplicate section": "\n[profile other]\nregion = a\n[profile other]\nregion = b\n",
+		"duplicate key":     "\n[profile other]\nregion = a\nREGION = b\n",
+	} {
+		bin, state := fakeAWS(t, ssoProfile)
+		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(os.Getenv("HOME"), ".aws", "config")
+		b, _ := os.ReadFile(path)
+		if err := os.WriteFile(path, append(b, extra...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true})
+		if err == nil || !strings.Contains(err.Error(), "cannot read") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	// What configparser allows: [DEFAULT] twice, a key continued over several lines.
+	if err := iniStrict("[DEFAULT]\na = 1\n[DEFAULT]\nb = 2\n[profile x]\ns3 =\n  a = 1\n  a = 2\n"); err != nil {
+		t.Fatalf("false positive: %v", err)
 	}
 }

@@ -435,6 +435,6 @@ func CachedSettings() (map[string]Profile, []Conflict, bool) {
 
 // DescribeProfile returns the SSO account and role the member's AWS files give name.
 func DescribeProfile(name string) (account, role string) {
-	k := profileKeys(nil, name)
+	k, _ := profileKeys(nil, name)
 	return k["sso_account_id"], k["sso_role_name"]
 }

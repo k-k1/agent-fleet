@@ -89,7 +89,15 @@ func runAWSExec(args []string) {
 				fmt.Printf("%s\t(not exported: a Settings profile never becomes the default profile)\n", n)
 				continue
 			}
-			fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used)\n", n)
+			// Show both sides: a shadowing definition with another account is exactly
+			// the mix-up to see before a run, not after af-aws-exec refuses it.
+			acct, role := awsx.DescribeProfile(n)
+			if sp, ok := res.Settings[n]; ok && (sp.AccountID != acct || sp.RoleName != role) {
+				fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used: account %s, role %s; "+
+					"Settings %q is account %s, role %s; rename one)\n", n, orNone(acct), orNone(role), sp.Label, sp.AccountID, sp.RoleName)
+				continue
+			}
+			fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used: account %s, role %s)\n", n, orNone(acct), orNone(role))
 		}
 		for _, c := range res.Conflicts {
 			fmt.Printf("%s\t(not exported: Settings labels %s all map to this name; rename all but one)\n", c.Name, strings.Join(c.Labels, " / "))
@@ -166,9 +174,10 @@ func parseAWSExecArgs(args []string) (awsx.ExecOptions, bool) {
 }
 
 // runAWSEnvCredentials is `workspace-agent aws-env-credentials`: the credential_process
-// of the one-profile config af-aws-exec gives its child. It prints the credentials that
-// are already in its own environment and nothing else, so it can only ever return what
-// af-aws-exec handed that child.
+// of the one-profile config af-aws-exec gives its child. It prints the credentials in its
+// own environment, and only while they are still the ones af-aws-exec handed over
+// (AF_AWS_EXEC_KEY_ID); after a script swaps them it refuses rather than let the
+// profile name stand for another account.
 func runAWSEnvCredentials(args []string) {
 	b, err := awsx.EnvCredentials(os.Environ())
 	if err != nil {
@@ -207,4 +216,11 @@ func ensureAWSCLI() (string, error) {
 func isTerminal(f *os.File) bool {
 	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
 	return err == nil
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }

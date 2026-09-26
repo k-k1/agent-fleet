@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -63,7 +65,7 @@ var scrubbedEnv = []string{
 	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
 	"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
 	"AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME",
-	"AWS_EC2_METADATA_DISABLED", "AWS_CREDENTIAL_FILE", "BOTO_CONFIG",
+	"AWS_EC2_METADATA_DISABLED", "AWS_CREDENTIAL_FILE", "BOTO_CONFIG", execKeyIDVar,
 }
 
 // baseEnv is environ minus scrubbedEnv, with IMDS turned off for every SDK that honours
@@ -89,30 +91,37 @@ func baseEnv(environ []string) []string {
 // is kept.
 func steerIsolatedConfig(env []string) ([]string, bool) {
 	aws := filepath.Dir(ConfigPath())
-	steered := false
+	steered, fromChild := false, false
 	out := env[:0:0]
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
-		switch k {
-		case "AWS_CONFIG_FILE":
-			// /dev/null is af-aws-exec's own child isolation: a nested af-aws-exec (a
-			// Makefile target run under an outer one) should still find the profiles.
-			if v == os.DevNull {
-				kv, steered = "AWS_CONFIG_FILE="+ConfigPath(), true
-				break
-			}
-			dir := realPath(filepath.Dir(expandHome(v)))
-			for _, d := range []string{"af-sessions", "af-ops", "af-exec"} {
-				if dir == realPath(filepath.Join(aws, d)) {
-					kv, steered = "AWS_CONFIG_FILE="+ConfigPath(), true
-				}
-			}
-		case "AWS_SHARED_CREDENTIALS_FILE":
-			if v == os.DevNull {
-				continue
-			}
+		if k != "AWS_CONFIG_FILE" {
+			out = append(out, kv)
+			continue
+		}
+		// /dev/null and ~/.aws/af-exec are af-aws-exec's own child isolation: a nested
+		// af-aws-exec (a Makefile target run under an outer one) should still find the
+		// profiles.
+		dir := realPath(filepath.Dir(expandHome(v)))
+		switch {
+		case v == os.DevNull || dir == realPath(filepath.Join(aws, "af-exec")):
+			kv, steered, fromChild = "AWS_CONFIG_FILE="+ConfigPath(), true, true
+		case dir == realPath(filepath.Join(aws, "af-sessions")) || dir == realPath(filepath.Join(aws, "af-ops")):
+			kv, steered = "AWS_CONFIG_FILE="+ConfigPath(), true
 		}
 		out = append(out, kv)
+	}
+	// The outer run's AWS_SHARED_CREDENTIALS_FILE=/dev/null goes with its config. Next
+	// to a config file the caller chose, a /dev/null credentials file is also their
+	// choice: dropping it would let ~/.aws/credentials add keys to their profile.
+	if fromChild {
+		kept := out[:0]
+		for _, kv := range out {
+			if kv != "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull {
+				kept = append(kept, kv)
+			}
+		}
+		out = kept
 	}
 	return out, steered
 }
@@ -149,7 +158,7 @@ func envValue(env []string, key string) string {
 // ([X]), both located the way the CLI locates them from env. Read here rather than
 // through `aws configure get`: each of those is a CLI start (~0.8 s measured), and ten
 // of them put eight seconds in front of every af-aws-exec.
-func profileKeys(env []string, profile string) map[string]string {
+func profileKeys(env []string, profile string) (map[string]string, error) {
 	cfg := envValue(env, "AWS_CONFIG_FILE")
 	if cfg == "" {
 		cfg = ConfigPath()
@@ -159,9 +168,13 @@ func profileKeys(env []string, profile string) map[string]string {
 		creds = filepath.Join(filepath.Dir(ConfigPath()), "credentials")
 	}
 	keys := map[string]string{}
-	readINISection(expandHome(cfg), configPicker("profile", profile), keys)
-	readINISection(expandHome(creds), credentialsPicker(profile), keys)
-	return keys
+	if err := readINISection(expandHome(cfg), configPicker("profile", profile), keys); err != nil {
+		return nil, err
+	}
+	if err := readINISection(expandHome(creds), credentialsPicker(profile), keys); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 // checkSSOProfile admits only a profile the CLI will resolve through its SSO provider
@@ -272,7 +285,10 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, errors.New("af-aws-exec does not run under the default profile; name the SSO profile from Settings (`af-aws-exec --list`)")
 	}
 	env, steered := steerIsolatedConfig(baseEnv(environ))
-	keys := profileKeys(env, o.Profile)
+	keys, err := profileKeys(env, o.Profile)
+	if err != nil {
+		return "", nil, nil, err
+	}
 	if err := checkAmbiguous(o); err != nil {
 		return "", nil, nil, err
 	}
@@ -281,7 +297,10 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	}
 	// Identity first: a colliding or shadowed name is the more useful answer even when
 	// the definition found is not an SSO profile at all.
-	sso := resolveSSO(env, keys)
+	sso, err := resolveSSO(env, keys)
+	if err != nil {
+		return "", nil, nil, err
+	}
 	if err := checkIdentity(sso, o); err != nil {
 		return "", nil, nil, err
 	}
@@ -343,6 +362,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		}
 	}
 	env = append(env,
+		execKeyIDVar+"="+creds.AccessKeyID,
 		"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 		"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
 		"AWS_SESSION_TOKEN="+creds.SessionToken)
@@ -464,7 +484,7 @@ func quoteAll(ss []string) []string {
 
 // childConfigName is the profile names childEnv will write a one-profile config for
 // (the characters an exported Settings profile can have; see sessionx).
-var childConfigName = regexp.MustCompile(`^[A-Za-z0-9._@-]{1,64}$`)
+var childConfigName = regexp.MustCompile(`^[A-Za-z0-9._@+ -]{1,64}$`)
 
 // childEnv gives the child the AWS files and endpoints af-aws-exec vouches for, not the
 // member's. Its config defines exactly one profile, the selected one, whose
@@ -486,12 +506,19 @@ func childEnv(env []string, profile, helper string) ([]string, error) {
 		out = append(out, kv)
 	}
 	cfg := os.DevNull
-	if helper != "" && childConfigName.MatchString(profile) && iniValueRe.MatchString(strings.ReplaceAll(helper, " ", "")) {
-		cfg = filepath.Join(filepath.Dir(ConfigPath()), "af-exec", profile+".config")
-		ini := fmt.Sprintf("# Written by af-aws-exec for the command it runs; regenerated on each run.\n[profile %s]\ncredential_process = %s\n", profile, helper)
-		if err := os.MkdirAll(filepath.Dir(cfg), 0o700); err != nil {
+	if helper != "" {
+		// The header is quoted (botocore shlex-splits it), so a name with spaces works;
+		// the character set leaves nothing for the quotes to escape. The file name is
+		// the escaped profile name, one file per profile.
+		if !childConfigName.MatchString(profile) || !iniValueRe.MatchString(strings.ReplaceAll(helper, " ", "")) {
+			return nil, fmt.Errorf("profile name %q cannot be given to the command's AWS config; rename the profile", profile)
+		}
+		dir, err := privateDir(filepath.Join(filepath.Dir(ConfigPath()), "af-exec"))
+		if err != nil {
 			return nil, err
 		}
+		cfg = filepath.Join(dir, url.PathEscape(profile)+".config")
+		ini := fmt.Sprintf("# Written by af-aws-exec for the command it runs; regenerated on each run.\n[profile \"%s\"]\ncredential_process = %s\n", profile, helper)
 		if old, err := os.ReadFile(cfg); err != nil || string(old) != ini {
 			if err := writeAtomic(cfg, []byte(ini), 0o600); err != nil {
 				return nil, err
@@ -501,14 +528,50 @@ func childEnv(env []string, profile, helper string) ([]string, error) {
 	return append(out, "AWS_CONFIG_FILE="+cfg, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull), nil
 }
 
+// privateDir makes dir (0700) and insists it is a real directory owned by this user
+// with no access for anyone else: the child's credential_process is read from it, so a
+// symlink onto shared storage or a group-writable directory would let someone else
+// decide what the child runs.
+func privateDir(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() {
+		return "", fmt.Errorf("%s must be a directory of your own, not a link; remove it and run again", dir)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return "", err
+		}
+	}
+	return dir, nil
+}
+
+// execKeyIDVar pins the child's profile to the credentials af-aws-exec handed over: it
+// holds their access key id (an identifier, not a secret). EnvCredentials refuses once
+// AWS_ACCESS_KEY_ID no longer matches it, so a script that exports another account's
+// keys (after an assume-role, say) does not silently turn `--profile prod` into that
+// account.
+const execKeyIDVar = "AF_AWS_EXEC_KEY_ID"
+
 // EnvCredentials is the credential_process document for the credentials in environ,
 // for `workspace-agent aws-env-credentials`.
 func EnvCredentials(environ []string) ([]byte, error) {
 	c := processCreds{Version: 1,
 		AccessKeyID: envValue(environ, "AWS_ACCESS_KEY_ID"), SecretAccessKey: envValue(environ, "AWS_SECRET_ACCESS_KEY"),
 		SessionToken: envValue(environ, "AWS_SESSION_TOKEN"), Expiration: envValue(environ, "AWS_CREDENTIAL_EXPIRATION")}
-	if c.AccessKeyID == "" || c.SecretAccessKey == "" || c.SessionToken == "" {
+	pinned := envValue(environ, execKeyIDVar)
+	if pinned == "" || c.AccessKeyID == "" || c.SecretAccessKey == "" || c.SessionToken == "" {
 		return nil, errors.New("no af-aws-exec credentials in the environment; run the command under af-aws-exec")
+	}
+	if c.AccessKeyID != pinned {
+		return nil, errors.New("AWS_ACCESS_KEY_ID was changed after af-aws-exec started this command, so it is no longer the " +
+			"profile af-aws-exec ran it under; use the new credentials without --profile, or run that step under its own af-aws-exec")
 	}
 	return json.Marshal(c)
 }
@@ -533,7 +596,7 @@ func ssoOnlyConfig(sso ssoInfo) (string, error) {
 		if !iniSessionRe.MatchString(sso.Session) {
 			return "", fmt.Errorf("sso-session name %q is not usable", sso.Session)
 		}
-		fmt.Fprintf(&b, "[sso-session %s]\n", sso.Session)
+		fmt.Fprintf(&b, "[sso-session \"%s\"]\n", sso.Session)
 		if sso.Scopes != "" {
 			if !iniValueRe.MatchString(strings.ReplaceAll(sso.Scopes, " ", "")) {
 				return "", errors.New("sso_registration_scopes is not usable")
@@ -569,20 +632,22 @@ type ssoInfo struct {
 
 // resolveSSO reads the profile's SSO settings the way the CLI does: through its
 // sso-session section when it names one, from the profile itself otherwise.
-func resolveSSO(env []string, keys map[string]string) ssoInfo {
+func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 	sso := ssoInfo{Session: keys["sso_session"], Account: keys["sso_account_id"], Role: keys["sso_role_name"]}
 	if sso.Session == "" {
 		sso.StartURL, sso.Region = keys["sso_start_url"], keys["sso_region"]
-		return sso
+		return sso, nil
 	}
 	sess := map[string]string{}
 	cfg := envValue(env, "AWS_CONFIG_FILE")
 	if cfg == "" {
 		cfg = ConfigPath()
 	}
-	readINISection(expandHome(cfg), configPicker("sso-session", sso.Session), sess)
+	if err := readINISection(expandHome(cfg), configPicker("sso-session", sso.Session), sess); err != nil {
+		return ssoInfo{}, err
+	}
 	sso.StartURL, sso.Region, sso.Scopes = sess["sso_start_url"], sess["sso_region"], sess["sso_registration_scopes"]
-	return sso
+	return sso, nil
 }
 
 // verifierEnv is env for the CLI calls that obtain and check credentials: the SSO-only
