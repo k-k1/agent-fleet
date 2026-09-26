@@ -99,11 +99,12 @@ func stoppedChildSlotNote() string {
 		"この期間は利用者が Console の 設定 > エージェント > セッション で変えられます"
 }
 
-// stoppedTTLPhrase renders an archive period: whole days as "N 日", anything shorter (only the
-// env var and the tests produce that) as a Go duration.
+// stoppedTTLPhrase renders an archive period: whole days as "N 日", anything else (only the env
+// var and the tests produce that) as a Go duration, so 36h is not quoted as "1 日".
 func stoppedTTLPhrase(d time.Duration) string {
-	if h := d.Hours(); h >= 24 {
-		return fmt.Sprintf("%d 日", int(h/24))
+	const day = 24 * time.Hour
+	if d >= day && d%day == 0 {
+		return fmt.Sprintf("%d 日", d/day)
 	}
 	return d.String() + " "
 }

@@ -221,7 +221,7 @@ Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor /
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
 **llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
 the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
-**Sessions** group holds **when stopped sessions are archived** (Default — the deployment's period, 7 days unless your admin changed it — 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
+**Sessions** group holds **when stopped sessions are archived** (Default — the deployment's period, 7 days unless the deployment changed it — 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
 **children per session**), **fleet observation from sessions**,
 **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.

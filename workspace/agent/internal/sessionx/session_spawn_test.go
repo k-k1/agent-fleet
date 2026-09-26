@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -503,5 +504,19 @@ func TestRecreateHandsTheChildSlotToTheSuccessor(t *testing.T) {
 	handOverSpawnLineage(plain.Name)
 	if m3, ok := session.ReadMeta("solo"); !ok || m3.Origin != session.OriginUser {
 		t.Fatalf("an unrelated session was rewritten: %+v", m3)
+	}
+}
+
+// Only whole days read as days: flooring would quote an env-set 36h as "1 日", a day shorter
+// than the period in force.
+func TestStoppedTTLPhraseKeepsPartialDays(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		14 * 24 * time.Hour: "14 日",
+		36 * time.Hour:      "36h0m0s ",
+		time.Hour:           "1h0m0s ",
+	} {
+		if got := stoppedTTLPhrase(d); got != want {
+			t.Errorf("stoppedTTLPhrase(%v) = %q, want %q", d, got, want)
+		}
 	}
 }

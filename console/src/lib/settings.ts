@@ -832,6 +832,14 @@ export const STOPPED_ARCHIVE_DAYS = [1, 3, 7, 14, 30] as const;
 // "Do not auto-archive" — the Agent's session.StoppedArchiveNever.
 export const STOPPED_ARCHIVE_NEVER = -1;
 
+// stoppedArchiveChoice — which button a stored value lights. Mirrors the Agent's
+// NormalizeStoppedArchiveDays: a value no button produces (a hand-edited ui-prefs, an imported
+// bundle, another Console version) is applied as Default, so it is shown as Default too rather
+// than as no choice at all.
+export function stoppedArchiveChoice(v: number): number {
+  return (STOPPED_ARCHIVE_DAYS as readonly number[]).includes(v) || v === STOPPED_ARCHIVE_NEVER ? v : 0;
+}
+
 // imageProviderLabel names one row of the FALLBACK ordering list (see IMAGE_PROVIDERS_RANKED).
 // agy and codex are agent kinds and carry their own display name; the fleet's own engine is not
 // an agent at all — it is a service this deployment runs — so it has its own label rather than a

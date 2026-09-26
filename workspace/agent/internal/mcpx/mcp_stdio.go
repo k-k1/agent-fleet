@@ -895,15 +895,6 @@ func memoWriteAllowed() bool {
 	return writeEnabled() || selfReportOnly()
 }
 
-// mcpStdioFleetSpawnTools — the ten session-steering tools, advertised only under
-// `--self-report --fleet-spawn` (ADR 0073). Written out here rather than reused from the
-// operator's list for the reasons in mcpStdioFleetObserveTools: the operator's text is Japanese
-// and points at tools a session does not get. The handlers are shared.
-//
-// The descriptions carry the refusals (children only, three at a time, no grandchildren, no
-// shells) because a limit a model learns by hitting it costs a whole turn, and because these
-// are the sentences that make the difference between "start a session for every thought" and
-// "start one when the work genuinely splits".
 // stoppedChildExpiryClause is the part of create_session's limits sentence that promises a
 // stopped child frees its slot by itself. Only true while auto-archive is on: with the user's
 // setting at "off" the promise would have a caller wait for a slot that never comes back.
@@ -914,6 +905,15 @@ func stoppedChildExpiryClause() string {
 	return ""
 }
 
+// mcpStdioFleetSpawnTools — the ten session-steering tools, advertised only under
+// `--self-report --fleet-spawn` (ADR 0073). Written out here rather than reused from the
+// operator's list for the reasons in mcpStdioFleetObserveTools: the operator's text is Japanese
+// and points at tools a session does not get. The handlers are shared.
+//
+// The descriptions carry the refusals (children only, three at a time, no grandchildren, no
+// shells) because a limit a model learns by hitting it costs a whole turn, and because these
+// are the sentences that make the difference between "start a session for every thought" and
+// "start one when the work genuinely splits".
 func mcpStdioFleetSpawnTools() []map[string]any {
 	return []map[string]any{
 		{

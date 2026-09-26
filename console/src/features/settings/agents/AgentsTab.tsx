@@ -9,6 +9,7 @@ import {
   SPAWN_CHILD_LIMITS,
   STOPPED_ARCHIVE_DAYS,
   STOPPED_ARCHIVE_NEVER,
+  stoppedArchiveChoice,
   normalizeImageProviderOrder,
   collapseImageProviderOrder,
   expandImageProviderOrder,
@@ -159,7 +160,7 @@ export function AgentsTab() {
           the deployment's AF_SESSION_STOPPED_TTL, which the Console cannot see. */}
       <Row label={tr("agents.stopped_archive")}>
         <Choice
-          value={s.sessionStoppedArchiveDays}
+          value={stoppedArchiveChoice(s.sessionStoppedArchiveDays)}
           options={[
             [0, tr("agents.stopped_archive_default")],
             ...STOPPED_ARCHIVE_DAYS.map((n): [number, string] => [n, tCount("agents.stopped_archive_days", n)]),

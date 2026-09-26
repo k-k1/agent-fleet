@@ -184,6 +184,16 @@ describe("停止中セッションのアーカイブ期間（#982）", () => {
     expect(getSettings().sessionStoppedArchiveDays).toBe(0);
   });
 
+  // The Agent applies a value no button produces as Default, so the row has to show Default
+  // rather than light nothing.
+  it("選択肢に無い保存値は「既定」として表示する", async () => {
+    setSettings({ sessionStoppedArchiveDays: 2 });
+    respond();
+    await mount();
+    const active = buttons().filter((b) => b.classList.contains("active"));
+    expect(active.map((b) => b.textContent)).toEqual([t("agents.stopped_archive_default")]);
+  });
+
   it("「しない」は -1、日数はその数を保存する", async () => {
     respond();
     await mount();
