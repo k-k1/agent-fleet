@@ -1655,9 +1655,9 @@ func recommendedOneShotModelV(v visibility, kind string, tier OneShotTier) strin
 		return m
 	}
 	if kind == session.KindMuse {
-		// Never "": a muse run with no --model lands on the contributor row (clamp 8), so the
+		// A muse run with no --model lands on the contributor row (clamp 8), so the
 		// recommendation is the model museOneShot would fall back to anyway.
-		return museSafeDefault()
+		return museSafeOneShotModel(v)
 	}
 	if tier == OneShotProse {
 		return recommendedAssistantModelV(v, kind)

@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,7 +30,7 @@ const modelsTTL = 10 * time.Minute
 var modelsMu sync.Mutex
 var modelsAt time.Time
 var modelsList []agents.ModelChoice // nil = never fetched, or every fetch so far failed
-var modelsSafe string               // the catalog's first non-data-sharing id; "" when it has none
+var modelsSafe []string             // the catalog's non-data-sharing ids, newest first; empty when it has none
 
 // Models returns the account's selectable launch models. Empty is a valid answer — the picker
 // then offers only the default — and so is the pre-install, pre-sign-in state, which is the
@@ -66,17 +67,17 @@ func SafeDefaultModel(cl *msp.Client) string {
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 	if modelsList != nil && time.Since(modelsAt) < modelsTTL {
-		return modelsSafe
+		return firstID(modelsSafe)
 	}
 	list, safe, err := modelsFrom(cl)
 	if err != nil {
 		// The catalog is not answerable right now. Returning the stale pick rather than ""
 		// keeps a restart on the model the session already had; "" would silently fall back
 		// to the host's contributor default.
-		return modelsSafe
+		return firstID(modelsSafe)
 	}
 	modelsList, modelsSafe, modelsAt = list, safe, time.Now()
-	return modelsSafe
+	return firstID(modelsSafe)
 }
 
 // SafeDefaultExecModel is SafeDefaultModel for a caller that holds no connection: the
@@ -95,7 +96,24 @@ func SafeDefaultExecModel() string {
 	Models() // refreshes the shared cache (a live host if there is one, else a probe)
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
-	return modelsSafe
+	return firstID(modelsSafe)
+}
+
+// SafeExecModels is every model SafeDefaultExecModel could answer, newest first: the catalog's
+// rows minus the data-sharing ones. A caller that must also honour "models not to use" takes
+// the first one the member has not hidden — never a contributor row in its place.
+func SafeExecModels() []string {
+	Models()
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	return slices.Clone(modelsSafe)
+}
+
+func firstID(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0]
 }
 
 // effortChoices is what the picker offers for reasoning effort, and it is the generated wire
@@ -121,12 +139,12 @@ var errMuseSignedOut = errors.New("muse has no stored credential")
 // usually opened while muse sessions are running, and `model/list` is a query that touches no
 // session state. A live host that fails the call falls through to a fresh one rather than
 // reporting failure — it may be mid-shutdown.
-func probeModels() ([]agents.ModelChoice, string, error) {
+func probeModels() ([]agents.ModelChoice, []string, error) {
 	if !Installed() {
-		return nil, "", errMuseAbsent
+		return nil, nil, errMuseAbsent
 	}
 	if !readCredential().Present {
-		return nil, "", errMuseSignedOut
+		return nil, nil, errMuseSignedOut
 	}
 	for _, h := range liveHandles() {
 		h.mu.Lock()
@@ -141,7 +159,7 @@ func probeModels() ([]agents.ModelChoice, string, error) {
 	}
 	cl, stop, err := dialProbe()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	defer stop()
 	return modelsFrom(cl)
@@ -152,16 +170,16 @@ func probeModels() ([]agents.ModelChoice, string, error) {
 // No sessionId is sent: that parameter only flags the row matching a session's effective
 // model, and this list is a LAUNCH menu with no session behind it. `isDefault` is not folded
 // into the labels either — the picker's own "Default" entry means "let AF choose", and what AF
-// chooses is the second return: the first row the vendor does not say it may learn from, in
-// the catalog's own order, which is newest first.
-func modelsFrom(cl *msp.Client) ([]agents.ModelChoice, string, error) {
+// chooses is the head of the second return: the rows the vendor does not say it may learn
+// from, in the catalog's own order, which is newest first.
+func modelsFrom(cl *msp.Client) ([]agents.ModelChoice, []string, error) {
 	var res msp.ModelListResult
 	if err := cl.CallInto(msp.MethodModelList, msp.ModelListParams{}, callTimeout, &res); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	efforts := effortChoices()
 	list := make([]agents.ModelChoice, 0, len(res.Models))
-	safe := ""
+	var safe []string
 	for _, m := range res.Models {
 		if m.ModelID == "" {
 			continue
@@ -170,8 +188,8 @@ func modelsFrom(cl *msp.Client) ([]agents.ModelChoice, string, error) {
 		if label == "" {
 			label = m.ModelID
 		}
-		if safe == "" && !dataSharingModel(m) {
-			safe = m.ModelID
+		if !dataSharingModel(m) {
+			safe = append(safe, m.ModelID)
 		}
 		// DefaultEffort stays empty on purpose. The catalog carries no effort at all and
 		// nothing on the wire echoes the one a session would use with none sent, so naming

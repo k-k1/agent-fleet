@@ -131,15 +131,15 @@ func museChatModel(c *ChatConversation) (string, error) {
 }
 
 // museOneShot runs one AI assist generation (a title, a branch name, reply chips, …) on
-// `muse exec`. model is the member's choice or the recommendation; "" falls back to the safe
-// default, and with no safe default the call is refused — clamp 8 applies here exactly as in
+// `muse exec`. model is the member's choice or the recommendation; "" falls back to the newest
+// safe model not hidden, and with none the call is refused — clamp 8 applies here exactly as in
 // museChatModel, since a one-shot with no --model runs on the `-contributor` row too.
 func museOneShot(ctx context.Context, call *usagex.Call, persona, prompt, model string) (string, error) {
 	if model = strings.TrimSpace(model); model == "" {
-		model = museSafeDefault()
+		model = museSafeOneShotModel(prefsVisibility)
 	}
 	if model == "" {
-		return "", errors.New("muse: cannot read the model catalog, so AI assist will not run (with no model it would run on the contributor model)")
+		return "", errors.New("muse: no model to run AI assist on (the catalog is unreadable or every non-contributor model is hidden); with no model it would run on the contributor model")
 	}
 	call.ModelReq = model
 	if err := muse.EnsureClamps(); err != nil {

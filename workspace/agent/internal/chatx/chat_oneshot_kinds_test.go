@@ -164,32 +164,66 @@ func TestMuseOneShotRefusesWithoutAModel(t *testing.T) {
 	}
 }
 
+// stubMuseSafeModels answers muse's catalog of non-contributor rows, newest first.
+func stubMuseSafeModels(t *testing.T, ids ...string) {
+	t.Helper()
+	prev := museSafeModels
+	t.Cleanup(func() { museSafeModels = prev })
+	museSafeModels = func() []string { return ids }
+}
+
+// hideModels makes the saved "models not to use" setting hide ids (testDeps hides nothing).
+func hideModels(t *testing.T, ids ...string) {
+	t.Helper()
+	prev := deps.VisibleModel
+	t.Cleanup(func() { deps.VisibleModel = prev })
+	deps.VisibleModel = func(_, m string) string {
+		if slices.Contains(ids, m) {
+			return ""
+		}
+		return m
+	}
+}
+
 func TestMuseOneShotFallsBackToTheSafeDefault(t *testing.T) {
 	t.Setenv("AGENT_MUSE_BIN", "/nonexistent/muse")
 	t.Setenv("HOME", t.TempDir()) // EnsureClamps writes ~/.config/muse/settings.json
-	prev := museSafeDefault
-	t.Cleanup(func() { museSafeDefault = prev })
-	museSafeDefault = func() string { return "muse-spark-1.3" }
+	stubMuseSafeModels(t, "muse-spark-1.3", "muse-spark-1.2")
+	hideModels(t, "muse-spark-1.3")
 
 	var call usagex.Call
 	_, err := museOneShot(t.Context(), &call, "", "hi", "")
 	if err == nil || !strings.Contains(err.Error(), "muse execution failed") {
 		t.Fatalf("err = %v, want the exec of the missing binary to fail", err)
 	}
-	if call.ModelReq != "muse-spark-1.3" {
-		t.Errorf("ModelReq = %q, want the safe default", call.ModelReq)
+	if call.ModelReq != "muse-spark-1.2" {
+		t.Errorf("ModelReq = %q, want the newest safe model not hidden", call.ModelReq)
+	}
+}
+
+// Hiding every safe row must refuse, not fall back to a contributor row or to no --model.
+func TestMuseOneShotRefusesWhenEverySafeModelIsHidden(t *testing.T) {
+	t.Setenv("AGENT_MUSE_BIN", "/nonexistent/muse")
+	stubMuseSafeModels(t, "muse-spark-1.3")
+	hideModels(t, "muse-spark-1.3")
+
+	var call usagex.Call
+	if _, err := museOneShot(t.Context(), &call, "", "hi", ""); err == nil || !strings.Contains(err.Error(), "contributor") {
+		t.Fatalf("err = %v, want a refusal", err)
 	}
 }
 
 // "recommended" for muse names the model a one-shot runs on, never "" (#972 reported it as the
-// CLI default, which for muse is the contributor row).
+// CLI default, which for muse is the contributor row) and never a hidden one.
 func TestRecommendedModelsMuseOneShotTiers(t *testing.T) {
-	prev := museSafeDefault
-	t.Cleanup(func() { museSafeDefault = prev })
-	museSafeDefault = func() string { return "muse-spark-1.3" }
+	stubMuseSafeModels(t, "muse-spark-1.3", "muse-spark-1.2")
 
 	got := RecommendedModels(session.KindMuse)
 	if got.Short != "muse-spark-1.3" || got.Prose != "muse-spark-1.3" {
-		t.Errorf("RecommendedModels(muse) = %+v, want the safe default for both one-shot tiers", got)
+		t.Errorf("RecommendedModels(muse) = %+v, want the newest safe model for both one-shot tiers", got)
+	}
+	got = RecommendedModelsWithHidden(session.KindMuse, []string{"muse-spark-1.3"})
+	if got.Short != "muse-spark-1.2" || got.Prose != "muse-spark-1.2" {
+		t.Errorf("with muse-spark-1.3 hidden: %+v, want muse-spark-1.2", got)
 	}
 }
