@@ -84,7 +84,9 @@ When the login is needed, `--no-login` is not given and nobody is at a terminal,
   cache file's `expiresAt` and a hash of its token. A cache can hold a token that has not expired and that
   AWS still rejects (the session was revoked, or the portal session ended first; `loginNeeded` matches
   exactly that botocore message). Decisions 2 and 5 therefore look for a cache that has **changed since
-  filing**, not only for one that has not expired.
+  filing**, not only for one that has not expired. A run that joins an existing request replaces the
+  recorded state with the one its own failing check saw, under the same lock, whenever the two differ. The
+  record then always describes a cache known to be unusable.
 - **Only the Agent expires requests.** It drops a request 15 minutes after the last `af-aws-exec` asked for
   it, but never while an attempt it runs for that request is live (decision 3). The CLI never removes a
   request file: it cannot see the Agent's attempts.
@@ -165,10 +167,11 @@ it, `GET …/attempts/{attempt}` answers that the attempt is gone, and the modal
 request itself is on disk and stays pending.
 
 "Cancel" calls `POST /api/aws-login/{id}/cancel`. The Agent ends any running attempt, writes a
-**cancel marker** for the sso-session in the same directory (the profile, when it was cancelled, and the
-cache state recorded in the request), and only then drops the request. The waiting `af-aws-exec` runs
-read the marker and exit 3 at once, saying that the login request was **cancelled** (not that the member
-declined it: an agent can call the route too).
+**cancel marker** for the sso-session in the same directory (the id of the request it cancelled, the
+profile, when it was cancelled, and the cache state recorded in the request), and only then drops the
+request. The waiting `af-aws-exec` runs read the marker and exit 3 at once, saying that the login request
+was **cancelled** (not that the member declined it: an agent can call the route too). A waiter reacts only
+to a marker that names its own request, so a marker left from an earlier request does not end it.
 
 For 10 minutes after a cancel, a new `af-aws-exec` for that profile finds the marker, files no request and
 shows no toast. Without this, the next run would put the toast straight back. It exits 3 at once, saying
@@ -202,10 +205,14 @@ waits up to 90 seconds.
   seconds, which is cheap. It asks the CLI for the credentials again (`exportCreds`, a whole `aws` start)
   only when the cache has changed from the state recorded at filing and holds a token that has not
   expired — once per change, not every two seconds.
-- If the credentials come back, the command runs as if the login had been there from the start. If they
-  still fail as a login problem, it keeps waiting: the request stays pending until a later change.
-- If a cancel marker appears, it exits 3 at once (decision 3). A request file that disappears without a
-  marker means resolved, and it asks for the credentials.
+- If the credentials come back, the command runs as if the login had been there from the start.
+- If they still fail as a login problem, the Agent may already have dropped the request as resolved (the
+  cache changed; another user of the same sso-session refreshing it is enough). The run then files a
+  **new** request — a new random id, the cache state it just saw, a new notification — and keeps waiting
+  for the rest of its time. It never waits on a request that is gone.
+- If a cancel marker for its request appears, it exits 3 at once (decision 3). A request file that
+  disappears without one means resolved, and it asks for the credentials, with the rule above if they
+  fail.
 - On timeout it exits 3. The message says the login was requested in the Console and to run the command
   again after approving it. The request stays pending, so the toast stays up.
 
@@ -213,9 +220,10 @@ The 90 seconds assume the agents' command timeouts are longer. Before the implem
 things are measured for each agent kind and recorded in the implementation's journal: its default timeout
 for a shell command, and whether a command killed by that timeout still hands its partial output to the
 agent. The immediate line above tells an agent where the login is only when that output survives.
-`af-aws-exec` cannot tell which kind called it (no variable names the kind, and a Managed session may not
-even have `AF_SESSION_NAME`), so the wait is one number: if any kind's timeout is shorter than 90 seconds
-and that kind drops the output, the wait is shortened below that timeout for everyone.
+When `AF_SESSION_NAME` is set, `af-aws-exec` reads that session's meta, which names its kind, and takes
+the wait for that kind: 90 seconds, or less than the kind's timeout when that timeout is shorter and the
+kind drops the output. When the kind is unknown (a Managed session may not have `AF_SESSION_NAME`), it
+takes the shortest wait of all kinds.
 
 ### Decision 6 — the flags and the terminal case do not change
 
@@ -250,6 +258,9 @@ terminal.
 - A new sticky toast kind exists. The toast system has no way to withdraw a toast from code today, so the
   implementation adds one.
 - A tab with a login toast up polls one cheap Agent route every few seconds until the request is resolved.
+- For a kind with a short command timeout, or a caller whose kind is unknown, the wait may be too short for
+  the member to approve in time. There the agent's usual outcome is the exit 3 and a rerun, not a command
+  that completes after approval.
 - Not covered here, each a separate issue: a "Log in" action on a Settings > SSM profile row that opens the
   same modal, and warning before an SSO session ends. The acceptance run against a real IAM Identity Center
   also stays open until a member runs it.
