@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,9 +91,32 @@ func wireEngineWithWindow(t *testing.T, client harness.Client, window int) {
 	})
 }
 
+// testMeta also drops name's handle when the test ends. The handle registry is package-global
+// and keyed by name alone, so a handle a test leaves behind is what the NEXT Resume of the same
+// name gets back — under -count=N that is the previous run's handle, bound to a $HOME and a
+// store t.TempDir has already removed — and its turn goroutines keep firing the package-global
+// state notifier into whichever test runs next (#952). Registered after t.TempDir, so it runs
+// before that directory is removed.
 func testMeta(t *testing.T, name string) session.Meta {
 	t.Helper()
-	return session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindLcpp, Model: "test-model"}
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindLcpp, Model: "test-model"}
+	t.Cleanup(func() { dropAndWait(t, name) })
+	return m
+}
+
+// dropAndWait is DropHandle that returns only once the handle's turn has stopped and its store
+// and MCP manager are closed.
+func dropAndWait(t *testing.T, name string) {
+	t.Helper()
+	done := dropHandle(name)
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Errorf("handle %s was not released within 30s", name)
+	}
 }
 
 // waitState blocks until the handle reports one of `want`.
@@ -370,9 +394,10 @@ func assertUserOnlyPlusVisibleError(t *testing.T, m session.Meta) {
 // after launch, must not silently eat the user's next message either.
 func TestDriverSendWithNoModelRecordsVisibleError(t *testing.T) {
 	testHome(t)
-	// Deliberately built by hand rather than via testMeta (which sets Model: "test-model"),
-	// matching a legacy/direct-POST session that bypassed the create-time guard.
-	m := session.Meta{Name: "sess-no-model", Dir: t.TempDir(), Kind: session.KindLcpp}
+	// Model cleared from testMeta's "test-model", matching a legacy/direct-POST session that
+	// bypassed the create-time guard.
+	m := testMeta(t, "sess-no-model")
+	m.Model = ""
 
 	d := NewDriver()
 	h, err := d.Resume(m)
@@ -541,11 +566,16 @@ func TestDriverRestartSettleAborted(t *testing.T) {
 // notification.
 func TestDriverRestartSettleCompletedNoDuplicateNotify(t *testing.T) {
 	testHome(t)
-	var notifyCount int
-	agents.SetStateNotifier(func(sid, previous, state, excerpt string) { notifyCount++ })
-	t.Cleanup(func() { agents.SetStateNotifier(nil) })
-
 	m := testMeta(t, "sess-settle-clean")
+	// The notifier is package-global and fires on its own goroutine, so count only this
+	// session's notifications, and atomically.
+	var notifyCount atomic.Int32
+	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		if sid == sidFor(m) {
+			notifyCount.Add(1)
+		}
+	})
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
 	st := Open(sidFor(m))
 	if _, err := st.AppendUser("hi"); err != nil {
 		t.Fatalf("AppendUser: %v", err)
@@ -564,8 +594,8 @@ func TestDriverRestartSettleCompletedNoDuplicateNotify(t *testing.T) {
 		t.Fatalf("TurnState = %v, want TurnCompleted", snap.TurnState)
 	}
 	time.Sleep(20 * time.Millisecond) // notify() is async (agents/notify.go) — give it a moment
-	if notifyCount != 0 {
-		t.Fatalf("notifyCount = %d, want 0 (a clean tail was already reported before restart)", notifyCount)
+	if n := notifyCount.Load(); n != 0 {
+		t.Fatalf("notifyCount = %d, want 0 (a clean tail was already reported before restart)", n)
 	}
 }
 
