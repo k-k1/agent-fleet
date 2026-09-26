@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -304,23 +305,42 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, errors.New("af-aws-exec does not run under the default profile; name the SSO profile from Settings (`af-aws-exec --list`)")
 	}
 	env := steerIsolatedConfig(baseEnv(environ))
-	aws := awsRunner{bin: awsBin, env: env}
 	keys := profileKeys(env, o.Profile)
 	if err := checkSSOProfile(keys, o.Profile); err != nil {
 		return "", nil, nil, err
 	}
 
-	creds, err := exportCreds(aws, o.Profile)
+	// Credentials come from a config written here that holds nothing but the profile's
+	// validated SSO fields, with the credentials file and every endpoint override
+	// switched off. Asking the CLI to resolve the member's own profile would make this
+	// only as safe as profileKeys' imitation of the CLI's parser, and each review round
+	// found another divergence that let assume-role or a process provider win.
+	ini, err := ssoOnlyConfig(env, keys)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("profile %q: %w", o.Profile, err)
+	}
+	dir, err := os.MkdirTemp("", "af-aws-exec-")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	defer os.RemoveAll(dir)
+	cfg := filepath.Join(dir, "config")
+	if err := os.WriteFile(cfg, []byte(ini), 0o600); err != nil {
+		return "", nil, nil, err
+	}
+	aws := awsRunner{bin: awsBin, env: verifierEnv(env, cfg)}
+
+	creds, err := exportCreds(aws, ssoOnlyProfile)
 	if err != nil {
 		login := o.Login == "always" || (o.Login != "never" && o.Interactive)
 		if !login {
 			return "", nil, nil, fmt.Errorf("%w for profile %q: %v\nlog in with: aws sso login --profile %s --use-device-code --no-browser",
 				ErrLoginRequired, o.Profile, err, o.Profile)
 		}
-		if lerr := deviceLogin(awsBin, env, o.Profile, o.Stderr); lerr != nil {
-			return "", nil, nil, fmt.Errorf("aws sso login --profile %s: %w", o.Profile, lerr)
+		if lerr := deviceLogin(awsBin, aws.env, ssoOnlyProfile, o.Stderr); lerr != nil {
+			return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", o.Profile, lerr)
 		}
-		if creds, err = exportCreds(aws, o.Profile); err != nil {
+		if creds, err = exportCreds(aws, ssoOnlyProfile); err != nil {
 			return "", nil, nil, fmt.Errorf("credentials for profile %q after login: %w", o.Profile, err)
 		}
 	}
@@ -340,13 +360,15 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		env = append(env, "AWS_CREDENTIAL_EXPIRATION="+creds.Expiration)
 	}
 
-	// Check who the exported credentials actually belong to. The static check above
-	// mirrors the CLI's config parsing, and every divergence found so far (":" delimiters,
-	// [DEFAULT] inheritance, [profile default]) was a way to admit a profile the CLI then
-	// resolved through another provider. This asks the credentials themselves, so it
-	// holds whatever the parser missed: they must be the profile's own SSO permission-set
-	// role in the profile's own account.
-	who := awsRunner{bin: awsBin, env: env}
+	// Confirm the credentials are a session of the profile's permission-set role in its
+	// account. With the SSO-only config this is a consistency check, not the proof of
+	// provenance (an ARN shows a role name and account, not that Identity Center issued
+	// it). It runs with the verifier env so no endpoint override can answer in AWS's place.
+	who := awsRunner{bin: awsBin, env: verifierEnv(env, cfg)}
+	who.env = append(who.env,
+		"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
+		"AWS_SESSION_TOKEN="+creds.SessionToken)
 	arn, err := who.out("sts", "get-caller-identity", "--query", "Arn", "--output", "text")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("could not confirm the identity of the credentials for profile %q: %v", o.Profile, err)
@@ -368,6 +390,83 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, err
 	}
 	return prog, o.Argv, env, nil
+}
+
+// ssoOnlyProfile is the one profile name in the SSO-only config; the member's profile
+// name never enters that file.
+const ssoOnlyProfile = "sso"
+
+var (
+	iniValueRe   = regexp.MustCompile(`^[!-~]+$`)
+	iniSessionRe = regexp.MustCompile(`^[A-Za-z0-9._@+ -]+$`)
+)
+
+// ssoOnlyConfig renders the minimal config the CLI needs to turn the profile's SSO
+// login into role credentials, and nothing else. The sso-session keeps its own name so
+// the CLI finds the token an ordinary `aws sso login` cached for it. Values come from
+// single parsed lines, but are still held to printable, space-free ASCII so none can
+// add a key.
+func ssoOnlyConfig(env []string, keys map[string]string) (string, error) {
+	var b strings.Builder
+	var startURL, ssoRegion string
+	session := keys["sso_session"]
+	if session != "" {
+		sess := map[string]string{}
+		cfg := envValue(env, "AWS_CONFIG_FILE")
+		if cfg == "" {
+			cfg = ConfigPath()
+		}
+		readSection(expandHome(cfg), "sso-session "+session, sess)
+		startURL, ssoRegion = sess["sso_start_url"], sess["sso_region"]
+		if !iniSessionRe.MatchString(session) {
+			return "", fmt.Errorf("sso-session name %q is not usable", session)
+		}
+		fmt.Fprintf(&b, "[sso-session %s]\n", session)
+		if sc := sess["sso_registration_scopes"]; sc != "" {
+			if !iniValueRe.MatchString(strings.ReplaceAll(sc, " ", "")) {
+				return "", errors.New("sso_registration_scopes is not usable")
+			}
+			fmt.Fprintf(&b, "sso_registration_scopes = %s\n", sc)
+		}
+	} else {
+		startURL, ssoRegion = keys["sso_start_url"], keys["sso_region"]
+	}
+	fields := [][2]string{
+		{"sso_start_url", startURL}, {"sso_region", ssoRegion},
+		{"sso_account_id", keys["sso_account_id"]}, {"sso_role_name", keys["sso_role_name"]},
+	}
+	for _, f := range fields {
+		if !iniValueRe.MatchString(f[1]) {
+			return "", fmt.Errorf("%s is missing or not usable", f[0])
+		}
+	}
+	if session != "" {
+		fmt.Fprintf(&b, "sso_start_url = %s\nsso_region = %s\n\n[profile %s]\nsso_session = %s\n", startURL, ssoRegion, ssoOnlyProfile, session)
+	} else {
+		fmt.Fprintf(&b, "[profile %s]\nsso_start_url = %s\nsso_region = %s\n", ssoOnlyProfile, startURL, ssoRegion)
+	}
+	fmt.Fprintf(&b, "sso_account_id = %s\nsso_role_name = %s\n", keys["sso_account_id"], keys["sso_role_name"])
+	return b.String(), nil
+}
+
+// verifierEnv is env for the CLI calls that obtain and check credentials: the SSO-only
+// config, no credentials file, and no endpoint override from the environment or any
+// config. An AWS_ENDPOINT_URL left in a shell for a local emulator would otherwise
+// receive the SSO and STS calls (and the session token) and could answer as AWS
+// (verified with aws-cli 2.36.46: a local server's forged ARN came back with exit 0).
+// The child command keeps the member's own settings.
+func verifierEnv(env []string, cfg string) []string {
+	out := make([]string, 0, len(env)+3)
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if k == "AWS_CONFIG_FILE" || k == "AWS_SHARED_CREDENTIALS_FILE" || k == "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS" ||
+			strings.HasPrefix(k, "AWS_ENDPOINT_URL") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "AWS_CONFIG_FILE="+cfg, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull,
+		"AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true")
 }
 
 func exportCreds(aws awsRunner, profile string) (processCreds, error) {

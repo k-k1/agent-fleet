@@ -292,9 +292,10 @@ af-aws-exec --profile <name> -- npx cdk deploy
   keeps its own login and role caches under `~/.aws`, as it always does.)
 - The profile must have an **account and role** set in Settings. A profile that also carries `role_arn`,
   `source_profile`, `credential_process` or static keys is refused, because the AWS CLI would not use its SSO
-  login (keys under a `[DEFAULT]` section count, since the CLI applies them to every profile). Before running the
-  command it also checks with AWS that the credentials really are that profile's SSO role in that account, and
-  refuses otherwise. `--profile default` is refused: name the SSO profile.
+  login (keys under a `[DEFAULT]` section count, since the CLI applies them to every profile). The credentials
+  are obtained through the profile's SSO login alone — from a minimal config holding only its SSO settings, with
+  endpoint overrides ignored — and then checked with AWS to be a session of that profile's permission-set role in
+  that account. `--profile default` is refused: name the SSO profile.
 - The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
   falling back. At a terminal it starts the device-code login for you; elsewhere (an agent's shell) it exits with
   code 3 and the login command to run.

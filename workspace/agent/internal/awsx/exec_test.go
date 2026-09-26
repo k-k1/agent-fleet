@@ -3,11 +3,14 @@ package awsx
 import (
 	"bytes"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -23,7 +26,9 @@ var ssoProfile = map[string]string{
 func writeProfile(t *testing.T, path string, cfg map[string]string) {
 	t.Helper()
 	var conf, creds strings.Builder
-	conf.WriteString("[default]\nrole_arn = arn:aws:iam::1:role/default\ncredential_source = EcsContainer\n\n[profile prod]\n")
+	conf.WriteString("[default]\nrole_arn = arn:aws:iam::1:role/default\ncredential_source = EcsContainer\n\n" +
+		"[sso-session af-prod]\nsso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-1\n" +
+		"sso_registration_scopes = sso:account:access\n\n[profile prod]\n")
 	creds.WriteString("[default]\naws_access_key_id = AKIADEFAULT\n\n[prod]\n")
 	for k, v := range cfg {
 		if line, ok := strings.CutPrefix(k, "raw:"); ok {
@@ -48,6 +53,21 @@ func writeProfile(t *testing.T, path string, cfg map[string]string) {
 	}
 }
 
+// with returns ssoProfile plus extra and minus drop.
+func with(extra map[string]string, drop ...string) map[string]string {
+	m := map[string]string{}
+	for k, v := range ssoProfile {
+		m[k] = v
+	}
+	for _, k := range drop {
+		delete(m, k)
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return m
+}
+
 // fakeAWS writes the profile into $HOME/.aws and an aws stand-in. `loggedIn` (a file)
 // decides whether export-credentials succeeds, and `sso login` creates it. It records
 // whether it ever saw a workload-role variable, the AWS_CONFIG_FILE it got, and how many
@@ -65,7 +85,8 @@ func fakeAWS(t *testing.T, cfg map[string]string) (bin, state string) {
 S="` + state + `"
 env | grep -E '^AWS_(CONTAINER_|WEB_IDENTITY)' >> "$S/leaked"
 [ "$AWS_EC2_METADATA_DISABLED" = true ] || echo imds >> "$S/leaked"
-echo "$AWS_CONFIG_FILE" > "$S/configFile"
+cat "$AWS_CONFIG_FILE" > "$S/seenConfig.$1-$2" 2>/dev/null
+env | grep -E '^AWS_(ENDPOINT_URL|IGNORE_CONFIGURED|SHARED_CREDENTIALS_FILE|CONFIG_FILE)' | sort > "$S/seenEnv.$1-$2"
 echo x >> "$S/calls"
 case "$1 $2" in
 "configure export-credentials")
@@ -177,8 +198,13 @@ func TestPlanExecLogsInWithTheDeviceCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	args, _ := os.ReadFile(filepath.Join(state, "loginArgs"))
-	if !strings.Contains(string(args), "--use-device-code") || !strings.Contains(string(args), "--profile prod") {
+	// The login runs against the SSO-only config, whose sso-session keeps the member's
+	// session name, so the token lands where `aws sso login --profile prod` would put it.
+	if !strings.Contains(string(args), "--use-device-code") || !strings.Contains(string(args), "--profile "+ssoOnlyProfile) {
 		t.Fatalf("login args = %q", args)
+	}
+	if cfg, _ := os.ReadFile(filepath.Join(state, "seenConfig.sso-login")); !strings.Contains(string(cfg), "[sso-session af-prod]") {
+		t.Fatalf("login config:\n%s", cfg)
 	}
 	if envMap(env)["AWS_ACCESS_KEY_ID"] != "ASIAFAKE" {
 		t.Fatal("no credentials after login")
@@ -189,19 +215,6 @@ func TestPlanExecLogsInWithTheDeviceCode(t *testing.T) {
 // the SSO login (measured for the missing-account case with aws-cli 2.36.46), so none
 // may reach export-credentials.
 func TestPlanExecRefusesProfilesTheCLIWouldNotResolveThroughSSO(t *testing.T) {
-	with := func(extra map[string]string, drop ...string) map[string]string {
-		m := map[string]string{}
-		for k, v := range ssoProfile {
-			m[k] = v
-		}
-		for _, k := range drop {
-			delete(m, k)
-		}
-		for k, v := range extra {
-			m[k] = v
-		}
-		return m
-	}
 	for name, cfg := range map[string]map[string]string{
 		"static keys only":            {"aws_access_key_id": "AKIA", "region": "us-west-2"},
 		"no account":                  with(nil, "sso_account_id"),
@@ -257,9 +270,8 @@ func TestPlanExecLooksPastAnSSMSessionsIsolatedConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("AWS_CONFIG_FILE=%s: %v", isolated, err)
 		}
-		got, _ := os.ReadFile(filepath.Join(state, "configFile"))
-		if strings.TrimSpace(string(got)) != want || envMap(env)["AWS_CONFIG_FILE"] != want {
-			t.Errorf("AWS_CONFIG_FILE=%s: aws saw %q, child %q, want %q", isolated, got, envMap(env)["AWS_CONFIG_FILE"], want)
+		if got := envMap(env)["AWS_CONFIG_FILE"]; got != want {
+			t.Errorf("AWS_CONFIG_FILE=%s: child got %q, want %q", isolated, got, want)
 		}
 	}
 }
@@ -416,6 +428,84 @@ func TestPlanExecSeesKeysInheritedFromDEFAULT(t *testing.T) {
 		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true})
 		if err == nil || !strings.Contains(err.Error(), "role_arn") {
 			t.Errorf("[DEFAULT] in %s: err = %v", name, err)
+		}
+	}
+}
+
+// The CLI calls that obtain and check credentials see only the SSO-only config: no
+// credentials file, no endpoint override (an AWS_ENDPOINT_URL left for a local emulator
+// could otherwise answer as STS), and none of the member's other keys. The child keeps
+// the member's own endpoint settings.
+func TestPlanExecObtainsCredentialsThroughAnSSOOnlyConfig(t *testing.T) {
+	bin, state := fakeAWS(t, with(map[string]string{"raw:endpoint_url = http://127.0.0.1:1": "", "raw:region = eu-west-1": ""}))
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environ := append(workloadEnv, "AWS_ENDPOINT_URL_STS=http://127.0.0.1:2", "AWS_ENDPOINT_URL=http://127.0.0.1:3",
+		"AWS_SHARED_CREDENTIALS_FILE=/somewhere/credentials")
+	_, _, env, err := PlanExec(bin, environ, ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[sso-session af-prod]\nsso_registration_scopes = sso:account:access\nsso_start_url = https://example.awsapps.com/start\n" +
+		"sso_region = ap-northeast-1\n\n[profile sso]\nsso_session = af-prod\nsso_account_id = 123456789012\nsso_role_name = Dev\n"
+	for _, call := range []string{"configure-export-credentials", "sts-get-caller-identity"} {
+		cfg, _ := os.ReadFile(filepath.Join(state, "seenConfig."+call))
+		if string(cfg) != want {
+			t.Fatalf("%s saw config:\n%s\nwant:\n%s", call, cfg, want)
+		}
+		seen, _ := os.ReadFile(filepath.Join(state, "seenEnv."+call))
+		for _, bad := range []string{"AWS_ENDPOINT_URL", "/somewhere/credentials"} {
+			if strings.Contains(string(seen), bad) {
+				t.Fatalf("%s saw %s:\n%s", call, bad, seen)
+			}
+		}
+		if !strings.Contains(string(seen), "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true") || !strings.Contains(string(seen), "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull) {
+			t.Fatalf("%s env:\n%s", call, seen)
+		}
+	}
+	if m := envMap(env); m["AWS_ENDPOINT_URL_STS"] != "http://127.0.0.1:2" || m["AWS_REGION"] != "eu-west-1" {
+		t.Fatalf("the child lost the member's own settings: %v", m)
+	}
+}
+
+// Against the real CLI: with the verifier env, an endpoint override in the environment
+// or in the config never receives the STS call. The same call without it does reach the
+// fake server, which shows the probe works. Skipped where no aws CLI is installed.
+func TestVerifierEnvKeepsSTSOffEndpointOverrides(t *testing.T) {
+	aws, err := exec.LookPath("aws")
+	if err != nil {
+		t.Skip("aws CLI not installed")
+	}
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "no", http.StatusForbidden)
+	}))
+	defer srv.Close()
+	home := t.TempDir()
+	cfg := filepath.Join(home, "config")
+	if err := os.WriteFile(cfg, []byte("[profile sso]\naws_access_key_id = AKIAFAKE\naws_secret_access_key = fake\nendpoint_url = "+srv.URL+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "AWS_REGION=us-east-1",
+		"AWS_MAX_ATTEMPTS=1", "AWS_EC2_METADATA_DISABLED=true"}
+	run := func(env []string) int32 {
+		hits.Store(0)
+		cmd := exec.Command(aws, "sts", "get-caller-identity", "--profile", "sso", "--cli-connect-timeout", "3", "--cli-read-timeout", "3")
+		cmd.Env = env
+		_ = cmd.Run()
+		return hits.Load()
+	}
+	for name, env := range map[string][]string{
+		"environment": append(base, "AWS_ENDPOINT_URL_STS="+srv.URL, "AWS_CONFIG_FILE="+cfg),
+		"config file": append(base, "AWS_CONFIG_FILE="+cfg),
+	} {
+		if run(env) == 0 {
+			t.Fatalf("control (%s): the override was not used even without the verifier env", name)
+		}
+		if n := run(verifierEnv(env, cfg)); n != 0 {
+			t.Fatalf("%s: the verifier env still sent %d request(s) to the override", name, n)
 		}
 	}
 }
