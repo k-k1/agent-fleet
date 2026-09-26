@@ -16,6 +16,11 @@ package chatx
 //   - chat / prose — a fixed tier by NAME, newest version first (codex: the newest "-luna").
 //     Quality matters there, and a price ranking would quietly pick the weakest model.
 //
+// What is never recommended differs by rule, on purpose: codex's own `upgrade` (retiring) notice
+// excludes a model from both; models.dev's `status: deprecated` only from the short tier's price
+// ranking (a deprecated row has no usable price). codex's catalog is the authority for what
+// codex serves, and models.dev's openai rows describe the API, not the ChatGPT-backed CLI.
+//
 // Every rule degrades to the fixed id it replaced when the catalog or the prices are missing,
 // so no price data means today's behaviour, never an empty pick where there used to be one.
 
@@ -64,15 +69,49 @@ func RecommendedModels(kind string) RecommendedSet {
 }
 
 // codexRecommendIDs is codex's live catalog as a recommendation may use it: minus hidden models
-// and minus the ones codex itself announces are retiring.
-func codexRecommendIDs() []string {
-	ids := visibleModelIDs(session.KindCodex, modelChoiceIDs(codexModels()))
-	return slices.DeleteFunc(ids, codexRetiring)
+// and minus the ones codex itself announces are retiring. listed says whether the catalog could
+// be read at all — an empty result from a readable catalog means "nothing qualifies", which must
+// not be answered with a fixed id that may be retiring or absent (#972 review, round 2).
+func codexRecommendIDs() (ids []string, listed bool) {
+	all := modelChoiceIDs(codexModels())
+	ids = visibleModelIDs(session.KindCodex, all)
+	return slices.DeleteFunc(ids, codexRetiring), len(all) > 0
+}
+
+// codexNewestLuna is codex's chat / prose recommendation: the newest "-luna" in the catalog,
+// "" when the catalog lists none that qualifies, and the fixed defaultCodexChatModel only when
+// the catalog cannot be read (the CLI not logged in yet, say).
+func codexNewestLuna() string {
+	ids, listed := codexRecommendIDs()
+	if m := newestTierModel(ids, "gpt-", "luna"); m != "" || listed {
+		return m
+	}
+	return visibleModel(session.KindCodex, defaultCodexChatModel)
 }
 
 // agyRecommendIDs is agy's live catalog minus hidden models.
 func agyRecommendIDs() []string {
 	return visibleModelIDs(session.KindAgy, modelChoiceIDs(agyModels()))
+}
+
+// agyNamedModel resolves a fixed agy model NAME (defaultAgyChatModel, a display name) to the id
+// the live catalog lists it under. agy ≥1.1.19 lists "<id>\t<display name>"
+// (gemini-3.5-flash-medium / "Gemini 3.5 Flash (Medium)"), and agyChatModel drops a --model
+// the catalog does not list as an id — so answering with the display name showed "Gemini 3.5
+// Flash (Medium)" while the CLI default ran (#972 review, round 2). A readable catalog without
+// that model answers "" (the CLI default, which is what runs); an unreadable one keeps the name,
+// as before, which older agy builds accept as-is.
+func agyNamedModel(name string) string {
+	all := agyModels()
+	if len(all) == 0 {
+		return visibleModel(session.KindAgy, name)
+	}
+	for _, m := range filterVisibleModels(session.KindAgy, all) {
+		if strings.EqualFold(m.ID, name) || strings.EqualFold(m.Label, name) {
+			return m.ID
+		}
+	}
+	return ""
 }
 
 // cheapestListedModel returns the id in ids with the lowest modelListPrice, "" when none is

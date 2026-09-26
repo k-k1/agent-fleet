@@ -435,16 +435,13 @@ func recommendedAssistantModel(agent string) string {
 	case session.KindClaude:
 		return visibleModel(agent, "sonnet")
 	case session.KindCodex:
-		if m := newestTierModel(codexRecommendIDs(), "gpt-", "luna"); m != "" {
-			return m
-		}
-		return visibleModel(agent, defaultCodexChatModel)
+		return codexNewestLuna()
 	case session.KindOpencode:
 		const goModel = "opencode-go/glm-5.2"
 		return recommendedCatalogModel(visibleModelIDs(agent, opencode.Models()), goModel,
 			visibleModel(agent, defaultOpencodeChatModel))
 	case session.KindAgy:
-		return visibleModel(agent, defaultAgyChatModel)
+		return agyNamedModel(defaultAgyChatModel)
 	}
 	return "" // cursor: Auto is the only entitlement-safe recommendation
 }

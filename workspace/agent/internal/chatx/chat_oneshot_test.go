@@ -184,12 +184,11 @@ func TestRecommendedUtilityModelStableBackends(t *testing.T) {
 }
 
 func TestCodexOneShotArgs(t *testing.T) {
-	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-5.4-mini") // do not depend on a catalogue fetch (real CLI)
-	args := codexOneShotArgs()
+	args := codexOneShotArgsFor("gpt-5.4-mini")
 	joined := strings.Join(args, " ")
 
 	if !hasFlagValue(args, "-m", "gpt-5.4-mini") {
-		t.Fatalf("AF_TITLE_MODEL_CODEX has no effect: %q", joined)
+		t.Fatalf("the chosen model is not passed: %q", joined)
 	}
 	if !hasFlagValue(args, "-c", `model_reasoning_effort="low"`) {
 		t.Fatalf("the user's high setting must not apply to a one-shot call: %q", joined)
@@ -204,6 +203,9 @@ func TestCodexOneShotArgs(t *testing.T) {
 
 func TestCodexOneShotArgsForSelectedModel(t *testing.T) {
 	t.Setenv("AF_TITLE_MODEL_CODEX", "env-model")
+	if args := codexOneShotArgsFor(""); argValue(args, "-m") != "" {
+		t.Fatalf("the argv builder applied a model of its own: %q", args)
+	}
 	args := codexOneShotArgsFor("ui-model")
 	if got := argValue(args, "-m"); got != "ui-model" {
 		t.Fatalf("model = %q, want ui-model", got)

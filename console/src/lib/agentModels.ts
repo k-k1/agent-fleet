@@ -271,14 +271,24 @@ export function useRecommendedModels(kind: string): RecommendedModels | null {
   const hiddenModels = useSettings().hiddenModels;
   const key = `${kind}|${JSON.stringify(hiddenModelsFor(hiddenModels, kind))}`;
   const [rec, setRec] = useState<RecommendedModels | null>(() => cachedRecommended(key));
+  // round advances every RECOMMENDED_TTL_MS while mounted: a settings tab left open would
+  // otherwise keep the answer it opened with, however old (#972 review, round 2).
+  const [round, setRound] = useState(0);
+  // A different kind or hidden list is a different question: drop the old answer at once.
+  useEffect(() => {
+    setRec(cachedRecommended(key));
+  }, [key]);
   useEffect(() => {
     let alive = true;
-    setRec(cachedRecommended(key));
-    void fetchRecommended(kind, key).then((r) => alive && setRec(r));
+    // A refresh round keeps showing the previous answer until the new one lands, and keeps it
+    // if the Agent cannot be reached — an older answer beats a label that names nothing.
+    void fetchRecommended(kind, key).then((r) => alive && r && setRec(r));
+    const timer = setTimeout(() => setRound((n) => n + 1), RECOMMENDED_TTL_MS);
     return () => {
       alive = false;
+      clearTimeout(timer);
     };
-  }, [kind, key]);
+  }, [kind, key, round]);
   return rec;
 }
 

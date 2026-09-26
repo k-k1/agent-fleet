@@ -131,6 +131,28 @@ describe("useResolvedModelLabel", () => {
     }
   });
 
+  // #972 review round 2: the answer expires, and a tab left open must pick up the new one
+  // without being reopened — the Agent's answer moves with prices and releases.
+  it("re-asks the Agent while left open, once the answer has expired", async () => {
+    vi.useFakeTimers();
+    try {
+      await render(undefined);
+      expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Haiku" }));
+      agentAnswers.claude = { models: [], recommended: { chat: "sonnet", prose: "sonnet", short: "sonnet" } };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      });
+      expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Haiku" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
+      });
+      await settle();
+      expect(host.textContent).toBe(t("assistant.recommended_now", { model: "Sonnet" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // A workspace that is still booting answers 502 first; the label must not stay at a bare
   // "推奨" until the settings are reopened (#972 review).
   it("retries while the Agent is not reachable yet, then names its answer", async () => {

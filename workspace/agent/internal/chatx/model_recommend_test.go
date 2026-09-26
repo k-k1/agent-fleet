@@ -91,9 +91,45 @@ func TestRecommendedShortAgyPrefersLowEffortOnTie(t *testing.T) {
 	if got := recommendedUtilityModel(session.KindAgy); got != "gemini-3.8-flash-low" {
 		t.Fatalf("agy short = %q, want the low-effort Flash", got)
 	}
+	// No prices: the fixed Flash default, resolved against the catalog — which here does not
+	// list it, so the answer is the CLI default, which is what would run.
 	useCatalogs(t, nil, ids, nil, map[string]float64{})
-	if got := recommendedUtilityModel(session.KindAgy); got != defaultAgyChatModel {
-		t.Fatalf("agy short without prices = %q, want %q", got, defaultAgyChatModel)
+	if got := recommendedUtilityModel(session.KindAgy); got != "" {
+		t.Fatalf("agy short without prices = %q, want \"\" (Flash Medium is not listed)", got)
+	}
+}
+
+// #972 review round 2: agy ≥1.1.19 lists "<id>\t<display name>", and the run path passes only
+// catalog ids through (agyChatModel). The recommendation must name the id, or the screen says
+// Flash while the CLI default runs.
+func TestAgyRecommendationUsesCatalogID(t *testing.T) {
+	prev := agyModels
+	t.Cleanup(func() { agyModels = prev })
+	twoColumn := []agents.ModelChoice{
+		{ID: "gemini-3.7-flash-high", Label: "Gemini 3.7 Flash (High)"},
+		{ID: "gemini-3.5-flash-medium", Label: "Gemini 3.5 Flash (Medium)"},
+		{ID: "gemini-3.5-flash-low", Label: "Gemini 3.5 Flash (Low)"},
+	}
+	agyModels = func() []agents.ModelChoice { return twoColumn }
+	for _, got := range []string{recommendedAssistantModel(session.KindAgy), recommendedUtilityModel(session.KindAgy)} {
+		if got != "gemini-3.5-flash-medium" {
+			t.Fatalf("agy recommendation = %q, want the catalog id gemini-3.5-flash-medium", got)
+		}
+		if agyChatModel(got, twoColumn) != got {
+			t.Fatalf("the run path drops %q", got)
+		}
+	}
+	// The pre-1.1.19 one-column form (id == display name) keeps working unchanged.
+	agyModels = func() []agents.ModelChoice {
+		return []agents.ModelChoice{{ID: defaultAgyChatModel, Label: defaultAgyChatModel}}
+	}
+	if got := recommendedAssistantModel(session.KindAgy); got != defaultAgyChatModel {
+		t.Fatalf("one-column agy = %q", got)
+	}
+	// No catalog at all (agy not logged in): the fixed name, as before.
+	agyModels = func() []agents.ModelChoice { return nil }
+	if got := recommendedAssistantModel(session.KindAgy); got != defaultAgyChatModel {
+		t.Fatalf("agy without a catalog = %q", got)
 	}
 }
 
@@ -112,6 +148,16 @@ func TestRecommendedCodexChatFollowsNewestLuna(t *testing.T) {
 	useCatalogs(t, nil, nil, nil, nil)
 	if got := recommendedAssistantModel(session.KindCodex); got != defaultCodexChatModel {
 		t.Fatalf("codex chat without a catalog = %q, want %q", got, defaultCodexChatModel)
+	}
+	// #972 review round 2: a READABLE catalog with no qualifying luna — the only one retiring,
+	// or none listed — answers the CLI default, never the fixed id it may not serve.
+	useCatalogs(t, []string{"gpt-6-sol", "gpt-5.6-luna"}, nil, map[string]bool{"gpt-5.6-luna": true}, nil)
+	if got := recommendedAssistantModel(session.KindCodex); got != "" {
+		t.Fatalf("codex chat with only a retiring luna = %q, want \"\"", got)
+	}
+	useCatalogs(t, []string{"gpt-6-astra", "gpt-6-sol"}, nil, nil, nil)
+	if got := recommendedAssistantModel(session.KindCodex); got != "" {
+		t.Fatalf("codex chat with no luna listed = %q, want \"\"", got)
 	}
 }
 
@@ -170,8 +216,18 @@ func TestCodexOneShotModelRespectsExplicitDefault(t *testing.T) {
 	if m, auto := codexOneShotModel("gpt-6-sol", true, false, OneShotShort); m != "gpt-6-sol" || auto {
 		t.Fatalf("explicit model = %q (auto=%v)", m, auto)
 	}
+	// The operator's AF_TITLE_MODEL_CODEX stands in for an UNSET setting only, and is never
+	// treated as our own pick (a failure must not quietly drop it).
 	t.Setenv("AF_TITLE_MODEL_CODEX", "env-model")
-	if m, _ := codexOneShotModel("", false, false, OneShotShort); m != "" {
-		t.Fatalf("with AF_TITLE_MODEL_CODEX the argv builder must be left to apply it, got %q", m)
+	if m, auto := codexOneShotModel("", false, false, OneShotShort); m != "env-model" || auto {
+		t.Fatalf("unset with env = %q (auto=%v), want env-model, not ours", m, auto)
+	}
+	// Round 2: neither an explicit Default nor a "recommended" that resolved to nothing may turn
+	// into the environment's model — and an empty pick is nothing to retry without.
+	if m, auto := codexOneShotModel("", true, false, OneShotShort); m != "" || auto {
+		t.Fatalf("explicit Default with env = %q (auto=%v), want no -m", m, auto)
+	}
+	if m, auto := codexOneShotModel("", true, true, OneShotShort); m != "" || auto {
+		t.Fatalf("empty recommendation with env = %q (auto=%v), want no -m and not ours", m, auto)
 	}
 }
