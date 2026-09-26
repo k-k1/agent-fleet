@@ -193,6 +193,10 @@ export function parseCommand(t: Turn): { name: string; args: string } | null {
 //   * compaction summaries, sidechain (subagent) turns and isNoise's system lines.
 // A slash command / skill run is kept in its re-typeable "/name args" form, and the image
 // studio's trailing signal line is dropped because the studio appended it, not the user.
+// The Agent tags a turn by matching its exact text against what was injected into the session,
+// so once the operator or a schedule has sent e.g. "/compact", the user's own identical prompt is
+// tagged too and drops out here. Accepted: the user loses one recall of words they can see were
+// also sent for them, never gets someone else's words back.
 export function composerHistory(turns: Turn[]): string[] {
   const out: string[] = [];
   for (const t of turns) {

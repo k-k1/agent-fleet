@@ -219,6 +219,7 @@ describe("composerHistory", () => {
       user("<task-notification>done</task-notification>"),
       user("<system-reminder>x</system-reminder>"),
       user("<command-name>/review</command-name><command-args>123</command-args>"),
+      user("<command-name>/compact</command-name>", { source: "schedule" }),
       user("背景を夜にして\n" + signal),
       user(signal),
       user("  最初の依頼  "),
