@@ -92,8 +92,11 @@ When the login is needed, `--no-login` is not given and nobody is at a terminal,
   run asks for the credentials once more instead of recording anything. Recording a later read would mark
   a good login as unusable, and the request would then never resolve. That one retry takes its own
   snapshot under the same rule. If it fails and the file still matches that snapshot, the run records it
-  (joining, filing or re-filing as usual). If the cache moved yet again, the run records nothing, leaves
-  any existing request as it is, and goes on waiting; the next change is checked like any other.
+  (joining, filing or re-filing as usual). If the cache moved yet again, the run applies the same rule
+  again, within its wait: it records and files only once a check fails against a cache that held still
+  through it, and leaves any existing request as it is meanwhile. A run that never gets there has filed
+  nothing, so it does not claim to have: it exits 3 with today's terminal command, not with the "requested
+  in the Console" wording of decision 5.
 - **Only the Agent expires requests.** It drops a request 15 minutes after the last `af-aws-exec` asked for
   it, but never while an attempt it runs for that request is live (decision 3). The CLI never removes a
   request file: it cannot see the Agent's attempts.
