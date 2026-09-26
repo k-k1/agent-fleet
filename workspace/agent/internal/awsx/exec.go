@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // ExecOptions is one `af-aws-exec` invocation.
@@ -99,12 +100,12 @@ func steerIsolatedConfig(env []string) ([]string, bool) {
 			out = append(out, kv)
 			continue
 		}
-		// /dev/null and ~/.aws/af-exec are af-aws-exec's own child isolation: a nested
+		// /dev/null and ChildConfigDir are af-aws-exec's own child isolation: a nested
 		// af-aws-exec (a Makefile target run under an outer one) should still find the
 		// profiles.
 		dir := realPath(filepath.Dir(expandHome(v)))
 		switch {
-		case v == os.DevNull || dir == realPath(filepath.Join(aws, "af-exec")):
+		case v == os.DevNull || dir == realPath(ChildConfigDir()):
 			kv, steered, fromChild = "AWS_CONFIG_FILE="+ConfigPath(), true, true
 		case dir == realPath(filepath.Join(aws, "af-sessions")) || dir == realPath(filepath.Join(aws, "af-ops")):
 			kv, steered = "AWS_CONFIG_FILE="+ConfigPath(), true
@@ -358,8 +359,10 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 			if steered {
 				prefix = "AWS_CONFIG_FILE=~/.aws/config "
 			}
+			// Quoted: the hint is meant to be pasted into a shell, and a profile name can
+			// hold anything a quoted INI header can.
 			return "", nil, nil, fmt.Errorf("%w for profile %q: %v\nlog in with: %saws sso login --profile %s --use-device-code --no-browser",
-				ErrLoginRequired, o.Profile, err, prefix, o.Profile)
+				ErrLoginRequired, o.Profile, err, prefix, session.ShellQuote(o.Profile))
 		}
 		if lerr := deviceLogin(awsBin, aws.env, ssoOnlyProfile, o.Stderr); lerr != nil {
 			return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", o.Profile, lerr)
@@ -369,16 +372,27 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		}
 	}
 
+	// --region, then a region the caller exported (as for any aws command), then the
+	// profile's. AWS_DEFAULT_REGION alone is copied to AWS_REGION: the JS SDK and CDK
+	// read only the latter, and the child's config carries no region to fall back on.
 	region := o.Region
-	if region == "" && !envHas(env, "AWS_REGION") && !envHas(env, "AWS_DEFAULT_REGION") {
+	switch {
+	case region != "" || envHas(env, "AWS_REGION"):
+	case envHas(env, "AWS_DEFAULT_REGION"):
+		region = envValue(env, "AWS_DEFAULT_REGION")
+	default:
 		region = keys["region"]
 	}
 	if region != "" {
 		env = setEnv(env, "AWS_REGION="+region, "AWS_DEFAULT_REGION="+region)
 	}
 	if !o.KeepConfig {
-		if env, err = childEnv(env, o.Profile, o.CredentialHelper); err != nil {
+		var warn string
+		if env, warn, err = childEnv(env, o.Profile, o.CredentialHelper); err != nil {
 			return "", nil, nil, err
+		}
+		if warn != "" && o.Stderr != nil {
+			fmt.Fprintln(o.Stderr, warn)
 		}
 	}
 	env = setEnv(env,
@@ -395,7 +409,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	// provenance (an ARN shows a role name and account, not that Identity Center issued
 	// it). It runs with the verifier env so no endpoint override can answer in AWS's place.
 	who := awsRunner{bin: awsBin, env: verifierEnv(env, cfg)}
-	who.env = append(who.env,
+	who.env = setEnv(who.env,
 		"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 		"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
 		"AWS_SESSION_TOKEN="+creds.SessionToken)
@@ -412,7 +426,11 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		if creds.Expiration != "" {
 			exp = " (expires " + creds.Expiration + ")"
 		}
-		fmt.Fprintf(o.Stderr, "af-aws-exec: running as %s%s\n", arn, exp)
+		reg := envValue(env, "AWS_REGION")
+		if reg == "" {
+			reg = "(none)"
+		}
+		fmt.Fprintf(o.Stderr, "af-aws-exec: running as %s in region %s%s\n", arn, reg, exp)
 	}
 
 	prog, err := exec.LookPath(o.Argv[0])
@@ -515,7 +533,7 @@ var childConfigName = regexp.MustCompile(`^[A-Za-z0-9._@+ -]{1,64}$`)
 // depend on the run, so concurrent runs can share it; the region travels in AWS_REGION.
 // Endpoint overrides are dropped: an AWS_ENDPOINT_URL left in the shell would receive
 // the new credentials with every signed call (verified with aws-cli 2.36.46).
-func childEnv(env []string, profile, helper string) ([]string, error) {
+func childEnv(env []string, profile, helper string) ([]string, string, error) {
 	out := make([]string, 0, len(env)+2)
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
@@ -525,27 +543,45 @@ func childEnv(env []string, profile, helper string) ([]string, error) {
 		}
 		out = append(out, kv)
 	}
-	cfg := os.DevNull
+	cfg, warn := os.DevNull, ""
 	if helper != "" {
-		// The header is quoted (botocore shlex-splits it), so a name with spaces works;
-		// the character set leaves nothing for the quotes to escape. The file name is
-		// the escaped profile name, one file per profile.
-		if !childConfigName.MatchString(profile) || !iniValueRe.MatchString(strings.ReplaceAll(helper, " ", "")) {
-			return nil, fmt.Errorf("profile name %q cannot be given to the command's AWS config; rename the profile", profile)
-		}
-		dir, err := privateDir(filepath.Join(filepath.Dir(ConfigPath()), "af-exec"))
-		if err != nil {
-			return nil, err
-		}
-		cfg = filepath.Join(dir, url.PathEscape(profile)+".config")
-		ini := fmt.Sprintf("# Written by af-aws-exec for the command it runs; regenerated on each run.\n[profile \"%s\"]\ncredential_process = %s\n", profile, helper)
-		if old, err := os.ReadFile(cfg); err != nil || string(old) != ini {
-			if err := writeAtomic(cfg, []byte(ini), 0o600); err != nil {
-				return nil, err
-			}
+		// Without a private place for it the child gets an empty config instead: it
+		// stays isolated and only loses "a tool naming this same profile works". Failing
+		// the run would leave --keep-aws-config as the only way through.
+		var err error
+		if cfg, err = writeChildConfig(profile, helper); err != nil {
+			cfg, warn = os.DevNull, fmt.Sprintf("af-aws-exec: %v; the command gets an empty AWS config instead, "+
+				"so a tool that names profile %q itself will not find it", err, profile)
 		}
 	}
-	return append(out, "AWS_CONFIG_FILE="+cfg, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull), nil
+	return append(out, "AWS_CONFIG_FILE="+cfg, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull), warn, nil
+}
+
+// ChildConfigDir holds the one-profile configs of af-aws-exec's children. It is in the
+// Agent's state directory, not under ~/.aws, so a ~/.aws linked onto other storage is
+// never followed to write it.
+func ChildConfigDir() string { return filepath.Join(paths.AgentStateDir(), "aws-exec") }
+
+// writeChildConfig writes the one-profile config for profile and returns its path. The
+// header is quoted (botocore shlex-splits it), so a name with spaces works; the
+// character set leaves nothing for the quotes to escape. The file name is the escaped
+// profile name, one file per profile; the content does not depend on the run.
+func writeChildConfig(profile, helper string) (string, error) {
+	if !childConfigName.MatchString(profile) || !iniValueRe.MatchString(strings.ReplaceAll(helper, " ", "")) {
+		return "", fmt.Errorf("profile name %q cannot be written into an AWS config header", profile)
+	}
+	dir, err := privateDir(ChildConfigDir())
+	if err != nil {
+		return "", err
+	}
+	cfg := filepath.Join(dir, url.PathEscape(profile)+".config")
+	ini := fmt.Sprintf("# Written by af-aws-exec for the command it runs; regenerated on each run.\n[profile \"%s\"]\ncredential_process = %s\n", profile, helper)
+	if old, err := os.ReadFile(cfg); err != nil || string(old) != ini {
+		if err := writeAtomic(cfg, []byte(ini), 0o600); err != nil {
+			return "", err
+		}
+	}
+	return cfg, nil
 }
 
 // privateDir makes dir (0700) and insists it is a real directory owned by this user,
@@ -575,15 +611,21 @@ func privateDir(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Every directory above: writable by others only with the sticky bit (as /tmp is),
-	// under which they still cannot rename what they do not own.
+	// Every directory above must be this user's or root's (an owner can always give
+	// themselves write access and rename what is inside), and writable by others only
+	// with the sticky bit (as /tmp is), under which they cannot rename what they do not
+	// own.
 	for p := filepath.Dir(real); ; p = filepath.Dir(p) {
 		pi, err := os.Stat(p)
 		if err != nil {
 			return "", err
 		}
+		ps, ok := pi.Sys().(*syscall.Stat_t)
+		if !ok || (int(ps.Uid) != os.Getuid() && ps.Uid != 0) {
+			return "", fmt.Errorf("%s belongs to another user, so %s under it is not private", p, dir)
+		}
 		if pi.Mode().Perm()&0o022 != 0 && pi.Mode()&os.ModeSticky == 0 {
-			return "", fmt.Errorf("%s is writable by other users, so %s under it is not private; tighten its permissions", p, dir)
+			return "", fmt.Errorf("%s is writable by its group or other users, so %s under it is not private", p, dir)
 		}
 		if p == filepath.Dir(p) {
 			break

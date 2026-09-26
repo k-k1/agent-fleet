@@ -37,12 +37,12 @@ func scanINI(text string, fn func(iniLine)) {
 	for _, raw := range strings.Split(text, "\n") {
 		// Python strips and measures indent on Unicode whitespace: a line led by a
 		// no-break space (pasted from a web page) continues the value above it.
-		t := strings.TrimFunc(raw, unicode.IsSpace)
+		t := strings.TrimFunc(raw, pySpace)
 		if t == "" || t[0] == '#' || t[0] == ';' {
 			continue
 		}
 		// In characters, as Python counts: a no-break space is two bytes but one column.
-		indent := utf8.RuneCountInString(raw) - utf8.RuneCountInString(strings.TrimLeftFunc(raw, unicode.IsSpace))
+		indent := utf8.RuneCountInString(raw) - utf8.RuneCountInString(strings.TrimLeftFunc(raw, pySpace))
 		if optIndent >= 0 && indent > optIndent {
 			if last.value == "" {
 				last.value = t
@@ -70,6 +70,11 @@ func scanINI(text string, fn func(iniLine)) {
 		fn(last)
 	}
 }
+
+// pySpace is Python's str.isspace, which strip() and configparser's indent use: Go's
+// unicode.IsSpace plus the C0 separators U+001C..U+001F. Leaving those out let a
+// "\x1crole_arn = ..." line be a live key to the CLI and not to this reader.
+func pySpace(r rune) bool { return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f) }
 
 // configSection maps a config-file section name to what botocore makes of it: a
 // profile ("default", or anything starting with "profile" that shlex-splits into two

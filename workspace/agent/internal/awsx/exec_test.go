@@ -353,6 +353,10 @@ region = us-east-1
 <NBSP>[profile decoy]
 sso_account_id = 222222222222
 
+[profile c0]
+<FS>role_arn = arn:aws:iam::5:role/c0
+sso_account_id = 555555555555
+
 [profile nb2]
  foo = bar
 <NBSP>role_arn = arn:aws:iam::4:role/nb2
@@ -366,6 +370,8 @@ credential_process = /bin/a
 	// A line led by a no-break space (pasted from a web page) is a continuation for
 	// configparser; spelled out here to keep the byte visible in the source.
 	conf = strings.ReplaceAll(conf, "<NBSP>", "\u00a0")
+	// U+001C is whitespace to Python's strip() (not to Go's unicode.IsSpace).
+	conf = strings.ReplaceAll(conf, "<FS>", "\x1c")
 	creds := "[prod]\naws_access_key_id: AKIAEXAMPLE\n\n[default]\ncredential_process = /bin/true\n"
 	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o700); err != nil {
 		t.Fatal(err)
@@ -386,7 +392,7 @@ credential_process = /bin/a
 	for _, k := range all {
 		asks = append(asks, ask{"prod", k})
 	}
-	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2"} {
+	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2", "c0"} {
 		for _, k := range few {
 			asks = append(asks, ask{p, k})
 		}
@@ -578,7 +584,7 @@ func TestPlanExecIsolatesTheChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := envMap(env)
-	want := filepath.Join(os.Getenv("HOME"), ".aws", "af-exec", "prod.config")
+	want := filepath.Join(ChildConfigDir(), "prod.config")
 	if m["AWS_CONFIG_FILE"] != want || m["AWS_SHARED_CREDENTIALS_FILE"] != os.DevNull || m["AWS_REGION"] != "us-west-2" {
 		t.Fatalf("child env = %v", m)
 	}
@@ -652,7 +658,7 @@ func TestChildEnvResolvesOnlyTheSelectedProfile(t *testing.T) {
 	}
 	base := []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "AWS_EC2_METADATA_DISABLED=true",
 		"AWS_ACCESS_KEY_ID=ASIACHILD", "AWS_SECRET_ACCESS_KEY=s", "AWS_SESSION_TOKEN=t"}
-	child, err := childEnv(base, "prod", helper)
+	child, _, err := childEnv(base, "prod", helper)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +751,7 @@ func TestPlanExecNestedUnderAnotherRun(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, outer := range []string{os.DevNull, filepath.Join(os.Getenv("HOME"), ".aws", "af-exec", "other.config")} {
+	for _, outer := range []string{os.DevNull, filepath.Join(ChildConfigDir(), "other.config")} {
 		environ := append(workloadEnv, "AWS_CONFIG_FILE="+outer, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull)
 		if _, _, _, err := PlanExec(bin, environ, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true}); err != nil {
 			t.Errorf("outer AWS_CONFIG_FILE=%s: %v", outer, err)
@@ -799,7 +805,7 @@ func TestGeneratedConfigsKeepNamesWithSpaces(t *testing.T) {
 	if err := os.WriteFile(helper, []byte("#!/bin/sh\nprintf '{\"Version\":1,\"AccessKeyId\":\"ASIASPACE\",\"SecretAccessKey\":\"s\",\"SessionToken\":\"t\"}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	child, err := childEnv([]string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}, "my prod", helper)
+	child, _, err := childEnv([]string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}, "my prod", helper)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -808,42 +814,67 @@ func TestGeneratedConfigsKeepNamesWithSpaces(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "ASIASPACE") {
 		t.Fatalf("child profile with a space: %s %v", out, err)
 	}
-	if _, err := childEnv(nil, `bad"name`, helper); err == nil {
-		t.Fatal("a name the header cannot hold was accepted")
+	if env, warn, err := childEnv(nil, `bad"name`, helper); err != nil || warn == "" || envMap(env)["AWS_CONFIG_FILE"] != os.DevNull {
+		t.Fatalf("a name the header cannot hold: %v %q %v", envMap(env), warn, err)
 	}
 }
 
-// The directory the child's credential_process is read from must be the user's own.
-func TestChildEnvRefusesALinkedOrSharedDirectory(t *testing.T) {
+// The directory the child's credential_process is read from must be the user's own and
+// private. When it cannot be, the child still runs isolated, with an empty config and a
+// warning, rather than the run failing and leaving --keep-aws-config as the way out.
+func TestChildEnvFallsBackWhenTheDirectoryIsNotPrivate(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T, home string){
+		"linked directory": func(t *testing.T, home string) {
+			shared := filepath.Join(home, "shared")
+			mustMkdir(t, shared, 0o700)
+			mustMkdir(t, filepath.Dir(ChildConfigDir()), 0o700)
+			if err := os.Symlink(shared, ChildConfigDir()); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"group-writable home": func(t *testing.T, home string) {
+			if err := os.Chmod(home, 0o775); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"state dir linked onto a world-writable directory": func(t *testing.T, home string) {
+			shared := filepath.Join(home, "shared")
+			mustMkdir(t, shared, 0o777)
+			mustMkdir(t, filepath.Join(home, ".local"), 0o700)
+			if err := os.Symlink(shared, filepath.Join(home, ".local", "state")); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		setup(t, home)
+		env, warn, err := childEnv(nil, "prod", "/bin/true")
+		if err != nil || !strings.Contains(warn, "empty AWS config") || envMap(env)["AWS_CONFIG_FILE"] != os.DevNull {
+			t.Errorf("%s: %v %q %v", name, envMap(env), warn, err)
+		}
+	}
+
+	// A private directory that was left open is tightened and used.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o700); err != nil {
-		t.Fatal(err)
+	mustMkdir(t, ChildConfigDir(), 0o777)
+	env, warn, err := childEnv(nil, "prod", "/bin/true")
+	if err != nil || warn != "" || envMap(env)["AWS_CONFIG_FILE"] != filepath.Join(ChildConfigDir(), "prod.config") {
+		t.Fatalf("%v %q %v", envMap(env), warn, err)
 	}
-	shared := filepath.Join(home, "shared")
-	if err := os.MkdirAll(shared, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(shared, filepath.Join(home, ".aws", "af-exec")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := childEnv(nil, "prod", "/bin/true"); err == nil || !strings.Contains(err.Error(), "not a link") {
-		t.Fatalf("err = %v", err)
-	}
-	if err := os.Remove(filepath.Join(home, ".aws", "af-exec")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(home, ".aws", "af-exec"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(filepath.Join(home, ".aws", "af-exec"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := childEnv(nil, "prod", "/bin/true"); err != nil {
-		t.Fatal(err)
-	}
-	if fi, _ := os.Stat(filepath.Join(home, ".aws", "af-exec")); fi.Mode().Perm() != 0o700 {
+	if fi, _ := os.Stat(ChildConfigDir()); fi.Mode().Perm() != 0o700 {
 		t.Fatalf("mode = %v", fi.Mode().Perm())
+	}
+}
+
+func mustMkdir(t *testing.T, dir string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -912,35 +943,65 @@ func TestPlanExecNeverDuplicatesAChildVariable(t *testing.T) {
 	}
 }
 
-// ~/.aws may be a link onto other storage (the workspace allows it), but not onto a
-// directory other users can write to: they could rename af-exec after the check and
-// plant their own credential_process.
-func TestChildEnvRefusesAWorldWritableParent(t *testing.T) {
+// A ~/.aws linked onto other storage (the workspace allows it) is never followed to
+// write the child's config: that lives in the Agent's state directory.
+func TestChildConfigIsNotWrittenThroughALinkedAWSDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	shared := filepath.Join(home, "shared")
-	if err := os.Mkdir(shared, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(shared, 0o777); err != nil {
-		t.Fatal(err)
-	}
+	mustMkdir(t, shared, 0o777)
 	if err := os.Symlink(shared, filepath.Join(home, ".aws")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := childEnv(nil, "prod", "/bin/true"); err == nil || !strings.Contains(err.Error(), "writable by other users") {
+	env, warn, err := childEnv(nil, "prod", "/bin/true")
+	if err != nil || warn != "" || envMap(env)["AWS_CONFIG_FILE"] != filepath.Join(ChildConfigDir(), "prod.config") {
+		t.Fatalf("%v %q %v", envMap(env), warn, err)
+	}
+	if entries, _ := os.ReadDir(shared); len(entries) != 0 {
+		t.Fatalf("wrote into the linked ~/.aws: %v", entries)
+	}
+}
+
+// Region precedence: --region, then what the caller exported, then the profile's; a lone
+// AWS_DEFAULT_REGION is copied to AWS_REGION for the SDKs that read only that.
+func TestPlanExecRegionPrecedence(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile) // profile region us-west-2
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		flag string
+		env  []string
+		want string
+	}{
+		"profile":                 {"", nil, "us-west-2"},
+		"flag beats env":          {"eu-central-1", []string{"AWS_REGION=us-east-1"}, "eu-central-1"},
+		"exported beats profile":  {"", []string{"AWS_REGION=us-east-1"}, "us-east-1"},
+		"only AWS_DEFAULT_REGION": {"", []string{"AWS_DEFAULT_REGION=ap-south-1"}, "ap-south-1"},
+	} {
+		_, _, env, err := PlanExec(bin, append(workloadEnv, c.env...), ExecOptions{Profile: "prod", Settings: prodSettings,
+			Region: c.flag, Login: "never", Argv: []string{"true"}, Quiet: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m := envMap(env); m["AWS_REGION"] != c.want {
+			t.Errorf("%s: AWS_REGION = %q, want %q", name, m["AWS_REGION"], c.want)
+		}
+	}
+}
+
+// The login hint is pasted into a shell; a profile name is quoted in it.
+func TestLoginHintQuotesTheProfileName(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	path := filepath.Join(os.Getenv("HOME"), ".aws", "config")
+	b, _ := os.ReadFile(path)
+	b = append(b, "\n[profile \"p; echo X\"]\nsso_session = af-prod\nsso_account_id = 123456789012\nsso_role_name = Dev\n"...)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "p; echo X", Account: "123456789012", Settings: prodSettings,
+		Login: "never", Argv: []string{"true"}})
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "--profile 'p; echo X' --use-device-code") {
 		t.Fatalf("err = %v", err)
-	}
-	// The same link onto a private directory is fine, and the child config is written
-	// at the resolved path.
-	if err := os.Chmod(shared, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	env, err := childEnv(nil, "prod", "/bin/true")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := envMap(env)["AWS_CONFIG_FILE"]; got != filepath.Join(shared, "af-exec", "prod.config") {
-		t.Fatalf("AWS_CONFIG_FILE = %q", got)
 	}
 }

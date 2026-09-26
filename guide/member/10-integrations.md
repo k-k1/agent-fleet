@@ -306,13 +306,18 @@ af-aws-exec --profile <name> -- npx cdk deploy
   credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
   works. A tool that names a different one — Terraform's `profile = "staging"`, `cdk deploy --profile staging`,
   `AWS_PROFILE=staging` in a script — fails with "The config profile (staging) could not be found" instead of
-  quietly running as that other profile. The region is passed in `AWS_REGION`. If a script inside the command
+  quietly running as that other profile. If `af-aws-exec` cannot keep that config private (a home directory other
+  users can write to, for example) it gives the command an empty AWS config instead, with a warning: still isolated,
+  only a tool naming the same profile will not find it. If a script inside the command
   replaces `AWS_ACCESS_KEY_ID` (after an `assume-role`, say), the chosen profile stops resolving there rather than
   quietly meaning the new account; use the new credentials without `--profile`.
 - **When you see "could not be found"**, the tool is asking for another profile. Remove that profile setting from
   the tool, or run it under that profile (`af-aws-exec --profile staging …`). Do not add `--keep-aws-config` to get
   past it: that hands the tool your own `~/.aws` files and endpoint settings again, and it would then run as the
   profile it names. Keep `--keep-aws-config` for tools that need other settings from those files.
+- **Region**: `--region` if you give it, otherwise a region already exported in your shell (`AWS_REGION`, then
+  `AWS_DEFAULT_REGION`), otherwise the profile's. The "running as" line shows the region used. A stale
+  `AWS_REGION` in your shell beats the profile's region, so give `--region` for deployments.
 - `--account <id>` refuses to run unless the profile is that AWS account. Put it in scripts, runbooks and agent
   instructions for anything that deploys, so a wrong profile name stops before anything happens. For a profile that
   is **not** one of your Settings profiles (one you defined yourself) `--account` is required.
