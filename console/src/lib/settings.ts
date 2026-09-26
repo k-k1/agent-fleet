@@ -1615,6 +1615,76 @@ export function settingsDefaults(): Settings {
 // effort: if the workspace is stopped / agent unreachable, localStorage still holds it.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveInFlight: Promise<void> | null = null;
+// Only the newest PUT's answer speaks for the sync state: an older one landing late (or the
+// previous owner's, across an identity switch) must not overwrite it.
+let saveGen = 0;
+// Server-synced keys changed on this tab and not yet confirmed saved, with a per-key change
+// count so a save only confirms the version it carried. A hydrate keeps these local values
+// over the server's: without that, the only ways out of a failed save were to lose the change
+// (server wins) or to PUT the whole tab's state blind over what other devices saved since.
+const unsaved = new Map<keyof Settings, number>();
+let changeSeq = 0;
+
+/** Whether this tab's settings have reached the Agent's ui-prefs. The Console applies a change at
+ *  once and saves it later, so while a save is failing the screen shows one setting and the Agent
+ *  acts on another (a model un-hidden on screen is refused at launch; one hidden still runs) —
+ *  the member has to be told, not just the console. */
+export type PrefsSyncState = "synced" | "pending" | "failed";
+let syncState: PrefsSyncState = "synced";
+const syncSubs = new Set<() => void>();
+
+function setSyncState(next: PrefsSyncState): void {
+  if (syncState === next) return;
+  syncState = next;
+  syncSubs.forEach((fn) => fn());
+}
+
+export const prefsSyncState = (): PrefsSyncState => syncState;
+
+export function usePrefsSyncState(): PrefsSyncState {
+  return useSyncExternalStore(
+    (fn) => {
+      syncSubs.add(fn);
+      return () => void syncSubs.delete(fn);
+    },
+    prefsSyncState,
+    prefsSyncState,
+  );
+}
+
+/** Try again now: read the server copy (the unsaved keys stay local over it), then send. */
+export function retryPrefsSync(): void {
+  if (saveTimer || saveInFlight) return; // already on its way
+  hydrateAttempt = 0;
+  void hydrateUIPrefs();
+}
+
+// Whose server copy this browser's localStorage was last merged with, as "tenant|user". Read at
+// the first hydrate: localStorage outlives a sign-out, so without it a previous account's
+// accumulated data (working sets, hidden models, …) cannot be told from this account's
+// unsynced data. The source is set by the app shell; unset, or with the user not yet resolved,
+// the owner is unknown and every owner-dependent step takes its conservative branch.
+const OWNER_KEY = "af-display-settings-owner";
+let ownerSource: () => string = () => "";
+
+export function setPrefsOwnerSource(fn: () => string): void {
+  ownerSource = fn;
+}
+
+function readStoredOwner(): string {
+  try {
+    return localStorage.getItem(OWNER_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function recordOwner(owner: string): void {
+  if (!owner) return;
+  try {
+    localStorage.setItem(OWNER_KEY, owner);
+  } catch {}
+}
 
 // Has the server's ui-prefs been read even once? Saving is a whole-object PUT where the last
 // writer wins, so nothing may be sent before that read succeeds: an unhydrated state is only
@@ -1634,7 +1704,12 @@ let hydrateAttempt = 0;
 const HYDRATE_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 function scheduleHydrateRetry(): void {
-  if (prefsLoaded || hydrateRetry || hydrateAttempt >= HYDRATE_RETRY_MS.length) return;
+  if (prefsLoaded || hydrateRetry) return;
+  if (hydrateAttempt >= HYDRATE_RETRY_MS.length) {
+    // Out of automatic retries with a change still waiting: it has not reached the Agent.
+    if (savePending) setSyncState("failed");
+    return;
+  }
   const wait = HYDRATE_RETRY_MS[hydrateAttempt++];
   hydrateRetry = setTimeout(() => {
     hydrateRetry = null;
@@ -1654,28 +1729,48 @@ function markPrefsLoaded(): void {
   if (savePending) {
     savePending = false;
     scheduleServerSave();
+  } else if (syncState === "failed" && !saveTimer && !saveInFlight && unsaved.size === 0) {
+    // The read that failed is now done and nothing is waiting to go out.
+    setSyncState("synced");
   }
 }
 
 function scheduleServerSave(): void {
   if (!prefsLoaded) {
     savePending = true;
+    // A failure stays shown until something lands; otherwise the change is waiting for the read.
+    if (syncState !== "failed") setSyncState("pending");
     scheduleHydrateRetry();
     return;
   }
+  if (syncState !== "failed") setSyncState("pending");
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
+    const gen = ++saveGen;
+    const carried = new Map(unsaved);
     // Device-local keys are not sent to the server; they never leave this device.
-    saveInFlight = apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state))
+    const flight: Promise<void> = apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state))
       // Swallowing a failure means believing the settings are synced when they are not. A
       // permanent failure such as exceeding the 64 KiB limit (413) is only visible here, so it
-      // must always be logged.
+      // must always be logged — and shown (usePrefsSyncState).
       .then((res) => {
-        if (res && typeof res === "object" && res.error) warnPrefsSaveFailed(res.error);
+        if (res && typeof res === "object" && res.error) {
+          warnPrefsSaveFailed(res.error);
+          if (gen === saveGen) setSyncState("failed");
+          return;
+        }
+        for (const [k, seq] of carried) if (unsaved.get(k) === seq) unsaved.delete(k);
+        if (gen === saveGen && !saveTimer && unsaved.size === 0) setSyncState("synced");
       })
-      .catch((e) => warnPrefsSaveFailed(e))
-      .finally(() => { saveInFlight = null; });
+      .catch((e) => {
+        warnPrefsSaveFailed(e);
+        if (gen === saveGen) setSyncState("failed");
+      })
+      .finally(() => {
+        if (saveInFlight === flight) saveInFlight = null;
+      });
+    saveInFlight = flight;
   }, 600);
 }
 
@@ -1825,21 +1920,58 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // has a value: writing a default into a missing key would let the merge below overwrite the
   // local choice, sending an unsaved selection back to zen every time.
   if ("opencodeCatalog" in srv) srv.opencodeCatalog = migrateOpencodeCatalog(srv.opencodeCatalog);
-  let changed = false;
-  const merged: Settings = { ...state };
   // Object/array values compared by reference would differ on every hydrate (the server response
   // is always a fresh object) — compare by value so `changed` is set only on a real change.
   const sameValue = (a: unknown, b: unknown): boolean =>
     a === b ||
     (typeof a === "object" && a !== null && typeof b === "object" && b !== null &&
       JSON.stringify(a) === JSON.stringify(b));
+  let changed = false;
+  const merged: Settings = { ...state };
+  // Whose accumulated data this browser holds. Another known owner's is dropped before the merge,
+  // so neither restore path below can send it to this account (the identity-switch resync does
+  // the same within one page load; this covers a boot after a sign-out). Only a known,
+  // matching owner may push back a key the server has never held.
+  const owner = ownerSource();
+  const storedOwner = readStoredOwner();
+  // With no record (a copy written before the record existed, or by a browser that never finished
+  // a hydrate) only the keys the server has never held are dropped: recording this owner over
+  // them would make the next boot push them as this account's, while the empty-server self-heal
+  // below keeps working as it did before the record.
+  if (owner && storedOwner !== owner) {
+    if (storedOwner) unsaved.clear();
+    for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
+      if (!isAccumulatedSetting(k) || (!storedOwner && k in srv)) continue;
+      unsaved.delete(k);
+      if (!sameValue(merged[k], DEFAULTS[k])) {
+        (merged as any)[k] = DEFAULTS[k];
+        changed = true;
+      }
+    }
+  }
+  const sameOwner = !!owner && storedOwner === owner;
   // If the server lost accumulated data that this device still has, push it back instead of
   // taking the server's value (self-repair).
   let restore = false;
   for (const k of Object.keys(DEFAULTS)) {
     const key = k as keyof Settings;
     if (isDeviceLocalSetting(key)) continue; // device-local keys are never restored
-    if (!(k in srv) || sameValue(srv[k], (merged as any)[k])) continue;
+    if (!(k in srv)) {
+      // A key the server has never held while this device holds a non-default value — say,
+      // hidden models set while every save failed. Pushed back only for the recorded owner.
+      if (unsaved.has(key) || (sameOwner && isAccumulatedSetting(key) && !sameValue((merged as any)[k], DEFAULTS[key]))) restore = true;
+      continue;
+    }
+    if (sameValue(srv[k], (merged as any)[k])) {
+      unsaved.delete(key); // the server already holds it (a save that landed but answered an error)
+      continue;
+    }
+    // Changed here and not yet saved (a save pending or failed): this tab's value stands and goes
+    // out with the save below, over the server copy that is otherwise taken as it is.
+    if (unsaved.has(key)) {
+      restore = true;
+      continue;
+    }
     if (isAccumulatedSetting(key) && isEmptyPref(srv[k]) && !isEmptyPref((merged as any)[k])) {
       restore = true;
       continue;
@@ -1852,7 +1984,10 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // A server written by an older Console has only defaultModel. Do not let the
   // already-normalized local map mask that server-side value during migration.
   // Once the new map exists on the server it is authoritative for every agent.
-  const rows = serverRows && typeof serverRows === "object"
+  // An unsaved local edit stands over the server's map, as the loop above does for other keys.
+  const rows = unsaved.has("agentLaunchDefaults")
+    ? merged.agentLaunchDefaults
+    : serverRows && typeof serverRows === "object"
     ? serverRows
     : {
         ...merged.agentLaunchDefaults,
@@ -1871,6 +2006,14 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // Reaching here means the server's current values really were read. A pending save flows after
   // this: markPrefsLoaded → scheduleServerSave reads state 600ms later, so the `state = merged`
   // below takes effect first.
+  // The record and the copy are written together: another tab may have written the shared copy
+  // since this one last did, and recording this owner over that copy would vouch for its values.
+  if (owner) {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(changed ? merged : state));
+    } catch {}
+    recordOwner(owner);
+  }
   markPrefsLoaded();
   // Accumulated data the server did not have is written back from here to restore it.
   if (restore) scheduleServerSave();
@@ -1903,6 +2046,11 @@ export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
     saveTimer = null;
   }
   savePending = false;
+  // What failed or waited was the previous owner's save; the new owner starts from their own copy,
+  // and an answer to the previous owner's PUT still in flight no longer speaks for it.
+  saveGen++;
+  unsaved.clear();
+  setSyncState("synced");
   const cleared: Partial<Settings> = {};
   for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
     if (isAccumulatedSetting(k)) (cleared as any)[k] = DEFAULTS[k];
@@ -1928,9 +2076,17 @@ export function setSetting<K extends keyof Settings>(key: K, value: Settings[K])
 // run that many re-renders and debounced saves.
 export function setSettings(patch: Partial<Settings>): void {
   state = { ...state, ...patch };
+  for (const k of Object.keys(patch) as (keyof Settings)[]) {
+    if (!isDeviceLocalSetting(k)) unsaved.set(k, ++changeSeq);
+  }
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
+  // localStorage is shared by every tab, whatever tenant each shows: the copy now holds this
+  // tab's owner's values, so the record has to say so, or a tab on another tenant would later
+  // vouch for them as its own. Only once this tab has read its server copy — before that, what
+  // it holds is not known to be this owner's.
+  if (prefsLoaded) recordOwner(ownerSource());
   applyTheme(state);
   applyLocale(state);
   applyCjkFont(state);

@@ -610,6 +610,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "set.group_connections": "Connections",
   "set.group_workspace": "Workspace",
   "set.back": "All settings",
+  "set.prefs_unsynced": "Your settings could not be saved to the server. The change exists on this device only, and the agents still act on the previous settings.",
+  "set.prefs_retry": "Retry",
 
   // === アカウント（サインイン方法の紐づけ・docs/log/61 §61.16 + 決定 37） ===
   "set.tab_account": "Account",

@@ -204,3 +204,252 @@ describe("ui-prefs: the ACCUMULATED classification", () => {
     expect([s.isEmptyPref(0), s.isEmptyPref(false), s.isEmptyPref({ a: 1 }), s.isEmptyPref(["a"])]).toEqual([false, false, false, false]);
   });
 });
+
+// #1023 item 1: a failed save used to reach console.warn only, while the screen and the Agent
+// acted on different settings from then on.
+describe("ui-prefs: a save that does not land is shown", () => {
+  it("goes failed on an error answer and back to synced once a save lands", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    expect(s.prefsSyncState()).toBe("synced");
+    apiJSONMock.mockResolvedValueOnce({ error: { code: "http_413", message: "too large" } });
+    s.setSetting("chatSize", 17);
+    expect(s.prefsSyncState()).toBe("pending");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(s.prefsSyncState()).toBe("failed");
+    apiMock.mockResolvedValueOnce({}); // the retry reads the server copy first
+    s.retryPrefsSync();
+    expect(s.prefsSyncState()).toBe("failed"); // stays shown until something lands
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).toHaveBeenCalledTimes(2);
+    expect(s.prefsSyncState()).toBe("synced");
+  });
+
+  it("goes failed on a thrown PUT too", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    apiJSONMock.mockRejectedValueOnce(new Error("network"));
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(s.prefsSyncState()).toBe("failed");
+  });
+
+  it("goes failed when the server copy stays unreadable with a change waiting", async () => {
+    apiMock.mockResolvedValue({ error: { code: "http_502" } });
+    const s = await freshSettings({});
+    expect(await s.hydrateUIPrefs()).toBe(false);
+    s.setSetting("chatSize", 17);
+    expect(s.prefsSyncState()).toBe("pending");
+    await vi.advanceTimersByTimeAsync(200_000); // every automatic hydrate retry used up
+    expect(s.prefsSyncState()).toBe("failed");
+    apiMock.mockResolvedValue({});
+    s.retryPrefsSync(); // reads the server copy, then sends the waiting change
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).toHaveBeenCalledTimes(1);
+    expect(s.prefsSyncState()).toBe("synced");
+  });
+
+  // Review of #1023: re-sending a failed save blind (whole-object PUT, last writer wins) wiped
+  // every change another device had saved since. A refresh reads first, keeps only this tab's
+  // unsaved keys over the server copy, then sends.
+  it("keeps a failed change over the server copy on refresh, without wiping another device's", async () => {
+    apiMock.mockResolvedValueOnce({ chatSize: 14, iconSet: "default" });
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    apiJSONMock.mockResolvedValueOnce({ error: { code: "http_502" } });
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(s.prefsSyncState()).toBe("failed");
+    // Meanwhile another device saved a different key.
+    apiMock.mockResolvedValueOnce({ chatSize: 14, iconSet: "seti" });
+    await s.refreshUIPrefs(); // back in the foreground
+    expect(s.getSettings().chatSize).toBe(17);
+    expect(s.getSettings().iconSet).toBe("seti");
+    await vi.advanceTimersByTimeAsync(1_000);
+    const body = (apiJSONMock.mock.calls[1] as [string, string, Record<string, unknown>])[2];
+    expect([body.chatSize, body.iconSet]).toEqual([17, "seti"]);
+    expect(s.prefsSyncState()).toBe("synced");
+  });
+
+  // Review of #1023, round 2: agentLaunchDefaults is merged apart from the loop, and took the
+  // server's map over an unsaved local edit.
+  it("keeps an unsaved launch-defaults edit over the server copy on refresh", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    const server = s.getSettings().agentLaunchDefaults;
+    const edited = { ...server, codex: { ...server.codex, model: "gpt-6-sol" } };
+    apiJSONMock.mockResolvedValueOnce({ error: { code: "http_502" } });
+    s.setSetting("agentLaunchDefaults", edited);
+    await vi.advanceTimersByTimeAsync(1_000);
+    apiMock.mockResolvedValueOnce({ agentLaunchDefaults: server });
+    await s.refreshUIPrefs();
+    expect(s.getSettings().agentLaunchDefaults.codex.model).toBe("gpt-6-sol");
+    await vi.advanceTimersByTimeAsync(1_000);
+    const body = (apiJSONMock.mock.calls[1] as [string, string, Record<string, any>])[2];
+    expect(body.agentLaunchDefaults.codex.model).toBe("gpt-6-sol");
+  });
+
+  it("lets only the newest save speak for the state", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    let landFirst!: (v: unknown) => void;
+    apiJSONMock
+      .mockImplementationOnce(() => new Promise((r) => { landFirst = r; })) // slow, lands last
+      .mockResolvedValueOnce({ error: { code: "http_413" } });
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(700);
+    s.setSetting("chatSize", 18);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(s.prefsSyncState()).toBe("failed");
+    landFirst({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.prefsSyncState()).toBe("failed"); // the older save carried 17, not 18
+  });
+
+  it("does not go failed when an older save errors after the newest one landed", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    let errFirst!: (v: unknown) => void;
+    apiJSONMock
+      .mockImplementationOnce(() => new Promise((r) => { errFirst = r; }))
+      .mockResolvedValueOnce({});
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(700);
+    s.setSetting("chatSize", 18);
+    await vi.advanceTimersByTimeAsync(700);
+    errFirst({ error: { code: "http_502" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.prefsSyncState()).toBe("synced"); // 18, the newest, is on the server
+  });
+
+  it("ignores the previous owner's save answering after an identity switch", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    let fail!: (e: unknown) => void;
+    apiJSONMock.mockImplementationOnce(() => new Promise((_, rej) => { fail = rej; }));
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(700);
+    apiMock.mockResolvedValueOnce({});
+    await s.resyncAccumulatedForIdentitySwitch();
+    fail(new Error("network"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.prefsSyncState()).toBe("synced");
+  });
+});
+
+// #1023 item 1: the local copy records whose server copy it was merged with. A key the server
+// has never held may be pushed back only for that owner — on a first boot the identity-switch
+// resync does not run, so without the record a previous account's localStorage could be PUT to
+// a new account (#972 tried the push without it and reverted).
+describe("ui-prefs: the owner of the local copy", () => {
+  const OWNER_KEY = "af-display-settings-owner";
+  const hidden = { claude: ["fable", "opus"] };
+
+  it("pushes back a key the server never held, for the recorded owner", async () => {
+    const s = await freshSettings({ hiddenModels: hidden });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({ chatSize: 14 }); // no hiddenModels key at all
+    await s.hydrateUIPrefs();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).toHaveBeenCalledTimes(1);
+    expect((apiJSONMock.mock.calls[0] as [string, string, Record<string, unknown>])[2].hiddenModels).toEqual(hidden);
+  });
+
+  it("drops another owner's accumulated data at the first hydrate and sends nothing of it", async () => {
+    const s = await freshSettings({ hiddenModels: hidden, workingSets: [{ id: "g1", name: "旧", repos: [], convs: [], sessions: [], schedules: [] }] });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u2");
+    apiMock.mockResolvedValueOnce({ workingSets: [] }); // empty on the server: the old self-heal path
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().workingSets).toEqual([]);
+    expect(s.getSettings().hiddenModels).toEqual({ claude: ["fable"] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (const call of apiJSONMock.mock.calls as [string, string, Record<string, unknown>][]) {
+      expect(call[2].workingSets).toEqual([]);
+      expect(call[2].hiddenModels).toEqual({ claude: ["fable"] });
+    }
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u2");
+  });
+
+  it("does not push a never-held key while the owner is unknown", async () => {
+    const s = await freshSettings({ hiddenModels: hidden });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => ""); // whoami has not answered yet
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).not.toHaveBeenCalled();
+    expect(s.getSettings().hiddenModels).toEqual(hidden); // kept locally, just not sent
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1");
+  });
+
+  // Review of #1023: adopting an unrecorded copy and recording this owner over it made the
+  // SECOND boot push it as this account's.
+  it("treats an unrecorded copy as another owner's, so no later boot pushes it", async () => {
+    const s = await freshSettings({ hiddenModels: hidden });
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).not.toHaveBeenCalled();
+    expect(s.getSettings().hiddenModels).toEqual({ claude: ["fable"] });
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1"); // recorded from now on
+
+    const again = await freshSettings(JSON.parse(localStorage.getItem("af-display-settings")!));
+    again.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await again.hydrateUIPrefs();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).not.toHaveBeenCalled();
+  });
+
+  // Review of #1023, round 2: with no record, only never-held keys are dropped; the empty-server
+  // self-heal keeps working as before the record existed.
+  it("keeps the empty-server self-heal for an unrecorded copy", async () => {
+    const sets = [{ id: "g1", name: "自分のグループ", repos: [], convs: [], sessions: [], schedules: [] }];
+    const s = await freshSettings({ workingSets: sets });
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({ workingSets: [] });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().workingSets).toEqual(sets);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((apiJSONMock.mock.calls[0] as [string, string, Record<string, unknown>])[2].workingSets).toEqual(sets);
+  });
+
+  // Review of #1023, round 2: a refresh with nothing to merge moved the record to this tab while
+  // the shared copy still held another tenant's tab's values.
+  it("writes the copy along with the record on a hydrate that changes nothing", async () => {
+    const s = await freshSettings({});
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    // Another tab, on t2, writes its own values into the shared copy and records itself.
+    localStorage.setItem("af-display-settings", JSON.stringify({ ...s.getSettings(), hiddenModels: hidden }));
+    localStorage.setItem(OWNER_KEY, "t2|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.refreshUIPrefs(); // this tab (t1) refreshes; nothing differs from its own state
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1");
+    expect(JSON.parse(localStorage.getItem("af-display-settings")!).hiddenModels).toEqual({ claude: ["fable"] });
+  });
+
+  // Review of #1023: localStorage is shared by tabs on different tenants; a write must move the
+  // record to the writer, or another tenant's tab vouches for it at its next boot.
+  it("moves the record to whichever owner last wrote the shared copy", async () => {
+    const s = await freshSettings({});
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    localStorage.setItem(OWNER_KEY, "t2|u1"); // another tab, on t2, hydrated since
+    s.setSetting("hiddenModels", hidden); // this tab (t1) writes the shared copy
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1");
+  });
+});
