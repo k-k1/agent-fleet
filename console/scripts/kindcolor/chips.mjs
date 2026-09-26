@@ -58,8 +58,8 @@ const light = { ...dark, ...vars(block('[data-theme="light"]')) };
 const KINDS = Object.keys(dark).filter((k) => k.startsWith("kind-")).map((k) => k.slice(5));
 if (KINDS.length < 11) throw new Error(`only ${KINDS.length} kind hues found; expected 11+`);
 // The semantic colours that share these screens: --err for error states, --del for removed diff
-// lines (and, in much of the Console, errors too). A non-null second entry would paint a literal
-// instead of the token; none is needed now that --err is declared.
+// lines (an alias of --err today, kept so the swatch follows it if it diverges). A non-null
+// second entry would paint a literal instead of the token; none is needed now that --err exists.
 const SEM = [["err", null], ["del", null], ["warn", null], ["ok", null], ["accent", null]];
 
 // The variables go into a <style> rule, never an inline style="" attribute. Measured the hard
