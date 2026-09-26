@@ -20,6 +20,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -53,9 +54,9 @@ func callerTrustEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(plugin, "agent-fleet-caller.js"), []byte(callerPluginBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldName, oldCaller := mcpAFServerName, mcpCallerSID
-	mcpAFServerName = func() string { return "af_0123abcd" }
-	t.Cleanup(func() { mcpAFServerName, mcpCallerSID = oldName, oldCaller })
+	t.Setenv(mcpreg.AFServerKeyEnv, "af_0123abcd")
+	oldCaller := mcpCallerSID
+	t.Cleanup(func() { mcpCallerSID = oldCaller })
 }
 
 // writeOpencodeSlot records an opencode session in dir and the opencode session id AF mapped
@@ -402,7 +403,8 @@ func TestMCPOwningSessionIgnoresStampThePluginDidNotGuarantee(t *testing.T) {
 			}
 		}},
 		{"opencode reads its config from elsewhere", func(t *testing.T) { t.Setenv("XDG_CONFIG_HOME", t.TempDir()) }},
-		{"legacy af server name", func(t *testing.T) { mcpAFServerName = func() string { return "af" } }},
+		{"registered under the legacy af key", func(t *testing.T) { t.Setenv(mcpreg.AFServerKeyEnv, "af") }},
+		{"spawned by an entry af did not write", func(t *testing.T) { t.Setenv(mcpreg.AFServerKeyEnv, "") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cwd, _ := callerTestEnv(t, map[string]bool{"ocfirst": true, "ocsecond": true})

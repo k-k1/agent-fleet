@@ -3589,13 +3589,14 @@ func mcpCallerSession(cwd string) (string, bool) {
 // or altered, the model's own value would arrive untouched and naming another session's id would be enough
 // to act as it. The model shares this uid, so this is not a wall against a determined one — it
 // stops the reserved argument from being a door that a plain tool call opens.
+//
+// The key checked is the one THIS child was registered under (mcpreg.AFServerKeyEnv, written
+// into af's opencode entry only), not the Agent's current name: a copy of af's command
+// registered as bare `af` — a project opencode.json, a stale entry — has no such key, and a
+// child of a daemon adopted across an Agent restart keeps the rotated key it was started with.
 func mcpCallerStampTrusted() bool {
-	return mcpAFServerName() != mcpreg.BuiltinAF && opencode.CallerPluginCurrent()
+	return mcpreg.IsRotatedAFServerName(os.Getenv(mcpreg.AFServerKeyEnv)) && opencode.CallerPluginCurrent()
 }
-
-// mcpAFServerName is a seam: mcpreg remembers the name for the life of the process, so a test
-// could not otherwise show the legacy-name case after any test that saw a rotated one.
-var mcpAFServerName = mcpreg.AFServerName
 
 // mcpStampedFolderSessions is who can be calling this MCP child when the answer only arrives
 // per call: the live sessions in this folder, returned only when every one of them is Managed
