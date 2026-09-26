@@ -576,3 +576,49 @@ func TestAssistantTurnCarriesItsEndTime(t *testing.T) {
 			"the turn's start instead of when it finished", a.EndTS, t2)
 	}
 }
+
+// Items carry no model, so the handle stamps each stored item with the model the host last
+// reported, and the mirror badges each response with it. A fork's copy keeps the stamps.
+func TestResponsesCarryTheModelTheHostReported(t *testing.T) {
+	newStore(t)
+	m := metaFor(t, "muse-model")
+	h := &threadHandle{name: m.Name, slotSid: slotSid(m)}
+	switchTo := func(model string) {
+		h.onNotify(msp.NotificationSessionModelChanged, []byte(`{"sessionId":"s","modelId":"`+model+`","source":"user","sourceRange":{},"viewCursor":"c"}`))
+	}
+	exchange := func(n string) {
+		u := item(msp.ItemKindUserMessage, "u"+n, 1)
+		u.Text = sp("q" + n)
+		h.onItem(u)
+		a := item(msp.ItemKindAgentMessage, "a"+n, 1)
+		a.Text = sp("a" + n)
+		h.onItem(a)
+	}
+	switchTo("model-a")
+	exchange("1")
+	switchTo("model-b")
+	exchange("2")
+
+	responses := func(td agents.TranscriptData) []string {
+		var out []string
+		for _, tn := range td.Turns {
+			if tn.Role == "assistant" {
+				out = append(out, tn.Model)
+			}
+		}
+		return out
+	}
+	td, _ := New().Transcript(m)
+	if got := responses(td); strings.Join(got, ",") != "model-a,model-b" {
+		t.Fatalf("got %q, want [model-a model-b]", got)
+	}
+
+	fork := metaFor(t, "muse-model-fork")
+	if err := openStore(slotSid(m)).ForkAt(slotSid(fork), ""); err != nil {
+		t.Fatal(err)
+	}
+	td, _ = New().Transcript(fork)
+	if got := responses(td); strings.Join(got, ",") != "model-a,model-b" {
+		t.Fatalf("fork: got %q, want [model-a model-b]", got)
+	}
+}

@@ -61,6 +61,7 @@ type threadHandle struct {
 	cl     *msp.Client
 	sid    string // the muse session id (the UUIDv7 AF minted)
 	path   string // the session.jsonl session/start reported
+	model  string // the model the host last reported as selected; stamped on each stored item
 	alive  bool
 	state  agents.TurnState
 	turnID string // the running turn, for steer's expectedTurnId
@@ -182,13 +183,15 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 // worse, and the old session.jsonl is still on disk either way.
 func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) error {
 	if prev, ok := readSession(h.slotSid); ok && prev.ID != "" {
+		var res msp.SessionResumeResult
 		err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
 			CommandID: msp.NewCommandID(),
 			SessionID: prev.ID,
-		}, callTimeout, nil)
+		}, callTimeout, &res)
 		if err == nil {
 			h.mu.Lock()
 			h.sid, h.path = prev.ID, prev.Path
+			h.setModelLocked(res.Session.ModelID)
 			h.mu.Unlock()
 			return nil
 		}
@@ -246,9 +249,18 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	}
 	h.mu.Lock()
 	h.sid, h.path = res.Session.SessionID, res.Session.Path
+	h.setModelLocked(res.Session.ModelID)
 	h.mu.Unlock()
 	writeSession(h.slotSid, museSession{ID: res.Session.SessionID, Path: res.Session.Path})
 	return nil
+}
+
+// setModelLocked adopts the model the host reports; nil or empty keeps the last known one.
+// Caller holds h.mu.
+func (h *threadHandle) setModelLocked(id *string) {
+	if id != nil && *id != "" {
+		h.model = *id
+	}
 }
 
 // approvalModeFor maps the launch-time permission choice onto the session's approval mode. It
@@ -392,6 +404,15 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		h.ctxHasUsage = true
 		h.ctxMu.Unlock()
 
+	case msp.NotificationSessionModelChanged:
+		var p msp.SessionModelChangedParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.mu.Lock()
+		h.setModelLocked(&p.ModelID)
+		h.mu.Unlock()
+
 	case msp.NotificationUsageChanged:
 		// Unsolicited, and about the ACCOUNT rather than this session — so it is recorded
 		// process-wide (usage.go) rather than on the handle. This is the only route by which
@@ -410,9 +431,9 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 func (h *threadHandle) onItem(it msp.Item) {
 	h.mu.Lock()
 	delete(h.streaming, it.ItemID)
-	sid := h.slotSid
+	sid, model := h.slotSid, h.model
 	h.mu.Unlock()
-	if err := openStore(sid).Append(it); err != nil {
+	if err := openStore(sid).AppendFrom(it, model); err != nil {
 		log.Printf("muse: %s: transcript append: %v", h.name, err)
 	}
 }
@@ -897,6 +918,7 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 		}
 		h.mu.Lock()
 		h.settings.Model = model
+		h.model = model
 		h.mu.Unlock()
 	}
 	if s.ClearEffort {
@@ -1101,6 +1123,7 @@ func (h *threadHandle) forkSession(cl *msp.Client) error {
 	}
 	h.mu.Lock()
 	h.sid, h.path = res.Session.SessionID, res.Session.Path
+	h.setModelLocked(res.Session.ModelID)
 	h.mu.Unlock()
 	writeSession(h.slotSid, museSession{ID: res.Session.SessionID, Path: res.Session.Path})
 	// The store copy is deliberately AFTER the host's fork succeeded and is deliberately not
