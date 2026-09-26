@@ -41,10 +41,12 @@
   --ok: #67c23a;
   --warn: #e6a23c;
   --del: #e06c75;
-  /* Error / danger state (a failed job, an unavailable engine, a blocked egress). Kept apart
-     from --del, which marks REMOVED lines in diffs — a deletion is not an error. The dark value
-     is the red the Console used as a literal before this token existed. 4.05:1 on --active-bg,
-     4.97:1+ on the other surfaces. */
+  /* Error / danger state (a failed job, an unavailable engine, a blocked egress). Removed diff
+     lines use --del instead — a deletion is not an error — but --del is ALSO the de facto error
+     red in much of the Console (toasts, notification errors, invalid inputs), so there are two
+     error reds today; unifying them is follow-up work. The dark value is the red the Console
+     used as a literal before this token existed: 4.97-5.63:1 on --bg/--panel/--panel2/--bar,
+     4.54 on --hover-bg, 4.22 on --btn, 4.05 on --active-bg. */
   --err: #f85149;
   /* Origin hue for a peer-injected turn (docs/log/58: another SESSION sent it). The mirror
      already spends --warn on operator, --accent on chat and --ok on schedule, so the
