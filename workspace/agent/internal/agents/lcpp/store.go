@@ -522,11 +522,8 @@ func transcriptFromRecords(recs []Record, sessionModel string) []transcript.Turn
 	// model labels an assistant record that names none: the latest switch note's model, or
 	// sessionModel when there is no note at all.
 	model := sessionModel
-	for _, r := range recs {
-		if r.Kind == KindSystemNote && r.Note == NoteModelChange {
-			model = ""
-			break
-		}
+	if hasModelChange(recs) {
+		model = ""
 	}
 
 	for _, r := range recs {
@@ -611,6 +608,15 @@ func transcriptFromRecords(recs []Record, sessionModel string) []transcript.Turn
 	return turns
 }
 
+func hasModelChange(recs []Record) bool {
+	for _, r := range recs {
+		if r.Kind == KindSystemNote && r.Note == NoteModelChange {
+			return true
+		}
+	}
+	return false
+}
+
 // ForkAt implements decision 3's fork/fork-at: copy this session's records up to and
 // including anchorID, verbatim (same IDs — a fork keeps its own history's anchors valid, the
 // same claude-style contract agents.go:243's ForkAtResolver already documents), into a brand
@@ -649,6 +655,16 @@ func (s *Store) ForkAt(newSID, anchorID string) (*Store, error) {
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
+	// The fork inherits the source's CURRENT model, which TranscriptFor applies to unlabelled
+	// responses when the store holds no model-change note. If the cut drops every note the
+	// source had, that model is a later one than those responses ran on, so a leading note
+	// naming no model keeps them unlabelled rather than mislabelled.
+	if hasModelChange(recs) && !hasModelChange(recs[:idx+1]) {
+		unknown := Record{ID: newRecordID(), TS: recs[0].TS, Kind: KindSystemNote, Note: NoteModelChange}
+		if err := enc.Encode(unknown); err != nil {
+			return nil, err
+		}
+	}
 	for _, r := range recs[:idx+1] {
 		if err := enc.Encode(r); err != nil {
 			return nil, err

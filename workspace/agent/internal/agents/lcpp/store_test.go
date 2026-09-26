@@ -743,4 +743,21 @@ func TestTranscriptModelPerTurn(t *testing.T) {
 	if got := models(switched, "C"); !slices.Equal(got, []string{"", "B", "C"}) {
 		t.Fatalf("after a switch: got %q, want [\"\" B C]", got)
 	}
+
+	// A fork cut before the switch inherits the current model C, which must not label the
+	// response that ran before B.
+	recs, _, err := switched.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	early, err := switched.ForkAt("sid-model-fork-early", recs[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := models(early, "C"); !slices.Equal(got, []string{""}) {
+		t.Fatalf("fork before the switch: got %q, want [\"\"]", got)
+	}
+	if msgs, err := early.Full(); err != nil || len(msgs) != 2 {
+		t.Fatalf("fork's engine messages = %+v, %v; want the user and assistant only", msgs, err)
+	}
 }
