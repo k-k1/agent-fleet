@@ -14,31 +14,53 @@ var ssoProfile = map[string]string{
 	"sso_session": "af-prod", "sso_account_id": "123456789012", "sso_role_name": "Dev", "region": "us-west-2",
 }
 
-// fakeAWS writes an aws stand-in. `configure get <key>` answers from cfg, the way the
-// real CLI reads the merged config + credentials entry of the profile; `loggedIn` (a
-// file) decides whether export-credentials succeeds, and `sso login` creates it. It
-// records whether it ever saw a workload-role variable, and the AWS_CONFIG_FILE it got.
-func fakeAWS(t *testing.T, cfg map[string]string) (bin, state string) {
+// writeProfile writes cfg as the [profile prod] section of an INI config at path, the
+// way the CLI would find it. Keys prefixed "creds:" go to the [prod] section of the
+// credentials file beside it instead.
+func writeProfile(t *testing.T, path string, cfg map[string]string) {
 	t.Helper()
-	dir := t.TempDir()
-	state = filepath.Join(dir, "state")
-	if err := os.MkdirAll(filepath.Join(state, "cfg"), 0o700); err != nil {
+	var conf, creds strings.Builder
+	conf.WriteString("[default]\nrole_arn = arn:aws:iam::1:role/default\ncredential_source = EcsContainer\n\n[profile prod]\n")
+	creds.WriteString("[default]\naws_access_key_id = AKIADEFAULT\n\n[prod]\n")
+	for k, v := range cfg {
+		if ck, ok := strings.CutPrefix(k, "creds:"); ok {
+			creds.WriteString(ck + " = " + v + "\n")
+			continue
+		}
+		conf.WriteString(k + " = " + v + "\n")
+	}
+	conf.WriteString("s3 =\n  role_arn = nested-not-a-profile-key\n")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for k, v := range cfg {
-		if err := os.WriteFile(filepath.Join(state, "cfg", k), []byte(v+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(path, []byte(conf.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "credentials"), []byte(creds.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fakeAWS writes the profile into $HOME/.aws and an aws stand-in. `loggedIn` (a file)
+// decides whether export-credentials succeeds, and `sso login` creates it. It records
+// whether it ever saw a workload-role variable, the AWS_CONFIG_FILE it got, and how many
+// times it was started.
+func fakeAWS(t *testing.T, cfg map[string]string) (bin, state string) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	writeProfile(t, filepath.Join(os.Getenv("HOME"), ".aws", "config"), cfg)
+	dir := t.TempDir()
+	state = filepath.Join(dir, "state")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
 	}
 	script := `#!/bin/sh
 S="` + state + `"
 env | grep -E '^AWS_(CONTAINER_|WEB_IDENTITY)' >> "$S/leaked"
 [ "$AWS_EC2_METADATA_DISABLED" = true ] || echo imds >> "$S/leaked"
 echo "$AWS_CONFIG_FILE" > "$S/configFile"
+echo x >> "$S/calls"
 case "$1 $2" in
-"configure get")
-  [ -f "$S/cfg/$3" ] && cat "$S/cfg/$3"
-  exit 0 ;;
 "configure export-credentials")
   env | grep -E '^AWS_ACCESS_KEY_ID' >> "$S/leaked"
   [ -f "$S/loggedIn" ] || { echo "Error loading SSO Token: Token for af-prod does not exist" >&2; exit 255; }
@@ -173,14 +195,15 @@ func TestPlanExecRefusesProfilesTheCLIWouldNotResolveThroughSSO(t *testing.T) {
 		return m
 	}
 	for name, cfg := range map[string]map[string]string{
-		"static keys only":    {"aws_access_key_id": "AKIA", "region": "us-west-2"},
-		"no account":          with(nil, "sso_account_id"),
-		"no role":             with(nil, "sso_role_name"),
-		"credential_process":  with(map[string]string{"credential_process": "/bin/echo"}, "sso_account_id"),
-		"role_arn":            with(map[string]string{"role_arn": "arn:aws:iam::1:role/x"}),
-		"web identity":        with(map[string]string{"web_identity_token_file": "/tmp/t"}),
-		"credential_source":   with(map[string]string{"credential_source": "EcsContainer"}),
-		"static keys and sso": with(map[string]string{"aws_access_key_id": "AKIA"}),
+		"static keys only":            {"aws_access_key_id": "AKIA", "region": "us-west-2"},
+		"no account":                  with(nil, "sso_account_id"),
+		"no role":                     with(nil, "sso_role_name"),
+		"credential_process":          with(map[string]string{"credential_process": "/bin/echo"}, "sso_account_id"),
+		"role_arn":                    with(map[string]string{"role_arn": "arn:aws:iam::1:role/x"}),
+		"web identity":                with(map[string]string{"web_identity_token_file": "/tmp/t"}),
+		"credential_source":           with(map[string]string{"credential_source": "EcsContainer"}),
+		"static keys and sso":         with(map[string]string{"aws_access_key_id": "AKIA"}),
+		"process in credentials file": with(map[string]string{"creds:credential_process": "/bin/echo"}),
 	} {
 		bin, state := fakeAWS(t, cfg)
 		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
@@ -196,24 +219,54 @@ func TestPlanExecRefusesProfilesTheCLIWouldNotResolveThroughSSO(t *testing.T) {
 // An SSM session pane exports its own isolated AWS_CONFIG_FILE; the exported profiles
 // live in ~/.aws/config, so the wrapper must look there. A file the person chose is kept.
 func TestPlanExecLooksPastAnSSMSessionsIsolatedConfig(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	bin, state := fakeAWS(t, ssoProfile)
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home := os.Getenv("HOME")
+	mine := filepath.Join(home, "mine", "config")
+	writeProfile(t, mine, ssoProfile)
+	// ~/.aws reached through a symlink must match too.
+	if err := os.Symlink(filepath.Join(home, ".aws"), filepath.Join(home, "aws-link")); err != nil {
+		t.Fatal(err)
+	}
 	for isolated, want := range map[string]string{
-		filepath.Join(home, ".aws", "af-sessions", "x.config"): filepath.Join(home, ".aws", "config"),
-		filepath.Join(home, "mine.config"):                     filepath.Join(home, "mine.config"),
+		filepath.Join(home, ".aws", "af-sessions", "x.config"):                 filepath.Join(home, ".aws", "config"),
+		filepath.Join(home, ".aws", ".", "af-ops", "..", "af-ops", "a.config"): filepath.Join(home, ".aws", "config"),
+		filepath.Join(home, "aws-link", "af-sessions", "x.config"):             filepath.Join(home, ".aws", "config"),
+		mine: mine,
 	} {
-		bin, state := fakeAWS(t, ssoProfile)
-		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		if err := os.MkdirAll(filepath.Join(home, ".aws", "af-sessions"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(home, ".aws", "af-ops"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		_, _, env, err := PlanExec(bin, append(workloadEnv, "AWS_CONFIG_FILE="+isolated),
 			ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true})
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("AWS_CONFIG_FILE=%s: %v", isolated, err)
 		}
 		got, _ := os.ReadFile(filepath.Join(state, "configFile"))
 		if strings.TrimSpace(string(got)) != want || envMap(env)["AWS_CONFIG_FILE"] != want {
 			t.Errorf("AWS_CONFIG_FILE=%s: aws saw %q, child %q, want %q", isolated, got, envMap(env)["AWS_CONFIG_FILE"], want)
 		}
+	}
+}
+
+// Each CLI start costs most of a second; a successful run needs export-credentials and
+// the identity check and nothing else.
+func TestPlanExecStartsTheCLITwice(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	if _, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Stderr: &stderr}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(state, "calls"))
+	if n := strings.Count(string(b), "x"); n != 2 {
+		t.Fatalf("aws was started %d times, want 2", n)
 	}
 }

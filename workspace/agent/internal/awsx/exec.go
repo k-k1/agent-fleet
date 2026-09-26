@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 // ExecOptions is one `af-aws-exec` invocation.
@@ -73,13 +75,98 @@ func steerIsolatedConfig(env []string) []string {
 		if !ok {
 			continue
 		}
+		dir := realPath(filepath.Dir(expandHome(v)))
 		for _, d := range []string{"af-sessions", "af-ops"} {
-			if strings.HasPrefix(filepath.Clean(v), filepath.Join(aws, d)+string(filepath.Separator)) {
+			if dir == realPath(filepath.Join(aws, d)) {
 				env[i] = "AWS_CONFIG_FILE=" + ConfigPath()
 			}
 		}
 	}
 	return env
+}
+
+// realPath resolves symlinks where it can, so a ~/.aws linked onto other storage still
+// matches whichever spelling of the path a caller exported.
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
+}
+
+// expandHome expands a leading "~/" the way the AWS CLI does for its file variables.
+func expandHome(p string) string {
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		return filepath.Join(paths.HomeDir(), rest)
+	}
+	return p
+}
+
+func envValue(env []string, key string) string {
+	v := ""
+	for _, kv := range env {
+		if k, val, _ := strings.Cut(kv, "="); k == key {
+			v = val // last wins, as the child would see it
+		}
+	}
+	return v
+}
+
+// profileKeys returns the keys the CLI would merge for profile: its section of the
+// config file ([profile X], or [default]) and its section of the credentials file
+// ([X]), both located the way the CLI locates them from env. Read here rather than
+// through `aws configure get`: each of those is a CLI start (~0.8 s measured), and ten
+// of them put eight seconds in front of every af-aws-exec.
+func profileKeys(env []string, profile string) map[string]string {
+	cfg := envValue(env, "AWS_CONFIG_FILE")
+	if cfg == "" {
+		cfg = ConfigPath()
+	}
+	creds := envValue(env, "AWS_SHARED_CREDENTIALS_FILE")
+	if creds == "" {
+		creds = filepath.Join(filepath.Dir(ConfigPath()), "credentials")
+	}
+	keys := map[string]string{}
+	header := "profile " + profile
+	if profile == "default" {
+		header = "default"
+	}
+	readSection(expandHome(cfg), header, keys)
+	readSection(expandHome(creds), profile, keys)
+	return keys
+}
+
+// readSection adds the top-level key = value pairs of every section named header in
+// the INI file at path to keys (a repeated section merges, as in botocore). Indented
+// lines are sub-settings of the key above them (s3 = ...) and comments start with #
+// or ;. The config parser in botocore compares the section name after collapsing
+// whitespace, so this does too.
+func readSection(path, header string, keys map[string]string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	in := false
+	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+		if m := sectionRe.FindStringSubmatch(line); m != nil {
+			in = strings.Join(strings.Fields(m[1]), " ") == header
+			continue
+		}
+		if !in || line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		t := strings.TrimSpace(line)
+		if t == "" || t[0] == '#' || t[0] == ';' {
+			continue
+		}
+		k, v, ok := strings.Cut(t, "=")
+		if !ok {
+			continue
+		}
+		if k, v = strings.TrimSpace(k), strings.TrimSpace(v); v != "" {
+			keys[strings.ToLower(k)] = v
+		}
+	}
 }
 
 // checkSSOProfile admits only a profile the CLI will resolve through its SSO provider
@@ -89,20 +176,16 @@ func steerIsolatedConfig(env []string) []string {
 // aws-cli 2.36.46: sso_session without an account plus a credential_process in
 // ~/.aws/credentials handed the child the process's keys). The assume-role and
 // web-identity providers run before SSO, so a profile carrying their keys is refused
-// too. `aws configure get` reads both the config and the credentials file.
-func checkSSOProfile(aws awsRunner, profile string) error {
-	get := func(k string) string {
-		v, _ := aws.out("configure", "get", k, "--profile", profile)
-		return v
-	}
-	if get("sso_session") == "" && get("sso_start_url") == "" {
+// too.
+func checkSSOProfile(keys map[string]string, profile string) error {
+	if keys["sso_session"] == "" && keys["sso_start_url"] == "" {
 		return fmt.Errorf("profile %q is not an SSO profile in the AWS config (af-aws-exec only passes SSO credentials; see `af-aws-exec --list`)", profile)
 	}
-	if get("sso_account_id") == "" || get("sso_role_name") == "" {
+	if keys["sso_account_id"] == "" || keys["sso_role_name"] == "" {
 		return fmt.Errorf("profile %q has no SSO account and role; set both on the profile in Settings > SSM", profile)
 	}
 	for _, k := range []string{"role_arn", "source_profile", "credential_source", "credential_process", "web_identity_token_file", "aws_access_key_id"} {
-		if get(k) != "" {
+		if keys[k] != "" {
 			return fmt.Errorf("profile %q also sets %s, so the AWS CLI would not use its SSO login; af-aws-exec refuses it", profile, k)
 		}
 	}
@@ -160,7 +243,8 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	}
 	env := steerIsolatedConfig(baseEnv(environ))
 	aws := awsRunner{bin: awsBin, env: env}
-	if err := checkSSOProfile(aws, o.Profile); err != nil {
+	keys := profileKeys(env, o.Profile)
+	if err := checkSSOProfile(keys, o.Profile); err != nil {
 		return "", nil, nil, err
 	}
 
@@ -181,7 +265,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 
 	region := o.Region
 	if region == "" && !envHas(env, "AWS_REGION") && !envHas(env, "AWS_DEFAULT_REGION") {
-		region, _ = aws.out("configure", "get", "region", "--profile", o.Profile)
+		region = keys["region"]
 	}
 	if region != "" {
 		env = append(env, "AWS_REGION="+region, "AWS_DEFAULT_REGION="+region)
