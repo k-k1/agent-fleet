@@ -1219,3 +1219,24 @@ func TestLoginNeededMatchesOnlyTokenErrors(t *testing.T) {
 		}
 	}
 }
+
+// The refusal says why truthfully: role_arn and web identity take the profile away from
+// SSO in the CLI itself; the others only in other SDKs and tools.
+func TestCheckSSOProfileStatesTheRightReason(t *testing.T) {
+	base := map[string]string{"sso_session": "s", "sso_account_id": "1", "sso_role_name": "r"}
+	for key, want := range map[string]string{
+		"role_arn":                "would not use its SSO login",
+		"web_identity_token_file": "would not use its SSO login",
+		"credential_process":      "would still use its SSO",
+		"aws_access_key_id":       "would still use its SSO",
+		"source_profile":          "would still use its SSO",
+	} {
+		k := map[string]string{key: ""}
+		for kk, v := range base {
+			k[kk] = v
+		}
+		if err := checkSSOProfile(k, "p"); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", key, err, want)
+		}
+	}
+}

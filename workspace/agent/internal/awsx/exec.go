@@ -226,10 +226,21 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 	// Presence, not value: botocore's providers claim a profile by the key alone, so an
 	// empty `role_arn =` (set or inherited) still sends the CLI to assume-role
 	// (measured: "Partial credentials found in assume-role", exit 253).
-	for _, k := range []string{"role_arn", "source_profile", "credential_source", "credential_process", "web_identity_token_file",
-		"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
+	for _, k := range []string{"role_arn", "web_identity_token_file"} {
 		if _, set := keys[k]; set {
 			return fmt.Errorf("profile %q also sets %s, so the AWS CLI would not use its SSO login; af-aws-exec refuses it", profile, k)
+		}
+	}
+	// These the CLI resolves after SSO, but the Go v2 and JS v3 SDKs (and tools built on
+	// them) take static keys, credential_process and credential_source first: the one
+	// profile name would mean different identities to different tools.
+	for _, k := range []string{"source_profile", "credential_source", "credential_process",
+		"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
+		if _, set := keys[k]; set {
+			return fmt.Errorf("profile %q also sets %s (in ~/.aws/config or ~/.aws/credentials); the AWS CLI would still use its SSO "+
+				"login, but other SDKs and tools may use %s first, so the name would mean different identities to different tools. "+
+				"Remove it from this profile; a tool that syncs credentials into ~/.aws/credentials under this name (yawsso, for "+
+				"one) writes it back, so sync to another name", profile, k, k)
 		}
 	}
 	return nil
