@@ -157,6 +157,38 @@ describe("useRecommendedModels and the ui-prefs save", () => {
   });
 });
 
+// #1023 item 5: the applied opencode route was one module-scope value, refetched only when the
+// selected route changed — a tenant switch with the same "Go" setting kept showing the previous
+// tenant's answer (and so missed the new tenant's Zen-rescue warning).
+describe("useOpencodeAppliedRoute", () => {
+  it("answers per tenant, never showing the previous tenant's route", async () => {
+    const { settings, models } = await fresh();
+    apiMock.mockImplementation(async (p: string) => {
+      if (p === "api/env/ui-prefs") return {};
+      if (!p.startsWith("api/agents/opencode/models")) return null;
+      log.push(`GET ${tenant}`);
+      // t2's account has no Go contract, so the Agent's empty-menu rescue lists Zen instead.
+      return { models: [{ id: "m", label: "m" }], route: tenant === "t2" ? "zen" : "go" };
+    });
+    await act(async () => settings.setSetting("opencodeCatalog", "go"));
+    function Probe() {
+      return <span>{models.useOpencodeAppliedRoute() || "-"}</span>;
+    }
+    root = createRoot(host);
+    await act(async () => root!.render(<Probe />));
+    await flush();
+    expect(host.textContent).toBe("go");
+    // The settings card stays mounted across a switch; what re-renders it is the new owner's
+    // ui-prefs landing (App's resyncAccumulatedForIdentitySwitch), not a route change.
+    tenant = "t2";
+    await act(async () => void (await settings.resyncAccumulatedForIdentitySwitch()));
+    expect(host.textContent).not.toBe("go"); // t1's answer is not t2's
+    await flush();
+    expect(host.textContent).toBe("zen");
+    expect(log).toEqual(["GET t1", "GET t2"]);
+  });
+});
+
 describe("fillRecommendedModelMaps", () => {
   it("gives every assistant kind an entry, never touching an explicit one", async () => {
     const { settings } = await fresh();

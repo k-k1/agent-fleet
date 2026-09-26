@@ -89,7 +89,11 @@ function decorateLabel(kind: string, label: string, all: ModelDescriptor[]): str
 // the METERED ids instead, which is the one thing a billing setting must not do quietly. ""
 // while no list has been fetched, and after a failed fetch: nothing is known then, and a
 // warning drawn from nothing is worse than none.
-let opencodeRoute = "";
+//
+// Keyed by the question (questionKey) like the list itself: the same "Go" setting under another
+// tenant or user is another Agent's answer, so a route held per kind showed the previous
+// tenant's (no Zen-rescue warning where one was due) and a late answer could overwrite it.
+const opencodeRoutes = new Map<string, string>();
 
 // Why the last fetch for this kind came back with no model: either as the Agent named it
 // ("catalog_empty" | "route" | "hidden" — agent_models.go's emptyReason) or "unreachable",
@@ -223,7 +227,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
             efforts: Array.isArray(m.efforts) ? m.efforts.filter((x): x is string => typeof x === "string" && !!x) : [],
             defaultEffort: typeof m.defaultEffort === "string" ? m.defaultEffort : "",
           }));
-        if (kind === "opencode") opencodeRoute = typeof d?.route === "string" ? d.route : "";
+        if (kind === "opencode") opencodeRoutes.set(ident, typeof d?.route === "string" ? d.route : "");
         const opts = desc.map((m): ModelOption => [m.id, decorateLabel(kind, m.label, desc)]);
         if (!opts.length) {
           // The Agent answered, and the answer was "none" — a different fact from a fetch
@@ -240,7 +244,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
       })
       .catch((e) => {
         inflight.delete(flight);
-        if (kind === "opencode") opencodeRoute = "";
+        if (kind === "opencode") opencodeRoutes.delete(ident);
         // A fetch that did not land tells us nothing about why the menu is empty, so the
         // previous answer must not be left standing as an explanation of this one. The
         // "empty" throw above is not that case — it IS the answer, reason and all.
@@ -489,16 +493,19 @@ export async function resolveQuickLaunchModel(kind: string, resolved: string): P
 // request while a launch modal is open — opencode's entry is deliberately uncached but folds
 // through `inflight`.
 export function useOpencodeAppliedRoute(): string {
-  const selected = useSettings().opencodeCatalog;
-  const [route, setRoute] = useState(opencodeRoute);
+  useSettings(); // re-render on a settings change: the question below reads them
+  // The question, not the selected route alone: a tenant or user switch with the same setting
+  // is a different answer too.
+  const ident = questionKey(questionFor("opencode"));
+  const [held, setHeld] = useState<{ ident: string; route: string } | null>(null);
   useEffect(() => {
     let alive = true;
-    void fetchModels("opencode").then(() => alive && setRoute(opencodeRoute));
+    void fetchModels("opencode").then(() => alive && setHeld({ ident, route: opencodeRoutes.get(ident) ?? "" }));
     return () => {
       alive = false;
     };
-  }, [selected]); // a route change reshapes the list server-side, so the answer can change
-  return route;
+  }, [ident]);
+  return held?.ident === ident ? held.route : opencodeRoutes.get(ident) ?? "";
 }
 
 // useModelCatalogSettled answers whether this kind's catalog fetch has settled once. Static kinds
