@@ -8,6 +8,7 @@ import { ordClass } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useSessionUI } from "../sessions/ui.ts";
 import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { useUnreadSessions } from "../notifications/unread.ts";
@@ -291,9 +292,21 @@ function PopulatedPane({
   // of sessionMeta.alive — which a failed resume never produces — so the pane sat on
   // "resuming" (再開中…) forever with the button gone and no error. Now the spinner ends with the
   // request, and `attached` is only latched when the backend actually accepted.
+  //
+  // A stopped SSM session goes through the login modal instead (#1025), the same route as
+  // the rail menu's resume: it POSTs /start itself and shows the SSO device code when the
+  // token has expired. Its onReady focuses this pane, and the attach follows from the alive
+  // effect above once the session list reports the session running. That can be before ready
+  // (the login runs inside the session's pane); the agent reads the device URL with
+  // `capture-pane -J`, so the resize an attach brings does not break it.
   const startSession = useSessionsStore((s) => s.start);
+  const openSsmResume = useSessionUI((u) => u.openSsmResume);
   const [resuming, setResuming] = useState(false);
   const onResume = () => {
+    if (sessionMeta?.alive !== true && pane.session && sessionMeta?.kind === "ssm") {
+      openSsmResume(pane.session, false);
+      return;
+    }
     void (async () => {
       if (sessionMeta?.alive !== true && pane.session) {
         setResuming(true);
