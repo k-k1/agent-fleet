@@ -13,7 +13,9 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -21,14 +23,29 @@ import (
 )
 
 // callerTestEnv is ownerTestEnv plus an isolated HOME, so the opencode sid store the
-// resolution reads is this test's own.
+// resolution reads is this test's own, with the conditions under which a stamp is believed:
+// the caller plugin installed and af under a rotated name.
 func callerTestEnv(t *testing.T, alive map[string]bool) (cwd string, probed *[]string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	callerTrustEnv(t)
 	cwd, probed = ownerTestEnv(t, alive)
-	old := mcpCallerSID
-	t.Cleanup(func() { mcpCallerSID = old })
 	return cwd, probed
+}
+
+func callerTrustEnv(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plugin := filepath.Join(home, ".config", "opencode", "plugin")
+	if err := os.MkdirAll(plugin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugin, "agent-fleet-caller.js"), []byte("//"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldName, oldCaller := mcpAFServerName, mcpCallerSID
+	mcpAFServerName = func() string { return "af_0123abcd" }
+	t.Cleanup(func() { mcpAFServerName, mcpCallerSID = oldName, oldCaller })
 }
 
 // writeOpencodeSlot records an opencode session in dir and the opencode session id AF mapped
@@ -165,7 +182,7 @@ func TestTakeCallerSID(t *testing.T) {
 // End to end through tools/call: the stamp decides the owner, never reaches the Agent as an
 // argument, and does not outlive the call it arrived on.
 func TestMCPStdioCallUsesAndStripsCallerStamp(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	callerTrustEnv(t)
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	t.Chdir(t.TempDir())
 	cwd, err := os.Getwd()
@@ -214,7 +231,10 @@ func TestMCPStdioCallUsesAndStripsCallerStamp(t *testing.T) {
 func callerImageGenAgent(t *testing.T, alive map[string]bool) (generatedFor, statusFor *[]string) {
 	t.Helper()
 	var gen, stat []string
+	var mu sync.Mutex // the watcher test hits this from two goroutines at once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/status") && strings.HasPrefix(r.URL.Path, "/sessions/"):
 			a, ok := alive[path.Base(path.Dir(r.URL.Path))]
@@ -262,7 +282,7 @@ func callerListNames(t *testing.T) map[string]bool {
 // shared child serves two live Managed opencode sessions the owner is ambiguous at list time.
 // The tool is still offered, and each call lands under the session that stamped it.
 func TestGenerateImageOfferedToSharedOpencodeChildAndFiledByStamp(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	callerTrustEnv(t)
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	t.Chdir(t.TempDir())
 	cwd, err := os.Getwd()
@@ -334,7 +354,7 @@ func TestGenerateImageNotOfferedWhereTheStampCannotDecide(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			callerTrustEnv(t)
 			t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 			t.Chdir(t.TempDir())
 			cwd, err := os.Getwd()
@@ -350,4 +370,95 @@ func TestGenerateImageNotOfferedWhereTheStampCannotDecide(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A stamp is believed only where it can only have come from the plugin. With the plugin gone,
+// or af under the legacy bare name the plugin does not recognise, the model's own value arrives
+// untouched — naming a live neighbour's id must not make the call that neighbour's.
+func TestMCPOwningSessionIgnoresStampThePluginDidNotGuarantee(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		break_ func(t *testing.T)
+	}{
+		{"plugin removed", func(t *testing.T) {
+			if err := os.Remove(filepath.Join(os.Getenv("HOME"), ".config", "opencode", "plugin", "agent-fleet-caller.js")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"legacy af server name", func(t *testing.T) { mcpAFServerName = func() string { return "af" } }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd, _ := callerTestEnv(t, map[string]bool{"ocfirst": true, "ocsecond": true})
+			writeOpencodeSlot(t, "ocfirst", cwd, "ses_first")
+			writeOpencodeSlot(t, "ocsecond", cwd, "ses_second")
+			mcpCallerSID = "ses_second"
+			if got, err := mcpOwningSession(); err != nil || got != "ocsecond" {
+				t.Fatalf("control: trusted stamp resolved to %q, %v; want ocsecond", got, err)
+			}
+			tc.break_(t)
+			if got, err := mcpOwningSession(); err == nil {
+				t.Fatalf("untrusted stamp resolved to %q; want the cwd fallback's ambiguity refusal", got)
+			}
+			if got := mcpStampedFolderSessions(); got != nil {
+				t.Fatalf("list-time offer made for %v with an untrusted stamp", got)
+			}
+		})
+	}
+}
+
+// A live session AF has not mapped yet cannot be matched by any stamp, so a list-time offer
+// would be refused on every one of its calls.
+func TestGenerateImageNotOfferedWhileASessionIsUnmapped(t *testing.T) {
+	cwd, _ := callerTestEnv(t, map[string]bool{"ocfirst": true, "ocfresh": true})
+	writeOpencodeSlot(t, "ocfirst", cwd, "ses_first")
+	writeOpencodeSlot(t, "ocfresh", cwd, "")
+	if got := mcpStampedFolderSessions(); got != nil {
+		t.Fatalf("mcpStampedFolderSessions() = %v, want nil while ocfresh has no mapping", got)
+	}
+}
+
+// The list belongs to the whole shared child. Building it while a stamped call is in flight —
+// the watcher does exactly that beside a long generate_image — must neither read the stamp nor
+// resolve to the caller.
+func TestListOwnerNeverReadsTheCallStamp(t *testing.T) {
+	cwd, _ := callerTestEnv(t, map[string]bool{"ocfirst": true, "ocsecond": true})
+	writeOpencodeSlot(t, "ocfirst", cwd, "ses_first")
+	writeOpencodeSlot(t, "ocsecond", cwd, "ses_second")
+	mcpCallerSID = "ses_second"
+	if got, err := mcpListOwningSession(); err == nil {
+		t.Fatalf("list-time owner = %q; a list must not take the in-flight call's stamp", got)
+	}
+}
+
+// Run with -race: the watcher's list derivation beside stamped calls on the dispatch goroutine.
+// CI does not pass -race, so there the guard is TestListOwnerNeverReadsTheCallStamp; this one
+// is for a local `go test -race` (it reports the race in mcpCallerSession when the list path
+// is pointed back at the stamp).
+func TestToolListWatcherBesideStampedCallsIsRaceFree(t *testing.T) {
+	callerTrustEnv(t)
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	t.Chdir(t.TempDir())
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	withImageGen(t, true)
+	withMCPFlags(t, false, true, true)
+	mcpSourceSession = ""
+	writeOpencodeSlot(t, "ocfirst", cwd, "ses_first")
+	writeOpencodeSlot(t, "ocsecond", cwd, "ses_second")
+	callerImageGenAgent(t, map[string]bool{"ocfirst": true, "ocsecond": true})
+	t.Cleanup(forgetAdvertised)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 20; i++ {
+			_ = mcpStdioToolList()
+		}
+	}()
+	for i := 0; i < 20; i++ {
+		_ = callGenerateImage(t, map[string]any{"prompt": "a cat", mcpCallerSIDArg: "ses_first"})
+	}
+	<-done
 }

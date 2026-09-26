@@ -93,7 +93,7 @@ func mcpStudioAdvertise() (studioOffer, bool) {
 	if !selfReportOnly() {
 		return studioOffer{}, false
 	}
-	self, err := mcpOwningSession()
+	self, err := mcpListOwningSession()
 	if err != nil {
 		if studioBoundInThisFolder() {
 			return studioOffer{agentTrial: true}, true

@@ -38,6 +38,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -91,7 +92,10 @@ var mcpSourceSession string
 const mcpCallerSIDArg = "_af_caller_sid"
 
 // mcpCallerSID is mcpCallerSIDArg's value for the tools/call being handled, "" outside one.
-// One variable is enough because RunStdio dispatches serially.
+// One variable is enough because RunStdio dispatches serially — but only the dispatch goroutine
+// may read it: the tools/list watcher runs beside a call (a generate_image call holds the loop
+// for minutes), so everything that builds the list resolves its owner through
+// mcpListOwningSession, which never looks here.
 var mcpCallerSID string
 
 // mcpPeerMessagingEnabled adds ONLY the two session-to-session messaging tools to the
@@ -1577,7 +1581,7 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 	if !mcpImageGenEnabled {
 		return offer, false
 	}
-	self, err := mcpOwningSession()
+	self, err := mcpListOwningSession()
 	if err != nil {
 		// Without a session name the Agent cannot key the output directory or the usage row,
 		// so the tool has nowhere to put its result — unless the call will name it: tools/list
@@ -3480,7 +3484,15 @@ func outputCursorScope() string {
 // resolves the common shape (the caller is running; the others in that folder are stopped)
 // and is only ever allowed to REMOVE an ambiguity: unless it lands on exactly one session,
 // the original candidate set stands and the caller gets the ambiguity error.
-func mcpOwningSession() (string, error) {
+func mcpOwningSession() (string, error) { return mcpResolveOwner(true) }
+
+// mcpListOwningSession is mcpOwningSession for code that builds tools/list. A list carries no
+// caller stamp and is shared by every session on this child, and the watcher derives it on its
+// own goroutine while a call may be in flight; reading that call's stamp here would both race and
+// hand the whole child the list of whichever session happened to be calling.
+func mcpListOwningSession() (string, error) { return mcpResolveOwner(false) }
+
+func mcpResolveOwner(useStamp bool) (string, error) {
 	if session.ValidName(mcpSourceSession) {
 		return mcpSourceSession, nil
 	}
@@ -3488,8 +3500,10 @@ func mcpOwningSession() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("引き継ぎ元セッションを特定できません: 作業ディレクトリを取得できません")
 	}
-	if name, ok := mcpCallerSession(cwd); ok {
-		return name, nil
+	if useStamp {
+		if name, ok := mcpCallerSession(cwd); ok {
+			return name, nil
+		}
 	}
 	var found []string
 	for _, m := range session.ListMetas() {
@@ -3544,7 +3558,7 @@ func takeCallerSID(args json.RawMessage) (json.RawMessage, string) {
 // (no stamp, no match, a stopped match, a failed probe) reports ok=false and leaves the
 // decision to the cwd fallback, which is what the call would have got without the plugin.
 func mcpCallerSession(cwd string) (string, bool) {
-	if mcpCallerSID == "" {
+	if mcpCallerSID == "" || !mcpCallerStampTrusted() {
 		return "", false
 	}
 	var found []string
@@ -3569,31 +3583,49 @@ func mcpCallerSession(cwd string) (string, bool) {
 	return found[0], true
 }
 
+// mcpCallerStampTrusted reports whether a stamp on a call can only have come from the plugin.
+// The plugin overwrites the reserved argument on af's tools, but it recognises them by the
+// rotated `af_<8 hex>` server name: under the legacy bare `af` name, or with the plugin removed,
+// the model's own value would arrive untouched and naming another session's id would be enough
+// to act as it. The model shares this uid, so this is not a wall against a determined one — it
+// stops the reserved argument from being a door that a plain tool call opens.
+func mcpCallerStampTrusted() bool {
+	return mcpAFServerName() != mcpreg.BuiltinAF && opencode.CallerPluginInstalled()
+}
+
+// mcpAFServerName is a seam: mcpreg remembers the name for the life of the process, so a test
+// could not otherwise show the legacy-name case after any test that saw a rotated one.
+var mcpAFServerName = mcpreg.AFServerName
+
 // mcpStampedFolderSessions is who can be calling this MCP child when the answer only arrives
 // per call: the live sessions in this folder, returned only when every one of them is Managed
-// opencode — the kind whose calls carry the plugin's stamp (mcpCallerSession). A folder that
-// also holds another kind, or whose liveness could not be read, returns nil: a list-time offer
-// there would promise a call that cannot tell its caller apart.
+// opencode with a conversation AF has mapped — the calls whose stamp mcpCallerSession can match
+// — and the stamp can be trusted at all. A folder that also holds another kind, or whose
+// liveness could not be read, returns nil: a list-time offer there would promise a call that
+// cannot tell its caller apart.
 func mcpStampedFolderSessions() []string {
+	if !mcpCallerStampTrusted() {
+		return nil
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil
 	}
 	var names []string
-	kinds := map[string]string{}
+	metas := map[string]session.Meta{}
 	for _, m := range session.ListMetas() {
 		if m.Archived || !session.ValidName(m.Name) || (m.Dir != cwd && m.CWD() != cwd) {
 			continue
 		}
 		names = append(names, m.Name)
-		kinds[m.Name] = m.Kind
+		metas[m.Name] = m
 	}
 	alive, ok := mcpAliveSessions(names)
 	if !ok || len(alive) == 0 {
 		return nil
 	}
 	for _, n := range alive {
-		if kinds[n] != session.KindOpencode {
+		if m := metas[n]; m.Kind != session.KindOpencode || opencode.SlotSessionID(m) == "" {
 			return nil
 		}
 	}
