@@ -39,8 +39,10 @@ export function SessionModals() {
             setTimeout(() => void refreshSessions(), 1200);
           }}
           onCancel={() => {
-            close();
-            void refreshSessions();
+            // Refresh BEFORE closing: a pane showing this session holds its attach while the
+            // modal is open (Pane.tsx) and attaches on close if the list still says alive —
+            // which, right after /halt, it does until the next refresh.
+            void refreshSessions().finally(close);
           }}
         />
       )}

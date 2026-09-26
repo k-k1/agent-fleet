@@ -1,7 +1,8 @@
 // Regression guard for #1025: the pane's resume button on a stopped SSM session must go through
 // the SSO login modal (useSessionUI.openSsmResume), the same route as the rail menu's resume,
 // instead of POSTing /start directly and leaving the device code only inside the terminal.
-// A stopped shell session keeps resuming directly.
+// A stopped shell session keeps resuming directly, and while the modal is open the pane holds
+// its attach (attaching resizes the tmux window the modal scrapes the device URL from).
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -13,8 +14,8 @@ import type { Session } from "../../types/session.ts";
 
 // The real TerminalView opens a PTY; a stub that exposes the resume callback is enough.
 vi.mock("../terminal/TerminalView.tsx", () => ({
-  TerminalView: ({ onResume }: { onResume?: () => void }) => (
-    <button type="button" className="resume-stub" onClick={() => onResume?.()} />
+  TerminalView: ({ onResume, attached }: { onResume?: () => void; attached?: boolean }) => (
+    <button type="button" className="resume-stub" data-attached={String(!!attached)} onClick={() => onResume?.()} />
   ),
 }));
 vi.mock("../mirror/MirrorView.tsx", () => ({
@@ -29,6 +30,8 @@ const view: PaneView = { id: "v1", session: "s1", content: { kind: "terminal", c
 const cell: Cell = { id: "c1", selectedViewId: "v1", views: [view] };
 const noop = () => {};
 
+const realStart = useSessionsStore.getState().start;
+
 describe("pane resume button on a stopped session", () => {
   let root: Root | null = null;
   let host: HTMLElement | null = null;
@@ -39,25 +42,30 @@ describe("pane resume button on a stopped session", () => {
     root = null;
     host = null;
     useSessionUI.getState().close();
-    vi.restoreAllMocks();
+    useSessionsStore.setState({ sessions: [], start: realStart });
   });
 
-  const pressResume = async (meta: Session) => {
+  const render = async (meta: Session) => {
     useSessionsStore.setState({ sessions: [meta] });
-    const start = vi.spyOn(useSessionsStore.getState(), "start").mockResolvedValue(true);
-    // The spy replaces the method on the state object; put that object back so the hook reads it.
-    useSessionsStore.setState({ start: useSessionsStore.getState().start });
-    host = document.createElement("div");
-    document.body.appendChild(host);
     await act(async () => {
-      root = createRoot(host!);
-      root.render(
+      root!.render(
         <Pane cell={cell} pane={view} sessionMeta={meta} onActivate={noop} onClose={noop} onSwap={noop} onDropSplit={noop} />,
       );
     });
-    const btn = host.querySelector(".resume-stub") as HTMLButtonElement | null;
-    expect(btn).not.toBeNull();
-    await act(async () => btn!.click());
+  };
+  const stub = () => host!.querySelector(".resume-stub") as HTMLButtonElement;
+
+  const pressResume = async (meta: Session) => {
+    // Replace the store method outright (a spy on the state object would be copied into the
+    // next state by setState and outlive restoreAllMocks).
+    const start = vi.fn(async () => true);
+    useSessionsStore.setState({ start });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await render(meta);
+    expect(stub()).not.toBeNull();
+    await act(async () => stub().click());
     return start;
   };
 
@@ -65,11 +73,22 @@ describe("pane resume button on a stopped session", () => {
     const start = await pressResume({ name: "s1", kind: "ssm", alive: false, title: "ssm" });
     expect(useSessionUI.getState().ssmResume).toEqual({ name: "s1", force: false });
     expect(start).not.toHaveBeenCalled();
+    expect(stub().dataset.attached).toBe("false");
+  });
+
+  it("holds the attach while the modal is open and attaches once it closes", async () => {
+    await pressResume({ name: "s1", kind: "ssm", alive: false, title: "ssm" });
+    // The login runs inside the session's pane, so the list reports it alive mid-login.
+    await render({ name: "s1", kind: "ssm", alive: true, title: "ssm" });
+    expect(stub().dataset.attached).toBe("false");
+    await act(async () => useSessionUI.getState().close());
+    expect(stub().dataset.attached).toBe("true");
   });
 
   it("starts a shell session directly without the modal", async () => {
     const start = await pressResume({ name: "s1", kind: "shell", alive: false, title: "shell" });
     expect(start).toHaveBeenCalledWith("s1");
     expect(useSessionUI.getState().ssmResume).toBeNull();
+    expect(stub().dataset.attached).toBe("true");
   });
 });
