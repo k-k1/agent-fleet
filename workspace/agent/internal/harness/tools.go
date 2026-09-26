@@ -101,6 +101,12 @@ type Runtime struct {
 	// off. Set RepeatGateDisabled to turn the whole gate off instead.
 	RepeatWarnAfter  int
 	RepeatAbortAfter int
+	// RepeatCycleWarnAfter and RepeatCycleAbortAfter are the same gate's thresholds
+	// for a cycle — one sequence of 2 to maxRepeatCyclePeriod exact calls repeated
+	// back to back — counted in full repetitions. Each <= 0 uses the package default
+	// (defaultRepeatCycleWarnAfter / defaultRepeatCycleAbortAfter).
+	RepeatCycleWarnAfter  int
+	RepeatCycleAbortAfter int
 	// RepeatNameWarnAfter and RepeatNameAbortAfter configure the gate's same-name
 	// half: consecutive assistant turns that call only one tool name, whatever the
 	// arguments (repeat.go's nameStreakTracker). Warn runs the calls and prefixes a

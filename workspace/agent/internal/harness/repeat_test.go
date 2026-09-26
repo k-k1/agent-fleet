@@ -597,3 +597,85 @@ func TestRepeatNameGateLeavesExactGateInterceptionAlone(t *testing.T) {
 		}
 	}
 }
+
+func TestRepeatTrackerFindsCycles(t *testing.T) {
+	call := func(key string) ToolCall { return ToolCall{Name: "read", Arguments: fmt.Sprintf(`{"path":%q}`, key)} }
+	cases := []struct {
+		seq                  string
+		wantPeriod, wantReps int
+	}{
+		{"abab", 2, 2},
+		{"ababab", 2, 3},
+		{"abcabcabc", 3, 3},
+		{"aabbaabbaabb", 4, 3},
+		{"aaaa", 0, 0}, // the identical-call streak's job, not a cycle
+		{"abcd", 0, 0},
+		{"ababx", 0, 0}, // anything else resets
+	}
+	for _, c := range cases {
+		var tr repeatTracker
+		var obs repeatObservation
+		for _, k := range c.seq {
+			obs = tr.note(call(string(k)))
+		}
+		if obs.period != c.wantPeriod || obs.cycles != c.wantReps {
+			t.Errorf("%s: period=%d cycles=%d, want period=%d cycles=%d", c.seq, obs.period, obs.cycles, c.wantPeriod, c.wantReps)
+		}
+	}
+}
+
+// TestRepeatGateCatchesAnAlternatingCycle: read a, read b, ... with the package
+// defaults — the shape an identical-call streak never sees.
+func TestRepeatGateCatchesAnAlternatingCycle(t *testing.T) {
+	var executed atomic.Int32
+	reg := NewRegistry(countingTool("read", &executed))
+	var turns []Turn
+	for i := 1; i <= 20; i++ {
+		path := "a.go"
+		if i%2 == 0 {
+			path = "b.go"
+		}
+		turns = append(turns, Turn{ToolCalls: []ToolCall{{ID: fmt.Sprintf("%d", i), Name: "read", Arguments: fmt.Sprintf(`{"path":%q}`, path)}}})
+	}
+	client := &scriptedClient{turns: turns}
+	res, err := Run(context.Background(), client, reg, &Runtime{Cwd: t.TempDir()}, nil)
+	if !errors.Is(err, ErrRepeatedToolCall) {
+		t.Fatalf("err = %v, want ErrRepeatedToolCall", err)
+	}
+	wantAbortAt := 2 * defaultRepeatCycleAbortAfter
+	wantWarnFrom := 2 * defaultRepeatCycleWarnAfter
+	if client.i != wantAbortAt {
+		t.Fatalf("Send called %d times, want %d (the call completing cycle %d)", client.i, wantAbortAt, defaultRepeatCycleAbortAfter)
+	}
+	if got := executed.Load(); got != int32(wantWarnFrom-1) {
+		t.Fatalf("tool ran %d times, want %d (calls from the one completing cycle %d on are intercepted)", got, wantWarnFrom-1, defaultRepeatCycleWarnAfter)
+	}
+	if res.RepeatWarnings != wantAbortAt-wantWarnFrom {
+		t.Fatalf("RepeatWarnings = %d, want %d", res.RepeatWarnings, wantAbortAt-wantWarnFrom)
+	}
+	if !strings.Contains(err.Error(), "same sequence of 2 calls") {
+		t.Fatalf("err = %v, want it to name the 2-call cycle", err)
+	}
+}
+
+// TestRepeatGateIgnoresEditTestAlternation is the cycle negative control: edit then
+// test, over and over, is progress as long as each edit differs — even though the
+// test command itself is identical every time.
+func TestRepeatGateIgnoresEditTestAlternation(t *testing.T) {
+	var turns []Turn
+	for i := 1; i <= 15; i++ {
+		turns = append(turns,
+			Turn{ToolCalls: []ToolCall{{ID: fmt.Sprintf("e%d", i), Name: "edit", Arguments: fmt.Sprintf(`{"path":"a.go","old_string":"v%d","new_string":"v%d"}`, i, i+1)}}},
+			Turn{ToolCalls: []ToolCall{{ID: fmt.Sprintf("t%d", i), Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
+		)
+	}
+	turns = append(turns, Turn{Content: "done"})
+	reg := NewRegistry(Tool{Def: ToolDef{Name: "edit"}, Run: okTool}, Tool{Def: ToolDef{Name: "bash"}, Run: okTool})
+	res, err := Run(context.Background(), &scriptedClient{turns: turns}, reg, &Runtime{Cwd: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.RepeatWarnings != 0 || res.RepeatNameWarnings != 0 {
+		t.Fatalf("RepeatWarnings = %d, RepeatNameWarnings = %d, want 0 for both", res.RepeatWarnings, res.RepeatNameWarnings)
+	}
+}

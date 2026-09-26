@@ -225,10 +225,10 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 			// there — those really cannot continue — but this path is meant to
 			// be recoverable).
 			aborted := turn.ToolCalls[abortIdx]
-			streak := decisions[abortIdx].streak
+			abortDecision := decisions[abortIdx]
 			abortResults := make([]Message, len(turn.ToolCalls))
 			for i, call := range turn.ToolCalls {
-				abortResults[i] = toolResult(call, repeatAbortToolMessage(call, aborted, streak))
+				abortResults[i] = toolResult(call, repeatAbortToolMessage(call, aborted, abortDecision))
 			}
 			full = append(full, abortResults...)
 			for _, d := range decisions[:abortIdx] {
@@ -236,7 +236,7 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 					repeatWarnings++
 				}
 			}
-			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, repeatAbortErr(aborted, streak)
+			return Result{Messages: full, RepeatWarnings: repeatWarnings, RepeatNameWarnings: repeatNameWarnings, Compactions: compactions}, repeatAbortErr(aborted, abortDecision)
 		}
 		for _, d := range decisions {
 			if d.action == repeatWarn {
@@ -408,7 +408,7 @@ func runToolCalls(ctx context.Context, reg *Registry, rt *Runtime, calls []ToolC
 	var wg sync.WaitGroup
 	for i, call := range calls {
 		if decisions[i].action == repeatWarn {
-			out[i] = toolResult(call, repeatWarnMessage(call, decisions[i].streak))
+			out[i] = toolResult(call, repeatWarnMessage(call, decisions[i]))
 			continue
 		}
 		wg.Add(1)
