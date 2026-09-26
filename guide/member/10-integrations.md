@@ -281,9 +281,10 @@ Open the URL it prints and approve the code — only a code you started yourself
 SSM sessions of the same profile, so logging in once covers both.
 
 **Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
-role*). A command that relies on the default credential chain — no profile, a misspelled profile, or an expired
-login — can then quietly run as that role instead of as you. For deployments and anything else that must use your
-authorization, pass your credentials explicitly:
+role*). A command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool
+with no profile setting — then quietly runs as that role instead of as you, in another account. (A named profile
+that is misspelled or logged out fails with an error instead.) For deployments, lookups in your accounts and
+anything else that must use your authorization, pass your credentials explicitly:
 
 ```sh
 af-aws-exec --profile <name> -- ./gradlew deploy

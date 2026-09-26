@@ -139,10 +139,11 @@ directory belongs to someone else.
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.
 - **AWS: the default credential chain may not be the user.** The container can have a workload
-  role that a bare `aws` / SDK / build-tool call silently falls back to, in another account.
-  Anything that must act as the user goes through `af-aws-exec --profile <name> --account <id>
-  -- <command>`; never retry a refused run without it, and never add `--keep-aws-config` to get
-  past an error. Procedure, exit codes and who fixes what: `notes/aws.md`.
+  role that a bare `aws` / SDK / build-tool call silently falls back to, in another account. Any
+  AWS command about the user's accounts or resources — **reads included** — goes through
+  `af-aws-exec --profile <name> --account <id> -- <command>`; never retry a refused run without
+  it, and never add `--keep-aws-config` to get past an error. Procedure, exit codes and who fixes
+  what: `notes/aws.md`.
 
 ## Answering questions about this Workspace
 The user guide is at `/usr/local/share/agent-fleet/docs` (`member/` for people running agents,
@@ -161,7 +162,7 @@ All under `/usr/local/share/agent-fleet/notes/`:
 | touch a working copy that is not yours, integrate or fast-forward, install or share dependencies in a worktree | `/usr/local/share/agent-fleet/notes/worktrees.md` |
 | run a JVM or Node build/test, need a JDK or `JAVA_HOME`, or a build died with 137 | `/usr/local/share/agent-fleet/notes/build.md` |
 | screenshot or verify a UI, hand a Chromium page to the user, explain the browser pane | `/usr/local/share/agent-fleet/notes/browser.md` |
-| run an AWS command that must act as the user (deploy, write), or an AWS command failed with an SSO/token error, "could not be found" or `af-aws-exec` exit 3 | `/usr/local/share/agent-fleet/notes/aws.md` |
+| run any AWS command about the user's accounts or resources (reads included), or an AWS command failed with an SSO/token error, "could not be found" or `af-aws-exec` exit 3 | `/usr/local/share/agent-fleet/notes/aws.md` |
 | act on an `[agent-fleet…]` note or peer envelope, hand off, message a peer, generate an image, add MCP or change agent configuration | `/usr/local/share/agent-fleet/notes/agent-fleet.md` |
 
 Any guide path named here or in a topic file has to exist in the shipped guide, and any topic file

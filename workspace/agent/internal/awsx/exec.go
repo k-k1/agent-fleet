@@ -350,6 +350,9 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	aws := awsRunner{bin: awsBin, env: verifierEnv(env, cfg)}
 
 	creds, err := exportCreds(aws, ssoOnlyProfile)
+	if err != nil && !loginNeeded(err.Error()) {
+		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
+	}
 	if err != nil {
 		login := o.Login == "always" || (o.Login != "never" && o.Interactive)
 		if !login {
@@ -385,7 +388,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	case envHas(env, "AWS_DEFAULT_REGION"):
 		region = envValue(env, "AWS_DEFAULT_REGION")
 	default:
-		region = keys["region"]
+		region = scalar(keys["region"])
 	}
 	if region != "" {
 		env = setEnv(env, "AWS_REGION="+region, "AWS_DEFAULT_REGION="+region)
@@ -733,7 +736,28 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 		return ssoInfo{}, err
 	}
 	sso.StartURL, sso.Region, sso.Scopes = sess["sso_start_url"], sess["sso_region"], sess["sso_registration_scopes"]
+	// botocore refuses a profile whose own sso_start_url / sso_region (set there, or
+	// inherited from [DEFAULT], empty included) differs from its sso-session's
+	// (measured: export-credentials exits 253). Refuse it too rather than pick one.
+	for _, f := range [][3]string{{"sso_start_url", keys["sso_start_url"], sso.StartURL}, {"sso_region", keys["sso_region"], sso.Region}} {
+		if _, set := keys[f[0]]; set && f[1] != f[2] {
+			return ssoInfo{}, fmt.Errorf("profile sets %s = %q but its sso-session %q has %q; the AWS CLI refuses that, remove one", f[0], f[1], sso.Session, f[2])
+		}
+	}
 	return sso, nil
+}
+
+// loginNeeded tells an export failure that a (re)login fixes from any other one. Only
+// those get exit 3: an agent hands exit 3 to the user as "log in", and an AccessDenied
+// or a broken CLI is not fixed by that. The phrases are botocore's SSO token errors.
+func loginNeeded(msg string) bool {
+	for _, p := range []string{"Error loading SSO Token", "retrieving token from sso", "SSO session associated with this profile",
+		"Token has expired", "sso login"} {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // verifierEnv is env for the CLI calls that obtain and check credentials: the SSO-only

@@ -95,6 +95,7 @@ echo x >> "$S/calls"
 case "$1 $2" in
 "configure export-credentials")
   env | grep -E '^AWS_ACCESS_KEY_ID' >> "$S/leaked"
+  [ -f "$S/exportErr" ] && { cat "$S/exportErr" >&2; exit 255; }
   [ -f "$S/loggedIn" ] || { echo "Error loading SSO Token: Token for af-prod does not exist" >&2; exit 255; }
   echo '{"Version":1,"AccessKeyId":"ASIAFAKE","SecretAccessKey":"sekret","SessionToken":"tok","Expiration":"2030-01-01T00:00:00+00:00"}'
   exit 0 ;;
@@ -318,6 +319,12 @@ func TestProfileKeysAgreesWithTheRealAWSCLI(t *testing.T) {
 web_identity_token_file = /tmp/inherited
 sso_role_name = FromDefault
 
+[profile nest]
+region =
+  a = eu-west-1
+sso_account_id =
+  b = 111111111111
+
 [profile blank]
 sso_role_name =
 region =
@@ -413,7 +420,7 @@ credential_process = /bin/a
 	for _, k := range all {
 		asks = append(asks, ask{"prod", k})
 	}
-	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2", "c0", "ws", "dotted", "odd", "sig", "blank"} {
+	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2", "c0", "ws", "dotted", "odd", "sig", "blank", "nest"} {
 		for _, k := range few {
 			asks = append(asks, ask{p, k})
 		}
@@ -435,7 +442,12 @@ credential_process = /bin/a
 	}
 	wg.Wait()
 	for i, a := range asks {
-		if k, _ := profileKeys(env, a.profile); got[i] != k[a.key] {
+		k, _ := profileKeys(env, a.profile)
+		want := k[a.key]
+		if strings.HasPrefix(want, "\n") {
+			want = "" // a nested map; `configure get` prints nothing for it
+		}
+		if got[i] != want {
 			t.Errorf("%s.%s: aws CLI says %q, profileKeys says %q", a.profile, a.key, got[i], k[a.key])
 		}
 	}
@@ -1035,12 +1047,13 @@ func TestLoginHintQuotesTheProfileName(t *testing.T) {
 func TestINIStrictRefusesWhatTheCLIRefuses(t *testing.T) {
 	good := "[profile p]\nsso_session = s\nregion = us-east-1\n"
 	cases := map[string]string{
-		"byte-order mark":      "\ufeff" + good,
-		"invalid UTF-8":        "[profile x]\nregion = \xff\n" + good,
-		"bare line":            "[profile x]\njust words\n" + good,
-		"key before a section": "region = us-east-1\n" + good,
-		"empty header":         "[]\n" + good,
-		"empty key":            "[profile x]\n= v\n" + good,
+		"byte-order mark":       "\ufeff" + good,
+		"invalid UTF-8":         "[profile x]\nregion = \xff\n" + good,
+		"bare line":             "[profile x]\njust words\n" + good,
+		"key before a section":  "region = us-east-1\n" + good,
+		"empty header":          "[]\n" + good,
+		"empty key":             "[profile x]\n= v\n" + good,
+		"nested line without =": "[profile x]\nregion =\n  eu-west-1\n" + good,
 	}
 	aws, lookErr := exec.LookPath("aws")
 	for name, text := range cases {
@@ -1107,5 +1120,78 @@ func TestPlanExecEmptyValueOverridesDEFAULT(t *testing.T) {
 	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true})
 	if err == nil {
 		t.Fatal("the [DEFAULT] account was used for a profile that blanks it")
+	}
+}
+
+// A value that starts on the line after its key is a nested map to botocore, not a
+// region or an account: af-aws-exec must not use it as one.
+func TestPlanExecIgnoresANestedValue(t *testing.T) {
+	bin, state := fakeAWS(t, with(map[string]string{"raw:region =\n  a = eu-west-1": ""}, "region"))
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, env, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := envMap(env)["AWS_REGION"]; r != "" {
+		t.Fatalf("AWS_REGION = %q from a nested value", r)
+	}
+	bin, _ = fakeAWS(t, with(map[string]string{"raw:sso_account_id =\n  a = 123456789012": ""}, "sso_account_id"))
+	if _, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true}); err == nil {
+		t.Fatal("a nested sso_account_id was used as the account")
+	}
+}
+
+// Exit 3 means "log in"; only SSO token errors get it. An agent hands exit 3 to the user
+// as a login request, which does not fix an access error or a broken CLI.
+func TestPlanExecOnlyTokenErrorsAskForALogin(t *testing.T) {
+	for msg, login := range map[string]bool{
+		"Error loading SSO Token: Token for af-prod does not exist":                                       true,
+		"Error when retrieving token from sso: Token has expired and refresh failed":                      true,
+		"The SSO session associated with this profile has expired or is otherwise invalid.":               true,
+		"An error occurred (ForbiddenException) when calling the GetRoleCredentials operation: No access": false,
+		"aws: error: argument operation: Invalid choice":                                                  false,
+	} {
+		bin, state := fakeAWS(t, ssoProfile)
+		if err := os.WriteFile(filepath.Join(state, "exportErr"), []byte(msg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}})
+		if err == nil || errors.Is(err, ErrLoginRequired) != login || !strings.Contains(err.Error(), msg) {
+			t.Errorf("%q: err = %v (login required: %v, want %v)", msg, err, errors.Is(err, ErrLoginRequired), login)
+		}
+	}
+}
+
+// botocore refuses a profile whose own SSO start URL or region (inherited from [DEFAULT]
+// included) differs from its sso-session's; so does af-aws-exec.
+func TestPlanExecRefusesAProfileThatContradictsItsSSOSession(t *testing.T) {
+	for name, prefix := range map[string]string{
+		"[DEFAULT] sso_region":    "[DEFAULT]\nsso_region = eu-west-1\n\n",
+		"[DEFAULT] sso_start_url": "[DEFAULT]\nsso_start_url = https://other.awsapps.com/start\n\n",
+		"empty sso_region":        "[DEFAULT]\nsso_region =\n\n",
+	} {
+		bin, state := fakeAWS(t, ssoProfile)
+		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(os.Getenv("HOME"), ".aws", "config")
+		b, _ := os.ReadFile(path)
+		if err := os.WriteFile(path, append([]byte(prefix), b...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true})
+		if err == nil || !strings.Contains(err.Error(), "its sso-session") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	// The same value in both places is fine.
+	bin, state := fakeAWS(t, with(map[string]string{"sso_region": "ap-northeast-1"}))
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true}); err != nil {
+		t.Fatalf("matching values refused: %v", err)
 	}
 }

@@ -48,11 +48,10 @@ func scanINI(text string, fn func(iniLine)) {
 		// In characters, as Python counts: a no-break space is two bytes but one column.
 		indent := utf8.RuneCountInString(raw) - utf8.RuneCountInString(strings.TrimLeftFunc(raw, pySpace))
 		if optIndent >= 0 && indent > optIndent {
-			if last.value == "" {
-				last.value = t
-			} else {
-				last.value += "\n" + t
-			}
+			// Joined as configparser does, also after an empty first value: "region ="
+			// followed by an indented line is "\neu-west-1", which botocore reads as a
+			// nested map, not as the region (see scalar).
+			last.value += "\n" + t
 			last.cont = true
 			fn(last)
 			continue
@@ -82,6 +81,16 @@ func scanINI(text string, fn func(iniLine)) {
 // unicode.IsSpace plus the C0 separators U+001C..U+001F. Leaving those out let a
 // "\x1crole_arn = ..." line be a live key to the CLI and not to this reader.
 func pySpace(r rune) bool { return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f) }
+
+// scalar is the value as a plain setting: "" when botocore would read it as a nested
+// map (a value that starts on the line after its key) or it spans lines, neither of
+// which the CLI uses as a region or an SSO field.
+func scalar(v string) string {
+	if strings.Contains(v, "\n") {
+		return ""
+	}
+	return v
+}
 
 // pyLower is Python's str.lower, which configparser applies to key names: the full
 // Unicode lowercase mapping, not strings.ToLower's simple one. They differ where it can
@@ -180,9 +189,13 @@ func iniStrict(text string) error {
 	}
 	sections := map[string]bool{}
 	options := map[[2]string]bool{}
+	final := map[[2]string]string{} // each key's value after its continuation lines
 	var err error
 	seenHeader := false
 	scanINI(text, func(l iniLine) {
+		if !l.header && !l.bad {
+			final[[2]string{l.section, l.key}] = l.value
+		}
 		switch {
 		case err != nil || l.cont:
 		case l.bad:
@@ -203,7 +216,23 @@ func iniStrict(text string) error {
 			options[k] = true
 		}
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// botocore reads a value that starts on the next line as nested "k = v" lines and
+	// fails the whole file on a line without "=" (measured: "region =" followed by an
+	// indented "eu-west-1" is "Unable to parse config file").
+	for k, v := range final {
+		if !strings.HasPrefix(v, "\n") {
+			continue
+		}
+		for _, line := range strings.Split(v, "\n") {
+			if t := strings.TrimFunc(line, pySpace); t != "" && !strings.Contains(t, "=") {
+				return fmt.Errorf("%s in [%s] continues on the next line with %q, which is not a key = value setting", k[1], k[0], t)
+			}
+		}
+	}
+	return nil
 }
 
 // configPicker selects the config-file sections botocore reads as profile (or
