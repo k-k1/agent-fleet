@@ -77,7 +77,8 @@ case "$1 $2" in
   echo "$*" > "$S/loginArgs"; touch "$S/loggedIn"; exit 0 ;;
 "sts get-caller-identity")
   [ "$AWS_ACCESS_KEY_ID" = ASIAFAKE ] || exit 255
-  echo "arn:aws:sts::123456789012:assumed-role/Dev/me"; exit 0 ;;
+  if [ -f "$S/arn" ]; then cat "$S/arn"; else echo "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Dev_0123456789abcdef/me"; fi
+  exit 0 ;;
 esac
 exit 1
 `
@@ -147,7 +148,7 @@ func TestPlanExecPassesOnlySSOCredentialsToTheChild(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(state, "leaked")); len(b) != 0 {
 		t.Fatalf("the aws CLI calls saw workload credentials:\n%s", b)
 	}
-	if !strings.Contains(stderr.String(), "assumed-role/Dev/me") || strings.Contains(stderr.String(), "sekret") {
+	if !strings.Contains(stderr.String(), "assumed-role/AWSReservedSSO_Dev_0123456789abcdef/me") || strings.Contains(stderr.String(), "sekret") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -291,7 +292,10 @@ func TestProfileKeysAgreesWithTheRealAWSCLI(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	conf := `[default]
+	conf := `[DEFAULT]
+web_identity_token_file = /tmp/inherited
+
+[default]
 role_arn = arn:aws:iam::1:role/default
 credential_source = EcsContainer
 
@@ -342,6 +346,76 @@ credential_process = /bin/false
 	for i, k := range keys {
 		if got[i] != ours[k] {
 			t.Errorf("%s: aws CLI says %q, profileKeys says %q", k, got[i], ours[k])
+		}
+	}
+}
+
+func TestIsSSORoleARN(t *testing.T) {
+	ok := "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Dev_0123456789abcdef/me@example.com"
+	for arn, want := range map[string]bool{
+		ok: true,
+		"arn:aws-cn:sts::123456789012:assumed-role/AWSReservedSSO_Dev_0123456789abcdef/me": true,
+		"arn:aws:sts::999999999999:assumed-role/AWSReservedSSO_Dev_0123456789abcdef/me":    false, // other account
+		"arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Admin_0123456789abcdef/me":  false, // other permission set
+		"arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Dev_x_0123456789abcdef/me":  false, // Dev_x is another set
+		"arn:aws:sts::123456789012:assumed-role/Dev/me":                                    false, // plain assume-role
+		"arn:aws:sts::123456789012:assumed-role/ecsTaskRole/abc":                           false, // workload role
+		"arn:aws:iam::123456789012:user/me":                                                false,
+		"arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Dev_0123456789ABCDEF/me":    false,
+		"arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Dev_0123456789abcdef":       false,
+		"arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Dev_0123456789abcdef/me/x":  false,
+	} {
+		if got := IsSSORoleARN(arn, "123456789012", "Dev"); got != want {
+			t.Errorf("IsSSORoleARN(%s) = %v, want %v", arn, got, want)
+		}
+	}
+	if IsSSORoleARN(ok, "", "Dev") || IsSSORoleARN(ok, "123456789012", "") {
+		t.Error("an empty account or role matched")
+	}
+}
+
+// Whatever the static check admits, the credentials must turn out to be the profile's own
+// SSO role; anything else (another provider the parser did not foresee) is refused.
+func TestPlanExecRefusesCredentialsThatAreNotTheSSORole(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "arn"), []byte("arn:aws:sts::123456789012:assumed-role/deployer/botocore-session-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true})
+	if err == nil || !strings.Contains(err.Error(), "not its SSO role") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPlanExecRefusesTheDefaultProfile(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "default", Login: "never", Argv: []string{"true"}})
+	if err == nil || !strings.Contains(err.Error(), "default profile") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// configparser lends [DEFAULT] keys to every section of the same file, in the config
+// and the credentials file alike (verified with aws-cli 2.36.46: an SSO profile plus a
+// [DEFAULT] role_arn/source_profile resolves through assume-role).
+func TestPlanExecSeesKeysInheritedFromDEFAULT(t *testing.T) {
+	for name, file := range map[string]string{"config": "config", "credentials": "credentials"} {
+		bin, state := fakeAWS(t, ssoProfile)
+		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(os.Getenv("HOME"), ".aws", file)
+		b, _ := os.ReadFile(path)
+		b = append([]byte("[DEFAULT]\nrole_arn = arn:aws:iam::1:role/x\nsource_profile = src\n\n"), b...)
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Login: "never", Argv: []string{"true"}, Quiet: true})
+		if err == nil || !strings.Contains(err.Error(), "role_arn") {
+			t.Errorf("[DEFAULT] in %s: err = %v", name, err)
 		}
 	}
 }

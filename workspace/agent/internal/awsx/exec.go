@@ -147,22 +147,32 @@ func readSection(path, header string, keys map[string]string) {
 	if err != nil {
 		return
 	}
+	// configparser's [DEFAULT] (exactly that spelling) lends its keys to every section
+	// of the same file, so a role_arn there is live in each profile.
 	var sect map[string]string
+	defaults := map[string]string{}
 	defer func() {
+		if sect == nil {
+			return
+		}
+		for k, v := range defaults {
+			keys[k] = v
+		}
 		for k, v := range sect {
 			keys[k] = v
 		}
 	}()
-	in := false
+	in, inDefault := false, false
 	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
 			in = strings.Join(strings.Fields(m[1]), " ") == header
+			inDefault = m[1] == "DEFAULT"
 			if in {
 				sect = map[string]string{}
 			}
 			continue
 		}
-		if !in || line == "" || line[0] == ' ' || line[0] == '\t' {
+		if (!in && !inDefault) || line == "" || line[0] == ' ' || line[0] == '\t' {
 			continue
 		}
 		t := strings.TrimSpace(line)
@@ -177,7 +187,11 @@ func readSection(path, header string, keys map[string]string) {
 			continue
 		}
 		if k, v := strings.TrimSpace(t[:i]), strings.TrimSpace(t[i+1:]); v != "" {
-			sect[strings.ToLower(k)] = v
+			if inDefault {
+				defaults[strings.ToLower(k)] = v
+			} else {
+				sect[strings.ToLower(k)] = v
+			}
 		}
 	}
 }
@@ -190,6 +204,35 @@ func readSection(path, header string, keys map[string]string) {
 // ~/.aws/credentials handed the child the process's keys). The assume-role and
 // web-identity providers run before SSO, so a profile carrying their keys is refused
 // too.
+// IsSSORoleARN reports whether arn is a session of the IAM Identity Center role for
+// permission set role in account. Identity Center names that role
+// AWSReservedSSO_<permission set>_<16 hex> (permission set names are at most 32
+// characters, so the name is never truncated), and a session of it reads
+// arn:<partition>:sts::<account>:assumed-role/<role>/<session>.
+func IsSSORoleARN(arn, account, role string) bool {
+	if account == "" || role == "" {
+		return false
+	}
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) != 6 || parts[0] != "arn" || !strings.HasPrefix(parts[1], "aws") || parts[2] != "sts" || parts[4] != account {
+		return false
+	}
+	res := strings.Split(parts[5], "/")
+	if len(res) != 3 || res[0] != "assumed-role" || res[2] == "" {
+		return false
+	}
+	suffix, ok := strings.CutPrefix(res[1], "AWSReservedSSO_"+role+"_")
+	if !ok || len(suffix) != 16 {
+		return false
+	}
+	for _, c := range suffix {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+
 func checkSSOProfile(keys map[string]string, profile string) error {
 	if keys["sso_session"] == "" && keys["sso_start_url"] == "" {
 		return fmt.Errorf("profile %q is not an SSO profile in the AWS config (af-aws-exec only passes SSO credentials; see `af-aws-exec --list`)", profile)
@@ -254,6 +297,12 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if len(o.Argv) == 0 {
 		return "", nil, nil, errors.New("no command given after --")
 	}
+	// The CLI resolves "default" from [profile default] when that exists and from
+	// [default] otherwise, and every bare command already uses it; a Settings profile is
+	// never exported under that name, so there is nothing here to pick it for.
+	if o.Profile == "default" {
+		return "", nil, nil, errors.New("af-aws-exec does not run under the default profile; name the SSO profile from Settings (`af-aws-exec --list`)")
+	}
 	env := steerIsolatedConfig(baseEnv(environ))
 	aws := awsRunner{bin: awsBin, env: env}
 	keys := profileKeys(env, o.Profile)
@@ -291,17 +340,27 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		env = append(env, "AWS_CREDENTIAL_EXPIRATION="+creds.Expiration)
 	}
 
-	// Ask with the exported credentials themselves, so the principal printed is the one
-	// the child will actually use rather than a second resolution of the profile.
+	// Check who the exported credentials actually belong to. The static check above
+	// mirrors the CLI's config parsing, and every divergence found so far (":" delimiters,
+	// [DEFAULT] inheritance, [profile default]) was a way to admit a profile the CLI then
+	// resolved through another provider. This asks the credentials themselves, so it
+	// holds whatever the parser missed: they must be the profile's own SSO permission-set
+	// role in the profile's own account.
+	who := awsRunner{bin: awsBin, env: env}
+	arn, err := who.out("sts", "get-caller-identity", "--query", "Arn", "--output", "text")
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("could not confirm the identity of the credentials for profile %q: %v", o.Profile, err)
+	}
+	if !IsSSORoleARN(arn, keys["sso_account_id"], keys["sso_role_name"]) {
+		return "", nil, nil, fmt.Errorf("profile %q resolved to %s, not its SSO role %s in account %s; af-aws-exec refuses it",
+			o.Profile, arn, keys["sso_role_name"], keys["sso_account_id"])
+	}
 	if !o.Quiet && o.Stderr != nil {
-		who := awsRunner{bin: awsBin, env: env}
-		if arn, err := who.out("sts", "get-caller-identity", "--query", "Arn", "--output", "text"); err == nil {
-			exp := ""
-			if creds.Expiration != "" {
-				exp = " (expires " + creds.Expiration + ")"
-			}
-			fmt.Fprintf(o.Stderr, "af-aws-exec: running as %s%s\n", arn, exp)
+		exp := ""
+		if creds.Expiration != "" {
+			exp = " (expires " + creds.Expiration + ")"
 		}
+		fmt.Fprintf(o.Stderr, "af-aws-exec: running as %s%s\n", arn, exp)
 	}
 
 	prog, err := exec.LookPath(o.Argv[0])
