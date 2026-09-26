@@ -1316,3 +1316,41 @@ func TestPlanExecExplainsADEFAULTClash(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Messages never quote a value that could be a secret: a conflicting
+// aws_secret_access_key names the key and where it is, and a malformed line is given by
+// number, not content.
+func TestMessagesDoNotQuoteSecrets(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	path := filepath.Join(os.Getenv("HOME"), ".aws", "config")
+	b, _ := os.ReadFile(path)
+	b = append([]byte("[DEFAULT]\naws_secret_access_key = SECRET-FROM-DEFAULT\n\n"), b...)
+	b = append(b, "aws_secret_access_key = SECRET-IN-PROFILE\n"...)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}})
+	if err == nil || strings.Contains(err.Error(), "SECRET") || !strings.Contains(err.Error(), "aws_secret_access_key") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := iniStrict("[profile x]\nwJalrSECRETLINE\n"); err == nil || strings.Contains(err.Error(), "SECRET") || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("bad line: %v", err)
+	}
+	if err := iniStrict("[profile x]\ns3 =\n  wJalrSECRETNESTED\n"); err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("nested: %v", err)
+	}
+}
+
+// The credentials file is named by the path actually read.
+func TestOriginNamesTheCredentialsFileInUse(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	creds := filepath.Join(home, "other-creds")
+	if err := os.WriteFile(creds, []byte("[p]\nregion = x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, origin, err := profileKeysFrom([]string{"AWS_SHARED_CREDENTIALS_FILE=" + creds}, "p")
+	if err != nil || origin["region"] != creds {
+		t.Fatalf("origin = %v, err = %v", origin, err)
+	}
+}

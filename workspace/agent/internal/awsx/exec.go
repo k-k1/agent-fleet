@@ -183,7 +183,7 @@ func profileKeysFrom(env []string, profile string) (map[string]string, map[strin
 	if err := readINISectionFrom(expandHome(cfg), configPicker("profile", profile), keys, origin, ""); err != nil {
 		return nil, nil, err
 	}
-	if err := readINISectionFrom(expandHome(creds), credentialsPicker(profile), keys, origin, "~/.aws/credentials"); err != nil {
+	if err := readINISectionFrom(expandHome(creds), credentialsPicker(profile), keys, origin, expandHome(creds)); err != nil {
 		return nil, nil, err
 	}
 	return keys, origin, nil
@@ -803,7 +803,13 @@ func resolveSSO(env []string, keys, origin map[string]string) (ssoInfo, error) {
 	for _, k := range shared {
 		if keys[k] != sess[k] {
 			// Say where each side's value is written: a value the session inherits from
-			// [DEFAULT] is not in its own section, where the user would look first.
+			// [DEFAULT] is not in its own section, where the user would look first. Values
+			// only for settings known not to be secret: the shared key can be anything,
+			// aws_secret_access_key included.
+			if !nonSecretKey[k] {
+				return ssoInfo{}, fmt.Errorf("it sets %s (%s) to a different value than its sso-session %q does (%s); the AWS CLI "+
+					"refuses that, remove one", k, where(origin[k]), sso.Session, where(sessOrigin[k]))
+			}
 			return ssoInfo{}, fmt.Errorf("it sets %s = %q (%s) but its sso-session %q has %q (%s); the AWS CLI refuses that, "+
 				"remove one", k, keys[k], where(origin[k]), sso.Session, sess[k], where(sessOrigin[k]))
 		}
@@ -831,6 +837,12 @@ func resolveSSO(env []string, keys, origin map[string]string) (ssoInfo, error) {
 	sso.Account, sso.Role = keys["sso_account_id"], keys["sso_role_name"]
 	sso.StartURL, sso.Region, sso.Scopes = sess["sso_start_url"], sess["sso_region"], sess["sso_registration_scopes"]
 	return sso, nil
+}
+
+// nonSecretKey are the settings whose values a message may quote.
+var nonSecretKey = map[string]bool{
+	"sso_start_url": true, "sso_region": true, "sso_account_id": true, "sso_role_name": true, "sso_session": true,
+	"sso_registration_scopes": true, "region": true, "output": true,
 }
 
 func where(origin string) string {

@@ -318,6 +318,15 @@ func defaultClash(defaults map[string]string, p Profile) string {
 	if hasWebID && webID != "" {
 		return fmt.Sprintf("web_identity_token_file = %q would make the AWS CLI use web identity instead of this SSO profile", webID)
 	}
+	// An account or role Settings leaves blank is not written, so a [DEFAULT] one would
+	// fill it in: the Settings name would reach an account Settings never chose
+	// (measured: `aws configure get sso_account_id --profile <name>` shows the [DEFAULT]
+	// one, and export takes the SSO path with it).
+	for _, f := range [][2]string{{"sso_account_id", p.AccountID}, {"sso_role_name", p.RoleName}} {
+		if v, ok := defaults[f[0]]; ok && f[1] == "" {
+			return fmt.Sprintf("%s = %q would be used for this profile, which has none in Settings", f[0], v)
+		}
+	}
 	region := p.Region
 	if region == "" {
 		region = p.SSORegion

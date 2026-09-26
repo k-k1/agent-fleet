@@ -344,3 +344,20 @@ func TestApplyDoesNotExportAProfileADEFAULTKeyBreaks(t *testing.T) {
 		t.Fatalf("empty value: %q", res.DefaultClash["prod"])
 	}
 }
+
+// A Settings profile with no account or role would take the [DEFAULT] one: held back.
+func TestApplyHoldsBackAProfileDEFAULTWouldGiveAnAccount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("[DEFAULT]\nsso_account_id = 999999999999\nsso_role_name = Admin\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blank := prof("blank")
+	blank.AccountID, blank.RoleName = "", ""
+	res, err := Apply(path, []Profile{blank})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.DefaultClash["blank"], "which has none in Settings") {
+		t.Fatalf("result = %+v", res)
+	}
+}

@@ -25,6 +25,7 @@ type iniLine struct {
 	key, value string // key lower-cased as configparser's optionxform does
 	cont       bool   // re-reported after a continuation line, not a new key
 	bad        bool   // neither a header nor a key: configparser's ParsingError
+	line       int    // 1-based line number, for messages that must not quote content
 }
 
 // scanINI walks text the way configparser does: lines are stripped before matching; a
@@ -38,7 +39,8 @@ func scanINI(text string, fn func(iniLine)) {
 	optIndent := -1 // indent of the last key, -1 when there is none to continue
 	var last iniLine
 	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-	for _, raw := range strings.Split(text, "\n") {
+	for n, raw := range strings.Split(text, "\n") {
+		lineNo := n + 1
 		// Python strips and measures indent on Unicode whitespace: a line led by a
 		// no-break space (pasted from a web page) continues the value above it.
 		t := strings.TrimFunc(raw, pySpace)
@@ -52,7 +54,7 @@ func scanINI(text string, fn func(iniLine)) {
 			// followed by an indented line is "\neu-west-1", which botocore reads as a
 			// nested map, not as the region (see scalar).
 			last.value += "\n" + t
-			last.cont = true
+			last.cont, last.line = true, lineNo
 			fn(last)
 			continue
 		}
@@ -60,7 +62,7 @@ func scanINI(text string, fn func(iniLine)) {
 			if j := strings.LastIndexByte(t, ']'); j > 1 {
 				section = t[1:j]
 				optIndent = -1
-				fn(iniLine{header: true, section: section})
+				fn(iniLine{header: true, section: section, line: lineNo})
 				continue
 			}
 		}
@@ -68,11 +70,11 @@ func scanINI(text string, fn func(iniLine)) {
 		key := pyLower(strings.TrimFunc(t[:max(i, 0)], pySpace))
 		if i < 0 || key == "" {
 			// No delimiter, or nothing before it ("= v"): configparser's ParsingError.
-			fn(iniLine{section: section, bad: true, value: t})
+			fn(iniLine{section: section, bad: true, value: t, line: lineNo})
 			continue
 		}
 		optIndent = indent
-		last = iniLine{section: section, key: key, value: strings.TrimFunc(t[i+1:], pySpace)}
+		last = iniLine{section: section, key: key, value: strings.TrimFunc(t[i+1:], pySpace), line: lineNo}
 		fn(last)
 	}
 }
@@ -210,19 +212,25 @@ func iniStrict(text string) error {
 	}
 	sections := map[string]bool{}
 	options := map[[2]string]bool{}
-	final := map[[2]string]string{} // each key's value after its continuation lines
+	final := map[[2]string]string{}  // each key's value after its continuation lines
+	firstLine := map[[2]string]int{} // where each key starts
+	// Messages give line numbers, never line content: these files hold secret keys, and a
+	// malformed line is as likely to be one as anything else.
 	var err error
 	seenHeader := false
 	scanINI(text, func(l iniLine) {
 		if !l.header && !l.bad {
 			final[[2]string{l.section, l.key}] = l.value
+			if !l.cont {
+				firstLine[[2]string{l.section, l.key}] = l.line
+			}
 		}
 		switch {
 		case err != nil || l.cont:
 		case l.bad:
-			err = fmt.Errorf("the line %q is neither a [section] nor a key = value", l.value)
+			err = fmt.Errorf("line %d is neither a [section] nor a key = value", l.line)
 		case !l.header && !seenHeader:
-			err = fmt.Errorf("%s is set before any [section]", l.key)
+			err = fmt.Errorf("line %d sets a key before any [section]", l.line)
 		case l.header:
 			seenHeader = true
 			if sections[l.section] && l.section != "DEFAULT" {
@@ -249,7 +257,8 @@ func iniStrict(text string) error {
 		}
 		for _, line := range strings.Split(v, "\n") {
 			if t := strings.TrimFunc(line, pySpace); t != "" && !strings.Contains(t, "=") {
-				return fmt.Errorf("%s in [%s] continues on the next line with %q, which is not a key = value setting", k[1], k[0], t)
+				return fmt.Errorf("%s in [%s] (line %d) continues on the next line with a line that is not a key = value setting",
+					k[1], k[0], firstLine[k])
 			}
 		}
 	}
