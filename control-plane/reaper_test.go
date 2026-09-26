@@ -24,6 +24,9 @@ type reaperFenceRuntime struct {
 	busy         atomic.Bool
 	repoJobs     atomic.Int32
 	imageJobs    atomic.Int32
+	// jobOnDrain queues an image job the moment the reaper drains the outbox — the last step
+	// before Stop, and one that can take seconds.
+	jobOnDrain atomic.Bool
 }
 
 type operationFenceGateStore struct {
@@ -56,7 +59,14 @@ func (r *reaperFenceRuntime) AcquireOperationFence(ctx context.Context) (func(),
 func newReaperFenceRuntime(t *testing.T) *reaperFenceRuntime {
 	t.Helper()
 	r := &reaperFenceRuntime{fenceEntered: make(chan struct{}), fenceRelease: make(chan struct{})}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/notifications" {
+			if r.jobOnDrain.Load() {
+				r.imageJobs.Store(1)
+			}
+			http.NotFound(w, req)
+			return
+		}
 		state := "idle"
 		if r.busy.Load() {
 			state = "working"
@@ -690,6 +700,20 @@ func TestReaperSweepKeepsAWorkspaceWithAnImageJob(t *testing.T) {
 	rp.sweepWorkspace(ctx, ws, clocks, map[string]bool{})
 	if n := rt.stops.Load(); n != 1 {
 		t.Fatalf("Stop calls = %d once the queue is empty, want 1", n)
+	}
+}
+
+// Work that starts while the outbox drains must still cancel the stop: the drain is the one
+// wait left after the re-check, and nothing inside the workspace reports to the CP's
+// activity ledger on its own.
+func TestReaperStopRechecksAfterOutboxDrain(t *testing.T) {
+	_, ws, mgr := reaperLifecycleFixture(t)
+	rt := newReaperFenceRuntime(t)
+	close(rt.fenceRelease)
+	rt.jobOnDrain.Store(true)
+	(&reaper{mgr: mgr}).stopWorkspace(context.Background(), rt, ws, time.Second)
+	if n := rt.stops.Load(); n != 0 {
+		t.Fatalf("Stop calls = %d after an image job was queued during the drain, want 0", n)
 	}
 }
 

@@ -705,13 +705,8 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 		log.Printf("idle-stop: refresh sessions %s: %v", ws.ContainerName, err)
 		return
 	}
-	if env.jobsRunning() {
+	if env.holdsWorkspace() {
 		return
-	}
-	for _, s := range env.Sessions {
-		if holdsWorkspace(s) {
-			return
-		}
 	}
 	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
 	if rp.mgr.conns.watched(ws.ID, presenceGrace, time.Now()) ||
@@ -755,6 +750,12 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 	drainCtx, cancelDrain := context.WithTimeout(lease.Context(), 5*time.Second)
 	drainAgentOutbox(drainCtx, rp.mgr.store, rt, ws.MembershipID)
 	cancelDrain()
+	// The drain can take seconds, and work can start inside the workspace meanwhile without
+	// passing through the CP (an agent pressing Generate in a studio). Ask the Agent once more
+	// right before the irreversible Stop.
+	if env, err := rp.mgr.agentSessionsEnv(lease.Context(), rt); err != nil || env.holdsWorkspace() {
+		return
+	}
 	if err := rt.Stop(lease.Context()); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
 		return

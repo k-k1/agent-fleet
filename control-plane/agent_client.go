@@ -232,6 +232,20 @@ type agentSessionsEnvelope struct {
 // jobsRunning reports whether session-less work is in flight in the workspace.
 func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }
 
+// holdsWorkspace reports whether anything in this read keeps the workspace from being
+// idle-stopped: session-less work, or a session that holdsWorkspace says must not be stopped.
+func (e agentSessionsEnvelope) holdsWorkspace() bool {
+	if e.jobsRunning() {
+		return true
+	}
+	for _, s := range e.Sessions {
+		if holdsWorkspace(s) {
+			return true
+		}
+	}
+	return false
+}
+
 // agentSessionsEnv is agentSessions plus the workspace-level busy signals that ride
 // the same response, so the reaper needs no extra request per sweep.
 func (m *manager) agentSessionsEnv(ctx context.Context, rt runtime.Runtime) (agentSessionsEnvelope, error) {
