@@ -55,6 +55,8 @@ func runAWSExec(args []string) {
 		// The CP answered but ~/.aws/config could not be written: its answer still
 		// decides what is ambiguous or shadowed.
 		fmt.Fprintf(os.Stderr, "af-aws-exec: could not update ~/.aws/config (%v)\n", serr)
+	case serr != nil && res.FromCache:
+		fmt.Fprintf(os.Stderr, "af-aws-exec: could not refresh profiles from Settings (%v); using the last copy\n", serr)
 	case serr != nil:
 		if m, c, ok := awsx.CachedSettings(); ok {
 			res.Settings, res.Conflicts = m, c
@@ -74,16 +76,9 @@ func runAWSExec(args []string) {
 			fmt.Fprintln(os.Stderr, "af-aws-exec: this deployment does not export Settings profiles; ~/.aws/config is used as is")
 		}
 		names := res.Exported
-		if !fresh {
-			// Could not ask the CP: list what the file holds now rather than nothing,
-			// and mark the cached Settings names it does not hold as not exported so a
-			// shadowed name still shows both accounts.
+		if !fresh && !res.FromCache {
+			// Neither the CP nor a cached copy: list what the file holds now.
 			names = awsx.ExportedIn(awsx.ConfigPath())
-			if !res.Fetched && res.Settings != nil {
-				off := awsx.ClassifyOffline(res.Settings)
-				res.Shadowed, res.SessionShadowed, res.Incomplete, res.DefaultClash, res.Invalid =
-					off.Shadowed, off.SessionShadowed, off.Incomplete, off.DefaultClash, off.Invalid
-			}
 		}
 		for _, n := range names {
 			acct, role := awsx.DescribeProfile(n)
@@ -103,10 +98,13 @@ func runAWSExec(args []string) {
 			acct, role := awsx.DescribeProfile(n)
 			if sp, ok := res.Settings[n]; ok && (sp.AccountID != acct || sp.RoleName != role) {
 				fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used: account %s, role %s; "+
-					"Settings %q is account %s, role %s; rename one)\n", n, orNone(acct), orNone(role), sp.Label, sp.AccountID, sp.RoleName)
+					"Settings %q is account %s, role %s; rename one)\n", n, orNone(acct), orNone(role), sp.Label, orNone(sp.AccountID), orNone(sp.RoleName))
 				continue
 			}
 			fmt.Printf("%s\t(not exported: your own definition in ~/.aws is used: account %s, role %s)\n", n, orNone(acct), orNone(role))
+		}
+		for n, reason := range res.Invalid {
+			fmt.Printf("%s\t(not exported: a Settings value cannot be written to the AWS config: %s)\n", n, reason)
 		}
 		for n, reason := range res.Incomplete {
 			fmt.Printf("%s\t(not exported: %s)\n", n, reason)

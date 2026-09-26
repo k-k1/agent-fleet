@@ -111,7 +111,9 @@ func TestApplyRefusesInjectedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
-	if strings.Contains(string(b), "credential_process") || strings.Join(res.Invalid, ",") != "evil" {
+	// The reason names the field, never the value (which here is the injection itself).
+	if strings.Contains(string(b), "credential_process") || len(res.Invalid) != 1 || res.Invalid["evil"] == "" ||
+		strings.Contains(res.Invalid["evil"], "credential_process") {
 		t.Fatalf("injection not refused: %+v\n%s", res, b)
 	}
 }
@@ -292,19 +294,31 @@ func TestSyncMarksAFetchThatCouldNotBeWritten(t *testing.T) {
 	}
 }
 
-// Offline, each cached Settings profile the block lacks gets its real reason.
-func TestClassifyOfflineGivesEachReason(t *testing.T) {
+// With the CP unreachable the block is re-applied from the last list the CP gave, so a
+// [DEFAULT] line added since holds a profile back offline just as it would online.
+func TestSyncReappliesTheCachedListWhenTheCPIsDown(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
-	if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte("[profile mine]\nregion = x\n"), 0o600); err != nil {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"profiles":[{"name":"prod","label":"prod","startUrl":"https://example.awsapps.com/start","ssoRegion":"ap-northeast-1","accountId":"123456789012","roleName":"Dev","region":"us-west-2"}]}`))
+	}))
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_x.y")
+	if res, err := Sync(); err != nil || strings.Join(res.Exported, ",") != "prod" {
+		t.Fatalf("online: %+v %v", res, err)
+	}
+	srv.Close()
+	path := filepath.Join(home, ".aws", "config")
+	b, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, append([]byte("[DEFAULT]\nregion = eu-west-1\n\n"), b...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	half := prof("half")
-	half.RoleName = ""
-	res := ClassifyOffline(map[string]Profile{"mine": prof("mine"), "half": half, "ok": prof("ok")})
-	if strings.Join(res.Shadowed, ",") != "mine" || res.Incomplete["half"] == "" || strings.Join(res.Exported, ",") != "ok" {
-		t.Fatalf("result = %+v", res)
+	res, err := Sync()
+	if err == nil || !res.FromCache || len(res.Exported) != 0 || res.DefaultClash["prod"] == "" {
+		t.Fatalf("offline: %+v %v", res, err)
+	}
+	if got := ExportedIn(path); len(got) != 0 {
+		t.Fatalf("the block still holds %v offline", got)
 	}
 }
 

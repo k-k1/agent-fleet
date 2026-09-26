@@ -1372,9 +1372,21 @@ func TestPlanExecExplainsASessionShadowedName(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[sso-session af-held]\nsso_start_url = https://other.awsapps.com/start\nsso_region = us-east-1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	settings := map[string]Profile{"held": {Name: "held", Label: "held", AccountID: "1", RoleName: "r"}}
+	settings := map[string]Profile{"held": {Name: "held", Label: "held", AccountID: "1", RoleName: "r",
+		StartURL: "https://example.awsapps.com/start", SSORegion: "ap-northeast-1"}}
 	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "held", Settings: settings, Login: "never", Argv: []string{"true"}})
 	if err == nil || !strings.Contains(err.Error(), "[sso-session af-held]") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A Settings value the AWS config cannot hold says so, without quoting the value.
+func TestPlanExecExplainsAnUnwritableSettingsValue(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	settings := map[string]Profile{"odd": {Name: "odd", Label: "odd", AccountID: "123456789012", RoleName: "Dev:Ops",
+		StartURL: "https://example.awsapps.com/start", SSORegion: "ap-northeast-1"}}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "odd", Settings: settings, Login: "never", Argv: []string{"true"}})
+	if err == nil || !strings.Contains(err.Error(), "cannot be written to the AWS config") || strings.Contains(err.Error(), "Dev:Ops") {
 		t.Fatalf("err = %v", err)
 	}
 }

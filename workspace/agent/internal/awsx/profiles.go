@@ -58,11 +58,12 @@ type Profile struct {
 type SyncResult struct {
 	Exported []string // profile names now in the managed block
 	// Shadowed are profiles not exported because ~/.aws/config or ~/.aws/credentials
-	// already defines the same profile or sso-session name, or because the name is
-	// "default" (see render).
+	// already defines a profile of that name, or because the name is "default" (see
+	// render). A collision with the member's own sso-session is SessionShadowed.
 	Shadowed []string
-	// Invalid are profiles refused by the INI allowlist (sessionx.RenderSSMConfig).
-	Invalid []string
+	// Invalid are profiles whose Settings values the INI allowlist refuses
+	// (sessionx.RenderSSMConfig), by name, with the allowlist's reason (field names only).
+	Invalid map[string]string
 	// Incomplete are Settings profiles without both an account and a role, not exported,
 	// by name, with the reason (IncompleteReason).
 	Incomplete map[string]string
@@ -84,6 +85,9 @@ type SyncResult struct {
 	// Fetched is true when Settings and Conflicts came from the CP on this call, even if
 	// writing ~/.aws/config then failed: fresh answers must not be swapped for the cache.
 	Fetched bool
+	// FromCache is true when the CP could not be asked and the block was re-applied
+	// from the last list it gave.
+	FromCache bool
 }
 
 // Conflict is a profile name two or more Settings labels map to.
@@ -133,6 +137,24 @@ func Fetch() ([]Profile, []Conflict, error) {
 // previous block, so a CP blip never takes working profiles away.
 func Sync() (SyncResult, error) {
 	ps, conflicts, err := Fetch()
+	if err != nil && !errors.Is(err, ErrBridgeOff) {
+		// The CP cannot be asked: re-apply the last list it gave, so the block follows
+		// what the files say now (a [DEFAULT] line added since, a profile of the
+		// member's own) and --list, the block and af-aws-exec agree. The block never
+		// loses a profile the cache still has; it only applies today's rules to it.
+		if cached, cconf, ok := cachedList(); ok {
+			res, aerr := Apply(ConfigPath(), cached)
+			res.Settings = map[string]Profile{}
+			for _, p := range cached {
+				res.Settings[p.Name] = p
+			}
+			res.Conflicts, res.FromCache = cconf, true
+			if aerr != nil {
+				return res, fmt.Errorf("%v; applying the last copy also failed: %w", err, aerr)
+			}
+			return res, err
+		}
+	}
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -275,10 +297,9 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			res.SessionShadowed = append(res.SessionShadowed, p.Name)
 			continue
 		}
-		// Without an account and a role the CLI does not treat the profile as SSO at all
-		// and the default chain goes on to the container's role (measured with aws-cli
-		// 2.36.46 against a container-credentials endpoint: the rendered profile returned
-		// the workload credentials). Exporting the name would hand users that trap.
+		// Without both an account and a role the profile is not exported: with neither the
+		// CLI does not treat it as SSO and the default chain goes on to the container's
+		// role (measured), with one it fails. See IncompleteReason.
 		if why := IncompleteReason(p); why != "" {
 			if res.Incomplete == nil {
 				res.Incomplete = map[string]string{}
@@ -298,7 +319,10 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region,
 		})
 		if rerr != nil {
-			res.Invalid = append(res.Invalid, p.Name)
+			if res.Invalid == nil {
+				res.Invalid = map[string]string{}
+			}
+			res.Invalid[p.Name] = rerr.Error()
 			continue
 		}
 		body.WriteString("\n")
@@ -469,8 +493,8 @@ func syncAndLog(why string) {
 	for n, reason := range res.DefaultClash {
 		log.Printf("aws profiles sync (%s): %q not exported: [DEFAULT] %s (in ~/.aws/config)", why, n, reason)
 	}
-	if len(res.Invalid) > 0 {
-		log.Printf("aws profiles sync (%s): not exported, refused by validation: %s", why, strings.Join(res.Invalid, ", "))
+	for n, reason := range res.Invalid {
+		log.Printf("aws profiles sync (%s): %q not exported, a Settings value cannot be written to the AWS config (%s)", why, n, reason)
 	}
 	if res.Changed {
 		log.Printf("aws profiles sync (%s): %d profile(s) in ~/.aws/config", why, len(res.Exported))
@@ -527,6 +551,19 @@ func saveSettingsCache(ps []Profile, conflicts []Conflict) {
 	_ = writeAtomic(path, b, 0o600)
 }
 
+// cachedList is the last list the CP gave, as saved by a successful sync.
+func cachedList() ([]Profile, []Conflict, bool) {
+	b, err := os.ReadFile(settingsCachePath())
+	if err != nil {
+		return nil, nil, false
+	}
+	var c settingsCache
+	if json.Unmarshal(b, &c) != nil {
+		return nil, nil, false
+	}
+	return c.Profiles, c.Conflicts, true
+}
+
 // CachedSettings returns the list saved by the last successful sync, for when the CP
 // cannot be asked now; ok is false when there is none.
 func CachedSettings() (map[string]Profile, []Conflict, bool) {
@@ -549,25 +586,4 @@ func CachedSettings() (map[string]Profile, []Conflict, bool) {
 func DescribeProfile(name string) (account, role string) {
 	k, _ := profileKeys(nil, name)
 	return k["sso_account_id"], k["sso_role_name"]
-}
-
-// ClassifyOffline runs the export rules against the files as they are now for the cached
-// Settings profiles, without writing anything: for --list when the CP cannot be asked,
-// so each profile the block lacks is reported with its real reason (shadowed,
-// incomplete, a [DEFAULT] clash) rather than lumped together.
-func ClassifyOffline(settings map[string]Profile) SyncResult {
-	names := make([]string, 0, len(settings))
-	for n := range settings {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	ps := make([]Profile, 0, len(names))
-	for _, n := range names {
-		ps = append(ps, settings[n])
-	}
-	path := ConfigPath()
-	old, _ := os.ReadFile(path)
-	creds, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "credentials"))
-	_, res, _ := render(string(old), string(creds), ps)
-	return res
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 // ExecOptions is one `af-aws-exec` invocation.
@@ -351,6 +352,11 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		if why := IncompleteReason(sp); why != "" {
 			return "", nil, nil, fmt.Errorf("profile %q is not exported: %s (Settings > SSM)", o.Profile, why)
 		}
+		if _, rerr := sessionx.RenderSSMConfig(session.SSMMeta{Profile: sp.Name, StartURL: sp.StartURL, SSORegion: sp.SSORegion,
+			AccountID: sp.AccountID, RoleName: sp.RoleName, Region: sp.Region}); rerr != nil && len(keys) == 0 {
+			return "", nil, nil, fmt.Errorf("profile %q is not exported: a Settings value cannot be written to the AWS config (%v); "+
+				"fix it in Settings > SSM", o.Profile, rerr)
+		}
 	}
 	if reason, ok := o.DefaultClash[o.Profile]; ok && len(keys) == 0 {
 		return "", nil, nil, fmt.Errorf("profile %q is not exported: [DEFAULT] %s (in ~/.aws/config); remove that line from [DEFAULT]",
@@ -517,7 +523,7 @@ func checkIdentity(sso ssoInfo, o ExecOptions) error {
 			mine = fmt.Sprintf("account %s, role %s, portal %s (%s)", orNone(sso.Account), orNone(sso.Role), orNone(sso.StartURL), orNone(sso.Region))
 		}
 		return fmt.Errorf("profile %q in your own AWS config is %s, but the Settings profile %q is account %s, role %s, portal %s (%s); "+
-			"rename one of them so the name means one account", o.Profile, mine, sp.Label, sp.AccountID, sp.RoleName, sp.StartURL, sp.SSORegion)
+			"rename one of them so the name means one account", o.Profile, mine, sp.Label, orNone(sp.AccountID), orNone(sp.RoleName), orNone(sp.StartURL), orNone(sp.SSORegion))
 	}
 	// No account at all is checkSSOProfile's to report ("has no SSO account and role"):
 	// an --account message about "(none)" would send the user after the wrong fix.
