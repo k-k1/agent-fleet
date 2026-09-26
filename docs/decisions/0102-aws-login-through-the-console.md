@@ -87,6 +87,10 @@ When the login is needed, `--no-login` is not given and nobody is at a terminal,
   filing**, not only for one that has not expired. A run that joins an existing request replaces the
   recorded state with the one its own failing check saw, under the same lock, whenever the two differ. The
   record then always describes a cache known to be unusable.
+- "The state a check saw" is a snapshot read **before** the credentials are asked for, not after. If the
+  cache file differs from that snapshot once the check has failed, a login may have landed in between: the
+  run asks for the credentials once more instead of recording anything. Recording a later read would mark
+  a good login as unusable, and the request would then never resolve.
 - **Only the Agent expires requests.** It drops a request 15 minutes after the last `af-aws-exec` asked for
   it, but never while an attempt it runs for that request is live (decision 3). The CLI never removes a
   request file: it cannot see the Agent's attempts.
@@ -208,8 +212,10 @@ waits up to 90 seconds.
 - If the credentials come back, the command runs as if the login had been there from the start.
 - If they still fail as a login problem, the Agent may already have dropped the request as resolved (the
   cache changed; another user of the same sso-session refreshing it is enough). The run then files a
-  **new** request — a new random id, the cache state it just saw, a new notification — and keeps waiting
-  for the rest of its time. It never waits on a request that is gone.
+  **new** request — a new random id, the cache state it saw (the snapshot of decision 1), a new
+  notification — and keeps waiting for the rest of its time. It never waits on a request that is gone.
+  The re-file goes through the same cancel-hold check as a new run: with a live cancel marker for the
+  sso-session it files nothing and exits 3 as cancelled.
 - If a cancel marker for its request appears, it exits 3 at once (decision 3). A request file that
   disappears without one means resolved, and it asks for the credentials, with the rule above if they
   fail.
@@ -223,7 +229,8 @@ agent. The immediate line above tells an agent where the login is only when that
 When `AF_SESSION_NAME` is set, `af-aws-exec` reads that session's meta, which names its kind, and takes
 the wait for that kind: 90 seconds, or less than the kind's timeout when that timeout is shorter and the
 kind drops the output. When the kind is unknown (a Managed session may not have `AF_SESSION_NAME`), it
-takes the shortest wait of all kinds.
+takes the shortest wait of all kinds. A kind the meta names but the journal has no measurement for (a
+shell or ssm session running a script, a kind added later) counts as unknown.
 
 ### Decision 6 — the flags and the terminal case do not change
 
