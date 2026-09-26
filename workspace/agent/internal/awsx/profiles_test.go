@@ -4,9 +4,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 func prof(name string) Profile {
@@ -345,19 +349,59 @@ func TestApplyDoesNotExportAProfileADEFAULTKeyBreaks(t *testing.T) {
 	}
 }
 
-// A Settings profile with no account or role would take the [DEFAULT] one: held back.
-func TestApplyHoldsBackAProfileDEFAULTWouldGiveAnAccount(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config")
-	if err := os.WriteFile(path, []byte("[DEFAULT]\nsso_account_id = 999999999999\nsso_role_name = Admin\n"), 0o600); err != nil {
+// A Settings profile without both an account and a role is never exported: the CLI does
+// not treat it as SSO, so `aws --profile <name>` would fall through to the workspace's
+// own role, or to a [DEFAULT] account (both measured with aws-cli 2.36.46).
+func TestApplyDoesNotExportAProfileWithoutAccountAndRole(t *testing.T) {
+	for _, defaults := range []string{"", "[DEFAULT]\nsso_account_id = 999999999999\nsso_role_name = Admin\n"} {
+		path := filepath.Join(t.TempDir(), "config")
+		if err := os.WriteFile(path, []byte(defaults), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		noRole, blank := prof("norole"), prof("blank")
+		noRole.RoleName = ""
+		blank.AccountID, blank.RoleName = "", ""
+		res, err := Apply(path, []Profile{noRole, blank, prof("ok")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// ("ok" itself clashes with the [DEFAULT] account in the second case.)
+		if strings.Join(res.Incomplete, ",") != "norole,blank" || (defaults == "" && strings.Join(res.Exported, ",") != "ok") {
+			t.Fatalf("defaults %q: result = %+v", defaults, res)
+		}
+	}
+}
+
+// Why exporting it would be a trap, against the real CLI: the block RenderSSMConfig writes
+// for a profile without account and role resolves to whatever the container credentials
+// endpoint hands out. Skipped where no aws CLI is installed.
+func TestAProfileWithoutAccountAndRoleFallsToTheWorkloadRole(t *testing.T) {
+	aws, err := exec.LookPath("aws")
+	if err != nil {
+		t.Skip("aws CLI not installed")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"AccessKeyId":"ASIAWORKLOAD","SecretAccessKey":"s","Token":"t","Expiration":"2099-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+	home := t.TempDir()
+	path := filepath.Join(home, ".aws", "config")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	blank := prof("blank")
+	blank := prof("noacct")
 	blank.AccountID, blank.RoleName = "", ""
-	res, err := Apply(path, []Profile{blank})
+	ini, err := sessionx.RenderSSMConfig(session.SSMMeta{Profile: blank.Name, StartURL: blank.StartURL, SSORegion: blank.SSORegion, Region: blank.Region})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.DefaultClash["blank"], "which has none in Settings") {
-		t.Fatalf("result = %+v", res)
+	if err := os.WriteFile(path, []byte(ini), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(aws, "configure", "export-credentials", "--profile", "noacct", "--format", "process")
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "AWS_CONTAINER_CREDENTIALS_FULL_URI=" + srv.URL, "AWS_EC2_METADATA_DISABLED=true"}
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), "ASIAWORKLOAD") {
+		t.Fatalf("expected the workload credentials (the hazard this test documents), got:\n%s", out)
 	}
 }

@@ -63,6 +63,10 @@ type SyncResult struct {
 	Shadowed []string
 	// Invalid are profiles refused by the INI allowlist (sessionx.RenderSSMConfig).
 	Invalid []string
+	// Incomplete are Settings profiles without an account and a role, not exported: the
+	// CLI's SSO provider does not claim such a profile, so `aws --profile <name>` would
+	// fall through to the workspace's own (workload) role.
+	Incomplete []string
 	// DefaultClash are profiles not exported because a [DEFAULT] line in ~/.aws/config
 	// would make the CLI refuse them or run them as another role, by name, with that
 	// line and what it does (a ready-to-print reason).
@@ -264,6 +268,14 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			res.Shadowed = append(res.Shadowed, p.Name)
 			continue
 		}
+		// Without an account and a role the CLI does not treat the profile as SSO at all
+		// and the default chain goes on to the container's role (measured with aws-cli
+		// 2.36.46 against a container-credentials endpoint: the rendered profile returned
+		// the workload credentials). Exporting the name would hand users that trap.
+		if p.AccountID == "" || p.RoleName == "" {
+			res.Incomplete = append(res.Incomplete, p.Name)
+			continue
+		}
 		if why := defaultClash(defaults, p); why != "" {
 			if res.DefaultClash == nil {
 				res.DefaultClash = map[string]string{}
@@ -317,15 +329,6 @@ func defaultClash(defaults map[string]string, p Profile) string {
 	}
 	if hasWebID && webID != "" {
 		return fmt.Sprintf("web_identity_token_file = %q would make the AWS CLI use web identity instead of this SSO profile", webID)
-	}
-	// An account or role Settings leaves blank is not written, so a [DEFAULT] one would
-	// fill it in: the Settings name would reach an account Settings never chose
-	// (measured: `aws configure get sso_account_id --profile <name>` shows the [DEFAULT]
-	// one, and export takes the SSO path with it).
-	for _, f := range [][2]string{{"sso_account_id", p.AccountID}, {"sso_role_name", p.RoleName}} {
-		if v, ok := defaults[f[0]]; ok && f[1] == "" {
-			return fmt.Sprintf("%s = %q would be used for this profile, which has none in Settings", f[0], v)
-		}
 	}
 	region := p.Region
 	if region == "" {
@@ -428,6 +431,9 @@ func syncAndLog(why string) {
 	}
 	for _, c := range res.Conflicts {
 		log.Printf("aws profiles sync (%s): not exported, Settings labels %s all map to %q", why, strings.Join(c.Labels, " / "), c.Name)
+	}
+	if len(res.Incomplete) > 0 {
+		log.Printf("aws profiles sync (%s): not exported, no account and role in Settings: %s", why, strings.Join(res.Incomplete, ", "))
 	}
 	for n, reason := range res.DefaultClash {
 		log.Printf("aws profiles sync (%s): %q not exported: [DEFAULT] %s (in ~/.aws/config)", why, n, reason)

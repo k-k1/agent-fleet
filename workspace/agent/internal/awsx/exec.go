@@ -347,6 +347,10 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if err := checkAmbiguous(o); err != nil {
 		return "", nil, nil, err
 	}
+	if sp, ok := o.Settings[o.Profile]; ok && (sp.AccountID == "" || sp.RoleName == "") {
+		return "", nil, nil, fmt.Errorf("profile %q has no account and role in Settings, so it is not exported (`aws --profile` "+
+			"would fall back to the workspace's own role); set both on the profile in Settings > SSM", o.Profile)
+	}
 	if reason, ok := o.DefaultClash[o.Profile]; ok && len(keys) == 0 {
 		return "", nil, nil, fmt.Errorf("profile %q is not exported: [DEFAULT] %s (in ~/.aws/config); remove that line from [DEFAULT]",
 			o.Profile, reason)

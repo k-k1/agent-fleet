@@ -264,6 +264,8 @@ AWS SDKs and build tools (Gradle, Maven, CDK, Terraform, …) can select them by
 - The profiles sit in a **managed block** at the end of the file, between two `# agent-fleet` marker lines. Edit
   them in Settings, not inside the block — the block is rewritten, and so is anything `aws configure set` writes
   into it. Everything outside it is yours and is kept.
+  Only profiles with both an **account and a role** are exported: without them `aws --profile <name>` would not
+  use SSO at all and would quietly run as the workspace's own role.
   If a `[DEFAULT]` line in `~/.aws/config` would break a profile (a different region, a `role_arn` that would make
   every profile assume that role, …), that profile is not exported, and `af-aws-exec --list` names the line.
   If you already defined a profile with the same name yourself (in `~/.aws/config` or `~/.aws/credentials`),

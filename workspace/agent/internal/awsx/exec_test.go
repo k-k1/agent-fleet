@@ -1354,3 +1354,13 @@ func TestOriginNamesTheCredentialsFileInUse(t *testing.T) {
 		t.Fatalf("origin = %v, err = %v", origin, err)
 	}
 }
+
+// Running a Settings profile without account and role says what to fix in Settings.
+func TestPlanExecExplainsAnIncompleteSettingsProfile(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	incomplete := map[string]Profile{"half": {Name: "half", Label: "half", AccountID: "123456789012"}}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "half", Settings: incomplete, Login: "never", Argv: []string{"true"}})
+	if err == nil || !strings.Contains(err.Error(), "no account and role in Settings") {
+		t.Fatalf("err = %v", err)
+	}
+}
