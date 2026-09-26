@@ -34,6 +34,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // The live catalogs the rules read. Variables so this package's tests can answer for them: the
@@ -131,9 +132,17 @@ var (
 	claudeShortTiers = []string{"haiku", "sonnet", "opus", "fable"}
 )
 
+// With every alias hidden, the fail-safe keeps the list in force only while a registered model
+// is left (sessionx.EffectiveHidden), so that model is the answer — never a hidden alias (#972
+// review, round 6). tiers[0] remains only for a state no reading of the setting produces.
 func claudeFirstVisible(v visibility, tiers []string) string {
 	for _, t := range tiers {
 		if m := v.model(session.KindClaude, t); m != "" {
+			return m
+		}
+	}
+	for _, id := range uiprefs.ClaudeCustomModels() {
+		if m := v.model(session.KindClaude, id); m != "" {
 			return m
 		}
 	}

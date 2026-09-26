@@ -1839,16 +1839,7 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   for (const k of Object.keys(DEFAULTS)) {
     const key = k as keyof Settings;
     if (isDeviceLocalSetting(key)) continue; // device-local keys are never restored
-    if (!(k in srv)) {
-      // An accumulated key the server has never held, while this device holds a value of its
-      // own (not the defaults — after an owner switch local is back at DEFAULTS, so this never
-      // carries one owner's data to another): the server's absence is "never written", not a
-      // choice, and the Agent would act on its own reading of it — for hiddenModels, the
-      // Console's defaults — while this screen shows the local value (#972 review, round 5).
-      if (isAccumulatedSetting(key) && !sameValue((merged as any)[k], (DEFAULTS as any)[k])) restore = true;
-      continue;
-    }
-    if (sameValue(srv[k], (merged as any)[k])) continue;
+    if (!(k in srv) || sameValue(srv[k], (merged as any)[k])) continue;
     if (isAccumulatedSetting(key) && isEmptyPref(srv[k]) && !isEmptyPref((merged as any)[k])) {
       restore = true;
       continue;

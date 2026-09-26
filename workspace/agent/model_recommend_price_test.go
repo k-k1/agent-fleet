@@ -106,16 +106,29 @@ func TestAgentModelsCarriesRecommended(t *testing.T) {
 		t.Fatalf("short = %q with haiku hidden, want the next tier sonnet", got.Short)
 	}
 	// The request's list wins over the saved one, for the list and the recommendation.
-	got, ids := read(`?hidden=` + url.QueryEscape(`["sonnet"," ",7]`))
+	got, ids := read(`?hidden=` + url.QueryEscape(`["sonnet"," "]`))
 	if got.Short != "haiku" || got.Chat != "opus" {
 		t.Fatalf("with ?hidden=[sonnet] = %+v, want short haiku, chat opus", got)
 	}
 	if slices.Contains(ids, "sonnet") || !slices.Contains(ids, "haiku") {
 		t.Fatalf("with ?hidden=[sonnet] the list = %v", ids)
 	}
-	// Malformed: the saved setting applies.
-	if got, _ := read(`?hidden=not-json`); got.Short != "sonnet" {
-		t.Fatalf("malformed ?hidden= = %+v, want the saved setting's answer", got)
+	// Malformed — not JSON, not an array (null included), a non-string element: the saved
+	// setting applies, never "nothing hidden" (#972 review, round 6).
+	for _, bad := range []string{"not-json", "null", `{"a":1}`, `["sonnet",7]`} {
+		if got, ids := read(`?hidden=` + url.QueryEscape(bad)); got.Short != "sonnet" || slices.Contains(ids, "haiku") {
+			t.Fatalf("?hidden=%s = %+v / %v, want the saved setting's answer (haiku hidden)", bad, got, ids)
+		}
+	}
+}
+
+// #972 review round 6: with every alias hidden and a registered model left, the list stays in
+// force — and the recommendation is that model, never a hidden alias.
+func TestClaudeRecommendationFallsToRegisteredModel(t *testing.T) {
+	writeUIPrefs(t, `{"claudeCustomModels":["claude-mythos-1"],"hiddenModels":{"claude":["fable","opus","sonnet","haiku"]}}`)
+	got := chatx.RecommendedModels("claude")
+	if got != (chatx.RecommendedSet{Chat: "claude-mythos-1", Prose: "claude-mythos-1", Short: "claude-mythos-1"}) {
+		t.Fatalf("recommended = %+v, want the registered model for every tier", got)
 	}
 }
 

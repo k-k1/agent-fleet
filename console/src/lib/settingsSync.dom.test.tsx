@@ -104,29 +104,6 @@ describe("ui-prefs: an empty value never flattens accumulated data", () => {
     expect(body.quickRepliesPinned).toEqual(["OK"]);
   });
 
-  // #972 review round 5: a key the server has NEVER held is "never written", not a choice. With a
-  // value of this device's own, the Agent would act on its own reading of the absence (for
-  // hiddenModels, the Console's defaults) while this screen showed the local value — push it.
-  it("pushes back an accumulated key the server has never held, when this device has its own", async () => {
-    const s = await freshSettings({ hiddenModels: { claude: ["fable", "haiku"] } });
-    apiMock.mockResolvedValueOnce({ iconSet: "vscode" }); // no hiddenModels key at all
-
-    expect(await s.hydrateUIPrefs()).toBe(true);
-    expect(s.getSettings().hiddenModels).toEqual({ claude: ["fable", "haiku"] });
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(apiJSONMock).toHaveBeenCalledTimes(1);
-    expect((apiJSONMock.mock.calls[0][2] as Record<string, unknown>).hiddenModels).toEqual({ claude: ["fable", "haiku"] });
-  });
-
-  it("does not push the defaults for a key the server has never held", async () => {
-    const s = await freshSettings({});
-    apiMock.mockResolvedValueOnce({ iconSet: "vscode" });
-
-    expect(await s.hydrateUIPrefs()).toBe(true);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(apiJSONMock).not.toHaveBeenCalled(); // the defaults are what the Agent reads anyway
-  });
-
   it("still adopts a populated server copy of the same keys", async () => {
     const s = await freshSettings({ quickReplies: { ok: { text: "OK", count: 1, at: 1 } } });
     apiMock.mockResolvedValueOnce({ quickReplies: learned });

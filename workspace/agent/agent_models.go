@@ -236,19 +236,25 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 }
 
 // requestHiddenModels reads ?hidden= — the Console's hiddenModels[kind] as a JSON array of
-// strings. ok=false when absent or malformed, and the saved ui-prefs apply instead.
+// strings. ok=false when absent or malformed — not an array (`null` included: json.Unmarshal
+// accepts it into a nil slice), or an element that is not a string — and the saved ui-prefs
+// apply instead (#972 review, round 6). Blank strings are skipped, as the Console skips them.
 func requestHiddenModels(r *http.Request) (raw []string, ok bool) {
 	q := r.URL.Query()
 	if !q.Has("hidden") {
 		return nil, false
 	}
 	var vals []any
-	if json.Unmarshal([]byte(q.Get("hidden")), &vals) != nil {
+	if json.Unmarshal([]byte(q.Get("hidden")), &vals) != nil || vals == nil {
 		return nil, false
 	}
 	raw = []string{}
 	for _, v := range vals {
-		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+		s, isString := v.(string)
+		if !isString {
+			return nil, false
+		}
+		if strings.TrimSpace(s) != "" {
 			raw = append(raw, s)
 		}
 	}
