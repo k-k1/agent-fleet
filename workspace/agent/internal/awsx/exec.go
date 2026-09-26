@@ -136,20 +136,30 @@ func profileKeys(env []string, profile string) map[string]string {
 	return keys
 }
 
-// readSection adds the top-level key = value pairs of every section named header in
-// the INI file at path to keys (a repeated section merges, as in botocore). Indented
-// lines are sub-settings of the key above them (s3 = ...) and comments start with #
-// or ;. The config parser in botocore compares the section name after collapsing
-// whitespace, so this does too.
+// readSection adds the top-level key/value pairs of the section named header in the
+// INI file at path to keys. Headers are compared after collapsing whitespace, and when
+// several headers name the same profile the last one replaces the others rather than
+// merging with them (both as the AWS CLI does; checked against the real CLI in
+// TestProfileKeysAgreesWithTheRealAWSCLI). Indented lines are sub-settings of the key
+// above them (s3 = ...) and comments start with # or ;.
 func readSection(path, header string, keys map[string]string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
+	var sect map[string]string
+	defer func() {
+		for k, v := range sect {
+			keys[k] = v
+		}
+	}()
 	in := false
 	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
 			in = strings.Join(strings.Fields(m[1]), " ") == header
+			if in {
+				sect = map[string]string{}
+			}
 			continue
 		}
 		if !in || line == "" || line[0] == ' ' || line[0] == '\t' {
@@ -159,12 +169,15 @@ func readSection(path, header string, keys map[string]string) {
 		if t == "" || t[0] == '#' || t[0] == ';' {
 			continue
 		}
-		k, v, ok := strings.Cut(t, "=")
-		if !ok {
+		// configparser (which the AWS CLI reads these files with) accepts ":" as well as
+		// "=" and splits at whichever comes first; `role_arn: x` is as live as
+		// `role_arn = x` (verified with aws-cli 2.36.46).
+		i := strings.IndexAny(t, "=:")
+		if i < 0 {
 			continue
 		}
-		if k, v = strings.TrimSpace(k), strings.TrimSpace(v); v != "" {
-			keys[strings.ToLower(k)] = v
+		if k, v := strings.TrimSpace(t[:i]), strings.TrimSpace(t[i+1:]); v != "" {
+			sect[strings.ToLower(k)] = v
 		}
 	}
 }

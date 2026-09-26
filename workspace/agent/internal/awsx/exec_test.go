@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -16,13 +18,18 @@ var ssoProfile = map[string]string{
 
 // writeProfile writes cfg as the [profile prod] section of an INI config at path, the
 // way the CLI would find it. Keys prefixed "creds:" go to the [prod] section of the
-// credentials file beside it instead.
+// credentials file beside it instead, and a key prefixed "raw:" is written verbatim as a
+// line of the config section (the value is ignored).
 func writeProfile(t *testing.T, path string, cfg map[string]string) {
 	t.Helper()
 	var conf, creds strings.Builder
 	conf.WriteString("[default]\nrole_arn = arn:aws:iam::1:role/default\ncredential_source = EcsContainer\n\n[profile prod]\n")
 	creds.WriteString("[default]\naws_access_key_id = AKIADEFAULT\n\n[prod]\n")
 	for k, v := range cfg {
+		if line, ok := strings.CutPrefix(k, "raw:"); ok {
+			conf.WriteString(line + "\n")
+			continue
+		}
 		if ck, ok := strings.CutPrefix(k, "creds:"); ok {
 			creds.WriteString(ck + " = " + v + "\n")
 			continue
@@ -204,6 +211,8 @@ func TestPlanExecRefusesProfilesTheCLIWouldNotResolveThroughSSO(t *testing.T) {
 		"credential_source":           with(map[string]string{"credential_source": "EcsContainer"}),
 		"static keys and sso":         with(map[string]string{"aws_access_key_id": "AKIA"}),
 		"process in credentials file": with(map[string]string{"creds:credential_process": "/bin/echo"}),
+		"role_arn with a colon":       with(map[string]string{"raw:role_arn: arn:aws:iam::1:role/x": "", "raw:source_profile:other": ""}),
+		"upper-case key":              with(map[string]string{"raw:Credential_Process = /bin/echo": ""}),
 	} {
 		bin, state := fakeAWS(t, cfg)
 		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
@@ -268,5 +277,71 @@ func TestPlanExecStartsTheCLITwice(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(state, "calls"))
 	if n := strings.Count(string(b), "x"); n != 2 {
 		t.Fatalf("aws was started %d times, want 2", n)
+	}
+}
+
+// profileKeys stands in for the AWS CLI's own parser, so check it against the real one on
+// the shapes that have bitten: ":" delimiters, key case, comments, indented sub-settings,
+// repeated sections, and keys on [default] that must not leak into another profile. Skipped
+// where no aws CLI is installed.
+func TestProfileKeysAgreesWithTheRealAWSCLI(t *testing.T) {
+	aws, err := exec.LookPath("aws")
+	if err != nil {
+		t.Skip("aws CLI not installed")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	conf := `[default]
+role_arn = arn:aws:iam::1:role/default
+credential_source = EcsContainer
+
+[profile prod]
+sso_session = af-prod
+# role_arn = commented-out
+; credential_process = commented-out
+sso_account_id: 123456789012
+SSO_Role_Name = Dev
+s3 =
+  role_arn = nested
+
+[profile   prod]
+region:us-west-2
+source_profile: other
+
+[profile other]
+credential_process = /bin/false
+`
+	creds := "[prod]\naws_access_key_id: AKIAEXAMPLE\n\n[default]\ncredential_process = /bin/true\n"
+	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte(conf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aws", "credentials"), []byte(creds), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	ours := profileKeys(env, "prod")
+
+	keys := []string{"sso_session", "sso_account_id", "sso_role_name", "region", "role_arn", "source_profile",
+		"credential_source", "credential_process", "web_identity_token_file", "aws_access_key_id"}
+	got := make([]string, len(keys))
+	var wg sync.WaitGroup
+	for i, k := range keys {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cmd := exec.Command(aws, "configure", "get", k, "--profile", "prod")
+			cmd.Env = env
+			out, _ := cmd.Output()
+			got[i] = strings.TrimSpace(string(out))
+		}()
+	}
+	wg.Wait()
+	for i, k := range keys {
+		if got[i] != ours[k] {
+			t.Errorf("%s: aws CLI says %q, profileKeys says %q", k, got[i], ours[k])
+		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
+	"golang.org/x/sys/unix"
 )
 
 const awsExecUsage = `usage: af-aws-exec --profile <name> [--region <region>] [--login|--no-login] [-q] -- <command> [args...]
@@ -138,7 +139,10 @@ func ensureAWSCLI() (string, error) {
 	return exec.LookPath("aws")
 }
 
+// isTerminal reports whether f is a terminal. A character-device check is not enough:
+// /dev/null is one too, and treating a redirected, unattended run as interactive would
+// start a device-code login that waits for nobody.
 func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
+	return err == nil
 }
