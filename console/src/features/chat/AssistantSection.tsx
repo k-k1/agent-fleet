@@ -11,7 +11,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
-import { isTransientErr } from "../../core/api/client.ts";
+import { isTransientErr, type ApiError } from "../../core/api/client.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
@@ -22,7 +22,7 @@ import { useChatStore } from "./store.ts";
 import { openChat, openAssistantDraft, convTarget, draftTarget } from "./open.ts";
 import { AssistantModal } from "./AssistantModal.tsx";
 import { ChatTitleModal } from "./ChatTitleModal.tsx";
-import { assistantName, assistantDesc } from "./assistantI18n.ts";
+import { assistantName, assistantDesc, assistantSaveError } from "./assistantI18n.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useActiveWorkingSet, convInSet, workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -178,10 +178,12 @@ export const AssistantSection = memo(function AssistantSection() {
   const saveAssistant = async (input: AssistantInput) => {
     // apiJSON resolves a server error as {error} rather than throwing. Treating that as
     // success would close the modal and lose what was typed (the persona, …), so a failure is
-    // toasted and re-thrown, leaving AssistantModal open.
+    // toasted and re-thrown, leaving AssistantModal open. A validation refusal says why in its
+    // localized err.<code>; the rejected integration id comes in its own field.
     const res = await (editing ? assistantUpdate(editing.id, input) : assistantCreate(input)).catch(() => null);
     if (!res || (res as { error?: unknown }).error) {
-      toast(editing ? tr("asst.update_failed") : tr("asst.create_failed"));
+      const err = (res as { error?: ApiError & { integration?: string } } | null)?.error;
+      toast(assistantSaveError(err, editing ? tr("asst.update_failed") : tr("asst.create_failed")));
       throw new Error("assistant save failed");
     }
     refresh();

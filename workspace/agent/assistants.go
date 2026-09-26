@@ -15,8 +15,6 @@ package main
 
 import (
 	"embed"
-	"errors"
-
 	"net/http"
 	"os"
 	"path/filepath"
@@ -109,21 +107,45 @@ type assistantInput struct {
 	Voice        string   `json:"voice"`
 }
 
+// inputError is applyInput's refusal: a stable code the Console localizes (err.<code>) and an
+// English developer message. integration names the rejected id in its own field, because the
+// Console shows the localized text and must not append the English message to get at the id.
+type inputError struct {
+	code        string
+	msg         string
+	integration string
+}
+
+// inputErrorWire is inputError's response body; integration is omitted when empty.
+type inputErrorWire struct {
+	Error struct {
+		Code        string `json:"code"`
+		Message     string `json:"message"`
+		Integration string `json:"integration,omitempty"`
+	} `json:"error"`
+}
+
+func (e *inputError) write(w http.ResponseWriter) {
+	var body inputErrorWire
+	body.Error.Code, body.Error.Message, body.Error.Integration = e.code, e.msg, e.integration
+	httpx.WriteJSON(w, http.StatusBadRequest, body)
+}
+
 // applyInput validates the input and folds it onto a (new or existing) assistant.
-func applyInput(a *assistants.Assistant, in assistantInput) error {
+func applyInput(a *assistants.Assistant, in assistantInput) *inputError {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
-		return errors.New("名前を入力してください")
+		return &inputError{code: errCodeAssistantNameRequired, msg: "name is required"}
 	}
 	if _, ok := chatx.ChatProviders[in.Agent]; !ok {
-		return errors.New("未対応のエージェントです")
+		return &inputError{code: errCodeAssistantAgentUnsupported, msg: "unsupported agent: " + in.Agent}
 	}
 	tools := in.Tools
 	if tools == "" {
 		tools = assistants.ToolsNone
 	}
 	if !assistants.ValidToolGrant(tools) {
-		return errors.New("未対応のツール指定です")
+		return &inputError{code: errCodeAssistantToolsUnsupported, msg: "unsupported tool grant: " + tools}
 	}
 	integrations := []string{}
 	for _, id := range in.Integrations {
@@ -132,7 +154,7 @@ func applyInput(a *assistants.Assistant, in assistantInput) error {
 			continue
 		}
 		if !assistants.ValidIntegration(id) {
-			return errors.New("未対応の連携です: " + id)
+			return &inputError{code: errCodeAssistantIntegrationUnsupported, msg: "unsupported integration: " + id, integration: id}
 		}
 		integrations = chatx.AppendUniqueStr(integrations, id)
 	}
@@ -156,8 +178,8 @@ func handleAssistantCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	now := chatx.NowMs()
 	a := &assistants.Assistant{ID: chatx.RandUUID(), Builtin: false, CreatedAt: now, UpdatedAt: now}
-	if err := applyInput(a, in); err != nil {
-		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
+	if ierr := applyInput(a, in); ierr != nil {
+		ierr.write(w)
 		return
 	}
 	if err := assistants.SaveUser(a); err != nil {
@@ -182,8 +204,8 @@ func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
-	if err := applyInput(a, in); err != nil {
-		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
+	if ierr := applyInput(a, in); ierr != nil {
+		ierr.write(w)
 		return
 	}
 	a.UpdatedAt = chatx.NowMs()

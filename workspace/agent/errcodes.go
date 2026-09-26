@@ -90,6 +90,12 @@ const (
 	errCodeAssistantNotFound      = "assistant_not_found"
 	errCodeAssistantBuiltinEdit   = "assistant_builtin_readonly_edit"
 	errCodeAssistantBuiltinDelete = "assistant_builtin_readonly_delete"
+	// Create/update validation (applyInput). integration_unsupported also carries the
+	// rejected id in an `integration` field.
+	errCodeAssistantNameRequired           = "assistant_name_required"
+	errCodeAssistantAgentUnsupported       = "assistant_agent_unsupported"
+	errCodeAssistantToolsUnsupported       = "assistant_tools_unsupported"
+	errCodeAssistantIntegrationUnsupported = "assistant_integration_unsupported"
 
 	// Image paste (session_paste.go)
 	errCodePasteTooLarge         = "paste_too_large"
