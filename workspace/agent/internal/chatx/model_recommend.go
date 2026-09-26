@@ -45,6 +45,7 @@ var (
 	codexRetiring   = codex.Retiring
 	agyModels       = agy.Models
 	museSafeDefault = muse.SafeDefaultExecModel
+	museSafeModels  = muse.SafeExecModels
 )
 
 // visibility is one reading of the hidden-models setting, applied to candidates: the saved one
@@ -120,6 +121,19 @@ func recommendedModels(v visibility, kind string) RecommendedSet {
 		Prose: recommendedOneShotModelV(v, kind, OneShotProse),
 		Short: recommendedOneShotModelV(v, kind, OneShotShort),
 	}
+}
+
+// museSafeOneShotModel is the model a muse one-shot runs on when the member chose none: the
+// newest non-contributor row they have not hidden. "" when every safe row is hidden or the
+// catalog is unreadable — the caller refuses then, because the alternative is the contributor
+// row (clamp 8), which "models not to use" must not push AF into choosing.
+func museSafeOneShotModel(v visibility) string {
+	for _, id := range museSafeModels() {
+		if m := v.model(session.KindMuse, id); m != "" {
+			return m
+		}
+	}
+	return ""
 }
 
 // claude's tier aliases in the order each purpose prefers them. claude has no "let the CLI pick"

@@ -231,7 +231,8 @@ func TestLiveModelCatalog(t *testing.T) {
 	if !readCredential().Present {
 		t.Skip("not signed in to muse: model/list has no catalog to return")
 	}
-	list, safe, err := probeModels()
+	list, safeIDs, err := probeModels()
+	safe := firstID(safeIDs)
 	if err != nil {
 		t.Fatalf("model/list: %v", err)
 	}

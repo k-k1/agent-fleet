@@ -130,6 +130,57 @@ func museChatModel(c *ChatConversation) (string, error) {
 	return "", errors.New("muse: モデル目録を読めないため、ターンを実行できません（モデル未指定のまま実行すると会話が製品改善に使われうる contributor モデルになります。Settings › AI › Muse Code でモデルを選んでください）")
 }
 
+// museOneShot runs one AI assist generation (a title, a branch name, reply chips, …) on
+// `muse exec`. model is the member's choice or the recommendation; "" falls back to the newest
+// safe model not hidden, and with none the call is refused — clamp 8 applies here exactly as in
+// museChatModel, since a one-shot with no --model runs on the `-contributor` row too.
+func museOneShot(ctx context.Context, call *usagex.Call, persona, prompt, model string) (string, error) {
+	if model = strings.TrimSpace(model); model == "" {
+		model = museSafeOneShotModel(prefsVisibility)
+	}
+	if model == "" {
+		return "", errors.New("muse: no model to run AI assist on (the catalog is unreadable or every non-contributor model is hidden); with no model it would run on the contributor model")
+	}
+	call.ModelReq = model
+	if err := muse.EnsureClamps(); err != nil {
+		return "", fmt.Errorf("muse: %w", err)
+	}
+	f, err := os.CreateTemp("", "muse-oneshot-prompt-*")
+	if err != nil {
+		return "", fmt.Errorf("muse: prompt file: %w", err)
+	}
+	promptPath := f.Name()
+	defer os.Remove(promptPath)
+	if _, err := f.WriteString(headlessPrompt(persona, nil, prompt)); err != nil {
+		f.Close()
+		return "", fmt.Errorf("muse: prompt file: %w", err)
+	}
+	f.Close()
+
+	out, err := museChatCmd(ctx, museOneShotArgs(model, promptPath)...).Output()
+	if err != nil {
+		return "", fmt.Errorf("muse execution failed: %s", cliErr(err))
+	}
+	reply, _, execErr := parseMuseExecEvents(out)
+	if execErr != "" {
+		return "", fmt.Errorf("muse returned an error: %s", execErr)
+	}
+	reply = strings.TrimRight(strings.TrimSpace(reply), "\n")
+	if reply == "" {
+		return "", errors.New("no response from muse")
+	}
+	call.OK = true
+	return reply, nil
+}
+
+// museOneShotArgs is a chat turn's argv minus the continuity: a one-shot never resumes, so
+// --no-session-log keeps each call from leaving a session behind (claude's
+// --no-session-persistence). It cannot be combined with --session-id, which is why the chat
+// turn does not carry it.
+func museOneShotArgs(model, promptPath string) []string {
+	return append(museChatBaseArgs(), "--no-session-log", "--model", model, "--prompt-file", promptPath)
+}
+
 // museChatBaseArgs is the shared argv prefix for a muse exec turn. Flags in order:
 //
 //   - --json: machine-readable JSONL events on stdout (the whole point of this driver)

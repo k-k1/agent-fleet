@@ -226,6 +226,7 @@ func init() {
 	codexRetiring = func(string) bool { return false }
 	agyModels = func() []agents.ModelChoice { return nil }
 	museSafeDefault = func() string { return "" }
+	museSafeModels = func() []string { return nil }
 }
 
 // testPrices is what testModelListPrice answers, keyed "kind/model". Empty by default: no
