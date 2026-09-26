@@ -238,6 +238,10 @@ func TestPlanExecRefusesProfilesTheCLIWouldNotResolveThroughSSO(t *testing.T) {
 		"process in credentials file": with(map[string]string{"creds:credential_process": "/bin/echo"}),
 		"role_arn with a colon":       with(map[string]string{"raw:role_arn: arn:aws:iam::1:role/x": "", "raw:source_profile:other": ""}),
 		"upper-case key":              with(map[string]string{"raw:Credential_Process = /bin/echo": ""}),
+		"empty role_arn":              with(map[string]string{"raw:role_arn =": ""}),
+		"empty source_profile":        with(map[string]string{"raw:source_profile =": ""}),
+		"secret key only":             with(map[string]string{"creds:aws_secret_access_key": "x"}),
+		"empty sso_session, inline":   with(map[string]string{"sso_session": "", "sso_start_url": "https://example.awsapps.com/start", "sso_region": "ap-northeast-1"}),
 	} {
 		bin, state := fakeAWS(t, cfg)
 		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
@@ -1123,22 +1127,26 @@ func TestPlanExecEmptyValueOverridesDEFAULT(t *testing.T) {
 	}
 }
 
-// A value that starts on the line after its key is a nested map to botocore, not a
-// region or an account: af-aws-exec must not use it as one.
-func TestPlanExecIgnoresANestedValue(t *testing.T) {
-	bin, state := fakeAWS(t, with(map[string]string{"raw:region =\n  a = eu-west-1": ""}, "region"))
-	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
-		t.Fatal(err)
+// A region that is not one plain value (a nested map, or a value continued on the next
+// line) is no region to the CLI either: refuse unless --region or the shell names one,
+// rather than run with no region. A nested account is never used as the account.
+func TestPlanExecRefusesARegionThatIsNotOneValue(t *testing.T) {
+	for _, raw := range []string{"raw:region =\n  a = eu-west-1", "raw:region = eu-west-1\n  foo = bar"} {
+		bin, state := fakeAWS(t, with(map[string]string{raw: ""}, "region"))
+		if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		o := ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true}
+		if _, _, _, err := PlanExec(bin, workloadEnv, o); err == nil || !strings.Contains(err.Error(), "--region") {
+			t.Errorf("%q: err = %v", raw, err)
+		}
+		o.Region = "eu-west-1"
+		if _, _, env, err := PlanExec(bin, workloadEnv, o); err != nil || envMap(env)["AWS_REGION"] != "eu-west-1" {
+			t.Errorf("%q with --region: %v %v", raw, err, envMap(env))
+		}
 	}
-	_, _, env, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r := envMap(env)["AWS_REGION"]; r != "" {
-		t.Fatalf("AWS_REGION = %q from a nested value", r)
-	}
-	bin, _ = fakeAWS(t, with(map[string]string{"raw:sso_account_id =\n  a = 123456789012": ""}, "sso_account_id"))
-	if _, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true}); err == nil {
+	bin, _ := fakeAWS(t, with(map[string]string{"raw:sso_account_id =\n  a = 123456789012": ""}, "sso_account_id"))
+	if _, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Region: "eu-west-1", Login: "never", Argv: []string{"true"}, Quiet: true}); err == nil {
 		t.Fatal("a nested sso_account_id was used as the account")
 	}
 }
@@ -1193,5 +1201,21 @@ func TestPlanExecRefusesAProfileThatContradictsItsSSOSession(t *testing.T) {
 	}
 	if _, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true}); err != nil {
 		t.Fatalf("matching values refused: %v", err)
+	}
+}
+
+// Exit 3 only for botocore's own token errors; an unrelated error that merely mentions
+// "sso login" is not one.
+func TestLoginNeededMatchesOnlyTokenErrors(t *testing.T) {
+	for msg, want := range map[string]bool{
+		"aws: [ERROR]: Error loading SSO Token: Token for af-prod does not exist":                      true,
+		"Error when retrieving token from sso: Token has expired and refresh failed":                   true,
+		"The SSO session associated with this profile has expired or is otherwise invalid. To refresh": true,
+		"AccessDenied: user is not allowed to call sso login on this account":                          false,
+		"Token has expired": false,
+	} {
+		if got := loginNeeded(msg); got != want {
+			t.Errorf("loginNeeded(%q) = %v, want %v", msg, got, want)
+		}
 	}
 }

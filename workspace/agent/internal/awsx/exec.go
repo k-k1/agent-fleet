@@ -223,8 +223,12 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 	if keys["sso_account_id"] == "" || keys["sso_role_name"] == "" {
 		return fmt.Errorf("profile %q has no SSO account and role; set both on the profile in Settings > SSM", profile)
 	}
-	for _, k := range []string{"role_arn", "source_profile", "credential_source", "credential_process", "web_identity_token_file", "aws_access_key_id"} {
-		if keys[k] != "" {
+	// Presence, not value: botocore's providers claim a profile by the key alone, so an
+	// empty `role_arn =` (set or inherited) still sends the CLI to assume-role
+	// (measured: "Partial credentials found in assume-role", exit 253).
+	for _, k := range []string{"role_arn", "source_profile", "credential_source", "credential_process", "web_identity_token_file",
+		"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
+		if _, set := keys[k]; set {
 			return fmt.Errorf("profile %q also sets %s, so the AWS CLI would not use its SSO login; af-aws-exec refuses it", profile, k)
 		}
 	}
@@ -327,6 +331,11 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	}
 	if err := checkSSOProfile(keys, o.Profile); err != nil {
 		return "", nil, nil, err
+	}
+	// A region that spans lines is no region to the CLI either; if nothing else names one,
+	// refuse rather than run the command with no region at all (and a tool's own default).
+	if r, set := keys["region"]; set && r != "" && scalar(r) == "" && o.Region == "" && !envHas(env, "AWS_REGION") && !envHas(env, "AWS_DEFAULT_REGION") {
+		return "", nil, nil, fmt.Errorf("profile %q has a region that spans several lines; fix it or pass --region", o.Profile)
 	}
 
 	// Credentials come from a config written here that holds nothing but the profile's
@@ -723,6 +732,11 @@ type ssoInfo struct {
 // sso-session section when it names one, from the profile itself otherwise.
 func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 	sso := ssoInfo{Session: keys["sso_session"], Account: keys["sso_account_id"], Role: keys["sso_role_name"]}
+	// Present but empty is not absent: the CLI looks for an sso-session named "" and fails
+	// ("specified sso-session does not exist"), so it is no legacy profile either.
+	if _, set := keys["sso_session"]; set && sso.Session == "" {
+		return ssoInfo{}, errors.New("sso_session is empty; name the sso-session or remove the line")
+	}
 	if sso.Session == "" {
 		sso.StartURL, sso.Region = keys["sso_start_url"], keys["sso_region"]
 		return sso, nil
@@ -751,8 +765,8 @@ func resolveSSO(env []string, keys map[string]string) (ssoInfo, error) {
 // those get exit 3: an agent hands exit 3 to the user as "log in", and an AccessDenied
 // or a broken CLI is not fixed by that. The phrases are botocore's SSO token errors.
 func loginNeeded(msg string) bool {
-	for _, p := range []string{"Error loading SSO Token", "retrieving token from sso", "SSO session associated with this profile",
-		"Token has expired", "sso login"} {
+	for _, p := range []string{"Error loading SSO Token:", "Error when retrieving token from sso:",
+		"The SSO session associated with this profile has expired or is otherwise invalid"} {
 		if strings.Contains(msg, p) {
 			return true
 		}
