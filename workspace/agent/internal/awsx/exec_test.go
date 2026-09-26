@@ -353,6 +353,22 @@ region = us-east-1
 <NBSP>[profile decoy]
 sso_account_id = 222222222222
 
+[profile ws]
+region<FS> = us-west-2
+
+[profile dotted]
+regİon = eu-west-1
+
+[profile odd]
+İ = one
+i = two
+region = ap-south-1
+
+[profile sig]
+ΑΣ = one
+ασ = two
+region = sa-east-1
+
 [profile c0]
 <FS>role_arn = arn:aws:iam::5:role/c0
 sso_account_id = 555555555555
@@ -392,7 +408,7 @@ credential_process = /bin/a
 	for _, k := range all {
 		asks = append(asks, ask{"prod", k})
 	}
-	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2", "c0"} {
+	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2", "c0", "ws", "dotted", "odd", "sig"} {
 		for _, k := range few {
 			asks = append(asks, ask{p, k})
 		}
@@ -1019,6 +1035,7 @@ func TestINIStrictRefusesWhatTheCLIRefuses(t *testing.T) {
 		"bare line":            "[profile x]\njust words\n" + good,
 		"key before a section": "region = us-east-1\n" + good,
 		"empty header":         "[]\n" + good,
+		"empty key":            "[profile x]\n= v\n" + good,
 	}
 	aws, lookErr := exec.LookPath("aws")
 	for name, text := range cases {

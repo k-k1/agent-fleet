@@ -63,12 +63,14 @@ func scanINI(text string, fn func(iniLine)) {
 			}
 		}
 		i := strings.IndexAny(t, "=:")
-		if i < 0 {
+		key := pyLower(strings.TrimFunc(t[:max(i, 0)], pySpace))
+		if i < 0 || key == "" {
+			// No delimiter, or nothing before it ("= v"): configparser's ParsingError.
 			fn(iniLine{section: section, bad: true, value: t})
 			continue
 		}
 		optIndent = indent
-		last = iniLine{section: section, key: strings.ToLower(strings.TrimSpace(t[:i])), value: strings.TrimSpace(t[i+1:])}
+		last = iniLine{section: section, key: key, value: strings.TrimFunc(t[i+1:], pySpace)}
 		fn(last)
 	}
 }
@@ -77,6 +79,67 @@ func scanINI(text string, fn func(iniLine)) {
 // unicode.IsSpace plus the C0 separators U+001C..U+001F. Leaving those out let a
 // "\x1crole_arn = ..." line be a live key to the CLI and not to this reader.
 func pySpace(r rune) bool { return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f) }
+
+// pyLower is Python's str.lower, which configparser applies to key names. It differs
+// from strings.ToLower in two places that can change which key a line is: U+0130 (İ)
+// lowers to "i" + U+0307, not "i" (so "regİon" is not region to the CLI), and a capital
+// sigma at the end of a word lowers to final sigma (ς). Cased and case-ignorable are
+// approximated with the Unicode categories; key names outside ASCII only need to come
+// out different from the ASCII names we look up, which this keeps.
+func pyLower(s string) string {
+	if isASCII(s) {
+		return strings.ToLower(s)
+	}
+	rs := []rune(s)
+	var b strings.Builder
+	for i, r := range rs {
+		switch {
+		case r == 'İ':
+			b.WriteString("i\u0307")
+		case r == 'Σ' && finalSigma(rs, i):
+			b.WriteRune('ς')
+		default:
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// finalSigma is Unicode's Final_Sigma condition, as Python applies it: a cased letter
+// before position i and none after it, skipping case-ignorable characters both ways.
+func finalSigma(rs []rune, i int) bool {
+	cased := func(r rune) bool { return unicode.IsUpper(r) || unicode.IsLower(r) || unicode.IsTitle(r) }
+	ignorable := func(r rune) bool {
+		return unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Lm, unicode.Sk) || strings.ContainsRune("'.:^`\u00b7\u2019", r)
+	}
+	before := false
+	for j := i - 1; j >= 0; j-- {
+		if ignorable(rs[j]) {
+			continue
+		}
+		before = cased(rs[j])
+		break
+	}
+	if !before {
+		return false
+	}
+	for j := i + 1; j < len(rs); j++ {
+		if ignorable(rs[j]) {
+			continue
+		}
+		return !cased(rs[j])
+	}
+	return true
+}
 
 // configSection maps a config-file section name to what botocore makes of it: a
 // profile ("default", or anything starting with "profile" that shlex-splits into two
