@@ -689,6 +689,8 @@ COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-arch-repair
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
+# agent-fleet-caller.js (stamps the calling opencode session on af's MCP tools so a
+# Managed session can be told apart from its worktree mates, #989 — seeded likewise) +
 # rtk.ts (token-saving command rewrite, the opencode analog of claude's rtk hook —
 # seeded/removed by the agent per the ~/.config/agent-fleet/rtk.json toggle).
 COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
