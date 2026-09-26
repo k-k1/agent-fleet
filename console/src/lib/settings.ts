@@ -1934,13 +1934,16 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // matching owner may push back a key the server has never held.
   const owner = ownerSource();
   const storedOwner = readStoredOwner();
-  // No record counts as another owner: a copy written before the record existed, or by a
-  // browser that never finished a hydrate, cannot be vouched for — recording this owner over it
-  // would make the next boot push it as this account's.
+  // With no record (a copy written before the record existed, or by a browser that never finished
+  // a hydrate) only the keys the server has never held are dropped: recording this owner over
+  // them would make the next boot push them as this account's, while the empty-server self-heal
+  // below keeps working as it did before the record.
   if (owner && storedOwner !== owner) {
-    unsaved.clear();
+    if (storedOwner) unsaved.clear();
     for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
-      if (isAccumulatedSetting(k) && !sameValue(merged[k], DEFAULTS[k])) {
+      if (!isAccumulatedSetting(k) || (!storedOwner && k in srv)) continue;
+      unsaved.delete(k);
+      if (!sameValue(merged[k], DEFAULTS[k])) {
         (merged as any)[k] = DEFAULTS[k];
         changed = true;
       }
@@ -1981,7 +1984,10 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // A server written by an older Console has only defaultModel. Do not let the
   // already-normalized local map mask that server-side value during migration.
   // Once the new map exists on the server it is authoritative for every agent.
-  const rows = serverRows && typeof serverRows === "object"
+  // An unsaved local edit stands over the server's map, as the loop above does for other keys.
+  const rows = unsaved.has("agentLaunchDefaults")
+    ? merged.agentLaunchDefaults
+    : serverRows && typeof serverRows === "object"
     ? serverRows
     : {
         ...merged.agentLaunchDefaults,
@@ -2000,7 +2006,14 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // Reaching here means the server's current values really were read. A pending save flows after
   // this: markPrefsLoaded → scheduleServerSave reads state 600ms later, so the `state = merged`
   // below takes effect first.
-  recordOwner(owner);
+  // The record and the copy are written together: another tab may have written the shared copy
+  // since this one last did, and recording this owner over that copy would vouch for its values.
+  if (owner) {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(changed ? merged : state));
+    } catch {}
+    recordOwner(owner);
+  }
   markPrefsLoaded();
   // Accumulated data the server did not have is written back from here to restore it.
   if (restore) scheduleServerSave();

@@ -273,6 +273,25 @@ describe("ui-prefs: a save that does not land is shown", () => {
     expect(s.prefsSyncState()).toBe("synced");
   });
 
+  // Review of #1023, round 2: agentLaunchDefaults is merged apart from the loop, and took the
+  // server's map over an unsaved local edit.
+  it("keeps an unsaved launch-defaults edit over the server copy on refresh", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    const server = s.getSettings().agentLaunchDefaults;
+    const edited = { ...server, codex: { ...server.codex, model: "gpt-6-sol" } };
+    apiJSONMock.mockResolvedValueOnce({ error: { code: "http_502" } });
+    s.setSetting("agentLaunchDefaults", edited);
+    await vi.advanceTimersByTimeAsync(1_000);
+    apiMock.mockResolvedValueOnce({ agentLaunchDefaults: server });
+    await s.refreshUIPrefs();
+    expect(s.getSettings().agentLaunchDefaults.codex.model).toBe("gpt-6-sol");
+    await vi.advanceTimersByTimeAsync(1_000);
+    const body = (apiJSONMock.mock.calls[1] as [string, string, Record<string, any>])[2];
+    expect(body.agentLaunchDefaults.codex.model).toBe("gpt-6-sol");
+  });
+
   it("lets only the newest save speak for the state", async () => {
     apiMock.mockResolvedValueOnce({});
     const s = await freshSettings({});
@@ -389,6 +408,36 @@ describe("ui-prefs: the owner of the local copy", () => {
     await again.hydrateUIPrefs();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(apiJSONMock).not.toHaveBeenCalled();
+  });
+
+  // Review of #1023, round 2: with no record, only never-held keys are dropped; the empty-server
+  // self-heal keeps working as before the record existed.
+  it("keeps the empty-server self-heal for an unrecorded copy", async () => {
+    const sets = [{ id: "g1", name: "自分のグループ", repos: [], convs: [], sessions: [], schedules: [] }];
+    const s = await freshSettings({ workingSets: sets });
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({ workingSets: [] });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().workingSets).toEqual(sets);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((apiJSONMock.mock.calls[0] as [string, string, Record<string, unknown>])[2].workingSets).toEqual(sets);
+  });
+
+  // Review of #1023, round 2: a refresh with nothing to merge moved the record to this tab while
+  // the shared copy still held another tenant's tab's values.
+  it("writes the copy along with the record on a hydrate that changes nothing", async () => {
+    const s = await freshSettings({});
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    // Another tab, on t2, writes its own values into the shared copy and records itself.
+    localStorage.setItem("af-display-settings", JSON.stringify({ ...s.getSettings(), hiddenModels: hidden }));
+    localStorage.setItem(OWNER_KEY, "t2|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.refreshUIPrefs(); // this tab (t1) refreshes; nothing differs from its own state
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1");
+    expect(JSON.parse(localStorage.getItem("af-display-settings")!).hiddenModels).toEqual({ claude: ["fable"] });
   });
 
   // Review of #1023: localStorage is shared by tabs on different tenants; a write must move the
