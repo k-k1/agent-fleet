@@ -154,17 +154,19 @@ func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySna
 // above any fixed tail (a 5-line work-item prompt plus the footer did). Whitespace is
 // ignored on both sides, so a line the composer wrapped at pane width still matches. With
 // no composer on screen it falls back to the last few lines.
+//
+// Either end of the prompt counts. The composer keeps the cursor in view, so on a short pane
+// a long draft is scrolled and only its END is on screen (measured at 80x23: the 5-line
+// work-item prompt showed from its second wrapped line on, so the head alone never matched).
 func promptDraftVisible(captured, prompt string) bool {
-	head := squashSpace(strings.SplitN(prompt, "\n", 2)[0])
+	head, tail := promptEnds(prompt)
 	if head == "" || captured == "" {
 		return false
 	}
-	if r := []rune(head); len(r) > 12 {
-		head = string(r[:12])
-	}
 	draft, above, ok := claudeComposer(captured)
 	if !ok {
-		return strings.Contains(squashSpace(paneTail(captured, 6)), head)
+		t := squashSpace(paneTail(captured, 6))
+		return strings.Contains(t, head) || strings.Contains(t, tail)
 	}
 	// claude 2.1.282 strips invisible characters from typed input and then HOLDS the draft
 	// ("Removed 1 invisible character · review and press Enter to send"); the Enter that
@@ -173,7 +175,33 @@ func promptDraftVisible(captured, prompt string) bool {
 		return true
 	}
 	// A draft claude folded into a paste placeholder does not show its text.
-	return strings.Contains(draft, "[Pasted text") || strings.Contains(squashSpace(draft), head)
+	if strings.Contains(draft, "[Pasted text") {
+		return true
+	}
+	d := squashSpace(draft)
+	return strings.Contains(d, head) || strings.Contains(d, tail)
+}
+
+// promptEnds returns the first and last 12 non-space runes of the prompt's first and last
+// non-blank lines: short enough to survive a wrap, and each a line claude draws verbatim.
+func promptEnds(prompt string) (head, tail string) {
+	var lines []string
+	for _, l := range strings.Split(prompt, "\n") {
+		if l = squashSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return "", ""
+	}
+	h, t := []rune(lines[0]), []rune(lines[len(lines)-1])
+	if len(h) > 12 {
+		h = h[:12]
+	}
+	if len(t) > 12 {
+		t = t[len(t)-12:]
+	}
+	return string(h), string(t)
 }
 
 // claudeComposer splits a captured claude pane around its composer: draft is the last "❯"
