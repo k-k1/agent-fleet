@@ -27,8 +27,9 @@ Twelve checks:
 
 ref is checked at three levels. (a) Axis coverage: the agent columns cover the session
 kind constants, the deployment rows cover the runtime profiles. (b) Row agreement:
-capabilities expressed by Caps() must match exactly (not ⊇ — marking a capability ✓ that
-is not set is the worst kind of lie). (c) Translation agreement: the ✓ marks are in the
+every row that restates a Caps() field (CAPS_ROWS) must match exactly (not ⊇ — marking a
+capability ✓ that is not set is the worst kind of lie), and every Caps field must be either
+mapped or excused. (c) Translation agreement: the ✓ marks are in the
 same places in en and ja. Checking only that a translation exists does not stop a
 translation whose content has drifted, and a capability table that is stale on one side
 does the same harm as having two tables.
@@ -630,6 +631,37 @@ def source_caps() -> dict[str, set[str]]:
     return out
 
 
+def source_caps_fields() -> list[str]:
+    """Field names of the agents.Caps struct, in declaration order."""
+    path = os.path.join(ROOT, "workspace", "agent", "internal", "agents", "agents.go")
+    if not os.path.exists(path):
+        return []
+    m = re.search(r"^type Caps struct \{\n(.*?)^\}", read(path), re.M | re.S)
+    if not m:
+        return []
+    return re.findall(r"^\s*([A-Z]\w*)\s+bool\b", m.group(1), re.M)
+
+
+# Rows of ref/agents.md that restate a Caps() field: (row label, field, negated). A negated
+# row is ✓ exactly for the kinds whose Caps() leaves the field false — including kinds with
+# no Caps() at all (shell, ssm). "Read-only history while stopped" also rests on
+# CanTranscript but is deliberately absent: cursor's cell is a qualified — (footnote 3, none
+# under Managed, a history over the CLI route), not the negation of the field.
+CAPS_ROWS = (
+    ("Terminal (CLI) execution", "ManagedOnly", True),
+    ("Live chat mirror", "CanTranscript", False),
+    ("Copy the conversation into a new session", "CanFork", False),
+    ("Fork from a past message", "CanForkAt", False),
+    ("Choosing to skip permission prompts", "PermissionChoice", False),
+)
+
+# Caps fields with no row in the table, and why. Every field must be either in CAPS_ROWS or
+# here, so a field added later cannot be left out of the check without a stated reason.
+CAPS_UNMAPPED = {
+    "UsesLabel": "claude's --name display label, an implementation detail with no member-facing row",
+}
+
+
 def table_check_marks(path: str, row_label: str) -> set[str] | None:
     """Column names marked ✓ in the table row row_label, or None if the row is absent."""
     header: list[str] = []
@@ -1208,19 +1240,25 @@ def check_ref(f: Findings) -> None:
     # marking a capability ✓ that is not set is the worst kind of lie).
     if os.path.exists(agents):
         caps = source_caps()
-        for row, field in (
-            ("Copy the conversation into a new session", "CanFork"),
-            ("Fork from a past message", "CanForkAt"),
-            ("Choosing to skip permission prompts", "PermissionChoice"),
-        ):
+        kinds = source_kinds()
+        mapped = {field for _, field, _ in CAPS_ROWS}
+        for field in source_caps_fields():
+            if field not in mapped and field not in CAPS_UNMAPPED:
+                f.error(
+                    f"agents.Caps: field {field} is neither mapped to a row of"
+                    " ref/agents.md (CAPS_ROWS) nor excused (CAPS_UNMAPPED)"
+                )
+        for row, field, negated in CAPS_ROWS:
             marked = table_check_marks(agents, row)
             if marked is None:
                 f.error(f"ref/agents.md: row not found -> '{row}'")
                 continue
-            want = {k for k, fields in caps.items() if field in fields}
+            has = {k for k, fields in caps.items() if field in fields}
+            want = (kinds - has) if negated else has
             if marked != want:
+                name = f"not {field}" if negated else field
                 f.error(
-                    f"ref/agents.md: '{row}' disagrees with {field} in the"
+                    f"ref/agents.md: '{row}' disagrees with {name} in the"
                     f" implementation (table={sorted(marked)} / code={sorted(want)})"
                 )
 
