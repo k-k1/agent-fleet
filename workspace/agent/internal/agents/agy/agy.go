@@ -92,15 +92,12 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
-	// agy has no status hooks, so no working/idle state is surfaced. A pending
-	// interactive prompt IS detectable though (conversation-DB probe — pending.go),
-	// so the sessions list can badge "question" / "waiting for permission" while the TUI
-	// is blocked.
+	// agy has no status hooks; working / idle / question / permission all come from the
+	// conversation DB's last step (LiveState — pending.go). Surfacing only the pending prompt
+	// here left State empty mid-turn, which the Console draws as waiting for input.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
-		if st, _ := Probe(m); st != "" {
-			li.State = st
-		}
+		li.State = LiveState(m)
 	}
 	// Capture on BOTH sides of alive. Alive polls adopt the UUID via the
 	// brain-dir diff as soon as the first prompt lands (what lights the live

@@ -195,3 +195,34 @@ func TestLiveStateNoOpinionWithoutDB(t *testing.T) {
 		t.Fatalf("missing-db LiveState returned %q", got)
 	}
 }
+
+// The sessions list reads WireLive, not DriveState. It must carry the same working / idle
+// verdict: an empty State mid-turn is drawn by the Console as waiting for input. A dead
+// session reports nothing, since its DB keeps the last status it had.
+func TestWireLiveSurfacesWorkingAndIdle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	for _, tc := range []struct {
+		name   string
+		status int
+		alive  bool
+		want   string
+	}{
+		{"running", stepStatusRunning, true, "working"},
+		{"done", stepStatusDone, true, "idle"},
+		{"dead", stepStatusRunning, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slot := "slot-wl-" + tc.name
+			m := session.Meta{Dir: dir, Name: slot, Kind: session.KindAgy}
+			sids.Write(session.UUID(dir, slot), "conv-wl-"+tc.name)
+			mkConvDB(t, "conv-wl-"+tc.name, [][3]any{
+				{14, 3, []byte("user")},
+				{132, tc.status, []byte("view_file")},
+			})
+			if got := (agentImpl{}).WireLive(m, tc.alive).State; got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
