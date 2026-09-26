@@ -15,7 +15,7 @@ import (
 
 const awsExecUsage = `usage: af-aws-exec --profile <name> [--account <id>] [--region <region>] [--login|--no-login]
                    [--keep-aws-config] [-q] -- <command> [args...]
-       af-aws-exec --list
+       af-aws-exec --list | --help | --version
 
 Runs <command> with short-lived credentials of one SSO profile (Settings > SSM, exported
 into ~/.aws/config). The credentials are passed to that one child process through its
@@ -33,6 +33,11 @@ expired SSO login fails instead of silently running as another principal.
                      (default: prompt only when stdin and stderr are a terminal)
   --list             pull the profiles from Settings now and list them with account and role
   -q                 do not print the principal the command runs as
+  -h, --help         print this help
+  --version          print the version (the workspace-agent build it belongs to)
+
+Exit status: the command's own on success; 2 usage error; 3 SSO login required but not
+started (no terminal, or --no-login); 1 any other refusal or failure.
 `
 
 // runAWSExec is `workspace-agent aws-exec`, reached through the af-aws-exec PATH shim.
@@ -149,6 +154,9 @@ func parseAWSExecArgs(args []string) (awsx.ExecOptions, bool) {
 			list = true
 		case "-h", "--help":
 			fmt.Print(awsExecUsage)
+			os.Exit(0)
+		case "--version":
+			fmt.Println("af-aws-exec, part of " + versionLine())
 			os.Exit(0)
 		default:
 			awsExecFail(2, "unknown argument "+a+" (put the command after --)")
