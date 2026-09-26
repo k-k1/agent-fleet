@@ -80,8 +80,14 @@ When the login is needed, `--no-login` is not given and nobody is at a terminal,
 - Only **Settings profiles** can be logged in this way. For a profile the member defined in their own
   `~/.aws` (run with `--account`), the Agent has no validated source for the account and role to show.
   That case keeps today's exit 3 and the terminal command.
-- A request expires 15 minutes after the last `af-aws-exec` asked for it, but never while an attempt for it
-  is running (decision 3).
+- The request records the **state of the sso-session's token cache when it was filed**: absent, or the
+  cache file's `expiresAt` and a hash of its token. A cache can hold a token that has not expired and that
+  AWS still rejects (the session was revoked, or the portal session ended first; `loginNeeded` matches
+  exactly that botocore message). Decisions 2 and 5 therefore look for a cache that has **changed since
+  filing**, not only for one that has not expired.
+- **Only the Agent expires requests.** It drops a request 15 minutes after the last `af-aws-exec` asked for
+  it, but never while an attempt it runs for that request is live (decision 3). The CLI never removes a
+  request file: it cannot see the Agent's attempts.
 
 ### Decision 2 — the Console shows a sticky toast at the bottom, with a "Log in" button
 
@@ -105,10 +111,12 @@ account and role, and who asks. It has one button, **Log in**, which opens the l
 - The Console does not open the modal by itself. A modal that appears while the member types in a terminal
   pane takes their keystrokes.
 - **The Agent decides whether a request is resolved.** A request is resolved when the token cache of its
-  sso-session (`~/.aws/sso/cache/<sha1 of the sso-session name>.json`) holds a token that has not expired
-  — however the login happened, from this Console, another tab or a terminal — or when it is cancelled or
-  expired. Reading that file's `expiresAt` costs a file read, not an `aws` run. The Agent drops resolved
-  requests.
+  sso-session (`~/.aws/sso/cache/<sha1 of the sso-session name>.json`) has changed since the request was
+  filed (decision 1) and holds a token that has not expired — however the login happened, from this
+  Console, another tab or a terminal. A cache that was already there at filing, unchanged, resolves
+  nothing, however far its `expiresAt` lies ahead. Reading that file costs a file read, not an `aws` run.
+  The Agent drops resolved requests. Cancelled and expired requests are dropped as well (decisions 1
+  and 3).
 - While a toast is up, that tab asks `GET /api/aws-login` every few seconds and removes the toast once the
   request is no longer pending. The Console also asks once when it starts, so a reload does not lose a
   pending request. Nothing polls while no toast is up.
@@ -123,13 +131,18 @@ config file that holds only the sso-session rendered from Settings (the same sha
 The Agent reads the verification URL and the code from the command's output, with the same patterns as
 `parseSSMLogin`.
 
-- **The URL is checked before it is shown.** Its host must be the device-authorization host of the
-  profile's Settings `sso_region` or the host of its Settings start URL. Anything else ends the attempt as
-  failed, and nothing is shown. (`parseSSMLogin`'s pattern accepts any https host.)
+- **The URL is checked before it is shown.** Its host must be exactly equal — as a whole host name, not a
+  substring or a suffix — to one of a fixed list built from the profile's Settings: the
+  device-authorization host of its `sso_region` in that region's partition (`amazonaws.com`, or
+  `amazonaws.com.cn` for China), or the host of its start URL. Anything else ends the attempt as failed,
+  and the modal says why ("unexpected sign-in URL"). `parseSSMLogin`'s patterns accept any https host, and
+  `device\.sso\.` matches inside `device.sso.evil.example` too, so the check is a separate step and not the
+  pattern.
 - The attempt succeeds when the command exits 0 and the token cache of decision 2 then holds a token that
-  has not expired. The patterns have been proven only against a terminal's output, so before the
-  implementation is accepted it is measured that the CLI writes the URL and code to a pipe before it
-  blocks.
+  has not expired. The patterns have been proven only against a terminal's output. Before the
+  implementation is accepted, two things are measured: that the CLI writes the URL and code to a pipe
+  before it blocks, and which host it prints, including for a start URL on the newer portal domains. The
+  list of accepted hosts follows that measurement.
 
 `start` returns an **attempt id**. The modal polls `GET /api/aws-login/{id}/attempts/{attempt}` and shows
 the URL and code of that attempt only. Every `start` begins a new attempt and ends the one running before
@@ -151,12 +164,18 @@ Attempts live in the Agent's memory. If the Agent restarts during one, the `aws 
 it, `GET …/attempts/{attempt}` answers that the attempt is gone, and the modal offers to start again. The
 request itself is on disk and stays pending.
 
-"Cancel" calls `POST /api/aws-login/{id}/cancel`. It ends any running attempt and drops the request. The
-waiting `af-aws-exec` runs then exit 3 at once, saying that the login request was **cancelled** (not that
-the member declined it: an agent can call the route too). For 10 minutes after a cancel, a new
-`af-aws-exec` for that profile files no request and shows no toast. It exits 3 at once, saying that the
-login was cancelled in the Console and to ask the member. Without this, the next run would put the toast
-straight back.
+"Cancel" calls `POST /api/aws-login/{id}/cancel`. The Agent ends any running attempt, writes a
+**cancel marker** for the sso-session in the same directory (the profile, when it was cancelled, and the
+cache state recorded in the request), and only then drops the request. The waiting `af-aws-exec` runs
+read the marker and exit 3 at once, saying that the login request was **cancelled** (not that the member
+declined it: an agent can call the route too).
+
+For 10 minutes after a cancel, a new `af-aws-exec` for that profile finds the marker, files no request and
+shows no toast. Without this, the next run would put the toast straight back. It exits 3 at once, saying
+that the login was cancelled in the Console, and prints the terminal command
+(`aws sso login --profile <name> --use-device-code --no-browser`): until #1028 there is no other way to log
+in from the Console during those minutes. A marker whose recorded cache state no longer matches the cache
+counts as void, since a login elsewhere has made it moot. Only the Agent writes and removes markers.
 
 The device-code presentation (code, "Sign in" button that the member opens by hand, the warning) is
 factored out of `SsmLoginModal` into one component that both modals use. `SsmLoginModal`'s props and the
@@ -179,18 +198,24 @@ As soon as the request is filed, `af-aws-exec` prints that the login was request
 prints this first, before waiting, so that a run killed by its caller's timeout has still said it. It then
 waits up to 90 seconds.
 
-- While waiting it reads the request file and the `expiresAt` of the sso-session's token cache every two
+- While waiting it reads the request file, the cancel marker and the sso-session's token cache every two
   seconds, which is cheap. It asks the CLI for the credentials again (`exportCreds`, a whole `aws` start)
-  only when that cache file shows a token that has not expired.
-- If the credentials come back, the command runs as if the login had been there from the start.
-- If the request is cancelled, it exits 3 at once (decision 3).
+  only when the cache has changed from the state recorded at filing and holds a token that has not
+  expired — once per change, not every two seconds.
+- If the credentials come back, the command runs as if the login had been there from the start. If they
+  still fail as a login problem, it keeps waiting: the request stays pending until a later change.
+- If a cancel marker appears, it exits 3 at once (decision 3). A request file that disappears without a
+  marker means resolved, and it asks for the credentials.
 - On timeout it exits 3. The message says the login was requested in the Console and to run the command
   again after approving it. The request stays pending, so the toast stays up.
 
-The 90 seconds assume the agents' command timeouts are longer. Before the implementation is accepted, each
-agent kind's default timeout for a shell command is measured and recorded in the implementation's journal.
-If a kind's timeout is shorter, the immediate line above is what tells that agent where the login is; the
-wait is not shortened for it.
+The 90 seconds assume the agents' command timeouts are longer. Before the implementation is accepted, two
+things are measured for each agent kind and recorded in the implementation's journal: its default timeout
+for a shell command, and whether a command killed by that timeout still hands its partial output to the
+agent. The immediate line above tells an agent where the login is only when that output survives.
+`af-aws-exec` cannot tell which kind called it (no variable names the kind, and a Managed session may not
+even have `AF_SESSION_NAME`), so the wait is one number: if any kind's timeout is shorter than 90 seconds
+and that kind drops the output, the wait is shortened below that timeout for everyone.
 
 ### Decision 6 — the flags and the terminal case do not change
 
