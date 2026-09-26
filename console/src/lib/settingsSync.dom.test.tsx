@@ -218,6 +218,7 @@ describe("ui-prefs: a save that does not land is shown", () => {
     expect(s.prefsSyncState()).toBe("pending");
     await vi.advanceTimersByTimeAsync(1_000);
     expect(s.prefsSyncState()).toBe("failed");
+    apiMock.mockResolvedValueOnce({}); // the retry reads the server copy first
     s.retryPrefsSync();
     expect(s.prefsSyncState()).toBe("failed"); // stays shown until something lands
     await vi.advanceTimersByTimeAsync(1_000);
@@ -250,18 +251,75 @@ describe("ui-prefs: a save that does not land is shown", () => {
     expect(s.prefsSyncState()).toBe("synced");
   });
 
-  it("retries a failed save on refresh instead of letting the server copy overwrite it", async () => {
-    apiMock.mockResolvedValueOnce({ chatSize: 14 });
+  // Review of #1023: re-sending a failed save blind (whole-object PUT, last writer wins) wiped
+  // every change another device had saved since. A refresh reads first, keeps only this tab's
+  // unsaved keys over the server copy, then sends.
+  it("keeps a failed change over the server copy on refresh, without wiping another device's", async () => {
+    apiMock.mockResolvedValueOnce({ chatSize: 14, iconSet: "default" });
     const s = await freshSettings({});
     await s.hydrateUIPrefs();
-    apiJSONMock.mockResolvedValueOnce({ error: { code: "http_500" } });
+    apiJSONMock.mockResolvedValueOnce({ error: { code: "http_502" } });
     s.setSetting("chatSize", 17);
     await vi.advanceTimersByTimeAsync(1_000);
-    apiMock.mockResolvedValueOnce({ chatSize: 14 });
+    expect(s.prefsSyncState()).toBe("failed");
+    // Meanwhile another device saved a different key.
+    apiMock.mockResolvedValueOnce({ chatSize: 14, iconSet: "seti" });
     await s.refreshUIPrefs(); // back in the foreground
     expect(s.getSettings().chatSize).toBe(17);
+    expect(s.getSettings().iconSet).toBe("seti");
     await vi.advanceTimersByTimeAsync(1_000);
-    expect((apiJSONMock.mock.calls[1] as [string, string, Record<string, unknown>])[2].chatSize).toBe(17);
+    const body = (apiJSONMock.mock.calls[1] as [string, string, Record<string, unknown>])[2];
+    expect([body.chatSize, body.iconSet]).toEqual([17, "seti"]);
+    expect(s.prefsSyncState()).toBe("synced");
+  });
+
+  it("lets only the newest save speak for the state", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    let landFirst!: (v: unknown) => void;
+    apiJSONMock
+      .mockImplementationOnce(() => new Promise((r) => { landFirst = r; })) // slow, lands last
+      .mockResolvedValueOnce({ error: { code: "http_413" } });
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(700);
+    s.setSetting("chatSize", 18);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(s.prefsSyncState()).toBe("failed");
+    landFirst({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.prefsSyncState()).toBe("failed"); // the older save carried 17, not 18
+  });
+
+  it("does not go failed when an older save errors after the newest one landed", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    let errFirst!: (v: unknown) => void;
+    apiJSONMock
+      .mockImplementationOnce(() => new Promise((r) => { errFirst = r; }))
+      .mockResolvedValueOnce({});
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(700);
+    s.setSetting("chatSize", 18);
+    await vi.advanceTimersByTimeAsync(700);
+    errFirst({ error: { code: "http_502" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.prefsSyncState()).toBe("synced"); // 18, the newest, is on the server
+  });
+
+  it("ignores the previous owner's save answering after an identity switch", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    await s.hydrateUIPrefs();
+    let fail!: (e: unknown) => void;
+    apiJSONMock.mockImplementationOnce(() => new Promise((_, rej) => { fail = rej; }));
+    s.setSetting("chatSize", 17);
+    await vi.advanceTimersByTimeAsync(700);
+    apiMock.mockResolvedValueOnce({});
+    await s.resyncAccumulatedForIdentitySwitch();
+    fail(new Error("network"));
+    await vi.advanceTimersByTimeAsync(0);
     expect(s.prefsSyncState()).toBe("synced");
   });
 });
@@ -313,13 +371,36 @@ describe("ui-prefs: the owner of the local copy", () => {
     expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1");
   });
 
-  it("does not push a never-held key when no owner was recorded (a copy from before the record)", async () => {
+  // Review of #1023: adopting an unrecorded copy and recording this owner over it made the
+  // SECOND boot push it as this account's.
+  it("treats an unrecorded copy as another owner's, so no later boot pushes it", async () => {
     const s = await freshSettings({ hiddenModels: hidden });
     s.setPrefsOwnerSource(() => "t1|u1");
     apiMock.mockResolvedValueOnce({});
     await s.hydrateUIPrefs();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(apiJSONMock).not.toHaveBeenCalled();
+    expect(s.getSettings().hiddenModels).toEqual({ claude: ["fable"] });
     expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1"); // recorded from now on
+
+    const again = await freshSettings(JSON.parse(localStorage.getItem("af-display-settings")!));
+    again.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await again.hydrateUIPrefs();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).not.toHaveBeenCalled();
+  });
+
+  // Review of #1023: localStorage is shared by tabs on different tenants; a write must move the
+  // record to the writer, or another tenant's tab vouches for it at its next boot.
+  it("moves the record to whichever owner last wrote the shared copy", async () => {
+    const s = await freshSettings({});
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    localStorage.setItem(OWNER_KEY, "t2|u1"); // another tab, on t2, hydrated since
+    s.setSetting("hiddenModels", hidden); // this tab (t1) writes the shared copy
+    expect(localStorage.getItem(OWNER_KEY)).toBe("t1|u1");
   });
 });
