@@ -466,8 +466,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 					working = true // a submit (answering the question) starts a turn
 				}
 			} else {
-				// -l: literal, so the answer text is typed verbatim (no key-name interp).
-				cmd = tmuxx.Cmd("send-keys", "-t", pane, "-l", s.T)
+				// -l: literal, so the answer text is typed verbatim (no key-name interp). "--" ends
+				// tmux's flags: text starting with "-" is otherwise parsed as one ("invalid flag --").
+				cmd = tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", s.T)
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
 				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
@@ -816,7 +817,7 @@ func typePromptText(name, pane, text string) error {
 	// literal-keys send-keys is eaten by the paste coalescing and the prompt is never
 	// submitted.
 	if kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot && kind != session.KindCursor && kind != session.KindKiro {
-		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
+		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
 		return nil

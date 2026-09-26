@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -526,5 +528,33 @@ esac
 			t.Fatalf("prompt was never delivered; tmux commands = %s", b)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A prompt that starts with "-" ("--account …", a "- item" bullet) was parsed by tmux as a
+// send-keys flag and failed with "invalid flag --", so it never reached the pane. Only a real
+// tmux does that parsing, so this drives one instead of the argument-logging fake.
+func TestTypePromptTextSendsLeadingDashLiterally(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	isolateAgentState(t)
+	const name = "dash_prompt"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	tn := session.TmuxName(name)
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "cat").CombinedOutput(); err != nil {
+		t.Fatalf("new-session: %v\n%s", err, out)
+	}
+	for _, text := range []string{"--account foo", "- item"} {
+		if err := typePromptText(name, tn, text); err != nil {
+			t.Fatalf("typePromptText(%q): %v", text, err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for !strings.Contains(tmuxx.CapturePane(tn), text) {
+			if time.Now().After(deadline) {
+				t.Fatalf("pane never showed %q:\n%s", text, tmuxx.CapturePane(tn))
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 }
