@@ -143,6 +143,11 @@ var Entries = []string{
 	// 3), keyed by sid like the rest of this list. Also never existed under .config — it was
 	// introduced under AgentDataDir and only just moved onto this side.
 	"lcpp",
+	// af-aws-exec (issue #998): the one-profile configs it gives its children, and the last
+	// Settings > SSM list the CP returned. Both introduced directly under AgentStateDir,
+	// never under .config, so run() no-ops on them.
+	"aws-exec",
+	"aws-settings.json",
 }
 
 // markerName records which entries are finished, so an entry whose source could not be
