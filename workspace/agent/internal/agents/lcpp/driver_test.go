@@ -175,6 +175,9 @@ func TestDriverSendPersistsTurnAndCompletes(t *testing.T) {
 	if recs[1].Kind != KindAssistant || recs[1].Content != "hello there" {
 		t.Fatalf("unexpected assistant record: %+v", recs[1])
 	}
+	if recs[1].Model != "test-model" {
+		t.Fatalf("assistant record model = %q, want the turn's model test-model", recs[1].Model)
+	}
 
 	// The generic status route (§4.2) must show idle once the turn settles — this is the
 	// route agent.go's WireLive and sessionx's DriveState both read.

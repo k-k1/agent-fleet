@@ -43,6 +43,9 @@ import (
 type record struct {
 	Seen string   `json:"seen"`
 	Item msp.Item `json:"item"`
+	// Model is the model the host reported as selected when AF saw the item; items carry no
+	// model of their own. Empty on lines written before it was recorded.
+	Model string `json:"model,omitempty"`
 }
 
 // store is one session's append-only item log.
@@ -78,8 +81,11 @@ func (s *store) Path() string { return filepath.Join(storeDir(), s.sid+".jsonl")
 
 // Append writes one item. A failure is returned rather than swallowed so the caller can log
 // it once; it is never fatal to a turn, because the host still owns the conversation.
-func (s *store) Append(it msp.Item) error {
-	line, err := json.Marshal(record{Seen: time.Now().UTC().Format(time.RFC3339Nano), Item: it})
+func (s *store) Append(it msp.Item) error { return s.AppendFrom(it, "") }
+
+// AppendFrom is Append recording the model in force when the item arrived.
+func (s *store) AppendFrom(it msp.Item, model string) error {
+	line, err := json.Marshal(record{Seen: time.Now().UTC().Format(time.RFC3339Nano), Item: it, Model: model})
 	if err != nil {
 		return err
 	}
@@ -102,19 +108,26 @@ func (s *store) Append(it msp.Item) error {
 // is FIRST-SEEN order, which is the order the conversation happened in — sorting by revision
 // or by id would reshuffle a turn whose tool call completed after the text that follows it.
 func (s *store) Items() ([]msp.Item, error) {
+	items, _, err := s.itemsWithModels()
+	return items, err
+}
+
+// itemsWithModels is Items plus the recorded model of each item, by item id.
+func (s *store) itemsWithModels() ([]msp.Item, map[string]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := os.Open(s.Path())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // a session that has not spoken yet is not an error
+			return nil, nil, nil // a session that has not spoken yet is not an error
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 
 	var order []string
 	byID := map[string]msp.Item{}
+	models := map[string]string{}
 	sc := bufio.NewScanner(f)
 	// One item can carry a whole tool output, so the stock 64 KiB line limit would turn a
 	// large-but-legitimate record into a truncated conversation.
@@ -132,12 +145,16 @@ func (s *store) Items() ([]msp.Item, error) {
 			continue
 		}
 		byID[r.Item.ItemID] = r.Item
+		// The first stamp wins: a later revision of the same item may arrive after a switch.
+		if _, stamped := models[r.Item.ItemID]; !stamped && r.Model != "" {
+			models[r.Item.ItemID] = r.Model
+		}
 	}
 	items := make([]msp.Item, 0, len(order))
 	for _, id := range order {
 		items = append(items, byID[id])
 	}
-	return items, sc.Err()
+	return items, models, sc.Err()
 }
 
 // Remove drops the stored conversation (a slot whose identity is being discarded).
@@ -438,7 +455,7 @@ func appendStreaming(turns []transcript.Turn, items []msp.Item, fragments map[st
 // The destination is written once and never merged into: a store that already exists belongs
 // to a slot that has already lived, and copying over it would splice two conversations.
 func (s *store) ForkAt(newSID, cutTurnID string) error {
-	items, err := s.Items()
+	items, models, err := s.itemsWithModels()
 	if err != nil {
 		return err
 	}
@@ -459,7 +476,7 @@ func (s *store) ForkAt(newSID, cutTurnID string) error {
 		return nil
 	}
 	for i := 0; i <= cut && i < len(items); i++ {
-		if err := dst.Append(items[i]); err != nil {
+		if err := dst.AppendFrom(items[i], models[items[i].ItemID]); err != nil {
 			return err
 		}
 	}

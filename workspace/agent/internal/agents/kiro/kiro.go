@@ -27,6 +27,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // sids maps our deterministic slot sid to kiro's own (CLI-minted) session id.
@@ -68,8 +69,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// boundary is the state source (Track A2).
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
-		if st := LiveState(m); st != "" {
-			li.State = st
+		// Until the kind's own source exists (right after launch or the first prompt) it has
+		// no opinion, and the row would read as waiting for input while the prompt just sent
+		// is running. Only a fresh stored "working" fills that gap (status.RecentlyWorking).
+		if li.State = LiveState(m); li.State == "" && status.RecentlyWorking(session.UUID(m.Dir, m.Name)) {
+			li.State = "working"
 		}
 	}
 	if !alive && !session.DirExists(m.Dir) {

@@ -70,7 +70,38 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	}
 	defer f.Close()
 	td.Turns = parseTranscript(f)
+	// A conversation that never switched models records none, so its turns carry the model
+	// the session was launched (or last resumed) with.
+	stampModel(td.Turns, modelLabel(m.Model))
 	return td, true
+}
+
+// stampModel labels every still-unlabelled assistant turn with model, for the mirror's
+// per-response badge.
+func stampModel(turns []transcript.Turn, model string) {
+	if model == "" {
+		return
+	}
+	for i := range turns {
+		if turns[i].Role == "assistant" && turns[i].Model == "" {
+			turns[i].Model = model
+		}
+	}
+}
+
+// modelLabel is the inverse of modelID: the display name `agy models` lists for id, or id
+// itself when the catalog has not been fetched. The transcript's switch notes carry display
+// names, so both sources then read the same. The catalog is walked in its listed order so an
+// id listed under two names always answers with the same one.
+func modelLabel(id string) string {
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	for _, c := range modelsList {
+		if c.ID == id {
+			return c.Label
+		}
+	}
+	return id
 }
 
 // stepLine is one transcript_full.jsonl row (fields we read).
@@ -126,6 +157,7 @@ func parseTranscript(f *os.File) []transcript.Turn {
 	// a matching user turn with idx > the idx at send time. Leaving every agy turn at
 	// the zero value stalled both (docs/log/32).
 	line := -1
+	model := "" // the model named by the latest switch note
 	for sc.Scan() {
 		line++
 		var s stepLine
@@ -135,6 +167,15 @@ func parseTranscript(f *os.File) []transcript.Turn {
 		switch {
 		case s.Type == "USER_INPUT":
 			flush()
+			// agy writes no model on its own steps; the only record is the switch note it
+			// prefixes to the next prompt. The note's "from" is what answered every turn
+			// before it, so the first note also labels the turns already parsed.
+			if from, to, ok := modelSwitch(s.Content); ok {
+				if model == "" && from != "None" {
+					stampModel(turns, from)
+				}
+				model = to
+			}
 			text := s.Content
 			if m := userRequestRe.FindStringSubmatch(text); m != nil {
 				text = m[1]
@@ -150,7 +191,7 @@ func parseTranscript(f *os.File) []transcript.Turn {
 		case s.Source == "MODEL" && s.Type == "PLANNER_RESPONSE":
 			if text := strings.TrimSpace(s.Content); text != "" {
 				if cur == nil {
-					cur = &transcript.Turn{Role: "assistant", Idx: line}
+					cur = &transcript.Turn{Role: "assistant", Idx: line, Model: model}
 				}
 				cur.Parts = append(cur.Parts, transcript.Part{Kind: "text", Text: text})
 			}
@@ -165,7 +206,7 @@ func parseTranscript(f *os.File) []transcript.Turn {
 				out = out[:toolOutputMax] + "…"
 			}
 			if cur == nil {
-				cur = &transcript.Turn{Role: "assistant", Idx: line}
+				cur = &transcript.Turn{Role: "assistant", Idx: line, Model: model}
 			}
 			p := transcript.Part{Kind: "tool", Tool: s.Type, Output: out}
 			// A step that wrote a file says so in its own prose, which is the only

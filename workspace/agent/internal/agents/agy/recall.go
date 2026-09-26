@@ -37,7 +37,29 @@ func (agentImpl) RecallSettings(m session.Meta) agents.RecalledSettings {
 	return recallFrom(f, cachedModelIDsByLabel())
 }
 
-var modelChangeRe = regexp.MustCompile("changed setting `Model Selection` from .*? to (.+?)\\.(?:\\s|$)")
+var (
+	settingsChangeRe = regexp.MustCompile(`(?s)<USER_SETTINGS_CHANGE>(.*?)</USER_SETTINGS_CHANGE>`)
+	modelSwitchRe    = regexp.MustCompile("changed setting `Model Selection` from (.+?) to (.+?)\\.(?:\\s|$)")
+)
+
+// modelSwitch reads the model switch notes agy prefixes to a USER_INPUT and returns the
+// model before the first and after the last. Only the <USER_SETTINGS_CHANGE> blocks ahead of
+// <USER_REQUEST> are searched: anything inside the request, tags included, is text the user
+// typed, not a switch.
+func modelSwitch(content string) (from, to string, ok bool) {
+	if i := strings.Index(content, "<USER_REQUEST>"); i >= 0 {
+		content = content[:i]
+	}
+	for _, blk := range settingsChangeRe.FindAllStringSubmatch(content, -1) {
+		for _, mm := range modelSwitchRe.FindAllStringSubmatch(blk[1], -1) {
+			if !ok {
+				from, ok = strings.TrimSpace(mm[1]), true
+			}
+			to = strings.TrimSpace(mm[2])
+		}
+	}
+	return from, to, ok
+}
 
 func recallFrom(rd io.Reader, byLabel map[string]string) agents.RecalledSettings {
 	var r agents.RecalledSettings
@@ -48,8 +70,8 @@ func recallFrom(rd io.Reader, byLabel map[string]string) agents.RecalledSettings
 		if json.Unmarshal(sc.Bytes(), &s) != nil || s.Type != "USER_INPUT" {
 			continue
 		}
-		if mm := modelChangeRe.FindStringSubmatch(s.Content); mm != nil {
-			r.Model = modelID(strings.TrimSpace(mm[1]), byLabel)
+		if _, to, ok := modelSwitch(s.Content); ok {
+			r.Model = modelID(to, byLabel)
 		}
 		if mm := userRequestRe.FindStringSubmatch(s.Content); mm != nil {
 			r.Mode = "normal"
