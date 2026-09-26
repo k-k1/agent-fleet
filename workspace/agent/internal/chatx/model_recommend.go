@@ -52,14 +52,23 @@ var (
 // Console asking for its current, possibly unsaved, setting). Rules take it as a parameter so
 // one answer is computed against one reading throughout.
 type visibility struct {
-	explicit bool
-	hidden   []string // effective list (fail-safe applied) when explicit
+	explicit     bool
+	hidden       []string // effective list (fail-safe applied) when explicit
+	claudeCustom []string // claude's registered models when explicit
 }
 
 var prefsVisibility = visibility{}
 
-func explicitVisibility(kind string, raw []string) visibility {
-	return visibility{explicit: true, hidden: deps.EffectiveHidden(kind, raw)}
+func explicitVisibility(kind string, raw, claudeCustom []string) visibility {
+	return visibility{explicit: true, hidden: deps.EffectiveHidden(kind, raw, claudeCustom), claudeCustom: claudeCustom}
+}
+
+// claudeCustomModels is the registered-models list this reading was computed with.
+func (v visibility) claudeCustomModels() []string {
+	if !v.explicit {
+		return uiprefs.ClaudeCustomModels()
+	}
+	return v.claudeCustom
 }
 
 func (v visibility) model(kind, m string) string {
@@ -100,13 +109,14 @@ func RecommendedModels(kind string) RecommendedSet {
 	return recommendedModels(prefsVisibility, kind)
 }
 
-// RecommendedModelsWithHidden answers for a hidden-models list the caller supplies (raw, as the
-// Console holds it) instead of the one saved in ui-prefs — GET /agents/{kind}/models?hidden=….
+// RecommendedModelsWithHidden answers for a hidden-models list and claude's registered models the
+// caller supplies (raw, as the Console holds them) instead of the ones saved in ui-prefs — GET
+// /agents/{kind}/models?hidden=…&custom=….
 // The Console asks with its current setting, so the answer is exactly for what its screen shows,
 // whether or not its debounced save has reached this Agent yet (#972 review, rounds 3–5: every
 // scheme that matched a saved-prefs answer to the screen's setting after the fact had a race).
-func RecommendedModelsWithHidden(kind string, raw []string) RecommendedSet {
-	return recommendedModels(explicitVisibility(kind, raw), kind)
+func RecommendedModelsWithHidden(kind string, raw, claudeCustom []string) RecommendedSet {
+	return recommendedModels(explicitVisibility(kind, raw, claudeCustom), kind)
 }
 
 func recommendedModels(v visibility, kind string) RecommendedSet {
@@ -141,7 +151,7 @@ func claudeFirstVisible(v visibility, tiers []string) string {
 			return m
 		}
 	}
-	for _, id := range uiprefs.ClaudeCustomModels() {
+	for _, id := range v.claudeCustomModels() {
 		if m := v.model(session.KindClaude, id); m != "" {
 			return m
 		}

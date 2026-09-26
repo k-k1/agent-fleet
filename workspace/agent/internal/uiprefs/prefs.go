@@ -321,6 +321,12 @@ func ClaudeCustomModels() []string {
 	if !ok {
 		return nil
 	}
+	return NormalizeClaudeCustomModels(raw)
+}
+
+// NormalizeClaudeCustomModels applies ClaudeCustomModels' rule to a list from elsewhere — the
+// Console's current, possibly unsaved list (GET /agents/claude/models?custom=…). Never nil.
+func NormalizeClaudeCustomModels(raw []any) []string {
 	out := make([]string, 0, len(raw))
 	seen := map[string]bool{}
 	for _, value := range raw {

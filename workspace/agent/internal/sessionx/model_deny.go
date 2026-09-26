@@ -115,6 +115,13 @@ func HiddenModelsFor(kind string) []string {
 // the four aliases but kept a registered model — relaunching models they had hidden (#972
 // review, round 5).
 func EffectiveHidden(kind string, raw []string) []string {
+	return EffectiveHiddenWith(kind, raw, uiprefs.ClaudeCustomModels())
+}
+
+// EffectiveHiddenWith is EffectiveHidden against a registered-models list the caller supplies
+// (GET /agents/claude/models?custom=…): right after a member registers a model, before the save
+// lands, the fail-safe must count the model their picker already shows.
+func EffectiveHiddenWith(kind string, raw, claudeCustom []string) []string {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -123,7 +130,7 @@ func EffectiveHidden(kind string, raw []string) []string {
 		for _, c := range claude.Models() {
 			candidates = append(candidates, c.ID)
 		}
-		candidates = append(candidates, uiprefs.ClaudeCustomModels()...)
+		candidates = append(candidates, claudeCustom...)
 		all := true
 		for _, id := range candidates {
 			if !modelHiddenIn(raw, id) {

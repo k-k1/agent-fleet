@@ -120,7 +120,8 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  *  a transient backend error (`http_502` while the workspace boots, any 5xx body). An empty
  *  `models` array is NOT this case: that is an answer, and it carries its own reason. */
 /** One question to the Agent: whose (tenant, user) and under which settings (the hidden list,
- *  opencode's billing route). The settings travel WITH the request (?hidden= / ?catalog=), so
+ *  opencode's billing route, claude's registered models). The settings travel WITH the request
+ *  (?hidden= / ?catalog= / ?custom=), so
  *  the Agent answers for this tab's current setting even before its debounced save arrives —
  *  the answer is a function of the question, and caching it under the question is exact
  *  (#972 review, rounds 3–5: every scheme that matched a saved-prefs answer to the screen after
@@ -131,6 +132,7 @@ interface CatalogQuestion {
   user: string;
   hidden: string; // JSON array of the kind's hidden-models entry, as this tab holds it
   catalog: string; // opencode's billing route; "" for every other kind
+  custom: string; // JSON array of claude's registered models; "" for every other kind
 }
 
 function questionFor(kind: string): CatalogQuestion {
@@ -143,10 +145,11 @@ function questionFor(kind: string): CatalogQuestion {
     user: getUser(),
     hidden: JSON.stringify(hidden),
     catalog: kind === "opencode" ? s.opencodeCatalog : "",
+    custom: kind === "claude" ? JSON.stringify(s.claudeCustomModels) : "",
   };
 }
 
-const questionKey = (q: CatalogQuestion): string => [q.tenant, q.user, q.kind, q.hidden, q.catalog].join("|");
+const questionKey = (q: CatalogQuestion): string => [q.tenant, q.user, q.kind, q.hidden, q.catalog, q.custom].join("|");
 
 /** Is this tab still asking as the same tenant and user? api() sends whichever is current at
  *  call time, so a question begun under one and retried after a switch would be answered by the
@@ -161,6 +164,7 @@ async function requestModels(q: CatalogQuestion): Promise<Record<string, unknown
   if (!stillAsker(q)) return null;
   const params = new URLSearchParams({ hidden: q.hidden });
   if (q.kind === "opencode") params.set("catalog", q.catalog);
+  if (q.kind === "claude") params.set("custom", q.custom);
   const d = await api(`api/agents/${q.kind}/models?${params}`).catch(() => null);
   if (!d || isTransientErr(d) || !Array.isArray(d.models) || !stillAsker(q)) return null;
   return d;

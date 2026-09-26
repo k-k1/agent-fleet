@@ -157,6 +157,37 @@ describe("useRecommendedModels and the ui-prefs save", () => {
   });
 });
 
+// #1023 item 3: claude's registered models are part of the question too. With every alias hidden,
+// the Agent's fail-safe and "fall back to a registered model" read the registered list — so a
+// model registered on this screen has to reach the answer before its save does.
+describe("useRecommendedModels and claude's registered models", () => {
+  it("asks with the screen's registered models at once, before the save lands", async () => {
+    const { settings, models } = await fresh();
+    expect(await settings.hydrateUIPrefs()).toBe(true);
+    apiMock.mockImplementation(async (p: string) => {
+      const m = /^api\/agents\/claude\/models\?(.*)$/.exec(p);
+      if (!m) return {};
+      const custom: string[] = JSON.parse(new URLSearchParams(m[1]).get("custom") ?? "null");
+      log.push(`GET custom=${custom}`);
+      const short = custom?.[0] ?? "haiku"; // all aliases hidden: the fail-safe unless one is registered
+      return { models: [], recommended: { chat: short, prose: short, short } };
+    });
+    await act(async () => settings.setSetting("hiddenModels", { claude: ["fable", "opus", "sonnet", "haiku"] }));
+    function Probe() {
+      return <span>{models.useRecommendedModels("claude")?.short ?? "-"}</span>;
+    }
+    root = createRoot(host);
+    await act(async () => root!.render(<Probe />));
+    await flush();
+    expect(host.textContent).toBe("haiku");
+    log = [];
+    await act(async () => settings.setSetting("claudeCustomModels", ["claude-mythos-1"]));
+    await flush(); // no time passes: the debounced PUT has not gone out
+    expect(log).toEqual(["GET custom=claude-mythos-1"]);
+    expect(host.textContent).toBe("claude-mythos-1");
+  });
+});
+
 // #1023 item 5: the applied opencode route was one module-scope value, refetched only when the
 // selected route changed — a tenant switch with the same "Go" setting kept showing the previous
 // tenant's answer (and so missed the new tenant's Zen-rescue warning).
