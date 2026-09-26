@@ -35,10 +35,12 @@ describe("expandThinking", () => {
   });
 });
 
+// The Agent's uiprefs.ClaudeCustomModels test (claude_custom_test.go) uses this same input table.
 describe("normalizeClaudeCustomModels", () => {
   it("trims ids and drops aliases, duplicates, and broken values", () => {
     expect(normalizeClaudeCustomModels([
       " claude-opus-4-8 ", "CLAUDE-OPUS-4-8", "claude-opus-4-7", "claude-opus-4-6[1m]", "opus", "bad model", 42, "",
+      "claude-", "claude-_x", "claude-[1m]", "claude-opus 4",
     ])).toEqual(["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6[1m]"]);
   });
 

@@ -336,13 +336,19 @@ func ClaudeCustomModels() []string {
 	return out
 }
 
+// validClaudeCustomModel is the Console's normalizeClaudeCustomModels rule
+// (/^claude-[a-z0-9][a-z0-9._\-[\]]*$/i): an id one side accepts and the other drops shows in
+// the picker but not in the Agent's list or MCP list_models, and the all-hidden fail-safe then
+// counts it on one side only. Brackets carry Claude Code's context suffix (`[1m]`); the id is
+// shell-quoted at launch and passed as a single argv entry to chat turns, so they never glob.
 func validClaudeCustomModel(id string) bool {
 	id = strings.TrimSpace(id)
 	if !strings.HasPrefix(strings.ToLower(id), "claude-") || len(id) == len("claude-") {
 		return false
 	}
-	for _, r := range id {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+	for i, r := range id[len("claude-"):] {
+		alnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if alnum || (i > 0 && (r == '-' || r == '_' || r == '.' || r == '[' || r == ']')) {
 			continue
 		}
 		return false
