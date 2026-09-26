@@ -156,7 +156,7 @@ export const errors = {
   "err.assistant_builtin_readonly_delete": "ビルトインは削除できません",
   "err.assistant_name_required": "名前を入力してください",
   "err.assistant_agent_unsupported": "未対応のエージェントです",
-  "err.assistant_tools_unsupported": "未対応のツール指定です",
+  "err.assistant_tools_unsupported": "未対応のツール許可です",
   "err.assistant_integration_unsupported": "未対応の連携です",
   "err.paste_too_large": "ファイルが大きすぎます",
   "err.paste_unsupported_kind": "このセッション種別には画像を渡せません",

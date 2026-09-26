@@ -159,7 +159,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.assistant_builtin_readonly_delete": "Built-in assistants can't be deleted.",
   "err.assistant_name_required": "Enter a name.",
   "err.assistant_agent_unsupported": "This agent isn't supported.",
-  "err.assistant_tools_unsupported": "This tool setting isn't supported.",
+  "err.assistant_tools_unsupported": "This tool permission isn't supported.",
   "err.assistant_integration_unsupported": "Unsupported integration",
   "err.paste_too_large": "The file is too large.",
   "err.paste_unsupported_kind": "This session type can't accept images.",

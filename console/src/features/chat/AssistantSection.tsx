@@ -178,8 +178,8 @@ export const AssistantSection = memo(function AssistantSection() {
   const saveAssistant = async (input: AssistantInput) => {
     // apiJSON resolves a server error as {error} rather than throwing. Treating that as
     // success would close the modal and lose what was typed (the persona, …), so a failure is
-    // toasted and re-thrown, leaving AssistantModal open. A validation refusal says why in its
-    // localized err.<code>; the rejected integration id comes in its own field.
+    // toasted and re-thrown, leaving AssistantModal open. An assistant_* refusal (validation,
+    // not found, built-in) says why in its localized err.<code>.
     const res = await (editing ? assistantUpdate(editing.id, input) : assistantCreate(input)).catch(() => null);
     if (!res || (res as { error?: unknown }).error) {
       const err = (res as { error?: ApiError & { integration?: string } } | null)?.error;

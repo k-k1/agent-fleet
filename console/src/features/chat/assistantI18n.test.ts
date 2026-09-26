@@ -25,6 +25,9 @@ describe("assistantSaveError", () => {
       "fallback",
     );
     expect(assistantSaveError({ code: "http_502" }, "fallback")).toBe("fallback");
+    // A malformed body is refused by the shared decoder with bad_request, which has a catalogue
+    // entry of its own ("The request is malformed.") — the prefix gate is what keeps it out.
+    expect(assistantSaveError({ code: "bad_request", message: "invalid JSON body" }, "fallback")).toBe("fallback");
     expect(assistantSaveError({ code: "assistant_from_a_newer_agent" }, "fallback")).toBe("fallback");
   });
 });
