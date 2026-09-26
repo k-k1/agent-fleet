@@ -240,3 +240,27 @@ func hasEnv(env []string, want string) bool {
 	}
 	return false
 }
+
+// af's opencode child is told the key it was registered under (#989), so it can refuse caller
+// stamps when it runs under a key the caller plugin does not recognise. Only af's entry gets
+// it, and the definition's own env is left as it was.
+func TestOpencodeServersTellAFItsRegisteredKey(t *testing.T) {
+	af := ServerDef{ID: BuiltinAF, Name: "af_0123abcd", Transport: "stdio", Command: "/bin/wa",
+		Args: []string{"mcp-stdio"}, Env: map[string]string{"KEEP": "1"}}
+	other := attachStdioDef("a")
+	got := OpencodeServers([]ServerDef{af, other})
+
+	env, _ := got["af_0123abcd"].(map[string]any)["environment"].(map[string]any)
+	if env[AFServerKeyEnv] != "af_0123abcd" || env["KEEP"] != "1" {
+		t.Fatalf("af environment = %#v, want its key plus its own env", env)
+	}
+	if _, leaked := af.Env[AFServerKeyEnv]; leaked {
+		t.Fatal("the definition's Env map was mutated")
+	}
+	if oenv, _ := got["a"].(map[string]any)["environment"].(map[string]any); oenv[AFServerKeyEnv] != nil {
+		t.Fatalf("a non-af server received %s: %#v", AFServerKeyEnv, oenv)
+	}
+	if !IsRotatedAFServerName("af_0123abcd") || IsRotatedAFServerName("af") || IsRotatedAFServerName("") {
+		t.Fatal("IsRotatedAFServerName disagrees with the per-boot name shape")
+	}
+}

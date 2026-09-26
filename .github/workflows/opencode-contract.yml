@@ -41,6 +41,7 @@ on:
     branches: [main]
     paths:
       - "workspace/agent/internal/agents/opencode/**"
+      - "workspace/opencode-plugin/**"
       - "workspace/agent/session_io.go"
       - "workspace/agent/opencode_contract_test.go"
       - "workspace/Dockerfile"

@@ -67,6 +67,7 @@ MCP・config の口は無く、同じディレクトリのセッションは af 
 一方、opencode のプラグインフック `tool.execute.before` は MCP ツールでも発火し、opencode の
 セッション ID と、`client.callTool` にそのまま渡る `args` を受け取る（`session/tools.ts`、
 v1.18.32）。AF は `rtk.ts` を同じ仕組みで入れている。これを使う経路は #989 に切り出した。
+→ #989 は [119](119-opencode-caller-session-plugin.md) で実装した。
 
 ## 実装
 

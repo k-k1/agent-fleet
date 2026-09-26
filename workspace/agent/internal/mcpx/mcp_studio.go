@@ -93,7 +93,7 @@ func mcpStudioAdvertise() (studioOffer, bool) {
 	if !selfReportOnly() {
 		return studioOffer{}, false
 	}
-	self, err := mcpOwningSession()
+	self, err := mcpListOwningSession()
 	if err != nil {
 		if studioBoundInThisFolder() {
 			return studioOffer{agentTrial: true}, true
@@ -114,7 +114,7 @@ func studioBoundInThisFolder() bool {
 		return false
 	}
 	for _, m := range session.ListMetas() {
-		if !m.Archived && m.Dir == cwd && m.Studio != "" {
+		if !m.Archived && mcpRunsIn(m, cwd) && m.Studio != "" {
 			return true
 		}
 	}

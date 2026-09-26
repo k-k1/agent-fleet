@@ -770,10 +770,12 @@ else
   ' "$SETTINGS" 2>/dev/null || true
 fi
 
-# opencode status plugin: copy the bundled plugin into the user's opencode plugin
-# dir (home, persists) so opencode reports session working/idle state back to the
-# agent — the opencode analog of claude's settings.json hooks. Refreshed each start
-# so it tracks the image version. opencode auto-loads ~/.config/opencode/plugin/*.js.
+# opencode plugins: copy the bundled *.js plugins into the user's opencode plugin
+# dir (home, persists): agent-fleet-status.js reports session working/idle state back
+# to the agent — the opencode analog of claude's settings.json hooks — and
+# agent-fleet-caller.js stamps the calling session on af's MCP tools (#989). Refreshed
+# each start so they track the image version. opencode auto-loads
+# ~/.config/opencode/plugin/*.js. (rtk.ts is the agent's to seed or remove.)
 OC_PLUG_SRC="/usr/local/share/agent-fleet/opencode-plugin"
 OC_PLUG_DST="$HOME/.config/opencode/plugin"
 if [ -d "$OC_PLUG_SRC" ]; then

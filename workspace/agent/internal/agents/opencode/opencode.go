@@ -21,6 +21,11 @@ import (
 // AF_SESSION_SID); the agent only reads/removes it.
 var sids = agents.NewSidStore("opencode-sid")
 
+// SlotSessionID is the opencode session id ("ses_…") slot m is mapped to, "" when it has
+// none yet. The af MCP server matches the id the caller plugin stamps on a tools/call
+// against it (#989), so AF's own mapping — never the caller's claim — decides ownership.
+func SlotSessionID(m session.Meta) string { return sids.Read(session.UUID(m.Dir, m.Name)) }
+
 // New returns the opencode Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
 
