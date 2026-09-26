@@ -103,7 +103,7 @@ func (agentImpl) ClearResume(string) {}
 // session simply shows neither.
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	st := Open(sidFor(m))
-	turns, err := st.Transcript()
+	turns, err := st.TranscriptFor(m.Model)
 	if err != nil {
 		return agents.TranscriptData{}, false
 	}

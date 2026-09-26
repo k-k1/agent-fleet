@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -694,5 +695,52 @@ func TestTranscriptToolPartsCarryTheirEdits(t *testing.T) {
 	}
 	if got := byTool["read"]; got.File != "" || got.Edits != nil {
 		t.Fatalf("read part = %+v, want a plain trace — a read is not a change", got)
+	}
+}
+
+// Each response is badged with the model that answered it. The meta only holds the current
+// model, so it may label unrecorded responses only while no switch note exists.
+func TestTranscriptModelPerTurn(t *testing.T) {
+	testHome(t)
+	answer := func(s *Store, model string) {
+		t.Helper()
+		if _, err := s.AppendUser("q"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AppendMessageFrom(harness.Message{Role: harness.RoleAssistant, Content: "a"}, model); err != nil {
+			t.Fatal(err)
+		}
+	}
+	models := func(s *Store, sessionModel string) []string {
+		t.Helper()
+		turns, err := s.TranscriptFor(sessionModel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, tn := range turns {
+			if tn.Role == "assistant" {
+				out = append(out, tn.Model)
+			}
+		}
+		return out
+	}
+
+	never := Open("sid-model-never-switched")
+	answer(never, "")
+	answer(never, "A")
+	if got := models(never, "A"); !slices.Equal(got, []string{"A", "A"}) {
+		t.Fatalf("no switch: got %q", got)
+	}
+
+	switched := Open("sid-model-switched")
+	answer(switched, "") // written before models were recorded, launched on an unknown model
+	if _, err := switched.AppendModelChangeNote("B"); err != nil {
+		t.Fatal(err)
+	}
+	answer(switched, "")
+	answer(switched, "C")
+	if got := models(switched, "C"); !slices.Equal(got, []string{"", "B", "C"}) {
+		t.Fatalf("after a switch: got %q, want [\"\" B C]", got)
 	}
 }

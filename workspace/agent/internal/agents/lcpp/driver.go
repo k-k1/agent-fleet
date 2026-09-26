@@ -548,7 +548,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	h.mu.Unlock()
 
 	for _, m := range newMessagesSince(before, result.Messages) {
-		if _, aerr := st.AppendMessage(m); aerr != nil {
+		if _, aerr := st.AppendMessageFrom(m, model); aerr != nil {
 			log.Printf("lcpp: persisting turn message: %v", aerr)
 		}
 	}

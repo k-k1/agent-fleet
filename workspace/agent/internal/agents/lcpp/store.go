@@ -90,7 +90,8 @@ type Record struct {
 	ToolCallID string `json:"toolCallId,omitempty"`
 	// Note classifies a KindSystemNote record.
 	Note Note `json:"note,omitempty"`
-	// Model is the new model id (Note==NoteModelChange only).
+	// Model is the new model id on a NoteModelChange, or the model that produced a
+	// KindAssistant record (empty on records written before it was recorded).
 	Model string `json:"model,omitempty"`
 	// Usage is set on a KindUsage record (a pointer, not a value, so an all-zero
 	// harness.Usage that was never actually reported — types.go's own "Usage's zero value
@@ -288,6 +289,13 @@ func (s *Store) AppendUser(content string) (Record, error) {
 // has no harness.Message shape at all (it is a driver-level settings change, not something
 // the engine ever sees) — call AppendModelChangeNote for that instead.
 func (s *Store) AppendMessage(m harness.Message) (Record, error) {
+	return s.AppendMessageFrom(m, "")
+}
+
+// AppendMessageFrom is AppendMessage recording which model produced an assistant message, so
+// the mirror can badge each response with the model that actually answered it; the meta only
+// holds the current one.
+func (s *Store) AppendMessageFrom(m harness.Message, model string) (Record, error) {
 	switch m.Role {
 	case harness.RoleUser:
 		k := KindUser
@@ -296,7 +304,7 @@ func (s *Store) AppendMessage(m harness.Message) (Record, error) {
 		}
 		return s.append(Record{Kind: k, Content: m.Content})
 	case harness.RoleAssistant:
-		return s.append(Record{Kind: KindAssistant, Content: m.Content, Reasoning: m.Reasoning, ToolCalls: m.ToolCalls})
+		return s.append(Record{Kind: KindAssistant, Content: m.Content, Reasoning: m.Reasoning, ToolCalls: m.ToolCalls, Model: model})
 	case harness.RoleTool:
 		return s.append(Record{Kind: KindToolResult, Content: m.Content, ToolCallID: m.ToolCallID})
 	case harness.RoleSystem:
@@ -483,7 +491,13 @@ func (s *Store) SendMessages(systemPrompt string) ([]harness.Message, error) {
 // two representations this method and SendMessages produce, not every record kind's mirror
 // treatment), and inventing one is wiring work for the kind itself, out of this package's
 // scope.
-func (s *Store) Transcript() ([]transcript.Turn, error) {
+func (s *Store) Transcript() ([]transcript.Turn, error) { return s.TranscriptFor("") }
+
+// TranscriptFor is Transcript with sessionModel labelling assistant turns whose record names no
+// model. It is used only while the store holds no model-change note: every switch writes one,
+// so without any the session has only ever run on sessionModel, while after one the meta's
+// model says nothing about the turns before it.
+func (s *Store) TranscriptFor(sessionModel string) ([]transcript.Turn, error) {
 	// truncated ignored — see Full's own call site: a torn last write never became a
 	// complete turn in the first place, so there is nothing the mirror should have shown for
 	// it either.
@@ -491,7 +505,7 @@ func (s *Store) Transcript() ([]transcript.Turn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return transcriptFromRecords(recs), nil
+	return transcriptFromRecords(recs, sessionModel), nil
 }
 
 // toolCallSite is where an in-flight tool_calls entry landed, so a later KindToolResult
@@ -501,10 +515,19 @@ type toolCallSite struct {
 	turn, part int
 }
 
-func transcriptFromRecords(recs []Record) []transcript.Turn {
+func transcriptFromRecords(recs []Record, sessionModel string) []transcript.Turn {
 	var turns []transcript.Turn
 	sites := make(map[string]toolCallSite)
 	lastAssistant := -1
+	// model labels an assistant record that names none: the latest switch note's model, or
+	// sessionModel when there is no note at all.
+	model := sessionModel
+	for _, r := range recs {
+		if r.Kind == KindSystemNote && r.Note == NoteModelChange {
+			model = ""
+			break
+		}
+	}
 
 	for _, r := range recs {
 		switch r.Kind {
@@ -517,7 +540,10 @@ func transcriptFromRecords(recs []Record) []transcript.Turn {
 				Text:  r.Content,
 			})
 		case KindAssistant:
-			t := transcript.Turn{Role: "assistant", TS: r.TS, AnchorID: r.ID, Idx: len(turns), Text: r.Content}
+			t := transcript.Turn{Role: "assistant", TS: r.TS, AnchorID: r.ID, Idx: len(turns), Text: r.Content, Model: r.Model}
+			if t.Model == "" {
+				t.Model = model
+			}
 			if strings.TrimSpace(r.Reasoning) != "" {
 				t.Parts = append(t.Parts, transcript.Part{Kind: "thinking", Text: r.Reasoning})
 			}
@@ -547,6 +573,8 @@ func transcriptFromRecords(recs []Record) []transcript.Turn {
 			}
 		case KindSystemNote:
 			switch r.Note {
+			case NoteModelChange:
+				model = r.Model
 			case NoteCompaction:
 				// Same convention claude's own compaction summary uses (transcript.go's
 				// Turn.Compact doc comment): a collapsible "context compacted" block, not an
