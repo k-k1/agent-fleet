@@ -20,6 +20,15 @@ func TestCursorTUIMirrorContract(t *testing.T) {
 		requireTUIContract(t, false, "cursor-agent が PATH にありません: "+err.Error())
 	}
 	requireTUIContract(t, cursor.LoggedIn(), "Cursor が認証済みではありません（E2E_CURSOR_AUTH_JSON を設定してください）")
+	// `status` reports isAuthenticated for any token that is merely present in
+	// auth.json, even one Cursor's server rejects ("Logged in (unable to fetch user
+	// details)", no userInfo — measured on 2026.09.26-dd393fe). The TUI does check
+	// with the server and stops at "Press any key to log in...", so without this the
+	// contract spends 2 minutes on a readiness timeout that hides the cause (#1003).
+	if _, ok := cursor.Status()["email"]; !ok {
+		requireTUIContract(t, false, "Cursor のサーバーがトークンを受け付けません（status に userInfo がない）。"+
+			"失効か期限切れ：専用ログインで E2E_CURSOR_AUTH_JSON を作り直してください（.github/workflows/cursor-contract.yml 冒頭）")
+	}
 
 	realHome, err := os.UserHomeDir()
 	if err != nil {

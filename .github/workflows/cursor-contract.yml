@@ -1,6 +1,14 @@
 # Cursor credentials are refreshable local auth state, so a real turn is dispatched
 # only when its encrypted CI secret is configured. A failed/expired auth never advances
 # the release marker and remains visible to cli-release-watch's tracking issue.
+#
+# E2E_CURSOR_AUTH_JSON is ~/.config/cursor/auth.json from a login used by CI only.
+# A second login or a logout of the same session revokes it, and `cursor-agent status`
+# still says "authenticated" for a revoked token while the TUI stops at "Press any key
+# to log in..." (#1003). The token is a JWT that lives about 60 days; the restore step
+# fails once it has expired and warns in its last 14 days. To regenerate it:
+#   h=$(mktemp -d) && HOME=$h cursor-agent login \
+#     && gh secret set E2E_CURSOR_AUTH_JSON < "$h/.config/cursor/auth.json"; rm -rf "$h"
 name: cursor-contract
 
 on:
@@ -35,6 +43,18 @@ jobs:
           umask 077
           printf '%s' "$AUTH" > "$HOME/.config/cursor/auth.json"
           jq -e . "$HOME/.config/cursor/auth.json" >/dev/null
+          # Read only the expiry claim of the access token; never print the token.
+          payload="$(jq -r '.accessToken // empty' "$HOME/.config/cursor/auth.json" | cut -d. -f2 | tr '_-' '/+')"
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+          exp="$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.exp // empty' 2>/dev/null || true)"
+          if [ -z "$exp" ]; then
+            echo '::warning::E2E_CURSOR_AUTH_JSON has no readable accessToken expiry'
+          else
+            left=$(( (exp - $(date +%s)) / 86400 ))
+            echo "E2E_CURSOR_AUTH_JSON access token expires $(date -u -d "@$exp" +%F) ($left days left)"
+            [ "$exp" -gt "$(date +%s)" ] || { echo '::error::E2E_CURSOR_AUTH_JSON has expired; regenerate it (see the header of this workflow)'; exit 1; }
+            [ "$left" -ge 14 ] || echo "::warning::E2E_CURSOR_AUTH_JSON expires in $left days; regenerate it (see the header of this workflow)"
+          fi
       - uses: ./.github/actions/setup-agent-cli
         id: cli
         with:
