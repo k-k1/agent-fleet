@@ -7,6 +7,7 @@ import { useBackClose } from "../../lib/backClose.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
+import { composerHistory } from "./composerHistory.ts";
 import { chatGet, chatStream, chatStop, chatCreate, chatCompact, chatSetAgent, assistantGet, chatPasteImage } from "./api.ts";
 import { errText, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
@@ -32,7 +33,7 @@ import { ContextBar } from "../mirror/ContextBar.tsx";
 import { ChatPlan } from "./ChatPlan.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
+import { buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -830,14 +831,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   useEffect(() => () => stopTtsForReplacement(ttsRef.current?.ctl ?? null), []);
 
   // Composer history = the user's own prompts in this conversation, so ↑ recalls them even
-  // after a reload (built from conv, not just this mount). The visible words only — the
-  // machine-facing pasted-image instruction is stripped. Newest last, consecutive dupes folded.
-  const history: string[] = [];
-  for (const m of conv?.messages ?? []) {
-    if (m.role !== "user") continue;
-    const s = splitPastedImages(m.content).text.trim();
-    if (s && history[history.length - 1] !== s) history.push(s);
-  }
+  // after a reload (built from conv, not just this mount). Bridge / schedule turns are left out.
+  const history = composerHistory(conv?.messages ?? []);
 
   // The whole reply-suggestion set (candidates, pin menu, focus ring) lives in
   // parts/useChatSuggest. The call stays exactly where the original block was, so the

@@ -48,7 +48,7 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/types/chat.ts",
 			tsName:  "ChatMessage",
 			tsKeys: keySet("role", "content", "ts", "agent", "model", "steps", "session",
-				"delivered", "notice_key", "notice_args", "report_kind", "report_reason"),
+				"delivered", "notice_key", "notice_args", "report_kind", "report_reason", "source"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
 				"instr": "[gap] chatx.ChatMessage emits it but the Console's ChatMessage does not declare it.",
@@ -214,7 +214,7 @@ var chatMessageBinding = map[string]string{
 	"Role": "role", "Content": "content", "TS": "ts", "Agent": "agent", "Model": "model",
 	"Steps": "steps", "Session": "session", "Instr": "instr", "Delivered": "delivered",
 	"NoticeKey": "notice_key", "NoticeArgs": "notice_args", "ReportKind": "report_kind",
-	"ReportReason": "report_reason",
+	"ReportReason": "report_reason", "Source": "source",
 }
 
 var branchInfoBinding = map[string]string{

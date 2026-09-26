@@ -88,6 +88,11 @@ type ChatMessage struct {
 	// Empty on reports written before P6: those fall back to Content on both sides.
 	ReportKind   string `json:"report_kind,omitempty"`
 	ReportReason string `json:"report_reason,omitempty"`
+	// Source attributes a role=="user" message that nobody typed in the Console composer:
+	// "discord" / "slack" (a reply in the bridge's operator thread) or "schedule" (a
+	// scheduled assistant fire, docs/log/38). "" = typed in the composer. Same vocabulary as
+	// transcript.Turn.Source; the Console keeps these out of the composer's ↑ history.
+	Source string `json:"source,omitempty"`
 }
 
 // ChatConversation is the persisted record (one JSON file per conversation).

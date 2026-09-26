@@ -96,7 +96,7 @@ type Deps struct {
 	// (The same "far side you must not copy" shape as README's `var usageMu = usagex.Mu`.
 	// This one is not a lock, so vet stays quiet — hence the explicit function.)
 	MCPConvID       func() string
-	RunOperatorTurn func(conv, text string) (string, error)
+	RunOperatorTurn func(conv, text, source string) (string, error)
 
 	// --- Stable error codes (errcodes.go) ---
 	//
@@ -218,7 +218,9 @@ func maybeFoldSessionUsage() { deps.MaybeFoldSessionUsage() }
 
 func toolchainShellPrefix() string { return deps.ToolchainShellPrefix() }
 
-func runOperatorTurn(conv, text string) (string, error) { return deps.RunOperatorTurn(conv, text) }
+func runOperatorTurn(conv, text, source string) (string, error) {
+	return deps.RunOperatorTurn(conv, text, source)
+}
 
 // mcpConvID was a variable on the main side (mcp_wiring.go rewrites it at runtime). A
 // variable cannot be shared across packages, so here alone "reading a variable" becomes
