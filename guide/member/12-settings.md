@@ -163,7 +163,9 @@ the assistant conversation — they share an implementation, but they surface so
   "Recommended" for short labels is **the model with the lowest models.dev list price** among the ones that CLI
   lists (codex and agy — a cheaper model that ships is picked up on its own); for prose it is a fixed tier one step
   up. Without prices it falls back to the previous defaults. "Recommended (currently: …)" shows what it resolves
-  to right now.
+  to right now. For muse, both are the newest model that is not a `-contributor` one, as for the assistant;
+  if muse's model list cannot be read, the assistance is not generated rather than run on its contributor
+  default.
 - **Features that use AI assistance** — one card per feature (8 in total). Turning one off hides its button
   entirely and folds away that card's agent/model rows.
   - **Session title suggestion** — the banner that proposes a title, plus "Ask AI" in a session's rename dialog.

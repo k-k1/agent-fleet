@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -288,7 +289,23 @@ func PreferredHeadlessAgent() string { return preferredFrom(assistantAgentOrderP
 // (Settings > AI assist, "agent priority"). Ranked separately from the chat on purpose:
 // the chat wants the strongest CLI, these run constantly and want the cheapest that
 // works (docs/log/84).
-func PreferredAssistAgent() string { return preferredFrom(aiAssistOrderPref()) }
+func PreferredAssistAgent() string { return preferredFrom(oneShotOrder()) }
+
+// oneShotKinds are exactly the kinds OneShotHeadlessRun has a case for. A kind outside this list
+// is never selected for a one-shot — neither by a feature pin nor from the priority order — even
+// when ChatProviders knows it: the run used to fall through to the claude path for any kind
+// without a case, so a Muse pick ran and was billed on claude (#1020). lcpp is left out on
+// purpose (ADR 0093: auto-selecting into a self-hosted engine is a phase 2 decision).
+// TestOneShotKindsMatchTheRunnerSwitch keeps this list and the switch in step.
+var oneShotKinds = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy, session.KindMuse}
+
+func oneShotRunnable(kind string) bool { return slices.Contains(oneShotKinds, kind) }
+
+// oneShotOrder is the AI assist priority order minus the kinds no one-shot can run on. Never
+// empty: agentOrderPref appends every DefaultHeadlessOrder kind, and all of them are runnable.
+func oneShotOrder() []string {
+	return slices.DeleteFunc(slices.Clone(aiAssistOrderPref()), func(k string) bool { return !oneShotRunnable(k) })
+}
 
 // ChatProviderFor resolves the provider driving this conversation: the pinned agent
 // while its CLI is authenticated, else the preferred available backend — so a
@@ -1637,6 +1654,11 @@ func recommendedOneShotModelV(v visibility, kind string, tier OneShotTier) strin
 	if m := oneShotEnvModelV(v, kind); m != "" {
 		return m
 	}
+	if kind == session.KindMuse {
+		// Never "": a muse run with no --model lands on the contributor row (clamp 8), so the
+		// recommendation is the model museOneShot would fall back to anyway.
+		return museSafeDefault()
+	}
 	if tier == OneShotProse {
 		return recommendedAssistantModelV(v, kind)
 	}
@@ -1672,7 +1694,7 @@ const (
 // /ai-assist/resolution, which must answer every poll without ever starting a CLI (docs/log/103
 // §103.8-3) — that path uses oneShotKindCached below instead, never this one.
 func oneShotKind(feature string) (kind, source string) {
-	if pin := aiFeatureAgentPref(feature); pin != "" && headlessAgentAvailable(pin) {
+	if pin := aiFeatureAgentPref(feature); oneShotRunnable(pin) && headlessAgentAvailable(pin) {
 		return pin, OneShotSourcePin
 	}
 	return PreferredAssistAgent(), OneShotSourceDefault
@@ -1767,7 +1789,7 @@ func headlessAvailableCached(kind string) (available, known bool) {
 // caller reports that feature as source "unknown" rather than showing a value that might not
 // be what actually runs.
 func oneShotKindCached(feature string) (kind, source string, ok bool) {
-	if pin := aiFeatureAgentPref(feature); pin != "" {
+	if pin := aiFeatureAgentPref(feature); oneShotRunnable(pin) {
 		avail, known := headlessAvailableCached(pin)
 		if !known {
 			return "", "", false
@@ -1777,7 +1799,7 @@ func oneShotKindCached(feature string) (kind, source string, ok bool) {
 		}
 		// Confirmed unreachable: fall through to the order below, same as oneShotKind.
 	}
-	for _, k := range aiAssistOrderPref() {
+	for _, k := range oneShotOrder() {
 		if avail, known := headlessAvailableCached(k); known && avail {
 			return k, OneShotSourceDefault, true
 		}
@@ -1982,7 +2004,7 @@ func OneShotHeadless(ctx context.Context, feature string, tier OneShotTier, pers
 // re-deriving resolveOneShot's own logic.
 func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, persona, prompt, claudeModel string) (reply, kind, model string, err error) {
 	// Usage ledger (ADR 0029 §3). This function takes the first usable backend out of
-	// claude → codex → opencode → cursor → agy, so kind is filled in inside the branch, as a
+	// the priority order (oneShotKinds), so kind is filled in inside the branch, as a
 	// result of what ran: writing the requested value instead would turn all consumption of a
 	// claude-less workspace into claude's (docs/log/46 §2). Recording inside rather than
 	// widening the return value keeps the four call sites untouched, since the recording point
@@ -2131,8 +2153,23 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		}
 		call.OK = true
 		return strings.TrimRight(strings.TrimSpace(string(out)), "\n"), "", "", nil
+	case session.KindMuse:
+		call.Kind, call.Measured = session.KindMuse, usagex.MeasuredNone
+		m := selected
+		if !configured {
+			m = recommendedOneShotModel(kind, tier)
+		}
+		reply, err := museOneShot(ctx, &call, persona, prompt, m)
+		return reply, "", "", err
+	case session.KindClaude:
+		// runs below
+	default:
+		// oneShotKind never returns a kind outside oneShotKinds; this is the backstop that keeps
+		// a new kind from silently running (and being billed) on claude.
+		call.Kind = kind
+		return "", "", "", fmt.Errorf("AI assist cannot run on %q", kind)
 	}
-	// claude (default): the historical path, kept native. --no-session-persistence is
+	// claude: the historical path, kept native. --no-session-persistence is
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
 	// a one-shot never resumes, so don't pile per-call jsonl into Claude's projects tree.
 	//
