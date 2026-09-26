@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -155,7 +156,7 @@ func syncProfiles(background bool) (SyncResult, error) {
 	// writing the block. Otherwise two runs can commit out of order: one that fetched
 	// (or read the cache) earlier could write its older list after a newer one.
 	genBefore, _ := cacheGeneration()
-	waitStart := time.Now()
+	seqBefore := readFetchSeq()
 	unlock, target, lerr := lockConfig(ConfigPath())
 	if lerr != nil {
 		return SyncResult{}, lerr
@@ -164,12 +165,13 @@ func syncProfiles(background bool) (SyncResult, error) {
 	// Another run that held the lock while this one waited has just asked the CP and
 	// cached the answer: use it rather than asking again, so parallel af-aws-exec runs
 	// (make -j8) share one fetch instead of queueing one each. Two conditions, both
-	// needed: the cache's generation changed while this run waited (a fetch completed
-	// meanwhile; a fresh random id per fetch, so a clock step or a touched file cannot
-	// fake it), and that fetch STARTED after this run did, so its answer cannot predate a
-	// Settings edit made just before this run (a fetch already in flight when the run
-	// began may carry the pre-edit list).
-	if gen, started := cacheGeneration(); gen != "" && gen != genBefore && !started.Before(waitStart) {
+	// needed, and no clocks in either (a clock step would otherwise order fetches
+	// wrongly): the cache's generation changed while this run waited (a fetch completed
+	// meanwhile; a fresh random id per fetch), and that fetch's sequence number, taken
+	// under the lock when it started, is above the one this run read before waiting, so
+	// the fetch started after this run did and cannot carry a list from before a Settings
+	// edit made just before it.
+	if gen, seq := cacheGeneration(); gen != "" && gen != genBefore && seq > seqBefore {
 		if cached, cconf, ok := cachedList(); ok {
 			res, aerr := applyLocked(ConfigPath(), target, cached)
 			res.Settings = map[string]Profile{}
@@ -180,7 +182,7 @@ func syncProfiles(background bool) (SyncResult, error) {
 			return res, aerr
 		}
 	}
-	fetchStart := time.Now()
+	seq := nextFetchSeq()
 	ps, conflicts, err := fetchUnlessCoolingDown(background)
 	if err != nil {
 		// The CP cannot be asked: re-apply the last list it gave, so the block follows
@@ -210,7 +212,7 @@ func syncProfiles(background bool) (SyncResult, error) {
 	// it is: the cache is then never older than the block, so a later offline re-apply
 	// cannot put an older list back (fail closed: a cache that cannot be saved leaves
 	// the block as it is, and an older cache is removed).
-	if serr := saveSettingsCache(ps, conflicts, fetchStart); serr != nil {
+	if serr := saveSettingsCache(ps, conflicts, seq); serr != nil {
 		_ = os.Remove(settingsCachePath())
 		return res, fmt.Errorf("could not save the Settings cache (%w); ~/.aws/config was left as it is", serr)
 	}
@@ -640,10 +642,10 @@ func settingsCachePath() string {
 }
 
 type settingsCache struct {
-	// Gen is a fresh random id per successful fetch, and FetchStarted when that fetch
-	// began; see syncProfiles.
-	Gen          string    `json:"gen"`
-	FetchStarted time.Time `json:"fetchStarted"`
+	// Gen is a fresh random id per successful fetch, and Seq that fetch's sequence
+	// number (nextFetchSeq); see syncProfiles.
+	Gen string `json:"gen"`
+	Seq uint64 `json:"seq"`
 	// Owner is a digest of the bridge token the list was fetched with. The token is
 	// per membership, so a cache left in a restored or shared home by another membership
 	// is never applied here.
@@ -665,12 +667,12 @@ func cacheOwner() string {
 // saveSettingsCache writes the cache with a new generation every time, even for an
 // unchanged list: the generation is how a run that waited for the lock knows a fetch
 // just happened.
-func saveSettingsCache(ps []Profile, conflicts []Conflict, fetchStarted time.Time) error {
+func saveSettingsCache(ps []Profile, conflicts []Conflict, seq uint64) error {
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
 	}
-	b, err := json.Marshal(settingsCache{Gen: hex.EncodeToString(nonce[:]), FetchStarted: fetchStarted, Owner: cacheOwner(),
+	b, err := json.Marshal(settingsCache{Gen: hex.EncodeToString(nonce[:]), Seq: seq, Owner: cacheOwner(),
 		Profiles: ps, Conflicts: conflicts})
 	if err != nil {
 		return err
@@ -728,8 +730,15 @@ func unreachablePath() string { return filepath.Join(paths.AgentStateDir(), "aws
 // unreachableCooldown of a failed fetch it reports the CP unreachable without asking. The
 // caller holds the config lock.
 func fetchUnlessCoolingDown(background bool) ([]Profile, []Conflict, error) {
-	if fi, err := os.Stat(unreachablePath()); background && err == nil && time.Since(fi.ModTime()) < unreachableCooldown {
-		return nil, nil, fmt.Errorf("the CP was unreachable %s ago; not asking again yet", time.Since(fi.ModTime()).Round(time.Second))
+	if fi, err := os.Stat(unreachablePath()); background && err == nil {
+		// A marker dated in the future (a clock step back, a restored home) would hold the
+		// poll off for as long as the clock takes to catch up: drop it and ask.
+		switch age := time.Since(fi.ModTime()); {
+		case age < 0:
+			_ = os.Remove(unreachablePath())
+		case age < unreachableCooldown:
+			return nil, nil, fmt.Errorf("the CP was unreachable %s ago; not asking again yet", age.Round(time.Second))
+		}
 	}
 	ps, conflicts, err := Fetch()
 	if err != nil {
@@ -744,16 +753,38 @@ func fetchUnlessCoolingDown(background bool) ([]Profile, []Conflict, error) {
 	return ps, conflicts, nil
 }
 
-// cacheGeneration is the cache's generation id and when its fetch started, or "" when
-// there is no cache for this membership.
-func cacheGeneration() (string, time.Time) {
+// cacheGeneration is the cache's generation id and its fetch's sequence number, or ""
+// when there is no cache for this membership.
+func cacheGeneration() (string, uint64) {
 	b, err := os.ReadFile(settingsCachePath())
 	if err != nil {
-		return "", time.Time{}
+		return "", 0
 	}
 	var c settingsCache
 	if json.Unmarshal(b, &c) != nil || c.Owner == "" || c.Owner != cacheOwner() {
-		return "", time.Time{}
+		return "", 0
 	}
-	return c.Gen, c.FetchStarted
+	return c.Gen, c.Seq
+}
+
+func fetchSeqPath() string { return filepath.Join(paths.AgentStateDir(), "aws-fetch-seq") }
+
+// readFetchSeq is the number of the last fetch that started (0 when none is recorded).
+func readFetchSeq() uint64 {
+	b, err := os.ReadFile(fetchSeqPath())
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	return n
+}
+
+// nextFetchSeq numbers a fetch that is about to start. The caller holds the config lock,
+// so numbers only grow and are handed out one at a time.
+func nextFetchSeq() uint64 {
+	n := readFetchSeq() + 1
+	if err := os.MkdirAll(filepath.Dir(fetchSeqPath()), 0o700); err == nil {
+		_ = writeAtomic(fetchSeqPath(), []byte(strconv.FormatUint(n, 10)), 0o600)
+	}
+	return n
 }
