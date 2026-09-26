@@ -155,7 +155,7 @@ describe("MuseCard", () => {
     const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
     api.mockImplementation((path: string) =>
       Promise.resolve(
-        path === "api/agents/muse/models"
+        path.startsWith("api/agents/muse/models")
           ? {
               models: [
                 { id: "muse-spark-1.3", label: "muse-spark-1.3", efforts },

@@ -352,6 +352,14 @@ kind, model, _ := resolveOneShot(feature, tier)
   ようにした——それまで Agent は「何も隠さない」と読み、設定画面が除外と言う Fable を起動・
   列挙できていた。claude は chat が常に `--model` を渡すので、除外された段は次の段へ送る
   （sonnet → opus → haiku → fable、短文は haiku から）。
+  🔴 レビュー 5 巡目: 照合（`appliedHidden`）も、照合しない入力（opencode の課金ルート）・
+  応答内で ui-prefs を 3 回読む食い違い・切り替え中の聞き直しで破れた。**照合もやめ、設定を
+  問いに乗せる**: Console は今の設定（`?hidden=`、opencode は `?catalog=`）を付けて聞き、Agent
+  はその値で一覧も推奨も計算する（無ければ従来どおり保存済みの ui-prefs）。答えが問いの関数に
+  なるので、問いをキーにしたキャッシュは正確で、保存のタイミングに依存しない。`appliedHidden`
+  は撤去。あわせて claude の「全部隠したら無視」の判定を、Console の選択肢と同じく登録モデル
+  込みで数えるようにした（組込 4 つだけを数え、登録モデルが残っているのに除外を丸ごと無効化
+  していた）。
 
 ## 103.12 レビューで変えたこと
 

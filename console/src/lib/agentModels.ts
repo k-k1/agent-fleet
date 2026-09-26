@@ -115,9 +115,50 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** One request. Resolves to the parsed body, or null when it did not land — a thrown fetch, or
  *  a transient backend error (`http_502` while the workspace boots, any 5xx body). An empty
  *  `models` array is NOT this case: that is an answer, and it carries its own reason. */
-async function requestModels(kind: string): Promise<Record<string, unknown> | null> {
-  const d = await api(`api/agents/${kind}/models`).catch(() => null);
-  if (!d || isTransientErr(d) || !Array.isArray(d.models)) return null;
+/** One question to the Agent: whose (tenant, user) and under which settings (the hidden list,
+ *  opencode's billing route). The settings travel WITH the request (?hidden= / ?catalog=), so
+ *  the Agent answers for this tab's current setting even before its debounced save arrives —
+ *  the answer is a function of the question, and caching it under the question is exact
+ *  (#972 review, rounds 3–5: every scheme that matched a saved-prefs answer to the screen after
+ *  the fact had a race). */
+interface CatalogQuestion {
+  kind: string;
+  tenant: string;
+  user: string;
+  hidden: string; // JSON array of the kind's hidden-models entry, as this tab holds it
+  catalog: string; // opencode's billing route; "" for every other kind
+}
+
+function questionFor(kind: string): CatalogQuestion {
+  const s = getSettings();
+  const raw = s.hiddenModels?.[kind];
+  const hidden = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string" && !!v.trim()) : [];
+  return {
+    kind,
+    tenant: getTenant(),
+    user: getUser(),
+    hidden: JSON.stringify(hidden),
+    catalog: kind === "opencode" ? s.opencodeCatalog : "",
+  };
+}
+
+const questionKey = (q: CatalogQuestion): string => [q.tenant, q.user, q.kind, q.hidden, q.catalog].join("|");
+
+/** Is this tab still asking as the same tenant and user? api() sends whichever is current at
+ *  call time, so a question begun under one and retried after a switch would be answered by the
+ *  other's Agent. */
+const stillAsker = (q: CatalogQuestion): boolean => getTenant() === q.tenant && getUser() === q.user;
+
+/** One request. Resolves to the parsed body, or null when it did not land — a thrown fetch, or
+ *  a transient backend error (`http_502` while the workspace boots, any 5xx body) — or when the
+ *  tenant / user changed since the question was asked. An empty `models` array is NOT this case:
+ *  that is an answer, and it carries its own reason. */
+async function requestModels(q: CatalogQuestion): Promise<Record<string, unknown> | null> {
+  if (!stillAsker(q)) return null;
+  const params = new URLSearchParams({ hidden: q.hidden });
+  if (q.kind === "opencode") params.set("catalog", q.catalog);
+  const d = await api(`api/agents/${q.kind}/models?${params}`).catch(() => null);
+  if (!d || isTransientErr(d) || !Array.isArray(d.models) || !stillAsker(q)) return null;
   return d;
 }
 
@@ -134,66 +175,28 @@ async function requestModels(kind: string): Promise<Record<string, unknown> | nu
  *  lcppMemberModelsCacheTTL, and it drops that cache when the connection is saved or deleted). */
 const VOLATILE_MODEL_KINDS = new Set(["opencode", "lcpp"]);
 
-/** What a kind's list depends on besides the kind: whose it is (the Console switches tenant and
- *  user within one page load) and the settings the Agent shapes it with — hidden models, and
- *  opencode's billing route. A list fetched under another identity is another list: before this
- *  was part of the key, un-hiding a model never brought it back until a reload, because the
- *  cached list was the one the Agent had filtered (#972 review, round 3). */
-function catalogIdent(kind: string): string {
-  const s = getSettings();
-  return [
-    getTenant(),
-    getUser(),
-    JSON.stringify(hiddenModelsFor(s.hiddenModels, kind)),
-    kind === "opencode" ? s.opencodeCatalog : "",
-  ].join("|");
-}
 
-/** The kind's hidden-models entry as this tab holds it, in the form the Agent echoes it back
- *  (`appliedHidden`: the non-empty strings, in order, verbatim). */
-function localHidden(kind: string): string {
-  const raw = getSettings().hiddenModels?.[kind];
-  const list = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string" && !!v.trim()) : [];
-  return JSON.stringify(list);
-}
 
-/** Was this answer computed under `hidden` (a localHidden value)? The Agent reads the setting
- *  from its ui-prefs, which this tab updates 600 ms after a change — or not at all before its
- *  first read of the server copy, or when the save fails — so an answer can reflect a list the
- *  screen no longer holds. Only a matching answer may be kept (#972 review, round 4: waiting for
- *  the save instead guessed, and each wrong guess was a stale answer cached under a new key).
- *  An Agent too old to say is taken at its word. */
-function answeredUnder(d: Record<string, unknown> | null, hidden: string): boolean {
-  if (!d || !Array.isArray(d.appliedHidden)) return true;
-  return JSON.stringify(d.appliedHidden) === hidden;
-}
 
 function cachedOptions(kind: string): ModelOption[] | undefined {
   const hit = cache.get(kind);
-  return hit && hit.ident === catalogIdent(kind) ? hit.opts : undefined;
+  return hit && hit.ident === questionKey(questionFor(kind)) ? hit.opts : undefined;
 }
 
 function fetchModels(kind: string): Promise<ModelOption[]> {
   const cacheable = !VOLATILE_MODEL_KINDS.has(kind);
-  const ident = catalogIdent(kind);
+  const ident = questionKey(questionFor(kind));
   const hit = cacheable ? cachedOptions(kind) : undefined;
   if (hit) return Promise.resolve(hit);
-  const flight = `${kind}|${ident}`;
-  const hidden = localHidden(kind);
-  // Whether the list that finally came back was shaped under this tab's hidden list; a list
-  // that was not is still shown (the picker filters hidden ids itself) but never cached.
-  let current = true;
+  const q = questionFor(kind);
+  const flight = ident;
   let p = inflight.get(flight);
   if (!p) {
     p = (async () => {
       for (let attempt = 0; ; attempt++) {
-        const d = await requestModels(kind);
-        // A list shaped under another hidden list (a change not yet saved) is asked again on
-        // the same schedule, and used uncached once the attempts run out.
-        if (d && (answeredUnder(d, hidden) || attempt >= MODELS_RETRY_MS.length)) {
-          current = answeredUnder(d, hidden);
-          return d;
-        }
+        const d = await requestModels(q);
+        if (d) return d;
+        if (!stillAsker(q)) throw new Error("moved"); // another tenant / user now: not ours to show
         if (attempt >= MODELS_RETRY_MS.length) {
           // Out of attempts. "Could not reach the Agent" is its own answer — the picker
           // must not fall back to naming the account's plan for it.
@@ -231,7 +234,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
         emptyReasons.delete(kind);
         const full = [...defaultOnly(kind), ...opts];
         descriptors.set(kind, desc);
-        if (cacheable && current) cache.set(kind, { ident, opts: full });
+        if (cacheable) cache.set(kind, { ident, opts: full });
         else inflight.delete(flight);
         return full;
       })
@@ -296,23 +299,20 @@ function cachedRecommended(key: string): RecommendedModels | null {
 // the Agent is not listening yet and the CP answers 502, and giving up on the first one left
 // the label at a plain "推奨" until the settings were reopened (#972 review). A failure caches
 // nothing.
-function fetchRecommended(kind: string, key: string): Promise<RecommendedModels | null> {
+function fetchRecommended(q: CatalogQuestion): Promise<RecommendedModels | null> {
+  const key = questionKey(q);
   const hit = cachedRecommended(key);
   if (hit) return Promise.resolve(hit);
   let p = recommendedInflight.get(key);
   if (!p) {
-    const hidden = localHidden(kind);
     p = (async () => {
       for (let attempt = 0; ; attempt++) {
-        const d = await requestModels(kind);
-        const r = parseRecommended(d?.recommended);
-        // Kept only when computed under the hidden list this key stands for (answeredUnder);
-        // otherwise asked again, and given up on — naming no model — once the attempts run out.
-        if (r && answeredUnder(d, hidden)) {
+        const r = parseRecommended((await requestModels(q))?.recommended);
+        if (r) {
           recommendedCache.set(key, { rec: r, at: Date.now() });
           return r;
         }
-        if (attempt >= MODELS_RETRY_MS.length) return null;
+        if (!stillAsker(q) || attempt >= MODELS_RETRY_MS.length) return null;
         await sleep(MODELS_RETRY_MS[attempt]);
       }
     })().finally(() => recommendedInflight.delete(key));
@@ -326,8 +326,9 @@ function fetchRecommended(kind: string, key: string): Promise<RecommendedModels 
 // one: the Console used to re-derive this itself (aiModelRow.tsx's recommendedModelId) and the
 // two drifted.
 export function useRecommendedModels(kind: string): RecommendedModels | null {
-  const hiddenModels = useSettings().hiddenModels;
-  const key = [getTenant(), getUser(), kind, JSON.stringify(hiddenModelsFor(hiddenModels, kind))].join("|");
+  useSettings(); // re-render on a settings change: the question below reads them
+  const q = questionFor(kind);
+  const key = questionKey(q);
   // The answer is held WITH the key it answers, and only returned for the current key: a
   // different tenant, kind or hidden list is a different question, and even the one render
   // between the key changing and an effect clearing the state must not show the old answer.
@@ -342,7 +343,7 @@ export function useRecommendedModels(kind: string): RecommendedModels | null {
     let alive = true;
     // A refresh round keeps showing the previous answer until the new one lands, and keeps it
     // if the Agent cannot be reached — an older answer beats a label that names nothing.
-    void fetchRecommended(kind, key).then((r) => alive && r && setHeld({ key, rec: r }));
+    void fetchRecommended(q).then((r) => alive && r && setHeld({ key, rec: r }));
     const timer = setTimeout(() => setRound((n) => n + 1), RECOMMENDED_TTL_MS);
     return () => {
       alive = false;
@@ -429,7 +430,7 @@ export function useModelOptions(kind: string): ModelOption[] | null {
   // belongs to one tenant and user, so any change to those refetches (catalogIdent) — otherwise
   // the picker keeps showing the old list until the Console is reloaded.
   const s = useSettings();
-  const ident = catalogIdent(kind);
+  const ident = questionKey(questionFor(kind));
   useEffect(() => {
     if (!isDynamic(kind)) return;
     let alive = true;
@@ -512,7 +513,7 @@ export function useOpencodeAppliedRoute(): string {
 export function useModelCatalogSettled(kind: string): boolean {
   // Settled for the identity the list is fetched under (catalogIdent), not for the kind alone:
   // after a tenant / hidden / route change the new list is in flight, and the note must wait.
-  const ident = catalogIdent(kind);
+  const ident = questionKey(questionFor(kind));
   const [settledFor, setSettledFor] = useState<string | null>(null);
   useEffect(() => {
     if (!isDynamic(kind)) return;
@@ -542,7 +543,9 @@ function visibleModelOptions(
 // adds a value missing from the catalog back into the choices (ModelPicker / AssistantTab) is not
 // applied to hidden models: adding one back would resurrect a model the user hid.
 export function useHiddenModel(kind: string, model: string): boolean {
-  const hiddenModels = useSettings().hiddenModels;
-  const catalog = kind === "claude" ? CLAUDE_MODELS.map(([id]) => id) : undefined;
+  const { hiddenModels, claudeCustomModels } = useSettings();
+  // claude's fail-safe counts what its picker offers — the aliases AND registered models — as
+  // visibleModelOptions and the Agent's EffectiveHidden do (#972 review, round 5).
+  const catalog = kind === "claude" ? [...CLAUDE_MODELS.map(([id]) => id), ...claudeCustomModels] : undefined;
   return isModelHidden(hiddenModels, kind, model, catalog);
 }

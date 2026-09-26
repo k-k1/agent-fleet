@@ -98,20 +98,35 @@ func HiddenModelsRaw(kind string) []string {
 // HiddenModelsFor returns the effective deny list for a kind. ui-prefs is opaque JSON owned by
 // the Console, so a wrong type or broken content falls back to "nothing hidden".
 //
-// Only claude has a failsafe: denying all four fixed tiers would leave no model to launch with,
-// because the claude picker has no "default" choice (a deliberate design in settings.ts). A
+// Only claude has a failsafe: denying every model the claude picker offers would leave no model
+// to launch with, because it has no "default" choice (a deliberate design in settings.ts). A
 // broken setting that hides everything is ignored and the plain catalog comes back. Kinds with
 // a live catalog need no such protection — for them "empty catalog = launch on the default" is
 // already a normal state.
 func HiddenModelsFor(kind string) []string {
-	out := HiddenModelsRaw(kind)
-	if len(out) == 0 {
+	return EffectiveHidden(kind, HiddenModelsRaw(kind))
+}
+
+// EffectiveHidden applies the fail-safe to a raw hidden list — the one read from ui-prefs, or one
+// a caller supplies (GET /agents/{kind}/models?hidden=…, which answers for the Console's current
+// setting rather than the last one it saved). claude's candidates are what its picker offers:
+// the four aliases AND the member's registered models, matching the Console's
+// visibleModelOptions. Counting the aliases alone switched the whole list off when a member hid
+// the four aliases but kept a registered model — relaunching models they had hidden (#972
+// review, round 5).
+func EffectiveHidden(kind string, raw []string) []string {
+	if len(raw) == 0 {
 		return nil
 	}
 	if kind == "claude" {
-		all := true
+		candidates := []string{}
 		for _, c := range claude.Models() {
-			if !modelHiddenIn(out, c.ID) {
+			candidates = append(candidates, c.ID)
+		}
+		candidates = append(candidates, uiprefs.ClaudeCustomModels()...)
+		all := true
+		for _, id := range candidates {
+			if !modelHiddenIn(raw, id) {
 				all = false
 				break
 			}
@@ -120,7 +135,12 @@ func HiddenModelsFor(kind string) []string {
 			return nil
 		}
 	}
-	return out
+	return raw
+}
+
+// ModelHiddenIn decides against an already-resolved (effective) deny list.
+func ModelHiddenIn(hidden []string, requested string) bool {
+	return strings.TrimSpace(requested) != "" && modelHiddenIn(hidden, requested)
 }
 
 // modelHiddenIn decides against an already-resolved deny list; split out so HiddenModelsFor is
@@ -155,7 +175,11 @@ func hiddenModelError(requested string) string {
 // FilterVisibleModels drops denied models from a catalog. It runs via handleAgentModels, so the
 // Console picker and MCP list_models show the same result.
 func FilterVisibleModels(kind string, list []agents.ModelChoice) []agents.ModelChoice {
-	hidden := HiddenModelsFor(kind)
+	return FilterVisibleModelsIn(HiddenModelsFor(kind), list)
+}
+
+// FilterVisibleModelsIn is FilterVisibleModels against an effective list the caller resolved.
+func FilterVisibleModelsIn(hidden []string, list []agents.ModelChoice) []agents.ModelChoice {
 	if len(hidden) == 0 {
 		return list
 	}

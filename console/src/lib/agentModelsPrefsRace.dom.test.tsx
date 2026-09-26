@@ -1,9 +1,9 @@
-// #972 review rounds 3–4: the Agent answers "recommended" (and shapes the model list) from the
-// ui-prefs it holds, and a settings change reaches it only with the debounced PUT, 600 ms later
-// — or never, before the first read of the server copy or when the save fails. Asked the moment
-// "hidden models" changed, it answered from the old list, and that answer was cached under the
-// NEW list's key. The Agent now says which list it answered under (`appliedHidden`); these pin
-// that only a matching answer is kept, and that an answer never crosses tenants.
+// #972 review rounds 3–5: the Agent used to answer "recommended" (and shape the model list) from
+// the ui-prefs it holds, which a settings change reaches only with the debounced PUT 600 ms later
+// — or never, before the first read of the server copy or when the save fails — so answers for
+// the old setting landed under the new setting's key. The Console now sends its current setting
+// with the question (?hidden=), making the answer a function of the question; these pin that, and
+// that an answer never crosses tenants.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -20,13 +20,11 @@ vi.mock("../core/api/client.ts", () => ({
   isTransientErr: () => false,
 }));
 
-// What the Agent holds: updated by the PUT, read by the GET. null = never saved, which the Agent
-// reads as the Console's own default (claude: fable) — sessionx.HiddenModelsRaw.
-let serverHiddenMap: Record<string, string[]> | null = null;
-const agentHidden = (kind: string): string[] =>
-  serverHiddenMap ? (serverHiddenMap[kind] ?? []) : kind === "claude" ? ["fable"] : [];
+// The Agent computes from the ?hidden= the request carries (agent_models.go
+// requestHiddenModels), as the real one does. failNext makes the next GET not land (a booting
+// workspace's 502).
 let log: string[] = [];
-let failPut = false;
+let failNext = false;
 
 async function fresh() {
   vi.resetModules();
@@ -50,30 +48,24 @@ beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
   tenant = "t1";
-  serverHiddenMap = null;
   log = [];
-  failPut = false;
+  failNext = false;
   apiMock.mockReset().mockImplementation(async (p: string) => {
     if (p === "api/env/ui-prefs") return {};
-    const kind = /^api\/agents\/([^/]+)\/models$/.exec(p)?.[1];
-    if (!kind) return null;
-    const hidden = agentHidden(kind);
+    const m = /^api\/agents\/([^/?]+)\/models(?:\?(.*))?$/.exec(p);
+    if (!m) return null;
+    const hidden: string[] = JSON.parse(new URLSearchParams(m[2] ?? "").get("hidden") ?? "[]");
     log.push(`GET ${tenant} hidden=${hidden.filter((h) => h !== "fable").join(",")}`);
-    const short = tenant === "t2" ? "opus" : hidden.includes("haiku") ? "sonnet" : "haiku";
-    const models = ["gpt-6-luna", "gpt-6-sol"].filter((m) => !hidden.includes(m)).map((id) => ({ id, label: id }));
-    return { models, recommended: { chat: "sonnet", prose: "sonnet", short }, appliedHidden: hidden };
-  });
-  apiJSONMock.mockReset().mockImplementation(async (p: string, _m: string, body: any) => {
-    if (p === "api/env/ui-prefs") {
-      if (failPut) {
-        log.push("PUT failed");
-        return { error: { code: "http_413", message: "too large" } };
-      }
-      const saved: Record<string, string[]> = body?.hiddenModels ?? {};
-      serverHiddenMap = saved;
-      const changed = Object.values(saved).flat().filter((h) => h !== "fable");
-      log.push(`PUT hidden=${changed.join(",")}`);
+    if (failNext) {
+      failNext = false;
+      return null;
     }
+    const short = tenant === "t2" ? "opus" : hidden.includes("haiku") ? "sonnet" : "haiku";
+    const models = ["gpt-6-luna", "gpt-6-sol"].filter((id) => !hidden.includes(id)).map((id) => ({ id, label: id }));
+    return { models, recommended: { chat: "sonnet", prose: "sonnet", short } };
+  });
+  apiJSONMock.mockReset().mockImplementation(async (p: string) => {
+    if (p === "api/env/ui-prefs") log.push("PUT");
     return {};
   });
   host = document.createElement("div");
@@ -88,7 +80,7 @@ afterEach(() => {
 });
 
 describe("useRecommendedModels and the ui-prefs save", () => {
-  it("keeps no answer computed before the hidden-models change reached the Agent", async () => {
+  it("answers for the screen's current hidden list at once, before the save lands", async () => {
     const { settings, models } = await fresh();
     expect(await settings.hydrateUIPrefs()).toBe(true); // saves flow only after the server read
     function Probe() {
@@ -100,36 +92,16 @@ describe("useRecommendedModels and the ui-prefs save", () => {
     expect(host.textContent).toBe("haiku");
 
     await act(async () => settings.setSetting("hiddenModels", { claude: ["fable", "haiku"] }));
-    await flush();
-    // Asked at once and answered under the OLD list: not taken, so nothing is named yet.
-    expect(log.slice(1)).toEqual(["GET t1 hidden="]);
-    expect(host.textContent).toBe("-");
-    await flush(2_000); // the save lands at 600 ms, the retry at 1.5 s
-    expect(log.slice(2)).toEqual(["PUT hidden=haiku", "GET t1 hidden=haiku"]);
+    await flush(); // no time passes: the debounced PUT has not gone out
+    expect(log).toEqual(["GET t1 hidden=", "GET t1 hidden=haiku"]);
     expect(host.textContent).toBe("sonnet");
+    await flush(700);
+    expect(log).toContain("PUT");
   });
 
-  it("names no model while the Agent never gets the change (a failing save)", async () => {
+  it("brings an un-hidden model back into the list at once", async () => {
     const { settings, models } = await fresh();
-    expect(await settings.hydrateUIPrefs()).toBe(true);
-    failPut = true;
-    function Probe() {
-      return <span>{models.useRecommendedModels("claude")?.short ?? "-"}</span>;
-    }
-    root = createRoot(host);
-    await act(async () => settings.setSetting("hiddenModels", { claude: ["fable", "haiku"] }));
-    await act(async () => root!.render(<Probe />));
-    await flush(60_000); // every retry spent
-    expect(log).toContain("PUT failed");
-    // Every answer was the Agent's "haiku", computed under a list the screen no longer holds.
-    expect(host.textContent).toBe("-");
-  });
-
-  it("brings an un-hidden model back into the list once the Agent has the change", async () => {
-    const { settings, models } = await fresh();
-    expect(await settings.hydrateUIPrefs()).toBe(true);
     await act(async () => settings.setSetting("hiddenModels", { claude: ["fable"], codex: ["gpt-6-sol"] }));
-    await flush(2_000);
     function Probe() {
       return <span>{(models.useModelOptions("codex") ?? []).map(([id]) => id || "default").join(",")}</span>;
     }
@@ -138,7 +110,7 @@ describe("useRecommendedModels and the ui-prefs save", () => {
     await flush();
     expect(host.textContent).toBe("default,gpt-6-luna");
     await act(async () => settings.setSetting("hiddenModels", { claude: ["fable"], codex: [] }));
-    await flush(2_000);
+    await flush();
     expect(host.textContent).toBe("default,gpt-6-luna,gpt-6-sol");
   });
 
@@ -158,8 +130,30 @@ describe("useRecommendedModels and the ui-prefs save", () => {
     // Not even for one render: the first paint under t2 must not name t1's model.
     expect(host.textContent).not.toBe("haiku");
     await flush();
-    expect(log).toEqual(["GET t1 hidden=", "GET t2 hidden="]);
     expect(host.textContent).toBe("opus");
+  });
+
+  // #972 review round 5: a question begun under t1 and retried after a switch to t2 would be
+  // sent — and answered — as t2, then kept under t1's key.
+  it("drops a retry that would be asked as another tenant", async () => {
+    const { models } = await fresh();
+    function Probe() {
+      return <span>{models.useRecommendedModels("claude")?.short ?? "-"}</span>;
+    }
+    failNext = true; // t1's first attempt does not land; its retry is due in 1.5 s
+    root = createRoot(host);
+    await act(async () => root!.render(<Probe />));
+    await flush();
+    expect(host.textContent).toBe("-");
+    act(() => root!.unmount());
+    tenant = "t2";
+    await flush(60_000); // t1's retry comes due under t2
+    expect(log).toEqual(["GET t1 hidden="]); // …and is not sent
+    tenant = "t1";
+    root = createRoot(host);
+    await act(async () => root!.render(<Probe />));
+    await flush();
+    expect(host.textContent).toBe("haiku"); // asked afresh as t1, not t2's "opus"
   });
 });
 

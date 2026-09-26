@@ -1608,31 +1608,39 @@ var oneShotEnvModels = map[string]string{
 // a display name is resolved to its id). Then the computed recommendation applies instead, and
 // that is what the screen names (#972 review, round 4).
 func oneShotEnvModel(kind string) string {
+	return oneShotEnvModelV(prefsVisibility, kind)
+}
+
+func oneShotEnvModelV(v visibility, kind string) string {
 	name := oneShotEnvModels[kind]
 	if name == "" {
 		return ""
 	}
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
+	m := strings.TrimSpace(os.Getenv(name))
+	if m == "" {
 		return ""
 	}
 	if kind == session.KindAgy {
-		return agyNamedModel(v)
+		return agyNamedModel(v, m)
 	}
-	return visibleModel(kind, v)
+	return v.model(kind, m)
 }
 
 // recommendedOneShotModel is the "recommended" resolution for a tier — the Console shows the
 // same split (Settings > AI assist, "short text" / "prose"). An operator override
 // (oneShotEnvModel) wins over the computed rules.
 func recommendedOneShotModel(kind string, tier OneShotTier) string {
-	if m := oneShotEnvModel(kind); m != "" {
+	return recommendedOneShotModelV(prefsVisibility, kind, tier)
+}
+
+func recommendedOneShotModelV(v visibility, kind string, tier OneShotTier) string {
+	if m := oneShotEnvModelV(v, kind); m != "" {
 		return m
 	}
 	if tier == OneShotProse {
-		return recommendedAssistantModel(kind)
+		return recommendedAssistantModelV(v, kind)
 	}
-	return recommendedUtilityModel(kind)
+	return recommendedUtilityModelV(v, kind)
 }
 
 // oneShotModelPref reads the user's per-backend choice for a tier.
@@ -1805,6 +1813,10 @@ func ResolveOneShotModelCached(feature string, tier OneShotTier, kind string) (m
 // proves it is available; otherwise an empty result deliberately delegates to the
 // CLI default rather than risking a metered/unentitled Zen model.
 func recommendedUtilityModel(kind string) string {
+	return recommendedUtilityModelV(prefsVisibility, kind)
+}
+
+func recommendedUtilityModelV(v visibility, kind string) string {
 	// A candidate excluded by the hidden-models setting (model_deny.go) is not auto-selected
 	// either.
 	//
@@ -1815,21 +1827,21 @@ func recommendedUtilityModel(kind string) string {
 	// listing rather than an entitlement (see OneShotHeadlessRun's opencode branch).
 	switch kind {
 	case session.KindClaude:
-		return claudeFirstVisible(claudeShortTiers)
+		return claudeFirstVisible(v, claudeShortTiers)
 	case session.KindCodex:
-		ids, _ := codexRecommendIDs()
+		ids, _ := codexRecommendIDs(v)
 		if m := cheapestListedModel(kind, ids); m != "" {
 			return m
 		}
 		return cheapOneShotModel(ids)
 	case session.KindOpencode:
 		const goModel = "opencode-go/deepseek-v4-flash"
-		return recommendedCatalogModel(visibleModelIDs(kind, opencode.Models()), goModel, "")
+		return recommendedCatalogModel(v.ids(kind, opencode.Models()), goModel, "")
 	case session.KindAgy:
-		if m := cheapestListedModel(kind, agyRecommendIDs()); m != "" {
+		if m := cheapestListedModel(kind, agyRecommendIDs(v)); m != "" {
 			return m
 		}
-		return agyNamedModel(defaultAgyChatModel)
+		return agyNamedModel(v, defaultAgyChatModel)
 	}
 	return ""
 }

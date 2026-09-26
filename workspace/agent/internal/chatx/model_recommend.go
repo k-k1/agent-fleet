@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
@@ -45,6 +46,45 @@ var (
 	museSafeDefault = muse.SafeDefaultExecModel
 )
 
+// visibility is one reading of the hidden-models setting, applied to candidates: the saved one
+// (prefsVisibility — the run paths), or a list a request supplies (explicitVisibility — the
+// Console asking for its current, possibly unsaved, setting). Rules take it as a parameter so
+// one answer is computed against one reading throughout.
+type visibility struct {
+	explicit bool
+	hidden   []string // effective list (fail-safe applied) when explicit
+}
+
+var prefsVisibility = visibility{}
+
+func explicitVisibility(kind string, raw []string) visibility {
+	return visibility{explicit: true, hidden: deps.EffectiveHidden(kind, raw)}
+}
+
+func (v visibility) model(kind, m string) string {
+	if !v.explicit {
+		return visibleModel(kind, m)
+	}
+	if deps.ModelHiddenIn(v.hidden, m) {
+		return ""
+	}
+	return m
+}
+
+func (v visibility) ids(kind string, ids []string) []string {
+	if !v.explicit {
+		return visibleModelIDs(kind, ids)
+	}
+	return slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return deps.ModelHiddenIn(v.hidden, id) })
+}
+
+func (v visibility) list(kind string, l []agents.ModelChoice) []agents.ModelChoice {
+	if !v.explicit {
+		return filterVisibleModels(kind, l)
+	}
+	return slices.DeleteFunc(slices.Clone(l), func(c agents.ModelChoice) bool { return deps.ModelHiddenIn(v.hidden, c.ID) })
+}
+
 // RecommendedSet is what "recommended" resolves to for one kind, per tier — exactly the ids the
 // run paths pass as --model ("" = no flag, the CLI's own default).
 type RecommendedSet struct {
@@ -56,15 +96,28 @@ type RecommendedSet struct {
 // RecommendedModels answers for GET /agents/{kind}/models. It calls the same functions the run
 // paths call, so the screen cannot show one model while another runs.
 func RecommendedModels(kind string) RecommendedSet {
-	chat := recommendedAssistantModel(kind)
+	return recommendedModels(prefsVisibility, kind)
+}
+
+// RecommendedModelsWithHidden answers for a hidden-models list the caller supplies (raw, as the
+// Console holds it) instead of the one saved in ui-prefs — GET /agents/{kind}/models?hidden=….
+// The Console asks with its current setting, so the answer is exactly for what its screen shows,
+// whether or not its debounced save has reached this Agent yet (#972 review, rounds 3–5: every
+// scheme that matched a saved-prefs answer to the screen's setting after the fact had a race).
+func RecommendedModelsWithHidden(kind string, raw []string) RecommendedSet {
+	return recommendedModels(explicitVisibility(kind, raw), kind)
+}
+
+func recommendedModels(v visibility, kind string) RecommendedSet {
+	chat := recommendedAssistantModelV(v, kind)
 	if kind == session.KindMuse {
 		// museChatModel's own fallback: the newest non-contributor row (ADR 0095 P2-21).
 		chat = museSafeDefault()
 	}
 	return RecommendedSet{
 		Chat:  chat,
-		Prose: recommendedOneShotModel(kind, OneShotProse),
-		Short: recommendedOneShotModel(kind, OneShotShort),
+		Prose: recommendedOneShotModelV(v, kind, OneShotProse),
+		Short: recommendedOneShotModelV(v, kind, OneShotShort),
 	}
 }
 
@@ -78,9 +131,9 @@ var (
 	claudeShortTiers = []string{"haiku", "sonnet", "opus", "fable"}
 )
 
-func claudeFirstVisible(tiers []string) string {
+func claudeFirstVisible(v visibility, tiers []string) string {
 	for _, t := range tiers {
-		if m := visibleModel(session.KindClaude, t); m != "" {
+		if m := v.model(session.KindClaude, t); m != "" {
 			return m
 		}
 	}
@@ -91,29 +144,29 @@ func claudeFirstVisible(tiers []string) string {
 // and minus the ones codex itself announces are retiring. listed says whether the catalog could
 // be read at all — an empty result from a readable catalog means "nothing qualifies", which must
 // not be answered with a fixed id that may be retiring or absent (#972 review, round 2).
-func codexRecommendIDs() (ids []string, listed bool) {
+func codexRecommendIDs(v visibility) (ids []string, listed bool) {
 	list := codexModels()
 	// nil = never read (codex.Models returns its last good list, nil before the first); a read
 	// that succeeded with nothing to list is an empty non-nil slice — still "listed", where the
 	// fixed id must not come back (#972 review, round 3).
-	ids = visibleModelIDs(session.KindCodex, modelChoiceIDs(list))
+	ids = v.ids(session.KindCodex, modelChoiceIDs(list))
 	return slices.DeleteFunc(ids, codexRetiring), list != nil
 }
 
 // codexNewestLuna is codex's chat / prose recommendation: the newest "-luna" in the catalog,
 // "" when the catalog lists none that qualifies, and the fixed defaultCodexChatModel only when
 // the catalog cannot be read (the CLI not logged in yet, say).
-func codexNewestLuna() string {
-	ids, listed := codexRecommendIDs()
+func codexNewestLuna(v visibility) string {
+	ids, listed := codexRecommendIDs(v)
 	if m := newestTierModel(ids, "gpt-", "luna"); m != "" || listed {
 		return m
 	}
-	return visibleModel(session.KindCodex, defaultCodexChatModel)
+	return v.model(session.KindCodex, defaultCodexChatModel)
 }
 
 // agyRecommendIDs is agy's live catalog minus hidden models.
-func agyRecommendIDs() []string {
-	return visibleModelIDs(session.KindAgy, modelChoiceIDs(agyModels()))
+func agyRecommendIDs(v visibility) []string {
+	return v.ids(session.KindAgy, modelChoiceIDs(agyModels()))
 }
 
 // agyNamedModel resolves a fixed agy model NAME (defaultAgyChatModel, a display name) to the id
@@ -123,12 +176,12 @@ func agyRecommendIDs() []string {
 // Flash (Medium)" while the CLI default ran (#972 review, round 2). A readable catalog without
 // that model answers "" (the CLI default, which is what runs); an unreadable one keeps the name,
 // as before, which older agy builds accept as-is.
-func agyNamedModel(name string) string {
+func agyNamedModel(v visibility, name string) string {
 	all := agyModels()
 	if len(all) == 0 {
-		return visibleModel(session.KindAgy, name)
+		return v.model(session.KindAgy, name)
 	}
-	for _, m := range filterVisibleModels(session.KindAgy, all) {
+	for _, m := range v.list(session.KindAgy, all) {
 		if strings.EqualFold(m.ID, name) || strings.EqualFold(m.Label, name) {
 			return m.ID
 		}

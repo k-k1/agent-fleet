@@ -6,13 +6,16 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 const recommendCatalogFixture = `{
@@ -70,42 +73,64 @@ func TestRecommendPriceIDAgy(t *testing.T) {
 }
 
 // GET /agents/{kind}/models carries the Agent's own "recommended" per tier — the one the
-// Console draws "推奨（現在: X）" from — and it follows the hidden-models setting exactly as
-// the run paths do.
+// Console draws "推奨（現在: X）" from. With ?hidden= it answers for the list the request gives
+// (the Console's current, possibly unsaved, setting) — list and recommendation alike; without it,
+// for the saved one (#972 review, rounds 3–5).
 func TestAgentModelsCarriesRecommended(t *testing.T) {
-	var applied []string
-	read := func() chatx.RecommendedSet {
+	read := func(query string) (chatx.RecommendedSet, []string) {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/agents/claude/models", nil)
+		req := httptest.NewRequest(http.MethodGet, "/agents/claude/models"+query, nil)
 		req.SetPathValue("kind", "claude")
 		rec := httptest.NewRecorder()
 		handleAgentModels(rec, req)
 		var got struct {
-			Recommended   *chatx.RecommendedSet `json:"recommended"`
-			AppliedHidden []string              `json:"appliedHidden"`
+			Models      []struct{ ID string } `json:"models"`
+			Recommended *chatx.RecommendedSet `json:"recommended"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Recommended == nil || got.AppliedHidden == nil {
-			t.Fatalf("no recommended/appliedHidden in %s (%v)", rec.Body.String(), err)
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Recommended == nil {
+			t.Fatalf("no recommended in %s (%v)", rec.Body.String(), err)
 		}
-		applied = got.AppliedHidden
-		return *got.Recommended
+		ids := []string{}
+		for _, m := range got.Models {
+			ids = append(ids, m.ID)
+		}
+		return *got.Recommended, ids
 	}
-	writeUIPrefs(t, `{}`)
-	if got, want := read(), (chatx.RecommendedSet{Chat: "sonnet", Prose: "sonnet", Short: "haiku"}); got != want {
-		t.Fatalf("recommended = %+v, want %+v", got, want)
+	writeUIPrefs(t, `{"hiddenModels":{}}`)
+	if got, _ := read(""); got != (chatx.RecommendedSet{Chat: "sonnet", Prose: "sonnet", Short: "haiku"}) {
+		t.Fatalf("recommended = %+v", got)
 	}
-	// Never saved: the Console's default list (fable), which the Agent now applies as well.
-	if len(applied) != 1 || applied[0] != "fable" {
-		t.Fatalf("appliedHidden = %v, want the default [fable]", applied)
-	}
-	// The answer says which hidden list it was computed under, verbatim, so the Console can
-	// tell an answer from before its own (not yet saved) change.
-	writeUIPrefs(t, `{"hiddenModels":{"claude":["haiku"," ",7]}}`)
-	if got := read(); got.Short != "sonnet" {
+	// Saved: haiku hidden → the next tier.
+	writeUIPrefs(t, `{"hiddenModels":{"claude":["haiku"]}}`)
+	if got, _ := read(""); got.Short != "sonnet" {
 		t.Fatalf("short = %q with haiku hidden, want the next tier sonnet", got.Short)
 	}
-	if len(applied) != 1 || applied[0] != "haiku" {
-		t.Fatalf("appliedHidden = %v, want [haiku]", applied)
+	// The request's list wins over the saved one, for the list and the recommendation.
+	got, ids := read(`?hidden=` + url.QueryEscape(`["sonnet"," ",7]`))
+	if got.Short != "haiku" || got.Chat != "opus" {
+		t.Fatalf("with ?hidden=[sonnet] = %+v, want short haiku, chat opus", got)
+	}
+	if slices.Contains(ids, "sonnet") || !slices.Contains(ids, "haiku") {
+		t.Fatalf("with ?hidden=[sonnet] the list = %v", ids)
+	}
+	// Malformed: the saved setting applies.
+	if got, _ := read(`?hidden=not-json`); got.Short != "sonnet" {
+		t.Fatalf("malformed ?hidden= = %+v, want the saved setting's answer", got)
+	}
+}
+
+// #972 review round 5: claude's all-hidden fail-safe counts the member's registered models, as
+// the Console's picker does. Hiding the four aliases while a registered model remains keeps them
+// hidden; it used to switch the whole list off and relaunch them.
+func TestClaudeFailSafeCountsRegisteredModels(t *testing.T) {
+	all := []string{"fable", "opus", "sonnet", "haiku"}
+	writeUIPrefs(t, `{"claudeCustomModels":["claude-mythos-1"]}`)
+	if got := sessionx.EffectiveHidden("claude", all); len(got) != 4 {
+		t.Fatalf("aliases hidden, a registered model left: effective = %v, want all four kept hidden", got)
+	}
+	writeUIPrefs(t, `{}`)
+	if got := sessionx.EffectiveHidden("claude", all); got != nil {
+		t.Fatalf("everything hidden: effective = %v, want the fail-safe (nil)", got)
 	}
 }
 

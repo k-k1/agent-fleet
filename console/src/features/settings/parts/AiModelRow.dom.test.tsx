@@ -76,7 +76,7 @@ beforeEach(() => {
     },
   };
   apiMock.mockReset().mockImplementation(async (p: string) => {
-    const kind = /^api\/agents\/([^/]+)\/models$/.exec(p)?.[1];
+    const kind = /^api\/agents\/([^/?]+)\/models(?:\?|$)/.exec(p)?.[1];
     return kind ? (agentAnswers[kind] ?? null) : null;
   });
 });

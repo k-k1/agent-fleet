@@ -431,17 +431,21 @@ func recommendedCatalogModel(ids []string, target, fallback string) string {
 // either — return empty and leave it to the CLI's own default. Catalog-derived candidates
 // are re-picked from the filtered catalog.
 func recommendedAssistantModel(agent string) string {
+	return recommendedAssistantModelV(prefsVisibility, agent)
+}
+
+func recommendedAssistantModelV(v visibility, agent string) string {
 	switch agent {
 	case session.KindClaude:
-		return claudeFirstVisible(claudeChatTiers)
+		return claudeFirstVisible(v, claudeChatTiers)
 	case session.KindCodex:
-		return codexNewestLuna()
+		return codexNewestLuna(v)
 	case session.KindOpencode:
 		const goModel = "opencode-go/glm-5.2"
-		return recommendedCatalogModel(visibleModelIDs(agent, opencode.Models()), goModel,
-			visibleModel(agent, defaultOpencodeChatModel))
+		return recommendedCatalogModel(v.ids(agent, opencode.Models()), goModel,
+			v.model(agent, defaultOpencodeChatModel))
 	case session.KindAgy:
-		return agyNamedModel(defaultAgyChatModel)
+		return agyNamedModel(v, defaultAgyChatModel)
 	}
 	return "" // cursor: Auto is the only entitlement-safe recommendation
 }
@@ -479,7 +483,7 @@ func chatModel(c *ChatConversation) string {
 	if m := envOr("AF_CHAT_MODEL", defaultChatModel); visibleModel(session.KindClaude, m) != "" {
 		return m
 	}
-	return claudeFirstVisible(claudeChatTiers)
+	return claudeFirstVisible(prefsVisibility, claudeChatTiers)
 }
 
 // chatModelFor resolves the --model for the backend that is ACTUALLY driving this turn.
