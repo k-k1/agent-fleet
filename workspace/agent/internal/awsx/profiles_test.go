@@ -7,12 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
@@ -506,7 +504,7 @@ func TestOfflineSyncReadsTheCacheUnderTheLock(t *testing.T) {
 	mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
 	older := prof("prod")
 	older.AccountID = "111111111111"
-	if err := saveSettingsCache([]Profile{older}, nil, nextFetchSeq()); err != nil {
+	if err := saveSettingsCache([]Profile{older}, nil); err != nil {
 		t.Fatal(err)
 	}
 	unlock, _, err := lockConfig(ConfigPath())
@@ -521,7 +519,7 @@ func TestOfflineSyncReadsTheCacheUnderTheLock(t *testing.T) {
 	time.Sleep(200 * time.Millisecond) // let it reach the lock
 	newer := prof("prod")
 	newer.AccountID = "222222222222"
-	if err := saveSettingsCache([]Profile{newer}, nil, nextFetchSeq()); err != nil {
+	if err := saveSettingsCache([]Profile{newer}, nil); err != nil {
 		t.Fatal(err)
 	}
 	unlock()
@@ -542,7 +540,7 @@ func TestCacheSaveFailureAndFailedReapply(t *testing.T) {
 	t.Setenv("HOME", home)
 	mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
 	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
-	if err := saveSettingsCache([]Profile{prof("old")}, nil, nextFetchSeq()); err != nil {
+	if err := saveSettingsCache([]Profile{prof("old")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -570,7 +568,7 @@ func TestCacheSaveFailureAndFailedReapply(t *testing.T) {
 	srv.Close()
 
 	// Offline with a half block: the re-apply fails and FromCache stays false.
-	if err := saveSettingsCache([]Profile{prof("prod")}, nil, nextFetchSeq()); err != nil {
+	if err := saveSettingsCache([]Profile{prof("prod")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(ConfigPath(), []byte(blockBegin+"\n[profile x]\n"), 0o600); err != nil {
@@ -616,95 +614,6 @@ func TestSyncFetchesUnderTheLock(t *testing.T) {
 	}
 }
 
-// After a failed fetch, syncs within the cooldown go straight to the cache instead of
-// each waiting out the timeout under the lock; after it, the CP is asked again, and a
-// success clears the cooldown.
-func TestSyncCoolsDownAfterAnUnreachableCP(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
-	var hits atomic.Int32
-	var up atomic.Bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		if !up.Load() {
-			http.Error(w, "down", http.StatusBadGateway)
-			return
-		}
-		_, _ = w.Write([]byte(`{"profiles":[]}`))
-	}))
-	defer srv.Close()
-	t.Setenv("AF_CP_BASE_URL", srv.URL)
-	for i := 0; i < 3; i++ {
-		if _, err := syncProfiles(true); err == nil {
-			t.Fatal("expected the CP to be unreachable")
-		}
-	}
-	if n := hits.Load(); n != 1 {
-		t.Fatalf("the poll asked the CP %d times within the cooldown, want 1", n)
-	}
-	// An explicit run (af-aws-exec) always asks, cooldown or not: right after the CP
-	// recovers, a Settings change must not be answered from the older cache.
-	up.Store(true)
-	if res, err := Sync(); err != nil || !res.Fetched || hits.Load() != 2 {
-		t.Fatalf("explicit run within the cooldown: %+v %v hits=%d", res, err, hits.Load())
-	}
-	up.Store(false)
-	if _, err := syncProfiles(true); err == nil {
-		t.Fatal("expected the CP to be unreachable again")
-	}
-	old := time.Now().Add(-unreachableCooldown - time.Second)
-	if err := os.Chtimes(unreachablePath(), old, old); err != nil {
-		t.Fatal(err)
-	}
-	up.Store(true)
-	if _, err := syncProfiles(true); err != nil || hits.Load() != 4 {
-		t.Fatalf("after the cooldown: err = %v, hits = %d", err, hits.Load())
-	}
-	if _, err := os.Stat(unreachablePath()); !os.IsNotExist(err) {
-		t.Fatal("a successful fetch did not clear the cooldown")
-	}
-}
-
-// Runs that waited for the lock while another run fetched and cached the CP's answer use
-// that answer instead of each asking the CP again.
-func TestSyncsWaitingForTheLockShareOneFetch(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		_, _ = w.Write([]byte(`{"profiles":[]}`))
-	}))
-	defer srv.Close()
-	t.Setenv("AF_CP_BASE_URL", srv.URL)
-	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
-	unlock, _, err := lockConfig(ConfigPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if res, err := Sync(); err != nil || !res.Fetched || res.Settings["prod"].AccountID != "123456789012" {
-				t.Errorf("waiting run: %+v %v", res, err)
-			}
-		}()
-	}
-	time.Sleep(200 * time.Millisecond)
-	// What the lock holder would do: fetch and cache.
-	if err := saveSettingsCache([]Profile{prof("prod")}, nil, nextFetchSeq()); err != nil {
-		t.Fatal(err)
-	}
-	unlock()
-	wg.Wait()
-	if n := hits.Load(); n != 0 {
-		t.Fatalf("the CP was asked %d time(s) by runs that could use the fresh cache", n)
-	}
-}
-
 // The cache file an earlier build kept in ~/.aws is removed by a successful sync.
 func TestSyncRemovesTheOldCacheFile(t *testing.T) {
 	home := t.TempDir()
@@ -723,100 +632,5 @@ func TestSyncRemovesTheOldCacheFile(t *testing.T) {
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatal("the old cache file is still there")
-	}
-}
-
-// Reusing another run's answer needs proof that a fetch happened while this run waited
-// (the cache generation changed); a cache whose mtime is in the future (a clock step, a
-// restore) must not stop every run from asking the CP.
-func TestAFutureCacheMtimeDoesNotSkipTheFetch(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		_, _ = w.Write([]byte(`{"profiles":[]}`))
-	}))
-	defer srv.Close()
-	t.Setenv("AF_CP_BASE_URL", srv.URL)
-	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
-	if err := saveSettingsCache([]Profile{prof("prod")}, nil, nextFetchSeq()); err != nil {
-		t.Fatal(err)
-	}
-	future := time.Now().Add(24 * time.Hour)
-	if err := os.Chtimes(settingsCachePath(), future, future); err != nil {
-		t.Fatal(err)
-	}
-	for i := 1; i <= 2; i++ {
-		if res, err := Sync(); err != nil || len(res.Settings) != 0 || hits.Load() != int32(i) {
-			t.Fatalf("run %d: %+v %v hits=%d", i, res, err, hits.Load())
-		}
-	}
-}
-
-// A fetch that was already in flight when a run began may carry the list from before a
-// Settings edit made just before that run: its answer is not reused, the run asks the CP
-// itself (the user fixes prod in Settings and runs af-aws-exec while the poll fetches).
-func TestAFetchStartedBeforeTheRunIsNotReused(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		_, _ = w.Write([]byte(`{"profiles":[]}`))
-	}))
-	defer srv.Close()
-	t.Setenv("AF_CP_BASE_URL", srv.URL)
-	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
-	inFlight := nextFetchSeq() // the lock holder's fetch started before the runs below
-	unlock, _, err := lockConfig(ConfigPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if res, err := Sync(); err != nil || len(res.Settings) != 0 {
-				t.Errorf("waiting run used the in-flight answer: %+v %v", res, err)
-			}
-		}()
-	}
-	time.Sleep(200 * time.Millisecond)
-	if err := saveSettingsCache([]Profile{prof("prod")}, nil, inFlight); err != nil {
-		t.Fatal(err)
-	}
-	unlock()
-	wg.Wait()
-	if hits.Load() < 1 {
-		t.Fatalf("hits = %d: nobody asked the CP", hits.Load())
-	}
-}
-
-// No wall clock decides reuse: a cache whose fetch started before the run (by sequence
-// number) is not reused even if the clock stepped back in between, and a cooldown marker
-// dated in the future does not hold the poll off.
-func TestReuseAndCooldownIgnoreClockSteps(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		_, _ = w.Write([]byte(`{"profiles":[]}`))
-	}))
-	defer srv.Close()
-	t.Setenv("AF_CP_BASE_URL", srv.URL)
-	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
-	mustMkdir(t, paths.AgentStateDir(), 0o700)
-	future := time.Now().Add(24 * time.Hour)
-	if err := os.WriteFile(unreachablePath(), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(unreachablePath(), future, future); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := syncProfiles(true); err != nil || hits.Load() != 1 {
-		t.Fatalf("a future cooldown marker held the poll off: err=%v hits=%d", err, hits.Load())
 	}
 }
