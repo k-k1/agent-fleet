@@ -316,6 +316,11 @@ func TestProfileKeysAgreesWithTheRealAWSCLI(t *testing.T) {
 	t.Setenv("HOME", home)
 	conf := `[DEFAULT]
 web_identity_token_file = /tmp/inherited
+sso_role_name = FromDefault
+
+[profile blank]
+sso_role_name =
+region =
 
 [default]
 role_arn = arn:aws:iam::1:role/default
@@ -408,7 +413,7 @@ credential_process = /bin/a
 	for _, k := range all {
 		asks = append(asks, ask{"prod", k})
 	}
-	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2", "c0", "ws", "dotted", "odd", "sig"} {
+	for _, p := range []string{"q1", "q2", "q3", "cont", "hidden", "nb", "decoy", "nb2", "c0", "ws", "dotted", "odd", "sig", "blank"} {
 		for _, k := range few {
 			asks = append(asks, ask{p, k})
 		}
@@ -1058,5 +1063,47 @@ func TestINIStrictRefusesWhatTheCLIRefuses(t *testing.T) {
 	}
 	if err := iniStrict(good); err != nil {
 		t.Fatalf("false positive: %v", err)
+	}
+}
+
+// pyLower against Python's str.lower (outputs taken from CPython): the simple mapping of
+// strings.ToLower gets U+0130 and final sigma wrong, which changes which key a line is
+// or makes two distinct keys look like duplicates.
+func TestPyLowerMatchesPython(t *testing.T) {
+	for in, want := range map[string]string{
+		"REGION":      "region",
+		"ΑΣ·Α":        "ασ·α", // U+0387 is case-ignorable: the sigma is not final
+		"ΑΣ":          "ας",
+		"ΑΣ Α":        "ας α",
+		"İ":           "i̇",
+		"regİon":      "regi̇on",
+		"KELVİN":      "kelvi̇n",
+		"ΣΑΣ":         "σας",
+		"Α·Σ":         "α·ς",
+		"ΟΔΟΣ.":       "οδος.",
+		"\u212aelvin": "kelvin", // U+212A (KELVIN SIGN) lowers to ASCII k in both
+	} {
+		if got := pyLower(in); got != want {
+			t.Errorf("pyLower(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// An explicit empty value overrides [DEFAULT]: the CLI reads it as empty, so a profile
+// that blanks the account must not borrow the default's (verified with aws-cli 2.36.46).
+func TestPlanExecEmptyValueOverridesDEFAULT(t *testing.T) {
+	bin, state := fakeAWS(t, with(map[string]string{"raw:sso_account_id =": ""}, "sso_account_id"))
+	if err := os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(os.Getenv("HOME"), ".aws", "config")
+	b, _ := os.ReadFile(path)
+	b = append([]byte("[DEFAULT]\nsso_account_id = 123456789012\n\n"), b...)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: prodSettings, Login: "never", Argv: []string{"true"}, Quiet: true})
+	if err == nil {
+		t.Fatal("the [DEFAULT] account was used for a profile that blanks it")
 	}
 }

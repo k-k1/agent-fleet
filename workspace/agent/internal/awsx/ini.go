@@ -7,6 +7,9 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // The AWS CLI reads its files with Python's configparser and then maps section names to
@@ -80,29 +83,17 @@ func scanINI(text string, fn func(iniLine)) {
 // "\x1crole_arn = ..." line be a live key to the CLI and not to this reader.
 func pySpace(r rune) bool { return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f) }
 
-// pyLower is Python's str.lower, which configparser applies to key names. It differs
-// from strings.ToLower in two places that can change which key a line is: U+0130 (İ)
-// lowers to "i" + U+0307, not "i" (so "regİon" is not region to the CLI), and a capital
-// sigma at the end of a word lowers to final sigma (ς). Cased and case-ignorable are
-// approximated with the Unicode categories; key names outside ASCII only need to come
-// out different from the ASCII names we look up, which this keeps.
+// pyLower is Python's str.lower, which configparser applies to key names: the full
+// Unicode lowercase mapping, not strings.ToLower's simple one. They differ where it can
+// change which key a line is: U+0130 (İ) lowers to "i" + U+0307 (so "regİon" is not
+// region to the CLI), and a capital sigma ending a word lowers to final sigma. The
+// language-neutral mapping of x/text/cases implements both, Final_Sigma's
+// case-ignorable set included.
 func pyLower(s string) string {
 	if isASCII(s) {
 		return strings.ToLower(s)
 	}
-	rs := []rune(s)
-	var b strings.Builder
-	for i, r := range rs {
-		switch {
-		case r == 'İ':
-			b.WriteString("i\u0307")
-		case r == 'Σ' && finalSigma(rs, i):
-			b.WriteRune('ς')
-		default:
-			b.WriteRune(unicode.ToLower(r))
-		}
-	}
-	return b.String()
+	return cases.Lower(language.Und).String(s)
 }
 
 func isASCII(s string) bool {
@@ -110,33 +101,6 @@ func isASCII(s string) bool {
 		if s[i] >= 0x80 {
 			return false
 		}
-	}
-	return true
-}
-
-// finalSigma is Unicode's Final_Sigma condition, as Python applies it: a cased letter
-// before position i and none after it, skipping case-ignorable characters both ways.
-func finalSigma(rs []rune, i int) bool {
-	cased := func(r rune) bool { return unicode.IsUpper(r) || unicode.IsLower(r) || unicode.IsTitle(r) }
-	ignorable := func(r rune) bool {
-		return unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, unicode.Lm, unicode.Sk) || strings.ContainsRune("'.:^`\u00b7\u2019", r)
-	}
-	before := false
-	for j := i - 1; j >= 0; j-- {
-		if ignorable(rs[j]) {
-			continue
-		}
-		before = cased(rs[j])
-		break
-	}
-	if !before {
-		return false
-	}
-	for j := i + 1; j < len(rs); j++ {
-		if ignorable(rs[j]) {
-			continue
-		}
-		return !cased(rs[j])
 	}
 	return true
 }
@@ -181,11 +145,12 @@ func readINISection(path string, pick func(section string) bool, keys map[string
 		case l.header && pick(l.section):
 			sect = map[string]string{}
 		case l.header:
+		// Empty values are kept: `sso_account_id =` in a profile overrides the [DEFAULT]
+		// one and leaves it empty, as the CLI reads it (skipping it let the default
+		// account through, verified with aws-cli 2.36.46).
 		case l.section == "DEFAULT":
-			if l.value != "" {
-				defaults[l.key] = l.value
-			}
-		case sect != nil && pick(l.section) && l.value != "":
+			defaults[l.key] = l.value
+		case sect != nil && pick(l.section):
 			sect[l.key] = l.value
 		}
 	})
