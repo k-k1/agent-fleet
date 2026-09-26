@@ -1081,6 +1081,8 @@ func TestPyLowerMatchesPython(t *testing.T) {
 		"ΣΑΣ":         "σας",
 		"Α·Σ":         "α·ς",
 		"ΟΔΟΣ.":       "οδος.",
+		"ΑΣ\u0387Α":   "ασ\u0387α", // U+0387 GREEK ANO TELEIA is case-ignorable too
+		"Α\u0387Σ":    "α\u0387ς",
 		"\u212aelvin": "kelvin", // U+212A (KELVIN SIGN) lowers to ASCII k in both
 	} {
 		if got := pyLower(in); got != want {
