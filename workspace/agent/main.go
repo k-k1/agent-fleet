@@ -222,6 +222,8 @@ func serve() {
 	// already installed and marked, so this is a no-op on a workspace that has
 	// never used one.
 	go afdb.Autostart("agent boot")
+	// Old copilot / cursor versions that earlier installs left in home.
+	go pruneOldCLIVersionsAtBoot()
 
 	mux := buildMux()
 
