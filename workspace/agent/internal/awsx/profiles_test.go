@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -488,5 +489,87 @@ func TestSettingsCacheIsBoundAndAlwaysLatest(t *testing.T) {
 	}
 	if m, _, _ := CachedSettings(); m["prod"].AccountID != "222222222222" {
 		t.Fatalf("the cache kept the older answer: %v", m)
+	}
+}
+
+// An offline run chooses the cached list under the same lock a fresh run writes the block
+// and the cache under: if the cache changes while it waits for the lock, it applies the
+// newer list, never the one it would have read before waiting.
+func TestOfflineSyncReadsTheCacheUnderTheLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_CP_BASE_URL", "http://127.0.0.1:9") // nothing listens: offline
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
+	mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
+	older := prof("prod")
+	older.AccountID = "111111111111"
+	if err := saveSettingsCache([]Profile{older}, nil); err != nil {
+		t.Fatal(err)
+	}
+	unlock, _, err := lockConfig(ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan SyncResult)
+	go func() {
+		res, _ := Sync()
+		done <- res
+	}()
+	time.Sleep(200 * time.Millisecond) // let it reach the lock
+	newer := prof("prod")
+	newer.AccountID = "222222222222"
+	if err := saveSettingsCache([]Profile{newer}, nil); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	res := <-done
+	if res.Settings["prod"].AccountID != "222222222222" {
+		t.Fatalf("the offline run applied the list it saw before the lock: %+v", res.Settings)
+	}
+	b, _ := os.ReadFile(ConfigPath())
+	if !strings.Contains(string(b), "sso_account_id = 222222222222") {
+		t.Fatalf("block:\n%s", b)
+	}
+}
+
+// A fresh answer that cannot be cached is reported; an offline re-apply that could not write the block is not
+// reported as applied.
+func TestCacheSaveFailureAndFailedReapply(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	mustMkdir(t, filepath.Join(home, ".aws"), 0o700)
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "afp_member")
+	if err := saveSettingsCache([]Profile{prof("old")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"profiles":[]}`))
+	}))
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	// Make only the cache write fail: a non-empty directory where the cache file goes
+	// cannot be replaced by a rename (the config and its lock are unaffected).
+	if err := os.Remove(settingsCachePath()); err != nil {
+		t.Fatal(err)
+	}
+	mustMkdir(t, filepath.Join(settingsCachePath(), "x"), 0o700)
+	_, err := Sync()
+	if err == nil || !strings.Contains(err.Error(), "Settings cache") {
+		t.Fatalf("a failed cache save was not reported: %v", err)
+	}
+	if err := os.RemoveAll(settingsCachePath()); err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+
+	// Offline with a half block: the re-apply fails and FromCache stays false.
+	if err := saveSettingsCache([]Profile{prof("prod")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ConfigPath(), []byte(blockBegin+"\n[profile x]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Sync()
+	if err == nil || res.FromCache {
+		t.Fatalf("failed re-apply reported as applied: %+v %v", res, err)
 	}
 }

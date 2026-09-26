@@ -139,28 +139,39 @@ func Fetch() ([]Profile, []Conflict, error) {
 // previous block, so a CP blip never takes working profiles away.
 func Sync() (SyncResult, error) {
 	ps, conflicts, err := Fetch()
-	if err != nil && !errors.Is(err, ErrBridgeOff) {
-		// The CP cannot be asked: re-apply the last list it gave, so the block follows
-		// what the files say now (a [DEFAULT] line added since, a profile of the
-		// member's own) and --list, the block and af-aws-exec agree. The block never
-		// loses a profile the cache still has; it only applies today's rules to it.
-		if cached, cconf, ok := cachedList(); ok {
-			res, aerr := Apply(ConfigPath(), cached)
-			res.Settings = map[string]Profile{}
-			for _, p := range cached {
-				res.Settings[p.Name] = p
-			}
-			res.Conflicts, res.FromCache = cconf, true
-			if aerr != nil {
-				return res, fmt.Errorf("%v; applying the last copy also failed: %w", err, aerr)
-			}
-			return res, err
-		}
-	}
-	if err != nil {
+	if err != nil && errors.Is(err, ErrBridgeOff) {
 		return SyncResult{}, err
 	}
-	res, err := Apply(ConfigPath(), ps)
+	// Choosing the list (the CP's answer, or the cache when the CP cannot be asked),
+	// writing the block and updating the cache happen under one lock across processes:
+	// otherwise an offline run that read the cache before a fresh run wrote the CP's
+	// newer answer could apply the older list last.
+	unlock, target, lerr := lockConfig(ConfigPath())
+	if lerr != nil {
+		return SyncResult{}, lerr
+	}
+	defer unlock()
+	if err != nil {
+		// The CP cannot be asked: re-apply the last list it gave, so the block follows
+		// what the files say now (a [DEFAULT] line added since, a profile of the
+		// member's own) and --list, the block and af-aws-exec agree.
+		cached, cconf, ok := cachedList()
+		if !ok {
+			return SyncResult{}, err
+		}
+		res, aerr := applyLocked(ConfigPath(), target, cached)
+		res.Settings = map[string]Profile{}
+		for _, p := range cached {
+			res.Settings[p.Name] = p
+		}
+		res.Conflicts = cconf
+		if aerr != nil {
+			return res, fmt.Errorf("%v; applying the last copy also failed: %w", err, aerr)
+		}
+		res.FromCache = true
+		return res, err
+	}
+	res, aerr := applyLocked(ConfigPath(), target, ps)
 	res.Settings = map[string]Profile{}
 	for _, p := range ps {
 		res.Settings[p.Name] = p
@@ -168,9 +179,15 @@ func Sync() (SyncResult, error) {
 	res.Conflicts = conflicts
 	res.Fetched = true
 	// Saved even when the block could not be written: it is the CP's latest answer, and
-	// a later offline run must not fall back to an older one.
-	saveSettingsCache(ps, conflicts)
-	return res, err
+	// a later offline run must not fall back to an older one. If it cannot be saved the
+	// older cache is removed for the same reason.
+	if serr := saveSettingsCache(ps, conflicts); serr != nil {
+		_ = os.Remove(settingsCachePath())
+		if aerr == nil {
+			aerr = fmt.Errorf("could not save the Settings cache: %w", serr)
+		}
+	}
+	return res, aerr
 }
 
 // Apply rewrites the managed block of the config at path to hold ps. It writes only when
@@ -178,19 +195,33 @@ func Sync() (SyncResult, error) {
 // the file atomically under a lock so a concurrent sync (the poll and an af-aws-exec)
 // cannot interleave a read-modify-write.
 func Apply(path string, ps []Profile) (SyncResult, error) {
-	target, err := resolveLink(path)
-	if err != nil {
-		return SyncResult{}, err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-		return SyncResult{}, err
-	}
-	unlock, err := lockDir(filepath.Dir(target))
+	unlock, target, err := lockConfig(path)
 	if err != nil {
 		return SyncResult{}, err
 	}
 	defer unlock()
+	return applyLocked(path, target, ps)
+}
 
+// lockConfig resolves the config at path, makes its directory, and takes the lock that
+// serializes every writer of it; it returns the unlock and the resolved target.
+func lockConfig(path string) (func(), string, error) {
+	target, err := resolveLink(path)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return nil, "", err
+	}
+	unlock, err := lockDir(filepath.Dir(target))
+	if err != nil {
+		return nil, "", err
+	}
+	return unlock, target, nil
+}
+
+// applyLocked is Apply for a caller that already holds lockConfig.
+func applyLocked(path, target string, ps []Profile) (SyncResult, error) {
 	old, err := os.ReadFile(target)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return SyncResult{}, err
@@ -363,10 +394,10 @@ var invalidFields = []struct {
 }{
 	{"profile", "the profile name (from the Settings label)", "letters, digits and ._@- (at most 64)", func(p Profile) string { return p.Name }},
 	{"sso start url", "the start URL", "https:// followed by printable characters without spaces", func(p Profile) string { return p.StartURL }},
-	{"sso region", "the SSO region", "lower-case letters, digits and -", func(p Profile) string { return p.SSORegion }},
-	{"region", "the region", "lower-case letters, digits and -", func(p Profile) string { return p.Region }},
-	{"account id", "the account", "digits only", func(p Profile) string { return p.AccountID }},
-	{"role name", "the role name", "letters, digits and +=,.@_-", func(p Profile) string { return p.RoleName }},
+	{"sso region", "the SSO region", "lower-case letters, digits and -, at most 32", func(p Profile) string { return p.SSORegion }},
+	{"region", "the region", "lower-case letters, digits and -, at most 32", func(p Profile) string { return p.Region }},
+	{"account id", "the account", "digits only, at most 20", func(p Profile) string { return p.AccountID }},
+	{"role name", "the role name", "letters, digits and +=,.@_-, at most 64", func(p Profile) string { return p.RoleName }},
 }
 
 // InvalidReason turns the allowlist's refusal of p (err, from RenderSSMConfig) into a
@@ -376,7 +407,7 @@ func InvalidReason(p Profile, err error) string {
 	for _, f := range invalidFields {
 		switch {
 		case strings.HasSuffix(msg, "invalid "+f.field):
-			return fmt.Sprintf("%s %q has characters an AWS config cannot hold (allowed: %s); fix it in Settings > SSM", f.words, f.value(p), f.allowed)
+			return fmt.Sprintf("%s %q is not a value an AWS config can hold (allowed: %s); fix it in Settings > SSM", f.words, f.value(p), f.allowed)
 		case strings.HasSuffix(msg, f.field+" is required"):
 			return fmt.Sprintf("%s is missing; set it in Settings > SSM", f.words)
 		}
@@ -592,16 +623,19 @@ func cacheOwner() string {
 	return hex.EncodeToString(sum[:])
 }
 
-func saveSettingsCache(ps []Profile, conflicts []Conflict) {
+func saveSettingsCache(ps []Profile, conflicts []Conflict) error {
 	b, err := json.Marshal(settingsCache{Owner: cacheOwner(), Profiles: ps, Conflicts: conflicts})
 	if err != nil {
-		return
+		return err
 	}
 	path := settingsCachePath()
 	if old, rerr := os.ReadFile(path); rerr == nil && string(old) == string(b) {
-		return
+		return nil
 	}
-	_ = writeAtomic(path, b, 0o600)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return writeAtomic(path, b, 0o600)
 }
 
 // cachedList is the last list the CP gave, as saved by a successful sync.

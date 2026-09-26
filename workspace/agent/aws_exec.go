@@ -76,14 +76,18 @@ func runAWSExec(args []string) {
 			fmt.Fprintln(os.Stderr, "af-aws-exec: this deployment does not export Settings profiles; ~/.aws/config is used as is")
 		}
 		names := res.Exported
-		if !fresh && !res.FromCache {
-			// Neither the CP nor a cached copy: list what the file holds now.
+		unverified := ""
+		if !fresh && !res.FromCache && !errors.Is(serr, awsx.ErrBridgeOff) {
+			// Neither the CP nor a cached copy of this member's list: the block is from an
+			// earlier sync (possibly another membership's, in a shared home) and nothing
+			// here can say whether it still matches Settings or the files.
 			names = awsx.ExportedIn(awsx.ConfigPath())
+			unverified = "\t(in ~/.aws/config from an earlier sync; not checked against Settings now)"
 		}
 		for _, n := range names {
 			acct, role := awsx.DescribeProfile(n)
-			label := ""
-			if sp, ok := res.Settings[n]; ok {
+			label := unverified
+			if sp, ok := res.Settings[n]; ok && unverified == "" {
 				label = "\t(" + strconv.Quote(sp.Label) + ")"
 			}
 			fmt.Printf("%s\t%s\t%s%s\n", n, acct, role, label)

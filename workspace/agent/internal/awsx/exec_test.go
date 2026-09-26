@@ -1387,7 +1387,7 @@ func TestPlanExecExplainsAnUnwritableSettingsValue(t *testing.T) {
 	settings := map[string]Profile{"odd": {Name: "odd", Label: "odd", AccountID: "123456789012", RoleName: "Dev:Ops",
 		StartURL: "https://example.awsapps.com/start", SSORegion: "ap-northeast-1"}}
 	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "odd", Settings: settings, Login: "never", Argv: []string{"true"}})
-	if err == nil || !strings.Contains(err.Error(), `the role name "Dev:Ops" has characters an AWS config cannot hold (allowed: letters, digits and +=,.@_-)`) ||
+	if err == nil || !strings.Contains(err.Error(), `the role name "Dev:Ops" is not a value an AWS config can hold (allowed: letters, digits and +=,.@_-, at most 64)`) ||
 		strings.Contains(err.Error(), "ssm meta") {
 		t.Fatalf("err = %v", err)
 	}
