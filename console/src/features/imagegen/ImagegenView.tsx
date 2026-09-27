@@ -67,7 +67,7 @@ import { StudioAgent } from "./parts/StudioAgent.tsx";
 import { StudioHistory, type PictureActions } from "./parts/StudioHistory.tsx";
 import { StudioPicker } from "./parts/StudioPicker.tsx";
 import { attachAgent } from "./attach.ts";
-import { lastStudio, migrateLegacyPane, newStudio, once, openImagegen, rememberStudio } from "./open.ts";
+import { forgetStudio, migrateLegacyPane, newStudio, once, openImagegen, rememberStudio } from "./open.ts";
 import { STUDIO_TITLE_MAX, studioName } from "./studios.ts";
 import { studiosChanged } from "./studioBus.ts";
 import { useStudioList } from "./useStudioList.ts";
@@ -414,7 +414,7 @@ function StudioPane({
 
   // A studio the Agent says is gone is not the one to reopen next time.
   useEffect(() => {
-    if (studio.missing && lastStudio() === studioId) rememberStudio(null);
+    if (studio.missing) forgetStudio(studioId);
   }, [studioId, studio.missing]);
 
   // Put a new, empty studio in THIS pane — after a delete, or when the studio is gone.
@@ -471,7 +471,7 @@ function StudioPane({
       toast(tr("imggen.studio_delete_failed"), { kind: "error" });
       return;
     }
-    rememberStudio(null);
+    forgetStudio(studioId);
     forgetStudioState(studioId);
     studiosChanged();
     // The bound session's meta loses its studio on the Agent; the rail's wand follows.

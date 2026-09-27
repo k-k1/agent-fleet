@@ -375,15 +375,20 @@ its draft and versions; pictures stay.
 **Revision 10 (2026-09-27)**: there is no studio-less pane. The text above stands with these changes:
 
 - Opening image generation with no studio named opens the one this browser opened last, unless the
-  Agent answers `not_found`; otherwise it **creates an empty studio** (decision 2, step ① alone —
-  no session). "Open in image generation" from a picture's properties creates a new studio from
+  Agent answers `not_found`; otherwise the studio changed most recently (the list's newest
+  `updated_at`, whichever device changed it), and only when there is none does it **create an empty
+  studio** (decision 2, step ① alone — no session). A browser that remembers nothing therefore
+  continues the member's latest studio instead of adding an empty one. Deleting a studio forgets it
+  only if it was the remembered one. "Open in image generation" from a picture's properties creates a new studio from
   the picture's recovered fields rather than overwriting the one on screen. One creation at a time
   per trigger, so a double press makes one studio.
 - `studioId: null` survives only in stored layouts from before this revision. Such a pane moves the
   browser's `localStorage` draft into a new studio on mount, retargets itself to it and deletes the
   local copy; a failed create keeps the draft and offers a retry.
 - The picker offers **"New studio"**, which opens a new empty studio in a new pane, leaving the
-  current one as it is. An untitled studio is named by its `created_at` (the list route carries it),
+  current one as it is. On a phone (the 760px breakpoint, outside tabs mode) "in a new pane" would
+  split the one column into two unusable halves, so there it replaces the current pane — the picker
+  goes back; this applies to every `newPane` open of a studio. An untitled studio is named by its `created_at` (the list route carries it),
   not by an id fragment. A person renames a studio from the pane's settings (`title`, human-only,
   200 characters).
 - Results, the trial slot and the history reload follow **the pane's own studio's jobs** (the

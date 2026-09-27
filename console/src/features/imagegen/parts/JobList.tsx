@@ -57,6 +57,7 @@ export function JobList({ rows, queuePaused, queued, queueMax, now, onGroupOp, o
         <button
           type="button"
           className="ui-btn ui-btn-ghost"
+          title={tr("imggen.queue_all_hint")}
           onClick={() => onQueueOp(queuePaused ? "resume" : "pause")}
         >
           <Icon name={queuePaused ? "debug-continue" : "debug-pause"} />

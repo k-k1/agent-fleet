@@ -206,8 +206,9 @@ you: each checkpoint's own published numbers as the placeholders, the fields its
 read greyed out, and a trial run before you commit forty.
 
 **Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. Opening it
-again focuses the pane you have. The pane always has a **studio** open — the one you opened last,
-or a new, empty one. The draft is saved in the workspace, so what you started on a PC carries on
+again focuses the pane you have. The pane always has a **studio** open — the one this browser
+opened last, else the one changed most recently on any device; only when you have no studio at all
+is a new, empty one made. The draft is saved in the workspace, so what you started on a PC carries on
 from your phone. To refine the draft in conversation with an agent, attach one to that studio
 ([below](#studio-refine-the-draft-by-talking-to-an-agent)).
 
@@ -379,7 +380,8 @@ agent never paints a batch on its own.
   like any rewind). **Use as reference** places it as the next edit's reference image.
 - You can have as many studios as you like and switch between them at the top of the pane. Its
   **+ New studio** (in the command palette, "New image studio") opens an empty studio in a pane
-  beside this one, leaving the current studio as it is. A studio you have not named is listed by
+  beside this one, leaving the current studio as it is (on a phone it opens in the current pane
+  instead of splitting the screen; switch back here). A studio you have not named is listed by
   when it was made ("Studio 9/27 14:05"); rename it from the gear menu. Deleting a studio deletes
   its draft, edit history and versions; **the pictures stay**.
 - The results and the trial slot show **the jobs pressed in this studio** only. The queue is one
