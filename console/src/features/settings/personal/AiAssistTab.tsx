@@ -128,6 +128,7 @@ function AiFeatureCard({ f, row }: { f: AiAssistFeatureDef; row: AiAssistResolut
               tier={f.tier}
               value={s.aiFeatureModels?.[f.id]?.[pin] || AI_FEATURE_MODEL_FOLLOW_DEFAULT}
               extraOption={[AI_FEATURE_MODEL_FOLLOW_DEFAULT, tr("aiassist.feature_model_follow_default")]}
+              inherited={tierModels?.[pin as AiAgentKind]}
               onChange={(model) => {
                 // "follow default" is never stored — it maps to DELETING the override, not to
                 // writing a third sentinel value the Agent would have to know about

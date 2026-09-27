@@ -27,9 +27,11 @@ import (
 const (
 	// loginRequestTTL is how long a request stays after the last run asked for it.
 	loginRequestTTL = 15 * time.Minute
-	// loginCancelHold is how long a cancel keeps new runs from filing again: without it
-	// the next run would put the toast straight back.
-	loginCancelHold = 10 * time.Minute
+	// loginCancelHold is how long a cancel keeps new runs from filing again: without it an
+	// agent that reruns at once would put the toast straight back. Short, because nothing
+	// in the Console can lift it: a member who cancelled on the wrong device and wants to
+	// log in from another one waits this long (ADR 0102, revision of 2026-09-27).
+	loginCancelHold = time.Minute
 	// NoticeKindAWSLogin is the notification kind that carries a request id to the Console.
 	NoticeKindAWSLogin = "aws-login-required"
 )

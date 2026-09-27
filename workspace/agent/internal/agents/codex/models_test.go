@@ -43,11 +43,19 @@ func TestParseRetiring(t *testing.T) {
 	out := []byte(`{"models":[
 	  {"slug":"gpt-6-luna","upgrade":null},
 	  {"slug":"gpt-5.6-luna"},
-	  {"slug":"gpt-5.5","upgrade":{"model":"gpt-5.6-sol","retirement_at":"2026-10-14T19:00:00Z"}}
+	  {"slug":"gpt-5.5","upgrade":{"model":"gpt-5.6-sol","migration_markdown":"GPT-5.5 retires on October 14, 2026.","retirement_at":"2026-10-14T19:00:00Z"}}
 	]}`)
 	got := parseRetiring(out)
-	if !got["gpt-5.5"] || got["gpt-6-luna"] || got["gpt-5.6-luna"] {
-		t.Fatalf("parseRetiring = %v, want only gpt-5.5", got)
+	want := map[string]agents.ModelRetiring{"gpt-5.5": {
+		At: "2026-10-14T19:00:00Z", Note: "GPT-5.5 retires on October 14, 2026.", Successor: "gpt-5.6-sol",
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseRetiring = %v, want %v", got, want)
+	}
+	// A notice codex words differently still marks the model retiring.
+	odd := parseRetiring([]byte(`{"models":[{"slug":"gpt-5.4","upgrade":"gpt-5.6-sol"}]}`))
+	if _, ok := odd["gpt-5.4"]; !ok {
+		t.Fatalf("parseRetiring(string upgrade) = %v, want gpt-5.4 marked", odd)
 	}
 	if parseRetiring([]byte("not json")) != nil {
 		t.Fatal("a broken dump must mark nothing retiring")
