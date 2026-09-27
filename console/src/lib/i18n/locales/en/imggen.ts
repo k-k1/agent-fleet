@@ -187,8 +187,6 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.props_session_gone": "That session can no longer be opened",
   // ADR 0100: the image studio.
   "imggen.studio_pick": "Studio",
-  "imggen.studio_none": "No studio (this browser's draft)",
-  "imggen.studio_untitled": "Untitled studio {id}",
   "imggen.studio_settings": "Studio settings",
   "imggen.studio_agent_trial": "Let the agent run a trial",
   "imggen.studio_agent_trial_hint": "The agent sees the change at its next tool-list refresh (within a minute) or when it resumes.",
@@ -199,7 +197,6 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.studio_read_failed": "Could not read the studio",
   "imggen.studio_save_failed": "Could not save the draft; the latest draft was read back",
   "imggen.studio_create_failed": "Could not create the studio",
-  "imggen.studio_open_none": "Open without a studio",
   "imggen.studio_open": "Open in the studio",
   "imggen.studio_redirect": "This session is bound to an image studio",
   "imggen.studio_redirect_hint": "Carry on the conversation in the studio's left column. The same session open in two places overwrites the text and attachments you are composing.",
@@ -303,4 +300,11 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.queue_others_live": "{n} jobs from other studios and sessions ({live} in progress)",
   "imggen.queue_other_studio": "Other studio",
   "imggen.queue_no_studio": "No studio",
+  "imggen.studio_dated": "Studio {when}",
+  "imggen.studio_new": "+ New studio",
+  "imggen.studio_new_here": "Start a new studio here",
+  "imggen.studio_rename": "Name",
+  "imggen.studio_retry": "Try again",
+  "imggen.studio_preparing": "Preparing the studio…",
+  "imggen.studio_waiting_ws": "The studio is prepared once the workspace is running",
 };

@@ -72,7 +72,7 @@ export const LayoutMap = memo(function LayoutMap() {
           {/* The overview's one on-screen entry (the other is the leader key, g s). */}
           <IconButton icon="dashboard" label={tr("pane.open_sessions")} onClick={() => openSessionsOverview()} />
           {imagegenAvailable && (
-            <IconButton icon="wand" label={tr("pane.open_imagegen")} onClick={() => openImagegen()} />
+            <IconButton icon="wand" label={tr("pane.open_imagegen")} onClick={() => void openImagegen()} />
           )}
           {/* Not behind `imagegenAvailable`: the folder holds what the SESSIONS generated too
               (the codex / agy routes), which exist whether or not this deployment runs an

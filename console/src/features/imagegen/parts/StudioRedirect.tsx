@@ -14,7 +14,7 @@ export function StudioRedirect({ studioId, headerActions }: { studioId: string; 
     <div className="igen-redirect">
       <ViewHead actions={headerActions} />
       <EmptyState icon="wand" title={tr("imggen.studio_redirect")} hint={tr("imggen.studio_redirect_hint")}>
-        <Button variant="primary" icon="wand" onClick={() => openImagegen({ studioId })}>
+        <Button variant="primary" icon="wand" onClick={() => void openImagegen({ studioId })}>
           {tr("imggen.studio_open")}
         </Button>
       </EmptyState>

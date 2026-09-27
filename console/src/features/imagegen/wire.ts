@@ -525,6 +525,8 @@ export interface StudioSummary {
   id: string;
   title: string;
   session?: string;
+  /** Absent from an Agent older than the picker's dated names; `updated_at` stands in. */
+  created_at?: string;
   updated_at: string;
 }
 

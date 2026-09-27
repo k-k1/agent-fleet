@@ -189,8 +189,6 @@ export const imggen = {
   "imggen.props_session_gone": "このセッションはもう開けません",
   // ADR 0100: the image studio.
   "imggen.studio_pick": "スタジオ",
-  "imggen.studio_none": "スタジオなし（このブラウザの下書き）",
-  "imggen.studio_untitled": "無題のスタジオ {id}",
   "imggen.studio_settings": "スタジオの設定",
   "imggen.studio_agent_trial": "エージェントの試走を許す",
   "imggen.studio_agent_trial_hint": "切り替えがエージェントに届くのは次のツール一覧の更新（1 分以内）か、再開のときです。",
@@ -201,7 +199,6 @@ export const imggen = {
   "imggen.studio_read_failed": "スタジオを読めませんでした",
   "imggen.studio_save_failed": "下書きを保存できませんでした。最新の下書きを読み直しました",
   "imggen.studio_create_failed": "スタジオを作れませんでした",
-  "imggen.studio_open_none": "スタジオなしで開く",
   "imggen.studio_open": "スタジオで開く",
   "imggen.studio_redirect": "このセッションは画像生成スタジオに結ばれています",
   "imggen.studio_redirect_hint": "会話はスタジオの左の列で続けます。同じセッションを 2 か所で開くと、入力中の文や添付が互いに上書きされます。",
@@ -305,4 +302,11 @@ export const imggen = {
   "imggen.queue_others_live": "他のスタジオ・セッションのジョブ {n} 件（{live} 件が進行中）",
   "imggen.queue_other_studio": "他のスタジオ",
   "imggen.queue_no_studio": "スタジオ外",
+  "imggen.studio_dated": "スタジオ {when}",
+  "imggen.studio_new": "＋ 新しいスタジオ",
+  "imggen.studio_new_here": "新しいスタジオにする",
+  "imggen.studio_rename": "名前",
+  "imggen.studio_retry": "もう一度",
+  "imggen.studio_preparing": "スタジオを用意しています…",
+  "imggen.studio_waiting_ws": "ワークスペースが起動するとスタジオを用意します",
 };
