@@ -110,7 +110,7 @@ export interface StudioState {
   rewind: (seq: number) => Promise<boolean>;
   setAgentTrial: (on: boolean) => void;
   /** Rename; "" clears it back to the dated name. The Agent takes a title from a person only. */
-  setTitle: (title: string) => void;
+  setTitle: (title: string) => Promise<void>;
   /** Versions whose press_result did not append ("record pending"). */
   recordPending: ReadonlySet<string>;
   reload: () => Promise<void>;
@@ -351,11 +351,9 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   );
 
   const setTitle = useCallback(
-    (title: string) => {
-      void (async () => {
-        await flush();
-        await put({ title });
-      })();
+    async (title: string) => {
+      await flush();
+      await put({ title });
     },
     [flush, put],
   );

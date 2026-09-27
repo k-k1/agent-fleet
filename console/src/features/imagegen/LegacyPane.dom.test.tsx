@@ -12,8 +12,9 @@ vi.mock("./api.ts", async (orig) => ({
   ...(await orig<typeof import("./api.ts")>()),
   createStudio: async (body: { draft: { prompt?: string } }) => {
     creates.push(body.draft.prompt ?? "");
+    const id = `st${creates.length}`;
     await new Promise((r) => setTimeout(r, 5));
-    return createFails ? { error: { code: "unavailable", message: "down" } } : { id: `st${creates.length}` };
+    return createFails ? { error: { code: "unavailable", message: "down" } } : { id };
   },
 }));
 vi.mock("../../core/store/workspace.ts", async (orig) => ({
@@ -45,14 +46,16 @@ afterEach(async () => {
   localStorage.clear();
 });
 
-const mount = async () => {
+const mount = async (panes = ["p1"]) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () =>
     root.render(
       <StrictMode>
-        <ImagegenView paneId="p1" studioId={null} />
+        {panes.map((id) => (
+          <ImagegenView key={id} paneId={id} studioId={null} />
+        ))}
       </StrictMode>,
     ),
   );
@@ -65,6 +68,15 @@ describe("スタジオなしペインの移行", () => {
     await mount();
     expect(creates).toEqual(["old local draft"]);
     expect(retargets).toEqual([["p1", "st1"]]);
+    expect(localStorage.getItem(draftKey(getTenant()))).toBeNull();
+  });
+
+  it("旧ペインが 2 つ同時に移行しても、下書きを持つスタジオは 1 つだけ", async () => {
+    saveDraft(draftKey(getTenant()), { ...emptyDraft(), prompt: "old local draft" });
+    await mount(["p1", "p2"]);
+    expect([...creates].sort()).toEqual(["", "old local draft"]);
+    expect(retargets.map((r) => r[0]).sort()).toEqual(["p1", "p2"]);
+    expect(new Set(retargets.map((r) => r[1])).size).toBe(2);
     expect(localStorage.getItem(draftKey(getTenant()))).toBeNull();
   });
 

@@ -17,6 +17,7 @@ import { toast } from "../../ui/toast.ts";
 import { createStudio, getStudio } from "./api.ts";
 import { draftKey, emptyDraft, loadDraft, type ImagegenDraft } from "./draft.ts";
 import { studioFromForm } from "./studioSync.ts";
+import { studiosChanged } from "./studioBus.ts";
 
 export interface OpenImagegenOptions {
   /**
@@ -43,7 +44,10 @@ export function openImagegen(opts: OpenImagegenOptions = {}): Promise<OpenImageg
     show(opts.studioId, !!opts.newPane);
     return Promise.resolve({ studioId: opts.studioId });
   }
-  return once("open", async () => {
+  // Only the same intent joins a press in flight: a second picture's draft, or "new studio
+  // beside", is a different request and must not be answered with the first one's studio.
+  const intent = JSON.stringify([opts.draft ?? null, !!opts.fresh, !!opts.newPane]);
+  return once(`open:${intent}`, async () => {
     let id = !opts.draft && !opts.fresh ? await rememberedStudio() : null;
     if (!id) {
       const r = await newStudio(opts.draft ?? emptyDraft());
@@ -92,6 +96,7 @@ export async function newStudio(draft: ImagegenDraft): Promise<OpenImagegenResul
     const s = await createStudio({ draft: studioFromForm(draft) });
     if (!s || s.error || !s.id) return { error: (s?.error && errText(s.error)) || t("imggen.studio_create_failed") };
     rememberStudio(s.id);
+    studiosChanged();
     return { studioId: s.id };
   } catch {
     return { error: t("imggen.studio_create_failed") };
@@ -108,6 +113,26 @@ export function once(key: string, run: () => Promise<OpenImagegenResult>): Promi
   const p = run().finally(() => inflight.delete(key));
   inflight.set(key, p);
   return p;
+}
+
+// Which legacy pane holds the browser's old draft while its studio is being created. Several
+// null panes restored together must not each copy it: the first takes it, the others start
+// empty. Released on failure, so a retry (by any of them) can take it again.
+let draftClaim: string | null = null;
+
+/** Give a pane stored without a studio a new one (see LegacyPane). */
+export function migrateLegacyPane(paneId: string): Promise<OpenImagegenResult> {
+  return once(`migrate:${paneId}`, async () => {
+    const mine = draftClaim === null || draftClaim === paneId;
+    const draft = mine ? localDraft() : null;
+    if (draft) draftClaim = paneId;
+    const r = await newStudio(draft ?? emptyDraft());
+    if (draftClaim === paneId) {
+      if (r.studioId) dropLocalDraft();
+      draftClaim = null;
+    }
+    return r;
+  });
 }
 
 /**

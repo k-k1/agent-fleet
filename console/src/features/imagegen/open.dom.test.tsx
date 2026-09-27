@@ -116,6 +116,17 @@ describe("openImagegen", () => {
     expect(calls).toEqual(["create prompt=", "create prompt="]);
   });
 
+  it("別の意図の「開く」は合流しない（別の draft・fresh+newPane はそれぞれ作る）", async () => {
+    const [a, b, c] = await Promise.all([
+      openImagegen({ draft: { ...emptyDraft(), prompt: "A" } }),
+      openImagegen({ draft: { ...emptyDraft(), prompt: "B" } }),
+      openImagegen({ fresh: true, newPane: true }),
+    ]);
+    expect(new Set([a.studioId, b.studioId, c.studioId]).size).toBe(3);
+    expect([...calls].sort()).toEqual(["create prompt=", "create prompt=A", "create prompt=B"]);
+    expect(opened).toContain(`new ${c.studioId}`);
+  });
+
   it("スタジオ id 指定はそのまま開く（Agent に問い合わせない）", async () => {
     expect(await openImagegen({ studioId: "x", newPane: true })).toEqual({ studioId: "x" });
     expect(calls).toEqual([]);

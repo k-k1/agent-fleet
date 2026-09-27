@@ -38,7 +38,6 @@ import {
   imageProperties,
   imagegenCancelJob,
   imagegenHistory,
-  listStudios,
   studioDraftLog,
   imagegenGroupOp,
   imagegenJobs,
@@ -51,7 +50,6 @@ import {
   type JobGroup,
   type HistoryItem,
   type PressMode,
-  type StudioSummary,
 } from "./api.ts";
 import { anyLive, engineState, foldGroups, studioJobs } from "./jobs.ts";
 import { draftFromProperties, emptyDraft, remappedOp } from "./draft.ts";
@@ -69,8 +67,10 @@ import { StudioAgent } from "./parts/StudioAgent.tsx";
 import { StudioHistory, type PictureActions } from "./parts/StudioHistory.tsx";
 import { StudioPicker } from "./parts/StudioPicker.tsx";
 import { attachAgent } from "./attach.ts";
-import { dropLocalDraft, lastStudio, localDraft, newStudio, once, openImagegen, rememberStudio } from "./open.ts";
+import { lastStudio, migrateLegacyPane, newStudio, once, openImagegen, rememberStudio } from "./open.ts";
 import { STUDIO_TITLE_MAX, studioName } from "./studios.ts";
+import { studiosChanged } from "./studioBus.ts";
+import { useStudioList } from "./useStudioList.ts";
 import { historyByPath, pressSeqOf, studioFromForm } from "./studioSync.ts";
 import { forgetStudioState, useStudio } from "./useStudio.ts";
 import "./imagegen.css";
@@ -103,7 +103,7 @@ export function ImagegenView({
 // A pane with no studio, from a layout saved before decision 10's revision. It moves the draft
 // this browser kept into a new studio (empty when there was none), points the pane at it, and
 // drops the local copy — once: the create is keyed by the pane, so a remount while it is in
-// flight joins it, and once the pane has a studio this component is gone.
+// flight joins it; several such panes share out the one draft (migrateLegacyPane).
 function LegacyPane({ paneId, headerActions }: { paneId: string; headerActions?: ReactNode }) {
   const tr = useT();
   const running = useWorkspaceStore((s) => wsRunning(s.state));
@@ -113,12 +113,11 @@ function LegacyPane({ paneId, headerActions }: { paneId: string; headerActions?:
   useEffect(() => {
     if (!running) return;
     let alive = true;
-    void once(`migrate:${paneId}`, () => newStudio(localDraft() ?? emptyDraft())).then((r) => {
+    void migrateLegacyPane(paneId).then((r) => {
       if (!r.studioId) {
         if (alive) setError(r.error || "");
         return;
       }
-      dropLocalDraft();
       // Only the mount still here moves the pane (StrictMode's first mount has been cleaned up).
       if (alive) setPaneTarget(paneId, { content: { kind: "imagegen", studioId: r.studioId } });
     });
@@ -196,7 +195,7 @@ function StudioPane({
   const [logOpen, setLogOpen] = useState(false);
   // The narrow pane's tab (ADR 0100 §4); ignored while the three columns fit.
   const [tab, setTab] = useState<"chat" | "form" | "out">("form");
-  const [studios, setStudios] = useState<StudioSummary[]>([]);
+  const [studios, readStudios] = useStudioList();
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyBefore, setHistoryBefore] = useState("");
   // The bar's running segment fills against the clock, so the row needs a tick of its own.
@@ -210,14 +209,6 @@ function StudioPane({
     rememberStudio(studioId);
   }, [studioId]);
 
-  const readStudios = useCallback(async () => {
-    try {
-      const r = await listStudios();
-      if (r && !r.error && Array.isArray(r.studios)) setStudios(r.studios);
-    } catch {
-      /* the picker keeps what it had */
-    }
-  }, []);
 
   const readHistory = useCallback(
     async (more = false) => {
@@ -436,11 +427,10 @@ function StudioPane({
     setPaneTarget(paneId, { content: { kind: "imagegen", studioId: r.studioId } });
   }, [paneId, setPaneTarget, toast]);
 
-  // "＋ New studio" opens beside this one; the list here learns of it on its next read.
+  // "＋ New studio" opens beside this one; every pane's list hears of it (studiosChanged).
   const createStudio = useCallback(async () => {
-    const r = await openImagegen({ fresh: true, newPane: true });
-    if (r.studioId) void readStudios();
-  }, [readStudios]);
+    await openImagegen({ fresh: true, newPane: true });
+  }, []);
 
   const attach = useCallback(
     async (o: AttachOpts): Promise<boolean> => {
@@ -459,13 +449,13 @@ function StudioPane({
       if (r.error) toast(r.error, { kind: "error" });
       if (r.session) void refreshSessions();
       if (r.studioId) {
-        void readStudios();
+        studiosChanged();
         if (r.studioId !== studioId) openStudio(r.studioId);
         else void studio.reload();
       }
       return !!r.session;
     },
-    [studioId, draft, provider, attachOpen, studio, toast, tr, refreshSessions, readStudios, openStudio],
+    [studioId, draft, provider, attachOpen, studio, toast, tr, refreshSessions, openStudio],
   );
 
   const removeStudio = useCallback(async () => {
@@ -483,7 +473,7 @@ function StudioPane({
     }
     rememberStudio(null);
     forgetStudioState(studioId);
-    void readStudios();
+    studiosChanged();
     // The bound session's meta loses its studio on the Agent; the rail's wand follows.
     void refreshSessions();
     // The pane goes on with the most recent studio no other pane shows, else a new one.
@@ -493,7 +483,7 @@ function StudioPane({
     const next = studios.find((s) => s.id !== studioId && !shown.has(s.id));
     if (next) setPaneTarget(paneId, { content: { kind: "imagegen", studioId: next.id } });
     else void replaceWithNew();
-  }, [studioId, studios, paneId, confirm, tr, toast, readStudios, refreshSessions, setPaneTarget, replaceWithNew]);
+  }, [studioId, studios, paneId, confirm, tr, toast, refreshSessions, setPaneTarget, replaceWithNew]);
 
   // "Back to this picture's settings": the press its version names, through the same rewind
   // as the edit history. The log page on screen may not reach that far back, so older pages
@@ -821,7 +811,7 @@ function StudioPane({
                   }}
                   onBlur={(e) => {
                     const v = e.currentTarget.value.trim();
-                    if (v !== (studio.studio?.title || "")) studio.setTitle(v);
+                    if (v !== (studio.studio?.title || "")) void studio.setTitle(v).then(studiosChanged);
                   }}
                 />
               </label>
