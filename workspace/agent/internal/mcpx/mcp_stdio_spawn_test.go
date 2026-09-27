@@ -724,8 +724,9 @@ func TestRenameChildSessionRefusedWithoutTheOptIn(t *testing.T) {
 	}
 }
 
-// Issue #1068: effort is validated against the chosen model's efforts from the same catalog
-// list_models serves, refused with the valid list, and forwarded when accepted.
+// An effort is checked against the row the launch will start (short names resolved the same
+// way), refused with that row's list, and forwarded when accepted. Kinds whose catalog cannot
+// say, and a catalog that cannot be read, let it through rather than block the create.
 func TestCreateSessionEffort(t *testing.T) {
 	withFleetSpawn(t, true)
 	t.Setenv("HOME", t.TempDir())
@@ -741,6 +742,8 @@ func TestCreateSessionEffort(t *testing.T) {
 				`{"id":"gpt-sol","efforts":["low","medium","high","xhigh"],"defaultEffort":"low"},` +
 				`{"id":"gpt-mini","efforts":["minimal","low"]},` +
 				`{"id":"gpt-plain"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/agents/claude/models":
+			http.Error(w, "catalog down", http.StatusInternalServerError)
 		case r.Method == http.MethodPost && r.URL.Path == "/sessions":
 			posts++
 			body = nil
@@ -748,6 +751,7 @@ func TestCreateSessionEffort(t *testing.T) {
 			_, _ = w.Write([]byte(`{"name":"slot09"}`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
 		}
 	}))
 	defer srv.Close()
@@ -760,12 +764,8 @@ func TestCreateSessionEffort(t *testing.T) {
 		params, _ := json.Marshal(map[string]any{"name": "create_session", "arguments": json.RawMessage(a)})
 		return string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
 	}
-	base := map[string]any{"dir": "/repos/app", "kind": "codex", "model": "gpt-sol", "initial_prompt": "review"}
 	with := func(kv ...any) map[string]any {
-		m := map[string]any{}
-		for k, v := range base {
-			m[k] = v
-		}
+		m := map[string]any{"dir": "/repos/app", "kind": "codex", "model": "gpt-sol", "initial_prompt": "review"}
 		for i := 0; i < len(kv); i += 2 {
 			m[kv[i].(string)] = kv[i+1]
 		}
@@ -779,8 +779,7 @@ func TestCreateSessionEffort(t *testing.T) {
 		t.Fatalf("effort not forwarded: %v", body["effort"])
 	}
 	xhighKey := body["idempotency_key"]
-
-	if resp := call(base); strings.Contains(resp, `"isError":true`) {
+	if resp := call(with()); strings.Contains(resp, `"isError":true`) {
 		t.Fatalf("create without effort failed: %s", resp)
 	}
 	if body["effort"] != "" {
@@ -795,12 +794,18 @@ func TestCreateSessionEffort(t *testing.T) {
 		args map[string]any
 		want []string
 	}{
-		// Refused for the model, with that model's list (not the kind's union).
+		// Refused for the model, with that model's list, not the kind's union.
 		{with("effort", "minimal"), []string{"gpt-sol", "low, medium, high, xhigh"}},
-		// A model with no efforts takes none at all.
+		// A short name is checked against the model it resolves to.
+		{with("model", "sol", "effort", "minimal"), []string{"gpt-sol", "low, medium, high, xhigh"}},
 		{with("model", "gpt-plain", "effort", "low"), []string{"gpt-plain", "省略"}},
-		// No model: checked against every effort the kind lists.
-		{with("model", "", "effort", "max"), []string{"codex", "low, medium, high, xhigh, minimal"}},
+		// No model means the CLI's default, which no catalog row describes.
+		{with("model", "", "effort", "low"), []string{"model"}},
+		{with("kind", "copilot", "model", "", "effort", "high"), []string{"auto"}},
+		{with("kind", "copilot", "model", "auto", "effort", "high"), []string{"auto"}},
+		{with("kind", "cursor", "effort", "high"), []string{"モデル id"}},
+		{with("kind", "agy", "effort", "high"), []string{"モデル id"}},
+		{with("kind", "lcpp", "effort", "high"), []string{"lcpp"}},
 	} {
 		resp := call(tc.args)
 		if !strings.Contains(resp, `"isError":true`) {
@@ -812,11 +817,25 @@ func TestCreateSessionEffort(t *testing.T) {
 			}
 		}
 	}
-	if resp := call(with("model", "", "effort", "minimal")); strings.Contains(resp, `"isError":true`) {
-		t.Fatalf("an effort some model lists was refused with no model given: %s", resp)
+	if posts != before {
+		t.Fatalf("a refused effort still reached POST /sessions (%d posts)", posts-before)
 	}
-	if posts != before+1 {
-		t.Fatalf("a refused effort still reached POST /sessions (%d posts, want %d)", posts-before, 1)
+
+	for _, args := range []map[string]any{
+		with("model", "mini", "effort", "minimal"),
+		// opencode's variant and kiro's --effort are judged by the CLI; their catalogs list none.
+		with("kind", "opencode", "model", "opencode-go/glm", "effort", "max"),
+		with("kind", "kiro", "model", "", "effort", "high"),
+		// The Agent refuses an unknown model itself, with the better message.
+		with("model", "gpt-unknown", "effort", "ultra"),
+		// A catalog that cannot be read must not block the create (or its idempotent retry).
+		with("kind", "claude", "model", "opus", "effort", "max"),
+	} {
+		if resp := call(args); strings.Contains(resp, `"isError":true`) {
+			t.Errorf("%v refused: %s", args, resp)
+		} else if body["effort"] != args["effort"] {
+			t.Errorf("%v: effort forwarded as %v", args, body["effort"])
+		}
 	}
 }
 

@@ -35,6 +35,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -960,7 +961,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 					"title":          map[string]any{"type": "string", "description": "Short display name saying what the task is (optional)"},
 					"kind":           map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse. shell/ssm are refused"},
 					"model":          map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
-					"effort":         map[string]any{"type": "string", "description": "Reasoning effort, one of that model's efforts in list_models (optional; default: the model's defaultEffort). A value the model does not list is refused"},
+					"effort":         map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Pass model with it and use one of that model's efforts from list_models; anything else is refused. opencode and kiro list none but take their CLI's values; agy and cursor fold effort into the model id instead"},
 					"initial_prompt": map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like"},
 					"worktree":       map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
 					"branch":         map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
@@ -2058,7 +2059,7 @@ var mcpStdioWriteTools = []map[string]any{
 				"title":          map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
 				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | agy | copilot | cursor | kiro | lcpp | shell。agy は Antigravity CLI（接続済みのときのみ起動可）。copilot は GitHub Copilot CLI（GitHub 連携＋Copilot サブスクが前提）。cursor は Cursor CLI（接続済みのときのみ起動可）。kiro は Kiro CLI（接続済みのときのみ起動可・既定は managed ドライバ）。lcpp は自前の llama.cpp ハーネス（サインイン不要・常に managed・Terminal (CLI) 経路は無い）で、model は list_models(kind=\"lcpp\") が返す自前エンジンの目録から選ぶ。muse は Meta の Muse Code（オンデマンド導入＋サインイン済みのときのみ起動可・常に managed・Terminal (CLI) 経路は無い）。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
 				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
-				"effort":         map[string]any{"type": "string", "description": "推論 effort（任意）。list_models が返すそのモデルの efforts から選ぶ。省略時はモデルの defaultEffort。一覧に無い値は拒否される。"},
+				"effort":         map[string]any{"type": "string", "description": "推論 effort（任意）。model と一緒に指定し、list_models が返すそのモデルの efforts から選ぶ（それ以外は拒否される）。省略時はモデルの defaultEffort。opencode と kiro は一覧に efforts が無いが CLI の値をそのまま受ける。agy と cursor は effort がモデル id に含まれるので指定しない。"},
 				"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
 				"worktree":       map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
 				"branch":         map[string]any{"type": "string", "description": "worktree の基点ブランチ（任意、省略時は現在の HEAD）。"},
@@ -4310,57 +4311,59 @@ func CreateSessionKey(scope, dir, subdir, kind, model, effort, prompt string, wo
 	return "cs_" + hex.EncodeToString(h.Sum(nil))
 }
 
-// checkCreateEffort refuses an effort the chosen model does not accept, naming the ones it
-// does, so the caller can correct itself in the same turn. It reads the same catalog
-// list_models answers from. A model that is omitted, or not listed under exactly that id (a
-// short name the Agent expands), is checked against every effort the kind lists instead.
+// checkCreateEffort refuses an effort the child would not run at, naming the ones it would, so
+// the caller can correct itself in the same turn. It reads the catalog list_models answers
+// from and resolves the model with the launch's own rule (agents.MatchModel): validating
+// against any other row than the one that starts lets a value through that the model lacks.
+//
+// When the catalog cannot be read, or does not name the model unambiguously, the effort is let
+// through: the Agent keeps launching on a degraded catalog and refuses unknown models itself,
+// and blocking here would also block the retry that replays a create which already went through.
 func checkCreateEffort(kind, model, effort string) error {
 	if kind == "" {
 		kind = "claude"
 	}
-	out, err := agentGET("/agents/" + url.PathEscape(kind) + "/models")
-	if err != nil {
-		return fmt.Errorf("effort を確かめるモデル一覧の取得に失敗しました: %v", err)
-	}
-	var cat struct {
-		Models []struct {
-			ID      string   `json:"id"`
-			Efforts []string `json:"efforts"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal([]byte(out), &cat); err != nil {
-		return fmt.Errorf("effort を確かめるモデル一覧を読めませんでした: %v", err)
-	}
-	var valid []string
-	matched := false
-	for _, m := range cat.Models {
-		if model != "" && m.ID == model {
-			valid, matched = m.Efforts, true
-			break
-		}
-	}
-	if !matched {
-		seen := map[string]bool{}
-		for _, m := range cat.Models {
-			for _, e := range m.Efforts {
-				if !seen[e] {
-					seen[e] = true
-					valid = append(valid, e)
-				}
-			}
-		}
-	}
-	if slices.Contains(valid, effort) {
+	switch kind {
+	case "agy", "cursor":
+		return fmt.Errorf("%s は effort を別に指定できません。effort はモデル id に含まれているので、list_models から目的の effort の id を選んでください", kind)
+	case "lcpp":
+		return fmt.Errorf("lcpp は effort を指定できません（推論量はエンジン側の起動設定で決まります）")
+	case "opencode", "kiro":
+		// Their catalogs list no efforts, yet the CLI takes one (opencode's variant, kiro's
+		// --effort), so the CLI is the only judge of the value.
 		return nil
 	}
-	target := kind
-	if matched {
-		target = model
+	if kind == "copilot" && (model == "" || strings.EqualFold(model, "auto")) {
+		// The launch drops effort for auto, because copilot refuses it there.
+		return fmt.Errorf("copilot の auto は effort を指定できません。effort を使うなら list_models から model も指定してください")
 	}
-	if len(valid) == 0 {
-		return fmt.Errorf("%s は effort を指定できません（effort を省略してください）", target)
+	if model == "" {
+		// The default model is the CLI's choice and is not in the catalog, so there is no row
+		// to check against.
+		return fmt.Errorf("effort を指定するときは model も list_models から指定してください")
 	}
-	return fmt.Errorf("effort %q は %s では使えません。使える値: %s（省略するとモデルの既定）", effort, target, strings.Join(valid, ", "))
+	out, err := agentGET("/agents/" + url.PathEscape(kind) + "/models")
+	if err != nil {
+		return nil
+	}
+	var cat struct {
+		Models []agents.ModelChoice `json:"models"`
+	}
+	if json.Unmarshal([]byte(out), &cat) != nil {
+		return nil
+	}
+	matched := agents.MatchModel(model, cat.Models)
+	if len(matched) != 1 {
+		return nil
+	}
+	m := matched[0]
+	if slices.Contains(m.Efforts, effort) {
+		return nil
+	}
+	if len(m.Efforts) == 0 {
+		return fmt.Errorf("%s は effort を指定できません（effort を省略してください）", m.ID)
+	}
+	return fmt.Errorf("effort %q は %s では使えません。使える値: %s（省略するとモデルの既定）", effort, m.ID, strings.Join(m.Efforts, ", "))
 }
 
 // agentCreateSession POSTs /sessions and, crucially, does NOT let a client-side timeout

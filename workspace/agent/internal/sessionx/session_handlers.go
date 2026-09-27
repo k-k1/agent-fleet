@@ -455,25 +455,10 @@ func resolveLiveModel(requested string, choices []agents.ModelChoice) (string, e
 	if requested == "" || len(choices) == 0 {
 		return requested, nil
 	}
-	norm := func(s string) string {
-		return strings.ToLower(strings.TrimSpace(s))
-	}
-	want := norm(requested)
-	// An exact id/label match wins outright, even when it also happens to be a
-	// prefix of another choice (e.g. "sakana/fugu" vs "sakana/fugu-ultra"): the
-	// fuzzy family-name matching below is only for when nothing matched exactly.
-	for _, choice := range choices {
-		if want == norm(choice.ID) || want == norm(choice.Label) {
-			return choice.ID, nil
-		}
-	}
-	var matches []string
-	for _, choice := range choices {
-		id, label := norm(choice.ID), norm(choice.Label)
-		if strings.HasSuffix(id, "-"+want) || strings.HasSuffix(label, "-"+want) ||
-			strings.HasPrefix(id, want+"-") || strings.HasPrefix(label, want+"-") {
-			matches = append(matches, choice.ID)
-		}
+	matched := agents.MatchModel(requested, choices)
+	matches := make([]string, len(matched))
+	for i, m := range matched {
+		matches[i] = m.ID
 	}
 	if len(matches) == 1 {
 		return matches[0], nil
@@ -484,7 +469,7 @@ func resolveLiveModel(requested string, choices []agents.ModelChoice) (string, e
 	}
 	return "", fmt.Errorf("モデル %q は利用できません。近い候補: %s。"+
 		"一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。",
-		requested, joinModelIDs(nearestModels(want, choices), modelSuggestLimit))
+		requested, joinModelIDs(nearestModels(strings.ToLower(requested), choices), modelSuggestLimit))
 }
 
 // retiredModelError is the wording for "the id is right, but the model is no longer
