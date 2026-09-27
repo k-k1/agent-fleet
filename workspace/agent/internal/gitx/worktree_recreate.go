@@ -95,7 +95,7 @@ func ResolveRecreate(parent, name string, branches []string, trashSHA func(branc
 	if len(names) == 0 {
 		return nil
 	}
-	inUse := WorktreeBranches(parent)
+	inUse := branchOccupants(parent)
 	var out []RecreateCandidate
 	for _, b := range names {
 		if sha := GitBranchSHA(parent, b); sha != "" {
@@ -131,6 +131,24 @@ func ResolveRecreate(parent, name string, branches []string, trashSHA func(branc
 		base = ""
 	}
 	return []RecreateCandidate{{Source: RecreateNew, Branch: names[0], Ref: base}}
+}
+
+// branchOccupants maps each branch checked out in parent's repository to the working copy
+// holding it, parent included (WorktreeBranches leaves the queried copy out, and git refuses
+// the parent's branch just the same). A registration whose folder is gone is not an occupant:
+// a worktree deleted behind git's back is still listed with its branch until pruned, and that
+// entry is usually the very folder being recreated — RecreateWorktreeAt prunes it first.
+func branchOccupants(parent string) map[string]string {
+	m := map[string]string{}
+	for b, p := range WorktreeBranches(parent) {
+		if _, err := os.Stat(p); err == nil {
+			m[b] = p
+		}
+	}
+	if b := GitCurrentBranch(parent); b != "" && b != "(detached)" {
+		m[b] = parent
+	}
+	return m
 }
 
 // RecreateWorktreeAt adds a worktree of parent at exactly dir from candidate c, or, when

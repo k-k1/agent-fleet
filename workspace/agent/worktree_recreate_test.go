@@ -136,3 +136,49 @@ func TestRecreateWorktreeRefusals(t *testing.T) {
 		t.Errorf("occupied path = %d, want 409", code)
 	}
 }
+
+// A worktree removed behind git's back stays registered, with its branch, until pruned. The
+// plan must not read that leftover as "checked out elsewhere" — it is the folder being
+// recreated — and the POST must get past it.
+func TestRecreateWorktreeDeletedOutsideTheConsole(t *testing.T) {
+	srv, parent := recreateServer(t)
+	wt := filepath.Join(filepath.Dir(parent), "app@st")
+	gitAt(t, parent, "worktree", "add", "-q", "-b", "st", wt, "main")
+	session.WriteMeta(session.Meta{Name: "s", Kind: session.KindClaude, Dir: wt, Branch: "st", Archived: true})
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+
+	var plan recreatePlan
+	do(t, srv, "GET", "/repos/app@st/recreate", nil, http.StatusOK, &plan)
+	if len(plan.Candidates) != 1 || plan.Candidates[0].Source != gitx.RecreateLocal || plan.Candidates[0].InUse != "" {
+		t.Fatalf("plan = %+v, want local st, not in use", plan)
+	}
+	do(t, srv, "POST", "/repos/app@st/recreate", map[string]any{"source": "local", "branch": "st"}, http.StatusCreated, nil)
+	if got := gitx.GitCurrentBranch(wt); got != "st" {
+		t.Fatalf("recreated on %q, want st", got)
+	}
+}
+
+// The branch the parent working copy itself has checked out is as unavailable as one held by
+// another worktree: the plan says so, instead of the add failing with git's raw error.
+func TestRecreateWorktreeBranchHeldByTheParent(t *testing.T) {
+	srv, parent := recreateServer(t)
+	gone := filepath.Join(filepath.Dir(parent), "app@main")
+	session.WriteMeta(session.Meta{Name: "s", Kind: session.KindClaude, Dir: gone, Branch: "main", Archived: true})
+
+	var plan recreatePlan
+	do(t, srv, "GET", "/repos/app@main/recreate", nil, http.StatusOK, &plan)
+	if len(plan.Candidates) != 1 || plan.Candidates[0].InUse != "app" {
+		t.Fatalf("plan = %+v, want main in use by app", plan)
+	}
+	if code := httpStatus(t, srv, "POST", "/repos/app@main/recreate",
+		map[string]any{"source": "local", "branch": "main"}); code != http.StatusConflict {
+		t.Fatalf("recreate on the parent's branch = %d, want 409", code)
+	}
+	do(t, srv, "POST", "/repos/app@main/recreate",
+		map[string]any{"source": "local", "branch": "main", "new_branch": "main-2"}, http.StatusCreated, nil)
+	if got := gitx.GitCurrentBranch(gone); got != "main-2" {
+		t.Fatalf("recreated on %q, want main-2", got)
+	}
+}
