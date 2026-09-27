@@ -11,14 +11,20 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { DraftLogEntry, HistoryItem, Job, JobsResponse, StudioWire } from "./wire.ts";
 
-const jobsNow: { jobs: Job[] } = { jobs: [] };
+// `jobs` is what the test says the queue holds; `served` is what the Agent answers. While a press
+// is `held` (its line written, the enqueue not done yet — a cold engine) the Agent still answers
+// the list from before.
+const jobsNow: { jobs: Job[]; served: Job[]; held: boolean } = { jobs: [], served: [], held: false };
 const historyNow: { items: HistoryItem[] } = { items: [] };
 const baseStudio = { id: "s1", title: "", draft: {}, locks: [], session: "sess-1", agent_trial: true, created_at: "2026-09-27T10:00:00Z" };
 const studioNow: { s: StudioWire } = { s: { ...baseStudio, updated_at: "1", recent_log: [] } as unknown as StudioWire };
 vi.mock("./api.ts", async (orig) => ({
   ...(await orig<typeof import("./api.ts")>()),
   imagegenStatus: async () => ({ enabled: true, ready: true, providers: [] }),
-  imagegenJobs: async (): Promise<JobsResponse> => ({ jobs: jobsNow.jobs, groups: [] }) as JobsResponse,
+  imagegenJobs: async (): Promise<JobsResponse> => {
+    if (!jobsNow.held) jobsNow.served = jobsNow.jobs;
+    return { jobs: jobsNow.served, groups: [] } as JobsResponse;
+  },
   listStudios: async () => ({ studios: [] }),
   imagegenHistory: async () => ({ items: historyNow.items }),
   imageProperties: async (path: string) =>
@@ -88,13 +94,24 @@ const tick = async (ms: number) => {
   });
 };
 
-/** Someone pressed — the agent's run_image_trial, or another device: the studio's log gains a
- *  press, and the pane sees it on the studio's next 2 s poll. */
+/** Someone pressed — the agent's run_image_trial, or another device — in the Agent's order
+ *  (studio_press.go): ① the press line, ③ the enqueue, ④ the press_result line. Neither line
+ *  moves the studio's updated_at, and on a cold engine ③ is slow, so the pane's poll sees ①
+ *  while the queue does not have the jobs yet; they appear with ④, a poll later. */
 let pressSeq = 0;
-const press = async () => {
+const logLine = (e: Record<string, unknown>) => {
   pressSeq++;
-  const entry = { seq: pressSeq, kind: "press", at: "2026-09-27T10:00:00Z", author: "agent", mode: "agent_trial", version: "v" + pressSeq, jobs: [] } as unknown as DraftLogEntry;
-  studioNow.s = { ...studioNow.s, updated_at: String(pressSeq + 1), recent_log: [...(studioNow.s.recent_log || []), entry] };
+  const entry = { seq: pressSeq, at: "2026-09-27T10:00:00Z", ...e } as unknown as DraftLogEntry;
+  studioNow.s = { ...studioNow.s, recent_log: [...(studioNow.s.recent_log || []), entry] };
+};
+const press = async () => {
+  const version = "v" + (pressSeq + 1);
+  jobsNow.held = true;
+  logLine({ kind: "press", author: "agent", mode: "agent_trial", version });
+  await tick(2100);
+  await tick(50);
+  jobsNow.held = false;
+  logLine({ kind: "press_result", version, state: "ok", jobs: jobsNow.jobs.map((j) => j.id) });
   await tick(2100);
   await tick(50);
 };
@@ -105,6 +122,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   useWorkspaceStore.setState({ state: "running" });
   jobsNow.jobs = [];
+  jobsNow.served = [];
+  jobsNow.held = false;
   historyNow.items = [];
   pressSeq = 0;
   useSessionsStore.setState({ loaded: true, sessions: [] });
@@ -182,6 +201,25 @@ describe("jobs nobody pressed in this pane (review 4)", () => {
     expect(host.querySelector(".igen-draftbar-thumb")).not.toBeNull();
     expect(tab(2).querySelector(".igen-tab-badge")?.textContent).toBe("+1");
     expect(toastText()).toMatch(/1/);
+  });
+
+  it("a read between the press line and the enqueue finds nothing; the press_result line reads again", async () => {
+    narrowPane(true);
+    await mount();
+    jobsNow.jobs = [{ id: "t1", state: "done", trial: true, studio: "s1", files: [{ path: "generated/console/t1.png", seed: 7 }] }];
+    // ① only: the pane's poll takes the press line in while the cold engine has not enqueued.
+    jobsNow.held = true;
+    logLine({ kind: "press", author: "agent", mode: "agent_trial", version: "v1" });
+    await tick(2100);
+    await tick(50);
+    expect(host.querySelector(".igen-draftbar-thumb")).toBeNull();
+    // ③ then ④: the jobs exist and the result line says so.
+    jobsNow.held = false;
+    logLine({ kind: "press_result", version: "v1", state: "ok", jobs: ["t1"] });
+    await tick(2100);
+    await tick(50);
+    expect(host.querySelector(".igen-draftbar-thumb")).not.toBeNull();
+    expect(tab(2).querySelector(".igen-tab-badge")?.textContent).toBe("+1");
   });
 
   it("reads the jobs when the tab comes back into view, even with no studio polling", async () => {
