@@ -56,7 +56,8 @@ import {
 import { anyLive, engineState, foldGroups, studioJobs } from "./jobs.ts";
 import { draftFromProperties, emptyDraft, remappedOp } from "./draft.ts";
 import { noteImagegenStatus } from "./available.ts";
-import { GenerateForm, ModelSelect } from "./parts/GenerateForm.tsx";
+import { GenerateForm } from "./parts/GenerateForm.tsx";
+import { StudioEngineBar } from "./parts/StudioEngineBar.tsx";
 import { JobList } from "./parts/JobList.tsx";
 import { ResultCards, TrialSlot, resultsOf, type ResultItem } from "./parts/ResultCards.tsx";
 import { DraftBar } from "./parts/DraftBar.tsx";
@@ -658,6 +659,24 @@ function StudioPane({
             : tr("imggen.engine_cold_hint_unknown")
           : tr("imggen.engine_ready");
 
+  const refresh = () => {
+    void readStatus();
+    void readJobs();
+  };
+  const engineBar = (variant: "head" | "band") => (
+    <StudioEngineBar
+      variant={variant}
+      draft={draft}
+      patch={patch}
+      fleetProviders={fleetProviderList}
+      provider={provider}
+      models={models}
+      state={state}
+      engineLine={engineLine}
+      onRefresh={refresh}
+    />
+  );
+
   const session = studio.studio?.session || "";
   const sessionState = useSessionsStore((s) => (session ? s.sessions.find((x) => x.name === session)?.state : undefined));
   const chatMark = useChatMark(sessionState, sees("chat"));
@@ -732,20 +751,14 @@ function StudioPane({
               label={tr("pane.open_generated")}
               onClick={() => openGeneratedGallery()}
             />
-            <IconButton
-              icon="refresh"
-              label={tr("imggen.refresh")}
-              onClick={() => {
-                void readStatus();
-                void readJobs();
-              }}
-            />
+            {/* A narrow pane draws this in the engine band instead (imagegen.css). */}
+            <IconButton icon="refresh" label={tr("imggen.refresh")} className="igen-head-refresh" onClick={refresh} />
             {headerActions}
           </>
         }
       >
         <span className="view-title">
-          <Icon name="wand" /> {tr("imggen.title")}
+          <Icon name="wand" /> <span className="igen-title-text">{tr("imggen.title")}</span>
         </span>
         {/* The studio this pane edits (ADR 0100 decision 10), and "＋ New studio" beside it. */}
         <StudioPicker
@@ -755,26 +768,9 @@ function StudioPane({
           onOpen={openStudio}
           onNew={() => void createStudio()}
         />
-        {/* The model is the member's (decision 4); its place in the head says so. */}
-        <span className="igen-head-model">
-          <ModelSelect draft={draft} patch={patch} fleetProviders={fleetProviderList} provider={provider} models={models} compact />
-        </span>
-        <span className={"igen-engine igen-engine-" + state} title={engineLine}>
-          <span className="igen-dot" />
-          {state === "ready"
-            ? tr("imggen.engine_ready")
-            : state === "cold"
-              ? tr("imggen.engine_cold")
-              : state === "starting"
-                ? tr("imggen.engine_starting")
-                : tr("imggen.engine_unavailable")}
-        </span>
-        {/* Only when it says something the chip does not: "ready" twice is noise, while the
-            cold start's minutes and the unavailable code's reason are the point. */}
-        {state !== "ready" && <span className="igen-engine-hint muted">{engineLine}</span>}
-        {/* Never "$0.00": comfy's CostUSD is 0 by construction and the attribution lives in
-            the administrator's hourly table (decision 10). */}
-        <span className="igen-cost muted">{tr("imggen.cost_note")}</span>
+        {/* The model is the member's (decision 4); its place in the head says so. A narrow pane
+            draws the same bar at the top of the settings tab instead (imagegen.css). */}
+        {engineBar("head")}
         {studio.studio && (
           <details className="igen-studio-menu">
             <summary title={tr("imggen.studio_settings")}>
@@ -884,6 +880,7 @@ function StudioPane({
               />
             </div>
             <div className="igen-col-form">
+              {engineBar("band")}
               <div className="igen-form-head">
                 <button
                   type="button"

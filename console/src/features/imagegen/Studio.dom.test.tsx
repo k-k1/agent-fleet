@@ -101,35 +101,46 @@ const fieldOf = (name: string): HTMLElement | null => {
 };
 
 describe("錠（決定 4）", () => {
-  it("錠はエージェントの欄にだけ付き、押すと鍵で知らせる", async () => {
-    const hits: string[] = [];
-    await mount(<Form locks={["prompt"]} onToggleLock={(k) => hits.push(k)} />);
+  const lockBox = (label: string) =>
+    [...host.querySelectorAll<HTMLLabelElement>(".igen-lockset label")]
+      .find((l) => l.textContent?.trim() === label)
+      ?.querySelector("input") as HTMLInputElement | undefined;
+
+  it("鍵は掛かった欄にだけ、欄名の横に出る", async () => {
+    await mount(<Form locks={["prompt"]} onToggleLock={() => {}} />);
     const prompt = fieldOf("Prompt") ?? fieldOf("プロンプト");
-    const lock = prompt!.querySelector<HTMLElement>(".igen-lock")!;
-    expect(lock.getAttribute("aria-pressed")).toBe("true");
-    await act(async () => lock.click());
-    expect(hits).toEqual(["prompt"]);
-    // The steps field's lock is the params lock.
-    const steps = host.querySelectorAll(".igen-grid .igen-lock")[0] as HTMLElement;
-    await act(async () => steps.click());
-    expect(hits).toEqual(["prompt", "params"]);
-    // No lock on the member's own fields: the seed policy, N.
-    const locks = host.querySelectorAll(".igen-lock").length;
-    expect(locks).toBeGreaterThan(0);
-    expect(host.querySelector("select[class='ds-select'] + .igen-lock")).toBeNull();
+    expect(prompt!.querySelector(".igen-lock")).not.toBeNull();
+    // Only the one locked field: an unlocked field carries no icon at all.
+    expect(host.querySelectorAll(".igen-lock")).toHaveLength(1);
   });
 
-  it("欄の名前を押しても錠は動かない（label が span の button に転送しない）", async () => {
+  it("掛け外しは詳細の中のチェック群で、キーは StudioKey のまま", async () => {
     const hits: string[] = [];
-    await mount(<Form locks={[]} onToggleLock={(k) => hits.push(k)} />);
-    const label = host.querySelector<HTMLElement>(".igen-field .igen-label")!;
+    await mount(<Form locks={["prompt"]} onToggleLock={(k) => hits.push(k)} />);
+    const set = host.querySelector(".igen-advanced .igen-lockset");
+    expect(set, "the switches live inside the folded details").not.toBeNull();
+    expect(lockBox("プロンプト")?.checked ?? lockBox("Prompt")?.checked).toBe(true);
+    // One switch covers the four sampler knobs, as the params lock always did.
+    const params = lockBox("steps・cfg・sampler・scheduler") ?? lockBox("steps, cfg, sampler, scheduler");
+    expect(params!.checked).toBe(false);
+    await act(async () => params!.click());
+    expect(hits).toEqual(["params"]);
+    // The member's own fields (seed policy, N) are not lockable.
+    expect(set!.querySelectorAll("input").length).toBe(8);
+  });
+
+  it("欄の名前を押しても錠は動かない", async () => {
+    const hits: string[] = [];
+    await mount(<Form locks={["prompt"]} onToggleLock={(k) => hits.push(k)} />);
+    const label = (fieldOf("Prompt") ?? fieldOf("プロンプト"))!.querySelector<HTMLElement>(".igen-label")!;
     await act(async () => label.click());
     expect(hits).toEqual([]);
   });
 
-  it("スタジオなしのペインには錠が無い", async () => {
+  it("スタジオなしのペインには錠もチェック群も無い", async () => {
     await mount(<Form />);
     expect(host.querySelectorAll(".igen-lock")).toHaveLength(0);
+    expect(host.querySelector(".igen-lockset")).toBeNull();
   });
 });
 
@@ -140,6 +151,20 @@ describe("エージェントが動かした欄の縁取り（決定 6）", () =>
     expect(hl.some((e) => e.querySelector("textarea.igen-prompt"))).toBe(true);
     expect(hl.some((e) => e.querySelector("textarea.igen-negative"))).toBe(false);
     expect(host.querySelectorAll(".igen-grid .igen-hl").length).toBe(4);
+  });
+
+  it("詳細の中の欄が動いたら詳細が開き、要約に印が出る", async () => {
+    await mount(<Form locks={[]} onToggleLock={() => {}} highlight={new Set(["params"])} />);
+    const adv = host.querySelector<HTMLDetailsElement>(".igen-advanced")!;
+    expect(adv.open).toBe(true);
+    expect(adv.querySelector("summary .igen-hl-mark")).not.toBeNull();
+  });
+
+  it("詳細の外の欄だけなら詳細は畳んだまま（陰性対照）", async () => {
+    await mount(<Form locks={[]} onToggleLock={() => {}} highlight={new Set(["prompt"])} />);
+    const adv = host.querySelector<HTMLDetailsElement>(".igen-advanced")!;
+    expect(adv.open).toBe(false);
+    expect(adv.querySelector(".igen-hl-mark")).toBeNull();
   });
 });
 

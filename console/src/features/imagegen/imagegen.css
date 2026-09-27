@@ -173,6 +173,66 @@
   max-width: 220px;
 }
 
+/* The model pickers and the engine state (StudioEngineBar) are drawn twice: inline in the head
+   of a wide pane, and as a full-width band atop the settings tab of a narrow one. The head is a
+   single nowrap row under the pane's own overlaid buttons; at phone width seven items in it left
+   the model select zero pixels wide, and a studio without a model cannot do anything. */
+.igen-enginebar-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.igen-enginebar-band {
+  display: none;
+}
+
+@container paneview (max-width: 720px) {
+  .igen-enginebar-head,
+  .igen-title-text,
+  .igen .igen-head-refresh {
+    display: none;
+  }
+  .igen .view-title {
+    flex: none;
+  }
+  /* ds-select's 200px floor is what pushed the head's last buttons under the pane's own. */
+  .igen .igen-studio-pick {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .igen-enginebar-band {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .igen-enginebar-band .igen-head-model {
+    display: flex;
+    flex: 1 1 100%;
+    gap: 8px;
+  }
+  .igen-enginebar-band .igen-head-model .igen-field {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .igen-enginebar-band .igen-head-model .ds-select {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+  .igen-enginebar-band .igen-engine-hint {
+    flex: 1 1 0;
+    white-space: normal;
+  }
+  .igen-band-refresh {
+    margin-left: auto;
+  }
+}
+
 .igen-studio-menu {
   position: relative;
 }
@@ -220,7 +280,6 @@
 .igen-lock {
   display: inline-flex;
   margin-left: 6px;
-  cursor: pointer;
   color: var(--muted);
   vertical-align: middle;
 }
@@ -495,8 +554,7 @@
   background: var(--err);
 }
 
-.igen-engine-hint,
-.igen-cost {
+.igen-engine-hint {
   font-size: 11px;
   min-width: 0;
   overflow: hidden;
@@ -697,6 +755,96 @@
   cursor: pointer;
   font-size: 11px;
   color: var(--muted);
+}
+
+/* The folded line carries the values a press will use, so it has to stay readable at a
+   glance: the name in the body colour, the values muted, cut with an ellipsis on a phone. */
+.igen-advanced-title {
+  color: var(--fg);
+  margin-right: 8px;
+}
+
+.igen-advanced-sum {
+  overflow-wrap: anywhere;
+}
+
+.igen-hl-mark {
+  margin-left: 6px;
+  color: var(--accent);
+}
+
+.igen-lockset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 10px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.igen-lockset > legend {
+  padding: 0 4px;
+}
+
+/* ── size chips ───────────────────────────────────────────────────── */
+
+/* Spans the knob grid: four chips and a select do not fit a 140px track. */
+.igen-size {
+  grid-column: 1 / -1;
+}
+
+.igen-size-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Tap-sized: this row replaced a native select, which a phone already made big enough. */
+.igen-size-chips .igen-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 14px;
+}
+
+.igen-size-chips .igen-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.igen-size-chips .igen-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.igen-shape {
+  display: inline-block;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.igen-shape-portrait {
+  width: 8px;
+  height: 12px;
+}
+
+.igen-shape-square {
+  width: 10px;
+  height: 10px;
+}
+
+.igen-shape-landscape {
+  width: 12px;
+  height: 8px;
+}
+
+.igen .igen-size-alt {
+  align-self: flex-start;
+  min-width: 0;
+  max-width: 200px;
 }
 
 .igen-inputs {
