@@ -73,3 +73,10 @@ export function workItemSessionCreate(rec: {
 export function workItemSessionDelete(id: string): Promise<Response> {
   return raw(`api/work-item-sessions/${q(id)}`, { method: "DELETE" });
 }
+
+/** Search the trackers past the rail's cut (#1095): every enabled saved query narrowed by `q`,
+ * resolved live. Nothing is cached, and a stopped workspace answers 409 rather than being
+ * started. Only on an explicit press — GitHub allows 30 searches a minute. */
+export function workItemSearch(q: string): Promise<unknown> {
+  return apiJSON("api/work-items/search", "POST", { q });
+}

@@ -69,7 +69,8 @@
 
 /* "Show more (N remaining)" / "Collapse". The count badge keeps reporting the full total, so
    this row is what explains that the rest is collapsed, not hidden. */
-.wi-more {
+.wi-more,
+.wi-search {
   display: block;
   width: calc(100% - 16px);
   margin: 4px 8px 2px;
@@ -81,8 +82,26 @@
   font-size: 11px;
   text-align: center;
 }
-.wi-more:hover {
+.wi-more:hover,
+.wi-search:hover:not(:disabled) {
   color: var(--accent);
+}
+
+.wi-search:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Rows found by the tracker search: set apart from the rail's own, because they are not cached
+   and go away on the next keystroke. */
+.wi-remote {
+  margin-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.wi-remote-head {
+  padding: 4px 8px 2px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .wi-list {

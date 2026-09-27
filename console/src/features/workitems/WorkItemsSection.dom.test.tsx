@@ -17,7 +17,9 @@ const workItemList = vi.fn();
 const workItemQueryCreate = vi.fn();
 const bitbucketRepoList = vi.fn();
 const workItemDetail = vi.fn();
+const workItemSearch = vi.fn();
 vi.mock("./api.ts", () => ({
+  workItemSearch: (...a: unknown[]) => workItemSearch(...a),
   workItemList: (...a: unknown[]) => workItemList(...a),
   workItemDetail: (...a: unknown[]) => workItemDetail(...a),
   workItemRefresh: vi.fn(async () => ({ items: [], queries: [] })),
@@ -106,6 +108,7 @@ const strayChildren = (panel: Element) =>
 
 beforeEach(() => {
   workItemList.mockReset();
+  workItemSearch.mockReset();
   workItemQueryCreate.mockReset();
   workItemQueryCreate.mockResolvedValue({ id: "new" });
   bitbucketRepoList.mockReset();
@@ -474,6 +477,45 @@ describe("WorkItemsSection", () => {
     await act(async () => typeInto(input, "存在しない語"));
     expect(rows()).toBe(0);
     expect(text()).toContain(t("wi.filter_empty"));
+  });
+
+  // #1095: a ticket past the rail's cut is found by asking the tracker, on a press only.
+  it("searches the tracker when the filter finds nothing, showing only rows not on the rail", async () => {
+    const rail = [...jiraRows(40), item({ id: "gh", key: "acme/web#45" })];
+    workItemList.mockResolvedValue({ items: rail, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    workItemSearch.mockResolvedValue({
+      items: [
+        item({ id: "github:acme/web#45", key: "acme/web#45" }), // already on the rail
+        item({ id: "github:acme/web#1028", key: "acme/web#1028", title: "SSM login" }),
+      ],
+      errors: [],
+      skipped: [],
+    });
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    await act(async () => typeInto(input, "1028"));
+    expect(workItemSearch).not.toHaveBeenCalled(); // typing alone never reaches the tracker
+    const btn = host.querySelector<HTMLButtonElement>(".wi-search")!;
+    expect(btn.textContent).toBe(t("wi.search_tracker", { q: "1028" }));
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(workItemSearch).toHaveBeenCalledWith("1028");
+    const found = host.querySelectorAll(".wi-remote .wi-row");
+    expect(found.length).toBe(1);
+    expect(found[0].textContent).toContain("SSM login");
+    // Typing on drops the answer to the old needle.
+    await act(async () => typeInto(input, "10289"));
+    expect(host.querySelector(".wi-remote")).toBeNull();
+  });
+
+  it("does not offer the tracker search as usable while the workspace is stopped", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: false });
+    await render();
+    await act(async () => typeInto(host.querySelector<HTMLInputElement>(".wi-filter input")!, "1028"));
+    expect(host.querySelector<HTMLButtonElement>(".wi-search")!.disabled).toBe(true);
+    expect(text()).toContain(t("wi.search_stopped"));
   });
 
   it("shows no filter box on a rail that is not crowded", async () => {

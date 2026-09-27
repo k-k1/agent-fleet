@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -29,6 +30,7 @@ type workItemEnv struct {
 	mid  string
 	body func() string // what the stub Agent answers /work-items/fetch with
 	hits *int
+	sent *string // the last request body the stub Agent received
 }
 
 func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
@@ -46,7 +48,7 @@ func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
 	id, _ := st.UpsertIdentity(ctx, "wi@example.com", "wi", "")
 	m, _ := st.EnsureMembership(ctx, id.ID, tenant.ID, "member")
 
-	env := &workItemEnv{st: st, mid: m.ID, hits: new(int)}
+	env := &workItemEnv{st: st, mid: m.ID, hits: new(int), sent: new(string)}
 	env.body = func() string { return `{"items":[],"errors":[]}` }
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/work-items/fetch" {
@@ -54,6 +56,8 @@ func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
 			return
 		}
 		*env.hits++
+		b, _ := io.ReadAll(r.Body)
+		*env.sent = string(b)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(env.body()))
 	}))
