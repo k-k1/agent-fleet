@@ -124,10 +124,11 @@ export function conversationReachable(res: unknown): boolean {
   return isTransientErr(res);
 }
 
-/** Only a 404 (chat_conversation_not_found) says the conversation no longer exists. */
+/** Only chat_conversation_not_found says the conversation no longer exists — not any 404: the
+ *  CP answers 404 for a workspace or membership it cannot resolve too. */
 export function conversationProvenGone(res: unknown): boolean {
-  const err = (res as { error?: { code?: string; status?: number } } | null | undefined)?.error;
-  return !!err && typeof err === "object" && (err.status === 404 || err.code === "chat_conversation_not_found");
+  const err = (res as { error?: { code?: string } } | null | undefined)?.error;
+  return !!err && typeof err === "object" && err.code === "chat_conversation_not_found";
 }
 
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<NotificationOpenResult> {
@@ -301,11 +302,14 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
   // A report on screen only through its session is left for its conversation — unless that
   // conversation is gone, when nothing could ever show it again and the session on screen is
   // the last place it can be acknowledged (what the session-pane rule did before). This runs
-  // with no click behind it, so only a 404 proves "gone" (a 401/403/429 is not a deleted
-  // conversation). A transient failure (5xx while the WS starts, a dropped connection) is asked
-  // again on the next sync; any other answer again after REPROBE_MS, so a conversation deleted
-  // after an earlier probe found it alive is still noticed.
+  // with no click behind it, so only chat_conversation_not_found proves "gone" (a 401/403/429,
+  // or a 404 about something else, is not a deleted conversation). A transient failure (5xx
+  // while the WS starts, a dropped connection) is asked again after RETRY_MS — sync runs on
+  // every layout change, and a divider drag must not turn into a burst of requests; any other
+  // answer again after REPROBE_MS, so a conversation deleted after an earlier probe found it
+  // alive is still noticed.
   const REPROBE_MS = 5 * 60_000;
+  const RETRY_MS = 30_000;
   const probedAt = new Map<string, number>();
   const inflight = new Set<string>();
   const checkGoneReports = (items: FleetNotification[], sessions: Session[]) => {
@@ -320,7 +324,11 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
         .catch(() => null)
         .then((conv) => {
           inflight.delete(n.id);
-          if (!conv || isTransientErr(conv)) return;
+          if (!conv || isTransientErr(conv)) {
+            // Due again RETRY_MS from now: probedAt + REPROBE_MS lands there.
+            probedAt.set(n.id, Date.now() - REPROBE_MS + RETRY_MS);
+            return;
+          }
           probedAt.set(n.id, Date.now());
           if (conversationProvenGone(conv)) void useNotificationStore.getState().markSeen(undefined, [n.id]);
         });
