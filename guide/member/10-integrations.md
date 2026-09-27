@@ -312,6 +312,25 @@ af-aws-exec --profile <name> -- npx cdk deploy
   are obtained through the profile's SSO login alone — from a minimal config holding only its SSO settings, with
   endpoint overrides ignored — and then checked with AWS to be a session of that profile's permission-set role in
   that account. `--profile default` is refused: name the SSO profile.
+- **A profile that is not SSO.** Some accounts are reached only through a profile of your own in `~/.aws`: one that
+  assumes a role from a `source_profile` (`role_arn` + `source_profile`), or one with a `credential_process`.
+  `af-aws-exec` runs such a profile when you name its account with `--account`, which is required here:
+
+  ```sh
+  af-aws-exec --profile deploy-target --account <id> --region <region> -- ./deploy.sh
+  ```
+
+  The AWS CLI resolves the profile from your own files, with the workload role, IMDS and endpoint overrides out of
+  reach, and the command runs only if AWS reports the credentials in that account (and, for a role, as a session of
+  that role). It is refused, before anything is fetched, when the profile or any profile in its `source_profile`
+  chain (a `[DEFAULT]` section included) sets `credential_source` (that takes the workspace's own credentials),
+  `web_identity_token_file` or `mfa_serial` (nobody can answer the MFA prompt when an agent runs the command), or
+  when the chain is broken. Only temporary credentials are passed: a profile that resolves to long-lived keys is
+  refused, so use the keys to assume a role instead. If the chain ends in an SSO profile whose login is missing, the
+  command exits with code 3 and the `aws sso login` command for that SSO profile (at a terminal it starts the login
+  itself); the Console is not asked. These profiles do not appear in `af-aws-exec --list`, and they cannot share a
+  name with a Settings profile. The source keys stay in your `~/.aws` files as before; `af-aws-exec` never hands them
+  to the command.
 - The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
   falling back. At a terminal it starts the device-code login for you.
 - **When an agent's command needs the login**, it asks you in the Console instead: a toast at the bottom of the
@@ -346,8 +365,8 @@ af-aws-exec --profile <name> -- npx cdk deploy
   is **not** one of your Settings profiles (one you defined yourself) `--account` is required.
 - A name that means two things is refused: two Settings labels that map to it, or your own `~/.aws` definition of
   a Settings profile's name with a different account, role or sign-in portal.
-- Credentials last as long as the SSO role session (often one hour). A longer command fails when they expire
-  rather than switching identity.
+- Credentials last as long as the SSO role session, or the assumed role's session (often one hour). A longer
+  command fails when they expire rather than switching identity.
 
 ## Environment settings and recreating the workspace
 

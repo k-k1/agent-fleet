@@ -32,6 +32,11 @@ the ones that are not exported (the user's own definition wins, a name two label
 `default`). Choose by account and role, not by the name alone. If the task does not say which
 account, ask the user — do not guess from a name like `prod`.
 
+Some deployments are not reached through SSO at all: a profile in the user's own `~/.aws` that
+assumes a role from a `source_profile` (or runs a `credential_process`). `--list` does not show
+those. Use one only when the user or a runbook names it, and always with `--account`; the same
+`af-aws-exec` runs it (below). It is never a reason to fall back to bare `aws --profile`.
+
 ## Run
 
 ```sh
@@ -39,13 +44,15 @@ af-aws-exec --profile <name> --account <id> [--region <region>] -- <command> [ar
 ```
 
 - Always pass `--account` when you know the account (the user named it, a runbook states it). It is
-  required for a profile that is not one of the Settings profiles.
+  required for a profile that is not one of the Settings profiles, including every `role_arn` /
+  `credential_process` profile: the command runs only if AWS reports its credentials in that account.
 - Pass `--region` for deploys. Without it a region already exported in the shell (`AWS_REGION`, then
   `AWS_DEFAULT_REGION`) wins over the profile's, and a stale one is how commands land in the wrong
   region. The "running as … in region …" line on stderr shows principal and region; check it.
 - The command gets the profile's short-lived credentials in its environment, an AWS config that
   defines only that profile, no credentials file, no `AWS_ENDPOINT_URL*`. Credentials last as long as
-  the SSO role session (often one hour); a longer command fails rather than switching identity.
+  the SSO role session, or the assumed role's session (often one hour); a longer command fails rather
+  than switching identity.
 
 ## When it stops
 
@@ -60,6 +67,12 @@ af-aws-exec --profile <name> --account <id> [--region <region>] -- <command> [ar
 | "in your own AWS config is …, but the Settings profile … is …; rename one" | The user's `~/.aws` defines the name differently. | Tell the user; do not pick one for them. |
 | "is not one of your Settings profiles; name the account … with --account" | A profile the user defined themselves. | Rerun with `--account` if you know the account; otherwise ask. |
 | "is account X, not the Y given with --account" | Wrong profile for this account. | Stop. Recheck `--list`; ask the user. |
+| "is not an SSO profile; af-aws-exec runs a role or credential_process profile only with --account" | The user's own assume-role or `credential_process` profile, run without `--account`. | Rerun with `--account` if the user or a runbook named the account (the message shows the role's account; that alone is not the user naming it); otherwise ask. |
+| "assumes a role in account X, not the Y given with --account" / "resolved to …, which is account X, not the Y given with --account" / "not a session of its role" | The profile is not the account you were told. | Stop. Ask the user; do not switch `--account` to match. |
+| "sets credential_source" / "sets web_identity_token_file" / "sets mfa_serial" / "without a source_profile" / "names itself as source_profile" / "loops back" / "names source_profile …, which is not defined" / "not an IAM role ARN" | The role chain would use the workspace's own credentials, needs a prompt nobody can answer, or is broken. | Report the message; the user fixes the profile. Never run it with bare `aws` instead. |
+| "resolves to long-lived keys" / "not an SSO profile in the AWS config, nor a role_arn or credential_process profile" | Static keys only; `af-aws-exec` never hands them to a command. | Report it; the user sets up a role to assume from those keys (or an SSO profile). Never use the keys with bare `aws`. |
+| "SSO login required for profile … (the SSO profile '<src>' its source_profile chain ends in) … log in with: aws sso login --profile '<src>' …" (exit 3) | A role assumed from an SSO profile whose login is missing; the Console is not asked for these. | Give the user that exact command for their own terminal, as for the exit 3 row above. |
+| "mixes sso_* settings with role_arn or credential_process" | One profile is both. | Report it; the user splits it into two profiles. |
 | "not defined in …" / "not an SSO profile" / "has no SSO account and role" / "the AWS CLI cannot read …" / "sso_session is empty" / "it sets <key> … but its sso-session …" / "… are only in [sso-session …]" | The profile or the file is not usable as is. | Report the message; the user fixes Settings or the file. |
 | "not exported: no account and role in Settings" / "Settings has an account but no role" / "… a role but no account" (in `--list` or from a run) | A Settings profile without both. With neither, `aws --profile` would run as the workspace's own role, so it is never exported. | Report it; the user sets both in Settings > SSM. Never use that name with bare `aws`. |
 | "your [sso-session af-<name>] in ~/.aws/config uses the name this profile's sso-session needs" | The user's own sso-session section blocks the export. | Report it; the user renames that section. |
@@ -88,7 +101,8 @@ for an approval nobody sees, and a code from you is exactly what the user is tol
 ## Never
 
 - Run a user-identity action with bare `aws` / an SDK / a build tool outside `af-aws-exec`, or retry
-  that way after `af-aws-exec` refused.
+  that way after `af-aws-exec` refused — also not for a profile that is not SSO: `af-aws-exec`
+  runs those with `--account`.
 - Use `--keep-aws-config` as a workaround. It exists for tools that genuinely need other settings
   from the user's `~/.aws` files, and only the user decides that.
 - Write the credentials anywhere, echo them, or paste `env` output (it holds them and `AF_*` secrets).

@@ -179,14 +179,7 @@ func profileKeys(env []string, profile string) (map[string]string, error) {
 
 // profileKeysFrom is profileKeys with where each key came from (see readINISectionFrom).
 func profileKeysFrom(env []string, profile string) (map[string]string, map[string]string, error) {
-	cfg := envValue(env, "AWS_CONFIG_FILE")
-	if cfg == "" {
-		cfg = ConfigPath()
-	}
-	creds := envValue(env, "AWS_SHARED_CREDENTIALS_FILE")
-	if creds == "" {
-		creds = filepath.Join(filepath.Dir(ConfigPath()), "credentials")
-	}
+	cfg, creds := profileFiles(env)
 	keys, origin := map[string]string{}, map[string]string{}
 	if err := readINISectionFrom(expandHome(cfg), configPicker("profile", profile), keys, origin, ""); err != nil {
 		return nil, nil, err
@@ -195,6 +188,20 @@ func profileKeysFrom(env []string, profile string) (map[string]string, map[strin
 		return nil, nil, err
 	}
 	return keys, origin, nil
+}
+
+// profileFiles is the config and credentials files the CLI reads under env, as the
+// variables spell them (a leading "~/" not yet expanded).
+func profileFiles(env []string) (cfg, creds string) {
+	cfg = envValue(env, "AWS_CONFIG_FILE")
+	if cfg == "" {
+		cfg = ConfigPath()
+	}
+	creds = envValue(env, "AWS_SHARED_CREDENTIALS_FILE")
+	if creds == "" {
+		creds = filepath.Join(filepath.Dir(ConfigPath()), "credentials")
+	}
+	return cfg, creds
 }
 
 // checkSSOProfile admits only a profile the CLI will resolve through its SSO provider
@@ -236,7 +243,14 @@ func IsSSORoleARN(arn, account, role string) bool {
 
 func checkSSOProfile(keys map[string]string, profile string) error {
 	if keys["sso_session"] == "" && keys["sso_start_url"] == "" {
-		return fmt.Errorf("profile %q is not an SSO profile in the AWS config (af-aws-exec only passes SSO credentials; see `af-aws-exec --list`)", profile)
+		_, role := keys["role_arn"]
+		_, process := keys["credential_process"]
+		if role || process {
+			return fmt.Errorf("profile %q mixes sso_* settings with role_arn or credential_process, so the name would mean different "+
+				"identities to different tools; af-aws-exec refuses it", profile)
+		}
+		return fmt.Errorf("profile %q is not an SSO profile in the AWS config, nor a role_arn or credential_process profile "+
+			"(af-aws-exec never passes long-lived keys; see `af-aws-exec --list` for the Settings profiles)", profile)
 	}
 	if keys["sso_account_id"] == "" || keys["sso_role_name"] == "" {
 		return fmt.Errorf("profile %q has no SSO account and role; set both on the profile in Settings > SSM", profile)
@@ -379,13 +393,14 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if err := checkIdentity(sso, o); err != nil {
 		return "", nil, nil, err
 	}
+	if nonSSOProfile(keys) {
+		return planNonSSO(awsBin, env, keys, origin, steered, o)
+	}
 	if err := checkSSOProfile(keys, o.Profile); err != nil {
 		return "", nil, nil, err
 	}
-	// A region that spans lines is no region to the CLI either; if nothing else names one,
-	// refuse rather than run the command with no region at all (and a tool's own default).
-	if r, set := keys["region"]; set && r != "" && scalar(r) == "" && o.Region == "" && !envHas(env, "AWS_REGION") && !envHas(env, "AWS_DEFAULT_REGION") {
-		return "", nil, nil, fmt.Errorf("profile %q has a region that spans several lines; fix it or pass --region", o.Profile)
+	if err := checkRegion(env, keys, o); err != nil {
+		return "", nil, nil, err
 	}
 
 	// Credentials come from a config written here that holds nothing but the profile's
@@ -441,6 +456,36 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		}
 	}
 
+	// Confirm the credentials are a session of the profile's permission-set role in its
+	// account. With the SSO-only config this is a consistency check, not the proof of
+	// provenance (an ARN shows a role name and account, not that Identity Center issued
+	// it).
+	return planChild(awsBin, env, keys, creds, cfg, o, func(arn string) error {
+		if !IsSSORoleARN(arn, keys["sso_account_id"], keys["sso_role_name"]) {
+			return fmt.Errorf("profile %q resolved to %s, not its SSO role %s in account %s; af-aws-exec refuses it",
+				o.Profile, arn, keys["sso_role_name"], keys["sso_account_id"])
+		}
+		return nil
+	})
+}
+
+// checkRegion refuses a region that spans lines, which is no region to the CLI either,
+// when nothing else names one, rather than run the command with no region at all (and a
+// tool's own default).
+func checkRegion(env []string, keys map[string]string, o ExecOptions) error {
+	if r, set := keys["region"]; set && r != "" && scalar(r) == "" && o.Region == "" && !envHas(env, "AWS_REGION") && !envHas(env, "AWS_DEFAULT_REGION") {
+		return fmt.Errorf("profile %q has a region that spans several lines; fix it or pass --region", o.Profile)
+	}
+	return nil
+}
+
+// planChild finishes a plan once creds are in hand: it picks the region, isolates the
+// child, puts the credentials in its environment, and asks STS whose they are for check
+// to accept or refuse. The STS call runs with verifierCfg as its only config and no
+// endpoint override, so nothing but AWS answers it.
+func planChild(awsBin string, env []string, keys map[string]string, creds processCreds, verifierCfg string, o ExecOptions,
+	check func(arn string) error) (string, []string, []string, error) {
+	var err error
 	// --region, then a region the caller exported (as for any aws command), then the
 	// profile's. AWS_DEFAULT_REGION alone is copied to AWS_REGION: the JS SDK and CDK
 	// read only the latter, and the child's config carries no region to fall back on.
@@ -477,11 +522,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		env = setEnv(env, "AWS_CREDENTIAL_EXPIRATION="+creds.Expiration)
 	}
 
-	// Confirm the credentials are a session of the profile's permission-set role in its
-	// account. With the SSO-only config this is a consistency check, not the proof of
-	// provenance (an ARN shows a role name and account, not that Identity Center issued
-	// it). It runs with the verifier env so no endpoint override can answer in AWS's place.
-	who := awsRunner{bin: awsBin, env: verifierEnv(env, cfg)}
+	who := awsRunner{bin: awsBin, env: verifierEnv(env, verifierCfg)}
 	who.env = setEnv(who.env,
 		"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 		"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
@@ -490,9 +531,8 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("could not confirm the identity of the credentials for profile %q: %v", o.Profile, err)
 	}
-	if !IsSSORoleARN(arn, keys["sso_account_id"], keys["sso_role_name"]) {
-		return "", nil, nil, fmt.Errorf("profile %q resolved to %s, not its SSO role %s in account %s; af-aws-exec refuses it",
-			o.Profile, arn, keys["sso_role_name"], keys["sso_account_id"])
+	if err := check(arn); err != nil {
+		return "", nil, nil, err
 	}
 	if !o.Quiet && o.Stderr != nil {
 		exp := ""
@@ -573,14 +613,7 @@ func orNone(s string) string {
 // notDefined explains a profile that neither file defines, naming the files actually
 // read, so the fix is aimed at the right place rather than at Settings.
 func notDefined(env []string, o ExecOptions) error {
-	cfg := envValue(env, "AWS_CONFIG_FILE")
-	if cfg == "" {
-		cfg = ConfigPath()
-	}
-	creds := envValue(env, "AWS_SHARED_CREDENTIALS_FILE")
-	if creds == "" {
-		creds = filepath.Join(filepath.Dir(ConfigPath()), "credentials")
-	}
+	cfg, creds := profileFiles(env)
 	msg := fmt.Sprintf("profile %q is not defined in %s or %s", o.Profile, cfg, creds)
 	if _, ok := o.Settings[o.Profile]; ok {
 		b, _ := os.ReadFile(expandHome(cfg))
@@ -918,6 +951,10 @@ func verifierEnv(env []string, cfg string) []string {
 		"AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true")
 }
 
+// errNoSessionToken is an export that holds keys but no session token: long-lived keys,
+// which af-aws-exec never hands to a command.
+var errNoSessionToken = errors.New("aws configure export-credentials returned no temporary credentials")
+
 func exportCreds(aws awsRunner, profile string) (processCreds, error) {
 	out, err := aws.out("configure", "export-credentials", "--profile", profile, "--format", "process")
 	if err != nil {
@@ -928,8 +965,11 @@ func exportCreds(aws awsRunner, profile string) (processCreds, error) {
 		// Never echo out: it is the credential document.
 		return processCreds{}, errors.New("aws configure export-credentials returned something that is not credentials JSON")
 	}
-	if c.AccessKeyID == "" || c.SecretAccessKey == "" || c.SessionToken == "" {
-		return processCreds{}, errors.New("aws configure export-credentials returned no temporary credentials")
+	if c.AccessKeyID == "" || c.SecretAccessKey == "" {
+		return processCreds{}, errors.New("aws configure export-credentials returned no credentials")
+	}
+	if c.SessionToken == "" {
+		return processCreds{}, errNoSessionToken
 	}
 	return c, nil
 }
