@@ -578,7 +578,7 @@ export function ImagegenView({
             close();
           }}
         >
-          <Icon name="image" /> {tr("imggen.lb_reference")}
+          <Icon name="file-media" /> {tr("imggen.lb_reference")}
         </button>
         {zoomItem && zoomSeed != null && (
           <button

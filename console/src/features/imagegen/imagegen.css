@@ -6,7 +6,7 @@
   /* The two-column split is decided by the PANE's width, not the window's: a studio in one
      of four columns is narrow on a desktop. Every other pane view declares the same
      container so `@container paneview` means the same thing everywhere. */
-  container: paneview / inline-size;
+  container: paneview igenpane / inline-size;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -955,12 +955,14 @@
 /* ── the narrow pane's loop: draft bar, tab marks (lane L4) ─────────── */
 
 /* The draft bar lives in the conversation column and matters only while the draft column is
-   folded away; three columns show the draft itself. */
+   folded away; three columns show the draft itself. It asks the STUDIO's width by name: it is
+   drawn inside the mirror, which declares a `paneview` container of its own, and that one is
+   narrow in every layout. */
 .igen-draftbar {
   display: none;
 }
 
-@container paneview (max-width: 720px) {
+@container igenpane (max-width: 720px) {
   .igen-draftbar {
     display: flex;
     align-items: center;
