@@ -162,12 +162,103 @@ const stillAsker = (q: CatalogQuestion): boolean => getTenant() === q.tenant && 
  *  that is an answer, and it carries its own reason. */
 async function requestModels(q: CatalogQuestion): Promise<Record<string, unknown> | null> {
   if (!stillAsker(q)) return null;
-  const params = new URLSearchParams({ hidden: q.hidden });
+  // info=1: the picker shows each model's list price, context and retirement (Issue #1021). The
+  // Agent adds it only on request so MCP list_models, which reads the same route, stays small.
+  const params = new URLSearchParams({ hidden: q.hidden, info: "1" });
   if (q.kind === "opencode") params.set("catalog", q.catalog);
   if (q.kind === "claude") params.set("custom", q.custom);
   const d = await api(`api/agents/${q.kind}/models?${params}`).catch(() => null);
   if (!d || isTransientErr(d) || !Array.isArray(d.models) || !stillAsker(q)) return null;
+  recordModelInfo(q, d.models);
   return d;
+}
+
+/** What the Agent knows about one model beyond its name (ModelChoice.Info,
+ *  workspace/agent/model_info.go). Every field is optional; absent means nothing is known, and
+ *  the picker then says nothing rather than guess. */
+export interface ModelInfo {
+  /** API list price, USD per 1M tokens, on the kind's own billing route. Not a subscription bill. */
+  price?: { in: number; out: number; cacheRead?: number };
+  /** The models.dev provider the price came from ("openai", "opencode"). */
+  priceFrom?: string;
+  context?: number;
+  released?: string;
+  deprecated?: boolean;
+  retiring?: { at?: string; note?: string; successor?: string };
+}
+
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+
+function parseModelInfo(v: unknown): ModelInfo | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, any>;
+  const info: ModelInfo = {};
+  const pin = num(r.price?.in);
+  const pout = num(r.price?.out);
+  if (pin !== undefined && pout !== undefined) {
+    info.price = { in: pin, out: pout };
+    const cr = num(r.price?.cacheRead);
+    if (cr) info.price.cacheRead = cr;
+  }
+  if (str(r.priceFrom)) info.priceFrom = r.priceFrom;
+  if (num(r.context)) info.context = r.context;
+  if (str(r.released)) info.released = r.released;
+  if (r.deprecated === true) info.deprecated = true;
+  if (r.retiring && typeof r.retiring === "object") {
+    info.retiring = { at: str(r.retiring.at), note: str(r.retiring.note), successor: str(r.retiring.successor) };
+  }
+  return Object.keys(info).length ? info : null;
+}
+
+// Per question (questionKey), the info the Agent attached to each model id. Kept per question
+// like the lists themselves: another tenant's Agent prices from another catalog. Filled by
+// every answer, the recommendation's included — that is the only fetch claude makes.
+const modelInfos = new Map<string, Map<string, ModelInfo>>();
+
+function recordModelInfo(q: CatalogQuestion, models: unknown[]): void {
+  const m = new Map<string, ModelInfo>();
+  for (const row of models) {
+    const r = row as { id?: unknown; info?: unknown } | null;
+    const info = r && typeof r.id === "string" ? parseModelInfo(r.info) : null;
+    if (info) m.set(r!.id as string, info);
+  }
+  modelInfos.set(questionKey(q), m);
+}
+
+/** modelInfoOf reads a model's info off the last answer for this kind under the current
+ *  question, like modelProviderOf: any render that can see the row can see its info. */
+export function modelInfoOf(kind: string, id: string): ModelInfo | null {
+  if (!id) return null;
+  return modelInfos.get(questionKey(questionFor(kind)))?.get(id) ?? null;
+}
+
+/** Is this model on its way out — the CLI's own retirement notice or models.dev's deprecated mark? */
+export function modelIsRetiring(info: ModelInfo | null): boolean {
+  return !!(info?.retiring || info?.deprecated);
+}
+
+const CLAUDE_ALIAS_IDS = new Set(CLAUDE_MODELS.map(([id]) => id));
+
+// useModelInfo is modelInfoOf for a caller that has no list fetch of its own to wait on: the
+// selected model's line under a picker. claude has no live catalog, so its answer rides on the
+// recommendation's request; its tier aliases are never priced (which model an alias runs is
+// the installed CLI's business).
+export function useModelInfo(kind: string, id: string): ModelInfo | null {
+  useSettings(); // re-render on a settings change: the question below reads them
+  const key = questionKey(questionFor(kind));
+  const wants = !!id && (isDynamic(kind) || (kind === "claude" && !CLAUDE_ALIAS_IDS.has(id)));
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (!wants) return;
+    let alive = true;
+    const p: Promise<unknown> = isDynamic(kind) ? fetchModels(kind) : fetchRecommended(questionFor(kind));
+    void p.then(() => alive && bump((n) => n + 1));
+    return () => {
+      alive = false;
+    };
+  }, [kind, key, wants]);
+  return wants ? (modelInfos.get(key)?.get(id) ?? null) : null;
 }
 
 /** Kinds whose model list can change from Settings DURING one Console load, so their answer is
@@ -296,6 +387,7 @@ const recommendedInflight = new Map<string, Promise<RecommendedModels | null>>()
 export function clearRecommendedModels(): void {
   recommendedCache.clear();
   recommendedInflight.clear();
+  modelInfos.clear();
 }
 
 function cachedRecommended(key: string): RecommendedModels | null {

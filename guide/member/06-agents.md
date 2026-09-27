@@ -82,6 +82,15 @@ and rolls in the cross-cutting features covered elsewhere in this guide — work
 ² cursor and agy fold the reasoning effort into the model name, so there is no separate
 control. kiro accepts a `--effort` flag but exposes no per-model effort picker.
 
+The model lists show each model's **API list price** (input / output per 1M tokens) and context
+window, and the line under the chosen model adds the cache-read price and release date. The
+numbers are models.dev's published **pay-as-you-go API prices** — not what a claude, codex or agy
+subscription is charged (for opencode they are the price opencode actually bills). A model codex
+has announced it will retire, or one models.dev marks deprecated, is tagged "Retiring". Nothing is
+shown for cursor, muse and lcpp, or for claude's tier aliases (Opus and so on): there is no price
+source for the first three, and which model an alias runs depends on the CLI version. A full claude
+id you registered does get one.
+
 ³ cursor's managed (default) execution keeps no local transcript — a **stopped** cursor
 session has no history to show (the live mirror works while running, and running cursor
 as Terminal (CLI) does persist a readable history). kiro, by contrast, persists a readable

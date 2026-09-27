@@ -11,6 +11,7 @@ import { useModelOptions, useHiddenModel, useModelCatalogSettled, modelCatalogRe
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 import { ModelCombo } from "./ModelCombo.tsx";
+import { ModelInfoLine } from "./ModelInfoLine.tsx";
 import { refreshUIPrefs } from "../lib/settings.ts";
 
 interface ModelPickerProps {
@@ -75,6 +76,7 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
     return (
       <div className="model-picker-dynamic">
         <ModelCombo kind={kind} options={dynamicOptions ?? []} value={model} onChange={onChange} />
+        <ModelInfoLine kind={kind} model={model} />
         {!settled && (
           <span className="ui-field-hint model-picker-loading">
             <Icon name="loading" spin /> {tr("ui.model_loading")}
@@ -114,6 +116,8 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
           {registered.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
         </select>
       )}
+      {/* Registered full ids only: the aliases have no info (useModelInfo). */}
+      {registeredSelected && <ModelInfoLine kind={kind} model={model} />}
     </div>
   );
 }

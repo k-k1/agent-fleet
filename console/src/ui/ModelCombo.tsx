@@ -37,7 +37,8 @@ import { useEscLayer } from "../lib/escLayer.ts";
 import { useT } from "../lib/i18n/index.ts";
 import { primaryCoarsePointer } from "../lib/device.ts";
 import { filterModelOptions } from "../lib/modelFilter.ts";
-import { modelProviderOf } from "../lib/agentModels.ts";
+import { modelInfoOf, modelIsRetiring, modelProviderOf } from "../lib/agentModels.ts";
+import { modelInfoCompact } from "./ModelInfoLine.tsx";
 import type { ModelOption } from "../lib/agentModels.ts";
 
 interface ModelComboProps {
@@ -253,6 +254,8 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
           ) : (
             filtered.map(([v, label], i) => {
               const p = modelProviderOf(kind, v);
+              const info = modelInfoOf(kind, v);
+              const meta = modelInfoCompact(info);
               return (
                 <div
                   key={v || "default"}
@@ -271,6 +274,11 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
                     {p ? <Icon name={"brand:" + p} /> : null}
                   </span>
                   <span className="model-combo-label">{label}</span>
+                  {/* Price and window on the row itself, so a list spanning several
+                      generations can be compared without picking each one (Issue #1021). The
+                      full line, with what the price means, sits under the field. */}
+                  {modelIsRetiring(info) && <span className="model-combo-badge">{tr("ui.mi_retiring")}</span>}
+                  {meta && <span className="model-combo-meta">{meta}</span>}
                 </div>
               );
             })

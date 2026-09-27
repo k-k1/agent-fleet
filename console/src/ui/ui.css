@@ -1108,3 +1108,40 @@
   align-items: center;
   gap: 5px;
 }
+
+/* ---- ModelInfoLine and the combo rows' price (Issue #1021) ---- */
+.model-info-line {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  line-height: 1.5;
+}
+.model-info-price {
+  cursor: help; /* the title says this is a list price, not the member's bill */
+}
+.model-info-warn {
+  color: var(--warn);
+}
+/* Right-aligned so the label, not the numbers, is what gets truncated on a narrow list. */
+.model-combo-meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.model-combo-badge {
+  flex: none;
+  margin-left: auto;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  border-radius: 4px;
+  color: var(--warn);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.model-combo-badge + .model-combo-meta {
+  margin-left: 0;
+}

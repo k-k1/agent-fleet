@@ -138,3 +138,10 @@
   }
 
 }
+
+/* AiModelRow: the select with the chosen model's price line under it (Issue #1021). */
+.ai-model-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
