@@ -390,6 +390,13 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// SSM login status polled by the New Session modal (docs/log/p3-ssm-session.md)
 	// — surfaces the device-auth URL and the "ready" transition without attaching yet.
 	mux.HandleFunc("GET /api/sessions/{name}/ssm-login", rest)
+	// af-aws-exec's Console login (ADR 0102). start and the attempt poll go through
+	// restLoginFlow: the attempt lives only in the Agent process's memory.
+	awsLogin := proxy.withResolved(proxy.restLoginFlow)
+	mux.HandleFunc("GET /api/aws-login", rest)
+	mux.HandleFunc("POST /api/aws-login/{id}/start", awsLogin)
+	mux.HandleFunc("GET /api/aws-login/{id}/attempts/{attempt}", awsLogin)
+	mux.HandleFunc("POST /api/aws-login/{id}/cancel", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
 	mux.HandleFunc("POST /api/ssm/instances", ws.withResolved(ws.ssmInstances))
 	// Structured transcript for the Console chat view (case-A).

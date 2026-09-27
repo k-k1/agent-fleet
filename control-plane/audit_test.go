@@ -37,6 +37,12 @@ func TestAuditActionTarget(t *testing.T) {
 		{"DELETE", "/api/sessions/s1", "s1", "session.delete", "s1", true},
 		{"DELETE", "/api/sessions/s1?stop=1", "s1", "session.delete", "s1", true},
 		{"DELETE", "/api/sessions/s1/marks", "s1", "", "", false},
+		// ADR 0102: the press and the cancel are audited with the Console's profile hint;
+		// the polls are reads.
+		{"POST", "/api/aws-login/0123456789abcdef01234567/start?profile=prod", "", "aws.login.start", "prod", true},
+		{"POST", "/api/aws-login/0123456789abcdef01234567/cancel?profile=prod", "", "aws.login.cancel", "prod", true},
+		{"GET", "/api/aws-login/0123456789abcdef01234567/attempts/abc", "", "", "", false},
+		{"GET", "/api/aws-login", "", "", "", false},
 		// Not auditable (reads, non-change mutations, unlisted ops):
 		{"GET", "/api/fs/file?path=a", "", "", "", false},
 		{"GET", "/api/fs/tree", "", "", "", false},

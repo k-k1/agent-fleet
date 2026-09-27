@@ -78,6 +78,12 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// rev/at/scope is what actually governs, and what happened is recorded in the
 			// repo's restore commit (AF-Restore-Rev / -Scope).
 			return "memory.restore", q.Get("rev"), true
+		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/start"):
+			// ADR 0102. The Console repeats the profile in the query as an audit hint; the
+			// Agent decides from the request id alone, and never sees the code here.
+			return "aws.login.start", q.Get("profile"), true
+		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/cancel"):
+			return "aws.login.cancel", q.Get("profile"), true
 		case p == "/api/sessions":
 			return "session.create", "", true
 		case name != "" && strings.HasSuffix(p, "/fork"):
@@ -185,6 +191,9 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
+	// A hint for the Agent's own log (ADR 0102 decision 4): an agent calling the Agent
+	// directly can set it too, so the Agent never decides anything on it.
+	req.Header.Set("X-AF-Relay", "cp")
 
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
