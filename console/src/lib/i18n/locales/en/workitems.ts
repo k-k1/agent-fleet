@@ -135,6 +135,7 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.session_archived_hint": "This session is archived. Click to restore and open it",
   "wi.session_deleted": "Deleted",
   "wi.session_gone": "Session {name} no longer exists (deleted, or in the trash)",
+  "wi.session_folder_gone": "The working folder of “{name}” no longer exists. You can recreate it from the archive",
   "wi.restore_title": "Restore the archived session?",
   "wi.restore_body": "“{name}” is archived. Restore it to the session list and open it.",
   "wi.detail_start_head": "Start this ticket",

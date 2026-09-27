@@ -133,6 +133,7 @@ export const workitems = {
   "wi.session_archived_hint": "アーカイブ済みのセッションです。クリックすると復帰して開けます",
   "wi.session_deleted": "削除済み",
   "wi.session_gone": "セッション {name} は見つかりません（削除済みか、ごみ箱にあります）",
+  "wi.session_folder_gone": "「{name}」の作業フォルダはもうありません。アーカイブ一覧からフォルダを作り直せます",
   "wi.restore_title": "アーカイブ済みのセッションを復帰しますか？",
   "wi.restore_body": "「{name}」はアーカイブされています。復帰して一覧に戻し、開きます。",
   "wi.detail_start_head": "このチケットを始める",

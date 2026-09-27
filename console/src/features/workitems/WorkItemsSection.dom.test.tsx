@@ -41,14 +41,17 @@ vi.mock("../../core/api/client.ts", async (orig) => ({
   api: (...a: unknown[]) => clientApi(...a),
   raw: (...a: unknown[]) => clientRaw(...a),
 }));
+// Both opens are counted as "opened"; openTerminal also records which one it was.
 const openChat = vi.fn();
+const openTerminal = vi.fn();
 vi.mock("../sessions/open.ts", () => ({
   openSessionChat: (...a: unknown[]) => openChat(...a),
-  openSessionTerminal: (...a: unknown[]) => openChat(...a),
+  openSessionTerminal: (...a: unknown[]) => (openTerminal(...a), openChat(...a)),
 }));
 
 const { WorkItemsSection } = await import("./WorkItemsSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
+const { useSessionUI } = await import("../sessions/ui.ts");
 const { useWorkItemStore } = await import("./store.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -128,7 +131,9 @@ beforeEach(() => {
   clientApi.mockRejectedValue(new Error("workspace stopped"));
   clientRaw.mockReset();
   openChat.mockReset();
+  openTerminal.mockReset();
   useSessionsStore.setState({ sessions: [], refresh: vi.fn(async () => {}) });
+  useSessionUI.setState({ archivedOpen: false, archivedDir: null });
   workItemList.mockReset();
   workItemSearch.mockReset();
   workItemQueryCreate.mockReset();
@@ -995,5 +1000,47 @@ describe("WorkItemsSection — the sessions a ticket was started in (#1108)", ()
     await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
     await settle();
     expect(openChat).toHaveBeenCalledWith("sk7f3q9");
+  });
+
+  // api() resolves an error body rather than throwing; that is an unreadable shelf, not an
+  // empty one, so nothing may be called deleted.
+  it("does not call a session deleted when the shelf answers with an error body", async () => {
+    clientApi.mockResolvedValue({ error: { code: "workspace_stopped", status: 503 } });
+    withLedger("sarch01");
+    await render();
+    await openRow();
+    await settle();
+    const [e] = entries();
+    expect(e.classList.contains("is-gone")).toBe(false);
+    expect(e.textContent).not.toContain(t("wi.session_deleted"));
+    await act(async () => e.click());
+    await settle();
+    expect(openChat).toHaveBeenCalledWith("sarch01");
+    expect(document.body.textContent).not.toContain(t("wi.session_gone", { name: "sarch01" }));
+  });
+
+  it("sends a session whose folder is gone to the shelf instead of restoring it", async () => {
+    clientApi.mockResolvedValue({ sessions: [{ ...session("sarch01", "古い調査"), resumable: false, dir: "/home/dev/repos/web@wip-x" }] });
+    withLedger("sarch01");
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
+    await settle();
+    expect(clientRaw).not.toHaveBeenCalled();
+    expect(openChat).not.toHaveBeenCalled();
+    expect(useSessionUI.getState().archivedOpen).toBe(true);
+    expect(useSessionUI.getState().archivedDir).toBe("/home/dev/repos/web@wip-x");
+  });
+
+  it("opens a restored session by its own kind even before the list refresh lists it", async () => {
+    clientApi.mockResolvedValue({ sessions: [{ ...session("sarch01", "シェル作業"), kind: "shell" }] });
+    clientRaw.mockResolvedValue({ ok: true });
+    withLedger("sarch01");
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
+    await settle();
+    await act(async () => confirmButton()!.click());
+    await settle();
+    expect(openChat).toHaveBeenCalledWith("sarch01");
+    expect(openTerminal).toHaveBeenCalledWith("sarch01");
   });
 });

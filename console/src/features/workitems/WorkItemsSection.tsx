@@ -44,7 +44,8 @@ import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import { LabelBadge } from "./LabelBadge.tsx";
-import { resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
+import { readShelf, resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
+import { useSessionUI } from "../sessions/ui.ts";
 import {
   branchForItem,
   dedupeWorkItems,
@@ -261,9 +262,11 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     return first ? sessionRef(first.sessionName).title || first.sessionName : "";
   };
 
-  const openLive = (name: string) => {
+  // kind: the caller's own knowledge of the session, for when the live list does not have it
+  // yet (a restore whose list refresh has not landed).
+  const openLive = (name: string, kind = "claude") => {
     const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
-    (agentOf(s?.kind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
+    (agentOf(s?.kind || kind).caps.chat ? openSessionChat : openSessionTerminal)(name);
   };
 
   // A slug that is not on the live list used to open nothing at all (#1108). Read the shelf
@@ -272,20 +275,24 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   // read (a stopped workspace), fall through to the plain open, which is what it always did.
   const openSession = async (name: string) => {
     if (sessions.some((s) => s.name === name)) return openLive(name);
-    let shelf: ResolvedSessionRef;
-    try {
-      const d = await api("api/sessions/archived");
-      shelf = resolveSessionRef(name, [], d.sessions || []);
-    } catch {
-      return openLive(name);
-    }
-    if (shelf.state === "gone") {
+    const shelf = readShelf(await api("api/sessions/archived").catch(() => null));
+    if (!shelf) return openLive(name);
+    const ref = resolveSessionRef(name, [], shelf);
+    if (ref.state === "gone") {
       toast(t("wi.session_gone", { name }));
+      return;
+    }
+    const found = ref.session!;
+    // Its folder is gone (a deleted worktree): restoring would bring back a session that cannot
+    // resume. The shelf, scoped to that folder, is where recreating the worktree is offered.
+    if (found.resumable === false) {
+      toast(t("wi.session_folder_gone", { name: ref.title || name }));
+      useSessionUI.getState().openArchived(found.dir || undefined);
       return;
     }
     const ok = await askConfirm({
       title: tr("wi.restore_title"),
-      body: tr("wi.restore_body", { name: shelf.title || name }),
+      body: tr("wi.restore_body", { name: ref.title || name }),
       confirmLabel: tr("arch.restore"),
       danger: false,
     });
@@ -296,7 +303,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
       return;
     }
     await useSessionsStore.getState().refresh();
-    openLive(name);
+    openLive(name, found.kind);
   };
 
   // reviewBranch: the PR's head branch, when the detail modal's live read resolved one and the
