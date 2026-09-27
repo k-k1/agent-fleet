@@ -196,7 +196,7 @@ allows for the instance bucket that the specified instance type belongs to.
 
 **EC2 のクォータ解放は ECS の登録解除より遅い。** CP が見られる唯一の手がかり
 （container instance が居るか）は、EC2 の会計とは別物である。ECS が再試行するので壊れは
-しないが、**段を上げる起動は「退場 150 秒＋クォータ待ち最大 6 分＋コールドスタート」**で
+しないが、**段を上げる起動は「退場 150 秒＋クォータ待ち最大 6 分＋コールドスタート」** で
 見積もる必要があり、`StartDeadlineSec`（既定 900 秒）はその合計を超えていなければならない
 （実測 497 秒）。4→4 の入れ替えでは起きない。
 

@@ -305,8 +305,8 @@ A dominates  ⟺  5M + 4  >  5 * (1 + P) * n
 | Box 2 | 122 | 27 | 614 | 140 x n | **A dominates for n≤4** (B from n≥5) |
 
 **There is no single answer to "is A or B the main source".** Boxes with many metas and few
-projects are A-dominated; the reverse are B-dominated. Decisions 4 and 5 are **not alternatives
-- they rescue different boxes.** This is the answer to the first open question.
+projects are A-dominated; the reverse are B-dominated. Decisions 4 and 5 are **not alternatives —
+they rescue different boxes.** This is the answer to the first open question.
 
 #### On the wire (`/proc/self/mountstats`, 2026-09-18, read-only over SSM)
 

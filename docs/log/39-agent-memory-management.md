@@ -137,7 +137,7 @@ repo 内レイアウトは `claude/projects/<slug>/...`・`codex/...` と kind �
   ④対象 kind のセッションが誰も working でないか、を見て判定する（`memory_trigger.go` の
   `memoryShouldSnapshot` — 純関数なのでテストは実時間を待たない）。走査は
   `projects/*/memory` に glob で限定するので、同じマウントにある 883MB の transcript は
-  一切 stat しない。ポーリングなので**「15 分 tick の保険」は本体に統合された**。
+  一切 stat しない。ポーリングなので **「15 分 tick の保険」は本体に統合された**。
   加えて Console からの手動 snapshot。
 - **busy 先送りの上限**: 実行中セッションがあるうちは待つが、変更から `MaxDefer`（既定 30 分）
   経つと busy を押し切って積む。状態マーカーは壊れ得る（停止済みセッションに working が
@@ -407,7 +407,7 @@ CP 許可リストの片側漏れ = FE 404 という既知の罠を踏まない�
 
 ### ④-P4 scheduler 連携（**削除**）
 
-不要と判断した。P1 で契機がフック相乗りではなく**常駐ポーリング（既定 1 分 tick）**に
+不要と判断した。P1 で契機がフック相乗りではなく**常駐ポーリング（既定 1 分 tick）** に
 なった時点で、定時実行から snapshot を叩く機構は二重になる（②に「ポーリングなので
 『15 分 tick の保険』は本体に統合された」と書いたのと同じ理由）。頻度を変えたいなら
 `AF_MEMORY_SNAPSHOT_INTERVAL` / `_DEBOUNCE` があり、全体 OFF は UI トグルがある。

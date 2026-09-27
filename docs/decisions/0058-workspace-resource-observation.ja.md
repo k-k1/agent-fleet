@@ -21,7 +21,7 @@
 2. ホストの `/sys/fs/cgroup/system.slice/docker-<id>.scope` を読み、
 3. ディスクは CP のローカル FS に対して `du -sb <dataDir>/home` を走らせる
 
-という**「CP と Workspace が同じホストに載っている」前提の読み方**だった。ECS のタスクには docker
+という **「CP と Workspace が同じホストに載っている」前提の読み方**だった。ECS のタスクには docker
 バイナリも対象の cgroup も home のパスも無い。Fargate でも `ecs-ec2` でも同じで、`ecs-ec2` 固有の
 問題ではない。
 

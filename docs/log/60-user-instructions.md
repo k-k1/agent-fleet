@@ -50,7 +50,7 @@ user/global 指示位置へ配る仕組みを決める。
 配布の実装は 2 箇所しかない。
 
 - `workspace/Dockerfile:520-522` — `workspace-notes.md` を `/usr/local/share/agent-fleet/` へ置き、
-  **`/etc/claude-code/CLAUDE.md`（root 所有の managed policy）**へコピー。
+  **`/etc/claude-code/CLAUDE.md`（root 所有の managed policy）** へコピー。
 - `workspace/entrypoint.sh:566-575` — 毎起動、同じ本文を **`cp -f`** で
   `~/.codex/AGENTS.md` と `~/.config/opencode/AGENTS.md` へ上書き。
 

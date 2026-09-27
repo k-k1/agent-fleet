@@ -19,7 +19,7 @@
 - **現状、終了理由はまったく捕捉していない。** エージェントは `os/exec` の子ではなく `tmux new-session -d` で起動される（`workspace/agent/session_tmux.go:22`）ため、親は tmux サーバであり `cmd.Wait()` による `WaitStatus`/exit code/signal 取得の導線が存在しない。終了検知は `tmuxx.LiveSessionNames()` のポーリングで「セッションが消えたか」を見るだけ（`workspace/agent/session_handlers.go:33-62`）で、消えたら `Meta.StoppedAt` に時刻を打つのみ。**なぜ死んだかは残らない。**
 - cgroup は CP が直読みしているが（`control-plane/metrics.go:176-196` の `memory.current`/`memory.max`）、**`memory.events` は未読**。`dmesg`/`journald`/docker `.State.OOMKilled`/`.State.ExitCode` も一切参照していない。Console の「OOM の可能性」表示（`console/src/app/WsBar.tsx:683`）は docker state が `stopped` になったことからの**単なる推測**で根拠データがない。
 - 捕捉には粒度・コストの異なる **3 つのメカニズム**があり（§2）、**pane 単位の exit code 捕捉（手段 A）が最も頑健**で、cgroup / docker 由来のシグナル（手段 B/C）は原因ラベル付けの裏取りに使う、という役割分担にする。
-- **Phase 1（CP のみ・再ビルド不要）**で「コンテナ OOM の確定検知」を先に入れ、**Phase 2（agent 再ビルド）**で「どのセッションが何で死んだか」の attribution を足す。docs/25（運用監視）はこのテーマを扱っていないので新規設計項目。
+- **Phase 1（CP のみ・再ビルド不要）** で「コンテナ OOM の確定検知」を先に入れ、**Phase 2（agent 再ビルド）** で「どのセッションが何で死んだか」の attribution を足す。docs/25（運用監視）はこのテーマを扱っていないので新規設計項目。
 
 ---
 

@@ -10,7 +10,7 @@ updated: "2026-08"
 
 Workspace のセッションは基本的に 1 セッション = 1 worktree で走るので、同じレポの worktree が
 同時に 10 個並ぶことがある。このとき効いてくるのは**メモリではなくディスクと「共有されるか
-どうか」**で、エコシステムごとに答えが違う。[workspace-notes.md](../../workspace/workspace-notes.md)
+どうか」** で、エコシステムごとに答えが違う。[workspace-notes.md](../../workspace/workspace-notes.md)
 （＝各エージェントが常時読む運用ガイド）には要点だけ置き、根拠と言語別の詳細をここに置く。
 
 前提となる永続モデルは 2 つだけ:

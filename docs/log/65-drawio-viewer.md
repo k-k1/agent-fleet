@@ -84,9 +84,9 @@ FileView (.drawio)  … src/features/viewer/DrawioView.tsx
 
 この形を採る理由は 3 つとも実測に基づく。
 
-- **65.2.1-1（グローバル汚染）**を構造的に無効化できる。iframe の window は使い捨てで、
+- **65.2.1-1（グローバル汚染）** を構造的に無効化できる。iframe の window は使い捨てで、
   ペインを閉じれば消える。CSS も混ざらない。
-- **65.2.1-2（lightbox 持ち出し）**に二重の蓋ができる。ツールバーから外す（`lightbox: 0`）のに加え、
+- **65.2.1-2（lightbox 持ち出し）** に二重の蓋ができる。ツールバーから外す（`lightbox: 0`）のに加え、
   `sandbox` に `allow-popups` を与えないので `window.open` 自体が失敗する。
 - iframe は**オリジンを持たない**（`allow-same-origin` を与えない）ので、図のラベルに仕込まれた
   HTML がビューアの DOMPurify をすり抜けても、Console の DOM・Cookie・API に届かない。

@@ -134,7 +134,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
   ```
 - **manager.go の昇格**: in-memory map を**廃止し DB を source of truth に**。CP 再起動時は Workspace レコードから rehydrate ＋ Runtime（docker inspect / ECS describe）で reconcile。
   → 「停止中コンテナのポート再採番」問題が原理的に消える。
-- **現ライブ環境からの移行（B5）**: 今のライブ（運用者の既存 workspace 等）は**我々の社の「第 1 デプロイ＝リファレンス実装」**になる。
+- **現ライブ環境からの移行（B5）**: 今のライブ（運用者の既存 workspace 等）は**我々の社の「第 1 デプロイ＝リファレンス実装」** になる。
   移行 = **既定テナントを 1 つ作成 → 既存ユーザーを所属 → 既存コンテナ/home から DB をバックフィル**（Phase 2 の home/secrets 移行と同型の one-shot）。
 - **規模配慮**: マイグレーションは単純な SQL（goose/atlas 等）。ORM は薄く。分散トランザクション不要。
 
@@ -159,7 +159,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
   role = identity.role==super_admin か membership.role
   workspace = getOrCreate(identity, tenant)            // テナントごとに別コンテナ
   ```
-- **L1（認証）**: 既定は **CP ネイティブ Google OAuth（`AUTH=oauth`）**＝外部ゲートウェイ不要で各社が許可ドメイン/メールを設定（[reference/auth.md](build/07-security.md)、2026-06-29 ライブ採用）。大規模/既存資産がある社は自社の ALB OIDC / oauth2-proxy（`AUTH=proxy`）も選べる。我々は設定方法を文書化（P3-10）。
+- **L1（認証）**: 既定は **CP ネイティブ Google OAuth（`AUTH=oauth`）** ＝外部ゲートウェイ不要で各社が許可ドメイン/メールを設定（[reference/auth.md](build/07-security.md)、2026-06-29 ライブ採用）。大規模/既存資産がある社は自社の ALB OIDC / oauth2-proxy（`AUTH=proxy`）も選べる。我々は設定方法を文書化（P3-10）。
 - **L2-authz（認可）を DB に移す**: emails.txt の静的許可を廃し、**CP が email を DB と突合**し identity/membership を判定。未登録 email は provisioning ポリシー依存（既定 auto-provision / 厳格は 403）。
 - **新エンドポイント**: `GET /api/tenants` = 呼び出し元の membership 一覧（tenant slug/name/role）→ Console のピッカー。
 - **provisioning ポリシー**（env で切替）: 既定 **auto-provision**（ゲートウェイを通れた=その社の正規メンバー → 既定テナントへ自動）/ 厳格運用は **invite-only**（管理者が招待で membership 先行作成、未知は 403）。マルチテナントの部署割当は招待ベース。

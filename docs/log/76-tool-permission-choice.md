@@ -107,7 +107,7 @@ claude 2.1.241 を実 tmux で 1 本ずつ起動して採取（2026-08-24）。`
 
 ⚠️ **manual だけ `(shift+tab to cycle)` を出さない。** `paneMode` の claude 分岐は
 「4 つの名前 ＋ `shift+tab to cycle` の合言葉」で判定していたので、**承認ありのセッションは
-モード不明（空文字）**になっていた。空文字は「コンポーザ未描画」の意味も兼ねており
+モード不明（空文字）** になっていた。空文字は「コンポーザ未描画」の意味も兼ねており
 （`session_io.go` の launch-seed readiness ゲート）、**初回プロンプトの配達が 30 秒待たされてから
 best-effort に落ちる**。`internal/tmuxx` の `modeFooterRe` は 2.1.212 で同じ罠を踏んで直して
 いたが、`paneMode` 側には反映されていなかった。→ `claudeModeLabel` にモード名を並べ、最後の砦を

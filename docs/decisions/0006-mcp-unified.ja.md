@@ -10,8 +10,8 @@
 
 CP は REST + Console を持つが、これは**人間が作ったクライアント（Console）でしか駆動できない**。
 運用者・メンバーが自分の Claude（Claude Code / Desktop / claude.ai）から自然言語で Fleet を
-操作・観測したい。とくに本プロジェクトの起点である**「1 つの手元 Claude が、自分の Workspace
-内で走る複数の claude/opencode/codex セッションを束ねて駆動する」**（フリート運用の MCP 化）が
+操作・観測したい。とくに本プロジェクトの起点である「**1 つの手元 Claude が、自分の Workspace
+内で走る複数の claude/opencode/codex セッションを束ねて駆動する**」（フリート運用の MCP 化）が
 そもそもの目的。これを REST に人手クライアントを被せる形では達成できない。
 
 「管理面（P3-6 旧構想）」と「作業面（メンバー自身の遠隔セッション駆動）」を **両方** 1 本の

@@ -94,7 +94,7 @@ ECS は同じ strategy で同じ provider に置き直そうとし、それが�
 - **`describe()` はサービスイベントの先頭 3 件を既に運んでいる**（`engineServiceEventsKept`）。
   決定 5 がコードで判定するのに新しい API も IAM も要らない。起動失敗の cooldown は
   `AF_ENGINE_<役>_FAIL_COOLDOWN_SEC`（既定 900 秒）を失敗のたびに倍にし、**倍化は 4 回まで
-  （16 倍・4 時間）**である（`engineCooldownMaxDoublings`）。
+  （16 倍・4 時間）** である（`engineCooldownMaxDoublings`）。
 - **エンジン表のうち生きたまま運べるのは梯子と capacity provider 名**（`engine_table_reload.go`）。
   service・url・health・provider・idle・deadline が変わったときは「再起動が要る」とログに出す
   だけである。provider 名は起草時には運べず、Spot への置き換えで実際の欠落になった（0074
@@ -155,7 +155,7 @@ id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour|b
   つまりその行に「宣言価格」は 1 つしか書けないのに、実際の値段は範囲である。
 
 したがって価格の書き方も決める——**`usdPerHour` には、その提案が買いうる**いちばん高い型**の
-込み価格を書く。**安く見せる側に倒すと、比較のための数字が比較の役に立たなくなる。
+込み価格を書く**。安く見せる側に倒すと、比較のための数字が比較の役に立たなくなる。
 「込み」は MI の管理料を含む値で、取り方は 0074 の「`usdPerHour` は Cost Explorer の確定値」と
 同じである（定価を写してはならない。実測で 7.80% ずれる）。
 
@@ -375,7 +375,7 @@ TTS は Fargate なので買うインスタンスが無い。提案の行は**�
   （`50-tts.yaml`）。公開仕様 (c) は「Fargate の launch type → Fargate の capacity provider」を
   有効な遷移に挙げているので CP は動かせるが、そうするとテンプレートと service が食い違い、
   次の CloudFormation 更新が `LaunchType` へ戻す（決定 12 の CFN の行）。TTS に提案を宣言する
-  配備では、テンプレートが `LaunchType` の代わりに**明示の `FARGATE` strategy（weight 1）**を
+  配備では、テンプレートが `LaunchType` の代わりに**明示の `FARGATE` strategy（weight 1）** を
   書き、CP が変えるのは strategy の中の provider 名だけにする（レビュー R10）。
 - ⚠️ `UseSpot` パラメータは残すが、意味が「Spot にする」から「**Spot の提案を一覧に入れる**」へ
   変わる。実測では `UseSpot` の切り替えは本番で**その場更新**だった（約 6 分・置き換え無し）が、
@@ -549,7 +549,7 @@ LlmOffers=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|
 **古いカードへの静かな再着地**の問題だからである。
 
 ⚠️ **文字列で判断することの代償。** AWS がメッセージを変えたらこの表は黙って効かなくなる。
-**どのコードにも当たらなかったときの既定は「予算まで待つ」**にして、当たらなかったこと自体を
+**どのコードにも当たらなかったときの既定は「予算まで待つ」** にして、当たらなかったこと自体を
 ログに 1 行出す（次に誰かが読むときの唯一の手がかりになる）。
 
 ## 時間の予算と、最悪の待ち時間
@@ -862,7 +862,7 @@ on a service that is already using one, you must force a new deployment."}
 ### 判定
 
 - **(a) 緑。** MI の provider 同士の遷移そのものは拒まれていない——`forceNewDeployment` を添えた
-  同じ遷移が 200 で通り、strategy は書いた値になった。拒まれたのは**「force 無し」という渡し方**
+  同じ遷移が 200 で通り、strategy は書いた値になった。拒まれたのは **「force 無し」という渡し方**
   だけで、これはレビュー R1 が「赤ではない」と決めた形である。**この ADR の骨格は書き直さない。**
   却下案「購入形態ごとに service を 2 本」へ戻る必要は無い。
 - **(b) 緑。service は無傷。** 拒まれた呼び出しは 1 欄も動かさなかった（`updatedAt` が控えのまま）。
@@ -878,7 +878,7 @@ on a service that is already using one, you must force a new deployment."}
 ### 🔥 新しく分かったこと（決定 4 (a) に効く）
 
 1. **公開仕様 (c) の読み替え。** `UpdateService` の API Reference は `capacityProviderStrategy` を
-   「新しいデプロイを起こさない」と書くが、それは**「force 無しで strategy を更新できる」を
+   「新しいデプロイを起こさない」と書くが、それは **「force 無しで strategy を更新できる」を
    意味しない**。すでに strategy を使っている service では、ECS は force 無しの strategy 更新を
    **API の入口で 400 で拒む**。往復の両方向で同じ文面だった。
 2. 🔴 **決定 4 (a) は「`forceNewDeployment` を渡さない」と書いているが、strategy が今と違う値に
@@ -989,7 +989,7 @@ P0 のコード（CP・CFN・Console）が develop に入った直後、実機 1
 20:30:36 engines: image: offer l4 answered budget after 3m2s; trying l40s (od)
 ```
 
-**インスタンスは 26 秒で来ていた。**切られたのはその上のタスクで、コンテナの取得と ComfyUI の起動に数分かかる
+**インスタンスは 26 秒で来ていた**。切られたのはその上のタスクで、コンテナの取得と ComfyUI の起動に数分かかる
 （0071 実測のコールドスタート 527〜586 秒）。つまり既定の 180 秒では、**Spot が取れても取れなくても
 一覧を最後まで歩き、そのたびにインスタンスを買う**。この回は 7 分で 3 つの提案を歩き、**2 台買って 1 台も起動しなかった。**
 `ImageOfferBudgetSec=900` にして同じ宣言で回すと、2 回目は上の表のとおり `spot3` のまま warm に達した。

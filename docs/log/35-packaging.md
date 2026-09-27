@@ -88,7 +88,7 @@ air-gap・ファイル渡し運用には `--bundle-rootfs` の self-contained ta
   git・gh ラッパー・node・chromium の**実行時ライブラリ群**・fontconfig+DejaVu など
   **OSS のユーザーランドだけ**を焼く。エージェント CLI（claude/codex/opencode/agy/copilot/rtk）は
   **焼かず**、entrypoint が初回起動時に `versions.json` の**ピン版（= e2e-smoke で動作
-  検証した版）**を仮想 HOME の `~/.local/bin` へインストールし、self-update opt-in
+  検証した版）** を仮想 HOME の `~/.local/bin` へインストールし、self-update opt-in
   有効時はそのまま最新へ追従する（§35.4.1 — サイズとライセンスの両方の理由）。
   **chromium 本体＋CJK フォント・Go toolchain・AWS CLI+SSM plugin・ops MCP サーバ群も
   焼かず**、使う人だけがオンデマンドでピン版を導入する（下記）。node は残す
@@ -567,7 +567,7 @@ VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 | フェーズ | 内容 | 出口 |
 |---|---|---|
 | **P1: 共通基盤** | 版刻印（§35.6.1）・release.sh へ `aws/` 同梱 + SHA256SUMS・`deploy/release/build.sh` 骨格・**配布 variant（`BAKE_AGENT_CLIS=0`）と entrypoint のピン版 boot-install 一般化 + NOTICE/帰属整備（§35.4.1）** | `VERSION=x build.sh --compose` で A+B+D が出る（B は lean variant・起動時ピン install がコンテナで通る） |
-| **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: lean rootfs 書き出し + 静的 bwrap/git + rootfs.json 生成）・ランチャの R 初回 DL（sha256 検証・`--rootfs` オフライン経路）・`workspace-agent install-chromium` + `findChromiumBinary` 解決順変更（専用ピン dir を playwright cache より先に）・`install-go` + toolchains UI への Go 追加・ops 系オンデマンド（ssm 初回の awscli+SMP 導入 / mcp-run の uvx ピン実行・grafana DL）・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）**で tar 展開 → `af start` → clone → claude セッション E2E（ブラウザペインは初回 attach でピン版 chromium が入る） |
+| **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: lean rootfs 書き出し + 静的 bwrap/git + rootfs.json 生成）・ランチャの R 初回 DL（sha256 検証・`--rootfs` オフライン経路）・`workspace-agent install-chromium` + `findChromiumBinary` 解決順変更（専用ピン dir を playwright cache より先に）・`install-go` + toolchains UI への Go 追加・ops 系オンデマンド（ssm 初回の awscli+SMP 導入 / mcp-run の uvx ピン実行・grafana DL）・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）** で tar 展開 → `af start` → clone → claude セッション E2E（ブラウザペインは初回 attach でピン版 chromium が入る） |
 | **P3: ECS 配布** | release-ecr.sh・ImageTag/Persistence パラメータ化・更新 runbook・最小 IAM 表 | sandbox で「push → deploy → WS 起動 → タグ更新 → 次回 Start で新イメージ」一巡 |
 | **P4: 検証ゲート** | §35.8 の未済分（native 実機が筆頭） | 各ゲート緑 + 第 2 デプロイ再現 |
 
@@ -783,7 +783,7 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
 | 1 | `deploy/aws/ecs/release-ecr.sh`（新設） | runbook §ECR push のスクリプト化。`VERSION=<v> release-ecr.sh --profile <p> --region <r> [--account <acct>] [--images-tar <B>] [--registry <local-prefix>]`。手順: ①`--account` 省略時は `aws sts get-caller-identity` で解決 ②**ECR repo の存在確認のみ**（`describe-repositories` で `af-control-plane`/`af-workspace`。不在なら「20-platform を先に deploy」の案内で fail — §35.3.4-1 の「create-repository（idempotent）」は**凍結時に否決**: repo の正は 20-platform CFN であり、out-of-band create は後続の CFN deploy を AlreadyExists で壊す）③`get-login-password \| docker login` ④`--images-tar`（air-gap B）指定時は `docker load` を前置（ビルド環境と push 環境の分離）⑤ローカル名 `agent-fleet/{control-plane,workspace}:$VERSION` → ECR URI `<acct>.dkr.ecr.<region>.amazonaws.com/af-{control-plane,workspace}:$VERSION` へ tag/push ⑥完了時に次の一手（`cloudformation deploy --parameter-overrides ImageTag=$VERSION`）を表示。runbook のコマンド列が正・スクリプトは写し、の関係を README に明記 |
 | 2 | `cfn/30-ingress.yaml` | `CpImageTag`/`WorkspaceImageTag`（既定 dev・個別）を**単一 `ImageTag`（既定 dev）へ統合**。リリースは CP/WS を同一 VERSION で焼く（build.sh）ため版は常に揃う — 片方だけ進める運用は作らない。アップグレード = `aws cloudformation deploy --parameter-overrides ImageTag=<v>`（他パラメータは previous value 維持）。CP サービスは rolling replace、Workspace はアダプタがステートレスに TaskDefinition を作るため**次回 Start から新イメージ**（稼働中 WS は巻き込まない） |
 | 3 | `cfn/10-data.yaml` | `Persistence` パラメータ（`delete`（既定・sandbox）/`retain`）。`Transform: AWS::LanguageExtensions` + Condition で分岐: EFS = DeletionPolicy/UpdateReplacePolicy `Retain`、RDS = 同 `Snapshot`＋`BackupRetentionPeriod` 0→7＋`DeletionProtection` true。「本番は `Persistence=retain`」を README の標準にする |
-| 4 | `deploy/aws/ecs/README.md` | ①§ECR push を release-ecr.sh 前提に書き換え（手打ちコマンド列は正として残す）②**§Upgrade（更新 runbook）新設**: release-ecr.sh → deploy `ImageTag=<v>` → CP 入替・WS は次回 Start・DB/EFS/稼働中 WS 不変・事前バックアップ（EFS+RDS snapshot）推奨 ③**§最小 IAM 表**（P3-10 宿題）: デプロイ主体に要る権限をサービス単位で一覧 ④`Persistence` の説明と stand-up 例の `ImageTag` 反映 |
+| 4 | `deploy/aws/ecs/README.md` | ①§ECR push を release-ecr.sh 前提に書き換え（手打ちコマンド列は正として残す）② **§Upgrade（更新 runbook）新設**: release-ecr.sh → deploy `ImageTag=<v>` → CP 入替・WS は次回 Start・DB/EFS/稼働中 WS 不変・事前バックアップ（EFS+RDS snapshot）推奨 ③ **§最小 IAM 表**（P3-10 宿題）: デプロイ主体に要る権限をサービス単位で一覧 ④`Persistence` の説明と stand-up 例の `ImageTag` 反映 |
 | 5 | `.github/workflows/release-gate.yml` | **`ecs-gate` job 追加**（docker/AWS 不要の軽量ジョブ）: cfn-lint で 4 テンプレ検証（LanguageExtensions 対応）+ `bash -n`/shellcheck + **fake-aws/fake-docker stub で release-ecr.sh を実走**し AWS CLI 呼び出し列（sts→describe-repositories→login→(load)→tag×2→push×2）と ECR URI 組み立てを固定（--images-tar 経路含む）。compose-gate に「バンドル A に release-ecr.sh が実行ビット付きで同梱」の assert を追加 |
 
 **P3 ゲート**:
@@ -836,7 +836,7 @@ P4 = 検証ゲートの残り（§35.8）と配布チャネル（§35.4.2）の�
 **②実機でしか測れない項目のチェックリスト化**（ユーザー実施 — §35.8.1）。
 chromium CDN の実 DL 検証は dist-gate（CI）に置く。※着手時は「この WS の回線では
 PRSS が 400」を再確認して CI を実測地点にしたが、ゲート初回実走で真因は回線ではなく
-**「x64 アセットが供給元から消えていた」**と判明した（§35.9-7(a) 参照 — P1 以来の
+「**x64 アセットが供給元から消えていた**」と判明した（§35.9-7(a) 参照 — P1 以来の
 「別回線で確認」は誤診で、amd64 の install-chromium は全環境で壊れていた）。
 
 | # | 対象 | 変更内容 |
@@ -846,7 +846,7 @@ PRSS が 400」を再確認して CI を実測地点にしたが、ゲート初�
 | 3 | `deploy/local/dist-stub-test.sh`（新設） | fake gh で publish-dist.sh の呼び出し列を固定(新規 publish / `<r>` 再利用スキップ / app tag 衝突 fail / url 不一致 fail / --seed)＋ install.sh の **file:// 実走**（偽 dist レイアウトから DL→sha 照合→展開→symlink→`af` 実在まで。sha 改竄で fail する否定経路含む） |
 | 4 | `.github/workflows/release-gate.yml` | **`dist-gate` job 追加**（軽量・docker 不要）: bash -n + shellcheck（publish-dist.sh / install.sh / dist-stub-test.sh）+ dist-stub-test.sh 実走 + **chromium CDN 実 DL 検証**（§35.9-7(a) の消化: versions.json ピン build の zip を第一ホストからフル DL → unzip で `chrome-linux/chrome` 実在 → fallback 2 ホストは ranged GET + 先頭 1KiB が第一ホストと一致＝同一物確認 → noto_cjk raw URL の疎通）。**native-gate へ「ビルド済み C を file:// 経由で install.sh 導入 → 導入先の `af` が動く」step を追加**（インストーラと実成果物の噛み合わせを実 tar で検証）。反復用マーカー `[dist-only]` を追加（dist-gate 以外をスキップ） |
 | 5 | `.github/workflows/publish-dist.yml`（新設） | 実 publish の CI 経路（§35.4.2「private Actions の workflow_dispatch」の実装）。inputs: `version`。secret **`DIST_PUBLISH_TOKEN`**（fine-grained PAT・dist repo の Contents RW）必須 — 無ければ設定手順を案内して fail。手順: `build.sh --all` → `publish-dist.sh --seed`。`<r>` 不変リリース（`--rootfs-json`）はローカル実施（§35.8.2 runbook） |
-| 6 | docs | §35.8 表の更新（配布チャネル行の追加）+ **§35.8.1 native 実機ゲート チェックリスト（ユーザー実施）**新設（環境記録・導入・起動・E2E・chromium sandbox 実測コマンドと判定・オフライン再起動・報告様式）+ **§35.8.2 実 publish runbook**（初回セットアップ: repo 作成 → PAT → secret → dispatch → 実機 install 検証）。docs/34 §34.6・deploy/native/README.md から相互参照（README にはワンライナー導入を追記） |
+| 6 | docs | §35.8 表の更新（配布チャネル行の追加）+ **§35.8.1 native 実機ゲート チェックリスト（ユーザー実施）** 新設（環境記録・導入・起動・E2E・chromium sandbox 実測コマンドと判定・オフライン再起動・報告様式）+ **§35.8.2 実 publish runbook**（初回セットアップ: repo 作成 → PAT → secret → dispatch → 実機 install 検証）。docs/34 §34.6・deploy/native/README.md から相互参照（README にはワンライナー導入を追記） |
 
 **P4 ゲート**:
 
@@ -948,7 +948,7 @@ grep はビルドが生成・埋め込みする物を原理的に見られない
   落とし、ビットマップで篩ってから sha256 で確定する 2 段にした。
 - **語長を台帳に載せる必要がある**（窓幅が要るため）。総当たりの手がかりを少し与える
   が、そもそも辞書語なので隠蔽としては元々弱い。**目的は「grep や検索エンジンで
-  引っかからないこと」**であって秘匿ではない。
+  引っかからないこと」** であって秘匿ではない。
 - **窓はファイルをまたがない**（leaf ごとに状態を reset）。またぐと隣接ファイルの
   末尾と先頭が偶然つながって**偽の一致を作る**。
 - **短すぎる語は登録できない**（5 rune 未満は error）。汎用語を入れるとイメージ内の
@@ -1073,7 +1073,7 @@ pool もいずれ掃除されるので延命にしかならない）。
 | native（C+R・ワンライナー導入の本線） | `build.sh` が明示的に **0** | 焼かない。初回起動の boot-install が `versions.json` のピンで取得 |
 | compose のイメージ（GHCR で配布） | `release.sh` は未指定 → Dockerfile 既定の **1** | 焼く |
 
-★**[ADR 0037](../decisions/0037-registry-policy.ja.md)（B の廃止）はこの行を消していない。**
+★ **[ADR 0037](../decisions/0037-registry-policy.ja.md)（B の廃止）はこの行を消していない。**
 B は「`docker save` で tar 化して配る」経路が無くなっただけで、**イメージ自体は同じものを
 GHCR へ push する**。したがって **compose のイメージは今も chromium を apt の厳密版 pin で
 焼いており、`ARG CHROMIUM_VERSION` が Debian の security 更新で腐ると publish のビルド段が
@@ -1258,7 +1258,7 @@ git tag -a v0.3.0 <build commit> -m "agent-fleet 0.3.0" && git push origin v0.3.
 確定しないため**ノート側には書かない**。publish はノート未整備を hard error にする
 （dist-stub-test の case 10/11 で固定）。release-gate の dist-gate が
 `gen-changelog.sh --check` と「台帳の全版にノートがある」こと、および
-**「台帳の全版が `notes/SUMMARY.md` / `.ja.md` に節を持つ」**ことを検査する
+「**台帳の全版が `notes/SUMMARY.md` / `.ja.md` に節を持つ**」ことを検査する
 （横断索引は手で書くので、足し忘れに気づく仕組みが他に無い・2026-09-07 追加）。
 **アセットは不変だがノート本文はメタデータなので後から差し替え可能**
 （`gh release edit v<v> --notes-file -`）。0.1.0〜0.2.3 のノートはこの経路で後追い

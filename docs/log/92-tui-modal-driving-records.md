@@ -1,7 +1,7 @@
 # 92（記録）— TUI モーダル駆動の実測記録
 
 > 凍結アーカイブ。**プレイブック（検証手順・回帰チェック・恒久修正の不変条件）は
-> [build/92](../build/92-driving-a-tui.ja.md) へ移した。**ここに残したのは、特定の CLI 版に
+> [build/92](../build/92-driving-a-tui.ja.md) へ移した**。ここに残したのは、特定の CLI 版に
 > 対する日付つきの実測と事件記録——寿命が違うので現役の棚には置けない。
 
 Console のチャットは、エージェント TUI のモーダル（claude の AskUserQuestion=AUQ、プラン承認、
@@ -333,7 +333,7 @@ env -u AF_SESSION_NAME claude -p --setting-sources project --settings ./hooks.js
 
 **教訓**: 「ターンは一本道」という前提を置いたフック配線は、BG サブエージェント /
 Workflow / Monitor が入った時点で崩れる。フックで状態を書く経路を足すときは
-**「裏で並行に鳴りうるか」**を必ず一度問うこと。
+「**裏で並行に鳴りうるか**」を必ず一度問うこと。
 
 ## 9. キャンセルした AUQ が「また聞かれる」— 保留ペイロードが決着より長生きする（2026-08-31、claude 2.1.251 で実測・修正済み）
 
@@ -385,7 +385,7 @@ Workflow / Monitor が入った時点で崩れる。フックで状態を書く�
    流れていても効く。掃除は出す経路と同じ関数の中に置く（分けると必ず片方だけ直される）。
 2. `isDeclinedAnswer` に `The tool use was rejected` を追加。§6 で入れた判定は
    `(No answer provided)` しか見ておらず、Console のキャンセルが生む文言を取り逃していた
-   ため、却下された質問が**「回答済み」を名乗り、回答欄に英文の定型文**が入っていた。
+   ため、却下された質問が **「回答済み」を名乗り、回答欄に英文の定型文**が入っていた。
 
 回帰テストは `session_transcript_test.go`（`TestSweepSettledPending` — 掃除する／生きた
 質問は掃除しない／決着が無ければ触らない、の3件を `surfacePendingPayloads` 越しに固定）と

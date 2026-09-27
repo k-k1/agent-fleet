@@ -63,7 +63,7 @@ tmux new -s main            # 本番の「tmux にアタッチ」を手で再現
 ```
 
 ### 3. `claude /login`（H1/H2）
-公式挙動（[02 §2.6](../build/08-integrations.ja.md#85-claude-認証オンボーディングl2-の本丸)）では、ヘッドレス環境は**自動でコード方式（方式 A）**に切替わる。
+公式挙動（[02 §2.6](../build/08-integrations.ja.md#85-claude-認証オンボーディングl2-の本丸)）では、ヘッドレス環境は**自動でコード方式（方式 A）** に切替わる。
 ```bash
 claude                      # 初回起動。未ログインなら /login を案内、または明示的に /login
 ```

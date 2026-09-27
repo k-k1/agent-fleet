@@ -54,15 +54,15 @@
 - サービスプレビュー（`/preview/<port>` 経路、commit `23975c8`）。CP `handlePreview`（`rtFor` 認証 + `Bearer` 付与 + `X-Forwarded-*`）→ Agent `/proxy/<port>`（ReverseProxy）→ コンテナ内 `127.0.0.1:<port>`。隔離不変。Console は WS バーのポート入力＋新タブ（`?tenant=` fallback）。HTTP のみ（WS/HMR は次段）。詳細は現行 [dev/05 §5.3](build/05-api.md)（当時参照した reference/preview と HANDOFF §6.10.9 は再編で廃止）。
 ## 2026-06-29
 - 設定→接続で**認証アカウントを表示**。claude（`claude auth status` の email/plan）、codex（`auth.json` の `auth_mode` + id_token claims から email/plan、例 `…@gmail.com · plus`）。
-- 接続を**「エージェント / git ホスティング」にカテゴリ分け**。GitHub/Bitbucket も実アカウント表示（`/user`・`/2.0/user`、store キャッシュ＝polled endpoint で都度 API を叩かない、`gitEntry.Login`/`bitbucketCreds.Account`）。
+- 接続を **「エージェント / git ホスティング」にカテゴリ分け**。GitHub/Bitbucket も実アカウント表示（`/user`・`/2.0/user`、store キャッシュ＝polled endpoint で都度 API を叩かない、`gitEntry.Login`/`bitbucketCreds.Account`）。
 - git 接続に **ID（ハンドル）+ email** を表示（GitHub `/user`、Bitbucket `/2.0/user` + `/user/emails`、`gitEntry.Email`/`bitbucketCreds.Email` にキャッシュ）。例: github `k-k1 · k1.kami@gmail.com` / bitbucket `bb-user · dev@example.com`。
 - 表示: アイコンセット選択を折り返しチップ化（スマホで見切れ解消、`ChipChoice`）。設定/管理モーダルのヘッダ余白拡大 + ✕ タップ域確保（スマホは `safe-area-inset-top`）。
-- セッション一覧/ファイルツリーの UI 微修正: (1) 停止中セッション名を `--muted`→`--fg` opacity0.72 で可読に / (2) 接続中セッションは**先頭固定（hoist）を維持** + pin バッジを行の**右上に絶対配置**（セッション名は左寄せ固定。`.session-row` を `position:relative`、pin は `position:absolute`）/ (3) ファイルツリー選択色のハードコード（`#2a3a44`/`#2f5a6a`）を `--hover-bg`/`--active-bg` に＝ライトモードで暗いままを解消 / (4) **`.pane-head` に `z-index:3`**＝sticky なセクションヘッダ（SESSIONS 等）が sticky なピン行に覆われないように。
+- セッション一覧/ファイルツリーの UI 微修正: (1) 停止中セッション名を `--muted`→`--fg` opacity0.72 で可読に / (2) 接続中セッションは**先頭固定（hoist）を維持** + pin バッジを行の**右上に絶対配置**（セッション名は左寄せ固定。`.session-row` を `position:relative`、pin は `position:absolute`）/ (3) ファイルツリー選択色のハードコード（`#2a3a44`/`#2f5a6a`）を `--hover-bg`/`--active-bg` に＝ライトモードで暗いままを解消 / (4) **`.pane-head` に `z-index:3`** ＝sticky なセクションヘッダ（SESSIONS 等）が sticky なピン行に覆われないように。
 - ピン留め行の sticky 固定が効かない回帰を修正。pin 右上化で足した `.list>li.session-row{position:relative}` が `.session-row.pinned{position:sticky}` を**詳細度で上書き**し上部固定を無効化（少し下にズレる/SESSIONS の隙間から見える）。pin はピン留め行のみ＝sticky が包含ブロックなので relative 不要 → 削除して sticky 復活。
 - codex resume が新規セッションになるバグ修正。codex のフックは claude 同様**入れ子スキーマ** `hooks.<E>=[{hooks=[{type,command}]}]` が必要（フラットはパースは通るが無音で発火しない）。フラットだとフック未発火→session_id 未捕捉→resume で id 無し→新規化。実機で発火・session_id 捕捉・resume を確認。
 - Console 接続 UI 刷新: Claude を **OAuth 接続ボタン**化（クリックでサインインを別タブ自動オープン＋コード貼付、`window.open`）/ Codex・GitHub の認証コードを**クリックでコピー**（`CopyCode`）/ 接続中の **✕→「切断」** テキストボタン（`DisconnectButton`）。端末の「sign-in URL」コピー機能は廃止（`reconstructURL` 撤去）＝設定>接続で代替。
 - Workspace「**作り直す**」を WS バーから **設定>環境の危険ゾーン**（警告ダイアログ付き、`EnvTab` の `WorkspaceDangerZone`）へ移設。WS バーは Start/Stop/更新/プレビューのみに。
-- Repos 行を簡素化: **fetch / 🗑削除 / ブランチ切替を右ペイン（ソース管理ヘッダ）へ移設**し、**起動ボタンをブランチ位置（名前の右）**へ。削除後は端末へ戻る。
+- Repos 行を簡素化: **fetch / 🗑削除 / ブランチ切替を右ペイン（ソース管理ヘッダ）へ移設**し、**起動ボタンをブランチ位置（名前の右）** へ。削除後は端末へ戻る。
 - 左ペインのドロップダウン（起動 / セッション⋯）が下のセクション（FILES 等）に隠れる問題を修正。flex item にスコープされる z-index を、メニュー展開中だけ `:has()` で当該 `.pane-section` を上位スタッキングへ引き上げて解消。
 - SCM diff を**ファイル毎の折り畳み＋旧/新行番号ガター**（codeleaf 風、`splitDiffFiles`/`diffRows`/`FileDiff`）。スマホは `scmbody` を縦積みし変更/履歴を上部（最大38vh）＋ diff 全幅。
 - **SESSIONS/REPOS のピン留めを廃止**（順序が入れ替わり使いづらいとの FB）。`pinFirst`/`listutil.js`・pin バッジ・sticky を撤去し、接続中/SCM 表示中を **選択ハイライト（`.active`）のみ**に。← 6/29 前段（57/58）の「ピン先頭固定＋バッジ＋sticky 回帰修正」系はこれで撤回。

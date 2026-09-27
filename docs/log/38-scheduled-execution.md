@@ -123,7 +123,7 @@
 
 ユーザーは「毎朝9時」「平日の夕方6時」「6時間おき」のように**自然言語で**オペレーターに
 頼めるようにする。ただし DB とスケジューラが評価するのは**構造化 spec（cron/interval/once
-＋tz）**であって自然言語文字列ではない。実装方針:
+＋tz）** であって自然言語文字列ではない。実装方針:
 
 - `create_schedule` MCP は **構造化 spec を受ける**（`spec_kind`＋`spec`＋`tz`）。オペレーター
   （LLM）がユーザーの自然言語を cron 等へ**登録時に翻訳**して渡す。生の自然言語を DB に
@@ -506,7 +506,7 @@ WS も Agent も正常に起動しているのに、その朝だけ何も実行�
   overlap の fake-agent 統合）。**意図的な限界**（決定 3）: 使用率トリガ `context_pct` は未実装
   （停止中 WS で usage を読めないため後続 best-effort）。**残**: 実フリート再ビルド後の実機目視、
   Console のスケジュール一覧に reuse/rotation の表示（現状 read-only 台帳は DTO に出るが UI 未装飾）。
-- **P5.1（Console/CP 改良・2026-07-23）**＝利用者フィードバック7件:
+- **P5.1（Console/CP 改良・2026-07-23）** ＝利用者フィードバック7件:
   ① **無効デプロイでは左レールのスケジュールを隠す**＝`whoami` に `scheduler_enabled`
   （＝`schedulerRunning`）を追加し、`App.tsx` が偽なら `<SchedulesSection>` を描画しない
   （発火し得ないデプロイで UI ノイズを出さない）。② **env サンプル追記**＝`deploy/compose/.env.example`
@@ -525,7 +525,7 @@ WS も Agent も正常に起動しているのに、その朝だけ何も実行�
   `sch_98968564…` は状態確認依頼（実フリート DB は当環境から触れないためオペレーター会話で
   `list_schedules` する）。テスト＝CP +2件（manual-fire フラグ set/clear、run session/trigger 往復）
   ＋console read.test +2件（`runStatusLabelKey`/`isManualRun`）。CP 224／console typecheck・vitest 394・
-  i18n-lint・build 緑。**⑧ スケジューラを既定 ON（opt-out）へ反転（2026-07-23・ユーザー判断）**＝`main.go` の
+  i18n-lint・build 緑。**⑧ スケジューラを既定 ON（opt-out）へ反転（2026-07-23・ユーザー判断）** ＝`main.go` の
   `AF_SCHEDULER_INTERVAL` 既定を `0`→`1m`（`=0` で hard-off は温存）。根拠＝tick は `enabled,next_run`
   インデックス済み due-query 1本でスケジュール0件なら完全 no-op・「作った定時実行が実際に発火する」方が
   驚きが少ない。リスク本体は tick でなく発火＝停止中 WS の wake（意図的にスケジュールを作った時だけ発生・

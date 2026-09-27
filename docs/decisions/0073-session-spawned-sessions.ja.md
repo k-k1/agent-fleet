@@ -119,7 +119,7 @@
 `--self-report` との論理積で、`--chromium-attach` / `--peer-messaging` / `--image-gen` /
 `--fleet-observe` と同じ加算パターン（ADR 0041 決定 3）。ui-prefs のキーは `sessionFleetSpawn`。
 
-`--fleet-observe` に相乗りさせない。段階 1 の説明文は利用者に**「動かす操作は一切増えません」**と
+`--fleet-observe` に相乗りさせない。段階 1 の説明文は利用者に「**動かす操作は一切増えません**」と
 約束しており、相乗りはその約束を無言で撤回する。
 
 ~~ただし **Console 上では観測 ON を前提条件にする**~~（2026-09-09 に前提条件ごと消滅した）。
@@ -167,7 +167,7 @@
   `resume_session` / `get_session_output` がそこに並んでいることこそが、段階 2 で固定したい性質
   である（`--fleet-spawn` が無ければ出ない）。~~8 本~~ ~~9 本~~ 10 本（上の補遺）を一覧から抜くのは、その性質を試験から
   取り除くことに等しい。
-- 代わりに**`--fleet-spawn` を立てたときちょうど 10 本が増えることを固定する試験を足す**。
+- 代わりに **`--fleet-spawn` を立てたときちょうど 10 本が増えることを固定する試験を足す**。
   2 本セットで「観測だけでは出ない」と「起動を入れると出るのはこの ~~8 本~~ ~~9 本~~ 10 本だけ」の両方が留まる
   （試験名も ~~`TestFleetSpawnAddsExactlyItsNineTools`~~ `TestFleetSpawnAddsExactlyItsTenTools`）。
 
@@ -553,7 +553,7 @@ codex は af builtin へ焼かれた `tool_timeout_sec=600` に収まり、**ope
   （`locales/ja/usage.ts:127` / `locales/en/usage.ts:128`）。
 - **Meta による系譜追跡は Meta が在るあいだだけ有効。** `RemoveMeta`（削除導線
   `session_handlers.go:1035`）で `origin_session` は消え、その子の親は二度と辿れない。使用量の行に
-  焼かれた `origin` は残るので**「無人の消費だった」ことは残り、「誰の子だったか」は消える**。
+  焼かれた `origin` は残るので **「無人の消費だった」ことは残り、「誰の子だったか」は消える**。
   系譜を永続させたいなら別の置き場（台帳）が要る——本 ADR では取らない。
 
   **補遺（2026-09-10・docs/log/94）: 判断は変えないが、対価が目に見えるようになった。** 左ペインが

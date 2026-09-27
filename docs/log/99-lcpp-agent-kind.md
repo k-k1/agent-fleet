@@ -190,7 +190,7 @@ decisions/0084（エンジン表示とテナント別可否）。**判断と棄�
   lcpp はターンを自分で回すので `status.Persist(sid, working|idle|question)`（`internal/status/status.go:155`）を
   **直接書く**。`DriveState`（`sessionx/agent.go:74-141`）は claude と同じ generic 経路で読める。
 - ⚠️ 既存語彙に無い状態が 1 つ: **engine_waking**（箱の起床。`engine_gateway.go:558` の `pendingGuard`・
-  `errEngineWaking`・wake timeout 900 秒）。最初のターンが**分単位で「working のまま何も出ない」**になる。
+  `errEngineWaking`・wake timeout 900 秒）。最初のターンが**分単位で「working のまま何も出ない」** になる。
   v1 は working ＋ `LastSay="エンジン起動待ち（n 秒）"` で逃がし、新状態 `waking` は Console の語彙変更
   （WireLive/チップ/通知）を伴うので後回し。⚠️ [[borrowed-engine-waking-flattened-on-stream]]: 借用エンジン
   では streamed 経路が 200 を先に書き、far の 503 が `engine_unavailable` に化ける。**自前クライアントは
@@ -274,7 +274,7 @@ hermes-agent はこの表の全部を Python で持っている（`tools/`・`ag
   話す必要がある（うちのサーバが両方受けるのと対称）。
 - 登録簿の扱い: `mcpreg` の materialize は「各 CLI のファイルに書く」。lcpp は書き先が無く、`mcpreg.ForKind`
   相当を**メモリで読む**。`knownKinds` に入れて（利用者が lcpp 向けにサーバを有効化できる）`MaterializedKinds` には
-  入れない＝**「known だが materialize しない kind」は初**。`materialize_test.go:377` の len 一致はそのままで通る。
+  入れない＝ **「known だが materialize しない kind」は初**。`materialize_test.go:377` の len 一致はそのままで通る。
 - プロジェクト MCP（`.mcp.json` 等）は他 kind の綴りを `mcpproj/inspect.go` が既に読める。lcpp 自身の綴りは
   作らない（`COPY_TARGET_KINDS` にも入れない）。
 
@@ -1084,7 +1084,7 @@ MoE・ハイブリッド構造）で計算バッファの実際の必要量が�
 
 課題は §12.5 と同じ（`TestManualLiveAgenticSession`・`workspace/agent/internal/harness/live_manual_test.go`・
 バグ持ちの Go プロジェクトを直させる 5 タスク＋圧縮後の想起 1 問）。番号は #1〜#16 で、#5 は「並列指示あり／なし」
-の 2 走行を数える——§12.5 が実機 6 本（#1〜#6）と数えたのと同じ数え方をそのまま延長し、番号行は**「実機 16 本」**・
+の 2 走行を数える——§12.5 が実機 6 本（#1〜#6）と数えたのと同じ数え方をそのまま延長し、番号行は「**実機 16 本**」・
 #5 の 2 走行を数えると**走行数は計 17**。§12.5 の表はそのまま残し、以下がその延長（#7〜#16）を含む全体表。
 
 🔴 **本節は駆動役セッションが `$HOME/lcpp-live/` の生ログを突き合わせて 1 回訂正している**（初出時は #14 が

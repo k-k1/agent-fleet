@@ -933,7 +933,7 @@ entrypoint は `~/repos は触っていません` と言い、削除対象は `~
    `wsState === "running"` だけ。**`starting` では停止ではなく起動を投げ**、それを 3 が
    捨てる。さらに `wsStartBusy` が `starting` で true になりボタン自体が `disabled`。
 
-**UI から出せる操作が「起動」しか無く、その起動が no-op になる。**復旧には CP を経由しない
+**UI から出せる操作が「起動」しか無く、その起動が no-op になる**。復旧には CP を経由しない
 `aws ecs update-service --desired-count 0` が要った。
 
 ⚠️ 教訓は「**`starting` を一時状態だと決めてかかっていた**」こと。ECS の cold pull は分単位
@@ -982,7 +982,7 @@ phase に載せる（`blocked: <ECS の原文>`）。Console は接頭辞を訳�
 どのスナップショットから作るか）は pool・role・**image** で絞っており、**アーキで絞って
 いなかった**。golden はアーキ毎に 1 本焼かれて**どれも同じ image スタンプを持つ**ので、
 2 つ目のアーキを宣言した瞬間に image が判別力を失い、残る決め手が `snapshotStartedAfter`＝
-**「後に焼き終わった方が勝つ」**になる。ベイカー側の `goldenFor` は最初から `arch` を
+「**後に焼き終わった方が勝つ**」になる。ベイカー側の `goldenFor` は最初から `arch` を
 引数に取っていたので、**読む側だけに穴が空いていた**。
 
 ⚠️ **壊れないのが厄介だった。** §70.5 の自己修復が違うアーキの中身を消して boot-install を

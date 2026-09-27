@@ -34,7 +34,7 @@ updated: "2026-07"
 | `tenant` | 部署単位（既定 1 テナント=全社）。`slug`(unique)・`limits`(JSON: max_workspaces 等)・`isolation`・`key_ref`・ログイン規則 3 種（0039: `allowed_providers`／`auto_join_domains`／`allowed_domains`・すべて CSV。**`allowed_emails` は無い** — 「誰が入れるか」の名簿は `membership` が持つ。[61](../decisions/0043-login-idp.ja.md) §61.9.5）|
 | `identity` | 人。`email`(unique)・`user_key`(unique・sanitize 済みキー)・`role`(`super_admin`\|`user`) |
 | `membership` | identity×tenant の結節。`role`(`tenant_admin`\|`member`)・`UNIQUE(identity_id, tenant_id)`・`status`。**オフボーディングは論理削除**（`status='inactive'`・workspace / home は残る）で、解決系はすべて `status='active'` を要求する。復活は招待 API だけが行う（自動採番経路が復活させると除名が無効化されるため） |
-| `identity_provider` | (provider, subject) → identity の対応（0038 / pg 0021。[61](../decisions/0043-login-idp.ja.md) §61.5）。IdP 側で email が変わっても `user_key`＝home を動かさないための鍵。**行が 1 つでもあれば「一度サインインされた identity」**で、テナント定義 IdP の規則 2' はこれを見て claim と拒否を分ける |
+| `identity_provider` | (provider, subject) → identity の対応（0038 / pg 0021。[61](../decisions/0043-login-idp.ja.md) §61.5）。IdP 側で email が変わっても `user_key`＝home を動かさないための鍵。**行が 1 つでもあれば「一度サインインされた identity」** で、テナント定義 IdP の規則 2' はこれを見て claim と拒否を分ける |
 | `tenant_idp` | テナント定義のサインイン方法（0040 / pg 0023。[61](../decisions/0043-login-idp.ja.md) §61.11）。`UNIQUE(tenant_id, name)`・`issuer`／`client_id`／`secret_enc`＋`key_ref`（テナント鍵で封印）・`trust`・`allowed_tids`／`allowed_domains`(CSV・**ドメインは必須**)・`status`(`pending`\|`active`\|`suspended`)・`approved_by`／`approved_at`。**行を書くのは tenant_admin、`active` にできるのは super_admin だけ**（IdP の登録は「誰であるか」を宣言する権限で、identity は email でデプロイ全体に 1 つのため）。CP が見る provider id は `t:<tenant-slug>:<name>` で、env 由来（`entra` 等）と名前空間が分かれている |
 | `tenant_git_oauth` | テナントが登録した git プロバイダの OAuth アプリ（0048 / pg 0032。[71](../decisions/0052-tenant-git-oauth.ja.md)）。`UNIQUE(tenant_id, provider)`（`provider` = `github`\|`bitbucket`）・`client_id`・`secret_enc`＋`key_ref`（`tenant_idp` と同じ封筒）。**status 列が無いのが `tenant_idp` との差**——clone 用の OAuth アプリは「誰であるか」を宣言せず、`redirect_uri` は CP 固定・token は本人のワークスペースにしか渡らないので、tenant_admin の保存で即有効（ADR0052 決定 3）。GitHub 行は device flow なので `secret_enc` は常に空。**env は読まない**（`BITBUCKET_OAUTH_KEY/SECRET` は廃止、`GITHUB_OAUTH_CLIENT_ID` はサインイン専用へ） |
 | `user_limit` | membership 単位の上限（`max_sessions`・`disk_gb`・`mem_limit`＝Workspace RAM 上限 bytes、0018）。テナント枠内で管理者が設定 |
@@ -94,7 +94,7 @@ membership ──< pat / user_limit / ssm_profile ──< ssm_host / memo / memo
   「Postgres mirror of migrations/0028_mcp_server.sql」）。
 - ⚠️ **片方に足して片方を忘れても、誰も気づかない。** 実際に `memo_category`（`migrations/0020`）が
   Postgres 側へ写されないまま残り、ECS/RDS のデプロイではカテゴリの API が全部 500 を返していた
-  （Console は配列でない応答を空リストに畳むので、症状は「エラー」ではなく**「カテゴリが出ない」**
+  （Console は配列でない応答を空リストに畳むので、症状は「エラー」ではなく「**カテゴリが出ない**」
   ——障害として報告しようがない形だった）。2026-08-22 に `migrations-pg/0030` で写し、
   **`TestSchemaDialectParity`（`store_schema_parity_test.go`）が両系列の着地スキーマを実測で
   突き合わせる**ようにした。`AF_TEST_DATABASE_URL` を与えたときだけ走るので、**マイグレーションを

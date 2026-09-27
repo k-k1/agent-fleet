@@ -83,7 +83,7 @@ Docker host 側で `docker inspect --format '{{.Image}}' 15592d470c28` を実行
 
 ## 4. 機能シナリオと長時間計測
 
-計測は §2 の追加修正入り Agent（`:7799`）で、**通常 Console 経路（`predelay=0` の即時 attach、`vdelay=0`）**で採取。
+計測は §2 の追加修正入り Agent（`:7799`）で、**通常 Console 経路（`predelay=0` の即時 attach、`vdelay=0`）** で採取。
 定常描画の帯域・資源値は焼き込みイメージ（backpressure 修正済み）と同一の streaming 状態に到達したもので、
 追加修正は attach 起動時のみに効くため定常値には影響しない。
 
