@@ -230,6 +230,8 @@ func serve() {
 	go afdb.Autostart("agent boot")
 	// Old copilot / cursor versions that earlier installs left in home.
 	go pruneOldCLIVersionsAtBoot()
+	// Throwaway chromium profiles, orphaned ~/.af-work dirs, superseded node / kiro versions.
+	go pruneLeftoversAtBoot()
 
 	mux := buildMux()
 

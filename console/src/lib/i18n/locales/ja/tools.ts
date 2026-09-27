@@ -285,6 +285,20 @@ export const tools = {
   "machine.tool_empty_failed": "{name} を空にできませんでした: ",
   "machine.tool_note":
     "go・npm・uv・pip がホームに溜めるキャッシュです。上限なく増え、自動では消えません。数えるには全ファイルを読むので、ボタンを押したときだけ測ります。",
+  "machine.left_title": "使われなくなったファイル",
+  "machine.left_failed": "使われなくなったファイルを測れませんでした。",
+  "machine.left_kind_chromium": "Chromium の使い捨てプロファイル",
+  "machine.left_kind_af_work": "終わったセッションの作業用フォルダ",
+  "machine.left_kind_node": "古い Node.js",
+  "machine.left_kind_kiro": "古い Kiro",
+  "machine.left_count": "{size}（{count} 個）",
+  "machine.left_zero": "なし",
+  "machine.left_delete": "削除",
+  "machine.left_deleting": "削除しています…",
+  "machine.left_deleted": "{name} を {count} 個削除しました（{size}）。",
+  "machine.left_failed_delete": "{name} を削除できませんでした: ",
+  "machine.left_partial": "一部は削除できませんでした: ",
+  "machine.left_note": "強制終了した Chromium が残したプロファイル、もう無いセッションの ~/.af-work、新しいパッチに置き換わった Node.js、入れ替わった Kiro です。二度と読まれないので、消しても次のビルドは遅くなりません。Agent の起動時にも自動で消します。使用中のものと、1 時間以内に変更されたものは残します。",
   "machine.note_who_changes":
     "サイズとマシンの種類はテナント管理者が決めます。変更は次にワークスペースを起動したときに反映されます。",
 

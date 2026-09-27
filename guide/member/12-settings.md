@@ -417,6 +417,14 @@ administrator's to set.
   build or install is using shows **"In use"** and cannot be emptied until that finishes.
   Old versions of the Copilot and Cursor CLIs are not listed here: they are removed automatically when
   the Workspace starts, keeping the current version, the pinned one, and any a running session still uses.
+- **Leftover files** — things nothing reads again: throwaway profiles that killed headless Chromium
+  runs left under `~/.config/chromium-headless` and `~/.cache/chromium-headless`, `~/.af-work` folders
+  whose session (in the trash included) and working copy are gone, Node.js patches a newer patch of the
+  same major replaced, and Kiro versions other than the installed and the pinned one. The Agent removes
+  them each time it starts; this section is for a workspace that runs for weeks without a restart.
+  **"Measure"** counts what would go now, and **"Delete"** removes one kind right away — without a
+  confirmation, because unlike a tool cache nothing gets slower afterwards. Anything in use by a
+  process or changed within the last hour is kept.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain

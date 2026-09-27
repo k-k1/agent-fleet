@@ -154,6 +154,7 @@ export function MachineView({ d }: { d: WsMachine }) {
       {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} own={own} />}
       {d.running && <DiskSection />}
       {d.running && <ToolCacheSection />}
+      {d.running && <LeftoverSection />}
     </div>
   );
 }
@@ -499,6 +500,101 @@ function ToolCacheSection() {
           <p>{tr("machine.tool_confirm_body", { size: humanSize(confirm.bytes) })}</p>
         </ConfirmDialog>
       )}
+    </section>
+  );
+}
+
+// The /cleanup/leftovers answer (workspace/agent/leftovers.go).
+interface LeftoverRow extends Place {
+  kind: string;
+  count: number;
+  bytes: number;
+}
+
+// A kind this Console has no label for (a newer Agent) shows by its name.
+const leftoverLabel = (kind: string) => tMaybe("machine.left_kind_" + kind.replace(/-/g, "_")) ?? kind;
+
+// LeftoverSection — throwaway chromium profiles, orphaned ~/.af-work folders and superseded
+// node / kiro versions: things nothing reads again (#1038).
+//
+// Not part of ToolCacheSection on purpose: emptying a cache costs the next build, removing
+// these costs nothing, and one warning over both would blur the two. The Agent already
+// removes them at boot; this is for a workspace that runs for weeks without a restart, and
+// it shows what a removal took. The delete runs the boot pass for one kind, so there is no
+// confirmation — what it would keep (in use, changed within the hour) is judged there.
+function LeftoverSection() {
+  const tr = useT();
+  const [msg, setMsg] = useState("");
+  const [rows, setRows] = useState<LeftoverRow[] | null>(null);
+  const [hidden, setHidden] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
+  const [err, setErr] = useState(false);
+  const [busy, setBusy] = useState("");
+
+  const measure = async () => {
+    setMeasuring(true);
+    setErr(false);
+    try {
+      const res = await api("api/cleanup/leftovers");
+      if (!res || res.error || !Array.isArray(res.kinds)) throw new Error("");
+      setHidden(!!res.unsupported);
+      setRows(res.kinds);
+      setTruncated(!!res.truncated);
+    } catch {
+      setErr(true);
+    } finally {
+      setMeasuring(false);
+    }
+  };
+
+  const remove = async (row: LeftoverRow) => {
+    const label = leftoverLabel(row.kind);
+    setBusy(row.kind);
+    try {
+      const res = await api("api/cleanup/leftovers/" + encodeURIComponent(row.kind), { method: "DELETE" });
+      if (res?.error) setMsg(tr("machine.left_failed_delete", { name: label }) + (res.error.message ?? res.error.code));
+      else {
+        const done = tr("machine.left_deleted", { name: label, count: res?.count ?? 0, size: humanSize(res?.bytes ?? 0) });
+        // Some went and some did not: say both, not a clean success.
+        setMsg(res?.failed ? done + " " + tr("machine.left_partial") + res.failed : done);
+      }
+    } catch {
+      setMsg(tr("machine.left_failed_delete", { name: label }));
+    } finally {
+      setBusy("");
+    }
+    // Whatever happened, the counts above are stale now.
+    await measure();
+  };
+
+  // Outside a Workspace image the Agent does not touch home, so there is nothing to offer.
+  if (hidden) return null;
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("machine.left_title")}</h4>
+      {err && <p className="muted ds-sub">{tr("machine.left_failed")}</p>}
+      {rows?.map((r) => (
+        <Row key={r.kind} label={leftoverLabel(r.kind)}>
+          <span className="mv-val mv-size">
+            {r.count > 0 ? tr("machine.left_count", { size: humanSize(r.bytes), count: r.count }) : tr("machine.left_zero")}
+          </span>
+          <PlaceLine place={r} />
+          {r.count > 0 && (
+            <Button small icon="trash" onClick={() => remove(r)} disabled={!!busy}>
+              {busy === r.kind ? tr("machine.left_deleting") : tr("machine.left_delete")}
+            </Button>
+          )}
+        </Row>
+      ))}
+      <div className="mv-actions">
+        <Button small icon="refresh" onClick={measure} disabled={measuring}>
+          {measuring ? tr("machine.tool_measuring") : tr("machine.tool_measure")}
+        </Button>
+      </div>
+      {msg && <p className="ds-sub">{msg}</p>}
+      {truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
+      <p className="muted ds-sub">{tr("machine.left_note")}</p>
     </section>
   );
 }

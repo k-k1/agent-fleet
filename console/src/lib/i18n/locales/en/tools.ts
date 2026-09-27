@@ -288,6 +288,20 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.tool_empty_failed": "Couldn't empty {name}: ",
   "machine.tool_note":
     "Caches that go, npm, uv and pip keep in your home. They grow without limit and are never emptied automatically. Measuring reads every file, so it runs only when you press the button.",
+  "machine.left_title": "Leftover files",
+  "machine.left_failed": "Couldn't measure the leftover files.",
+  "machine.left_kind_chromium": "Chromium throwaway profiles",
+  "machine.left_kind_af_work": "Work folders of ended sessions",
+  "machine.left_kind_node": "Old Node.js versions",
+  "machine.left_kind_kiro": "Old Kiro versions",
+  "machine.left_count": "{size} ({count})",
+  "machine.left_zero": "None",
+  "machine.left_delete": "Delete",
+  "machine.left_deleting": "Deleting…",
+  "machine.left_deleted": "Deleted {count} of {name} ({size}).",
+  "machine.left_failed_delete": "Couldn't delete {name}: ",
+  "machine.left_partial": "Some could not be deleted: ",
+  "machine.left_note": "Profiles that killed Chromium runs left behind, ~/.af-work folders whose session is gone, Node.js patches a newer one replaced, and Kiro versions that were swapped out. Nothing reads them again, so deleting them doesn't slow the next build. The Agent also removes them when it starts. Anything in use or changed within the last hour is kept.",
   "machine.note_who_changes":
     "The size and the kind of machine are set by your tenant administrator, and a change applies the next time the workspace starts.",
 
