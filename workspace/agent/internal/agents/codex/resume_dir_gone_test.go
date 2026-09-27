@@ -11,9 +11,14 @@ import (
 // A Managed resume whose working folder is gone is refused before anything else happens,
 // like every other Managed driver (#1039): no runtime is started, no handle registered, and
 // the slot's id mapping is left as it was so the conversation is reachable again once the
-// folder comes back.
+// folder comes back. The ledger assertion guards the ordering only in part: if the check
+// regressed, Ensure fails first here (the runtime is disabled), so the test catches it by the
+// error, not by the overwrite the check exists to prevent.
 func TestResumeRefusesMissingDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // isolate the sid ledger
+	// Never reach a real runtime if the check regresses: Ensure would otherwise adopt a daemon
+	// another session runs on the default address, before any login gate.
+	t.Setenv("AF_CODEX_APP_SERVER_DISABLE", "1")
 	dir := filepath.Join(t.TempDir(), "gone")
 	m := session.Meta{Name: "dir-gone-" + t.Name(), Kind: session.KindCodex, Dir: dir}
 	slot := session.UUID(m.Dir, m.Name)
