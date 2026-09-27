@@ -83,6 +83,13 @@ func TestTerminalNotifierThrottles(t *testing.T) {
 		t.Fatalf("A B A B: %d events, want 2", len(*got)-before)
 	}
 
+	// The same text over another sequence is still a repeat.
+	before = len(*got)
+	n.Notify(oscnotify.Notification{Proto: "osc99", Body: "A"})
+	if len(*got) != before {
+		t.Fatalf("same text as OSC 99: %d events, want 0", len(*got)-before)
+	}
+
 	// A burst of distinct messages stops at the budget, and the budget refills.
 	*now = now.Add(terminalNotifyBurstWindow)
 	before = len(*got)

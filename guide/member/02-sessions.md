@@ -230,7 +230,7 @@ phone during a commute (shell / ssm don't notify).
 When a program running in a session **asks its terminal for a notification** (the OSC 9 / 99 /
 777 escape sequences — you can emit one yourself, e.g. `printf '\e]9;Build done\a'`), it
 arrives in the notification center as **"Terminal notification"**, with a browser notification
-too (not while that session is on screen, nor when the browser has not been allowed to notify).
+too (not while that session is in the active pane, nor when the browser has not been allowed to notify).
 That lets a shell session tell you when a long build finishes. claude / codex / opencode already
 report the same moments through their own channel, so their terminal notifications are not used,
 to avoid duplicates.

@@ -36,6 +36,10 @@ func terminalNotifyHasHooks(kind string) bool {
 	return false
 }
 
+// terminalNotifyText is what the repeat filter compares: the text, not the sequence
+// that carried it, since a program may send the same message as OSC 9 and OSC 99.
+type terminalNotifyText struct{ title, body string }
+
 // TerminalNotifier turns the notifications found in one session's pane output
 // into outbox events. One lives in each record-terminal process, which is the
 // only reader of that pane's raw bytes, so its throttle state needs no lock.
@@ -45,7 +49,7 @@ type TerminalNotifier struct {
 	Now func() time.Time
 	Put func(notice.Event) error
 
-	seenAt   map[oscnotify.Notification]time.Time
+	seenAt   map[terminalNotifyText]time.Time
 	recentAt []time.Time
 }
 
@@ -64,7 +68,8 @@ func (t *TerminalNotifier) Notify(n oscnotify.Notification) {
 			delete(t.seenAt, k)
 		}
 	}
-	if _, dup := t.seenAt[n]; dup {
+	key := terminalNotifyText{n.Title, n.Body}
+	if _, dup := t.seenAt[key]; dup {
 		return
 	}
 	kept := t.recentAt[:0]
@@ -84,9 +89,9 @@ func (t *TerminalNotifier) Notify(n oscnotify.Notification) {
 		return
 	}
 	if t.seenAt == nil {
-		t.seenAt = map[oscnotify.Notification]time.Time{}
+		t.seenAt = map[terminalNotifyText]time.Time{}
 	}
-	t.seenAt[n] = at
+	t.seenAt[key] = at
 	t.recentAt = append(t.recentAt, at)
 	ev := notice.New(TerminalNotificationKind, m.Name, m.Kind, session.Display(m))
 	ev.Payload["proto"] = n.Proto
