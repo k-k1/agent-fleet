@@ -81,10 +81,11 @@ export type PaneContent =
   /**
    * The image-generation studio (ADR 0081, ADR 0100 decision 10): a form, a queue and its
    * results, and — once an agent is attached — the studio it edits with the member. `studioId`
-   * is the Agent's studio (a UUID); null is the studio-less pane whose form is the
-   * localStorage draft (`af.imagegen-draft.<ws>`), as before ADR 0100. The draft itself never
-   * lives here: the layout store is not a place for a 2 kB prompt.
-   * `sameTarget` is the studio id, and null matches null, so the studio-less pane stays one.
+   * is the Agent's studio (a UUID). null survives only in layouts saved before every pane had a
+   * studio (decision 10, revised): such a pane moves the browser's localStorage draft
+   * (`af.imagegen-draft.<ws>`) into a new studio on mount and replaces its own target. The draft
+   * itself never lives here: the layout store is not a place for a 2 kB prompt.
+   * `sameTarget` is the studio id, so a second open of one studio focuses the pane that has it.
    */
   | { kind: "imagegen"; studioId: string | null }
   /**

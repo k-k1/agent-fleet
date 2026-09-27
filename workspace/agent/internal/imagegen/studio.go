@@ -109,11 +109,13 @@ type ImageStudioWire struct {
 	RecentLog []DraftLogEntry `json:"recent_log,omitempty"`
 }
 
-// ImageStudioSummary is one row of GET /imagegen/studios.
+// ImageStudioSummary is one row of GET /imagegen/studios. CreatedAt is what the pane names an
+// untitled studio by, so two of them can be told apart in the picker.
 type ImageStudioSummary struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Session   string `json:"session,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at"`
 }
 

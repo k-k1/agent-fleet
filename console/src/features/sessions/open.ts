@@ -23,7 +23,7 @@ import { openImagegen } from "../imagegen/open.ts";
 function openStudioOf(name: string, split: boolean, studio?: string): boolean {
   const id = studio ?? useSessionsStore.getState().sessions.find((s) => s.name === name)?.studio;
   if (!id) return false;
-  openImagegen({ studioId: id, newPane: split });
+  void openImagegen({ studioId: id, newPane: split });
   return true;
 }
 

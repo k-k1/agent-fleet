@@ -1798,7 +1798,7 @@ export function WsBar() {
         <button
           className="ghost ws-split ws-imagegen"
           title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
-          onClick={() => openImagegen()}
+          onClick={() => void openImagegen()}
         >
           <Icon name="wand" />
           <span className="lbl">{tr("wsbar.imagegen")}</span>

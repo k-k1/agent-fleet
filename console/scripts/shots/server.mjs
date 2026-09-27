@@ -185,7 +185,7 @@ const exact = {
   // The image studio (ADR 0100). Without these the studio pane cannot open its studio and the
   // guide's pictures show an error instead of the three columns.
   "/api/imagegen/studios": (q, method) =>
-    method === "POST" ? fx.imagegenStudio(LOCALE, studioReads) : fx.imagegenStudios(LOCALE),
+    method === "POST" ? fx.imagegenNewStudio(crypto.randomUUID()) : fx.imagegenStudios(LOCALE),
   "/api/imagegen/history": () => fx.imagegenHistory(),
   "/api/imagegen/knowledge": (q, method) =>
     method === "POST" ? {} : fx.imagegenKnowledge(LOCALE, q.get("scope") || "family", q.get("key") || ""),
@@ -271,6 +271,8 @@ const re = [
     /^\/api\/imagegen\/studios\/[^/]+$/,
     (m, q, method) => {
       if (method === "DELETE") return {};
+      const made = fx.imagegenCreatedStudio(m[0].split("/").pop());
+      if (made) return method === "PUT" ? { studio: made } : made;
       if (method === "PUT") return { studio: fx.imagegenStudio(LOCALE, studioReads) };
       // Each read counts: from the second one on, the agent has made one more edit, so the
       // pane's poll outlines the field it moved (decision 6).

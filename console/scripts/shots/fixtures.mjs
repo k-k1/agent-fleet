@@ -647,6 +647,7 @@ export function imagegenJobs(locale) {
   const done = (n, seed) => ({
     id: `j${n}`,
     group: "g1",
+    studio: STUDIO_ID,
     state: "done",
     label: locale === "ja" ? "cfg 振り" : "cfg sweep",
     model: "illustrious-v2",
@@ -681,6 +682,7 @@ export function imagegenJobs(locale) {
     jobs: [
       {
         id: "t1",
+        studio: STUDIO_ID,
         state: "done",
         trial: true,
         model: "illustrious-v2",
@@ -696,6 +698,7 @@ export function imagegenJobs(locale) {
       {
         id: "j13",
         group: "g1",
+        studio: STUDIO_ID,
         state: "running",
         label: locale === "ja" ? "cfg 振り" : "cfg sweep",
         model: "illustrious-v2",
@@ -706,8 +709,12 @@ export function imagegenJobs(locale) {
         // No elapsed_ms while it runs: the Console subtracts started_at (lane A's ETag rule).
         started_at: iso(18),
       },
-      { id: "j14", group: "g1", state: "queued", position: 1, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
-      { id: "j15", group: "g1", state: "queued", position: 2, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
+      { id: "j14", group: "g1", studio: STUDIO_ID, state: "queued", position: 1, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
+      { id: "j15", group: "g1", studio: STUDIO_ID, state: "queued", position: 2, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
+      // Pressed in the other studio, and one a session made with generate_image: the studio pane
+      // folds both under "other studios and sessions" (ADR 0100 decision 10, revision 10).
+      { id: "k1", group: "g2", studio: OTHER_STUDIO_ID, state: "queued", position: 3, label: locale === "ja" ? "表紙" : "Cover", model: "illustrious-v2" },
+      { id: "s1", state: "done", model: "illustrious-v2", started_at: iso(900), finished_at: iso(880), files: [file(99, 1)] },
       done(12, 815_723_015),
       done(11, 815_723_014),
       done(10, 815_723_013),
@@ -1626,6 +1633,7 @@ export function sessionsBig(locale, lanes) {
 // for af's tools.
 
 export const STUDIO_ID = "5f0c2d1e-8a4b-4c3d-9e2f-1a2b3c4d5e6f";
+export const OTHER_STUDIO_ID = "0b7d9e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d";
 
 const studioDraft = (dark) => ({
   provider: "comfy",
@@ -1698,13 +1706,28 @@ export function imagegenStudio(locale, reads) {
 }
 
 export function imagegenStudios(locale) {
+  const created = imagegenCreatedList();
   return {
     studios: [
-      { id: STUDIO_ID, title: L(locale, "港の夕暮れ", "Harbour at dusk"), session: "swnd7qa", updated_at: ago(1) },
-      { id: "0b7d9e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d", title: L(locale, "表紙の案", "Cover ideas"), updated_at: ago(60 * 26) },
+      ...created,
+      { id: STUDIO_ID, title: L(locale, "港の夕暮れ", "Harbour at dusk"), session: "swnd7qa", created_at: ago(30), updated_at: ago(1) },
+      { id: OTHER_STUDIO_ID, title: L(locale, "表紙の案", "Cover ideas"), created_at: ago(60 * 30), updated_at: ago(60 * 26) },
     ],
   };
 }
+
+// Studios made by "+ New studio" or a pane's first open: untitled, empty, named by their date.
+const created = [];
+
+export function imagegenNewStudio(id) {
+  const at = new Date().toISOString();
+  const s = { id, title: "", draft: {}, agent_trial: true, created_at: at, updated_at: at, recent_log: [] };
+  created.unshift(s);
+  return s;
+}
+
+export const imagegenCreatedStudio = (id) => created.find((s) => s.id === id) || null;
+const imagegenCreatedList = () => created.map(({ id, title, created_at, updated_at }) => ({ id, title, created_at, updated_at }));
 
 // A page is oldest first, as the Agent slices it.
 export function imagegenDraftLog() {

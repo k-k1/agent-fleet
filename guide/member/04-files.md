@@ -206,8 +206,10 @@ you: each checkpoint's own published numbers as the placeholders, the fields its
 read greyed out, and a trial run before you commit forty.
 
 **Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. Opening it
-again focuses the pane you have. To refine the draft in conversation with an agent, turn the same
-pane into a **studio** ([below](#studio-refine-the-draft-by-talking-to-an-agent)).
+again focuses the pane you have. The pane always has a **studio** open — the one you opened last,
+or a new, empty one. The draft is saved in the workspace, so what you started on a PC carries on
+from your phone. To refine the draft in conversation with an agent, attach one to that studio
+([below](#studio-refine-the-draft-by-talking-to-an-agent)).
 
 **Before you generate**
 
@@ -310,9 +312,8 @@ agent never paints a batch on its own.
 
 **Attaching an agent**
 
-- Pressing **Attach an agent** turns the form's current contents into the draft of a new studio,
-  starts one session and binds it. Merely opening the pane creates no session. If the session
-  fails to start, the studio and its draft stay, unbound.
+- Pressing **Attach an agent** starts one session and binds it to this studio. Merely opening the
+  pane creates no session. If the session fails to start, the studio and its draft stay, unbound.
 - **Choose a model first.** Prompts are written differently per model (SDXL-family, anima and
   Qwen-Image prompts are built differently), so the button stays disabled until one is chosen. Clear
   the model after attaching and the conversation's input is held until you choose again; switch to
@@ -376,8 +377,16 @@ agent never paints a batch on its own.
   remembers the version it came from, and that survives a Workspace restart.
 - **Restore these settings** puts back the draft that picture was made from (an edit-history entry,
   like any rewind). **Use as reference** places it as the next edit's reference image.
-- You can have as many studios as you like and switch between them at the top of the pane.
-  Deleting a studio deletes its draft, edit history and versions; **the pictures stay**.
+- You can have as many studios as you like and switch between them at the top of the pane. Its
+  **+ New studio** (in the command palette, "New image studio") opens an empty studio in a pane
+  beside this one, leaving the current studio as it is. A studio you have not named is listed by
+  when it was made ("Studio 9/27 14:05"); rename it from the gear menu. Deleting a studio deletes
+  its draft, edit history and versions; **the pictures stay**.
+- The results and the trial slot show **the jobs pressed in this studio** only. The queue is one
+  per workspace, so other studios' and sessions' jobs are folded under "jobs from other studios
+  and sessions" — that is where you see why your own batch has not started yet.
+- **Open in image generation** in a picture's properties creates a new studio from that picture's
+  settings and opens it.
 
 **Knowledge notes**
 

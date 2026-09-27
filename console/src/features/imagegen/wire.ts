@@ -280,6 +280,10 @@ export interface Job {
   files?: StoredFile[];
   warnings?: string[];
   error?: string;
+  /** The studio press this job came from (ADR 0100 decision 9); absent for a job enqueued
+   *  outside a studio (`generate_image`, an older Agent). */
+  studio?: string;
+  version?: string;
 }
 
 export interface JobGroup {
@@ -521,6 +525,8 @@ export interface StudioSummary {
   id: string;
   title: string;
   session?: string;
+  /** Absent from an Agent older than the picker's dated names; `updated_at` stands in. */
+  created_at?: string;
   updated_at: string;
 }
 
