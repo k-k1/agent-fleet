@@ -1,7 +1,6 @@
 // The studio pane's loop on a phone (lane L4), rendered whole: finished pictures announce
 // themselves when the results are out of sight, the results tab counts them until it is
-// opened, and the lightbox walks the results column and carries the picture verbs only in a
-// studio.
+// opened, and the lightbox walks the results column and carries the picture verbs.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,6 +13,8 @@ vi.mock("./api.ts", async (orig) => ({
   imagegenJobs: async (): Promise<JobsResponse> => ({ jobs: jobsNow.jobs, groups: [] }) as JobsResponse,
   listStudios: async () => ({ studios: [] }),
   imagegenHistory: async () => ({ items: [] }),
+  getStudio: async () => ({ id: "s1", title: "", draft: {}, locks: [], session: "", agent_trial: true, created_at: "2026-09-27T10:00:00Z", updated_at: "1" }),
+  studioDraftLog: async () => ({ entries: [] }),
 }));
 vi.mock("../repos/useRepoRail.ts", () => ({
   useRepoRailContext: () => ({ launchKinds: ["claude"], connsSettling: false }),
@@ -32,10 +33,11 @@ let host: HTMLDivElement;
 let root: Root;
 const realRO = globalThis.ResizeObserver;
 
-const running: Job = { id: "g1", state: "running" };
+const running: Job = { id: "g1", state: "running", studio: "s1" };
 const done = (n: number): Job => ({
   id: "g1",
   state: "done",
+  studio: "s1",
   files: Array.from({ length: n }, (_, i) => ({ path: `generated/console/p${i}.png`, seed: 100 + i })),
 });
 
@@ -57,7 +59,7 @@ const mount = async (props: { active?: boolean } = {}) => {
     root.render(
       <ToastProvider>
         <ConfirmProvider>
-          <ImagegenView paneId="p1" active={props.active ?? true} />
+          <ImagegenView paneId="p1" studioId="s1" active={props.active ?? true} />
         </ConfirmProvider>
       </ToastProvider>,
     ),
@@ -118,6 +120,15 @@ describe("the studio's loop on a narrow pane", () => {
     expect(toastText()).toMatch(/2/);
   });
 
+  it("does not announce another studio's pictures", async () => {
+    narrowPane(true);
+    await mount();
+    jobsNow.jobs = [{ ...done(2), studio: "other" }];
+    await refresh();
+    expect(document.querySelector(".igen-done-toast")).toBeNull();
+    expect(tab(2).querySelector(".igen-tab-badge")).toBeNull();
+  });
+
   it("does not announce what was already finished when the pane opened", async () => {
     narrowPane(true);
     jobsNow.jobs = [done(4)];
@@ -129,7 +140,7 @@ describe("the studio's loop on a narrow pane", () => {
 });
 
 describe("the lightbox from the results", () => {
-  it("walks the results column with ←/→, and shows no studio verbs without a studio", async () => {
+  it("walks the results column with ←/→ and carries the studio's picture verbs", async () => {
     narrowPane(false);
     jobsNow.jobs = [done(3)];
     await mount();
@@ -141,7 +152,6 @@ describe("the lightbox from the results", () => {
     await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" })));
     expect(pos()).toMatch(/3\s*\/\s*3/);
     expect(document.querySelector<HTMLButtonElement>(".mirror-lightbox-next")!.disabled).toBe(true);
-    // The studio-less pane has no picture verbs (no studio to restore into).
-    expect(document.querySelector(".mirror-lightbox-actions")).toBeNull();
+    expect(document.querySelector(".mirror-lightbox-actions")).not.toBeNull();
   });
 });
