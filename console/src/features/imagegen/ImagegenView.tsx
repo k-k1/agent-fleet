@@ -21,7 +21,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { allViews } from "../../layout/ops.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
-import { useT } from "../../lib/i18n/index.ts";
+import { tCount, useT } from "../../lib/i18n/index.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { openGeneratedGallery } from "../gallery/open.ts";
@@ -910,7 +910,7 @@ function StudioPane({
           {ready > 0 && (
             <div className="igen-done-note" role="status">
               <Icon name="pass" />
-              <span className="igen-done-text">{tr("imggen.done_toast", { n: ready })}</span>
+              <span className="igen-done-text">{tCount("imggen.done_toast", ready)}</span>
               <button type="button" className="ui-btn ui-btn-sm" onClick={viewResults}>
                 {tr("imggen.done_view")}
               </button>
