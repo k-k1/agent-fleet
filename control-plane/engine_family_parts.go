@@ -13,12 +13,13 @@ package main
 // Face), so finding them meant knowing a repository name and searching for it by hand.
 //
 // 🔴 Every entry here was measured against the live APIs before it was written — anima and krea2
-// on 2026-09-15, the two qwen-image-edit families on 2026-09-20, qwen-image-2.1 on 2026-09-21:
+// on 2026-09-15, the two qwen-image-edit families on 2026-09-20, qwen-image-2.1 on 2026-09-21,
+// flux1 on 2026-09-27:
 // the repository, the path inside it, and that it is ungated. A wrong path here is a second
 // download that 404s minutes after somebody pressed a button, which is exactly the shape of
 // failure the ingest form exists to move earlier.
 //
-// ⚠️ The table is deliberately NOT complete. flux1, flux2-klein, sd35 and zimage are split too and
+// ⚠️ The table is deliberately NOT complete. flux2-klein, sd35 and zimage are split too and
 // have no entry yet, because nobody has measured their parts the way these were — and an entry
 // written from memory would be that 404. A family with no entry behaves exactly as before: the
 // row is marked and the parts are attached by hand.
@@ -123,6 +124,40 @@ var engineFamilyParts = map[string][]engineFamilyPart{
 		{Flag: "--vae", Repo: "Comfy-Org/Qwen-Image-2.1",
 			File:  "vae/qwen_image_2.1_vae_bf16.safetensors",
 			S3Key: "image/vae/qwen_image_2.1_vae_bf16.safetensors"},
+	},
+	// flux1: two text encoders and a VAE, read by DualCLIPLoader (type flux) and VAELoader.
+	// Measured 2026-09-27 through /api/models/<repo>?blobs=true, anonymous, both repositories
+	// `gated: false`:
+	//
+	//	clip_l.safetensors            246,144,152 B  sha256 660c6f5b…
+	//	t5xxl_fp8_e4m3fn.safetensors  4,893,934,904 B sha256 7d330da4…
+	//	flux-vae-bf16.safetensors     167,664,710 B  sha256 0c0c8ac4…
+	//
+	// 🔴 `t5xxl_fp8_e4m3fn_scaled.safetensors`, in the same repository, is NOT a substitute: it
+	// carries per-tensor scales, a different format under the same flag.
+	//
+	// The VAE is Kijai's bf16 copy and not black-forest-labs/FLUX.1-schnell's `ae.safetensors`.
+	// Both hold the same weights (schnell's in fp32, apache-2.0), but schnell is `gated: auto`:
+	// fetching it needs a Hugging Face token whose account accepted the terms, and a part this
+	// table names has to be fetchable by every deployment, tokenless ones included. The copy's
+	// header was read by range request: the original `ae` layout (`decoder.conv_in.*`, 244 BF16
+	// tensors) that VAELoader reads, not the diffusers one. Its repository states licence `other`
+	// because it also hosts the non-commercial FLUX.1-dev weights, so that is what the ingest
+	// records as accepted; the VAE itself is the apache-2.0 schnell release.
+	//
+	// ⚠️ Its key is NOT `image/vae/ae.safetensors`, the name hand-staged FLUX VAEs usually carry:
+	// the planner declares whatever already sits at a part's key without comparing the bytes, so a
+	// key named after this file keeps an unrelated `ae.safetensors` from being taken for it.
+	"flux1": {
+		{Flag: "--clip_l", Repo: "comfyanonymous/flux_text_encoders",
+			File:  "clip_l.safetensors",
+			S3Key: "image/text_encoders/clip_l.safetensors"},
+		{Flag: "--t5xxl", Repo: "comfyanonymous/flux_text_encoders",
+			File:  "t5xxl_fp8_e4m3fn.safetensors",
+			S3Key: "image/text_encoders/t5xxl_fp8_e4m3fn.safetensors"},
+		{Flag: "--vae", Repo: "Kijai/flux-fp8",
+			File:  "flux-vae-bf16.safetensors",
+			S3Key: "image/vae/flux-vae-bf16.safetensors"},
 	},
 }
 
