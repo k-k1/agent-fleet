@@ -12,7 +12,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { activeWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useSessionsStore } from "./store.ts";
-import { rotatableSessions, rotateTarget } from "./rotate.ts";
+import { rotatableSessions, rotateTarget, rotationCurrent } from "./rotate.ts";
 import type { RotateTarget } from "./rotate.ts";
 import type { Session } from "../../types/session.ts";
 import { openImagegen } from "../imagegen/open.ts";
@@ -100,8 +100,9 @@ export function openSessionFromList(s: Session, split: boolean, running: boolean
  * destination, or null when there is no candidate or only one, so the caller can say "there
  * are no others". */
 export function rotateRunningSession(delta: number): RotateTarget | null {
-  const list = rotatableSessions(useSessionsStore.getState().sessions, activeWorkingSet(getSettings()));
-  const current = activePane(useLayoutStore.getState().layout)?.session;
+  const sessions = useSessionsStore.getState().sessions;
+  const list = rotatableSessions(sessions, activeWorkingSet(getSettings()));
+  const current = rotationCurrent(activePane(useLayoutStore.getState().layout), sessions);
   const target = rotateTarget(list, current, delta);
   if (target) openSessionDefault(target.session);
   return target;

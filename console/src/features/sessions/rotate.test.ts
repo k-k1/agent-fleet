@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rotatableSessions, rotateTarget } from "./rotate.ts";
+import { rotatableSessions, rotateTarget, rotationCurrent } from "./rotate.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -79,5 +79,22 @@ describe("rotateTarget", () => {
   it("never produces a negative index, even for a delta larger than the list", () => {
     expect(rotateTarget(list, "s1", -7)?.session.name).toBe("s3");
     expect(rotateTarget(list, "s1", 7)?.session.name).toBe("s2");
+  });
+});
+
+describe("rotationCurrent", () => {
+  const list = [s("painter", { studio: "st-1" }), s("coder")];
+  it("an image-studio pane stands for the session bound to its studio, so a swipe moves on from it", () => {
+    const pane = { session: null, content: { kind: "imagegen", studioId: "st-1" } };
+    const cur = rotationCurrent(pane, list);
+    expect(cur).toBe("painter");
+    expect(rotateTarget(list, cur, 1)?.session.name).toBe("coder");
+  });
+  it("a studio with no bound session stands for nothing (the rotation starts at the head)", () => {
+    expect(rotationCurrent({ session: null, content: { kind: "imagegen", studioId: "st-9" } }, list)).toBeNull();
+  });
+  it("any other pane stands for its own session", () => {
+    expect(rotationCurrent({ session: "coder", content: { kind: "terminal" } }, list)).toBe("coder");
+    expect(rotationCurrent(null, list)).toBeNull();
   });
 });

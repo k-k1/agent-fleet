@@ -8,6 +8,12 @@ describe("echoLanded", () => {
     expect(echoLanded({ text: "確認して", sinceIdx: 10 }, [{ role: "user", text: "確認して", idx: 11 }], notNoise)).toBe(true);
   });
 
+  it("an image studio send resolves against its turn, which still carries the studio signal line", () => {
+    const signal = "[studio v4 · draft changed → get_image_studio]";
+    const turn = { role: "user", text: `1-b, 2 発光する感じ\n\n${signal}`, idx: 11 };
+    expect(echoLanded({ text: "1-b, 2 発光する感じ", sinceIdx: 10 }, [turn], notNoise)).toBe(true);
+  });
+
   it("a managed Codex image marker resolves via the attachment path", () => {
     const path = "/home/dev/.cache/agent-fleet/pasted/sid/paste-1.png";
     const actual = `確認して <image name=[Image #1] path="${path}">`;

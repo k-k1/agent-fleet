@@ -62,6 +62,9 @@ export interface PaneTitleMeta {
    *  title wants the user-facing one). Absent — an unknown or stopped session — falls
    *  back to the folder name rather than showing a slug. */
   gallerySession?: Session;
+  /** An image studio's name (its title, else the dated fallback); absent until a list or a read
+   *  of that studio has landed, when the tab reads "image generation". */
+  studioName?: string;
 }
 
 /** Title for a pane: the bound session (name · agent) for terminal/mirror
@@ -102,7 +105,7 @@ export function paneTitle(pane: Pane, session: Session | null, meta: PaneTitleMe
     case "engineAdd":
       return jaKind("engineAdd");
     case "imagegen":
-      return jaKind("imagegen");
+      return meta.studioName || jaKind("imagegen");
     case "gallery":
       // A generated-images folder is named by a session UUID, so its basename says
       // nothing; name the session instead when the caller could resolve it.

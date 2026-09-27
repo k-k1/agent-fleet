@@ -366,4 +366,6 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.start_agent_model": "Agent model",
   "imggen.queue_all_hint": "The queue is one per workspace: this also stops (and resumes) the jobs of other studios and sessions. To pause only this studio, use the pause on its own row",
   "imggen.sum_knob_none": "default {k}",
+  "imggen.queue_done": "Finished ({n})",
+  "imggen.queue_done_failed": "Finished ({n}, {failed} with failures)",
 };

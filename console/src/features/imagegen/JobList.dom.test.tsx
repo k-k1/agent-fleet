@@ -129,7 +129,7 @@ describe("他のスタジオのジョブ", () => {
     expect(others?.querySelectorAll(".igen-qrow.other")).toHaveLength(2);
     const badges = [...(others?.querySelectorAll(".igen-badge.other") || [])].map((b) => b.textContent);
     expect(badges).toEqual(["他のスタジオ", "スタジオ外"]);
-    const outside = [...host.querySelectorAll(".igen-qrow")].filter((r) => !r.closest("details"));
+    const outside = [...host.querySelectorAll(".igen-qrow")].filter((r) => !r.closest(".igen-queue-others"));
     expect(outside).toHaveLength(1);
     expect(outside[0].classList.contains("other")).toBe(false);
   });
@@ -138,5 +138,33 @@ describe("他のスタジオのジョブ", () => {
     await render(false, undefined, mixed);
     expect(host.querySelector("details.igen-queue-others")).toBeNull();
     expect(host.querySelectorAll(".igen-qrow")).toHaveLength(3);
+  });
+});
+
+describe("終わった行", () => {
+  // The Agent keeps the last 500 finished jobs on the list: unfolded, every trial ever pressed
+  // stayed in the queue as a "done 1/1" row and pushed what is still waiting out of sight.
+  const settled: Job[] = [
+    ...JOBS,
+    { id: "t1", trial: true, state: "done" },
+    { id: "t2", trial: true, state: "done" },
+    { id: "t3", trial: true, state: "failed", error: "oom" },
+  ];
+
+  it("終わった行は閉じた「終わったもの」に畳まれ、待っている行だけが外に出る", async () => {
+    await render(false, undefined, settled);
+    const done = host.querySelector("details.igen-queue-done");
+    expect(done?.hasAttribute("open")).toBe(false);
+    expect(done?.querySelector("summary")?.textContent).toBe("終わったもの 3 件（うち失敗 1 件）");
+    expect(done?.querySelectorAll(".igen-qrow")).toHaveLength(3);
+    const outside = [...host.querySelectorAll(".igen-qrow")].filter((r) => !r.closest("details"));
+    expect(outside).toHaveLength(1);
+    expect(outside[0].querySelector(".igen-qrow-label")?.textContent).toBe("cfg sweep");
+  });
+
+  it("待っている行が無ければ「待っているジョブはありません」と出す", async () => {
+    await render(false, undefined, settled.slice(3));
+    expect(host.querySelector(".igen-queue > .igen-hint:not(:first-child), .igen-queue p.igen-hint")?.textContent).toMatch(/ありません/);
+    expect(host.querySelectorAll("details.igen-queue-done .igen-qrow")).toHaveLength(3);
   });
 });

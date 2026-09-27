@@ -1,4 +1,5 @@
 import { samePastedPrompt } from "../../lib/pastedImages.ts";
+import { stripStudioSignal } from "./transcript/model.ts";
 
 export interface PendingEcho {
   text: string;
@@ -98,7 +99,9 @@ export function echoLanded(e: PendingEcho, turns: TranscriptTurn[], isNoise: (t:
     // "/foo", so the text match below can never catch it.
     if (echoCmd && t.idx !== undefined && t.idx > e.sinceIdx && commandTurnName(t.text || "") === echoCmd) return true;
     if (e.launch && !isNoise(t)) return true;
-    if (isNoise(t) || !samePastedPrompt(t.text || "", e.text)) return false;
+    // The image studio's signal line rides on the wire only (composerSend): the echo holds the
+    // member's words, so the turn is compared without it, or the echo never lands.
+    if (isNoise(t) || !samePastedPrompt(stripStudioSignal(t.text || ""), e.text)) return false;
     if (t.idx !== undefined && t.idx > e.sinceIdx) return true;
     return !!e.attachmentPaths?.length && e.attachmentPaths.every((path) => (t.text || "").includes(path));
   });

@@ -15,6 +15,7 @@ import { errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import type { MirrorSignal } from "../mirror/MirrorView.tsx";
+import { cacheStudio, useStudioCache } from "./studioCache.ts";
 import {
   getStudio,
   patchStudio,
@@ -120,10 +121,12 @@ export interface StudioState {
 export function useStudio(id: string, opts: { running: boolean }): StudioState {
   const tr = useT();
   const toast = useToast();
-  const [studio, setStudio] = useState<StudioWire | null>(null);
+  // The last read of this studio in this window paints the first frame (studioCache); the read
+  // below replaces it. baseRef stays empty until then, so nothing is saved against a cached copy.
+  const [studio, setStudio] = useState<StudioWire | null>(() => (id ? useStudioCache.getState().byId[id] ?? null : null));
   const [failed, setFailed] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
-  const [form, setForm] = useState<ImagegenDraft>(() => formFromStudio(null));
+  const [form, setForm] = useState<ImagegenDraft>(() => formFromStudio(studio?.draft ?? null));
   const [highlight, setHighlight] = useState<Set<StudioKey>>(
     () => new Set((id ? readJSON<Seen>(seenKey(id))?.keys || [] : []) as StudioKey[]),
   );
@@ -151,6 +154,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
     const prevSeen = seenSeqRef.current;
     baseRef.current = next;
     setStudio(next);
+    cacheStudio(next);
     setFailed(null);
     const seq = lastSeq(next.recent_log);
     // The first read is the baseline: what the agent did before this pane opened is not news.
