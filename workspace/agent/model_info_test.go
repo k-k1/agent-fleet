@@ -22,7 +22,8 @@ const modelInfoCatalogFixture = `{
  }},
  "opencode": {"models": {
    "glm-5":     {"limit": {"context": 204800}, "cost": {"input": 1, "output": 3.2}},
-   "hy3-free":  {"cost": {"input": 0, "output": 0}}
+   "hy3-free":  {"cost": {"input": 0, "output": 0, "cache_read": 0}},
+   "ling-flash": {"release_date": "2026-08-27", "limit": {"context": 262144}, "status": "deprecated"}
  }},
  "zhipuai": {"models": {
    "glm-5":     {"cost": {"input": 0.6, "output": 2.2}}
@@ -52,7 +53,7 @@ func TestResolveModelInfo(t *testing.T) {
 		want     *agents.ModelInfo
 	}{
 		{session.KindCodex, "gpt-6-luna", &agents.ModelInfo{
-			Price: &agents.ModelPrice{In: 0.1, Out: 0.5, CacheRead: 0.01}, PriceFrom: "openai",
+			Price: &agents.ModelPrice{In: 0.1, Out: 0.5, CacheRead: ptr(0.01)}, PriceFrom: "openai",
 			Context: 1050000, Released: "2026-09-22",
 		}},
 		{session.KindCodex, "gpt-5.5", &agents.ModelInfo{
@@ -67,10 +68,16 @@ func TestResolveModelInfo(t *testing.T) {
 		{session.KindOpencode, "opencode-go/glm-5", &agents.ModelInfo{
 			Price: &agents.ModelPrice{In: 1, Out: 3.2}, PriceFrom: "opencode", Context: 204800,
 		}},
-		// A free model is a real $0, not "unknown".
+		// A free model is a real $0, not "unknown" — its stated free cache read included.
 		{session.KindOpencode, "opencode/hy3-free", &agents.ModelInfo{
-			Price: &agents.ModelPrice{}, PriceFrom: "opencode",
+			Price: &agents.ModelPrice{CacheRead: ptr(0)}, PriceFrom: "opencode",
 		}},
+		// Upstream has not priced it, but still states its window, date and status.
+		{session.KindOpencode, "opencode/ling-flash", &agents.ModelInfo{
+			Context: 262144, Released: "2026-08-27", Deprecated: true,
+		}},
+		// Not on the gateway: another provider's price is not what opencode bills.
+		{session.KindOpencode, "opencode/claude-opus-4-8", nil},
 		// agy's effort variants and display names land on the base model.
 		{session.KindAgy, "Gemini 3.8 Flash (Low)", &agents.ModelInfo{
 			Price: &agents.ModelPrice{In: 0.75, Out: 3.75}, PriceFrom: "google", Context: 1048576,
@@ -93,6 +100,25 @@ func TestResolveModelInfo(t *testing.T) {
 			wj, _ := json.Marshal(c.want)
 			t.Errorf("resolveModelInfo(%s, %q) = %s, want %s", c.kind, c.id, gj, wj)
 		}
+	}
+}
+
+func ptr(v float64) *float64 { return &v }
+
+// The lists come from each kind's cache; an ?info=1 answer must not write into them, or every
+// later answer (MCP list_models included) carries Info too.
+func TestWithModelDetailLeavesTheCachedListAlone(t *testing.T) {
+	useIsolatedUsageDir(t)
+	useUsageCatalog(t, modelInfoCatalogFixture)
+	cached := []agents.ModelChoice{{ID: "gpt-6-luna", Label: "GPT-6 Luna"}}
+	if got := withModelDetail(session.KindCodex, cached, true); got[0].Info == nil {
+		t.Fatal("?info=1 answer carries no info")
+	}
+	if cached[0].Info != nil || cached[0].Provider != "" {
+		t.Fatalf("the cached list was written into: %+v", cached[0])
+	}
+	if got := withModelDetail(session.KindCodex, cached, false); got[0].Info != nil {
+		t.Fatalf("an answer without ?info=1 carries info: %+v", got[0].Info)
 	}
 }
 

@@ -94,6 +94,19 @@ describe("ModelInfoLine", () => {
     expect(warn.getAttribute("title")).toBe("GPT-5.5 retires on October 14, 2026.");
   });
 
+  it("keeps a stated free cache read, and omits an unstated one", async () => {
+    answer = {
+      models: [
+        { id: "opencode/hy3-free", label: "hy3", info: { price: { in: 0, out: 0, cacheRead: 0 }, priceFrom: "opencode" } },
+        { id: "opencode/glm-5", label: "glm", info: { price: { in: 1, out: 3.2 }, priceFrom: "opencode" } },
+      ],
+    };
+    await mount("opencode", "opencode/hy3-free");
+    const price = () => host.querySelector(".model-info-price")?.textContent || "";
+    expect(price()).toContain(t("ui.mi_price_cache", { v: "$0" }));
+    expect(price()).toContain("opencode");
+  });
+
   it("draws no line for a model the Agent says nothing about", async () => {
     answer = { models: [{ id: "auto", label: "Auto" }, { id: "claude-sonnet-4.5", label: "Sonnet" }] };
     await mount("kiro", "claude-sonnet-4.5");

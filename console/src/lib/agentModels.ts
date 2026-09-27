@@ -198,8 +198,9 @@ function parseModelInfo(v: unknown): ModelInfo | null {
   const pout = num(r.price?.out);
   if (pin !== undefined && pout !== undefined) {
     info.price = { in: pin, out: pout };
+    // 0 is a stated free cache read, not "unknown"; absent is unknown.
     const cr = num(r.price?.cacheRead);
-    if (cr) info.price.cacheRead = cr;
+    if (cr !== undefined) info.price.cacheRead = cr;
   }
   if (str(r.priceFrom)) info.priceFrom = r.priceFrom;
   if (num(r.context)) info.context = r.context;

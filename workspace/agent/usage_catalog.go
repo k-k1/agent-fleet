@@ -95,10 +95,9 @@ type usageCatalog struct {
 	// priced (a ledger row for one must still get its amount), but never RECOMMENDED
 	// (chatx's cheapest-model pick, model_recommend.go).
 	deprecated map[string]bool
-	// meta is the rest of what the model picker shows per price key (Issue #1021): context
-	// window and release date. Kept under the same key, and so the same collision winner, as
-	// the price it sits beside.
-	meta    map[string]catalogModelMeta
+	// rows is what the model picker shows per key (Issue #1021), for EVERY indexed row, priced
+	// or not: a model upstream has not priced still has a context window and a status.
+	rows    map[string]catalogRow
 	origin  string    // opencode | fetched | file | env (Console owns the wording; no path is exposed)
 	modTime time.Time // the source file's mtime = which point in time these prices are from
 	models  int
@@ -222,7 +221,8 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 	price := map[string]usagePrice{}
 	family := map[string]string{}
 	deprecated := map[string]bool{}
-	meta := map[string]catalogModelMeta{}
+	rows := map[string]catalogRow{}
+	rowWinner := map[string]string{}
 	// When normalized names collide inside one provider, take the lexicographically smaller
 	// model id, so map iteration order cannot make the result wander (measured on 3.3M: an
 	// amount that changes on every read is not acceptable).
@@ -239,10 +239,27 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 			continue
 		}
 		for mid, m := range p.Models {
-			if m.Cost == nil || m.Cost.Input == nil || m.Cost.Output == nil {
+			key := pid + "/" + usageNormalizeModel(mid)
+			priced := m.Cost != nil && m.Cost.Input != nil && m.Cost.Output != nil
+			// The picker's row: a priced row beats an unpriced one of the same name, then the
+			// smaller id, so the row agrees with the ledger's price wherever one exists.
+			cur, seen := rowWinner[key]
+			curPriced := seen && rows[key].price != nil
+			if !seen || (priced && !curPriced) || (priced == curPriced && mid < cur) {
+				rowWinner[key] = mid
+				row := catalogRow{released: strings.TrimSpace(m.ReleaseDate), deprecated: m.Status == "deprecated"}
+				if m.Limit != nil && m.Limit.Context > 0 {
+					row.context = m.Limit.Context
+				}
+				if priced {
+					row.price = &usagePrice{In: *m.Cost.Input, Out: *m.Cost.Output, CacheRead: derefPrice(m.Cost.CacheRead)}
+					row.cacheReadKnown = m.Cost.CacheRead != nil
+				}
+				rows[key] = row
+			}
+			if !priced {
 				continue // upstream has no price for this model, so it stays unpriced
 			}
-			key := pid + "/" + usageNormalizeModel(mid)
 			if cur, ok := winner[key]; ok && cur <= mid {
 				continue
 			}
@@ -252,11 +269,6 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 			} else {
 				delete(deprecated, key)
 			}
-			mm := catalogModelMeta{released: strings.TrimSpace(m.ReleaseDate)}
-			if m.Limit != nil && m.Limit.Context > 0 {
-				mm.context = m.Limit.Context
-			}
-			meta[key] = mm
 			price[key] = usagePrice{
 				In: *m.Cost.Input, Out: *m.Cost.Output,
 				CacheRead: derefPrice(m.Cost.CacheRead), CacheWrite: derefPrice(m.Cost.CacheWrite),
@@ -266,13 +278,16 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 	if len(price) == 0 {
 		return nil
 	}
-	return &usageCatalog{price: price, family: family, deprecated: deprecated, meta: meta, origin: origin, modTime: mod, models: len(price)}
+	return &usageCatalog{price: price, family: family, deprecated: deprecated, rows: rows, origin: origin, modTime: mod, models: len(price)}
 }
 
-// catalogModelMeta is the non-price part of one catalog row the picker shows.
-type catalogModelMeta struct {
-	context  int
-	released string
+// catalogRow is one catalog row as the model picker shows it.
+type catalogRow struct {
+	price          *usagePrice // nil when upstream has no complete price
+	cacheReadKnown bool        // upstream states a cache-read price (possibly 0)
+	context        int
+	released       string
+	deprecated     bool
 }
 
 func derefPrice(v *float64) float64 {
@@ -307,35 +322,40 @@ func usageCatalogLookup(kind, model string) (usagePrice, string, bool) {
 // usageCatalogLookupStatus is usageCatalogLookup plus whether upstream marks the matched row
 // deprecated — which a ledger does not care about and a recommendation does.
 func usageCatalogLookupStatus(kind, model string) (p usagePrice, ref string, deprecated, ok bool) {
-	e, ok := usageCatalogLookupEntry(kind, model)
-	return e.price, e.ref, e.deprecated, ok
-}
-
-// usageCatalogEntry is one matched catalog row: everything the ledger, the recommendation and
-// the model picker read, found by one walk of the provider order.
-type usageCatalogEntry struct {
-	price      usagePrice
-	ref        string // "provider/normalized model"
-	deprecated bool
-	meta       catalogModelMeta
-}
-
-func usageCatalogLookupEntry(kind, model string) (usageCatalogEntry, bool) {
 	cat := loadUsageCatalog()
 	if cat == nil {
-		return usageCatalogEntry{}, false
+		return usagePrice{}, "", false, false
 	}
 	base := usageNormalizeModel(model)
 	if base == "" {
-		return usageCatalogEntry{}, false
+		return usagePrice{}, "", false, false
 	}
 	for _, pid := range usageCatalogOrder(kind) {
 		key := pid + "/" + base
 		if p, ok := cat.price[key]; ok {
-			return usageCatalogEntry{price: p, ref: key, deprecated: cat.deprecated[key], meta: cat.meta[key]}, true
+			return p, key, cat.deprecated[key], true
 		}
 	}
-	return usageCatalogEntry{}, false
+	return usagePrice{}, "", false, false
+}
+
+// usageCatalogRouteRow finds the picker's row for a model on the kind's OWN billing providers
+// only (usageCatalogProviders) — never the primary-provider fallback the ledger uses: a price
+// shown next to a model is read as the price of the route it runs on, and for opencode
+// another provider's number is not what the gateway bills. ok=false for a kind with no
+// providers of its own.
+func usageCatalogRouteRow(kind, model string) (row catalogRow, provider string, ok bool) {
+	cat := loadUsageCatalog()
+	base := usageNormalizeModel(model)
+	if cat == nil || base == "" {
+		return catalogRow{}, "", false
+	}
+	for _, pid := range usageCatalogProviders[kind] {
+		if r, ok := cat.rows[pid+"/"+base]; ok {
+			return r, pid, true
+		}
+	}
+	return catalogRow{}, "", false
 }
 
 // usageCatalogMeta is the catalog declaration carried in the response, nil when there is no

@@ -218,11 +218,12 @@ type ModelInfo struct {
 	Retiring *ModelRetiring `json:"retiring,omitempty"`
 }
 
-// ModelPrice is a list price in USD per 1M tokens. CacheRead is 0 where upstream has none.
+// ModelPrice is a list price in USD per 1M tokens. CacheRead is nil where upstream states
+// none, and a real 0 where it states a free cache read.
 type ModelPrice struct {
-	In        float64 `json:"in"`
-	Out       float64 `json:"out"`
-	CacheRead float64 `json:"cacheRead,omitempty"`
+	In        float64  `json:"in"`
+	Out       float64  `json:"out"`
+	CacheRead *float64 `json:"cacheRead,omitempty"`
 }
 
 // ModelRetiring is a vendor's notice that a model is going away. Any field may be empty.

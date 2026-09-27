@@ -53,7 +53,7 @@ export function ModelInfoLine({ kind, model }: { kind: string; model: string }) 
         <span className="model-info-price" title={tr("ui.mi_list_price_note")}>
           {tr("ui.mi_price_head", { label: priceLabel })}{" "}
           {tr("ui.mi_price_io", { in: fmtUSD(info.price.in), out: fmtUSD(info.price.out) })}
-          {info.price.cacheRead ? " · " + tr("ui.mi_price_cache", { v: fmtUSD(info.price.cacheRead) }) : ""}
+          {info.price.cacheRead !== undefined ? " · " + tr("ui.mi_price_cache", { v: fmtUSD(info.price.cacheRead) }) : ""}
         </span>
       )}
       {facts.length > 0 && <span className="model-info-facts">{facts.join(" · ")}</span>}
