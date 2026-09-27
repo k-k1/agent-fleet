@@ -8,7 +8,7 @@ into containers, so the directory boundary *is* the distribution boundary. When 
 boundary erodes, links break silently in the reader's copy, so the conventions are
 machine-checked here rather than left to human review.
 
-Twelve checks:
+Fourteen checks:
 
   links      relative links resolve (anchors ignored)
   anchors    a #fragment points at a heading that exists (matched with Console's slug rule)
@@ -24,6 +24,7 @@ Twelve checks:
   features   member rows of the feature catalogue point at a procedure on the member/ shelf
   knowledge  the assistant knowledge covers the member rows of the feature catalogue
   notes      the operating policy shipped to every container points only at shipped shelves
+  emphasis   every ** in guide/, docs/ and the release notes renders as bold on GitHub
 
 ref is checked at three levels. (a) Axis coverage: the agent columns cover the session
 kind constants, the deployment rows cover the runtime profiles. (b) Row agreement:
@@ -1310,6 +1311,122 @@ def strip_code(body: str) -> str:
     return INLINE_RE.sub("", FENCE_RE.sub("", body))
 
 
+RELEASE_NOTES = os.path.join(ROOT, "deploy", "release", "notes")
+CODE_SPAN_RE = re.compile(r"(`+)(?!`)((?:(?!\n[ \t]*\n).)*?[^`])\1(?!`)", re.S)
+# A run of two or more: `***` opens or closes a bold too, and two bolds written back to
+# back (`。****次`) make one run of four, which GitHub leaves as text.
+STRONG_RE = re.compile(r"(?<!\*)\*\*+(?!\*)")
+LIST_ITEM_RE = re.compile(r"[ \t]*(?:[-*+]|\d+\.)[ \t]")
+TABLE_ROW_RE = re.compile(r"[ \t]*\|")
+
+
+def md_blocks(text: str) -> list[tuple[int, int]]:
+    """(start, end) spans in which emphasis pairs: paragraphs, list items, and each
+    cell of a table row, since GFM parses table cells apart."""
+    spans: list[tuple[int, int]] = []
+    start = None
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        end = pos + len(line)
+        if TABLE_ROW_RE.match(line):
+            if start is not None:
+                spans.append((start, pos))
+                start = None
+            cell = pos
+            for m in re.finditer(r"(?<!\\)\|", line):
+                spans.append((cell, pos + m.start()))
+                cell = pos + m.end()
+            spans.append((cell, end))
+        elif not line.strip():
+            if start is not None:
+                spans.append((start, pos))
+                start = None
+        elif LIST_ITEM_RE.match(line) or start is None:
+            if start is not None:
+                spans.append((start, pos))
+            start = pos
+        pos = end
+    if start is not None:
+        spans.append((start, pos))
+    return spans
+
+
+def _md_punct(c: str) -> bool:
+    # cmark-gfm's rule, which GitHub renders with: ASCII punctuation plus the Unicode P*
+    # categories. Symbols such as ＋ ＝ › ★ are not punctuation there.
+    return (c.isascii() and not c.isalnum() and not c.isspace()) or unicodedata.category(
+        c
+    ).startswith("P")
+
+
+def check_emphasis(files: list[str], f: Findings) -> None:
+    """Does every `**` render as bold on GitHub, rather than as raw asterisks?
+
+    GitHub renders with plain CommonMark: the release notes (the dist repository's
+    Release bodies) and every page of guide/ and docs/ read on github.com. There a `**`
+    next to punctuation counts only when its other side is whitespace or punctuation,
+    and the full-width brackets and stops of Japanese (「」（）、。) are all punctuation,
+    while Japanese has no spaces to save it. So `用の**「推論エンジン」**の画面` shows the
+    raw asterisks on GitHub, while the Console, which retries such runs
+    (console/src/lib/markdown.ts), renders it bold: nobody who only reads the guide in
+    the Console sees it. 0.21.0 and 0.23.0 were published that way, and over 800 such
+    runs had piled up in guide/ and docs/. Keep the bracket outside the bold
+    (`「**推論エンジン**」の`), the stop too (`**…しない**。`), or put a space on the
+    outer side. Symbols such as ＋ ＝ › are not punctuation in cmark-gfm, so
+    `（…）**＋` does not close either.
+
+    Within each paragraph, list item or table cell (code removed), runs are paired the
+    way CommonMark pairs them: a right-flanking run closes the nearest open one, a
+    left-flanking run opens, and a run that does neither, or an opener left unclosed,
+    shows as raw asterisks. Runs of two or more `*` are checked; single `*` and `_` are not.
+    """
+    def bad(path: str, body: str, start: int, block: str, i: int, what: str) -> None:
+        line = body.count("\n", 0, start + i) + 1
+        f.errors.append(
+            f"{rel(path)}:{line}: this ** {what} on GitHub, which shows it as-is "
+            f"(…{block[max(0, i - 8):i + 10].strip()}…); keep punctuation such as "
+            "「」（）。 outside the bold, or put a space on the outer side"
+        )
+
+    notes = []
+    if os.path.isdir(RELEASE_NOTES):
+        notes = [
+            os.path.join(RELEASE_NOTES, n)
+            for n in sorted(os.listdir(RELEASE_NOTES))
+            if n.endswith(".md")
+        ]
+    for path in files + notes:
+        body = FENCE_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), read(path))
+        # A code span is masked but keeps its backticks: the delimiter next to it sees a
+        # backtick, which is punctuation. Spans may wrap onto the next line.
+        body = CODE_SPAN_RE.sub(
+            lambda m: m.group(1) + "x" * len(m.group(2)) + m.group(1), body
+        )
+        body = re.sub(r"\\[*_`\\]", "xx", body)  # an escaped character is text
+        for start, block_end in md_blocks(body):
+            block = body[start:block_end]
+            openers: list[int] = []
+            for m in STRONG_RE.finditer(block):
+                i = m.start()
+                j = m.end()
+                before = block[i - 1] if i > 0 else " "
+                after = block[j] if j < len(block) else " "
+                left = not after.isspace() and (
+                    not _md_punct(after) or before.isspace() or _md_punct(before)
+                )
+                right = not before.isspace() and (
+                    not _md_punct(before) or after.isspace() or _md_punct(after)
+                )
+                if right and openers:
+                    openers.pop()
+                elif left:
+                    openers.append(i)
+                else:
+                    bad(path, body, start, block, i, "neither opens nor closes bold")
+            for i in openers:
+                bad(path, body, start, block, i, "is never closed")
+
+
 _cache: dict[str, str] = {}
 
 
@@ -1331,7 +1448,7 @@ def main() -> int:
         help=(
             "comma-separated check names "
             "(links,anchors,closure,chapters,lang,header,vocab,frozen,"
-            "ref,settings,features,knowledge,notes)"
+            "ref,settings,features,knowledge,notes,emphasis)"
         ),
     )
     args = ap.parse_args()
@@ -1368,6 +1485,8 @@ def main() -> int:
         check_knowledge(f)
     if run("notes"):
         check_notes(f)
+    if run("emphasis"):
+        check_emphasis(files, f)
 
     for w in f.warns:
         print(f"warn: {w}")
