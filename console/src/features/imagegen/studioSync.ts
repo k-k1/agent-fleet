@@ -232,18 +232,40 @@ export function toggleLock(locks: string[] | undefined, key: StudioKey): string[
 export const changeKey = (field: string): string => field.split(".")[0];
 
 /**
- * The keys the agent moved since `afterSeq`: what the pane outlines until the member touches
- * them (decision 6). Read off the edit log rather than a diff, so a change the MEMBER made in
- * another pane is not painted as the agent's.
+ * What the pane outlines as the agent's until the member touches it or presses (decision 6): the
+ * edit log's own field names, so a knob is marked alone ("params.cfg") rather than every sampler
+ * field at once — the lock stays per studio key, the outline does not. Read off the edit log
+ * rather than a diff, so a change the MEMBER made in another pane is not painted as the agent's.
  */
-export function agentTouched(entries: DraftLogEntry[] | undefined, afterSeq: number): StudioKey[] {
+export function agentTouched(entries: DraftLogEntry[] | undefined, afterSeq: number): string[] {
   const out = new Set<string>();
   for (const e of entries || []) {
     if (e.seq <= afterSeq || e.kind !== "edit" || e.author !== "agent") continue;
-    for (const c of e.changes || []) out.add(changeKey(c.field));
+    for (const c of e.changes || []) out.add(c.field);
   }
-  return [...out].sort() as StudioKey[];
+  return [...out].sort();
 }
+
+/** The outline mark of each form field: the edit log's field name (`params.<knob>` for a knob). */
+const FORM_TO_MARK: Partial<Record<keyof ImagegenDraft, string>> = {
+  steps: "params.steps",
+  cfg: "params.cfg",
+  sampler: "params.sampler",
+  scheduler: "params.scheduler",
+  clipSkip: "params.clip_skip",
+  guidance: "params.guidance",
+  shift: "params.shift",
+};
+
+export const markOf = (k: keyof ImagegenDraft): string => FORM_TO_MARK[k] ?? FORM_TO_STUDIO[k];
+
+/** The marks a form edit clears. */
+export const marksOf = (keys: (keyof ImagegenDraft)[]): string[] => [...new Set(keys.map(markOf))];
+
+/** Is this mark outlined? A bare "params" (saved by a Console before marks were per knob) still
+ *  outlines every knob, so an old outline does not silently vanish. */
+export const marked = (hl: ReadonlySet<string> | undefined, mark: string): boolean =>
+  !!hl && (hl.has(mark) || (mark.startsWith("params.") && hl.has("params")));
 
 const lastSeq = (entries: DraftLogEntry[] | undefined): number =>
   (entries || []).reduce((m, e) => (e.seq > m ? e.seq : m), 0);

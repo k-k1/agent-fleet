@@ -5,6 +5,8 @@ import { emptyDraft } from "./draft.ts";
 import { stripStudioSignal, withStudioSignal } from "../mirror/transcript/model.ts";
 import {
   agentTouched,
+  marked,
+  marksOf,
   changedKeys,
   describeChange,
   draftCallEntry,
@@ -133,9 +135,17 @@ const log: DraftLogEntry[] = [
 ];
 
 describe("編集履歴", () => {
-  it("エージェントが動かした鍵（params.cfg は params）", () => {
-    expect(agentTouched(log, 0)).toEqual(["params", "prompt"]);
+  it("エージェントが動かした欄（摘みは params.cfg のまま＝その摘みだけ縁取る）", () => {
+    expect(agentTouched(log, 0)).toEqual(["params.cfg", "prompt"]);
     expect(agentTouched(log, 2)).toEqual([]);
+  });
+
+  it("縁取りの印: 摘みは params.<名前>、素の params（古い保存）は全部の摘みに効く", () => {
+    expect(marksOf(["cfg", "clipSkip", "prompt"])).toEqual(["params.cfg", "params.clip_skip", "prompt"]);
+    expect(marked(new Set(["params.cfg"]), "params.cfg")).toBe(true);
+    expect(marked(new Set(["params.cfg"]), "params.sampler")).toBe(false);
+    expect(marked(new Set(["params"]), "params.sampler")).toBe(true);
+    expect(marked(undefined, "prompt")).toBe(false);
   });
 
   it("版は新しい順、press_result は最初の 1 件だけを採る、結果の無い版は pending", () => {

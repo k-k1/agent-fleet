@@ -9,6 +9,7 @@ English | [日本語](0100-image-generation-studio.ja.md)
   Status update (2026-09-24): P0 is implemented. The prerequisites and the frozen contract landed as #924; the three lanes as #925 (CP relay), #926 (Agent, `workspace/agent/internal/imagegen/studio*.go`) and #927 (Console pane); and the integration with revision 8 as #932, merged on 2026-09-23. The P0 acceptance run on a deployment is #959; P1 is #960.
   Status update (2026-09-25): two facts in the context and in decision 8 no longer hold (#978, [docs/log/117](../log/117-managed-af-session-name-delivery.md)). copilot / cursor / kiro / muse Managed now deliver `AF_SESSION_NAME` to the af child; muse's af server already gets the Agent token on the wire (ADR 0095 P2-14). A codex Managed thread resumed into a replaced daemon keeps its name too: the "falls back to the cwd guess" below was measured against a live daemon only. Opening those kinds to studios and letting codex Managed turn the worktree off stay with #960.
   Status update (2026-09-27): decision 10 is revised (revision 10) — the studio-less pane is gone. Its draft lived in one browser's `localStorage`, so what the member wrote on a PC never reached their phone; a studio needs no agent to exist (decision 2, step ①), so every pane now edits one and the draft follows the member across devices. Decision 2's "without a session the pane keeps working on the `localStorage` draft" no longer holds; the attach order ①–③ is unchanged except that ① is skipped (the pane already has its studio).
+  Status update (2026-09-28): decision 6's outline is narrowed (see the note under decision 6). A press clears the outlines, and a sampler knob is outlined alone, not with the whole `params` group its lock covers.
 - Follow-ups: #949, #956, #959, #960
 - **Revision 1 (2026-09-23)**: folds in the ADR review by another session, `semvs2b` (codex /
   gpt-6-sol), [113-adr-review](../log/113-adr-review.md) (9 red, 12 yellow, 1 blue). Decisions 3, 4,
@@ -280,6 +281,11 @@ and muse read first-class Managed attachments; every other kind and TUI get the 
 text, as today. Kinds or models without vision get the button disabled with a reason. The check is a
 new attachment flag next to `agent.caps.imagePaste`, and the capability table joins the
 `guideTable.test.ts` cross-check.
+
+**Note (2026-09-28)**: an outline also ends when the person presses trial or enqueue, since pressing with
+the agent's values is looking at them. Left until each field was touched, the outlines piled up until
+every field the agent had ever moved wore one. It is drawn per field of the edit log (`params.cfg`),
+not per lock key, so changing one knob does not outline all of them.
 
 ### Decision 7 — Family dialect, quality prefixes and recommended ranges move into the Agent's family table
 
