@@ -146,6 +146,41 @@ describe("useStudio: 縁取り（決定 6）", () => {
   });
 });
 
+describe("useStudio: 押すと縁取りが消える", () => {
+  it("試走・投入はエージェントの値を見て押したこと: 縁取りを全部消す", async () => {
+    await mount();
+    current = {
+      ...current,
+      updated_at: "v2",
+      draft: { prompt: "b", params: { cfg: 5 } },
+      recent_log: [
+        ...(current.recent_log || []),
+        { seq: 2, kind: "edit", at: "t", author: "agent", changes: [{ field: "prompt" }, { field: "params.cfg" }] },
+      ],
+    };
+    await tick(2100);
+    expect([...st.highlight].sort()).toEqual(["params.cfg", "prompt"]);
+    await act(async () => void (await st.press("trial")));
+    expect([...st.highlight]).toEqual([]);
+  });
+
+  it("摘みを 1 つ直すとその摘みの縁取りだけ消える", async () => {
+    await mount();
+    current = {
+      ...current,
+      updated_at: "v2",
+      draft: { params: { cfg: 5, sampler: "euler" } },
+      recent_log: [
+        ...(current.recent_log || []),
+        { seq: 2, kind: "edit", at: "t", author: "agent", changes: [{ field: "params.cfg" }, { field: "params.sampler" }] },
+      ],
+    };
+    await tick(2100);
+    await act(async () => st.patchForm({ cfg: "6" }));
+    expect([...st.highlight]).toEqual(["params.sampler"]);
+  });
+});
+
 describe("forgetStudioState", () => {
   it("削除したスタジオの縁取りと合図の位置だけを消す", async () => {
     await mount();

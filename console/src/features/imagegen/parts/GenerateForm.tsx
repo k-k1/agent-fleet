@@ -18,7 +18,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { Slider } from "../../settings/parts/controls.tsx";
 import { loraTriggers, loraWeight, type ImagegenLora, type ImagegenModel, type ImagegenProvider, type Knob } from "../wire.ts";
 import { familyFacts, SIZE_SHAPES, sizeOptions, sizeShape, sizesByShape, type SizeShape } from "../families.ts";
-import { LOCKABLE, type StudioKey } from "../studioSync.ts";
+import { LOCKABLE, changeKey, marked, type StudioKey } from "../studioSync.ts";
 import { effectiveParams, MAX_BATCH, MAX_JOBS, OPS, type ImagegenDraft } from "../draft.ts";
 import { InputPicker } from "./InputPicker.tsx";
 
@@ -86,7 +86,9 @@ export function GenerateForm({
   // A locked key shows its padlock beside the field's name; the switches themselves live in one
   // group inside the folded details, so an unlocked field carries no icon at all.
   const lk = (k: StudioKey): ReactNode => (locks?.includes(k) ? <LockBadge /> : null);
-  const hl = (k: StudioKey): string => (highlight?.has(k) ? " igen-hl" : "");
+  // Outlines are per field (studioSync `markOf`): a knob is marked "params.<knob>", not with the
+  // whole sampler group the lock covers.
+  const hl = (mark: string): string => (marked(highlight, mark) ? " igen-hl" : "");
   const family = model?.family || "";
   // Undeclared knobs = an Agent from before this ADR. Everything stays enabled; see the
   // header comment for why that is the safe direction.
@@ -153,7 +155,7 @@ export function GenerateForm({
 
   // The folded details open themselves when the agent moved a field inside them: an outline the
   // member cannot see is no signal at all.
-  const hlAdv = ADVANCED_KEYS.some((k) => highlight?.has(k));
+  const hlAdv = [...(highlight || [])].some((m) => (ADVANCED_KEYS as readonly string[]).includes(changeKey(m)));
   const [advOpen, setAdvOpen] = useState(hlAdv);
   useEffect(() => {
     if (hlAdv) setAdvOpen(true);
@@ -358,7 +360,7 @@ export function GenerateForm({
           )}
         </summary>
         <div className="igen-grid">
-          <Knobbed label={tr("imggen.steps")} on={reads("steps")} family={family} lock={lk("params")} extra={hl("params")}>
+          <Knobbed label={tr("imggen.steps")} on={reads("steps")} family={family} lock={lk("params")} extra={hl("params.steps")}>
             <input
               className="ds-input"
               type="number"
@@ -370,7 +372,7 @@ export function GenerateForm({
               onChange={(e) => patch({ steps: e.target.value })}
             />
           </Knobbed>
-          <Knobbed label={tr("imggen.cfg")} on={reads("cfg")} family={family} lock={lk("params")} extra={hl("params")}>
+          <Knobbed label={tr("imggen.cfg")} on={reads("cfg")} family={family} lock={lk("params")} extra={hl("params.cfg")}>
             <input
               className="ds-input"
               type="number"
@@ -384,7 +386,7 @@ export function GenerateForm({
             />
           </Knobbed>
           {offers("guidance", draft.guidance) && (
-            <Knobbed label={tr("imggen.guidance")} on={knobOn("guidance")} family={family} lock={lk("params")} extra={hl("params")}>
+            <Knobbed label={tr("imggen.guidance")} on={knobOn("guidance")} family={family} lock={lk("params")} extra={hl("params.guidance")}>
               <input
                 className="ds-input"
                 type="number"
@@ -399,7 +401,7 @@ export function GenerateForm({
             </Knobbed>
           )}
           {offers("shift", draft.shift) && (
-            <Knobbed label={tr("imggen.shift")} on={knobOn("shift")} family={family} lock={lk("params")} extra={hl("params")}>
+            <Knobbed label={tr("imggen.shift")} on={knobOn("shift")} family={family} lock={lk("params")} extra={hl("params.shift")}>
               <input
                 className="ds-input"
                 type="number"
@@ -414,7 +416,7 @@ export function GenerateForm({
             </Knobbed>
           )}
           {offers("clip_skip", draft.clipSkip) && (
-            <Knobbed label={tr("imggen.clip_skip")} on={knobOn("clip_skip")} family={family} lock={lk("params")} extra={hl("params")}>
+            <Knobbed label={tr("imggen.clip_skip")} on={knobOn("clip_skip")} family={family} lock={lk("params")} extra={hl("params.clip_skip")}>
               <input
                 className="ds-input"
                 type="number"
@@ -428,7 +430,7 @@ export function GenerateForm({
               />
             </Knobbed>
           )}
-          <Knobbed label={tr("imggen.sampler")} on={reads("sampler")} family={family} lock={lk("params")} extra={hl("params")}>
+          <Knobbed label={tr("imggen.sampler")} on={reads("sampler")} family={family} lock={lk("params")} extra={hl("params.sampler")}>
             {/* The options are the AGENT's allow-list: a name it does not know is refused with
                 400, and the catalogue overlay's silent fallback does not apply to a member's
                 typed value (decision 4). */}
@@ -446,7 +448,7 @@ export function GenerateForm({
               ))}
             </select>
           </Knobbed>
-          <Knobbed label={tr("imggen.scheduler")} on={reads("scheduler")} family={family} lock={lk("params")} extra={hl("params")}>
+          <Knobbed label={tr("imggen.scheduler")} on={reads("scheduler")} family={family} lock={lk("params")} extra={hl("params.scheduler")}>
             <select
               className="ds-select"
               value={draft.scheduler}

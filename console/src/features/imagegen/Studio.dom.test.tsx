@@ -155,6 +155,14 @@ describe("エージェントが動かした欄の縁取り（決定 6）", () =>
     expect(host.querySelectorAll(".igen-grid .igen-hl").length).toBe(4);
   });
 
+  it("エージェントが cfg だけ変えたら cfg だけを縁取る（鍵の単位の params 一式ではない）", async () => {
+    await mount(<Form locks={[]} onToggleLock={() => {}} highlight={new Set(["params.cfg"])} />);
+    expect(host.querySelectorAll(".igen-grid .igen-hl").length).toBe(1);
+    expect(fieldOf("cfg")!.className).toContain("igen-hl");
+    expect(fieldOf("steps")!.className).not.toContain("igen-hl");
+    expect(host.querySelector<HTMLDetailsElement>(".igen-advanced")!.open).toBe(true);
+  });
+
   it("詳細の中の欄が動いたら詳細が開き、要約に印が出る", async () => {
     await mount(<Form locks={[]} onToggleLock={() => {}} highlight={new Set(["params"])} />);
     const adv = host.querySelector<HTMLDetailsElement>(".igen-advanced")!;

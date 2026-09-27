@@ -38,7 +38,7 @@ import {
   mergeForm,
   rebaseForm,
   studioFromForm,
-  studioKeysOf,
+  marksOf,
   studioSignal,
   toggleLock as toggled,
   type StudioKey,
@@ -101,8 +101,8 @@ export interface StudioState {
   patchForm: (p: Partial<ImagegenDraft>) => void;
   locks: string[];
   toggleLock: (k: StudioKey) => void;
-  /** Keys the agent moved since the member last touched them. */
-  highlight: ReadonlySet<StudioKey>;
+  /** Fields the agent moved since the member last touched them or pressed (studioSync `markOf`). */
+  highlight: ReadonlySet<string>;
   /** The edit log known so far, newest first. */
   log: DraftLogEntry[];
   hasOlder: boolean;
@@ -127,9 +127,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
   const [failed, setFailed] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [form, setForm] = useState<ImagegenDraft>(() => formFromStudio(studio?.draft ?? null));
-  const [highlight, setHighlight] = useState<Set<StudioKey>>(
-    () => new Set((id ? readJSON<Seen>(seenKey(id))?.keys || [] : []) as StudioKey[]),
-  );
+  const [highlight, setHighlight] = useState<Set<string>>(() => new Set(id ? readJSON<Seen>(seenKey(id))?.keys || [] : []));
   const [older, setOlder] = useState<DraftLogEntry[]>([]);
   const [olderCursor, setOlderCursor] = useState<number | null>(null);
   const [recordPending, setRecordPending] = useState<Set<string>>(() => new Set());
@@ -301,8 +299,10 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
       const next = { ...formRef.current, ...p };
       formRef.current = next;
       setForm(next);
-      const touched = studioKeysOf(Object.keys(p) as (keyof ImagegenDraft)[]);
-      setHighlight((h) => (touched.some((k) => h.has(k)) ? new Set([...h].filter((k) => !touched.includes(k))) : h));
+      const touched = marksOf(Object.keys(p) as (keyof ImagegenDraft)[]);
+      // A knob edit also clears a bare "params" outline saved before outlines were per knob.
+      const clears = (m: string) => touched.includes(m) || (m === "params" && touched.some((t) => t.startsWith("params.")));
+      setHighlight((h) => ([...h].some(clears) ? new Set([...h].filter((m) => !clears(m))) : h));
       dirtyRef.current = true;
       window.clearTimeout(timerRef.current);
       timerRef.current = window.setTimeout(() => void flush(), DEBOUNCE_MS);
@@ -382,6 +382,9 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
         return null;
       }
       if (r.recorded === false && r.version) setRecordPending((s) => new Set([...s, r.version]));
+      // Pressing with the agent's values is the member having looked at them: the outlines have
+      // done their job, and left on they only pile up until every field wears one.
+      setHighlight(new Set());
       void reload();
       return r;
     },
