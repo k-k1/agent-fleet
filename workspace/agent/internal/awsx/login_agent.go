@@ -225,7 +225,11 @@ func HandleLoginList(w http.ResponseWriter, r *http.Request) {
 		seen := map[waiterWire]bool{}
 		waiters := []waiterWire{}
 		for i := len(req.Waiters) - 1; i >= 0 && len(waiters) < 5; i-- {
-			ww := waiterWire{Session: req.Waiters[i].Session, Command: req.Waiters[i].Command}
+			// Cleaned again here, not only when filed: any agent can write the file directly.
+			ww := waiterWire{Session: cleanWaiterText(req.Waiters[i].Session), Command: cleanWaiterText(req.Waiters[i].Command)}
+			if ww == (waiterWire{}) {
+				continue
+			}
 			if !seen[ww] {
 				seen[ww] = true
 				waiters = append(waiters, ww)
@@ -392,7 +396,9 @@ func startLoginAttempt(bin string, req LoginRequest, sp Profile) (*loginAttempt,
 	ctx, stop := context.WithTimeout(context.Background(), loginAttemptTimeout)
 	cmd := exec.CommandContext(ctx, bin, "sso", "login", "--profile", ssoOnlyProfile, "--use-device-code", "--no-browser")
 	cmd.Env = verifierEnv(baseEnv(os.Environ()), cfg)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Its own process group, so a replace or cancel kills everything it started; and it dies
+	// with the Agent, whose restart loses the attempt anyway (ADR 0102 decision 3).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	pr, pw, err := os.Pipe()
 	if err != nil {

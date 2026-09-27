@@ -15,7 +15,10 @@
   どちらも欠けていない。
 - 既定のタイムアウトは 120 秒。90 秒の待ちはその内側に収まる。越えても、出力は失われない。
 
-→ `consoleLoginWaits` に claude = 90 秒を入れた（`workspace/agent/aws_exec.go`）。
+→ `consoleLoginWaits` に claude = 90 秒を入れた（`workspace/agent/aws_exec.go`）。未測定の kind は
+`consoleLoginUnmeasuredWait`（5 秒）を使う。実装レビューで、最初の版は未測定の kind にも claude の 90 秒を
+使っていたと指摘された。90 秒より短いタイムアウトで出力を捨てる kind があれば、その kind のエージェントには
+何も伝わらないので、未測定の kind は 5 秒に改めた。
 
 ### 1.2 ダミーの開始 URL ではデバイス認可まで進めない（決定 3）
 
@@ -25,13 +28,29 @@
 - `StartDeviceAuthorization` が `InvalidRequestException`（`invalid_request`）で断り、exit 254 で終わった。
 - URL もコードも出ないので、パイプへの書き出しと表示ホストは、この方法では測れない。
 
+### 1.3 パイプへの書き出し（決定 3・実装レビューで測定）
+
+偽の OIDC エンドポイント（`AWS_ENDPOINT_URL_SSO_OIDC`）と隔離した HOME を使い、`aws sso login --use-device-code
+--no-browser` の標準出力を、時刻を付けて読むパイプにつないだ（aws-cli 2.36.46）。
+
+- デバイス認可から 50 ms 以内に、次の 4 行がパイプに届いた。プロセスが終わる約 5 秒前で、CLI が /token を
+  ポーリングしている間に書き出している。
+  - 「Please visit…」
+  - `https://device.sso.ap-northeast-1.amazonaws.com/`
+  - `ABCD-EFGH`
+  - `…?user_code=ABCD-EFGH`
+- 素の URL が先、user_code 付きの URL が最後に出る。`DeviceAuthorization` はどちらの順でも扱える。
+
 ## 2. 測れていないもの
 
-- **パイプへの書き出しと、表示される URL のホスト**（決定 3）: 本物の IAM Identity Center の開始 URL が要る。
-  利用者のポータルでデバイスコードを発行する操作なので、受け入れ実行（#1026 の Acceptance）で測る。
-  現在の許可ホストは、`device.sso.<sso_region>.amazonaws.com`（中国は `.amazonaws.com.cn`）と、開始 URL のホスト。
-- **claude 以外の kind のシェルコマンドのタイムアウト**（決定 5）: 未測定。未測定の kind は「分からない」扱いで、
-  測った中で最も短い待ち（今は claude の 90 秒）を使う。→ #1036
+- **本物のポータルが表示する URL のホスト**（決定 3）: 偽の OIDC は、`sso_region` から組み立てた
+  `device.sso.<region>.amazonaws.com` を返した。本物のポータル、特に新しいドメインの開始 URL で同じになるかは、
+  受け入れ実行（#1026 の Acceptance）で確かめる。いまの許可ホストは次の 2 つ。
+  - `device.sso.<sso_region>.amazonaws.com`（中国は `.amazonaws.com.cn`）
+  - 開始 URL のホスト
+- **claude 以外の kind のシェルコマンドのタイムアウト**（決定 5）: 未測定。未測定の kind と、kind の分からない
+  呼び出し元は 5 秒待つ。どのツールのタイムアウトにも切られない短さで、依頼を出して表示し、exit 3 で終える。
+  測った kind だけが、その値を使う（今は claude の 90 秒）。→ #1036
 
 ## 3. 偽の aws で確かめたこと
 

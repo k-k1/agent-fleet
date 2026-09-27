@@ -42,6 +42,8 @@ func settle(aws awsRunner, ssoSession string, snap CacheState, deadline time.Tim
 			return snap, processCreds{}, errUnsettled
 		}
 		snap = cur
+		// A cache that keeps moving must not turn this into back-to-back aws starts.
+		time.Sleep(loginPollInterval)
 		c, err := exportCreds(aws, ssoOnlyProfile)
 		if err == nil {
 			return snap, c, nil
@@ -88,6 +90,9 @@ func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, fi
 		"waiting up to %s for the member to approve it there\n", o.Profile, o.ConsoleWait.Round(time.Second))
 
 	recorded := snap
+	// lost: the request is gone and could not be filed again, so only a cache change is
+	// worth another aws start.
+	lost := false
 	for time.Now().Before(deadline) {
 		time.Sleep(loginPollInterval)
 		state := requestStateFor(sso.Session, req.ID)
@@ -95,7 +100,7 @@ func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, fi
 			return processCreds{}, cancelled()
 		}
 		cur := ReadCacheState(sso.Session)
-		if state != requestGone && !(cur != recorded && cur.Unexpired(time.Now())) {
+		if (state != requestGone || lost) && !(cur != recorded && cur.Unexpired(time.Now())) {
 			continue
 		}
 		c, err := exportCreds(aws, ssoOnlyProfile)
@@ -122,12 +127,13 @@ func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, fi
 			return processCreds{}, cancelled()
 		}
 		if err != nil {
+			recorded, lost = s, true
 			continue
 		}
 		if created {
 			fmt.Fprintf(stderr, "af-aws-exec: the SSO login for profile %q is still needed; requested again in the Agent Fleet Console\n", o.Profile)
 		}
-		req, recorded = next, s
+		req, recorded, lost = next, s, false
 	}
 	return processCreds{}, fmt.Errorf("%w for profile %q: the login was requested in the Agent Fleet Console and is waiting "+
 		"for the member to approve it there; run the command again once it is approved", ErrLoginRequired, o.Profile)

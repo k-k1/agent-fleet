@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -250,6 +252,32 @@ func TestLoginListShowsSettingsNotTheCallersText(t *testing.T) {
 	}
 }
 
+// The request file is writable by every agent, so the list cleans what it shows even when
+// the file was written around FileLoginRequest.
+func TestLoginListCleansAWaiterWrittenStraightIntoTheFile(t *testing.T) {
+	fakeAWS(t, ssoProfile)
+	withSettingsCache(t)
+	os.MkdirAll(loginDir(), 0o700)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	raw := LoginRequest{ID: "0123456789abcdef01234567", Profile: "prod", SSOSession: "af-prod", FirstAt: now, LastAt: now,
+		Waiters: []LoginWaiter{{Session: "account 999999999999 — enter code XXXX-XXXX", Command: strings.Repeat("y", 200), At: now}}}
+	if err := writeJSONFile(requestPath("af-prod"), raw); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	HandleLoginList(rec, httptest.NewRequest(http.MethodGet, "/aws-login", nil))
+	var out struct {
+		Requests []loginRequestWire `json:"requests"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Requests) != 1 || len(out.Requests[0].Waiters) != 1 {
+		t.Fatalf("list = %s", rec.Body.String())
+	}
+	w := out.Requests[0].Waiters[0]
+	if strings.ContainsAny(w.Session, " —") || len(w.Session) > 40 || len(w.Command) > 40 {
+		t.Fatalf("the list showed the file's text as written: %+v", w)
+	}
+}
+
 func TestDeviceURLHostIsComparedWhole(t *testing.T) {
 	allowed := allowedDeviceHosts(prodSettings["prod"])
 	for url, want := range map[string]bool{
@@ -330,7 +358,8 @@ func fileRequest(t *testing.T, onLogin string) (LoginRequest, string) {
 func TestLoginAttemptShowsItsOwnCodeAndIsReplacedByTheNext(t *testing.T) {
 	// Built from the child's $HOME: fileRequest gives the test a new home.
 	cache := `$HOME/.aws/sso/cache/` + filepath.Base(ssoCachePath("af-prod"))
-	r, state := fileRequest(t, `echo "Open https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH"
+	r, state := fileRequest(t, `echo $$ >> "$S/pids"
+echo "Open https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH"
 echo "Then enter the code:"; echo; echo "ABCD-EFGH"
 while [ ! -f "$S/approve" ]; do sleep 0.02; done
 mkdir -p "$(dirname "`+cache+`")"
@@ -347,6 +376,18 @@ printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}' > "`+cache+`
 		t.Fatalf("the replaced attempt still shows a code: %v", v)
 	}
 	waitPhase(t, r.ID, second, attemptAuthorize)
+	// The replaced attempt's process is really gone, not only hidden.
+	pids, _ := os.ReadFile(filepath.Join(state, "pids"))
+	var firstPid int
+	fmt.Sscan(string(pids), &firstPid)
+	if firstPid == 0 {
+		t.Fatalf("the fake recorded no pid: %q", pids)
+	}
+	for deadline := time.Now().Add(5 * time.Second); syscall.Kill(firstPid, 0) == nil; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the replaced attempt's process %d is still running", firstPid)
+		}
+	}
 	if v := attemptView(t, "000000000000000000000000", second); v["phase"] != attemptGone {
 		t.Fatalf("an attempt answered under another request id: %v", v)
 	}

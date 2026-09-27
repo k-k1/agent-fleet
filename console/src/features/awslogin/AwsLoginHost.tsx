@@ -58,18 +58,23 @@ export function AwsLoginHost() {
   }, [noticeSeq, refresh]);
 
   const visible = useMemo(() => requests.filter((r) => !hidden[r.id]), [requests, hidden]);
-  const shownKeys = useRef(new Set<string>());
+  // key -> what the toast shows. Every poll returns a new array; a toast is re-issued only
+  // when what it shows changed.
+  const shown = useRef(new Map<string, string>());
   useEffect(() => {
-    const next = new Set<string>();
+    const next = new Map<string, string>();
     for (const r of visible) {
       const key = toastKey(r.id);
-      next.add(key);
-      toast(<AwsLoginToast r={r} />, { kind: "info", duration: 0, key, onClose: () => hide(r.id) });
+      const sig = JSON.stringify([r.label, r.profile, r.accountId, r.roleName, waitersLine(r)]);
+      next.set(key, sig);
+      if (shown.current.get(key) !== sig) {
+        toast(<AwsLoginToast r={r} />, { kind: "info", duration: 0, key, onClose: () => hide(r.id) });
+      }
     }
-    for (const key of shownKeys.current) {
+    for (const key of shown.current.keys()) {
       if (!next.has(key)) dismissToast(key);
     }
-    shownKeys.current = next;
+    shown.current = next;
   }, [visible, hide]);
 
   const polling = visible.length > 0;

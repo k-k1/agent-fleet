@@ -159,15 +159,21 @@ func runAWSExec(args []string) {
 // consoleLoginWaits is how long af-aws-exec waits for a Console login, per agent kind,
 // from measurements of that kind's shell tool (ADR 0102 decision 5): the wait has to end
 // before the tool gives up on the command, unless the tool keeps the output of a command
-// it stops waiting for. A kind not listed has not been measured.
+// it stops waiting for. A kind not listed has not been measured (#1036).
 var consoleLoginWaits = map[string]time.Duration{
 	// Measured 2026-09-27: the Bash tool's default timeout is 120 s, and a command that
 	// outlives its timeout moves to the background with its output kept, so nothing is lost.
 	session.KindClaude: 90 * time.Second,
 }
 
-// consoleLoginWait picks the wait for the session that runs this command. An unknown or
-// unmeasured caller gets the shortest measured wait (ADR 0102 decision 5).
+// consoleLoginUnmeasuredWait is the wait of a kind nobody has measured, and so the
+// shortest of all kinds: short enough that no tool's timeout plausibly cuts it, so the
+// run still files the request, says so, and ends with exit 3 for a rerun.
+const consoleLoginUnmeasuredWait = 5 * time.Second
+
+// consoleLoginWait picks the wait for the session that runs this command. An unknown
+// caller gets the shortest wait of all kinds, which is the unmeasured one while any kind
+// is unmeasured (ADR 0102 decision 5).
 func consoleLoginWait(sessionName string) time.Duration {
 	if session.ValidName(sessionName) {
 		if m, ok := session.ReadMeta(sessionName); ok {
@@ -176,13 +182,7 @@ func consoleLoginWait(sessionName string) time.Duration {
 			}
 		}
 	}
-	shortest := time.Duration(0)
-	for _, d := range consoleLoginWaits {
-		if shortest == 0 || d < shortest {
-			shortest = d
-		}
-	}
-	return shortest
+	return consoleLoginUnmeasuredWait
 }
 
 // parseAWSExecArgs reads the flags up to "--"; everything after it is the command.

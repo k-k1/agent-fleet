@@ -68,8 +68,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       setItems((xs) => {
         const at = item.key ? xs.findIndex((x) => x.key === item.key) : -1;
         if (at < 0) return [...xs, item];
+        // Keep the id, which is the React key: a new one would remount the toast, dropping
+        // focus and a press in progress, and re-announcing it to a screen reader.
         const next = xs.slice();
-        next[at] = item;
+        next[at] = { ...item, id: xs[at].id };
         return next;
       });
       // Errors (and any opt-in persist) are recorded in the notification center so a failure

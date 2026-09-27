@@ -79,11 +79,12 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// repo's restore commit (AF-Restore-Rev / -Scope).
 			return "memory.restore", q.Get("rev"), true
 		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/start"):
-			// ADR 0102. The Console repeats the profile in the query as an audit hint; the
-			// Agent decides from the request id alone, and never sees the code here.
-			return "aws.login.start", q.Get("profile"), true
+			// ADR 0102. The request id is from the URL; the profile is only the Console's
+			// hint in the query (the Agent decides from the id alone), so it is labelled one.
+			// The code never passes through here.
+			return "aws.login.start", awsLoginAuditTarget(p, q), true
 		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/cancel"):
-			return "aws.login.cancel", q.Get("profile"), true
+			return "aws.login.cancel", awsLoginAuditTarget(p, q), true
 		case p == "/api/sessions":
 			return "session.create", "", true
 		case name != "" && strings.HasSuffix(p, "/fork"):
@@ -118,6 +119,13 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// awsLoginAuditTarget names an AWS login request by its id, with the profile hint the
+// Console sends.
+func awsLoginAuditTarget(p string, q url.Values) string {
+	id, _, _ := strings.Cut(strings.TrimPrefix(p, "/api/aws-login/"), "/")
+	return id + " (profile hint: " + q.Get("profile") + ")"
 }
 
 // agentProxyAPI is the set of pass-through proxies to the Workspace Agent. Resolution

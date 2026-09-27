@@ -318,8 +318,8 @@ af-aws-exec --profile <name> -- npx cdk deploy
   screen names the profile, its account and role from Settings, and which session asks. Press **Log in** to open the
   login window, check what it is for, and press **Log in** there; only then is a sign-in code created, and only
   that window shows it. Check the code, press **Sign in and approve**, and approve it on the page that opens. The
-  agent's command waits about a minute and a half and then continues; if it has given up by then, the agent runs
-  it again. **Cancel the request** withdraws it, and for about ten minutes that profile is not asked for again.
+  agent's command waits for a while (about a minute and a half for Claude, a few seconds for the other agents)
+  and continues once you approve; if it has given up by then, the agent runs it again. **Cancel the request** withdraws it, and for about ten minutes that profile is not asked for again.
   Closing the toast only hides it in that tab. This covers your Settings profiles; for a profile you defined
   yourself, or with `--no-login`, the command exits with code 3 and the login command to run in a terminal.
 - The command gets an AWS config that defines **only the profile you chose** (it hands back the same short-lived

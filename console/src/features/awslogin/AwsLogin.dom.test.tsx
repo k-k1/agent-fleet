@@ -129,6 +129,17 @@ describe("AWS login toast and modal", () => {
     expect(document.body.textContent).toContain("was not the one this profile uses");
   });
 
+  it("keeps the same toast across polls, so focus and a press in progress survive", async () => {
+    await mount();
+    const first = document.querySelector(".ui-toast");
+    const btn = first!.querySelector(".update-toast-btn") as HTMLButtonElement;
+    btn.focus();
+    listed = [{ ...prod }]; // a new object with the same content, as every poll returns
+    await tick(8100);
+    expect(document.querySelector(".ui-toast")).toBe(first);
+    expect(document.activeElement).toBe(btn);
+  });
+
   it("withdraws the toast once the Agent no longer lists the request", async () => {
     await mount();
     expect(document.querySelector(".ui-toast")).not.toBeNull();
