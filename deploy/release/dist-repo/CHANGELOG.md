@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.24.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.24.0) — 2026-09-27
+
+The AWS profiles in Settings now work with the AWS CLI, SDKs and build tools in your workspace, and
+the Console asks you to log in when one needs it. Deleted worktrees go to the trash and come back
+at the same path with their uncommitted changes. Sessions that need you stand out, and **Alt+U**
+jumps to the next one. The image studio is usable on a phone, starts from a repository row and runs
+several studios at once. The model pickers show API list price, context window and retirement.
+
 ## [0.23.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.2) — 2026-09-25
 
 Each terminal session gets its own scratch folder, removed along with the session, and

@@ -9,7 +9,49 @@ Each line starts with the area it belongs to — **[preview]**, **[ecs-ec2]**,
 **[mirror]** — so a fix can be traced back to the feature it repairs, which is not
 otherwise visible once the bullets are one line long.
 
+From 0.24.0, a line that came from a GitHub issue ends with its number, linked to
+<https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
+
 ---
+
+## [0.24.0](0.24.0.md) — 2026-09-27
+
+**CLI pins** — Claude Code 2.1.283, Codex 0.157.1, Antigravity 1.2.11, Cursor 2026.09.26-dd393fe, Kiro 2.24.1, Muse Code 1.4.0-R4161.1
+
+**New / Improved**
+
+- **[AWS]** Settings › AWS SSM profiles are written into `~/.aws/config`; `af-aws-exec` runs a command as you, and a Console toast asks you to log in when the login has expired ([#998](https://github.com/k-k1/agent-fleet/issues/998), [#1026](https://github.com/k-k1/agent-fleet/issues/1026), [#1036](https://github.com/k-k1/agent-fleet/issues/1036))
+- **[worktree]** Deleting a worktree goes to the trash with its branch and uncommitted changes, and restoring brings it back at the same path with its sessions; older deletes can be recreated from the archive ([#1040](https://github.com/k-k1/agent-fleet/issues/1040), [#1042](https://github.com/k-k1/agent-fleet/issues/1042))
+- **[notifications]** Sessions that need you get an amber outline and pane ring, unread rows a bold title; **Alt+U** jumps to the next; a notification is read once what it points to is on screen ([#1057](https://github.com/k-k1/agent-fleet/issues/1057))
+- **[models]** The model pickers show API list price, context window and retirement (not for cursor, Muse Code, llama.cpp or claude's tier names) ([#1021](https://github.com/k-k1/agent-fleet/issues/1021))
+- **[notifications]** Desktop notifications programs raise in a Terminal (CLI) session (OSC 9 / 99 / 777) reach the notification center ([#1058](https://github.com/k-k1/agent-fleet/issues/1058))
+- **[settings › machine]** Leftover files: stale Chromium profiles, orphaned `~/.af-work` folders, old Node patches and Kiro versions, removed on a press and at Agent start (old Copilot and Cursor versions too) ([#1038](https://github.com/k-k1/agent-fleet/issues/1038), [#981](https://github.com/k-k1/agent-fleet/issues/981))
+- **[settings › agents]** Your own period for archiving stopped sessions (1–30 days, or Off) ([#982](https://github.com/k-k1/agent-fleet/issues/982))
+- **[image generation]** Clip skip, FLUX guidance and Anima shift can be set from the studio, a catalogue row and `generate_image` ([#1035](https://github.com/k-k1/agent-fleet/issues/1035))
+- **[image generation]** The studio works on a phone, starts from a repository or worktree row, and runs several studios with their own results; every pane edits a studio ([#1074](https://github.com/k-k1/agent-fleet/issues/1074))
+- **[issue tracker]** Every label in its tracker colour, priority first; a query that matched more than was fetched says so, GitHub fetches 100, and "Search the tracker" finds the rest ([#993](https://github.com/k-k1/agent-fleet/issues/993), [#994](https://github.com/k-k1/agent-fleet/issues/994), [#1095](https://github.com/k-k1/agent-fleet/issues/1095))
+- **[settings modal]** The admin and tenant settings reopen where you left them ([#1100](https://github.com/k-k1/agent-fleet/issues/1100))
+- **[UI prefs sync]** A failed settings sync is shown with a Retry; another account's copy in the same browser no longer mixes in ([#1023](https://github.com/k-k1/agent-fleet/issues/1023))
+- **[agent kinds]** llama.cpp sessions warn at turn 12 and stop at turn 20 a model that keeps calling one tool with changing arguments ([#953](https://github.com/k-k1/agent-fleet/issues/953))
+- **[engines]** An engine that does not come up in time names the reason ECS gives ([#967](https://github.com/k-k1/agent-fleet/issues/967))
+- **[settings › assistants]** A refused assistant setting says what was wrong, in your language ([#971](https://github.com/k-k1/agent-fleet/issues/971))
+
+**Fixed**
+
+- **[deletion locks]** A session action running at the same moment could undo a deletion lock ([#950](https://github.com/k-k1/agent-fleet/issues/950))
+- **[sessions]** Resuming a Terminal (CLI) session reverted the model, effort and mode switched inside the terminal ([#987](https://github.com/k-k1/agent-fleet/issues/987))
+- **[MCP]** In Managed sessions, Agent Fleet's own tools refused when two sessions shared a folder, and every call failed on cursor ([#978](https://github.com/k-k1/agent-fleet/issues/978), [#951](https://github.com/k-k1/agent-fleet/issues/951), [#989](https://github.com/k-k1/agent-fleet/issues/989))
+- **[idle stop]** A workspace could stop under a running or queued image generation ([#949](https://github.com/k-k1/agent-fleet/issues/949))
+- **[settings › AI assistance]** AI assist with Muse Code chosen ran on claude ([#1020](https://github.com/k-k1/agent-fleet/issues/1020))
+- **[SSM]** Resume on a stopped SSM pane skipped the SSO login dialog, and a narrow pane cut the sign-in link ([#1025](https://github.com/k-k1/agent-fleet/issues/1025))
+- **[sessions]** Resuming a codex or opencode Managed session whose folder was deleted was not refused ([#1039](https://github.com/k-k1/agent-fleet/issues/1039))
+- **[engines]** flux1 image models could not be completed from the catalogue ([#1053](https://github.com/k-k1/agent-fleet/issues/1053))
+- **[image generation]** Studio: a sent message stayed "Pending", tab titles and menu, a flash on switching back, the phone swipe, finished trials piling up, change outlines on every field ([#1089](https://github.com/k-k1/agent-fleet/issues/1089))
+- **[start flow]** Starting a session from a work item could send the first prompt twice
+- **[composer]** A prompt starting with `-` failed with "invalid flag"; the history (↑/↓, Ctrl+R) offered text you never typed
+- **[claude auth]** "Could not refresh your login because another Claude Code process is refreshing it" was retried instead of offering sign-in
+- **[antigravity]** agy sessions showed "waiting for input" while working; the mirror showed no model on agy, llama.cpp and Muse Code replies
+- **[MCP]** The CP's `list_models` refused llama.cpp ([#1075](https://github.com/k-k1/agent-fleet/issues/1075))
 
 ## [0.23.2](0.23.2.md) — 2026-09-25
 

@@ -64,6 +64,27 @@ work. Earlier releases grew into essays nobody finishes, so:
 Bold is for headline items, not for every bullet: if most of a section is bold, none of
 it stands out.
 
+## Issue references
+
+From 0.24.0, bugs and requests are tracked as issues on `k-k1/agent-fleet`, and a bullet
+that came from one ends with it. Older releases are not backfilled.
+
+- **Write the full URL:** `([#1057](https://github.com/k-k1/agent-fleet/issues/1057))`.
+  A bare `#1057` in the release body links to the *dist* repository's issue of that
+  number, and `k-k1/agent-fleet#1057` is plain text in the guide's copy under
+  `ref/releases/`. Only the full link works in both.
+- **The reference follows the bullet, it does not replace it.** The bullet still names
+  the symptom and the outcome; the issue is where the background lives.
+- **Never in the first paragraph** — `gen-changelog.sh` lifts it into the dist CHANGELOG.
+- **Cite the issue the change came from**, open or closed: an issue can be closed while
+  a live acceptance is still owed (then cite the open follow-up too), or still open
+  after its PR merged (`Refs #N`). What decides is `git merge-base --is-ancestor
+  <PR merge commit> <build commit>`, not the issue's state.
+- A limitation in a feature's bullet may point at the open issue that tracks it.
+- Several issues folded into one bullet are listed together: `([#1040](…), [#1042](…))`.
+- `SUMMARY*.md` lines carry the same links at the end, so "which release fixed #N?" is
+  one search.
+
 Do **not** put the download links, asset names or the rootfs tag in these files:
 `notes-body.sh` appends that footer, because the rootfs content hash is only known at
 build time.

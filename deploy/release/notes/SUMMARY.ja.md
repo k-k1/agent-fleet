@@ -8,7 +8,49 @@
 各行の頭には、それがどの面の話かを **[プレビュー]**・**[ecs-ec2]**・**[ミラー]** のように
 付けています。1 行に畳むと「どの機能に対する修正なのか」が見えなくなるためです。
 
+0.24.0 からは、GitHub の Issue から来た項目の末尾にその番号を付け、
+<https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
+
 ---
+
+## [0.24.0](0.24.0.ja.md) — 2026-09-27
+
+**CLI ピン** — Claude Code 2.1.283 / Codex 0.157.1 / Antigravity 1.2.11 / Cursor 2026.09.26-dd393fe / Kiro 2.24.1 / Muse Code 1.4.0-R4161.1
+
+**New / Improved**
+
+- **[AWS]** 設定 › AWS SSM のプロファイルを `~/.aws/config` に書き出す。`af-aws-exec` があなたとしてコマンドを実行し、ログインが切れていると Console のトーストがログインを求める ([#998](https://github.com/k-k1/agent-fleet/issues/998), [#1026](https://github.com/k-k1/agent-fleet/issues/1026), [#1036](https://github.com/k-k1/agent-fleet/issues/1036))
+- **[worktree]** worktree の削除はブランチと未コミットの変更ごとごみ箱へ入り、戻すと同じパスにセッションごと戻る。以前に消したものはアーカイブから作り直せる ([#1040](https://github.com/k-k1/agent-fleet/issues/1040), [#1042](https://github.com/k-k1/agent-fleet/issues/1042))
+- **[通知]** 対応が要るセッションは行が琥珀色の枠・ペインが輪、未読の行はタイトルが太字。**Alt+U** で次へ移る。通知は指す先が画面に出た時点で既読 ([#1057](https://github.com/k-k1/agent-fleet/issues/1057))
+- **[モデル]** モデルの選択肢に API 定価・コンテキスト長・廃止予定（cursor・Muse Code・llama.cpp と claude の段階名には出ない） ([#1021](https://github.com/k-k1/agent-fleet/issues/1021))
+- **[通知]** ターミナル（CLI）のセッションでプログラムが出すデスクトップ通知（OSC 9 / 99 / 777）が通知センターに届く ([#1058](https://github.com/k-k1/agent-fleet/issues/1058))
+- **[設定/マシン]** 使われなくなったファイル。残った Chromium のプロファイル・持ち主のない `~/.af-work`・古い Node のパッチ版と Kiro を押して消せる。Agent の起動時にも消す（古い Copilot・Cursor も） ([#1038](https://github.com/k-k1/agent-fleet/issues/1038), [#981](https://github.com/k-k1/agent-fleet/issues/981))
+- **[設定/エージェント]** 停止中セッションのアーカイブまでの期間を自分で選べる（1〜30 日、オフ） ([#982](https://github.com/k-k1/agent-fleet/issues/982))
+- **[画像生成]** clip skip・FLUX の guidance・Anima の shift をスタジオ・カタログの行・`generate_image` から指定できる ([#1035](https://github.com/k-k1/agent-fleet/issues/1035))
+- **[画像生成]** スタジオがスマホで使え、リポジトリや worktree の行から始められ、スタジオごとに結果が分かれていくつも並べられる。ペインは必ずスタジオを編集する ([#1074](https://github.com/k-k1/agent-fleet/issues/1074))
+- **[課題管理]** ラベルをすべてトラッカーの色で優先度から表示。取得件数より多く一致したクエリはそう示し、GitHub は 100 件取得し、「トラッカーで探す」で残りを探せる ([#993](https://github.com/k-k1/agent-fleet/issues/993), [#994](https://github.com/k-k1/agent-fleet/issues/994), [#1095](https://github.com/k-k1/agent-fleet/issues/1095))
+- **[設定モーダル]** 管理画面とテナント設定が前回閉じた場所で開く ([#1100](https://github.com/k-k1/agent-fleet/issues/1100))
+- **[UI 設定同期]** 設定の同期の失敗を表示して再試行できる。同じブラウザの別アカウントの設定が混ざらない ([#1023](https://github.com/k-k1/agent-fleet/issues/1023))
+- **[エージェント種別]** llama.cpp のセッションは、引数を変えて同じツールを呼び続けるモデルを 12 ターン目で警告し 20 ターン目で止める ([#953](https://github.com/k-k1/agent-fleet/issues/953))
+- **[エンジン]** 時間内に上がらないエンジンは ECS が返した理由を示す ([#967](https://github.com/k-k1/agent-fleet/issues/967))
+- **[設定/アシスタント]** アシスタントの設定が断られたとき、理由を利用者の言語で示す ([#971](https://github.com/k-k1/agent-fleet/issues/971))
+
+**Fixed**
+
+- **[削除ロック]** 同時に走ったセッションの操作で削除ロックが外れることがあった ([#950](https://github.com/k-k1/agent-fleet/issues/950))
+- **[セッション]** ターミナル（CLI）のセッションの再開で、端末の中で切り替えたモデル・effort・モードが戻っていた ([#987](https://github.com/k-k1/agent-fleet/issues/987))
+- **[MCP]** マネージドのセッションで、2 つのセッションが同じフォルダを使うと Agent Fleet のツールが断っていた。cursor ではすべての呼び出しが失敗していた ([#978](https://github.com/k-k1/agent-fleet/issues/978), [#951](https://github.com/k-k1/agent-fleet/issues/951), [#989](https://github.com/k-k1/agent-fleet/issues/989))
+- **[アイドル停止]** 画像生成の実行中・待ち行列があってもワークスペースが止まることがあった ([#949](https://github.com/k-k1/agent-fleet/issues/949))
+- **[設定/AI補助]** AI 補助で Muse Code を選んでも claude で動いていた ([#1020](https://github.com/k-k1/agent-fleet/issues/1020))
+- **[SSM]** 停止中の SSM のペインの「再開」が SSO のログイン画面を飛ばし、狭いペインではサインインのリンクが切れていた ([#1025](https://github.com/k-k1/agent-fleet/issues/1025))
+- **[セッション]** フォルダを消した codex・opencode のマネージドのセッションの再開が断られなかった ([#1039](https://github.com/k-k1/agent-fleet/issues/1039))
+- **[エンジン]** flux1 の画像モデルをカタログから揃えられなかった ([#1053](https://github.com/k-k1/agent-fleet/issues/1053))
+- **[画像生成]** スタジオ: 送ったメッセージが「送信中」のまま・タブの名前とメニュー・戻ったときのちらつき・スマホのスワイプ・終わった試し生成が溜まる・変更の枠がすべての欄に広がる ([#1089](https://github.com/k-k1/agent-fleet/issues/1089))
+- **[起動導線]** 課題管理からセッションを始めると最初のプロンプトが 2 回送られることがあった
+- **[コンポーザー]** `-` で始まるプロンプトが「invalid flag」で失敗していた。履歴（↑/↓、Ctrl+R）に自分が打っていない文が出ていた
+- **[claude 認証]** 「Could not refresh your login because another Claude Code process is refreshing it」を再試行し続け、サインインの導線を出していなかった
+- **[antigravity]** agy のセッションが作業中なのに「入力待ち」と出ていた。ミラーで agy・llama.cpp・Muse Code の返答にモデルが出ていなかった
+- **[MCP]** CP の `list_models` が llama.cpp を断っていた ([#1075](https://github.com/k-k1/agent-fleet/issues/1075))
 
 ## [0.23.2](0.23.2.ja.md) — 2026-09-25
 
