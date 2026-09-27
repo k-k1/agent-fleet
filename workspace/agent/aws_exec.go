@@ -159,11 +159,24 @@ func runAWSExec(args []string) {
 // consoleLoginWaits is how long af-aws-exec waits for a Console login, per agent kind,
 // from measurements of that kind's shell tool (ADR 0102 decision 5): the wait has to end
 // before the tool gives up on the command, unless the tool keeps the output of a command
-// it stops waiting for. A kind not listed has not been measured (#1036).
+// it stops waiting for. A kind not listed has not been measured. The measurements are in
+// docs/log/120-aws-console-login.md §1.1 (all 2026-09-27).
 var consoleLoginWaits = map[string]time.Duration{
-	// Measured 2026-09-27: the Bash tool's default timeout is 120 s, and a command that
-	// outlives its timeout moves to the background with its output kept, so nothing is lost.
+	// 120 s default, then the command moves to the background with its output kept.
 	session.KindClaude: 90 * time.Second,
+	// Returns the output so far after 10 s and keeps the command running for the model to poll.
+	session.KindCodex: 90 * time.Second,
+	// 120 s default, then SIGTERM; the tool result keeps the output printed before it.
+	session.KindOpencode: 90 * time.Second,
+	// Both return the output so far after 30 s and keep the command running in the background.
+	session.KindCopilot: 90 * time.Second,
+	session.KindCursor:  90 * time.Second,
+	// No timeout within 400 s.
+	session.KindKiro: 90 * time.Second,
+	session.KindMuse: 90 * time.Second,
+	// Our own bash tool (harness/tools_bash.go): 300 s default, output kept on timeout.
+	session.KindLcpp: 90 * time.Second,
+	// agy is not listed: it does not start on the measuring host (CRNGT failure, no RDRAND).
 }
 
 // consoleLoginUnmeasuredWait is the wait of a kind nobody has measured, and so the
