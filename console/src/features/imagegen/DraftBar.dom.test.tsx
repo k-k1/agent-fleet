@@ -169,6 +169,18 @@ describe("the tab marks", () => {
     expect(out.mark).toBe("ask");
   });
 
+  it("a question withdrawn back to idle is not a reply", async () => {
+    const out = { unseen: 0, arrived: [] as number[], mark: "" as ChatMark };
+    await mount(<Probe paths={[]} ready viewing={false} state="working" out={out} />);
+    await rerender(<Probe paths={[]} ready viewing={false} state="question" out={out} />);
+    expect(out.mark).toBe("ask");
+    await rerender(<Probe paths={[]} ready viewing={false} state="idle" out={out} />);
+    expect(out.mark).toBe("");
+    await rerender(<Probe paths={[]} ready viewing={false} state="permission" out={out} />);
+    await rerender(<Probe paths={[]} ready viewing={false} state="" out={out} />);
+    expect(out.mark).toBe("");
+  });
+
   it("a turn that ends while the conversation is on screen leaves no mark", async () => {
     const out = { unseen: 0, arrived: [] as number[], mark: "" as ChatMark };
     await mount(<Probe paths={[]} ready viewing state="working" out={out} />);

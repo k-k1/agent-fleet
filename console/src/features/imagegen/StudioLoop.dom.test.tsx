@@ -4,15 +4,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { Job, JobsResponse } from "./wire.ts";
+import type { HistoryItem, Job, JobsResponse } from "./wire.ts";
 
 const jobsNow: { jobs: Job[] } = { jobs: [] };
+const historyNow: { items: HistoryItem[] } = { items: [] };
 vi.mock("./api.ts", async (orig) => ({
   ...(await orig<typeof import("./api.ts")>()),
   imagegenStatus: async () => ({ enabled: true, ready: true, providers: [] }),
   imagegenJobs: async (): Promise<JobsResponse> => ({ jobs: jobsNow.jobs, groups: [] }) as JobsResponse,
   listStudios: async () => ({ studios: [] }),
-  imagegenHistory: async () => ({ items: [] }),
+  imagegenHistory: async () => ({ items: historyNow.items }),
+  imageProperties: async (path: string) =>
+    path === "generated/console/old.png" ? { source: "sidecar", seed: 4242 } : { source: "none" },
   getStudio: async () => ({ id: "s1", title: "", draft: {}, locks: [], session: "", agent_trial: true, created_at: "2026-09-27T10:00:00Z", updated_at: "1" }),
   studioDraftLog: async () => ({ entries: [] }),
 }));
@@ -51,19 +54,19 @@ const narrowPane = (on: boolean) => {
     : (undefined as unknown as typeof ResizeObserver);
 };
 
+// Keyed by the studio, as Pane.tsx mounts it: switching studios in a pane is a remount.
+const view = (studioId: string, active: boolean) => (
+  <ToastProvider>
+    <ConfirmProvider>
+      <ImagegenView key={studioId} paneId="p1" studioId={studioId} active={active} />
+    </ConfirmProvider>
+  </ToastProvider>
+);
 const mount = async (props: { active?: boolean } = {}) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () =>
-    root.render(
-      <ToastProvider>
-        <ConfirmProvider>
-          <ImagegenView paneId="p1" studioId="s1" active={props.active ?? true} />
-        </ConfirmProvider>
-      </ToastProvider>,
-    ),
-  );
+  await act(async () => root.render(view("s1", props.active ?? true)));
   await act(async () => {}); // the first status / jobs reads
 };
 
@@ -80,6 +83,7 @@ const toastText = () => document.querySelector(".igen-done-toast")?.textContent 
 beforeEach(() => {
   useWorkspaceStore.setState({ state: "running" });
   jobsNow.jobs = [running];
+  historyNow.items = [];
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -136,6 +140,78 @@ describe("the studio's loop on a narrow pane", () => {
     await refresh();
     expect(document.querySelector(".igen-done-toast")).toBeNull();
     expect(tab(2).querySelector(".igen-tab-badge")).toBeNull();
+  });
+});
+
+describe("the ready notice (review 1)", () => {
+  it("is withdrawn when the pane switches to another studio, so View never drives a dead pane", async () => {
+    narrowPane(true);
+    await mount();
+    jobsNow.jobs = [done(2)];
+    await refresh();
+    expect(toastText()).toMatch(/2/);
+    await act(async () => root.render(view("s2", true)));
+    await act(async () => {});
+    expect(document.querySelector(".igen-done-toast")).toBeNull();
+  });
+
+  it("is withdrawn when the member opens the results tab by hand", async () => {
+    narrowPane(true);
+    await mount();
+    jobsNow.jobs = [done(2)];
+    await refresh();
+    expect(toastText()).toMatch(/2/);
+    await act(async () => tab(2).click());
+    expect(document.querySelector(".igen-done-toast")).toBeNull();
+  });
+
+  it("stands at the top of the screen, clear of the draft bar and the composer", async () => {
+    narrowPane(true);
+    await mount();
+    jobsNow.jobs = [done(1)];
+    await refresh();
+    expect(document.querySelector(".igen-done-toast")!.closest(".ui-toasts")!.classList.contains("ui-toasts-top")).toBe(true);
+  });
+
+  it("counts every trial that finished between two reads, not only the one in the slot", async () => {
+    narrowPane(true);
+    jobsNow.jobs = [
+      { id: "t1", state: "running", trial: true, studio: "s1" },
+      { id: "t2", state: "running", trial: true, studio: "s1" },
+    ];
+    await mount();
+    jobsNow.jobs = [
+      { id: "t1", state: "done", trial: true, studio: "s1", files: [{ path: "generated/console/t1.png", seed: 1 }] },
+      { id: "t2", state: "done", trial: true, studio: "s1", files: [{ path: "generated/console/t2.png", seed: 2 }] },
+    ];
+    await refresh();
+    expect(toastText()).toMatch(/2/);
+    expect(tab(2).querySelector(".igen-tab-badge")?.textContent).toBe("+2");
+  });
+});
+
+describe("the lightbox from the history", () => {
+  it("offers the seeded trial for a past picture, with the seed read from its properties", async () => {
+    narrowPane(false);
+    jobsNow.jobs = [];
+    historyNow.items = [{ path: "generated/console/old.png", studio: "s1", version: "v1", created_at: "2026-09-27T10:00:00Z" }];
+    await mount();
+    const thumb = host.querySelector<HTMLButtonElement>(".igen-history .igen-thumb")!;
+    await act(async () => thumb.click());
+    await act(async () => {});
+    const verbs = [...document.querySelectorAll(".mirror-lightbox-actions button")].map((b) => b.textContent || "");
+    expect(verbs.length).toBe(3);
+    expect(verbs.some((t) => /seed/.test(t))).toBe(true);
+  });
+
+  it("hides the seeded trial only when the picture's seed cannot be read", async () => {
+    narrowPane(false);
+    jobsNow.jobs = [];
+    historyNow.items = [{ path: "generated/console/unknown.png", studio: "s1", created_at: "2026-09-27T10:00:00Z" }];
+    await mount();
+    await act(async () => host.querySelector<HTMLButtonElement>(".igen-history .igen-thumb")!.click());
+    await act(async () => {});
+    expect(document.querySelectorAll(".mirror-lightbox-actions button").length).toBe(2);
   });
 });
 

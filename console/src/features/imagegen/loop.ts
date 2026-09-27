@@ -91,7 +91,9 @@ export function useChatMark(state: string | undefined, viewing: boolean): ChatMa
   useEffect(() => {
     const was = last.current;
     last.current = state;
-    if (was === "working" && state !== "working" && !viewing) setReplied(true);
+    // Only a turn that ran to idle is a reply. working → question / permission / plan is the
+    // agent asking, and that question later withdrawn back to idle answered nothing.
+    if (was === "working" && (state === "idle" || state === "" || state == null) && !viewing) setReplied(true);
   }, [state, viewing]);
   useEffect(() => {
     if (viewing) setReplied(false);
