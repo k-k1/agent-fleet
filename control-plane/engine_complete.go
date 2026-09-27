@@ -370,7 +370,7 @@ func engineCompleteStepFor(ctx context.Context, role, id string, lora bool, flag
 			// (engineIngester.install), not here.
 		}, nil
 	}
-	// 5. No part list for this family (flux1, sd35, zimage, flux2-klein today). What the CP can
+	// 5. No part list for this family (sd35, zimage, flux2-klein today). What the CP can
 	//    still do is offer what is in the role's directory — and refuse to guess when the
 	//    directory serves more than one of the roles this row is missing.
 	cands := engineCompleteUnused(l.inDir(dir), used)
