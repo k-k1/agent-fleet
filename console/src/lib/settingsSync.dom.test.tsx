@@ -440,6 +440,45 @@ describe("ui-prefs: the owner of the local copy", () => {
     expect(JSON.parse(localStorage.getItem("af-display-settings")!).hiddenModels).toEqual({ claude: ["fable"] });
   });
 
+  // Review of #1023, round 3: a hydrate asked before an identity switch answered after the
+  // switch's resync and was merged — and could be sent — as the new owner's settings.
+  it("drops a hydrate answer asked as the previous owner", async () => {
+    const s = await freshSettings({});
+    let who = "t1|u1";
+    localStorage.setItem(OWNER_KEY, who);
+    s.setPrefsOwnerSource(() => who);
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    let answerOld!: (v: unknown) => void;
+    apiMock.mockImplementationOnce(() => new Promise((r) => { answerOld = r; }));
+    const late = s.refreshUIPrefs(); // asked as t1
+    who = "t2|u1";
+    apiMock.mockResolvedValueOnce({});
+    await s.resyncAccumulatedForIdentitySwitch(); // t2's own (empty) copy lands first
+    answerOld({ workingSets: [{ id: "g1", name: "t1 のグループ", repos: [], convs: [], sessions: [], schedules: [] }], hiddenModels: hidden });
+    await late;
+    expect(s.getSettings().workingSets).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (const call of apiJSONMock.mock.calls as [string, string, Record<string, unknown>][]) {
+      expect(call[2].workingSets).toEqual([]);
+    }
+  });
+
+  // Review of #1023, round 3: a no-op hydrate rewrote the shared copy even when it was already
+  // recorded as this owner's, losing another same-owner tab's newer unsaved edit.
+  it("leaves a copy already recorded as this owner's alone on a no-op hydrate", async () => {
+    const s = await freshSettings({});
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    // Another tab of the same owner edits (its save failed; the edit lives in the copy only).
+    localStorage.setItem("af-display-settings", JSON.stringify({ ...s.getSettings(), hiddenModels: hidden }));
+    apiMock.mockResolvedValueOnce({});
+    await s.refreshUIPrefs();
+    expect(JSON.parse(localStorage.getItem("af-display-settings")!).hiddenModels).toEqual(hidden);
+  });
+
   // Review of #1023: localStorage is shared by tabs on different tenants; a write must move the
   // record to the writer, or another tenant's tab vouches for it at its next boot.
   it("moves the record to whichever owner last wrote the shared copy", async () => {

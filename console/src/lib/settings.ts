@@ -1880,14 +1880,23 @@ export function migrateOpencodeCatalog(v: unknown): "off" | "own" | "free" | "go
   return "off"; // unset/unknown = disabled until explicitly chosen
 }
 
+// Each hydrate's number; only the newest one's answer is merged. api() sends the tenant current at
+// call time, so an answer asked before an identity switch is the previous owner's copy, and
+// merging it after the switch's resync would show — and could send — that owner's settings as
+// the new owner's.
+let hydrateGen = 0;
+
 export async function hydrateUIPrefs(): Promise<boolean> {
+  const gen = ++hydrateGen;
+  const owner = ownerSource();
   let srv: any;
   try {
     srv = await api("api/env/ui-prefs");
   } catch {
-    scheduleHydrateRetry();
+    if (gen === hydrateGen) scheduleHydrateRetry();
     return false;
   }
+  if (gen !== hydrateGen || ownerSource() !== owner) return false; // superseded or asked as someone else
   // api() does not throw on an HTTP error; it returns {error:{code:"http_502"}} — exactly what
   // the CP does while a workspace is starting. Mistaking "could not fetch" for "the server is
   // empty" lets the next save overwrite the server with defaults, so treat a failure as a
@@ -1932,7 +1941,6 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // so neither restore path below can send it to this account (the identity-switch resync does
   // the same within one page load; this covers a boot after a sign-out). Only a known,
   // matching owner may push back a key the server has never held.
-  const owner = ownerSource();
   const storedOwner = readStoredOwner();
   // With no record (a copy written before the record existed, or by a browser that never finished
   // a hydrate) only the keys the server has never held are dropped: recording this owner over
@@ -2008,7 +2016,9 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // below takes effect first.
   // The record and the copy are written together: another tab may have written the shared copy
   // since this one last did, and recording this owner over that copy would vouch for its values.
-  if (owner) {
+  // When the copy is recorded as this owner's already it is left alone: another tab of the same
+  // owner may hold a newer unsaved edit there.
+  if (owner && storedOwner !== owner) {
     try {
       localStorage.setItem(KEY, JSON.stringify(changed ? merged : state));
     } catch {}
