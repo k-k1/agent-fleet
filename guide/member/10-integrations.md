@@ -320,12 +320,16 @@ af-aws-exec --profile <name> -- npx cdk deploy
   af-aws-exec --profile deploy-target --account <id> --region <region> -- ./deploy.sh
   ```
 
-  The AWS CLI resolves the profile from your own files, with the workload role, IMDS and endpoint overrides out of
-  reach, and the command runs only if AWS reports the credentials in that account (and, for a role, as a session of
-  that role). It is refused, before anything is fetched, when the profile or any profile in its `source_profile`
-  chain (a `[DEFAULT]` section included) sets `credential_source` (that takes the workspace's own credentials),
-  `web_identity_token_file` or `mfa_serial` (nobody can answer the MFA prompt when an agent runs the command), or
-  when the chain is broken. Only temporary credentials are passed: a profile that resolves to long-lived keys is
+  The AWS CLI resolves the profile from your own files, with its own ways to the workload role (the container
+  credentials variables, IMDS) and endpoint overrides switched off, and the command runs only if AWS reports the
+  credentials in that account (and, for a role, as a session of that role). A `credential_process` is your own
+  program and runs as you wrote it: `af-aws-exec` checks the account of what it returns, not where it came from. It
+  is refused, before anything is fetched, when the profile or any profile in its `source_profile` chain (a
+  `[DEFAULT]` section included) sets `credential_source` (that takes the workspace's own credentials),
+  `web_identity_token_file` or `mfa_serial` (nobody can answer the MFA prompt when an agent runs the command), when
+  keys sit where the AWS CLI would use them instead of what the profile names (beside a `credential_process`, or on
+  a role profile other than the one you name as its own `source_profile`), or when the chain is broken. When a
+  `credential_process` fails, its output is not shown; run it yourself to see why. Only temporary credentials are passed: a profile that resolves to long-lived keys is
   refused, so use the keys to assume a role instead. If the chain ends in an SSO profile whose login is missing, the
   command exits with code 3 and the `aws sso login` command for that SSO profile (at a terminal it starts the login
   itself); the Console is not asked. These profiles do not appear in `af-aws-exec --list`, and they cannot share a

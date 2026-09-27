@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,8 +137,16 @@ func TestPlanExecRefusesANonSSOProfileBeforeFetching(t *testing.T) {
 		"undefined source":             {deployProfile, "", "", deployAccount, "not defined"},
 		"no source_profile":            {map[string]string{"role_arn": deployProfile["role_arn"]}, "", "", deployAccount, "without a source_profile"},
 		"self source without keys":     {map[string]string{"role_arn": deployProfile["role_arn"], "source_profile": "prod"}, "", "", deployAccount, "names itself"},
-		"not a role ARN":               {map[string]string{"role_arn": "arn:aws:iam::222233334444:user/me", "source_profile": "src"}, srcConfig, srcKeys, deployAccount, "not an IAM role ARN"},
-		"empty role_arn":               {map[string]string{"raw:role_arn =": "", "source_profile": "src"}, srcConfig, srcKeys, deployAccount, "not an IAM role ARN"},
+		"process with keys beside it":  {map[string]string{"credential_process": "/x", "creds:aws_session_token": "t"}, "", "", deployAccount, "never run the process"},
+		"process with keys in the credentials [DEFAULT]": {map[string]string{"credential_process": "/x"}, "", "[DEFAULT]\naws_access_key_id = AKIADEF\n", deployAccount, "never run the process"},
+		"source role with keys": {deployProfile, "[profile src]\nrole_arn = arn:aws:iam::1:role/r\nsource_profile = base\n\n[profile base]\n",
+			"[src]\naws_access_key_id = AKIASRC\naws_secret_access_key = x\n", deployAccount, "sets role_arn and also aws_access_key_id"},
+		"source role that is its own source": {deployProfile, "[profile src]\nrole_arn = arn:aws:iam::1:role/r\nsource_profile = src\n",
+			"[src]\naws_access_key_id = AKIASRC\naws_secret_access_key = x\n", deployAccount, "sets role_arn and also"},
+		"named role with keys and another source": {map[string]string{"role_arn": deployProfile["role_arn"], "source_profile": "src",
+			"creds:aws_access_key_id": "AKIA"}, srcConfig, srcKeys, deployAccount, "sets role_arn and also"},
+		"not a role ARN": {map[string]string{"role_arn": "arn:aws:iam::222233334444:user/me", "source_profile": "src"}, srcConfig, srcKeys, deployAccount, "not an IAM role ARN"},
+		"empty role_arn": {map[string]string{"raw:role_arn =": "", "source_profile": "src"}, srcConfig, srcKeys, deployAccount, "not an IAM role ARN"},
 	} {
 		bin, state := fakeDeploy(t, tc.cfg, tc.config, tc.creds, deployARN)
 		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Account: tc.account, Login: "always", Argv: []string{"true"}, Quiet: true})
@@ -236,5 +245,53 @@ func TestRoleARNParts(t *testing.T) {
 		if got != want {
 			t.Errorf("%s: %q, want %q", arn, got, want)
 		}
+	}
+}
+
+// The one shape where a role profile holds keys: it is its own source, and the keys
+// assume its role.
+func TestPlanExecRunsARoleThatIsItsOwnSource(t *testing.T) {
+	bin, _ := fakeDeploy(t, map[string]string{"role_arn": deployProfile["role_arn"], "source_profile": "prod",
+		"creds:aws_access_key_id": "AKIASELF", "creds:aws_secret_access_key": "x"}, "", "", deployARN)
+	if _, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Account: deployAccount, Login: "never", Argv: []string{"true"}, Quiet: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// botocore quotes a failing credential_process's stderr, which may hold anything.
+func TestPlanExecDoesNotRepeatWhatAProcessPrinted(t *testing.T) {
+	bin, state := fakeDeploy(t, map[string]string{"credential_process": "/usr/local/bin/get-creds"}, "", "", deployARN)
+	msg := "Unable to retrieve credentials: Error when retrieving credentials from custom-process: FAKE_SECRET_FROM_PROCESS"
+	if err := os.WriteFile(filepath.Join(state, "exportErr"), []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Account: deployAccount, Login: "never", Argv: []string{"true"}, Quiet: true})
+	if err == nil || strings.Contains(err.Error(), "FAKE_SECRET") || !strings.Contains(err.Error(), "credential_process") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// The premise of refusing keys beside a credential_process, held to the real CLI:
+// botocore takes the keys and never runs the process. Skipped where no aws CLI is
+// installed.
+func TestRealAWSCLIPrefersKeysOverACredentialProcess(t *testing.T) {
+	aws, err := exec.LookPath("aws")
+	if err != nil {
+		t.Skip("aws CLI not installed")
+	}
+	dir := t.TempDir()
+	cfg, creds := filepath.Join(dir, "config"), filepath.Join(dir, "credentials")
+	if err := os.WriteFile(cfg, []byte("[profile p]\ncredential_process = /bin/sh -c \"exit 12\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(creds, []byte("[p]\naws_access_key_id = ASIAKEYSWIN\naws_secret_access_key = x\naws_session_token = t\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(aws, "configure", "export-credentials", "--profile", "p", "--format", "process")
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "AWS_CONFIG_FILE=" + cfg, "AWS_SHARED_CREDENTIALS_FILE=" + creds,
+		"AWS_EC2_METADATA_DISABLED=true"}
+	out, err := cmd.Output()
+	if err != nil || !strings.Contains(string(out), "ASIAKEYSWIN") {
+		t.Fatalf("the CLI no longer prefers the keys (err %v); revisit checkSourceChain's refusal:\n%s", err, out)
 	}
 }

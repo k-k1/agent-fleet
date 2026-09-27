@@ -62,8 +62,16 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 			return "", fmt.Errorf("%s sets mfa_serial (%s); af-aws-exec cannot answer an MFA prompt, so it refuses the profile",
 				in, where(origin["mfa_serial"]))
 		}
+		static := staticKeyIn(keys)
 		role, hasRole := keys["role_arn"]
 		if !hasRole {
+			// Only the named profile gets here without a role (nonSSOProfile admitted it for
+			// its credential_process): keys beside the process win over it in botocore (the
+			// shared-credentials provider runs first), and the process never runs.
+			if cur == profile && static != "" {
+				return "", fmt.Errorf("%s sets credential_process and also %s (%s); the AWS CLI would use those keys and never "+
+					"run the process, so af-aws-exec refuses it", in, static, where(origin[static]))
+			}
 			if keys["sso_session"] != "" || keys["sso_start_url"] != "" {
 				return cur, nil
 			}
@@ -76,10 +84,17 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 		if src == "" {
 			return "", fmt.Errorf("%s sets role_arn without a source_profile; af-aws-exec only runs a role assumed from a source profile", in)
 		}
-		// botocore lets a profile be its own source when it holds static keys: the keys
-		// assume the role.
+		// botocore lets the named profile be its own source when it holds static keys: the
+		// keys assume the role. Keys on a source further down are that hop's credentials
+		// instead, and its own role is never assumed, so a role hop may hold keys only in
+		// that one shape.
+		if static != "" && (cur != profile || src != cur) {
+			return "", fmt.Errorf("%s sets role_arn and also %s (%s); depending on where the profile sits in the chain the AWS CLI "+
+				"uses those keys instead of the role, so af-aws-exec refuses it (keep the keys in a profile of their own and name it "+
+				"as source_profile)", in, static, where(origin[static]))
+		}
 		if src == cur {
-			if keys["aws_access_key_id"] != "" {
+			if static != "" {
 				return "", nil
 			}
 			return "", fmt.Errorf("%s names itself as source_profile but has no keys of its own", in)
@@ -96,6 +111,16 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 		}
 		cur = src
 	}
+}
+
+// staticKeyIn returns the first static-key setting keys has, or "".
+func staticKeyIn(keys map[string]string) string {
+	for _, k := range []string{"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
+		if _, set := keys[k]; set {
+			return k
+		}
+	}
+	return ""
 }
 
 // roleARNParts splits arn:<partition>:iam::<account>:role/<path/>name into the account
@@ -194,6 +219,13 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 	if errors.Is(err, errNoSessionToken) {
 		return "", nil, nil, fmt.Errorf("profile %q resolves to long-lived keys, and af-aws-exec passes only temporary credentials "+
 			"(a role assumed from a source profile, or a credential_process that returns a session token)", o.Profile)
+	}
+	if err != nil && strings.Contains(err.Error(), "custom-process") {
+		// botocore quotes a failing credential_process's stderr in its error, and what a
+		// process prints there is not ours to vouch for (measured: a secret it wrote to
+		// stderr came back in the message).
+		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: a credential_process in its chain failed "+
+			"(its output is not shown; run it yourself to see why)", o.Profile)
 	}
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
