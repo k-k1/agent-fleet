@@ -129,6 +129,15 @@ describe("AWS login toast and modal", () => {
     expect(document.body.textContent).toContain("was not the one this profile uses");
   });
 
+  it("still shows the toast when the store already held the request as the host mounted", async () => {
+    // The host's effect runs before ToastProvider registers its sink, so the first toast()
+    // goes nowhere; the next poll must issue it rather than trust that it was shown.
+    useAwsLoginStore.setState({ requests: [prod as never] });
+    await mount();
+    await tick(4100);
+    expect(document.querySelector(".ui-toast")?.textContent).toContain("Production");
+  });
+
   it("keeps the same toast across polls, so focus and a press in progress survive", async () => {
     await mount();
     const first = document.querySelector(".ui-toast");

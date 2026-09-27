@@ -66,9 +66,10 @@ export function AwsLoginHost() {
     for (const r of visible) {
       const key = toastKey(r.id);
       const sig = JSON.stringify([r.label, r.profile, r.accountId, r.roleName, waitersLine(r)]);
-      next.set(key, sig);
-      if (shown.current.get(key) !== sig) {
-        toast(<AwsLoginToast r={r} />, { kind: "info", duration: 0, key, onClose: () => hide(r.id) });
+      if (shown.current.get(key) === sig) {
+        next.set(key, sig);
+      } else if (toast(<AwsLoginToast r={r} />, { kind: "info", duration: 0, key, onClose: () => hide(r.id) })) {
+        next.set(key, sig);
       }
     }
     for (const key of shown.current.keys()) {

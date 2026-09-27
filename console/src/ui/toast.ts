@@ -16,8 +16,13 @@ export function registerToastSink(fn: ToastFn | null, dismiss: DismissFn | null 
   dismissSink = dismiss;
 }
 
-export function toast(message: ReactNode, opts?: ToastOptions): void {
-  sink?.(message, opts);
+// toast returns whether a provider took the call: one made before <ToastProvider> registered
+// (a child's effects run before its parent's) is dropped, and a caller that remembers what it
+// has shown must not remember that one.
+export function toast(message: ReactNode, opts?: ToastOptions): boolean {
+  if (!sink) return false;
+  sink(message, opts);
+  return true;
 }
 
 // dismissToast withdraws the toast shown with { key }, without running its onClose: the
