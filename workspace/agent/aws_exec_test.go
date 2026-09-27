@@ -40,15 +40,21 @@ func TestConsoleLoginWaitByKind(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 	session.WriteMeta(session.Meta{Name: "c1", Kind: session.KindClaude})
 	session.WriteMeta(session.Meta{Name: "x1", Kind: session.KindCodex})
+	session.WriteMeta(session.Meta{Name: "s1", Kind: session.KindShell})
 	for name, want := range map[string]time.Duration{
-		"c1": consoleLoginWaits[session.KindClaude], "x1": consoleLoginUnmeasuredWait,
+		"c1": 90 * time.Second, "x1": 90 * time.Second,
+		"s1":     consoleLoginUnmeasuredWait,
 		"nosuch": consoleLoginUnmeasuredWait, "": consoleLoginUnmeasuredWait,
 	} {
 		if got := consoleLoginWait(name); got != want {
 			t.Errorf("%q: wait = %s, want %s", name, got, want)
 		}
 	}
-	if consoleLoginWaits[session.KindClaude] != 90*time.Second {
-		t.Fatal("claude's measured wait changed without a new measurement")
+	// docs/log/120 §1.1: every measured kind either outlasts 90 s or keeps the output.
+	for _, k := range []string{session.KindClaude, session.KindCodex, session.KindOpencode,
+		session.KindCopilot, session.KindCursor, session.KindKiro, session.KindMuse, session.KindAgy, session.KindLcpp} {
+		if consoleLoginWaits[k] != 90*time.Second {
+			t.Errorf("%s: measured wait = %s, changed without a new measurement", k, consoleLoginWaits[k])
+		}
 	}
 }
