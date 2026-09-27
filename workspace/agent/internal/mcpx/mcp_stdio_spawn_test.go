@@ -799,13 +799,15 @@ func TestCreateSessionEffort(t *testing.T) {
 		// A short name is checked against the model it resolves to.
 		{with("model", "sol", "effort", "minimal"), []string{"gpt-sol", "low, medium, high, xhigh"}},
 		{with("model", "gpt-plain", "effort", "low"), []string{"gpt-plain", "省略"}},
-		// No model means the CLI's default, which no catalog row describes.
-		{with("model", "", "effort", "low"), []string{"model"}},
+		// No model: only what every effort-taking model accepts, whichever is the default.
+		{with("model", "", "effort", "xhigh"), []string{"low", "model"}},
 		{with("kind", "copilot", "model", "", "effort", "high"), []string{"auto"}},
 		{with("kind", "copilot", "model", "auto", "effort", "high"), []string{"auto"}},
 		{with("kind", "cursor", "effort", "high"), []string{"モデル id"}},
 		{with("kind", "agy", "effort", "high"), []string{"モデル id"}},
 		{with("kind", "lcpp", "effort", "high"), []string{"lcpp"}},
+		{with("kind", "shell", "effort", "high"), []string{"shell"}},
+		{with("kind", "ssm", "effort", "high"), []string{"ssm"}},
 	} {
 		resp := call(tc.args)
 		if !strings.Contains(resp, `"isError":true`) {
@@ -823,6 +825,7 @@ func TestCreateSessionEffort(t *testing.T) {
 
 	for _, args := range []map[string]any{
 		with("model", "mini", "effort", "minimal"),
+		with("model", "", "effort", "low"),
 		// opencode's variant and kiro's --effort are judged by the CLI; their catalogs list none.
 		with("kind", "opencode", "model", "opencode-go/glm", "effort", "max"),
 		with("kind", "kiro", "model", "", "effort", "high"),
