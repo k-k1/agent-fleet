@@ -123,7 +123,7 @@ func recommendedModels(v visibility, kind string) RecommendedSet {
 	chat := recommendedAssistantModelV(v, kind)
 	if kind == session.KindMuse {
 		// museChatModel's own fallback: the newest non-contributor row (ADR 0095 P2-21).
-		chat = museSafeVisible(v)
+		chat = museSafeOneShotModel(v)
 	}
 	return RecommendedSet{
 		Chat:  chat,
@@ -132,10 +132,11 @@ func recommendedModels(v visibility, kind string) RecommendedSet {
 	}
 }
 
-// museSafeVisible is the newest non-data-sharing muse model this reading of the hidden-models
-// setting leaves visible; "" when there is none (the catalog unread, no safe row, or every safe
-// row hidden), and the chat then refuses the turn.
-func museSafeVisible(v visibility) string {
+// museSafeOneShotModel is the model a muse one-shot or chat turn runs on when the member chose
+// none: the newest non-contributor row they have not hidden. "" when every safe row is hidden or
+// the catalog is unreadable — the caller refuses then, because the alternative is the
+// contributor row (clamp 8), which "models not to use" must not push AF into choosing.
+func museSafeOneShotModel(v visibility) string {
 	for _, id := range museSafeModels() {
 		if m := v.model(session.KindMuse, id); m != "" {
 			return m

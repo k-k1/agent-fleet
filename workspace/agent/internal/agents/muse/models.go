@@ -30,7 +30,7 @@ const modelsTTL = 10 * time.Minute
 var modelsMu sync.Mutex
 var modelsAt time.Time
 var modelsList []agents.ModelChoice // nil = never fetched, or every fetch so far failed
-var modelsSafe []string             // the catalog's non-data-sharing ids, in catalog order
+var modelsSafe []string             // the catalog's non-data-sharing ids, newest first; empty when it has none
 
 // Models returns the account's selectable launch models. Empty is a valid answer — the picker
 // then offers only the default — and so is the pre-install, pre-sign-in state, which is the
@@ -107,11 +107,10 @@ func firstVisible(ids []string) (string, error) {
 	return "", nil
 }
 
-// SafeExecModels is SafeDefaultModel for a caller that holds no connection: the assistant chat
-// drives `muse exec`, a process per turn, so there is no client to ask. It returns every
-// non-data-sharing id in catalog order (newest first) rather than the first alone, so the
-// caller can skip the ones the member hid — only this package can read the catalog's
-// descriptions, and the first safe row may be hidden.
+// SafeExecModels is SafeDefaultModel for a caller that holds no connection — the assistant chat
+// and AI assist drive `muse exec`, a process per turn, so there is no client to ask. It returns
+// every non-data-sharing id, newest first: the caller takes the first one the member has not
+// hidden, never a contributor row in its place.
 //
 // 🔴 It exists because exec falls back to the same contributor default a session does, and
 // nothing in the chat path was resolving a model at all: a conversation the member never
@@ -119,14 +118,21 @@ func firstVisible(ids []string) (string, error) {
 // `isDefault` row. Measured on 1.3.0-R3401.1 (ADR 0095 P2-21): with no --model the session
 // store records `modelId: "muse-spark-1.3-contributor"`.
 //
-// Empty means the catalog could not be read, or has no safe row. The caller must refuse the
-// turn rather than send no --model — that is the whole point, and it is the one place this
-// differs from SafeDefaultModel, whose caller holds a session that already has a model.
+// Empty means the catalog could not be read, or has no safe row. The caller must refuse the turn
+// rather than send no --model — that is the whole point, and it is the one place this differs
+// from SafeDefaultModel, whose caller holds a session that already has a model.
 func SafeExecModels() []string {
 	Models() // refreshes the shared cache (a live host if there is one, else a probe)
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 	return slices.Clone(modelsSafe)
+}
+
+func firstID(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0]
 }
 
 // effortChoices is what the picker offers for reasoning effort, and it is the generated wire
@@ -183,8 +189,8 @@ func probeModels() ([]agents.ModelChoice, []string, error) {
 // No sessionId is sent: that parameter only flags the row matching a session's effective
 // model, and this list is a LAUNCH menu with no session behind it. `isDefault` is not folded
 // into the labels either — the picker's own "Default" entry means "let AF choose", and what AF
-// chooses comes from the second return: the rows the vendor does not say it may learn from, in
-// the catalog's own order, which is newest first.
+// chooses is the head of the second return: the rows the vendor does not say it may learn
+// from, in the catalog's own order, which is newest first.
 func modelsFrom(cl *msp.Client) ([]agents.ModelChoice, []string, error) {
 	var res msp.ModelListResult
 	if err := cl.CallInto(msp.MethodModelList, msp.ModelListParams{}, callTimeout, &res); err != nil {
@@ -192,7 +198,7 @@ func modelsFrom(cl *msp.Client) ([]agents.ModelChoice, []string, error) {
 	}
 	efforts := effortChoices()
 	list := make([]agents.ModelChoice, 0, len(res.Models))
-	safe := []string{}
+	var safe []string
 	for _, m := range res.Models {
 		if m.ModelID == "" {
 			continue

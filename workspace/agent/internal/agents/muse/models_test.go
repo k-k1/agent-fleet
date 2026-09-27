@@ -164,29 +164,31 @@ func TestSafeDefaultSkipsTheVendorsContributorDefault(t *testing.T) {
 		{"modelId":"muse-spark-1.3-contributor","displayLabel":"muse-spark-1.3-contributor","providerId":"meta","isDefault":true,
 		 "description":"Your content, including inter-session messages, may be used for product improvement."}]}`)
 
-	_, safe, err := modelsFrom(cl)
+	_, safeIDs, err := modelsFrom(cl)
+	safe := firstID(safeIDs)
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
-	if !slices.Equal(safe, []string{"muse-spark-1.3"}) {
-		t.Errorf("safe rows are %q, want the non-contributor row only", safe)
+	if safe != "muse-spark-1.3" {
+		t.Errorf("safe default is %q, want the non-contributor row", safe)
 	}
 }
 
-// Every safe row is kept, in catalog order, not just the first: the assistant chat skips the
-// ones the member hid, and only this package can tell a safe row from a sharing one.
-func TestSafeRowsKeepCatalogOrder(t *testing.T) {
+// Every safe row is kept, in catalog order, so a member who hides the newest one still gets a
+// safe model rather than none (SafeExecModels, #1020 review).
+func TestSafeModelsKeepEveryNonSharingRowInOrder(t *testing.T) {
 	cl, _ := catalogHost(t, `{"providerId":"meta","source":"providerCatalog","models":[
 		{"modelId":"muse-spark-1.3","displayLabel":"a","providerId":"meta"},
 		{"modelId":"muse-spark-1.3-contributor","displayLabel":"b","providerId":"meta"},
-		{"modelId":"muse-spark-1.2","displayLabel":"c","providerId":"meta"}]}`)
+		{"modelId":"muse-spark-1.2","displayLabel":"c","providerId":"meta"},
+		{"modelId":"muse-spark-1.2-contributor","displayLabel":"d","providerId":"meta"}]}`)
 
-	_, safe, err := modelsFrom(cl)
+	_, safeIDs, err := modelsFrom(cl)
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
-	if !slices.Equal(safe, []string{"muse-spark-1.3", "muse-spark-1.2"}) {
-		t.Errorf("safe rows are %q, want both non-contributor rows, newest first", safe)
+	if want := []string{"muse-spark-1.3", "muse-spark-1.2"}; !slices.Equal(safeIDs, want) {
+		t.Errorf("safe ids = %v, want %v", safeIDs, want)
 	}
 }
 
@@ -221,12 +223,13 @@ func TestSafeDefaultReadsTheDescriptionNotOnlyTheSuffix(t *testing.T) {
 		 "description":"Your content may be used for product improvement."},
 		{"modelId":"muse-spark-1.3","displayLabel":"muse-spark-1.3","providerId":"meta"}]}`)
 
-	_, safe, err := modelsFrom(cl)
+	_, safeIDs, err := modelsFrom(cl)
+	safe := firstID(safeIDs)
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
-	if !slices.Equal(safe, []string{"muse-spark-1.3"}) {
-		t.Errorf("safe rows are %q: the description's claim was ignored", safe)
+	if safe != "muse-spark-1.3" {
+		t.Errorf("safe default is %q: the description's claim was ignored", safe)
 	}
 }
 
@@ -238,12 +241,13 @@ func TestSafeDefaultIsEmptyWhenEveryRowShares(t *testing.T) {
 		{"modelId":"muse-spark-1.3-contributor","displayLabel":"a","providerId":"meta"},
 		{"modelId":"muse-spark-1.2-contributor","displayLabel":"b","providerId":"meta"}]}`)
 
-	_, safe, err := modelsFrom(cl)
+	_, safeIDs, err := modelsFrom(cl)
+	safe := firstID(safeIDs)
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
-	if len(safe) != 0 {
-		t.Errorf("safe rows are %q, want none", safe)
+	if safe != "" {
+		t.Errorf("safe default is %q, want none", safe)
 	}
 }
 
