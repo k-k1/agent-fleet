@@ -17,6 +17,7 @@ import { useSchedulesStore } from "../schedules/store.ts";
 import { unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 import { childIdleMuted } from "./childIdle.ts";
+import { useAwsLoginStore } from "../awslogin/store.ts";
 
 export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsupported";
 export interface FleetNotification {
@@ -154,6 +155,14 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // not one of our own sessions, so it must not fall through to the session resolution below.
   // It stops opening once the share is revoked, which is correct: the offer derives from the
   // share ACL, and when the ACL is gone so is the content.
+  // af-aws-exec's login request (ADR 0102): its destination is the login modal. Only the id is
+  // read; the modal shows what the Agent lists for it, and nothing for an id it does not list.
+  if (n.kind === "aws-login-required" && typeof n.payload.requestId === "string" && n.payload.requestId) {
+    const aws = useAwsLoginStore.getState();
+    void aws.refresh();
+    aws.open(n.payload.requestId);
+    return { opened: true };
+  }
   if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {
     openSharedSession(n.payload.catalogId, split);
     return { opened: true };

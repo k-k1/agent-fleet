@@ -6,13 +6,22 @@ import type { ToastOptions } from "./ToastProvider.tsx";
 // that (or after unmount) are dropped — there is no live UI to show them. Inside components
 // prefer useToast(); this bridge exists only for code that runs outside the React tree.
 type ToastFn = (message: ReactNode, opts?: ToastOptions) => void;
+type DismissFn = (key: string) => void;
 
 let sink: ToastFn | null = null;
+let dismissSink: DismissFn | null = null;
 
-export function registerToastSink(fn: ToastFn | null): void {
+export function registerToastSink(fn: ToastFn | null, dismiss: DismissFn | null = null): void {
   sink = fn;
+  dismissSink = dismiss;
 }
 
 export function toast(message: ReactNode, opts?: ToastOptions): void {
   sink?.(message, opts);
+}
+
+// dismissToast withdraws the toast shown with { key }, without running its onClose: the
+// owner withdraws it because what it announced is settled, not because the member closed it.
+export function dismissToast(key: string): void {
+  dismissSink?.(key);
 }

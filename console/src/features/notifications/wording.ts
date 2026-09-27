@@ -25,6 +25,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "handoff-accepted": "noti.kind_handoff_accepted",
   "handoff-expired": "noti.kind_handoff_expired",
   "arch-residue": "noti.kind_arch_residue",
+  "aws-login-required": "noti.kind_aws_login_required",
 };
 
 /** Translated row heading; only an unknown kind (new CP with an old Console) falls back to the raw identifier. */
@@ -189,6 +190,11 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       body: t("notif.rate_limit_resumed.body", { name }),
       speech: t("notif.rate_limit_resumed.speech", { name }),
     };
+  }
+  if (n.kind === "aws-login-required") {
+    // Fixed text only: the payload is written by whoever filed the request, so nothing from it
+    // is shown. The profile, account and role are in the toast and the modal, from the Agent.
+    return { title: t("notif.aws_login.title"), body: t("notif.aws_login.body"), speech: t("notif.aws_login.speech") };
   }
   if (n.kind === "arch-residue") {
     // The CPU architecture changed and some artefacts could not be restored automatically

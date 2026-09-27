@@ -19,12 +19,19 @@ export interface ToastOptions {
   kind?: ToastKind;
   duration?: number; // ms; 0 = sticky (manual close only)
   persist?: boolean; // also keep in the notification center after dismiss (default: errors)
+  // key names a toast so its owner can replace it in place or withdraw it (dismissToast)
+  // once what it announced is settled; a second toast with the same key replaces the first.
+  key?: string;
+  // onClose runs when the member closes the toast with its X, not when it is withdrawn.
+  onClose?: () => void;
 }
 
 interface ToastItem {
   id: number;
   message: ReactNode;
   kind: ToastKind;
+  key?: string;
+  onClose?: () => void;
 }
 
 type ToastFn = (message: ReactNode, opts?: ToastOptions) => void;
@@ -57,7 +64,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (message, opts) => {
       const kind = opts?.kind ?? "error";
       const id = ++seq.current;
-      setItems((xs) => [...xs, { id, message, kind }]);
+      const item: ToastItem = { id, message, kind, key: opts?.key, onClose: opts?.onClose };
+      setItems((xs) => {
+        const at = item.key ? xs.findIndex((x) => x.key === item.key) : -1;
+        if (at < 0) return [...xs, item];
+        const next = xs.slice();
+        next[at] = item;
+        return next;
+      });
       // Errors (and any opt-in persist) are recorded in the notification center so a failure
       // that scrolled away can still be reviewed. Only string messages can be logged.
       if ((opts?.persist ?? kind === "error") && typeof message === "string") pushToastLog(kind, message);
@@ -68,11 +82,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [remove],
   );
 
+  const dismiss = useCallback((key: string) => {
+    setItems((xs) => xs.filter((x) => x.key !== key));
+  }, []);
+
   // Expose this provider's toast to non-React callers (keyboard commands) while mounted.
   useEffect(() => {
-    registerToastSink(toast);
-    return () => registerToastSink(null);
-  }, [toast]);
+    registerToastSink(toast, dismiss);
+    return () => registerToastSink(null, null);
+  }, [toast, dismiss]);
 
   return (
     <ToastCtx.Provider value={toast}>
@@ -88,7 +106,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             >
               <Icon name={TOAST_ICONS[t.kind]} />
               <span className="ui-toast-msg">{t.message}</span>
-              <button type="button" className="ui-toast-x" title={tr("ui.close")} onClick={() => remove(t.id)}>
+              <button
+                type="button"
+                className="ui-toast-x"
+                title={tr("ui.close")}
+                onClick={() => {
+                  remove(t.id);
+                  t.onClose?.();
+                }}
+              >
                 <Icon name="close" />
               </button>
             </div>
