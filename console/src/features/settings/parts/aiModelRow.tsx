@@ -11,7 +11,8 @@ import { ASSISTANT_AGENT_KINDS, ASSISTANT_RECOMMENDED_MODEL } from "../../../lib
 import { agentOf } from "../../../agents/registry.ts";
 import { Row, Select } from "./controls.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { useHiddenModel, useModelOptions, useRecommendedModels } from "../../../lib/agentModels.ts";
+import { modelInfoOf, modelIsRetiring, useHiddenModel, useModelOptions, useRecommendedModels } from "../../../lib/agentModels.ts";
+import { ModelInfoLine } from "../../../ui/ModelInfoLine.tsx";
 
 export type AiModelTier = "chat" | "prose" | "short";
 
@@ -59,6 +60,7 @@ export function AiModelRow({
   value,
   onChange,
   extraOption,
+  inherited,
 }: {
   kind: AiAgentKind;
   tier: AiModelTier;
@@ -68,9 +70,20 @@ export function AiModelRow({
    *  設定に従う）", mapped by the caller's onChange to deleting the per-feature override rather
    *  than storing this sentinel literally). Omitted by every other caller. */
   extraOption?: [string, string];
+  /** What extraOption resolves to — the tier default it follows (undefined ⇒ "推奨"), so the
+   *  line under the row describes the model that actually runs rather than the sentinel. */
+  inherited?: string;
 }) {
   const tr = useT();
-  const live = useModelOptions(kind) || [["", tr("ui.default")]];
+  const listed = useModelOptions(kind) || [["", tr("ui.default")]];
+  // A native <option> cannot carry the combo's badge, so a model on its way out says so in its
+  // text. modelInfoOf reads the same answer the list came from.
+  const live = listed.map(([id, label]): [string, string] =>
+    modelIsRetiring(modelInfoOf(kind, id)) ? [id, tr("ui.mi_retiring_suffix", { label })] : [id, label],
+  );
+  const recommendedSet = useRecommendedModels(kind);
+  const recommendedId = recommendedSet?.[tier] || "";
+  const recommendedHidden = useHiddenModel(kind, recommendedId);
   // Same resolution AiFeatureCard's "currently uses" line draws Y from (useResolvedModelLabel) —
   // one function decides what "推奨" resolves to, so the two can never drift apart again the way
   // the pre-fix duplicate here did (103-impl-review (a)).
@@ -86,13 +99,26 @@ export function AiModelRow({
   // treats a hidden value as unset and falls back to the recommendation, so adding it back
   // would make the display the thing that lies.
   const hidden = useHiddenModel(kind, value);
+  // The line under the row describes what runs: for "推奨" that is the model it resolves to,
+  // and so it is for a hidden model, which the Agent treats as unset (see above).
+  const effective = extraOption && value === extraOption[0] ? inherited : value;
+  const effectiveHidden = useHiddenModel(kind, effective || "");
+  const described =
+    effective === undefined || effective === ASSISTANT_RECOMMENDED_MODEL || effectiveHidden
+      ? recommendedHidden
+        ? ""
+        : recommendedId
+      : effective;
   const options =
     value && !hidden && !choices.some(([id]) => id === value)
       ? [...choices, [value, value] as [string, string]]
       : choices;
   return (
     <Row label={agentOf(kind).assistantName}>
-      <Select value={value} options={options} onChange={onChange} />
+      <div className="ai-model-field">
+        <Select value={value} options={options} onChange={onChange} />
+        <ModelInfoLine kind={kind} model={described} />
+      </div>
     </Row>
   );
 }

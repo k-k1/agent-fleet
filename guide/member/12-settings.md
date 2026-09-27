@@ -136,7 +136,8 @@ The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [
 - **Agent priority** — the first connected CLI from the top of this list runs the assistants. Titles, reply
   suggestions and the like are ranked separately (the **AI assistance** tab).
 - **Assistant models** — per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
-  shows what it currently resolves to.
+  shows what it currently resolves to. Under the select, the chosen model's (for "Recommended", the resolved
+  model's) API list price, context window and release date are shown ([Agents](06-agents.md)).
 - **Auto-reply to session reports** — the operator takes one turn automatically when a report arrives.
   **Automatic reply limit** (default 10, max 50 — it cannot be unlimited), **model for automatic replies**
   (reading a report is routine work, so a lighter model saves a lot), **batching window** (reports arriving

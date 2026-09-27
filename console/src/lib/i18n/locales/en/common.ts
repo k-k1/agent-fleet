@@ -335,6 +335,24 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // listening yet and the CP answers 502 — NOT a connection or plan problem, so this must not
   // send anyone to look at either. Shown only once the retries are used up.
   "ui.model_unreachable": "Couldn't fetch the model list — the workspace may have only just started (reopen to try again).",
+  // The model picker's catalog facts (ModelInfoLine; Issue #1021). The price is the pay-as-you-go
+  // API list price: claude / codex / agy are usually subscription-billed, so it must never read
+  // as the member's bill.
+  "ui.mi_list_price": "API list price",
+  "ui.mi_gateway_price": "{gateway} price",
+  "ui.mi_list_price_note": "The pay-as-you-go API price per 1M tokens (models.dev). It is not what a subscription is charged.",
+  "ui.mi_price_head": "{label} (per 1M tokens):",
+  "ui.mi_legend": "{label} per 1M tokens: input / output · context",
+  "ui.mi_price_io": "in {in} · out {out}",
+  "ui.mi_price_cache": "cache read {v}",
+  "ui.mi_context": "context {n}",
+  "ui.mi_released": "released {date}",
+  "ui.mi_retiring": "Retiring",
+  "ui.mi_retiring_on": "Retires {date}",
+  "ui.mi_successor": "switch to {model}",
+  "ui.mi_deprecated": "Deprecated upstream",
+  // Appended to a native <option>'s text, which cannot carry a badge.
+  "ui.mi_retiring_suffix": "{label} (retiring)",
   "ui.cancel": "Cancel",
   "ui.run": "Run",
   "ui.running": "Running…",
