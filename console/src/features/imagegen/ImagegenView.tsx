@@ -300,7 +300,14 @@ function StudioPane({
   // not running. The studio's own polling carries every press into its log, so a press newer than
   // the last one seen reads the job list once; a live job then hands over to the poller, and
   // decision 2's cadence is unchanged.
-  const lastPress = useMemo(() => studio.log.reduce((m, e) => (e.kind === "press" && e.seq > m ? e.seq : m), 0), [studio.log]);
+  //
+  // The press line is written BEFORE the enqueue, which is slow on a cold engine, so a read
+  // on the press alone can find no job yet; the press_result line (after the enqueue) reads
+  // again. That is the first trial on a cold engine — the one most likely to be missed.
+  const lastPress = useMemo(
+    () => studio.log.reduce((m, e) => ((e.kind === "press" || e.kind === "press_result") && e.seq > m ? e.seq : m), 0),
+    [studio.log],
+  );
   const pressSeen = useRef(0);
   useEffect(() => {
     if (lastPress <= pressSeen.current) return;
