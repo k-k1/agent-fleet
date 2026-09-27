@@ -135,7 +135,9 @@ func snapshotWorkingTree(dir, head, name string) (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(tmp)
-	env := append([]string{"GIT_INDEX_FILE=" + filepath.Join(tmp, "index")}, snapshotIdentity...)
+	// LC_ALL=C: uncommittedNestedRe reads git's English stderr, which a localized git would
+	// translate.
+	env := append([]string{"GIT_INDEX_FILE=" + filepath.Join(tmp, "index"), "LC_ALL=C"}, snapshotIdentity...)
 	run := func(args ...string) (string, error) {
 		cmd := Cmd(dir, args...)
 		cmd.Env = append(cmd.Env, env...)
