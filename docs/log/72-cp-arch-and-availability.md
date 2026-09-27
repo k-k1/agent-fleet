@@ -46,7 +46,7 @@ workspace について書いた「**レシピは書けている。一度も焼�
   HTTP 1.0 / スタンドアロンタスク / blue-green / ECS Anywhere / PPv2 / FIPS）。
 - **タスクサイズ**: `cpu`/`memory` の組み合わせに arm64 固有の制限は記載が無い。
   CP の 512/1024 はそのまま。
-- **`cpuArchitecture` の既定**: `X86_64`。**⚠️ ただし「タスクが起動するときに入る」**の
+- **`cpuArchitecture` の既定**: `X86_64`。**⚠️ ただし「タスクが起動するときに入る」** の
   であって、登録時に書かれるわけではない——だから `describe-task-definition` は
   `null` を返し、テンプレートにもどこにも「amd64 で動いている」とは書いていない。
   [70](70-slot-instance-classes.md) §70.8 が記録した EC2 との非対称（EC2 は `null` の
@@ -185,7 +185,7 @@ pull エラーのログすら出ない（[70](70-slot-instance-classes.md) §70.
 クロスコンパイル経路はまさにその 2 つが乖離しうる場所で、`GOARCH` を間違えれば
 **完全に整形式な index の arm64 側に amd64 の ELF が入る**。`imagetools inspect` は
 何も言わない。だから QEMU が入っているうちに実際に起動させ、`uname -m` と
-**`af-cp` の ELF `e_machine`（`b700` = AArch64）**まで見る。
+**`af-cp` の ELF `e_machine`（`b700` = AArch64）** まで見る。
 
 ⚠️ **`workflow_dispatch` はデフォルトブランチにファイルが無いと 404**（`--ref` を指しても）
 ——だが**このファイルは develop に既にある**ので、`--ref temp/…` で**作業ブランチの中身**を

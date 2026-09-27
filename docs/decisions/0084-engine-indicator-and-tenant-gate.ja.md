@@ -367,7 +367,7 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
 `~/.config/agent-fleet/ui-prefs.json` にあり（`internal/uiprefs/prefs.go` の `Path()`）、
 読むのは Agent だけで（`prefs.go:241`）、CP の関与は `GET`/`PUT /api/env/ui-prefs` を Agent へ
 素通しで中継することだけである（`control-plane/routes.go:787`）——解釈も保存もしない不透明な塊。
-よって見出しは**「いちばん良い状態」**とし、行ごとの真実は popover が持つ。`auto` の実際の行き先と
+よって見出しは「**いちばん良い状態**」とし、行ごとの真実は popover が持つ。`auto` の実際の行き先と
 「いちばん良い行」を見分けられる場所は、そこしかない。
 
 この畳み方は**後から賢くできる場所でもない**。「自分の `auto` が最初に当てる行」が欲しくなった
@@ -506,7 +506,7 @@ C のゲート 4（「行を送らない」）は A が作る `engines` スト�
 6. ~~**`imageProviderOrder` は CP から見えるか。**~~ **解決——見えない。** あの設定は
    ワークスペースから出ない。home ボリュームの `~/.config/agent-fleet/ui-prefs.json` にあり、
    読むのは Agent（`internal/uiprefs/prefs.go:241`）、CP は解釈しない不透明な塊として中継する
-   だけである（`control-plane/routes.go:787`）。よって決定 11 の見出しは**「いちばん良い状態」**、
+   だけである（`control-plane/routes.go:787`）。よって決定 11 の見出しは「**いちばん良い状態**」、
    行ごとの真実は popover。着工前に決着したので、誰も推測しなくてよい。
 7. **役に行が 2 つ以上あるとき、テナントゲートは役のままでよいか。** 決定 7 は役の粒度で切った。
    LAN の 1 台だけ許してクラウドのインスタンスは許さない、という要求が実際に出るかは分からない。

@@ -6,7 +6,7 @@
   [history/p3-7-aws-adapter.md](p3-7-aws-adapter.md)（ECS アダプタ）/
   [build/03-control-plane.ja.md](../build/03-control-plane.ja.md) / [build/02-console.ja.md](../build/02-console.ja.md)
 
-チャット（assistant-chat）のエージェント回答テキストを、**ずんだもん（VOICEVOX）**の声で読み上げる。
+チャット（assistant-chat）のエージェント回答テキストを、**ずんだもん（VOICEVOX）** の声で読み上げる。
 将来 **AWS Polly** など他エンジンにも広げられるよう、TTS をプロバイダ抽象として設計する。
 
 ## 背景
@@ -304,7 +304,7 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   ハッシュで話者プール（`tts.ts` の `SESSION_VOICES`: VOICEVOX 標準 14 キャラ／Polly 3 声）から
   決定的に割り当て（`sessionVoiceOpts`）。ミラーの読み上げ（手動・自動）とセッション音声通知に
   適用（`startNarration`/`readTurn`/`announce` に voice 上書きパラメータを追加）。ハッシュは
-  表示タイトルでなく**セッション名（固定 ID）**で取るので、タイトルを変えても声は変わらない。
+  表示タイトルでなく**セッション名（固定 ID）** で取るので、タイトルを変えても声は変わらない。
   チャットタブ・朗読ビューは選択中の話者のまま。
 - **感情スタイルの読み分け（2026-07-11）** ✅: 設定 `ttsEmotion`（既定 OFF）。文（合成 1 回）
   単位で `emotionOf`（`ttsText.ts`・純関数・テスト有り）がエラー/失敗系→ツンツン、成功/完了系→
@@ -496,7 +496,7 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
 - **統合上の壁**: (1) 公式は **Streamlit UI のみで HTTP API 無し** → 基盤の GPT-SoVITS
   `api_v2.py`（既定 `:9880` の `/tts`）にずんだもんモデル＋参照音声を載せて起動し、CP に
   `voiceger` プロバイダ（`AF_VOICEGER_URL` を指すアダプタ）を足す経路になる。(2) **CUDA/ROCm=GPU 前提**。
-- **保留理由**: dev ホストの GPU は **AMD Vega 内蔵APU（Picasso/Raven2, gfx90c/gfx902）**で、CUDA 不可・
+- **保留理由**: dev ホストの GPU は **AMD Vega 内蔵APU（Picasso/Raven2, gfx90c/gfx902）** で、CUDA 不可・
   **ROCm も APU 非対応** → GPU 加速不可、CPU 実行は遅く重い（OOM 多発ホストで非推奨）。よって
   **このホストでは検証不能**。実装すると「未検証コード」になるため見送り。
 - **やるならの前提**: NVIDIA GPU 機 or クラウド GPU（Colab/RunPod/AWS g4dn 等）に GPT-SoVITS を立て、

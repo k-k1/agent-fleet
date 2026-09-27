@@ -290,7 +290,7 @@ Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン�
 **結論: AMG でも mcp-grafana はそのまま使える見込み。** 認証レイヤの分担が肝で、
 
 - **IAM Identity Center / SAML** はブラウザの**人間ログイン専用**。Grafana HTTP API のプログラムアクセスには関与しない。
-- **SigV4（IAM 資格）**が要るのは AWS 側の **workspace 管理 API**（`aws grafana …`）だけ。Grafana HTTP API 本体は署名不要。
+- **SigV4（IAM 資格）** が要るのは AWS 側の **workspace 管理 API**（`aws grafana …`）だけ。Grafana HTTP API 本体は署名不要。
 - プログラムアクセスは Grafana ネイティブの**サービスアカウントトークン**（`Authorization: Bearer`）で、mcp-grafana の推奨認証（env `GRAFANA_URL` + `GRAFANA_SERVICE_ACCOUNT_TOKEN`）とそのまま一致する。エンドポイントは `https://g-xxxxxxxxxx.grafana-workspace.<region>.amazonaws.com`。
 
 **AMG 特有の事実（セルフホストとの差分）**:
@@ -310,7 +310,7 @@ Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン�
 - **案A: 静的トークン（PagerDuty 同型・推奨初手）** — 運用タブに Grafana カード（URL + SA トークン）→ `secrets.enc`（`GrafanaCreds{url, token}`）→ `mcp-run grafana` が env 注入して焼き込み済み `mcp-grafana -disable-write -disable-admin` を exec。**セルフホスト / Grafana Cloud / AMG を同一 kind で吸収**でき、実装は PagerDuty 縦切りの写経（下記差分箇所）。AMG の場合だけ 30 日で失効するので、失効時に UI で貼り直し（401 をカード上で分かるようにする程度の配慮）。
 - **案B: AMG 専用・IAM 動的発行（秘密レス）** — 接続情報は region / workspaceId / serviceAccountId のみで**長寿命秘密ゼロ**。`mcp-run` が既存 AWS SSO 資格チェーン（ssm 接続と同じ、コンテナ内完結）で `CreateWorkspaceServiceAccountToken`（短命 TTL、例 8h）を発行して env 注入 → exec。ローテーション不要が利点。考慮点: ① SSO ロールに `grafana:CreateWorkspaceServiceAccountToken` / `Delete…` / `List…` の IAM 権限が要る（インフラ側整備）、② exec モデルでは終了時削除ができないため、起動時に自分の名前プレフィックス（例 `af-<user>-`）の**期限切れトークンを List + Delete で掃除**してクォータ堆積を防ぐ、③ mcp-grafana の `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`（リクエスト毎に再読込）を使えば TTL 越えの長寿命セッションでも親常駐なしで更新余地あり。
 - **推奨**: 案A で開始し（全 Grafana 系を 1 kind でカバー、AMG は「トークンの取り方が違うだけ」として guide に記載）、AMG 利用が定着して 30 日ローテーションが痛くなったら、案B を `grafana` 接続の認証モード（`token` / `amg-iam`）として追加する。UI・opsIntegrations・アシスタント側は案A/B で共通（違いは `mcp-run grafana` の資格取得部のみ）なので、後付けで両立できる。
-- **案B の弱点と代替（案C、2026-07-14 議論）**: 案B は「本人の SSO セッションが生きている」前提になり、深夜のインシデント時に切れている可能性が高い（インシデント対応ツールとして急所）＋全メンバーの Permission Set に発行権限を配る infra 負担がある。代替は **案C: CP タスクロールが発行主体**になる形 — C-1) 管理者が手動ローテートして共有トークンをテナント設定に保存、C-2) CP が共有トークンを自動ローテート（CP が秘密を保存＝原則衝突）、**C-3) CP がユーザー毎トークン（`af-<user>`）を発行し、既存 CP→Agent API で各人の `secrets.enc` へ素通し配布・CP は token ID と期限（非秘密）のみ保持**。C-3 なら SSO 非依存・手作業ゼロ・Grafana 側監査の個人分離・「CP は秘密を保存しない」原則を維持できる（発行**能力**を CP に置くことは §8-1 の ADR で線引きが必要）。トークンクォータは **100/workspace（期限切れも算入・引き上げ不可）**なので、どの案でも入れ替わり削除が必須。
+- **案B の弱点と代替（案C、2026-07-14 議論）**: 案B は「本人の SSO セッションが生きている」前提になり、深夜のインシデント時に切れている可能性が高い（インシデント対応ツールとして急所）＋全メンバーの Permission Set に発行権限を配る infra 負担がある。代替は **案C: CP タスクロールが発行主体**になる形 — C-1) 管理者が手動ローテートして共有トークンをテナント設定に保存、C-2) CP が共有トークンを自動ローテート（CP が秘密を保存＝原則衝突）、**C-3) CP がユーザー毎トークン（`af-<user>`）を発行し、既存 CP→Agent API で各人の `secrets.enc` へ素通し配布・CP は token ID と期限（非秘密）のみ保持**。C-3 なら SSO 非依存・手作業ゼロ・Grafana 側監査の個人分離・「CP は秘密を保存しない」原則を維持できる（発行**能力**を CP に置くことは §8-1 の ADR で線引きが必要）。トークンクォータは **100/workspace（期限切れも算入・引き上げ不可）** なので、どの案でも入れ替わり削除が必須。
 - **運用状況（2026-07-14）**: 実環境で案A の接続確認済み。**当面は案A（ユーザー毎トークンの手動ローテート）で運用**し、案B/C は保留（利用が定着しローテーションが痛くなった時点で C-3 を第一候補に ADR 化）。
 
 **案A の実装差分（PagerDuty 実装との対応）**: `secrets.go` に `GrafanaCreds`、`connections.go` + agent `routes.go` + CP `routes.go` に `/connections/grafana`、`mcp_run.go` に `case "grafana"`（uvx ではなく焼き込みバイナリを exec、`-disable-write -disable-admin` 固定）、`assistants.go` に `integrationGrafana`（opsIntegrations 1 行 + integrationReady case + SRE アシスタントへ追加）、Console `OpsTab.tsx` に GrafanaCard（URL + トークンの 2 入力）、Dockerfile に mcp-grafana バイナリ（49MB、リリース tarball）をベイク。

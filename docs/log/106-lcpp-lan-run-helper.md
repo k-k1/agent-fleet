@@ -65,7 +65,7 @@ PR #826 の `workspace/agent/internal/harness/live_contract_test.go`(ビルド�
 | 5 | `tool_calls` が有効な JSON・既知のツール名・必須引数を満たす | `/v1/chat/completions` | ツールループ全体(決定 5) |
 | 6 | stream の最終チャンクが `usage` を運ぶ | `/v1/chat/completions` | 決定 8 の exact 使用量 |
 
-🔴 **軸 1・2・3・4 は OpenAI 互換 API では**ない**。** 「OpenAI 互換サーバなら動く」は、この kind に
+🔴 **軸 1・2・3・4 は OpenAI 互換 API では**ない **。** 「OpenAI 互換サーバなら動く」は、この kind に
 関しては誤りである。判定の実務はここに尽きる。
 
 ### 2.2 判定表
@@ -104,7 +104,7 @@ PR #826 の `workspace/agent/internal/harness/live_contract_test.go`(ビルド�
   同じ形**である。つまり Jan は「不合格の製品」ではなく「合格するエンジンを、合格しない窓口で包んだ
   製品」。Jan を**モデルの入手と起動の GUI として使い、エンジンのポートを直接指す**という使い方は
   成立しうるが、Jan はそのポートを loopback + 自前 api_key で握るので、LAN へ出す方法は未確認。
-- **llama-swap**: README の対応経路一覧が明示的で、`/props` は**`?model={model_id}` が必須**。
+- **llama-swap**: README の対応経路一覧が明示的で、`/props` は **`?model={model_id}` が必須**。
   うちの `props()` はクエリを付けない(`control-plane/engine_gateway.go` の props 経路)。
   `input_tokens`・`control` は一覧に無い(= 404)。
 - **Docker Model Runner**: 公式 API リファレンスの経路は `/engines/v1/*`(OpenAI 互換)・`/models*`・
@@ -311,7 +311,7 @@ Workspace のサンドボックス(GPU 無し・root 無し)で動かす設計�
 3. 🔴 **`streaming_usage_present`(`:224-`)は落ちる。** `chatRequest`(`client.go:121-129`)は
    **`stream_options.include_usage` を意図的に送っていない**——「gateway が入れるから」とコメントが
    明記している。入れているのは `askForStreamUsage`(`control-plane/engine_gateway.go:901-913`)で、
-   その実測コメントが**「付けなければ usage のチャンクはそもそも来ない」**と書いている。
+   その実測コメントが「**付けなければ usage のチャンクはそもそも来ない**」と書いている。
    **= CP を通さず直に叩くと usage は来ない。**
    - **本番には波及しない。** 105 の「LAN 行に差し替える」(`AF_LLM_URL`)を実装しても、`external` 行は
      同じ `serve()` を通る(`engine_gateway.go:1542-1548` の external 分岐は health の扱いだけ)ので、

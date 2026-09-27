@@ -93,7 +93,7 @@
 
 **推定していた「0.9GB 前後」は当たっていた**（`0.7.0` は 902MiB で、版が上がっても形は変わらない）。
 variant も probe の中から実物で確認した——`/usr/bin/chromium` `/usr/local/go` `/usr/local/aws-cli`
-がいずれも存在する＝**`BAKE_AGENT_CLIS=0` かつ `BAKE_OPTIONAL_TOOLS=1`** で、§62.3 が前提にしていた
+がいずれも存在する＝ **`BAKE_AGENT_CLIS=0` かつ `BAKE_OPTIONAL_TOOLS=1`** で、§62.3 が前提にしていた
 形そのもの。⚠️ `deploy/release/build.sh` に `BAKE_OPTIONAL_TOOLS=0` を渡す行があるが、あれは
 **native の rootfs 用イメージ専用**で、コンテナ像は Dockerfile 既定の `1` のまま。読み違えやすい。
 
@@ -212,7 +212,7 @@ assert している**（`workspace/Dockerfile` の `find / -perm /6000 -exec chm
 | **(a) SOCI** | 定常 Start の pull -40〜60%（公称） | リリース手順に版ピン 2 本。**Dockerfile / CFN / Go は変更ゼロ**。AWS 課金増ほぼゼロ | **高**: 索引なしで再 push するだけで戻る（ドキュメント明記） |
 | **(b) イメージ縮小** | pull は劇的に短縮（手段は既存: `BAKE_OPTIONAL_TOOLS=0`） | 初回だけ chromium ~1GB 等を **NAT 越え**（S3 GW エンドポイントの外＝$0.062/GB が復活）／EFS に workspace ごと ~1GB（$0.36/GB-月 × 人数）／初回 Start がさらに悪化／native lean 用の経路を ECS 本番が使うことになりテスト面が増える | 中 |
 | **(c) UI で吸収** | 待ち時間は **1 秒も縮まない**。「エラーに見える」だけが消える | ほぼゼロ | 高 |
-| **(d) EC2 起動タイプ** | 2 回目以降 pull ゼロ（最大） | **scale-to-zero の経済性が消える**。容量プロバイダ / ASG / ドレイン / AMI 更新が増え、「per-workspace は CP がステートレスに」という設計の芯を壊す。しかも**「1 台の VM」形は `deploy/aws/ec2-single` として既に存在する** | 低 |
+| **(d) EC2 起動タイプ** | 2 回目以降 pull ゼロ（最大） | **scale-to-zero の経済性が消える**。容量プロバイダ / ASG / ドレイン / AMI 更新が増え、「per-workspace は CP がステートレスに」という設計の芯を壊す。しかも **「1 台の VM」形は `deploy/aws/ec2-single` として既に存在する** | 低 |
 
 **推奨: (c) を先に（ほぼ無料）、本命は (a)。(b) は保留、(d) は却下。**
 
@@ -238,7 +238,7 @@ assert している**（`workspace/Dockerfile` の `find / -perm /6000 -exec chm
 > **汎用インスタンスのプール ＋ ユーザー毎 EBS の差し替え**を測ったところ、**Start は 22〜27s**
 > （ホットスロット・pull 0.045s）だった。**~105s の 1/4 で、しかも永続 home を保てるのはこの形だけ。**
 > したがって「EC2 では速くできない」と一般化してはならない —— (d) の却下は
-> **「1 台をユーザーに固定する形なら効かない」**という意味に限る。
+> 「**1 台をユーザーに固定する形なら効かない**」という意味に限る。
 - **(b) は SOCI と排他ではなく、むしろ SOCI の効果を削る**（縮めた先が 250MiB 閾値に近づく）。
   ECS の本番運用実績が出て EFS コストが読めるまで保留。
 - **(c) にはまだ塞げる穴が 1 つ残っている**（SOCI の採否と独立に効く。以下は実装前の記述）:
@@ -393,7 +393,7 @@ aws logs tail /af/af-ecs-ingress/cp --since 15m | grep 'Agent healthy' # §62.5.
 
 ### 62.7.1 計測の実行手段: `aws` CLI か AWS MCP か
 
-フリートには 4 つ目の builtin 連携として **Agent Toolkit for AWS（AWS MCP Server）**があり
+フリートには 4 つ目の builtin 連携として **Agent Toolkit for AWS（AWS MCP Server）** があり
 （[25-ops-monitoring.md](25-ops-monitoring.md)）、`call_aws` は AWS API 約 15,000 アクションを叩ける。
 原理的には P0 も P1 もこれで実行できる。**が、この用途では `aws` CLI を使う。**
 
@@ -598,7 +598,7 @@ API 呼び出し**で、実際 1〜2 秒で `UpdateService` に到達してい�
 ### 62.10.3 正体は「前タスクの後片付けと次の配置が重なること」
 
 統制実験で唯一再現しなかった条件を潰していったら、**変数は API でもタスクの形でもなく
-「前のタスクを止めてから次を start するまでの間隔」**だった。
+「前のタスクを止めてから次を start するまでの間隔」** だった。
 
 | 条件（いずれも実 ws のタスク定義・SC 有・1024/2048） | Start API → task 作成 |
 |---|---|

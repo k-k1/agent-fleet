@@ -187,14 +187,14 @@ deprecated になり、worktree 起動が落ちた）。`Models()` は落とし�
 従来の文言に落ちる。
 
 なお同じ起動ガードは、失敗時にカタログ全件を並べていた（opencode では約 60 件）。
-Console のトーストとスマホの通知では理由が読めなくなるので、**近い候補 5 件＋「ほか N 件」**に
+Console のトーストとスマホの通知では理由が読めなくなるので、**近い候補 5 件＋「ほか N 件」** に
 切り詰めてある（`nearestModels` — 共有トークン数、同点は共通接頭辞長で並べ替え。
 `opencode-go/…` を指定したら候補も `opencode-go/…` から出る）。
 
 ## 54.5 使う枠の4択（オフ / 無料枠 / Go / Zen）
 
 opencode.ai は 3 つの課金経路を持ち、実測でそれぞれ独立していた（§54.4）。どれを使うかは
-運用の判断なので、設定 > エージェント > opencode の**「使う枠」**で選ばせる。
+運用の判断なので、設定 > エージェント > opencode の「**使う枠**」で選ばせる。
 旧「モデル一覧」設定（`go-first` / `hide-zen` / `all`）の置き換えで、ui-prefs のキーは
 `opencodeCatalog` のまま値だけ変わる（`hide-zen`→`go`、`go-first`/`all`→`zen`、
 未設定/不明→`off`。Agent 側 `CatalogPref` と Console 側 `migrateOpencodeCatalog` が

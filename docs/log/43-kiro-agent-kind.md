@@ -133,7 +133,7 @@ Track A では**設定固定の冪等ヘルパ（`ensureSettings`）だけ先行
 - **セッション同一性（cursor との最大差）**: kiro は**セッション ID を CLI が採番**し、自己採番 `--resume-id` を渡しても採用されない（実測: 独自 ID を切る）。よって**起動後に `~/.kiro/sessions/cli/<sid>.json`（cwd 記録付き）を cwd＋mtime で発見**し sidstore にキャッシュ（codex rollout 発見と同型）。BuildLaunch はキャッシュ済み sid のみ resume に使う（fresh 枠が同一 cwd の無関係セッションを掴まない）。同一 cwd 複数枠は既知の縁（worktree は別 dir なので実運用で問題化しない）。
 - **read 正本**: v2 JSONL（Prompt/AssistantMessage/ToolResults）。`ToolResults` を `toolUseId` で対応 tool パートに突合し**ツール出力（stdout）まで描ける**（cursor では不可だった）。ハードキル後の `--resume-id` 復帰も実測 PASS（`.lock` は終了で消え、resume は履歴再生）→ GracefulStop 不要。
 - **root 配線**: `session.go`（KindKiro）/ `agent.go`（registry＋driveState 分岐）/ `connections.go`（Status）/ `agent_models.go`（Models）/ `fs.go` denylist（`.kiro` ＋ `.local/share/kiro-cli`）/ `session_io.go`（paneMode readiness・bracketed paste・readiness 待ち）。
-- **検証**: `go build ./...`／全 test 緑（kiro 8 件＋main/session 既存）。**ライブ E2E（KIRO_LIVE=1）**= 実 TUI 起動→idle 描画→プロンプト→**cwd 発見→転写パース（user＋tool 出力 attach 確認）**→working→idle 状態遷移まで実測 PASS（sid=40a4893f・turns=2・sawUser/sawToolOut=true）。models 8 件・whoami connected も実測。
+- **検証**: `go build ./...`／全 test 緑（kiro 8 件＋main/session 既存）。**ライブ E2E（KIRO_LIVE=1）**= 実 TUI 起動→idle 描画→プロンプト→**cwd 発見→転写パース（user＋tool 出力 attach 確認）** →working→idle 状態遷移まで実測 PASS（sid=40a4893f・turns=2・sawUser/sawToolOut=true）。models 8 件・whoami connected も実測。
 
 ## 7. Track B 実装メモ（2026-07-24・temp/snznjpk）— 配備（オンデマンド導入＋焼き込みノブ）
 
@@ -314,7 +314,7 @@ metadata の正確な shape を再プローブし確定した。
 (2) 855MB のため lean の boot-install ループにも入れておらず（§7）、
 (3) 自己更新（`app.disableAutoupdates`）は entrypoint／`pinKiroSettings`／`ensureSettings` の三重で封殺しており、
 (4) 唯一の導入経路である起動ガードが `command -v kiro-cli >/dev/null 2>&1 || workspace-agent install-kiro`
-＝**「不在」しか見ない**（`installKiro` も冒頭で presence 判定だけして即 return）。
+＝ **「不在」しか見ない**（`installKiro` も冒頭で presence 判定だけして即 return）。
 結果、最初に入った版が終着点になる。self-update opt-in（ON）も kiro を対象にしていない（npm4種/agy/rtk/cursor のみ）ので救われない。
 
 **修正**（`install_kiro.go` / `kiro/program.go` / `kiro_install_http.go`）:

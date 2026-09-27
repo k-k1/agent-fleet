@@ -116,7 +116,7 @@
   worktree が正（`~/.cursor/worktrees/` に勝手に増えるのを避ける）。
 - 自己更新封殺: 既定で auto-update ON。**Track B で公式手段を確定**（Track 0 の env 探索は
   空振りだったが、バンドル再解析で背景更新ゲート＝`disableAutoUpdate || channel==="static"`
-  を発見）: **`--disable-auto-update` root フラグ**（全起動経路で前置）＋**`cli-config.json`
+  を発見）: **`--disable-auto-update` root フラグ**（全起動経路で前置）＋ **`cli-config.json`
   channel:"static"**（entrypoint 再固定）の 2 経路。AUR の versions 書込禁止 fallback は不要。
   自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）は rtk/agy と同じ「~/.local/bin shadow」系
   （npm でないため上流 install.sh で latest を home へ導入）。詳細は §Track B。
@@ -456,7 +456,7 @@ chatId は別空間）。
 | 2 | JSONL 転写 | ✅ `~/.cursor/projects/<cwdスラグ>/agent-transcripts/<chatId>/<chatId>.jsonl`。Anthropic content block 型（`tool_use` あり・**tool_result 無し**・uuid/timestamp 無し）＋`turn_ended`。TUI/-p は書く・**ACP は書かない** |
 | 3 | hooks 実発火 | ✅ TUI: beforeSubmitPrompt/beforeShellExecution/stop 全発火。`-p`: beforeShellExecution のみ。ACP: 不発火。payload に conversation_id/`transcript_path`/cursor_version/user_email。コマンド書換の可否は未検証（rtk 実装時） |
 | 4 | 資格情報 | ✅ `~/.config/cursor/auth.json`（600・accessToken/refreshToken 平文 JSON）。ホームボリュームで持続。`status --format json` はクリーンな構造化 JSON |
-| 5 | auto-update 封殺 | ✅ **Track B で公式手段を確定**（Track 0 の「手段なし」を覆す）。バンドル再解析で背景更新ゲート＝`disableAutoUpdate \|\| channel==="static"`。**`--disable-auto-update` root フラグ**（サブコマンドの前・実測合格）＋**`cli-config.json` channel:"static"**（実測: version/status/acp 正常・static 維持）の 2 経路で封殺。versions 書込禁止 fallback は不要に |
+| 5 | auto-update 封殺 | ✅ **Track B で公式手段を確定**（Track 0 の「手段なし」を覆す）。バンドル再解析で背景更新ゲート＝`disableAutoUpdate \|\| channel==="static"`。**`--disable-auto-update` root フラグ**（サブコマンドの前・実測合格）＋ **`cli-config.json` channel:"static"**（実測: version/status/acp 正常・static 維持）の 2 経路で封殺。versions 書込禁止 fallback は不要に |
 | 6 | `agent models` | ✅ `id - 表示名` のテキスト行（`--format json` は無い）。アカウント連動（auto/composer/claude/gpt/grok 系を確認）。要認証 |
 | 7 | TUI 実測 | ✅ §Track 0 実測結果（trust プロンプト・フッタ・許可プロンプトのキー列） |
 | 8 | create-chat→resume | ✅ `create-chat` が UUID を即返し、`-p --resume <id>` でそのチャットにターンが乗る（result の session_id 一致・転写も同一ファイルに追記） |

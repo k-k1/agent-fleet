@@ -77,7 +77,7 @@
   専用・外部端点なしと整合）ので P2a の受信 Gateway に相乗りし、公開端点は不要。回答は契約6の
   構造化写像（キー送出でも、押下者検証は契約5の本人限定）。claude/TUI はフックが pending
   ペイロードを記録し MirrorView 検証済みのキー列を Go 再現。**managed（codex/opencode/copilot）も
-  実装済み（2026-07-22）**＝当初懸念した「rollout call_id ↔ ライブ Interaction id」の識別子不一致は
+  実装済み（2026-07-22）** ＝当初懸念した「rollout call_id ↔ ライブ Interaction id」の識別子不一致は
   **custom_id に id を載せず回答時に `Resume→Snapshot` で現在の Interaction を再取得**して解消
   （送信側は `codex.PendingInteraction` で resume せず questions を覗いて通知に添付）。陳腐化は
   フィンガープリント＋`Respond` の id 照合の二重ガード。単一選択のみ対応（multi-select はテキストの

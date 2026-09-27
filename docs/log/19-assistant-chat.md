@@ -40,7 +40,7 @@ Markdown ドキュメントの翻訳を投げる、チャットセッション�
 2. `Agent` インターフェース(`agent.go`)は `buildLaunch` が tmux プログラムを返す契約。チャットを
    無理に `SessionKind` として通すとセッション機構(一覧/アーカイブ/idle 判定)を壊す。
 
-→ **チャットは tmux セッションではなく、Agent 内の並列サブシステム(`chat.go`)**として作る。
+→ **チャットは tmux セッションではなく、Agent 内の並列サブシステム(`chat.go`)** として作る。
 
 ```
 Console: PaneKind "chat" + ChatView（xterm 非依存）
@@ -159,7 +159,7 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
 - **挨拶カード**: 会話が未開始（draft or messages 空）の間、ChatView が assistant の description を
   挨拶カードとして表示（**静的**＝ライブのモデル turn を消費しない。req: 会話開始時に説明表示／自己紹介）。
 - **draft モード（未開始は保存しない）**: 左レールでアシスタントを選ぶと **conversation を作らず** draft ペイン
-  （Pane.draftAssistantId、conversationId=null）を開く。**最初のメッセージ送信時に初めて `chatCreate`**→
+  （Pane.draftAssistantId、conversationId=null）を開く。**最初のメッセージ送信時に初めて `chatCreate`** →
   `promoteDraft(paneId, id)` でペインを実会話に昇格→stream。load 効果は convRef ガードで昇格時の再読込
   （＝streaming 中断）を回避。会話一覧は message_count>0 のみ表示（Files 右クリックの即時作成が放置された
   空会話も一覧に出さない）。`chatListKey`/`bumpChatList` で draft→実会話化を左レールに反映。
@@ -231,7 +231,7 @@ materializeする面は別の起動scopeで、docs/51の`af_report`とdocs/53の
 アシスタントチャットは **チャット出力のみ・ファイル書き込み不可・1コンテキスト**（サブエージェントも
 禁止＝OOM対策）。→ **短〜中の翻訳/要約/Q&A 向け**。**大きなファイルを翻訳して別ファイルに保存**のような
 「ファイル出力を伴う大規模作業」は、ファイルを書けて大規模作業向けの **コーディングセッション** に投げるべき。
-このため Files 右クリックには**「セッションに送る…」**を追加（下記）。実インシデント: `~/codex-manual.md`
+このため Files 右クリックには「**セッションに送る…**」を追加（下記）。実インシデント: `~/codex-manual.md`
 （マニュアル1本）を翻訳アシスタントに投げ、サブエージェント fan-out で OOM＋ファイル出力失敗。
 
 ### Files 右クリック「セッションに送る…」（**実装済**）

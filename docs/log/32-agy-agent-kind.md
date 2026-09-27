@@ -516,7 +516,7 @@ claude の AskUserQuestion / 許可プロンプトに相当する、**会話進�
 | 1 | **コマンド実行許可**（"Requesting permission for: …"） | 4 択（Yes / この会話で常に許可 / settings.json に永続許可 / No）＋ esc cancel・tab Amend・ctrl+g 編集 | **保留中は無記録**。承認後に `RUN_COMMAND`（DONE）。**拒否は step 自体が残らない**（TUI にのみ "User declined the tool call"） |
 | 2 | **ファイル作成許可**（"Allow creation of this file?"） | 2 択＋インライン diff・f full diff・tab Amend | 同上。承認後に `CODE_ACTION`（DONE） |
 | 3 | **ファイル編集許可**（"Accept this file edit?"） | 2 択＋diff。**shift+tab で auto-approve edits トグル**の案内あり | 同上。承認後に `CODE_ACTION`（DONE） |
-| 4 | **ASK_QUESTION（AskUserQuestion 相当）** | "Question N/M:" ＋番号付き選択肢＋ **Write-in…（自由記述）**＋ esc Skip | **保留中は無記録**。回答後に `ASK_QUESTION`（DONE）— ただし content は **回答のみ**（"A1: Apples"）で**質問文・選択肢は JSONL に残らない** |
+| 4 | **ASK_QUESTION（AskUserQuestion 相当）** | "Question N/M:" ＋番号付き選択肢＋ **Write-in…（自由記述）** ＋ esc Skip | **保留中は無記録**。回答後に `ASK_QUESTION`（DONE）— ただし content は **回答のみ**（"A1: Apples"）で**質問文・選択肢は JSONL に残らない** |
 | 5 | plan モード特有の承認 | **無し** — plan は brain の artifact（.md）として保存され「/artifact で確認して手動で shift+tab」方式。claude の ExitPlanMode 型の承認ダイアログは存在しない | plan 作成は `CODE_ACTION` |
 
 - 権限系 1–3 は**フリート既定では発生しない**: BuildLaunch が

@@ -1,6 +1,6 @@
 # 37. チャットブリッジ（Slack / Discord 連携）— 通知・双方向操縦・承認ゲート
 
-- 状態: **P1／P1.5＋P2a（受信＝スレッド返信→注入）＋全文ブリッジ（応答本文投稿）＋
+- 状態: P1／P1.5＋P2a（受信＝スレッド返信→注入）＋全文ブリッジ（応答本文投稿）＋
   P2b（AUQ／許可／プラン承認のボタン化・claude/TUI＋managed codex/opencode/copilot）＋
   通知/全文の整理（全文は本文のみ・メンション時間ゲート・受信 ack）＋
   P3先取り（@メンション→フリート・オペレーター会話・専用スレッド）＋
@@ -202,7 +202,7 @@ Components（ボタン）で回答する**。回答はキー送出でなく構�
   ボタン押下を `INTERACTION_CREATE` として Gateway に流す（＝ローカル専用・外部端点なしの
   本命構成そのもの）。P2a の受信 Gateway に相乗りし、公開端点は不要。押下は 3 秒以内に
   callback を返す必要があるため、受信は**即 deferred-ACK（type 6・ローディング非表示）→
-  適用→メッセージ編集（ボタン除去＋結果表示）**の順（`receiver.go routeInteraction`）。
+  適用→メッセージ編集（ボタン除去＋結果表示）** の順（`receiver.go routeInteraction`）。
 - **送信（ボタン描画・`internal/bridge/interact.go`）**: 受信が有効（`Receive`＋channel
   モード）なとき question/plan-approval/permission-request にボタンを添える。permission→
   「許可/拒否」、plan→「承認/却下」、question→**質問ごとに 1 メッセージ**（単一/複数問で

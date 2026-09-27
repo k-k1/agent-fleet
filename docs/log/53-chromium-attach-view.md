@@ -376,7 +376,7 @@ layout側は4000x4000。pointer座標はlayout空間なので、Agentは新し�
 **pinch zoom（§53.19）**: `viewport`の`zoom`（省略時1、上限4）は上のbase — `fit`後のlayout、fitなしならpane —
 をさらに`base / zoom`へ縮める。`fit`と直交し、view-onlyでも受理する（見えているものの見え方はページ入力ではない）。
 
-`Emulation.setDeviceMetricsOverride`の**`scale`は使わない**。Chrome 151で実測したところ、これは出力画像を
+`Emulation.setDeviceMetricsOverride`の **`scale`は使わない**。Chrome 151で実測したところ、これは出力画像を
 縮めるのではなく**同じ大きさの面の中でページだけを縮めて描く**（ページが左上に小さく描かれ、右と下が空白になる）。
 さらにpointer座標はlayout空間のままなので、見えている位置と入力位置が`scale`分ずれ、スクロールバーを掴めない・
 ホイールが効かないという形で現れる。frame寸法だけを見る検証はこれを通してしまうため、テストは

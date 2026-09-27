@@ -261,7 +261,7 @@ shell `#46c9d0`（シアン）/ **ssm `#6d8bf5`（藍）**。
   2. 二次 = **TUI の明示文字列契約**（`internal/agents/rovo/state.go`）。kiro と同じく
      スピナーグリフ regex は使わない（[[spinner-re-slash-command-miss]] / false-idle の教訓）。
   3. 縮退 = `~/.rovodev/sessions/<uuid>/` の mtime と `driveState` の楽観 working。
-- **`ensureSettings`（冪等・プロセス内 1 回）**で `~/.rovodev/config.yml` に固定する候補:
+- **`ensureSettings`（冪等・プロセス内 1 回）** で `~/.rovodev/config.yml` に固定する候補:
   `toolPermissions.default: allow`（⚠️ 素の home だと許可待ちでペインが固着する。kiro の
   `chat.disableTrustAllConfirmation` と同じ位置づけ）／`sessions.auto_restore: false`（AF が
   `--restore` を明示するので、勝手な復帰は枠とセッションの対応を壊す）／`console.outputFormat`（⏳
