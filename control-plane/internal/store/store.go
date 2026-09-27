@@ -586,6 +586,8 @@ type Memo struct {
 // synchronisation is deliberately not a thing (docs/log/80 §80.12) — the query is what keeps
 // the rail short. FetchedAt/LastError record the last attempt (see
 // MarkWorkItemQueryFetched for why the stamp is written even when the fetch failed).
+// MatchTotal says whether the last successful fetch left rows out: 0 when it did not, the
+// tracker's count of matches when it did, -1 when it did but the tracker gave no count.
 type WorkItemQuery struct {
 	ID, MembershipID, Provider string
 	Label, Query, RepoHint     string
@@ -593,6 +595,7 @@ type WorkItemQuery struct {
 	Position                   int
 	CreatedAt                  string
 	FetchedAt, LastError       string
+	MatchTotal                 int
 }
 
 // WorkItem is one cached row of a query's result. ★ Non-secret metadata ONLY: the
@@ -1546,6 +1549,9 @@ type WorkItemStore interface {
 	// stamped even on failure — it is the rate limiter as well as the "last fetched"
 	// label, so a provider that 500s must not turn into a fetch on every 4s tick.
 	MarkWorkItemQueryFetched(ctx context.Context, id, fetchedAt, errMsg string) error
+	// SetWorkItemQueryMatchTotal records WorkItemQuery.MatchTotal. Called on a successful fetch
+	// only: a failed one keeps its cached rows, so it keeps the note that goes with them.
+	SetWorkItemQueryMatchTotal(ctx context.Context, id string, matchTotal int) error
 
 	ListWorkItems(ctx context.Context, membershipID string) ([]WorkItem, error)
 	// ReplaceWorkItems swaps the cached rows of the given queries for `items` in one

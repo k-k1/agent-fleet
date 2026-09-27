@@ -158,6 +158,44 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	}
 }
 
+// #1095: a query whose page left matches out says so, and keeps saying so while the Workspace is
+// stopped. Three cases in one refresh — a known count, a full page without a count, and a query
+// that fit — then a refresh that fails, which must keep the note next to the rows it kept.
+func TestWorkItemsMatchTotalThroughTheCache(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "gh", "GitHub", "is:open involves:@me", true)
+	env.addQuery(t, "jr", "Jira", "assignee = currentUser()", true)
+	env.addQuery(t, "fit", "Fits", "is:open repo:acme/web", true)
+	env.body = func() string {
+		return `{"items":[],"errors":[],
+		         "truncated":[{"queryId":"gh","total":159},{"queryId":"jr","total":0}]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+
+	want := map[string]int{"gh": 159, "jr": -1, "fit": 0}
+	check := func(when string) {
+		t.Helper()
+		out, aerr := env.api.workItemsPayload(ctx, env.res, "stopped")
+		if aerr != nil {
+			t.Fatalf("payload: %v", aerr)
+		}
+		for _, q := range out.Queries {
+			if q.MatchTotal != want[q.ID] {
+				t.Errorf("%s: %s matchTotal = %d, want %d", when, q.ID, q.MatchTotal, want[q.ID])
+			}
+		}
+	}
+	check("after the fetch")
+
+	env.body = func() string {
+		return `{"items":[],"errors":[{"queryId":"gh","message":"github rate limit reached"}],"truncated":[]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	want["jr"] = 0 // fetched fine this time and nothing was left out
+	check("after a failed refresh")
+}
+
 // When the request never reached the Agent (just stopped, restarting) fetched_at is left
 // alone: advancing it would count "it did not arrive" as fetched and stay silent for the
 // five minutes of the interval.

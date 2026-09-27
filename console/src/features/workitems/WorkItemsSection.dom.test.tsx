@@ -222,6 +222,25 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(1); // the other rows stay visible through a failure
   });
 
+  // #1095: the rail showed 50 of 59 and said nothing, so a ticket past the cut was just missing.
+  it("says when a query's page left matches out", async () => {
+    workItemList.mockResolvedValue({
+      items: [item()],
+      queries: [
+        { ...query, matchTotal: 159 },
+        { ...query, id: "q2", label: "Jira", matchTotal: -1 },
+        { ...query, id: "q3", label: "全部入った", matchTotal: 0 },
+      ],
+      sessions: [],
+      fetchedAt: "2026-08-26T09:00:00Z",
+      running: true,
+    });
+    await render();
+    expect(text()).toContain(t("wi.query_truncated", { label: "自分の未完了", shown: 1, total: 159 }));
+    expect(text()).toContain(t("wi.query_truncated_unknown", { label: "Jira", shown: 0 }));
+    expect(host.querySelectorAll(".wi-trunc").length).toBe(2);
+  });
+
   it("puts a badge on a started row", async () => {
     workItemList.mockResolvedValue({
       items: [item(), item({ id: "2", key: "acme/web#46", title: "まだ誰も見ていない" })],

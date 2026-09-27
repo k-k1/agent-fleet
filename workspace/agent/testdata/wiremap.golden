@@ -217,5 +217,5 @@ svn_auth.go handlePutSvnConn x1 {trustCert,urlPrefix,username}
 svn_auth.go handleSvnAuth x1 {trustCert,urlPrefix,username}
 ui_prefs.go handleGetUIPrefs x1 {} dyn
 ui_prefs.go handlePutUIPrefs x1 {} dyn
-workitems.go handleWorkItemsFetch x2 {errors,items}
+workitems.go handleWorkItemsFetch x2 {errors,items,truncated}
 workitems_comment.go handleWorkItemsComment x1 {url}

@@ -278,10 +278,10 @@ func TestBitbucketNotConnected(t *testing.T) {
 // never fetched again.
 func TestFetchWorkItemQueryRoutesBitbucket(t *testing.T) {
 	newBBStub(t, http.StatusOK, `{"values":[]}`)
-	if _, err := fetchWorkItemQuery(bbTokenStore(), workItemQueryIn{ID: "q1", Provider: "bitbucket", Query: "acme/web"}); err != nil {
+	if _, _, err := fetchWorkItemQuery(bbTokenStore(), workItemQueryIn{ID: "q1", Provider: "bitbucket", Query: "acme/web"}); err != nil {
 		t.Fatalf("bitbucket must be routed: %v", err)
 	}
-	if _, err := fetchWorkItemQuery(bbTokenStore(), workItemQueryIn{ID: "q1", Provider: "gitlab", Query: "x"}); err == nil {
+	if _, _, err := fetchWorkItemQuery(bbTokenStore(), workItemQueryIn{ID: "q1", Provider: "gitlab", Query: "x"}); err == nil {
 		t.Fatal("unknown provider must be refused")
 	}
 }

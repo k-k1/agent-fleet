@@ -87,6 +87,9 @@ type workItemQueryDTO struct {
 	Position  int    `json:"position"`
 	FetchedAt string `json:"fetchedAt"`
 	LastError string `json:"lastError"`
+	// MatchTotal: 0 = the rail has every match, >0 = the tracker's count when the page left
+	// rows out, -1 = rows were left out and the tracker gave no count (#1095).
+	MatchTotal int `json:"matchTotal"`
 }
 
 type workItemSessionDTO struct {
@@ -109,7 +112,7 @@ func workItemToDTO(w store.WorkItem) workItemDTO {
 func workItemQueryToDTO(q store.WorkItemQuery) workItemQueryDTO {
 	return workItemQueryDTO{ID: q.ID, Provider: q.Provider, Label: q.Label, Query: q.Query,
 		RepoHint: q.RepoHint, Enabled: q.Enabled, Position: q.Position,
-		FetchedAt: q.FetchedAt, LastError: q.LastError}
+		FetchedAt: q.FetchedAt, LastError: q.LastError, MatchTotal: q.MatchTotal}
 }
 
 func workItemSessionToDTO(s store.WorkItemSession) workItemSessionDTO {
@@ -303,7 +306,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 	if len(due) == 0 {
 		return
 	}
-	rows, errs, err := fetchWorkItemsFromAgent(ctx, res.rt, due)
+	rows, errs, truncs, err := fetchWorkItemsFromAgent(ctx, res.rt, due)
 	now := store.NowTS()
 	if err != nil {
 		// The Agent was unreachable (just stopped, or restarting). Do not advance
@@ -332,6 +335,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 			items = append(items, it)
 		}
 		_ = a.store.MarkWorkItemQueryFetched(ctx, q.ID, now, "")
+		_ = a.store.SetWorkItemQueryMatchTotal(ctx, q.ID, truncs[q.ID])
 	}
 	if len(ok) > 0 {
 		_ = a.store.ReplaceWorkItems(ctx, mid, ok, items)
@@ -369,12 +373,19 @@ type agentWorkItemsResp struct {
 		QueryID string `json:"queryId"`
 		Message string `json:"message"`
 	} `json:"errors"`
+	// Truncated lists the queries whose page left matches out; Total is 0 when the tracker gave
+	// no count. An Agent from before #1095 sends none, which reads as "nothing left out".
+	Truncated []struct {
+		QueryID string `json:"queryId"`
+		Total   int    `json:"total"`
+	} `json:"truncated"`
 }
 
 // fetchWorkItemsFromAgent asks the running Agent to resolve the queries. Returns the rows
-// per query id and the per-query error messages; a transport-level failure comes back as
+// per query id, the per-query error messages and the per-query match totals (in
+// WorkItemQuery.MatchTotal's encoding, absent = 0); a transport-level failure comes back as
 // the error (the caller then keeps the previous fetched_at, see refreshNow).
-func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []store.WorkItemQuery) (map[string][]store.WorkItem, map[string]string, error) {
+func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []store.WorkItemQuery) (map[string][]store.WorkItem, map[string]string, map[string]int, error) {
 	in := agentWorkItemsReq{Queries: make([]agentWorkItemQuery, 0, len(queries))}
 	for _, q := range queries {
 		in.Queries = append(in.Queries, agentWorkItemQuery{ID: q.ID, Provider: q.Provider, Query: q.Query})
@@ -382,7 +393,7 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 	body, _ := json.Marshal(in)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+"/work-items/fetch", bytes.NewReader(body))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if tok := rt.Token(); tok != "" {
@@ -390,20 +401,20 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 	}
 	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		// A 404 means an Agent from before the fleet was rebuilt; say "unsupported"
 		// rather than letting it read as a failure.
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, nil, &httpStatusError{resp.StatusCode, "this workspace agent does not support work items yet"}
+			return nil, nil, nil, &httpStatusError{resp.StatusCode, "this workspace agent does not support work items yet"}
 		}
-		return nil, nil, &httpStatusError{resp.StatusCode, "agent refused the work item fetch"}
+		return nil, nil, nil, &httpStatusError{resp.StatusCode, "agent refused the work item fetch"}
 	}
 	var out agentWorkItemsResp
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	rows := map[string][]store.WorkItem{}
 	for _, it := range out.Items {
@@ -418,7 +429,14 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 	for _, e := range out.Errors {
 		errs[e.QueryID] = e.Message
 	}
-	return rows, errs, nil
+	truncs := map[string]int{}
+	for _, t := range out.Truncated {
+		truncs[t.QueryID] = -1
+		if t.Total > 0 {
+			truncs[t.QueryID] = t.Total
+		}
+	}
+	return rows, errs, truncs, nil
 }
 
 type httpStatusError struct {

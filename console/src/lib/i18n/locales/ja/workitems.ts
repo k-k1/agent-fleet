@@ -17,6 +17,8 @@ export const workitems = {
   "wi.stopped_note": "Workspace 停止中のため更新されません",
   "wi.load_failed": "一覧を読み込めませんでした",
   "wi.query_failed": "「{label}」の取得に失敗しました",
+  "wi.query_truncated": "「{label}」は {total} 件中 {shown} 件だけ取得しています（クエリを絞ると全件出ます）",
+  "wi.query_truncated_unknown": "「{label}」は先頭 {shown} 件だけ取得しています（続きがあります・クエリを絞ると全件出ます）",
   "wi.empty": "該当する項目はありません",
   "wi.filter_ph": "この一覧の中を探す",
   "wi.filter_empty": "絞り込みに一致する行はありません",

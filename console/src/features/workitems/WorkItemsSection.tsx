@@ -297,6 +297,23 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             <span>{tr("wi.query_failed", { label: q.label })}</span>
           </div>
         ))}
+      {/* A query that matched more than one page carries says so (#1095). Without this the header
+          count reads as "everything" and a ticket past the cut is simply not there, which the
+          filter box then confirms. */}
+      {payload?.queries
+        .filter((q) => q.enabled && !q.lastError && q.matchTotal !== 0)
+        .map((q) => {
+          const shown = payload.items.filter((i) => i.queryId === q.id).length;
+          const msg =
+            q.matchTotal > 0
+              ? tr("wi.query_truncated", { label: q.label, shown, total: q.matchTotal })
+              : tr("wi.query_truncated_unknown", { label: q.label, shown });
+          return (
+            <div className="wi-trunc" key={q.id} role="status" title={msg}>
+              {msg}
+            </div>
+          );
+        })}
       {loaded && !payload?.queries.length ? (
         <div className="pane-empty">
           {tr("wi.no_queries")}

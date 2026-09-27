@@ -29,6 +29,16 @@
   white-space: nowrap;
 }
 
+/* "N of M fetched": information, not a failure, so it takes the stamp's muted tone. */
+.wi-trunc {
+  padding: 0 8px 4px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* One-line filter, shown only on a crowded rail (docs/log/80 §80.18.4). It is not a query UI,
    so it stays understated: a plain band that sinks into the section, with no buttons and no
    operators. */

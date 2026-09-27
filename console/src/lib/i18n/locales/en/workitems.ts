@@ -19,6 +19,8 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.stopped_note": "not refreshing while the workspace is stopped",
   "wi.load_failed": "Couldn't load the list",
   "wi.query_failed": "Couldn't fetch “{label}”",
+  "wi.query_truncated": "“{label}”: fetched {shown} of {total} — narrow the query to see them all",
+  "wi.query_truncated_unknown": "“{label}”: fetched the first {shown}, there are more — narrow the query to see them all",
   "wi.empty": "No matching items",
   "wi.filter_ph": "Find in this list",
   "wi.filter_empty": "No row matches the filter",

@@ -39,6 +39,9 @@ export interface WorkItemQuery {
   position: number;
   fetchedAt: string;
   lastError: string;
+  /** Whether the last fetch left matches out (#1095): 0 = the rail has them all, >0 = the
+   * tracker's count of matches, -1 = rows were left out but the tracker gave no count. */
+  matchTotal: number;
 }
 
 export interface WorkItemSessionRef {
@@ -75,7 +78,8 @@ export function readWorkItems(res: unknown): { payload: WorkItemPayload | null; 
       ...EMPTY,
       ...d,
       items: (d.items as unknown[]).map(normalizeItem),
-      queries: d.queries as WorkItemQuery[],
+      // An older CP sends no matchTotal; "nothing left out" is what it used to mean.
+      queries: (d.queries as WorkItemQuery[]).map((q) => ({ ...q, matchTotal: typeof q.matchTotal === "number" ? q.matchTotal : 0 })),
       sessions: Array.isArray(d.sessions) ? (d.sessions as WorkItemSessionRef[]) : [],
       fetchedAt: typeof d.fetchedAt === "string" ? d.fetchedAt : "",
       running: !!d.running,
