@@ -350,4 +350,5 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.size_landscape": "Landscape",
   "imggen.size_exact": "Dimensions",
   "imggen.sum_sampler_none": "default sampler",
+  "imggen.sum_scheduler_none": "default scheduler",
 };

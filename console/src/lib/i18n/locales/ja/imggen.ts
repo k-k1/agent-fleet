@@ -352,4 +352,5 @@ export const imggen = {
   "imggen.size_landscape": "横",
   "imggen.size_exact": "寸法",
   "imggen.sum_sampler_none": "sampler 既定",
+  "imggen.sum_scheduler_none": "scheduler 既定",
 };
