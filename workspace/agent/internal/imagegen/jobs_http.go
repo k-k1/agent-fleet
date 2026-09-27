@@ -180,6 +180,9 @@ const (
 	// paramsMaxCFG is past every published recommendation for these families; above it the
 	// picture is burned rather than more faithful.
 	paramsMaxCFG = 30
+	// paramsMaxGuidance bounds FLUX.1's distilled guidance the way paramsMaxCFG bounds a cfg: the
+	// node takes up to 100, and past about 5 dev is already degrading.
+	paramsMaxGuidance = 30
 	// sizeMultiple is the latent stride every one of the families is built on — including anima,
 	// whose Qwen-Image VAE downscales by 8 like the rest despite carrying 16 channels. A width that
 	// is not a multiple of it is silently rounded inside ComfyUI, so what comes back is not the
@@ -212,6 +215,15 @@ func validateRequestParams(p *EngineParams) error {
 	}
 	if p.CFG < 0 || p.CFG > paramsMaxCFG {
 		return fmt.Errorf("cfg must be between 0 and %d (got %g)", paramsMaxCFG, p.CFG)
+	}
+	if p.ClipSkip < 0 || p.ClipSkip > comfyMaxClipSkip {
+		return fmt.Errorf("clip_skip must be between 1 and %d (got %d)", comfyMaxClipSkip, p.ClipSkip)
+	}
+	if p.Guidance < 0 || p.Guidance > paramsMaxGuidance {
+		return fmt.Errorf("guidance must be between 0 and %d (got %g)", paramsMaxGuidance, p.Guidance)
+	}
+	if p.Shift < 0 || p.Shift > comfyMaxShift {
+		return fmt.Errorf("shift must be between 0 and %d (got %g)", comfyMaxShift, p.Shift)
 	}
 	return nil
 }

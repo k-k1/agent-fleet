@@ -1330,7 +1330,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   const inspectSeq = useRef(0);
   const filesSeq = useRef(0);
   const [params, setParams] = useState<Record<keyof EngineParams, string>>({
-    steps: "", cfg: "", sampler: "", scheduler: "", clip_skip: "", weight: "",
+    steps: "", cfg: "", sampler: "", scheduler: "", clip_skip: "", guidance: "", shift: "", weight: "",
   });
   const rawRef = manualRef.trim();
   const hfURL = rawRef.match(/^https?:\/\/huggingface\.co\/([^/?#]+\/[^/?#]+)(?:\/(?:blob|resolve)\/([^/?#]+)\/([^?#]+))?/);
@@ -1815,7 +1815,8 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   const [trainedWords, setTrainedWords] = useState((model.trained_words || []).join(", "));
   const [params, setParams] = useState<Record<keyof EngineParams, string>>({
     steps: String(model.params?.steps || ""), cfg: String(model.params?.cfg || ""), sampler: model.params?.sampler || "",
-    scheduler: model.params?.scheduler || "", clip_skip: String(model.params?.clip_skip || ""), weight: String(model.params?.weight || ""),
+    scheduler: model.params?.scheduler || "", clip_skip: String(model.params?.clip_skip || ""),
+    guidance: String(model.params?.guidance || ""), shift: String(model.params?.shift || ""), weight: String(model.params?.weight || ""),
   });
   const [busy, setBusy] = useState(false);
   const baseChoices = image ? row.base_models || [] : lora ? (row.model_rows || []).filter((candidate) => candidate.kind !== "lora").map((candidate) => candidate.id) : [];

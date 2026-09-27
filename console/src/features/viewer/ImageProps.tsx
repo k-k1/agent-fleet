@@ -45,6 +45,9 @@ function rowsOf(p: ImageProperties, tr: (k: string, v?: Record<string, unknown>)
   add("cfg", tr("imggen.props_cfg"), p.params?.cfg);
   add("sampler", tr("imggen.props_sampler"), p.params?.sampler);
   add("scheduler", tr("imggen.props_scheduler"), p.params?.scheduler);
+  add("clip_skip", tr("imggen.props_clip_skip"), p.params?.clip_skip);
+  add("guidance", tr("imggen.props_guidance"), p.params?.guidance);
+  add("shift", tr("imggen.props_shift"), p.params?.shift);
   if (p.loras?.length) {
     add("loras", tr("imggen.props_loras"), p.loras.map((l) => `${l.name}${l.weight != null ? ` @${l.weight}` : ""}`).join(", "));
   }

@@ -36,7 +36,7 @@ describe("フォームとスタジオの下書き", () => {
       prompt: "1girl",
       negativePrompt: "blurry",
       size: "1216x832",
-      params: { steps: 28, cfg: 5.5, sampler: "euler" },
+      params: { steps: 28, cfg: 5.5, sampler: "euler", clip_skip: 2, guidance: 4.5, shift: 14 },
       seed_policy: "fixed",
       seed: 42,
       loras: [{ name: "add-detail", weight: 0.8 }],

@@ -21,6 +21,10 @@ describe("族の事実（ADR 0100 決定 7: Agent の表から読むだけ）", 
 
   it("cfg を読まない族は cfg の範囲を持たない", () => {
     expect(familyFacts({ id: "m", dialect: "sentences", steps_range: [16, 32] })?.cfg).toBeUndefined();
+    const flux = familyFacts({ id: "m", dialect: "sentences", steps_range: [16, 32], guidance_range: [3.5, 5] });
+    expect(flux?.guidance).toEqual([3.5, 5]);
+    expect(flux?.shift).toBeUndefined();
+    expect(familyFacts({ id: "m", shift_range: [3, 24] })?.shift).toEqual([3, 24]);
   });
 
   // 勝手に手引きを作らない: 族の名前だけでは何も言わない（Console に第 2 の表は無い）。

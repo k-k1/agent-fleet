@@ -444,6 +444,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_params_sampler": "Sampler",
   "admin.engines_params_scheduler": "Scheduler",
   "admin.engines_params_clip_skip": "Clip skip",
+  "admin.engines_params_guidance": "Guidance (FLUX.1)",
+  "admin.engines_params_shift": "Shift (Anima)",
   "admin.engines_params_weight": "Default strength",
   // A display name ("DPM++ 2M Karras") is accepted: the CP translates it into ComfyUI's own
   // vocabulary and drops what it cannot translate.
@@ -453,7 +455,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_params_save": "Save",
   // 🔴 flux1 / klein fold guidance into the conditioning, so a card's "CFG" is a different knob.
   "admin.engines_params_cfg_ignored": "This family does not use CFG (guidance is a different input).",
-  "admin.engines_params_clip_skip_note": "Clip skip is recorded only; no workflow here reads it yet.",
+  "admin.engines_params_clip_skip_note": "Clip skip applies to SD1.5 and SDXL only. SDXL already runs at 2, so only 3 and up change its picture.",
   // The family suggestion. Decision 2 keeps the declaration with the operator, so it is filled
   // in and can be changed.
   "admin.engines_ingest_go": "Take it in",

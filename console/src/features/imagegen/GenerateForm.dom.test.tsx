@@ -125,6 +125,44 @@ describe("knobs に無い欄", () => {
   });
 });
 
+// #1035: clip skip (sd15/sdxl), guidance (flux1) and shift (anima) are one family's each, so they
+// are drawn where the Agent lists them and not greyed out on every other family.
+describe("1 族だけの摘み", () => {
+  const FLUX_G: ImagegenModel = { ...FLUX, knobs: ["steps", "guidance", "sampler", "scheduler", "strength"], params: { guidance: 3.5 } };
+  const ANIMA: ImagegenModel = { id: "anima", family: "anima", knobs: ["steps", "cfg", "sampler", "scheduler", "shift", "negative"] };
+  const SDXL_CS: ImagegenModel = { ...SDXL, knobs: [...SDXL.knobs!, "clip_skip"] };
+
+  it("宣言した族にだけ欄が出る", async () => {
+    await render(FLUX_G);
+    expect((fieldByLabel("guidance") as HTMLInputElement).disabled).toBe(false);
+    expect((fieldByLabel("guidance") as HTMLInputElement).placeholder).toContain("3.5");
+    expect(fieldByLabel("shift")).toBeNull();
+    expect(fieldByLabel("clip skip")).toBeNull();
+  });
+
+  it("anima は shift、sdxl は clip skip", async () => {
+    await render(ANIMA);
+    expect((fieldByLabel("shift") as HTMLInputElement).disabled).toBe(false);
+    expect(fieldByLabel("guidance")).toBeNull();
+    await act(async () => root.unmount());
+    await render(SDXL_CS);
+    expect((fieldByLabel("clip skip") as HTMLInputElement).disabled).toBe(false);
+    expect(fieldByLabel("shift")).toBeNull();
+  });
+
+  it("古い Agent には出さない（適用されない値を打たせない）", async () => {
+    await render(OLD);
+    for (const k of ["guidance", "shift", "clip skip"]) expect(fieldByLabel(k), k).toBeNull();
+  });
+
+  it("読まない族へ持ち越した値は、無効の欄として見えたまま残る", async () => {
+    await render(SDXL, { guidance: "5" });
+    const f = fieldByLabel("guidance") as HTMLInputElement;
+    expect(f.disabled).toBe(true);
+    expect(f.value).toBe("5");
+  });
+});
+
 describe("管理者のネガティブ", () => {
   it("固定のチップとして出て、テキスト欄には混ざらない", async () => {
     const withRow = { ...SDXL, negative: "worst quality" };

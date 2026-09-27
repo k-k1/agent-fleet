@@ -15,29 +15,34 @@ import (
 )
 
 // params is merged one level down: the agent's cfg does not erase the member's steps and
-// sampler, and the agent may not set a knob outside decision 4's four.
+// sampler, the agent may set every sampler knob (clip_skip included), and a key that is not a
+// knob is refused.
 func TestStudioParamsMergeByKnob(t *testing.T) {
 	withStudios(t)
 	s := createStudio(t, `{"model":"sdxl-base","params":{"steps":30,"cfg":7,"sampler":"euler"}}`)
 	bindForTest(t, s.ID, "s1")
 	_, res := putStudio(t, s.ID, `{"author":"agent","session":"s1","draft":{"params":{"cfg":5,"clip_skip":2,"weight":3}}}`)
 	p := res.Studio.Draft.Params
-	if p == nil || p.Steps != 30 || p.Sampler != "euler" || p.CFG != 5 || p.ClipSkip != 0 {
-		t.Fatalf("params = %+v, want steps and sampler kept, cfg 5, no clip_skip", p)
+	if p == nil || p.Steps != 30 || p.Sampler != "euler" || p.CFG != 5 || p.ClipSkip != 2 || p.Weight != 0 {
+		t.Fatalf("params = %+v, want steps and sampler kept, cfg 5, clip_skip 2, no weight", p)
 	}
-	if droppedReason(res, "params.clip_skip") != dropHumanOnly || droppedReason(res, "params.weight") != dropInvalid {
+	if droppedReason(res, "params.clip_skip") != "" || droppedReason(res, "params.weight") != dropInvalid {
 		t.Errorf("dropped = %+v", res.Dropped)
 	}
 	last := readStudioLog(s.ID)
-	if c := last[len(last)-1].Changes; len(c) != 1 || c[0].Field != "params.cfg" || string(c[0].Before) != "7" {
-		t.Errorf("changes = %+v, want one params.cfg change", c)
+	if c := last[len(last)-1].Changes; len(c) != 2 || c[0].Field != "params.cfg" || string(c[0].Before) != "7" || c[1].Field != "params.clip_skip" {
+		t.Errorf("changes = %+v, want params.cfg and params.clip_skip", c)
 	}
 	// A null knob clears that knob alone; clearing every knob clears params.
 	_, res = putStudio(t, s.ID, `{"author":"human","draft":{"params":{"sampler":null,"clip_skip":2}}}`)
 	if p := res.Studio.Draft.Params; p == nil || p.Sampler != "" || p.Steps != 30 || p.ClipSkip != 2 {
 		t.Errorf("after the member's patch params = %+v", p)
 	}
-	_, res = putStudio(t, s.ID, `{"author":"human","draft":{"params":{"steps":null,"cfg":null,"clip_skip":null}}}`)
+	_, res = putStudio(t, s.ID, `{"author":"agent","session":"s1","draft":{"params":{"guidance":4.5,"shift":14}}}`)
+	if p := res.Studio.Draft.Params; p == nil || p.Guidance != 4.5 || p.Shift != 14 {
+		t.Errorf("after the agent's guidance and shift params = %+v", p)
+	}
+	_, res = putStudio(t, s.ID, `{"author":"human","draft":{"params":{"steps":null,"cfg":null,"clip_skip":null,"guidance":null,"shift":null}}}`)
 	if res.Studio.Draft.Params != nil {
 		t.Errorf("params = %+v, want cleared", res.Studio.Draft.Params)
 	}
