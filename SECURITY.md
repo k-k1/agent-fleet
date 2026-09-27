@@ -45,6 +45,18 @@ make an informed choice — not undisclosed bugs.
 - **Backups are sensitive.** A backup archive contains per-user homes and plaintext
   Claude login state. Protect archive storage (permissions / encryption at rest).
 
+- **Anything running in a Workspace can read that user's own secrets.** Agents,
+  their shells and every process they start (build scripts, package install hooks,
+  MCP servers) run as the same uid as the Workspace Agent. They can read the
+  per-workspace DEK (`AF_SECRET_KEY`) and the CP↔Agent `AGENT_TOKEN` — from their
+  own environment, the Agent's `/proc/<pid>/environ` and the tmux global
+  environment — and can obtain plaintext git tokens through the credential helper.
+  The boundary is the container: none of this reaches other users or the CP. What a
+  leaked DEK adds is the ability to decrypt a copy of that user's `secrets.enc`
+  taken later (backups, volume snapshots); the DEK is not rotated. Treat a prompt
+  injection or a malicious dependency inside a session as able to exfiltrate that
+  user's connected credentials. See `docs/build/07-security.md` §7.2.
+
 - **`docker.sock` access = host access.** Anyone able to run the CP container (or
   reach the Docker socket) can control the host. Restrict who can deploy/operate.
 
