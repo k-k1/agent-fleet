@@ -48,7 +48,7 @@ func init() {
 		VisibleModel:        sessionx.VisibleModel,
 		VisibleModelIDs:     sessionx.VisibleModelIDs,
 		ModelListPrice:      modelListPrice,
-		EffectiveHidden:     sessionx.EffectiveHidden,
+		EffectiveHidden:     sessionx.EffectiveHiddenWith,
 		ModelHiddenIn:       sessionx.ModelHiddenIn,
 
 		AssistantDeps:          assistantDeps,

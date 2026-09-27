@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -56,7 +57,10 @@ func skipPermissionsPref(kind string) (bool, bool) {
 
 // internal/agents does not read main's settings files itself, so this is handed over as a hook,
 // the same way opencode.UsagePref and mcpreg.PeerMessagingEnabled are.
-func init() { agents.SkipPermissionsPref = skipPermissionsPref }
+func init() {
+	agents.SkipPermissionsPref = skipPermissionsPref
+	muse.ModelHidden = func(id string) bool { return sessionx.ModelHidden(session.KindMuse, id) }
+}
 
 // agentOrderPref normalizes a stored priority list into a TOTAL order: unknown kinds
 // and dupes are dropped, and kinds missing from the stored list are appended in the

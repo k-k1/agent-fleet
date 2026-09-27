@@ -147,6 +147,58 @@ func TestClaudeFailSafeCountsRegisteredModels(t *testing.T) {
 	}
 }
 
+// #1023 item 3: the registered models travel with the question (?custom=) like the hidden list.
+// Right after a member registers a model — before the save lands — the fail-safe and the
+// recommendation count it, and the list carries it; a malformed ?custom= reads the saved list.
+func TestAgentModelsClaudeCustomFromTheQuestion(t *testing.T) {
+	read := func(query string) (chatx.RecommendedSet, []string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/agents/claude/models"+query, nil)
+		req.SetPathValue("kind", "claude")
+		rec := httptest.NewRecorder()
+		handleAgentModels(rec, req)
+		var got struct {
+			Models      []struct{ ID string } `json:"models"`
+			Recommended *chatx.RecommendedSet `json:"recommended"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Recommended == nil {
+			t.Fatalf("no recommended in %s (%v)", rec.Body.String(), err)
+		}
+		ids := []string{}
+		for _, m := range got.Models {
+			ids = append(ids, m.ID)
+		}
+		return *got.Recommended, ids
+	}
+	allAliases := url.QueryEscape(`["fable","opus","sonnet","haiku"]`)
+	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable","opus","sonnet","haiku"]}}`)
+	mythos := chatx.RecommendedSet{Chat: "claude-mythos-1", Prose: "claude-mythos-1", Short: "claude-mythos-1"}
+
+	// Nothing registered yet on the Agent: hiding every alias trips the fail-safe.
+	if got, _ := read(`?hidden=` + allAliases); got.Short != "haiku" {
+		t.Fatalf("saved list empty: recommended = %+v, want the fail-safe's haiku", got)
+	}
+	// The screen already holds a registered model: the list stays in force and names it.
+	got, ids := read(`?hidden=` + allAliases + `&custom=` + url.QueryEscape(`["claude-mythos-1","bad model"]`))
+	if got != mythos || !slices.Equal(ids, []string{"claude-mythos-1"}) {
+		t.Fatalf("?custom=[claude-mythos-1] = %+v / %v, want the registered model only", got, ids)
+	}
+	// ?custom= alone reads the hidden list from ui-prefs.
+	if got, _ := read(`?custom=` + url.QueryEscape(`["claude-mythos-1"]`)); got != mythos {
+		t.Fatalf("?custom= without ?hidden= = %+v, want the saved hidden list applied", got)
+	}
+	// The screen dropped the model the Agent still holds: the fail-safe applies again.
+	writeUIPrefs(t, `{"claudeCustomModels":["claude-mythos-1"],"hiddenModels":{"claude":["fable","opus","sonnet","haiku"]}}`)
+	if got, ids := read(`?hidden=` + allAliases + `&custom=%5B%5D`); got.Short != "haiku" || slices.Contains(ids, "claude-mythos-1") {
+		t.Fatalf("?custom=[] = %+v / %v, want the fail-safe and no registered model", got, ids)
+	}
+	for _, bad := range []string{"not-json", "null", `{"a":1}`} {
+		if got, _ := read(`?hidden=` + allAliases + `&custom=` + url.QueryEscape(bad)); got != mythos {
+			t.Fatalf("?custom=%s = %+v, want the saved registered model", bad, got)
+		}
+	}
+}
+
 // The fetch replaces the copy only with something that parses as a catalog, and never fetches
 // again while the copy is younger than a day.
 func TestRefreshModelsDev(t *testing.T) {

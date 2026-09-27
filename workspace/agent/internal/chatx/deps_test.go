@@ -103,7 +103,7 @@ func testDeps() Deps {
 		VisibleModel:        func(_, model string) string { return model },
 		VisibleModelIDs:     func(_ string, ids []string) []string { return ids },
 		ModelListPrice:      func(kind, model string) (float64, bool) { return testModelListPrice(kind, model) },
-		EffectiveHidden:     func(_ string, raw []string) []string { return raw },
+		EffectiveHidden:     func(_ string, raw, _ []string) []string { return raw },
 		ModelHiddenIn: func(hidden []string, model string) bool {
 			return model != "" && slices.Contains(hidden, model)
 		},
@@ -225,7 +225,6 @@ func init() {
 	codexModels = func() []agents.ModelChoice { return nil }
 	codexRetiring = func(string) bool { return false }
 	agyModels = func() []agents.ModelChoice { return nil }
-	museSafeDefault = func() string { return "" }
 	museSafeModels = func() []string { return nil }
 }
 
