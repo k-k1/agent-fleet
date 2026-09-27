@@ -147,7 +147,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, id := range claudeCustom {
 			if key := strings.ToLower(id); !seen[key] {
-				list = append(list, agents.ModelChoice{ID: id, Label: id})
+				list = append(list, agents.ModelChoice{ID: id, Label: id, Efforts: claude.EffortsFor(id)})
 				seen[key] = true
 			}
 		}

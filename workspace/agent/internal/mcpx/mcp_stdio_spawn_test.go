@@ -723,3 +723,121 @@ func TestRenameChildSessionRefusedWithoutTheOptIn(t *testing.T) {
 		}
 	}
 }
+
+// Issue #1068: effort is validated against the chosen model's efforts from the same catalog
+// list_models serves, refused with the valid list, and forwarded when accepted.
+func TestCreateSessionEffort(t *testing.T) {
+	withFleetSpawn(t, true)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude, Origin: session.OriginUser})
+
+	var body map[string]any
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/agents/codex/models":
+			_, _ = w.Write([]byte(`{"models":[` +
+				`{"id":"gpt-sol","efforts":["low","medium","high","xhigh"],"defaultEffort":"low"},` +
+				`{"id":"gpt-mini","efforts":["minimal","low"]},` +
+				`{"id":"gpt-plain"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/sessions":
+			posts++
+			body = nil
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"name":"slot09"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	call := func(args map[string]any) string {
+		t.Helper()
+		a, _ := json.Marshal(args)
+		params, _ := json.Marshal(map[string]any{"name": "create_session", "arguments": json.RawMessage(a)})
+		return string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+	}
+	base := map[string]any{"dir": "/repos/app", "kind": "codex", "model": "gpt-sol", "initial_prompt": "review"}
+	with := func(kv ...any) map[string]any {
+		m := map[string]any{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i].(string)] = kv[i+1]
+		}
+		return m
+	}
+
+	if resp := call(with("effort", "xhigh")); strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("valid effort refused: %s", resp)
+	}
+	if body["effort"] != "xhigh" {
+		t.Fatalf("effort not forwarded: %v", body["effort"])
+	}
+	xhighKey := body["idempotency_key"]
+
+	if resp := call(base); strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("create without effort failed: %s", resp)
+	}
+	if body["effort"] != "" {
+		t.Fatalf("omitted effort forwarded as %v", body["effort"])
+	}
+	if body["idempotency_key"] == xhighKey {
+		t.Fatal("creates differing only by effort share an idempotency key")
+	}
+
+	before := posts
+	for _, tc := range []struct {
+		args map[string]any
+		want []string
+	}{
+		// Refused for the model, with that model's list (not the kind's union).
+		{with("effort", "minimal"), []string{"gpt-sol", "low, medium, high, xhigh"}},
+		// A model with no efforts takes none at all.
+		{with("model", "gpt-plain", "effort", "low"), []string{"gpt-plain", "省略"}},
+		// No model: checked against every effort the kind lists.
+		{with("model", "", "effort", "max"), []string{"codex", "low, medium, high, xhigh, minimal"}},
+	} {
+		resp := call(tc.args)
+		if !strings.Contains(resp, `"isError":true`) {
+			t.Fatalf("%v accepted: %s", tc.args, resp)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(resp, w) {
+				t.Errorf("%v: refusal %s does not mention %q", tc.args, resp, w)
+			}
+		}
+	}
+	if resp := call(with("model", "", "effort", "minimal")); strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("an effort some model lists was refused with no model given: %s", resp)
+	}
+	if posts != before+1 {
+		t.Fatalf("a refused effort still reached POST /sessions (%d posts, want %d)", posts-before, 1)
+	}
+}
+
+func TestCreateSessionSchemasOfferEffort(t *testing.T) {
+	for name, tools := range map[string][]map[string]any{"session": mcpStdioFleetSpawnTools(), "operator": mcpStdioWriteTools} {
+		found := false
+		for _, tool := range tools {
+			if tool["name"] != "create_session" {
+				continue
+			}
+			found = true
+			props := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+			if _, ok := props["effort"]; !ok {
+				t.Errorf("%s create_session has no effort", name)
+			}
+			if _, ok := props["skip_permissions"]; ok {
+				t.Errorf("%s create_session offers skip_permissions", name)
+			}
+		}
+		if !found {
+			t.Errorf("%s surface has no create_session", name)
+		}
+	}
+}

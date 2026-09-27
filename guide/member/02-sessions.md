@@ -575,6 +575,9 @@ this in parallel").
   cursor, kiro, lcpp or muse, with any model you have not excluded. A claude session can start
   a codex child, so different agents can work on one job together. shell and ssm cannot be
   started this way.
+- **The parent can choose the child's effort** among the ones that model offers (a reviewer at
+  high effort, say); a value the model does not offer is refused. It **cannot choose the
+  child's permission mode**: the child follows your per-kind default in Settings > Agents.
 - **A child starts in a new worktree** unless the parent asks otherwise, so it never shares the
   parent's working copy. Asking for a directory another session is working in is refused.
 - **The task arrives as the child's first instruction**, and the chat view badges it
