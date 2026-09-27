@@ -122,10 +122,14 @@ export function conversationReachable(res: unknown): boolean {
   return isTransientErr(res);
 }
 
+// A session report's destination is the operator CONVERSATION, not the reporting session
+// (docs/log/30) — the conversation id rides the payload. So is each chat-* notice's.
+export const opensConversation = (n: FleetNotification): boolean =>
+  (n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") &&
+  typeof n.payload.conversation_id === "string" && !!n.payload.conversation_id;
+
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<NotificationOpenResult> {
-  // A session report's destination is the operator CONVERSATION, not the reporting
-  // session (docs/log/30) — the conversation id rides the payload.
-  if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
+  if (opensConversation(n) && typeof n.payload.conversation_id === "string") {
     const convID = n.payload.conversation_id;
     // The fetch is only used to confirm permanent absence. A 5xx while the WS starts, or a
     // dropped connection (throw), is left to ChatView's retry and the conversation is opened
