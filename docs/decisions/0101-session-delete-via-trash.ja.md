@@ -4,6 +4,9 @@
 
 - 状態: **accepted**（2026-09-24）。同じ変更で実装する。設計の経緯・入口の棚卸し・ごみ箱の実測は
   [docs/log/115](../log/115-session-delete-via-trash.ja.md)。§115.7 の判断 6 件は、利用者がすべて推奨案を選んだ。
+  2026-09-27 に改訂（#1042）: worktree の削除もごみ箱を通すようにした。削除時にコミット・ブランチ・未コミットの
+  変更を記録し、コミットを `refs/af/deleted-worktrees/*` で保護する。ごみ箱から復元すると、フォルダを元に戻し、
+  アーカイブへ移したセッションも戻す（[docs/log/122](../log/122-worktree-delete-through-the-trash.md)）。
 - Follow-ups: #950
 - 関連: [0097](0097-session-retention.ja.md)（停止セッションの保持。決定 2「削除は人の操作だけ・回収は常に
   gz 退避経由」を、この ADR で例外なく成り立たせる）／[0028](0028-deletion-lock.ja.md)（削除ロック）／
