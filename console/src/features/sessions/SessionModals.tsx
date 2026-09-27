@@ -22,6 +22,7 @@ export function SessionModals() {
   const branchRename = useSessionUI((s) => s.branchRename);
   const ssmResume = useSessionUI((s) => s.ssmResume);
   const archivedOpen = useSessionUI((s) => s.archivedOpen);
+  const archivedDir = useSessionUI((s) => s.archivedDir);
   const cleanupOpen = useSessionUI((s) => s.cleanupOpen);
   const close = useSessionUI((s) => s.close);
 
@@ -44,7 +45,17 @@ export function SessionModals() {
           }}
         />
       )}
-      {archivedOpen && <ArchivedModal onClose={close} onRestored={() => void refreshSessions()} />}
+      {archivedOpen && (
+        <ArchivedModal
+          dir={archivedDir}
+          onClose={close}
+          onRestored={() => {
+            void refreshSessions();
+            // Recreating a worktree adds a working copy, not just sessions.
+            void useReposStore.getState().refresh();
+          }}
+        />
+      )}
       {cleanupOpen && (
         // Cleanup mutates working copies (delete_worktree), branches, and sessions on
         // disk, so — like clone — re-pull all three left-pane stores, not just sessions.
