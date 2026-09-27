@@ -79,3 +79,16 @@ describe("the studio's agent column without a model", () => {
     expect(btn?.disabled).toBe(false);
   });
 });
+
+describe("the agent head on a narrow pane (review 4)", () => {
+  it("marks what a narrow pane drops, and keeps 'replace' named when it shows only its icon", async () => {
+    useSessionsStore.setState({ loaded: true, sessions: [{ name: "s1", kind: "claude", alive: true, model: "opus" } as Session] });
+    await mount("s1", false);
+    const head = host.querySelector(".igen-agent-head")!;
+    // The model and driver chips are the ones the container query hides.
+    expect(head.querySelectorAll(".igen-chip-extra").length).toBe(2);
+    const replace = head.querySelector<HTMLButtonElement>(".igen-agent-replace")!;
+    expect(replace.getAttribute("aria-label")).toMatch(/替える|Replace|Switch/i);
+    expect(replace.querySelector(".igen-agent-replace-label")).not.toBeNull();
+  });
+});

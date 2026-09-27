@@ -1342,3 +1342,22 @@
 .igen-done-note > .codicon:first-child {
   color: var(--ok);
 }
+
+/* The narrow pane's conversation needs every line (measured at 390x500, keyboard up: 31 px of
+   transcript). The agent head fits one line, and while the member types in the composer the
+   draft bar and the head step aside; they come back on blur. Focus on the bar's own buttons
+   does not count, so the bar never moves under a finger that is pressing it. */
+@container igenpane (max-width: 720px) {
+  .igen-agent-head {
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+  }
+  .igen-agent-head .igen-chip-extra,
+  .igen-agent-replace-label {
+    display: none;
+  }
+  .igen-agent:has(.mirror-compose textarea:focus) .igen-draftbar,
+  .igen-agent:has(.mirror-compose textarea:focus) .igen-agent-head {
+    display: none;
+  }
+}
