@@ -353,4 +353,55 @@ describe("MachineView", () => {
     expect(host!.textContent).toContain("go-build を空にしました");
     expect(document.body.querySelector(".confirm-title")).toBeNull();
   });
+
+  it("measures the leftovers only on a press, and deletes one kind without asking", async () => {
+    answers.byPath["api/cleanup/leftovers"] = {
+      kinds: [
+        { kind: "chromium", count: 1551, bytes: 8 * 2 ** 30, path: "~/.config/chromium-headless" },
+        { kind: "af-work", count: 0, bytes: 0, path: "~/.af-work" },
+        { kind: "node", count: 1, bytes: 187 * 2 ** 20, path: "~/.nvm/versions/node" },
+        { kind: "kiro", count: 0, bytes: 0 },
+      ],
+    };
+    answers.byPath["api/cleanup/leftovers/chromium"] = { kind: "chromium", count: 1551, bytes: 8 * 2 ** 30 };
+    let text = await mount(shared);
+    expect(text).toContain("使われなくなったファイル");
+    expect(answers.calls).not.toContain("GET api/cleanup/leftovers");
+
+    const section = () =>
+      [...document.body.querySelectorAll("section")].find((s) =>
+        s.querySelector("h4")?.textContent?.includes("使われなくなったファイル"),
+      )!;
+    const buttons = () => [...section().querySelectorAll("button")];
+    await act(async () => {
+      buttons().find((b) => b.textContent === "測る")!.click();
+    });
+    text = section().textContent || "";
+    expect(text).toContain("Chromium の使い捨てプロファイル");
+    expect(text).toContain("終わったセッションの作業用フォルダ");
+    expect(text).toContain("1551 個");
+    // Only the kinds with something to take offer "delete".
+    expect(buttons().filter((b) => b.textContent === "削除")).toHaveLength(2);
+    // Not the tool caches' warning: removing these costs nothing.
+    expect(text).not.toContain("遅くなります");
+
+    await act(async () => {
+      buttons().find((b) => b.textContent === "削除")!.click();
+    });
+    expect(document.body.querySelector(".confirm-title")).toBeNull();
+    expect(answers.calls).toContain("DELETE api/cleanup/leftovers/chromium");
+    expect(section().textContent).toContain("Chromium の使い捨てプロファイル を 1551 個削除しました");
+  });
+
+  it("hides the leftovers outside a Workspace image", async () => {
+    answers.byPath["api/cleanup/leftovers"] = { kinds: [], unsupported: true };
+    await mount(shared);
+    const btn = [...document.body.querySelectorAll("section")]
+      .find((s) => s.querySelector("h4")?.textContent?.includes("使われなくなったファイル"))!
+      .querySelector("button")!;
+    await act(async () => {
+      btn.click();
+    });
+    expect(document.body.textContent).not.toContain("使われなくなったファイル");
+  });
 });

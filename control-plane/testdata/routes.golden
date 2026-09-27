@@ -161,6 +161,8 @@ POST /api/cleanup/archives/{id}/restore
 DELETE /api/cleanup/cache/{feature}
 GET /api/cleanup/tool-caches
 DELETE /api/cleanup/tool-caches/{name}
+GET /api/cleanup/leftovers
+DELETE /api/cleanup/leftovers/{kind}
 GET /api/cleanup/usage
 GET /api/codex/settings
 PUT /api/codex/settings

@@ -69,6 +69,8 @@ POST /cleanup/archives/{id}/restore
 DELETE /cleanup/cache/{feature}
 GET /cleanup/tool-caches
 DELETE /cleanup/tool-caches/{name}
+GET /cleanup/leftovers
+DELETE /cleanup/leftovers/{kind}
 GET /cleanup/usage
 GET /codex/settings
 PUT /codex/settings

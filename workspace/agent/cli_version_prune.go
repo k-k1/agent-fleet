@@ -62,6 +62,9 @@ var (
 // cliVersionStore is one CLI's pile of version directories.
 type cliVersionStore struct {
 	name string
+	// mention is what a process's argv has to contain to count as possibly this CLI when
+	// its files cannot be read; "" means name.
+	mention string
 	// roots are the directories whose children are version directories.
 	roots []string
 	// versionName says which children are versions; anything else is left alone.
@@ -85,12 +88,8 @@ type prunedVersion struct {
 // versions.json, e.g. the native runtime on someone's own machine) home is not ours to
 // tidy, so it does nothing.
 func pruneOldCLIVersionsAtBoot() {
-	b, err := os.ReadFile(buildPinsPath)
-	if err != nil {
-		return
-	}
-	pins := map[string]string{}
-	if json.Unmarshal(b, &pins) != nil {
+	pins, ok := workspacePins()
+	if !ok {
 		return
 	}
 	var total int64
@@ -317,8 +316,8 @@ func (s cliVersionStore) prune(pin string) []prunedVersion {
 	return out
 }
 
-// versionsInUse collects the versions any process has its executable, a mapping or an open
-// file under. It fails closed: an error when /proc cannot be listed, when a process that
+// versionsInUse collects the versions any process has its executable, a mapping, an open
+// file or its working directory under. It fails closed: an error when /proc cannot be listed, when a process that
 // could be this CLI cannot be read (a process that has since exited is fine), or when a
 // process is this CLI but its version cannot be told.
 //
@@ -368,6 +367,16 @@ func (s cliVersionStore) versionsInUse() (map[string]bool, error) {
 			}
 			continue
 		}
+		cwd, err := os.Readlink(filepath.Join(pd, "cwd"))
+		switch {
+		case err == nil:
+			note(cwd)
+		case !os.IsNotExist(err):
+			if err := unreadable(err); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		b, err := os.ReadFile(filepath.Join(pd, "maps"))
 		if err != nil && !os.IsNotExist(err) {
 			if err := unreadable(err); err != nil {
@@ -408,5 +417,9 @@ func (s cliVersionStore) cmdlineMentions(pd string) bool {
 	if err != nil {
 		return !os.IsNotExist(err)
 	}
-	return strings.Contains(string(b), s.name)
+	m := s.mention
+	if m == "" {
+		m = s.name
+	}
+	return strings.Contains(string(b), m)
 }

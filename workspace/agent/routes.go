@@ -89,6 +89,8 @@ func buildMux() *http.ServeMux {
 	// Package-manager caches in home (go-build, npm, uv, pip): measure and empty on request (docs/log/116).
 	mux.HandleFunc("GET /cleanup/tool-caches", handleToolCacheUsage)
 	mux.HandleFunc("DELETE /cleanup/tool-caches/{name}", handleDeleteToolCache)
+	mux.HandleFunc("GET /cleanup/leftovers", handleLeftoverUsage)
+	mux.HandleFunc("DELETE /cleanup/leftovers/{kind}", handleDeleteLeftovers)
 	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites
 	// on deletion (DELETE and its old name /stop, and the shell / ssm a deleted working copy
 	// sends to the trash) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one
