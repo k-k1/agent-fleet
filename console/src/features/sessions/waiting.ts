@@ -1,9 +1,10 @@
 // Ledger of "when this session last started waiting on a human".
 //
-// Two consumers, and the difference between them is the rule: the command palette ORDERS its
-// session list by it (most-recently-waiting first), and the sessions overview only SHOWS the
-// elapsed time on a card (ADR 0078 decision 11). Nothing else may use it, and nothing else may
-// order by it — a grid that stays open must not reshuffle every time a question is answered
+// Three consumers, and the difference between them is the rule: the command palette and the
+// jump-to-next-attention command (attention.ts) ORDER by it (most-recently-waiting first), and
+// the sessions overview only SHOWS the elapsed time on a card (ADR 0078 decision 11). Ordering
+// is allowed only where the order is taken once per user action; nothing that stays on screen
+// may order by it — a grid that stays open must not reshuffle every time a question is answered
 // (ADR 0078 decision 6).
 //
 // Why a ledger is needed: GET /api/sessions returns the state (question / plan / permission)

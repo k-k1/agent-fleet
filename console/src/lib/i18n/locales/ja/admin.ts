@@ -435,6 +435,8 @@ export const admin = {
   "admin.engines_params_sampler": "サンプラー",
   "admin.engines_params_scheduler": "スケジューラ",
   "admin.engines_params_clip_skip": "Clip skip",
+  "admin.engines_params_guidance": "Guidance（FLUX.1）",
+  "admin.engines_params_shift": "Shift（Anima）",
   "admin.engines_params_weight": "既定の強さ",
   // 表示名（"DPM++ 2M Karras"）でも入る。CP が ComfyUI の語彙へ直し、直せないものは捨てる。
   "admin.engines_params_name_ph": "dpmpp_2m",
@@ -443,7 +445,7 @@ export const admin = {
   "admin.engines_params_save": "保存",
   // 🔴 flux1 / klein の CFG は別の摘み（FluxGuidance・蒸留パス）なので、当てても効かない。
   "admin.engines_params_cfg_ignored": "このファミリーでは CFG は使われません（ガイダンスが別の入力です）。",
-  "admin.engines_params_clip_skip_note": "clip skip は記録だけで、いまのワークフローでは使われません。",
+  "admin.engines_params_clip_skip_note": "clip skip が効くのは SD1.5 と SDXL だけです。SDXL は最初から 2 相当なので、絵が変わるのは 3 以上です。",
   // ファミリーの推定。決定 2 のとおり宣言するのは運用者なので、入れておくだけで、外せる。
   "admin.engines_ingest_go": "取り込む",
   // 🔴 押す前に「載るかどうか」を言う。実機で借りた llm は L4（24 GB）に重み 17 GB を載せた

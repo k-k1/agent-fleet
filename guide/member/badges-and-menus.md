@@ -37,8 +37,9 @@ shown as text as well, not just an icon.
 The speaker icon means an answer is being read aloud; the warning plus a branch name means the working copy has
 switched to a branch different from the one it started on. A **red dot on the corner of the kind icon** (and on
 the session's tab) is a notification for that session you have not read yet; a collapsed project row or section
-shows it for anything folded inside. It clears when the session is on screen, or with **"Mark all as read"**
-in the notification centre ([02](02-sessions.md#reading-state-badges-and-notifications)).
+shows it for anything folded inside. It clears when the session is on screen (a report: when its operator
+conversation is), or with **"Mark all as read"** in the notification centre
+([02](02-sessions.md#reading-state-badges-and-notifications)).
 
 A row can also carry **"Shared"** (visible to another member —
 [02](02-sessions.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and

@@ -156,3 +156,16 @@ func TestParamsCleanBoundsWhatReachesTheCatalogue(t *testing.T) {
 		t.Errorf("explicit scheduler = %+v, want simple", both)
 	}
 }
+
+// guidance (flux1) and shift (anima) are kept within what the node takes and dropped past it,
+// one field at a time like the rest.
+func TestParamsCleanKeepsGuidanceAndShift(t *testing.T) {
+	got := engineParamsClean(&store.EngineParams{Guidance: 4.5, Shift: 14})
+	if got == nil || got.Guidance != 4.5 || got.Shift != 14 {
+		t.Errorf("clean = %+v, want guidance 4.5 and shift 14 kept", got)
+	}
+	got = engineParamsClean(&store.EngineParams{Guidance: 500, Shift: 500, Steps: 20})
+	if got == nil || got.Guidance != 0 || got.Shift != 0 || got.Steps != 20 {
+		t.Errorf("clean = %+v, want guidance and shift dropped, steps kept", got)
+	}
+}

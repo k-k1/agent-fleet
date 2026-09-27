@@ -80,3 +80,41 @@ describe("tabbed pane: unread dot", () => {
     expect(host!.querySelector(".unread-dot")).toBeNull();
   });
 });
+
+// The pane ring (#1057): the session ON SCREEN is waiting on the user's answer. Unlike the tab
+// dot it stays on the selected tab — being looked at does not answer a question.
+describe("pane: needs-you ring", () => {
+  let root: Root | null = null;
+  let host: HTMLElement | null = null;
+
+  const show = async (meta: Session, view: PaneView = frontView) => {
+    useSessionsStore.setState({ sessions: [meta, SESSIONS[1]] });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    await act(async () => {
+      root = createRoot(host!);
+      root.render(
+        <Pane cell={{ id: "c1", selectedViewId: view.id, views: [view] }} pane={view} sessionMeta={meta}
+          onActivate={noop} onClose={noop} onSwap={noop} onDropSplit={noop} />,
+      );
+    });
+  };
+  const ringed = () => !!host!.querySelector(".pane.pane-needs-you");
+
+  afterEach(async () => {
+    if (root) await act(async () => root!.unmount());
+    host?.remove();
+    root = null;
+    host = null;
+  });
+
+  it("rings a pane whose session waits on a question", async () => {
+    await show({ ...SESSIONS[0], state: "question" });
+    expect(ringed()).toBe(true);
+  });
+
+  it("leaves a working session's pane alone", async () => {
+    await show({ ...SESSIONS[0], state: "working" });
+    expect(ringed()).toBe(false);
+  });
+});

@@ -12,6 +12,8 @@ import { useSessionUI } from "../sessions/ui.ts";
 import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { useUnreadSessions } from "../notifications/unread.ts";
+import { isWaiting } from "../sessions/waiting.ts";
+import { shownSession } from "../sessions/shown.ts";
 import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -325,6 +327,11 @@ function PopulatedPane({
   const showPopout = popoutTabMode !== "popout" && canPopout(pane);
   const ctlCount = (showPopout ? 1 : 0) + (canWrap ? 1 : 0) + (canClose ? 1 : 0);
   const views: PaneView[] = cell.views;
+  // The session on screen is waiting on the user's answer (#1057). Being on screen already
+  // clears its unread dot, but not this: only answering does. A studio pane shows its bound
+  // session's mirror, so it counts too.
+  const shownMeta = sessionByName.get(shownSession(pane, sessions));
+  const needsYou = !!shownMeta && isWaiting(shownMeta);
   // Sessions with an unseen notification, for the tab dots below. One set for the whole
   // strip: the per-tab hook form would be a hook count that changes with the tab count.
   const unreadSessions = useUnreadSessions();
@@ -471,7 +478,7 @@ function PopulatedPane({
   return (
     <div
       ref={paneRef}
-      className={cx("pane", active && "active", tabbed && "tabbed", zone && "droptarget", hovered && "pane-hover", ordCls)}
+      className={cx("pane", active && "active", tabbed && "tabbed", zone && "droptarget", hovered && "pane-hover", needsYou && "pane-needs-you", ordCls)}
       style={{ ...style, "--pane-ctl-n": ctlCount } as CSSProperties}
       data-pane-id={pane.id}
       data-cell-id={cell.id}

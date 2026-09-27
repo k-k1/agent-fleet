@@ -26,6 +26,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "handoff-expired": "noti.kind_handoff_expired",
   "arch-residue": "noti.kind_arch_residue",
   "aws-login-required": "noti.kind_aws_login_required",
+  "terminal-notification": "noti.kind_terminal_notification",
 };
 
 /** Translated row heading; only an unknown kind (new CP with an old Console) falls back to the raw identifier. */
@@ -46,6 +47,11 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   // design (below), so the list of what has to be reinstalled has to be ON the row or it is
   // nowhere.
   if (n.kind === "arch-residue") return notificationWording(n).body;
+  // The message is the point of a terminal notification; the kind label alone says nothing.
+  if (n.kind === "terminal-notification") {
+    const text = terminalNotificationText(n.payload);
+    return text ? `${n.displayName} — ${text}` : n.displayName;
+  }
   return n.displayName;
 }
 
@@ -75,6 +81,14 @@ function scheduleFailureReason(status: string): string {
       return t("notif.schedule.reason_overlap");
   }
   return status.startsWith("error:") ? status.slice("error:".length).trim() : "";
+}
+
+// terminalNotificationText joins what the session's program put in its OSC 9 / 99 / 777
+// sequence. The Agent has already stripped control characters and bounded the length.
+function terminalNotificationText(payload: Record<string, unknown>): string {
+  const title = typeof payload.title === "string" ? payload.title : "";
+  const body = typeof payload.body === "string" ? payload.body : "";
+  return [title, body].filter(Boolean).join(" — ");
 }
 
 export function notificationWording(n: NotificationWordingInput): { title: string; body: string; speech: string } {
@@ -195,6 +209,17 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // Fixed text only: the payload is written by whoever filed the request, so nothing from it
     // is shown. The profile, account and role are in the toast and the modal, from the Agent.
     return { title: t("notif.aws_login.title"), body: t("notif.aws_login.body"), speech: t("notif.aws_login.speech") };
+  }
+  if (n.kind === "terminal-notification") {
+    // A program in the session asked its terminal to raise a desktop notification (OSC 9 / 99 /
+    // 777). Its text is arbitrary program output, so the spoken form names the session and reads
+    // only the start of it.
+    const text = terminalNotificationText(n.payload);
+    return {
+      title: t("notif.terminal.title", { name }),
+      body: text || name,
+      speech: text ? t("notif.terminal.speech", { name, text: text.slice(0, 80) }) : t("notif.terminal.speech_bare", { name }),
+    };
   }
   if (n.kind === "arch-residue") {
     // The CPU architecture changed and some artefacts could not be restored automatically

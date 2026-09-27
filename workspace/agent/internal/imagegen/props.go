@@ -428,6 +428,23 @@ func (g comfyReadGraph) props() ImageProps {
 		}
 		_, sampler, hasSampler = g.node("sca", "SamplerCustomAdvanced")
 	}
+	// The three per-family knobs, each read only off the family that takes it: zimage and the
+	// instruction-edit families carry a ModelSamplingAuraFlow too, at a shift their template fixes,
+	// and a reproduction that sent it back would be refused a knob that family does not read.
+	family := ""
+	if _, n, ok := g.node("save", "SaveImage"); ok {
+		family = comfyFamilyFromPrefix(stringOf(n.Inputs["filename_prefix"]))
+	}
+	reads := func(knob string) bool { return family != "" && comfyFamilyReadsKnob(comfyFamily(family), knob) }
+	if _, n, ok := g.node("clipskip", "CLIPSetLastLayer"); ok && reads("clip_skip") {
+		params.ClipSkip = -intOf(n.Inputs["stop_at_clip_layer"])
+	}
+	if _, n, ok := g.node("guidance", "FluxGuidance"); ok && reads("guidance") {
+		params.Guidance = floatOf(n.Inputs["guidance"])
+	}
+	if _, n, ok := g.node("ms", "ModelSamplingAuraFlow"); ok && reads("shift") {
+		params.Shift = floatOf(n.Inputs["shift"])
+	}
 	if params != (EngineParams{}) {
 		p := params
 		out.Params = &p
@@ -452,9 +469,7 @@ func (g comfyReadGraph) props() ImageProps {
 			out.Size = fmt.Sprintf("%dx%d", w, h)
 		}
 	}
-	if _, n, ok := g.node("save", "SaveImage"); ok {
-		out.Family = comfyFamilyFromPrefix(stringOf(n.Inputs["filename_prefix"]))
-	}
+	out.Family = family
 	for _, id := range sortedKeys(g) {
 		if g[id].Class != "LoraLoader" {
 			continue

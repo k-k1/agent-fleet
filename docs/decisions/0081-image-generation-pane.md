@@ -252,6 +252,11 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   are not request fields — no template reads `clip_skip`, and a LoRA weight is per-LoRA already).
   Merge order becomes **family recipe ← catalogue row ← request**, field by field, with the merge that
   exists (`comfyRecipe.with`).
+
+  **Amendment (2026-09-27, #1035).** `clip_skip` is a request field now, with `guidance` (flux1) and
+  `shift` (anima) beside it: each is read by one family's template, listed in that family's `knobs`,
+  and reported as a warning when sent to a family that does not read it. The studio agent may set all
+  three. See ADR 0072 decision 4's amendment for what each value does.
 - **The MCP tool does not get `params`.** ADR 0069's reason stands for agents. The pane's providers are
   the fleet's own, whose knobs the Agent built itself.
   - 🔴 **Withdrawn on 2026-09-15** (ADR 0069's follow-up of the same day). Half of the "ADR 0069 reason"

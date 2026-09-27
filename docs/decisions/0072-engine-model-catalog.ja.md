@@ -3765,6 +3765,12 @@ scheduler は Agent が知らない名前なら**無視してファミリーの�
 別の摘みで、モデルカードの数字を当てると静かに違う絵になる。`clip_skip` は記録だけ
 （5 つのグラフのどれにも `CLIPSetLastLayer` が無い）で、画面でもそう言う。
 
+**改訂（2026-09-27・#1035）。** `clip_skip` は適用されるようになった。行か要求が n を宣言すると、
+sd15 と sdxl のテンプレートが `CLIPSetLastLayer(-n)` を挟む。ComfyUI の SDXL のエンコーダは最初から
+最後から 2 層目で止まる（`sdxl_clip.py` の `layer_idx=-2`）ので、sdxl で 2 を宣言しても既定と同じ絵で、
+変わるのは 3 以上。あわせて `guidance`（flux1 の FluxGuidance。FLUX.1 のモデルカードが「CFG」と書く数字で、
+既定 3.5）と `shift`（anima の ModelSamplingAuraFlow。宣言したときだけ挟む。モデル自身の値は 3）を足した。
+
 ### 5. LoRA を別一覧にする
 
 行についていた「LoRA」タグは**一覧そのもの**が言うようになり、代わりに学習元ファミリー

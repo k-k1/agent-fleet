@@ -158,6 +158,12 @@ func engineParamsClean(p *store.EngineParams) *store.EngineParams {
 	if n, ok := engineParamsInt(strconv.Itoa(p.ClipSkip), 1, 4); ok {
 		out.ClipSkip = n
 	}
+	if f, ok := engineParamsFloat(strconv.FormatFloat(p.Guidance, 'f', -1, 64), 0.5, 30); ok {
+		out.Guidance = f
+	}
+	if f, ok := engineParamsFloat(strconv.FormatFloat(p.Shift, 'f', -1, 64), 0.1, 100); ok {
+		out.Shift = f
+	}
 	if f, ok := engineParamsFloat(strconv.FormatFloat(p.Weight, 'f', -1, 64), 0.05, 2); ok {
 		out.Weight = f
 	}

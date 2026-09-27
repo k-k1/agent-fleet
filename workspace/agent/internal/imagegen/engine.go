@@ -118,10 +118,17 @@ type EngineParams struct {
 	CFG       float64 `json:"cfg,omitempty"`
 	Sampler   string  `json:"sampler,omitempty"`
 	Scheduler string  `json:"scheduler,omitempty"`
-	// ClipSkip is carried but applied by no template: none of the five graphs has a
-	// CLIPSetLastLayer node. Kept on the wire so the catalogue's declaration survives a round
-	// trip rather than being dropped by the reader that does not use it yet.
+	// ClipSkip is the WebUI's "Clip skip": n stops the text encoder n layers from the end, which
+	// the sd15 and sdxl templates spell CLIPSetLastLayer(-n). 1 is the last layer and adds no
+	// node. ComfyUI's SDXL encoders already stop at the penultimate layer, so on sdxl 2 is the
+	// default picture and only 3 and up move it; on sd15 2 already does.
 	ClipSkip int `json:"clip_skip,omitempty"`
+	// Guidance is FLUX.1's distilled guidance, FluxGuidance's `guidance` — the number a FLUX.1
+	// model card calls "CFG", which is not the sampler cfg above (flux1 has none).
+	Guidance float64 `json:"guidance,omitempty"`
+	// Shift is the sampling shift ModelSamplingAuraFlow applies to anima. Undeclared adds no node
+	// and the model's own 3.0 applies (comfy/supported_models.py, Anima.sampling_settings).
+	Shift float64 `json:"shift,omitempty"`
 	// Weight is a LoRA row's declared strength — what to use when a caller names the adapter
 	// and not a number. See comfyResolveLoras for the order the three answers are tried in.
 	Weight float64 `json:"weight,omitempty"`

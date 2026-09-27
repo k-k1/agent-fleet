@@ -277,11 +277,16 @@ const re = [
       if (method === "DELETE") return {};
       const made = fx.imagegenCreatedStudio(m[0].split("/").pop());
       if (made) return method === "PUT" ? { studio: fx.imagegenPatchCreated(made, body) } : made;
-      if (method === "PUT") return { studio: fx.imagegenStudio(LOCALE, studioReads) };
+      // The member's own edits are kept on top of the fixture, so a PUT is not undone by its
+      // own echo half a second later (the pane would snap every field it just changed back).
+      if (method === "PUT") {
+        for (const [k, v] of Object.entries(body?.draft || {})) studioEdits[k] = v;
+        return { studio: withStudioEdits(fx.imagegenStudio(LOCALE, studioReads)) };
+      }
       // Each read counts: from the second one on, the agent has made one more edit, so the
       // pane's poll outlines the field it moved (decision 6).
       studioReads++;
-      return fx.imagegenStudio(LOCALE, studioReads);
+      return withStudioEdits(fx.imagegenStudio(LOCALE, studioReads));
     },
   ],
   // Egress allowlist verdicts for the MCP tab (docs/log/48 §9). This deployment HAS the
@@ -360,6 +365,15 @@ function crc32(buf) {
 
 const seenUnknown = new Set();
 let studioReads = 0;
+const studioEdits = {};
+const withStudioEdits = (s) => {
+  const draft = { ...s.draft };
+  for (const [k, v] of Object.entries(studioEdits)) {
+    if (v === null) delete draft[k];
+    else draft[k] = v;
+  }
+  return { ...s, draft };
+};
 
 function apiBody(pathname, query, method = "GET", body = null) {
   if (exact[pathname]) return exact[pathname](query, method, body);

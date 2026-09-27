@@ -61,7 +61,9 @@ function Form({
   locks,
   onToggleLock,
   highlight,
+  model = SDXL,
 }: {
+  model?: ImagegenModel;
   locks?: string[];
   onToggleLock?: (k: StudioKey) => void;
   highlight?: ReadonlySet<string>;
@@ -73,9 +75,9 @@ function Form({
       patch={(p) => setDraft((d) => ({ ...d, ...p }))}
       fleetProviders={[]}
       provider={null}
-      models={[SDXL]}
+      models={[model]}
       loras={[]}
-      model={SDXL}
+      model={model}
       samplers={[]}
       schedulers={[]}
       loraWeightMax={2}
@@ -121,7 +123,7 @@ describe("錠（決定 4）", () => {
     expect(set, "the switches live inside the folded details").not.toBeNull();
     expect(lockBox("プロンプト")?.checked ?? lockBox("Prompt")?.checked).toBe(true);
     // One switch covers the four sampler knobs, as the params lock always did.
-    const params = lockBox("steps・cfg・sampler・scheduler") ?? lockBox("steps, cfg, sampler, scheduler");
+    const params = lockBox("steps・cfg・sampler・scheduler ほか") ?? lockBox("steps, cfg, sampler, scheduler and the rest");
     expect(params!.checked).toBe(false);
     await act(async () => params!.click());
     expect(hits).toEqual(["params"]);
@@ -158,6 +160,15 @@ describe("エージェントが動かした欄の縁取り（決定 6）", () =>
     const adv = host.querySelector<HTMLDetailsElement>(".igen-advanced")!;
     expect(adv.open).toBe(true);
     expect(adv.querySelector("summary .igen-hl-mark")).not.toBeNull();
+  });
+
+  // #1035: guidance / shift / clip skip live under `params` too, so an agent edit to one of them
+  // opens the details and outlines it like the four sampler knobs.
+  it("guidance を変えられたら詳細が開き、guidance の欄も縁取る", async () => {
+    const FLUX_G: ImagegenModel = { id: "flux1-dev", family: "flux1", knobs: ["steps", "guidance", "sampler", "scheduler"] };
+    await mount(<Form model={FLUX_G} locks={[]} onToggleLock={() => {}} highlight={new Set(["params"])} />);
+    expect(host.querySelector<HTMLDetailsElement>(".igen-advanced")!.open).toBe(true);
+    expect(fieldOf("guidance")!.className).toContain("igen-hl");
   });
 
   it("詳細の外の欄だけなら詳細は畳んだまま（陰性対照）", async () => {

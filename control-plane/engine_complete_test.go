@@ -278,6 +278,88 @@ func TestCompleteRouteAttachesWhatIsAlreadyHereAndThenSaysNone(t *testing.T) {
 	}
 }
 
+// flux1 on a deployment that holds only the row's own weights: `check` prices all three parts as
+// downloads from the repositories the table names, and one press starts all three.
+func TestCompleteTakesFlux1PartsInWithOnePress(t *testing.T) {
+	engineHFRepoStub(t, engineFlux1Repos())
+	h := newEngineLedgerHarness(t)
+	h.put("image/diffusion_models/flux1-dev-fp8.safetensors", 11_900_000_000)
+	h.row(t, store.EngineModel{ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1",
+		Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1-dev-fp8.safetensors"}}})
+
+	rec := h.call(t, h.a.completeModel, "POST", "/api/admin/engines/image/models/flux1-dev-fp8/complete",
+		`{"check":true}`, map[string]string{"id": "flux1-dev-fp8"})
+	var check engineCompleteAnswer
+	if err := json.Unmarshal(rec.Body.Bytes(), &check); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("check = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	want := map[string]engineFamilyPart{}
+	for _, p := range engineFamilyPartsFor("flux1") {
+		want[p.Flag] = p
+	}
+	if len(want) != 3 || len(check.Files) != len(want) {
+		t.Fatalf("check = %+v, want the three parts of %+v", check.Files, want)
+	}
+	for _, f := range check.Files {
+		p, ok := want[f.Flag]
+		if !ok || f.Action != engineCompleteActDownload || f.Bytes != 1_000_000 || f.Key != p.S3Key ||
+			!strings.Contains(f.Source, p.Repo+"/"+p.File) {
+			t.Errorf("%s = %+v, want a priced download of %s/%s to %s", f.Flag, f, p.Repo, p.File, p.S3Key)
+		}
+	}
+	if len(h.ecs.run) != 0 {
+		t.Fatalf("a check started %d task(s)", len(h.ecs.run))
+	}
+
+	rec = h.call(t, h.a.completeModel, "POST", "/api/admin/engines/image/models/flux1-dev-fp8/complete",
+		`{"license_accepted":true}`, map[string]string{"id": "flux1-dev-fp8"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("press = %d %s", rec.Code, rec.Body.String())
+	}
+	if len(h.ecs.run) != 3 {
+		t.Errorf("the press started %d download(s), want the three parts", len(h.ecs.run))
+	}
+	jobs := engineJobsOf(t, h.st, "image")
+	got := map[string]bool{}
+	for _, j := range jobs {
+		got[j.S3Key] = true
+	}
+	for _, p := range want {
+		if !got[p.S3Key] {
+			t.Errorf("no ingest job writes %s: %+v", p.S3Key, jobs)
+		}
+	}
+}
+
+// The second flux1 row on a deployment the first one completed: the parts are at their canonical
+// keys, so the press declares all three and downloads nothing.
+func TestCompleteSecondFlux1RowReusesTheStagedParts(t *testing.T) {
+	h := newEngineLedgerHarness(t)
+	h.put("image/diffusion_models/flux1-schnell-fp8.safetensors", 11_900_000_000)
+	h.put("image/text_encoders/clip_l.safetensors", 246_144_152)
+	h.put("image/text_encoders/t5xxl_fp8_e4m3fn.safetensors", 4_893_934_904)
+	h.put("image/vae/flux-vae-bf16.safetensors", 167_664_710)
+	h.row(t, store.EngineModel{ID: "flux1-schnell-fp8", Kind: "checkpoint", BaseModel: "flux1",
+		Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1-schnell-fp8.safetensors"}}})
+
+	// Every upstream lookup 404s, so the answer below comes from the bucket alone: a regression
+	// that fetched a part would surface as that part missing, never as a real network call.
+	engineHFRepoStub(t, nil)
+	rec := h.call(t, h.a.completeModel, "POST", "/api/admin/engines/image/models/flux1-schnell-fp8/complete",
+		`{}`, map[string]string{"id": "flux1-schnell-fp8"})
+	var answer engineCompleteAnswer
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("complete = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	if answer.BytesToDownload != 0 || len(h.ecs.run) != 0 {
+		t.Errorf("%d byte(s) and %d task(s) for parts this deployment holds", answer.BytesToDownload, len(h.ecs.run))
+	}
+	m, _ := engineCatalogModel(t.Context(), h.e, "flux1-schnell-fp8")
+	if missing := engineMissingFileFlags("comfy", m); len(missing) != 0 {
+		t.Errorf("the row still misses %v: %+v", missing, m.Files)
+	}
+}
+
 // `check` prices the press without spending anything — the same two-step the ingest form follows.
 func TestCompleteCheckActsOnNothing(t *testing.T) {
 	h := newEngineLedgerHarness(t)

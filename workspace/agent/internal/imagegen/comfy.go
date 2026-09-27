@@ -390,6 +390,18 @@ func comfyIgnoredParamWarnings(family comfyFamily, p *EngineParams) []string {
 		out = append(out, fmt.Sprintf("scheduler=%s was not applied: the %s family's schedule is derived from the"+
 			" picture's size (Flux2Scheduler), not chosen by name", strings.TrimSpace(p.Scheduler), family))
 	}
+	if p.ClipSkip > 0 && !comfyFamilyReadsKnob(family, "clip_skip") {
+		out = append(out, fmt.Sprintf("clip_skip=%d was not applied: only the sd15 and sdxl templates"+
+			" have a CLIP text encoder to stop early", p.ClipSkip))
+	}
+	if p.Guidance > 0 && !comfyFamilyReadsKnob(family, "guidance") {
+		out = append(out, fmt.Sprintf("guidance=%g was not applied: it is FLUX.1's distilled guidance"+
+			" (FluxGuidance), which the %s family does not have — use cfg where the family reads it", p.Guidance, family))
+	}
+	if p.Shift > 0 && !comfyFamilyReadsKnob(family, "shift") {
+		out = append(out, fmt.Sprintf("shift=%g was not applied: only the anima template takes a sampling"+
+			" shift; the %s family's is fixed by its template or its model", p.Shift, family))
+	}
 	return out
 }
 
@@ -581,7 +593,8 @@ func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
 // is why it is that function and not a second reading of the same two sources.
 func comfyEffectiveDefaults(conn EngineConn, family comfyFamily, model string) EngineParams {
 	r := comfyFamilyRecipeFor(family).with(conn.Params[model])
-	return EngineParams{Steps: r.Steps, CFG: r.CFG, Sampler: r.Sampler, Scheduler: r.Scheduler}
+	return EngineParams{Steps: r.Steps, CFG: r.CFG, Sampler: r.Sampler, Scheduler: r.Scheduler,
+		ClipSkip: r.ClipSkip, Guidance: r.Guidance, Shift: r.Shift}
 }
 
 // comfySortedNames spells an allow-list for the wire. Sorted, because a map range would reorder
@@ -1699,6 +1712,15 @@ func comfyEffectiveParams(row EngineParams, req *EngineParams) EngineParams {
 	}
 	if s := strings.TrimSpace(req.Scheduler); s != "" {
 		row.Scheduler = s
+	}
+	if req.ClipSkip > 0 {
+		row.ClipSkip = req.ClipSkip
+	}
+	if req.Guidance > 0 {
+		row.Guidance = req.Guidance
+	}
+	if req.Shift > 0 {
+		row.Shift = req.Shift
 	}
 	return row
 }

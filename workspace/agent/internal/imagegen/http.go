@@ -201,6 +201,8 @@ type familyAdvice struct {
 	QualityPrefixes []string  `json:"quality_prefixes,omitempty"`
 	StepsRange      []int     `json:"steps_range,omitempty"`
 	CFGRange        []float64 `json:"cfg_range,omitempty"`
+	GuidanceRange   []float64 `json:"guidance_range,omitempty"`
+	ShiftRange      []float64 `json:"shift_range,omitempty"`
 	TrialSteps      int       `json:"trial_steps,omitempty"`
 }
 
@@ -215,6 +217,12 @@ func familyAdviceFor(family string) familyAdvice {
 	}
 	if r.CFGRange != [2]float64{} {
 		out.CFGRange = r.CFGRange[:]
+	}
+	if r.GuidanceRange != [2]float64{} {
+		out.GuidanceRange = r.GuidanceRange[:]
+	}
+	if r.ShiftRange != [2]float64{} {
+		out.ShiftRange = r.ShiftRange[:]
 	}
 	return out
 }

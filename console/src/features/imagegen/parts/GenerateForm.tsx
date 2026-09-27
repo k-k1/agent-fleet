@@ -92,6 +92,10 @@ export function GenerateForm({
   // header comment for why that is the safe direction.
   const declared = model?.knobs;
   const reads = (k: Knob): boolean => !declared || declared.includes(k);
+  // The one-family knobs are drawn only where the model's family declares them, not greyed out
+  // on the other ten: an Agent that does not list them cannot apply them either. A value already
+  // in the draft keeps its field on screen (greyed), so it cannot ride along unseen.
+  const offers = (k: Knob, value: string): boolean => !!declared?.includes(k) || value.trim() !== "";
 
   const sizes = useMemo(() => sizeOptions(model?.sizes, model?.family), [model]);
   // A LoRA only loads on a checkpoint of its own family; offering the rest would be a form
@@ -155,13 +159,25 @@ export function GenerateForm({
     if (hlAdv) setAdvOpen(true);
   }, [hlAdv]);
 
+  const knobOn = (k: Knob): boolean => !!declared?.includes(k);
   // What a press would use, one line: the member's value, else the model's default by name.
   const defaults = model?.params;
   const summary = [
     draft.op !== "generate" && tr(`imggen.op_${draft.op}` as "imggen.op_generate"),
-    ...effectiveParams(draft, defaults, reads).map(({ key, value, typed }) => {
-      if (value == null) return tr(`imggen.sum_${key}_none` as "imggen.sum_steps_none");
-      const shown = key === "steps" ? tr("imggen.sum_steps", { v: value }) : key === "cfg" ? tr("imggen.sum_cfg", { v: value }) : String(value);
+    // The one-family knobs count only where the family declares them (knobOn), the rule their
+    // fields follow: a value carried over to another family is sent but never applied.
+    ...effectiveParams(draft, defaults, (k) => (ONE_FAMILY_KNOBS.includes(k) ? knobOn(k) : reads(k))).map(({ key, value, typed }) => {
+      const label = key === "steps" || key === "cfg" || key === "sampler" || key === "scheduler" ? null : tr(`imggen.${key}`);
+      if (value == null)
+        return label ? tr("imggen.sum_knob_none", { k: label }) : tr(`imggen.sum_${key}_none` as "imggen.sum_steps_none");
+      const shown =
+        key === "steps"
+          ? tr("imggen.sum_steps", { v: value })
+          : key === "cfg"
+            ? tr("imggen.sum_cfg", { v: value })
+            : label
+              ? `${label} ${value}`
+              : String(value);
       return typed ? shown : tr("imggen.default_ph", { v: shown });
     }),
     draft.seedPolicy === "random"
@@ -176,6 +192,7 @@ export function GenerateForm({
 
   const stepsPh = model?.params?.steps != null ? tr("imggen.default_ph", { v: model.params.steps }) : tr("imggen.default_ph_none");
   const cfgPh = model?.params?.cfg != null ? tr("imggen.default_ph", { v: model.params.cfg }) : tr("imggen.default_ph_none");
+  const ph = (v: number | undefined) => (v != null ? tr("imggen.default_ph", { v }) : tr("imggen.default_ph_none"));
 
   return (
     <div className="igen-form" onKeyDown={onKeyDown}>
@@ -366,6 +383,51 @@ export function GenerateForm({
               onChange={(e) => patch({ cfg: e.target.value })}
             />
           </Knobbed>
+          {offers("guidance", draft.guidance) && (
+            <Knobbed label={tr("imggen.guidance")} on={knobOn("guidance")} family={family} lock={lk("params")} extra={hl("params")}>
+              <input
+                className="ds-input"
+                type="number"
+                min={0}
+                max={30}
+                step={0.1}
+                value={draft.guidance}
+                disabled={!knobOn("guidance")}
+                placeholder={ph(model?.params?.guidance)}
+                onChange={(e) => patch({ guidance: e.target.value })}
+              />
+            </Knobbed>
+          )}
+          {offers("shift", draft.shift) && (
+            <Knobbed label={tr("imggen.shift")} on={knobOn("shift")} family={family} lock={lk("params")} extra={hl("params")}>
+              <input
+                className="ds-input"
+                type="number"
+                min={0}
+                max={100}
+                step={0.5}
+                value={draft.shift}
+                disabled={!knobOn("shift")}
+                placeholder={ph(model?.params?.shift)}
+                onChange={(e) => patch({ shift: e.target.value })}
+              />
+            </Knobbed>
+          )}
+          {offers("clip_skip", draft.clipSkip) && (
+            <Knobbed label={tr("imggen.clip_skip")} on={knobOn("clip_skip")} family={family} lock={lk("params")} extra={hl("params")}>
+              <input
+                className="ds-input"
+                type="number"
+                min={1}
+                max={12}
+                step={1}
+                value={draft.clipSkip}
+                disabled={!knobOn("clip_skip")}
+                placeholder={ph(model?.params?.clip_skip)}
+                onChange={(e) => patch({ clipSkip: e.target.value })}
+              />
+            </Knobbed>
+          )}
           <Knobbed label={tr("imggen.sampler")} on={reads("sampler")} family={family} lock={lk("params")} extra={hl("params")}>
             {/* The options are the AGENT's allow-list: a name it does not know is refused with
                 400, and the catalogue overlay's silent fallback does not apply to a member's
@@ -612,6 +674,8 @@ function FamilyCardBlock({ model, onQuality }: { model: ImagegenModel; onQuality
             {[
               card.steps && tr("imggen.family_steps", { lo: card.steps[0], hi: card.steps[1] }),
               card.cfg && tr("imggen.family_cfg", { lo: card.cfg[0], hi: card.cfg[1] }),
+              card.guidance && tr("imggen.family_guidance", { lo: card.guidance[0], hi: card.guidance[1] }),
+              card.shift && tr("imggen.family_shift", { lo: card.shift[0], hi: card.shift[1] }),
               card.trialSteps && tr("imggen.family_trial", { n: card.trialSteps }),
             ]
               .filter(Boolean)
@@ -733,6 +797,9 @@ export function ModelSelect({
     </>
   );
 }
+
+/** #1035's knobs: each read by one family, drawn and summarized only where it is declared. */
+const ONE_FAMILY_KNOBS: readonly Knob[] = ["guidance", "shift", "clip_skip"];
 
 /** The keys whose fields sit inside the folded details. */
 const ADVANCED_KEYS: readonly StudioKey[] = ["params", "op", "inputs", "strength"];

@@ -4097,6 +4097,13 @@ conditioning (FluxGuidance, BasicGuider) and a model card's "CFG" is a different
 it would be a silently wrong picture. `clip_skip` is recorded only — none of the five graphs has
 a `CLIPSetLastLayer` node — and the panel says so.
 
+**Amendment (2026-09-27, #1035).** `clip_skip` is now applied: the sd15 and sdxl templates add
+`CLIPSetLastLayer(-n)` when a row or a request declares n. ComfyUI's SDXL encoders already stop at
+the penultimate layer (`sdxl_clip.py`, `layer_idx=-2`), so on sdxl a declared 2 is the default
+picture and only 3 and up change it. Two fields joined it: `guidance` (flux1's FluxGuidance, the
+number a FLUX.1 card calls "CFG", default 3.5) and `shift` (anima's ModelSamplingAuraFlow, added
+only when declared; the model's own is 3).
+
 ### 5. LoRAs are their own list
 
 The tag that used to say "LoRA" on a row is now said by the LIST, and what the row carries

@@ -311,23 +311,72 @@ func TestPlanOffersTheVocabularyWhenItCannotNameTheFamily(t *testing.T) {
 // ADR 0072's 2026-09-15 addendum measured what the alternative costs: an entry written from
 // memory is a 404 minutes after a press.
 func TestPlanNamesTheRolesItCannotSupply(t *testing.T) {
-	engineHFRepoStub(t, map[string][]string{"black-forest-labs/FLUX.1-dev": {"flux1-dev.safetensors"}})
+	engineHFRepoStub(t, map[string][]string{"Tongyi-MAI/Z-Image-Turbo": {"z_image_turbo.safetensors"}})
 	a, e, _, _ := enginePlanAPI(t)
 
-	plan := enginePlanOf(t, a, e, `{"kind":"checkpoint","base_model":"flux1","license_accepted":true,
-	  "source":{"hf":{"repo":"black-forest-labs/FLUX.1-dev","file":"flux1-dev.safetensors"}}}`)
+	plan := enginePlanOf(t, a, e, `{"kind":"checkpoint","base_model":"zimage","license_accepted":true,
+	  "source":{"hf":{"repo":"Tongyi-MAI/Z-Image-Turbo","file":"z_image_turbo.safetensors"}}}`)
 
 	if len(plan.Files) != 1 {
-		t.Fatalf("flux1 has no part table, so the plan must name one file: %+v", plan.Files)
+		t.Fatalf("zimage has no part table, so the plan must name one file: %+v", plan.Files)
 	}
 	joined := strings.Join(plan.Warnings, " | ")
-	for _, role := range []string{"--clip_l", "--t5xxl", "--vae"} {
+	for _, role := range []string{"--clip_l", "--vae"} {
 		if !strings.Contains(joined, role) {
 			t.Errorf("the plan is silent about %s: %q", role, joined)
 		}
 	}
 	if strings.Contains(joined, "image/text_encoders/") {
 		t.Errorf("the plan invented a path for a role it has no source for: %q", joined)
+	}
+}
+
+// flux1's diffusion model arrives with its three parts in the same act: two encoders from one
+// repository, the VAE from another, each at the key its loader lists.
+func TestPlanTakesFlux1InWithItsThreeParts(t *testing.T) {
+	engineHFRepoStub(t, engineFlux1Repos())
+	a, e, _, _ := enginePlanAPI(t)
+
+	plan := enginePlanOf(t, a, e, `{"kind":"checkpoint","base_model":"flux1","license_accepted":true,
+	  "source":{"hf":{"repo":"Kijai/flux-fp8","file":"flux1-dev-fp8.safetensors"}}}`)
+
+	want := map[string]string{
+		"--diffusion-model": "image/diffusion_models/flux1-dev-fp8.safetensors",
+		"--clip_l":          "image/text_encoders/clip_l.safetensors",
+		"--t5xxl":           "image/text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+		"--vae":             "image/vae/flux-vae-bf16.safetensors",
+	}
+	if len(plan.Files) != len(want) {
+		t.Fatalf("plan has %d file(s), want the weights and three parts: %+v", len(plan.Files), plan.Files)
+	}
+	for flag, key := range want {
+		f, ok := enginePlanFileFor(plan, flag)
+		switch {
+		case !ok:
+			t.Errorf("the plan says nothing about %s", flag)
+		case f.Key != key:
+			t.Errorf("%s lands at %q, want %q", flag, f.Key, key)
+		case f.Action != enginePlanDownload:
+			t.Errorf("%s = %q on a deployment that holds nothing", flag, f.Action)
+		}
+	}
+	if len(plan.Warnings) != 0 {
+		t.Errorf("a complete plan carries warnings: %v", plan.Warnings)
+	}
+}
+
+// engineFlux1Repos is what flux1's part table names, plus a weights file to take in.
+func engineFlux1Repos() map[string][]string {
+	return map[string][]string{
+		"comfyanonymous/flux_text_encoders": {
+			"clip_l.safetensors",
+			"t5xxl_fp8_e4m3fn.safetensors",
+			"t5xxl_fp8_e4m3fn_scaled.safetensors",
+		},
+		"Kijai/flux-fp8": {
+			"flux1-dev-fp8.safetensors",
+			"flux-vae-bf16.safetensors",
+		},
 	}
 }
 

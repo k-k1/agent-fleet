@@ -227,11 +227,21 @@ notified with **"A reply is ready"**; when a question arrives, with **"A questio
 the session name is included in the body. This suits use cases like waiting for a reply on your
 phone during a commute (shell / ssm don't notify).
 
+When a program running in a session **asks its terminal for a notification** (the OSC 9 / 99 /
+777 escape sequences — you can emit one yourself, e.g. `printf '\e]9;Build done\a'`), it
+arrives in the notification center as **"Terminal notification"**, with a browser notification
+too (not while that session is in the active pane, nor when the browser has not been allowed to notify).
+That lets a shell session tell you when a long build finishes. claude / codex / opencode already
+report the same moments through their own channel, so their terminal notifications are not used,
+to avoid duplicates.
+
 **A red dot on a session marks a notification you have not read yet.** It sits on the session's
 row in the left pane (on the corner of its icon) and on its tab, and rolls up onto a collapsed
 project row or section, so a folded parent still shows that something inside is waiting. The dot
 clears once that session is on screen in one of your panes, or when you press **"Mark all as
-read"** in the notification centre — merely opening the bell marks nothing as read.
+read"** in the notification centre — merely opening the bell marks nothing as read. A session's
+**report** is the exception: it was posted to an operator conversation, so it clears when that
+conversation is on screen (or you open it from the notification centre), not when the session is.
 
 ## Stopping and tidying up sessions
 
@@ -746,10 +756,11 @@ the new list **without a restart**.
   as 1376×768). You still cannot pick exact dimensions, but you can ask for landscape or
   portrait. The Codex route has no aspect-ratio setting at all.
 - **Sampler settings can be asked for on the deployment's engines.** `generate_image` takes
-  steps, cfg, sampler and scheduler (and a seed, the negative prompt and LoRA weights). Anything
-  left out runs at the checkpoint's published values, and a setting the model's family does not
-  read — cfg on FLUX.1, a named scheduler on FLUX.2 klein — is **named in the result as not
-  applied** rather than dropped in silence.
+  steps, cfg, sampler and scheduler (and a seed, the negative prompt and LoRA weights), plus three
+  settings one family each reads: clip skip (SD1.5, SDXL), guidance (FLUX.1, which has no cfg) and
+  shift (Anima). Anything left out runs at the checkpoint's published values, and a setting the
+  model's family does not read — cfg on FLUX.1, a named scheduler on FLUX.2 klein — is **named in
+  the result as not applied** rather than dropped in silence.
 - **A LoRA asked for from chat carries its trigger words.** The tool lists each adapter with the
   words it was trained on and tells the agent to put one in the prompt — an adapter loaded
   without its trigger costs the whole generation and changes nothing visible.

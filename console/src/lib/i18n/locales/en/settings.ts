@@ -462,6 +462,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "keys.cmd.regionNext": "Next region (rail / main / bars)",
   "keys.cmd.regionPrev": "Previous region",
   "keys.cmd.sessionNew": "New session (launch)",
+  "keys.cmd.sessionNextAttention": "Jump to the next session that needs you",
   "keys.cmd.workspaceToggle": "Start / stop workspace",
   "keys.cmd.toggleRail": "Toggle left rail",
   "keys.cmd.railMode": "Toggle left rail display mode",

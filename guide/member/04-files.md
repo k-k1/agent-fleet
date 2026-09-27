@@ -199,11 +199,15 @@ A pane that makes pictures on your organisation's own ComfyUI **without an agent
 Asking a session for a picture is right for "put an illustration in this document"; this is for
 "forty variations of one prompt at three CFG values", where every round trip through a model
 would cost a turn. A session can name the same settings you can (`generate_image` takes steps,
-cfg, sampler, scheduler, seed, the negative prompt and the LoRA weights); what it leaves out runs
+cfg, sampler, scheduler, clip skip, guidance, shift, seed, the negative prompt and the LoRA
+weights); what it leaves out runs
 at the checkpoint's own published values, and a setting its family does not read is named in the
 result's warnings rather than dropped in silence. What a session cannot see is what this form shows
 you: each checkpoint's own published numbers as the placeholders, the fields its family does not
-read greyed out, and a trial run before you commit forty.
+read greyed out, and a trial run before you commit forty. Three fields appear only for the family
+that reads them: **clip skip** for SD1.5 and SDXL (SDXL already runs at 2, so only 3 and up change
+its picture), **guidance** for FLUX.1 (what its model cards call CFG; 3.5 to 5), and **shift** for
+Anima (3 by default; 14 to 24 steadies the composition of a large picture).
 
 **Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. Opening it
 again focuses the pane you have. The pane always has a **studio** open — the one this browser
@@ -296,7 +300,8 @@ The default folder is `generated/console/`, which the gallery lists like any oth
 **never swept** — you pressed the button for each of these. **Output folder** under Advanced puts
 a run somewhere of your own naming. Every picture is written with a small record beside it, so
 enlarging one anywhere in the Console (this pane, the gallery, a shared file in the mirror) and
-pressing **Properties** shows the model, seed, size, steps, cfg, sampler, scheduler, LoRAs and
+pressing **Properties** shows the model, seed, size, steps, cfg, sampler, scheduler (and clip
+skip, guidance or shift where set), LoRAs and
 both prompts, each row with a copy button, plus **copy all as JSON** and **open in image
 generation**, which loads the fields back into the form. Pictures made by an agent before this
 existed can still be read: the graph ComfyUI embeds in the PNG carries the same numbers. Pictures

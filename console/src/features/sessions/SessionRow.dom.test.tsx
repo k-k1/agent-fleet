@@ -110,3 +110,36 @@ describe("SessionRow unread dot", () => {
     expect(dot()).not.toBeNull();
   });
 });
+
+// "Needs you" (#1057): a ring for a session waiting on the user's answer, a bold title for one
+// that only has unread news. They are separate classes because they clear differently — the
+// ring by answering, the bold by looking — so a row can wear either, or both.
+describe("SessionRow needs-you marks", () => {
+  const row = () => host.querySelector<HTMLElement>(".sess-row");
+
+  it("rings a live session waiting on a question, a plan or a permission", async () => {
+    for (const state of ["question", "plan", "permission"]) {
+      await render({ state });
+      expect(row()?.classList.contains("sess-needs-you")).toBe(true);
+    }
+  });
+
+  it("does not ring a working, idle or stopped-with-a-carried-question row", async () => {
+    await render({ state: "working" });
+    expect(row()?.classList.contains("sess-needs-you")).toBe(false);
+    await render({});
+    expect(row()?.classList.contains("sess-needs-you")).toBe(false);
+    await render({ alive: false, state: "question", carried: "question" });
+    expect(row()?.classList.contains("sess-needs-you")).toBe(false);
+  });
+
+  it("marks an unread row without ringing it", async () => {
+    useNotificationStore.setState({ items: [notify("s1", false)] });
+    await render({});
+    expect(row()?.classList.contains("sess-unread")).toBe(true);
+    expect(row()?.classList.contains("sess-needs-you")).toBe(false);
+    useNotificationStore.setState({ items: [notify("s1", true)] });
+    await render({});
+    expect(row()?.classList.contains("sess-unread")).toBe(false);
+  });
+});

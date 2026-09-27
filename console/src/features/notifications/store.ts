@@ -8,13 +8,15 @@ import { activePane, allPanes } from "../../layout/ops.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { shownSession } from "../sessions/shown.ts";
+import type { Session } from "../../types/session.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSessionTerminalSplit } from "../sessions/open.ts";
 import { openChat } from "../chat/open.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { openSharedSession } from "../sharing/open.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
-import { unseenSessionEventIDs } from "./read.ts";
+import { destinationShown, opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 import { childIdleMuted } from "./childIdle.ts";
 import { useAwsLoginStore } from "../awslogin/store.ts";
@@ -61,8 +63,9 @@ async function deliver(n: FleetNotification): Promise<void> {
   // suppression here costs the user an OS notification, and the layout says nothing about
   // whether the browser tab is even on screen — while it is hidden this is the only channel
   // left. Swallowing one per open pane would turn a background window into a silent one.
-  const active = activePane(useLayoutStore.getState().layout)?.session;
-  if (n.target.type === "session" && active === n.target.id) {
+  // Suppressed only where its destination is: a report is not on screen just because its
+  // session is (that pane does not acknowledge it either), and is when its conversation is.
+  if (destinationShown(n, activePane(useLayoutStore.getState().layout), useSessionsStore.getState().sessions)) {
     return;
   }
   // A muted child's idle interrupts nobody; wireNotificationReadOnVisibleSessions marks it read.
@@ -121,10 +124,15 @@ export function conversationReachable(res: unknown): boolean {
   return isTransientErr(res);
 }
 
+/** Only chat_conversation_not_found says the conversation no longer exists — not any 404: the
+ *  CP answers 404 for a workspace or membership it cannot resolve too. */
+export function conversationProvenGone(res: unknown): boolean {
+  const err = (res as { error?: { code?: string } } | null | undefined)?.error;
+  return !!err && typeof err === "object" && err.code === "chat_conversation_not_found";
+}
+
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<NotificationOpenResult> {
-  // A session report's destination is the operator CONVERSATION, not the reporting
-  // session (docs/log/30) — the conversation id rides the payload.
-  if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
+  if (opensConversation(n) && typeof n.payload.conversation_id === "string") {
     const convID = n.payload.conversation_id;
     // The fetch is only used to confirm permanent absence. A 5xx while the WS starts, or a
     // dropped connection (throw), is left to ChatView's retry and the conversation is opened
@@ -257,8 +265,11 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   },
 }));
 
-// Showing a session is an explicit acknowledgement of every pending event for it — and
-// showing means every VISIBLE pane, not only the focused one. allPanes is the selected view
+// Showing a notification's DESTINATION is an explicit acknowledgement of it — and showing
+// means every VISIBLE pane, not only the focused one. For most events that is their session;
+// a report's is the operator conversation it was posted to (opensConversation), so the
+// reporting session on screen does not clear it: that shows none of the report, and clearing
+// it there loses it both from the rail and from the jump to the next session that needs you. allPanes is the selected view
 // of each cell, i.e. exactly what is on screen: a session sitting in a second pane, or on
 // the selected tab of another cell, is being looked at, and leaving its unread dot up would
 // mark as "not looked at" something the user can see. The dot on a pane tab is what makes
@@ -269,19 +280,59 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
   const pending = new Set<string>();
   const sync = () => {
     const items = useNotificationStore.getState().items;
+    const sessions = useSessionsStore.getState().sessions;
     // The same session can occupy two panes, so dedupe before posting the acknowledgement.
     const ids = [...new Set([
-      ...allPanes(useLayoutStore.getState().layout).flatMap((p) => unseenSessionEventIDs(items, p.session || "")),
+      ...allPanes(useLayoutStore.getState().layout).flatMap((p) => [
+        ...unseenSessionEventIDs(items, shownSession(p, sessions)),
+        ...(p.content.kind === "chat" ? unseenConversationEventIDs(items, p.content.conversationId || "") : []),
+      ]),
       // A muted child's idle is acknowledged on arrival too, so it raises no dot and no count.
       // Here rather than in deliver(): deliver sees only rows newer than the first load, and
       // runs before the session list may have arrived to say which sessions are children.
       ...mutedChildIdleIDs(items),
     ])].filter((id) => !pending.has(id));
+    checkGoneReports(items, sessions);
     if (!ids.length) return;
     ids.forEach((id) => pending.add(id));
     void useNotificationStore.getState().markSeen(undefined, ids).finally(() => {
       ids.forEach((id) => pending.delete(id));
     });
+  };
+  // A report on screen only through its session is left for its conversation — unless that
+  // conversation is gone, when nothing could ever show it again and the session on screen is
+  // the last place it can be acknowledged (what the session-pane rule did before). This runs
+  // with no click behind it, so only chat_conversation_not_found proves "gone" (a 401/403/429,
+  // or a 404 about something else, is not a deleted conversation). A transient failure (5xx
+  // while the WS starts, a dropped connection) is asked again after RETRY_MS — sync runs on
+  // every layout change, and a divider drag must not turn into a burst of requests; any other
+  // answer again after REPROBE_MS, so a conversation deleted after an earlier probe found it
+  // alive is still noticed.
+  const REPROBE_MS = 5 * 60_000;
+  const RETRY_MS = 30_000;
+  const probedAt = new Map<string, number>();
+  const inflight = new Set<string>();
+  const checkGoneReports = (items: FleetNotification[], sessions: Session[]) => {
+    const panes = allPanes(useLayoutStore.getState().layout);
+    const now = Date.now();
+    for (const n of items) {
+      if (n.seen || inflight.has(n.id) || now - (probedAt.get(n.id) ?? -Infinity) < REPROBE_MS) continue;
+      if (!opensConversation(n) || n.target.type !== "session") continue;
+      if (!panes.some((p) => shownSession(p, sessions) === n.target.id)) continue;
+      inflight.add(n.id);
+      void chatGet(String(n.payload.conversation_id))
+        .catch(() => null)
+        .then((conv) => {
+          inflight.delete(n.id);
+          if (!conv || isTransientErr(conv)) {
+            // Due again RETRY_MS from now: probedAt + REPROBE_MS lands there.
+            probedAt.set(n.id, Date.now() - REPROBE_MS + RETRY_MS);
+            return;
+          }
+          probedAt.set(n.id, Date.now());
+          if (conversationProvenGone(conv)) void useNotificationStore.getState().markSeen(undefined, [n.id]);
+        });
+    }
   };
   const unLayout = useLayoutStore.subscribe(sync);
   const unSessions = useSessionsStore.subscribe((state, previous) => {

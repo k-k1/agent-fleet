@@ -182,15 +182,16 @@ export type EngineModel = {
  * Every field is optional and 0 means UNDECLARED: the provider merges them over the family's
  * template one field at a time, so a row that names only `steps` keeps the template's sampler.
  *
- * `clip_skip` is stored and shown but applied by no template today (none of the five ComfyUI
- * graphs has a CLIPSetLastLayer node) — it is kept because it is published alongside the others
- * and dropping it at the form means reading the model page again to get it back. */
+ * `clip_skip` (sd15/sdxl), `guidance` (flux1's FluxGuidance) and `shift` (anima) are each read
+ * by one family's template; the others ignore them. */
 export type EngineParams = {
   steps?: number;
   cfg?: number;
   sampler?: string;
   scheduler?: string;
   clip_skip?: number;
+  guidance?: number;
+  shift?: number;
   /** A LoRA row's recommended strength, and the only field here about an adapter rather than a
    *  checkpoint. The provider uses it when a caller names the LoRA without a number. */
   weight?: number;

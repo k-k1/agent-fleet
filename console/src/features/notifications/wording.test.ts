@@ -99,3 +99,28 @@ describe("notification row headings", () => {
     expect(notificationRowSubtitle({ kind: "answer-ready", displayName: "プラン検証", payload: {} })).toBe("プラン検証");
   });
 });
+
+// A program in the session raised an OSC 9 / 99 / 777 desktop notification (#1058). Its text is
+// the whole message: without it on the row and in the OS notification, the reader only learns
+// that *something* happened.
+describe("terminal notification", () => {
+  it("carries the program's text on the notification and the row", () => {
+    setLocale("ja");
+    const n = { kind: "terminal-notification", displayName: "ビルド係", payload: { proto: "osc777", title: "Build", body: "done" } };
+    const w = notificationWording(n);
+    expect(w.title).toBe("ビルド係 からの通知");
+    expect(w.body).toBe("Build — done");
+    expect(notificationRowSubtitle(n)).toBe("ビルド係 — Build — done");
+    expect(notificationKindLabel("terminal-notification")).toBe("端末からの通知");
+  });
+
+  it("falls back to the session name when the payload has no text", () => {
+    setLocale("en");
+    const n = { kind: "terminal-notification", displayName: "builder", payload: { proto: "osc9" } };
+    const w = notificationWording(n);
+    expect(w.body).toBe("builder");
+    expect(w.speech).toBe("builder sent a notification.");
+    expect(notificationRowSubtitle(n)).toBe("builder");
+    setLocale("ja");
+  });
+});

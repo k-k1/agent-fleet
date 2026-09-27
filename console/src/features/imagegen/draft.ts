@@ -34,6 +34,10 @@ export interface ImagegenDraft {
   cfg: string;
   sampler: string;
   scheduler: string;
+  /** The three one-family knobs (#1035), empty = the model's default like the four above. */
+  clipSkip: string;
+  guidance: string;
+  shift: string;
   seedPolicy: SeedPolicy;
   /** Only meaningful for `fixed` / `sequence`. */
   seed: string;
@@ -87,6 +91,9 @@ export const emptyDraft = (): ImagegenDraft => ({
   cfg: "",
   sampler: "",
   scheduler: "",
+  clipSkip: "",
+  guidance: "",
+  shift: "",
   seedPolicy: "random",
   seed: "",
   loras: [],
@@ -156,6 +163,9 @@ export function parseDraft(raw: string | null | undefined): ImagegenDraft {
     cfg: numText(p.cfg),
     sampler: str(p.sampler, 60),
     scheduler: str(p.scheduler, 60),
+    clipSkip: numText(p.clipSkip),
+    guidance: numText(p.guidance),
+    shift: numText(p.shift),
     seedPolicy: policy === "fixed" || policy === "sequence" ? policy : "random",
     seed: numText(p.seed),
     loras: loras(p.loras),
@@ -212,6 +222,9 @@ export function draftFromProperties(base: ImagegenDraft, props: ImageProperties)
   if (pm?.cfg != null) next.cfg = String(pm.cfg);
   if (pm?.sampler) next.sampler = pm.sampler;
   if (pm?.scheduler) next.scheduler = pm.scheduler;
+  if (pm?.clip_skip != null) next.clipSkip = String(pm.clip_skip);
+  if (pm?.guidance != null) next.guidance = String(pm.guidance);
+  if (pm?.shift != null) next.shift = String(pm.shift);
   if (props.loras?.length) next.loras = props.loras.map((l) => ({ name: l.name, ...(l.weight != null ? { weight: l.weight } : {}) }));
   if (props.op) next.op = OPS.includes(props.op) ? props.op : base.op;
   if (props.strength != null) next.strength = props.strength;
@@ -234,13 +247,23 @@ export function draftParams(d: ImagegenDraft): EngineParams | undefined {
   if (d.cfg.trim() && Number.isFinite(cfg)) p.cfg = cfg;
   if (d.sampler) p.sampler = d.sampler;
   if (d.scheduler) p.scheduler = d.scheduler;
+  const num = (s: string): number | undefined => {
+    const v = Number(s);
+    return s.trim() && Number.isFinite(v) ? v : undefined;
+  };
+  const clipSkip = num(d.clipSkip);
+  const guidance = num(d.guidance);
+  const shift = num(d.shift);
+  if (clipSkip != null) p.clip_skip = clipSkip;
+  if (guidance != null) p.guidance = guidance;
+  if (shift != null) p.shift = shift;
   return Object.keys(p).length ? p : undefined;
 }
 
-/** One sampler knob as a press would run it: the member's value when `draftParams` sends one,
+/** One sampler knob (including #1035's one-family three) as a press would run it: the member's value when `draftParams` sends one,
  *  else the model's default (`null` when the row declares none). */
 export interface EffectiveParam {
-  key: keyof Pick<EngineParams, "steps" | "cfg" | "sampler" | "scheduler">;
+  key: keyof Pick<EngineParams, "steps" | "cfg" | "guidance" | "shift" | "clip_skip" | "sampler" | "scheduler">;
   value: string | number | null;
   typed: boolean;
 }
@@ -256,7 +279,7 @@ export function effectiveParams(
   reads: (k: EffectiveParam["key"]) => boolean,
 ): EffectiveParam[] {
   const sent = draftParams(d) || {};
-  return (["steps", "cfg", "sampler", "scheduler"] as const)
+  return (["steps", "cfg", "guidance", "shift", "clip_skip", "sampler", "scheduler"] as const)
     .filter(reads)
     .map((key) =>
       sent[key] != null ? { key, value: sent[key]!, typed: true } : { key, value: defaults?.[key] ?? null, typed: false },

@@ -618,8 +618,10 @@ export function imagegenStatus(locale) {
             description: ja ? "文章で指示する系統" : "Prompted in sentences",
             family: "flux1",
             sizes: ["1024x1024", "1216x832"],
-            params: { steps: 20, sampler: "euler", scheduler: "simple" },
-            knobs: ["steps", "sampler", "scheduler"],
+            // #1035: flux1 reads guidance instead of cfg.
+            params: { steps: 20, sampler: "euler", scheduler: "simple", guidance: 3.5 },
+            knobs: ["steps", "guidance", "sampler", "scheduler"],
+            guidance_range: [2, 5],
             dialect: "sentences",
             quality_prefixes: [],
             steps_range: [16, 32],

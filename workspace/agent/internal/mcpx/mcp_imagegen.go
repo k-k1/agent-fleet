@@ -151,9 +151,9 @@ type imageGenArgs struct {
 	// Agent as the request it is and gets refused by value there, rather than being read here as
 	// "not given" and silently becoming the default.
 	strength *float64
-	// params is the sampler overlay (steps, cfg, sampler, scheduler). A POINTER because an absent
-	// object and an empty one must not become the same request downstream, and forwarded as
-	// typed: which family reads which of the four, and what the ceilings are, is the Agent's
+	// params is the sampler overlay (steps, cfg, sampler, scheduler, clip_skip, guidance, shift).
+	// A POINTER because an absent object and an empty one must not become the same request
+	// downstream, and forwarded as typed: which family reads which knob, and what the ceilings are, is the Agent's
 	// answer — this layer knows neither and must not narrow either.
 	params *imageGenParamsArg
 }
@@ -166,6 +166,9 @@ type imageGenParamsArg struct {
 	CFG       float64 `json:"cfg,omitempty"`
 	Sampler   string  `json:"sampler,omitempty"`
 	Scheduler string  `json:"scheduler,omitempty"`
+	ClipSkip  int     `json:"clip_skip,omitempty"`
+	Guidance  float64 `json:"guidance,omitempty"`
+	Shift     float64 `json:"shift,omitempty"`
 }
 
 // imageGenLoraArg is one entry of the tool's `loras` argument.

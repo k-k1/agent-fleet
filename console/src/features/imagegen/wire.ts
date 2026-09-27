@@ -34,7 +34,17 @@ export type SeedPolicy = "random" | "fixed" | "sequence";
  *  templates use; the Console must never keep a second copy (decision 4). `strength` is ADR
  *  0094 decision 12's addition — the first knob a family can answer false for (Qwen-Image-Edit
  *  fixes its denoise at 1). */
-export type Knob = "steps" | "cfg" | "sampler" | "scheduler" | "negative" | "strength";
+export type Knob =
+  | "steps"
+  | "cfg"
+  | "sampler"
+  | "scheduler"
+  | "negative"
+  | "strength"
+  // One family or two each: sd15/sdxl, flux1 and anima (#1035).
+  | "clip_skip"
+  | "guidance"
+  | "shift";
 
 /** The ComfyUI families the Agent has templates for. A row whose `base_model` is
  *  something else still renders — the family card is the only thing that goes missing. */
@@ -52,13 +62,16 @@ export type Family =
   | "qwen-image-2.1";
 
 /** The `params` overlay of decision 4, in the shape the catalogue row already uses.
- *  `clip_skip` and `weight` ride along on the catalogue's side; the form sends neither. */
+ *  `weight` rides along on the catalogue's side (a LoRA row's); the form never sends it.
+ *  `clip_skip` (sd15/sdxl), `guidance` (flux1) and `shift` (anima) are read by one family each. */
 export interface EngineParams {
   steps?: number;
   cfg?: number;
   sampler?: string;
   scheduler?: string;
   clip_skip?: number;
+  guidance?: number;
+  shift?: number;
   weight?: number;
 }
 
@@ -113,6 +126,9 @@ export interface ImagegenModel {
   steps_range?: [number, number];
   /** Absent for a family that does not read cfg. */
   cfg_range?: [number, number];
+  /** Present only on the family that reads that knob (flux1, anima). */
+  guidance_range?: [number, number];
+  shift_range?: [number, number];
   /** The steps a trial runs at (ADR 0081 decision 11). */
   trial_steps?: number;
 }

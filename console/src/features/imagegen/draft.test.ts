@@ -106,6 +106,12 @@ describe("params の重ね", () => {
     expect(draftParams(emptyDraft())).toBeUndefined();
     expect(draftParams({ ...emptyDraft(), steps: "20" })).toEqual({ steps: 20 });
     expect(draftParams({ ...emptyDraft(), cfg: "0" })).toEqual({ cfg: 0 });
+    expect(draftParams({ ...emptyDraft(), clipSkip: "2", guidance: "4.5", shift: "14" })).toEqual({
+      clip_skip: 2,
+      guidance: 4.5,
+      shift: 14,
+    });
+    expect(draftParams({ ...emptyDraft(), guidance: "abc" })).toBeUndefined();
   });
 });
 
@@ -160,12 +166,12 @@ describe("マスク", () => {
 
 // Review #9: the details summary reads the same rule as the request.
 describe("effectiveParams", () => {
-  const all = () => true;
+  const four = (k: string) => ["steps", "cfg", "sampler", "scheduler"].includes(k);
   const defaults = { steps: 28, cfg: 6, sampler: "dpmpp_2m", scheduler: "karras" };
 
   it("a value draftParams would send wins; the rest are the model's defaults", () => {
     const d = { ...emptyDraft(), cfg: "7", scheduler: "simple" };
-    expect(effectiveParams(d, defaults, all)).toEqual([
+    expect(effectiveParams(d, defaults, four)).toEqual([
       { key: "steps", value: 28, typed: false },
       { key: "cfg", value: 7, typed: true },
       { key: "sampler", value: "dpmpp_2m", typed: false },
@@ -174,14 +180,23 @@ describe("effectiveParams", () => {
   });
 
   it("a value the request drops (not a number) shows the default, not the text", () => {
-    expect(effectiveParams({ ...emptyDraft(), steps: "abc" }, defaults, all)[0]).toEqual({ key: "steps", value: 28, typed: false });
+    expect(effectiveParams({ ...emptyDraft(), steps: "abc" }, defaults, four)[0]).toEqual({ key: "steps", value: 28, typed: false });
   });
 
   it("a knob the family does not read is left out; no default is null", () => {
-    expect(effectiveParams(emptyDraft(), undefined, (k) => k !== "sampler").map((p) => [p.key, p.value])).toEqual([
+    expect(effectiveParams(emptyDraft(), undefined, (k) => four(k) && k !== "sampler").map((p) => [p.key, p.value])).toEqual([
       ["steps", null],
       ["cfg", null],
       ["scheduler", null],
+    ]);
+  });
+
+  it("#1035's knobs ride the same rule, after steps and cfg", () => {
+    const d = { ...emptyDraft(), guidance: "4", clipSkip: "x" };
+    expect(effectiveParams(d, { guidance: 3.5, shift: 3, clip_skip: 2 }, (k) => ["guidance", "shift", "clip_skip"].includes(k))).toEqual([
+      { key: "guidance", value: 4, typed: true },
+      { key: "shift", value: 3, typed: false },
+      { key: "clip_skip", value: 2, typed: false },
     ]);
   });
 });
