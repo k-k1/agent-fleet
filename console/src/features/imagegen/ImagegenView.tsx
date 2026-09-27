@@ -295,6 +295,31 @@ function StudioPane({
     };
   }, [live, running]);
 
+  // Presses this pane did not make — the agent's run_image_trial, another device, another pane
+  // on the same studio — enqueue jobs the poller above cannot know about: with nothing live it is
+  // not running. The studio's own polling carries every press into its log, so a press newer than
+  // the last one seen reads the job list once; a live job then hands over to the poller, and
+  // decision 2's cadence is unchanged.
+  const lastPress = useMemo(() => studio.log.reduce((m, e) => (e.kind === "press" && e.seq > m ? e.seq : m), 0), [studio.log]);
+  const pressSeen = useRef(0);
+  useEffect(() => {
+    if (lastPress <= pressSeen.current) return;
+    pressSeen.current = lastPress;
+    if (running) void jobsRef.current();
+  }, [lastPress, running]);
+  // The studio polls only while a session is bound, and nothing polls while the tab is hidden;
+  // coming back into view is when a phone would have missed a press, so read once then.
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  useEffect(() => {
+    if (!running) return;
+    const onVis = () => {
+      if (!document.hidden && !liveRef.current) void jobsRef.current();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [running]);
+
   // ADR 0082 unresolved question 2: with N fleet rows, each carries its OWN Studio answer —
   // two comfy rows can have overlapping model ids with different checkpoints behind them — so
   // silently driving the pane off "the first ready one" is right only while there is just one.
