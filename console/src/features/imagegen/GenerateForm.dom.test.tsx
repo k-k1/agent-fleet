@@ -221,17 +221,135 @@ describe("トリガー語のチップ", () => {
   });
 });
 
+const sizeChips = () => [...host.querySelectorAll<HTMLButtonElement>(".igen-size-chips .igen-chip")];
+const pressedChip = () => sizeChips().find((b) => b.getAttribute("aria-pressed") === "true")?.textContent?.trim();
+
 describe("編集のときの大きさ", () => {
   it("元画像の寸法が勝つので無効になり、理由が出る", async () => {
     await render(SDXL, { op: "edit" });
-    const size = fieldByLabel("大きさ") ?? fieldByLabel("Size");
-    expect((size as HTMLSelectElement).disabled).toBe(true);
+    expect(sizeChips().length).toBeGreaterThan(0);
+    expect(sizeChips().every((b) => b.disabled)).toBe(true);
+    expect(host.querySelector(".igen-size")!.textContent).toMatch(/元画像の大きさ|input's own dimensions/);
   });
 
   // ADR 0094 決定 4: sizes が空の族は disabled ではなく、欄そのものを描かない。
   it("qwen-image-edit-2509 は sizes が空なので欄ごと出ない", async () => {
     await render(QWEN_EDIT, { op: "edit" });
-    expect(fieldByLabel("大きさ") ?? fieldByLabel("Size")).toBeNull();
+    expect(host.querySelector(".igen-size")).toBeNull();
+  });
+});
+
+// The size is chips by orientation over the row's own list; draft.size keeps its WxH form.
+describe("大きさのチップ", () => {
+  const clickChip = async (label: RegExp) => {
+    const b = sizeChips().find((c) => label.test(c.textContent || ""))!;
+    await act(async () => b.click());
+  };
+  const alt = () => host.querySelector<HTMLSelectElement>(".igen-size-alt");
+
+  it("既定・縦・正方形・横が出て、未指定なら既定が押されている", async () => {
+    await render(SDXL);
+    expect(sizeChips().map((b) => b.textContent?.trim())).toEqual(["モデルの既定", "縦", "正方形", "横"]);
+    expect(pressedChip()).toBe("モデルの既定");
+    expect(alt(), "nothing picked: no dimension list").toBeNull();
+  });
+
+  it("縦を押すとその形の最初の寸法になり、同じ形の候補が選べる", async () => {
+    await render(SDXL);
+    await clickChip(/^縦$/);
+    expect(pressedChip()).toBe("縦");
+    // DEFAULT_SIZES lists 896x1152 before 832x1216.
+    expect(alt()!.value).toBe("896x1152");
+    expect([...alt()!.options].map((o) => o.value)).toEqual(["896x1152", "832x1216"]);
+    await clickChip(/^正方形$/);
+    // One square candidate: shown as text, no select.
+    expect(alt()).toBeNull();
+    expect(host.querySelector(".igen-size")!.textContent).toContain("1024x1024");
+    await clickChip(/既定/);
+    expect(pressedChip()).toBe("モデルの既定");
+  });
+
+  it("一覧に無い寸法（エージェントの値）も形のチップに乗り、値は残る", async () => {
+    await render(SDXL, { size: "768x1344" });
+    expect(pressedChip()).toBe("縦");
+    expect(alt()!.value).toBe("768x1344");
+    expect([...alt()!.options].map((o) => o.value)).toEqual(["768x1344", "896x1152", "832x1216"]);
+  });
+});
+
+// The folded details say what a press would use (the launch modal's rule).
+describe("詳細の要約行", () => {
+  const summary = () => host.querySelector(".igen-advanced-sum")!.textContent;
+  const PARAMS: ImagegenModel = { ...SDXL, params: { steps: 15, cfg: 5 } };
+
+  it("未入力ならモデルの既定を示し、seed の決め方も出る", async () => {
+    await render(PARAMS);
+    expect(host.querySelector<HTMLDetailsElement>(".igen-advanced")!.open, "folded by default").toBe(false);
+    expect(summary()).toBe("既定 15 steps · 既定 cfg 5 · sampler 既定 · scheduler 既定 · 毎回ランダム");
+  });
+
+  it("入力した値がそのまま出る", async () => {
+    await render(PARAMS, { steps: "30", cfg: "7", sampler: "euler", seedPolicy: "fixed", seed: "42", batchSize: 2 });
+    expect(summary()).toBe("30 steps · cfg 7 · euler · scheduler 既定 · seed 42 · 1 回 2 枚");
+  });
+
+  it("族が読まない摘みは要約にも出ない", async () => {
+    await render(FLUX);
+    expect(summary()).not.toContain("cfg");
+    expect(summary()).toContain("steps");
+  });
+
+  // Review #9: the line follows the same rule as the request (draftParams): a typed value is
+  // sent, an empty one leaves the model's default in force, and a knob the family does not read
+  // is not on the line at all.
+  const SAMPLED: ImagegenModel = { ...SDXL, params: { sampler: "dpmpp_2m", scheduler: "karras" } };
+
+  it("sampler も scheduler も未入力ならモデル既定の両方が出る", async () => {
+    await render(SAMPLED);
+    expect(summary()).toContain("既定 dpmpp_2m");
+    expect(summary()).toContain("既定 karras");
+  });
+
+  it("scheduler だけ入力しても既定の sampler は残る", async () => {
+    await render(SAMPLED, { scheduler: "simple" });
+    expect(summary()).toContain("既定 dpmpp_2m");
+    expect(summary()).toContain("simple");
+    expect(summary()).not.toContain("karras");
+  });
+
+  it("sampler を読まない族ではモデル既定の sampler も出ない", async () => {
+    const NO_SAMPLER: ImagegenModel = { ...SAMPLED, knobs: ["steps", "scheduler"] };
+    await render(NO_SAMPLER);
+    expect(summary()).not.toContain("dpmpp_2m");
+    expect(summary()).toContain("既定 karras");
+  });
+
+  // #1035 × review #9: the one-family knobs follow the same rule — declared by the family: typed
+  // or default; not declared (a carried-over value the Agent will not apply): not on the line.
+  it("guidance を読む族は既定の guidance が出て、入力するとその値になる", async () => {
+    const FLUX_G: ImagegenModel = { ...FLUX, knobs: ["steps", "guidance", "sampler", "scheduler"], params: { guidance: 3.5 } };
+    await render(FLUX_G);
+    expect(summary()).toContain("既定 guidance 3.5");
+    await render(FLUX_G, { guidance: "4" });
+    expect(summary()).toContain("guidance 4");
+    expect(summary()).not.toContain("3.5");
+  });
+
+  it("読まない族へ持ち越した guidance・shift・clip skip は要約に出ない", async () => {
+    await render(SDXL, { guidance: "5", shift: "3", clipSkip: "2" });
+    expect(summary()).not.toMatch(/guidance|shift|clip skip/);
+  });
+
+  it("shift と clip skip は宣言した族で出る（既定が無ければ「既定」）", async () => {
+    await render({ id: "anima", family: "anima", knobs: ["steps", "shift"], params: { shift: 3 } });
+    expect(summary()).toContain("既定 shift 3");
+    await render({ ...SDXL, knobs: [...SDXL.knobs!, "clip_skip"] });
+    expect(summary()).toContain("clip skip 既定");
+  });
+
+  it("操作が生成以外なら先頭に出る", async () => {
+    await render(SDXL, { op: "edit" });
+    expect(summary()?.startsWith("編集")).toBe(true);
   });
 });
 

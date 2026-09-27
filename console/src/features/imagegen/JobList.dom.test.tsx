@@ -24,7 +24,7 @@ const JOBS: Job[] = [
 ];
 const GROUPS: JobGroup[] = [{ id: "g1", label: "cfg sweep", state: "running", done: 1, failed: 0, total: 40 }];
 
-const render = async (paused = false) => {
+const render = async (paused = false, studioId?: string, jobs: Job[] = JOBS) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -32,7 +32,7 @@ const render = async (paused = false) => {
   await act(async () => {
     root.render(
       <JobList
-        rows={foldGroups(JOBS, groups)}
+        rows={foldGroups(jobs, groups)}
         queuePaused={false}
         queued={3}
         queueMax={200}
@@ -40,6 +40,7 @@ const render = async (paused = false) => {
         onGroupOp={(id, op) => groupOps.push([id, op])}
         onQueueOp={(op) => queueOps.push(op)}
         onCancelJob={(id) => cancelled.push(id)}
+        studioId={studioId}
       />,
     );
   });
@@ -104,8 +105,38 @@ describe("取消の単位", () => {
 
   it("行列全体の一時停止はグループ操作ではない", async () => {
     await render();
-    await act(async () => byText("すべて一時停止")?.click());
+    await act(async () => byText("ワークスペース全体を一時停止")?.click());
     expect(queueOps).toEqual(["pause"]);
+    // Every studio's batches stop, not just this one's: the button says so.
+    expect(byText("ワークスペース全体を一時停止")?.title).toContain("他のスタジオ");
     expect(groupOps).toEqual([]);
+  });
+});
+
+describe("他のスタジオのジョブ", () => {
+  const mixed: Job[] = [
+    ...JOBS.map((j) => ({ ...j, studio: "B" })),
+    { id: "mine", studio: "A", state: "done" },
+    { id: "sess", state: "done" },
+  ];
+
+  it("自分の行は外に、他のスタジオとスタジオ外の行は畳んだ中に薄く出る", async () => {
+    await render(false, "A", mixed);
+    const others = host.querySelector("details.igen-queue-others");
+    expect(others).toBeTruthy();
+    expect(others?.hasAttribute("open")).toBe(false);
+    expect(others?.querySelector("summary")?.textContent).toContain("1 件が進行中");
+    expect(others?.querySelectorAll(".igen-qrow.other")).toHaveLength(2);
+    const badges = [...(others?.querySelectorAll(".igen-badge.other") || [])].map((b) => b.textContent);
+    expect(badges).toEqual(["他のスタジオ", "スタジオ外"]);
+    const outside = [...host.querySelectorAll(".igen-qrow")].filter((r) => !r.closest("details"));
+    expect(outside).toHaveLength(1);
+    expect(outside[0].classList.contains("other")).toBe(false);
+  });
+
+  it("スタジオを渡さなければ全部を自分の行として出す", async () => {
+    await render(false, undefined, mixed);
+    expect(host.querySelector("details.igen-queue-others")).toBeNull();
+    expect(host.querySelectorAll(".igen-qrow")).toHaveLength(3);
   });
 });

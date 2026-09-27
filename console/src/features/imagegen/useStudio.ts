@@ -109,6 +109,8 @@ export interface StudioState {
   press: (mode: PressMode) => Promise<StudioPressResult | null>;
   rewind: (seq: number) => Promise<boolean>;
   setAgentTrial: (on: boolean) => void;
+  /** Rename; "" clears it back to the dated name. The Agent takes a title from a person only. */
+  setTitle: (title: string) => Promise<void>;
   /** Versions whose press_result did not append ("record pending"). */
   recordPending: ReadonlySet<string>;
   reload: () => Promise<void>;
@@ -320,7 +322,12 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
       if (document.hidden || dirtyRef.current || inflightRef.current) return;
       const r = await read();
       if (!r || dirtyRef.current || inflightRef.current) return;
-      if (r.updated_at !== baseRef.current?.updated_at || r.session !== baseRef.current?.session) adopt(r, "merge");
+      const base = baseRef.current;
+      if (r.updated_at !== base?.updated_at || r.session !== base?.session) adopt(r, "merge");
+      // A press and its result are log lines only: they do not move updated_at (the Agent's
+      // studio_press.go appends without touching the studio), so a trial the agent ran or a
+      // press from another device would never be adopted. The draft did not move, so keep it.
+      else if (lastSeq(r.recent_log) !== lastSeq(base?.recent_log)) adopt(r, "keep");
     };
     const t = window.setInterval(() => void tick(), POLL_MS);
     return () => window.clearInterval(t);
@@ -344,6 +351,14 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
         await flush();
         await put({ agent_trial: on });
       })();
+    },
+    [flush, put],
+  );
+
+  const setTitle = useCallback(
+    async (title: string) => {
+      await flush();
+      await put({ title });
     },
     [flush, put],
   );
@@ -459,6 +474,7 @@ export function useStudio(id: string, opts: { running: boolean }): StudioState {
     press,
     rewind,
     setAgentTrial,
+    setTitle,
     recordPending,
     reload,
     signal,

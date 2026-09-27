@@ -175,8 +175,8 @@ function contentFromFlat(p: any): PaneContent {
         : { kind: "terminal", chat: false };
     }
     // The studio id reaches API paths, so it is held to the Agent's own id shape (a UUID,
-    // ADR 0100). A layout from before the ADR has none, and a bad one is dropped to the
-    // studio-less pane rather than to a blank terminal — the draft is still there.
+    // ADR 0100). A layout from before the ADR has none, and a bad one is dropped to null rather
+    // than to a blank terminal: that pane makes itself a new studio on mount.
     case "imagegen": {
       const studioId = str(p.studioId);
       return { kind: "imagegen", studioId: studioId && STUDIO_ID_RE.test(studioId) ? studioId : null };

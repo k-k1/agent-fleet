@@ -75,20 +75,23 @@ const snapshot = () => available;
  * running workspace (and again when the tab becomes visible after the answer went stale);
  * a stopped workspace resets the answer, since the Agent that would answer is gone with it.
  */
-export function useImagegenAvailable(): boolean {
+export function useImagegenAvailable(opts: { passive?: boolean } = {}): boolean {
   const running = useWorkspaceStore((s) => wsRunning(s.state));
+  // Passive: a row that repeats once per working copy asks only when the answer is stale, so
+  // unfolding a tree of forty rows is not forty status reads.
+  const force = !opts.passive;
   useEffect(() => {
     if (!running) {
       resetImagegenAvailability();
       return;
     }
-    void refresh(true);
+    void refresh(force);
     const onVis = () => {
       if (!document.hidden) void refresh(false);
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, [running]);
+  }, [running, force]);
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 

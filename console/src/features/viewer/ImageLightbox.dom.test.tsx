@@ -220,3 +220,29 @@ describe("共有ライトボックスの送りとフォルダ", () => {
     expect(closed).toBe(0); // the bar keeps its clicks
   });
 });
+
+describe("the host's row of verbs (the image studio)", () => {
+  it("is absent unless the host passes one, so the other hosts' overlay is unchanged", async () => {
+    await render();
+    expect(host.querySelector(".mirror-lightbox-actions")).toBeNull();
+  });
+
+  it("draws the host's buttons, and a press there does not close the lightbox", async () => {
+    let used = 0;
+    await render({
+      actions: (
+        <button type="button" className="verb" onClick={() => used++}>
+          use
+        </button>
+      ),
+    });
+    const verb = host.querySelector(".mirror-lightbox-actions .verb") as HTMLElement;
+    expect(verb).not.toBeNull();
+    await clickAt(verb);
+    expect(used).toBe(1);
+    expect(closed).toBe(0);
+    // The row's gaps are the row's too, not the backdrop.
+    await clickAt(host.querySelector(".mirror-lightbox-actions") as HTMLElement);
+    expect(closed).toBe(0);
+  });
+});

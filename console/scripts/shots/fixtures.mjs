@@ -618,8 +618,10 @@ export function imagegenStatus(locale) {
             description: ja ? "文章で指示する系統" : "Prompted in sentences",
             family: "flux1",
             sizes: ["1024x1024", "1216x832"],
-            params: { steps: 20, sampler: "euler", scheduler: "simple" },
-            knobs: ["steps", "sampler", "scheduler"],
+            // #1035: flux1 reads guidance instead of cfg.
+            params: { steps: 20, sampler: "euler", scheduler: "simple", guidance: 3.5 },
+            knobs: ["steps", "guidance", "sampler", "scheduler"],
+            guidance_range: [2, 5],
             dialect: "sentences",
             quality_prefixes: [],
             steps_range: [16, 32],
@@ -647,6 +649,7 @@ export function imagegenJobs(locale) {
   const done = (n, seed) => ({
     id: `j${n}`,
     group: "g1",
+    studio: STUDIO_ID,
     state: "done",
     label: locale === "ja" ? "cfg 振り" : "cfg sweep",
     model: "illustrious-v2",
@@ -681,6 +684,7 @@ export function imagegenJobs(locale) {
     jobs: [
       {
         id: "t1",
+        studio: STUDIO_ID,
         state: "done",
         trial: true,
         model: "illustrious-v2",
@@ -696,6 +700,7 @@ export function imagegenJobs(locale) {
       {
         id: "j13",
         group: "g1",
+        studio: STUDIO_ID,
         state: "running",
         label: locale === "ja" ? "cfg 振り" : "cfg sweep",
         model: "illustrious-v2",
@@ -706,8 +711,12 @@ export function imagegenJobs(locale) {
         // No elapsed_ms while it runs: the Console subtracts started_at (lane A's ETag rule).
         started_at: iso(18),
       },
-      { id: "j14", group: "g1", state: "queued", position: 1, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
-      { id: "j15", group: "g1", state: "queued", position: 2, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
+      { id: "j14", group: "g1", studio: STUDIO_ID, state: "queued", position: 1, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
+      { id: "j15", group: "g1", studio: STUDIO_ID, state: "queued", position: 2, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
+      // Pressed in the other studio, and one a session made with generate_image: the studio pane
+      // folds both under "other studios and sessions" (ADR 0100 decision 10, revision 10).
+      { id: "k1", group: "g2", studio: OTHER_STUDIO_ID, state: "queued", position: 3, label: locale === "ja" ? "表紙" : "Cover", model: "illustrious-v2" },
+      { id: "s1", state: "done", model: "illustrious-v2", started_at: iso(900), finished_at: iso(880), files: [file(99, 1)] },
       done(12, 815_723_015),
       done(11, 815_723_014),
       done(10, 815_723_013),
@@ -1626,6 +1635,7 @@ export function sessionsBig(locale, lanes) {
 // for af's tools.
 
 export const STUDIO_ID = "5f0c2d1e-8a4b-4c3d-9e2f-1a2b3c4d5e6f";
+export const OTHER_STUDIO_ID = "0b7d9e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d";
 
 const studioDraft = (dark) => ({
   provider: "comfy",
@@ -1698,13 +1708,51 @@ export function imagegenStudio(locale, reads) {
 }
 
 export function imagegenStudios(locale) {
+  const created = imagegenCreatedList();
   return {
     studios: [
-      { id: STUDIO_ID, title: L(locale, "港の夕暮れ", "Harbour at dusk"), session: "swnd7qa", updated_at: ago(1) },
-      { id: "0b7d9e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d", title: L(locale, "表紙の案", "Cover ideas"), updated_at: ago(60 * 26) },
+      ...created,
+      { id: STUDIO_ID, title: L(locale, "港の夕暮れ", "Harbour at dusk"), session: "swnd7qa", created_at: ago(30), updated_at: ago(1) },
+      { id: OTHER_STUDIO_ID, title: L(locale, "表紙の案", "Cover ideas"), created_at: ago(60 * 30), updated_at: ago(60 * 26) },
     ],
   };
 }
+
+// Studios made by "+ New studio" or a pane's first open: untitled, empty, named by their date.
+const created = [];
+
+export function imagegenNewStudio(id, sent = null) {
+  const at = new Date().toISOString();
+  const s = {
+    id,
+    title: typeof sent?.title === "string" ? sent.title : "",
+    draft: sent?.draft && typeof sent.draft === "object" ? { ...sent.draft } : {},
+    agent_trial: true,
+    created_at: at,
+    updated_at: at,
+    recent_log: [],
+  };
+  created.unshift(s);
+  return s;
+}
+
+// A PUT on a studio made here: the merge patch applied (null clears a key), as the Agent does.
+export function imagegenPatchCreated(s, patch) {
+  if (patch && typeof patch === "object") {
+    for (const [k, v] of Object.entries(patch.draft || {})) {
+      if (v === null) delete s.draft[k];
+      else s.draft[k] = v;
+    }
+    if (typeof patch.title === "string") s.title = patch.title;
+    if (Array.isArray(patch.locks)) s.locks = patch.locks;
+    if (typeof patch.agent_trial === "boolean") s.agent_trial = patch.agent_trial;
+    s.updated_at = new Date().toISOString();
+  }
+  return s;
+}
+
+export const imagegenCreatedStudio = (id) => created.find((s) => s.id === id) || null;
+const imagegenCreatedList = () => created.map(({ id, title, created_at, updated_at }) => ({ id, title, created_at, updated_at }));
 
 // A page is oldest first, as the Agent slices it.
 export function imagegenDraftLog() {

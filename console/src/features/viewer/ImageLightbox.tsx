@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PointerEvent as RPointerEvent, MouseEvent as RMouseEvent } from "react";
+import type { PointerEvent as RPointerEvent, MouseEvent as RMouseEvent, ReactNode } from "react";
 import { ImageView, type ImageViewHandle } from "./ImageView.tsx";
 import { ImageProps } from "./ImageProps.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -20,7 +20,7 @@ import { useT } from "../../lib/i18n/index.ts";
 // must wire it (MirrorView does, GalleryView does). Without it a phone's Back press
 // jumps past the lightbox and navigates the pane away underneath it.
 //
-// Paging and "open the folder" are the host's too, and each control appears only when
+// Paging, "open the folder" and the bottom row of verbs are the host's too, and each control appears only when
 // its callback is passed — the mirror passes neither, so its bar is unchanged.
 //
 // The `mirror-lightbox` class names stay as they were when this lived under
@@ -58,9 +58,12 @@ interface Props {
   /** Extra class on the overlay. `over-modal` lifts it above a ui/Modal (z-index 100), for a
    *  lightbox opened from inside a dialog; the base 60 would leave it behind the backdrop. */
   className?: string;
+  /** The host's verbs on this picture, drawn as a row along the bottom (the image studio's
+   *  "use as reference" and the like). Absent = no row. */
+  actions?: ReactNode;
 }
 
-export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, index, total, onOpenFolder, path, className }: Props) {
+export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, index, total, onOpenFolder, path, className, actions }: Props) {
   const tr = useT();
   const view = useRef<ImageViewHandle>(null);
   const [scale, setScale] = useState(1);
@@ -128,7 +131,7 @@ export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, 
     down.current = null;
     if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > DRAG_SLOP) return; // a pan, not a click
     const el = e.target as HTMLElement | null;
-    if (el?.closest(".imgview-img, .mirror-lightbox-bar, .imgprops")) return; // the image, the controls and the properties panel keep their clicks
+    if (el?.closest(".imgview-img, .mirror-lightbox-bar, .mirror-lightbox-actions, .imgprops")) return; // the image, the controls and the properties panel keep their clicks
     onClose();
   };
 
@@ -220,6 +223,7 @@ export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, 
       </div>
       {path && showProps && <ImageProps path={path} />}
       <ImageView ref={view} src={src} placeholder={placeholder} alt={alt || tr("mirror.pasted_image_zoom")} onZoom={setScale} />
+      {actions && <div className="mirror-lightbox-actions">{actions}</div>}
     </div>
   );
 }

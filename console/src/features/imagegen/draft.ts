@@ -259,3 +259,29 @@ export function draftParams(d: ImagegenDraft): EngineParams | undefined {
   if (shift != null) p.shift = shift;
   return Object.keys(p).length ? p : undefined;
 }
+
+/** One sampler knob (including #1035's one-family three) as a press would run it: the member's value when `draftParams` sends one,
+ *  else the model's default (`null` when the row declares none). */
+export interface EffectiveParam {
+  key: keyof Pick<EngineParams, "steps" | "cfg" | "guidance" | "shift" | "clip_skip" | "sampler" | "scheduler">;
+  value: string | number | null;
+  typed: boolean;
+}
+
+/**
+ * The knobs a press would run, derived from `draftParams` so the summary and the request cannot
+ * disagree: a value the request would drop (empty, not a number) shows the model's default. A
+ * knob the family does not read (`reads` false) is left out, since neither value takes effect.
+ */
+export function effectiveParams(
+  d: ImagegenDraft,
+  defaults: EngineParams | undefined,
+  reads: (k: EffectiveParam["key"]) => boolean,
+): EffectiveParam[] {
+  const sent = draftParams(d) || {};
+  return (["steps", "cfg", "guidance", "shift", "clip_skip", "sampler", "scheduler"] as const)
+    .filter(reads)
+    .map((key) =>
+      sent[key] != null ? { key, value: sent[key]!, typed: true } : { key, value: defaults?.[key] ?? null, typed: false },
+    );
+}

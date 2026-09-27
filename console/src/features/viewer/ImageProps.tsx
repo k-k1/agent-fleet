@@ -20,8 +20,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { imageProperties, type ImageProperties } from "../imagegen/api.ts";
 import { folderOf } from "../imagegen/generatedBy.ts";
 import { openGeneratingSession, useGeneratingSession } from "../imagegen/useGeneratingSession.ts";
-import { currentDraft, openImagegen } from "../imagegen/open.ts";
-import { draftFromProperties } from "../imagegen/draft.ts";
+import { openImagegen } from "../imagegen/open.ts";
+import { draftFromProperties, emptyDraft } from "../imagegen/draft.ts";
 
 interface Row {
   key: string;
@@ -170,9 +170,9 @@ export function ImageProps({ path }: { path: string }) {
         <button
           type="button"
           className="ui-btn ui-btn-ghost"
-          // Lays the recovered fields over the draft as it stands, so what the picture did
-          // not carry keeps whatever the person had typed (draft.ts documents the rule).
-          onClick={() => openImagegen({ draft: draftFromProperties(currentDraft(), props) })}
+          // A new studio from the picture's recovered fields: the studio open elsewhere keeps
+          // its own draft rather than having this picture laid over it.
+          onClick={() => void openImagegen({ draft: draftFromProperties(emptyDraft(), props) })}
         >
           {tr("imggen.props_open_gen")}
         </button>

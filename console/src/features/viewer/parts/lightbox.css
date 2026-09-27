@@ -94,6 +94,39 @@
   }
 }
 
+/* The host's verbs on the picture (the image studio's). Along the bottom, centred and
+   wrapping, so a phone's thumb reaches them and the picture above stays whole. */
+.mirror-lightbox-actions {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  cursor: default;
+}
+.mirror-lightbox-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bar);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  opacity: 0.92;
+  cursor: pointer;
+}
+.mirror-lightbox-actions button:hover {
+  opacity: 1;
+}
+.mirror-lightbox-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* The properties panel (ADR 0081 decision 3). It lives HERE and not in imagegen.css
    because the lightbox is opened by the gallery and the mirror too, and a rule that only
    loads when the studio pane is mounted would leave the panel unstyled in the two places it

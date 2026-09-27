@@ -670,4 +670,5 @@ export const settings = {
   "instr.ws_required_title": "ワークスペースが停止しています",
   "instr.ws_required_hint": "指示の実体はワークスペース内のファイルなので、起動中のみ編集できます。",
   "instr.start_ws": "ワークスペースを起動",
+  "keys.cmd.newImagegenStudio": "新しい画像スタジオ",
 };

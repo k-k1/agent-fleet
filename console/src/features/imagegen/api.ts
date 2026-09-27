@@ -32,6 +32,7 @@ import type {
   StudioWire,
 } from "./wire.ts";
 import type { ApiError } from "../../core/api/client.ts";
+import { studiosChanged } from "./studioBus.ts";
 
 export * from "./wire.ts";
 
@@ -66,7 +67,13 @@ const studioPath = (id: string, rest = "") => `api/imagegen/studios/${encodeURIC
 
 export const listStudios = (): Promise<StudioList> => api("api/imagegen/studios");
 
-export const createStudio = (body: StudioCreate): Promise<StudioWire> => apiJSON("api/imagegen/studios", "POST", body);
+/** Every path that makes a studio comes through here, so here is where the other panes'
+ *  pickers hear of it. */
+export const createStudio = async (body: StudioCreate): Promise<StudioWire> => {
+  const s: StudioWire = await apiJSON("api/imagegen/studios", "POST", body);
+  if (s && !s.error && s.id) studiosChanged();
+  return s;
+};
 
 export const getStudio = (id: string): Promise<StudioWire> => api(studioPath(id));
 

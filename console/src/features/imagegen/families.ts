@@ -89,3 +89,26 @@ export function parseSize(size: string | undefined): [number, number] | null {
   const h = Number(m[2]);
   return w > 0 && h > 0 ? [w, h] : null;
 }
+
+/** The orientation chips the size field offers instead of a list of dimensions. */
+export type SizeShape = "portrait" | "square" | "landscape";
+export const SIZE_SHAPES: readonly SizeShape[] = ["portrait", "square", "landscape"];
+
+/** A size's orientation, or null for a value that is not `WxH`. */
+export function sizeShape(size: string | undefined): SizeShape | null {
+  const p = parseSize(size);
+  if (!p) return null;
+  return p[0] === p[1] ? "square" : p[0] < p[1] ? "portrait" : "landscape";
+}
+
+/** The size options grouped by orientation, each group in the list's own order — so a shape's
+ *  first entry is the one the Agent (or the family fallback) lists first, never a size the
+ *  browser picked. */
+export function sizesByShape(sizes: readonly string[]): Record<SizeShape, string[]> {
+  const out: Record<SizeShape, string[]> = { portrait: [], square: [], landscape: [] };
+  for (const s of sizes) {
+    const k = sizeShape(s);
+    if (k) out[k].push(s);
+  }
+  return out;
+}

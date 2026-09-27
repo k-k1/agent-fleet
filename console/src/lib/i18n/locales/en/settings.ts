@@ -676,4 +676,5 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "instr.ws_required_title": "The workspace is stopped",
   "instr.ws_required_hint": "Your instructions live in files inside the workspace, so they can only be edited while it runs.",
   "instr.start_ws": "Start the workspace",
+  "keys.cmd.newImagegenStudio": "New image studio",
 };

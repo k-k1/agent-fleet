@@ -384,7 +384,10 @@ export const ALL_COMMANDS: Command[] = [
   { id: "open.sessions", title: "keys.cmd.openSessions", seq: "g s", run: () => openSessionsOverview() },
   // The image-generation studio (ADR 0081 decision 6). It can be bound here — unlike the
   // gallery, which needs a folder — because it takes no argument at all, like the overview.
-  { id: "open.imagegen", title: "keys.cmd.openImagegen", seq: "g i", run: () => openImagegen() },
+  { id: "open.imagegen", title: "keys.cmd.openImagegen", seq: "g i", run: () => void openImagegen() },
+  // A second studio beside the first (ADR 0100 decision 10). Palette only: the g group's
+  // letters are spoken for, and this is not a many-times-a-day key.
+  { id: "open.imagegenNew", title: "keys.cmd.newImagegenStudio", run: () => void openImagegen({ fresh: true, newPane: true }) },
   // A gallery normally needs a folder, which is why the kind has no command of its own
   // (ADR 0080 decision 1). This one has a fixed target — where generate_image writes.
   { id: "open.generated", title: "keys.cmd.openGenerated", seq: "g g", run: () => openGeneratedGallery() },

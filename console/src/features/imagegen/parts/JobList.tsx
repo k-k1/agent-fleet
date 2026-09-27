@@ -7,12 +7,16 @@
 // Which verb is which unit is the part that is easy to get wrong and impossible to undo:
 // pause / resume / skip / abort are GROUP operations (the group is what the person
 // submitted), and only the per-job ✕ cancels one picture.
+//
+// The queue is the workspace's, shared by every studio (ADR 0100 decision 6). Given the pane's
+// studio, rows pressed elsewhere fold under one closed line: the member still sees why their
+// own batch waits, without taking another studio's batch for theirs.
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { IconButton } from "../../../ui/Button.tsx";
 import type { GroupOp, Job } from "../wire.ts";
 import { jobElapsedMs } from "../wire.ts";
-import { barSegments, etaBucket, etaMs, type JobRow } from "../jobs.ts";
+import { anyLive, barSegments, etaBucket, etaMs, splitRows, type JobRow } from "../jobs.ts";
 
 const STATE_KEY = {
   queued: "imggen.state_queued",
@@ -35,10 +39,14 @@ interface Props {
   onGroupOp: (id: string, op: GroupOp) => void;
   onQueueOp: (op: "pause" | "resume") => void;
   onCancelJob: (id: string) => void;
+  /** The pane's studio. Absent: every row is shown as the pane's own. */
+  studioId?: string;
 }
 
-export function JobList({ rows, queuePaused, queued, queueMax, now, onGroupOp, onQueueOp, onCancelJob }: Props) {
+export function JobList({ rows, queuePaused, queued, queueMax, now, onGroupOp, onQueueOp, onCancelJob, studioId }: Props) {
   const tr = useT();
+  const { own, other } = studioId ? splitRows(rows, studioId) : { own: rows, other: [] };
+  const otherLive = other.filter((r) => anyLive(r.jobs)).length;
   return (
     <section className="igen-queue">
       <header className="igen-queue-head">
@@ -49,18 +57,31 @@ export function JobList({ rows, queuePaused, queued, queueMax, now, onGroupOp, o
         <button
           type="button"
           className="ui-btn ui-btn-ghost"
+          title={tr("imggen.queue_all_hint")}
           onClick={() => onQueueOp(queuePaused ? "resume" : "pause")}
         >
           <Icon name={queuePaused ? "debug-continue" : "debug-pause"} />
           {queuePaused ? tr("imggen.resume_all") : tr("imggen.pause_all")}
         </button>
       </header>
-      {rows.length === 0 ? (
+      {own.length === 0 ? (
         <p className="igen-hint">{tr("imggen.queue_empty")}</p>
       ) : (
-        rows.map((row) => (
+        own.map((row) => (
           <QueueRow key={row.key} row={row} now={now} onGroupOp={onGroupOp} onCancelJob={onCancelJob} />
         ))
+      )}
+      {other.length > 0 && (
+        <details className="igen-queue-others">
+          <summary>
+            {otherLive
+              ? tr("imggen.queue_others_live", { n: other.length, live: otherLive })
+              : tr("imggen.queue_others", { n: other.length })}
+          </summary>
+          {other.map((row) => (
+            <QueueRow key={row.key} row={row} now={now} onGroupOp={onGroupOp} onCancelJob={onCancelJob} other />
+          ))}
+        </details>
       )}
     </section>
   );
@@ -71,11 +92,14 @@ function QueueRow({
   now,
   onGroupOp,
   onCancelJob,
+  other = false,
 }: {
   row: JobRow;
   now: number;
   onGroupOp: (id: string, op: GroupOp) => void;
   onCancelJob: (id: string) => void;
+  /** Pressed in another studio, or outside any (a session's generate_image). */
+  other?: boolean;
 }) {
   const tr = useT();
   const seg = barSegments(row, now);
@@ -87,8 +111,13 @@ function QueueRow({
   const pausedMin = row.group?.paused_at ? Math.floor((now - Date.parse(row.group.paused_at)) / 60_000) : 0;
 
   return (
-    <div className={"igen-qrow" + (paused ? " paused" : "")}>
+    <div className={"igen-qrow" + (paused ? " paused" : "") + (other ? " other" : "")}>
       <div className="igen-qrow-head">
+        {other && (
+          <span className="igen-badge other">
+            {row.jobs[0]?.studio ? tr("imggen.queue_other_studio") : tr("imggen.queue_no_studio")}
+          </span>
+        )}
         {row.trial && <span className="igen-badge trial">{tr("imggen.trial_row")}</span>}
         <span className="igen-qrow-label">{row.label || row.jobs[0]?.model || row.key}</span>
         <span className="igen-qrow-counts">{tr("imggen.group_counts", { done: row.done, total: row.total })}</span>

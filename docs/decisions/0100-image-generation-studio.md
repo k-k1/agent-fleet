@@ -8,6 +8,7 @@ English | [日本語](0100-image-generation-studio.ja.md)
   Nothing is implemented.
   Status update (2026-09-24): P0 is implemented. The prerequisites and the frozen contract landed as #924; the three lanes as #925 (CP relay), #926 (Agent, `workspace/agent/internal/imagegen/studio*.go`) and #927 (Console pane); and the integration with revision 8 as #932, merged on 2026-09-23. The P0 acceptance run on a deployment is #959; P1 is #960.
   Status update (2026-09-25): two facts in the context and in decision 8 no longer hold (#978, [docs/log/117](../log/117-managed-af-session-name-delivery.md)). copilot / cursor / kiro / muse Managed now deliver `AF_SESSION_NAME` to the af child; muse's af server already gets the Agent token on the wire (ADR 0095 P2-14). A codex Managed thread resumed into a replaced daemon keeps its name too: the "falls back to the cwd guess" below was measured against a live daemon only. Opening those kinds to studios and letting codex Managed turn the worktree off stay with #960.
+  Status update (2026-09-27): decision 10 is revised (revision 10) — the studio-less pane is gone. Its draft lived in one browser's `localStorage`, so what the member wrote on a PC never reached their phone; a studio needs no agent to exist (decision 2, step ①), so every pane now edits one and the draft follows the member across devices. Decision 2's "without a session the pane keeps working on the `localStorage` draft" no longer holds; the attach order ①–③ is unchanged except that ① is skipped (the pane already has its studio).
 - Follow-ups: #949, #956, #959, #960
 - **Revision 1 (2026-09-23)**: folds in the ADR review by another session, `semvs2b` (codex /
   gpt-6-sol), [113-adr-review](../log/113-adr-review.md) (9 red, 12 yellow, 1 blue). Decisions 3, 4,
@@ -39,6 +40,9 @@ English | [日本語](0100-image-generation-studio.ja.md)
   §10 — **0 new red**, 2 yellow). Fixed copies and uploads always live in different places; a partial
   trailing JSONL line is truncated by the writer and skipped by readers. The reviewer's verdict:
   presentable as proposed.
+- **Revision 10 (2026-09-27)**: the user's request ("several studios", "use it from the phone").
+  **Every imagegen pane edits a studio**; the studio-less pane and its `localStorage` draft are
+  retired. Decision 10 gained the rules for opening, creating and naming studios.
 - **Revision 9 (2026-09-24)**: the user's decision. Prompts are written differently per model
   (SDXL-family, anima and Qwen-Image are built differently), so **the studio's conversation does not
   start until a model is chosen**. Decisions 2, 3 and 5 changed.
@@ -367,6 +371,29 @@ execution method, repository as cwd, subdir, worktree (default on), permission s
 Opening the same session in a mirror pane is redirected to the imagegen pane (composer drafts,
 attachment drafts and send echoes would otherwise overwrite each other). Deleting a studio deletes
 its draft and versions; pictures stay.
+
+**Revision 10 (2026-09-27)**: there is no studio-less pane. The text above stands with these changes:
+
+- Opening image generation with no studio named opens the one this browser opened last, unless the
+  Agent answers `not_found`; otherwise the studio changed most recently (the list's newest
+  `updated_at`, whichever device changed it), and only when there is none does it **create an empty
+  studio** (decision 2, step ① alone — no session). A browser that remembers nothing therefore
+  continues the member's latest studio instead of adding an empty one. Deleting a studio forgets it
+  only if it was the remembered one. "Open in image generation" from a picture's properties creates a new studio from
+  the picture's recovered fields rather than overwriting the one on screen. One creation at a time
+  per trigger, so a double press makes one studio.
+- `studioId: null` survives only in stored layouts from before this revision. Such a pane moves the
+  browser's `localStorage` draft into a new studio on mount, retargets itself to it and deletes the
+  local copy; a failed create keeps the draft and offers a retry.
+- The picker offers **"New studio"**, which opens a new empty studio in a new pane, leaving the
+  current one as it is. On a phone (the 760px breakpoint, outside tabs mode) "in a new pane" would
+  split the one column into two unusable halves, so there it replaces the current pane — the picker
+  goes back; this applies to every `newPane` open of a studio. An untitled studio is named by its `created_at` (the list route carries it),
+  not by an id fragment. A person renames a studio from the pane's settings (`title`, human-only,
+  200 characters).
+- Results, the trial slot and the history reload follow **the pane's own studio's jobs** (the
+  job's `studio`); the queue stays shared (decision 6), with other studios' rows folded away.
+- Deleting a studio moves the pane to the newest studio no other pane shows, else to a new one.
 
 ### Decision 11 — Inpaint completes inside the studio. A person paints the mask, the agent writes the instruction
 

@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const calls: string[] = [];
+let putStatus = 200;
 vi.mock("../../core/api/client.ts", () => ({
   raw: async (path: string, init?: { method?: string }) => {
     calls.push(`${init?.method || "GET"} ${path}`);
@@ -24,6 +25,11 @@ vi.mock("./api.ts", () => ({
   },
   createStudio: async () => ({ id: "st1" }),
   studioPersona: async () => ({ prompt: "persona", lang: "ja" }),
+  getStudio: async () => null,
+  patchStudio: async (id: string, body: unknown, ifMatch: string) => {
+    calls.push(`put ${id} ${ifMatch} ${JSON.stringify(body)}`);
+    return { status: putStatus };
+  },
 }));
 
 import { attachAgent } from "./attach.ts";
@@ -38,5 +44,43 @@ describe("switching the studio's agent", () => {
     });
     expect(r).toEqual({ studioId: "st1", session: "snew001" });
     expect(calls).toEqual(['bind st1 ""', "POST api/sessions/sold001/halt", "POST api/sessions studio=st1"]);
+  });
+});
+
+describe("attaching to an existing studio", () => {
+  it("writes the dialog's model and the default title before the persona is read", async () => {
+    calls.length = 0;
+    const r = await attachAgent({
+      studioId: "st1",
+      draft: () => ({}),
+      existing: { title: "", updatedAt: "v1", draft: { provider: "comfy", model: "old" } },
+      opts: { dir: "", kind: "claude", driver: "tui", imageProvider: "comfy", imageModel: "flux", place: "" } as never,
+    });
+    expect(r.session).toBe("snew001");
+    expect(calls[0]).toBe('put st1 v1 {"author":"human","draft":{"model":"flux"},"title":"ホーム · Claude Code"}');
+  });
+  it("leaves a named studio's title and an unchanged model alone", async () => {
+    calls.length = 0;
+    await attachAgent({
+      studioId: "st1",
+      draft: () => ({}),
+      existing: { title: "mine", updatedAt: "v1", draft: { provider: "comfy", model: "flux" } },
+      opts: { dir: "", kind: "claude", driver: "tui", imageProvider: "comfy", imageModel: "flux", place: "" } as never,
+    });
+    expect(calls.some((c) => c.startsWith("put"))).toBe(false);
+  });
+  it("does not start the agent when only the provider changed and the write failed", async () => {
+    calls.length = 0;
+    putStatus = 500;
+    const r = await attachAgent({
+      studioId: "st1",
+      draft: () => ({}),
+      existing: { title: "mine", updatedAt: "v1", draft: { provider: "comfy-a", model: "sdxl" } },
+      opts: { dir: "", kind: "claude", driver: "tui", imageProvider: "comfy-b", imageModel: "sdxl", place: "" } as never,
+    });
+    putStatus = 200;
+    expect(r.session).toBeUndefined();
+    expect(r.error).toBeTruthy();
+    expect(calls.some((c) => c.startsWith("POST api/sessions"))).toBe(false);
   });
 });

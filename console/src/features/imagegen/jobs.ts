@@ -92,6 +92,28 @@ export function foldGroups(jobs: Job[] | undefined, groups: JobGroup[] | undefin
   return order.map((k) => rows.get(k)!);
 }
 
+/**
+ * The jobs a studio pane calls its own: the ones its presses made. The queue is the
+ * workspace's (decision 6), but results, the trial slot and the history reload are per studio
+ * — without this, a picture pressed in one studio appears as the latest trial of every other
+ * studio open beside it. A job with no `studio` (a session's `generate_image`, an older Agent)
+ * belongs to none.
+ */
+export const studioJobs = (jobs: Job[] | undefined, studioId: string): Job[] =>
+  studioId ? (jobs || []).filter((j) => j.studio === studioId) : [];
+
+/** A queue row pressed in `studioId`. Every job of a row comes from one press, so the first
+ *  job speaks for the row. */
+export const rowOfStudio = (row: JobRow, studioId: string): boolean => !!studioId && row.jobs[0]?.studio === studioId;
+
+/** Split the shared queue into this studio's rows and everyone else's, keeping the order. */
+export function splitRows(rows: JobRow[], studioId: string): { own: JobRow[]; other: JobRow[] } {
+  const own: JobRow[] = [];
+  const other: JobRow[] = [];
+  for (const r of rows) (rowOfStudio(r, studioId) ? own : other).push(r);
+  return { own, other };
+}
+
 /** What the header says about the engine box, in the member's words (decision 10). */
 export type EngineState = "ready" | "cold" | "starting" | "unavailable";
 

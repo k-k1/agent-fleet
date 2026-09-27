@@ -6,7 +6,7 @@
   /* The two-column split is decided by the PANE's width, not the window's: a studio in one
      of four columns is narrow on a desktop. Every other pane view declares the same
      container so `@container paneview` means the same thing everywhere. */
-  container: paneview / inline-size;
+  container: paneview igenpane / inline-size;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -173,6 +173,66 @@
   max-width: 220px;
 }
 
+/* The model pickers and the engine state (StudioEngineBar) are drawn twice: inline in the head
+   of a wide pane, and as a full-width band atop the settings tab of a narrow one. The head is a
+   single nowrap row under the pane's own overlaid buttons; at phone width seven items in it left
+   the model select zero pixels wide, and a studio without a model cannot do anything. */
+.igen-enginebar-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.igen-enginebar-band {
+  display: none;
+}
+
+@container paneview (max-width: 720px) {
+  .igen-enginebar-head,
+  .igen-title-text,
+  .igen .igen-head-refresh {
+    display: none;
+  }
+  .igen .view-title {
+    flex: none;
+  }
+  /* ds-select's 200px floor is what pushed the head's last buttons under the pane's own. */
+  .igen .igen-studio-pick {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .igen-enginebar-band {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .igen-enginebar-band .igen-head-model {
+    display: flex;
+    flex: 1 1 100%;
+    gap: 8px;
+  }
+  .igen-enginebar-band .igen-head-model .igen-field {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .igen-enginebar-band .igen-head-model .ds-select {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+  .igen-enginebar-band .igen-engine-hint {
+    flex: 1 1 0;
+    white-space: normal;
+  }
+  .igen-band-refresh {
+    margin-left: auto;
+  }
+}
+
 .igen-studio-menu {
   position: relative;
 }
@@ -220,7 +280,6 @@
 .igen-lock {
   display: inline-flex;
   margin-left: 6px;
-  cursor: pointer;
   color: var(--muted);
   vertical-align: middle;
 }
@@ -425,6 +484,40 @@
   align-items: center;
 }
 
+/* Last time's settings, folded: one line that names every value the start will use. */
+.igen-attach-last {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.igen-attach-last-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-attach-last-sum {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.igen-attach-place {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.igen-attach-place-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .igen-redirect {
   display: flex;
   flex-direction: column;
@@ -461,8 +554,7 @@
   background: var(--err);
 }
 
-.igen-engine-hint,
-.igen-cost {
+.igen-engine-hint {
   font-size: 11px;
   min-width: 0;
   overflow: hidden;
@@ -663,6 +755,96 @@
   cursor: pointer;
   font-size: 11px;
   color: var(--muted);
+}
+
+/* The folded line carries the values a press will use, so it has to stay readable at a
+   glance: the name in the body colour, the values muted, cut with an ellipsis on a phone. */
+.igen-advanced-title {
+  color: var(--fg);
+  margin-right: 8px;
+}
+
+.igen-advanced-sum {
+  overflow-wrap: anywhere;
+}
+
+.igen-hl-mark {
+  margin-left: 6px;
+  color: var(--accent);
+}
+
+.igen-lockset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 10px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.igen-lockset > legend {
+  padding: 0 4px;
+}
+
+/* ── size chips ───────────────────────────────────────────────────── */
+
+/* Spans the knob grid: four chips and a select do not fit a 140px track. */
+.igen-size {
+  grid-column: 1 / -1;
+}
+
+.igen-size-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Tap-sized: this row replaced a native select, which a phone already made big enough. */
+.igen-size-chips .igen-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 14px;
+}
+
+.igen-size-chips .igen-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.igen-size-chips .igen-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.igen-shape {
+  display: inline-block;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.igen-shape-portrait {
+  width: 8px;
+  height: 12px;
+}
+
+.igen-shape-square {
+  width: 10px;
+  height: 10px;
+}
+
+.igen-shape-landscape {
+  width: 12px;
+  height: 8px;
+}
+
+.igen .igen-size-alt {
+  align-self: flex-start;
+  min-width: 0;
+  max-width: 200px;
 }
 
 .igen-inputs {
@@ -950,4 +1132,232 @@
   font-size: 12px;
   color: var(--warn);
   border-top: 1px solid var(--border);
+}
+
+/* ── the narrow pane's loop: draft bar, tab marks (lane L4) ─────────── */
+
+/* The draft bar lives in the conversation column and matters only while the draft column is
+   folded away; three columns show the draft itself. It asks the STUDIO's width by name: it is
+   drawn inside the mirror, which declares a `paneview` container of its own, and that one is
+   narrow in every layout. */
+.igen-draftbar {
+  display: none;
+}
+
+@container igenpane (max-width: 720px) {
+  .igen-draftbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0 4px;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    cursor: pointer;
+    flex: none;
+  }
+}
+
+/* The agent changed the draft: an accent edge, and one soft pulse when it appears. */
+.igen-draftbar-hl {
+  border-color: var(--accent);
+  animation: igen-draftbar-pulse 1.2s ease-out 2;
+}
+
+@keyframes igen-draftbar-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .igen-draftbar-hl {
+    animation: none;
+  }
+}
+
+.igen-draftbar-thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.igen-draftbar-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.igen-draftbar-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 2px 0;
+  font: inherit;
+  text-align: left;
+  color: var(--fg);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.igen-draftbar-prompt,
+.igen-draftbar-model {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.igen-draftbar-prompt {
+  font-size: 13px;
+}
+
+.igen-draftbar-model {
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.igen-draftbar-dot,
+.igen-tab-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+/* Finger-sized on the phone the bar exists for. */
+.igen-draftbar-btn {
+  flex: none;
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+.igen-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.igen-tab-badge {
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 8px;
+  color: var(--bg);
+  background: var(--accent);
+}
+
+.igen-tab-dot-working {
+  background: var(--muted);
+  animation: igen-tab-blink 1.4s ease-in-out infinite;
+}
+
+.igen-tab-dot-ask {
+  background: var(--warn);
+}
+
+@keyframes igen-tab-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .igen-tab-dot-working {
+    animation: none;
+  }
+}
+
+/* The no-session state holds the bar at the column's foot. */
+.igen-agent-none {
+  justify-content: space-between;
+}
+
+/* Queue rows pressed in another studio (or outside any): folded, and dimmed when opened, so
+   they read as the shared queue's context rather than this studio's own batches. */
+.igen-queue-others > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.igen-qrow.other {
+  opacity: 0.6;
+}
+
+.igen-badge.other {
+  color: var(--muted);
+}
+
+/* "N pictures are ready": the pane's own line between the tab strip and the columns. In the
+   flow, so it pushes the content down instead of covering the app's bars or the composer. */
+.igen-done-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 12px 0;
+  padding: 4px 6px 4px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: 6px;
+  background: var(--panel);
+  flex: none;
+}
+
+.igen-done-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.igen-done-x {
+  display: inline-flex;
+  padding: 4px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.igen-done-note > .codicon:first-child {
+  color: var(--ok);
+}
+
+/* The narrow pane's conversation needs every line (measured at 390x500, keyboard up: 31 px of
+   transcript). The agent head fits one line, and while the member types in the composer the
+   draft bar and the head step aside; they come back on blur. Focus on the bar's own buttons
+   does not count, so the bar never moves under a finger that is pressing it. */
+@container igenpane (max-width: 720px) {
+  .igen-agent-head {
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+  }
+  .igen-agent-head .igen-chip-extra,
+  .igen-agent-replace-label {
+    display: none;
+  }
+  .igen-agent:has(.mirror-compose textarea:focus) .igen-draftbar,
+  .igen-agent:has(.mirror-compose textarea:focus) .igen-agent-head {
+    display: none;
+  }
 }
