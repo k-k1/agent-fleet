@@ -146,6 +146,19 @@ describe("ModelInfoLine", () => {
     expect(host.querySelector(".model-info-price")?.textContent).toContain("$0.10");
   });
 
+  it("describes the recommended model when the inherited one is hidden, as the Agent runs it", async () => {
+    setSetting("hiddenModels", { codex: ["gpt-5.5"] });
+    answer = {
+      models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", info: { price: { in: 0.1, out: 0.5 } } }],
+      recommended: { chat: "gpt-6-luna", prose: "gpt-6-luna", short: "gpt-6-luna" },
+    };
+    await render(
+      <AiModelRow kind="codex" tier="short" value="__follow__" extraOption={["__follow__", "follow"]} inherited="gpt-5.5" onChange={() => {}} />,
+    );
+    expect(host.querySelector(".model-info-price")?.textContent).toContain("$0.10");
+    setSetting("hiddenModels", {});
+  });
+
   it("draws no line for a model the Agent says nothing about", async () => {
     answer = { models: [{ id: "auto", label: "Auto" }, { id: "claude-sonnet-4.5", label: "Sonnet" }] };
     await mount("kiro", "claude-sonnet-4.5");

@@ -99,10 +99,16 @@ export function AiModelRow({
   // treats a hidden value as unset and falls back to the recommendation, so adding it back
   // would make the display the thing that lies.
   const hidden = useHiddenModel(kind, value);
-  // The line under the row describes what runs: for "推奨" that is the model it resolves to.
+  // The line under the row describes what runs: for "推奨" that is the model it resolves to,
+  // and so it is for a hidden model, which the Agent treats as unset (see above).
   const effective = extraOption && value === extraOption[0] ? inherited : value;
+  const effectiveHidden = useHiddenModel(kind, effective || "");
   const described =
-    effective === undefined || effective === ASSISTANT_RECOMMENDED_MODEL ? (recommendedHidden ? "" : recommendedId) : effective;
+    effective === undefined || effective === ASSISTANT_RECOMMENDED_MODEL || effectiveHidden
+      ? recommendedHidden
+        ? ""
+        : recommendedId
+      : effective;
   const options =
     value && !hidden && !choices.some(([id]) => id === value)
       ? [...choices, [value, value] as [string, string]]
