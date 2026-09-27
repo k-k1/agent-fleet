@@ -2,10 +2,11 @@
 
 [English](README.md) | 日本語
 
-**PCを閉じても、AIの仕事は止まらない。**
+**エージェントは置き換えない。運用する。**
 
-Claude Code、Codex、Copilot、Cursor など複数のコーディングエージェントを
-サーバー上で並行稼働させ、ひとつの画面からオーケストレーション。
+Claude Code、Codex、Copilot、Cursor など複数のコーディングエージェントを、
+そのままの姿でサーバー上で並行稼働させ、ひとつの画面から運用。
+PC を閉じても、エージェントの仕事は止まりません。
 ターミナルに張り付く必要はなく、必要なセッションへいつでもアタッチ。
 Discord、Slack、スマホのブラウザから進捗を確認し、どこからでも次の指示を送れます。
 セッションのタイトルと最適な指示の提案が、「何を任せていたか」と
@@ -18,7 +19,9 @@ Discord、Slack、スマホのブラウザから進捗を確認し、どこか�
 
 ## Agent Fleet とは
 
-Agent Fleet は、AI コーディングエージェント（Claude Code / Codex CLI /
+Agent Fleet は新しいエージェントフレームワークではありません。いま使っている CLI を
+ログイン・モデル・振る舞いごとそのまま動かし、その周りの運用を引き受けます。
+AI コーディングエージェント（Claude Code / Codex CLI /
 GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code、そして
 フリート自身の llama.cpp ハーネス）を「フリート」として
 まとめて運用するための、セルフホスト型の Web コンソールです。利用者ごとに隔離された
@@ -33,7 +36,8 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code�
   GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode / Muse Code のセッションと、
   フリート自身のチャットエンジン上の llama.cpp セッションを並べて実行。
   セッション毎のモデル選択に対応し、CLI の版は動作検証済みの組み合わせにピン止め
-  （self-update は opt-in）。
+  （self-update は opt-in）。上流が新しい版を出すと、毎日の監視が実物の CLI で契約テストを
+  走らせます（[仕組み](https://github.com/k-k1/agent-fleet/blob/develop/docs/build/10-development.ja.md#上流-cli-の破壊検知版ドリフト監視--contract-テスト)）。
 - **異なるエージェント同士が協働する** — セッションは別種のセッションを子として
   起こせます（claude がレビューを codex に、codex が下請けを opencode に）。子は
   それぞれ自分の worktree で動き、親は指示し、出力を読み、完了時に報告を 1 通
@@ -56,7 +60,8 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code�
 - **起動中アプリのライブプレビュー** — ワークスペース内で起動した Web アプリ
   （Vite HMR・WebSocket・Spring Boot 等）を埋め込みブラウザペインで表示。
   ポートは軽量プレビューでも開けます。
-- **設計段階からマルチユーザー** — Google OAuth ログイン、テナントとロール
+- **設計段階からマルチユーザー** — 自社の IdP（Google・Microsoft Entra ID・Okta などの OIDC）での
+  ログイン、テナントとロール
   （member / admin / operator）、ユーザー毎のネットワーク分離、秘密情報の
   at-rest 封筒暗号、ワークスペース毎のメモリクォータ。ワークスペースは分離したまま、
   **セッション単位・プロジェクト単位で会話を他のメンバーへ共有**できます（閲覧のみ／
@@ -180,7 +185,7 @@ Kiro はアシスタントチャットとしては**利用できません**（he
 | 状況 | 版 | 必要なもの |
 |---|---|---|
 | WSL2 や単一ユーザー Linux で個人利用・Docker なし | **Native**（下記） | unprivileged user namespaces が使える x86_64 Linux/WSL2（素の WSL2 は可）、`curl` か `wget`、ディスク ~1.5 GB |
-| 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用 Google OAuth 2.0 クライアント |
+| 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用の IdP クライアント（Google OAuth 2.0 クライアントまたは OIDC アプリ） |
 
 全版共通: 各ワークスペースの初回起動時にエージェント CLI のピン版導入で一度だけ
 外向きネットワークが必要です（air-gap の代替手順は各同梱 README に記載）。また
@@ -258,12 +263,12 @@ compose バンドル（`agent-fleet-<版>.tar.gz`）は
 ```bash
 curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash
 cd agent-fleet-<版>
-cp .env.example .env     # 秘密・ドメイン・Google OAuth を記入（下記も参照）
+cp .env.example .env     # 秘密・ドメイン・IdP クライアントを記入（下記も参照）
 docker compose up -d
 ```
 
 native 版と違い**完全なワンライナーにはなりません**: `docker compose up` の前に
-`.env`（秘密・`PUBLIC_DOMAIN`・Google OAuth・任意で下記の git プロバイダ OAuth 変数）を
+`.env`（秘密・`PUBLIC_DOMAIN`・IdP クライアント）を
 編集する必要があります。版を固定するなら `AF_VERSION=<版>` を前置し、`AF_SKIP_PULL=1`
 で pull を省けます（`docker compose up` がどのみち pull します）。手動が良ければ
 バンドルを DL 後、`sha256sum -c --ignore-missing SHA256SUMS`・`tar xzf`。
@@ -328,9 +333,11 @@ rm -rf ~/.local/opt/agent-fleet
   あります。受け取った人が原典を辿れるようにするためです。
 - 本配布物のイメージと rootfs は **lean 構成**（エージェント CLI を焼き込まない
   ビルド）です。エージェント CLI（Claude Code / Codex / GitHub Copilot /
-  Antigravity / Cursor / Kiro / OpenCode）の本体は同梱せず、各ワークスペースの初回起動時に、
-  利用者ごとにそれぞれの公式配布元から検証済みのピン版を取得し、各自のアカウントで
-  サインインします。Muse Code も同梱せず、利用者が求めたときにその人のホームへ取得します。本配布物は、プロプライエタリな CLI を再配布しません。
+  Antigravity / Cursor / Kiro / OpenCode / Muse Code）の本体は同梱せず、利用者ごとに
+  それぞれの公式配布元から検証済みのピン版を取得し、各自のアカウントでサインインします。
+  取得するのは多くがワークスペースの初回起動時で、Kiro（約 855MB）は初めて Kiro
+  セッションを起動したとき、Muse Code は利用者が接続カードからインストールしたときです。
+  本配布物は、プロプライエタリな CLI を再配布しません。
 - 同梱している OSS の帰属表示は、各 tar 内の `NOTICE` を参照してください。
 
 ## 免責事項 — エージェントの自律実行について
