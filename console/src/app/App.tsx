@@ -24,6 +24,7 @@ import {
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { wireSessionPaneReconcile } from "../features/sessions/paneReconcile.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
+import { AwsLoginHost } from "../features/awslogin/AwsLoginHost.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
 import { NotProvisioned } from "../features/auth/NotProvisioned.tsx";
@@ -564,6 +565,7 @@ export function App() {
       {guideOpen && <GuideModal />}
       <StartHost />
       <SessionModals />
+      <AwsLoginHost />
       <WsStartingDialog />
       <AuthExpiredModal />
       <ProviderRequiredModal />

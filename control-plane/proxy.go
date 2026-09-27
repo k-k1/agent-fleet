@@ -78,6 +78,13 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// rev/at/scope is what actually governs, and what happened is recorded in the
 			// repo's restore commit (AF-Restore-Rev / -Scope).
 			return "memory.restore", q.Get("rev"), true
+		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/start"):
+			// ADR 0102. The request id is from the URL; the profile is only the Console's
+			// hint in the query (the Agent decides from the id alone), so it is labelled one.
+			// The code never passes through here.
+			return "aws.login.start", awsLoginAuditTarget(p, q), true
+		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/cancel"):
+			return "aws.login.cancel", awsLoginAuditTarget(p, q), true
 		case p == "/api/sessions":
 			return "session.create", "", true
 		case name != "" && strings.HasSuffix(p, "/fork"):
@@ -112,6 +119,13 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// awsLoginAuditTarget names an AWS login request by its id, with the profile hint the
+// Console sends.
+func awsLoginAuditTarget(p string, q url.Values) string {
+	id, _, _ := strings.Cut(strings.TrimPrefix(p, "/api/aws-login/"), "/")
+	return id + " (profile hint: " + q.Get("profile") + ")"
 }
 
 // agentProxyAPI is the set of pass-through proxies to the Workspace Agent. Resolution
@@ -185,6 +199,9 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
+	// A hint for the Agent's own log (ADR 0102 decision 4): an agent calling the Agent
+	// directly can set it too, so the Agent never decides anything on it.
+	req.Header.Set("X-AF-Relay", "cp")
 
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {

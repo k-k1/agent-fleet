@@ -99,12 +99,8 @@ func parseSSMLogin(buf string, alive bool) ssmLoginStatus {
 	if strings.Contains(buf, "Starting session with SessionId:") {
 		return ssmLoginStatus{Phase: "ready"}
 	}
-	url := ssmURLWithCode.FindString(buf)
-	if url == "" {
-		url = ssmDeviceURL.FindString(buf)
-	}
-	if url != "" {
-		return ssmLoginStatus{Phase: "authorize", URL: url, Code: ssmCodeRe.FindString(buf)}
+	if url, code := DeviceAuthorization(buf); url != "" {
+		return ssmLoginStatus{Phase: "authorize", URL: url, Code: code}
 	}
 	if !alive {
 		// The pane's program (exec aws ssm start-session) exited before establishing —
@@ -116,6 +112,21 @@ func parseSSMLogin(buf string, alive bool) ssmLoginStatus {
 		return ssmLoginStatus{Phase: "error", Message: msg}
 	}
 	return ssmLoginStatus{Phase: "pending"}
+}
+
+// DeviceAuthorization picks the verification URL and the user code out of what
+// `aws sso login --use-device-code` printed; url is "" while neither is there yet. The
+// patterns accept any https host, so a caller that shows the URL to a person checks the
+// host itself.
+func DeviceAuthorization(out string) (url, code string) {
+	url = ssmURLWithCode.FindString(out)
+	if url == "" {
+		url = ssmDeviceURL.FindString(out)
+	}
+	if url == "" {
+		return "", ""
+	}
+	return url, ssmCodeRe.FindString(out)
 }
 
 // lastNonEmptyLines returns up to n trailing non-blank lines of s, joined by newlines.

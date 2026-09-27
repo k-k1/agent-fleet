@@ -313,8 +313,15 @@ af-aws-exec --profile <name> -- npx cdk deploy
   endpoint overrides ignored — and then checked with AWS to be a session of that profile's permission-set role in
   that account. `--profile default` is refused: name the SSO profile.
 - The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
-  falling back. At a terminal it starts the device-code login for you; elsewhere (an agent's shell) it exits with
-  code 3 and the login command to run.
+  falling back. At a terminal it starts the device-code login for you.
+- **When an agent's command needs the login**, it asks you in the Console instead: a toast at the bottom of the
+  screen names the profile, its account and role from Settings, and which session asks. Press **Log in** to open the
+  login window, check what it is for, and press **Log in** there; only then is a sign-in code created, and only
+  that window shows it. Check the code, press **Sign in and approve**, and approve it on the page that opens. The
+  agent's command waits for a while (about a minute and a half for Claude, a few seconds for the other agents)
+  and continues once you approve; if it has given up by then, the agent runs it again. **Cancel the request** withdraws it, and for about ten minutes that profile is not asked for again.
+  Closing the toast only hides it in that tab. This covers your Settings profiles; for a profile you defined
+  yourself, or with `--no-login`, the command exits with code 3 and the login command to run in a terminal.
 - The command gets an AWS config that defines **only the profile you chose** (it hands back the same short-lived
   credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
   works. A tool that names a different one — Terraform's `profile = "staging"`, `cdk deploy --profile staging`,

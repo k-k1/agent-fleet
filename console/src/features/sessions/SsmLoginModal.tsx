@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { DeviceCodeView } from "./DeviceCodeView.tsx";
 import { api, raw, rawJSON, sessionDelete } from "../../core/api/client.ts";
 
 interface SsmLoginModalProps {
@@ -94,30 +95,7 @@ export function SsmLoginModal({ name, start = false, force = false, onReady, onC
         {phase === "error" ? (
           <p className="ssm-error">{tr("sx.ssm_login_failed")}{error ? " " + error : ""}</p>
         ) : phase === "authorize" ? (
-          <>
-            <p className="ui-field-hint">
-              {tr("sx.ssm_verify_hint")}
-            </p>
-            {code && (
-              <div className="ssm-code-row">
-                <span className="ui-field-label">{tr("sx.ssm_code_label")}</span>
-                <span className="ssm-code">{code}</span>
-              </div>
-            )}
-            <div>
-              <Button
-                variant="primary"
-                icon="link-external"
-                disabled={!url}
-                onClick={() => url && window.open(url, "_blank", "noopener")}
-              >
-                {tr("sx.ssm_sign_in")}
-              </Button>
-            </div>
-            <p className="ui-field-hint">
-              {tr("sx.ssm_warn")}
-            </p>
-          </>
+          <DeviceCodeView url={url} code={code} hint={tr("sx.ssm_verify_hint")} />
         ) : (
           <p className="ui-field-hint">{tr("sx.ssm_connecting")}</p>
         )}

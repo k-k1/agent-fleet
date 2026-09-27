@@ -73,7 +73,8 @@ func with(extra map[string]string, drop ...string) map[string]string {
 }
 
 // fakeAWS writes the profile into $HOME/.aws and an aws stand-in. `loggedIn` (a file)
-// decides whether export-credentials succeeds, and `sso login` creates it. It records
+// decides whether export-credentials succeeds, and `sso login` creates it. `onExport` and
+// `onLogin`, when present, are sourced first by those two commands. It records
 // whether it ever saw a workload-role variable, the AWS_CONFIG_FILE it got, and how many
 // times it was started.
 func fakeAWS(t *testing.T, cfg map[string]string) (bin, state string) {
@@ -95,12 +96,15 @@ echo x >> "$S/calls"
 case "$1 $2" in
 "configure export-credentials")
   env | grep -E '^AWS_ACCESS_KEY_ID' >> "$S/leaked"
+  [ -f "$S/onExport" ] && . "$S/onExport"
   [ -f "$S/exportErr" ] && { cat "$S/exportErr" >&2; exit 255; }
   [ -f "$S/loggedIn" ] || { echo "Error loading SSO Token: Token for af-prod does not exist" >&2; exit 255; }
   echo '{"Version":1,"AccessKeyId":"ASIAFAKE","SecretAccessKey":"sekret","SessionToken":"tok","Expiration":"2030-01-01T00:00:00+00:00"}'
   exit 0 ;;
 "sso login")
-  echo "$*" > "$S/loginArgs"; touch "$S/loggedIn"; exit 0 ;;
+  echo "$*" > "$S/loginArgs"
+  [ -f "$S/onLogin" ] && . "$S/onLogin"
+  touch "$S/loggedIn"; exit 0 ;;
 "sts get-caller-identity")
   [ "$AWS_ACCESS_KEY_ID" = ASIAFAKE ] || exit 255
   if [ -f "$S/arn" ]; then cat "$S/arn"; else echo "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Dev_0123456789abcdef/me"; fi

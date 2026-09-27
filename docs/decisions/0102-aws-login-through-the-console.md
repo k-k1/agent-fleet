@@ -2,9 +2,11 @@
 
 English | [日本語](0102-aws-login-through-the-console.ja.md)
 
-- Status: **proposed** (2026-09-27). Implementation follows in a separate change.
+- Status: **accepted** (2026-09-27). Implemented in the change that follows this ADR's first merge. The
+  measurements of decisions 3 and 5, and what is still unmeasured, are in
+  [docs/log/120](../log/120-aws-console-login.md).
 - Issue: #1026
-- Follow-ups: #1028, #1029
+- Follow-ups: #1028, #1029, #1036
 - Related: #1010 (acceptance of `af-aws-exec`, where the gap was found) / #1025 (the SSM resume
   button skipped the login modal; the device-code view is shared with it)
 

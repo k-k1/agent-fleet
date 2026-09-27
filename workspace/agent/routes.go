@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -172,6 +173,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/status", sessionx.HandleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", sessionx.HandleSessionOutput)
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", sessionx.HandleSSMLoginStatus)
+	// af-aws-exec's Console login (ADR 0102): the pending requests, and the device-code
+	// attempt the member starts with "Log in". CP allowlist: registerSessionRoutes.
+	mux.HandleFunc("GET /aws-login", awsx.HandleLoginList)
+	mux.HandleFunc("POST /aws-login/{id}/start", awsx.HandleLoginStart)
+	mux.HandleFunc("GET /aws-login/{id}/attempts/{attempt}", awsx.HandleLoginAttempt)
+	mux.HandleFunc("POST /aws-login/{id}/cancel", awsx.HandleLoginCancel)
 	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)
 	mux.HandleFunc("POST /sessions/{name}/start", sessionx.HandleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.

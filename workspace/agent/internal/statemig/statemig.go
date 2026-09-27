@@ -119,6 +119,9 @@ var Entries = []string{
 	"completion-key",
 	"instr-ledger",
 	"browser-handoff-ledger",
+	// af-aws-exec's Console login requests and cancel markers (ADR 0102). Introduced
+	// directly under AgentStateDir, so run() no-ops on a source that was never there.
+	"aws-login",
 	// Per-boot / per-run state of the CLIs themselves.
 	"mcp-output-cursor",
 	"mcp-af-name",

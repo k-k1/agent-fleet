@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -54,6 +55,13 @@ type ExecOptions struct {
 
 	Stderr      io.Writer
 	Interactive bool // stdin and stderr are terminals
+
+	// ConsoleLogin lets a run with nobody at a terminal ask the Console for the login
+	// (ADR 0102) instead of only failing; ConsoleWait bounds how long it then waits, and
+	// Waiter says who asks. Only for a Settings profile the files define as Settings does.
+	ConsoleLogin bool
+	ConsoleWait  time.Duration
+	Waiter       LoginWaiter
 }
 
 // ErrLoginRequired means the SSO login is missing or expired and no login was attempted.
@@ -400,29 +408,36 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	}
 	aws := awsRunner{bin: awsBin, env: verifierEnv(env, cfg)}
 
+	// Read before the check, not after: a login landing between the two must not be
+	// recorded as the cache that failed (ADR 0102 decision 1).
+	snap := ReadCacheState(sso.Session)
 	creds, err := exportCreds(aws, ssoOnlyProfile)
 	if err != nil && !loginNeeded(err.Error()) {
 		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
 	}
 	if err != nil {
-		login := o.Login == "always" || (o.Login != "never" && o.Interactive)
-		if !login {
-			// The hint runs in the caller's shell, where AWS_CONFIG_FILE may still be the
-			// SSM pane's own file that does not define this profile.
-			prefix := ""
-			if steered {
-				prefix = "AWS_CONFIG_FILE=~/.aws/config "
+		// The hint runs in the caller's shell, where AWS_CONFIG_FILE may still be the SSM
+		// pane's own file that does not define this profile. Quoted: it is meant to be
+		// pasted into a shell, and a profile name can hold anything a quoted INI header can.
+		prefix := ""
+		if steered {
+			prefix = "AWS_CONFIG_FILE=~/.aws/config "
+		}
+		hint := fmt.Sprintf("%saws sso login --profile %s --use-device-code --no-browser", prefix, session.ShellQuote(o.Profile))
+		switch {
+		case o.Login == "always" || (o.Login != "never" && o.Interactive):
+			if lerr := deviceLogin(awsBin, aws.env, ssoOnlyProfile, o.Stderr); lerr != nil {
+				return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", o.Profile, lerr)
 			}
-			// Quoted: the hint is meant to be pasted into a shell, and a profile name can
-			// hold anything a quoted INI header can.
-			return "", nil, nil, fmt.Errorf("%w for profile %q: %v\nlog in with: %saws sso login --profile %s --use-device-code --no-browser",
-				ErrLoginRequired, o.Profile, err, prefix, session.ShellQuote(o.Profile))
-		}
-		if lerr := deviceLogin(awsBin, aws.env, ssoOnlyProfile, o.Stderr); lerr != nil {
-			return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", o.Profile, lerr)
-		}
-		if creds, err = exportCreds(aws, ssoOnlyProfile); err != nil {
-			return "", nil, nil, fmt.Errorf("credentials for profile %q after login: %w", o.Profile, err)
+			if creds, err = exportCreds(aws, ssoOnlyProfile); err != nil {
+				return "", nil, nil, fmt.Errorf("credentials for profile %q after login: %w", o.Profile, err)
+			}
+		case consoleEligible(sso, o):
+			if creds, err = consoleLogin(aws, sso, snap, o, err, hint); err != nil {
+				return "", nil, nil, err
+			}
+		default:
+			return "", nil, nil, fmt.Errorf("%w for profile %q: %v\nlog in with: %s", ErrLoginRequired, o.Profile, err, hint)
 		}
 	}
 

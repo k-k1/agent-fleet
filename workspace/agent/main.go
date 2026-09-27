@@ -157,6 +157,7 @@ func serve() {
 	// `aws --profile <name>`, an SDK or a build tool can select them (issue #998).
 	// Backgrounded and fail-open like the MCP pull.
 	awsx.StartSync()
+	awsx.LoginAWSBin = ensureAWSCLI
 	startTerminalHistoryJanitor()
 	// Route a managed driver's turn completion (it has no hooks) into the same
 	// notification/report path the hook route uses (the "answered" notice plus the
