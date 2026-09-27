@@ -29,6 +29,8 @@ import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
+import { api, raw } from "../../core/api/client.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useReposStore, type Repo } from "../repos/store.ts";
@@ -42,6 +44,7 @@ import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import { LabelBadge } from "./LabelBadge.tsx";
+import { resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
 import {
   branchForItem,
   dedupeWorkItems,
@@ -72,13 +75,16 @@ import "./workitems.css";
 interface RowProps {
   item: WorkItem;
   started: WorkItemSessionRef[];
+  /** What the started badge calls the first session: its display name when it is on the live
+   * list, else its slug (#1108). */
+  startedName: string;
   /** Meta this query repeats on every row — dropped from the line (docs/log/80 §80.18.2). */
   uniform: { repo: boolean; assignee: boolean };
   onOpen(item: WorkItem): void;
   onOpenSession(name: string): void;
 }
 
-const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, onOpenSession }: RowProps) {
+const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, uniform, onOpen, onOpenSession }: RowProps) {
   const tr = useT();
   const tone = stateTone(item.state);
   const busy = started.length > 0;
@@ -145,7 +151,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
         <button
           type="button"
           className="wi-started"
-          title={tr("wi.started_at", { name: started[0].sessionName })}
+          title={tr("wi.started_at", { name: startedName })}
           onClick={(e) => {
             e.stopPropagation();
             onOpenSession(started[0].sessionName);
@@ -174,6 +180,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
 export const WorkItemsSection = memo(function WorkItemsSection() {
   const tr = useT();
   const toast = useToast();
+  const askConfirm = useConfirm();
   const tenant = useTenantStore((s) => s.tenant);
   const payload = useWorkItemStore((s) => s.payload);
   const loaded = useWorkItemStore((s) => s.loaded);
@@ -242,9 +249,54 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   };
   const labelOf = (id: string) => payload?.queries.find((x) => x.id === id)?.label || id;
 
-  const openSession = (name: string) => {
-    const s = sessions.find((x) => x.name === name);
+  // The ledger names a slug; what the modals show for it is looked up here (#1108). The shelf is
+  // read only while a modal lists a slug that is not on the live list.
+  const shownRefs = [detailOn, reportOn].flatMap((i) => (i ? sessionsForItem(ledger, i.key) : []));
+  const missing = [...new Set(shownRefs.map((r) => r.sessionName))].filter((n) => !sessions.some((s) => s.name === n));
+  const archived = useArchivedFor(missing);
+  const sessionRef = (name: string): ResolvedSessionRef => resolveSessionRef(name, sessions, archived);
+
+  const startedNameFor = (item: WorkItem) => {
+    const first = sessionsForItem(ledger, item.key)[0];
+    return first ? sessionRef(first.sessionName).title || first.sessionName : "";
+  };
+
+  const openLive = (name: string) => {
+    const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
     (agentOf(s?.kind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
+  };
+
+  // A slug that is not on the live list used to open nothing at all (#1108). Read the shelf
+  // fresh at the click — the row badge reaches here with no modal open — and offer to bring an
+  // archived session back; a slug on neither list is said to be gone. If the shelf cannot be
+  // read (a stopped workspace), fall through to the plain open, which is what it always did.
+  const openSession = async (name: string) => {
+    if (sessions.some((s) => s.name === name)) return openLive(name);
+    let shelf: ResolvedSessionRef;
+    try {
+      const d = await api("api/sessions/archived");
+      shelf = resolveSessionRef(name, [], d.sessions || []);
+    } catch {
+      return openLive(name);
+    }
+    if (shelf.state === "gone") {
+      toast(t("wi.session_gone", { name }));
+      return;
+    }
+    const ok = await askConfirm({
+      title: tr("wi.restore_title"),
+      body: tr("wi.restore_body", { name: shelf.title || name }),
+      confirmLabel: tr("arch.restore"),
+      danger: false,
+    });
+    if (!ok) return;
+    const res = await raw(`api/sessions/${encodeURIComponent(name)}/restore`, { method: "POST" }).catch(() => null);
+    if (!res?.ok) {
+      toast(t("arch.restore_failed"));
+      return;
+    }
+    await useSessionsStore.getState().refresh();
+    openLive(name);
   };
 
   // reviewBranch: the PR's head branch, when the detail modal's live read resolved one and the
@@ -387,6 +439,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                 key={item.id}
                 item={item}
                 started={sessionsForItem(ledger, item.key)}
+                startedName={startedNameFor(item)}
                 uniform={uniform[item.queryId] || { repo: false, assignee: false }}
                 onOpen={setDetailOn}
                 onOpenSession={openSession}
@@ -422,6 +475,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                   key={item.id}
                   item={item}
                   started={sessionsForItem(ledger, item.key)}
+                  startedName={startedNameFor(item)}
                   uniform={{ repo: false, assignee: false }}
                   onOpen={setDetailOn}
                   onOpenSession={openSession}
@@ -466,9 +520,10 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
           onClose={() => setDetailOn(null)}
           onPick={(target, inPlace, reviewBranch) => pickTarget(detailOn, target, inPlace, reviewBranch)}
           onStartHub={() => toStartHub(detailOn)}
+          sessionRef={sessionRef}
           onOpenSession={(name) => {
             setDetailOn(null);
-            openSession(name);
+            void openSession(name);
           }}
           // Close the detail modal before opening the report one: never stack two modals, since
           // both the Esc layering and the focus trap assume one at a time.
@@ -482,6 +537,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
         <WorkItemReportModal
           item={reportOn}
           sessions={sessionsForItem(ledger, reportOn.key)}
+          sessionRef={sessionRef}
           onClose={() => setReportOn(null)}
         />
       )}

@@ -31,7 +31,24 @@ vi.mock("./api.ts", () => ({
   bitbucketRepoList: (...a: unknown[]) => bitbucketRepoList(...a),
 }));
 
+// The session side (#1108): the archived shelf and restore go through the plain client, and
+// opening a session is observed rather than performed. By default the shelf cannot be read,
+// which is what a stopped workspace looks like.
+const clientApi = vi.fn();
+const clientRaw = vi.fn();
+vi.mock("../../core/api/client.ts", async (orig) => ({
+  ...(await orig<typeof import("../../core/api/client.ts")>()),
+  api: (...a: unknown[]) => clientApi(...a),
+  raw: (...a: unknown[]) => clientRaw(...a),
+}));
+const openChat = vi.fn();
+vi.mock("../sessions/open.ts", () => ({
+  openSessionChat: (...a: unknown[]) => openChat(...a),
+  openSessionTerminal: (...a: unknown[]) => openChat(...a),
+}));
+
 const { WorkItemsSection } = await import("./WorkItemsSection.tsx");
+const { useSessionsStore } = await import("../sessions/store.ts");
 const { useWorkItemStore } = await import("./store.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -107,6 +124,11 @@ const strayChildren = (panel: Element) =>
     .map((el) => el.className);
 
 beforeEach(() => {
+  clientApi.mockReset();
+  clientApi.mockRejectedValue(new Error("workspace stopped"));
+  clientRaw.mockReset();
+  openChat.mockReset();
+  useSessionsStore.setState({ sessions: [], refresh: vi.fn(async () => {}) });
   workItemList.mockReset();
   workItemSearch.mockReset();
   workItemQueryCreate.mockReset();
@@ -870,5 +892,108 @@ describe("WorkItemDetailModal — a pull request", () => {
     expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
     expect(useLaunchTarget.getState().existingBranch).toBe("");
     expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
+});
+
+describe("WorkItemsSection — the sessions a ticket was started in (#1108)", () => {
+  const ledgerRow = (sessionName: string, id = "l1") => ({
+    id,
+    provider: "github",
+    itemKey: "acme/web#45",
+    sessionName,
+    repo: "web",
+    branch: "issue-45",
+    createdAt: "",
+  });
+  const withLedger = (...names: string[]) =>
+    workItemList.mockResolvedValue({
+      items: [item()],
+      queries: [query],
+      sessions: names.map((n, i) => ledgerRow(n, `l${i}`)),
+      fetchedAt: "",
+      running: true,
+    });
+  const session = (name: string, title: string) => ({ name, title, kind: "claude", dir: "/home/dev/repos/web", createdAt: "" });
+  const entries = () => [...document.querySelectorAll<HTMLButtonElement>(".wi-dsession")];
+  const confirmButton = () => [...document.querySelectorAll<HTMLButtonElement>(".ui-confirm-actions button")].pop();
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+  };
+
+  it("names a live session by its display name, keeping the slug beside it", async () => {
+    useSessionsStore.setState({ sessions: [session("sk7f3q9", "ログイン修正")] as never });
+    withLedger("sk7f3q9");
+    await render();
+    expect(host.querySelector(".wi-started")?.getAttribute("title")).toContain("ログイン修正");
+    await openRow();
+    const [e] = entries();
+    expect(e.querySelector(".wi-dname")?.textContent).toBe("ログイン修正");
+    expect(e.querySelector(".wi-dslug")?.textContent).toBe("sk7f3q9");
+    // Every slug was on the live list, so the shelf was never read.
+    expect(clientApi).not.toHaveBeenCalled();
+  });
+
+  it("marks an archived session, and restores then opens it on click", async () => {
+    clientApi.mockResolvedValue({ sessions: [session("sarch01", "古い調査")] });
+    clientRaw.mockResolvedValue({ ok: true });
+    withLedger("sarch01");
+    await render();
+    await openRow();
+    await settle();
+    const [e] = entries();
+    expect(e.classList.contains("is-archived")).toBe(true);
+    expect(e.querySelector(".wi-dname")?.textContent).toBe("古い調査");
+    expect(e.textContent).toContain(t("wi.session_archived"));
+    await act(async () => e.click());
+    await settle();
+    // Nothing is restored before the user says so.
+    expect(clientRaw).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(t("wi.restore_title"));
+    await act(async () => confirmButton()!.click());
+    await settle();
+    expect(clientRaw).toHaveBeenCalledWith("api/sessions/sarch01/restore", { method: "POST" });
+    expect(useSessionsStore.getState().refresh).toHaveBeenCalled();
+    expect(openChat).toHaveBeenCalledWith("sarch01");
+  });
+
+  it("opens nothing and restores nothing when the restore is declined", async () => {
+    clientApi.mockResolvedValue({ sessions: [session("sarch01", "古い調査")] });
+    withLedger("sarch01");
+    await render();
+    await openRow();
+    await settle();
+    await act(async () => entries()[0].click());
+    await settle();
+    const cancel = document.querySelector<HTMLButtonElement>(".ui-confirm-actions button")!;
+    await act(async () => cancel.click());
+    await settle();
+    expect(clientRaw).not.toHaveBeenCalled();
+    expect(openChat).not.toHaveBeenCalled();
+  });
+
+  it("says a session is gone when it is on neither list, instead of doing nothing", async () => {
+    clientApi.mockResolvedValue({ sessions: [] });
+    withLedger("sgone00");
+    await render();
+    await openRow();
+    await settle();
+    const [e] = entries();
+    expect(e.classList.contains("is-gone")).toBe(true);
+    await act(async () => e.click());
+    await settle();
+    expect(openChat).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(t("wi.session_gone", { name: "sgone00" }));
+  });
+
+  it("still opens a missing slug when the shelf cannot be read (a stopped workspace)", async () => {
+    withLedger("sk7f3q9");
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
+    await settle();
+    expect(openChat).toHaveBeenCalledWith("sk7f3q9");
   });
 });
