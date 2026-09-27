@@ -148,10 +148,16 @@ func leftoverSize(l leftover, budget *int) (bytes int64, files int) {
 	return bytes, files
 }
 
+// removeLeftover is removeTree; a var so a test can make one removal fail.
+var removeLeftover = removeTree
+
 type leftoverRemoved struct {
 	Kind  string `json:"kind"`
 	Count int    `json:"count"`
 	Bytes int64  `json:"bytes"`
+	// Failed is the first removal error when some went and some did not; the Console says so
+	// next to the count instead of reporting a clean success.
+	Failed string `json:"failed,omitempty"`
 }
 
 // prune removes this kind's leftovers and says what went. The caller holds
@@ -162,7 +168,7 @@ func (k leftoverKind) prune(home string, pins map[string]string) (leftoverRemove
 	for _, l := range k.pruneable(home, pins) {
 		budget := toolCacheMaxEntries
 		bytes, _ := leftoverSize(l, &budget)
-		if err := removeTree(l.path()); err != nil {
+		if err := removeLeftover(l.path()); err != nil {
 			log.Printf("leftovers: remove %s: %v", l.path(), err)
 			if firstErr == nil {
 				firstErr = err
@@ -294,21 +300,9 @@ func afWorkRoots(home string) []string { return []string{filepath.Join(home, ".a
 // Deleting a session removes its directory already (removeSessionSideFiles); what is left
 // predates that, or was keyed by a working copy that is gone.
 func afWorkLeftovers(_ string, roots []string, _ map[string]string) []leftover {
-	// Without a readable session store every name looks orphaned.
-	if _, err := os.Stat(session.MetaDir()); err != nil {
+	known, ok := afWorkKnownNames()
+	if !ok {
 		return nil
-	}
-	known := map[string]bool{}
-	for _, m := range session.ListMetas() {
-		known[m.Name] = true
-		if m.Dir != "" {
-			known[filepath.Base(m.Dir)] = true
-		}
-	}
-	for _, man := range listCleanupArchives() {
-		for _, s := range man.Sessions {
-			known[s.Name] = true
-		}
 	}
 	repos, err := os.ReadDir(gitx.ReposRoot())
 	if err != nil && !os.IsNotExist(err) {
@@ -329,11 +323,70 @@ func afWorkLeftovers(_ string, roots []string, _ map[string]string) []leftover {
 	return out
 }
 
+// afWorkKnownNames collects every session name (live and in the trash) and each live
+// session's working-copy name. ok=false when any record cannot be read or parsed:
+// session.ListMetas and listCleanupArchives skip such a record silently, and WriteMeta is not
+// atomic, so a meta caught mid-write would make that session's directory look orphaned.
+// Without a readable session store every name looks orphaned, so that is false too.
+func afWorkKnownNames() (map[string]bool, bool) {
+	known := map[string]bool{}
+	read := func(dir string, into func([]byte) bool) bool {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return false
+		}
+		for _, e := range ents {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if os.IsNotExist(err) {
+				continue // removed since the listing: a delete, not a record to protect
+			}
+			if err != nil || !into(b) {
+				return false
+			}
+		}
+		return true
+	}
+	if !read(session.MetaDir(), func(b []byte) bool {
+		var m session.Meta
+		if json.Unmarshal(b, &m) != nil || m.Name == "" {
+			return false
+		}
+		known[m.Name] = true
+		if m.Dir != "" {
+			known[filepath.Base(m.Dir)] = true
+		}
+		return true
+	}) {
+		return nil, false
+	}
+	trash := cleanupStoreDir()
+	if _, err := os.Stat(trash); err == nil || !os.IsNotExist(err) {
+		if !read(trash, func(b []byte) bool {
+			var m cleanupManifest
+			if json.Unmarshal(b, &m) != nil || m.ID == "" {
+				return false
+			}
+			for _, s := range m.Sessions {
+				known[s.Name] = true
+			}
+			return true
+		}) {
+			return nil, false
+		}
+	}
+	return known, true
+}
+
 // --- node -------------------------------------------------------------------------------
 
-// nodeLeftovers keeps, per major, the highest patch (compared as nodeBinFor does), any
-// version an nvm alias names exactly, and any version on the Agent's own PATH (what the
-// entrypoint put there). A name that is not a version is left alone.
+// nodeLeftovers keeps, per major, the highest runnable patch (bin/node present, compared as
+// nodeBinFor does, so it is the one sessions get), any version an nvm alias names exactly, and
+// any version on the Agent's own PATH (what the entrypoint put there). A name that is not a
+// version, or a version without bin/node (half-installed, or not nvm's layout), is left alone:
+// counting it as the highest would delete the only patch that runs.
 func nodeLeftovers(home string, roots []string, _ map[string]string) []leftover {
 	keep := map[string]bool{}
 	for _, v := range nvmAliasTargets(home) {
@@ -361,6 +414,9 @@ func nodeLeftovers(home string, roots []string, _ map[string]string) []leftover 
 			}
 			v := parseDotted(strings.TrimPrefix(e.Name(), "v"))
 			if len(v) != 3 {
+				continue
+			}
+			if info, err := os.Stat(filepath.Join(root, e.Name(), "bin", "node")); err != nil || info.IsDir() {
 				continue
 			}
 			vers = append(vers, ver{e.Name(), v})
@@ -539,6 +595,9 @@ func handleDeleteLeftovers(w http.ResponseWriter, r *http.Request) {
 	if err != nil && res.Count == 0 {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
+	}
+	if err != nil {
+		res.Failed = err.Error()
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
 }

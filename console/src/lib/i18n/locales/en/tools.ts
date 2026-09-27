@@ -300,6 +300,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.left_deleting": "Deleting…",
   "machine.left_deleted": "Deleted {count} of {name} ({size}).",
   "machine.left_failed_delete": "Couldn't delete {name}: ",
+  "machine.left_partial": "Some could not be deleted: ",
   "machine.left_note": "Profiles that killed Chromium runs left behind, ~/.af-work folders whose session is gone, Node.js patches a newer one replaced, and Kiro versions that were swapped out. Nothing reads them again, so deleting them doesn't slow the next build. The Agent also removes them when it starts. Anything in use or changed within the last hour is kept.",
   "machine.note_who_changes":
     "The size and the kind of machine are set by your tenant administrator, and a change applies the next time the workspace starts.",

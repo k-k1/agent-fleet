@@ -554,10 +554,17 @@ function LeftoverSection() {
     try {
       const res = await api("api/cleanup/leftovers/" + encodeURIComponent(row.kind), { method: "DELETE" });
       if (res?.error) setMsg(tr("machine.left_failed_delete", { name: label }) + (res.error.message ?? res.error.code));
-      else setMsg(tr("machine.left_deleted", { name: label, count: res?.count ?? 0, size: humanSize(res?.bytes ?? 0) }));
+      else {
+        const done = tr("machine.left_deleted", { name: label, count: res?.count ?? 0, size: humanSize(res?.bytes ?? 0) });
+        // Some went and some did not: say both, not a clean success.
+        setMsg(res?.failed ? done + " " + tr("machine.left_partial") + res.failed : done);
+      }
+    } catch {
+      setMsg(tr("machine.left_failed_delete", { name: label }));
     } finally {
       setBusy("");
     }
+    // Whatever happened, the counts above are stale now.
     await measure();
   };
 

@@ -297,6 +297,7 @@ export const tools = {
   "machine.left_deleting": "削除しています…",
   "machine.left_deleted": "{name} を {count} 個削除しました（{size}）。",
   "machine.left_failed_delete": "{name} を削除できませんでした: ",
+  "machine.left_partial": "一部は削除できませんでした: ",
   "machine.left_note": "強制終了した Chromium が残したプロファイル、もう無いセッションの ~/.af-work、新しいパッチに置き換わった Node.js、入れ替わった Kiro です。二度と読まれないので、消しても次のビルドは遅くなりません。Agent の起動時にも自動で消します。使用中のものと、1 時間以内に変更されたものは残します。",
   "machine.note_who_changes":
     "サイズとマシンの種類はテナント管理者が決めます。変更は次にワークスペースを起動したときに反映されます。",

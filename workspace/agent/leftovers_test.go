@@ -340,3 +340,68 @@ func TestLeftoversNeedVersionsJSON(t *testing.T) {
 		t.Fatalf("survey = %s", rec.Body.String())
 	}
 }
+
+// ListMetas skips a meta it cannot parse, and WriteMeta is not atomic: a meta caught
+// mid-write must not make its session's directory look orphaned, nor must a broken manifest
+// in the trash.
+func TestLeftoversAfWorkFailsClosedOnAnUnreadableRecord(t *testing.T) {
+	home, _ := isolateLeftovers(t)
+	writeSized(t, filepath.Join(home, ".af-work", "shalf01", "x"), 1)
+	if err := os.WriteFile(filepath.Join(home, "sessions", "shalf01.json"), []byte(`{"name":"shal`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pruneKind(t, "af-work")
+	assertEntries(t, filepath.Join(home, ".af-work"), "shalf01")
+
+	writeMeta(t, home, "shalf01", "")
+	writeSized(t, filepath.Join(sessionx.CleanupArchiveDir(), "20260927-000000-sx.json"), 0)
+	pruneKind(t, "af-work")
+	assertEntries(t, filepath.Join(home, ".af-work"), "shalf01")
+}
+
+// nodeBinFor only picks a version with bin/: a higher directory without it must not count
+// as the one sessions run.
+func TestLeftoversNodeIgnoresAVersionThatCannotRun(t *testing.T) {
+	isolateLeftovers(t)
+	root := nvmNodeRoot()
+	writeSized(t, filepath.Join(root, "v20.1.0", "bin", "node"), 64)
+	writeSized(t, filepath.Join(root, "v20.2.0", "include", "node.h"), 8)
+
+	pruneKind(t, "node")
+
+	assertEntries(t, root, "v20.1.0", "v20.2.0")
+}
+
+func TestDeleteLeftoversReportsAPartialFailure(t *testing.T) {
+	home, _ := isolateLeftovers(t)
+	work := filepath.Join(home, ".af-work")
+	writeSized(t, filepath.Join(work, "sgone01", "x"), 10)
+	writeSized(t, filepath.Join(work, "sgone02", "x"), 10)
+	old := removeLeftover
+	t.Cleanup(func() { removeLeftover = old })
+	removeLeftover = func(p string) error {
+		if filepath.Base(p) == "sgone02" {
+			return os.ErrPermission
+		}
+		return removeTree(p)
+	}
+	del := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("DELETE", "/cleanup/leftovers/af-work", nil)
+		req.SetPathValue("kind", "af-work")
+		rec := httptest.NewRecorder()
+		handleDeleteLeftovers(rec, req)
+		return rec
+	}
+
+	// One went, one did not: 200 with the count and what failed.
+	rec := del()
+	var res leftoverRemoved
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if rec.Code != http.StatusOK || res.Count != 1 || res.Failed == "" {
+		t.Fatalf("partial = %d %s", rec.Code, rec.Body.String())
+	}
+	// Nothing went: an error.
+	if rec := del(); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("all failed = %d %s", rec.Code, rec.Body.String())
+	}
+}
