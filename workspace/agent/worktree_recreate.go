@@ -69,7 +69,7 @@ func recreateTarget(w http.ResponseWriter, r *http.Request) (name, dir, parent s
 // recreateCandidates resolves the ways to put dir back, from the branches its sessions
 // recorded (newest session first) and the branches the Console archived before deleting.
 func recreateCandidates(dir, parent string) []gitx.RecreateCandidate {
-	return gitx.ResolveRecreate(parent, filepath.Base(dir), sessionBranchesIn(dir), trashedBranchSHA(parent))
+	return gitx.ResolveRecreate(parent, filepath.Base(dir), sessionBranchesIn(dir), trashedBranchSHA(parent), latestTombstone(dir))
 }
 
 // sessionBranchesIn lists the start branches of the sessions whose working copy was dir,
@@ -167,6 +167,10 @@ func recreateWorktreeGated(w http.ResponseWriter, r *http.Request, req recreateR
 		}
 	} else if c.InUse != "" {
 		gitx.WriteBranchInUse(w, c.Branch, c.InUse)
+		return
+	} else if c.NeedsNewBranch() {
+		httpx.WriteErr(w, http.StatusConflict, errCodeRecreateNeedsNewBranch,
+			"the branch has moved since the delete, or there was none; choose a new branch name")
 		return
 	}
 	if err := gitx.RecreateWorktreeAt(parent, dir, *c, nb); err != nil {

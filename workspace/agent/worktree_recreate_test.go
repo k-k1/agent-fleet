@@ -61,9 +61,12 @@ func TestRecreateDeletedWorktreeFlow(t *testing.T) {
 
 	var plan recreatePlan
 	do(t, srv, "GET", "/repos/app@feat-z/recreate", nil, http.StatusOK, &plan)
-	if plan.Path != wt || plan.Parent != "app" || len(plan.Candidates) != 1 ||
-		plan.Candidates[0] != (gitx.RecreateCandidate{Source: gitx.RecreateTrash, Branch: "feat-z", SHA: sha}) {
-		t.Fatalf("plan = %+v, want the archived SHA of feat-z at %s", plan, wt)
+	// The delete's own record comes first (clean tree: no snapshot), then the SHA the branch
+	// delete archived.
+	if plan.Path != wt || plan.Parent != "app" || len(plan.Candidates) != 2 ||
+		plan.Candidates[0] != (gitx.RecreateCandidate{Source: gitx.RecreateDeleted, Branch: "feat-z", SHA: sha}) ||
+		plan.Candidates[1] != (gitx.RecreateCandidate{Source: gitx.RecreateTrash, Branch: "feat-z", SHA: sha}) {
+		t.Fatalf("plan = %+v, want the deleted state then the archived SHA of feat-z at %s", plan, wt)
 	}
 
 	// A candidate the plan did not offer is refused rather than trusted.

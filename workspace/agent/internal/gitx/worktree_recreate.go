@@ -24,11 +24,12 @@ import (
 // Where a recreated worktree's commits come from, best first. The Console shows the source,
 // so these strings are wire values.
 const (
-	RecreateLocal  = "local"  // the local branch still exists
-	RecreateRemote = "remote" // only a remote-tracking branch is left
-	RecreateTrash  = "trash"  // the branch was deleted through the Console, which kept its SHA
-	RecreateMerged = "merged" // the branch is gone, but a merge commit still names its head
-	RecreateNew    = "new"    // nothing is left: a fresh branch of the same name off the parent
+	RecreateDeleted = "deleted" // the delete recorded it: its commit, branch and uncommitted work
+	RecreateLocal   = "local"   // the local branch still exists
+	RecreateRemote  = "remote"  // only a remote-tracking branch is left
+	RecreateTrash   = "trash"   // the branch was deleted through the Console, which kept its SHA
+	RecreateMerged  = "merged"  // the branch is gone, but a merge commit still names its head
+	RecreateNew     = "new"     // nothing is left: a fresh branch of the same name off the parent
 )
 
 // RecreateCandidate is one way to put a deleted worktree back.
@@ -47,6 +48,19 @@ type RecreateCandidate struct {
 	// branch in one worktree at a time, so the only ways forward are opening that copy or
 	// starting a new branch at SHA.
 	InUse string `json:"in_use,omitempty"`
+	// Snapshot (RecreateDeleted only) is the commit holding the working tree at the delete,
+	// laid over the checkout afterwards.
+	Snapshot string `json:"snapshot,omitempty"`
+	// Moved (RecreateDeleted only) says Branch has since moved off SHA. Checking it out would
+	// not be the state that was deleted, so this candidate then needs a new branch at SHA —
+	// the branch as it is now is the separate RecreateLocal candidate.
+	Moved bool `json:"moved,omitempty"`
+}
+
+// NeedsNewBranch reports whether c can only be taken on a new branch: its branch is checked
+// out elsewhere, has moved since the delete, or there was none (a detached HEAD).
+func (c RecreateCandidate) NeedsNewBranch() bool {
+	return c.InUse != "" || c.Moved || c.Branch == ""
 }
 
 // ErrRecreatePathExists is returned when something already sits at the target path.
@@ -87,16 +101,20 @@ func RecreateParent(name string) (string, bool) {
 //
 // Each branch yields at most one candidate — the first source that has it — and when no
 // branch yields any, the answer is a single RecreateNew for the first name.
-func ResolveRecreate(parent, name string, branches []string, trashSHA func(branch string) string) []RecreateCandidate {
+//
+// tomb, when the delete recorded one for this folder, comes first as RecreateDeleted: it is
+// the only candidate that also brings back the uncommitted work.
+func ResolveRecreate(parent, name string, branches []string, trashSHA func(branch string) string, tomb *WorktreeTombstone) []RecreateCandidate {
+	deleted := deletedCandidate(parent, tomb)
 	names := validBranchNames(parent, branches)
 	if len(names) == 0 {
 		names = branchesForFolderSeg(parent, name)
 	}
 	if len(names) == 0 {
-		return nil
+		return deleted
 	}
 	inUse := branchOccupants(parent)
-	var out []RecreateCandidate
+	out := deleted
 	for _, b := range names {
 		if sha := GitBranchSHA(parent, b); sha != "" {
 			c := RecreateCandidate{Source: RecreateLocal, Branch: b, SHA: sha}
@@ -130,7 +148,32 @@ func ResolveRecreate(parent, name string, branches []string, trashSHA func(branc
 	if base == "(detached)" {
 		base = ""
 	}
-	return []RecreateCandidate{{Source: RecreateNew, Branch: names[0], Ref: base}}
+	return append(out, RecreateCandidate{Source: RecreateNew, Branch: names[0], Ref: base})
+}
+
+// deletedCandidate turns the tombstone into its candidate, or nothing when it belongs to
+// another repository or its commit is no longer there. A snapshot gc has taken (its pin was
+// dropped by hand) is left out rather than failing the checkout.
+func deletedCandidate(parent string, t *WorktreeTombstone) []RecreateCandidate {
+	if t == nil || realPath(t.Parent) != realPath(parent) || !commitExists(parent, t.Head) {
+		return nil
+	}
+	c := RecreateCandidate{Source: RecreateDeleted, Branch: t.Branch, SHA: t.Head}
+	if t.Snapshot != "" && commitExists(parent, t.Snapshot) {
+		c.Snapshot = t.Snapshot
+	}
+	if c.Branch != "" && !ValidBranchName(parent, c.Branch) {
+		c.Branch = ""
+	}
+	if c.Branch != "" {
+		if tip := GitBranchSHA(parent, c.Branch); tip != "" && tip != c.SHA {
+			c.Moved = true
+		}
+		if occ := branchOccupants(parent)[c.Branch]; occ != "" {
+			c.InUse = filepath.Base(occ)
+		}
+	}
+	return []RecreateCandidate{c}
 }
 
 // branchOccupants maps each branch checked out in parent's repository to the working copy
@@ -172,6 +215,15 @@ func RecreateWorktreeAt(parent, dir string, c RecreateCandidate, newBranch strin
 		if start != "" {
 			args = append(args, start)
 		}
+	case c.Source == RecreateDeleted:
+		if c.Branch == "" {
+			return fmt.Errorf("a new branch is required: HEAD was detached when it was deleted")
+		}
+		if GitBranchExists(parent, c.Branch) {
+			args = []string{"worktree", "add", dir, c.Branch}
+		} else {
+			args = []string{"worktree", "add", "-b", c.Branch, dir, c.SHA}
+		}
 	case c.Source == RecreateLocal:
 		args = []string{"worktree", "add", dir, c.Branch}
 	case c.Source == RecreateRemote:
@@ -190,6 +242,15 @@ func RecreateWorktreeAt(parent, dir string, c RecreateCandidate, newBranch strin
 		return fmt.Errorf("worktree add: %v: %s", err, out)
 	}
 	finishNewWorktree(dir, parent)
+	if c.Source == RecreateDeleted && c.Snapshot != "" {
+		// The working tree as it was deleted, over a checkout of its HEAD. The index stays at
+		// HEAD, so every change comes back unstaged — staged-ness is the one thing the
+		// snapshot does not keep. Files the snapshot lacks are removed, untracked ones in it
+		// come back untracked.
+		if out, err := Combined(dir, "restore", "--source="+c.Snapshot, "--worktree", "--", "."); err != nil {
+			return fmt.Errorf("the worktree is back, but its uncommitted work could not be laid over it: %v: %s", err, out)
+		}
+	}
 	switch {
 	case newBranch != "":
 	case c.Source == RecreateLocal || c.Source == RecreateRemote:

@@ -83,11 +83,9 @@ func agentContractFamilies() []contractFamily {
 			binding: cleanupManifestBinding,
 			tsPath:  "../../console/src/features/sessions/CleanupModal.tsx",
 			tsName:  "CleanupArchive",
-			tsKeys:  keySet("id", "at", "reason", "sessions", "branches", "bytes"),
+			tsKeys:  keySet("id", "at", "reason", "sessions", "branches", "worktree", "bytes"),
 			tsOnly:  map[string]string{},
-			goOnly: map[string]string{
-				"worktrees": "[gap] cleanupManifest emits it but the Console's CleanupArchive does not declare it (the list of worktrees a cleanup deleted never reaches the screen).",
-			},
+			goOnly:  map[string]string{},
 		},
 
 		// Browser attachment state.
@@ -224,7 +222,7 @@ var branchInfoBinding = map[string]string{
 
 var cleanupManifestBinding = map[string]string{
 	"ID": "id", "At": "at", "Reason": "reason", "Sessions": "sessions",
-	"Branches": "branches", "Worktrees": "worktrees", "Bytes": "bytes",
+	"Branches": "branches", "Worktree": "worktree", "Bytes": "bytes",
 }
 
 var browserAttachmentBinding = map[string]string{

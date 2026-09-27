@@ -52,7 +52,8 @@ func TestGitWiringIsLive(t *testing.T) {
 		"ShelveSession": func(t *testing.T) { sameGitFunc(t, w.ShelveSession, sessionx.ArchiveSession) },
 		"TrashSession":  func(t *testing.T) { sameGitFunc(t, w.TrashSession, trashStoppedSession) },
 
-		"WithDeletionGate": func(t *testing.T) { sameGitFunc(t, w.WithDeletionGate, sessionx.WithDeletionGate) },
+		"WithDeletionGate":      func(t *testing.T) { sameGitFunc(t, w.WithDeletionGate, sessionx.WithDeletionGate) },
+		"RecordDeletedWorktree": func(t *testing.T) { sameGitFunc(t, w.RecordDeletedWorktree, recordDeletedWorktree) },
 
 		"RepoJobActive": func(t *testing.T) { sameGitFunc(t, w.RepoJobActive, repoJobActive) },
 		// StartRepoJob alone is not the real function: it goes through an adapter that
@@ -111,6 +112,7 @@ func TestGitWiringIsLive(t *testing.T) {
 		"ErrCodeLocked":                func(t *testing.T) { sameGitCode(t, w.ErrCodeLocked, errCodeLocked) },
 		"ErrCodeLockedSessions":        func(t *testing.T) { sameGitCode(t, w.ErrCodeLockedSessions, errCodeLockedSessions) },
 		"ErrCodeSessionsTrashFailed":   func(t *testing.T) { sameGitCode(t, w.ErrCodeSessionsTrashFailed, errCodeSessionsTrashFailed) },
+		"ErrCodeWorktreeArchiveFailed": func(t *testing.T) { sameGitCode(t, w.ErrCodeWorktreeArchiveFailed, errCodeWorktreeArchiveFailed) },
 	}
 
 	// Cross-check the set of checks against Deps' field set. A new field always fails
