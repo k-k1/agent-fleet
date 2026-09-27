@@ -48,6 +48,8 @@ import { EngineAddView } from "../settings/admin/adminEngineAdd.tsx";
 import { SessionsOverview } from "../overview/SessionsOverview.tsx";
 import { GalleryView } from "../gallery/GalleryView.tsx";
 import { ImagegenView } from "../imagegen/ImagegenView.tsx";
+import { cachedStudioSummary, ensureStudioList, useStudioCache } from "../imagegen/studioCache.ts";
+import { studioName as studioNameOf } from "../imagegen/studios.ts";
 import { StudioRedirect } from "../imagegen/parts/StudioRedirect.tsx";
 import { FleetGraphView } from "../fleetgraph/FleetGraphView.tsx";
 import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
@@ -261,6 +263,7 @@ function PopulatedPane({
   const dropSplitTab = useLayoutStore((s) => s.dropSplitTab);
   const sessions = useSessionsStore((s) => s.sessions);
   const sessionByName = useMemo(() => new Map(sessions.map((s) => [s.name, s] as const)), [sessions]);
+  const studioCache = useStudioCache();
   // A shared-session tab isn't backed by a local Session — it needs its own
   // name/kind, kept in the recipient-side store (docs/log/59) instead.
   const sharedSessions = useSharedSessionsStore((s) => s.sessions);
@@ -277,6 +280,10 @@ function PopulatedPane({
   // Clearing `open` keeps the element mounted — SessionMenu owns the handoff/share dialogs,
   // which outlive the menu itself, so unmounting it would take them down with it.
   const wsRunning = useWorkspaceStore((s) => s.state) === "running";
+  const hasStudioTab = cell.views.some((v) => v.content.kind === "imagegen");
+  useEffect(() => {
+    if (hasStudioTab && wsRunning) ensureStudioList();
+  }, [hasStudioTab, wsRunning]);
   const sessionActions = useSessionActions();
   const [tabMenu, setTabMenu] = useState<{ session: string; x: number; y: number; open: boolean } | null>(null);
   const tabMenuSession = tabMenu ? sessionByName.get(tabMenu.session) ?? null : null;
@@ -338,6 +345,19 @@ function PopulatedPane({
   // Never expose the runtime session slug in the tab strip: sessions have a
   // user-facing title, and unloaded metadata should read as a neutral state
   // until it arrives instead of briefly leaking an opaque identifier.
+  // An image-studio tab is named after its studio and follows the session bound to it (state
+  // icon, right-click menu). The tab strip never mounts the studio pane, so both come from the
+  // window's studio cache and the session list: the studio's own `session`, else a session that
+  // names the studio (its meta is written before the studio read catches up).
+  const studioOf = (view: PaneView) =>
+    view.content.kind === "imagegen" && view.content.studioId ? cachedStudioSummary(studioCache, view.content.studioId) : null;
+  const studioSession = (view: PaneView): Session | null => {
+    if (view.content.kind !== "imagegen" || !view.content.studioId) return null;
+    const bound = studioOf(view)?.session;
+    if (bound) return sessionByName.get(bound) ?? null;
+    const id = view.content.studioId;
+    return sessions.find((x) => x.studio === id) ?? null;
+  };
   const tabLabel = (view: PaneView) => {
     const session = view.session ? sessionByName.get(view.session) ?? null : null;
     if (view.content.kind === "terminal" && view.session && !session) return tr("pane.no_session");
@@ -350,9 +370,15 @@ function PopulatedPane({
       view.content.kind === "gallery" && view.content.gallerySession
         ? sessionByName.get(view.content.gallerySession)
         : undefined;
-    return paneTitle(view, session, { shared, chatTitle, gallerySession });
+    const studio = studioOf(view);
+    const studioName = studio ? studioNameOf(studio, (stamp) => tr("imggen.studio_dated", { when: stamp })) : undefined;
+    return paneTitle(view, session, { shared, chatTitle, gallerySession, studioName });
   };
   const tabState = (view: PaneView) => {
+    if (view.content.kind === "imagegen") {
+      const bound = studioSession(view);
+      return bound ? stateInfo(bound) : null;
+    }
     if (view.content.kind !== "terminal" || !view.session) return null;
     const session = sessionByName.get(view.session);
     return session ? stateInfo(session) : null;
@@ -416,7 +442,7 @@ function PopulatedPane({
       unread: !!view.session && view.id !== cell.selectedViewId && unreadSessions.has(view.session),
     })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [views, cell.selectedViewId, sessionByName, sharedById, chatTitles, tr, unreadSessions],
+    [views, cell.selectedViewId, sessionByName, sharedById, chatTitles, tr, unreadSessions, studioCache],
   );
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, cell.id);
@@ -508,7 +534,8 @@ function PopulatedPane({
             // Only session tabs get a menu; SCM/file tabs and a stopped workspace keep the
             // browser default. Resolved once here so right-click and the menu key look at the
             // same decision.
-            const menuSession = wsRunning && view.session && sessionByName.has(view.session) ? view.session : null;
+            const tabSession = view.content.kind === "imagegen" ? studioSession(view)?.name : view.session;
+            const menuSession = wsRunning && tabSession && sessionByName.has(tabSession) ? tabSession : null;
             return (
               <div
                 className={cx("pane-tab", view.id === cell.selectedViewId && "selected")}

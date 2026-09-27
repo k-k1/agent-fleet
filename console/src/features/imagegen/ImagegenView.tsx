@@ -72,6 +72,7 @@ import { studiosChanged } from "./studioBus.ts";
 import { useStudioList } from "./useStudioList.ts";
 import { historyByPath, pressSeqOf, studioFromForm } from "./studioSync.ts";
 import { forgetStudioState, useStudio } from "./useStudio.ts";
+import { cacheImagegenStatus, uncacheStudio, useStudioCache } from "./studioCache.ts";
 import "./imagegen.css";
 
 /** Decision 2's cadence. Only ever runs while something is unfinished AND the tab is shown. */
@@ -174,7 +175,9 @@ function StudioPane({
 
   const studio = useStudio(studioId, { running });
   const draft = studio.form;
-  const [status, setStatus] = useState<ImagegenStatus | null>(null);
+  // The window's last status is the first frame: without it a remount reads "engine unavailable"
+  // until the read below answers.
+  const [status, setStatus] = useState<ImagegenStatus | null>(() => useStudioCache.getState().status);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [groups, setGroups] = useState<JobGroup[]>([]);
   const [queuePaused, setQueuePaused] = useState(false);
@@ -231,6 +234,7 @@ function StudioPane({
       const s = await imagegenStatus();
       if (!s || isTransientErr(s)) return;
       setStatus(s);
+      cacheImagegenStatus(s);
       noteImagegenStatus(s); // the bar's button follows the same answer
       setFailed(false);
     } catch {
@@ -507,6 +511,7 @@ function StudioPane({
     }
     forgetStudio(studioId);
     forgetStudioState(studioId);
+    uncacheStudio(studioId);
     studiosChanged();
     // The bound session's meta loses its studio on the Agent; the rail's wand follows.
     void refreshSessions();

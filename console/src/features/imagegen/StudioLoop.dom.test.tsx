@@ -49,6 +49,7 @@ import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useStudioCache } from "./studioCache.ts";
 import type { Session } from "../../types/session.ts";
 
 let host: HTMLDivElement;
@@ -119,6 +120,10 @@ const tab = (k: number) => host.querySelectorAll<HTMLButtonElement>(".igen-tab")
 const toastText = () => document.querySelector(".igen-done-note")?.textContent || "";
 
 beforeEach(() => {
+  // Each test's studio restarts its edit log at seq 0; the window's studio cache (studioCache)
+  // would otherwise seed the pane with the previous test's later log. The Agent's seqs only grow,
+  // so outside tests a cached log is never ahead of the next read.
+  useStudioCache.setState({ list: [], byId: {}, status: null });
   vi.useFakeTimers();
   useWorkspaceStore.setState({ state: "running" });
   jobsNow.jobs = [];
