@@ -16,7 +16,14 @@ vi.mock("../../ui/toast.ts", () => ({
     return true;
   },
 }));
+let listed: { id: string; title: string; updated_at: string }[] = [];
+let mobile = false;
+vi.mock("../../lib/device.ts", () => ({ mobileMatches: () => mobile }));
 vi.mock("./api.ts", () => ({
+  listStudios: async () => {
+    calls.push("list");
+    return { studios: listed };
+  },
   getStudio: async (id: string) => {
     calls.push(`get ${id}`);
     if (getThrows) throw new Error("offline");
@@ -33,7 +40,7 @@ vi.mock("./api.ts", () => ({
 }));
 
 const { useLayoutStore } = await import("../../layout/store.ts");
-const { openImagegen, lastStudio, rememberStudio } = await import("./open.ts");
+const { openImagegen, lastStudio, rememberStudio, forgetStudio } = await import("./open.ts");
 const { emptyDraft, draftKey, saveDraft } = await import("./draft.ts");
 const { getTenant } = await import("../../core/api/client.ts");
 
@@ -46,6 +53,8 @@ beforeEach(() => {
   createFails = false;
   getThrows = false;
   seq = 0;
+  listed = [];
+  mobile = false;
   localStorage.clear();
   useLayoutStore.setState({
     openTarget: (t: { content: { kind: string; studioId?: string | null } }) => opened.push(`here ${t.content.studioId}`),
@@ -62,17 +71,36 @@ describe("openImagegen", () => {
     expect(opened).toEqual(["here old"]);
   });
 
-  it("覚えていなければ新しいスタジオを作って開き、次回のために覚える", async () => {
+  it("覚えていなければ、最後に更新されたスタジオを開く（別の端末で始めた続き）", async () => {
+    studios.add("pc").add("older");
+    listed = [
+      { id: "older", title: "", updated_at: "2026-09-27T01:00:00Z" },
+      { id: "pc", title: "", updated_at: "2026-09-27T09:00:00Z" },
+    ];
+    expect(await openImagegen()).toEqual({ studioId: "pc" });
+    expect(calls).toEqual(["list"]);
+    expect(opened).toEqual(["here pc"]);
+    expect(lastStudio()).toBe("pc");
+  });
+
+  it("覚えているスタジオが消えていたら、一覧の最新を開く", async () => {
+    rememberStudio("gone");
+    listed = [{ id: "pc", title: "", updated_at: "2026-09-27T09:00:00Z" }];
+    expect(await openImagegen()).toEqual({ studioId: "pc" });
+    expect(calls).toEqual(["get gone", "list"]);
+  });
+
+  it("スタジオが 1 つも無ければ新しいスタジオを作って開き、次回のために覚える", async () => {
     expect(await openImagegen()).toEqual({ studioId: "st1" });
-    expect(calls).toEqual(["create prompt="]);
+    expect(calls).toEqual(["list", "create prompt="]);
     expect(opened).toEqual(["here st1"]);
     expect(lastStudio()).toBe("st1");
   });
 
-  it("Agent が「無い」と言ったら忘れて新しく作る", async () => {
+  it("Agent が「無い」と言い、他に無ければ忘れて新しく作る", async () => {
     rememberStudio("gone");
     expect(await openImagegen()).toEqual({ studioId: "st1" });
-    expect(calls).toEqual(["get gone", "create prompt="]);
+    expect(calls).toEqual(["get gone", "list", "create prompt="]);
     expect(lastStudio()).toBe("st1");
   });
 
@@ -99,7 +127,7 @@ describe("openImagegen", () => {
 
   it("作れなければトーストで知らせ、ペインは開かない", async () => {
     createFails = true;
-    const r = await openImagegen();
+    const r = await openImagegen({ fresh: true });
     expect(r.studioId).toBeUndefined();
     expect(r.error).toBeTruthy();
     expect(toasts).toHaveLength(1);
@@ -139,6 +167,29 @@ describe("openImagegen", () => {
     calls.length = 0;
     await openImagegen();
     expect(calls).toEqual(["get st1"]);
+  });
+
+  it("スマホでは newPane を無視して今のペインに開く（上下に割らない）", async () => {
+    mobile = true;
+    await openImagegen({ fresh: true, newPane: true });
+    await openImagegen({ studioId: "x", newPane: true });
+    expect(opened).toEqual(["here st1", "here x"]);
+  });
+
+  it("スマホでもタブ表示なら別タブ（newPane）のまま", async () => {
+    mobile = true;
+    useLayoutStore.setState({ layout: { ...useLayoutStore.getState().layout, mode: "tabs" } } as never);
+    await openImagegen({ studioId: "x", newPane: true });
+    expect(opened).toEqual(["new x"]);
+    useLayoutStore.setState({ layout: { ...useLayoutStore.getState().layout, mode: "split" } } as never);
+  });
+
+  it("削除したスタジオを忘れるのは、それが覚えているスタジオのときだけ", () => {
+    rememberStudio("keep");
+    forgetStudio("other");
+    expect(lastStudio()).toBe("keep");
+    forgetStudio("keep");
+    expect(lastStudio()).toBeNull();
   });
 
   it("スタジオ id 指定はそのまま開く（Agent に問い合わせない）", async () => {

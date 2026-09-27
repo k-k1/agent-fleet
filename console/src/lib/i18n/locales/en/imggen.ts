@@ -132,8 +132,8 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.queue_full": "The queue is full",
   "imggen.trial_full": "As many trials as the queue allows are already waiting",
   "imggen.queue_paused": "The queue is paused (trials still run)",
-  "imggen.pause_all": "Pause everything",
-  "imggen.resume_all": "Resume everything",
+  "imggen.pause_all": "Pause the whole workspace",
+  "imggen.resume_all": "Resume the whole workspace",
   "imggen.group_counts": "{done} / {total}",
   "imggen.group_failed": "{n} failed",
   "imggen.eta_min": "about {n} min left",
@@ -352,4 +352,5 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.sum_sampler_none": "default sampler",
   "imggen.sum_scheduler_none": "default scheduler",
   "imggen.start_no_parent": "This worktree's parent clone is not listed, so the new worktree this combination needs cannot be cut. Choose Terminal (CLI) or another place.",
+  "imggen.queue_all_hint": "The queue is one per workspace: this also stops (and resumes) the jobs of other studios and sessions. To pause only this studio, use the pause on its own row",
 };

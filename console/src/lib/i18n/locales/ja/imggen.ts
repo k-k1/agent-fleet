@@ -133,8 +133,8 @@ export const imggen = {
   "imggen.queue_full": "待ち行列がいっぱいです",
   "imggen.trial_full": "試走が既に上限まで待っています",
   "imggen.queue_paused": "待ち行列を止めています（試走だけは走ります）",
-  "imggen.pause_all": "すべて一時停止",
-  "imggen.resume_all": "すべて再開",
+  "imggen.pause_all": "ワークスペース全体を一時停止",
+  "imggen.resume_all": "ワークスペース全体を再開",
   "imggen.group_counts": "{done} / {total}",
   "imggen.group_failed": "失敗 {n}",
   "imggen.eta_min": "残り約 {n} 分",
@@ -354,4 +354,5 @@ export const imggen = {
   "imggen.sum_sampler_none": "sampler 既定",
   "imggen.sum_scheduler_none": "scheduler 既定",
   "imggen.start_no_parent": "この worktree の親のクローンが一覧に無いため、この組み合わせで必要な新しい worktree を切れません。ターミナル（CLI）を選ぶか、別の場所を選んでください。",
+  "imggen.queue_all_hint": "待ち行列はワークスペースで 1 本です。他のスタジオやセッションのジョブも止まります（再開も同じ）。このスタジオの分だけなら、行ごとの一時停止を使ってください",
 };

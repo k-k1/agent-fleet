@@ -105,8 +105,10 @@ describe("取消の単位", () => {
 
   it("行列全体の一時停止はグループ操作ではない", async () => {
     await render();
-    await act(async () => byText("すべて一時停止")?.click());
+    await act(async () => byText("ワークスペース全体を一時停止")?.click());
     expect(queueOps).toEqual(["pause"]);
+    // Every studio's batches stop, not just this one's: the button says so.
+    expect(byText("ワークスペース全体を一時停止")?.title).toContain("他のスタジオ");
     expect(groupOps).toEqual([]);
   });
 });

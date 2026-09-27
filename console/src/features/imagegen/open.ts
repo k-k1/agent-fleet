@@ -14,7 +14,8 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { errText, getTenant } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { toast } from "../../ui/toast.ts";
-import { createStudio, getStudio } from "./api.ts";
+import { mobileMatches } from "../../lib/device.ts";
+import { createStudio, getStudio, listStudios } from "./api.ts";
 import { draftKey, emptyDraft, loadDraft, type ImagegenDraft } from "./draft.ts";
 import { studioFromForm } from "./studioSync.ts";
 
@@ -50,7 +51,7 @@ export function openImagegen(opts: OpenImagegenOptions = {}): Promise<OpenImageg
     // A legacy draft still here means its pane's migration failed and that pane was closed:
     // the next plain open (or "new studio") makes it a studio rather than leaving it stranded.
     const leftover = !opts.draft && draftClaim === null ? localDraft() : null;
-    let id = !opts.draft && !opts.fresh && !leftover ? await rememberedStudio() : null;
+    let id = !opts.draft && !opts.fresh && !leftover ? ((await rememberedStudio()) ?? (await latestStudio())) : null;
     if (!id) {
       if (leftover) draftClaim = LEFTOVER;
       const r = await newStudio(opts.draft ?? leftover ?? emptyDraft());
@@ -69,10 +70,13 @@ export function openImagegen(opts: OpenImagegenOptions = {}): Promise<OpenImageg
   });
 }
 
+// "Beside" on a phone would split the one column in two, leaving each studio's conversation a
+// few pixels tall; there the studio replaces the current pane (the picker goes back). Tabs mode
+// has room for another tab, so it keeps opening beside.
 function show(studioId: string, newPane: boolean): void {
   const st = useLayoutStore.getState();
   const target = { content: { kind: "imagegen" as const, studioId } };
-  if (newPane) st.openTargetInNew(target);
+  if (newPane && (!mobileMatches() || st.layout.mode === "tabs")) st.openTargetInNew(target);
   else st.openTarget(target);
 }
 
@@ -92,6 +96,21 @@ async function rememberedStudio(): Promise<string | null> {
     /* unreachable is not "gone" */
   }
   return id;
+}
+
+// A browser that remembers nothing (a new device, a cleared store) continues the studio touched
+// last anywhere — the reason every draft lives on the workspace — rather than starting an
+// empty one. null when there is none or the list cannot be read.
+async function latestStudio(): Promise<string | null> {
+  try {
+    const r = await listStudios();
+    const list = r && !r.error && Array.isArray(r.studios) ? r.studios : [];
+    const newest = list.reduce<(typeof list)[number] | null>((a, s) => (!a || s.updated_at > a.updated_at ? s : a), null);
+    if (newest) rememberStudio(newest.id);
+    return newest?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -175,6 +194,11 @@ export function lastStudio(): string | null {
   } catch {
     return null;
   }
+}
+
+/** A deleted studio is forgotten only if it was the one remembered; another is left alone. */
+export function forgetStudio(id: string): void {
+  if (lastStudio() === id) rememberStudio(null);
 }
 
 export function rememberStudio(id: string | null): void {
