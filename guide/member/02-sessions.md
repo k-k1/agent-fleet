@@ -311,9 +311,11 @@ changes (untracked files included, ignored ones not), and protects the commit fr
 collection. **Restoring** the entry recreates the worktree at the same path with those changes (all
 unstaged) and puts the sessions that delete shelved back in the list. When it cannot come back as it
 was — the branch moved after the delete, or another working copy has it checked out — the restore
-does nothing and says why; "Recreate working copy" in the archive list (below) then brings it back on
-a new branch. **Deleting it permanently** from the trash removes the protection, and from then on it
-cannot be brought back. If the record cannot be written (a full disk), the worktree is not deleted.
+creates nothing and opens the recreate dialog instead (the same one as "Recreate working copy",
+below), which brings it back on a new branch. **Deleting it permanently** from the trash removes the protection, and from then on it
+cannot be brought back. The worktree is not deleted if the record cannot be written (a full disk), or if it holds a
+repository git does not track (a clone inside it, whose contents the trash cannot keep). A new file
+that was staged comes back as an untracked file.
 The stopped AI sessions that lived in it **move to the archive** (the conversation stays
 readable, but it cannot resume until the folder is recreated — see below), and shell / SSM move to the trash. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
 it only ever covers sessions that are already gone for good.
