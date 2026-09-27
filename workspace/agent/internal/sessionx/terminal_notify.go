@@ -13,8 +13,9 @@ import (
 const TerminalNotificationKind = "terminal-notification"
 
 const (
-	// terminalNotifyRepeatWindow drops a notification identical to the previous one
-	// within this window: a TUI that redraws can emit the same sequence again.
+	// terminalNotifyRepeatWindow drops a notification identical to any other one seen
+	// within this window: a TUI that redraws can emit the same sequence again, and two
+	// alternating messages would slip past a comparison with the last one only.
 	terminalNotifyRepeatWindow = 30 * time.Second
 	// terminalNotifyBurst notifications per terminalNotifyBurstWindow at most, so a
 	// program printing sequences in a loop cannot flood the notification center.
@@ -44,20 +45,26 @@ type TerminalNotifier struct {
 	Now func() time.Time
 	Put func(notice.Event) error
 
-	last     oscnotify.Notification
-	lastAt   time.Time
+	seenAt   map[oscnotify.Notification]time.Time
 	recentAt []time.Time
 }
 
-// Notify records n for the session unless the kind is hook-driven, it repeats the
-// previous notification, or the burst budget is spent.
+// Notify records n for the session unless the kind is hook-driven, the same
+// notification was recorded within the repeat window, or the burst budget is spent.
 func (t *TerminalNotifier) Notify(n oscnotify.Notification) {
 	now := time.Now
 	if t.Now != nil {
 		now = t.Now
 	}
 	at := now()
-	if n == t.last && at.Sub(t.lastAt) < terminalNotifyRepeatWindow {
+	// Pruned on every call, so the map holds at most what the burst budget let in
+	// during one repeat window.
+	for k, seen := range t.seenAt {
+		if at.Sub(seen) >= terminalNotifyRepeatWindow {
+			delete(t.seenAt, k)
+		}
+	}
+	if _, dup := t.seenAt[n]; dup {
 		return
 	}
 	kept := t.recentAt[:0]
@@ -76,7 +83,10 @@ func (t *TerminalNotifier) Notify(n oscnotify.Notification) {
 	if !ok || terminalNotifyHasHooks(m.Kind) {
 		return
 	}
-	t.last, t.lastAt = n, at
+	if t.seenAt == nil {
+		t.seenAt = map[oscnotify.Notification]time.Time{}
+	}
+	t.seenAt[n] = at
 	t.recentAt = append(t.recentAt, at)
 	ev := notice.New(TerminalNotificationKind, m.Name, m.Kind, session.Display(m))
 	ev.Payload["proto"] = n.Proto

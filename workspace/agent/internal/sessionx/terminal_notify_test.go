@@ -71,17 +71,30 @@ func TestTerminalNotifierThrottles(t *testing.T) {
 		t.Fatalf("repeat after the window: %d events, want 2", len(*got))
 	}
 
+	// Alternating messages are each still a repeat inside the window.
+	*now = now.Add(terminalNotifyBurstWindow)
+	before := len(*got)
+	a, b := oscnotify.Notification{Proto: "osc9", Body: "A"}, oscnotify.Notification{Proto: "osc9", Body: "B"}
+	n.Notify(a)
+	n.Notify(b)
+	n.Notify(a)
+	n.Notify(b)
+	if len(*got) != before+2 {
+		t.Fatalf("A B A B: %d events, want 2", len(*got)-before)
+	}
+
 	// A burst of distinct messages stops at the budget, and the budget refills.
 	*now = now.Add(terminalNotifyBurstWindow)
+	before = len(*got)
 	for i := 0; i < terminalNotifyBurst+3; i++ {
 		n.Notify(oscnotify.Notification{Proto: "osc9", Body: string(rune('a' + i))})
 	}
-	if len(*got) != 2+terminalNotifyBurst {
-		t.Fatalf("burst: %d events, want %d", len(*got), 2+terminalNotifyBurst)
+	if len(*got) != before+terminalNotifyBurst {
+		t.Fatalf("burst: %d events, want %d", len(*got)-before, terminalNotifyBurst)
 	}
 	*now = now.Add(terminalNotifyBurstWindow)
 	n.Notify(oscnotify.Notification{Proto: "osc9", Body: "later"})
-	if len(*got) != 3+terminalNotifyBurst {
-		t.Fatalf("after the window: %d events, want %d", len(*got), 3+terminalNotifyBurst)
+	if len(*got) != before+terminalNotifyBurst+1 {
+		t.Fatalf("after the window: %d events, want %d", len(*got)-before, terminalNotifyBurst+1)
 	}
 }

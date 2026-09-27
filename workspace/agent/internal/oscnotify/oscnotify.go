@@ -265,7 +265,9 @@ func conEmuCommand(p []byte) bool {
 // kittyChunk handles `99;<metadata>;<payload>` (kitty desktop-notification protocol).
 // Title and body may arrive in several chunks sharing an id, the last one with d=1
 // (the default). p=? is the capability query a program sends before deciding to
-// notify, and the other p= values (close, icon, buttons, alive) carry no text.
+// notify. icon and buttons chunks carry no text but belong to the notification being
+// assembled, so the one with d=1 still completes it; close and alive are commands about
+// an earlier notification.
 func (s *Scanner) kittyChunk(rest []byte, emit func(Notification)) {
 	meta, payload, _ := bytes.Cut(rest, []byte(";"))
 	id, done, part, b64 := "", true, "title", false
@@ -282,28 +284,32 @@ func (s *Scanner) kittyChunk(rest []byte, emit func(Notification)) {
 			b64 = string(v) == "1"
 		}
 	}
-	if part != "title" && part != "body" {
-		return
-	}
-	text := payload
-	if b64 {
-		dec, err := base64.StdEncoding.DecodeString(string(payload))
-		if err != nil {
-			return
+	switch part {
+	case "title", "body":
+		text := payload
+		if b64 {
+			dec, err := base64.StdEncoding.DecodeString(string(payload))
+			if err != nil {
+				return
+			}
+			text = dec
 		}
-		text = dec
-	}
-	kp := s.kittyFor(id)
-	dst := &kp.title
-	if part == "body" {
-		dst = &kp.body
-	}
-	if len(*dst)+len(text) <= maxBody {
-		*dst = append(*dst, text...)
+		kp := s.kittyFor(id)
+		dst := &kp.title
+		if part == "body" {
+			dst = &kp.body
+		}
+		if len(*dst)+len(text) <= maxBody {
+			*dst = append(*dst, text...)
+		}
+	case "icon", "buttons":
+	default:
+		return
 	}
 	if !done {
 		return
 	}
+	kp := s.kittyFor(id)
 	title, bodyText := string(kp.title), string(kp.body)
 	s.kittyDrop(id)
 	if n, ok := clean("osc99", title, bodyText); ok {

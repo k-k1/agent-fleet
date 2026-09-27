@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -123,5 +124,36 @@ func TestRecordTerminalFindsNotifications(t *testing.T) {
 	}
 	if h, _ := readTerminalHistory("demo"); string(h) != src {
 		t.Fatalf("history = %q, want the stream unchanged", h)
+	}
+}
+
+// A notify stuck on file I/O must not hold up the read loop: the history is written in
+// full and the recorder returns once its drain timeout passes.
+func TestRecordTerminalDoesNotWaitForAStuckNotify(t *testing.T) {
+	t.Setenv("AF_TERMINAL_HISTORY_DIR", t.TempDir())
+	old := terminalNotifyDrainTimeout
+	terminalNotifyDrainTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { terminalNotifyDrainTimeout = old })
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	var src strings.Builder
+	for i := 0; i < 3*terminalNotifyQueue; i++ {
+		src.WriteString("\x1b]9;n" + strconv.Itoa(i) + "\x07line\r\n")
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- recordTerminal("demo", strings.NewReader(src.String()), func(oscnotify.Notification) { <-release })
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("recordTerminal blocked on a stuck notify")
+	}
+	if h, _ := readTerminalHistory("demo"); string(h) != src.String() {
+		t.Fatalf("history has %d bytes, want %d", len(h), src.Len())
 	}
 }

@@ -128,6 +128,8 @@ func recordTerminal(name string, src io.Reader, notify func(oscnotify.Notificati
 	}()
 
 	var osc oscnotify.Scanner
+	emit := startTerminalNotifyWorker(notify)
+	defer emit.close()
 	buf := make([]byte, 32*1024)
 	for {
 		n, rerr := src.Read(buf)
@@ -136,7 +138,7 @@ func recordTerminal(name string, src io.Reader, notify func(oscnotify.Notificati
 				return err
 			}
 			if notify != nil {
-				osc.Feed(buf[:n], notify)
+				osc.Feed(buf[:n], emit.send)
 			}
 			if st, err := f.Stat(); err == nil && st.Size() > terminalHistoryMaxBytes+(256<<10) {
 				var cerr error
@@ -153,6 +155,53 @@ func recordTerminal(name string, src io.Reader, notify func(oscnotify.Notificati
 			}
 			return rerr
 		}
+	}
+}
+
+// terminalNotifyQueue bounds the notifications waiting for the worker; more than this
+// in flight means the worker is stuck, and further ones are dropped.
+const terminalNotifyQueue = 16
+
+// terminalNotifyWorker runs notify off the read loop. notify reads the session meta and
+// writes the outbox; if that file I/O stalls, tmux's pipe to this process must keep
+// draining and the history must keep being written, so the loop only ever hands off
+// without waiting.
+type terminalNotifyWorker struct {
+	ch   chan oscnotify.Notification
+	done chan struct{}
+}
+
+func startTerminalNotifyWorker(notify func(oscnotify.Notification)) *terminalNotifyWorker {
+	w := &terminalNotifyWorker{ch: make(chan oscnotify.Notification, terminalNotifyQueue), done: make(chan struct{})}
+	go func() {
+		defer close(w.done)
+		for n := range w.ch {
+			if notify != nil {
+				notify(n)
+			}
+		}
+	}()
+	return w
+}
+
+func (w *terminalNotifyWorker) send(n oscnotify.Notification) {
+	select {
+	case w.ch <- n:
+	default:
+	}
+}
+
+// terminalNotifyDrainTimeout bounds how long a finished stream waits for queued
+// notifications: a stuck notify must not keep the process alive after its pane is gone.
+var terminalNotifyDrainTimeout = 5 * time.Second
+
+// close lets what was queued finish before returning, so the process does not exit
+// with a notification it already accepted — up to terminalNotifyDrainTimeout.
+func (w *terminalNotifyWorker) close() {
+	close(w.ch)
+	select {
+	case <-w.done:
+	case <-time.After(terminalNotifyDrainTimeout):
 	}
 }
 
