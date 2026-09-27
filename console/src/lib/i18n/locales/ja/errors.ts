@@ -41,7 +41,7 @@ export const errors = {
   "err.recreate_parent_missing":
     "この worktree の元になった作業コピーが見つからないため、作り直せません。",
   "err.recreate_stale":
-    "この作り直し方はもう使えません（ブランチが変わった可能性があります）。開き直して選び直してください。",
+    "この作り直し方はもう使えません（ブランチが変わった可能性があります）。候補を読み直したので、選び直してください。",
   "err.recreate_failed": "作業コピーを作り直せませんでした。",
   "err.session_resumed": "ごみ箱へ移している間にセッションが再開されたため、削除しませんでした。",
   "err.sessions_trash_failed":

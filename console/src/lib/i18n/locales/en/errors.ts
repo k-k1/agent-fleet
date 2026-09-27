@@ -42,7 +42,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.recreate_parent_missing":
     "The working copy this worktree came from is gone, so it can't be recreated.",
   "err.recreate_stale":
-    "That way of recreating it is no longer available (the branch may have changed). Reopen and choose again.",
+    "That way of recreating it is no longer available (the branch may have changed). The options were reloaded; choose again.",
   "err.recreate_failed": "Couldn't recreate the working copy.",
   "err.session_resumed": "The session was resumed while it was being moved to the trash, so it was not deleted.",
   "err.sessions_trash_failed":

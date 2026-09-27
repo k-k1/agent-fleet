@@ -29,7 +29,6 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   kind: "claude",
   dir: DIR,
   resumable: false,
-  archived: true,
   ...over,
 });
 
@@ -154,6 +153,8 @@ describe("削除された worktree の作り直し", () => {
     await submit();
     expect(changed).toBe(0);
     expect(document.querySelector(".rwt-session")).toBeNull();
+    // What was shown no longer resolves: the candidates are fetched again to choose from.
+    expect(api).toHaveBeenCalledTimes(2);
   });
 
   it("アーカイブの見出しに作り直しを出すのは、消えた worktree フォルダの群だけ", () => {

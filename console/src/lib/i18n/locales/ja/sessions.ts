@@ -264,7 +264,7 @@ export const sessions = {
   "rwt.lead": "{parent} の worktree として元のパスに作り直します。コミットの取り出し元を選んでください。",
   "rwt.plan_failed": "作り直し方を調べられませんでした。",
   "rwt.no_candidates": "作り直しに使えるブランチ名が見つかりませんでした。",
-  "rwt.elsewhere": "このフォルダは今の場所（{path}）と違うため、ここからは作り直せません。",
+  "rwt.elsewhere": "このフォルダは今の作業コピーの置き場所（{path}）と違うため、ここからは作り直せません。",
   "rwt.src_local": "ローカルブランチ",
   "rwt.src_remote": "リモートブランチ {ref}",
   "rwt.src_trash": "削除時に記録したコミット",

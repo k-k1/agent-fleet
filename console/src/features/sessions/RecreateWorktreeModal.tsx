@@ -64,6 +64,8 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
   // Set once the worktree exists: the branch it is on.
   const [created, setCreated] = useState<string | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(sessions.map((s) => s.name)));
+  // Bumped to fetch the plan again (after recreate_stale: what was shown no longer resolves).
+  const [planRev, setPlanRev] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -77,7 +79,7 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
     return () => {
       live = false;
     };
-  }, [name, tr]);
+  }, [name, tr, planRev]);
 
   const cand = plan?.candidates[pick];
   // The Agent resolves {name} under its own repos root; a session that recorded a folder
@@ -103,6 +105,11 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
       const res = await apiJSON(`api/repos/${encodeURIComponent(name)}/recreate`, "POST", body);
       if (res?.error) {
         toast(errText(res.error));
+        if (res.error.code === "recreate_stale") {
+          setPlan(null);
+          setPick(0);
+          setPlanRev((n) => n + 1);
+        }
         return;
       }
       setCreated(typeof res?.branch === "string" ? res.branch : cand.branch);
