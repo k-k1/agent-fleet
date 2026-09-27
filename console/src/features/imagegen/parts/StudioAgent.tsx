@@ -2,6 +2,7 @@
 // as it is (thinking, tool cards, attachments, stop and resume come with it), under a head that
 // names the agent and offers to switch it. Without a session, the way to attach one.
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { apiJSON, errText } from "../../../core/api/client.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -30,6 +31,7 @@ export function StudioAgent({
   needsModel,
   onAttach,
   onReplace,
+  aboveComposer,
 }: {
   paneId: string;
   studioId: string | null;
@@ -44,6 +46,9 @@ export function StudioAgent({
   needsModel: boolean;
   onAttach: () => void;
   onReplace: () => void;
+  /** The narrow pane's draft bar: above the composer, or at the foot of the column when there
+   *  is no conversation to hold it. */
+  aboveComposer?: ReactNode;
 }) {
   const tr = useT();
   const toast = useToast();
@@ -81,6 +86,7 @@ export function StudioAgent({
             {tr("imggen.attach")}
           </Button>
         </EmptyState>
+        {aboveComposer}
       </div>
     );
   }
@@ -94,6 +100,7 @@ export function StudioAgent({
             </Button>
           )}
         </EmptyState>
+        {aboveComposer}
       </div>
     );
   }
@@ -170,6 +177,7 @@ export function StudioAgent({
           }}
           signal={signal}
           toolCard={toolCard}
+          aboveComposer={aboveComposer}
           composerBlock={
             needsModel ? (
               <div className="igen-needs-model" role="status">

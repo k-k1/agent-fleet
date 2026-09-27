@@ -144,6 +144,7 @@ export function MirrorView({
   signal,
   toolCard,
   composerBlock,
+  aboveComposer,
 }: {
   paneId: string;
   session: string;
@@ -163,6 +164,9 @@ export function MirrorView({
   /** Why this host holds the composer shut, drawn in its place (the image studio with no model
    *  chosen, ADR 0100 revision 9). Absent → the composer as usual. */
   composerBlock?: ReactNode;
+  /** Drawn between the transcript and the composer (or whatever stands in its place): the
+   *  image studio's draft bar. Absent → nothing. */
+  aboveComposer?: ReactNode;
 }) {
   const settings = useSettings();
   // Per-agent descriptor: how this session's assistant signs its turns, and which
@@ -2060,6 +2064,7 @@ export function MirrorView({
         />
       </div>
 
+      {aboveComposer}
       {readOnly ? (
         dirGone ? (
           <DirGoneNotice />

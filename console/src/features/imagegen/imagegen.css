@@ -951,3 +951,159 @@
   color: var(--warn);
   border-top: 1px solid var(--border);
 }
+
+/* ── the narrow pane's loop: draft bar, tab marks (lane L4) ─────────── */
+
+/* The draft bar lives in the conversation column and matters only while the draft column is
+   folded away; three columns show the draft itself. */
+.igen-draftbar {
+  display: none;
+}
+
+@container paneview (max-width: 720px) {
+  .igen-draftbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0 4px;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    cursor: pointer;
+    flex: none;
+  }
+}
+
+/* The agent changed the draft: an accent edge, and one soft pulse when it appears. */
+.igen-draftbar-hl {
+  border-color: var(--accent);
+  animation: igen-draftbar-pulse 1.2s ease-out 2;
+}
+
+@keyframes igen-draftbar-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .igen-draftbar-hl {
+    animation: none;
+  }
+}
+
+.igen-draftbar-thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.igen-draftbar-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.igen-draftbar-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 2px 0;
+  font: inherit;
+  text-align: left;
+  color: var(--fg);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.igen-draftbar-prompt,
+.igen-draftbar-model {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.igen-draftbar-prompt {
+  font-size: 13px;
+}
+
+.igen-draftbar-model {
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.igen-draftbar-dot,
+.igen-tab-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+/* Finger-sized on the phone the bar exists for. */
+.igen-draftbar-btn {
+  flex: none;
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+.igen-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.igen-tab-badge {
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 8px;
+  color: var(--bg);
+  background: var(--accent);
+}
+
+.igen-tab-dot-working {
+  background: var(--muted);
+  animation: igen-tab-blink 1.4s ease-in-out infinite;
+}
+
+.igen-tab-dot-ask {
+  background: var(--warn);
+}
+
+@keyframes igen-tab-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .igen-tab-dot-working {
+    animation: none;
+  }
+}
+
+/* The no-session state holds the bar at the column's foot. */
+.igen-agent-none {
+  justify-content: space-between;
+}
