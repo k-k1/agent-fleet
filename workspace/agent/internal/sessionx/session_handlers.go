@@ -1607,27 +1607,36 @@ func HandleRestoreSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	m, ok := session.ReadMeta(name)
+	if _, ok := session.ReadMeta(name); !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	m, ok := RestoreSession(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
+}
+
+// RestoreSession takes a session off the shelf, without the HTTP shell. Restoring a deleted
+// worktree from the trash calls it too, for the sessions that delete shelved.
+func RestoreSession(name string) (session.Meta, bool) {
 	// Under the meta lock, on the meta as it is now: a lock set, or a delete, since the read
 	// above must not be rolled back (ADR 0101).
-	m, ok = UpdateSessionMeta(name, func(m *session.Meta) bool {
+	m, ok := UpdateSessionMeta(name, func(m *session.Meta) bool {
 		m.Archived = false
 		m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
 		return true
 	})
 	if !ok {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
-		return
+		return m, false
 	}
-	// Restore only un-hides the row (§101.8: it never starts anything — `wireSession(m,
-	// false)` below is a STOPPED session). RecordRevive belongs to the branch in
-	// HandleListSessions that observes the slot actually come back alive.
+	// Restore only un-hides the row (§101.8: it never starts anything — the caller answers a
+	// STOPPED session). RecordRevive belongs to the branch in HandleListSessions that observes
+	// the slot actually come back alive.
 	fleetgraph.RecordArchived(name, false)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
+	return m, true
 }
 
 // HandleListArchived returns archived sessions (for the restore modal).

@@ -2321,7 +2321,7 @@ var mcpStdioWriteTools = []map[string]any{
 	{
 		"name": "delete_worktree",
 		"description": "不要になった worktree（作業コピー）を削除する。list_cleanup_candidates で action=delete_worktree の候補（マージ済みクリーン＝safe、未マージだがクリーン＝review）を片付ける時に使う。" +
-			"未コミット/未pushの変更がある worktree は保護のため削除できない（keep 候補。Console で強制削除するよう案内する）。その worktree の停止中の AI セッションはアーカイブ（棚）へ移り、shell/ssm はごみ箱へ入る（どちらも復元できる。会話は消えない）。ローカルの作業コピーだけが消え、履歴・リモート・ブランチは残る。破壊的操作なので、どの worktree を消すかを一言添えて実行前に必ず利用者へ確認すること。",
+			"未コミット/未pushの変更がある worktree は保護のため削除できない（keep 候補。Console で強制削除するよう案内する）。その worktree の停止中の AI セッションはアーカイブ（棚）へ移り、shell/ssm はごみ箱へ入る（どちらも復元できる。会話は消えない）。ローカルの作業コピーだけが消え、履歴・リモート・ブランチは残る。削除した worktree もごみ箱に記録され、restore_cleanup_archive で同じパスに作り直せる。破壊的操作なので、どの worktree を消すかを一言添えて実行前に必ず利用者へ確認すること。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

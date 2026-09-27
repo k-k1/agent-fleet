@@ -7,9 +7,10 @@ package main
 //   - session: its meta + transcript jsonl(s) — the conversation, otherwise gone.
 //   - branch:  its name + tip SHA — a merged branch's commits already live in the
 //              target's object store, so recording the ref is enough to recreate it.
-// A worktree's working files are reconstructable from git (delete_worktree refuses
-// dirty/ahead), so they are NOT archived. Deleting a worktree moves its stopped AI sessions to
-// the shelf and its shell / ssm to this trash (ADR 0101 decision 4).
+//   - worktree: a tombstone (path, branch, HEAD, a snapshot commit of uncommitted work) whose
+//              commits a refs/af/deleted-worktrees/* ref pins against gc until the entry is
+//              purged (worktree_tombstone.go). Deleting a worktree also moves its stopped AI
+//              sessions to the shelf and its shell / ssm to this trash (ADR 0101 decision 4).
 //
 // Each archive is a self-contained <id>.tar.gz (manifest.json + jsonl files inside),
 // with a sidecar <id>.json manifest for cheap listing without extracting.
@@ -59,12 +60,12 @@ type cleanupArchivedBranch struct {
 }
 
 type cleanupManifest struct {
-	ID        string                   `json:"id"`
-	At        string                   `json:"at"` // RFC3339
-	Reason    string                   `json:"reason,omitempty"`
-	Sessions  []cleanupArchivedSession `json:"sessions,omitempty"`
-	Branches  []cleanupArchivedBranch  `json:"branches,omitempty"`
-	Worktrees []string                 `json:"worktrees,omitempty"` // names removed (informational)
+	ID       string                   `json:"id"`
+	At       string                   `json:"at"` // RFC3339
+	Reason   string                   `json:"reason,omitempty"`
+	Sessions []cleanupArchivedSession `json:"sessions,omitempty"`
+	Branches []cleanupArchivedBranch  `json:"branches,omitempty"`
+	Worktree *gitx.WorktreeTombstone  `json:"worktree,omitempty"`
 	// Bytes is the size of the archive's tarball, filled in by listCleanupArchives for the
 	// trash tab (what a purge reclaims). Never written into the archive itself.
 	Bytes int64 `json:"bytes,omitempty"`
@@ -321,6 +322,9 @@ func purgeCleanupArchive(id string) (cleanupManifest, error) {
 	if err := os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
 		return man, err
 	}
+	if man.Worktree != nil {
+		gitx.UnpinDeletedWorktree(*man.Worktree) // nothing can bring it back now; let gc have it
+	}
 	return man, nil
 }
 
@@ -526,5 +530,11 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	}
 	restored["sessions"] = sessions
 	restored["branches"] = branches
+	if m.Worktree != nil {
+		if err := restoreDeletedWorktree(*m.Worktree); err != nil {
+			return nil, err
+		}
+		restored["worktree"] = m.Worktree.Name
+	}
 	return restored, nil
 }

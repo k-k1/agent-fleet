@@ -87,7 +87,7 @@ func TestResolveRecreateSources(t *testing.T) {
 		return ""
 	}
 	got := ResolveRecreate(parent, "app@whatever",
-		[]string{"loc", "feature", "gone", "pr-x", "feat/plain", "busy", "loc", "", "(detached)", "-x", "nothing"}, trash)
+		[]string{"loc", "feature", "gone", "pr-x", "feat/plain", "busy", "loc", "", "(detached)", "-x", "nothing"}, trash, nil)
 	want := []RecreateCandidate{
 		{Source: RecreateLocal, Branch: "loc", SHA: localSHA},
 		{Source: RecreateRemote, Branch: "feature", SHA: remoteSHA, Ref: "origin/feature"},
@@ -106,12 +106,12 @@ func TestResolveRecreateSources(t *testing.T) {
 	}
 
 	// Nothing left of the branch: a new one of the same name off the parent's branch.
-	if got := ResolveRecreate(parent, "app@nothing", []string{"nothing"}, trash); len(got) != 1 ||
+	if got := ResolveRecreate(parent, "app@nothing", []string{"nothing"}, trash, nil); len(got) != 1 ||
 		got[0] != (RecreateCandidate{Source: RecreateNew, Branch: "nothing", Ref: "main"}) {
 		t.Errorf("nothing left = %+v, want one new off main", got)
 	}
 	// A merge commit that names another branch whose name merely contains ours is not a match.
-	if got := ResolveRecreate(parent, "app@x", []string{"pr"}, nil); len(got) != 1 || got[0].Source != RecreateNew {
+	if got := ResolveRecreate(parent, "app@x", []string{"pr"}, nil, nil); len(got) != 1 || got[0].Source != RecreateNew {
 		t.Errorf("prefix of a merged branch = %+v, want new", got)
 	}
 }
@@ -119,11 +119,11 @@ func TestResolveRecreateSources(t *testing.T) {
 func TestResolveRecreateFolderSegFallback(t *testing.T) {
 	parent := recreateFixture(t)
 	sha := commitOn(t, parent, "feat/y")
-	if got := ResolveRecreate(parent, "app@feat-y", nil, nil); len(got) != 1 ||
+	if got := ResolveRecreate(parent, "app@feat-y", nil, nil, nil); len(got) != 1 ||
 		got[0] != (RecreateCandidate{Source: RecreateLocal, Branch: "feat/y", SHA: sha}) {
 		t.Errorf("seg matching a local branch = %+v", got)
 	}
-	if got := ResolveRecreate(parent, "app@wip-q", nil, nil); len(got) != 1 ||
+	if got := ResolveRecreate(parent, "app@wip-q", nil, nil, nil); len(got) != 1 ||
 		got[0] != (RecreateCandidate{Source: RecreateNew, Branch: "wip-q", Ref: "main"}) {
 		t.Errorf("seg matching nothing = %+v", got)
 	}

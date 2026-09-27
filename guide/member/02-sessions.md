@@ -305,9 +305,18 @@ they are removed. The **"Trash (restore)"** tab of the cleanup modal **restores*
 **"Delete permanently"** reclaims the space once you are sure (if a restore of that archive stopped
 part way, restore it again first — deleting it is refused until then). The trash never empties on its
 own; when it has grown, **"Delete permanently: older than 30 days"** in the trash tab reclaims it in
-one go (its size is also shown in **Settings → Machine**). **Only deleting a worktree cannot
-be undone** — and even then only the working copy goes; the history, the remote and the branch
-remain. The stopped AI sessions that lived in it **move to the archive** (the conversation stays
+one go (its size is also shown in **Settings → Machine**). **Deleting a worktree goes
+through the trash too.** Just before the delete it records the commit, the branch and the uncommitted
+changes (untracked files included, ignored ones not), and protects the commit from git's garbage
+collection. **Restoring** the entry recreates the worktree at the same path with those changes (all
+unstaged) and puts the sessions that delete shelved back in the list. When it cannot come back as it
+was — the branch moved after the delete, or another working copy has it checked out — the restore
+creates nothing and opens the recreate dialog instead (the same one as "Recreate working copy",
+below), which brings it back on a new branch. **Deleting it permanently** from the trash removes the protection, and from then on it
+cannot be brought back. The worktree is not deleted if the record cannot be written (a full disk), or if it holds a
+repository git does not track (a clone inside it, whose contents the trash cannot keep). A new file
+that was staged comes back as an untracked file.
+The stopped AI sessions that lived in it **move to the archive** (the conversation stays
 readable, but it cannot resume until the folder is recreated — see below), and shell / SSM move to the trash. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
 it only ever covers sessions that are already gone for good.
 
@@ -349,6 +358,7 @@ if its working folder is missing.
 **A deleted worktree can be recreated at its original path.** In the archive list, the heading of
 a deleted worktree's folder offers **"Recreate working copy"**. It looks for the branch the folder
 last held, in this order, and creates the worktree at the same path from the first it finds: the
+state at the delete (when the trash recorded it; uncommitted changes come back too) → the
 local branch → the remote branch → the commit recorded when the branch was deleted from the Console
 → the head commit a merge commit still names (a GitHub PR merge, for example). If none is left, it
 starts a new branch of the same name off the parent. Once it is back, choose the sessions to
@@ -359,8 +369,9 @@ before.
 - A folder of the same name may have been reused by earlier work on a branch of the same name.
   Sessions whose start branch differs from the recreated one are flagged; check them against their
   dates before restoring.
-- Uncommitted changes and ignored files (`node_modules`, `.env`, …) do not come back, and nothing
-  can be recreated once the parent working copy is gone.
+- Uncommitted changes come back only from "the state at the delete", for deletes the trash
+  recorded. Ignored files (`node_modules`, `.env`, …) never come back, and nothing can be
+  recreated once the parent working copy is gone.
 - Right-click a working copy's row and choose **"Archived sessions of this working copy"** to open
   the archive for that folder only.
 

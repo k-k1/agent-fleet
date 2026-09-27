@@ -399,6 +399,13 @@ func handleRestoreCleanupArchive(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "restore_incomplete", err.Error())
 		return
 	}
+	var conflict *restoreConflict
+	if errors.As(err, &conflict) {
+		// A deleted worktree that cannot come back as it was without a choice the trash cannot
+		// ask for (a new branch name) — the archive's recreate dialog can.
+		httpx.WriteErr(w, http.StatusConflict, conflict.code, conflict.msg)
+		return
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "restore_failed", err.Error())
 		return

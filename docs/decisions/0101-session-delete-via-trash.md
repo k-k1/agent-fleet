@@ -5,7 +5,10 @@ English | [日本語](0101-session-delete-via-trash.ja.md)
 - Status: **accepted** (2026-09-24). Built in the same change. The design history, the inventory of
   entry points and the trash measurements are in
   [docs/log/115](../log/115-session-delete-via-trash.md). The user took the recommended option on all
-  six decisions of §115.7.
+  six decisions of §115.7. Amended on 2026-09-27 (issue #1042): deleting a worktree now goes through the
+  trash too. The delete records its commit, branch and uncommitted work, pins the commit with
+  `refs/af/deleted-worktrees/*`, and restoring the entry puts the folder back and takes its shelved
+  sessions off the shelf ([docs/log/122](../log/122-worktree-delete-through-the-trash.md)).
 - Follow-ups: #950
 - Related: [0097](0097-session-retention.md) (retaining stopped sessions — this ADR makes its decision 2,
   "deleting is a person's action, and reclaiming always goes through the gz archive", true without
