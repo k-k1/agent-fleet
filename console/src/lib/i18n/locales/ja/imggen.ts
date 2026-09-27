@@ -353,4 +353,5 @@ export const imggen = {
   "imggen.size_exact": "寸法",
   "imggen.sum_sampler_none": "sampler 既定",
   "imggen.sum_scheduler_none": "scheduler 既定",
+  "imggen.start_no_parent": "この worktree の親のクローンが一覧に無いため、この組み合わせで必要な新しい worktree を切れません。ターミナル（CLI）を選ぶか、別の場所を選んでください。",
 };

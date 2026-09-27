@@ -351,4 +351,5 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.size_exact": "Dimensions",
   "imggen.sum_sampler_none": "default sampler",
   "imggen.sum_scheduler_none": "default scheduler",
+  "imggen.start_no_parent": "This worktree's parent clone is not listed, so the new worktree this combination needs cannot be cut. Choose Terminal (CLI) or another place.",
 };

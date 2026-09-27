@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const calls: string[] = [];
+let putStatus = 200;
 vi.mock("../../core/api/client.ts", () => ({
   raw: async (path: string, init?: { method?: string }) => {
     calls.push(`${init?.method || "GET"} ${path}`);
@@ -27,7 +28,7 @@ vi.mock("./api.ts", () => ({
   getStudio: async () => null,
   patchStudio: async (id: string, body: unknown, ifMatch: string) => {
     calls.push(`put ${id} ${ifMatch} ${JSON.stringify(body)}`);
-    return { status: 200 };
+    return { status: putStatus };
   },
 }));
 
@@ -67,5 +68,19 @@ describe("attaching to an existing studio", () => {
       opts: { dir: "", kind: "claude", driver: "tui", imageProvider: "comfy", imageModel: "flux", place: "" } as never,
     });
     expect(calls.some((c) => c.startsWith("put"))).toBe(false);
+  });
+  it("does not start the agent when only the provider changed and the write failed", async () => {
+    calls.length = 0;
+    putStatus = 500;
+    const r = await attachAgent({
+      studioId: "st1",
+      draft: () => ({}),
+      existing: { title: "mine", updatedAt: "v1", draft: { provider: "comfy-a", model: "sdxl" } },
+      opts: { dir: "", kind: "claude", driver: "tui", imageProvider: "comfy-b", imageModel: "sdxl", place: "" } as never,
+    });
+    putStatus = 200;
+    expect(r.session).toBeUndefined();
+    expect(r.error).toBeTruthy();
+    expect(calls.some((c) => c.startsWith("POST api/sessions"))).toBe(false);
   });
 });

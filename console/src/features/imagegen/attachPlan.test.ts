@@ -39,6 +39,23 @@ describe("planPlace", () => {
   });
 });
 
+describe("planPlace for a worktree whose parent clone is not listed", () => {
+  const alone = [WT];
+  it("never cuts the new worktree from the worktree's own folder", () => {
+    expect(planPlace({ repo: WT, repos: alone, kind: "codex", driver: "managed", want: false })).toMatchObject({
+      blocked: "no_parent",
+      worktree: false,
+    });
+  });
+  it("runs in place when the agent does not need a worktree", () => {
+    expect(planPlace({ repo: WT, repos: alone, kind: "claude", driver: "tui", want: true })).toMatchObject({
+      dir: "/r/app@x",
+      worktree: false,
+      worktreeChoice: false,
+    });
+  });
+});
+
 describe("orderedPlaces", () => {
   it("lists each worktree under its parent", () => {
     expect(orderedPlaces(repos).map((p) => `${p.nested ? "  " : ""}${p.repo.name}`)).toEqual(["app", "  app@x", "legacy"]);
