@@ -1134,6 +1134,14 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	if out, err := Combined(parentDir, args...); err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, out)
 	}
+	finishNewWorktree(dir, parentDir)
+	return dir, nil
+}
+
+// finishNewWorktree is what every freshly added worktree needs before a session runs in it.
+// Only call it right after `git worktree add`: the scratch relocation below must not run on
+// an existing worktree.
+func finishNewWorktree(dir, parentDir string) {
 	applyGitIdentity(dir) // commit identity for the worktree (config is shared, but explicit)
 	// A worktree's submodules live in their own object store, so without this they are fetched
 	// from the remote all over again — see git_submodule_seed.go. Seed from the parent's copy
@@ -1144,7 +1152,6 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	// relocating them is free. Only on creation: an existing worktree may already hold
 	// a populated tree on EFS, and moving that on a relaunch would stall the session.
 	scratchAutoRelocate(dir)
-	return dir, nil
 }
 
 func HandleCloneRepo(w http.ResponseWriter, r *http.Request) {
