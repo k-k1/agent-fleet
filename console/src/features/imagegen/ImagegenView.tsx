@@ -23,6 +23,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { dismissToast } from "../../ui/toast.ts";
 import { openGeneratedGallery } from "../gallery/open.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -57,7 +58,9 @@ import { draftFromProperties, draftKey, emptyDraft, loadDraft, remappedOp, saveD
 import { noteImagegenStatus } from "./available.ts";
 import { GenerateForm, ModelSelect } from "./parts/GenerateForm.tsx";
 import { JobList } from "./parts/JobList.tsx";
-import { ResultCards, TrialSlot, resultsOf } from "./parts/ResultCards.tsx";
+import { ResultCards, TrialSlot, resultsOf, type ResultItem } from "./parts/ResultCards.tsx";
+import { DraftBar } from "./parts/DraftBar.tsx";
+import { pressBlocked, useArrivals, useChatMark, useUnseenCount } from "./loop.ts";
 import { AttachAgentModal, type AttachOpts } from "./parts/AttachAgentModal.tsx";
 import { DraftLog } from "./parts/DraftLog.tsx";
 import { KnowledgeMemo } from "./parts/KnowledgeMemo.tsx";
@@ -71,6 +74,9 @@ import "./imagegen.css";
 
 /** Decision 2's cadence. Only ever runs while something is unfinished AND the tab is shown. */
 const POLL_MS = 2000;
+
+/** The pane width at which the columns fold into tabs — imagegen.css's `@container paneview`. */
+const NARROW_PX = 720;
 
 /** The picture history's page size. */
 const HISTORY_PAGE = 24;
@@ -110,8 +116,13 @@ export function ImagegenView({
   // letting the person press a button that answers 429 (lane A, deviation 3).
   const [caps, setCaps] = useState({ queued: 0, queueMax: 0, trialPending: 0, trialMax: 0 });
   const [failed, setFailed] = useState(false);
+  // The job list has been read once: before that an empty list is "not known", not "none".
+  const [jobsRead, setJobsRead] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [zoomPath, setZoomPath] = useState<string | null>(null);
+  // The enlarged picture, and which list its ←/→ walk: the results column (trial + results) or
+  // the studio's history.
+  const [zoom, setZoom] = useState<{ path: string; from: "out" | "history" } | null>(null);
+  const zoomPath = zoom?.path ?? null;
   const [attachOpen, setAttachOpen] = useState<"attach" | "replace" | null>(null);
   const [logOpen, setLogOpen] = useState(false);
   // The narrow pane's tab (ADR 0100 §4); ignored while the three columns fit.
@@ -203,6 +214,7 @@ export function ImagegenView({
         trialMax: r.trial_max || 0,
       });
       setNow(Date.now());
+      setJobsRead(true);
     } catch {
       /* a transient 502 while the agent restarts keeps the list on screen */
     }
@@ -290,6 +302,25 @@ export function ImagegenView({
   const rows = useMemo(() => foldGroups(jobs, groups), [jobs, groups]);
   const results = useMemo(() => resultsOf(jobs.filter((j) => !j.trial)), [jobs]);
   const latestTrial = useMemo(() => resultsOf(jobs.filter((j) => j.trial))[0] ?? null, [jobs]);
+  // The results column's pictures in its own order — the trial slot, then the grid — which is
+  // what the lightbox walks and what the badge and the "ready" notice count.
+  const outItems = useMemo<ResultItem[]>(() => (latestTrial ? [latestTrial, ...results] : results), [latestTrial, results]);
+  const outPaths = useMemo(() => outItems.map((r) => r.file.path), [outItems]);
+
+  // Whether the columns are folded into tabs. The CSS decides the layout by container query;
+  // this only tells the badges and the notice whether a tab other than the results hides them.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setNarrow(el.clientWidth <= NARROW_PX));
+    ro.observe(el);
+    setNarrow(el.clientWidth <= NARROW_PX);
+    return () => ro.disconnect();
+  }, []);
+  const sees = (k: "chat" | "form" | "out") => active && (!narrow || tab === k);
+  const newResults = useUnseenCount(outPaths, jobsRead, sees("out"));
 
   const submit = useCallback(
     async (trial: boolean) => {
@@ -502,10 +533,76 @@ export function ImagegenView({
     [patch, toast, tr],
   );
 
-  const close = useCallback(() => setZoomPath(null), []);
+  const again = useCallback(
+    (item: ResultItem, sameSeed: boolean) => {
+      const seed = item.file.seed ?? item.job.seed ?? null;
+      if (sameSeed && seed != null) patch({ seed: String(seed), seedPolicy: "fixed" });
+      else patch({ seedPolicy: "random" });
+      void submit(true);
+    },
+    [patch, submit],
+  );
+
+  const close = useCallback(() => setZoom(null), []);
+  const zoomOut = useCallback((path: string) => setZoom({ path, from: "out" }), []);
+  const zoomHistory = useCallback((path: string) => setZoom({ path, from: "history" }), []);
   // Back closes the lightbox instead of the pane; the host owns that entry, not the
   // lightbox (the same rule the gallery and the mirror follow).
   useBackClose(zoomPath ? close : undefined, !!zoomPath);
+
+  // ←/→ through the list the picture was opened from. A picture that has left that list (the
+  // job was cleared under it) simply has no neighbours.
+  const zoomList = zoom?.from === "history" ? history.map((h) => h.path) : outPaths;
+  const zoomAt = zoomPath ? zoomList.indexOf(zoomPath) : -1;
+  const lightboxPaging =
+    zoom && zoomAt >= 0 && zoomList.length > 1
+      ? {
+          index: zoomAt + 1,
+          total: zoomList.length,
+          onPrev: zoomAt > 0 ? () => setZoom({ ...zoom, path: zoomList[zoomAt - 1] }) : undefined,
+          onNext: zoomAt < zoomList.length - 1 ? () => setZoom({ ...zoom, path: zoomList[zoomAt + 1] }) : undefined,
+        }
+      : {};
+  // The studio's verbs on the enlarged picture — the cards' own, so the lightbox is where the
+  // loop can continue. Each closes the lightbox: what it changed is on the form or in the queue.
+  const zoomItem = zoomPath ? outItems.find((r) => r.file.path === zoomPath) : undefined;
+  const zoomSeed = zoomItem ? (zoomItem.file.seed ?? zoomItem.job.seed ?? null) : null;
+  const zoomVersion = zoom?.from === "history" ? history.find((h) => h.path === zoomPath)?.version : undefined;
+  const lightboxActions =
+    zoomPath && pictureActions ? (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            pictureActions.onReference(zoomPath);
+            close();
+          }}
+        >
+          <Icon name="file-media" /> {tr("imggen.lb_reference")}
+        </button>
+        {zoomItem && zoomSeed != null && (
+          <button
+            type="button"
+            disabled={pressBlocked(draft, { busy: busy || state === "unavailable", trialFull, queueFull }).trial}
+            onClick={() => {
+              again(zoomItem, true);
+              close();
+            }}
+          >
+            <Icon name="beaker" /> {tr("imggen.lb_again")}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            pictureActions.onRestore(zoomPath, zoomVersion);
+            close();
+          }}
+        >
+          <Icon name="history" /> {tr("imggen.lb_restore")}
+        </button>
+      </>
+    ) : undefined;
 
   const engineLine =
     state === "unavailable"
@@ -521,6 +618,39 @@ export function ImagegenView({
           : tr("imggen.engine_ready");
 
   const session = studio.studio?.session || "";
+  const sessionState = useSessionsStore((s) => (session ? s.sessions.find((x) => x.name === session)?.state : undefined));
+  const chatMark = useChatMark(sessionState, sees("chat"));
+
+  // "N pictures are ready", only when the member is not already looking at the results: a
+  // narrow pane on another tab, or this pane not the active one. The pictures are the
+  // difference between two job lists the poller read anyway — nothing polls for this.
+  const noticeKey = "igen-done-" + (paneId || "pane");
+  // Pictures announced since the member last saw the results: a second batch while the first
+  // notice is still up says the total, not only the latest batch.
+  const announced = useRef(0);
+  const viewResults = useCallback(() => {
+    announced.current = 0;
+    dismissToast(noticeKey);
+    setTab("out");
+    if (paneId) useLayoutStore.getState().selectTab(paneId);
+  }, [noticeKey, paneId]);
+  const seesOut = sees("out");
+  useEffect(() => {
+    if (seesOut) announced.current = 0;
+  }, [seesOut]);
+  useArrivals(outPaths, jobsRead, (n) => {
+    if (seesOut) return;
+    announced.current += n;
+    toast(
+      <span className="igen-done-toast">
+        {tr("imggen.done_toast", { n: announced.current })}{" "}
+        <button type="button" className="ui-btn ui-btn-sm" onClick={viewResults}>
+          {tr("imggen.done_view")}
+        </button>
+      </span>,
+      { kind: "success", key: noticeKey, duration: 8000 },
+    );
+  });
   const studioTitle = (s: { title?: string; id: string }) => s.title || tr("imggen.studio_untitled", { id: s.id.slice(0, 8) });
   const form = (
     <GenerateForm
@@ -549,7 +679,7 @@ export function ImagegenView({
   );
 
   return (
-    <div className="igen">
+    <div className="igen" ref={rootRef}>
       <ViewHead
         actions={
           <>
@@ -658,6 +788,20 @@ export function ImagegenView({
                 onClick={() => setTab(k)}
               >
                 {tr(`imggen.tab_${k}` as "imggen.tab_chat")}
+                {k === "out" && newResults > 0 && (
+                  <span className="igen-tab-badge" aria-label={tr("imggen.tab_new_results", { n: newResults })}>
+                    +{newResults}
+                  </span>
+                )}
+                {k === "form" && studio.highlight.size > 0 && (
+                  <span className="igen-tab-dot" aria-label={tr("imggen.tab_agent_changed")} />
+                )}
+                {k === "chat" && chatMark && (
+                  <span
+                    className={"igen-tab-dot igen-tab-dot-" + chatMark}
+                    aria-label={tr(`imggen.tab_chat_${chatMark}` as "imggen.tab_chat_working")}
+                  />
+                )}
               </button>
             ))}
           </div>
@@ -674,6 +818,19 @@ export function ImagegenView({
                 needsModel={!draft.model.trim()}
                 onAttach={() => setAttachOpen("attach")}
                 onReplace={() => setAttachOpen("replace")}
+                aboveComposer={
+                  <DraftBar
+                    draft={draft}
+                    modelName={model?.label || draft.model}
+                    highlight={studio.highlight.size > 0}
+                    trial={latestTrial}
+                    gate={{ busy: busy || state === "unavailable", trialFull, queueFull }}
+                    onTrial={() => void submit(true)}
+                    onEnqueue={() => void submit(false)}
+                    onOpenForm={() => setTab("form")}
+                    onZoom={zoomOut}
+                  />
+                }
               />
             </div>
             <div className="igen-col-form">
@@ -702,7 +859,7 @@ export function ImagegenView({
               {form}
             </div>
             <div className="igen-col-out">
-              <TrialSlot item={latestTrial} onZoom={setZoomPath} onUseSeed={useSeed} />
+              <TrialSlot item={latestTrial} onZoom={zoomOut} onUseSeed={useSeed} />
               <JobList
                 rows={rows}
                 queuePaused={queuePaused}
@@ -715,21 +872,16 @@ export function ImagegenView({
               />
               <ResultCards
                 items={results}
-                onZoom={setZoomPath}
+                onZoom={zoomOut}
                 actions={pictureActions}
-                onAgain={(item, sameSeed) => {
-                  const seed = item.file.seed ?? item.job.seed ?? null;
-                  if (sameSeed && seed != null) patch({ seed: String(seed), seedPolicy: "fixed" });
-                  else patch({ seedPolicy: "random" });
-                  void submit(true);
-                }}
+                onAgain={again}
               />
               {studioId && pictureActions && (
                 <StudioHistory
                   items={history}
                   hasMore={!!historyBefore}
                   onMore={() => void readHistory(true)}
-                  onZoom={setZoomPath}
+                  onZoom={zoomHistory}
                   actions={pictureActions}
                 />
               )}
@@ -746,7 +898,13 @@ export function ImagegenView({
       )}
       {zoomPath &&
         createPortal(
-          <ImageLightbox src={downloadURL(zoomPath)} path={zoomPath} onClose={close} />,
+          <ImageLightbox
+            src={downloadURL(zoomPath)}
+            path={zoomPath}
+            onClose={close}
+            {...lightboxPaging}
+            actions={lightboxActions}
+          />,
           document.body,
         )}
     </div>
