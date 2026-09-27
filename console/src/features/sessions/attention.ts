@@ -66,11 +66,16 @@ export interface AttentionWalk {
  * active session starts a new walk from the fresh queue — after that session when it is in
  * the queue, from the head otherwise.
  *
+ * `currentDone` false: the current session is still in the queue for a destination that is
+ * not on screen (its report's conversation, say), so it is a stop too — the last one, after
+ * every other.
+ *
  * null when nothing needs you other than the current session. */
 export function nextAttention(
   queue: string[],
   current: string | null | undefined,
   prev: AttentionWalk | null,
+  currentDone = true,
 ): AttentionWalk | null {
   const live = new Set(queue);
   const base = prev && current && prev.at === current ? prev.order : queue;
@@ -79,7 +84,7 @@ export function nextAttention(
   const from = current ? order.indexOf(current) : -1;
   for (let i = 1; i <= order.length; i++) {
     const n = order[(from + i) % order.length];
-    if (n !== current && live.has(n)) return { order, at: n };
+    if (live.has(n) && (n !== current || !currentDone)) return { order, at: n };
   }
   return null;
 }

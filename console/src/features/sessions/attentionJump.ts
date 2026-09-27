@@ -10,7 +10,7 @@ import { displayName } from "../../lib/sessionview.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { toast } from "../../ui/toast.ts";
 import { openNotificationTarget, useNotificationStore } from "../notifications/store.ts";
-import { opensConversation } from "../notifications/read.ts";
+import { destinationShown, opensConversation } from "../notifications/read.ts";
 import type { FleetNotification } from "../notifications/store.ts";
 import { attentionQueue, nextAttention, unreadAtFromNotifications } from "./attention.ts";
 import type { AttentionWalk } from "./attention.ts";
@@ -31,7 +31,11 @@ import type { Session } from "../../types/session.ts";
 let walk: AttentionWalk | null = null;
 let landedAt = "";
 let watching = false;
-let busy = false;
+// When the press in flight started. A second press meanwhile would pick the same stop again,
+// so it is ignored — but only for a while: opening a conversation waits on a fetch with no
+// timeout of its own, and a hung one must not swallow every later press.
+let busySince = 0;
+const BUSY_MS = 5000;
 
 const placeKey = (l: Layout): string => {
   const v = activePane(l);
@@ -76,9 +80,8 @@ async function openStop(s: Session, items: FleetNotification[]): Promise<void> {
 /** Opens the next session that needs you in the active pane (or focuses the pane already
  *  showing it) and says where it went. */
 export async function jumpToNextAttention(): Promise<void> {
-  // A second press while a conversation is still being fetched would pick the same stop again.
-  if (busy) return;
-  busy = true;
+  if (busySince && Date.now() - busySince < BUSY_MS) return;
+  const started = (busySince = Date.now());
   try {
     watchLayout();
     const sessions = useSessionsStore.getState().sessions;
@@ -88,8 +91,14 @@ export async function jumpToNextAttention(): Promise<void> {
     const queue = attentionQueue(sessions, waitingAt, unreadAtFromNotifications(items));
     const layout = useLayoutStore.getState().layout;
     const prev = walk && placeKey(layout) === landedAt ? walk : null;
-    const current = prev ? prev.at : shownSession(activePane(layout), sessions);
-    const next = nextAttention(queue.map((s) => s.name), current, prev);
+    const place = activePane(layout);
+    const current = prev ? prev.at : shownSession(place, sessions);
+    // Being at a session is not being at every one of its stops: with an unseen report left,
+    // the session on screen still needs you — in the report's conversation.
+    const here = sessions.find((s) => s.name === current);
+    const stop = here && !isWaiting(here) ? newestUnseen(items, here.name) : undefined;
+    const currentDone = !stop || destinationShown(stop, place, sessions);
+    const next = nextAttention(queue.map((s) => s.name), current, prev, currentDone);
     const target = next && queue.find((s) => s.name === next.at);
     walk = null;
     if (!next || !target) {
@@ -101,7 +110,7 @@ export async function jumpToNextAttention(): Promise<void> {
     landedAt = placeKey(useLayoutStore.getState().layout);
     walk = next;
   } finally {
-    busy = false;
+    if (busySince === started) busySince = 0;
   }
 }
 
@@ -109,5 +118,5 @@ export async function jumpToNextAttention(): Promise<void> {
 export function resetAttentionWalkForTest(): void {
   walk = null;
   landedAt = "";
-  busy = false;
+  busySince = 0;
 }

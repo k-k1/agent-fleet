@@ -10,9 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Cell, Layout, View } from "../../layout/types.ts";
 
 const apiJSON = vi.fn(async (..._args: unknown[]) => ({}));
+const chatGet = vi.fn(async (_id: string): Promise<unknown> => ({ id: "alive" }));
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   apiJSON: (...args: unknown[]) => apiJSON(...args),
+  chatGet: (id: string) => chatGet(id),
 }));
 
 const { useNotificationStore, wireNotificationReadOnVisibleSessions } = await import("./store.ts");
@@ -132,6 +134,18 @@ describe("a session report", () => {
     stop = wireNotificationReadOnVisibleSessions();
     await Promise.resolve();
     expect(acked()).toEqual(["e2"]);
+  });
+
+  it("is acknowledged through its session once its conversation is proven gone — and only then", async () => {
+    chatGet.mockImplementation(async (id: string) =>
+      id === "gone" ? { error: { code: "chat_conversation_not_found", status: 404 } }
+        : id === "flaky" ? { error: { code: "http_502" } } : { id });
+    useNotificationStore.setState({ items: [report("e1", "worker", "gone"), report("e2", "worker", "flaky"), report("e3", "worker", "alive")] });
+    useLayoutStore.setState({ layout: layout([cell("g1", [view("p1", "worker")])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await vi.waitFor(() => expect(acked()).toEqual(["e1"]));
+    chatGet.mockReset();
+    chatGet.mockImplementation(async () => ({ id: "alive" }));
   });
 
   it("is acknowledged when its conversation is on screen, and only its own", async () => {

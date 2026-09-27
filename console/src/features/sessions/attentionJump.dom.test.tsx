@@ -82,6 +82,33 @@ describe("jumpToNextAttention", () => {
     expect(seenPosts()).toEqual([]);
   });
 
+  it("reaches the report of the session already on screen", async () => {
+    useSessionsStore.setState({
+      sessions: [
+        { name: "asks", kind: "claude", alive: true, state: "question" },
+        { name: "reported", kind: "claude", alive: true, state: "" },
+      ],
+    });
+    useNotificationStore.setState({
+      items: [note("e1", "reported", "session-report", "2026-09-27T10:00:00Z", { conversation_id: "conv-1" })],
+    });
+    setLayout(show("reported"));
+    // The other stop first, the reporting session's own report last — but reached.
+    await jumpToNextAttention();
+    await jumpToNextAttention();
+    expect(opened).toEqual(["session:asks", "conversation:conv-1"]);
+  });
+
+  it("opens the report even when the reporting session on screen is all that needs you", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "reported", kind: "claude", alive: true, state: "" }] });
+    useNotificationStore.setState({
+      items: [note("e1", "reported", "session-report", "2026-09-27T10:00:00Z", { conversation_id: "conv-1" })],
+    });
+    setLayout(show("reported"));
+    await jumpToNextAttention();
+    expect(opened).toEqual(["conversation:conv-1"]);
+  });
+
   it("acknowledges a report whose conversation is gone, so it cannot hold the queue forever", async () => {
     useSessionsStore.setState({ sessions: [{ name: "reported", kind: "claude", alive: true, state: "" }] });
     useNotificationStore.setState({

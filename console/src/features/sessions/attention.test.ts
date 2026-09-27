@@ -52,6 +52,12 @@ describe("nextAttention", () => {
     expect(nextAttention(["a", "b", "c"], "c", null)?.at).toBe("a");
   });
 
+  it("keeps the current session as the last stop while one of its destinations is not on screen", () => {
+    expect(nextAttention(["a"], "a", null, false)?.at).toBe("a");
+    expect(nextAttention(["a", "b"], "a", null, false)?.at).toBe("b");
+    expect(nextAttention(["a", "b"], "b", null, false)?.at).toBe("a");
+  });
+
   it("returns null when nothing but the current session needs you", () => {
     expect(nextAttention([], "a", null)).toBeNull();
     expect(nextAttention(["a"], "a", null)).toBeNull();

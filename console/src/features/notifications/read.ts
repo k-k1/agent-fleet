@@ -1,4 +1,6 @@
 import type { FleetNotification } from "./store.ts";
+import type { View } from "../../layout/types.ts";
+import { shownSession } from "../sessions/shown.ts";
 
 const unreadFor = (n: FleetNotification, sessionName: string): boolean =>
   !n.seen && n.target.type === "session" && n.target.id === sessionName;
@@ -41,3 +43,10 @@ export function unreadSessionNames(items: FleetNotification[]): string[] {
  *  poll (5s); this value is Object.is-comparable, so a render only follows a real change.
  *  Newline is safe as the separator: a session name is a generated slug. */
 export const unreadSessionKey = (items: FleetNotification[]): string => unreadSessionNames(items).join("\n");
+
+/** Is this notification's destination what the view shows? A report's destination is its
+ *  conversation; everything else aimed at a session is that session. */
+export function destinationShown(n: FleetNotification, view: View | null | undefined, sessions: { name: string; studio?: string }[]): boolean {
+  if (opensConversation(n)) return view?.content.kind === "chat" && view.content.conversationId === n.payload.conversation_id;
+  return n.target.type === "session" && !!n.target.id && shownSession(view, sessions) === n.target.id;
+}

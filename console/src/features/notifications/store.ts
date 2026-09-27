@@ -9,13 +9,14 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { shownSession } from "../sessions/shown.ts";
+import type { Session } from "../../types/session.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSessionTerminalSplit } from "../sessions/open.ts";
 import { openChat } from "../chat/open.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { openSharedSession } from "../sharing/open.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
-import { opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
+import { destinationShown, opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 import { childIdleMuted } from "./childIdle.ts";
 import { useAwsLoginStore } from "../awslogin/store.ts";
@@ -62,8 +63,9 @@ async function deliver(n: FleetNotification): Promise<void> {
   // suppression here costs the user an OS notification, and the layout says nothing about
   // whether the browser tab is even on screen — while it is hidden this is the only channel
   // left. Swallowing one per open pane would turn a background window into a silent one.
-  const active = shownSession(activePane(useLayoutStore.getState().layout), useSessionsStore.getState().sessions);
-  if (n.target.type === "session" && active === n.target.id) {
+  // Suppressed only where its destination is: a report is not on screen just because its
+  // session is (that pane does not acknowledge it either), and is when its conversation is.
+  if (destinationShown(n, activePane(useLayoutStore.getState().layout), useSessionsStore.getState().sessions)) {
     return;
   }
   // A muted child's idle interrupts nobody; wireNotificationReadOnVisibleSessions marks it read.
@@ -283,11 +285,31 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
       // runs before the session list may have arrived to say which sessions are children.
       ...mutedChildIdleIDs(items),
     ])].filter((id) => !pending.has(id));
+    checkGoneReports(items, sessions);
     if (!ids.length) return;
     ids.forEach((id) => pending.add(id));
     void useNotificationStore.getState().markSeen(undefined, ids).finally(() => {
       ids.forEach((id) => pending.delete(id));
     });
+  };
+  // A report on screen only through its session is left for its conversation — unless that
+  // conversation is gone, when nothing could ever show it again and the session on screen is
+  // the last place it can be acknowledged (what the session-pane rule did before). Proven gone
+  // the way openNotificationTarget proves it (a 4xx, not a transient failure); asked once per
+  // notification.
+  const probed = new Set<string>();
+  const checkGoneReports = (items: FleetNotification[], sessions: Session[]) => {
+    const panes = allPanes(useLayoutStore.getState().layout);
+    for (const n of items) {
+      if (n.seen || probed.has(n.id) || !opensConversation(n) || n.target.type !== "session") continue;
+      if (!panes.some((p) => shownSession(p, sessions) === n.target.id)) continue;
+      probed.add(n.id);
+      void chatGet(String(n.payload.conversation_id))
+        .catch(() => null)
+        .then((conv) => {
+          if (!conversationReachable(conv)) void useNotificationStore.getState().markSeen(undefined, [n.id]);
+        });
+    }
   };
   const unLayout = useLayoutStore.subscribe(sync);
   const unSessions = useSessionsStore.subscribe((state, previous) => {
