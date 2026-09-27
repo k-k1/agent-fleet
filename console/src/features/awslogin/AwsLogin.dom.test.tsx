@@ -97,6 +97,8 @@ describe("AWS login toast and modal", () => {
 
     await act(async () => button("Log in", toast!).click());
     expect(document.body.textContent).toContain("AWS login (Production)");
+    // Closing is the answer for "not on this device": the modal must say the request stays.
+    expect(document.body.textContent).toContain("Closing keeps the request");
     await tick(5000);
     expect(calls.some((c) => c.path.includes("/start"))).toBe(false);
   });

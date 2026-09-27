@@ -517,6 +517,7 @@ export const sessions = {
   "awslogin.unexpected_url": "サインインの URL がこのプロファイルのものではなかったため、表示しませんでした。何も承認されていません。",
   "awslogin.replaced": "このプロファイルで別のサインインが始まったため、このサインインは止まり、そのコードはもう使えません。",
   "awslogin.gone": "このサインインはもう動いていません（ワークスペースが再起動したのかもしれません）。",
+  "awslogin.close_hint": "閉じても依頼は残り、ほかの端末の Console にも出続けるので、別のブラウザからログインできます。依頼を取り消すのは、このログインをしないときだけにしてください。",
   "awslogin.cancel_request": "依頼を取り消す",
   "awslogin.close": "閉じる",
   "awslogin.not_pending": "このログイン依頼はもう保留中ではありません。",

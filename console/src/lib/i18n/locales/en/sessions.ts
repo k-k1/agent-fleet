@@ -507,6 +507,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "awslogin.unexpected_url": "The sign-in URL was not the one this profile uses, so it was not shown. Nothing was approved.",
   "awslogin.replaced": "Another sign-in was started for this profile, so this one was stopped and its code no longer works.",
   "awslogin.gone": "This sign-in is no longer running (the workspace may have restarted).",
+  "awslogin.close_hint": "Closing keeps the request: it stays in the Console on your other devices too, so you can sign in from another browser. Cancel the request only if you do not want this login.",
   "awslogin.cancel_request": "Cancel the request",
   "awslogin.close": "Close",
   "awslogin.not_pending": "This login request is no longer pending.",

@@ -130,6 +130,7 @@ export function AwsLoginModal({ id }: { id: string }) {
         )}
         {phase === "replaced" && <p className="ssm-error">{tr("awslogin.replaced")}</p>}
         {phase === "gone" && <p className="ssm-error">{tr("awslogin.gone")}</p>}
+        {phase !== "done" && <p className="ui-field-hint">{tr("awslogin.close_hint")}</p>}
       </div>
       <footer className="ui-modal-foot">
         {phase !== "done" && (
