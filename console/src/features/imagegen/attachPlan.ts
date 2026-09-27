@@ -8,7 +8,7 @@ import type { Repo } from "../repos/store.ts";
 import { worktreeOptional, type StudioDriver } from "./studioSync.ts";
 
 /** Why the chosen place cannot host the chosen agent at all. */
-export type PlaceBlock = "needs_repo" | "no_worktree";
+export type PlaceBlock = "needs_repo" | "no_worktree" | "no_parent";
 
 /** What the session will actually be started with, and what the dialog says about it. */
 export interface PlacePlan {
@@ -55,10 +55,12 @@ export function planPlace(p: {
   if (!canCutWorktree(r)) return { dir, ...none, ...(optional ? {} : { blocked: "no_worktree" as const }) };
   const worktree = optional ? p.want : true;
   if (r.worktree) {
+    const parent = (r.parent && p.repos.find((x) => x.name === r.parent && !x.worktree && x.path)) || null;
+    // No parent clone to cut from: in place where the agent allows it, else refused with the reason.
+    if (!parent) return { dir, ...none, ...(optional ? {} : { blocked: "no_parent" as const }) };
     if (!worktree) return { dir, ...none, worktreeChoice: true };
-    const parent = (r.parent && p.repos.find((x) => x.name === r.parent && x.path)) || null;
     return {
-      dir: parent?.path || dir,
+      dir: parent.path || "",
       worktree: true,
       base: r.branch || "",
       worktreeChoice: optional,

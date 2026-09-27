@@ -132,8 +132,16 @@ export function AttachAgentModal({
   const models = provider?.models || [];
   const imageOk = !!image.model && models.some((m) => m.id === image.model);
   useEffect(() => {
-    if (status && image.model && !models.some((m) => m.id === image.model)) setImage((i) => ({ ...i, model: "" }));
-  }, [status, models, image.model]);
+    if (!status) return;
+    // A named engine that is gone is not replaced by the first one left: model ids overlap across
+    // fleet rows, so the same id there is another engine. Ask again, like a vanished working copy.
+    if (image.providerId && !providers.some((p) => p.id === image.providerId)) {
+      setImage({ providerId: "", model: "" });
+      setFolded(false);
+      return;
+    }
+    if (image.model && !models.some((m) => m.id === image.model)) setImage((i) => ({ ...i, model: "" }));
+  }, [status, providers, models, image.providerId, image.model]);
 
   // Keep the kind among the offered ones when the execution method (or the connections) change.
   // Not while the connection check is out: its empty list would wipe a remembered kind.
@@ -442,6 +450,7 @@ export function AttachAgentModal({
         )}
         {plan.blocked === "needs_repo" && kind && <p className="igen-warn">{tr("imggen.attach_needs_repo")}</p>}
         {plan.blocked === "no_worktree" && kind && <p className="igen-warn">{tr("imggen.start_no_worktree")}</p>}
+        {plan.blocked === "no_parent" && kind && <p className="igen-warn">{tr("imggen.start_no_parent")}</p>}
       </div>
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose} disabled={busy}>

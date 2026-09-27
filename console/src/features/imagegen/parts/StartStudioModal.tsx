@@ -28,9 +28,17 @@ export function StartStudioModal({ repo, onClose }: { repo: Repo; onClose: () =>
     if (r.studioId) made.current = r.studioId;
     if (r.error) toast(r.error || tr("imggen.attach_failed"), { kind: "error" });
     if (!r.session || !r.studioId) return false;
+    made.current = null;
     void refreshSessions();
-    openImagegen({ studioId: r.studioId, newPane: true });
+    void openImagegen({ studioId: r.studioId, newPane: true });
     return true;
   };
-  return <AttachAgentModal fixedRepo={repo} onClose={onClose} onAttach={onAttach} />;
+  // Closed after a start that made the studio but no session: open that studio rather than leave
+  // it only in the picker — its pane still offers "attach an agent", with the model already set.
+  const close = () => {
+    if (made.current) void openImagegen({ studioId: made.current, newPane: true });
+    made.current = null;
+    onClose();
+  };
+  return <AttachAgentModal fixedRepo={repo} onClose={close} onAttach={onAttach} />;
 }

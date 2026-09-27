@@ -127,6 +127,9 @@ async function writeChoice(
     if (!fresh || fresh.error || !fresh.id) break;
     cur = { title: fresh.title || "", updatedAt: fresh.updated_at, draft: fresh.draft || {} };
   }
-  // A title that did not land is cosmetic; a model that did not land is not (revision 9).
-  return image.model && (existing.draft.model || "") !== image.model ? t("imggen.start_model_failed") : null;
+  // A title that did not land is cosmetic; an engine or model that did not land is not: model ids
+  // overlap across fleet rows, so the same id on the old row would start on an engine nobody chose.
+  const missed =
+    (!!image.model && (cur.draft.model || "") !== image.model) || (!!image.provider && (cur.draft.provider || "") !== image.provider);
+  return missed ? t("imggen.start_model_failed") : null;
 }

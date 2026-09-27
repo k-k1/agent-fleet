@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+let personaFails = false;
 const posts: { path: string; body: Record<string, unknown> }[] = [];
 const puts: { path: string; body: Record<string, unknown> }[] = [];
 vi.mock("../../core/api/client.ts", async (orig) => ({
@@ -18,7 +19,7 @@ vi.mock("../../core/api/client.ts", async (orig) => ({
           { id: "comfy", kind: "comfy", fleet: true, ready: true, models: [{ id: "sdxl", label: "SDXL" }, { id: "flux", label: "Flux" }] },
         ],
       };
-    if (path.endsWith("/persona")) return { prompt: "persona", lang: "ja" };
+    if (path.endsWith("/persona")) return personaFails ? { error: { code: "boom" } } : { prompt: "persona", lang: "ja" };
     if (path.startsWith("api/imagegen/studios/")) return { id: "st9", title: "", draft: {}, updated_at: "v1" };
     return {};
   },
@@ -61,11 +62,11 @@ const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 let root: Root;
 let host: HTMLDivElement;
 
-async function render(repo: Repo): Promise<void> {
+async function render(repo: Repo, onClose: () => void = () => {}): Promise<void> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => root.render(<StartStudioModal repo={repo} onClose={() => {}} />));
+  await act(async () => root.render(<StartStudioModal repo={repo} onClose={onClose} />));
   await act(async () => {
     await Promise.resolve();
   });
@@ -200,5 +201,31 @@ describe("start a studio from a working-copy row", () => {
     await settle();
     const saved = JSON.parse(localStorage.getItem(attachLastKey("t1")) || "null");
     expect(saved).toMatchObject({ kind: "claude", driver: "tui", imageProvider: "comfy", imageModel: "flux" });
+  });
+
+  it("does not fall back to another engine when the remembered one is gone", async () => {
+    localStorage.setItem(
+      attachLastKey("t1"),
+      JSON.stringify({ driver: "tui", kind: "claude", model: "", effort: "", repo: "app", worktree: true, imageProvider: "gone", imageModel: "sdxl" }),
+    );
+    await render(BASE);
+    await settle();
+    expect(summary()).toBeNull();
+    expect(startBtn().disabled).toBe(true);
+  });
+
+  it("opens the studio it made when the dialog is closed after a failed start", async () => {
+    personaFails = true;
+    const onClose = vi.fn();
+    await render(BASE, onClose);
+    await pickImage("sdxl");
+    await click(startBtn());
+    await settle();
+    personaFails = false;
+    expect(sessionPost()).toBeUndefined();
+    expect(opened).toEqual([]);
+    await click(byText("キャンセル"));
+    expect(opened).toEqual([{ studioId: "st9", newPane: true }]);
+    expect(onClose).toHaveBeenCalled();
   });
 });
