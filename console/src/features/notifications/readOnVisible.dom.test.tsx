@@ -92,6 +92,32 @@ describe("which sessions count as looked at", () => {
   });
 });
 
+// A session bound to an image studio opens in the studio pane, which embeds its mirror but
+// carries only the studio id. It is on screen all the same, so it is acknowledged — otherwise its
+// dot never clears and the jump to the next session that needs you keeps landing on it (#1057).
+describe("a session shown through its image studio", () => {
+  it("is acknowledged once the studio pane is on screen", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "painter", kind: "claude", alive: true, studio: "st-1" }] });
+    useNotificationStore.setState({ items: [event("e1", "painter")] });
+    const studio: View = { id: "p1", session: null, content: { kind: "imagegen", studioId: "st-1" }, wrap: null };
+    useLayoutStore.setState({ layout: layout([cell("g1", [studio])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e1"]);
+  });
+
+  it("does not acknowledge the session whose pane the studio replaced", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "painter", kind: "claude", alive: true, studio: "st-1" }] });
+    useNotificationStore.setState({ items: [event("e1", "painter"), event("e2", "before")] });
+    // Opening the studio over a session pane keeps that pane's terminal binding.
+    const studio: View = { id: "p1", session: "before", content: { kind: "imagegen", studioId: "st-1" }, wrap: null };
+    useLayoutStore.setState({ layout: layout([cell("g1", [studio])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e1"]);
+  });
+});
+
 // childIdleNotify off: a spawned child's idle is acknowledged on arrival, wherever it is, so
 // it raises no dot — its question, and any other session's idle, still wait to be looked at.
 describe("a muted child's idle", () => {

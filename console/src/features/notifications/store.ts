@@ -8,6 +8,7 @@ import { activePane, allPanes } from "../../layout/ops.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { shownSession } from "../sessions/shown.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSessionTerminalSplit } from "../sessions/open.ts";
 import { openChat } from "../chat/open.ts";
@@ -61,7 +62,7 @@ async function deliver(n: FleetNotification): Promise<void> {
   // suppression here costs the user an OS notification, and the layout says nothing about
   // whether the browser tab is even on screen — while it is hidden this is the only channel
   // left. Swallowing one per open pane would turn a background window into a silent one.
-  const active = activePane(useLayoutStore.getState().layout)?.session;
+  const active = shownSession(activePane(useLayoutStore.getState().layout), useSessionsStore.getState().sessions);
   if (n.target.type === "session" && active === n.target.id) {
     return;
   }
@@ -269,9 +270,10 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
   const pending = new Set<string>();
   const sync = () => {
     const items = useNotificationStore.getState().items;
+    const sessions = useSessionsStore.getState().sessions;
     // The same session can occupy two panes, so dedupe before posting the acknowledgement.
     const ids = [...new Set([
-      ...allPanes(useLayoutStore.getState().layout).flatMap((p) => unseenSessionEventIDs(items, p.session || "")),
+      ...allPanes(useLayoutStore.getState().layout).flatMap((p) => unseenSessionEventIDs(items, shownSession(p, sessions))),
       // A muted child's idle is acknowledged on arrival too, so it raises no dot and no count.
       // Here rather than in deliver(): deliver sees only rows newer than the first load, and
       // runs before the session list may have arrived to say which sessions are children.
