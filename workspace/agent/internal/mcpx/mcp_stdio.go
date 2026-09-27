@@ -1177,6 +1177,9 @@ func mcpStdioStudioTools(offer studioOffer) []map[string]any {
 							"cfg":       map[string]any{"type": "number", "minimum": 0},
 							"sampler":   map[string]any{"type": "string"},
 							"scheduler": map[string]any{"type": "string"},
+							"clip_skip": map[string]any{"type": "integer", "minimum": 1, "maximum": 12, "description": "sd15 and sdxl only"},
+							"guidance":  map[string]any{"type": "number", "minimum": 0, "maximum": 30, "description": "flux1 only: its distilled guidance (it has no cfg)"},
+							"shift":     map[string]any{"type": "number", "minimum": 0, "maximum": 100, "description": "anima only: sampling shift"},
 						},
 					},
 					"loras": map[string]any{
@@ -1373,6 +1376,13 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 				"description": "How hard the sampler is pushed toward the prompt"},
 			"sampler":   map[string]any{"type": "string", "enum": offer.Samplers},
 			"scheduler": map[string]any{"type": "string", "enum": offer.Schedulers},
+			// One family each; a family that does not read one says so in warnings.
+			"clip_skip": map[string]any{"type": "integer", "minimum": 1, "maximum": 12,
+				"description": "sd15/sdxl only: stop the text encoder n layers from the end (the WebUI's \"Clip skip\"; sdxl already runs at 2)"},
+			"guidance": map[string]any{"type": "number", "minimum": 0, "maximum": 30,
+				"description": "flux1 only: FLUX.1's distilled guidance, what its model cards call CFG (default 3.5; 3.5-5 for illustration)"},
+			"shift": map[string]any{"type": "number", "minimum": 0, "maximum": 100,
+				"description": "anima only: sampling shift (default 3; 14-24 steadies composition at high resolution)"},
 		}
 		if len(offer.Schedulers) == 0 {
 			delete(params, "scheduler")

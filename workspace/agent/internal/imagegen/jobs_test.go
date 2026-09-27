@@ -905,7 +905,7 @@ func TestStatusReportsTheMemberFacingCatalogue(t *testing.T) {
 	if m.Negative != "watermark" || st.NegativeAlways != "gore" {
 		t.Errorf("negatives = %q / %q", m.Negative, st.NegativeAlways)
 	}
-	if strings.Join(m.Knobs, ",") != "steps,cfg,sampler,scheduler,negative,strength" {
+	if strings.Join(m.Knobs, ",") != "steps,cfg,sampler,scheduler,clip_skip,negative,strength" {
 		t.Errorf("knobs = %v, want what the sdxl template reads (ADR 0094 decision 12 adds strength)", m.Knobs)
 	}
 	if m.LicenseName != "CreativeML" || m.LicenseURL != "https://x/l" || m.SourceURL != "https://x/s" {
@@ -949,6 +949,12 @@ func TestFamilyRowsCarryTheirAdvice(t *testing.T) {
 		if hasRange := r.CFGRange != [2]float64{}; hasRange != readsCFG {
 			t.Errorf("%s: cfg range %v but the template reads cfg = %v", r.Family, r.CFGRange, readsCFG)
 		}
+		if hasRange, reads := r.GuidanceRange != [2]float64{}, slices.Contains(r.SamplerKnobs, "guidance"); hasRange != reads {
+			t.Errorf("%s: guidance range %v but the template reads guidance = %v", r.Family, r.GuidanceRange, reads)
+		}
+		if hasRange, reads := r.ShiftRange != [2]float64{}, slices.Contains(r.SamplerKnobs, "shift"); hasRange != reads {
+			t.Errorf("%s: shift range %v but the template reads shift = %v", r.Family, r.ShiftRange, reads)
+		}
 		if r.Dialect == comfyDialectSentences && len(r.QualityPrefixes) > 0 {
 			t.Errorf("%s: quality prefixes on a sentence family", r.Family)
 		}
@@ -962,9 +968,11 @@ func TestFamilyKnobsMatchTheTemplates(t *testing.T) {
 	// Request.Strength on an edit — and absent only from qwen-image-edit-2509, which fixes its
 	// denoise at 1 by construction (comfyFamilyStrength).
 	want := map[comfyFamily]string{
-		ComfyFamilySDXL:              "steps,cfg,sampler,scheduler,negative,strength",
+		ComfyFamilySD15:              "steps,cfg,sampler,scheduler,clip_skip,negative,strength",
+		ComfyFamilySDXL:              "steps,cfg,sampler,scheduler,clip_skip,negative,strength",
 		ComfyFamilySD35:              "steps,cfg,sampler,scheduler,negative,strength",
-		ComfyFamilyFlux1:             "steps,sampler,scheduler,strength",
+		ComfyFamilyFlux1:             "steps,guidance,sampler,scheduler,strength",
+		ComfyFamilyAnima:             "steps,cfg,sampler,scheduler,shift,negative,strength",
 		ComfyFamilyFlux2Klein:        "steps,sampler,strength",
 		ComfyFamilyZImage:            "steps,cfg,sampler,scheduler,strength",
 		ComfyFamilyQwenImageEdit2509: "steps,cfg,sampler,scheduler,negative",

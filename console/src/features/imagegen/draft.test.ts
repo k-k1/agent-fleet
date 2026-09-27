@@ -105,6 +105,12 @@ describe("params の重ね", () => {
     expect(draftParams(emptyDraft())).toBeUndefined();
     expect(draftParams({ ...emptyDraft(), steps: "20" })).toEqual({ steps: 20 });
     expect(draftParams({ ...emptyDraft(), cfg: "0" })).toEqual({ cfg: 0 });
+    expect(draftParams({ ...emptyDraft(), clipSkip: "2", guidance: "4.5", shift: "14" })).toEqual({
+      clip_skip: 2,
+      guidance: 4.5,
+      shift: 14,
+    });
+    expect(draftParams({ ...emptyDraft(), guidance: "abc" })).toBeUndefined();
   });
 });
 

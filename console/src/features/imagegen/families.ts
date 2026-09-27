@@ -39,6 +39,8 @@ export interface FamilyFacts {
   quality: string[];
   steps?: [number, number];
   cfg?: [number, number];
+  guidance?: [number, number];
+  shift?: [number, number];
   trialSteps?: number;
 }
 
@@ -58,9 +60,11 @@ export function familyFacts(model: ImagegenModel | null | undefined): FamilyFact
   const quality = Array.isArray(model.quality_prefixes) ? model.quality_prefixes.filter((q) => typeof q === "string" && q) : [];
   const steps = range(model.steps_range);
   const cfg = range(model.cfg_range);
+  const guidance = range(model.guidance_range);
+  const shift = range(model.shift_range);
   const trialSteps = typeof model.trial_steps === "number" && model.trial_steps > 0 ? model.trial_steps : undefined;
-  if (!dialect && !quality.length && !steps && !cfg && !trialSteps) return null;
-  return { dialect, quality, steps, cfg, trialSteps };
+  if (!dialect && !quality.length && !steps && !cfg && !guidance && !shift && !trialSteps) return null;
+  return { dialect, quality, steps, cfg, guidance, shift, trialSteps };
 }
 
 /** Size options for a model: the row's list when the status carried one, else the family's.

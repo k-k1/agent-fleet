@@ -746,10 +746,11 @@ the new list **without a restart**.
   as 1376×768). You still cannot pick exact dimensions, but you can ask for landscape or
   portrait. The Codex route has no aspect-ratio setting at all.
 - **Sampler settings can be asked for on the deployment's engines.** `generate_image` takes
-  steps, cfg, sampler and scheduler (and a seed, the negative prompt and LoRA weights). Anything
-  left out runs at the checkpoint's published values, and a setting the model's family does not
-  read — cfg on FLUX.1, a named scheduler on FLUX.2 klein — is **named in the result as not
-  applied** rather than dropped in silence.
+  steps, cfg, sampler and scheduler (and a seed, the negative prompt and LoRA weights), plus three
+  settings one family each reads: clip skip (SD1.5, SDXL), guidance (FLUX.1, which has no cfg) and
+  shift (Anima). Anything left out runs at the checkpoint's published values, and a setting the
+  model's family does not read — cfg on FLUX.1, a named scheduler on FLUX.2 klein — is **named in
+  the result as not applied** rather than dropped in silence.
 - **A LoRA asked for from chat carries its trigger words.** The tool lists each adapter with the
   words it was trained on and tells the agent to put one in the prompt — an adapter loaded
   without its trigger costs the whole generation and changes nothing visible.

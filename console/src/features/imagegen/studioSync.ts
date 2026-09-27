@@ -14,7 +14,7 @@ import { STUDIO_AGENT_FIELDS, type DraftChange, type DraftLogEntry, type History
 
 export type StudioKey = keyof StudioDraft;
 
-/** Which studio key each form field lives under. The four sampler fields share `params`. */
+/** Which studio key each form field lives under. The sampler fields share `params`. */
 export const FORM_TO_STUDIO: Record<keyof ImagegenDraft, StudioKey> = {
   providerId: "provider",
   model: "model",
@@ -25,6 +25,9 @@ export const FORM_TO_STUDIO: Record<keyof ImagegenDraft, StudioKey> = {
   cfg: "params",
   sampler: "params",
   scheduler: "params",
+  clipSkip: "params",
+  guidance: "params",
+  shift: "params",
   seedPolicy: "seed_policy",
   seed: "seed",
   loras: "loras",
@@ -63,6 +66,9 @@ export function formFromStudio(d: StudioDraft | null | undefined): ImagegenDraft
     cfg: num(p.cfg) != null ? String(p.cfg) : "",
     sampler: text(p.sampler),
     scheduler: text(p.scheduler),
+    clipSkip: num(p.clip_skip) != null ? String(p.clip_skip) : "",
+    guidance: num(p.guidance) != null ? String(p.guidance) : "",
+    shift: num(p.shift) != null ? String(p.shift) : "",
     seedPolicy: policy === "fixed" || policy === "sequence" ? policy : "random",
     seed: num(d.seed) != null ? String(d.seed) : "",
     loras: Array.isArray(d.loras) ? d.loras.filter((l) => l && typeof l.name === "string") : [],
@@ -105,6 +111,12 @@ export function studioFromForm(f: ImagegenDraft): StudioDraft {
   if (cfg != null) params.cfg = cfg;
   if (f.sampler) params.sampler = f.sampler;
   if (f.scheduler) params.scheduler = f.scheduler;
+  const clipSkip = n(f.clipSkip);
+  const guidance = n(f.guidance);
+  const shift = n(f.shift);
+  if (clipSkip != null) params.clip_skip = clipSkip;
+  if (guidance != null) params.guidance = guidance;
+  if (shift != null) params.shift = shift;
   if (Object.keys(params).length) d.params = params;
   if (f.seedPolicy !== "random") d.seed_policy = f.seedPolicy;
   const seed = n(f.seed);

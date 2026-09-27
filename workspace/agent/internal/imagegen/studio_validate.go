@@ -133,7 +133,7 @@ func validateDraftField(key string, raw json.RawMessage) string {
 	case "params":
 		var p EngineParams
 		if err := studioStrict(raw, &p); err != nil {
-			return "params takes steps, cfg, sampler and scheduler: " + err.Error()
+			return "params takes " + strings.Join(studioParamKeys, ", ") + ": " + err.Error()
 		}
 		if err := validateRequestParams(&p); err != nil {
 			return err.Error()
@@ -213,7 +213,7 @@ func applyDraftPatch(d ImageStudioDraft, patch map[string]json.RawMessage, autho
 			continue
 		}
 		if k == "params" && !isJSONNull(raw) {
-			merged, bad, ok := mergeDraftParams(cur["params"], raw, author)
+			merged, bad, ok := mergeDraftParams(cur["params"], raw)
 			dropped = append(dropped, bad...)
 			if !ok {
 				continue
@@ -242,23 +242,19 @@ func applyDraftPatch(d ImageStudioDraft, patch map[string]json.RawMessage, autho
 	return next, draftChanges(d, next), dropped
 }
 
-// studioParamKeys are the params a person may set; the agent may set the first four (decision 4
-// names steps, cfg, sampler and scheduler). clip_skip rides along for the member because the
-// catalogue carries it.
-var studioParamKeys = []string{"steps", "cfg", "sampler", "scheduler", "clip_skip"}
+// studioParamKeys are the sampler knobs a draft may set, and the agent may set every one of them:
+// each is a value a picture answers, which is what the agent is there to try. Which of them a
+// model's family reads is the model's knobs list, not this one.
+var studioParamKeys = []string{"steps", "cfg", "sampler", "scheduler", "clip_skip", "guidance", "shift"}
 
-// mergeDraftParams is params' own merge patch, one level down: the sampler overlay is four
-// independent knobs, and "cfg 5" from the agent must not erase the steps and sampler the member
-// set. A null sub-key clears that knob; an empty result clears params. ok is false when nothing
-// is to be applied (the value was not an object).
-func mergeDraftParams(cur, patch json.RawMessage, author string) (json.RawMessage, []DroppedField, bool) {
+// mergeDraftParams is params' own merge patch, one level down: the sampler overlay is independent
+// knobs, and "cfg 5" from the agent must not erase the steps and sampler the member set. A null
+// sub-key clears that knob; an empty result clears params. ok is false when nothing is to be
+// applied (the value was not an object).
+func mergeDraftParams(cur, patch json.RawMessage) (json.RawMessage, []DroppedField, bool) {
 	var sub map[string]json.RawMessage
 	if err := json.Unmarshal(patch, &sub); err != nil || sub == nil {
-		return nil, []DroppedField{{Field: "params", Reason: dropInvalid, Detail: "params is an object of steps, cfg, sampler and scheduler"}}, false
-	}
-	allowed := studioParamKeys
-	if author == studioAuthorAgent {
-		allowed = studioParamKeys[:4]
+		return nil, []DroppedField{{Field: "params", Reason: dropInvalid, Detail: "params is an object of " + strings.Join(studioParamKeys, ", ")}}, false
 	}
 	merged := map[string]json.RawMessage{}
 	if len(cur) > 0 {
@@ -272,9 +268,7 @@ func mergeDraftParams(cur, patch json.RawMessage, author string) (json.RawMessag
 	slices.Sort(keys)
 	for _, k := range keys {
 		switch {
-		case !slices.Contains(allowed, k) && slices.Contains(studioParamKeys, k):
-			dropped = append(dropped, DroppedField{Field: "params." + k, Reason: dropHumanOnly, Detail: "only the user sets this"})
-		case !slices.Contains(allowed, k):
+		case !slices.Contains(studioParamKeys, k):
 			dropped = append(dropped, DroppedField{Field: "params." + k, Reason: dropInvalid, Detail: "no such param"})
 		case isJSONNull(sub[k]):
 			delete(merged, k)

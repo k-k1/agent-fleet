@@ -697,7 +697,8 @@ Claude Code にも同じ用途の機能（cross-session messaging、`/list-agent
   ぴったりの寸法は選べませんが、横長・縦長は頼めます。Codex 経路には縦横比の指定そのものが
   ありません。
 - **配備のエンジンではサンプラーの設定も頼めます。** `generate_image` は steps・cfg・sampler・
-  scheduler（それに seed・ネガティブプロンプト・LoRA の強さ）を受け取ります。省いた欄はその
+  scheduler（それに seed・ネガティブプロンプト・LoRA の強さ）を受け取ります。1 つの系統だけが読む
+  設定も 3 つあります。clip skip（SD1.5・SDXL）、guidance（cfg を持たない FLUX.1）、shift（Anima）です。省いた欄はその
   チェックポイントの公表値で走り、モデルのファミリーが読まない設定——FLUX.1 の cfg、FLUX.2 klein
   で名指しした scheduler——は黙って捨てられず、**結果に「適用されなかった」と名前つきで出ます**。
 - **チャットから頼んだ LoRA にはトリガー語が付きます。** ツールはアダプタごとに学習時の語を

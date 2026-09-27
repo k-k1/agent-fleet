@@ -182,6 +182,12 @@ type comfyRecipe struct {
 	CFG       float64
 	Sampler   string
 	Scheduler string
+	// ClipSkip, Guidance and Shift are read by one or two families each (the row's SamplerKnobs
+	// says which). Zero on a family that reads one means "the model's own", and the template then
+	// adds no node for it — so the graph a row that declares nothing gets is the one it always got.
+	ClipSkip int
+	Guidance float64
+	Shift    float64
 }
 
 // with is the merge, and it is per FIELD. A row that declares only `steps` keeps this family's
@@ -206,8 +212,31 @@ func (r comfyRecipe) with(p EngineParams) comfyRecipe {
 	if comfyKnownScheduler(p.Scheduler) {
 		r.Scheduler = strings.TrimSpace(p.Scheduler)
 	}
+	if p.ClipSkip > 0 && p.ClipSkip <= comfyMaxClipSkip {
+		r.ClipSkip = p.ClipSkip
+	}
+	if p.Guidance > 0 && p.Guidance <= comfyMaxGuidance {
+		r.Guidance = p.Guidance
+	}
+	if p.Shift > 0 && p.Shift <= comfyMaxShift {
+		r.Shift = p.Shift
+	}
 	return r
 }
+
+// comfyMaxGuidance and comfyMaxShift are the node inputs' own ceilings (FluxGuidance and
+// ModelSamplingAuraFlow max 100, ComfyUI v0.37.0): a value past one fails the whole prompt at
+// validation, after the cold start, so the recipe keeps its own instead — the same trade the
+// sampler name above makes.
+//
+// comfyMaxClipSkip is CLIP-L's 12 layers, not the node's -24: sd1_clip.py falls back to the LAST
+// layer for an index past the encoder's depth, so 13 on sd15 would quietly mean 1, and on sdxl
+// would split clip_l and clip_g onto different layers.
+const (
+	comfyMaxClipSkip = 12
+	comfyMaxGuidance = 100
+	comfyMaxShift    = 100
+)
 
 // comfySamplerNames and comfySchedulerNames are the names this Agent is willing to send.
 //
@@ -232,6 +261,11 @@ func comfyKnownScheduler(s string) bool { return comfySchedulerNames[strings.Tri
 
 // recipe is the family default with this request's model declaration merged over it.
 func (p comfyParams) recipe(base comfyRecipe) comfyRecipe { return base.with(p.Params) }
+
+// declared is only what the row and the request actually named, with the same range checks the
+// recipe merge applies. A template asks this, not recipe, before ADDING a node: the family's own
+// value is the model's default, and a node that restates it is a graph nobody asked to change.
+func (p comfyParams) declared() comfyRecipe { return comfyRecipe{}.with(p.Params) }
 
 // comfyMegapixelSizes is what the megapixel-era families share, and it is the exact list this
 // package sent before sizes became a per-family answer (comfyFamilyRow.Sizes).
@@ -472,8 +506,8 @@ type comfyFamilyRow struct {
 	// not read it at all — flux1 and klein have no cfg, klein no scheduler — which is the same
 	// fact SamplerKnobs states for the form.
 	Recipe comfyRecipe
-	// SamplerKnobs is the subset of `steps cfg sampler scheduler` this family's template actually
-	// reads. `negative` and `strength` are NOT listed here: comfyFamilyKnobs appends them from
+	// SamplerKnobs is the subset of `steps cfg sampler scheduler clip_skip guidance shift` this
+	// family's template actually reads. `negative` and `strength` are NOT listed here: comfyFamilyKnobs appends them from
 	// Guided and InstructionEdit, so the two answers cannot disagree with the ones Caps gives.
 	//
 	// Derived from the templates and to be read next to them: flux1 and klein fold guidance into
@@ -572,11 +606,14 @@ type comfyFamilyRow struct {
 	// that a new family has to remember.
 	//
 	// CFGRange is zero for a family whose template does not read cfg (flux1, klein), which is the
-	// same fact SamplerKnobs states.
+	// same fact SamplerKnobs states. GuidanceRange and ShiftRange are likewise set only on the
+	// family that reads that knob (flux1, anima).
 	Dialect         comfyDialect
 	QualityPrefixes []string
 	StepsRange      [2]int
 	CFGRange        [2]float64
+	GuidanceRange   [2]float64
+	ShiftRange      [2]float64
 }
 
 // comfyDialect is how a family's prompt is written: a comma-separated tag list, sentences, or
@@ -619,8 +656,8 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// graph for this family verbatim (web/scripts/defaultGraph.js, the workflow that loads with
 	// v1-5-pruned-emaonly) rather than a number picked to look like SDXL's, so that what backs it
 	// is a citation a reviewer can check instead of this author's taste.
-	Recipe:       comfyRecipe{Steps: 20, CFG: 8, Sampler: "euler", Scheduler: "normal"},
-	SamplerKnobs: comfyKnobsSampled, TrialSteps: 10, Guided: true,
+	Recipe:       comfyRecipe{Steps: 20, CFG: 8, Sampler: "euler", Scheduler: "normal", ClipSkip: 1},
+	SamplerKnobs: comfyKnobsClipSkip, TrialSteps: 10, Guided: true,
 	// Stops at 768 on the long side for the reason the Sizes field states: 512x768 is the
 	// portrait every model card for this family prints, and past it the duplication starts.
 	Sizes: []string{"512x512", "512x768", "768x512", "640x512", "512x640"},
@@ -629,9 +666,11 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	Dialect: comfyDialectTags, QualityPrefixes: []string{"masterpiece, best quality"},
 	StepsRange: [2]int{20, 30}, CFGRange: [2]float64{6, 9},
 }, {
-	Family:       ComfyFamilySDXL,
-	Recipe:       comfyRecipe{Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"},
-	SamplerKnobs: comfyKnobsSampled, TrialSteps: 10, Guided: true,
+	Family: ComfyFamilySDXL,
+	// ClipSkip 2 is not a choice made here: it is where ComfyUI's SDXL encoders already stop
+	// (sdxl_clip.py, layer_idx=-2 on both), stated so the form shows what runs.
+	Recipe:       comfyRecipe{Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras", ClipSkip: 2},
+	SamplerKnobs: comfyKnobsClipSkip, TrialSteps: 10, Guided: true,
 	// Two dialects share the family: base/Illustrious/NoobAI take `masterpiece, best quality`,
 	// Pony takes the score tags. Both are offered and the card says which is which.
 	Dialect:         comfyDialectTags,
@@ -644,9 +683,12 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	Dialect: comfyDialectSentences, StepsRange: [2]int{24, 40}, CFGRange: [2]float64{3.5, 6},
 }, {
 	Family:       ComfyFamilyFlux1,
-	Recipe:       comfyRecipe{Steps: 20, Sampler: "euler", Scheduler: "simple"},
-	SamplerKnobs: []string{"steps", "sampler", "scheduler"}, TrialSteps: 8,
-	Dialect: comfyDialectSentences, StepsRange: [2]int{16, 32},
+	Recipe:       comfyRecipe{Steps: 20, Sampler: "euler", Scheduler: "simple", Guidance: 3.5},
+	SamplerKnobs: []string{"steps", "guidance", "sampler", "scheduler"}, TrialSteps: 8,
+	// Guidance: 3.5 is the photographic setting the community guides start from, and 3.5 to 5 is
+	// what they give for illustration and painting, where prompt following matters more; past
+	// about 5 dev degrades quickly, so the range stops there.
+	Dialect: comfyDialectSentences, StepsRange: [2]int{16, 32}, GuidanceRange: [2]float64{3.5, 5},
 }, {
 	Family:       ComfyFamilyFlux2Klein,
 	Recipe:       comfyRecipe{Steps: 4, Sampler: "euler"},
@@ -671,8 +713,10 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	// ⚠️ These are the BASE/Aesthetic numbers. Anima-Turbo is a separate checkpoint distilled to
 	// cfg 1 and 8-12 steps, and sampled at 30/4 it burns out — that is the row's `params` to
 	// declare, exactly as for the distilled SD1.5 variants.
-	Recipe:       comfyRecipe{Steps: 30, CFG: 4, Sampler: "euler", Scheduler: "simple"},
-	SamplerKnobs: comfyKnobsSampled,
+	// Shift 3 is the model's own (comfy/supported_models.py, Anima.sampling_settings) and not a
+	// node the template adds: only a declared shift inserts ModelSamplingAuraFlow.
+	Recipe:       comfyRecipe{Steps: 30, CFG: 4, Sampler: "euler", Scheduler: "simple", Shift: 3},
+	SamplerKnobs: []string{"steps", "cfg", "sampler", "scheduler", "shift"},
 	// A third of the family's 30, rather than SDXL's 10 out of 20: the model card's floor for the
 	// undistilled versions is 30 steps, so a trial at 10 would be judging a composition this
 	// family does not produce at 10.
@@ -684,6 +728,9 @@ var comfyFamilyRows = []comfyFamilyRow{{
 	Dialect:         comfyDialectMixed,
 	QualityPrefixes: []string{"masterpiece, best quality, score_7, safe", "masterpiece, best quality"},
 	StepsRange:      [2]int{30, 50}, CFGRange: [2]float64{4, 5},
+	// The default 3 favours detail; the Anima guides raise it to 14-24 to spend the early steps
+	// on composition, which is what holds a high-resolution picture together.
+	ShiftRange: [2]float64{3, 24},
 }, {
 	Family: ComfyFamilyKrea2,
 	// 🔴 Not run on a GPU here, and this one points the OTHER way from anima's: these are the
@@ -802,6 +849,11 @@ var comfyFamilyRows = []comfyFamilyRow{{
 // A named value because six rows share it verbatim, and a seventh spelling it differently by
 // accident is the drift comfyFamilyRows exists to stop.
 var comfyKnobsSampled = []string{"steps", "cfg", "sampler", "scheduler"}
+
+// comfyKnobsClipSkip is the two single-checkpoint families' list: a plain KSampler plus the
+// CLIPSetLastLayer their template inserts. Its own literal rather than an append to the one
+// above, which would share (and one day overwrite) that backing array.
+var comfyKnobsClipSkip = []string{"steps", "cfg", "sampler", "scheduler", "clip_skip"}
 
 // comfyFamilyRowFor is the table lookup. False for a family nobody declares, which every caller
 // turns into the same refusal the switch's default does.
@@ -937,6 +989,13 @@ func comfyGraphSingleCheckpoint(f comfyFiles, p comfyParams, family comfyFamily)
 	// CheckpointLoaderSimple returns (MODEL, CLIP, VAE), so the LoRA chain hangs off slots 0
 	// and 1 and the VAE is never part of it — a LoRA never touches it.
 	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("ckpt", 0), comfyLink("ckpt", 1))
+	// After the LoRA chain, so both encodes read the clip every adapter has patched. Only a
+	// declared clip skip adds the node; see EngineParams.ClipSkip for what n means per family.
+	if n := p.declared().ClipSkip; n > 0 {
+		g["clipskip"] = comfyNode{ClassType: "CLIPSetLastLayer", Inputs: map[string]any{
+			"stop_at_clip_layer": -n, "clip": clip}}
+		clip = comfyLink("clipskip", 0)
+	}
 	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
@@ -1095,10 +1154,11 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// the model it is handed, so feeding it a different model than the guider samples with would
 	// schedule one network and denoise another.
 	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
+	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilyFlux1))
 	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": p.Prompt, "clip": clip}}
 	g["guidance"] = comfyNode{ClassType: "FluxGuidance", Inputs: map[string]any{
-		"conditioning": comfyLink("pos", 0), "guidance": 3.5}}
+		"conditioning": comfyLink("pos", 0), "guidance": r.Guidance}}
 	lat, err := comfyRequestLatent(g, p, comfyLink("vae", 0), "EmptySD3LatentImage")
 	if err != nil {
 		return nil, err
@@ -1107,7 +1167,6 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// is BasicGuider rather than CFGGuider), so the number a model card calls "CFG" for this
 	// family is FluxGuidance's `guidance` and not a sampler cfg — two different knobs with one
 	// name. Applying the declared cfg here would turn "CFG 4" into a silently wrong picture.
-	r := p.recipe(comfyFamilyRecipeFor(ComfyFamilyFlux1))
 	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": r.Sampler}}
 	// BasicScheduler DOES have a denoise (unlike klein's Flux2Scheduler), and it cuts the tail
 	// itself: total_steps = steps/denoise, then the last steps+1 sigmas. So an edit needs no
@@ -1222,6 +1281,13 @@ func comfyGraphAnima(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"vae":  {ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}},
 	}
 	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
+	// Only a declared shift adds the node, after the LoRAs as in zimage. Anima samples as a plain
+	// FLOW model at multiplier 1.0, which is exactly the object ModelSamplingAuraFlow installs, so
+	// the node changes the shift and nothing else (comfy/model_base.py Anima, v0.37.0).
+	if s := p.declared().Shift; s > 0 {
+		g["ms"] = comfyNode{ClassType: "ModelSamplingAuraFlow", Inputs: map[string]any{"shift": s, "model": model}}
+		model = comfyLink("ms", 0)
+	}
 	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
