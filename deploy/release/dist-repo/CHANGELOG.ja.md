@@ -3,6 +3,14 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.24.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.24.0) — 2026-09-27
+
+設定の AWS のプロファイルがワークスペースの AWS CLI・SDK・ビルドツールから使えるようになり、
+ログインが要るときは Console が知らせます。消した worktree はごみ箱に入り、未コミットの変更ごと
+同じパスに戻せます。対応が要るセッションが目立つようになり、**Alt+U** で次へ移れます。画像の
+スタジオはスマホで使え、リポジトリの行から始められ、いくつも並べて使えます。モデルの選択肢には
+API 定価・コンテキスト長・廃止予定が出ます。
+
 ## [0.23.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.23.2) — 2026-09-25
 
 ターミナルのセッションごとに作業用のフォルダが付き、セッションと一緒に消えるようになりました。
