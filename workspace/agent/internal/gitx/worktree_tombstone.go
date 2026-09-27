@@ -14,7 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -92,6 +94,8 @@ func PrepareTombstone(dir, parent string) (t WorktreeTombstone, ok bool, err err
 	return t, true, nil
 }
 
+var uncommittedNestedRe = regexp.MustCompile(`'([^']+)' does not have a commit checked out`)
+
 // NestedReposError refuses a delete whose worktree holds repositories git does not track (a
 // clone inside it). `add -A` records such a folder as a gitlink — a commit id whose objects
 // live only in that folder's own .git — so the snapshot would bring back an empty directory
@@ -137,6 +141,20 @@ func snapshotWorkingTree(dir, head, name string) (string, error) {
 		cmd.Env = append(cmd.Env, env...)
 		out, err := cmd.Output()
 		if err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				// A nested repository with no commit yet cannot even become a gitlink:
+				// `add -A` stops with "'x/' does not have a commit checked out" (measured).
+				// Same refusal as a nested repository that has one.
+				if m := uncommittedNestedRe.FindAllStringSubmatch(string(ee.Stderr), -1); len(m) > 0 {
+					var paths []string
+					for _, g := range m {
+						paths = append(paths, strings.TrimSuffix(g[1], "/"))
+					}
+					return "", &NestedReposError{Paths: paths}
+				}
+				err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+			}
 			return "", fmt.Errorf("git %s: %w", args[0], err)
 		}
 		return strings.TrimSpace(string(out)), nil

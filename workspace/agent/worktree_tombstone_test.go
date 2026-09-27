@@ -217,24 +217,42 @@ func TestPartlyFailedRemoveKeepsTheTrashEntry(t *testing.T) {
 
 // A repository git does not track inside the worktree would come back as an empty folder:
 // the delete is refused, nothing is recorded, and the worktree is left as it is.
+//
+// Both shapes: one with a commit (it would become a bare gitlink) and a bare `git init` with none
+// (`add -A` cannot even take it, and the refusal must not read as a full disk).
 func TestDeleteRefusesAWorktreeWithANestedRepository(t *testing.T) {
-	e := tombstoneSetup(t)
-	nested := filepath.Join(e.wt, "vendor", "lib")
-	gitInit(t, nested)
-	var res struct {
-		Error struct{ Code, Message string }
-	}
-	do(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil, http.StatusConflict, &res)
-	if res.Error.Code != errCodeWorktreeNestedRepo || !strings.Contains(res.Error.Message, "vendor/lib") {
-		t.Fatalf("refusal = %+v", res.Error)
-	}
-	if !gitx.IsGitRepo(nested) || !gitx.IsLinkedWorktree(e.wt) {
-		t.Fatal("the worktree or its nested repository was touched")
-	}
-	if refs := pinnedRefs(t, e.parent); refs != "" {
-		t.Errorf("a pin was left behind: %q", refs)
-	}
-	if arcs := worktreeArchives(t, e.srv); len(arcs) != 0 {
-		t.Errorf("a trash entry was left behind: %+v", arcs)
+	for _, withCommit := range []bool{true, false} {
+		name := "no-commit"
+		if withCommit {
+			name = "with-commit"
+		}
+		t.Run(name, func(t *testing.T) {
+			e := tombstoneSetup(t)
+			nested := filepath.Join(e.wt, "vendor", "lib")
+			if withCommit {
+				gitInit(t, nested)
+			} else {
+				if err := os.MkdirAll(nested, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				gitAt(t, nested, "init", "-q")
+			}
+			var res struct {
+				Error struct{ Code, Message string }
+			}
+			do(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil, http.StatusConflict, &res)
+			if res.Error.Code != errCodeWorktreeNestedRepo || !strings.Contains(res.Error.Message, "vendor/lib") {
+				t.Fatalf("refusal = %+v", res.Error)
+			}
+			if !gitx.IsGitRepo(nested) || !gitx.IsLinkedWorktree(e.wt) {
+				t.Fatal("the worktree or its nested repository was touched")
+			}
+			if refs := pinnedRefs(t, e.parent); refs != "" {
+				t.Errorf("a pin was left behind: %q", refs)
+			}
+			if arcs := worktreeArchives(t, e.srv); len(arcs) != 0 {
+				t.Errorf("a trash entry was left behind: %+v", arcs)
+			}
+		})
 	}
 }

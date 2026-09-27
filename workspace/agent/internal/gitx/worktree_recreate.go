@@ -205,8 +205,10 @@ func RecreateWorktreeAt(parent, dir string, c RecreateCandidate, newBranch strin
 	// `worktree add` refuses a path that is "missing but already registered".
 	_ = Cmd(parent, "worktree", "prune").Run()
 	var args []string
+	created := "" // the branch this call creates, taken away again if the recreate fails
 	switch {
 	case newBranch != "":
+		created = newBranch
 		start := c.SHA
 		if start == "" {
 			start = c.Ref
@@ -223,6 +225,7 @@ func RecreateWorktreeAt(parent, dir string, c RecreateCandidate, newBranch strin
 			args = []string{"worktree", "add", dir, c.Branch}
 		} else {
 			args = []string{"worktree", "add", "-b", c.Branch, dir, c.SHA}
+			created = c.Branch
 		}
 	case c.Source == RecreateLocal:
 		args = []string{"worktree", "add", dir, c.Branch}
@@ -252,6 +255,9 @@ func RecreateWorktreeAt(parent, dir string, c RecreateCandidate, newBranch strin
 			// and count as done, and the uncommitted work would never be laid over it. Nothing
 			// of the user's is in it yet — it is the recorded commit, fresh.
 			_, _ = Combined(parent, "worktree", "remove", "--force", dir)
+			if created != "" {
+				_, _ = Combined(parent, "branch", "-D", created)
+			}
 			return fmt.Errorf("its uncommitted work could not be laid over the checkout, so nothing was recreated: %v: %s", err, out)
 		}
 	}
