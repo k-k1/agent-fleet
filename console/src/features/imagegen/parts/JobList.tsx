@@ -11,12 +11,16 @@
 // The queue is the workspace's, shared by every studio (ADR 0100 decision 6). Given the pane's
 // studio, rows pressed elsewhere fold under one closed line: the member still sees why their
 // own batch waits, without taking another studio's batch for theirs.
+//
+// Finished rows fold too. The Agent keeps the last 500 finished jobs on the list, so without the
+// fold every trial ever pressed stayed in the queue as a "done 1/1" row, pushing what is still
+// waiting out of sight; the pictures themselves are in the results below.
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { IconButton } from "../../../ui/Button.tsx";
 import type { GroupOp, Job } from "../wire.ts";
 import { jobElapsedMs } from "../wire.ts";
-import { anyLive, barSegments, etaBucket, etaMs, splitRows, type JobRow } from "../jobs.ts";
+import { anyLive, barSegments, etaBucket, etaMs, rowFinished, splitRows, type JobRow } from "../jobs.ts";
 
 const STATE_KEY = {
   queued: "imggen.state_queued",
@@ -47,6 +51,9 @@ export function JobList({ rows, queuePaused, queued, queueMax, now, onGroupOp, o
   const tr = useT();
   const { own, other } = studioId ? splitRows(rows, studioId) : { own: rows, other: [] };
   const otherLive = other.filter((r) => anyLive(r.jobs)).length;
+  const waiting = own.filter((r) => !rowFinished(r));
+  const finished = own.filter(rowFinished);
+  const finishedFailed = finished.filter((r) => r.failed > 0).length;
   return (
     <section className="igen-queue">
       <header className="igen-queue-head">
@@ -64,12 +71,24 @@ export function JobList({ rows, queuePaused, queued, queueMax, now, onGroupOp, o
           {queuePaused ? tr("imggen.resume_all") : tr("imggen.pause_all")}
         </button>
       </header>
-      {own.length === 0 ? (
+      {waiting.length === 0 ? (
         <p className="igen-hint">{tr("imggen.queue_empty")}</p>
       ) : (
-        own.map((row) => (
+        waiting.map((row) => (
           <QueueRow key={row.key} row={row} now={now} onGroupOp={onGroupOp} onCancelJob={onCancelJob} />
         ))
+      )}
+      {finished.length > 0 && (
+        <details className="igen-queue-done">
+          <summary>
+            {finishedFailed
+              ? tr("imggen.queue_done_failed", { n: finished.length, failed: finishedFailed })
+              : tr("imggen.queue_done", { n: finished.length })}
+          </summary>
+          {finished.map((row) => (
+            <QueueRow key={row.key} row={row} now={now} onGroupOp={onGroupOp} onCancelJob={onCancelJob} />
+          ))}
+        </details>
       )}
       {other.length > 0 && (
         <details className="igen-queue-others">
@@ -107,7 +126,7 @@ function QueueRow({
   const running = row.running;
   const gid = row.group?.id || null;
   const paused = row.group?.state === "paused";
-  const finished = row.done + row.failed + row.cancelled >= row.total && !running;
+  const finished = rowFinished(row);
   const pausedMin = row.group?.paused_at ? Math.floor((now - Date.parse(row.group.paused_at)) / 60_000) : 0;
 
   return (

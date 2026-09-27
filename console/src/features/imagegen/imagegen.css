@@ -902,6 +902,19 @@
   flex-wrap: wrap;
 }
 
+/* Trial and enqueue stay at the foot of the draft column however far the form is scrolled:
+   below a long prompt and the details they were off screen, and the one thing the column is
+   for had to be scrolled to. Sticky against the column, which is the scroller. */
+.igen-studio > .igen-col-form .igen-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 -6px;
+  padding: 8px 6px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
 .igen-fullsteps {
   display: inline-flex;
   align-items: center;
@@ -984,8 +997,17 @@
 
 .igen-queue-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+/* In a results column ~300px wide the heading, the cap and the workspace pause do not fit on
+   one line; without these the heading and the cap shrank to one character per line. They wrap
+   as whole pieces instead. */
+.igen-queue-head > h3,
+.igen-queue-head > .igen-hint {
+  white-space: nowrap;
 }
 
 .igen-badge {
@@ -1294,7 +1316,8 @@
 
 /* Queue rows pressed in another studio (or outside any): folded, and dimmed when opened, so
    they read as the shared queue's context rather than this studio's own batches. */
-.igen-queue-others > summary {
+.igen-queue-others > summary,
+.igen-queue-done > summary {
   cursor: pointer;
   color: var(--muted);
   font-size: 12px;

@@ -107,6 +107,9 @@ export const studioJobs = (jobs: Job[] | undefined, studioId: string): Job[] =>
 export const rowOfStudio = (row: JobRow, studioId: string): boolean => !!studioId && row.jobs[0]?.studio === studioId;
 
 /** Split the shared queue into this studio's rows and everyone else's, keeping the order. */
+/** Every job of the row has settled (done, failed or cancelled) and none is running. */
+export const rowFinished = (r: JobRow): boolean => !r.running && r.done + r.failed + r.cancelled >= r.total;
+
 export function splitRows(rows: JobRow[], studioId: string): { own: JobRow[]; other: JobRow[] } {
   const own: JobRow[] = [];
   const other: JobRow[] = [];

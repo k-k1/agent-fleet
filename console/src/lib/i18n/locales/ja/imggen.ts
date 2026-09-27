@@ -368,4 +368,6 @@ export const imggen = {
   "imggen.start_agent_model": "エージェントのモデル",
   "imggen.queue_all_hint": "待ち行列はワークスペースで 1 本です。他のスタジオやセッションのジョブも止まります（再開も同じ）。このスタジオの分だけなら、行ごとの一時停止を使ってください",
   "imggen.sum_knob_none": "{k} 既定",
+  "imggen.queue_done": "終わったもの {n} 件",
+  "imggen.queue_done_failed": "終わったもの {n} 件（うち失敗 {failed} 件）",
 };
