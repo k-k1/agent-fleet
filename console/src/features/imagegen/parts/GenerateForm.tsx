@@ -11,14 +11,14 @@
 //      the ADR rejects by name). Quality prefixes and trigger words are chips that append
 //      when pressed; the administrator's negative is a chip that cannot be removed and is
 //      never merged into the textarea, so what is in the box is what the person wrote.
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent as RKeyboardEvent, ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { Slider } from "../../settings/parts/controls.tsx";
 import { loraTriggers, loraWeight, type ImagegenLora, type ImagegenModel, type ImagegenProvider, type Knob } from "../wire.ts";
-import { familyFacts, sizeOptions } from "../families.ts";
-import type { StudioKey } from "../studioSync.ts";
+import { familyFacts, SIZE_SHAPES, sizeOptions, sizeShape, sizesByShape, type SizeShape } from "../families.ts";
+import { LOCKABLE, type StudioKey } from "../studioSync.ts";
 import { MAX_BATCH, MAX_JOBS, OPS, type ImagegenDraft } from "../draft.ts";
 import { InputPicker } from "./InputPicker.tsx";
 
@@ -83,9 +83,9 @@ export function GenerateForm({
 }: Props) {
   const tr = useT();
   const card = familyFacts(model);
-  // The lock toggle and the agent outline for one studio key; nothing without a studio.
-  const lk = (k: StudioKey): ReactNode =>
-    locks && onToggleLock ? <LockToggle locked={locks.includes(k)} onToggle={() => onToggleLock(k)} /> : null;
+  // A locked key shows its padlock beside the field's name; the switches themselves live in one
+  // group inside the folded details, so an unlocked field carries no icon at all.
+  const lk = (k: StudioKey): ReactNode => (locks?.includes(k) ? <LockBadge /> : null);
   const hl = (k: StudioKey): string => (highlight?.has(k) ? " igen-hl" : "");
   const family = model?.family || "";
   // Undeclared knobs = an Agent from before this ADR. Everything stays enabled; see the
@@ -146,6 +146,43 @@ export function GenerateForm({
       if (!queueFull) onEnqueue();
     } else if (!trialFull) onTrial();
   };
+
+  // The folded details open themselves when the agent moved a field inside them: an outline the
+  // member cannot see is no signal at all.
+  const hlAdv = ADVANCED_KEYS.some((k) => highlight?.has(k));
+  const [advOpen, setAdvOpen] = useState(hlAdv);
+  useEffect(() => {
+    if (hlAdv) setAdvOpen(true);
+  }, [hlAdv]);
+
+  // What a press would use, one line: the member's value, else the model's default by name.
+  const defaults = model?.params;
+  const summary = [
+    draft.op !== "generate" && tr(`imggen.op_${draft.op}` as "imggen.op_generate"),
+    (reads("sampler") || reads("scheduler")) &&
+      ([reads("sampler") && draft.sampler, reads("scheduler") && draft.scheduler].filter(Boolean).join(" / ") ||
+        (defaults?.sampler ? tr("imggen.default_ph", { v: defaults.sampler }) : tr("imggen.sum_sampler_none"))),
+    reads("steps") &&
+      (draft.steps.trim()
+        ? tr("imggen.sum_steps", { v: draft.steps.trim() })
+        : defaults?.steps != null
+          ? tr("imggen.default_ph", { v: tr("imggen.sum_steps", { v: defaults.steps }) })
+          : tr("imggen.sum_steps_none")),
+    reads("cfg") &&
+      (draft.cfg.trim()
+        ? tr("imggen.sum_cfg", { v: draft.cfg.trim() })
+        : defaults?.cfg != null
+          ? tr("imggen.default_ph", { v: tr("imggen.sum_cfg", { v: defaults.cfg }) })
+          : tr("imggen.sum_cfg_none")),
+    draft.seedPolicy === "random"
+      ? tr("imggen.seed_random")
+      : draft.seedPolicy === "sequence"
+        ? tr("imggen.sum_seed_sequence", { v: draft.seed.trim() || "?" })
+        : tr("imggen.sum_seed", { v: draft.seed.trim() || tr("imggen.seed_fixed") }),
+    draft.batchSize > 1 && tr("imggen.sum_batch", { n: draft.batchSize }),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const stepsPh = model?.params?.steps != null ? tr("imggen.default_ph", { v: model.params.steps }) : tr("imggen.default_ph_none");
   const cfgPh = model?.params?.cfg != null ? tr("imggen.default_ph", { v: model.params.cfg }) : tr("imggen.default_ph_none");
@@ -224,114 +261,20 @@ export function GenerateForm({
       )}
 
       <div className="igen-grid">
-        <Knobbed label={tr("imggen.steps")} on={reads("steps")} family={family} lock={lk("params")} extra={hl("params")}>
-          <input
-            className="ds-input"
-            type="number"
-            min={1}
-            max={150}
-            value={draft.steps}
-            disabled={!reads("steps")}
-            placeholder={stepsPh}
-            onChange={(e) => patch({ steps: e.target.value })}
-          />
-        </Knobbed>
-        <Knobbed label={tr("imggen.cfg")} on={reads("cfg")} family={family} lock={lk("params")} extra={hl("params")}>
-          <input
-            className="ds-input"
-            type="number"
-            min={0}
-            max={30}
-            step={0.5}
-            value={draft.cfg}
-            disabled={!reads("cfg")}
-            placeholder={cfgPh}
-            onChange={(e) => patch({ cfg: e.target.value })}
-          />
-        </Knobbed>
-        <Knobbed label={tr("imggen.sampler")} on={reads("sampler")} family={family} lock={lk("params")} extra={hl("params")}>
-          {/* The options are the AGENT's allow-list: a name it does not know is refused with
-              400, and the catalogue overlay's silent fallback does not apply to a member's
-              typed value (decision 4). */}
-          <select
-            className="ds-select"
-            value={draft.sampler}
-            disabled={!reads("sampler")}
-            onChange={(e) => patch({ sampler: e.target.value })}
-          >
-            <option value="">{tr("imggen.model_default")}</option>
-            {samplers.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </Knobbed>
-        <Knobbed label={tr("imggen.scheduler")} on={reads("scheduler")} family={family} lock={lk("params")} extra={hl("params")}>
-          <select
-            className="ds-select"
-            value={draft.scheduler}
-            disabled={!reads("scheduler")}
-            onChange={(e) => patch({ scheduler: e.target.value })}
-          >
-            <option value="">{tr("imggen.model_default")}</option>
-            {schedulers.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </Knobbed>
         {/* ADR 0094 decision 4: a family whose size is decided from the input picture's own
             aspect ratio (sizes: []) does not draw the field at all, rather than a disabled one
             offering candidates that would silently do nothing. */}
         {sizes.length > 0 && (
-          <label className={"igen-field" + hl("size")}>
-            <span className="igen-label">
-              {tr("imggen.size")}
-              {lk("size")}
-            </span>
-            <select
-              className="ds-select"
-              value={draft.size}
-              // On an edit the input's dimensions win (decision 9). Shown disabled with the
-              // reason, so the rule is read before the run rather than in a warning after it.
-              disabled={isEdit}
-              title={isEdit ? tr("imggen.size_from_input") : undefined}
-              onChange={(e) => patch({ size: e.target.value })}
-            >
-              <option value="">{tr("imggen.model_default")}</option>
-              {sizes.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            {isEdit && <span className="igen-hint">{tr("imggen.size_from_input")}</span>}
-          </label>
-        )}
-        <label className="igen-field">
-          <span className="igen-label">{tr("imggen.seed_policy")}</span>
-          <select
-            className="ds-select"
-            value={draft.seedPolicy}
-            onChange={(e) => patch({ seedPolicy: e.target.value as ImagegenDraft["seedPolicy"] })}
-          >
-            <option value="random">{tr("imggen.seed_random")}</option>
-            <option value="fixed">{tr("imggen.seed_fixed")}</option>
-            <option value="sequence">{tr("imggen.seed_sequence")}</option>
-          </select>
-        </label>
-        {draft.seedPolicy !== "random" && (
-          <label className="igen-field">
-            <span className="igen-label">{tr("imggen.seed")}</span>
-            <input
-              className="ds-input"
-              value={draft.seed}
-              placeholder={tr("imggen.seed_ph")}
-              onChange={(e) => patch({ seed: e.target.value })}
-            />
-          </label>
+          <SizeField
+            sizes={sizes}
+            value={draft.size}
+            // On an edit the input's dimensions win (decision 9). Shown disabled with the
+            // reason, so the rule is read before the run rather than in a warning after it.
+            disabled={isEdit}
+            badge={lk("size")}
+            extra={hl("size")}
+            onChange={(size) => patch({ size })}
+          />
         )}
         <label className="igen-field">
           <span className="igen-label">{tr("imggen.jobs")}</span>
@@ -347,15 +290,15 @@ export function GenerateForm({
         </label>
       </div>
 
-      <div className={"igen-loras" + hl("loras")}>
-        <span className="igen-label">
-          {tr("imggen.loras")}
-          {lk("loras")}
-        </span>
-        {usable.length === 0 ? (
-          <span className="igen-hint">{tr("imggen.lora_none")}</span>
-        ) : (
-          usable.map((l) => {
+      {/* Drawn only when the family has LoRAs to offer: an empty section saying "none" was a
+          permanent line of noise on every family without adapters. */}
+      {usable.length > 0 && (
+        <div className={"igen-loras" + hl("loras")}>
+          <span className="igen-label">
+            {tr("imggen.loras")}
+            {lk("loras")}
+          </span>
+          {usable.map((l) => {
             const on = picked.has(l.name);
             const w = draft.loras.find((x) => x.name === l.name)?.weight ?? loraWeight(l);
             const words = loraTriggers(l);
@@ -391,13 +334,104 @@ export function GenerateForm({
                 )}
               </div>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
 
-      <details className="igen-advanced">
-        <summary>{tr("imggen.advanced")}</summary>
+      {/* The sampler knobs and the rest fold away, with the values a press would actually use
+          on the summary line — the launch modal's rule: folded is fine, hidden is not. */}
+      <details className="igen-advanced" open={advOpen} onToggle={(e) => setAdvOpen(e.currentTarget.open)}>
+        <summary>
+          <span className="igen-advanced-title">{tr("imggen.advanced")}</span>
+          <span className="igen-advanced-sum">{summary}</span>
+          {hlAdv && (
+            <span className="igen-hl-mark" title={tr("imggen.hl_note")} aria-label={tr("imggen.hl_note")}>
+              ●
+            </span>
+          )}
+        </summary>
         <div className="igen-grid">
+          <Knobbed label={tr("imggen.steps")} on={reads("steps")} family={family} lock={lk("params")} extra={hl("params")}>
+            <input
+              className="ds-input"
+              type="number"
+              min={1}
+              max={150}
+              value={draft.steps}
+              disabled={!reads("steps")}
+              placeholder={stepsPh}
+              onChange={(e) => patch({ steps: e.target.value })}
+            />
+          </Knobbed>
+          <Knobbed label={tr("imggen.cfg")} on={reads("cfg")} family={family} lock={lk("params")} extra={hl("params")}>
+            <input
+              className="ds-input"
+              type="number"
+              min={0}
+              max={30}
+              step={0.5}
+              value={draft.cfg}
+              disabled={!reads("cfg")}
+              placeholder={cfgPh}
+              onChange={(e) => patch({ cfg: e.target.value })}
+            />
+          </Knobbed>
+          <Knobbed label={tr("imggen.sampler")} on={reads("sampler")} family={family} lock={lk("params")} extra={hl("params")}>
+            {/* The options are the AGENT's allow-list: a name it does not know is refused with
+                400, and the catalogue overlay's silent fallback does not apply to a member's
+                typed value (decision 4). */}
+            <select
+              className="ds-select"
+              value={draft.sampler}
+              disabled={!reads("sampler")}
+              onChange={(e) => patch({ sampler: e.target.value })}
+            >
+              <option value="">{tr("imggen.model_default")}</option>
+              {samplers.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </Knobbed>
+          <Knobbed label={tr("imggen.scheduler")} on={reads("scheduler")} family={family} lock={lk("params")} extra={hl("params")}>
+            <select
+              className="ds-select"
+              value={draft.scheduler}
+              disabled={!reads("scheduler")}
+              onChange={(e) => patch({ scheduler: e.target.value })}
+            >
+              <option value="">{tr("imggen.model_default")}</option>
+              {schedulers.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </Knobbed>
+          <label className="igen-field">
+            <span className="igen-label">{tr("imggen.seed_policy")}</span>
+            <select
+              className="ds-select"
+              value={draft.seedPolicy}
+              onChange={(e) => patch({ seedPolicy: e.target.value as ImagegenDraft["seedPolicy"] })}
+            >
+              <option value="random">{tr("imggen.seed_random")}</option>
+              <option value="fixed">{tr("imggen.seed_fixed")}</option>
+              <option value="sequence">{tr("imggen.seed_sequence")}</option>
+            </select>
+          </label>
+          {draft.seedPolicy !== "random" && (
+            <label className="igen-field">
+              <span className="igen-label">{tr("imggen.seed")}</span>
+              <input
+                className="ds-input"
+                value={draft.seed}
+                placeholder={tr("imggen.seed_ph")}
+                onChange={(e) => patch({ seed: e.target.value })}
+              />
+            </label>
+          )}
           <label className="igen-field">
             <span className="igen-label">{tr("imggen.batch")}</span>
             <input
@@ -483,6 +517,17 @@ export function GenerateForm({
               </label>
             )}
           </>
+        )}
+        {locks && onToggleLock && (
+          <fieldset className="igen-lockset">
+            <legend className="igen-label">{tr("imggen.lockset")}</legend>
+            {LOCKABLE.map((k) => (
+              <label key={k} className="igen-fullsteps">
+                <input type="checkbox" checked={locks.includes(k)} onChange={() => onToggleLock(k)} />
+                {LOCK_LABEL[k] ? tr(LOCK_LABEL[k] as "imggen.prompt") : k}
+              </label>
+            ))}
+          </fieldset>
         )}
       </details>
 
@@ -696,31 +741,101 @@ export function ModelSelect({
   );
 }
 
-/** 🔒 on a field the agent may write (ADR 0100 decision 4). A span with the button role, not a
- *  <button>: it sits inside the field's <label>, and a label forwards a click on its text to its
- *  first labelable descendant — which a real button would be, turning every click on the
- *  field's name into a lock toggle. */
-function LockToggle({ locked, onToggle }: { locked: boolean; onToggle: () => void }) {
+/** The keys whose fields sit inside the folded details. */
+const ADVANCED_KEYS: readonly StudioKey[] = ["params", "op", "inputs", "strength"];
+
+/** The lock group's label for each lockable key; a key without one falls back to its name. */
+const LOCK_LABEL: Partial<Record<StudioKey, string>> = {
+  prompt: "imggen.prompt",
+  negativePrompt: "imggen.negative",
+  params: "imggen.lock_params",
+  size: "imggen.size",
+  loras: "imggen.loras",
+  strength: "imggen.strength",
+  op: "imggen.op",
+  inputs: "imggen.inputs",
+};
+
+/** 🔒 beside a field the member locked against the agent (ADR 0100 decision 4). An indicator
+ *  only: it sits inside the field's <label>, where anything clickable would also catch every
+ *  click on the field's name. */
+function LockBadge() {
   const tr = useT();
-  const act = (e: { preventDefault: () => void; stopPropagation: () => void }) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onToggle();
+  return (
+    <span className="igen-lock on" role="img" title={tr("imggen.lock_on")} aria-label={tr("imggen.lock_on")}>
+      <Icon name="lock" />
+    </span>
+  );
+}
+
+/** The size as orientation chips (model default, portrait, square, landscape) over the row's
+ *  own list. A shape with several candidates adds a select of just those; `draft.size` keeps its
+ *  `WxH` form, and a value the list lacks (the agent's, an older draft's) is still shown. */
+function SizeField({
+  sizes,
+  value,
+  disabled,
+  badge,
+  extra,
+  onChange,
+}: {
+  sizes: string[];
+  value: string;
+  disabled: boolean;
+  badge: ReactNode;
+  extra: string;
+  onChange: (size: string) => void;
+}) {
+  const tr = useT();
+  const groups = useMemo(() => sizesByShape(sizes), [sizes]);
+  const cur = value.trim();
+  const curShape = cur ? sizeShape(cur) : null;
+  const alts = curShape ? (groups[curShape].includes(cur) ? groups[curShape] : [cur, ...groups[curShape]]) : [];
+  const pick = (k: SizeShape) => {
+    if (curShape !== k) onChange(groups[k][0]);
   };
   return (
-    <span
-      role="button"
-      tabIndex={0}
-      aria-pressed={locked}
-      className={"igen-lock" + (locked ? " on" : "")}
-      title={tr(locked ? "imggen.lock_on" : "imggen.lock_off")}
-      aria-label={tr(locked ? "imggen.lock_on" : "imggen.lock_off")}
-      onClick={act}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") act(e);
-      }}
-    >
-      <Icon name={locked ? "lock" : "unlock"} />
-    </span>
+    <div className={"igen-field igen-size" + extra} role="group" aria-label={tr("imggen.size")}>
+      <span className="igen-label">
+        {tr("imggen.size")}
+        {badge}
+      </span>
+      <div className="igen-size-chips">
+        <button type="button" className="igen-chip" aria-pressed={!cur} disabled={disabled} onClick={() => onChange("")}>
+          {tr("imggen.model_default")}
+        </button>
+        {SIZE_SHAPES.filter((k) => groups[k].length > 0 || curShape === k).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className="igen-chip"
+            aria-pressed={curShape === k}
+            disabled={disabled}
+            onClick={() => pick(k)}
+          >
+            <span className={"igen-shape igen-shape-" + k} aria-hidden="true" />
+            {tr(`imggen.size_${k}` as "imggen.size_square")}
+          </button>
+        ))}
+      </div>
+      {alts.length > 1 ? (
+        <select
+          className="ds-select igen-size-alt"
+          aria-label={tr("imggen.size_exact")}
+          value={cur}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {alts.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      ) : (
+        cur && <span className="igen-hint">{cur}</span>
+      )}
+      {disabled && <span className="igen-hint">{tr("imggen.size_from_input")}</span>}
+    </div>
   );
 }
