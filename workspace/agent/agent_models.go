@@ -221,8 +221,12 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// rather than in each kind's package: the answer comes from one catalog and one table, and
 	// a kind's own list carries billing routes, not makers. Best-effort — an id that cannot be
 	// placed keeps Provider empty and simply gets no mark.
+	withInfo := r.URL.Query().Get("info") == "1"
 	for i := range list {
 		list[i].Provider = resolveModelProvider(r.PathValue("kind"), list[i].ID)
+		if withInfo {
+			list[i].Info = resolveModelInfo(r.PathValue("kind"), list[i].ID)
+		}
 	}
 	out := map[string]any{"models": list}
 	// What "recommended" resolves to on this kind, per tier (Issue #972) — the Agent's own

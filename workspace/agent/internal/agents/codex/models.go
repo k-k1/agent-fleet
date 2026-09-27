@@ -26,7 +26,7 @@ import (
 var modelsMu sync.Mutex
 var modelsAt time.Time
 var modelsList []agents.ModelChoice
-var modelsRetiring map[string]bool
+var modelsRetiring map[string]agents.ModelRetiring
 
 func Models() []agents.ModelChoice {
 	modelsMu.Lock()
@@ -55,15 +55,23 @@ func Models() []agents.ModelChoice {
 // It stays in the picker (a member may still choose it until then), but is never what AF
 // recommends (Issue #972). Answers from the last Models() read; false before the first one.
 func Retiring(id string) bool {
+	_, ok := Retirement(id)
+	return ok
+}
+
+// Retirement is Retiring plus what the notice says, for the picker's "retiring" mark (Issue
+// #1021). The fields are empty where the notice does not carry them.
+func Retirement(id string) (agents.ModelRetiring, bool) {
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
-	return modelsRetiring[id]
+	r, ok := modelsRetiring[id]
+	return r, ok
 }
 
 // parseRetiring collects the slugs whose catalog entry names an upgrade target. Kept apart
-// from parseCatalog so the picker's ModelChoice (a wire type) does not grow a field only the
-// recommendation reads.
-func parseRetiring(b []byte) map[string]bool {
+// from parseCatalog so the list stays the picker's population and the notice is attached only
+// where a caller asks for it.
+func parseRetiring(b []byte) map[string]agents.ModelRetiring {
 	var doc struct {
 		Models []struct {
 			Slug    string          `json:"slug"`
@@ -73,10 +81,21 @@ func parseRetiring(b []byte) map[string]bool {
 	if json.Unmarshal(b, &doc) != nil {
 		return nil
 	}
-	out := map[string]bool{}
+	out := map[string]agents.ModelRetiring{}
 	for _, m := range doc.Models {
-		if u := strings.TrimSpace(string(m.Upgrade)); m.Slug != "" && u != "" && u != "null" {
-			out[m.Slug] = true
+		u := strings.TrimSpace(string(m.Upgrade))
+		if m.Slug == "" || u == "" || u == "null" {
+			continue
+		}
+		// An upgrade of another shape still marks the model retiring; it just says nothing more.
+		var up struct {
+			Model     string `json:"model"`
+			Note      string `json:"migration_markdown"`
+			RetiresAt string `json:"retirement_at"`
+		}
+		_ = json.Unmarshal(m.Upgrade, &up)
+		out[m.Slug] = agents.ModelRetiring{
+			At: strings.TrimSpace(up.RetiresAt), Note: strings.TrimSpace(up.Note), Successor: strings.TrimSpace(up.Model),
 		}
 	}
 	return out

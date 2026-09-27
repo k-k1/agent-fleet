@@ -192,6 +192,44 @@ type ModelChoice struct {
 	Provider      string   `json:"provider,omitempty"`
 	Efforts       []string `json:"efforts,omitempty"`
 	DefaultEffort string   `json:"defaultEffort,omitempty"`
+	// Info is what the picker can say about the model beyond its name — list price, context
+	// window, release date, retirement (Issue #1021). Filled centrally in model_info.go and only
+	// when the caller asks (?info=1): MCP list_models reads this same answer, and an agent
+	// choosing a model id has no use for ~100 extra bytes per row. nil means nothing is known.
+	Info *ModelInfo `json:"info,omitempty"`
+}
+
+// ModelInfo is the models.dev (and, for codex, the CLI's own) catalog facts about one model.
+// Every field is optional: a model upstream does not know keeps the zero value, and the
+// picker draws nothing for it rather than a guess.
+type ModelInfo struct {
+	// Price is the API LIST price in USD per 1M tokens on the kind's own billing route
+	// (opencode: the gateway's). It is not what a subscription-billed member pays.
+	Price *ModelPrice `json:"price,omitempty"`
+	// PriceFrom is the models.dev provider the price was read from ("openai", "opencode").
+	PriceFrom string `json:"priceFrom,omitempty"`
+	// Context is the context window in tokens.
+	Context int `json:"context,omitempty"`
+	// Released is models.dev's release_date (YYYY-MM-DD, sometimes YYYY-MM).
+	Released string `json:"released,omitempty"`
+	// Deprecated is models.dev's `status: deprecated`.
+	Deprecated bool `json:"deprecated,omitempty"`
+	// Retiring is the CLI's own retirement notice (codex's `upgrade`).
+	Retiring *ModelRetiring `json:"retiring,omitempty"`
+}
+
+// ModelPrice is a list price in USD per 1M tokens. CacheRead is 0 where upstream has none.
+type ModelPrice struct {
+	In        float64 `json:"in"`
+	Out       float64 `json:"out"`
+	CacheRead float64 `json:"cacheRead,omitempty"`
+}
+
+// ModelRetiring is a vendor's notice that a model is going away. Any field may be empty.
+type ModelRetiring struct {
+	At        string `json:"at,omitempty"`        // RFC3339, as the vendor wrote it
+	Note      string `json:"note,omitempty"`      // the vendor's own sentence, in English
+	Successor string `json:"successor,omitempty"` // the model id it points to
 }
 
 // TranscriptData is what a non-claude agent's Transcript() yields: the full
