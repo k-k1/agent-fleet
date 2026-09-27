@@ -228,4 +228,20 @@ describe("start a studio from a working-copy row", () => {
     expect(opened).toEqual([{ studioId: "st9", newPane: true }]);
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("unfolds with the reason when last time's new worktree cannot be cut any more", async () => {
+    useReposStore.setState({ repos: [WT] });
+    localStorage.setItem(
+      attachLastKey("t1"),
+      JSON.stringify({ driver: "tui", kind: "claude", model: "", effort: "", repo: WT.name, worktree: true, imageProvider: "comfy", imageModel: "sdxl" }),
+    );
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const { AttachAgentModal } = await import("./parts/AttachAgentModal.tsx");
+    await act(async () => root.render(<AttachAgentModal onClose={() => {}} onAttach={async () => true} />));
+    await settle();
+    expect(summary()).toBeNull();
+    expect(document.body.textContent).toContain("親のクローンが一覧に無い");
+  });
 });

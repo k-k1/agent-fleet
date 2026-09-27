@@ -47,12 +47,14 @@ describe("planPlace for a worktree whose parent clone is not listed", () => {
       worktree: false,
     });
   });
-  it("runs in place when the agent does not need a worktree", () => {
+  it("runs in place when the agent does not need a worktree, saying the asked-for worktree is not cut", () => {
     expect(planPlace({ repo: WT, repos: alone, kind: "claude", driver: "tui", want: true })).toMatchObject({
       dir: "/r/app@x",
       worktree: false,
       worktreeChoice: false,
+      wantUnmet: true,
     });
+    expect(planPlace({ repo: WT, repos: alone, kind: "claude", driver: "tui", want: false }).wantUnmet).toBeUndefined();
   });
 });
 

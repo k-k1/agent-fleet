@@ -354,4 +354,5 @@ export const imggen = {
   "imggen.sum_sampler_none": "sampler 既定",
   "imggen.sum_scheduler_none": "scheduler 既定",
   "imggen.start_no_parent": "この worktree の親のクローンが一覧に無いため、この組み合わせで必要な新しい worktree を切れません。ターミナル（CLI）を選ぶか、別の場所を選んでください。",
+  "imggen.start_no_parent_in_place": "この worktree の親のクローンが一覧に無いため、前回の新しい worktree は切れません。この worktree で直接実行します。",
 };
