@@ -1,23 +1,65 @@
-# Agent Fleet — a self-hosted console for running AI coding agents as a fleet
+# Agent Fleet — a self-hosted operations layer for AI coding agents
 
 English | [日本語](README.ja.md)
 
+**Don't replace your coding agents. Operate them.**
+
 ![The Agent Fleet Console: repo tree with live sessions, a chat mirror of a running agent, and the repository's commit graph side by side](docs/img/console-en.webp)
 
-**Close your laptop. The agents keep working.**
+Agent Fleet is not another agent framework. Claude Code stays Claude Code and Codex stays
+Codex: the CLIs you already use run as they are, with their own sign-in, models and
+behaviour. What Agent Fleet takes on is everything around them — a persistent, isolated
+environment per member, real git working copies and worktrees, sessions you follow and
+steer from a browser, questions and permission prompts, usage, schedules, and remote
+control. **Close your laptop. The agents keep working.**
 
-Agent Fleet lets a team share AI coding agents — Claude Code, Codex CLI, GitHub Copilot
-CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode, Muse Code, and the fleet's own llama.cpp
-harness — from one browser console. Each member
-gets an isolated per-user environment (a Docker container with cgroup CPU/memory quotas,
-or a bubblewrap sandbox in the Docker-less native edition) with a persistent home and its
-own git working copies, and starts, follows and steers agent sessions from the browser.
-There is no need to sit in front of a terminal: check progress and send the next
-instruction from Discord, Slack, or a phone.
+Supported today: Claude Code, Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI,
+Kiro, OpenCode, Muse Code, and the fleet's own llama.cpp harness.
 
 It is **self-hosted**. One company runs one deployment on its own infrastructure, so the
-credentials, the source and the conversations stay inside it. The same core runs on a
-single Linux host with Docker Compose and on AWS ECS.
+credentials, the source and the conversations stay inside it. Each member's environment is
+a Docker container with cgroup CPU/memory quotas (or a bubblewrap sandbox in the
+Docker-less native edition). The same core runs on a single Linux host with Docker Compose
+and on AWS ECS.
+
+## A day with Agent Fleet
+
+1. In the morning, hand one issue to Claude Code and another to Codex, each in its own git
+   worktree.
+2. Close the laptop and leave. Both keep working on the server.
+3. One of them asks for permission. The request arrives in that session's Slack thread,
+   and you answer it from your phone.
+4. Back at a desk, the session list shows which sessions finished and which are waiting on
+   you, and each worktree's changes are a click away.
+
+## Operate a fleet, not a single chat
+
+- **Many sessions at once** — across agent kinds, each in its own worktree. One list shows
+  which are working and which wait on a question, a plan or a permission prompt.
+- **Sessions that start sessions** — a session can hand a review to another agent kind and
+  get one report back; the fleet graph draws who started whom and what passed between
+  them.
+- **Unattended work** — scheduled runs wake a stopped workspace, and a turn cut short by a
+  usage limit resumes when the limit lifts.
+- **From anywhere** — a Discord / Slack thread per session, where you reply to steer and
+  answer with buttons; the Console works in a phone's browser.
+- **One yardstick for spend** — tokens per feature, per agent and per model, with calls
+  that report no tokens counted as unmeasured rather than free.
+
+## Built to survive upstream changes
+
+Agent CLIs change every few days, and supporting nine of them is only worth something if
+the support keeps working. So:
+
+- Every CLI is **pinned** in the workspace image to a version that was verified;
+  self-update is opt-in.
+- A daily watcher notices when a CLI publishes a new version and dispatches a **contract
+  test that drives the real CLI**, its interactive TUI included, against what Agent Fleet
+  depends on.
+- "We saw a new version" and "we tested it" are recorded separately, so a release that
+  has not passed its contract is never mistaken for one that has.
+
+How the two halves fit together: [Detecting upstream CLI breakage](docs/build/10-development.md#detecting-upstream-cli-breakage).
 
 ## A look around
 

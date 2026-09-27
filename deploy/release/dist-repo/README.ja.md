@@ -2,10 +2,11 @@
 
 [English](README.md) | 日本語
 
-**PCを閉じても、AIの仕事は止まらない。**
+**エージェントは置き換えない。運用する。**
 
-Claude Code、Codex、Copilot、Cursor など複数のコーディングエージェントを
-サーバー上で並行稼働させ、ひとつの画面からオーケストレーション。
+Claude Code、Codex、Copilot、Cursor など複数のコーディングエージェントを、
+そのままの姿でサーバー上で並行稼働させ、ひとつの画面から運用。
+PC を閉じても、エージェントの仕事は止まりません。
 ターミナルに張り付く必要はなく、必要なセッションへいつでもアタッチ。
 Discord、Slack、スマホのブラウザから進捗を確認し、どこからでも次の指示を送れます。
 セッションのタイトルと最適な指示の提案が、「何を任せていたか」と
@@ -18,7 +19,9 @@ Discord、Slack、スマホのブラウザから進捗を確認し、どこか�
 
 ## Agent Fleet とは
 
-Agent Fleet は、AI コーディングエージェント（Claude Code / Codex CLI /
+Agent Fleet は新しいエージェントフレームワークではありません。いま使っている CLI を
+ログイン・モデル・振る舞いごとそのまま動かし、その周りの運用を引き受けます。
+AI コーディングエージェント（Claude Code / Codex CLI /
 GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code、そして
 フリート自身の llama.cpp ハーネス）を「フリート」として
 まとめて運用するための、セルフホスト型の Web コンソールです。利用者ごとに隔離された
@@ -33,7 +36,8 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code�
   GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode / Muse Code のセッションと、
   フリート自身のチャットエンジン上の llama.cpp セッションを並べて実行。
   セッション毎のモデル選択に対応し、CLI の版は動作検証済みの組み合わせにピン止め
-  （self-update は opt-in）。
+  （self-update は opt-in）。上流が新しい版を出すと、毎日の監視が実物の CLI で契約テストを
+  走らせます（[仕組み](https://github.com/k-k1/agent-fleet/blob/develop/docs/build/10-development.ja.md#上流-cli-の破壊検知版ドリフト監視--contract-テスト)）。
 - **異なるエージェント同士が協働する** — セッションは別種のセッションを子として
   起こせます（claude がレビューを codex に、codex が下請けを opencode に）。子は
   それぞれ自分の worktree で動き、親は指示し、出力を読み、完了時に報告を 1 通

@@ -2,10 +2,11 @@
 
 English | [日本語](README.ja.md)
 
-**Close your laptop. The AI keeps working.**
+**Don't replace your coding agents. Operate them.**
 
 Run Claude Code, Codex, Copilot, Cursor, and other coding agents in parallel on your
-server, and orchestrate them all from one console. There is no need to stay glued to
+server, as they are, and operate them all from one console. Close your laptop; the
+agents keep working. There is no need to stay glued to
 a terminal—attach to any session whenever you need it. Check progress and send the
 next instruction from Discord, Slack, or your phone's browser, wherever you are.
 Session titles and suggested next instructions keep you from losing track of what
@@ -18,7 +19,9 @@ Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 
 ## What is Agent Fleet?
 
-Agent Fleet is a self-hosted web console for running AI coding agents
+Agent Fleet is not another agent framework: the CLIs you already use run unchanged,
+with their own sign-in, models and behaviour, and Agent Fleet takes on the operations
+around them. It is a self-hosted web console for running AI coding agents
 (Claude Code, Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI,
 Kiro, OpenCode, Muse Code, and the fleet's own llama.cpp harness) as a managed fleet. Each member gets an isolated workspace — a
 Docker container with cgroup CPU/memory quotas (or a bubblewrap-sandboxed
@@ -30,7 +33,7 @@ Key features:
 
 - **Nine agent kinds, one console** — run Claude Code / Codex / GitHub Copilot /
   Antigravity / Cursor / Kiro / OpenCode / Muse Code sessions, and llama.cpp sessions on
-  the fleet's own chat engine, side by side, with per-session model choice. CLI versions are pinned to verified combinations (opt-in self-update).
+  the fleet's own chat engine, side by side, with per-session model choice. CLI versions are pinned to verified combinations (opt-in self-update), and a daily watcher runs contract tests against the real CLIs when upstream publishes a new version ([how](https://github.com/k-k1/agent-fleet/blob/develop/docs/build/10-development.md#detecting-upstream-cli-breakage)).
 - **Agents that work together, across kinds** — a session can start child sessions of
   any other kind (claude handing a review to codex, codex farming a subtask out to
   opencode), each in its own worktree; it steers them, reads their output and gets one
