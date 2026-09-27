@@ -177,7 +177,7 @@ func listStudios() []ImageStudioSummary {
 		if err != nil {
 			continue
 		}
-		out = append(out, ImageStudioSummary{ID: rec.ID, Title: rec.Title, Session: rec.Session, UpdatedAt: rec.UpdatedAt})
+		out = append(out, ImageStudioSummary{ID: rec.ID, Title: rec.Title, Session: rec.Session, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
 	return out

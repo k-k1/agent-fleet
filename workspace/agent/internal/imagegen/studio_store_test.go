@@ -397,3 +397,17 @@ func TestStudioDeleteKeepsThePicturesAndUnbinds(t *testing.T) {
 }
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+// The list carries created_at: an untitled studio is named by it in the pane's picker.
+func TestStudioListCarriesCreatedAt(t *testing.T) {
+	withStudios(t)
+	s := createStudio(t, `{}`)
+	rec := studioDo(t, HandleStudios, http.MethodGet, "/imagegen/studios", "")
+	var l ImageStudioList
+	if err := json.Unmarshal(rec.Body.Bytes(), &l); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Studios) != 1 || l.Studios[0].CreatedAt == "" || l.Studios[0].CreatedAt != s.CreatedAt {
+		t.Fatalf("list = %+v, want created_at %q", l.Studios, s.CreatedAt)
+	}
+}
