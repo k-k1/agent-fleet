@@ -11,7 +11,8 @@
 // it with the attach button still there.
 import { apiJSON, errDetail, errText, raw } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
-import { bindStudio, createStudio, studioPersona, type StudioDraft } from "./api.ts";
+import { kindDisplayName } from "../../lib/sessionkind.ts";
+import { bindStudio, createStudio, getStudio, patchStudio, studioPersona, type StudioDraft, type StudioPatch } from "./api.ts";
 import type { AttachOpts } from "./parts/AttachAgentModal.tsx";
 
 export interface AttachResult {
@@ -27,6 +28,9 @@ export async function attachAgent(p: {
   draft: () => StudioDraft;
   title?: string;
   opts: AttachOpts;
+  /** The pane's studio as last read, when there is one: the dialog's model is written into it,
+   *  and an untitled studio takes the default title. */
+  existing?: { title: string; updatedAt: string; draft: StudioDraft };
   /** "Switch agents": the session the studio is bound to now. Unbound before the create, because
    *  the Agent refuses to take a studio from a session that is still alive (409 studio_bound). */
   replacing?: string;
@@ -47,14 +51,21 @@ export async function attachAgent(p: {
     // (the Console's own stop button is the same call).
     void raw(`api/sessions/${encodeURIComponent(p.replacing)}/halt`, { method: "POST" }).catch(() => undefined);
   }
+  const o = p.opts;
+  const image: StudioDraft = { provider: o.imageProvider || undefined, model: o.imageModel || undefined };
+  const title = p.title || defaultStudioTitle(o);
   if (!studioId) {
     try {
-      const s = await createStudio({ draft: p.draft(), ...(p.title ? { title: p.title } : {}) });
+      const s = await createStudio({ draft: { ...p.draft(), ...image }, ...(title ? { title } : {}) });
       if (!s || s.error || !s.id) return { studioId: null, error: (s?.error && errText(s.error)) || t("imggen.studio_create_failed") };
       studioId = s.id;
     } catch {
       return { studioId: null, error: t("imggen.studio_create_failed") };
     }
+  }
+  if (p.existing && studioId) {
+    const err = await writeChoice(studioId, p.existing, image, title);
+    if (err) return { studioId, error: err };
   }
   let persona = "";
   try {
@@ -64,7 +75,6 @@ export async function attachAgent(p: {
   } catch {
     return { studioId, error: t("imggen.persona_failed") };
   }
-  const o = p.opts;
   const body: Record<string, unknown> = { dir: o.dir, kind: o.kind, driver: o.driver, studio: studioId, initial_prompt: persona };
   if (o.model) body.model = o.model;
   if (o.effort) body.effort = o.effort;
@@ -84,4 +94,39 @@ export async function attachAgent(p: {
   }
   if (!res || res.error || !res.name) return { studioId, error: res?.error ? errDetail(res.error) : t("imggen.attach_failed") };
   return { studioId, session: res.name as string };
+}
+
+/** "<working copy> · <agent>" ("Home · <agent>" without one): what a studio is called until the
+ *  member names it, so two studios in the picker are told apart by where their agent works. */
+export function defaultStudioTitle(o: Pick<AttachOpts, "place" | "kind">): string {
+  return `${o.place || t("imggen.start_title_home")} · ${kindDisplayName(o.kind)}`;
+}
+
+// The dialog's model into an existing studio (and the default title into an untitled one), before
+// the persona is read: the first turn is written for that model. One retry on 412 — the pane's
+// own debounced save may have moved the version since it was read.
+async function writeChoice(
+  id: string,
+  existing: NonNullable<Parameters<typeof attachAgent>[0]["existing"]>,
+  image: StudioDraft,
+  title: string,
+): Promise<string | null> {
+  let cur = existing;
+  for (let i = 0; i < 2; i++) {
+    const draft: NonNullable<StudioPatch["draft"]> = {};
+    if (image.model && (cur.draft.model || "") !== image.model) draft.model = image.model;
+    if (image.provider && (cur.draft.provider || "") !== image.provider) draft.provider = image.provider;
+    const body: StudioPatch = { author: "human" };
+    if (Object.keys(draft).length) body.draft = draft;
+    if (!cur.title && title) body.title = title;
+    if (!body.draft && !body.title) return null;
+    const r = await patchStudio(id, body, cur.updatedAt);
+    if (r.status >= 200 && r.status < 300 && !r.error) return null;
+    if (r.status !== 412 || i > 0) break;
+    const fresh = await getStudio(id).catch(() => null);
+    if (!fresh || fresh.error || !fresh.id) break;
+    cur = { title: fresh.title || "", updatedAt: fresh.updated_at, draft: fresh.draft || {} };
+  }
+  // A title that did not land is cosmetic; a model that did not land is not (revision 9).
+  return image.model && (existing.draft.model || "") !== image.model ? t("imggen.start_model_failed") : null;
 }

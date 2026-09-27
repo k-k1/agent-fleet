@@ -28,6 +28,7 @@ export function StudioAgent({
   log,
   onRewind,
   needsModel,
+  attachPicksModel = false,
   onAttach,
   onReplace,
 }: {
@@ -42,11 +43,15 @@ export function StudioAgent({
   /** No model is chosen: prompts are written for one, so no agent is attached and no message
    *  sent until there is (ADR 0100 revision 9). */
   needsModel: boolean;
+  /** The attach dialog asks for the model itself, so attaching is not held back by needsModel
+   *  (the composer still is). */
+  attachPicksModel?: boolean;
   onAttach: () => void;
   onReplace: () => void;
 }) {
   const tr = useT();
   const toast = useToast();
+  const attachBlocked = needsModel && !attachPicksModel;
   const meta = useSessionsStore((s) => (session ? s.sessions.find((x) => x.name === session) ?? null : null));
   const loaded = useSessionsStore((s) => s.loaded);
   const startSession = useSessionsStore((s) => s.start);
@@ -76,8 +81,8 @@ export function StudioAgent({
   if (!session) {
     return (
       <div className="igen-agent igen-agent-none">
-        <EmptyState icon="hubot" title={tr("imggen.agent_none")} hint={tr(needsModel ? "imggen.agent_needs_model" : "imggen.agent_none_hint")}>
-          <Button variant="primary" icon="add" onClick={onAttach} disabled={needsModel}>
+        <EmptyState icon="hubot" title={tr("imggen.agent_none")} hint={tr(attachBlocked ? "imggen.agent_needs_model" : "imggen.agent_none_hint")}>
+          <Button variant="primary" icon="add" onClick={onAttach} disabled={attachBlocked}>
             {tr("imggen.attach")}
           </Button>
         </EmptyState>
@@ -89,7 +94,7 @@ export function StudioAgent({
       <div className="igen-agent igen-agent-none">
         <EmptyState icon={loaded ? "warning" : "loading"} title={tr(loaded ? "imggen.agent_gone" : "imggen.agent_loading")}>
           {loaded && (
-            <Button variant="primary" icon="add" onClick={onAttach} disabled={needsModel}>
+            <Button variant="primary" icon="add" onClick={onAttach} disabled={attachBlocked}>
               {tr("imggen.attach")}
             </Button>
           )}
@@ -133,7 +138,7 @@ export function StudioAgent({
         {meta.model && <span className="igen-chip">{meta.model}</span>}
         <span className="igen-chip">{tr(managed ? "imggen.attach_driver_managed" : "imggen.attach_driver_tui")}</span>
         <span className="igen-agent-spacer" />
-        <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" onClick={onReplace} disabled={needsModel}>
+        <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" onClick={onReplace} disabled={attachBlocked}>
           <Icon name="arrow-swap" /> {tr("imggen.agent_replace")}
         </button>
       </div>

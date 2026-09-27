@@ -362,18 +362,16 @@ export function ImagegenView({
 
   const attach = useCallback(
     async (o: AttachOpts): Promise<boolean> => {
-      // Prompts are written for a model (revision 9): the button is disabled without one, and
-      // this holds if the member clears it while the dialog is open.
-      if (!draft.model.trim()) {
-        toast(tr("imggen.agent_needs_model"), { kind: "error" });
-        return false;
-      }
+      // Prompts are written for a model (revision 9): the dialog picks one and will not start
+      // without it, and attachAgent writes it into the studio before the persona is read.
+      const cur = studio.studio;
       const r = await attachAgent({
         studioId,
         // The pane's resolved row, not the draft's possibly-stale pick (decision 2: a trial never
         // falls back to another provider, so the studio must name the one on screen).
         draft: () => studioFromForm({ ...draft, providerId: provider?.id || "" }),
         opts: o,
+        ...(studioId && cur ? { existing: { title: cur.title || "", updatedAt: cur.updated_at, draft: cur.draft || {} } } : {}),
         replacing: attachOpen === "replace" ? studio.studio?.session : undefined,
       });
       if (r.error) toast(r.error, { kind: "error" });
@@ -672,6 +670,7 @@ export function ImagegenView({
                 log={studio.log}
                 onRewind={studio.rewind}
                 needsModel={!draft.model.trim()}
+                attachPicksModel
                 onAttach={() => setAttachOpen("attach")}
                 onReplace={() => setAttachOpen("replace")}
               />
@@ -740,6 +739,7 @@ export function ImagegenView({
       {attachOpen && (
         <AttachAgentModal
           replacing={attachOpen === "replace" ? session : undefined}
+          initialImage={{ providerId: provider?.id || "", model: draft.model }}
           onClose={() => setAttachOpen(null)}
           onAttach={attach}
         />

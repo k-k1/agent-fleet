@@ -12,6 +12,11 @@ vi.mock("../repos/useRepoRail.ts", () => ({
     connsSettling: false,
   }),
 }));
+// The attach dialog reads the fleet's image models before it lets anything start.
+vi.mock("./api.ts", async (orig) => ({
+  ...(await orig<typeof import("./api.ts")>()),
+  imagegenStatus: async () => ({ providers: [{ id: "comfy", kind: "comfy", fleet: true, ready: true, models: [{ id: "sdxl-base" }] }] }),
+}));
 vi.mock("../../ui/ModelPicker.tsx", () => ({
   ModelPicker: () => <select data-testid="model" />,
   EffortPicker: () => <select data-testid="effort" />,
@@ -213,6 +218,7 @@ describe("エージェントを付ける: kind の候補（決定 8）", () => {
     const sent: unknown[] = [];
     await mount(
       <AttachAgentModal
+        initialImage={{ providerId: "comfy", model: "sdxl-base" }}
         onClose={() => {}}
         onAttach={async (o) => {
           sent.push(o);

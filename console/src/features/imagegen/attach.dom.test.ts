@@ -24,6 +24,11 @@ vi.mock("./api.ts", () => ({
   },
   createStudio: async () => ({ id: "st1" }),
   studioPersona: async () => ({ prompt: "persona", lang: "ja" }),
+  getStudio: async () => null,
+  patchStudio: async (id: string, body: unknown, ifMatch: string) => {
+    calls.push(`put ${id} ${ifMatch} ${JSON.stringify(body)}`);
+    return { status: 200 };
+  },
 }));
 
 import { attachAgent } from "./attach.ts";
@@ -38,5 +43,29 @@ describe("switching the studio's agent", () => {
     });
     expect(r).toEqual({ studioId: "st1", session: "snew001" });
     expect(calls).toEqual(['bind st1 ""', "POST api/sessions/sold001/halt", "POST api/sessions studio=st1"]);
+  });
+});
+
+describe("attaching to an existing studio", () => {
+  it("writes the dialog's model and the default title before the persona is read", async () => {
+    calls.length = 0;
+    const r = await attachAgent({
+      studioId: "st1",
+      draft: () => ({}),
+      existing: { title: "", updatedAt: "v1", draft: { provider: "comfy", model: "old" } },
+      opts: { dir: "", kind: "claude", driver: "tui", imageProvider: "comfy", imageModel: "flux", place: "" } as never,
+    });
+    expect(r.session).toBe("snew001");
+    expect(calls[0]).toBe('put st1 v1 {"author":"human","draft":{"model":"flux"},"title":"ホーム · Claude Code"}');
+  });
+  it("leaves a named studio's title and an unchanged model alone", async () => {
+    calls.length = 0;
+    await attachAgent({
+      studioId: "st1",
+      draft: () => ({}),
+      existing: { title: "mine", updatedAt: "v1", draft: { provider: "comfy", model: "flux" } },
+      opts: { dir: "", kind: "claude", driver: "tui", imageProvider: "comfy", imageModel: "flux", place: "" } as never,
+    });
+    expect(calls.some((c) => c.startsWith("put"))).toBe(false);
   });
 });
