@@ -422,4 +422,5 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "scm.create_and_switch": "Create and switch",
   "scm.diff_load_failed": "(failed to load diff)",
   "scm.no_file_selected": "(no file selected)",
+  "repo.start_studio": "Start an image studio",
 };
