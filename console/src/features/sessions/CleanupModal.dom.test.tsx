@@ -246,7 +246,7 @@ describe("CleanupModal cache section", () => {
         id: "20260901-000000-w",
         at: "2026-09-01T00:00:00Z",
         reason: "delete_worktree",
-        worktree: { name: "app@wip", branch: "wip", snapshot: "abc" },
+        worktree: { name: "app@wip", path: "/home/dev/repos/app@wip", branch: "wip", snapshot: "abc" },
       },
     ];
     restoreStatus = 409;
@@ -258,7 +258,12 @@ describe("CleanupModal cache section", () => {
     expect(row).toContain("未コミットの変更を含む");
     await click(document.querySelector<HTMLButtonElement>(".clean-arch-actions button"));
     // Not the "stopped part way, restore again" text: that would send the person round in a loop.
-    expect(document.body.textContent).toContain("「作業コピーを作り直す」で新しいブランチ名");
+    expect(document.body.textContent).toContain("新しいブランチ名を付けて作り直してください");
     expect(document.body.textContent).not.toContain("もう一度「復元」すると続きから終わります");
+    // The way through opens right here: the archive may have no heading for this folder.
+    expect(writes).not.toContainEqual(expect.objectContaining({ url: expect.stringContaining("/recreate") }));
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContainEqual(
+      expect.stringContaining("api/repos/app%40wip/recreate"),
+    );
   });
 });

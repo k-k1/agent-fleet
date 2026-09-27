@@ -26,6 +26,12 @@ import { humanSize } from "../../lib/filemeta.ts";
 import { cleanupReasonParts } from "./cleanupReason.ts";
 import { groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
 import { useSessionUI } from "./ui.ts";
+import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
+import type { Session } from "../../types/session.ts";
+
+/** Refusals of a deleted worktree's restore that a new branch name gets past — the recreate
+ *  dialog can ask for one, the trash cannot. */
+const NEEDS_RECREATE_DIALOG = new Set(["recreate_needs_new_branch", "branch_in_use"]);
 
 interface CleanupArchive {
   id: string;
@@ -34,7 +40,7 @@ interface CleanupArchive {
   sessions?: { name: string; display?: string }[];
   branches?: { repo: string; name: string }[];
   /** A deleted worktree's tombstone (reason "delete_worktree"). */
-  worktree?: { name: string; branch?: string; snapshot?: string };
+  worktree?: { name: string; path: string; branch?: string; snapshot?: string };
   /** Size of the archive's tarball (what purging it reclaims). */
   bytes?: number;
 }
@@ -97,6 +103,8 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   // the survey is a to-do list, and a collapsed-by-default one hides the work.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // A deleted worktree whose restore needs a new branch name, open in the recreate dialog.
+  const [recreate, setRecreate] = useState<{ dir: string; sessions: Session[] } | null>(null);
   const askConfirm = useConfirm();
   const toast = useToast();
   const tr = useT();
@@ -257,9 +265,18 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
     try {
       const res = await rawJSON(`api/cleanup/archives/${encodeURIComponent(id)}/restore`, "POST");
       const code: string | undefined = res.ok ? undefined : (await res.json().catch(() => null))?.error?.code;
+      const wt = archives?.find((a) => a.id === id)?.worktree;
+      if (code && wt?.path && NEEDS_RECREATE_DIALOG.has(code)) {
+        // The archive's own heading may not exist for this folder (no AI session was shelved),
+        // so the way through is opened from here, with whatever of it is still on the shelf.
+        const shelf = await api("api/sessions/archived").catch(() => null);
+        const sessions = ((shelf?.sessions || []) as Session[]).filter((s) => s.dir === wt.path);
+        toast(errText({ code, message: t("clean.restore_failed") }));
+        setRecreate({ dir: wt.path, sessions });
+        return;
+      }
       // restore_incomplete = it stopped part way: nothing was undone, and restoring again
-      // finishes it. Any other code is a deleted worktree that cannot come back as it was
-      // (its branch moved, is in use, …) — the catalogue text points at the archive's dialog.
+      // finishes it. Any other code is a deleted worktree that cannot come back as it was.
       toast(
         res.ok
           ? t("clean.restored")
@@ -713,6 +730,17 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
           </div>
         )}
       </div>
+      {recreate && (
+        <RecreateWorktreeModal
+          dir={recreate.dir}
+          sessions={recreate.sessions}
+          onClose={() => setRecreate(null)}
+          onChanged={() => {
+            void loadArchives();
+            onChanged?.();
+          }}
+        />
+      )}
     </Modal>
   );
 }

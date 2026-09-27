@@ -47,7 +47,9 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.worktree_archive_failed":
     "Couldn't record the worktree in the trash, so it was not deleted (check the free disk space).",
   "err.recreate_needs_new_branch":
-    "The branch has moved since the delete, or there was none, so it can't be put back as it was. Use \"Recreate working copy\" in the archive list and give it a new branch name.",
+    "The branch has moved since the delete, or there was none, so it can't be put back as it was. Recreate it on a new branch name.",
+  "err.worktree_nested_repo":
+    "This worktree holds a repository git does not track (a clone inside it), whose contents the trash cannot keep. Move or delete it first; the worktree was left as it is.",
   "err.session_resumed": "The session was resumed while it was being moved to the trash, so it was not deleted.",
   "err.sessions_trash_failed":
     "Couldn't move this working copy's shell/ssm sessions to the trash, so the working copy was not deleted (check the free disk space).",

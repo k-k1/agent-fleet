@@ -81,7 +81,7 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
       .then((d) => {
         if (!live) return;
         if (d?.error) setPlanErr(errText(d.error));
-        else setPlan(d as RecreatePlan);
+        else setPlan({ ...(d as RecreatePlan), candidates: (d as RecreatePlan)?.candidates || [] });
       })
       .catch(() => live && setPlanErr(tr("rwt.plan_failed")));
     return () => {
