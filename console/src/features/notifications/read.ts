@@ -3,9 +3,23 @@ import type { FleetNotification } from "./store.ts";
 const unreadFor = (n: FleetNotification, sessionName: string): boolean =>
   !n.seen && n.target.type === "session" && n.target.id === sessionName;
 
+/** A session report's destination is the operator CONVERSATION, not the reporting session
+ *  (docs/log/30) — the conversation id rides the payload. So is each chat-* notice's. */
+export const opensConversation = (n: FleetNotification): boolean =>
+  (n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") &&
+  typeof n.payload.conversation_id === "string" && !!n.payload.conversation_id;
+
+/** Unseen events a pane showing this session acknowledges: its own, minus those whose
+ *  destination is a conversation (they are acknowledged where they point). */
 export function unseenSessionEventIDs(items: FleetNotification[], sessionName: string): string[] {
   if (!sessionName) return [];
-  return items.filter((n) => unreadFor(n, sessionName)).map((n) => n.id);
+  return items.filter((n) => unreadFor(n, sessionName) && !opensConversation(n)).map((n) => n.id);
+}
+
+/** Unseen events whose destination is this conversation. */
+export function unseenConversationEventIDs(items: FleetNotification[], conversationId: string): string[] {
+  if (!conversationId) return [];
+  return items.filter((n) => !n.seen && opensConversation(n) && n.payload.conversation_id === conversationId).map((n) => n.id);
 }
 
 /** Does this one session still carry an unseen notification? A rail row subscribes to this

@@ -15,7 +15,7 @@ import { openChat } from "../chat/open.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { openSharedSession } from "../sharing/open.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
-import { unseenSessionEventIDs } from "./read.ts";
+import { opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 import { childIdleMuted } from "./childIdle.ts";
 import { useAwsLoginStore } from "../awslogin/store.ts";
@@ -121,12 +121,6 @@ export function conversationReachable(res: unknown): boolean {
   if (typeof (res as { id?: string }).id === "string" && (res as { id?: string }).id) return true;
   return isTransientErr(res);
 }
-
-// A session report's destination is the operator CONVERSATION, not the reporting session
-// (docs/log/30) — the conversation id rides the payload. So is each chat-* notice's.
-export const opensConversation = (n: FleetNotification): boolean =>
-  (n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") &&
-  typeof n.payload.conversation_id === "string" && !!n.payload.conversation_id;
 
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<NotificationOpenResult> {
   if (opensConversation(n) && typeof n.payload.conversation_id === "string") {
@@ -262,8 +256,11 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   },
 }));
 
-// Showing a session is an explicit acknowledgement of every pending event for it — and
-// showing means every VISIBLE pane, not only the focused one. allPanes is the selected view
+// Showing a notification's DESTINATION is an explicit acknowledgement of it — and showing
+// means every VISIBLE pane, not only the focused one. For most events that is their session;
+// a report's is the operator conversation it was posted to (opensConversation), so the
+// reporting session on screen does not clear it: that shows none of the report, and clearing
+// it there loses it both from the rail and from the jump to the next session that needs you. allPanes is the selected view
 // of each cell, i.e. exactly what is on screen: a session sitting in a second pane, or on
 // the selected tab of another cell, is being looked at, and leaving its unread dot up would
 // mark as "not looked at" something the user can see. The dot on a pane tab is what makes
@@ -277,7 +274,10 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
     const sessions = useSessionsStore.getState().sessions;
     // The same session can occupy two panes, so dedupe before posting the acknowledgement.
     const ids = [...new Set([
-      ...allPanes(useLayoutStore.getState().layout).flatMap((p) => unseenSessionEventIDs(items, shownSession(p, sessions))),
+      ...allPanes(useLayoutStore.getState().layout).flatMap((p) => [
+        ...unseenSessionEventIDs(items, shownSession(p, sessions)),
+        ...(p.content.kind === "chat" ? unseenConversationEventIDs(items, p.content.conversationId || "") : []),
+      ]),
       // A muted child's idle is acknowledged on arrival too, so it raises no dot and no count.
       // Here rather than in deliver(): deliver sees only rows newer than the first load, and
       // runs before the session list may have arrived to say which sessions are children.

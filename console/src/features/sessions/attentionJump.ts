@@ -9,7 +9,8 @@ import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { toast } from "../../ui/toast.ts";
-import { openNotificationTarget, opensConversation, useNotificationStore } from "../notifications/store.ts";
+import { openNotificationTarget, useNotificationStore } from "../notifications/store.ts";
+import { opensConversation } from "../notifications/read.ts";
 import type { FleetNotification } from "../notifications/store.ts";
 import { attentionQueue, nextAttention, unreadAtFromNotifications } from "./attention.ts";
 import type { AttentionWalk } from "./attention.ts";
@@ -20,14 +21,30 @@ import { useSessionsStore } from "./store.ts";
 import { isWaiting, observedWaitingAt } from "./waiting.ts";
 import type { Session } from "../../types/session.ts";
 
-// The previous press: the walk, and the layout it left behind. The walk continues only while
-// the layout is still exactly that one — any navigation of the user's own (another pane,
-// another tab, another session, even coming back to the same one) starts a fresh walk from
-// what is on screen, in the current order. It is also what lets a jump that landed on a
-// conversation, which shows no session, still know where it was. Device-local and in memory
-// only: losing it (a reload) just restarts the walk.
+// The previous press. The walk continues only while the user stays where it landed: the
+// active pane still shows the same view with the same content. Resizing, wrapping or
+// polling do not move that; any navigation of the user's own does — even coming back to
+// the same session later — and drops the walk, so the next press starts afresh from what is
+// on screen, in the current order. Keyed on the place rather than on the session because a
+// report lands on a conversation, which shows no session. Device-local and in memory only:
+// losing it (a reload) just restarts the walk.
 let walk: AttentionWalk | null = null;
-let landedOn: Layout | null = null;
+let landedAt = "";
+let watching = false;
+let busy = false;
+
+const placeKey = (l: Layout): string => {
+  const v = activePane(l);
+  return v ? JSON.stringify([l.activeCellId, v.id, v.session, v.content]) : "";
+};
+
+function watchLayout(): void {
+  if (watching) return;
+  watching = true;
+  useLayoutStore.subscribe((st) => {
+    if (walk && placeKey(st.layout) !== landedAt) walk = null;
+  });
+}
 
 /** Newest unseen notification for a session. */
 function newestUnseen(items: FleetNotification[], name: string): FleetNotification | undefined {
@@ -41,15 +58,16 @@ function newestUnseen(items: FleetNotification[], name: string): FleetNotificati
 
 /** Where a stop of the walk leads. A session waiting on an answer opens the session. An unread
  *  one opens what its newest notification points at: a report lives in the operator
- *  conversation, not the reporting session — opening the session would show neither the report
- *  nor anything new, while its visible-pane acknowledgement cleared the report as read. */
+ *  conversation, not the reporting session. Being on screen there is what acknowledges it
+ *  (wireNotificationReadOnVisibleSessions). A session with both a report and a newer finished
+ *  turn keeps its place in the queue after the first stop and is visited again for the other. */
 async function openStop(s: Session, items: FleetNotification[]): Promise<void> {
   const n = isWaiting(s) ? undefined : newestUnseen(items, s.name);
   if (n && opensConversation(n)) {
     const r = await openNotificationTarget(n, false);
-    // A conversation pane shows no session, so nothing acknowledges it on sight; do what
-    // activating the row in the notification center does.
-    if (r.opened) void useNotificationStore.getState().markSeen(undefined, [n.id]);
+    // The conversation is gone, so nothing can ever show this report again: acknowledge it
+    // here, or it would hold the session in the queue and every press would come back to it.
+    if (r.missingConversation !== undefined) void useNotificationStore.getState().markSeen(undefined, [n.id]);
     return;
   }
   openSessionFromList(s, false, wsRunning(useWorkspaceStore.getState().state));
@@ -58,23 +76,38 @@ async function openStop(s: Session, items: FleetNotification[]): Promise<void> {
 /** Opens the next session that needs you in the active pane (or focuses the pane already
  *  showing it) and says where it went. */
 export async function jumpToNextAttention(): Promise<void> {
-  const sessions = useSessionsStore.getState().sessions;
-  const items = useNotificationStore.getState().items;
-  const fromNotifications = waitingAtFromNotifications(items);
-  const waitingAt = (name: string) => Math.max(fromNotifications[name] || 0, observedWaitingAt(name));
-  const queue = attentionQueue(sessions, waitingAt, unreadAtFromNotifications(items));
-  const layout = useLayoutStore.getState().layout;
-  const prev = walk && layout === landedOn ? walk : null;
-  const current = prev ? prev.at : shownSession(activePane(layout), sessions);
-  const next = nextAttention(queue.map((s) => s.name), current, prev);
-  const target = next && queue.find((s) => s.name === next.at);
-  if (!next || !target) {
+  // A second press while a conversation is still being fetched would pick the same stop again.
+  if (busy) return;
+  busy = true;
+  try {
+    watchLayout();
+    const sessions = useSessionsStore.getState().sessions;
+    const items = useNotificationStore.getState().items;
+    const fromNotifications = waitingAtFromNotifications(items);
+    const waitingAt = (name: string) => Math.max(fromNotifications[name] || 0, observedWaitingAt(name));
+    const queue = attentionQueue(sessions, waitingAt, unreadAtFromNotifications(items));
+    const layout = useLayoutStore.getState().layout;
+    const prev = walk && placeKey(layout) === landedAt ? walk : null;
+    const current = prev ? prev.at : shownSession(activePane(layout), sessions);
+    const next = nextAttention(queue.map((s) => s.name), current, prev);
+    const target = next && queue.find((s) => s.name === next.at);
     walk = null;
-    toast(t(queue.length ? "noti.jump_only_current" : "noti.jump_none"), { kind: "info", duration: 2000 });
-    return;
+    if (!next || !target) {
+      toast(t(queue.length ? "noti.jump_only_current" : "noti.jump_none"), { kind: "info", duration: 2000 });
+      return;
+    }
+    toast(t("noti.jump_to", { name: displayName(target), total: queue.length }), { kind: "info", duration: 1600 });
+    await openStop(target, items);
+    landedAt = placeKey(useLayoutStore.getState().layout);
+    walk = next;
+  } finally {
+    busy = false;
   }
-  toast(t("noti.jump_to", { name: displayName(target), total: queue.length }), { kind: "info", duration: 1600 });
-  await openStop(target, items);
-  walk = next;
-  landedOn = useLayoutStore.getState().layout;
+}
+
+/** Test seam: forget the walk. */
+export function resetAttentionWalkForTest(): void {
+  walk = null;
+  landedAt = "";
+  busy = false;
 }

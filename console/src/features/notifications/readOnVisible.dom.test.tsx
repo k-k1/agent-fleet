@@ -118,6 +118,31 @@ describe("a session shown through its image studio", () => {
   });
 });
 
+// A report's destination is the operator conversation it was posted to. Showing the reporting
+// session shows none of it, so that must not clear it (#1057 review): the conversation does.
+describe("a session report", () => {
+  const report = (id: string, session: string, conversation: string): FleetNotification => ({
+    ...event(id, session), kind: "session-report", payload: { conversation_id: conversation },
+  });
+  const chat = (id: string, conversationId: string): View => ({ id, session: null, content: { kind: "chat", conversationId, draftAssistantId: null }, wrap: null });
+
+  it("stays unread while only the reporting session is on screen", async () => {
+    useNotificationStore.setState({ items: [report("e1", "worker", "conv-1"), event("e2", "worker")] });
+    useLayoutStore.setState({ layout: layout([cell("g1", [view("p1", "worker")])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e2"]);
+  });
+
+  it("is acknowledged when its conversation is on screen, and only its own", async () => {
+    useNotificationStore.setState({ items: [report("e1", "worker", "conv-1"), report("e2", "worker", "conv-2"), event("e3", "worker")] });
+    useLayoutStore.setState({ layout: layout([cell("g1", [chat("p1", "conv-1")])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e1"]);
+  });
+});
+
 // childIdleNotify off: a spawned child's idle is acknowledged on arrival, wherever it is, so
 // it raises no dot — its question, and any other session's idle, still wait to be looked at.
 describe("a muted child's idle", () => {
