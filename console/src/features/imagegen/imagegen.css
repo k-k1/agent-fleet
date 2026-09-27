@@ -425,6 +425,40 @@
   align-items: center;
 }
 
+/* Last time's settings, folded: one line that names every value the start will use. */
+.igen-attach-last {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.igen-attach-last-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-attach-last-sum {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.igen-attach-place {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.igen-attach-place-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .igen-redirect {
   display: flex;
   flex-direction: column;

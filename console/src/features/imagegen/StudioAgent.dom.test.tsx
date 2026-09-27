@@ -26,7 +26,7 @@ afterEach(async () => {
   mirrorProps.length = 0;
 });
 
-async function mount(session: string, needsModel: boolean) {
+async function mount(session: string, needsModel: boolean, attachPicksModel = false) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -41,6 +41,7 @@ async function mount(session: string, needsModel: boolean) {
           log={[]}
           onRewind={() => undefined}
           needsModel={needsModel}
+          attachPicksModel={attachPicksModel}
           onAttach={() => undefined}
           onReplace={() => undefined}
         />
@@ -70,5 +71,11 @@ describe("the studio's agent column without a model", () => {
     await mount("s1", false);
     expect(host.querySelector(".igen-needs-model")).toBeNull();
     expect(mirrorProps.at(-1)?.composerBlock).toBeUndefined();
+  });
+
+  it("offers to attach when the attach dialog picks the model itself", async () => {
+    await mount("", true, true);
+    const btn = [...host.querySelectorAll("button")].find((b) => /付ける|Attach/.test(b.textContent || ""));
+    expect(btn?.disabled).toBe(false);
   });
 });

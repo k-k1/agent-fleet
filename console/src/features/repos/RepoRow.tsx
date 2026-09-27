@@ -6,7 +6,7 @@
 // `active` = open in the SCM pane; `selected` = the attached session's repo — both
 // just highlight in place (no reordering).
 import { createPortal } from "react-dom";
-import { useLayoutEffect, useRef, useState } from "react";
+import { Suspense, lazy, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -29,6 +29,13 @@ import { LaunchModal } from "./LaunchModal.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import { canFastForwardFromParent, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
+import { useImagegenAvailable } from "../imagegen/available.ts";
+
+// Loaded on first use: the dialog's image-model picker lives with the generation form, which the
+// rail's bundle has no other reason to carry.
+const StartStudioModal = lazy(() =>
+  import("../imagegen/parts/StartStudioModal.tsx").then((m) => ({ default: m.StartStudioModal })),
+);
 
 // Provider display: known SaaS hosts get a friendly label; unknown slugs show as-is.
 const PROVIDER_LABEL: Record<string, string> = {
@@ -99,6 +106,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const isSvn = r.vcs === "svn";
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false);
+  const [studioModal, setStudioModal] = useState(false);
+  const imagegenAvailable = useImagegenAvailable({ passive: true });
   // Coding agents only (runsInDir) — shell/ssm have no model/prompt, so the
   // modal excludes them; they keep the ▼ quick path. Not caps.chat: agy is
   // terminal-only (no chat mirror) but still launches through the modal.
@@ -347,6 +356,21 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                       <Icon name={kindIcon(k)} /> {kindLabel(k)}
                     </button>
                   ))}
+                  {imagegenAvailable && (
+                    <>
+                      <div className="ui-menu-sep" role="separator" />
+                      <button
+                        type="button"
+                        className="ui-menu-item"
+                        onClick={() => {
+                          setShowLaunch(false);
+                          setStudioModal(true);
+                        }}
+                      >
+                        <Icon name="wand" /> {tr("repo.start_studio")}
+                      </button>
+                    </>
+                  )}
                 </div>,
                 document.body,
               )}
@@ -468,6 +492,16 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </li>
               </>
             )}
+            {running && imagegenAvailable && (
+              <>
+                <li className="ui-menu-sep" role="separator" />
+                <li>
+                  <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setStudioModal(true); }}>
+                    <Icon name="wand" /> {tr("repo.start_studio")}
+                  </button>
+                </li>
+              </>
+            )}
             {/* Working sets (docs/log/52): membership toggles — base rows only. */}
             {!r.worktree && wsets.length > 0 && (
               <>
@@ -578,6 +612,11 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           onClose={() => setLaunchModal(false)}
           onLaunch={onStartWork}
         />
+      )}
+      {studioModal && (
+        <Suspense fallback={null}>
+          <StartStudioModal repo={r} onClose={() => setStudioModal(false)} />
+        </Suspense>
       )}
     </li>
   );

@@ -20,6 +20,8 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { RepoRow } = await import("./RepoRow.tsx");
 import { setLocale } from "../../lib/i18n/index.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { noteImagegenStatus, _imagegenAvailability } from "../imagegen/available.ts";
 import type { Repo } from "./store.ts";
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -96,5 +98,20 @@ describe("RepoRow worktree row", () => {
     expect(itemFor("Shell を起動")).toBeTruthy();
     expect(itemFor("Claude を起動")).toBeUndefined();
     expect(itemFor("Codex を起動")).toBeUndefined();
+  });
+
+  it("offers to start an image studio only while the fleet has an image engine", async () => {
+    await render(WT);
+    await openMenu();
+    expect(itemFor("画像スタジオを始める")).toBeUndefined();
+    act(() => root?.unmount());
+    root = createRoot(host);
+    useWorkspaceStore.setState({ state: "running" });
+    noteImagegenStatus({ providers: [{ id: "comfy", kind: "comfy", fleet: true, ready: true, models: [] }] } as never);
+    await render(WT);
+    await openMenu();
+    expect(itemFor("画像スタジオを始める")).toBeTruthy();
+    _imagegenAvailability.reset();
+    useWorkspaceStore.setState({ state: "…" });
   });
 });

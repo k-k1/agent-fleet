@@ -419,4 +419,5 @@ export const repos = {
   "scm.create_and_switch": "作成して切替",
   "scm.diff_load_failed": "(diff 取得失敗)",
   "scm.no_file_selected": "(ファイル未選択)",
+  "repo.start_studio": "画像スタジオを始める",
 };
