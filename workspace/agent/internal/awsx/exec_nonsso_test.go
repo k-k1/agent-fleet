@@ -137,16 +137,25 @@ func TestPlanExecRefusesANonSSOProfileBeforeFetching(t *testing.T) {
 		"undefined source":             {deployProfile, "", "", deployAccount, "not defined"},
 		"no source_profile":            {map[string]string{"role_arn": deployProfile["role_arn"]}, "", "", deployAccount, "without a source_profile"},
 		"self source without keys":     {map[string]string{"role_arn": deployProfile["role_arn"], "source_profile": "prod"}, "", "", deployAccount, "names itself"},
-		"process with keys beside it":  {map[string]string{"credential_process": "/x", "creds:aws_session_token": "t"}, "", "", deployAccount, "never run the process"},
-		"process with keys in the credentials [DEFAULT]": {map[string]string{"credential_process": "/x"}, "", "[DEFAULT]\naws_access_key_id = AKIADEF\n", deployAccount, "never run the process"},
+		"process with keys beside it":  {map[string]string{"credential_process": "/x", "creds:aws_session_token": "t"}, "", "", deployAccount, "more than one way"},
+		"process with keys in the credentials [DEFAULT]": {map[string]string{"credential_process": "/x"}, "", "[DEFAULT]\naws_access_key_id = AKIADEF\n", deployAccount, "more than one way"},
 		"source role with keys": {deployProfile, "[profile src]\nrole_arn = arn:aws:iam::1:role/r\nsource_profile = base\n\n[profile base]\n",
-			"[src]\naws_access_key_id = AKIASRC\naws_secret_access_key = x\n", deployAccount, "sets role_arn and also aws_access_key_id"},
+			"[src]\naws_access_key_id = AKIASRC\naws_secret_access_key = x\n", deployAccount, "credentials (role_arn, keys)"},
 		"source role that is its own source": {deployProfile, "[profile src]\nrole_arn = arn:aws:iam::1:role/r\nsource_profile = src\n",
-			"[src]\naws_access_key_id = AKIASRC\naws_secret_access_key = x\n", deployAccount, "sets role_arn and also"},
+			"[src]\naws_access_key_id = AKIASRC\naws_secret_access_key = x\n", deployAccount, "more than one way"},
 		"named role with keys and another source": {map[string]string{"role_arn": deployProfile["role_arn"], "source_profile": "src",
-			"creds:aws_access_key_id": "AKIA"}, srcConfig, srcKeys, deployAccount, "sets role_arn and also"},
-		"not a role ARN": {map[string]string{"role_arn": "arn:aws:iam::222233334444:user/me", "source_profile": "src"}, srcConfig, srcKeys, deployAccount, "not an IAM role ARN"},
-		"empty role_arn": {map[string]string{"raw:role_arn =": "", "source_profile": "src"}, srcConfig, srcKeys, deployAccount, "not an IAM role ARN"},
+			"creds:aws_access_key_id": "AKIA"}, srcConfig, srcKeys, deployAccount, "more than one way"},
+		"process source with keys": {deployProfile, "[profile src]\ncredential_process = /x\n",
+			"[src]\naws_access_key_id = AKIASRC\naws_secret_access_key = x\naws_session_token = t\n", deployAccount, "(keys, credential_process)"},
+		"process source with keys in the credentials [DEFAULT]": {deployProfile, "[profile src]\ncredential_process = /x\n",
+			"[DEFAULT]\naws_session_token = t\n", deployAccount, "more than one way"},
+		"login_session":              {map[string]string{"credential_process": "/x", "login_session": "other"}, "", "", deployAccount, "sets login_session"},
+		"login_session as source":    {deployProfile, "[profile src]\nlogin_session = other\n", "", deployAccount, "sets login_session"},
+		"incomplete SSO source":      {deployProfile, "[profile src]\nsso_session = af-prod\n", "", deployAccount, "incomplete SSO settings"},
+		"SSO source with process":    {deployProfile, "[profile src]\nsso_session = af-prod\ncredential_process = /x\n", "", deployAccount, "(sso, credential_process)"},
+		"source without credentials": {deployProfile, srcConfig, "", deployAccount, "no credentials of its own"},
+		"not a role ARN":             {map[string]string{"role_arn": "arn:aws:iam::222233334444:user/me", "source_profile": "src"}, srcConfig, srcKeys, deployAccount, "not an IAM role ARN"},
+		"empty role_arn":             {map[string]string{"raw:role_arn =": "", "source_profile": "src"}, srcConfig, srcKeys, deployAccount, "not an IAM role ARN"},
 	} {
 		bin, state := fakeDeploy(t, tc.cfg, tc.config, tc.creds, deployARN)
 		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Account: tc.account, Login: "always", Argv: []string{"true"}, Quiet: true})
@@ -293,5 +302,20 @@ func TestRealAWSCLIPrefersKeysOverACredentialProcess(t *testing.T) {
 	out, err := cmd.Output()
 	if err != nil || !strings.Contains(string(out), "ASIAKEYSWIN") {
 		t.Fatalf("the CLI no longer prefers the keys (err %v); revisit checkSourceChain's refusal:\n%s", err, out)
+	}
+}
+
+// A process can print an SSO token error; its output must not be taken for a login
+// failure nor repeated.
+func TestPlanExecWithholdsProcessOutputBeforeTheLoginCheck(t *testing.T) {
+	src := "[profile src]\nsso_session = af-prod\nsso_account_id = 123456789012\nsso_role_name = Dev\n"
+	bin, state := fakeDeploy(t, deployProfile, src, "", deployARN)
+	msg := "Error when retrieving credentials from custom-process: Error loading SSO Token: FAKE_SECRET_FROM_PROCESS"
+	if err := os.WriteFile(filepath.Join(state, "exportErr"), []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Account: deployAccount, Login: "never", Argv: []string{"true"}, Quiet: true})
+	if err == nil || errors.Is(err, ErrLoginRequired) || strings.Contains(err.Error(), "FAKE_SECRET") {
+		t.Fatalf("err = %v", err)
 	}
 }

@@ -326,9 +326,12 @@ af-aws-exec --profile <name> -- npx cdk deploy
   program and runs as you wrote it: `af-aws-exec` checks the account of what it returns, not where it came from. It
   is refused, before anything is fetched, when the profile or any profile in its `source_profile` chain (a
   `[DEFAULT]` section included) sets `credential_source` (that takes the workspace's own credentials),
-  `web_identity_token_file` or `mfa_serial` (nobody can answer the MFA prompt when an agent runs the command), when
-  keys sit where the AWS CLI would use them instead of what the profile names (beside a `credential_process`, or on
-  a role profile other than the one you name as its own `source_profile`), or when the chain is broken. When a
+  `web_identity_token_file`, `login_session` or `mfa_serial` (nobody can answer the MFA prompt when an agent runs the
+  command), when a profile in the chain names more than one way to get credentials (for example keys, even only a
+  session token or keys in `~/.aws/config`, beside a `credential_process` or on a role profile: the AWS CLI and
+  other SDKs would not agree on which to use), when the SSO profile a chain ends in is incomplete, or when the chain
+  is broken. Keep one way per profile: keys go in a profile of their own, named as `source_profile`. The one
+  exception is a role profile you name that is its own `source_profile` and holds the keys itself. When a
   `credential_process` fails, its output is not shown; run it yourself to see why. Only temporary credentials are passed: a profile that resolves to long-lived keys is
   refused, so use the keys to assume a role instead. If the chain ends in an SSO profile whose login is missing, the
   command exits with code 3 and the `aws sso login` command for that SSO profile (at a terminal it starts the login

@@ -38,6 +38,12 @@ const maxSourceChain = 16
 // assume-role provider does, and refuses anything along it that could end at an
 // identity the member did not name. It returns the SSO profile the chain ends in, if it
 // does, so an expired login there can be reported as a login.
+//
+// Each hop must name exactly one way to get credentials. Guessing which of two the CLI
+// takes means mirroring botocore's provider order, and every guess so far missed one
+// (keys beside a credential_process, keys on a role hop, login_session, an incomplete
+// SSO profile falling through to a process); other SDKs order them differently again.
+// The one exception is botocore's documented self-source shape (below).
 func checkSourceChain(env []string, profile string, keys, origin map[string]string) (ssoRoot string, err error) {
 	cur, seen := profile, map[string]bool{profile: true}
 	for hop := 0; ; hop++ {
@@ -52,9 +58,10 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 			return "", fmt.Errorf("%s sets credential_source (%s), which takes the workspace's own credentials, not yours; "+
 				"af-aws-exec refuses it", in, where(origin["credential_source"]))
 		}
-		if _, set := keys["web_identity_token_file"]; set {
-			return "", fmt.Errorf("%s sets web_identity_token_file (%s); af-aws-exec does not run web-identity profiles",
-				in, where(origin["web_identity_token_file"]))
+		for _, k := range []string{"web_identity_token_file", "login_session"} {
+			if _, set := keys[k]; set {
+				return "", fmt.Errorf("%s sets %s (%s); af-aws-exec does not run that kind of profile", in, k, where(origin[k]))
+			}
 		}
 		// The CLI would prompt for the code on a terminal the command does not have when an
 		// agent runs it, and wait there.
@@ -62,20 +69,25 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 			return "", fmt.Errorf("%s sets mfa_serial (%s); af-aws-exec cannot answer an MFA prompt, so it refuses the profile",
 				in, where(origin["mfa_serial"]))
 		}
-		static := staticKeyIn(keys)
+		sources := credentialSources(keys)
 		role, hasRole := keys["role_arn"]
 		if !hasRole {
-			// Only the named profile gets here without a role (nonSSOProfile admitted it for
-			// its credential_process): keys beside the process win over it in botocore (the
-			// shared-credentials provider runs first), and the process never runs.
-			if cur == profile && static != "" {
-				return "", fmt.Errorf("%s sets credential_process and also %s (%s); the AWS CLI would use those keys and never "+
-					"run the process, so af-aws-exec refuses it", in, static, where(origin[static]))
+			if len(sources) != 1 {
+				return "", oneSourceError(in, sources, origin)
 			}
-			if keys["sso_session"] != "" || keys["sso_start_url"] != "" {
-				return cur, nil
+			if sources[0] != "sso" {
+				return "", nil
 			}
-			return "", nil
+			// An SSO profile the SSO provider does not claim falls through to whatever
+			// else the chain finds; only a complete one is an SSO root.
+			sso, err := resolveSSO(env, keys, origin)
+			if err != nil {
+				return "", fmt.Errorf("%s: %w", in, err)
+			}
+			if sso.Account == "" || sso.Role == "" || sso.StartURL == "" || sso.Region == "" {
+				return "", fmt.Errorf("%s has incomplete SSO settings (it needs a portal, SSO region, account and role)", in)
+			}
+			return cur, nil
 		}
 		if scalar(role) == "" {
 			return "", fmt.Errorf("%s has an empty or multi-line role_arn (%s)", in, where(origin["role_arn"]))
@@ -85,19 +97,20 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 			return "", fmt.Errorf("%s sets role_arn without a source_profile; af-aws-exec only runs a role assumed from a source profile", in)
 		}
 		// botocore lets the named profile be its own source when it holds static keys: the
-		// keys assume the role. Keys on a source further down are that hop's credentials
-		// instead, and its own role is never assumed, so a role hop may hold keys only in
-		// that one shape.
-		if static != "" && (cur != profile || src != cur) {
-			return "", fmt.Errorf("%s sets role_arn and also %s (%s); depending on where the profile sits in the chain the AWS CLI "+
-				"uses those keys instead of the role, so af-aws-exec refuses it (keep the keys in a profile of their own and name it "+
-				"as source_profile)", in, static, where(origin[static]))
-		}
+		// keys assume the role. On a source further down the same keys are that hop's
+		// credentials instead and its own role is never assumed, so the shape is allowed
+		// only on the named profile.
 		if src == cur {
-			if static != "" {
+			if cur == profile && len(sources) == 2 && sources[1] == "keys" {
 				return "", nil
 			}
-			return "", fmt.Errorf("%s names itself as source_profile but has no keys of its own", in)
+			if cur == profile && len(sources) == 1 {
+				return "", fmt.Errorf("%s names itself as source_profile but has no keys of its own", in)
+			}
+			return "", oneSourceError(in, sources, origin)
+		}
+		if len(sources) != 1 {
+			return "", oneSourceError(in, sources, origin)
 		}
 		if seen[src] || hop >= maxSourceChain {
 			return "", fmt.Errorf("the source_profile chain from profile %q loops back to %q", profile, src)
@@ -113,14 +126,42 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 	}
 }
 
-// staticKeyIn returns the first static-key setting keys has, or "".
-func staticKeyIn(keys map[string]string) string {
-	for _, k := range []string{"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
-		if _, set := keys[k]; set {
-			return k
+// credentialSources lists the ways keys name to get credentials, in a fixed order:
+// "role_arn", "sso" (any sso_* setting), "keys" (any static-key setting), and
+// "credential_process". Any key counts, even alone or in the config file where the CLI
+// would not use it: a session token alone or config-file keys do not shadow a process in
+// the CLI, but other SDKs take static keys first, so the name would mean different
+// identities to different tools (the same policy as checkSSOProfile's).
+func credentialSources(keys map[string]string) []string {
+	var out []string
+	if _, set := keys["role_arn"]; set {
+		out = append(out, "role_arn")
+	}
+	for k := range keys {
+		if strings.HasPrefix(k, "sso_") {
+			out = append(out, "sso")
+			break
 		}
 	}
-	return ""
+	for _, k := range []string{"aws_access_key_id", "aws_secret_access_key", "aws_session_token"} {
+		if _, set := keys[k]; set {
+			out = append(out, "keys")
+			break
+		}
+	}
+	if _, set := keys["credential_process"]; set {
+		out = append(out, "credential_process")
+	}
+	return out
+}
+
+func oneSourceError(in string, sources []string, origin map[string]string) error {
+	if len(sources) == 0 {
+		return fmt.Errorf("%s has no credentials of its own (no keys, credential_process or SSO settings)", in)
+	}
+	return fmt.Errorf("%s names more than one way to get credentials (%s); the AWS CLI and other SDKs would not agree on "+
+		"which to use, so af-aws-exec refuses it: keep one per profile (keys in a profile of their own, named as "+
+		"source_profile)", in, strings.Join(sources, ", "))
 }
 
 // roleARNParts splits arn:<partition>:iam::<account>:role/<path/>name into the account
@@ -199,6 +240,7 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 
 	aws := awsRunner{bin: awsBin, env: ownFilesEnv(env)}
 	creds, err := exportCreds(aws, o.Profile)
+	err = withheldProcessOutput(err, o.Profile)
 	if err != nil && ssoRoot != "" && loginNeeded(err.Error()) {
 		// The Console login (ADR 0102) is for Settings profiles run by name; here the
 		// member runs the login for the chain's SSO profile themselves.
@@ -215,17 +257,11 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 			return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", ssoRoot, lerr)
 		}
 		creds, err = exportCreds(aws, o.Profile)
+		err = withheldProcessOutput(err, o.Profile)
 	}
 	if errors.Is(err, errNoSessionToken) {
 		return "", nil, nil, fmt.Errorf("profile %q resolves to long-lived keys, and af-aws-exec passes only temporary credentials "+
 			"(a role assumed from a source profile, or a credential_process that returns a session token)", o.Profile)
-	}
-	if err != nil && strings.Contains(err.Error(), "custom-process") {
-		// botocore quotes a failing credential_process's stderr in its error, and what a
-		// process prints there is not ours to vouch for (measured: a secret it wrote to
-		// stderr came back in the message).
-		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: a credential_process in its chain failed "+
-			"(its output is not shown; run it yourself to see why)", o.Profile)
 	}
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
@@ -241,4 +277,16 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 		}
 		return nil
 	})
+}
+
+// withheldProcessOutput replaces an export error that carries a credential_process's
+// output. botocore quotes a failing process's stderr in its error, and what a process
+// prints there is not ours to vouch for (measured: a secret it wrote to stderr came back
+// in the message). It runs before anything reads the error, loginNeeded included: a
+// process can print an SSO token error too.
+func withheldProcessOutput(err error, profile string) error {
+	if err == nil || !strings.Contains(err.Error(), "custom-process") {
+		return err
+	}
+	return fmt.Errorf("a credential_process in the chain of profile %q failed; its output is not shown, run it yourself to see why", profile)
 }
