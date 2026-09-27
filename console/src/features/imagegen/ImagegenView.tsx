@@ -953,7 +953,10 @@ function StudioPane({
                 }
               />
             </div>
-            <div className="igen-col-form">
+            {/* The draft and results columns scroll vertically; a long unbroken prompt or path
+                overflowing sideways must not make them count as horizontal scrollers and
+                swallow the phone's session swipe (app/swipeGuard.ts). */}
+            <div className="igen-col-form" data-swipe-y="">
               {engineBar("band")}
               <div className="igen-form-head">
                 <button
@@ -977,7 +980,7 @@ function StudioPane({
               )}
               {form}
             </div>
-            <div className="igen-col-out">
+            <div className="igen-col-out" data-swipe-y="">
               <TrialSlot item={latestTrial} onZoom={zoomOut} onUseSeed={useSeed} />
               <JobList
                 rows={rows}

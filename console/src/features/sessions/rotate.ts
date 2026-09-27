@@ -48,3 +48,18 @@ export function rotateTarget(
   const i = (((base + delta) % list.length) + list.length) % list.length;
   return { session: list[i], index: i, total: list.length };
 }
+
+/** The session a pane stands for in the rotation. An image-studio pane has no session of its
+ *  own; it stands for the session bound to its studio, or a swipe from it would start over at
+ *  the head of the list — which is usually that same session, so the swipe did nothing. */
+export function rotationCurrent(
+  pane: { session?: string | null; content: { kind: string; studioId?: string | null } } | null | undefined,
+  sessions: Session[],
+): string | null {
+  if (!pane) return null;
+  if (pane.content.kind === "imagegen") {
+    const id = pane.content.studioId;
+    return (id && sessions.find((s) => s.studio === id)?.name) || null;
+  }
+  return pane.session || null;
+}

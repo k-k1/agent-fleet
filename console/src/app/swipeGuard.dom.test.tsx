@@ -113,6 +113,8 @@ describe("data-swipe-y の付け先", () => {
     ["ミラーの転写", "../features/mirror/MirrorView.tsx", "mirror-body"],
     ["共有ビューの転写", "../features/sharing/SharedSessionView.tsx", "shared-view-body"],
     ["アシスタントチャット", "../features/chat/ChatView.tsx", "chat-scroll"],
+    ["画像スタジオの下書き列", "../features/imagegen/ImagegenView.tsx", "igen-col-form"],
+    ["画像スタジオの結果列", "../features/imagegen/ImagegenView.tsx", "igen-col-out"],
   ];
   for (const [name, file, cls] of cases) {
     it(`${name}（.${cls}）に付いている`, () => {
