@@ -231,7 +231,7 @@ func TestLiveModelCatalog(t *testing.T) {
 	if !readCredential().Present {
 		t.Skip("not signed in to muse: model/list has no catalog to return")
 	}
-	list, safeRows, err := probeModels()
+	list, rows, err := probeModels()
 	if err != nil {
 		t.Fatalf("model/list: %v", err)
 	}
@@ -256,7 +256,10 @@ func TestLiveModelCatalog(t *testing.T) {
 	// the live catalog and it must not be one the vendor says it may learn from. An empty pick
 	// here means every session AF starts without an explicit model falls back to the host's
 	// default, which IS the contributor variant.
-	safe := firstOrEmpty(safeRows)
+	safe := ""
+	if len(rows) > 0 {
+		safe = rows[0]
+	}
 	if safe == "" {
 		t.Error("no non-data-sharing model in the live catalog: sessions would fall back to the host's contributor default")
 	}

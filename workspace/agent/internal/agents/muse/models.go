@@ -52,9 +52,19 @@ func Models() []agents.ModelChoice {
 	return modelsList
 }
 
+// ModelHidden reports whether the member's hidden-models setting excludes a muse model id. main
+// installs it (internal/agents does not read main's settings files); the default hides nothing.
+var ModelHidden = func(id string) bool { return false }
+
+// errSafeModelsHidden refuses a start that would otherwise run a model the member hid, or the
+// host's contributor default in its place.
+var errSafeModelsHidden = errors.New("Muse Code: 製品改善に使われないモデルがすべて設定「使わないモデル」で除外されています。モデルを選んで起動するか、設定 > エージェント > 動作設定 で除外を解除してください。")
+
 // SafeDefaultModel is the model id AF starts a session on when the member chose none, over a
-// connection the caller already holds. "" means "send no modelId", which hands the choice back
-// to the host.
+// connection the caller already holds: the newest safe row the member has not hidden. "" with
+// no error means "send no modelId" (the catalog has no safe row at all), which hands the choice
+// back to the host. When safe rows exist but every one is hidden it returns an error: the
+// caller must refuse rather than send no modelId, which would run the contributor default.
 //
 // 🔴 It exists because the host's own default is the one decision 6 clamp 8 is about. Measured
 // on 1.3.0-R3401.1, the catalog's `isDefault: true` row is `muse-spark-1.3-contributor`, whose
@@ -63,28 +73,38 @@ func Models() []agents.ModelChoice {
 // into product-improvement use without their ever seeing the word. The member keeps the choice
 // (the contributor variants stay in the picker, at the same price); what AF picks for them when
 // they have not made one is the other direction.
-func SafeDefaultModel(cl *msp.Client) string {
+func SafeDefaultModel(cl *msp.Client) (string, error) {
+	return firstVisible(safeRows(cl))
+}
+
+// safeRows is the catalog's non-data-sharing ids, refreshed over cl when the cache is stale.
+func safeRows(cl *msp.Client) []string {
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 	if modelsList != nil && time.Since(modelsAt) < modelsTTL {
-		return firstOrEmpty(modelsSafe)
+		return slices.Clone(modelsSafe)
 	}
 	list, safe, err := modelsFrom(cl)
 	if err != nil {
-		// The catalog is not answerable right now. Returning the stale pick rather than ""
-		// keeps a restart on the model the session already had; "" would silently fall back
+		// The catalog is not answerable right now. Returning the stale rows rather than none
+		// keeps a restart on the model the session already had; none would silently fall back
 		// to the host's contributor default.
-		return firstOrEmpty(modelsSafe)
+		return slices.Clone(modelsSafe)
 	}
 	modelsList, modelsSafe, modelsAt = list, safe, time.Now()
-	return firstOrEmpty(modelsSafe)
+	return slices.Clone(modelsSafe)
 }
 
-func firstOrEmpty(ids []string) string {
-	if len(ids) == 0 {
-		return ""
+func firstVisible(ids []string) (string, error) {
+	for _, id := range ids {
+		if !ModelHidden(id) {
+			return id, nil
+		}
 	}
-	return ids[0]
+	if len(ids) > 0 {
+		return "", errSafeModelsHidden
+	}
+	return "", nil
 }
 
 // SafeExecModels is SafeDefaultModel for a caller that holds no connection: the assistant chat

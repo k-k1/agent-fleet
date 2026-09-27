@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
 )
@@ -186,6 +187,28 @@ func TestSafeRowsKeepCatalogOrder(t *testing.T) {
 	}
 	if !slices.Equal(safe, []string{"muse-spark-1.3", "muse-spark-1.2"}) {
 		t.Errorf("safe rows are %q, want both non-contributor rows, newest first", safe)
+	}
+}
+
+// #1023: a session started with no model skips the safe rows the member hid, and refuses when
+// every safe row is hidden — sending no modelId would run the host's contributor default.
+func TestSafeDefaultModelSkipsHiddenRows(t *testing.T) {
+	resetModelCatalogCache(t)
+	modelsMu.Lock()
+	modelsList = []agents.ModelChoice{{ID: "muse-spark-1.3"}, {ID: "muse-spark-1.2"}}
+	modelsSafe, modelsAt = []string{"muse-spark-1.3", "muse-spark-1.2"}, time.Now()
+	modelsMu.Unlock()
+	prev := ModelHidden
+	t.Cleanup(func() { ModelHidden = prev })
+
+	hidden := map[string]bool{"muse-spark-1.3": true}
+	ModelHidden = func(id string) bool { return hidden[id] }
+	if got, err := SafeDefaultModel(nil); err != nil || got != "muse-spark-1.2" {
+		t.Fatalf("SafeDefaultModel = %q, %v; want the next safe row", got, err)
+	}
+	hidden["muse-spark-1.2"] = true
+	if got, err := SafeDefaultModel(nil); err == nil {
+		t.Fatalf("SafeDefaultModel = %q and no error; every safe row is hidden", got)
 	}
 }
 
