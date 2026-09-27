@@ -13,6 +13,7 @@ import { getSettings } from "../../lib/settings.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { hasTurnReader } from "../mirror/turnTts.ts";
 import { useSessionsStore } from "./store.ts";
+import { childIdleMuted } from "../notifications/childIdle.ts";
 
 const notify = (title: string, body: string) => {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
@@ -50,7 +51,9 @@ export function useSessionNotifications(enabled = true): void {
         const st = getSettings();
         const speak = st.ttsSessionNotify;
         const mirrored = st.ttsEnabled && st.ttsAutoReadAllPanes && hasTurnReader(s.name);
-        if (s.state === "idle" && before === "working") {
+        // A spawned child going idle stays silent when childIdleNotify is off (its parent is
+        // the one waiting); the idle state never falls through to the question branch below.
+        if (s.state === "idle" && before === "working" && !childIdleMuted(s.name, s)) {
           notify(t("sx.notify_answered_title"), displayName(s));
           // The voice is fixed per session (sessionVoiceOpts), keyed by session name rather
           // than display name so a rename does not change it.

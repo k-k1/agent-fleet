@@ -33,14 +33,15 @@ Getting this wrong is what makes a setting look like it "didn't work".
 
 | Timing | What |
 |---|---|
-| **Immediately** | Display, keys, speech, notifications; adding and removing connections |
-| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, fleet observation, image generation, MCP servers |
+| **Immediately** | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh) |
+| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
 
 There are also **two storage scopes**. The theme, the surface colours and the main-area layout are stored **on
 this device only**; everything else (font, font size, …) is stored on the server and follows you to another PC
-or browser.
+or browser. If saving to the server fails, the top of the settings screen says your settings could not be
+saved; until then the agents act on the previous settings, so press **Retry**.
 
 ---
 
@@ -122,7 +123,9 @@ Reads out replies from sessions and assistants.
 - **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself
   lives in the "Chat integration" tab ([08](10-integrations.md)).
 - **Allow desktop notifications** — asks the browser for permission.
-- History is in the **notification centre** (last 7 days), opened from the bell in the top bar.
+- History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
+  you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
+  ([02](02-sessions.md#reading-state-badges-and-notifications)).
 
 ### Assistant
 
@@ -157,8 +160,13 @@ the assistant conversation — they share an implementation, but they surface so
 - **Agent priority** — the CLI order used for assistance, ranked separately from the assistant. The chat wants
   the strongest model; assistance runs constantly and wants the cheapest one that works.
 - **Model for short labels** / **Model for prose** — short covers titles, branch names and reply suggestions;
-  prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults (a
-  lightweight model for short labels, one tier up for prose).
+  prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults.
+  "Recommended" for short labels is **the model with the lowest models.dev list price** among the ones that CLI
+  lists (codex and agy — a cheaper model that ships is picked up on its own); for prose it is a fixed tier one step
+  up. Without prices it falls back to the previous defaults. "Recommended (currently: …)" shows what it resolves
+  to right now. For muse, both are the newest model that is neither a `-contributor` one nor one you hid;
+  if there is none (or muse's model list cannot be read), the assistance is not generated rather than run on
+  its contributor default.
 - **Features that use AI assistance** — one card per feature (8 in total). Turning one off hides its button
   entirely and folds away that card's agent/model rows.
   - **Session title suggestion** — the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
@@ -217,10 +225,14 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
 
 Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
-**Sessions** group holds **session-to-session messaging**, **fleet observation from sessions**,
+**llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
+the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
+**Sessions** group holds **when stopped sessions are archived** (Default — the deployment's period, 7 days unless the deployment changed it — 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
+**children per session**), **fleet observation from sessions**,
 **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
 → [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions),
+[02 Sessions](02-sessions.md#starting-sessions-from-a-session-child-sessions),
 [02 Sessions](02-sessions.md#having-a-session-generate-an-image)
 
 ### Git hosting
@@ -315,14 +327,14 @@ scale.
 
 - **Range** — 24 hours / 7 days / 30 days.
 - **Split by** — feature / agent / model / session origin (started by a person, created by the operator, created
-  by a schedule, handoff) / trigger (user, automatic, schedule, operator, bridge …).
+  by a schedule, handoff, started by a session) / trigger (user, automatic, schedule, operator, bridge …).
 - **Metric** — tokens spent / number of calls / cache reads / **API-equivalent cost (estimated)** — tokens ×
   each model's published API list price (cache writes ×1.25, cache reads ×0.1), shown with a `≈`. **It is not
   what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read
   "—" (only claude's auxiliary calls return one). The measured figure is still there: hover the amount and it is
   shown alongside — never added to the estimate.
-- Rates come from a built-in table for Anthropic and from the **models.dev price catalog** (read from the copy
-  opencode keeps) for everything else. **Hover an amount to see which rate was used and where it came from.**
+- Rates come from a built-in table for Anthropic and from the **models.dev price catalog** for everything else.
+  The Agent fetches that catalog once a day (where it cannot, it reads the copy opencode keeps). **Hover an amount to see which rate was used and where it came from.**
   Consumption that went through opencode is priced at opencode's own rates — that is closer to what you actually pay.
 - Models missing from the catalog too are **not** estimated. That consumption is reported under "what is
   measurable" as "N% of the consumption runs on models with no price on file" — which is not an amount of 0.
@@ -386,10 +398,33 @@ administrator's to set.
 - A size or class your admin changes applies **at the next start**, so when the running instance and the
   configuration disagree, **both** are shown.
 - **Usage** — a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
-  home disk's usage. **The ceilings are the rows above** — this workspace's memory limit and its core
+  home disk's usage. **The disk figure is only yours on an instance of your own**; on a shared host it is
+  the whole filesystem home sits on (labelled so, and never coloured as a warning), because other
+  members fill it too. **The ceilings are the rows above** — this workspace's memory limit and its core
   count — so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
   unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
   it could not read**, and it says so when a process was killed for memory during the window.
+- **Disk used by Agent Fleet** — what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
+  down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
+  sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after
+  14 on their own; **"Open cleanup"** closes Settings and opens the cleanup modal, where the deleted
+  sessions' share and the trash can be tidied up ([02 Sessions](02-sessions.md#tidying-up-in-bulk-cleanup)).
+  Working copies and tool caches are not counted here.
+- **Tool caches** — the caches go, npm, uv and pip keep in your home (`~/.cache/go-build`,
+  `~/.npm/_cacache`, …). They grow without limit (tens of GB is common) and are never emptied
+  automatically. **"Measure"** counts them (it reads every file, so only on a press); **"Empty"** deletes
+  one after a confirmation. The next build or install that needs it is slower once. A cache a running
+  build or install is using shows **"In use"** and cannot be emptied until that finishes.
+  Old versions of the Copilot and Cursor CLIs are not listed here: they are removed automatically when
+  the Workspace starts, keeping the current version, the pinned one, and any a running session still uses.
+- **Leftover files** — things nothing reads again: throwaway profiles that killed headless Chromium
+  runs left under `~/.config/chromium-headless` and `~/.cache/chromium-headless`, `~/.af-work` folders
+  whose session (in the trash included) and working copy are gone, Node.js patches a newer patch of the
+  same major replaced, and Kiro versions other than the installed and the pinned one. The Agent removes
+  them each time it starts; this section is for a workspace that runs for weeks without a restart.
+  **"Measure"** counts what would go now, and **"Delete"** removes one kind right away — without a
+  confirmation, because unlike a tool cache nothing gets slower afterwards. Anything in use by a
+  process or changed within the last hour is kept.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain
@@ -463,6 +498,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | I keep typing the same preamble | Agent instructions |
 | Sign in to Claude / Codex | Agents |
 | Stop a model that bills extra from being picked | Agents (models you don't use) |
+| Keep stopped sessions in the list longer, or out of it sooner | Agents (archive stopped sessions after) |
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Let a session see what the other sessions are doing | Agents (fleet observation from sessions) |
 | Have a session leave you a note about what it noticed | Agents (fleet observation from sessions) |

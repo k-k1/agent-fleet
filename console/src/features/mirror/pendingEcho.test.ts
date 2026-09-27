@@ -154,4 +154,19 @@ describe("the first instruction at launch (launchSeed's display echo)", () => {
   it("cannot resolve when the anchor came from a previous session (the regression shape)", () => {
     expect(echoLanded({ text: "検討して", sinceIdx: 500 }, [{ role: "user", text: "検討して", idx: 7 }], notNoise)).toBe(false);
   });
+
+  // The first turn's text need not equal what was sent: a delivery retry once typed the prompt
+  // a second time behind a draft claude had held, and the doubled turn left this echo Pending
+  // forever — read as a third send.
+  it("resolves against a first turn whose text differs from the sent one", () => {
+    const doubled = [{ role: "user", text: "検討して\n検討して", idx: 3 }];
+    expect(echoLanded({ text: "検討して", sinceIdx: -1, launch: true }, doubled, notNoise)).toBe(true);
+    expect(echoLanded({ text: "検討して", sinceIdx: -1 }, doubled, notNoise)).toBe(false);
+  });
+
+  it("does not resolve on a noise turn or before any user turn", () => {
+    const e = { text: "検討して", sinceIdx: -1, launch: true };
+    expect(echoLanded(e, [{ role: "user", text: "<command-name>/model</command-name>", idx: 1 }], () => true)).toBe(false);
+    expect(echoLanded(e, [{ role: "assistant", text: "…", idx: 1 }], notNoise)).toBe(false);
+  });
 });

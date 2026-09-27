@@ -424,6 +424,22 @@ func HandleChatDelete(w http.ResponseWriter, r *http.Request) {
 
 type chatSendReq struct {
 	Content string `json:"content"`
+	// Source marks a message the Console sent on the member's behalf rather than one typed
+	// in the composer — today only the session-handoff first turn ("handoff"). It is stored
+	// on the user message (ChatMessage.Source) so the composer's ↑ history skips it.
+	Source string `json:"source,omitempty"`
+}
+
+// SourceHandoff is the Console's auto-sent session-handoff request (useSessionActions).
+const SourceHandoff = "handoff"
+
+// sendSource maps the wire value onto what may be stored. The endpoint is reachable by any
+// client, so an unknown value is dropped instead of minting arbitrary source strings.
+func sendSource(s string) string {
+	if s == SourceHandoff {
+		return s
+	}
+	return ""
 }
 
 func HandleChatSend(w http.ResponseWriter, r *http.Request) {
@@ -449,7 +465,7 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 	prov := ChatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	actualAgent := ChatProviderKind(c, prov)
 
-	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: content, TS: NowMs()})
+	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: content, TS: NowMs(), Source: sendSource(req.Source)})
 	// docs/log/33 stage 4: if we would enter a new turn still over the threshold, compact
 	// pre-emptively first; on success the injectHandoff right below carries that summary.
 	MaybeAutoCompact(r.Context(), c, prov)
@@ -533,7 +549,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	prov := ChatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	actualAgent := ChatProviderKind(c, prov)
 
-	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: content, TS: NowMs()})
+	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: content, TS: NowMs(), Source: sendSource(req.Source)})
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	// From here the response is an SSE stream; per-frame errors ride the stream body.

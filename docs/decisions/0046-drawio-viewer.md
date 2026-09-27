@@ -9,6 +9,7 @@ English | [日本語](0046-drawio-viewer.ja.md)
   with zero outbound requests" in a real browser every time. **P1 withdrew the original proposal (the
   frame fetching directly from `STENCIL_PATH`) on the basis of measurement, adding decisions 5b and
   5c.** The pre-seeding script for closed networks (P1b) and P2 onwards are not started.
+  Status update (2026-09-24): the last sentence is out of date. P1b was built on 2026-08-22 as `control-plane drawio-preseed` (`control-plane/drawio_preseed.go`, commit 5ba380de8; `--from <dir>` fills the cache on a closed network after checking each file against the ledger's sha256) and shipped in 0.10.0. P2 onwards is still not started.
 - See also: [0027-markdown-code-editor.md](0027-markdown-code-editor.md) (the File pane's surfaces and
   the save machinery — this ADR adds one more surface) / [docs/35](../log/35-packaging.md) (what is bundled and
   distribution size) / [0031-mcp-registry.md](0031-mcp-registry.md) (the pattern of checking untrusted

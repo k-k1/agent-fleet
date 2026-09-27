@@ -19,6 +19,14 @@ vi.mock("../sessions/open.ts", () => ({
   openSessionFromList: (s: Session, split: boolean, running: boolean) => openSessionFromList(s, split, running),
 }));
 
+// The graph only needs to pass the shared actions into its label menu; lifecycle behavior is
+// covered with the menu and action hooks themselves. Keeping this view test provider-free
+// makes the right-click regression focused on event ownership.
+vi.mock("../sessions/useSessionActions.tsx", () => ({ useSessionActions: () => ({}) }));
+vi.mock("../sessions/SessionMenu.tsx", () => ({
+  SessionMenu: ({ open }: { open: boolean }) => (open ? <div data-testid="session-menu" /> : null),
+}));
+
 let served: FleetGraphPage | { error: { code: string } } = { error: { code: "test" } };
 const fetchFleetGraph = vi.fn((_since: number, _until: number) => Promise.resolve(served));
 vi.mock("../../core/api/client.ts", async (importOriginal) => {
@@ -286,6 +294,27 @@ describe("FleetGraphView", () => {
     // A lane the live list does not carry (archived / deleted) says what the line style
     // already says, rather than guessing at a state nobody reported.
     expect(chips.some((c) => c.textContent?.includes(t("fgraph.presence_short_gone")))).toBe(true);
+  });
+
+  it("owns a live session label's right-click instead of forwarding it to the terminal", async () => {
+    await render();
+    const label = [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) =>
+      el.textContent?.includes("fleet-graph kickoff"),
+    )!;
+    let bubbled = false;
+    const onDocumentContextMenu = () => {
+      bubbled = true;
+    };
+    document.addEventListener("contextmenu", onDocumentContextMenu);
+    const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 60 });
+    await act(async () => {
+      label.dispatchEvent(ev);
+    });
+    document.removeEventListener("contextmenu", onDocumentContextMenu);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(bubbled).toBe(false);
+    expect(host.querySelector('[data-testid="session-menu"]')).toBeTruthy();
+    expect(openSessionFromList).not.toHaveBeenCalled();
   });
 
   it("switching to the sessions overview swaps this pane, and Ctrl opens a new one", async () => {

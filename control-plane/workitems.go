@@ -60,18 +60,21 @@ func newWorkItemsAPI(m *manager) workItemsAPI { return workItemsAPI{memberAuth{m
 // workItemDTO is the wire shape of one cached row. Note what is absent: body, comments,
 // attachments. Those are read inside the session with `gh` / the Jira MCP.
 type workItemDTO struct {
-	ID        string   `json:"id"`
-	QueryID   string   `json:"queryId"`
-	Provider  string   `json:"provider"`
-	Kind      string   `json:"kind"`
-	Key       string   `json:"key"`
-	Title     string   `json:"title"`
-	State     string   `json:"state"`
-	URL       string   `json:"url"`
-	Assignee  string   `json:"assignee"`
-	Labels    []string `json:"labels"`
-	Repo      string   `json:"repo"`
-	UpdatedAt string   `json:"updatedAt"`
+	ID       string   `json:"id"`
+	QueryID  string   `json:"queryId"`
+	Provider string   `json:"provider"`
+	Kind     string   `json:"kind"`
+	Key      string   `json:"key"`
+	Title    string   `json:"title"`
+	State    string   `json:"state"`
+	URL      string   `json:"url"`
+	Assignee string   `json:"assignee"`
+	Labels   []string `json:"labels"`
+	// LabelColors maps a label name to its tracker colour ("rrggbb"). Never nil: the Console
+	// reads it as an object.
+	LabelColors map[string]string `json:"labelColors"`
+	Repo        string            `json:"repo"`
+	UpdatedAt   string            `json:"updatedAt"`
 }
 
 type workItemQueryDTO struct {
@@ -99,7 +102,8 @@ type workItemSessionDTO struct {
 func workItemToDTO(w store.WorkItem) workItemDTO {
 	return workItemDTO{ID: w.ID, QueryID: w.QueryID, Provider: w.Provider, Kind: w.Kind,
 		Key: w.Key, Title: w.Title, State: w.State, URL: w.URL, Assignee: w.Assignee,
-		Labels: splitLabels(w.Labels), Repo: w.Repo, UpdatedAt: w.UpdatedAt}
+		Labels: splitLabels(w.Labels), LabelColors: decodeLabelColors(w.LabelColors),
+		Repo: w.Repo, UpdatedAt: w.UpdatedAt}
 }
 
 func workItemQueryToDTO(q store.WorkItemQuery) workItemQueryDTO {
@@ -111,6 +115,32 @@ func workItemQueryToDTO(q store.WorkItemQuery) workItemQueryDTO {
 func workItemSessionToDTO(s store.WorkItemSession) workItemSessionDTO {
 	return workItemSessionDTO{ID: s.ID, Provider: s.Provider, ItemKey: s.ItemKey,
 		SessionName: s.SessionName, Repo: s.Repo, Branch: s.Branch, CreatedAt: s.CreatedAt}
+}
+
+// encodeLabelColors is the stored form of a row's label colours: "" when there are none, so a
+// Jira row costs nothing and reads the same as a row cached before the column existed.
+func encodeLabelColors(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// decodeLabelColors is the inverse. It returns an empty map, never nil, and a column it cannot
+// read costs the colours only — the row still renders, with colours derived from the names.
+func decodeLabelColors(s string) map[string]string {
+	out := map[string]string{}
+	if s != "" {
+		_ = json.Unmarshal([]byte(s), &out)
+		if out == nil {
+			out = map[string]string{}
+		}
+	}
+	return out
 }
 
 // splitLabels turns the stored comma-separated column into a slice.
@@ -322,17 +352,18 @@ type agentWorkItemQuery struct {
 
 type agentWorkItemsResp struct {
 	Items []struct {
-		QueryID   string   `json:"queryId"`
-		Provider  string   `json:"provider"`
-		Kind      string   `json:"kind"`
-		Key       string   `json:"key"`
-		Title     string   `json:"title"`
-		State     string   `json:"state"`
-		URL       string   `json:"url"`
-		Assignee  string   `json:"assignee"`
-		Labels    []string `json:"labels"`
-		Repo      string   `json:"repo"`
-		UpdatedAt string   `json:"updatedAt"`
+		QueryID     string            `json:"queryId"`
+		Provider    string            `json:"provider"`
+		Kind        string            `json:"kind"`
+		Key         string            `json:"key"`
+		Title       string            `json:"title"`
+		State       string            `json:"state"`
+		URL         string            `json:"url"`
+		Assignee    string            `json:"assignee"`
+		Labels      []string          `json:"labels"`
+		LabelColors map[string]string `json:"labelColors"`
+		Repo        string            `json:"repo"`
+		UpdatedAt   string            `json:"updatedAt"`
 	} `json:"items"`
 	Errors []struct {
 		QueryID string `json:"queryId"`
@@ -379,7 +410,8 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 		rows[it.QueryID] = append(rows[it.QueryID], store.WorkItem{
 			Provider: it.Provider, Kind: it.Kind, Key: it.Key, Title: it.Title,
 			State: it.State, URL: it.URL, Assignee: it.Assignee,
-			Labels: strings.Join(it.Labels, ","), Repo: it.Repo, UpdatedAt: it.UpdatedAt,
+			Labels: strings.Join(it.Labels, ","), LabelColors: encodeLabelColors(it.LabelColors),
+			Repo: it.Repo, UpdatedAt: it.UpdatedAt,
 		})
 	}
 	errs := map[string]string{}

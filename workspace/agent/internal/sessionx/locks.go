@@ -136,6 +136,9 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	// Not inside a working-copy delete: see WithDeletionGate.
+	deletionGate.Lock()
+	defer deletionGate.Unlock()
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
 	m, ok := session.ReadMeta(name)
@@ -148,27 +151,50 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "locked": m.Locked})
 }
 
-// WriteSessionMetaKeepingLock writes a lifecycle-only update (currently the
-// StoppedAt bookkeeping from GET /sessions) without allowing an older snapshot
-// to overwrite the user's newer lock choice. Callers must use this rather than
-// session.WriteMeta when they started from a listed meta.
+// UpdateSessionMeta is a read-modify-write of one meta under the same lock: fn edits the meta
+// as it is on disk NOW, and returns false to write nothing. Reports whether it wrote (false also
+// when the meta is gone — deleted, so there is nothing to write back).
 //
-// The keep-awake pin (KeepAwakeUntil) gets the same treatment: the list is polled every few
-// seconds, so an older snapshot rolling back a pin pressed meanwhile looks to the user like
-// a button that did nothing — the same trap the lock already fell into once. So does the
-// stop-after-turn arm (docs/log/85), where losing the write is worse than a dead button: the
-// arm silently stops being honoured and the session the user expected to fold away keeps
-// running.
-func WriteSessionMetaKeepingLock(m session.Meta) session.Meta {
+// Every write that starts from a meta read earlier goes through here, and fn sets only the
+// fields its caller owns (issue #950). Writing the earlier snapshot back instead — even with a
+// few fields re-merged from disk, which is what WriteSessionMetaKeepingLock used to do — rolls
+// back whatever another writer changed in between: a deletion lock set meanwhile (and the next
+// delete goes through), an archive, a rename, a keep-awake pin, a stop-after-turn arm. The
+// handlers that hold a snapshot are the slow ones (a kill, a relaunch, a driver RPC), so the
+// window is seconds, and the list polls every few. session.WriteMeta itself is left to the
+// first write of a new name; meta_write_sites_test.go freezes that.
+func UpdateSessionMeta(name string, fn func(m *session.Meta) bool) (session.Meta, bool) {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
-	if current, ok := session.ReadMeta(m.Name); ok {
-		m.Locked = current.Locked
-		m.KeepAwakeUntil = current.KeepAwakeUntil
-		m.StopAfterTurnAt = current.StopAfterTurnAt
+	m, ok := session.ReadMeta(name)
+	if !ok || !fn(&m) {
+		return m, false
 	}
 	session.WriteMeta(m)
-	return m
+	return m, true
+}
+
+// deletionGate serialises a working-copy delete (gitx.HandleDeleteRepo, from its guards to
+// settling its sessions) against the lock endpoints. Without it a lock set while `git worktree
+// remove` ran was answered "locked" and the folder was deleted anyway (ADR 0101). Order: the
+// gate is always taken first, never while holding sessionLockMu or lockMu.
+var deletionGate sync.Mutex
+
+// WithDeletionGate runs fn inside the deletion gate (gitx takes it through its deps).
+func WithDeletionGate(fn func()) {
+	deletionGate.Lock()
+	defer deletionGate.Unlock()
+	fn()
+}
+
+// WithSessionMetaLock runs fn holding the lock every meta read-modify-write above takes. The
+// trash forgets a meta inside it, after re-reading the lock, so a lock set while the archive
+// was being written is honoured and no snapshot write can land between the check and the
+// removal.
+func WithSessionMetaLock(fn func()) {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	fn()
 }
 
 // keepAwakeMaxHours caps how far one pin can extend. Extending is just pressing again, and
@@ -226,6 +252,8 @@ func HandleRepoLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	deletionGate.Lock() // not inside a working-copy delete: see WithDeletionGate
+	defer deletionGate.Unlock()
 	if err := SetRepoLock(dir, req.Locked); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "lock_save", err.Error())
 		return
@@ -270,4 +298,39 @@ func AbsPath(p string) string {
 		return r
 	}
 	return filepath.Clean(p)
+}
+
+// settleInitialPrompt records how the create's initial prompt ended (ADR 0100 decision 2).
+// It moves the state only out of pending: the same delivery code also serves prompts that are
+// not a create's initial one (a carried interaction, a stopped session's first input), and
+// those must not invent a state for a session that never had one.
+func settleInitialPrompt(name, state string) {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	m, ok := session.ReadMeta(name)
+	if !ok || m.InitialPromptState != session.InitialPromptPending {
+		return
+	}
+	m.InitialPromptState = state
+	session.WriteMeta(m)
+}
+
+// RecoverPendingInitialPrompts turns every pending initial prompt into unknown. Called once at
+// Agent start: the delivery goroutine died with the previous process, the meta did not, and a
+// state nothing will ever settle would hold the studio pane on "sending" forever. A resend
+// after this may deliver the persona twice; the persona is a statement of role, and reading
+// it twice does no harm, where never being able to resend does.
+func RecoverPendingInitialPrompts() int {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	n := 0
+	for _, m := range session.ListMetas() {
+		if m.InitialPromptState != session.InitialPromptPending {
+			continue
+		}
+		m.InitialPromptState = session.InitialPromptUnknown
+		session.WriteMeta(m)
+		n++
+	}
+	return n
 }

@@ -104,13 +104,13 @@
 
 /* danger button (recreate / destructive) */
 .danger-btn {
-  background: color-mix(in srgb, var(--del) 16%, transparent);
-  border-color: color-mix(in srgb, var(--del) 45%, var(--border));
-  color: var(--del);
+  background: color-mix(in srgb, var(--err) 16%, transparent);
+  border-color: color-mix(in srgb, var(--err) 45%, var(--border));
+  color: var(--err);
 }
 
 .danger-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--del) 26%, transparent);
+  background: color-mix(in srgb, var(--err) 26%, transparent);
 }
 
 /* repo/branch picker dropdowns */
@@ -754,7 +754,7 @@
 }
 
 .form-err {
-  color: var(--del);
+  color: var(--err);
   font-size: 12px;
 }
 

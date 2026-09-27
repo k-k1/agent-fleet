@@ -10,7 +10,8 @@
 // (docs/log/32 202e439) cannot arise here by construction. The authoritative read source is
 // the Claude Code-compatible JSONL transcript (program.go transcriptPath), never the private
 // SQLite store (~/.cursor/chats/**/store.db): a change to opencode's store contract once
-// produced a false idle (docs/log/40 decision 3). Auth has its own flow, with credentials in
+// produced a false idle (docs/log/40 decision 3). The one exception is recall.go, which reads
+// the chat's model and mode once per resume and falls back to the meta on any failure. Auth has its own flow, with credentials in
 // ~/.config/cursor/auth.json (auth.go).
 package cursor
 
@@ -21,6 +22,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // sids maps our deterministic slot sid to the cursor chat UUID. Written at FRESH
@@ -71,8 +73,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// Liveness polling is where drift gets noticed (cursor has no hooks). resolveSid
 		// repairs the ledger, so later ChatID reads point at the new conversation (sid.go).
 		resolveSid(m)
-		if st := LiveState(m); st != "" {
-			li.State = st
+		// Until the kind's own source exists (right after launch or the first prompt) it has
+		// no opinion, and the row would read as waiting for input while the prompt just sent
+		// is running. Only a fresh stored "working" fills that gap (status.RecentlyWorking).
+		if li.State = LiveState(m); li.State == "" && status.RecentlyWorking(session.UUID(m.Dir, m.Name)) {
+			li.State = "working"
 		}
 	}
 	if !alive && !session.DirExists(m.Dir) {

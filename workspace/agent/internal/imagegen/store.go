@@ -10,6 +10,7 @@ package imagegen
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +113,9 @@ func storeImagesAt(dir string, images []Image, props *ImageProps) ([]StoredFile,
 			}
 			if err := writeSidecar(path, one); err != nil {
 				return nil, err
+			}
+			if err := appendHistory(historyItemOf(path, one)); err != nil {
+				log.Printf("imagegen: %s is not in the picture history: %v", path, err)
 			}
 		}
 	}

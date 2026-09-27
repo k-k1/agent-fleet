@@ -70,7 +70,7 @@ button.mt-bash-toggle:hover {
   border-top: 1px solid var(--border);
 }
 .mt-bash-err {
-  color: var(--del);
+  color: var(--err);
 }
 
 /* A `/`-run slash command / skill invocation (CmdChip): a compact inline chip — the

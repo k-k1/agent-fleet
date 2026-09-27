@@ -29,6 +29,12 @@ skip and say so.
   disk that vanishes on **stop**: an empty `node_modules` link is expected, so **run installs
   unconditionally**. Never put tracked files or uncommitted work on `/scratch`.
   Details: `notes/environment.md`.
+- **Throwaway files go in `$AF_WORK_DIR`** (probes, review checkouts, bundles, screenshots,
+  scratch clones) — `~/.af-work/<session>/`, created at launch and **deleted with the session**.
+  Where it is unset (Managed sessions), use `~/.af-work/<working copy's directory name>/` and
+  delete it yourself. Never loose in `~` or `~/.cache`: nobody can tell later whose they were
+  and they pile up by the hundred. `/tmp` is shared and wiped on restart.
+  Details: `notes/environment.md`.
 
 ## Do not
 - Leave uncommitted changes; store credentials in plaintext (connections live under Settings >
@@ -40,6 +46,10 @@ skip and say so.
   bare: with no argument at all it **starts a second Agent**. To inspect it, ask it —
   `workspace-agent --version` / `--help` answer and exit, and any argument it does not know
   prints usage and exits 2 rather than booting.
+- Filing a GitHub issue — Agent Fleet's own tracker or a user's repository — is visible outside
+  this workspace: strip secrets, internal hostnames/URLs, and tenant/customer names from logs,
+  screenshots or error text before pasting them in, and describe the environment generically
+  instead. Where to file feedback on Agent Fleet itself is in the guide's Troubleshooting chapter.
 
 ## Git branches: stay on the branch the session started on
 - **Do not create, switch, or rename branches on your own initiative** — not even when the
@@ -128,6 +138,12 @@ directory belongs to someone else.
   binary.
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.
+- **AWS: the default credential chain may not be the user.** The container can have a workload
+  role that a bare `aws` / SDK / build-tool call silently falls back to, in another account. Any
+  AWS command about the user's accounts or resources — **reads included** — goes through
+  `af-aws-exec --profile <name> --account <id> -- <command>`; never retry a refused run without
+  it, and never add `--keep-aws-config` to get past an error. Procedure, exit codes and who fixes
+  what: `notes/aws.md`.
 
 ## Answering questions about this Workspace
 The user guide is at `/usr/local/share/agent-fleet/docs` (`member/` for people running agents,
@@ -146,6 +162,7 @@ All under `/usr/local/share/agent-fleet/notes/`:
 | touch a working copy that is not yours, integrate or fast-forward, install or share dependencies in a worktree | `/usr/local/share/agent-fleet/notes/worktrees.md` |
 | run a JVM or Node build/test, need a JDK or `JAVA_HOME`, or a build died with 137 | `/usr/local/share/agent-fleet/notes/build.md` |
 | screenshot or verify a UI, hand a Chromium page to the user, explain the browser pane | `/usr/local/share/agent-fleet/notes/browser.md` |
+| run any AWS command about the user's accounts or resources (reads included), or an AWS command failed with an SSO/token error, "could not be found" or `af-aws-exec` exit 3 | `/usr/local/share/agent-fleet/notes/aws.md` |
 | act on an `[agent-fleet…]` note or peer envelope, hand off, message a peer, generate an image, add MCP or change agent configuration | `/usr/local/share/agent-fleet/notes/agent-fleet.md` |
 
 Any guide path named here or in a topic file has to exist in the shipped guide, and any topic file

@@ -8,6 +8,7 @@
   （`npm --prefix console run drawio:check`）が実ブラウザで「描画される・外部への要求 0 件」を
   毎回判定する。**P1 で当初案（フレームが `STENCIL_PATH` から直接取る）を実測により撤回し、
   決定 5b / 5c を追加した。** 閉域向けの事前投入スクリプト（P1b）と P2 以降は未着手。
+  状態の更新（2026-09-24）: 最後の一文は古い。P1b は 2026-08-22 に `control-plane drawio-preseed` として作った（`control-plane/drawio_preseed.go`、コミット 5ba380de8。閉域では `--from <dir>` が 1 件ずつ台帳の sha256 と照合してからキャッシュに置く）。0.10.0 で出荷済み。P2 以降は今も未着手。
 - 関連: [0027-markdown-code-editor.md](0027-markdown-code-editor.ja.md)（File ペインの面と保存機構。
   本 ADR はその面を 1 つ増やす） / [docs/35](../log/35-packaging.md)（同梱物と配布サイズ） /
   [0031-mcp-registry.md](0031-mcp-registry.ja.md)（信用できない入力を名前で照合してから使う型）

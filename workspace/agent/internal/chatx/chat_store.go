@@ -38,6 +38,14 @@ func chatDir() string {
 
 func convPath(id string) string { return filepath.Join(chatDir(), id+".json") }
 
+// ChatDir is where conversations are stored; ConvPath is one conversation's file. Exported
+// for the cache orphan scan, which only needs to know whether a conversation still exists —
+// a stat, not LoadConv's read and parse, which it would otherwise do under the cleanup lock.
+func ChatDir() string { return chatDir() }
+
+// ConvPath is the file of conversation id (see ChatDir).
+func ConvPath(id string) string { return convPath(id) }
+
 func LoadConv(id string) (*ChatConversation, error) {
 	if !paths.ValidIDSegment(id) {
 		return nil, errors.New("invalid conversation id")

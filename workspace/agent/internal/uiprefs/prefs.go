@@ -252,6 +252,18 @@ func SpawnChildLimit() int {
 	return int(v)
 }
 
+// StoppedArchiveDays is the user's stopped-session archive period (ADR 0097, ui-prefs
+// sessionStoppedArchiveDays): days, StoppedArchiveNever for "off", or 0 for missing or malformed.
+// RAW for the same reason as SpawnChildLimit — the choices and the fallback to the deployment
+// default belong to session.StoppedTTL.
+func StoppedArchiveDays() int {
+	v, ok := Read()["sessionStoppedArchiveDays"].(float64)
+	if !ok {
+		return 0
+	}
+	return int(v)
+}
+
 // mcpreg builds the session-side af server's launch args and must not read main's
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
 //
@@ -263,6 +275,7 @@ func init() {
 	mcpreg.PeerMessagingEnabled = PeerMessaging
 	mcpreg.FleetSpawnEnabled = FleetSpawn
 	session.SpawnChildLimitPref = SpawnChildLimit
+	session.StoppedArchiveDaysPref = StoppedArchiveDays
 }
 
 // imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,
@@ -308,6 +321,12 @@ func ClaudeCustomModels() []string {
 	if !ok {
 		return nil
 	}
+	return NormalizeClaudeCustomModels(raw)
+}
+
+// NormalizeClaudeCustomModels applies ClaudeCustomModels' rule to a list from elsewhere — the
+// Console's current, possibly unsaved list (GET /agents/claude/models?custom=…). Never nil.
+func NormalizeClaudeCustomModels(raw []any) []string {
 	out := make([]string, 0, len(raw))
 	seen := map[string]bool{}
 	for _, value := range raw {
@@ -323,13 +342,19 @@ func ClaudeCustomModels() []string {
 	return out
 }
 
+// validClaudeCustomModel is the Console's normalizeClaudeCustomModels rule
+// (/^claude-[a-z0-9][a-z0-9._\-[\]]*$/i): an id one side accepts and the other drops shows in
+// the picker but not in the Agent's list or MCP list_models, and the all-hidden fail-safe then
+// counts it on one side only. Brackets carry Claude Code's context suffix (`[1m]`); the id is
+// shell-quoted at launch and passed as a single argv entry to chat turns, so they never glob.
 func validClaudeCustomModel(id string) bool {
 	id = strings.TrimSpace(id)
 	if !strings.HasPrefix(strings.ToLower(id), "claude-") || len(id) == len("claude-") {
 		return false
 	}
-	for _, r := range id {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+	for i, r := range id[len("claude-"):] {
+		alnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if alnum || (i > 0 && (r == '-' || r == '_' || r == '.' || r == '[' || r == ']')) {
 			continue
 		}
 		return false

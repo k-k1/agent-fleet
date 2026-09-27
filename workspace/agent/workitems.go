@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -50,17 +51,41 @@ type workItemQueryIn struct {
 // to open / in_progress / done / other; Repo is "owner/name" when the provider has one
 // (the Console seeds the launch target from it).
 type workItemOut struct {
-	QueryID   string   `json:"queryId"`
-	Provider  string   `json:"provider"`
-	Kind      string   `json:"kind"`
-	Key       string   `json:"key"`
-	Title     string   `json:"title"`
-	State     string   `json:"state"`
-	URL       string   `json:"url"`
-	Assignee  string   `json:"assignee"`
-	Labels    []string `json:"labels"`
-	Repo      string   `json:"repo"`
-	UpdatedAt string   `json:"updatedAt"`
+	QueryID  string   `json:"queryId"`
+	Provider string   `json:"provider"`
+	Kind     string   `json:"kind"`
+	Key      string   `json:"key"`
+	Title    string   `json:"title"`
+	State    string   `json:"state"`
+	URL      string   `json:"url"`
+	Assignee string   `json:"assignee"`
+	Labels   []string `json:"labels"`
+	// LabelColors maps a label name to the tracker's own colour as lowercase "rrggbb". Only
+	// GitHub has label colours; a label missing here is drawn in a colour derived from its
+	// name. Never nil, so it marshals to {} rather than null.
+	LabelColors map[string]string `json:"labelColors"`
+	Repo        string            `json:"repo"`
+	UpdatedAt   string            `json:"updatedAt"`
+}
+
+// gitHubLabel is one entry of a GitHub issue's or pull request's `labels` array.
+type gitHubLabel struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+var hexColorRe = regexp.MustCompile(`^[0-9a-fA-F]{6}$`)
+
+// gitHubLabelColors keeps the colours that are well-formed "rrggbb". The value ends up in a
+// CSS custom property on the Console, so anything else is dropped here rather than trusted.
+func gitHubLabelColors(labels []gitHubLabel) map[string]string {
+	out := map[string]string{}
+	for _, l := range labels {
+		if l.Name != "" && hexColorRe.MatchString(l.Color) {
+			out[l.Name] = strings.ToLower(l.Color)
+		}
+	}
+	return out
 }
 
 type workItemErrOut struct {
@@ -203,9 +228,7 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 			Assignees []struct {
 				Login string `json:"login"`
 			} `json:"assignees"`
-			Labels []struct {
-				Name string `json:"name"`
-			} `json:"labels"`
+			Labels []gitHubLabel `json:"labels"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(body, &gr); err != nil {
@@ -234,7 +257,7 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 			QueryID: queryID, Provider: "github", Kind: kind, Key: key,
 			Title: it.Title, State: normalizeGitHubState(it.State, it.Draft),
 			URL: it.HTMLURL, Assignee: assignee, Labels: labels,
-			Repo: repo, UpdatedAt: it.UpdatedAt,
+			LabelColors: gitHubLabelColors(it.Labels), Repo: repo, UpdatedAt: it.UpdatedAt,
 		})
 	}
 	return out, nil

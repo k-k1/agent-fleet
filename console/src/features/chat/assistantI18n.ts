@@ -8,9 +8,23 @@
 // to locale changes (useT) to re-render on a language switch.
 import type { Assistant } from "../../types/assistant.ts";
 import { tMaybe } from "../../lib/i18n/index.ts";
+import type { ApiError } from "../../core/api/client.ts";
 
 export const assistantName = (a: Assistant): string =>
   (a.builtin ? tMaybe("assistant." + a.id + ".name") : undefined) ?? a.name;
 
 export const assistantDesc = (a: Assistant): string | undefined =>
   (a.builtin ? tMaybe("assistant." + a.id + ".desc") : undefined) ?? a.description;
+
+// assistantSaveError is the toast for a refused create/update. Only the Agent's assistant_*
+// codes are localized reasons; anything else (a 5xx, a disk error, no response) keeps
+// `fallback` rather than surfacing a developer message. integration_unsupported carries the
+// rejected id in its own field, appended after the localized text.
+export const assistantSaveError = (
+  err: (ApiError & { integration?: string }) | null | undefined,
+  fallback: string,
+): string => {
+  const why = err?.code?.startsWith("assistant_") ? tMaybe("err." + err.code) : undefined;
+  if (!why) return fallback;
+  return err?.integration ? why + ": " + err.integration : why;
+};

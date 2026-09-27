@@ -810,19 +810,20 @@ func TestComfyWorkflowQwenImageEditMatchesGoldenFixture(t *testing.T) {
 	}
 }
 
-// Inpaint on an instruction-edit family (ADR 0094 decision 3, claimed after 実測 G / 実測 I). Every
-// assertion here is a way the picture comes back WRONG with no error anywhere, which is why they
-// are pinned one by one rather than left to the golden:
+// Inpaint on an instruction-edit family (ADR 0094 decision 3, claimed after 実測 G / 実測 I; its
+// wiring revised on 2026-09-23). Every assertion here is a way the picture comes back WRONG with
+// no error anywhere, which is why they are pinned one by one rather than left to the golden:
 //
-//   - the mask must go through a FluxKontextImageScale of its OWN. The picture's own scale node
-//     centre-crops to the nearest trained ratio; SetLatentNoiseMask only stretches. Measured on a
-//     1820x1024 input: the repainted band's edge sat 8 px from where the picture's map puts it,
-//     and routing the mask through this node moved it back (実測 I).
+//   - nothing in the graph may crop. The mask is only stretched over the latent by
+//     SetLatentNoiseMask, so a picture that is cropped (FluxKontextImageScale, or ImageScale with
+//     crop="center") lands on a different frame from its mask: measured on a 1820x1024 input, the
+//     repainted band's edge sat 6.6 px off with the crop and 3 px without it (docs/log/112 §11).
+//   - the mask has no scaling node of its own: its own stretch and the picture's are the same map.
 //   - it must be ImageToMask on RED, not LoadImageMask. LoadImage's MASK output is `1.0 - alpha`,
 //     so an opaque black-and-white PNG arrives as an all-zero mask and repaints nothing.
 //   - the noise mask must reach the SAMPLER. A SetLatentNoiseMask that is built but not consumed
 //     is a full repaint of the whole picture, and the graph validates either way.
-func TestComfyWorkflowQwenImageEditInpaintScalesTheMaskWithThePicture(t *testing.T) {
+func TestComfyWorkflowQwenImageEditInpaintStretchesTheMaskWithThePicture(t *testing.T) {
 	for _, c := range comfyQwenEditFamilies {
 		t.Run(string(c.family), func(t *testing.T) {
 			p := comfyGoldenParams
@@ -831,27 +832,24 @@ func TestComfyWorkflowQwenImageEditInpaintScalesTheMaskWithThePicture(t *testing
 			if err != nil {
 				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
 			}
+			for id, n := range g {
+				if n.ClassType == "FluxKontextImageScale" || n.Inputs["crop"] == "center" {
+					t.Errorf("%s is %s(crop=%v): a cropped picture no longer shares its mask's map", id,
+						n.ClassType, n.Inputs["crop"])
+				}
+			}
 			if got := g["maskimg"].Inputs["image"]; got != "af-mask.png" {
 				t.Errorf("maskimg.image = %v, want the mask file", got)
 			}
-			if cls := g["maskscale"].ClassType; cls != "FluxKontextImageScale" {
-				t.Errorf("maskscale = %q, want the same node the picture goes through — otherwise the"+
-					" mask is stretched over a frame the picture was cropped out of", cls)
-			}
-			if got := g["maskscale"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("maskimg", 0)) {
-				t.Errorf("maskscale.image = %v, want the mask's own LoadImage", got)
-			}
-			// The picture's scale node is a DIFFERENT one fed by the picture: one node for both
-			// would put the mask's pixels into the encode.
-			if got := g["scale"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("img", 0)) {
-				t.Errorf("scale.image = %v, want the picture's own LoadImage", got)
+			if _, ok := g["maskscale"]; ok {
+				t.Errorf("maskscale is back: the mask needs no scaling of its own once the picture is not cropped")
 			}
 			if cls, ch := g["mask"].ClassType, g["mask"].Inputs["channel"]; cls != "ImageToMask" || ch != "red" {
 				t.Errorf("mask = %s(channel=%v), want ImageToMask(channel=red) — alpha reads an opaque"+
 					" black-and-white PNG as an all-zero mask", cls, ch)
 			}
-			if got := g["mask"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("maskscale", 0)) {
-				t.Errorf("mask.image = %v, want the SCALED mask", got)
+			if got := g["mask"].Inputs["image"]; !reflect.DeepEqual(got, comfyLink("maskimg", 0)) {
+				t.Errorf("mask.image = %v, want the mask's own LoadImage", got)
 			}
 			nm := g["noisemask"]
 			if nm.ClassType != "SetLatentNoiseMask" ||
@@ -950,9 +948,9 @@ func TestEveryFamilysPrefixIsReadableBack(t *testing.T) {
 // own — an extra reference that is dropped, scaled, or attached to one side only all produce a
 // picture with no error anywhere:
 //
-//   - image2 is a LoadImage of its own, NOT routed through FluxKontextImageScale. That node fixes
-//     the FRAME, and the frame is image1's; scaling a borrowed object to the first picture's
-//     aspect ratio crops away the thing the caller asked for.
+//   - image2 is a LoadImage of its own, NOT routed through the scale node. That node fixes the
+//     FRAME, and the frame is image1's; the encoder gives each extra reference its own index
+//     rather than a place on image1's grid.
 //   - it reaches BOTH encodes. CFG subtracts the two conditionings, so a reference on one side
 //     only leaves its own encoding in the difference.
 //   - the latent still comes from scaled image1, so the output keeps the edited picture's size.
@@ -1263,6 +1261,8 @@ func TestComfyWorkflowQwenImage21MatchesGoldenFixtures(t *testing.T) {
 	}{
 		{"t2i", func(p *comfyParams) {}},
 		{"edit", func(p *comfyParams) { p.Op, p.Images = OpEdit, []string{"af-photo.png"} }},
+		// The one request that keeps the decode's alpha: no SplitImageWithAlpha before the save.
+		{"t2i-transparent", func(p *comfyParams) { p.Transparent = true }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1333,9 +1333,12 @@ func TestComfyWorkflowQwenImage21TakesItsLatentFromTheOpsOwnSource(t *testing.T)
 	}
 }
 
-// Ten references, named the way the node names them. `image_1` and not `image1` — the edit
-// families next door take the second spelling, the two nodes are different nodes, and a wrong key
-// is silently dropped by ComfyUI rather than refused.
+// Ten references, named the way the API names them: `images.image_1`, the Autogrow group and its
+// member joined by a dot. 🔴 This test used to assert the bare `image_1` — the label the editor
+// shows — and so pinned the bug instead of catching it: /prompt accepts the unknown key, and the
+// node dies at run time with "unexpected keyword argument 'image_1'" (measured on the dev
+// deployment, 2026-09-23). The edit families next door take `image1` with no underscore and no
+// group; the two nodes are different nodes.
 func TestComfyWorkflowQwenImage21WiresEveryReferenceOntoTheOneEncode(t *testing.T) {
 	p := comfyGoldenParams
 	p.Op = OpEdit
@@ -1358,8 +1361,14 @@ func TestComfyWorkflowQwenImage21WiresEveryReferenceOntoTheOneEncode(t *testing.
 		if n, ok := g[node]; !ok || n.ClassType != "LoadImage" || n.Inputs["image"] != p.Images[i] {
 			t.Fatalf("%s = %+v, want a LoadImage of %s", node, g[node], p.Images[i])
 		}
-		if got := comfyLinkAt(t, g, fmt.Sprintf("enc.image_%d", i+1)); got[0] != node {
-			t.Errorf("enc.image_%d reads %v, want %s", i+1, got, node)
+		if got := comfyLinkAt(t, g, fmt.Sprintf("enc.images.image_%d", i+1)); got[0] != node {
+			t.Errorf("enc.images.image_%d reads %v, want %s", i+1, got, node)
+		}
+	}
+	// The spelling that failed on real hardware must not come back under any number.
+	for key := range enc.Inputs {
+		if strings.HasPrefix(key, "image") && !strings.HasPrefix(key, "images.") {
+			t.Errorf("enc has input %q: the node takes its references only as `images.image_N`", key)
 		}
 	}
 	// No FluxKontextImageScale anywhere: this node does its own resizing from `resolution`, and

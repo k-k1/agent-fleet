@@ -91,6 +91,9 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindOpencode {
 		return nil, errors.New("opencode driver は opencode セッション専用です")
 	}
+	if !session.DirExists(m.Dir) {
+		return nil, agents.DirGoneErr(m.Dir)
+	}
 	addr, gen, err := Serve().Ensure()
 	if err != nil {
 		return nil, err

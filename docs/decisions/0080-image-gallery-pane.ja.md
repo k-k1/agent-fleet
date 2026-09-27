@@ -3,6 +3,7 @@
 [English](0080-image-gallery-pane.md) | 日本語
 
 - 状態: **受理**（2026-09-13 起草、同日のレビューで訂正を反映して受理）。
+- Follow-ups: #961
 - 関連: [0049](0049-session-changed-files.ja.md) 決定 4 と [0046](0046-drawio-viewer.ja.md)（**新しい
   `PaneKind` は作らず面を 1 つ増やす**——本 ADR はその例外を論じる） /
   [0078](0078-sessions-overview-pane.ja.md)（直近の前例。ペイン種別 1 つ・既存メニューを借りる・

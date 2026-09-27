@@ -4,10 +4,11 @@ package msp
 // and names the Go type of its params.
 //
 // It is a decode map, never an allow-list. Measured on 1.3.0-R3401.1, the host emits
-// `session/started` — which the bundle does not declare anywhere except inside
-// `session/listChanged`'s own description — before the `session/start` response. A dispatcher
-// that refused an undeclared method would therefore reject real traffic on the first call of
-// every session. Drop what you cannot decode; do not treat it as a protocol error.
+// `session/started` before the `session/start` response although that bundle does not declare
+// it (1.4.0-R4161.1 declares it and `session/closed`). A dispatcher that refused an undeclared
+// method would reject real traffic on the first call of every session against an older host,
+// and a newer host can outrun the bundle the same way. Drop what you cannot decode; do not
+// treat it as a protocol error.
 func DeclaredNotification(method string) (paramsType string, declared bool) {
 	t, ok := notificationParams[method]
 	return t, ok

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   coalesceUserActions,
+  composerHistory,
   foldParts,
   groupTurns,
   isNoise,
@@ -10,6 +11,8 @@ import {
   peerIntentOf,
   peerSenderOf,
   spawnParentOf,
+  STUDIO_SIGNAL_PREFIX,
+  stripStudioSignal,
 } from "./model.ts";
 import type { Turn } from "./types.ts";
 
@@ -193,6 +196,72 @@ describe("spawnParentOf", () => {
 
   it("ignores a name that is not a session name", () => {
     expect(spawnParentOf("[agent-fleet:spawn from=../etc] 直して")).toBeNull();
+  });
+});
+
+describe("composerHistory", () => {
+  it("keeps only what the user typed, oldest first, repeats folded", () => {
+    const signal = "[studio v4 · 下書きが変わった · 新しい結果 2 → get_image_studio]";
+    const history = composerHistory([
+      user("最初の依頼"),
+      asst("はい"),
+      user("運用者からの指示", { source: "operator" }),
+      user("定期実行のプロンプト", { source: "schedule" }),
+      user("手動の定期実行", { source: "schedule-manual" }),
+      user("continue", { source: "auto-resume" }),
+      user("Discord から", { source: "discord" }),
+      user("[agent-fleet:peer from=other intent=request reply=only-if-blocked] 直して", { source: "peer" }),
+      user("[agent-fleet:peer from=other intent=notice] まだ印の無い peer"),
+      user("[agent-fleet:spawn from=parent] 子への指示"),
+      user("claude のネイティブ経路", { source: "peer", peerFrom: "other" }),
+      user("This session is being continued from a previous conversation…", { compact: true }),
+      user("サブエージェントへの指示", { sidechain: true }),
+      user("<task-notification>done</task-notification>"),
+      user("<system-reminder>x</system-reminder>"),
+      user("<command-name>/review</command-name><command-args>123</command-args>"),
+      user("<command-name>/compact</command-name>", { source: "schedule" }),
+      user("背景を夜にして\n" + signal),
+      user(signal),
+      user("  最初の依頼  "),
+      user("最初の依頼"),
+    ]);
+    expect(history).toEqual(["最初の依頼", "/review 123", "背景を夜にして", "最初の依頼"]);
+  });
+});
+
+describe("stripStudioSignal", () => {
+  const signal = "[studio v4 · 下書きが変わった · 新しい結果 2 → get_image_studio]";
+
+  it("drops the trailing signal line and nothing else", () => {
+    expect(stripStudioSignal("背景を夜にして\n" + signal)).toBe("背景を夜にして");
+    expect(stripStudioSignal("背景を夜にして\n\n" + signal + "\n")).toBe("背景を夜にして");
+    expect(stripStudioSignal(signal)).toBe("");
+    // The member's own words: not the last line, or not a whole line.
+    expect(stripStudioSignal(signal + "\nこれは本文")).toBe(signal + "\nこれは本文");
+    expect(stripStudioSignal("本文 [studio v1]")).toBe("本文 [studio v1]");
+    expect(stripStudioSignal("参考にして\n[studio lighting reference]")).toBe("参考にして\n[studio lighting reference]");
+    expect(stripStudioSignal("[agent-fleet:peer from=a] 直して")).toBe("[agent-fleet:peer from=a] 直して");
+  });
+
+  it("never starts with '<', so isNoise cannot hide the message it rides on", () => {
+    expect(STUDIO_SIGNAL_PREFIX.startsWith("<")).toBe(false);
+    expect(isNoise(user("背景を夜にして\n" + signal))).toBe(false);
+  });
+
+  it("is gone from the rendered parts and the copied text; a signal-only turn disappears", () => {
+    const groups = groupTurns([
+      user("背景を夜にして\n" + signal, { parts: [{ kind: "text", text: "背景を夜にして\n" + signal }] }),
+      asst("cfg を 5 に下げました。"),
+      user(signal),
+    ]);
+    expect(groups.map((g) => g.role)).toEqual(["user", "assistant"]);
+    expect(groups[0].text).toBe("背景を夜にして");
+    expect(groups[0].parts).toEqual([{ kind: "text", text: "背景を夜にして" }]);
+  });
+
+  it("leaves an assistant turn alone", () => {
+    const groups = groupTurns([asst("例:\n" + signal)]);
+    expect(groups[0].text).toBe("例:\n" + signal);
   });
 });
 

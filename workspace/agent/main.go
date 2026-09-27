@@ -21,11 +21,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
@@ -151,6 +153,11 @@ func serve() {
 	// Backgrounded: it is a few hundred KB over the network and nothing at boot waits on
 	// it, but the Console's user guide and every agent's environment answers need it.
 	go syncWorkspaceDocs("agent boot")
+	// Export the member's SSO profiles (Settings → SSM) into ~/.aws/config so a plain
+	// `aws --profile <name>`, an SDK or a build tool can select them (issue #998).
+	// Backgrounded and fail-open like the MCP pull.
+	awsx.StartSync()
+	awsx.LoginAWSBin = ensureAWSCLI
 	startTerminalHistoryJanitor()
 	// Route a managed driver's turn completion (it has no hooks) into the same
 	// notification/report path the hook route uses (the "answered" notice plus the
@@ -183,6 +190,17 @@ func serve() {
 	// replacement, idle-stop). Unless a surviving marker is restored as "interrupted", a
 	// half-made working copy comes back into the list looking like an ordinary repository.
 	sweepRepoJobMarkers()
+	// Image-generation input sets (ADR 0100 decision 4) belong to jobs in a queue that lives in
+	// memory, so none of them can still be needed after a restart.
+	imagegen.ClearInputSets()
+	// A session whose initial prompt was still being typed when the previous process ended
+	// would read "sending" forever (ADR 0100 decision 2); settle those as unknown.
+	if n := sessionx.RecoverPendingInitialPrompts(); n > 0 {
+		log.Printf("initial-prompt: %d pending delivery(ies) from the previous process marked unknown", n)
+	}
+	// The image studios: install the store, settle a binding written on one side only, and give
+	// every press the previous process left without a result one (ADR 0100 decisions 2 and 9).
+	imagegen.StartStudios()
 	// Codex sessions use a shared local app-server when available (from P3 on, the
 	// RuntimeSupervisor in codex.Serve() owns the daemon). AF attaches a read-only
 	// observer per loaded thread: compaction state, rate limits, and the model-switch
@@ -210,6 +228,10 @@ func serve() {
 	// already installed and marked, so this is a no-op on a workspace that has
 	// never used one.
 	go afdb.Autostart("agent boot")
+	// Old copilot / cursor versions that earlier installs left in home.
+	go pruneOldCLIVersionsAtBoot()
+	// Throwaway chromium profiles, orphaned ~/.af-work dirs, superseded node / kiro versions.
+	go pruneLeftoversAtBoot()
 
 	mux := buildMux()
 
@@ -245,6 +267,11 @@ func serve() {
 	// menu. In the background because it is a call out over the public hairpin and nothing
 	// else waits on it; a deployment with no engines answers 404 and this is a no-op.
 	go syncEngineProviders()
+
+	// The Agent's own daily copy of the models.dev price catalog (Issue #972): the usage
+	// estimates and the cheapest-model recommendation read it even where opencode never ran.
+	// Best-effort and in the background; AF_MODELS_DEV_URL=off turns it off.
+	startModelsDevRefresh()
 
 	// Chat-bridge delivery loop (docs/log/37 P1): drains the on-disk queue that
 	// notice.Put / record-exit enqueue into (possibly from hook subprocesses)

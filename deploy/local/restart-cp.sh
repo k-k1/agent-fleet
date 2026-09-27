@@ -29,7 +29,18 @@ export WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
 # (deploy/release/stage-docs.sh). What ships is guide/ and only that (ADR 0064) —
 # docs/ is the developer tree and holds none of the shelves, so pointing here at it
 # stages nothing at all and the Console's 「利用ガイド」 opens a file that is not there.
-export AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/guide}"
+# Not guide/ itself: what a container receives is the STAGED guide
+# (deploy/release/stage-docs.sh), which adds the runbooks and the release history and
+# rewrites the links that reach them. Served raw, those links point at
+# ../../deploy/... and the Console's 「利用ガイド」 reports "file not found". So stage it
+# here the way the images do, into the data dir, unless the caller named a tree. The
+# stage is taken at launch: an edit under guide/ shows after the next launch.
+if [ -z "${AF_DOCS_DIR:-}" ]; then
+  AF_DOCS_DIR="$WS_DATA/guide-staged"
+  rm -rf "$AF_DOCS_DIR"
+  bash "$ROOT/deploy/release/stage-docs.sh" "$AF_DOCS_DIR" >/dev/null
+fi
+export AF_DOCS_DIR
 CP_ADDR="${CP_ADDR:-127.0.0.1:8099}"
 PORT="${CP_ADDR##*:}"
 

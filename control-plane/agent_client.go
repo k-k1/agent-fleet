@@ -220,10 +220,30 @@ func (m *manager) agentSessions(ctx context.Context, rt runtime.Runtime) ([]sess
 // agentSessionsEnvelope is the Agent's GET /sessions body. RepoJobs is the count of
 // running repository imports (docs/log/78) — a workspace with none of its own sessions can
 // still be busy for an hour cloning, and the reaper must not stop it (the import dies
-// with the container and leaves a half-written working copy).
+// with the container and leaves a half-written working copy). ImageJobs is the same for the
+// image queue (running, or queued and not paused): a cold engine can take ~16 minutes, and the
+// queue lives in the Agent process, so a stop loses it.
 type agentSessionsEnvelope struct {
-	Sessions []sessionWire `json:"sessions"`
-	RepoJobs int           `json:"repoJobs"`
+	Sessions  []sessionWire `json:"sessions"`
+	RepoJobs  int           `json:"repoJobs"`
+	ImageJobs int           `json:"imageJobs"`
+}
+
+// jobsRunning reports whether session-less work is in flight in the workspace.
+func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }
+
+// holdsWorkspace reports whether anything in this read keeps the workspace from being
+// idle-stopped: session-less work, or a session that holdsWorkspace says must not be stopped.
+func (e agentSessionsEnvelope) holdsWorkspace() bool {
+	if e.jobsRunning() {
+		return true
+	}
+	for _, s := range e.Sessions {
+		if holdsWorkspace(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // agentSessionsEnv is agentSessions plus the workspace-level busy signals that ride

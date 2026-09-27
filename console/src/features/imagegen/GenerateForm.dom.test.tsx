@@ -70,7 +70,6 @@ function Harness({
       queueFull={false}
       onTrial={() => {}}
       onEnqueue={() => {}}
-      onPromptHelp={() => {}}
     />
   );
 }
@@ -295,7 +294,6 @@ describe("fleet が複数あるときの選択", () => {
           queueFull={false}
           onTrial={() => {}}
           onEnqueue={() => {}}
-          onPromptHelp={() => {}}
         />
       );
     }

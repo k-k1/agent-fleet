@@ -17,11 +17,13 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
 import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
+import { MiddleEllipsis } from "../files/MiddleEllipsis.tsx";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
@@ -948,18 +950,12 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   };
 
   // Context menu: open at the cursor; close on outside click / Escape / blur.
+  useDismiss(menuRef, !!menu, () => setMenu(null));
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", onKey);
     window.addEventListener("blur", close);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", close);
-    };
+    return () => window.removeEventListener("blur", close);
   }, [menu]);
   // Clamp EVERY render, before paint: the JSX re-applies the raw cursor coords
   // as inline style on each re-render (store polls re-render this component
@@ -1088,7 +1084,9 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                 (fresh.size && r.segPaths.some((p) => fresh.has(p)) ? " fs-new" : "")
               }
               style={{ paddingLeft: 4 + r.depth * 14 }}
-              title={isDir ? undefined : tr("proj.open_new_pane")}
+              // The full path first: a long name is cut in the middle, and this is
+              // the one place it reads whole.
+              title={isDir ? r.path : r.path + "\n" + tr("proj.open_new_pane")}
               onClick={(e) => {
                 if (!isDir && (e.ctrlKey || e.metaKey)) {
                   setSelected(r.path);
@@ -1118,7 +1116,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                   )}
                 </span>
                 <span className="fs-name">
-                  {r.name}
+                  <MiddleEllipsis text={r.name} />
                   {r.sub ? <span className="fs-sub"> {r.sub}</span> : null}
                 </span>
                 {/* A worktree's branch, outside .fs-name so the two shrink
@@ -1158,7 +1156,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                   {isOpen ? "▾" : "▸"}
                 </button>
                 <span className="fs-ic"><DirIcon open={isOpen} /></span>
-                <span className="fs-name">{r.name}</span>
+                <span className="fs-name"><MiddleEllipsis text={r.name} /></span>
               </div>
             );
           })}

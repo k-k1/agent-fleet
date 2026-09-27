@@ -77,13 +77,10 @@ Keep commits small and focused, and follow the format below.
 
 ### Commit message format
 
-Conventional Commits with a **Japanese subject**. **Both the subject and the body
-are written in Japanese** — that is this repository's convention, and its commit
-history doubles as the design record, so it stays in one language.
-
-> Contributing from outside and don't write Japanese? **English is fine** — send
-> the PR in English and the maintainer will not ask you to rewrite it. The rule
-> above is the maintainer's own working convention, not a barrier to entry.
+Conventional Commits, written in **English** — both the subject and the body. PR
+titles and descriptions and GitHub issues are written in English as well. The commit
+history doubles as the design record; history before 2026-09-25 is in Japanese and
+stays as it is (do not rewrite it).
 
 ```
 <type>(<scope>): <summary>      ← first line, no trailing period, imperative, ~50 chars

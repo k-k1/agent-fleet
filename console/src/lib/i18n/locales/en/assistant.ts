@@ -29,6 +29,7 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
   "assistant.models": "Assistant models",
   "assistant.note_models":
     "Model used by built-in assistants for new conversations. If priority falls back to another CLI, that CLI uses its row's model. “Recommended” chooses a safe model from the connected catalog and shows the current resolution.",
+  "assistant.recommended": "Recommended",
   "assistant.recommended_now": "Recommended (currently: {model})",
   "assistant.auto_turn": "Auto-respond to session reports",
   "assistant.note_auto_turn":

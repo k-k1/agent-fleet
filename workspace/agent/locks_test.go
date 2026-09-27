@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // lockMux wires the routes the delete lock (docs/log/45) governs, so each test drives
@@ -34,9 +35,9 @@ func lockMux() *http.ServeMux {
 	return mux
 }
 
-// TestSessionLockRefusesDeletion: a locked session survives BOTH manual delete paths
-// — /stop (the Console's Delete, which forgets the meta) and DELETE ?reclaim=1 (jsonl
-// reclaim) — while archive (reversible) still works. Unlocking restores deletability.
+// TestSessionLockRefusesDeletion: a locked session survives BOTH delete routes — /stop (the
+// old name of the Console's Delete) and DELETE — while archive (reversible) still works.
+// Unlocking restores deletability. Both routes end in the trash (ADR 0101).
 func TestSessionLockRefusesDeletion(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -77,9 +78,10 @@ func TestSessionLockRefusesDeletion(t *testing.T) {
 	}
 }
 
-// A GET /sessions list has a small side effect: it stamps a stopped session's
-// StoppedAt. Its meta snapshot can predate a concurrent lock toggle, so that
-// bookkeeping must not write Locked=false back over the newly saved lock.
+// A GET /sessions list has a small side effect: it stamps a stopped session's StoppedAt. It
+// works from a ListMetas snapshot that can predate a concurrent lock toggle, so that
+// bookkeeping is written onto the meta as it is on disk (issue #950) and must not write
+// Locked=false back over the newly saved lock.
 func TestListMetaWriteKeepsNewerSessionLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -88,22 +90,19 @@ func TestListMetaWriteKeepsNewerSessionLock(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	stale := session.Meta{Name: "slot01", Dir: dir, Kind: session.KindShell}
-	session.WriteMeta(stale)
+	session.WriteMeta(session.Meta{Name: "slot01", Dir: dir, Kind: session.KindShell, Locked: true})
+	srv := httptest.NewServer(lockMux())
+	defer srv.Close()
 
-	// Simulate POST /lock completing after GET /sessions took its snapshot.
-	fresh, ok := session.ReadMeta("slot01")
-	if !ok {
-		t.Fatal("session meta missing")
+	resp, err := http.Get(srv.URL + "/sessions")
+	if err != nil {
+		t.Fatal(err)
 	}
-	fresh.Locked = true
-	session.WriteMeta(fresh)
-	stale.StoppedAt = time.Now().Format(time.RFC3339)
-	sessionx.WriteSessionMetaKeepingLock(stale)
+	resp.Body.Close()
 
 	got, ok := session.ReadMeta("slot01")
-	if !ok || !got.Locked {
-		t.Fatalf("list bookkeeping cleared a newer lock: meta=%+v ok=%v", got, ok)
+	if !ok || !got.Locked || got.StoppedAt == "" {
+		t.Fatalf("after the list stamped the stop: meta=%+v ok=%v, want StoppedAt written and still locked", got, ok)
 	}
 }
 
@@ -162,6 +161,55 @@ func TestSessionLockSurvivesTTLSweep(t *testing.T) {
 	do(t, srv, "GET", "/sessions/archived", nil, http.StatusOK, &shelf)
 	if len(shelf.Sessions) != 1 || shelf.Sessions[0].Name != "dropme" {
 		t.Errorf("shelf = %+v, want the swept session listed for restore", shelf.Sessions)
+	}
+}
+
+// TestTTLSweepFollowsTheUsersSetting: the archive period is the user's setting (Settings >
+// Agents > Session) ahead of AF_SESSION_STOPPED_TTL, read on the list itself, so a change needs
+// no restart. The env var is set to 1s throughout: a row that survives it survived because the
+// setting won. The locked twin is exempt whatever the period.
+func TestTTLSweepFollowsTheUsersSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		days     int
+		archived bool // the unlocked row, stopped two days ago
+	}{
+		{"setting longer than the stop beats the env var", 3, false},
+		{"setting shorter than the stop archives", 1, true},
+		{"off never archives", session.StoppedArchiveNever, false},
+		{"a value the Console cannot produce falls back to the env var", 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+			t.Setenv("AF_SESSION_STOPPED_TTL", "1s")
+			if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(map[string]any{"sessionStoppedArchiveDays": tc.days})
+			if err := os.WriteFile(uiprefs.Path(), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(lockMux())
+			defer srv.Close()
+
+			dir := filepath.Join(home, "repos", "app")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			stopped := time.Now().Add(-48 * time.Hour).Format(time.RFC3339)
+			session.WriteMeta(session.Meta{Name: "keepme", Dir: dir, Kind: session.KindShell, StoppedAt: stopped, Locked: true})
+			session.WriteMeta(session.Meta{Name: "stale", Dir: dir, Kind: session.KindShell, StoppedAt: stopped})
+
+			do(t, srv, "GET", "/sessions", nil, http.StatusOK, nil)
+			if m, ok := session.ReadMeta("stale"); !ok || m.Archived != tc.archived {
+				t.Errorf("stale: archived=%v ok=%v, want archived=%v", m.Archived, ok, tc.archived)
+			}
+			if m, ok := session.ReadMeta("keepme"); !ok || m.Archived {
+				t.Errorf("locked row was archived: %+v ok=%v", m, ok)
+			}
+		})
 	}
 }
 
@@ -231,42 +279,6 @@ func TestRepoDeleteRefusedByLockedSession(t *testing.T) {
 	}
 	if !session.DirExists(dir) {
 		t.Fatal("working copy was removed despite a locked session living in it")
-	}
-}
-
-// TestWorktreeLockBlocksAutoPrune: maybePruneWorktree drops a clean, session-less
-// worktree on its own (no user action) — the lock must stop that automatic path too.
-func TestWorktreeLockBlocksAutoPrune(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
-
-	parent := filepath.Join(home, "repos", "app")
-	gitInit(t, parent)
-	wt := filepath.Join(home, "repos", "app@wt")
-	cmd := exec.Command("git", "-C", parent, "worktree", "add", "-b", "wt", wt)
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("worktree add: %v: %s", err, out)
-	}
-
-	if err := sessionx.SetRepoLock(wt, true); err != nil {
-		t.Fatal(err)
-	}
-	gitx.MaybePruneWorktree(wt)
-	if !session.DirExists(wt) {
-		t.Fatal("locked worktree was auto-pruned")
-	}
-	// Same call once unlocked removes it — proving the test's prune really would fire.
-	if err := sessionx.SetRepoLock(wt, false); err != nil {
-		t.Fatal(err)
-	}
-	gitx.MaybePruneWorktree(wt)
-	if session.DirExists(wt) {
-		t.Fatal("unlocked clean worktree should have been pruned")
 	}
 }
 

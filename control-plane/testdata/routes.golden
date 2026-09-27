@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 514
+# count: 541
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -35,6 +35,7 @@ GET /api/admin/engines/{key}/attribution
 PUT /api/admin/engines/{key}/class
 POST /api/admin/engines/{key}/discover
 GET /api/admin/engines/{key}/hourly
+PUT /api/admin/engines/{key}/idle
 POST /api/admin/engines/{key}/ingest
 POST /api/admin/engines/{key}/ingest/files
 POST /api/admin/engines/{key}/ingest/resolve
@@ -115,6 +116,10 @@ POST /api/assistants
 DELETE /api/assistants/{id}
 GET /api/assistants/{id}
 PUT /api/assistants/{id}
+GET /api/aws-login
+GET /api/aws-login/{id}/attempts/{attempt}
+POST /api/aws-login/{id}/cancel
+POST /api/aws-login/{id}/start
 GET /api/browser/attach-targets
 GET /api/browser/attachments
 POST /api/browser/attachments
@@ -149,9 +154,16 @@ POST /api/chat/conversations/{id}/title/suggest
 GET /api/claude/settings
 PUT /api/claude/settings
 GET /api/claude/usage
+DELETE /api/cleanup/archives
 GET /api/cleanup/archives
 DELETE /api/cleanup/archives/{id}
 POST /api/cleanup/archives/{id}/restore
+DELETE /api/cleanup/cache/{feature}
+GET /api/cleanup/tool-caches
+DELETE /api/cleanup/tool-caches/{name}
+GET /api/cleanup/leftovers
+DELETE /api/cleanup/leftovers/{kind}
+GET /api/cleanup/usage
 GET /api/codex/settings
 PUT /api/codex/settings
 GET /api/codex/usage
@@ -264,12 +276,26 @@ GET /api/git-oauth
 GET /api/git/identity
 PUT /api/git/identity
 POST /api/imagegen/groups/{id}
+GET /api/imagegen/history
 GET /api/imagegen/jobs
 POST /api/imagegen/jobs
 DELETE /api/imagegen/jobs/{id}
+GET /api/imagegen/knowledge
+POST /api/imagegen/knowledge
+PUT /api/imagegen/knowledge
 GET /api/imagegen/props
 POST /api/imagegen/queue
 GET /api/imagegen/status
+GET /api/imagegen/studios
+POST /api/imagegen/studios
+DELETE /api/imagegen/studios/{id}
+GET /api/imagegen/studios/{id}
+PUT /api/imagegen/studios/{id}
+POST /api/imagegen/studios/{id}/bind
+GET /api/imagegen/studios/{id}/draft-log
+GET /api/imagegen/studios/{id}/persona
+POST /api/imagegen/studios/{id}/press
+POST /api/imagegen/studios/{id}/rewind
 GET /api/internal-git/repos
 POST /api/internal-git/repos
 DELETE /api/internal-git/repos/{name}
@@ -336,6 +362,8 @@ POST /api/repos/{name}/mcp/apply
 POST /api/repos/{name}/mcp/plan
 POST /api/repos/{name}/parent-ff
 GET /api/repos/{name}/prompt-templates
+GET /api/repos/{name}/recreate
+POST /api/repos/{name}/recreate
 GET /api/repos/{name}/show
 POST /api/repos/{name}/stage
 GET /api/repos/{name}/status
@@ -474,6 +502,7 @@ POST /git/{slug}/{repo}/info/lfs/objects/batch
 GET /git/{slug}/{repo}/info/lfs/objects/{oid}
 PUT /git/{slug}/{repo}/info/lfs/objects/{oid}
 GET /healthz
+GET /internal/aws-profiles
 GET /internal/docs
 POST /internal/egress
 GET /internal/egress/policy

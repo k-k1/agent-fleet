@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // sids maps our deterministic slot sid to agy's conversation UUID, read back as
@@ -92,14 +93,15 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
-	// agy has no status hooks, so no working/idle state is surfaced. A pending
-	// interactive prompt IS detectable though (conversation-DB probe — pending.go),
-	// so the sessions list can badge "question" / "waiting for permission" while the TUI
-	// is blocked.
+	// agy has no status hooks; working / idle / question / permission all come from the
+	// conversation DB's last step (LiveState — pending.go). Surfacing only the pending prompt
+	// here left State empty mid-turn, which the Console draws as waiting for input.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
-		if st, _ := Probe(m); st != "" {
-			li.State = st
+		// Before the conversation is adopted the DB has no opinion; only a fresh stored
+		// "working" fills that gap (status.RecentlyWorking).
+		if li.State = LiveState(m); li.State == "" && status.RecentlyWorking(session.UUID(m.Dir, m.Name)) {
+			li.State = "working"
 		}
 	}
 	// Capture on BOTH sides of alive. Alive polls adopt the UUID via the

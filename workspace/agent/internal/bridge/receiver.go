@@ -45,7 +45,9 @@ type ReceiverDeps struct {
 	// answer-ready notification), the operator conversation's reply has no such push,
 	// so the receiver posts the returned reply back into the thread itself. On failure
 	// reply carries an already-localized reason line to post, plus the error to log.
-	Operator func(conv, text string) (reply string, err error)
+	// source names the platform the message came from (sourceDiscord / sourceSlack) so the
+	// stored user message is attributed to it.
+	Operator func(conv, text, source string) (reply string, err error)
 }
 
 // receiverPollInterval: how often to re-read secrets to notice a connect/disconnect or an
@@ -276,7 +278,7 @@ func routeOperatorInbound(m gatewayMessage, conv, text, token string, deps Recei
 	}
 	go func() {
 		stop := startTypingPulse(token, m.ChannelID)
-		reply, err := deps.Operator(conv, text)
+		reply, err := deps.Operator(conv, text, sourceDiscord)
 		stop()
 		if err != nil {
 			log.Printf("bridge: operator turn for conv %s failed: %v", conv, err)

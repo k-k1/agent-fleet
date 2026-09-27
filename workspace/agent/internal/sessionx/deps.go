@@ -60,6 +60,12 @@ type Deps struct {
 	IsSvnRepo       func(dir string) bool
 	RepoJobsRunning func() int
 
+	// --- Image jobs (internal/imagegen) ---
+	//
+	// Queued or running image jobs keep the workspace awake the same way an import does; the
+	// count rides the session list because that is what the CP's reaper reads.
+	ImageJobsActive func() int
+
 	// --- Closing the usage ledger (usage_fold.go) ---
 	//
 	// Stopping or deleting a session closes its usage ledger. usage_fold.go stays in main:
@@ -76,6 +82,15 @@ type Deps struct {
 	// would leave files silently undeleted, so the zero value is not allowed here either.
 	RemoveTerminalHistory func(name string)
 
+	// --- The trash (cleanup_ops.go) ---
+	//
+	// The one way a session's meta is forgotten (ADR 0101 decision 1): archive it to the gz
+	// trash, then remove it. The archive lives in main (cleanup_archive.go) with its restore
+	// and purge, so /stop reaches it through here. stop = halt a running session first
+	// (otherwise a running one is refused with TrashErrRunning). code is "" or a stable error
+	// code (errCodeLocked / TrashErr*).
+	TrashSession func(m session.Meta, stop bool) (archive, code string, err error)
+
 	// --- Toolchains (env_toolchains.go) ---
 	ToolchainShellPrefix func() string
 
@@ -87,7 +102,7 @@ type Deps struct {
 	// (The same "far side you must not copy" shape as README's `var usageMu = usagex.Mu`.
 	// This one is not a lock, so vet stays quiet — hence the explicit function.)
 	MCPConvID       func() string
-	RunOperatorTurn func(conv, text string) (string, error)
+	RunOperatorTurn func(conv, text, source string) (string, error)
 
 	// --- Stable error codes (errcodes.go) ---
 	//
@@ -197,7 +212,13 @@ func isSvnRepo(dir string) bool { return deps.IsSvnRepo(dir) }
 
 func repoJobsRunning() int { return deps.RepoJobsRunning() }
 
+func imageJobsActive() int { return deps.ImageJobsActive() }
+
 func removeTerminalHistory(name string) { deps.RemoveTerminalHistory(name) }
+
+func trashSession(m session.Meta, stop bool) (string, string, error) {
+	return deps.TrashSession(m, stop)
+}
 
 func finalizeSessionUsage(m session.Meta) { deps.FinalizeSessionUsage(m) }
 
@@ -205,7 +226,9 @@ func maybeFoldSessionUsage() { deps.MaybeFoldSessionUsage() }
 
 func toolchainShellPrefix() string { return deps.ToolchainShellPrefix() }
 
-func runOperatorTurn(conv, text string) (string, error) { return deps.RunOperatorTurn(conv, text) }
+func runOperatorTurn(conv, text, source string) (string, error) {
+	return deps.RunOperatorTurn(conv, text, source)
+}
 
 // mcpConvID was a variable on the main side (mcp_wiring.go rewrites it at runtime). A
 // variable cannot be shared across packages, so here alone "reading a variable" becomes

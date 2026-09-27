@@ -97,6 +97,7 @@ func filterVisibleModels(kind string, list []agents.ModelChoice) []agents.ModelC
 }
 func visibleModel(kind, model string) string             { return deps.VisibleModel(kind, model) }
 func visibleModelIDs(kind string, ids []string) []string { return deps.VisibleModelIDs(kind, ids) }
+func modelListPrice(kind, model string) (float64, bool)  { return deps.ModelListPrice(kind, model) }
 
 func assistantDeps() assistants.Deps { return deps.AssistantDeps() }
 func ensureBuiltinKnowledge() string { return deps.EnsureBuiltinKnowledge() }

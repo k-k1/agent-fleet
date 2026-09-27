@@ -6,6 +6,7 @@
   **2026-08-27: 実データ（Jira 41 件）を見て決定 14〜16 を追記** —— 決定 8 の「保存クエリが唯一の絞り込み」を一部撤回した（[docs/80](../log/80-work-item-inbox.md) §80.18）。
   **2026-08-27: Bitbucket の Pull Request を足して決定 17〜19 を追記**（[docs/80](../log/80-work-item-inbox.md) §80.19）。
   **2026-09-11: プルリクエストの詳細を開いた時点で取り直す（決定 24）**。あわせて決定 19.1 の括弧内の誤りを訂正した（[docs/80](../log/80-work-item-inbox.md) §80.24 / §80.16-3）。設計と経緯は [docs/80](../log/80-work-item-inbox.md)。
+  状態の更新（2026-09-25）: 決定 14 が作らずに残したクエリを組み立てる UI・ソート UI・グルーピングは予定しない（決定 14、docs/log/80 §80.18.5）。詳細ペインは決定 20 の詳細モーダルに置き換わった。
 - 関連: [0031-mcp-registry.md](0031-mcp-registry.ja.md)（MCP は「各 CLI が直接喋り、af は定義を配るだけ」。
   OAuth MCP は非目的）/ [0036-working-sets.md](0036-working-sets.ja.md)（“案件”という単位）/
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.ja.md)

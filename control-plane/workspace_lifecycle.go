@@ -404,7 +404,11 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// therefore never reaches the container. Its own credential for the same
 			// reason as the others; a leak refreshes this member's git token and
 			// nothing else.
-			"AF_GIT_OAUTH_TOKEN="+mintGitOAuthToken(gitOAuthSignKey(m.tokenSignMaster()), ws.MembershipID))
+			"AF_GIT_OAUTH_TOKEN="+mintGitOAuthToken(gitOAuthSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// AWS profiles bridge (issue #998): the agent pulls the member's SSO profiles
+			// into ~/.aws/config. Its own credential; a leak reads that non-secret list
+			// and nothing else.
+			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID))
 	}
 	return env
 }

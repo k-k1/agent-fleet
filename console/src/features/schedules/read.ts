@@ -99,7 +99,7 @@ export function readScheduleList(res: unknown): ScheduleListResult {
 }
 
 // A run/last_status token maps to one of four tones so the dot + label read consistently
-// with the rest of the console (--ok / --warn / --danger / --muted). The scheduler emits:
+// with the rest of the console (--ok / --warn / --err / --muted). The scheduler emits:
 // "fired"/"fired_noop" (success), "skipped_*" (a soft skip), "error:*" (a hard failure),
 // and "" (never run yet).
 export type StatusTone = "ok" | "warn" | "danger" | "muted";

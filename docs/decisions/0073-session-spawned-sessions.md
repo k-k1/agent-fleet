@@ -346,7 +346,7 @@ so; they are corrected (docs/log/89 §89.5).
 for no longer happens while the predecessor is archived. What it still prevents is the double count
 that would come back **when the user restores that predecessor**.
 
-#### Amendment (2026-09-10, docs/log/87 §87.16): the number is a setting now (1..6, default 3)
+#### Amendment (2026-09-10, docs/log/87 §87.16): the number is a setting now (1..6, default 3; 1..10 since 2026-09-24)
 
 **Three stopped being a compile-time constant and became a setting** under Settings > Agents >
 Session. The ground for it is what this decision already said about itself — **three is provisional,
@@ -377,6 +377,15 @@ value**: nothing has been measured, and all that changed is who picks the provis
   "provisional value nobody measured" any more, but six must not be read as "measured." Limits to
   how far this generalizes (this one 10 GiB workspace, the claude kind only) are in
   docs/log/87 §87.17.6.
+
+  **Amendment (2026-09-24): the ceiling went from six to ten (the default of three stays).** A
+  user wanted one parent to run more than six parallel lanes. By the estimate above, ten children
+  plus their parent is eleven agents, 3.7-4.7 GiB (the RSS sum, i.e. the overestimate) — under
+  half of the host, still leaving room for the sessions the user opened themselves. ⚠️ **Ten is a
+  further extrapolation than six, not a measurement.** And two parents at ten is twenty-two
+  agents, level with the roughly 23 the host holds by the estimate above — the next bullet's "the
+  workspace total is not bounded by this setting" applies in full. The user is the one who picks a
+  number that high; a workspace on the default of three behaves exactly as before.
 - **The reason a ceiling is needed is not running out of memory as such.** This budget is **per
   parent**, and nothing bounds the number of parents (two at six is thirteen agents). The
   workspace total is therefore not bounded by this setting at all, which is exactly why one

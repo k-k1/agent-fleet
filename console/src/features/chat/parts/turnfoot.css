@@ -36,5 +36,5 @@
   padding: 8px 4px;
 }
 .chat-error {
-  color: var(--del);
+  color: var(--err);
 }

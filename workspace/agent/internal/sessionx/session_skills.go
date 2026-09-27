@@ -9,6 +9,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -85,21 +86,26 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		skills = opencodeSkills(meta.Dir)
 	case session.KindCursor:
 		skills = cursorSkills(meta)
-	case session.KindKiro, session.KindCopilot, session.KindAgy, session.KindLcpp, session.KindMuse:
+	case session.KindMuse:
+		// Native enumeration over MSP (ADR 0095 P2-23): the session's own host answers
+		// `skill/list`, which covers muse's bundled skills, the member's own under
+		// ~/.config/muse/skills, plugin skills and the working copy's `.agents/skills/`.
+		//
+		// The fallback is the reason nativeConvs is set conditionally: with no live host there
+		// is no session to ask, and `.agents/skills` must then go back to being offered as a
+		// foreign entry (a plain "read this and follow it" prompt) rather than disappearing
+		// from the picker because a native list that does not exist claims to own it.
+		skills = museSkills(meta)
+		if len(skills) > 0 {
+			nativeConvs = []string{".agents/skills"}
+		}
+	case session.KindKiro, session.KindCopilot, session.KindAgy, session.KindLcpp:
 		// No native enumeration: no user-invocable mechanism confirmed yet (§7). Foreign only.
 		// lcpp drives no CLI at all (ADR 0093 decision 5: "スキルは foreign のみ"), so it
 		// belongs in this same bucket rather than the default (no-skills) case below — the
 		// Console's picker and harness.SystemPrompt's own foreignSkillsPrompt (both read the
 		// same SKILL.md trees) must agree on what this kind can offer.
 		//
-		// muse is here for a different reason and it is worth spelling out, because it is NOT
-		// "this kind has no mechanism": MSP publishes `skill/list` and a `skill` input part
-		// whose selector the HOST resolves and expands, and muse discovers AF's own fleet
-		// topics under ~/.config/muse/skills (ADR 0095 decision 12). Driving that wire route is
-		// unbuilt work, and until it exists muse belongs in this bucket rather than in the
-		// default case, which returned an EMPTY list — the picker offered a muse session
-		// nothing at all, including the repository's own skills that reach it by injection
-		// exactly as they reach the four kinds above (ADR 0095 P2-14).
 	default:
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 		return
@@ -107,6 +113,47 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 	skills = appendForeignSkills(skills, chainUp(cwd, meta.Dir), cwd, nativeConvs)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 }
+
+// museSkills is the native half for muse: MSP's `skill/list`, asked of the session's own live
+// host (ADR 0095 P2-23). Empty when the session is not running — the caller then leaves
+// `.agents/skills` to the foreign (injection) route, which is what muse had before this.
+//
+// The wire's scope vocabulary is mapped onto the picker's three sources rather than passed
+// through: `bundled` and `plugin` are both "came with the tool, not with your repository",
+// which is what this column means to a reader, and an unknown future scope lands there too
+// rather than inventing a fourth label the Console has no string for.
+func museSkills(meta session.Meta) []sessionSkill {
+	native := museNativeSkills(meta.Name)
+	out := make([]sessionSkill, 0, len(native))
+	for _, s := range native {
+		if s.Selector == "" || len(out) >= maxSessionSkills {
+			continue
+		}
+		out = append(out, sessionSkill{
+			Name:         s.Selector,
+			Description:  s.Description,
+			ArgumentHint: s.ArgumentHint,
+			Source:       museSkillSource(s.Source),
+			Type:         "skill",
+			Invoke:       "/" + s.Selector + " ",
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func museSkillSource(scope string) string {
+	switch scope {
+	case "project", "user":
+		return scope
+	default: // bundled, plugin, and anything a later release adds
+		return "cli"
+	}
+}
+
+// museNativeSkills is the `skill/list` call, as a variable so tests can stand in for it — the
+// real one needs a running muse host, which a unit test has no business starting.
+var museNativeSkills = muse.Skills
 
 // claudeBundledSkills is the probe for the skills the claude CLI ships (docs/log/50 §9); a
 // variable so tests can stand in for it instead of starting a real claude.

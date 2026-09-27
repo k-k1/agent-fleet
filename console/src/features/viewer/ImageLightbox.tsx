@@ -55,9 +55,12 @@ interface Props {
    * path there is nothing to ask `GET api/imagegen/props` about.
    */
   path?: string;
+  /** Extra class on the overlay. `over-modal` lifts it above a ui/Modal (z-index 100), for a
+   *  lightbox opened from inside a dialog; the base 60 would leave it behind the backdrop. */
+  className?: string;
 }
 
-export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, index, total, onOpenFolder, path }: Props) {
+export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, index, total, onOpenFolder, path, className }: Props) {
   const tr = useT();
   const view = useRef<ImageViewHandle>(null);
   const [scale, setScale] = useState(1);
@@ -133,7 +136,7 @@ export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, 
     // data-no-swipe: on a phone the whole overlay owns horizontal drags (panning a zoomed
     // image), so the swipe that rotates sessions must stand down while it is open.
     <div
-      className="mirror-lightbox"
+      className={"mirror-lightbox" + (className ? " " + className : "")}
       data-no-swipe=""
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}

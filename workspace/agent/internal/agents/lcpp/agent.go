@@ -82,6 +82,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		li.Context = ctx
 	}
 	if !alive {
+		// Same rule as every other kind: a stopped session whose folder is gone cannot resume
+		// there, and the Console offers to recreate a deleted worktree only when it says so.
+		li.Resumable = session.DirExists(m.Dir)
 		return li
 	}
 	sid := sidFor(m)
@@ -103,7 +106,7 @@ func (agentImpl) ClearResume(string) {}
 // session simply shows neither.
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	st := Open(sidFor(m))
-	turns, err := st.Transcript()
+	turns, err := st.TranscriptFor(m.Model)
 	if err != nil {
 		return agents.TranscriptData{}, false
 	}
@@ -200,7 +203,9 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 		return "", fmt.Errorf("フォーク元のターンが見つかりません: %s", at.Anchor)
 	}
 	if !at.Include {
-		if idx == 0 {
+		// Model-change notes are driver bookkeeping (a fork can start with one), not
+		// conversation: a cut that would keep only them is still "before the start".
+		if !hasConversationBefore(recs[:idx]) {
 			return "", errors.New("この会話の先頭より前ではフォークできません")
 		}
 		return recs[idx-1].ID, nil
@@ -211,4 +216,13 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 		}
 	}
 	return "", nil // the last exchange: keep the whole conversation
+}
+
+func hasConversationBefore(recs []Record) bool {
+	for _, r := range recs {
+		if r.Kind != KindSystemNote || r.Note != NoteModelChange {
+			return true
+		}
+	}
+	return false
 }

@@ -20,6 +20,10 @@ Start wherever you fit.
 may use it, per agent, per repository kind, per deployment target and per role. What a
 word means is in the [Glossary](ref/glossary.md).
 
+**The [release history](../deploy/release/notes/SUMMARY.md)** is what changed in each
+release — which release a feature arrived in and which one fixed a problem, one line per
+item, newest release first, with each release's full notes one click away.
+
 If you would rather never open a terminal, the [Simple guide](member/lite.md) is the
 short way round.
 

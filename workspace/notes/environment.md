@@ -69,6 +69,20 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
 
 - **Check before a big install** — `df -h ~`. The volume is shared with everything else you do,
   and caches grow without bound (`~/.npm`, `~/.cache` reach tens of GB).
+- **Where throwaway work goes**: `$AF_WORK_DIR` — `~/.af-work/<session>/`, which the Agent
+  creates when a Terminal (CLI) session launches and removes when the session is deleted (not
+  archived, not restored). Managed sessions do not get the variable yet (issue #978); there use
+  `mkdir -p ~/.af-work/"$(basename "$(git rev-parse --show-toplevel)")"` and remove it when the
+  task is done. One directory
+  per session means the owner is obvious and one `rm -rf` cleans up; files dropped straight into
+  `~` were measured at 190+ unowned directories in one home. Not `/tmp` (shared by every session,
+  wiped on restart) and not `~/.cache`, which is for tools' own caches.
+- **Reclaiming cache space** (all regenerable; the next build or install is slower once):
+  `go clean -cache` (`~/.cache/go-build`), `npm cache clean --force` (`~/.npm/_cacache` — npm
+  never evicts), `uv cache prune`. Do it only when no other session is mid-build — check
+  `ps -eo pid,args` for `go build`/`go test`/`npm ci` first, since they share these caches.
+  The user can do the same from Settings > Machine > Tool caches, which refuses while a
+  build is running.
 - N worktrees means N copies of every per-project dependency tree unless the ecosystem shares one
   (Go, Gradle/Maven and Cargo do; **npm does not** — 300 MB+ per worktree). Sharing a
   `node_modules` between worktrees has its own hazards: `/usr/local/share/agent-fleet/notes/worktrees.md`.

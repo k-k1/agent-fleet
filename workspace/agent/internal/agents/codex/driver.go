@@ -141,6 +141,9 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCodex {
 		return nil, errors.New("codex driver は codex セッション専用です")
 	}
+	if !session.DirExists(m.Dir) {
+		return nil, agents.DirGoneErr(m.Dir)
+	}
 	cl, gen, err := Serve().Ensure()
 	if err != nil {
 		return nil, err

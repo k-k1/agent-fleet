@@ -1,8 +1,17 @@
 import { useEffect, useState } from "react";
+import type { MouseEvent as RMouseEvent } from "react";
 import { api } from "../../../core/api/client.ts";
+import { Button } from "../../../ui/Button.tsx";
+import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
+import { humanSize } from "../../../lib/filemeta.ts";
+import { useSettingsUI } from "../store.ts";
+import { useSessionUI } from "../../sessions/ui.ts";
+import { useFilesStore } from "../../files/store.ts";
+import { useLeftRail } from "../../../core/store/leftRail.ts";
+import { openGallery } from "../../gallery/open.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
-import { useT } from "../../../lib/i18n/index.ts";
+import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
 import { TrendChart } from "../../../ui/TrendChart.tsx";
 import { useWsStatsSeries } from "../../../core/store/wsStatsFeed.ts";
@@ -127,7 +136,7 @@ export function MachineView({ d }: { d: WsMachine }) {
           </Row>
         )}
         {disk.value > 0 && (
-          <Row label={tr("machine.home_disk")}>
+          <Row label={tr(own || !disk.measured ? "machine.home_disk" : "machine.home_disk_fs")}>
             <span className="mv-val">
               {gib(disk.value)}
               {src(disk)}
@@ -142,7 +151,10 @@ export function MachineView({ d }: { d: WsMachine }) {
         <p className="muted ds-sub">{own ? tr("machine.note_own_box") : tr("machine.note_shared_host")}</p>
         <p className="muted ds-sub">{tr("machine.note_who_changes")}</p>
       </section>
-      {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} />}
+      {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} own={own} />}
+      {d.running && <DiskSection />}
+      {d.running && <ToolCacheSection />}
+      {d.running && <LeftoverSection />}
     </div>
   );
 }
@@ -156,7 +168,7 @@ export function MachineView({ d }: { d: WsMachine }) {
 //
 // The samples come from wsStatsFeed, which keeps its own clock — see that module for why the
 // push stream alone cannot produce a moving chart.
-function UsageSection({ memMax, vcpu }: { memMax: number; vcpu: number }) {
+function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own: boolean }) {
   const tr = useT();
   const samples = useWsStatsSeries();
   const last = samples[samples.length - 1];
@@ -209,11 +221,15 @@ function UsageSection({ memMax, vcpu }: { memMax: number; vcpu: number }) {
         <TrendChart points={samples.map((s) => ({ t: s.t, v: s.cpu }))} max={cpuCeil} spanMs={spanMs} />
       </div>
       {/* Disk is a level, not a rate: it moves in steps over hours, so a trend line of it
-          says nothing a bar does not. */}
+          says nothing a bar does not.
+          The figure is a statfs of the filesystem home sits on. Only on a box of one's own is
+          that one's own disk; elsewhere it is the whole host (or the shared EFS), so it is
+          labelled as such and never tinted — a warning colour would say "you did this" about
+          a number other people fill. */}
       {diskPct != null && last.diskUsed != null && last.diskTotal != null && (
-        <div className={"mu-chart" + lvl(diskPct, 80, 92)}>
+        <div className={"mu-chart" + (own ? lvl(diskPct, 80, 92) : "")}>
           <div className="mu-head">
-            <span className="mu-k">{tr("machine.home_disk")}</span>
+            <span className="mu-k">{tr(own ? "machine.home_disk" : "machine.home_disk_fs")}</span>
             <span className="mu-v">
               {tr("machine.usage_of", {
                 used: fmtGiB(last.diskUsed) + " GiB",
@@ -228,6 +244,357 @@ function UsageSection({ memMax, vcpu }: { memMax: number; vcpu: number }) {
         </div>
       )}
       <p className="muted ds-sub">{tr("machine.usage_note")}</p>
+    </section>
+  );
+}
+
+/** Where a figure lives (usagePlace in cleanup_cache.go): path to read ("~/…"), browse = the
+ *  same folder relative to the browse root, which the file tree and the gallery take ("" or
+ *  absent when it is outside the root, or the Agent predates the field). */
+interface Place {
+  path?: string;
+  browse?: string;
+}
+
+// The /cleanup/usage answer (workspace/agent/cleanup_cache.go).
+interface CleanupUsage {
+  cache?: { bytes: number; files: number; parts?: ({ name: string; bytes: number; files: number } & Place)[] } & Place;
+  orphans?: { ok: boolean; bytes: number; files: number; dirs: number; unjudged?: number };
+  /** oldest = YYYY-MM-DD of the oldest archive; nothing in the trash expires on its own. */
+  trash?: { bytes: number; archives: number; oldest?: string } & Place;
+  truncated?: boolean;
+}
+
+/** Cache parts that hold pictures, so "open in the gallery" means something. */
+const IMAGE_PARTS = new Set(["generated", "thumbs", "codex-view-image", "pasted", "memo-images"]);
+
+/** Ctrl/⌘ and the middle button open beside, as everywhere else in the Console. */
+const besideClick = (e: RMouseEvent) => e.ctrlKey || e.metaKey || e.button === 1;
+
+// PlaceLine — a figure's folder: the path (a click opens that folder in the left pane's file
+// tree and focuses it) and, for picture folders, the way into the gallery. Both leave the
+// settings modal first — what they open is behind it.
+function PlaceLine({ place, gallery }: { place?: Place; gallery?: boolean }) {
+  const tr = useT();
+  const closeSettings = useSettingsUI((s) => s.closeSettings);
+  if (!place?.path) return null;
+  const browse = place.browse;
+  const reveal = () => {
+    if (!browse) return;
+    closeSettings();
+    useLeftRail.getState().ensureOpen();
+    useFilesStore.getState().revealInFiles(browse, { focus: true });
+  };
+  const toGallery = (e: RMouseEvent) => {
+    if (!browse) return;
+    closeSettings();
+    openGallery(browse, { newPane: besideClick(e) });
+  };
+  return (
+    <span className="mv-place">
+      {browse ? (
+        <button type="button" className="mv-path" title={tr("machine.disk_reveal", { path: place.path })} onClick={reveal}>
+          {place.path}
+        </button>
+      ) : (
+        <span className="mv-path is-static" title={place.path}>
+          {place.path}
+        </span>
+      )}
+      {gallery && browse && (
+        <Button small icon="file-media" onClick={toGallery} onAuxClick={toGallery}>
+          {tr("machine.disk_open_gallery")}
+        </Button>
+      )}
+    </span>
+  );
+}
+
+// DiskSection — what Agent Fleet itself has piled up on the disk, and the way to the
+// cleanup that gives it back.
+//
+// Not the home disk figure above: that is the whole filesystem, and outside a dedicated box
+// mostly other people's. A cleanup button next to it would promise to move a number it
+// barely touches. These rows are exactly what the cleanup modal can reclaim (the cache of
+// deleted sessions, the trash) plus what ages out on its own (generated images, thumbnails),
+// so the button and the numbers answer the same question.
+//
+// Measured on demand by the Agent (a du), held there for 30 seconds — never on the 4-second
+// stats path.
+function DiskSection() {
+  const tr = useT();
+  const [u, setU] = useState<CleanupUsage | null>(null);
+  const [err, setErr] = useState(false);
+  const closeSettings = useSettingsUI((s) => s.closeSettings);
+  const openCleanup = useSessionUI((s) => s.openCleanup);
+
+  useEffect(() => {
+    let cancelled = false;
+    api("api/cleanup/usage")
+      .then((res: CleanupUsage & { error?: unknown }) => {
+        if (cancelled) return;
+        // An Agent older than the endpoint answers with an error or without the fields.
+        if (!res || res.error || !res.cache) throw new Error("");
+        setU(res);
+      })
+      .catch(() => !cancelled && setErr(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The cleanup modal is another modal: close this one first rather than stack two.
+  const open = () => {
+    closeSettings();
+    openCleanup();
+  };
+
+  const partLabel = (name: string) =>
+    name ? (tMaybe("machine.disk_part_" + name.replace(/-/g, "_")) ?? name) : tr("machine.disk_part_other");
+
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("machine.disk_title")}</h4>
+      {err ? (
+        <p className="muted ds-sub">{tr("machine.disk_failed")}</p>
+      ) : !u || !u.cache ? (
+        <p className="muted ds-sub">{tr("common.loading")}</p>
+      ) : (
+        <>
+          <Row label={tr("machine.disk_cache")}>
+            <span className="mv-val mv-size">{humanSize(u.cache.bytes)}</span>
+            <PlaceLine place={u.cache} />
+          </Row>
+          {(u.cache.parts || [])
+            .filter((p) => p.bytes > 0)
+            .map((p) => (
+              <Row key={p.name || "-"} label={<span className="mv-sub">{partLabel(p.name)}</span>}>
+                <span className="mv-val mv-size">{humanSize(p.bytes)}</span>
+                {/* The unnamed part is the loose files at the cache root: its place is the root,
+                    already on the line above. */}
+                {p.name && <PlaceLine place={p} gallery={IMAGE_PARTS.has(p.name)} />}
+              </Row>
+            ))}
+          <Row label={tr("machine.disk_orphans")}>
+            <span className="mv-val">
+              {u.orphans?.ok ? humanSize(u.orphans.bytes) : tr("machine.disk_orphans_unknown")}
+            </span>
+          </Row>
+          {u.trash && (
+            <Row label={tr("machine.disk_trash")}>
+              <span className="mv-val">
+                {tr("machine.disk_trash_of", { size: humanSize(u.trash.bytes), count: u.trash.archives })}
+                {u.trash.oldest ? tr("machine.disk_trash_oldest", { date: u.trash.oldest }) : ""}
+              </span>
+              <PlaceLine place={u.trash} />
+            </Row>
+          )}
+          <div className="mv-actions">
+            <Button small icon="trash" onClick={open}>
+              {tr("machine.disk_open_cleanup")}
+            </Button>
+          </div>
+          {u.truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
+          {/* Its own note: not "too many files" — the session folders were not judged at all
+              because the session store is missing, so the figure above is the chats' only. */}
+          {!!u.orphans?.unjudged && <p className="muted ds-sub">{tr("machine.disk_orphans_unjudged")}</p>}
+          <p className="muted ds-sub">{tr("machine.disk_note")}</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+// The /cleanup/tool-caches answer (workspace/agent/tool_caches.go).
+interface ToolCacheRow extends Place {
+  name: string;
+  bytes: number;
+  files: number;
+  /** pids that could be using the cache; the Agent refuses to empty it while non-empty. */
+  busy?: number[];
+}
+
+// ToolCacheSection — the go / npm / uv / pip caches in home, and emptying one (docs/log/116).
+//
+// Not part of DiskSection: those rows are Agent Fleet's own and are walked when the tab
+// opens. These run to hundreds of thousands of files, so they are measured only on a press.
+// Nothing here runs on a timer — neither Go nor npm can evict by age, so emptying means all
+// of it, and when to pay the slower next build is the person's call.
+function ToolCacheSection() {
+  const tr = useT();
+  // The outcome of the last "empty", said under the rows it changed.
+  const [msg, setMsg] = useState("");
+  const [rows, setRows] = useState<ToolCacheRow[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
+  const [err, setErr] = useState(false);
+  const [confirm, setConfirm] = useState<ToolCacheRow | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const measure = async () => {
+    setMeasuring(true);
+    setErr(false);
+    try {
+      const res = await api("api/cleanup/tool-caches");
+      // An Agent older than the endpoint answers with an error.
+      if (!res || res.error || !Array.isArray(res.caches)) throw new Error("");
+      setRows(res.caches);
+      setTruncated(!!res.truncated);
+    } catch {
+      setErr(true);
+    } finally {
+      setMeasuring(false);
+    }
+  };
+
+  const empty = async (row: ToolCacheRow) => {
+    setBusy(true);
+    try {
+      const res = await api("api/cleanup/tool-caches/" + encodeURIComponent(row.name), { method: "DELETE" });
+      if (res?.error?.code === "cache_in_use") setMsg(tr("machine.tool_in_use", { name: row.name }));
+      else if (res?.error) setMsg(tr("machine.tool_empty_failed", { name: row.name }) + (res.error.message ?? res.error.code));
+      else setMsg(tr("machine.tool_emptied", { name: row.name, size: humanSize(res?.bytes ?? row.bytes) }));
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+    }
+    await measure();
+  };
+
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("machine.tool_title")}</h4>
+      {err && <p className="muted ds-sub">{tr("machine.tool_failed")}</p>}
+      {rows && rows.length === 0 && <p className="muted ds-sub">{tr("machine.tool_none")}</p>}
+      {rows?.map((r) => (
+        <Row key={r.name} label={r.name}>
+          <span className="mv-val mv-size">{humanSize(r.bytes)}</span>
+          <PlaceLine place={r} />
+          {r.busy?.length ? (
+            <span className="muted">{tr("machine.tool_busy", { pids: r.busy.join(", ") })}</span>
+          ) : (
+            r.bytes > 0 && (
+              <Button small icon="trash" onClick={() => setConfirm(r)}>
+                {tr("machine.tool_empty")}
+              </Button>
+            )
+          )}
+        </Row>
+      ))}
+      <div className="mv-actions">
+        <Button small icon="refresh" onClick={measure} disabled={measuring}>
+          {measuring ? tr("machine.tool_measuring") : tr("machine.tool_measure")}
+        </Button>
+      </div>
+      {msg && <p className="ds-sub">{msg}</p>}
+      {truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
+      <p className="muted ds-sub">{tr("machine.tool_note")}</p>
+      {confirm && (
+        <ConfirmDialog
+          title={tr("machine.tool_confirm_title", { name: confirm.name })}
+          confirmLabel={tr("machine.tool_empty")}
+          busy={busy}
+          onConfirm={() => empty(confirm)}
+          onCancel={() => setConfirm(null)}
+        >
+          <p>{tr("machine.tool_confirm_body", { size: humanSize(confirm.bytes) })}</p>
+        </ConfirmDialog>
+      )}
+    </section>
+  );
+}
+
+// The /cleanup/leftovers answer (workspace/agent/leftovers.go).
+interface LeftoverRow extends Place {
+  kind: string;
+  count: number;
+  bytes: number;
+}
+
+// A kind this Console has no label for (a newer Agent) shows by its name.
+const leftoverLabel = (kind: string) => tMaybe("machine.left_kind_" + kind.replace(/-/g, "_")) ?? kind;
+
+// LeftoverSection — throwaway chromium profiles, orphaned ~/.af-work folders and superseded
+// node / kiro versions: things nothing reads again (#1038).
+//
+// Not part of ToolCacheSection on purpose: emptying a cache costs the next build, removing
+// these costs nothing, and one warning over both would blur the two. The Agent already
+// removes them at boot; this is for a workspace that runs for weeks without a restart, and
+// it shows what a removal took. The delete runs the boot pass for one kind, so there is no
+// confirmation — what it would keep (in use, changed within the hour) is judged there.
+function LeftoverSection() {
+  const tr = useT();
+  const [msg, setMsg] = useState("");
+  const [rows, setRows] = useState<LeftoverRow[] | null>(null);
+  const [hidden, setHidden] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
+  const [err, setErr] = useState(false);
+  const [busy, setBusy] = useState("");
+
+  const measure = async () => {
+    setMeasuring(true);
+    setErr(false);
+    try {
+      const res = await api("api/cleanup/leftovers");
+      if (!res || res.error || !Array.isArray(res.kinds)) throw new Error("");
+      setHidden(!!res.unsupported);
+      setRows(res.kinds);
+      setTruncated(!!res.truncated);
+    } catch {
+      setErr(true);
+    } finally {
+      setMeasuring(false);
+    }
+  };
+
+  const remove = async (row: LeftoverRow) => {
+    const label = leftoverLabel(row.kind);
+    setBusy(row.kind);
+    try {
+      const res = await api("api/cleanup/leftovers/" + encodeURIComponent(row.kind), { method: "DELETE" });
+      if (res?.error) setMsg(tr("machine.left_failed_delete", { name: label }) + (res.error.message ?? res.error.code));
+      else {
+        const done = tr("machine.left_deleted", { name: label, count: res?.count ?? 0, size: humanSize(res?.bytes ?? 0) });
+        // Some went and some did not: say both, not a clean success.
+        setMsg(res?.failed ? done + " " + tr("machine.left_partial") + res.failed : done);
+      }
+    } catch {
+      setMsg(tr("machine.left_failed_delete", { name: label }));
+    } finally {
+      setBusy("");
+    }
+    // Whatever happened, the counts above are stale now.
+    await measure();
+  };
+
+  // Outside a Workspace image the Agent does not touch home, so there is nothing to offer.
+  if (hidden) return null;
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("machine.left_title")}</h4>
+      {err && <p className="muted ds-sub">{tr("machine.left_failed")}</p>}
+      {rows?.map((r) => (
+        <Row key={r.kind} label={leftoverLabel(r.kind)}>
+          <span className="mv-val mv-size">
+            {r.count > 0 ? tr("machine.left_count", { size: humanSize(r.bytes), count: r.count }) : tr("machine.left_zero")}
+          </span>
+          <PlaceLine place={r} />
+          {r.count > 0 && (
+            <Button small icon="trash" onClick={() => remove(r)} disabled={!!busy}>
+              {busy === r.kind ? tr("machine.left_deleting") : tr("machine.left_delete")}
+            </Button>
+          )}
+        </Row>
+      ))}
+      <div className="mv-actions">
+        <Button small icon="refresh" onClick={measure} disabled={measuring}>
+          {measuring ? tr("machine.tool_measuring") : tr("machine.tool_measure")}
+        </Button>
+      </div>
+      {msg && <p className="ds-sub">{msg}</p>}
+      {truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
+      <p className="muted ds-sub">{tr("machine.left_note")}</p>
     </section>
   );
 }

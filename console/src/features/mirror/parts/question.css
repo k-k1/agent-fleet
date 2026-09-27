@@ -235,6 +235,15 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+/* The answered card's translate button: the card has no footer, so the button gets a row of
+   its own, right-aligned like the submit on a pending card. */
+.mq-tx-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
 .mq-footer .mq-terminal-hint {
   font-size: 12px;
 }

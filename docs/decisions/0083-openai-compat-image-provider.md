@@ -7,6 +7,7 @@ English | [日本語](0083-openai-compat-image-provider.ja.md)
   one at a time. Corrected passages are marked *(review)* — the two CFN parameter names in
   decision 1, the destination wording in decision 2, decision 7's citation, the ADR 0069 number
   upheld, and the second reason behind the size guess.
+- Follow-ups: #962
 - **Nothing was measured for this document.** Every claim is read out of this repository's code
   and templates on 2026-09-14 (file:line under "Sources checked"), except two facts the operator
   states: **neither live deployment runs sdcpp** (the sandbox's borrowed row reports

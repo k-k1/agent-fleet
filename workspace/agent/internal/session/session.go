@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -74,16 +75,16 @@ const (
 // point that says the number out loud, so no caller is ever told a figure that is not in force.
 const SpawnChildLimitDefault = 3
 
-// SpawnChildLimitMax is the largest value the setting may take (ADR 0073 decision 6, amendment
-// 2026-09-10). A live claude session measures 340-435 MB and this host's cgroup is 10 GiB
-// (docs/log/88 §88.9.2), so six children plus their parent is under a third of the host —
+// SpawnChildLimitMax is the largest value the setting may take (ADR 0073 decision 6, amendments
+// 2026-09-10 and 2026-09-24). A live claude session measures 340-435 MB and this host's cgroup is
+// 10 GiB (docs/log/88 §88.9.2), so ten children plus their parent is under half of the host —
 // leaving room for the sessions the user opened themselves.
 //
 // The ceiling has to be well under what the host can hold, because this budget is PER PARENT and
-// nothing bounds their number: two parents at six is already thirteen agents. Refusing to have an
+// nothing bounds their number: two parents at ten is already twenty-two agents. Refusing to have an
 // upper bound at all would give back the one property the limit exists for — a ceiling a refusal
 // can name before the host runs out of memory instead of after.
-const SpawnChildLimitMax = 6
+const SpawnChildLimitMax = 10
 
 // SpawnChildLimitPref answers the user's configured child limit, RAW: whatever number is stored,
 // or 0 for missing or malformed. Wired by internal/uiprefs, which cannot be imported from here
@@ -191,9 +192,14 @@ type Session struct {
 	// also gets it the live state and the archived/TTL filtering the list already applies.
 	Origin        string `json:"origin,omitempty"`
 	OriginSession string `json:"originSession,omitempty"`
-	Repo          string `json:"repo"` // working dir basename (display)
-	WorkingCopyID string `json:"workingCopyId,omitempty"`
-	Title         string `json:"title"` // user-supplied display title (optional, any kind)
+	// Studio / InitialPromptState mirror Meta's (ADR 0100 decision 2): which image studio this
+	// session is bound to, and how far its initial prompt got. The studio pane reads both off
+	// the list; the Control Plane's sessionWire has to carry them too or they vanish there.
+	Studio             string `json:"studio,omitempty"`
+	InitialPromptState string `json:"initialPromptState,omitempty"`
+	Repo               string `json:"repo"` // working dir basename (display)
+	WorkingCopyID      string `json:"workingCopyId,omitempty"`
+	Title              string `json:"title"` // user-supplied display title (optional, any kind)
 	// TitleSetBy mirrors Meta.TitleSetBy ("user" | "parent" | ""): who last set Title. It
 	// rides the wire so a reader outside this process can tell a name the user chose from one
 	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;
@@ -384,9 +390,10 @@ type Meta struct {
 	// launched process starts deeper (see CWD). "" = start at Dir, the default.
 	Subdir string `json:"subdir,omitempty"`
 	Model  string `json:"model"`
-	// Effort / Mode are the desired managed-thread settings. They live beside Model
-	// so a successful dynamic change survives Agent/workspace restarts and is inherited
-	// by fork/recreate. TUI sessions leave both empty.
+	// Effort / Mode are the desired thread settings. They live beside Model so a change
+	// survives Agent/workspace restarts and is inherited by fork/recreate: a Managed change
+	// is written here by the settings endpoint, a switch made in a TUI is read back from the
+	// CLI's own store when the slot is resumed (agents.SettingsRecaller).
 	Effort string `json:"effort,omitempty"`
 	Mode   string `json:"mode,omitempty"`
 	// SkipPermissions is this session's answer to "skip the permission prompts?"
@@ -474,6 +481,13 @@ type Meta struct {
 	// conversation. Once that exists, later launches resume normally and ForkFrom
 	// is ignored — a restart never re-forks. Empty for non-forked sessions.
 	ForkFrom string `json:"forkFrom,omitempty"`
+	// ForkSids is every session this one was forked from, nearest last, as session UUIDs
+	// (session.UUID of each ancestor). A fork's conversation is a copy of its source's, so the
+	// absolute paths the source's prompts point at — its pasted files under
+	// ~/.cache/agent-fleet/pasted/<sid> — are in this session's history too, and in its own
+	// forks' after it. The cache orphan scan keeps those directories while any descendant
+	// lives. Unlike ForkFrom it is kept for good and is the same id space for every kind.
+	ForkSids []string `json:"forkSids,omitempty"`
 	// ForkAt narrows ForkFrom to a POINT in the source conversation: this session
 	// carries the source's history up to — but NOT including — the anchored turn
 	// (docs/log/55 §55.3). The value is whatever the kind's ForkAtResolver produced from the
@@ -508,6 +522,19 @@ type Meta struct {
 	OriginConv string `json:"originConv,omitempty"`
 	// OriginSession names the session that raised this one (ADR 0073). See Origin above.
 	OriginSession string `json:"originSession,omitempty"`
+	// Studio is the image studio this session is bound to (ADR 0100 decision 2), "" for none.
+	// It is a COPY kept for advertising the studio tools: the truth of the binding is the
+	// studio's own `session`, and the two cannot be written atomically, so every studio tool
+	// checks the studio side again when it is called. Fork does not inherit it (one studio,
+	// one session); recreate does, because it is the same slot started empty.
+	Studio string `json:"studio,omitempty"`
+	// InitialPromptState is how far the create's initial_prompt got (ADR 0100 decision 2):
+	// "" when there was none, pending from the create until the delivery finishes, then
+	// delivered / failed / unknown (the delivery ended without evidence either way). The studio
+	// pane reads it to decide whether to offer a resend; while it is pending a resend would be
+	// a second persona turn, so none is offered. A pending left by a previous Agent process can
+	// never finish — RecoverPendingInitialPrompts turns it into unknown at start.
+	InitialPromptState string `json:"initialPromptState,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached
@@ -515,6 +542,14 @@ type Meta struct {
 	// the aws CLI obtains them via SSO at launch and caches them in the home volume.
 	SSM *SSMMeta `json:"ssm,omitempty"`
 }
+
+// The values of Meta.InitialPromptState.
+const (
+	InitialPromptPending   = "pending"
+	InitialPromptDelivered = "delivered"
+	InitialPromptFailed    = "failed"
+	InitialPromptUnknown   = "unknown"
+)
 
 // SSMMeta is the persisted, non-secret description of an SSM login target.
 type SSMMeta struct {
@@ -537,18 +572,60 @@ func (m Meta) DriverKind() string {
 	return m.Driver
 }
 
-// StoppedTTL is how long a stopped (exited) session stays in the ACTIVE list before it
-// is auto-archived (ADR 0097 — archived, never deleted, so the conversation is still
-// restorable from the shelf afterwards). Configurable; default 7d (metas now persist
-// across Stop→Start, so the window spans restarts). A session running at shutdown is
-// marked stopped on the next list after restart, starting its TTL then.
-func StoppedTTL() time.Duration {
-	if v := os.Getenv("AF_SESSION_STOPPED_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
+// StoppedArchiveDefault is the stopped-session archive period when neither the user's setting
+// nor AF_SESSION_STOPPED_TTL says otherwise (ADR 0097).
+const StoppedArchiveDefault = 7 * 24 * time.Hour
+
+// StoppedArchiveNever is the stored value for "do not auto-archive" (ui-prefs
+// sessionStoppedArchiveDays). Zero is taken: it is what a missing or malformed key reads as, and
+// that has to mean "the deployment default", not "never".
+const StoppedArchiveNever = -1
+
+// StoppedArchiveDayChoices are the periods, in days, a user may pick. The Console offers exactly
+// these (drift-tested against console/src/lib/settings.ts); anything else stored reads as unset.
+var StoppedArchiveDayChoices = []int{1, 3, 7, 14, 30}
+
+// StoppedArchiveDaysPref answers the user's archive-period setting RAW: the stored number, or 0
+// for missing or malformed. Wired by internal/uiprefs, which cannot be imported from here (it
+// depends on this package). Nil means nothing is wired, i.e. the deployment default.
+var StoppedArchiveDaysPref func() int
+
+// NormalizeStoppedArchiveDays narrows a stored value to a choice the Console offers, or 0 for
+// "not set". Out of range reads as unset rather than as the nearest choice, the same rule as
+// NormalizeSpawnChildLimit: a value no button produces is a hand-edited or stale prefs file.
+func NormalizeStoppedArchiveDays(n int) int {
+	if n == StoppedArchiveNever || slices.Contains(StoppedArchiveDayChoices, n) {
+		return n
+	}
+	return 0
+}
+
+// StoppedTTL is how long a stopped (exited) session stays in the ACTIVE list before it is
+// auto-archived (ADR 0097 — archived, never deleted, so the conversation is still restorable
+// from the shelf afterwards). ok=false means the user turned auto-archive off.
+//
+// Precedence: the user's setting (Settings > Agents > Session), then AF_SESSION_STOPPED_TTL, then
+// StoppedArchiveDefault. Call it when the period is needed, never once into a variable: the list
+// handler applies a changed setting on its next poll with no Agent restart, and a refusal that
+// quotes the period has to quote the one in force.
+//
+// The window spans Stop→Start (metas persist). A session running at shutdown is marked stopped
+// on the next list after restart, starting its TTL then.
+func StoppedTTL() (d time.Duration, ok bool) {
+	if StoppedArchiveDaysPref != nil {
+		switch n := NormalizeStoppedArchiveDays(StoppedArchiveDaysPref()); {
+		case n == StoppedArchiveNever:
+			return 0, false
+		case n > 0:
+			return time.Duration(n) * 24 * time.Hour, true
 		}
 	}
-	return 7 * 24 * time.Hour
+	if v := os.Getenv("AF_SESSION_STOPPED_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d, true
+		}
+	}
+	return StoppedArchiveDefault, true
 }
 
 // Display derives a human-readable session name, mirroring the Console's

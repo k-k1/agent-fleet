@@ -38,6 +38,7 @@ value instead of reverting code.
 | Browser pane | ✓ | ✓³ | ✓ | ✓ |
 | Cost attribution per member | — | — | ✓ | ✓ |
 | An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ |
+| A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ |
 
 ¹ Staged on the host and bind-mounted at start.
 
@@ -55,6 +56,10 @@ OpenAI-compatible server ([operate/07](../operate/07-image-engine.md)).
 ⁵ The fleet's own GPU, bought when something asks for it. There is no equivalent on
 Fargate. On every target a session can also generate images on **the member's own CLI
 plan** (Codex / Antigravity); this row is about an engine the deployment provides.
+
+⁶ On `ecs-ec2`, the fleet's own GPU. On `docker` and `native`, a llama.cpp **already running
+on your own network**, pointed at with one environment variable
+([operate/09](../operate/09-llm-lan.md)).
 
 ## Where the procedure lives
 

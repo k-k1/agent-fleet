@@ -2,9 +2,11 @@ package muse
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
 )
@@ -143,7 +145,7 @@ func resetModelCatalogCache(t *testing.T) {
 	t.Helper()
 	modelsMu.Lock()
 	prevList, prevSafe, prevAt := modelsList, modelsSafe, modelsAt
-	modelsList, modelsSafe, modelsAt = nil, "", time.Time{}
+	modelsList, modelsSafe, modelsAt = nil, nil, time.Time{}
 	modelsMu.Unlock()
 	t.Cleanup(func() {
 		modelsMu.Lock()
@@ -162,12 +164,53 @@ func TestSafeDefaultSkipsTheVendorsContributorDefault(t *testing.T) {
 		{"modelId":"muse-spark-1.3-contributor","displayLabel":"muse-spark-1.3-contributor","providerId":"meta","isDefault":true,
 		 "description":"Your content, including inter-session messages, may be used for product improvement."}]}`)
 
-	_, safe, err := modelsFrom(cl)
+	_, safeIDs, err := modelsFrom(cl)
+	safe := firstID(safeIDs)
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
 	if safe != "muse-spark-1.3" {
 		t.Errorf("safe default is %q, want the non-contributor row", safe)
+	}
+}
+
+// Every safe row is kept, in catalog order, so a member who hides the newest one still gets a
+// safe model rather than none (SafeExecModels, #1020 review).
+func TestSafeModelsKeepEveryNonSharingRowInOrder(t *testing.T) {
+	cl, _ := catalogHost(t, `{"providerId":"meta","source":"providerCatalog","models":[
+		{"modelId":"muse-spark-1.3","displayLabel":"a","providerId":"meta"},
+		{"modelId":"muse-spark-1.3-contributor","displayLabel":"b","providerId":"meta"},
+		{"modelId":"muse-spark-1.2","displayLabel":"c","providerId":"meta"},
+		{"modelId":"muse-spark-1.2-contributor","displayLabel":"d","providerId":"meta"}]}`)
+
+	_, safeIDs, err := modelsFrom(cl)
+	if err != nil {
+		t.Fatalf("modelsFrom: %v", err)
+	}
+	if want := []string{"muse-spark-1.3", "muse-spark-1.2"}; !slices.Equal(safeIDs, want) {
+		t.Errorf("safe ids = %v, want %v", safeIDs, want)
+	}
+}
+
+// #1023: a session started with no model skips the safe rows the member hid, and refuses when
+// every safe row is hidden — sending no modelId would run the host's contributor default.
+func TestSafeDefaultModelSkipsHiddenRows(t *testing.T) {
+	resetModelCatalogCache(t)
+	modelsMu.Lock()
+	modelsList = []agents.ModelChoice{{ID: "muse-spark-1.3"}, {ID: "muse-spark-1.2"}}
+	modelsSafe, modelsAt = []string{"muse-spark-1.3", "muse-spark-1.2"}, time.Now()
+	modelsMu.Unlock()
+	prev := ModelHidden
+	t.Cleanup(func() { ModelHidden = prev })
+
+	hidden := map[string]bool{"muse-spark-1.3": true}
+	ModelHidden = func(id string) bool { return hidden[id] }
+	if got, err := SafeDefaultModel(nil); err != nil || got != "muse-spark-1.2" {
+		t.Fatalf("SafeDefaultModel = %q, %v; want the next safe row", got, err)
+	}
+	hidden["muse-spark-1.2"] = true
+	if got, err := SafeDefaultModel(nil); err == nil {
+		t.Fatalf("SafeDefaultModel = %q and no error; every safe row is hidden", got)
 	}
 }
 
@@ -180,7 +223,8 @@ func TestSafeDefaultReadsTheDescriptionNotOnlyTheSuffix(t *testing.T) {
 		 "description":"Your content may be used for product improvement."},
 		{"modelId":"muse-spark-1.3","displayLabel":"muse-spark-1.3","providerId":"meta"}]}`)
 
-	_, safe, err := modelsFrom(cl)
+	_, safeIDs, err := modelsFrom(cl)
+	safe := firstID(safeIDs)
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}
@@ -197,7 +241,8 @@ func TestSafeDefaultIsEmptyWhenEveryRowShares(t *testing.T) {
 		{"modelId":"muse-spark-1.3-contributor","displayLabel":"a","providerId":"meta"},
 		{"modelId":"muse-spark-1.2-contributor","displayLabel":"b","providerId":"meta"}]}`)
 
-	_, safe, err := modelsFrom(cl)
+	_, safeIDs, err := modelsFrom(cl)
+	safe := firstID(safeIDs)
 	if err != nil {
 		t.Fatalf("modelsFrom: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -76,23 +77,36 @@ func reserveSpawnSlot(parent string) error {
 	if have := countChildren(parent) + spawnInflight.n[parent]; have >= limit {
 		return fmt.Errorf("このセッションは既に子セッションを %d 本持っています（上限 %d）。"+
 			"list_child_sessions で状態を確かめ、不要な子は利用者に Console での削除・アーカイブを頼んでください"+
-			"（停止したままの子は %s で自動的に枠が空きます）",
-			have, limit, stoppedTTLPhrase())
+			"（%s）",
+			have, limit, stoppedChildSlotNote())
 	}
 	spawnInflight.n[parent]++
 	return nil
 }
 
-// stoppedTTLPhrase renders session.StoppedTTL for the refusal above. The figure is spelled out
-// because ADR 0073 refuses to have invisible limits, and read from the setting rather than
-// written as "7 days" because AF_SESSION_STOPPED_TTL moves it (and the tests set it to
-// minutes).
-func stoppedTTLPhrase() string {
-	d := session.StoppedTTL()
-	if h := d.Hours(); h >= 24 {
-		return fmt.Sprintf("%d 日", int(h/24))
+// stoppedChildSlotNote says when a stopped child frees its slot on its own, for the refusal
+// above. The period is spelled out because ADR 0073 refuses to have invisible limits, and read
+// from session.StoppedTTL rather than written as "7 days" because the user's setting and
+// AF_SESSION_STOPPED_TTL both move it. With auto-archive off there is no such moment, and
+// saying so is what stops the caller from waiting for a slot that will not come back.
+func stoppedChildSlotNote() string {
+	d, ok := session.StoppedTTL()
+	if !ok {
+		return "利用者の設定で自動アーカイブが止まっているため、停止したままの子も枠を持ち続けます。" +
+			"この設定は Console の 設定 > エージェント > セッション にあります"
 	}
-	return d.String()
+	return "停止したままの子は停止から " + stoppedTTLPhrase(d) + "で自動的にアーカイブされ、枠が空きます。" +
+		"この期間は利用者が Console の 設定 > エージェント > セッション で変えられます"
+}
+
+// stoppedTTLPhrase renders an archive period: whole days as "N 日", anything else (only the env
+// var and the tests produce that) as a Go duration, so 36h is not quoted as "1 日".
+func stoppedTTLPhrase(d time.Duration) string {
+	const day = 24 * time.Hour
+	if d >= day && d%day == 0 {
+		return fmt.Sprintf("%d 日", d/day)
+	}
+	return d.String() + " "
 }
 
 // spawnSlot is one create's claim on a child slot. Zero parent = this create is not a spawn, and
@@ -169,19 +183,20 @@ func (s *spawnSlot) releaseLocked() {
 // holds. It is recorded in decision 6 rather than defended against here: defending would mean
 // keeping the slot charged to a session the user replaced on purpose.
 func handOverSpawnLineage(name string) {
-	// Re-read rather than writing back the copy the caller has held since before the launch:
-	// the recreate archived it seconds ago and anything that touched it in between would be
-	// undone by writing a stale snapshot.
-	old, ok := session.ReadMeta(name)
-	// Only a lineage that COSTS a slot is handed over. A session a person launched from a
-	// handoff proposal also carries origin_session (origin=user), and it holds no slot — for
-	// that one this would be pure loss: the superseded identity would forget who proposed it
-	// and nothing would be freed.
-	if !ok || !session.InUnattendedChain(old) {
-		return
-	}
-	old.OriginSession = ""
-	session.WriteMeta(old)
+	// Re-read under the lock rather than writing back the copy the caller has held since before
+	// the launch: the recreate archived it seconds ago and anything that touched it in between
+	// would be undone by writing a stale snapshot.
+	UpdateSessionMeta(name, func(old *session.Meta) bool {
+		// Only a lineage that COSTS a slot is handed over. A session a person launched from a
+		// handoff proposal also carries origin_session (origin=user), and it holds no slot — for
+		// that one this would be pure loss: the superseded identity would forget who proposed it
+		// and nothing would be freed.
+		if !session.InUnattendedChain(*old) {
+			return false
+		}
+		old.OriginSession = ""
+		return true
+	})
 }
 
 // forkLineage is the OriginSession a fork of src inherits (ADR 0073 decision 1).

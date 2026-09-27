@@ -321,6 +321,11 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 			edge, mode = e, modePreview
 		}
 	}
+	// Files in the thumbnail cache are served as they are (inThumbCache): thumbnailing them
+	// is what makes a gallery on that folder fill it without end.
+	if edge > 0 && inThumbCache(filepath.Join(path.root, path.relative)) {
+		edge = 0
+	}
 	if edge > 0 {
 		if data, ct, ok := thumbnail(opened.file, path.display, fi.Size(), fi.ModTime(), edge, mode); ok {
 			w.Header().Set("Content-Type", ct)

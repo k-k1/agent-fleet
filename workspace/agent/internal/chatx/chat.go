@@ -88,6 +88,12 @@ type ChatMessage struct {
 	// Empty on reports written before P6: those fall back to Content on both sides.
 	ReportKind   string `json:"report_kind,omitempty"`
 	ReportReason string `json:"report_reason,omitempty"`
+	// Source attributes a role=="user" message that nobody typed in the Console composer:
+	// "discord" / "slack" (a reply in the bridge's operator thread), "schedule" (a
+	// scheduled assistant fire, docs/log/38) or "handoff" (the Console's auto-sent session
+	// handoff, SourceHandoff). "" = typed in the composer. The Console keeps these out of the
+	// composer's ↑ history.
+	Source string `json:"source,omitempty"`
 }
 
 // ChatConversation is the persisted record (one JSON file per conversation).
@@ -390,8 +396,9 @@ func ChatPersonaFor(lang string) string {
 const defaultChatModel = "claude-sonnet-5"
 
 // defaultCodexChatModel favors the high-volume Luna tier for conversational
-// assistants. Assistants that need deeper coding/reasoning can still pin gpt-5.6
-// explicitly in their template.
+// assistants. Assistants that need deeper coding/reasoning can still pin a Sol model
+// explicitly in their template. Only the fallback for when the live catalog cannot be read:
+// recommendedAssistantModel follows the newest "-luna" the catalog lists (Issue #972).
 const defaultCodexChatModel = "gpt-5.6-luna"
 
 // defaultOpencodeChatModel favors the capable general-purpose model in the
@@ -424,17 +431,21 @@ func recommendedCatalogModel(ids []string, target, fallback string) string {
 // either — return empty and leave it to the CLI's own default. Catalog-derived candidates
 // are re-picked from the filtered catalog.
 func recommendedAssistantModel(agent string) string {
+	return recommendedAssistantModelV(prefsVisibility, agent)
+}
+
+func recommendedAssistantModelV(v visibility, agent string) string {
 	switch agent {
 	case session.KindClaude:
-		return visibleModel(agent, "sonnet")
+		return claudeFirstVisible(v, claudeChatTiers)
 	case session.KindCodex:
-		return visibleModel(agent, defaultCodexChatModel)
+		return codexNewestLuna(v)
 	case session.KindOpencode:
 		const goModel = "opencode-go/glm-5.2"
-		return recommendedCatalogModel(visibleModelIDs(agent, opencode.Models()), goModel,
-			visibleModel(agent, defaultOpencodeChatModel))
+		return recommendedCatalogModel(v.ids(agent, opencode.Models()), goModel,
+			v.model(agent, defaultOpencodeChatModel))
 	case session.KindAgy:
-		return visibleModel(agent, defaultAgyChatModel)
+		return agyNamedModel(v, defaultAgyChatModel)
 	}
 	return "" // cursor: Auto is the only entitlement-safe recommendation
 }
@@ -465,7 +476,14 @@ func chatModel(c *ChatConversation) string {
 	if c.Model != "" {
 		return c.Model
 	}
-	return envOr("AF_CHAT_MODEL", defaultChatModel)
+	// A conversation with no model of its own (created before models were snapshotted) runs the
+	// deployment default — unless the member hid it, in which case the same recommendation a
+	// new conversation gets. claude's chat always passes --model, so without this check hiding
+	// "sonnet" still ran claude-sonnet-5 (#972 review, round 4).
+	if m := envOr("AF_CHAT_MODEL", defaultChatModel); visibleModel(session.KindClaude, m) != "" {
+		return m
+	}
+	return claudeFirstVisible(prefsVisibility, claudeChatTiers)
 }
 
 // chatModelFor resolves the --model for the backend that is ACTUALLY driving this turn.

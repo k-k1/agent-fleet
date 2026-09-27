@@ -329,6 +329,24 @@ func LiveState(sid string) string {
 	return state
 }
 
+// sourceWarmup bounds how long a stored "working" may stand in for a hook-less kind's own
+// state source: long enough to cover launch and a first prompt before that source exists
+// (seconds, measured), short enough that a working nothing will ever clear cannot hold the
+// workspace awake or hide the session from idle-stop.
+const sourceWarmup = 2 * time.Minute
+
+// RecentlyWorking reports whether the stored state is "working" and was written within
+// sourceWarmup. It is the list's fallback for the hook-less kinds while their own source has no
+// opinion yet; unlike LiveState it never answers idle without evidence.
+func RecentlyWorking(sid string) bool {
+	st, ok := Read(sid)
+	if !ok || st.State != "working" {
+		return false
+	}
+	at, ok := StateAt(sid)
+	return ok && time.Since(at) < sourceWarmup
+}
+
 // EffectiveModal resolves what the claude TUI is ACTUALLY showing, which the raw
 // status state can lie about. AskUserQuestion / ExitPlanMode fire their OWN
 // permission_prompt Notification between the tool's PreToolUse and its PostToolUse, so

@@ -1744,9 +1744,9 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried); err != nil {
+			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio); err != nil {
 			return err
 		}
 	}
@@ -1755,7 +1755,7 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried
+		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -1764,7 +1764,7 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 	var out []SessionRow
 	for rows.Next() {
 		r := SessionRow{WorkspaceID: workspaceID}
-		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried); err != nil {
+		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -3612,12 +3612,12 @@ func (s *SQL) MarkWorkItemQueryFetched(ctx context.Context, id, fetchedAt, errMs
 }
 
 const workItemCols = `SELECT id, membership_id, query_id, provider, item_kind, item_key,
-	title, state, url, assignee, labels, repo, updated_at, fetched_at FROM work_item_cache`
+	title, state, url, assignee, labels, label_colors, repo, updated_at, fetched_at FROM work_item_cache`
 
 func scanWorkItem(sc interface{ Scan(...any) error }) (WorkItem, error) {
 	var w WorkItem
 	err := sc.Scan(&w.ID, &w.MembershipID, &w.QueryID, &w.Provider, &w.Kind, &w.Key,
-		&w.Title, &w.State, &w.URL, &w.Assignee, &w.Labels, &w.Repo, &w.UpdatedAt, &w.FetchedAt)
+		&w.Title, &w.State, &w.URL, &w.Assignee, &w.Labels, &w.LabelColors, &w.Repo, &w.UpdatedAt, &w.FetchedAt)
 	return w, err
 }
 
@@ -3660,10 +3660,10 @@ func (s *SQL) ReplaceWorkItems(ctx context.Context, membershipID string, queryID
 	for _, w := range items {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO work_item_cache(id, membership_id, query_id, provider, item_kind, item_key,
-			 title, state, url, assignee, labels, repo, updated_at, fetched_at)
-			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			 title, state, url, assignee, labels, label_colors, repo, updated_at, fetched_at)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			w.ID, membershipID, w.QueryID, w.Provider, w.Kind, w.Key, w.Title, w.State,
-			w.URL, w.Assignee, w.Labels, w.Repo, w.UpdatedAt, w.FetchedAt); err != nil {
+			w.URL, w.Assignee, w.Labels, w.LabelColors, w.Repo, w.UpdatedAt, w.FetchedAt); err != nil {
 			return err
 		}
 	}

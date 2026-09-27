@@ -8,7 +8,7 @@ import "encoding/json"
 // rendered from. fingerprint_test.go asserts the installed binary still exports it; a
 // mismatch means the wire moved under us, which is a red build rather than a silent
 // decode failure at runtime.
-const SchemaFingerprint = "sha256:7469c9e352e67def4a59df7e439984d7194fa351e1c8b7abb34060fd977ced81"
+const SchemaFingerprint = "sha256:36466f634c8c78a812462ec941187fd4547b232ee06153e5feb2a1482f0d3d7f"
 
 // SchemaVersion is MSP's own version, carried in `initialize`.
 const SchemaVersion = 1
@@ -76,6 +76,7 @@ const (
 	NotificationItemUpdated                   = "item/updated"
 	NotificationSessionApprovalModeChanged    = "session/approvalModeChanged"
 	NotificationSessionBranchChanged          = "session/branchChanged"
+	NotificationSessionClosed                 = "session/closed"
 	NotificationSessionContextUsage           = "session/contextUsage"
 	NotificationSessionGoalChanged            = "session/goalChanged"
 	NotificationSessionListChanged            = "session/listChanged"
@@ -83,6 +84,7 @@ const (
 	NotificationSessionModelRouteUnserved     = "session/modelRouteUnserved"
 	NotificationSessionNameChanged            = "session/nameChanged"
 	NotificationSessionReasoningEffortChanged = "session/reasoningEffortChanged"
+	NotificationSessionStarted                = "session/started"
 	NotificationSessionStatusChanged          = "session/statusChanged"
 	NotificationSessionTodoListChanged        = "session/todoListChanged"
 	NotificationSessionTokenUsage             = "session/tokenUsage"
@@ -160,6 +162,7 @@ var notificationParams = map[string]string{
 	"item/updated":                   "ItemUpdatedParams",
 	"session/approvalModeChanged":    "SessionApprovalModeChangedParams",
 	"session/branchChanged":          "SessionBranchChangedParams",
+	"session/closed":                 "SessionClosedParams",
 	"session/contextUsage":           "SessionContextUsageParams",
 	"session/goalChanged":            "SessionGoalChangedParams",
 	"session/listChanged":            "SessionListChangedParams",
@@ -167,6 +170,7 @@ var notificationParams = map[string]string{
 	"session/modelRouteUnserved":     "SessionModelRouteUnservedParams",
 	"session/nameChanged":            "SessionNameChangedParams",
 	"session/reasoningEffortChanged": "SessionReasoningEffortChangedParams",
+	"session/started":                "SessionStartedParams",
 	"session/statusChanged":          "SessionStatusChangedParams",
 	"session/todoListChanged":        "SessionTodoListChangedParams",
 	"session/tokenUsage":             "SessionTokenUsageParams",
@@ -1583,6 +1587,9 @@ type ModelCatalogEntry struct {
 	ProviderID string `json:"providerId"`
 	// Release date; `null` when the catalog source declared nothing.
 	ReleaseDate *string `json:"releaseDate,omitempty"`
+	// Complete ordered selectable efforts. Optional only for decoding older hosts; a present
+	// value is never null. Current hosts always send it.
+	Variants *ModelReasoningEffortVariants `json:"variants,omitempty"`
 }
 
 // ModelCatalogSource Where a model catalog came from (tdd SS3.10). **Open**: an unrecognized value is an
@@ -1658,6 +1665,9 @@ type ModelListResult struct {
 	// fake and labels it honestly.
 	Source ModelCatalogSource `json:"source"`
 }
+
+// ModelReasoningEffortVariants A complete ordered effort set, or an explicit unknown capability.
+type ModelReasoningEffortVariants json.RawMessage
 
 // ModelSelection A model selection (tdd SS3.8). Empty strings are normalized to absent.
 type ModelSelection struct {
@@ -2075,6 +2085,43 @@ type SessionBranchChangedParams struct {
 	WorkspaceRoot string `json:"workspaceRoot"`
 }
 
+// SessionClosedParams `session/closed` params (tdd SS2.6.2; enrolled by #33065): a loaded session was unloaded
+// from this host, broadcast to every initialized connection. After it, the session is
+// `notLoaded`; the log remains on disk and `session/resume` reloads it. A crash emits
+// nothing — only the two orderly unload paths do, and both write the durable
+// `SessionEnd` record first.
+type SessionClosedParams struct {
+	// Which orderly unload path fired.
+	Reason SessionClosedReason `json:"reason"`
+	// The unloaded session.
+	SessionID string `json:"sessionId"`
+	// The final view head; a client that stores it can later `session/resume {cursor}` and
+	// receive exactly the (empty) suffix. An **opaque** view cursor: clients relay it, never
+	// parse it (tdd SS4.1). **Required-nullable**: the producers always write the member and
+	// write `null` when the final fold failed at unload (`session/idle.rs`,
+	// `serve/shutdown.rs`; PR #16779 review) — the host defines no cursor values of its own
+	// and never invents one, and the subscriber still learns the session closed.
+	ViewCursor *string `json:"viewCursor,omitempty"`
+}
+
+// SessionClosedReason The SS2.6.2 closed-reason vocabulary. Server-produced and published OPEN by owner ruling
+// — the #33065 menu-B pick (PR #33201 comment 5638727249, recorded in the enrollment
+// decision record), which settles that this notification reason enum publishes open rather
+// than resting on E2's result-vocabulary rule by analogy. A crash is deliberately not a
+// reason, because a crash emits no notification at all.
+type SessionClosedReason string
+
+const (
+	SessionClosedReasonIdle         SessionClosedReason = "idle"
+	SessionClosedReasonHostShutdown SessionClosedReason = "hostShutdown"
+)
+
+// SessionClosedReasonValues are every SessionClosedReason the bundle declares, in schema order.
+var SessionClosedReasonValues = []SessionClosedReason{
+	SessionClosedReasonIdle,
+	SessionClosedReasonHostShutdown,
+}
+
 // SessionCompactParams `session/compact` params (tdd SS3.7): manually compact the session's conversation
 // context — the `/compact` gesture. Compaction runs asynchronously; the ack is admission
 // only.
@@ -2134,6 +2181,98 @@ type SessionContextUsageParams struct {
 	// The effective context-window size from the host's pressure basis; absent when the basis
 	// has no limit — the limit part is omitted, never invented (tdd SS4.6.6).
 	WindowTokens *int64 `json:"windowTokens,omitempty"`
+}
+
+// SessionDeleteCompletedParams The persisted deletion terminal, separate from admission (SS3.24). The shared schema is
+// one object. Actual failed producers send both optional fields; completed producers omit
+// both. Clients enforce those obligations before interpreting a known outcome. Preserve
+// unknown strings without treating them as successful completion.
+type SessionDeleteCompletedParams struct {
+	// Idempotency key of the original deletion command.
+	CommandID string `json:"commandId"`
+	// Deletion result; an unknown value leaves the command pending.
+	Outcome SessionDeleteOutcome `json:"outcome"`
+	// Erasure evidence for a failed result; omitted for a completed result.
+	PhysicalChange *SessionDeletePhysicalChange `json:"physicalChange,omitempty"`
+	// Required for a failed result and omitted for a completed result.
+	Reason *SessionDeleteFailureReason `json:"reason,omitempty"`
+	// Session named by the original deletion command.
+	SessionID string `json:"sessionId"`
+}
+
+// SessionDeleteFailureReason Stable deletion-failure vocabulary known to this version (SS3.24). The server emits only
+// these values. Future reason strings remain an open result vocabulary; consumers cannot
+// infer completion from any reason.
+type SessionDeleteFailureReason string
+
+const (
+	SessionDeleteFailureReasonOwnershipUnavailable SessionDeleteFailureReason = "ownershipUnavailable"
+	SessionDeleteFailureReasonSharedSource         SessionDeleteFailureReason = "sharedSource"
+	SessionDeleteFailureReasonWriterBusy           SessionDeleteFailureReason = "writerBusy"
+	SessionDeleteFailureReasonUnsafeSource         SessionDeleteFailureReason = "unsafeSource"
+	SessionDeleteFailureReasonSourceChanged        SessionDeleteFailureReason = "sourceChanged"
+	SessionDeleteFailureReasonQuiescenceFailed     SessionDeleteFailureReason = "quiescenceFailed"
+	SessionDeleteFailureReasonCancelled            SessionDeleteFailureReason = "cancelled"
+	SessionDeleteFailureReasonStorageFailure       SessionDeleteFailureReason = "storageFailure"
+	SessionDeleteFailureReasonCleanupIncomplete    SessionDeleteFailureReason = "cleanupIncomplete"
+	SessionDeleteFailureReasonUnsupportedLayout    SessionDeleteFailureReason = "unsupportedLayout"
+)
+
+// SessionDeleteFailureReasonValues are every SessionDeleteFailureReason the bundle declares, in schema order.
+var SessionDeleteFailureReasonValues = []SessionDeleteFailureReason{
+	SessionDeleteFailureReasonOwnershipUnavailable,
+	SessionDeleteFailureReasonSharedSource,
+	SessionDeleteFailureReasonWriterBusy,
+	SessionDeleteFailureReasonUnsafeSource,
+	SessionDeleteFailureReasonSourceChanged,
+	SessionDeleteFailureReasonQuiescenceFailed,
+	SessionDeleteFailureReasonCancelled,
+	SessionDeleteFailureReasonStorageFailure,
+	SessionDeleteFailureReasonCleanupIncomplete,
+	SessionDeleteFailureReasonUnsupportedLayout,
+}
+
+// SessionDeleteOutcome Known terminal outcomes. A future outcome cannot authorize success or exit.
+type SessionDeleteOutcome string
+
+const (
+	SessionDeleteOutcomeCompleted SessionDeleteOutcome = "completed"
+	SessionDeleteOutcomeFailed    SessionDeleteOutcome = "failed"
+)
+
+// SessionDeleteOutcomeValues are every SessionDeleteOutcome the bundle declares, in schema order.
+var SessionDeleteOutcomeValues = []SessionDeleteOutcome{
+	SessionDeleteOutcomeCompleted,
+	SessionDeleteOutcomeFailed,
+}
+
+// SessionDeleteParams `session/delete` params. The host validates a non-nil legacy-valid UUID target and a
+// UUID-v7 command identity before admission. Unknown members are ignored and do not enter
+// the normalized command identity (SS1.5.4).
+type SessionDeleteParams struct {
+	// UUID-v7 idempotency key for this deletion command.
+	CommandID string `json:"commandId"`
+	// Non-nil UUID of the session selected for deletion.
+	SessionID string `json:"sessionId"`
+}
+
+// SessionDeletePhysicalChange The failed attempt's immutable snapshot of persisted physical evidence. `possible` is
+// recorded before a detach/unlink, `confirmed` after a proved owned effect. A failure
+// never resets that evidence merely because the session path is absent. Unknown strings
+// remain representable; consumers must treat them conservatively as `possible`.
+type SessionDeletePhysicalChange string
+
+const (
+	SessionDeletePhysicalChangeNone      SessionDeletePhysicalChange = "none"
+	SessionDeletePhysicalChangePossible  SessionDeletePhysicalChange = "possible"
+	SessionDeletePhysicalChangeConfirmed SessionDeletePhysicalChange = "confirmed"
+)
+
+// SessionDeletePhysicalChangeValues are every SessionDeletePhysicalChange the bundle declares, in schema order.
+var SessionDeletePhysicalChangeValues = []SessionDeletePhysicalChange{
+	SessionDeletePhysicalChangeNone,
+	SessionDeletePhysicalChangePossible,
+	SessionDeletePhysicalChangeConfirmed,
 }
 
 // SessionDurability Whether this host writes its sessions to disk (SS1.4.1, SS2.13). A property of the host
@@ -2569,6 +2708,21 @@ type SessionStartResult struct {
 	// every view event after this cursor. A deduplicated retry returns this same result (tdd
 	// SS2.5.1).
 	ViewCursor string `json:"viewCursor"`
+}
+
+// SessionStartedParams `session/started` params (tdd SS2.6.1; enrolled by #33065): a session became newly
+// loaded on this host via `session/start` or `session/fork` (never `session/resume` —
+// Appendix C, OQ-F), broadcast to every initialized connection. The one member is the same
+// `$defs/Session` object the `session/start`/`session/fork` results carry, so the
+// broadcast and the result describe one fact through one type — the host builds the
+// broadcast payload as a `$defs/Session` — the fresh-start arm reuses the result's
+// `session` member, the start-replay arm builds the live attach snapshot — and the
+// emission is parity-gated against this type at the producer (`session-server`
+// prod-assembly capture) and over the committed transcript corpus (conformance
+// `session_lifecycle_enrollment`).
+type SessionStartedParams struct {
+	// The newly loaded session, as of the start/fork fold.
+	Session Session `json:"session"`
 }
 
 // SessionStatus A session's load state (tdd SS2.4).
@@ -3539,6 +3693,19 @@ type UnframedViewNotificationParams struct {
 	// every live notification already carries it (tdd SS4.2.1) — nothing is spliced beside
 	// `method`.
 	ViewCursor string `json:"viewCursor"`
+}
+
+// UnknownModelReasoningEffortVariants The only scalar alternative to a known effort array. Kept as a closed singleton so
+// arbitrary strings and uppercase spellings fail decoding.
+type UnknownModelReasoningEffortVariants string
+
+const (
+	UnknownModelReasoningEffortVariantsUnknown UnknownModelReasoningEffortVariants = "unknown"
+)
+
+// UnknownModelReasoningEffortVariantsValues are every UnknownModelReasoningEffortVariants the bundle declares, in schema order.
+var UnknownModelReasoningEffortVariantsValues = []UnknownModelReasoningEffortVariants{
+	UnknownModelReasoningEffortVariantsUnknown,
 }
 
 // UsageReadResult `usage/read` result: `{usage?}` — omitted, never `null`, when the host has observed

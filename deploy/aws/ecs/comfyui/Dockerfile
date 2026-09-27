@@ -17,6 +17,12 @@
 # against `NODE_CLASS_MAPPINGS` and the V3 `node_id=` schemas in nodes.py and comfy_extras/ (ADR
 # 0098 "What was measured" carries the v0.35.2 → v0.37.0 run of it).
 #
+# The Agent also copies one piece of upstream ARITHMETIC, which no schema diff shows: the
+# reference rescale inside TextEncodeQwenImageEditPlus (comfy_extras/nodes_qwen.py), mirrored by
+# comfyQwenEditRefSize in workspace/agent/internal/imagegen/comfy_qwenedit_size.go. Read that
+# function at both tags on every bump — if it changes and the copy does not, instruction edits
+# come back soft with no error (ADR 0094, revision of 2026-09-23).
+#
 # No ComfyUI-Manager: it exists to install custom nodes at runtime from inside the UI, which is
 # both unreachable (P2 ships no pane — that is P5) and the one thing a pinned, golden-tested
 # deployment must not do to itself. ComfyUI-GGUF is not baked either — the ADR's own GPU

@@ -629,29 +629,6 @@ func LinkedWorktreeCount(dir string) int {
 	return 0
 }
 
-// MaybePruneWorktree auto-removes a linked worktree once nothing needs it — the
-// counterpart to worktree-then-start that keeps them from piling up. It removes only
-// when dir is a worktree, no session meta references it (worktreeHasSessions), AND it
-// is clean: uncommitted or unpushed work is preserved for manual handling via the
-// explicit force-delete path. Best-effort; called after a session's meta is forgotten.
-func MaybePruneWorktree(dir string) {
-	if dir == "" || !IsLinkedWorktree(dir) || worktreeHasSessions(dir) {
-		return
-	}
-	if repoLocked(dir) {
-		return // the deletion lock (docs/log/45) applies to auto-prune too
-	}
-	if st, err := GitStatus(dir); err != nil || st.Dirty || st.Ahead > 0 {
-		return // keep dirty/unpushed worktrees; the user force-deletes those explicitly
-	}
-	parent := WorktreeParent(dir)
-	if parent == "" {
-		return
-	}
-	_ = Cmd(parent, "worktree", "remove", "--force", dir).Run()
-	_ = Cmd(parent, "worktree", "prune").Run()
-}
-
 // GitCurrentBranch returns dir's checked-out branch name, "(detached)" on a
 // detached HEAD, or "" when dir isn't a resolvable git working tree. Cheaper than
 // GitStatus (a single rev-parse, no porcelain parse) — used to stamp a session's
@@ -1157,6 +1134,14 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	if out, err := Combined(parentDir, args...); err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, out)
 	}
+	finishNewWorktree(dir, parentDir)
+	return dir, nil
+}
+
+// finishNewWorktree is what every freshly added worktree needs before a session runs in it.
+// Only call it right after `git worktree add`: the scratch relocation below must not run on
+// an existing worktree.
+func finishNewWorktree(dir, parentDir string) {
 	applyGitIdentity(dir) // commit identity for the worktree (config is shared, but explicit)
 	// A worktree's submodules live in their own object store, so without this they are fetched
 	// from the remote all over again — see git_submodule_seed.go. Seed from the parent's copy
@@ -1167,7 +1152,6 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	// relocating them is free. Only on creation: an existing worktree may already hold
 	// a populated tree on EFS, and moving that on a relaunch would stall the session.
 	scratchAutoRelocate(dir)
-	return dir, nil
 }
 
 func HandleCloneRepo(w http.ResponseWriter, r *http.Request) {
@@ -1563,7 +1547,16 @@ func HandleRepoFetch(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
+// HandleDeleteRepo deletes a working copy. Everything from the guards to settling its sessions
+// runs inside the deletion gate, which the lock endpoints take too: a lock set on the working
+// copy or on a session in it while the delete is in flight either lands before the guards read
+// it (and the delete is refused) or waits until the delete is over — it can no longer be
+// "accepted" and then deleted anyway (ADR 0101).
 func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
+	withDeletionGate(func() { handleDeleteRepoGated(w, r) })
+}
+
+func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 	dir, ok := RepoAnyDirFromPath(w, r)
 	if !ok {
 		return
@@ -1603,13 +1596,14 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	// Remove it directly (after the session guard above); the git worktree logic below
 	// applies only to git working copies.
 	if !IsGitRepo(dir) && isSvnRepo(dir) {
+		if !trashShellSessionsUnder(w, dir) {
+			return
+		}
 		if err := os.RemoveAll(dir); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
 		}
-		if pruneSessions(r) {
-			forgetNonLiveMetasUnder(dir)
-		}
+		shelveSessionsUnder(dir)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
 		return
 	}
@@ -1633,14 +1627,27 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
 			return
 		}
+		// Record it in the trash before anything is removed, so the delete can be taken back:
+		// its commit pinned, its uncommitted work (untracked files included) snapshotted.
+		// Failing that, nothing is deleted — the same rule as the shell sessions below.
+		undo, ok := recordWorktreeTombstone(w, dir, parent)
+		if !ok {
+			return
+		}
+		if !trashShellSessionsUnder(w, dir) {
+			undo()
+			return
+		}
 		if out, err := Combined(parent, "worktree", "remove", "--force", dir); err != nil {
+			// No undo once the remove has run: one that fails part way (a directory it may not
+			// delete) has already taken files and often the registration — measured — and the
+			// trash entry is then the only copy of the uncommitted work. A worktree that is in
+			// fact still whole only leaves an entry whose restore finds the folder there.
 			httpx.WriteErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
 		_ = Cmd(parent, "worktree", "prune").Run()
-		if pruneSessions(r) {
-			forgetNonLiveMetasUnder(dir)
-		}
+		shelveSessionsUnder(dir)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
 		return
 	}
@@ -1653,33 +1660,69 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("this working copy has %d worktree(s) branched off it; delete those first", n))
 		return
 	}
+	if !trashShellSessionsUnder(w, dir) {
+		return
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
-	if pruneSessions(r) {
-		forgetNonLiveMetasUnder(dir)
-	}
+	shelveSessionsUnder(dir)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
 }
 
-// pruneSessions reports whether the delete should also forget the (non-live) session
-// metas that lived in the removed dir. Opt-in via ?prune_sessions=1 so the Console's
-// plain "delete working copy" keeps its existing behavior (metas untouched); only the
-// cleanup path (MCP delete_worktree) sets it, completing the tidy-up so a stopped
-// session isn't left pointing at a directory that no longer exists.
-func pruneSessions(r *http.Request) bool {
-	v := r.URL.Query().Get("prune_sessions")
-	return v == "1" || v == "true"
+// recordWorktreeTombstone writes the trash entry for a worktree about to be deleted and returns
+// the way to take it back. It answers 500 itself, removing nothing, when the entry cannot be
+// written. A worktree with no commit yet has nothing to pin and is deleted unrecorded.
+func recordWorktreeTombstone(w http.ResponseWriter, dir, parent string) (undo func(), ok bool) {
+	t, has, err := PrepareTombstone(dir, parent)
+	if err == nil && !has {
+		return func() {}, true
+	}
+	if err == nil {
+		for _, m := range sessionsToSettleUnder(dir) {
+			if m.Kind != session.KindShell && m.Kind != session.KindSSM {
+				t.Shelved = append(t.Shelved, m.Name)
+			}
+		}
+		undo, err = recordDeletedWorktree(t)
+	}
+	if IsNestedRepos(err) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeWorktreeNestedRepo,
+			err.Error()+"; move or delete them first, and the worktree was left as it is")
+		return nil, false
+	}
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeWorktreeArchiveFailed,
+			fmt.Sprintf("could not record the worktree in the trash, so it was left as it is: %v", err))
+		return nil, false
+	}
+	return undo, true
 }
 
-// forgetNonLiveMetasUnder removes the metas of any NON-live session whose cwd is at or
-// under dir. HandleDeleteRepo has already refused when a LIVE session runs there, so the
-// remaining metas are stopped/archived — unusable once dir is gone (resume would hit
-// DirGoneErr). Belt-and-suspenders: re-check liveness here too. jsonl is left on disk
-// (same as stop = forget meta, keep transcript).
-func forgetNonLiveMetasUnder(dir string) {
+// trashShellSessionsUnder moves the stopped shell / ssm sessions of dir to the trash BEFORE the
+// working copy is removed, and answers 500 (removing nothing) if one cannot be — the trash can
+// fail (a full disk), and deleting the folder first would leave that session listed with no
+// folder, contrary to what the delete promised. Reports whether the delete may go on.
+func trashShellSessionsUnder(w http.ResponseWriter, dir string) bool {
+	for _, m := range sessionsToSettleUnder(dir) {
+		if m.Kind != session.KindShell && m.Kind != session.KindSSM {
+			continue
+		}
+		if err := trashSession(m); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, errCodeSessionsTrashFailed,
+				fmt.Sprintf("could not move session %s to the trash, so the working copy was left as it is: %v", m.Name, err))
+			return false
+		}
+	}
+	return true
+}
+
+// sessionsToSettleUnder lists the sessions a delete of dir settles: at or under dir, not
+// running, not locked, not already on the shelf.
+func sessionsToSettleUnder(dir string) []session.Meta {
 	live := tmuxx.LiveSessionNames()
+	var out []session.Meta
 	for _, m := range session.ListMetas() {
 		if m.Dir != dir && !strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
 			continue
@@ -1687,20 +1730,41 @@ func forgetNonLiveMetasUnder(dir string) {
 		if live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m)) {
 			continue
 		}
-		if m.Locked {
-			continue // deletion lock (docs/log/45) — not removed as collateral of a cleanup either
-		}
-		if m.Archived {
-			// An archived session sits on the shelf: removing the worktree leaves the
-			// conversation there, and reclaiming it is the shelf's own deletion (delete_session,
-			// with its gz stash). Forgetting it here silently empties the shelf of anyone who
-			// went 1) archive in bulk, 2) delete the worktree. The row renders as "no folder".
+		if m.Locked || m.Archived {
 			continue
 		}
-		finalizeSessionUsage(m) // settle into the usage ledger before forgetting (docs/log/46 §3-b)
-		// A person deleting the working copy is a person's delete of this session too, the
-		// same as /stop or DELETE /sessions — the fleet graph's lineage row goes with it
-		// (ADR 0096 decision 6).
-		session.RemoveMetaAndLineage(m.Name)
+		out = append(out, m)
+	}
+	return out
+}
+
+// shelveSessionsUnder settles the stopped sessions whose cwd was at or under a working copy
+// that has just been deleted (ADR 0101 decision 4). Deleting a working copy is a decision
+// about the files, not about the conversations, so:
+//
+//   - a stopped AI session moves to the shelf — its conversation stays readable and deleting
+//     it is a separate act, from the shelf;
+//   - a stopped shell / ssm moves to the trash — without its folder there is nothing to go
+//     back to, and the trash can still restore the row. trashShellSessionsUnder does this
+//     BEFORE the removal, so a trash that fails stops the delete;
+//   - archived (already on the shelf) and deletion-locked sessions are left alone, and a live
+//     one cannot be here: HandleDeleteRepo refuses while any session runs there or is locked.
+//     Liveness is re-checked anyway (belt-and-suspenders).
+//
+// It runs on every delete of a working copy. It used to be opt-in (?prune_sessions=1, sent by
+// the cleanup modal and the MCP tool) and FORGOT the metas outright, without the trash; without
+// the flag it left metas pointing at a folder that no longer existed. The flag is still
+// accepted and means nothing.
+func shelveSessionsUnder(dir string) {
+	for _, m := range sessionsToSettleUnder(dir) {
+		if m.Kind == session.KindShell || m.Kind == session.KindSSM {
+			// trashShellSessionsUnder took these before the removal; one left here appeared
+			// since. Same treatment, and a failure can only be logged now.
+			if err := trashSession(m); err != nil {
+				log.Printf("delete working copy %s: could not move %s to the trash, leaving it listed: %v", dir, m.Name, err)
+			}
+			continue
+		}
+		shelveSession(m)
 	}
 }

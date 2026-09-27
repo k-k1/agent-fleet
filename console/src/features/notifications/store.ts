@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api, apiJSON, chatGet, isTransientErr } from "../../core/api/client.ts";
 import { pushHealthy } from "../../core/push/events.ts";
-import { getSettings } from "../../lib/settings.ts";
+import { getSettings, subscribe as subscribeSettings } from "../../lib/settings.ts";
 import { toast } from "../../ui/toast.ts";
 import { t as tr } from "../../lib/i18n/index.ts";
 import { activePane, allPanes } from "../../layout/ops.ts";
@@ -16,6 +16,8 @@ import { openSharedSession } from "../sharing/open.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
 import { unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
+import { childIdleMuted } from "./childIdle.ts";
+import { useAwsLoginStore } from "../awslogin/store.ts";
 
 export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsupported";
 export interface FleetNotification {
@@ -63,6 +65,8 @@ async function deliver(n: FleetNotification): Promise<void> {
   if (n.target.type === "session" && active === n.target.id) {
     return;
   }
+  // A muted child's idle interrupts nobody; wireNotificationReadOnVisibleSessions marks it read.
+  if (n.kind === "answer-ready" && n.target.type === "session" && childIdleMuted(n.target.id)) return;
   const text = notificationWording(n);
   const s = getSettings();
   const deviceDelivery = n.kind !== "usage-reset" || s.usageResetNotify;
@@ -151,6 +155,14 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // not one of our own sessions, so it must not fall through to the session resolution below.
   // It stops opening once the share is revoked, which is correct: the offer derives from the
   // share ACL, and when the ACL is gone so is the content.
+  // af-aws-exec's login request (ADR 0102): its destination is the login modal. Only the id is
+  // read; the modal shows what the Agent lists for it, and nothing for an id it does not list.
+  if (n.kind === "aws-login-required" && typeof n.payload.requestId === "string" && n.payload.requestId) {
+    const aws = useAwsLoginStore.getState();
+    void aws.refresh();
+    aws.open(n.payload.requestId);
+    return { opened: true };
+  }
   if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {
     openSharedSession(n.payload.catalogId, split);
     return { opened: true };
@@ -258,9 +270,13 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
   const sync = () => {
     const items = useNotificationStore.getState().items;
     // The same session can occupy two panes, so dedupe before posting the acknowledgement.
-    const ids = [...new Set(allPanes(useLayoutStore.getState().layout)
-      .flatMap((p) => unseenSessionEventIDs(items, p.session || "")))]
-      .filter((id) => !pending.has(id));
+    const ids = [...new Set([
+      ...allPanes(useLayoutStore.getState().layout).flatMap((p) => unseenSessionEventIDs(items, p.session || "")),
+      // A muted child's idle is acknowledged on arrival too, so it raises no dot and no count.
+      // Here rather than in deliver(): deliver sees only rows newer than the first load, and
+      // runs before the session list may have arrived to say which sessions are children.
+      ...mutedChildIdleIDs(items),
+    ])].filter((id) => !pending.has(id));
     if (!ids.length) return;
     ids.forEach((id) => pending.add(id));
     void useNotificationStore.getState().markSeen(undefined, ids).finally(() => {
@@ -268,15 +284,24 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
     });
   };
   const unLayout = useLayoutStore.subscribe(sync);
+  const unSessions = useSessionsStore.subscribe((state, previous) => {
+    if (state.sessions !== previous.sessions) sync();
+  });
+  const unSettings = subscribeSettings(sync);
   const unNotifications = useNotificationStore.subscribe((state, previous) => {
     if (state.items !== previous.items) sync();
   });
   sync();
   return () => {
     unLayout();
+    unSessions();
+    unSettings();
     unNotifications();
   };
 }
+
+const mutedChildIdleIDs = (items: FleetNotification[]): string[] =>
+  items.filter((n) => !n.seen && n.kind === "answer-ready" && n.target.type === "session" && childIdleMuted(n.target.id)).map((n) => n.id);
 
 // applyPushedNotifications adopts a pushed api/events frame. Bumping the
 // request/applied counters marks any in-flight poll as stale so its (older)

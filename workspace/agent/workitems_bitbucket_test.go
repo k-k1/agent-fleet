@@ -118,6 +118,9 @@ func TestParseBitbucketPullRequests(t *testing.T) {
 		if r.Labels == nil {
 			t.Errorf("row %d: labels must be an empty slice, not nil", i)
 		}
+		if r.LabelColors == nil {
+			t.Errorf("row %d: labelColors must be an empty map, not nil", i)
+		}
 	}
 }
 

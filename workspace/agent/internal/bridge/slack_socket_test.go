@@ -22,7 +22,10 @@ func TestRouteSlackInboundIdentityGate(t *testing.T) {
 			injected = append(injected, name+"|"+text+"|"+source)
 			return "", nil
 		},
-		Operator: func(conv, text string) (string, error) { opCh <- conv + "|" + text; return "ok", nil },
+		Operator: func(conv, text, source string) (string, error) {
+			opCh <- conv + "|" + text + "|" + source
+			return "ok", nil
+		},
 	}
 	creds := slackReceiveCreds{botToken: "xoxb-tok", boundUser: "U9", botUserID: "UBOT"}
 
@@ -49,7 +52,7 @@ func TestRouteSlackInboundIdentityGate(t *testing.T) {
 	routeSlackInbound(slackInboundMsg{User: "U9", Text: "status?", Channel: "C1", TS: "t2", ThreadTS: "root-op"}, creds, deps)
 	select {
 	case got := <-opCh:
-		if got != "conv-op|status?" {
+		if got != "conv-op|status?|slack" {
 			t.Fatalf("operator turn got %q", got)
 		}
 	case <-time.After(2 * time.Second):

@@ -140,8 +140,11 @@ func TestAssistantModelPrefs(t *testing.T) {
 	if got, ok := aiShortModelPref("opencode"); !ok || got != "" {
 		t.Fatalf("explicit short default = %q, %v", got, ok)
 	}
-	if _, ok := aiShortModelPref("codex"); ok {
-		t.Fatal("missing backend must remain distinguishable from explicit default")
+	// A missing backend reads as "recommended" — what the Console's settings row shows for it
+	// (fillRecommendedModelMaps) — and stays distinguishable from the explicit default "" above
+	// (#972 review, round 3: it used to be a third state the screen could not name).
+	if got, ok := aiShortModelPref("codex"); !ok || got != chatx.AssistantRecommendedModel {
+		t.Fatalf("missing backend = %q, %v, want recommended", got, ok)
 	}
 	if got, ok := aiProseModelPref("claude"); !ok || got != "sonnet" {
 		t.Fatalf("prose model = %q, %v", got, ok)
@@ -150,6 +153,17 @@ func TestAssistantModelPrefs(t *testing.T) {
 	// the whole point of the split.
 	if got, _ := aiShortModelPref("claude"); got != "haiku" {
 		t.Fatalf("short model = %q", got)
+	}
+	// A kind missing from a map that exists does not reach back to the legacy key: the Console
+	// copies the legacy map only when the new key is absent altogether.
+	writeUIPrefs(t, `{"assistantUtilityModels":{"codex":"gpt-5.4-mini"},"aiShortModels":{"claude":"haiku"}}`)
+	if got, _ := aiShortModelPref("codex"); got != chatx.AssistantRecommendedModel {
+		t.Fatalf("missing from the new map = %q, want recommended (not the legacy value)", got)
+	}
+	// Nothing saved at all is a new member's DEFAULTS: "recommended".
+	writeUIPrefs(t, `{}`)
+	if got, _ := aiProseModelPref("agy"); got != chatx.AssistantRecommendedModel {
+		t.Fatalf("no prefs = %q, want recommended", got)
 	}
 }
 

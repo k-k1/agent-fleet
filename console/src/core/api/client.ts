@@ -717,13 +717,16 @@ export async function chatStream(
   content: string,
   h: ChatStreamHandlers,
   signal?: AbortSignal,
+  // source: set when the Console sends on the member's behalf ("handoff"); stored on the user
+  // message so the composer's ↑ history skips it. Omitted for composer input.
+  source?: string,
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetch(rel(`api/chat/conversations/${encodeURIComponent(id)}/stream`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(source ? { content, source } : { content }),
       signal,
     });
   } catch {
@@ -795,6 +798,28 @@ export async function chatStream(
 // authority.
 export const sessionSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/lock`, "POST", { locked });
+// Delete a session: the Agent moves it to the cleanup trash, where it can be restored
+// (ADR 0101). stop = stop it first if it is running (otherwise a running one answers 409).
+// Written for an Agent older than ADR 0101 too, since the Console can be newer than it:
+//   - reclaim=1: without it such an Agent forgot the session WITHOUT the trash;
+//   - it does not know stop=1 and answers a running session 409 session_running, so with
+//     stop the session is halted and the delete tried once more. A current Agent halts it
+//     itself and never answers session_running to stop=1 (a session resumed mid-delete is
+//     session_resumed, which is NOT retried: that would stop someone's resumed session).
+export const sessionDelete = async (name: string, opts: { stop?: boolean } = {}): Promise<Response> => {
+  const url = `api/sessions/${encodeURIComponent(name)}?reclaim=1${opts.stop ? "&stop=1" : ""}`;
+  const res = await raw(url, { method: "DELETE" });
+  if (!opts.stop || res.status !== 409) return res;
+  const j = await res
+    .clone()
+    .json()
+    .catch(() => null);
+  const code = typeof j?.error === "object" ? j?.error?.code : j?.error;
+  if (code !== "session_running") return res;
+  const halted = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" });
+  if (!halted.ok) return res;
+  return raw(url, { method: "DELETE" });
+};
 // Attention beacon (docs/log/75 P3): tells the Workspace's idle clock that a person is
 // touching the Console right now. The response is ignored — a dropped presence record is
 // picked up by the next action. auto-start is not allowed, so this never wakes a stopped

@@ -119,6 +119,9 @@ var Entries = []string{
 	"completion-key",
 	"instr-ledger",
 	"browser-handoff-ledger",
+	// af-aws-exec's Console login requests and cancel markers (ADR 0102). Introduced
+	// directly under AgentStateDir, so run() no-ops on a source that was never there.
+	"aws-login",
 	// Per-boot / per-run state of the CLIs themselves.
 	"mcp-output-cursor",
 	"mcp-af-name",
@@ -143,6 +146,11 @@ var Entries = []string{
 	// 3), keyed by sid like the rest of this list. Also never existed under .config — it was
 	// introduced under AgentDataDir and only just moved onto this side.
 	"lcpp",
+	// af-aws-exec (issue #998): the one-profile configs it gives its children, and the last
+	// Settings > SSM list the CP returned. Both introduced directly under AgentStateDir,
+	// never under .config, so run() no-ops on them.
+	"aws-exec",
+	"aws-settings.json",
 }
 
 // markerName records which entries are finished, so an entry whose source could not be

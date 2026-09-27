@@ -186,6 +186,37 @@ type modelStatus struct {
 	SourceURL   string `json:"source_url,omitempty"`
 	// TypicalMS is how long a picture on THIS checkpoint usually takes, measured.
 	TypicalMS int64 `json:"typical_ms,omitempty"`
+	familyAdvice
+}
+
+// familyAdvice is the family row's advice to a person writing a prompt (ADR 0100 decision 7),
+// on the status route for the pane's family card and in get_image_studio's model facts. Empty
+// for a model whose family has no row: a card invented for it would advise on a dialect nobody
+// checked.
+type familyAdvice struct {
+	Dialect string `json:"dialect,omitempty"`
+	// DialectHow is Dialect as an instruction (comfyDialectHow). The pane draws its own words
+	// for the three values; an agent reading get_image_studio gets this.
+	DialectHow      string    `json:"dialect_how,omitempty"`
+	QualityPrefixes []string  `json:"quality_prefixes,omitempty"`
+	StepsRange      []int     `json:"steps_range,omitempty"`
+	CFGRange        []float64 `json:"cfg_range,omitempty"`
+	TrialSteps      int       `json:"trial_steps,omitempty"`
+}
+
+func familyAdviceFor(family string) familyAdvice {
+	r, ok := comfyFamilyRowFor(comfyFamily(family))
+	if !ok {
+		return familyAdvice{}
+	}
+	out := familyAdvice{Dialect: string(r.Dialect), DialectHow: comfyDialectHow(r.Dialect), QualityPrefixes: r.QualityPrefixes, TrialSteps: r.TrialSteps}
+	if r.StepsRange != [2]int{} {
+		out.StepsRange = r.StepsRange[:]
+	}
+	if r.CFGRange != [2]float64{} {
+		out.CFGRange = r.CFGRange[:]
+	}
+	return out
 }
 
 // loraStatus is one entry of providerStatus.Loras — see imagegen.LoraInfo. baseModel rides along
@@ -316,6 +347,7 @@ func applyStudio(ctx context.Context, p Provider, st *providerStatus) {
 			Knobs: m.Knobs, Ops: ops, MaxInputs: m.MaxInputs,
 			LicenseName: m.LicenseName, LicenseURL: m.LicenseURL,
 			SourceURL: m.SourceURL, TypicalMS: jobs.typicalFor(p.ID(), m.ID),
+			familyAdvice: familyAdviceFor(m.Family),
 		})
 	}
 	st.Loras = make([]loraStatus, 0, len(s.Loras))
@@ -552,6 +584,16 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 			Strength: body.Strength, Params: body.Params,
 		},
 	}
+	// The same gate as the queue's (ADR 0100 decision 4), and here it matters more: the codex and
+	// agy routes hand the path to a child process, which opens it after every check of ours. The
+	// set lives exactly as long as this synchronous call.
+	staged, st, err := stageRequestInputs(job.Request)
+	if err != nil {
+		writeGenerateErr(w, err)
+		return
+	}
+	defer removeInputSet(st.Set)
+	job.Request = staged
 	out, err := Run(r.Context(), job)
 	if err != nil {
 		writeGenerateErr(w, err)
@@ -569,6 +611,10 @@ func writeGenerateErr(w http.ResponseWriter, err error) {
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "imagegen_no_provider", err.Error())
 	case errors.Is(err, ErrUnknownProvider):
 		httpx.WriteErr(w, http.StatusBadRequest, "imagegen_unknown_provider", err.Error())
+	case errors.Is(err, errBadInput):
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_input", err.Error())
+	case errors.Is(err, errNoBrowseRoot):
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "no_browse_root", err.Error())
 	default:
 		httpx.WriteErr(w, http.StatusBadGateway, "imagegen_failed", err.Error())
 	}

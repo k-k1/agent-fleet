@@ -48,7 +48,7 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/types/chat.ts",
 			tsName:  "ChatMessage",
 			tsKeys: keySet("role", "content", "ts", "agent", "model", "steps", "session",
-				"delivered", "notice_key", "notice_args", "report_kind", "report_reason"),
+				"delivered", "notice_key", "notice_args", "report_kind", "report_reason", "source"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
 				"instr": "[gap] chatx.ChatMessage emits it but the Console's ChatMessage does not declare it.",
@@ -83,11 +83,9 @@ func agentContractFamilies() []contractFamily {
 			binding: cleanupManifestBinding,
 			tsPath:  "../../console/src/features/sessions/CleanupModal.tsx",
 			tsName:  "CleanupArchive",
-			tsKeys:  keySet("id", "at", "reason", "sessions", "branches"),
+			tsKeys:  keySet("id", "at", "reason", "sessions", "branches", "worktree", "bytes"),
 			tsOnly:  map[string]string{},
-			goOnly: map[string]string{
-				"worktrees": "[gap] cleanupManifest emits it but the Console's CleanupArchive does not declare it (the list of worktrees a cleanup deleted never reaches the screen).",
-			},
+			goOnly:  map[string]string{},
 		},
 
 		// Browser attachment state.
@@ -214,7 +212,7 @@ var chatMessageBinding = map[string]string{
 	"Role": "role", "Content": "content", "TS": "ts", "Agent": "agent", "Model": "model",
 	"Steps": "steps", "Session": "session", "Instr": "instr", "Delivered": "delivered",
 	"NoticeKey": "notice_key", "NoticeArgs": "notice_args", "ReportKind": "report_kind",
-	"ReportReason": "report_reason",
+	"ReportReason": "report_reason", "Source": "source",
 }
 
 var branchInfoBinding = map[string]string{
@@ -224,7 +222,7 @@ var branchInfoBinding = map[string]string{
 
 var cleanupManifestBinding = map[string]string{
 	"ID": "id", "At": "at", "Reason": "reason", "Sessions": "sessions",
-	"Branches": "branches", "Worktrees": "worktrees",
+	"Branches": "branches", "Worktree": "worktree", "Bytes": "bytes",
 }
 
 var browserAttachmentBinding = map[string]string{

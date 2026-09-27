@@ -279,7 +279,7 @@ RUN set -eux; \
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
 # が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/log/35 §35.4.1）。
 ARG BAKE_RTK=1
-ARG RTK_VERSION=0.49.0
+ARG RTK_VERSION=0.50.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -315,10 +315,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.278
+ARG CLAUDE_CODE_VERSION=2.1.283
 ARG OPENCODE_VERSION=1.18.32
-ARG CODEX_VERSION=0.155.1
-ARG COPILOT_VERSION=1.0.87
+ARG CODEX_VERSION=0.157.1
+ARG COPILOT_VERSION=1.0.88
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -344,10 +344,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.8
-ARG AGY_RELEASE_BUILD=4907747922280448
-ARG AGY_SHA256_X64=244752206d1f65c01aff489628f1df51f1a3fddacaa8ed74984661ebb6d09136
-ARG AGY_SHA256_ARM64=85ea71929436711e4b0332026508ee4e7ddb05192f24f1774dfbed879255fc6e
+ARG AGY_VERSION=1.2.11
+ARG AGY_RELEASE_BUILD=6016716732497920
+ARG AGY_SHA256_X64=c91c62c5e6fa954f5a7e1d7b9ad417d749db4aa60a4ba0b3d604dec1b645d190
+ARG AGY_SHA256_ARM64=01513bc61f9592353045ba801ebb407fbccb8984fcbfde591bc6b681b24e92bc
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -391,9 +391,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.09.15-d2fe57e
-ARG CURSOR_SHA256_X64=4b7b026dd104e935b216cc52f905a560d741fc80a4a4d62ef655735b96a15c97
-ARG CURSOR_SHA256_ARM64=2d741c12c3ee7a505584579efb28a0ee31ff13fefc1f347e2d3b43688c04620d
+ARG CURSOR_VERSION=2026.09.26-dd393fe
+ARG CURSOR_SHA256_X64=8085fd120f5c71f4eae7fea26a043718e5644e3071e4fab3220a0e58c51f9593
+ARG CURSOR_SHA256_ARM64=ab1178d0d8c10b254e7e427d1d673533a389338424e75034be9ab9da02845bde
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -433,9 +433,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.22.0
-ARG KIRO_SHA256_X64=7ec8078d67d5705ff7265a143b25dc1b37b82dabd009e1fce3bd9828a459e971
-ARG KIRO_SHA256_ARM64=7a0b20a11258ab7396b6f855047e444d3a295dfb75bb1e11b0a9832698e7857d
+ARG KIRO_VERSION=2.24.1
+ARG KIRO_SHA256_X64=89e26b61707a3a17bcf0d0dfa7043366d94b48bfe35e9605058bd5de4b7199ce
+ARG KIRO_SHA256_ARM64=95e149b0b5e2be3c6f56d4e5ed1bc5313d2596ef39255529a553027fd87abff5
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
@@ -450,12 +450,12 @@ ARG KIRO_SHA256_ARM64=7a0b20a11258ab7396b6f855047e444d3a295dfb75bb1e11b0a9832698
 #   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url（匿名）
 #   curl -s "<manifest_url>" | jq .artifacts.x86_linux,.artifacts.aarch64_linux
 # sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
-# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 313,800,920 B / 281,942,104 B。
+# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 347,850,968 B / 307,828,824 B（1.4.0-R4161.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.3.0-R3401.1
-ARG MUSE_SHA256_X64=71b089d055dfe6e4562092bc484896b61bd96fd6ef9fef9da54a14aa174e2a33
-ARG MUSE_SHA256_ARM64=5e5ea2a3de3a3fabdff8982aec9423d20eaa7dad05df37efb4264356d0d2e223
+ARG MUSE_VERSION=1.4.0-R4161.1
+ARG MUSE_SHA256_X64=1b68bd4518d53a2aaff063915df4d141b0a205e6d79038299d04e3a14e85a5b9
+ARG MUSE_SHA256_ARM64=38a0e3b7f59825ffc60f7fae65ac9727cf9bbb47fe4e687cc29cede9deb8fabf
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
@@ -686,9 +686,14 @@ COPY af-db.sh /usr/local/bin/af-db
 # アーキ変更後に利用者自身の ~/.local 導入物を同じ版で戻す（entrypoint から呼ばれる）。
 # entrypoint に埋めず別ファイルにしてあるのは、単体で走らせて検証できるようにするため。
 COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-arch-repair
+# Runs one command under one SSO profile's short-lived credentials, never the workload
+# role (issue #998). Same shape as af-db: the implementation is `workspace-agent aws-exec`.
+COPY af-aws-exec.sh /usr/local/bin/af-aws-exec
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
+# agent-fleet-caller.js (stamps the calling opencode session on af's MCP tools so a
+# Managed session can be told apart from its worktree mates, #989 — seeded likewise) +
 # rtk.ts (token-saving command rewrite, the opencode analog of claude's rtk hook —
 # seeded/removed by the agent per the ~/.config/agent-fleet/rtk.json toggle).
 COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/

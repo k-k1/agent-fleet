@@ -94,6 +94,12 @@ Each role takes one of three settings.
 Disabled the mode is disabled and the state says stopping, because the instance does not vanish the
 instant you press it. That is not a disagreement.
 
+Under an engine running on demand, **Stop after** is how many minutes it stays up after its last
+use before it stops itself. The field states its own minimum — the start deadline, so an engine
+is never stopped while it is still starting — and takes at most 24 hours. A saved value applies
+from the controller's next pass and is written to the audit log. An externally managed engine has
+no such field: it is never stopped from here.
+
 ⚠️ **The first request waits.** A request to a stopped engine answers after roughly three
 minutes, the time it takes to buy an instance and load the model (the call itself completes in one
 go — nothing has to be retried). Before time-critical work you can warm it up by switching to
@@ -173,7 +179,9 @@ Taking a model in is one press: **search** the model, press **add** on its card,
 card shows and press **take in**. The plan lists every file the model needs, one line each, with
 what that press costs — a download in MiB, or **no download (already held)** / **no download
 (moved inside the bucket)** when the deployment already has the bytes — then the licence and any
-warnings the source carries. The Control Plane decides where each file goes and which parts the
+warnings the source carries. A warning also names a part the family needs — a text encoder, a
+VAE — whose destination another row already declares or an unfinished ingest job has recorded,
+and says what to do first: complete that row, or dismiss that job. The Control Plane decides where each file goes and which parts the
 family needs; nothing on the card asks for a role, a key or a file name, and a model split across
 several files goes in with the same single press. The search can be narrowed to one **Family**
 (the default is **Every family**), and it finds repositories laid out for ComfyUI as well as the
@@ -246,18 +254,42 @@ ceiling is still shown, labelled as one. This matters more than it sounds: a 27B
 66,560 MiB at a 262,144-token window and 8,320 MiB at 32,768, so a screen that priced the cache at
 the ceiling reported every large model as impossible.
 
+A registered card whose source can be read back carries one more press: **Other sizes…** on a
+chat model from a Hugging Face repository (the same ladder, reached from any of its rows) and
+**Other versions…** on an image model from Civitai (the model's other versions, each with its
+size, whether it fits and whether it is already held; a version whose size the source does not
+give shows no verdict). Both end on the ordinary plan card. Taking one in makes a new row — to
+swap, press **Start with this** on the new row, then forget the old one. The catalogue also keeps
+its search results, filters and scroll position while you look at another tab.
+
 A row can be kept in order after the fact. Its **Files** list records where each file came from,
 linked as **Source page**. **Edit** on the row changes the description, the family, the measured
 VRAM, a chat model's context window and max output, a LoRA's **trigger words** and the generation
 **Parameters**.
 
+The verdict from the plan card is on a chat model's **Edit** too, with **Use the largest this
+class holds (n)** as one press. And changing the role's GPU class re-fits every row's window to
+the new class by itself, listing what moved (old → new) and what could not be fitted, with the
+reason. It takes effect the next time the engine starts — a running engine keeps the window it was
+started with.
+
 For the image families somebody on this deployment has actually measured, both screens — the plan
 card and **Edit** — print that measurement beside the field, with the conditions it was taken
-under (the picture size, the batch, how many reference pictures). **Edit** offers it as one press;
-the ingest never writes it. That is deliberate: this column means "the operator measured it", and
+under (the GPU it was measured on, the picture size, the batch, how many reference pictures — the
+same run reads higher on a larger GPU, where nothing has to be offloaded). **Edit** offers it as
+one press; the ingest never writes it. That is deliberate: this column means "the operator measured it", and
 the deployment sizes the GPU it buys from it. Left blank, the ladder falls back to the sum of the
 row's files, which for a split family is well above what the run uses — 28,676 MiB against a
 measured 20,862 for Qwen-Image-Edit — and buys a larger instance than the model needs.
+
+Three of the image families are instruction editors, and each goes in as a split family with
+parts of its own. **Qwen-Image-Edit 2509** and **2511** edit and inpaint only — no plain
+generation, no strength, no size choice — from up to three reference pictures. **Qwen-Image 2.1**
+both generates and edits (up to ten references) and **shares no file with them**: its
+autoencoder is a different one that the loader accepts and decodes to noise, so its parts are
+taken in as files of their own even where the edit families' are already held. A Qwen-Image 2.1
+row also needs the image engine's ComfyUI at **v0.37.0 or newer** — on an older one the row
+registers and enables, and every request fails at the engine.
 
 When a press is refused because something already holds its destination, the
 card names it — **held by** the registered row, the ingest job, the bucket object or the running
@@ -312,8 +344,8 @@ known"** — nothing is padded out with a zero or a "not scheduled", so read the
 - **Instance started** — when the GPU instance joined the cluster, how long ago that was, and the
   instance id. If it says **Service updated** instead, no instance was found; that timestamp also
   moves on a deployment update, so it is not the instance's own lifetime.
-- **Stops by itself** — shown only for an engine running on demand. **It is absent under Always
-  on**, because it does not stop. Same for Disabled and for an engine that is already stopped:
+- **Stops by itself** — shown only for an engine running on demand, at the time **Stop after**
+  gives it. **It is absent under Always on**, because it does not stop. Same for Disabled and for an engine that is already stopped:
   the absence is the answer.
 - **Requests in the last N min** — how many arrived in that window. ⚠️ This count lives in the
   **control plane's own memory**, so it resets to zero when the control plane is replaced. Until

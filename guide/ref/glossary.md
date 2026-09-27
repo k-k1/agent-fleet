@@ -32,6 +32,7 @@ thing.
 | Shared session | session share | Showing a conversation read-only to another member of the same tenant |
 | Handoff | handoff | Passing a conversation to a new session, or to another member |
 | Fork | fork at message | Starting a new session from a past point in an existing conversation |
+| Child session | spawn / origin `session` | A session another session started and handed a task to. The parent may list, watch, stop, resume and rename the children it started, and nothing else; deleting one is yours. See [02 Sessions](../member/02-sessions.md#starting-sessions-from-a-session-child-sessions) |
 | Work item | work item | An issue, ticket or pull request pulled in from a provider. See [repos.md](repos.md) |
 | Memo queue | memo | Instructions parked now and sent to a session later, in a batch |
 | Cleanup / trash | cleanup / shelf | The sweep of stopped sessions, stale worktrees and merged branches. What it removes is stashed and can be restored |
@@ -50,7 +51,13 @@ thing.
 | Family | family / `base_model` | The checkpoint's lineage — SD 1.5, SDXL, SD 3.5, FLUX.1, FLUX.2 klein, Z-Image, Anima, Krea 2. It decides the workflow, the default size and which settings are read. The image-generation pane's card for it |
 | Plan card | ingest plan / `plan_token` | The quote shown before a model is taken in: every file it needs, what each costs (a download in MiB, or nothing when the bytes are already held), the licence and the warnings. Not the chat plan card a session asks you to approve |
 | S3 Bucket | ledger / object store | The tab ("Bucket") that lists what the deployment's storage actually holds — including objects no catalogue row declares — and lets you register, move or delete them |
-| Image generation (pane) | imagegen studio | The pane that makes pictures on the deployment's ComfyUI without an agent: trial run, batches, seeds, LoRAs |
+| Image generation (pane) | imagegen pane | The pane that makes pictures on the deployment's ComfyUI without an agent: trial run, batches, seeds, LoRAs |
+| Studio | image studio / `ImageStudio` / `studios/<id>.json` | One image-generation draft and the zero or one session bound to it. It has an id of its own, so switching agents keeps the draft, the edit history and the versions. A person presses generate; the agent refines the draft and may trial one picture |
+| Draft | draft | What is in a studio's form (prompt, negative, knobs, size, LoRAs, operation, reference images, model). Both the agent and you write it; a per-field lock stops the agent's writes |
+| Edit history | draft log / `studios/<id>.log.jsonl` | One entry per change to the draft (time, writer, each changed field before and after). "Restore this point" deletes nothing; the restore is itself an entry |
+| Version | version / `press` line | A copy of the draft at the moment trial, enqueue or the agent's trial was pressed. A picture remembers the version it came from, and "Restore these settings" returns to that version's draft |
+| Input set (not on screen) | input set / `~/.cache/agent-fleet/generated/console/inputs/<set>/` | The fixed copy of the reference and mask images taken at enqueue. The renderer reads the copy, never the original, so swapping the original afterwards changes nothing. It goes when its group finishes |
 | Image gallery | gallery pane | A folder's pictures as cards, with folders, covers, counts and an enlarged view |
+| Fleet graph | fleetgraph pane | One lane per session, time running left to right: which session started which, what passed between them, and when each was working, waiting or idle. The elapsed counterpart of the sessions overview |
 | LoRA | LoRA adapter | A small add-on trained against one family that steers a checkpoint's style or subject. Listed only for the family it matches |
 | Trigger words | trigger words | The words a LoRA needs in the prompt to do anything. Shown on its row before you pick it, and added as chips when you do |

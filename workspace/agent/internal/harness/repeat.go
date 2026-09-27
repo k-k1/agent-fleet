@@ -23,11 +23,21 @@ package harness
 // (re-running `go test` after each edit, confirming a build twice) and far below the
 // 72-in-a-row failure it exists to catch.
 //
-// Known limitation: this gate only ever looks at an unbroken RUN of the same call
-// (repeatTracker resets on anything different in between). An A, B, A, B, ...
-// alternating pattern is never flagged, no matter how long it runs — not what the
-// measured incident did, but a gap this design leaves open on purpose rather than by
-// oversight.
+// That risk came true (ADR 0093 debt 2): on later live runs the gate fired zero times
+// while coder called one tool six turns running with different arguments each time. The
+// name-streak half of this file (nameStreakTracker) is the answer: it ignores arguments
+// and counts consecutive assistant turns that call only one tool name, with thresholds
+// set from every trial log in that series — the longest such run in a PASSING session
+// was 6 turns (gemma-4 `bash`, gpt-oss `read`), the incident was 72. Because the
+// arguments differ, each call may be genuine progress, so its warn stage still runs the
+// call and only prefixes the result with a notice; its abort stage stops Run exactly
+// like the exact-call gate's.
+//
+// The exact-call half also recognizes cycles: the same sequence of 2 to
+// maxRepeatCyclePeriod exact calls repeated back to back (read a, read b, read a, read b,
+// ...), which a streak of identical calls never sees. Gemini CLI's loop detector and
+// OpenHands' stuck detector both flag this shape; neither live incident here did it.
+// A cycle is exact repetition, so its warn stage intercepts like the streak's does.
 
 import (
 	"encoding/json"
@@ -57,6 +67,29 @@ const (
 	defaultRepeatAbortAfter = 8
 )
 
+// defaultRepeatNameWarnAfter and defaultRepeatNameAbortAfter are Runtime.
+// RepeatNameWarnAfter/RepeatNameAbortAfter's fallback for <=0. Warn is twice the longest
+// same-name run measured in a passing session (6 turns); abort stays far below the 72-turn
+// incident. Lowering either toward 6 starts interrupting sessions that were working.
+// defaultRepeatCycleWarnAfter and defaultRepeatCycleAbortAfter are Runtime.
+// RepeatCycleWarnAfter/RepeatCycleAbortAfter's fallback for <=0, counted in full
+// repetitions of the cycle. Legitimate work that alternates two steps changes an
+// argument in between (a different edit before each test run), so it never forms an
+// exact cycle; that is why these can sit as low as the exact streak's thresholds.
+const (
+	defaultRepeatCycleWarnAfter  = 3
+	defaultRepeatCycleAbortAfter = 5
+)
+
+// maxRepeatCyclePeriod is the longest cycle, in calls, the tracker looks for. Gemini
+// CLI looks for cycles up to 5; 4 covers alternating pairs and two-call pairs.
+const maxRepeatCyclePeriod = 4
+
+const (
+	defaultRepeatNameWarnAfter  = 12
+	defaultRepeatNameAbortAfter = 20
+)
+
 // repeatAction is what the gate decided about one ToolCall, based on the length of
 // the identical-call streak it extends.
 type repeatAction int
@@ -67,12 +100,29 @@ const (
 	repeatAbort
 )
 
-// repeatDecision pairs the action with the streak length it was decided from, so the
-// warn-stage message and Result's bookkeeping can report a real count instead of a
-// vague "you're repeating yourself".
+// repeatDecision pairs the action with the repetition it was decided from, so the
+// messages can report a real count instead of a vague "you're repeating yourself".
+// period is 0 for a streak of identical calls; otherwise the decision came from a
+// cycle of period calls repeated cycles times.
 type repeatDecision struct {
-	action repeatAction
-	streak int
+	action         repeatAction
+	streak         int
+	period, cycles int
+}
+
+// what describes the repetition for the model and for Run's error.
+func (d repeatDecision) what(call ToolCall) string {
+	if d.period > 0 {
+		return fmt.Sprintf("%s is part of the same sequence of %d calls, repeated with the exact same arguments %d times in a row", call.Name, d.period, d.cycles)
+	}
+	return fmt.Sprintf("%s has now been called with the exact same arguments %d times in a row, with nothing else in between", call.Name, d.streak)
+}
+
+// repeatObservation is what repeatTracker.note saw: the identical-call streak, and
+// the strongest cycle (most repetitions; period 0 when there is none).
+type repeatObservation struct {
+	streak         int
+	period, cycles int
 }
 
 // repeatTracker counts an unbroken run of canonically-identical tool calls. loop.go's
@@ -82,12 +132,15 @@ type repeatDecision struct {
 type repeatTracker struct {
 	last  string
 	count int
+	// recent holds the last maxRepeatCyclePeriod keys, oldest first; runs[p] counts
+	// consecutive calls that equalled the call p positions before them.
+	recent []string
+	runs   [maxRepeatCyclePeriod + 1]int
 }
 
-// note folds call into the tracker and returns the new streak length: 1 if call
-// differs from the immediately preceding one, or one more than the preceding streak
-// if it is the same call again.
-func (t *repeatTracker) note(call ToolCall) int {
+// note folds call into the tracker. streak is 1 if call differs from the immediately
+// preceding one, or one more than the preceding streak if it is the same call again.
+func (t *repeatTracker) note(call ToolCall) repeatObservation {
 	key := canonicalCall(call)
 	if key == t.last {
 		t.count++
@@ -95,7 +148,27 @@ func (t *repeatTracker) note(call ToolCall) int {
 		t.last = key
 		t.count = 1
 	}
-	return t.count
+	obs := repeatObservation{streak: t.count}
+	for p := 2; p <= maxRepeatCyclePeriod; p++ {
+		if len(t.recent) >= p && t.recent[len(t.recent)-p] == key {
+			t.runs[p]++
+		} else {
+			t.runs[p] = 0
+		}
+		// A constant block (a, a, a, a) is the identical-call streak's job; counting it
+		// here too would report the same repetition twice under a vaguer name.
+		if t.count >= p {
+			continue
+		}
+		if cycles := (t.runs[p] + p) / p; cycles >= 2 && cycles > obs.cycles {
+			obs.period, obs.cycles = p, cycles
+		}
+	}
+	t.recent = append(t.recent, key)
+	if len(t.recent) > maxRepeatCyclePeriod {
+		t.recent = t.recent[1:]
+	}
+	return obs
 }
 
 // canonicalCall is the gate's definition of "the same call": the tool name plus its
@@ -128,11 +201,40 @@ func canonicalArgs(raw string) string {
 	return string(b)
 }
 
-// repeatGate is a Runtime's RepeatWarnAfter/RepeatAbortAfter/RepeatGateDisabled,
-// resolved once per Run (newRepeatGate) rather than re-read from rt on every call.
+// nameStreakTracker counts consecutive assistant turns whose tool calls all use one
+// tool name, whatever their arguments. It is kept per turn, not per call: one turn that
+// reads eight files in parallel is a single step, and the live logs the defaults come
+// from were counted in turns. A turn mixing tool names breaks the streak.
+type nameStreakTracker struct {
+	name  string
+	count int
+}
+
+// note folds one turn's calls into the tracker and returns the new streak length (0
+// for a turn that mixes tool names).
+func (t *nameStreakTracker) note(calls []ToolCall) int {
+	name := calls[0].Name
+	for _, c := range calls[1:] {
+		if c.Name != name {
+			t.name, t.count = "", 0
+			return 0
+		}
+	}
+	if name == t.name {
+		t.count++
+	} else {
+		t.name, t.count = name, 1
+	}
+	return t.count
+}
+
+// repeatGate is a Runtime's repeat-gate fields, resolved once per Run (newRepeatGate)
+// rather than re-read from rt on every call.
 type repeatGate struct {
-	warnAfter, abortAfter int
-	disabled              bool
+	warnAfter, abortAfter           int
+	cycleWarnAfter, cycleAbortAfter int
+	nameWarnAfter, nameAbortAfter   int
+	disabled                        bool
 }
 
 // newRepeatGate resolves rt's repeat-gate fields, applying defaultRepeatWarnAfter/
@@ -152,21 +254,66 @@ func newRepeatGate(rt *Runtime) repeatGate {
 	if abortAfter <= 0 {
 		abortAfter = defaultRepeatAbortAfter
 	}
-	return repeatGate{warnAfter: warnAfter, abortAfter: abortAfter}
+	cycleWarnAfter := rt.RepeatCycleWarnAfter
+	if cycleWarnAfter <= 0 {
+		cycleWarnAfter = defaultRepeatCycleWarnAfter
+	}
+	cycleAbortAfter := rt.RepeatCycleAbortAfter
+	if cycleAbortAfter <= 0 {
+		cycleAbortAfter = defaultRepeatCycleAbortAfter
+	}
+	nameWarnAfter := rt.RepeatNameWarnAfter
+	if nameWarnAfter <= 0 {
+		nameWarnAfter = defaultRepeatNameWarnAfter
+	}
+	nameAbortAfter := rt.RepeatNameAbortAfter
+	if nameAbortAfter <= 0 {
+		nameAbortAfter = defaultRepeatNameAbortAfter
+	}
+	return repeatGate{
+		warnAfter: warnAfter, abortAfter: abortAfter,
+		cycleWarnAfter: cycleWarnAfter, cycleAbortAfter: cycleAbortAfter,
+		nameWarnAfter: nameWarnAfter, nameAbortAfter: nameAbortAfter,
+	}
 }
 
-// decide turns a streak length into what the loop should do about the call that just
-// extended it.
-func (g repeatGate) decide(streak int) repeatDecision {
+// decide turns what the tracker observed into what the loop should do about the call
+// that was just noted: the more severe of the streak's and the cycle's verdicts.
+func (g repeatGate) decide(obs repeatObservation) repeatDecision {
+	d := repeatDecision{action: stage(obs.streak, g.warnAfter, g.abortAfter), streak: obs.streak}
+	if obs.period > 0 {
+		if a := stage(obs.cycles, g.cycleWarnAfter, g.cycleAbortAfter); a > d.action {
+			d = repeatDecision{action: a, streak: obs.streak, period: obs.period, cycles: obs.cycles}
+		}
+	}
+	if g.disabled {
+		d.action = repeatRun
+	}
+	return d
+}
+
+func stage(n, warnAfter, abortAfter int) repeatAction {
+	switch {
+	case n >= abortAfter:
+		return repeatAbort
+	case n >= warnAfter:
+		return repeatWarn
+	default:
+		return repeatRun
+	}
+}
+
+// decideName is decide's counterpart for a same-name turn streak.
+func (g repeatGate) decideName(streak int) repeatAction {
 	switch {
 	case g.disabled:
-		return repeatDecision{action: repeatRun, streak: streak}
-	case streak >= g.abortAfter:
-		return repeatDecision{action: repeatAbort, streak: streak}
-	case streak >= g.warnAfter:
-		return repeatDecision{action: repeatWarn, streak: streak}
+		return repeatRun
+	case streak >= g.nameAbortAfter:
+		return repeatAbort
+	case streak >= g.nameWarnAfter:
+		return repeatWarn
 	default:
-		return repeatDecision{action: repeatRun, streak: streak}
+		return repeatRun
 	}
 }
 
@@ -175,16 +322,16 @@ func (g repeatGate) decide(streak int) repeatDecision {
 // error (executeOne's own "error: …" convention for a declined/failed call) so the
 // model reacts to it as something that needs a different next step, not as an
 // ordinary result it can shrug off.
-func repeatWarnMessage(call ToolCall, streak int) string {
+func repeatWarnMessage(call ToolCall, d repeatDecision) string {
 	return fmt.Sprintf(
-		"error: repeated tool call — %s has now been called with the exact same arguments %d times in a row, with nothing else in between. This call was NOT executed. Stop repeating it: do something different, or explain what is actually still needed.",
-		call.Name, streak,
+		"error: repeated tool call — %s. This call was NOT executed. Stop repeating it: do something different, or explain what is actually still needed.",
+		d.what(call),
 	)
 }
 
 // repeatAbortErr is the error Run returns once the gate's abort stage trips.
-func repeatAbortErr(call ToolCall, streak int) error {
-	return fmt.Errorf("%s called with the exact same arguments %d times in a row, with nothing else in between: %w", call.Name, streak, ErrRepeatedToolCall)
+func repeatAbortErr(call ToolCall, d repeatDecision) error {
+	return fmt.Errorf("%s: %w", d.what(call), ErrRepeatedToolCall)
 }
 
 // repeatAbortToolMessage is the RoleTool content Run attaches, for EVERY call in the
@@ -197,15 +344,42 @@ func repeatAbortErr(call ToolCall, streak int) error {
 // the model to do something else and continue", the abort stage's whole reason for
 // being recoverable rather than just fatal — can hand Result.Messages straight back
 // to a fresh Run call and get a sendable request, not a malformed one.
-func repeatAbortToolMessage(call, aborted ToolCall, streak int) string {
+func repeatAbortToolMessage(call, aborted ToolCall, d repeatDecision) string {
 	if call.ID == aborted.ID {
 		return fmt.Sprintf(
-			"error: repeated tool call — %s has now been called with the exact same arguments %d times in a row, with nothing else in between. This session has been stopped; this call was NOT executed.",
-			call.Name, streak,
+			"error: repeated tool call — %s. This session has been stopped; this call was NOT executed.",
+			d.what(aborted),
 		)
 	}
 	return fmt.Sprintf(
-		"error: not executed — this turn was stopped because %s was called with the exact same arguments %d times in a row, with nothing else in between.",
-		aborted.Name, streak,
+		"error: not executed — this turn was stopped because %s.",
+		d.what(aborted),
+	)
+}
+
+// repeatNameWarnNotice is prefixed to the real result of each call in a turn that
+// extended a same-name streak past the warn stage (a call the exact-call gate
+// intercepted keeps its own error instead). The call did run — with different
+// arguments it may be genuine progress — which is why this is a notice in front of
+// the output rather than an "error:" in place of it.
+func repeatNameWarnNotice(name string, turns int) string {
+	return fmt.Sprintf(
+		"note: %s has now been the only tool called for %d turns in a row. If this is not getting closer to the goal, stop and change approach, or answer with what you have.\n\n",
+		name, turns,
+	)
+}
+
+// repeatNameAbortErr is the error Run returns once a same-name streak reaches
+// Runtime.RepeatNameAbortAfter.
+func repeatNameAbortErr(name string, turns int) error {
+	return fmt.Errorf("%s was the only tool called for %d turns in a row: %w", name, turns, ErrRepeatedToolCall)
+}
+
+// repeatNameAbortToolMessage answers every call of the turn that tripped the name
+// abort, for the same sendable-history reason as repeatAbortToolMessage.
+func repeatNameAbortToolMessage(name string, turns int) string {
+	return fmt.Sprintf(
+		"error: not executed — %s has been the only tool called for %d turns in a row. This session has been stopped.",
+		name, turns,
 	)
 }

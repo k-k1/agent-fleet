@@ -111,6 +111,8 @@ idle セッションはどれも動かさない）。
 - `WriteSessionMetaKeepingLock` に arm を足すのを忘れると、数秒ごとの一覧ポーリングが
   古いスナップショットを書き戻して arm を消す。ロックと keep-awake ピンが既に踏んでいる罠で、
   こちらは「押したのに効かないボタン」より悪い（バッジは出たまま、停止だけが来ない）。
+  🔴 2026-09-25 追記: この罠は構造ごと無くなった。`WriteSessionMetaKeepingLock` は廃止され、一覧は
+  `UpdateSessionMeta` で今のメタに `StoppedAt` だけを書く（Issue #950）。守る欄を足し忘れる余地が無い。
 
 ## 85.7 やっていないこと（v1 の範囲外）
 

@@ -1,6 +1,7 @@
 # 108. opencode で「配備の借用エンジン」と「メンバー個人の LAN llama-server」を両建てできるか——調査のみ
 
 - 状態: **調査のみ。実装は無し、ADR も起こしていない。LAN 実機には一切触っていない。**
+  → 予定しない。両建ては段 0（`opencode.jsonc` の手書き）で行う。メンバーが段 0 を実際に使って状態表示などを求めたら、§4 末尾の判断（`allow_engine_llm` を迂回する整理を opencode にも広げてよいか）から再開（2026-09-25）
 - 依頼: `[agent-fleet:spawn from=sjqlfyj]`。opencode セッションで、配備の借用 llm provider
   (Control Plane 経由、ADR 0071)と、メンバー自身の LAN llama-server provider(直結)を
   両建てできるかをコードから検討し、根拠付きで記録する。

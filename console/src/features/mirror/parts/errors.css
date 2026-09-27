@@ -11,16 +11,16 @@
    point is that a failed turn used to be indistinguishable from a finished one. */
 .mirror-error {
   margin: 4px 0;
-  border: 1px solid color-mix(in srgb, var(--del) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--err) 45%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--del) 8%, transparent);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
 }
 .mirror-error-head {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  color: var(--del);
+  color: var(--err);
 }
 .mte-title {
   font-size: 12px;
@@ -49,7 +49,7 @@
   margin: 0 8px 6px 26px;
   padding: 6px 8px;
   border-radius: 5px;
-  background: color-mix(in srgb, var(--del) 10%, transparent);
+  background: color-mix(in srgb, var(--err) 10%, transparent);
 }
 .mef-msg {
   flex: 1 1 220px;
@@ -63,16 +63,16 @@
   gap: 5px;
   flex: 0 0 auto;
   padding: 3px 10px;
-  border: 1px solid color-mix(in srgb, var(--del) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--err) 55%, transparent);
   border-radius: 5px;
   background: var(--bg);
-  color: var(--del);
+  color: var(--err);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 .mef-action:hover {
-  background: color-mix(in srgb, var(--del) 14%, var(--bg));
+  background: color-mix(in srgb, var(--err) 14%, var(--bg));
 }
 /* The same recovery row once the login has been renewed (ErrorBlock `resolved`). It is a
    statement, not an offer, so there is no button and no red: the failure itself stays red

@@ -269,6 +269,23 @@ export function EnginesAdminView() {
     }
   };
 
+  const setIdle = async (key: string, idleSecs: number) => {
+    setBusy(key + "/idle");
+    try {
+      const d = await apiJSON(`api/admin/engines/${encodeURIComponent(key)}/idle`, "PUT", {
+        idle_secs: idleSecs,
+      });
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+    } finally {
+      setBusy("");
+    }
+  };
+
   if (rows === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
   return (
@@ -373,6 +390,13 @@ export function EnginesAdminView() {
           </div>
           )}
           {isSuper && <EngineStatus row={e} />}
+          {isSuper && !engineIsExternal(e) && e.mode === "ondemand" && e.idle_secs !== undefined && (
+            <EngineIdle
+              row={e}
+              busy={busy === e.key + "/idle"}
+              onSave={(seconds) => setIdle(e.key, seconds)}
+            />
+          )}
           {/* The GPU ladder is a choice of box to buy. An external row has no box and no rungs,
               so the section is absent rather than empty (ADR 0076 decision 1). */}
           {isSuper && !engineIsExternal(e) && (
@@ -457,6 +481,36 @@ export function EnginesAdminView() {
           It is unconditional otherwise: a deployment with no engine row yet still has a
           membership to mint for, and the borrowing side is stood up before the engines are. */}
       {isSuper && <EngineIssueTokenPanel />}
+    </div>
+  );
+}
+
+function EngineIdle({ row, busy, onSave }: { row: EngineRow; busy: boolean; onSave: (seconds: number) => void }) {
+  const tr = useT();
+  const saved = Math.round((row.idle_secs || 0) / 60);
+  const minimum = Math.max(1, Math.ceil((row.idle_min_secs || 60) / 60));
+  const [draft, setDraft] = useState(String(saved));
+  useEffect(() => setDraft(String(saved)), [saved]);
+  const minutes = Number(draft);
+  const valid = Number.isInteger(minutes) && minutes >= minimum && minutes <= 1440;
+  return (
+    <div className="engines-negative">
+      <label className="engines-model-add-row">
+        <span>{tr("admin.engines_idle_label")}</span>
+        <input
+          type="number"
+          min={minimum}
+          max={1440}
+          step={1}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <span>{tr("admin.engines_idle_minutes")}</span>
+        <button type="button" disabled={busy || !valid || minutes === saved} onClick={() => onSave(minutes * 60)}>
+          {tr("common.save")}
+        </button>
+      </label>
+      <p className="muted">{tr("admin.engines_idle_hint").replace("{m}", String(minimum))}</p>
     </div>
   );
 }

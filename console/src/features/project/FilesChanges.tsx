@@ -20,6 +20,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
 import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
+import { MiddleEllipsis } from "../files/MiddleEllipsis.tsx";
 import { useReposStore } from "../repos/store.ts";
 import { orderedRepos } from "../../lib/project.ts";
 import { useActiveWorkingSet, folderBase } from "../../lib/workingSetsStore.ts";
@@ -230,7 +231,9 @@ export function FilesChanges() {
                       <span className="fs-ic">
                         <FileIcon name={rel.split("/").pop() || ""} />
                       </span>
-                      {rel}
+                      <span className="fs-name">
+                        <MiddleEllipsis text={rel} />
+                      </span>
                     </span>
                     {/* ⋯ — the same menu the right-click opens, for pointers that
                         have no right button and for keyboard reach. */}

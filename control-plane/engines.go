@@ -511,6 +511,7 @@ func engineSettingsFor(key string) engineSettings {
 		modeAt:   "engine_" + key + "_mode_at",
 		demandAt: "engine_" + key + "_demand_at",
 		negative: "engine_" + key + "_negative",
+		idle:     "engine_" + key + "_idle_sec",
 	}
 }
 
@@ -1224,11 +1225,14 @@ func (e *engineRuntimeState) warm(ctx context.Context) bool {
 // reads the idle window out of this to say when the engine will stop by itself, and a zero
 // there is configured to mean "never stops", which is the opposite of the truth for a managed
 // engine that simply has no loop attached in this process.
-func (e *engineRuntimeState) controlCfg() engineControlCfg {
+func (e *engineRuntimeState) controlCfg(ctx context.Context) engineControlCfg {
+	var cfg engineControlCfg
 	if e.ctrl != nil {
-		return e.ctrl.cfg
+		cfg = e.ctrl.cfg
+	} else {
+		cfg = engineControlCfgFor(e.def)
 	}
-	return engineControlCfgFor(e.def)
+	return engineControlCfgWithStoredIdle(ctx, cfg, e.settings, engineSettingsFor(e.def.Key).idle)
 }
 
 // modelIDs are the ids this engine's provider offers, as <provider>/<id>. Read from the

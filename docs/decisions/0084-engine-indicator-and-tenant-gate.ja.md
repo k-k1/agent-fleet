@@ -10,6 +10,7 @@
   🟢 **着工前に 2026-09-14 レビュー済み。** 行番号は全部ツリーで引き直した。未解決のうち 2 つは
   ソースから答えが出たのでその答えごと閉じ（2 と 6——どちらも「CP からは見えない」）、
   決定 9 の穴は書かれていたより狭いと分かった。
+  状態の更新（2026-09-24）: P0 は実装済み。3 レーンとも 2026-09-14 にマージした——P0-A は CP のインジケータ（#666、`control-plane/engine_member.go`）、P0-B は Console のピル（#663、`console/src/features/engines/EnginesPill.tsx`）、P0-C はテナントゲート（#664、`control-plane/limits.go` の `allow_engine_llm` / `allow_engine_image`）。P1・P2 と名の付いた変更は履歴に無い。
 - 関連: [0071](0071-self-hosted-inference-engines.ja.md)（エンジンのインスタンス・オンデマンド制御・
   コールドスタート・ゲートウェイ） /
   [0082](0082-many-image-engines-at-once.ja.md)（**images 行それ自体が 1 provider**。

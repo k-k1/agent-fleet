@@ -35,8 +35,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -80,6 +82,21 @@ const SessionOutputTailBytes = 32 << 10
 // It is deliberately not a tool argument: native conversation ids such as
 // CLAUDE_CODE_SESSION_ID are provider-specific and must never decide AF ownership.
 var mcpSourceSession string
+
+// mcpCallerSIDArg is the reserved tools/call argument the AF opencode plugin
+// (workspace/opencode-plugin/agent-fleet-caller.js) stamps with the calling opencode
+// session id — the one per-call identity a Managed opencode session can deliver, since its
+// sessions share one MCP child per directory (#989). The id is not an AF identity by itself:
+// mcpCallerSession only uses it as a key into AF's own slot → opencode-session mapping, in
+// line with mcpSourceSession's rule that a native id must never decide ownership.
+const mcpCallerSIDArg = "_af_caller_sid"
+
+// mcpCallerSID is mcpCallerSIDArg's value for the tools/call being handled, "" outside one.
+// One variable is enough because RunStdio dispatches serially — but only the dispatch goroutine
+// may read it: the tools/list watcher runs beside a call (a generate_image call holds the loop
+// for minutes), so everything that builds the list resolves its owner through
+// mcpListOwningSession, which never looks here.
+var mcpCallerSID string
 
 // mcpPeerMessagingEnabled adds ONLY the two session-to-session messaging tools to the
 // session-side server (docs/log/58 / ADR 0041 decision 3). Enabled by `--self-report
@@ -177,6 +194,7 @@ func parseStdioFlags(args []string) {
 // --self-report with --chromium-attach adds the narrowly scoped Chromium Attach View
 // tools without granting any other read/write tool (docs/log/53 §53.8).
 func RunStdio(args []string) {
+	dropUnexpandedEnv()
 	mcpSourceSession = os.Getenv("AF_SESSION_NAME")
 	parseStdioFlags(args)
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
@@ -411,6 +429,9 @@ func mcpStdioToolList() []map[string]any {
 		if offer, ok := mcpImageGenAdvertise(); ok {
 			tools = append(tools, mcpStdioImageGenTools(offer)...)
 		}
+		if offer, ok := mcpStudioAdvertise(); ok {
+			tools = append(tools, mcpStdioStudioTools(offer)...)
+		}
 		return tools
 	}
 	if writeEnabled() {
@@ -592,7 +613,8 @@ func handoffReportBackNote() string {
 	if !mcpPeerMessagingEnabled {
 		return ""
 	}
-	return " Only when you need to be told it is done, name your own session ($AF_SESSION_NAME) in the " +
+	return " Only when you need to be told it is done, name your own session (get_session_status with no name " +
+		"reports it) in the " +
 		"prompt and ask for one send_to_peer_session reply. A reply costs the successor a turn and resumes " +
 		"you if you have stopped, so keep it for fanning out to several successors and collecting the " +
 		"results; an ordinary handoff needs none, because the user sees the work in the Console."
@@ -669,16 +691,15 @@ func mcpStdioSelfReportTools() []map[string]any {
 				"Completion is detected anyway, so when in doubt do not call it. " +
 				"Do not call it while you are stopping to ask a question or wait for approval, or while work " +
 				"continues (an early report is ignored). " +
-				"The server writes the body, so pass only your own session name.",
+				"The server writes the body, so pass at most your own session name.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"session": map[string]any{
 						"type":        "string",
-						"description": "Your own session name (pass the value written in the instruction's [agent-fleet] note verbatim)",
+						"description": "Your own session name: the value written in the instruction's [agent-fleet] note, verbatim. Omit it and the server fills in the session it serves",
 					},
 				},
-				"required": []string{"session"},
 			},
 		},
 		{
@@ -798,9 +819,8 @@ func mcpStdioFleetObserveTools() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"name": map[string]any{"type": "string", "minLength": 1, "description": "Session name (the name from list_peer_sessions, or your own $AF_SESSION_NAME)"},
+					"name": map[string]any{"type": "string", "minLength": 1, "description": "Session name from list_peer_sessions. Omit it for your own session; the result's name is your session name"},
 				},
-				"required": []string{"name"},
 			},
 		},
 		{
@@ -892,6 +912,16 @@ func memoWriteAllowed() bool {
 	return writeEnabled() || selfReportOnly()
 }
 
+// stoppedChildExpiryClause is the part of create_session's limits sentence that promises a
+// stopped child frees its slot by itself. Only true while auto-archive is on: with the user's
+// setting at "off" the promise would have a caller wait for a slot that never comes back.
+func stoppedChildExpiryClause() string {
+	if _, ok := session.StoppedTTL(); ok {
+		return ", or when one you left stopped expires"
+	}
+	return ""
+}
+
 // mcpStdioFleetSpawnTools — the ten session-steering tools, advertised only under
 // `--self-report --fleet-spawn` (ADR 0073). Written out here rather than reused from the
 // operator's list for the reasons in mcpStdioFleetObserveTools: the operator's text is Japanese
@@ -914,7 +944,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"It starts in a NEW worktree by default, so it never shares your working copy; pass " +
 				"worktree=false only for a directory nobody is working in. " +
 				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit()) + " children at a time (a slot frees when the user deletes or " +
-				"archives that child, or when one you left stopped expires - list_child_sessions shows what " +
+				"archives that child" + stoppedChildExpiryClause() + " - list_child_sessions shows what " +
 				"you have), a session you started cannot start its own, and shell sessions cannot be started " +
 				"from here. " +
 				"You are NOT told when it finishes: poll get_session_status, or leave report_back on and it " +
@@ -1109,6 +1139,95 @@ func sessionDriveAllowed(name string) error {
 // TestImageGenToolNameMatchesConstant holds the two spellings together.
 const mcpToolGenerateImage = "generate_image"
 
+// mcpStdioStudioTools — the image studio's four tools (ADR 0100 decision 3), offered only to a
+// session bound to a studio, or one whose identity cannot be told apart (mcpStudioAdvertise).
+// The names are spelled out as literals for the same AST scan as generate_image's.
+//
+// The descriptions are English and short: they are a fixed cost on every turn of every studio
+// session. set_image_draft declares clearing as a `clear` list rather than a nullable type,
+// because Gemini-family clients refuse type arrays; an explicit null is still accepted.
+func mcpStdioStudioTools(offer studioOffer) []map[string]any {
+	noArgs := map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{}}
+	tools := []map[string]any{
+		{
+			"name": "get_image_studio",
+			"description": "Agent Fleet image studio: read the draft you are working on with the user - its fields, which are locked, " +
+				"what changed since your last call (the user's edits, rewinds, new results), the model's facts and the knowledge summary. " +
+				"Call it FIRST on every user message, before answering.",
+			"inputSchema": noArgs,
+		},
+		{
+			"name": "set_image_draft",
+			"description": "Agent Fleet image studio: change fields of the draft. Only the fields you send change; list fields in `clear` to empty them. " +
+				"The model, seed, jobs, count, out_dir, label and mask are the user's - propose a model with suggest_model instead. " +
+				"A locked field is not changed and the answer says so. Generating is the user's button, not yours.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"prompt":         map[string]any{"type": "string"},
+					"negativePrompt": map[string]any{"type": "string"},
+					"size":           map[string]any{"type": "string", "description": "<width>x<height>"},
+					"op":             map[string]any{"type": "string", "enum": []string{"generate", "edit", "inpaint", "outpaint", "remove_background", "upscale"}},
+					"strength":       map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+					"inputs":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Reference image paths, under the file browser's root (usually home) or the generated-images folder (not /tmp)"},
+					"params": map[string]any{
+						"type": "object", "additionalProperties": false,
+						"properties": map[string]any{
+							"steps":     map[string]any{"type": "integer", "minimum": 1},
+							"cfg":       map[string]any{"type": "number", "minimum": 0},
+							"sampler":   map[string]any{"type": "string"},
+							"scheduler": map[string]any{"type": "string"},
+						},
+					},
+					"loras": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object", "additionalProperties": false,
+							"properties": map[string]any{
+								"name":   map[string]any{"type": "string"},
+								"weight": map[string]any{"type": "number"},
+							},
+							"required": []string{"name"},
+						},
+					},
+					"suggest_model": map[string]any{"type": "string"},
+					"clear": map[string]any{
+						"type": "array", "items": map[string]any{"type": "string",
+							"enum": []string{"prompt", "negativePrompt", "size", "op", "strength", "inputs", "params", "loras", "suggest_model"}},
+					},
+				},
+			},
+		},
+		{
+			"name": "add_image_knowledge",
+			"description": "Agent Fleet image studio: append a note to the knowledge kept for the studio's model or its family - only when the " +
+				"user asks you to remember something, or has just judged a result good or bad. Say what worked or failed and on what evidence. " +
+				"Prompts behave differently per model, so the key is the model the studio has chosen (scope model) or that model's family " +
+				"(scope family); with no model chosen it is refused - ask the user to pick one.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"scope":    map[string]any{"type": "string", "enum": []string{"family", "model"}},
+					"key":      map[string]any{"type": "string", "minLength": 1, "description": "The studio's model id (scope model) or its family (scope family), as get_image_studio shows them"},
+					"note":     map[string]any{"type": "string", "minLength": 1},
+					"evidence": map[string]any{"type": "string"},
+				},
+				"required": []string{"scope", "key", "note"},
+			},
+		},
+	}
+	if offer.agentTrial {
+		tools = append(tools, map[string]any{
+			"name": "run_image_trial",
+			"description": "Agent Fleet image studio: make ONE quick trial picture from the draft exactly as saved - it takes no arguments, so " +
+				"what runs is always what the user sees. Waits up to 2 minutes; a slower picture arrives in get_image_studio later. " +
+				"Each call wakes a GPU: do not repeat it to compare small changes.",
+			"inputSchema": noArgs,
+		})
+	}
+	return tools
+}
+
 // mcpStdioImageGenTools — the image generation tool, advertised only under
 // `--self-report --image-gen` AND only to the sessions mcpImageGenAdvertise picks.
 //
@@ -1145,7 +1264,8 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			"items": map[string]any{"type": "string"},
 			"description": fmt.Sprintf(
 				"Absolute paths of reference images (up to %d), for editing or as a style reference."+
-					" A model may take fewer, and then the call is refused by name",
+					" A model may take fewer, and then the call is refused by name."+
+					" Only files under the file browser's root (usually home) or the generated-images folder are read; copy one from /tmp there first",
 				maxInputsOrDefault(offer.MaxInputs))},
 	}
 	// mask goes with inpaint and nothing else. A mask handed to a route that has no mask
@@ -1471,10 +1591,26 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 	if !mcpImageGenEnabled {
 		return offer, false
 	}
-	self, err := mcpOwningSession()
+	self, err := mcpListOwningSession()
 	if err != nil {
 		// Without a session name the Agent cannot key the output directory or the usage row,
-		// so the tool has nowhere to put its result.
+		// so the tool has nowhere to put its result — unless the call will name it: tools/list
+		// carries no caller stamp, but a child shared by several live Managed opencode sessions
+		// is offered the tool on their behalf and each call's stamp decides whose it is (#989).
+		// Any one that is not a studio session stands in for the list; they are all one kind.
+		for _, name := range mcpStampedFolderSessions() {
+			if !studioBoundSession(name) {
+				self = name
+				break
+			}
+		}
+		if self == "" {
+			return offer, false
+		}
+	} else if studioBoundSession(self) {
+		// A studio session makes pictures with the person's button, not this tool (ADR 0100
+		// decision 3). Leaving it out is only how it looks; mcpGenerateImage checks again, because
+		// the call side trusts the tools/list the client last saw, which can predate the binding.
 		return offer, false
 	}
 	st, err := agentImageGenStatus(self)
@@ -2130,9 +2266,9 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		// Stopping relays to /halt, which is resumable. The destructive /stop (which also
-		// forgets the meta) is deliberately not exposed: the advertised tool set is the
-		// gate, so irreversible operations stay in the Console.
+		// Stopping relays to /halt, which is resumable. /stop is the old name of "delete this
+		// session" (it moves it to the trash, ADR 0101) and is deliberately not this tool:
+		// deleting is delete_session, which the operator confirms first.
 		"name":        "stop_session",
 		"description": "指定セッションを停止する（停止中＝再開可能。会話履歴と作業ディレクトリは保持され、resume_session や Console から再開できる）。暴走している・不要になった・リソースを空けたいセッションを畳む時に呼ぶ。実行中の作業は中断され、そのセッションへの未達の自動報告は取り消される。実行前に『どのセッションを止めるか』を一言添えて利用者に確認すること。",
 		"inputSchema": map[string]any{
@@ -2185,7 +2321,7 @@ var mcpStdioWriteTools = []map[string]any{
 	{
 		"name": "delete_worktree",
 		"description": "不要になった worktree（作業コピー）を削除する。list_cleanup_candidates で action=delete_worktree の候補（マージ済みクリーン＝safe、未マージだがクリーン＝review）を片付ける時に使う。" +
-			"未コミット/未pushの変更がある worktree は保護のため削除できない（keep 候補。Console で強制削除するよう案内する）。削除でその worktree に紐づく停止中セッションも一覧から整理される。ローカルの作業コピーだけが消え、履歴・リモート・ブランチは残る。破壊的操作なので、どの worktree を消すかを一言添えて実行前に必ず利用者へ確認すること。",
+			"未コミット/未pushの変更がある worktree は保護のため削除できない（keep 候補。Console で強制削除するよう案内する）。その worktree の停止中の AI セッションはアーカイブ（棚）へ移り、shell/ssm はごみ箱へ入る（どちらも復元できる。会話は消えない）。ローカルの作業コピーだけが消え、履歴・リモート・ブランチは残る。削除した worktree もごみ箱に記録され、restore_cleanup_archive で同じパスに作り直せる。破壊的操作なので、どの worktree を消すかを一言添えて実行前に必ず利用者へ確認すること。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -2284,6 +2420,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		Args json.RawMessage `json:"arguments"`
 	}
 	_ = json.Unmarshal(req.Params, &p)
+	// Taken out before anything decodes or forwards p.Args (the memo tools relay it verbatim).
+	p.Args, mcpCallerSID = takeCallerSID(p.Args)
+	defer func() { mcpCallerSID = "" }()
 	// The session-side advertised set IS the scope boundary (see
 	// selfReportOnly()/sessionChromiumEnabled()). Refuse every unadvertised name here
 	// too, or a client that guesses names could reach fleet read/write handlers from any
@@ -2414,6 +2553,8 @@ func mcpStdioCall(req mcpReq) []byte {
 	}
 
 	switch p.Name {
+	case "get_image_studio", "set_image_draft", "run_image_trial", "add_image_knowledge":
+		return mcpStudioCall(req, p.Name, p.Args)
 	case mcpToolGenerateImage:
 		return mcpGenerateImage(req, imageGenArgs{
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
@@ -2536,10 +2677,17 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !selfReportOnly() {
 			return mcpToolErr(req.ID, "af_report はセッション側の Agent Fleet サーバー専用です")
 		}
-		if !session.ValidName(a.Session) {
-			return mcpToolErr(req.ID, "session（自分のセッション名）が必要です")
+		name := a.Session
+		if !session.ValidName(name) {
+			// The argument only ever means "me", and a Managed model has no shell variable to
+			// read it from; the server knows whom it serves (mcpOwningSession).
+			resolved, err := mcpOwningSession()
+			if err != nil {
+				return mcpToolErr(req.ID, err.Error())
+			}
+			name = resolved
 		}
-		body, _ := json.Marshal(map[string]string{"name": a.Session, "kind": reportKindSelfReport})
+		body, _ := json.Marshal(map[string]string{"name": name, "kind": reportKindSelfReport})
 		if _, err := AgentPOST("/chat/report", body); err != nil {
 			return mcpToolErr(req.ID, "完了の申告に失敗しました: "+err.Error())
 		}
@@ -3109,10 +3257,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err := bridgeApprovalGate(approvalLabel("delete_worktree"), a.Name); err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
-		// prune_sessions=1 also clears the stopped metas attached to it. No force: a dirty or
-		// ahead worktree stays protected and is refused by the Agent, which returns the
-		// reason (push first, or force it from the Console).
-		out, err := agentDo(http.MethodDelete, "/repos/"+url.PathEscape(a.Name)+"?prune_sessions=1", nil)
+		// The Agent shelves the stopped AI sessions in it and trashes its shell / ssm on every
+		// delete (ADR 0101 decision 4), so no flag is sent. No force: a dirty or ahead worktree
+		// stays protected and is refused by the Agent, which returns the reason (push first,
+		// or force it from the Console).
+		out, err := agentDo(http.MethodDelete, "/repos/"+url.PathEscape(a.Name), nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "worktree の削除に失敗しました: "+err.Error())
 		}
@@ -3127,9 +3276,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err := bridgeApprovalGate(approvalLabel("delete_session"), a.Name); err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
-		// reclaim=1 reclaims the jsonl too. It is moved to the gz safety net before deletion,
-		// so it stays restorable.
-		out, err := agentDo(http.MethodDelete, "/sessions/"+url.PathEscape(a.Name)+"?reclaim=1", nil)
+		// Every delete moves the meta and jsonl to the gz trash before removing them (ADR 0101),
+		// so it stays restorable. A running session is refused (no stop=1: stopping is a
+		// separate, confirmed step).
+		out, err := agentDo(http.MethodDelete, "/sessions/"+url.PathEscape(a.Name), nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの削除に失敗しました: "+err.Error())
 		}
@@ -3208,10 +3358,20 @@ func mcpStdioCall(req mcpReq) []byte {
 	case "list_repos":
 		path = "/repos"
 	case "get_session_status":
-		if a.Name == "" {
+		name := a.Name
+		if name == "" && selfReportOnly() {
+			// A session asking about itself: this is also how a Managed model, which has no
+			// $AF_SESSION_NAME in its shell, learns its own name.
+			resolved, err := mcpOwningSession()
+			if err != nil {
+				return mcpToolErr(req.ID, err.Error())
+			}
+			name = resolved
+		}
+		if name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
-		path = "/sessions/" + url.PathEscape(a.Name) + "/status"
+		path = "/sessions/" + url.PathEscape(name) + "/status"
 	case "get_session_output":
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
@@ -3308,26 +3468,41 @@ func outputCursorScope() string {
 
 // mcpOwningSession names the session this MCP process serves.
 //
-// AF_SESSION_NAME is the contract, and it arrives two ways. TERMINAL sessions get it
-// from the tmux launch env (session_tmux.go), which codex forwards (mcpreg's
-// extraEnvVars) and claude inherits. MANAGED codex sessions get it from the THREAD
-// config instead (mcpreg.CodexThreadServers, docs/log/27 §9.3.1) — their MCP child is
-// spawned by the ONE shared daemon the Agent started, whose process env cannot carry
-// anything per-session. That config is applied by thread/START only: a thread resumed
-// into a REPLACED daemon comes back without it (measured, docs/log/27 §9.3.1) and lands in
-// the fallback below.
+// AF_SESSION_NAME is the contract. Each launch route delivers it through the one per-session
+// channel its host has (docs/log/117):
 //
-// MANAGED OPENCODE has neither: its MCP config is global and the child is spawned per
-// project directory, so sessions sharing a worktree share one child (measured 1.18.15,
-// contract_mcp_identity_test.go). Those callers land in the cwd fallback below, as do
-// codex threads whose config had to be omitted (unreadable registry).
+//   - TERMINAL: the tmux launch env (session_tmux.go), inherited by the CLI and forwarded by
+//     codex (mcpreg's extraEnvVars).
+//   - MANAGED codex: the THREAD config (mcpreg.CodexThreadServers). The daemon is shared, but
+//     thread/start, thread/fork and a resume into a daemon that has not loaded the thread all
+//     apply it; a resume into the daemon that already holds the thread keeps the one it started
+//     with, which is the same name.
+//   - MANAGED copilot / kiro / muse host / cursor: one vendor process per session, started with
+//     it in its environment. cursor scrubs its MCP children's environment, so its config file
+//     carries a `${env:…}` reference (mcpreg.cursorStdioEnv).
+//   - MANAGED muse: the session/start wire's `env`, since muse scrubs too.
+//   - lcpp: added to the builtin's definition in-process (agents/lcpp injectSessionName).
 //
-// The fallback matches the working folder, which is not unique — several sessions
-// routinely share one worktree. Narrowing by liveness resolves the common shape (the
-// caller is running; the others in that folder are stopped) and is only ever allowed
-// to REMOVE an ambiguity: unless it lands on exactly one session, the original
-// candidate set stands and the caller gets the ambiguity error.
-func mcpOwningSession() (string, error) {
+// MANAGED OPENCODE has no per-process channel: its MCP config is global and the child is
+// spawned per project directory, so sessions sharing a worktree share one child (measured
+// 1.18.32, contract_mcp_identity_test.go). Its channel is per CALL instead: the AF plugin
+// stamps opencode's session id on each af tools/call (#989, mcpCallerSession).
+//
+// Everything else — an opencode whose plugin was removed, a route whose registry could not
+// be read — lands in the cwd fallback below. The fallback matches the working folder, which
+// is not unique — several sessions routinely share one worktree. Narrowing by liveness
+// resolves the common shape (the caller is running; the others in that folder are stopped)
+// and is only ever allowed to REMOVE an ambiguity: unless it lands on exactly one session,
+// the original candidate set stands and the caller gets the ambiguity error.
+func mcpOwningSession() (string, error) { return mcpResolveOwner(true) }
+
+// mcpListOwningSession is mcpOwningSession for code that builds tools/list. A list carries no
+// caller stamp and is shared by every session on this child, and the watcher derives it on its
+// own goroutine while a call may be in flight; reading that call's stamp here would both race and
+// hand the whole child the list of whichever session happened to be calling.
+func mcpListOwningSession() (string, error) { return mcpResolveOwner(false) }
+
+func mcpResolveOwner(useStamp bool) (string, error) {
 	if session.ValidName(mcpSourceSession) {
 		return mcpSourceSession, nil
 	}
@@ -3335,9 +3510,14 @@ func mcpOwningSession() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("引き継ぎ元セッションを特定できません: 作業ディレクトリを取得できません")
 	}
+	if useStamp {
+		if name, ok := mcpCallerSession(cwd); ok {
+			return name, nil
+		}
+	}
 	var found []string
 	for _, m := range session.ListMetas() {
-		if m.Archived || m.Dir != cwd || !session.ValidName(m.Name) {
+		if m.Archived || !mcpRunsIn(m, cwd) || !session.ValidName(m.Name) {
 			continue
 		}
 		found = append(found, m.Name)
@@ -3357,6 +3537,128 @@ func mcpOwningSession() (string, error) {
 	}
 	return "", fmt.Errorf("引き継ぎ元セッションを特定できません: AF_SESSION_NAME がありません")
 }
+
+// takeCallerSID removes mcpCallerSIDArg from a tools/call's arguments and returns what is
+// left together with its value. Arguments without it come back byte-for-byte, so the
+// common path costs one decode and changes nothing.
+func takeCallerSID(args json.RawMessage) (json.RawMessage, string) {
+	var m map[string]json.RawMessage
+	if len(args) == 0 || json.Unmarshal(args, &m) != nil {
+		return args, ""
+	}
+	raw, ok := m[mcpCallerSIDArg]
+	if !ok {
+		return args, ""
+	}
+	delete(m, mcpCallerSIDArg)
+	rest, err := json.Marshal(m)
+	if err != nil {
+		return args, ""
+	}
+	var sid string
+	_ = json.Unmarshal(raw, &sid) // a non-string is nobody's session id: dropped, not trusted
+	return rest, sid
+}
+
+// mcpCallerSession resolves the opencode session id stamped on this call to the AF session
+// that owns it. The id arrives as a tool argument, so the model can write one too (the plugin
+// overwrites it, but a member can remove the plugin): it is only ever a key. It must equal
+// the id AF itself mapped to exactly one live opencode session in this MCP child's folder —
+// the child is spawned per directory, so that is the set that can be calling. Anything else
+// (no stamp, no match, a stopped match, a failed probe) reports ok=false and leaves the
+// decision to the cwd fallback, which is what the call would have got without the plugin.
+func mcpCallerSession(cwd string) (string, bool) {
+	if mcpCallerSID == "" || !mcpCallerStampTrusted() {
+		return "", false
+	}
+	var found []string
+	for _, m := range session.ListMetas() {
+		if m.Archived || m.Kind != session.KindOpencode || !session.ValidName(m.Name) {
+			continue
+		}
+		if !mcpRunsIn(m, cwd) {
+			continue
+		}
+		if opencode.SlotSessionID(m) == mcpCallerSID {
+			found = append(found, m.Name)
+		}
+	}
+	if len(found) != 1 {
+		return "", false
+	}
+	st, err := agentSessionStatus(found[0])
+	if err != nil || !st.Alive {
+		return "", false
+	}
+	return found[0], true
+}
+
+// mcpCallerStampTrusted reports whether a stamp on a call can only have come from the plugin.
+// The plugin overwrites the reserved argument on af's tools, but it recognises them by the
+// rotated `af_<8 hex>` server name: under the legacy bare `af` name, or with the plugin removed
+// or altered, the model's own value would arrive untouched and naming another session's id would be enough
+// to act as it. The model shares this uid, so this is not a wall against a determined one — it
+// stops the reserved argument from being a door that a plain tool call opens.
+//
+// The key checked is the one THIS child was registered under (mcpreg.AFServerKeyEnv, written
+// into af's opencode entry only), not the Agent's current name: a copy of af's command
+// registered as bare `af` — a project opencode.json, a stale entry — has no such key, and a
+// child of a daemon adopted across an Agent restart keeps the rotated key it was started with.
+//
+// What it cannot stop is a config written to impersonate: whoever writes an MCP entry chooses
+// its child's whole environment, AF_MCP_SERVER_KEY included — and could just as well set
+// AF_SESSION_NAME, which mcpOwningSession believes before any of this. Identity delivered
+// through the environment is only as good as the config that delivers it; this check closes the
+// cases where nobody chose to lie.
+func mcpCallerStampTrusted() bool {
+	return mcpreg.IsRotatedAFServerName(os.Getenv(mcpreg.AFServerKeyEnv)) && opencode.CallerPluginCurrent()
+}
+
+// mcpStampedFolderSessions is who can be calling this MCP child when the answer only arrives
+// per call: the live sessions in this folder, returned only when every one of them is Managed
+// opencode with a conversation AF has mapped — the calls whose stamp mcpCallerSession can match
+// — and the stamp can be trusted at all. A folder that also holds another kind, or whose
+// liveness could not be read, returns nil: a list-time offer there would promise a call that
+// cannot tell its caller apart.
+func mcpStampedFolderSessions() []string {
+	if !mcpCallerStampTrusted() {
+		return nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	metas := map[string]session.Meta{}
+	for _, m := range session.ListMetas() {
+		if m.Archived || !session.ValidName(m.Name) || !mcpRunsIn(m, cwd) {
+			continue
+		}
+		names = append(names, m.Name)
+		metas[m.Name] = m
+	}
+	alive, ok := mcpAliveSessions(names)
+	if !ok || len(alive) == 0 {
+		return nil
+	}
+	// Each live session needs its own mapped conversation: an unmapped one, or two mapped to the
+	// same id, is a caller no stamp can single out, and every call would be refused.
+	seen := map[string]bool{}
+	for _, n := range alive {
+		m := metas[n]
+		id := opencode.SlotSessionID(m)
+		if m.Kind != session.KindOpencode || id == "" || seen[id] {
+			return nil
+		}
+		seen[id] = true
+	}
+	sort.Strings(alive)
+	return alive
+}
+
+// mcpRunsIn reports whether session m's agent — and so the MCP child it spawns — runs in cwd:
+// its working copy, or the subdir it was launched into (Meta.CWD).
+func mcpRunsIn(m session.Meta, cwd string) bool { return m.Dir == cwd || m.CWD() == cwd }
 
 // mcpAliveSessions keeps the names the Agent reports as alive. ok is false when any
 // probe failed — a partial answer must not narrow anything, since the missing one

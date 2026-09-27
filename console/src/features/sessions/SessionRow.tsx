@@ -166,6 +166,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         )}
         {/* Deletion lock (docs/log/45): the lock badge, so the row itself says why delete
             is unavailable. */}
+        {/* Bound to an image studio (ADR 0100 decision 10): the row opens the studio pane. */}
+        {s.studio && <Icon name="wand" className="sess-studio" title={tr("srow.studio_badge")} />}
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
         {/* Keep-awake pin (docs/log/75): shown only while the deadline is still live. An
             expired pin left on the badge would let the user believe they are still

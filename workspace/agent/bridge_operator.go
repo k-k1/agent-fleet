@@ -34,14 +34,15 @@ import (
 // session_mode=assistant) shares the same machinery through runOperatorTurnAs — the two
 // are the same turn but NOT the same consumption to a reader of the usage graph, so the
 // usage tag is the caller's to supply (ADR 0029 §2).
-func runOperatorTurn(conv, text string) (string, error) {
-	return runOperatorTurnAs(conv, text, usagex.Tag{
+func runOperatorTurn(conv, text, source string) (string, error) {
+	return runOperatorTurnAs(conv, text, source, usagex.Tag{
 		Feature: usagex.FeatureAssistantBridge, Trigger: usagex.TriggerBridge, Ref: conv,
 	})
 }
 
-// runOperatorTurnAs is runOperatorTurn with an explicit usage tag.
-func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
+// runOperatorTurnAs is runOperatorTurn with an explicit usage tag. source is stored on the
+// injected user message (chatx.ChatMessage.Source) so it is not mistaken for composer input.
+func runOperatorTurnAs(conv, text, source string, tag usagex.Tag) (string, error) {
 	en := sessionx.BridgeAnswerEN()
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -64,7 +65,7 @@ func runOperatorTurnAs(conv, text string, tag usagex.Tag) (string, error) {
 	prov := chatx.ChatProviderFor(c)
 	actualAgent := chatx.ChatProviderKind(c, prov)
 
-	c.Messages = append(c.Messages, chatx.ChatMessage{Role: "user", Content: text, TS: chatx.NowMs()})
+	c.Messages = append(c.Messages, chatx.ChatMessage{Role: "user", Content: text, TS: chatx.NowMs(), Source: source})
 	// A real user message resets the unattended auto-turn budget (docs/log/30), same as
 	// handleChatSend — subsequent session reports get a fresh follow-up allowance.
 	c.AutoTurns, c.AutoPausedNotified = 0, false

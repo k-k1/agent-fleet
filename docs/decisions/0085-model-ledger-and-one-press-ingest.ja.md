@@ -5,6 +5,7 @@
 - Status: **drafted**（2026-09-15）。未実装。以下の「ある／ない」は `57ac9515`（develop ＋ PR #691。
   この ADR は #691 が先に merge される前提）で grep して確認し、「実測」は同日 af-sandbox の管理
   API で読んだもの。
+  状態の更新（2026-09-24）: 実装済み。すべて 2026-09-15 にマージした。P1（CP）は #695（1 押しの取り込み、`control-plane/engine_plan.go`）と #696 / #697（バケツを台帳として読む）、P2（Console）は #694、P3 は #704（猶予ルートと猶予フィールドの撤去、`plan_token` の必須化）。P1・P2 が挙げる af-sandbox での実測を行ったかは、ここには記録が無い。
 - 一部を置き換える: [0072](0072-engine-model-catalog.ja.md) 決定 6 の要求の形（呼び出し側が
   S3 キーを名指す。`attach` / `replace` / `reuse_s3_key` の 3 モード）と、2026-09-15 の追記 4 本の
   救済策（`POST …/models/{id}/parts`、`main_file_fix`、ジョブ履歴の「この鍵で登録する」）。決定 2 の

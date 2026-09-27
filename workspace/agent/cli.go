@@ -53,6 +53,21 @@ var subcommands = []subcommand{
 		summary:  "per-working-copy Postgres for tests: up|url|env|reset|down|status",
 		run:      runAFDB,
 	},
+	{
+		// Behind the af-aws-exec PATH shim (issue #998): one command under one SSO
+		// profile's short-lived credentials, never the container's workload role.
+		name:     "aws-exec",
+		operands: "--profile <name> -- <command>",
+		summary:  "run a command with one SSO profile's short-lived credentials",
+		run:      runAWSExec,
+	},
+	{
+		// credential_process of the one-profile config af-aws-exec writes for its child.
+		name:    "aws-env-credentials",
+		summary: "print the af-aws-exec credentials in this environment as credential_process JSON",
+		hidden:  true,
+		run:     runAWSEnvCredentials,
+	},
 	// On-demand pinned installers (docs/log/35 §35.7.2, jdk.go / install_tools.go /
 	// install_kiro.go / install_postgres.go / install_pg_client.go / install_mysql.go): a lean
 	// rootfs deployment installs these into the per-user home on first use, so the entrypoint

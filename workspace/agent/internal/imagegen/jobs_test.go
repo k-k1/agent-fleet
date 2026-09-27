@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -366,6 +367,58 @@ func TestPausedGroupIsSkippedAndOthersKeepRunning(t *testing.T) {
 		t.Fatalf("group state after resume = %q", got)
 	}
 	_ = other
+}
+
+// ActiveJobs is what keeps the workspace from being idle-stopped under the queue, so it has to
+// count exactly what a worker would still run: the running job and runnable pending ones, but
+// not a paused or aborted group, and under a queue-wide pause only trials.
+func TestActiveJobsCountsOnlyWorkThatWillRun(t *testing.T) {
+	q := withJobQueue(t)
+	p := newGateProvider(t)
+	withStubProvider(t, p)
+
+	if got := q.activeJobs(); got != 0 {
+		t.Fatalf("empty queue: ActiveJobs = %d, want 0", got)
+	}
+	enqueue(t, q, JobSpec{Request: Request{Prompt: "running"}})
+	waitFor(t, "the queue to start", func() bool { return len(p.begun) > 0 })
+	<-p.begun
+	if got := q.activeJobs(); got != 1 {
+		t.Fatalf("one running: ActiveJobs = %d, want 1", got)
+	}
+	batch := enqueue(t, q, JobSpec{Request: Request{Prompt: "batch"}, Jobs: 2})
+	if got := q.activeJobs(); got != 3 {
+		t.Fatalf("running + 2 queued: ActiveJobs = %d, want 3", got)
+	}
+	if err := q.GroupOp(batch.Group, "pause"); err != nil {
+		t.Fatalf("pause = %v", err)
+	}
+	if got := q.activeJobs(); got != 1 {
+		t.Fatalf("batch paused: ActiveJobs = %d, want 1 (a paused batch must not hold the workspace)", got)
+	}
+	if err := q.GroupOp(batch.Group, "resume"); err != nil {
+		t.Fatalf("resume = %v", err)
+	}
+	if err := q.QueueOp("pause"); err != nil {
+		t.Fatalf("queue pause = %v", err)
+	}
+	enqueue(t, q, JobSpec{Request: Request{Prompt: "trial"}, Trial: true})
+	if got := q.activeJobs(); got != 2 {
+		t.Fatalf("queue paused, one trial waiting: ActiveJobs = %d, want 2 (running + trial)", got)
+	}
+	if err := q.QueueOp("resume"); err != nil {
+		t.Fatalf("queue resume = %v", err)
+	}
+	if err := q.GroupOp(batch.Group, "cancel"); err != nil {
+		t.Fatalf("cancel = %v", err)
+	}
+	if got := q.activeJobs(); got != 2 {
+		t.Fatalf("batch aborted: ActiveJobs = %d, want 2 (running + trial)", got)
+	}
+	for i := 0; i < 2; i++ {
+		p.release <- struct{}{}
+	}
+	waitFor(t, "the queue to drain", func() bool { return q.activeJobs() == 0 })
 }
 
 // Abort removes every queued job of the group and interrupts the running one; the pictures
@@ -861,6 +914,15 @@ func TestStatusReportsTheMemberFacingCatalogue(t *testing.T) {
 	if len(m.Sizes) == 0 {
 		t.Error("sizes are missing")
 	}
+	// ADR 0100 decision 7: the family card is drawn from the Agent's row, under the JSON names the
+	// Console reads.
+	raw := rec.Body.String()
+	for _, key := range []string{`"dialect":"tags"`, `"quality_prefixes":["masterpiece, best quality"`,
+		`"steps_range":[20,40]`, `"cfg_range":[5,9]`, `"trial_steps":10`} {
+		if !strings.Contains(raw, key) {
+			t.Errorf("status lacks %s: %s", key, raw)
+		}
+	}
 	if len(st.Samplers) == 0 || len(st.Schedulers) == 0 {
 		t.Error("the sampler and scheduler allow-lists are missing: the form would offer a name this Agent refuses")
 	}
@@ -869,6 +931,27 @@ func TestStatusReportsTheMemberFacingCatalogue(t *testing.T) {
 	}
 	if len(st.Loras) != 1 || len(st.Loras[0].TrainedWords) != 1 || st.Loras[0].Weight != 0.7 {
 		t.Errorf("loras = %+v, want the trigger words and the declared strength", st.Loras)
+	}
+}
+
+// Every family says how a prompt is written for it and where its steps sit, and a cfg range
+// exactly when its template reads cfg (ADR 0100 decision 7) — a range for a knob the graph
+// ignores would advise a number that changes nothing.
+func TestFamilyRowsCarryTheirAdvice(t *testing.T) {
+	for _, r := range comfyFamilyRows {
+		if comfyDialectHow(r.Dialect) == "" {
+			t.Errorf("%s: dialect %q", r.Family, r.Dialect)
+		}
+		if r.StepsRange[0] <= 0 || r.StepsRange[0] > r.StepsRange[1] {
+			t.Errorf("%s: steps range %v", r.Family, r.StepsRange)
+		}
+		readsCFG := slices.Contains(r.SamplerKnobs, "cfg")
+		if hasRange := r.CFGRange != [2]float64{}; hasRange != readsCFG {
+			t.Errorf("%s: cfg range %v but the template reads cfg = %v", r.Family, r.CFGRange, readsCFG)
+		}
+		if r.Dialect == comfyDialectSentences && len(r.QualityPrefixes) > 0 {
+			t.Errorf("%s: quality prefixes on a sentence family", r.Family)
+		}
 	}
 }
 
@@ -905,5 +988,17 @@ func TestEveryFamilyHasARecipe(t *testing.T) {
 		if !ok || r.Recipe.Steps == 0 || r.Recipe.Sampler == "" {
 			t.Errorf("%s has no usable recipe: %+v", f, r.Recipe)
 		}
+	}
+}
+
+// anima's model card documents tags, captions, or both, and both together is its finest control:
+// the family says so, and the advice an agent reads says which part goes in which form.
+func TestAnimaIsWrittenInTagsAndSentences(t *testing.T) {
+	a := familyAdviceFor(string(ComfyFamilyAnima))
+	if a.Dialect != string(comfyDialectMixed) || !strings.Contains(a.DialectHow, "sentences") || !strings.Contains(a.DialectHow, "tags") {
+		t.Errorf("anima advice = %+v", a)
+	}
+	if sd := familyAdviceFor(string(ComfyFamilySDXL)); sd.Dialect != string(comfyDialectTags) || strings.Contains(sd.DialectHow, "AND sentences") {
+		t.Errorf("sdxl advice = %+v", sd)
 	}
 }

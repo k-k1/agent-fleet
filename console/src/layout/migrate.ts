@@ -18,6 +18,8 @@ const str = (v: unknown): string | null => (typeof v === "string" && v ? v : nul
 /** Session names are slugs (the Agent's `session.ValidName`), and `gallerySession` only
  *  ever reaches a title — anything else is a stored value pretending to be a name. */
 const SESSION_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
+// An image studio id (ADR 0100): the Agent mints a UUID and refuses anything else.
+const STUDIO_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Folded-away family parents (ADR 0096 / ADR 0078), stored as session names. Held to the
  *  name alphabet like every other stored id here, and capped: the fold list is written back
@@ -172,11 +174,13 @@ function contentFromFlat(p: any): PaneContent {
           }
         : { kind: "terminal", chat: false };
     }
-    // No field to validate: the form is a localStorage draft and the queue is the Agent's
-    // (ADR 0081 decision 6). Forgetting this case is what would degrade a studio to a blank
-    // terminal on every reload, which is the only way this kind can go wrong here.
-    case "imagegen":
-      return { kind: "imagegen" };
+    // The studio id reaches API paths, so it is held to the Agent's own id shape (a UUID,
+    // ADR 0100). A layout from before the ADR has none, and a bad one is dropped to the
+    // studio-less pane rather than to a blank terminal — the draft is still there.
+    case "imagegen": {
+      const studioId = str(p.studioId);
+      return { kind: "imagegen", studioId: studioId && STUDIO_ID_RE.test(studioId) ? studioId : null };
+    }
     case "gallery": {
       // A stored value is untrusted input and this one is a PATH that the view hands
       // straight to api/fs/tree, so it gets the `browser` kind's stance: reject rather

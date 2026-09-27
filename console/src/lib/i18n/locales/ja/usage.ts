@@ -80,6 +80,7 @@ export const usage = {
   "usage.catalog_note":
     "単価カタログ: models.dev（{n} モデル・取得 {when}）。カタログが更新されると過去の推定額も変わります。",
   "usage.catalog_origin_opencode": "opencode が保持しているカタログを読んでいます（こちらからは更新しません）。",
+  "usage.catalog_origin_fetched": "Agent が models.dev から 1 日 1 回取得しているカタログを読んでいます。",
   "usage.catalog_origin_file": "ワークスペースに置かれたカタログを読んでいます。",
   "usage.catalog_origin_env": "AF_USAGE_CATALOG で指定されたカタログを読んでいます。",
   "usage.kpi_unmeasured": "未計測の呼び出し",

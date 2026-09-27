@@ -53,7 +53,7 @@ trash) — [02](02-sessions.md#tidying-up-in-bulk-cleanup).
 ### A session won't resume / is shown struck through
 
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
-(typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode cannot resume from this state.
+(typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse cannot resume from this state.
 Start the same work over as a new session. shell falls back to home and resumes if the
 working folder is missing ([02](02-sessions.md)).
 
@@ -203,7 +203,7 @@ To use a specific Claude release (a full id such as `claude-opus-4-8`), register
 
 ### The launch dialog offers only "Default"
 
-The agents with a live catalog (codex / opencode / copilot / cursor / kiro / agy) fetch their
+The agents with a live catalog (codex / opencode / copilot / cursor / kiro / agy / lcpp / muse) fetch their
 model list when the dialog opens, so **"Loading models…" for a moment is normal** — wait for
 it before concluding anything. What the picker says once it settles is the answer:
 
@@ -379,3 +379,14 @@ can be installed into your user area yourself (`pip install --user` persists).
 
 If this doesn't solve it, ask your team admin or IT department, including the symptom and
 (if any) the message that was shown. The internals are covered in the developer documentation.
+
+## Reporting a bug or requesting a feature
+
+If the problem looks like it's in Agent Fleet itself, rather than your team's setup, file it as
+a GitHub issue at <https://github.com/k-k1/agent-fleet/issues>. From a terminal session you can
+also ask the agent you're using to do this for you.
+
+**The repository is public.** Before pasting in logs, screenshots, or error text, strip out
+secrets, internal hostnames/URLs, tenant or customer names, and anything else about your
+organisation's environment that shouldn't be visible outside it — describe what happened in
+general terms instead.

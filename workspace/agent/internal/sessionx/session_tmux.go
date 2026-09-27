@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -40,6 +41,12 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// Session-side MCP tools need a provider-neutral owner identity. Native IDs differ
 	// across CLIs, while this slug is stable for every Agent Fleet session.
 	plan.Env = append(plan.Env, "AF_SESSION_NAME="+m.Name)
+	// The session's throwaway directory (docs/log/116), created here so the path is real
+	// by the time the CLI reads it; removed when the session is deleted. A failure to create
+	// it does not block the launch — the variable is simply not set.
+	if wd := paths.SessionWorkDir(m.Name); wd != "" && os.MkdirAll(wd, 0o700) == nil {
+		plan.Env = append(plan.Env, "AF_WORK_DIR="+wd)
+	}
 	// Inject the database client environment (PG* / MYSQL_* / AF_DB_URL_POSTGRES) for
 	// whichever engines are running, so `psql` and `mysql` connect with no arguments.
 	// Silent when absent — do not block session launch on db state.
@@ -103,10 +110,16 @@ func ensureSessionTmux(name string, ssmForce bool) error {
 			return err
 		}
 		// Resuming clears the stopped marking. The next list poll would clear it too, but a
-		// pre-halt StoppedAt surviving right after the /start response is confusing.
-		if m.StoppedAt != "" {
-			m.StoppedAt = ""
-			session.WriteMeta(m)
+		// pre-halt StoppedAt surviving right after the /start response is confusing. Cleared on
+		// the meta as it is now: the launch above takes seconds, and m written back would roll
+		// back a lock set meanwhile (issue #950).
+		if _, cleared := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+			if cur.StoppedAt == "" {
+				return false // a list poll got there first, and recorded the revive itself
+			}
+			cur.StoppedAt = ""
+			return true
+		}); cleared {
 			fleetgraph.RecordRevive(name) // write site ③: the slot became alive again
 		}
 		return nil
@@ -117,11 +130,32 @@ func ensureSessionTmux(name string, ssmForce bool) error {
 	if !ok {
 		return fmt.Errorf("no meta for session %s", name)
 	}
+	recallSettings(&m)
 	if err := startSessionTmux(m, ssmForce); err != nil {
 		log.Printf("resume %s: %v", name, err)
 		return err
 	}
 	return nil
+}
+
+// recallSettings folds what the conversation last ran with (the kind's SettingsRecaller) into
+// m before a TUI slot is relaunched, and persists it. Without it the launch flags carry the
+// creation-time settings and override any switch made in the terminal (#987).
+func recallSettings(m *session.Meta) {
+	r, ok := AgentOf(m.Kind).(agents.SettingsRecaller)
+	if !ok {
+		return
+	}
+	before := *m
+	rec := r.RecallSettings(*m)
+	if !rec.Apply(m) {
+		return
+	}
+	log.Printf("resume %s: settings from the conversation: model %q→%q effort %q→%q mode %q→%q",
+		m.Name, before.Model, m.Model, before.Effort, m.Effort, before.Mode, m.Mode)
+	// Only the recalled fields are written, so a meta write that landed since our read is not
+	// undone.
+	UpdateSessionMeta(m.Name, rec.Apply)
 }
 
 // LiveSessionsInDir returns the display names of running sessions whose cwd is at
@@ -172,17 +206,4 @@ func LockedSessionsInDir(metas []session.Meta, dir string) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// WorktreeHasSessions reports whether ANY session meta (live, stopped, or archived)
-// still has its cwd at or under dir. Auto-pruning a worktree checks this first so a
-// working copy that a stopped/archived session could still resume or restore into is
-// never removed out from under it.
-func WorktreeHasSessions(dir string) bool {
-	for _, m := range session.ListMetas() {
-		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
-			return true
-		}
-	}
-	return false
 }

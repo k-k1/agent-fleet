@@ -2,29 +2,93 @@
 
 Every published release, newest first, with each new feature and each fix on one
 line. The per-version notes answer "is there anything in here for me?"; this file
-answers "when did X ship?" and "which release fixed Y?" without opening 30 files.
+answers "when did X ship?" and "which release fixed Y?" without opening every
+release's notes.
 
 Each line starts with the area it belongs to — **[preview]**, **[ecs-ec2]**,
 **[mirror]** — so a fix can be traced back to the feature it repairs, which is not
 otherwise visible once the bullets are one line long.
 
-Keeping it current:
-
-- Add the new version's section at the top **as part of publishing** (see the steps
-  in [README.md](README.md)); `release-gate` fails when a ledger row has no section
-  here. Japanese lives in [SUMMARY.ja.md](SUMMARY.ja.md) and moves with it.
-- One line per item, condensed from that version's notes. Upgrade steps stay in the
-  notes and do not come here.
-- The **CLI pins** line lists only the agent CLIs whose pin moved in that version;
-  no line means nothing moved. Take the values from the build commit rather than
-  from the prepared notes — a pin bump can land between writing them and publishing:
-  `git show <build-commit>:workspace/Dockerfile | grep -E '^ARG (CLAUDE_CODE|OPENCODE|CODEX|COPILOT|AGY|CURSOR|KIRO|RTK)_VERSION='`
-  diffed against the previous version's build commit.
-- Only versions in [index.tsv](index.tsv) belong here. Notes exist for a couple of
-  versions that were prepared and then never published (0.8.1, 0.12.5); the ledger,
-  not the presence of a file, says what shipped.
-
 ---
+
+## [0.23.2](0.23.2.md) — 2026-09-25
+
+**CLI pins** — Claude Code 2.1.282, Antigravity 1.2.10, Kiro 2.24.0
+
+**New / Improved**
+
+- **[sessions]** Each Terminal (CLI) session has its own scratch folder `$AF_WORK_DIR` (`~/.af-work/<session>/`), deleted with the session (not yet for Managed)
+- **[settings › machine]** Tool caches: measure and empty the go, npm, uv and pip caches in your home on a press; a cache in use by a running build cannot be emptied
+- **[cleanup]** The working-copy delete shows each copy's sessions (kind icon, display name, state chip on running ones)
+- **[guide delivery]** The guide's top page puts the release history in its own paragraph after the reference
+
+**Fixed**
+
+- **[notifications]** With "Notify when a child session is waiting for input" off, the child's input wait still left an unread dot on the row, the pane tab and the notification center; it is now marked read as it arrives
+- **[left pane › FILES]** The Files pane could open `~/.local/share/agent-fleet` (scrollback, cleanup archive, usage ledger); it is now blocked
+- **[ecs-ec2]** `pause.sh` left engine GPU instances running and billed; it now waits for or terminates them, sweeps leftovers after the CP stops, and stops the database too (`--keep-db` keeps it)
+
+## [0.23.1](0.23.1.md) — 2026-09-24
+
+**CLI pins** — Claude Code 2.1.281, Codex 0.156.1, Antigravity 1.2.9, Kiro 2.23.1
+
+**New / Improved**
+
+- **[image generation]** Image studio: "Attach an agent" binds a session to the draft, the agent rewrites prompt, negative, steps, cfg, size, LoRAs and references as you talk, and a person presses generate; per-field locks, an edit history you can rewind to, model / seed / mask stay the person's, and "Switch agent" rebinds without losing the draft (claude, copilot, cursor and kiro as Terminal (CLI) only; opencode not as Managed; Muse Code not yet)
+- **[sessions]** Deleting any session goes to the trash and can be undone (shell and SSM too); deleting a session no longer deletes its worktree, and deleting a worktree moves its stopped sessions to the archive; the trash tab gains "Delete permanently: older than 30 days" and never empties on its own
+- **[cleanup]** The cleanup dialog clears the cache of deleted sessions (pasted images, images codex read) once nothing refers to it
+- **[settings › machine]** The disk Agent Fleet uses, with each folder's path; a path opens in the file tree, an image folder in the gallery
+- **[question cards]** A Translate button on pending and answered questions and on messages from other sessions that came in another language; answers are matched against the original
+- **[viewer]** Text in a PDF can be selected and copied
+- **[guide delivery]** The user guide carries every release's notes and this index, and the builtin assistants answer from them (in a new conversation)
+- **[sessions]** A session can run up to 10 children at once (was 6; default still 3)
+- **[notifications]** "Notify when a child session is waiting for input" can be turned off; questions and approvals from a child still notify
+- **[mirror]** Thinking blocks collapse to a one-line preview, and the close bar appears only on long ones
+- **[composer]** A pasted image chip opens in the lightbox, in the mirror's composer and the launch dialog
+- **[left pane › FILES]** Long file names are shortened in the middle, keeping the extension and the end of the name; the tooltip shows the full path
+
+**Fixed**
+
+- **[fleet operator]** The fleet operator and SRE assistant on Antigravity answered "no response from agy" whenever the model tried a command or read its reference material; they now answer, and agy's reason is shown when it fails
+- **[gallery]** Opening the thumbnail cache folder in the gallery kept making thumbnails of thumbnails
+
+## [0.23.0](0.23.0.md) — 2026-09-23
+
+**CLI pins** — Claude Code 2.1.280, Codex 0.156.0, Copilot 1.0.88, OpenCode 1.18.32, Antigravity 1.2.8; Muse Code 1.3.0-R3401.1 (new, installed on demand)
+
+**New / Improved**
+
+- **[agent kinds]** llama.cpp sessions: the fleet's own harness on the deployment's chat engine, with no CLI and no terminal pane; tools, MCP servers, approvals and exact usage in the mirror; on from the start ("Use llama.cpp" in Settings › Agents switches it off), and "Your own connection" points it at a LAN llama-server, which takes priority and whose reachability the card and the engine pill show
+- **[agent kinds]** Muse Code sessions: a one-time install into your home from the Settings › Agents card, sign-in with a Meta account from the browser or with an API key, then launched like any other agent; questions, usage and context gauge, skills, MCP servers, fork and handoff go through the mirror; its OS sandbox cannot run in a workspace, so it never asks before running a tool
+- **[sessions]** A fleet graph behind the sessions overview's "Graph" switch: one lane per session on a time axis with start, stop, spawn, messages, reports and the current state; families fold, archived lanes can be shown, the window pans and zooms from the last 24 hours
+- **[image generation]** Editing by instruction: the Qwen-Image-Edit families (2509 / 2511) take a sentence, up to three reference pictures and a mask for inpainting; the whole picture is edited (nothing cropped, phone-photo orientation honoured, a mask of any size marks the same region); waking and generating are timed separately; reproduction info carries prompt, negative and size; Qwen-Image 2.1 joins the families, with sizes up to 2K
+- **[sessions]** A stopped session whose window runs out moves to the archive with its conversation instead of being deleted, and a worktree no longer disappears with its session (the cleanup dialog reclaims it)
+- **[settings › AI assistance]** Each AI-assistance feature — title, branch name and reply suggestions, file edit suggestions, work-plan update, answer translation — has its own on/off, agent and model; a feature that is off hides its button
+- **[plans]** "Review in another session" on a plan rejects it and starts a review session with the agent you pick, which checks the plan against the code and answers in a fixed format
+- **[engines]** "Stop after" per role on the engines panel replaces the fixed GPU idle window
+- **[engines]** A Spot offer is bought only for a role where a super admin ticked "Accept interruption"; a pinned Spot offer without it is skipped and the role chooses automatically
+- **[engines]** A registered model's card offers "Other versions…" / "Other sizes…" — the same publisher's other versions or quantisations with size and fit — and taking one in creates a new row
+- **[sessions]** Stop every session under a repository or worktree from its right-click menu, now or after the turn, with the reason for any that cannot be stopped
+- **[opencode]** The card separates "Use opencode" (Off in a new workspace; off, it is gone from the launch menus and API create is refused) from the billing choice, which gains "None (my own keys)" on which the opencode.ai key is never injected
+- **[notifications]** A red dot on a session with an unread notification; "Mark all as read" in the notification centre
+- **[start flow]** The model list says "Loading models…" and, when empty, why (all excluded, billing route, workspace just started)
+- **[usage]** The WS bar keeps the usage chips of the two most recently used agents and folds the rest into "+N"; each chip can be kept on the bar or always folded
+- **[engines]** The engine pill names the loaded model, says "In use" while a request runs, and when it was last used
+- **[gallery]** Card right-click menu (copy path / name, rename, delete, open the generating session); the lightbox's information panel follows the theme; pictures pasted into the chat open in the same lightbox
+- **[sessions]** The changed-files band appears for llama.cpp, Kiro, Muse Code and Antigravity sessions
+- **[image generation]** The size warning on an edit names the size the picture will actually come out at, for every family
+
+**Fixed**
+
+- **[engines]** A borrowed engine whose model was still loading answered "did not come up in time" instead of waiting; the wait is streamed and the far deployment's refusal is relayed as it came
+- **[usage]** Context usage of a session on the fleet's own chat engine was a guess; it reads the window the engine actually loaded
+- **[engines]** The fit verdict of a chat model's quantisation could be wrong; it is read from the file itself and stays with the row
+- **[engines]** Taking a model in: an undeclared `llm` file offered only Delete (now Register too); editing the id on the plan card failed as a stale plan; the dialog planned twice and flickered; a split family's part colliding with another family's file is detected while planning; moving a misplaced file always failed (needs the `60-engines` update)
+- **[mirror]** A claude session's mirror went silent during a long run of tools while the terminal kept narrating: the narration is claude's thinking (summarised on Fable 5.1 / Opus 5.5), which the mirror dropped; it shows as a collapsible Thinking block, and usage is counted once per response
+- **[engines]** A long generation on the fleet's own image engine could be reported as failed while the engine was still working on it (a momentary health-check failure was cached); it now keeps waiting while the job is queued
+- **[console]** Clicking outside a popover or right-click menu also pressed whatever was underneath; it now only closes the menu
+- **[integrations / Discord]** The same "answer ready" notification could be sent twice
+- **[mirror]** Copying a quote lost its paragraph breaks; swiping a wide table sideways on a phone opened the left pane
 
 ## [0.22.1](0.22.1.md) — 2026-09-18
 

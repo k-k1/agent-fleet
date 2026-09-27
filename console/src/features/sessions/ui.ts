@@ -11,11 +11,12 @@ interface SessionUI {
   branchRename: Session | null; // worktree branch-rename modal target
   ssmResume: { name: string; force: boolean } | null; // SSM re-login/resume target
   archivedOpen: boolean; // the archive browser
+  archivedDir: string | null; // …scoped to one working copy's folder, when opened from its row
   cleanupOpen: boolean; // the cleanup panel (docs/log/32)
   openRename(s: Session): void;
   openBranchRename(s: Session): void;
   openSsmResume(name: string, force: boolean): void;
-  openArchived(): void;
+  openArchived(dir?: string): void;
   openCleanup(): void;
   close(): void; // clears every session dialog
 }
@@ -25,12 +26,13 @@ export const useSessionUI = create<SessionUI>((set) => ({
   branchRename: null,
   ssmResume: null,
   archivedOpen: false,
+  archivedDir: null,
   cleanupOpen: false,
   openRename: (s) => set({ rename: s }),
   openBranchRename: (s) => set({ branchRename: s }),
   openSsmResume: (name, force) => set({ ssmResume: { name, force } }),
-  openArchived: () => set({ archivedOpen: true }),
+  openArchived: (dir) => set({ archivedOpen: true, archivedDir: dir || null }),
   openCleanup: () => set({ cleanupOpen: true }),
   close: () =>
-    set({ rename: null, branchRename: null, ssmResume: null, archivedOpen: false, cleanupOpen: false }),
+    set({ rename: null, branchRename: null, ssmResume: null, archivedOpen: false, archivedDir: null, cleanupOpen: false }),
 }));

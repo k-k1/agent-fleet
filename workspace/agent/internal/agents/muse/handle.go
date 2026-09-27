@@ -55,15 +55,20 @@ type threadHandle struct {
 	// unchanged" cannot express a three-valued bool.
 	bypass bool
 
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	cl     *msp.Client
-	sid    string // the muse session id (the UUIDv7 AF minted)
-	path   string // the session.jsonl session/start reported
-	alive  bool
-	state  agents.TurnState
-	turnID string // the running turn, for steer's expectedTurnId
+	mu    sync.Mutex
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	cl    *msp.Client
+	sid   string // the muse session id (the UUIDv7 AF minted)
+	path  string // the session.jsonl session/start reported
+	model string // the model the host last reported as selected
+	// turnModel is model as it stood when the running turn started, stamped on that turn's
+	// items: session/setModel is acknowledged at once but applied at the next model call, so
+	// the latest model would mislabel the call already in flight.
+	turnModel string
+	alive     bool
+	state     agents.TurnState
+	turnID    string // the running turn, for steer's expectedTurnId
 
 	running  bool
 	queue    []agents.TurnInput
@@ -114,7 +119,10 @@ func (p *pendingAsk) isApproval() bool { return p != nil && p.approvalID != "" }
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	cmd := exec.Command(Bin(), serveArgs()...)
 	cmd.Dir = h.dir
-	cmd.Env = childEnv(os.Environ())
+	// One host per session: this puts the name in the model's own shell as well, the way a
+	// Terminal session has it. The af server gets it on the wire (mcp.go), since muse scrubs
+	// its MCP children's environment.
+	cmd.Env = agents.WithSessionName(childEnv(os.Environ()), h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -179,13 +187,15 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 // worse, and the old session.jsonl is still on disk either way.
 func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) error {
 	if prev, ok := readSession(h.slotSid); ok && prev.ID != "" {
+		var res msp.SessionResumeResult
 		err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
 			CommandID: msp.NewCommandID(),
 			SessionID: prev.ID,
-		}, callTimeout, nil)
+		}, callTimeout, &res)
 		if err == nil {
 			h.mu.Lock()
 			h.sid, h.path = prev.ID, prev.Path
+			h.setModelLocked(res.Session.ModelID)
 			h.mu.Unlock()
 			return nil
 		}
@@ -212,9 +222,16 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		WorkspaceRoot: &h.dir,
 		ApprovalMode:  approvalModeFor(h.bypass),
 	}
+	safe := ""
+	if st.Model == "" {
+		var err error
+		if safe, err = SafeDefaultModel(cl); err != nil {
+			return err
+		}
+	}
 	if st.Model != "" {
 		params.ModelID = &st.Model
-	} else if safe := SafeDefaultModel(cl); safe != "" {
+	} else if safe != "" {
 		// 🔴 Omitting modelId is not the neutral choice it looks like: the host's own default
 		// is the contributor variant, whose catalogue description says the conversation may be
 		// used for product improvement (decision 6 clamp 8). So "the member chose no model"
@@ -230,7 +247,7 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	granted := h.sessionMCP
 	h.mu.Unlock()
 	if granted {
-		servers, err := sessionMCPServers()
+		servers, err := sessionMCPServers(h.name)
 		if err != nil {
 			log.Printf("muse: %s: MCP servers unavailable, starting without them: %v", h.name, err)
 		} else if len(servers) > 0 {
@@ -243,9 +260,18 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	}
 	h.mu.Lock()
 	h.sid, h.path = res.Session.SessionID, res.Session.Path
+	h.setModelLocked(res.Session.ModelID)
 	h.mu.Unlock()
 	writeSession(h.slotSid, museSession{ID: res.Session.SessionID, Path: res.Session.Path})
 	return nil
+}
+
+// setModelLocked adopts the model the host reports; nil or empty keeps the last known one.
+// Caller holds h.mu.
+func (h *threadHandle) setModelLocked(id *string) {
+	if id != nil && *id != "" {
+		h.model = *id
+	}
 }
 
 // approvalModeFor maps the launch-time permission choice onto the session's approval mode. It
@@ -300,9 +326,10 @@ func (h *threadHandle) watch(cmd *exec.Cmd, cl *msp.Client) {
 
 // onNotify runs on the client's read goroutine and must never block.
 //
-// The declared notification table is a decode map, not an allow-list: the host emits
-// `session/started` before the `session/start` response and that name is not in the schema at
-// all, so an unknown method is dropped rather than treated as a protocol error.
+// The declared notification table is a decode map, not an allow-list: a host can emit a
+// notification its bundle does not declare (1.3.0-R3401.1 sends `session/started` before the
+// `session/start` response), so an unknown method is dropped rather than treated as a protocol
+// error.
 func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	switch method {
 	case msp.NotificationTurnStarted:
@@ -313,6 +340,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		h.mu.Lock()
 		h.turnID, h.running = p.TurnID, true
 		h.state = agents.TurnRunning
+		h.turnModel = h.model
 		h.mu.Unlock()
 		agents.MarkTurnStart(h.slotSid)
 		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
@@ -323,6 +351,9 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 			return
 		}
 		h.finishTurn(p)
+		h.mu.Lock()
+		h.turnModel = ""
+		h.mu.Unlock()
 
 	case msp.NotificationSessionStatusChanged:
 		var p msp.SessionStatusChangedParams
@@ -388,6 +419,15 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		h.ctxHasUsage = true
 		h.ctxMu.Unlock()
 
+	case msp.NotificationSessionModelChanged:
+		var p msp.SessionModelChangedParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.mu.Lock()
+		h.setModelLocked(&p.ModelID)
+		h.mu.Unlock()
+
 	case msp.NotificationUsageChanged:
 		// Unsolicited, and about the ACCOUNT rather than this session — so it is recorded
 		// process-wide (usage.go) rather than on the handle. This is the only route by which
@@ -406,9 +446,12 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 func (h *threadHandle) onItem(it msp.Item) {
 	h.mu.Lock()
 	delete(h.streaming, it.ItemID)
-	sid := h.slotSid
+	sid, model := h.slotSid, h.turnModel
+	if model == "" {
+		model = h.model
+	}
 	h.mu.Unlock()
-	if err := openStore(sid).Append(it); err != nil {
+	if err := openStore(sid).AppendFrom(it, model); err != nil {
 		log.Printf("muse: %s: transcript append: %v", h.name, err)
 	}
 }
@@ -709,7 +752,7 @@ func (h *threadHandle) startTurn(in agents.TurnInput) error {
 	params := msp.TurnStartParams{
 		CommandID: msp.NewCommandID(),
 		SessionID: sid,
-		Input:     inputParts(in),
+		Input:     skillPart(cl, sid, inputParts(in)),
 	}
 	if e := reasoningEffort(effort); e != nil {
 		params.ReasoningEffort = e
@@ -734,7 +777,7 @@ func (h *threadHandle) steerNow(in agents.TurnInput, turnID string) error {
 		CommandID:      msp.NewCommandID(),
 		SessionID:      sid,
 		ExpectedTurnID: turnID,
-		Input:          inputParts(in),
+		Input:          skillPart(cl, sid, inputParts(in)),
 	}, callTimeout, nil)
 }
 
@@ -880,7 +923,10 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	}
 	model := s.Model
 	if s.ClearModel {
-		model = SafeDefaultModel(cl)
+		var err error
+		if model, err = SafeDefaultModel(cl); err != nil {
+			return err
+		}
 	}
 	if model != "" {
 		err := cl.CallInto(msp.MethodSessionSetModel, msp.SessionSetModelParams{
@@ -893,6 +939,7 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 		}
 		h.mu.Lock()
 		h.settings.Model = model
+		h.model = model
 		h.mu.Unlock()
 	}
 	if s.ClearEffort {
@@ -1097,6 +1144,7 @@ func (h *threadHandle) forkSession(cl *msp.Client) error {
 	}
 	h.mu.Lock()
 	h.sid, h.path = res.Session.SessionID, res.Session.Path
+	h.setModelLocked(res.Session.ModelID)
 	h.mu.Unlock()
 	writeSession(h.slotSid, museSession{ID: res.Session.SessionID, Path: res.Session.Path})
 	// The store copy is deliberately AFTER the host's fork succeeded and is deliberately not

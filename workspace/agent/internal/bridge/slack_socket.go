@@ -404,7 +404,7 @@ func routeSlackOperator(m slackInboundMsg, conv, text string, creds slackReceive
 		log.Printf("bridge: react to slack operator reply failed: %v", err)
 	}
 	go func() {
-		reply, err := deps.Operator(conv, text)
+		reply, err := deps.Operator(conv, text, sourceSlack)
 		if err != nil {
 			log.Printf("bridge: slack operator turn for conv %s failed: %v", conv, err)
 		}

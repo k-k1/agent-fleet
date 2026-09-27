@@ -35,6 +35,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
@@ -51,11 +52,13 @@ func TestSessionWiringIsLive(t *testing.T) {
 
 		"IsSvnRepo":       func(t *testing.T) { sameSessionFunc(t, w.IsSvnRepo, isSvnRepo) },
 		"RepoJobsRunning": func(t *testing.T) { sameSessionFunc(t, w.RepoJobsRunning, repoJobsRunning) },
+		"ImageJobsActive": func(t *testing.T) { sameSessionFunc(t, w.ImageJobsActive, imagegen.ActiveJobs) },
 
 		"FinalizeSessionUsage":  func(t *testing.T) { sameSessionFunc(t, w.FinalizeSessionUsage, finalizeSessionUsage) },
 		"MaybeFoldSessionUsage": func(t *testing.T) { sameSessionFunc(t, w.MaybeFoldSessionUsage, maybeFoldSessionUsage) },
 
 		"RemoveTerminalHistory": func(t *testing.T) { sameSessionFunc(t, w.RemoveTerminalHistory, removeTerminalHistory) },
+		"TrashSession":          func(t *testing.T) { sameSessionFunc(t, w.TrashSession, trashSession) },
 		"ToolchainShellPrefix":  func(t *testing.T) { sameSessionFunc(t, w.ToolchainShellPrefix, toolchainShellPrefix) },
 
 		"RunOperatorTurn": func(t *testing.T) { sameSessionFunc(t, w.RunOperatorTurn, runOperatorTurn) },

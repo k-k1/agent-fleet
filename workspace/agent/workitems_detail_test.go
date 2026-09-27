@@ -18,7 +18,7 @@ func TestParseGitHubPullRequest(t *testing.T) {
 	  "html_url":"https://github.com/acme/web/pull/518","updated_at":"2026-09-11T01:00:00Z",
 	  "draft":false,"merged":false,"mergeable":null,
 	  "additions":120,"deletions":30,"changed_files":7,"comments":2,"review_comments":3,
-	  "user":{"login":"taro"},"assignees":[],"labels":[{"name":"infra"}],
+	  "user":{"login":"taro"},"assignees":[],"labels":[{"name":"infra","color":"0E8A16"}],
 	  "requested_reviewers":[{"login":"hanako"}],
 	  "base":{"ref":"develop","repo":{"full_name":"acme/web"}},
 	  "head":{"ref":"feature/x","sha":"deadbeef"}}`)
@@ -59,7 +59,10 @@ func TestParseGitHubPullRequest(t *testing.T) {
 		t.Fatalf("parse bare: %v", err)
 	}
 	bareJSON, _ := json.Marshal(bare)
-	for _, want := range []string{`"labels":[]`, `"reviews":[]`} {
+	if out.LabelColors["infra"] != "0e8a16" {
+		t.Errorf("labelColors = %v, want infra=0e8a16", out.LabelColors)
+	}
+	for _, want := range []string{`"labels":[]`, `"labelColors":{}`, `"reviews":[]`} {
 		if !strings.Contains(string(bareJSON), want) {
 			t.Errorf("JSON has no %s: %s", want, bareJSON)
 		}

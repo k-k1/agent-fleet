@@ -251,6 +251,7 @@ tools/call の名前で数えると (a) は `generate_image`・`list_child_sessi
     なし）。今回の修正が解決したのは「MCP 子プロセス自身がオーナーを名乗れるか」であって、
     `af_report` に限っては「モデルが自分の名前を知る手段」も別に要る——これは今回の依頼
     （af MCP 子への env 伝播）の範囲外と判断し、別件として記録するに留める。
+  → Issue #951 に起票（2026-09-24）
 - `create_session` の `parent` 決定・`list_child_sessions`/`list_peer_sessions` は
   実際に子/兄弟セッションを立てないと end-to-end では検証していない（単体+プロセス境界の
   試験で `mcpOwningSession` が正しい名前を返すことまでは確認済み）。

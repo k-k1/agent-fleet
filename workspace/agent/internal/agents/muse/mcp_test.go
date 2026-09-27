@@ -20,7 +20,7 @@ func TestHTTPServerUsesTheWireSpellingNotTheFiles(t *testing.T) {
 	cfg := mcpServerConfig(mcpreg.ServerDef{
 		Name: "tickets", Transport: mcpreg.TransportHTTP, URL: "https://mcp.example.com/mcp",
 		Headers: map[string]string{"Authorization": "Bearer x"},
-	})
+	}, "")
 	if cfg.Transport != "streamableHttp" {
 		t.Errorf("transport = %q, want streamableHttp", cfg.Transport)
 	}
@@ -32,7 +32,7 @@ func TestHTTPServerUsesTheWireSpellingNotTheFiles(t *testing.T) {
 	}
 	// The stdio arm's own spelling, so a change to either is caught here rather than by a
 	// member whose sessions stop starting.
-	stdio := mcpServerConfig(mcpreg.ServerDef{Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/bin/true"})
+	stdio := mcpServerConfig(mcpreg.ServerDef{Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/bin/true"}, "")
 	if stdio.Transport != "stdio" {
 		t.Errorf("stdio transport = %q", stdio.Transport)
 	}
@@ -46,7 +46,7 @@ func TestEveryServerIsOptional(t *testing.T) {
 		{Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/bin/true"},
 		{Name: "tickets", Transport: mcpreg.TransportHTTP, URL: "https://example.com/mcp"},
 	} {
-		cfg := mcpServerConfig(d)
+		cfg := mcpServerConfig(d, "")
 		if cfg.Mode == nil {
 			t.Fatalf("%s: no mode sent, so the host applies its own default (required)", d.Name)
 		}
@@ -130,7 +130,7 @@ func TestServersScopedToAnotherKindAreNotSent(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	servers, err := sessionMCPServers()
+	servers, err := sessionMCPServers("")
 	if err != nil {
 		t.Fatalf("sessionMCPServers: %v", err)
 	}
@@ -167,7 +167,7 @@ func startCapture(t *testing.T, host *msptest.Host) <-chan msp.SessionStartParam
 func TestTheBuiltinAFServerReachesMuse(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SECRET_KEY", "")
-	servers, err := sessionMCPServers()
+	servers, err := sessionMCPServers("")
 	if err != nil {
 		t.Fatalf("sessionMCPServers: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestBuiltinServersCarryTheEnvTheAgentAPINeeds(t *testing.T) {
 		Name: "af", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinAF,
 		Transport: mcpreg.TransportStdio, Command: "workspace-agent",
 		Args: []string{"mcp-stdio", "--self-report"},
-	})
+	}, "")
 	if af.Env["AGENT_TOKEN"] != "probe-token" {
 		t.Errorf("the af server gets no agent token: env = %v", af.Env)
 	}
@@ -219,7 +219,7 @@ func TestBuiltinServersCarryTheEnvTheAgentAPINeeds(t *testing.T) {
 	pd := mcpServerConfig(mcpreg.ServerDef{
 		Name: "pagerduty", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinPagerDuty,
 		Transport: mcpreg.TransportStdio, Command: "workspace-agent",
-	})
+	}, "")
 	if pd.Env["AF_SECRET_KEY"] != "probe-key" {
 		t.Errorf("a builtin's mcp-run wrapper cannot open the store: env = %v", pd.Env)
 	}
@@ -233,7 +233,7 @@ func TestBuiltinServersCarryTheEnvTheAgentAPINeeds(t *testing.T) {
 	user := mcpServerConfig(mcpreg.ServerDef{
 		Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/usr/bin/wiki-mcp",
 		Env: map[string]string{"WIKI_TOKEN": "theirs"},
-	})
+	}, "")
 	if user.Env["WIKI_TOKEN"] != "theirs" {
 		t.Errorf("the definition's own env was dropped: %v", user.Env)
 	}
@@ -247,8 +247,45 @@ func TestBuiltinServersCarryTheEnvTheAgentAPINeeds(t *testing.T) {
 		Name: "af", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinAF,
 		Transport: mcpreg.TransportStdio, Command: "workspace-agent",
 		Env: map[string]string{"AGENT_TOKEN": "explicit"},
-	})
+	}, "")
 	if own.Env["AGENT_TOKEN"] != "explicit" {
 		t.Errorf("the definition's own value lost to the environment: %v", own.Env)
+	}
+}
+
+// TestBuiltinAFCarriesItsOwnSessionName pins the one channel a Managed muse session's af server
+// has for learning which session it serves: muse scrubs its MCP children's environment, and the
+// Agent's own environment belongs to no session, so the name has to ride the per-session wire.
+// Without it every session-bound af tool guesses from the working folder.
+func TestBuiltinAFCarriesItsOwnSessionName(t *testing.T) {
+	// A stray value in the Agent's environment is some OTHER session's; it must not win.
+	t.Setenv("AF_SESSION_NAME", "someone-else")
+
+	af := mcpServerConfig(mcpreg.ServerDef{
+		Name: "af", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinAF,
+		Transport: mcpreg.TransportStdio, Command: "workspace-agent",
+	}, "s-owner")
+	if got := af.Env["AF_SESSION_NAME"]; got != "s-owner" {
+		t.Errorf("af server told AF_SESSION_NAME=%q, want the session it serves", got)
+	}
+
+	// Another builtin and a user-registered server are not the af server: neither reads the
+	// variable, and a member's command has no business being told the session name.
+	for _, d := range []mcpreg.ServerDef{
+		{Name: "pagerduty", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinPagerDuty,
+			Transport: mcpreg.TransportStdio, Command: "workspace-agent"},
+		{Name: "af", Transport: mcpreg.TransportStdio, Command: "/usr/bin/their-af"},
+	} {
+		if v, ok := mcpServerConfig(d, "s-owner").Env["AF_SESSION_NAME"]; ok {
+			t.Errorf("%s (origin %q) was given AF_SESSION_NAME=%q", d.Name, d.Origin, v)
+		}
+	}
+
+	// No name, nothing stamped — and still not the Agent's own value.
+	if v, ok := mcpServerConfig(mcpreg.ServerDef{
+		Name: "af", Origin: mcpreg.OriginBuiltin, ID: mcpreg.BuiltinAF,
+		Transport: mcpreg.TransportStdio, Command: "workspace-agent",
+	}, "").Env["AF_SESSION_NAME"]; ok {
+		t.Errorf("an unnamed session's af server was given AF_SESSION_NAME=%q", v)
 	}
 }

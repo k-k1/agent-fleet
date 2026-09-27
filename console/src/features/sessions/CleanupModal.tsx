@@ -8,6 +8,9 @@
 //     survey still reports them (the assistant/operator has no shelf UI), we filter.
 //     Rows are nested repo → working copy (cleanupGroups.ts) so a dozen worktrees of one
 //     repo read as one repo, and each group shows what goes away together.
+//     Below the two stages, unnumbered (③ is the shelf's final reclaim): the cache left
+//     behind by sessions that are gone for good, one sized row per cache — the only delete
+//     here with no trash behind it, so it says so.
 //   Trash — the gz safety net that delete_session/delete_branch write before removing
 //     anything: restore (undo) or purge (reclaim for good).
 import { useEffect, useMemo, useState } from "react";
@@ -16,12 +19,19 @@ import { Button, IconButton } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { api, rawJSON, raw } from "../../core/api/client.ts";
+import { api, errText, rawJSON, raw } from "../../core/api/client.ts";
 import { t, tMaybe, useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
+import { humanSize } from "../../lib/filemeta.ts";
 import { cleanupReasonParts } from "./cleanupReason.ts";
 import { groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
 import { useSessionUI } from "./ui.ts";
+import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
+import type { Session } from "../../types/session.ts";
+
+/** Refusals of a deleted worktree's restore that a new branch name gets past — the recreate
+ *  dialog can ask for one, the trash cannot. */
+const NEEDS_RECREATE_DIALOG = new Set(["recreate_needs_new_branch", "branch_in_use"]);
 
 interface CleanupArchive {
   id: string;
@@ -29,7 +39,16 @@ interface CleanupArchive {
   reason?: string;
   sessions?: { name: string; display?: string }[];
   branches?: { repo: string; name: string }[];
+  /** A deleted worktree's tombstone (reason "delete_worktree"). */
+  worktree?: { name: string; path: string; branch?: string; snapshot?: string };
+  /** Size of the archive's tarball (what purging it reclaims). */
+  bytes?: number;
 }
+
+/** "Delete permanently: older ones" in the trash tab (ADR 0101 decision 6). A person presses it —
+ *  nothing in the trash expires on its own (ADR 0097) — so a fixed window is enough; the point is
+ *  not to pick hundreds of rows one by one. */
+const PURGE_OLDER_DAYS = 30;
 
 interface CleanupModalProps {
   onClose?: () => void;
@@ -59,13 +78,21 @@ function runAction(c: CleanupCandidate): Promise<Response> {
     case "delete_session":
       return raw(`api/sessions/${enc(c.id)}?reclaim=1`, { method: "DELETE" });
     case "delete_worktree":
-      return raw(`api/repos/${enc(c.id)}?prune_sessions=1`, { method: "DELETE" });
+      // The Agent shelves the stopped AI sessions in it and trashes its shell / ssm itself
+      // (ADR 0101 decision 4). prune_sessions=1 would make an Agent older than that FORGET them.
+      return raw(`api/repos/${enc(c.id)}`, { method: "DELETE" });
     case "delete_branch":
       return raw(`api/repos/${enc(c.id)}/branch?branch=${enc(c.branch || "")}`, { method: "DELETE" });
+    case "delete_cache":
+      return raw(`api/cleanup/cache/${enc(c.id)}`, { method: "DELETE" });
     default:
       return Promise.resolve(new Response(null, { status: 400 }));
   }
 }
+
+// The display name of a cache row's id ("pasted", "codex-view-image"). An id this Console
+// does not know (an Agent newer than it) shows as itself.
+export const cacheLabel = (id: string) => tMaybe("clean.cache_feature_" + id.replace(/-/g, "_")) ?? id;
 
 export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const [tab, setTab] = useState<"candidates" | "archives">("candidates");
@@ -76,6 +103,8 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   // the survey is a to-do list, and a collapsed-by-default one hides the work.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // A deleted worktree whose restore needs a new branch name, open in the recreate dialog.
+  const [recreate, setRecreate] = useState<{ dir: string; sessions: Session[] } | null>(null);
   const askConfirm = useConfirm();
   const toast = useToast();
   const tr = useT();
@@ -98,7 +127,8 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const visible = useMemo(() => (items || []).filter((c) => !isShelfRow(c)), [items]);
   const shelfCount = (items?.length ?? 0) - visible.length;
   const stage1 = useMemo(() => visible.filter((c) => c.type === "session"), [visible]);
-  const stage2 = useMemo(() => visible.filter((c) => c.type !== "session"), [visible]);
+  const stage2 = useMemo(() => visible.filter((c) => c.type !== "session" && c.type !== "cache"), [visible]);
+  const cacheRows = useMemo(() => visible.filter((c) => c.type === "cache"), [visible]);
   const actionable = useMemo(
     () => visible.filter((c) => c.action && c.safety !== "keep"),
     [visible],
@@ -174,9 +204,14 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
 
   const runSelected = () => {
     const targets = actionable.filter((c) => checked.has(rowKey(c)));
+    // The general body promises a trash; a cache delete has none, so a selection that
+    // includes one says that too.
+    const body = targets.some((c) => c.action === "delete_cache")
+      ? tr("clean.confirm_body") + " " + tr("clean.confirm_body_cache")
+      : tr("clean.confirm_body");
     return runTargets(targets, {
       title: tr("clean.confirm_title", { count: targets.length }),
-      body: tr("clean.confirm_body"),
+      body,
       confirmLabel: tr("clean.confirm_do", { count: targets.length }),
     });
   };
@@ -214,11 +249,46 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
       confirmLabel: tr("clean.confirm_do", { count: stage2Safe.length }),
     });
 
+  // Cache one-shot: every cache row that has an action (a scan the Agent could not trust
+  // comes as keep, with none).
+  const cacheTargets = useMemo(() => cacheRows.filter((c) => c.action && c.safety !== "keep"), [cacheRows]);
+  const cacheBytes = cacheTargets.reduce((n, c) => n + (c.bytes || 0), 0);
+  const runCache = () =>
+    runTargets(cacheTargets, {
+      title: tr("clean.cache_stage_confirm_title"),
+      body: tr("clean.cache_stage_confirm_body", { size: humanSize(cacheBytes) }),
+      confirmLabel: tr("clean.confirm_do", { count: cacheTargets.length }),
+    });
+
   const restore = async (id: string) => {
     setBusy(true);
     try {
       const res = await rawJSON(`api/cleanup/archives/${encodeURIComponent(id)}/restore`, "POST");
-      toast(res.ok ? t("clean.restored") : t("clean.restore_failed"));
+      const code: string | undefined = res.ok ? undefined : (await res.json().catch(() => null))?.error?.code;
+      const wt = archives?.find((a) => a.id === id)?.worktree;
+      if (code && wt?.path && NEEDS_RECREATE_DIALOG.has(code)) {
+        // The archive's own heading may not exist for this folder (no AI session was shelved),
+        // so the way through is opened from here, with whatever of it is still on the shelf.
+        const shelf = await api("api/sessions/archived").catch(() => null);
+        // At or under the folder, as the delete shelved them (subfolder launches included).
+        const sessions = ((shelf?.sessions || []) as Session[]).filter(
+          (s) => s.dir === wt.path || !!s.dir?.startsWith(wt.path + "/"),
+        );
+        toast(errText({ code, message: t("clean.restore_failed") }));
+        setRecreate({ dir: wt.path, sessions });
+        return;
+      }
+      // restore_incomplete = it stopped part way: nothing was undone, and restoring again
+      // finishes it. Any other code is a deleted worktree that cannot come back as it was.
+      toast(
+        res.ok
+          ? t("clean.restored")
+          : code && code !== "restore_incomplete"
+            ? errText({ code, message: t("clean.restore_failed") })
+            : res.status === 409
+              ? t("clean.restore_incomplete")
+              : t("clean.restore_failed"),
+      );
       await loadArchives();
       await loadCandidates();
       onChanged?.();
@@ -237,8 +307,56 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
     if (!ok) return;
     setBusy(true);
     try {
-      await raw(`api/cleanup/archives/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+      // A refusal has to be seen: the one the Agent gives on purpose (409) is an archive
+      // whose restore did not finish, which only restoring it again resolves.
+      const res = await raw(`api/cleanup/archives/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => null);
+      if (!res || !res.ok) {
+        toast(res?.status === 409 ? t("clean.purge_restore_incomplete") : t("clean.purge_failed"));
+      }
       await loadArchives();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Archives past the window, by their write time (at is the Agent's RFC3339). One without a
+  // parseable at is left out: the Agent would not purge it either.
+  const oldArchives = useMemo(() => {
+    if (!archives) return [];
+    const cutoff = Date.now() - PURGE_OLDER_DAYS * 24 * 60 * 60 * 1000;
+    return archives.filter((a) => {
+      const at = a.at ? Date.parse(a.at) : NaN;
+      return Number.isFinite(at) && at < cutoff;
+    });
+  }, [archives]);
+  const oldBytes = oldArchives.reduce((n, a) => n + (a.bytes || 0), 0);
+
+  const purgeOld = async () => {
+    const ok = await askConfirm({
+      title: tr("clean.purge_old_title", { days: PURGE_OLDER_DAYS }),
+      body: tr("clean.purge_old_body", { count: oldArchives.length, size: humanSize(oldBytes) }),
+      confirmLabel: tr("clean.purge_do"),
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await raw(`api/cleanup/archives?older_than_days=${PURGE_OLDER_DAYS}`, { method: "DELETE" }).catch(
+        () => null,
+      );
+      const j = res?.ok ? await res.json().catch(() => null) : null;
+      if (!j) {
+        toast(t("clean.purge_failed"));
+      } else {
+        // kept = archives a restore left half done: the Agent keeps them, as the single purge does.
+        toast(
+          j.kept
+            ? t("clean.purge_old_done_kept", { count: j.purged ?? 0, kept: j.kept })
+            : t("clean.purge_old_done", { count: j.purged ?? 0, size: humanSize(j.bytes ?? 0) }),
+        );
+      }
+      await loadArchives();
+      onChanged?.();
     } finally {
       setBusy(false);
     }
@@ -254,6 +372,43 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const openShelf = () => {
     onClose?.();
     openArchived();
+  };
+
+  // One row of the flat cache list: the same columns as a tree row, with the size where a
+  // tree row names its target.
+  const renderCacheRow = (c: CleanupCandidate) => {
+    const key = rowKey(c);
+    const selectable = !!c.action && c.safety !== "keep";
+    const reason = cleanupReasonParts(c);
+    return (
+      <li key={key} className={"clean-row" + (selectable ? "" : " is-keep")}>
+        {selectable ? (
+          <label className="clean-check">
+            <input type="checkbox" checked={checked.has(key)} disabled={busy} onChange={() => toggle(key)} />
+          </label>
+        ) : (
+          <span className="clean-check" aria-hidden="true" />
+        )}
+        <span className={"clean-badge clean-badge-" + c.safety}>{tMaybe("clean.safety_" + c.safety) ?? c.safety}</span>
+        <span className="clean-type clean-type-cache">{tr("clean.type_cache")}</span>
+        <span className="clean-target" title={c.id}>
+          {cacheLabel(c.id)}
+          {/* The partial mark stands on its own: a keep row (nothing it could clear) is
+              exactly where "there is more it did not reach" must still be visible. */}
+          {(c.bytes != null && c.dirs != null) || c.truncated || c.stuck ? (
+            <span className="clean-size">
+              {c.bytes != null && c.dirs != null ? tr("clean.cache_size", { dirs: c.dirs, size: humanSize(c.bytes) }) : ""}
+              {c.truncated || c.stuck ? tr("clean.cache_partial") : ""}
+            </span>
+          ) : null}
+        </span>
+        <span className="clean-act">{c.action ? (tMaybe("clean.action_" + c.action) ?? c.action) : ""}</span>
+        <span className="clean-reason">
+          {reason.badge && <span className="clean-reason-badge">{reason.badge}</span>}
+          {reason.text && <span className="clean-reason-text">{reason.text}</span>}
+        </span>
+      </li>
+    );
   };
 
   // One stage's repo → working copy → rows tree. `prefix` namespaces the collapse
@@ -482,6 +637,28 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                   )}
                 </section>
 
+                <section className="clean-stage">
+                  <div className="clean-stage-head">
+                    <span className="clean-stage-title">{tr("clean.cache_stage_title")}</span>
+                    <span className="clean-toolbar-spacer" />
+                    <Button
+                      small
+                      variant="danger"
+                      disabled={busy || cacheTargets.length === 0}
+                      title={tr("clean.cache_stage_run_title")}
+                      onClick={() => void runCache()}
+                    >
+                      {tr("clean.cache_stage_run")}
+                      {cacheTargets.length ? tr("common.paren", { v: humanSize(cacheBytes) }) : ""}
+                    </Button>
+                  </div>
+                  {cacheRows.length === 0 ? (
+                    <p className="clean-stage-empty">{tr("clean.cache_stage_empty")}</p>
+                  ) : (
+                    <ul className="clean-list clean-rows">{cacheRows.map(renderCacheRow)}</ul>
+                  )}
+                </section>
+
                 {shelfCount > 0 && (
                   <div className="clean-shelf">
                     <Icon name="archive" />
@@ -503,39 +680,70 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
             ) : archives.length === 0 ? (
               <div className="clean-empty">{tr("clean.archives_empty")}</div>
             ) : (
-              <ul className="clean-list">
-                {archives.map((a) => (
-                  <li key={a.id} className="clean-row clean-archive-row">
-                    {/* at is the Agent's RFC3339 (UTC), so render it as a locale date-time
-                        rather than reusing the raw value in the viewer's timezone. When at
-                        is missing, id is not a valid date and fmtDateTime returns it as-is. */}
-                    <span className="clean-arch-when">{fmtDateTime(a.at || a.id, DATETIME_FULL)}</span>
-                    <span className="clean-arch-what">
-                      {a.reason === "delete_branch"
-                        ? tr("clean.archive_reason_delete_branch")
-                        : tr("clean.archive_reason_delete_session")}
-                      {a.sessions && a.sessions.length > 0
-                        ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
-                        : ""}
-                      {a.branches && a.branches.length > 0
-                        ? " · " + tr("clean.archive_branches_n", { count: a.branches.length })
-                        : ""}
+              <>
+                {oldArchives.length > 0 && (
+                  <div className="clean-toolbar">
+                    <span className="muted">
+                      {tr("clean.purge_old_hint", {
+                        days: PURGE_OLDER_DAYS,
+                        count: oldArchives.length,
+                        size: humanSize(oldBytes),
+                      })}
                     </span>
-                    <span className="clean-arch-actions">
-                      <Button variant="ghost" onClick={() => void restore(a.id)} disabled={busy}>
-                        {tr("clean.restore")}
-                      </Button>
-                      <Button variant="danger" onClick={() => void purge(a.id)} disabled={busy}>
-                        {tr("clean.purge")}
-                      </Button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
+                    <span className="clean-toolbar-spacer" />
+                    <Button variant="danger" onClick={() => void purgeOld()} disabled={busy}>
+                      {tr("clean.purge_old", { days: PURGE_OLDER_DAYS })}
+                    </Button>
+                  </div>
+                )}
+                <ul className="clean-list">
+                  {archives.map((a) => (
+                    <li key={a.id} className="clean-row clean-archive-row">
+                      {/* at is the Agent's RFC3339 (UTC), so render it as a locale date-time
+                          rather than reusing the raw value in the viewer's timezone. When at
+                          is missing, id is not a valid date and fmtDateTime returns it as-is. */}
+                      <span className="clean-arch-when">{fmtDateTime(a.at || a.id, DATETIME_FULL)}</span>
+                      <span className="clean-arch-what">
+                        {a.reason === "delete_branch"
+                          ? tr("clean.archive_reason_delete_branch")
+                          : a.reason === "delete_worktree"
+                            ? tr("clean.archive_reason_delete_worktree", { name: a.worktree?.name || "" })
+                            : tr("clean.archive_reason_delete_session")}
+                        {a.worktree?.snapshot ? " · " + tr("clean.archive_worktree_snapshot") : ""}
+                        {a.sessions && a.sessions.length > 0
+                          ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
+                          : ""}
+                        {a.branches && a.branches.length > 0
+                          ? " · " + tr("clean.archive_branches_n", { count: a.branches.length })
+                          : ""}
+                      </span>
+                      <span className="clean-arch-actions">
+                        <Button variant="ghost" onClick={() => void restore(a.id)} disabled={busy}>
+                          {tr("clean.restore")}
+                        </Button>
+                        <Button variant="danger" onClick={() => void purge(a.id)} disabled={busy}>
+                          {tr("clean.purge")}
+                        </Button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </div>
         )}
       </div>
+      {recreate && (
+        <RecreateWorktreeModal
+          dir={recreate.dir}
+          sessions={recreate.sessions}
+          onClose={() => setRecreate(null)}
+          onChanged={() => {
+            void loadArchives();
+            onChanged?.();
+          }}
+        />
+      )}
     </Modal>
   );
 }

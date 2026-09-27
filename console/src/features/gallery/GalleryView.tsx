@@ -16,13 +16,15 @@
 //     what changed (ADR 0080 P2). Walking back into a folder is the common case, and a round
 //     trip's worth of empty pane is what made it feel slow.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { displayURL, downloadURL } from "../../core/api/client.ts";
+import { displayURL, downloadURL, errDetail, fsDelete, fsRename } from "../../core/api/client.ts";
 import { humanSize } from "../../lib/filemeta.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useBackClose } from "../../lib/backClose.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -31,10 +33,14 @@ import { isBusySession } from "../files/sessionRefresh.ts";
 import { REVALIDATE_GAP_MS, WORKING_TICK_MS } from "../files/refreshPolicy.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
+import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
+import { openGeneratingSession, useGeneratingSession, type GeneratingSession } from "../imagegen/useGeneratingSession.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
+import { useToast } from "../../ui/ToastProvider.tsx";
 import {
   PAGE_SIZE,
   breadcrumb,
@@ -133,6 +139,19 @@ function useArmed(ref: { current: HTMLElement | null }, active = true): boolean 
 
 const baseName = (p: string): string => p.split("/").filter(Boolean).pop() || p;
 
+/**
+ * What one right-click menu acts on. Both card kinds produce the same shape, because every
+ * item but the wording works the same on either: the paths are copied, renamed and deleted
+ * through the same endpoints, and only the confirm text has to know that a folder takes its
+ * contents with it. The "Up" card is NOT a target — it names the folder being left, and
+ * renaming or deleting the thing you climbed out of is never what a right-click there meant.
+ */
+interface MenuTarget {
+  kind: "image" | "folder";
+  name: string;
+  path: string;
+}
+
 interface GalleryViewProps {
   paneId: string;
   path: string;
@@ -146,6 +165,8 @@ interface GalleryViewProps {
 
 export function GalleryView({ paneId, path, sort, focus, sessionName, headerActions }: GalleryViewProps) {
   const tr = useT();
+  const showToast = useToast();
+  const askConfirm = useConfirm();
   const running = useWorkspaceStore((s) => wsRunning(s.state));
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
   const filesTick = useFilesStore((s) => s.tick);
@@ -171,6 +192,12 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   // new generation shifts every index under "newest first", and an index would quietly
   // enlarge a different image while someone is looking at it.
   const [zoomPath, setZoomPath] = useState<string | null>(null);
+  // The right-click menu: what it acts on and where to draw it. The entry is held whole rather
+  // than by index, for the same reason `zoomPath` is — a background refresh reorders the grid,
+  // and a menu that renamed whatever is now at position 3 would be the one failure a file menu
+  // must not have.
+  const [menu, setMenu] = useState<(MenuTarget & { x: number; y: number }) | null>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
 
   // Refs the refresh path reads: it runs from a timer / event, not from a render, so it
   // must not close over a stale listing or re-subscribe whenever one arrives.
@@ -207,6 +234,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
     setStale(!!cached);
     setLimit(cached?.limit ?? PAGE_SIZE);
     setZoomPath(null);
+    setMenu(null); // it names an entry in the folder being left
     setFresh(new Set()); // the tint belongs to the folder it was worked out in
     namesRef.current = cached ? new Set(cached.entries.map((e) => e?.name).filter(Boolean) as string[]) : null;
     shownRef.current = !!cached;
@@ -420,6 +448,82 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   // Back press jumps straight past the picture.
   useBackClose(zoomPath ? close : undefined, !!zoomPath);
 
+  // --- the right-click menu -------------------------------------------------------------
+  // Closed by an outside click / Escape / the window losing focus, the same three ways the
+  // file tree's menu closes. The outside click only closes it (useDismiss swallows it).
+  useDismiss(menuRef, !!menu, () => setMenu(null));
+  useEffect(() => {
+    if (!menu) return;
+    const shut = () => setMenu(null);
+    window.addEventListener("blur", shut);
+    return () => window.removeEventListener("blur", shut);
+  }, [menu]);
+  // Clamped on EVERY render, not once on open: the JSX re-applies the raw cursor coords as
+  // inline style each time, and this view re-renders on its own (the files tick, a running
+  // session's slow refresh) while the menu is up — a one-shot clamp would be undone by the
+  // next poll and a menu opened near the pane's foot would jump back off-screen.
+  useLayoutEffect(() => {
+    if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y);
+  });
+  /** Run a menu action and close the menu — one place, so no item can forget the close. */
+  const runMenu = (fn: () => void) => {
+    setMenu(null);
+    fn();
+  };
+
+  const copyText = (text: string, done: string) => {
+    if (!navigator.clipboard?.writeText) return showToast(tr("common.copy_failed"), { kind: "error" });
+    navigator.clipboard.writeText(text).then(
+      () => showToast(done, { kind: "success" }),
+      () => showToast(tr("common.copy_failed"), { kind: "error" }),
+    );
+  };
+
+  /**
+   * Rename in place: what is typed is a NAME, and the destination is built in the FOLDER ON
+   * SCREEN. A slash is refused rather than joined — "../x.png" would move the picture into a
+   * sibling folder and "a/b.png" into one that may not exist, and a rename that silently
+   * relocates is worse than one that says no. (The Agent's own path gate stops an escape from
+   * the browse root; it has no reason to stop a move WITHIN it, so that check belongs here.)
+   *
+   * An enlarged picture follows the rename. The lightbox is held by path (`zoomPath`), so
+   * leaving it pointing at the old name would 404 the moment the listing lands — the picture
+   * would vanish from under whoever renamed it.
+   */
+  const renameEntry = async (target: MenuTarget) => {
+    const typed = window.prompt(tr(target.kind === "folder" ? "gallery.rename_folder_prompt" : "gallery.rename_prompt"), target.name);
+    if (typed === null) return;
+    const next = typed.trim();
+    if (!next || next === target.name) return;
+    if (next.includes("/")) return showToast(tr("gallery.rename_bad_name"), { kind: "error" });
+    const to = path ? path + "/" + next : next;
+    const res = await fsRename(target.path, to);
+    if (res.error) return showToast(tr("gallery.rename_failed", { msg: errDetail(res.error) }), { kind: "error" });
+    setZoomPath((p) => (p === target.path ? to : p));
+    refresh(true);
+  };
+
+  /**
+   * Delete, behind the shared confirm. A folder takes everything inside it, so it says so and
+   * asks with its own wording — the file tree's menu learnt the same lesson (`delete_dir_note`).
+   *
+   * An enlarged view of the deleted picture is closed rather than left on a URL that now 404s.
+   */
+  const deleteEntry = async (target: MenuTarget) => {
+    const dir = target.kind === "folder";
+    const ok = await askConfirm({
+      title: tr(dir ? "gallery.delete_folder_title" : "gallery.delete_title"),
+      body: tr(dir ? "gallery.delete_folder_body" : "gallery.delete_body", { name: target.name }),
+      confirmLabel: tr("common.delete_do"),
+      danger: true,
+    });
+    if (!ok) return;
+    const res = await fsDelete(target.path);
+    if (res.error) return showToast(tr("gallery.delete_failed", { msg: errDetail(res.error) }), { kind: "error" });
+    setZoomPath((p) => (p === target.path ? null : p));
+    refresh(true);
+  };
+
   /**
    * Walk into a folder (or up out of one) IN THIS PANE. Not openGallery: that dedupes on
    * the folder and would jump to a gallery of the same folder someone has open elsewhere,
@@ -457,6 +561,20 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   // the current pane by itself, which is the right answer where there is no "beside".
   const openPane = (img: GalleryImage) => {
     useLayoutStore.getState().openTargetInNew({ content: { kind: "file", filePath: img.path } }, true);
+  };
+
+  // The session whose generate_image wrote the pictures in THIS folder, when one still exists.
+  // Every image card here shares the folder, so it is resolved once for the pane rather than
+  // per card — and the header wears it, so "which session made these" is answered before
+  // anyone opens a menu (a generated folder is named by a UUID and says nothing by itself).
+  const madeBy = useGeneratingSession(path);
+  // The same question for whatever the menu is open on: a FOLDER card asks about itself, which
+  // is the case that matters most — the generated root is a grid of one folder per session, so
+  // that is where someone is looking when they want the conversation behind a batch.
+  const menuMadeBy = useGeneratingSession(menu?.kind === "folder" ? menu.path : path);
+  const jumpToSession = (target: GeneratingSession | null, split: boolean) => {
+    if (!target) return;
+    if (!openGeneratingSession(target.name, split)) showToast(tr("gallery.session_gone"), { kind: "info" });
   };
 
   const title = sessionTitle
@@ -550,6 +668,23 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
             </span>
           ))}
         </span>
+        {/* Who made these. A generated folder is named by a UUID, so without this the pane
+            cannot say whose pictures it is showing — and the label is the way back to that
+            session's conversation, which is where the prompt behind the picture is. Drawn only
+            when the session still exists: a button that leads nowhere is worse than none. */}
+        {madeBy && (
+          <button
+            type="button"
+            className="ui-btn ui-btn-ghost gal-madeby"
+            title={tr("gallery.open_session", { name: madeBy.label })}
+            aria-label={tr("gallery.open_session", { name: madeBy.label })}
+            onClick={(e) => jumpToSession(madeBy, e.ctrlKey || e.metaKey)}
+            onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+            onAuxClick={(e) => e.button === 1 && jumpToSession(madeBy, true)}
+          >
+            <Icon name="comment-discussion" /> {madeBy.label}
+          </button>
+        )}
       </div>
       {failed ? (
         <EmptyState icon="warning" title={tr("gallery.failed")} hint={path} />
@@ -601,6 +736,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
                 fresh={fresh.has(f.name)}
                 onPrefetch={() => prefetchGallery(f.path, thumbEdge())}
                 onOpen={(newPane) => (newPane ? openGallery(f.path, { newPane: true }) : navigate(f.path))}
+                onMenu={(x, y) => setMenu({ kind: "folder", name: f.name, path: f.path, x, y })}
               />
             ))}
             {shown.map((img) => (
@@ -612,6 +748,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
                 onBroken={() => setBroken((b) => new Set(b).add(img.path))}
                 onZoom={() => setZoomPath(img.path)}
                 onOpenPane={() => openPane(img)}
+                onMenu={(x, y) => setMenu({ kind: "image", name: img.name, path: img.path, x, y })}
                 showTime={mode === "new"}
               />
             ))}
@@ -654,6 +791,81 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
           />,
           document.body,
         )}
+      {menu &&
+        createPortal(
+          // Portalled and position:fixed, like every other right-click menu here: a menu drawn
+          // inside `.gal-body` would be clipped by the scroll container it was opened in.
+          // mousedown is stopped so the outside-click listener above does not close the menu
+          // on the very press that is choosing an item.
+          <ul
+            className="ui-menu gal-ctxmenu"
+            ref={menuRef}
+            style={{ left: menu.x, top: menu.y }}
+            role="menu"
+            aria-label={tr("gallery.menu")}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {/* A folder card offers "open in a second pane" too: its plain click navigates
+                THIS pane, so without this the menu is the only way to keep the grid you are
+                in. A picture already has that as the card's own corner button. */}
+            {menu.kind === "folder" && (
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onClick={() => runMenu(() => openGallery(menu.path, { newPane: true }))}
+                >
+                  <Icon name="split-horizontal" /> {tr("gallery.open_folder_pane")}
+                </button>
+              </li>
+            )}
+            <li>
+              <button
+                type="button"
+                className="ui-menu-item"
+                onClick={() => runMenu(() => copyText(menu.path, tr("gallery.copied_path")))}
+              >
+                <Icon name="copy" /> {tr("gallery.copy_path")}
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                className="ui-menu-item"
+                onClick={() => runMenu(() => copyText(menu.name, tr("gallery.copied_name")))}
+              >
+                <Icon name="copy" /> {tr(menu.kind === "folder" ? "gallery.copy_folder_name" : "gallery.copy_name")}
+              </button>
+            </li>
+            {menuMadeBy && (
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                  onAuxClick={(e) => e.button === 1 && runMenu(() => jumpToSession(menuMadeBy, true))}
+                  onClick={(e) => {
+                    const split = e.ctrlKey || e.metaKey;
+                    runMenu(() => jumpToSession(menuMadeBy, split));
+                  }}
+                >
+                  <Icon name="comment-discussion" /> {tr("gallery.open_session", { name: menuMadeBy.label })}
+                </button>
+              </li>
+            )}
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void renameEntry(menu))}>
+                <Icon name="edit" /> {tr(menu.kind === "folder" ? "gallery.rename_folder" : "gallery.rename")}
+              </button>
+            </li>
+            <li>
+              <button type="button" className="ui-menu-item danger" onClick={() => runMenu(() => void deleteEntry(menu))}>
+                <Icon name="trash" /> {tr(menu.kind === "folder" ? "gallery.delete_folder" : "gallery.delete")}
+              </button>
+            </li>
+          </ul>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -674,6 +886,7 @@ function FolderCard({
   fresh,
   onPrefetch,
   onOpen,
+  onMenu,
 }: {
   label: string;
   meta?: string;
@@ -687,10 +900,23 @@ function FolderCard({
    *  is the earliest honest signal that somebody is about to open it. */
   onPrefetch?: () => void;
   onOpen: (newPane: boolean) => void;
+  /** Open this folder's right-click menu. Absent on the "Up" card: it names the folder being
+   *  left, and renaming or deleting that from here is never what the right-click meant. */
+  onMenu?: (x: number, y: number) => void;
 }) {
   const hoverTimer = useRef(0);
   const disarm = () => window.clearTimeout(hoverTimer.current);
   useEffect(() => disarm, []);
+  const onContextMenu = (e: RMouseEvent) => {
+    if (!onMenu) return; // no menu here, so leave the browser's own alone
+    e.preventDefault();
+    onMenu(e.clientX, e.clientY);
+  };
+  const onKeyDown = (e: RKeyboardEvent<HTMLDivElement>) => {
+    if (!onMenu || !isContextMenuKey(e)) return;
+    e.preventDefault();
+    synthContextMenu(e.currentTarget);
+  };
   // Gated exactly like an image card: a browse root with sixty subfolders would otherwise put
   // sixty covers in the queue before anyone has scrolled. No cover, no observer — "Up" and the
   // folders of an Agent that does not peek have nothing to wait for.
@@ -698,7 +924,12 @@ function FolderCard({
   const armed = useArmed(thumbRef, !!cover);
   const [coverFailed, setCoverFailed] = useState(false);
   return (
-    <div className={"gal-card folder" + (fresh ? " gal-new" : "")} role="listitem">
+    <div
+      className={"gal-card folder" + (fresh ? " gal-new" : "")}
+      role="listitem"
+      onContextMenu={onContextMenu}
+      onKeyDown={onKeyDown}
+    >
       <button
         type="button"
         className="gal-enter"
@@ -755,6 +986,7 @@ function GalleryCard({
   onBroken,
   onZoom,
   onOpenPane,
+  onMenu,
   showTime,
 }: {
   img: GalleryImage;
@@ -763,9 +995,23 @@ function GalleryCard({
   onBroken: () => void;
   onZoom: () => void;
   onOpenPane: () => void;
+  /** Open the card's right-click menu at these viewport coordinates. */
+  onMenu: (x: number, y: number) => void;
   showTime: boolean;
 }) {
   const tr = useT();
+  const onContextMenu = (e: RMouseEvent) => {
+    e.preventDefault();
+    onMenu(e.clientX, e.clientY);
+  };
+  // Menu key / Shift+F10 on the focused card. A native contextmenu event is synthesised on the
+  // card rather than calling onMenu directly, so there is only ONE way in and the keyboard
+  // cannot drift from the pointer (the rail rows do the same — contextMenuKey.ts).
+  const onKeyDown = (e: RKeyboardEvent<HTMLDivElement>) => {
+    if (!isContextMenuKey(e)) return;
+    e.preventDefault();
+    synthContextMenu(e.currentTarget);
+  };
   // A relative time is only shown when the Agent actually sent one — never derived from
   // the file name, however tempting the unixnano in a generated one looks.
   const meta = showTime && img.mtime ? relTime(img.mtime * 1000) : humanSize(img.size);
@@ -797,7 +1043,12 @@ function GalleryCard({
     // No picture on screen, so there is nothing to enlarge: the whole card becomes the
     // pane target, exactly as a non-image file card does in the transcript.
     return (
-      <div className={"gal-card" + (fresh ? " gal-new" : "")} role="listitem">
+      <div
+        className={"gal-card" + (fresh ? " gal-new" : "")}
+        role="listitem"
+        onContextMenu={onContextMenu}
+        onKeyDown={onKeyDown}
+      >
         <button
           type="button"
           className="gal-zoom"
@@ -811,7 +1062,12 @@ function GalleryCard({
     );
   }
   return (
-    <div className={"gal-card image" + (fresh ? " gal-new" : "")} role="listitem">
+    <div
+      className={"gal-card image" + (fresh ? " gal-new" : "")}
+      role="listitem"
+      onContextMenu={onContextMenu}
+      onKeyDown={onKeyDown}
+    >
       <button type="button" className="gal-zoom" title={tr("gallery.zoom", { name: img.name })} onClick={onZoom}>
         {body}
       </button>

@@ -5,6 +5,8 @@ English | [日本語](0076-external-image-engine-on-lan.ja.md)
 - Status: **proposed, reviewed** (2026-09-11). Nothing is implemented. The review (last section)
   checked every claim against the code and found no premise that fails; its corrections are
   folded into the decisions below and P0 may start.
+  Status update (2026-09-24): P0 is implemented. Its four lanes landed as #556 (Agent), #557 (documentation), #558 (Console) and #560 (CP: the external row synthesised from `AF_COMFY_URL`, `control-plane/engines.go`). P0's completion run — one image from a LAN ComfyUI — is not recorded.
+- Follow-ups: #957, #958, #962
 - **Nothing was measured for this document.** Every claim says where it comes from —
   (a) measurements in ADR 0069, 0071 and 0072, (b) facts read out of this repository's code on
   2026-09-11 (listed file:line under "Sources checked"), (c) things known only as ComfyUI's

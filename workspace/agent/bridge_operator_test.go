@@ -53,7 +53,7 @@ func TestRunOperatorTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reply, err := runOperatorTurn(conv.ID, "  稼働状況は?  ")
+	reply, err := runOperatorTurn(conv.ID, "  稼働状況は?  ", "discord")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +74,10 @@ func TestRunOperatorTurn(t *testing.T) {
 	if c.Messages[0].Content != "稼働状況は?" {
 		t.Fatalf("user turn = %q (should be trimmed)", c.Messages[0].Content)
 	}
+	// Attributed to the bridge, so the Console keeps it out of the composer's ↑ history.
+	if c.Messages[0].Source != "discord" {
+		t.Fatalf("user turn source = %q, want discord", c.Messages[0].Source)
+	}
 	if c.Messages[1].Content != "フリートは2件稼働中です" {
 		t.Fatalf("assistant turn = %q", c.Messages[1].Content)
 	}
@@ -86,7 +90,7 @@ func TestRunOperatorTurn(t *testing.T) {
 // operator conversation is gone.
 func TestRunOperatorTurnMissingConv(t *testing.T) {
 	withTempHome(t)
-	reply, err := runOperatorTurn(chatx.RandUUID(), "hi")
+	reply, err := runOperatorTurn(chatx.RandUUID(), "hi", "discord")
 	if err == nil {
 		t.Fatal("expected an error for a missing conversation")
 	}

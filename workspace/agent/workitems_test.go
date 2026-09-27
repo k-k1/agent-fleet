@@ -20,7 +20,7 @@ func TestParseGitHubSearchItems(t *testing.T) {
 	   "repository_url":"https://api.github.com/repos/acme/web",
 	   "updated_at":"2026-08-25T01:02:03Z",
 	   "assignees":[{"login":"taro"},{"login":"hanako"}],
-	   "labels":[{"name":"bug"},{"name":"p1"}]},
+	   "labels":[{"name":"bug","color":"D73A4A"},{"name":"p1","color":"url(x)"}]},
 	  {"number":46,"title":"draft pr","state":"open","draft":true,
 	   "html_url":"https://github.com/acme/web/pull/46",
 	   "repository_url":"https://api.github.com/repos/acme/web",
@@ -56,6 +56,15 @@ func TestParseGitHubSearchItems(t *testing.T) {
 	}
 	if strings.Join(got.Labels, ",") != "bug,p1" {
 		t.Errorf("labels = %v", got.Labels)
+	}
+	// The colour is lowercased, and one that is not "rrggbb" is dropped rather than passed on
+	// to end up in the Console's CSS.
+	if len(got.LabelColors) != 1 || got.LabelColors["bug"] != "d73a4a" {
+		t.Errorf("labelColors = %v, want only bug=d73a4a", got.LabelColors)
+	}
+	// A row without labels still carries {} rather than null.
+	if enc, _ := json.Marshal(rows[1]); !strings.Contains(string(enc), `"labelColors":{}`) {
+		t.Errorf("unlabelled row = %s, want labelColors {}", enc)
 	}
 	if rows[1].Kind != "pr" || rows[1].State != "in_progress" {
 		t.Errorf("draft PR = %q/%q, want pr/in_progress", rows[1].Kind, rows[1].State)

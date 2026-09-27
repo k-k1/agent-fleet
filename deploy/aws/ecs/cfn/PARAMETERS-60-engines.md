@@ -550,7 +550,10 @@ though their names look like the block's. They feed the task definition and the 
 
 `AF_ENGINE_LLM_IDLE_SEC` — how long the engine goes unwanted before the controller stops it.
 Written into the SSM table rather than passed to 30-ingress, which has no room left for
-per-engine parameters (ADR 0071 decision 8).
+per-engine parameters (ADR 0071 decision 8). It is the default only: a super_admin can set the
+same figure per role in the Admin modal (**Stop after**, in minutes, floored at
+`LlmStartDeadlineSec` and capped at 24 hours), and a saved value wins from the controller's next
+pass without a stack update.
 
 ### `LlmStartDeadlineSec`
 
@@ -679,7 +682,8 @@ hardware; the floor only keeps a card too small to load the checkpoint out.
 HALF the llm role's window on purpose: an image is a 21-second request with no conversation
 around it, while an LLM turn sits inside a session that thinks for minutes between requests.
 900 s is $0.31 of idle GPU against a ~300-second re-wake, which is the trade this number is
-making.
+making. As with `LlmIdleSec`, it is the default only — the Admin modal's **Stop after** overrides
+it per role from the controller's next pass.
 
 ### `ImageStartDeadlineSec`
 

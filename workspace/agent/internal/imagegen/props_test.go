@@ -223,6 +223,51 @@ func TestPropsReadsTheInstructionEditGraph(t *testing.T) {
 	}
 }
 
+// qwen-image-2.1 encodes BOTH conditionings in one TextEncodeQwenImage21 — positive on slot 0,
+// negative on slot 1 — so the field is chosen by the edge's slot, and its references are
+// img1..imgN. Read by class alone, every picture of this family came back with no prompt (ADR
+// 0098, found while checking Open 4 on the dev deployment's own output).
+func TestPropsReadsTheQwenImage21Graph(t *testing.T) {
+	const prompt, negative = "Wrap <image2> round the fox's neck.", "blurry"
+	cases := []struct {
+		name   string
+		op     Op
+		images []string
+	}{
+		{"generate", OpGenerate, nil},
+		{"edit", OpEdit, []string{"af-fox.png", "af-scarf.png", "af-3.png"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g, err := comfyBuildGraph(ComfyFamilyQwenImage21, comfyQwen21Files, comfyParams{
+				Op: c.op, Images: c.images, Prompt: prompt, Negative: negative,
+				Seed: 7, Width: 1024, Height: 1024, BatchSize: 1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			graph, err := json.Marshal(g)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "image-1-1.png")
+			if err := os.WriteFile(path, pngWithText(t, tinyPNG(t, 1024, 1024), "prompt", string(graph)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got := readImageProps(path)
+			if got.Prompt != prompt || got.Negative != negative {
+				t.Errorf("prompt/negative = %q/%q, want %q/%q", got.Prompt, got.Negative, prompt, negative)
+			}
+			if got.Family != string(ComfyFamilyQwenImage21) || got.Op != string(c.op) {
+				t.Errorf("family/op = %q/%q", got.Family, got.Op)
+			}
+			if strings.Join(got.Inputs, ",") != strings.Join(c.images, ",") {
+				t.Errorf("inputs = %v, want every reference in order %v", got.Inputs, c.images)
+			}
+		})
+	}
+}
+
 // A vendor-route picture has neither, and the answer says so rather than showing blanks that
 // read as "the seed was 0".
 func TestPropsAnswersNoneForAPictureWithNeither(t *testing.T) {

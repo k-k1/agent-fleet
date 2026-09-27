@@ -455,7 +455,9 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// Auth is ambient (the CLI picks up ~/.local/share/kiro-cli/data.sqlite3 itself — measured:
 	// it runs through with no env injection). Unauthenticated, ACP exits immediately with
 	// "You are not logged in" on stderr (fail-fast).
-	cmd.Env = os.Environ()
+	// One child per session, and kiro hands its own environment to MCP children (measured),
+	// so this is how the af server learns which session it serves.
+	cmd.Env = agents.WithSessionName(os.Environ(), h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

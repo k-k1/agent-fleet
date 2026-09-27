@@ -59,6 +59,7 @@ var authKinds = map[string]bool{
 var authMarkers = []string{
 	"run /login",
 	"re-authenticate",
+	"refresh your login", // a stuck token refresh; see blockedMarkers in abort.go
 	"authentication_failed",
 	"invalid api key",
 	"unauthorized",

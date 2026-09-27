@@ -18,7 +18,7 @@ import type { CSSProperties } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { raw, errText } from "../../core/api/client.ts";
+import { raw, errText, sessionDelete } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -27,6 +27,8 @@ import { useReposStore } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
+import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { kindIcon } from "../../lib/sessionkind.ts";
 import {
   planTree,
   defaultSelection,
@@ -40,6 +42,10 @@ import {
 } from "./deleteTree.ts";
 
 const enc = encodeURIComponent;
+
+/** Sessions named under a row before the rest collapse into "+N". A spawned copy has one or
+ *  two; a long list would push the grades — the dialog's actual argument — off screen. */
+const SESSIONS_SHOWN = 3;
 
 /** Grade → badge label. A lookup rather than a composed key, so tsc still checks all three. */
 const GRADE_LABEL = {
@@ -114,8 +120,15 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
    *  landed — a row whose sessions could not be cleared is NOT deleted: removing the folder
    *  under a session that still has a meta leaves a row pointing at nothing. */
   const clearSessions = async (p: CopyPlan): Promise<string> => {
-    const call = async (s: Session, ep: "archive" | "stop") => {
-      const res = await raw(`api/sessions/${enc(s.name)}/${ep}`, { method: "POST" }).catch(() => null);
+    // AI sessions go to the archive; shell / ssm to the trash (restorable, ADR 0101). The Agent
+    // would do the same for whatever is left when the copy is deleted — doing it here first
+    // gives each row its own progress and error.
+    const call = async (s: Session, op: "archive" | "delete") => {
+      const res = await (
+        op === "archive"
+          ? raw(`api/sessions/${enc(s.name)}/archive`, { method: "POST" })
+          : sessionDelete(s.name, { stop: true })
+      ).catch(() => null);
       if (!res?.ok) {
         const j = await res?.json().catch(() => null);
         return j?.error ? errText(j.error) : tr("rp.del.session_failed_generic", { name: s.name });
@@ -129,7 +142,7 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
       if (err) return err;
     }
     for (const s of forget) {
-      const err = await call(s, "stop");
+      const err = await call(s, "delete");
       if (err) return err;
     }
     return "";
@@ -251,6 +264,32 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
                   </span>
                   <span className={"wcdel-grade wcdel-grade-" + grade}>{tr(GRADE_LABEL[grade])}</span>
                 </label>
+                {/* Folder and branch slugs are random, so the sessions' names are the only
+                    thing on the row that says what the copy was FOR. Live ones carry their
+                    state, since they are what the "stop them first" tick would cut. */}
+                {p.sessions.length > 0 && (
+                  <ul className="wcdel-sessions">
+                    {p.sessions.slice(0, SESSIONS_SHOWN).map((s) => {
+                      const st = s.alive ? stateInfo(s) : null;
+                      return (
+                        <li key={s.name} className="wcdel-session" title={s.name}>
+                          <Icon name={kindIcon(s.kind)} className="wcdel-session-kind" />
+                          <span className="wcdel-session-name">{displayName(s)}</span>
+                          {st && (
+                            <span className={"session-state " + st.cls} title={st.text}>
+                              <Icon name={st.icon} spin={st.spin} /> {st.short ?? st.text}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                    {p.sessions.length > SESSIONS_SHOWN && (
+                      <li className="wcdel-session-more">
+                        {tr("rp.del.sessions_more", { count: p.sessions.length - SESSIONS_SHOWN })}
+                      </li>
+                    )}
+                  </ul>
+                )}
                 {why.key && !res && <p className="wcdel-why">{tr(why.key, { count: why.count })}</p>}
                 {res && (
                   <p className={"wcdel-result" + (res.ok ? "" : " is-failed")}>

@@ -138,4 +138,5 @@ exit code は次のとおり（すべて `echo $?` で直接確認、`| tail` �
   `resolveQuickLaunchModel` 自体の単体試験（`agentModels.dom.test.tsx`）とコードレビューに留めた。
   空 model が万一この経路をすり抜けても、サーバ側の 400 ガードが最終防衛線になる。
 - 上記「既知の赤」の `handles` map テスト分離問題自体の修正は本件の範囲外（別件として起票が必要）。
+  → Issue #952 に起票（2026-09-24）
 - generate_image まわりは親セッションが別途調査。

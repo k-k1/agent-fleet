@@ -80,12 +80,12 @@
 }
 /* a deletion between lines: a small wedge at the top edge of the line. */
 .codegrid .cl-gutter.cb-del {
-  box-shadow: inset 0 2px 0 -0.5px #f85149;
+  box-shadow: inset 0 2px 0 -0.5px var(--del);
 }
 .codegrid .cl-gutter.cb-add.cb-del {
-  box-shadow: inset 3px 0 0 #2ea043, inset 0 2px 0 -0.5px #f85149;
+  box-shadow: inset 3px 0 0 #2ea043, inset 0 2px 0 -0.5px var(--del);
 }
 .codegrid .cl-gutter.cb-mod.cb-del {
-  box-shadow: inset 3px 0 0 #1f6feb, inset 0 2px 0 -0.5px #f85149;
+  box-shadow: inset 3px 0 0 #1f6feb, inset 0 2px 0 -0.5px var(--del);
 }
 

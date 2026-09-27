@@ -94,9 +94,13 @@ button.mt-tool-outhead {
   border-radius: 4px;
 }
 
-/* Chain-of-thought disclosure (codex/opencode reasoning), styled like the compaction
-   summary: a faint collapsed row that expands to the reasoning Markdown. */
+/* Chain-of-thought disclosure (codex/opencode reasoning). Closed: one faint row, the label
+   followed by a one-line preview of the reasoning. Open: no head row at all — the lightbulb moves
+   into the body's left gutter, level with the first line, and stays the toggle. A busy turn
+   interleaves many short thoughts with tool rows, and a separate head row per thought doubled
+   their height. */
 .mirror-thinking {
+  position: relative;
   margin: 2px 0;
   font-size: 0.95em;
 }
@@ -105,6 +109,7 @@ button.mt-tool-outhead {
   align-items: center;
   gap: 5px;
   width: 100%;
+  min-width: 0;
   padding: 2px 4px;
   border: 0;
   border-radius: 4px;
@@ -114,11 +119,36 @@ button.mt-tool-outhead {
   text-align: left;
   opacity: 0.6;
 }
-.mirror-thinking.open .mirror-thinking-head {
-  opacity: 0.8;
+.mirror-thinking-head:hover {
+  opacity: 0.9;
 }
 .mth-title {
+  flex: none;
   font-size: 12px;
+}
+.mth-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+/* Open: the head collapses to the gutter icon. 20px wide = the body's left padding; the height
+   matches the first line of the Markdown (13.5px x 1.5) so the icon sits on that line. */
+.mirror-thinking.open > .mirror-thinking-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 20px;
+  height: calc(var(--chat-size, 13.5px) * 1.5 + 2px);
+  padding: 2px 0 0 3px;
+  opacity: 0.8;
+}
+.mirror-thinking.open > .mirror-thinking-head .mth-title,
+.mirror-thinking.open > .mirror-thinking-head .mth-preview {
+  display: none;
 }
 .mirror-thinking-body {
   padding: 2px 8px 4px 20px;

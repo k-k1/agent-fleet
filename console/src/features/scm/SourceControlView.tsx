@@ -66,18 +66,12 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
   useLayoutEffect(() => {
     if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y);
   }, [menu]);
+  useDismiss(menuRef, !!menu, () => setMenu(null));
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", onKey);
     window.addEventListener("blur", close);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", close);
-    };
+    return () => window.removeEventListener("blur", close);
   }, [menu]);
 
   // Load status + graph. Returns whether the load succeeded. A gateway/empty response

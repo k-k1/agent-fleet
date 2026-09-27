@@ -3,8 +3,10 @@ package agy
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -117,5 +119,68 @@ func TestTranscriptPrefersFullOverTruncated(t *testing.T) {
 	td, _ := agentImpl{}.Transcript(m)
 	if len(td.Turns) != 1 || td.Turns[0].Text != "full view" {
 		t.Fatalf("did not prefer transcript_full.jsonl: %+v", td.Turns)
+	}
+}
+
+// agy writes no model on its steps, so the mirror's per-response badge comes from the
+// switch notes in the prompts and, failing those, the launch model.
+func TestTranscriptStampsModelPerTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	switchNote := func(from, to string) string {
+		return "The user changed setting `Model Selection` from " + from + " to " + to + ". No need to comment on this change."
+	}
+	for _, tc := range []struct {
+		name   string
+		launch string
+		lines  []string
+		want   []string // model of each assistant turn
+	}{
+		{"launch model when nothing switched", "gemini-3.1-pro-high",
+			[]string{userInput("", "hi"), planner, userInput("", "again"), planner},
+			[]string{"gemini-3.1-pro-high", "gemini-3.1-pro-high"}},
+		{"first prompt names the model", "",
+			[]string{userInput(switchNote("None", "Gemini 3.8 Flash (Low)"), "hi"), planner},
+			[]string{"Gemini 3.8 Flash (Low)"}},
+		{"a switch relabels only later turns; its from labels earlier ones", "gemini-3.1-pro-high",
+			[]string{userInput("", "hi"), planner, userInput(switchNote("Gemini 3.1 Pro (High)", "Gemini 3.6 Flash (High)"), "again"), planner},
+			[]string{"Gemini 3.1 Pro (High)", "Gemini 3.6 Flash (High)"}},
+		{"the sentence typed in a request is not a switch", "gemini-3.1-pro-high",
+			[]string{userInput("", "explain: "+switchNote("A", "B")), planner},
+			[]string{"gemini-3.1-pro-high"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slot := "slot-model-" + tc.name
+			conv := "conv-model-" + tc.name
+			sids.Write(session.UUID(dir, slot), conv)
+			writeTranscript(t, conv, "transcript_full.jsonl", strings.Join(tc.lines, "\n")+"\n")
+			td, _ := agentImpl{}.Transcript(session.Meta{Dir: dir, Name: slot, Kind: session.KindAgy, Model: tc.launch})
+			var got []string
+			for _, turn := range td.Turns {
+				if turn.Role == "assistant" {
+					got = append(got, turn.Model)
+				}
+			}
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Two display names for one id must not flip the badge between polls.
+func TestModelLabelFollowsCatalogOrder(t *testing.T) {
+	modelsMu.Lock()
+	saved := modelsList
+	modelsList = []agents.ModelChoice{{ID: "m", Label: "First"}, {ID: "m", Label: "Second"}}
+	modelsMu.Unlock()
+	t.Cleanup(func() { modelsMu.Lock(); modelsList = saved; modelsMu.Unlock() })
+	for range 20 {
+		if got := modelLabel("m"); got != "First" {
+			t.Fatalf("got %q, want First", got)
+		}
+	}
+	if got := modelLabel("unknown"); got != "unknown" {
+		t.Fatalf("uncatalogued id: got %q", got)
 	}
 }

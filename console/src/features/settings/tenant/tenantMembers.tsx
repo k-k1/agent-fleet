@@ -124,7 +124,9 @@ function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) 
             ? tr("admin.idle_hold_background")
             : h.kind === "repojob"
               ? tr("admin.idle_hold_repojob")
-              : tr("admin.idle_hold_watching");
+              : h.kind === "imagejob"
+                ? tr("admin.idle_hold_imagejob")
+                : tr("admin.idle_hold_watching");
     // Beyond the first, only a count: a roster row must stay one line. Details are in the
     // member detail view.
     const more = holders.length > 1 ? tr("admin.idle_hold_more", { n: String(holders.length - 1) }) : "";
@@ -182,7 +184,9 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
                       ? tr("admin.idle_hold_background_row", { session: h.session ?? "" })
                       : h.kind === "repojob"
                         ? tr("admin.idle_hold_repojob_row")
-                        : tr("admin.idle_hold_watching_row")}
+                        : h.kind === "imagejob"
+                          ? tr("admin.idle_hold_imagejob_row")
+                          : tr("admin.idle_hold_watching_row")}
               </li>
             ))}
           </ul>

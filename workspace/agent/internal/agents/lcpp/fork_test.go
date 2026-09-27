@@ -187,3 +187,27 @@ func TestForkDoesNotDoubleCopyOnSecondResume(t *testing.T) {
 		t.Fatalf("record count after two Resumes = %d, want 4 (no duplication)", len(recs))
 	}
 }
+
+// A fork cut before a model switch starts with a bookkeeping model-change note (ForkAt). Forking
+// that copy "before" its first user turn must still be refused, not produce a conversation made
+// of the note alone.
+func TestForkAtBeforeFirstTurnIgnoresLeadingModelNote(t *testing.T) {
+	testHome(t)
+	src := testMeta(t, "sess-forknote-src")
+	ids := seedTwoExchanges(t, sidFor(src))
+	if _, err := Open(sidFor(src)).AppendModelChangeNote("model-b"); err != nil {
+		t.Fatal(err)
+	}
+	copyMeta := testMeta(t, "sess-forknote-copy")
+	cp, err := Open(sidFor(src)).ForkAt(sidFor(copyMeta), ids[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, _, _ := cp.Records()
+	if len(recs) != 3 || recs[0].Note != NoteModelChange {
+		t.Fatalf("premise: copy should start with the model note, got %+v", recs)
+	}
+	if _, err := (agentImpl{}).ResolveForkAt(copyMeta, agents.ForkPoint{Anchor: recs[1].ID}); err == nil {
+		t.Fatal("forking before the copy's first user turn was accepted")
+	}
+}

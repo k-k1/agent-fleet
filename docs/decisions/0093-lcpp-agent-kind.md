@@ -25,6 +25,10 @@ English | [日本語](0093-lcpp-agent-kind.ja.md)
   decisions, and where the nine debt items stand, is under "Phase 2 implementation record
   (2026-09-21)". Decision 8 (exact usage) and making the kind launchable in Console landed through
   PR #829 — its content is recorded under "Phase 2 implementation record".
+  Status update (2026-09-24): the residual "the end-to-end path is unverified" (under "New residuals born during Phase 2") is closed. On 2026-09-21 the driving session started an `lcpp` session from a deployed Agent and completed a round trip on a warm instance (five transcript records, `window: 262144`); the three defects that run found — a 45-second abort on a cold instance, the wait display, and peer sends — were fixed in PR #840. The cold-instance fix is covered by tests; no hardware re-run of the cold path is recorded. Two residuals are not planned unless a measurement shows a cost: the "waking" last-say judged by elapsed time (the v1 simplification Decision 4 accepted) and debt 8, `InputTokens` on every iteration (#840 put it behind the wake retry; its cost has not been measured).
+  Status update (2026-09-25): debt 7 (pinning the llama.cpp engine image) needs no more code — the mechanism shipped in PR #803 (`standup.sh --llm-digest`; procedure in `deploy/aws/ecs/cfn/PARAMETERS-60-engines.md`). Pinning is an operator step, taken the next time `af-llamacpp` in ECR is replaced: a stand-up after teardown, an `LlmImageTag` change, or a deliberate delete/retag (`update.sh` and `release-ecr.sh` do not copy this image).
+  Status update (2026-09-25): debt 2 (the repeat gate missing a same-tool loop whose arguments change every turn) is addressed in code (#953). `workspace/agent/internal/harness/repeat.go` gains a second half that ignores arguments and counts consecutive assistant turns calling only one tool name: from turn 12 it still runs the calls but prefixes each result with a notice (inside `MaxOutputBytes`), and at turn 20 it stops `Run` with `ErrRepeatedToolCall`. The thresholds come from the trial logs: the longest same-name run in a passing session was 6 turns (gemma-4 `bash`, gpt-oss `read`), the incident was 72. Covered by scripted-client tests (positive control: the 72-turn `todo_write` run with varying arguments; negative control: the 6-turn runs); no hardware re-run yet. The exact-call half also recognizes cycles of 2–4 identical calls repeated back to back (read a, read b, read a, …): warn at 3 repetitions (not executed), stop at 5 — the shape Gemini CLI's loop detector and OpenHands' stuck detector both flag. A loop that changes arguments while never repeating one tool name for 12 turns is still not caught; a model judging the history (Gemini CLI's third stage) was considered and left out for its per-check inference cost on a self-hosted engine. Also left out: flagging a tool that returns the same result for different arguments — `edit` (`edited <path>`), silent `bash` commands (empty output) and `grep` (`(no matches)`) do that during ordinary work. A tighter same-name threshold for bookkeeping-only tools such as `todo_write` is deferred until a live run shows a same-name run approaching 20 turns.
+- Follow-ups: #951, #952, #953, #954, #973, #975
 - The request is one sentence: **can our own harness — a process that talks to llama-server's API
   directly instead of driving a vendor CLI — be a session kind of Agent Fleet, and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements
@@ -719,6 +723,9 @@ Numbers match "Debt carried into Phase 2" above.
    (`store.go:231,270`).
 2. **Unresolved (unchanged).** Zero hits on hardware again in #823's final qwen3-coder measurement.
    The root cause is still unconfirmed.
+   🔴 Correction (2026-09-25): no longer unresolved in code — #953 added a same-name gate that
+   ignores arguments (status update at the top). Still open on hardware: no live run has
+   exercised it yet.
 3. 🟢 **Resolved (2026-09-21, §14 #15/#16, already recorded in this ADR).** No change.
 4. **Unresolved (unchanged, an engine-side constraint).** `llama-3.1-8b-instruct-q4_k_m` still does
    not work on this engine build. #826's contract test only watches for the version drifting; fixing
@@ -774,3 +781,36 @@ allowlist gains `lcpp` (without it, `create_session`/`list_models` could not be 
 all) — alongside `GET /agents/lcpp/models` and `agentModels.ts`'s `isDynamic` (without these, no
 model could be chosen at launch and the driver would fail immediately with "no model configured").
 Details are under "What implementing Decision 8 found".
+
+### Correction (2026-09-23): two capability rows the table never caught up with
+
+`guide/ref/agents.md` said `—` for lcpp's **"Model choice at launch"** and **"Context usage
+gauge"**. Both were wrong, and had been since the moment the features landed.
+
+The order explains it. The lcpp column was added in PR #816; the model picker was opened in
+#824 and the context gauge built in #829 — the paragraph directly above this one even records
+the picker's wiring ("without these, no model could be chosen at launch"). Nothing went back to
+the table, and nothing checked: `scripts/docs-check.py` compares the table to the Go `Caps()`
+for three rows only (`CanFork`, `CanForkAt`, `PermissionChoice`), and neither of these is one of
+them.
+
+🔴 The model row was wrong in the misleading direction. lcpp is the one kind whose catalogue has
+no "let the tool decide" entry (`requiresConcreteModel` in `console/src/lib/agentModels.ts`), so
+`StartModal` does not merely offer a model — it refuses to launch until one is picked. A reader
+checking the table before their first session was told the opposite of a requirement. The guide's
+own lcpp prose contradicted it too, describing model families and model swapping across sixteen
+measured runs. The cell is now `✓¹⁹`, and footnote 19 says the list is the member's own server's
+and that the choice is the cost decision on this kind.
+
+The gauge row is `✓`. `WireLive` fills `li.Context` from `Store.LastUsage()` and names
+`WindowSource="recorded"` when the window resolved (decision 8), pinned by
+`TestWireLiveContextRecordedWindow` and its unresolved-window twin, and the end-to-end run of
+2026-09-21 recorded `window: 262144` in the transcript — the ADR's own motivating evidence that
+`WindowGuess` is never consulted.
+
+What keeps it from happening again is `console/src/agents/guideTable.test.ts` (ADR 0095 P2-22):
+it now maps nine rows of the table onto Console caps for every kind, so a table cell and a cap
+cannot disagree without a red build. Along the way it recorded something worth knowing about one
+of them: `caps.contextBar` has no reader anywhere in the Console — the gauge draws from the
+session's context payload whatever the kind — so that flag is documentation, and this test is
+now what makes it mean anything.

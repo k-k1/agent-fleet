@@ -24,10 +24,13 @@ import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import { useIsMobile } from "../../lib/device.ts";
 import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
 import { exitLabel, stateInfo } from "../../lib/sessionview.ts";
 import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { openSessionFromList } from "../sessions/open.ts";
 import { fetchFleetGraph } from "../../core/api/client.ts";
@@ -215,6 +218,7 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
   // next to it stayed at a literal 34px, so the two drifted apart by row (measured: ~17px
   // per row at 1700px wide, ~160px by row 6).
   const sessions = useSessionsStore((s) => s.sessions);
+  const sessionActions = useSessionActions();
   // Measure the SCROLL BOX, not the canvas: `.fgraph-body` scrolls (overflow:auto), so the
   // canvas inside it is sized by its own content — the SVG — and observing that is a loop
   // that latches at whatever width the first render used (measured: 920px at every viewport,
@@ -590,6 +594,8 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
                   clickable={!lane.erased && clickable(lane.id)}
                   missingParent={missingParent}
                   session={sessionMap.get(lane.id)}
+                  actions={sessionActions}
+                  running={running}
                   onOpen={(e) => activate(e, (np) => openActor(lane.id, np))}
                   onFold={lane.hasChildren ? () => toggleFold(lane.id) : undefined}
                 />
@@ -769,6 +775,8 @@ function LaneLabel({
   clickable,
   missingParent,
   session,
+  actions,
+  running,
   onOpen,
   onFold,
 }: {
@@ -782,10 +790,13 @@ function LaneLabel({
    *  readers (ADR 0078 decision 5). A fourth derivation would drift from them, and this
    *  figure would say "idle" about a session the rest of the Console calls limited. */
   session: Session | undefined;
+  actions: ReturnType<typeof useSessionActions>;
+  running: boolean;
   onOpen: (e: ClickMods) => void;
   onFold: (() => void) | undefined;
 }) {
   const tr = useT();
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   if (lane.erased) {
     return (
       <div className="fgraph-label erased" style={{ height: h }} title={tr("fgraph.erased_label", { id: lane.label })}>
@@ -811,6 +822,17 @@ function LaneLabel({
       title={`${lane.label}\n${kindLabel(lane.kind)} · ${st ? st.text : presence}`}
       onClick={clickable ? onOpen : undefined}
       onAuxClick={clickable ? onOpen : undefined}
+      onContextMenu={
+        session
+          ? (e) => {
+              // This label is next to a terminal pane. Do not let its right-click reach that
+              // pane, where a contextmenu is a paste request; the session menu owns it here.
+              e.preventDefault();
+              e.stopPropagation();
+              setMenuAt({ x: e.clientX, y: e.clientY });
+            }
+          : undefined
+      }
       onKeyDown={
         clickable
           ? (e) => {
@@ -840,6 +862,23 @@ function LaneLabel({
       ) : (
         <span className="session-state off" title={presence}>
           <span className="lbl">{tr(PRESENCE_SHORT_KEY[lane.presence])}</span>
+        </span>
+      )}
+      {session && menuAt && (
+        <span
+          className="fgraph-menu-host"
+          onClick={(e) => e.stopPropagation()}
+          onAuxClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          <SessionMenu
+            s={session}
+            actions={actions}
+            running={running}
+            open
+            place={(el) => placeFixed(el, menuAt.x, menuAt.y)}
+            onClose={() => setMenuAt(null)}
+          />
         </span>
       )}
     </div>

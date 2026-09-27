@@ -64,8 +64,8 @@
   color: var(--success, #4ec97a);
 }
 .mt-delegation-status.failed {
-  /* --danger does not exist (tokens.css defines no such token); --del is the one danger colour. */
-  color: var(--del);
+  /* The error colour is --err (there is no --danger token). */
+  color: var(--err);
 }
 .mt-delegation-meta {
   margin-top: 5px;
@@ -366,7 +366,7 @@
 }
 .mt-translate-err {
   font-size: 12px;
-  color: var(--del);
+  color: var(--err);
   /* The reason a press failed belongs next to the answer it failed on, but a long backend
      message must not push the footer's own numbers off the row. */
   max-width: 22em;

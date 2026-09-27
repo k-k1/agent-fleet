@@ -90,10 +90,14 @@ type usageCatalog struct {
 	// for the providers in modelFamilyProviders only. It is what model_provider.go turns into
 	// the maker's brand mark; it is indexed here rather than in a second pass so the 4MB file
 	// is decoded once (this host is memory-constrained).
-	family  map[string]string
-	origin  string    // opencode | file | env (Console owns the wording; no path is exposed)
-	modTime time.Time // the source file's mtime = which point in time these prices are from
-	models  int
+	family map[string]string
+	// deprecated is the set of price keys upstream marks `"status": "deprecated"` — still
+	// priced (a ledger row for one must still get its amount), but never RECOMMENDED
+	// (chatx's cheapest-model pick, model_recommend.go).
+	deprecated map[string]bool
+	origin     string    // opencode | fetched | file | env (Console owns the wording; no path is exposed)
+	modTime    time.Time // the source file's mtime = which point in time these prices are from
+	models     int
 }
 
 // usageCatalogStatTTL is how often the file is looked at again. A price is looked up thousands
@@ -110,16 +114,26 @@ var (
 	usageCatalogChecked time.Time // when it was last stat'ed (no lookup within the TTL)
 )
 
+// The origins a catalog can be read from (usageCatalogMeta.Origin; the Console words each).
+const (
+	usageCatalogOriginEnv      = "env"
+	usageCatalogOriginFile     = "file"
+	usageCatalogOriginFetched  = "fetched"
+	usageCatalogOriginOpencode = "opencode"
+)
+
 // usageCatalogFiles is the search order; the first readable one wins.
 //   - AF_USAGE_CATALOG: for tests, and for an operator to point at their own snapshot
-//   - usageDir()/catalog.json: a place to put one in a workspace that does not use opencode
+//   - usageDir()/catalog.json: a place to put one by hand (a closed network, say)
+//   - usageDir()/models.dev.json: the Agent's own daily copy (model_catalog_fetch.go)
 //   - opencode's cache: read only, never updated from here
 func usageCatalogFiles() []struct{ path, origin string } {
 	out := []struct{ path, origin string }{}
 	if v := strings.TrimSpace(os.Getenv("AF_USAGE_CATALOG")); v != "" {
-		out = append(out, struct{ path, origin string }{v, "env"})
+		out = append(out, struct{ path, origin string }{v, usageCatalogOriginEnv})
 	}
-	out = append(out, struct{ path, origin string }{filepath.Join(usagex.Dir(), "catalog.json"), "file"})
+	out = append(out, struct{ path, origin string }{filepath.Join(usagex.Dir(), "catalog.json"), usageCatalogOriginFile})
+	out = append(out, struct{ path, origin string }{modelsDevPath(), usageCatalogOriginFetched})
 	cache := os.Getenv("XDG_CACHE_HOME")
 	if cache == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -127,7 +141,7 @@ func usageCatalogFiles() []struct{ path, origin string } {
 		}
 	}
 	if cache != "" {
-		out = append(out, struct{ path, origin string }{filepath.Join(cache, "opencode", "models.json"), "opencode"})
+		out = append(out, struct{ path, origin string }{filepath.Join(cache, "opencode", "models.json"), usageCatalogOriginOpencode})
 	}
 	return out
 }
@@ -173,6 +187,8 @@ type catalogFile map[string]struct {
 		// upstream carries that survives a model being re-hosted: every hoster copies the
 		// family along with the weights. model_provider.go maps it to the maker.
 		Family string `json:"family"`
+		// Status is "deprecated" (or "alpha"/"beta") where upstream says so, absent otherwise.
+		Status string `json:"status"`
 		Cost   *struct {
 			Input      *float64 `json:"input"`
 			Output     *float64 `json:"output"`
@@ -196,6 +212,7 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 	wantFamily := modelFamilyIndexed()
 	price := map[string]usagePrice{}
 	family := map[string]string{}
+	deprecated := map[string]bool{}
 	// When normalized names collide inside one provider, take the lexicographically smaller
 	// model id, so map iteration order cannot make the result wander (measured on 3.3M: an
 	// amount that changes on every read is not acceptable).
@@ -220,6 +237,11 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 				continue
 			}
 			winner[key] = mid
+			if m.Status == "deprecated" {
+				deprecated[key] = true
+			} else {
+				delete(deprecated, key)
+			}
 			price[key] = usagePrice{
 				In: *m.Cost.Input, Out: *m.Cost.Output,
 				CacheRead: derefPrice(m.Cost.CacheRead), CacheWrite: derefPrice(m.Cost.CacheWrite),
@@ -229,7 +251,7 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 	if len(price) == 0 {
 		return nil
 	}
-	return &usageCatalog{price: price, family: family, origin: origin, modTime: mod, models: len(price)}
+	return &usageCatalog{price: price, family: family, deprecated: deprecated, origin: origin, modTime: mod, models: len(price)}
 }
 
 func derefPrice(v *float64) float64 {
@@ -257,20 +279,28 @@ func usageCatalogOrder(kind string) []string {
 // usageCatalogLookup looks a price up in the catalog. ref says whose provider's value was
 // taken and is shown on screen: an amount whose price source is unknown cannot be checked.
 func usageCatalogLookup(kind, model string) (usagePrice, string, bool) {
+	p, ref, _, ok := usageCatalogLookupStatus(kind, model)
+	return p, ref, ok
+}
+
+// usageCatalogLookupStatus is usageCatalogLookup plus whether upstream marks the matched row
+// deprecated — which a ledger does not care about and a recommendation does.
+func usageCatalogLookupStatus(kind, model string) (p usagePrice, ref string, deprecated, ok bool) {
 	cat := loadUsageCatalog()
 	if cat == nil {
-		return usagePrice{}, "", false
+		return usagePrice{}, "", false, false
 	}
 	base := usageNormalizeModel(model)
 	if base == "" {
-		return usagePrice{}, "", false
+		return usagePrice{}, "", false, false
 	}
 	for _, pid := range usageCatalogOrder(kind) {
-		if p, ok := cat.price[pid+"/"+base]; ok {
-			return p, pid + "/" + base, true
+		key := pid + "/" + base
+		if p, ok := cat.price[key]; ok {
+			return p, key, cat.deprecated[key], true
 		}
 	}
-	return usagePrice{}, "", false
+	return usagePrice{}, "", false, false
 }
 
 // usageCatalogMeta is the catalog declaration carried in the response, nil when there is no

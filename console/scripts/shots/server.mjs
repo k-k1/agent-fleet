@@ -182,6 +182,13 @@ const exact = {
     ],
   }),
   "/api/imagegen/jobs": () => fx.imagegenJobs(LOCALE),
+  // The image studio (ADR 0100). Without these the studio pane cannot open its studio and the
+  // guide's pictures show an error instead of the three columns.
+  "/api/imagegen/studios": (q, method) =>
+    method === "POST" ? fx.imagegenStudio(LOCALE, studioReads) : fx.imagegenStudios(LOCALE),
+  "/api/imagegen/history": () => fx.imagegenHistory(),
+  "/api/imagegen/knowledge": (q, method) =>
+    method === "POST" ? {} : fx.imagegenKnowledge(LOCALE, q.get("scope") || "family", q.get("key") || ""),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
   "/api/internal-git/repos": () => ({ repos: [] }),
@@ -256,6 +263,21 @@ const re = [
   [/^\/api\/fs\/tree$/, (m, q) => fx.fsTree(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/file$/, (m, q) => fx.fsFile(LOCALE, q.get("path") || "")],
   [/^\/api\/imagegen\/props$/, (m, q) => fx.imagegenProps(LOCALE, q.get("path") || "")],
+  [/^\/api\/imagegen\/studios\/[^/]+\/draft-log$/, () => fx.imagegenDraftLog()],
+  [/^\/api\/imagegen\/studios\/[^/]+\/persona$/, () => fx.imagegenPersona(LOCALE)],
+  [/^\/api\/imagegen\/studios\/[^/]+\/press$/, () => ({ version: "v3", jobs: [{ id: "t2", position: 0 }], recorded: true })],
+  [/^\/api\/imagegen\/studios\/[^/]+\/(rewind|bind)$/, () => fx.imagegenStudio(LOCALE, studioReads)],
+  [
+    /^\/api\/imagegen\/studios\/[^/]+$/,
+    (m, q, method) => {
+      if (method === "DELETE") return {};
+      if (method === "PUT") return { studio: fx.imagegenStudio(LOCALE, studioReads) };
+      // Each read counts: from the second one on, the agent has made one more edit, so the
+      // pane's poll outlines the field it moved (decision 6).
+      studioReads++;
+      return fx.imagegenStudio(LOCALE, studioReads);
+    },
+  ],
   // Egress allowlist verdicts for the MCP tab (docs/log/48 §9). This deployment HAS the
   // proxy wired and is still log-only, and the corp wiki host is not on the list — the
   // combination that renders the "works today, blocked once enforced" warning.
@@ -331,12 +353,13 @@ function crc32(buf) {
 }
 
 const seenUnknown = new Set();
+let studioReads = 0;
 
-function apiBody(pathname, query) {
-  if (exact[pathname]) return exact[pathname](query);
+function apiBody(pathname, query, method = "GET") {
+  if (exact[pathname]) return exact[pathname](query, method);
   for (const [rx, fn] of re) {
     const m = rx.exec(pathname);
-    if (m) return fn(m, query);
+    if (m) return fn(m, query, method);
   }
   if (!seenUnknown.has(pathname)) {
     seenUnknown.add(pathname);
@@ -366,7 +389,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (p.startsWith("/api/")) {
-    const body = JSON.stringify(apiBody(p, url.searchParams));
+    const body = JSON.stringify(apiBody(p, url.searchParams, req.method));
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     res.end(body);
     return;

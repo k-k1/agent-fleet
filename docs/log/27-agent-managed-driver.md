@@ -488,6 +488,13 @@ user レベルしか表示しないため（openai/codex#13025）、これを pr
    **daemon 入れ替え × 同一ワークツリーに生存セッションが複数**の場合だけ。そこは取り違えずに
    拒否する（`mcpOwningSession`）。
 
+   🔴 **訂正（2026-09-25、[117](117-managed-af-session-name-delivery.md)）**: 上の表の「daemon 自体が
+   入れ替わる → 失う」は誤り。この節の測定は**同じ生きた daemon** への resume で、codex は読み込み済みの
+   thread を start 時の設定のまま返していただけだった。入れ替えた daemon への resume（thread が未読み込み）
+   では `config.mcp_servers` が適用され、プローブは resume 時の名前を読んだ（0.156.1、
+   `TestLiveDriftCodexThreadMCPConfigAppliesOnColdResume`）。driver は常に同じ名前で resume するので、
+   codex Managed はどの復旧経路でも名前を保つ。測った形（同じ daemon）と結論の形（入れ替え）がずれていた。
+
 **opencode managed には同等の口が無い**（実測 1.18.15、`contract_mcp_identity_test.go`）:
 
 - `POST /session` の body は `parentID` / `title` / `agent` / `model` / `metadata` /

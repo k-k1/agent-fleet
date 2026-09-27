@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -27,10 +28,11 @@ import (
 //   - "keep":   do NOT auto-clean (live sessions, uncommitted/unpushed work) — needs
 //     the user to stop/push/force in the Console.
 //
-// action names the tool that acts on it ("archive_session" / "delete_worktree"), or
+// action names the tool that acts on it ("archive_session" / "delete_worktree" /
+// "delete_cache" — the last is a Console action only, the assistant has no tool for it), or
 // "" when there is no assistant action (informational — orphan panes, archived rows).
 type cleanupCandidate struct {
-	Type    string `json:"type"` // "session" | "worktree"
+	Type    string `json:"type"` // "session" | "worktree" | "branch" | "cache"
 	Action  string `json:"action,omitempty"`
 	ID      string `json:"id"` // session name, or repo base name (delete_worktree arg)
 	Display string `json:"display,omitempty"`
@@ -49,6 +51,22 @@ type cleanupCandidate struct {
 	Safety    string `json:"safety"` // safe | review | keep
 	ReasonKey string `json:"reason_key,omitempty"`
 	Reason    string `json:"reason"`
+	// Bytes / Files size a "cache" row (what the delete reclaims); Dirs counts the
+	// per-session directories it covers. 0 on every other type.
+	Bytes int64 `json:"bytes,omitempty"`
+	Files int   `json:"files,omitempty"`
+	Dirs  int   `json:"dirs,omitempty"`
+	// Truncated = the scan behind a "cache" row stopped at its entry budget: the row covers
+	// only what was looked at, a delete takes only that, and the next survey shows the rest.
+	Truncated bool `json:"truncated,omitempty"`
+	// Unreadable counts orphan folders a "cache" row leaves out because something inside
+	// could not be read — a state that surveying again does not change.
+	Unreadable int `json:"unreadable,omitempty"`
+	// Stuck = the scan behind a "cache" row could not finish a single folder within its
+	// budget, and would stop at the same place again.
+	Stuck bool `json:"stuck,omitempty"`
+	// Unjudged counts session folders left alone because the session store is missing.
+	Unjudged int `json:"unjudged,omitempty"`
 }
 
 // The "reason" of a candidate is text WE generate for the user to read, so per ADR 0033
@@ -72,6 +90,13 @@ const (
 	cleanReasonWtMerged     = "clean.reason.wt_merged"
 	cleanReasonWtUnmerged   = "clean.reason.wt_unmerged"
 	cleanReasonBranchMerged = "clean.reason.branch_merged"
+	cleanReasonCacheOrphan  = "clean.reason.cache_orphan"
+	cleanReasonCacheUnsafe  = "clean.reason.cache_unsafe"
+	cleanReasonCachePartial = "clean.reason.cache_partial"
+	cleanReasonCacheUnread  = "clean.reason.cache_unreadable"
+	cleanReasonCacheStalled = "clean.reason.cache_stalled"
+	cleanReasonCacheStuck   = "clean.reason.cache_stuck"
+	cleanReasonCacheNoStore = "clean.reason.cache_no_store"
 )
 
 var cleanupReasonJA = map[string]string{
@@ -86,6 +111,13 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonWtMerged:     "マージ済み・クリーン（親に取り込み済み）",
 	cleanReasonWtUnmerged:   "クリーンだが未マージ（固有コミットあり。削除でブランチは残るが要確認）",
 	cleanReasonBranchMerged: "マージ済みローカルブランチ（親に取り込み済み。削除しても復元可）",
+	cleanReasonCacheOrphan:  "削除済みセッション／会話のキャッシュ（ごみ箱にも無く、もう参照されない。削除は元に戻せない）",
+	cleanReasonCacheUnsafe:  "読めないセッション情報かごみ箱があり、参照の有無を判定できない（何も消さない）",
+	cleanReasonCachePartial: "件数が多く、上限まで点検した分だけが対象（削除後にもう一度点検すると残りが出る。元に戻せない）",
+	cleanReasonCacheUnread:  "中身を読めないフォルダがあり、それは対象外（そのフォルダは点検し直しても対象にならない。権限かファイルシステムの確認が必要）",
+	cleanReasonCacheStalled: "セッション情報とごみ箱が多すぎて参照の有無を判定できない（点検し直しても変わらない。ごみ箱を整理すると進む）",
+	cleanReasonCacheNoStore: "セッションの保存先が見つからないので、セッションのフォルダは判定しない（チャットの分だけが対象。保存先が戻れば点検できる。元に戻せない）",
+	cleanReasonCacheStuck:   "点検の上限までに 1 つも判定できない（大きすぎるフォルダか、手前に多数のフォルダがある。点検し直しても同じ所で止まるので ~/.cache/agent-fleet を手で確認する）",
 }
 
 // cleanupReasonText resolves a reason key to its source-language sentence. An unknown key
@@ -231,9 +263,75 @@ func HandleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	out = append(out, cacheCleanupCandidates(time.Now())...)
+
 	counts := map[string]int{"safe": 0, "review": 0, "keep": 0}
 	for _, c := range out {
 		counts[c.Safety]++
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"candidates": out, "counts": counts})
+}
+
+// cacheCleanupCandidates turns the cache orphan scan (cache_orphans.go) into one row per
+// feature — hundreds of per-session directories as hundreds of rows would bury the rest of
+// the survey, and nobody picks among them: they are all equally unreachable.
+//
+// Graded safe: "provably done" is the grade's other half, and unreachable is provable here.
+// It is the one delete in this list with no gz trash behind it — images do not compress and
+// the restore reads a whole archive into memory — so the reason text says it cannot be undone.
+// An unprovable scan is shown as keep rather than hidden, like a locked session.
+func cacheCleanupCandidates(now time.Time) []cleanupCandidate {
+	var out []cleanupCandidate
+	for _, feature := range CacheOrphanFeatures {
+		found, err := ScanCacheOrphans(feature, now, nil)
+		if err != nil {
+			out = append(out, cleanupCandidate{
+				Type: "cache", ID: feature, Safety: "keep",
+				ReasonKey: cleanReasonCacheUnsafe, Reason: cleanupReasonText(cleanReasonCacheUnsafe),
+			})
+			continue
+		}
+		reason := cacheReason(found)
+		if len(found.Dirs) == 0 {
+			if reason != cleanReasonCacheOrphan {
+				// Nothing it could clear, but something it could not judge: say so rather
+				// than show nothing, which would read as "nothing to tidy".
+				out = append(out, cleanupCandidate{
+					Type: "cache", ID: feature, Safety: "keep",
+					Truncated: found.Truncated, Unreadable: found.Unreadable, Stuck: found.Stuck, Unjudged: found.Unjudged,
+					ReasonKey: reason, Reason: cleanupReasonText(reason),
+				})
+			}
+			continue
+		}
+		out = append(out, cleanupCandidate{
+			Type: "cache", Action: "delete_cache", ID: feature, Safety: "safe",
+			Bytes: found.Bytes, Files: found.Files, Dirs: len(found.Dirs),
+			Truncated: found.Truncated, Unreadable: found.Unreadable, Stuck: found.Stuck, Unjudged: found.Unjudged,
+			ReasonKey: reason, Reason: cleanupReasonText(reason),
+		})
+	}
+	return out
+}
+
+// cacheReason picks the note a cache row carries — the one whose fix comes first. Too many
+// records to judge anything at all; then no session store to judge sessions against; then
+// folders that could not be read (a definite fault a
+// person must fix); then a scan that could not finish anything (look by hand); then a budget
+// cut the next press resolves. The other states still ride on the row's own fields, so the
+// Console can show that part was left unchecked.
+func cacheReason(found CacheOrphans) string {
+	switch {
+	case found.Stalled:
+		return cleanReasonCacheStalled
+	case found.Unjudged > 0:
+		return cleanReasonCacheNoStore
+	case found.Unreadable > 0:
+		return cleanReasonCacheUnread
+	case found.Stuck:
+		return cleanReasonCacheStuck
+	case found.Truncated:
+		return cleanReasonCachePartial
+	}
+	return cleanReasonCacheOrphan
 }

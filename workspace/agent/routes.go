@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -82,9 +83,17 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	mux.HandleFunc("DELETE /cleanup/archives", handlePurgeOldCleanupArchives) // "older ones" (ADR 0101 decision 6)
+	mux.HandleFunc("GET /cleanup/usage", handleCleanupUsage)
+	mux.HandleFunc("DELETE /cleanup/cache/{feature}", handleDeleteCacheOrphans)
+	// Package-manager caches in home (go-build, npm, uv, pip): measure and empty on request (docs/log/116).
+	mux.HandleFunc("GET /cleanup/tool-caches", handleToolCacheUsage)
+	mux.HandleFunc("DELETE /cleanup/tool-caches/{name}", handleDeleteToolCache)
+	mux.HandleFunc("GET /cleanup/leftovers", handleLeftoverUsage)
+	mux.HandleFunc("DELETE /cleanup/leftovers/{kind}", handleDeleteLeftovers)
 	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites
-	// on deletion (/stop forgetting the metadata, DELETE, collateral from deleting a working
-	// copy) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one
+	// on deletion (DELETE and its old name /stop, and the shell / ssm a deleted working copy
+	// sends to the trash) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one
 	// the user wants to keep seeing (ADR 0097). Manual halt / archive still go through.
 	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
 	// Keep-awake pin (docs/log/75): shields the session and the Workspace from idle auto-stop
@@ -142,6 +151,22 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /imagegen/queue", imagegen.HandleQueueOp)
 	// What a picture was made from: the sidecar, else the PNG's own prompt chunk (decision 3).
 	mux.HandleFunc("GET /imagegen/props", imagegen.HandleProps)
+	// The image studio (ADR 0100): the draft, its edit log and presses, the persona, the picture
+	// history and the knowledge documents. All proxied by the CP, like the queue above.
+	mux.HandleFunc("GET /imagegen/studios", imagegen.HandleStudios)
+	mux.HandleFunc("POST /imagegen/studios", imagegen.HandleStudios)
+	mux.HandleFunc("GET /imagegen/studios/{id}", imagegen.HandleStudio)
+	mux.HandleFunc("PUT /imagegen/studios/{id}", imagegen.HandleStudio)
+	mux.HandleFunc("DELETE /imagegen/studios/{id}", imagegen.HandleStudio)
+	mux.HandleFunc("POST /imagegen/studios/{id}/bind", imagegen.HandleStudioBind)
+	mux.HandleFunc("POST /imagegen/studios/{id}/press", imagegen.HandleStudioPress)
+	mux.HandleFunc("POST /imagegen/studios/{id}/rewind", imagegen.HandleStudioRewind)
+	mux.HandleFunc("GET /imagegen/studios/{id}/draft-log", imagegen.HandleStudioDraftLog)
+	mux.HandleFunc("GET /imagegen/studios/{id}/persona", imagegen.HandleStudioPersona)
+	mux.HandleFunc("GET /imagegen/history", imagegen.HandleHistory)
+	mux.HandleFunc("GET /imagegen/knowledge", imagegen.HandleKnowledge)
+	mux.HandleFunc("POST /imagegen/knowledge", imagegen.HandleKnowledge)
+	mux.HandleFunc("PUT /imagegen/knowledge", imagegen.HandleKnowledge)
 	// Memo image attachments (docs/log/21 image attachments) — membership-scoped, so keyed to the
 	// container rather than a session (memo_paste.go). CP proxies /api/memos/* here.
 	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)
@@ -150,6 +175,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/status", sessionx.HandleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", sessionx.HandleSessionOutput)
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", sessionx.HandleSSMLoginStatus)
+	// af-aws-exec's Console login (ADR 0102): the pending requests, and the device-code
+	// attempt the member starts with "Log in". CP allowlist: registerSessionRoutes.
+	mux.HandleFunc("GET /aws-login", awsx.HandleLoginList)
+	mux.HandleFunc("POST /aws-login/{id}/start", awsx.HandleLoginStart)
+	mux.HandleFunc("GET /aws-login/{id}/attempts/{attempt}", awsx.HandleLoginAttempt)
+	mux.HandleFunc("POST /aws-login/{id}/cancel", awsx.HandleLoginCancel)
 	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)
 	mux.HandleFunc("POST /sessions/{name}/start", sessionx.HandleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.
@@ -256,6 +287,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /repo-jobs", handleListRepoJobs)
 	mux.HandleFunc("DELETE /repo-jobs/{id}", handleDeleteRepoJob)
 	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
+	// A deleted worktree put back at its original path, so its sessions resume (issue #1040).
+	mux.HandleFunc("GET /repos/{name}/recreate", handleRecreatePlan)
+	mux.HandleFunc("POST /repos/{name}/recreate", handleRecreateWorktree)
 	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock) // deletion lock (docs/log/45)
 	mux.HandleFunc("GET /repos/{name}/status", gitx.HandleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", gitx.HandleRepoBranches)

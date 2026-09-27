@@ -171,7 +171,7 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   margin-left: auto;
   font-size: 12px;
   padding: 2px 10px;
-  color: var(--del);
+  color: var(--err);
 }
 .typing-dots {
   display: inline-flex;

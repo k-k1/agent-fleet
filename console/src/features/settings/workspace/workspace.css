@@ -45,7 +45,7 @@
   font-size: 12px;
   /* Use the app's danger token (was a hardcoded pale pink that vanished on light
      theme and didn't match the confirm/toast danger language). */
-  color: var(--del);
+  color: var(--err);
 }
 
 .danger-zone-row {
@@ -78,7 +78,7 @@
 }
 
 .confirm-list .lose {
-  color: var(--del);
+  color: var(--err);
 }
 
 /* Internal git provider: the repo list inside its provider card (P2). */
@@ -410,6 +410,64 @@
   color: var(--warn);
 }
 
+/* Disk breakdown (MachineTab DiskSection): a cache part is a line item under the cache
+   total, so it is indented and quiet; the button to the cleanup sits under the figures it
+   acts on. */
+.mv-sub {
+  padding-left: 12px;
+  color: var(--muted);
+}
+
+.mv-actions {
+  margin: 8px 0 4px;
+}
+
+/* Where a disk figure lives (MachineTab PlaceLine): the path after the size, quiet and
+   monospace, a link into the left pane's file tree; picture folders also get a gallery button.
+   The path takes what is left of the row and ellipsises — the full path is in the title. */
+.mv-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mv-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: left;
+}
+
+button.mv-path {
+  cursor: pointer;
+}
+
+button.mv-path:hover,
+button.mv-path:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* The size ahead of a path gets a fixed width, so the paths start in one column; the gallery
+   button goes to the row's right edge, so the buttons do too. */
+.mv-val.mv-size {
+  min-width: 6.5em;
+}
+
+.mv-place > .ui-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 /* Machine tab — the usage charts (MachineTab UsageSection). The level class tints the whole
    block through currentColor, which is what the chart's stroke and fill follow. */
 .mu-chart {
@@ -422,7 +480,7 @@
 }
 
 .mu-chart.is-crit {
-  color: var(--danger, var(--warn));
+  color: var(--err);
 }
 
 .mu-head {
@@ -549,15 +607,15 @@
 }
 
 .db-state-error {
-  background: color-mix(in srgb, var(--del) 14%, transparent);
-  color: var(--del);
-  border-color: color-mix(in srgb, var(--del) 38%, transparent);
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 38%, transparent);
 }
 
 .db-engine-error {
   margin: 0;
   font-size: 11.5px;
-  color: var(--del);
+  color: var(--err);
   font-family: var(--mono, monospace);
 }
 
@@ -672,7 +730,7 @@
 }
 
 .db-btn-drop {
-  color: var(--del);
+  color: var(--err);
 }
 
 /* Create a database by name. The hint sits on the same flex line and wraps under
@@ -701,7 +759,7 @@
 }
 
 .db-create-bad {
-  color: var(--del);
+  color: var(--err);
 }
 
 /* Stop dropdown — floated below the Stop button; stays anchored left. */
@@ -740,5 +798,5 @@
 }
 
 .db-stop-item.db-stop-purge {
-  color: var(--del);
+  color: var(--err);
 }

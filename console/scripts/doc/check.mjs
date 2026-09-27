@@ -231,6 +231,12 @@ const PANE = `JSON.stringify({
 // The failure state carries the download hint under the reason; the "converting" one does not
 // (DocPreview.tsx). Same signal the broken-file check below waits on.
 const settled = (s) => !!s.md || s.status.includes("ダウンロード");
+// How long to poll. `until` exits as soon as the condition holds, so a larger value costs nothing
+// on a fast machine. Locally doc:check completes in ~2.5-2.9 s; on a busy GitHub runner the
+// conversion did not settle within 15 s (the old 150-try limit) for a randomly-chosen document
+// across two consecutive CI runs (PR #893; .wasm was served 200 both times). 600 tries = 60 s
+// gives 4× headroom with the same fast-path.
+const DOC_TRIES = 600;
 // Why there is no body. Waiting on the body alone runs the whole deadline for any failure and
 // then reports "missing: …", which cannot tell a conversion that came out wrong from a WASM that
 // never loaded — the state that produced the CI flake this fixes. The served-request record is
@@ -247,7 +253,7 @@ try {
     ["sample.pptx", "pptx", ["スライドの見出し", "箇条書きの項目"]],
   ]) {
     await b.goto(`http://127.0.0.1:${port}/index.html?src=/${file}&fmt=${fmt}`);
-    const pane = JSON.parse(await until(b.evaluate, PANE, (s) => settled(JSON.parse(s)), 150));
+    const pane = JSON.parse(await until(b.evaluate, PANE, (s) => settled(JSON.parse(s)), DOC_TRIES));
     const missing = wants.filter((w) => !pane.md.includes(w));
     check(
       missing.length === 0,
@@ -259,7 +265,7 @@ try {
   // A table stays a table (a GFM row). Picking up the values is not enough if the columns are
   // mangled, because then it cannot be read.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/sample.xlsx&fmt=xlsx`);
-  const table = JSON.parse(await until(b.evaluate, PANE, (s) => settled(JSON.parse(s)), 150));
+  const table = JSON.parse(await until(b.evaluate, PANE, (s) => settled(JSON.parse(s)), DOC_TRIES));
   const sheet = table.md;
   check(
     /\|\s*みかん\s*\|\s*34\s*\|/.test(sheet),
@@ -310,7 +316,7 @@ try {
     b.evaluate,
     "[...document.querySelectorAll('.docpreview-status')].map((e) => e.textContent).join(' ')",
     (s) => s.includes("ダウンロード"),
-    150,
+    DOC_TRIES,
   );
   const why = await b.evaluate("document.querySelector('.docpreview-status')?.textContent || ''");
   check(!!why, "a broken file shows the reason", JSON.stringify(why));

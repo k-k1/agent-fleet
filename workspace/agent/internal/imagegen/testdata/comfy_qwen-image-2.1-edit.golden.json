@@ -27,7 +27,7 @@
         "clip",
         0
       ],
-      "image_1": [
+      "images.image_1": [
         "img1",
         0
       ],
@@ -73,12 +73,21 @@
       "steps": 25
     }
   },
+  "rgb": {
+    "class_type": "SplitImageWithAlpha",
+    "inputs": {
+      "image": [
+        "dec",
+        0
+      ]
+    }
+  },
   "save": {
     "class_type": "SaveImage",
     "inputs": {
       "filename_prefix": "af-qwen-image-2.1",
       "images": [
-        "dec",
+        "rgb",
         0
       ]
     }

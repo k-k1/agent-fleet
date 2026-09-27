@@ -688,7 +688,7 @@
 }
 
 .res-tile.crit {
-  border-color: var(--del);
+  border-color: var(--err);
 }
 
 .rt-fill {
@@ -701,7 +701,7 @@
 }
 
 .res-tile.crit .rt-fill {
-  background: var(--del);
+  background: var(--err);
 }
 
 .as-name {
@@ -1023,9 +1023,9 @@ label.idp-flag {
 }
 
 .mcp-probe.bad {
-  color: var(--del);
-  border-color: color-mix(in srgb, var(--del) 40%, var(--border2));
-  background: color-mix(in srgb, var(--del) 8%, transparent);
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 40%, var(--border2));
+  background: color-mix(in srgb, var(--err) 8%, transparent);
 }
 
 .mcp-probe .muted {

@@ -39,6 +39,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -64,6 +65,18 @@ func init() {
 	// inside that package would be a second copy of a security decision.
 	imagegen.BrowsePath = safeBrowsePath
 	imagegen.BrowseWritablePath = safeWritableBrowsePath
+	// The reference-image gate (ADR 0100 decision 4) reads beneath the browse root itself and
+	// refuses the same denylist the file tree does.
+	imagegen.BrowseRootDir = browseRoot
+	imagegen.PathDenied = isDenied
+	// The image studio (ADR 0100): liveness and the session meta lock are sessionx's, the
+	// member's language is the synced UI preference.
+	imagegen.StudioSessionAlive = func(name string) bool {
+		m, ok := session.ReadMeta(name)
+		return ok && sessionx.SessionAlive(m)
+	}
+	imagegen.SessionStudioCAS = sessionx.SetSessionStudio
+	imagegen.Locale = uiprefs.Locale
 	// Which Agent wrote a graph is provenance the sidecar carries and nothing else can: the
 	// templates change between releases and the record outlives the binary.
 	imagegen.Build = buildVersion

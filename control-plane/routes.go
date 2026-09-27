@@ -345,6 +345,13 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/cleanup/archives", rest)
 	mux.HandleFunc("POST /api/cleanup/archives/{id}/restore", rest)
 	mux.HandleFunc("DELETE /api/cleanup/archives/{id}", rest)
+	mux.HandleFunc("DELETE /api/cleanup/archives", rest) // ?older_than_days=N (ADR 0101 decision 6)
+	mux.HandleFunc("GET /api/cleanup/usage", rest)
+	mux.HandleFunc("DELETE /api/cleanup/cache/{feature}", rest)
+	mux.HandleFunc("GET /api/cleanup/tool-caches", rest)
+	mux.HandleFunc("DELETE /api/cleanup/tool-caches/{name}", rest)
+	mux.HandleFunc("GET /api/cleanup/leftovers", rest)
+	mux.HandleFunc("DELETE /api/cleanup/leftovers/{kind}", rest)
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	mux.HandleFunc("POST /api/sessions/{name}/input", rest)
@@ -385,6 +392,13 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// SSM login status polled by the New Session modal (docs/log/p3-ssm-session.md)
 	// — surfaces the device-auth URL and the "ready" transition without attaching yet.
 	mux.HandleFunc("GET /api/sessions/{name}/ssm-login", rest)
+	// af-aws-exec's Console login (ADR 0102). start and the attempt poll go through
+	// restLoginFlow: the attempt lives only in the Agent process's memory.
+	awsLogin := proxy.withResolved(proxy.restLoginFlow)
+	mux.HandleFunc("GET /api/aws-login", rest)
+	mux.HandleFunc("POST /api/aws-login/{id}/start", awsLogin)
+	mux.HandleFunc("GET /api/aws-login/{id}/attempts/{attempt}", awsLogin)
+	mux.HandleFunc("POST /api/aws-login/{id}/cancel", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
 	mux.HandleFunc("POST /api/ssm/instances", ws.withResolved(ws.ssmInstances))
 	// Structured transcript for the Console chat view (case-A).
@@ -485,7 +499,7 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 // credential that does not exist and a second copy of the family dispatch. The gateway is not
 // touched — cancel reaches ComfyUI over the pass-through the Agent already uses.
 //
-// All seven are plain REST. The queue is what makes that possible (decision 2): enqueueing
+// All of them are plain REST. The queue is what makes that possible (decision 2): enqueueing
 // answers at once and the browser polls, so nothing here waits out a cold start behind the
 // ALB's 60-second idle timeout the way the blocking `POST /imagegen/generate` would. That
 // route stays off this list on purpose — it is the MCP tool's door, not the pane's.
@@ -499,6 +513,22 @@ func registerImagegenRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/imagegen/props", rest)        // a picture's resolved request (sidecar, else PNG chunk)
 	mux.HandleFunc("POST /api/imagegen/groups/{id}", rest) // pause / resume / skip / cancel a batch (decision 12)
 	mux.HandleFunc("POST /api/imagegen/queue", rest)       // the same, over every group at once
+	// The image studio (ADR 0100): relayed the same way. The body of a studio PUT carries
+	// If-Match, which the relay's header clone passes through untouched.
+	mux.HandleFunc("GET /api/imagegen/studios", rest)                // list the studios
+	mux.HandleFunc("POST /api/imagegen/studios", rest)               // create one from the pane's draft
+	mux.HandleFunc("GET /api/imagegen/studios/{id}", rest)           // one studio, polled by its pane
+	mux.HandleFunc("PUT /api/imagegen/studios/{id}", rest)           // merge-patch the draft
+	mux.HandleFunc("DELETE /api/imagegen/studios/{id}", rest)        // delete draft and versions; pictures stay
+	mux.HandleFunc("POST /api/imagegen/studios/{id}/bind", rest)     // attach or detach a session
+	mux.HandleFunc("POST /api/imagegen/studios/{id}/press", rest)    // trial or enqueue, recorded as a version
+	mux.HandleFunc("POST /api/imagegen/studios/{id}/rewind", rest)   // restore the draft of an earlier entry
+	mux.HandleFunc("GET /api/imagegen/studios/{id}/draft-log", rest) // the edit log, paged
+	mux.HandleFunc("GET /api/imagegen/studios/{id}/persona", rest)   // the first turn for a new session
+	mux.HandleFunc("GET /api/imagegen/history", rest)                // pictures, newest first
+	mux.HandleFunc("GET /api/imagegen/knowledge", rest)              // one knowledge document
+	mux.HandleFunc("POST /api/imagegen/knowledge", rest)             // append to its records
+	mux.HandleFunc("PUT /api/imagegen/knowledge", rest)              // the notes editor, all four sections
 }
 
 // Assistant templates (docs/log/19 Q2) — configurable chat personas, proxied verbatim.
@@ -525,6 +555,11 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/ssm/hosts", ssm.withMembership(ssm.createHost))
 	mux.HandleFunc("PUT /api/ssm/hosts/{id}", ssm.withMembership(ssm.updateHost))
 	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", ssm.withMembership(ssm.deleteHost))
+	// The Agent's pull of the same profiles into ~/.aws/config (aws_profiles_bridge.go).
+	// Session-exempt via the /internal/ prefix; authenticated by AF_AWS_PROFILES_TOKEN.
+	exemptPrefix("/internal/")
+	awsp := newAWSProfilesBridgeAPI(cfg.mgr)
+	mux.HandleFunc("GET /internal/aws-profiles", awsp.list)
 }
 
 // Work item inbox (docs/log/80) — external tickets in the left rail. The list and the refresh
@@ -671,6 +706,8 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos", rest)
 	mux.HandleFunc("POST /api/repos/init", rest) // new working copy with no import source (mkdir + git init)
 	mux.HandleFunc("DELETE /api/repos/{name}", rest)
+	mux.HandleFunc("GET /api/repos/{name}/recreate", rest) // deleted worktree back at its path (#1040)
+	mux.HandleFunc("POST /api/repos/{name}/recreate", rest)
 	mux.HandleFunc("POST /api/repos/{name}/lock", rest) // deletion lock (docs/log/45)
 	mux.HandleFunc("GET /api/repos/{name}/status", rest)
 	mux.HandleFunc("GET /api/repos/{name}/branches", rest)

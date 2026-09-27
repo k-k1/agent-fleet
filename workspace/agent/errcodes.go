@@ -39,6 +39,25 @@ const (
 	// because it would have taken locked sessions down with it.
 	errCodeLocked         = "locked"
 	errCodeLockedSessions = "locked_sessions"
+	// Deleting a working copy moves its shell / ssm sessions to the trash first (ADR 0101); if
+	// one cannot be (a full disk), the working copy is left as it is and this is the answer.
+	errCodeSessionsTrashFailed = "sessions_trash_failed"
+	// Deleting a worktree records it in the trash first (commit pinned, uncommitted work
+	// snapshotted — issue #1042); when that cannot be done, the worktree is left as it is.
+	errCodeWorktreeArchiveFailed = "worktree_archive_failed"
+	// The worktree holds a repository git does not track (a clone inside it), whose contents
+	// the trash cannot keep, so the delete is refused rather than losing them silently.
+	errCodeWorktreeNestedRepo = "worktree_nested_repo"
+	// Recreating a deleted worktree at its original path (worktree_recreate.go): the path is
+	// taken, no parent working copy is left to add it to, the candidate the client chose no
+	// longer resolves, or git refused the add.
+	errCodeRecreatePathExists    = "recreate_path_exists"
+	errCodeRecreateParentMissing = "recreate_parent_missing"
+	errCodeRecreateStale         = "recreate_stale"
+	errCodeRecreateFailed        = "recreate_failed"
+	// The chosen way back can only be taken on a new branch: the branch has moved since the
+	// delete, or HEAD was detached (issue #1042).
+	errCodeRecreateNeedsNewBranch = "recreate_needs_new_branch"
 )
 
 // Stable codes for the user-facing errors (docs/log/28 P3). The backend message is a
@@ -87,6 +106,12 @@ const (
 	errCodeAssistantNotFound      = "assistant_not_found"
 	errCodeAssistantBuiltinEdit   = "assistant_builtin_readonly_edit"
 	errCodeAssistantBuiltinDelete = "assistant_builtin_readonly_delete"
+	// Create/update validation (applyInput). integration_unsupported also carries the
+	// rejected id in an `integration` field.
+	errCodeAssistantNameRequired           = "assistant_name_required"
+	errCodeAssistantAgentUnsupported       = "assistant_agent_unsupported"
+	errCodeAssistantToolsUnsupported       = "assistant_tools_unsupported"
+	errCodeAssistantIntegrationUnsupported = "assistant_integration_unsupported"
 
 	// Image paste (session_paste.go)
 	errCodePasteTooLarge         = "paste_too_large"

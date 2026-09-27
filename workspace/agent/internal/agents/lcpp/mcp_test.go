@@ -592,7 +592,7 @@ func TestMCPBuiltinAFChildLearnsOwningSessionName(t *testing.T) {
 				results[r.ToolCallID] = r.Content
 			}
 		}
-		DropHandle(m.Name)
+		dropAndWait(t, m.Name)
 		return results["call-af"], results["call-ext"]
 	}
 

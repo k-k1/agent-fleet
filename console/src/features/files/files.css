@@ -78,15 +78,31 @@
 .fs-file.active {
   color: var(--lp-accent, var(--accent));
 }
-/* Search-result rows: filename first, then its dir path muted (VS Code style).
-   The wrapper truncates so a long path trims from the right, keeping the name. */
+/* A name truncates in the middle (MiddleEllipsis): the head shrinks to "…" while
+   the tail — extension and the characters that tell siblings apart — stays. */
 .fs-name {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.mid-head {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
+.mid-tail {
+  flex: none;
+}
+/* Search-result rows: filename first, then its dir path muted (VS Code style).
+   The path shrinks far faster than the name, so it goes first. */
 .fs-sub {
+  flex: 0 1000 auto;
+  min-width: 0;
+  margin-left: 0.3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--muted);
   font-size: 11px;
 }

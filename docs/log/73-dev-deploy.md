@@ -185,6 +185,16 @@ CP を止める前に片付けると**動いている CP が作り直す**／ス
 | `teardown.sh`（既定） | ホストゾーンと `/af-cp/*` だけ | `standup.sh` で再構築（ECR は空から） |
 | `teardown.sh --purge-secrets --purge-retained` | ほぼ何も | 秘密の作り直しから |
 
+🔴 **2026-09-23 追記（ADR 0099 の比較の中で）:** 上の `pause.sh` の行は 2 点が変わった。
+(1) **RDS も止めるようになった**（既定。`--keep-db` で残す）——CP の後に止め、`--up` では CP の前に
+起こす。AWS は止めた RDS を **7 日で勝手に起動する**ので、`--status` は「CP が止まっているのに DB が
+動いている」を警告し、`pause.sh` をもう一度流すと止まる。(2) **エンジンの GPU の箱を見ていなかった**
+——`pause.sh` は `engine|gpu|fleet` を 1 度も扱っておらず、箱が起きている間に CP を 0 にすると、
+それを終わらせる唯一のコントローラが居なくなって箱が取り残されていた（g6.xlarge で 1 日 ~$28）。
+スロットの「CP を先に止めると取り残す」と同じ形を、GPU について見落としていた。今は CP の idle 停止を
+待ち、CP が止まった後に**掃引で生きている箱を terminate する**。NAT と ALB は AWS に「停止」が無い
+（削除だけ）ので残る——止められる分を全部止めた休止の床は、定価の算術で日額 ~$2.0。
+
 ⚠️ **ECR は温存できない。** `af-control-plane` / `af-workspace` は 20-platform のリソースで
 `EmptyOnDelete: true` ＝スタック削除でイメージごと消える。だから `standup.sh` は
 GHCR から `crane copy` し直す前提で書いてある。

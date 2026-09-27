@@ -28,7 +28,7 @@ func envOr(key, def string) string {
 }
 
 // Home is cursor's state root (~/.cursor): chats/<ws-hash>/<chatId>/store.db (a private
-// SQLite we never read), projects/<slug>/agent-transcripts/ (the JSONL we do read),
+// SQLite only recall.go reads), projects/<slug>/agent-transcripts/ (the JSONL we do read),
 // hooks.json, cli-config.json. Credentials live in a separate tree
 // (~/.config/cursor/auth.json); both trees are on fs.go's denylist so plaintext tokens
 // stay unreadable (docs/log/40 contract).

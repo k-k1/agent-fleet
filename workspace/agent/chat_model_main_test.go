@@ -18,7 +18,7 @@ func TestTurnModelRecordedPerMessage(t *testing.T) {
 	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runOperatorTurn(conv.ID, "状況は?"); err != nil {
+	if _, err := runOperatorTurn(conv.ID, "状況は?", "discord"); err != nil {
 		t.Fatal(err)
 	}
 	c, err := chatx.LoadConv(conv.ID)
@@ -44,7 +44,7 @@ func TestTurnModelBlankWhenUnknown(t *testing.T) {
 	if err := chatx.SaveConv(conv); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runOperatorTurn(conv.ID, "状況は?"); err != nil {
+	if _, err := runOperatorTurn(conv.ID, "状況は?", "discord"); err != nil {
 		t.Fatal(err)
 	}
 	c, err := chatx.LoadConv(conv.ID)

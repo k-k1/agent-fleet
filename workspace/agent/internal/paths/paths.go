@@ -233,3 +233,24 @@ func ValidIDSegment(id string) bool {
 	}
 	return true
 }
+
+// ImagegenStudiosDir holds the image studios, one `<id>.json` each (ADR 0100 decision 2), plus
+// each studio's append-only `<id>.log.jsonl`. Under AgentConfigDir because a studio is
+// user-authored content a Workspace must not lose, and inside the Files pane's denylist on
+// purpose: the draft is edited through the studio, never as a file. Two processes read it —
+// the Agent that owns it and the session's MCP child, which decides what to advertise from it
+// without a round trip — so the path lives here rather than in either package. The id is a
+// ValidIDSegment.
+func ImagegenStudiosDir() string { return filepath.Join(AgentConfigDir(), "imagegen", "studios") }
+
+// SessionWorkDir is a session's throwaway directory, ~/.af-work/<name>: probes, review
+// checkouts, bundles — what agents used to drop loose in ~ by the hundred (docs/log/116).
+// Terminal sessions get it as $AF_WORK_DIR; deleting the session deletes it. It sits in
+// plain view in home, not under the state roots, because the agent working in the session
+// is the one that reads it. "" for a name that could reach outside ~/.af-work.
+func SessionWorkDir(name string) string {
+	if name == "" || name == "." || name == ".." || strings.ContainsRune(name, filepath.Separator) {
+		return ""
+	}
+	return filepath.Join(HomeDir(), ".af-work", name)
+}

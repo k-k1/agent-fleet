@@ -39,7 +39,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -262,6 +261,12 @@ func comfyFamilyInstructionEdit(family comfyFamily) bool {
 // itself, not through how far a partial denoise is allowed to travel — so a caller's strength has
 // nowhere to go. 実測 C is the same failure this exists to prevent: the same request at denoise
 // 0.6 came back unedited, with no error and no warning.
+// comfyFamilyAlpha is comfyFamilyRow.Alpha: whether the family's decode carries an alpha channel.
+func comfyFamilyAlpha(family comfyFamily) bool {
+	r, ok := comfyFamilyRowFor(family)
+	return ok && r.Alpha
+}
+
 func comfyFamilyStrength(family comfyFamily) bool {
 	return !comfyFamilyInstructionEdit(family)
 }
@@ -292,7 +297,7 @@ func comfyFamilyMaxInputs(family comfyFamily) int {
 }
 
 // comfyFamilyHasNoSizes is ADR 0094 decision 4: Qwen-Image-Edit's output size is decided by
-// FluxKontextImageScale from the INPUT PICTURE's own aspect ratio, so no size a request or a
+// comfyQwenEditSize from the INPUT PICTURE's own size, so no size a request or a
 // catalogue row could name would reach the sampler at all. comfySizesFor checks this BEFORE the
 // row's own declared list — the one family where the family's answer wins over the row's, because
 // the row's list would otherwise offer a control that silently does nothing.
@@ -599,8 +604,8 @@ func comfySortedNames(set map[string]bool) []string {
 // decision 2 exists to prevent.
 //
 // 🔴 One family wins even over the row's OWN declaration (ADR 0094 decision 4,
-// comfyFamilyHasNoSizes): Qwen-Image-Edit's output size is decided by FluxKontextImageScale from
-// the input picture's aspect ratio, so a row's `sizes` there would offer a control that silently
+// comfyFamilyHasNoSizes): Qwen-Image-Edit's output size is decided by comfyQwenEditSize from
+// the input picture's own size, so a row's `sizes` there would offer a control that silently
 // does nothing. That check runs BEFORE conn.Sizes[model] for exactly that reason.
 func comfySizesFor(conn EngineConn, model string) []string {
 	family, ok := comfyFamilyFor(conn, model)
@@ -1007,6 +1012,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		Op: req.Op, Prompt: req.Prompt, Negative: comfyNegativeFor(conn, model, req),
 		Seed: seed, Width: w, Height: h,
 		BatchSize: count, Loras: loras, Strength: req.Strength,
+		Transparent: strings.EqualFold(strings.TrimSpace(req.Background), "transparent"),
 		// The catalogue row for THIS model with the caller's own overlay laid over it, field by
 		// field (ADR 0081 decision 4). What the template then does with it is one more merge —
 		// family recipe ← this — so the whole order is recipe ← row ← request, and a caller who
@@ -1029,7 +1035,20 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	// needing. Reading the picture's real dimensions here rather than trusting req.Size is what
 	// keeps klein's schedule honest — Flux2Scheduler derives its shift from a width and height,
 	// and an edit's size is the input picture's, not the caller's.
-	var sizeWarning string
+	var inW, inH int
+	// An instruction-edit family shrinks the picture to a size computed from its own (comfyQwenEditSize),
+	// so a picture whose size cannot be read is refused HERE, before the upload wakes the engine —
+	// a guessed size would be the soft picture that rule exists to prevent. A file that cannot be
+	// read at all is left to uploadImage, which says so by name.
+	if params.isImageToImage() && comfyFamilyInstructionEdit(family) && len(req.Inputs) > 0 {
+		if raw, err := readRequestFile(req.Inputs[0]); err == nil {
+			if _, _, ok := comfyPictureSize(raw); !ok {
+				return Result{}, fmt.Errorf("the %s family needs to read the input picture's size, and %s is not"+
+					" a PNG, JPEG, WebP or GIF it can decode — convert it to one of those and try again",
+					family, req.Inputs[0])
+			}
+		}
+	}
 	if params.isImageToImage() {
 		req.reportPhase(PhaseUploading)
 		for _, in := range req.Inputs {
@@ -1039,14 +1058,10 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 			}
 			params.Images = append(params.Images, up.name)
 			// The FIRST reference decides the output's dimensions, and only it: every family that
-			// reads a second one composes it INTO the first one's frame (FluxKontextImageScale
-			// scales image1 and the rest ride the same latent), so measuring the others here would
-			// report a size no picture ever had.
+			// reads a second one composes it INTO the first one's frame (the latent is made from
+			// image1 alone), so measuring the others here would report a size no picture ever had.
 			if len(params.Images) == 1 && up.width > 0 && up.height > 0 {
-				if req.Size != "" && req.Size != "auto" && (up.width != w || up.height != h) {
-					sizeWarning = fmt.Sprintf(
-						"size=%s requested, but %s keeps the input picture's own %dx%d", req.Size, req.Op, up.width, up.height)
-				}
+				inW, inH = up.width, up.height
 				params.Width, params.Height = up.width, up.height
 			}
 		}
@@ -1055,20 +1070,8 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 			if err != nil {
 				return Result{}, err
 			}
-			// 🔴 The instruction-edit families, and only they, need the mask to be the picture's
-			// own size. Their template sends BOTH through FluxKontextImageScale so that the crop
-			// it applies is the same for both (comfyQwenEditNoiseMask), and that node picks its
-			// target from the width and height it is given — a mask of some other shape resolves a
-			// different target and lands somewhere else, silently. Every other family stretches the
-			// mask over the whole frame with no crop, where a different size is still "the same
-			// region of the picture" and has always been allowed.
-			if comfyFamilyInstructionEdit(family) && mask.width > 0 && mask.height > 0 &&
-				(mask.width != params.Width || mask.height != params.Height) {
-				return Result{}, fmt.Errorf("the %s family needs the mask to be the input picture's own size"+
-					" (%dx%d), and this one is %dx%d — its frame is rescaled from the picture's aspect ratio,"+
-					" so a mask of another shape would be applied to a different area than the one drawn",
-					family, params.Width, params.Height, mask.width, mask.height)
-			}
+			// Every family stretches the mask over the whole frame with no crop, so a mask of
+			// another size is still "the same region of the picture" and is allowed everywhere.
 			params.Mask = mask.name
 		}
 	}
@@ -1102,7 +1105,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		return Result{}, err
 	}
 
-	warnings := comfyWarnings(req)
+	warnings := comfyWarnings(req, family)
 	if ignored := comfyNegativeIgnoredWarning(conn, model, family); ignored != "" {
 		warnings = append(warnings, ignored)
 	}
@@ -1111,8 +1114,10 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if switchWarning != "" {
 		warnings = append(warnings, switchWarning)
 	}
-	if sizeWarning != "" {
-		warnings = append(warnings, sizeWarning)
+	if params.isImageToImage() && req.Size != "" && req.Size != "auto" {
+		if sw := comfyImg2ImgSizeWarning(req.Size, req.Op, w, h, inW, inH, images[0]); sw != "" {
+			warnings = append(warnings, sw)
+		}
 	}
 	if cached := comfyCacheWarning(hist); cached != "" {
 		warnings = append(warnings, cached)
@@ -1184,17 +1189,17 @@ type comfyUpload struct {
 // decided to rename, and a graph naming the file it MEANT to upload would fail validation against
 // a directory listing that has the other one.
 func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, req Request, path string) (comfyUpload, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readRequestFile(path)
 	if err != nil {
-		return comfyUpload{}, fmt.Errorf("could not read %s: %w", path, err)
+		return comfyUpload{}, err
 	}
 	if len(raw) > comfyMaxUpload {
 		return comfyUpload{}, fmt.Errorf("%s is %d bytes, over this route's %d-byte limit for one picture",
 			path, len(raw), comfyMaxUpload)
 	}
 	up := comfyUpload{name: comfyUploadName(raw, path)}
-	if cfg, _, err := image.DecodeConfig(bytes.NewReader(raw)); err == nil {
-		up.width, up.height = cfg.Width, cfg.Height
+	if w, h, ok := comfyPictureSize(raw); ok {
+		up.width, up.height = w, h
 	}
 
 	var buf bytes.Buffer
@@ -1309,10 +1314,12 @@ func (p *comfyProvider) sendWithWake(ctx context.Context, conn EngineConn, req R
 	}
 }
 
-// comfyWarnings is what this route knows it cannot honour, mirroring sdcppWarnings.
-func comfyWarnings(req Request) []string {
+// comfyWarnings is what this route knows it cannot honour, mirroring sdcppWarnings. Per family,
+// because one family CAN honour a transparent background (comfyFamilyRow.Alpha) — telling that
+// caller "opaque produced" over a picture with 17 % of its pixels at alpha 0 was a false warning.
+func comfyWarnings(req Request, family comfyFamily) []string {
 	var out []string
-	if b := strings.ToLower(strings.TrimSpace(req.Background)); b == "transparent" {
+	if b := strings.ToLower(strings.TrimSpace(req.Background)); b == "transparent" && !comfyFamilyAlpha(family) {
 		out = append(out, "background=transparent requested, opaque produced (this engine's checkpoints have no alpha channel)")
 	}
 	return out
@@ -1467,8 +1474,10 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 			}
 			// An UNKNOWN prompt id is normal while the picture is being made — ComfyUI's history
 			// holds finished prompts only, and the queued one lives in /queue. It stops being
-			// normal once this engine has restarted under us.
-			if !known && sawWaking {
+			// normal once this engine has restarted under us — and a wake alone does not prove
+			// that: the gateway also answers engine_waking for a box that is up but too busy to
+			// answer its health probe (a T4 editing at 35 s/step), so /queue is asked first.
+			if !known && sawWaking && !p.stillQueued(ctx, conn, promptID) {
 				return comfyHistory{}, fmt.Errorf(
 					"the image engine restarted while this picture was being made, and the queued request did not survive it (%s)"+
 						" — ask again; nothing was generated", lastWaking)
@@ -1480,6 +1489,14 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 		case <-time.After(wait):
 		}
 	}
+}
+
+// stillQueued is whether the engine still holds this prompt, asked only after a wake was seen.
+// An answer that cannot be read counts as "no": the restart is then reported as before, which
+// is the direction that stops the wait rather than letting it run silent to the budget.
+func (p *comfyProvider) stillQueued(ctx context.Context, conn EngineConn, promptID string) bool {
+	held, err := p.queueHolds(ctx, conn, promptID)
+	return err == nil && held
 }
 
 // comfyPollTimedOut names the engine's own last word when the wait ran out during a wake, so a
@@ -1583,6 +1600,36 @@ func comfyCacheWarning(hist comfyHistory) string {
 // seed is the graph's own, and each picture is stamped with seed+i (ADR 0081 decision 3): that
 // is how ComfyUI derives a batch's noise from one number, so the second picture of a batch of
 // four is reproducible only under seed+1 and never under the seed the request carried.
+// comfyImg2ImgSizeWarning tells a caller who named a size on an image-to-image op that the
+// picture was not made at it. The frame follows the first reference, but not always at that
+// reference's own pixels: the instruction-edit families rescale it (2509 and 2511 shrink it to a
+// fixed point of their encoder's own rescale, comfyQwenEditSize; Qwen-Image 2.1's encode resizes to a 1024² budget at
+// multiples of 32, so a 1216x832 reference comes back 1248x832 — ADR 0098 P2). The size named is
+// therefore the one MEASURED off the output rather than one computed from the family: a
+// re-derivation of each node's arithmetic here would be a second copy that drifts silently the
+// day a pin bump changes it, while the decoded PNG is the fact itself.
+//
+// The input's size still leads the sentence, because it is what the caller controls — the only
+// way to steer the frame on these ops is to crop or scale the picture that goes in. An output
+// whose dimensions could not be read falls back to naming the input alone.
+func comfyImg2ImgSizeWarning(size string, op Op, w, h, inW, inH int, out Image) string {
+	outW, outH := out.Width, out.Height
+	if outW <= 0 || outH <= 0 {
+		outW, outH = inW, inH
+	}
+	if outW <= 0 || outH <= 0 || (outW == w && outH == h) {
+		return ""
+	}
+	if outW == inW && outH == inH {
+		return fmt.Sprintf("size=%s requested, but %s keeps the input picture's own %dx%d", size, op, inW, inH)
+	}
+	if inW <= 0 || inH <= 0 {
+		return fmt.Sprintf("size=%s requested, but %s made the picture at %dx%d", size, op, outW, outH)
+	}
+	return fmt.Sprintf("size=%s requested, but %s follows the input picture (%dx%d) and the engine made it at %dx%d",
+		size, op, inW, inH, outW, outH)
+}
+
 func (p *comfyProvider) fetchImages(ctx context.Context, conn EngineConn, hist comfyHistory, seed int64) ([]Image, error) {
 	var out []Image
 	for _, o := range hist.Outputs {
@@ -1698,27 +1745,48 @@ func (p *comfyProvider) Cancel(ctx context.Context, upstream string) error {
 // SECOND element is the prompt id (server.py's own queue tuple); anything shaped otherwise is
 // skipped rather than guessed at.
 func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[string]bool, error) {
+	pending, _, err := p.queue(ctx, conn)
+	return pending, err
+}
+
+// queueHolds reports whether the engine still has this prompt, running or waiting its turn.
+func (p *comfyProvider) queueHolds(ctx context.Context, conn EngineConn, promptID string) (bool, error) {
+	pending, running, err := p.queue(ctx, conn)
+	if err != nil {
+		return false, err
+	}
+	return pending[promptID] || running[promptID], nil
+}
+
+// queue reads GET /queue into its two sets of prompt ids: pending, then running.
+func (p *comfyProvider) queue(ctx context.Context, conn EngineConn) (map[string]bool, map[string]bool, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL(conn, "/queue"), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
 	body, status, _, err := engineHTTPAttempt(p.client, httpReq)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if status >= 300 {
-		return nil, fmt.Errorf("the image engine's /queue answered %d %s: %s",
+		return nil, nil, fmt.Errorf("the image engine's /queue answered %d %s: %s",
 			status, http.StatusText(status), engineErrText(body))
 	}
 	var doc struct {
+		Running [][]any `json:"queue_running"`
 		Pending [][]any `json:"queue_pending"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	return comfyQueueIDs(doc.Pending), comfyQueueIDs(doc.Running), nil
+}
+
+// comfyQueueIDs is the prompt ids out of one of /queue's lists.
+func comfyQueueIDs(entries [][]any) map[string]bool {
 	out := map[string]bool{}
-	for _, entry := range doc.Pending {
+	for _, entry := range entries {
 		if len(entry) < 2 {
 			continue
 		}
@@ -1726,7 +1794,7 @@ func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[
 			out[id] = true
 		}
 	}
-	return out, nil
+	return out
 }
 
 // postCancel sends one cancel call. It does NOT go through sendWithWake: a 503 engine_waking

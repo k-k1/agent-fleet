@@ -92,6 +92,27 @@ func TestSQLiteStore(t *testing.T) {
 	if mx, err := st.MaxAgentPort(ctx); err != nil || mx != 7700 {
 		t.Fatalf("maxport: %v %d", err, mx)
 	}
+
+	// The session mirror keeps which image studio a session is bound to (ADR 0100 decision 2):
+	// a stopped Workspace's list is served from here alone, and the Console routes a studio
+	// session to the studio pane by this key.
+	if err := st.ReplaceSessions(ctx, ws.ID, []SessionRow{
+		{WorkspaceID: ws.ID, Name: "s1", Kind: "claude", State: "stopped", CreatedAt: NowTS(), Studio: "st1"},
+		{WorkspaceID: ws.ID, Name: "s2", Kind: "claude", State: "stopped", CreatedAt: NowTS()},
+	}); err != nil {
+		t.Fatalf("replace sessions: %v", err)
+	}
+	rows, err := st.ListSessions(ctx, ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	studios := map[string]string{}
+	for _, r := range rows {
+		studios[r.Name] = r.Studio
+	}
+	if studios["s1"] != "st1" || studios["s2"] != "" {
+		t.Fatalf("mirrored studios = %v, want s1 bound and s2 not", studios)
+	}
 }
 
 // Memo queue (docs/log/21): CRUD is membership-scoped; ListMemos returns unsent plus

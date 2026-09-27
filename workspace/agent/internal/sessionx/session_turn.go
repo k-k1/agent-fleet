@@ -352,20 +352,24 @@ func HandleSessionSettings(w http.ResponseWriter, r *http.Request) {
 	// Persist the desired next-turn settings only after the native update succeeds.
 	// This is especially important for opencode, whose driver owns variant/model state
 	// in memory because serve has no thread-settings persistence endpoint.
-	if req.ClearModel {
-		meta.Model = ""
-	} else if req.Model != "" {
-		meta.Model = req.Model
-	}
-	if req.ClearEffort {
-		meta.Effort = ""
-	} else if req.Effort != "" {
-		meta.Effort = req.Effort
-	}
-	if req.Mode != "" {
-		meta.Mode = req.Mode
-	}
-	session.WriteMeta(meta)
+	// Onto the meta as it is now, not the one read before the RPC above: that write-back would
+	// roll back a lock set meanwhile (issue #950).
+	UpdateSessionMeta(name, func(meta *session.Meta) bool {
+		if req.ClearModel {
+			meta.Model = ""
+		} else if req.Model != "" {
+			meta.Model = req.Model
+		}
+		if req.ClearEffort {
+			meta.Effort = ""
+		} else if req.Effort != "" {
+			meta.Effort = req.Effort
+		}
+		if req.Mode != "" {
+			meta.Mode = req.Mode
+		}
+		return true
+	})
 	snap, _ := h.Snapshot()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"updated": name, "model": snap.Settings.Model, "effort": snap.Settings.Effort, "mode": snap.Settings.Mode,

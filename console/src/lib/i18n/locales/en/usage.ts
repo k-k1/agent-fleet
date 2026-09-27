@@ -81,6 +81,7 @@ export const usage: Record<keyof typeof jaUsage, string> = {
   "usage.catalog_note":
     "Price catalog: models.dev ({n} models, fetched {when}). Past estimates change when the catalog does.",
   "usage.catalog_origin_opencode": "Read from the catalog opencode keeps (we never update it).",
+  "usage.catalog_origin_fetched": "Read from the catalog the Agent fetches from models.dev once a day.",
   "usage.catalog_origin_file": "Read from a catalog placed in this workspace.",
   "usage.catalog_origin_env": "Read from the catalog named by AF_USAGE_CATALOG.",
   "usage.kpi_unmeasured": "Unmeasured calls",

@@ -43,6 +43,18 @@ node console/scripts/shots/capture.mjs --locale en
   question. The README shot wants the live question card, but that card locks the composer,
   so anything that exercises the composer itself (the skill picker's tiers, say) needs this.
 
+## Guide shots
+
+Two scenes are for the user guide rather than the README — the sessions overview and the
+fleet graph — and land in `guide/assets/` (shipped with the guide by `stage-docs.sh`):
+
+```bash
+node console/scripts/shots/capture.mjs --locale ja --only overview,fleetgraph --out guide/assets
+node console/scripts/shots/capture.mjs --locale en --only overview,fleetgraph --out guide/assets
+```
+
+The container is shared, so pass `--port` / `--cdp-port` that nothing else is listening on.
+
 ## Publishing
 
 `deploy/release/publish-dist.sh --seed` pushes `docs/img/*.webp` to the dist repo

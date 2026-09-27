@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -191,8 +192,8 @@ func TestRepeatGateDisabledNeverIntervenes(t *testing.T) {
 	if got := executed.Load(); got != 20 {
 		t.Fatalf("tool actually ran %d times, want 20 (RepeatGateDisabled must never intervene)", got)
 	}
-	if res.RepeatWarnings != 0 {
-		t.Fatalf("RepeatWarnings = %d, want 0", res.RepeatWarnings)
+	if res.RepeatWarnings != 0 || res.RepeatNameWarnings != 0 {
+		t.Fatalf("RepeatWarnings = %d, RepeatNameWarnings = %d, want 0 for both", res.RepeatWarnings, res.RepeatNameWarnings)
 	}
 }
 
@@ -351,3 +352,330 @@ func TestRepeatGateIgnoresTheQwen38NegativeControlSequence(t *testing.T) {
 }
 
 func okTool(_ context.Context, _ *Runtime, args string) (string, error) { return "ok:" + args, nil }
+
+func TestNameStreakTrackerCountsTurnsNotCalls(t *testing.T) {
+	call := func(name string) ToolCall { return ToolCall{Name: name} }
+	var tr nameStreakTracker
+	steps := []struct {
+		calls []ToolCall
+		want  int
+	}{
+		{[]ToolCall{call("read"), call("read"), call("read")}, 1}, // parallel reads are one step
+		{[]ToolCall{call("read")}, 2},
+		{[]ToolCall{call("read"), call("bash")}, 0}, // mixed names break the streak
+		{[]ToolCall{call("read")}, 1},
+		{[]ToolCall{call("bash")}, 1},
+		{[]ToolCall{call("bash")}, 2},
+	}
+	for i, st := range steps {
+		if got := tr.note(st.calls); got != st.want {
+			t.Fatalf("step %d: streak = %d, want %d", i, got, st.want)
+		}
+	}
+}
+
+// varyingCall is one tool called with arguments that differ on every turn — the shape
+// the exact-call gate cannot see (ADR 0093 debt 2).
+func varyingCall(name string, i int) ToolCall {
+	return ToolCall{ID: fmt.Sprintf("%s-%d", name, i), Name: name, Arguments: fmt.Sprintf(`{"path":"f.go","offset":%d}`, i*100)}
+}
+
+func TestRepeatNameGateWarnStageStillRunsAndPrefixesNotice(t *testing.T) {
+	var executed atomic.Int32
+	reg := NewRegistry(countingTool("read", &executed))
+	var turns []Turn
+	for i := 1; i <= 4; i++ {
+		turns = append(turns, Turn{ToolCalls: []ToolCall{varyingCall("read", i)}})
+	}
+	turns = append(turns, Turn{Content: "done"})
+	client := &scriptedClient{turns: turns}
+	rt := &Runtime{Cwd: t.TempDir(), RepeatNameWarnAfter: 3, RepeatNameAbortAfter: 100}
+	res, err := Run(context.Background(), client, reg, rt, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := executed.Load(); got != 4 {
+		t.Fatalf("tool actually ran %d times, want 4 — the name warn stage must not suppress calls", got)
+	}
+	if res.RepeatNameWarnings != 2 || res.RepeatWarnings != 0 {
+		t.Fatalf("RepeatNameWarnings = %d, RepeatWarnings = %d, want 2 and 0", res.RepeatNameWarnings, res.RepeatWarnings)
+	}
+	for _, m := range res.Messages {
+		if m.Role != RoleTool {
+			continue
+		}
+		warned := m.ToolCallID == "read-3" || m.ToolCallID == "read-4"
+		if got := strings.HasPrefix(m.Content, "note: read has now been the only tool called"); got != warned {
+			t.Fatalf("call %s: content %q, notice present = %v, want %v", m.ToolCallID, m.Content, got, warned)
+		}
+		if !strings.Contains(m.Content, "ran:read:") {
+			t.Fatalf("call %s: content %q lost the real result", m.ToolCallID, m.Content)
+		}
+	}
+}
+
+// TestRepeatNameGateCatchesTheIncidentWithVaryingArguments is the positive control for
+// ADR 0093 debt 2: the 72-turn todo_write run, replayed with arguments that change
+// every turn, must be stopped by the package defaults.
+func TestRepeatNameGateCatchesTheIncidentWithVaryingArguments(t *testing.T) {
+	var executed atomic.Int32
+	reg := NewRegistry(countingTool("todo_write", &executed))
+	var turns []Turn
+	for i := 1; i <= 72; i++ {
+		turns = append(turns, Turn{ToolCalls: []ToolCall{{
+			ID:        fmt.Sprintf("%d", i),
+			Name:      "todo_write",
+			Arguments: fmt.Sprintf(`{"todos":[{"content":"Fix all bugs (pass %d)","status":"completed"}]}`, i),
+		}}})
+	}
+	client := &scriptedClient{turns: turns}
+	rt := &Runtime{Cwd: t.TempDir()}
+	res, err := Run(context.Background(), client, reg, rt, nil)
+	if !errors.Is(err, ErrRepeatedToolCall) {
+		t.Fatalf("err = %v, want ErrRepeatedToolCall", err)
+	}
+	if client.i != defaultRepeatNameAbortAfter {
+		t.Fatalf("Send was called %d times before Run aborted, want %d (defaultRepeatNameAbortAfter)", client.i, defaultRepeatNameAbortAfter)
+	}
+	if got := executed.Load(); got != defaultRepeatNameAbortAfter-1 {
+		t.Fatalf("tool actually ran %d times, want %d (every turn before the aborting one)", got, defaultRepeatNameAbortAfter-1)
+	}
+	if want := defaultRepeatNameAbortAfter - defaultRepeatNameWarnAfter; res.RepeatNameWarnings != want {
+		t.Fatalf("RepeatNameWarnings = %d, want %d", res.RepeatNameWarnings, want)
+	}
+	last := res.Messages[len(res.Messages)-1]
+	if last.Role != RoleTool || last.ToolCallID != fmt.Sprintf("%d", defaultRepeatNameAbortAfter) || !strings.HasPrefix(last.Content, "error:") {
+		t.Fatalf("last message = %+v, want an error answering the aborting call so the history stays sendable", last)
+	}
+}
+
+// TestRepeatNameGateIgnoresTheLongestPassingRuns is the negative control: the longest
+// same-name runs in the passing live sessions (6 turns of bash, 6 of read, each with
+// different arguments) and a run just short of the warn default must go untouched.
+func TestRepeatNameGateIgnoresTheLongestPassingRuns(t *testing.T) {
+	var turns []Turn
+	for i := 1; i <= 6; i++ {
+		turns = append(turns, Turn{ToolCalls: []ToolCall{{ID: fmt.Sprintf("b%d", i), Name: "bash", Arguments: fmt.Sprintf(`{"command":"go test ./pkg%d"}`, i)}}})
+	}
+	turns = append(turns, Turn{ToolCalls: []ToolCall{{ID: "e", Name: "edit", Arguments: `{"path":"a.go"}`}}})
+	for i := 1; i < defaultRepeatNameWarnAfter; i++ {
+		turns = append(turns, Turn{ToolCalls: []ToolCall{varyingCall("read", i)}})
+	}
+	turns = append(turns, Turn{Content: "done"})
+	client := &scriptedClient{turns: turns}
+	reg := NewRegistry(
+		Tool{Def: ToolDef{Name: "bash"}, Run: okTool},
+		Tool{Def: ToolDef{Name: "edit"}, Run: okTool},
+		Tool{Def: ToolDef{Name: "read"}, Run: okTool},
+	)
+	res, err := Run(context.Background(), client, reg, &Runtime{Cwd: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.RepeatNameWarnings != 0 || res.RepeatWarnings != 0 {
+		t.Fatalf("RepeatNameWarnings = %d, RepeatWarnings = %d, want 0 for both", res.RepeatNameWarnings, res.RepeatWarnings)
+	}
+}
+
+// TestRepeatNameGateNoticeStaysWithinMaxOutputBytes: the notice is added before
+// truncation, so a warned result is capped exactly like any other.
+func TestRepeatNameGateNoticeStaysWithinMaxOutputBytes(t *testing.T) {
+	const limit = 400
+	reg := NewRegistry(Tool{
+		Def: ToolDef{Name: "read"},
+		Run: func(context.Context, *Runtime, string) (string, error) { return strings.Repeat("x", 5000), nil },
+	})
+	turns := []Turn{
+		{ToolCalls: []ToolCall{varyingCall("read", 1)}},
+		{ToolCalls: []ToolCall{varyingCall("read", 2)}},
+		{Content: "done"},
+	}
+	rt := &Runtime{Cwd: t.TempDir(), MaxOutputBytes: limit, RepeatNameWarnAfter: 2, RepeatNameAbortAfter: 100}
+	res, err := Run(context.Background(), &scriptedClient{turns: turns}, reg, rt, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	unwarned := truncateOutput(strings.Repeat("x", 5000), limit)
+	for _, m := range res.Messages {
+		if m.Role != RoleTool || m.ToolCallID != "read-2" {
+			continue
+		}
+		if !strings.HasPrefix(m.Content, "note: ") {
+			t.Fatalf("warned result %q does not start with the notice", m.Content)
+		}
+		if len(m.Content) > len(unwarned) {
+			t.Fatalf("warned result is %d bytes, an unwarned one is %d — the notice must not push past MaxOutputBytes", len(m.Content), len(unwarned))
+		}
+		return
+	}
+	t.Fatal("no tool message for read-2")
+}
+
+// TestRepeatNameGateAbortAnswersEveryParallelCall: the aborting turn may carry
+// several same-name calls; each must be answered and none may run.
+func TestRepeatNameGateAbortAnswersEveryParallelCall(t *testing.T) {
+	var executed atomic.Int32
+	reg := NewRegistry(countingTool("read", &executed))
+	turns := []Turn{
+		{ToolCalls: []ToolCall{varyingCall("read", 1)}},
+		{ToolCalls: []ToolCall{varyingCall("read", 2), varyingCall("read", 3), varyingCall("read", 4)}},
+	}
+	rt := &Runtime{Cwd: t.TempDir(), RepeatNameWarnAfter: 100, RepeatNameAbortAfter: 2}
+	res, err := Run(context.Background(), &scriptedClient{turns: turns}, reg, rt, nil)
+	if !errors.Is(err, ErrRepeatedToolCall) {
+		t.Fatalf("err = %v, want ErrRepeatedToolCall", err)
+	}
+	if got := executed.Load(); got != 1 {
+		t.Fatalf("tool ran %d times, want 1 (only the first turn)", got)
+	}
+	answered := map[string]string{}
+	for _, m := range res.Messages {
+		if m.Role == RoleTool {
+			answered[m.ToolCallID] = m.Content
+		}
+	}
+	for _, id := range []string{"read-2", "read-3", "read-4"} {
+		if c, ok := answered[id]; !ok || !strings.HasPrefix(c, "error:") {
+			t.Fatalf("call %s answered = %v with %q, want an \"error:\" answer", id, ok, c)
+		}
+	}
+}
+
+// TestRepeatNameGateMixedTurnResetsTheStreak: one turn using two tool names breaks
+// a same-name run, so two runs just under the warn threshold on either side of it
+// never warn.
+func TestRepeatNameGateMixedTurnResetsTheStreak(t *testing.T) {
+	var turns []Turn
+	n := 0
+	for side := 0; side < 2; side++ {
+		for i := 1; i < defaultRepeatNameWarnAfter; i++ {
+			n++
+			turns = append(turns, Turn{ToolCalls: []ToolCall{varyingCall("read", n)}})
+		}
+		if side == 0 {
+			n++
+			turns = append(turns, Turn{ToolCalls: []ToolCall{varyingCall("read", n), {ID: "b", Name: "bash", Arguments: `{"command":"ls"}`}}})
+		}
+	}
+	turns = append(turns, Turn{Content: "done"})
+	reg := NewRegistry(Tool{Def: ToolDef{Name: "read"}, Run: okTool}, Tool{Def: ToolDef{Name: "bash"}, Run: okTool})
+	res, err := Run(context.Background(), &scriptedClient{turns: turns}, reg, &Runtime{Cwd: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.RepeatNameWarnings != 0 {
+		t.Fatalf("RepeatNameWarnings = %d, want 0 — the mixed turn must reset the streak", res.RepeatNameWarnings)
+	}
+}
+
+// TestRepeatNameGateLeavesExactGateInterceptionAlone: in a turn both halves warn
+// on, the call the exact-call gate intercepted keeps its own error and does not run.
+func TestRepeatNameGateLeavesExactGateInterceptionAlone(t *testing.T) {
+	var executed atomic.Int32
+	reg := NewRegistry(countingTool("read", &executed))
+	same := func(id string) ToolCall { return ToolCall{ID: id, Name: "read", Arguments: `{"path":"a.go"}`} }
+	turns := []Turn{
+		{ToolCalls: []ToolCall{same("1")}},
+		{ToolCalls: []ToolCall{same("2"), varyingCall("read", 9)}}, // "2": exact streak 2 -> intercepted
+		{Content: "done"},
+	}
+	rt := &Runtime{Cwd: t.TempDir(), RepeatWarnAfter: 2, RepeatAbortAfter: 100, RepeatNameWarnAfter: 2, RepeatNameAbortAfter: 100}
+	res, err := Run(context.Background(), &scriptedClient{turns: turns}, reg, rt, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := executed.Load(); got != 2 {
+		t.Fatalf("tool ran %d times, want 2 (call 1 and read-9)", got)
+	}
+	for _, m := range res.Messages {
+		switch {
+		case m.Role != RoleTool:
+		case m.ToolCallID == "2" && !strings.HasPrefix(m.Content, "error: repeated tool call"):
+			t.Fatalf("intercepted call's message = %q, want the exact-call gate's error", m.Content)
+		case m.ToolCallID == "read-9" && !strings.HasPrefix(m.Content, "note: "):
+			t.Fatalf("executed call's message = %q, want the same-name notice", m.Content)
+		}
+	}
+}
+
+func TestRepeatTrackerFindsCycles(t *testing.T) {
+	call := func(key string) ToolCall { return ToolCall{Name: "read", Arguments: fmt.Sprintf(`{"path":%q}`, key)} }
+	cases := []struct {
+		seq                  string
+		wantPeriod, wantReps int
+	}{
+		{"abab", 2, 2},
+		{"ababab", 2, 3},
+		{"abcabcabc", 3, 3},
+		{"aabbaabbaabb", 4, 3},
+		{"aaaa", 0, 0}, // the identical-call streak's job, not a cycle
+		{"abcd", 0, 0},
+		{"ababx", 0, 0}, // anything else resets
+	}
+	for _, c := range cases {
+		var tr repeatTracker
+		var obs repeatObservation
+		for _, k := range c.seq {
+			obs = tr.note(call(string(k)))
+		}
+		if obs.period != c.wantPeriod || obs.cycles != c.wantReps {
+			t.Errorf("%s: period=%d cycles=%d, want period=%d cycles=%d", c.seq, obs.period, obs.cycles, c.wantPeriod, c.wantReps)
+		}
+	}
+}
+
+// TestRepeatGateCatchesAnAlternatingCycle: read a, read b, ... with the package
+// defaults — the shape an identical-call streak never sees.
+func TestRepeatGateCatchesAnAlternatingCycle(t *testing.T) {
+	var executed atomic.Int32
+	reg := NewRegistry(countingTool("read", &executed))
+	var turns []Turn
+	for i := 1; i <= 20; i++ {
+		path := "a.go"
+		if i%2 == 0 {
+			path = "b.go"
+		}
+		turns = append(turns, Turn{ToolCalls: []ToolCall{{ID: fmt.Sprintf("%d", i), Name: "read", Arguments: fmt.Sprintf(`{"path":%q}`, path)}}})
+	}
+	client := &scriptedClient{turns: turns}
+	res, err := Run(context.Background(), client, reg, &Runtime{Cwd: t.TempDir()}, nil)
+	if !errors.Is(err, ErrRepeatedToolCall) {
+		t.Fatalf("err = %v, want ErrRepeatedToolCall", err)
+	}
+	wantAbortAt := 2 * defaultRepeatCycleAbortAfter
+	wantWarnFrom := 2 * defaultRepeatCycleWarnAfter
+	if client.i != wantAbortAt {
+		t.Fatalf("Send called %d times, want %d (the call completing cycle %d)", client.i, wantAbortAt, defaultRepeatCycleAbortAfter)
+	}
+	if got := executed.Load(); got != int32(wantWarnFrom-1) {
+		t.Fatalf("tool ran %d times, want %d (calls from the one completing cycle %d on are intercepted)", got, wantWarnFrom-1, defaultRepeatCycleWarnAfter)
+	}
+	if res.RepeatWarnings != wantAbortAt-wantWarnFrom {
+		t.Fatalf("RepeatWarnings = %d, want %d", res.RepeatWarnings, wantAbortAt-wantWarnFrom)
+	}
+	if !strings.Contains(err.Error(), "same sequence of 2 calls") {
+		t.Fatalf("err = %v, want it to name the 2-call cycle", err)
+	}
+}
+
+// TestRepeatGateIgnoresEditTestAlternation is the cycle negative control: edit then
+// test, over and over, is progress as long as each edit differs — even though the
+// test command itself is identical every time.
+func TestRepeatGateIgnoresEditTestAlternation(t *testing.T) {
+	var turns []Turn
+	for i := 1; i <= 15; i++ {
+		turns = append(turns,
+			Turn{ToolCalls: []ToolCall{{ID: fmt.Sprintf("e%d", i), Name: "edit", Arguments: fmt.Sprintf(`{"path":"a.go","old_string":"v%d","new_string":"v%d"}`, i, i+1)}}},
+			Turn{ToolCalls: []ToolCall{{ID: fmt.Sprintf("t%d", i), Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
+		)
+	}
+	turns = append(turns, Turn{Content: "done"})
+	reg := NewRegistry(Tool{Def: ToolDef{Name: "edit"}, Run: okTool}, Tool{Def: ToolDef{Name: "bash"}, Run: okTool})
+	res, err := Run(context.Background(), &scriptedClient{turns: turns}, reg, &Runtime{Cwd: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.RepeatWarnings != 0 || res.RepeatNameWarnings != 0 {
+		t.Fatalf("RepeatWarnings = %d, RepeatNameWarnings = %d, want 0 for both", res.RepeatWarnings, res.RepeatNameWarnings)
+	}
+}

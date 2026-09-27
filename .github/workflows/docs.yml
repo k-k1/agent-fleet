@@ -44,6 +44,13 @@ jobs:
       - name: docs-check
         run: python3 scripts/docs-check.py
 
+      # Build the tree that ships (guide + runbooks + release history) the way the image
+      # builds do. stage-docs.sh fails on a release note whose link would be dead in the
+      # staged copy and on a ledger version without notes; without this step that would
+      # first surface when a CP image is built.
+      - name: stage the shipped docs
+        run: deploy/release/stage-docs.sh "$RUNNER_TEMP/staged-docs"
+
       # Surfaces the checks kept at warn level during the migration (the vocabulary of the
       # user-facing shelves). Once the shelves are written, fold this into the run above as
       # --strict.

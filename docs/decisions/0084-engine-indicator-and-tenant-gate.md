@@ -11,6 +11,7 @@ English | [日本語](0084-engine-indicator-and-tenant-gate.ja.md)
   🟢 **Reviewed 2026-09-14 before the build**, every anchor re-run against the tree. Two open
   questions were answerable from the source and are now closed with their answers (2 and 6 — both
   "no, the CP cannot see it"), and decision 9's hole turned out narrower than it was written.
+  Status update (2026-09-24): P0 is implemented, all three lanes merged on 2026-09-14 — P0-A, the CP indicator (#666, `control-plane/engine_member.go`); P0-B, the Console pills (#663, `console/src/features/engines/EnginesPill.tsx`); P0-C, the tenant gate (#664, `allow_engine_llm` / `allow_engine_image` in `control-plane/limits.go`). Nothing in the history is marked P1 or P2.
 - See also: [0071](0071-self-hosted-inference-engines.md) (the engine instance, on-demand control, the
   cold start, the gateway) /
   [0082](0082-many-image-engines-at-once.md) (**an images row is itself one provider**; a role holds

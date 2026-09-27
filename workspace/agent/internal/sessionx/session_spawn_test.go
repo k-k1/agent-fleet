@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -253,6 +254,45 @@ func TestSpawnBudgetFollowsTheUsersSetting(t *testing.T) {
 	}
 }
 
+// The refusal says when a stopped child frees its slot by itself, and that moment is the user's
+// archive setting: a period when there is one, and "never" when auto-archive is off. A refusal
+// still promising "7 日" to a user who turned it off has the caller wait for a slot that never
+// comes back. Written through the prefs file, for the reason spawnLimitPref gives.
+func TestSpawnRefusalNamesTheArchivePeriodInForce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		days  int
+		want  string
+		avoid string
+	}{
+		{"a chosen period", 14, "停止から 14 日で自動的に", "止まっている"},
+		{"off", session.StoppedArchiveNever, "自動アーカイブが止まっている", "日で自動的に"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spawnFixture(t, session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser})
+			if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(map[string]any{"sessionSpawnChildLimit": 1, "sessionStoppedArchiveDays": tc.days})
+			if err := os.WriteFile(uiprefs.Path(), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			(&spawnSlot{parent: "root"}).publish(child("kid", "root"))
+
+			err := reserveSpawnSlot("root")
+			if err == nil {
+				t.Fatal("second child was allowed past a limit of 1")
+			}
+			if !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), tc.avoid) {
+				t.Fatalf("refusal %q: want %q and not %q", err, tc.want, tc.avoid)
+			}
+			if !strings.Contains(err.Error(), "設定 > エージェント > セッション") {
+				t.Fatalf("refusal %q does not say where the period is changed", err)
+			}
+		})
+	}
+}
+
 // Two creates that differ in content are not serialized by the idempotency ledger (it keys on
 // one intent), so counting metas alone lets both pass the same "two existing". The reservation
 // is what closes that.
@@ -464,5 +504,19 @@ func TestRecreateHandsTheChildSlotToTheSuccessor(t *testing.T) {
 	handOverSpawnLineage(plain.Name)
 	if m3, ok := session.ReadMeta("solo"); !ok || m3.Origin != session.OriginUser {
 		t.Fatalf("an unrelated session was rewritten: %+v", m3)
+	}
+}
+
+// Only whole days read as days: flooring would quote an env-set 36h as "1 日", a day shorter
+// than the period in force.
+func TestStoppedTTLPhraseKeepsPartialDays(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		14 * 24 * time.Hour: "14 日",
+		36 * time.Hour:      "36h0m0s ",
+		time.Hour:           "1h0m0s ",
+	} {
+		if got := stoppedTTLPhrase(d); got != want {
+			t.Errorf("stoppedTTLPhrase(%v) = %q, want %q", d, got, want)
+		}
 	}
 }

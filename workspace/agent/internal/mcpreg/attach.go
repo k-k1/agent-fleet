@@ -109,13 +109,32 @@ func OpencodeServers(defs []ServerDef) map[string]any {
 			"command": anySlice(append([]string{d.Command}, d.Args...)),
 			"enabled": true,
 		}
-		if len(d.Env) > 0 {
-			e["environment"] = anyMap(d.Env)
+		env := d.Env
+		if d.ID == BuiltinAF {
+			// The child cannot otherwise learn the key opencode registered it under, and the
+			// caller plugin stamps only tools under a rotated key (#989): a copy of this command
+			// registered as bare `af` — a project config, a stale entry — must not have its
+			// model-written stamps believed. mcpx.mcpCallerStampTrusted reads it back.
+			env = make(map[string]string, len(d.Env)+1)
+			for k, v := range d.Env {
+				env[k] = v
+			}
+			env[AFServerKeyEnv] = d.Name
+		}
+		if len(env) > 0 {
+			e["environment"] = anyMap(env)
 		}
 		out[d.Name] = e
 	}
 	return out
 }
+
+// AFServerKeyEnv carries, into af's opencode MCP child, the key opencode registered it under.
+const AFServerKeyEnv = "AF_MCP_SERVER_KEY"
+
+// IsRotatedAFServerName reports whether name has the per-boot `af_<8 hex>` shape — the one
+// the opencode caller plugin recognises af's tools by.
+func IsRotatedAFServerName(name string) bool { return afNameRE.MatchString(name) }
 
 // CodexOpts tunes the codex serialization for its consumer.
 type CodexOpts struct {

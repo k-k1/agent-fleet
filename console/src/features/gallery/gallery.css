@@ -66,6 +66,18 @@
 .gal-crumb-sep {
   opacity: 0.6;
 }
+/* Which session generated the pictures in this folder, and the way back to it. Parked at the
+   trailing edge and never allowed to grow: the breadcrumb is the row's real content, and a
+   long session title must shrink itself rather than push the trail out of sight. */
+.gal-madeby {
+  flex: none;
+  max-width: 45%;
+  margin-left: auto;
+  overflow: hidden;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 /* A folder has no picture, so the tile holds the icon at the size a thumbnail would be —
    the grid keeps one rhythm whether a row is folders or images. */
 .gal-folder-icon {

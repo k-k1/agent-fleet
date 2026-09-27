@@ -41,6 +41,8 @@ func TestSafeBrowsePath(t *testing.T) {
 		// working dirs, pending-permission payloads — is denied by the same rule.
 		{"abs denied in state dir", root + "/.local/state/agent-fleet/sessions/slot01.json", "", "", false},
 		{"rel denied in state dir", ".local/state/agent-fleet/chat-wd", "", "", false},
+		{"abs denied in data dir", root + "/.local/share/agent-fleet/terminal-history/slot01.log", "", "", false},
+		{"rel denied in data dir", ".local/share/agent-fleet/cleanup", "", "", false},
 
 		// absolute under the scratch base → served, display path is the absolute path
 		{"abs in scratch", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", true},

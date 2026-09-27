@@ -70,7 +70,9 @@ type workItemDetailOut struct {
 	Author   string   `json:"author"`
 	Assignee string   `json:"assignee"`
 	Labels   []string `json:"labels"`
-	Repo     string   `json:"repo"`
+	// LabelColors is the same name → "rrggbb" map the list rows carry (see workItemOut).
+	LabelColors map[string]string `json:"labelColors"`
+	Repo        string            `json:"repo"`
 	// UpdatedAt is UTC RFC3339, normalised per provider exactly as the list rows are: the panel
 	// prints it next to the cached stamp, and two formats side by side read as two clocks.
 	UpdatedAt string `json:"updatedAt"`
@@ -225,10 +227,8 @@ func parseGitHubPullRequest(body []byte, key string) (*workItemDetailOut, string
 		RequestedReviewers []struct {
 			Login string `json:"login"`
 		} `json:"requested_reviewers"`
-		Labels []struct {
-			Name string `json:"name"`
-		} `json:"labels"`
-		Base struct {
+		Labels []gitHubLabel `json:"labels"`
+		Base   struct {
 			Ref  string `json:"ref"`
 			Repo struct {
 				FullName string `json:"full_name"`
@@ -254,7 +254,7 @@ func parseGitHubPullRequest(body []byte, key string) (*workItemDetailOut, string
 		Comments: pr.Comments + pr.ReviewComments,
 		// Empty slices, never nil: a nil slice marshals to JSON null and the Console iterates
 		// these (the null-labels white screen, docs/log/80 §80.17.5).
-		Labels: []string{}, Reviews: []workItemReviewOut{},
+		Labels: []string{}, LabelColors: gitHubLabelColors(pr.Labels), Reviews: []workItemReviewOut{},
 	}
 	if len(pr.Assignees) > 0 {
 		out.Assignee = pr.Assignees[0].Login
@@ -522,12 +522,13 @@ func parseBitbucketPullRequest(body []byte, key string) (*workItemDetailOut, err
 		Draft:     pr.Draft,
 		Merged:    strings.EqualFold(pr.State, "MERGED"),
 		// Bitbucket does not report whether a PR merges cleanly without starting a merge task.
-		Mergeable:  "unknown",
-		BaseBranch: pr.Destination.Branch.Name,
-		HeadBranch: pr.Source.Branch.Name,
-		Comments:   pr.CommentCount,
-		Labels:     []string{},
-		Reviews:    []workItemReviewOut{},
+		Mergeable:   "unknown",
+		BaseBranch:  pr.Destination.Branch.Name,
+		HeadBranch:  pr.Source.Branch.Name,
+		Comments:    pr.CommentCount,
+		Labels:      []string{},
+		LabelColors: map[string]string{},
+		Reviews:     []workItemReviewOut{},
 	}
 	// Only reviewers. A Bitbucket participant list also holds everyone who commented, and
 	// "6 reviewers" that is really 4 bystanders is worse than no line at all.

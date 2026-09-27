@@ -83,6 +83,15 @@ var blockedMarkers = []string{
 	// right by accident, so name the stems explicitly.
 	"re-authenticate",
 	"run /login",
+	// Measured 2026-09-25 (two sessions sharing one CLAUDE_CONFIG_DIR, error:"server_error",
+	// no apiErrorStatus): "Could not refresh your login because another Claude Code process
+	// is refreshing it (or exited mid-refresh) · Try again in a minute; if it keeps
+	// happening, close other Claude Code windows or sign in again with /login". The
+	// server_error kind made it retryable, so auto-resume re-sent it a minute later into the
+	// same failure, and no re-authentication route was offered. Signing in again cleared it.
+	// As auth, auth_resume.go still resumes on its own if the other process does finish the
+	// refresh, since that rewrites .credentials.json just as a login does.
+	"refresh your login",
 }
 
 // limitMarkers are the blockedMarkers that specifically mean A USAGE LIMIT — a quota that

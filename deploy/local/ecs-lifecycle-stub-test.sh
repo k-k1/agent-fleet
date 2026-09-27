@@ -200,9 +200,23 @@ case "$args" in
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
   *"ecs describe-services"*"runningCount"*) echo "0" ;;
+  # pause.sh asks which engine / speech services are above desired 0. Answer the generic
+  # branch below and a Workspace name comes back as an "engine service" — the sweep would then
+  # scale a Workspace down and report it as an engine.
+  *"ecs describe-services"*"af-af-ecs-engines-"*)
+    [ "${STUB_ENGINE_SVC_UP:-0}" = 1 ] && echo "af-af-ecs-engines-image" || echo "" ;;
   *"ecs describe-services"*) echo "af-ws-alice" ;;
   *"ecs list-container-instances"*) echo "arn:aws:ecs:x:1:container-instance/ci-1" ;;
   *"ecs list-task-definitions"*) echo "arn:aws:ecs:x:1:task-definition/af-ws-alice:1" ;;
+  # The engines' GPU boxes (af-role=engine-*), before the slot branch that answers everything.
+  # STUB_ENGINE_BOXES=late: a box that exists only once the CP has been stopped — the one the
+  # final sweep exists for, bought between the wait and the CP's own stop.
+  *"ec2 describe-instances"*"af-role,Values=engine-"*)
+    case "${STUB_ENGINE_BOXES:-0}" in
+      1) echo "i-gpu" ;;
+      late) grep -q "af-t-ingress-cp --desired-count 0" "$STUB_LOG" && echo "i-late" || echo "" ;;
+      *) echo "" ;;
+    esac ;;
   *"ec2 describe-instances"*)
     if [ "${STUB_NO_SLOTS:-0}" = 1 ]; then echo ""; else echo "i-1"; fi ;;
   *"ec2 describe-volumes"*) echo "vol-1" ;;
@@ -233,6 +247,8 @@ case "$args" in
   *"logs describe-log-groups"*) echo "" ;;
   *"ecs list-clusters"*) echo "" ;;
   *"rds describe-db-snapshots"*) echo "t-data-snapshot-db-xyz" ;;
+  # pause.sh reads one instance's status; teardown's listing below must keep answering "gone".
+  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*) echo "${STUB_DB_STATUS:-available}" ;;
   *"rds describe-db-instances"*) echo "" ;;
   *"efs describe-file-systems"*) echo "" ;;   # checking after deletion, so empty
 esac
@@ -1017,6 +1033,70 @@ echo "== case 4: pause stops the control plane LAST =="
 "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4" </dev/null
 order "ecs update-service --cluster t-cluster --service af-ws-alice --desired-count 0" "ec2 stop-instances"
 order "ec2 stop-instances" "ecs update-service --cluster t-cluster --service af-t-ingress-cp --desired-count 0"
+# No engine stack, no box, no database here: none of the new steps may fire.
+hasnt "ec2 terminate-instances"
+hasnt "rds stop-db-instance"
+
+CP_DOWN="ecs update-service --cluster t-cluster --service af-t-ingress-cp --desired-count 0"
+CP_UP="ecs update-service --cluster t-cluster --service af-t-ingress-cp --desired-count 1"
+
+echo "== case 4b: --fast ends the engine boxes and the helper services, and sweeps again after the CP =="
+: > "$LOG"
+STUB_ENGINES_LIVE=1 STUB_ENGINE_BOXES=1 STUB_ENGINE_SVC_UP=1 \
+  "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4b" </dev/null
+order "ecs update-service --cluster t-cluster --service af-af-ecs-engines-image --desired-count 0" "$CP_DOWN"
+order "ec2 terminate-instances --instance-ids i-gpu" "$CP_DOWN"
+# The sweep: asked again once the CP is gone (a static stub still answers i-gpu, so the
+# last terminate lands after the CP stop).
+order_again "$CP_DOWN" "ec2 terminate-instances --instance-ids i-gpu"
+# Engine boxes are terminated, never stopped: stop-instances belongs to the slots alone.
+hasnt "ec2 stop-instances --instance-ids i-gpu"
+
+echo "== case 4c: a box bought between the wait and the CP stop is ended by the sweep =="
+: > "$LOG"
+STUB_NO_SLOTS=1 STUB_ENGINE_BOXES=late \
+  "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out4c" </dev/null
+order "$CP_DOWN" "ec2 terminate-instances --instance-ids i-late"
+grep -q "no CP left to end them" "$WORK/out4c" || fail "the sweep did not say why it terminated: $(tail -3 "$WORK/out4c")"
+
+echo "== case 4d: the database stops AFTER the control plane, and only when it is running =="
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4d" </dev/null
+order "$CP_DOWN" "rds stop-db-instance --db-instance-identifier t-db"
+: > "$LOG"
+STUB_DB_STATUS=stopped \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4d2" </dev/null
+hasnt "rds stop-db-instance"   # stopping a stopped instance is refused by RDS
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast --keep-db > "$WORK/out4d3" </dev/null
+hasnt "rds stop-db-instance"
+grep -q "kept running" "$WORK/out4d3" || fail "--keep-db did not say the database is still billing"
+
+echo "== case 4e: --up starts the database and waits for it BEFORE the control plane =="
+: > "$LOG"
+STUB_DB_STATUS=stopped \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4e" </dev/null
+order "rds start-db-instance --db-instance-identifier t-db" "$CP_UP"
+order "rds wait db-instance-available --db-instance-identifier t-db" "$CP_UP"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4e2" </dev/null
+hasnt "rds start-db-instance"   # already available: nothing to start
+has "$CP_UP"
+
+echo "== case 4f: --status flags RDS's 7-day restart and a box with no CP =="
+: > "$LOG"
+STUB_ENGINE_BOXES=1 \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4f" </dev/null
+grep -q "restarts a" "$WORK/out4f" || fail "status did not flag a running database under a paused CP"
+grep -q "no control plane to end them" "$WORK/out4f" || fail "status did not flag a GPU box with no CP"
+hasnt "update-service"; hasnt "terminate-instances"; hasnt "stop-db-instance"   # status changes nothing
+
+echo "== case 4g: without --yes, pause writes nothing =="
+: > "$LOG"
+STUB_ENGINES_LIVE=1 STUB_ENGINE_BOXES=1 STUB_ENGINE_SVC_UP=1 \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --fast > "$WORK/out4g" </dev/null
+hasnt "update-service"; hasnt "terminate-instances"; hasnt "stop-instances"; hasnt "stop-db-instance"
+grep -q "database stopped" "$WORK/out4g" || fail "the plan did not mention the database step"
 
 echo "== case 5: nothing prints a secret-looking parameter =="
 : > "$LOG"

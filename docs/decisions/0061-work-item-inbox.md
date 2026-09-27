@@ -5,6 +5,7 @@ English | [日本語](0061-work-item-inbox.ja.md)
 - Status: **adopted; P0–P2 implemented** (2026-08-26. Within P2, automatic working-set creation is **not adopted** = decision 11, and PR creation is **withdrawn** = decision 6.1).
   **2026-08-27: decisions 14–16 added after looking at real data (41 Jira items)** — partly withdrawing decision 8's "a saved query is the only filter" ([docs/80](../log/80-work-item-inbox.md) §80.18).
   **2026-08-27: Bitbucket pull requests added, with decisions 17–19** ([docs/80](../log/80-work-item-inbox.md) §80.19). The design and the background are in [docs/80](../log/80-work-item-inbox.md).
+  Status update (2026-09-25): the query composer, the sort UI and grouping that decision 14 left unbuilt are not planned (decision 14; docs/log/80 §80.18.5). The detail pane was superseded by decision 20's detail modal.
 - See also: [0031-mcp-registry.md](0031-mcp-registry.md) (MCP means "each CLI speaks it directly and af only distributes the definitions"; OAuth MCP is a non-goal) / [0036-working-sets.md](0036-working-sets.md) (the unit of "a piece of work") /
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (do not keep it warm) / [0052-tenant-git-oauth.md](0052-tenant-git-oauth.md) (the CP passes secrets through and does not hold them) / [0059-repo-import-jobs.md](0059-repo-import-jobs.md) (the relationship between self-running work and the busy check)
 

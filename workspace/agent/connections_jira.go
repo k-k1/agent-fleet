@@ -593,7 +593,7 @@ func parseJiraSearchIssues(body []byte, site, queryID string) ([]workItemOut, er
 			Title:    is.Fields.Summary,
 			State:    normalizeJiraState(is.Fields.Status.StatusCategory.Key),
 			URL:      site + "/browse/" + is.Key,
-			Assignee: assignee, Labels: labels,
+			Assignee: assignee, Labels: labels, LabelColors: map[string]string{},
 			// Jira has no repository. The launch target comes from the query's repoHint,
 			// which is the project-to-working-copy mapping.
 			Repo: "", UpdatedAt: jiraTimeToRFC3339(is.Fields.Updated),

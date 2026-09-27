@@ -19,7 +19,7 @@ import (
 // hand-written approximation would have accepted enum:null, which Anthropic rejects
 // before starting the Claude turn.
 func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
-	const expectedAdvertisedToolCount = 57
+	const expectedAdvertisedToolCount = 61
 
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
@@ -47,6 +47,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		peer                        bool
 		imageGen                    bool
 		fleetSpawn                  bool
+		studio                      bool
 	}{
 		{name: "assistant-read"},
 		{name: "assistant-write", write: true},
@@ -59,6 +60,9 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		// list_my_sessions), so without this variant it would be declared and never
 		// advertised — and its schema would never be compiled.
 		{name: "session-fleet-spawn", selfReport: true, fleetSpawn: true},
+		// The studio tools are offered only to a session whose meta names a studio that names it
+		// back (ADR 0100 decision 3), with run_image_trial only when the studio allows trials.
+		{name: "session-studio", selfReport: true, studio: true},
 	}
 
 	advertised := make(map[string]struct{})
@@ -68,6 +72,9 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 			mcpPeerMessagingEnabled = variant.peer
 			mcpImageGenEnabled = variant.imageGen
 			mcpFleetSpawnEnabled = variant.fleetSpawn
+			if variant.studio {
+				bindStudioForTest(t, "slot01", true)
+			}
 			for _, tool := range mcpStdioToolList() {
 				name := tool["name"].(string)
 				advertised[name] = struct{}{}

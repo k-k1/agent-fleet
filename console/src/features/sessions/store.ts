@@ -14,6 +14,9 @@ import type { Session } from "../../types/session.ts";
 
 interface SessionsStore {
   sessions: Session[];
+  /** A list has arrived at least once. Before that, a session missing from `sessions` is
+   *  "not loaded yet", not "gone" — and an empty workspace is a real, loaded answer. */
+  loaded: boolean;
   /** Global "open the start hub" signal (launch flow Ph2): the WS bar's start button
    * and onboarding bump this; StartHost — which owns the StartModal —
    * watches it. */
@@ -38,6 +41,7 @@ let ser = ""; // last published serialization (module-level: not render state)
 
 export const useSessionsStore = create<SessionsStore>((set, get) => ({
   sessions: [],
+  loaded: false,
   startTick: 0,
   openStart: () => set((s) => ({ startTick: s.startTick + 1 })),
 
@@ -48,6 +52,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     // with no transition nothing is written, so the 4s calls cost only a comparison.
     noteSessions(list);
     const s = JSON.stringify(list);
+    if (!get().loaded) set({ loaded: true });
     if (s !== ser) {
       ser = s;
       set({ sessions: list });

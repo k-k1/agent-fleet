@@ -16,6 +16,20 @@ import type {
   ImagegenStatus,
   JobsResponse,
   QueueOp,
+  DraftLogPage,
+  HistoryPage,
+  Knowledge,
+  KnowledgeAdd,
+  KnowledgeEdit,
+  KnowledgeScope,
+  PressMode,
+  StudioCreate,
+  StudioList,
+  StudioPatch,
+  StudioPatchResult,
+  StudioPersona,
+  StudioPressResult,
+  StudioWire,
 } from "./wire.ts";
 import type { ApiError } from "../../core/api/client.ts";
 
@@ -45,3 +59,92 @@ export const imagegenQueueOp = (op: QueueOp): Promise<{ error?: ApiError }> =>
  */
 export const imageProperties = (path: string): Promise<ImageProperties> =>
   api(`api/imagegen/props?path=${encodeURIComponent(path)}`);
+
+// --- ADR 0100: the image studio -------------------------------------------------------------
+
+const studioPath = (id: string, rest = "") => `api/imagegen/studios/${encodeURIComponent(id)}${rest}`;
+
+export const listStudios = (): Promise<StudioList> => api("api/imagegen/studios");
+
+export const createStudio = (body: StudioCreate): Promise<StudioWire> => apiJSON("api/imagegen/studios", "POST", body);
+
+export const getStudio = (id: string): Promise<StudioWire> => api(studioPath(id));
+
+/** Merge-patch the studio. `ifMatch` is the `updated_at` the pane last read: a write that lost
+ *  a race is refused (412) rather than silently overwriting the agent's (or the member's) edit.
+ *  The status comes back with the body because the caller answers 412, a 5xx and a refusal three
+ *  different ways; 0 is a request that never got an answer. */
+export const patchStudio = async (
+  id: string,
+  body: StudioPatch,
+  ifMatch: string,
+): Promise<StudioPatchResult & { status: number }> => {
+  let r: Response;
+  try {
+    r = await raw(studioPath(id), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": ifMatch },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: 0 } as StudioPatchResult & { status: number };
+  }
+  const parsed = (await r.json().catch(() => ({}))) as StudioPatchResult;
+  return { ...parsed, status: r.status };
+};
+
+/** Deletes the draft and its versions; the pictures stay. */
+export const deleteStudio = (id: string): Promise<Response> => raw(studioPath(id), { method: "DELETE" });
+
+/** Attach a session, or detach with an empty one. */
+export const bindStudio = (id: string, session: string): Promise<StudioWire> =>
+  apiJSON(studioPath(id, "/bind"), "POST", { session });
+
+export const pressStudio = (id: string, mode: PressMode): Promise<StudioPressResult> =>
+  apiJSON(studioPath(id, "/press"), "POST", { mode });
+
+export const rewindStudio = (id: string, to: number): Promise<StudioWire> =>
+  apiJSON(studioPath(id, "/rewind"), "POST", { to });
+
+export const studioDraftLog = (id: string, before?: number, limit?: number): Promise<DraftLogPage> => {
+  const q = new URLSearchParams();
+  if (before) q.set("before", String(before));
+  if (limit) q.set("limit", String(limit));
+  const qs = q.toString();
+  return api(studioPath(id, "/draft-log") + (qs ? `?${qs}` : ""));
+};
+
+export const studioPersona = (id: string): Promise<StudioPersona> => api(studioPath(id, "/persona"));
+
+export const imagegenHistory = (opts: { studio?: string; before?: string; limit?: number } = {}): Promise<HistoryPage> => {
+  const q = new URLSearchParams();
+  if (opts.studio) q.set("studio", opts.studio);
+  if (opts.before) q.set("before", opts.before);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return api("api/imagegen/history" + (qs ? `?${qs}` : ""));
+};
+
+/** `full` reads the summary past its 1 KB limit — only for the editor, which would otherwise
+ *  save the cut copy over the rest. */
+export const imagegenKnowledge = (scope: KnowledgeScope, key: string, full = false): Promise<Knowledge> =>
+  api(`api/imagegen/knowledge?scope=${encodeURIComponent(scope)}&key=${encodeURIComponent(key)}${full ? "&full=1" : ""}`);
+
+export const addImagegenKnowledge = (body: KnowledgeAdd): Promise<{ error?: ApiError }> =>
+  apiJSON("api/imagegen/knowledge", "POST", body);
+
+/** Replace the four sections; the status comes back so the editor can tell 412 apart. */
+export const editImagegenKnowledge = async (body: KnowledgeEdit): Promise<Knowledge & { status: number }> => {
+  let r: Response;
+  try {
+    r = await raw("api/imagegen/knowledge", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: 0 } as Knowledge & { status: number };
+  }
+  const parsed = (await r.json().catch(() => ({}))) as Knowledge;
+  return { ...parsed, status: r.status };
+};

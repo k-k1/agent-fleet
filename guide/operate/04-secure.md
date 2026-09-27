@@ -89,9 +89,10 @@ in the Console.
    enforce. From then on, traffic outside the allowlist is **blocked**. The Admin UI also warns
    you to confirm reality in log-only first before switching.
 
-> Current implementation scope: **observation (log-only) and allowlist management work**. The
-> actual blocking (enforce), and enabling the accompanying always-on container-side wiring
-> (internal network + proxy env injection), are **not yet completed and are follow-up work**.
+> Current implementation scope: **observation (log-only) and allowlist management work, and the
+> proxy itself can block (enforce)**. The always-on container-side wiring that routes workspace
+> traffic through the proxy (internal network + proxy env injection) is **not built yet**, so
+> **switching to enforce does not yet constrain a workspace**.
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in `docs/build/07-security.md` §7.8.
 

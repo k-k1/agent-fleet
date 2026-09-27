@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -288,7 +289,23 @@ func PreferredHeadlessAgent() string { return preferredFrom(assistantAgentOrderP
 // (Settings > AI assist, "agent priority"). Ranked separately from the chat on purpose:
 // the chat wants the strongest CLI, these run constantly and want the cheapest that
 // works (docs/log/84).
-func PreferredAssistAgent() string { return preferredFrom(aiAssistOrderPref()) }
+func PreferredAssistAgent() string { return preferredFrom(oneShotOrder()) }
+
+// oneShotKinds are exactly the kinds OneShotHeadlessRun has a case for. A kind outside this list
+// is never selected for a one-shot — neither by a feature pin nor from the priority order — even
+// when ChatProviders knows it: the run used to fall through to the claude path for any kind
+// without a case, so a Muse pick ran and was billed on claude (#1020). lcpp is left out on
+// purpose (ADR 0093: auto-selecting into a self-hosted engine is a phase 2 decision).
+// TestOneShotKindsMatchTheRunnerSwitch keeps this list and the switch in step.
+var oneShotKinds = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy, session.KindMuse}
+
+func oneShotRunnable(kind string) bool { return slices.Contains(oneShotKinds, kind) }
+
+// oneShotOrder is the AI assist priority order minus the kinds no one-shot can run on. Never
+// empty: agentOrderPref appends every DefaultHeadlessOrder kind, and all of them are runnable.
+func oneShotOrder() []string {
+	return slices.DeleteFunc(slices.Clone(aiAssistOrderPref()), func(k string) bool { return !oneShotRunnable(k) })
+}
 
 // ChatProviderFor resolves the provider driving this conversation: the pinned agent
 // while its CLI is authenticated, else the preferred available backend — so a
@@ -1144,10 +1161,11 @@ func opencodeErrText(name, msg, ref string) string {
 // under a per-conversation isolated HOME (chatAgyHome) that shares ONLY the OAuth
 // token with the user's real ~/.gemini. `-p` auto-denies tool prompts (docs/log/32
 // D-5); the isolated home's permissions.allow re-opens exactly the chat contract:
-// the read tools plus `mcp(<server>/*)` for each granted server (rule syntax
-// reverse-engineered from the binary and live-verified 2026-07-20). Command/write
-// tools stay auto-denied — no --dangerously-skip-permissions. No usage events, so
-// the context gauge stays empty (Context = nil).
+// the knowledge dirs, URL reads, and `mcp(<server>/*)` for each granted server (rule
+// syntax reverse-engineered from the binary and live-verified 2026-07-20), and
+// permissions.deny hard-denies commands and writes (agyChatDenyRules —
+// on agy ≥1.2 a soft-deny kills the whole turn). No --dangerously-skip-permissions.
+// No usage events, so the context gauge stays empty (Context = nil).
 type agyChat struct{}
 
 func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
@@ -1169,9 +1187,11 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	// agy may refresh the OAuth token via tmp+rename, replacing the symlink with a
 	// diverging real file — fold a rotated token back to the shared one (as for codex).
 	defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
+		return "", fmt.Errorf("agy execution failed: %s", agyStderrOr(stderr.Bytes(), err.Error()))
 	}
 	if c.AgyConversationID == "" {
 		// First turn: adopt the conversation this run just recorded for its private
@@ -1181,11 +1201,27 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	}
 	reply := strings.TrimRight(strings.TrimSpace(string(out)), "\n")
 	if reply == "" {
-		return "", errors.New("no response from agy")
+		// agy ≥1.2 ends a -p turn with exit 0 and an empty stdout when a tool needed a
+		// permission print mode cannot prompt for, and says which one only on stderr
+		// ("jetski: no output produced — a tool required the "read_file" permission …").
+		return "", errors.New(agyStderrOr(stderr.Bytes(), "no response from agy"))
 	}
 	call.OK = true
 	c.NoteTurnModel(model) // only what --model carried (agy names no model)
 	return reply, nil
+}
+
+// agyStderrOr is agy's stderr as one bounded message, or fallback when it printed
+// nothing. cmd.Stderr is set, so exec.ExitError carries no stderr for cliErr to read.
+func agyStderrOr(stderr []byte, fallback string) string {
+	s := strings.TrimSpace(string(stderr))
+	if s == "" {
+		return fallback
+	}
+	if len(s) > 500 {
+		s = s[:500] + "…"
+	}
+	return s
 }
 
 // agyChatArgs builds the argv for one agy chat turn: flags first, the prompt as
@@ -1232,7 +1268,7 @@ func agyChatModel(model string, catalog []agents.ModelChoice) string {
 //   - home/.gemini/antigravity-cli/antigravity-oauth-token — symlink to the real
 //     token (login is the ONLY shared state; agy resolves config from $HOME).
 //   - settings.json / config/config.json — workspace trust for wd, telemetry off,
-//     and permissions.allow (both files carry it: the effective location has
+//     and permissions allow/deny (both files carry them: the effective location has
 //     shifted between builds, docs/log/32 D-5, and an extra copy is harmless).
 //   - config/mcp_config.json — the granted MCP servers. agy's spawned MCP servers
 //     inherit its env, so each entry pins env.HOME back to the REAL home (the af
@@ -1253,15 +1289,15 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 		}
 	}
 	reconcileChatCreds(agy.TokenPath(), filepath.Join(cliDir, "antigravity-oauth-token"))
-	allow := agyChatAllowRules(c)
+	perms := map[string]any{"allow": agyChatAllowRules(c), "deny": agyChatDenyRules}
 	settings := map[string]any{
 		"enableTelemetry":   false,
 		"trustedWorkspaces": []string{wd},
-		"permissions":       map[string]any{"allow": allow},
+		"permissions":       perms,
 	}
 	files := map[string]map[string]any{
 		filepath.Join(cliDir, "settings.json"):   settings,
-		filepath.Join(cfgDir, "config.json"):     {"permissions": map[string]any{"allow": allow}},
+		filepath.Join(cfgDir, "config.json"):     {"permissions": perms},
 		filepath.Join(cfgDir, "mcp_config.json"): {"mcpServers": agyChatServers(c)},
 	}
 	for p, v := range files {
@@ -1276,19 +1312,37 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 	return home, wd, nil
 }
 
-// agyChatAllowRules is the permissions.allow set for a chat's agy: the read-only
-// file tools (knowledge dirs stay readable) plus `mcp(<server>/*)` per granted
-// server. Everything else — command execution, writes — stays auto-denied by -p,
-// which IS the chat contract. Rule syntax verified live (mcp(af) and bare tool
-// names do NOT match; docs/log/32 §headlessChat).
+// agyChatAllowRules is the permissions.allow set for a chat's agy: `read_file(<dir>)`
+// per knowledge dir, `read_url(*)` (parity with claude's chat, which keeps WebFetch —
+// chatToolLimits), and `mcp(<server>/*)` per granted server. Rule syntax verified
+// live (mcp(af) and bare tool names do NOT match — agy drops them from settings.json;
+// docs/log/32 §headlessChat). Anything else a turn reaches for is either hard-denied
+// (agyChatDenyRules) or, outside the knowledge dirs, soft-denied by print mode.
 func agyChatAllowRules(c *ChatConversation) []string {
-	allow := []string{"read_file", "list_dir", "grep_search", "find_files", "codebase_search"}
+	var allow []string
+	for _, d := range c.knowledgeDirs() {
+		allow = append(allow, "read_file("+d+")")
+	}
+	allow = append(allow, "read_url(*)")
+	n := len(allow)
 	for name := range agyChatServers(c) {
 		allow = append(allow, "mcp("+name+"/*)")
 	}
-	sort.Strings(allow[5:]) // deterministic file content across turns
+	sort.Strings(allow[n:]) // deterministic file content across turns
 	return allow
 }
+
+// agyChatDenyRules hard-denies what the chat contract never grants. They are not
+// redundant with print mode's own refusal: agy ≥1.2 (measured on 1.2.9) answers a
+// permission it cannot prompt for by ENDING the turn — exit 0, empty stdout, the
+// reason only on stderr — so one reach for a shell command (the model does this
+// unprompted, e.g. to look around before calling an MCP tool) lost the whole reply
+// as "no response from agy". A deny rule is reported back to the model instead,
+// and it answers in text. write_file must be listed too: it is not print-mode gated
+// at all, so with commands denied the model falls back to it and does write files
+// (measured: /tmp and $HOME). Targets: command takes `*`, write_file a directory
+// prefix.
+var agyChatDenyRules = []string{"command(*)", "write_file(/)"}
 
 // agyChatExe resolves the binary serving mcp-stdio/mcp-run in agy's mcp_config —
 // indirected so the live test can point it at the installed workspace-agent
@@ -1553,13 +1607,62 @@ const (
 	OneShotProse
 )
 
-// recommendedOneShotModel is the "recommended" resolution for a tier — the Console shows the
-// same split (Settings > AI assist, "short text" / "prose").
-func recommendedOneShotModel(kind string, tier OneShotTier) string {
-	if tier == OneShotProse {
-		return recommendedAssistantModel(kind)
+// oneShotEnvModels are the operator's per-kind overrides of the one-shot recommendation. They
+// used to apply only to a member with NO model setting, which the Console never leaves (its
+// defaults store "recommended" for every kind, and ui_prefs.go reads a missing entry the same
+// way) — so they were silently dead for everyone the settings screen could show. Folded into the
+// recommendation itself, they now take effect for "recommended" and show up as its answer
+// (#972 review, round 3).
+var oneShotEnvModels = map[string]string{
+	session.KindCodex:    "AF_TITLE_MODEL_CODEX",
+	session.KindOpencode: "AF_TITLE_MODEL_OPENCODE",
+	session.KindAgy:      "AF_TITLE_MODEL_AGY",
+}
+
+// oneShotEnvModel is kind's operator override, "" when none is set — or when it cannot be what
+// runs: a model the member hid ("models not to use" wins over the operator's default, as it does
+// at session launch), or, for agy, a name its catalog does not list (agyChatModel would drop it;
+// a display name is resolved to its id). Then the computed recommendation applies instead, and
+// that is what the screen names (#972 review, round 4).
+func oneShotEnvModel(kind string) string {
+	return oneShotEnvModelV(prefsVisibility, kind)
+}
+
+func oneShotEnvModelV(v visibility, kind string) string {
+	name := oneShotEnvModels[kind]
+	if name == "" {
+		return ""
 	}
-	return recommendedUtilityModel(kind)
+	m := strings.TrimSpace(os.Getenv(name))
+	if m == "" {
+		return ""
+	}
+	if kind == session.KindAgy {
+		return agyNamedModel(v, m)
+	}
+	return v.model(kind, m)
+}
+
+// recommendedOneShotModel is the "recommended" resolution for a tier — the Console shows the
+// same split (Settings > AI assist, "short text" / "prose"). An operator override
+// (oneShotEnvModel) wins over the computed rules.
+func recommendedOneShotModel(kind string, tier OneShotTier) string {
+	return recommendedOneShotModelV(prefsVisibility, kind, tier)
+}
+
+func recommendedOneShotModelV(v visibility, kind string, tier OneShotTier) string {
+	if m := oneShotEnvModelV(v, kind); m != "" {
+		return m
+	}
+	if kind == session.KindMuse {
+		// A muse run with no --model lands on the contributor row (clamp 8), so the
+		// recommendation is the model museOneShot would fall back to anyway.
+		return museSafeOneShotModel(v)
+	}
+	if tier == OneShotProse {
+		return recommendedAssistantModelV(v, kind)
+	}
+	return recommendedUtilityModelV(v, kind)
 }
 
 // oneShotModelPref reads the user's per-backend choice for a tier.
@@ -1591,7 +1694,7 @@ const (
 // /ai-assist/resolution, which must answer every poll without ever starting a CLI (docs/log/103
 // §103.8-3) — that path uses oneShotKindCached below instead, never this one.
 func oneShotKind(feature string) (kind, source string) {
-	if pin := aiFeatureAgentPref(feature); pin != "" && headlessAgentAvailable(pin) {
+	if pin := aiFeatureAgentPref(feature); oneShotRunnable(pin) && headlessAgentAvailable(pin) {
 		return pin, OneShotSourcePin
 	}
 	return PreferredAssistAgent(), OneShotSourceDefault
@@ -1686,7 +1789,7 @@ func headlessAvailableCached(kind string) (available, known bool) {
 // caller reports that feature as source "unknown" rather than showing a value that might not
 // be what actually runs.
 func oneShotKindCached(feature string) (kind, source string, ok bool) {
-	if pin := aiFeatureAgentPref(feature); pin != "" {
+	if pin := aiFeatureAgentPref(feature); oneShotRunnable(pin) {
 		avail, known := headlessAvailableCached(pin)
 		if !known {
 			return "", "", false
@@ -1696,7 +1799,7 @@ func oneShotKindCached(feature string) (kind, source string, ok bool) {
 		}
 		// Confirmed unreachable: fall through to the order below, same as oneShotKind.
 	}
-	for _, k := range aiAssistOrderPref() {
+	for _, k := range oneShotOrder() {
 		if avail, known := headlessAvailableCached(k); known && avail {
 			return k, OneShotSourceDefault, true
 		}
@@ -1732,48 +1835,77 @@ func ResolveOneShotModelCached(feature string, tier OneShotTier, kind string) (m
 // proves it is available; otherwise an empty result deliberately delegates to the
 // CLI default rather than risking a metered/unentitled Zen model.
 func recommendedUtilityModel(kind string) string {
+	return recommendedUtilityModelV(prefsVisibility, kind)
+}
+
+func recommendedUtilityModelV(v visibility, kind string) string {
 	// A candidate excluded by the hidden-models setting (model_deny.go) is not auto-selected
 	// either.
+	//
+	// codex and agy follow the cheapest priced model their catalog lists (model_recommend.go),
+	// falling back to what they did before prices were read. claude needs no ranking: the
+	// "haiku" alias already moves to each new Haiku. opencode is deliberately NOT ranked: its
+	// cheapest rows are the $0 "-free" promotions, which are retired every few weeks and are a
+	// listing rather than an entitlement (see OneShotHeadlessRun's opencode branch).
 	switch kind {
 	case session.KindClaude:
-		return visibleModel(kind, "haiku")
+		return claudeFirstVisible(v, claudeShortTiers)
 	case session.KindCodex:
-		return cheapOneShotModel(visibleModelIDs(kind, modelChoiceIDs(codex.Models())))
+		ids, _ := codexRecommendIDs(v)
+		if m := cheapestListedModel(kind, ids); m != "" {
+			return m
+		}
+		return cheapOneShotModel(ids)
 	case session.KindOpencode:
 		const goModel = "opencode-go/deepseek-v4-flash"
-		return recommendedCatalogModel(visibleModelIDs(kind, opencode.Models()), goModel, "")
+		return recommendedCatalogModel(v.ids(kind, opencode.Models()), goModel, "")
 	case session.KindAgy:
-		return visibleModel(kind, defaultAgyChatModel)
+		if m := cheapestListedModel(kind, agyRecommendIDs(v)); m != "" {
+			return m
+		}
+		return agyNamedModel(v, defaultAgyChatModel)
 	}
 	return ""
 }
 
-// codexOneShotArgs is the argv for a codex one-shot. --ephemeral: a one-shot never
+// codexOneShotModel is the -m a codex one-shot runs with ("" = none, the CLI default), and
+// whether it is OUR pick (so a failure may retry without it — CodexOneShotWithRetry).
+// selected / configured / auto are what OneShotHeadlessRun resolved from the settings, the
+// "recommended" sentinel already replaced (auto marks that).
+//
+//   - nothing configured ⇒ the recommendation exactly as "recommended" gives it (which is
+//     AF_TITLE_MODEL_CODEX when the operator set one — theirs, never retried away);
+//   - configured ⇒ used as is. "" — the member's explicit CLI default, or a recommendation that
+//     resolved to nothing — stays "no -m": neither the cheapest model nor the environment's
+//     model may stand in for it (#972 review, rounds 1 and 2).
+func codexOneShotModel(selected string, configured, auto bool, tier OneShotTier) (string, bool) {
+	if !configured {
+		m := recommendedOneShotModel(session.KindCodex, tier)
+		return m, m != "" && oneShotEnvModel(session.KindCodex) == ""
+	}
+	return selected, auto && selected != ""
+}
+
+// codexOneShotArgsFor is the argv for a codex one-shot. --ephemeral: a one-shot never
 // needs resume, so don't persist a thread even into the chat-only CODEX_HOME.
 //
 // The two savings knobs (docs/log/46 §1-a-2 / §2-b), mirroring what the claude path does:
-//   - -m <cheap model>: without it codex ran throwaway calls on whatever config.toml
-//     pins — on a real workspace gpt-5.6-luna. AF_TITLE_MODEL_CODEX still wins, and an
-//     empty pick (unknown catalog) falls back to today's "no -m" behaviour.
+//   - -m <model>: without it codex ran throwaway calls on whatever config.toml pins — on a
+//     real workspace gpt-5.6-luna. The CALLER picks it (codexOneShotModel); "" means no -m.
+//     This function no longer picks one of its own, nor reads AF_TITLE_MODEL_CODEX: it could
+//     not tell "nobody chose" from "the member chose the CLI default", and replaced both
+//     (#972 review) — an explicit Default ran gpt-6-luna while the screen said Default.
 //   - -c model_reasoning_effort="low": the analog of MAX_THINKING_TOKENS=0. A title is
 //     not a reasoning problem, and the user's configured effort (often "high") would
 //     otherwise apply to every one-shot. "low" is supported by every listed model.
 //
 // The trailing "-" makes codex read the prompt from stdin; it must stay last.
-func codexOneShotArgs() (args []string, autoPicked bool) {
-	return codexOneShotArgsFor("")
-}
-
-func codexOneShotArgsFor(selected string) (args []string, autoPicked bool) {
-	args = []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
+func codexOneShotArgsFor(selected string) []string {
+	args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
 	if selected != "" {
 		args = append(args, "-m", selected)
-	} else if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
-		args = append(args, "-m", m) // explicit user choice: never second-guess it
-	} else if m := cheapOneShotModel(visibleModelIDs(session.KindCodex, modelChoiceIDs(codex.Models()))); m != "" {
-		args, autoPicked = append(args, "-m", m), true
 	}
-	return append(args, "-c", `model_reasoning_effort="low"`, "-"), autoPicked
+	return append(args, "-c", `model_reasoning_effort="low"`, "-")
 }
 
 // codexOneShotArgsNoModel strips OUR OWN -m pick for the one retry: a catalog entry the
@@ -1872,7 +2004,7 @@ func OneShotHeadless(ctx context.Context, feature string, tier OneShotTier, pers
 // re-deriving resolveOneShot's own logic.
 func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, persona, prompt, claudeModel string) (reply, kind, model string, err error) {
 	// Usage ledger (ADR 0029 §3). This function takes the first usable backend out of
-	// claude → codex → opencode → cursor → agy, so kind is filled in inside the branch, as a
+	// the priority order (oneShotKinds), so kind is filled in inside the branch, as a
 	// result of what ran: writing the requested value instead would turn all consumption of a
 	// claude-less workspace into claude's (docs/log/46 §2). Recording inside rather than
 	// widening the return value keeps the four call sites untouched, since the recording point
@@ -1882,7 +2014,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 	defer func() { kind, model = call.Kind, call.ModelReq }()
 	kind, selected, configured, _ := resolveOneShot(feature, tier)
 	selected = strings.TrimSpace(selected)
-	autoRecommended := selected == AssistantRecommendedModel
+	// Our own pick — retried without -m if it fails — only when the recommendation was computed;
+	// an operator's AF_TITLE_MODEL_* is theirs and is never dropped behind their back.
+	autoRecommended := selected == AssistantRecommendedModel && oneShotEnvModel(kind) == ""
 	if selected == AssistantRecommendedModel {
 		selected, configured = recommendedOneShotModel(kind, tier), true
 	}
@@ -1891,13 +2025,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		call.Kind = session.KindCodex
 		defer func() { _, _ = chatCodexHome() }()
 		full := headlessPrompt(persona, nil, prompt)
-		if !configured && os.Getenv("AF_TITLE_MODEL_CODEX") == "" {
-			selected = recommendedOneShotModel(kind, tier)
-			autoRecommended = selected != ""
-		}
-		args, autoPicked := codexOneShotArgsFor(selected)
-		autoPicked = autoPicked || autoRecommended
-		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
+		selected, autoRecommended = codexOneShotModel(selected, configured, autoRecommended, tier)
+		args := codexOneShotArgsFor(selected)
+		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoRecommended, full, runCodexOneShot)
 		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
 		return reply, "", "", err
 	case session.KindOpencode:
@@ -1920,10 +2050,7 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
 		m := selected
 		if !configured {
-			m = os.Getenv("AF_TITLE_MODEL_OPENCODE")
-			if m == "" {
-				m = recommendedOneShotModel(kind, tier)
-			}
+			m = recommendedOneShotModel(kind, tier) // AF_TITLE_MODEL_OPENCODE first, as for "recommended"
 		}
 		if m != "" {
 			args = append(args, "--model", m)
@@ -2007,7 +2134,9 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		var args []string
 		m := selected
 		if !configured {
-			m = envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel)
+			// The same answer "recommended" gives (RecommendedModels), so a member who never
+			// opened the setting runs what the screen calls the recommendation.
+			m = recommendedOneShotModel(kind, tier)
 		}
 		if m := agyChatModel(m, filterVisibleModels(session.KindAgy, agy.Models())); m != "" {
 			args = append(args, "--model", m)
@@ -2024,8 +2153,23 @@ func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, p
 		}
 		call.OK = true
 		return strings.TrimRight(strings.TrimSpace(string(out)), "\n"), "", "", nil
+	case session.KindMuse:
+		call.Kind, call.Measured = session.KindMuse, usagex.MeasuredNone
+		m := selected
+		if !configured {
+			m = recommendedOneShotModel(kind, tier)
+		}
+		reply, err := museOneShot(ctx, &call, persona, prompt, m)
+		return reply, "", "", err
+	case session.KindClaude:
+		// runs below
+	default:
+		// oneShotKind never returns a kind outside oneShotKinds; this is the backstop that keeps
+		// a new kind from silently running (and being billed) on claude.
+		call.Kind = kind
+		return "", "", "", fmt.Errorf("AI assist cannot run on %q", kind)
 	}
-	// claude (default): the historical path, kept native. --no-session-persistence is
+	// claude: the historical path, kept native. --no-session-persistence is
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
 	// a one-shot never resumes, so don't pile per-call jsonl into Claude's projects tree.
 	//

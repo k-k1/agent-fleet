@@ -77,8 +77,11 @@ func HandleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 	buf := ""
 	if pane := tmuxx.SessionPaneID(session.TmuxName(name)); pane != "" {
 		// -S - captures the whole scrollback so the URL (early) and the SessionId line
-		// (later) are both visible regardless of pane size.
-		if out, err := tmuxx.Cmd("capture-pane", "-p", "-S", "-", "-t", pane).Output(); err == nil {
+		// (later) are both visible regardless of pane size. -J joins lines the pane
+		// wrapped: a narrow client (a phone, a split pane, or one attaching mid-login and
+		// resizing the window) wraps the device URL, and without it the regex took the
+		// first row as the whole URL — a broken link in the login modal (#1025).
+		if out, err := tmuxx.Cmd("capture-pane", "-p", "-J", "-S", "-", "-t", pane).Output(); err == nil {
 			buf = string(out)
 		}
 	}
@@ -96,12 +99,8 @@ func parseSSMLogin(buf string, alive bool) ssmLoginStatus {
 	if strings.Contains(buf, "Starting session with SessionId:") {
 		return ssmLoginStatus{Phase: "ready"}
 	}
-	url := ssmURLWithCode.FindString(buf)
-	if url == "" {
-		url = ssmDeviceURL.FindString(buf)
-	}
-	if url != "" {
-		return ssmLoginStatus{Phase: "authorize", URL: url, Code: ssmCodeRe.FindString(buf)}
+	if url, code := DeviceAuthorization(buf); url != "" {
+		return ssmLoginStatus{Phase: "authorize", URL: url, Code: code}
 	}
 	if !alive {
 		// The pane's program (exec aws ssm start-session) exited before establishing —
@@ -113,6 +112,21 @@ func parseSSMLogin(buf string, alive bool) ssmLoginStatus {
 		return ssmLoginStatus{Phase: "error", Message: msg}
 	}
 	return ssmLoginStatus{Phase: "pending"}
+}
+
+// DeviceAuthorization picks the verification URL and the user code out of what
+// `aws sso login --use-device-code` printed; url is "" while neither is there yet. The
+// patterns accept any https host, so a caller that shows the URL to a person checks the
+// host itself.
+func DeviceAuthorization(out string) (url, code string) {
+	url = ssmURLWithCode.FindString(out)
+	if url == "" {
+		url = ssmDeviceURL.FindString(out)
+	}
+	if url == "" {
+		return "", ""
+	}
+	return url, ssmCodeRe.FindString(out)
 }
 
 // lastNonEmptyLines returns up to n trailing non-blank lines of s, joined by newlines.
@@ -185,11 +199,22 @@ func validateSSMMeta(s session.SSMMeta) error {
 // non-secret SSM meta. Idempotent — rewritten on every (re)launch. Contains no
 // secrets (only the SSO start URL / account / role).
 func WriteSSMConfig(path string, s session.SSMMeta) error {
-	if err := validateSSMMeta(s); err != nil {
+	ini, err := RenderSSMConfig(s)
+	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
+	}
+	return os.WriteFile(path, []byte(ini), 0o600)
+}
+
+// RenderSSMConfig returns the sso-session + profile sections for s, validated. The
+// sso-session is named "af-<profile>" wherever it is written, so every file that
+// describes the same profile shares one cached SSO login.
+func RenderSSMConfig(s session.SSMMeta) (string, error) {
+	if err := validateSSMMeta(s); err != nil {
+		return "", err
 	}
 	region := s.Region
 	if region == "" {
@@ -212,7 +237,7 @@ func WriteSSMConfig(path string, s session.SSMMeta) error {
 	if region != "" {
 		fmt.Fprintf(&b, "region = %s\n", region)
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	return b.String(), nil
 }
 
 // buildSSMProgram assembles the pane command for an SSM session: refresh SSO creds

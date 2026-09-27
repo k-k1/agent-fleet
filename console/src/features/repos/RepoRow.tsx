@@ -67,6 +67,9 @@ export interface RepoRowProps {
    * sessionsInFolder). */
   onArchiveStopped?: () => void;
   stoppedCount?: number;
+  /** Open the shelf scoped to this folder: the archived sessions that ran here, including
+   * older generations of a folder reused for a branch of the same name. */
+  onOpenArchived?: () => void;
   /** Stop every LIVE session in this row's subtree (right-click menu → StopSessionsModal).
    * Unlike the bulk archive above, the scope is the whole subtree the rail nests under this
    * row — a spawn's worktrees are exactly what one wants to put down in one go — so the
@@ -89,7 +92,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onStopSessions, aliveCount = 0 }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -488,7 +491,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             )}
             {/* The two bulk session actions, tidiest first in the order one reaches for them:
                 put the running ones down, then shelve what is already stopped. */}
-            {((onStopSessions && aliveCount > 0) || (onArchiveStopped && stoppedCount > 0)) && (
+            {((onStopSessions && aliveCount > 0) || (onArchiveStopped && stoppedCount > 0) || onOpenArchived) && (
               <li className="ui-menu-sep" role="separator" />
             )}
             {onStopSessions && aliveCount > 0 && (
@@ -504,6 +507,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onArchiveStopped(); }}>
                   <Icon name="archive" /> {tr("repo.archive_stopped")}
                   {tr("common.paren", { v: stoppedCount })}
+                </button>
+              </li>
+            )}
+            {onOpenArchived && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenArchived(); }}>
+                  <Icon name="history" /> {tr("repo.open_archived")}
                 </button>
               </li>
             )}

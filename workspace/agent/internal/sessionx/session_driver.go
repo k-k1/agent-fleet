@@ -114,10 +114,10 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	}
 	status.Remove(sid)
 
-	// flip → resume: restart the same conversation on the new driver. On failure, put Driver
-	// back and return the session stopped: the conversation itself is untouched, so the user
-	// can resume on the old driver.
-	prev := m.Driver
+	// flip → resume: restart the same conversation on the new driver. The new Driver lives only
+	// in m until the launch succeeds, so a failure leaves the meta on disk on the old driver and
+	// returns the session stopped: the conversation itself is untouched, so the user can resume
+	// on the old driver. (Writing m back on failure would only roll back what changed meanwhile.)
 	if target == session.DriverManaged {
 		m.Driver = session.DriverManaged
 	} else {
@@ -126,24 +126,39 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	if target == session.DriverManaged {
 		d, _ := driverOf(m)
 		if _, err := mcpx.StartManagedSession(d, m); err != nil {
-			m.Driver = prev
-			session.WriteMeta(m)
 			writeRuntimeErr(w, err)
 			return
 		}
 	} else {
 		if err := startSessionTmux(m, false); err != nil {
-			m.Driver = prev
-			session.WriteMeta(m)
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
 	}
-	wasStopped := m.StoppedAt != ""
-	m.StoppedAt = ""
-	// The stop/relaunch above takes seconds — re-merge the on-disk lock so this
-	// write-back can't roll back a lock the user flipped meanwhile (lost update).
-	m = WriteSessionMetaKeepingLock(m)
+	// The stop/relaunch above takes seconds, so the switch is written onto the meta as it is
+	// now: m written back would roll back a lock set meanwhile (issue #950).
+	wasStopped := false
+	cur, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+		// Judged on disk too: a list poll during the switch may have stamped the stop (and
+		// recorded the death) that this revive answers.
+		wasStopped = cur.StoppedAt != ""
+		cur.Driver = m.Driver
+		cur.StoppedAt = ""
+		return true
+	})
+	if !ok {
+		// Deleted during the relaunch: the delete halted whatever was running then, and the
+		// runtime started above has no meta to belong to. Stop it rather than answer 200 for a
+		// session that is gone.
+		if target == session.DriverManaged {
+			dropManagedRuntime(m)
+		} else {
+			_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(name))).Run()
+		}
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	m = cur
 	if wasStopped {
 		fleetgraph.RecordRevive(name) // write site ③: only when the slot really was stopped
 	}

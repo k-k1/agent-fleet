@@ -8,7 +8,8 @@ import { useSettingsUI } from "../store.ts";
 import { OnOff, Row } from "../parts/controls.tsx";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
 
-// NotificationsTab — notification preferences. The upper section is the device-side audio
+// NotificationsTab — notification preferences. The first section filters which session events
+// interrupt at all (childIdleNotify). The next is the device-side audio
 // notification (ttsSessionNotify / usageResetNotify, split off from text-to-speech). The lower
 // one is the master on/off for notifications to the chat integrations (Discord / Slack): only
 // a connected service is operable, and an unconnected one offers a link to the chat settings.
@@ -57,6 +58,14 @@ export function NotificationsTab() {
 
   return (
     <div className="display-settings">
+      <section className="ds-group">
+        <h4 className="ds-title">{tr("noti.session_title")}</h4>
+        <Row label={tr("noti.child_idle_notify")}>
+          <OnOff value={s.childIdleNotify} onChange={(v) => setSetting("childIdleNotify", v)} />
+        </Row>
+        <p className="muted ds-note">{tr("noti.note_child_idle_notify")}</p>
+      </section>
+
       <section className="ds-group">
         <h4 className="ds-title">{tr("noti.audio_title")}</h4>
         <Row label={tr("tts.session_notify")}>

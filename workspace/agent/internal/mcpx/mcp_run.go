@@ -23,6 +23,7 @@ import (
 
 // RunSubcommand handles `workspace-agent mcp-run <provider> [extra args...]`.
 func RunSubcommand(args []string) {
+	dropUnexpandedEnv()
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "mcp-run: provider required (e.g. pagerduty)")
 		os.Exit(2)

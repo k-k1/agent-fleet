@@ -73,8 +73,16 @@ func HandleJobs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCode, errMsg)
 		return
 	}
+	// The gate runs here, before Enqueue, because the copies have to exist before any job does:
+	// Enqueue wakes the worker, which may start on the first job before this handler answers.
+	spec, err := stageJobSpec(spec)
+	if err != nil {
+		writeEnqueueErr(w, err)
+		return
+	}
 	out, err := jobs.Enqueue(r.Context(), spec)
 	if err != nil {
+		removeInputSet(spec.InputSet)
 		writeEnqueueErr(w, err)
 		return
 	}
@@ -91,6 +99,8 @@ func writeEnqueueErr(w http.ResponseWriter, err error) {
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "imagegen_no_provider", err.Error())
 	case errors.Is(err, ErrUnknownProvider):
 		httpx.WriteErr(w, http.StatusBadRequest, "imagegen_unknown_provider", err.Error())
+	case errors.Is(err, errBadInput):
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_input", err.Error())
 	case errors.Is(err, errNoBrowseRoot):
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "no_browse_root", err.Error())
 	default:

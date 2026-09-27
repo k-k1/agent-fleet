@@ -153,6 +153,13 @@ export const settings: Record<keyof typeof jaSettings, string> = {
 
   // --- agent settings (AgentsTab) ---
   "agents.session": "Session",
+  "agents.stopped_archive": "Archive stopped sessions after",
+  "agents.stopped_archive_default": "Default",
+  "agents.stopped_archive_days_one": "{count} day",
+  "agents.stopped_archive_days_other": "{count} days",
+  "agents.stopped_archive_never": "Off",
+  "agents.note_stopped_archive":
+    "How long a session left stopped stays in the session list before it moves to the archive. Nothing is deleted — restore it from the archive at any time — and a session locked against deletion stays in the list. A stopped child session holds its slot until then; with Off, until you archive or delete it. Applies from the next list refresh, so shortening it moves sessions already past the new period to the archive at once. Default is the deployment's period: 7 days unless the deployment changed it.",
   "agents.peer_messaging": "Messages between sessions",
   "agents.note_peer_messaging":
     "Lets a session send a short message to another session in this workspace. It reaches a stopped session by resuming it, and the recipient is told this is not an instruction from you. Applies to sessions started from now on. Default OFF.",
@@ -161,7 +168,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
     "Lets a session start another session, hand it a task, and look after the ones it started — listing them, reading their output, stopping and resuming them. It cannot instruct, answer for or delete any session. How many children it may have is set below (deleting or archiving one frees its slot). No grandchildren and no shell sessions. Each child is a whole agent's memory and quota, billed to you. Applies to sessions started from now on. Default OFF.",
   "agents.spawn_child_limit": "Children per session",
   "agents.note_spawn_child_limit":
-    "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child is a whole agent's memory. Default 3.",
+    "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child is a whole agent's memory. 1–10, default 3.",
   "agents.image_generation": "Image generation",
   "agents.note_image_generation":
     "Lets a session generate an image from a prompt (the generate_image tool). It uses a connected CLI's own image generation, spending that plan's usage each time. Applies to sessions started from now on. Default OFF.",
@@ -603,6 +610,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "set.group_connections": "Connections",
   "set.group_workspace": "Workspace",
   "set.back": "All settings",
+  "set.prefs_unsynced": "Your settings could not be saved to the server. The change exists on this device only, and the agents still act on the previous settings.",
+  "set.prefs_retry": "Retry",
 
   // === アカウント（サインイン方法の紐づけ・docs/log/61 §61.16 + 決定 37） ===
   "set.tab_account": "Account",

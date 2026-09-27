@@ -176,6 +176,13 @@ const engineViewTTL = 3 * time.Second
 // view is the cached DescribeServices. An error is cached for the same TTL: a service that
 // answers with an error answers with it for every caller in that window, and hammering the
 // API is how one misconfiguration becomes a throttle.
+//
+// 🔴 Except an error that is the CALLER's own ending — its context cancelled or past its
+// deadline. That says nothing about the service, and caching it hands one caller's hang-up to
+// every other caller for the TTL. Measured on af-sandbox (ADR 0098 P3): a sampler's
+// `curl -m 5 …/system_stats` gave up mid-DescribeServices, and the Agent's next /history poll
+// on a box that was busy but running was answered `could not read the engine service: …
+// context canceled` — a 503 engine_unavailable that ended a generation the engine then finished.
 func (t *engineECS) view(ctx context.Context) (engineServiceView, error) {
 	now := t.clock()
 	t.mu.Lock()
@@ -187,6 +194,9 @@ func (t *engineECS) view(ctx context.Context) (engineServiceView, error) {
 	t.mu.Unlock()
 
 	v, err := t.describe(ctx)
+	if err != nil && ctx.Err() != nil {
+		return v, err
+	}
 	t.mu.Lock()
 	t.cached, t.cachEr, t.cachAt = v, err, now
 	t.mu.Unlock()

@@ -90,6 +90,9 @@ func TestAbortedTurnClassification(t *testing.T) {
 		// on blocked by accident. Re-sending fails the same way until the user logs in again,
 		// so pin it as the intended classification.
 		{"auth expired", "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.", 401, false},
+		// Measured 2026-09-25: arrives as error:"server_error" without a status, yet re-sending
+		// hit the same failure; signing in again cleared it.
+		{"login refresh stuck", refreshStuckText, 0, false},
 		{"unknown wording", "API Error: something nobody has seen before", 0, false}, // undecidable = blocked
 	}
 	for _, tc := range cases {
@@ -426,6 +429,11 @@ func TestAbortAuthAxis(t *testing.T) {
 			// field is what does not get reworded between releases.
 			name: "unknown wording, auth kind", line: apiErrKind("API Error: nobody has seen this", 0, "authentication_failed"),
 			auth: true, reason: "the error field alone must be enough",
+		},
+		{
+			// server_error would make it retryable on the kind alone; the text must win.
+			name: "stuck login refresh", line: apiErrKind(refreshStuckText, 0, "server_error"),
+			auth: true, reason: "re-sending repeats it; signing in again clears it",
 		},
 		{
 			name: "usage limit is blocked but not auth", line: apiErr("You've reached your Fable 5 limit.", 429),

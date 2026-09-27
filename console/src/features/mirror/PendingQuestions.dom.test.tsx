@@ -177,3 +177,56 @@ describe("PendingQuestions draft", () => {
     expect(picked()).toEqual([false, false, false, false]);
   });
 });
+
+describe("PendingQuestions translation", () => {
+  const EN: Question[] = [{ question: "Which one?", options: [{ label: "Alpha" }, { label: "Beta" }] }];
+
+  function mountTranslated(shown: boolean, onToggle = () => {}) {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root!.render(
+        <PendingQuestions
+          questions={EN}
+          sending={false}
+          onSubmitKeys={(keys) => {
+            sent.push(keys);
+            return Promise.resolve(true);
+          }}
+          onSubmitSeq={(seq) => {
+            sent.push(seq);
+            return Promise.resolve(true);
+          }}
+          translate={{
+            questions: shown ? [{ question: "どっち？", options: [{ label: "アルファ" }, { label: "ベータ" }] }] : EN,
+            lead: "",
+            shown,
+            busy: false,
+            toggle: onToggle,
+          }}
+        />,
+      ),
+    );
+  }
+
+  it("shows the translated text but answers with the original option", async () => {
+    mountTranslated(true);
+    expect(document.querySelector(".mq-text")!.textContent).toBe("どっち？");
+    expect(opts().map((b) => b.querySelector(".mq-opt-label")!.textContent)).toEqual(["アルファ", "ベータ"]);
+    click(opts()[1]);
+    click(document.querySelector(".mq-submit"));
+    await act(async () => {});
+    // Down×1, Enter — the keys aim at the option's POSITION, which the translation does not move.
+    expect(sent).toEqual([["Down", "Enter"]]);
+  });
+
+  it("the button toggles through the wiring", () => {
+    let pressed = 0;
+    mountTranslated(false, () => pressed++);
+    const btn = document.querySelector<HTMLButtonElement>(".mt-translate")!;
+    expect(btn.classList.contains("on")).toBe(false);
+    click(btn);
+    expect(pressed).toBe(1);
+  });
+});

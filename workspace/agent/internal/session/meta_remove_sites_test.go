@@ -39,7 +39,7 @@ var removeMetaAndLineageCaller = regexp.MustCompile(`(?:^|[^.\w])(?:session\.)?R
 // makes the test pass) — say which bucket it belongs in in the same commit.
 const (
 	wantRemoveMeta           = 0                          // none since ADR 0097: the stopped-session TTL archives instead of forgetting
-	wantRemoveMetaAndLineage = 4                          // /stop, DELETE /sessions (both branches), working-copy delete collateral
+	wantRemoveMetaAndLineage = 1                          // trashSession only (ADR 0101 decision 1): /stop, DELETE /sessions and a deleted working copy's shell / ssm all go through it
 	metaGoRelPath            = "internal/session/meta.go" // defines both; excluded from the scan
 )
 
@@ -87,6 +87,14 @@ func TestRemoveMetaCallSitesAreClassified(t *testing.T) {
 			"person asking for the session to be gone (use RemoveMetaAndLineage instead, ADR 0096 "+
 			"decision 6)? Update wantRemoveMeta only after deciding which.",
 			len(plainSites), wantRemoveMeta, strings.Join(plainSites, "\n"))
+	}
+	// ADR 0101 decision 1: the one site is the trash, which writes the gz archive before it
+	// forgets anything. A second site would be a delete that skips the trash — route it through
+	// trashSession (cleanup_ops.go) instead of raising the count.
+	for _, site := range erasingSites {
+		if !strings.HasPrefix(filepath.ToSlash(site), "cleanup_ops.go: ") {
+			t.Errorf("RemoveMetaAndLineage called outside the trash (cleanup_ops.go's trashSession): %s", site)
+		}
 	}
 	if len(erasingSites) != wantRemoveMetaAndLineage {
 		t.Errorf("RemoveMetaAndLineage has %d call site(s), want %d:\n%s\n"+

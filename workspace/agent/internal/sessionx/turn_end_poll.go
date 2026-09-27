@@ -29,7 +29,6 @@ package sessionx
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -50,20 +49,16 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 // recordPolledTurnEnd is the sessions-list half: stamp when the turn ended, fire nothing.
 //
 // state is what the kind's WireLive already read, reused so the list does not pay for the same
-// source twice — except for agy, whose WireLive probes only for a pending interactive prompt
-// (it surfaces no working/idle at all), so the end-of-turn reading has to be taken here. That
-// extra read is why the cheap status-store gate comes first: with no turn in flight, or with
-// this one's end already stamped, there is nothing to learn and the poll costs one small read.
+// source twice. The cheap status-store gate still comes first: with no turn in flight, or with
+// this one's end already stamped, there is nothing to learn.
 func recordPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
 	if !status.TurnEndUnrecorded(sid) {
 		return
 	}
 	switch m.Kind {
-	case session.KindCopilot, session.KindCursor, session.KindKiro:
+	case session.KindAgy, session.KindCopilot, session.KindCursor, session.KindKiro:
 		// WireLive already read the same source DriveState reads.
-	case session.KindAgy:
-		state = agy.LiveState(m)
 	default:
 		// Every other kind has a hook (or a managed driver) that reports its own end of
 		// turn, so an idle here is not evidence that a turn ended — for claude it is

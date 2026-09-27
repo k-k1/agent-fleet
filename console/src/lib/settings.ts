@@ -363,6 +363,12 @@ export interface Settings {
   // so a value hand-edited into ui-prefs cannot raise the ceiling. Offered as a fixed set of
   // choices rather than a free number precisely so the range is a property of the control.
   sessionSpawnChildLimit: number;
+  // How long a stopped session stays in the active list before it moves to the archive (ADR
+  // 0097; AgentsTab > Session). Days from STOPPED_ARCHIVE_DAYS, STOPPED_ARCHIVE_NEVER for "off",
+  // or 0 for "the deployment default" — AF_SESSION_STOPPED_TTL, else 7 days. 0 is stored rather
+  // than 7 so the deployment's env var still applies to a user who never picked a period. The
+  // Agent reads it on every session list, so a change applies on the next list with no restart.
+  sessionStoppedArchiveDays: number;
   // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
   // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
   // unmentioned providers append in the built-in order — so a list saved before a provider
@@ -590,6 +596,13 @@ export interface Settings {
   // a pin survives the learned data being pruned and the order stays the one the user chose
   // (lib/quickReplies).
   quickRepliesPinned: string[];
+  // WS bar agent-usage chips: which agents keep a permanent slot on the bar (session kinds).
+  // The bar otherwise shows the two most recently used and folds the rest behind one "+N" chip
+  // (app/usageChipPlan.ts). Both lists are the user overriding that ranking — pinning is how you
+  // ask for a third chip, so there is no separate count setting.
+  usageChipsPinned: string[];
+  // Agents whose chip always sits in the folded popover, however recently they were used.
+  usageChipsFolded: string[];
   // Branch-name template for launching from a work item (docs/log/80 P2). The placeholders are
   // {key} (PROJ-123 / issue-45) and {slug} (an ASCII slug from the title, empty for Japanese).
   // Empty string = the default, feature/{key}-{slug}. Clearing this does NOT fall back to the
@@ -642,6 +655,12 @@ export interface Settings {
   // Detected reliably while the Console tab is open; a reset that happened while it was closed
   // notifies exactly once on the next open.
   usageResetNotify: boolean;
+  // Notify (OS notification and voice) when a CHILD session — one another session spawned
+  // (origin "session") — finishes a turn and waits for input. Its parent is the one waiting on
+  // that turn, so a fleet of children otherwise pings once per child turn. Off also marks the
+  // notification read on arrival (no dot, no unread count; the row stays). Questions and
+  // permission requests from a child still notify: nobody but a person can answer those.
+  childIdleNotify: boolean;
   // Convert English words to katakana before handing them to VOICEVOX (docs/log/24, the CP's
   // enkana preprocessing), so English is read plausibly in a Japanese accent without leaving
   // Zundamon's voice. It is a transliteration based on the CMU pronouncing dictionary, so a word
@@ -804,7 +823,22 @@ export function imageProviderIsFleet(id: string): boolean {
 // Agent's session.SpawnChildLimitMax: a choice past it is silently answered with the DEFAULT,
 // not with the ceiling, so an option this list offered and the Agent refused would set the
 // budget lower than the user asked for rather than higher.
-export const SPAWN_CHILD_LIMITS = [1, 2, 3, 4, 5, 6] as const;
+export const SPAWN_CHILD_LIMITS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+
+// The stopped-session archive periods a user may pick, in days (ADR 0097). Must equal the Agent's
+// session.StoppedArchiveDayChoices: the Agent reads any other number as "not set" and falls back
+// to the deployment default, so a button missing there would silently do nothing.
+export const STOPPED_ARCHIVE_DAYS = [1, 3, 7, 14, 30] as const;
+// "Do not auto-archive" — the Agent's session.StoppedArchiveNever.
+export const STOPPED_ARCHIVE_NEVER = -1;
+
+// stoppedArchiveChoice — which button a stored value lights. Mirrors the Agent's
+// NormalizeStoppedArchiveDays: a value no button produces (a hand-edited ui-prefs, an imported
+// bundle, another Console version) is applied as Default, so it is shown as Default too rather
+// than as no choice at all.
+export function stoppedArchiveChoice(v: number): number {
+  return (STOPPED_ARCHIVE_DAYS as readonly number[]).includes(v) || v === STOPPED_ARCHIVE_NEVER ? v : 0;
+}
 
 // imageProviderLabel names one row of the FALLBACK ordering list (see IMAGE_PROVIDERS_RANKED).
 // agy and codex are agent kinds and carry their own display name; the fleet's own engine is not
@@ -970,6 +1004,40 @@ export function normalizeAssistantOrder(v: unknown): string[] {
 // of splitting the keys is that they can move independently AFTER this migration runs, not that
 // they start apart (docs/log/103 §103.3-5: this function's own doc comment used to say the
 // opposite of what the code below does — fixed here, not just in the code).
+// The per-kind model maps whose missing entries mean "recommended" (fillRecommendedModelMaps).
+const RECOMMENDED_MODEL_MAPS = ["assistantModels", "aiShortModels", "aiProseModels"] as const;
+
+// fillRecommendedModelMaps gives every assistant kind an entry in the three per-kind model maps,
+// "recommended" where it has none, and says whether it added any. A missing entry was a state of
+// its own: the settings row showed it as the CLI default ("" — `map[kind] || ""`) while the Agent
+// ran its per-kind historical default or AF_TITLE_MODEL_*, so screen and run disagreed
+// (#972 review, round 3). The Agent now reads a missing entry as "recommended" as well
+// (ui_prefs.go), so this only has to make the screen say so; it never writes back. It arose wherever a map was shallow-merged over DEFAULTS — a legacy
+// assistantUtilityModels copy (migrateAiAssistPrefs) lacking a kind, or a kind added after the
+// map was first saved (muse). "recommended" is what DEFAULTS give a new member for every kind,
+// so this makes an older prefs file mean what a new one means. Explicit values, "" (the CLI
+// default) included, are never touched.
+export function fillRecommendedModelMaps(o: Record<string, unknown>): boolean {
+  let added = false;
+  for (const key of RECOMMENDED_MODEL_MAPS) {
+    const cur = o[key];
+    if (cur === undefined) continue; // absent: DEFAULTS supply the whole map
+    const map: Record<string, unknown> = cur && typeof cur === "object" && !Array.isArray(cur) ? { ...cur } : {};
+    let changed = false;
+    for (const kind of ASSISTANT_AGENT_KINDS) {
+      if (!(kind in map)) {
+        map[kind] = ASSISTANT_RECOMMENDED_MODEL;
+        changed = true;
+      }
+    }
+    if (changed) {
+      o[key] = map;
+      added = true;
+    }
+  }
+  return added;
+}
+
 export function migrateAiAssistPrefs(o: Record<string, unknown>): void {
   // Title suggestion moves to one key per feature. The old autoTitleSuggest covered sessions,
   // chats and branch names at once, so an explicit OFF is carried over to all three.
@@ -1063,6 +1131,7 @@ const DEFAULTS: Settings = {
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
+  sessionStoppedArchiveDays: 0, // the deployment default (ADR 0097)
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   lcppEnabled: true, // opt-out (docs/log/105 §106.2) — an existing deployment launches lcpp today
@@ -1084,6 +1153,7 @@ const DEFAULTS: Settings = {
     opencode: ASSISTANT_RECOMMENDED_MODEL,
     cursor: ASSISTANT_RECOMMENDED_MODEL,
     agy: ASSISTANT_RECOMMENDED_MODEL,
+    muse: ASSISTANT_RECOMMENDED_MODEL,
   },
   aiShortModels: {
     claude: ASSISTANT_RECOMMENDED_MODEL,
@@ -1091,6 +1161,7 @@ const DEFAULTS: Settings = {
     opencode: ASSISTANT_RECOMMENDED_MODEL,
     cursor: ASSISTANT_RECOMMENDED_MODEL,
     agy: ASSISTANT_RECOMMENDED_MODEL,
+    muse: ASSISTANT_RECOMMENDED_MODEL,
   },
   aiProseModels: {
     claude: ASSISTANT_RECOMMENDED_MODEL,
@@ -1098,6 +1169,7 @@ const DEFAULTS: Settings = {
     opencode: ASSISTANT_RECOMMENDED_MODEL,
     cursor: ASSISTANT_RECOMMENDED_MODEL,
     agy: ASSISTANT_RECOMMENDED_MODEL,
+    muse: ASSISTANT_RECOMMENDED_MODEL,
   },
   assistantAutoTurn: true,
   assistantAutoTurnLimit: 10,
@@ -1130,6 +1202,7 @@ const DEFAULTS: Settings = {
   ttsStereoByPane: true,
   ttsSessionNotify: false,
   usageResetNotify: true,
+  childIdleNotify: true,
   ttsEnglishKana: true,
   ttsUserDict: "",
   ttsCacheSec: 900, // 15 minutes
@@ -1161,6 +1234,9 @@ const DEFAULTS: Settings = {
   quickReplies: {},
   quickRepliesHidden: [],
   quickRepliesPinned: [],
+  // Empty = nothing overridden: the WS bar ranks the usage chips by recent use on its own.
+  usageChipsPinned: [],
+  usageChipsFolded: [],
   workItemBranchTemplate: "",
   workingSets: [],
   workingSetActive: "",
@@ -1377,6 +1453,7 @@ function load(): Settings {
     // priority/model lists, an independent read-aloud language). Runs the same function as
     // hydrateUIPrefs().
     migrateAiAssistPrefs(saved);
+    fillRecommendedModelMaps(saved);
     const legacyClaudeModel = typeof saved.defaultModel === "string" ? saved.defaultModel : DEFAULT_MODEL;
     const rows = saved.agentLaunchDefaults && typeof saved.agentLaunchDefaults === "object"
       ? saved.agentLaunchDefaults
@@ -1538,6 +1615,76 @@ export function settingsDefaults(): Settings {
 // effort: if the workspace is stopped / agent unreachable, localStorage still holds it.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveInFlight: Promise<void> | null = null;
+// Only the newest PUT's answer speaks for the sync state: an older one landing late (or the
+// previous owner's, across an identity switch) must not overwrite it.
+let saveGen = 0;
+// Server-synced keys changed on this tab and not yet confirmed saved, with a per-key change
+// count so a save only confirms the version it carried. A hydrate keeps these local values
+// over the server's: without that, the only ways out of a failed save were to lose the change
+// (server wins) or to PUT the whole tab's state blind over what other devices saved since.
+const unsaved = new Map<keyof Settings, number>();
+let changeSeq = 0;
+
+/** Whether this tab's settings have reached the Agent's ui-prefs. The Console applies a change at
+ *  once and saves it later, so while a save is failing the screen shows one setting and the Agent
+ *  acts on another (a model un-hidden on screen is refused at launch; one hidden still runs) —
+ *  the member has to be told, not just the console. */
+export type PrefsSyncState = "synced" | "pending" | "failed";
+let syncState: PrefsSyncState = "synced";
+const syncSubs = new Set<() => void>();
+
+function setSyncState(next: PrefsSyncState): void {
+  if (syncState === next) return;
+  syncState = next;
+  syncSubs.forEach((fn) => fn());
+}
+
+export const prefsSyncState = (): PrefsSyncState => syncState;
+
+export function usePrefsSyncState(): PrefsSyncState {
+  return useSyncExternalStore(
+    (fn) => {
+      syncSubs.add(fn);
+      return () => void syncSubs.delete(fn);
+    },
+    prefsSyncState,
+    prefsSyncState,
+  );
+}
+
+/** Try again now: read the server copy (the unsaved keys stay local over it), then send. */
+export function retryPrefsSync(): void {
+  if (saveTimer || saveInFlight) return; // already on its way
+  hydrateAttempt = 0;
+  void hydrateUIPrefs();
+}
+
+// Whose server copy this browser's localStorage was last merged with, as "tenant|user". Read at
+// the first hydrate: localStorage outlives a sign-out, so without it a previous account's
+// accumulated data (working sets, hidden models, …) cannot be told from this account's
+// unsynced data. The source is set by the app shell; unset, or with the user not yet resolved,
+// the owner is unknown and every owner-dependent step takes its conservative branch.
+const OWNER_KEY = "af-display-settings-owner";
+let ownerSource: () => string = () => "";
+
+export function setPrefsOwnerSource(fn: () => string): void {
+  ownerSource = fn;
+}
+
+function readStoredOwner(): string {
+  try {
+    return localStorage.getItem(OWNER_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function recordOwner(owner: string): void {
+  if (!owner) return;
+  try {
+    localStorage.setItem(OWNER_KEY, owner);
+  } catch {}
+}
 
 // Has the server's ui-prefs been read even once? Saving is a whole-object PUT where the last
 // writer wins, so nothing may be sent before that read succeeds: an unhydrated state is only
@@ -1557,7 +1704,12 @@ let hydrateAttempt = 0;
 const HYDRATE_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 function scheduleHydrateRetry(): void {
-  if (prefsLoaded || hydrateRetry || hydrateAttempt >= HYDRATE_RETRY_MS.length) return;
+  if (prefsLoaded || hydrateRetry) return;
+  if (hydrateAttempt >= HYDRATE_RETRY_MS.length) {
+    // Out of automatic retries with a change still waiting: it has not reached the Agent.
+    if (savePending) setSyncState("failed");
+    return;
+  }
   const wait = HYDRATE_RETRY_MS[hydrateAttempt++];
   hydrateRetry = setTimeout(() => {
     hydrateRetry = null;
@@ -1577,28 +1729,48 @@ function markPrefsLoaded(): void {
   if (savePending) {
     savePending = false;
     scheduleServerSave();
+  } else if (syncState === "failed" && !saveTimer && !saveInFlight && unsaved.size === 0) {
+    // The read that failed is now done and nothing is waiting to go out.
+    setSyncState("synced");
   }
 }
 
 function scheduleServerSave(): void {
   if (!prefsLoaded) {
     savePending = true;
+    // A failure stays shown until something lands; otherwise the change is waiting for the read.
+    if (syncState !== "failed") setSyncState("pending");
     scheduleHydrateRetry();
     return;
   }
+  if (syncState !== "failed") setSyncState("pending");
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
+    const gen = ++saveGen;
+    const carried = new Map(unsaved);
     // Device-local keys are not sent to the server; they never leave this device.
-    saveInFlight = apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state))
+    const flight: Promise<void> = apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state))
       // Swallowing a failure means believing the settings are synced when they are not. A
       // permanent failure such as exceeding the 64 KiB limit (413) is only visible here, so it
-      // must always be logged.
+      // must always be logged — and shown (usePrefsSyncState).
       .then((res) => {
-        if (res && typeof res === "object" && res.error) warnPrefsSaveFailed(res.error);
+        if (res && typeof res === "object" && res.error) {
+          warnPrefsSaveFailed(res.error);
+          if (gen === saveGen) setSyncState("failed");
+          return;
+        }
+        for (const [k, seq] of carried) if (unsaved.get(k) === seq) unsaved.delete(k);
+        if (gen === saveGen && !saveTimer && unsaved.size === 0) setSyncState("synced");
       })
-      .catch((e) => warnPrefsSaveFailed(e))
-      .finally(() => { saveInFlight = null; });
+      .catch((e) => {
+        warnPrefsSaveFailed(e);
+        if (gen === saveGen) setSyncState("failed");
+      })
+      .finally(() => {
+        if (saveInFlight === flight) saveInFlight = null;
+      });
+    saveInFlight = flight;
   }, 600);
 }
 
@@ -1708,14 +1880,23 @@ export function migrateOpencodeCatalog(v: unknown): "off" | "own" | "free" | "go
   return "off"; // unset/unknown = disabled until explicitly chosen
 }
 
+// Each hydrate's number; only the newest one's answer is merged. api() sends the tenant current at
+// call time, so an answer asked before an identity switch is the previous owner's copy, and
+// merging it after the switch's resync would show — and could send — that owner's settings as
+// the new owner's.
+let hydrateGen = 0;
+
 export async function hydrateUIPrefs(): Promise<boolean> {
+  const gen = ++hydrateGen;
+  const owner = ownerSource();
   let srv: any;
   try {
     srv = await api("api/env/ui-prefs");
   } catch {
-    scheduleHydrateRetry();
+    if (gen === hydrateGen) scheduleHydrateRetry();
     return false;
   }
+  if (gen !== hydrateGen || ownerSource() !== owner) return false; // superseded or asked as someone else
   // api() does not throw on an HTTP error; it returns {error:{code:"http_502"}} — exactly what
   // the CP does while a workspace is starting. Mistaking "could not fetch" for "the server is
   // empty" lets the next save overwrite the server with defaults, so treat a failure as a
@@ -1737,6 +1918,10 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // AFTER the single-pin promotion: aiAssistOrder inherits from assistantAgentOrder, so calling
   // it first would leave a user who has only the legacy pin on the default order.
   migrateAiAssistPrefs(srv);
+  // Display only — nothing is written back: the Agent reads a missing entry as "recommended"
+  // too (ui_prefs.go's aiModelPref / assistantChatModelPref), and a PUT here would be the
+  // hydrate-time write the owner-switch guards below forbid.
+  fillRecommendedModelMaps(srv);
   // The opencode setting changed from "how to shape the list" to "which billing route to use".
   // Of the legacy values, "hide Zen" means intending to use Go only, so it maps to go; "Go
   // first" and "show all" mean wanting to see both, so they map to zen (the previous
@@ -1744,21 +1929,57 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // has a value: writing a default into a missing key would let the merge below overwrite the
   // local choice, sending an unsaved selection back to zen every time.
   if ("opencodeCatalog" in srv) srv.opencodeCatalog = migrateOpencodeCatalog(srv.opencodeCatalog);
-  let changed = false;
-  const merged: Settings = { ...state };
   // Object/array values compared by reference would differ on every hydrate (the server response
   // is always a fresh object) — compare by value so `changed` is set only on a real change.
   const sameValue = (a: unknown, b: unknown): boolean =>
     a === b ||
     (typeof a === "object" && a !== null && typeof b === "object" && b !== null &&
       JSON.stringify(a) === JSON.stringify(b));
+  let changed = false;
+  const merged: Settings = { ...state };
+  // Whose accumulated data this browser holds. Another known owner's is dropped before the merge,
+  // so neither restore path below can send it to this account (the identity-switch resync does
+  // the same within one page load; this covers a boot after a sign-out). Only a known,
+  // matching owner may push back a key the server has never held.
+  const storedOwner = readStoredOwner();
+  // With no record (a copy written before the record existed, or by a browser that never finished
+  // a hydrate) only the keys the server has never held are dropped: recording this owner over
+  // them would make the next boot push them as this account's, while the empty-server self-heal
+  // below keeps working as it did before the record.
+  if (owner && storedOwner !== owner) {
+    if (storedOwner) unsaved.clear();
+    for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
+      if (!isAccumulatedSetting(k) || (!storedOwner && k in srv)) continue;
+      unsaved.delete(k);
+      if (!sameValue(merged[k], DEFAULTS[k])) {
+        (merged as any)[k] = DEFAULTS[k];
+        changed = true;
+      }
+    }
+  }
+  const sameOwner = !!owner && storedOwner === owner;
   // If the server lost accumulated data that this device still has, push it back instead of
   // taking the server's value (self-repair).
   let restore = false;
   for (const k of Object.keys(DEFAULTS)) {
     const key = k as keyof Settings;
     if (isDeviceLocalSetting(key)) continue; // device-local keys are never restored
-    if (!(k in srv) || sameValue(srv[k], (merged as any)[k])) continue;
+    if (!(k in srv)) {
+      // A key the server has never held while this device holds a non-default value — say,
+      // hidden models set while every save failed. Pushed back only for the recorded owner.
+      if (unsaved.has(key) || (sameOwner && isAccumulatedSetting(key) && !sameValue((merged as any)[k], DEFAULTS[key]))) restore = true;
+      continue;
+    }
+    if (sameValue(srv[k], (merged as any)[k])) {
+      unsaved.delete(key); // the server already holds it (a save that landed but answered an error)
+      continue;
+    }
+    // Changed here and not yet saved (a save pending or failed): this tab's value stands and goes
+    // out with the save below, over the server copy that is otherwise taken as it is.
+    if (unsaved.has(key)) {
+      restore = true;
+      continue;
+    }
     if (isAccumulatedSetting(key) && isEmptyPref(srv[k]) && !isEmptyPref((merged as any)[k])) {
       restore = true;
       continue;
@@ -1771,7 +1992,10 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // A server written by an older Console has only defaultModel. Do not let the
   // already-normalized local map mask that server-side value during migration.
   // Once the new map exists on the server it is authoritative for every agent.
-  const rows = serverRows && typeof serverRows === "object"
+  // An unsaved local edit stands over the server's map, as the loop above does for other keys.
+  const rows = unsaved.has("agentLaunchDefaults")
+    ? merged.agentLaunchDefaults
+    : serverRows && typeof serverRows === "object"
     ? serverRows
     : {
         ...merged.agentLaunchDefaults,
@@ -1790,6 +2014,16 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // Reaching here means the server's current values really were read. A pending save flows after
   // this: markPrefsLoaded → scheduleServerSave reads state 600ms later, so the `state = merged`
   // below takes effect first.
+  // The record and the copy are written together: another tab may have written the shared copy
+  // since this one last did, and recording this owner over that copy would vouch for its values.
+  // When the copy is recorded as this owner's already it is left alone: another tab of the same
+  // owner may hold a newer unsaved edit there.
+  if (owner && storedOwner !== owner) {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(changed ? merged : state));
+    } catch {}
+    recordOwner(owner);
+  }
   markPrefsLoaded();
   // Accumulated data the server did not have is written back from here to restore it.
   if (restore) scheduleServerSave();
@@ -1822,6 +2056,11 @@ export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
     saveTimer = null;
   }
   savePending = false;
+  // What failed or waited was the previous owner's save; the new owner starts from their own copy,
+  // and an answer to the previous owner's PUT still in flight no longer speaks for it.
+  saveGen++;
+  unsaved.clear();
+  setSyncState("synced");
   const cleared: Partial<Settings> = {};
   for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
     if (isAccumulatedSetting(k)) (cleared as any)[k] = DEFAULTS[k];
@@ -1847,9 +2086,17 @@ export function setSetting<K extends keyof Settings>(key: K, value: Settings[K])
 // run that many re-renders and debounced saves.
 export function setSettings(patch: Partial<Settings>): void {
   state = { ...state, ...patch };
+  for (const k of Object.keys(patch) as (keyof Settings)[]) {
+    if (!isDeviceLocalSetting(k)) unsaved.set(k, ++changeSeq);
+  }
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
+  // localStorage is shared by every tab, whatever tenant each shows: the copy now holds this
+  // tab's owner's values, so the record has to say so, or a tab on another tenant would later
+  // vouch for them as its own. Only once this tab has read its server copy — before that, what
+  // it holds is not known to be this owner's.
+  if (prefsLoaded) recordOwner(ownerSource());
   applyTheme(state);
   applyLocale(state);
   applyCjkFont(state);

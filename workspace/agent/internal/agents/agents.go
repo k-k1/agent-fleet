@@ -226,6 +226,55 @@ type TranscriptData struct {
 	Compacting bool
 }
 
+// SettingsRecaller is an optional Agent capability for TUI sessions: what the conversation
+// itself last ran with, read from the CLI's own store. The launch command passes meta.Model /
+// meta.Effort / meta.Mode as flags, and those flags beat whatever the conversation switched
+// to in the terminal (`/model`, an effort picker, a mode toggle), so without this every
+// stop/resume silently reverts the switch to the launch settings (#987). The resume path
+// folds a recalled value into the meta before building the command and persists it, which
+// also keeps fork/recreate and the Console in step.
+//
+// An empty field means "nothing recorded" and keeps the meta's value. Called only when an
+// existing slot is relaunched; a kind whose store records nothing does not implement it.
+type SettingsRecaller interface {
+	RecallSettings(m session.Meta) RecalledSettings
+}
+
+// RecalledSettings is what a SettingsRecaller found. Values use the same vocabulary as the
+// meta fields (what the kind's launch flag accepts), never a display name.
+type RecalledSettings struct {
+	Model  string
+	Effort string
+	// Mode is "plan" or "normal"; "" = not recorded.
+	Mode string
+	// ClearModel / ClearEffort mean the conversation went back to the CLI's own default, so
+	// the launch must stop passing the flag at all.
+	ClearModel  bool
+	ClearEffort bool
+}
+
+// Apply folds r into m and reports whether anything changed.
+func (r RecalledSettings) Apply(m *session.Meta) bool {
+	before := [3]string{m.Model, m.Effort, m.Mode}
+	switch {
+	case r.ClearModel:
+		m.Model = ""
+	case r.Model != "":
+		m.Model = r.Model
+	}
+	switch {
+	case r.ClearEffort:
+		m.Effort = ""
+	case r.Effort != "":
+		m.Effort = r.Effort
+	}
+	// "" and "normal" both launch without the plan flag; do not churn the meta between them.
+	if r.Mode == "plan" || (r.Mode == "normal" && m.Mode == "plan") {
+		m.Mode = r.Mode
+	}
+	return before != [3]string{m.Model, m.Effort, m.Mode}
+}
+
 // ContextReporter is an optional Agent capability: a session-level context-fill
 // reading for agents whose transcript carries no per-turn token usage (agy —
 // its transcript_full.jsonl has no token counts at all, docs/log/32). Called ONLY from the
