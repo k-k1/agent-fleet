@@ -244,4 +244,12 @@ describe("start a studio from a working-copy row", () => {
     expect(summary()).toBeNull();
     expect(document.body.textContent).toContain("親のクローンが一覧に無い");
   });
+
+  it("names the image model and the agent's model apart", async () => {
+    await render(BASE);
+    const labels = [...document.querySelectorAll(".igen-attach .igen-label, .igen-attach .ui-field-label")].map((e) => e.textContent);
+    expect(labels).toContain("画像モデル");
+    expect(labels).toContain("エージェントのモデル");
+    expect(labels).not.toContain("モデル");
+  });
 });

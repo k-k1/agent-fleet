@@ -1719,10 +1719,33 @@ export function imagegenStudios(locale) {
 // Studios made by "+ New studio" or a pane's first open: untitled, empty, named by their date.
 const created = [];
 
-export function imagegenNewStudio(id) {
+export function imagegenNewStudio(id, sent = null) {
   const at = new Date().toISOString();
-  const s = { id, title: "", draft: {}, agent_trial: true, created_at: at, updated_at: at, recent_log: [] };
+  const s = {
+    id,
+    title: typeof sent?.title === "string" ? sent.title : "",
+    draft: sent?.draft && typeof sent.draft === "object" ? { ...sent.draft } : {},
+    agent_trial: true,
+    created_at: at,
+    updated_at: at,
+    recent_log: [],
+  };
   created.unshift(s);
+  return s;
+}
+
+// A PUT on a studio made here: the merge patch applied (null clears a key), as the Agent does.
+export function imagegenPatchCreated(s, patch) {
+  if (patch && typeof patch === "object") {
+    for (const [k, v] of Object.entries(patch.draft || {})) {
+      if (v === null) delete s.draft[k];
+      else s.draft[k] = v;
+    }
+    if (typeof patch.title === "string") s.title = patch.title;
+    if (Array.isArray(patch.locks)) s.locks = patch.locks;
+    if (typeof patch.agent_trial === "boolean") s.agent_trial = patch.agent_trial;
+    s.updated_at = new Date().toISOString();
+  }
   return s;
 }
 

@@ -675,6 +675,7 @@ export function ModelSelect({
   provider,
   models,
   compact = false,
+  modelLabel,
 }: {
   draft: ImagegenDraft;
   patch: (p: Partial<ImagegenDraft>) => void;
@@ -682,6 +683,8 @@ export function ModelSelect({
   provider: ImagegenProvider | null;
   models: ImagegenModel[];
   compact?: boolean;
+  /** The model field's name where another "model" sits beside it (the attach dialog's agent's). */
+  modelLabel?: string;
 }) {
   const tr = useT();
   // ADR 0082 unresolved question 2: shown only when there is a REAL choice — one fleet row is
@@ -708,7 +711,7 @@ export function ModelSelect({
         </label>
       )}
       <label className={"igen-field" + (compact ? " compact" : "")}>
-        <span className="igen-label">{tr("imggen.model")}</span>
+        <span className="igen-label">{modelLabel || tr("imggen.model")}</span>
         <select
           className="ds-select"
           value={draft.model}
