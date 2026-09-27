@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 539
+# count: 541
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -360,6 +360,8 @@ POST /api/repos/{name}/mcp/apply
 POST /api/repos/{name}/mcp/plan
 POST /api/repos/{name}/parent-ff
 GET /api/repos/{name}/prompt-templates
+GET /api/repos/{name}/recreate
+POST /api/repos/{name}/recreate
 GET /api/repos/{name}/show
 POST /api/repos/{name}/stage
 GET /api/repos/{name}/status
