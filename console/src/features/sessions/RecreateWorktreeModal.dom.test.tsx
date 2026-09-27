@@ -166,4 +166,37 @@ describe("削除された worktree の作り直し", () => {
     expect(recreatableGroup("", [sess("a")])).toBe(false);
     expect(recreatableGroup(DIR, [])).toBe(false);
   });
+
+  it("削除時の状態は、ブランチが動いていれば新しいブランチ名を付けて送る", async () => {
+    api.mockResolvedValue({
+      name: "app@feat-z",
+      path: DIR,
+      parent: "app",
+      candidates: [
+        { source: "deleted", branch: "feat-z", sha: "abc", snapshot: "def", moved: true },
+        { source: "local", branch: "feat-z", sha: "123" },
+      ],
+    });
+    apiJSON.mockResolvedValue({ branch: "feat-z-2" });
+    await render([sess("s")]);
+    expect(document.body.textContent).toContain("未コミットの変更も戻す");
+    expect(document.querySelector<HTMLInputElement>(".ui-field input")?.value).toBe("feat-z-2");
+    await submit();
+    expect(apiJSON).toHaveBeenCalledWith("api/repos/app%40feat-z/recreate", "POST", {
+      source: "deleted",
+      branch: "feat-z",
+      new_branch: "feat-z-2",
+    });
+  });
+
+  it("削除時にブランチが無ければフォルダ名を新しいブランチ名の既定にする", async () => {
+    api.mockResolvedValue({
+      name: "app@feat-z",
+      path: DIR,
+      parent: "app",
+      candidates: [{ source: "deleted", branch: "", sha: "abc" }],
+    });
+    await render([sess("s")]);
+    expect(document.querySelector<HTMLInputElement>(".ui-field input")?.value).toBe("feat-z");
+  });
 });

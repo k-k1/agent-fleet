@@ -19,7 +19,7 @@ import { Button, IconButton } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { api, rawJSON, raw } from "../../core/api/client.ts";
+import { api, errText, rawJSON, raw } from "../../core/api/client.ts";
 import { t, tMaybe, useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 import { humanSize } from "../../lib/filemeta.ts";
@@ -33,6 +33,8 @@ interface CleanupArchive {
   reason?: string;
   sessions?: { name: string; display?: string }[];
   branches?: { repo: string; name: string }[];
+  /** A deleted worktree's tombstone (reason "delete_worktree"). */
+  worktree?: { name: string; branch?: string; snapshot?: string };
   /** Size of the archive's tarball (what purging it reclaims). */
   bytes?: number;
 }
@@ -254,8 +256,19 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
     setBusy(true);
     try {
       const res = await rawJSON(`api/cleanup/archives/${encodeURIComponent(id)}/restore`, "POST");
-      // 409 = it stopped part way: nothing was undone, and restoring again finishes it.
-      toast(res.ok ? t("clean.restored") : res.status === 409 ? t("clean.restore_incomplete") : t("clean.restore_failed"));
+      const code: string | undefined = res.ok ? undefined : (await res.json().catch(() => null))?.error?.code;
+      // restore_incomplete = it stopped part way: nothing was undone, and restoring again
+      // finishes it. Any other code is a deleted worktree that cannot come back as it was
+      // (its branch moved, is in use, …) — the catalogue text points at the archive's dialog.
+      toast(
+        res.ok
+          ? t("clean.restored")
+          : code && code !== "restore_incomplete"
+            ? errText({ code, message: t("clean.restore_failed") })
+            : res.status === 409
+              ? t("clean.restore_incomplete")
+              : t("clean.restore_failed"),
+      );
       await loadArchives();
       await loadCandidates();
       onChanged?.();
@@ -673,7 +686,10 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                       <span className="clean-arch-what">
                         {a.reason === "delete_branch"
                           ? tr("clean.archive_reason_delete_branch")
-                          : tr("clean.archive_reason_delete_session")}
+                          : a.reason === "delete_worktree"
+                            ? tr("clean.archive_reason_delete_worktree", { name: a.worktree?.name || "" })
+                            : tr("clean.archive_reason_delete_session")}
+                        {a.worktree?.snapshot ? " · " + tr("clean.archive_worktree_snapshot") : ""}
                         {a.sessions && a.sessions.length > 0
                           ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
                           : ""}

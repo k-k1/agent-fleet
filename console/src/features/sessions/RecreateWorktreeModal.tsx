@@ -22,13 +22,21 @@ import type { Session } from "../../types/session.ts";
 
 /** One way to put the folder back — gitx.RecreateCandidate on the wire. */
 export interface RecreateCandidate {
-  source: "local" | "remote" | "trash" | "merged" | "new";
+  source: "deleted" | "local" | "remote" | "trash" | "merged" | "new";
   branch: string;
   sha?: string;
   ref?: string;
   pr?: number;
   in_use?: string;
+  /** "deleted" only: the uncommitted work recorded at the delete, laid back over it. */
+  snapshot?: string;
+  /** "deleted" only: the branch has moved since the delete. */
+  moved?: boolean;
 }
+
+/** Mirrors gitx.RecreateCandidate.NeedsNewBranch: the branch is held elsewhere, has moved since
+ *  the delete, or there was none (a detached HEAD). */
+const needsNewBranchFor = (c?: RecreateCandidate) => !!c && (!!c.in_use || !!c.moved || !c.branch);
 
 interface RecreatePlan {
   name: string;
@@ -86,12 +94,21 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
   // somewhere else cannot come back through this path, and recreating elsewhere would not
   // bring its conversation back.
   const elsewhere = !!plan && plan.path !== dir;
-  const needsNewBranch = !!cand?.in_use;
+  const needsNewBranch = needsNewBranchFor(cand);
 
   useEffect(() => {
-    if (cand?.in_use) setNewBranch(cand.branch + "-2");
-    else setNewBranch("");
-  }, [cand]);
+    if (!needsNewBranchFor(cand)) setNewBranch("");
+    else setNewBranch(cand?.branch ? cand.branch + "-2" : name.slice(name.lastIndexOf("@") + 1));
+  }, [cand, name]);
+
+  const newBranchLabel = (c?: RecreateCandidate) =>
+    !c
+      ? ""
+      : c.in_use
+        ? tr("rwt.in_use", { branch: c.branch, folder: c.in_use })
+        : c.moved
+          ? tr("rwt.moved", { branch: c.branch })
+          : tr("rwt.detached");
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
@@ -165,6 +182,8 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
 
   const sourceText = (c: RecreateCandidate) => {
     switch (c.source) {
+      case "deleted":
+        return c.snapshot ? tr("rwt.src_deleted_snapshot") : tr("rwt.src_deleted");
       case "local":
         return tr("rwt.src_local");
       case "remote":
@@ -239,7 +258,7 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
               {plan.candidates.map((c, i) => (
                 <label key={c.source + ":" + c.branch} className="rwt-cand">
                   <input type="radio" name="rwt-cand" checked={pick === i} onChange={() => setPick(i)} disabled={busy} />
-                  <span className="rwt-cand-branch">{c.branch}</span>
+                  <span className="rwt-cand-branch">{c.branch || tr("rwt.detached_head")}</span>
                   <span className="sm-muted">
                     {sourceText(c)}
                     {c.sha ? " · " + shortSha(c.sha) : ""}
@@ -250,7 +269,7 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
             {cand?.source === "new" && <p className="sm-muted">{tr("rwt.new_hint")}</p>}
             {needsNewBranch && (
               <label className="ui-field">
-                <span className="ui-field-label">{tr("rwt.in_use", { branch: cand?.branch || "", folder: cand?.in_use || "" })}</span>
+                <span className="ui-field-label">{newBranchLabel(cand)}</span>
                 <input type="text" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} disabled={busy} />
                 <span className="ui-field-hint">{tr("rwt.in_use_hint")}</span>
               </label>

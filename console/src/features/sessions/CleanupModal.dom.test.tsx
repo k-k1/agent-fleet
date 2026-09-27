@@ -14,12 +14,15 @@ let writes: { url: string; method: string }[] = [];
 let archives: unknown[] = [];
 let purgeStatus = 200;
 let restoreStatus = 200;
+let restoreBody: unknown = null;
 
 const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
   const u = String(url);
   const method = String(opts?.method || "GET");
   if (method !== "GET") writes.push({ url: u, method });
-  const body = u.includes("sessions/cleanup")
+  const body = method === "POST" && u.includes("/restore") && restoreBody
+    ? restoreBody
+    : u.includes("sessions/cleanup")
     ? { candidates }
     : u.includes("cleanup/archives")
       ? { archives }
@@ -100,6 +103,7 @@ beforeEach(() => {
   archives = [];
   purgeStatus = 200;
   restoreStatus = 200;
+  restoreBody = null;
   fetchMock.mockClear();
 });
 afterEach(() => {
@@ -233,5 +237,28 @@ describe("CleanupModal cache section", () => {
     await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
     await click(document.querySelector<HTMLButtonElement>(".clean-arch-actions button"));
     expect(document.body.textContent).toContain("もう一度「復元」すると続きから終わります");
+  });
+
+  it("names a deleted worktree in the trash and says why it cannot come back as it was", async () => {
+    candidates = [];
+    archives = [
+      {
+        id: "20260901-000000-w",
+        at: "2026-09-01T00:00:00Z",
+        reason: "delete_worktree",
+        worktree: { name: "app@wip", branch: "wip", snapshot: "abc" },
+      },
+    ];
+    restoreStatus = 409;
+    restoreBody = { error: { code: "recreate_needs_new_branch", message: "x" } };
+    await render();
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
+    const row = document.querySelector(".clean-arch-what")?.textContent || "";
+    expect(row).toContain("作業コピー削除（app@wip）");
+    expect(row).toContain("未コミットの変更を含む");
+    await click(document.querySelector<HTMLButtonElement>(".clean-arch-actions button"));
+    // Not the "stopped part way, restore again" text: that would send the person round in a loop.
+    expect(document.body.textContent).toContain("「作業コピーを作り直す」で新しいブランチ名");
+    expect(document.body.textContent).not.toContain("もう一度「復元」すると続きから終わります");
   });
 });

@@ -44,6 +44,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.recreate_stale":
     "That way of recreating it is no longer available (the branch may have changed). The options were reloaded; choose again.",
   "err.recreate_failed": "Couldn't recreate the working copy.",
+  "err.worktree_archive_failed":
+    "Couldn't record the worktree in the trash, so it was not deleted (check the free disk space).",
+  "err.recreate_needs_new_branch":
+    "The branch has moved since the delete, or there was none, so it can't be put back as it was. Use \"Recreate working copy\" in the archive list and give it a new branch name.",
   "err.session_resumed": "The session was resumed while it was being moved to the trash, so it was not deleted.",
   "err.sessions_trash_failed":
     "Couldn't move this working copy's shell/ssm sessions to the trash, so the working copy was not deleted (check the free disk space).",
