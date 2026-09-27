@@ -287,6 +287,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /repo-jobs", handleListRepoJobs)
 	mux.HandleFunc("DELETE /repo-jobs/{id}", handleDeleteRepoJob)
 	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
+	// A deleted worktree put back at its original path, so its sessions resume (issue #1040).
+	mux.HandleFunc("GET /repos/{name}/recreate", handleRecreatePlan)
+	mux.HandleFunc("POST /repos/{name}/recreate", handleRecreateWorktree)
 	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock) // deletion lock (docs/log/45)
 	mux.HandleFunc("GET /repos/{name}/status", gitx.HandleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", gitx.HandleRepoBranches)

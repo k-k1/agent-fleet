@@ -82,6 +82,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		li.Context = ctx
 	}
 	if !alive {
+		// Same rule as every other kind: a stopped session whose folder is gone cannot resume
+		// there, and the Console offers to recreate a deleted worktree only when it says so.
+		li.Resumable = session.DirExists(m.Dir)
 		return li
 	}
 	sid := sidFor(m)

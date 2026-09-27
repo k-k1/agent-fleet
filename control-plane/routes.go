@@ -706,6 +706,8 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos", rest)
 	mux.HandleFunc("POST /api/repos/init", rest) // new working copy with no import source (mkdir + git init)
 	mux.HandleFunc("DELETE /api/repos/{name}", rest)
+	mux.HandleFunc("GET /api/repos/{name}/recreate", rest) // deleted worktree back at its path (#1040)
+	mux.HandleFunc("POST /api/repos/{name}/recreate", rest)
 	mux.HandleFunc("POST /api/repos/{name}/lock", rest) // deletion lock (docs/log/45)
 	mux.HandleFunc("GET /api/repos/{name}/status", rest)
 	mux.HandleFunc("GET /api/repos/{name}/branches", rest)

@@ -42,6 +42,13 @@ const (
 	// Deleting a working copy moves its shell / ssm sessions to the trash first (ADR 0101); if
 	// one cannot be (a full disk), the working copy is left as it is and this is the answer.
 	errCodeSessionsTrashFailed = "sessions_trash_failed"
+	// Recreating a deleted worktree at its original path (worktree_recreate.go): the path is
+	// taken, no parent working copy is left to add it to, the candidate the client chose no
+	// longer resolves, or git refused the add.
+	errCodeRecreatePathExists    = "recreate_path_exists"
+	errCodeRecreateParentMissing = "recreate_parent_missing"
+	errCodeRecreateStale         = "recreate_stale"
+	errCodeRecreateFailed        = "recreate_failed"
 )
 
 // Stable codes for the user-facing errors (docs/log/28 P3). The backend message is a

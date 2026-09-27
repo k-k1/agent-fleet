@@ -132,7 +132,7 @@ export const ProjectTree = memo(function ProjectTree() {
           <IconButton icon="broadcast" label={tr("share.list_title")} onClick={() => setShowShares(true)} />
           <span className="proj-head-sep" aria-hidden="true" />
           <IconButton icon="trash" label={tr("clean.open")} onClick={openCleanup} />
-          <IconButton icon="archive" label={tr("pj.open_archive")} onClick={openArchived} />
+          <IconButton icon="archive" label={tr("pj.open_archive")} onClick={() => openArchived()} />
         </>
       }
     >

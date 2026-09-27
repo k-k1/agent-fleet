@@ -2,6 +2,7 @@ package lcpp
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -45,14 +46,17 @@ func TestBuildLaunchAlwaysErrors(t *testing.T) {
 }
 
 // TestWireLiveNotAliveIsZeroValue pins WireLive's alive=false shape: no live handle to read
-// LastSay from, and Resumable defaults true (there is no "working dir gone" concept for a
-// managed-only kind the way claude/opencode's tui route has).
+// LastSay from, and resumable exactly when the working folder exists — Resume refuses a gone
+// folder (DirGoneErr), so saying otherwise would hide the Console's recreate-worktree offer.
 func TestWireLiveNotAliveIsZeroValue(t *testing.T) {
 	testHome(t)
 	a := New()
-	li := a.WireLive(session.Meta{Name: "unknown-session"}, false)
+	li := a.WireLive(session.Meta{Name: "unknown-session", Dir: t.TempDir()}, false)
 	if li.State != "" || !li.Resumable || li.LastSay != "" {
 		t.Fatalf("WireLive(alive=false) = %+v, want an empty/resumable zero value", li)
+	}
+	if li := a.WireLive(session.Meta{Name: "unknown-session", Dir: filepath.Join(t.TempDir(), "gone")}, false); li.Resumable {
+		t.Fatalf("WireLive(alive=false) with the folder gone = %+v, want not resumable", li)
 	}
 	a.ClearResume("anything") // must not panic
 }

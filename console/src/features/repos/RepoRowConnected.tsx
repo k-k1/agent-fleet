@@ -16,6 +16,7 @@ import { useReposStore } from "./store.ts";
 import type { Repo } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useSessionUI } from "../sessions/ui.ts";
 import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
 import { RepoRow } from "./RepoRow.tsx";
 import { useStartWork } from "./useStartWork.ts";
@@ -162,6 +163,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, onArchi
       // nests under this one are almost always the rest of the same job, and the dirty /
       // force question is asked per row there instead of as a second dialog.
       onDelete={() => setDelOpen(true)}
+      onOpenArchived={r.path ? () => useSessionUI.getState().openArchived(r.path) : undefined}
       // Quick launch (▼ / right-click): no prompt, straight to a session.
       onLaunch={async (kind, split) => {
         const hasModel = agentOf(kind).caps.model;

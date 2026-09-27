@@ -80,6 +80,9 @@ func (agentImpl) BuildLaunch(session.Meta, agents.LaunchOpts) (agents.LaunchPlan
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li := agents.LiveInfo{Resumable: true}
 	if !alive {
+		// Same rule as every other kind: a stopped session whose folder is gone cannot resume
+		// there, and the Console offers to recreate a deleted worktree only when it says so.
+		li.Resumable = session.DirExists(m.Dir)
 		return li
 	}
 	sid := slotSid(m)
