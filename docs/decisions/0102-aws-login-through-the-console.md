@@ -185,7 +185,7 @@ request. The waiting `af-aws-exec` runs read the marker and exit 3 at once, sayi
 was **cancelled** (not that the member declined it: an agent can call the route too). A waiter reacts only
 to a marker that names its own request, so a marker left from an earlier request does not end it.
 
-For 10 minutes after a cancel, a new `af-aws-exec` for that profile finds the marker, files no request and
+🔄 (the hold is one minute since the [revision](#revision--a-one-minute-cancel-hold-and-close-keeps-the-request-2026-09-27)) For 10 minutes after a cancel, a new `af-aws-exec` for that profile finds the marker, files no request and
 shows no toast. Without this, the next run would put the toast straight back. It exits 3 at once, saying
 that the login was cancelled in the Console, and prints the terminal command
 (`aws sso login --profile <name> --use-device-code --no-browser`): until #1028 there is no other way to log
@@ -279,3 +279,37 @@ terminal.
 - Not covered here, each a separate issue: a "Log in" action on a Settings > SSM profile row that opens the
   same modal, and warning before an SSO session ends. The acceptance run against a real IAM Identity Center
   also stays open until a member runs it.
+
+## Revision — a one-minute cancel hold, and "Close" keeps the request (2026-09-27)
+
+**Decided by the user in the first live run.** The run is recorded in [docs/log/120](../log/120-aws-console-login.md) §4.
+Decision 3's paragraph on the hold is left as written, with a 🔄 pointer here.
+
+### Why it changes
+
+The member pressed "Cancel the request" because the browser on that device could not sign in. The member then
+wanted to log in at once from another PC. For the next 10 minutes, nothing in the Console could start a login:
+
+- The request was gone, and every new run was held back.
+- The agent could not lift the hold either.
+
+The only way left was the terminal command. The hold exists only to stop an agent that reruns at once from
+putting the toast straight back, and a minute is enough for that.
+
+That cancel was not needed in the first place. A request belongs to the workspace, so "Close" leaves it in the
+Console of every other device, and the member can press "Log in" there. But the modal did not say so, and
+"Cancel the request" sat next to "Close" with nothing to tell them apart.
+
+### What changes
+
+1. **The cancel hold is one minute** (was 10 minutes). The rest of decision 3 stays:
+   - the cancel marker names its request;
+   - waiters react only to their own marker;
+   - a changed cache voids the marker;
+   - only the Agent writes and removes markers;
+   - the held run prints the terminal command.
+2. **The modal says what "Close" and "Cancel the request" do:** closing keeps the request, which stays in the
+   Console on the member's other devices; cancelling is for a login the member does not want.
+
+Follow-up #1028 (a "Log in" on the Settings > SSM row) would give the member an entry point that no hold can
+block. This revision does not wait for it.
