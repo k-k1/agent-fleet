@@ -26,6 +26,10 @@ vi.mock("./api.ts", async (orig) => ({
   getStudio: async () => studioNow.s,
   studioDraftLog: async () => ({ entries: [] }),
 }));
+// The conversation column's mirror has its own network and its own tests; here it is a stub.
+vi.mock("../mirror/MirrorView.tsx", () => ({
+  MirrorView: (p: { aboveComposer?: React.ReactNode }) => <div className="mirror-stub">{p.aboveComposer}</div>,
+}));
 vi.mock("../repos/useRepoRail.ts", () => ({
   useRepoRailContext: () => ({ launchKinds: ["claude"], connsSettling: false }),
 }));
@@ -38,6 +42,8 @@ import { ImagegenView } from "./ImagegenView.tsx";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import type { Session } from "../../types/session.ts";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -101,6 +107,7 @@ beforeEach(() => {
   jobsNow.jobs = [];
   historyNow.items = [];
   pressSeq = 0;
+  useSessionsStore.setState({ loaded: true, sessions: [] });
   studioNow.s = { ...baseStudio, updated_at: "1", recent_log: [] } as unknown as StudioWire;
 });
 afterEach(async () => {
@@ -190,6 +197,26 @@ describe("jobs nobody pressed in this pane (review 4)", () => {
   });
 });
 
+describe("the first tab (review 4)", () => {
+  it("opens on the conversation while the agent's first prompt is still being delivered", async () => {
+    narrowPane(true);
+    useSessionsStore.setState({ loaded: true, sessions: [{ name: "sess-1", kind: "claude", alive: true, initialPromptState: "pending" } as Session] });
+    await mount();
+    expect(tab(0).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("opens on the settings otherwise, and never takes the tab back from the member", async () => {
+    narrowPane(true);
+    useSessionsStore.setState({ loaded: true, sessions: [{ name: "sess-1", kind: "claude", alive: true, initialPromptState: "delivered" } as Session] });
+    await mount();
+    expect(tab(1).getAttribute("aria-selected")).toBe("true");
+    await act(async () => tab(2).click());
+    useSessionsStore.setState({ sessions: [{ name: "sess-1", kind: "claude", alive: true, initialPromptState: "pending" } as Session] });
+    await tick(50);
+    expect(tab(2).getAttribute("aria-selected")).toBe("true");
+  });
+});
+
 describe("the ready notice (review 1)", () => {
   it("is withdrawn when the pane switches to another studio, so View never drives a dead pane", async () => {
     narrowPane(true);
@@ -265,6 +292,8 @@ describe("the lightbox from the history", () => {
     const verbs = [...document.querySelectorAll(".mirror-lightbox-actions button")].map((b) => b.textContent || "");
     expect(verbs.length).toBe(3);
     expect(verbs.some((t) => /seed/.test(t))).toBe(true);
+    // It runs the CURRENT draft at that seed, not the old picture's settings: the label says so.
+    expect(verbs.some((t) => /今の下書き|current draft/.test(t))).toBe(true);
   });
 
   it("hides the seeded trial only when the picture's seed cannot be read", async () => {

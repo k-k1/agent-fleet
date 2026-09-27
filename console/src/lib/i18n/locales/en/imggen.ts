@@ -309,7 +309,7 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.done_toast": "{n} pictures are ready",
   "imggen.done_view": "View",
   "imggen.lb_reference": "Use as reference",
-  "imggen.lb_again": "Trial again with this seed",
+  "imggen.lb_again": "Trial the current draft at this seed",
   "imggen.lb_restore": "Back to these settings",
   "imggen.start_title": "Start an image studio",
   "imggen.start_go": "Start",

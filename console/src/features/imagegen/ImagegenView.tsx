@@ -717,6 +717,16 @@ function StudioPane({
 
   const session = studio.studio?.session || "";
   const sessionState = useSessionsStore((s) => (session ? s.sessions.find((x) => x.name === session)?.state : undefined));
+  // Right after a start (the repo row, "attach"), what happens next is the agent's first turn,
+  // so a narrow pane opens on the conversation while that first prompt is still being
+  // delivered. Only until the member picks a tab themselves.
+  const firstPromptPending = useSessionsStore((s) =>
+    session ? s.sessions.find((x) => x.name === session)?.initialPromptState === "pending" : false,
+  );
+  const tabPicked = useRef(false);
+  useEffect(() => {
+    if (firstPromptPending && !tabPicked.current) setTab("chat");
+  }, [firstPromptPending]);
   const chatMark = useChatMark(sessionState, sees("chat"));
 
   // "N pictures are ready", only when the member is not already looking at the results: a
@@ -867,7 +877,10 @@ function StudioPane({
                 role="tab"
                 aria-selected={tab === k}
                 className={"igen-tab" + (tab === k ? " active" : "")}
-                onClick={() => setTab(k)}
+                onClick={() => {
+                  tabPicked.current = true;
+                  setTab(k);
+                }}
               >
                 {tr(`imggen.tab_${k}` as "imggen.tab_chat")}
                 {k === "out" && newResults > 0 && (
