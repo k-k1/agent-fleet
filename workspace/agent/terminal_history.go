@@ -12,8 +12,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/oscnotify"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 const terminalHistoryMaxBytes int64 = 4 << 20
@@ -99,10 +101,15 @@ func runRecordTerminal(args []string) {
 	if len(args) != 1 || !session.ValidName(args[0]) {
 		return
 	}
-	_ = recordTerminal(args[0], os.Stdin)
+	notifier := &sessionx.TerminalNotifier{Name: args[0]}
+	_ = recordTerminal(args[0], os.Stdin, notifier.Notify)
 }
 
-func recordTerminal(name string, src io.Reader) error {
+// recordTerminal appends src to the session's history file and, when notify is not
+// nil, hands it every OSC desktop notification found in the stream. This is the one
+// place that sees the CLI's own bytes: the attach WebSocket carries tmux's redraw,
+// in which tmux has already swallowed those sequences.
+func recordTerminal(name string, src io.Reader, notify func(oscnotify.Notification)) error {
 	dir := terminalHistoryDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -120,12 +127,16 @@ func recordTerminal(name string, src io.Reader) error {
 		}
 	}()
 
+	var osc oscnotify.Scanner
 	buf := make([]byte, 32*1024)
 	for {
 		n, rerr := src.Read(buf)
 		if n > 0 {
 			if _, err := f.Write(buf[:n]); err != nil {
 				return err
+			}
+			if notify != nil {
+				osc.Feed(buf[:n], notify)
 			}
 			if st, err := f.Stat(); err == nil && st.Size() > terminalHistoryMaxBytes+(256<<10) {
 				var cerr error

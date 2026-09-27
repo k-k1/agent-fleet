@@ -227,6 +227,13 @@ notified with **"A reply is ready"**; when a question arrives, with **"A questio
 the session name is included in the body. This suits use cases like waiting for a reply on your
 phone during a commute (shell / ssm don't notify).
 
+When a program running in a session **asks its terminal for a notification** (the OSC 9 / 99 /
+777 escape sequences — you can emit one yourself, e.g. `printf '\e]9;Build done\a'`), it
+arrives in the notification center and as a browser notification as **"Terminal notification"**.
+That lets a shell session tell you when a long build finishes. claude / codex / opencode already
+report the same moments through their own channel, so their terminal notifications are not used,
+to avoid duplicates.
+
 **A red dot on a session marks a notification you have not read yet.** It sits on the session's
 row in the left pane (on the corner of its icon) and on its tab, and rolls up onto a collapsed
 project row or section, so a folded parent still shows that something inside is waiting. The dot
