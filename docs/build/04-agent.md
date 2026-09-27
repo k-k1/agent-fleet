@@ -178,6 +178,8 @@ What each kind can emit, read from its binary (2026-09-27; no kind was captured 
 | copilot, cursor, kiro | none found | — |
 | shell | whatever the user runs | The main beneficiary. |
 
+Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OSC).
+
 ## 4.5 Chat and assistants (a headless CLI)
 
 - **Chat is not a tmux session.** It is a parallel subsystem driving the CLI in headless
