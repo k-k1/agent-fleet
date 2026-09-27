@@ -39,9 +39,11 @@
 | kiro | 2.16.0 | 400 秒以内には切られない | 残る | 90 秒 |
 | muse | 1.3.0 | 400 秒以内には切られない | 残る | 90 秒 |
 | lcpp | （自前） | `harness/tools_bash.go` の既定 300 秒。時間切れでも途中までの出力に注記を付けて返す（`TestBashTimeoutKeepsPartialOutput`） | 残る | 90 秒 |
-| agy | — | この機械では起動しない（`--version` でも `CRNGT failed`。RDRAND の無いホスト） | 未測定 | 5 秒（未測定） |
+| agy | 1.2.11 | 400 秒以内には切られない（`run_command` は 405 秒で完了し、両方の行を返した） | 残る | 90 秒 |
 
-- 測れた kind は、どれもタイムアウトが 90 秒より長いか、途中までの出力を残す。よって、すべて 90 秒にした。
+- どの kind も、タイムアウトが 90 秒より長いか、途中までの出力を残す。よって、すべて 90 秒にした。
+- agy は、この機械（RDRAND が壊れたホスト）では素のままだと `CRNGT failed` で止まる。製品と同じマスク
+  （`agents/agy/fips.go` の `OPENSSL_ia32cap=~0x4000000000000000`）を付けて測った。
 - copilot は、作業フォルダの外にあるスクリプトを `--allow-all-paths` 無しでは拒んだ（`Permission denied and
   could not request permission from user`）。タイムアウトとは関係が無い。
 - codex と copilot と cursor は、10〜30 秒でエージェントに制御を返す。このとき af-aws-exec はまだ待っていて、
@@ -76,9 +78,8 @@
   受け入れ実行（#1026 の Acceptance）で確かめる。いまの許可ホストは次の 2 つ。
   - `device.sso.<sso_region>.amazonaws.com`（中国は `.amazonaws.com.cn`）
   - 開始 URL のホスト
-- **agy のシェルコマンドのタイムアウト**（決定 5）: 測定に使った機械では agy が起動しない（§1.1.1）。agy と、
-  kind の分からない呼び出し元、shell/ssm のセッションは 5 秒待つ。どのツールのタイムアウトにも切られない
-  短さで、依頼を出して表示し、exit 3 で終える。
+- **シェルコマンドのタイムアウトが無い呼び出し元**（決定 5）: kind の分からない呼び出し元と、shell/ssm の
+  セッションは 5 秒待つ。どのツールのタイムアウトにも切られない短さで、依頼を出して表示し、exit 3 で終える。
 
 ## 3. 偽の aws で確かめたこと
 
