@@ -293,18 +293,18 @@ func TestCompleteTakesFlux1PartsInWithOnePress(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &check); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("check = %d %s (%v)", rec.Code, rec.Body.String(), err)
 	}
-	want := map[string]string{
-		"--clip_l": "comfyanonymous/flux_text_encoders",
-		"--t5xxl":  "comfyanonymous/flux_text_encoders",
-		"--vae":    "Kijai/flux-fp8",
+	want := map[string]engineFamilyPart{}
+	for _, p := range engineFamilyPartsFor("flux1") {
+		want[p.Flag] = p
 	}
-	if len(check.Files) != len(want) {
-		t.Fatalf("check = %+v, want the three parts", check.Files)
+	if len(want) != 3 || len(check.Files) != len(want) {
+		t.Fatalf("check = %+v, want the three parts of %+v", check.Files, want)
 	}
 	for _, f := range check.Files {
-		repo, ok := want[f.Flag]
-		if !ok || f.Action != engineCompleteActDownload || f.Bytes <= 0 || !strings.Contains(f.Source, repo) {
-			t.Errorf("%s = %+v, want a priced download from %s", f.Flag, f, repo)
+		p, ok := want[f.Flag]
+		if !ok || f.Action != engineCompleteActDownload || f.Bytes != 1_000_000 || f.Key != p.S3Key ||
+			!strings.Contains(f.Source, p.Repo+"/"+p.File) {
+			t.Errorf("%s = %+v, want a priced download of %s/%s to %s", f.Flag, f, p.Repo, p.File, p.S3Key)
 		}
 	}
 	if len(h.ecs.run) != 0 {
@@ -319,6 +319,16 @@ func TestCompleteTakesFlux1PartsInWithOnePress(t *testing.T) {
 	if len(h.ecs.run) != 3 {
 		t.Errorf("the press started %d download(s), want the three parts", len(h.ecs.run))
 	}
+	jobs := engineJobsOf(t, h.st, "image")
+	got := map[string]bool{}
+	for _, j := range jobs {
+		got[j.S3Key] = true
+	}
+	for _, p := range want {
+		if !got[p.S3Key] {
+			t.Errorf("no ingest job writes %s: %+v", p.S3Key, jobs)
+		}
+	}
 }
 
 // The second flux1 row on a deployment the first one completed: the parts are at their canonical
@@ -332,7 +342,9 @@ func TestCompleteSecondFlux1RowReusesTheStagedParts(t *testing.T) {
 	h.row(t, store.EngineModel{ID: "flux1-schnell-fp8", Kind: "checkpoint", BaseModel: "flux1",
 		Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1-schnell-fp8.safetensors"}}})
 
-	// No HTTP stub: a press that reached Hugging Face for any part would fail.
+	// Every upstream lookup 404s, so the answer below comes from the bucket alone: a regression
+	// that fetched a part would surface as that part missing, never as a real network call.
+	engineHFRepoStub(t, nil)
 	rec := h.call(t, h.a.completeModel, "POST", "/api/admin/engines/image/models/flux1-schnell-fp8/complete",
 		`{}`, map[string]string{"id": "flux1-schnell-fp8"})
 	var answer engineCompleteAnswer

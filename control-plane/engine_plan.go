@@ -236,7 +236,7 @@ func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, 
 	}
 
 	// What the family reads and this plan cannot supply. The roles are named and no path is
-	// guessed: flux1, sd35, zimage and flux2-klein have no measured part list, and the honest
+	// guessed: sd35, zimage and flux2-klein have no measured part list, and the honest
 	// answer is which slots the person will be filling by hand.
 	for _, want := range engineComfyRequiredFlags[base] {
 		if enginePlanHasFlag(plan.Files, want) {

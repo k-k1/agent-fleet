@@ -145,6 +145,16 @@ var engineFamilyParts = map[string][]engineFamilyPart{
 	// because it also hosts the non-commercial FLUX.1-dev weights, so that is what the ingest
 	// records as accepted; the VAE itself is the apache-2.0 schnell release.
 	//
+	// The two encoders are the same bytes SD3.5 reads (sha256 identical in
+	// stabilityai/stable-diffusion-3.5-large and Comfy-Org/stable-diffusion-3.5-fp8, measured the
+	// same day). An sd35 entry should declare them from this repository and at these keys: the
+	// plan's reuse compares the artifact identity, so the same bytes from stabilityai would be a
+	// second identity at a key this one already holds, and the plan would skip the part.
+	//
+	// With an entry, completing a row no longer offers what sits in the role's directory: a
+	// hand-staged `ae.safetensors` or fp16 T5 is passed over and these files are downloaded, on
+	// purpose, because the directory is where the Qwen encoders of other families live too.
+	//
 	// ⚠️ Its key is NOT `image/vae/ae.safetensors`, the name hand-staged FLUX VAEs usually carry:
 	// the planner declares whatever already sits at a part's key without comparing the bytes, so a
 	// key named after this file keeps an unrelated `ae.safetensors` from being taken for it.
