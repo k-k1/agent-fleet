@@ -345,11 +345,12 @@ What changed in each version is in the notes on every release, indexed in
   Fleet, Apache-2.0 §4(d) requires you to carry the notices in `NOTICE` forward —
   which includes that URL — so recipients can find the original.
 - The distributed images and rootfs are a **lean build**: the agent CLIs
-  (Claude Code / Codex / GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode) are
-  not bundled. On first start each user fetches verified, pinned versions from
-  the respective upstream and signs in with their own account. Muse Code is not bundled
-  either: it is fetched into a user's home only when that user asks for it. This
-  distribution intentionally does not redistribute the proprietary CLIs.
+  (Claude Code / Codex / GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode /
+  Muse Code) are not bundled. Each user fetches verified, pinned versions from the
+  respective upstream and signs in with their own account — most on a workspace's
+  first start, while Kiro (~855MB) is fetched the first time a Kiro session starts and
+  Muse Code when the user installs it from its connection card. This distribution
+  intentionally does not redistribute the proprietary CLIs.
 - For attribution of the bundled OSS, see the `NOTICE` file inside each tar.
 
 ## Disclaimer — autonomous agent execution
