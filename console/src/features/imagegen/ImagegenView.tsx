@@ -52,7 +52,7 @@ import {
   type PressMode,
   type StudioSummary,
 } from "./api.ts";
-import { anyLive, buildRequest, engineState, foldGroups } from "./jobs.ts";
+import { anyLive, buildRequest, engineState, foldGroups, studioJobs } from "./jobs.ts";
 import { draftFromProperties, draftKey, emptyDraft, loadDraft, remappedOp, saveDraft, type ImagegenDraft } from "./draft.ts";
 import { noteImagegenStatus } from "./available.ts";
 import { GenerateForm, ModelSelect } from "./parts/GenerateForm.tsx";
@@ -288,8 +288,10 @@ export function ImagegenView({
   }, [modelId]);
 
   const rows = useMemo(() => foldGroups(jobs, groups), [jobs, groups]);
-  const results = useMemo(() => resultsOf(jobs.filter((j) => !j.trial)), [jobs]);
-  const latestTrial = useMemo(() => resultsOf(jobs.filter((j) => j.trial))[0] ?? null, [jobs]);
+  // Results and the trial slot are this studio's presses only; the queue above stays shared.
+  const ownJobs = useMemo(() => studioJobs(jobs, studioId ?? ""), [jobs, studioId]);
+  const results = useMemo(() => resultsOf(ownJobs.filter((j) => !j.trial)), [ownJobs]);
+  const latestTrial = useMemo(() => resultsOf(ownJobs.filter((j) => j.trial))[0] ?? null, [ownJobs]);
 
   const submit = useCallback(
     async (trial: boolean) => {
@@ -333,7 +335,7 @@ export function ImagegenView({
 
   // The finished pictures of this studio arrive through the job list; re-read the history page
   // when the count of finished jobs moves, never on a timer of its own.
-  const doneCount = useMemo(() => jobs.filter((j) => j.state === "done").length, [jobs]);
+  const doneCount = useMemo(() => ownJobs.filter((j) => j.state === "done").length, [ownJobs]);
   useEffect(() => {
     if (studioId && doneCount) void readHistory(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -712,6 +714,7 @@ export function ImagegenView({
                 onGroupOp={(id, op) => void groupOp(id, op)}
                 onQueueOp={(op) => void queueOp(op)}
                 onCancelJob={(id) => void cancelJob(id)}
+                studioId={studioId ?? undefined}
               />
               <ResultCards
                 items={results}

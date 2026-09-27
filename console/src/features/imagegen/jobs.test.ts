@@ -15,6 +15,8 @@ import {
   etaMs,
   foldGroups,
   seedsFor,
+  splitRows,
+  studioJobs,
 } from "./jobs.ts";
 import { emptyDraft } from "./draft.ts";
 import type { ImagegenStatus, Job, JobGroup } from "./wire.ts";
@@ -276,5 +278,27 @@ describe("走っているものがあるか（ポーリングの唯一の条件�
     expect(anyLive([job({ id: "1", state: "done" }), job({ id: "2", state: "cancelled" })])).toBe(false);
     expect(anyLive([])).toBe(false);
     expect(anyLive(undefined)).toBe(false);
+  });
+});
+
+describe("スタジオ別の絞り込み", () => {
+  const jobs: Job[] = [
+    job({ id: "a1", group: "ga", studio: "A", state: "done" }),
+    job({ id: "b1", group: "gb", studio: "B", state: "running" }),
+    job({ id: "at", studio: "A", trial: true, state: "done" }),
+    job({ id: "s1", state: "done" }), // a session's generate_image: no studio
+  ];
+
+  it("自スタジオのジョブだけを返す（スタジオ無しのジョブはどこにも属さない）", () => {
+    expect(studioJobs(jobs, "A").map((j) => j.id)).toEqual(["a1", "at"]);
+    expect(studioJobs(jobs, "B").map((j) => j.id)).toEqual(["b1"]);
+    expect(studioJobs(jobs, "")).toEqual([]);
+    expect(studioJobs(undefined, "A")).toEqual([]);
+  });
+
+  it("行列は自分の行と他の行に分かれ、順序は保たれる", () => {
+    const { own, other } = splitRows(foldGroups(jobs, []), "A");
+    expect(own.map((r) => r.key)).toEqual(["ga", "job:at"]);
+    expect(other.map((r) => r.key)).toEqual(["gb", "job:s1"]);
   });
 });

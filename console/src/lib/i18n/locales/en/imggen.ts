@@ -299,4 +299,8 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.agent_needs_model": "Choose a model in the model field above first. Prompts are written differently for each model, so the conversation with the agent starts once one is chosen.",
   "imggen.draft_card": "Draft updated",
   "imggen.draft_card_unmatched": "Could not tell which edit this was (see the edit history in the middle column)",
+  "imggen.queue_others": "{n} jobs from other studios and sessions",
+  "imggen.queue_others_live": "{n} jobs from other studios and sessions ({live} in progress)",
+  "imggen.queue_other_studio": "Other studio",
+  "imggen.queue_no_studio": "No studio",
 };

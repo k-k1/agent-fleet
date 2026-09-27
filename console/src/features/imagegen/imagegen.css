@@ -951,3 +951,20 @@
   color: var(--warn);
   border-top: 1px solid var(--border);
 }
+
+/* Queue rows pressed in another studio (or outside any): folded, and dimmed when opened, so
+   they read as the shared queue's context rather than this studio's own batches. */
+.igen-queue-others > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.igen-qrow.other {
+  opacity: 0.6;
+}
+
+.igen-badge.other {
+  color: var(--muted);
+}
