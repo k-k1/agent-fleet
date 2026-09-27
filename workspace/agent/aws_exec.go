@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"golang.org/x/sys/unix"
 )
 
@@ -135,6 +138,12 @@ func runAWSExec(args []string) {
 		awsExecFail(1, err.Error())
 	}
 	o.Interactive = isTerminal(os.Stdin) && isTerminal(os.Stderr)
+	// Inside a workspace the Agent can show the login in the Console (ADR 0102).
+	if os.Getenv("AF_CP_BASE_URL") != "" {
+		name := os.Getenv("AF_SESSION_NAME")
+		o.ConsoleLogin, o.ConsoleWait = true, consoleLoginWait(name)
+		o.Waiter = awsx.LoginWaiter{Session: name, Command: filepath.Base(o.Argv[0])}
+	}
 	prog, argv, env, err := awsx.PlanExec(awsBin, os.Environ(), o)
 	if err != nil {
 		if errors.Is(err, awsx.ErrLoginRequired) {
@@ -145,6 +154,35 @@ func runAWSExec(args []string) {
 	if err := syscall.Exec(prog, argv, env); err != nil {
 		awsExecFail(1, "exec "+prog+": "+err.Error())
 	}
+}
+
+// consoleLoginWaits is how long af-aws-exec waits for a Console login, per agent kind,
+// from measurements of that kind's shell tool (ADR 0102 decision 5): the wait has to end
+// before the tool gives up on the command, unless the tool keeps the output of a command
+// it stops waiting for. A kind not listed has not been measured.
+var consoleLoginWaits = map[string]time.Duration{
+	// Measured 2026-09-27: the Bash tool's default timeout is 120 s, and a command that
+	// outlives its timeout moves to the background with its output kept, so nothing is lost.
+	session.KindClaude: 90 * time.Second,
+}
+
+// consoleLoginWait picks the wait for the session that runs this command. An unknown or
+// unmeasured caller gets the shortest measured wait (ADR 0102 decision 5).
+func consoleLoginWait(sessionName string) time.Duration {
+	if session.ValidName(sessionName) {
+		if m, ok := session.ReadMeta(sessionName); ok {
+			if d, ok := consoleLoginWaits[m.Kind]; ok {
+				return d
+			}
+		}
+	}
+	shortest := time.Duration(0)
+	for _, d := range consoleLoginWaits {
+		if shortest == 0 || d < shortest {
+			shortest = d
+		}
+	}
+	return shortest
 }
 
 // parseAWSExecArgs reads the flags up to "--"; everything after it is the command.
