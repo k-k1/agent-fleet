@@ -267,6 +267,7 @@ export function AttachAgentModal({
                 fleetProviders={providers}
                 provider={provider}
                 models={models}
+                modelLabel={tr("imggen.start_image_model")}
               />
             ) : (
               <p className="igen-warn">{tr("imggen.engine_unavailable")}</p>
@@ -343,7 +344,7 @@ export function AttachAgentModal({
             </div>
             {kind && a.caps.model && (
               <div className="ui-field">
-                <span className="ui-field-label">{tr("launch.field.model")}</span>
+                <span className="ui-field-label">{tr("imggen.start_agent_model")}</span>
                 <ModelPicker
                   kind={kind}
                   model={model}

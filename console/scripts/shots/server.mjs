@@ -62,7 +62,11 @@ const exact = {
     super_admin: false,
   }),
   "/api/workspace": () => ({ state: "running", bootPhase: "" }),
-  "/api/sessions": () => ({ sessions: FLEET_LANES ? fx.sessionsBig(LOCALE, FLEET_LANES) : fx.sessions(LOCALE) }),
+  // A POST is "start a session" (the studio's attach): answer a name so the flow completes.
+  "/api/sessions": (q, method) =>
+    method === "POST"
+      ? { name: "s" + crypto.randomUUID().slice(0, 6) }
+      : { sessions: FLEET_LANES ? fx.sessionsBig(LOCALE, FLEET_LANES) : fx.sessions(LOCALE) },
   "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
   "/api/fleet-graph": () => (FLEET_LANES ? fx.fleetGraphBig(LOCALE, FLEET_LANES) : fx.fleetGraph(LOCALE)),
   "/api/cleanup/archives": () => ({ archives: fx.cleanupArchives(LOCALE) }),
@@ -184,8 +188,8 @@ const exact = {
   "/api/imagegen/jobs": () => fx.imagegenJobs(LOCALE),
   // The image studio (ADR 0100). Without these the studio pane cannot open its studio and the
   // guide's pictures show an error instead of the three columns.
-  "/api/imagegen/studios": (q, method) =>
-    method === "POST" ? fx.imagegenNewStudio(crypto.randomUUID()) : fx.imagegenStudios(LOCALE),
+  "/api/imagegen/studios": (q, method, body) =>
+    method === "POST" ? fx.imagegenNewStudio(crypto.randomUUID(), body) : fx.imagegenStudios(LOCALE),
   "/api/imagegen/history": () => fx.imagegenHistory(),
   "/api/imagegen/knowledge": (q, method) =>
     method === "POST" ? {} : fx.imagegenKnowledge(LOCALE, q.get("scope") || "family", q.get("key") || ""),
@@ -269,10 +273,10 @@ const re = [
   [/^\/api\/imagegen\/studios\/[^/]+\/(rewind|bind)$/, () => fx.imagegenStudio(LOCALE, studioReads)],
   [
     /^\/api\/imagegen\/studios\/[^/]+$/,
-    (m, q, method) => {
+    (m, q, method, body) => {
       if (method === "DELETE") return {};
       const made = fx.imagegenCreatedStudio(m[0].split("/").pop());
-      if (made) return method === "PUT" ? { studio: made } : made;
+      if (made) return method === "PUT" ? { studio: fx.imagegenPatchCreated(made, body) } : made;
       if (method === "PUT") return { studio: fx.imagegenStudio(LOCALE, studioReads) };
       // Each read counts: from the second one on, the agent has made one more edit, so the
       // pane's poll outlines the field it moved (decision 6).
@@ -357,11 +361,11 @@ function crc32(buf) {
 const seenUnknown = new Set();
 let studioReads = 0;
 
-function apiBody(pathname, query, method = "GET") {
-  if (exact[pathname]) return exact[pathname](query, method);
+function apiBody(pathname, query, method = "GET", body = null) {
+  if (exact[pathname]) return exact[pathname](query, method, body);
   for (const [rx, fn] of re) {
     const m = rx.exec(pathname);
-    if (m) return fn(m, query, method);
+    if (m) return fn(m, query, method, body);
   }
   if (!seenUnknown.has(pathname)) {
     seenUnknown.add(pathname);
@@ -391,9 +395,19 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (p.startsWith("/api/")) {
-    const body = JSON.stringify(apiBody(p, url.searchParams, req.method));
-    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(body);
+    // The request body is read for the handlers that keep what was sent (a new studio's title
+    // and draft), so a flow that creates something shows it back instead of a blank.
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      let sent = null;
+      try {
+        sent = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : null;
+      } catch {}
+      const body = JSON.stringify(apiBody(p, url.searchParams, req.method, sent));
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(body);
+    });
     return;
   }
 
