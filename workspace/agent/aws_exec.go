@@ -171,9 +171,11 @@ var consoleLoginWaits = map[string]time.Duration{
 	// Both return the output so far after 30 s and keep the command running in the background.
 	session.KindCopilot: 90 * time.Second,
 	session.KindCursor:  90 * time.Second,
+	// Managed (muse serve): moves the command to the background with the output so far, and
+	// delivers the rest when it ends.
+	session.KindMuse: 90 * time.Second,
 	// No timeout within 400 s (agy measured with the RDRAND mask of agents/agy/fips.go).
 	session.KindKiro: 90 * time.Second,
-	session.KindMuse: 90 * time.Second,
 	session.KindAgy:  90 * time.Second,
 	// Our own bash tool (harness/tools_bash.go): 300 s default, output kept on timeout.
 	session.KindLcpp: 90 * time.Second,

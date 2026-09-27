@@ -36,12 +36,18 @@
 | opencode | 1.18.32 | 120 秒で SIGTERM（`exceeding timeout 120000 ms`） | 残る（途中までの出力に注記が付く） | 90 秒 |
 | copilot | 1.0.88 | 30 秒で途中までの出力を返し、コマンドはバックグラウンドで走り続ける（終わると通知） | 残る | 90 秒 |
 | cursor | 2026.09.26 | `timeout: 30000`・`TIMEOUT_BEHAVIOR_BACKGROUND`（`hardTimeout` は 24 時間） | 残る | 90 秒 |
-| kiro | 2.16.0 | 400 秒以内には切られない | 残る | 90 秒 |
-| muse | 1.3.0 | 400 秒以内には切られない | 残る | 90 秒 |
+| kiro | 2.16.0 | 400 秒以内には切られない | 切られないので問わない | 90 秒 |
+| muse | 1.3.0 | Managed（`muse serve`）: `execution_state: background_running` で途中までの出力を返し、コマンドは走り続けて最後の出力も届いた。`muse exec` では 400 秒以内に切られない | 残る | 90 秒 |
 | lcpp | （自前） | `harness/tools_bash.go` の既定 300 秒。時間切れでも途中までの出力に注記を付けて返す（`TestBashTimeoutKeepsPartialOutput`） | 残る | 90 秒 |
-| agy | 1.2.11 | 400 秒以内には切られない（`run_command` は 405 秒で完了し、両方の行を返した） | 残る | 90 秒 |
+| agy | 1.2.11 | 400 秒以内には切られない（`run_command` は 405 秒で完了し、両方の行を返した） | 切られないので問わない | 90 秒 |
 
 - どの kind も、タイムアウトが 90 秒より長いか、途中までの出力を残す。よって、すべて 90 秒にした。
+- kiro と agy は 400 秒のプローブが最後まで走ったので、タイムアウトで切られたときに出力が残るかは
+  測れていない。決定 5 はタイムアウトが 90 秒より長い kind に出力の扱いを問わないので、値は変わらない。
+- 測ったのは各 CLI の非対話モード（`codex exec`・`opencode run`・`copilot -p`・`cursor-agent -p`・
+  `kiro-cli chat --no-interactive`・`agy -p`）で、製品が起動する経路（Managed の app-server や `serve`、
+  Terminal (CLI) の TUI）そのものではない。シェルツールは同じ実装なので既定値も同じと見ているが、経路ごとには
+  確かめていない。muse だけは、レビューの指摘で製品の経路（Managed のセッションを立ててプローブを実行）でも測った。
 - agy は、この機械（RDRAND が壊れたホスト）では素のままだと `CRNGT failed` で止まる。製品と同じマスク
   （`agents/agy/fips.go` の `OPENSSL_ia32cap=~0x4000000000000000`）を付けて測った。
 - copilot は、作業フォルダの外にあるスクリプトを `--allow-all-paths` 無しでは拒んだ（`Permission denied and
