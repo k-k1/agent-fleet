@@ -11,7 +11,10 @@
 // The line moved once, on real data (docs/log/80 §80.18 / ADR 0061 decision 14). One saved
 // query returned 41 rows, so the rail folds at RAIL_VISIBLE and offers a one-line filter
 // over the rows it already has. Neither touches the provider, is saved, or reorders —
-// that is the whole distinction between "the rail's job" and "the query's job".
+// that is the whole distinction between "the rail's job" and "the query's job". The one
+// exception is a press, not a keystroke (#1095): when the filter finds nothing, or a query's
+// page left matches out, "search the tracker" asks the provider once and shows what it found
+// under the rail's rows, uncached.
 //
 // No buttons on the row (§80.20). Forty-one "start" buttons down the right edge make the rail
 // look like a surface where pressing does something, which is alarming for a list meant to be
@@ -57,9 +60,13 @@ import {
   stateTone,
   titleForItem,
   uniformMeta,
+  readWorkItemSearch,
   type WorkItem,
+  type WorkItemSearchResult,
   type WorkItemSessionRef,
 } from "./read.ts";
+import { workItemSearch } from "./api.ts";
+import { errText } from "../../core/api/client.ts";
 import "./workitems.css";
 
 interface RowProps {
@@ -184,6 +191,11 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const [detailOn, setDetailOn] = useState<WorkItem | null>(null);
   const [needle, setNeedle] = useState("");
   const [expanded, setExpanded] = useState(false);
+  // The tracker search answers the needle it was pressed for; typing on makes it stale, so it
+  // is dropped rather than shown under a filter it no longer matches.
+  const [remote, setRemote] = useState<{ needle: string; result: WorkItemSearchResult } | null>(null);
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remoteErr, setRemoteErr] = useState("");
 
   // Switching tenant must not leave the previous tenant's rows behind (as in the other stores).
   useEffect(() => {
@@ -206,6 +218,29 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const crowded = items.length > RAIL_VISIBLE;
   const shown = expanded || !crowded ? matched : matched.slice(0, RAIL_VISIBLE);
   const hidden = matched.length - shown.length;
+
+  const q = needle.trim();
+  const truncated = !!payload?.queries.some((x) => x.enabled && x.matchTotal !== 0);
+  const canSearch = !!q && (matched.length === 0 || truncated);
+  const remoteRows = useMemo(() => {
+    if (!remote || remote.needle !== q) return null;
+    const onRail = new Set(items.map((i) => `${i.provider}:${i.key}`));
+    return remote.result.items.filter((i) => !onRail.has(`${i.provider}:${i.key}`));
+  }, [remote, q, items]);
+  const searchTracker = () => {
+    if (!canSearch || remoteBusy || !payload?.running) return;
+    const asked = q;
+    setRemoteBusy(true);
+    setRemoteErr("");
+    void workItemSearch(asked)
+      .then((res) => {
+        const got = readWorkItemSearch(res);
+        if (got.result) setRemote({ needle: asked, result: got.result });
+        else setRemoteErr(errText(got.error) || tr("wi.search_failed"));
+      })
+      .finally(() => setRemoteBusy(false));
+  };
+  const labelOf = (id: string) => payload?.queries.find((x) => x.id === id)?.label || id;
 
   const openSession = (name: string) => {
     const s = sessions.find((x) => x.name === name);
@@ -297,6 +332,23 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             <span>{tr("wi.query_failed", { label: q.label })}</span>
           </div>
         ))}
+      {/* A query that matched more than one page carries says so (#1095). Without this the header
+          count reads as "everything" and a ticket past the cut is simply not there, which the
+          filter box then confirms. */}
+      {payload?.queries
+        .filter((q) => q.enabled && !q.lastError && q.matchTotal !== 0)
+        .map((q) => {
+          const shown = payload.items.filter((i) => i.queryId === q.id).length;
+          const msg =
+            q.matchTotal > 0
+              ? tr("wi.query_truncated", { label: q.label, shown, total: q.matchTotal })
+              : tr("wi.query_truncated_unknown", { label: q.label, shown });
+          return (
+            <div className="wi-trunc" key={q.id} role="status" title={msg}>
+              {msg}
+            </div>
+          );
+        })}
       {loaded && !payload?.queries.length ? (
         <div className="pane-empty">
           {tr("wi.no_queries")}
@@ -319,7 +371,13 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                 value={needle}
                 placeholder={tr("wi.filter_ph")}
                 aria-label={tr("wi.filter_ph")}
-                onChange={(e) => setNeedle(e.target.value)}
+                onChange={(e) => {
+                  setNeedle(e.target.value);
+                  setRemoteErr("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") searchTracker();
+                }}
               />
             </div>
           )}
@@ -336,6 +394,55 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             ))}
           </div>
           {matched.length === 0 && <div className="pane-empty">{tr("wi.filter_empty")}</div>}
+          {/* Past the rail's cut (#1095). Offered when the filter found nothing or a query's page
+              is known to be partial; a press, never a keystroke. */}
+          {canSearch && !remoteRows && (
+            <button
+              type="button"
+              className="wi-search"
+              disabled={remoteBusy || !payload?.running}
+              title={payload?.running ? undefined : tr("wi.search_stopped")}
+              onClick={searchTracker}
+            >
+              {remoteBusy ? tr("wi.searching") : tr("wi.search_tracker", { q })}
+            </button>
+          )}
+          {canSearch && !payload?.running && <div className="wi-trunc">{tr("wi.search_stopped")}</div>}
+          {remoteErr && (
+            <div className="wi-err" role="status" title={remoteErr}>
+              <Icon name="warning" />
+              <span>{remoteErr}</span>
+            </div>
+          )}
+          {remoteRows && remote && (
+            <div className="wi-remote">
+              <div className="wi-remote-head">{tr("wi.search_head", { q: remote.needle })}</div>
+              {remoteRows.map((item) => (
+                <WorkItemRow
+                  key={item.id}
+                  item={item}
+                  started={sessionsForItem(ledger, item.key)}
+                  uniform={{ repo: false, assignee: false }}
+                  onOpen={setDetailOn}
+                  onOpenSession={openSession}
+                />
+              ))}
+              {remoteRows.length === 0 && remote.result.errors.length === 0 && (
+                <div className="pane-empty">{tr("wi.search_none")}</div>
+              )}
+              {remote.result.errors.map((e) => (
+                <div className="wi-err" key={e.queryId} role="status" title={e.message}>
+                  <Icon name="warning" />
+                  <span>{tr("wi.query_failed", { label: labelOf(e.queryId) })}</span>
+                </div>
+              ))}
+              {remote.result.skipped.length > 0 && (
+                <div className="wi-trunc">
+                  {tr("wi.search_skipped", { labels: remote.result.skipped.map(labelOf).join(" / ") })}
+                </div>
+              )}
+            </div>
+          )}
           {/* Always name the remaining count. The section badge still counts everything, so this
               line is what explains that nothing is being hidden. */}
           {hidden > 0 && (

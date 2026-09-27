@@ -32,8 +32,13 @@ import (
 
 const (
 	// workItemFetchPerQuery caps one query's rows. Full synchronisation is a non-goal
-	// (docs/log/80 §80.12) — the saved query is what keeps the rail short.
+	// (docs/log/80 §80.12) — the saved query is what keeps the rail short. A query that
+	// matches more says so on the rail (workItemTruncOut) instead of dropping rows silently.
+	// 50 is Bitbucket's largest page, and Jira shares it.
 	workItemFetchPerQuery = 50
+	// workItemFetchGitHub is GitHub's own cap: /search/issues takes per_page up to 100. At 50
+	// a plain `is:open involves:@me` already overflowed for an active member (#1095).
+	workItemFetchGitHub = 100
 	// workItemFetchQueries caps how many queries one request may carry, so a bad CP
 	// request cannot fan out into an unbounded number of provider calls.
 	workItemFetchQueries = 10
@@ -88,6 +93,14 @@ func gitHubLabelColors(labels []gitHubLabel) map[string]string {
 	return out
 }
 
+// workItemTruncOut marks a query that matched more rows than one page carries. Total is the
+// provider's count of matches, or 0 when the provider does not say (the page was simply
+// full). Only truncated queries are listed.
+type workItemTruncOut struct {
+	QueryID string `json:"queryId"`
+	Total   int    `json:"total"`
+}
+
 type workItemErrOut struct {
 	QueryID string `json:"queryId"`
 	Message string `json:"message"`
@@ -108,8 +121,9 @@ func handleWorkItemsFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []workItemOut{}
 	errs := []workItemErrOut{}
+	truncs := []workItemTruncOut{}
 	if len(in.Queries) == 0 {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "errors": errs})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "errors": errs, "truncated": truncs})
 		return
 	}
 	if len(in.Queries) > workItemFetchQueries {
@@ -121,45 +135,73 @@ func handleWorkItemsFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, q := range in.Queries {
-		rows, err := fetchWorkItemQuery(s, q)
+		rows, total, err := fetchWorkItemQuery(s, q)
 		if err != nil {
 			errs = append(errs, workItemErrOut{QueryID: q.ID, Message: err.Error()})
 			continue
 		}
 		items = append(items, rows...)
+		if workItemTruncated(len(rows), total, workItemFetchCap(q.Provider)) {
+			truncs = append(truncs, workItemTruncOut{QueryID: q.ID, Total: total})
+		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "errors": errs})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "errors": errs, "truncated": truncs})
 }
 
-func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, error) {
+// workItemFetchCap is the page size asked of the provider a query names.
+func workItemFetchCap(provider string) int {
+	switch strings.TrimSpace(provider) {
+	case "", "github":
+		return workItemFetchGitHub
+	}
+	return workItemFetchPerQuery
+}
+
+// workItemTruncated decides whether a query matched more than the rail received. A known total
+// is trusted; without one, a full page is taken to mean there is more (Jira's newer search and
+// Bitbucket's projected page do not count). The cost of that guess is one needless note on the
+// rare query that matches exactly the cap.
+func workItemTruncated(fetched, total, capN int) bool {
+	if total > 0 {
+		return total > fetched
+	}
+	return fetched >= capN
+}
+
+// fetchWorkItemQuery resolves one saved query. total is the provider's count of matches, or 0
+// when it does not report one.
+func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, int, error) {
 	query := strings.TrimSpace(q.Query)
 	if query == "" {
-		return nil, fmt.Errorf("query is empty")
+		return nil, 0, fmt.Errorf("query is empty")
 	}
 	switch strings.TrimSpace(q.Provider) {
 	case "", "github":
 		e, ok := s.Git["github.com"]
 		if !ok || e.Token == "" {
-			return nil, fmt.Errorf("GitHub is not connected")
+			return nil, 0, fmt.Errorf("GitHub is not connected")
 		}
 		return githubSearchWorkItems(e.Token, q.ID, query)
 	case "jira":
 		if !jiraConnected(s.Jira) {
-			return nil, fmt.Errorf("Jira is not connected")
+			return nil, 0, fmt.Errorf("Jira is not connected")
 		}
-		return jiraSearchWorkItems(s.Jira, q.ID, query)
+		rows, err := jiraSearchWorkItems(s.Jira, q.ID, query)
+		return rows, 0, err
 	case "bitbucket":
 		// bitbucketAuthHeader is what decides whether we are connected: there are two paths
 		// (OAuth and an API token), and "connected" is defined nowhere else.
-		return bitbucketSearchWorkItems(s, q.ID, query)
+		rows, err := bitbucketSearchWorkItems(s, q.ID, query)
+		return rows, 0, err
 	default:
-		return nil, fmt.Errorf("unsupported provider: %s", q.Provider)
+		return nil, 0, fmt.Errorf("unsupported provider: %s", q.Provider)
 	}
 }
 
 // githubSearchWorkItems resolves one saved search through GET /search/issues, which
 // covers issues and pull requests in one call and is what the GitHub UI's own "assigned
-// to me" view is built on. One page only — see workItemFetchPerQuery.
+// to me" view is built on. One page only — see workItemFetchGitHub. The second result is
+// GitHub's total_count, which is what tells the rail how many rows the page left out.
 //
 // advanced_search=true is what lets a saved query use `OR` and parentheses. Members need them
 // to ask one query for "assigned to me OR mine OR waiting on my review" — `assignee:` alone
@@ -177,17 +219,17 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 // The token is the Connections one, whose scope is `repo` (no `read:org`), and the
 // host is fixed to github.com: GitHub Enterprise Server is out of scope for v1, exactly
 // as for the `gh` wrapper (docs/build/08 §8.3).
-func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, error) {
-	u := "https://api.github.com/search/issues?per_page=" + fmt.Sprint(workItemFetchPerQuery) +
+func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, int, error) {
+	u := "https://api.github.com/search/issues?per_page=" + fmt.Sprint(workItemFetchGitHub) +
 		"&sort=updated&order=desc&advanced_search=true&q=" + url.QueryEscape(query)
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	gitx.GithubHeaders(req, token)
 	resp, err := workItemHTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -197,15 +239,23 @@ func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, error) 
 			// 403 covers rate limiting as well as permissions. Without telling the two apart, a
 			// user told to re-connect re-authenticates for nothing.
 			if strings.Contains(strings.ToLower(string(body)), "rate limit") {
-				return nil, fmt.Errorf("github rate limit reached")
+				return nil, 0, fmt.Errorf("github rate limit reached")
 			}
-			return nil, fmt.Errorf("github rejected the token (re-connect GitHub)")
+			return nil, 0, fmt.Errorf("github rejected the token (re-connect GitHub)")
 		case http.StatusUnprocessableEntity:
-			return nil, fmt.Errorf("github could not parse the query")
+			return nil, 0, fmt.Errorf("github could not parse the query")
 		}
-		return nil, fmt.Errorf("github search %d", resp.StatusCode)
+		return nil, 0, fmt.Errorf("github search %d", resp.StatusCode)
 	}
-	return parseGitHubSearchItems(body, queryID)
+	rows, err := parseGitHubSearchItems(body, queryID)
+	if err != nil {
+		return nil, 0, err
+	}
+	var tc struct {
+		TotalCount int `json:"total_count"`
+	}
+	_ = json.Unmarshal(body, &tc)
+	return rows, tc.TotalCount, nil
 }
 
 // parseGitHubSearchItems maps a /search/issues body onto the shared row shape. Split out

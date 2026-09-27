@@ -3527,13 +3527,13 @@ func (s *SQL) CloudCostDays(ctx context.Context) (string, string, error) {
 // ---------------------------------------------------------------------------
 
 const workItemQueryCols = `SELECT id, membership_id, provider, label, query, repo_hint,
-	enabled, position, created_at, fetched_at, last_error FROM work_item_query`
+	enabled, position, created_at, fetched_at, last_error, match_total FROM work_item_query`
 
 func scanWorkItemQuery(sc interface{ Scan(...any) error }) (WorkItemQuery, error) {
 	var q WorkItemQuery
 	var enabled int
 	err := sc.Scan(&q.ID, &q.MembershipID, &q.Provider, &q.Label, &q.Query, &q.RepoHint,
-		&enabled, &q.Position, &q.CreatedAt, &q.FetchedAt, &q.LastError)
+		&enabled, &q.Position, &q.CreatedAt, &q.FetchedAt, &q.LastError, &q.MatchTotal)
 	q.Enabled = enabled != 0
 	return q, err
 }
@@ -3608,6 +3608,12 @@ func (s *SQL) DeleteWorkItemQuery(ctx context.Context, id, membershipID string) 
 func (s *SQL) MarkWorkItemQueryFetched(ctx context.Context, id, fetchedAt, errMsg string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE work_item_query SET fetched_at=?, last_error=? WHERE id=?`, fetchedAt, errMsg, id)
+	return err
+}
+
+func (s *SQL) SetWorkItemQueryMatchTotal(ctx context.Context, id string, matchTotal int) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE work_item_query SET match_total=? WHERE id=?`, matchTotal, id)
 	return err
 }
 

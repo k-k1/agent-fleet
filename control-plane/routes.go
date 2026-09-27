@@ -578,6 +578,7 @@ func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
 	// relays it to the Agent.
 	mux.HandleFunc("POST /api/work-items/comment", wi.withResolved(wi.comment))
 	mux.HandleFunc("POST /api/work-items/detail", wi.withResolved(wi.detail))
+	mux.HandleFunc("POST /api/work-items/search", wi.withResolved(wi.search))
 	mux.HandleFunc("GET /api/work-item-queries", wi.withMembership(wi.listQueries))
 	mux.HandleFunc("POST /api/work-item-queries", wi.withMembership(wi.createQuery))
 	mux.HandleFunc("PATCH /api/work-item-queries/{id}", wi.withMembership(wi.updateQuery))

@@ -99,7 +99,7 @@ func TestGitHubSearchRequestEnablesAdvancedSearch(t *testing.T) {
 	t.Cleanup(func() { workItemHTTPClient.Transport = orig })
 
 	query := "is:open (assignee:@me OR author:@me OR review-requested:@me)"
-	if _, err := githubSearchWorkItems("tok", "q1", query); err != nil {
+	if _, _, err := githubSearchWorkItems("tok", "q1", query); err != nil {
 		t.Fatalf("search: %v", err)
 	}
 	if got == nil {
@@ -112,6 +112,58 @@ func TestGitHubSearchRequestEnablesAdvancedSearch(t *testing.T) {
 	// rewrite it on the way out.
 	if q := got.Query().Get("q"); q != query {
 		t.Errorf("q = %q, want %q", q, query)
+	}
+}
+
+// #1095: the rail showed 50 of 59 matches and said nothing, so an open issue GitHub's own search
+// found was missing with no hint why. The request asks for GitHub's largest page, and the
+// response's total_count comes back so the rail can say what the page left out.
+func TestGitHubSearchAsksFullPageAndReportsTotal(t *testing.T) {
+	var got *url.URL
+	orig := workItemHTTPClient.Transport
+	workItemHTTPClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.URL
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(`{"total_count":159,"items":[{"number":1,"title":"a","state":"open"}]}`))}, nil
+	})
+	t.Cleanup(func() { workItemHTTPClient.Transport = orig })
+
+	rows, total, err := githubSearchWorkItems("tok", "q1", "is:open involves:@me")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if pp := got.Query().Get("per_page"); pp != "100" {
+		t.Errorf("per_page = %q, want 100", pp)
+	}
+	if len(rows) != 1 || total != 159 {
+		t.Errorf("rows=%d total=%d, want 1 and 159", len(rows), total)
+	}
+}
+
+func TestWorkItemTruncated(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		fetched, total, cap int
+		want                bool
+	}{
+		{"known total above the page", 100, 159, 100, true},
+		{"known total fits", 59, 59, 100, false},
+		{"known total trusted over a full page", 50, 50, 50, false},
+		{"no total, full page", 50, 0, 50, true},
+		{"no total, short page", 12, 0, 50, false},
+		{"nothing matched", 0, 0, 50, false},
+	} {
+		if got := workItemTruncated(tc.fetched, tc.total, tc.cap); got != tc.want {
+			t.Errorf("%s: workItemTruncated(%d, %d, %d) = %v, want %v", tc.name, tc.fetched, tc.total, tc.cap, got, tc.want)
+		}
+	}
+}
+
+func TestWorkItemFetchCapPerProvider(t *testing.T) {
+	for p, want := range map[string]int{"": 100, "github": 100, "jira": 50, "bitbucket": 50} {
+		if got := workItemFetchCap(p); got != want {
+			t.Errorf("workItemFetchCap(%q) = %d, want %d", p, got, want)
+		}
 	}
 }
 
