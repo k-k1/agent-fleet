@@ -248,6 +248,16 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
               <span>{tr("ui.filter_models")}</span>
             </button>
           )}
+          {/* What the rows' numbers are. Without it "$5 / $30" beside a subscription-billed model
+              reads as a bill, and with Default selected there is no line under the field to
+              say otherwise. Outside the listbox: a role=listbox may only contain options. */}
+          {options.some(([v]) => modelInfoCompact(modelInfoOf(kind, v))) && (
+            <div className="model-combo-legend">
+              {tr("ui.mi_legend", {
+                label: kind === "opencode" ? tr("ui.mi_gateway_price", { gateway: "opencode" }) : tr("ui.mi_list_price"),
+              })}
+            </div>
+          )}
           <div id={listId} className="model-combo-list" role="listbox" aria-label={tr("ui.kind_model", { kind })}>
           {filtered.length === 0 ? (
             <div className="model-combo-empty">{tr("ui.no_matching_models")}</div>

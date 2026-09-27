@@ -342,6 +342,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "ui.mi_gateway_price": "{gateway} price",
   "ui.mi_list_price_note": "The pay-as-you-go API price per 1M tokens (models.dev). It is not what a subscription is charged.",
   "ui.mi_price_head": "{label} (per 1M tokens):",
+  "ui.mi_legend": "{label} per 1M tokens: input / output · context",
   "ui.mi_price_io": "in {in} · out {out}",
   "ui.mi_price_cache": "cache read {v}",
   "ui.mi_context": "context {n}",

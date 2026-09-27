@@ -241,14 +241,13 @@ export function modelIsRetiring(info: ModelInfo | null): boolean {
 
 const CLAUDE_ALIAS_IDS = new Set(CLAUDE_MODELS.map(([id]) => id));
 
-// useModelInfo is modelInfoOf for a caller that has no list fetch of its own to wait on: the
-// selected model's line under a picker. claude has no live catalog, so its answer rides on the
-// recommendation's request; its tier aliases are never priced (which model an alias runs is
-// the installed CLI's business).
-export function useModelInfo(kind: string, id: string): ModelInfo | null {
+// useModelInfos asks for this kind's model info (when `wanted`) and re-renders once it lands,
+// returning everything known under the current question. claude has no live catalog, so its
+// answer rides on the recommendation's request.
+export function useModelInfos(kind: string, wanted = true): ReadonlyMap<string, ModelInfo> | undefined {
   useSettings(); // re-render on a settings change: the question below reads them
   const key = questionKey(questionFor(kind));
-  const wants = !!id && (isDynamic(kind) || (kind === "claude" && !CLAUDE_ALIAS_IDS.has(id)));
+  const wants = wanted && (isDynamic(kind) || kind === "claude");
   const [, bump] = useState(0);
   useEffect(() => {
     if (!wants) return;
@@ -259,7 +258,15 @@ export function useModelInfo(kind: string, id: string): ModelInfo | null {
       alive = false;
     };
   }, [kind, key, wants]);
-  return wants ? (modelInfos.get(key)?.get(id) ?? null) : null;
+  return wants ? modelInfos.get(key) : undefined;
+}
+
+// useModelInfo is one model's info, for the selected model's line under a picker. claude's tier
+// aliases are never priced (which model an alias runs is the installed CLI's business).
+export function useModelInfo(kind: string, id: string): ModelInfo | null {
+  const wants = !!id && !(kind === "claude" && CLAUDE_ALIAS_IDS.has(id));
+  const infos = useModelInfos(kind, wants);
+  return wants ? (infos?.get(id) ?? null) : null;
 }
 
 /** Kinds whose model list can change from Settings DURING one Console load, so their answer is

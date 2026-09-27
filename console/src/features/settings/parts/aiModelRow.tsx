@@ -60,6 +60,7 @@ export function AiModelRow({
   value,
   onChange,
   extraOption,
+  inherited,
 }: {
   kind: AiAgentKind;
   tier: AiModelTier;
@@ -69,6 +70,9 @@ export function AiModelRow({
    *  設定に従う）", mapped by the caller's onChange to deleting the per-feature override rather
    *  than storing this sentinel literally). Omitted by every other caller. */
   extraOption?: [string, string];
+  /** What extraOption resolves to — the tier default it follows (undefined ⇒ "推奨"), so the
+   *  line under the row describes the model that actually runs rather than the sentinel. */
+  inherited?: string;
 }) {
   const tr = useT();
   const listed = useModelOptions(kind) || [["", tr("ui.default")]];
@@ -96,7 +100,9 @@ export function AiModelRow({
   // would make the display the thing that lies.
   const hidden = useHiddenModel(kind, value);
   // The line under the row describes what runs: for "推奨" that is the model it resolves to.
-  const described = value === ASSISTANT_RECOMMENDED_MODEL ? (recommendedHidden ? "" : recommendedId) : value;
+  const effective = extraOption && value === extraOption[0] ? inherited : value;
+  const described =
+    effective === undefined || effective === ASSISTANT_RECOMMENDED_MODEL ? (recommendedHidden ? "" : recommendedId) : effective;
   const options =
     value && !hidden && !choices.some(([id]) => id === value)
       ? [...choices, [value, value] as [string, string]]

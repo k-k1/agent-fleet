@@ -1145,3 +1145,10 @@
 .model-combo-badge + .model-combo-meta {
   margin-left: 0;
 }
+.model-combo-legend {
+  padding: 3px 8px 5px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}

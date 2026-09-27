@@ -7,12 +7,14 @@
 import { useEffect, useMemo } from "react";
 import { useT } from "../lib/i18n/index.ts";
 import { Icon } from "./Icon.tsx";
-import { useModelOptions, useHiddenModel, useModelCatalogSettled, modelCatalogReason } from "../lib/agentModels.ts";
+import { useModelOptions, useHiddenModel, useModelCatalogSettled, modelCatalogReason, useModelInfos, modelIsRetiring } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 import { ModelCombo } from "./ModelCombo.tsx";
 import { ModelInfoLine } from "./ModelInfoLine.tsx";
 import { refreshUIPrefs } from "../lib/settings.ts";
+
+const CLAUDE_ALIASES = ["fable", "opus", "sonnet", "haiku"];
 
 interface ModelPickerProps {
   kind: string;
@@ -23,6 +25,9 @@ interface ModelPickerProps {
 export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   const tr = useT();
   const options = useModelOptions(kind);
+  // claude's registered full ids: asked for whenever there is one, not only once one is chosen,
+  // because the retiring mark on the <option> is there to warn BEFORE the pick.
+  const claudeInfos = useModelInfos(kind, kind === "claude" && !!options?.some(([v]) => !CLAUDE_ALIASES.includes(v)));
   // A long-lived phone tab may have been foregrounded the whole time another device
   // edited this server-backed catalog. Refresh when a Claude picker actually opens as
   // well as on App foreground, so both Settings and launch modals see the latest ids.
@@ -89,8 +94,10 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   // Claude Code OAuth has no account-aware model catalog to query. Keep the stable
   // tier aliases as the fast path and offer only full ids that the user deliberately
   // registered in Agent settings.
-  const aliases = options.filter(([v]) => ["fable", "opus", "sonnet", "haiku"].includes(v));
-  const registered = options.filter(([v]) => !["fable", "opus", "sonnet", "haiku"].includes(v));
+  const aliases = options.filter(([v]) => CLAUDE_ALIASES.includes(v));
+  const registered = options
+    .filter(([v]) => !CLAUDE_ALIASES.includes(v))
+    .map(([v, label]): ModelOption => [v, modelIsRetiring(claudeInfos?.get(v) ?? null) ? tr("ui.mi_retiring_suffix", { label }) : label]);
   const registeredSelected = registered.some(([v]) => v === model);
   return (
     <div className="model-picker-claude">

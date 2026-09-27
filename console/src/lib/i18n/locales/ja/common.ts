@@ -342,6 +342,7 @@ export const common = {
   "ui.mi_gateway_price": "{gateway} の価格",
   "ui.mi_list_price_note": "API を従量課金で使うときの 100 万トークンあたりの定価です（models.dev）。サブスクリプションの請求額ではありません。",
   "ui.mi_price_head": "{label}（100 万トークンあたり）:",
+  "ui.mi_legend": "{label}（100 万トークンあたり）: 入力 / 出力 · コンテキスト",
   "ui.mi_price_io": "入力 {in} · 出力 {out}",
   "ui.mi_price_cache": "キャッシュ読取 {v}",
   "ui.mi_context": "コンテキスト {n}",

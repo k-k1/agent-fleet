@@ -21,7 +21,10 @@ vi.mock("../core/api/client.ts", async (orig) => {
 });
 
 const { ModelPicker } = await import("./ModelPicker.tsx");
+const { AiModelRow } = await import("../features/settings/parts/aiModelRow.tsx");
 const { t } = await import("../lib/i18n/index.ts");
+const { setSetting } = await import("../lib/settings.ts");
+const { clearRecommendedModels } = await import("../lib/agentModels.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -31,11 +34,15 @@ function Harness({ kind, initial }: { kind: string; initial: string }) {
   return <ModelPicker kind={kind} model={model} onChange={setModel} />;
 }
 
-async function mount(kind: string, initial: string) {
+async function render(el: React.ReactElement) {
   await act(async () => {
-    root!.render(<Harness kind={kind} initial={initial} />);
+    root!.render(el);
   });
-  for (let i = 0; i < 4; i++) await act(async () => Promise.resolve());
+  for (let i = 0; i < 6; i++) await act(async () => Promise.resolve());
+}
+
+async function mount(kind: string, initial: string) {
+  await render(<Harness kind={kind} initial={initial} />);
   await act(async () => host.querySelector<HTMLInputElement>('input[role="combobox"]')!.focus());
 }
 
@@ -44,6 +51,7 @@ const row = (id: string) =>
 
 beforeEach(() => {
   asked.length = 0;
+  clearRecommendedModels();
   g.IS_REACT_ACT_ENVIRONMENT = true;
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -85,6 +93,10 @@ describe("ModelInfoLine", () => {
     expect(row("gpt-5.5").querySelector(".model-combo-badge")?.textContent).toBe(t("ui.mi_retiring"));
     // Nothing known: no meta at all, rather than an empty or zero price.
     expect(row("gpt-reserve").querySelector(".model-combo-meta")).toBeNull();
+    // The rows' bare numbers are explained in the popup itself.
+    expect(host.querySelector(".model-combo-legend")?.textContent).toBe(
+      t("ui.mi_legend", { label: t("ui.mi_list_price") }),
+    );
 
     const line = host.querySelector(".model-info-line")!;
     expect(line.querySelector(".model-info-price")?.textContent).toContain("$5");
@@ -105,6 +117,33 @@ describe("ModelInfoLine", () => {
     const price = () => host.querySelector(".model-info-price")?.textContent || "";
     expect(price()).toContain(t("ui.mi_price_cache", { v: "$0" }));
     expect(price()).toContain("opencode");
+  });
+
+  it("marks a retiring registered claude id before it is picked, and prices no alias", async () => {
+    setSetting("claudeCustomModels", ["claude-opus-4-7"]);
+    answer = {
+      models: [
+        { id: "opus", label: "Opus" },
+        { id: "claude-opus-4-7", label: "claude-opus-4-7", info: { price: { in: 5, out: 25 }, priceFrom: "anthropic", deprecated: true } },
+      ],
+      recommended: { chat: "sonnet", prose: "sonnet", short: "haiku" },
+    };
+    await render(<Harness kind="claude" initial="opus" />);
+    const opts = [...host.querySelectorAll("select option")].map((o) => o.textContent);
+    expect(opts).toContain(t("ui.mi_retiring_suffix", { label: "claude-opus-4-7" }));
+    expect(host.querySelector(".model-info-line")).toBeNull(); // the alias is selected
+    setSetting("claudeCustomModels", []);
+  });
+
+  it("describes what a feature's 'follow default' actually runs", async () => {
+    answer = {
+      models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", info: { price: { in: 0.1, out: 0.5 }, context: 1050000 } }],
+      recommended: { chat: "gpt-6-luna", prose: "gpt-6-luna", short: "gpt-6-luna" },
+    };
+    await render(
+      <AiModelRow kind="codex" tier="short" value="__follow__" extraOption={["__follow__", "follow"]} inherited={undefined} onChange={() => {}} />,
+    );
+    expect(host.querySelector(".model-info-price")?.textContent).toContain("$0.10");
   });
 
   it("draws no line for a model the Agent says nothing about", async () => {
