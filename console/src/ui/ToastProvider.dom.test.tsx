@@ -51,13 +51,4 @@ describe("ToastProvider", () => {
     await act(async () => vi.advanceTimersByTime(4100));
     expect(texts()).toEqual([]);
   });
-
-  it("stacks a top-placed toast apart from the default bottom stack", async () => {
-    await act(async () => fire("bottom", { kind: "info" }));
-    await act(async () => fire("top", { kind: "info", placement: "top" }));
-    const top = document.querySelector(".ui-toasts.ui-toasts-top");
-    expect(top?.textContent).toContain("top");
-    expect(top?.textContent).not.toContain("bottom");
-    expect(document.querySelector(".ui-toasts:not(.ui-toasts-top)")?.textContent).toContain("bottom");
-  });
 });

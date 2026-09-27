@@ -311,7 +311,7 @@ export const imggen = {
   "imggen.done_toast": "{n} 枚できました",
   "imggen.done_view": "見る",
   "imggen.lb_reference": "これを参照にする",
-  "imggen.lb_again": "seed を固定してもう一度（試走）",
+  "imggen.lb_again": "この seed で今の下書きを試走",
   "imggen.lb_restore": "この設定に戻す",
   "imggen.start_title": "画像スタジオを始める",
   "imggen.start_go": "始める",

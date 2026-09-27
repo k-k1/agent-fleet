@@ -142,11 +142,20 @@ export function StudioAgent({
         <span className={"igen-chip kind-" + agentOf(meta.kind).cssClass}>
           <Icon name={agentOf(meta.kind).icon} /> {kindDisplayName(meta.kind)}
         </span>
-        {meta.model && <span className="igen-chip">{meta.model}</span>}
-        <span className="igen-chip">{tr(managed ? "imggen.attach_driver_managed" : "imggen.attach_driver_tui")}</span>
+        {/* The narrow pane keeps the head to one line (imagegen.css): these two chips go, and
+            "replace" is its icon — every line here is one less line of conversation. */}
+        {meta.model && <span className="igen-chip igen-chip-extra">{meta.model}</span>}
+        <span className="igen-chip igen-chip-extra">{tr(managed ? "imggen.attach_driver_managed" : "imggen.attach_driver_tui")}</span>
         <span className="igen-agent-spacer" />
-        <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" onClick={onReplace} disabled={attachBlocked}>
-          <Icon name="arrow-swap" /> {tr("imggen.agent_replace")}
+        <button
+          type="button"
+          className="ui-btn ui-btn-ghost ui-btn-sm igen-agent-replace"
+          onClick={onReplace}
+          disabled={attachBlocked}
+          title={tr("imggen.agent_replace")}
+          aria-label={tr("imggen.agent_replace")}
+        >
+          <Icon name="arrow-swap" /> <span className="igen-agent-replace-label">{tr("imggen.agent_replace")}</span>
         </button>
       </div>
       {state === "pending" && (

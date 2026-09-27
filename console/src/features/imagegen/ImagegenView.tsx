@@ -24,7 +24,6 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { dismissToast } from "../../ui/toast.ts";
 import { openGeneratedGallery } from "../gallery/open.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -77,6 +76,9 @@ import "./imagegen.css";
 
 /** Decision 2's cadence. Only ever runs while something is unfinished AND the tab is shown. */
 const POLL_MS = 2000;
+
+/** How long the "pictures are ready" line stays up; the results tab's badge outlasts it. */
+const NOTICE_MS = 8000;
 
 /** The pane width at which the columns fold into tabs — imagegen.css's `@container paneview`. */
 const NARROW_PX = 720;
@@ -292,6 +294,31 @@ function StudioPane({
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [live, running]);
+
+  // Presses this pane did not make — the agent's run_image_trial, another device, another pane
+  // on the same studio — enqueue jobs the poller above cannot know about: with nothing live it is
+  // not running. The studio's own polling carries every press into its log, so a press newer than
+  // the last one seen reads the job list once; a live job then hands over to the poller, and
+  // decision 2's cadence is unchanged.
+  const lastPress = useMemo(() => studio.log.reduce((m, e) => (e.kind === "press" && e.seq > m ? e.seq : m), 0), [studio.log]);
+  const pressSeen = useRef(0);
+  useEffect(() => {
+    if (lastPress <= pressSeen.current) return;
+    pressSeen.current = lastPress;
+    if (running) void jobsRef.current();
+  }, [lastPress, running]);
+  // The studio polls only while a session is bound, and nothing polls while the tab is hidden;
+  // coming back into view is when a phone would have missed a press, so read once then.
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  useEffect(() => {
+    if (!running) return;
+    const onVis = () => {
+      if (!document.hidden && !liveRef.current) void jobsRef.current();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [running]);
 
   // ADR 0082 unresolved question 2: with N fleet rows, each carries its OWN Studio answer —
   // two comfy rows can have overlapping model ids with different checkpoints behind them — so
@@ -690,45 +717,46 @@ function StudioPane({
 
   const session = studio.studio?.session || "";
   const sessionState = useSessionsStore((s) => (session ? s.sessions.find((x) => x.name === session)?.state : undefined));
+  // Right after a start (the repo row, "attach"), what happens next is the agent's first turn,
+  // so a narrow pane opens on the conversation while that first prompt is still being
+  // delivered. Only until the member picks a tab themselves.
+  const firstPromptPending = useSessionsStore((s) =>
+    session ? s.sessions.find((x) => x.name === session)?.initialPromptState === "pending" : false,
+  );
+  const tabPicked = useRef(false);
+  useEffect(() => {
+    if (firstPromptPending && !tabPicked.current) setTab("chat");
+  }, [firstPromptPending]);
   const chatMark = useChatMark(sessionState, sees("chat"));
 
   // "N pictures are ready", only when the member is not already looking at the results: a
   // narrow pane on another tab, or this pane not the active one. The pictures are the
   // difference between two job lists the poller read anyway — nothing polls for this.
-  const noticeKey = "igen-done-" + (paneId || "pane");
-  // Pictures announced since the member last saw the results: a second batch while the first
-  // notice is still up says the total, not only the latest batch.
-  const announced = useRef(0);
+  //
+  // It is the pane's own line under the tab strip, in the flow, not a toast: a floating toast
+  // covered either the composer (bottom) or the app's top bar (top) on a phone, and one that
+  // outlives the view held a View bound to a pane that had switched studios.
+  // The count is the total since the member last saw the results, not only the latest batch.
+  const [ready, setReady] = useState(0);
   const viewResults = useCallback(() => {
-    announced.current = 0;
-    dismissToast(noticeKey);
+    setReady(0);
     setTab("out");
     if (paneId) useLayoutStore.getState().selectTab(paneId);
-  }, [noticeKey, paneId]);
+  }, [paneId]);
   const seesOut = sees("out");
   // Looking at the results by any route (the tab, the three columns, the pane made active)
   // settles the notice as View does.
   useEffect(() => {
-    if (!seesOut) return;
-    announced.current = 0;
-    dismissToast(noticeKey);
-  }, [seesOut, noticeKey]);
-  // The notice's View closes over THIS mount's tab state; switching the pane to another studio
-  // remounts the view, and a View left behind would drive a pane that no longer exists.
-  useEffect(() => () => dismissToast(noticeKey), [noticeKey, studioId]);
+    if (seesOut) setReady(0);
+  }, [seesOut]);
+  // Each new batch restarts the clock; the badge keeps counting after the line has gone.
+  useEffect(() => {
+    if (!ready) return;
+    const id = window.setTimeout(() => setReady(0), NOTICE_MS);
+    return () => window.clearTimeout(id);
+  }, [ready]);
   useArrivals(madePaths, jobsRead, (n) => {
-    if (seesOut) return;
-    announced.current += n;
-    toast(
-      <span className="igen-done-toast">
-        {tr("imggen.done_toast", { n: announced.current })}{" "}
-        <button type="button" className="ui-btn ui-btn-sm" onClick={viewResults}>
-          {tr("imggen.done_view")}
-        </button>
-      </span>,
-      // Top: at the bottom it covered the draft bar and the composer on a phone.
-      { kind: "success", key: noticeKey, duration: 8000, placement: "top" },
-    );
+    if (!seesOut) setReady((r) => r + n);
   });
   const datedName = studio.studio ? studioName({ ...studio.studio, title: "" }, (stamp) => tr("imggen.studio_dated", { when: stamp })) : "";
   const form = (
@@ -849,7 +877,10 @@ function StudioPane({
                 role="tab"
                 aria-selected={tab === k}
                 className={"igen-tab" + (tab === k ? " active" : "")}
-                onClick={() => setTab(k)}
+                onClick={() => {
+                  tabPicked.current = true;
+                  setTab(k);
+                }}
               >
                 {tr(`imggen.tab_${k}` as "imggen.tab_chat")}
                 {k === "out" && newResults > 0 && (
@@ -869,6 +900,18 @@ function StudioPane({
               </button>
             ))}
           </div>
+          {ready > 0 && (
+            <div className="igen-done-note" role="status">
+              <Icon name="pass" />
+              <span className="igen-done-text">{tr("imggen.done_toast", { n: ready })}</span>
+              <button type="button" className="ui-btn ui-btn-sm" onClick={viewResults}>
+                {tr("imggen.done_view")}
+              </button>
+              <button type="button" className="igen-done-x" title={tr("common.close")} aria-label={tr("common.close")} onClick={() => setReady(0)}>
+                <Icon name="close" />
+              </button>
+            </div>
+          )}
           <div className="igen-body igen-studio" data-tab={tab}>
             <div className="igen-col-agent">
               <StudioAgent
