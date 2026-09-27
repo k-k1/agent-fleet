@@ -24,6 +24,9 @@ export interface ToastOptions {
   key?: string;
   // onClose runs when the member closes the toast with its X, not when it is withdrawn.
   onClose?: () => void;
+  // "top" stacks it at the top of the screen instead, for a notice that must not cover the
+  // composer at the bottom of a phone (the image studio's "pictures are ready").
+  placement?: "bottom" | "top";
 }
 
 interface ToastItem {
@@ -32,6 +35,7 @@ interface ToastItem {
   kind: ToastKind;
   key?: string;
   onClose?: () => void;
+  placement: "bottom" | "top";
 }
 
 type ToastFn = (message: ReactNode, opts?: ToastOptions) => void;
@@ -55,23 +59,35 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const tr = useT();
   const [items, setItems] = useState<ToastItem[]>([]);
   const seq = useRef(0);
+  // Each shown toast's expiry, by id. A keyed replacement keeps its id, so its old timer has
+  // to be cancelled here — left running, it removed the replacement at the FIRST one's deadline.
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  // The id each key is shown under, known synchronously (setItems' updater runs later).
+  const keyIds = useRef(new Map<string, number>());
 
   const remove = useCallback((id: number) => {
+    const t = timers.current.get(id);
+    if (t) clearTimeout(t);
+    timers.current.delete(id);
+    for (const [k, v] of keyIds.current) if (v === id) keyIds.current.delete(k);
     setItems((xs) => xs.filter((x) => x.id !== id));
   }, []);
 
   const toast = useCallback<ToastFn>(
     (message, opts) => {
       const kind = opts?.kind ?? "error";
-      const id = ++seq.current;
-      const item: ToastItem = { id, message, kind, key: opts?.key, onClose: opts?.onClose };
+      // A keyed toast already on screen keeps its id, which is the React key: a new one would
+      // remount it, dropping focus and a press in progress, and re-announcing it to a screen
+      // reader.
+      const shown = opts?.key ? keyIds.current.get(opts.key) : undefined;
+      const id = shown ?? ++seq.current;
+      if (opts?.key) keyIds.current.set(opts.key, id);
+      const item: ToastItem = { id, message, kind, key: opts?.key, onClose: opts?.onClose, placement: opts?.placement ?? "bottom" };
       setItems((xs) => {
-        const at = item.key ? xs.findIndex((x) => x.key === item.key) : -1;
+        const at = xs.findIndex((x) => x.id === id);
         if (at < 0) return [...xs, item];
-        // Keep the id, which is the React key: a new one would remount the toast, dropping
-        // focus and a press in progress, and re-announcing it to a screen reader.
         const next = xs.slice();
-        next[at] = { ...item, id: xs[at].id };
+        next[at] = item;
         return next;
       });
       // Errors (and any opt-in persist) are recorded in the notification center so a failure
@@ -79,14 +95,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       if ((opts?.persist ?? kind === "error") && typeof message === "string") pushToastLog(kind, message);
       // Errors auto-dismiss rather than sticking (0); the notification center keeps them.
       const duration = opts?.duration ?? (kind === "error" ? 8000 : 4000);
-      if (duration > 0) setTimeout(() => remove(id), duration);
+      const old = timers.current.get(id);
+      if (old) clearTimeout(old);
+      timers.current.delete(id);
+      if (duration > 0) timers.current.set(id, setTimeout(() => remove(id), duration));
     },
     [remove],
   );
 
-  const dismiss = useCallback((key: string) => {
-    setItems((xs) => xs.filter((x) => x.key !== key));
-  }, []);
+  const dismiss = useCallback(
+    (key: string) => {
+      const id = keyIds.current.get(key);
+      if (id != null) remove(id);
+    },
+    [remove],
+  );
 
   // Expose this provider's toast to non-React callers (keyboard commands) while mounted.
   useEffect(() => {
@@ -97,32 +120,36 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={toast}>
       {children}
-      {items.length > 0 && (
-        <div className="ui-toasts">
-          {items.map((t) => (
-            <div
-              key={t.id}
-              className={"ui-toast ui-toast-" + t.kind}
-              role={t.kind === "error" ? "alert" : "status"}
-              aria-live={t.kind === "error" ? "assertive" : "polite"}
-            >
-              <Icon name={TOAST_ICONS[t.kind]} />
-              <span className="ui-toast-msg">{t.message}</span>
-              <button
-                type="button"
-                className="ui-toast-x"
-                title={tr("ui.close")}
-                onClick={() => {
-                  remove(t.id);
-                  t.onClose?.();
-                }}
+      {(["bottom", "top"] as const).map((place) => {
+        const here = items.filter((t) => t.placement === place);
+        if (here.length === 0) return null;
+        return (
+          <div key={place} className={"ui-toasts" + (place === "top" ? " ui-toasts-top" : "")}>
+            {here.map((t) => (
+              <div
+                key={t.id}
+                className={"ui-toast ui-toast-" + t.kind}
+                role={t.kind === "error" ? "alert" : "status"}
+                aria-live={t.kind === "error" ? "assertive" : "polite"}
               >
-                <Icon name="close" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+                <Icon name={TOAST_ICONS[t.kind]} />
+                <span className="ui-toast-msg">{t.message}</span>
+                <button
+                  type="button"
+                  className="ui-toast-x"
+                  title={tr("ui.close")}
+                  onClick={() => {
+                    remove(t.id);
+                    t.onClose?.();
+                  }}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      })}
     </ToastCtx.Provider>
   );
 }
