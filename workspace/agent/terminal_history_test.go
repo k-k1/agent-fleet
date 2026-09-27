@@ -4,14 +4,20 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/oscnotify"
 )
 
 func TestRecordTerminalPersistsOutput(t *testing.T) {
 	t.Setenv("AF_TERMINAL_HISTORY_DIR", t.TempDir())
 	want := []byte("\x1b[32mhello\x1b[0m\r\n")
-	if err := recordTerminal("demo", bytes.NewReader(want)); err != nil {
+	if err := recordTerminal("demo", bytes.NewReader(want), nil); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := readTerminalHistory("demo")
@@ -30,7 +36,7 @@ func TestRecordTerminalPersistsOutput(t *testing.T) {
 func TestRecordTerminalKeepsBoundedTail(t *testing.T) {
 	t.Setenv("AF_TERMINAL_HISTORY_DIR", t.TempDir())
 	src := bytes.Repeat([]byte("0123456789abcdef"), int(terminalHistoryMaxBytes/(16))+32768)
-	if err := recordTerminal("demo", bytes.NewReader(src)); err != nil {
+	if err := recordTerminal("demo", bytes.NewReader(src), nil); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := readTerminalHistory("demo")
@@ -97,5 +103,57 @@ func TestCleanupTerminalHistoryDisabledDeletesPersistentStore(t *testing.T) {
 	cleanupTerminalHistory()
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("disabled persistent store still exists: %v", err)
+	}
+}
+
+// The recorder is the only reader of the CLI's own bytes, so it is where OSC desktop
+// notifications are found — a sequence split across reads included — while the history
+// file keeps the stream byte for byte.
+func TestRecordTerminalFindsNotifications(t *testing.T) {
+	t.Setenv("AF_TERMINAL_HISTORY_DIR", t.TempDir())
+	src := "out\x1b]9;4;1;30\x07\x1b]777;notify;Build;done\x07\x1bPtmux;\x1b\x1b]9;wrapped\x07\x1b\\"
+	var got []oscnotify.Notification
+	err := recordTerminal("demo", iotest.OneByteReader(strings.NewReader(src)),
+		func(n oscnotify.Notification) { got = append(got, n) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []oscnotify.Notification{{Proto: "osc777", Title: "Build", Body: "done"}, {Proto: "osc9", Body: "wrapped"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("notifications = %#v, want %#v", got, want)
+	}
+	if h, _ := readTerminalHistory("demo"); string(h) != src {
+		t.Fatalf("history = %q, want the stream unchanged", h)
+	}
+}
+
+// A notify stuck on file I/O must not hold up the read loop: the history is written in
+// full and the recorder returns once its drain timeout passes.
+func TestRecordTerminalDoesNotWaitForAStuckNotify(t *testing.T) {
+	t.Setenv("AF_TERMINAL_HISTORY_DIR", t.TempDir())
+	old := terminalNotifyDrainTimeout
+	terminalNotifyDrainTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { terminalNotifyDrainTimeout = old })
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	var src strings.Builder
+	for i := 0; i < 3*terminalNotifyQueue; i++ {
+		src.WriteString("\x1b]9;n" + strconv.Itoa(i) + "\x07line\r\n")
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- recordTerminal("demo", strings.NewReader(src.String()), func(oscnotify.Notification) { <-release })
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("recordTerminal blocked on a stuck notify")
+	}
+	if h, _ := readTerminalHistory("demo"); string(h) != src.String() {
+		t.Fatalf("history has %d bytes, want %d", len(h), src.Len())
 	}
 }

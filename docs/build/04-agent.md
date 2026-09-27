@@ -145,6 +145,41 @@ wrapper and the state hook coexist and **toggling one does not break the other**
 Managed drivers write to the same store from runtime events. The Console polls, draws
 the badge, and raises a browser notification on the transitions that need a human.
 
+### Terminal notifications (OSC 9 / 99 / 777)
+
+A program can ask its terminal for a desktop notification with OSC 9 (iTerm2),
+OSC 99 (kitty) or OSC 777 `notify` (rxvt / Ghostty). **The only place that sees those
+bytes is the `pipe-pane` recorder** (`record-terminal`): the attach WebSocket carries
+tmux's redraw, and tmux swallows the sequences. The recorder scans its stream
+(`internal/oscnotify`) and puts a `terminal-notification` event in the outbox
+(`sessionx.TerminalNotifier`). Measured on tmux 3.5a: plain OSC and the tmux
+passthrough wrapper (`ESC P tmux; … ESC \`) both reach `pipe-pane` byte for byte.
+
+- **Not a notification:** `OSC 9;<digits>…` is ConEmu's control family — `9;4` is a
+  progress bar that agy and opencode emit every turn, `9;9` a shell's cwd — and kitty's
+  `p=?` is a capability query.
+- **Dropped for hook-driven kinds** (claude, codex, opencode): their hooks already put
+  answer-ready / question / permission in the outbox, so an OSC notification would
+  report the same moment twice. cmux applies the same rule and sets claude's
+  `preferredNotifChannel` to `notifications_disabled`.
+- **Throttled per session**: the same text again within 30 s is dropped, and at most
+  5 per minute are kept.
+- Only 7-bit introducers and terminators are parsed; 0x9c/0x9d are UTF-8 continuation
+  bytes of Japanese text, not C1 controls.
+
+What each kind can emit, read from its binary (2026-09-27; no kind was captured live):
+
+| Kind (version) | Emits | Notes |
+|---|---|---|
+| claude 2.1.283 | nothing by default | `preferredNotifChannel=auto` picks a method by terminal and finds none under tmux; `iterm2` / `kitty` / `ghostty` select OSC 9 / 99 / 777, wrapped in tmux passthrough when `$TMUX` is set. Not changed by us: hooks are authoritative. |
+| codex 0.157.1 | nothing by default | `tui.notifications` with `notification_method = osc9 \| bel`. Not enabled: hooks are authoritative. |
+| opencode | OSC 9;4 progress; OSC 99 code behind a `p=?` capability query | tmux does not answer the query. |
+| agy | OSC 9;4 progress only | No notification while a prompt is pending (`agents/agy/pending.go`). |
+| copilot, cursor, kiro | none found | — |
+| shell | whatever the user runs | The main beneficiary. |
+
+Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OSC).
+
 ## 4.5 Chat and assistants (a headless CLI)
 
 - **Chat is not a tmux session.** It is a parallel subsystem driving the CLI in headless
