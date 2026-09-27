@@ -4368,27 +4368,22 @@ func checkCreateEffort(kind, model, effort string) error {
 }
 
 // checkDefaultModelEffort handles an effort with no model. The default is the CLI's own choice
-// and no catalog row says which it is, so only an effort every effort-taking model accepts is
-// safe whichever it turns out to be. Rows with no efforts are left out: no kind defaults to
-// one (copilot's auto is refused before this).
+// and no catalog row says which it is, so only an effort every listed model accepts is safe.
+// A row with no efforts vetoes every value: it may be the default (a user can point Claude Code
+// at Haiku). An empty catalog says nothing and lets the effort through, as a degraded one does.
 func checkDefaultModelEffort(kind, effort string, models []agents.ModelChoice) error {
-	var common []string
-	seen := false
-	for _, m := range models {
-		if len(m.Efforts) == 0 {
-			continue
-		}
-		if !seen {
-			common, seen = slices.Clone(m.Efforts), true
-			continue
-		}
+	if len(models) == 0 {
+		return nil
+	}
+	common := slices.Clone(models[0].Efforts)
+	for _, m := range models[1:] {
 		common = slices.DeleteFunc(common, func(e string) bool { return !slices.Contains(m.Efforts, e) })
 	}
-	if !seen || slices.Contains(common, effort) {
+	if slices.Contains(common, effort) {
 		return nil
 	}
 	if len(common) == 0 {
-		return fmt.Errorf("model を省略すると %s の effort は選べません。list_models から model も指定してください", kind)
+		return fmt.Errorf("model を省略すると %s の effort は選べません（effort を取らないモデルが既定かもしれないため）。list_models から model も指定してください", kind)
 	}
 	return fmt.Errorf("model を省略したときに使える effort は %s です（既定モデルが何でも通る値だけ）。%q を使うなら list_models から model も指定してください", strings.Join(common, ", "), effort)
 }

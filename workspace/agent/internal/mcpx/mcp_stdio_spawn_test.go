@@ -733,17 +733,29 @@ func TestCreateSessionEffort(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude, Origin: session.OriginUser})
 
+	// A kind missing here answers 500: a catalog that cannot be read.
+	catalogs := map[string]string{
+		"codex": `{"id":"gpt-sol","efforts":["low","medium","high","xhigh"],"defaultEffort":"low"},` +
+			`{"id":"gpt-mini","efforts":["minimal","low"]},` +
+			`{"id":"gpt-plain"}`,
+		// Haiku takes no effort and may be the user's Claude Code default.
+		"claude": `{"id":"opus","efforts":["low","high"]},{"id":"haiku"}`,
+		"muse":   `{"id":"m-a","efforts":["low","high"]},{"id":"m-b","efforts":["low","medium"]}`,
+		// Every row takes effort, but no value is shared.
+		"disjoint": `{"id":"d-a","efforts":["low"]},{"id":"d-b","efforts":["high"]}`,
+		"empty":    ``,
+	}
 	var body map[string]any
 	posts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/agents/codex/models":
-			_, _ = w.Write([]byte(`{"models":[` +
-				`{"id":"gpt-sol","efforts":["low","medium","high","xhigh"],"defaultEffort":"low"},` +
-				`{"id":"gpt-mini","efforts":["minimal","low"]},` +
-				`{"id":"gpt-plain"}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/agents/claude/models":
-			http.Error(w, "catalog down", http.StatusInternalServerError)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/agents/") && strings.HasSuffix(r.URL.Path, "/models"):
+			cat, ok := catalogs[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agents/"), "/models")]
+			if !ok {
+				http.Error(w, "catalog down", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"models":[` + cat + `]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/sessions":
 			posts++
 			body = nil
@@ -799,8 +811,12 @@ func TestCreateSessionEffort(t *testing.T) {
 		// A short name is checked against the model it resolves to.
 		{with("model", "sol", "effort", "minimal"), []string{"gpt-sol", "low, medium, high, xhigh"}},
 		{with("model", "gpt-plain", "effort", "low"), []string{"gpt-plain", "省略"}},
-		// No model: only what every effort-taking model accepts, whichever is the default.
-		{with("model", "", "effort", "xhigh"), []string{"low", "model"}},
+		// No model: only what every listed model accepts, whichever is the default. A row
+		// with no efforts could be the default, so it vetoes every value.
+		{with("model", "", "effort", "low"), []string{"既定かもしれない"}},
+		{with("kind", "claude", "model", "", "effort", "high"), []string{"既定かもしれない"}},
+		{with("kind", "disjoint", "model", "", "effort", "low"), []string{"既定かもしれない"}},
+		{with("kind", "muse", "model", "", "effort", "high"), []string{"使える effort は low です"}},
 		{with("kind", "copilot", "model", "", "effort", "high"), []string{"auto"}},
 		{with("kind", "copilot", "model", "auto", "effort", "high"), []string{"auto"}},
 		{with("kind", "cursor", "effort", "high"), []string{"モデル id"}},
@@ -825,14 +841,16 @@ func TestCreateSessionEffort(t *testing.T) {
 
 	for _, args := range []map[string]any{
 		with("model", "mini", "effort", "minimal"),
-		with("model", "", "effort", "low"),
+		with("kind", "muse", "model", "", "effort", "low"),
+		// An empty catalog says nothing about the default.
+		with("kind", "empty", "model", "", "effort", "low"),
 		// opencode's variant and kiro's --effort are judged by the CLI; their catalogs list none.
 		with("kind", "opencode", "model", "opencode-go/glm", "effort", "max"),
 		with("kind", "kiro", "model", "", "effort", "high"),
 		// The Agent refuses an unknown model itself, with the better message.
 		with("model", "gpt-unknown", "effort", "ultra"),
 		// A catalog that cannot be read must not block the create (or its idempotent retry).
-		with("kind", "claude", "model", "opus", "effort", "max"),
+		with("kind", "gone", "model", "", "effort", "max"),
 	} {
 		if resp := call(args); strings.Contains(resp, `"isError":true`) {
 			t.Errorf("%v refused: %s", args, resp)
