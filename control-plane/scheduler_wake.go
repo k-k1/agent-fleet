@@ -274,7 +274,9 @@ func scheduleInjectKind(kind string) string {
 	return kind
 }
 
-// injectDriver mirrors the Agent-side rule: managed-driver kinds run paneless.
+// injectDriver mirrors the Agent-side rule: managed-driver kinds run paneless. lcpp and
+// muse are absent on purpose: they have no tui route (Caps().ManagedOnly), and the Agent's
+// create handler defaults an empty driver to managed for them.
 func injectDriver(kind string) string {
 	switch kind {
 	case "codex", "opencode", "copilot", "cursor", "kiro":
