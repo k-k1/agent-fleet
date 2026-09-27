@@ -17,7 +17,6 @@ import { toast } from "../../ui/toast.ts";
 import { createStudio, getStudio } from "./api.ts";
 import { draftKey, emptyDraft, loadDraft, type ImagegenDraft } from "./draft.ts";
 import { studioFromForm } from "./studioSync.ts";
-import { studiosChanged } from "./studioBus.ts";
 
 export interface OpenImagegenOptions {
   /**
@@ -48,9 +47,17 @@ export function openImagegen(opts: OpenImagegenOptions = {}): Promise<OpenImageg
   // beside", is a different request and must not be answered with the first one's studio.
   const intent = JSON.stringify([opts.draft ?? null, !!opts.fresh, !!opts.newPane]);
   return once(`open:${intent}`, async () => {
-    let id = !opts.draft && !opts.fresh ? await rememberedStudio() : null;
+    // A legacy draft still here means its pane's migration failed and that pane was closed:
+    // the next plain open (or "new studio") makes it a studio rather than leaving it stranded.
+    const leftover = !opts.draft && draftClaim === null ? localDraft() : null;
+    let id = !opts.draft && !opts.fresh && !leftover ? await rememberedStudio() : null;
     if (!id) {
-      const r = await newStudio(opts.draft ?? emptyDraft());
+      if (leftover) draftClaim = LEFTOVER;
+      const r = await newStudio(opts.draft ?? leftover ?? emptyDraft());
+      if (leftover) {
+        if (r.studioId) dropLocalDraft();
+        draftClaim = null;
+      }
       if (!r.studioId) {
         toast(r.error, { kind: "error" });
         return r;
@@ -96,7 +103,6 @@ export async function newStudio(draft: ImagegenDraft): Promise<OpenImagegenResul
     const s = await createStudio({ draft: studioFromForm(draft) });
     if (!s || s.error || !s.id) return { error: (s?.error && errText(s.error)) || t("imggen.studio_create_failed") };
     rememberStudio(s.id);
-    studiosChanged();
     return { studioId: s.id };
   } catch {
     return { error: t("imggen.studio_create_failed") };
@@ -119,6 +125,8 @@ export function once(key: string, run: () => Promise<OpenImagegenResult>): Promi
 // null panes restored together must not each copy it: the first takes it, the others start
 // empty. Released on failure, so a retry (by any of them) can take it again.
 let draftClaim: string | null = null;
+// The claim openImagegen takes for a stranded draft; pane ids never look like this.
+const LEFTOVER = ":open";
 
 /** Give a pane stored without a studio a new one (see LegacyPane). */
 export function migrateLegacyPane(paneId: string): Promise<OpenImagegenResult> {
