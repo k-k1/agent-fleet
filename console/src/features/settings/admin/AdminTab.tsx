@@ -19,6 +19,7 @@ import { TtsAdminView } from "./adminTts.tsx";
 import { EnginesAdminView } from "./adminEngines.tsx";
 import { EngineTokensAdminView } from "./adminEngineTokens.tsx";
 import { TenantsList } from "./adminTenants.tsx";
+import { lastAdminPlace, rememberAdminPlace } from "../store.ts";
 
 // AdminTab (the super_admin surface) — the same left rail + body two-pane shell as personal and
 // tenant settings.
@@ -119,10 +120,11 @@ export function AdminTab() {
   const costProfile = useCostProfile();
 
   // scope = the slug of the open tenant (null = root). section is the rail position, remembered
-  // separately for root and tenant so closing a tenant just returns to the list.
-  const [scope, setScope] = useState<string | null>(null);
-  const [rootSection, setRootSection] = useState("tenants");
-  const [scopeSection, setScopeSection] = useState("limits");
+  // separately for root and tenant so closing a tenant just returns to the list. All three are
+  // restored from where the modal was last left (#1100); the member level is not.
+  const [scope, setScope] = useState<string | null>(() => lastAdminPlace().scope);
+  const [rootSection, setRootSection] = useState(() => lastAdminPlace().root);
+  const [scopeSection, setScopeSection] = useState(() => lastAdminPlace().scopeSection);
   const [member, setMember] = useState<Member | null>(null);
   // Phones use the same drill-down as personal settings: rail → body, back returns to the rail.
   const [entered, setEntered] = useState(false);
@@ -158,6 +160,17 @@ export function AdminTab() {
     loadTenants();
   }, [loadTenants]);
   useEffect(() => {
+    rememberAdminPlace({ root: rootSection, scope, scopeSection });
+  }, [rootSection, scope, scopeSection]);
+  // A restored tenant that has since been deleted (or is no longer listed) has nothing to stay
+  // inside — back to the root rail.
+  useEffect(() => {
+    if (tenants && scope && !tenants.some((t) => t.slug === scope)) {
+      setScope(null);
+      setMember(null);
+    }
+  }, [tenants, scope]);
+  useEffect(() => {
     // super_admin only, so a tenant_admin simply never sees the tab (the endpoint 403s
     // and this stays false).
     api("api/admin/ec2-pool")
@@ -173,7 +186,13 @@ export function AdminTab() {
 
   const cost = !!costProfile?.available;
   const groups = scope ? tenantScopeGroups({ cost }) : rootGroups({ pool: hasPool, cost, engines: hasEngines });
-  const section = scope ? scopeSection : rootSection;
+  // A remembered item this rail does not offer (a conditional item whose probe says no, or a key
+  // from an older build) shows the level's entrance instead. The stored value is left alone, so
+  // an item whose probe is still in flight comes back once it answers.
+  const offered = (key: string) => groups.some((g) => g.items.some(([k]) => k === key));
+  const shownScopeSection = offered(scopeSection) ? scopeSection : "limits";
+  const shownRootSection = offered(rootSection) ? rootSection : "tenants";
+  const section = scope ? shownScopeSection : shownRootSection;
   const scopeTenant = scope ? tenants.find((t) => t.slug === scope) || null : null;
   const currentLabel = tr(
     (groups.flatMap((g) => g.items).find(([k]) => k === section)?.[1] ??
@@ -201,7 +220,7 @@ export function AdminTab() {
         <TenantScopeBody
           slug={scope}
           tenant={scopeTenant}
-          section={scopeSection}
+          section={shownScopeSection}
           isSuper={isSuper}
           hasPool={hasPool}
           member={member}
@@ -217,18 +236,18 @@ export function AdminTab() {
         />
       );
     }
-    if (rootSection === "register") return <SignInMethodRegister />;
-    if (rootSection === "egress") return <EgressView />;
-    if (rootSection === "tts") return <TtsAdminView />;
-    if (rootSection === "brand") return <BrandAdminView />;
-    if (rootSection === "engines" && hasEngines) return <EnginesAdminView />;
-    if (rootSection === "engine-tokens" && hasEngines) return <EngineTokensAdminView />;
-    if (rootSection === "pool" && hasPool) return <PoolView />;
-    if (rootSection === "sessions") return <AllSessionsView tenants={tenants} isSuper={isSuper} />;
-    if (rootSection === "usage") return <UsageView tenants={tenants} isSuper={isSuper} />;
-    if (rootSection === "cost" && cost) return <CloudCostAdminView tenants={tenants} isSuper={isSuper} />;
-    if (rootSection === "audit") return <AuditView tenants={tenants} isSuper={isSuper} />;
-    if (rootSection === "mcp") return <McpAdminView tenants={tenants} />;
+    if (shownRootSection === "register") return <SignInMethodRegister />;
+    if (shownRootSection === "egress") return <EgressView />;
+    if (shownRootSection === "tts") return <TtsAdminView />;
+    if (shownRootSection === "brand") return <BrandAdminView />;
+    if (shownRootSection === "engines" && hasEngines) return <EnginesAdminView />;
+    if (shownRootSection === "engine-tokens" && hasEngines) return <EngineTokensAdminView />;
+    if (shownRootSection === "pool" && hasPool) return <PoolView />;
+    if (shownRootSection === "sessions") return <AllSessionsView tenants={tenants} isSuper={isSuper} />;
+    if (shownRootSection === "usage") return <UsageView tenants={tenants} isSuper={isSuper} />;
+    if (shownRootSection === "cost" && cost) return <CloudCostAdminView tenants={tenants} isSuper={isSuper} />;
+    if (shownRootSection === "audit") return <AuditView tenants={tenants} isSuper={isSuper} />;
+    if (shownRootSection === "mcp") return <McpAdminView tenants={tenants} />;
     return <TenantsList tenants={tenants} isSuper={isSuper} onReload={loadTenants} onOpen={openTenant} />;
   };
 

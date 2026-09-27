@@ -7,23 +7,70 @@
 // are pushed by AdminTab as layers of useBackClose.
 import { create } from "zustand";
 
-// The settings modal remembers the last-opened section in localStorage, so reopening
-// lands where you left off. First-ever open (nothing stored) defaults to the display
-// section of the personal settings. Device-local UI state — deliberately NOT server-synced.
+// Each modal (personal / tenant / admin) remembers where it was left in localStorage, so
+// reopening lands there. First-ever open (nothing stored) uses the modal's entrance: display for
+// personal settings, sign-in for tenant settings, the tenant list for admin. Device-local UI
+// state — deliberately NOT server-synced. Readers validate what comes back: a key from an older
+// build, or a tenant that has since gone, falls back to the entrance.
 const SETTINGS_SECTION_KEY = "af-settings-section";
-const lastSection = (): string => {
+const TENANT_SECTION_KEY = "af-tenant-section";
+const TENANT_SLUG_KEY = "af-tenant-slug";
+const ADMIN_PLACE_KEY = "af-admin-place";
+
+function readKey(key: string): string {
   try {
-    return localStorage.getItem(SETTINGS_SECTION_KEY) || "";
+    return localStorage.getItem(key) || "";
   } catch {
     return "";
   }
-};
-export function rememberSettingsSection(section: string): void {
+}
+function writeKey(key: string, value: string): void {
   try {
-    localStorage.setItem(SETTINGS_SECTION_KEY, section);
+    localStorage.setItem(key, value);
   } catch {
     /* storage unavailable — non-fatal */
   }
+}
+
+const lastSection = (): string => readKey(SETTINGS_SECTION_KEY);
+export function rememberSettingsSection(section: string): void {
+  writeKey(SETTINGS_SECTION_KEY, section);
+}
+
+const lastTenantSection = (): string => readKey(TENANT_SECTION_KEY);
+export function rememberTenantSection(section: string): void {
+  writeKey(TENANT_SECTION_KEY, section);
+}
+/** The tenant last picked in the tenant settings modal ("" = none stored). */
+export const lastTenantSlug = (): string => readKey(TENANT_SLUG_KEY);
+export function rememberTenantSlug(slug: string): void {
+  writeKey(TENANT_SLUG_KEY, slug);
+}
+
+/** Where the admin modal was left: the root rail item, the open tenant (null = root) and the
+ *  rail item inside that tenant. The member drill-down is transient and never stored. */
+export interface AdminPlace {
+  root: string;
+  scope: string | null;
+  scopeSection: string;
+}
+export const ADMIN_PLACE_DEFAULT: AdminPlace = { root: "tenants", scope: null, scopeSection: "limits" };
+export function lastAdminPlace(): AdminPlace {
+  try {
+    const v = JSON.parse(readKey(ADMIN_PLACE_KEY) || "null");
+    if (!v || typeof v !== "object") return ADMIN_PLACE_DEFAULT;
+    const str = (x: unknown) => (typeof x === "string" ? x : "");
+    return {
+      root: str(v.root) || ADMIN_PLACE_DEFAULT.root,
+      scope: str(v.scope) || null,
+      scopeSection: str(v.scopeSection) || ADMIN_PLACE_DEFAULT.scopeSection,
+    };
+  } catch {
+    return ADMIN_PLACE_DEFAULT;
+  }
+}
+export function rememberAdminPlace(place: AdminPlace): void {
+  writeKey(ADMIN_PLACE_KEY, JSON.stringify(place));
 }
 
 interface SettingsUIStore {
@@ -36,7 +83,8 @@ interface SettingsUIStore {
    *  whole deployment and personal settings cover yourself; this covers the tenant you
    *  administer. */
   tenantOpen: boolean;
-  /** Section to open (deep-link). Defaults to "signin" when unspecified. */
+  /** Section to open: the caller's requested section (deep-link), else the last-opened one
+   *  (localStorage), else "signin". */
   tenantSection: string;
   /** Getting-started guide modal (re-openable first-run checklist — GuideModal). */
   guideOpen: boolean;
@@ -59,7 +107,7 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   settingsSection: lastSection() || "display",
   adminOpen: false,
   tenantOpen: false,
-  tenantSection: "signin",
+  tenantSection: lastTenantSection() || "signin",
   guideOpen: false,
 
   openSettings(section?: string) {
@@ -77,7 +125,8 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   },
 
   // The admin modal rides on the same ui/Modal as the personal settings, so close-on-back is
-  // handled by useBackClose (AdminTab stacks the drill-down levels on top of it).
+  // handled by useBackClose (AdminTab stacks the drill-down levels on top of it). Where it was
+  // left is restored by AdminTab itself (lastAdminPlace), since it has no deep-link to honour.
   openAdmin() {
     set({ adminOpen: true });
   },
@@ -86,11 +135,10 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   },
 
   // Tenant settings ride on the same ui/Modal as the personal settings, so close-on-back is
-  // handled by useBackClose (no history entry of its own, unlike the admin modal). The section
-  // comes only from the caller's deep-link and is not remembered in localStorage: there are
-  // only two surfaces, and on each open you want the entrance rather than where you left off.
+  // handled by useBackClose. Like personal settings, no explicit section → restore the
+  // last-opened one (localStorage), else sign-in (#1100).
   openTenantSettings(section?: string) {
-    set({ tenantSection: section || "signin", tenantOpen: true });
+    set({ tenantSection: section || lastTenantSection() || "signin", tenantOpen: true });
   },
   closeTenantSettings() {
     set({ tenantOpen: false });

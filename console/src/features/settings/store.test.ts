@@ -49,3 +49,46 @@ describe("settings modal — last-opened section persistence", () => {
     expect(values.get("af-settings-section")).toBe("tokens");
   });
 });
+
+describe("tenant settings modal — last-opened section persistence (#1100)", () => {
+  it("first-ever open (nothing stored) defaults to sign-in", () => {
+    store.useSettingsUI.getState().openTenantSettings();
+    expect(store.useSettingsUI.getState().tenantSection).toBe("signin");
+  });
+
+  it("restores the last-opened section on a plain open", () => {
+    store.rememberTenantSection("members");
+    store.useSettingsUI.getState().openTenantSettings();
+    expect(store.useSettingsUI.getState().tenantSection).toBe("members");
+  });
+
+  it("an explicit requested section wins over the remembered one (deep-link)", () => {
+    store.rememberTenantSection("members");
+    store.useSettingsUI.getState().openTenantSettings("rules");
+    expect(store.useSettingsUI.getState().tenantSection).toBe("rules");
+  });
+
+  it("remembers the picked tenant", () => {
+    expect(store.lastTenantSlug()).toBe("");
+    store.rememberTenantSlug("acme");
+    expect(store.lastTenantSlug()).toBe("acme");
+  });
+});
+
+describe("admin modal — where it was left (#1100)", () => {
+  it("defaults to the tenant list with nothing stored", () => {
+    expect(store.lastAdminPlace()).toEqual({ root: "tenants", scope: null, scopeSection: "limits" });
+  });
+
+  it("round-trips root, open tenant and the section inside it", () => {
+    store.rememberAdminPlace({ root: "egress", scope: "acme", scopeSection: "members" });
+    expect(store.lastAdminPlace()).toEqual({ root: "egress", scope: "acme", scopeSection: "members" });
+  });
+
+  it("falls back to the defaults for a corrupt or partial value", () => {
+    values.set("af-admin-place", "{not json");
+    expect(store.lastAdminPlace()).toEqual({ root: "tenants", scope: null, scopeSection: "limits" });
+    values.set("af-admin-place", JSON.stringify({ scope: 3, root: "" }));
+    expect(store.lastAdminPlace()).toEqual({ root: "tenants", scope: null, scopeSection: "limits" });
+  });
+});
