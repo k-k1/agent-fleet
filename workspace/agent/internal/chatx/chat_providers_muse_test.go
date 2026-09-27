@@ -110,6 +110,57 @@ func TestMuseChatModelKeepsTheMemberSChoice(t *testing.T) {
 	}
 }
 
+// withMuseHidden gives the chat two safe muse rows (newest first) and hides the given ids through
+// the VisibleModel seam, the way the saved hidden-models setting does in production.
+func withMuseHidden(t *testing.T, hidden ...string) {
+	t.Helper()
+	prev := museSafeModels
+	museSafeModels = func() []string { return []string{"muse-spark-1.3", "muse-spark-1.2"} }
+	d := testDeps()
+	d.VisibleModel = func(_, model string) string {
+		if slices.Contains(hidden, model) {
+			return ""
+		}
+		return model
+	}
+	Configure(d)
+	t.Cleanup(func() {
+		museSafeModels = prev
+		Configure(testDeps())
+	})
+}
+
+// #1023 item 4: hiding the safe default moves the chat to the next safe row, and the
+// recommendation the Console shows names that same row.
+func TestMuseChatModelSkipsAHiddenSafeDefault(t *testing.T) {
+	withMuseHidden(t, "muse-spark-1.3")
+	model, err := museChatModel(&ChatConversation{ID: "c", Agent: "muse"})
+	if err != nil || model != "muse-spark-1.2" {
+		t.Fatalf("museChatModel = %q, %v; want the next safe row muse-spark-1.2", model, err)
+	}
+	if got := RecommendedModelsWithHidden("muse", []string{"muse-spark-1.3"}, nil).Chat; got != "muse-spark-1.2" {
+		t.Errorf("recommended chat = %q, want muse-spark-1.2", got)
+	}
+}
+
+// Every safe row hidden: refuse, never a contributor row or no --model.
+func TestMuseChatModelRefusesWhenEverySafeRowIsHidden(t *testing.T) {
+	withMuseHidden(t, "muse-spark-1.3", "muse-spark-1.2")
+	if model, err := museChatModel(&ChatConversation{ID: "c", Agent: "muse"}); err == nil {
+		t.Fatalf("museChatModel = %q and no error; every safe row is hidden", model)
+	}
+}
+
+// A conversation pinned to a model the member later hid is refused, as the launch guard
+// refuses it for a session.
+func TestMuseChatModelRefusesAHiddenPinnedModel(t *testing.T) {
+	withMuseHidden(t, "muse-spark-1.3-contributor")
+	c := &ChatConversation{ID: "c", Agent: "muse", Model: "muse-spark-1.3-contributor"}
+	if model, err := museChatModel(c); err == nil {
+		t.Fatalf("museChatModel = %q and no error; the pinned model is hidden", model)
+	}
+}
+
 // The argv the chat turn is built on. Each flag is a clamp with a reason in the source; a
 // mutation that drops one leaves every other test in this package green.
 func TestMuseChatBaseArgsCarryTheHeadlessClamps(t *testing.T) {

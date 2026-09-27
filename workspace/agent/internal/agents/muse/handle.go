@@ -222,9 +222,16 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		WorkspaceRoot: &h.dir,
 		ApprovalMode:  approvalModeFor(h.bypass),
 	}
+	safe := ""
+	if st.Model == "" {
+		var err error
+		if safe, err = SafeDefaultModel(cl); err != nil {
+			return err
+		}
+	}
 	if st.Model != "" {
 		params.ModelID = &st.Model
-	} else if safe := SafeDefaultModel(cl); safe != "" {
+	} else if safe != "" {
 		// 🔴 Omitting modelId is not the neutral choice it looks like: the host's own default
 		// is the contributor variant, whose catalogue description says the conversation may be
 		// used for product improvement (decision 6 clamp 8). So "the member chose no model"
@@ -916,7 +923,10 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	}
 	model := s.Model
 	if s.ClearModel {
-		model = SafeDefaultModel(cl)
+		var err error
+		if model, err = SafeDefaultModel(cl); err != nil {
+			return err
+		}
 	}
 	if model != "" {
 		err := cl.CallInto(msp.MethodSessionSetModel, msp.SessionSetModelParams{

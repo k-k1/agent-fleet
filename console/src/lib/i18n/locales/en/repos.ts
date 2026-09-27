@@ -48,6 +48,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "repo.sess_running": "{n} running sessions",
   "repo.sess_stopped": "{n} stopped sessions",
   "repo.archive_stopped": "Archive all stopped sessions",
+  "repo.open_archived": "Archived sessions of this working copy",
   "repo.launch_title": "Start working (defaults to an isolated worktree · agent/model/first instruction)",
   "repo.no_agents": "No available agents",
   "repo.quick_launch": "Pick a kind and launch immediately (no prompt)",

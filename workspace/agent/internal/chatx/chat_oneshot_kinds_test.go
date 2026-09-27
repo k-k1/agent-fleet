@@ -222,7 +222,7 @@ func TestRecommendedModelsMuseOneShotTiers(t *testing.T) {
 	if got.Short != "muse-spark-1.3" || got.Prose != "muse-spark-1.3" {
 		t.Errorf("RecommendedModels(muse) = %+v, want the newest safe model for both one-shot tiers", got)
 	}
-	got = RecommendedModelsWithHidden(session.KindMuse, []string{"muse-spark-1.3"})
+	got = RecommendedModelsWithHidden(session.KindMuse, []string{"muse-spark-1.3"}, nil)
 	if got.Short != "muse-spark-1.2" || got.Prose != "muse-spark-1.2" {
 		t.Errorf("with muse-spark-1.3 hidden: %+v, want muse-spark-1.2", got)
 	}

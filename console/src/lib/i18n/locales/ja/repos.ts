@@ -46,6 +46,7 @@ export const repos = {
   "repo.sess_running": "稼働中のセッション {n} 件",
   "repo.sess_stopped": "停止中のセッション {n} 件",
   "repo.archive_stopped": "停止中のセッションを全てアーカイブ",
+  "repo.open_archived": "この作業コピーのアーカイブ済みセッション",
   "repo.launch_title": "作業を始める（既定は隔離 worktree・エージェント/モデル/最初の指示）",
   "repo.no_agents": "利用可能なエージェントがありません",
   "repo.quick_launch": "種別を選んで即起動（プロンプト無し）",

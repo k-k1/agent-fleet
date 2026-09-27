@@ -350,6 +350,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/cleanup/cache/{feature}", rest)
 	mux.HandleFunc("GET /api/cleanup/tool-caches", rest)
 	mux.HandleFunc("DELETE /api/cleanup/tool-caches/{name}", rest)
+	mux.HandleFunc("GET /api/cleanup/leftovers", rest)
+	mux.HandleFunc("DELETE /api/cleanup/leftovers/{kind}", rest)
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	mux.HandleFunc("POST /api/sessions/{name}/input", rest)
@@ -704,6 +706,8 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos", rest)
 	mux.HandleFunc("POST /api/repos/init", rest) // new working copy with no import source (mkdir + git init)
 	mux.HandleFunc("DELETE /api/repos/{name}", rest)
+	mux.HandleFunc("GET /api/repos/{name}/recreate", rest) // deleted worktree back at its path (#1040)
+	mux.HandleFunc("POST /api/repos/{name}/recreate", rest)
 	mux.HandleFunc("POST /api/repos/{name}/lock", rest) // deletion lock (docs/log/45)
 	mux.HandleFunc("GET /api/repos/{name}/status", rest)
 	mux.HandleFunc("GET /api/repos/{name}/branches", rest)

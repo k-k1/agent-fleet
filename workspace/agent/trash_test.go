@@ -284,10 +284,11 @@ func TestWorktreeStaysWhenItsShellCannotBeTrashed(t *testing.T) {
 	defer srv.Close()
 	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent)
-	wt, err := gitx.EnsureWorktree(parent, "main", "wt-y", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A worktree with no commit yet: a delete records no tombstone for it, so the unwritable
+	// trash is met by the shell's archive, which is the step under test (a worktree with a
+	// commit is refused one step earlier — TestWorktreeStaysWhenItsTombstoneCannotBeWritten).
+	wt := filepath.Join(home, "repos", "app@wt-y")
+	gitAt(t, parent, "worktree", "add", "-q", "--orphan", "-b", "wt-y", wt)
 	session.WriteMeta(session.Meta{Name: "shfull1", Dir: wt, Kind: session.KindShell})
 	store := cleanupStoreDir() // a file where the trash directory should be: every archive fails
 	if err := os.MkdirAll(filepath.Dir(store), 0o700); err != nil {

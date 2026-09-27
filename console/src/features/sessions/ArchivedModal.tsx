@@ -2,7 +2,9 @@
 // disk). Restore (back as a stopped session), or delete — which reclaims the
 // conversation through DELETE ?reclaim=1, so it is bundled to the cleanup trash
 // (gz) first and stays restorable from the Cleanup modal's trash tab. Grouped by
-// working dir, filterable, bulk-prunable by age (>7 days).
+// working dir, filterable, bulk-prunable by age (>7 days). A group whose folder was a
+// deleted worktree offers to recreate it at the same path (RecreateWorktreeModal), which is
+// what makes its sessions resumable again.
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
@@ -15,12 +17,15 @@ import { displayName } from "../../lib/sessionview.ts";
 import { t, useLocale, useT } from "../../lib/i18n/index.ts";
 import { compareText } from "../../lib/intl.ts";
 import type { Session } from "../../types/session.ts";
+import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
 
 type ArchivedSession = Session & { started?: string };
 
 interface ArchivedModalProps {
   onClose?: () => void;
   onRestored?: () => void;
+  /** Open scoped to one working copy's folder (the working-copy row menu). */
+  dir?: string | null;
 }
 
 // Group heading, split into the base repo (a prefix) and a branch/folder label.
@@ -39,6 +44,13 @@ const groupHeading = (dir: string, head?: ArchivedSession): { repo?: string; lab
   return { label: seg };
 };
 
+// A group can be recreated when its folder was a worktree ("<repo>@<seg>") and every session
+// in it reports the folder gone. The Agent decides the rest (parent still there, path free).
+export const recreatableGroup = (dir: string, list: ArchivedSession[]): boolean => {
+  const seg = dir.split("/").filter(Boolean).pop() || "";
+  return seg.indexOf("@") > 0 && list.length > 0 && list.every((s) => s.resumable === false);
+};
+
 // "Old" cutoff for bulk-prune. No createdAt = never pruned by age.
 const OLD_DAYS = 7;
 // A deletion-locked row (docs/log/45) is out of scope for the bulk delete — the Agent refuses
@@ -49,8 +61,10 @@ const isOld = (s: ArchivedSession, now: number) => {
   return !isNaN(ts) && now - ts > OLD_DAYS * 86400_000;
 };
 
-export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
+export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedModalProps) {
   const [items, setItems] = useState<ArchivedSession[] | null>(null);
+  const [scope, setScope] = useState<string | null>(scopeDir || null);
+  const [recreate, setRecreate] = useState<{ dir: string; list: ArchivedSession[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -68,13 +82,13 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
   }, []);
 
   const filtered = useMemo(() => {
-    const list = items || [];
+    const list = (items || []).filter((s) => !scope || s.dir === scope);
     const needle = q.trim().toLowerCase();
     if (!needle) return list;
     return list.filter((s) =>
       [displayName(s), s.name, s.dir || "", kindLabel(s.kind)].join(" ").toLowerCase().includes(needle),
     );
-  }, [items, q]);
+  }, [items, q, scope]);
 
   // Group by dir. Groups sorted by repo name (asc), rows by createdAt desc.
   const groups = useMemo(() => {
@@ -258,26 +272,54 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
               </Button>
             </div>
 
+            {scope && (
+              <div className="arch-scope">
+                <Icon name="filter" />
+                <span className="arch-scope-dir" title={scope}>
+                  {tr("arch.scope", { folder: scope.split("/").filter(Boolean).pop() || scope })}
+                </span>
+                <Button small variant="ghost" onClick={() => setScope(null)}>
+                  {tr("arch.scope_clear")}
+                </Button>
+              </div>
+            )}
             {groups.length === 0 && <p className="sm-muted">{tr("arch.no_match")}</p>}
             <ul className="arch-list">
               {groups.map((g) => {
                 const isCollapsed = collapsed.has(g.dir);
                 return (
                   <li key={g.dir || "__nodir"}>
-                    <button
-                      type="button"
-                      className="sess-group-btn"
-                      onClick={() => toggleGroup(g.dir)}
-                      title={g.dir || tr("arch.no_workdir")}
-                    >
-                      <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} />
-                      <Icon name="folder" />
-                      <span className="sess-group-name">
-                        {g.repo && <span className="sess-group-repo">{g.repo}</span>}
-                        <span className="sess-group-branch">{g.label}</span>
-                      </span>
-                      <span className="sess-group-count">{g.list.length}</span>
-                    </button>
+                    <div className="arch-group-head">
+                      <button
+                        type="button"
+                        className="sess-group-btn"
+                        onClick={() => toggleGroup(g.dir)}
+                        title={g.dir || tr("arch.no_workdir")}
+                      >
+                        <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} />
+                        <Icon name="folder" />
+                        <span className="sess-group-name">
+                          {g.repo && <span className="sess-group-repo">{g.repo}</span>}
+                          <span className="sess-group-branch">{g.label}</span>
+                        </span>
+                        <span className="sess-group-count">{g.list.length}</span>
+                      </button>
+                      {recreatableGroup(g.dir, g.list) && (
+                        <Button
+                          small
+                          variant="ghost"
+                          icon="repo"
+                          disabled={busy}
+                          title={tr("arch.recreate_title")}
+                          onClick={() =>
+                            // Every shelved session of the folder, not just the filtered rows.
+                            setRecreate({ dir: g.dir, list: (items || []).filter((s) => s.dir === g.dir) })
+                          }
+                        >
+                          {tr("arch.recreate")}
+                        </Button>
+                      )}
+                    </div>
                     {!isCollapsed &&
                       g.list.map((s) => (
                         <div key={s.name} className="arch-row">
@@ -312,6 +354,17 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
           </>
         )}
       </div>
+      {recreate && (
+        <RecreateWorktreeModal
+          dir={recreate.dir}
+          sessions={recreate.list}
+          onClose={() => setRecreate(null)}
+          onChanged={() => {
+            void load();
+            onRestored?.();
+          }}
+        />
+      )}
       <footer className="ui-modal-foot">
         <Button
           variant="primary"

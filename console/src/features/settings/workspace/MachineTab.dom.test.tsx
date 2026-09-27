@@ -23,7 +23,9 @@ const answers = vi.hoisted(() => ({ byPath: {} as Record<string, unknown>, calls
 vi.mock("../../../core/api/client.ts", () => ({
   api: (path: string, opts?: RequestInit) => {
     answers.calls.push((opts?.method ?? "GET") + " " + path);
-    return Promise.resolve(answers.byPath[path] ?? {});
+    const a = answers.byPath[path];
+    // An Error stands for a request that never got an answer (fetch rejected).
+    return a instanceof Error ? Promise.reject(a) : Promise.resolve(a ?? {});
   },
   apiJSON: () => Promise.resolve({}),
   getTenant: () => "default",
@@ -352,5 +354,80 @@ describe("MachineView", () => {
     expect(answers.calls).toContain("DELETE api/cleanup/tool-caches/go-build");
     expect(host!.textContent).toContain("go-build を空にしました");
     expect(document.body.querySelector(".confirm-title")).toBeNull();
+  });
+
+  it("measures the leftovers only on a press, and deletes one kind without asking", async () => {
+    answers.byPath["api/cleanup/leftovers"] = {
+      kinds: [
+        { kind: "chromium", count: 1551, bytes: 8 * 2 ** 30, path: "~/.config/chromium-headless" },
+        { kind: "af-work", count: 0, bytes: 0, path: "~/.af-work" },
+        { kind: "node", count: 1, bytes: 187 * 2 ** 20, path: "~/.nvm/versions/node" },
+        { kind: "kiro", count: 0, bytes: 0 },
+      ],
+    };
+    answers.byPath["api/cleanup/leftovers/chromium"] = { kind: "chromium", count: 1551, bytes: 8 * 2 ** 30 };
+    let text = await mount(shared);
+    expect(text).toContain("使われなくなったファイル");
+    expect(answers.calls).not.toContain("GET api/cleanup/leftovers");
+
+    const section = () =>
+      [...document.body.querySelectorAll("section")].find((s) =>
+        s.querySelector("h4")?.textContent?.includes("使われなくなったファイル"),
+      )!;
+    const buttons = () => [...section().querySelectorAll("button")];
+    await act(async () => {
+      buttons().find((b) => b.textContent === "測る")!.click();
+    });
+    text = section().textContent || "";
+    expect(text).toContain("Chromium の使い捨てプロファイル");
+    expect(text).toContain("終わったセッションの作業用フォルダ");
+    expect(text).toContain("1551 個");
+    // Only the kinds with something to take offer "delete".
+    expect(buttons().filter((b) => b.textContent === "削除")).toHaveLength(2);
+    // Not the tool caches' warning: removing these costs nothing.
+    expect(text).not.toContain("遅くなります");
+
+    await act(async () => {
+      buttons().find((b) => b.textContent === "削除")!.click();
+    });
+    expect(document.body.querySelector(".confirm-title")).toBeNull();
+    expect(answers.calls).toContain("DELETE api/cleanup/leftovers/chromium");
+    expect(section().textContent).toContain("Chromium の使い捨てプロファイル を 1551 個削除しました");
+  });
+
+  it("hides the leftovers outside a Workspace image", async () => {
+    answers.byPath["api/cleanup/leftovers"] = { kinds: [], unsupported: true };
+    await mount(shared);
+    const btn = [...document.body.querySelectorAll("section")]
+      .find((s) => s.querySelector("h4")?.textContent?.includes("使われなくなったファイル"))!
+      .querySelector("button")!;
+    await act(async () => {
+      btn.click();
+    });
+    expect(document.body.textContent).not.toContain("使われなくなったファイル");
+  });
+
+  it("says a leftover delete failed and measures again, also when the request never came back", async () => {
+    answers.byPath["api/cleanup/leftovers"] = { kinds: [{ kind: "node", count: 2, bytes: 400 * 2 ** 20 }] };
+    answers.byPath["api/cleanup/leftovers/node"] = new Error("network");
+    await mount(shared);
+    const section = () =>
+      [...document.body.querySelectorAll("section")].find((s) =>
+        s.querySelector("h4")?.textContent?.includes("使われなくなったファイル"),
+      )!;
+    const click = async (label: string) =>
+      act(async () => {
+        [...section().querySelectorAll("button")].find((b) => b.textContent === label)!.click();
+      });
+    await click("測る");
+    await click("削除");
+    expect(section().textContent).toContain("古い Node.js を削除できませんでした");
+    expect(answers.calls.filter((c) => c === "GET api/cleanup/leftovers")).toHaveLength(2);
+
+    // Some went and some did not: both are said.
+    answers.byPath["api/cleanup/leftovers/node"] = { kind: "node", count: 1, bytes: 200 * 2 ** 20, failed: "permission denied" };
+    await click("削除");
+    expect(section().textContent).toContain("古い Node.js を 1 個削除しました");
+    expect(section().textContent).toContain("一部は削除できませんでした: permission denied");
   });
 });

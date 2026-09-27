@@ -89,7 +89,11 @@ function decorateLabel(kind: string, label: string, all: ModelDescriptor[]): str
 // the METERED ids instead, which is the one thing a billing setting must not do quietly. ""
 // while no list has been fetched, and after a failed fetch: nothing is known then, and a
 // warning drawn from nothing is worse than none.
-let opencodeRoute = "";
+//
+// Keyed by the question (questionKey) like the list itself: the same "Go" setting under another
+// tenant or user is another Agent's answer, so a route held per kind showed the previous
+// tenant's (no Zen-rescue warning where one was due) and a late answer could overwrite it.
+const opencodeRoutes = new Map<string, string>();
 
 // Why the last fetch for this kind came back with no model: either as the Agent named it
 // ("catalog_empty" | "route" | "hidden" — agent_models.go's emptyReason) or "unreachable",
@@ -116,7 +120,8 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  *  a transient backend error (`http_502` while the workspace boots, any 5xx body). An empty
  *  `models` array is NOT this case: that is an answer, and it carries its own reason. */
 /** One question to the Agent: whose (tenant, user) and under which settings (the hidden list,
- *  opencode's billing route). The settings travel WITH the request (?hidden= / ?catalog=), so
+ *  opencode's billing route, claude's registered models). The settings travel WITH the request
+ *  (?hidden= / ?catalog= / ?custom=), so
  *  the Agent answers for this tab's current setting even before its debounced save arrives —
  *  the answer is a function of the question, and caching it under the question is exact
  *  (#972 review, rounds 3–5: every scheme that matched a saved-prefs answer to the screen after
@@ -127,6 +132,7 @@ interface CatalogQuestion {
   user: string;
   hidden: string; // JSON array of the kind's hidden-models entry, as this tab holds it
   catalog: string; // opencode's billing route; "" for every other kind
+  custom: string; // JSON array of claude's registered models; "" for every other kind
 }
 
 function questionFor(kind: string): CatalogQuestion {
@@ -139,10 +145,11 @@ function questionFor(kind: string): CatalogQuestion {
     user: getUser(),
     hidden: JSON.stringify(hidden),
     catalog: kind === "opencode" ? s.opencodeCatalog : "",
+    custom: kind === "claude" ? JSON.stringify(s.claudeCustomModels) : "",
   };
 }
 
-const questionKey = (q: CatalogQuestion): string => [q.tenant, q.user, q.kind, q.hidden, q.catalog].join("|");
+const questionKey = (q: CatalogQuestion): string => [q.tenant, q.user, q.kind, q.hidden, q.catalog, q.custom].join("|");
 
 /** Is this tab still asking as the same tenant and user? api() sends whichever is current at
  *  call time, so a question begun under one and retried after a switch would be answered by the
@@ -157,6 +164,7 @@ async function requestModels(q: CatalogQuestion): Promise<Record<string, unknown
   if (!stillAsker(q)) return null;
   const params = new URLSearchParams({ hidden: q.hidden });
   if (q.kind === "opencode") params.set("catalog", q.catalog);
+  if (q.kind === "claude") params.set("custom", q.custom);
   const d = await api(`api/agents/${q.kind}/models?${params}`).catch(() => null);
   if (!d || isTransientErr(d) || !Array.isArray(d.models) || !stillAsker(q)) return null;
   return d;
@@ -223,7 +231,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
             efforts: Array.isArray(m.efforts) ? m.efforts.filter((x): x is string => typeof x === "string" && !!x) : [],
             defaultEffort: typeof m.defaultEffort === "string" ? m.defaultEffort : "",
           }));
-        if (kind === "opencode") opencodeRoute = typeof d?.route === "string" ? d.route : "";
+        if (kind === "opencode") opencodeRoutes.set(ident, typeof d?.route === "string" ? d.route : "");
         const opts = desc.map((m): ModelOption => [m.id, decorateLabel(kind, m.label, desc)]);
         if (!opts.length) {
           // The Agent answered, and the answer was "none" — a different fact from a fetch
@@ -240,7 +248,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
       })
       .catch((e) => {
         inflight.delete(flight);
-        if (kind === "opencode") opencodeRoute = "";
+        if (kind === "opencode") opencodeRoutes.delete(ident);
         // A fetch that did not land tells us nothing about why the menu is empty, so the
         // previous answer must not be left standing as an explanation of this one. The
         // "empty" throw above is not that case — it IS the answer, reason and all.
@@ -489,16 +497,19 @@ export async function resolveQuickLaunchModel(kind: string, resolved: string): P
 // request while a launch modal is open — opencode's entry is deliberately uncached but folds
 // through `inflight`.
 export function useOpencodeAppliedRoute(): string {
-  const selected = useSettings().opencodeCatalog;
-  const [route, setRoute] = useState(opencodeRoute);
+  useSettings(); // re-render on a settings change: the question below reads them
+  // The question, not the selected route alone: a tenant or user switch with the same setting
+  // is a different answer too.
+  const ident = questionKey(questionFor("opencode"));
+  const [held, setHeld] = useState<{ ident: string; route: string } | null>(null);
   useEffect(() => {
     let alive = true;
-    void fetchModels("opencode").then(() => alive && setRoute(opencodeRoute));
+    void fetchModels("opencode").then(() => alive && setHeld({ ident, route: opencodeRoutes.get(ident) ?? "" }));
     return () => {
       alive = false;
     };
-  }, [selected]); // a route change reshapes the list server-side, so the answer can change
-  return route;
+  }, [ident]);
+  return held?.ident === ident ? held.route : opencodeRoutes.get(ident) ?? "";
 }
 
 // useModelCatalogSettled answers whether this kind's catalog fetch has settled once. Static kinds

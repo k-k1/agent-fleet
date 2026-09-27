@@ -1134,6 +1134,14 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	if out, err := Combined(parentDir, args...); err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, out)
 	}
+	finishNewWorktree(dir, parentDir)
+	return dir, nil
+}
+
+// finishNewWorktree is what every freshly added worktree needs before a session runs in it.
+// Only call it right after `git worktree add`: the scratch relocation below must not run on
+// an existing worktree.
+func finishNewWorktree(dir, parentDir string) {
 	applyGitIdentity(dir) // commit identity for the worktree (config is shared, but explicit)
 	// A worktree's submodules live in their own object store, so without this they are fetched
 	// from the remote all over again — see git_submodule_seed.go. Seed from the parent's copy
@@ -1144,7 +1152,6 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	// relocating them is free. Only on creation: an existing worktree may already hold
 	// a populated tree on EFS, and moving that on a relaunch would stall the session.
 	scratchAutoRelocate(dir)
-	return dir, nil
 }
 
 func HandleCloneRepo(w http.ResponseWriter, r *http.Request) {
@@ -1620,10 +1627,22 @@ func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
 			return
 		}
+		// Record it in the trash before anything is removed, so the delete can be taken back:
+		// its commit pinned, its uncommitted work (untracked files included) snapshotted.
+		// Failing that, nothing is deleted — the same rule as the shell sessions below.
+		undo, ok := recordWorktreeTombstone(w, dir, parent)
+		if !ok {
+			return
+		}
 		if !trashShellSessionsUnder(w, dir) {
+			undo()
 			return
 		}
 		if out, err := Combined(parent, "worktree", "remove", "--force", dir); err != nil {
+			// No undo once the remove has run: one that fails part way (a directory it may not
+			// delete) has already taken files and often the registration — measured — and the
+			// trash entry is then the only copy of the uncommitted work. A worktree that is in
+			// fact still whole only leaves an entry whose restore finds the folder there.
 			httpx.WriteErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
@@ -1650,6 +1669,35 @@ func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 	}
 	shelveSessionsUnder(dir)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
+}
+
+// recordWorktreeTombstone writes the trash entry for a worktree about to be deleted and returns
+// the way to take it back. It answers 500 itself, removing nothing, when the entry cannot be
+// written. A worktree with no commit yet has nothing to pin and is deleted unrecorded.
+func recordWorktreeTombstone(w http.ResponseWriter, dir, parent string) (undo func(), ok bool) {
+	t, has, err := PrepareTombstone(dir, parent)
+	if err == nil && !has {
+		return func() {}, true
+	}
+	if err == nil {
+		for _, m := range sessionsToSettleUnder(dir) {
+			if m.Kind != session.KindShell && m.Kind != session.KindSSM {
+				t.Shelved = append(t.Shelved, m.Name)
+			}
+		}
+		undo, err = recordDeletedWorktree(t)
+	}
+	if IsNestedRepos(err) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeWorktreeNestedRepo,
+			err.Error()+"; move or delete them first, and the worktree was left as it is")
+		return nil, false
+	}
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeWorktreeArchiveFailed,
+			fmt.Sprintf("could not record the worktree in the trash, so it was left as it is: %v", err))
+		return nil, false
+	}
+	return undo, true
 }
 
 // trashShellSessionsUnder moves the stopped shell / ssm sessions of dir to the trash BEFORE the

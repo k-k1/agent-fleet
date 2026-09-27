@@ -37,6 +37,19 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.locked_sessions":
     "This working copy hosts sessions that are locked against deletion; removing it would leave them unresumable. Unlock those sessions first.",
   "err.worktree_remove_failed": "Failed to remove the worktree.",
+  "err.recreate_path_exists":
+    "Something already exists at that path. Only a folder that is gone can be recreated.",
+  "err.recreate_parent_missing":
+    "The working copy this worktree came from is gone, so it can't be recreated.",
+  "err.recreate_stale":
+    "That way of recreating it is no longer available (the branch may have changed). The options were reloaded; choose again.",
+  "err.recreate_failed": "Couldn't recreate the working copy.",
+  "err.worktree_archive_failed":
+    "Couldn't record the worktree in the trash, so it was not deleted (check the free disk space).",
+  "err.recreate_needs_new_branch":
+    "The branch has moved since the delete, or there was none, so it can't be put back as it was. Recreate it on a new branch name.",
+  "err.worktree_nested_repo":
+    "This worktree holds a repository git does not track (a clone inside it), whose contents the trash cannot keep. Move or delete it first; the worktree was left as it is.",
   "err.session_resumed": "The session was resumed while it was being moved to the trash, so it was not deleted.",
   "err.sessions_trash_failed":
     "Couldn't move this working copy's shell/ssm sessions to the trash, so the working copy was not deleted (check the free disk space).",

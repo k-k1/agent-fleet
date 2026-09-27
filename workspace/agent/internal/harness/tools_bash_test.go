@@ -72,6 +72,23 @@ func TestBashPerCallTimeoutDoesNotKillWholeLoop(t *testing.T) {
 	}
 }
 
+// ADR 0102 decision 5 (docs/log/120 §1.1): af-aws-exec gives lcpp its 90-second Console-login
+// wait because this tool's default timeout is longer and a timed-out command keeps what it
+// printed before the timeout.
+func TestBashTimeoutKeepsPartialOutput(t *testing.T) {
+	if defaultBashTimeout < 90*time.Second {
+		t.Fatalf("defaultBashTimeout = %s, shorter than af-aws-exec's lcpp wait", defaultBashTimeout)
+	}
+	rt := &Runtime{Cwd: t.TempDir()}
+	out, err := runBash(context.Background(), rt, `{"command":"echo first-line; exec sleep 5","timeout_sec":1}`)
+	if err != nil {
+		t.Fatalf("runBash: %v", err)
+	}
+	if !strings.Contains(out, "first-line") || !strings.Contains(out, "timed out") {
+		t.Fatalf("bash output = %q, want the line printed before the timeout and a timeout notice", out)
+	}
+}
+
 func TestRtkRewriteFallsBackWhenUnavailable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no rtk on PATH
 	got := rtkRewrite(context.Background(), "git status")

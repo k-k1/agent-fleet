@@ -36,6 +36,19 @@ export const errors = {
   "err.locked_sessions":
     "この作業コピーには削除ロック中のセッションがあります。削除すると再開できなくなるため、先にそのセッションのロックを解除してください。",
   "err.worktree_remove_failed": "worktree の削除に失敗しました。",
+  "err.recreate_path_exists":
+    "そのパスには既に何かがあります。作り直せるのは消えたフォルダだけです。",
+  "err.recreate_parent_missing":
+    "この worktree の元になった作業コピーが見つからないため、作り直せません。",
+  "err.recreate_stale":
+    "この作り直し方はもう使えません（ブランチが変わった可能性があります）。候補を読み直したので、選び直してください。",
+  "err.recreate_failed": "作業コピーを作り直せませんでした。",
+  "err.worktree_archive_failed":
+    "worktree をごみ箱に記録できなかったため、削除していません（ディスクの空きを確認してください）。",
+  "err.recreate_needs_new_branch":
+    "ブランチが削除後に動いたか、削除時にブランチが無かったため、そのままでは戻せません。新しいブランチ名を付けて作り直してください。",
+  "err.worktree_nested_repo":
+    "この worktree の中に git 管理外のリポジトリ（中で clone したものなど）があり、その中身はごみ箱に残せません。先に移動か削除をしてください。worktree はそのままです。",
   "err.session_resumed": "ごみ箱へ移している間にセッションが再開されたため、削除しませんでした。",
   "err.sessions_trash_failed":
     "作業コピーの shell/ssm セッションをごみ箱へ移せなかったため、作業コピーは削除していません（ディスクの空きを確認してください）。",

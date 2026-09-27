@@ -19,13 +19,19 @@ import { Button, IconButton } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { api, rawJSON, raw } from "../../core/api/client.ts";
+import { api, errText, rawJSON, raw } from "../../core/api/client.ts";
 import { t, tMaybe, useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 import { humanSize } from "../../lib/filemeta.ts";
 import { cleanupReasonParts } from "./cleanupReason.ts";
 import { groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
 import { useSessionUI } from "./ui.ts";
+import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
+import type { Session } from "../../types/session.ts";
+
+/** Refusals of a deleted worktree's restore that a new branch name gets past — the recreate
+ *  dialog can ask for one, the trash cannot. */
+const NEEDS_RECREATE_DIALOG = new Set(["recreate_needs_new_branch", "branch_in_use"]);
 
 interface CleanupArchive {
   id: string;
@@ -33,6 +39,8 @@ interface CleanupArchive {
   reason?: string;
   sessions?: { name: string; display?: string }[];
   branches?: { repo: string; name: string }[];
+  /** A deleted worktree's tombstone (reason "delete_worktree"). */
+  worktree?: { name: string; path: string; branch?: string; snapshot?: string };
   /** Size of the archive's tarball (what purging it reclaims). */
   bytes?: number;
 }
@@ -95,6 +103,8 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   // the survey is a to-do list, and a collapsed-by-default one hides the work.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // A deleted worktree whose restore needs a new branch name, open in the recreate dialog.
+  const [recreate, setRecreate] = useState<{ dir: string; sessions: Session[] } | null>(null);
   const askConfirm = useConfirm();
   const toast = useToast();
   const tr = useT();
@@ -254,8 +264,31 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
     setBusy(true);
     try {
       const res = await rawJSON(`api/cleanup/archives/${encodeURIComponent(id)}/restore`, "POST");
-      // 409 = it stopped part way: nothing was undone, and restoring again finishes it.
-      toast(res.ok ? t("clean.restored") : res.status === 409 ? t("clean.restore_incomplete") : t("clean.restore_failed"));
+      const code: string | undefined = res.ok ? undefined : (await res.json().catch(() => null))?.error?.code;
+      const wt = archives?.find((a) => a.id === id)?.worktree;
+      if (code && wt?.path && NEEDS_RECREATE_DIALOG.has(code)) {
+        // The archive's own heading may not exist for this folder (no AI session was shelved),
+        // so the way through is opened from here, with whatever of it is still on the shelf.
+        const shelf = await api("api/sessions/archived").catch(() => null);
+        // At or under the folder, as the delete shelved them (subfolder launches included).
+        const sessions = ((shelf?.sessions || []) as Session[]).filter(
+          (s) => s.dir === wt.path || !!s.dir?.startsWith(wt.path + "/"),
+        );
+        toast(errText({ code, message: t("clean.restore_failed") }));
+        setRecreate({ dir: wt.path, sessions });
+        return;
+      }
+      // restore_incomplete = it stopped part way: nothing was undone, and restoring again
+      // finishes it. Any other code is a deleted worktree that cannot come back as it was.
+      toast(
+        res.ok
+          ? t("clean.restored")
+          : code && code !== "restore_incomplete"
+            ? errText({ code, message: t("clean.restore_failed") })
+            : res.status === 409
+              ? t("clean.restore_incomplete")
+              : t("clean.restore_failed"),
+      );
       await loadArchives();
       await loadCandidates();
       onChanged?.();
@@ -673,7 +706,10 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                       <span className="clean-arch-what">
                         {a.reason === "delete_branch"
                           ? tr("clean.archive_reason_delete_branch")
-                          : tr("clean.archive_reason_delete_session")}
+                          : a.reason === "delete_worktree"
+                            ? tr("clean.archive_reason_delete_worktree", { name: a.worktree?.name || "" })
+                            : tr("clean.archive_reason_delete_session")}
+                        {a.worktree?.snapshot ? " · " + tr("clean.archive_worktree_snapshot") : ""}
                         {a.sessions && a.sessions.length > 0
                           ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
                           : ""}
@@ -697,6 +733,17 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
           </div>
         )}
       </div>
+      {recreate && (
+        <RecreateWorktreeModal
+          dir={recreate.dir}
+          sessions={recreate.sessions}
+          onClose={() => setRecreate(null)}
+          onChanged={() => {
+            void loadArchives();
+            onChanged?.();
+          }}
+        />
+      )}
     </Modal>
   );
 }

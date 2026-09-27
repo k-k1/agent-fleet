@@ -116,6 +116,16 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// so it is exactly the answer for what that screen shows (#972 review, rounds 3–5). Without
 	// them — MCP list_models, an older Console — the saved ui-prefs apply, as before.
 	hiddenRaw, hiddenGiven := requestHiddenModels(r)
+	// claude's registered models travel the same way (?custom=): right after a member registers
+	// one, the fail-safe and the "fall back to a registered model" recommendation must count it.
+	// Either setting given makes the whole answer explicit, the other read from ui-prefs.
+	claudeCustom, customGiven := requestClaudeCustomModels(r)
+	if !customGiven {
+		claudeCustom = uiprefs.ClaudeCustomModels()
+	}
+	if customGiven && !hiddenGiven {
+		hiddenRaw, hiddenGiven = sessionx.HiddenModelsRaw(r.PathValue("kind")), true
+	}
 	catalogPref := uiprefs.OpencodeCatalog()
 	if r.URL.Query().Has("catalog") {
 		catalogPref = opencode.CatalogPref(r.URL.Query().Get("catalog"))
@@ -135,7 +145,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		for _, model := range list {
 			seen[strings.ToLower(model.ID)] = true
 		}
-		for _, id := range uiprefs.ClaudeCustomModels() {
+		for _, id := range claudeCustom {
 			if key := strings.ToLower(id); !seen[key] {
 				list = append(list, agents.ModelChoice{ID: id, Label: id})
 				seen[key] = true
@@ -200,7 +210,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// shape as opencodeCatalog). An explicitly named hidden model is refused separately
 	// by the guard in handleCreateSession.
 	if hiddenGiven {
-		list = sessionx.FilterVisibleModelsIn(sessionx.EffectiveHidden(r.PathValue("kind"), hiddenRaw), list)
+		list = sessionx.FilterVisibleModelsIn(sessionx.EffectiveHiddenWith(r.PathValue("kind"), hiddenRaw, claudeCustom), list)
 	} else {
 		list = sessionx.FilterVisibleModels(r.PathValue("kind"), list)
 	}
@@ -221,7 +231,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// "recommended" choice to explain.
 	if _, ok := chatx.ChatProviders[r.PathValue("kind")]; ok {
 		if hiddenGiven {
-			out["recommended"] = chatx.RecommendedModelsWithHidden(r.PathValue("kind"), hiddenRaw)
+			out["recommended"] = chatx.RecommendedModelsWithHidden(r.PathValue("kind"), hiddenRaw, claudeCustom)
 		} else {
 			out["recommended"] = chatx.RecommendedModels(r.PathValue("kind"))
 		}
@@ -259,4 +269,19 @@ func requestHiddenModels(r *http.Request) (raw []string, ok bool) {
 		}
 	}
 	return raw, true
+}
+
+// requestClaudeCustomModels reads ?custom= — the Console's claudeCustomModels as a JSON array,
+// normalized by the same rule as the saved list. ok=false when absent or not a JSON array, and
+// the saved ui-prefs apply instead.
+func requestClaudeCustomModels(r *http.Request) (ids []string, ok bool) {
+	q := r.URL.Query()
+	if !q.Has("custom") {
+		return nil, false
+	}
+	var vals []any
+	if json.Unmarshal([]byte(q.Get("custom")), &vals) != nil || vals == nil {
+		return nil, false
+	}
+	return uiprefs.NormalizeClaudeCustomModels(vals), true
 }

@@ -89,6 +89,8 @@ func buildMux() *http.ServeMux {
 	// Package-manager caches in home (go-build, npm, uv, pip): measure and empty on request (docs/log/116).
 	mux.HandleFunc("GET /cleanup/tool-caches", handleToolCacheUsage)
 	mux.HandleFunc("DELETE /cleanup/tool-caches/{name}", handleDeleteToolCache)
+	mux.HandleFunc("GET /cleanup/leftovers", handleLeftoverUsage)
+	mux.HandleFunc("DELETE /cleanup/leftovers/{kind}", handleDeleteLeftovers)
 	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites
 	// on deletion (DELETE and its old name /stop, and the shell / ssm a deleted working copy
 	// sends to the trash) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one
@@ -285,6 +287,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /repo-jobs", handleListRepoJobs)
 	mux.HandleFunc("DELETE /repo-jobs/{id}", handleDeleteRepoJob)
 	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
+	// A deleted worktree put back at its original path, so its sessions resume (issue #1040).
+	mux.HandleFunc("GET /repos/{name}/recreate", handleRecreatePlan)
+	mux.HandleFunc("POST /repos/{name}/recreate", handleRecreateWorktree)
 	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock) // deletion lock (docs/log/45)
 	mux.HandleFunc("GET /repos/{name}/status", gitx.HandleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", gitx.HandleRepoBranches)

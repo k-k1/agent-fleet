@@ -81,6 +81,11 @@ type Deps struct {
 	// "call fn" would bring back the window in which a lock is accepted and then deleted anyway.
 	WithDeletionGate func(fn func())
 
+	// RecordDeletedWorktree pins a worktree's commit and writes its tombstone to the trash
+	// before the worktree is removed (issue #1042); undo takes both back for a delete that
+	// stops after it. A no-op would quietly make a worktree delete irreversible again.
+	RecordDeletedWorktree func(t WorktreeTombstone) (undo func(), err error)
+
 	// --- Import jobs (repo_jobs.go) ---
 	//
 	// A clone outlives the request, so it runs as a background job (docs/log/78). The
@@ -126,6 +131,8 @@ type Deps struct {
 	ErrCodeLocked                string
 	ErrCodeLockedSessions        string
 	ErrCodeSessionsTrashFailed   string
+	ErrCodeWorktreeArchiveFailed string
+	ErrCodeWorktreeNestedRepo    string
 }
 
 var deps Deps
@@ -170,6 +177,8 @@ func Configure(d Deps) {
 	errCodeLocked = d.ErrCodeLocked
 	errCodeLockedSessions = d.ErrCodeLockedSessions
 	errCodeSessionsTrashFailed = d.ErrCodeSessionsTrashFailed
+	errCodeWorktreeArchiveFailed = d.ErrCodeWorktreeArchiveFailed
+	errCodeWorktreeNestedRepo = d.ErrCodeWorktreeNestedRepo
 }
 
 // unwired decides what counts as "not wired". Besides the zero value, an empty map counts
@@ -202,6 +211,8 @@ var (
 	errCodeLocked                string
 	errCodeLockedSessions        string
 	errCodeSessionsTrashFailed   string
+	errCodeWorktreeArchiveFailed string
+	errCodeWorktreeNestedRepo    string
 )
 
 // What follows are thin delegations under the same names the code used before the move, so
@@ -225,6 +236,8 @@ func shelveSession(m session.Meta) { deps.ShelveSession(m) }
 func trashSession(m session.Meta) error { return deps.TrashSession(m) }
 
 func withDeletionGate(fn func()) { deps.WithDeletionGate(fn) }
+
+func recordDeletedWorktree(t WorktreeTombstone) (func(), error) { return deps.RecordDeletedWorktree(t) }
 
 func repoJobActive(name string) bool { return deps.RepoJobActive(name) }
 

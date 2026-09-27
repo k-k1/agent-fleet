@@ -1206,6 +1206,8 @@ export const admin = {
   "clean.archives_empty": "ごみ箱は空です。",
   "clean.archive_reason_delete_session": "セッション削除",
   "clean.archive_reason_delete_branch": "ブランチ削除",
+  "clean.archive_reason_delete_worktree": "作業コピー削除（{name}）",
+  "clean.archive_worktree_snapshot": "未コミットの変更を含む",
   "clean.archive_sessions_n": "セッション {count} 件",
   "clean.archive_branches_n": "ブランチ {count} 件",
   "clean.restore": "復元",
