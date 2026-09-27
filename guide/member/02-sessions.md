@@ -308,7 +308,7 @@ own; when it has grown, **"Delete permanently: older than 30 days"** in the tras
 one go (its size is also shown in **Settings → Machine**). **Only deleting a worktree cannot
 be undone** — and even then only the working copy goes; the history, the remote and the branch
 remain. The stopped AI sessions that lived in it **move to the archive** (the conversation stays
-readable, but it cannot resume without its folder), and shell / SSM move to the trash. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
+readable, but it cannot resume until the folder is recreated — see below), and shell / SSM move to the trash. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
 it only ever covers sessions that are already gone for good.
 
 Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
@@ -345,6 +345,24 @@ display becomes **"Folder missing — can't resume"**, and the row is struck thr
 longer be clicked ("Can't resume — the working folder no longer exists"). The typical case is
 after deleting a working copy together with its worktree. shell falls back to home and resumes
 if its working folder is missing.
+
+**A deleted worktree can be recreated at its original path.** In the archive list, the heading of
+a deleted worktree's folder offers **"Recreate working copy"**. It looks for the branch the folder
+last held, in this order, and creates the worktree at the same path from the first it finds: the
+local branch → the remote branch → the commit recorded when the branch was deleted from the Console
+→ the head commit a merge commit still names (a GitHub PR merge, for example). If none is left, it
+starts a new branch of the same name off the parent. Once it is back, choose the sessions to
+restore. With the folder back where it was, every kind of session resumes its conversation as
+before.
+
+- If another working copy has that branch checked out, a new branch is started at the same commit.
+- A folder of the same name may have been reused by earlier work on a branch of the same name.
+  Sessions whose start branch differs from the recreated one are flagged; check them against their
+  dates before restoring.
+- Uncommitted changes and ignored files (`node_modules`, `.env`, …) do not come back, and nothing
+  can be recreated once the parent working copy is gone.
+- Right-click a working copy's row and choose **"Archived sessions of this working copy"** to open
+  the archive for that folder only.
 
 When you open a stopped session, the history is first shown read-only, and **"Resume"** restarts
 the conversation. After resuming, it continues with the execution method that was saved.
