@@ -270,7 +270,10 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
         // The archive's own heading may not exist for this folder (no AI session was shelved),
         // so the way through is opened from here, with whatever of it is still on the shelf.
         const shelf = await api("api/sessions/archived").catch(() => null);
-        const sessions = ((shelf?.sessions || []) as Session[]).filter((s) => s.dir === wt.path);
+        // At or under the folder, as the delete shelved them (subfolder launches included).
+        const sessions = ((shelf?.sessions || []) as Session[]).filter(
+          (s) => s.dir === wt.path || !!s.dir?.startsWith(wt.path + "/"),
+        );
         toast(errText({ code, message: t("clean.restore_failed") }));
         setRecreate({ dir: wt.path, sessions });
         return;
