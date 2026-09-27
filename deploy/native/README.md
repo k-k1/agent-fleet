@@ -1,7 +1,8 @@
 # Agent Fleet — native package (no Docker, single user)
 
 Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
-Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode) as a managed fleet. This native package runs
+Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode, Muse Code, and
+the fleet's own llama.cpp harness) as a managed fleet. This native package runs
 it without Docker on a single-user Linux host (including WSL2): the control plane and
 console run as host processes, and the workspace runs inside a bubblewrap
 (user-namespace) sandbox on a downloaded rootfs. For multi-user service with
@@ -40,7 +41,9 @@ cd agent-fleet-native-<v>-linux-amd64
   On a workspace's first start, the entrypoint auto-installs the versions pinned in
   versions.json (verified-working versions) into the virtual HOME (network is needed
   only then). kiro (~855MB) is the exception: it is installed on demand the first
-  time a Kiro session starts, not at workspace start.
+  time a Kiro session starts, not at workspace start. Muse Code is not installed at all until
+  you ask for it: its connection card's **"Install"** button fetches the pinned version
+  into your home.
 - Stop with Ctrl-C (runs in the foreground). For running as a service, see the
   systemd user unit below.
 
