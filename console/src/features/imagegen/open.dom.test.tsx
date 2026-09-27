@@ -34,7 +34,8 @@ vi.mock("./api.ts", () => ({
 
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { openImagegen, lastStudio, rememberStudio } = await import("./open.ts");
-const { emptyDraft } = await import("./draft.ts");
+const { emptyDraft, draftKey, saveDraft } = await import("./draft.ts");
+const { getTenant } = await import("../../core/api/client.ts");
 
 const opened: string[] = [];
 beforeEach(() => {
@@ -125,6 +126,19 @@ describe("openImagegen", () => {
     expect(new Set([a.studioId, b.studioId, c.studioId]).size).toBe(3);
     expect([...calls].sort()).toEqual(["create prompt=", "create prompt=A", "create prompt=B"]);
     expect(opened).toContain(`new ${c.studioId}`);
+  });
+
+  it("移行に失敗して残った旧下書きは、次に開いたときの新しいスタジオが引き取る", async () => {
+    rememberStudio("old");
+    saveDraft(draftKey(getTenant()), { ...emptyDraft(), prompt: "left behind" });
+    expect(await openImagegen()).toEqual({ studioId: "st1" });
+    expect(calls).toEqual(["create prompt=left behind"]);
+    expect(opened).toEqual(["here st1"]);
+    expect(localStorage.getItem(draftKey(getTenant()))).toBeNull();
+    // Taken once: the next plain open is back to the remembered studio.
+    calls.length = 0;
+    await openImagegen();
+    expect(calls).toEqual(["get st1"]);
   });
 
   it("スタジオ id 指定はそのまま開く（Agent に問い合わせない）", async () => {

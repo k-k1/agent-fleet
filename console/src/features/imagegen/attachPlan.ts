@@ -22,6 +22,8 @@ export interface PlacePlan {
   /** A worktree row whose agent needs a worktree: a new one is cut from the row's branch. */
   forcedFromWorktree: boolean;
   blocked?: PlaceBlock;
+  /** The member asked for a new worktree that cannot be cut here, so the start runs in place. */
+  wantUnmet?: boolean;
 }
 
 /** Worktree rows start in place (the member picked that checkout); base clones start a new one. */
@@ -57,7 +59,10 @@ export function planPlace(p: {
   if (r.worktree) {
     const parent = (r.parent && p.repos.find((x) => x.name === r.parent && !x.worktree && x.path)) || null;
     // No parent clone to cut from: in place where the agent allows it, else refused with the reason.
-    if (!parent) return { dir, ...none, ...(optional ? {} : { blocked: "no_parent" as const }) };
+    if (!parent) {
+      if (!optional) return { dir, ...none, blocked: "no_parent" as const };
+      return { dir, ...none, ...(p.want ? { wantUnmet: true } : {}) };
+    }
     if (!worktree) return { dir, ...none, worktreeChoice: true };
     return {
       dir: parent.path || "",

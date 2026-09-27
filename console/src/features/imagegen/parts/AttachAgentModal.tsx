@@ -213,7 +213,7 @@ export function AttachAgentModal({
 
   const blocked = !kind || !!plan.blocked;
   // A remembered choice this place cannot host is shown open, with the reason, not folded.
-  const showFolded = folded && !plan.blocked;
+  const showFolded = folded && !plan.blocked && !plan.wantUnmet;
   const go = async () => {
     if (blocked || !imageOk) return;
     setBusy(true);
@@ -451,6 +451,7 @@ export function AttachAgentModal({
         {plan.blocked === "needs_repo" && kind && <p className="igen-warn">{tr("imggen.attach_needs_repo")}</p>}
         {plan.blocked === "no_worktree" && kind && <p className="igen-warn">{tr("imggen.start_no_worktree")}</p>}
         {plan.blocked === "no_parent" && kind && <p className="igen-warn">{tr("imggen.start_no_parent")}</p>}
+        {plan.wantUnmet && kind && <p className="igen-warn">{tr("imggen.start_no_parent_in_place")}</p>}
       </div>
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose} disabled={busy}>
