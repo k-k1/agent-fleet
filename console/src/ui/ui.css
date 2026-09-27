@@ -229,6 +229,11 @@
   gap: 8px;
   max-width: min(520px, 92vw);
 }
+/* The top stack (ToastOptions.placement): clear of a phone's composer at the bottom. */
+.ui-toasts.ui-toasts-top {
+  top: 12px;
+  bottom: auto;
+}
 .ui-toast {
   display: flex;
   align-items: flex-start;

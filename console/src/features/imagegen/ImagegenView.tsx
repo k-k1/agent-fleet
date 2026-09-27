@@ -354,6 +354,9 @@ function StudioPane({
   // what the lightbox walks and what the badge and the "ready" notice count.
   const outItems = useMemo<ResultItem[]>(() => (latestTrial ? [latestTrial, ...results] : results), [latestTrial, results]);
   const outPaths = useMemo(() => outItems.map((r) => r.file.path), [outItems]);
+  // What the badge and the "ready" notice count: every finished picture of this studio,
+  // including trials the slot does not show — two trials finishing between two reads are two.
+  const madePaths = useMemo(() => resultsOf(ownJobs).map((r) => r.file.path), [ownJobs]);
 
   // Whether the columns are folded into tabs. The CSS decides the layout by container query;
   // this only tells the badges and the notice whether a tab other than the results hides them.
@@ -368,7 +371,7 @@ function StudioPane({
     return () => ro.disconnect();
   }, []);
   const sees = (k: "chat" | "form" | "out") => active && (!narrow || tab === k);
-  const newResults = useUnseenCount(outPaths, jobsRead, sees("out"));
+  const newResults = useUnseenCount(madePaths, jobsRead, sees("out"));
 
   const submit = useCallback(
     async (trial: boolean) => {
@@ -575,19 +578,37 @@ function StudioPane({
     [patch, toast, tr],
   );
 
-  const again = useCallback(
-    (item: ResultItem, sameSeed: boolean) => {
-      const seed = item.file.seed ?? item.job.seed ?? null;
-      if (sameSeed && seed != null) patch({ seed: String(seed), seedPolicy: "fixed" });
+  const trialAt = useCallback(
+    (seed: number | null) => {
+      if (seed != null) patch({ seed: String(seed), seedPolicy: "fixed" });
       else patch({ seedPolicy: "random" });
       void submit(true);
     },
     [patch, submit],
   );
+  const again = useCallback(
+    (item: ResultItem, sameSeed: boolean) => trialAt(sameSeed ? (item.file.seed ?? item.job.seed ?? null) : null),
+    [trialAt],
+  );
 
   const close = useCallback(() => setZoom(null), []);
   const zoomOut = useCallback((path: string) => setZoom({ path, from: "out" }), []);
   const zoomHistory = useCallback((path: string) => setZoom({ path, from: "history" }), []);
+  // A history picture older than the job list carries no seed (a history row has none), so its
+  // seed is read from the picture's own properties; unreadable, and the seeded trial is hidden.
+  const [zoomPropsSeed, setZoomPropsSeed] = useState<{ path: string; seed: number | null } | null>(null);
+  const zoomInJobs = !!zoom && outItems.some((r) => r.file.path === zoom.path);
+  useEffect(() => {
+    if (!zoom || zoomInJobs) return;
+    let live = true;
+    const path = zoom.path;
+    imageProperties(path)
+      .then((p) => live && setZoomPropsSeed({ path, seed: p && p.source !== "none" && typeof p.seed === "number" ? p.seed : null }))
+      .catch(() => live && setZoomPropsSeed({ path, seed: null }));
+    return () => {
+      live = false;
+    };
+  }, [zoom, zoomInJobs]);
   // Back closes the lightbox instead of the pane; the host owns that entry, not the
   // lightbox (the same rule the gallery and the mirror follow).
   useBackClose(zoomPath ? close : undefined, !!zoomPath);
@@ -608,7 +629,7 @@ function StudioPane({
   // The studio's verbs on the enlarged picture — the cards' own, so the lightbox is where the
   // loop can continue. Each closes the lightbox: what it changed is on the form or in the queue.
   const zoomItem = zoomPath ? outItems.find((r) => r.file.path === zoomPath) : undefined;
-  const zoomSeed = zoomItem ? (zoomItem.file.seed ?? zoomItem.job.seed ?? null) : null;
+  const zoomSeed = zoomItem ? (zoomItem.file.seed ?? zoomItem.job.seed ?? null) : zoomPropsSeed?.path === zoomPath ? zoomPropsSeed.seed : null;
   const zoomVersion = zoom?.from === "history" ? history.find((h) => h.path === zoomPath)?.version : undefined;
   const lightboxActions =
     zoomPath && pictureActions ? (
@@ -622,12 +643,12 @@ function StudioPane({
         >
           <Icon name="file-media" /> {tr("imggen.lb_reference")}
         </button>
-        {zoomItem && zoomSeed != null && (
+        {zoomSeed != null && (
           <button
             type="button"
             disabled={pressBlocked(draft, { busy: busy || state === "unavailable", trialFull, queueFull }).trial}
             onClick={() => {
-              again(zoomItem, true);
+              trialAt(zoomSeed);
               close();
             }}
           >
@@ -695,10 +716,17 @@ function StudioPane({
     if (paneId) useLayoutStore.getState().selectTab(paneId);
   }, [noticeKey, paneId]);
   const seesOut = sees("out");
+  // Looking at the results by any route (the tab, the three columns, the pane made active)
+  // settles the notice as View does.
   useEffect(() => {
-    if (seesOut) announced.current = 0;
-  }, [seesOut]);
-  useArrivals(outPaths, jobsRead, (n) => {
+    if (!seesOut) return;
+    announced.current = 0;
+    dismissToast(noticeKey);
+  }, [seesOut, noticeKey]);
+  // The notice's View closes over THIS mount's tab state; switching the pane to another studio
+  // remounts the view, and a View left behind would drive a pane that no longer exists.
+  useEffect(() => () => dismissToast(noticeKey), [noticeKey, studioId]);
+  useArrivals(madePaths, jobsRead, (n) => {
     if (seesOut) return;
     announced.current += n;
     toast(
@@ -708,7 +736,8 @@ function StudioPane({
           {tr("imggen.done_view")}
         </button>
       </span>,
-      { kind: "success", key: noticeKey, duration: 8000 },
+      // Top: at the bottom it covered the draft bar and the composer on a phone.
+      { kind: "success", key: noticeKey, duration: 8000, placement: "top" },
     );
   });
   const datedName = studio.studio ? studioName({ ...studio.studio, title: "" }, (stamp) => tr("imggen.studio_dated", { when: stamp })) : "";
