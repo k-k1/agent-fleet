@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { useSettingsUI } from "./store.ts";
+import { lastTenantSlug, rememberTenantSection, rememberTenantSlug, useSettingsUI } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -61,7 +61,9 @@ export function TenantDialog() {
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [isSuper, setIsSuper] = useState(false);
   const [forbidden, setForbidden] = useState(false);
-  const [slug, setSlug] = useState("");
+  // The tenant last picked here is restored too (#1100); load() drops it for the first tenant
+  // when it is no longer in the list.
+  const [slug, setSlug] = useState(lastTenantSlug);
 
   // Members are two levels, list → detail. Growing the rail by one item per person breaks down
   // in a 40-person department, and the rail would shift the moment someone is added or removed,
@@ -90,6 +92,15 @@ export function TenantDialog() {
     load();
   }, [load]);
 
+  // Remember where this modal was left, like personal settings: openTenantSettings() without a
+  // section restores it on the next open (#1100).
+  useEffect(() => {
+    rememberTenantSection(section);
+  }, [section]);
+  useEffect(() => {
+    if (slug) rememberTenantSlug(slug);
+  }, [slug]);
+
   const tenant = tenants?.find((t) => t.slug === slug) || null;
   // The engine item exists only for a tenant the operator granted `allow_engine_ingest`
   // (ADR 0072 open question 11). The flag rides on the tenant row this modal already has, so
@@ -98,8 +109,14 @@ export function TenantDialog() {
     cost: !!costProfile?.available,
     engines: !!tenant?.allow_engine_ingest,
   });
+  // A remembered item this tenant's rail does not offer (cost on a deployment without an AWS
+  // bill, engines on a tenant without the grant) shows sign-in instead. Only decided once both
+  // inputs are known, so a remembered cost item is not swapped out while the profile loads; the
+  // stored value is left alone either way.
+  const offered = groups.some((g) => g.items.some(([k]) => k === section));
+  const shown = offered || !costProfile || !tenant ? section : "signin";
   const currentLabel = tr(
-    (groups.flatMap((g) => g.items).find(([k]) => k === section)?.[1] ??
+    (groups.flatMap((g) => g.items).find(([k]) => k === shown)?.[1] ??
       "tenant.title") as Parameters<typeof tr>[0],
   );
 
@@ -111,7 +128,7 @@ export function TenantDialog() {
       <TenantScopeBody
         slug={tenant.slug}
         tenant={tenant}
-        section={section}
+        section={shown}
         isSuper={isSuper}
         member={member}
         onOpenMember={setMember}
@@ -156,8 +173,8 @@ export function TenantDialog() {
                   <button
                     key={key}
                     type="button"
-                    className={"settings-rail-item" + (section === key ? " active" : "")}
-                    aria-current={section === key ? "page" : undefined}
+                    className={"settings-rail-item" + (shown === key ? " active" : "")}
+                    aria-current={shown === key ? "page" : undefined}
                     onClick={() => {
                       setSection(key);
                       setMember(null);

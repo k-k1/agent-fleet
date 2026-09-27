@@ -77,6 +77,9 @@ const click = async (el: HTMLElement | undefined) => {
 beforeEach(() => {
   api.mockReset();
   apiJSON.mockReset();
+  // Where the modal was left is remembered in localStorage (#1100); start every case at the
+  // entrance.
+  localStorage.clear();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -152,5 +155,59 @@ describe("AdminTab / the engines item", () => {
     // The default stub rejects the probe, which is what an older CP's 404 looks like: the item
     // would open an empty room.
     expect(railLabels().join(" ")).not.toContain("推論エンジン");
+  });
+});
+
+// #1100: reopening the admin modal lands where it was left — the open tenant and the section
+// inside it included — and falls back to the entrance when what was stored no longer exists.
+describe("AdminTab / remembers where it was left", () => {
+  const active = () => host!.querySelector(".settings-rail-item.active")?.textContent;
+  const reopen = async () => {
+    act(() => root?.unmount());
+    host?.remove();
+    await mount();
+  };
+
+  it("restores the open tenant and its section after close → reopen", async () => {
+    respond(true);
+    await mount();
+    await click(byText(".tenant-card", "Beta"));
+    await click(byText(".settings-rail-item", "メンバー"));
+    expect(active()).toBe("メンバー");
+
+    await reopen();
+    expect(host!.querySelector(".admin-scope-name")?.textContent).toContain("Beta");
+    expect(active()).toBe("メンバー");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/beta/members");
+  });
+
+  it("restores a root section", async () => {
+    respond(true);
+    await mount();
+    await click(byText(".settings-rail-item", "通信"));
+    await reopen();
+    expect(host!.querySelector(".admin-scope-name")).toBeNull();
+    expect(active()).toBe("通信");
+  });
+
+  it("returns to the root rail when the remembered tenant is gone", async () => {
+    localStorage.setItem(
+      "af-admin-place",
+      JSON.stringify({ root: "tenants", scope: "gone", scopeSection: "members" }),
+    );
+    respond(true);
+    await mount();
+    expect(host!.querySelector(".admin-scope-name")).toBeNull();
+    expect(host!.querySelectorAll(".tenant-card").length).toBe(2);
+    expect(JSON.parse(localStorage.getItem("af-admin-place")!).scope).toBeNull();
+  });
+
+  it("shows the entrance for a remembered item the rail does not offer", async () => {
+    // engines is conditional, and the default stub says this CP does not serve it.
+    localStorage.setItem("af-admin-place", JSON.stringify({ root: "engines", scope: null, scopeSection: "limits" }));
+    respond(true);
+    await mount();
+    expect(active()).toBe("テナント一覧");
+    expect(host!.querySelectorAll(".tenant-card").length).toBe(2);
   });
 });

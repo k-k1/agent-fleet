@@ -86,6 +86,8 @@ const buttonTexts = () =>
 beforeEach(() => {
   api.mockReset();
   apiJSON.mockReset();
+  // The last section and tenant are remembered in localStorage (#1100); start clean.
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -201,4 +203,55 @@ describe("TenantDialog", () => {
     expect(api).toHaveBeenCalledWith("api/admin/mcp-servers?tenant=acme");
     expect(document.querySelector(".settings-content .usage-toolbar select")).toBeNull();
   });
+
+  // #1100: a plain open (the TopBar entry passes no section) lands where the modal was left —
+  // section and tenant — instead of always on sign-in / the first tenant.
+  it("restores the last section and tenant on a plain reopen", async () => {
+    const BETA = { ...TENANT, slug: "beta", name: "Beta" };
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/tenants") return Promise.resolve({ tenants: [TENANT, BETA], super_admin: false });
+      if (path.endsWith("/members")) return Promise.resolve({ members: [MEMBER] });
+      if (path.endsWith("/idp")) return Promise.resolve({ providers: [] });
+      return Promise.resolve({});
+    });
+    await mount("signin");
+    const picker = document.querySelector<HTMLSelectElement>(".tenant-picker")!;
+    await act(async () => {
+      picker.value = "beta";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const members = Array.from(document.querySelectorAll<HTMLButtonElement>(".settings-rail-item")).find(
+      (b) => b.textContent === "メンバー",
+    );
+    await act(async () => {
+      members!.click();
+    });
+
+    act(() => root?.unmount());
+    host?.remove();
+    useSettingsUI.getState().closeTenantSettings();
+    api.mockClear();
+    await mount("");
+    expect(document.querySelector(".settings-rail-item.active")?.textContent).toBe("メンバー");
+    expect(document.querySelector<HTMLSelectElement>(".tenant-picker")!.value).toBe("beta");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/beta/members");
+  });
+
+  it("falls back to the first tenant when the remembered one is gone", async () => {
+    localStorage.setItem("af-tenant-slug", "gone");
+    respond(false);
+    await mount("signin");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/idp");
+    expect(localStorage.getItem("af-tenant-slug")).toBe("acme");
+  });
+
+  it("shows sign-in for a remembered item this tenant's rail does not offer", async () => {
+    // engines exists only for a tenant granted allow_engine_ingest; TENANT is not.
+    localStorage.setItem("af-tenant-section", "engines");
+    respond(false);
+    await mount("");
+    expect(document.querySelector(".settings-rail-item.active")?.textContent).toBe("サインイン方式");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/idp");
+  });
 });
+
