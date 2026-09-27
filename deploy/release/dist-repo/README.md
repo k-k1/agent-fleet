@@ -57,7 +57,8 @@ Key features:
 - **Live app preview** — web apps started inside a workspace (Vite HMR,
   WebSocket, Spring Boot, …) render in an embedded browser pane; ports are
   reachable through lightweight previews.
-- **Multi-user by design** — Google OAuth login, tenants and roles
+- **Multi-user by design** — sign-in with your company's IdP (Google, Microsoft Entra ID, Okta
+  and other OIDC providers), tenants and roles
   (member / admin / operator), per-user network isolation, envelope encryption
   for secrets at rest, and per-workspace memory quotas. Workspaces stay
   isolated, yet a conversation can be **shared with another member per session
@@ -188,7 +189,7 @@ Kiro is **not** available as an assistant chat (it has no headless chat mode).
 | Your situation | Edition | What you need |
 |---|---|---|
 | Personal use on WSL2 or a single-user Linux machine; no Docker | **Native** (below) | x86_64 Linux/WSL2 with unprivileged user namespaces (stock WSL2 works), `curl` or `wget`, ~1.5 GB disk |
-| A team on your own Linux server | **Docker Compose** (below) | Docker Engine + `docker compose`, a public domain pointed at the host (auto-TLS; an internal-CA fallback exists), a Google OAuth 2.0 client for login |
+| A team on your own Linux server | **Docker Compose** (below) | Docker Engine + `docker compose`, a public domain pointed at the host (auto-TLS; an internal-CA fallback exists), an IdP client for login (a Google OAuth 2.0 client or an OIDC app) |
 
 Common to all editions: outbound network is needed once per workspace to
 pin-install the agent CLIs on first start (air-gap alternatives are documented
@@ -276,13 +277,12 @@ the bundle, extracts it and pulls the images:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash
 cd agent-fleet-<version>
-cp .env.example .env     # fill in secrets, domain, Google OAuth (see below)
+cp .env.example .env     # fill in secrets, domain, your IdP client (see below)
 docker compose up -d
 ```
 
 Unlike the native edition this is **not** a full one-liner: you must edit `.env`
-(secrets, `PUBLIC_DOMAIN`, Google OAuth, optionally the git-provider OAuth vars
-below) before `docker compose up`. To pin a version, prefix
+(secrets, `PUBLIC_DOMAIN`, your IdP client) before `docker compose up`. To pin a version, prefix
 `AF_VERSION=<version>`; `AF_SKIP_PULL=1` skips the pull (`docker compose up`
 pulls anyway). Prefer the manual path? Download the bundle, then
 `sha256sum -c --ignore-missing SHA256SUMS` and `tar xzf`.

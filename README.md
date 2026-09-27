@@ -51,8 +51,7 @@ and on AWS ECS.
 Agent CLIs change every few days, and supporting nine of them is only worth something if
 the support keeps working. So:
 
-- Every CLI is **pinned** in the workspace image to a version that was verified;
-  self-update is opt-in.
+- Every CLI is **pinned** to a version that was verified; self-update is opt-in.
 - A daily watcher notices when a CLI publishes a new version and dispatches a **contract
   test that drives the real CLI**, its interactive TUI included, against what Agent Fleet
   depends on.
@@ -71,6 +70,8 @@ How the two halves fit together: [Detecting upstream CLI breakage](docs/build/10
 | **Split panes** — mirror, live terminal and working-tree changes side by side; each pane can also pop out into its own tab. | **Real git, in the console** — commit graph beside the selected commit's diff, plus staging and commit, per working copy and worktree. |
 | ![Usage tab: a stacked per-feature token chart over 30 days, KPI tiles for tokens, calls, cache reads, API-equivalent cost and unmeasured calls, and breakdowns by feature, agent and model](docs/img/usage-en.webp) | ![A terminal pane attached to a shell session, showing a build and a git status run](docs/img/terminal-en.webp) |
 | **See where the tokens went** — per feature, per agent and per model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. |
+| ![Sessions overview: one card per running session, grouped by repository, with the state chip, model and context usage on each](docs/img/overview-en.webp) | ![Fleet graph: one lane per session on a time axis, children under their parent, arrows for what passed between sessions, and each lane's state chip](docs/img/fleetgraph-en.webp) |
+| **Every running session at a glance** — one card per session, grouped by repository and family; the ones waiting on you are coloured so they stand out. | **The fleet over time** — one lane per session, children under their parent, and arrows for what passed between them; pan and zoom through the day. |
 
 The UI is English or Japanese, switched per user in ⚙ Settings — every view above also
 exists in Japanese (`docs/img/*-ja.webp`, e.g. [the console](docs/img/console-ja.webp)).

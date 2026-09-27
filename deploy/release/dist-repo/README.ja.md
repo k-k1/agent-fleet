@@ -60,7 +60,8 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code�
 - **起動中アプリのライブプレビュー** — ワークスペース内で起動した Web アプリ
   （Vite HMR・WebSocket・Spring Boot 等）を埋め込みブラウザペインで表示。
   ポートは軽量プレビューでも開けます。
-- **設計段階からマルチユーザー** — Google OAuth ログイン、テナントとロール
+- **設計段階からマルチユーザー** — 自社の IdP（Google・Microsoft Entra ID・Okta などの OIDC）での
+  ログイン、テナントとロール
   （member / admin / operator）、ユーザー毎のネットワーク分離、秘密情報の
   at-rest 封筒暗号、ワークスペース毎のメモリクォータ。ワークスペースは分離したまま、
   **セッション単位・プロジェクト単位で会話を他のメンバーへ共有**できます（閲覧のみ／
@@ -184,7 +185,7 @@ Kiro はアシスタントチャットとしては**利用できません**（he
 | 状況 | 版 | 必要なもの |
 |---|---|---|
 | WSL2 や単一ユーザー Linux で個人利用・Docker なし | **Native**（下記） | unprivileged user namespaces が使える x86_64 Linux/WSL2（素の WSL2 は可）、`curl` か `wget`、ディスク ~1.5 GB |
-| 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用 Google OAuth 2.0 クライアント |
+| 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用の IdP クライアント（Google OAuth 2.0 クライアントまたは OIDC アプリ） |
 
 全版共通: 各ワークスペースの初回起動時にエージェント CLI のピン版導入で一度だけ
 外向きネットワークが必要です（air-gap の代替手順は各同梱 README に記載）。また
@@ -262,12 +263,12 @@ compose バンドル（`agent-fleet-<版>.tar.gz`）は
 ```bash
 curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash
 cd agent-fleet-<版>
-cp .env.example .env     # 秘密・ドメイン・Google OAuth を記入（下記も参照）
+cp .env.example .env     # 秘密・ドメイン・IdP クライアントを記入（下記も参照）
 docker compose up -d
 ```
 
 native 版と違い**完全なワンライナーにはなりません**: `docker compose up` の前に
-`.env`（秘密・`PUBLIC_DOMAIN`・Google OAuth・任意で下記の git プロバイダ OAuth 変数）を
+`.env`（秘密・`PUBLIC_DOMAIN`・IdP クライアント）を
 編集する必要があります。版を固定するなら `AF_VERSION=<版>` を前置し、`AF_SKIP_PULL=1`
 で pull を省けます（`docker compose up` がどのみち pull します）。手動が良ければ
 バンドルを DL 後、`sha256sum -c --ignore-missing SHA256SUMS`・`tar xzf`。
