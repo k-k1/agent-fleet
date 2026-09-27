@@ -93,11 +93,16 @@ export async function jumpToNextAttention(): Promise<void> {
     const prev = walk && placeKey(layout) === landedAt ? walk : null;
     const place = activePane(layout);
     const current = prev ? prev.at : shownSession(place, sessions);
-    // Being at a session is not being at every one of its stops: with an unseen report left,
-    // the session on screen still needs you — in the report's conversation.
+    // Being at a session is not being at every one of its stops, and on a continued walk
+    // `current` is where the walk was, not what is on screen: the current session is done
+    // only when the destination of its next stop is the place on screen — the session itself
+    // when it waits on an answer, else its newest unseen notification's (a report's is its
+    // conversation).
     const here = sessions.find((s) => s.name === current);
     const stop = here && !isWaiting(here) ? newestUnseen(items, here.name) : undefined;
-    const currentDone = !stop || destinationShown(stop, place, sessions);
+    const currentDone = !here ? true
+      : isWaiting(here) ? shownSession(place, sessions) === here.name
+      : !stop || destinationShown(stop, place, sessions);
     const next = nextAttention(queue.map((s) => s.name), current, prev, currentDone);
     const target = next && queue.find((s) => s.name === next.at);
     walk = null;
@@ -107,6 +112,9 @@ export async function jumpToNextAttention(): Promise<void> {
     }
     toast(t("noti.jump_to", { name: displayName(target), total: queue.length }), { kind: "info", duration: 1600 });
     await openStop(target, items);
+    // A press that outlived its guard (a hung fetch) must not claim the walk for a place the
+    // user has since moved on from.
+    if (busySince !== started || Date.now() - started >= BUSY_MS) return;
     landedAt = placeKey(useLayoutStore.getState().layout);
     walk = next;
   } finally {

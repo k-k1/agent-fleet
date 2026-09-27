@@ -136,14 +136,26 @@ describe("a session report", () => {
     expect(acked()).toEqual(["e2"]);
   });
 
-  it("is acknowledged through its session once its conversation is proven gone — and only then", async () => {
-    chatGet.mockImplementation(async (id: string) =>
-      id === "gone" ? { error: { code: "chat_conversation_not_found", status: 404 } }
-        : id === "flaky" ? { error: { code: "http_502" } } : { id });
-    useNotificationStore.setState({ items: [report("e1", "worker", "gone"), report("e2", "worker", "flaky"), report("e3", "worker", "alive")] });
+  it("is acknowledged through its session once its conversation is proven gone — a 404, and only a 404", async () => {
+    const answers: Record<string, unknown> = {
+      gone: { error: { code: "chat_conversation_not_found", status: 404 } },
+      flaky: { error: { code: "http_502" } },
+      denied: { error: { code: "forbidden", status: 403 } },
+    };
+    chatGet.mockImplementation(async (id: string) => answers[id] ?? { id });
+    const items = [report("e1", "worker", "gone"), report("e2", "worker", "flaky"), report("e3", "worker", "alive"), report("e4", "worker", "denied")];
+    useNotificationStore.setState({ items });
     useLayoutStore.setState({ layout: layout([cell("g1", [view("p1", "worker")])]) });
     stop = wireNotificationReadOnVisibleSessions();
     await vi.waitFor(() => expect(acked()).toEqual(["e1"]));
+    // The 502 proved nothing, so the next sync asks again — and this time it is gone.
+    answers.flaky = { error: { code: "chat_conversation_not_found", status: 404 } };
+    useNotificationStore.setState({ items: [...items] });
+    await vi.waitFor(() => expect(acked().sort()).toEqual(["e1", "e2"]));
+    // The alive and the 403 ones were answered conclusively: not asked again this soon.
+    const asked = chatGet.mock.calls.map((c) => c[0]);
+    expect(asked.filter((id) => id === "alive")).toHaveLength(1);
+    expect(asked.filter((id) => id === "denied")).toHaveLength(1);
     chatGet.mockReset();
     chatGet.mockImplementation(async () => ({ id: "alive" }));
   });

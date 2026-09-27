@@ -109,6 +109,19 @@ describe("jumpToNextAttention", () => {
     expect(opened).toEqual(["conversation:conv-1"]);
   });
 
+  it("counts a session that started waiting as a stop while the walk stands in its report's conversation", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "reported", kind: "claude", alive: true, state: "" }] });
+    useNotificationStore.setState({
+      items: [note("e1", "reported", "session-report", "2026-09-27T10:00:00Z", { conversation_id: "conv-1" })],
+    });
+    await jumpToNextAttention(); // the conversation
+    // Its report is read now, and the session asks a question — which is not on screen here.
+    useNotificationStore.setState({ items: [{ ...note("e1", "reported", "session-report", "2026-09-27T10:00:00Z", { conversation_id: "conv-1" }), seen: true }] });
+    useSessionsStore.setState({ sessions: [{ name: "reported", kind: "claude", alive: true, state: "question" }] });
+    await jumpToNextAttention();
+    expect(opened).toEqual(["conversation:conv-1", "session:reported"]);
+  });
+
   it("acknowledges a report whose conversation is gone, so it cannot hold the queue forever", async () => {
     useSessionsStore.setState({ sessions: [{ name: "reported", kind: "claude", alive: true, state: "" }] });
     useNotificationStore.setState({

@@ -124,6 +124,12 @@ export function conversationReachable(res: unknown): boolean {
   return isTransientErr(res);
 }
 
+/** Only a 404 (chat_conversation_not_found) says the conversation no longer exists. */
+export function conversationProvenGone(res: unknown): boolean {
+  const err = (res as { error?: { code?: string; status?: number } } | null | undefined)?.error;
+  return !!err && typeof err === "object" && (err.status === 404 || err.code === "chat_conversation_not_found");
+}
+
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<NotificationOpenResult> {
   if (opensConversation(n) && typeof n.payload.conversation_id === "string") {
     const convID = n.payload.conversation_id;
@@ -294,20 +300,29 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
   };
   // A report on screen only through its session is left for its conversation — unless that
   // conversation is gone, when nothing could ever show it again and the session on screen is
-  // the last place it can be acknowledged (what the session-pane rule did before). Proven gone
-  // the way openNotificationTarget proves it (a 4xx, not a transient failure); asked once per
-  // notification.
-  const probed = new Set<string>();
+  // the last place it can be acknowledged (what the session-pane rule did before). This runs
+  // with no click behind it, so only a 404 proves "gone" (a 401/403/429 is not a deleted
+  // conversation). A transient failure (5xx while the WS starts, a dropped connection) is asked
+  // again on the next sync; any other answer again after REPROBE_MS, so a conversation deleted
+  // after an earlier probe found it alive is still noticed.
+  const REPROBE_MS = 5 * 60_000;
+  const probedAt = new Map<string, number>();
+  const inflight = new Set<string>();
   const checkGoneReports = (items: FleetNotification[], sessions: Session[]) => {
     const panes = allPanes(useLayoutStore.getState().layout);
+    const now = Date.now();
     for (const n of items) {
-      if (n.seen || probed.has(n.id) || !opensConversation(n) || n.target.type !== "session") continue;
+      if (n.seen || inflight.has(n.id) || now - (probedAt.get(n.id) ?? -Infinity) < REPROBE_MS) continue;
+      if (!opensConversation(n) || n.target.type !== "session") continue;
       if (!panes.some((p) => shownSession(p, sessions) === n.target.id)) continue;
-      probed.add(n.id);
+      inflight.add(n.id);
       void chatGet(String(n.payload.conversation_id))
         .catch(() => null)
         .then((conv) => {
-          if (!conversationReachable(conv)) void useNotificationStore.getState().markSeen(undefined, [n.id]);
+          inflight.delete(n.id);
+          if (!conv || isTransientErr(conv)) return;
+          probedAt.set(n.id, Date.now());
+          if (conversationProvenGone(conv)) void useNotificationStore.getState().markSeen(undefined, [n.id]);
         });
     }
   };
