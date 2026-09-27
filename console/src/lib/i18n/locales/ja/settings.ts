@@ -605,6 +605,8 @@ export const settings = {
   "set.group_connections": "接続",
   "set.group_workspace": "ワークスペース",
   "set.back": "設定一覧",
+  "set.prefs_unsynced": "設定をサーバーに保存できていません。変更はこの端末にだけあり、エージェントは前の設定のまま動きます。",
+  "set.prefs_retry": "再送",
 
   // === アカウント（サインイン方法の紐づけ・docs/log/61 §61.16 + 決定 37） ===
   "set.tab_account": "アカウント",

@@ -20,6 +20,7 @@ import { useSettingsUI, rememberSettingsSection } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { Modal } from "../../ui/Modal.tsx";
+import { PrefsSyncBanner } from "./PrefsSyncBanner.tsx";
 import { DisplayTab } from "./personal/DisplayTab.tsx";
 import { AccountTab } from "./personal/AccountTab.tsx";
 import { KeysTab } from "./personal/KeysTab.tsx";
@@ -221,6 +222,7 @@ export function SettingsDialog() {
                 {currentLabel}
               </span>
             </div>
+            <PrefsSyncBanner />
             {section === "agents" && <AgentsTab />}
             {section === "assistant" && <AssistantTab />}
             {section === "aiassist" && <AiAssistTab />}

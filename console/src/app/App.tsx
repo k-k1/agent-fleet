@@ -34,7 +34,8 @@ import { startRepoJobsPolling } from "../features/repos/jobs.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setSetting, useSettings } from "../lib/settings.ts";
+import { hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, setSetting, useSettings } from "../lib/settings.ts";
+import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
@@ -316,6 +317,9 @@ export function App() {
     const unNotificationRead = wireNotificationReadOnVisibleSessions();
     void (async () => {
       await useTenantStore.getState().init();
+      // The local settings copy records whose server copy it was merged with; until whoami has
+      // answered the user is "", which ui-prefs treats as an unknown owner.
+      setPrefsOwnerSource(() => (getUser() ? `${getTenant()}|${getUser()}` : ""));
       await hydrateUIPrefs();
       if (!alive) return;
       prefsReady = true;
