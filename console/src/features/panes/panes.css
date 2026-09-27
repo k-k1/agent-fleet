@@ -262,6 +262,28 @@
 .pane.droptarget {
   border-color: var(--accent);
 }
+/* The session on screen waits on the user's answer: a warn ring drawn INSIDE the border.
+   An overlay rather than the pane's own box-shadow, because an inset shadow paints under the
+   children (an opaque terminal or mirror covers it) and the active ring above already owns
+   box-shadow and border-color — this has to read on the active pane too, next to its ordinal
+   ring. pointer-events: none keeps the content clickable through it. The pane becomes a
+   stacking context (the active one already is, z-index 3) so the ring only has to beat the
+   pane's own content — xterm alone layers up to z-index 10 — and stays below the active pane. */
+.pane.pane-needs-you:not(.active) {
+  z-index: 1;
+}
+.pane.pane-needs-you::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  border: 2px solid var(--warn);
+  border-radius: inherit;
+  /* Measured: the bare 2px line vanished next to the active pane's accent ring on a dark
+     terminal; the inner glow is what makes it read from across the screen. */
+  box-shadow: inset 0 0 14px 2px color-mix(in srgb, var(--warn) 35%, transparent);
+  pointer-events: none;
+}
 
 /* Native HTML D&D auto-scrolls the scrollable element under the pointer. While
    moving a tab, cover every View (including other Cells) with the Cell's own

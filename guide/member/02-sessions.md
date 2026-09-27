@@ -239,7 +239,9 @@ to avoid duplicates.
 row in the left pane (on the corner of its icon) and on its tab, and rolls up onto a collapsed
 project row or section, so a folded parent still shows that something inside is waiting. The dot
 clears once that session is on screen in one of your panes, or when you press **"Mark all as
-read"** in the notification centre — merely opening the bell marks nothing as read.
+read"** in the notification centre — merely opening the bell marks nothing as read. A session's
+**report** is the exception: it was posted to an operator conversation, so it clears when that
+conversation is on screen (or you open it from the notification centre), not when the session is.
 
 ## Stopping and tidying up sessions
 

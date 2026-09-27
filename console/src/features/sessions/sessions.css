@@ -92,6 +92,19 @@
 .sess-row.lineage.active::before {
   left: 3px;
 }
+/* Waiting on the user's answer (question / plan / permission): a warn ring around the whole
+   row, so it reads from across the rail rather than only by its chip. An outline, not a
+   box-shadow or fill: .active owns the inset shadow and hover / selection / working-set
+   dimming own the background, and the ring has to survive all of them. */
+.sess-row.sess-needs-you {
+  outline: 1px solid color-mix(in srgb, var(--warn) 70%, transparent);
+  outline-offset: -1px;
+}
+/* Unread only: the mail-client convention, a bold title next to the dot. Quieter than the
+   ring on purpose — it clears by looking, the ring only by answering. */
+.sess-row.sess-unread .sess-l1 {
+  font-weight: 600;
+}
 /* Keep the context menu outside the dead-row opacity. Applying opacity to the
    row itself creates a stacking context, which traps the fixed menu below
    later sticky section headers regardless of the menu's own z-index. */

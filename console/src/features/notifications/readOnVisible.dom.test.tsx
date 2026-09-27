@@ -10,9 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Cell, Layout, View } from "../../layout/types.ts";
 
 const apiJSON = vi.fn(async (..._args: unknown[]) => ({}));
+const chatGet = vi.fn(async (_id: string): Promise<unknown> => ({ id: "alive" }));
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   apiJSON: (...args: unknown[]) => apiJSON(...args),
+  chatGet: (id: string) => chatGet(id),
 }));
 
 const { useNotificationStore, wireNotificationReadOnVisibleSessions } = await import("./store.ts");
@@ -89,6 +91,90 @@ describe("which sessions count as looked at", () => {
     useNotificationStore.setState({ items: [event("e9", "open")] });
     await Promise.resolve();
     expect(acked()).toEqual(["e9"]);
+  });
+});
+
+// A session bound to an image studio opens in the studio pane, which embeds its mirror but
+// carries only the studio id. It is on screen all the same, so it is acknowledged — otherwise its
+// dot never clears and the jump to the next session that needs you keeps landing on it (#1057).
+describe("a session shown through its image studio", () => {
+  it("is acknowledged once the studio pane is on screen", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "painter", kind: "claude", alive: true, studio: "st-1" }] });
+    useNotificationStore.setState({ items: [event("e1", "painter")] });
+    const studio: View = { id: "p1", session: null, content: { kind: "imagegen", studioId: "st-1" }, wrap: null };
+    useLayoutStore.setState({ layout: layout([cell("g1", [studio])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e1"]);
+  });
+
+  it("does not acknowledge the session whose pane the studio replaced", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "painter", kind: "claude", alive: true, studio: "st-1" }] });
+    useNotificationStore.setState({ items: [event("e1", "painter"), event("e2", "before")] });
+    // Opening the studio over a session pane keeps that pane's terminal binding.
+    const studio: View = { id: "p1", session: "before", content: { kind: "imagegen", studioId: "st-1" }, wrap: null };
+    useLayoutStore.setState({ layout: layout([cell("g1", [studio])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e1"]);
+  });
+});
+
+// A report's destination is the operator conversation it was posted to. Showing the reporting
+// session shows none of it, so that must not clear it (#1057 review): the conversation does.
+describe("a session report", () => {
+  const report = (id: string, session: string, conversation: string): FleetNotification => ({
+    ...event(id, session), kind: "session-report", payload: { conversation_id: conversation },
+  });
+  const chat = (id: string, conversationId: string): View => ({ id, session: null, content: { kind: "chat", conversationId, draftAssistantId: null }, wrap: null });
+
+  it("stays unread while only the reporting session is on screen", async () => {
+    useNotificationStore.setState({ items: [report("e1", "worker", "conv-1"), event("e2", "worker")] });
+    useLayoutStore.setState({ layout: layout([cell("g1", [view("p1", "worker")])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e2"]);
+  });
+
+  it("is acknowledged through its session once its conversation is proven gone — chat_conversation_not_found only", async () => {
+    const answers: Record<string, unknown> = {
+      gone: { error: { code: "chat_conversation_not_found", status: 404 } },
+      flaky: { error: { code: "http_502" } },
+      denied: { error: { code: "forbidden", status: 403 } },
+      elsewhere: { error: { code: "not_found", status: 404 } },
+    };
+    chatGet.mockImplementation(async (id: string) => answers[id] ?? { id });
+    const items = [report("e1", "worker", "gone"), report("e2", "worker", "flaky"), report("e3", "worker", "alive"), report("e4", "worker", "denied"), report("e5", "worker", "elsewhere")];
+    useNotificationStore.setState({ items });
+    useLayoutStore.setState({ layout: layout([cell("g1", [view("p1", "worker")])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await vi.waitFor(() => expect(acked()).toEqual(["e1"]));
+    // The 502 proved nothing: asked again, but not on the very next sync — only after the
+    // retry delay — and this time it is gone.
+    answers.flaky = { error: { code: "chat_conversation_not_found", status: 404 } };
+    useNotificationStore.setState({ items: [...items] });
+    await Promise.resolve();
+    expect(chatGet.mock.calls.filter((c) => c[0] === "flaky")).toHaveLength(1);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 31_000);
+    useNotificationStore.setState({ items: [...items] });
+    await vi.waitFor(() => expect(acked().sort()).toEqual(["e1", "e2"]));
+    clock.mockRestore();
+    // The alive and the 403 ones were answered conclusively: not asked again this soon.
+    const asked = chatGet.mock.calls.map((c) => c[0]);
+    expect(asked.filter((id) => id === "alive")).toHaveLength(1);
+    expect(asked.filter((id) => id === "denied")).toHaveLength(1);
+    expect(asked.filter((id) => id === "elsewhere")).toHaveLength(1);
+    chatGet.mockReset();
+    chatGet.mockImplementation(async () => ({ id: "alive" }));
+  });
+
+  it("is acknowledged when its conversation is on screen, and only its own", async () => {
+    useNotificationStore.setState({ items: [report("e1", "worker", "conv-1"), report("e2", "worker", "conv-2"), event("e3", "worker")] });
+    useLayoutStore.setState({ layout: layout([cell("g1", [chat("p1", "conv-1")])]) });
+    stop = wireNotificationReadOnVisibleSessions();
+    await Promise.resolve();
+    expect(acked()).toEqual(["e1"]);
   });
 });
 

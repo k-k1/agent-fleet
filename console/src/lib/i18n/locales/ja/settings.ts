@@ -456,6 +456,7 @@ export const settings = {
   "keys.cmd.regionNext": "次の領域へ（レール / メイン / バー）",
   "keys.cmd.regionPrev": "前の領域へ",
   "keys.cmd.sessionNew": "新規セッション（起動）",
+  "keys.cmd.sessionNextAttention": "次の要対応セッションへ移動",
   "keys.cmd.workspaceToggle": "ワークスペース 起動 / 停止",
   "keys.cmd.toggleRail": "左レールの表示切替",
   "keys.cmd.railMode": "左レールの表示モード切替",

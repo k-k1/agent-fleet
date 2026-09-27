@@ -37,6 +37,12 @@ even when they're displayed wrapped. No need to copy a long URL and paste it bac
   previous / next tab, **Alt+A** add a memo, **Alt+G** cycle working sets, **Alt+/** jump to
   the rail's filter box, **Alt+Q** mute the read-aloud, **Alt+,** open settings.
   All of them are rebindable in Settings › Keyboard.
+- **Alt+U** — jump to the next session that **needs you**: first the ones waiting on your
+  answer (question, plan approval, permission), most recent first, then the ones with an
+  unread notification (a finished turn, a report). Press again to walk the rest. In the
+  left rail a session waiting on you is ringed, and one with unread news has a bold title
+  and a red dot; a pane showing a session that waits on you is ringed too. Opening the
+  session clears the unread mark; the ring goes away when you answer.
 - **Alt+= / Alt+- / Alt+0** — make the text you're looking at **bigger / smaller / default
   size**. The terminal, the file viewer, the conversation (mirror) and the read-aloud view
   each keep their own size, and the one belonging to the focused pane is what moves (the

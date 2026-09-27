@@ -24,6 +24,7 @@ import { openSessionFromList } from "./open.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { useSessionUnread } from "../notifications/unread.ts";
+import { isWaiting } from "./waiting.ts";
 import type { SessionActions } from "./useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -84,6 +85,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // per member and shared across devices). Clears the moment the session is shown in a
   // visible pane, so the dot means "something came back and nobody has looked".
   const unread = useSessionUnread(s.name);
+  // Waiting on this person's answer (#1057): rings the whole row, the loudest thing in the rail,
+  // because unlike the unread dot it does not clear by looking — only by answering.
+  const needsYou = isWaiting(s);
 
   return (
     <li
@@ -93,7 +97,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         (hl ? " hover" : "") +
         (s.alive ? "" : " stopped") +
         (inert ? " dead" : "") +
-        (lineage ? " lineage" : "")
+        (lineage ? " lineage" : "") +
+        (needsYou ? " sess-needs-you" : "") +
+        (unread ? " sess-unread" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
       onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
