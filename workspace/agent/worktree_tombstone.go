@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -75,7 +76,8 @@ func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
 		return err
 	}
 	for _, name := range t.Shelved {
-		if m, ok := session.ReadMeta(name); ok && m.Archived && filepath.Clean(m.Dir) == dir {
+		// At or under the folder: the delete shelves sessions started in a subfolder too.
+		if m, ok := session.ReadMeta(name); ok && m.Archived && underDir(filepath.Clean(m.Dir), dir) {
 			sessionx.RestoreSession(name)
 		}
 	}
@@ -107,4 +109,8 @@ func recreateFromTombstone(dir string, t gitx.WorktreeTombstone) error {
 		return &restoreConflict{errCodeRecreateFailed, err.Error()}
 	}
 	return nil
+}
+
+func underDir(p, dir string) bool {
+	return p == dir || strings.HasPrefix(p, dir+string(os.PathSeparator))
 }

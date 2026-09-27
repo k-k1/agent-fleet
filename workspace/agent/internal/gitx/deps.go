@@ -132,6 +132,7 @@ type Deps struct {
 	ErrCodeLockedSessions        string
 	ErrCodeSessionsTrashFailed   string
 	ErrCodeWorktreeArchiveFailed string
+	ErrCodeWorktreeNestedRepo    string
 }
 
 var deps Deps
@@ -177,6 +178,7 @@ func Configure(d Deps) {
 	errCodeLockedSessions = d.ErrCodeLockedSessions
 	errCodeSessionsTrashFailed = d.ErrCodeSessionsTrashFailed
 	errCodeWorktreeArchiveFailed = d.ErrCodeWorktreeArchiveFailed
+	errCodeWorktreeNestedRepo = d.ErrCodeWorktreeNestedRepo
 }
 
 // unwired decides what counts as "not wired". Besides the zero value, an empty map counts
@@ -210,6 +212,7 @@ var (
 	errCodeLockedSessions        string
 	errCodeSessionsTrashFailed   string
 	errCodeWorktreeArchiveFailed string
+	errCodeWorktreeNestedRepo    string
 )
 
 // What follows are thin delegations under the same names the code used before the move, so

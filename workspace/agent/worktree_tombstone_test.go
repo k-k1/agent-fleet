@@ -56,6 +56,8 @@ func tombstoneSetup(t *testing.T) tombstoneEnv {
 		t.Fatal(err)
 	}
 	session.WriteMeta(session.Meta{Name: "aiaaaa1", Dir: wt, Kind: session.KindClaude, Branch: "wt-x"})
+	// Started in a subfolder: shelved by the delete as well, so it has to come back too.
+	session.WriteMeta(session.Meta{Name: "aisub01", Dir: filepath.Join(wt, "sub"), Kind: session.KindClaude, Branch: "wt-x"})
 	return tombstoneEnv{srv: srv, home: home, parent: parent, wt: wt}
 }
 
@@ -92,7 +94,7 @@ func TestDeletedWorktreeRoundTripsThroughTheTrash(t *testing.T) {
 	}
 	tomb := arcs[0].Worktree
 	if tomb == nil || tomb.Path != e.wt || tomb.Branch != "wt-x" || tomb.Snapshot == "" ||
-		len(tomb.Shelved) != 1 || tomb.Shelved[0] != "aiaaaa1" {
+		strings.Join(tomb.Shelved, ",") != "aiaaaa1,aisub01" {
 		t.Fatalf("tombstone = %+v", tomb)
 	}
 	if refs := pinnedRefs(t, e.parent); refs != tomb.Ref {
@@ -119,8 +121,10 @@ func TestDeletedWorktreeRoundTripsThroughTheTrash(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(e.wt, "committed.txt")); string(got) != "unpushed" {
 		t.Errorf("committed = %q", got)
 	}
-	if m, _ := session.ReadMeta("aiaaaa1"); m.Archived {
-		t.Error("the shelved session was not restored with its folder")
+	for _, name := range []string{"aiaaaa1", "aisub01"} {
+		if m, _ := session.ReadMeta(name); m.Archived {
+			t.Errorf("shelved session %s was not restored with its folder", name)
+		}
 	}
 
 	// Purging the entry drops the pin (and nothing else).
@@ -178,5 +182,59 @@ func TestTrashRestoreOfAMovedBranchRefuses(t *testing.T) {
 	}
 	if m, _ := session.ReadMeta("aiaaaa1"); !m.Archived {
 		t.Error("the session left the shelf although its folder did not come back")
+	}
+}
+
+// A remove that fails part way has already taken files, so the trash entry — the only copy of
+// the uncommitted work by then — is kept, pin and all.
+func TestPartlyFailedRemoveKeepsTheTrashEntry(t *testing.T) {
+	e := tombstoneSetup(t)
+	stuck := filepath.Join(e.wt, "stuck")
+	if err := os.MkdirAll(stuck, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stuck, "x"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stuck, 0o555); err != nil { // its file cannot be unlinked
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o755) })
+	if code := httpStatus(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil); code != http.StatusBadGateway {
+		t.Skipf("the remove did not fail (running as root?): %d", code)
+	}
+	arcs := worktreeArchives(t, e.srv)
+	if len(arcs) != 1 || arcs[0].Worktree == nil || arcs[0].Worktree.Snapshot == "" {
+		t.Fatalf("trash entry after a partly failed remove = %+v, want it kept with its snapshot", arcs)
+	}
+	if refs := pinnedRefs(t, e.parent); refs != arcs[0].Worktree.Ref {
+		t.Fatalf("pin = %q, want %q kept", refs, arcs[0].Worktree.Ref)
+	}
+	if got := gitAt(t, e.parent, "show", arcs[0].Worktree.Snapshot+":f"); got != "edited" {
+		t.Errorf("snapshot f = %q", got)
+	}
+}
+
+// A repository git does not track inside the worktree would come back as an empty folder:
+// the delete is refused, nothing is recorded, and the worktree is left as it is.
+func TestDeleteRefusesAWorktreeWithANestedRepository(t *testing.T) {
+	e := tombstoneSetup(t)
+	nested := filepath.Join(e.wt, "vendor", "lib")
+	gitInit(t, nested)
+	var res struct {
+		Error struct{ Code, Message string }
+	}
+	do(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil, http.StatusConflict, &res)
+	if res.Error.Code != errCodeWorktreeNestedRepo || !strings.Contains(res.Error.Message, "vendor/lib") {
+		t.Fatalf("refusal = %+v", res.Error)
+	}
+	if !gitx.IsGitRepo(nested) || !gitx.IsLinkedWorktree(e.wt) {
+		t.Fatal("the worktree or its nested repository was touched")
+	}
+	if refs := pinnedRefs(t, e.parent); refs != "" {
+		t.Errorf("a pin was left behind: %q", refs)
+	}
+	if arcs := worktreeArchives(t, e.srv); len(arcs) != 0 {
+		t.Errorf("a trash entry was left behind: %+v", arcs)
 	}
 }

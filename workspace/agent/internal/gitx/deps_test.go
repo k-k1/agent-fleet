@@ -119,6 +119,7 @@ func testDeps() Deps {
 		ErrCodeLockedSessions:        "gitx-test-locked_sessions",
 		ErrCodeSessionsTrashFailed:   "gitx-test-sessions_trash_failed",
 		ErrCodeWorktreeArchiveFailed: "gitx-test-worktree_archive_failed",
+		ErrCodeWorktreeNestedRepo:    "gitx-test-worktree_nested_repo",
 	}
 }
 

@@ -248,7 +248,11 @@ func RecreateWorktreeAt(parent, dir string, c RecreateCandidate, newBranch strin
 		// snapshot does not keep. Files the snapshot lacks are removed, untracked ones in it
 		// come back untracked.
 		if out, err := Combined(dir, "restore", "--source="+c.Snapshot, "--worktree", "--", "."); err != nil {
-			return fmt.Errorf("the worktree is back, but its uncommitted work could not be laid over it: %v: %s", err, out)
+			// Take the checkout away again: left standing, a retry would find the folder back
+			// and count as done, and the uncommitted work would never be laid over it. Nothing
+			// of the user's is in it yet — it is the recorded commit, fresh.
+			_, _ = Combined(parent, "worktree", "remove", "--force", dir)
+			return fmt.Errorf("its uncommitted work could not be laid over the checkout, so nothing was recreated: %v: %s", err, out)
 		}
 	}
 	switch {

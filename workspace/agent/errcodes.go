@@ -45,6 +45,9 @@ const (
 	// Deleting a worktree records it in the trash first (commit pinned, uncommitted work
 	// snapshotted — issue #1042); when that cannot be done, the worktree is left as it is.
 	errCodeWorktreeArchiveFailed = "worktree_archive_failed"
+	// The worktree holds a repository git does not track (a clone inside it), whose contents
+	// the trash cannot keep, so the delete is refused rather than losing them silently.
+	errCodeWorktreeNestedRepo = "worktree_nested_repo"
 	// Recreating a deleted worktree at its original path (worktree_recreate.go): the path is
 	// taken, no parent working copy is left to add it to, the candidate the client chose no
 	// longer resolves, or git refused the add.

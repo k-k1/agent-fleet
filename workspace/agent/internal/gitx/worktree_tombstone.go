@@ -11,6 +11,7 @@ package gitx
 // tombstone back (RecreateDeleted).
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,8 +85,44 @@ func PrepareTombstone(dir, parent string) (t WorktreeTombstone, ok bool, err err
 	if err != nil {
 		return t, false, err
 	}
+	if nested := addedGitlinks(dir, head, snap); len(nested) > 0 {
+		return t, false, &NestedReposError{Paths: nested}
+	}
 	t.Snapshot = snap
 	return t, true, nil
+}
+
+// NestedReposError refuses a delete whose worktree holds repositories git does not track (a
+// clone inside it). `add -A` records such a folder as a gitlink — a commit id whose objects
+// live only in that folder's own .git — so the snapshot would bring back an empty directory
+// and the delete would lose its contents while claiming to keep them (measured).
+type NestedReposError struct{ Paths []string }
+
+func (e *NestedReposError) Error() string {
+	return "the worktree holds repositories git does not track, which the trash cannot keep: " + strings.Join(e.Paths, ", ")
+}
+
+// IsNestedRepos reports whether err is a NestedReposError.
+func IsNestedRepos(err error) bool {
+	var n *NestedReposError
+	return errors.As(err, &n)
+}
+
+// addedGitlinks lists the gitlinks snap has and head does not: nested repositories picked up
+// as untracked. A submodule HEAD already tracks is a gitlink on both sides and is left out.
+func addedGitlinks(dir, head, snap string) []string {
+	out, err := Run(dir, "diff-tree", "-r", "--no-renames", "--diff-filter=A", head, snap)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, ln := range strings.Split(out, "\n") {
+		meta, path, ok := strings.Cut(ln, "\t")
+		if f := strings.Fields(meta); ok && len(f) >= 2 && f[1] == "160000" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func snapshotWorkingTree(dir, head, name string) (string, error) {

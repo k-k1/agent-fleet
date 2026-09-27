@@ -1639,7 +1639,10 @@ func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if out, err := Combined(parent, "worktree", "remove", "--force", dir); err != nil {
-			undo()
+			// No undo once the remove has run: one that fails part way (a directory it may not
+			// delete) has already taken files and often the registration — measured — and the
+			// trash entry is then the only copy of the uncommitted work. A worktree that is in
+			// fact still whole only leaves an entry whose restore finds the folder there.
 			httpx.WriteErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
@@ -1683,6 +1686,11 @@ func recordWorktreeTombstone(w http.ResponseWriter, dir, parent string) (undo fu
 			}
 		}
 		undo, err = recordDeletedWorktree(t)
+	}
+	if IsNestedRepos(err) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeWorktreeNestedRepo,
+			err.Error()+"; move or delete them first, and the worktree was left as it is")
+		return nil, false
 	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeWorktreeArchiveFailed,

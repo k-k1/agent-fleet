@@ -65,6 +65,7 @@ func gitDeps() gitx.Deps {
 		ErrCodeLockedSessions:        errCodeLockedSessions,
 		ErrCodeSessionsTrashFailed:   errCodeSessionsTrashFailed,
 		ErrCodeWorktreeArchiveFailed: errCodeWorktreeArchiveFailed,
+		ErrCodeWorktreeNestedRepo:    errCodeWorktreeNestedRepo,
 	}
 }
 
