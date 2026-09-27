@@ -247,18 +247,43 @@ describe("詳細の要約行", () => {
   it("未入力ならモデルの既定を示し、seed の決め方も出る", async () => {
     await render(PARAMS);
     expect(host.querySelector<HTMLDetailsElement>(".igen-advanced")!.open, "folded by default").toBe(false);
-    expect(summary()).toBe("sampler 既定 · 既定 15 steps · 既定 cfg 5 · 毎回ランダム");
+    expect(summary()).toBe("既定 15 steps · 既定 cfg 5 · sampler 既定 · scheduler 既定 · 毎回ランダム");
   });
 
   it("入力した値がそのまま出る", async () => {
     await render(PARAMS, { steps: "30", cfg: "7", sampler: "euler", seedPolicy: "fixed", seed: "42", batchSize: 2 });
-    expect(summary()).toBe("euler · 30 steps · cfg 7 · seed 42 · 1 回 2 枚");
+    expect(summary()).toBe("30 steps · cfg 7 · euler · scheduler 既定 · seed 42 · 1 回 2 枚");
   });
 
   it("族が読まない摘みは要約にも出ない", async () => {
     await render(FLUX);
     expect(summary()).not.toContain("cfg");
     expect(summary()).toContain("steps");
+  });
+
+  // Review #9: the line follows the same rule as the request (draftParams): a typed value is
+  // sent, an empty one leaves the model's default in force, and a knob the family does not read
+  // is not on the line at all.
+  const SAMPLED: ImagegenModel = { ...SDXL, params: { sampler: "dpmpp_2m", scheduler: "karras" } };
+
+  it("sampler も scheduler も未入力ならモデル既定の両方が出る", async () => {
+    await render(SAMPLED);
+    expect(summary()).toContain("既定 dpmpp_2m");
+    expect(summary()).toContain("既定 karras");
+  });
+
+  it("scheduler だけ入力しても既定の sampler は残る", async () => {
+    await render(SAMPLED, { scheduler: "simple" });
+    expect(summary()).toContain("既定 dpmpp_2m");
+    expect(summary()).toContain("simple");
+    expect(summary()).not.toContain("karras");
+  });
+
+  it("sampler を読まない族ではモデル既定の sampler も出ない", async () => {
+    const NO_SAMPLER: ImagegenModel = { ...SAMPLED, knobs: ["steps", "scheduler"] };
+    await render(NO_SAMPLER);
+    expect(summary()).not.toContain("dpmpp_2m");
+    expect(summary()).toContain("既定 karras");
   });
 
   it("操作が生成以外なら先頭に出る", async () => {

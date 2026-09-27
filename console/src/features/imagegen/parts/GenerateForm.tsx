@@ -19,7 +19,7 @@ import { Slider } from "../../settings/parts/controls.tsx";
 import { loraTriggers, loraWeight, type ImagegenLora, type ImagegenModel, type ImagegenProvider, type Knob } from "../wire.ts";
 import { familyFacts, SIZE_SHAPES, sizeOptions, sizeShape, sizesByShape, type SizeShape } from "../families.ts";
 import { LOCKABLE, type StudioKey } from "../studioSync.ts";
-import { MAX_BATCH, MAX_JOBS, OPS, type ImagegenDraft } from "../draft.ts";
+import { effectiveParams, MAX_BATCH, MAX_JOBS, OPS, type ImagegenDraft } from "../draft.ts";
 import { InputPicker } from "./InputPicker.tsx";
 
 interface Props {
@@ -159,21 +159,11 @@ export function GenerateForm({
   const defaults = model?.params;
   const summary = [
     draft.op !== "generate" && tr(`imggen.op_${draft.op}` as "imggen.op_generate"),
-    (reads("sampler") || reads("scheduler")) &&
-      ([reads("sampler") && draft.sampler, reads("scheduler") && draft.scheduler].filter(Boolean).join(" / ") ||
-        (defaults?.sampler ? tr("imggen.default_ph", { v: defaults.sampler }) : tr("imggen.sum_sampler_none"))),
-    reads("steps") &&
-      (draft.steps.trim()
-        ? tr("imggen.sum_steps", { v: draft.steps.trim() })
-        : defaults?.steps != null
-          ? tr("imggen.default_ph", { v: tr("imggen.sum_steps", { v: defaults.steps }) })
-          : tr("imggen.sum_steps_none")),
-    reads("cfg") &&
-      (draft.cfg.trim()
-        ? tr("imggen.sum_cfg", { v: draft.cfg.trim() })
-        : defaults?.cfg != null
-          ? tr("imggen.default_ph", { v: tr("imggen.sum_cfg", { v: defaults.cfg }) })
-          : tr("imggen.sum_cfg_none")),
+    ...effectiveParams(draft, defaults, reads).map(({ key, value, typed }) => {
+      if (value == null) return tr(`imggen.sum_${key}_none` as "imggen.sum_steps_none");
+      const shown = key === "steps" ? tr("imggen.sum_steps", { v: value }) : key === "cfg" ? tr("imggen.sum_cfg", { v: value }) : String(value);
+      return typed ? shown : tr("imggen.default_ph", { v: shown });
+    }),
     draft.seedPolicy === "random"
       ? tr("imggen.seed_random")
       : draft.seedPolicy === "sequence"

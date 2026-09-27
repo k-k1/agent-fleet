@@ -11,6 +11,7 @@ import {
   draftFromProperties,
   draftKey,
   draftParams,
+  effectiveParams,
   emptyDraft,
   parseDraft,
   remappedOp,
@@ -154,5 +155,33 @@ describe("マスク", () => {
     expect(emptyDraft().mask).toBe("");
     expect(parseDraft(JSON.stringify({ mask: 7 })).mask).toBe("");
     expect(parseDraft("{}").mask).toBe("");
+  });
+});
+
+// Review #9: the details summary reads the same rule as the request.
+describe("effectiveParams", () => {
+  const all = () => true;
+  const defaults = { steps: 28, cfg: 6, sampler: "dpmpp_2m", scheduler: "karras" };
+
+  it("a value draftParams would send wins; the rest are the model's defaults", () => {
+    const d = { ...emptyDraft(), cfg: "7", scheduler: "simple" };
+    expect(effectiveParams(d, defaults, all)).toEqual([
+      { key: "steps", value: 28, typed: false },
+      { key: "cfg", value: 7, typed: true },
+      { key: "sampler", value: "dpmpp_2m", typed: false },
+      { key: "scheduler", value: "simple", typed: true },
+    ]);
+  });
+
+  it("a value the request drops (not a number) shows the default, not the text", () => {
+    expect(effectiveParams({ ...emptyDraft(), steps: "abc" }, defaults, all)[0]).toEqual({ key: "steps", value: 28, typed: false });
+  });
+
+  it("a knob the family does not read is left out; no default is null", () => {
+    expect(effectiveParams(emptyDraft(), undefined, (k) => k !== "sampler").map((p) => [p.key, p.value])).toEqual([
+      ["steps", null],
+      ["cfg", null],
+      ["scheduler", null],
+    ]);
   });
 });
