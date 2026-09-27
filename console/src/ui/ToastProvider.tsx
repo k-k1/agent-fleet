@@ -24,9 +24,6 @@ export interface ToastOptions {
   key?: string;
   // onClose runs when the member closes the toast with its X, not when it is withdrawn.
   onClose?: () => void;
-  // "top" stacks it at the top of the screen instead, for a notice that must not cover the
-  // composer at the bottom of a phone (the image studio's "pictures are ready").
-  placement?: "bottom" | "top";
 }
 
 interface ToastItem {
@@ -35,7 +32,6 @@ interface ToastItem {
   kind: ToastKind;
   key?: string;
   onClose?: () => void;
-  placement: "bottom" | "top";
 }
 
 type ToastFn = (message: ReactNode, opts?: ToastOptions) => void;
@@ -82,7 +78,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const shown = opts?.key ? keyIds.current.get(opts.key) : undefined;
       const id = shown ?? ++seq.current;
       if (opts?.key) keyIds.current.set(opts.key, id);
-      const item: ToastItem = { id, message, kind, key: opts?.key, onClose: opts?.onClose, placement: opts?.placement ?? "bottom" };
+      const item: ToastItem = { id, message, kind, key: opts?.key, onClose: opts?.onClose };
       setItems((xs) => {
         const at = xs.findIndex((x) => x.id === id);
         if (at < 0) return [...xs, item];
@@ -120,36 +116,32 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={toast}>
       {children}
-      {(["bottom", "top"] as const).map((place) => {
-        const here = items.filter((t) => t.placement === place);
-        if (here.length === 0) return null;
-        return (
-          <div key={place} className={"ui-toasts" + (place === "top" ? " ui-toasts-top" : "")}>
-            {here.map((t) => (
-              <div
-                key={t.id}
-                className={"ui-toast ui-toast-" + t.kind}
-                role={t.kind === "error" ? "alert" : "status"}
-                aria-live={t.kind === "error" ? "assertive" : "polite"}
+      {items.length > 0 && (
+        <div className="ui-toasts">
+          {items.map((t) => (
+            <div
+              key={t.id}
+              className={"ui-toast ui-toast-" + t.kind}
+              role={t.kind === "error" ? "alert" : "status"}
+              aria-live={t.kind === "error" ? "assertive" : "polite"}
+            >
+              <Icon name={TOAST_ICONS[t.kind]} />
+              <span className="ui-toast-msg">{t.message}</span>
+              <button
+                type="button"
+                className="ui-toast-x"
+                title={tr("ui.close")}
+                onClick={() => {
+                  remove(t.id);
+                  t.onClose?.();
+                }}
               >
-                <Icon name={TOAST_ICONS[t.kind]} />
-                <span className="ui-toast-msg">{t.message}</span>
-                <button
-                  type="button"
-                  className="ui-toast-x"
-                  title={tr("ui.close")}
-                  onClick={() => {
-                    remove(t.id);
-                    t.onClose?.();
-                  }}
-                >
-                  <Icon name="close" />
-                </button>
-              </div>
-            ))}
-          </div>
-        );
-      })}
+                <Icon name="close" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </ToastCtx.Provider>
   );
 }

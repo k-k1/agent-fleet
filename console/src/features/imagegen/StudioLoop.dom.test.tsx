@@ -78,7 +78,7 @@ const refresh = async () => {
   await act(async () => {});
 };
 const tab = (k: number) => host.querySelectorAll<HTMLButtonElement>(".igen-tab")[k];
-const toastText = () => document.querySelector(".igen-done-toast")?.textContent || "";
+const toastText = () => document.querySelector(".igen-done-note")?.textContent || "";
 
 beforeEach(() => {
   useWorkspaceStore.setState({ state: "running" });
@@ -102,10 +102,10 @@ describe("the studio's loop on a narrow pane", () => {
     expect(toastText()).toMatch(/3/);
     expect(tab(2).querySelector(".igen-tab-badge")?.textContent).toBe("+3");
     // "View" goes to the results tab: the badge and the notice both go away.
-    await act(async () => document.querySelector<HTMLButtonElement>(".igen-done-toast button")!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>(".igen-done-note button")!.click());
     expect(tab(2).getAttribute("aria-selected")).toBe("true");
     expect(tab(2).querySelector(".igen-tab-badge")).toBeNull();
-    expect(document.querySelector(".igen-done-toast")).toBeNull();
+    expect(document.querySelector(".igen-done-note")).toBeNull();
   });
 
   it("says nothing when the results are already on screen", async () => {
@@ -113,7 +113,7 @@ describe("the studio's loop on a narrow pane", () => {
     await mount();
     jobsNow.jobs = [done(2)];
     await refresh();
-    expect(document.querySelector(".igen-done-toast")).toBeNull();
+    expect(document.querySelector(".igen-done-note")).toBeNull();
   });
 
   it("announces on a wide pane that is not the active one", async () => {
@@ -129,7 +129,7 @@ describe("the studio's loop on a narrow pane", () => {
     await mount();
     jobsNow.jobs = [{ ...done(2), studio: "other" }];
     await refresh();
-    expect(document.querySelector(".igen-done-toast")).toBeNull();
+    expect(document.querySelector(".igen-done-note")).toBeNull();
     expect(tab(2).querySelector(".igen-tab-badge")).toBeNull();
   });
 
@@ -138,7 +138,7 @@ describe("the studio's loop on a narrow pane", () => {
     jobsNow.jobs = [done(4)];
     await mount();
     await refresh();
-    expect(document.querySelector(".igen-done-toast")).toBeNull();
+    expect(document.querySelector(".igen-done-note")).toBeNull();
     expect(tab(2).querySelector(".igen-tab-badge")).toBeNull();
   });
 });
@@ -152,7 +152,7 @@ describe("the ready notice (review 1)", () => {
     expect(toastText()).toMatch(/2/);
     await act(async () => root.render(view("s2", true)));
     await act(async () => {});
-    expect(document.querySelector(".igen-done-toast")).toBeNull();
+    expect(document.querySelector(".igen-done-note")).toBeNull();
   });
 
   it("is withdrawn when the member opens the results tab by hand", async () => {
@@ -162,15 +162,36 @@ describe("the ready notice (review 1)", () => {
     await refresh();
     expect(toastText()).toMatch(/2/);
     await act(async () => tab(2).click());
-    expect(document.querySelector(".igen-done-toast")).toBeNull();
+    expect(document.querySelector(".igen-done-note")).toBeNull();
   });
 
-  it("stands at the top of the screen, clear of the draft bar and the composer", async () => {
+  it("is the pane's own line under the tab strip, not a floating toast over the app's controls", async () => {
     narrowPane(true);
     await mount();
     jobsNow.jobs = [done(1)];
     await refresh();
-    expect(document.querySelector(".igen-done-toast")!.closest(".ui-toasts")!.classList.contains("ui-toasts-top")).toBe(true);
+    const note = document.querySelector(".igen-done-note")!;
+    expect(note.closest(".ui-toasts")).toBeNull();
+    // In the flow between the tabs and the columns: it pushes them down, it covers nothing.
+    expect(note.previousElementSibling?.classList.contains("igen-tabs")).toBe(true);
+    expect(note.nextElementSibling?.classList.contains("igen-body")).toBe(true);
+  });
+
+  it("goes away on its own after a while", async () => {
+    narrowPane(true);
+    await mount();
+    vi.useFakeTimers();
+    try {
+      jobsNow.jobs = [done(1)];
+      await refresh();
+      expect(document.querySelector(".igen-done-note")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTime(8100));
+      expect(document.querySelector(".igen-done-note")).toBeNull();
+      // The badge stays: the pictures are still unseen.
+      expect(tab(2).querySelector(".igen-tab-badge")?.textContent).toBe("+1");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("counts every trial that finished between two reads, not only the one in the slot", async () => {

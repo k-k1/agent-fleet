@@ -1308,3 +1308,37 @@
 .igen-badge.other {
   color: var(--muted);
 }
+
+/* "N pictures are ready": the pane's own line between the tab strip and the columns. In the
+   flow, so it pushes the content down instead of covering the app's bars or the composer. */
+.igen-done-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 12px 0;
+  padding: 4px 6px 4px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: 6px;
+  background: var(--panel);
+  flex: none;
+}
+
+.igen-done-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.igen-done-x {
+  display: inline-flex;
+  padding: 4px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.igen-done-note > .codicon:first-child {
+  color: var(--ok);
+}
