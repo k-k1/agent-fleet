@@ -6,6 +6,7 @@ English | [日本語](0061-work-item-inbox.ja.md)
   **2026-08-27: decisions 14–16 added after looking at real data (41 Jira items)** — partly withdrawing decision 8's "a saved query is the only filter" ([docs/80](../log/80-work-item-inbox.md) §80.18).
   **2026-08-27: Bitbucket pull requests added, with decisions 17–19** ([docs/80](../log/80-work-item-inbox.md) §80.19). The design and the background are in [docs/80](../log/80-work-item-inbox.md).
   Status update (2026-09-25): the query composer, the sort UI and grouping that decision 14 left unbuilt are not planned (decision 14; docs/log/80 §80.18.5). The detail pane was superseded by decision 20's detail modal.
+  **2026-09-28: decision 25 added** — say when a query's page left matches out, and search the tracker on a press only (#1095). It departs narrowly from decision 14's line.
 - See also: [0031-mcp-registry.md](0031-mcp-registry.md) (MCP means "each CLI speaks it directly and af only distributes the definitions"; OAuth MCP is a non-goal) / [0036-working-sets.md](0036-working-sets.md) (the unit of "a piece of work") /
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (do not keep it warm) / [0052-tenant-git-oauth.md](0052-tenant-git-oauth.md) (the CP passes secrets through and does not hold them) / [0059-repo-import-jobs.md](0059-repo-import-jobs.md) (the relationship between self-running work and the busy check)
 
@@ -352,6 +353,29 @@ going to where they are ("we do not build a ticket viewer", decision 1). Startin
 removed**: decision 19.1's reason for listing pull requests at all — reviewing someone else's is work
 with no session on this side yet — still needs a working copy, and the started ledger (decision 5)
 still has to stop the second person picking up the same review.
+
+**25 (#1095). Say when a query's page left matches out, and let a press search past it.** Real data
+hit the cap decision 15 left unsurfaced: `is:open involves:@me` matched 59 on GitHub, the rail held 50
+and said nothing, and an open issue past the cut was "not there" — which the rail's filter then
+confirmed. Three changes, each the smallest that closes it:
+
+- **GitHub's page is 100** (its `per_page` maximum). Jira and Bitbucket stay at 50 (Bitbucket's largest
+  page). Still one page: full synchronisation remains a non-goal.
+- **The cut is said, under the stamp**: "fetched N of M" when the tracker counts (GitHub's
+  `total_count`), "the first N, there are more" when it does not and the page came back full. The CP
+  keeps it on the query row (`match_total`) so the stopped rail says it too.
+- **"Search the tracker" under the filter**, offered when the filter finds nothing or a query is
+  known to be partial. This departs from decision 14's line ("a request to the provider is the saved
+  query's job") on purpose and narrowly: **on a press only, never per keystroke** (GitHub allows 30
+  searches a minute), **only while the workspace runs** (decision 1), **nothing is cached** (the next
+  refresh would silently take it back), and the results sit apart from the rail's rows. Each enabled
+  saved query is narrowed by the typed words in its own language (GitHub: appended terms, `#1028` →
+  `1028`; Jira: `AND text ~ "…"`, or `key = "…"` for an issue key). Bitbucket's filter language has no
+  free text, so its queries are named as not searched.
+
+Rejected: **paging with "show more" from the provider.** The 5-minute refresh replaces the cache with
+the first page, so kept pages would either vanish or have to be re-fetched every time; a stopped
+workspace cannot fetch them at all; and rows sorted by update shift between requests.
 
 ## Options rejected
 

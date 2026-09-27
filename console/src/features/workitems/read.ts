@@ -39,6 +39,9 @@ export interface WorkItemQuery {
   position: number;
   fetchedAt: string;
   lastError: string;
+  /** Whether the last fetch left matches out (#1095): 0 = the rail has them all, >0 = the
+   * tracker's count of matches, -1 = rows were left out but the tracker gave no count. */
+  matchTotal: number;
 }
 
 export interface WorkItemSessionRef {
@@ -75,7 +78,8 @@ export function readWorkItems(res: unknown): { payload: WorkItemPayload | null; 
       ...EMPTY,
       ...d,
       items: (d.items as unknown[]).map(normalizeItem),
-      queries: d.queries as WorkItemQuery[],
+      // An older CP sends no matchTotal; "nothing left out" is what it used to mean.
+      queries: (d.queries as WorkItemQuery[]).map((q) => ({ ...q, matchTotal: typeof q.matchTotal === "number" ? q.matchTotal : 0 })),
       sessions: Array.isArray(d.sessions) ? (d.sessions as WorkItemSessionRef[]) : [],
       fetchedAt: typeof d.fetchedAt === "string" ? d.fetchedAt : "",
       running: !!d.running,
@@ -212,6 +216,35 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
   };
 }
 
+export interface WorkItemSearchResult {
+  items: WorkItem[];
+  /** Per-query failures, named on the rail the same way a refresh failure is. */
+  errors: { queryId: string; message: string }[];
+  /** Queries whose provider cannot be narrowed by free text (Bitbucket). */
+  skipped: string[];
+}
+
+/** Adopt one POST /api/work-items/search body (#1095). Rows go through `normalizeItem` like the
+ * rail's own: they cross the same two boundaries. */
+export function readWorkItemSearch(res: unknown): { result: WorkItemSearchResult | null; error?: ApiError | string } {
+  if (!res || typeof res !== "object") return { result: null };
+  const d = res as Record<string, unknown> & { error?: ApiError | string };
+  if (d.error) return { result: null, error: d.error };
+  if (!Array.isArray(d.items)) return { result: null };
+  return {
+    result: {
+      items: (d.items as unknown[]).map(normalizeItem),
+      errors: Array.isArray(d.errors)
+        ? (d.errors as unknown[]).map((e) => ({
+            queryId: str((e as Record<string, unknown>)?.queryId),
+            message: str((e as Record<string, unknown>)?.message),
+          }))
+        : [],
+      skipped: Array.isArray(d.skipped) ? d.skipped.filter((x): x is string => typeof x === "string") : [],
+    },
+  };
+}
+
 /** Which rows get a live read: pull requests on the two providers that have one. A Jira key has
  * no pull request behind it, and an issue's cached row already says everything the panel shows. */
 export function canReadLive(item: { kind: string; provider: string }): boolean {
@@ -335,7 +368,7 @@ export function uniformMeta(items: WorkItem[]): Record<string, { repo: boolean; 
 
 /** Rail filter: a substring search over what the row is ABOUT (docs/log/80 §80.18.4).
  *
- * Not a query. It never reaches the provider, is never saved, has no operators and does
+ * Not a query. It never reaches the provider (the separate "search the tracker" press does, #1095), is never saved, has no operators and does
  * not reorder — it only helps the eye find one row among 41. Assignee and repo are matched
  * even when `uniformMeta` hid them from the row: what was dropped is the rendering, not
  * the data. */

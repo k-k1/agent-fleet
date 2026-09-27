@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -29,6 +30,7 @@ type workItemEnv struct {
 	mid  string
 	body func() string // what the stub Agent answers /work-items/fetch with
 	hits *int
+	sent *string // the last request body the stub Agent received
 }
 
 func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
@@ -46,7 +48,7 @@ func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
 	id, _ := st.UpsertIdentity(ctx, "wi@example.com", "wi", "")
 	m, _ := st.EnsureMembership(ctx, id.ID, tenant.ID, "member")
 
-	env := &workItemEnv{st: st, mid: m.ID, hits: new(int)}
+	env := &workItemEnv{st: st, mid: m.ID, hits: new(int), sent: new(string)}
 	env.body = func() string { return `{"items":[],"errors":[]}` }
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/work-items/fetch" {
@@ -54,6 +56,8 @@ func newWorkItemEnv(t *testing.T, state string) *workItemEnv {
 			return
 		}
 		*env.hits++
+		b, _ := io.ReadAll(r.Body)
+		*env.sent = string(b)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(env.body()))
 	}))
@@ -156,6 +160,44 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 			}
 		}
 	}
+}
+
+// #1095: a query whose page left matches out says so, and keeps saying so while the Workspace is
+// stopped. Three cases in one refresh — a known count, a full page without a count, and a query
+// that fit — then a refresh that fails, which must keep the note next to the rows it kept.
+func TestWorkItemsMatchTotalThroughTheCache(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	ctx := context.Background()
+	env.addQuery(t, "gh", "GitHub", "is:open involves:@me", true)
+	env.addQuery(t, "jr", "Jira", "assignee = currentUser()", true)
+	env.addQuery(t, "fit", "Fits", "is:open repo:acme/web", true)
+	env.body = func() string {
+		return `{"items":[],"errors":[],
+		         "truncated":[{"queryId":"gh","total":159},{"queryId":"jr","total":0}]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+
+	want := map[string]int{"gh": 159, "jr": -1, "fit": 0}
+	check := func(when string) {
+		t.Helper()
+		out, aerr := env.api.workItemsPayload(ctx, env.res, "stopped")
+		if aerr != nil {
+			t.Fatalf("payload: %v", aerr)
+		}
+		for _, q := range out.Queries {
+			if q.MatchTotal != want[q.ID] {
+				t.Errorf("%s: %s matchTotal = %d, want %d", when, q.ID, q.MatchTotal, want[q.ID])
+			}
+		}
+	}
+	check("after the fetch")
+
+	env.body = func() string {
+		return `{"items":[],"errors":[{"queryId":"gh","message":"github rate limit reached"}],"truncated":[]}`
+	}
+	env.api.refreshNow(ctx, env.res, true)
+	want["jr"] = 0 // fetched fine this time and nothing was left out
+	check("after a failed refresh")
 }
 
 // When the request never reached the Agent (just stopped, restarting) fetched_at is left
