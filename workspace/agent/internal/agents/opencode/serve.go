@@ -311,9 +311,11 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	// managed turns authenticate identically. Re-keying requires a Restart (§7).
 	cmd.Env = append(os.Environ(), env()...)
 	cmd.Dir = paths.HomeDir()
-	if err := cmd.Start(); err != nil {
+	tail, err := agents.StartWithStderrTail(cmd)
+	if err != nil {
 		return "", 0, fmt.Errorf("opencode serve の起動に失敗しました: %w", err)
 	}
+	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(200 * time.Millisecond)
@@ -324,16 +326,18 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			s.stopping = false
 			gen := s.gen
 			s.armIdleWatchLocked()
-			go s.waitDaemon(cmd, gen)
+			go s.waitDaemon(cmd, tail, gen)
 			go s.monitorEvents(addr, gen)
 			log.Printf("opencode serve: started (gen %d, pid %d, %s)", gen, cmd.Process.Pid, addr)
 			recordLifecycle("started", gen, fmt.Sprintf("pid %d", cmd.Process.Pid))
 			return addr, gen, nil
 		}
 	}
+	err = tail.Wrap(errors.New("opencode serve が時間内に起動しませんでした")) // before the kill adds noise
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait() // reap: waitDaemon is only started on success — Kill alone leaves a zombie
-	return "", 0, errors.New("opencode serve が時間内に起動しませんでした")
+	tail.Release()
+	return "", 0, err
 }
 
 // armIdleWatchLocked starts the "fold up on zero demand" watcher, at most one at a time.
@@ -403,8 +407,9 @@ func splitServeAddr(addr string) (host, port string, err error) {
 // waitDaemon records WHY the owned daemon exited (§10.2-2: exit recording moved from the
 // pane wrapper's record-exit into the supervisor) and kicks reconciliation for the
 // surviving sessions.
-func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
+func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int) {
 	err := cmd.Wait()
+	tail.Release()
 	s.mu.Lock()
 	// Deliberate means WE asked THIS process to end. Comparing gen alone would misread a
 	// Restart (it clears stopping without changing gen), and comparing s.cmd would call

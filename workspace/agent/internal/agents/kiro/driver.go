@@ -466,9 +466,17 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	if err != nil {
 		return err
 	}
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
+	tail, err := agents.StartWithStderrTail(cmd)
+	if err != nil {
 		return fmt.Errorf("kiro runtime を起動できません: %w", err)
+	}
+	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
+	// Snapshot the tail before stopChild: the stop sequence can make the CLI print noise
+	// that pushes the real cause out of the budget.
+	fail := func(err error) error {
+		err = tail.Wrap(err)
+		stopChild(cmd, stdin)
+		return err
 	}
 	cl := newACPClient(stdin, stdout)
 	// Capture this cl in the closure: during the first spawn readLoop can run while h.cl is
@@ -479,13 +487,12 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	}
 	cl.onNotify = h.onNotify
 	exited := make(chan struct{})
-	go h.watch(cmd, cl, exited)
+	go h.watch(cmd, tail, cl, exited)
 
 	if _, err := cl.call("initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
 	}, 30*time.Second); err != nil {
-		stopChild(cmd, stdin)
-		return fmt.Errorf("kiro runtime の initialize に失敗しました: %w", err)
+		return fail(fmt.Errorf("kiro runtime の initialize に失敗しました: %w", err))
 	}
 
 	sid := h.sid
@@ -531,8 +538,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 				// Do not leave a partial replay in buf — it would be shown in preference to the
 				// complete file transcript.
 				h.buf.reset()
-				stopChild(cmd, stdin)
-				return fmt.Errorf("kiro セッションを読み込めませんでした（別プロセスが占有中の可能性・時間をおいて再開してください）: %w", lerr)
+				return fail(fmt.Errorf("kiro セッションを読み込めませんでした（別プロセスが占有中の可能性・時間をおいて再開してください）: %w", lerr))
 			}
 		} else {
 			mode = currentModeOf(res)
@@ -544,15 +550,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 			"cwd": h.dir, "mcpServers": []any{},
 		}, 60*time.Second)
 		if err != nil {
-			stopChild(cmd, stdin)
-			return fmt.Errorf("kiro セッションを作成できません: %w", err)
+			return fail(fmt.Errorf("kiro セッションを作成できません: %w", err))
 		}
 		var out struct {
 			SessionID string `json:"sessionId"`
 		}
 		if json.Unmarshal(res, &out) != nil || out.SessionID == "" {
-			stopChild(cmd, stdin)
-			return errors.New("kiro セッションの作成応答を解釈できません")
+			return fail(errors.New("kiro セッションの作成応答を解釈できません"))
 		}
 		sid = out.SessionID
 		sids.Write(h.slotSid, sid) // CLI-assigned sid, shared with the read layer (resolveSid)
@@ -666,9 +670,10 @@ func currentModelOf(res json.RawMessage) string {
 // supervisor, because there is one child per session). An exit caused by stdin EOF
 // (DropHandle/Shutdown) is exit 0, i.e. "stopped", so the Console shows the normal stopped
 // state.
-func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient, exited chan struct{}) {
+func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClient, exited chan struct{}) {
 	defer close(exited) // release the switch's DropHandleWait (a channel specific to this child)
 	_ = cmd.Wait()
+	tail.Release()
 	code, sig := 0, 0
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
 		if ws.Signaled() {

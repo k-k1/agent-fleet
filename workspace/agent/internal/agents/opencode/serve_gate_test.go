@@ -143,7 +143,7 @@ func TestUnexpectedDeathIsRecordedEvenAfterEnsureReplacedTheProcess(t *testing.T
 	s.mu.Unlock()
 
 	before := len(Lifecycle())
-	s.waitDaemon(cmd, 7)
+	s.waitDaemon(cmd, nil, 7)
 
 	ev := Lifecycle()
 	if len(ev) != before+1 || ev[len(ev)-1].Event != "died" {
@@ -164,7 +164,7 @@ func TestDeliberateStopIsNotRecordedAsDeath(t *testing.T) {
 	s.mu.Unlock()
 
 	before := len(Lifecycle())
-	s.waitDaemon(cmd, 7)
+	s.waitDaemon(cmd, nil, 7)
 
 	if ev := Lifecycle(); len(ev) != before {
 		t.Fatalf("a teardown we asked for must not be filed as a death, got %+v", ev[before:])

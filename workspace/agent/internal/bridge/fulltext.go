@@ -28,6 +28,9 @@ const maxBodyChunks = 12
 
 const redactedMark = "[secret redacted]"
 
+// RedactedMark is what every redaction leaves behind, for scrubbers outside this package.
+const RedactedMark = redactedMark
+
 // bridgeDivider is a thin horizontal rule appended to the end of a full-text answer
 // and a mirrored user input (docs/log/37 Fix ⑤), so consecutive posts / a run of replies
 // don't visually merge into one unreadable block. A run of U+2500 renders as a line

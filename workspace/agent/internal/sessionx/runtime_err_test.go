@@ -2,11 +2,13 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 )
@@ -65,5 +67,27 @@ func TestWriteRuntimeErrSplitsPermanentFromTransient(t *testing.T) {
 	}
 	if msg != "opencode serve が時間内に起動しませんでした" {
 		t.Errorf("transient: message = %q, want the server's own reason", msg)
+	}
+}
+
+// A child that failed to start carries the end of its stderr; this response is where it
+// reaches the member, while the error's own text (what callers log) stays without it.
+func TestWriteRuntimeErrAppendsStderrTail(t *testing.T) {
+	err := fmt.Errorf("kiro runtime の initialize に失敗しました: %w",
+		&agents.StartError{Err: errors.New("接続が切れました"), Stderr: "Error: You are not logged in"})
+	rec := httptest.NewRecorder()
+	writeRuntimeErr(rec, err)
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if e := json.Unmarshal(rec.Body.Bytes(), &body); e != nil {
+		t.Fatalf("body is not the error envelope: %s", rec.Body.String())
+	}
+	want := err.Error() + "\n\n--- stderr (tail) ---\nError: You are not logged in"
+	if rec.Code != http.StatusBadGateway || body.Error.Code != "runtime_failed" || body.Error.Message != want {
+		t.Fatalf("got %d %q %q, want 502 runtime_failed %q", rec.Code, body.Error.Code, body.Error.Message, want)
 	}
 }
