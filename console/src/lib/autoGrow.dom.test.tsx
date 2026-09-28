@@ -16,6 +16,7 @@ function composer(): { row: HTMLDivElement; input: HTMLTextAreaElement } {
 describe("autoGrowTextarea", () => {
   it("holds the parent row with min-height while measuring and restores it afterwards", () => {
     const { row, input } = composer();
+    input.value = "a long draft";
     row.getBoundingClientRect = () => ({ height: 212 }) as DOMRect;
     const seen: string[] = [];
     // Reading scrollHeight is the moment of measurement; record the parent's min-height then.
@@ -35,6 +36,7 @@ describe("autoGrowTextarea", () => {
 
   it("restores a min-height the parent already had", () => {
     const { row, input } = composer();
+    input.value = "a";
     row.style.minHeight = "54px";
     row.getBoundingClientRect = () => ({ height: 54 }) as DOMRect;
     Object.defineProperty(input, "scrollHeight", { get: () => 38 });
@@ -42,6 +44,24 @@ describe("autoGrowTextarea", () => {
     autoGrowTextarea(input);
 
     expect(row.style.minHeight).toBe("54px");
+  });
+
+  it("gives an empty input its rows height instead of measuring the placeholder", () => {
+    const { input } = composer();
+    input.placeholder = "a placeholder that wraps to several lines at a narrow width";
+    input.style.height = "75px";
+    let measured = false;
+    Object.defineProperty(input, "scrollHeight", {
+      get() {
+        measured = true;
+        return 75;
+      },
+    });
+
+    autoGrowTextarea(input);
+
+    expect(measured).toBe(false);
+    expect(input.style.height).toBe("");
   });
 
   it("does nothing without an element (before mount / after unmount)", () => {
