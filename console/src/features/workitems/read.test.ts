@@ -311,6 +311,14 @@ describe("titleSlug", () => {
   it("returns empty for an all-non-ASCII title, so the caller can fall back to the key", () => {
     expect(titleSlug("日本語のみ")).toBe("");
   });
+
+  it("cuts a long title at a word boundary, the same as the Agent's TitleSlug (#1125)", () => {
+    expect(titleSlug("Branch naming rules across all the layers resolved")).toBe("branch-naming-rules-across-all");
+    // The character after the limit is a separator, so all 32 are whole words.
+    expect(titleSlug("abcdefghij abcdefghij abcdefghij ab")).toBe("abcdefghij-abcdefghij-abcdefghij");
+    // One word longer than the limit has no boundary to cut at.
+    expect(titleSlug("a".repeat(40))).toBe("a".repeat(32));
+  });
 });
 
 describe("promptForItem", () => {

@@ -49,6 +49,7 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.query_expr": "Search query",
   "wi.branch_template": "Branch name template",
   "wi.branch_preview": "e.g. {branch} / {branch2} ({key} and {slug} are available; {slug} is empty for a title with no ASCII words)",
+  "wi.branch_preview_rules": "e.g. {branch} / {branch2} (empty means the default {prefix}{ref}-{slug}. Available: {ref} {num} {key} {project} {type} {prefix} {slug}. {type} and {prefix} come from the issue type or labels, so a Bug gets fix/. {slug} is empty for a title with no ASCII words. Rules the repository declares, such as git-flow, win at launch)",
   "wi.report_title": "Comment the work back",
   "wi.report_to": "Posting to",
   "wi.report_session": "Session",

@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -269,6 +270,58 @@ func TestCleanBranchName(t *testing.T) {
 		if got := CleanBranchName(in); got != want {
 			t.Errorf("CleanBranchName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The AI suggestion's `<kind>/<name>` reply (ADR 0103 decision 8): a kind outside the resolved
+// set is dropped, never folded into the slug, and without kinds the reply is the slug as before.
+func TestSplitSuggestedBranch(t *testing.T) {
+	kinds := []string{"feature", "bugfix", "docs"}
+	cases := []struct{ reply, kind, slug string }{
+		{"bugfix/login-redirect", "bugfix", "login-redirect"},
+		{"`Feature`/Session Branch Rename\nexplanation", "feature", "session-branch-rename"},
+		{"feat/login-redirect", "", "login-redirect"},
+		{"login-redirect", "", "login-redirect"},
+	}
+	for _, c := range cases {
+		if k, s := SplitSuggestedBranch(c.reply, kinds); k != c.kind || s != c.slug {
+			t.Errorf("SplitSuggestedBranch(%q) = %q, %q; want %q, %q", c.reply, k, s, c.kind, c.slug)
+		}
+	}
+	if k, s := SplitSuggestedBranch("bugfix/login-redirect", nil); k != "" || s != "bugfix-login-redirect" {
+		t.Errorf("without kinds = %q, %q; want the whole reply as the slug", k, s)
+	}
+	withKinds := branchSuggestPrompt(nil, kinds)
+	if !strings.Contains(withKinds, "exactly one of: feature, bugfix, docs") || strings.Contains(withKinds, "no prefixes like") {
+		t.Errorf("prompt with kinds does not offer them:\n%s", withKinds)
+	}
+	if bare := BranchSuggestPrompt(nil); !strings.Contains(bare, "no prefixes like 'feature/'") {
+		t.Errorf("prompt without kinds lost its no-prefix rule:\n%s", bare)
+	}
+}
+
+// The suggestion hands the resolver an already-ended context, so the kinds never wait for a
+// Bitbucket model inside the model's budget (see suggestionKinds).
+func TestSuggestionKindsUseAnEndedContext(t *testing.T) {
+	if _, err := execLookPathGit(); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	old := BranchKinds
+	defer func() { BranchKinds = old }()
+	var ended bool
+	BranchKinds = func(ctx context.Context, _ string) []string {
+		ended = ctx.Err() != nil
+		return []string{"feature"}
+	}
+	if got := suggestionKinds(context.Background(), dir); len(got) != 1 || !ended {
+		t.Errorf("kinds = %v, context ended = %v; want the resolver's answer from an ended context", got, ended)
+	}
+	if got := suggestionKinds(context.Background(), t.TempDir()); got != nil {
+		t.Errorf("a directory that is not git got kinds %v", got)
 	}
 }
 

@@ -10,6 +10,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useRepoRailContext } from "./useRepoRail.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { StartModal } from "./StartModal.tsx";
+import { branchItemOf } from "./branchRule.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import { useLaunchTarget, useLaunchSeed } from "./store.ts";
 import { markHandoffLaunched } from "../mirror/HandoffProposal.tsx";
@@ -84,6 +85,7 @@ export function StartHost() {
           initialPrompt={seedPrompt || undefined}
           initialTitle={seedTitle || undefined}
           initialNewBranch={seedWorkItem?.branch || undefined}
+          workItem={seedWorkItem && !launchExisting ? branchItemOf(seedWorkItem) : undefined}
           initialWorktree={launchInPlace ? false : undefined}
           initialExistingBranch={launchExisting || undefined}
           onClose={() => {

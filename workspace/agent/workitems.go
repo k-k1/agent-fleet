@@ -65,6 +65,10 @@ type workItemOut struct {
 	URL      string   `json:"url"`
 	Assignee string   `json:"assignee"`
 	Labels   []string `json:"labels"`
+	// Type is the tracker's own issue type (GitHub's issue type, Jira's issuetype), "" when the
+	// tracker has none. The branch-name resolver maps it to a kind before the labels (ADR 0103
+	// decision 4).
+	Type string `json:"type"`
 	// LabelColors maps a label name to the tracker's own colour as lowercase "rrggbb". Only
 	// GitHub has label colours; a label missing here is drawn in a colour derived from its
 	// name. Never nil, so it marshals to {} rather than null.
@@ -289,6 +293,10 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 				Login string `json:"login"`
 			} `json:"assignees"`
 			Labels []gitHubLabel `json:"labels"`
+			// Type is null unless the organisation has issue types set up.
+			Type *struct {
+				Name string `json:"name"`
+			} `json:"type"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(body, &gr); err != nil {
@@ -309,6 +317,10 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 		for _, l := range it.Labels {
 			labels = append(labels, l.Name)
 		}
+		typ := ""
+		if it.Type != nil {
+			typ = it.Type.Name
+		}
 		key := fmt.Sprintf("%s#%d", repo, it.Number)
 		if repo == "" {
 			key = fmt.Sprintf("#%d", it.Number)
@@ -316,7 +328,7 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 		out = append(out, workItemOut{
 			QueryID: queryID, Provider: "github", Kind: kind, Key: key,
 			Title: it.Title, State: normalizeGitHubState(it.State, it.Draft),
-			URL: it.HTMLURL, Assignee: assignee, Labels: labels,
+			URL: it.HTMLURL, Assignee: assignee, Labels: labels, Type: typ,
 			LabelColors: gitHubLabelColors(it.Labels), Repo: repo, UpdatedAt: it.UpdatedAt,
 			nodeID: it.NodeID,
 		})

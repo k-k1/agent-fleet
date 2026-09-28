@@ -166,8 +166,12 @@ workspace is stopped.
 - The usual launch dialog then opens, with the agent, model and first instruction filled in. **That
   instruction carries the key, the title, the URL and where to read the body** — not the body
   itself.
-- For an issue, the branch defaults to `feature/<key>`; the template is in the settings tab. A
-  pull request launches on its own head branch instead (below).
+- For an issue, the launch dialog is filled in with a branch name and a base branch from the
+  branch naming rules: by default the issue type or labels pick the prefix, then the number and
+  the title, e.g. `feature/45-empty-list` or `fix/PROJ-123`. A repository that declares git-flow
+  or a Bitbucket branching model gets its own prefixes and base, and the dialog says where the
+  base came from. A name outside the rules only gets a note; nothing is refused. The template is
+  in the settings tab. A pull request launches on its own head branch instead (below).
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
   nothing is written for you. Bitbucket items have no such button — Agent Fleet only reads from
@@ -828,7 +832,7 @@ review the content and choose **"Approve and send"** or **"Reject"**.
 ## Changing the title and branch name
 
 - **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents; adopt it with "Use this".
-- **Rename the branch** — appears only for sessions running in a worktree. Renames that worktree's branch (the folder — that is, the session — stays as is). Buttons let you swap the `feat/` `fix/` `refactor/` `chore/` `docs/` prefixes, and **"Ask AI to suggest"** proposes a branch name from the conversation. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).
+- **Rename the branch** — appears only for sessions running in a worktree. Renames that worktree's branch (the folder — that is, the session — stays as is). Buttons let you swap the prefix for one of the repository's branch naming rules (`feature/` `fix/` `hotfix/` … by default), and **"Ask AI to suggest"** proposes a branch name from the conversation, composed by the same rules — a session started from an issue keeps the issue's number in it. A name outside the rules only gets a note. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).
 
 ## Reading an answer in your own language (translation)
 

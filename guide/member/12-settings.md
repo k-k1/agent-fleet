@@ -267,8 +267,10 @@ issues and pull requests, Bitbucket pull requests — so that a session can be s
 - **Bitbucket** has no search across an account, so its query is **assembled from your connected
   repositories** — what to list × which target — instead of being typed by hand. Bitbucket items are
   **read only**: nothing is written back to them.
-- **Branch name template** — what a session started from a row branches as (`feature/{key}` by
-  default).
+- **Branch name template** — what a session started from a row branches as. Empty means the
+  default `{prefix}{ref}-{slug}` (e.g. `feature/45-empty-list`, `fix/PROJ-123`); the placeholders
+  are `{ref}` `{num}` `{key}` `{project}` `{type}` `{prefix}` `{slug}`, and the example under the
+  field shows what yours produces. A repository's own rules (git-flow and the like) win at launch.
 
 The list itself, and starting a session from a row, are in
 [02 Sessions](02-sessions.md#starting-from-the-issue-tracker).

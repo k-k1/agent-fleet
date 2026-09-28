@@ -735,6 +735,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos/{name}/branch-name/check", rest)
 	mux.HandleFunc("GET /api/branch-rules/user", rest)
 	mux.HandleFunc("PUT /api/branch-rules/user", rest)
+	mux.HandleFunc("POST /api/branch-rules/preview", rest)
 	// Project-scope MCP servers (docs/log/56 P0/P1) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/mcp", rest)
 	mux.HandleFunc("POST /api/repos/{name}/mcp/plan", rest)

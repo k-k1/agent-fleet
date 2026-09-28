@@ -320,6 +320,8 @@ func buildMux() *http.ServeMux {
 	// The user layer of the branch rules. Its own store, not ui-prefs (ADR 0103 decision 2).
 	mux.HandleFunc("GET /branch-rules/user", handleGetUserBranchRules)
 	mux.HandleFunc("PUT /branch-rules/user", handlePutUserBranchRules)
+	// The template preview of the work-items settings, which name no working copy.
+	mux.HandleFunc("POST /branch-rules/preview", handleBranchRulesPreview)
 	// Project-scope MCP servers (docs/log/56 P0): read-only cross-file snapshot of the
 	// working copy's own .mcp.json / opencode.json / .codex/config.toml / etc.
 	// Separate axis from the MCP registry (docs/log/48) — never auto-triggered, never

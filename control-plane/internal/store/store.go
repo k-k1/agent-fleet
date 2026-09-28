@@ -627,6 +627,7 @@ type WorkItem struct {
 	UpdatedAt, FetchedAt                string
 	Checks                              string // JSON object {state,total,failed,pending}; "" when not read
 	Mergeable                           string // clean / conflict / unknown; "" when not read
+	ItemType                            string // the tracker's issue type (GitHub type, Jira issuetype); "" when none
 }
 
 // WorkItemSession is the ledger row written when a session is started from an item.

@@ -73,6 +73,14 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       body.origin_session = handoffSession;
       body.origin_proposal = handoffId;
     }
+    // The work item a launch was seeded from goes into the session meta, so a later rename
+    // through the branch-name resolver keeps {ref} and the kind (ADR 0103 decision 8). The same
+    // store as the lineage above, for the same reason. An older Agent ignores the field (the
+    // create decodes leniently), so it needs no fallback.
+    const { workItem } = useLaunchSeed.getState();
+    if (workItem) {
+      body.work_item = { provider: workItem.provider, key: workItem.key, title: workItem.title, type: workItem.type, labels: workItem.labels };
+    }
     if (worktree) {
       body.worktree = true;
       body.branch = base;

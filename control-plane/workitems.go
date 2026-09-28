@@ -80,6 +80,9 @@ type workItemDTO struct {
 	// the zero values: an empty checks state and "".
 	Checks    workItemChecksDTO `json:"checks"`
 	Mergeable string            `json:"mergeable"`
+	// Type is the tracker's issue type, which the branch-name resolver maps to a kind (ADR 0103
+	// decision 4). "" for a tracker without types, a pull request, or an older Agent.
+	Type string `json:"type"`
 }
 
 // workItemChecksDTO is the head commit's checks folded into counts. State is "success" /
@@ -122,7 +125,7 @@ func workItemToDTO(w store.WorkItem) workItemDTO {
 		Key: w.Key, Title: w.Title, State: w.State, URL: w.URL, Assignee: w.Assignee,
 		Labels: splitLabels(w.Labels), LabelColors: decodeLabelColors(w.LabelColors),
 		Repo: w.Repo, UpdatedAt: w.UpdatedAt,
-		Checks: decodeWorkItemChecks(w.Checks), Mergeable: w.Mergeable}
+		Checks: decodeWorkItemChecks(w.Checks), Mergeable: w.Mergeable, Type: w.ItemType}
 }
 
 func workItemQueryToDTO(q store.WorkItemQuery) workItemQueryDTO {
@@ -408,6 +411,7 @@ type agentWorkItemsResp struct {
 		UpdatedAt   string            `json:"updatedAt"`
 		Checks      workItemChecksDTO `json:"checks"`
 		Mergeable   string            `json:"mergeable"`
+		Type        string            `json:"type"`
 	} `json:"items"`
 	Errors []struct {
 		QueryID string `json:"queryId"`
@@ -463,7 +467,7 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 			State: it.State, URL: it.URL, Assignee: it.Assignee,
 			Labels: strings.Join(it.Labels, ","), LabelColors: encodeLabelColors(it.LabelColors),
 			Repo: it.Repo, UpdatedAt: it.UpdatedAt,
-			Checks: encodeWorkItemChecks(it.Checks), Mergeable: it.Mergeable,
+			Checks: encodeWorkItemChecks(it.Checks), Mergeable: it.Mergeable, ItemType: it.Type,
 		})
 	}
 	errs := map[string]string{}
