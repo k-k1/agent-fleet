@@ -72,7 +72,7 @@ describe("QuestionBlock translation", () => {
   // #1114: the model left one field out of its reply, marker and all.
   describe("a field the reply dropped", () => {
     const DROPPED = "`Q1.header` 配備\n\n`Q1.text` どう進めますか？\n\n`Q1.O1.label` 今すぐ再配備";
-    const REST = "`Q1.O2.label` Skip it";
+    const REST = "Remaining fields:\n\n`Q1.O2.label` Skip it";
 
     function dropping(shown: boolean, rest: string | undefined, pressed: Array<[string, string[]]>): TranscriptTranslateWiring {
       return {
@@ -91,7 +91,8 @@ describe("QuestionBlock translation", () => {
 
     it("merges the follow-up over the first reply", () => {
       const pressed: Array<[string, string[]]> = [];
-      const h = render(dropping(true, "`Q1.O2.label` 飛ばす", pressed));
+      // The reply keeps the heading line in front of the marker; it must not reach the screen.
+      const h = render(dropping(true, "残りの欄:\n\n`Q1.O2.label` 飛ばす", pressed));
       expect(labels(h)).toEqual(["今すぐ再配備", "飛ばす"]);
       expect(pressed).toEqual([]);
     });

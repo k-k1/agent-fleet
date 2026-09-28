@@ -60,10 +60,18 @@ function questionFields(qs: Question[]): Array<[string, string]> {
 const fieldsSource = (fields: Array<[string, string]>): string =>
   fields.map(([m, v]) => "`" + m + "` " + v).join("\n\n");
 
+// Heads the follow-up so it can never be the same text as the card. A reply with no marker at
+// all (a one-field card whose field was dropped) leaves every field missing, and without this the
+// follow-up would hash to the card itself and be answered from the very cache entry that is
+// missing them. Anything before the first marker is dropped by parseQuestionTranslation, so the
+// line never reaches the screen.
+const FOLLOW_UP_HEAD = "Remaining fields:";
+
 /** The follow-up request for the fields a translation came back without, in the same marked
  *  form as the card itself. "" when nothing is missing. */
 export function missingFieldsSource(qs: Question[], fields: Map<string, string>): string {
-  return fieldsSource(questionFields(qs).filter(([m]) => !fields.has(m)));
+  const rest = questionFields(qs).filter(([m]) => !fields.has(m));
+  return rest.length ? FOLLOW_UP_HEAD + "\n\n" + fieldsSource(rest) : "";
 }
 
 const MARKER_RE = /^[ \t]*`(Q\d+\.(?:header|text|O\d+\.(?:label|desc)))`[ \t]*/gm;

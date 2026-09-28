@@ -65,7 +65,15 @@ describe("parseQuestionTranslation", () => {
 describe("missingFieldsSource", () => {
   it("marks only the fields the reply came back without", () => {
     const reply = "`Q1.header` ライブ確認\n\n`Q1.text` どう進めますか？\n\n`Q1.O1.label` 再デプロイする（推奨）\n\n`Q1.O2.label` 飛ばす";
-    expect(missingFieldsSource(QS, parseQuestionTranslation(reply))).toBe("`Q1.O1.desc` You rebuild the dev deployment.");
+    expect(missingFieldsSource(QS, parseQuestionTranslation(reply))).toBe("Remaining fields:\n\n`Q1.O1.desc` You rebuild the dev deployment.");
+  });
+
+  // A reply with no marker at all leaves every field missing; the follow-up must still differ
+  // from the card, or it would be served the same cached reply.
+  it("never equals the card itself, even when every field is missing", () => {
+    const rest = missingFieldsSource(QS, parseQuestionTranslation("翻訳しました。"));
+    expect(rest).not.toBe(questionTranslateSource(QS));
+    expect(parseQuestionTranslation(rest).get("Q1.O1.desc")).toBe("You rebuild the dev deployment.");
   });
 
   it("is empty when every field came back", () => {
