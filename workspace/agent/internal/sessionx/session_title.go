@@ -42,8 +42,17 @@ const (
 	// titleGenBackoff bounds how often a PERSISTENTLY failing generation (bad model
 	// name, CLI hiccup, ...) is retried — without it, a poll every 1.2-3s would retry
 	// on literally every tick forever.
-	titleGenBackoff     = 5 * time.Minute
-	TitleSuggestTimeout = 60 * time.Second
+	titleGenBackoff = 5 * time.Minute
+	// SyncSuggestBudget bounds a suggestion the Console waits for in one silent request: the
+	// AWS ingress drops a request that has sent no byte for idle_timeout.timeout_seconds (60 s,
+	// deploy/aws/ecs/cfn/30-ingress.yaml), so a model answering at 59 s succeeded here and
+	// reached the browser as a gateway error. The margin covers the CP hop in between.
+	// TestSyncSuggestBudgetStaysUnderTheIngressIdleTimeout reads the YAML and pins the relation.
+	SyncSuggestBudget   = 45 * time.Second
+	TitleSuggestTimeout = SyncSuggestBudget
+	// autoTitleGenTimeout bounds the background generation (generateSessionTitle), which no
+	// request waits on, so the ingress budget above does not apply to it.
+	autoTitleGenTimeout = 60 * time.Second
 )
 
 // titleGenState tracks, per session name, whether a generation is currently running
@@ -119,7 +128,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 	ok := false
 	defer func() { titleGenDone(name, ok) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), TitleSuggestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), autoTitleGenTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerAuto, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
@@ -889,13 +898,14 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// The deadline starts before the transcript parse: the ingress counts that time too.
+	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
+	defer cancel()
 	turns := sessionTitleTurns(m)
 	if len(withoutStudioPersona(turns)) == 0 {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleNoContent, "not enough conversation yet (try after a few exchanges)")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
-	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
 	kind, branch, err := runBranchSuggestLLM(ctx, turns, suggestionKinds(ctx, m.Dir))
 	if err != nil {
