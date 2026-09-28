@@ -294,15 +294,17 @@ describe("the ready notice (review 1)", () => {
     expect(note.nextElementSibling?.classList.contains("igen-body")).toBe(true);
   });
 
-  it("goes away on its own after a while", async () => {
+  it("stays until the results are seen or it is closed", async () => {
     narrowPane(true);
     await mount();
     jobsNow.jobs = [done(1)];
     await press();
-    expect(document.querySelector(".igen-done-note")).not.toBeNull();
-    await tick(8100);
+    // A cold-engine trial takes minutes; the member looks back long after it finished.
+    await tick(10 * 60_000);
+    expect(toastText()).toMatch(/1/);
+    await act(async () => document.querySelector<HTMLButtonElement>(".igen-done-x")!.click());
     expect(document.querySelector(".igen-done-note")).toBeNull();
-    // The badge stays: the pictures are still unseen.
+    // Closing the line is not looking at the pictures: the badge stays.
     expect(tab(2).querySelector(".igen-tab-badge")?.textContent).toBe("+1");
   });
 
