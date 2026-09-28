@@ -12,6 +12,13 @@
 // the reply is split back on those markers, and a field whose marker did not survive simply
 // shows its original text.
 //
+// A reply can come back with a whole field missing, marker and all (observed: one option's
+// description of an otherwise fully translated card, #1114). Those fields go out once more as a
+// second, smaller card of their own (questionTranslateSource over just them), pressed on the
+// reader's behalf the same way the automatic translation is, and merged over the first reply.
+// The follow-up is latched per text like every automatic press, so a model that drops the field
+// again leaves the original showing rather than asking forever.
+//
 // Translation is display-only. The options' labels are what the answer is built from (key
 // driving, managed answers, carried answers all match on the label), so the card keeps
 // selecting and sending the ORIGINAL label whatever is on screen.
@@ -30,9 +37,14 @@ const marker = (qi: number, field: Field, oi?: number): string =>
  *  has nothing to translate. Previews are left out: they are mockups and code, which the
  *  translation must not touch anyway. */
 export function questionTranslateSource(qs: Question[]): string {
-  const out: string[] = [];
+  return fieldsSource(questionFields(qs));
+}
+
+/** The card's non-empty fields as [marker, text], in card order. */
+function questionFields(qs: Question[]): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
   const push = (m: string, v?: string) => {
-    if (v && v.trim()) out.push("`" + m + "` " + v.trim());
+    if (v && v.trim()) out.push([m, v.trim()]);
   };
   qs.forEach((q, qi) => {
     push(marker(qi, "header"), q.header);
@@ -42,7 +54,24 @@ export function questionTranslateSource(qs: Question[]): string {
       push(marker(qi, "desc", oi), o.description);
     });
   });
-  return out.join("\n\n");
+  return out;
+}
+
+const fieldsSource = (fields: Array<[string, string]>): string =>
+  fields.map(([m, v]) => "`" + m + "` " + v).join("\n\n");
+
+// Heads the follow-up so it can never be the same text as the card. A reply with no marker at
+// all (a one-field card whose field was dropped) leaves every field missing, and without this the
+// follow-up would hash to the card itself and be answered from the very cache entry that is
+// missing them. Anything before the first marker is dropped by parseQuestionTranslation, so the
+// line never reaches the screen.
+const FOLLOW_UP_HEAD = "Remaining fields:";
+
+/** The follow-up request for the fields a translation came back without, in the same marked
+ *  form as the card itself. "" when nothing is missing. */
+export function missingFieldsSource(qs: Question[], fields: Map<string, string>): string {
+  const rest = questionFields(qs).filter(([m]) => !fields.has(m));
+  return rest.length ? FOLLOW_UP_HEAD + "\n\n" + fieldsSource(rest) : "";
 }
 
 const MARKER_RE = /^[ \t]*`(Q\d+\.(?:header|text|O\d+\.(?:label|desc)))`[ \t]*/gm;
@@ -122,14 +151,28 @@ export function useQuestionTranslate(
     if (auto) tx?.autoPress(args.current.key, args.current.texts);
   }, [auto, key, tx]);
 
+  // The fields the reply dropped, asked for once more (see the header). Only while the
+  // translation is on screen: nobody is reading a gap in a card shown in the original.
+  const got = offered && shown ? tx?.get(source) : undefined;
+  const fields = got ? parseQuestionTranslation(got) : undefined;
+  const rest = fields ? missingFieldsSource(qs, fields) : "";
+  const restKey = rest ? turnTranslateKey([rest]) : "";
+  const restGot = rest ? tx?.get(rest) : undefined;
+  const repair = !!restKey && !restGot;
+  useEffect(() => {
+    if (repair) tx?.autoPress(restKey, [rest]);
+  }, [repair, restKey, rest, tx]);
+
   if (!offered || !tx) return undefined;
-  const got = shown ? tx.get(source) : undefined;
   const leadTx = shown && lead.trim() ? tx.get(lead) : undefined;
+  if (fields && restGot) {
+    for (const [m, v] of parseQuestionTranslation(restGot)) if (!fields.has(m)) fields.set(m, v);
+  }
   return {
-    questions: got ? translatedQuestions(qs, parseQuestionTranslation(got)) : qs,
+    questions: fields ? translatedQuestions(qs, fields) : qs,
     lead: leadTx ?? lead,
     shown,
-    busy: tx.busy(key),
+    busy: tx.busy(key) || (repair && tx.busy(restKey)),
     error: tx.error(key),
     toggle: () => tx.toggle(key, texts),
   };
