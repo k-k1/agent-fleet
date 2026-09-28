@@ -470,7 +470,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
     "Launches in home (<0>~</0>). It doesn't work on a repository — good for drafts, research, and throwaway work.",
   "start.ssm_host_label": "Host to log in to",
   "start.ssm_no_hosts": "No registered hosts.",
-  "start.settings_ssm": "Settings → SSM",
+  "start.settings_ssm": "Settings → AWS profiles/SSM",
   "start.register_there": "to register one.",
   "start.ssm_search_ph": "Search by host name / instance ID…",
   "start.select_host": "— select a host —",

@@ -28,7 +28,7 @@ export const ops = {
   "ops.cw_profile_select": "プロファイルを選択…",
   "ops.cw_manual_option": "手動入力（自分の ~/.aws のプロファイル）",
   "ops.cw_no_profiles": "SSO プロファイルが未登録のため手動入力になります。",
-  "ops.cw_open_ssm": "AWS SSM で設定",
+  "ops.cw_open_ssm": "AWS プロファイル/SSM で設定",
   "ops.cw_manual_placeholder": "~/.aws のプロファイル名",
   "ops.cw_region_placeholder": "リージョン（任意）",
   "ops.cw_hint":

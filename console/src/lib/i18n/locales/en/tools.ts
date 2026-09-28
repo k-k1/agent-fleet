@@ -346,10 +346,10 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.comm_failed": "Communication failed: {msg}",
   "ssm.save_failed_http": "Failed to save: HTTP {status}{detail}",
   "ssm.save_failed_404": " (/api/ssm not available. The CP may need a restart.)",
-  "ssm.intro_1": "Settings for logging in to your AWS EC2 instances via SSM Session Manager. ",
+  "ssm.intro_1": "Your AWS profiles, which af-aws-exec and SSM sessions sign in with, and the EC2 instances you log in to via SSM Session Manager. ",
   "ssm.intro_bold": "No AWS secrets are stored here",
   "ssm.intro_2": " (short-lived credentials are obtained via browser auth with ",
-  "ssm.intro_3": " at session start and kept only inside the workspace).",
+  "ssm.intro_3": " when you log in and kept only inside the workspace).",
   "ssm.profile_cat": "Profiles (shared settings)",
   "ssm.profile_help_1":
     "The AWS access portal (IAM Identity Center) and an account/role within it. Reused across many hosts. One profile = one ",

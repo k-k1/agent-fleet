@@ -237,7 +237,7 @@ replies.
 ## Logging in to another in-house host (SSM)
 
 You can log in to EC2 instances in your company's AWS via AWS SSM Session Manager. Configuration lives in
-**⚙ Settings → the "AWS SSM" tab**, split into **two layers**.
+**⚙ Settings → the "AWS profiles/SSM" tab**, split into **two layers**.
 
 - **Profile (shared settings)** — the access portal (IAM Identity Center) and account/role. A bundle of SSO settings reused across multiple hosts. Create one of these first.
 - **SSM host (individual)** — an alias for the login target → instance ID. For authentication you just pick a profile.

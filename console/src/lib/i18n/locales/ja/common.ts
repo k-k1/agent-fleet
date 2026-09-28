@@ -191,7 +191,7 @@ export const common = {
   "topbar.host_version": "Agent Fleet v{v}",
   "topbar.update_ready": "更新あり · v{v} を再起動で適用",
   "topbar.update_badge": "更新",
-  "topbar.settings_title": "設定（表示 / ワークスペース / エージェント / Git / AWS SSM / MCP）",
+  "topbar.settings_title": "設定（表示 / ワークスペース / エージェント / Git / AWS プロファイル/SSM / MCP）",
 
   // === P2 共通の細かな語 ===
   "common.list_sep": "、",

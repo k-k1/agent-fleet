@@ -480,7 +480,7 @@ export const sessions = {
     "ホーム（<0>~</0>）で起動します。リポジトリの作業はせず、下書き・調べもの・使い捨ての作業向けです。",
   "start.ssm_host_label": "ログイン先ホスト",
   "start.ssm_no_hosts": "登録済みのホストがありません。",
-  "start.settings_ssm": "設定 → SSM",
+  "start.settings_ssm": "設定 → AWS プロファイル/SSM",
   "start.register_there": "で登録してください。",
   "start.ssm_search_ph": "ホスト名・インスタンスIDで検索…",
   "start.select_host": "— ホストを選択 —",
