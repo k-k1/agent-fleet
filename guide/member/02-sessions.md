@@ -831,7 +831,7 @@ review the content and choose **"Approve and send"** or **"Reject"**.
 
 ## Changing the title and branch name
 
-- **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents; adopt it with "Use this".
+- **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents — a session started from an issue keeps the issue's key (`#1146`, `PROJ-123`) at the front; adopt it with "Use this".
 - **Rename the branch** — appears only for sessions running in a worktree. Renames that worktree's branch (the folder — that is, the session — stays as is). Buttons let you swap the prefix for one of the repository's branch naming rules (`feature/` `fix/` `hotfix/` … by default), and **"Ask AI to suggest"** proposes a branch name from the conversation, composed by the same rules — a session started from an issue keeps the issue's number in it. A name outside the rules only gets a note. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).
 
 ## Reading an answer in your own language (translation)
