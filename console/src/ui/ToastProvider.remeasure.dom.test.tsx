@@ -87,6 +87,25 @@ describe("ToastProvider on a phone, while the page changes", () => {
     pane.remove();
   });
 
+  it("re-measures when a view shows another part through its own attribute", async () => {
+    // The image studio switches tabs by data-tab on .igen-body alone; CSS then shows the header
+    // of the session embedded in the chat tab.
+    const body = document.createElement("div");
+    body.className = "igen-body igen-studio";
+    body.setAttribute("data-tab", "form");
+    body.innerHTML = '<div class="igen-col-agent"><header class="view-head"></header></div>';
+    document.body.appendChild(body);
+    await act(async () => fire("update now", { kind: "info", duration: 0 }));
+    measured.y = 249;
+    await act(async () => {
+      body.setAttribute("data-tab", "chat");
+      await frame();
+      await frame();
+    });
+    expect(stackTop()).toBe("257px");
+    body.remove();
+  });
+
   it("does not measure for content that changes under it", async () => {
     // A terminal's DOM renderer rewrites its rows every frame; measuring for each would force a
     // layout per frame.

@@ -142,7 +142,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const mo = new MutationObserver((records) => {
       if (touchesChrome(records)) later();
     });
-    mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "hidden", "open"] });
+    // Every attribute, not a list: views show and hide their parts through their own attributes
+    // (the studio's tabs through data-tab on .igen-body), and touchesChrome keeps only those on
+    // an element that holds a bar.
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true });
     const vv = window.visualViewport;
     window.addEventListener("resize", sync);
     vv?.addEventListener("resize", sync);
