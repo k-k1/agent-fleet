@@ -103,7 +103,9 @@ export function modelFit(
  * to whatever it had.
  */
 export function windowThatFits(weightsMiB: number, kv: KVPrice, cardMiB: number, ceiling: number): number {
-  if (!(kv.per1k > 0) || !(cardMiB > 0) || !(ceiling > 0)) return 0;
+  // Priced when EITHER half is known: a model whose every layer slides has no per-1k rate at all,
+  // only its fixed share, and still fits some window.
+  if (!kvKnown(kv) || !(cardMiB > 0) || !(ceiling > 0)) return 0;
   const room = cardMiB * FIT_COMFORTABLE - weightsMiB;
   if (room <= 0) return 0;
   let best = 0;
@@ -172,7 +174,7 @@ export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefi
     if (model.kind === "lora" || !(model.context_tokens && model.context_tokens > 0)) continue;
     const kv = kvPriceOf(model);
     const ceiling = model.context_length || 0;
-    if (!kv.per1k || !ceiling) {
+    if (!kvKnown(kv) || !ceiling) {
       out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "header" });
       continue;
     }

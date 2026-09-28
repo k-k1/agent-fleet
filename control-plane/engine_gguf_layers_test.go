@@ -229,3 +229,44 @@ func TestEngineSWACells(t *testing.T) {
 		}
 	}
 }
+
+// The same refusal when the window ends inside the vocabulary — the normal way a production read
+// finishes. Masked as short, the ladder would have stored the geometry without its widths.
+func TestParseGGUFGeometryFoldErrorPastTheArchKeysIsNotShort(t *testing.T) {
+	heads := make([]any, 5)
+	for i := range heads {
+		heads[i] = 8
+	}
+	buf := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "gemma4"},
+		{"gemma4.block_count", ggufTypeUint32, 6},
+		{"gemma4.attention.head_count_kv", ggufTypeArray, ggufArr{ggufTypeUint32, heads}},
+		{"gemma4.attention.key_length", ggufTypeUint32, 64},
+		{"gemma4.attention.value_length", ggufTypeUint32, 64},
+		{"tokenizer.ggml.tokens", ggufTypeArray, ggufArr{ggufTypeString, []any{"a", "bb", "ccc", "dddd"}}},
+	})
+	cut := buf[:len(buf)-6] // inside the token array
+	g, err := engineGGUFGeometryFrom(func(int) ([]byte, error) { return cut, nil })
+	if err == nil || errors.Is(err, errGGUFShort) || g.complete() {
+		t.Errorf("fold error past the arch keys: %+v %v", g, err)
+	}
+}
+
+// The panel multiplies per1k by the window, so it is rounded UP: a width of 1,000 elements is
+// 1.95 MiB per 1k, and truncated to 1 it priced 262,144 tokens at half their cost.
+func TestEngineKVPricingRoundsUp(t *testing.T) {
+	g := engineKVGeometry{Layers: 1, HeadsKV: 1, KeyLen: 500, ValLen: 500, FullWidth: 1000}
+	per1k, _ := engineKVPricing(g)
+	if per1k != 2 {
+		t.Fatalf("per1k = %d, want 2 (1.95 rounded up)", per1k)
+	}
+	if exact := engineKVCacheMiB(g, 262144); per1k*256 < exact {
+		t.Errorf("per1k x 256 = %d under-states the %d MiB cache", per1k*256, exact)
+	}
+	// The row stored before the widths, through the old formula: rounded up the same way.
+	legacy := g
+	legacy.FullWidth = 0
+	if per1k, _ := engineKVPricing(legacy); per1k != 2 {
+		t.Errorf("legacy per1k = %d, want 2", per1k)
+	}
+}

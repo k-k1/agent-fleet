@@ -247,6 +247,18 @@ describe("a sliding-window model", () => {
     expect(modelFit(6777, GEMMA4, 24576, CARD).kvMiB).toBe(1824);
   });
 
+  // Every layer sliding: no per-1k rate, only the fixed share — still priced, not "unread".
+  it("fits a model with no full-attention layer", () => {
+    const allSliding = { per1k: 0, fixed: 1440 };
+    expect(windowThatFits(6777, allSliding, CARD, 262144)).toBe(262144);
+    const row = {
+      id: "all-swa", kind: "gguf", context_tokens: 8192, context_length: 32768,
+      kv_mib_per_1k_tokens: 0, kv_mib_fixed: 1440,
+      file_rows: [{ s3Key: "llm/all-swa.gguf", bytes: 6777 * 1048576 }],
+    } as unknown as EngineModel;
+    expect(refitWindows([row], CARD)).toEqual([{ id: "all-swa", from: 8192, to: 32768 }]);
+  });
+
   it("re-fits a registered row with its sliding share", () => {
     const row = {
       id: "gemma-4-12b", kind: "gguf", context_tokens: 8192, context_length: 262144,

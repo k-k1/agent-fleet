@@ -2748,7 +2748,10 @@ func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState,
 	//
 	// And the widths likewise: a row read before them sizes a sliding or convolutional model as
 	// if every layer were full — twice gpt-oss-20b's measured cache — so a row without them is
-	// read once more, and a layered read is the mark that it need not be again.
+	// read once more, and a layered read is the mark that it need not be again. A header the
+	// per-layer fold refuses (a per-layer array that does not cover every block) therefore stays
+	// in the "read again on every loading write" set above: the same bounded cost, and a refused
+	// bucket read has to be retried anyway.
 	if !ok || engineModelIsLora(cur) || (cur.ContextCeiling > 0 && engineRowGeometry(cur).layered()) {
 		return
 	}

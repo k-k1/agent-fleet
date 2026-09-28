@@ -505,11 +505,15 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 		}
 		return geom, errors.New("gguf: the header does not declare the attention geometry")
 	}
+	// 🔴 A window that ended INSIDE the architecture keys may still be missing a per-layer key,
+	// so it goes back as short and the ladder tries the bigger window. One that ended past them
+	// (PastArch) has seen everything the fold uses: a fold error there is the header's own, and
+	// masking it as short would let the ladder store the geometry without its widths.
+	if scanErr != nil && !geom.PastArch {
+		return geom, scanErr
+	}
 	full, swa, err := ggufLayerWidths(arch, geom, layers)
 	if err != nil {
-		if scanErr != nil {
-			return geom, scanErr
-		}
 		return geom, err
 	}
 	geom.FullWidth, geom.SWAWidth = full, swa
@@ -788,12 +792,23 @@ func engineKVPricing(g engineKVGeometry) (per1k, fixed int) {
 		return 0, 0
 	}
 	if !g.layered() {
-		return engineKVCacheMiB(g, 1024), 0
+		layers := g.cacheLayers()
+		if layers <= 0 {
+			return 0, 0
+		}
+		return engineCeilMiB(int64(layers) * int64(g.HeadsKV) * int64(g.KeyLen+g.ValLen) * 1024 * 2), 0
 	}
 	const bytesPerElement = 2
-	per1k = int(int64(g.FullWidth) * 1024 * bytesPerElement / (1024 * 1024))
-	fixed = int(int64(g.SWAWidth) * int64(engineSWACells(g.SlidingWindow, 0)) * bytesPerElement / (1024 * 1024))
+	per1k = engineCeilMiB(int64(g.FullWidth) * 1024 * bytesPerElement)
+	fixed = engineCeilMiB(int64(g.SWAWidth) * int64(engineSWACells(g.SlidingWindow, 0)) * bytesPerElement)
 	return per1k, fixed
+}
+
+// engineCeilMiB rounds bytes UP to MiB. 🔴 The panel multiplies per1k by the window, so a fraction
+// dropped here is dropped 256 times at 262,144 tokens: a width of 1,000 elements is 1.95 MiB per
+// 1k, and truncated to 1 it prices a 512 MiB cache at 256.
+func engineCeilMiB(bytes int64) int {
+	return int((bytes + 1<<20 - 1) >> 20)
 }
 
 // engineIngestGeometry is the ingest path's one attempt at a model's geometry.
