@@ -12,9 +12,10 @@ package sessionx
 // behind a switch click is the most surprising behaviour available.
 //
 // Conversation identity is carried by the per-slot sid store: going managed does a
-// thread/resume on the same thread id (the other direction, a TUI resume of a server-created
-// thread, is measured too, §12.3), and going tui rides BuildLaunch's usual resume
-// (codex resume <id> --remote / opencode --session <id>).
+// thread/resume on the same thread id, and going tui rides BuildLaunch's usual resume
+// (codex resume <id> / opencode --session <id>). §12.3 measured the codex TUI opening a
+// server-created thread through `--remote`; the direct launch reads the same rollout under
+// $CODEX_HOME but has not been measured on that path.
 
 import (
 	"encoding/json"

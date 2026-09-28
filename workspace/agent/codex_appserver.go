@@ -2,8 +2,9 @@ package main
 
 // Codex app-server lifecycle and event monitor.
 //
-// The interactive Codex TUI connects to this local app-server over loopback.
-// A second, read-only AF connection observes the TUI's threads, which gives us
+// Managed codex sessions run their threads on this local app-server; the TUI (CLI
+// route) launches codex directly and does not connect (see codex.buildProgram).
+// A second, read-only AF connection observes the loaded threads, which gives us
 // first-class signals instead of scraping version-dependent terminal text:
 //   - contextCompaction item lifecycle → live compacting state (codex.SetCompacting)
 //   - account/rateLimits/updated → usage reading fresher than the rollout snapshot
@@ -11,7 +12,7 @@ package main
 //   - model/rerouted, thread/settings/updated, warning, thread/status/changed →
 //     structured observation log (docs/log/27 P1). The log separates the two possible
 //     causes of an unrequested model switch: a server-side reroute emits
-//     model/rerouted, while a TUI-level nudge acceptance emits only a
+//     model/rerouted, while a client-side nudge acceptance emits only a
 //     thread/settings/updated with a changed model.
 //
 // The app-server delivers thread-scoped notifications (item/*, turn/*,
@@ -40,8 +41,6 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 const codexAppServerEnv = "AF_CODEX_APP_SERVER_ADDR"
@@ -151,59 +150,22 @@ func orDash(s string) string {
 // The daemon is no longer started at boot: even when nobody was signed in and
 // codex was never used, about 110 MB stayed resident (measured: 62 MB native +
 // 48 MB node shim). A cold start costs 217 ms (measured), so waking it on demand
-// — managed Resume and the TUI's BuildLaunch — is the honest trade. This does
-// only three things: (1) register the seam that hands the ledger-less codex
-// package the number of sessions alive on the TUI route, (2) adopt a daemon left
-// behind by a previous Agent process, (3) keep an observer running across the
-// daemon's whole life.
+// — managed Resume — is the honest trade. This does only two things: (1) adopt a
+// daemon left behind by a previous Agent process, (2) keep an observer running
+// across the daemon's whole life.
 //
 // The observer is a read-only socket SEPARATE from the writer: thread-scoped
 // notifications are per connection (docs/log/27 §12.1-1) and the writer only sees
-// the threads it started or resumed itself, so covering the TUI (CLI route)
-// threads is the observer's job.
+// the threads it started or resumed itself, so covering any other loaded thread is
+// the observer's job.
 func startCodexAppServer() {
 	if codex.Serve().Disabled() {
 		_ = os.Unsetenv(codexAppServerEnv)
 		return
 	}
-	// The seams must be installed before AdoptIfRunning: Ensure reads TUIDependents when
-	// it arms the zero-demand watch, so swapping them in later opens a window where TUI
-	// sessions look like 0 and a live TUI's backend can be torn down under it.
-	codex.TUIDependents = liveCodexTUISessions
 	codex.DaemonUp = wakeCodexObserver
 	codex.Serve().AdoptIfRunning()
 	go superviseCodexObserver()
-}
-
-// liveCodexTUISessions counts the codex sessions running on the CLI route whose
-// backend is the shared app-server (`codex --remote`). They are dependents of the
-// daemon exactly like managed handles: kill it under them and the TUI's
-// conversation stops dead. tmux is queried once (list-sessions) for the count.
-func liveCodexTUISessions() int { return countCodexTUISessions(tmuxx.LiveSessionNames()) }
-
-// countCodexTUISessions is the pure half, so the filter can be tested without
-// creating a session in the fleet's own tmux namespace (LiveSessionNames only
-// reports names carrying session.TmuxPrefix, so a test would have to plant a
-// `claude_*` session that the Console would then show as an orphan).
-//
-// live is keyed by the session name with the prefix stripped (tmuxx.LiveSessionNames)
-// — verified against a real tmux: `claude_skggere` → `skggere`. Get that wrong and the
-// count is always 0, so the zero-demand check pulls the backend out from under live TUI
-// sessions.
-func countCodexTUISessions(live map[string]bool) int {
-	if len(live) == 0 {
-		return 0
-	}
-	n := 0
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindCodex || m.Archived || m.DriverKind() == session.DriverManaged {
-			continue
-		}
-		if live[m.Name] {
-			n++
-		}
-	}
-	return n
 }
 
 func connectCodexAppServer(addr string) (*websocket.Conn, error) {
@@ -235,7 +197,7 @@ func connectCodexAppServer(addr string) (*websocket.Conn, error) {
 			},
 			// AF needs lifecycle boundaries, not token/terminal deltas. Suppressing
 			// high-volume notifications keeps the observer cheap and does not affect
-			// the TUI's separate app-server connection.
+			// the writer's separate app-server connection.
 			"capabilities": map[string]any{"optOutNotificationMethods": []string{
 				"item/agentMessage/delta",
 				"item/plan/delta",
@@ -383,7 +345,7 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 
 // observeThreadLifecycle maintains the attach set from broadcast notifications.
 // thread/started announces new threads only; a thread loaded by another
-// connection's resume (the TUI resuming an AF session) is announced by a
+// connection's resume (another client resuming an AF session) is announced by a
 // broadcast thread/status/changed instead, so both trigger an attach.
 func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 	switch msg.Method {
@@ -502,8 +464,8 @@ func observeCodexAppServer(conn *websocket.Conn) {
 			continue
 		}
 		// Server-initiated requests (method + id, e.g. approvals aimed at
-		// the driving TUI) fall through harmlessly: no case matches, and we
-		// must not answer on the TUI's behalf.
+		// the driving client) fall through harmlessly: no case matches, and we
+		// must not answer on that client's behalf.
 		obs.observeThreadLifecycle(msg)
 		handleCodexAppServerEvent(raw)
 	}
@@ -542,7 +504,7 @@ func handleCodexAppServerEvent(raw []byte) {
 		}
 	case "model/rerouted":
 		// Rare and high-signal (its absence around a model switch is what convicts
-		// the TUI nudge), so always logged, never deduplicated.
+		// a client-side nudge), so always logged, never deduplicated.
 		var p codexAppServerModelReroutedNotification
 		if json.Unmarshal(msg.Params, &p) != nil {
 			return
