@@ -101,42 +101,94 @@ func threadLoaded(cl *appClient, threadID string) (bool, error) {
 
 // While the pane waits, the terminal belongs to the waiter, not to codex: a prompt typed into
 // it is read by nobody and lands, if at all, as stray keystrokes before codex draws its
-// composer. The waiter leaves a marker keyed by the session name for its lifetime, and the
-// prompt paths refuse or hold back while it is there. The pane's foreground command cannot
-// tell: tmux reports the wrapping shell (measured: `bash`).
+// composer. A marker keyed by the session name covers the whole hand-over, so the prompt
+// paths can refuse or hold back:
+//
+//   - "pending": written by BuildLaunch before the pane exists, so the gap until the waiter
+//     starts is covered (valid for awaitPendingTTL);
+//   - "<pid>": the waiter, for its lifetime (a dead pid does not count);
+//   - "done": written by the waiter as it exits; codex is starting but has no composer yet
+//     (recent for awaitDoneTTL).
+//
+// The pane's foreground command cannot tell: tmux reports the wrapping shell (measured: bash).
 func awaitMarkerPath(name string) string {
 	return filepath.Join(paths.AgentStateDir(), "codex-await", name)
 }
 
+const (
+	awaitPending    = "pending"
+	awaitDone       = "done"
+	awaitPendingTTL = 15 * time.Second
+	awaitDoneTTL    = 30 * time.Second
+)
+
+func writeAwaitMarker(name, state string) {
+	if !session.ValidName(name) {
+		return
+	}
+	p := awaitMarkerPath(name)
+	if os.MkdirAll(filepath.Dir(p), 0o700) != nil {
+		return
+	}
+	tmp := p + ".tmp"
+	if os.WriteFile(tmp, []byte(state), 0o600) == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
+
+func readAwaitMarker(name string) (state string, age time.Duration, ok bool) {
+	if !session.ValidName(name) {
+		return "", 0, false
+	}
+	p := awaitMarkerPath(name)
+	fi, err := os.Stat(p)
+	if err != nil {
+		return "", 0, false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", 0, false
+	}
+	return strings.TrimSpace(string(b)), time.Since(fi.ModTime()), true
+}
+
+// markPending is BuildLaunch's half: the pane is about to wait.
+func markPending(name string) { writeAwaitMarker(name, awaitPending) }
+
 // MarkAwaiting records that this process is the pane's waiter for session name and returns
-// the cleanup. An empty name (a pane without AF_SESSION_NAME) records nothing.
+// the cleanup, which marks the wait done. An empty name (a pane without AF_SESSION_NAME)
+// records nothing.
 func MarkAwaiting(name string) func() {
 	if !session.ValidName(name) {
 		return func() {}
 	}
-	p := awaitMarkerPath(name)
-	if os.MkdirAll(filepath.Dir(p), 0o700) != nil {
-		return func() {}
-	}
-	if os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o600) != nil {
-		return func() {}
-	}
-	return func() { _ = os.Remove(p) }
+	writeAwaitMarker(name, strconv.Itoa(os.Getpid()))
+	return func() { writeAwaitMarker(name, awaitDone) }
 }
 
-// Awaiting reports whether session name's pane is still waiting for the app-server to release
-// its thread. A marker whose process is gone (a killed pane skips the cleanup) does not count.
+// Awaiting reports whether session name's pane is waiting (or about to wait) for the
+// app-server to release its thread.
 func Awaiting(name string) bool {
-	if !session.ValidName(name) {
+	state, age, ok := readAwaitMarker(name)
+	if !ok {
 		return false
 	}
-	b, err := os.ReadFile(awaitMarkerPath(name))
-	if err != nil {
+	switch state {
+	case awaitPending:
+		return age < awaitPendingTTL
+	case awaitDone:
 		return false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	pid, err := strconv.Atoi(state)
 	if err != nil || pid <= 0 {
 		return false
 	}
 	return syscall.Kill(pid, 0) == nil
+}
+
+// JustReleased reports that the wait ended moments ago: codex is starting in the pane and may
+// not have drawn its composer yet.
+func JustReleased(name string) bool {
+	state, age, ok := readAwaitMarker(name)
+	return ok && state == awaitDone && age < awaitDoneTTL
 }

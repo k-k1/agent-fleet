@@ -285,6 +285,13 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("keys/seq must have at most %d elements", maxInputSteps))
 		return
 	}
+	// Refused before anything records this prompt's origin (the mirror badge, the fleet
+	// graph, the peer rate limit): a refused send must leave no trace that a later identical
+	// user message could inherit. submitPromptTUI checks again at the moment of typing.
+	if body.Prompt != "" && !body.WhenReady && len(body.Keys) == 0 && len(body.Seq) == 0 &&
+		!codexHandOverGate(w, name) {
+		return
+	}
 	// Peer send (docs/log/58 / ADR 0041). Every invariant is satisfied here before the
 	// request joins the ordinary injection path. It sits BEFORE the managed/tui split for
 	// the same reason as the self-report hint line: otherwise one of the two paths slips
@@ -719,12 +726,7 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 		writeBlockedErr(w, st)
 		return false
 	}
-	// codex: a Terminal launch that resumes a thread the shared app-server still holds first
-	// waits in the pane for the release (codex/release.go, about 70 s). Nobody reads the
-	// terminal meanwhile, so a prompt typed now would be lost or arrive as stray keystrokes.
-	if meta, ok := session.ReadMeta(name); ok && meta.Kind == session.KindCodex && codex.Awaiting(name) {
-		httpx.WriteErr(w, http.StatusConflict, "codex_releasing",
-			"managed 実行方式からこの会話を引き継いでいる途中です（通常 1 分ほど）。codex の入力欄が出てから送ってください")
+	if !codexHandOverGate(w, name) {
 		return false
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
@@ -759,6 +761,36 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 		// The same predicate decides that a stop-after-turn arm is superseded (docs/log/85):
 		// what releases the arm is new WORK arriving, and a slash command starts none.
 		cancelStopArmOnNewPrompt(name)
+	}
+	return true
+}
+
+// codexHandOverGate guards a prompt to a codex Terminal pane that is taking a conversation
+// over from the shared app-server (codex/release.go). While the pane waits (about 70 s) nobody
+// reads the terminal, so the prompt is refused; right after the wait codex is still starting,
+// so the prompt holds until its composer is drawn (15 s cap, then best effort). Outside a
+// hand-over it costs one stat. On refusal the HTTP error is written and false is returned.
+func codexHandOverGate(w http.ResponseWriter, name string) bool {
+	meta, ok := session.ReadMeta(name)
+	if !ok || meta.Kind != session.KindCodex || meta.DriverKind() == session.DriverManaged {
+		return true
+	}
+	refuse := func() bool {
+		httpx.WriteErr(w, http.StatusConflict, "codex_releasing",
+			"managed 実行方式からこの会話を引き継いでいる途中です（通常 1 分ほど）。codex の入力欄が出てから送ってください")
+		return false
+	}
+	if codex.Awaiting(name) {
+		return refuse()
+	}
+	if codex.JustReleased(name) {
+		tn := session.TmuxName(name)
+		for i := 0; i < 30 && PaneMode(meta.Kind, tn) == ""; i++ {
+			if codex.Awaiting(name) {
+				return refuse()
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
 	return true
 }

@@ -266,6 +266,7 @@ type codexObserver struct {
 	nextID    int
 	pending   map[int]string  // in-flight observer request id → thread id ("" = loaded/list)
 	requested map[string]bool // threads attached or with an in-flight resume
+	swept     []string        // loaded threads collected over the pages of the running sweep
 }
 
 func newCodexObserver(conn *websocket.Conn) *codexObserver {
@@ -294,6 +295,7 @@ func (o *codexObserver) attach(threadID string) {
 func (o *codexObserver) sweep() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.swept = nil
 	o.sendLocked("thread/loaded/list", map[string]any{}, "")
 }
 
@@ -454,13 +456,21 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 			NextCursor *string  `json:"nextCursor"`
 		}
 		if !failed && json.Unmarshal(msg.Result, &res) == nil {
-			// Absence proves an unload only on a complete list.
-			if res.NextCursor == nil || *res.NextCursor == "" {
-				clearUnloadedCodexReleased(res.Data)
-			}
 			for _, tid := range res.Data {
 				o.attach(tid)
 			}
+			o.mu.Lock()
+			o.swept = append(o.swept, res.Data...)
+			if res.NextCursor != nil && *res.NextCursor != "" {
+				o.sendLocked("thread/loaded/list", map[string]any{"cursor": *res.NextCursor}, "")
+				o.mu.Unlock()
+				return
+			}
+			// Absence proves an unload only once every page is in.
+			all := o.swept
+			o.swept = nil
+			o.mu.Unlock()
+			clearUnloadedCodexReleased(all)
 		}
 		return
 	}

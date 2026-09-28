@@ -562,7 +562,9 @@ func TestTypePromptTextSendsLeadingDashLiterally(t *testing.T) {
 
 // While a codex pane waits for the shared app-server to release its thread, nobody reads the
 // terminal: a prompt typed then would be lost or reach codex as stray keystrokes before its
-// composer exists. It is refused with its own code, and nothing is typed.
+// composer exists. It is refused with its own code, nothing is typed, and nothing records the
+// refused prompt's origin (a later identical user message would inherit the badge). Once the
+// wait is over, a send goes through as soon as codex draws its footer.
 func TestHandleSessionInputRefusesWhileCodexAwaitsRelease(t *testing.T) {
 	bin := t.TempDir()
 	logPath := filepath.Join(bin, "tmux.log")
@@ -571,6 +573,8 @@ printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
 case "$1" in
   has-session) exit 0 ;;
   list-panes) printf '1 %%7\n' ;;
+  capture-pane) printf '> Ask Codex to do anything\n  gpt-5.5 high · ~/repo\n' ;;
+  load-buffer) /bin/cat > /dev/null ;;
 esac
 `
 	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
@@ -579,23 +583,33 @@ esac
 	t.Setenv("PATH", bin)
 	t.Setenv("TMUX_TEST_LOG", logPath)
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 
 	const name = "codex_await"
+	const prompt = "scheduled nudge"
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
 	done := codex.MarkAwaiting(name) // this test process stands in for the pane's waiter
 
-	rec := postInput(t, name, `{"prompt":"hello"}`)
+	rec := postInput(t, name, `{"prompt":"`+prompt+`","source":"schedule"}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
 		t.Fatalf("status = %d, body = %s, want 409 codex_releasing", rec.Code, rec.Body.String())
 	}
 	if b, err := os.ReadFile(logPath); err == nil && (strings.Contains(string(b), "send-keys") || strings.Contains(string(b), "paste-buffer")) {
 		t.Fatalf("nothing may be typed while the waiter holds the pane, tmux commands = %q", b)
 	}
+	turns := []transcript.Turn{{Role: "user", Text: prompt}}
+	tagInjectedTurns(name, turns)
+	if turns[0].Source != "" {
+		t.Fatalf("the refused prompt left an origin record (%q) for a later identical message", turns[0].Source)
+	}
 
-	done()
-	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
+	done() // the wait is over; codex has drawn its footer (the fake capture-pane)
+	start := time.Now()
 	if rec := postInput(t, name, `{"prompt":"hello"}`); rec.Code != http.StatusOK {
 		t.Fatalf("after the wait: status = %d, body = %s, want 200", rec.Code, rec.Body.String())
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("send held %v although the composer was already drawn", d)
 	}
 }

@@ -193,6 +193,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// A thread the shared app-server still holds (a managed session switched to Terminal)
 	// locks the direct TUI out until the daemon unloads it; release.go explains the wait.
 	awaitAddr := releaseForTUI(resumeID)
+	if awaitAddr != "" {
+		markPending(m.Name)
+	}
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom, awaitAddr), Cwd: m.CWD()}, nil
 }
 

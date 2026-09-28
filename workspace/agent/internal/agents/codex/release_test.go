@@ -122,6 +122,9 @@ func TestBuildLaunchWaitsForTheAppServerToReleaseTheThread(t *testing.T) {
 	if len(released) != 1 || released[0] != "cx-own" {
 		t.Fatalf("released = %v, want [cx-own]", released)
 	}
+	if !Awaiting(m.Name) {
+		t.Fatal("the launch did not mark the pane as about to wait: a prompt could slip in before the waiter starts")
+	}
 
 	t.Setenv(appServerAddrEnv, "")
 	released = nil
@@ -141,6 +144,13 @@ func TestAwaitingFollowsTheWaiter(t *testing.T) {
 	done()
 	if Awaiting("await-mark") {
 		t.Fatal("Awaiting still true after the waiter's cleanup")
+	}
+	if !JustReleased("await-mark") {
+		t.Fatal("the end of the wait is not reported: codex has no composer yet at that moment")
+	}
+	markPending("await-mark")
+	if !Awaiting("await-mark") {
+		t.Fatal("a pending marker (pane not started yet) does not count as waiting")
 	}
 	if MarkAwaiting(""); Awaiting("") {
 		t.Fatal("a pane without AF_SESSION_NAME must not mark anything")

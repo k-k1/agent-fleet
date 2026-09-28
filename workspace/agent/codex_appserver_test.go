@@ -403,6 +403,13 @@ func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
 			case "initialize":
 				write(map[string]any{"id": m["id"], "result": map[string]any{}})
 			case "thread/loaded/list":
+				// Two pages: the held thread, when loaded, is on the second one, so a
+				// sweep that reads only the first page would take it for unloaded.
+				if cur, _ := m["params"].(map[string]any)["cursor"].(string); cur == "" {
+					write(map[string]any{"id": m["id"],
+						"result": map[string]any{"data": []string{"thr-other"}, "nextCursor": "p2"}})
+					continue
+				}
 				loadedMu.Lock()
 				data := []string{}
 				if loaded {
@@ -413,6 +420,10 @@ func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
 					"result": map[string]any{"data": data, "nextCursor": nil}})
 			case "thread/resume", "thread/unsubscribe":
 				tid, _ := m["params"].(map[string]any)["threadId"].(string)
+				if tid == "thr-other" {
+					write(map[string]any{"id": m["id"], "result": map[string]any{}})
+					continue
+				}
 				calls <- m["method"].(string) + " " + tid
 				write(map[string]any{"id": m["id"], "result": map[string]any{}})
 			}
@@ -469,6 +480,9 @@ func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
 	push <- map[string]any{"method": "thread/status/changed",
 		"params": map[string]any{"threadId": "thr-held", "status": map[string]any{"type": "idle"}}}
 	quiet("released thread re-attached while still loaded")
+	if !codexThreadReleased("thr-held") {
+		t.Fatal("a sweep whose second page still lists the thread ended the hold")
+	}
 
 	// The hold is on disk, so an Agent restarted during the pane's wait keeps off the thread.
 	codexReleasedMu.Lock()
