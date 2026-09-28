@@ -375,9 +375,28 @@
   border-color: var(--accent);
   color: var(--accent);
 }
-.wi-dbranch {
+.wi-dbranch,
+.wi-dslug {
   color: var(--muted);
   font-size: 11px;
+}
+.wi-dslug {
+  font-family: var(--mono);
+}
+/* Not on the live list: the dot drops its "running" green, and the tag says why (#1108). */
+.wi-dsession.is-archived .codicon,
+.wi-dsession.is-gone .codicon {
+  color: var(--muted);
+}
+.wi-dsession.is-gone {
+  opacity: 0.7;
+}
+.wi-dtag {
+  color: var(--muted);
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
 }
 
 /* --- start-target picker (inside the detail modal) -------------------------- */
