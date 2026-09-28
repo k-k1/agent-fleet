@@ -738,19 +738,27 @@ func TestCreateSessionEffort(t *testing.T) {
 		"codex": `{"id":"gpt-sol","efforts":["low","medium","high","xhigh"],"defaultEffort":"low"},` +
 			`{"id":"gpt-mini","efforts":["minimal","low"]},` +
 			`{"id":"gpt-plain"}`,
-		// Haiku takes no effort and may be the user's Claude Code default.
-		"claude": `{"id":"opus","efforts":["low","high"]},{"id":"haiku"}`,
+		"claude": `{"id":"opus","efforts":["low","high"]}`,
 		"muse":   `{"id":"m-a","efforts":["low","high"]},{"id":"m-b","efforts":["low","medium"]}`,
 		// Every row takes effort, but no value is shared.
 		"disjoint": `{"id":"d-a","efforts":["low"]},{"id":"d-b","efforts":["high"]}`,
 		"empty":    ``,
+	}
+	// What ?hidden=[] returns: the rows before the user's hidden models are removed. Haiku takes
+	// no effort, is hidden here, and may still be the user's Claude Code default.
+	unfiltered := map[string]string{
+		"claude": `{"id":"opus","efforts":["low","high"]},{"id":"haiku"}`,
 	}
 	var body map[string]any
 	posts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/agents/") && strings.HasSuffix(r.URL.Path, "/models"):
-			cat, ok := catalogs[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agents/"), "/models")]
+			kind := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agents/"), "/models")
+			cat, ok := catalogs[kind]
+			if all, has := unfiltered[kind]; has && r.URL.Query().Get("hidden") == "[]" {
+				cat = all
+			}
 			if !ok {
 				http.Error(w, "catalog down", http.StatusInternalServerError)
 				return

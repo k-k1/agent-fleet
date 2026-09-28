@@ -4340,7 +4340,14 @@ func checkCreateEffort(kind, model, effort string) error {
 		// The launch drops effort for auto, because copilot refuses it there.
 		return fmt.Errorf("copilot の auto は effort を指定できません。effort を使うなら list_models から model も指定してください")
 	}
-	out, err := agentGET("/agents/" + url.PathEscape(kind) + "/models")
+	path := "/agents/" + url.PathEscape(kind) + "/models"
+	if model == "" {
+		// The CLI's default launches even when the user hid it in Agent Fleet, so the
+		// model-less check needs the rows before that filter; an explicit empty ?hidden= is
+		// the endpoint's way to ask for them.
+		path += "?hidden=" + url.QueryEscape("[]")
+	}
+	out, err := agentGET(path)
 	if err != nil {
 		return nil
 	}
