@@ -10,6 +10,7 @@ English | [日本語](0100-image-generation-studio.ja.md)
   Status update (2026-09-25): two facts in the context and in decision 8 no longer hold (#978, [docs/log/117](../log/117-managed-af-session-name-delivery.md)). copilot / cursor / kiro / muse Managed now deliver `AF_SESSION_NAME` to the af child; muse's af server already gets the Agent token on the wire (ADR 0095 P2-14). A codex Managed thread resumed into a replaced daemon keeps its name too: the "falls back to the cwd guess" below was measured against a live daemon only. Opening those kinds to studios and letting codex Managed turn the worktree off stay with #960.
   Status update (2026-09-27): decision 10 is revised (revision 10) — the studio-less pane is gone. Its draft lived in one browser's `localStorage`, so what the member wrote on a PC never reached their phone; a studio needs no agent to exist (decision 2, step ①), so every pane now edits one and the draft follows the member across devices. Decision 2's "without a session the pane keeps working on the `localStorage` draft" no longer holds; the attach order ①–③ is unchanged except that ① is skipped (the pane already has its studio).
   Status update (2026-09-28): decision 6's outline is narrowed (see the note under decision 6). A press clears the outlines, and a sampler knob is outlined alone, not with the whole `params` group its lock covers.
+  Status update (2026-09-28): the P0 acceptance run is recorded in [docs/log/124](../log/124-imagegen-studio-p0-acceptance.md); Unresolved 1 and 4 are answered there. Follow-ups: #1131, #1132.
 - Follow-ups: #949, #956, #959, #960
 - **Revision 1 (2026-09-23)**: folds in the ADR review by another session, `semvs2b` (codex /
   gpt-6-sol), [113-adr-review](../log/113-adr-review.md) (9 red, 12 yellow, 1 blue). Decisions 3, 4,
@@ -497,13 +498,20 @@ conversation.
 
 ## Unresolved
 
-1. **Which kinds honour `list_changed`** (unmeasured beyond claude). Where it is not honoured,
-   re-binding and the trial toggle wait for a resume. Measured in the P0 acceptance run.
+1. **Which kinds honour `list_changed`** — measured in the P0 acceptance run
+   ([docs/log/124](../log/124-imagegen-studio-p0-acceptance.md) §2): claude, agy, copilot and kiro on Terminal
+   honour it; opencode Terminal picks the change up on a resume; codex Managed never re-lists, not even
+   on a resume (the shared app-server keeps the thread's af child), so its trial toggle does not reach
+   a running session (#1132). codex Terminal does not reach a studio at all — its thread runs in home
+   with an af child that cannot name its session (#1131). The pane always creates its session bound, so
+   binding itself does not depend on this.
 2. **The trial cap of 3 is workspace-wide.** Whether to limit the agent to one trial per studio; the
    429 wording needs studio context; codex's 600 s MCP limit is short of a cold engine's 16 minutes.
 3. **Tier-2 (workspace stop) fires during generation** — the reaper does not see imagegen jobs. A hole
    since 0081; filed separately.
-4. **The summary cap (1 KB) and the 8 KB `get_image_studio` cap are guesses.** Tuned on the live run.
+4. **The summary cap (1 KB) and the 8 KB `get_image_studio` cap** — kept after the live run
+   ([docs/log/124](../log/124-imagegen-studio-p0-acceptance.md) §4): real summaries are 659–878 bytes; a real
+   draft answers in about 3 KB and seven long edits bring it to 7.6 KB, where the fitting order takes over.
 5. **A CLI's built-in image tools other than `generate_image`** (codex's `image_gen`, agy) remain
    usable in a studio. Restricting them is a per-kind configuration matter, outside this ADR.
 6. **Repair when only one side of studio/meta got written** (decision 2): the studio is the truth and
