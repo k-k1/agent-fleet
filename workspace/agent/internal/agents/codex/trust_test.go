@@ -91,3 +91,31 @@ func TestBuildLaunchTrustsTheSubdirItRunsIn(t *testing.T) {
 		}
 	}
 }
+
+// codex matches trust against the resolved path, so a working copy reached through a symlink
+// must have its target listed as well, or the TUI parks on the trust dialog anyway.
+func TestBuildLaunchTrustsTheSymlinkTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	realResolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "trust-link", Kind: session.KindCodex, Dir: link, Subdir: "sub"}
+	if _, err := New().BuildLaunch(m, agents.LaunchOpts{}); err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	got := readCodexConfig(t)
+	for _, d := range []string{link, filepath.Join(link, "sub"), realResolved, filepath.Join(realResolved, "sub")} {
+		if want := "[projects." + tomlString(d) + "]"; !strings.Contains(got, want) {
+			t.Errorf("missing %s in:\n%s", want, got)
+		}
+	}
+}

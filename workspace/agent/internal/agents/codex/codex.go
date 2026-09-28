@@ -9,6 +9,7 @@ package codex
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -161,8 +162,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// the "Do you trust this directory?" prompt (the bypass flags don't cover it). The
 	// thread runs in CWD(), and a trusted parent does not cover a chosen subdirectory
 	// (measured 0.157.1 outside a git repo: the prompt still appeared), so both are listed.
-	ensureFolderTrusted(m.Dir)
-	ensureFolderTrusted(m.CWD())
+	// codex matches trust against the resolved path (measured 0.158.0: launched through a
+	// symlink it named the target and asked again), so the target is listed too.
+	for _, d := range []string{m.Dir, m.CWD()} {
+		ensureFolderTrusted(d)
+		if real, err := filepath.EvalSymlinks(d); err == nil && real != d {
+			ensureFolderTrusted(real)
+		}
+	}
 	// Auth is codex's own ~/.codex/auth.json (codex login, written via the Connections
 	// flow), so no token is injected. State + per-slot resume are wired purely through
 	// codex hooks injected on the command line (-c), keyed by our deterministic slot

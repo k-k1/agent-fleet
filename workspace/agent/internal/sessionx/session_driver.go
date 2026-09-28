@@ -14,7 +14,7 @@ package sessionx
 // Conversation identity is carried by the per-slot sid store: going managed does a
 // thread/resume on the same thread id (the other direction, a TUI resume of a server-created
 // thread, is measured too, §12.3), and going tui rides BuildLaunch's usual resume
-// (codex resume <id> --remote / opencode --session <id>).
+// (codex resume <id> / opencode --session <id>).
 
 import (
 	"encoding/json"

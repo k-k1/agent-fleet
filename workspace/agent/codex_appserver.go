@@ -197,7 +197,7 @@ func connectCodexAppServer(addr string) (*websocket.Conn, error) {
 			},
 			// AF needs lifecycle boundaries, not token/terminal deltas. Suppressing
 			// high-volume notifications keeps the observer cheap and does not affect
-			// the TUI's separate app-server connection.
+			// the writer's separate app-server connection.
 			"capabilities": map[string]any{"optOutNotificationMethods": []string{
 				"item/agentMessage/delta",
 				"item/plan/delta",
