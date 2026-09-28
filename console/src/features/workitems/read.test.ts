@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { t } from "../../lib/i18n/index.ts";
 import {
   branchForItem,
+  checksText,
   canComment,
   canReadLive,
   checksTone,
@@ -42,6 +43,8 @@ const item = (over: Partial<WorkItem> = {}): WorkItem => ({
   labelColors: {},
   repo: "acme/web",
   updatedAt: "2026-08-26T00:00:00Z",
+  checks: { state: "", total: 0, failed: 0, pending: 0 },
+  mergeable: "",
   ...over,
 });
 
@@ -57,6 +60,31 @@ describe("readWorkItems", () => {
 
   it("survives a frame without sessions (an older CP)", () => {
     expect(readWorkItems({ items: [], queries: [] }).payload?.sessions).toEqual([]);
+  });
+
+  it("reads a pull request's CI and conflict status, and draws nothing for what it does not know (#1113)", () => {
+    const read = (raw: Record<string, unknown>) => readWorkItems({ items: [raw], queries: [] }).payload!.items[0];
+    const pr = read({ id: "1", checks: { state: "failure", total: 40, failed: 3, pending: 1 }, mergeable: "conflict" });
+    expect(pr.checks).toEqual({ state: "failure", total: 40, failed: 3, pending: 1 });
+    expect(pr.mergeable).toBe("conflict");
+    // An older CP sends neither field.
+    const old = read({ id: "2" });
+    expect(old.checks).toEqual({ state: "", total: 0, failed: 0, pending: 0 });
+    expect(old.mergeable).toBe("");
+    // Both pick an icon and a class name, so an unknown value is dropped rather than passed on.
+    const odd = read({ id: "3", checks: { state: "neutral\" x", total: "7" }, mergeable: "MERGEABLE" });
+    expect(odd.checks).toEqual({ state: "", total: 0, failed: 0, pending: 0 });
+    expect(odd.mergeable).toBe("");
+    expect(read({ id: "4", checks: null }).checks.state).toBe("");
+  });
+});
+
+describe("checksText", () => {
+  it("keeps the counts in the line, and says nothing for no checks", () => {
+    expect(checksText({ state: "failure", total: 40, failed: 3, pending: 0 })).toBe(t("wi.detail_checks_failed", { failed: 3, total: 40 }));
+    expect(checksText({ state: "pending", total: 5, failed: 0, pending: 2 })).toBe(t("wi.detail_checks_pending", { pending: 2, total: 5 }));
+    expect(checksText({ state: "success", total: 7, failed: 0, pending: 0 })).toBe(t("wi.detail_checks_ok", { total: 7 }));
+    expect(checksText({ state: "", total: 0, failed: 0, pending: 0 })).toBe("");
   });
 });
 

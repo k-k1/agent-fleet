@@ -124,7 +124,8 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 		return `{"items":[{"queryId":"ok","provider":"github","kind":"issue","key":"acme/web#9",
 		          "title":"新しい行","state":"open","url":"https://example.invalid/9",
 		          "labels":["bug"],"labelColors":{"bug":"d73a4a"},
-		          "repo":"acme/web","updatedAt":"2026-08-26T00:00:00Z"}],
+		          "repo":"acme/web","updatedAt":"2026-08-26T00:00:00Z",
+		          "checks":{"state":"failure","total":40,"failed":3,"pending":1},"mergeable":"conflict"}],
 		         "errors":[{"queryId":"ng","message":"github could not parse the query"}]}`
 	}
 	env.api.refreshNow(ctx, env.res, true)
@@ -139,9 +140,18 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	// The Agent's label colours survive the cache and reach the wire.
 	for _, it := range items {
 		if it.Key == "acme/web#9" {
-			if got := workItemToDTO(it).LabelColors["bug"]; got != "d73a4a" {
+			dto := workItemToDTO(it)
+			if got := dto.LabelColors["bug"]; got != "d73a4a" {
 				t.Errorf("bug colour through the cache = %q, want d73a4a", got)
 			}
+			// So do the pull request's CI and conflict status (#1113).
+			want := workItemChecksDTO{State: "failure", Total: 40, Failed: 3, Pending: 1}
+			if dto.Checks != want || dto.Mergeable != "conflict" {
+				t.Errorf("status through the cache = %+v / %q, want %+v / conflict", dto.Checks, dto.Mergeable, want)
+			}
+		} else if dto := workItemToDTO(it); dto.Checks != (workItemChecksDTO{}) || dto.Mergeable != "" {
+			// A row that never carried a status (here: cached before the refresh) reads as not read.
+			t.Errorf("old row status = %+v / %q, want zero", dto.Checks, dto.Mergeable)
 		}
 	}
 	queries, _ := env.st.ListWorkItemQueries(ctx, env.mid)
@@ -443,5 +453,16 @@ func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 		if !strings.Contains(string(enc), `"labelColors":{}`) {
 			t.Errorf("label_colors %q: want labelColors {}, got: %s", stored, enc)
 		}
+	}
+	// Likewise checks: a row cached before the column existed, or an unreadable value, is an
+	// object with an empty state — never absent, never null.
+	for _, stored := range []string{"", "not json", "null"} {
+		enc, _ := json.Marshal(workItemToDTO(store.WorkItem{ID: "1", Checks: stored}))
+		if !strings.Contains(string(enc), `"checks":{"state":"","total":0,"failed":0,"pending":0}`) {
+			t.Errorf("checks %q: want an empty checks object, got: %s", stored, enc)
+		}
+	}
+	if encodeWorkItemChecks(workItemChecksDTO{}) != "" {
+		t.Error("no checks must store as '' so an issue row costs nothing")
 	}
 }

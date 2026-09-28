@@ -200,6 +200,41 @@ describe("WorkItemsSection", () => {
     expect(color("checkout")).toMatch(/^#[0-9a-f]{6}$/);
   });
 
+  it("marks each open pull request's CI and conflicts on the row, and nothing else (#1113)", async () => {
+    const pr = (id: string, over: Record<string, unknown>) =>
+      item({ id, key: `acme/web#${id}`, kind: "pr", labels: [], ...over });
+    workItemList.mockResolvedValue({
+      items: [
+        pr("1", { checks: { state: "failure", total: 40, failed: 3, pending: 0 }, mergeable: "conflict" }),
+        pr("2", { checks: { state: "pending", total: 5, failed: 0, pending: 2 }, mergeable: "unknown" }),
+        pr("3", { checks: { state: "success", total: 7, failed: 0, pending: 0 }, mergeable: "clean" }),
+        // No checks ran: no mark at all, never a green one.
+        pr("4", { checks: { state: "", total: 0, failed: 0, pending: 0 }, mergeable: "clean" }),
+        // An issue from an older CP, without either field.
+        item({ id: "5", key: "acme/web#5" }),
+      ],
+      queries: [query],
+      sessions: [],
+      fetchedAt: "2026-08-26T09:00:00Z",
+      running: true,
+    });
+    await render();
+    const flags = (key: string) =>
+      [...host.querySelectorAll<HTMLElement>(".wi-row")]
+        .find((r) => r.querySelector(".wi-key")?.getAttribute("title") === key)!
+        .querySelectorAll<HTMLElement>(".wi-flag");
+    const ci = t("wi.detail_checks");
+    const one = flags("acme/web#1");
+    expect([...one].map((f) => f.className)).toEqual(["wi-flag tone-bad", "wi-flag tone-bad"]);
+    expect(one[0].getAttribute("aria-label")).toBe(`${ci}: ${t("wi.detail_checks_failed", { failed: 3, total: 40 })}`);
+    expect(one[1].getAttribute("aria-label")).toBe(t("wi.detail_merge_conflict"));
+    // "unknown" mergeability is not a conflict and not drawn.
+    expect([...flags("acme/web#2")].map((f) => f.className)).toEqual(["wi-flag tone-warn"]);
+    expect([...flags("acme/web#3")].map((f) => f.className)).toEqual(["wi-flag tone-ok"]);
+    expect(flags("acme/web#4").length).toBe(0);
+    expect(flags("acme/web#5").length).toBe(0);
+  });
+
   it("survives a row with null labels (this blanked the whole Console)", async () => {
     // The CP emitted a Go nil slice as JSON null; item.labels.slice(0, 2) in the row threw a
     // TypeError, and with no ErrorBoundary in the app the whole Console disappeared. The producer

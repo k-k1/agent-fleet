@@ -75,6 +75,21 @@ type workItemDTO struct {
 	LabelColors map[string]string `json:"labelColors"`
 	Repo        string            `json:"repo"`
 	UpdatedAt   string            `json:"updatedAt"`
+	// Checks and Mergeable are a pull request's CI and merge-conflict status (#1113). A row the
+	// Agent did not read them for (an issue, a closed PR, Jira, Bitbucket, an older Agent) carries
+	// the zero values: an empty checks state and "".
+	Checks    workItemChecksDTO `json:"checks"`
+	Mergeable string            `json:"mergeable"`
+}
+
+// workItemChecksDTO is the head commit's checks folded into counts. State is "success" /
+// "failure" / "pending", or "" when there were none or they were not read — never green by
+// default.
+type workItemChecksDTO struct {
+	State   string `json:"state"`
+	Total   int    `json:"total"`
+	Failed  int    `json:"failed"`
+	Pending int    `json:"pending"`
 }
 
 type workItemQueryDTO struct {
@@ -106,7 +121,8 @@ func workItemToDTO(w store.WorkItem) workItemDTO {
 	return workItemDTO{ID: w.ID, QueryID: w.QueryID, Provider: w.Provider, Kind: w.Kind,
 		Key: w.Key, Title: w.Title, State: w.State, URL: w.URL, Assignee: w.Assignee,
 		Labels: splitLabels(w.Labels), LabelColors: decodeLabelColors(w.LabelColors),
-		Repo: w.Repo, UpdatedAt: w.UpdatedAt}
+		Repo: w.Repo, UpdatedAt: w.UpdatedAt,
+		Checks: decodeWorkItemChecks(w.Checks), Mergeable: w.Mergeable}
 }
 
 func workItemQueryToDTO(q store.WorkItemQuery) workItemQueryDTO {
@@ -144,6 +160,28 @@ func decodeLabelColors(s string) map[string]string {
 		}
 	}
 	return out
+}
+
+// encodeWorkItemChecks is the stored form of a row's checks: "" when nothing was reported, so
+// most rows cost nothing and read the same as a row cached before the column existed.
+func encodeWorkItemChecks(c workItemChecksDTO) string {
+	if c == (workItemChecksDTO{}) {
+		return ""
+	}
+	b, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// decodeWorkItemChecks is the inverse; a column it cannot read costs the CI marker only.
+func decodeWorkItemChecks(s string) workItemChecksDTO {
+	var c workItemChecksDTO
+	if s != "" && json.Unmarshal([]byte(s), &c) != nil {
+		return workItemChecksDTO{}
+	}
+	return c
 }
 
 // splitLabels turns the stored comma-separated column into a slice.
@@ -368,6 +406,8 @@ type agentWorkItemsResp struct {
 		LabelColors map[string]string `json:"labelColors"`
 		Repo        string            `json:"repo"`
 		UpdatedAt   string            `json:"updatedAt"`
+		Checks      workItemChecksDTO `json:"checks"`
+		Mergeable   string            `json:"mergeable"`
 	} `json:"items"`
 	Errors []struct {
 		QueryID string `json:"queryId"`
@@ -423,6 +463,7 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 			State: it.State, URL: it.URL, Assignee: it.Assignee,
 			Labels: strings.Join(it.Labels, ","), LabelColors: encodeLabelColors(it.LabelColors),
 			Repo: it.Repo, UpdatedAt: it.UpdatedAt,
+			Checks: encodeWorkItemChecks(it.Checks), Mergeable: it.Mergeable,
 		})
 	}
 	errs := map[string]string{}

@@ -71,6 +71,14 @@ type workItemOut struct {
 	LabelColors map[string]string `json:"labelColors"`
 	Repo        string            `json:"repo"`
 	UpdatedAt   string            `json:"updatedAt"`
+	// Checks and Mergeable are filled for open GitHub pull requests only (see
+	// githubEnrichPullRequests). Zero values mean "not read", which the rail draws as nothing —
+	// the same as "no checks", and never as green.
+	Checks    workItemChecksOut `json:"checks"`
+	Mergeable string            `json:"mergeable"`
+
+	// nodeID is GitHub's global ID, the key the enrichment call looks rows up by. Not on the wire.
+	nodeID string
 }
 
 // gitHubLabel is one entry of a GitHub issue's or pull request's `labels` array.
@@ -251,6 +259,7 @@ func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, int, er
 	if err != nil {
 		return nil, 0, err
 	}
+	githubEnrichPullRequests(token, rows)
 	var tc struct {
 		TotalCount int `json:"total_count"`
 	}
@@ -264,6 +273,7 @@ func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, int, er
 func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) {
 	var gr struct {
 		Items []struct {
+			NodeID      string `json:"node_id"`
 			Number      int    `json:"number"`
 			Title       string `json:"title"`
 			State       string `json:"state"`
@@ -308,6 +318,7 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 			Title: it.Title, State: normalizeGitHubState(it.State, it.Draft),
 			URL: it.HTMLURL, Assignee: assignee, Labels: labels,
 			LabelColors: gitHubLabelColors(it.Labels), Repo: repo, UpdatedAt: it.UpdatedAt,
+			nodeID: it.NodeID,
 		})
 	}
 	return out, nil

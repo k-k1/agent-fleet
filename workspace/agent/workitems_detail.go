@@ -51,6 +51,21 @@ type workItemChecksOut struct {
 	Pending int    `json:"pending"`
 }
 
+// settle derives State from the counts. Any failure outranks anything still running: a red job
+// stays red however the rest finish.
+func (c *workItemChecksOut) settle() {
+	switch {
+	case c.Total == 0:
+		c.State = ""
+	case c.Failed > 0:
+		c.State = "failure"
+	case c.Pending > 0:
+		c.State = "pending"
+	default:
+		c.State = "success"
+	}
+}
+
 // workItemReviewOut is one reviewer's standing on the PR. State is "approved",
 // "changes_requested" or "pending" (asked, has not answered).
 type workItemReviewOut struct {
@@ -378,16 +393,7 @@ func parseGitHubCheckRuns(body []byte) workItemChecksOut {
 			out.Failed++
 		}
 	}
-	switch {
-	case out.Total == 0:
-		out.State = ""
-	case out.Failed > 0:
-		out.State = "failure"
-	case out.Pending > 0:
-		out.State = "pending"
-	default:
-		out.State = "success"
-	}
+	out.settle()
 	return out
 }
 
@@ -576,16 +582,7 @@ func parseBitbucketStatuses(body []byte) workItemChecksOut {
 			out.Failed++
 		}
 	}
-	switch {
-	case out.Total == 0:
-		out.State = ""
-	case out.Failed > 0:
-		out.State = "failure"
-	case out.Pending > 0:
-		out.State = "pending"
-	default:
-		out.State = "success"
-	}
+	out.settle()
 	return out
 }
 

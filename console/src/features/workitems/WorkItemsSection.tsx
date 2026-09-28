@@ -47,6 +47,8 @@ import { LabelBadge } from "./LabelBadge.tsx";
 import { readShelf, resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
 import {
   branchForItem,
+  checksText,
+  checksTone,
   dedupeWorkItems,
   fullLocal,
   matchWorkItem,
@@ -83,6 +85,8 @@ interface RowProps {
   onOpen(item: WorkItem): void;
   onOpenSession(name: string): void;
 }
+
+const CHECK_ICON: Record<string, string> = { success: "pass", failure: "error", pending: "clock" };
 
 const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, uniform, onOpen, onOpenSession }: RowProps) {
   const tr = useT();
@@ -125,6 +129,31 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
           <span className="wi-title" title={item.assignee ? `${item.title} — @${item.assignee}` : item.title}>
             {item.title}
           </span>
+          {/* CI and conflicts of an open pull request (#1113), so the rail answers "which of these
+              needs me" without opening each one. Icons only, with the detail modal's own wording
+              on hover: the title keeps the width. Nothing is drawn when nothing was read — an
+              issue, a closed PR, a provider without these — and "no checks" is that same nothing,
+              never a green mark. */}
+          {item.checks.state && (
+            <span
+              className={`wi-flag tone-${checksTone(item.checks)}`}
+              role="img"
+              aria-label={`${tr("wi.detail_checks")}: ${checksText(item.checks)}`}
+              title={`${tr("wi.detail_checks")}: ${checksText(item.checks)}`}
+            >
+              <Icon name={CHECK_ICON[item.checks.state] || "circle-large-outline"} />
+            </span>
+          )}
+          {item.mergeable === "conflict" && (
+            <span
+              className="wi-flag tone-bad"
+              role="img"
+              aria-label={tr("wi.detail_merge_conflict")}
+              title={tr("wi.detail_merge_conflict")}
+            >
+              <Icon name="git-merge" />
+            </span>
+          )}
           {/* Shown only on rows that have been sitting: for anything touched today the sort
               order already says so, and it is not worth 23% of the title (measured: 38px of
               130px). */}

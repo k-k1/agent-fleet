@@ -46,6 +46,7 @@ import type { ResolvedSessionRef } from "./sessionRefs.ts";
 import {
   canComment,
   canReadLive,
+  checksText,
   checksTone,
   fullLocal,
   readWorkItemDetail,
@@ -244,15 +245,6 @@ export function WorkItemDetailModal({
             ? tr("wi.detail_merge_conflict")
             : tr("wi.detail_merge_unknown");
 
-  // The counts stay in the line: "failing" cannot say whether one job of forty is red.
-  const checksText = (c: WorkItemDetail["checks"]): string =>
-    c.state === "failure"
-      ? tr("wi.detail_checks_failed", { failed: c.failed, total: c.total })
-      : c.state === "pending"
-        ? tr("wi.detail_checks_pending", { pending: c.pending, total: c.total })
-        : c.state === "success"
-          ? tr("wi.detail_checks_ok", { total: c.total })
-          : "";
 
   const reviewSummary = (pr: WorkItemDetail): string => {
     const c = reviewCounts(pr.reviews);
