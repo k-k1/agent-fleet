@@ -3017,7 +3017,8 @@ someone re-exported the bundle, although the client already spoke both releases.
 the binary's own export:
 
 Most rules depend on which way a type travels, which the checker works out by following `$ref`s
-from the RPC tables: method params and server-request results go to the host, method results,
+from the RPC tables of the checked-in bundle (paths only the new schema has are ones the client
+never takes): method params and server-request results go to the host, method results,
 notifications and server-request params come to the client, and a type reached both ways (or by
 nothing) gets both rule sets.
 
@@ -3033,7 +3034,7 @@ nothing) gets both rule sets.
 The vendor marks most enums `"x-msp-openness": "open"` and says readers must handle unknown values,
 but this client does not: an unknown `ItemKind` drops out of the transcript and an unknown
 `SessionStatus` leaves the turn state where it was. So openness is not trusted. Descriptions and the
-reserved-capability references are ignored, and any keyword without a rule is compared for
+reserved-capability list are ignored, and any keyword without a rule is compared for
 equality, so a change the checker does not understand fails closed. `TestInstalledBinaryIsCompatibleWithTheBundle` replaces
 `TestInstalledBinaryExportsTheSameSchema`. The workflow still requires the release manifest's
 fingerprint to equal the one the downloaded binary exports, reports a bundle behind the release as

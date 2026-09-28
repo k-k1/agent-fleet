@@ -133,6 +133,11 @@ func TestCompareAdditions(t *testing.T) {
 		{"new error code", func(b map[string]any) {
 			b["errors"] = append(b["errors"].([]any), map[string]any{"code": -32002, "kind": "busy"})
 		}, "errors[-32002]: new error code"},
+		{"new value in a sent enum, also reached by a new notification", func(b map[string]any) {
+			// The old client ignores the new notification, so Mode still only travels to the host.
+			def(b, "Mode")["enum"] = []any{"plan", "act", "review"}
+			b["notifications"].(map[string]any)["mode/changed"] = map[string]any{"params": map[string]any{"$ref": "#/$defs/Mode"}}
+		}, `$defs.Mode.enum: new value "review" (host to client never carries it)`},
 		{"new grantable capability", func(b map[string]any) {
 			b["capabilities"].(map[string]any)["grantable"] = []any{"fs.read", "fs.write"}
 		}, "capabilities.grantable: fs.write added"},
@@ -143,8 +148,12 @@ func TestCompareAdditions(t *testing.T) {
 			if !r.Compatible() {
 				t.Fatalf("an additive change was judged breaking:\n%s", r)
 			}
-			if len(r.Additions) != 1 || r.Additions[0] != c.want {
-				t.Fatalf("additions = %q, want [%q]", r.Additions, c.want)
+			found := false
+			for _, a := range r.Additions {
+				found = found || a == c.want
+			}
+			if !found {
+				t.Fatalf("additions = %q, want one of them to be %q", r.Additions, c.want)
 			}
 		})
 	}
@@ -221,6 +230,9 @@ func TestCompareBreaks(t *testing.T) {
 		{"removed capability", func(b map[string]any) {
 			b["capabilities"].(map[string]any)["grantable"] = []any{}
 		}, nil, "capabilities.grantable: fs.read removed"},
+		{"unknown capabilities member", func(b map[string]any) {
+			b["capabilities"].(map[string]any)["required"] = []any{"fs.read"}
+		}, nil, `capabilities.required: null -> ["fs.read"]`},
 		{"unknown keyword", func(b map[string]any) {
 			props(b, "StartParams")["cwd"].(map[string]any)["format"] = "uri"
 		}, nil, `$defs.StartParams.cwd.format: null -> "uri"`},

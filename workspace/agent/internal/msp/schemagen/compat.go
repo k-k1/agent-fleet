@@ -90,10 +90,10 @@ const (
 )
 
 func compareBundles(r *CompatReport, oldB, newB map[string]any) {
+	// Directions come from the old bundle alone: they describe what the client built from it
+	// actually sends and reads. A path only the new schema has (a new notification, a new
+	// optional member) is one the client never takes.
 	flows := defFlows(oldB)
-	for name, f := range defFlows(newB) {
-		flows[name] |= f
-	}
 	defFlow := func(name string) flow {
 		if f := flows[name]; f != 0 {
 			return f
@@ -382,17 +382,28 @@ func compareErrors(r *CompatReport, o, n any) {
 
 // compareCapabilities compares the grantable names as a set: the client asks for capabilities
 // by name, so one that disappears is one it can no longer be granted. The reserved list names
-// identifiers with no producer and carries only references, so it is not compared.
+// identifiers with no producer and carries only references, so it is skipped; any other member
+// has no rule and must not move.
 func compareCapabilities(r *CompatReport, o, n map[string]any) {
-	oSet, nSet := asSet(o["grantable"]), asSet(n["grantable"])
-	for _, v := range sortedSet(oSet) {
-		if !nSet[v] {
-			r.breakf("capabilities.grantable: %s removed", v)
-		}
-	}
-	for _, v := range sortedSet(nSet) {
-		if !oSet[v] {
-			r.addf("capabilities.grantable: %s added", v)
+	for _, k := range unionKeys(o, n) {
+		switch k {
+		case "grantable":
+			oSet, nSet := asSet(o[k]), asSet(n[k])
+			for _, v := range sortedSet(oSet) {
+				if !nSet[v] {
+					r.breakf("capabilities.grantable: %s removed", v)
+				}
+			}
+			for _, v := range sortedSet(nSet) {
+				if !oSet[v] {
+					r.addf("capabilities.grantable: %s added", v)
+				}
+			}
+		case "reserved":
+		default:
+			if !equalIgnoring(o[k], n[k]) {
+				r.breakf("capabilities.%s: %s -> %s", k, compact(o[k]), compact(n[k]))
+			}
 		}
 	}
 }
