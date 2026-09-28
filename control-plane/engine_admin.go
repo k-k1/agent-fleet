@@ -1950,8 +1950,14 @@ func engineResolvedRow(res engineResolved, tokens engineDeploymentTokens, provid
 	// 🔴 ABSENT, never 0, when the header was not readable. "Nobody measured it" and "it
 	// measured zero" are different facts and this panel draws them differently; a 0 here would
 	// be read as a model whose window costs nothing.
-	if kv := engineKVCacheMiB(geom, 1024); kv > 0 {
-		row["kv_mib_per_1k_tokens"] = kv
+	//
+	// kv_mib_fixed is the sliding-window layers' share, which the window does NOT multiply —
+	// see engineKVPricing.
+	if per1k, fixed := engineKVPricing(geom); per1k > 0 || fixed > 0 {
+		row["kv_mib_per_1k_tokens"] = per1k
+		if fixed > 0 {
+			row["kv_mib_fixed"] = fixed
+		}
 	}
 	return row
 }
@@ -2004,8 +2010,11 @@ func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, 
 	// so this is a repository-wide estimate and says which file it came from rather than
 	// pretending to be every file's answer. The row that is actually taken in gets its own
 	// header read at the resolve, which is the number the press is priced from.
-	if kv, from := a.engineListKV(r.Context(), b.Source, files, engineIngestKindFor(e)); kv > 0 {
-		answer["kv_mib_per_1k_tokens"] = kv
+	if per1k, fixed, from := a.engineListKV(r.Context(), b.Source, files, engineIngestKindFor(e)); from != "" {
+		answer["kv_mib_per_1k_tokens"] = per1k
+		if fixed > 0 {
+			answer["kv_mib_fixed"] = fixed
+		}
 		answer["kv_from"] = from
 	}
 	writeJSON(w, http.StatusOK, answer)
@@ -2018,9 +2027,9 @@ func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, 
 // one 1 MiB request per listing, which is what makes a thirty-file repository affordable to show
 // at all — thirty header reads would be thirty.
 func (a engineAdminAPI) engineListKV(ctx context.Context, src engineIngestSource,
-	files []engineCandidate, kind string) (int, string) {
+	files []engineCandidate, kind string) (per1k, fixed int, from string) {
 	if !strings.EqualFold(strings.TrimSpace(kind), "gguf") {
-		return 0, ""
+		return 0, 0, ""
 	}
 	for _, f := range files {
 		if f.Role != engineCandidateModel {
@@ -2039,19 +2048,19 @@ func (a engineAdminAPI) engineListKV(ctx context.Context, src engineIngestSource
 			civitai.File = f.Name
 			picked.Civitai = &civitai
 		default:
-			return 0, ""
+			return 0, 0, ""
 		}
 		res, aerr := engineIngestResolve(ctx, picked)
 		if aerr != nil {
-			return 0, ""
+			return 0, 0, ""
 		}
 		geom := engineIngestGeometry(ctx, kind, res, a.hfTokens())
-		if kv := engineKVCacheMiB(geom, 1024); kv > 0 {
-			return kv, f.Name
+		if per1k, fixed := engineKVPricing(geom); per1k > 0 || fixed > 0 {
+			return per1k, fixed, f.Name
 		}
-		return 0, ""
+		return 0, 0, ""
 	}
-	return 0, ""
+	return 0, 0, ""
 }
 
 // postIngest (POST …/ingest) is the one press (ADR 0085 decisions 1, 3 and 4).
@@ -2198,7 +2207,9 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// what could be read now: the header read above may have been refused, and the file has not
 	// changed since somebody paid for it.
 	if main.known != nil {
-		if main.known.KVGeom != (engineKVGeometry{}) {
+		// Unless what was recorded predates the per-layer read and this one has it: that record
+		// sizes a sliding or convolutional model as if every layer were full.
+		if main.known.KVGeom != (engineKVGeometry{}) && (main.known.KVGeom.layered() || !geom.layered()) {
 			geom = main.known.KVGeom
 		}
 		if main.known.VaeBundled != "" {
@@ -2734,7 +2745,11 @@ func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState,
 	// ⚠️ Which makes it "at most once per loading write", not "once": a header declaring no
 	// `<arch>.context_length` is read again every time. llama.cpp's converter always writes one,
 	// so this is a supported-input assumption rather than a leak — see engine_gguf.go's header.
-	if !ok || engineModelIsLora(cur) || cur.ContextCeiling > 0 {
+	//
+	// And the widths likewise: a row read before them sizes a sliding or convolutional model as
+	// if every layer were full — twice gpt-oss-20b's measured cache — so a row without them is
+	// read once more, and a layered read is the mark that it need not be again.
+	if !ok || engineModelIsLora(cur) || (cur.ContextCeiling > 0 && engineRowGeometry(cur).layered()) {
 		return
 	}
 	key, ok := engineGeometryFile(cur)
@@ -2750,14 +2765,11 @@ func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState,
 	// changed while the read was in flight.
 	// cur.Files is the declaration the header was read out of — compared on write, so a
 	// replacement that landed while the read was in flight leaves this write with nothing to do.
-	if _, err := a.mgr.store.SetEngineModelGeometry(ctx, e.def.Key, id, cur.Files, store.EngineModelKV{
-		Layers: geom.Layers, HeadsKV: geom.HeadsKV, KeyLen: geom.KeyLen, ValueLen: geom.ValLen,
-		NextN: geom.NextN, FullAttnInterval: geom.FullAttnInterval, Ceiling: geom.Ceiling,
-	}); err != nil {
+	if _, err := a.mgr.store.SetEngineModelGeometry(ctx, e.def.Key, id, cur.Files, engineStoreKV(geom)); err != nil {
 		log.Printf("engines: %s/%s: the geometry was read and could not be stored (%v)", e.def.Key, id, err)
 		return
 	}
 	e.catalog.invalidate()
-	log.Printf("engines: %s/%s: attention geometry read from the bucket (%d layers, %d caching, ceiling %d)",
-		e.def.Key, id, geom.Layers, geom.cacheLayers(), geom.Ceiling)
+	log.Printf("engines: %s/%s: attention geometry read from the bucket (%d layers, per-token width %d full + %d sliding over %d, ceiling %d)",
+		e.def.Key, id, geom.Layers, geom.FullWidth, geom.SWAWidth, geom.SlidingWindow, geom.Ceiling)
 }

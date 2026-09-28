@@ -34,19 +34,37 @@ export type Fit = {
   nextClass?: EngineClass;
 };
 
-export function kvCacheMiB(kvPer1k: number, contextTokens: number): number {
-  if (!(kvPer1k > 0) || !(contextTokens > 0)) return 0;
-  return Math.round((kvPer1k * contextTokens) / 1024);
+/** What the KV cache costs, as the CP prices it (`engineKVPricing`): MiB per 1024 tokens for the
+ *  layers that grow with the window, plus the MiB the sliding-window layers hold at their cap
+ *  whatever the window. 🔴 Only `per1k` is multiplied — gemma-4-12b's sliding layers are 1440 of
+ *  its 1824 MiB at 24,576 tokens and the same 1440 at 131,072. */
+export type KVPrice = { per1k: number; fixed?: number };
+
+export function kvPriceOf(src?: { kv_mib_per_1k_tokens?: number; kv_mib_fixed?: number } | null): KVPrice {
+  return { per1k: src?.kv_mib_per_1k_tokens || 0, fixed: src?.kv_mib_fixed || 0 };
+}
+
+/** No cache figure: an image checkpoint, a LoRA, or a header nobody could read. */
+export const NO_KV: KVPrice = { per1k: 0 };
+
+/** Whether the CP could price the cache at all. */
+export function kvKnown(kv: KVPrice): boolean {
+  return kv.per1k > 0 || (kv.fixed || 0) > 0;
+}
+
+export function kvCacheMiB(kv: KVPrice, contextTokens: number): number {
+  if (!kvKnown(kv) || !(contextTokens > 0)) return 0;
+  return Math.round((kv.per1k * contextTokens) / 1024) + (kv.fixed || 0);
 }
 
 export function modelFit(
   weightsMiB: number,
-  kvPer1k: number,
+  kv: KVPrice,
   contextTokens: number,
   cardMiB: number,
   classes: EngineClass[] = [],
 ): Fit {
-  const kvMiB = kvCacheMiB(kvPer1k, contextTokens);
+  const kvMiB = kvCacheMiB(kv, contextTokens);
   const needMiB = weightsMiB + kvMiB;
   const used = cardMiB > 0 ? needMiB / cardMiB : 0;
   // No card to compare against, or nothing to compare: the panel draws the numbers and no verdict.
@@ -57,7 +75,7 @@ export function modelFit(
   // are over the card, no cache size can rescue it and the answer is knowable — which matters,
   // because a repository that will not answer a ranged GET would otherwise hide its largest
   // quantisations behind a shrug.
-  if (kvMiB === 0 && kvPer1k <= 0 && needMiB <= cardMiB) {
+  if (kvMiB === 0 && !kvKnown(kv) && needMiB <= cardMiB) {
     return { state: "unknown", weightsMiB, kvMiB, needMiB, used };
   }
   const state: FitState = used <= FIT_COMFORTABLE ? "fits" : used <= 1 ? "tight" : "over";
@@ -84,13 +102,13 @@ export function modelFit(
  * Answers 0 when nothing can be said — no card, no cache figure — and the caller then falls back
  * to whatever it had.
  */
-export function windowThatFits(weightsMiB: number, kvPer1k: number, cardMiB: number, ceiling: number): number {
-  if (!(kvPer1k > 0) || !(cardMiB > 0) || !(ceiling > 0)) return 0;
+export function windowThatFits(weightsMiB: number, kv: KVPrice, cardMiB: number, ceiling: number): number {
+  if (!(kv.per1k > 0) || !(cardMiB > 0) || !(ceiling > 0)) return 0;
   const room = cardMiB * FIT_COMFORTABLE - weightsMiB;
   if (room <= 0) return 0;
   let best = 0;
   for (let window = 1024; window <= ceiling; window *= 2) {
-    if (kvCacheMiB(kvPer1k, window) > room) break;
+    if (kvCacheMiB(kv, window) > room) break;
     best = window;
   }
   return best;
@@ -152,9 +170,9 @@ export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefi
   const out: WindowRefit[] = [];
   for (const model of models) {
     if (model.kind === "lora" || !(model.context_tokens && model.context_tokens > 0)) continue;
-    const kvPer1k = model.kv_mib_per_1k_tokens || 0;
+    const kv = kvPriceOf(model);
     const ceiling = model.context_length || 0;
-    if (!kvPer1k || !ceiling) {
+    if (!kv.per1k || !ceiling) {
       out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "header" });
       continue;
     }
@@ -178,7 +196,7 @@ export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefi
       out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "weights" });
       continue;
     }
-    const to = windowThatFits(weightsMiB, kvPer1k, cardMiB, ceiling);
+    const to = windowThatFits(weightsMiB, kv, cardMiB, ceiling);
     if (to === model.context_tokens) continue;
     // 0 here is the third blocked shape: the weights are known and they alone fill the card.
     out.push(to > 0

@@ -108,7 +108,8 @@ func TestParseGGUFGeometryReadsBothShapes(t *testing.T) {
 	// way to learn it (engineGGUFGeometryOfObject).
 	// PastArch: the fixture writes a tokenizer key, so the scan knows no architecture key is
 	// still ahead — which is what makes a short read of this header trustworthy.
-	want := engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, Ceiling: 32768, PastArch: true}
+	want := engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, FullWidth: 28 * 2 * 256,
+		Ceiling: 32768, PastArch: true}
 	if got != want {
 		t.Errorf("qwen2 geometry = %+v, want %+v", got, want)
 	}
@@ -120,7 +121,8 @@ func TestParseGGUFGeometryReadsBothShapes(t *testing.T) {
 	// 🔴 128, NOT 2048/32 = 64. Getting this wrong halves a 30B's KV estimate.
 	// No PastArch: this fixture writes no tokenizer key, so the scan cannot know whether the
 	// header had more to say. The ladder treats that as unsettled and reads further.
-	want = engineKVGeometry{Layers: 48, HeadsKV: 4, KeyLen: 128, ValLen: 128, Ceiling: 262144}
+	want = engineKVGeometry{Layers: 48, HeadsKV: 4, KeyLen: 128, ValLen: 128, FullWidth: 48 * 4 * 256,
+		Ceiling: 262144}
 	if got != want {
 		t.Errorf("qwen3moe geometry = %+v, want %+v", got, want)
 	}
@@ -195,7 +197,8 @@ func TestParseGGUFGeometrySkipsPastArraysAndFloats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, PastArch: true}); got != want {
+	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, FullWidth: 28 * 2 * 256,
+		PastArch: true}); got != want {
 		t.Errorf("geometry = %+v, want %+v", got, want)
 	}
 }
@@ -310,7 +313,8 @@ func TestParseGGUFGeometryReadsPastTheRequiredFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := engineKVGeometry{Layers: 65, HeadsKV: 4, KeyLen: 256, ValLen: 256, NextN: 1, FullAttnInterval: 4}
+	want := engineKVGeometry{Layers: 65, HeadsKV: 4, KeyLen: 256, ValLen: 256, NextN: 1, FullAttnInterval: 4,
+		FullWidth: 16 * 4 * 512} // the same 16 caching layers as cacheLayers()
 	if got != want {
 		t.Errorf("geometry = %+v, want %+v", got, want)
 	}
@@ -333,7 +337,8 @@ func TestParseGGUFGeometryShortWindowKeepsWhatItRead(t *testing.T) {
 	if !errors.Is(err, errGGUFShort) {
 		t.Fatalf("err = %v, want errGGUFShort", err)
 	}
-	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, PastArch: true}); got != want {
+	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, FullWidth: 28 * 2 * 256,
+		PastArch: true}); got != want {
 		t.Errorf("geometry = %+v, want %+v (what it read, alongside the error)", got, want)
 	}
 }

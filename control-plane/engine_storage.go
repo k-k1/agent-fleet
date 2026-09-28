@@ -373,10 +373,7 @@ func engineKnownArtifacts(models []store.EngineModel, jobs []store.EngineIngestJ
 				// 🔴 The ceiling travels with the rest. Reuse REPLACES the freshly read geometry
 				// with this one (engineIngestResolve), so leaving it out wrote a 0 over the row's
 				// context_ceiling — and a row with no ceiling is offered no re-fit at all.
-				kv = engineKVGeometry{Layers: model.KVLayers, HeadsKV: model.KVHeadsKV,
-					KeyLen: model.KVKeyLen, ValLen: model.KVValueLen,
-					NextN: model.KVNextN, FullAttnInterval: model.KVFullAttnInterval,
-					Ceiling: model.ContextCeiling}
+				kv = engineRowGeometry(model)
 			}
 			add(file.S3Key, model.ID, file.Source, file.ArtifactIdentity, true, true, kv, file.VaeBundled)
 		}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -398,5 +399,90 @@ func TestEngineModelTrainedWordsRoundTrip(t *testing.T) {
 	// A row that does not exist is reported as such, so the route answers 404 rather than 200.
 	if ok, err := st.SetEngineModelTrainedWords(ctx, "image", "nobody", []string{"x"}); err != nil || ok {
 		t.Fatalf("absent row: %v %v", ok, err)
+	}
+}
+
+// The per-layer widths travel through every writer that stores a header read: the whole-row
+// Put, the ingest's Create, the heal's targeted Set, and a file Replace. A writer that drops
+// them leaves a sliding or convolutional model sized as if every layer were full — twice
+// gpt-oss-20b's measured cache — or, for gemma-4 and LFM2, not sized at all.
+//
+// Run against Postgres too when AF_TEST_DATABASE_URL is set: the two dialects have separate
+// migrations for these columns.
+func TestEngineModelLayerWidthsSurviveEveryWriter(t *testing.T) {
+	stores := map[string]*SQL{"sqlite": engineModelStore(t)}
+	if url := os.Getenv("AF_TEST_DATABASE_URL"); url != "" {
+		pg, err := OpenPostgres(url)
+		if err != nil {
+			t.Fatalf("open postgres: %v", err)
+		}
+		t.Cleanup(func() { pg.Close() })
+		ctx := context.Background()
+		if _, err := pg.db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+			t.Fatalf("reset schema: %v", err)
+		}
+		if err := pg.Migrate(ctx); err != nil {
+			t.Fatalf("migrate: %v", err)
+		}
+		stores["postgres"] = pg
+	}
+	for name, st := range stores {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			file := EngineModelFile{S3Key: "llm/gemma-4-12b-it-Q4_K_M.gguf"}
+			widths := func(t *testing.T, id string, full, swa, window int) {
+				t.Helper()
+				rows, err := st.ListEngineModels(ctx, "llm")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, m := range rows {
+					if m.ID == id {
+						if m.KVFullWidth != full || m.KVSWAWidth != swa || m.KVSlidingWindow != window {
+							t.Errorf("%s: widths %d/%d/%d, want %d/%d/%d", id,
+								m.KVFullWidth, m.KVSWAWidth, m.KVSlidingWindow, full, swa, window)
+						}
+						return
+					}
+				}
+				t.Fatalf("%s: not listed", id)
+			}
+			put := EngineModel{Role: "llm", ID: "put", Kind: "gguf", Files: []EngineModelFile{file},
+				KVLayers: 48, KVHeadsKV: 8, KVKeyLen: 512, KVValueLen: 512,
+				KVFullWidth: 8192, KVSWAWidth: 163840, KVSlidingWindow: 1024}
+			if err := st.PutEngineModel(ctx, put); err != nil {
+				t.Fatal(err)
+			}
+			widths(t, "put", 8192, 163840, 1024)
+
+			created := put
+			created.ID = "created"
+			if ok, err := st.CreateEngineModel(ctx, created); err != nil || !ok {
+				t.Fatalf("create: %v %v", ok, err)
+			}
+			widths(t, "created", 8192, 163840, 1024)
+
+			// The heal: a row stored without widths gets them from a targeted write.
+			bare := put
+			bare.ID, bare.KVFullWidth, bare.KVSWAWidth, bare.KVSlidingWindow = "healed", 0, 0, 0
+			if err := st.PutEngineModel(ctx, bare); err != nil {
+				t.Fatal(err)
+			}
+			kv := EngineModelKV{Layers: 24, HeadsKV: 8, KeyLen: 64, ValueLen: 64,
+				FullWidth: 12288, SWAWidth: 12288, SlidingWindow: 128, Ceiling: 131072}
+			if ok, err := st.SetEngineModelGeometry(ctx, "llm", "healed", bare.Files, kv); err != nil || !ok {
+				t.Fatalf("set geometry: %v %v", ok, err)
+			}
+			widths(t, "healed", 12288, 12288, 128)
+
+			// A replaced main file rewrites them, zeros included: the old file's layers no
+			// longer describe the bytes.
+			next := EngineModelFile{S3Key: "llm/other.gguf"}
+			if ok, err := st.ReplaceEngineModelFile(ctx, "llm", "put", next, &EngineModelKV{
+				Layers: 24, HeadsKV: 8, KeyLen: 64, ValueLen: 64, FullWidth: 6144}); err != nil || !ok {
+				t.Fatalf("replace: %v %v", ok, err)
+			}
+			widths(t, "put", 6144, 0, 0)
+		})
 	}
 }
