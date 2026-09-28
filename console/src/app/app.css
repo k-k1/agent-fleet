@@ -8,7 +8,13 @@
      layout viewport doesn't shrink on its own (interactive-widget=resizes-
      content isn't honored, or a WebView ignores it). Falls back to 100% the
      rest of the time — the var is removed as soon as the keyboard closes. */
-  height: var(--app-h, 100%);
+  /* --app-top (viewport.ts) moves the frame's content to where the panned visual viewport is,
+     and the frame grows by the same amount so its content keeps --app-h (border-box). Padding:
+     a margin collapses through #root and body and makes the page that much taller (measured:
+     1242px on an 891px screen), and position/transform would become the containing block of
+     the frame's absolute and fixed descendants. */
+  height: calc(var(--app-h, 100%) + var(--app-top, 0px));
+  padding-top: var(--app-top, 0px);
 }
 
 .app-body {
