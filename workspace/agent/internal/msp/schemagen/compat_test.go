@@ -9,6 +9,8 @@ import (
 )
 
 // baseBundle is a miniature export with one of every construct the rules distinguish.
+// StartParams and Mode travel only to the host, StartResult and Reason only to the client, and
+// Role and Variants are referenced by nothing, so they get both rule sets.
 const baseBundle = `{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "MSP v1",
@@ -17,16 +19,23 @@ const baseBundle = `{
       "type": "object",
       "properties": {
         "cwd": {"type": "string"},
-        "model": {"type": ["string", "null"]}
+        "model": {"type": ["string", "null"]},
+        "mode": {"$ref": "#/$defs/Mode"}
       },
       "required": ["cwd"]
     },
+    "StartResult": {
+      "type": "object",
+      "properties": {"sessionId": {"type": "string"}, "status": {"$ref": "#/$defs/Reason"}},
+      "required": ["sessionId"]
+    },
+    "Mode": {"type": "string", "enum": ["plan", "act"], "x-msp-openness": "closed"},
     "Reason": {"type": "string", "enum": ["idle", "shutdown"], "x-msp-openness": "open"},
     "Role": {"type": "string", "enum": ["user", "assistant"], "x-msp-openness": "closed"},
     "Variants": {"anyOf": [{"type": "array", "items": {"$ref": "#/$defs/Reason"}}, {"type": "null"}]}
   },
   "methods": {
-    "session/start": {"description": "start", "params": {"$ref": "#/$defs/StartParams"}, "result": {"type": "object"}}
+    "session/start": {"description": "start", "params": {"$ref": "#/$defs/StartParams"}, "result": {"$ref": "#/$defs/StartResult"}}
   },
   "notifications": {
     "session/closed": {"params": {"type": "object", "properties": {"reason": {"$ref": "#/$defs/Reason"}}}}
@@ -35,7 +44,7 @@ const baseBundle = `{
     "approval/request": {"params": {"type": "object"}, "result": {"type": "object"}}
   },
   "errors": [{"code": -32001, "kind": "notFound", "retryable": false}],
-  "capabilities": {"grantable": ["fs.read"], "reserved": []},
+  "capabilities": {"grantable": ["fs.read"], "reserved": [{"name": "rawLog", "reference": "#1"}]},
   "reserved": []
 }`
 
@@ -108,15 +117,25 @@ func TestCompareAdditions(t *testing.T) {
 		{"new optional property", func(b map[string]any) {
 			props(b, "StartParams")["effort"] = map[string]any{"type": "string"}
 		}, "$defs.StartParams.effort: new optional property"},
-		{"new value in an open enum", func(b map[string]any) {
-			def(b, "Reason")["enum"] = []any{"idle", "shutdown", "evicted"}
-		}, `$defs.Reason.enum: new value "evicted" (open enum)`},
+		{"new required property in a result", func(b map[string]any) {
+			props(b, "StartResult")["cursor"] = map[string]any{"type": "string"}
+			def(b, "StartResult")["required"] = []any{"sessionId", "cursor"}
+		}, "$defs.StartResult.cursor: new required property (host to client only)"},
+		{"param became optional", func(b map[string]any) {
+			def(b, "StartParams")["required"] = []any{}
+		}, "$defs.StartParams.cwd: required true -> false (safe in this direction)"},
+		{"result member became required", func(b map[string]any) {
+			def(b, "StartResult")["required"] = []any{"sessionId", "status"}
+		}, "$defs.StartResult.status: required false -> true (safe in this direction)"},
+		{"new value in an enum only the client sends", func(b map[string]any) {
+			def(b, "Mode")["enum"] = []any{"plan", "act", "review"}
+		}, `$defs.Mode.enum: new value "review" (host to client never carries it)`},
 		{"new error code", func(b map[string]any) {
 			b["errors"] = append(b["errors"].([]any), map[string]any{"code": -32002, "kind": "busy"})
 		}, "errors[-32002]: new error code"},
 		{"new grantable capability", func(b map[string]any) {
 			b["capabilities"].(map[string]any)["grantable"] = []any{"fs.read", "fs.write"}
-		}, `capabilities.grantable: "fs.write" added`},
+		}, "capabilities.grantable: fs.write added"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -160,22 +179,33 @@ func TestCompareBreaks(t *testing.T) {
 		{"existing property became required", func(b map[string]any) {
 			def(b, "StartParams")["required"] = []any{"cwd", "model"}
 		}, nil, "$defs.StartParams.model: required false -> true"},
-		{"required property became optional", func(b map[string]any) {
-			def(b, "StartParams")["required"] = []any{}
-		}, nil, "$defs.StartParams.cwd: required true -> false"},
+		{"result member became optional", func(b map[string]any) {
+			def(b, "StartResult")["required"] = []any{}
+		}, nil, "$defs.StartResult.sessionId: required true -> false"},
+		{"new required property in an unreferenced type", func(b map[string]any) {
+			v := def(b, "Role")
+			v["properties"] = map[string]any{"x": map[string]any{"type": "string"}}
+			v["required"] = []any{"x"}
+		}, nil, "$defs.Role.x: new required property"},
 		{"changed type", func(b map[string]any) {
 			props(b, "StartParams")["cwd"] = map[string]any{"type": "integer"}
 		}, nil, `$defs.StartParams.cwd.type: "string" -> "integer"`},
 		{"changed ref", func(b map[string]any) {
 			b["methods"].(map[string]any)["session/start"].(map[string]any)["params"] = map[string]any{"$ref": "#/$defs/Role"}
 		}, nil, `methods.session/start.params.$ref: "#/$defs/StartParams" -> "#/$defs/Role"`},
+		{"notification lost its params", func(b map[string]any) {
+			delete(b["notifications"].(map[string]any)["session/closed"].(map[string]any), "params")
+		}, nil, "notifications.session/closed.params: removed"},
 		{"new arm in an anyOf", func(b map[string]any) {
 			v := def(b, "Variants")
 			v["anyOf"] = append(v["anyOf"].([]any), map[string]any{"type": "string"})
 		}, nil, "$defs.Variants.anyOf: 2 arms -> 3"},
 		{"new value in a closed enum", func(b map[string]any) {
 			def(b, "Role")["enum"] = []any{"user", "assistant", "system"}
-		}, nil, `$defs.Role.enum: new value "system" in a closed enum`},
+		}, nil, `$defs.Role.enum: new value "system" in a type the client decodes`},
+		{"new value in an open enum the client decodes", func(b map[string]any) {
+			def(b, "Reason")["enum"] = []any{"idle", "shutdown", "evicted"}
+		}, nil, `$defs.Reason.enum: new value "evicted" in a type the client decodes`},
 		{"value removed from an open enum", func(b map[string]any) {
 			def(b, "Reason")["enum"] = []any{"idle"}
 		}, nil, `$defs.Reason.enum: value "shutdown" removed`},
@@ -190,7 +220,7 @@ func TestCompareBreaks(t *testing.T) {
 		}, nil, `errors[-32001]: {"code":-32001,"kind":"notFound","retryable":false} -> {"code":-32001,"kind":"notFound","retryable":true}`},
 		{"removed capability", func(b map[string]any) {
 			b["capabilities"].(map[string]any)["grantable"] = []any{}
-		}, nil, `capabilities.grantable: "fs.read" removed`},
+		}, nil, "capabilities.grantable: fs.read removed"},
 		{"unknown keyword", func(b map[string]any) {
 			props(b, "StartParams")["cwd"].(map[string]any)["format"] = "uri"
 		}, nil, `$defs.StartParams.cwd.format: null -> "uri"`},
@@ -234,6 +264,38 @@ func TestCompareIgnoresDescriptions(t *testing.T) {
 	}, nil)
 	if len(r.Additions) != 0 || len(r.Breaks) != 0 {
 		t.Fatalf("description edits were reported:\n%s", r)
+	}
+}
+
+// TestCompareIgnoresReservedCapabilities: the reserved list only carries references for names
+// nothing produces, so rewording one is not a protocol change.
+func TestCompareIgnoresReservedCapabilities(t *testing.T) {
+	r := compareMutated(t, func(b map[string]any) {
+		b["capabilities"].(map[string]any)["reserved"] = []any{map[string]any{"name": "rawLog", "reference": "#2"}}
+	}, nil)
+	if len(r.Additions) != 0 || len(r.Breaks) != 0 {
+		t.Fatalf("a reserved-capability reference edit was reported:\n%s", r)
+	}
+}
+
+// TestDefFlowsFollowRefs pins the direction each miniature type gets, including a type reached
+// only through another type's property.
+func TestDefFlowsFollowRefs(t *testing.T) {
+	var b map[string]any
+	if err := json.Unmarshal([]byte(baseBundle), &b); err != nil {
+		t.Fatal(err)
+	}
+	got := defFlows(b)
+	want := map[string]flow{"StartParams": toHost, "Mode": toHost, "StartResult": toClient, "Reason": toClient}
+	for name, f := range want {
+		if got[name] != f {
+			t.Errorf("flow of %s = %d, want %d", name, got[name], f)
+		}
+	}
+	for _, name := range []string{"Role", "Variants"} {
+		if got[name] != 0 {
+			t.Errorf("flow of unreferenced %s = %d, want 0 (Compare treats it as both ways)", name, got[name])
+		}
 	}
 }
 

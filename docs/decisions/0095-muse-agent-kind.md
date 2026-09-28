@@ -700,11 +700,11 @@ none of it is optional.
 - **What it owes**: the sandbox waiver (Decision 5), a settings file it must not corrupt (Decision 6),
   a vendor whose feature set overlaps ours (Decision 6, and a guide section explaining what AF does
   not see), and a beta that moved 1.2 → 1.3 in one month.
-- **Drift has a lock**: `muse schema` is offline and the release manifest carries
-  `msp_schema_fingerprint`. A test asserting the baked binary's fingerprint equals the one the
-  generated types were built from turns a silent protocol change into a red build. No other kind has
-  this. (P2-24 narrowed the test from equal fingerprints to a compatible schema: the fingerprint
-  also moves on additive releases, which the types survive.)
+- **Drift has a lock**: `muse schema` exports the protocol offline and the release manifest carries
+  `msp_schema_fingerprint`. A test that holds the baked binary's export to the schema the generated
+  types were built from, and fails on any change those types cannot speak, turns a silent protocol
+  change into a red build. No other kind has this. (It asks for compatibility, not an equal
+  fingerprint — see P2-24.)
 - **Estimate**: managed-only, no TUI assets, **22–33 session-days in the table, 23–35 expected today**
   (the managed-only gate is still unpaid — see below) — the sum of the table, with no
   rounding applied to make a tidier headline. It has moved every round, and that is the honest
@@ -3016,18 +3016,28 @@ someone re-exported the bundle, although the client already spoke both releases.
 `schemagen.Compare` (`internal/msp/schemagen/compat.go`) now compares the checked-in bundle with
 the binary's own export:
 
-- **Compatible (reported as notices)**: new types, methods and notifications; new optional
-  properties; new values in enums the vendor marks `"x-msp-openness": "open"`; new error codes and
-  grantable capabilities.
-- **Breaking (red)**: anything removed; a new required property, or an existing property whose
-  required-ness changed; a changed type, `$ref` or arm count; a new value in a `closed` enum; a new
-  server request (the host would wait for an answer the client cannot give); a changed
-  `schemaVersion`, or an experimental export.
+Most rules depend on which way a type travels, which the checker works out by following `$ref`s
+from the RPC tables: method params and server-request results go to the host, method results,
+notifications and server-request params come to the client, and a type reached both ways (or by
+nothing) gets both rule sets.
 
-Descriptions are ignored, and any keyword without a rule is compared for equality, so a change the
-checker does not understand fails closed. `TestInstalledBinaryIsCompatibleWithTheBundle` replaces
-`TestInstalledBinaryExportsTheSameSchema`; the workflow reports a different manifest fingerprint as
-a notice and still fails when the binary check skips.
+- **Compatible (reported as notices)**: new types, methods and notifications; new optional
+  properties; a new required property in a type the client only decodes (encoding/json drops it);
+  required-ness moving the safe way (a param becoming optional, a result member becoming required);
+  a new value in an enum the client only sends; new error codes and grantable capabilities.
+- **Breaking (red)**: anything removed; a new required property in a type the client sends;
+  required-ness moving the other way; a changed type, `$ref` or arm count; a new value in any enum
+  the client decodes; a new server request (the host would wait for an answer the client cannot
+  give); a changed `schemaVersion`, or an experimental export.
+
+The vendor marks most enums `"x-msp-openness": "open"` and says readers must handle unknown values,
+but this client does not: an unknown `ItemKind` drops out of the transcript and an unknown
+`SessionStatus` leaves the turn state where it was. So openness is not trusted. Descriptions and the
+reserved-capability references are ignored, and any keyword without a rule is compared for
+equality, so a change the checker does not understand fails closed. `TestInstalledBinaryIsCompatibleWithTheBundle` replaces
+`TestInstalledBinaryExportsTheSameSchema`. The workflow still requires the release manifest's
+fingerprint to equal the one the downloaded binary exports, reports a bundle behind the release as
+a notice, and fails when the binary check skips.
 
 Measured: the checker judges 1.3.0 → R4161.1 and R4161.1 → R4302.1 compatible, with exactly the
 additions listed above, and the reverse of the first (the R4161.1 bundle against the 1.3.0

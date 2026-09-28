@@ -32,8 +32,10 @@ func (r *CompatReport) Compatible() bool { return len(r.Breaks) == 0 }
 // the rule that replaced it; the fingerprint is still carried, as a record of which export the
 // types were rendered from.
 //
-// Anything this does not recognise is a break: a keyword it has no rule for is compared for
-// equality, so an unfamiliar change fails closed rather than passing as an addition.
+// Most rules depend on which way a type travels: a new required member is harmless in a result
+// the client only decodes, and fatal in params it has to fill. Anything this does not recognise
+// is a break: a keyword it has no rule for is compared for equality, so an unfamiliar change
+// fails closed rather than passing as an addition.
 func Compare(oldDir, newDir string) (*CompatReport, error) {
 	var oldMan, newMan manifest
 	if err := readJSON(filepath.Join(oldDir, "schema", "manifest.json"), &oldMan); err != nil {
@@ -78,22 +80,50 @@ var ignoredKeys = map[string]bool{
 	"examples":    true,
 }
 
+// flow says which way a schema node travels. A type reachable both ways gets both rule sets.
+type flow uint8
+
+const (
+	toHost   flow = 1 << iota // the client builds it: method params, server-request results
+	toClient                  // the client decodes it: method results, notifications, server-request params
+	bothWays = toHost | toClient
+)
+
 func compareBundles(r *CompatReport, oldB, newB map[string]any) {
+	flows := defFlows(oldB)
+	for name, f := range defFlows(newB) {
+		flows[name] |= f
+	}
+	defFlow := func(name string) flow {
+		if f := flows[name]; f != 0 {
+			return f
+		}
+		// Referenced by nothing today; it may be tomorrow, from either side.
+		return bothWays
+	}
 	for _, k := range unionKeys(oldB, newB) {
 		o, n := oldB[k], newB[k]
 		switch k {
 		case "$defs":
-			compareNamed(r, "$defs", asMap(o), asMap(n), func(path string) { r.addf("%s: new type", path) })
+			compareNamed(r, "$defs", asMap(o), asMap(n),
+				func(path string) { r.addf("%s: new type", path) },
+				func(name, path string, ov, nv any) { compareNode(r, path, ov, nv, defFlow(name)) })
 		case "methods":
 			// The client picks which methods it calls, so one it has never heard of is unused.
-			compareNamed(r, "methods", asMap(o), asMap(n), func(path string) { r.addf("%s: new method", path) })
+			compareNamed(r, "methods", asMap(o), asMap(n),
+				func(path string) { r.addf("%s: new method", path) },
+				func(_, path string, ov, nv any) { compareEntry(r, path, ov, nv, toHost, toClient) })
 		case "notifications":
 			// The notification table is a decode map, not an allow-list: an unknown name is
 			// ignored (TestUndeclaredNotificationIsIgnored in the muse driver).
-			compareNamed(r, "notifications", asMap(o), asMap(n), func(path string) { r.addf("%s: new notification", path) })
+			compareNamed(r, "notifications", asMap(o), asMap(n),
+				func(path string) { r.addf("%s: new notification", path) },
+				func(_, path string, ov, nv any) { compareEntry(r, path, ov, nv, toClient, toClient) })
 		case "requests":
 			// A server request waits for an answer the client does not know how to give.
-			compareNamed(r, "requests", asMap(o), asMap(n), func(path string) { r.breakf("%s: new server request", path) })
+			compareNamed(r, "requests", asMap(o), asMap(n),
+				func(path string) { r.breakf("%s: new server request", path) },
+				func(_, path string, ov, nv any) { compareEntry(r, path, ov, nv, toClient, toHost) })
 		case "errors":
 			compareErrors(r, o, n)
 		case "capabilities":
@@ -108,8 +138,49 @@ func compareBundles(r *CompatReport, oldB, newB map[string]any) {
 	}
 }
 
+// defFlows reports, for every $defs entry reachable from an RPC table, which way it travels.
+func defFlows(b map[string]any) map[string]flow {
+	defs := asMap(b["$defs"])
+	flows := map[string]flow{}
+	var walk func(v any, f flow)
+	walk = func(v any, f flow) {
+		switch t := v.(type) {
+		case map[string]any:
+			if ref, ok := t["$ref"].(string); ok {
+				name := strings.TrimPrefix(ref, "#/$defs/")
+				if flows[name]&f != f {
+					flows[name] |= f
+					walk(defs[name], f)
+				}
+			}
+			for _, e := range t {
+				walk(e, f)
+			}
+		case []any:
+			for _, e := range t {
+				walk(e, f)
+			}
+		}
+	}
+	for _, table := range []struct {
+		name           string
+		params, result flow
+	}{
+		{"methods", toHost, toClient},
+		{"notifications", toClient, toClient},
+		{"requests", toClient, toHost},
+	} {
+		for _, e := range asMap(b[table.name]) {
+			em := asMap(e)
+			walk(em["params"], table.params)
+			walk(em["result"], table.result)
+		}
+	}
+	return flows
+}
+
 // compareNamed walks one of the bundle's name → schema tables.
-func compareNamed(r *CompatReport, table string, o, n map[string]any, added func(path string)) {
+func compareNamed(r *CompatReport, table string, o, n map[string]any, added func(path string), both func(name, path string, ov, nv any)) {
 	for _, name := range unionKeys(o, n) {
 		path := table + "." + name
 		ov, inOld := o[name]
@@ -120,13 +191,46 @@ func compareNamed(r *CompatReport, table string, o, n map[string]any, added func
 		case !inNew:
 			r.breakf("%s: removed", path)
 		default:
-			compareNode(r, path, ov, nv)
+			both(name, path, ov, nv)
 		}
 	}
 }
 
-// compareNode compares one schema node (or an RPC entry, whose params and result are nodes).
-func compareNode(r *CompatReport, path string, o, n any) {
+// compareEntry compares one RPC entry, whose params and result travel in the given directions.
+func compareEntry(r *CompatReport, path string, o, n any, params, result flow) {
+	om, nm := asMap(o), asMap(n)
+	if om == nil || nm == nil {
+		if !equalIgnoring(o, n) {
+			r.breakf("%s: changed", path)
+		}
+		return
+	}
+	for _, k := range unionKeys(om, nm) {
+		if ignoredKeys[k] {
+			continue
+		}
+		ov, nv := om[k], nm[k]
+		switch k {
+		case "params", "result":
+			if ov == nil || nv == nil {
+				r.breakf("%s.%s: %s", path, k, presence(ov, nv))
+				continue
+			}
+			f := params
+			if k == "result" {
+				f = result
+			}
+			compareNode(r, path+"."+k, ov, nv, f)
+		default:
+			if !equalIgnoring(ov, nv) {
+				r.breakf("%s.%s: %s -> %s", path, k, compact(ov), compact(nv))
+			}
+		}
+	}
+}
+
+// compareNode compares one schema node travelling in direction f.
+func compareNode(r *CompatReport, path string, o, n any, f flow) {
 	om, oIsMap := o.(map[string]any)
 	nm, nIsMap := n.(map[string]any)
 	if !oIsMap || !nIsMap {
@@ -146,17 +250,17 @@ func compareNode(r *CompatReport, path string, o, n any) {
 			// Judged together, per property: whether a newly required name is a break
 			// depends on whether the property itself is new.
 			if !propsDone {
-				compareProperties(r, path, om, nm)
+				compareProperties(r, path, om, nm, f)
 				propsDone = true
 			}
 		case "enum":
-			compareEnum(r, path, om, nm)
-		case "params", "result", "items", "additionalProperties":
+			compareEnum(r, path, om, nm, f)
+		case "items", "additionalProperties":
 			if ov == nil || nv == nil {
 				r.breakf("%s.%s: %s", path, k, presence(ov, nv))
 				continue
 			}
-			compareNode(r, path+"."+k, ov, nv)
+			compareNode(r, path+"."+k, ov, nv, f)
 		case "anyOf", "oneOf", "allOf":
 			oa, na := asSlice(ov), asSlice(nv)
 			if len(oa) != len(na) {
@@ -164,7 +268,7 @@ func compareNode(r *CompatReport, path string, o, n any) {
 				continue
 			}
 			for i := range oa {
-				compareNode(r, fmt.Sprintf("%s.%s[%d]", path, k, i), oa[i], na[i])
+				compareNode(r, fmt.Sprintf("%s.%s[%d]", path, k, i), oa[i], na[i], f)
 			}
 		default:
 			if !equalIgnoring(ov, nv) {
@@ -174,7 +278,7 @@ func compareNode(r *CompatReport, path string, o, n any) {
 	}
 }
 
-func compareProperties(r *CompatReport, path string, om, nm map[string]any) {
+func compareProperties(r *CompatReport, path string, om, nm map[string]any, f flow) {
 	op, np := asMap(om["properties"]), asMap(nm["properties"])
 	oReq, nReq := asSet(om["required"]), asSet(nm["required"])
 	for _, name := range unionKeys(op, np) {
@@ -182,32 +286,45 @@ func compareProperties(r *CompatReport, path string, om, nm map[string]any) {
 		ov, inOld := op[name]
 		nv, inNew := np[name]
 		switch {
-		case !inOld && nReq[name]:
+		case !inOld && nReq[name] && f&toHost != 0:
 			// The client does not send it, and the host requires it.
 			r.breakf("%s: new required property", p)
+		case !inOld && nReq[name]:
+			// Only decoded: encoding/json drops a member the type has no field for.
+			r.addf("%s: new required property (host to client only)", p)
 		case !inOld:
 			r.addf("%s: new optional property", p)
 		case !inNew:
 			// Whether it was sent or decoded, one side now has a member the other lost.
 			r.breakf("%s: removed", p)
 		default:
-			if oReq[name] != nReq[name] {
-				r.breakf("%s: required %t -> %t", p, oReq[name], nReq[name])
+			switch {
+			case !oReq[name] && nReq[name] && f&toHost != 0:
+				// The client may leave it out, and the host now refuses that.
+				r.breakf("%s: required false -> true", p)
+			case oReq[name] && !nReq[name] && f&toClient != 0:
+				// The client may rely on it, and the host may now leave it out.
+				r.breakf("%s: required true -> false", p)
+			case oReq[name] != nReq[name]:
+				r.addf("%s: required %t -> %t (safe in this direction)", p, oReq[name], nReq[name])
 			}
-			compareNode(r, p, ov, nv)
+			compareNode(r, p, ov, nv, f)
 		}
 	}
 	// A required name with no property behind it still binds the sender.
 	for _, name := range sortedSet(nReq) {
-		if _, declared := np[name]; !declared && !oReq[name] {
+		if _, declared := np[name]; !declared && !oReq[name] && f&toHost != 0 {
 			r.breakf("%s.%s: newly required", path, name)
 		}
 	}
 }
 
-// compareEnum lets an enum grow only where the vendor declares it may: an "open" enum is one
-// whose readers are required to tolerate values they do not know.
-func compareEnum(r *CompatReport, path string, om, nm map[string]any) {
+// compareEnum lets an enum grow only where the client never has to read the new value. The
+// vendor marks most enums "open" and says readers must handle unknown values, but this client
+// switches on known ones: an unknown ItemKind drops out of the transcript (transcript.go) and an
+// unknown SessionStatus leaves the turn state where it was (handle.go onStatus). So growth in
+// anything the client decodes is a break, open or not.
+func compareEnum(r *CompatReport, path string, om, nm map[string]any, f flow) {
 	ov, nv := asSlice(om["enum"]), asSlice(nm["enum"])
 	if ov == nil || nv == nil {
 		r.breakf("%s.enum: %s", path, presence(om["enum"], nm["enum"]))
@@ -220,20 +337,18 @@ func compareEnum(r *CompatReport, path string, om, nm map[string]any) {
 	for _, v := range nv {
 		nSet[compact(v)] = true
 	}
-	open := om["x-msp-openness"] == "open" && nm["x-msp-openness"] == "open"
 	for _, v := range sortedSet(oSet) {
 		if !nSet[v] {
 			r.breakf("%s.enum: value %s removed", path, v)
 		}
 	}
 	for _, v := range sortedSet(nSet) {
-		if oSet[v] {
-			continue
-		}
-		if open {
-			r.addf("%s.enum: new value %s (open enum)", path, v)
-		} else {
-			r.breakf("%s.enum: new value %s in a closed enum", path, v)
+		switch {
+		case oSet[v]:
+		case f&toClient != 0:
+			r.breakf("%s.enum: new value %s in a type the client decodes", path, v)
+		default:
+			r.addf("%s.enum: new value %s (host to client never carries it)", path, v)
 		}
 	}
 }
@@ -265,26 +380,19 @@ func compareErrors(r *CompatReport, o, n any) {
 	}
 }
 
-// compareCapabilities treats each list as a set: the client asks for capabilities by name, so a
-// name that disappears is one it can no longer be granted.
+// compareCapabilities compares the grantable names as a set: the client asks for capabilities
+// by name, so one that disappears is one it can no longer be granted. The reserved list names
+// identifiers with no producer and carries only references, so it is not compared.
 func compareCapabilities(r *CompatReport, o, n map[string]any) {
-	for _, k := range unionKeys(o, n) {
-		oSet, nSet := map[string]bool{}, map[string]bool{}
-		for _, v := range asSlice(o[k]) {
-			oSet[compact(v)] = true
+	oSet, nSet := asSet(o["grantable"]), asSet(n["grantable"])
+	for _, v := range sortedSet(oSet) {
+		if !nSet[v] {
+			r.breakf("capabilities.grantable: %s removed", v)
 		}
-		for _, v := range asSlice(n[k]) {
-			nSet[compact(v)] = true
-		}
-		for _, v := range sortedSet(oSet) {
-			if !nSet[v] {
-				r.breakf("capabilities.%s: %s removed", k, v)
-			}
-		}
-		for _, v := range sortedSet(nSet) {
-			if !oSet[v] {
-				r.addf("capabilities.%s: %s added", k, v)
-			}
+	}
+	for _, v := range sortedSet(nSet) {
+		if !oSet[v] {
+			r.addf("capabilities.grantable: %s added", v)
 		}
 	}
 }

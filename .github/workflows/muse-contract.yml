@@ -119,13 +119,22 @@ jobs:
             exit 1
           fi
 
-      # Informational only. A different fingerprint means the checked-in bundle is behind this
-      # release; whether that matters is the next step's question.
-      - name: the manifest fingerprint against the generated types
+      # The release manifest and the binary's own export must name the same schema: otherwise
+      # the compatibility check below would judge a schema this release does not ship. Against
+      # the generated types a different fingerprint is informational only — the checked-in
+      # bundle is behind this release, and whether that matters is the next step's question.
+      - name: the manifest fingerprint against the binary and the generated types
         env:
           FP: ${{ steps.rel.outputs.fingerprint }}
         run: |
           set -euo pipefail
+          rm -rf /tmp/muse-schema
+          MUSE_NO_AUTO_UPDATE=1 /tmp/muse schema generate-json-schema --out /tmp/muse-schema
+          exported="$(jq -r .fingerprint /tmp/muse-schema/manifest.json)"
+          if [ "$exported" != "$FP" ]; then
+            echo "::error::the binary exports schema $exported, but the release manifest says $FP."
+            exit 1
+          fi
           have="$(sed -n 's/^const SchemaFingerprint = "\(.*\)"$/\1/p' workspace/agent/internal/msp/types_gen.go)"
           [ -n "$have" ] || { echo '::error::could not read msp.SchemaFingerprint'; exit 1; }
           if [ "$have" != "$FP" ]; then
