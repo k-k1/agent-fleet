@@ -703,7 +703,8 @@ none of it is optional.
 - **Drift has a lock**: `muse schema` is offline and the release manifest carries
   `msp_schema_fingerprint`. A test asserting the baked binary's fingerprint equals the one the
   generated types were built from turns a silent protocol change into a red build. No other kind has
-  this.
+  this. (P2-24 narrowed the test from equal fingerprints to a compatible schema: the fingerprint
+  also moves on additive releases, which the types survive.)
 - **Estimate**: managed-only, no TUI assets, **22–33 session-days in the table, 23–35 expected today**
   (the managed-only gate is still unpaid — see below) — the sum of the table, with no
   rounding applied to make a tidier headline. It has moved every round, and that is the honest
@@ -3002,3 +3003,35 @@ test's problem, not the mutation's.
 **Not built, deliberately.** `skill/changed` is not subscribed, because there is no cache to
 invalidate: the picker asks the running host each time it opens, which is a round trip to a
 process that already exists. A cache is what would make that notification necessary.
+
+### P2-24: the drift lock asks for compatibility, not an equal fingerprint (2026-09-29)
+
+The lock above compared fingerprints for equality, and the fingerprint moves on any change to the
+vendor's schema model. The two releases after 1.3.0 were both additive: 1.4.0-R4161.1 added the
+notifications `session/started` and `session/closed`, the `session/delete` types and an optional
+`ModelCatalogEntry.variants`; 1.4.0-R4302.1 added the method `session/delete` and the notification
+`session/deleteCompleted`. Each one turned `muse-contract.yml` red, and the pin could not move until
+someone re-exported the bundle, although the client already spoke both releases.
+
+`schemagen.Compare` (`internal/msp/schemagen/compat.go`) now compares the checked-in bundle with
+the binary's own export:
+
+- **Compatible (reported as notices)**: new types, methods and notifications; new optional
+  properties; new values in enums the vendor marks `"x-msp-openness": "open"`; new error codes and
+  grantable capabilities.
+- **Breaking (red)**: anything removed; a new required property, or an existing property whose
+  required-ness changed; a changed type, `$ref` or arm count; a new value in a `closed` enum; a new
+  server request (the host would wait for an answer the client cannot give); a changed
+  `schemaVersion`, or an experimental export.
+
+Descriptions are ignored, and any keyword without a rule is compared for equality, so a change the
+checker does not understand fails closed. `TestInstalledBinaryIsCompatibleWithTheBundle` replaces
+`TestInstalledBinaryExportsTheSameSchema`; the workflow reports a different manifest fingerprint as
+a notice and still fails when the binary check skips.
+
+Measured: the checker judges 1.3.0 → R4161.1 and R4161.1 → R4302.1 compatible, with exactly the
+additions listed above, and the reverse of the first (the R4161.1 bundle against the 1.3.0
+export) breaking, with every removal named. The unit tests cover every rule on a miniature
+bundle, plus the real bundle against itself. The fingerprint is still carried in `types_gen.go`,
+as the record of which export the types were rendered from; re-exporting is now done when the
+client wants something a release added.
