@@ -45,6 +45,10 @@
 .igen-body.igen-studio {
   grid-template-columns: minmax(300px, 1.1fr) minmax(320px, 1fr) minmax(280px, 0.9fr);
   overflow: hidden;
+  /* The composer sits on the pane's bottom edge, as in a session pane of its own; the grid's
+     bottom padding left a band under it (reported on a phone and on a PC). The scrolling
+     columns keep that room themselves. */
+  padding-bottom: 0;
 }
 
 .igen-studio > .igen-col-form,
@@ -52,7 +56,7 @@
   overflow: auto;
   min-height: 0;
   /* Room for the agent outline (.igen-hl), which a scrolling column would otherwise clip. */
-  padding: 4px 6px;
+  padding: 4px 6px 16px;
 }
 
 .igen-col-agent {

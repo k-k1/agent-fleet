@@ -102,7 +102,7 @@ func titleGenDone(name string, ok bool) {
 // checked the cheap session.Meta fields (Title == "", SuggestedTitle == "",
 // !SuggestedTitleDismissed) and autoTitleSuggestEnabled() before computing turns.
 func maybeSuggestTitle(name string, turns []transcript.Turn, idleFor time.Duration) {
-	if len(turns) < minTitleSuggestTurns || idleFor < titleIdleThreshold {
+	if len(withoutStudioPersona(turns)) < minTitleSuggestTurns || idleFor < titleIdleThreshold {
 		return
 	}
 	if !titleGenClaim(name) {
@@ -211,10 +211,35 @@ const (
 	titlePerTurnRunes = 400
 )
 
+// withoutStudioPersona drops a studio session's opening exchange: the persona the pane sends as
+// the first turn and the agent's greeting to it. Both describe the studio rather than the work, so
+// with them in the window every studio session was titled "prompt drafting in the image studio".
+func withoutStudioPersona(turns []transcript.Turn) []transcript.Turn {
+	first := -1
+	for i, t := range turns {
+		if t.Sidechain || t.Compact {
+			continue
+		}
+		if t.Role == "user" {
+			first = i
+		}
+		break
+	}
+	if first < 0 || !imagegen.IsStudioPersona(turns[first].Text) {
+		return turns
+	}
+	next := first + 1
+	for next < len(turns) && turns[next].Role != "user" {
+		next++
+	}
+	return append(append([]transcript.Turn{}, turns[:first]...), turns[next:]...)
+}
+
 // titleSuggestPrompt feeds the opening and the most recent real exchanges (skipping
 // sidechain/compaction/tool-only turns), weighting the recent topic — so the title
 // tracks where the conversation is now, not just where it started.
 func titleSuggestPrompt(turns []transcript.Turn, lang string) string {
+	turns = withoutStudioPersona(turns)
 	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
 		// The studio's signal line is addressed to the agent (ADR 0100 decision 5); a title or a
@@ -312,6 +337,7 @@ func writeConversationWindow(b *strings.Builder, real []transcript.Turn) {
 // it instructs an English kebab-case name even when the conversation is Japanese, with
 // English few-shot anchors.
 func BranchSuggestPrompt(turns []transcript.Turn) string {
+	turns = withoutStudioPersona(turns)
 	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
 		// The studio's signal line is addressed to the agent (ADR 0100 decision 5); a title or a
@@ -593,7 +619,7 @@ var (
 // a manual request and a concurrent automatic one can't double-fire for the same
 // session.
 func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn) (string, error) {
-	if len(turns) == 0 {
+	if len(withoutStudioPersona(turns)) == 0 {
 		return "", errNoTitleContent
 	}
 	if !titleGenClaim(name) {
@@ -802,7 +828,7 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	turns := sessionTitleTurns(m)
-	if len(turns) == 0 {
+	if len(withoutStudioPersona(turns)) == 0 {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleNoContent, "not enough conversation yet (try after a few exchanges)")
 		return
 	}

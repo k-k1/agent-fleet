@@ -509,13 +509,29 @@ func HandleStudioPersona(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, ImageStudioPersona{Prompt: studioPersona(lang, rec.Title), Lang: lang})
 }
 
+// The persona's opening words, shared with IsStudioPersona so rewording the persona cannot
+// silently stop the title suggester from recognising it.
+const (
+	studioPersonaLeadEN = "In this session you work with the user on the prompt draft of "
+	studioPersonaLeadJA = "このセッションでは、Agent Fleet の"
+)
+
+// IsStudioPersona reports whether a user turn is the persona the pane sends as a studio
+// session's first turn. It describes the studio, not the member's work, so a title or a branch
+// name taken from it names every studio session the same ("prompt drafting in the image studio").
+func IsStudioPersona(text string) bool {
+	text = strings.TrimSpace(text)
+	return strings.HasPrefix(text, studioPersonaLeadEN) ||
+		(strings.HasPrefix(text, studioPersonaLeadJA) && strings.Contains(text, "get_image_studio"))
+}
+
 func studioPersona(lang, title string) string {
 	if lang == "en" {
 		name := "an image studio"
 		if title != "" {
 			name = "the image studio \"" + title + "\""
 		}
-		return "In this session you work with the user on the prompt draft of " + name + " in Agent Fleet.\n" +
+		return studioPersonaLeadEN + name + " in Agent Fleet.\n" +
 			"- On every message from the user, call get_image_studio FIRST, before answering: it has the draft, the locked fields, " +
 			"and what changed since your last call (the user's edits, rewinds, new pictures).\n" +
 			"- Change the draft only with set_image_draft. Locked fields and the user's fields (model, seed, jobs, count, out_dir, label, mask) " +
@@ -531,7 +547,7 @@ func studioPersona(lang, title string) string {
 	if title != "" {
 		name = "画像生成スタジオ「" + title + "」"
 	}
-	return "このセッションでは、Agent Fleet の" + name + "で、利用者と一緒にプロンプトの下書きを作ります。\n" +
+	return studioPersonaLeadJA + name + "で、利用者と一緒にプロンプトの下書きを作ります。\n" +
 		"- 利用者の発言を受けたら、答える前にまず get_image_studio を呼んでください。下書き・錠の欄・前回からの変化" +
 		"（利用者の編集・巻き戻し・新しい絵）が分かります。\n" +
 		"- 下書きの変更は set_image_draft だけで行います。錠の欄と利用者の欄（model・seed・jobs・count・out_dir・label・mask）は" +
