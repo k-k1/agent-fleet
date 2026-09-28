@@ -18,6 +18,29 @@ describe("chromeBottom", () => {
     expect(chromeBottom(boxes, 390)).toBe(249);
   });
 
+  it("stays inside the top pane when a short split brings the lower pane's bars close", () => {
+    // Keyboard up (frame 440px tall) and the upper pane at its 20% minimum: the lower pane's
+    // header (177) is within the gap of the upper one's (144), and a studio below would add its
+    // tab strip and embedded header too.
+    const up = {};
+    const down = {};
+    const boxes = [
+      box(0, 59),
+      box(59, 101),
+      { ...box(108, 144, 7, 383), pane: up },
+      { ...box(177, 213, 7, 383), pane: down },
+      { ...box(213, 245, 7, 383), pane: down },
+      { ...box(281, 317, 19, 371), pane: down },
+    ];
+    expect(chromeBottom(boxes, 390)).toBe(144);
+  });
+
+  it("keeps chaining bars that belong to the same pane", () => {
+    const p = {};
+    const boxes = [box(0, 59), box(59, 101), { ...box(108, 145, 7, 383), pane: p }, { ...box(145, 177, 7, 383), pane: p }];
+    expect(chromeBottom(boxes, 390)).toBe(177);
+  });
+
   it("starts from where the frame is while a keyboard shifts it down", () => {
     expect(chromeBottom([box(300, 359), box(359, 401), box(408, 444, 7, 383)], 390)).toBe(444);
   });

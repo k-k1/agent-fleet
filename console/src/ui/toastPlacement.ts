@@ -18,6 +18,11 @@ export interface Box {
   bottom: number;
   left: number;
   right: number;
+  // Which pane the bar belongs to; absent for the app's own bars. The run stays inside the first
+  // pane it enters: with a split shrunk to its 20% minimum under a keyboard, the lower pane's
+  // header sits within RUN_GAP of the upper one's and would pull the stack onto that pane's
+  // composer.
+  pane?: unknown;
 }
 
 // chromeBottom returns the bottom of the run of boxes that starts with the topmost one. It starts
@@ -29,14 +34,22 @@ export function chromeBottom(boxes: Box[], viewportWidth: number): number {
     .sort((a, b) => a.top - b.top);
   if (seen.length === 0) return 0;
   let y = seen[0].top;
+  let pane: unknown;
   for (const b of seen) {
     if (b.top > y + RUN_GAP) break;
+    if (b.pane != null) {
+      if (pane == null) pane = b.pane;
+      else if (b.pane !== pane) break;
+    }
     y = Math.max(y, b.bottom);
   }
   return y;
 }
 
 export function measureChromeBottom(doc: Document = document): number {
-  const boxes = [...doc.querySelectorAll(TOAST_CHROME_SELECTOR)].map((e) => e.getBoundingClientRect());
+  const boxes = [...doc.querySelectorAll(TOAST_CHROME_SELECTOR)].map((e) => {
+    const r = e.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, pane: e.closest(".pane") ?? undefined };
+  });
   return chromeBottom(boxes, doc.documentElement.clientWidth || window.innerWidth);
 }
