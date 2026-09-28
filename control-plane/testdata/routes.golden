@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 544
+# count: 549
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -120,6 +120,8 @@ GET /api/aws-login
 GET /api/aws-login/{id}/attempts/{attempt}
 POST /api/aws-login/{id}/cancel
 POST /api/aws-login/{id}/start
+GET /api/branch-rules/user
+PUT /api/branch-rules/user
 GET /api/browser/attach-targets
 GET /api/browser/attachments
 POST /api/browser/attachments
@@ -344,6 +346,9 @@ POST /api/repos/init
 POST /api/repos/svn
 DELETE /api/repos/{name}
 DELETE /api/repos/{name}/branch
+POST /api/repos/{name}/branch-name
+POST /api/repos/{name}/branch-name/check
+GET /api/repos/{name}/branch-rule
 GET /api/repos/{name}/branches
 GET /api/repos/{name}/changes
 POST /api/repos/{name}/checkout

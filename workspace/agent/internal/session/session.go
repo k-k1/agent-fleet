@@ -541,6 +541,19 @@ type Meta struct {
 	// token expired) before start-session. No AWS credentials are stored anywhere —
 	// the aws CLI obtains them via SSO at launch and caches them in the home volume.
 	SSM *SSMMeta `json:"ssm,omitempty"`
+	// WorkItem is the item a work-item launch was started for (ADR 0103 decision 8), so a
+	// rename through POST /repos/{name}/branch-name keeps {ref} and the kind. nil for every
+	// other launch.
+	WorkItem *WorkItemRef `json:"workItem,omitempty"`
+}
+
+// WorkItemRef is the part of a work item the branch-name resolver renders from.
+type WorkItemRef struct {
+	Provider string   `json:"provider,omitempty"`
+	Key      string   `json:"key"`
+	Title    string   `json:"title,omitempty"`
+	Type     string   `json:"type,omitempty"`
+	Labels   []string `json:"labels,omitempty"`
 }
 
 // The values of Meta.InitialPromptState.
