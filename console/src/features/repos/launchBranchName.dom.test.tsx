@@ -89,7 +89,7 @@ async function typeInto(el: HTMLInputElement, text: string): Promise<void> {
   });
 }
 
-async function render(withItem = true, repo = "web"): Promise<void> {
+async function render(withItem = true, repo = "web", it: typeof item = item, prompt?: string): Promise<void> {
   await act(async () => {
     root!.render(
       <LaunchModal
@@ -97,7 +97,8 @@ async function render(withItem = true, repo = "web"): Promise<void> {
         branch="main"
         kinds={["claude"]}
         initialNewBranch="feature/issue-45"
-        workItem={withItem ? item : undefined}
+        initialPrompt={prompt}
+        workItem={withItem ? it : undefined}
         onClose={() => {}}
         onLaunch={onLaunch}
       />,
@@ -259,6 +260,39 @@ describe("work-item launch through the branch-name resolver", () => {
     expect(nameField().value).toBe("feature/issue-45");
     expect(baseField().value).toBe("main");
     expect(document.querySelector(".launch-base-source")).toBeNull();
+  });
+
+  it("another work item gets a fresh form inside the same Modal, whose back-button guard stays", async () => {
+    await render(true, "web", item, "look at #45");
+    const box = () => document.querySelector("textarea")!;
+    expect(box().value).toBe("look at #45");
+    const push = vi.spyOn(history, "pushState");
+    const back = vi.spyOn(history, "back");
+    const other = { ...item, key: "acme/web#46", title: "Another one" };
+    await render(true, "web", other, "look at #46");
+    // The form follows the new item: its first prompt, not the last item's.
+    expect(box().value).toBe("look at #46");
+    expect(apiJSONMock.mock.calls.at(-1)?.[2]).toEqual({ item: other });
+    // The Modal was not remounted: no guard consumed, none pushed again.
+    expect(back).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    push.mockRestore();
+    back.mockRestore();
+  });
+
+  it("another pull request's head branch replaces the last one's preselected branch", async () => {
+    const renderPR = (existing: string) =>
+      act(async () => {
+        root!.render(
+          <LaunchModal repo="web" branch="main" kinds={["claude"]} initialExistingBranch={existing} onClose={() => {}} onLaunch={onLaunch} />,
+        );
+      });
+    await renderPR("pr-a");
+    await settle();
+    await renderPR("pr-b");
+    await settle();
+    await click(byText("Start"));
+    expect(onLaunch.mock.calls[0][0]).toMatchObject({ base: "pr-b", useExisting: true });
   });
 
   it("a launch that did not come from a work item never asks for a name", async () => {

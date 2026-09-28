@@ -167,7 +167,32 @@ function LaunchSection({ label, summary, warn = false, open, onToggle, children 
   );
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch }: LaunchModalProps) {
+export function LaunchModal(props: LaunchModalProps) {
+  const { repo, onClose, workItem } = props;
+  const tr = useT();
+  // Held here because the Modal's close lock needs it; the form below sets it.
+  const [busy, setBusy] = useState(false);
+  // The form is remounted for each target (working copy, work item, preselected branch or
+  // location): every field, draft and resolved branch name belongs to the target it was opened
+  // for. The Modal around it is not — remounting it in the same commit costs its back-button
+  // guard (see StartHost).
+  const target = [repo, workItem?.provider ?? "", workItem?.key ?? "", props.initialExistingBranch ?? "", String(props.initialWorktree ?? "")].join("\u0000");
+  return (
+    <Modal
+      title={
+        <>
+          <Icon name="play" /> {tr("launch.title", { repo })}
+        </>
+      }
+      onClose={onClose}
+      lockClose={busy}
+    >
+      <LaunchForm key={target} {...props} busy={busy} setBusy={setBusy} />
+    </Modal>
+  );
+}
+
+function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -218,7 +243,6 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // look at a branch and coming back must not cost the screenshot that was pasted in.
   const attach = useAttachDraft(launchAttachKey(repo));
   const images = attach.items;
-  const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null); // hidden + picker (the phone path)
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
@@ -235,17 +259,6 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // restores the usual behaviour.
   const [branchName, setBranchName] = useState(initialNewBranch || "");
   const naming = useLaunchBranchName({ repo, item: workItem, name: branchName, setName: setBranchName, setBase });
-  // The same dialog can be handed another target; its branch fields then start from that
-  // target's own suggestion and base, before the resolver answers for it.
-  const target = `${repo}\u0000${workItem?.key ?? ""}`;
-  const lastTarget = useRef(target);
-  useEffect(() => {
-    if (lastTarget.current === target) return;
-    lastTarget.current = target;
-    setBranchName(initialNewBranch || "");
-    setBase(branch || "");
-    setConflict(null);
-  }, [target, initialNewBranch, branch]);
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
   const [conflictWt, setConflictWt] = useState(""); // for "in_use": the copy holding it
   // Branch: create a new one (the default), or use a branch that already exists. The latter
@@ -483,15 +496,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   };
 
   return (
-    <Modal
-      title={
-        <>
-          <Icon name="play" /> {tr("launch.title", { repo })}
-        </>
-      }
-      onClose={onClose}
-      lockClose={busy}
-    >
+    <>
       <div className="ui-modal-body">
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.agent")}</span>
@@ -930,6 +935,6 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           {busy ? tr("launch.launching") : worktree ? tr("launch.start_worktree") : tr("launch.launch")}
         </Button>
       </footer>
-    </Modal>
+    </>
   );
 }
