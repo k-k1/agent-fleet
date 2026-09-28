@@ -465,7 +465,24 @@ func cutKeyPrefix(s, key string) (string, bool) {
 	if r, _ := utf8.DecodeRuneInString(rest); unicode.IsLetter(r) || unicode.IsDigit(r) {
 		return "", false
 	}
-	return strings.TrimLeft(rest, " 　:：.)）、-–—|/"), true
+	return trimKeySeparator(rest), true
+}
+
+// trimKeySeparator drops what joins a key to the text ("#1146: x", "#1146 - x") without eating
+// the text's own punctuation: a separator counts only right after the key or before a space, so
+// "#1146 .NET 8" keeps its ".NET".
+func trimKeySeparator(rest string) string {
+	const blanks = " 　"
+	spaced := strings.TrimLeft(rest, blanks)
+	r, size := utf8.DecodeRuneInString(spaced)
+	if !strings.ContainsRune(":：.)）、-–—|/", r) {
+		return spaced
+	}
+	after := spaced[size:]
+	if trimmed := strings.TrimLeft(after, blanks); spaced == rest || trimmed != after || after == "" {
+		return trimmed
+	}
+	return spaced
 }
 
 const (
