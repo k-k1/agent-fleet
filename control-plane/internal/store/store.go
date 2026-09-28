@@ -612,6 +612,8 @@ type WorkItem struct {
 	LabelColors                         string // JSON object: label name -> "rrggbb"; "" when none
 	Repo                                string
 	UpdatedAt, FetchedAt                string
+	Checks                              string // JSON object {state,total,failed,pending}; "" when not read
+	Mergeable                           string // clean / conflict / unknown; "" when not read
 }
 
 // WorkItemSession is the ledger row written when a session is started from an item.

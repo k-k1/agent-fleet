@@ -152,6 +152,27 @@
   color: var(--muted);
 }
 
+/* CI / conflict marker on a pull request row, between the title and the age. */
+.wi-flag {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+}
+.wi-flag.tone-ok {
+  color: var(--ok);
+}
+.wi-flag.tone-warn {
+  color: var(--warn);
+}
+.wi-flag.tone-bad {
+  color: var(--err);
+}
+.wi-flag.tone-muted {
+  color: var(--muted);
+}
+
 .wi-info {
   flex: 1 1 auto;
   min-width: 0;
