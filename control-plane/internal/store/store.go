@@ -253,6 +253,16 @@ type EngineModel struct {
 	// or the row was written before they were read, and both reduce to "every layer caches".
 	// See engineKVGeometry.cacheLayers for the measurement that made them necessary.
 	KVNextN, KVFullAttnInterval int
+	// The per-layer geometry, folded into what the cache arithmetic needs: KVFullWidth and
+	// KVSWAWidth are Σ n_head_kv(il) × (key_length(il) + value_length(il)) over the layers that
+	// cache every token and over the sliding-window layers, and KVSlidingWindow is
+	// <arch>.attention.sliding_window. See engineKVGeometry.FullWidth for how they are read.
+	//
+	// When either width is non-zero it SUPERSEDES the formula over the six columns above, which
+	// can only describe a model whose layers all look alike. All three zero means the row was
+	// read before these existed — the six-column formula still answers, and healGeometry reads
+	// the header again.
+	KVFullWidth, KVSWAWidth, KVSlidingWindow int
 	// ContextCeiling is `<arch>.context_length`, the largest window the model was TRAINED for.
 	// 🔴 A ceiling, not a setting — the 27B here publishes 262144 and is run at 32768. It is
 	// stored so a registered row can be re-fitted against its own limit, which the panel cannot
@@ -456,6 +466,9 @@ type EngineModelKV struct {
 	// KVNextN/KVFullAttnInterval. Left out here, a re-read header would keep the row's stale
 	// divisor and go back to over-estimating by four.
 	NextN, FullAttnInterval int
+	// The per-layer widths and the sliding window — see EngineModel's KVFullWidth. Left out
+	// here, a re-read header would keep describing the previous file's layers.
+	FullWidth, SWAWidth, SlidingWindow int
 	// And the model's own ceiling, for the same reason: a file swapped for another quantisation
 	// of a DIFFERENT model publishes a different maximum, and a row left with the previous one
 	// is re-fitted against a limit its weights never had.
