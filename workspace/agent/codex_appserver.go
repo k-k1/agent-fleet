@@ -164,6 +164,7 @@ func startCodexAppServer() {
 		return
 	}
 	codex.DaemonUp = wakeCodexObserver
+	codex.ReleaseObservedThread = releaseCodexObservedThread
 	codex.Serve().AdoptIfRunning()
 	go superviseCodexObserver()
 }
@@ -269,7 +270,7 @@ func newCodexObserver(conn *websocket.Conn) *codexObserver {
 
 // attach subscribes this connection to one thread via a read-only thread/resume.
 func (o *codexObserver) attach(threadID string) {
-	if threadID == "" {
+	if threadID == "" || codexThreadReleased(threadID) {
 		return
 	}
 	o.mu.Lock()
@@ -291,6 +292,69 @@ func (o *codexObserver) forget(threadID string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	delete(o.requested, threadID)
+}
+
+// release unsubscribes this connection from a thread it is attached to.
+func (o *codexObserver) release(threadID string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.requested[threadID] {
+		return
+	}
+	delete(o.requested, threadID)
+	o.sendLocked("thread/unsubscribe", map[string]any{"threadId": threadID}, codexUnsubscribeMark+threadID)
+}
+
+// codexUnsubscribeMark tags a pending unsubscribe so handleResponse does not read its answer
+// as an attach.
+const codexUnsubscribeMark = "unsubscribe:"
+
+// codexReleaseHold is how long a released thread stays off the attach set when no unload is
+// seen: past the pane's wait, the Terminal session either owns the thread or has given up.
+const codexReleaseHold = codex.ThreadReleaseTimeout + time.Minute
+
+// codexReleased holds the threads a Terminal launch asked the observer to let go of (see
+// codex/release.go). It outlives any one observer connection: a reconnect's first sweep would
+// otherwise re-attach the thread and keep it loaded.
+var (
+	codexReleasedMu sync.Mutex
+	codexReleased   = map[string]time.Time{}
+	codexObsMu      sync.Mutex
+	codexObsCur     *codexObserver
+)
+
+func codexThreadReleased(threadID string) bool {
+	codexReleasedMu.Lock()
+	defer codexReleasedMu.Unlock()
+	at, ok := codexReleased[threadID]
+	if ok && time.Since(at) >= codexReleaseHold {
+		delete(codexReleased, threadID)
+		return false
+	}
+	return ok
+}
+
+func clearCodexReleased(threadID string) {
+	codexReleasedMu.Lock()
+	delete(codexReleased, threadID)
+	codexReleasedMu.Unlock()
+}
+
+// releaseCodexObservedThread is codex.ReleaseObservedThread: keep the thread off the attach set
+// until the server unloads it, and drop the current connection's subscription.
+func releaseCodexObservedThread(threadID string) {
+	if threadID == "" {
+		return
+	}
+	codexReleasedMu.Lock()
+	codexReleased[threadID] = time.Now()
+	codexReleasedMu.Unlock()
+	codexObsMu.Lock()
+	o := codexObsCur
+	codexObsMu.Unlock()
+	if o != nil {
+		o.release(threadID)
+	}
 }
 
 func (o *codexObserver) sendLocked(method string, params map[string]any, threadID string) {
@@ -320,6 +384,9 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 		return
 	}
 	failed := len(msg.Error) > 0 && string(msg.Error) != "null"
+	if strings.HasPrefix(threadID, codexUnsubscribeMark) {
+		return
+	}
 	if threadID == "" { // thread/loaded/list
 		var res struct {
 			Data []string `json:"data"`
@@ -371,6 +438,7 @@ func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 		// the observer socket reconnects.
 		if p.Status.Type == "notLoaded" {
 			o.forget(p.ThreadID)
+			clearCodexReleased(p.ThreadID)
 			return
 		}
 		if p.Status.Type != "" {
@@ -380,6 +448,7 @@ func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 		var p codexAppServerThreadNotification
 		if json.Unmarshal(msg.Params, &p) == nil {
 			o.forget(p.ThreadID)
+			clearCodexReleased(p.ThreadID)
 		}
 	}
 }
@@ -432,6 +501,16 @@ func superviseCodexObserver() {
 // observeCodexAppServer runs one observer connection until its socket drops.
 func observeCodexAppServer(conn *websocket.Conn) {
 	obs := newCodexObserver(conn)
+	codexObsMu.Lock()
+	codexObsCur = obs
+	codexObsMu.Unlock()
+	defer func() {
+		codexObsMu.Lock()
+		if codexObsCur == obs {
+			codexObsCur = nil
+		}
+		codexObsMu.Unlock()
+	}()
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {

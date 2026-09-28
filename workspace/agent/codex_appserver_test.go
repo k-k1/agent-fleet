@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -355,4 +356,119 @@ func TestCodexObserverForgetsUnloadedThread(t *testing.T) {
 	if obs.requested["thr-unload"] {
 		t.Fatal("notLoaded must forget the thread so a later reload can re-attach")
 	}
+}
+
+// A Terminal launch resuming a thread the shared app-server holds needs the server to unload
+// it, and the observer is the subscriber that otherwise keeps it loaded forever. Released, the
+// observer must unsubscribe, stay off the thread through sweeps and status broadcasts, and
+// attach again only once the unload (notLoaded) has been seen.
+func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
+	captureObservationLog(t)
+	t.Cleanup(func() { clearCodexReleased("thr-held") })
+
+	calls := make(chan string, 16) // "<method> <threadId>" for resume/unsubscribe
+	push := make(chan map[string]any, 4)
+	wsConns := make(chan *websocket.Conn, 4)
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		wsConns <- c
+		defer c.Close()
+		var wmu sync.Mutex // the push goroutine and the reply loop share the socket
+		write := func(v any) {
+			wmu.Lock()
+			defer wmu.Unlock()
+			_ = c.WriteJSON(v)
+		}
+		go func() {
+			for m := range push {
+				write(m)
+			}
+		}()
+		for {
+			var m map[string]any
+			if c.ReadJSON(&m) != nil {
+				return
+			}
+			switch m["method"] {
+			case "initialize":
+				write(map[string]any{"id": m["id"], "result": map[string]any{}})
+			case "thread/loaded/list":
+				write(map[string]any{"id": m["id"],
+					"result": map[string]any{"data": []string{"thr-held"}, "nextCursor": nil}})
+			case "thread/resume", "thread/unsubscribe":
+				tid, _ := m["params"].(map[string]any)["threadId"].(string)
+				calls <- m["method"].(string) + " " + tid
+				write(map[string]any{"id": m["id"], "result": map[string]any{}})
+			}
+		}
+	}))
+	t.Cleanup(func() {
+		srv.Close()
+		for {
+			select {
+			case c := <-wsConns:
+				_ = c.Close()
+				continue
+			default:
+			}
+			return
+		}
+	})
+	conn, err := connectCodexAppServer("ws" + strings.TrimPrefix(srv.URL, "http"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go observeCodexAppServer(conn)
+
+	expect := func(want string) {
+		t.Helper()
+		select {
+		case got := <-calls:
+			if got != want {
+				t.Fatalf("app-server got %q, want %q", got, want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("app-server never got %q", want)
+		}
+	}
+	quiet := func(why string) {
+		t.Helper()
+		select {
+		case got := <-calls:
+			t.Fatalf("%s: app-server got %q", why, got)
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	expect("thread/resume thr-held") // the first sweep attaches
+
+	releaseCodexObservedThread("thr-held")
+	expect("thread/unsubscribe thr-held")
+
+	// Still loaded during the server's grace period: neither a sweep nor a status broadcast
+	// may put the observer back on it.
+	codexObsMu.Lock()
+	obs := codexObsCur
+	codexObsMu.Unlock()
+	obs.sweep()
+	push <- map[string]any{"method": "thread/status/changed",
+		"params": map[string]any{"threadId": "thr-held", "status": map[string]any{"type": "idle"}}}
+	quiet("released thread re-attached while still loaded")
+
+	// Unloaded: the hold ends, and a later load is observed again.
+	push <- map[string]any{"method": "thread/status/changed",
+		"params": map[string]any{"threadId": "thr-held", "status": map[string]any{"type": "notLoaded"}}}
+	deadline := time.Now().Add(3 * time.Second)
+	for codexThreadReleased("thr-held") {
+		if time.Now().After(deadline) {
+			t.Fatal("notLoaded did not end the release")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	obs.sweep()
+	expect("thread/resume thr-held")
+	close(push)
 }

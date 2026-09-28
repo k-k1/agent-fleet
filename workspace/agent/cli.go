@@ -170,6 +170,15 @@ var subcommands = []subcommand{
 		run:     sessionx.RunSessionStatusHook,
 	},
 	{
+		// Prefixed to a codex Terminal resume by codex.buildProgram: wait until the shared
+		// app-server has unloaded the thread, or the TUI stops on codex's lock screen.
+		name:     "codex-await-thread",
+		operands: "<app-server addr> <thread id>",
+		summary:  "wait until the codex app-server releases a thread",
+		hidden:   true,
+		run:      runCodexAwaitThread,
+	},
+	{
 		// Appended after the agent CLI by startSessionTmux, so a crash / OOM is recorded.
 		name:    "record-exit",
 		summary: "record why a session's pane terminated",

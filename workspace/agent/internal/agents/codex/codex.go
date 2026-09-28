@@ -189,7 +189,11 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if forkFrom != "" && m.ForkAt != "" {
 		return agents.LaunchPlan{}, errors.New("発言時点からの分岐は managed のセッションでのみ利用できます")
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, sids.Read(cxSid), forkFrom), Cwd: m.CWD()}, nil
+	resumeID := sids.Read(cxSid)
+	// A thread the shared app-server still holds (a managed session switched to Terminal)
+	// locks the direct TUI out until the daemon unloads it; release.go explains the wait.
+	awaitAddr := releaseForTUI(resumeID)
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom, awaitAddr), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

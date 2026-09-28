@@ -83,6 +83,25 @@ codex の Terminal は `codex --remote <共有 app-server>` で起動する。TU
 修正: TUI の経路は `--remote` をやめて直接起動する。app-server も起こさない（Managed だけが使う）。
 信頼は `m.Dir` に加えて `m.CWD()` にも書く。app-server の需要から TUI の数を外す。
 
+### 3.2 配備後の受け入れと、Managed → Terminal の切り替え（2026-09-28）
+
+PR #1137 を配備した Agent で、Agent API から codex の Terminal を作って確かめた。
+
+- `pwd` は worktree。af 子の環境に `AF_SESSION_NAME` があり、cwd も worktree。`/output` は空でなくなった
+  （hook がスレッド ID を記録している）。
+- スタジオ: 結んだ後の走行中のセッションでは `NO_TOOL`（codex は `list_changed` を拾わない）。`/halt` → `/start` の
+  resume で会話が戻り、`set_image_draft` がスタジオの `recent_log` に `author: agent` の行を足した。
+- 🔴 **Managed → Terminal の切り替えは止まった。** 直接起動の TUI は履歴を出したあと「This conversation is open in
+  another app」で止まる。共有 app-server がスレッドを読み込んでいる間は、別プロセスの codex はそれを開けない。
+  書き手の接続は切り替えで `thread/unsubscribe` するが、読み取り専用のオブザーバが読み込み済みの全スレッドを購読し、
+  30 秒ごとの `thread/loaded/list` で付け直すので、5 分待っても読み込まれたままだった。
+- 隔離した app-server での実測: 最後の購読者が抜けてから約 70 秒で unload され、その時点でロックが解けて TUI が続く。
+
+修正: `BuildLaunch` が resume するスレッドを、オブザーバが unsubscribe して unload まで付け直さない（再接続をまたいで
+覚えておく）。pane では `workspace-agent codex-await-thread <addr> <id>` が `thread/loaded/list` を見て unload を待ってから
+`codex resume` を起動する（最長 3 分。過ぎたら codex のロック画面に任せる）。隔離した app-server で、待機の表示のあと
+ロック画面なしで会話が開くことを確かめた。
+
 ## 4. 上限値（未解決 4）
 
 **要約の 1 KB（`knowledgeSummaryMax`）はこのままでよい。** 実際の利用で書かれた知識文書の要約は

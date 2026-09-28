@@ -195,7 +195,7 @@ func buildAgentBin(t *testing.T) string {
 func prodArgs(t *testing.T, slot, agentBin string) []string {
 	t.Helper()
 	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "") // CLI route
-	prog := buildProgram("", "", slot, "", "")
+	prog := buildProgram("", "", slot, "", "", "")
 	var args []string
 	args = append(args, bypassFlagsLive(prog)...)
 	for _, v := range configOverridesLive(prog) {
