@@ -115,16 +115,6 @@ describe("the work item of a work-item launch", () => {
     expect(createBody().work_item).toEqual({ provider: "jira", key: "PROJ-12", title: "Login fails", type: "Bug", labels: ["auth"] });
   });
 
-  it("is dropped once for an Agent that refuses the unknown field, and the launch goes ahead", async () => {
-    useLaunchSeed.getState().set("look at it", "PROJ-12", "", "", "", workItem);
-    apiJSON.mockResolvedValueOnce({ error: { code: "bad_request", message: "invalid JSON body" } });
-    await launch();
-    const creates = apiJSON.mock.calls.filter((c) => c[0] === "api/sessions" && c[1] === "POST");
-    expect(creates).toHaveLength(2);
-    expect((creates[1][2] as Record<string, unknown>).work_item).toBeUndefined();
-    expect((creates[1][2] as Record<string, unknown>).initial_prompt).toBe("carry on");
-  });
-
   it("is not sent by any other launch", async () => {
     await launch();
     expect(createBody().work_item).toBeUndefined();

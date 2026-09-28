@@ -1,7 +1,7 @@
 // The launch modal's side of the branch-name resolver (ADR 0103 decision 8): a work-item launch
 // asks the Agent for the name and the base, and every typed name gets the advisory check.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { checkBranchName, fetchBranchName, fetchBranchRule, mergeWarnings } from "./branchRule.ts";
+import { baseSource, checkBranchName, fetchBranchName, fetchBranchRule, mergeWarnings } from "./branchRule.ts";
 import type { BranchItem, BranchName, BranchWarning } from "./branchRule.ts";
 
 const CHECK_DELAY_MS = 400;
@@ -27,6 +27,9 @@ export interface LaunchBranchName {
   /** Mark a field as the person's own: a later answer no longer overwrites it. */
   touchName: () => void;
   touchBase: () => void;
+  /** Where the rules took the base from; "" once the person typed their own base, which the
+   * launch then uses as given (decision 5). */
+  baseSource: string;
 }
 
 export function useLaunchBranchName({ repo, item, name, setName, setBase }: Options): LaunchBranchName {
@@ -34,6 +37,7 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
   const [rereading, setRereading] = useState(false);
   const nameTouched = useRef(false);
   const baseTouched = useRef(false);
+  const [baseEdited, setBaseEdited] = useState(false);
   const seq = useRef(0);
   const itemRef = useRef(item);
   itemRef.current = item;
@@ -66,18 +70,24 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
 
   const reread = useCallback(() => {
     setRereading(true);
-    // The refresh waits up to the Agent's own 3 s for Bitbucket, then the name is asked again.
+    // The refresh waits up to the Agent's own 3 s for Bitbucket, then the name is asked again —
+    // unless the target changed or the modal closed meanwhile (seq moved on): resolving then
+    // would answer for the old repository and overwrite the new one's name and base.
+    const gen = seq.current;
     void fetchBranchRule(repo, true)
-      .then(() => resolve())
+      .then(() => {
+        if (seq.current === gen) return resolve();
+      })
       .finally(() => setRereading(false));
   }, [repo, resolve]);
 
   const checked = useBranchCheck(repo, name);
 
   // The resolver's own bad_ref is about the name it proposed; the check covers whatever is in
-  // the field now, so it is the one that speaks for the name.
+  // the field now, so it is the one that speaks for the name. Likewise base_missing is about the
+  // base the rules picked, which a typed base replaces.
   const warnings = mergeWarnings(
-    resolved?.warnings.filter((w) => w.code !== "bad_ref"),
+    resolved?.warnings.filter((w) => w.code !== "bad_ref" && !(baseEdited && w.code === "base_missing")),
     checked,
   );
 
@@ -91,7 +101,9 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
     },
     touchBase: () => {
       baseTouched.current = true;
+      setBaseEdited(true);
     },
+    baseSource: baseEdited ? "" : baseSource(resolved?.sources),
   };
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchrule"
@@ -148,6 +149,13 @@ func TestBranchNameRoutes(t *testing.T) {
 	if len(preview.Names) != 1 || preview.Names[0].Name != "feature/123" {
 		t.Errorf("preview (typed template) = %+v", preview)
 	}
+
+	// The preview runs regular expressions and git per item, so its input is bounded.
+	do(t, srv, "POST", "/branch-rules/preview", map[string]any{"template": strings.Repeat("x", 300)}, http.StatusBadRequest, nil)
+	do(t, srv, "POST", "/branch-rules/preview", map[string]any{"items": []any{
+		map[string]any{"key": "PROJ-1", "title": strings.Repeat("t", 2000)},
+	}}, http.StatusBadRequest, nil)
+	do(t, srv, "POST", "/branch-rules/preview", map[string]any{"template": strings.Repeat("x", 40<<10)}, http.StatusRequestEntityTooLarge, nil)
 
 	// The AI branch suggestion picks from the same kinds the rename chips show.
 	if kinds := resolvedKindNames(context.Background(), dir); len(kinds) != 8 || kinds[0] != "feature" {

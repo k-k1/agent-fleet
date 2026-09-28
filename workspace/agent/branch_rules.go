@@ -292,13 +292,26 @@ type branchPreviewName struct {
 // belong to no working copy. It therefore resolves over the user and built-in layers only; a
 // repository's own declaration can still change the name at launch.
 func handleBranchRulesPreview(w http.ResponseWriter, r *http.Request) {
+	// Bounded: every item is rendered with regular expressions and checked by running git, so
+	// the body, the item count and each field are capped.
 	var req branchPreviewRequest
-	if !httpx.DecodeJSON(w, r, &req) {
+	if e := httpx.DecodeStrictJSON(r, &req, 32<<10); e != nil {
+		httpx.WriteErr(w, e.Status, e.Code, e.Message)
 		return
 	}
 	if len(req.Items) > 10 {
 		httpx.WriteErr(w, http.StatusBadRequest, "too_many_items", "at most 10 items")
 		return
+	}
+	if len(req.Template) > 256 {
+		httpx.WriteErr(w, http.StatusBadRequest, "template_too_long", "the template is at most 256 bytes")
+		return
+	}
+	for _, it := range req.Items {
+		if len(it.Key) > 200 || len(it.Title) > 1000 || len(it.Type) > 64 || len(it.Labels) > 30 {
+			httpx.WriteErr(w, http.StatusBadRequest, "item_too_large", "an item field is too long")
+			return
+		}
 	}
 	layers := userBranchLayers(strings.TrimSpace(req.Template))
 	out := make([]branchPreviewName, 0, len(req.Items))

@@ -13,7 +13,9 @@ import { createRoot, type Root } from "react-dom/client";
 type Json = Record<string, unknown>;
 let branchName: (body: Json) => Promise<Json> = async () => ({ error: { code: "http_404" } });
 let check: (body: Json) => Json = () => ({ warnings: [] });
+let refresh: () => Promise<Json> = async () => ({ kinds: [] });
 const apiMock = vi.fn(async (url: string): Promise<Json> => {
+  if (url.includes("branch-rule?refresh=1")) return refresh();
   if (url.includes("branch-rule")) return { kinds: [] };
   return { branches: [] };
 });
@@ -87,11 +89,11 @@ async function typeInto(el: HTMLInputElement, text: string): Promise<void> {
   });
 }
 
-async function render(withItem = true): Promise<void> {
+async function render(withItem = true, repo = "web"): Promise<void> {
   await act(async () => {
     root!.render(
       <LaunchModal
-        repo="web"
+        repo={repo}
         branch="main"
         kinds={["claude"]}
         initialNewBranch="feature/issue-45"
@@ -122,6 +124,7 @@ beforeEach(() => {
   resetAttachDraftDB();
   branchName = async () => resolved();
   check = () => ({ warnings: [] });
+  refresh = async () => ({ kinds: [] });
   apiMock.mockClear();
   apiJSONMock.mockClear();
   onLaunch = vi.fn<Launch>(async () => ({ ok: true }));
@@ -209,6 +212,33 @@ describe("work-item launch through the branch-name resolver", () => {
     expect(nameField().value).toBe("fix/45-empty-list-after-login");
     expect(baseField().value).toBe("develop");
     expect(warnings()).toHaveLength(0);
+  });
+
+  it("a typed base drops the rules' source note and their base_missing warning", async () => {
+    branchName = async () =>
+      resolved({ warnings: [{ code: "base_missing", message: "the base \"develop\" exists neither locally nor on origin" }] });
+    await render();
+    await click(secHead());
+    expect(document.querySelector(".launch-base-source")).not.toBeNull();
+    expect(warnings()).toHaveLength(1);
+    await typeInto(baseField(), "release/1.2");
+    await settle();
+    expect(document.querySelector(".launch-base-source")).toBeNull();
+    expect(warnings()).toHaveLength(0);
+  });
+
+  it("a Bitbucket re-read that returns after the target changed does not resolve the old one", async () => {
+    branchName = async () => resolved({ sources: { bitbucket: "pending" } });
+    let refreshed: (v: Json) => void = () => {};
+    refresh = () => new Promise((r) => (refreshed = r));
+    await render();
+    await click(secHead());
+    await click(byText("Read Bitbucket's branch settings again"));
+    await render(true, "api"); // the same dialog, now for another working copy
+    const before = apiJSONMock.mock.calls.filter((c) => c[0] === "api/repos/web/branch-name").length;
+    await act(async () => refreshed({ kinds: [] }));
+    await settle();
+    expect(apiJSONMock.mock.calls.filter((c) => c[0] === "api/repos/web/branch-name")).toHaveLength(before);
   });
 
   it("a launch that did not come from a work item never asks for a name", async () => {

@@ -44,7 +44,7 @@ import { sanitizeSeg } from "../../lib/reponame.ts";
 import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useLaunchBranchName } from "./useLaunchBranchName.ts";
-import { baseSource, bitbucketPending, warningText } from "./branchRule.ts";
+import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
@@ -723,9 +723,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                           seen to move silently. */}
                       <span className="ui-field-hint">{tr("launch.base_origin_note")}</span>
                       {/* A base the rules picked says which rule, so develop is never a surprise. */}
-                      {baseSource(naming.resolved?.sources) && (
+                      {naming.baseSource && (
                         <span className="ui-field-hint launch-base-source">
-                          {tr("launch.base_source")} <code>{baseSource(naming.resolved?.sources)}</code>
+                          {tr("launch.base_source")} <code>{naming.baseSource}</code>
                         </span>
                       )}
                     </label>

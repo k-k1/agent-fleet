@@ -788,6 +788,10 @@ const BranchSuggestPersona = "You name git branches. Read the conversation log a
 // Bitbucket cache. nil, or an empty answer, means the suggestion carries no kind.
 var BranchKinds func(ctx context.Context, dir string) []string
 
+// branchKindsTimeout covers the resolver's own 3 s wait for a first Bitbucket read and the
+// local git reads around it.
+const branchKindsTimeout = 5 * time.Second
+
 // runBranchSuggestLLM asks the title model for a git-safe branch name from the
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment. kind is "" unless kinds were offered and the reply picked one.
@@ -880,13 +884,17 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleNoContent, "not enough conversation yet (try after a few exchanges)")
 		return
 	}
+	// The kinds get their own budget, before the model's: a first Bitbucket read may take the
+	// resolver's full 3 s wait, which must not come out of the model's TitleSuggestTimeout.
+	var kinds []string
+	if BranchKinds != nil && gitx.IsGitRepo(m.Dir) {
+		kctx, kcancel := context.WithTimeout(r.Context(), branchKindsTimeout)
+		kinds = BranchKinds(kctx, m.Dir)
+		kcancel()
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
-	var kinds []string
-	if BranchKinds != nil && gitx.IsGitRepo(m.Dir) {
-		kinds = BranchKinds(ctx, m.Dir)
-	}
 	kind, branch, err := runBranchSuggestLLM(ctx, turns, kinds)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
