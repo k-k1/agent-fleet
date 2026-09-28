@@ -538,3 +538,24 @@ func TestCodexReleaseEndsOnNotLoadedOrRestore(t *testing.T) {
 		t.Fatal("restore did not end the release")
 	}
 }
+
+// Sweeps must not overlap: one starting while another is between pages would reset what the
+// first collected, and the first one's last page alone would then judge a held thread on an
+// earlier page unloaded.
+func TestCodexObserverSweepsDoNotOverlap(t *testing.T) {
+	prevFile := codexReleasedFile
+	codexReleasedFile = func() string { return filepath.Join(t.TempDir(), "released.json") }
+	t.Cleanup(func() { codexReleasedFile = prevFile; clearCodexReleased("thr-p1") })
+	releaseCodexObservedThread("thr-p1")
+
+	obs := newCodexObserver(nil) // a skipped sweep and a final page never touch conn
+	obs.sweptAt = time.Now()     // a sweep is between pages; page 1 listed thr-p1
+	obs.swept = []string{"thr-p1"}
+	obs.sweep() // the ticker fires meanwhile
+	obs.pending[500] = ""
+	obs.handleResponse(codexAppServerMessage{ID: []byte("500"),
+		Result: []byte(`{"data":[],"nextCursor":null}`)})
+	if !codexThreadReleased("thr-p1") {
+		t.Fatal("an overlapping sweep dropped page 1 and ended the hold on a thread still loaded")
+	}
+}

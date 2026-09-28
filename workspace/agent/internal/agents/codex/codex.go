@@ -195,6 +195,8 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	awaitAddr := releaseForTUI(resumeID)
 	if awaitAddr != "" {
 		markPending(m.Name)
+	} else {
+		clearPending(m.Name)
 	}
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom, awaitAddr), Cwd: m.CWD()}, nil
 }

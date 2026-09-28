@@ -595,7 +595,7 @@ esac
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
 		t.Fatalf("status = %d, body = %s, want 409 codex_releasing", rec.Code, rec.Body.String())
 	}
-	if b, err := os.ReadFile(logPath); err == nil && (strings.Contains(string(b), "send-keys") || strings.Contains(string(b), "paste-buffer")) {
+	if b, err := os.ReadFile(logPath); err == nil && (strings.Contains(string(b), "send-keys -t %7") || strings.Contains(string(b), "paste-buffer")) {
 		t.Fatalf("nothing may be typed while the waiter holds the pane, tmux commands = %q", b)
 	}
 	turns := []transcript.Turn{{Role: "user", Text: prompt}}
@@ -611,5 +611,68 @@ esac
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("send held %v although the composer was already drawn", d)
+	}
+}
+
+// Right after the wait codex is starting; if no composer footer shows up in time (a slow start,
+// or codex's lock screen, whose r/f/q keys typed text would press), the prompt is refused
+// rather than typed.
+func TestCodexHandOverRefusesWithoutAComposer(t *testing.T) {
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "tmux.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  has-session) exit 0 ;;
+  list-panes) printf '1 %%7\n' ;;
+  capture-pane) printf '  This conversation is open in another app    r to retry\n   r retry   f fork   esc/ctrl+c/q exit\n' ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("TMUX_TEST_LOG", logPath)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	prev := codexComposerWait
+	codexComposerWait = 600 * time.Millisecond
+	t.Cleanup(func() { codexComposerWait = prev })
+
+	const name = "codex_locked"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
+	codex.MarkAwaiting(name)() // the wait has just ended
+
+	rec := postInput(t, name, `{"prompt":"hello"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
+		t.Fatalf("status = %d, body = %s, want 409 codex_releasing", rec.Code, rec.Body.String())
+	}
+	// Scoped to this pane (%7): a straggler from another test's delayed Enter can land in
+	// the same log while PATH points here.
+	if b, err := os.ReadFile(logPath); err == nil && (strings.Contains(string(b), "send-keys -t %7") || strings.Contains(string(b), "paste-buffer")) {
+		t.Fatalf("typed into a pane with no composer, tmux commands = %q", b)
+	}
+}
+
+// A managed-to-Terminal switch marks the hand-over before the managed runtime goes, and the
+// meta still says managed until the pane is up. A send in that window must not take the
+// managed path: its Resume would load the thread on the app-server again and lock the new pane
+// out. Both /input and /turn refuse it.
+func TestCodexHandOverRefusesTheManagedPathDuringASwitch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	const name = "codex_switching"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	codex.MarkSwitching(name)
+
+	if rec := postInput(t, name, `{"prompt":"hello"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
+		t.Fatalf("/input: status = %d, body = %s, want 409 codex_releasing", rec.Code, rec.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/turn", strings.NewReader(`{"op":"start","prompt":"hello"}`))
+	req.SetPathValue("name", name)
+	rec := httptest.NewRecorder()
+	HandleSessionTurn(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
+		t.Fatalf("/turn: status = %d, body = %s, want 409 codex_releasing", rec.Code, rec.Body.String())
 	}
 }

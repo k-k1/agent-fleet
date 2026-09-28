@@ -155,6 +155,20 @@ func readAwaitMarker(name string) (state string, age time.Duration, ok bool) {
 // markPending is BuildLaunch's half: the pane is about to wait.
 func markPending(name string) { writeAwaitMarker(name, awaitPending) }
 
+// clearPending drops a "pending" marker when the launch turns out to have nothing to wait
+// for (no thread to resume, or no daemon holding it), so the switch's mark does not refuse
+// prompts for its whole TTL. A waiter's or a finished marker is left alone.
+func clearPending(name string) {
+	if state, _, ok := readAwaitMarker(name); ok && state == awaitPending {
+		_ = os.Remove(awaitMarkerPath(name))
+	}
+}
+
+// MarkSwitching is the driver switch's half, written before the managed runtime is dropped:
+// from that moment until the pane's waiter takes over, a prompt must neither go to the
+// managed path (a Resume would take the thread back) nor to a pane that is not there yet.
+func MarkSwitching(name string) { writeAwaitMarker(name, awaitPending) }
+
 // MarkAwaiting records that this process is the pane's waiter for session name and returns
 // the cleanup, which marks the wait done. An empty name (a pane without AF_SESSION_NAME)
 // records nothing.

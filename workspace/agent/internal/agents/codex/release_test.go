@@ -126,10 +126,16 @@ func TestBuildLaunchWaitsForTheAppServerToReleaseTheThread(t *testing.T) {
 		t.Fatal("the launch did not mark the pane as about to wait: a prompt could slip in before the waiter starts")
 	}
 
+	// A switch marked the hand-over, but this launch has nothing to wait for (no daemon):
+	// the mark must go, or prompts stay refused for its whole TTL.
 	t.Setenv(appServerAddrEnv, "")
+	MarkSwitching(m.Name)
 	released = nil
 	if got := launch(); strings.Contains(got, "codex-await-thread") || len(released) != 0 {
 		t.Fatalf("launch without a daemon waited or released (released=%v): %q", released, got)
+	}
+	if Awaiting(m.Name) {
+		t.Fatal("a launch with nothing to wait for left the switch's mark in place")
 	}
 }
 

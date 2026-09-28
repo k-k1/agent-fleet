@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -108,6 +109,12 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	// guards the session cross-process, wait bounded for the child to exit + release the lock
 	// so the TUI's `--resume-id` relaunch below doesn't race it into an error or a split-brain
 	// new sid (A2-2). Other kinds / directions don't gate on a lock, so drop asynchronously.
+	// codex: the pane will first wait for the app-server to release the thread; mark the
+	// hand-over now, before the managed runtime goes, so no prompt slips into either side
+	// meanwhile (codexHandOverGate).
+	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex {
+		codex.MarkSwitching(name)
+	}
 	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindKiro {
 		kiro.DropHandleWait(name, 5*time.Second)
 	} else {

@@ -267,7 +267,11 @@ type codexObserver struct {
 	pending   map[int]string  // in-flight observer request id → thread id ("" = loaded/list)
 	requested map[string]bool // threads attached or with an in-flight resume
 	swept     []string        // loaded threads collected over the pages of the running sweep
+	sweptAt   time.Time       // start of the running sweep; zero when none is running
 }
+
+// codexSweepStale lets a new sweep replace one whose pages stopped arriving.
+const codexSweepStale = 10 * time.Second
 
 func newCodexObserver(conn *websocket.Conn) *codexObserver {
 	// Request ids share the connection's JSON-RPC space with initialize (id 1);
@@ -292,10 +296,16 @@ func (o *codexObserver) attach(threadID string) {
 	o.sendLocked("thread/resume", map[string]any{"threadId": threadID}, threadID)
 }
 
+// sweep lists the loaded threads, page by page. One runs at a time: a second one resetting
+// swept mid-way would let the first one's last page alone judge what is unloaded.
 func (o *codexObserver) sweep() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.sweptAt.IsZero() && time.Since(o.sweptAt) < codexSweepStale {
+		return
+	}
 	o.swept = nil
+	o.sweptAt = time.Now()
 	o.sendLocked("thread/loaded/list", map[string]any{}, "")
 }
 
@@ -469,9 +479,15 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 			// Absence proves an unload only once every page is in.
 			all := o.swept
 			o.swept = nil
+			o.sweptAt = time.Time{}
 			o.mu.Unlock()
 			clearUnloadedCodexReleased(all)
+			return
 		}
+		o.mu.Lock()
+		o.swept = nil
+		o.sweptAt = time.Time{}
+		o.mu.Unlock()
 		return
 	}
 	if failed {

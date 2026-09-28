@@ -84,6 +84,9 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	if req.Op != "interrupt" && !codexHandOverGate(w, name) {
+		return
+	}
 	if meta.DriverKind() == session.DriverManaged {
 		handleManagedTurn(w, meta, req)
 		return
