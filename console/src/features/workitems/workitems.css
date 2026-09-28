@@ -387,10 +387,24 @@
   cursor: pointer;
   font-size: 12px;
   padding: 3px 8px;
+  /* A <button> centres its text by default, which a wrapped title makes obvious. */
+  text-align: left;
 }
 .wi-dsession .codicon {
   color: var(--ok);
   font-size: 10px;
+  flex: none;
+}
+/* Only the title wraps; the slug, branch and tag stay whole beside it. */
+.wi-dname {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wi-dslug,
+.wi-dbranch,
+.wi-dtag {
+  flex: none;
+  white-space: nowrap;
 }
 .wi-dsession:hover {
   border-color: var(--accent);
