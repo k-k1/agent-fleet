@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -266,18 +267,70 @@ func studioAuthorLabel(e DraftLogEntry) string {
 	return "user"
 }
 
+// studioChangeTextMax bounds one side of a spelled-out change, in bytes.
+const studioChangeTextMax = 120
+
+// studioChangeContext is how many runes of unchanged text stay on each side of a text change.
+const studioChangeContext = 24
+
 func studioChangeText(c DraftChange) string {
 	show := func(raw json.RawMessage) string {
 		if len(raw) == 0 {
 			return "(empty)"
 		}
 		s := string(raw)
-		if len(s) > 120 {
-			s = truncateRunes(s, 120) + "…"
+		if len(s) > studioChangeTextMax {
+			s = truncateRunes(s, studioChangeTextMax) + "…"
 		}
 		return s
 	}
+	var before, after string
+	if json.Unmarshal(c.Before, &before) == nil && json.Unmarshal(c.After, &after) == nil &&
+		(len(c.Before) > studioChangeTextMax || len(c.After) > studioChangeTextMax) {
+		b, a := studioChangeWindow(before, after)
+		return c.Field + ": " + b + " → " + a
+	}
 	return c.Field + ": " + show(c.Before) + " → " + show(c.After)
+}
+
+// studioChangeWindow quotes the part of two long texts that differs, with a little unchanged
+// text around it. Without it both sides are the same head of the prompt whenever the edit is
+// past the first 120 bytes — measured on the live run: an agent was told
+// `prompt: "masterpiece, …" → "masterpiece, …"` for an edit at the end, i.e. nothing.
+func studioChangeWindow(before, after string) (string, string) {
+	br, ar := []rune(before), []rune(after)
+	pre := 0
+	for pre < len(br) && pre < len(ar) && br[pre] == ar[pre] {
+		pre++
+	}
+	suf := 0
+	for suf < len(br)-pre && suf < len(ar)-pre && br[len(br)-1-suf] == ar[len(ar)-1-suf] {
+		suf++
+	}
+	from := max(pre-studioChangeContext, 0)
+	side := func(r []rune) string {
+		to := min(len(r)-suf+studioChangeContext, len(r))
+		s := string(r[from:to])
+		cut := to < len(r)
+		if len(s) > studioChangeTextMax {
+			s, cut = truncateRunes(s, studioChangeTextMax), true
+		}
+		// Unescaped HTML: prompts carry `<lora:name:0.8>`, which \u003c would make unreadable.
+		var q strings.Builder
+		enc := json.NewEncoder(&q)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(s)
+		out := strings.TrimSuffix(q.String(), "\n")
+		out = out[1 : len(out)-1]
+		if from > 0 {
+			out = "…" + out
+		}
+		if cut {
+			out += "…"
+		}
+		return `"` + out + `"`
+	}
+	return side(br), side(ar)
 }
 
 func truncateRunes(s string, n int) string {
