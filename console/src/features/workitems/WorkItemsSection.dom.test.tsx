@@ -582,6 +582,64 @@ describe("WorkItemsSection", () => {
     expect(text()).toContain(t("wi.search_stopped"));
   });
 
+  // #1142: the box clears through its own button on every device, not the UA's search cancel.
+  it("clears the filter with its × button and with Escape", async () => {
+    const mixed = [...jiraRows(40), item({ id: "gh", key: "acme/web#45", title: "ログイン後に一覧が空になる" })];
+    workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    expect(host.querySelector(".wi-filter .proj-filter-clear")).toBeNull(); // nothing to clear yet
+    await act(async () => typeInto(input, "ログイン"));
+    expect(rows()).toBe(1);
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!.click());
+    expect(input.value).toBe("");
+    expect(rows()).toBe(10);
+    expect(host.querySelector(".wi-filter .proj-filter-clear")).toBeNull();
+
+    await act(async () => typeInto(input, "ログイン"));
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(input.value).toBe("");
+    expect(rows()).toBe(10);
+  });
+
+  it("returns focus to the filter only when the × was pressed from the keyboard", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    const clear = () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!;
+
+    // Enter / Space on a button fires a click with detail 0.
+    await act(async () => typeInto(input, "x"));
+    clear().focus();
+    await act(async () => clear().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
+    expect(input.value).toBe("");
+    expect(document.activeElement).toBe(input);
+
+    // A tap or mouse click (detail ≥ 1) must not focus the input: on a phone that pops the keyboard.
+    await act(async () => typeInto(input, "x"));
+    clear().focus();
+    await act(async () => clear().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+    expect(input.value).toBe("");
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  it("drops the error of a tracker search that was still in flight when the filter was cleared", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    let fail!: (v: unknown) => void;
+    workItemSearch.mockReturnValue(new Promise((res) => (fail = res)));
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    await act(async () => typeInto(input, "1028"));
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-search")!.click());
+    expect(workItemSearch).toHaveBeenCalledWith("1028");
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!.click());
+    await act(async () => {
+      fail({ error: "boom" });
+      await Promise.resolve();
+    });
+    expect(host.querySelector(".wi-err")).toBeNull();
+  });
+
   it("shows no filter box on a rail that is not crowded", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(4), queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();

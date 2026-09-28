@@ -24,7 +24,7 @@
 //
 // Launching from the detail modal still just hands the existing launch stack (seed ->
 // useLaunchTarget -> LaunchModal), so worktree/branch/agent stay implemented in one place.
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
@@ -227,6 +227,10 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const [remote, setRemote] = useState<{ needle: string; result: WorkItemSearchResult } | null>(null);
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remoteErr, setRemoteErr] = useState("");
+  // Bumped whenever the needle changes, so a search still in flight cannot bring back an error
+  // for a needle the user has already typed over or cleared.
+  const searchGen = useRef(0);
+  const filterInput = useRef<HTMLInputElement>(null);
 
   // Switching tenant must not leave the previous tenant's rows behind (as in the other stores).
   useEffect(() => {
@@ -261,15 +265,22 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const searchTracker = () => {
     if (!canSearch || remoteBusy || !payload?.running) return;
     const asked = q;
+    const gen = searchGen.current;
     setRemoteBusy(true);
     setRemoteErr("");
     void workItemSearch(asked)
       .then((res) => {
+        if (gen !== searchGen.current) return;
         const got = readWorkItemSearch(res);
         if (got.result) setRemote({ needle: asked, result: got.result });
         else setRemoteErr(errText(got.error) || tr("wi.search_failed"));
       })
       .finally(() => setRemoteBusy(false));
+  };
+  const changeNeedle = (next: string) => {
+    searchGen.current++;
+    setNeedle(next);
+    setRemoteErr("");
   };
   const labelOf = (id: string) => payload?.queries.find((x) => x.id === id)?.label || id;
 
@@ -448,20 +459,37 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
               on screen (§80.18.4). */}
           {crowded && (
             <div className="wi-filter">
-              <Icon name="search" />
-              <input
-                type="search"
-                value={needle}
-                placeholder={tr("wi.filter_ph")}
-                aria-label={tr("wi.filter_ph")}
-                onChange={(e) => {
-                  setNeedle(e.target.value);
-                  setRemoteErr("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") searchTracker();
-                }}
-              />
+              <div className="proj-filter">
+                <Icon name="search" />
+                <input
+                  ref={filterInput}
+                  type="search"
+                  value={needle}
+                  placeholder={tr("wi.filter_ph")}
+                  aria-label={tr("wi.filter_ph")}
+                  onChange={(e) => changeNeedle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") searchTracker();
+                    else if (e.key === "Escape") changeNeedle("");
+                  }}
+                />
+                {needle && (
+                  <button
+                    type="button"
+                    className="proj-filter-clear"
+                    title={tr("pj.clear")}
+                    onClick={(e) => {
+                      changeNeedle("");
+                      // The button unmounts with the needle, dropping keyboard focus to <body>. Only a
+                      // keyboard press (detail 0) gets it back: on a tap, focusing the input would pop
+                      // the soft keyboard over the rows the user cleared the filter to see.
+                      if (e.detail === 0) filterInput.current?.focus();
+                    }}
+                  >
+                    <Icon name="close" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
           <div className="wi-list">
