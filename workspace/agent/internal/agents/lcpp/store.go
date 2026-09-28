@@ -8,12 +8,12 @@
 package lcpp
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -347,7 +347,7 @@ func (s *Store) AppendUsage(u harness.Usage, window int) (Record, error) {
 // window it ran against, straight off disk — no engine round trip, so WireLive can call this
 // on every session-list render. ok=false before any turn has ever completed.
 func (s *Store) LastUsage() (u harness.Usage, window int, ok bool) {
-	recs, _, err := s.Records()
+	recs, _, err := s.records()
 	if err != nil {
 		return harness.Usage{}, 0, false
 	}
@@ -361,8 +361,7 @@ func (s *Store) LastUsage() (u harness.Usage, window int, ok bool) {
 
 // maxRecordLine bounds one JSONL line Records will accept — generous (a large tool result or
 // a long reasoning trace can legitimately run to hundreds of KB) but finite, so a corrupted
-// or torn line fails as a decode error rather than growing bufio.Scanner's buffer without
-// limit.
+// or torn line fails as an error rather than growing a line buffer without limit.
 const maxRecordLine = 32 * 1024 * 1024
 
 // Records reads back every line of the session's log, in append order. A session with no
@@ -382,43 +381,17 @@ const maxRecordLine = 32 * 1024 * 1024
 // sign of trouble (mid-loop, before this distinction existed) would lose a whole session's
 // mirror history over one crash during its very last write — a cost this store's whole
 // reason to exist (decision 3: never lose the record) is meant to avoid paying.
+//
+// Only the lines appended since the last read of this path are decoded (recordcache.go). The
+// returned slice is the caller's own, but the ToolCalls and Usage it points at are shared with
+// the cache and must not be written to.
 func (s *Store) Records() (recs []Record, truncated bool, err error) {
-	f, err := os.Open(s.Path())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), maxRecordLine)
-	var lines [][]byte
-	for sc.Scan() {
-		line := bytes.TrimSpace(sc.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		lines = append(lines, append([]byte(nil), line...)) // sc.Bytes' backing array is reused by the next Scan
-	}
-	if err := sc.Err(); err != nil {
-		return nil, false, err
-	}
-
-	out := make([]Record, 0, len(lines))
-	for i, line := range lines {
-		var rec Record
-		if err := json.Unmarshal(line, &rec); err != nil {
-			if i == len(lines)-1 {
-				return out, true, nil
-			}
-			return out, false, fmt.Errorf("lcpp: %s: line %d: %w", s.Path(), i, err)
-		}
-		out = append(out, rec)
-	}
-	return out, false, nil
+	view, truncated, err := s.records()
+	return slices.Clone(view), truncated, err
 }
+
+// records is Records without the copy, for readers in this package that only look.
+func (s *Store) records() ([]Record, bool, error) { return readRecords(s.Path()) }
 
 // Full reconstructs decision 3's append-only "full" history as harness's own []Message
 // shape — the same shape harness.Run/PrepareTurn/BuildSendMessages already operate on, so a
@@ -437,7 +410,7 @@ func (s *Store) Full() ([]harness.Message, error) {
 	// truncated is intentionally ignored: Records' own doc comment establishes that the only
 	// line it can ever apply to is a write that never finished, so treating it as "not sent
 	// yet" here is exactly right — there is nothing to send that was ever actually recorded.
-	recs, _, err := s.Records()
+	recs, _, err := s.records()
 	if err != nil {
 		return nil, err
 	}
@@ -497,15 +470,15 @@ func (s *Store) Transcript() ([]transcript.Turn, error) { return s.TranscriptFor
 // model. It is used only while the store holds no model-change note: every switch writes one,
 // so without any the session has only ever run on sessionModel, while after one the meta's
 // model says nothing about the turns before it.
+//
+// Only the records appended since the last call on this path are converted (recordcache.go):
+// rebuilding every turn on every poll cost as much as decoding the log did, most of it
+// transcript.CapOutput re-copying each tool result.
 func (s *Store) TranscriptFor(sessionModel string) ([]transcript.Turn, error) {
 	// truncated ignored — see Full's own call site: a torn last write never became a
 	// complete turn in the first place, so there is nothing the mirror should have shown for
 	// it either.
-	recs, _, err := s.Records()
-	if err != nil {
-		return nil, err
-	}
-	return transcriptFromRecords(recs, sessionModel), nil
+	return readTranscript(s.Path(), sessionModel)
 }
 
 // toolCallSite is where an in-flight tool_calls entry landed, so a later KindToolResult
@@ -516,96 +489,133 @@ type toolCallSite struct {
 }
 
 func transcriptFromRecords(recs []Record, sessionModel string) []transcript.Turn {
-	var turns []transcript.Turn
-	sites := make(map[string]toolCallSite)
-	lastAssistant := -1
-	// model labels an assistant record that names none: the latest switch note's model, or
-	// sessionModel when there is no note at all.
-	model := sessionModel
-	if hasModelChange(recs) {
-		model = ""
-	}
-
+	var b transcriptBuilder
 	for _, r := range recs {
-		switch r.Kind {
-		case KindContinuation:
-			// Never the user's own words — see this method's own doc comment.
-		case KindUser:
-			turns = append(turns, transcript.Turn{
-				Role: "user", TS: r.TS, AnchorID: r.ID, Idx: len(turns),
+		b.add(r)
+	}
+	return b.result(sessionModel)
+}
+
+// transcriptBuilder folds records into turns one at a time, so the cache can carry it between
+// polls and feed it only what was appended. The zero value is an empty transcript.
+type transcriptBuilder struct {
+	turns         []transcript.Turn
+	sites         map[string]toolCallSite
+	lastAssistant int // 1-based, so the zero value means none yet
+	// model is the latest switch note's model; sawNote whether there has been one.
+	model   string
+	sawNote bool
+	// unlabelled are the assistant turns that named no model before any note. They take
+	// sessionModel at result time, and only if no note ever arrives: the label depends on the
+	// whole log, not on what has been folded so far.
+	unlabelled []int
+}
+
+func (b *transcriptBuilder) add(r Record) {
+	turns := &b.turns
+	switch r.Kind {
+	case KindContinuation:
+		// Never the user's own words — see Transcript's own doc comment.
+	case KindUser:
+		*turns = append(*turns, transcript.Turn{
+			Role: "user", TS: r.TS, AnchorID: r.ID, Idx: len(*turns),
+			Parts: []transcript.Part{{Kind: "text", Text: r.Content}},
+			Text:  r.Content,
+		})
+	case KindAssistant:
+		t := transcript.Turn{Role: "assistant", TS: r.TS, AnchorID: r.ID, Idx: len(*turns), Text: r.Content, Model: r.Model}
+		if t.Model == "" {
+			if b.sawNote {
+				t.Model = b.model
+			} else {
+				b.unlabelled = append(b.unlabelled, len(*turns))
+			}
+		}
+		if strings.TrimSpace(r.Reasoning) != "" {
+			t.Parts = append(t.Parts, transcript.Part{Kind: "thinking", Text: r.Reasoning})
+		}
+		if strings.TrimSpace(r.Content) != "" {
+			t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: r.Content})
+		}
+		for _, tc := range r.ToolCalls {
+			p := transcript.Part{Kind: "tool", Tool: tc.Name, Info: transcript.Clip(tc.Arguments)}
+			// Edit-family calls additionally carry their target and before/after, which is
+			// what the changed-files strip counts and what opens the trace as a diff
+			// (fileedits.go). Verb is left to transcript.EditVerb: an `edit` has an Old and
+			// reads as an edit, a `write` is pure insertion and reads as an add.
+			if f, es := toolEdits(tc.Name, tc.Arguments); len(es) > 0 {
+				p.File, p.Edits = f, es
+			}
+			t.Parts = append(t.Parts, p)
+			if tc.ID != "" {
+				if b.sites == nil {
+					b.sites = make(map[string]toolCallSite)
+				}
+				b.sites[tc.ID] = toolCallSite{turn: len(*turns), part: len(t.Parts) - 1}
+			}
+		}
+		*turns = append(*turns, t)
+		b.lastAssistant = len(*turns)
+	case KindToolResult:
+		if site, ok := b.sites[r.ToolCallID]; ok {
+			(*turns)[site.turn].Parts[site.part].Output = transcript.CapOutput(r.Content)
+			delete(b.sites, r.ToolCallID) // a ToolCallID answers exactly one call
+		}
+	case KindSystemNote:
+		switch r.Note {
+		case NoteModelChange:
+			b.model, b.sawNote = r.Model, true
+		case NoteCompaction:
+			// Same convention claude's own compaction summary uses (transcript.go's
+			// Turn.Compact doc comment): a collapsible "context compacted" block, not an
+			// ordinary user prompt.
+			*turns = append(*turns, transcript.Turn{
+				Role: "user", Compact: true, TS: r.TS, AnchorID: r.ID, Idx: len(*turns),
 				Parts: []transcript.Part{{Kind: "text", Text: r.Content}},
 				Text:  r.Content,
 			})
-		case KindAssistant:
-			t := transcript.Turn{Role: "assistant", TS: r.TS, AnchorID: r.ID, Idx: len(turns), Text: r.Content, Model: r.Model}
-			if t.Model == "" {
-				t.Model = model
-			}
-			if strings.TrimSpace(r.Reasoning) != "" {
-				t.Parts = append(t.Parts, transcript.Part{Kind: "thinking", Text: r.Reasoning})
-			}
-			if strings.TrimSpace(r.Content) != "" {
-				t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: r.Content})
-			}
-			for _, tc := range r.ToolCalls {
-				p := transcript.Part{Kind: "tool", Tool: tc.Name, Info: transcript.Clip(tc.Arguments)}
-				// Edit-family calls additionally carry their target and before/after, which is
-				// what the changed-files strip counts and what opens the trace as a diff
-				// (fileedits.go). Verb is left to transcript.EditVerb: an `edit` has an Old and
-				// reads as an edit, a `write` is pure insertion and reads as an add.
-				if f, es := toolEdits(tc.Name, tc.Arguments); len(es) > 0 {
-					p.File, p.Edits = f, es
-				}
-				t.Parts = append(t.Parts, p)
-				if tc.ID != "" {
-					sites[tc.ID] = toolCallSite{turn: len(turns), part: len(t.Parts) - 1}
-				}
-			}
-			turns = append(turns, t)
-			lastAssistant = len(turns) - 1
-		case KindToolResult:
-			if site, ok := sites[r.ToolCallID]; ok {
-				turns[site.turn].Parts[site.part].Output = transcript.CapOutput(r.Content)
-				delete(sites, r.ToolCallID) // a ToolCallID answers exactly one call
-			}
-		case KindSystemNote:
-			switch r.Note {
-			case NoteModelChange:
-				model = r.Model
-			case NoteCompaction:
-				// Same convention claude's own compaction summary uses (transcript.go's
-				// Turn.Compact doc comment): a collapsible "context compacted" block, not an
-				// ordinary user prompt.
-				turns = append(turns, transcript.Turn{
-					Role: "user", Compact: true, TS: r.TS, AnchorID: r.ID, Idx: len(turns),
-					Parts: []transcript.Part{{Kind: "text", Text: r.Content}},
-					Text:  r.Content,
-				})
-			case NoteTurnError:
-				// See NoteTurnError's own doc comment: the one system-note kind that gets a
-				// mirror rendering, as an error block on its own synthetic assistant turn (the
-				// preceding KindUser record is the prompt this failure answers).
-				turns = append(turns, transcript.Turn{
-					Role: "assistant", TS: r.TS, AnchorID: r.ID, Idx: len(turns),
-					Parts: []transcript.Part{{Kind: "error", Text: r.Content}},
-					Text:  r.Content,
-				})
-			}
-		case KindUsage:
-			if lastAssistant >= 0 && r.Usage != nil {
-				turns[lastAssistant].InTok = r.Usage.PromptTokens
-				turns[lastAssistant].OutTok = r.Usage.CompletionTokens
-				// ADR 0093 decision 8: this kind's own window, never a guess — session_usage.go's
-				// AggregateUsage and usage_fold.go's foldTurnRows both read CtxWindow>0 as
-				// WindowSource="recorded" automatically, the same way codex/opencode's own
-				// transcript parsers already do (opencode/transcript.go, codex/transcript.go).
-				if r.Window > 0 {
-					turns[lastAssistant].CtxWindow = r.Window
-				}
+		case NoteTurnError:
+			// See NoteTurnError's own doc comment: the one system-note kind that gets a
+			// mirror rendering, as an error block on its own synthetic assistant turn (the
+			// preceding KindUser record is the prompt this failure answers).
+			*turns = append(*turns, transcript.Turn{
+				Role: "assistant", TS: r.TS, AnchorID: r.ID, Idx: len(*turns),
+				Parts: []transcript.Part{{Kind: "error", Text: r.Content}},
+				Text:  r.Content,
+			})
+		}
+	case KindUsage:
+		if b.lastAssistant > 0 && r.Usage != nil {
+			t := &(*turns)[b.lastAssistant-1]
+			t.InTok = r.Usage.PromptTokens
+			t.OutTok = r.Usage.CompletionTokens
+			// ADR 0093 decision 8: this kind's own window, never a guess — session_usage.go's
+			// AggregateUsage and usage_fold.go's foldTurnRows both read CtxWindow>0 as
+			// WindowSource="recorded" automatically, the same way codex/opencode's own
+			// transcript parsers already do (opencode/transcript.go, codex/transcript.go).
+			if r.Window > 0 {
+				t.CtxWindow = r.Window
 			}
 		}
 	}
-	return turns
+}
+
+// result is the caller's own copy of the turns so far. Turn fields are copied by value; the
+// Parts of a turn still awaiting a tool result are copied too, because add writes that
+// result into the builder's Parts later, under a reader that may still hold this copy.
+func (b *transcriptBuilder) result(sessionModel string) []transcript.Turn {
+	out := slices.Clone(b.turns)
+	if !b.sawNote {
+		for _, i := range b.unlabelled {
+			out[i].Model = sessionModel
+		}
+	}
+	for _, site := range b.sites {
+		if t := &out[site.turn]; len(t.Parts) > 0 && &t.Parts[0] == &b.turns[site.turn].Parts[0] {
+			t.Parts = slices.Clone(t.Parts)
+		}
+	}
+	return out
 }
 
 func hasModelChange(recs []Record) bool {
@@ -628,7 +638,7 @@ func (s *Store) ForkAt(newSID, anchorID string) (*Store, error) {
 	// truncated ignored — a dropped, never-completed last write has no ID a caller could
 	// have been given as an anchor in the first place, so it can never be anchorID below;
 	// the lookup just behaves as if that line had never been written at all.
-	recs, _, err := s.Records()
+	recs, _, err := s.records()
 	if err != nil {
 		return nil, err
 	}

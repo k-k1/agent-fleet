@@ -165,7 +165,7 @@ func taskFromTodo(i int, t harness.TodoItem) transcript.Task {
 // this is simply sidFor(m) — driver.go's ensureForked reads it back as the SOURCE store to
 // copy from.
 func (agentImpl) ForkSource(m session.Meta) (string, error) {
-	recs, _, err := Open(sidFor(m)).Records()
+	recs, _, err := Open(sidFor(m)).records()
 	if err != nil {
 		return "", err
 	}
@@ -188,7 +188,7 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 // it returns "" — the same "whole conversation" value driver.go's ensureForked already gives
 // that meaning for a plain (non-point) fork.
 func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
-	recs, _, err := Open(sidFor(m)).Records()
+	recs, _, err := Open(sidFor(m)).records()
 	if err != nil {
 		return "", err
 	}
