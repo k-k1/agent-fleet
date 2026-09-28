@@ -86,9 +86,13 @@ func (c *BitbucketCache) Get(ctx context.Context, key string, refresh bool) ([]b
 			body, err := c.Fetch(fctx, ws, repo)
 			cancel()
 			c.mu.Lock()
-			if err != nil {
+			switch {
+			case errors.Is(err, ErrNoConnection):
+				// The connection was removed: the model read through it no longer counts.
+				e.body, e.at, e.err, e.errAt = nil, time.Time{}, err, time.Now()
+			case err != nil:
 				e.err, e.errAt = err, time.Now()
-			} else {
+			default:
 				e.body, e.at, e.err = body, time.Now(), nil
 			}
 			e.inflight = nil

@@ -409,3 +409,23 @@ func TestBitbucketStockSubsetCounts(t *testing.T) {
 		t.Error("the stock answer counted")
 	}
 }
+
+// Removing the connection drops the copy read through it, instead of using it unannounced.
+func TestBitbucketDisconnectDropsCopy(t *testing.T) {
+	dir := newRepo(t)
+	var gone atomic.Bool
+	c := NewBitbucketCache(func(context.Context, string, string) ([]byte, error) {
+		if gone.Load() {
+			return nil, ErrNoConnection
+		}
+		return []byte(`{"development":{"name":"develop","use_mainbranch":false}}`), nil
+	})
+	if repo := readRepo(t, dir, c); repo.Bitbucket != "ok" {
+		t.Fatalf("first read: %+v", repo)
+	}
+	gone.Store(true)
+	repo := ReadRepo(context.Background(), dir, ReadOptions{ID: "bitbucket.org/acme/web", Bitbucket: c, Refresh: true})
+	if repo.Bitbucket != "none" || len(repo.Layer.Rules) != 0 || repo.BitbucketFetchedAt != 0 {
+		t.Errorf("after disconnecting: %+v", repo)
+	}
+}
