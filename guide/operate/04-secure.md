@@ -234,8 +234,9 @@ whole deployment should be exactly the people who can edit the host's files.
 ## Reporting vulnerabilities
 
 If you find a vulnerability, **do not open a public issue** — report it privately. The
-preferred channel is GitHub's Security → "Report a vulnerability" (private advisory). The
-information to include in a report (affected version/commit, deployment form, reproduction
-steps, observed impact) and the response policy are in `SECURITY.md`.
+preferred channel is GitHub's Security → "Report a vulnerability" (private advisory); email
+to `security@agent-fleet.org` also works. The information to include in a report (affected
+version/commit, deployment form, reproduction steps, observed impact) and the response policy
+are in `SECURITY.md`.
 Because we are pre-1.0, fixes are made against the latest tag. Update to the latest version
 before reporting.

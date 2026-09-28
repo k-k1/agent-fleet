@@ -1,6 +1,6 @@
 # agent-fleet-dist
 
-[English](README.md) | 日本語
+[English](README.md) | 日本語 · [agent-fleet.org](https://agent-fleet.org/ja/)
 
 **エージェントは置き換えない。運用する。**
 

@@ -10,7 +10,7 @@ Please report suspected vulnerabilities **privately** — do not open a public
 issue for anything exploitable.
 
 - Preferred: GitHub → *Security* → *Report a vulnerability* (private advisory).
-- Or email the maintainer (see the repository owner's public profile).
+- Or email [security@agent-fleet.org](mailto:security@agent-fleet.org).
 
 Include: affected version/commit, deployment shape (on-prem compose / AWS), a
 reproduction or PoC, and the impact you observed. We aim to acknowledge within a
