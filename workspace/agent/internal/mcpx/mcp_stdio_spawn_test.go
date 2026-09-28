@@ -723,3 +723,167 @@ func TestRenameChildSessionRefusedWithoutTheOptIn(t *testing.T) {
 		}
 	}
 }
+
+// An effort is checked against the row the launch will start (short names resolved the same
+// way), refused with that row's list, and forwarded when accepted. Kinds whose catalog cannot
+// say, and a catalog that cannot be read, let it through rather than block the create.
+func TestCreateSessionEffort(t *testing.T) {
+	withFleetSpawn(t, true)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude, Origin: session.OriginUser})
+
+	// A kind missing here answers 500: a catalog that cannot be read.
+	catalogs := map[string]string{
+		"codex": `{"id":"gpt-sol","efforts":["low","medium","high","xhigh"],"defaultEffort":"low"},` +
+			`{"id":"gpt-mini","efforts":["minimal","low"]},` +
+			`{"id":"gpt-plain"}`,
+		"claude": `{"id":"opus","efforts":["low","high"]},{"id":"haiku"}`,
+		"muse":   `{"id":"m-a","efforts":["low","high"]},{"id":"m-b","efforts":["low","medium"]}`,
+	}
+	var body map[string]any
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/agents/") && strings.HasSuffix(r.URL.Path, "/models"):
+			cat, ok := catalogs[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agents/"), "/models")]
+			if !ok {
+				http.Error(w, "catalog down", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"models":[` + cat + `]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/sessions":
+			posts++
+			body = nil
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"name":"slot09"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	call := func(args map[string]any) string {
+		t.Helper()
+		a, _ := json.Marshal(args)
+		params, _ := json.Marshal(map[string]any{"name": "create_session", "arguments": json.RawMessage(a)})
+		return string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+	}
+	with := func(kv ...any) map[string]any {
+		m := map[string]any{"dir": "/repos/app", "kind": "codex", "model": "gpt-sol", "initial_prompt": "review"}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i].(string)] = kv[i+1]
+		}
+		return m
+	}
+
+	if resp := call(with("effort", "xhigh")); strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("valid effort refused: %s", resp)
+	}
+	if body["effort"] != "xhigh" {
+		t.Fatalf("effort not forwarded: %v", body["effort"])
+	}
+	xhighKey := body["idempotency_key"]
+	if resp := call(with()); strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("create without effort failed: %s", resp)
+	}
+	if body["effort"] != "" {
+		t.Fatalf("omitted effort forwarded as %v", body["effort"])
+	}
+	if body["idempotency_key"] == xhighKey {
+		t.Fatal("creates differing only by effort share an idempotency key")
+	}
+
+	before := posts
+	for _, tc := range []struct {
+		args map[string]any
+		want []string
+	}{
+		// Refused for the model, with that model's list, not the kind's union.
+		{with("effort", "minimal"), []string{"gpt-sol", "low, medium, high, xhigh"}},
+		// A short name is checked against the model it resolves to.
+		{with("model", "sol", "effort", "minimal"), []string{"gpt-sol", "low, medium, high, xhigh"}},
+		{with("model", "gpt-plain", "effort", "low"), []string{"gpt-plain", "省略"}},
+		{with("kind", "claude", "model", "haiku", "effort", "high"), []string{"haiku", "省略"}},
+		// No model: the default is the CLI's choice, so no value is known to hold for it -
+		// not even one every listed model shares.
+		{with("model", "", "effort", "low"), []string{"model も"}},
+		{with("model", "  ", "effort", "low"), []string{"model も"}},
+		{with("kind", "claude", "model", "", "effort", "high"), []string{"model も"}},
+		{with("kind", "muse", "model", "", "effort", "low"), []string{"model も"}},
+		{with("kind", "copilot", "model", "", "effort", "high"), []string{"auto"}},
+		{with("kind", "copilot", "model", "auto", "effort", "high"), []string{"auto"}},
+		{with("kind", "cursor", "effort", "high"), []string{"モデル id"}},
+		{with("kind", "agy", "effort", "high"), []string{"モデル id"}},
+		{with("kind", "lcpp", "effort", "high"), []string{"lcpp"}},
+		{with("kind", "shell", "effort", "high"), []string{"shell"}},
+		{with("kind", "ssm", "effort", "high"), []string{"ssm"}},
+	} {
+		resp := call(tc.args)
+		if !strings.Contains(resp, `"isError":true`) {
+			t.Fatalf("%v accepted: %s", tc.args, resp)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(resp, w) {
+				t.Errorf("%v: refusal %s does not mention %q", tc.args, resp, w)
+			}
+		}
+	}
+	if posts != before {
+		t.Fatalf("a refused effort still reached POST /sessions (%d posts)", posts-before)
+	}
+
+	// A padded id is checked as the model it names, and forwarded as that same string.
+	if resp := call(with("model", " gpt-sol ", "effort", " high ")); strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("padded model/effort refused: %s", resp)
+	}
+	if body["model"] != "gpt-sol" || body["effort"] != "high" {
+		t.Fatalf("forwarded model=%q effort=%q, want the trimmed values", body["model"], body["effort"])
+	}
+	if resp := call(with("model", " gpt-sol ", "effort", "minimal")); !strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("padded model escaped the check: %s", resp)
+	}
+
+	for _, args := range []map[string]any{
+		with("model", "mini", "effort", "minimal"),
+		with("kind", "claude", "model", "opus", "effort", "high"),
+		// opencode's variant and kiro's --effort are judged by the CLI; their catalogs list none.
+		with("kind", "opencode", "model", "opencode-go/glm", "effort", "max"),
+		with("kind", "kiro", "model", "", "effort", "high"),
+		// The Agent refuses an unknown model itself, with the better message.
+		with("model", "gpt-unknown", "effort", "ultra"),
+		// A catalog that cannot be read must not block the create (or its idempotent retry).
+		with("kind", "gone", "model", "g-1", "effort", "max"),
+	} {
+		if resp := call(args); strings.Contains(resp, `"isError":true`) {
+			t.Errorf("%v refused: %s", args, resp)
+		} else if body["effort"] != args["effort"] {
+			t.Errorf("%v: effort forwarded as %v", args, body["effort"])
+		}
+	}
+}
+
+func TestCreateSessionSchemasOfferEffort(t *testing.T) {
+	for name, tools := range map[string][]map[string]any{"session": mcpStdioFleetSpawnTools(), "operator": mcpStdioWriteTools} {
+		found := false
+		for _, tool := range tools {
+			if tool["name"] != "create_session" {
+				continue
+			}
+			found = true
+			props := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+			if _, ok := props["effort"]; !ok {
+				t.Errorf("%s create_session has no effort", name)
+			}
+			if _, ok := props["skip_permissions"]; ok {
+				t.Errorf("%s create_session offers skip_permissions", name)
+			}
+		}
+		if !found {
+			t.Errorf("%s surface has no create_session", name)
+		}
+	}
+}

@@ -74,18 +74,23 @@ func TestCreateIdempotencyKey(t *testing.T) {
 // TestCreateSessionKeyStable pins the tool-side key: deterministic across identical args
 // (so an LLM retry reproduces it) and sensitive to a changed arg.
 func TestCreateSessionKeyStable(t *testing.T) {
-	k1 := mcpx.CreateSessionKey("conv", "/d", "", "claude", "opus", "task", true, "main", "feat")
-	k2 := mcpx.CreateSessionKey("conv", "/d", "", "claude", "opus", "task", true, "main", "feat")
+	k1 := mcpx.CreateSessionKey("conv", "/d", "", "claude", "opus", "", "task", true, "main", "feat")
+	k2 := mcpx.CreateSessionKey("conv", "/d", "", "claude", "opus", "", "task", true, "main", "feat")
 	if k1 == "" || k1 != k2 {
 		t.Fatalf("key not stable: %q vs %q", k1, k2)
 	}
-	if mcpx.CreateSessionKey("conv", "/d", "", "claude", "opus", "task2", true, "main", "feat") == k1 {
+	if mcpx.CreateSessionKey("conv", "/d", "", "claude", "opus", "", "task2", true, "main", "feat") == k1 {
 		t.Fatal("changed prompt must change the key")
 	}
 	// A different subdir is a different launch intent — two sessions in the same repo
 	// but different folders must not collapse onto one another.
-	if mcpx.CreateSessionKey("conv", "/d", "console", "claude", "opus", "task", true, "main", "feat") == k1 {
+	if mcpx.CreateSessionKey("conv", "/d", "console", "claude", "opus", "", "task", true, "main", "feat") == k1 {
 		t.Fatal("changed subdir must change the key")
+	}
+	// Two creates that differ only by effort are different requests; the server-side intent
+	// fingerprint already counts effort, and the tool key must not be coarser than it.
+	if mcpx.CreateSessionKey("conv", "/d", "", "claude", "opus", "high", "task", true, "main", "feat") == k1 {
+		t.Fatal("changed effort must change the key")
 	}
 }
 

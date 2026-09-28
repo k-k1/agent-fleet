@@ -499,11 +499,13 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
   void version;
   const rows = descriptors.get(kind) || [];
   const selected = rows.find((m) => m.id === model);
+  // Haiku takes no effort whether named by alias or by a registered full id; the Agent's
+  // claude.EffortsFor draws the same line.
   // copilot's Auto (the only model on Free, and copilot's default) rejects --effort with
   // "Model auto does not support reasoning effort configuration". Offer the default effort only
   // until a concrete non-auto model is picked, matching the backend's launch guard.
   const noEffort =
-    (kind === "claude" && model === "haiku") ||
+    (kind === "claude" && model.toLowerCase().includes("haiku")) ||
     (kind === "copilot" && (model === "" || model === "auto"));
   // Union of the efforts across the catalog (the fallback when the selected model has no
   // metadata).
