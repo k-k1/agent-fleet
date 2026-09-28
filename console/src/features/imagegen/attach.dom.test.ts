@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 
 const calls: string[] = [];
 let putStatus = 200;
+let created: Record<string, unknown> = { name: "snew001" };
+let current: { title: string; updated_at: string } | null = null;
 vi.mock("../../core/api/client.ts", () => ({
   raw: async (path: string, init?: { method?: string }) => {
     calls.push(`${init?.method || "GET"} ${path}`);
@@ -13,7 +15,7 @@ vi.mock("../../core/api/client.ts", () => ({
   },
   apiJSON: async (path: string, method: string, body: { studio?: string }) => {
     calls.push(`${method} ${path} studio=${body.studio}`);
-    return { name: "snew001" };
+    return created;
   },
   errText: () => "",
   errDetail: () => "",
@@ -25,7 +27,7 @@ vi.mock("./api.ts", () => ({
   },
   createStudio: async () => ({ id: "st1" }),
   studioPersona: async () => ({ prompt: "persona", lang: "ja" }),
-  getStudio: async () => null,
+  getStudio: async () => current,
   patchStudio: async (id: string, body: unknown, ifMatch: string) => {
     calls.push(`put ${id} ${ifMatch} ${JSON.stringify(body)}`);
     return { status: putStatus };
@@ -82,5 +84,40 @@ describe("attaching to an existing studio", () => {
     expect(r.session).toBeUndefined();
     expect(r.error).toBeTruthy();
     expect(calls.some((c) => c.startsWith("POST api/sessions"))).toBe(false);
+  });
+});
+
+describe("a studio started in a new worktree", () => {
+  const opts = { dir: "/home/u/repos/app@feat", kind: "codex", driver: "managed", worktree: true, place: "app@feat", imageModel: "flux" };
+
+  it("takes the name of the worktree the Agent cut, not of the row it was started from", async () => {
+    calls.length = 0;
+    putStatus = 200;
+    created = { name: "snew002", repo: "app@wip-s1abcde" };
+    current = { title: "app@feat · Codex", updated_at: "v2" };
+    const r = await attachAgent({ studioId: null, draft: () => ({}), opts: opts as never });
+    expect(r.session).toBe("snew002");
+    expect(calls.at(-1)).toBe('put st1 v2 {"author":"human","title":"app@wip-s1abcde · Codex"}');
+  });
+
+  it("leaves a title the member typed in the meantime", async () => {
+    calls.length = 0;
+    created = { name: "snew003", repo: "app@wip-s1abcde" };
+    current = { title: "my harbour", updated_at: "v3" };
+    await attachAgent({ studioId: null, draft: () => ({}), opts: opts as never });
+    expect(calls.some((c) => c.startsWith("put"))).toBe(false);
+  });
+
+  it("leaves a studio the member had already named", async () => {
+    calls.length = 0;
+    created = { name: "snew004", repo: "app@wip-s1abcde" };
+    current = { title: "mine", updated_at: "v4" };
+    await attachAgent({
+      studioId: "st1",
+      draft: () => ({}),
+      existing: { title: "mine", updatedAt: "v1", draft: { model: "flux" } },
+      opts: opts as never,
+    });
+    expect(calls.some((c) => c.startsWith("put"))).toBe(false);
   });
 });

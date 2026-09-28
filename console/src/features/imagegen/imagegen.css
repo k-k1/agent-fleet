@@ -1384,3 +1384,20 @@
     display: none;
   }
 }
+
+/* On a touch device the focused composer means the soft keyboard is up, and the two steps above
+   still leave the transcript almost nothing: at 411x440 the stub shows 85 px, and a real session
+   adds the context bar and the title suggestion on top (a member reported the latest turns gone
+   while typing). Everything but the transcript, the session head and the composer's own row
+   steps aside until blur. Touch only: a narrow desktop pane has no keyboard eating its height. */
+@media (hover: none) and (pointer: coarse) {
+  @container igenpane (max-width: 720px) {
+    .igen:has(.mirror-compose textarea:focus) > .view-head,
+    .igen:has(.mirror-compose textarea:focus) .igen-tabs,
+    .igen-agent:has(.mirror-compose textarea:focus) .mirror-ctxbar,
+    .igen-agent:has(.mirror-compose textarea:focus) .mirror-title-suggest,
+    .igen-agent:has(.mirror-compose textarea:focus) .mirror-suggest {
+      display: none;
+    }
+  }
+}

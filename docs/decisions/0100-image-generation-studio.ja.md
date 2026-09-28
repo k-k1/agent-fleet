@@ -9,6 +9,7 @@
   状態の更新（2026-09-25）: 前提と決定 8 にある事実のうち 2 つが成り立たなくなった（#978、[docs/log/117](../log/117-managed-af-session-name-delivery.md)）。copilot／cursor／kiro／muse の Managed は af 子へ `AF_SESSION_NAME` を届けるようになった。muse の af サーバには wire で Agent のトークンがすでに届いている（ADR 0095 P2-14）。codex Managed も、入れ替えた daemon へ resume した thread が名前を保つ。下の「cwd 推定へ縮退する」は、生きた daemon だけで測った結果だった。これらの kind をスタジオへ開くことと、codex Managed で worktree を OFF にできるようにすることは #960 で扱う。
   状態の更新（2026-09-27）: 決定 10 を改訂した（改訂 10）——「スタジオなし」ペインを廃止。その下書きは 1 つのブラウザの `localStorage` にしか無く、PC で書いた下書きがスマホに出なかった。スタジオはエージェント無しでも作れる（決定 2 の ①）ので、ペインは必ずスタジオを編集し、下書きは端末をまたいで続く。決定 2 の「セッションが無いうちは今の `localStorage` 下書きで動く」は成り立たなくなった。付ける順序 ①〜③ は変わらず、① はペインがすでにスタジオを持つので飛ばされる。
   状態の更新（2026-09-28）: 決定 6 の縁取りを狭めた（決定 6 の下の注記）。押すと縁取りが消え、生成パラメータの摘みは鍵の単位（`params` 一式）ではなく摘みごとに縁取る。
+  状態の更新（2026-09-28）: P0 の配備での受け入れを [docs/log/124](../log/124-imagegen-studio-p0-acceptance.md) に記録した。未解決 1 と 4 の答えはそこにある。Follow-ups: #1131, #1132。
 - Follow-ups: #949, #956, #959, #960
 - **改訂 1（2026-09-23）**: 別セッション `semvs2b`（codex / gpt-6-sol）の ADR レビュー
   [113-adr-review](../log/113-adr-review.md)（🔴 9・🟡 12・🔵 1）を反映。決定 3・4・8・9・12 の契約を
@@ -430,13 +431,18 @@ kind の能力で決める: Managed で一級の添付を読むのは opencode�
 
 ## 未解決
 
-1. **`list_changed` を尊重する kind**（claude 以外は未測定）。尊重しない kind では結び直し・トグルが
-   resume まで効かない。P0 の受け入れで測る。
+1. **`list_changed` を尊重する kind** — P0 の受け入れで測った（[docs/log/124](../log/124-imagegen-studio-p0-acceptance.md)
+   §2）。Terminal の claude・agy・copilot・kiro は尊重する。opencode の Terminal は resume で拾う。codex の Managed は
+   resume でも一覧を取り直さない（共有 app-server がスレッドの af 子を持ち続ける）ので、試走のトグルが動いている
+   セッションに届かない（#1132）。codex の Terminal はそもそもスタジオに届かない。スレッドがホームで動き、af 子が
+   自分のセッションを名乗れない（#1131）。ペインは常に結んだ状態でセッションを作るので、結び自体はこれに左右されない。
 2. **試走の枠 3 はワークスペース共通**。エージェントの試走をスタジオごとに 1 枚に絞るか。429 の文言は
    スタジオ文脈に直す。codex の MCP 上限 600 秒は冷えたエンジンの 16 分に足りない。
 3. **段 2（ワークスペース停止）は生成中でも止める**（reaper は imagegen のジョブを見ない）。
    0081 からの穴で、別件で起票する。
-4. **知識の「要約」の上限**（1 KB）と `get_image_studio` の 8 KB は当て推量。実機で直す。
+4. **知識の「要約」の上限**（1 KB）と `get_image_studio` の 8 KB — 実機の後も据え置く
+   （[docs/log/124](../log/124-imagegen-studio-p0-acceptance.md) §4）。実際の要約は 659〜878 バイト。実際の下書きで応答は
+   約 3 KB、長い編集 7 回で 7.6 KB になり、そこから先は削る順序に任せる。
 5. **`generate_image` 以外の CLI 組み込み画像ツール**（codex の `image_gen`・agy）はスタジオでも
    使える。制限したければ kind ごとの構成の話で、本 ADR の外。
 6. **スタジオとメタの片側だけ書けたとき**の修復（決定 2）: スタジオを正として起動時に突き合わせる。

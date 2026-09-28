@@ -36,6 +36,9 @@ export async function attachAgent(p: {
   replacing?: string;
 }): Promise<AttachResult> {
   let studioId = p.studioId;
+  // Whether this call gave the studio its default title (a new studio, or an untitled one), and so
+  // may correct it once the session says where it really works.
+  const defaulted = !p.title && (!p.studioId || (!!p.existing && !p.existing.title));
   if (p.replacing && studioId) {
     // Unbind first, and wait for it: the create refuses a studio still bound to a live session
     // (409 studio_bound), and a stop does not finish before this returns. Unbound, the old
@@ -93,7 +96,26 @@ export async function attachAgent(p: {
     return { studioId, error: t("err.network") };
   }
   if (!res || res.error || !res.name) return { studioId, error: res?.error ? errDetail(res.error) : t("imggen.attach_failed") };
+  // A new worktree is named by the Agent, so the default title above names the row the member
+  // started from, and two studios cut from one row read the same in the picker. The create
+  // answers with the working copy the agent actually got.
+  const repo = typeof res.repo === "string" ? res.repo : "";
+  if (o.worktree && defaulted && repo && repo !== o.place) {
+    await retitle(studioId, title, defaultStudioTitle({ place: repo, kind: o.kind }));
+  }
   return { studioId, session: res.name as string };
+}
+
+// Cosmetic, so a failure is dropped; and only while the studio still carries the title this attach
+// wrote, so a name the member typed in the meantime is never replaced.
+async function retitle(id: string, from: string, to: string): Promise<void> {
+  try {
+    const cur = await getStudio(id);
+    if (!cur || cur.error || (cur.title || "") !== from) return;
+    await patchStudio(id, { author: "human", title: to }, cur.updated_at);
+  } catch {
+    // The studio keeps the row's name.
+  }
 }
 
 /** "<working copy> · <agent>" ("Home · <agent>" without one): what a studio is called until the
