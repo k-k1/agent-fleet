@@ -382,12 +382,22 @@ const maxRecordLine = 32 * 1024 * 1024
 // mirror history over one crash during its very last write — a cost this store's whole
 // reason to exist (decision 3: never lose the record) is meant to avoid paying.
 //
-// Only the lines appended since the last read of this path are decoded (recordcache.go). The
-// returned slice is the caller's own, but the ToolCalls and Usage it points at are shared with
-// the cache and must not be written to.
+// Only the lines appended since the last read of this path are decoded (recordcache.go); what
+// is returned is the caller's own copy, ToolCalls and Usage included.
 func (s *Store) Records() (recs []Record, truncated bool, err error) {
 	view, truncated, err := s.records()
-	return slices.Clone(view), truncated, err
+	if view == nil {
+		return nil, truncated, err
+	}
+	recs = slices.Clone(view)
+	for i := range recs {
+		recs[i].ToolCalls = slices.Clone(recs[i].ToolCalls)
+		if u := recs[i].Usage; u != nil {
+			uu := *u
+			recs[i].Usage = &uu
+		}
+	}
+	return recs, truncated, err
 }
 
 // records is Records without the copy, for readers in this package that only look.
@@ -425,7 +435,7 @@ func fullFromRecords(recs []Record) []harness.Message {
 			out = append(out, harness.Message{Role: harness.RoleUser, Content: r.Content})
 		case KindAssistant:
 			out = append(out, harness.Message{
-				Role: harness.RoleAssistant, Content: r.Content, Reasoning: r.Reasoning, ToolCalls: r.ToolCalls,
+				Role: harness.RoleAssistant, Content: r.Content, Reasoning: r.Reasoning, ToolCalls: slices.Clone(r.ToolCalls),
 			})
 		case KindToolResult:
 			out = append(out, harness.Message{Role: harness.RoleTool, Content: r.Content, ToolCallID: r.ToolCallID})
@@ -600,9 +610,9 @@ func (b *transcriptBuilder) add(r Record) {
 	}
 }
 
-// result is the caller's own copy of the turns so far. Turn fields are copied by value; the
-// Parts of a turn still awaiting a tool result are copied too, because add writes that
-// result into the builder's Parts later, under a reader that may still hold this copy.
+// result is the caller's own copy of the turns so far, down to each Part's Edits: add still
+// writes into earlier turns (a tool result's output, a usage count), and every other kind hands
+// out a fresh parse per read, so nothing downstream expects to share.
 func (b *transcriptBuilder) result(sessionModel string) []transcript.Turn {
 	out := slices.Clone(b.turns)
 	if !b.sawNote {
@@ -610,9 +620,29 @@ func (b *transcriptBuilder) result(sessionModel string) []transcript.Turn {
 			out[i].Model = sessionModel
 		}
 	}
-	for _, site := range b.sites {
-		if t := &out[site.turn]; len(t.Parts) > 0 && &t.Parts[0] == &b.turns[site.turn].Parts[0] {
-			t.Parts = slices.Clone(t.Parts)
+	// One backing array for every turn's Parts and one for every Edit, carved into capped
+	// slices: a copy per turn cost ~3000 allocations a poll on a 1000-round log.
+	var nParts, nEdits int
+	for _, t := range out {
+		nParts += len(t.Parts)
+		for _, p := range t.Parts {
+			nEdits += len(p.Edits)
+		}
+	}
+	parts := make([]transcript.Part, 0, nParts)
+	edits := make([]transcript.Edit, 0, nEdits)
+	for i := range out {
+		from := len(parts)
+		for _, p := range out[i].Parts {
+			if p.Edits != nil {
+				e := len(edits)
+				edits = append(edits, p.Edits...)
+				p.Edits = edits[e:len(edits):len(edits)]
+			}
+			parts = append(parts, p)
+		}
+		if out[i].Parts != nil {
+			out[i].Parts = parts[from:len(parts):len(parts)]
 		}
 	}
 	return out

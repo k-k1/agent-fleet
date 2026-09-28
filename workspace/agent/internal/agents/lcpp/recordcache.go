@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -46,6 +48,11 @@ const recordCacheIdle = 30 * time.Minute
 // record id, a nanosecond timestamp, so a recreated log differs well inside this.
 const recordHeadLen = 256
 
+// recordSweepEvery spaces sweeps out on reads of sessions already cached, so an Agent that keeps
+// polling one session still lets go of the ones it stopped reading.
+const recordSweepEvery = time.Minute
+
+var lastRecordSweep atomic.Int64 // unix nanoseconds
 type recordEntry struct {
 	mu   sync.Mutex
 	recs []Record    // every complete line before off, decoded
@@ -53,6 +60,7 @@ type recordEntry struct {
 	head []byte      // the file's first bytes when recs[0] was read — its identity
 	file os.FileInfo // the stat the cached records were read under
 	used time.Time   // last read, for the idle sweep
+	dead bool        // swept out of recordCache
 	// tb holds the turns of recs[:built]; readTranscript feeds it the rest.
 	tb    transcriptBuilder
 	built int
@@ -78,7 +86,11 @@ func readRecords(path string) (view []Record, truncated bool, err error) {
 	defer e.mu.Unlock()
 	tail, truncated, err := e.refresh(path, size)
 	if err != nil {
-		return e.view(), false, err
+		var ce corruptLine
+		if errors.As(err, &ce) {
+			return e.view(), false, err // the records before a bad line, as a full read gave
+		}
+		return nil, false, err
 	}
 	if tail != nil {
 		return append(e.view(), *tail), false, nil
@@ -121,20 +133,27 @@ func lockEntry(path string) (*recordEntry, int64, error) {
 		}
 		return nil, 0, err
 	}
-	// used is stamped at creation: the sweep runs before this entry is locked, and a zero
-	// timestamp reads as idle since the epoch.
-	v, loaded := recordCache.LoadOrStore(path, &recordEntry{used: time.Now()})
-	if !loaded {
-		sweepRecordCache(time.Now()) // on a miss only, off the hot path of a polled session
+	now := time.Now()
+	if last := lastRecordSweep.Load(); now.UnixNano()-last > int64(recordSweepEvery) &&
+		lastRecordSweep.CompareAndSwap(last, now.UnixNano()) {
+		sweepRecordCache(now)
 	}
-	e := v.(*recordEntry)
-	e.mu.Lock()
-	e.used = time.Now()
-	if fi.Size() < e.off || (e.file != nil && !os.SameFile(e.file, fi)) {
-		e.reset(nil)
+	for {
+		// used is stamped at creation: a sweep between here and the lock would otherwise
+		// read a zero timestamp as idle since the epoch.
+		v, _ := recordCache.LoadOrStore(path, &recordEntry{used: now})
+		e := v.(*recordEntry)
+		e.mu.Lock()
+		if e.dead {
+			e.mu.Unlock() // swept between the load and the lock: take the path's new entry
+			continue
+		}
+		e.used = time.Now()
+		if fi.Size() < e.off || (e.file != nil && !os.SameFile(e.file, fi)) {
+			e.reset(nil)
+		}
+		return e, fi.Size(), nil
 	}
-	e.file = fi
-	return e, fi.Size(), nil
 }
 
 // refresh folds whatever was appended since the last read; with nothing new it is free.
@@ -161,6 +180,17 @@ func (e *recordEntry) fold(path string) (tail *Record, truncated bool, err error
 		return nil, false, err
 	}
 	defer f.Close()
+	// Identity comes from the file actually opened, not the stat that sent us here: a
+	// replacement landing in between would otherwise pair the old file's offset with the new
+	// file's bytes.
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, false, err
+	}
+	if fi.Size() < e.off || (e.file != nil && !os.SameFile(e.file, fi)) {
+		e.reset(nil)
+	}
+	e.file = fi
 	head := make([]byte, recordHeadLen)
 	n, err := f.ReadAt(head, 0)
 	if n == 0 && err != nil && err != io.EOF {
@@ -192,7 +222,7 @@ func (e *recordEntry) fold(path string) (tail *Record, truncated bool, err error
 			}
 			var rec Record
 			if derr := json.Unmarshal(body, &rec); derr != nil {
-				bad = fmt.Errorf("lcpp: %s: line %d: %w", path, len(e.recs), derr)
+				bad = corruptLine{fmt.Errorf("lcpp: %s: line %d: %w", path, len(e.recs), derr)}
 			} else if !complete {
 				return &rec, false, nil
 			} else {
@@ -239,18 +269,27 @@ func sameHead(a, b []byte) bool {
 }
 
 // sweepRecordCache drops sessions nothing has read for recordCacheIdle. An entry a reader
-// currently holds is skipped rather than waited for: it is by definition in use.
+// currently holds is skipped rather than waited for: it is by definition in use. The check and
+// the delete happen under the entry's lock, and dead tells a reader that loaded the entry
+// just before to fetch the path again rather than fill an entry nobody can find.
 func sweepRecordCache(now time.Time) {
 	recordCache.Range(func(k, v any) bool {
 		e := v.(*recordEntry)
 		if !e.mu.TryLock() {
 			return true
 		}
-		idle := now.Sub(e.used) > recordCacheIdle
-		e.mu.Unlock()
-		if idle {
-			recordCache.Delete(k)
+		if now.Sub(e.used) > recordCacheIdle {
+			e.dead = true
+			recordCache.CompareAndDelete(k, e)
 		}
+		e.mu.Unlock()
 		return true
 	})
 }
+
+// corruptLine is a complete line that did not decode, told apart from a read error because
+// only this one comes back with the records before it.
+type corruptLine struct{ err error }
+
+func (c corruptLine) Error() string { return c.err.Error() }
+func (c corruptLine) Unwrap() error { return c.err }

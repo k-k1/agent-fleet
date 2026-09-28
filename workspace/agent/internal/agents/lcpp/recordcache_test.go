@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -362,5 +363,162 @@ func TestTranscriptConvertsOnlyWhatWasAppended(t *testing.T) {
 	}
 	if e.converted != 5 {
 		t.Fatalf("converted %d records in total, want 5 (4 + only the 1 new)", e.converted)
+	}
+}
+
+// TestReadsHandOutTheirOwnCopies: what Records, Full and TranscriptFor return is the caller's
+// to scribble on, down to tool calls, usage and edits; the next read still says what the log
+// says.
+func TestReadsHandOutTheirOwnCopies(t *testing.T) {
+	testHome(t)
+	s := Open("sid-own")
+	defer s.Close()
+	args := `{"path":"a.go","old_string":"x","new_string":"y"}`
+	if _, err := s.AppendUser("q"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendMessage(harness.Message{Role: harness.RoleAssistant,
+		ToolCalls: []harness.ToolCall{{ID: "c1", Name: "edit", Arguments: args}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendMessage(harness.Message{Role: harness.RoleTool, Content: "done", ToolCallID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 7}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	recs, _, err := s.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs[1].ToolCalls[0].Arguments = "scribbled"
+	recs[3].Usage.PromptTokens = 999
+	full, err := s.Full()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full[1].ToolCalls[0].Name = "scribbled"
+	turns, err := s.TranscriptFor("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns[1].Parts) != 1 || len(turns[1].Parts[0].Edits) != 1 {
+		t.Fatalf("setup: turn 1 parts = %+v, want one edit part", turns[1].Parts)
+	}
+	turns[1].Parts[0].Output = "scribbled"
+	turns[1].Parts[0].Edits[0].New = "scribbled"
+	// The copies share one backing array per read; appending to one turn must not reach the next.
+	_ = append(turns[0].Parts, transcript.Part{Kind: "text", Text: "appended"})
+	if turns[1].Parts[0].Kind != "tool" {
+		t.Fatalf("appending to turn 0's parts overwrote turn 1's: %+v", turns[1].Parts[0])
+	}
+
+	recs, _, _ = s.Records()
+	if recs[1].ToolCalls[0].Arguments != args || recs[3].Usage.PromptTokens != 7 {
+		t.Fatalf("Records after scribbling: %+v / %+v", recs[1].ToolCalls, *recs[3].Usage)
+	}
+	if u, _, _ := s.LastUsage(); u.PromptTokens != 7 {
+		t.Fatalf("LastUsage after scribbling = %d, want 7", u.PromptTokens)
+	}
+	if full, _ = s.Full(); full[1].ToolCalls[0].Name != "edit" {
+		t.Fatalf("Full after scribbling: %+v", full[1].ToolCalls)
+	}
+	turns, _ = s.TranscriptFor("")
+	if p := turns[1].Parts[0]; p.Output != "done" || p.Edits[0].New != "y" {
+		t.Fatalf("TranscriptFor after scribbling: %+v", p)
+	}
+}
+
+// TestRecordsOverlongLineReturnsNothing keeps the full read's contract for a read error: no
+// records at all, where a line that merely fails to decode returns the ones before it.
+func TestRecordsOverlongLineReturnsNothing(t *testing.T) {
+	testHome(t)
+	s := Open("sid-long")
+	defer s.Close()
+	appendUsers(t, s, 0, 2)
+	wantContents(t, s, "turn-0", "turn-1")
+	appendRaw(t, s, strings.Repeat("x", maxRecordLine+1)+"\n")
+	recs, truncated, err := s.Records()
+	if err == nil || truncated || recs != nil {
+		t.Fatalf("overlong line: %d records, truncated=%v, err=%v; want nil, false, an error", len(recs), truncated, err)
+	}
+}
+
+// TestSweepRunsWhilePollingAnotherSession: an Agent that keeps polling one session still lets go
+// of one it stopped reading, and the one it keeps polling survives.
+func TestSweepRunsWhilePollingAnotherSession(t *testing.T) {
+	testHome(t)
+	idle, polled := Open("sid-idle"), Open("sid-polled")
+	defer idle.Close()
+	defer polled.Close()
+	appendUsers(t, idle, 0, 1)
+	appendUsers(t, polled, 0, 1)
+	wantContents(t, idle, "turn-0")
+	wantContents(t, polled, "turn-0")
+	stale := cachedEntry(t, idle)
+	stale.mu.Lock()
+	stale.used = time.Now().Add(-recordCacheIdle - time.Minute)
+	stale.mu.Unlock()
+	lastRecordSweep.Store(0)
+
+	wantContents(t, polled, "turn-0") // a hit, not a miss
+	if _, ok := recordCache.Load(idle.Path()); ok {
+		t.Fatal("the idle session's entry survived a sweep")
+	}
+	if !stale.dead {
+		t.Fatal("a swept entry must be marked dead for a reader that loaded it just before")
+	}
+	if _, ok := recordCache.Load(polled.Path()); !ok {
+		t.Fatal("the polled session's entry was swept")
+	}
+	wantContents(t, idle, "turn-0") // and reading it again simply starts over
+}
+
+// TestFoldTakesIdentityFromTheOpenedFile: a replacement landing between the stat and the open,
+// with the same first bytes, must still be read from the start rather than from the old offset.
+func TestFoldTakesIdentityFromTheOpenedFile(t *testing.T) {
+	testHome(t)
+	s := Open("sid-race")
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	line := func(id, content string) string {
+		return fmt.Sprintf(`{"id":%q,"ts":"t","kind":"user","content":%q}`+"\n", id, content)
+	}
+	first := line("1", strings.Repeat("h", recordHeadLen)) // the shared head, longer than the window
+	if err := os.WriteFile(s.Path(), []byte(first+line("2", "old")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, size, err := lockEntry(s.Path())
+	if err != nil || e == nil {
+		t.Fatalf("lockEntry: %v", err)
+	}
+	if _, _, err := e.refresh(s.Path(), size); err != nil {
+		t.Fatal(err)
+	}
+	e.mu.Unlock()
+
+	// Stat the old file, then let the replacement land before the fold opens the path.
+	e, size, err = lockEntry(s.Path())
+	if err != nil || e == nil {
+		t.Fatalf("lockEntry: %v", err)
+	}
+	if err := os.WriteFile(s.Path()+".new", []byte(first+line("3", "new")+line("4", "newer")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(s.Path()+".new", s.Path()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.refresh(s.Path(), size+1); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range e.view() {
+		got = append(got, r.ID)
+	}
+	e.mu.Unlock()
+	if !reflect.DeepEqual(got, []string{"1", "3", "4"}) {
+		t.Fatalf("records = %v, want [1 3 4] — the new file read from its start", got)
 	}
 }
