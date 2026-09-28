@@ -3002,19 +3002,23 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		// Checked before anything is created: the Agent stores an effort without validating it,
 		// and an unknown value would otherwise surface only when the child's first turn fails.
-		if a.Effort != "" {
-			if err := checkCreateEffort(a.Kind, a.Model, a.Effort); err != nil {
+		// Trimmed once and used everywhere below: the check resolves a padded id to its row, so
+		// forwarding the raw value would launch a model string the check never saw, and a
+		// blank model would slip past its "effort needs model" refusal.
+		model, effort := strings.TrimSpace(a.Model), strings.TrimSpace(a.Effort)
+		if effort != "" {
+			if err := checkCreateEffort(a.Kind, model, effort); err != nil {
 				return mcpToolErr(req.ID, err.Error())
 			}
 		}
-		idemKey := CreateSessionKey(scope, a.Dir, a.Subdir, a.Kind, a.Model, a.Effort, initialPrompt, worktree, a.Branch, a.NewBranch)
+		idemKey := CreateSessionKey(scope, a.Dir, a.Subdir, a.Kind, model, effort, initialPrompt, worktree, a.Branch, a.NewBranch)
 		reqBody, _ := json.Marshal(map[string]any{
 			"dir":             a.Dir,
 			"subdir":          a.Subdir,
 			"title":           a.Title,
 			"kind":            a.Kind,
-			"model":           a.Model,
-			"effort":          a.Effort,
+			"model":           model,
+			"effort":          effort,
 			"initial_prompt":  initialPrompt,
 			"worktree":        worktree,
 			"branch":          a.Branch,

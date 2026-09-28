@@ -811,6 +811,7 @@ func TestCreateSessionEffort(t *testing.T) {
 		// No model: the default is the CLI's choice, so no value is known to hold for it -
 		// not even one every listed model shares.
 		{with("model", "", "effort", "low"), []string{"model も"}},
+		{with("model", "  ", "effort", "low"), []string{"model も"}},
 		{with("kind", "claude", "model", "", "effort", "high"), []string{"model も"}},
 		{with("kind", "muse", "model", "", "effort", "low"), []string{"model も"}},
 		{with("kind", "copilot", "model", "", "effort", "high"), []string{"auto"}},
@@ -833,6 +834,17 @@ func TestCreateSessionEffort(t *testing.T) {
 	}
 	if posts != before {
 		t.Fatalf("a refused effort still reached POST /sessions (%d posts)", posts-before)
+	}
+
+	// A padded id is checked as the model it names, and forwarded as that same string.
+	if resp := call(with("model", " gpt-sol ", "effort", " high ")); strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("padded model/effort refused: %s", resp)
+	}
+	if body["model"] != "gpt-sol" || body["effort"] != "high" {
+		t.Fatalf("forwarded model=%q effort=%q, want the trimmed values", body["model"], body["effort"])
+	}
+	if resp := call(with("model", " gpt-sol ", "effort", "minimal")); !strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("padded model escaped the check: %s", resp)
 	}
 
 	for _, args := range []map[string]any{
