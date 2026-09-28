@@ -399,6 +399,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/aws-login/{id}/start", awsLogin)
 	mux.HandleFunc("GET /api/aws-login/{id}/attempts/{attempt}", awsLogin)
 	mux.HandleFunc("POST /api/aws-login/{id}/cancel", rest)
+	// The Settings row's "Log in" (#1028): an attempt without a request, and each row's state.
+	mux.HandleFunc("GET /api/aws-login/profiles", rest)
+	mux.HandleFunc("POST /api/aws-login/profiles/{name}/start", awsLogin)
+	mux.HandleFunc("GET /api/aws-login/profiles/{name}/attempts/{attempt}", awsLogin)
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
 	mux.HandleFunc("POST /api/ssm/instances", ws.withResolved(ws.ssmInstances))
 	// Structured transcript for the Console chat view (case-A).

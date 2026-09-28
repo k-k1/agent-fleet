@@ -86,11 +86,30 @@ func (a ssmConfigAPI) listProfiles(w http.ResponseWriter, r *http.Request, _ sto
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	out := make([]ssmProfileDTO, 0, len(rows))
+	writeJSON(w, http.StatusOK, profileListWire(rows))
+}
+
+func profileListWire(rows []store.SSMProfile) []ssmProfileListDTO {
+	counts := map[string]int{}
 	for _, p := range rows {
-		out = append(out, profileToDTO(p))
+		counts[ssmProfileName(p.Label)]++
 	}
-	writeJSON(w, http.StatusOK, out)
+	out := make([]ssmProfileListDTO, 0, len(rows))
+	for _, p := range rows {
+		n := ssmProfileName(p.Label)
+		out = append(out, ssmProfileListDTO{ssmProfileDTO: profileToDTO(p), Name: n, NameCollides: counts[n] > 1})
+	}
+	return out
+}
+
+// ssmProfileListDTO is a profile as the Settings list shows it: with the ~/.aws profile
+// name the workspace knows it by, which the row's "Log in" (#1028) sends, and whether
+// another label maps to that name, in which case awsProfilesWire exports neither.
+// Read-only: create and import take ssmProfileDTO.
+type ssmProfileListDTO struct {
+	ssmProfileDTO
+	Name         string `json:"name"`
+	NameCollides bool   `json:"nameCollides,omitempty"`
 }
 
 // validateProfile trims + checks a profile DTO. Returns a normalized SSMProfile

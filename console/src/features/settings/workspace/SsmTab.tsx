@@ -6,10 +6,11 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { SSM_HOST_COLORS, hostColorBase, termBackground } from "../../../lib/termcolor.ts";
-import { useT, t } from "../../../lib/i18n/index.ts";
+import { useT, t, type MsgKey } from "../../../lib/i18n/index.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
+import { ProfileLoginModal, type LoginProfile } from "../../awslogin/ProfileLoginModal.tsx";
 
-// SsmTab manages the member's own AWS SSM login config (docs/log/p3-ssm-session.md)
+// SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
 //   profile (shared) = the shared auth bundle (SSO portal + account/role/region); many
 //                      hosts reuse one. Maps to a ~/.aws named profile.
@@ -105,6 +106,14 @@ export function SsmTab() {
 
 // --- profiles (common) ----------------------------------------------------------
 
+// The Agent's login states (GET /api/aws-login/profiles). No time is shown: the cache knows
+// only the access token's expiry, which the CLI renews until the portal session ends (#1029).
+const STATE_KEYS: Record<string, { label: MsgKey; title: MsgKey }> = {
+  signed_in: { label: "ssm.state_signed_in", title: "ssm.state_signed_in_title" },
+  renew: { label: "ssm.state_renew", title: "ssm.state_renew_title" },
+  none: { label: "ssm.state_none", title: "ssm.state_none_title" },
+};
+
 const emptyProfile: Record<string, string> = { label: "", startUrl: "", ssoRegion: "", accountId: "", roleName: "", region: "" };
 
 type FieldEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement>;
@@ -127,8 +136,33 @@ function ProfileSection({
   const toast = useToast();
   const [f, setF] = useState<Record<string, string>>(emptyProfile);
   const [busy, setBusy] = useState(false);
+  const [loginFor, setLoginFor] = useState<LoginProfile | null>(null);
+  // Each row's login state, from the Agent (absent while the workspace is stopped). Asked on
+  // open and after the login modal closes; nothing polls.
+  const [states, setStates] = useState<Record<string, string>>({});
+  const loadStates = useCallback(() => {
+    api("api/aws-login/profiles")
+      .then((d) => {
+        const m: Record<string, string> = {};
+        for (const p of Array.isArray(d?.profiles) ? d.profiles : []) m[String(p.name)] = String(p.state);
+        setStates(m);
+      })
+      .catch(() => setStates({}));
+  }, []);
+  useEffect(loadStates, [loadStates]);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
   const valid = f.label.trim() && /^https:\/\//.test(f.startUrl.trim()) && f.ssoRegion.trim();
+  // Why a row cannot log in from here (null when it can; "" when a CP too old to send the
+  // name leaves nothing to say). The Agent refuses the same rows; saying so up front beats
+  // a failed press.
+  const loginOff = (p: any): string | null =>
+    !p.name
+      ? ""
+      : p.nameCollides
+        ? tr("ssm.login_off_collides", { name: p.name })
+        : !p.accountId || !p.roleName
+          ? tr("ssm.login_off_incomplete")
+          : null;
 
   const add = async () => {
     if (!valid) return;
@@ -180,6 +214,22 @@ function ProfileSection({
             <li key={p.id} className="ssm-item">
               <div className="ssm-item-head">
                 <span className="ssm-alias">{p.label}</span>
+                {p.name && STATE_KEYS[states[p.name]] && (
+                  <span
+                    className={"ssm-login-state " + states[p.name]}
+                    title={tr(STATE_KEYS[states[p.name]].title)}
+                  >
+                    {tr(STATE_KEYS[states[p.name]].label)}
+                  </span>
+                )}
+                <button
+                  className="ghost ssm-login"
+                  title={loginOff(p) || tr("ssm.login_title")}
+                  disabled={loginOff(p) !== null}
+                  onClick={() => setLoginFor({ name: p.name, label: p.label, accountId: p.accountId, roleName: p.roleName })}
+                >
+                  {tr("ssm.login")}
+                </button>
                 <button className="ghost danger ssm-del" title={tr("common.delete")} onClick={() => remove(p.id)}>
                   {tr("common.delete")}
                 </button>
@@ -262,6 +312,15 @@ function ProfileSection({
         <button className="ghost ssm-add-toggle" onClick={() => setOpen(true)}>
           <Icon name="add" /> {tr("ssm.add_profile")}
         </button>
+      )}
+      {loginFor && (
+        <ProfileLoginModal
+          profile={loginFor}
+          onClose={() => {
+            setLoginFor(null);
+            loadStates();
+          }}
+        />
       )}
     </section>
   );
