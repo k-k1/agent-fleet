@@ -73,6 +73,13 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       body.origin_session = handoffSession;
       body.origin_proposal = handoffId;
     }
+    // The work item a launch was seeded from goes into the session meta, so a later rename
+    // through the branch-name resolver keeps {ref} and the kind (ADR 0103 decision 8). The same
+    // store as the lineage above, for the same reason.
+    const { workItem } = useLaunchSeed.getState();
+    if (workItem) {
+      body.work_item = { provider: workItem.provider, key: workItem.key, title: workItem.title, type: workItem.type, labels: workItem.labels };
+    }
     if (worktree) {
       body.worktree = true;
       body.branch = base;
@@ -88,6 +95,12 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       delete body.driver;
       if (!agentOf(kind).caps.tuiEffort) delete body.effort;
       if (!agentOf(kind).caps.tuiStartMode) delete body.mode;
+      res = await apiJSON("api/sessions", "POST", body);
+    }
+    // An Agent from before work_item existed refuses the whole body as bad_request: it decodes
+    // strictly. The item only helps a later rename, so the launch goes ahead without it.
+    if (res?.error && body.work_item && (res.error as { code?: string }).code === "bad_request") {
+      delete body.work_item;
       res = await apiJSON("api/sessions", "POST", body);
     }
     if (res && res.error) {

@@ -127,6 +127,16 @@ export const useLaunchTarget = create<LaunchTargetStore>((set) => ({
   clear: () => set({ target: null, existingBranch: "", inPlace: false }),
 }));
 
+/** The work item a launch was seeded from (docs/log/80). */
+export interface LaunchWorkItem {
+	provider: string;
+	key: string;
+	branch: string;
+	title: string;
+	type: string;
+	labels: string[];
+}
+
 /** A first-prompt seed for the next launch (docs/log/21 UI overhaul): the memo send modal's
  * "start a new session" stashes the composed memo text here, then opens the launch hub.
  * LaunchModal reads it once to prefill its prompt field, then it's cleared. */
@@ -147,10 +157,11 @@ interface LaunchSeedStore {
 	handoffOfferId: string;
 	/** The work item (docs/log/80) this launch came from. Held so the ledger gets its row only
 	 *  AFTER the launch succeeds — same reason as handoffOfferId: seeding must not claim the
-	 *  work was started, since the dialog can still be cancelled. `branch` is the value
-	 *  suggested in LaunchModal's new-branch field. */
-	workItem: { provider: string; key: string; branch: string } | null;
-	set(p: string, title?: string, handoffSession?: string, handoffId?: string, handoffOfferId?: string, workItem?: { provider: string; key: string; branch: string } | null): void;
+	 *  work was started, since the dialog can still be cancelled. `branch` is the Console's own
+	 *  suggestion (branchForItem), used when the Agent has no branch-name resolver; title, type
+	 *  and labels are what the resolver names the branch from (ADR 0103 decision 8). */
+	workItem: LaunchWorkItem | null;
+	set(p: string, title?: string, handoffSession?: string, handoffId?: string, handoffOfferId?: string, workItem?: LaunchWorkItem | null): void;
   clear(): void;
 }
 

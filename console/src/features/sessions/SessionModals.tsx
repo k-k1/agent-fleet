@@ -86,6 +86,7 @@ export function SessionModals() {
         <BranchRenameModal
           name={branchRename.name}
           branch={branchRename.branch || ""}
+          repo={branchRename.repo || ""}
           onClose={close}
           onSaved={() => void refreshSessions()}
         />

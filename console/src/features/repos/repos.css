@@ -658,6 +658,20 @@
 .launch-sec-sum.warn {
   color: var(--warn);
 }
+/* Branch-rule warnings under the new-branch field (ADR 0103 decision 8). Advisory: the launch
+   button stays enabled, so this reads as a note rather than an error. */
+.launch-branch-warns {
+  margin: -4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--warn);
+}
+.launch-branch-warns li {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+}
 .launch-sec-edit {
   flex: none;
   font-size: 11px;

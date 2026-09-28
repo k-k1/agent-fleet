@@ -43,6 +43,9 @@ import type { Branch } from "./BranchList.tsx";
 import { sanitizeSeg } from "../../lib/reponame.ts";
 import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { coarsePointer } from "../../lib/device.ts";
+import { useLaunchBranchName } from "./useLaunchBranchName.ts";
+import { baseSource, bitbucketPending, warningText } from "./branchRule.ts";
+import type { BranchItem } from "./branchRule.ts";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
 // base is the start point and newBranch the branch to create ("" => the server
@@ -119,10 +122,14 @@ interface LaunchModalProps {
   /** Open straight into existing-branch mode with this branch picked — the SCM view's
    * "start work on this branch" actions land here. */
   initialExistingBranch?: string;
-  /** Suggested NEW branch name, prefilled into the branch field (docs/log/80: a launch
-   * from a work item proposes feature/<key>-<slug>). Only a suggestion — clearing the
-   * field falls back to the server-minted temp/<slug>. */
+  /** Suggested NEW branch name, prefilled into the branch field: the Console's own
+   * branchForItem for a work-item launch, kept when the Agent has no branch-name resolver.
+   * Only a suggestion — clearing the field falls back to the server-minted temp/<slug>. */
   initialNewBranch?: string;
+  /** The work item this launch came from. The Agent's resolver then names the branch and
+   * picks the base (ADR 0103 decision 8), replacing initialNewBranch and the base unless the
+   * person has already edited them. */
+  workItem?: BranchItem;
   /** Pre-answer the location choice. Omitted = the usual default (a new worktree wherever
    * one is offered). false = directly in this copy, for a caller that already asked — the work
    * item flow picks the working copy first (docs/log/80 §80.8), and re-defaulting to
@@ -160,7 +167,7 @@ function LaunchSection({ label, summary, warn = false, open, onToggle, children 
   );
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, initialWorktree, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -224,8 +231,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const [subdir, setSubdir] = useState(() => resolveSubdir(repo));
   const [base, setBase] = useState(branch || "");
   // "" => the server mints temp/<slug>. A launch that came from a work item (docs/log/80)
-  // prefills feature/<key>-<slug> as a suggestion — clearing it restores the usual behaviour.
+  // prefills the resolver's name, e.g. feature/45-empty-list, as a suggestion — clearing it
+  // restores the usual behaviour.
   const [branchName, setBranchName] = useState(initialNewBranch || "");
+  const naming = useLaunchBranchName({ repo, item: workItem, name: branchName, setName: setBranchName, setBase });
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
   const [conflictWt, setConflictWt] = useState(""); // for "in_use": the copy holding it
   // Branch: create a new one (the default), or use a branch that already exists. The latter
@@ -317,6 +326,8 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       : explicit
         ? tr("launch.sum.wt_named", { branch: explicit, base: baseName || tr("launch.base_default") })
         : tr("launch.sum.wt_auto", { base: baseName || tr("launch.base_default") });
+  // The section is folded by default, so a branch-rule warning inside it is named on the summary.
+  const placeWarned = worktree && !existingMode && naming.warnings.length > 0;
   // Advanced does the opposite and lists only what moved off its default; all-defaults gets a
   // single word. Always printing 5 items turns the line into another grey band nobody reads.
   const advParts = [
@@ -639,8 +650,8 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
         ) : (
         <LaunchSection
           label={tr("launch.field.location")}
-          summary={placeSummary}
-          warn={existingMode && !existingBranch}
+          summary={placeWarned ? placeSummary + " · " + tr("launch.sum.branch_warn") : placeSummary}
+          warn={(existingMode && !existingBranch) || placeWarned}
           open={placeOpen}
           onToggle={() => toggleSection("place", placeOpen, setPlaceOpen)}
         >
@@ -699,23 +710,54 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                   <>
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.base_branch")}</span>
-                      <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
+                      <input
+                        value={base}
+                        onChange={(e) => {
+                          naming.touchBase();
+                          setBase(e.target.value);
+                        }}
+                        placeholder={branch || tr("launch.base_default")}
+                      />
                       {/* The base point is aligned to origin's tip (the Agent's
                           fastForwardNewWorktreeToOrigin). Spelled out here so the base is never
                           seen to move silently. */}
                       <span className="ui-field-hint">{tr("launch.base_origin_note")}</span>
+                      {/* A base the rules picked says which rule, so develop is never a surprise. */}
+                      {baseSource(naming.resolved?.sources) && (
+                        <span className="ui-field-hint launch-base-source">
+                          {tr("launch.base_source")} <code>{baseSource(naming.resolved?.sources)}</code>
+                        </span>
+                      )}
                     </label>
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.branch_name")}</span>
                       <input
                         value={branchName}
                         onChange={(e) => {
+                          naming.touchName();
                           setBranchName(e.target.value);
                           setConflict(null);
                         }}
                         placeholder={tr("launch.branch_ph")}
                       />
                     </label>
+                    {/* Advisory only (decision 8): nothing here stops the launch. */}
+                    {naming.warnings.length > 0 && (
+                      <ul className="launch-branch-warns" role="status">
+                        {naming.warnings.map((w) => (
+                          <li key={w.code + w.message} title={w.message}>
+                            <Icon name="warning" /> {warningText(w)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {bitbucketPending(naming.resolved?.sources) && (
+                      <div>
+                        <Button small icon={naming.rereading ? "loading" : "refresh"} disabled={naming.rereading} onClick={naming.reread}>
+                          {tr("launch.branch_reread")}
+                        </Button>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="ui-field">

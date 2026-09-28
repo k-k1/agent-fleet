@@ -603,10 +603,12 @@ export interface Settings {
   usageChipsPinned: string[];
   // Agents whose chip always sits in the folded popover, however recently they were used.
   usageChipsFolded: string[];
-  // Branch-name template for launching from a work item (docs/log/80 P2). The placeholders are
-  // {key} (PROJ-123 / issue-45) and {slug} (an ASCII slug from the title, empty for Japanese).
-  // Empty string = the default, feature/{key}-{slug}. Clearing this does NOT fall back to the
-  // server's temp/<slug>; clearing the branch field in the launch dialog is what does that.
+  // Branch-name template for launching from a work item (docs/log/80 P2), read by the Agent's
+  // resolver as the user's `*` rule (ADR 0103 decision 2). Placeholders: {ref} {num} {key}
+  // {project} {type} {prefix} {slug} (decision 4). Empty string = the resolver's built-in
+  // {prefix}{ref}-{slug}, or feature/{key} from an Agent without the resolver (branchForItem).
+  // Clearing this does NOT fall back to the server's temp/<slug>; clearing the branch field in
+  // the launch dialog is what does that.
   workItemBranchTemplate: string;
   // Read-aloud (TTS, docs/log/24 + ADR0013): speaks agent answers through VOICEVOX (Zundamon)
   // by calling the CP-native /api/tts/synthesize sentence by sentence (features/chat/tts.ts).

@@ -32,6 +32,10 @@ export interface WorkItem {
   checks: WorkItemChecks;
   /** "clean" | "conflict" | "unknown" for an open GitHub pull request, "" when not read. */
   mergeable: string;
+  /** The tracker's own issue type (GitHub's issue type, Jira's issuetype); "" or absent when the
+   * tracker has none or an older CP or Agent sent the row. The branch-name resolver maps it to a
+   * kind before the labels (ADR 0103 decision 4). */
+  type?: string;
 }
 
 export interface WorkItemQuery {
@@ -529,8 +533,9 @@ export function titleSlug(title: string, max = 32): string {
   return cut > 0 ? s.slice(0, cut) : s.slice(0, max);
 }
 
-/** The default branch template. `{key}` is the item key with the owner/name prefix
- * dropped (the working copy already says which repo it is) and "#" turned into
+/** The default branch template when the Agent has no branch-name resolver; the resolver's own
+ * default is {prefix}{ref}-{slug} (ADR 0103 decision 6). `{key}` is the item key with the
+ * owner/name prefix dropped (the working copy already says which repo it is) and "#" turned into
  * "issue-" — "#" cannot appear in a git ref. The key keeps the case it was written in:
  * G3-1234 is how the ticket, the commit message and the PR title all spell it, so
  * lower-casing it to g3-1234 only made the branch the odd one out. `{slug}` is the ASCII
@@ -540,7 +545,8 @@ export function titleSlug(title: string, max = 32): string {
  * in the setting if you want it. */
 export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}";
 
-/** Branch name for a work item, from the user's template (docs/log/80 P2).
+/** Branch name for a work item, from the user's template (docs/log/80 P2). The fallback for an
+ * Agent without the branch-name resolver, which renders {key} and {slug} only.
  *
  * A template that yields something git would refuse is worse than no template, so the
  * result is sanitised: only [A-Za-z0-9._/-] survives, empty path segments collapse, and

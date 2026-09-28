@@ -47,6 +47,7 @@ export const workitems = {
   "wi.query_expr": "検索クエリ",
   "wi.branch_template": "ブランチ名テンプレート",
   "wi.branch_preview": "例: {branch} / {branch2}（{key} と {slug} が使えます。日本語だけのタイトルは {slug} が空になります）",
+  "wi.branch_preview_rules": "例: {branch} / {branch2}（空欄なら既定の {prefix}{ref}-{slug}。使えるもの: {ref} {num} {key} {project} {type} {prefix} {slug}。{type} と {prefix} は課題の種別やラベルから決まり、Bug なら fix/ です。日本語だけのタイトルは {slug} が空になります。リポジトリ側に規則（git-flow など）があれば、起動時はそちらが優先されます）",
   "wi.report_title": "作業の報告をコメントする",
   "wi.report_to": "投稿先",
   "wi.report_session": "対象のセッション",

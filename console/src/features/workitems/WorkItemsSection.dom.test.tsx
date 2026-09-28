@@ -36,9 +36,12 @@ vi.mock("./api.ts", () => ({
 // which is what a stopped workspace looks like.
 const clientApi = vi.fn();
 const clientRaw = vi.fn();
+// The branch-template preview (ADR 0103): an Agent without the resolver by default.
+const clientApiJSON = vi.fn();
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<typeof import("../../core/api/client.ts")>()),
   api: (...a: unknown[]) => clientApi(...a),
+  apiJSON: (...a: unknown[]) => clientApiJSON(...a),
   raw: (...a: unknown[]) => clientRaw(...a),
 }));
 // Both opens are counted as "opened"; openTerminal also records which one it was.
@@ -129,6 +132,8 @@ beforeEach(() => {
   clientApi.mockReset();
   clientApi.mockRejectedValue(new Error("workspace stopped"));
   clientRaw.mockReset();
+  clientApiJSON.mockReset();
+  clientApiJSON.mockResolvedValue({ error: { code: "http_404" } });
   openChat.mockReset();
   openTerminal.mockReset();
   useSessionsStore.setState({ sessions: [], refresh: vi.fn(async () => {}) });
@@ -403,7 +408,16 @@ describe("WorkItemsSection", () => {
     expect(seed.prompt).toContain("gh issue view 45");
     expect(seed.prompt).not.toContain(">"); // the body is not pasted by default
     expect(seed.title).toContain("#45");
-    expect(seed.workItem).toEqual({ provider: "github", key: "acme/web#45", branch: "feature/issue-45" });
+    // The seed carries what the Agent's resolver names the branch from (ADR 0103 decision 8),
+    // with branchForItem's suggestion kept for an Agent without it.
+    expect(seed.workItem).toEqual({
+      provider: "github",
+      key: "acme/web#45",
+      branch: "feature/issue-45",
+      title: "ログイン後に一覧が空になる",
+      type: "",
+      labels: ["bug"],
+    });
     expect(useLaunchTarget.getState().target?.name).toBe("web");
     expect(useLaunchTarget.getState().inPlace).toBe(false);
   });
@@ -676,6 +690,50 @@ describe("WorkItemsSection", () => {
     // still works.
     const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
     expect(expr.value).toContain("currentUser()");
+  });
+
+  // --- The branch template's preview comes from the Agent's resolver (ADR 0103) ---
+
+  const waitPreview = async () => {
+    for (let i = 0; i < 3; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 350))));
+  };
+
+  it("previews the template through the resolver, as typed, with the resolver's default as the placeholder", async () => {
+    clientApiJSON.mockImplementation(async (_url: string, _m: string, body: { template: string }) => ({
+      names: body.template === "{type}/{num}"
+        ? [{ name: "feature/45", name_empty: false, kind: "feature" }, { name: "bugfix/123", name_empty: false, kind: "bugfix" }]
+        : [{ name: "feature/45-fix-the-empty-list", name_empty: false, kind: "feature" }, { name: "fix/PROJ-123", name_empty: false, kind: "bugfix" }],
+    }));
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    const modal = await openQueries();
+    await waitPreview();
+    const field = modal.querySelector<HTMLInputElement>(".wi-qbranch input")!;
+    expect(field.placeholder).toBe("{prefix}{ref}-{slug}");
+    expect(modal.querySelector(".wi-qbranch .wi-qhint")?.textContent).toContain("feature/45-fix-the-empty-list / fix/PROJ-123");
+    const [url, , sent] = clientApiJSON.mock.calls.at(-1)!;
+    expect(url).toBe("api/branch-rules/preview");
+    expect((sent as { items: { type?: string }[] }).items[1].type).toBe("Bug");
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "{type}/{num}");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await waitPreview();
+    expect(modal.querySelector(".wi-qbranch .wi-qhint")?.textContent).toContain("feature/45 / bugfix/123");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  });
+
+  it("falls back to the Console's own rendering when the Agent has no resolver", async () => {
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    const modal = await openQueries();
+    await waitPreview();
+    expect(modal.querySelector<HTMLInputElement>(".wi-qbranch input")!.placeholder).toBe("feature/{key}");
+    expect(modal.querySelector(".wi-qbranch .wi-qhint")?.textContent).toContain("feature/issue-45 / feature/PROJ-123");
   });
 
   // --- §80.23: a Bitbucket query is assembled, never typed ---

@@ -337,6 +337,9 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
       provider: item.provider,
       key: item.key,
       branch: branchForItem(item, settings.workItemBranchTemplate),
+      title: item.title,
+      type: item.type || "",
+      labels: item.labels ?? [],
     });
   };
 
