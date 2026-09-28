@@ -16,6 +16,7 @@ func runCodexAwaitThread(args []string) {
 		return
 	}
 	addr, tid := args[0], args[1]
+	defer codex.MarkAwaiting(os.Getenv("AF_SESSION_NAME"))()
 	done := make(chan bool, 1)
 	go func() { done <- codex.AwaitThreadUnloaded(addr, tid, codex.ThreadReleaseTimeout, 2*time.Second) }()
 	select {

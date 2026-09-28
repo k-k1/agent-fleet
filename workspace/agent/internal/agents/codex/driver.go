@@ -215,6 +215,9 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		// across cli⇄managed) both ride on it.
 		sids.Write(slotSid, tid)
 	}
+	// A Terminal launch may have asked the observer to stay off this thread (release.go); the
+	// managed session owns it again now.
+	RestoreObservedThread(tid)
 	// After resume the policies can have fallen back to the config defaults (measured), so
 	// re-assert them. A failure is not fatal: the turn still runs, only on the readOnly side.
 	if _, err := cl.call("thread/settings/update", mergeMaps(map[string]any{"threadId": tid}, bypassPolicies()), 10*time.Second); err != nil {

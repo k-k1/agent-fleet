@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -364,7 +365,12 @@ func TestCodexObserverForgetsUnloadedThread(t *testing.T) {
 // attach again only once the unload (notLoaded) has been seen.
 func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
 	captureObservationLog(t)
-	t.Cleanup(func() { clearCodexReleased("thr-held") })
+	releasedFile := filepath.Join(t.TempDir(), "released.json")
+	prevFile := codexReleasedFile
+	codexReleasedFile = func() string { return releasedFile }
+	t.Cleanup(func() { clearCodexReleased("thr-held"); codexReleasedFile = prevFile })
+	var loadedMu sync.Mutex
+	loaded := true // whether the scripted server still lists thr-held
 
 	calls := make(chan string, 16) // "<method> <threadId>" for resume/unsubscribe
 	push := make(chan map[string]any, 4)
@@ -397,8 +403,14 @@ func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
 			case "initialize":
 				write(map[string]any{"id": m["id"], "result": map[string]any{}})
 			case "thread/loaded/list":
+				loadedMu.Lock()
+				data := []string{}
+				if loaded {
+					data = []string{"thr-held"}
+				}
+				loadedMu.Unlock()
 				write(map[string]any{"id": m["id"],
-					"result": map[string]any{"data": []string{"thr-held"}, "nextCursor": nil}})
+					"result": map[string]any{"data": data, "nextCursor": nil}})
 			case "thread/resume", "thread/unsubscribe":
 				tid, _ := m["params"].(map[string]any)["threadId"].(string)
 				calls <- m["method"].(string) + " " + tid
@@ -458,17 +470,57 @@ func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
 		"params": map[string]any{"threadId": "thr-held", "status": map[string]any{"type": "idle"}}}
 	quiet("released thread re-attached while still loaded")
 
-	// Unloaded: the hold ends, and a later load is observed again.
-	push <- map[string]any{"method": "thread/status/changed",
-		"params": map[string]any{"threadId": "thr-held", "status": map[string]any{"type": "notLoaded"}}}
+	// The hold is on disk, so an Agent restarted during the pane's wait keeps off the thread.
+	codexReleasedMu.Lock()
+	codexReleased = map[string]bool{}
+	codexReleasedMu.Unlock()
+	loadCodexReleased()
+	if !codexThreadReleased("thr-held") {
+		t.Fatal("the release was not restored from disk")
+	}
+
+	// Unloaded, seen through a sweep (no notLoaded broadcast arrives): the hold ends, and a
+	// later load is observed again.
+	loadedMu.Lock()
+	loaded = false
+	loadedMu.Unlock()
+	obs.sweep()
 	deadline := time.Now().Add(3 * time.Second)
 	for codexThreadReleased("thr-held") {
 		if time.Now().After(deadline) {
-			t.Fatal("notLoaded did not end the release")
+			t.Fatal("a sweep without the thread did not end the release")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	if b, _ := os.ReadFile(releasedFile); strings.Contains(string(b), "thr-held") {
+		t.Fatalf("the ended hold is still on disk: %s", b)
+	}
+	loadedMu.Lock()
+	loaded = true
+	loadedMu.Unlock()
 	obs.sweep()
 	expect("thread/resume thr-held")
 	close(push)
+}
+
+// notLoaded is the other unload signal, and a managed Resume's restore is the explicit one.
+func TestCodexReleaseEndsOnNotLoadedOrRestore(t *testing.T) {
+	prevFile := codexReleasedFile
+	codexReleasedFile = func() string { return filepath.Join(t.TempDir(), "released.json") }
+	t.Cleanup(func() { codexReleasedFile = prevFile })
+
+	releaseCodexObservedThread("thr-a")
+	obs := newCodexObserver(nil) // neither path touches conn
+	obs.observeThreadLifecycle(codexAppServerMessage{
+		Method: "thread/status/changed",
+		Params: []byte(`{"threadId":"thr-a","status":{"type":"notLoaded"}}`),
+	})
+	if codexThreadReleased("thr-a") {
+		t.Fatal("notLoaded did not end the release")
+	}
+	releaseCodexObservedThread("thr-b")
+	clearCodexReleased("thr-b") // what codex.RestoreObservedThread does
+	if codexThreadReleased("thr-b") {
+		t.Fatal("restore did not end the release")
+	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -718,6 +719,14 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 		writeBlockedErr(w, st)
 		return false
 	}
+	// codex: a Terminal launch that resumes a thread the shared app-server still holds first
+	// waits in the pane for the release (codex/release.go, about 70 s). Nobody reads the
+	// terminal meanwhile, so a prompt typed now would be lost or arrive as stray keystrokes.
+	if meta, ok := session.ReadMeta(name); ok && meta.Kind == session.KindCodex && codex.Awaiting(name) {
+		httpx.WriteErr(w, http.StatusConflict, "codex_releasing",
+			"managed 実行方式からこの会話を引き継いでいる途中です（通常 1 分ほど）。codex の入力欄が出てから送ってください")
+		return false
+	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
 	// send_to_session right after create (no initial_prompt) would vanish. Its
 	// composer footer is persistent once drawn ("? for shortcuts" idle / "esc to
@@ -895,10 +904,16 @@ func typeInitialPrompt(name, prompt string) string {
 	if kind == session.KindShell {
 		ready = true
 	}
+	// A codex pane waiting for the app-server to release its thread (codex/release.go) has no
+	// composer for up to ThreadReleaseTimeout; the budget above starts once codex does.
+	releaseDeadline := time.Now().Add(codex.ThreadReleaseTimeout + 15*time.Second)
 	for i := 0; !ready && i < 60; i++ {
 		if PaneMode(kind, tn) != "" {
 			ready = true
 			break
+		}
+		if kind == session.KindCodex && codex.Awaiting(name) && time.Now().Before(releaseDeadline) {
+			i = 0
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

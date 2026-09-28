@@ -3,6 +3,10 @@ package codex
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -123,5 +127,37 @@ func TestBuildLaunchWaitsForTheAppServerToReleaseTheThread(t *testing.T) {
 	released = nil
 	if got := launch(); strings.Contains(got, "codex-await-thread") || len(released) != 0 {
 		t.Fatalf("launch without a daemon waited or released (released=%v): %q", released, got)
+	}
+}
+
+// The marker must track the waiter's life: present while it runs, gone after its cleanup, and
+// ignored once its process is dead (a killed pane never runs the cleanup).
+func TestAwaitingFollowsTheWaiter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	done := MarkAwaiting("await-mark")
+	if !Awaiting("await-mark") {
+		t.Fatal("marker written but Awaiting is false")
+	}
+	done()
+	if Awaiting("await-mark") {
+		t.Fatal("Awaiting still true after the waiter's cleanup")
+	}
+	if MarkAwaiting(""); Awaiting("") {
+		t.Fatal("a pane without AF_SESSION_NAME must not mark anything")
+	}
+	// A dead pid: spawn and reap a short process for a pid nobody holds any more.
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	p := awaitMarkerPath("await-stale")
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if Awaiting("await-stale") {
+		t.Fatal("a marker left by a dead waiter still blocks the session")
 	}
 }

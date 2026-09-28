@@ -3,8 +3,15 @@ package codex
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // A thread loaded on the shared app-server cannot be opened by a directly launched TUI: codex
@@ -20,6 +27,10 @@ import (
 // ReleaseObservedThread is the seam package main fills with its observer's release: unsubscribe
 // from the thread and stop re-attaching it until it is unloaded. This package holds no observer.
 var ReleaseObservedThread = func(threadID string) {}
+
+// RestoreObservedThread is its counterpart, called when a managed Resume takes the thread back:
+// the observer may attach to it again even though no unload was seen in between.
+var RestoreObservedThread = func(threadID string) {}
 
 // ThreadReleaseTimeout bounds the pane's wait. Past it the TUI starts anyway: the worst case is
 // codex's own lock screen, which still offers a retry.
@@ -86,4 +97,46 @@ func threadLoaded(cl *appClient, threadID string) (bool, error) {
 		}
 		cursor = *res.NextCursor
 	}
+}
+
+// While the pane waits, the terminal belongs to the waiter, not to codex: a prompt typed into
+// it is read by nobody and lands, if at all, as stray keystrokes before codex draws its
+// composer. The waiter leaves a marker keyed by the session name for its lifetime, and the
+// prompt paths refuse or hold back while it is there. The pane's foreground command cannot
+// tell: tmux reports the wrapping shell (measured: `bash`).
+func awaitMarkerPath(name string) string {
+	return filepath.Join(paths.AgentStateDir(), "codex-await", name)
+}
+
+// MarkAwaiting records that this process is the pane's waiter for session name and returns
+// the cleanup. An empty name (a pane without AF_SESSION_NAME) records nothing.
+func MarkAwaiting(name string) func() {
+	if !session.ValidName(name) {
+		return func() {}
+	}
+	p := awaitMarkerPath(name)
+	if os.MkdirAll(filepath.Dir(p), 0o700) != nil {
+		return func() {}
+	}
+	if os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o600) != nil {
+		return func() {}
+	}
+	return func() { _ = os.Remove(p) }
+}
+
+// Awaiting reports whether session name's pane is still waiting for the app-server to release
+// its thread. A marker whose process is gone (a killed pane skips the cleanup) does not count.
+func Awaiting(name string) bool {
+	if !session.ValidName(name) {
+		return false
+	}
+	b, err := os.ReadFile(awaitMarkerPath(name))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	return syscall.Kill(pid, 0) == nil
 }

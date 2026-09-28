@@ -97,8 +97,10 @@ PR #1137 を配備した Agent で、Agent API から codex の Terminal を作�
   30 秒ごとの `thread/loaded/list` で付け直すので、5 分待っても読み込まれたままだった。
 - 隔離した app-server での実測: 最後の購読者が抜けてから約 70 秒で unload され、その時点でロックが解けて TUI が続く。
 
-修正: `BuildLaunch` が resume するスレッドを、オブザーバが unsubscribe して unload まで付け直さない（再接続をまたいで
-覚えておく）。pane では `workspace-agent codex-await-thread <addr> <id>` が `thread/loaded/list` を見て unload を待ってから
+修正: `BuildLaunch` が resume するスレッドを、オブザーバが unsubscribe して unload まで付け直さない。解放の印は
+時間では消さず、unload（`notLoaded` か sweep の一覧から消えたこと）か Managed の Resume でだけ消す。再接続と Agent の
+再起動をまたぐようにファイルにも残す。待機中の pane には誰も入力を読まないので、プロンプトは `codex_releasing`（409）で断り、
+初回配送は待機が終わるまで待つ。pane では `workspace-agent codex-await-thread <addr> <id>` が `thread/loaded/list` を見て unload を待ってから
 `codex resume` を起動する（最長 3 分。過ぎたら codex のロック画面に任せる）。隔離した app-server で、待機の表示のあと
 ロック画面なしで会話が開くことを確かめた。
 

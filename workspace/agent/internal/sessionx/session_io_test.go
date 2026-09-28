@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -556,5 +557,45 @@ func TestTypePromptTextSendsLeadingDashLiterally(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
+	}
+}
+
+// While a codex pane waits for the shared app-server to release its thread, nobody reads the
+// terminal: a prompt typed then would be lost or reach codex as stray keystrokes before its
+// composer exists. It is refused with its own code, and nothing is typed.
+func TestHandleSessionInputRefusesWhileCodexAwaitsRelease(t *testing.T) {
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "tmux.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  has-session) exit 0 ;;
+  list-panes) printf '1 %%7\n' ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("TMUX_TEST_LOG", logPath)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+
+	const name = "codex_await"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
+	done := codex.MarkAwaiting(name) // this test process stands in for the pane's waiter
+
+	rec := postInput(t, name, `{"prompt":"hello"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
+		t.Fatalf("status = %d, body = %s, want 409 codex_releasing", rec.Code, rec.Body.String())
+	}
+	if b, err := os.ReadFile(logPath); err == nil && (strings.Contains(string(b), "send-keys") || strings.Contains(string(b), "paste-buffer")) {
+		t.Fatalf("nothing may be typed while the waiter holds the pane, tmux commands = %q", b)
+	}
+
+	done()
+	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
+	if rec := postInput(t, name, `{"prompt":"hello"}`); rec.Code != http.StatusOK {
+		t.Fatalf("after the wait: status = %d, body = %s, want 200", rec.Code, rec.Body.String())
 	}
 }

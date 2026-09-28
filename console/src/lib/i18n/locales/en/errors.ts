@@ -67,6 +67,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
     "The agent is showing an interactive prompt. Answer it from its card before sending.",
   "err.auth_expired":
     "This workspace's Claude login has expired. Re-authenticate from Settings > Agents before sending (sent now, the terminal would take the text but no turn would ever start).",
+  "err.codex_releasing":
+    "This conversation is still being handed over from managed execution (usually about a minute). Send once the codex composer appears.",
   "err.not_running": "The session is stopped. Resume it before sending.",
   // The workspace is mid-boot (container up, Agent not answering yet) and something
   // that needs the Agent arrived. Not a failure — a "not yet", so it asks for a retry.
