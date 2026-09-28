@@ -788,9 +788,19 @@ const BranchSuggestPersona = "You name git branches. Read the conversation log a
 // Bitbucket cache. nil, or an empty answer, means the suggestion carries no kind.
 var BranchKinds func(ctx context.Context, dir string) []string
 
-// branchKindsWait is how long the suggestion waits for a Bitbucket branching model that is not
-// cached yet. It bounds only that wait; the local git reads of the rules do not take a context.
-const branchKindsWait = time.Second
+// suggestionKinds are the kinds the AI suggestion may pick from. They add no wait to the model's
+// budget: the request is silent until it answers, and the load balancer drops an idle request at
+// 60 s. With an already-ended context the resolver answers from its Bitbucket cache at once; a
+// model not cached yet is fetched in the background for the next suggestion, and this one uses
+// the repository's other rules.
+func suggestionKinds(ctx context.Context, dir string) []string {
+	if BranchKinds == nil || !gitx.IsGitRepo(dir) {
+		return nil
+	}
+	kctx, cancel := context.WithCancel(ctx)
+	cancel()
+	return BranchKinds(kctx, dir)
+}
 
 // runBranchSuggestLLM asks the title model for a git-safe branch name from the
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
@@ -887,17 +897,7 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
-	// The whole answer stays inside TitleSuggestTimeout: the request is silent until it answers,
-	// and the load balancer drops an idle request at 60 s. So the kinds get only a short slice of
-	// it. A first Bitbucket read that outlasts the slice keeps running and fills the resolver's
-	// cache; this answer uses the rest of the repository's rules without it.
-	var kinds []string
-	if BranchKinds != nil && gitx.IsGitRepo(m.Dir) {
-		kctx, kcancel := context.WithTimeout(ctx, branchKindsWait)
-		kinds = BranchKinds(kctx, m.Dir)
-		kcancel()
-	}
-	kind, branch, err := runBranchSuggestLLM(ctx, turns, kinds)
+	kind, branch, err := runBranchSuggestLLM(ctx, turns, suggestionKinds(ctx, m.Dir))
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
 		// Deliberately not catalogued: the developer message is shown as-is to keep the

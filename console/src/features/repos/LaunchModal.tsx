@@ -235,6 +235,17 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // restores the usual behaviour.
   const [branchName, setBranchName] = useState(initialNewBranch || "");
   const naming = useLaunchBranchName({ repo, item: workItem, name: branchName, setName: setBranchName, setBase });
+  // The same dialog can be handed another target; its branch fields then start from that
+  // target's own suggestion and base, before the resolver answers for it.
+  const target = `${repo}\u0000${workItem?.key ?? ""}`;
+  const lastTarget = useRef(target);
+  useEffect(() => {
+    if (lastTarget.current === target) return;
+    lastTarget.current = target;
+    setBranchName(initialNewBranch || "");
+    setBase(branch || "");
+    setConflict(null);
+  }, [target, initialNewBranch, branch]);
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
   const [conflictWt, setConflictWt] = useState(""); // for "in_use": the copy holding it
   // Branch: create a new one (the default), or use a branch that already exists. The latter

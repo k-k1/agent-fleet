@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchrule"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -171,5 +172,53 @@ func writeHomeUIPrefs(t *testing.T, home, body string) {
 	}
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The AI suggestion never waits for Bitbucket (it answers within the load balancer's idle
+// limit): with a model not cached yet it gets the other rules' kinds at once, and the fetch it
+// started fills the cache for the next one.
+func TestSuggestionKindsDoNotWaitForBitbucket(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := filepath.Join(home, "repos", "app")
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main", dir},
+		{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "init"},
+		{"-C", dir, "remote", "add", "origin", "https://bitbucket.org/acme/app.git"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	old := branchBitbucket
+	branchBitbucket = branchrule.NewBitbucketCache(func(context.Context, string, string) ([]byte, error) {
+		started <- struct{}{}
+		<-release
+		return nil, branchrule.ErrNoConnection
+	})
+	defer func() { close(release); branchBitbucket = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	begin := time.Now()
+	kinds := resolvedKindNames(ctx, dir)
+	if d := time.Since(begin); d > time.Second {
+		t.Errorf("kinds took %v with an ended context; the suggestion must not wait for Bitbucket", d)
+	}
+	if len(kinds) != 8 {
+		t.Errorf("kinds = %v, want the built-in eight while Bitbucket is pending", kinds)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Error("the Bitbucket fetch was not started for the next suggestion")
 	}
 }

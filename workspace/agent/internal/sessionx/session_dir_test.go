@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -296,6 +297,31 @@ func TestSplitSuggestedBranch(t *testing.T) {
 	}
 	if bare := BranchSuggestPrompt(nil); !strings.Contains(bare, "no prefixes like 'feature/'") {
 		t.Errorf("prompt without kinds lost its no-prefix rule:\n%s", bare)
+	}
+}
+
+// The suggestion hands the resolver an already-ended context, so the kinds never wait for a
+// Bitbucket model inside the model's budget (see suggestionKinds).
+func TestSuggestionKindsUseAnEndedContext(t *testing.T) {
+	if _, err := execLookPathGit(); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	old := BranchKinds
+	defer func() { BranchKinds = old }()
+	var ended bool
+	BranchKinds = func(ctx context.Context, _ string) []string {
+		ended = ctx.Err() != nil
+		return []string{"feature"}
+	}
+	if got := suggestionKinds(context.Background(), dir); len(got) != 1 || !ended {
+		t.Errorf("kinds = %v, context ended = %v; want the resolver's answer from an ended context", got, ended)
+	}
+	if got := suggestionKinds(context.Background(), t.TempDir()); got != nil {
+		t.Errorf("a directory that is not git got kinds %v", got)
 	}
 }
 

@@ -73,10 +73,7 @@ export function StartHost() {
         />
       )}
       {launch && (
-        // Keyed by the target: the dialog keeps which fields the person edited, and a new working
-        // copy or work item must start from its own resolved name and base, not the last one's.
         <LaunchModal
-          key={`${launch.name}\u0000${seedWorkItem?.key ?? ""}`}
           repo={launch.name}
           branch={launch.branch}
           path={launch.path}

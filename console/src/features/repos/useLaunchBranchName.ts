@@ -60,6 +60,15 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
   }, [repo]);
 
   const itemKey = item?.key ?? "";
+  // A new target (working copy or item) forgets what the person edited for the last one and its
+  // answer. The dialog is not remounted for that: its Modal's back-button guard does not survive
+  // a remount in one commit (see StartHost).
+  useEffect(() => {
+    nameTouched.current = false;
+    baseTouched.current = false;
+    setBaseEdited(false);
+    setResolved(null);
+  }, [repo, itemKey]);
   useEffect(() => {
     if (!itemKey) return;
     void resolve();

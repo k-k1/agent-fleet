@@ -241,6 +241,26 @@ describe("work-item launch through the branch-name resolver", () => {
     expect(apiJSONMock.mock.calls.filter((c) => c[0] === "api/repos/web/branch-name")).toHaveLength(before);
   });
 
+  it("the same dialog handed another working copy drops the edits and the answer of the last one", async () => {
+    await render();
+    await click(secHead());
+    await typeInto(nameField(), "feature/typed-for-web");
+    await typeInto(baseField(), "release/1.2");
+    branchName = async () => resolved({ name: "feature/45-for-api", base_branch: "main", sources: { base: "repository: .agent-fleet/branches naming.base" } });
+    await render(true, "api");
+    expect(nameField().value).toBe("feature/45-for-api");
+    expect(baseField().value).toBe("main");
+    expect(document.querySelector(".launch-base-source")?.textContent).toContain("naming.base");
+
+    // A third copy whose Agent has no resolver starts from the Console's own suggestion, with
+    // nothing left of the previous answer.
+    branchName = async () => ({ error: { code: "http_404" } });
+    await render(true, "docs");
+    expect(nameField().value).toBe("feature/issue-45");
+    expect(baseField().value).toBe("main");
+    expect(document.querySelector(".launch-base-source")).toBeNull();
+  });
+
   it("a launch that did not come from a work item never asks for a name", async () => {
     await render(false);
     expect(apiJSONMock.mock.calls.some((c) => String(c[0]).endsWith("/branch-name"))).toBe(false);
