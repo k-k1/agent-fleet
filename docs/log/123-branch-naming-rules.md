@@ -60,3 +60,8 @@
 4. 宣言が無いのが普通なので、読むだけでは足りない。git-flow と同じキーを親 clone に書く「Git Flow を初期化」を Console に置く。
 5. 宣言に無い種類（nvie・Fork の bugfix）は feature に落とす。バグの課題でもこのチームの `feature/<キー>` と一致する。
 6. マージ先（`release/x` へ PR を出す）は命名とは別の話。
+
+## 6. レビュー 1 巡目で測ったこと
+
+- **`git config --file -`（標準入力）は `include.path` を既定で辿る**。`[include] path = /etc/hostname` を標準入力で渡すと、hostname の中身がキーとして返った。同じ内容でもパスで渡す（`--file f.cfg`）と include は辿らない（`--includes` を付けたときだけ辿る）。`--no-includes` を明示すると標準入力でも辿らない。git 2.47.3。コミットされたファイルを blob から標準入力で読むので、`--no-includes` は必須（ADR 0103 決定 3）。
+- ui-prefs は丸ごと置き換える: Console は自分の知っているキーだけを集めて PUT し（`settings.ts` の `serverPrefs`）、Agent はファイルを丸ごと書く（`ui_prefs.go` の `handlePutUIPrefs`）。新しいキーを足すと、古い Console が何か 1 つ保存しただけで消える。利用者層を ui-prefs から外した理由（決定 2）。
