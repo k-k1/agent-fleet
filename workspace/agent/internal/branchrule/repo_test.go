@@ -2,6 +2,7 @@ package branchrule
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -369,5 +370,42 @@ func TestBitbucketNoConnectionIsQuiet(t *testing.T) {
 	repo = ReadRepo(context.Background(), dir, ReadOptions{ID: "github.com/acme/web", Bitbucket: c})
 	if repo.Bitbucket != "" {
 		t.Errorf("github origin: %q", repo.Bitbucket)
+	}
+}
+
+// A failed refresh keeps the last good copy and says so, instead of dropping its base.
+func TestBitbucketFailedRefreshKeepsCopy(t *testing.T) {
+	dir := newRepo(t)
+	var fail atomic.Bool
+	c := NewBitbucketCache(func(context.Context, string, string) ([]byte, error) {
+		if fail.Load() {
+			return nil, errors.New("bitbucket 503: down")
+		}
+		return []byte(`{"development":{"name":"develop","use_mainbranch":false}}`), nil
+	})
+	first := readRepo(t, dir, c)
+	fail.Store(true)
+	repo := ReadRepo(context.Background(), dir, ReadOptions{ID: "bitbucket.org/acme/web", Bitbucket: c, Refresh: true})
+	if repo.Bitbucket != "ok" || len(repo.Layer.Rules) != 1 || *repo.Layer.Rules[0].Base != "develop" ||
+		repo.BitbucketFetchedAt != first.BitbucketFetchedAt || !hasWarning(repo.Warnings, "bitbucket_stale", "503") {
+		t.Errorf("after a failed refresh: %+v", repo)
+	}
+	// Without any good copy the failure is an error.
+	c2 := NewBitbucketCache(func(context.Context, string, string) ([]byte, error) { return nil, errors.New("bitbucket 404: gone") })
+	if repo := readRepo(t, dir, c2); repo.Bitbucket != "error" || !hasWarning(repo.Warnings, "bitbucket_error", "404") {
+		t.Errorf("no copy: %+v", repo)
+	}
+}
+
+// branch_types lists only the enabled types, so a stock subset was configured and counts.
+func TestBitbucketStockSubsetCounts(t *testing.T) {
+	isolateGit(t)
+	r, counted, err := bitbucketRule([]byte(`{"development":{"name":"main","use_mainbranch":true},
+	 "branch_types":[{"kind":"feature","prefix":"feature/"},{"kind":"hotfix","prefix":"hotfix/"}]}`))
+	if err != nil || !counted || len(r.Declares) != 2 {
+		t.Errorf("subset: counted=%v declares=%v err=%v", counted, r.Declares, err)
+	}
+	if _, counted, _ := bitbucketRule([]byte(stockModel)); counted {
+		t.Error("the stock answer counted")
 	}
 }

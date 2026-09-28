@@ -393,7 +393,7 @@ func ReadRepo(ctx context.Context, dir string, opt ReadOptions) Repo {
 
 	if ws, repo, ok := bitbucketRepo(opt.ID); ok && opt.Bitbucket != nil {
 		body, at, state, err := opt.Bitbucket.Get(ctx, ws+"/"+repo, opt.Refresh)
-		if !at.IsZero() {
+		if state == stateOK {
 			res.BitbucketFetchedAt = at.Unix()
 		}
 		switch state {
@@ -409,6 +409,10 @@ func ReadRepo(ctx context.Context, dir string, opt ReadOptions) Repo {
 				res.Bitbucket = "none"
 			}
 		default:
+			if err != nil && !errors.Is(err, ErrNoConnection) {
+				res.Warnings = append(res.Warnings, warn("bitbucket_stale",
+					"reading Bitbucket's branching model again failed ("+errText(err)+"); the previous copy is used"))
+			}
 			r, counted, perr := bitbucketRule(body)
 			switch {
 			case perr != nil:

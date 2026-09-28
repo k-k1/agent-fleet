@@ -37,10 +37,14 @@ type BitbucketCache struct {
 	entries map[string]*bbEntry
 }
 
+// bbEntry keeps the last good answer apart from the last failure: a failed refresh must
+// not take away a model that was read fine, or a transient error would silently drop its
+// base and kind set for ErrTTL.
 type bbEntry struct {
 	body     []byte
-	err      error
 	at       time.Time
+	err      error
+	errAt    time.Time
 	inflight chan struct{}
 }
 
@@ -50,14 +54,10 @@ func NewBitbucketCache(f Fetcher) *BitbucketCache {
 }
 
 func (c *BitbucketCache) fresh(e *bbEntry) bool {
-	if e.at.IsZero() {
-		return false
-	}
-	ttl := c.TTL
 	if e.err != nil {
-		ttl = c.ErrTTL
+		return time.Since(e.errAt) < c.ErrTTL
 	}
-	return time.Since(e.at) < ttl
+	return !e.at.IsZero() && time.Since(e.at) < c.TTL
 }
 
 // Get returns the cached model for key, fetching it when missing, stale or refresh is
@@ -86,7 +86,12 @@ func (c *BitbucketCache) Get(ctx context.Context, key string, refresh bool) ([]b
 			body, err := c.Fetch(fctx, ws, repo)
 			cancel()
 			c.mu.Lock()
-			e.body, e.err, e.at, e.inflight = body, err, time.Now(), nil
+			if err != nil {
+				e.err, e.errAt = err, time.Now()
+			} else {
+				e.body, e.at, e.err = body, time.Now(), nil
+			}
+			e.inflight = nil
 			c.mu.Unlock()
 			close(ch)
 		}()
@@ -103,18 +108,20 @@ func (c *BitbucketCache) Get(ctx context.Context, key string, refresh bool) ([]b
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e.at.IsZero() {
-		return nil, time.Time{}, statePending, nil
-	}
 	// A timed-out refresh still has the previous copy, which is better than nothing.
 	return result(e)
 }
 
+// result answers with the last good copy when there is one; err is then the failure of
+// the latest refresh, if any, for the caller to warn about.
 func result(e *bbEntry) ([]byte, time.Time, string, error) {
-	if e.err != nil {
-		return nil, e.at, stateError, e.err
+	switch {
+	case !e.at.IsZero():
+		return e.body, e.at, stateOK, e.err
+	case e.err != nil:
+		return nil, e.errAt, stateError, e.err
 	}
-	return e.body, e.at, stateOK, nil
+	return nil, time.Time{}, statePending, nil
 }
 
 type branchingModel struct {
@@ -137,6 +144,8 @@ var stockTypes = map[string]string{"bugfix": "bugfix/", "feature": "feature/", "
 
 // bitbucketRule reads the fields that differ from the unconfigured default: development
 // only when use_mainbranch is false, branch_types only when they are not the stock set.
+// A subset of the stock types counts too: branch_types lists only the enabled types, so a
+// missing one was turned off by someone, which is a declaration.
 func bitbucketRule(body []byte) (Rule, bool, error) {
 	var m branchingModel
 	if err := json.Unmarshal(body, &m); err != nil {

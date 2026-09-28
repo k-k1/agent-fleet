@@ -165,11 +165,13 @@ func TestKindSetBlocksWeakerLayers(t *testing.T) {
 
 func TestSanitize(t *testing.T) {
 	cases := map[string]string{
-		"feature/issue-45-":  "feature/issue-45",
-		"feature//x":         "feature/x",
-		"feat ure/a..b.lock": "feat-ure/a.b",
-		"feature/":           "feature",
-		"/-./":               "",
+		"feature/issue-45-":    "feature/issue-45",
+		"feature//x":           "feature/x",
+		"feat ure/a..b.lock":   "feat-ure/a.b",
+		"feature/":             "feature",
+		"/-./":                 "",
+		"feature/foo.lock/bar": "feature/foo/bar",
+		"x/.lock/y.lock.lock":  "x/lock/y",
 	}
 	for in, want := range cases {
 		if got := Sanitize(in); got != want {
@@ -191,5 +193,20 @@ func TestCheckPrefix(t *testing.T) {
 	}
 	if w := CheckPrefix("anything", append(kinds, KindView{Kind: "support", Prefix: ""})); w != nil {
 		t.Errorf("an empty prefix accepts every name: %v", w)
+	}
+}
+
+// A template is free text: the result is checked as a branch name after sanitising.
+func TestRenderedNameIsAValidBranch(t *testing.T) {
+	isolateGit(t)
+	tmpl := func(n string) []Layer {
+		return []Layer{{Name: "user", Rules: []Rule{{Match: "*", Name: str(n)}}}, Builtin()}
+	}
+	if got := Name(tmpl("{prefix}foo.lock/{slug}"), "", Request{Slug: "bar"}); got.Name != "feature/foo/bar" {
+		t.Errorf("mid-segment .lock: %+v", got)
+	}
+	got := Name(tmpl("HEAD"), "", Request{Slug: "x"})
+	if !got.NameEmpty || got.Name != "" || !hasWarning(got.Warnings, "bad_ref", "HEAD") {
+		t.Errorf("HEAD survives sanitising but is not a branch name: %+v", got)
 	}
 }

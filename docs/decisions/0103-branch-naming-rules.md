@@ -142,7 +142,9 @@ The sources are merged field by field into one repository rule, strongest first:
 4. **Bitbucket Cloud's branching model** (`GET /2.0/repositories/{ws}/{repo}/branching-model`), for a
    Bitbucket remote with a connection. A field counts only when it differs from the unconfigured default:
    - `development` only when `use_mainbranch` is false;
-   - `branch_types` only when some prefix is not the stock `bugfix/ feature/ hotfix/ release/`.
+   - `branch_types` only when they are not the stock `bugfix/ feature/ hotfix/ release/`: a prefix
+     differs, or a stock type is missing. The answer lists only the enabled types, so a missing one
+     was turned off by someone.
 
    The stock answer is what the field study got from a repository that runs git-flow off `develop`.
 

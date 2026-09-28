@@ -263,6 +263,12 @@ func Name(layers []Layer, id string, req Request) NameResult {
 		raw = prefix + vals["slug"]
 	}
 	res.Name = Sanitize(raw)
+	// Sanitize covers the rules its character set leaves open; this is the check that the
+	// result is a branch name at all, because a template is free text.
+	if res.Name != "" && !ValidBranch(res.Name) {
+		res.Warnings = append(res.Warnings, Warning{"bad_ref", quote(res.Name) + " is not a valid branch name"})
+		res.Name = ""
+	}
 	res.NameEmpty = res.Name == ""
 	return res
 }
@@ -329,20 +335,24 @@ var branchCharsRe = regexp.MustCompile(`[^A-Za-z0-9._/-]+`)
 var dotsRe = regexp.MustCompile(`\.\.+`)
 
 // Sanitize is the Console's sanitizeBranch: only [A-Za-z0-9._/-] survives, empty segments
-// collapse, and a separator left by an empty placeholder is dropped.
+// collapse, and a separator left by an empty placeholder is dropped. Unlike the Console it
+// strips ".lock" from every segment, not only the last: git refuses `feature/foo.lock/bar`.
 func Sanitize(raw string) string {
 	var segs []string
 	for _, seg := range strings.Split(branchCharsRe.ReplaceAllString(raw, "-"), "/") {
-		seg = strings.TrimLeft(strings.TrimRight(seg, "-."), "-.")
+		seg = dotsRe.ReplaceAllString(seg, ".")
+		for {
+			seg = strings.TrimLeft(strings.TrimRight(seg, "-."), "-.")
+			if !strings.HasSuffix(strings.ToLower(seg), ".lock") {
+				break
+			}
+			seg = seg[:len(seg)-len(".lock")]
+		}
 		if seg != "" {
 			segs = append(segs, seg)
 		}
 	}
-	out := dotsRe.ReplaceAllString(strings.Join(segs, "/"), ".")
-	if strings.HasSuffix(strings.ToLower(out), ".lock") {
-		out = out[:len(out)-len(".lock")]
-	}
-	return out
+	return strings.Join(segs, "/")
 }
 
 // CheckPrefix warns when name starts with none of the resolved prefixes (decision 8).
