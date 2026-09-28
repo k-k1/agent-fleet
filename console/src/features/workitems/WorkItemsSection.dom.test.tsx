@@ -602,15 +602,25 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(10);
   });
 
-  it("returns focus to the filter after the × button clears it", async () => {
+  it("returns focus to the filter only when the × was pressed from the keyboard", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
     const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    const clear = () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!;
+
+    // Enter / Space on a button fires a click with detail 0.
     await act(async () => typeInto(input, "x"));
-    const clear = host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!;
-    clear.focus();
-    await act(async () => clear.click());
+    clear().focus();
+    await act(async () => clear().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
+    expect(input.value).toBe("");
     expect(document.activeElement).toBe(input);
+
+    // A tap or mouse click (detail ≥ 1) must not focus the input: on a phone that pops the keyboard.
+    await act(async () => typeInto(input, "x"));
+    clear().focus();
+    await act(async () => clear().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+    expect(input.value).toBe("");
+    expect(document.activeElement).not.toBe(input);
   });
 
   it("drops the error of a tracker search that was still in flight when the filter was cleared", async () => {

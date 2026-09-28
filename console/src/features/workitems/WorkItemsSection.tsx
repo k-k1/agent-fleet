@@ -478,10 +478,12 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                     type="button"
                     className="proj-filter-clear"
                     title={tr("pj.clear")}
-                    onClick={() => {
+                    onClick={(e) => {
                       changeNeedle("");
-                      // The button unmounts with the needle; without this, keyboard focus drops to <body>.
-                      filterInput.current?.focus();
+                      // The button unmounts with the needle, dropping keyboard focus to <body>. Only a
+                      // keyboard press (detail 0) gets it back: on a tap, focusing the input would pop
+                      // the soft keyboard over the rows the user cleared the filter to see.
+                      if (e.detail === 0) filterInput.current?.focus();
                     }}
                   >
                     <Icon name="close" />
