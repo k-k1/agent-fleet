@@ -6,12 +6,16 @@
 // Errors (role=alert) and any { persist:true } toast are logged to the notification center
 // via toastLog so they can be reviewed after leaving the screen; trivial toasts (a copy
 // confirmation and the like) stay purely ephemeral.
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+// On a phone the stack sits below the top bars instead of at the bottom (toastPlacement.ts), and a
+// tap anywhere outside it dismisses the timed toasts.
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
 import { useT } from "../lib/i18n/index.ts";
+import { useIsMobile } from "../lib/device.ts";
 import { pushToastLog } from "../lib/toastLog.ts";
 import { registerToastSink } from "./toast.ts";
+import { measureChromeBottom } from "./toastPlacement.ts";
 
 export type ToastKind = "error" | "warn" | "info" | "success";
 
@@ -32,6 +36,8 @@ interface ToastItem {
   kind: ToastKind;
   key?: string;
   onClose?: () => void;
+  // A sticky toast carries an action (update now, finish a login) and closes only by its X.
+  sticky: boolean;
 }
 
 type ToastFn = (message: ReactNode, opts?: ToastOptions) => void;
@@ -54,6 +60,8 @@ export const TOAST_ICONS: Record<ToastKind, string> = {
 export function ToastProvider({ children }: { children: ReactNode }) {
   const tr = useT();
   const [items, setItems] = useState<ToastItem[]>([]);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const seq = useRef(0);
   // Each shown toast's expiry, by id. A keyed replacement keeps its id, so its old timer has
   // to be cancelled here — left running, it removed the replacement at the FIRST one's deadline.
@@ -78,7 +86,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const shown = opts?.key ? keyIds.current.get(opts.key) : undefined;
       const id = shown ?? ++seq.current;
       if (opts?.key) keyIds.current.set(opts.key, id);
-      const item: ToastItem = { id, message, kind, key: opts?.key, onClose: opts?.onClose };
+      // Errors auto-dismiss rather than sticking (0); the notification center keeps them.
+      const duration = opts?.duration ?? (kind === "error" ? 8000 : 4000);
+      const item: ToastItem = { id, message, kind, key: opts?.key, onClose: opts?.onClose, sticky: duration <= 0 };
       setItems((xs) => {
         const at = xs.findIndex((x) => x.id === id);
         if (at < 0) return [...xs, item];
@@ -89,8 +99,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       // Errors (and any opt-in persist) are recorded in the notification center so a failure
       // that scrolled away can still be reviewed. Only string messages can be logged.
       if ((opts?.persist ?? kind === "error") && typeof message === "string") pushToastLog(kind, message);
-      // Errors auto-dismiss rather than sticking (0); the notification center keeps them.
-      const duration = opts?.duration ?? (kind === "error" ? 8000 : 4000);
       const old = timers.current.get(id);
       if (old) clearTimeout(old);
       timers.current.delete(id);
@@ -113,11 +121,50 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     return () => registerToastSink(null, null);
   }, [toast, dismiss]);
 
+  const phone = useIsMobile();
+  const shown = items.length > 0;
+  const [top, setTop] = useState<number | null>(null);
+  // Measured before paint, so a toast never flashes at the bottom first. Re-measured when the
+  // stack changes and when the viewport moves (a soft keyboard shifts the frame, app/viewport.ts).
+  useLayoutEffect(() => {
+    if (!phone || !shown) return;
+    const sync = () => setTop(measureChromeBottom());
+    sync();
+    const vv = window.visualViewport;
+    window.addEventListener("resize", sync);
+    vv?.addEventListener("resize", sync);
+    vv?.addEventListener("scroll", sync);
+    return () => {
+      window.removeEventListener("resize", sync);
+      vv?.removeEventListener("resize", sync);
+      vv?.removeEventListener("scroll", sync);
+    };
+  }, [phone, shown, items]);
+
+  // A tap outside the stack dismisses the timed toasts, so one covering the content can be put
+  // away without aiming at its X. The tap itself still goes through to what it landed on. Like an
+  // expiry, this does not run onClose.
+  const stackRef = useRef<HTMLDivElement>(null);
+  const dismissible = items.some((t) => !t.sticky);
+  useEffect(() => {
+    if (!phone || !dismissible) return;
+    const onDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && stackRef.current?.contains(e.target)) return;
+      for (const t of itemsRef.current) if (!t.sticky) remove(t.id);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [phone, dismissible, remove]);
+
   return (
     <ToastCtx.Provider value={toast}>
       {children}
-      {items.length > 0 && (
-        <div className="ui-toasts">
+      {shown && (
+        <div
+          ref={stackRef}
+          className={"ui-toasts" + (phone ? " ui-toasts-phone" : "")}
+          style={phone && top != null ? { top: top + 8 } : undefined}
+        >
           {items.map((t) => (
             <div
               key={t.id}
