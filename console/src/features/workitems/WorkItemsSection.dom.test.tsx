@@ -582,6 +582,26 @@ describe("WorkItemsSection", () => {
     expect(text()).toContain(t("wi.search_stopped"));
   });
 
+  // #1142: the box clears through its own button on every device, not the UA's search cancel.
+  it("clears the filter with its × button and with Escape", async () => {
+    const mixed = [...jiraRows(40), item({ id: "gh", key: "acme/web#45", title: "ログイン後に一覧が空になる" })];
+    workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    expect(host.querySelector(".wi-filter .proj-filter-clear")).toBeNull(); // nothing to clear yet
+    await act(async () => typeInto(input, "ログイン"));
+    expect(rows()).toBe(1);
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!.click());
+    expect(input.value).toBe("");
+    expect(rows()).toBe(10);
+    expect(host.querySelector(".wi-filter .proj-filter-clear")).toBeNull();
+
+    await act(async () => typeInto(input, "ログイン"));
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(input.value).toBe("");
+    expect(rows()).toBe(10);
+  });
+
   it("shows no filter box on a rail that is not crowded", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(4), queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();

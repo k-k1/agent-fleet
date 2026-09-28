@@ -39,32 +39,17 @@
   white-space: nowrap;
 }
 
-/* One-line filter, shown only on a crowded rail (docs/log/80 §80.18.4). It is not a query UI,
-   so it stays understated: a plain band that sinks into the section, with no buttons and no
-   operators. */
+/* One-line filter, shown only on a crowded rail (docs/log/80 §80.18.4). It is not a query UI:
+   no operators. The box and its clear button are `.proj-filter`, so every left-pane filter
+   looks and clears the same way. */
 .wi-filter {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin: 0 8px 4px;
-  padding: 2px 6px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--muted);
-  font-size: 11px;
+  padding-bottom: 4px;
 }
-.wi-filter input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: none;
-  background: none;
-  color: inherit;
-  font: inherit;
-  padding: 2px 0;
-  outline: none;
-}
+/* The native cancel button is drawn on phones but not on an unfocused desktop Chromium input,
+   and would sit next to `.proj-filter-clear` as a second, different ×. */
 .wi-filter input::-webkit-search-cancel-button {
-  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 /* "Show more (N remaining)" / "Collapse". The count badge keeps reporting the full total, so

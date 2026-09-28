@@ -271,6 +271,10 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
       })
       .finally(() => setRemoteBusy(false));
   };
+  const clearNeedle = () => {
+    setNeedle("");
+    setRemoteErr("");
+  };
   const labelOf = (id: string) => payload?.queries.find((x) => x.id === id)?.label || id;
 
   // The ledger names a slug; what the modals show for it is looked up here (#1108). The shelf is
@@ -448,20 +452,28 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
               on screen (§80.18.4). */}
           {crowded && (
             <div className="wi-filter">
-              <Icon name="search" />
-              <input
-                type="search"
-                value={needle}
-                placeholder={tr("wi.filter_ph")}
-                aria-label={tr("wi.filter_ph")}
-                onChange={(e) => {
-                  setNeedle(e.target.value);
-                  setRemoteErr("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") searchTracker();
-                }}
-              />
+              <div className="proj-filter">
+                <Icon name="search" />
+                <input
+                  type="search"
+                  value={needle}
+                  placeholder={tr("wi.filter_ph")}
+                  aria-label={tr("wi.filter_ph")}
+                  onChange={(e) => {
+                    setNeedle(e.target.value);
+                    setRemoteErr("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") searchTracker();
+                    else if (e.key === "Escape") clearNeedle();
+                  }}
+                />
+                {needle && (
+                  <button type="button" className="proj-filter-clear" title={tr("pj.clear")} onClick={clearNeedle}>
+                    <Icon name="close" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
           <div className="wi-list">
