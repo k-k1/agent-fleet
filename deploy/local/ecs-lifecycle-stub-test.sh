@@ -277,6 +277,9 @@ case "$1" in
     esac
     echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
   auth) cat >/dev/null ;;
+  # A copy that fails after GHCR said the tag exists (network, ECR auth), for update.sh's
+  # ComfyUI repair: it must keep the old tag rather than name one ECR does not hold.
+  copy) case "$*" in *comfyui*) if [ "${STUB_COMFY_COPY_FAILS:-0}" = 1 ]; then exit 1; fi ;; esac ;;
   # standup.sh reads this back after every llm copy to record what actually landed in ECR.
   digest)
     [ "${STUB_CRANE_DIGEST_FAILS:-0}" = 1 ] && exit 1
@@ -875,26 +878,30 @@ COMFY_DEFAULT="$(sed -n '/^  ImageComfyImageTag:$/,/^  [A-Za-z]/p' "$ECS/cfn/60-
   | sed -n 's/^ *Default: *//p' | head -1 | tr -d '"')"
 [ -n "$COMFY_DEFAULT" ] || fail "cfn/60-engines.yaml declares no Default for ImageComfyImageTag"
 COMFY_STALE="$(sed -n 's/^COMFY_STALE_DEFAULTS="\(.*\)"$/\1/p' "$ECS/update.sh")"
-[ -n "$COMFY_STALE" ] || fail "update.sh lists no earlier ImageComfyImageTag defaults"
-# The rule that keeps the list honest: whoever moves the Default appends the old one, and never
-# lists the current one (that would name the Default on every release and override nothing).
-case " $COMFY_STALE " in
-  *" $COMFY_DEFAULT "*) fail "COMFY_STALE_DEFAULTS lists the current Default $COMFY_DEFAULT" ;;
-esac
-COMFY_OLD="${COMFY_STALE##* }"
+# Every Default the template has shipped, oldest first, kept HERE rather than derived from
+# update.sh: derive it and a bump that forgets to append the old Default still passes, while the
+# stacks created on it are never moved. Moving the Default fails this until both lists grow.
+COMFY_HISTORY="v0.34.0 v0.37.0"
+[ "$COMFY_DEFAULT" = "${COMFY_HISTORY##* }" ] \
+  || fail "ImageComfyImageTag's Default is $COMFY_DEFAULT: append it to COMFY_HISTORY here and the previous one to COMFY_STALE_DEFAULTS in update.sh"
+[ "$COMFY_STALE" = "${COMFY_HISTORY% *}" ] \
+  || fail "update.sh COMFY_STALE_DEFAULTS='$COMFY_STALE', want every earlier Default: '${COMFY_HISTORY% *}'"
 COMFY_GHCR="crane copy ghcr.io/k-k1/agent-fleet/comfyui:$COMFY_DEFAULT"
 
-echo "   3i-9a: image role on — copied, then named"
-: > "$LOG"
-VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
-  STUB_COMFY_WANT="$COMFY_OLD" \
-  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9a" 2>&1 \
-  || { cat "$WORK/out3i9a"; fail "update.sh failed against a stack on an earlier ComfyUI Default"; }
-has "$COMFY_GHCR"
-has "ImageComfyImageTag=$COMFY_DEFAULT"
-order "$COMFY_GHCR" "cloudformation deploy --stack-name af-ecs-engines"
-grep -q "ImageComfyImageTag=$COMFY_DEFAULT ($COMFY_OLD was an earlier template default" "$WORK/out3i9a" \
-  || fail "the repair did not say what it was repairing"
+echo "   3i-9a: image role on — copied, then named (from every earlier Default)"
+for COMFY_OLD in ${COMFY_HISTORY% *}; do
+  : > "$LOG"
+  VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+    STUB_COMFY_WANT="$COMFY_OLD" \
+    "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9a" 2>&1 \
+    || { cat "$WORK/out3i9a"; fail "update.sh failed against a stack on ComfyUI Default $COMFY_OLD"; }
+  has "$COMFY_GHCR"
+  has "ImageComfyImageTag=$COMFY_DEFAULT"
+  order "$COMFY_GHCR" "cloudformation deploy --stack-name af-ecs-engines"
+  grep -q "ImageComfyImageTag=$COMFY_DEFAULT ($COMFY_OLD was an earlier template default" "$WORK/out3i9a" \
+    || fail "the repair did not say what it was repairing"
+done
+COMFY_OLD="${COMFY_HISTORY%% *}"
 
 echo "   3i-9b: image role off — named, nothing copied"
 : > "$LOG"
@@ -935,6 +942,18 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_COMFY_IN_GHCR=0 S
   || { cat "$WORK/out3i9e"; fail "update.sh stopped the release over a missing ComfyUI image"; }
 grep -q "comfyui-image.yml" "$WORK/out3i9e" || fail "it did not say how to produce the image"
 hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+hasnt "ImageComfyImageTag="
+has "cloudformation deploy --stack-name af-ecs-engines"
+has "cloudformation deploy --stack-name t-ingress"
+
+echo "   3i-9f: GHCR has it but the copy fails — warned, tag kept, release goes on"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_COMFY_COPY_FAILS=1 STUB_ENGINES_LIVE=1 \
+  STUB_ENGINES_IMAGE_ON=1 STUB_COMFY_WANT="$COMFY_OLD" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9f" 2>&1 \
+  || { cat "$WORK/out3i9f"; fail "update.sh stopped the release over a failed ComfyUI copy"; }
+has "$COMFY_GHCR"
+grep -q "copying comfyui:$COMFY_DEFAULT into ECR failed" "$WORK/out3i9f" || fail "the failed copy was not reported"
 hasnt "ImageComfyImageTag="
 has "cloudformation deploy --stack-name af-ecs-engines"
 has "cloudformation deploy --stack-name t-ingress"

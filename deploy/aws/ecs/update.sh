@@ -129,10 +129,10 @@ if [ -n "$ENGINES_STACK" ]; then
 fi
 # The ComfyUI tag goes stale the same way on every bump of its Default, but an old tag still
 # runs — it only lacks the families the new one brings — so this repair never stops a release.
-# COMFY_STALE_DEFAULTS lists every Default the template has ever shipped: a live value on one of
-# them was never chosen and is moved on; any other value is somebody's choice and is kept.
-# 🔴 Moving the Default in cfn/60-engines.yaml means appending the old one here (the stub test
-# fails while the current Default is missing from the template or present in this list).
+# COMFY_STALE_DEFAULTS lists every EARLIER Default the template has shipped: a live value on one
+# of them was never chosen and is moved on; any other value is somebody's choice and is kept.
+# 🔴 Moving the Default in cfn/60-engines.yaml means appending the old one here. The stub test
+# keeps its own copy of the Default history and fails until both agree.
 COMFY_STALE_DEFAULTS="v0.34.0"
 COMFY_TAG=""; COMFY_REPAIR=0; COMFY_PULLED=0
 if [ -n "$ENGINES_STACK" ]; then

@@ -619,8 +619,8 @@ unaffected either way — its captured parameter file names the tag it is alread
 on, it copies `comfyui:<new>` from GHCR into `af-comfyui` first. Any other value counts as a
 choice and is left alone. If the new image cannot be copied, the stack keeps its tag and the
 release carries on with a warning, because the old tag still runs.
-`deploy/local/ecs-lifecycle-stub-test.sh` (case 3i-9) fails while the list contains the
-current default.
+`deploy/local/ecs-lifecycle-stub-test.sh` (case 3i-9) keeps its own copy of the default
+history and fails until both are updated.
 
 ### The `image` role's engine table fields
 

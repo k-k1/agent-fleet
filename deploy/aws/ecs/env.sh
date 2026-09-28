@@ -325,9 +325,11 @@ af_engine_tools_ensure() {
 }
 
 # af_comfy_ensure <ecr-host> <tag> — make sure af-comfyui:<tag> is in ECR, for update.sh moving
-# a stack off a stale ImageComfyImageTag. Same answers as af_engine_tools_ensure; the image is
-# baked only by comfyui-image.yml, so 1 is something no script here can fix. 3 = the copy itself
-# failed: callers use `|| rc=$?`, which switches set -e off in here.
+# a stack off a stale ImageComfyImageTag.
+#   0 = it is there (already, or copied just now)
+#   1 = GHCR has not got it either — only comfyui-image.yml can bake it
+#   2 = could not tell (no crane)
+#   3 = the copy itself failed; callers use `|| rc=$?`, which switches set -e off in here
 af_comfy_ensure() {
   local host="$1" tag="$2" ghcr
   if af_ecr_has af-comfyui "$tag"; then
