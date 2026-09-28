@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
@@ -83,16 +84,32 @@ func loadBranchContext(w http.ResponseWriter, r *http.Request, refresh bool) (*b
 		httpx.WriteErr(w, http.StatusNotFound, "not_git", "not a git working copy")
 		return nil, false
 	}
+	return newBranchContext(r.Context(), dir, refresh), true
+}
+
+func newBranchContext(ctx context.Context, dir string, refresh bool) *branchContext {
 	origin, _ := gitx.GitOriginURL(dir)
 	id := branchrule.RepoID(origin)
-	repo := branchrule.ReadRepo(r.Context(), dir, branchrule.ReadOptions{ID: id, Bitbucket: branchBitbucket, Refresh: refresh})
+	repo := branchrule.ReadRepo(ctx, dir, branchrule.ReadOptions{ID: id, Bitbucket: branchBitbucket, Refresh: refresh})
+	layers := []branchrule.Layer{repo.Layer}
+	layers = append(layers, userBranchLayers(branchTemplate())...)
+	return &branchContext{dir: dir, id: id, repo: repo, layers: layers}
+}
+
+// userBranchLayers are the layers below the repository: the user's, then the built-in.
+func userBranchLayers(template string) []branchrule.Layer {
 	user := branchrule.ReadUser(branchRulesUserPath())
-	layers := []branchrule.Layer{
-		repo.Layer,
-		branchrule.UserLayer(user.Rules, branchTemplate()),
-		branchrule.Builtin(),
+	return []branchrule.Layer{branchrule.UserLayer(user.Rules, template), branchrule.Builtin()}
+}
+
+// resolvedKindNames is sessionx.BranchKinds: the kinds the AI branch suggestion may pick from.
+func resolvedKindNames(ctx context.Context, dir string) []string {
+	c := newBranchContext(ctx, dir, false)
+	var out []string
+	for _, k := range branchrule.Effect(c.layers, c.id).Kinds {
+		out = append(out, k.Kind)
 	}
-	return &branchContext{dir: dir, id: id, repo: repo, layers: layers}, true
+	return out
 }
 
 func (c *branchContext) sources(fields map[string]string) map[string]any {
@@ -247,4 +264,47 @@ func handlePutUserBranchRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, branchrule.ReadUser(branchRulesUserPath()))
+}
+
+func init() {
+	sessionx.BranchKinds = resolvedKindNames
+}
+
+// branchPreviewRequest is POST /branch-rules/preview: the template as typed, not yet saved,
+// and the sample items to render it for.
+type branchPreviewRequest struct {
+	Template string            `json:"template"`
+	Items    []branchrule.Item `json:"items"`
+}
+
+type branchPreviewOut struct {
+	Names []branchPreviewName `json:"names"`
+}
+
+type branchPreviewName struct {
+	Name      string               `json:"name"`
+	NameEmpty bool                 `json:"name_empty"`
+	Kind      string               `json:"kind"`
+	Warnings  []branchrule.Warning `json:"warnings"`
+}
+
+// POST /branch-rules/preview renders the user's template for the work-items settings, which
+// belong to no working copy. It therefore resolves over the user and built-in layers only; a
+// repository's own declaration can still change the name at launch.
+func handleBranchRulesPreview(w http.ResponseWriter, r *http.Request) {
+	var req branchPreviewRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.Items) > 10 {
+		httpx.WriteErr(w, http.StatusBadRequest, "too_many_items", "at most 10 items")
+		return
+	}
+	layers := userBranchLayers(strings.TrimSpace(req.Template))
+	out := make([]branchPreviewName, 0, len(req.Items))
+	for i := range req.Items {
+		res := branchrule.Name(layers, "", branchrule.Request{Item: &req.Items[i]})
+		out = append(out, branchPreviewName{Name: res.Name, NameEmpty: res.NameEmpty, Kind: res.Kind, Warnings: warningsOrEmpty(res.Warnings)})
+	}
+	httpx.WriteJSON(w, http.StatusOK, branchPreviewOut{Names: out})
 }

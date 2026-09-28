@@ -48,6 +48,7 @@ func TestBranchNameRoutes(t *testing.T) {
 	mux.HandleFunc("POST /repos/{name}/branch-name/check", handleBranchNameCheck)
 	mux.HandleFunc("GET /branch-rules/user", handleGetUserBranchRules)
 	mux.HandleFunc("PUT /branch-rules/user", handlePutUserBranchRules)
+	mux.HandleFunc("POST /branch-rules/preview", handleBranchRulesPreview)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -122,6 +123,35 @@ func TestBranchNameRoutes(t *testing.T) {
 	do(t, srv, "POST", "/repos/app/branch-name", map[string]any{"slug": "x"}, http.StatusOK, &got)
 	if got.Base != "head" || len(got.Warnings) != 1 || got.Warnings[0].Code != "base_missing" {
 		t.Errorf("missing base: %+v", got)
+	}
+
+	// The settings preview renders the template as typed, not the saved one, for items of no
+	// repository; the Jira type maps the kind before the labels.
+	var preview struct {
+		Names []struct {
+			Name      string `json:"name"`
+			NameEmpty bool   `json:"name_empty"`
+			Kind      string `json:"kind"`
+		} `json:"names"`
+	}
+	do(t, srv, "POST", "/branch-rules/preview", map[string]any{"template": "", "items": []any{
+		map[string]any{"provider": "github", "key": "acme/web#45", "title": "Fix the empty list"},
+		map[string]any{"provider": "jira", "key": "PROJ-123", "title": "ログイン後に一覧が空になる", "type": "Bug", "labels": []string{"docs"}},
+	}}, http.StatusOK, &preview)
+	if len(preview.Names) != 2 || preview.Names[0].Name != "feature/45-fix-the-empty-list" ||
+		preview.Names[1].Name != "fix/PROJ-123" || preview.Names[1].Kind != "bugfix" {
+		t.Errorf("preview (built-in) = %+v", preview)
+	}
+	do(t, srv, "POST", "/branch-rules/preview", map[string]any{"template": "{type}/{num}", "items": []any{
+		map[string]any{"provider": "jira", "key": "PROJ-123", "title": "x"},
+	}}, http.StatusOK, &preview)
+	if len(preview.Names) != 1 || preview.Names[0].Name != "feature/123" {
+		t.Errorf("preview (typed template) = %+v", preview)
+	}
+
+	// The AI branch suggestion picks from the same kinds the rename chips show.
+	if kinds := resolvedKindNames(context.Background(), dir); len(kinds) != 8 || kinds[0] != "feature" {
+		t.Errorf("kinds for the suggestion = %v", kinds)
 	}
 }
 

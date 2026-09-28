@@ -337,6 +337,13 @@ func writeConversationWindow(b *strings.Builder, real []transcript.Turn) {
 // it instructs an English kebab-case name even when the conversation is Japanese, with
 // English few-shot anchors.
 func BranchSuggestPrompt(turns []transcript.Turn) string {
+	return branchSuggestPrompt(turns, nil)
+}
+
+// branchSuggestPrompt asks for `<kind>/<name>` when the repository's resolved kinds are
+// known (ADR 0103 decision 8), so the resolver can compose the name with the kind's prefix;
+// without them it asks for the bare name as before.
+func branchSuggestPrompt(turns []transcript.Turn, kinds []string) string {
 	turns = withoutStudioPersona(turns)
 	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
@@ -351,10 +358,20 @@ func BranchSuggestPrompt(turns []transcript.Turn) string {
 	var b strings.Builder
 	b.WriteString("Read the conversation log and output ONE git branch name for the task.\n")
 	b.WriteString("Rules: English only, lowercase kebab-case (words joined by hyphens), ")
-	b.WriteString("ASCII letters/digits/hyphens only, max 40 chars, no prefixes like 'feature/', no quotes.\n")
+	if len(kinds) > 0 {
+		b.WriteString("ASCII letters/digits/hyphens only, max 40 chars, no quotes.\n")
+		b.WriteString("Output it as <kind>/<name>, where <kind> is exactly one of: " + strings.Join(kinds, ", ") + ". ")
+		b.WriteString("Pick the kind that fits the work (a defect is bugfix; documentation only is docs); when unsure, feature.\n")
+	} else {
+		b.WriteString("ASCII letters/digits/hyphens only, max 40 chars, no prefixes like 'feature/', no quotes.\n")
+	}
 	b.WriteString("The conversation is often in Japanese — TRANSLATE the topic into a concise English name. ")
 	b.WriteString("Never output Japanese or non-ASCII characters.\n")
-	b.WriteString("Good: fix-login-redirect / refactor-billing-api / session-branch-rename\n")
+	if len(kinds) > 0 {
+		b.WriteString("Good: bugfix/login-redirect / refactor/billing-api / feature/session-branch-rename\n")
+	} else {
+		b.WriteString("Good: fix-login-redirect / refactor-billing-api / session-branch-rename\n")
+	}
 	b.WriteString("If the conversation drifted, prefer the most recent topic. Output ONLY the name.\n\n")
 	b.WriteString("--- conversation log ---\n")
 	writeConversationWindow(&b, real)
@@ -762,19 +779,50 @@ func HandleSetTitle(w http.ResponseWriter, r *http.Request) {
 // be in Japanese but the branch name must be ASCII (folder/ref charset), so we ask for
 // a translation-to-name, not a transcription.
 const BranchSuggestPersona = "You name git branches. Read the conversation log and output ONE short branch name " +
-	"describing the task. Rules: English, lowercase kebab-case (words joined by hyphens), " +
+	"describing the task, in the form the prompt asks for. Rules: English, lowercase kebab-case (words joined by hyphens), " +
 	"ASCII letters/digits/hyphens only, max 40 chars, no leading verb like 'add'/'fix' unless natural, " +
-	"no prefixes like 'feature/', no quotes, no explanation. Output only the name."
+	"no quotes, no explanation. Output only the name."
+
+// BranchKinds is the branch-name resolver's seam: main wires it to the kinds resolved for a
+// working copy (ADR 0103 decision 7), which live in package main with the user rules and the
+// Bitbucket cache. nil, or an empty answer, means the suggestion carries no kind.
+var BranchKinds func(ctx context.Context, dir string) []string
 
 // runBranchSuggestLLM asks the title model for a git-safe branch name from the
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
-// invalid ref/folder segment.
-func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	reply, err := chatx.OneShotHeadless(ctx, usagex.FeatureBranchSuggest, chatx.OneShotShort, BranchSuggestPersona, BranchSuggestPrompt(turns), TitleModel())
+// invalid ref/folder segment. kind is "" unless kinds were offered and the reply picked one.
+func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn, kinds []string) (kind, slug string, err error) {
+	reply, err := chatx.OneShotHeadless(ctx, usagex.FeatureBranchSuggest, chatx.OneShotShort, BranchSuggestPersona, branchSuggestPrompt(turns, kinds), TitleModel())
 	if err != nil {
-		return "", fmt.Errorf("branch suggestion failed: %w", err)
+		return "", "", fmt.Errorf("branch suggestion failed: %w", err)
 	}
-	return CleanBranchName(reply), nil
+	kind, slug = SplitSuggestedBranch(reply, kinds)
+	return kind, slug, nil
+}
+
+// SplitSuggestedBranch reads a `<kind>/<name>` reply. A kind outside kinds is dropped rather
+// than kept in the slug: the model was asked for a kind there, so the segment is never part of
+// the name. With no kinds offered the whole reply is the slug.
+func SplitSuggestedBranch(reply string, kinds []string) (kind, slug string) {
+	reply = strings.TrimSpace(reply)
+	if i := strings.IndexByte(reply, '\n'); i >= 0 {
+		reply = reply[:i]
+	}
+	if len(kinds) == 0 {
+		return "", CleanBranchName(reply)
+	}
+	head, rest, ok := strings.Cut(reply, "/")
+	if !ok {
+		return "", CleanBranchName(reply)
+	}
+	head = strings.ToLower(strings.Trim(strings.TrimSpace(head), "`'\"*"))
+	for _, k := range kinds {
+		if head == k {
+			kind = k
+			break
+		}
+	}
+	return kind, CleanBranchName(rest)
 }
 
 // CleanBranchName reduces an LLM reply to a git-safe kebab-case name: first line,
@@ -835,7 +883,11 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
-	branch, err := runBranchSuggestLLM(ctx, turns)
+	var kinds []string
+	if BranchKinds != nil && gitx.IsGitRepo(m.Dir) {
+		kinds = BranchKinds(ctx, m.Dir)
+	}
+	kind, branch, err := runBranchSuggestLLM(ctx, turns, kinds)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
 		// Deliberately not catalogued: the developer message is shown as-is to keep the
@@ -848,7 +900,9 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 			"AI が有効なブランチ名を返しませんでした。手入力してください。")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"branch": branch})
+	// branch stays the bare slug for an older Console, which puts its own chip prefix in front.
+	// A newer one passes kind and slug to POST /repos/{name}/branch-name to compose the name.
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"branch": branch, "kind": kind, "slug": branch})
 }
 
 // HandleSessionRenameBranch renames the branch of the session's working copy (its

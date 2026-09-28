@@ -272,6 +272,33 @@ func TestCleanBranchName(t *testing.T) {
 	}
 }
 
+// The AI suggestion's `<kind>/<name>` reply (ADR 0103 decision 8): a kind outside the resolved
+// set is dropped, never folded into the slug, and without kinds the reply is the slug as before.
+func TestSplitSuggestedBranch(t *testing.T) {
+	kinds := []string{"feature", "bugfix", "docs"}
+	cases := []struct{ reply, kind, slug string }{
+		{"bugfix/login-redirect", "bugfix", "login-redirect"},
+		{"`Feature`/Session Branch Rename\nexplanation", "feature", "session-branch-rename"},
+		{"feat/login-redirect", "", "login-redirect"},
+		{"login-redirect", "", "login-redirect"},
+	}
+	for _, c := range cases {
+		if k, s := SplitSuggestedBranch(c.reply, kinds); k != c.kind || s != c.slug {
+			t.Errorf("SplitSuggestedBranch(%q) = %q, %q; want %q, %q", c.reply, k, s, c.kind, c.slug)
+		}
+	}
+	if k, s := SplitSuggestedBranch("bugfix/login-redirect", nil); k != "" || s != "bugfix-login-redirect" {
+		t.Errorf("without kinds = %q, %q; want the whole reply as the slug", k, s)
+	}
+	withKinds := branchSuggestPrompt(nil, kinds)
+	if !strings.Contains(withKinds, "exactly one of: feature, bugfix, docs") || strings.Contains(withKinds, "no prefixes like") {
+		t.Errorf("prompt with kinds does not offer them:\n%s", withKinds)
+	}
+	if bare := BranchSuggestPrompt(nil); !strings.Contains(bare, "no prefixes like 'feature/'") {
+		t.Errorf("prompt without kinds lost its no-prefix rule:\n%s", bare)
+	}
+}
+
 // TestBranchNameStatus checks collision detection distinguishes a local branch, a
 // remote-only (past) branch, and an unused name — the signal the worktree/rename guards
 // use to refuse a name that would silently create a divergent branch.
