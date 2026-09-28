@@ -13,7 +13,9 @@
   // The caption band sits UNDER the Console rather than over it: #root is shortened by this much,
   // so no caption ever hides the control or the row a step is about. demo.mjs adds the same
   // height to the viewport.
-  const BAND = 56;
+  const CFG = window.__demoConfig || {};
+  const BAND = CFG.band || 56;
+  const CAPTION_PX = CFG.captionPx || 19;
   const css = `
     .dm-cursor { position: fixed; left: 0; top: 0; width: 26px; height: 26px; z-index: ${Z + 5};
       pointer-events: none; transition: transform 700ms cubic-bezier(.45,.05,.25,1), opacity 250ms;
@@ -26,8 +28,8 @@
     #root { height: calc(100% - ${BAND}px) !important; }
     .dm-caption { position: fixed; left: 0; right: 0; bottom: 0; height: ${BAND}px; z-index: ${Z + 3};
       pointer-events: none; display: flex; align-items: center; justify-content: center; gap: 12px;
-      padding: 0 24px; background: #0a0d13; border-top: 1px solid #253043; color: #f4f7fb;
-      font: 600 19px/1.3 system-ui, "Noto Sans CJK JP", "Noto Sans JP", sans-serif; }
+      padding: 0 18px; background: #0a0d13; border-top: 1px solid #253043; color: #f4f7fb;
+      font: 600 ${CAPTION_PX}px/1.3 system-ui, "Noto Sans CJK JP", "Noto Sans JP", sans-serif; }
     .dm-caption .n { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid;
       place-items: center; background: #3b82f6; color: #fff; font-size: 16px; }
     .dm-caption .n, .dm-caption .t { transition: opacity 200ms; }
@@ -40,6 +42,11 @@
       color: #cfd8e6; font: 500 20px/1.5 system-ui, "Noto Sans CJK JP", sans-serif; }
     .dm-away.on { opacity: 1; }
     .dm-away .clock { font: 300 64px/1 system-ui, sans-serif; color: #fff; letter-spacing: 1px; }
+    .dm-clock { position: fixed; left: 50%; top: 6px; z-index: ${Z + 3}; pointer-events: none;
+      transform: translateX(-50%); opacity: 0; transition: opacity 300ms; padding: 3px 14px;
+      border-radius: 999px; background: rgba(12,16,24,.92); border: 1px solid rgba(120,170,255,.45);
+      color: #fff; font: 600 20px/1.3 system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+    .dm-clock.on { opacity: 1; }
     .dm-phone { position: fixed; left: 50%; top: 50%; z-index: ${Z + 2}; pointer-events: none;
       box-sizing: border-box; width: 330px; height: 600px; margin: ${-300 - BAND / 2}px 0 0 -165px; border-radius: 44px;
       background: #0b0b0d;
@@ -92,6 +99,7 @@
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const ARROW = `<svg viewBox="0 0 26 26" width="26" height="26"><path d="M3 2 L3 21 L8.2 16.4 L11.6 24 L15 22.5 L11.7 15 L19 15 Z" fill="#fff" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+  const CLOCK = `<svg viewBox="0 0 20 20" width="17" height="17" style="vertical-align:-2px"><circle cx="10" cy="10" r="8.2" fill="none" stroke="#9fc3ff" stroke-width="1.8"/><path d="M10 5.2V10l3.4 2.1" fill="none" stroke="#9fc3ff" stroke-width="1.8" stroke-linecap="round"/></svg>`;
   const FINGER = `<svg viewBox="0 0 44 44" width="44" height="44"><circle cx="22" cy="22" r="17" fill="rgba(255,255,255,.35)" stroke="#fff" stroke-width="2.5"/><circle cx="22" cy="22" r="6" fill="#fff"/></svg>`;
 
   const cursor = el("dm-cursor", ARROW);
@@ -100,6 +108,12 @@
   const veil = el("dm-veil");
   const away = el("dm-away", `<div class="clock"></div><div class="l"></div>`);
   const phone = el("dm-phone", `<div class="dm-screen"></div>`);
+  const clock = el("dm-clock");
+  const hhmm = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const mins = (t) => {
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
+  };
   let pos = { x: 640, y: 420 };
   let finger = false;
 
@@ -155,6 +169,22 @@
       away.querySelector(".clock").textContent = clock;
       away.querySelector(".l").textContent = line;
       away.classList.toggle("on", on && !!clock);
+    },
+    // A wall clock over the top bar, for scenarios whose story spans hours. "" hides it.
+    clock(t) {
+      // An SVG face rather than an emoji: headless Chromium here has no emoji font.
+      clock.innerHTML = t ? `${CLOCK} ${esc(t)}` : "";
+      clock.classList.toggle("on", !!t);
+    },
+    // Runs the clock from one HH:MM to another over `ms` — a time-lapse.
+    async clockLapse(from, to, ms) {
+      const a = mins(from);
+      const b = mins(to);
+      const steps = 24;
+      for (let i = 1; i <= steps; i++) {
+        this.clock(hhmm(Math.round(a + ((b - a) * i) / steps)));
+        await wait(ms / steps);
+      }
     },
     // The Slack thread as the chat bridge fills it (workspace/agent/internal/bridge): the
     // notification text is the thread's first message, the Allow / Deny buttons are the reply

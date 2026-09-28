@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Encode the demo recording's screencast frames into one animated WebP.
 
-    python3 demo-encode.py <frames.json> <out.webp> [--fps 12] [--quality 75]
+    python3 demo-encode.py <frames.json> <out.webp> [--fps 12] [--effort 100]
 
 frames.json is what demo.mjs writes: {"frames": [{"file": "<png>", "t": <seconds>}], "end": <seconds>}.
 Each frame is shown until the next one's timestamp, the last until "end".
@@ -10,6 +10,11 @@ Pillow's WebP writer is libwebp's WebPAnimEncoder, which stores only the rectang
 since the previous frame: a UI recording is mostly still, so this is what keeps a 45-second
 capture at a few megabytes. There is no ffmpeg or gifski in the workspace image, and Pillow is one
 `pip install --user pillow` away.
+
+Lossless, not lossy. Measured on these recordings: lossless is no larger (553 KB against 586 KB at
+lossy q75 for the review scenario), and lossy leaves ghosts — a region that changes once and then
+stays still keeps the lossy approximation of what was there before (a tapped finger stayed visible
+with a per-channel error up to 26 until the next keyframe).
 """
 import argparse
 import hashlib
@@ -70,7 +75,8 @@ def main():
     ap.add_argument("frames")
     ap.add_argument("out")
     ap.add_argument("--fps", type=float, default=12)
-    ap.add_argument("--quality", type=int, default=75)
+    # For lossless WebP, "quality" is compression effort, not fidelity.
+    ap.add_argument("--effort", type=int, default=100)
     a = ap.parse_args()
 
     with open(a.frames) as fh:
@@ -86,13 +92,13 @@ def main():
         append_images=images[1:],
         duration=ReleasingDurations(durations, images),
         loop=0,
-        quality=a.quality,
+        lossless=True,
+        quality=a.effort,
         method=4,
         # Keyframes are full frames. A UI recording rarely needs one, and each costs as much as a
         # screenshot, so they are spaced ~8 s apart. libwebp requires kmin > kmax / 2.
         kmin=int(a.fps * 4) + 1,
         kmax=int(a.fps * 8),
-        allow_mixed=True,
     )
     for im in images:
         im.close()

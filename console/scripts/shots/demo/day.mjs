@@ -1,17 +1,15 @@
-// Stateful fixtures for the README demo recording (demo.mjs, `server.mjs --demo`).
+// Scenario "day" — the README's "A day with Agent Fleet" (docs/img/demo-day-<locale>.webp).
 //
-// The screenshot fixtures (fixtures.mjs) are one frozen moment. A recording needs time to pass:
-// sessions the Console launches have to appear, and the fleet has to move from "just started"
-// to "one finished, one waiting on you" between two scenes. So this module keeps state — the
-// sessions created through POST /api/sessions and a phase the recorder advances through
-// POST /__demo/phase — and answers only the routes that state touches. Everything else falls
-// through to fixtures.mjs.
+// Two issues are started from the issue tracker as a Claude Code and a Codex session, each in its
+// own worktree; the laptop closes; a permission request is allowed from the session's Slack thread
+// on a phone; back at the desk the overview shows one finished and one waiting, beside the finished
+// session's diff.
 //
-// Same rule as fixtures.mjs: everything is FICTIONAL, and the shapes are the real wire contracts
-// (console/src/types/session.ts, workspace/agent/internal/transcript/transcript.go,
-// console/src/features/workitems/read.ts).
-
-const L = (locale, ja, en) => (locale === "ja" ? ja : en);
+// The fixtures keep state: the sessions created through POST /api/sessions, and a phase the
+// recorder advances (kit.mjs `phases`). Same rule as fixtures.mjs: everything is FICTIONAL, and the
+// shapes are the real wire contracts (console/src/types/session.ts,
+// workspace/agent/internal/transcript/transcript.go, console/src/features/workitems/read.ts).
+import { L, ago, assistant, messagesBody, phases, router, tool, txt, user } from "./kit.mjs";
 
 export const PHASES = ["morning", "away", "back"];
 
@@ -85,8 +83,7 @@ index 1b7c0e4..6fa2d19 100644
  };
 `;
 
-export function createDemo(locale, fx) {
-  const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
+export function fixtures(locale, fx) {
   const state = { phase: "morning", created: new Map(), ledger: [] };
   const issues = demoIssues(locale);
   const issueOf = (kind) => issues.find((i) => i.kind === kind);
@@ -177,11 +174,6 @@ export function createDemo(locale, fx) {
   };
 
   // ---- transcripts -------------------------------------------------------------------
-  const user = (idx, text, ts) => ({ role: "user", idx, ts, text, parts: [{ kind: "text", text }] });
-  const assistant = (idx, ts, parts, model) => ({ role: "assistant", idx, ts, model, text: "", parts });
-  const txt = (text) => ({ kind: "text", text });
-  const tool = (t, info, output) => ({ kind: "tool", tool: t, info, output });
-
   const claudeTurns = (s) => {
     const n = issueOf("claude").number;
     const first = [
@@ -255,15 +247,7 @@ export function createDemo(locale, fx) {
     const turns = s.kind === "claude" ? claudeTurns(s) : codexTurns(s);
     const back = state.phase === "back";
     const status = s.kind === "claude" ? (back ? "idle" : "working") : back ? "question" : "working";
-    return {
-      name,
-      messages: turns,
-      cursor: turns.length * 4,
-      status,
-      alive: true,
-      reset: true,
-      firstLine: 0,
-      hasMore: false,
+    return messagesBody(name, turns, status, {
       ...(s.kind === "claude" && back ? { files: claudeFiles(s) } : {}),
       ...(s.kind === "codex" && back
         ? {
@@ -271,9 +255,7 @@ export function createDemo(locale, fx) {
             pendingText: L(locale, "直し方が 2 通りあるので、先に決めさせてください。", "There are two ways to fix this — let's pick one first."),
           }
         : {}),
-      jsonlLines: turns.length * 4,
-      jsonlMtime: new Date().toISOString(),
-    };
+    });
   };
 
   // ---- working-tree changes of the claude worktree -------------------------------------
@@ -282,9 +264,9 @@ export function createDemo(locale, fx) {
     if (state.phase !== "back" || repo !== claudeRepo()) return { changes: [] };
     return {
       changes: [
-        { path: "src/checkout/validate.ts", index: "", worktree: "M" },
-        { path: "src/checkout/validate.test.ts", index: "", worktree: "M" },
-        { path: "src/checkout/messages.ts", index: "", worktree: "M" },
+        { path: "src/checkout/validate.ts", index: " ", worktree: "M" },
+        { path: "src/checkout/validate.test.ts", index: " ", worktree: "M" },
+        { path: "src/checkout/messages.ts", index: " ", worktree: "M" },
       ],
     };
   };
@@ -334,20 +316,8 @@ export function createDemo(locale, fx) {
       const r = claudeRepo();
       return { changes: r ? changes(r).changes.map((c) => ({ ...c, repo: r, path: `repos/${r}/${c.path}` })) : [] };
     },
-    // The engine pills and the fleet graph belong to other stories; an empty answer keeps the
-    // top bar to what the demo is about.
-    "/api/engines/status": () => ({ engines: [] }),
   };
   const re = [
-    // The launch dialog's live model list (console/src/lib/agentModels.ts). Unanswered, codex's
-    // picker sits on "Loading models…" through the whole launch.
-    [
-      /^\/api\/agents\/([^/]+)\/models$/,
-      (m) =>
-        m[1] === "codex"
-          ? { models: [{ id: "gpt-5.6-luna", label: "gpt-5.6-luna", efforts: ["low", "medium", "high"], defaultEffort: "medium" }] }
-          : { models: [] },
-    ],
     [/^\/api\/sessions\/([^/]+)\/messages$/, (m) => messages(decodeURIComponent(m[1]))],
     [/^\/api\/repos\/([^/]+)\/changes$/, (m) => changes(decodeURIComponent(m[1]))],
     [/^\/api\/repos\/([^/]+)\/diff$/, (m, q) => ({ path: q.get("path") || "", diff: diffOf(q.get("path") || "") })],
@@ -360,24 +330,162 @@ export function createDemo(locale, fx) {
     ],
   ];
 
-  // Returns the body for a demo-owned route, or undefined to fall through to fixtures.mjs.
-  const route = (pathname, query, method, body) => {
-    if (exact[pathname]) return exact[pathname](query, method, body);
-    for (const [rx, fn] of re) {
-      const m = rx.exec(pathname);
-      if (m) {
-        const v = fn(m, query, method, body);
-        if (v != null) return v;
-      }
-    }
-    return undefined;
-  };
+  return { route: router(exact, re), setPhase: phases(PHASES, state) };
+}
 
-  const setPhase = (p) => {
-    if (!PHASES.includes(p)) return { error: `unknown phase ${p}` };
-    state.phase = p;
-    return { phase: p };
-  };
+// ---- the recording -------------------------------------------------------------------
 
-  return { route, setPhase };
+export const meta = { width: 1280, height: 800, band: 56 };
+
+// The captions are the README's four steps (README.md / README.ja.md "A day with Agent Fleet"),
+// shortened to one line each. The phone texts are the chat bridge's own strings:
+// workspace/agent/internal/bridge/format.go (headline), slack_interact.go (button labels) and
+// workspace/agent/internal/sessionx/bridge_answer.go (the line a press leaves behind).
+function text(locale) {
+  const [claude] = demoIssues(locale);
+  return {
+    en: {
+      cap: [
+        "Hand one issue to Claude Code and another to Codex, each in its own git worktree.",
+        "Close the laptop and leave. Both keep working on the server.",
+        "One asks for permission. It arrives in the session's Slack thread — answer from your phone.",
+        "Back at a desk: what finished, what waits on you, and each worktree's changes.",
+      ],
+      away: "Laptop closed",
+      phone: {
+        thread: "Thread",
+        channel: "#agents",
+        bot: "Agent Fleet",
+        headline: "A tool permission is awaiting your approval",
+        session: `"#${claude.number} ${claude.title}" (Claude Code)`,
+        link: "Open in Console",
+        replies: "1 reply",
+        allow: "Allow",
+        deny: "Deny",
+        done: "✓ Allowed",
+        compose: "Reply…",
+      },
+      splitDown: "Split down",
+    },
+    ja: {
+      cap: [
+        "Claude Code と Codex に別々の Issue を頼む。それぞれ自分の git worktree で。",
+        "ノートを閉じて出かける。どちらもサーバーの上で作業を続ける。",
+        "片方が許可を求める。依頼はセッションの Slack スレッドに届き、スマートフォンから答える。",
+        "机に戻ると、どれが終わりどれがあなたを待っているか、各 worktree の変更まで分かる。",
+      ],
+      away: "ノートは閉じたまま",
+      phone: {
+        thread: "スレッド",
+        channel: "#agents",
+        bot: "Agent Fleet",
+        headline: "ツール実行の許可待ちです",
+        session: `「#${claude.number} ${claude.title}」（Claude Code）`,
+        link: "Console で開く",
+        replies: "1 件の返信",
+        allow: "許可",
+        deny: "拒否",
+        done: "✓ 許可しました",
+        compose: "返信する…",
+      },
+      splitDown: "下に分割",
+    },
+  }[locale];
+}
+
+// What a returning user's browser would restore: the webshop commit graph where the first session
+// will open, the sessions overview beside it (the left column gets more room: it ends up holding
+// the finished session's chat over its diff), the issue tracker and the repo tree open in the rail,
+// and the Claude session's "Changed files" panel open as someone who uses it would have left it.
+export function seed() {
+  return {
+    layout: {
+      version: 3,
+      mode: "split",
+      cols: [
+        { id: "c1", rowRatio: 0.5, cells: [{ id: "g1", selectedViewId: "p1", views: [{ id: "p1", session: null, content: { kind: "scm", scmRepo: "webshop" }, wrap: null }] }] },
+        { id: "c2", rowRatio: 0.5, cells: [{ id: "g2", selectedViewId: "p2", views: [{ id: "p2", session: null, content: { kind: "sessions", showStopped: false }, wrap: null }] }] },
+      ],
+      colRatios: [0.58, 0.42],
+      activeCellId: "g1",
+    },
+    sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 1, files: 0 },
+    storage: { [`af.mirror-files-open.${NAME_OF.claude}`]: "1" },
+    ready: `!!document.querySelector(".wi-row")`,
+  };
+}
+
+export async function script(c) {
+  const T = text(c.locale);
+  const [claude, codex] = demoIssues(c.locale);
+  const { find } = c;
+
+  await c.caption(1, T.cap[0]);
+  await c.record();
+
+  // ---- 1. two issues, two agents, two worktrees ----
+  await c.sleep(1800);
+  await c.click(find(".wi-row", `#${claude.number}`));
+  await c.sleep(1000);
+  await c.click(find(".ui-modal .ui-btn-default"));
+  await c.sleep(900);
+  await c.hover(find(".ui-modal .launch-sec-head", "worktree"));
+  await c.sleep(900);
+  await c.click(find(".ui-modal .ui-btn-primary"));
+  await c.waitFor(`!!${find(".ovw-card", `#${claude.number}`)}`);
+  await c.sleep(1800);
+
+  await c.click(find(".wi-row", `#${codex.number}`));
+  await c.sleep(800);
+  await c.click(find(".ui-modal .ui-btn-default"));
+  await c.sleep(800);
+  await c.click(find(".ui-modal .seg-btn.kind-codex"));
+  // codex's model list is fetched on selection; start only once the picker has it.
+  await c.waitFor(`!document.querySelector(".model-picker-loading")`);
+  await c.sleep(700);
+  await c.click(find(".ui-modal .ui-btn-primary"));
+  await c.waitFor(`!!${find(".ovw-card", `#${codex.number}`)}`);
+  await c.sleep(2200);
+
+  // ---- 2. the laptop closes ----
+  await c.ev(`__demo.hideCursor()`);
+  await c.caption(2, T.cap[1]);
+  await c.ev(`__demo.veil(true, "09:10 → 11:40", ${JSON.stringify(T.away)})`);
+  await c.phase("away");
+  await c.sleep(3000);
+
+  // ---- 3. the permission request, answered on the phone ----
+  await c.caption(3, T.cap[2]);
+  await c.ev(`__demo.veil(true)`);
+  await c.ev(`__demo.phone(true, ${JSON.stringify({ ...T.phone, time: "11:40" })})`);
+  await c.sleep(2200);
+  await c.ev(`__demo.setFinger(true); __demo.move(${c.W / 2 + 120}, ${c.H - 60}, 0)`);
+  const allow = await c.ev(`__demo.phoneAllowRect()`);
+  await c.ev(`__demo.move(${Math.round(allow.x)}, ${Math.round(allow.y)}, 800)`);
+  await c.ev(`__demo.ripple()`);
+  await c.ev(`__demo.phonePress()`);
+  // While the phone is up, the fleet moves on to "back at a desk": the Claude session finished,
+  // Codex has a question. Its chat is opened from the repo tree behind the veil, so the Console
+  // comes back showing the finished session.
+  await c.phase("back");
+  await c.sleep(1800);
+  await c.ev(`(${find(".sess-row .sess-btn", `#${claude.number}`)})?.click()`);
+  await c.waitFor(`!/working/.test((${find(".ovw-card", `#${claude.number}`)})?.className || "working") && !!document.querySelector(".mfl-row")`);
+  await c.ev(`__demo.hideCursor(); __demo.setFinger(false)`);
+  await c.ev(`__demo.phone(false)`);
+  await c.sleep(700);
+
+  // ---- 4. back at a desk ----
+  await c.ev(`__demo.veil(false)`);
+  await c.caption(4, T.cap[3]);
+  await c.sleep(1600);
+  await c.hover(find(".ovw-card", `#${codex.number}`), 800);
+  await c.sleep(1300);
+  await c.hover(find(".ovw-card", `#${claude.number}`), 600);
+  await c.sleep(1000);
+  await c.click(find("button", `^${T.splitDown}$`), 800);
+  await c.sleep(700);
+  await c.click(`${find(".mfl-name", "^validate\\.ts$")}?.closest(".mfl-row")`, 800);
+  await c.waitFor(`[...document.querySelectorAll(".scmview .scm-scroll")].some((e) => /cart_total_zero/.test(e.textContent))`);
+  await c.sleep(3800);
 }
