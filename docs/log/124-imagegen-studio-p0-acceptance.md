@@ -104,6 +104,19 @@ PR #1137 を配備した Agent で、Agent API から codex の Terminal を作�
 `codex resume` を起動する（最長 3 分。過ぎたら codex のロック画面に任せる）。隔離した app-server で、待機の表示のあと
 ロック画面なしで会話が開くことを確かめた。
 
+### 3.3 PR #1141 の配備後の受け入れ（2026-09-28）
+
+PR #1141 を配備した Agent（バイナリは 22:46 のビルド。`codex-await-thread` を含む）で、Agent API から確かめた。
+
+- **Managed → Terminal の切り替え**: Managed で合言葉を覚えさせてから `POST /sessions/{n}/driver {"driver":"tui"}`。
+  API は 0.04 秒で返り、pane に待機の行が出て、約 60 秒後にロック画面なしで入力欄が出た。合言葉を尋ねると正しく答えた
+  （会話は引き継がれている）。
+- **待機中の送信**: `/input` と `/turn`（start）はどちらも 409 `codex_releasing`。pane には何も入力されなかった。入力欄が
+  出た後の `/input` は 200 で届き、待機の印（`codex-await/<name>`）は消えた。
+- **Terminal の通常の resume**: 同じセッションで `/halt` → `/start`。待機の行は出ず、1.5 秒で入力欄が出た。
+
+残りの端の場合は #1147、「停止してから切り替える」簡素化の案は #1148。#1131 はこの結果で閉じた。
+
 ## 4. 上限値（未解決 4）
 
 **要約の 1 KB（`knowledgeSummaryMax`）はこのままでよい。** 実際の利用で書かれた知識文書の要約は
