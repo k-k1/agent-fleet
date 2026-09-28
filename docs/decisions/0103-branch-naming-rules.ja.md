@@ -94,12 +94,16 @@ base は親 clone の現在の HEAD か、手で打った値。リポジトリ�
 その repo 自身だからである。
 
 **利用者層は ui-prefs ではなく専用の保管に置く。**
-- Agent は利用者の規則を、`GET/PUT /branch-rules/user` の後ろにある別のファイルで持つ。
+- Agent は利用者の規則を、`GET/PUT /branch-rules/user` の後ろにある別のファイルで持つ。置くのは、repo を
+  絞った規則と、種類ごとの上書き。
 - **ui-prefs に置かない理由:** Console は ui-prefs を丸ごと書き、自分の知っているキーだけを送る。Agent はファイルを
   置き換える。古い Console で何か 1 つ保存するだけで、知らない規則のキーが黙って消える。
-- **既存の `workItemBranchTemplate` は ui-prefs に残し、移行しない。** resolver は空でないテンプレートを、利用者の
-  規則がもう 1 つあるものとして読む（`{match: "*", name: <テンプレート>}`、保管した規則の後ろに並ぶ）。古い Console は
-  今までどおりこれを編集し、自分で描く。新しい Console が古い Agent に当たると 404 になり、同じことをする（決定 7）。
+- **利用者の既定テンプレートの置き場所は 1 つ: ui-prefs の `workItemBranchTemplate`。** 移行はしない。
+  - resolver は空でないテンプレートを、利用者の規則 `{match: "*", name: <テンプレート>}` として読む。
+  - 保管は、`name` を設定する `*` 単独の規則を断る。テンプレートを隠すものは作れない。
+  - 古い Console も新しい Console も同じ欄を編集するので、既定について食い違わない。古い Console は今までどおり
+    自分で描く。
+  - 新しい Console が古い Agent に当たると 404 になり、同じことをする（決定 7）。
 
 ### 決定 3: リポジトリ層は、リポジトリがすでに言っていることを読む
 
@@ -121,9 +125,9 @@ base は親 clone の現在の HEAD か、手で打った値。リポジトリ�
    前例は `.agent-fleet/launch-prompts.md`。
 2. **`.gitflow`**。git-flow-next の、コミットできる共有設定（git-config の書式、リポジトリ直下）。
 3. **clone の config にある `gitflow.*`**。gitflow-avh、nvie/gitflow、git-flow-next の avh 互換、Fork が書くキー:
-   `gitflow.branch.master`、`gitflow.branch.develop`、`gitflow.prefix.{feature,bugfix,release,hotfix,support}`。
-   git-flow-next 固有の `gitflow.branch.<名前>.{type,parent,prefix}` も読む。worktree はこの config を共有するので、
-   親 clone に書いたキーは全 worktree に届く。
+   `gitflow.branch.master`、`gitflow.branch.develop`、`gitflow.prefix.{feature,bugfix,release,hotfix,support}`（「avh 形式」）。
+   git-flow-next 固有の形式 `gitflow.branch.<名前>.{type,parent,startpoint,prefix}` も読む。worktree はこの config を
+   共有するので、親 clone に書いたキーは全 worktree に届く。
 4. **Bitbucket Cloud の branching model**（`GET /2.0/repositories/{ws}/{repo}/branching-model`）。Bitbucket の
    リモートで接続がある場合だけ。未設定のときの初期値と違う欄だけを数える:
    - `development` は `use_mainbranch` が false のときだけ。
@@ -136,15 +140,22 @@ base は親 clone の現在の HEAD か、手で打った値。リポジトリ�
    - それを過ぎたら model なしで答え、そのことを `sources.bitbucket: "pending"` と警告で示す。人は、base が
      `head` になった理由を黙って渡されるのではなく、見て分かる。
    - 写しは 10 分保つ。`GET …/branch-rule?refresh=1` で取り直せる。`sources` には各写しを取得した時刻が載る。
+   - base は名前と違ってブランチの履歴を変える。そのため起動モーダルは、pending の base を警告と「読み直す」操作と
+     一緒に示す。今と同じく、人が「起動」を押すまで何も作らない（決定 8）。
 
-git-flow の情報源が与えるもの:
+git-flow の情報源が与えるものは、形式によって違う。2 つの形式は別々に判定し、両方あるときは固有の形式が
+欄ごとに勝つ。
 
-- 列挙した各種類の prefix。
-- `feature`・`bugfix`・`release`・`support` には `base = <gitflow.branch.develop>`。
-- `hotfix` には `base = <gitflow.branch.master>`。
+- **avh 形式**は、`gitflow.branch.master` と `gitflow.branch.develop` の両方があるときだけ数える。与えるもの:
+  - 列挙した各種類の prefix
+  - `feature`・`bugfix`・`release`・`support` には `base = <gitflow.branch.develop>`
+  - `hotfix` には `base = <gitflow.branch.master>`
+- **固有の形式**は、`gitflow.version` があるときだけ数える。これは git-flow-next 自身が求める印。`type = topic` で
+  `<名前>` が種類の語彙にある `gitflow.branch.<名前>` ごとに、次を与える:
+  - その種類の `prefix`
+  - base: `startpoint` があればそれ、無ければ `parent`
 
-`gitflow.*` の情報源は、`gitflow.branch.master` と `gitflow.branch.develop` の両方があるときだけ数える。
-途中まで書かれた初期化（決定 9）は、半分宣言されたものではなく、宣言なしとして読まれる。
+  名前が種類でない topic ブランチは、警告を出して無視する。
 
 **種類の集合。** リポジトリ層の種類の集合は、情報源が列挙する種類の和集合:
 - `.agent-fleet/branches` の `[type "<種類>"]` の節
@@ -173,8 +184,13 @@ Bug は `feature/…` になる。nvie/gitflow と Fork には bugfix が無い�
   - `.gitflow` からは項目 3 の `gitflow.*` のキー。
 
   それ以外は警告を出して無視する。
-- **prefix と base はすべて `git check-ref-format --branch` を通す。** 通らない値は警告を出して捨てる。base は
-  `--end-of-options` の後ろでだけ git に渡す。
+- **値は、それが何であるかに合わせて確かめる。** 通らない値は警告を出して捨てる。
+  - base はブランチ名なので、`git check-ref-format --branch <base>` を通す。
+  - prefix は `<prefix>x` として確かめる。prefix は空でもよく、`/` で終わってもよい。`check-ref-format` は単独では
+    それを拒む（実測: `feature/` は exit 128、`feature/x` は exit 0）。
+  - タグの prefix（`versiontag`）はブランチではなく、空でもよい。`git check-ref-format "refs/tags/<prefix>1.0"` で
+    確かめる。
+  - base は `--end-of-options` の後ろでだけ git に渡す。
 
 利用者とテナントの規則、`gitflow.*` のキーにも、同じキーの確認とブランチ名の確認をかける。
 
@@ -206,8 +222,10 @@ Bug は `feature/…` になる。nvie/gitflow と Fork には bugfix が無い�
   どれにも当たらなければ `feature`。決定 3 の種類の集合は、最後に当てる。
 - **描画は今のサニタイズを保つ**（`sanitizeBranch`）: `[A-Za-z0-9._/-]` だけを残し、空のセグメントを詰め、
   空のプレースホルダが残した区切りを落とす。
-- **描いた名前が prefix だけの場合。** 描画とサニタイズの後で確かめる。たとえば `{prefix}{key}` は、作業項目が
-  無いと `feature/` になる。こうした名前にはスラグを足す（`feature/<slug>`）。スラグも空なら:
+- **描いた名前が prefix だけの場合。** サニタイズの前、描いたままの名前で確かめる。`sanitizeBranch` は空の最後の
+  セグメントを捨てるので、`feature/` が裸の `feature` になってしまうからである。たとえば `{prefix}{key}` は、
+  作業項目が無いと `feature/` になる。判定は「描いたままの名前から区切りを除いたものが、prefix から区切りを除いた
+  ものと等しいか」。こうした名前にはスラグを足し（`feature/<slug>`）、その後でサニタイズする。スラグも空なら:
   - 起動では `temp/<乱数>` に戻る。
   - 改名では resolver が `name_empty` を返し、Console は人が打てるよう入力欄を残す。
 - **英語スラグ（P2）。** 非 ASCII の題は、AI 補助の単発呼び出しで英語スラグを得られる。resolver はそれを待たず、
@@ -276,7 +294,9 @@ Console は利用者のテンプレートで自前の `branchForItem` を使い�
 
 ### 決定 8: 3 つの流儀を 1 つにする。規則は警告するだけで拒まない
 
-- **作業項目からの起動**は、名前と base を resolver に聞く。
+- **作業項目からの起動**は、名前と base を resolver に聞き、両方を起動モーダルに入れておく。モーダルは base の
+  出どころ（`sources`）とすべての警告を示す。人が「起動」を押すまで何も始まらない。作業項目からの起動は、
+  すでにこのモーダルを通っている。
 - **それ以外の起動は `temp/<乱数>` のまま**: 命名を後に回す方式は変えない。
 - **改名:**
   - チップは、決め打ちの一覧ではなく、解決した種類の prefix（`GET …/branch-rule`）にする。今と同じく、押すと
@@ -314,8 +334,10 @@ Console は利用者のテンプレートで自前の `branchForItem` を使い�
   - prefix を先に書き、2 つのブランチのキーを最後に書く。resolver は両方のブランチのキーがそろうまでこの情報源を
     無視する（決定 3）。そのため初回の初期化の間、並行する resolve が見るのは「何も無い」か「新しい状態の全部」の
     どちらか。
-  - 既存のキーの上から初期化し直す場合は、書き込みの瞬間に途中の状態が読まれうる。名前は助言にすぎず、次の
-    resolve で落ち着くので、これは受け入れる。
+  - resolver は `gitflow.*` のキーを、同じ Agent のロックの下で 1 回の `git config --get-regexp` で読む。
+    Agent の中の resolve が、初期化し直しの途中を見ることはない。
+  - Agent の外の git-flow クライアント（シェルの `git flow` CLI）は、2 つのキーの書き込みの間を読みうる。
+    `git flow init` を手で 2 回走らせたときと同じ露出なので、これは受け入れる。
   - 失敗したら、どのキーまで書いたかを返す。押し直すと全部を書き直す。
   - 何かを書く前に、すべての値に決定 3 のブランチ名の確認をかける。
 - **書くのは人が押したときだけで、ブランチは作らない。** 開発ブランチがローカルにも `origin` にも無ければ断る。

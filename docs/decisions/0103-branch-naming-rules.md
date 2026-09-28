@@ -101,14 +101,18 @@ literal segments, so `bitbucket.org/acme/web` beats `bitbucket.org/acme/*`, whic
 the rule listed first wins. The repository layer has no `match`: it is the repository.
 
 **The user layer is its own store, not ui-prefs.**
-- The Agent keeps the user's rules in a separate file behind `GET/PUT /branch-rules/user`.
+- The Agent keeps the user's rules in a separate file behind `GET/PUT /branch-rules/user`. These
+  are the rules scoped to repositories, and kind overrides.
 - **Why not ui-prefs:** the Console writes ui-prefs as a whole and sends only the keys it knows, and the
   Agent replaces the file. An older Console saving any setting would silently drop a rules key it does
   not know.
-- **The existing `workItemBranchTemplate` stays in ui-prefs and is not migrated.** The resolver reads a
-  non-empty template as one more user rule, `{match: "*", name: <template>}`, listed after the stored
-  rules. An older Console keeps editing and rendering it as today. A newer Console against an older Agent
-  gets 404 and does the same (decision 7).
+- **The user's default template has one home: `workItemBranchTemplate` in ui-prefs.** It is not
+  migrated.
+  - The resolver reads a non-empty template as the user rule `{match: "*", name: <template>}`.
+  - The store refuses a bare-`*` rule that sets `name`, so nothing can shadow the template.
+  - An older and a newer Console edit the same field, so they never disagree about the default. An older
+    Console keeps rendering it itself.
+  - A newer Console against an older Agent gets 404 and does the same (decision 7).
 
 ### Decision 3: the repository layer reads what the repository already says
 
@@ -132,9 +136,9 @@ The sources are merged field by field into one repository rule, strongest first:
 2. **`.gitflow`**, git-flow-next's committed shared config (git-config syntax, at the repository root).
 3. **`gitflow.*` in the clone's config**, the keys gitflow-avh, nvie/gitflow, git-flow-next's avh
    compatibility and Fork write: `gitflow.branch.master`, `gitflow.branch.develop` and
-   `gitflow.prefix.{feature,bugfix,release,hotfix,support}`. git-flow-next's native
-   `gitflow.branch.<name>.{type,parent,prefix}` is read too. Worktrees share this config, so a key
-   written in the parent clone reaches every worktree.
+   `gitflow.prefix.{feature,bugfix,release,hotfix,support}` (the "avh form"). git-flow-next's
+   native form, `gitflow.branch.<name>.{type,parent,startpoint,prefix}`, is read too. Worktrees share
+   this config, so a key written in the parent clone reaches every worktree.
 4. **Bitbucket Cloud's branching model** (`GET /2.0/repositories/{ws}/{repo}/branching-model`), for a
    Bitbucket remote with a connection. A field counts only when it differs from the unconfigured default:
    - `development` only when `use_mainbranch` is false;
@@ -146,17 +150,27 @@ The sources are merged field by field into one repository rule, strongest first:
    - With no copy for the repository yet, a resolve waits up to three seconds for the first fetch.
    - Past that, it answers without the model and says so, with `sources.bitbucket: "pending"` and a
      warning. A person then sees why the base is `head` instead of getting it silently.
+   - A base changes the branch's history, unlike a name, so the launch modal shows a pending base
+     with its warning and a "read again" action. Nothing is created until the person presses Launch,
+     as today (decision 8).
    - A copy is kept for ten minutes. `GET …/branch-rule?refresh=1` fetches it again, and `sources`
      carries the time each copy was fetched.
 
-What a git-flow source supplies:
+What a git-flow source supplies depends on its form. The two forms are gated independently, and when
+both are present the native form wins field by field.
 
-- The prefix of each kind it lists.
-- `base = <gitflow.branch.develop>` for `feature`, `bugfix`, `release` and `support`.
-- `base = <gitflow.branch.master>` for `hotfix`.
+- **The avh form** counts only when both `gitflow.branch.master` and `gitflow.branch.develop` are set.
+  It supplies:
+  - the prefix of each kind it lists;
+  - `base = <gitflow.branch.develop>` for `feature`, `bugfix`, `release` and `support`;
+  - `base = <gitflow.branch.master>` for `hotfix`.
+- **The native form** counts only when `gitflow.version` is set, the marker git-flow-next itself
+  requires. Each `gitflow.branch.<name>` with `type = topic` whose `<name>` is in the kind vocabulary
+  supplies:
+  - that kind's `prefix`;
+  - its base: `startpoint` when set, else `parent`.
 
-The `gitflow.*` source counts only when both `gitflow.branch.master` and `gitflow.branch.develop` are
-set. A half-written initialisation (decision 9) therefore reads as undeclared, not half-declared.
+  A topic branch whose name is not a kind is ignored with a warning.
 
 **The kind set.** The repository layer's kind set is the union of the kinds its sources list:
 - the `[type "<kind>"]` sections of `.agent-fleet/branches`;
@@ -186,8 +200,13 @@ under these limits:
   - From `.gitflow`: the `gitflow.*` keys of item 3.
 
   Anything else is ignored with a warning.
-- **Every prefix and base must pass `git check-ref-format --branch`.** A value that fails is dropped with a
-  warning. A base reaches git only after `--end-of-options`.
+- **Values are checked as what they are.** A value that fails is dropped with a warning.
+  - A base is a branch name and must pass `git check-ref-format --branch <base>`.
+  - A prefix is checked as `<prefix>x`. It may be empty or end in `/`, which `check-ref-format` rejects
+    on its own (measured: `feature/` exits 128, `feature/x` exits 0).
+  - A tag prefix (`versiontag`) is not a branch and may be empty. It is checked with
+    `git check-ref-format "refs/tags/<prefix>1.0"`.
+  - A base reaches git only after `--end-of-options`.
 
 User and tenant rules and the `gitflow.*` keys go through the same key and ref-name checks.
 
@@ -220,9 +239,11 @@ User and tenant rules and the `gitflow.*` keys go through the same key and ref-n
   No match means `feature`. Decision 3's kind set is applied last.
 - **Rendering keeps today's sanitising** (`sanitizeBranch`): only `[A-Za-z0-9._/-]` survives, empty
   segments collapse, and a separator left by an empty placeholder is dropped.
-- **When the rendered name is only its prefix.** This is checked after rendering and sanitising: for
-  example, `{prefix}{key}` with no work item renders `feature/`. Such a name gets the slug appended
-  (`feature/<slug>`). If the slug is empty too:
+- **When the rendered name is only its prefix.** This is checked on the raw rendering, before
+  sanitising, because `sanitizeBranch` drops the empty last segment and would turn `feature/` into a
+  bare `feature`. For example, `{prefix}{key}` with no work item renders `feature/`, and the check is
+  "does the raw name, stripped of separators, equal the prefix, stripped of separators". Such a name
+  gets the slug appended (`feature/<slug>`) and is then sanitised. If the slug is empty too:
   - at launch, it falls back to `temp/<random>`;
   - at rename, the resolver returns `name_empty` and the Console leaves the field for the person to type.
 - **English slug (P2).** A non-ASCII title may get an English slug through the AI-assist one-shot. The
@@ -295,7 +316,9 @@ returns 404, the Console keeps using its own `branchForItem` with the user's tem
 
 ### Decision 8: the three styles become one; rules warn and never refuse
 
-- **Work-item launch** asks the resolver for the name and the base.
+- **Work-item launch** asks the resolver for the name and the base, and prefills the launch modal with
+  both. The modal shows where the base came from (`sources`) and every warning. Nothing starts until the
+  person presses Launch; the work-item launch already goes through that modal.
 - **Other launches keep `temp/<random>`**: deferred naming does not change.
 - **Rename:**
   - The chips are the resolved kinds' prefixes (`GET …/branch-rule`), not a hard-coded list. As today,
@@ -334,8 +357,10 @@ repository (parent clone) gets **Initialize Git Flow**.
   - The prefixes are written first and the two branch keys last. The resolver ignores the source until
     both branch keys exist (decision 3), so during a first initialisation a concurrent resolve sees
     either nothing or the whole new state.
-  - A re-initialisation over existing keys can be read half-way for the moment of the write. This is
-    accepted: names are advisory, and the next resolve settles.
+  - The resolver reads the `gitflow.*` keys in one `git config --get-regexp` under the same Agent lock,
+    so a resolve in the Agent never sees a re-initialisation half-way.
+  - A git-flow client outside the Agent (the `git flow` CLI in a shell) can still read between two key
+    writes. That is the same exposure as running `git flow init` twice by hand, and it is accepted.
   - A failure reports which keys were written. Pressing again rewrites them all.
   - Every value passes decision 3's ref-name check before anything is written.
 - **It writes on a person's press only, and never creates a branch.** If the development branch

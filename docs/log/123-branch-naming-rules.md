@@ -65,3 +65,9 @@
 
 - **`git config --file -`（標準入力）は `include.path` を既定で辿る**。`[include] path = /etc/hostname` を標準入力で渡すと、hostname の中身がキーとして返った。同じ内容でもパスで渡す（`--file f.cfg`）と include は辿らない（`--includes` を付けたときだけ辿る）。`--no-includes` を明示すると標準入力でも辿らない。git 2.47.3。コミットされたファイルを blob から標準入力で読むので、`--no-includes` は必須（ADR 0103 決定 3）。
 - ui-prefs は丸ごと置き換える: Console は自分の知っているキーだけを集めて PUT し（`settings.ts` の `serverPrefs`）、Agent はファイルを丸ごと書く（`ui_prefs.go` の `handlePutUIPrefs`）。新しいキーを足すと、古い Console が何か 1 つ保存しただけで消える。利用者層を ui-prefs から外した理由（決定 2）。
+
+## 7. レビュー 2 巡目で測ったこと
+
+- `git check-ref-format --branch` は `feature/`（末尾 `/`）と空文字を exit 128 で拒み、`feature/x` は 0。prefix は単独で検査できないので、`<prefix>x` として検査する。タグの prefix は `refs/tags/<prefix>1.0` で検査する（空の prefix でも `refs/tags/1.0` は 0）。
+- `sanitizeBranch` は空のセグメントを捨てるので、`feature/` は `feature` になる。「prefix だけか」の判定はサニタイズの前にする。
+- git-flow-next の固有形式は、ブランチごとに `type`（`base` / `topic`）・`parent`・`startPoint`・`prefix` を持つ（`internal/config/config.go` の既定値: feature は topic・parent develop・startPoint develop・prefix `feature/`）。切り出し元は `startPoint`。`gitflow.version` が初期化済みの印。
