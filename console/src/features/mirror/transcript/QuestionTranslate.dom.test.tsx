@@ -69,6 +69,40 @@ describe("QuestionBlock translation", () => {
     expect(toggled).toEqual([[SOURCE]]);
   });
 
+  // #1114: the model left one field out of its reply, marker and all.
+  describe("a field the reply dropped", () => {
+    const DROPPED = "`Q1.header` 配備\n\n`Q1.text` どう進めますか？\n\n`Q1.O1.label` 今すぐ再配備";
+    const REST = "`Q1.O2.label` Skip it";
+
+    function dropping(shown: boolean, rest: string | undefined, pressed: Array<[string, string[]]>): TranscriptTranslateWiring {
+      return {
+        ...wiring(shown),
+        get: (t) => (t === SOURCE ? DROPPED : t === REST ? rest : undefined),
+        autoPress: (k, texts) => pressed.push([k, texts]),
+      };
+    }
+
+    it("asks for just that field once more, showing the original meanwhile", () => {
+      const pressed: Array<[string, string[]]> = [];
+      const h = render(dropping(true, undefined, pressed));
+      expect(labels(h)).toEqual(["今すぐ再配備", "Skip it"]);
+      expect(pressed).toEqual([[turnTranslateKey([REST]), [REST]]]);
+    });
+
+    it("merges the follow-up over the first reply", () => {
+      const pressed: Array<[string, string[]]> = [];
+      const h = render(dropping(true, "`Q1.O2.label` 飛ばす", pressed));
+      expect(labels(h)).toEqual(["今すぐ再配備", "飛ばす"]);
+      expect(pressed).toEqual([]);
+    });
+
+    it("asks for nothing while the card is shown in the original", () => {
+      const pressed: Array<[string, string[]]> = [];
+      render(dropping(false, undefined, pressed));
+      expect(pressed).toEqual([]);
+    });
+  });
+
   it("no wiring (the shared view) means no button", () => {
     const h = render(undefined);
     expect(h.querySelector(".mt-translate")).toBeNull();
