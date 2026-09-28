@@ -25,10 +25,16 @@ into ~/.aws/config). The credentials are passed to that one child process throug
 environment only. The container's workload role is blocked for the child: a missing or
 expired SSO login fails instead of silently running as another principal.
 
+A profile of your own that assumes a role from a source_profile, or runs a
+credential_process, is run too when --account names its account: the command gets its
+temporary credentials only if AWS reports them in that account. Long-lived keys,
+credential_source, web identity and mfa_serial are refused.
+
   --region <region>  the region for the command; without it a region already exported in
                      the shell (AWS_REGION, then AWS_DEFAULT_REGION) wins over the profile's
   --account <id>     refuse unless the profile is this AWS account (required for a profile
-                     that is not one of your Settings profiles)
+                     that is not one of your Settings profiles, and so for every
+                     role_arn / credential_process profile)
   --keep-aws-config  give the child your own ~/.aws files and AWS_ENDPOINT_URL* settings.
                      By default its config defines only the chosen profile, so a tool that
                      names another one fails with "could not be found": fix the tool rather
