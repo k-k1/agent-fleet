@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -37,7 +36,7 @@ var replyLabelRe = regexp.MustCompile(`(?i)^\s*(?:候補|返信候補|返信|回
 // are merged into the chip row.
 
 const (
-	ReplySuggestTimeout  = 60 * time.Second
+	ReplySuggestTimeout  = SyncSuggestBudget
 	replySuggestCount    = 3  // maximum number of candidates returned
 	replySuggestMaxRunes = 20 // per-candidate cap; longer lines are dropped as prose (persona says 20)
 	// The window is a CHARACTER budget, not a turn count. One transcript turn is one content
@@ -323,13 +322,14 @@ func HandleSuggestReplies(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// The deadline starts before the transcript parse: the ingress counts that time too.
+	ctx, cancel := context.WithTimeout(r.Context(), ReplySuggestTimeout)
+	defer cancel()
 	turns := sessionTitleTurns(m) // same transcript load as title suggestion (absorbs kind differences)
 	if len(turns) == 0 {
 		httpx.WriteErr(w, http.StatusBadRequest, "no_content", "not enough conversation yet to suggest replies")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), ReplySuggestTimeout)
-	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureSuggestSession, Trigger: usagex.TriggerManual, Ref: name})
 	reps, err := runReplySuggestLLM(ctx, turns)
 	if err != nil {

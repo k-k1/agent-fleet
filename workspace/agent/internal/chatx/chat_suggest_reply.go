@@ -60,6 +60,9 @@ func HandleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "reply suggestion is turned off")
 		return
 	}
+	// The deadline starts before the conversation load: the ingress counts that time too.
+	ctx, cancel := context.WithTimeout(r.Context(), replySuggestTimeout)
+	defer cancel()
 	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
@@ -69,8 +72,6 @@ func HandleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "no_content", "not enough conversation yet to suggest replies")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), replySuggestTimeout)
-	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureSuggestChat, Trigger: usagex.TriggerManual, Ref: c.ID})
 	reps, err := runChatReplySuggestLLM(ctx, c.Messages)
 	if err != nil {
