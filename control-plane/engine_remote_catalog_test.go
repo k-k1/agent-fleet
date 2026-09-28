@@ -425,13 +425,13 @@ func TestBorrowingOnlyCPAdoptsThroughTheRealBuilder(t *testing.T) {
 	// The poll's first tick is immediate rather than an interval away, so that a launch menu is
 	// not empty for ten minutes after a restart. It runs on its own goroutine; this waits for it.
 	e := waitForBorrowedRow(t, reg, "image")
-	awaitRemotePollExit(t, e)
 	if !e.def.remote() || e.def.Provider != "comfy" {
 		t.Errorf("def = %+v, want the far declaration", e.def)
 	}
 	if e.remote == nil || e.catalog.source == nil {
 		t.Fatal("the real builder gave the remote row no mirror to read")
 	}
+	awaitRemotePollExit(t, e)
 	if got := e.modelIDs(ctx); !reflect.DeepEqual(got, []string{"comfy/sdxl-base-1.0"}) {
 		t.Errorf("model ids = %v, want the borrowed checkpoint", got)
 	}
