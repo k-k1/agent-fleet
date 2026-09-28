@@ -729,6 +729,12 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos/{name}/svn-auth", rest)
 	// Launch prompt templates (repo launch modal) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
+	// Branch naming resolver (ADR 0103 decision 7) — proxied to the Agent.
+	mux.HandleFunc("GET /api/repos/{name}/branch-rule", rest)
+	mux.HandleFunc("POST /api/repos/{name}/branch-name", rest)
+	mux.HandleFunc("POST /api/repos/{name}/branch-name/check", rest)
+	mux.HandleFunc("GET /api/branch-rules/user", rest)
+	mux.HandleFunc("PUT /api/branch-rules/user", rest)
 	// Project-scope MCP servers (docs/log/56 P0/P1) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/mcp", rest)
 	mux.HandleFunc("POST /api/repos/{name}/mcp/plan", rest)

@@ -131,7 +131,7 @@ base は親 clone の現在の HEAD か、手で打った値。リポジトリ�
 4. **Bitbucket Cloud の branching model**（`GET /2.0/repositories/{ws}/{repo}/branching-model`）。Bitbucket の
    リモートで接続がある場合だけ。未設定のときの初期値と違う欄だけを数える:
    - `development` は `use_mainbranch` が false のときだけ。
-   - `branch_types` は、既定の `bugfix/ feature/ hotfix/ release/` と違う prefix があるときだけ。
+   - `branch_types` は、既定の `bugfix/ feature/ hotfix/ release/` と違うときだけ（違う prefix がある、または既定の種類が欠けている）。応答には有効な種類だけが載るので、欠けている種類は誰かが無効にしたもの。
 
    実地調査で、`develop` から切る git-flow 運用の repo が返したのは、この既定の答えだった。
 
