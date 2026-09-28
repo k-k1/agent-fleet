@@ -55,7 +55,35 @@ node console/scripts/shots/capture.mjs --locale en --only overview,fleetgraph --
 
 The container is shared, so pass `--port` / `--cdp-port` that nothing else is listening on.
 
+## Demo recording
+
+The README's "A day with Agent Fleet" is also a ~45-second animated WebP,
+`docs/img/demo-en.webp` / `demo-ja.webp`:
+
+```bash
+npm --prefix console run build          # console/dist must exist (the real bundle)
+pip install --user pillow               # the encoder; there is no ffmpeg in the workspace
+node console/scripts/shots/demo.mjs --locale en
+node console/scripts/shots/demo.mjs --locale ja
+```
+
+- `server.mjs --demo` swaps in `demo-fixtures.mjs`, a fleet with state: POST /api/sessions
+  creates the session and its worktree the way the Agent would, and `POST /__demo/phase`
+  moves the story from "just launched" to "one finished, one waiting on you".
+- `demo.mjs` plays the scenario through the real UI — the issue tracker's Start, the launch
+  dialog, the rail, the sessions overview, the changed-files panel — with CDP input, records
+  it with `Page.startScreencast`, and hands the frames to `demo-encode.py`. A step whose
+  control never appears fails the run instead of recording a skipped step.
+- `demo-overlay.js` draws what the Console cannot: a cursor (headless has none), the caption
+  band under the Console, and the phone. The phone's Slack thread is **redrawn**, not
+  recorded: its texts and buttons are the chat bridge's own strings
+  (`workspace/agent/internal/bridge/format.go`, `slack_interact.go`,
+  `workspace/agent/internal/sessionx/bridge_answer.go`), so update them together.
+- `--keep-frames` leaves the raw PNG frames in the temp directory it prints, for checking a
+  single moment.
+
 ## Publishing
 
 `deploy/release/publish-dist.sh --seed` pushes `docs/img/*.webp` to the dist repo
-under the same path, so both READMEs reference them relatively.
+under the same path, so both READMEs reference them relatively. The demo recordings
+(`demo-*.webp`) are left out: the dist READMEs do not show them.
