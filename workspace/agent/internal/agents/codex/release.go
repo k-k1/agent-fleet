@@ -104,9 +104,11 @@ func threadLoaded(cl *appClient, threadID string) (bool, error) {
 // composer. A marker keyed by the session name covers the whole hand-over, so the prompt
 // paths can refuse or hold back:
 //
-//   - "switching": written by the driver switch before the managed runtime is dropped, until
-//     the switch's launch replaces it or the switch fails (awaitSwitchingTTL is only a net for
-//     an Agent that died mid-switch). The meta still says managed meanwhile.
+//   - "switching" / "switching-wait": written by the driver switch before the managed runtime
+//     is dropped, and owned by it until the meta says Terminal (EndSwitch) or the switch fails
+//     (ClearHandOver): the meta still says managed meanwhile, so nothing else may end it.
+//     BuildLaunch only records that the pane will wait ("-wait"). awaitSwitchingTTL is just a
+//     net for an Agent that died mid-switch.
 //   - "pending": written by BuildLaunch before the pane exists, so the gap until the waiter
 //     starts is covered (valid for awaitPendingTTL).
 //   - "<pid>": the waiter, for its lifetime (a dead pid does not count).
@@ -120,11 +122,12 @@ func awaitMarkerPath(name string) string {
 }
 
 const (
-	awaitSwitching    = "switching"
-	awaitPending      = "pending"
-	awaitDone         = "done"
-	awaitSwitchingTTL = 2 * time.Minute
-	awaitPendingTTL   = 15 * time.Second
+	awaitSwitching     = "switching"
+	awaitSwitchingWait = "switching-wait"
+	awaitPending       = "pending"
+	awaitDone          = "done"
+	awaitSwitchingTTL  = 2 * time.Minute
+	awaitPendingTTL    = 15 * time.Second
 )
 
 func writeAwaitMarker(name, state string) {
@@ -157,8 +160,40 @@ func readAwaitMarker(name string) (state string, age time.Duration, ok bool) {
 	return strings.TrimSpace(string(b)), time.Since(fi.ModTime()), true
 }
 
-// markPending is BuildLaunch's half: the pane is about to wait.
-func markPending(name string) { writeAwaitMarker(name, awaitPending) }
+// launchHandOver is BuildLaunch's half. Mid-switch it only records whether the pane will
+// wait; the switch ends the mark itself. Otherwise it marks the pane as about to wait, or
+// clears a leftover hand-over when there is nothing to wait for.
+func launchHandOver(name string, wait bool) {
+	if state, age, ok := readAwaitMarker(name); ok && isSwitching(state) && age < awaitSwitchingTTL {
+		if wait {
+			writeAwaitMarker(name, awaitSwitchingWait)
+		}
+		return
+	}
+	if wait {
+		writeAwaitMarker(name, awaitPending)
+		return
+	}
+	ClearHandOver(name)
+}
+
+func isSwitching(state string) bool { return state == awaitSwitching || state == awaitSwitchingWait }
+
+// EndSwitch is called once the switch has made the meta say Terminal: a pane that will wait is
+// now "pending" until its waiter starts, and one that will not has nothing left to guard. A
+// waiter that already took over (pid, done) is left alone.
+func EndSwitch(name string) {
+	state, _, ok := readAwaitMarker(name)
+	if !ok {
+		return
+	}
+	switch state {
+	case awaitSwitchingWait:
+		writeAwaitMarker(name, awaitPending)
+	case awaitSwitching:
+		_ = os.Remove(awaitMarkerPath(name))
+	}
+}
 
 // ClearHandOver ends the hand-over for session name: a launch with nothing to wait for, a
 // failed switch, or codex's composer seen after the wait. A live waiter's marker is left alone.
@@ -168,7 +203,7 @@ func ClearHandOver(name string) {
 		return
 	}
 	switch state {
-	case awaitSwitching, awaitPending, awaitDone:
+	case awaitSwitching, awaitSwitchingWait, awaitPending, awaitDone:
 		_ = os.Remove(awaitMarkerPath(name))
 	}
 }
@@ -197,7 +232,7 @@ func Awaiting(name string) bool {
 		return false
 	}
 	switch state {
-	case awaitSwitching:
+	case awaitSwitching, awaitSwitchingWait:
 		return age < awaitSwitchingTTL
 	case awaitPending:
 		return age < awaitPendingTTL

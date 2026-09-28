@@ -126,16 +126,35 @@ func TestBuildLaunchWaitsForTheAppServerToReleaseTheThread(t *testing.T) {
 		t.Fatal("the launch did not mark the pane as about to wait: a prompt could slip in before the waiter starts")
 	}
 
-	// A switch marked the hand-over, but this launch has nothing to wait for (no daemon):
-	// the mark must go, or prompts stay refused for its whole TTL.
+	// A leftover hand-over and nothing to wait for (no daemon): the launch clears it, or
+	// prompts stay refused for its whole TTL.
 	t.Setenv(appServerAddrEnv, "")
-	MarkSwitching(m.Name)
+	writeAwaitMarker(m.Name, awaitPending)
 	released = nil
 	if got := launch(); strings.Contains(got, "codex-await-thread") || len(released) != 0 {
 		t.Fatalf("launch without a daemon waited or released (released=%v): %q", released, got)
 	}
 	if Awaiting(m.Name) {
-		t.Fatal("a launch with nothing to wait for left the switch's mark in place")
+		t.Fatal("a launch with nothing to wait for left a pending mark in place")
+	}
+
+	// Mid-switch the mark belongs to the switch: the meta still says managed until the switch
+	// has written Terminal, so the launch must not end it — only EndSwitch does.
+	MarkSwitching(m.Name)
+	launch()
+	if !Awaiting(m.Name) {
+		t.Fatal("the launch ended the switch's mark while the meta may still say managed")
+	}
+	EndSwitch(m.Name)
+	if Awaiting(m.Name) {
+		t.Fatal("EndSwitch left a mark although this pane has nothing to wait for")
+	}
+	t.Setenv(appServerAddrEnv, "ws://127.0.0.1:1")
+	MarkSwitching(m.Name)
+	launch()
+	EndSwitch(m.Name)
+	if !Awaiting(m.Name) {
+		t.Fatal("EndSwitch dropped the guard although the pane is about to wait")
 	}
 }
 
@@ -154,7 +173,7 @@ func TestAwaitingFollowsTheWaiter(t *testing.T) {
 	if !JustReleased("await-mark") {
 		t.Fatal("the end of the wait is not reported: codex has no composer yet at that moment")
 	}
-	markPending("await-mark")
+	launchHandOver("await-mark", true)
 	if !Awaiting("await-mark") {
 		t.Fatal("a pending marker (pane not started yet) does not count as waiting")
 	}

@@ -169,6 +169,9 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m = cur
+	if target == session.DriverTUI {
+		codex.EndSwitch(name) // the meta says Terminal now; see codex/release.go
+	}
 	if wasStopped {
 		fleetgraph.RecordRevive(name) // write site ③: only when the slot really was stopped
 	}
