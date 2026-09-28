@@ -51,6 +51,27 @@ func TestParseGitHubPRStatuses(t *testing.T) {
 			t.Errorf("%s = %+v / %q, want %+v / %q", c.id, st.checks, st.mergeable, c.checks, c.mergeable)
 		}
 	}
+	// A partial answer: one count array failed (null plus an error pointing into the node) while
+	// the other arrived green. Summing what arrived would show a PR with failing checks as passing.
+	partial := []byte(`{"data":{"nodes":[
+	  {"id":"PR_part","mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{
+	    "checkRunCountsByState":null,"statusContextCountsByState":[{"state":"SUCCESS","count":1}]}}}}]}},
+	  {"id":"PR_ok","mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{
+	    "checkRunCountsByState":[{"state":"SUCCESS","count":2}],"statusContextCountsByState":[]}}}}]}}
+	]},"errors":[{"path":["nodes",0,"commits","nodes",0,"commit","statusCheckRollup","contexts","checkRunCountsByState"]}]}`)
+	pg := parseGitHubPRStatuses(partial)
+	if _, ok := pg["PR_part"]; ok {
+		t.Errorf("a node an error points into must be left unread, got %+v", pg["PR_part"])
+	}
+	if pg["PR_ok"].checks.State != "success" {
+		t.Errorf("the other node in the same answer = %+v, want success", pg["PR_ok"].checks)
+	}
+	// The same null without an error: the checks are unread, the mergeability still stands.
+	nullOnly := []byte(`{"data":{"nodes":[{"id":"PR_n","mergeable":"CONFLICTING","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{
+	    "checkRunCountsByState":null,"statusContextCountsByState":[{"state":"SUCCESS","count":1}]}}}}]}}]}}`)
+	if st := parseGitHubPRStatuses(nullOnly)["PR_n"]; st.checks != (workItemChecksOut{}) || st.mergeable != "conflict" {
+		t.Errorf("null counts = %+v / %q, want unread checks and conflict", st.checks, st.mergeable)
+	}
 	if len(parseGitHubPRStatuses([]byte(`not json`))) != 0 {
 		t.Error("a body that does not parse must yield nothing")
 	}

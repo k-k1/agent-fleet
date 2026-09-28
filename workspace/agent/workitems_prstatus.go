@@ -83,9 +83,13 @@ type githubPRStatus struct {
 	mergeable string
 }
 
-// parseGitHubPRStatuses maps a nodes(ids:) answer by node ID. The `errors` array is ignored on
-// purpose: GitHub answers 200 with a null node and an error for an ID it cannot resolve (a
-// deleted PR, a repository the token lost), and the other nodes in the same answer are still good.
+// parseGitHubPRStatuses maps a nodes(ids:) answer by node ID.
+//
+// GraphQL answers 200 with partial data: a field that failed is null and its error names the path
+// to it. One bad node (a deleted PR, a repository the token lost) does not spoil the others, so
+// errors are applied per node — a node any error points into is left out entirely (not read),
+// because summing the counts that did arrive can turn a PR with a failing check green. A null
+// count array without a matching error is treated the same way for the checks.
 func parseGitHubPRStatuses(body []byte) map[string]githubPRStatus {
 	type counts []struct {
 		State string `json:"state"`
@@ -110,13 +114,24 @@ func parseGitHubPRStatuses(body []byte) map[string]githubPRStatus {
 				} `json:"commits"`
 			} `json:"nodes"`
 		} `json:"data"`
+		Errors []struct {
+			Path []any `json:"path"`
+		} `json:"errors"`
 	}
 	out := map[string]githubPRStatus{}
 	if err := json.Unmarshal(body, &gr); err != nil {
 		return out
 	}
-	for _, n := range gr.Data.Nodes {
-		if n == nil || n.ID == "" {
+	broken := map[int]bool{}
+	for _, e := range gr.Errors {
+		if len(e.Path) >= 2 && e.Path[0] == "nodes" {
+			if i, ok := e.Path[1].(float64); ok {
+				broken[int(i)] = true
+			}
+		}
+	}
+	for i, n := range gr.Data.Nodes {
+		if n == nil || n.ID == "" || broken[i] {
 			continue
 		}
 		st := githubPRStatus{mergeable: githubMergeableState(n.Mergeable)}
@@ -124,6 +139,12 @@ func parseGitHubPRStatuses(body []byte) map[string]githubPRStatus {
 		// than green.
 		if len(n.Commits.Nodes) > 0 && n.Commits.Nodes[0].Commit.Rollup != nil {
 			c := n.Commits.Nodes[0].Commit.Rollup.Contexts
+			// Both arrays are nullable in the schema. GitHub lists every state, zeros included, so
+			// a missing one is a failed read, not "none of that kind".
+			if c.CheckRuns == nil || c.Statuses == nil {
+				out[n.ID] = st
+				continue
+			}
 			for _, x := range c.CheckRuns {
 				st.checks.Total += x.Count
 				switch strings.ToUpper(x.State) {

@@ -219,15 +219,19 @@ describe("WorkItemsSection", () => {
       running: true,
     });
     await render();
-    const flags = (key: string) =>
-      [...host.querySelectorAll<HTMLElement>(".wi-row")]
-        .find((r) => r.querySelector(".wi-key")?.getAttribute("title") === key)!
-        .querySelectorAll<HTMLElement>(".wi-flag");
-    const ci = t("wi.detail_checks");
+    const row = (key: string) =>
+      [...host.querySelectorAll<HTMLElement>(".wi-row")].find((r) => r.querySelector(".wi-key")?.getAttribute("title") === key)!;
+    const flags = (key: string) => row(key).querySelectorAll<HTMLElement>(".wi-flag");
+    const ci = `${t("wi.detail_checks")}: ${t("wi.detail_checks_failed", { failed: 3, total: 40 })}`;
     const one = flags("acme/web#1");
     expect([...one].map((f) => f.className)).toEqual(["wi-flag tone-bad", "wi-flag tone-bad"]);
-    expect(one[0].getAttribute("aria-label")).toBe(`${ci}: ${t("wi.detail_checks_failed", { failed: 3, total: 40 })}`);
-    expect(one[1].getAttribute("aria-label")).toBe(t("wi.detail_merge_conflict"));
+    expect(one[0].getAttribute("title")).toBe(ci);
+    expect(one[1].getAttribute("title")).toBe(t("wi.detail_merge_conflict"));
+    // The row is one button, so its label is what a screen reader announces: the status is in it.
+    expect(row("acme/web#1").getAttribute("aria-label")).toBe(
+      [t("wi.open_detail", { key: "acme/web#1" }), ci, t("wi.detail_merge_conflict")].join(" — "),
+    );
+    expect(row("acme/web#5").getAttribute("aria-label")).toBe(t("wi.open_detail", { key: "acme/web#5" }));
     // "unknown" mergeability is not a conflict and not drawn.
     expect([...flags("acme/web#2")].map((f) => f.className)).toEqual(["wi-flag tone-warn"]);
     expect([...flags("acme/web#3")].map((f) => f.className)).toEqual(["wi-flag tone-ok"]);

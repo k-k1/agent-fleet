@@ -101,6 +101,11 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
   const labels = railLabels(item.labels);
   const meta = !!(repo || assignee || labels.length);
   const when = railWhen(item.updatedAt);
+  // The row is one button, so its label is all a screen reader announces — the icons inside it
+  // are not read out. The CI and conflict status therefore go into the label as well.
+  const ciText = item.checks.state ? `${tr("wi.detail_checks")}: ${checksText(item.checks)}` : "";
+  const conflictText = item.mergeable === "conflict" ? tr("wi.detail_merge_conflict") : "";
+  const label = [tr("wi.open_detail", { key: item.key }), ciText, conflictText].filter(Boolean).join(" — ");
   return (
     // The whole row opens the detail modal. The external link and the started badge nested
     // inside it are controls of their own, so each stops propagation before acting; otherwise
@@ -109,7 +114,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
       className={"wi-row" + (item.state === "done" ? " done" : "")}
       role="button"
       tabIndex={0}
-      aria-label={tr("wi.open_detail", { key: item.key })}
+      aria-label={label}
       onClick={() => onOpen(item)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -133,24 +138,14 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
               needs me" without opening each one. Icons only, with the detail modal's own wording
               on hover: the title keeps the width. Nothing is drawn when nothing was read — an
               issue, a closed PR, a provider without these — and "no checks" is that same nothing,
-              never a green mark. */}
-          {item.checks.state && (
-            <span
-              className={`wi-flag tone-${checksTone(item.checks)}`}
-              role="img"
-              aria-label={`${tr("wi.detail_checks")}: ${checksText(item.checks)}`}
-              title={`${tr("wi.detail_checks")}: ${checksText(item.checks)}`}
-            >
+              never a green mark. The same text is in the row's label above. */}
+          {ciText && (
+            <span className={`wi-flag tone-${checksTone(item.checks)}`} title={ciText}>
               <Icon name={CHECK_ICON[item.checks.state] || "circle-large-outline"} />
             </span>
           )}
-          {item.mergeable === "conflict" && (
-            <span
-              className="wi-flag tone-bad"
-              role="img"
-              aria-label={tr("wi.detail_merge_conflict")}
-              title={tr("wi.detail_merge_conflict")}
-            >
+          {conflictText && (
+            <span className="wi-flag tone-bad" title={conflictText}>
               <Icon name="git-merge" />
             </span>
           )}
