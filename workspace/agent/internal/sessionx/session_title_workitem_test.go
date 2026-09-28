@@ -29,6 +29,8 @@ func TestWithWorkItemKey(t *testing.T) {
 		// A bare number is the title's own content (a count, a year), not the key.
 		{"leading count is kept", "1146 errors after migration", github, "#1146 1146 errors after migration"},
 		{"github key with colon", "#1146: timeout tuning", github, "#1146 timeout tuning"},
+		{"github key with period", "#1146. timeout tuning", github, "#1146 timeout tuning"},
+		{"github key with paren", "#1146) timeout tuning", github, "#1146 timeout tuning"},
 		{"jira lower-cased", "proj-123 Login retry backoff", jira, "PROJ-123 Login retry backoff"},
 		{"longer number is not the key", "#11467 timeout tuning", github, "#1146 #11467 timeout tuning"},
 		{"longer jira key is not the key", "PROJ-1234 retry", jira, "PROJ-123 PROJ-1234 retry"},
@@ -77,6 +79,9 @@ func TestCleanSuggestedTitleKeepsIssueNumbers(t *testing.T) {
 		"`code`#":                          "code",
 		"#1. Login redirect":               "Login redirect",
 		"##1) Login redirect":              "Login redirect",
+		"#1、 Login redirect":               "Login redirect",
+		"#1） Login redirect":               "Login redirect",
+		"#1146. Retry backoff":             "#1146. Retry backoff",
 	}
 	for in, want := range cases {
 		if got := CleanSuggestedTitle(in); got != want {

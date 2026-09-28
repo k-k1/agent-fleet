@@ -465,7 +465,7 @@ func cutKeyPrefix(s, key string) (string, bool) {
 	if r, _ := utf8.DecodeRuneInString(rest); unicode.IsLetter(r) || unicode.IsDigit(r) {
 		return "", false
 	}
-	return strings.TrimLeft(rest, " 　:：-–—|/"), true
+	return strings.TrimLeft(rest, " 　:：.)）、-–—|/"), true
 }
 
 const (
@@ -561,14 +561,12 @@ func stripTitleMarkers(s string) string {
 	return b.String()
 }
 
-// isIssueNumber reports whether s opens with digits that are not a list number: "1146 …" is an
-// issue, "1. …" / "1) …" is a numbered heading whose "#" is markdown.
+// isIssueNumber reports whether s opens with digits that are not a list number: "1146 …" and
+// "1146. …" are issues, "1. …" is a numbered heading whose "#" is markdown. trimListNumber is
+// the one definition of a list number, so the two never disagree about the same line.
 func isIssueNumber(s string) bool {
-	digits := strings.TrimLeftFunc(s, unicode.IsDigit)
-	if len(digits) == len(s) {
-		return false
-	}
-	return !strings.HasPrefix(digits, ".") && !strings.HasPrefix(digits, ")")
+	r, _ := utf8.DecodeRuneInString(s)
+	return unicode.IsDigit(r) && trimListNumber(s) == s
 }
 
 func titleCandidateLine(line string) string {
