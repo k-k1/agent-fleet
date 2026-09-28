@@ -324,6 +324,26 @@ af_engine_tools_ensure() {
   af_engine_tools_copy "$host" "$tag"
 }
 
+# af_comfy_ensure <ecr-host> <tag> — make sure af-comfyui:<tag> is in ECR, for update.sh moving
+# a stack off a stale ImageComfyImageTag. Same answers as af_engine_tools_ensure; the image is
+# baked only by comfyui-image.yml, so 1 is something no script here can fix. 3 = the copy itself
+# failed: callers use `|| rc=$?`, which switches set -e off in here.
+af_comfy_ensure() {
+  local host="$1" tag="$2" ghcr
+  if af_ecr_has af-comfyui "$tag"; then
+    echo "    · af-comfyui:$tag is already in ECR"
+    return 0
+  fi
+  af_ghcr_has comfyui "$tag"; ghcr=$?
+  [ "$ghcr" = 2 ] && return 2
+  [ "$ghcr" = 0 ] || return 1
+  if [ "${AF_DRY:-0}" != 1 ]; then
+    "${AWS[@]}" ecr get-login-password | crane auth login "$host" -u AWS --password-stdin
+  fi
+  echo "    · crane copy $AF_GHCR_DEFAULT/comfyui:$tag"
+  af_run crane copy "$AF_GHCR_DEFAULT/comfyui:$tag" "$host/af-comfyui:$tag" || return 3
+}
+
 # af_cfn_param_default <template> <key> — the `Default:` a template declares for a parameter.
 #
 # For the update that INTRODUCES a parameter. The live stack has no value to read yet, and the
