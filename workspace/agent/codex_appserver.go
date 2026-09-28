@@ -34,6 +34,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +45,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 const codexAppServerEnv = "AF_CODEX_APP_SERVER_ADDR"
@@ -164,6 +169,9 @@ func startCodexAppServer() {
 		return
 	}
 	codex.DaemonUp = wakeCodexObserver
+	codex.ReleaseObservedThread = releaseCodexObservedThread
+	codex.RestoreObservedThread = clearCodexReleased
+	loadCodexReleased()
 	codex.Serve().AdoptIfRunning()
 	go superviseCodexObserver()
 }
@@ -257,9 +265,14 @@ type codexObserver struct {
 
 	mu        sync.Mutex
 	nextID    int
-	pending   map[int]string  // in-flight observer request id → thread id ("" = loaded/list)
+	pending   map[int]string  // in-flight observer request id → thread id, or a sweep/unsubscribe tag
 	requested map[string]bool // threads attached or with an in-flight resume
+	sweepGen  int             // the current sweep; pages tagged with an older one are dropped
+	swept     []string        // loaded threads collected over the current sweep's pages
 }
+
+// codexSweepMark tags a thread/loaded/list request with its sweep's generation.
+const codexSweepMark = "sweep:"
 
 func newCodexObserver(conn *websocket.Conn) *codexObserver {
 	// Request ids share the connection's JSON-RPC space with initialize (id 1);
@@ -274,23 +287,146 @@ func (o *codexObserver) attach(threadID string) {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.requested[threadID] {
+	// Judged under o.mu: release sets the flag before it takes o.mu, so either this sees the
+	// flag, or the resume is sent first and release, finding requested set, unsubscribes after
+	// it on the same ordered socket.
+	if o.requested[threadID] || codexThreadReleased(threadID) {
 		return
 	}
 	o.requested[threadID] = true
 	o.sendLocked("thread/resume", map[string]any{"threadId": threadID}, threadID)
 }
 
+// sweep lists the loaded threads, page by page. A new sweep supersedes one still between
+// pages: the old one's late pages are dropped, so they can neither pad nor cut short the new
+// one's collection — which alone decides what is unloaded.
 func (o *codexObserver) sweep() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.sendLocked("thread/loaded/list", map[string]any{}, "")
+	o.sweepGen++
+	o.swept = nil
+	o.sendLocked("thread/loaded/list", map[string]any{}, codexSweepMark+strconv.Itoa(o.sweepGen))
 }
 
 func (o *codexObserver) forget(threadID string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	delete(o.requested, threadID)
+}
+
+// release unsubscribes this connection from a thread it is attached to.
+func (o *codexObserver) release(threadID string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.requested[threadID] {
+		return
+	}
+	delete(o.requested, threadID)
+	o.sendLocked("thread/unsubscribe", map[string]any{"threadId": threadID}, codexUnsubscribeMark+threadID)
+}
+
+// codexUnsubscribeMark tags a pending unsubscribe so handleResponse does not read its answer
+// as an attach.
+const codexUnsubscribeMark = "unsubscribe:"
+
+// codexReleased holds the threads a Terminal launch asked the observer to let go of (see
+// codex/release.go). A hold ends only when the thread is seen unloaded (a notLoaded broadcast,
+// or its absence from a sweep) or a managed Resume takes the thread back — never by time: if
+// the thread is still loaded, re-attaching makes the observer its last holder again and locks
+// the Terminal session out for good. It outlives any one observer connection, and is kept on
+// disk across Agent restarts, because a fresh observer's first sweep would re-attach it.
+var (
+	codexReleasedMu sync.Mutex
+	codexReleased   = map[string]bool{}
+	codexObsMu      sync.Mutex
+	codexObsCur     *codexObserver
+)
+
+// codexReleasedFile is a seam so tests do not write the real state directory.
+var codexReleasedFile = func() string { return filepath.Join(paths.AgentStateDir(), "codex-released-threads.json") }
+
+func codexThreadReleased(threadID string) bool {
+	codexReleasedMu.Lock()
+	defer codexReleasedMu.Unlock()
+	return codexReleased[threadID]
+}
+
+func clearCodexReleased(threadID string) {
+	codexReleasedMu.Lock()
+	defer codexReleasedMu.Unlock()
+	if codexReleased[threadID] {
+		delete(codexReleased, threadID)
+		saveCodexReleasedLocked()
+	}
+}
+
+// saveCodexReleasedLocked writes the set whole; this process is its only writer.
+func saveCodexReleasedLocked() {
+	ids := make([]string, 0, len(codexReleased))
+	for id := range codexReleased {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	b, _ := json.Marshal(ids)
+	p := codexReleasedFile()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return
+	}
+	tmp := p + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
+
+func loadCodexReleased() {
+	b, err := os.ReadFile(codexReleasedFile())
+	if err != nil {
+		return
+	}
+	var ids []string
+	if json.Unmarshal(b, &ids) != nil {
+		return
+	}
+	codexReleasedMu.Lock()
+	defer codexReleasedMu.Unlock()
+	for _, id := range ids {
+		codexReleased[id] = true
+	}
+}
+
+// clearUnloadedCodexReleased ends the holds on threads a sweep no longer lists: the unload a
+// missed notLoaded broadcast would have reported.
+func clearUnloadedCodexReleased(loaded []string) {
+	codexReleasedMu.Lock()
+	defer codexReleasedMu.Unlock()
+	changed := false
+	for id := range codexReleased {
+		if !slices.Contains(loaded, id) {
+			delete(codexReleased, id)
+			changed = true
+		}
+	}
+	if changed {
+		saveCodexReleasedLocked()
+	}
+}
+
+// releaseCodexObservedThread is codex.ReleaseObservedThread: keep the thread off the attach set
+// until the server unloads it, and drop the current connection's subscription.
+func releaseCodexObservedThread(threadID string) {
+	if threadID == "" {
+		return
+	}
+	codexReleasedMu.Lock()
+	codexReleased[threadID] = true
+	saveCodexReleasedLocked()
+	codexReleasedMu.Unlock()
+	codexObsMu.Lock()
+	o := codexObsCur
+	codexObsMu.Unlock()
+	if o != nil {
+		o.release(threadID)
+	}
 }
 
 func (o *codexObserver) sendLocked(method string, params map[string]any, threadID string) {
@@ -320,15 +456,39 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 		return
 	}
 	failed := len(msg.Error) > 0 && string(msg.Error) != "null"
-	if threadID == "" { // thread/loaded/list
+	if strings.HasPrefix(threadID, codexUnsubscribeMark) {
+		return
+	}
+	if strings.HasPrefix(threadID, codexSweepMark) { // thread/loaded/list
+		o.mu.Lock()
+		current := threadID == codexSweepMark+strconv.Itoa(o.sweepGen)
+		o.mu.Unlock()
 		var res struct {
-			Data []string `json:"data"`
+			Data       []string `json:"data"`
+			NextCursor *string  `json:"nextCursor"`
 		}
-		if !failed && json.Unmarshal(msg.Result, &res) == nil {
-			for _, tid := range res.Data {
-				o.attach(tid)
-			}
+		if !current || failed || json.Unmarshal(msg.Result, &res) != nil {
+			return
 		}
+		for _, tid := range res.Data {
+			o.attach(tid)
+		}
+		o.mu.Lock()
+		if threadID != codexSweepMark+strconv.Itoa(o.sweepGen) { // superseded meanwhile
+			o.mu.Unlock()
+			return
+		}
+		o.swept = append(o.swept, res.Data...)
+		if res.NextCursor != nil && *res.NextCursor != "" {
+			o.sendLocked("thread/loaded/list", map[string]any{"cursor": *res.NextCursor}, threadID)
+			o.mu.Unlock()
+			return
+		}
+		// Absence proves an unload only once every page is in.
+		all := o.swept
+		o.swept = nil
+		o.mu.Unlock()
+		clearUnloadedCodexReleased(all)
 		return
 	}
 	if failed {
@@ -371,6 +531,7 @@ func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 		// the observer socket reconnects.
 		if p.Status.Type == "notLoaded" {
 			o.forget(p.ThreadID)
+			clearCodexReleased(p.ThreadID)
 			return
 		}
 		if p.Status.Type != "" {
@@ -380,6 +541,7 @@ func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 		var p codexAppServerThreadNotification
 		if json.Unmarshal(msg.Params, &p) == nil {
 			o.forget(p.ThreadID)
+			clearCodexReleased(p.ThreadID)
 		}
 	}
 }
@@ -432,6 +594,16 @@ func superviseCodexObserver() {
 // observeCodexAppServer runs one observer connection until its socket drops.
 func observeCodexAppServer(conn *websocket.Conn) {
 	obs := newCodexObserver(conn)
+	codexObsMu.Lock()
+	codexObsCur = obs
+	codexObsMu.Unlock()
+	defer func() {
+		codexObsMu.Lock()
+		if codexObsCur == obs {
+			codexObsCur = nil
+		}
+		codexObsMu.Unlock()
+	}()
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {

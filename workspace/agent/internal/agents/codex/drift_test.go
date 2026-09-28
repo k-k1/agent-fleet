@@ -107,7 +107,7 @@ var featureOverrideRe = regexp.MustCompile(`^features\.([a-z0-9_]+)=true$`)
 // prodProgram is the launch string under test (fresh slot: no resume/fork).
 func prodProgram(t *testing.T) string {
 	t.Helper()
-	return buildProgram("", "", "slot-drift", "", "")
+	return buildProgram("", "", "slot-drift", "", "", "")
 }
 
 // TestDriftCodexFeatureFlagsKnown asserts the feature gates our launch depends on still
