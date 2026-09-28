@@ -122,6 +122,25 @@ describe("AWS login toast and modal", () => {
     expect(() => button("Start again")).not.toThrow();
   });
 
+  it("drops the attempt when the open modal switches to another request", async () => {
+    const other = { ...prod, id: "fedcba9876543210fedcba98", profile: "stg", label: "Staging" };
+    listed = [prod, other];
+    await mount();
+    await act(async () => useAwsLoginStore.getState().open(prod.id as string));
+    attemptReplies = [
+      { phase: "authorize", url: "https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH", code: "ABCD-EFGH" },
+    ];
+    await act(async () => button("Log in", document.querySelector(".ui-modal-foot")!).click());
+    await tick(400);
+    expect(document.body.textContent).toContain("ABCD-EFGH");
+    await act(async () => useAwsLoginStore.getState().open(other.id));
+    expect(document.body.textContent).toContain("AWS login (Staging)");
+    expect(document.body.textContent).not.toContain("ABCD-EFGH");
+    await tick(5000);
+    expect(calls.some((c) => c.path.startsWith(`api/aws-login/${other.id}/attempts/`))).toBe(false);
+    expect(() => button("Log in", document.querySelector(".ui-modal-foot")!)).not.toThrow();
+  });
+
   it("says why an unexpected sign-in URL was refused", async () => {
     await mount();
     await act(async () => useAwsLoginStore.getState().open(prod.id as string));

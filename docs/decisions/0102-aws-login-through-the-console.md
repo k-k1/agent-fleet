@@ -337,7 +337,10 @@ cancel, the member's only way was the terminal command.
 3. **The press asks the CP for Settings first**, the same pull the five-minute poll makes, because the row can be
    newer than the last poll. It refuses a profile that is not in the managed block — shadowed by the member's own
    `~/.aws`, held back by `[DEFAULT]`, refused by the INI allowlist — for the reason decision 1 gives, and one
-   without both an account and a role. Each refusal has its own error code, which the modal words.
+   without both an account and a role. It starts nothing when that pull fails or its list could not be written:
+   the cache it would fall back to can predate the row, and a failed write leaves `~/.aws/config` without the
+   profile. Each refusal has its own error code, which the modal words. A row's attempt does not keep a
+   request from expiring; only that request's own attempt does.
 4. **The CP relays both routes** through the same running-workspace check as the request's, and audits the start as
    `aws.login.start` with the target `profile: <name>`. The Settings list now carries each profile's `name` and
    whether another label maps to it (`nameCollides`), so the Console does not re-derive the name.

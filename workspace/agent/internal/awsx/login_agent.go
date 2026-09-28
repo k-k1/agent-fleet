@@ -89,13 +89,14 @@ var loginAttempts = struct {
 	current map[string]*loginAttempt // by sso-session
 }{byID: map[string]*loginAttempt{}, current: map[string]*loginAttempt{}}
 
-// liveAttemptFor reports whether an attempt for ssoSession is still running: its request
-// must not expire under it.
-func liveAttemptFor(ssoSession string) bool {
+// liveAttemptFor reports whether an attempt for that request is still running: the
+// request must not expire under it. A login started from a Settings row does not count;
+// it would otherwise keep any request for the profile up for its whole 15 minutes.
+func liveAttemptFor(ssoSession, requestID string) bool {
 	loginAttempts.Lock()
 	a := loginAttempts.current[ssoSession]
 	loginAttempts.Unlock()
-	return a != nil && a.live()
+	return a != nil && a.requestID == requestID && a.live()
 }
 
 // pruneAttemptsLocked forgets attempts that ended long ago.
@@ -156,7 +157,7 @@ func sweepLoginRequests(now time.Time) []LoginRequest {
 				continue
 			}
 			last, perr := time.Parse(time.RFC3339Nano, r.LastAt)
-			if (perr != nil || now.Sub(last) >= loginRequestTTL) && !liveAttemptFor(r.SSOSession) {
+			if (perr != nil || now.Sub(last) >= loginRequestTTL) && !liveAttemptFor(r.SSOSession, r.ID) {
 				_ = os.Remove(path)
 				continue
 			}
@@ -299,7 +300,18 @@ var syncForLogin = Sync
 // replace each other the same way two presses on one request do.
 func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	res, _ := syncForLogin()
+	// Only a fresh list that was also written counts: the cache the offline path re-applies
+	// can predate the row the member pressed, and a failed write leaves names in Exported
+	// that are not in ~/.aws/config.
+	res, err := syncForLogin()
+	if err != nil || !res.Fetched {
+		msg := "the workspace could not read Settings just now"
+		if err != nil {
+			msg += ": " + err.Error()
+		}
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "settings_unavailable", msg)
+		return
+	}
 	sp, ok := res.Settings[name]
 	switch {
 	case !ok:

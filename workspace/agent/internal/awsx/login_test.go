@@ -611,3 +611,45 @@ func TestProfileLoginStatesSayNoMoreThanTheCacheKnows(t *testing.T) {
 		t.Fatalf("expired with a refresh token: %s", s)
 	}
 }
+
+func TestProfileLoginNeedsAFreshWrittenSettingsList(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	old := LoginAWSBin
+	LoginAWSBin = func() (string, error) { return bin, nil }
+	t.Cleanup(func() { LoginAWSBin = old })
+	oldSync := syncForLogin
+	t.Cleanup(func() { syncForLogin = oldSync })
+	for label, fn := range map[string]func() (SyncResult, error){
+		// The CP cannot be asked: the cache may predate the row that was pressed.
+		"cp down": func() (SyncResult, error) {
+			return SyncResult{Settings: prodSettings, Exported: []string{"prod"}, FromCache: true}, errors.New("CP unreachable")
+		},
+		// Fetched, but ~/.aws/config was not written: Exported names a block that is not there.
+		"write failed": func() (SyncResult, error) {
+			return SyncResult{Settings: prodSettings, Exported: []string{"prod"}, Fetched: true}, errors.New("read-only file system")
+		},
+		"bridge off": func() (SyncResult, error) { return SyncResult{}, ErrBridgeOff },
+	} {
+		syncForLogin = fn
+		rec := profileStart("prod")
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"settings_unavailable"`) {
+			t.Errorf("%s: start = %d %s", label, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestARowLoginDoesNotKeepARequestPastItsTTL(t *testing.T) {
+	r, _ := fileRequest(t, `echo "Open https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH"; sleep 5
+`)
+	exportedProd(t)
+	a := startProfileAttempt(t, "prod")
+	waitProfilePhase(t, "prod", a, attemptAuthorize)
+	later := time.Now().Add(loginRequestTTL + time.Minute)
+	if got := sweepLoginRequests(later); len(got) != 0 {
+		t.Fatalf("a row's login kept request %s past its TTL", r.ID)
+	}
+	loginAttempts.Lock()
+	cur := loginAttempts.byID[a]
+	loginAttempts.Unlock()
+	cur.end(attemptFailed, "")
+}

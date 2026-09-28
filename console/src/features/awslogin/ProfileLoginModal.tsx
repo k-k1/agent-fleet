@@ -21,6 +21,7 @@ const REFUSALS: Record<string, MsgKey> = {
   not_a_settings_profile: "awslogin.err_not_found",
   not_exported: "awslogin.err_not_exported",
   incomplete_profile: "awslogin.err_incomplete",
+  settings_unavailable: "awslogin.err_settings_unavailable",
 };
 
 export function ProfileLoginModal({ profile, onClose }: { profile: LoginProfile; onClose: () => void }) {

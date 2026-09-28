@@ -561,6 +561,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "awslogin.profile_done": "Logged in. SSM sessions and af-aws-exec commands for this profile can use it now; a command that already gave up can be run again.",
   "awslogin.err_not_found": "The workspace does not know this profile yet. Make sure the workspace is running, then try again.",
   "awslogin.err_not_exported": "This profile is not in the workspace's ~/.aws/config: a profile or sso-session of the same name there, or a [DEFAULT] line, holds it back. Run af-aws-exec --list in a terminal to see why.",
+  "awslogin.err_settings_unavailable": "The workspace could not read your Settings just now, so it did not start a sign-in with values that may be out of date. Try again in a moment.",
   "awslogin.err_incomplete": "Set both an account ID and a role name on this profile to log in here.",
   "sx.ssm_title": "SSM login ({name})",
   "sx.ssm_login_failed": "Login failed.",

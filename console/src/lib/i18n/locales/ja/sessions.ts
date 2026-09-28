@@ -571,6 +571,7 @@ export const sessions = {
   "awslogin.profile_done": "ログインしました。このプロファイルの SSM セッションと af-aws-exec のコマンドがすぐに使えます。すでに諦めたコマンドは、もう一度実行できます。",
   "awslogin.err_not_found": "ワークスペースはまだこのプロファイルを知りません。ワークスペースが動いていることを確かめてから、もう一度試してください。",
   "awslogin.err_not_exported": "このプロファイルはワークスペースの ~/.aws/config に書き出されていません。そこにある同じ名前のプロファイルや sso-session、または [DEFAULT] の行が妨げています。理由はターミナルで af-aws-exec --list を実行すると分かります。",
+  "awslogin.err_settings_unavailable": "ワークスペースがいま設定を読めなかったため、古いかもしれない値でサインインを始めませんでした。少し待ってからもう一度試してください。",
   "awslogin.err_incomplete": "ここからログインするには、このプロファイルにアカウント ID とロール名の両方を設定してください。",
   "sx.ssm_title": "SSM ログイン（{name}）",
   "sx.ssm_login_failed": "ログインに失敗しました。",
