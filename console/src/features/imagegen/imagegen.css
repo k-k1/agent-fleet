@@ -1372,8 +1372,9 @@
 
 /* The narrow pane's conversation needs every line (measured at 390x500, keyboard up: 31 px of
    transcript). The agent head fits one line, and while the member types in the composer the
-   draft bar and the head step aside; they come back on blur. Focus on the bar's own buttons
-   does not count, so the bar never moves under a finger that is pressing it. */
+   head steps aside; it comes back on blur. The draft bar stays: with the rows below hidden on
+   touch devices the conversation keeps ~450 px on the member's phone, and a member typing
+   wants the draft and its Trial button in view (they asked for it). */
 @container igenpane (max-width: 720px) {
   .igen-agent-head {
     flex-wrap: nowrap;
@@ -1383,7 +1384,6 @@
   .igen-agent-replace-label {
     display: none;
   }
-  .igen-agent:has(.mirror-compose textarea:focus) .igen-draftbar,
   .igen-agent:has(.mirror-compose textarea:focus) .igen-agent-head {
     display: none;
   }
