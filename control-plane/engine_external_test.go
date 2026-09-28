@@ -323,6 +323,10 @@ func TestEngineRegistryLlmURLIgnoredAgainstAManagedRow(t *testing.T) {
 	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "")
 	t.Setenv("AF_LLM_URL", "http://lan-host:8080")
 	t.Setenv("AF_ENGINE_API_KEY_LLM", "")
+	// A managed row gets a controller that calls the real ECS API on context.Background and
+	// logs every failure into whatever captureLog a later test has installed (measured: 15 of
+	// 30 runs broke TestEnginePendingRefusalIsLoggedOncePerMinute). Interval 0 never starts it.
+	t.Setenv("AF_ENGINE_LLM_CONTROL_INTERVAL_SEC", "0")
 	t.Setenv("AF_ENGINES_JSON", `{"engines":[
 	  {"key":"llm","api":"chat","provider":"llamacpp","service":"af-llm",
 	   "url":"http://llm.af.internal:8080","health":"/health"}]}`)
