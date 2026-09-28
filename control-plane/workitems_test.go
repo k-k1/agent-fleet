@@ -125,7 +125,8 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 		          "title":"新しい行","state":"open","url":"https://example.invalid/9",
 		          "labels":["bug"],"labelColors":{"bug":"d73a4a"},
 		          "repo":"acme/web","updatedAt":"2026-08-26T00:00:00Z",
-		          "checks":{"state":"failure","total":40,"failed":3,"pending":1},"mergeable":"conflict"}],
+		          "checks":{"state":"failure","total":40,"failed":3,"pending":1},"mergeable":"conflict",
+		          "type":"Bug"}],
 		         "errors":[{"queryId":"ng","message":"github could not parse the query"}]}`
 	}
 	env.api.refreshNow(ctx, env.res, true)
@@ -148,6 +149,10 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 			want := workItemChecksDTO{State: "failure", Total: 40, Failed: 3, Pending: 1}
 			if dto.Checks != want || dto.Mergeable != "conflict" {
 				t.Errorf("status through the cache = %+v / %q, want %+v / conflict", dto.Checks, dto.Mergeable, want)
+			}
+			// And the issue type the branch-name resolver maps to a kind (#1125).
+			if dto.Type != "Bug" {
+				t.Errorf("type through the cache = %q, want Bug", dto.Type)
 			}
 		} else if dto := workItemToDTO(it); dto.Checks != (workItemChecksDTO{}) || dto.Mergeable != "" {
 			// A row that never carried a status (here: cached before the refresh) reads as not read.

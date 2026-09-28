@@ -349,7 +349,7 @@ func jiraAccount(c *secrets.JiraCreds) (string, error) {
 // mapping below is shared. Guessing wrong in either direction would make the whole
 // provider look broken.
 func jiraSearchWorkItems(c *secrets.JiraCreds, queryID, jql string) ([]workItemOut, error) {
-	fields := "summary,status,assignee,labels,updated"
+	fields := "summary,status,assignee,labels,updated,issuetype"
 	q := "?jql=" + url.QueryEscape(jiraOrderedJQL(jql)) + "&maxResults=" + fmt.Sprint(workItemFetchPerQuery) + "&fields=" + url.QueryEscape(fields)
 	base := jiraAPIBase(c)
 	body, err := jiraGet(c, base+"/rest/api/3/search/jql"+q)
@@ -568,7 +568,10 @@ func parseJiraSearchIssues(body []byte, site, queryID string) ([]workItemOut, er
 				Assignee *struct {
 					DisplayName string `json:"displayName"`
 				} `json:"assignee"`
-				Labels []string `json:"labels"`
+				Labels    []string `json:"labels"`
+				IssueType *struct {
+					Name string `json:"name"`
+				} `json:"issuetype"`
 			} `json:"fields"`
 		} `json:"issues"`
 	}
@@ -588,12 +591,16 @@ func parseJiraSearchIssues(body []byte, site, queryID string) ([]workItemOut, er
 		if labels == nil {
 			labels = []string{}
 		}
+		typ := ""
+		if is.Fields.IssueType != nil {
+			typ = is.Fields.IssueType.Name
+		}
 		out = append(out, workItemOut{
 			QueryID: queryID, Provider: "jira", Kind: "issue", Key: is.Key,
 			Title:    is.Fields.Summary,
 			State:    normalizeJiraState(is.Fields.Status.StatusCategory.Key),
 			URL:      site + "/browse/" + is.Key,
-			Assignee: assignee, Labels: labels, LabelColors: map[string]string{},
+			Assignee: assignee, Labels: labels, Type: typ, LabelColors: map[string]string{},
 			// Jira has no repository. The launch target comes from the query's repoHint,
 			// which is the project-to-working-copy mapping.
 			Repo: "", UpdatedAt: jiraTimeToRFC3339(is.Fields.Updated),

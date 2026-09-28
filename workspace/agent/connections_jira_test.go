@@ -23,6 +23,7 @@ func TestParseJiraSearchIssues(t *testing.T) {
 	     "updated":"2026-08-26T10:11:12.000+0900",
 	     "status":{"name":"進行中","statusCategory":{"key":"indeterminate"}},
 	     "assignee":{"displayName":"山田 太郎"},
+	     "issuetype":{"name":"Bug"},
 	     "labels":["bug","checkout"]}},
 	  {"key":"PROJ-124","fields":{
 	     "summary":"done one",
@@ -59,6 +60,10 @@ func TestParseJiraSearchIssues(t *testing.T) {
 	}
 	if strings.Join(got.Labels, ",") != "bug,checkout" {
 		t.Errorf("labels = %v", got.Labels)
+	}
+	// The issue type feeds the branch-name resolver's kind (ADR 0103 decision 4).
+	if got.Type != "Bug" || rows[2].Type != "" {
+		t.Errorf("type = %q / %q, want Bug / empty", got.Type, rows[2].Type)
 	}
 	// Jira has no repository. The launch target comes from the query's repoHint, so nothing may
 	// be guessed and filled in here.
