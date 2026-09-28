@@ -416,14 +416,16 @@ func CleanSuggestedTitle(s string) string {
 // way the Console's titleForItem names the session at launch; without it, accepting a
 // suggestion drops the only mention of the ticket from the session list. The key is added here
 // rather than asked of the model, so it is exact whatever the model writes. A key the model
-// already led with, short or full, is replaced rather than repeated. A key too wide to leave
-// room for the text is not added: cutting it would name a different ticket.
+// already led with, short or full, is replaced rather than repeated. The key is kept whole and
+// the text is cut instead. A key with no room left for text is not added, since cutting it would
+// name a different ticket; no provider produces one (GitHub and Bitbucket give "#N", Jira keys
+// are short).
 func withWorkItemKey(title string, item *session.WorkItemRef) string {
 	if item == nil || title == "" {
 		return title
 	}
 	key := workItemShortKey(item.Key)
-	if key == "" || truncateToWidth(key, titleWidthCap/2) != key {
+	if key == "" || truncateToWidth(key, titleWidthCap-2) != key {
 		return title
 	}
 	rest := title
@@ -545,20 +547,28 @@ var titleLeadInPrefixes = []string{
 
 // titleCandidateLine turns one reply line into a title candidate, or "" if the line is
 // decoration/preamble rather than a title.
-// stripTitleMarkers drops titleMarkerChars, except a "#" directly before a digit: that is an
-// issue number ("#1146", "owner/repo#1146"), never markdown, and without it a title that names
-// its work item reads as a bare count and cannot be matched to the key withWorkItemKey adds.
+// stripTitleMarkers drops titleMarkerChars, except a "#" that opens an issue number ("#1146",
+// "owner/repo#1146"): that is never markdown, and without it a title that names its work item
+// reads as a bare count and cannot be matched to the key withWorkItemKey adds.
 func stripTitleMarkers(s string) string {
 	var b strings.Builder
 	for i, r := range s {
-		if strings.ContainsRune(titleMarkerChars, r) {
-			if next, _ := utf8.DecodeRuneInString(s[i+1:]); r != '#' || !unicode.IsDigit(next) {
-				continue
-			}
+		if strings.ContainsRune(titleMarkerChars, r) && !(r == '#' && isIssueNumber(s[i+1:])) {
+			continue
 		}
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// isIssueNumber reports whether s opens with digits that are not a list number: "1146 …" is an
+// issue, "1. …" / "1) …" is a numbered heading whose "#" is markdown.
+func isIssueNumber(s string) bool {
+	digits := strings.TrimLeftFunc(s, unicode.IsDigit)
+	if len(digits) == len(s) {
+		return false
+	}
+	return !strings.HasPrefix(digits, ".") && !strings.HasPrefix(digits, ")")
 }
 
 func titleCandidateLine(line string) string {

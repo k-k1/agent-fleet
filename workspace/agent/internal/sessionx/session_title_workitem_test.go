@@ -35,7 +35,8 @@ func TestWithWorkItemKey(t *testing.T) {
 		{"title is only the key", "#1146", github, "#1146"},
 		// U+212A KELVIN SIGN folds to "k" but is three bytes long.
 		{"case fold across byte lengths", "k-1 Fix", &session.WorkItemRef{Key: "\u212a-1"}, "\u212a-1 Fix"},
-		{"key too wide is not added", "timeout tuning", &session.WorkItemRef{Key: strings.Repeat("LONGKEY", 4) + "-1"}, "timeout tuning"},
+		{"wide key is kept whole", "Retry backoff", &session.WorkItemRef{Key: "CUSTOMER-SUPPORT-SERVICE-123"}, "CUSTOMER-SUPPORT-SERVICE-123 Retry backoff"},
+		{"key with no room for text is not added", "timeout tuning", &session.WorkItemRef{Key: strings.Repeat("LONGKEY", 7) + "-1"}, "timeout tuning"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -44,6 +45,14 @@ func TestWithWorkItemKey(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("wide key keeps whole and cuts the text", func(t *testing.T) {
+		key := strings.Repeat("K", 40) + "-1"
+		got := withWorkItemKey(strings.Repeat("word ", 10), &session.WorkItemRef{Key: key})
+		if !strings.HasPrefix(got, key+" w") || truncateToWidth(got, titleWidthCap) != got {
+			t.Fatalf("got %q", got)
+		}
+	})
 
 	t.Run("long title keeps the key within the width cap", func(t *testing.T) {
 		got := withWorkItemKey(truncateToWidth(long, titleWidthCap), github)
@@ -66,6 +75,8 @@ func TestCleanSuggestedTitleKeepsIssueNumbers(t *testing.T) {
 		"## k-k1/agent-fleet#1146 timeout": "k-k1/agent-fleet#1146 timeout",
 		"# Heading title":                  "Heading title",
 		"`code`#":                          "code",
+		"#1. Login redirect":               "Login redirect",
+		"##1) Login redirect":              "Login redirect",
 	}
 	for in, want := range cases {
 		if got := CleanSuggestedTitle(in); got != want {
