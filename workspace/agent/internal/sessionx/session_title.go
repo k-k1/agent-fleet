@@ -50,6 +50,9 @@ const (
 	// TestSyncSuggestBudgetStaysUnderTheIngressIdleTimeout reads the YAML and pins the relation.
 	SyncSuggestBudget   = 45 * time.Second
 	TitleSuggestTimeout = SyncSuggestBudget
+	// autoTitleGenTimeout bounds the background generation (generateSessionTitle), which no
+	// request waits on, so the ingress budget above does not apply to it.
+	autoTitleGenTimeout = 60 * time.Second
 )
 
 // titleGenState tracks, per session name, whether a generation is currently running
@@ -125,7 +128,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 	ok := false
 	defer func() { titleGenDone(name, ok) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), TitleSuggestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), autoTitleGenTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerAuto, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)

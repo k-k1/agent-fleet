@@ -4,6 +4,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,11 +22,24 @@ func ingressIdleTimeout(t *testing.T) time.Duration {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	m := regexp.MustCompile(`Key:\s*idle_timeout\.timeout_seconds,\s*Value:\s*"(\d+)"`).FindAllSubmatch(b, -1)
-	if len(m) != 1 {
-		t.Fatalf("%s: want exactly one idle_timeout.timeout_seconds attribute, found %d", path, len(m))
+	// Every non-comment line naming the key has to be the one strict form: a comment that
+	// still says 60 must not stand in for a live value rewritten in another shape.
+	attr := regexp.MustCompile(`^\s*-\s*\{\s*Key:\s*idle_timeout\.timeout_seconds,\s*Value:\s*"(\d+)"\s*\}\s*$`)
+	var values []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") || !strings.Contains(line, "idle_timeout.timeout_seconds") {
+			continue
+		}
+		m := attr.FindStringSubmatch(line)
+		if m == nil {
+			t.Fatalf("%s: unrecognised idle_timeout.timeout_seconds line %q", path, line)
+		}
+		values = append(values, m[1])
 	}
-	sec, _ := strconv.Atoi(string(m[0][1]))
+	if len(values) != 1 {
+		t.Fatalf("%s: want exactly one idle_timeout.timeout_seconds attribute, found %d", path, len(values))
+	}
+	sec, _ := strconv.Atoi(values[0])
 	return time.Duration(sec) * time.Second
 }
 
