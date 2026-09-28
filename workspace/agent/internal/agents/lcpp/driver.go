@@ -144,7 +144,7 @@ func ensureForked(m session.Meta, sid string) error {
 	src := Open(m.ForkFrom)
 	anchor := m.ForkAt
 	if anchor == "" {
-		recs, _, err := src.Records()
+		recs, _, err := src.records()
 		if err != nil {
 			return fmt.Errorf("lcpp: フォーク元を読めません: %w", err)
 		}
@@ -371,7 +371,7 @@ func (h *threadHandle) bypassNow(mode string) bool {
 // a clean completed tail was already reported before the crash, and reporting it again would
 // duplicate the operator's completion report.
 func (h *threadHandle) settle() {
-	recs, _, err := h.store.Records()
+	recs, _, err := h.store.records()
 	if err != nil || len(recs) == 0 {
 		h.state = agents.TurnCompleted
 		return
