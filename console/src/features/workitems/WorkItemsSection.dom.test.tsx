@@ -602,6 +602,34 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(10);
   });
 
+  it("returns focus to the filter after the × button clears it", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    await act(async () => typeInto(input, "x"));
+    const clear = host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!;
+    clear.focus();
+    await act(async () => clear.click());
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("drops the error of a tracker search that was still in flight when the filter was cleared", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    let fail!: (v: unknown) => void;
+    workItemSearch.mockReturnValue(new Promise((res) => (fail = res)));
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    await act(async () => typeInto(input, "1028"));
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-search")!.click());
+    expect(workItemSearch).toHaveBeenCalledWith("1028");
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!.click());
+    await act(async () => {
+      fail({ error: "boom" });
+      await Promise.resolve();
+    });
+    expect(host.querySelector(".wi-err")).toBeNull();
+  });
+
   it("shows no filter box on a rail that is not crowded", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(4), queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
