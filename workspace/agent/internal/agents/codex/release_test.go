@@ -158,6 +158,29 @@ func TestAwaitingFollowsTheWaiter(t *testing.T) {
 	if !Awaiting("await-mark") {
 		t.Fatal("a pending marker (pane not started yet) does not count as waiting")
 	}
+	MarkSwitching("await-mark")
+	if !Awaiting("await-mark") {
+		t.Fatal("a switch in progress does not count as waiting")
+	}
+	ClearHandOver("await-mark")
+	if Awaiting("await-mark") || JustReleased("await-mark") {
+		t.Fatal("ClearHandOver left the hand-over in place")
+	}
+	// "done" has no timeout: it lasts until a composer is seen, however long codex takes.
+	MarkAwaiting("await-mark")()
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(awaitMarkerPath("await-mark"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if !JustReleased("await-mark") {
+		t.Fatal("the end of the wait expired by time, before any composer was seen")
+	}
+	// A live waiter's marker survives ClearHandOver.
+	MarkAwaiting("await-mark")
+	ClearHandOver("await-mark")
+	if !Awaiting("await-mark") {
+		t.Fatal("ClearHandOver removed a live waiter's marker")
+	}
 	if MarkAwaiting(""); Awaiting("") {
 		t.Fatal("a pane without AF_SESSION_NAME must not mark anything")
 	}

@@ -612,6 +612,9 @@ esac
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("send held %v although the composer was already drawn", d)
 	}
+	if codex.JustReleased(name) {
+		t.Fatal("the composer was seen but the hand-over did not end")
+	}
 }
 
 // Right after the wait codex is starting; if no composer footer shows up in time (a slow start,
@@ -668,11 +671,14 @@ func TestCodexHandOverRefusesTheManagedPathDuringASwitch(t *testing.T) {
 	if rec := postInput(t, name, `{"prompt":"hello"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
 		t.Fatalf("/input: status = %d, body = %s, want 409 codex_releasing", rec.Code, rec.Body.String())
 	}
-	req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/turn", strings.NewReader(`{"op":"start","prompt":"hello"}`))
-	req.SetPathValue("name", name)
-	rec := httptest.NewRecorder()
-	HandleSessionTurn(rec, req)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
-		t.Fatalf("/turn: status = %d, body = %s, want 409 codex_releasing", rec.Code, rec.Body.String())
+	// interrupt too: handleManagedTurn would Resume the thread to deliver it.
+	for _, body := range []string{`{"op":"start","prompt":"hello"}`, `{"op":"interrupt"}`} {
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/turn", strings.NewReader(body))
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		HandleSessionTurn(rec, req)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "codex_releasing") {
+			t.Fatalf("/turn %s: status = %d, body = %s, want 409 codex_releasing", body, rec.Code, rec.Body.String())
+		}
 	}
 }

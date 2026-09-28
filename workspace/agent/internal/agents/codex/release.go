@@ -104,11 +104,15 @@ func threadLoaded(cl *appClient, threadID string) (bool, error) {
 // composer. A marker keyed by the session name covers the whole hand-over, so the prompt
 // paths can refuse or hold back:
 //
+//   - "switching": written by the driver switch before the managed runtime is dropped, until
+//     the switch's launch replaces it or the switch fails (awaitSwitchingTTL is only a net for
+//     an Agent that died mid-switch). The meta still says managed meanwhile.
 //   - "pending": written by BuildLaunch before the pane exists, so the gap until the waiter
-//     starts is covered (valid for awaitPendingTTL);
-//   - "<pid>": the waiter, for its lifetime (a dead pid does not count);
-//   - "done": written by the waiter as it exits; codex is starting but has no composer yet
-//     (recent for awaitDoneTTL).
+//     starts is covered (valid for awaitPendingTTL).
+//   - "<pid>": the waiter, for its lifetime (a dead pid does not count).
+//   - "done": written by the waiter as it exits. codex is starting, and may end up on its own
+//     lock screen; the marker stays until a composer footer is seen (ClearHandOver) or the
+//     next launch.
 //
 // The pane's foreground command cannot tell: tmux reports the wrapping shell (measured: bash).
 func awaitMarkerPath(name string) string {
@@ -116,10 +120,11 @@ func awaitMarkerPath(name string) string {
 }
 
 const (
-	awaitPending    = "pending"
-	awaitDone       = "done"
-	awaitPendingTTL = 15 * time.Second
-	awaitDoneTTL    = 30 * time.Second
+	awaitSwitching    = "switching"
+	awaitPending      = "pending"
+	awaitDone         = "done"
+	awaitSwitchingTTL = 2 * time.Minute
+	awaitPendingTTL   = 15 * time.Second
 )
 
 func writeAwaitMarker(name, state string) {
@@ -155,11 +160,15 @@ func readAwaitMarker(name string) (state string, age time.Duration, ok bool) {
 // markPending is BuildLaunch's half: the pane is about to wait.
 func markPending(name string) { writeAwaitMarker(name, awaitPending) }
 
-// clearPending drops a "pending" marker when the launch turns out to have nothing to wait
-// for (no thread to resume, or no daemon holding it), so the switch's mark does not refuse
-// prompts for its whole TTL. A waiter's or a finished marker is left alone.
-func clearPending(name string) {
-	if state, _, ok := readAwaitMarker(name); ok && state == awaitPending {
+// ClearHandOver ends the hand-over for session name: a launch with nothing to wait for, a
+// failed switch, or codex's composer seen after the wait. A live waiter's marker is left alone.
+func ClearHandOver(name string) {
+	state, _, ok := readAwaitMarker(name)
+	if !ok {
+		return
+	}
+	switch state {
+	case awaitSwitching, awaitPending, awaitDone:
 		_ = os.Remove(awaitMarkerPath(name))
 	}
 }
@@ -167,7 +176,7 @@ func clearPending(name string) {
 // MarkSwitching is the driver switch's half, written before the managed runtime is dropped:
 // from that moment until the pane's waiter takes over, a prompt must neither go to the
 // managed path (a Resume would take the thread back) nor to a pane that is not there yet.
-func MarkSwitching(name string) { writeAwaitMarker(name, awaitPending) }
+func MarkSwitching(name string) { writeAwaitMarker(name, awaitSwitching) }
 
 // MarkAwaiting records that this process is the pane's waiter for session name and returns
 // the cleanup, which marks the wait done. An empty name (a pane without AF_SESSION_NAME)
@@ -180,14 +189,16 @@ func MarkAwaiting(name string) func() {
 	return func() { writeAwaitMarker(name, awaitDone) }
 }
 
-// Awaiting reports whether session name's pane is waiting (or about to wait) for the
-// app-server to release its thread.
+// Awaiting reports whether session name is mid-switch, or its pane is waiting (or about to
+// wait) for the app-server to release its thread.
 func Awaiting(name string) bool {
 	state, age, ok := readAwaitMarker(name)
 	if !ok {
 		return false
 	}
 	switch state {
+	case awaitSwitching:
+		return age < awaitSwitchingTTL
 	case awaitPending:
 		return age < awaitPendingTTL
 	case awaitDone:
@@ -200,9 +211,9 @@ func Awaiting(name string) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
-// JustReleased reports that the wait ended moments ago: codex is starting in the pane and may
-// not have drawn its composer yet.
+// JustReleased reports that the wait has ended and no composer has been seen since: codex is
+// starting in the pane, or sits on its lock screen.
 func JustReleased(name string) bool {
-	state, age, ok := readAwaitMarker(name)
-	return ok && state == awaitDone && age < awaitDoneTTL
+	state, _, ok := readAwaitMarker(name)
+	return ok && state == awaitDone
 }

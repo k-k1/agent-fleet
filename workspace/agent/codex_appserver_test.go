@@ -365,10 +365,8 @@ func TestCodexObserverForgetsUnloadedThread(t *testing.T) {
 // attach again only once the unload (notLoaded) has been seen.
 func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
 	captureObservationLog(t)
-	releasedFile := filepath.Join(t.TempDir(), "released.json")
-	prevFile := codexReleasedFile
-	codexReleasedFile = func() string { return releasedFile }
-	t.Cleanup(func() { clearCodexReleased("thr-held"); codexReleasedFile = prevFile })
+	isolateCodexReleased(t)
+	releasedFile := codexReleasedFile()
 	var loadedMu sync.Mutex
 	loaded := true // whether the scripted server still lists thr-held
 
@@ -519,9 +517,7 @@ func TestCodexObserverReleasesThreadUntilUnloaded(t *testing.T) {
 
 // notLoaded is the other unload signal, and a managed Resume's restore is the explicit one.
 func TestCodexReleaseEndsOnNotLoadedOrRestore(t *testing.T) {
-	prevFile := codexReleasedFile
-	codexReleasedFile = func() string { return filepath.Join(t.TempDir(), "released.json") }
-	t.Cleanup(func() { codexReleasedFile = prevFile })
+	isolateCodexReleased(t)
 
 	releaseCodexObservedThread("thr-a")
 	obs := newCodexObserver(nil) // neither path touches conn
@@ -539,23 +535,43 @@ func TestCodexReleaseEndsOnNotLoadedOrRestore(t *testing.T) {
 	}
 }
 
-// Sweeps must not overlap: one starting while another is between pages would reset what the
-// first collected, and the first one's last page alone would then judge a held thread on an
-// earlier page unloaded.
-func TestCodexObserverSweepsDoNotOverlap(t *testing.T) {
-	prevFile := codexReleasedFile
-	codexReleasedFile = func() string { return filepath.Join(t.TempDir(), "released.json") }
-	t.Cleanup(func() { codexReleasedFile = prevFile; clearCodexReleased("thr-p1") })
+// A sweep that starts while an older one is between pages supersedes it. The older sweep's
+// late pages must be dropped: its final page arriving now would otherwise judge, from its own
+// partial list, a held thread (listed on the new sweep's first page) unloaded — measured over a
+// ticker interval longer than any fixed staleness window.
+func TestCodexObserverDropsPagesOfASupersededSweep(t *testing.T) {
+	isolateCodexReleased(t)
 	releaseCodexObservedThread("thr-p1")
 
-	obs := newCodexObserver(nil) // a skipped sweep and a final page never touch conn
-	obs.sweptAt = time.Now()     // a sweep is between pages; page 1 listed thr-p1
+	obs := newCodexObserver(nil) // dropped pages never touch conn
+	obs.sweepGen = 2             // sweep 2 is running; its first page listed thr-p1
 	obs.swept = []string{"thr-p1"}
-	obs.sweep() // the ticker fires meanwhile
-	obs.pending[500] = ""
+	obs.pending[500] = codexSweepMark + "1" // sweep 1's final page, late
 	obs.handleResponse(codexAppServerMessage{ID: []byte("500"),
 		Result: []byte(`{"data":[],"nextCursor":null}`)})
 	if !codexThreadReleased("thr-p1") {
-		t.Fatal("an overlapping sweep dropped page 1 and ended the hold on a thread still loaded")
+		t.Fatal("a superseded sweep's late page ended the hold on a thread still loaded")
 	}
+	if len(obs.swept) != 1 {
+		t.Fatalf("a superseded sweep's page changed the current collection: %v", obs.swept)
+	}
+}
+
+// isolateCodexReleased points the held-thread file at a temp dir and empties the in-memory set
+// for one test. The cleanup empties the set BEFORE restoring the path: clearing after would
+// write the test's set over the real state directory's file.
+func isolateCodexReleased(t *testing.T) {
+	t.Helper()
+	prevFile := codexReleasedFile
+	file := filepath.Join(t.TempDir(), "released.json")
+	codexReleasedFile = func() string { return file }
+	codexReleasedMu.Lock()
+	codexReleased = map[string]bool{}
+	codexReleasedMu.Unlock()
+	t.Cleanup(func() {
+		codexReleasedMu.Lock()
+		codexReleased = map[string]bool{}
+		codexReleasedMu.Unlock()
+		codexReleasedFile = prevFile
+	})
 }

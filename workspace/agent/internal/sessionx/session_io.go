@@ -771,9 +771,10 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 //   - from the switch's first step to the waiter's exit (Awaiting): refused, on either
 //     driver. Until the pane is up the meta still says managed, and a managed send would
 //     Resume the thread on the app-server and lock the new pane out again.
-//   - right after the wait (JustReleased): codex is starting, so the prompt holds until its
-//     composer footer is drawn — and is refused if it is not drawn within 15 s. A slow start
-//     or codex's own lock screen (whose r/f/q keys typed text would press) is not a composer.
+//   - after the wait (JustReleased, until a composer is seen): codex is starting, so the
+//     prompt holds until its composer footer is drawn — and is refused if it is not drawn
+//     within 15 s. A slow start or codex's own lock screen (whose r/f/q keys typed text would
+//     press) is not a composer. The first footer seen ends the hand-over.
 //
 // Outside a hand-over it costs one stat. On refusal the HTTP error is written and false is
 // returned.
@@ -796,6 +797,7 @@ func codexHandOverGate(w http.ResponseWriter, name string) bool {
 	tn := session.TmuxName(name)
 	for deadline := time.Now().Add(codexComposerWait); time.Now().Before(deadline); {
 		if PaneMode(meta.Kind, tn) != "" {
+			codex.ClearHandOver(name)
 			return true
 		}
 		if codex.Awaiting(name) {

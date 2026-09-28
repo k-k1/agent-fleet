@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -264,14 +265,14 @@ type codexObserver struct {
 
 	mu        sync.Mutex
 	nextID    int
-	pending   map[int]string  // in-flight observer request id → thread id ("" = loaded/list)
+	pending   map[int]string  // in-flight observer request id → thread id, or a sweep/unsubscribe tag
 	requested map[string]bool // threads attached or with an in-flight resume
-	swept     []string        // loaded threads collected over the pages of the running sweep
-	sweptAt   time.Time       // start of the running sweep; zero when none is running
+	sweepGen  int             // the current sweep; pages tagged with an older one are dropped
+	swept     []string        // loaded threads collected over the current sweep's pages
 }
 
-// codexSweepStale lets a new sweep replace one whose pages stopped arriving.
-const codexSweepStale = 10 * time.Second
+// codexSweepMark tags a thread/loaded/list request with its sweep's generation.
+const codexSweepMark = "sweep:"
 
 func newCodexObserver(conn *websocket.Conn) *codexObserver {
 	// Request ids share the connection's JSON-RPC space with initialize (id 1);
@@ -296,17 +297,15 @@ func (o *codexObserver) attach(threadID string) {
 	o.sendLocked("thread/resume", map[string]any{"threadId": threadID}, threadID)
 }
 
-// sweep lists the loaded threads, page by page. One runs at a time: a second one resetting
-// swept mid-way would let the first one's last page alone judge what is unloaded.
+// sweep lists the loaded threads, page by page. A new sweep supersedes one still between
+// pages: the old one's late pages are dropped, so they can neither pad nor cut short the new
+// one's collection — which alone decides what is unloaded.
 func (o *codexObserver) sweep() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if !o.sweptAt.IsZero() && time.Since(o.sweptAt) < codexSweepStale {
-		return
-	}
+	o.sweepGen++
 	o.swept = nil
-	o.sweptAt = time.Now()
-	o.sendLocked("thread/loaded/list", map[string]any{}, "")
+	o.sendLocked("thread/loaded/list", map[string]any{}, codexSweepMark+strconv.Itoa(o.sweepGen))
 }
 
 func (o *codexObserver) forget(threadID string) {
@@ -460,34 +459,36 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 	if strings.HasPrefix(threadID, codexUnsubscribeMark) {
 		return
 	}
-	if threadID == "" { // thread/loaded/list
+	if strings.HasPrefix(threadID, codexSweepMark) { // thread/loaded/list
+		o.mu.Lock()
+		current := threadID == codexSweepMark+strconv.Itoa(o.sweepGen)
+		o.mu.Unlock()
 		var res struct {
 			Data       []string `json:"data"`
 			NextCursor *string  `json:"nextCursor"`
 		}
-		if !failed && json.Unmarshal(msg.Result, &res) == nil {
-			for _, tid := range res.Data {
-				o.attach(tid)
-			}
-			o.mu.Lock()
-			o.swept = append(o.swept, res.Data...)
-			if res.NextCursor != nil && *res.NextCursor != "" {
-				o.sendLocked("thread/loaded/list", map[string]any{"cursor": *res.NextCursor}, "")
-				o.mu.Unlock()
-				return
-			}
-			// Absence proves an unload only once every page is in.
-			all := o.swept
-			o.swept = nil
-			o.sweptAt = time.Time{}
-			o.mu.Unlock()
-			clearUnloadedCodexReleased(all)
+		if !current || failed || json.Unmarshal(msg.Result, &res) != nil {
 			return
 		}
+		for _, tid := range res.Data {
+			o.attach(tid)
+		}
 		o.mu.Lock()
+		if threadID != codexSweepMark+strconv.Itoa(o.sweepGen) { // superseded meanwhile
+			o.mu.Unlock()
+			return
+		}
+		o.swept = append(o.swept, res.Data...)
+		if res.NextCursor != nil && *res.NextCursor != "" {
+			o.sendLocked("thread/loaded/list", map[string]any{"cursor": *res.NextCursor}, threadID)
+			o.mu.Unlock()
+			return
+		}
+		// Absence proves an unload only once every page is in.
+		all := o.swept
 		o.swept = nil
-		o.sweptAt = time.Time{}
 		o.mu.Unlock()
+		clearUnloadedCodexReleased(all)
 		return
 	}
 	if failed {

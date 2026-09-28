@@ -84,7 +84,9 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if req.Op != "interrupt" && !codexHandOverGate(w, name) {
+	// Interrupt included: mid-switch the meta still says managed, and handleManagedTurn's
+	// Resume would take the thread back from the pane that is about to open it.
+	if !codexHandOverGate(w, name) {
 		return
 	}
 	if meta.DriverKind() == session.DriverManaged {
