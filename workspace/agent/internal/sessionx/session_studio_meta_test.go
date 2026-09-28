@@ -319,3 +319,51 @@ func TestStudioCreateRefusesSessionsThatCannotTellWhoTheyAre(t *testing.T) {
 		t.Fatalf("an opencode Terminal session was refused: %+v", ref)
 	}
 }
+
+// A work-item launch records its item in the meta (ADR 0103 decision 8), bounded and
+// trimmed, and the item survives a recreate and a fork, which rename the same branch. A
+// launch without a key records nothing.
+func TestCreateRecordsTheWorkItem(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	labels := []any{" bug ", ""}
+	for i := 0; i < 40; i++ {
+		labels = append(labels, "l")
+	}
+	created := env.createOK(map[string]any{"kind": "claude", "dir": repo, "work_item": map[string]any{
+		"provider": "github", "key": " acme/web#45 ", "title": strings.Repeat("あ", 400), "type": "Bug", "labels": labels,
+	}})
+	m, _ := session.ReadMeta(created.Name)
+	wi := m.WorkItem
+	if wi == nil || wi.Provider != "github" || wi.Key != "acme/web#45" || wi.Type != "Bug" {
+		t.Fatalf("meta work item = %+v", wi)
+	}
+	if len([]rune(wi.Title)) != 300 || len(wi.Labels) != 30 || wi.Labels[0] != "bug" {
+		t.Fatalf("work item not bounded: title %d runes, labels %v", len([]rune(wi.Title)), wi.Labels)
+	}
+
+	nokey := env.createOK(map[string]any{"kind": "claude", "dir": repo, "work_item": map[string]any{"title": "x"}})
+	if nm, _ := session.ReadMeta(nokey.Name); nm.WorkItem != nil {
+		t.Fatalf("a work item without a key was recorded: %+v", nm.WorkItem)
+	}
+
+	env.plantConversation(session.Meta{Name: created.Name, Dir: repo})
+	fork := env.fork(created.Name)
+	if fm, _ := session.ReadMeta(fork.Name); fm.WorkItem == nil || fm.WorkItem.Key != "acme/web#45" {
+		t.Fatalf("fork work item = %+v, want the source's", fm.WorkItem)
+	}
+	code, raw := roundtrip(t, env.srv, "POST", "/sessions/"+created.Name+"/recreate", nil)
+	if code != http.StatusOK {
+		t.Fatalf("recreate = %d %s", code, raw)
+	}
+	var recreated session.Session
+	if err := json.Unmarshal(raw, &recreated); err != nil {
+		t.Fatal(err)
+	}
+	if rm, _ := session.ReadMeta(recreated.Name); rm.WorkItem == nil || rm.WorkItem.Key != "acme/web#45" {
+		t.Fatalf("recreate work item = %+v, want it kept", rm.WorkItem)
+	}
+}
