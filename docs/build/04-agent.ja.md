@@ -99,8 +99,8 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
 
 ## 4.3 エージェント kind / driver 統合パターン
 
-kind = `claude` / `codex` / `cursor` / `opencode` / `agy` / `copilot` / `kiro` / `shell` / `ssm`（agy は [32](../decisions/0008-antigravity-cli-agent-kind.ja.md)、copilot は [36](../decisions/0019-copilot-agent-kind.ja.md)、kiro は [decisions/0026](../decisions/0026-kiro-agent-kind.ja.md) — copilot / cursor / kiro は Terminal+Managed 両対応・per-session child の ACP driver、agy は Terminal 専用）。
-Codex / OpenCode は managed が新規既定で、tui は明示選択。Claude / shell / SSM は tui のみ。
+kind = `claude` / `codex` / `cursor` / `opencode` / `agy` / `copilot` / `kiro` / `lcpp` / `muse` / `shell` / `ssm`（agy は [32](../decisions/0008-antigravity-cli-agent-kind.ja.md)、copilot は [36](../decisions/0019-copilot-agent-kind.ja.md)、kiro は [decisions/0026](../decisions/0026-kiro-agent-kind.ja.md)、lcpp は [decisions/0093](../decisions/0093-lcpp-agent-kind.ja.md)、muse は [decisions/0095](../decisions/0095-muse-agent-kind.ja.md) — copilot / cursor / kiro は Terminal+Managed 両対応・per-session child の ACP driver、agy は Terminal 専用、lcpp / muse は Managed 専用で lcpp の driver は Agent 内・muse は per-session child）。
+Codex / OpenCode / cursor / copilot / kiro は managed が新規既定で、tui は明示選択。lcpp / muse は managed のみ（tui 経路なし）。Claude / agy / shell / SSM は tui のみ。
 **新 kind を足すときに埋める面**は毎回同じ（雛形は opencode 追加時に確立、codex で再利用）:
 
 | 面 | claude | codex | opencode |
@@ -288,11 +288,12 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
     `versions.json` のピン版を公式配布元（npm / GitHub Releases 等）から `~/.local` へ導入する
     （home 永続なので 2 回目以降は無音スキップ。ネット不通は WARN で続行し次回起動時に再試行。
     self-update opt-in が OFF の起動では進んだ版をピンへ戻す repin あり）。
-    kiro だけは全ユーザー一律の boot-install をせず（展開後 ~855MB）、利用時にオンデマンド導入。
+    kiro（展開後 ~855MB）と muse は全ユーザー一律の boot-install をせず、利用時にオンデマンド導入
+    （muse は接続カードの導入ボタンから）。
   - **`BAKE_AGENT_CLIS=1`**: 上記 CLI を焼き込み（初回起動を速くしたい自社デプロイ向けの明示ノブ）。
 - **版ピンはどちらの経路でも同じ `ARG`**（`CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` /
   `CODEX_VERSION` / `COPILOT_VERSION` / `CURSOR_VERSION` / `AGY_VERSION` / `KIRO_VERSION` /
-  `RTK_VERSION`——bump 手順は [10 §10.2.1 の runbook](10-development.ja.md)）。BAKE ノブに関わらず
+  `MUSE_VERSION` / `RTK_VERSION`——bump 手順は [10 §10.2.1 の runbook](10-development.ja.md)）。BAKE ノブに関わらず
   全ピンを `/usr/local/share/agent-fleet/versions.json` に書き出し、Agent の
   `GET /env/tool-versions`（設定→環境「ツールのバージョン」: 実効 / 焼き込み / ~/.local
   override / ピン差分の read-only 表示）と e2e-smoke と boot-install が参照する。

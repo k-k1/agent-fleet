@@ -95,8 +95,10 @@ separately.**
 
 ## 4.3 The pattern for integrating a kind
 
-The kinds are claude, codex, cursor, opencode, agy, copilot, kiro, plus shell and ssm.
-Codex and opencode default to managed; claude, shell and ssm are TUI only.
+The kinds are claude, codex, cursor, opencode, agy, copilot, kiro, lcpp, muse, plus shell
+and ssm. Codex, opencode, cursor, copilot and kiro default to managed; lcpp and muse are
+managed only (no TUI route at all — lcpp's driver runs inside the agent, muse's as a
+per-session child); claude, agy, shell and ssm are TUI only.
 
 **The surfaces a new kind must fill are the same every time** — the template was
 established when opencode was added and reused for codex. **Adding one is
@@ -303,8 +305,9 @@ the split ([09](09-deploy.md)).
   - **Lean**: the CLIs are **not baked in** — a safe default that does not redistribute
     proprietary software. The entrypoint **boot-installs the pinned versions** from the
     official sources into the home on first start (**persistent, so later starts skip
-    silently**; no network is a warning, not a failure, and it retries next time). One
-    large CLI is excluded even from that and installed on demand.
+    silently**; no network is a warning, not a failure, and it retries next time). Two
+    large CLIs, kiro and muse, are excluded even from that and installed on demand (muse
+    from its connection card).
   - **Baked**: an explicit knob for a deployment that wants a fast first start.
 - **The version pins are the same build arguments on both routes**, and **every pin is
   written into a manifest inside the image**, which the version report, the smoke test

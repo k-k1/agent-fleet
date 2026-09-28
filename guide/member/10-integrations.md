@@ -386,7 +386,7 @@ workspace again).
   **not in this workspace yet**; picking one shows an **Install** button that fetches it right there (about
   200MB, into your home volume, so it survives restarts). Sessions started after it finishes get it as
   `JAVA_HOME` — no stop and start needed.
-- **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle — its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off.
+- **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle — its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off. Neither is Muse Code: it is installed from its card at the build this image pins and never updates itself; when a newer pinned build arrives with the image, the card offers **"Update Muse Code"** ([06](06-agents.md#muse-code)). lcpp has no CLI in the workspace to update — its engine belongs to the deployment.
 
 ### Recreating the workspace (danger zone)
 
