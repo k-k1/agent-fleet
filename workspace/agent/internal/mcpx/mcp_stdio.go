@@ -961,7 +961,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 					"title":          map[string]any{"type": "string", "description": "Short display name saying what the task is (optional)"},
 					"kind":           map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse. shell/ssm are refused"},
 					"model":          map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
-					"effort":         map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Use one of that model's efforts from list_models; anything else is refused. Without model, only an effort every model lists is accepted. opencode and kiro list none: their value is not checked here, and a wrong one fails the child's first turn. agy and cursor fold effort into the model id instead"},
+					"effort":         map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Needs model: use one of that model's efforts from list_models; anything else, or an effort without model, is refused. opencode and kiro list none: their value is not checked here, and a wrong one fails the child's first turn. agy and cursor fold effort into the model id instead"},
 					"initial_prompt": map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like"},
 					"worktree":       map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
 					"branch":         map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
@@ -2059,7 +2059,7 @@ var mcpStdioWriteTools = []map[string]any{
 				"title":          map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
 				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | agy | copilot | cursor | kiro | lcpp | shell。agy は Antigravity CLI（接続済みのときのみ起動可）。copilot は GitHub Copilot CLI（GitHub 連携＋Copilot サブスクが前提）。cursor は Cursor CLI（接続済みのときのみ起動可）。kiro は Kiro CLI（接続済みのときのみ起動可・既定は managed ドライバ）。lcpp は自前の llama.cpp ハーネス（サインイン不要・常に managed・Terminal (CLI) 経路は無い）で、model は list_models(kind=\"lcpp\") が返す自前エンジンの目録から選ぶ。muse は Meta の Muse Code（オンデマンド導入＋サインイン済みのときのみ起動可・常に managed・Terminal (CLI) 経路は無い）。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
 				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
-				"effort":         map[string]any{"type": "string", "description": "推論 effort（任意）。list_models が返すそのモデルの efforts から選ぶ（それ以外は拒否される）。model を省略した場合は全モデル共通の値だけ通る。省略時はモデルの defaultEffort。opencode と kiro は一覧に efforts が無く、ここでは値を確かめない（誤った値は子の最初のターンで失敗する）。agy と cursor は effort がモデル id に含まれるので指定しない。"},
+				"effort":         map[string]any{"type": "string", "description": "推論 effort（任意）。model と一緒に指定し、list_models が返すそのモデルの efforts から選ぶ（それ以外や model 省略は拒否される）。省略時はモデルの defaultEffort。opencode と kiro は一覧に efforts が無く、ここでは値を確かめない（誤った値は子の最初のターンで失敗する）。agy と cursor は effort がモデル id に含まれるので指定しない。"},
 				"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
 				"worktree":       map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
 				"branch":         map[string]any{"type": "string", "description": "worktree の基点ブランチ（任意、省略時は現在の HEAD）。"},
@@ -4340,14 +4340,13 @@ func checkCreateEffort(kind, model, effort string) error {
 		// The launch drops effort for auto, because copilot refuses it there.
 		return fmt.Errorf("copilot の auto は effort を指定できません。effort を使うなら list_models から model も指定してください")
 	}
-	path := "/agents/" + url.PathEscape(kind) + "/models"
 	if model == "" {
-		// The CLI's default launches even when the user hid it in Agent Fleet, so the
-		// model-less check needs the rows before that filter; an explicit empty ?hidden= is
-		// the endpoint's way to ask for them.
-		path += "?hidden=" + url.QueryEscape("[]")
+		// The default is the CLI's own choice (the user's Claude Code settings, codex's
+		// config), which no catalog row identifies and which may be a hidden or no-effort
+		// model, so no value is known to hold for it.
+		return fmt.Errorf("effort を指定するときは model も list_models から指定してください（既定モデルは CLI 側の設定で決まり、その effort を確かめられないため）")
 	}
-	out, err := agentGET(path)
+	out, err := agentGET("/agents/" + url.PathEscape(kind) + "/models")
 	if err != nil {
 		return nil
 	}
@@ -4356,9 +4355,6 @@ func checkCreateEffort(kind, model, effort string) error {
 	}
 	if json.Unmarshal([]byte(out), &cat) != nil {
 		return nil
-	}
-	if model == "" {
-		return checkDefaultModelEffort(kind, effort, cat.Models)
 	}
 	matched := agents.MatchModel(model, cat.Models)
 	if len(matched) != 1 {
@@ -4372,27 +4368,6 @@ func checkCreateEffort(kind, model, effort string) error {
 		return fmt.Errorf("%s は effort を指定できません（effort を省略してください）", m.ID)
 	}
 	return fmt.Errorf("effort %q は %s では使えません。使える値: %s（省略するとモデルの既定）", effort, m.ID, strings.Join(m.Efforts, ", "))
-}
-
-// checkDefaultModelEffort handles an effort with no model. The default is the CLI's own choice
-// and no catalog row says which it is, so only an effort every listed model accepts is safe.
-// A row with no efforts vetoes every value: it may be the default (a user can point Claude Code
-// at Haiku). An empty catalog says nothing and lets the effort through, as a degraded one does.
-func checkDefaultModelEffort(kind, effort string, models []agents.ModelChoice) error {
-	if len(models) == 0 {
-		return nil
-	}
-	common := slices.Clone(models[0].Efforts)
-	for _, m := range models[1:] {
-		common = slices.DeleteFunc(common, func(e string) bool { return !slices.Contains(m.Efforts, e) })
-	}
-	if slices.Contains(common, effort) {
-		return nil
-	}
-	if len(common) == 0 {
-		return fmt.Errorf("model を省略すると %s の effort は選べません（effort を取らないモデルが既定かもしれないため）。list_models から model も指定してください", kind)
-	}
-	return fmt.Errorf("model を省略したときに使える effort は %s です（既定モデルが何でも通る値だけ）。%q を使うなら list_models から model も指定してください", strings.Join(common, ", "), effort)
 }
 
 // agentCreateSession POSTs /sessions and, crucially, does NOT let a client-side timeout

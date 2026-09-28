@@ -738,27 +738,15 @@ func TestCreateSessionEffort(t *testing.T) {
 		"codex": `{"id":"gpt-sol","efforts":["low","medium","high","xhigh"],"defaultEffort":"low"},` +
 			`{"id":"gpt-mini","efforts":["minimal","low"]},` +
 			`{"id":"gpt-plain"}`,
-		"claude": `{"id":"opus","efforts":["low","high"]}`,
-		"muse":   `{"id":"m-a","efforts":["low","high"]},{"id":"m-b","efforts":["low","medium"]}`,
-		// Every row takes effort, but no value is shared.
-		"disjoint": `{"id":"d-a","efforts":["low"]},{"id":"d-b","efforts":["high"]}`,
-		"empty":    ``,
-	}
-	// What ?hidden=[] returns: the rows before the user's hidden models are removed. Haiku takes
-	// no effort, is hidden here, and may still be the user's Claude Code default.
-	unfiltered := map[string]string{
 		"claude": `{"id":"opus","efforts":["low","high"]},{"id":"haiku"}`,
+		"muse":   `{"id":"m-a","efforts":["low","high"]},{"id":"m-b","efforts":["low","medium"]}`,
 	}
 	var body map[string]any
 	posts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/agents/") && strings.HasSuffix(r.URL.Path, "/models"):
-			kind := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agents/"), "/models")
-			cat, ok := catalogs[kind]
-			if all, has := unfiltered[kind]; has && r.URL.Query().Get("hidden") == "[]" {
-				cat = all
-			}
+			cat, ok := catalogs[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agents/"), "/models")]
 			if !ok {
 				http.Error(w, "catalog down", http.StatusInternalServerError)
 				return
@@ -819,12 +807,12 @@ func TestCreateSessionEffort(t *testing.T) {
 		// A short name is checked against the model it resolves to.
 		{with("model", "sol", "effort", "minimal"), []string{"gpt-sol", "low, medium, high, xhigh"}},
 		{with("model", "gpt-plain", "effort", "low"), []string{"gpt-plain", "省略"}},
-		// No model: only what every listed model accepts, whichever is the default. A row
-		// with no efforts could be the default, so it vetoes every value.
-		{with("model", "", "effort", "low"), []string{"既定かもしれない"}},
-		{with("kind", "claude", "model", "", "effort", "high"), []string{"既定かもしれない"}},
-		{with("kind", "disjoint", "model", "", "effort", "low"), []string{"既定かもしれない"}},
-		{with("kind", "muse", "model", "", "effort", "high"), []string{"使える effort は low です"}},
+		{with("kind", "claude", "model", "haiku", "effort", "high"), []string{"haiku", "省略"}},
+		// No model: the default is the CLI's choice, so no value is known to hold for it -
+		// not even one every listed model shares.
+		{with("model", "", "effort", "low"), []string{"model も"}},
+		{with("kind", "claude", "model", "", "effort", "high"), []string{"model も"}},
+		{with("kind", "muse", "model", "", "effort", "low"), []string{"model も"}},
 		{with("kind", "copilot", "model", "", "effort", "high"), []string{"auto"}},
 		{with("kind", "copilot", "model", "auto", "effort", "high"), []string{"auto"}},
 		{with("kind", "cursor", "effort", "high"), []string{"モデル id"}},
@@ -849,16 +837,14 @@ func TestCreateSessionEffort(t *testing.T) {
 
 	for _, args := range []map[string]any{
 		with("model", "mini", "effort", "minimal"),
-		with("kind", "muse", "model", "", "effort", "low"),
-		// An empty catalog says nothing about the default.
-		with("kind", "empty", "model", "", "effort", "low"),
+		with("kind", "claude", "model", "opus", "effort", "high"),
 		// opencode's variant and kiro's --effort are judged by the CLI; their catalogs list none.
 		with("kind", "opencode", "model", "opencode-go/glm", "effort", "max"),
 		with("kind", "kiro", "model", "", "effort", "high"),
 		// The Agent refuses an unknown model itself, with the better message.
 		with("model", "gpt-unknown", "effort", "ultra"),
 		// A catalog that cannot be read must not block the create (or its idempotent retry).
-		with("kind", "gone", "model", "", "effort", "max"),
+		with("kind", "gone", "model", "g-1", "effort", "max"),
 	} {
 		if resp := call(args); strings.Contains(resp, `"isError":true`) {
 			t.Errorf("%v refused: %s", args, resp)
