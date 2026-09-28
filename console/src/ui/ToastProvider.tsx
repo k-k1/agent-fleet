@@ -15,7 +15,7 @@ import { useT } from "../lib/i18n/index.ts";
 import { useIsMobile } from "../lib/device.ts";
 import { pushToastLog } from "../lib/toastLog.ts";
 import { registerToastSink } from "./toast.ts";
-import { measureChromeBottom } from "./toastPlacement.ts";
+import { measureChromeBottom, touchesChrome } from "./toastPlacement.ts";
 
 export type ToastKind = "error" | "warn" | "info" | "success";
 
@@ -128,8 +128,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // stack changes, when the viewport moves (a soft keyboard shifts the frame, app/viewport.ts),
   // and when the page under the stack changes while it is up: a sticky toast outlives a switch
   // of pane or studio tab, which brings in or takes away a header (measured: the studio's chat
-  // tab adds one at 213-249px that a stack placed on the form tab covered). Mutations are
-  // coalesced to one measurement per frame; an unchanged top does not re-render.
+  // tab adds one at 213-249px that a stack placed on the form tab covered). Only mutations that
+  // touch a bar count (touchesChrome), coalesced to one measurement per frame; an unchanged top
+  // does not re-render.
   useLayoutEffect(() => {
     if (!phone || !shown) return;
     const sync = () => setTop(measureChromeBottom());
@@ -138,7 +139,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const later = () => {
       if (!frame) frame = requestAnimationFrame(() => ((frame = 0), sync()));
     };
-    const mo = new MutationObserver(later);
+    const mo = new MutationObserver((records) => {
+      if (touchesChrome(records)) later();
+    });
     mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "hidden", "open"] });
     const vv = window.visualViewport;
     window.addEventListener("resize", sync);

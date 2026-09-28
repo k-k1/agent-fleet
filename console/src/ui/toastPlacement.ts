@@ -53,3 +53,21 @@ export function measureChromeBottom(doc: Document = document): number {
   });
   return chromeBottom(boxes, doc.documentElement.clientWidth || window.innerWidth);
 }
+
+// touchesChrome says whether a batch of DOM mutations can have moved the bars: a bar added,
+// removed or restyled, or an ancestor of one restyled (a pane switched, resized or hidden). The
+// rest is content — a terminal's DOM renderer rewrites its rows every frame and a streaming
+// transcript grows by the token — and measuring for it would force a layout each frame
+// (panes.css records a 20s profile spent that way). Selector matching only; no layout here.
+export function touchesChrome(records: MutationRecord[]): boolean {
+  const hasBar = (n: Node) => n instanceof Element && (n.matches(TOAST_CHROME_SELECTOR) || n.querySelector(TOAST_CHROME_SELECTOR) != null);
+  for (const r of records) {
+    if (r.type === "attributes") {
+      if (hasBar(r.target)) return true;
+      continue;
+    }
+    for (const n of r.addedNodes) if (hasBar(n)) return true;
+    for (const n of r.removedNodes) if (hasBar(n)) return true;
+  }
+  return false;
+}

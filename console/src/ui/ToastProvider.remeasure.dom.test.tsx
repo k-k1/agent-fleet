@@ -6,8 +6,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MOBILE_QUERY } from "../lib/device.ts";
 
-const measured = vi.hoisted(() => ({ y: 100 }));
-vi.mock("./toastPlacement.ts", () => ({ measureChromeBottom: () => measured.y }));
+const measured = vi.hoisted(() => ({ y: 100, calls: 0 }));
+vi.mock("./toastPlacement.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./toastPlacement.ts")>()),
+  measureChromeBottom: () => (measured.calls++, measured.y),
+}));
 
 const { ToastProvider, useToast } = await import("./ToastProvider.tsx");
 
@@ -59,6 +62,7 @@ describe("ToastProvider on a phone, while the page changes", () => {
     expect(stackTop()).toBe("108px");
     measured.y = 249;
     const head = document.createElement("header");
+    head.className = "view-head";
     await act(async () => {
       document.body.appendChild(head);
       await frame();
@@ -69,13 +73,37 @@ describe("ToastProvider on a phone, while the page changes", () => {
   });
 
   it("re-measures when a class change moves the bars", async () => {
+    const pane = document.createElement("div");
+    pane.innerHTML = '<header class="view-head"></header>';
+    document.body.appendChild(pane);
     await act(async () => fire("queued", { kind: "info", duration: 0 }));
     measured.y = 177;
     await act(async () => {
-      host.className = "switched";
+      pane.className = "pane active";
       await frame();
       await frame();
     });
     expect(stackTop()).toBe("185px");
+    pane.remove();
+  });
+
+  it("does not measure for content that changes under it", async () => {
+    // A terminal's DOM renderer rewrites its rows every frame; measuring for each would force a
+    // layout per frame.
+    const rows = document.createElement("div");
+    rows.className = "xterm-rows";
+    document.body.appendChild(rows);
+    await act(async () => fire("update now", { kind: "info", duration: 0 }));
+    const before = measured.calls;
+    await act(async () => {
+      for (let i = 0; i < 5; i++) {
+        rows.innerHTML = `<div style="width:${i}px">row ${i}</div>`;
+        rows.setAttribute("class", "xterm-rows r" + i);
+        await frame();
+      }
+      await frame();
+    });
+    expect(measured.calls).toBe(before);
+    rows.remove();
   });
 });
