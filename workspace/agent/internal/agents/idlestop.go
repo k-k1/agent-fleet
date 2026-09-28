@@ -6,7 +6,7 @@ package agents
 // Keeping either daemon resident is expensive (measured RSS: codex app-server about 110 MB =
 // 62 MB native + 48 MB node shim, opencode serve about 305 MB), while a cold start costs codex
 // only 217 ms. There is no case for keeping them up from boot, so they stay down while there is
-// no demand (managed handles).
+// no demand (codex: managed handles; opencode: managed handles and an OAuth flow in progress).
 //
 // The supervisor arms exactly one watch when Ensure succeeds, and the watch ends itself once
 // it stops the daemon (the next Ensure that needs one arms it again). The race between

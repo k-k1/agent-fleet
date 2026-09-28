@@ -229,7 +229,7 @@ func (s *Supervisor) armIdleWatchLocked() {
 }
 
 // stopIfIdle folds the daemon up only after re-checking zero demand under the lock. A Resume
-// or BuildLaunch between the watch loop's decision and the stop would pull the backend out
+// between the watch loop's decision and the stop would pull the backend out
 // from under a live session, so this one place closes the race. false = demand had returned
 // (keep watching).
 func (s *Supervisor) stopIfIdle() bool {

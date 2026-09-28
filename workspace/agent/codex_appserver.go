@@ -12,7 +12,7 @@ package main
 //   - model/rerouted, thread/settings/updated, warning, thread/status/changed →
 //     structured observation log (docs/log/27 P1). The log separates the two possible
 //     causes of an unrequested model switch: a server-side reroute emits
-//     model/rerouted, while a TUI-level nudge acceptance emits only a
+//     model/rerouted, while a client-side nudge acceptance emits only a
 //     thread/settings/updated with a changed model.
 //
 // The app-server delivers thread-scoped notifications (item/*, turn/*,
@@ -345,7 +345,7 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 
 // observeThreadLifecycle maintains the attach set from broadcast notifications.
 // thread/started announces new threads only; a thread loaded by another
-// connection's resume (the TUI resuming an AF session) is announced by a
+// connection's resume (another client resuming an AF session) is announced by a
 // broadcast thread/status/changed instead, so both trigger an attach.
 func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 	switch msg.Method {
@@ -464,8 +464,8 @@ func observeCodexAppServer(conn *websocket.Conn) {
 			continue
 		}
 		// Server-initiated requests (method + id, e.g. approvals aimed at
-		// the driving TUI) fall through harmlessly: no case matches, and we
-		// must not answer on the TUI's behalf.
+		// the driving client) fall through harmlessly: no case matches, and we
+		// must not answer on that client's behalf.
 		obs.observeThreadLifecycle(msg)
 		handleCodexAppServerEvent(raw)
 	}
@@ -504,7 +504,7 @@ func handleCodexAppServerEvent(raw []byte) {
 		}
 	case "model/rerouted":
 		// Rare and high-signal (its absence around a model switch is what convicts
-		// the TUI nudge), so always logged, never deduplicated.
+		// a client-side nudge), so always logged, never deduplicated.
 		var p codexAppServerModelReroutedNotification
 		if json.Unmarshal(msg.Params, &p) != nil {
 			return

@@ -320,7 +320,8 @@ auth 変更・config 変更・daemon アップデート・クラッシュ時に 
   （`AF_CODEX_APP_SERVER_ADDR`）を見つけられず `--remote` 無しの直接起動になり、P1 の観測
   （圧縮検知・ライブ rate limit・model reroute）が丸ごと落ちる。失敗は致命ではなく直接起動へ縮退。
   🔴 訂正（2026-09-28）: TUI は直接起動に戻したので、`BuildLaunch` はもう `Ensure` を呼ばない（§1.2 の訂正）。
-  `--remote` のスレッドは ID が記録されず、P1 の観測はもともと効いていなかった。
+  `--remote` のスレッドは ID が記録されず、sid との対応が要る観測（TUI の圧縮中表示など）はもともと効いていなかった。
+  sid を使わない `account/rateLimits/updated` と `model/rerouted` のログは旧版でも有効。
 - Agent 起動時: `AdoptIfRunning`（既に listen しているものだけ引き取る）。
 
 **4) オブザーバ（package main の read-only 接続）は daemon の生涯をまたいで常設**
