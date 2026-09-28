@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -103,44 +104,44 @@ func TestCompareAdditions(t *testing.T) {
 	cases := []struct {
 		name   string
 		mutate func(b map[string]any)
-		want   string
+		want   []string
 	}{
 		{"new type", func(b map[string]any) {
 			b["$defs"].(map[string]any)["DeleteParams"] = map[string]any{"type": "object"}
-		}, "$defs.DeleteParams: new type"},
+		}, []string{"$defs.DeleteParams: new type"}},
 		{"new method", func(b map[string]any) {
 			b["methods"].(map[string]any)["session/delete"] = map[string]any{"params": map[string]any{"type": "object"}}
-		}, "methods.session/delete: new method"},
+		}, []string{"methods.session/delete: new method"}},
 		{"new notification", func(b map[string]any) {
 			b["notifications"].(map[string]any)["session/started"] = map[string]any{"params": map[string]any{"type": "object"}}
-		}, "notifications.session/started: new notification"},
+		}, []string{"notifications.session/started: new notification"}},
 		{"new optional property", func(b map[string]any) {
 			props(b, "StartParams")["effort"] = map[string]any{"type": "string"}
-		}, "$defs.StartParams.effort: new optional property"},
+		}, []string{"$defs.StartParams.effort: new optional property"}},
 		{"new required property in a result", func(b map[string]any) {
 			props(b, "StartResult")["cursor"] = map[string]any{"type": "string"}
 			def(b, "StartResult")["required"] = []any{"sessionId", "cursor"}
-		}, "$defs.StartResult.cursor: new required property (host to client only)"},
+		}, []string{"$defs.StartResult.cursor: new required property (host to client only)"}},
 		{"param became optional", func(b map[string]any) {
 			def(b, "StartParams")["required"] = []any{}
-		}, "$defs.StartParams.cwd: required true -> false (safe in this direction)"},
+		}, []string{"$defs.StartParams.cwd: required true -> false (safe in this direction)"}},
 		{"result member became required", func(b map[string]any) {
 			def(b, "StartResult")["required"] = []any{"sessionId", "status"}
-		}, "$defs.StartResult.status: required false -> true (safe in this direction)"},
+		}, []string{"$defs.StartResult.status: required false -> true (safe in this direction)"}},
 		{"new value in an enum only the client sends", func(b map[string]any) {
 			def(b, "Mode")["enum"] = []any{"plan", "act", "review"}
-		}, `$defs.Mode.enum: new value "review" (host to client never carries it)`},
+		}, []string{`$defs.Mode.enum: new value "review" (host to client never carries it)`}},
 		{"new error code", func(b map[string]any) {
 			b["errors"] = append(b["errors"].([]any), map[string]any{"code": -32002, "kind": "busy"})
-		}, "errors[-32002]: new error code"},
+		}, []string{"errors[-32002]: new error code"}},
 		{"new value in a sent enum, also reached by a new notification", func(b map[string]any) {
 			// The old client ignores the new notification, so Mode still only travels to the host.
 			def(b, "Mode")["enum"] = []any{"plan", "act", "review"}
 			b["notifications"].(map[string]any)["mode/changed"] = map[string]any{"params": map[string]any{"$ref": "#/$defs/Mode"}}
-		}, `$defs.Mode.enum: new value "review" (host to client never carries it)`},
+		}, []string{`$defs.Mode.enum: new value "review" (host to client never carries it)`, "notifications.mode/changed: new notification"}},
 		{"new grantable capability", func(b map[string]any) {
 			b["capabilities"].(map[string]any)["grantable"] = []any{"fs.read", "fs.write"}
-		}, "capabilities.grantable: fs.write added"},
+		}, []string{"capabilities.grantable: fs.write added"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -148,12 +149,9 @@ func TestCompareAdditions(t *testing.T) {
 			if !r.Compatible() {
 				t.Fatalf("an additive change was judged breaking:\n%s", r)
 			}
-			found := false
-			for _, a := range r.Additions {
-				found = found || a == c.want
-			}
-			if !found {
-				t.Fatalf("additions = %q, want one of them to be %q", r.Additions, c.want)
+			// Exact, so a checker that starts reporting extra additions goes red here.
+			if !reflect.DeepEqual(r.Additions, c.want) {
+				t.Fatalf("additions = %q, want %q", r.Additions, c.want)
 			}
 		})
 	}
