@@ -1,6 +1,7 @@
 package branchrule
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -176,6 +177,24 @@ func TestSanitize(t *testing.T) {
 	for in, want := range cases {
 		if got := Sanitize(in); got != want {
 			t.Errorf("Sanitize(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A long title is cut at a word boundary, never mid-word (#1125).
+func TestTitleSlugCutsAtAWordBoundary(t *testing.T) {
+	cases := map[string]string{
+		"Fix the empty list": "fix-the-empty-list",
+		"Branch naming rules across all the layers resolved": "branch-naming-rules-across-all",
+		// The 33rd character is a separator: the whole 32 are words.
+		"abcdefghij abcdefghij abcdefghij ab": "abcdefghij-abcdefghij-abcdefghij",
+		// One word longer than the limit has no boundary to cut at.
+		strings.Repeat("a", 40): strings.Repeat("a", 32),
+		"ログイン後に一覧が空になる":         "",
+	}
+	for in, want := range cases {
+		if got := TitleSlug(in); got != want {
+			t.Errorf("TitleSlug(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

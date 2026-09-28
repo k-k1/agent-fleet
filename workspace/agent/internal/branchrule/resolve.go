@@ -322,13 +322,24 @@ func stripSep(s string) string {
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
-// TitleSlug is the Console's titleSlug: ASCII only, so a Japanese title gives "".
+// slugMax is the longest title slug. The Console's titleSlug uses the same limit.
+const slugMax = 32
+
+// TitleSlug is the Console's titleSlug: ASCII only, so a Japanese title gives "". A long
+// title is cut at the last word boundary within slugMax, so the name never ends mid-word
+// (`…-layers-re`). A single word longer than slugMax is cut at slugMax.
 func TitleSlug(title string) string {
 	s := strings.Trim(slugRe.ReplaceAllString(strings.ToLower(title), "-"), "-")
-	if len(s) > 32 {
-		s = strings.TrimRight(s[:32], "-")
+	if len(s) <= slugMax {
+		return s
 	}
-	return s
+	if s[slugMax] == '-' {
+		return s[:slugMax]
+	}
+	if i := strings.LastIndexByte(s[:slugMax], '-'); i > 0 {
+		return s[:i]
+	}
+	return s[:slugMax]
 }
 
 var branchCharsRe = regexp.MustCompile(`[^A-Za-z0-9._/-]+`)

@@ -515,13 +515,18 @@ export function shortLocal(iso: string): string {
 
 /** Slug for a branch name: ASCII words from the title, dashed, short. Returns "" when the
  * title is all non-ASCII (Japanese titles are the normal case here) — the caller then
- * falls back to the key alone rather than emitting a branch of empty dashes. */
+ * falls back to the key alone rather than emitting a branch of empty dashes. A long title is
+ * cut at the last word boundary within `max`, as the Agent's TitleSlug does, so a name never
+ * ends mid-word; one word longer than `max` is cut at `max`. */
 export function titleSlug(title: string, max = 32): string {
   const s = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return s.length > max ? s.slice(0, max).replace(/-+$/, "") : s;
+  if (s.length <= max) return s;
+  if (s[max] === "-") return s.slice(0, max);
+  const cut = s.lastIndexOf("-", max - 1);
+  return cut > 0 ? s.slice(0, cut) : s.slice(0, max);
 }
 
 /** The default branch template. `{key}` is the item key with the owner/name prefix
