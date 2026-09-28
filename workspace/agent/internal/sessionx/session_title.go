@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
@@ -122,7 +124,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 	ctx, cancel := context.WithTimeout(context.Background(), TitleSuggestTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerAuto, Ref: name})
-	title, err := runTitleSuggestLLM(ctx, turns)
+	title, err := titleSuggestLLM(ctx, turns)
 	if err != nil || title == "" {
 		return // ok stays false -> backoff before the next attempt
 	}
@@ -134,7 +136,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 		if m.Title != "" || m.SuggestedTitle != "" || m.SuggestedTitleDismissed {
 			return false
 		}
-		m.SuggestedTitle = title
+		m.SuggestedTitle = withWorkItemKey(title, m.WorkItem)
 		return true
 	})
 }
@@ -187,6 +189,9 @@ const titleSuggestPersonaEN = "You read a session's conversation log and write t
 // TitleModel: a cheap/fast model is enough for a short label; override deployment-
 // wide with AF_TITLE_MODEL.
 func TitleModel() string { return envOr("AF_TITLE_MODEL", "haiku") }
+
+// titleSuggestLLM is the seam the title tests stub; production always runs runTitleSuggestLLM.
+var titleSuggestLLM = runTitleSuggestLLM
 
 func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
 	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
@@ -405,6 +410,54 @@ func CleanSuggestedTitle(s string) string {
 		return strings.TrimSpace(truncateToWidth(title, titleWidthCap))
 	}
 	return ""
+}
+
+// withWorkItemKey puts the launching work item's short key in front of a suggested title, the
+// way the Console's titleForItem names the session at launch; without it, accepting a
+// suggestion drops the only mention of the ticket from the session list. The key is added here
+// rather than asked of the model, so it is exact whatever the model writes. A key the model
+// already led with is replaced, not repeated — including the bare number CleanSuggestedTitle
+// leaves after stripping "#" as decoration.
+func withWorkItemKey(title string, item *session.WorkItemRef) string {
+	if item == nil || title == "" {
+		return title
+	}
+	key := workItemShortKey(item.Key)
+	if key == "" {
+		return title
+	}
+	rest := title
+	for _, lead := range []string{key, strings.TrimPrefix(key, "#")} {
+		if r, ok := cutKeyPrefix(title, lead); ok {
+			rest = r
+			break
+		}
+	}
+	return strings.TrimSpace(truncateToWidth(strings.TrimSpace(key+" "+rest), titleWidthCap))
+}
+
+// workItemShortKey mirrors the Console's shortKey (console/src/features/workitems/read.ts):
+// "owner/name#45" -> "#45", and a key without "#" (Jira) is already short.
+func workItemShortKey(key string) string {
+	key = strings.TrimSpace(key)
+	if i := strings.Index(key, "#"); i > 0 {
+		return key[i:]
+	}
+	return key
+}
+
+// cutKeyPrefix reports whether s opens with key (case-insensitively, as a model may lower-case
+// a Jira key) and returns what follows without its separator. The key must end at a word
+// boundary, so "#12" never matches a title that opens with "#123".
+func cutKeyPrefix(s, key string) (string, bool) {
+	if key == "" || len(s) < len(key) || !strings.EqualFold(s[:len(key)], key) {
+		return "", false
+	}
+	rest := s[len(key):]
+	if r, _ := utf8.DecodeRuneInString(rest); unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return "", false
+	}
+	return strings.TrimLeft(rest, " 　:：-–—|/"), true
 }
 
 const (
@@ -635,7 +688,7 @@ var (
 // backoff guard (titleGenClaim/titleGenDone) used by the automatic trigger too, so
 // a manual request and a concurrent automatic one can't double-fire for the same
 // session.
-func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn) (string, error) {
+func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn, item *session.WorkItemRef) (string, error) {
 	if len(withoutStudioPersona(turns)) == 0 {
 		return "", errNoTitleContent
 	}
@@ -646,7 +699,7 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 	defer func() { titleGenDone(name, succeeded) }()
 
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: name})
-	title, err := runTitleSuggestLLM(ctx, turns)
+	title, err := titleSuggestLLM(ctx, turns)
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
 	}
@@ -656,7 +709,7 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 		return "", errors.New("title generation produced no usable title")
 	}
 	succeeded = true
-	return title, nil
+	return withWorkItemKey(title, item), nil
 }
 
 func writeTitleGenErr(w http.ResponseWriter, err error) {
@@ -693,7 +746,7 @@ func HandleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
 	defer cancel()
-	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m))
+	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m), m.WorkItem)
 	if err != nil {
 		writeTitleGenErr(w, err)
 		return
