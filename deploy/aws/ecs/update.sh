@@ -127,12 +127,41 @@ if [ -n "$ENGINES_STACK" ]; then
     esac
   fi
 fi
+# The ComfyUI tag goes stale the same way on every bump of its Default, but an old tag still
+# runs — it only lacks the families the new one brings — so this repair never stops a release.
+# COMFY_STALE_DEFAULTS lists every Default the template has ever shipped: a live value on one of
+# them was never chosen and is moved on; any other value is somebody's choice and is kept.
+# 🔴 Moving the Default in cfn/60-engines.yaml means appending the old one here (the stub test
+# fails while the current Default is missing from the template or present in this list).
+COMFY_STALE_DEFAULTS="v0.34.0"
+COMFY_TAG=""; COMFY_REPAIR=0; COMFY_PULLED=0
+if [ -n "$ENGINES_STACK" ]; then
+  comfy_live="$(af_stack_param "$ENGINES_STACK" ImageComfyImageTag)"
+  comfy_new="$(af_cfn_param_default "$HERE/cfn/60-engines.yaml" ImageComfyImageTag)"
+  case " $COMFY_STALE_DEFAULTS " in
+    *" $comfy_live "*)
+      if [ -n "$comfy_new" ] && [ "$comfy_new" != "$comfy_live" ]; then
+        COMFY_TAG="$comfy_new"; COMFY_REPAIR=1
+      fi ;;
+  esac
+  # Only a role that runs pulls the image; an LLM-only deployment is told the tag and pays for
+  # no copy. Read the way step 1f reads it: before ADR 0072 P6 a model key implied the role.
+  comfy_on="$(af_stack_param "$ENGINES_STACK" ImageEnabled)"
+  if [ -z "$comfy_on" ] && [ -n "$(af_stack_param "$ENGINES_STACK" ImageModelS3Key)" ]; then
+    comfy_on=true
+  fi
+  [ "$comfy_on" = true ] && COMFY_PULLED=1
+fi
 echo "==> plan for $STACK (ImageTag=$VERSION):"
 echo "      1. $AF_STACK_PLATFORM (20-platform — it owns the ECR repositories)"
 [ "$PUSH" = 1 ] && echo "      2. release-ecr.sh (push af-control-plane / af-workspace :$VERSION)"
 [ -n "$TTS_STACK" ] && echo "      3. $TTS_STACK (50-tts)"
 if [ -n "$ENGINES_STACK" ]; then
-  echo "      4. af-engine-tools:${ET_TAG:-<unknown>} into ECR, then $ENGINES_STACK (60-engines)"
+  if [ "$COMFY_REPAIR" = 1 ] && [ "$COMFY_PULLED" = 1 ]; then
+    echo "      4. af-engine-tools:${ET_TAG:-<unknown>} and af-comfyui:$COMFY_TAG into ECR, then $ENGINES_STACK (60-engines)"
+  else
+    echo "      4. af-engine-tools:${ET_TAG:-<unknown>} into ECR, then $ENGINES_STACK (60-engines)"
+  fi
 fi
 echo "      5. $STACK (30-ingress, ImageTag=$VERSION)"
 
@@ -386,6 +415,26 @@ if [ -n "$ENGINES_STACK" ]; then
       exit 1 ;;
   esac
 
+  # The stale ComfyUI tag's image, before the stack for the same reason as the one above. Where
+  # it cannot be carried over, the stack keeps the tag it has: that image is already in ECR and
+  # still runs, while naming the new tag would leave the image role unable to pull.
+  if [ "$COMFY_REPAIR" = 1 ] && [ "$COMFY_PULLED" = 1 ]; then
+    echo "==> ComfyUI image for $ENGINES_STACK: af-comfyui:$COMFY_TAG"
+    comfy_rc=0
+    af_comfy_ensure "$ECR_HOST" "$COMFY_TAG" || comfy_rc=$?
+    if [ "$comfy_rc" != 0 ]; then
+      case "$comfy_rc" in
+        1) echo "WARNING: comfyui:$COMFY_TAG is in neither ECR nor GHCR — run comfyui-image.yml with tag=$COMFY_TAG." >&2 ;;
+        2) echo "WARNING: af-comfyui:$COMFY_TAG is not in ECR and there is no crane to carry it over." >&2 ;;
+        *) echo "WARNING: copying comfyui:$COMFY_TAG into ECR failed." >&2 ;;
+      esac
+      echo "         $ENGINES_STACK keeps ImageComfyImageTag=$comfy_live. Once the image is there:" >&2
+      echo "           crane copy $AF_GHCR_DEFAULT/comfyui:$COMFY_TAG $ECR_HOST/af-comfyui:$COMFY_TAG" >&2
+      echo "         and re-run update.sh." >&2
+      COMFY_REPAIR=0
+    fi
+  fi
+
   echo "==> cloudformation deploy $ENGINES_STACK (60-engines, parameters unchanged)"
   # 🔴 ONE parameter cannot be left unchanged, and this is the only path that can repair it.
   # ADR 0072 phase P6 retired `<Role>ModelS3Key`, which until then ALSO decided whether the
@@ -436,6 +485,10 @@ if [ -n "$ENGINES_STACK" ]; then
   if [ "$ET_REPAIR" = 1 ]; then
     echo "    · EngineToolsImageTag=$ET_TAG (the old default speaks contract 1; every ingest was exiting 78)"
     eng_params+=("EngineToolsImageTag=$ET_TAG")
+  fi
+  if [ "$COMFY_REPAIR" = 1 ]; then
+    echo "    · ImageComfyImageTag=$COMFY_TAG ($comfy_live was an earlier template default, not a choice)"
+    eng_params+=("ImageComfyImageTag=$COMFY_TAG")
   fi
   eng_deploy=(--capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset)
   eng_shown=""
