@@ -416,18 +416,18 @@ func CleanSuggestedTitle(s string) string {
 // way the Console's titleForItem names the session at launch; without it, accepting a
 // suggestion drops the only mention of the ticket from the session list. The key is added here
 // rather than asked of the model, so it is exact whatever the model writes. A key the model
-// already led with is replaced, not repeated — including the bare number CleanSuggestedTitle
-// leaves after stripping "#" as decoration.
+// already led with, short or full, is replaced rather than repeated. A key too wide to leave
+// room for the text is not added: cutting it would name a different ticket.
 func withWorkItemKey(title string, item *session.WorkItemRef) string {
 	if item == nil || title == "" {
 		return title
 	}
 	key := workItemShortKey(item.Key)
-	if key == "" {
+	if key == "" || truncateToWidth(key, titleWidthCap/2) != key {
 		return title
 	}
 	rest := title
-	for _, lead := range []string{key, strings.TrimPrefix(key, "#")} {
+	for _, lead := range []string{strings.TrimSpace(item.Key), key} {
 		if r, ok := cutKeyPrefix(title, lead); ok {
 			rest = r
 			break
@@ -450,10 +450,16 @@ func workItemShortKey(key string) string {
 // a Jira key) and returns what follows without its separator. The key must end at a word
 // boundary, so "#12" never matches a title that opens with "#123".
 func cutKeyPrefix(s, key string) (string, bool) {
-	if key == "" || len(s) < len(key) || !strings.EqualFold(s[:len(key)], key) {
+	// Compare rune for rune: case folding can change a rune's byte length.
+	n := 0
+	for i := utf8.RuneCountInString(key); i > 0 && n < len(s); i-- {
+		_, size := utf8.DecodeRuneInString(s[n:])
+		n += size
+	}
+	if key == "" || !strings.EqualFold(s[:n], key) {
 		return "", false
 	}
-	rest := s[len(key):]
+	rest := s[n:]
 	if r, _ := utf8.DecodeRuneInString(rest); unicode.IsLetter(r) || unicode.IsDigit(r) {
 		return "", false
 	}
@@ -539,14 +545,24 @@ var titleLeadInPrefixes = []string{
 
 // titleCandidateLine turns one reply line into a title candidate, or "" if the line is
 // decoration/preamble rather than a title.
-func titleCandidateLine(line string) string {
-	s := strings.TrimSpace(line)
-	s = strings.Map(func(r rune) rune {
+// stripTitleMarkers drops titleMarkerChars, except a "#" directly before a digit: that is an
+// issue number ("#1146", "owner/repo#1146"), never markdown, and without it a title that names
+// its work item reads as a bare count and cannot be matched to the key withWorkItemKey adds.
+func stripTitleMarkers(s string) string {
+	var b strings.Builder
+	for i, r := range s {
 		if strings.ContainsRune(titleMarkerChars, r) {
-			return -1
+			if next, _ := utf8.DecodeRuneInString(s[i+1:]); r != '#' || !unicode.IsDigit(next) {
+				continue
+			}
 		}
-		return r
-	}, s)
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func titleCandidateLine(line string) string {
+	s := stripTitleMarkers(strings.TrimSpace(line))
 	s = strings.TrimLeft(s, "-–—>・•●▶ 　\t")
 	s = trimListNumber(s)
 	s = strings.Trim(s, titleQuoteChars)

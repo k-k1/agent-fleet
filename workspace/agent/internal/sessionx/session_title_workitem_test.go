@@ -25,13 +25,17 @@ func TestWithWorkItemKey(t *testing.T) {
 		{"github", "AI提案タイムアウトの調整", github, "#1146 AI提案タイムアウトの調整"},
 		{"jira", "Login retry backoff", jira, "PROJ-123 Login retry backoff"},
 		{"github key already there", "#1146 AI提案タイムアウトの調整", github, "#1146 AI提案タイムアウトの調整"},
-		// CleanSuggestedTitle strips "#" as decoration, so the model's own key arrives bare.
-		{"github bare number", "1146 AI提案タイムアウトの調整", github, "#1146 AI提案タイムアウトの調整"},
+		{"github full key", "k-k1/agent-fleet#1146 timeout tuning", github, "#1146 timeout tuning"},
+		// A bare number is the title's own content (a count, a year), not the key.
+		{"leading count is kept", "1146 errors after migration", github, "#1146 1146 errors after migration"},
 		{"github key with colon", "#1146: timeout tuning", github, "#1146 timeout tuning"},
 		{"jira lower-cased", "proj-123 Login retry backoff", jira, "PROJ-123 Login retry backoff"},
 		{"longer number is not the key", "#11467 timeout tuning", github, "#1146 #11467 timeout tuning"},
 		{"longer jira key is not the key", "PROJ-1234 retry", jira, "PROJ-123 PROJ-1234 retry"},
 		{"title is only the key", "#1146", github, "#1146"},
+		// U+212A KELVIN SIGN folds to "k" but is three bytes long.
+		{"case fold across byte lengths", "k-1 Fix", &session.WorkItemRef{Key: "\u212a-1"}, "\u212a-1 Fix"},
+		{"key too wide is not added", "timeout tuning", &session.WorkItemRef{Key: strings.Repeat("LONGKEY", 4) + "-1"}, "timeout tuning"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -53,6 +57,25 @@ func TestWithWorkItemKey(t *testing.T) {
 			t.Fatalf("%q is not a valid title", got)
 		}
 	})
+}
+
+// The model's own "#1146" must survive cleaning, or withWorkItemKey could not tell it from a count.
+func TestCleanSuggestedTitleKeepsIssueNumbers(t *testing.T) {
+	cases := map[string]string{
+		"**#1146 AI提案タイムアウトの調整**":          "#1146 AI提案タイムアウトの調整",
+		"## k-k1/agent-fleet#1146 timeout": "k-k1/agent-fleet#1146 timeout",
+		"# Heading title":                  "Heading title",
+		"`code`#":                          "code",
+	}
+	for in, want := range cases {
+		if got := CleanSuggestedTitle(in); got != want {
+			t.Errorf("CleanSuggestedTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+	item := &session.WorkItemRef{Provider: "github", Key: "k-k1/agent-fleet#1146"}
+	if got := withWorkItemKey(CleanSuggestedTitle("**#1146** AI提案タイムアウトの調整"), item); got != "#1146 AI提案タイムアウトの調整" {
+		t.Errorf("model-led key after cleaning = %q", got)
+	}
 }
 
 // stubTitleLLM makes both suggestion paths return reply without running a CLI.
