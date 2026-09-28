@@ -373,7 +373,7 @@ af-aws-exec --profile <名前> -- npx cdk deploy
   一覧に出ます。未インストールの版を選ぶと「インストール」ボタンが出て、その場で取得できます（約 200MB・
   home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから `JAVA_HOME` に入るので、
   停止・起動は要りません。
-- **エージェント CLI の更新** — 「起動時にエージェント CLI と rtk を最新へ更新する」（対象は claude / opencode / codex / cursor / GitHub Copilot / Antigravity（agy）/ rtk）。既定は OFF（イメージに焼いた版で固定）。Kiro はこのトグルの対象外です — 版はイメージ再ビルド / オンデマンド導入で固定し、Kiro 自身の自動更新も無効にしています。
+- **エージェント CLI の更新** — 「起動時にエージェント CLI と rtk を最新へ更新する」（対象は claude / opencode / codex / cursor / GitHub Copilot / Antigravity（agy）/ rtk）。既定は OFF（イメージに焼いた版で固定）。Kiro はこのトグルの対象外です — 版はイメージ再ビルド / オンデマンド導入で固定し、Kiro 自身の自動更新も無効にしています。Muse Code も対象外です。カードからイメージがピンした版を導入し、自分で更新することはありません。新しいピンの版がイメージと一緒に届くと、カードに **「Muse Code を更新」** が出ます（[06](06-agents.ja.md#muse-code)）。lcpp にはワークスペースで更新する CLI がありません——エンジンは配備側のものです。
 
 ### ワークスペースを作り直す（危険な操作）
 

@@ -9,11 +9,11 @@ English | [日本語](02-sessions.ja.md)
 
 A session bundles one job you delegate to the AI into a single unit — its **conversation,
 working location, and execution state**. It is a separate concept from whether a terminal
-exists: Codex / opencode / GitHub Copilot / Kiro also run as sessions under managed execution,
-without a black screen. In the left pane, sessions appear under the **repository** that matches
-their working location; those that don't belong to a repository appear under **Other sessions**.
-You can have multiple sessions in parallel, each with its own independent conversation and
-working folder.
+exists: Codex / opencode / GitHub Copilot / Cursor / Kiro also run as sessions under managed
+execution, without a black screen, and lcpp / muse run no other way. In the left pane, sessions
+appear under the **repository** that matches their working location; those that don't belong to
+a repository appear under **Other sessions**. You can have multiple sessions in parallel, each
+with its own independent conversation and working folder.
 
 ## Session types
 
@@ -37,26 +37,28 @@ covered in [10 Advanced usage](10-integrations.md).)
 
 ## Execution method — Managed and Terminal (CLI)
 
-On the start screen for Codex / cursor / opencode / GitHub Copilot / Kiro you can choose the **execution
-method**. This is the difference in the path Agent Fleet uses to run the agent and deliver your
-instructions (internally, the "driver"). It chooses **how a session of the same kind is run** —
-it does not give the conversation a separate storage location or a separate working folder.
+On the start screen for Codex / cursor / opencode / GitHub Copilot / Kiro you can choose the
+**execution method** (lcpp and muse offer no choice — they are Managed only). This is the
+difference in the path Agent Fleet uses to run the agent and deliver your instructions
+(internally, the "driver"). It chooses **how a session of the same kind is run** — it does not
+give the conversation a separate storage location or a separate working folder.
 
 - **Managed (recommended, default)** — Agent Fleet controls the agent directly.
   You operate it through the chat view; there is no terminal. Codex / opencode run on a shared
   execution runtime and have no per-session CLI process, so they save memory and suit
   parallel work (GitHub Copilot, cursor, and Kiro run a dedicated per-session process even when managed,
-  so their memory use is on par with Terminal (CLI)).
+  so their memory use is on par with Terminal (CLI)). lcpp runs inside the workspace's Agent with no
+  process of its own; muse runs one process per session.
 - **Terminal (CLI)** — launches the agent's CLI per session, and you can operate its
   interactive screen directly from the terminal. Suited to cases that need CLI-specific screens
   or commands; each session uses extra memory.
 
-New Codex / cursor / opencode / GitHub Copilot / Kiro sessions default to managed. claude / agy use
-Terminal (CLI), and shell / SSM use only the terminal path. For kinds that support managed
-execution, you can switch the execution method from the session's ⋯ menu whenever the session
-is not stopped and the agent is not in the middle of processing. **The conversation carries over
-as is.** You can also open the chat view from Terminal (CLI), but managed execution has no
-terminal screen.
+New Codex / cursor / opencode / GitHub Copilot / Kiro sessions default to managed. lcpp / muse
+are Managed only, claude / agy use Terminal (CLI), and shell / SSM use only the terminal path.
+For kinds that support both methods, you can switch the execution method from the session's ⋯
+menu whenever the session is not stopped and the agent is not in the middle of processing. **The
+conversation carries over as is.** You can also open the chat view from Terminal (CLI), but
+managed execution has no terminal screen.
 
 A Terminal (CLI) screen is kept alive behind the scenes even if you close the browser. You
 never need to operate that keep-alive mechanism yourself.
