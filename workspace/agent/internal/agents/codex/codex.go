@@ -9,7 +9,6 @@ package codex
 import (
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -159,15 +158,11 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
 	}
 	// Pre-accept codex's per-dir trust gate so a freshly cloned repo doesn't stall at
-	// the "Do you trust this directory?" prompt (the bypass flags don't cover it).
+	// the "Do you trust this directory?" prompt (the bypass flags don't cover it). The
+	// thread runs in CWD(), and a trusted parent does not cover a chosen subdirectory
+	// (measured 0.157.1 outside a git repo: the prompt still appeared), so both are listed.
 	ensureFolderTrusted(m.Dir)
-	// The shared app-server starts on demand, and the TUI route is one of those demands:
-	// without waking it here buildProgram finds no marker (env), launches directly without
-	// --remote, and compaction detection, live rate limits and reroute observation
-	// (docs/log/27 P1) all disappear. Failure is not fatal — fall back to a direct launch.
-	if _, _, err := Serve().Ensure(); err != nil {
-		log.Printf("codex app-server unavailable; using direct TUI: %v", err)
-	}
+	ensureFolderTrusted(m.CWD())
 	// Auth is codex's own ~/.codex/auth.json (codex login, written via the Connections
 	// flow), so no token is injected. State + per-slot resume are wired purely through
 	// codex hooks injected on the command line (-c), keyed by our deterministic slot

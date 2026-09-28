@@ -48,12 +48,13 @@ func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string
 		val := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s}]}]`, event, tomlString(cmd))
 		return "-c " + session.ShellQuote(val)
 	}
+	// Never `--remote <shared app-server>`: that TUI forwards none of the -c overrides
+	// below and no cwd to the thread it opens (measured 0.157.1 and 0.158.0: thread/start
+	// carries `"cwd":null` and a config of web_search/bypass_hook_trust only). The thread
+	// runs in $HOME, the status hooks never fire so the resume id is never captured, and the
+	// af MCP child gets no AF_SESSION_NAME (docs/log/124 §3). Launched directly, codex takes
+	// the pane's cwd and this process's environment, which the af entry's env_vars forward.
 	parts := []string{"codex"}
-	if addr := os.Getenv("AF_CODEX_APP_SERVER_ADDR"); addr != "" {
-		// Global options must precede resume/fork. The TUI remains interactive; only
-		// its backend moves behind the local app-server observed by Agent Fleet.
-		parts = append(parts, "--remote", session.ShellQuote(addr))
-	}
 	switch {
 	case codexResumeID != "":
 		parts = append(parts, "resume", session.ShellQuote(codexResumeID))

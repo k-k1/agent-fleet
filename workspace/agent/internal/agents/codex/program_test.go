@@ -6,7 +6,6 @@ import (
 )
 
 func TestBuildCodexProgram(t *testing.T) {
-	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "")
 	// Fresh launch: plain codex with bypass flags + injected status hooks.
 	got := buildProgram("", "", "slot1", "", "")
 	for _, want := range []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "session-status working slot1 codex", "session-status idle slot1 codex", "'features.default_mode_request_user_input=true'"} {
@@ -37,7 +36,6 @@ func TestBuildCodexProgram(t *testing.T) {
 // mode without it — measured on 0.144.3 and 0.144.5), which is exactly the failure the flag
 // exists to prevent.
 func TestBuildCodexProgramEnablesQuestionsOnEveryRoute(t *testing.T) {
-	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "")
 	const want = "'features.default_mode_request_user_input=true'"
 	for _, tc := range []struct {
 		name           string
@@ -53,11 +51,18 @@ func TestBuildCodexProgramEnablesQuestionsOnEveryRoute(t *testing.T) {
 	}
 }
 
-func TestBuildCodexProgramUsesAppServerBeforeSubcommand(t *testing.T) {
-	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "unix:///tmp/codex.sock")
-	got := buildProgram("", "", "slot1", "cx-own", "")
-	want := "codex --remote 'unix:///tmp/codex.sock' resume 'cx-own'"
-	if !strings.Contains(got, want) {
-		t.Fatalf("expected %q in %q", want, got)
+// A TUI attached with --remote runs its thread in the app-server's $HOME and drops every -c
+// override, the status hooks included (docs/log/124 §3), so the launch stays direct even
+// while the shared app-server is up and advertising its address.
+func TestBuildCodexProgramNeverAttachesToTheAppServer(t *testing.T) {
+	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "ws://127.0.0.1:7798")
+	for _, resume := range []string{"", "cx-own"} {
+		got := buildProgram("", "", "slot1", resume, "")
+		if strings.Contains(got, "--remote") {
+			t.Fatalf("resume=%q: launch attaches to the app-server: %q", resume, got)
+		}
+		if !strings.HasPrefix(got, "codex ") {
+			t.Fatalf("resume=%q: expected a direct `codex …` launch, got %q", resume, got)
+		}
 	}
 }

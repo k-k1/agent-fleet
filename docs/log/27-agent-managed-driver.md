@@ -68,6 +68,10 @@ write（制御）と subscribe（イベント）を足すこと**であり、rea
 （`program.go:51-54`）、AF は第 2 の WebSocket 接続で **read-only オブザーバ**として観測する。
 書き手は TUI だけなので競合はない。app-server 起動失敗時は従来の直接 TUI へフォールバックする（可用性優先）。
 
+> 🔴 訂正（2026-09-28・#1131）: `--remote` の TUI は `-c` の上書きもプロセスの cwd もスレッドに渡していなかった
+> （0.157.1／0.158.0 で実測。スレッドはホームで動き、status hooks は発火せず、スレッド ID が残らない）。
+> TUI の経路は直接起動に戻した。測り方と結果は [docs/log/124](124-imagegen-studio-p0-acceptance.md) §3.1。
+
 P1 実装（2026-07-15）で観測対象を `contextCompaction` の item lifecycle（`fa7e47d`）から
 `account/rateLimits/updated`・`model/rerouted`・`thread/settings/updated`・`warning`・
 `thread/status/changed` へ拡張した。その際、**thread スコープ通知はスレッドをロードした接続にしか
@@ -293,6 +297,8 @@ auth 変更・config 変更・daemon アップデート・クラッシュ時に 
   backend も兼ねている。TUI を数え落とすと、managed が 0 になった瞬間に TUI の会話が死ぬ。
   台帳と tmux を持たない codex package には数えられないので、`codex.TUIDependents` を
   package main が起動時に差し替える（`tmux list-sessions` 1 発）。
+  🔴 訂正（2026-09-28）: TUI はもう app-server を使わない（上の §1.2 の訂正）。需要は managed ハンドル数だけになり、
+  `TUIDependents` は削除した。
 - **opencode の需要 = managed ハンドル数 ＋ 実行中の OAuth フロー**。TUI ルートの opencode は
   serve を使わない（自前の SQLite に直接つなぐ）ので TUI は数えない。代わりに device フローの
   最中（直近の操作から 3 分）は需要として数える — 数えないと、利用者がブラウザで承認している

@@ -7,9 +7,9 @@ package codex
 // to do belongs to driver.go's ThreadHandle.
 //
 // The connection is kept apart from P1's observation (codexObserver in package main,
-// read-only): observation stays as it is, for compaction detection and rate limits of TUI
-// (CLI route) sessions, and managed writes go through this supervisor's writer connection
-// alone (single-writer exclusivity, §2).
+// read-only), and managed writes go through this supervisor's writer connection alone
+// (single-writer exclusivity, §2). The TUI (CLI route) does not use this daemon: see
+// buildProgram for why it launches codex directly.
 //
 // Measured (0.144.4, docs/log/27 §12.3):
 //   - the listen port serves HTTP /healthz and /readyz alongside WS — use those for the
@@ -43,9 +43,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
-// appServerAddrEnv is the existing contract buildProgram (TUI --remote) and main's
-// observation read: a value present means the shared app-server is usable. The supervisor
-// exports it when a start succeeds.
+// appServerAddrEnv is the mark main's observation reads: a value present means the shared
+// app-server is usable. The supervisor exports it when a start succeeds.
 const appServerAddrEnv = "AF_CODEX_APP_SERVER_ADDR"
 const defaultAppServerAddr = "ws://127.0.0.1:7798"
 
@@ -67,16 +66,8 @@ type Supervisor struct {
 
 var supervisor = &Supervisor{}
 
-// TUIDependents is the seam returning how many TUI-route codex sessions use the shared
-// daemon as their backend. This package holds neither the session ledger nor tmux, so
-// package main swaps it in at startup (default 0 = look at managed sessions only).
-//
-// Undercounting here lets the zero-demand decision pull the backend out from under live TUI
-// sessions: buildProgram bakes in `codex --remote <addr>`, so a TUI whose daemon disappeared
-// stops together with its conversation. Write this on the safe side, counting generously.
-var TUIDependents = func() int { return 0 }
-
-// dependents is the total number of things needing the shared daemon (managed handles + TUI).
+// dependents is the number of things needing the shared daemon: the managed handles. TUI
+// sessions launch codex directly (buildProgram) and are not counted.
 //
 // The managed side counts REGISTERED handles rather than liveHandles: when the daemon dies
 // runtimeLost clears alive on every handle, so counting live ones would look like "zero
@@ -87,7 +78,7 @@ func dependents() int {
 	handlesMu.Lock()
 	n := len(handles)
 	handlesMu.Unlock()
-	return n + TUIDependents()
+	return n
 }
 
 // idleGraceEnv / defaultIdleGrace: fold the daemon up after zero demand lasts this long.
@@ -105,7 +96,7 @@ func (s *Supervisor) Disabled() bool { return os.Getenv("AF_CODEX_APP_SERVER_DIS
 
 // operatorAddr records once the listen address the operator specified through env. The same
 // env is also written on a successful Ensure as the mark "a usable daemon lives here" (the
-// existing contract buildProgram's --remote and the observation read), so the value from
+// contract the observation reads), so the value from
 // before the mark is kept here: removing the mark on an automatic stop must not lose the
 // operator's setting as well.
 var (
@@ -203,7 +194,7 @@ func (s *Supervisor) Ensure() (*appClient, int, error) {
 	gen := s.gen
 	cl.onClosed = func() { s.writerLost(gen) }
 	go cl.readLoop()
-	// Keep the existing contract buildProgram (TUI --remote) and main's observation use.
+	// The mark main's observation reads.
 	_ = os.Setenv(appServerAddrEnv, addr)
 	s.armIdleWatchLocked()
 	log.Printf("codex app-server: writer connected (gen %d, %s)", gen, addr)
@@ -215,8 +206,7 @@ func (s *Supervisor) Ensure() (*appClient, int, error) {
 
 // AdoptIfRunning is the entry point at Agent startup: it adopts only a daemon that already
 // listens (started by a previous Agent process and left behind without a graceful shutdown).
-// With none there it does nothing — starting is left to demand (managed Resume, TUI
-// BuildLaunch). An unconditional Ensure here would make a workspace that never uses codex
+// With none there it does nothing — starting is left to demand (managed Resume). An unconditional Ensure here would make a workspace that never uses codex
 // pay 110 MB just for booting.
 func (s *Supervisor) AdoptIfRunning() {
 	if s.Disabled() || !healthy(s.Addr()) {
@@ -277,9 +267,8 @@ func (s *Supervisor) stopIfIdle() bool {
 	// this as an unintended disconnect, retryEnsure would bring back the daemon we just
 	// folded up. The next successful Ensure resets it to false (the only restart point).
 	//
-	// The TUI bakes in --remote whenever the env is present. Leaving the address of a dead
-	// daemon behind would make the next launch grab a dead backend, so remove the mark and
-	// fall back to a direct start.
+	// Leaving the address of a dead daemon behind would tell the observation a backend is
+	// usable when none is, so remove the mark.
 	_ = os.Unsetenv(appServerAddrEnv)
 	return true
 }
@@ -296,7 +285,7 @@ func (s *Supervisor) startDaemonLocked(addr string) error {
 	cmd := exec.Command("codex", "app-server", "--listen", addr)
 	tail, err := agents.StartWithStderrTail(cmd)
 	if err != nil {
-		_ = os.Unsetenv(appServerAddrEnv) // future TUI launches fall back to direct
+		_ = os.Unsetenv(appServerAddrEnv) // nothing usable lives at the address
 		return fmt.Errorf("codex app-server の起動に失敗しました: %w", err)
 	}
 	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
@@ -366,12 +355,8 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int)
 		})
 		h.runtimeLost()
 	}
-	// The daemon is also the backend of the CLI route (TUI --remote): even with zero managed
-	// sessions, restart it while live TUI sessions exist (reconcileAll never reaches Ensure
-	// without managed metadata). With nobody waiting, do not restart — the same call as the
-	// fold-up-on-zero-demand policy (stopIfIdle), reclaiming 110 MB the moment it dies.
-	// On failure startDaemonLocked drops the env and later TUI launches fall back to a
-	// direct start.
+	// With nobody waiting, do not restart — the same call as the fold-up-on-zero-demand
+	// policy (stopIfIdle), reclaiming 110 MB the moment it dies.
 	if dependents() > 0 {
 		go s.retryEnsure("daemon death")
 	} else {
@@ -417,8 +402,7 @@ func (s *Supervisor) writerLost(gen int) {
 
 // Restart is the path that applies auth and configuration changes (§7): drain → stop the old
 // process → reconcile brings up the new generation. Being a shared daemon, the drain is a
-// switch-over window for every codex session in the workspace (by design, §7 — the CLI
-// route's TUI backend rides on the same daemon).
+// switch-over window for every managed codex session in the workspace (by design, §7).
 func (s *Supervisor) Restart(reason string) {
 	s.mu.Lock()
 	if !s.up && s.cmd == nil {

@@ -64,6 +64,25 @@ codex の Terminal は `codex --remote <共有 app-server>` で起動する。TU
 
 スタジオに限らない問題なので、別の Issue にした。→ #1131
 
+### 3.1 原因と修正（#1131・2026-09-28）
+
+`--remote` の TUI は、`-c` の上書きもプロセスの cwd も app-server に渡していなかった。隔離した `CODEX_HOME` と
+専用の app-server を立て、TUI との WebSocket を中継して記録した（codex-cli 0.157.1 と 0.158.0 で同じ結果）。
+
+- `thread/start` に載るのは `"cwd":null` と `"config":{"web_search":…,"bypass_hook_trust":true}` だけ。`-m` は
+  専用の欄（`model`）で渡るが、`-c` は 1 つも載らない。`-C <dir>` を足すと `cwd` だけは載る。
+- そのため `-c` で注入していた status hooks も発火しない（`--remote` 無しの直接起動なら同じ hook が発火する
+  ＝陽性対照）。hook は codex 自身のセッション ID を記録する唯一の経路なので、スレッド ID が残らず、
+  resume・転写・圧縮検知も効いていなかった。
+- `-c 'mcp_servers.af={…,env={AF_SESSION_NAME=…}}'` も、`-c 'mcp_servers.af.env.AF_SESSION_NAME=…'` も、
+  スレッドには届かない。af 子の環境は洗われて（HOME・LANG・PATH など＋明示した env だけ）、スレッド ID も無い。
+- 直接起動なら、スレッドは pane の cwd で動き、`env_vars = ["AF_SESSION_NAME"]` で名前が af 子に届く。
+- 信頼済みの親ディレクトリは、git リポジトリでない子ディレクトリを覆わない（0.157.1 で確認を求められた）。
+  一方、app-server の起動後に `config.toml` へ書き足した信頼は読まれる。
+
+修正: TUI の経路は `--remote` をやめて直接起動する。app-server も起こさない（Managed だけが使う）。
+信頼は `m.Dir` に加えて `m.CWD()` にも書く。app-server の需要から TUI の数を外す。
+
 ## 4. 上限値（未解決 4）
 
 **要約の 1 KB（`knowledgeSummaryMax`）はこのままでよい。** 実際の利用で書かれた知識文書の要約は

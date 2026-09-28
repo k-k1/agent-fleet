@@ -32,10 +32,16 @@ func TestDriftCodexDaemonStartsOnDemandAndStopsWhenIdle(t *testing.T) {
 		t.Fatalf("something is already listening on %s — pick another test port", addr)
 	}
 
-	prev := TUIDependents
-	needs := 1
-	TUIDependents = func() int { return needs }
-	t.Cleanup(func() { TUIDependents = prev })
+	// One registered managed handle is the demand; deleting it takes demand to zero.
+	const demand = "drift-lifecycle"
+	handlesMu.Lock()
+	handles[demand] = &threadHandle{name: demand}
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, demand)
+		handlesMu.Unlock()
+	})
 
 	s := &Supervisor{}
 	t.Cleanup(s.Shutdown) // do not strand the daemon if the stop did not take
@@ -63,7 +69,9 @@ func TestDriftCodexDaemonStartsOnDemandAndStopsWhenIdle(t *testing.T) {
 		t.Fatal("the daemon stopped while there was still demand")
 	}
 
-	needs = 0
+	handlesMu.Lock()
+	delete(handles, demand)
+	handlesMu.Unlock()
 	select {
 	case <-stopped:
 	case <-time.After(10 * time.Second):

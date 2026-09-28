@@ -56,30 +56,24 @@ func TestEnsureDisabledBeatsTheAuthGate(t *testing.T) {
 	}
 }
 
-// The demand count must always include the TUI route. Drop it and the moment managed hits 0
-// we pull the backend (codex --remote) out from under live TUI sessions.
-func TestDependentsCountsTUISessions(t *testing.T) {
-	prev := TUIDependents
-	t.Cleanup(func() { TUIDependents = prev })
-
-	TUIDependents = func() int { return 0 }
-	if got := dependents(); got != 0 {
-		t.Fatalf("dependents = %d, want 0 on an empty workspace", got)
-	}
-	TUIDependents = func() int { return 2 }
-	if got := dependents(); got != 2 {
-		t.Fatalf("dependents = %d, want 2 (TUI sessions alone are demand)", got)
-	}
+// withDemand registers one placeholder managed handle, the only thing dependents counts.
+func withDemand(t *testing.T) {
+	t.Helper()
+	const name = "gate-demand"
+	handlesMu.Lock()
+	handles[name] = &threadHandle{name: name}
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, name)
+		handlesMu.Unlock()
+	})
 }
 
 // Managed handles are counted as registered, not as live: when the daemon dies runtimeLost
 // clears alive on every handle, so counting live makes the very situation that needs
 // recovery look like zero demand and inverts both the restart and the auto-stop decision.
 func TestDependentsCountsRegisteredHandlesNotLiveOnes(t *testing.T) {
-	prev := TUIDependents
-	TUIDependents = func() int { return 0 }
-	t.Cleanup(func() { TUIDependents = prev })
-
 	handlesMu.Lock()
 	handles["gate-test"] = &threadHandle{name: "gate-test"} // alive=false, i.e. the runtime was lost
 	handlesMu.Unlock()
@@ -100,9 +94,7 @@ func TestDependentsCountsRegisteredHandlesNotLiveOnes(t *testing.T) {
 // Never fold up while there is demand: a re-check that closes the race between the watch
 // loop's decision and the stop.
 func TestStopIfIdleRefusesWhileNeeded(t *testing.T) {
-	prev := TUIDependents
-	TUIDependents = func() int { return 1 }
-	t.Cleanup(func() { TUIDependents = prev })
+	withDemand(t)
 
 	s := &Supervisor{up: true, watching: true}
 	if s.stopIfIdle() {
@@ -115,10 +107,6 @@ func TestStopIfIdleRefusesWhileNeeded(t *testing.T) {
 
 // For a supervisor that is already down, report "stopped" and step off the watch.
 func TestStopIfIdleOnAlreadyDownStopsWatching(t *testing.T) {
-	prev := TUIDependents
-	TUIDependents = func() int { return 0 }
-	t.Cleanup(func() { TUIDependents = prev })
-
 	s := &Supervisor{watching: true}
 	if !s.stopIfIdle() {
 		t.Fatal("did not step off the watch for a supervisor that is down")
