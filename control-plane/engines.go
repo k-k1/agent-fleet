@@ -719,6 +719,8 @@ func engineTableNeedsAWS(t engineTable) bool {
 // and leaves the registry empty rather than stopping the CP: the deployment's Workspaces,
 // sessions and everything else do not depend on an engine existing, and refusing to boot
 // over an optional feature is the larger outage.
+//
+// ctx also ends the borrowed-catalogue poll; the controllers and the table reloader outlive it.
 func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	name := strings.TrimSpace(envx.Or("AF_ENGINES_SSM_PARAM", ""))
 	inline := strings.TrimSpace(envx.Or("AF_ENGINES_JSON", ""))
@@ -1020,7 +1022,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// The borrowed rows arrive the same way a rung does, on their own poll: the far catalogue is
 	// what declares which engines exist, so there is nothing to read at boot (ADR 0079 decision 2).
 	// It also refreshes the mirror every row already reads through.
-	rem.run(context.Background(), reg)
+	rem.run(ctx, reg)
 	return reg
 }
 

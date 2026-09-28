@@ -63,6 +63,10 @@ type engineRemotes struct {
 
 	mu    sync.Mutex
 	byKey map[string]*engineRemote
+
+	// polling counts the goroutine run starts, so a test can wait for it to be gone before the
+	// next test swaps the log output.
+	polling sync.WaitGroup
 }
 
 // engineRemote is one borrowed role: its mirrored catalogue, the far side's own base path for it,
@@ -232,7 +236,9 @@ func (r *engineRemotes) run(ctx context.Context, reg *engineRegistry) {
 	if r == nil || reg == nil {
 		return
 	}
+	r.polling.Add(1)
 	go func() {
+		defer r.polling.Done()
 		t := time.NewTicker(engineRemotePollInterval)
 		defer t.Stop()
 		r.refreshAll(ctx, reg)
@@ -259,6 +265,9 @@ func (r *engineRemotes) refreshAll(ctx context.Context, reg *engineRegistry) {
 	}
 	rows, err := r.fetchCatalog(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return // shutting down is not a failed fetch
+		}
 		log.Printf("engines: reading the borrowed catalogue from %s failed: %v", r.base, err)
 		return
 	}
