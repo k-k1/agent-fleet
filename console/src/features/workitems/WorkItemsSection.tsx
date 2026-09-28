@@ -45,7 +45,6 @@ import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import { LabelBadge } from "./LabelBadge.tsx";
 import { readShelf, resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
-import { useSessionUI } from "../sessions/ui.ts";
 import {
   branchForItem,
   dedupeWorkItems,
@@ -262,11 +261,9 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     return first ? sessionRef(first.sessionName).title || first.sessionName : "";
   };
 
-  // kind: the caller's own knowledge of the session, for when the live list does not have it
-  // yet (a restore whose list refresh has not landed).
-  const openLive = (name: string, kind = "claude") => {
+  const openLive = (name: string) => {
     const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
-    (agentOf(s?.kind || kind).caps.chat ? openSessionChat : openSessionTerminal)(name);
+    (agentOf(s?.kind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
   };
 
   // A slug that is not on the live list used to open nothing at all (#1108). Read the shelf
@@ -282,17 +279,14 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
       toast(t("wi.session_gone", { name }));
       return;
     }
-    const found = ref.session!;
-    // Its folder is gone (a deleted worktree): restoring would bring back a session that cannot
-    // resume. The shelf, scoped to that folder, is where recreating the worktree is offered.
-    if (found.resumable === false) {
-      toast(t("wi.session_folder_gone", { name: ref.title || name }));
-      useSessionUI.getState().openArchived(found.dir || undefined);
-      return;
-    }
+    const label = ref.title || name;
+    // A session whose folder is gone restores all the same, as on the shelf: its conversation
+    // can still be read, it just cannot resume — so the confirm says that rather than refusing.
     const ok = await askConfirm({
       title: tr("wi.restore_title"),
-      body: tr("wi.restore_body", { name: ref.title || name }),
+      body:
+        tr("wi.restore_body", { name: label }) +
+        (ref.session?.resumable === false ? "\n" + tr("wi.restore_folder_gone") : ""),
       confirmLabel: tr("arch.restore"),
       danger: false,
     });
@@ -302,8 +296,14 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
       toast(t("arch.restore_failed"));
       return;
     }
+    // Open only once the row is on the list: a chat pane draws nothing for a session the list
+    // does not have, and refresh() keeps the old list when its read fails.
     await useSessionsStore.getState().refresh();
-    openLive(name, found.kind);
+    if (!useSessionsStore.getState().sessions.some((s) => s.name === name)) {
+      toast(t("wi.restored_not_listed", { name: label }));
+      return;
+    }
+    openLive(name);
   };
 
   // reviewBranch: the PR's head branch, when the detail modal's live read resolved one and the

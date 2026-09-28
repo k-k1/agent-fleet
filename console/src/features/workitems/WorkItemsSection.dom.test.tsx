@@ -51,7 +51,6 @@ vi.mock("../sessions/open.ts", () => ({
 
 const { WorkItemsSection } = await import("./WorkItemsSection.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
-const { useSessionUI } = await import("../sessions/ui.ts");
 const { useWorkItemStore } = await import("./store.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -133,7 +132,6 @@ beforeEach(() => {
   openChat.mockReset();
   openTerminal.mockReset();
   useSessionsStore.setState({ sessions: [], refresh: vi.fn(async () => {}) });
-  useSessionUI.setState({ archivedOpen: false, archivedDir: null });
   workItemList.mockReset();
   workItemSearch.mockReset();
   workItemQueryCreate.mockReset();
@@ -921,6 +919,13 @@ describe("WorkItemsSection — the sessions a ticket was started in (#1108)", ()
   const session = (name: string, title: string) => ({ name, title, kind: "claude", dir: "/home/dev/repos/web", createdAt: "" });
   const entries = () => [...document.querySelectorAll<HTMLButtonElement>(".wi-dsession")];
   const confirmButton = () => [...document.querySelectorAll<HTMLButtonElement>(".ui-confirm-actions button")].pop();
+  /** The list refresh after a restore brings these rows onto the live list. */
+  const listsAfterRefresh = (...rows: ReturnType<typeof session>[]) =>
+    useSessionsStore.setState({
+      refresh: vi.fn(async () => {
+        useSessionsStore.setState({ sessions: rows as never });
+      }),
+    });
   const settle = async () => {
     for (let i = 0; i < 4; i++) {
       await act(async () => {
@@ -945,6 +950,7 @@ describe("WorkItemsSection — the sessions a ticket was started in (#1108)", ()
   it("marks an archived session, and restores then opens it on click", async () => {
     clientApi.mockResolvedValue({ sessions: [session("sarch01", "古い調査")] });
     clientRaw.mockResolvedValue({ ok: true });
+    listsAfterRefresh(session("sarch01", "古い調査"));
     withLedger("sarch01");
     await render();
     await openRow();
@@ -1019,20 +1025,26 @@ describe("WorkItemsSection — the sessions a ticket was started in (#1108)", ()
     expect(document.body.textContent).not.toContain(t("wi.session_gone", { name: "sarch01" }));
   });
 
-  it("sends a session whose folder is gone to the shelf instead of restoring it", async () => {
-    clientApi.mockResolvedValue({ sessions: [{ ...session("sarch01", "古い調査"), resumable: false, dir: "/home/dev/repos/web@wip-x" }] });
+  it("still restores a session whose folder is gone, saying it cannot resume", async () => {
+    const gone = { ...session("sarch01", "古い調査"), resumable: false };
+    clientApi.mockResolvedValue({ sessions: [gone] });
+    clientRaw.mockResolvedValue({ ok: true });
+    listsAfterRefresh(gone);
     withLedger("sarch01");
     await render();
     await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
     await settle();
-    expect(clientRaw).not.toHaveBeenCalled();
-    expect(openChat).not.toHaveBeenCalled();
-    expect(useSessionUI.getState().archivedOpen).toBe(true);
-    expect(useSessionUI.getState().archivedDir).toBe("/home/dev/repos/web@wip-x");
+    expect(document.querySelector(".ui-confirm-body")?.textContent).toContain(t("wi.restore_folder_gone"));
+    await act(async () => confirmButton()!.click());
+    await settle();
+    expect(clientRaw).toHaveBeenCalledWith("api/sessions/sarch01/restore", { method: "POST" });
+    expect(openChat).toHaveBeenCalledWith("sarch01");
   });
 
-  it("opens a restored session by its own kind even before the list refresh lists it", async () => {
-    clientApi.mockResolvedValue({ sessions: [{ ...session("sarch01", "シェル作業"), kind: "shell" }] });
+  // refresh() keeps the old list when its read fails, and a chat pane for a session the list
+  // does not have draws nothing — so the restore is reported instead of opening a blank pane.
+  it("does not open a restored session the list refresh did not bring back", async () => {
+    clientApi.mockResolvedValue({ sessions: [session("sarch01", "古い調査")] });
     clientRaw.mockResolvedValue({ ok: true });
     withLedger("sarch01");
     await render();
@@ -1040,7 +1052,22 @@ describe("WorkItemsSection — the sessions a ticket was started in (#1108)", ()
     await settle();
     await act(async () => confirmButton()!.click());
     await settle();
-    expect(openChat).toHaveBeenCalledWith("sarch01");
+    expect(clientRaw).toHaveBeenCalled();
+    expect(openChat).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(t("wi.restored_not_listed", { name: "古い調査" }));
+  });
+
+  it("opens a restored session by the kind the list gives it", async () => {
+    const shell = { ...session("sarch01", "シェル作業"), kind: "shell" };
+    clientApi.mockResolvedValue({ sessions: [shell] });
+    clientRaw.mockResolvedValue({ ok: true });
+    listsAfterRefresh(shell);
+    withLedger("sarch01");
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
+    await settle();
+    await act(async () => confirmButton()!.click());
+    await settle();
     expect(openTerminal).toHaveBeenCalledWith("sarch01");
   });
 });
