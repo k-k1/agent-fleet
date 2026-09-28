@@ -294,30 +294,35 @@ func (s *Supervisor) startDaemonLocked(addr string) error {
 		_ = os.Remove(strings.TrimPrefix(addr, "unix://")) // stale socket
 	}
 	cmd := exec.Command("codex", "app-server", "--listen", addr)
-	if err := cmd.Start(); err != nil {
+	tail, err := agents.StartWithStderrTail(cmd)
+	if err != nil {
 		_ = os.Unsetenv(appServerAddrEnv) // future TUI launches fall back to direct
 		return fmt.Errorf("codex app-server の起動に失敗しました: %w", err)
 	}
+	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 		if healthy(addr) {
 			s.cmd = cmd
-			go s.waitDaemon(cmd, s.gen+1) // Ensure increments gen right after
+			go s.waitDaemon(cmd, tail, s.gen+1) // Ensure increments gen right after
 			log.Printf("codex app-server: started (pid %d, %s)", cmd.Process.Pid, addr)
 			return nil
 		}
 	}
+	err = tail.Wrap(errors.New("codex app-server が時間内に起動しませんでした")) // before the kill adds noise
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait() // reap: waitDaemon is only started on success — Kill alone leaves a zombie
+	tail.Release()
 	_ = os.Unsetenv(appServerAddrEnv)
-	return errors.New("codex app-server が時間内に起動しませんでした")
+	return err
 }
 
 // waitDaemon records WHY the owned daemon exited (§10.2-2: the supervisor move of the pane
 // wrapper's record-exit) and kicks reconciliation for the surviving sessions.
-func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
+func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int) {
 	err := cmd.Wait()
+	tail.Release()
 	s.mu.Lock()
 	deliberate := s.stopping || s.cmd != cmd
 	if s.cmd == cmd {

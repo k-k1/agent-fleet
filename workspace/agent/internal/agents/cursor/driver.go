@@ -369,9 +369,17 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	if err != nil {
 		return err
 	}
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
+	tail, err := agents.StartWithStderrTail(cmd)
+	if err != nil {
 		return fmt.Errorf("cursor runtime を起動できません: %w", err)
+	}
+	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
+	// Snapshot the tail before stopChild: the stop sequence can make the CLI print noise
+	// that pushes the real cause out of the budget.
+	fail := func(err error) error {
+		err = tail.Wrap(err)
+		stopChild(cmd)
+		return err
 	}
 	cl := newACPClient(stdin, stdout)
 	// Capture this cl in the closure: during the first spawn readLoop can already run while
@@ -381,13 +389,12 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		h.onServerRequest(cl, id, method, params)
 	}
 	cl.onNotify = h.onNotify
-	go h.watch(cmd, cl)
+	go h.watch(cmd, tail, cl)
 
 	if _, err := cl.call("initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
 	}, 30*time.Second); err != nil {
-		stopChild(cmd)
-		return fmt.Errorf("cursor runtime の initialize に失敗しました: %w", err)
+		return fail(fmt.Errorf("cursor runtime の initialize に失敗しました: %w", err))
 	}
 
 	sid := h.sid
@@ -413,8 +420,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 			// "the conversation really is gone" cannot be decided here; return a retryable
 			// error and leave the session stopped instead.
 			h.buf.reset()
-			stopChild(cmd)
-			return fmt.Errorf("cursor セッションを読み込めませんでした（時間をおいて再開してください）: %w", err)
+			return fail(fmt.Errorf("cursor セッションを読み込めませんでした（時間をおいて再開してください）: %w", err))
 		} else {
 			mode = currentModeOf(res)
 			modelID = currentModelOf(res)
@@ -425,15 +431,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 			"cwd": h.dir, "mcpServers": []any{},
 		}, 60*time.Second)
 		if err != nil {
-			stopChild(cmd)
-			return fmt.Errorf("cursor セッションを作成できません: %w", err)
+			return fail(fmt.Errorf("cursor セッションを作成できません: %w", err))
 		}
 		var out struct {
 			SessionID string `json:"sessionId"`
 		}
 		if json.Unmarshal(res, &out) != nil || out.SessionID == "" {
-			stopChild(cmd)
-			return errors.New("cursor セッションの作成応答を解釈できません")
+			return fail(errors.New("cursor セッションの作成応答を解釈できません"))
 		}
 		sid = out.SessionID
 		sids.Write(h.slotSid, sid)
@@ -489,8 +493,9 @@ func currentModelOf(res json.RawMessage) string {
 // watch reaps the child and records its exit. With one child per session the exit can be
 // attributed exactly, unlike a daemon supervisor. An exit caused by SIGTERM
 // (DropHandle/Shutdown) becomes "stopped" and the Console shows the ordinary stopped state.
-func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient) {
+func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClient) {
 	_ = cmd.Wait()
+	tail.Release()
 	code, sig := 0, 0
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
 		if ws.Signaled() {

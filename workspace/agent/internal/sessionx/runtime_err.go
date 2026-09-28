@@ -26,6 +26,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -40,5 +41,16 @@ func writeRuntimeErr(w http.ResponseWriter, err error) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeAgentNotConnected, err.Error())
 		return
 	}
-	httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+	httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", runtimeErrMessage(err))
+}
+
+// runtimeErrMessage is err's message plus, for a child that failed to start, the end of its
+// stderr. This response is the one place the tail is rendered: StartError.Error() leaves it
+// out so the logs that record start errors never carry it.
+func runtimeErrMessage(err error) string {
+	msg := err.Error()
+	if tail := agents.StartErrStderr(err); tail != "" {
+		msg += "\n\n--- stderr (tail) ---\n" + tail
+	}
+	return msg
 }

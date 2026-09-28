@@ -249,10 +249,15 @@
 .ui-toast-success > .codicon:first-child { color: var(--ok); }
 .ui-toast-info { border-left-color: var(--accent); }
 .ui-toast-info > .codicon:first-child { color: var(--accent); }
+/* pre-line + the height cap: a launch failure can carry the end of the CLI's stderr (lines,
+   up to 2 KiB), which would otherwise run together into one wall covering the screen. */
 .ui-toast-msg {
   flex: 1;
   min-width: 0;
   word-break: break-word;
+  white-space: pre-line;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .ui-toast-x {
   background: none;
