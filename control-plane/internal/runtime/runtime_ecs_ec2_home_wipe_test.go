@@ -403,39 +403,108 @@ func TestECSEC2AFailedEraseRecordsNothing(t *testing.T) {
 	}
 }
 
-// The record is written after the volume is gone, and a record that cannot be written
-// fails the erase — the administrator retries — while the listings still clean up what
-// they can see.
-func TestECSEC2ARecordThatCannotBeWrittenFailsTheErase(t *testing.T) {
+// The pending mark goes first. If it cannot be written, nothing is destroyed: a home that
+// is still there is still the member's.
+func TestECSEC2AnEraseThatCannotMarkDestroysNothing(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
 	h.efs.tagErr = errors.New("ThrottlingException: rate exceeded")
 	if err := h.rt.EraseHome(ctx); err == nil {
-		t.Fatal("EraseHome succeeded without recording the erased volume")
+		t.Fatal("EraseHome succeeded without being able to mark the erase")
 	}
-	if _, ok := h.ec2.volumes["vol-1"]; ok {
-		t.Error("the volume was kept although the erase had already got past it")
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Error("the volume was deleted without the pending mark in place")
 	}
-	if _, ok := h.ec2.snapshots["snap-hib"]; ok {
-		t.Error("the listed hibernation snapshot was left although the record failed")
+	if _, ok := h.ec2.snapshots["snap-hib"]; !ok {
+		t.Error("the hibernation snapshot was deleted without the pending mark in place")
 	}
 }
 
-// The record stays within a tag value: the most recent erased volumes are kept.
-func TestECSEC2TheEraseRecordKeepsTheMostRecentVolumes(t *testing.T) {
+// The volume went but the record could not be confirmed: the pending mark stays, so no
+// restore runs — a copy the listings missed can never come back — until Clean home runs
+// again and finishes the record.
+func TestECSEC2AnEraseThatCannotConfirmBlocksTheRestoreUntilItIsRerun(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
-	for i := 0; i < maxErasedVolumes+3; i++ {
-		if err := h.rt.recordErasedVolumes(ctx, []string{fmt.Sprintf("vol-%02d", i)}); err != nil {
-			t.Fatalf("recordErasedVolumes: %v", err)
+	h.ec2.snapshots["snap-unseen"] = homeSnapshotOf("snap-unseen", "vol-1", time.Now(), ec2types.SnapshotStateCompleted)
+	h.ec2.snapshotHidden["snap-unseen"] = 3
+	h.efs.tagErrOn = func(call int) error {
+		if call >= 2 { // the pending mark is written; every confirm fails
+			return errors.New("ServiceUnavailable")
 		}
+		return nil
+	}
+	if err := h.rt.EraseHome(ctx); err == nil {
+		t.Fatal("EraseHome succeeded although the record could not be confirmed")
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; ok {
+		t.Fatal("setup: the volume should be gone")
+	}
+	if mark := keepMark(t, h); mark != "pending:vol-1" {
+		t.Fatalf("record = %q, want the pending mark to stay", mark)
+	}
+	if got, err := h.rt.restoreSnapshot(ctx); err == nil {
+		t.Fatalf("restoreSnapshot = %q with an erase unfinished; it must refuse", got)
+	}
+	h.efs.tagErrOn = nil
+	if err := h.rt.EraseHome(ctx); err != nil {
+		t.Fatalf("EraseHome, run again: %v", err)
+	}
+	if mark := keepMark(t, h); mark != "vol-1" {
+		t.Fatalf("record after the rerun = %q, want vol-1 erased", mark)
+	}
+	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "" {
+		t.Fatalf("restoreSnapshot after the rerun = %q, %v; the erased home must not come back", got, err)
+	}
+}
+
+// A failed erase whose mark could not be taken back leaves it pending on a home that is
+// still alive. The owner's next Start — which holds the lifecycle lease, so no erase is
+// running — takes it back, and the home's hibernation copies are restorable again.
+func TestECSEC2AStartOnTheLiveHomeTakesBackAStalePendingErase(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.efs.aps[0].Tags = append(h.efs.aps[0].Tags, efstypes.Tag{Key: aws.String(efsTagErasedVolumes), Value: aws.String("vol-7 pending:vol-1 pending:vol-9")})
+	if _, err := h.rt.prepare(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if mark := keepMark(t, h); mark != "vol-7 pending:vol-9" {
+		t.Errorf("record = %q; want the live home's pending mark gone and the rest kept", mark)
+	}
+}
+
+// The record stays within a tag value by forgetting only volumes that no longer have a
+// copy; one that still has a copy is never forgotten, and the write fails instead.
+func TestECSEC2TheEraseRecordForgetsOnlyVolumesWithoutCopies(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	rec := eraseRecord{}
+	for i := 0; i < 12; i++ {
+		rec.erased = append(rec.erased, fmt.Sprintf("vol-%017d", i))
+	}
+	kept := []ec2types.Snapshot{{VolumeId: aws.String(fmt.Sprintf("vol-%017d", 0))}}
+	if err := h.rt.writeEraseRecord(ctx, "fsap-keep", &rec, kept); err != nil {
+		t.Fatalf("writeEraseRecord: %v", err)
 	}
 	got := strings.Fields(keepMark(t, h))
-	if len(got) != maxErasedVolumes || got[0] != "vol-03" || got[len(got)-1] != fmt.Sprintf("vol-%02d", maxErasedVolumes+2) {
-		t.Errorf("record = %v, want the last %d", got, maxErasedVolumes)
+	if len(strings.Join(got, " ")) > efsTagValueMax {
+		t.Errorf("record is %d characters; an EFS tag value holds %d", len(strings.Join(got, " ")), efsTagValueMax)
 	}
-	if n := len(strings.Join(got, " ")); n > 256 {
-		t.Errorf("record is %d characters; an EFS tag value holds 256", n)
+	if got[0] != fmt.Sprintf("vol-%017d", 0) {
+		t.Errorf("the oldest volume still has a copy but was forgotten: %v", got)
+	}
+	if got[len(got)-1] != fmt.Sprintf("vol-%017d", 11) {
+		t.Errorf("the newest volume was forgotten: %v", got)
+	}
+	full := eraseRecord{}
+	var copies []ec2types.Snapshot
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("vol-%017d", i)
+		full.erased = append(full.erased, id)
+		copies = append(copies, ec2types.Snapshot{VolumeId: aws.String(id)})
+	}
+	if err := h.rt.writeEraseRecord(ctx, "fsap-keep", &full, copies); err == nil {
+		t.Error("a record that cannot fit without forgetting a volume with a copy was written anyway")
 	}
 }
 

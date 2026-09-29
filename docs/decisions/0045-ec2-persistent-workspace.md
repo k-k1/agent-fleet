@@ -1430,13 +1430,20 @@ on its EBS volume.
   the member's own snapshot first; one left behind would hand the erased home back. The pool sweeper advances a
   hibernation without the lifecycle lease, so a capture it started just before the volume went can be missing
   from an eventually consistent listing, and no wait makes a listing complete. The snapshots are listed twice
-  (again after a short settle) as cleanup, and the guarantee is a record instead: once the volume is gone,
-  the erase writes its id (and the ids of the volumes its listed snapshots came from) into
-  `af-home-erased-volumes` on the member's keep access point, which outlives the erase, and the restore path
-  never restores a snapshot of a recorded volume — it deletes it. A hibernation snapshot names the volume it was
-  taken from, so this holds whenever the copy was taken and whether or not a listing saw it, and it never touches
-  the copies of a home that was not erased. It is written only after the volume is gone: written first, an erase
-  that then failed would leave a home that was never erased with its legitimate hibernation copy refused.
+  (again after a short settle) as cleanup, and the guarantee is a record instead: `af-home-erased-volumes` on
+  the member's keep access point, which outlives the erase, names the erased volumes, and the restore path never
+  restores a snapshot of a named volume — it deletes it. A hibernation snapshot names the volume it was taken
+  from, so this holds whenever the copy was taken and whether or not a listing saw it, and it never touches the
+  copies of a home that was not erased. The record is written in two steps. Before anything is destroyed, the
+  erase marks the home volume (and the volumes its listed snapshots came from) `pending:`; if that write fails,
+  nothing is destroyed. Once the volume is gone the marks become plain ids. While a mark is pending the restore
+  path restores nothing, because the volume may already be gone and any copy listed could be the home being
+  erased; running Clean home again finishes the erase. An erase that fails with the volume still there takes its
+  mark back, and if that write fails too, the member's next Start takes back a pending mark on the volume that is
+  still its live home (a Start holds the lifecycle lease, so no erase is running then). Both halves are needed:
+  an id written only after the deletion is lost whenever that one write fails, and a mark left on a home that
+  survived would refuse its only legitimate hibernation copy. A tag value holds 256 characters, so the oldest ids
+  with no copy left drop off first; an id whose copy is still listed is never dropped — the write fails instead.
   Measured on the sandbox account against the VolumeId EBS reports: a copy of an unrecorded volume is restored,
   the same copy is refused once its volume is recorded. The one thing it does not keep that docker keeps: a keep file a tool replaced since the last start
   (the entrypoint moves it to EFS at the next boot) goes with the volume.

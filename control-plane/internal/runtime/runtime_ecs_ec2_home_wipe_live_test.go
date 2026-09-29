@@ -198,11 +198,11 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 
 	// --- the erase record, against the VolumeId EBS reports ---
 	if keepAP != "" {
-		rec, err := rt.erasedVolumes(ctx)
-		if err != nil || !rec.set[volID] {
-			t.Fatalf("EraseHome did not record %s on %s: %v, %v", volID, keepAP, rec.ids, err)
+		apID, rec, err := rt.ensureKeepAccessPoint(ctx)
+		if err != nil || !rec.isErased(volID) || len(rec.pending) != 0 || apID != keepAP {
+			t.Fatalf("EraseHome did not record %s as erased on %s: %q on %s, %v", volID, keepAP, rec.String(), apID, err)
 		}
-		t.Logf("erase record on %s: %v", keepAP, rec.ids)
+		t.Logf("erase record on %s: %q", keepAP, rec.String())
 		vol2, err := eye.CreateVolume(ctx, &ec2.CreateVolumeInput{
 			AvailabilityZone: aws.String(az), Size: aws.Int32(1), VolumeType: ec2types.VolumeTypeGp3, Encrypted: aws.Bool(true),
 			TagSpecifications: []ec2types.TagSpecification{{ResourceType: ec2types.ResourceTypeVolume, Tags: tags("scratch")}},
@@ -221,8 +221,10 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 			t.Fatalf("a copy of a volume that was not erased: restoreSnapshot = %q, %v; want %s", got, err, fresh)
 		}
 		// Once that volume is recorded as erased, the same copy is refused and deleted.
-		if err := rt.recordErasedVolumes(ctx, []string{volID}); err != nil {
-			t.Fatalf("recordErasedVolumes: %v", err)
+		rec.markPending([]string{volID})
+		rec.confirmPending()
+		if err := rt.writeEraseRecord(ctx, keepAP, &rec, nil); err != nil {
+			t.Fatalf("writeEraseRecord: %v", err)
 		}
 		if got, err := rt.restoreSnapshot(ctx); err != nil || got != "" {
 			t.Fatalf("a copy of an erased volume: restoreSnapshot = %q, %v; want none", got, err)

@@ -113,8 +113,10 @@ type fakeEFS struct {
 	// pageSize, when set, pages DescribeAccessPoints the way the real API does (at most
 	// 100 per call, NextToken for the rest).
 	pageSize int
-	// tagErr makes TagResource fail.
-	tagErr error
+	// tagErr makes TagResource fail; tagErrOn, when set, decides per call (1-based).
+	tagErr   error
+	tagErrOn func(call int) error
+	tagCalls int
 }
 
 func (f *fakeEFS) DescribeAccessPoints(_ context.Context, in *efs.DescribeAccessPointsInput, _ ...func(*efs.Options)) (*efs.DescribeAccessPointsOutput, error) {
@@ -148,8 +150,14 @@ func (f *fakeEFS) CreateAccessPoint(_ context.Context, in *efs.CreateAccessPoint
 }
 
 func (f *fakeEFS) TagResource(_ context.Context, in *efs.TagResourceInput, _ ...func(*efs.Options)) (*efs.TagResourceOutput, error) {
+	f.tagCalls++
 	if f.tagErr != nil {
 		return nil, f.tagErr
+	}
+	if f.tagErrOn != nil {
+		if err := f.tagErrOn(f.tagCalls); err != nil {
+			return nil, err
+		}
 	}
 	for i, ap := range f.aps {
 		if aws.ToString(ap.AccessPointId) != aws.ToString(in.ResourceId) {
