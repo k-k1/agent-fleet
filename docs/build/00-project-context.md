@@ -35,7 +35,7 @@ from the distribution bundle and its runbooks alone and records a passing E2E ru
 | User isolation | one workspace per membership (a person in a tenant) | a container on every target except `native`, which is single-user by design ([ref/deploy-targets](../../guide/ref/deploy-targets.md)). Why it is one long-lived workspace per member rather than an environment per task: [decisions/0104](../decisions/0104-long-lived-member-workspace.md) |
 | Target scale | tens to ~100 members per deployment; sized for about 20 at once | sizing assumptions, not measured limits. One host, or one ECS cluster, is meant to be enough. The code sets no deployment-wide cap; a tenant can be given workspace and session limits ([ref/limits](../../guide/ref/limits.md)) |
 | Deployment layer | one core; the runtime adapter is chosen by `AF_RUNTIME` | `docker` (the default), `native`, `ecs`, `ecs-ec2`, behind ports and adapters ([01 §1.6](01-architecture.md#16-ports-and-adapters--where-the-platform-dependency-is-confined)); what differs between them is [ref/deploy-targets](../../guide/ref/deploy-targets.md) |
-| Persistence | the home keeps clones, CLI logins and history across stop and start | where it lives depends on the target — see the "Home lives on" column of [ref/deploy-targets](../../guide/ref/deploy-targets.md) |
+| Persistence | clones, CLI logins and conversation history survive stopping and starting the workspace | they live in the home and, for Claude, in its state directory kept beside the home (see `CLAUDE_CONFIG_DIR` below). Where the home lives depends on the target — the "Home lives on" column of [ref/deploy-targets](../../guide/ref/deploy-targets.md) |
 | Git auth | HTTPS tokens/OAuth via Console (Connections) | downgraded from SSH keys ([decisions/0003](../decisions/0003-ssh-to-connections.md)). A member's token lives in their workspace's encrypted store; the CP passes it through but does not hold it. What the CP holds are the tenants' OAuth app secrets ([08 §8.1](08-integrations.md#81-the-integrations)) |
 | Tech stack | Console=React+Vite / Backend=Go | React + Vite for the Console: [decisions/0004](../decisions/0004-vanilla-to-react.md). The Control Plane and the Workspace Agent are Go (two modules), which suits daemons, WebSocket relaying and container control; no decision record argues that choice |
 
@@ -48,7 +48,7 @@ Knowing which parts came from where explains a few shapes in the code:
   allowlist. **Replaced by the CP's own login (`AUTH=oauth`)**, which now takes Google,
   GitHub or any OIDC provider; `AUTH=proxy` still trusts a gate like oauth2-proxy. The
   file format survives as `AF_OAUTH_ALLOWED_EMAILS_FILE` (one email or `@domain` per
-  line, read on every login). Design: [07 §7.3](07-security.md#73-l1-console-authentication--three-modes).
+  line; edits need no restart). Design: [07 §7.3](07-security.md#73-l1-console-authentication--three-modes).
 - **`tmux-claude.sh`** — a script in that personal setup, never part of this repository,
   which idempotently started, resumed and generation-managed several Claude CLIs in
   detached tmux. The session model in [04](04-agent.md) is the descendant of this; why the
@@ -57,8 +57,8 @@ Knowing which parts came from where explains a few shapes in the code:
   runtime now sets one per workspace, outside the browsable home.
 - **`~/.claude/settings.json`** with `remoteControlAtStartup` and
   `skipDangerousModePermissionPrompt` preconfigured. `workspace/entrypoint.sh` still seeds
-  a default one into a new workspace (with Remote Control at startup off); after that the
-  Console's Claude settings own the file.
+  a default `settings.json` into a new workspace's `$CLAUDE_CONFIG_DIR` (with Remote
+  Control at startup off); after that the Console's Claude settings own the file.
 
 ## Screenshots
 
