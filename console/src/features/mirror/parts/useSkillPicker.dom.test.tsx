@@ -77,7 +77,7 @@ function tap(el: HTMLElement) {
   el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
 }
 
-describe("useSkillPicker argument hint", () => {
+describe("useSkillPicker outside tap", () => {
   it("the first tap on send goes through while the hint is shown", async () => {
     const onSend = vi.fn();
     host = document.createElement("div");
