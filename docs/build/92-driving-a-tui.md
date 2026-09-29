@@ -21,8 +21,8 @@ its pending interactions through the Agent's structured routes (a question throu
 Which kinds have a Terminal route at all is in
 [the agent capability table](../../guide/ref/agents.md) — lcpp and muse, for example,
 have none (their `BuildLaunch` returns `ErrNoTerminalRoute`). Which modals a kind puts up
-on that route is best read from its key-sequence builder and its pending-modal probe
-(see [92.4](#924-where-the-driving-code-lives)).
+on that route is best read from its key-sequence builder and the code that detects its
+live state (see [92.4](#924-where-the-driving-code-lives)).
 
 **The dated incident and measurement records that produced this playbook are in the
 frozen archive** — they are pinned to specific CLI versions and do not belong on a
@@ -92,8 +92,9 @@ state detection sees, and add `-J` only when you need one wrapped line whole.
 Run from inside a session, a probe without these precautions interferes with the fleet.
 
 1. **A tmux socket of your own** (`tmux -L "$sock"`). Without `-L`, a probe started from
-   inside a pane lands on the tmux server the Agent owns, the one every live session in
-   the workspace runs on: a `kill-server` there takes them all down. Why the Agent's
+   inside a pane lands on the tmux server the Agent owns, the one every running Terminal
+   (CLI) session in the workspace lives on: a `kill-server` there takes them all down
+   (managed sessions have no pane and are not on it). Why the Agent's
    server is shared and how its code keeps off other servers is
    [04 §4.11](04-agent.md#411-tmux-server-scope-and-isolating-a-second-instance). Name the
    socket per session, not a fixed `probe`: two sessions running this recipe would
@@ -191,9 +192,14 @@ What to re-read when this playbook finds a change:
   the one-page-per-question menus (codex, opencode, agy; agy's write-in row is entered
   with Enter before it takes text), `buildRespondAnswers` for managed sessions. Plan and
   permission buttons are wired in `MirrorView.tsx`.
-- **What counts as pending** — claude's modals reach the Agent through its hooks and the
-  status store (`internal/status`); the other kinds report theirs from a `PendingModal`
-  method in `workspace/agent/internal/agents/<kind>/`.
+- **What counts as pending** — `DriveState` (`internal/sessionx/agent.go`) derives a
+  session's live state: the status store (`internal/status`), which claude's hooks fill
+  with its question, plan and permission modals, and, for some kinds without such hooks,
+  per-kind readers of a transcript, event log or pane (`opencode.LiveState` or
+  `kiro.LiveState`, for example). The gate, `promptBlocker`, reads its own selection of
+  these (see 92.3). `PendingModal` in `internal/agents/modal.go` is a different seam:
+  what a session carries over when it is stopped, asked once just before the stop — do
+  not read the live modal shapes from it.
 - **The delivery** — `POST /sessions/{name}/input` in
   `workspace/agent/internal/sessionx/session_io.go`: `{keys}` (`sendNamedKeys`), `{seq}`
   (key and text steps), `{prompt}` (`submitPromptTUI` → `typeLineAndSubmit`), the

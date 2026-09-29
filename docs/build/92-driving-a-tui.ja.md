@@ -18,8 +18,8 @@ Terminal (CLI) のセッションでは、Console はエージェントのモー
 対話に Agent の構造化された経路で答える（たとえば質問なら `POST /sessions/{name}/respond`）。
 どの kind に Terminal の経路があるかは [エージェント機能表](../../guide/ref/agents.ja.md) に
 ある——たとえば lcpp と muse には経路そのものが無い（`BuildLaunch` が `ErrNoTerminalRoute`
-を返す）。その経路で kind がどのモーダルを出すかは、その kind のキー列ビルダーと保留モーダルの
-プローブから読むのが確実（[92.4](#924-駆動コードの所在) を参照）。
+を返す）。その経路で kind がどのモーダルを出すかは、その kind のキー列ビルダーと、生きた状態を検出する
+コードから読むのが確実（[92.4](#924-駆動コードの所在) を参照）。
 
 **このプレイブックを生んだ日付つきの実測と事件記録は凍結アーカイブにある**——特定の CLI 版に
 紐づいた記録で、現役の棚には置けない（寿命が違う）。ここに置くのは、**古びない方法**だけ。
@@ -87,8 +87,9 @@ Agent 自身の画面読み取り（`internal/tmuxx/tmuxx.go` の `tmuxx.Capture
 セッションの中から実行するとき、これらの備えが無いプローブはフリートに干渉する。
 
 1. **自分専用の tmux ソケット**（`tmux -L "$sock"`）。`-L` が無いと、ペインの中から起動した
-   プローブは Agent が所有する tmux サーバー——ワークスペースの生きたセッションが全部載っている
-   サーバー——に乗る。そこで `kill-server` を打てば全部が死ぬ。Agent のサーバーがなぜ共有で、
+   プローブは Agent が所有する tmux サーバー——ワークスペースで動いている Terminal (CLI)
+   セッションが全部載っているサーバー——に乗る。そこで `kill-server` を打てばそれらが全部死ぬ
+   （マネージドのセッションはペインを持たず、そこには載っていない）。Agent のサーバーがなぜ共有で、
    Agent のコードがどう他のサーバーに触れないようにしているかは
    [04 §4.11](04-agent.ja.md#411-tmux-サーバーのスコープと第-2-インスタンスの隔離)。ソケット名は
    固定の `probe` ではなくセッションごとに付ける。さもないとこの手順を同時に回す 2 つの
@@ -171,9 +172,13 @@ Agent 自身の画面読み取り（`internal/tmuxx/tmuxx.go` の `tmuxx.Capture
   `buildClaudeSeq` / `buildClaudeSubmit`、1 問 1 ページのメニュー（codex・opencode・agy。
   agy の書き込み行は Enter で入ってから本文を受ける）は `buildMenuSeq`、マネージドのセッションは
   `buildRespondAnswers`。プランと許可のボタンは `MirrorView.tsx` で配線している。
-- **何を保留とみなすか** — claude のモーダルはフックと状態ストア（`internal/status`）を通って
-  Agent に届く。それ以外の kind は `workspace/agent/internal/agents/<kind>/` の `PendingModal`
-  メソッドから自分の保留を報告する。
+- **何を保留とみなすか** — `DriveState`（`internal/sessionx/agent.go`）がセッションの生きた
+  状態を導く。材料は状態ストア（`internal/status`。claude のフックが質問・プラン・許可の
+  モーダルを書き込む）と、そうしたフックの無い kind の一部に向けた転写・イベントログ・pane の
+  kind 別の読み取り（たとえば `opencode.LiveState` や `kiro.LiveState`）。ゲートの
+  `promptBlocker` はこのうち自分の選んだものを読む（92.3 を参照）。`internal/agents/modal.go`
+  の `PendingModal` は別の継ぎ目で、セッションを止めるときに持ち越すものを止める直前に 1 回だけ
+  問う——生きたモーダルの形をここから読まないこと。
 - **配送** — `workspace/agent/internal/sessionx/session_io.go` の
   `POST /sessions/{name}/input`: `{keys}`（`sendNamedKeys`）、`{seq}`（キー手順とテキスト
   手順）、`{prompt}`（`submitPromptTUI` → `typeLineAndSubmit`）、`allowedKey` の whitelist、
