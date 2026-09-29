@@ -22,6 +22,10 @@ const (
 	// from what it displays but stores them), which would otherwise duplicate the reply until
 	// the turn ends.
 	liveFinalGrace = 3 * time.Second
+	// liveStaleAfter drops a message that stopped mid-way: no new line for this long and no
+	// final flush means its turn was cut off (interrupted, or claude died) before it ended. A
+	// line is flushed once it ends, and even a long paragraph ends well within this.
+	liveStaleAfter = 2 * time.Minute
 	// liveTextMax bounds what one poll carries. The tail of a very long reply is enough for a
 	// preview, and the Console renders it as Markdown again on every poll.
 	liveTextMax = 16 << 10
@@ -39,25 +43,41 @@ func wantsLiveReply(r *http.Request, alive bool, state string) bool {
 // not show yet, or "". lines is the whole transcript.
 func liveReplyText(sid string, lines [][]byte, now time.Time) string {
 	lr, ok := status.ReadLiveText(sid)
-	if !ok || (lr.Final && now.Sub(lr.FinalAt) > liveFinalGrace) {
+	if !ok {
+		return ""
+	}
+	switch {
+	case lr.Final && now.Sub(lr.FinalAt) > liveFinalGrace:
+		return ""
+	case !lr.Final && now.Sub(lr.LastAt) > liveStaleAfter:
+		return ""
+	case claude.PromptSuperseded(lines, lr.Prompt):
+		// A message of an earlier turn. A turn that ends without Stop (interrupted, healed from
+		// the pane) leaves its last message in the file, and a flush that lands after Stop
+		// re-creates it, while the next turn has not streamed anything yet.
 		return ""
 	}
 	text := strings.TrimSpace(lr.Text)
 	if text == "" {
 		return ""
 	}
-	// Landed: the transcript's newest assistant text starts with what was streamed. When only
-	// the head of the message has landed (a response with text on both sides of a server tool
-	// call is written as one row per text block), what is left is the part still missing.
-	if landed := strings.TrimSpace(claude.LatestAssistantText(lines)); landed != "" {
-		switch {
-		case lr.Partial:
-			if strings.Contains(landed, text) {
+	if lr.Final {
+		// Complete, so its rows are in the transcript or about to be. Compared with the messages
+		// of its own turn only: an earlier turn's answer that happens to start the same way is
+		// not this one.
+		for _, t := range claude.TurnAssistantTexts(lines, lr.Prompt) {
+			if strings.HasPrefix(strings.TrimSpace(t), text) {
 				return ""
 			}
-		case strings.HasPrefix(landed, text):
+		}
+	} else if landed := strings.TrimSpace(claude.PendingAssistantText(lines)); landed != "" {
+		// Still being written, so the only rows of it that can be in the transcript are the ones
+		// after the newest user row. A response with text on both sides of a server tool call
+		// lands one text block at a time; what is left is the part still missing.
+		if strings.HasPrefix(landed, text) {
 			return ""
-		case strings.HasPrefix(text, landed):
+		}
+		if strings.HasPrefix(text, landed) {
 			text = strings.TrimSpace(text[len(landed):])
 			if text == "" {
 				return ""

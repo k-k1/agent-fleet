@@ -116,7 +116,9 @@ func RunSessionStatusHook(args []string) {
 		// The mirror's in-progress reply (#1250) is the session's own text only: a flush fired
 		// inside a subagent carries agent_id, and its prose is not this session's reply.
 		if h.agentID == "" {
-			status.AppendLiveText(sid, h.turnID, h.messageID, h.index, h.final, h.delta)
+			status.AppendLiveText(sid, status.LiveFlush{
+				Prompt: h.promptID, Turn: h.turnID, Msg: h.messageID, Index: h.index, Final: h.final, Delta: h.delta,
+			})
 		}
 		return
 	}
@@ -397,7 +399,9 @@ type hookInput struct {
 	toolName   string // PreToolUse/PostToolUse: which tool fired this hook ("" = not a tool event)
 	// MessageDisplay's position of delta: which turn and assistant message it belongs to, and
 	// its flush counter within that message. message_id is a display id of claude's own; it
-	// cannot be joined to the transcript's message ids.
+	// cannot be joined to the transcript's message ids. prompt_id can: the prompt's rows carry
+	// it as promptId.
+	promptID  string
 	turnID    string
 	messageID string
 	index     int
@@ -418,6 +422,7 @@ func decodeHookStdin() hookInput {
 		Message          string `json:"message"`           // Notification
 		NotificationType string `json:"notification_type"` // Notification
 		Delta            string `json:"delta"`             // MessageDisplay (streaming text chunk)
+		PromptID         string `json:"prompt_id"`         // MessageDisplay
 		TurnID           string `json:"turn_id"`           // MessageDisplay
 		MessageID        string `json:"message_id"`        // MessageDisplay
 		Index            int    `json:"index"`             // MessageDisplay
@@ -442,6 +447,7 @@ func decodeHookStdin() hookInput {
 		message:    in.Message,
 		ntype:      in.NotificationType,
 		delta:      in.Delta,
+		promptID:   in.PromptID,
 		turnID:     in.TurnID,
 		messageID:  in.MessageID,
 		index:      in.Index,

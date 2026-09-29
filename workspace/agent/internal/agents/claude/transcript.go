@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -218,67 +219,174 @@ func AssistantText(line []byte) string {
 	return sb.String()
 }
 
-// latestTextScan bounds how far back LatestAssistantText looks for a text row. It runs on
-// the mirror's poll while a turn streams, and a long run of tool calls with no prose between
-// them should not turn every poll into a walk over the whole transcript.
-const latestTextScan = 400
+// The helpers below tell whether the reply claude is streaming (the MessageDisplay text the
+// mirror shows while it is written, #1250) has reached the transcript yet. They compare text,
+// because MessageDisplay's message_id is a display id that no transcript row carries.
 
-// LatestAssistantText is the text of the newest assistant message that has any: the text
-// blocks of every row of that API message, in file order. claude writes one response as
-// several rows (thinking / text / tool_use), and a response with more than one text block
-// (text around a server tool call) as more than one text row, so the newest text row alone
-// can be a fragment of it. "" when no text row is within latestTextScan lines of the end.
-func LatestAssistantText(lines [][]byte) string {
-	type row struct {
-		Type    string `json:"type"`
-		Message struct {
-			ID      string `json:"id"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"message"`
+// liveScan bounds how far back the text lookups below read. They run on the mirror's poll
+// while a turn streams, and a long run of tool calls should not turn every poll into a walk
+// over the whole transcript.
+const liveScan = 400
+
+// promptScan bounds PromptSuperseded, which reads only user rows and must reach back past the
+// turn that is running now.
+const promptScan = 2000
+
+// memoryTag matches the memory citation tags claude strips from what it DISPLAYS but keeps in
+// the transcript: <cc-memory filenames="…"> and its other spellings (measured in the 2.1.284
+// bundle). Without stripping them the stored text never matches the displayed stream. claude
+// allows up to 1024 characters after the name; RE2 caps a repeat at 1000, hence the split.
+var memoryTag = regexp.MustCompile(`</?(?:cc-memory|cc_memory|ccmemory|CC-MEMORY|CC_MEMORY|CCMEMORY)(?:[\s/][^>]{0,1000}[^>]{0,23})?>`)
+
+// DisplayedText is stored assistant text as claude displays it.
+func DisplayedText(s string) string { return memoryTag.ReplaceAllString(s, "") }
+
+// liveRow is the part of a transcript row the live-reply helpers read.
+type liveRow struct {
+	Type     string `json:"type"`
+	PromptID string `json:"promptId"`
+	Message  struct {
+		ID      string          `json:"id"`
+		Content json.RawMessage `json:"content"` // a string for a typed prompt, blocks otherwise
+	} `json:"message"`
+}
+
+type contentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func parseLiveRow(line []byte) (liveRow, bool) {
+	var r liveRow
+	return r, json.Unmarshal(line, &r) == nil
+}
+
+// text is an assistant row's text blocks, joined.
+func (r liveRow) text() string {
+	if r.Type != "assistant" {
+		return ""
 	}
-	parse := func(line []byte) (row, string) {
-		var r row
-		if json.Unmarshal(line, &r) != nil {
-			return row{}, ""
+	var blocks []contentBlock
+	if json.Unmarshal(r.Message.Content, &blocks) != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, b := range blocks {
+		if b.Type == "text" {
+			sb.WriteString(b.Text)
 		}
-		var sb strings.Builder
-		if r.Type == "assistant" {
-			for _, c := range r.Message.Content {
-				if c.Type == "text" {
-					sb.WriteString(c.Text)
-				}
+	}
+	return sb.String()
+}
+
+// isPrompt: a user row that starts a turn, as opposed to one carrying tool results.
+func (r liveRow) isPrompt() bool {
+	if r.Type != "user" {
+		return false
+	}
+	var blocks []contentBlock
+	if json.Unmarshal(r.Message.Content, &blocks) != nil {
+		return true // a plain string: a typed prompt
+	}
+	for _, b := range blocks {
+		if b.Type == "tool_result" {
+			return false
+		}
+	}
+	return true
+}
+
+// PendingAssistantText is the text, as displayed, of the assistant rows after the newest user
+// row: the message claude is writing now, as far as its rows have landed. Its tool results can
+// only come after it ends, so no row of an earlier message is after that user row.
+func PendingAssistantText(lines [][]byte) string {
+	var parts []string
+	for i := len(lines) - 1; i >= max(0, len(lines)-liveScan); i-- {
+		r, ok := parseLiveRow(lines[i])
+		if !ok {
+			continue
+		}
+		if r.Type == "user" {
+			break
+		}
+		if t := r.text(); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	slices.Reverse(parts)
+	return DisplayedText(strings.Join(parts, ""))
+}
+
+// TurnAssistantTexts is the text, as displayed, of each assistant message of the turn that
+// answers promptID, newest first: back to that prompt's row. A message is all the rows that
+// share its id (one row per content block). An empty promptID stops at the newest prompt.
+func TurnAssistantTexts(lines [][]byte, promptID string) []string {
+	var out []string
+	var cur []string
+	curID := ""
+	flush := func() {
+		if len(cur) > 0 {
+			slices.Reverse(cur)
+			out = append(out, DisplayedText(strings.Join(cur, "")))
+		}
+		cur, curID = nil, ""
+	}
+	for i := len(lines) - 1; i >= max(0, len(lines)-liveScan); i-- {
+		r, ok := parseLiveRow(lines[i])
+		if !ok {
+			continue
+		}
+		if r.Type == "user" {
+			if promptID != "" && r.PromptID != "" && r.PromptID != promptID {
+				break // another turn's row
 			}
-		}
-		return r, sb.String()
-	}
-	stop := max(0, len(lines)-latestTextScan)
-	for i := len(lines) - 1; i >= stop; i-- {
-		if !bytes.Contains(lines[i], []byte(`"type":"assistant"`)) {
-			continue
-		}
-		r, text := parse(lines[i])
-		if text == "" {
-			continue
-		}
-		parts := []string{text}
-		// Earlier rows of the same message. They are contiguous but for bookkeeping rows; a
-		// user row (a prompt or a tool result) or another message's row ends them.
-		for j := i - 1; j >= 0; j-- {
-			p, t := parse(lines[j])
-			if p.Type == "user" || (p.Type == "assistant" && p.Message.ID != r.Message.ID) {
+			if r.isPrompt() {
 				break
 			}
-			if p.Type == "assistant" && t != "" {
-				parts = append(parts, t)
-			}
+			continue
 		}
-		slices.Reverse(parts)
-		return strings.Join(parts, "")
+		t := r.text()
+		if t == "" {
+			continue
+		}
+		if r.Message.ID != curID {
+			flush()
+			curID = r.Message.ID
+		}
+		cur = append(cur, t)
 	}
-	return ""
+	flush()
+	return out
+}
+
+// PromptSuperseded reports whether promptID belongs to an earlier turn: the transcript's newest
+// promptId is another one, and promptID appears before it. An id the transcript does not show
+// (yet) is not superseded, and neither is anything when either side has no id at all.
+func PromptSuperseded(lines [][]byte, promptID string) bool {
+	if promptID == "" {
+		return false
+	}
+	newest := ""
+	for i := len(lines) - 1; i >= max(0, len(lines)-promptScan); i-- {
+		if !bytes.Contains(lines[i], []byte(`"promptId":"`)) {
+			continue
+		}
+		r, ok := parseLiveRow(lines[i])
+		if !ok || r.PromptID == "" {
+			continue
+		}
+		if newest == "" {
+			newest = r.PromptID
+			if newest == promptID {
+				return false
+			}
+			continue
+		}
+		if r.PromptID == promptID {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectTurns builds the displayable turns from lines[lo:hi] (a window into the
