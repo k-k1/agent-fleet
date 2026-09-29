@@ -229,6 +229,18 @@
   gap: 8px;
   max-width: min(520px, 92vw);
 }
+/* Phone: below the top bars rather than over the composer (toastPlacement.ts); ToastProvider
+   sets `top` from the measured bars, and this is the place until it has. Spanning the width
+   instead of centring with `left: 50%`, which leaves a fixed box only the right half of the
+   screen to shrink-to-fit in. */
+.ui-toasts.ui-toasts-phone {
+  top: calc(var(--app-top, 0px) + 110px);
+  bottom: auto;
+  left: 8px;
+  right: 8px;
+  transform: none;
+  max-width: none;
+}
 .ui-toast {
   display: flex;
   align-items: flex-start;

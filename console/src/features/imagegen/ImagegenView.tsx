@@ -875,7 +875,8 @@ function StudioPane({
         <EmptyState icon="warning" title={tr("imggen.engine_unavailable")} />
       ) : (
         <>
-          <div className="igen-tabs" role="tablist">
+          {/* data-toast-chrome: a phone's toasts stay below this strip (ui/toastPlacement.ts). */}
+          <div className="igen-tabs" role="tablist" data-toast-chrome="">
             {(["chat", "form", "out"] as const).map((k) => (
               <button
                 key={k}
