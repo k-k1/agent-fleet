@@ -60,7 +60,7 @@ Start が使うイメージと Workspace が走らせているイメージが違
 4. **E2E ワークフローの緑を待つ。** `e2e.yml` は **push では走らない**（main への PR・毎晩の
    cron・手動 dispatch のみ）ので、作業ブランチでは自分で起こす:
    `gh workflow run e2e.yml --ref <ブランチ>`。CLI を焼き込んだイメージ
-   （`BAKE_AGENT_CLIS=1`）をビルドし、L1（**導入された版 ＝ ピン**）→ L2（フリート疎通）→
+   （`BAKE_AGENT_CLIS=1`）をビルドし、L1（§10.3 に挙げたツールについて**導入された版 ＝ ピン**）→ L2（フリート疎通）→
    L3（Console UI）を検証する。**red のまま先へ進まない。**
 5. **（大きめの版上げ）その CLI の contract を回す**（後述）。CLI ごとにワークフローも入力も
    別なので、要るものだけ回す。実ターンを使うものはその CLI のサブスク枠を消費する。`live` 入力は
@@ -69,10 +69,11 @@ Start が使うイメージと Workspace が走らせているイメージが違
    描かないので、状態検出を見るのは contract ワークフローの仕事で L4 ではない。
 6. **ホストに反映**: `run-dev.sh`。ビルド直後にイメージスモーク（L1）が走る。既定の lean
    イメージでは `versions.json` が新しいピンを持ち、CLI が焼かれていないことを確かめる。
-   `BAKE_AGENT_CLIS=1` なら導入された版を確かめる。
+   `BAKE_AGENT_CLIS=1` なら導入された版も確かめる。
 7. **各 Workspace に反映**: 各利用者が Console で **Stop→Start**。lean イメージでは、その起動で
-   entrypoint が新しいピンを `~/.local` に入れる（ネットワークが要る。失敗は次の起動で再試行）。
-   home と repos は残る。
+   entrypoint が boot-install 対象の CLI を `~/.local` で新しいピンへ進める（ネットワークが要る。
+   失敗は次の起動で再試行）。kiro と muse はオンデマンドで導入され、それぞれの導入経路でピンに
+   追従する（[04 §4.9](04-agent.ja.md#49-workspace-イメージと-entrypoint)）。home と repos は残る。
 8. **（任意）確認**: **設定 → ツールチェーン → ツールのバージョン** で、実効版・イメージ版・
    ピン版が並んで見える。
 
@@ -81,8 +82,9 @@ Start が使うイメージと Workspace が走らせているイメージが違
 - **毎晩の定期実行**（`e2e.yml`、04:00 JST・develop 対象）が、このリポジトリに変更が無くても
   上流 CLI や base image の破壊を検出する。red になったら上流を疑い、手順 4〜5 で切り分ける。
 - 再ビルドせず特定メンバーだけ先に進めたいときは、自己更新の opt-in がある。テナント設定で
-  許可し、メンバーが 設定 → ツールチェーン で Workspace ごとにオンにする。起動時に latest を
-  `~/.local` に入れる。オフにして Stop→Start するとピン版に戻る。
+  許可し、メンバーが 設定 → ツールチェーン で Workspace ごとにオンにする。メンバー自身の起動では latest を
+  `~/.local` に入れ、無人の起動（スケジュール実行の wake）では更新を飛ばして導入済みの版を
+  保つ。オフにして Stop→Start するとピン版に戻る。
 
 **版上げを知らせる仕組みは生きているか？** 公開版が動いたことに気づくのは
 `cli-release-watch.yml` で、contract が最後に通った版は追跡 issue の `tested` 状態である。
@@ -119,8 +121,10 @@ Start が使うイメージと Workspace が走らせているイメージが違
   その場で入れ替えて `/healthz` を待つ。**Workspace イメージは再ビルドしない。**
   `SKIP_CONSOLE=1` で Go 側のみ。`run-dev.sh` と同じ環境を再現し、`oauth.env` の存在を前提とする。
 - **`e2e-smoke.sh`** — イメージスモーク（L1）。ビルド済みイメージに対して `docker run` で
-  検証する。焼き込みイメージでは、導入された各 CLI の版が Dockerfile のピンと一致するか
-  （＝キャッシュが古くないか）を、lean イメージでは CLI が焼かれていないことを確かめる。
+  検証する。焼き込みイメージでは、導入された claude・opencode・codex・copilot・cursor・
+  kiro・muse の版が Dockerfile のピンと一致するか（＝キャッシュが古くないか）を確かめ、Go・`gh`・
+  Chromium はどのイメージでも版を突き合わせる。agy と rtk は存在の確認だけ。lean イメージでは
+  CLI が焼かれていないことを確かめる。
   どちらでも `versions.json` をピンと突き合わせ、イメージに入るべきものが揃っているかを見る。
   `run-dev.sh` がビルドのたびに実行し、`deploy/local/e2e-smoke.sh [image]` で単体でも回せる。
 
@@ -185,10 +189,10 @@ npm --prefix console run build
   | `release-scan` | 追跡ツリーに対する禁止トークンのゲート——pre-commit フックがステージ内容にかけるのと同じスキャナ |
 
   `docs.yml` が同じトリガで `scripts/docs-check.py` を回す。E2E ワークフローはイメージの
-  build が重いので分けてある。上流 CLI の破壊検知は第 3 の系統（後述）。そのほかのワークフローは
-  dispatch 専用で、イメージを焼くもの（たとえば開発配備用の Workspace イメージやエンジンの
-  イメージ）と、リリースを検証・公開するもの（`release-gate.yml`・`publish-dist.yml`。
-  [deploy/release/notes](../../deploy/release/notes/README.md) を参照）がある。
+  build が重いので分けてある。上流 CLI の破壊検知は第 3 の系統（後述）。イメージを焼く
+  ワークフロー（たとえば開発配備用の Workspace イメージやエンジンのイメージ）と
+  `publish-dist.yml` は dispatch 専用。`release-gate.yml` は dispatch と、packaging ブランチで
+  自身を変更する push で走る（[deploy/release/notes](../../deploy/release/notes/README.md) を参照）。
 
 ### E2E（イメージスモーク + フリート疎通 + UI + 実 API）
 
@@ -239,7 +243,7 @@ cd console-e2e && npm ci && npx playwright test
 | 答える問い | 「見に行くべき時か？」 | 「実際に壊れたか？」 |
 | 費用 | 無料 | 無料〜サブスク枠（Tier による） |
 | 頻度 | 毎日 | main への PR（関連パス）+ 週次 cron + dispatch（claude・copilot・agy・cursor・kiro は dispatch 専用）|
-| 赤くなる時 | 検査自体が失敗したときだけ | 契約が破れたとき |
+| 赤くなる時 | 検査自体が失敗したときだけ | 契約が破れたとき（外部サービスに依存するステップは報告のみのことがある。例: opencode の live な Tier B ターン）|
 
 ドリフトは**常態**（数日で版が進む CLI もある）なので、ドリフトのワークフローは赤くならない。
 追跡 issue を 1 本だけ最新に保ち、ドリフトが解消すれば閉じる。検査する行は
@@ -269,8 +273,11 @@ watcher が赤くなるのは、どの取得元も答えなかったときだけ
 まとめると (1) 無関係な変更で走り、(2) 入力が混ざる——実際に codex の Tier 2 と claude の
 L4 が 1 つの `live` 入力を共有し、1 回の dispatch で両方の枠が減った。ファイルを分ければこの
 結合は構造的に起きない。横断の例外は毎日の watcher 2 本と、`mcp-config-contract.yml`
-（クレデンシャル不要）: レジストリ側の 1 つの契約——各 CLI のグローバル MCP 設定ファイルの
-形——を複数の CLI にまたがって一度に検証する。
+（クレデンシャル不要）: レジストリ側の 1 つの契約——af が各 CLI のために書くグローバル MCP
+設定ファイルの形——を複数の CLI にまたがって一度に検証する。CI が見るのは claude・codex・
+opencode・copilot・cursor で、kiro（ログインが要る）と agy（ランナーで起動しない）はそこでは
+見られない。muse と lcpp にはこのファイルが無い——サーバーをワイヤ上とプロセス内で受け取る
+（`workspace/agent/internal/mcpreg/materialize.go` の `ServedKinds`）。
 
 共通セットアップ（Go・Node・tmux・実 CLI）は composite action
 `.github/actions/setup-agent-cli` にあり、`pinned | latest | <版>`（明示の版は npm の CLI

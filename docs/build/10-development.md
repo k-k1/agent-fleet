@@ -63,8 +63,8 @@ manifest `versions.json` on the default lean image — is
 4. **Wait for the end-to-end workflow to go green.** `e2e.yml` does **not** run on a
    push (only on PRs to main, a nightly cron and manual dispatch), so start it on your
    branch yourself: `gh workflow run e2e.yml --ref <branch>`. It builds the image with
-   the CLIs baked in (`BAKE_AGENT_CLIS=1`) and verifies L1 (**the installed version
-   equals the pin**), L2 (fleet connectivity) and L3 (Console UI). **Do not proceed
+   the CLIs baked in (`BAKE_AGENT_CLIS=1`) and verifies L1 (**the installed versions
+   equal the pins**, for the tools §10.3 names), L2 (fleet connectivity) and L3 (Console UI). **Do not proceed
    while it is red.**
 5. **(Larger bumps) run that CLI's contract** (below). Each CLI has its own workflow
    and inputs, so run only the one you need. The ones that take real turns spend that
@@ -74,12 +74,14 @@ manifest `versions.json` on the default lean image — is
    detection is the contract workflows' job, not L4's.
 6. **Reflect it on the host** with `run-dev.sh`. The image smoke test (L1) runs right
    after the build. On the default lean image it checks that `versions.json` carries
-   the new pins and that no CLI is baked in; with `BAKE_AGENT_CLIS=1` it checks the
-   installed versions.
+   the new pins and that no CLI is baked in; with `BAKE_AGENT_CLIS=1` it also checks
+   the installed versions.
 7. **Reflect it in each workspace**: every user does **Stop → Start** from the Console.
-   On a lean image the entrypoint installs the new pin into `~/.local` at that start
-   (it needs the network; a failure is retried at the next start). Home and
-   repositories survive.
+   On a lean image the entrypoint moves the boot-installed CLIs to the new pin in
+   `~/.local` at that start (it needs the network; a failure is retried at the next
+   start). kiro and muse are installed on demand instead, and follow the pin through
+   their own installers ([04 §4.9](04-agent.md#49-the-workspace-image-and-its-entrypoint)).
+   Home and repositories survive.
 8. **(Optional) confirm** from **Settings → Toolchains → Tool versions**, which shows
    the effective, image and pinned versions side by side.
 
@@ -90,8 +92,9 @@ Two notes:
   it goes red, suspect upstream and use steps 4–5 to isolate.
 - To move a single member forward without rebuilding, there is an opt-in self-update: a
   tenant setting allows it, and the member turns it on per workspace under Settings →
-  Toolchains. It installs latest into `~/.local` at start. Turning it off and doing
-  Stop → Start returns the workspace to the pin.
+  Toolchains. A start the member makes then installs latest into `~/.local`; an
+  unattended start (a scheduled run's wake) skips the update and keeps what is
+  installed. Turning it off and doing Stop → Start returns the workspace to the pin.
 
 **Is the thing that tells you to bump still running?** `cli-release-watch.yml` is what
 notices a public version moved, and the version its contract last passed is the `tested`
@@ -132,9 +135,10 @@ dispatched the contract, and nothing is being tested while it is down.
   workspace image.** `SKIP_CONSOLE=1` limits it to the Go side. It reproduces
   `run-dev.sh`'s environment, and requires `oauth.env` to exist.
 - **`e2e-smoke.sh`** — the image smoke test (L1), run with `docker run` against a
-  built image. On a baked image it checks that each installed CLI's version matches
-  the Dockerfile's pin (that is, the cache is not stale); on a lean image it checks
-  that no CLI is baked in. Either way it checks `versions.json` against the pins and
+  built image. On a baked image it checks that the installed claude, opencode, codex,
+  copilot, cursor, kiro and muse match the Dockerfile's pins (that is, the cache is
+  not stale), as do Go, `gh` and Chromium on every image; agy and rtk are checked for
+  presence only. On a lean image it checks that no CLI is baked in. Either way it checks `versions.json` against the pins and
   that everything that should be in the image is present. `run-dev.sh` runs it after
   every build; `deploy/local/e2e-smoke.sh [image]` runs it alone.
 
@@ -204,9 +208,10 @@ npm --prefix console run build
 
   `docs.yml` runs `scripts/docs-check.py` on the same triggers. The end-to-end
   workflow is separate because building images is heavy. Upstream CLI breakage is a
-  third system (below). Other workflows are dispatch-only. Some bake images (for
-  example the workspace image for a development deployment, and the engine images).
-  Others gate and publish releases (`release-gate.yml`, `publish-dist.yml`; see
+  third system (below). The workflows that bake images (for example the workspace
+  image for a development deployment, and the engine images) and `publish-dist.yml`
+  run on dispatch only; `release-gate.yml` runs on dispatch, and on a push that changes
+  it on the packaging branch (see
   [deploy/release/notes](../../deploy/release/notes/README.md)).
 
 ### End to end: image smoke, fleet, UI, real API
@@ -264,7 +269,7 @@ Two complementary systems close it — neither works alone:
 | Answers | "is it time to look?" | "did it actually break?" |
 | Cost | free | free to subscription quota, by tier |
 | Frequency | daily | PRs to main (relevant paths), a weekly cron, and dispatch (claude, copilot, agy, cursor and kiro are dispatch-only) |
-| Goes red | only if the check itself fails | when a contract breaks |
+| Goes red | only if the check itself fails | when a contract breaks (a step that depends on an outside service can be report-only, e.g. opencode's live Tier B turn) |
 
 Drift is **the normal state** — some CLIs move every few days — so the drift workflow
 does not go red. It keeps a single tracking issue up to date and closes it when the
@@ -300,7 +305,11 @@ happened: codex's Tier 2 and claude's L4 shared a single `live` input, and one d
 spent both quotas. Separate files make that coupling structurally impossible. The
 cross-cutting exceptions are the two daily watchers, and `mcp-config-contract.yml`
 (no credentials), which verifies one registry-side contract across several CLIs at
-once: the shape of each CLI's global MCP config file.
+once: the shape of the global MCP config file af writes for each CLI. CI covers
+claude, codex, opencode, copilot and cursor; kiro (needs a login) and agy (will not
+start on the runner) are not covered there. muse and lcpp have no such file — they get
+their servers on the wire and in process (`ServedKinds` in
+`workspace/agent/internal/mcpreg/materialize.go`).
 
 Shared setup (Go, Node, tmux and the real CLI) lives in the composite action
 `.github/actions/setup-agent-cli`, parameterised by `pinned | latest | <version>` (an
