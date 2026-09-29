@@ -207,9 +207,16 @@ substrate underneath it.
   downgraded** — always back up first.
 - **On AWS `WS_DATA` holds nothing** (`30-ingress` points it at `/tmp`). The state is
   RDS, EFS and, on `ecs-ec2`, the members' EBS homes, and each is backed up on its own
-  terms: `Persistence=retain` in `10-data` gives RDS snapshots, 7-day backups and
-  deletion protection and keeps EFS when the stack goes; the EBS homes are covered only
-  by the optional home backups of §9.5.
+  terms. **Retaining a resource when its stack is deleted is not a backup.**
+  - RDS: `Persistence=retain` in `10-data` turns on 7-day automated backups, a final
+    snapshot and deletion protection.
+  - EFS: `Persistence=retain` only keeps the file system when the stack is deleted. The
+    templates declare no EFS backup (no `BackupPolicy`, no AWS Backup plan), so
+    something deleted or corrupted on a running file system cannot be recovered from
+    it (#1195). The ecs runbook's upgrade step asks for an AWS Backup point taken by
+    hand.
+  - EBS homes (`ecs-ec2`): only the optional home backups of §9.5
+    (`AF_ECS_EC2_BACKUP_EVERY_SEC`, off by default).
 - **On ECS an upgrade is not only the application's tag.** A release can also need a new
   ECR repository and an image nothing has copied in yet (the engines' fetch and ingest
   steps live in `af-engine-tools`), so `update.sh` holds one order: **the repository
@@ -299,7 +306,7 @@ Properties to watch:
   sweeps any engine instance still alive.
 - **Most of a small deployment's bill is the floor, not people.** *Measured* on a sandbox
   over 2026-08-01 to 16: at most 22.3% of the bill could be attributed to a member; the
-  rest was NAT, DNS, tax, EFS, the CP, the load balancer and the database
+  rest was NAT, DNS, tax, EFS, the CP, the load balancer, the database and public IPv4
   ([decisions/0048](../decisions/0048-member-cloud-cost.md)). On `ecs-ec2` the Console
   shows each member's actual spend from cost allocation tags; the tagging for `ecs`
   ships unverified on real hardware.
