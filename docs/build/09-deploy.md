@@ -1,7 +1,7 @@
 ---
 audience: "someone adding a deployment target or an adapter"
 source_of_truth: "the code plus each runbook (`deploy/*/README.md`)"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
 # 09. Deployment — the forms, the adapters, the environment index
@@ -9,19 +9,23 @@ updated: "2026-07"
 English | [日本語](09-deploy.ja.md)
 
 **The actual commands live in the runbooks and are not duplicated here.** This chapter
-is the map: what forms exist, what gets swapped, and which knob controls it.
+is the map: what forms exist, what gets swapped, and which knob controls it. What each
+target can and cannot do (several users, per-user limits, engines, cost attribution) is
+[ref/deploy-targets](../../guide/ref/deploy-targets.md); how to add a target is
+[21](21-add-a-deploy-target.md).
 
 ## 9.1 The deployment forms
 
 | Form | Summary | State | Runbook |
 |---|---|---|---|
-| **local dev** | The CP as a host process. One entry script with subcommands, plus a light path that swaps only the CP | ✅ in use for development and small shared setups | the comments at the top of the scripts; the reflect-a-change table is [10](10-development.md) |
-| **wsl (personal)** | A WSL2 preset of local dev. Where Docker cannot be installed, the containerless subcommand ([ref/deploy-targets](../../guide/ref/deploy-targets.md)) | ✅ personal use | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
-| **compose** | The self-hosting mainline: a CP container plus Caddy for automatic TLS. The CP binds loopback, and **the compose definition contains the three constraints** of driving the host's Docker daemon from a container | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
-| **aws** | Either the native ECS adapter, or compose on a single EC2 VM | 🚧 implemented, no production mileage | [ecs](../../deploy/aws/ecs/README.md) / [ec2-single](../../deploy/aws/ec2-single/README.md) |
+| **local dev** | The CP as a host process. `run-dev.sh` is one entry point with subcommands (`local`, `wsl`, `native`, and `reset`, which wipes the data); `restart-cp.sh` swaps only the CP. `AUTH=dev` for one person, `oauth` when shared | ✅ in use for development and small shared setups | the comments at the top of [run-dev.sh](../../deploy/local/run-dev.sh) and [restart-cp.sh](../../deploy/local/restart-cp.sh); the reflect-a-change table is [10](10-development.md) |
+| **wsl (personal)** | `run-dev.sh wsl`: the local form preset for WSL2 with a native dockerd, `AUTH=dev` | ✅ personal use | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
+| **native** | No Docker: the CP and Console run as host processes and the workspace runs in a bubblewrap sandbox on a downloaded rootfs. **Single user only** — the `native` runtime refuses to start unless `AUTH=dev` | ✅ shipped as a package | [deploy/native/README.md](../../deploy/native/README.md) |
+| **compose** | The self-hosting mainline: a CP container plus Caddy for automatic TLS. The CP binds loopback, and **the compose definition contains the three constraints** of driving the host's Docker daemon from a container: the host network, `DATA_DIR` mounted at the same absolute path, and the docker group id | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
+| **aws — ECS** | Static infrastructure from CloudFormation, per-workspace resources from the CP's own ECS adapter. A workspace is a task on Fargate (`ecs`, the template default) or on an EC2 slot taken from a pool (`ecs-ec2`) | ✅ `ecs-ec2` runs the production deployment; `ecs` has been proven in a sandbox from deploy through end-to-end to teardown | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
+| **aws — ec2-single** | compose on one EC2 VM | ✅ the host of the "start from the release bundle on a clean host" gate | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
 
-- **ec2-single is compose on a VM** — a variant of the compose form, not a separate
-  runtime.
+- **ec2-single is compose on a VM** — the `docker` runtime, not a separate profile.
 - The authentication modes are [07 §7.3](07-security.md) and are not repeated here.
 
 ## 9.2 Ports and adapters — which knob swaps what
@@ -31,156 +35,220 @@ change (the seam list is [01 §1.6](01-architecture.md)). This section is the kn
 
 | Seam | Knob | Choices |
 |---|---|---|
-| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | empty, `local`, `docker` = Docker Engine (default) / `ecs`, `aws` = ECS 🚧 / `native`, `wsl` = containerless host processes, **which requires `AUTH=dev`**. **An unknown value fails fast at boot** |
-| `Store` | the database variables | SQLite (default, pure Go) or Postgres |
-| `KeyCustodian` | whether the master key is set | set = the local custodian; unset = no encryption, development only. KMS / Vault is 📋 ([decisions/0005](../decisions/0005-envelope-custodian.md)) |
-| `AuthGateway` | `AUTH` | `dev` / `oauth` / `proxy` ([07 §7.3](07-security.md)) |
+| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | empty, `local`, `docker` = Docker Engine (the default) / `ecs`, `aws` = ECS on Fargate / `ecs-ec2` = ECS on EC2 slots from a pool (no alias) / `native`, `wsl` = sandboxed host processes, **which requires `AUTH=dev`**. **An unknown value fails fast at boot** (`unknown AF_RUNTIME profile`; `runtime.NewFactory`) |
+| `Store` | `AF_DB` (the SQLite path) / `AF_DATABASE_URL`, or `AF_DB_HOST` and the other `AF_DB_*` | SQLite (default, pure Go) or Postgres |
+| `KeyCustodian` | whether `AF_MASTER_KEY` is set | set = the local custodian; unset = no encryption, development only. KMS / Vault is 📋 ([decisions/0005](../decisions/0005-envelope-custodian.md), #969) |
+| `AuthGateway` | `AUTH` | `dev` (the default when unset) / `oauth` (what the compose and AWS templates set) / `proxy` ([07 §7.3](07-security.md)) |
+| Engines | the engine table: `AF_ENGINES_SSM_PARAM` or `AF_ENGINES_JSON`, plus a row per role from `AF_LLM_URL` / `AF_COMFY_URL` | on AWS, engines the CP starts on demand; anywhere, a server already running on the network, named by URL |
 | Ingress / TLS | outside the CP | Caddy (compose) / Tailscale Funnel (local) / ALB + ACM (aws) |
 
-## 9.3 Ingress, and the loopback invariant
+## 9.3 Ingress, and the one-way-in invariant
 
-**The invariant: the CP binds loopback, and anything public is always behind the
-ingress.** The ingress terminates TLS and forwards; with `AUTH=oauth` the CP
-authenticates for itself, and only with `AUTH=proxy` does the ingress inject the
-identity header.
+**The invariant: the CP is reachable only through the ingress.** On one host the CP
+binds loopback — the image and compose set `CP_ADDR=127.0.0.1:8099`. The code's default
+(`:8080`) and `run-dev.sh`'s (`:8099`) bind every interface, which is fine for one
+person on a development host and wrong for anything shared. On AWS the CP task binds
+`0.0.0.0` inside its own network interface, and its security group admits only the
+load balancer's.
+
+The ingress terminates TLS and forwards. With `AUTH=oauth` the CP authenticates for
+itself; only with `AUTH=proxy` does the ingress inject the identity header.
 
 | Ingress | When | Notes |
 |---|---|---|
-| **Caddy** | the compose default | point DNS at it and certificates are obtained and renewed automatically, WebSockets included. A site with its own proxy can drop it |
-| **Tailscale Funnel** | one local form | straight through to the CP's loopback port |
-| **ALB + ACM** | aws 🚧 | TLS only — authentication stays native. Using the load balancer's own OIDC means `AUTH=proxy` |
+| **Caddy** | the compose default | point the DNS for `PUBLIC_DOMAIN` at it and certificates are obtained and renewed automatically, WebSockets included. Caddy and the CP both use the host network, so it reaches the CP's loopback port. A site with its own proxy can drop it (the second alternative in the `Caddyfile`) |
+| **Tailscale Funnel** | one local form | Funnel → `127.0.0.1:8099` directly |
+| **ALB + ACM** | aws | TLS only — authentication stays in the CP. `30-ingress.yaml`'s `AuthMode` allows `oauth` (the default) or `dev`; the templates configure no load-balancer OIDC |
 
-**Whenever the ingress changes, the public base URL must change with it** — it is what
-the OAuth redirect is built from, and the `https` prefix is what makes a Secure cookie
-possible.
+- **Whenever the ingress changes, `PUBLIC_BASE_URL` must change with it** — it is what
+  the OAuth redirect is built from, and the `https` prefix is what makes a Secure cookie
+  possible.
+- **Every proxy in front of the CP is one hop in `AF_TRUSTED_PROXY_HOPS`** (default 0 =
+  trust `RemoteAddr`). The compose example env and the AWS template set 1; a CDN in
+  front of the ALB makes it 2. The client address that tenant network restrictions see
+  depends on it ([07 §7.3](07-security.md)).
 
 ## 9.4 Environment variable index
 
 **The values, how to generate them and the caveats live in the annotated example env
 files** ([compose](../../deploy/compose/.env.example),
-[local](../../deploy/local/oauth.env.example)). This is only an index.
+[local](../../deploy/local/oauth.env.example)); the AWS templates set their own from
+stack parameters ([PARAMETERS.md](../../deploy/aws/ecs/cfn/PARAMETERS.md)). This is only
+an index. The value in parentheses is the code's default when the variable is unset.
 
 | Group | Variables | Role | Detail |
 |---|---|---|---|
-| CP core | the bind address, the Console directory, the runtime, the database path, the public base URL | where it listens, what it serves, which adapter | this chapter |
-| Workspace template | the image, the data root, the memory limit, the agent port base and host, the JVM directory, extra env, the session command | the common template the CP fills in when starting a container | [04](04-agent.md) |
-| L1 auth | the mode, the dev user, the header name, the provider client ids and secrets, the provider list and its per-provider settings, the cookie secret and TTL, the allowlists | Console login. **Every list empty means fail-closed.** A provider that declares no trust mode is disabled, and **zero working providers is fatal** | [07 §7.3](07-security.md) |
-| Provisioning and roles | the provisioning mode, the deployment-administrator list | how an unknown identity is admitted; who is an administrator | [06](06-data.md) |
-| At-rest encryption | the master key | unset means plaintext (development only). **Losing it is a crypto-shred** — keep it in a vault separate from the data | [07 §7.6](07-security.md) |
-| Git provider OAuth | **there are none** | A tenant administrator registers the apps in the Console. The old variables are no longer read, and the GitHub one is now for sign-in only | [decisions/0052](../decisions/0052-tenant-git-oauth.md) |
-| Scale-to-zero and showback | autostart, the several idle timeouts, the sweep interval, the stop grace, the sampling interval | auto-start, idle stop, the grace period, usage sampling | [03](03-control-plane.md) |
-| MCP | the enable flag | whether the endpoint exists at all | [08](08-integrations.md) |
-| Egress 🚧 | the listen address, the token, the ingest and policy URLs, the proxy address, the enforce flag, the allowlist | the forward proxy and the CP's aggregation | [07 §7.8](07-security.md) |
-| Postgres | a URL, or the individual parts, and **the ARN of the secret the password really lives in** | only when the store is Postgres. The parts are composed into a DSN; the ARN is what lets a rotated password be picked up without replacing the task (§9.9) | [06](06-data.md) |
-| ECS adapter 🚧 | the cluster, region, subnets, security group, namespace, filesystem, roles, log group, task size, uid/gid, start timeout | handing the CP the coordinates of the static infrastructure the templates built | [ecs runbook](../../deploy/aws/ecs/README.md) |
-| Containerless adapter 🚧 | the agent binary path | where the agent lives when there is no container | — |
-| Inside the container (injected by the CP; **an operator never sets these**) | the agent address and token, the secret key, the stop grace, the session command, the config directory, the self-update permission, the docs token | CP ↔ agent authentication, the DEK, the grace period | [04](04-agent.md) / [07 §7.5](07-security.md) |
+| CP core | `CP_ADDR` (`:8080`) · `CONSOLE_DIR` · `AF_RUNTIME` (`local`) · `AF_DB` (`<WS_DATA>/control-plane.db`) · `PUBLIC_BASE_URL` · `AF_PREVIEW_DOMAIN` · `AF_TRUSTED_PROXY_HOPS` (0) | where it listens, what it serves, which adapter, the public URL, preview subdomains, the client address | this chapter |
+| Workspace template | `WS_IMAGE` · `WS_DATA` (`/tmp/af-data`) · `WS_MEMORY` (`1g`) · `AF_MAX_WORKSPACE_MEM` · `WS_AGENT_PORT` (7700, the base of the per-workspace ports) · `WS_AGENT_HOST` (`127.0.0.1`) · `WS_JVM_DIR` · `WS_ENV` · `WS_SESSION_CMD` | the common template the CP fills in when starting a workspace. `WS_ENV` reaches `docker` and `native` workspaces only; the ECS runtimes do not pass it on | [04](04-agent.md) |
+| L1 auth | `AUTH` (`dev`) · `DEV_USER` (`dev`) · `AUTH_EMAIL_HEADER` (`X-Forwarded-Email`) · `GOOGLE_OAUTH_CLIENT_ID/SECRET` · `AF_GITHUB_LOGIN_CLIENT_ID/SECRET` (or `GITHUB_OAUTH_CLIENT_ID/SECRET`) with `AF_GITHUB_ALLOWED_ORGS` and the other `AF_GITHUB_*` · `AF_OIDC_PROVIDERS` + `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}` · `AF_COOKIE_SECRET` · `AF_SESSION_TTL` (168h) · `AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console login. **Every list empty means fail-closed.** A provider that declares no `TRUST` is disabled, and **zero working providers is fatal** | [07 §7.3](07-security.md) / [decisions/0043](../decisions/0043-login-idp.md) |
+| Provisioning and roles | `AF_PROVISION` (`auto`) · `SUPER_ADMIN_EMAILS` | how an unknown identity is admitted; who is a deployment administrator | [06](06-data.md) |
+| At-rest encryption | `AF_MASTER_KEY` | unset means plaintext (development only). **Losing it is a crypto-shred** — keep it in a vault separate from the data | [07 §7.6](07-security.md) |
+| Git provider OAuth | **there are none** | a tenant administrator registers the apps in the Console. `BITBUCKET_OAUTH_KEY/SECRET` are no longer read, and `GITHUB_OAUTH_CLIENT_ID` is for sign-in only | [decisions/0052](../decisions/0052-tenant-git-oauth.md) |
+| Scale-to-zero and showback | `AF_AUTOSTART` (on) · `AF_SESSION_IDLE_TIMEOUT` (1h) · `AF_INTERACTION_IDLE_TIMEOUT` (the session value) · `AF_WS_IDLE_TIMEOUT` (2h) · `AF_PRESENCE_IDLE_TIMEOUT` (30m) · `AF_IDLE_SWEEP_INTERVAL` (1m) · `AF_STOP_GRACE_SEC` (30, at most 120) · `AF_USAGE_SAMPLE_INTERVAL` (5m) | auto-start, idle stop, the grace period, usage sampling. For the idle timeouts and the sweep, `0` means off | [03](03-control-plane.md) |
+| MCP | `AF_MCP_ENABLED` | whether `/mcp` exists at all; only the exact string `true` enables it | [08](08-integrations.md) |
+| Egress | `AF_EGRESS_LISTEN` (`:3128`) · `AF_EGRESS_TOKEN` · `AF_EGRESS_{INGEST,POLICY}_URL` · `AF_EGRESS_PROXY_ADDR` · `AF_EGRESS_ENFORCE` · `AF_EGRESS_ALLOWLIST` | the forward-proxy subcommand and the CP's aggregation. `AF_EGRESS_PROXY_ADDR` injects the proxy variables into `docker` and `native` workspaces only | [07 §7.8](07-security.md) |
+| Postgres | `AF_DATABASE_URL`, or `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`, and **where the password really lives**: `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | only when the store is Postgres. The parts are composed into a DSN; the ARN is what lets a rotated password be picked up without replacing the task (§9.9) | [06](06-data.md) |
+| ECS adapter | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,INFRA_ROLE,LOG_GROUP,WORKSPACE_IMAGE,TASK_CPU,TASK_MEMORY,WS_DISK_GB,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | the coordinates of the static infrastructure the templates built. Read by `ecs` and `ecs-ec2` alike | [ecs runbook](../../deploy/aws/ecs/README.md) |
+| EC2 slot pool | `AF_ECS_EC2_LAUNCH_TEMPLATE` (required) · `AF_ECS_EC2_SLOT_TYPES` · `AF_ECS_EC2_DEFAULT_SLOT_CLASS` · `AF_ECS_EC2_AMI_ARM64` · `AF_ECS_EC2_MAX_SLOTS` (8) · `AF_ECS_EC2_HOME_GB` (50) · `AF_ECS_EC2_SLOT_SLEEP_SEC` (900) · `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` (0 = never) · `AF_ECS_EC2_HIBERNATE_AFTER_SEC` (0 = off) · `AF_ECS_EC2_BACKUP_EVERY_SEC` (0 = off) · `AF_ECS_EC2_BACKUP_KEEP` (3) · `AF_ECS_EC2_GOLDEN_AUTOBAKE` (on), and the sweep and timing knobs `AF_ECS_EC2_*_SEC` | `ecs-ec2` only: the slot types and cap, the home size, and the idle tiers of §9.5 | [ecs runbook](../../deploy/aws/ecs/README.md) §Optional: EC2 slot pool / [decisions/0045](../decisions/0045-ec2-persistent-workspace.md) |
+| Engines | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON` · `AF_LLM_URL` · `AF_COMFY_URL` / `AF_COMFY_API_KEY` · `AF_ENGINE_API_KEY_<KEY>` · `AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}` · `AF_ENGINE_ECS_CLUSTER` · `AF_ENGINE_WAKE_TIMEOUT` (900 s) · `AF_ENGINE_PLAIN_HOLD` · `AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | the engine table, the engine controller, the gateway's hold on a cold engine, and borrowing another deployment's engines | [decisions/0071](../decisions/0071-self-hosted-inference-engines.md) / [0076](../decisions/0076-external-image-engine-on-lan.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.md) |
+| Speech | `AF_VOICEVOX_URL` (`http://127.0.0.1:50021`) · `AF_TTS_ECS_SERVICE` and the other `AF_TTS_ECS_*` · `AF_TTS_MAX_CHARS` (300) · `AF_POLLY_{REGION,ENGINE}` | a VOICEVOX by URL, or the one on ECS that the CP scales from zero; Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.md) |
+| Containerless adapter | `AF_NATIVE_AGENT_BIN` (`workspace-agent` on `PATH`) · `AF_NATIVE_ROOTFS` · `AF_NATIVE_BWRAP` | where the agent binary lives; the rootfs that switches on the bubblewrap sandbox | [native runbook](../../deploy/native/README.md) |
+| Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker` and as SSM SecureString task secrets on ECS | [04](04-agent.md) / [07 §7.5](07-security.md) |
 
 How to check this index is complete: **the variable names are their own grep anchors.**
-Cross-check what the CP reads against the pass-through list in the start script and the
-example env files.
+Cross-check what the CP reads (`envx.Or`, `envx.DurationOr`, `runtime.EnvInt`,
+`os.Getenv`) against the example env files. `run-dev.sh` names what it passes in its
+`exec env` block, but that block is not a filter — every exported variable reaches the
+CP — and it sets its own defaults (`CP_ADDR=:8099`, `WS_MEMORY=5g`).
 
-**How a JDK is provided differs by runtime — never assume the system JVM directory
-exists.** The bind-mount knob is **local-only**; on ECS there is no such mount, so that
-directory can be empty. The runtime-independent answer is a directory on the home
-volume, populated by an install subcommand. Choosing a Java version in the Console
-installs any missing one and puts it on the path. **Choosing a version that is not
-installed offers a button that installs it there and then** — previously nothing
-happened until the next container start; now it needs neither a restart nor a terminal.
-After installation the toolchain resolution globs the directory at every start, so it
-takes effect **from the next session**.
+**`0` does not mean "off" everywhere.** The idle timeouts parse `0` as off; a duration
+read with `envx.DurationOr` (`AF_SESSION_TTL`, `AF_USAGE_SAMPLE_INTERVAL` …) treats `0`
+as unset and uses the default.
 
-## 9.5 The AWS target 🚧
+**How a JDK is provided differs by runtime — never assume `/usr/lib/jvm` is populated.**
+`WS_JVM_DIR` is bind-mounted read-only at `/usr/lib/jvm` on `docker` and on `native` in
+its rootfs mode; the ECS runtimes have no such mount, so that directory can be empty.
+The runtime-independent answer is `~/.local/share/agent-fleet/jvm` on the home volume,
+which `workspace-agent install-jdk <major>` fills with Temurin from Adoptium. Choosing a
+Java version in the Console makes the entrypoint install any missing one and put it on
+`JAVA_HOME`. `GET /env/toolchains` offers what is on disk in either directory plus what
+can be installed (`java_available`); **choosing one that is not installed offers a
+button that installs it there and then** (`POST /env/jdk-install`, then poll with
+`GET`). After installation `resolvedToolchains` globs the directories at every start,
+so it takes effect **from the next session** without a restart.
 
-**Implemented, with no production mileage** — proven in a sandbox from deploy through
-end-to-end to teardown.
+## 9.5 The AWS target
 
-- The mapping: the runtime is ECS (one workspace = one service, desired 0/1 =
-  scale-to-zero); the persistent home is an EFS access point with a fixed root and
-  uid/gid; secrets are parameter-store entries, **so the DEK appears in the task
-  definition only as a reference and never as plaintext**; the CP reaches the agent over
-  service discovery.
-- **The ownership boundary**: the CloudFormation templates build **static
-  infrastructure once**. Per-workspace resources are **created at runtime by the CP
-  under deterministic names** — the adapter is stateless and the templates never churn.
-- The `starting` state in the Runtime contract is effectively ECS-only, because a cold
-  image pull takes minutes. **While it is converging, callers neither re-start it nor
-  idle-stop it.** The Docker adapter comes up in seconds and never reports it.
-  - Reducing that latency — whether to adopt lazy image loading — concluded as a
-    **conditional yes**: the prerequisites are met by the current setup unchanged, but
-    **the ~100 s has never been broken down**, so the gate is to measure the pull
-    separately first.
-  - **The 504 on a first start had a different cause**: a synchronous wait longer than
-    the load balancer's idle timeout. It is fixed independently — **start returns as
-    soon as the desired count is set**, and waiting for the agent's health moved to a
-    background goroutine. A synchronous wait cannot be reintroduced there, because by
-    the time that code runs the task is always starting from nothing (there is no image
-    cache). Convergence is observed by the Console's own polling.
+Seven CloudFormation stacks, in deploy order `00-network → 10-data → 20-platform →
+(40-ec2-pool) → (50-tts) → (60-engines) → 30-ingress`; the ones in parentheses are
+optional. The runbook's "Stack decomposition" says what each one owns.
+
+- **The ownership boundary**: the templates build **static infrastructure once**.
+  Per-workspace resources are **created at runtime by the CP under deterministic names**
+  — the adapter is stateless (everything is found by name or tag) and the templates
+  never churn.
+- **The common mapping**: one workspace = one ECS service at desired 0 or 1
+  (scale-to-zero); the agent token and the DEK are SSM SecureString parameters, **so the
+  DEK appears in the task definition only as a reference and never as plaintext**; the
+  CP reaches the agent over Service Connect; the CP itself is a Fargate service in
+  `30-ingress` at `desiredCount 1`, with RDS Postgres as its store.
+- **`ecs` (Fargate)**: the home is an EFS access point with a fixed root and uid/gid.
+  Fargate keeps no image cache, so every start pulls the image cold.
+- **`ecs-ec2` (the EC2 slot pool, [decisions/0045](../decisions/0045-ec2-persistent-workspace.md))**:
+  - **A slot is an EC2 instance serving one member at a time.** The CP buys it itself
+    (`RunInstances` from `40-ec2-pool`'s launch template — no Auto Scaling group, no
+    capacity provider) up to `AF_ECS_EC2_MAX_SLOTS`, and pins the task to it with an
+    `ec2InstanceId ==` placement constraint. The slot's root volume is the image cache.
+  - **The home is the member's own gp3 EBS volume.** The CP attaches it at `/dev/sdf`
+    and mounts it over SSM. Credentials (`/var/lib/af/claude`) and the `keep` area stay
+    on EFS.
+  - **A new home starts from a golden snapshot** — a home that has already run the
+    boot-time install, baked by the CP whenever the workspace image changes and refused
+    when it does not match the running image.
+  - **Idle is tiered.** Stop sets desired 0 and leaves the home attached, so the member
+    returns to the same slot. After `AF_ECS_EC2_SLOT_SLEEP_SEC` a free slot is stopped
+    (the root volume still bills). After `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` it is
+    terminated, the home detached first. After `AF_ECS_EC2_HIBERNATE_AFTER_SEC` (or a
+    tenant's own limit) the home is snapshotted and the volume deleted; the next start
+    restores it. `AF_ECS_EC2_BACKUP_EVERY_SEC` takes a spare snapshot of a home in use,
+    the only way back from losing an Availability Zone, since an EBS volume cannot leave
+    its zone.
+  - **Why a deployment chooses it: I/O, a home that really persists, and sizes above
+    Fargate's ceiling — not start time.** Measured through the adapter, a warm start
+    takes 43–110 s against Fargate's ~105 s; small-file writes on the EBS home are 8–30×
+    faster than on EFS.
+- **The `starting` state in the Runtime contract is effectively ECS-only.** While it is
+  converging, callers neither re-start it nor idle-stop it; the Docker adapter comes up
+  in seconds and never reports it. **Start returns as soon as the desired count is
+  set**, the wait for the agent's health runs in a background goroutine, and the Console
+  observes convergence by polling `GET /api/workspace`. A synchronous wait cannot come
+  back: a cold start outlives the load balancer's 60 s idle timeout and turns into a
+  504.
+- **The Fargate start has been broken down**: of a ~101 s warm-home restart, the image
+  pull is ~35 s, so lazy image loading (SOCI) was rejected; the rest is task creation,
+  the network interface, the EFS mount and the entrypoint.
+- **Engines are separate stacks.** `50-tts` is VOICEVOX on Fargate, scaled from zero by
+  the CP. `60-engines` is llama.cpp and ComfyUI as ECS services on GPU instances that the
+  CP buys with EC2 Fleet when a request arrives. Neither depends on the workspace
+  runtime; the CP finds them through the engine table.
 - The cost characteristics are §9.8.
 
 ## 9.6 Parity and differences
 
-| Aspect | local / compose | aws (ECS) 🚧 |
-|---|---|---|
-| Workspace image and agent | the same artefact | the same artefact — this is the point of the split |
-| Scale-to-zero | stop / start the container | desired 0/1. **The idle logic is common**; the Runtime absorbs the difference |
-| Isolation strength | the container boundary, sharing a kernel | plus task isolation |
-| Egress | the container network plus a host firewall (enforce is 🚧) | security groups and network ACLs |
-| Storage performance | local disk, fast | **a network filesystem can be slow for git**, which is metadata-heavy |
-| Infrastructure privilege | the Docker socket is host-root equivalent ([07 §7.1](07-security.md)) | metadata blocked, a minimal task role |
+The workspace image and the agent are the same artefact on every target — that is the
+point of the split. The capability matrix is
+[ref/deploy-targets](../../guide/ref/deploy-targets.md); what follows is the
+substrate underneath it.
+
+| Aspect | docker / compose | native | ecs (Fargate) | ecs-ec2 |
+|---|---|---|---|---|
+| Scale-to-zero | stop / start the container | stop / start the processes | desired 0/1 | desired 0/1, then the idle tiers of §9.5 |
+| Isolation | the container boundary, sharing a kernel | a bubblewrap sandbox; one user | a task with no shared host | a task on an instance no one else uses at the same time |
+| Egress | the container network, optionally the forward proxy ([07 §7.8](07-security.md)) | the host's | security groups | security groups |
+| Home storage | a local directory, fast | a local directory | EFS: **metadata-heavy work such as git is slow** | EBS; credentials on EFS |
+| Infrastructure privilege | the Docker socket is host-root equivalent ([07 §7.1](07-security.md)) | the user's own account | a minimal task role, no instance metadata | a minimal task role |
+
+**The idle logic is common**; each Runtime absorbs how "stopped" is implemented.
 
 ## 9.7 Backup, restore and upgrade — the assumptions
 
-- **The data directory is everything you must preserve**: the database, every user's
-  home including the encrypted store, the plaintext agent state, the wrapped DEKs, and
-  the certificates. Only what can be re-provisioned is excluded.
-- **The master key goes in neither the data directory nor the backup** — keep it
+- **`WS_DATA` (`DATA_DIR` in compose) is everything you must preserve**: the database,
+  every user's home including the encrypted store `secrets.enc`, the plaintext agent
+  state, the wrapped DEKs, and the Caddy certificates. Only what can be re-provisioned
+  (`shared/jvm`) is excluded.
+- **`AF_MASTER_KEY` goes in neither the data directory nor the backup** — keep it
   separately. Losing it makes every backup undecryptable. Conversely, **the archive
   contains plaintext agent state, so the archive itself needs protecting.**
 - A restore may land under a different parent path: the CP re-points at start, **but the
   basename is a contract**.
-- **Upgrades apply migrations automatically at start and cannot be downgraded** — always
-  back up first.
+- **Upgrades apply the embedded migrations automatically at start and cannot be
+  downgraded** — always back up first.
+- On AWS the state is RDS (`Persistence=retain` in `10-data` turns on snapshots, 7-day
+  backups and deletion protection), EFS, and on `ecs-ec2` the members' EBS homes and
+  their snapshots.
 - **On ECS an upgrade is not only the application's tag.** A release can also need a new
-  ECR repository and an image nothing has copied in yet (0.19.0 moved the engines' fetch
-  and ingest steps into `af-engine-tools`), so `update.sh` holds one order: **the
-  repository (20-platform, through a change set it prints and executes only when nothing
-  is replaced) → the image (`crane copy` from GHCR) → the stack that names it
+  ECR repository and an image nothing has copied in yet (the engines' fetch and ingest
+  steps live in `af-engine-tools`), so `update.sh` holds one order: **the repository
+  (20-platform, through a change set it prints and executes only when nothing is
+  replaced) → the image (`crane copy` from GHCR) → the stack that names it
   (60-engines)**. Reversed, nothing fails at the time: the stack deploys and the fetch
   containers sit in `CannotPullContainerError` while the service reports a steady state.
   What the script deliberately does not do is *bake* an image — if GHCR has not got the
   tag either it stops and names the workflow that makes it.
-- The actual procedures are the [compose runbook](../../deploy/compose/README.md) and,
-  for ECS, the [ecs runbook](../../deploy/aws/ecs/README.md) §Upgrade.
+- The actual procedures (`backup.sh`, `restore.sh`, upgrade, air-gapped) are the
+  [compose runbook](../../deploy/compose/README.md) and, for ECS, the
+  [ecs runbook](../../deploy/aws/ecs/README.md) §Upgrade.
 
 ## 9.8 Cost characteristics
 
-The two AWS forms bill in a different **shape**. A single VM is **near-flat regardless
-of headcount**; ECS is **a standing floor plus headcount × hours**, where scale-to-zero
-does the work. **The choice follows that shape**; the absolute numbers below only
-support it.
+The AWS forms bill in a different **shape**. A single VM is **near-flat regardless of
+headcount**; ECS is **a standing floor plus headcount × hours**, where scale-to-zero does
+the work. **The choice follows that shape**; the absolute numbers below only support
+it.
 
-> **Assumptions**: us-east-1 on-demand list price, 730 h/month, as of 2026-07. Tokyo and
-> other regions run roughly **+10–30%**. No reserved or savings plans are applied.
+> **Assumptions**: unless marked *measured*, these are list prices from the AWS Pricing
+> API for ap-northeast-1 (Tokyo), 730 h/month, as of 2026-08 — the ecs runbook's "Cost
+> & ephemerality" and [decisions/0045](../decisions/0045-ec2-persistent-workspace.md).
+> us-east-1 is roughly 30% lower. No reserved instances or savings plans are applied.
 > **The agent subscriptions are each user's own and are not included at all.**
 
 ### 9.8.1 A single VM — flat
 
 | Item | Monthly | Note |
 |---|---|---|
-| The instance (2 vCPU / 8 GB) | $61 | smaller and larger sizes are offered by the template |
-| Disk, 30 GB | $2 | everything you back up lives here |
-| A static IP | $4 | public IPv4 is always billed now |
-| DNS zone | $1 | not needed with a wildcard DNS service |
-| **Total** | **≈ $67/month** | **it does not change as people are added** — until the RAM runs out |
+| The instance, a disk of 30 GB and a static IP | ≈ $87 (t3.large, the default) / ≈ $47 (t3.medium) | the template offers t3.medium, t3.large and t3.xlarge |
+| DNS zone | $0.50 | the template needs an existing Route53 hosted zone |
+| **Total** | **≈ $88/month** | **it does not change as people are added** — until the RAM runs out |
 
-**RAM is the limit, not CPU.** Subtract the CP, the proxy and the OS, and divide what is
-left by the per-workspace memory limit: about **4–5 concurrent workspaces** on that
-size. That is why the runbook tells you to lower the limit on a smaller instance.
+**RAM is the limit, not CPU.** Subtract the CP, Caddy and the OS (about 1.5 GB) and
+divide what is left by `WS_MEMORY`: that is how many workspaces can run at their limit
+at once. The compose example sets 5g, which leaves room for one on a t3.large, so a VM
+for a team is sized for everyone's peak — and the runbook tells you to lower the limit
+on a t3.medium.
 
 Properties to watch:
 
-- **A burstable instance family drops to its baseline** once the credits are gone.
+- **A burstable instance family drops to its baseline** once the CPU credits are gone.
   Sustained heavy builds want a fixed-performance family.
 - **Scale-to-zero does not help.** Idle-stop only stops the workspace containers; the VM
   is still billed. **Cutting weekend cost means stopping the VM itself.**
@@ -188,48 +256,61 @@ Properties to watch:
 
 ### 9.8.2 ECS — a floor plus usage
 
-**The standing floor, payable with zero workspaces running:**
+**The standing floor, payable with every workspace stopped:**
 
 | Item | Monthly | Note |
 |---|---|---|
-| NAT gateway | $33 | required for egress, and **endpoints cannot remove it** |
-| Load balancer | $20 | plus usage |
-| Database | $15 | why state survives a CP task replacement |
-| Network filesystem, 50 GB | $15 | billed by usage |
-| The CP task, 24/7 | $18 | |
-| Registry, logs, storage, DNS | $5–10 | |
-| **Floor** | **≈ $110/month** | |
+| NAT gateway | $45 | workspaces reach git and the model APIs through it, and it is on the start path (ECR, logs, SSM). A NAT instance (≈ $8) is the biggest single lever |
+| The CP task, 24/7 (0.5 vCPU / 1 GB) | $23 | |
+| Database (RDS db.t4g.micro, 20 GB) | $21 | why state survives a CP task replacement |
+| Load balancer | $18 | plus usage |
+| Secrets, service discovery, registry | ≈ $1 | |
+| EFS | by usage | every home on `ecs`; credentials only on `ecs-ec2` |
+| **Floor** | **≈ $107/month + EFS** | |
 
-**Per workspace**, at about **$0.049/hour**:
+**Per workspace:**
 
-| Pattern | Per person | 20 people | With the floor |
-|---|---|---|---|
-| Weekdays, 8 h (assumes scale-to-zero) | $8.7 | $174 | **≈ $285/month** |
-| 24/7 (idle stop not working) | $36 | $720 | ≈ $830/month |
+| | `ecs` (Fargate, 1 vCPU / 2 GB) | `ecs-ec2` (m7i.large, 2 vCPU / 8 GB) |
+|---|---|---|
+| Running | $0.0616/h | $0.130/h (m7i is $0.0651 per vCPU-hour at every size) |
+| Weekdays, 8 h × 22 days | ≈ $11 | ≈ $23 |
+| 24/7 (idle stop not working) | ≈ $45 | ≈ $95 |
+| While stopped | EFS, for what the home uses | the home's EBS, for what it **provisions** ($0.096/GB-month; 50 GB = $4.80), plus the slot's root volume until the slot is terminated (100 GB = $9.60) |
 
-**That second row is also the bill when scale-to-zero breaks.** Whether the idle
-settings are actually working is therefore a **cost** concern as much as an operational
-one.
+- **The 24/7 row is also the bill when scale-to-zero breaks.** Whether the idle settings
+  actually work is therefore a **cost** concern as much as an operational one.
+- **EBS bills what is provisioned, EFS what is used**: the break-even is a home 26.7%
+  full ($0.096 / $0.36). Hibernation turns a 50 GB home with 20 GB in it from $4.80 into
+  a $1.00 snapshot.
+- **EFS I/O is a line of its own**, and on `ecs-ec2` too, because the credentials stay
+  there. *Measured* on the production deployment in September 2026: about $135/month of
+  elastic-throughput I/O (CloudWatch × unit price, reconciled with Cost Explorer to
+  0.12%) — [decisions/0087](../decisions/0087-efs-metadata-io.md).
+- **A GPU engine left running dwarfs everything else**: a g6.xlarge is $1.26/h (≈ $918
+  a month). The CP starts engines on demand and stops them when idle, and `pause.sh`
+  sweeps any engine instance still alive.
+- **Most of a small deployment's bill is the floor, not people.** *Measured* on a sandbox
+  over 2026-08-01 to 16: at most 22.3% of the bill could be attributed to a member; the
+  rest was NAT, DNS, tax, EFS and the CP
+  ([decisions/0048](../decisions/0048-member-cloud-cost.md)). On `ecs` and `ecs-ec2` the
+  Console shows each member's actual spend from cost allocation tags.
 
 ### 9.8.3 Choosing between them
 
-| People | Single VM | ECS (weekdays, 8 h) | Verdict |
-|---|---|---|---|
-| up to 5 | **$67** | $154 | **the VM, no contest** — ECS cannot earn back its floor |
-| up to 15 | $283 | $240 | roughly even; decide on operational effort and isolation |
-| 20 | $283–368 | **$285** | **about the same** — the crossover, past which non-cost factors dominate |
-| 20, 24/7 | $283 | $830 | consolidating onto a VM wins by a mile |
-
-**There is almost no case where ECS wins on cost.** You choose it for task-level
-isolation, per-user fault isolation, rolling image replacement, and a tighter metadata
-and role posture (§9.6). **Scale-to-zero is not what makes it cheap — it is what dilutes
-the premium down to "about the same as a VM, at twenty people".**
-
-- **Small, single team → the VM** (compose on AWS).
-- **Isolation or per-user availability requirements → ECS**, accepting the floor and the
-  fact that idle-stop must actually work.
-- Both are still 🚧 with no production mileage. **Check the real numbers against the
-  first month's actual bill.**
+- **One or two people, or a team that fits one VM → ec2-single** (compose on AWS). It is
+  cheaper outright, and a VM for everyone's peak stays flat.
+- **ECS catches up on cost at roughly 8–10 concurrent users** (an estimate from the list
+  prices above), where the VM has to be sized for everyone's peak around the clock and
+  ECS bills only the hours each workspace runs.
+- **Below that, you choose ECS for what it gives regardless of price**: task-level
+  isolation, per-user fault isolation, rolling image replacement, and a tighter
+  metadata and role posture (§9.6). **Scale-to-zero is not what makes it cheap — it is
+  what dilutes the floor.**
+- **Between the two ECS runtimes**, `ecs-ec2` costs more per running hour for a bigger
+  box, and buys I/O, persistence and size (§9.5). It also adds four more resources per
+  workspace to operate.
+- **Check the estimates against the actual bill** — the Console's per-member cost view
+  and Cost Explorer.
 
 ## 9.9 Health, readiness, and a credential that moves
 
