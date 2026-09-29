@@ -48,7 +48,8 @@ CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一
 - **内蔵 git プロバイダ** — bare リポジトリ + smart HTTP + LFS を CP 自身がホストする（**Agent 非経由**・
   [91](91-internal-git.ja.md)）。
 - **egress 統制** — forward proxy への policy 配布・観測イベントの集約・admin と member の API（§3.8）。
-- **memo キュー** — membership 単位のメモと一括送信。**CP 完結**なので Workspace 停止中も使える（§3.6）。
+- **memo キュー** — membership 単位のメモと一括送信。CRUD は **CP 完結**なので Workspace 停止中も編集でき、Agent が
+  要るのは送信だけ（§3.6）。
 - **定時実行（scheduler）** — スケジュール定義を CP の DB に持ち、goroutine が発火させる（tz は埋め込み
   IANA DB で DST 込みで解決）。作成は `/internal/schedules`（`AF_SCHEDULE_TOKEN`）経由で、オペレーターの
   会話が自然文を spec に訳して使う。Console の `/api/schedules` は一覧・編集・一時停止・再開・即時実行・
@@ -82,9 +83,11 @@ CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一
 ## 3.2 リクエストの一生
 
 メンバーの API 呼び出しは同じ前段を通る（認可の原則・エラー形は [05 §5.4](05-api.ja.md) が正）。
-以下は完全形で、Workspace に触れるものが使うラッパー `withResolved` の手順。CP 完結の面 — memo キュー・
-スケジュール・保存済みの作業項目クエリ — は代わりに `withMembership` を使い、手順 3 で止まって Runtime を
-作らない。テナントすら要らないもの（PAT・テナントの選択）は `withIdentity` で、手順 2 で止まる。
+以下は完全形で、メンバー向け `/api` の標準ラッパー `withResolved` の手順。CP 完結のルート — memo の
+CRUD・スケジュール・保存済みの作業項目クエリ — は `withMembership` を使い、手順 3 で止まって Runtime を
+作らない。memo の flush と memo の画像のルートは Agent が要るので `withResolved`。テナントすら要らない
+ルート（PAT・テナントの選択）は `withIdentity` で、手順 2 で止まる。preview には専用のラッパー
+（`withPreviewResolved`）がある。新しいタブはテナントのヘッダを付けられないため。
 
 1. **authGate**（oauth モードのみ）— cookie 検証と email 注入。除外はそれぞれのルートの隣で宣言する
    （`exemptExact` / `exemptPrefix`）: ログインと OAuth の経路、`/healthz` と `/readyz`、それに自前で
@@ -99,8 +102,10 @@ CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一
 5. **処理または中継** — CP 完結の面はここで答え、それ以外は 5 経路のどれかで Agent へ
    （[05 §5.3](05-api.ja.md)）。
 
-idle-stop の活性を記録するのは、活動を意味する操作だけ: `GET` / `HEAD` 以外の REST 中継、チャットの
-ストリーム、§3.3 の long-lived 接続。裏のポーリングは `/api/events` も含めて Workspace を温めない。
+idle-stop の活性の時計を進めるのは、コードが `touchWorkspace` を呼ぶ箇所で、経路ごとに決まっている —
+中継を通る書き込み・ストリーム・接続・preview のアクセス・明示的な起動・attention ビーコン・スケジュールの
+起床など。意図して**数えない**のは裏での読み取り: 中継される `GET` / `HEAD` と `/api/events`。だから
+開きっぱなしの Console が Workspace を温め続けることは無い。
 
 Workspace が running でないときに要求が何に出会うかは経路で違う（[05 §5.3](05-api.ja.md)）。一般の REST
 中継（`agentProxyAPI.rest`）は状態を確かめずに接続し、Agent に届かなければ `502`。端末は先に確かめて

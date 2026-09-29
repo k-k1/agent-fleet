@@ -59,8 +59,8 @@ security design is [07](07-security.md).
   the CP itself, **not through the agent** ([91](91-internal-git.md)).
 - **Egress control** — distributing policy to the forward proxy, aggregating observed
   events, and the admin and member APIs (§3.8).
-- **The memo queue** — per-membership memos and batch send. A **CP-only** feature, so it
-  works while the workspace is stopped (§3.6).
+- **The memo queue** — per-membership memos and batch send. The CRUD is **CP-only**, so
+  memos can be edited while the workspace is stopped; only the send needs the agent (§3.6).
 - **The scheduler** — schedule definitions live in the CP's database and a goroutine
   fires them, resolving time zones (including DST) from an embedded IANA database.
   Creating one goes through `/internal/schedules` (`AF_SCHEDULE_TOKEN`), which the
@@ -102,11 +102,13 @@ Which file implements what is [90-code-map](90-code-map.md).
 ## 3.2 The life of a request
 
 A member's API call goes through the same front half (the authorisation principles
-and error shapes are [05 §5.4](05-api.md)). The steps below are the full form, the
-`withResolved` wrapper that anything touching the workspace uses. CP-only surfaces —
-the memo queue, schedules, the saved work-item queries — use `withMembership` instead,
-which stops after step 3 and never builds a Runtime; a few that need no tenant at all
-(PATs, the tenant picker) use `withIdentity` and stop after step 2.
+and error shapes are [05 §5.4](05-api.md)). The steps below are the full form,
+`withResolved`, the standard wrapper for the member-facing `/api` routes. CP-only
+routes — the memo CRUD, schedules, the saved work-item queries — use `withMembership`,
+which stops after step 3 and never builds a Runtime; the memo flush and the memo image
+routes need the agent and use `withResolved`. Routes that need no tenant at all (PATs,
+the tenant picker) use `withIdentity` and stop after step 2. Preview has a wrapper of
+its own (`withPreviewResolved`), because a new tab cannot carry the tenant header.
 
 1. **The auth gate** (oauth mode only) — verify the cookie and inject the email. The
    exemptions are declared next to the routes they belong to (`exemptExact` /
@@ -124,9 +126,11 @@ which stops after step 3 and never builds a Runtime; a few that need no tenant a
 5. **Handle or proxy** — CP-only surfaces are answered here; everything else goes to the
    agent over one of the five paths ([05 §5.3](05-api.md)).
 
-Only the operations that mean activity record it for idle-stop: a relayed REST call
-that is not `GET` or `HEAD`, a chat stream, and the long-lived connections of §3.3.
-Background polling, `/api/events` included, never keeps a workspace warm.
+Idle-stop's activity clock is advanced where the code calls `touchWorkspace`, path by
+path — writes through the relay, streams, connections, preview traffic, explicit
+starts, the attention beacon and a scheduled wake among them. What deliberately does
+**not** count is background reading: a relayed `GET` or `HEAD`, and `/api/events`. A
+Console left open therefore never keeps a workspace warm.
 
 What a request meets when the workspace is not running depends on its path
 ([05 §5.3](05-api.md)). The general REST relay (`agentProxyAPI.rest`) does not check
