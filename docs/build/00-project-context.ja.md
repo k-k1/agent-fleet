@@ -34,7 +34,7 @@ Agent Fleet は 0.x のリリースとして出荷していて、リリースノ
 | 利用者の隔離 | メンバーシップ（テナントの中の 1 人）ごとに 1 ワークスペース | `native` 以外のすべての形態でコンテナ。`native` は設計上 1 人用（[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)）。タスクごとの環境でなくメンバーごとに長寿命のワークスペースを 1 つ持たせる理由は [decisions/0104](../decisions/0104-long-lived-member-workspace.ja.md) |
 | 想定規模 | 1 配備あたり数十〜100 人程度・同時 20 人程度を想定した大きさ | どちらも想定であって実測した上限ではない。1 台のホストか 1 つの ECS クラスタで足りるつもりで作っている。配備全体の上限はコードに無く、テナントにはワークスペース数とセッション数の上限を設定できる（[ref/limits](../../guide/ref/limits.ja.md)） |
 | デプロイ層 | 1 つの中核。ランタイムアダプタは `AF_RUNTIME` で選ぶ | `docker`（既定）・`native`・`ecs`・`ecs-ec2` をポートとアダプタの裏に置く（[01 §1.6](01-architecture.ja.md)）。形態ごとの違いは [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md) |
-| 永続化 | クローン・CLI のログイン・会話の履歴は、ワークスペースの停止と再開をまたいで残る | 置き場はホームと、Claude についてはホームの横に置くその状態ディレクトリ（下の `CLAUDE_CONFIG_DIR`）。ホームの置き場は形態で違う。[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md) の「ホームの置き場」列 |
+| 永続化 | ワークスペースが持ち続けるデータ——作業コピー・CLI のログイン・手元の会話履歴——は、停止と再開をまたいで残る | 全部がホームにあるわけではない。Claude の状態は専用のディレクトリにあり（下の `CLAUDE_CONFIG_DIR`）、`ecs-ec2` ではホームが EBS、ログインは EFS に残る。形態ごとのホームの置き場は [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md) の「ホームの置き場」列。手元に保存されない会話もあり、たとえば Managed の cursor の会話は Cursor のサーバに残る（[ref/agents](../../guide/ref/agents.ja.md)） |
 | git 認証 | Console（接続）経由の HTTPS トークン／OAuth | SSH 鍵から格下げ（[decisions/0003](../decisions/0003-ssh-to-connections.ja.md)）。メンバーのトークンはそのワークスペースの暗号化ストアにあり、CP は通すが持たない。CP が持つのはテナントの OAuth アプリの秘密（[08 §8.1](08-integrations.ja.md#81-連携一覧)） |
 | 技術スタック | Console=React+Vite / バックエンド=Go | Console の React + Vite は [decisions/0004](../decisions/0004-vanilla-to-react.ja.md)。Control Plane と Workspace Agent は Go（2 つのモジュール）で、デーモン・WebSocket 中継・コンテナ制御に向く。この選択を論じた決定記録は無い |
 
