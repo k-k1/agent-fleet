@@ -81,7 +81,7 @@ as its context (the root `.dockerignore`).
 | Text-to-speech | `tts*.go`, `enkana*.go` |
 | Sharing and handoff | `session_share*.go`, `session_handoff.go` |
 | Work items | `workitems*.go` |
-| Role-scoped docs | `workspace_docs.go` (staging) and `docs_bridge.go` (the pull path) |
+| The guide in containers | `workspace_docs.go` (staging) and `docs_bridge.go` (the pull path) |
 | Idle stop | `reaper.go` (with `connRegistry`), `session_activity.go`, `idle_forecast.go` |
 
 ## 90.4 `workspace/agent/`
@@ -143,7 +143,7 @@ How the image is built, and what is baked or installed on demand, is
 | File | What it is |
 |---|---|
 | `Dockerfile` | The workspace image. It is built with `workspace/` as its context |
-| `entrypoint.sh` | Seeding at start, then `exec` of the image's command, `workspace-agent`. The role-scoped guide is not its job: it is mounted, or the agent pulls it (`docs_sync.go`) |
+| `entrypoint.sh` | Seeding at start, then `exec` of the image's command, `workspace-agent`. The guide is not its job: it is mounted, or the agent pulls it (`docs_sync.go`) |
 | `workspace-notes.md` | The operating policy every container gets: the short, always-loaded part (prohibitions and traps) |
 | `notes/` | Its topic files (`/usr/local/share/agent-fleet/notes/` in the image), the procedures the policy's index points at |
 | `af-db.sh`, `af-aws-exec.sh`, `af-scratch.sh`, `af-arch-repair.sh` | The `af-*` commands on `PATH`. The first two only exec `workspace-agent` |

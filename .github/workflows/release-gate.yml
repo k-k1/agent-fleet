@@ -473,8 +473,8 @@ jobs:
   # BAKE_AGENT_CLIS=1) and e2e-smoke pass unchanged. NOTE: the Dockerfile ARG
   # default is now lean-CLI (BAKE_AGENT_CLIS=0), so this gate bakes the CLIs in
   # explicitly to keep the baked self-host path covered; lean-CLI coverage lives
-  # in the dist/native gates. The CP also builds with the default DOCS_SRC
-  # (full docs tree).
+  # in the dist/native gates. The CP is built the way `docker compose up --build`
+  # builds it, with no arguments at all, and must still carry the user guide.
   default-image-gate:
     if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
@@ -488,10 +488,19 @@ jobs:
       - name: e2e-smoke (default)
         run: deploy/local/e2e-smoke.sh agent-fleet/workspace:ci-default
 
-      - name: build CP image (default DOCS_SRC = full docs tree)
+      - name: build CP image (no build arguments) and assert it carries the guide
         run: |
           set -eux
-          # Only that the default build succeeds. Without DOCS_SRC the image carries the
-          # repository's docs/ as is, which is the developer tree rather than the guide
-          # (ADR 0064), so asserting its contents here would pin the wrong tree.
           docker build -f control-plane/Dockerfile -t agent-fleet/control-plane:ci-default .
+          # The distribution gate above checks the staged tree in detail; this one pins
+          # that a plain build reaches the same staging: the guide's shelves and its
+          # entry page are there, and the developer docs/ (ADR 0064) is not.
+          docker run --rm --entrypoint /bin/sh agent-fleet/control-plane:ci-default -c '
+            set -e
+            d=/usr/local/share/agent-fleet/docs
+            for s in member admin operate ref assets; do test -d "$d/$s"; done
+            test -f "$d/README.md" && test -f "$d/README.ja.md"
+            test -f "$d/operate/runbooks/compose.md"
+            test -f "$d/ref/releases/SUMMARY.md"
+            test ! -e "$d/log" && test ! -e "$d/decisions" && test ! -e "$d/build"
+            test ! -e "$d/CONVENTIONS.md"'

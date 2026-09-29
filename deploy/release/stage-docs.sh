@@ -4,8 +4,9 @@
 #
 #   deploy/release/stage-docs.sh <dest-dir>
 #
-# Two consumers, one implementation: deploy/compose/release.sh bakes the result into
-# the CP image (DOCS_SRC), and deploy/release/build.sh drops it into the native tar.
+# Two consumers, one implementation: control-plane/Dockerfile runs it in its `docs`
+# stage and bakes the result into the CP image, and deploy/release/build.sh drops it
+# into the native tar.
 # They used to carry a copy of the allowlist loop each, which is exactly how the two
 # drift apart.
 #

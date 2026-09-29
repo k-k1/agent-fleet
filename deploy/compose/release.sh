@@ -13,7 +13,7 @@
 # Distribution variants (docs/log/35 §35.4.1/§35.4.3): by default
 #   - workspace is lean (BAKE_AGENT_CLIS=0; agent CLIs are pin-installed at start).
 #     The fully-baked internal build must be requested with BAKE_AGENT_CLIS=1.
-#   - CP docs come from a staged tree holding only the user guide (guide/) — the
+#   - CP docs are the user guide (guide/), staged by the image build itself — the
 #     developer documentation, the decision records and the frozen work journals
 #     are never shipped (ADR 0064).
 #
@@ -128,14 +128,6 @@ OUT="$DIST/agent-fleet-$VERSION"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 if [ "$DO_BUILD" = 1 ]; then
-  # Bake the distribution image's docs from a staged tree holding only the user guide
-  # (guide/, via stage-docs.sh). The stage must live inside the build context
-  # (repo root), so it goes in deploy/release/.docs-stage (gitignored).
-  DOCS_STAGE_REL="deploy/release/.docs-stage"
-  DOCS_STAGE="$ROOT/$DOCS_STAGE_REL"
-  rm -rf "$DOCS_STAGE"
-  bash "$ROOT/deploy/release/stage-docs.sh" "$DOCS_STAGE"
-
   # Same rule as the workspace image below: a multi-platform build produces a
   # manifest LIST, which buildx can only push. ⚠️ Both Dockerfiles pin their compiling
   # stages to $BUILDPLATFORM and cross-compile (docs/log/72 §72.3 for the CP's console
@@ -149,20 +141,18 @@ if [ "$DO_BUILD" = 1 ]; then
       echo "ERROR: CP_PLATFORMS needs --push (a manifest list cannot be loaded into the local docker)" >&2
       exit 1
     fi
-    echo "==> buildx $CP_IMAGE (platforms=$CP_PLATFORMS, context=repo root, docs=staged${CP_CACHE_REF:+, cache=$CP_CACHE_REF}) -> pushed"
+    echo "==> buildx $CP_IMAGE (platforms=$CP_PLATFORMS, context=repo root${CP_CACHE_REF:+, cache=$CP_CACHE_REF}) -> pushed"
     mapfile -t cp_cache < <(cache_args "$CP_CACHE_REF")
     docker buildx build --platform "$CP_PLATFORMS" --push \
       -f "$ROOT/control-plane/Dockerfile" -t "$CP_IMAGE" \
       --build-arg "VERSION=$VERSION" \
-      --build-arg "DOCS_SRC=$DOCS_STAGE_REL" \
       --provenance=false \
       ${cp_cache[@]+"${cp_cache[@]}"} \
       "$ROOT"
   else
-    echo "==> build $CP_IMAGE (context=repo root, docs=staged)"
+    echo "==> build $CP_IMAGE (context=repo root)"
     docker build -f "$ROOT/control-plane/Dockerfile" -t "$CP_IMAGE" \
       --build-arg "VERSION=$VERSION" \
-      --build-arg "DOCS_SRC=$DOCS_STAGE_REL" \
       "$ROOT"
   fi
   # The workspace image needs a second CPU architecture for its own reason: on the
@@ -199,7 +189,6 @@ if [ "$DO_BUILD" = 1 ]; then
       --build-arg "BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS" \
       "$ROOT/workspace"
   fi
-  rm -rf "$DOCS_STAGE"
 fi
 
 echo "==> assemble deploy surface -> $OUT"
