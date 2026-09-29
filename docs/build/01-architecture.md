@@ -101,8 +101,8 @@ the CLI agents, in tmux or under a managed driver, plus the working copies (~/re
   holds a streaming request open with a heartbeat; a non-streaming one is held for at
   most 45 seconds by default (75 for a borrowed engine; `AF_ENGINE_PLAIN_HOLD`) and
   then answered `503 engine_waking` with `Retry-After`, and the caller retries while the
-  engine keeps coming up. Speech set to `auto` is read by Polly, when Polly is
-  configured, until VOICEVOX answers.
+  engine keeps coming up. Speech is read by Polly wherever Polly is configured — always
+  for English, and for Japanese while VOICEVOX is starting or switched off.
 
 ## 1.4 Authentication is two layers — do not conflate them
 
