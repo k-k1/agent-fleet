@@ -258,19 +258,15 @@ func keepMark(t *testing.T, h *ec2Harness) string {
 	t.Helper()
 	for _, ap := range h.efs.aps {
 		if aws.ToString(ap.AccessPointId) == "fsap-keep" {
-			for _, tag := range ap.Tags {
-				if aws.ToString(tag.Key) == efsTagHomeErasedAt {
-					return aws.ToString(tag.Value)
-				}
-			}
+			return tagValue(ap.Tags, efsTagErasedVolumes)
 		}
 	}
 	return ""
 }
 
-func homeSnapshotAt(id string, start time.Time, state ec2types.SnapshotState) *ec2types.Snapshot {
+func homeSnapshotOf(id, volume string, start time.Time, state ec2types.SnapshotState) *ec2types.Snapshot {
 	return &ec2types.Snapshot{
-		SnapshotId: aws.String(id), VolumeId: aws.String("vol-1"), State: state, StartTime: aws.Time(start),
+		SnapshotId: aws.String(id), VolumeId: aws.String(volume), State: state, StartTime: aws.Time(start),
 		Tags: []ec2types.Tag{
 			{Key: aws.String(EC2TagMembership), Value: aws.String("M-1")},
 			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
@@ -278,20 +274,19 @@ func homeSnapshotAt(id string, start time.Time, state ec2types.SnapshotState) *e
 	}
 }
 
-// No wait makes an eventually consistent listing complete, so the erase leaves a mark that
-// the restore path honours whatever the listings showed: a hibernation capture both
-// listings missed is never handed back as the member's home.
+// No wait makes an eventually consistent listing complete, so the erase records which
+// volume it deleted, and the restore path refuses any snapshot of that volume: a capture
+// both listings missed is never handed back as the member's home.
 func TestECSEC2ACaptureTheEraseNeverSawIsNeverRestored(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
-	h.ec2.snapshots["snap-unseen"] = homeSnapshotAt("snap-unseen", time.Now().Add(-time.Second), ec2types.SnapshotStateCompleted)
-	h.ec2.snapshotHidden["snap-unseen"] = 2 // both of the erase's listings miss it
+	h.ec2.snapshots["snap-unseen"] = homeSnapshotOf("snap-unseen", "vol-1", time.Now(), ec2types.SnapshotStateCompleted)
+	h.ec2.snapshotHidden["snap-unseen"] = 3 // every listing the erase makes misses it
 	if err := h.rt.EraseHome(ctx); err != nil {
 		t.Fatalf("EraseHome: %v", err)
 	}
-	mark := keepMark(t, h)
-	if _, err := time.Parse(time.RFC3339Nano, mark); err != nil {
-		t.Fatalf("the keep access point carries no readable erase mark (%q): %v", mark, err)
+	if mark := keepMark(t, h); !strings.Contains(mark, "vol-1") {
+		t.Fatalf("the keep access point does not record the erased volume (%q)", mark)
 	}
 	if _, ok := h.ec2.snapshots["snap-unseen"]; !ok {
 		t.Fatal("setup: the unseen capture was deleted, so this test proves nothing")
@@ -305,28 +300,31 @@ func TestECSEC2ACaptureTheEraseNeverSawIsNeverRestored(t *testing.T) {
 	}
 }
 
-// The mark only says what came before it. A home created after the erase and hibernated
-// later — weeks later in practice, and in any case past the erase's window — is the
-// member's own home and is restored as usual.
-func TestECSEC2AHomeHibernatedAfterAnEraseIsRestored(t *testing.T) {
+// Identity, not time: a snapshot of the erased volume is refused however late it claims
+// to have started, and the home created after the erase is restored as usual.
+func TestECSEC2OnlyCopiesOfTheErasedVolumeAreRefused(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
 	if err := h.rt.EraseHome(ctx); err != nil {
 		t.Fatalf("EraseHome: %v", err)
 	}
-	h.ec2.snapshots["snap-new"] = homeSnapshotAt("snap-new", time.Now().Add(eraseWindow+eraseClockMargin+time.Minute), ec2types.SnapshotStateCompleted)
+	h.ec2.snapshots["snap-old-late"] = homeSnapshotOf("snap-old-late", "vol-1", time.Now().Add(time.Hour), ec2types.SnapshotStateCompleted)
+	h.ec2.snapshots["snap-new"] = homeSnapshotOf("snap-new", "vol-2", time.Now().Add(time.Minute), ec2types.SnapshotStateCompleted)
 	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "snap-new" {
 		t.Fatalf("restoreSnapshot = %q, %v; want the hibernation of the new home", got, err)
 	}
+	if _, ok := h.ec2.snapshots["snap-old-late"]; ok {
+		t.Error("a copy of the erased volume survived the restore path")
+	}
 }
 
-// An unreadable mark is not "never erased": the Start fails rather than guessing.
-func TestECSEC2AnUnreadableEraseMarkFailsTheRestore(t *testing.T) {
+// An unreadable record is not "nothing erased": the Start fails rather than guessing.
+func TestECSEC2AnUnreadableEraseRecordFailsTheRestore(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
-	h.efs.aps[0].Tags = append(h.efs.aps[0].Tags, efstypes.Tag{Key: aws.String(efsTagHomeErasedAt), Value: aws.String("yesterday")})
+	h.efs.aps[0].Tags = append(h.efs.aps[0].Tags, efstypes.Tag{Key: aws.String(efsTagErasedVolumes), Value: aws.String("yesterday")})
 	if _, err := h.rt.restoreSnapshot(ctx); err == nil {
-		t.Fatal("restoreSnapshot ignored an unreadable erase mark")
+		t.Fatal("restoreSnapshot ignored an unreadable erase record")
 	}
 }
 
@@ -373,44 +371,71 @@ func TestECSEC2HomeBackupsSaysWhetherTheHomeExists(t *testing.T) {
 	}
 }
 
-// The mark goes first. If it cannot be written, nothing is destroyed: a home that is still
-// there is still the member's, while a home deleted without the mark is one a stray
-// snapshot could bring back.
-func TestECSEC2EraseHomeDestroysNothingWithoutTheMark(t *testing.T) {
+// An erase that fails before the volume is gone records nothing. The home is still the
+// member's, and so are its hibernation copies: the one a hibernation already under way
+// completes after the failure is the only copy there will be once the sweeper deletes the
+// volume, and refusing it would lose the home.
+func TestECSEC2AFailedEraseRecordsNothing(t *testing.T) {
+	ctx := context.Background()
+	for name, fail := range map[string]func(h *ec2Harness){
+		"the slot will not let go":       func(h *ec2Harness) { h.ssmc.fail["af-umount"] = true },
+		"the volume will not be deleted": func(h *ec2Harness) { h.ec2.deleteVolumeErr = errors.New("RequestLimitExceeded") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := eraseHarness(t, name == "the slot will not let go")
+			delete(h.ec2.snapshots, "snap-hib")
+			h.ec2.snapshots["snap-pending"] = homeSnapshotOf("snap-pending", "vol-1", time.Now().Add(-time.Hour), ec2types.SnapshotStatePending)
+			fail(h)
+			if err := h.rt.EraseHome(ctx); err == nil {
+				t.Fatal("EraseHome succeeded although the volume is still there")
+			}
+			if mark := keepMark(t, h); mark != "" {
+				t.Fatalf("a failed erase recorded %q", mark)
+			}
+			// The hibernation finishes after the failure: the capture completes and the
+			// volume goes, and the home is now that copy.
+			h.ec2.snapshots["snap-pending"].State = ec2types.SnapshotStateCompleted
+			delete(h.ec2.volumes, "vol-1")
+			if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "snap-pending" {
+				t.Fatalf("restoreSnapshot = %q, %v; the home the erase failed to delete must come back", got, err)
+			}
+		})
+	}
+}
+
+// The record is written after the volume is gone, and a record that cannot be written
+// fails the erase — the administrator retries — while the listings still clean up what
+// they can see.
+func TestECSEC2ARecordThatCannotBeWrittenFailsTheErase(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
 	h.efs.tagErr = errors.New("ThrottlingException: rate exceeded")
 	if err := h.rt.EraseHome(ctx); err == nil {
-		t.Fatal("EraseHome succeeded although the mark could not be written")
+		t.Fatal("EraseHome succeeded without recording the erased volume")
 	}
-	if _, ok := h.ec2.volumes["vol-1"]; !ok {
-		t.Error("the volume was deleted without the mark in place")
+	if _, ok := h.ec2.volumes["vol-1"]; ok {
+		t.Error("the volume was kept although the erase had already got past it")
 	}
-	if _, ok := h.ec2.snapshots["snap-hib"]; !ok {
-		t.Error("the hibernation snapshot was deleted without the mark in place")
+	if _, ok := h.ec2.snapshots["snap-hib"]; ok {
+		t.Error("the listed hibernation snapshot was left although the record failed")
 	}
 }
 
-// The mark is dated past the erase's own window, so a capture that races the erase — it
-// starts before the volume goes, which is before the deadline — is covered even if it
-// starts after the erase began.
-func TestECSEC2TheEraseMarkCoversTheWholeErase(t *testing.T) {
+// The record stays within a tag value: the most recent erased volumes are kept.
+func TestECSEC2TheEraseRecordKeepsTheMostRecentVolumes(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
-	before := time.Now()
-	if err := h.rt.EraseHome(ctx); err != nil {
-		t.Fatalf("EraseHome: %v", err)
+	for i := 0; i < maxErasedVolumes+3; i++ {
+		if err := h.rt.recordErasedVolumes(ctx, []string{fmt.Sprintf("vol-%02d", i)}); err != nil {
+			t.Fatalf("recordErasedVolumes: %v", err)
+		}
 	}
-	mark, err := h.rt.homeErasedAt(ctx)
-	if err != nil {
-		t.Fatal(err)
+	got := strings.Fields(keepMark(t, h))
+	if len(got) != maxErasedVolumes || got[0] != "vol-03" || got[len(got)-1] != fmt.Sprintf("vol-%02d", maxErasedVolumes+2) {
+		t.Errorf("record = %v, want the last %d", got, maxErasedVolumes)
 	}
-	if mark.Before(before.Add(eraseWindow)) {
-		t.Errorf("mark %s does not reach past the erase window (started %s)", mark, before)
-	}
-	h.ec2.snapshots["snap-racing"] = homeSnapshotAt("snap-racing", time.Now().Add(eraseWindow/2), ec2types.SnapshotStateCompleted)
-	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "" {
-		t.Fatalf("a capture inside the erase window: restoreSnapshot = %q, %v; want none", got, err)
+	if n := len(strings.Join(got, " ")); n > 256 {
+		t.Errorf("record is %d characters; an EFS tag value holds 256", n)
 	}
 }
 

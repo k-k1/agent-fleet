@@ -69,6 +69,8 @@ type fakeEC2 struct {
 	// snapshotGone makes DeleteSnapshot answer NotFound for a snapshot, standing in for
 	// one that something else deleted after it was listed.
 	snapshotGone map[string]bool
+	// deleteVolumeErr makes DeleteVolume fail without deleting.
+	deleteVolumeErr error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -366,6 +368,9 @@ func (f *fakeEC2) DeleteVolume(_ context.Context, in *ec2.DeleteVolumeInput, _ .
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("DeleteVolume %s", aws.ToString(in.VolumeId))
+	if f.deleteVolumeErr != nil {
+		return nil, f.deleteVolumeErr
+	}
 	delete(f.volumes, aws.ToString(in.VolumeId))
 	return &ec2.DeleteVolumeOutput{}, nil
 }

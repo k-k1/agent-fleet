@@ -1430,13 +1430,15 @@ on its EBS volume.
   the member's own snapshot first; one left behind would hand the erased home back. The pool sweeper advances a
   hibernation without the lifecycle lease, so a capture it started just before the volume went can be missing
   from an eventually consistent listing, and no wait makes a listing complete. The snapshots are listed twice
-  (again after a short settle) as cleanup, and the guarantee is a mark instead: before anything is destroyed,
-  the erase stamps `af-home-erased-at` on the member's keep access point, which outlives the erase, dated past
-  the erase's own five-minute window; the restore path never restores a home snapshot that started before it —
-  it deletes it. Every snapshot of the erased home starts before its volume goes, and the volume goes inside the
-  window or not at all, so the mark covers them; and if the mark cannot be written, nothing is destroyed.
-  Measured on the sandbox account against the StartTime EBS reports: a snapshot taken inside the window is
-  refused, one taken after a mark is restored. The one thing it does not keep that docker keeps: a keep file a tool replaced since the last start
+  (again after a short settle) as cleanup, and the guarantee is a record instead: once the volume is gone,
+  the erase writes its id (and the ids of the volumes its listed snapshots came from) into
+  `af-home-erased-volumes` on the member's keep access point, which outlives the erase, and the restore path
+  never restores a snapshot of a recorded volume — it deletes it. A hibernation snapshot names the volume it was
+  taken from, so this holds whenever the copy was taken and whether or not a listing saw it, and it never touches
+  the copies of a home that was not erased. It is written only after the volume is gone: written first, an erase
+  that then failed would leave a home that was never erased with its legitimate hibernation copy refused.
+  Measured on the sandbox account against the VolumeId EBS reports: a copy of an unrecorded volume is restored,
+  the same copy is refused once its volume is recorded. The one thing it does not keep that docker keeps: a keep file a tool replaced since the last start
   (the entrypoint moves it to EFS at the next boot) goes with the volume.
 - **Backups stay, and deleting them is a separate action.** A backup outliving the home is what decision 17
   made it for, so no cleanup takes one as a side effect. The member detail shows how many a member has and

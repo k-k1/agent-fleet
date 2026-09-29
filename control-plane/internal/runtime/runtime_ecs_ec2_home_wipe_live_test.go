@@ -27,9 +27,8 @@ import (
 // detach) is releaseSlot, which Destroy and hibernation already run in production.
 //
 // With AF_ECS_EFS_ID it also creates a keep access point for the throwaway membership (no
-// mount, so no directory is ever made) and checks the erase mark: that EraseHome stamps it,
-// and that the restore path compares it with the StartTime AWS reports — the CP's clock
-// against EBS's, which no fake can stand in for.
+// mount, so no directory is ever made) and checks the erase record: that EraseHome writes
+// it, and that the restore path matches it against the VolumeId EBS reports on a snapshot.
 //
 // Opt-in; it bills a few minutes of a 1 GiB volume and its snapshots:
 //
@@ -197,16 +196,13 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 		t.Errorf("after the erase the next Start would restore %q (err %v), want a fresh home", got, err)
 	}
 
-	// --- the erase mark, against AWS's own StartTime ---
+	// --- the erase record, against the VolumeId EBS reports ---
 	if keepAP != "" {
-		mark, err := rt.homeErasedAt(ctx)
-		if err != nil || mark.IsZero() {
-			t.Fatalf("EraseHome left no readable mark on %s: %v, %v", keepAP, mark, err)
+		rec, err := rt.erasedVolumes(ctx)
+		if err != nil || !rec.set[volID] {
+			t.Fatalf("EraseHome did not record %s on %s: %v, %v", volID, keepAP, rec.ids, err)
 		}
-		t.Logf("erase mark on %s: %s", keepAP, mark.Format(time.RFC3339Nano))
-		if !mark.After(time.Now().Add(eraseWindow - time.Minute)) {
-			t.Errorf("the mark %s is not dated past the erase's own window", mark.Format(time.RFC3339))
-		}
+		t.Logf("erase record on %s: %v", keepAP, rec.ids)
 		vol2, err := eye.CreateVolume(ctx, &ec2.CreateVolumeInput{
 			AvailabilityZone: aws.String(az), Size: aws.Int32(1), VolumeType: ec2types.VolumeTypeGp3, Encrypted: aws.Bool(true),
 			TagSpecifications: []ec2types.TagSpecification{{ResourceType: ec2types.ResourceTypeVolume, Tags: tags("scratch")}},
@@ -218,24 +214,21 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 			t.Fatalf("second throwaway volume never became available: %v", err)
 		}
 		volID = aws.ToString(vol2.VolumeId)
-		// A home snapshot that starts inside the erase's window is what a racing capture
-		// looks like: refused and deleted, judged by the StartTime EBS stamped on it.
-		racing := snapshot(ec2RoleHome)
-		waitCompleted(racing)
+		// A hibernation of a home created after the erase names another volume: restored.
+		fresh := snapshot(ec2RoleHome)
+		waitCompleted(fresh)
+		if got, err := rt.restoreSnapshot(ctx); err != nil || got != fresh {
+			t.Fatalf("a copy of a volume that was not erased: restoreSnapshot = %q, %v; want %s", got, err, fresh)
+		}
+		// Once that volume is recorded as erased, the same copy is refused and deleted.
+		if err := rt.recordErasedVolumes(ctx, []string{volID}); err != nil {
+			t.Fatalf("recordErasedVolumes: %v", err)
+		}
 		if got, err := rt.restoreSnapshot(ctx); err != nil || got != "" {
-			t.Fatalf("a snapshot inside the erase window: restoreSnapshot = %q, %v; want none", got, err)
+			t.Fatalf("a copy of an erased volume: restoreSnapshot = %q, %v; want none", got, err)
 		}
-		if !gone(racing) {
-			t.Errorf("the snapshot inside the erase window was left billing")
-		}
-		// A snapshot that starts after the mark is the member's own home: restored.
-		if err := rt.markHomeErased(ctx, time.Now()); err != nil {
-			t.Fatalf("markHomeErased: %v", err)
-		}
-		later := snapshot(ec2RoleHome)
-		waitCompleted(later)
-		if got, err := rt.restoreSnapshot(ctx); err != nil || got != later {
-			t.Fatalf("a snapshot after the mark: restoreSnapshot = %q, %v; want %s", got, err, later)
+		if !gone(fresh) {
+			t.Errorf("the copy of the erased volume was left billing")
 		}
 	}
 
