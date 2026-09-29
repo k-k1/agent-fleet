@@ -32,9 +32,10 @@ is [decisions/0011](../decisions/0011-console-rebuild.md). The principles:
 - **Cohesion by feature**: endpoint calls, state, UI and CSS live together under
   `features/<x>/`. CSS is co-located plain CSS (no CSS Modules; collisions are avoided
   by a class-prefix convention).
-- **StrictMode-proof**: the app renders under `React.StrictMode`. Every `wire*()` /
-  `start*()` returns its cleanup and is called from an effect, so the double mount
-  leaves exactly one subscription. There are no wired-once flags.
+- **StrictMode-proof**: the app renders under `React.StrictMode`. The app-wide wiring
+  the shell starts at boot (the `wire*()` / `start*()` calls in `app/App.tsx`) returns its
+  cleanup and is called from an effect, so the double mount leaves exactly one
+  subscription. There are no wired-once flags.
 - **Every URL is relative to `document.baseURI`** (`rel()` in `core/api/client.ts`;
   `base: "./"` in `vite.config.js`). Absolute paths are forbidden: the Console may run
   behind a path-stripping proxy, and `index.html` sets a `<base>` so that relative URLs
@@ -79,9 +80,12 @@ is repeated here. To find your way in, the directories fall into a few kinds, fo
 
 Two conventions recur in them:
 
-- **`open.ts` is apart from the view.** A pane-backed feature exports its `open*()` from
-  its own module, because the keyboard command table imports it, and importing the view
-  would drag its rendering and CSS into every bundle that has a menu.
+- **`open.ts` is apart from the view.** Several pane-backed features — `overview`,
+  `fleetgraph`, `gallery`, `imagegen` and `scm`, for example — export their `open*()` from
+  an `open.ts` of its own; follow it for a new one. The keyboard command table imports
+  the opener, and importing the view would drag its rendering and CSS into every bundle
+  that has a menu. Older kinds open from elsewhere (`features/viewer/openFile.ts`,
+  `features/browser/attachmentAction.ts`).
 - **`api.ts` builds on `core/api/client.ts`; shapes may sit in `wire.ts`.** `client.ts`
   reads `localStorage` and replaces `window.fetch` when it is imported, so it does not
   load in the node test project. A pure module that needs only the types imports
@@ -99,9 +103,10 @@ Two conventions recur in them:
   stream per tab and hands each frame to its handlers; the streams are the
   `PushStream` type there, and the wire format is [05 §5.1](05-api.md#51-the-public-surface).
   The pollers for the same data stay running and skip their tick while `pushHealthy()` is
-  true, so a broken stream, or a CP without the route, loses nothing. A poller also drops
-  its own result when a push frame for the same stream landed while it was in flight
-  (`pushStamp`). Every (re)connect re-reads whoami and the session list, because a frame
+  true, so a broken stream, or a CP without the route, loses nothing. The workspace and
+  session pollers also drop their own result when a push frame for the same stream landed
+  while they were in flight (`pushStamp`); the other refreshes (work items, engines, for
+  example) have no such guard. Every (re)connect re-reads whoami and the session list, because a frame
   is sent only when something changes. Data outside the push streams is polled on its own
   schedule (repos every 60 s, for example).
 - **Workspace state** is the CP's value (`running`, `starting`, `stopped`, `none`) or the
@@ -155,16 +160,18 @@ Two conventions recur in them:
   scrollback alive but hidden, so going back to the terminal shows the same session.
 - **Two layout profiles**, chosen by a device-local preference: `split`, up to 4 columns
   of 1–2 cells with one view each; and `tabs`, up to 3 columns, where each cell holds tabs
-  (24 views in all). Each profile keeps its own saved layout, so switching destroys
-  nothing.
+  (24 views in all). Each profile keeps its own saved layout, so switching loses neither
+  arrangement. The runtime is not kept: after a switch the terminal service and the
+  browser registry dispose what the loaded layout no longer contains.
 - **The id contract is a hard invariant.** Swapping, drop-splitting and moving a tab
-  keep both the View id and the Cell id; renumbering or duplicating is forbidden. A new
-  View id builds a new xterm and a new WebGL context, and **the terminal you just moved
-  comes up blank**. The pure functions in `layout/ops.ts` and their tests enforce this.
+  keep both the View id and the Cell id; renumbering or duplicating is forbidden. For a
+  view that shows a terminal, a new View id builds a new xterm and a new WebGL context, and
+  **the terminal you just moved comes up blank**. The pure functions in `layout/ops.ts` and their tests enforce this.
 - `layout/ops.ts` is `Layout in → Layout out`. A no-op returns the input by reference,
-  so the caller can skip the commit on `next === cur`. The layout store's `commit()` is
-  **the only path that mutates**: it pushes the layout into `history.state` (the URL
-  never changes) and persists it.
+  so the caller can skip the commit on `next === cur`. Every layout action goes through
+  the layout store's `commit()`, which pushes the layout into `history.state` (the URL
+  never changes) and persists it. The exceptions set the layout directly: loading a
+  saved layout or a profile, seeding a pop-out, and restoring from history.
 - **Persistence is per user and tenant, per tab.** The key is built by `LKEY_NEW` in
   `layout/migrate.ts`. A tab's own layout is in `sessionStorage`, so two tabs keep
   different layouts; `localStorage` holds the last one written, to seed a new tab. What is
@@ -173,10 +180,11 @@ Two conventions recur in them:
 - **Adding a content kind** touches, for example, the union in `layout/types.ts`, the
   validator in `layout/migrate.ts`, `sameTarget` in `layout/ops.ts` (which decides when a
   second open focuses the existing view), the render switch in `features/panes/Pane.tsx`,
-  the titles in `features/panes/paneTitle.ts`, and the feature's `open.ts`. Miss the
+  the titles in `features/panes/paneTitle.ts`, and the function that opens it. Miss the
   validator and the view vanishes on reload.
-- **Tab order is most-recently-used.** `lastUsedAt` is not only for eviction; it decides
-  **what to show when the visible tab goes away**. Closing, moving or detaching all
+- **Which tab takes over is most-recently-used.** The strip's order is the cell's
+  `views` array: a new tab is appended, and dragging reorders it. `lastUsedAt` decides
+  the eviction victim and **what to show when the visible tab goes away**. Closing, moving or detaching all
   select the remaining tab you looked at last — open a file from the mirror, close it,
   and you are back in the mirror. Stamps are strictly monotonic within a page session so
   two touches in the same millisecond cannot tie.
@@ -230,9 +238,10 @@ shape a change has to fit.
 - **History navigation** pushes the layout into `history.state` **without changing the
   URL** (a path-stripping proxy makes URL paths unusable). Back and forward restore the
   layout and the phone drawer. "Back closes the modal" belongs to the shared modal layer
-  (`ui/Modal` with `lib/backClose.ts`), and drill-downs stack on it. The only URLs the
-  Console reads are entry points: `?session=` (a notification link), `?pane=` (a pop-out)
-  and `open/browser-attachment/{id}`.
+  (`ui/Modal` with `lib/backClose.ts`), and drill-downs stack on it. The URLs the
+  Console reads are entry points, for example `?session=` (a notification link), `?pane=`
+  (a pop-out), `?tenant=` (after a sign-in), `?share=` (the Web Share Target) and
+  `open/browser-attachment/{id}`.
 - **A horizontal swipe on a phone rotates through running sessions** when the drawer is
   closed. The selection rule is `features/sessions/rotate.ts` and the gesture is
   `app/swipeGestures.ts`. The order is the session list as returned, filtered by the
@@ -307,9 +316,8 @@ shape a change has to fit.
   removing the alias kills the build.**
 - **Serving.** The CP serves the directory `CONSOLE_DIR` names — the build output
   `console/dist` in development — from `registerStatic` in `control-plane/routes.go`.
-  Everything under `assets/` is cached by the browser as immutable, and everything else
-  (the shell, `version.json`, `sw.js`, the manifest) is `no-store`. The header values
-  belong to [05 §5.4](05-api.md#54-cross-cutting-rules). What that asks of a change:
+  Which paths are cached and how is [05 §5.4](05-api.md#54-cross-cutting-rules)'s; what
+  that asks of a change:
   - **A file under `assets/` must change its name whenever its bytes change.** Vite's
     content hashes do this; a copied directory puts a version in its path, as the pdf.js
     character maps do (`assets/pdfjs/<version>/`, the `afPdfjsAssets` plugin).

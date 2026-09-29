@@ -29,9 +29,9 @@ CP が配信する（§2.7）。Console と CP の会話は次のとおり。
   持つ（§2.4）。
 - **feature 単位の凝集**: エンドポイント呼び出し・状態・UI・CSS を `features/<x>/` に同居させる。CSS は
   co-located のプレーン CSS（CSS Modules は使わず、クラス接頭辞の規約で衝突を避ける）。
-- **StrictMode 耐性**: アプリは `React.StrictMode` の下で描画する。`wire*()` / `start*()` はどれも
-  後始末を返し、エフェクトから呼ばれるので、二重マウントの後も購読は 1 本だけ残る。wired-once
-  フラグは無い。
+- **StrictMode 耐性**: アプリは `React.StrictMode` の下で描画する。シェルが起動時に始めるアプリ全体の
+  結線（`app/App.tsx` の `wire*()` / `start*()` 呼び出し）は後始末を返し、エフェクトから呼ばれるので、
+  二重マウントの後も購読は 1 本だけ残る。wired-once フラグは無い。
 - **全 URL は `document.baseURI` 相対**（`core/api/client.ts` の `rel()`、`vite.config.js` の
   `base: "./"`）。絶対パスは禁止: Console は path-strip プロキシの配下で動くことがあり、
   `index.html` が `<base>` を立てて相対 URL をマウント先の下に解決させている。
@@ -74,9 +74,11 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
 
 これらに繰り返し出てくる規約が 2 つある。
 
-- **`open.ts` はビューと分ける。** ペインを持つ機能は `open*()` を専用のモジュールから出す。
-  キーボードのコマンド表がそれを import するので、ビューを import すると描画と CSS がメニューを
-  持つ全バンドルに引き込まれる。
+- **`open.ts` はビューと分ける。** ペインを持つ機能のいくつか — 例えば `overview`・`fleetgraph`・
+  `gallery`・`imagegen`・`scm` — は `open*()` を専用の `open.ts` から出す。新しく作るものはこれに
+  倣う。キーボードのコマンド表が開く関数を import するので、ビューを import すると描画と CSS が
+  メニューを持つ全バンドルに引き込まれる。古い種類は別の場所から開く（`features/viewer/openFile.ts`・
+  `features/browser/attachmentAction.ts`）。
 - **`api.ts` は `core/api/client.ts` の上に作り、形は `wire.ts` に置いてよい。** `client.ts` は
   import された時点で `localStorage` を読み `window.fetch` を差し替えるので、node のテスト
   プロジェクトでは読み込めない。型だけが要る純モジュールは `wire.ts` を import する。
@@ -91,8 +93,9 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
 - **プッシュが先、ポーリングは保険。** `core/push/events.ts` がタブごとに `api/events` を 1 本持ち、
   フレームを各ハンドラへ渡す。ストリームの種類はそこの `PushStream` 型で、ワイヤ形式は
   [05 §5.1](05-api.ja.md#51-公開面（console-↔-cp）)。同じデータのポーラーは動き続け、`pushHealthy()` が
-  真の間だけ番を飛ばすので、ストリームが切れても、ルートを持たない CP でも何も失わない。ポーラーは、
-  自分の取得中に同じストリームのフレームが届いていたら自分の結果を捨てる（`pushStamp`）。
+  真の間だけ番を飛ばすので、ストリームが切れても、ルートを持たない CP でも何も失わない。
+  ワークスペースとセッションのポーラーは、自分の取得中に同じストリームのフレームが届いていたら
+  自分の結果を捨てる（`pushStamp`）。ほかの読み直し（例えば課題・エンジン）にはこの守りが無い。
   (再)接続のたびに whoami とセッション一覧を読み直す。フレームは何かが変わったときにしか
   送られないからである。プッシュストリームに載らないデータはそれぞれの周期でポーリングする
   （例: repos は 60 秒ごと）。
@@ -137,22 +140,26 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
   隠れたまま生きていて、端末に戻すと同じセッションが出る。
 - **レイアウトのプロファイルは 2 つ**で、端末ローカルの設定で選ぶ: `split` は最大 4 カラム × 1〜2
   セル、各セルにビュー 1 つ。`tabs` は最大 3 カラムで、各セルがタブを持つ（全体で 24 ビュー）。
-  プロファイルごとに保存レイアウトを持つので、切り替えても何も壊れない。
+  プロファイルごとに保存レイアウトを持つので、切り替えてもどちらの配置も失われない。ランタイムは
+  保たれない: 切り替えの後、読み込んだレイアウトに無いものは端末サービスとブラウザのレジストリが
+  破棄する。
 - **id の契約はハードな不変条件。** 入れ替え・ドロップ分割・タブの移動は View の id も Cell の id も
-  保つ。振り直しや複製は禁止。新しい View id は新しい xterm と新しい WebGL コンテキストを作り、
+  保つ。振り直しや複製は禁止。端末を表示するビューでは、新しい View id は新しい xterm と新しい
+  WebGL コンテキストを作り、
   **動かしたばかりの端末が白紙で現れる**。`layout/ops.ts` の純関数とそのテストがこれを強制する。
 - `layout/ops.ts` は `Layout in → Layout out`。何もしない操作は入力を参照のまま返すので、呼び手は
-  `next === cur` で commit を省ける。layout ストアの `commit()` が**唯一の変更経路**で、レイアウトを
-  `history.state` に push し（URL は変えない）、永続化する。
+  `next === cur` で commit を省ける。レイアウトの操作はすべて layout ストアの `commit()` を通り、
+  これがレイアウトを `history.state` に push し（URL は変えない）、永続化する。例外はレイアウトを
+  直接置く: 保存レイアウトやプロファイルの読み込み・ポップアウトの種まき・履歴からの復元。
 - **永続化は利用者・テナント単位、タブ単位。** キーは `layout/migrate.ts` の `LKEY_NEW` が作る。
   タブ自身のレイアウトは `sessionStorage` にあるので、2 つのタブは別々のレイアウトを持てる。
   `localStorage` は最後に書かれたものを持ち、新しいタブの種にする。読み戻すのは信用できない JSON
   なので、`migrate.ts` が content の種類ごとに検証し、**知らない種類は空の端末として読み込む**。
 - **content の種類を足す**ときに触るのは、例えば `layout/types.ts` の union、`layout/migrate.ts` の
   検証、`layout/ops.ts` の `sameTarget`（2 度目に開いたとき既存のビューへフォーカスするかを決める）、
-  `features/panes/Pane.tsx` の描画の分岐、`features/panes/paneTitle.ts` の題名、その機能の
-  `open.ts`。検証を落とすとビューはリロードで消える。
-- **タブの順は最近使った順（MRU）。** `lastUsedAt` は追い出しのためだけではなく、**表示中のタブが
+  `features/panes/Pane.tsx` の描画の分岐、`features/panes/paneTitle.ts` の題名、それを開く関数。検証を落とすとビューはリロードで消える。
+- **代わりに出るタブは最近使った順（MRU）。** タブ列の並びはセルの `views` 配列の順で、新しい
+  タブは末尾に足され、ドラッグで並べ替えられる。`lastUsedAt` は追い出す対象と、**表示中のタブが
   抜けたあと何を出すか**を決める。閉じる・移す・切り離すのどれでも、残りのうち最後に見ていたタブを
   選ぶ — ミラーからファイルを開いて閉じれば、ミラーに戻る。同じミリ秒の 2 度の touch が同点に
   ならないよう、スタンプはページセッション内で厳密に単調増加させる。
@@ -197,8 +204,9 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
 - **履歴ナビゲーション**はレイアウトを `history.state` に push し、**URL は変えない**（path-strip
   プロキシのせいで URL のパスは使えない）。戻る／進むでレイアウトとスマホのドロワーが戻る。
   「戻るでモーダルを閉じる」は共有のモーダル層（`ui/Modal` と `lib/backClose.ts`）の持ち物で、
-  ドリルダウンはその上に積む。Console が読む URL は入口だけ: `?session=`（通知のリンク）・
-  `?pane=`（ポップアウト）・`open/browser-attachment/{id}`。
+  ドリルダウンはその上に積む。Console が読む URL は入口で、例えば `?session=`（通知のリンク）・
+  `?pane=`（ポップアウト）・`?tenant=`（サインインの後）・`?share=`（Web Share Target）・
+  `open/browser-attachment/{id}`。
 - **スマホの横スワイプは稼働中のセッションを順に回す**（ドロワーが閉じているとき）。選び方の規則は
   `features/sessions/rotate.ts`、ジェスチャは `app/swipeGestures.ts`。順序は返ってきたセッション
   一覧を作業グループで絞ったもので、左ペインに見えているものと一致する。左端から始まるスワイプは
@@ -261,9 +269,8 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
   ので、手当てをしない本番ビルドは minify でハングする。`vite.config.js` のエイリアスが
   `marp-math-stub.js` に差し替えている。**これは固定の制約で、エイリアスを外すとビルドが死ぬ。**
 - **配信。** CP は `CONSOLE_DIR` が指すディレクトリ（開発ではビルド成果物の `console/dist`）を
-  `control-plane/routes.go` の `registerStatic` から配る。`assets/` の下はすべてブラウザに immutable と
-  してキャッシュされ、それ以外（シェル・`version.json`・`sw.js`・マニフェスト）は `no-store`。
-  ヘッダの値は [05 §5.4](05-api.ja.md#54-横断規約) の持ち物。変更に求められること:
+  `control-plane/routes.go` の `registerStatic` から配る。どのパスがどうキャッシュされるかは
+  [05 §5.4](05-api.ja.md#54-横断規約) の持ち物。変更に求められること:
   - **`assets/` の下のファイルは、中身が変わるたびに名前も変わらなければならない。** Vite の
     コンテンツハッシュがそうする。ディレクトリごと複製するものはパスに版を入れる。pdf.js の文字
     マップがそれ（`assets/pdfjs/<版>/`、`afPdfjsAssets` プラグイン）。
