@@ -285,33 +285,71 @@ func TestPropsReadsTheMask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	graphs := map[string]string{"sdxl": string(sdxlGraph)}
+	type want struct{ op, mask, inputs string }
+	type maskCase struct {
+		graph string
+		want  want
+	}
+	inpaint := want{string(OpInpaint), "af-mask.png", "af-photo.png"}
+	cases := map[string]maskCase{"sdxl": {string(sdxlGraph), inpaint}}
 	for _, f := range []comfyFamily{ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511} {
 		b, err := os.ReadFile(filepath.Join("testdata", "comfy_"+string(f)+"-inpaint.golden.json"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		graphs[string(f)] = string(b)
+		cases[string(f)] = maskCase{string(b), inpaint}
 	}
-	// Another ComfyUI's numeric ids, where the mask's loader sorts before the picture's: the class
-	// fallback has to tell the two LoadImage nodes apart by what they feed.
-	graphs["foreign"] = `{
+	// Other ComfyUIs' numeric ids, where only the edges say which LoadImage is which.
+	foreign := func(nodes string) string {
+		return `{
+	  "5": {"class_type": "VAEEncode", "inputs": {"pixels": ["3", 0], "vae": ["9", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}},
+	  "9": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},` + nodes + `}`
+	}
+	// The mask's loader sorts before the picture's.
+	cases["foreign"] = maskCase{foreign(`
 	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-mask.png"}},
 	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
-	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}}
-	}`
-	for name, graph := range graphs {
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}}`), inpaint}
+	// The walk from the sampler stops at a node it does not know (ImageCompositeMasked names its
+	// picture `destination`), so the id fallback answers, and it must pass over the mask's loader.
+	cases["foreign-walk-stops"] = maskCase{`{
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-mask.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "ImageCompositeMasked", "inputs": {"destination": ["3", 0], "source": ["3", 0], "x": 0, "y": 0}},
+	  "5": {"class_type": "VAEEncode", "inputs": {"pixels": ["4", 0], "vae": ["9", 0]}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}},
+	  "9": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}}
+	}`, inpaint}
+	// One picture loaded once and used for both the encode and the mask: it is still the input.
+	cases["foreign-shared-loader"] = maskCase{foreign(`
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["3", 0], "channel": "alpha"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}}`),
+		want{string(OpInpaint), "af-photo.png", "af-photo.png"}}
+	// An ImageToMask that never reaches the sampler is not an inpaint mask, and its loader is not
+	// the picture either.
+	cases["foreign-stray-image-to-mask"] = maskCase{foreign(`
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-matte.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "7": {"class_type": "LatentUpscaleBy", "inputs": {"samples": ["5", 0], "scale_by": 1}}`),
+		want{string(OpEdit), "", "af-photo.png"}}
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "image-1-1.png")
-			if err := os.WriteFile(path, pngWithText(t, tinyPNG(t, 2, 2), "prompt", graph), 0o600); err != nil {
+			if err := os.WriteFile(path, pngWithText(t, tinyPNG(t, 2, 2), "prompt", c.graph), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			got := readImageProps(path)
-			if got.Op != string(OpInpaint) || got.Mask != "af-mask.png" {
-				t.Errorf("op/mask = %q/%q, want inpaint/af-mask.png", got.Op, got.Mask)
+			if got.Op != c.want.op || got.Mask != c.want.mask {
+				t.Errorf("op/mask = %q/%q, want %q/%q", got.Op, got.Mask, c.want.op, c.want.mask)
 			}
-			if strings.Join(got.Inputs, ",") != "af-photo.png" {
-				t.Errorf("inputs = %v, want the picture alone — the mask's own LoadImage is not a reference", got.Inputs)
+			if strings.Join(got.Inputs, ",") != c.want.inputs {
+				t.Errorf("inputs = %v, want %s", got.Inputs, c.want.inputs)
 			}
 		})
 	}
