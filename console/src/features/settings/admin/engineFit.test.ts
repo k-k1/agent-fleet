@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { kvCacheMiB, modelFit, windowThatFits, windowWhenUnsized, WINDOW_WHEN_UNSIZED, refitWindows, outputForWindow } from "./engineFit.ts";
+import { kvCacheMiB, kvPriceOf, modelFit, windowThatFits, windowWhenUnsized, WINDOW_WHEN_UNSIZED, refitWindows, outputForWindow } from "./engineFit.ts";
 import type { EngineClass, EngineModel } from "./engineTypes.ts";
 
 const rung = (id: string, vram_mib: number): EngineClass => ({ id, label: id, vram_mib, types: [] });
@@ -20,17 +20,17 @@ const QWEN_KV_PER_1K_CORRECTED = 64;
 
 describe("kvCacheMiB", () => {
   it("reproduces the number the panel USED to show at the published ceiling", () => {
-    expect(kvCacheMiB(QWEN_KV_PER_1K, 262144)).toBe(66560);
+    expect(kvCacheMiB({ per1k: QWEN_KV_PER_1K }, 262144)).toBe(66560);
   });
 
   it("is linear in the window, which is the whole point of storing it per 1k", () => {
-    expect(kvCacheMiB(QWEN_KV_PER_1K, 32768)).toBe(8320);
-    expect(kvCacheMiB(QWEN_KV_PER_1K, 8192)).toBe(2080);
+    expect(kvCacheMiB({ per1k: QWEN_KV_PER_1K }, 32768)).toBe(8320);
+    expect(kvCacheMiB({ per1k: QWEN_KV_PER_1K }, 8192)).toBe(2080);
   });
 
   it("answers 0 rather than guessing when either half is missing", () => {
-    expect(kvCacheMiB(0, 32768)).toBe(0);
-    expect(kvCacheMiB(QWEN_KV_PER_1K, 0)).toBe(0);
+    expect(kvCacheMiB({ per1k: 0 }, 32768)).toBe(0);
+    expect(kvCacheMiB({ per1k: QWEN_KV_PER_1K }, 0)).toBe(0);
   });
 });
 
@@ -38,44 +38,44 @@ describe("modelFit", () => {
   // UD-IQ2_XXS is 7.27 GB = 6,933 MiB. At 32,768 it needs 15,253 MiB of a 22,000 MiB card (69%),
   // which is the answer the operator could not get out of the old screen.
   it("says a 2-bit 27B fits a 22 GB card at a sane window", () => {
-    const fit = modelFit(6933, QWEN_KV_PER_1K, 32768, 22000, LADDER);
+    const fit = modelFit(6933, { per1k: QWEN_KV_PER_1K }, 32768, 22000, LADDER);
     expect(fit.needMiB).toBe(15253);
     expect(fit.state).toBe("fits");
     expect(fit.nextClass).toBeUndefined();
   });
 
   it("says the same model does not fit at its published ceiling", () => {
-    expect(modelFit(6933, QWEN_KV_PER_1K, 262144, 22000, LADDER).state).toBe("over");
+    expect(modelFit(6933, { per1k: QWEN_KV_PER_1K }, 262144, 22000, LADDER).state).toBe("over");
   });
 
   // UD-IQ4_XS is 14.25 GB = 13,590 MiB: 21,910 of 22,000 is 99.6%, and the compute buffers this
   // estimate cannot see are what killed the L4 in ADR 0074. It must not read as a yes.
   it("calls 99% of the card tight, not a fit", () => {
-    const fit = modelFit(13590, QWEN_KV_PER_1K, 32768, 22000, LADDER);
+    const fit = modelFit(13590, { per1k: QWEN_KV_PER_1K }, 32768, 22000, LADDER);
     expect(fit.state).toBe("tight");
   });
 
   it("names the smallest rung that would hold what this one will not", () => {
-    const fit = modelFit(13590, QWEN_KV_PER_1K, 262144, 22000, LADDER);
+    const fit = modelFit(13590, { per1k: QWEN_KV_PER_1K }, 262144, 22000, LADDER);
     expect(fit.state).toBe("over");
     expect(fit.nextClass).toBeUndefined(); // 80,150 MiB fits on no rung this deployment declares
-    const smaller = modelFit(20000, QWEN_KV_PER_1K, 32768, 22000, LADDER);
+    const smaller = modelFit(20000, { per1k: QWEN_KV_PER_1K }, 32768, 22000, LADDER);
     expect(smaller.state).toBe("over");
     expect(smaller.nextClass?.id).toBe("g6e.xlarge");
   });
 
   it("stays unknown while no header could be read and the weights still fit", () => {
-    expect(modelFit(6933, 0, 32768, 22000, LADDER).state).toBe("unknown");
+    expect(modelFit(6933, { per1k: 0 }, 32768, 22000, LADDER).state).toBe("unknown");
   });
 
   // 🔴 …but not once the weights alone are over the card. A repository that will not answer a
   // ranged GET would otherwise hide its largest quantisations behind a shrug.
   it("still refuses weights that alone exceed the card, with no cache figure at all", () => {
-    expect(modelFit(30000, 0, 32768, 22000, LADDER).state).toBe("over");
+    expect(modelFit(30000, { per1k: 0 }, 32768, 22000, LADDER).state).toBe("over");
   });
 
   it("draws no verdict when the deployment declares no card", () => {
-    expect(modelFit(6933, QWEN_KV_PER_1K, 32768, 0, LADDER).state).toBe("unknown");
+    expect(modelFit(6933, { per1k: QWEN_KV_PER_1K }, 32768, 0, LADDER).state).toBe("unknown");
   });
 });
 
@@ -83,19 +83,19 @@ describe("windowThatFits", () => {
   it("picks the largest power of two that leaves room on the card", () => {
     // 22,000 x 0.85 = 18,700 of which the weights take 6,933, leaving 11,767 MiB:
     // 32,768 tokens cost 8,320 and 65,536 would cost 16,640.
-    expect(windowThatFits(6933, QWEN_KV_PER_1K, 22000, 262144)).toBe(32768);
+    expect(windowThatFits(6933, { per1k: QWEN_KV_PER_1K }, 22000, 262144)).toBe(32768);
   });
 
   it("never goes past the model's own ceiling", () => {
-    expect(windowThatFits(500, QWEN_KV_PER_1K, 46068, 16384)).toBe(16384);
+    expect(windowThatFits(500, { per1k: QWEN_KV_PER_1K }, 46068, 16384)).toBe(16384);
   });
 
   it("answers 0 when the weights alone leave no room, rather than a window nothing can run", () => {
-    expect(windowThatFits(21000, QWEN_KV_PER_1K, 22000, 262144)).toBe(0);
+    expect(windowThatFits(21000, { per1k: QWEN_KV_PER_1K }, 22000, 262144)).toBe(0);
   });
 
   it("answers 0 when there is no cache figure to divide the room by", () => {
-    expect(windowThatFits(6933, 0, 22000, 262144)).toBe(0);
+    expect(windowThatFits(6933, { per1k: 0 }, 22000, 262144)).toBe(0);
   });
 });
 
@@ -126,12 +126,12 @@ describe("windowWhenUnsized", () => {
 describe("the corrected cache figure changes what the form offers", () => {
   const WEIGHTS_MIB = 11483; // Qwen3.8-27B-UD-IQ3_S, 12,040,883,104 bytes
   it("offers four times the window on the same card", () => {
-    expect(windowThatFits(WEIGHTS_MIB, QWEN_KV_PER_1K, 22000, 262144)).toBe(16384);
-    expect(windowThatFits(WEIGHTS_MIB, QWEN_KV_PER_1K_CORRECTED, 22000, 262144)).toBe(65536);
+    expect(windowThatFits(WEIGHTS_MIB, { per1k: QWEN_KV_PER_1K }, 22000, 262144)).toBe(16384);
+    expect(windowThatFits(WEIGHTS_MIB, { per1k: QWEN_KV_PER_1K_CORRECTED }, 22000, 262144)).toBe(65536);
   });
 
   it("still calls the published ceiling over, which is what the row that OOMed declared", () => {
-    expect(modelFit(WEIGHTS_MIB, QWEN_KV_PER_1K_CORRECTED, 262144, 22000, LADDER).state).toBe("over");
+    expect(modelFit(WEIGHTS_MIB, { per1k: QWEN_KV_PER_1K_CORRECTED }, 262144, 22000, LADDER).state).toBe("over");
   });
 });
 
@@ -217,5 +217,55 @@ describe("refitWindows will not fit against weights it does not know", () => {
     } as unknown as EngineModel;
     expect(refitWindows([measured], 24000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "measured" }]);
     expect(refitWindows([measured], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "measured" }]);
+  });
+});
+
+// The sliding-window share (the CP's `kv_mib_fixed`), measured 2026-09-28 against llama-server at
+// -c 24576 on an RTX 5060 Ti: gemma-4-12b allocated 384 MiB for its 8 full layers and 1440 MiB for
+// its 40 sliding ones, weights 6777 MiB on the card.
+describe("a sliding-window model", () => {
+  const GEMMA4 = { per1k: 16, fixed: 1440 };
+  const CARD = 16311;
+
+  it("adds the sliding share once and multiplies only the full layers", () => {
+    expect(kvCacheMiB(GEMMA4, 24576)).toBe(1824);
+    expect(kvCacheMiB(GEMMA4, 131072)).toBe(2048 + 1440);
+    expect(kvCacheMiB(GEMMA4, 0)).toBe(0);
+  });
+
+  // 🔴 The negative control: a single per-1k figure taken at 1024 tokens puts the sliding layers
+  // in the rate (16 + 320 at 1024 cells) and multiplies them, which caps the window at 16k on a
+  // card that holds the model's whole 262k.
+  it("offers the window the card really holds", () => {
+    expect(windowThatFits(6777, GEMMA4, CARD, 262144)).toBe(262144);
+    expect(windowThatFits(6777, { per1k: 336 }, CARD, 262144)).toBe(16384);
+  });
+
+  it("reads both fields off a row, and a row with neither is unpriced", () => {
+    expect(kvPriceOf({ kv_mib_per_1k_tokens: 16, kv_mib_fixed: 1440 })).toEqual(GEMMA4);
+    expect(modelFit(6777, kvPriceOf({}), 24576, CARD).state).toBe("unknown");
+    expect(modelFit(6777, GEMMA4, 24576, CARD).kvMiB).toBe(1824);
+  });
+
+  // Every layer sliding: no per-1k rate, only the fixed share — still priced, not "unread".
+  it("fits a model with no full-attention layer", () => {
+    const allSliding = { per1k: 0, fixed: 1440 };
+    expect(windowThatFits(6777, allSliding, CARD, 262144)).toBe(262144);
+    const row = {
+      id: "all-swa", kind: "gguf", context_tokens: 8192, context_length: 32768,
+      kv_mib_per_1k_tokens: 0, kv_mib_fixed: 1440,
+      file_rows: [{ s3Key: "llm/all-swa.gguf", bytes: 6777 * 1048576 }],
+    } as unknown as EngineModel;
+    expect(refitWindows([row], CARD)).toEqual([{ id: "all-swa", from: 8192, to: 32768 }]);
+  });
+
+  it("re-fits a registered row with its sliding share", () => {
+    const row = {
+      id: "gemma-4-12b", kind: "gguf", context_tokens: 8192, context_length: 262144,
+      kv_mib_per_1k_tokens: 16, kv_mib_fixed: 1440,
+      file_rows: [{ s3Key: "llm/gemma.gguf", bytes: 6777 * 1048576 }],
+    } as unknown as EngineModel;
+    expect(refitWindows([row], CARD)).toEqual([{ id: "gemma-4-12b", from: 8192, to: 262144 }]);
+    expect(refitWindows([row], 9000)).toEqual([{ id: "gemma-4-12b", from: 8192, to: 0, blocked: "weights" }]);
   });
 });

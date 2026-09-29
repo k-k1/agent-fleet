@@ -5,9 +5,9 @@ package msp
 import "encoding/json"
 
 // SchemaFingerprint is the vendor's fingerprint of the schema model these types were
-// rendered from. fingerprint_test.go asserts the installed binary still exports it; a
-// mismatch means the wire moved under us, which is a red build rather than a silent
-// decode failure at runtime.
+// rendered from. A different fingerprint only says the bundle is behind the host;
+// whether these types can still speak to it is schemagen.Compare's question, asked of
+// the installed binary by fingerprint_test.go.
 const SchemaFingerprint = "sha256:36466f634c8c78a812462ec941187fd4547b232ee06153e5feb2a1482f0d3d7f"
 
 // SchemaVersion is MSP's own version, carried in `initialize`.

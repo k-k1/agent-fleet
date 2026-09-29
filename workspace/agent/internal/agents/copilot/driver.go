@@ -381,9 +381,20 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	if err != nil {
 		return err
 	}
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
+	tail, err := agents.StartWithStderrTail(cmd)
+	if err != nil {
 		return fmt.Errorf("copilot runtime を起動できません: %w", err)
+	}
+	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
+	// Closed by watch once the exit is recorded; a failed start waits on it (awaitExitRecord).
+	exited := make(chan struct{})
+	// Snapshot the tail before stopChild: the stop sequence can make the CLI print noise
+	// that pushes the real cause out of the budget.
+	fail := func(err error) error {
+		err = tail.Wrap(err)
+		stopChild(cmd)
+		awaitExitRecord(exited)
+		return err
 	}
 	cl := newACPClient(stdin, stdout)
 	// Capture this cl in the closure: during the first spawn the readLoop can run while h.cl is
@@ -392,13 +403,12 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(cl, id, method, params)
 	}
-	go h.watch(cmd, cl)
+	go h.watch(cmd, tail, cl, exited)
 
 	if _, err := cl.call("initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
 	}, 30*time.Second); err != nil {
-		stopChild(cmd)
-		return fmt.Errorf("copilot runtime の initialize に失敗しました: %w", err)
+		return fail(fmt.Errorf("copilot runtime の initialize に失敗しました: %w", err))
 	}
 
 	sid := h.sid
@@ -421,8 +431,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 				log.Printf("copilot managed: session/load %s: store gone (%v) — restarting with a new session", h.name, err)
 				sid = ""
 			} else {
-				stopChild(cmd)
-				return fmt.Errorf("copilot セッションを読み込めませんでした（時間をおいて再開してください）: %w", err)
+				return fail(fmt.Errorf("copilot セッションを読み込めませんでした（時間をおいて再開してください）: %w", err))
 			}
 		} else {
 			mode = currentModeOf(res)
@@ -433,15 +442,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 			"cwd": h.dir, "mcpServers": []any{},
 		}, 60*time.Second)
 		if err != nil {
-			stopChild(cmd)
-			return fmt.Errorf("copilot セッションを作成できません: %w", err)
+			return fail(fmt.Errorf("copilot セッションを作成できません: %w", err))
 		}
 		var out struct {
 			SessionID string `json:"sessionId"`
 		}
 		if json.Unmarshal(res, &out) != nil || out.SessionID == "" {
-			stopChild(cmd)
-			return errors.New("copilot セッションの作成応答を解釈できません")
+			return fail(errors.New("copilot セッションの作成応答を解釈できません"))
 		}
 		sid = out.SessionID
 		sids.Write(h.slotSid, sid)
@@ -480,12 +487,28 @@ func currentModeOf(res json.RawMessage) string {
 	return out.Modes.CurrentModeID
 }
 
+// exitRecordWait bounds how long a failed spawn waits for watch: longer than stopChild's
+// SIGTERM → SIGKILL sequence (3 s), so a child that ignores SIGTERM is still counted.
+const exitRecordWait = 5 * time.Second
+
+// awaitExitRecord holds a failed spawn until watch has written the exit record. Without it the
+// caller reports the failure before the record exists, and the write lands after the caller
+// has moved on — under a test's TempDir HOME, while or after that tree is removed.
+func awaitExitRecord(exited <-chan struct{}) {
+	select {
+	case <-exited:
+	case <-time.After(exitRecordWait):
+	}
+}
+
 // watch reaps the child and records its exit (record-exit for managed sessions; with a
 // per-session child the attribution is exact, unlike a daemon supervisor's). An exit from
 // SIGTERM (DropHandle/Shutdown) becomes "stopped" and the Console shows the ordinary stopped
 // state.
-func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient) {
+func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClient, exited chan struct{}) {
+	defer close(exited) // releases a failed spawn's awaitExitRecord
 	err := cmd.Wait()
+	tail.Release()
 	_ = err
 	code, sig := 0, 0
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {

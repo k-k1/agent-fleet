@@ -26,7 +26,8 @@ package main
 // sha256 cannot change under us.
 //
 // ⚠️ "at most once" and not "exactly once", and the difference is a supported-input assumption
-// worth naming: healGeometry decides a row has been read by looking at `context_ceiling`, so a
+// worth naming: healGeometry decides a row has been read by looking at `context_ceiling` (and at
+// the per-layer widths, so a row read before them is read once more), so a
 // header that declares no `<arch>.context_length` is re-read on every loading write. llama.cpp's
 // converter always writes one, which is why this is accepted rather than paid for with another
 // column — but a file from some other writer would be re-read, at up to two prefix reads a time,
@@ -88,25 +89,6 @@ const (
 // window, and the one that must never be confused with "this is not a GGUF file".
 var errGGUFShort = errors.New("gguf: header window is short")
 
-// ggufStop hands a short read back to the LADDER rather than deciding for it.
-//
-// The scan no longer stops at the four required fields (the hybrid modifiers are written after
-// them), so it walks on into `tokenizer.ggml.tokens` — an array of the whole vocabulary,
-// megabytes long, which no window this file fetches will ever contain. Ending there with the
-// geometry in hand is a perfectly usable read.
-//
-// 🔴 But it is not the same as a COMPLETE one, and this function used to say it was. Between
-// `attention.value_length` and `full_attention_interval` there are several more keys, and a
-// header whose `general.*` strings are long enough pushes the modifiers past a 64 KiB window.
-// Swallowing the short error there returned a geometry that looks whole and prices its cache
-// four times too high — the very bug this pass exists to fix, reached through the error path.
-// So the error travels with the partial answer and engineGGUFGeometryFrom tries the bigger
-// window before settling for it.
-func ggufStop(geom engineKVGeometry, err error) error {
-	_ = geom
-	return err
-}
-
 // engineKVGeometry is what a KV-cache estimate is computed from. The first four are required:
 // a partially read header answers nothing, because the product of four numbers with one
 // missing is not a smaller estimate, it is a wrong one.
@@ -135,6 +117,22 @@ type engineKVGeometry struct {
 	// 🔴 This is the difference between an estimate that is right and one that is four times
 	// too big, which is not a rounding error when it decides whether a window fits on a card.
 	FullAttnInterval int
+
+	// FullWidth and SWAWidth are the model's cache per token, in elements, summed layer by
+	// layer: Σ n_head_kv(il) × (key_length(il) + value_length(il)) over the layers that cache
+	// every token of the window, and over the sliding-window layers whose cache is capped by
+	// SlidingWindow (<arch>.attention.sliding_window). Layers with no KV heads — the short
+	// convolutions of LFM2, the recurrent layers of a hybrid — and layers that borrow another
+	// layer's cache contribute to neither.
+	//
+	// They exist because GPT-OSS, gemma-4 and LFM2 mix layer kinds with different head counts
+	// and head widths, which the four numbers above cannot describe: gemma-4-12b's 40
+	// sliding layers carry 8 heads of 256 and its 8 full layers 1 head of 512. See
+	// ggufLayerWidths for the rules, all taken from llama.cpp's own loader.
+	//
+	// Non-zero on every header this reader completes. Both zero means a row read before they
+	// existed, and engineKVCacheMiB falls back to the four-number formula for it.
+	FullWidth, SWAWidth, SlidingWindow int
 
 	// Ceiling is `<arch>.context_length`: the largest window the model was TRAINED for. Not part
 	// of the cache arithmetic at all — it is read here because it is in the same header, on the
@@ -310,10 +308,42 @@ func (r *ggufReader) skipArray() error {
 	return fmt.Errorf("gguf: unsupported array element type %d", et)
 }
 
-// parseGGUFGeometry reads the header out of a prefix of a GGUF file.
-//
-// It stops as soon as it has all four numbers — the fields sit near the front, ahead of the
-// tokenizer, so the common case never touches most of the window.
+// ggufMaxLayerArray bounds a per-layer array read into memory. The largest block_count in
+// circulation is in the low hundreds, so anything past this is not a per-layer array.
+const ggufMaxLayerArray = 4096
+
+// intArray reads an array of integers or booleans — the per-layer keys. Any other element type
+// is not a per-layer count and is refused rather than skipped, because the caller asked for it
+// by name.
+func (r *ggufReader) intArray() ([]int, error) {
+	et, err := r.u32()
+	if err != nil {
+		return nil, err
+	}
+	n, err := r.u64()
+	if err != nil {
+		return nil, err
+	}
+	if n > ggufMaxLayerArray {
+		return nil, fmt.Errorf("gguf: a per-layer array of %d entries", n)
+	}
+	if et == ggufTypeFloat32 || et == ggufTypeFloat64 || ggufFixedWidth(et) == 0 {
+		return nil, fmt.Errorf("gguf: a per-layer array of element type %d", et)
+	}
+	out := make([]int, n)
+	for i := range out {
+		v, _, err := r.intValue(et)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+// parseGGUFGeometry reads the header out of a prefix of a GGUF file: every `<arch>.*` key, which
+// llama.cpp's converter writes ahead of the tokenizer, so the common case never touches most of
+// the window.
 func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 	r := &ggufReader{b: buf}
 	magic, err := r.take(4)
@@ -342,6 +372,7 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 
 	var arch string
 	var geom engineKVGeometry
+	var layers ggufLayerKeys
 	var embedding, heads int
 	// 🔴 The marker that says a short read is nevertheless a COMPLETE one. llama.cpp's converter
 	// writes `general.*`, then every `<arch>.*` key, then `tokenizer.*` — so once a tokenizer key
@@ -349,64 +380,105 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 	// costs nothing. Without it there is no way to tell "the header had no modifiers" from "the
 	// window ended before them", and the two have to be told apart: the second, taken for the
 	// first, stores a four-times-too-high cache estimate that reads as authoritative.
-	for i := uint64(0); i < kvCount; i++ {
-		key, err := r.str()
-		if err != nil {
-			return geom, ggufStop(geom, err)
-		}
-		// 🔴 Set from the KEY, before the value is parsed. The value that follows the first
-		// tokenizer key is the vocabulary array, which is exactly the thing no window contains —
-		// so a marker set after parsing it would never be set at all.
-		if strings.HasPrefix(key, "tokenizer.") {
-			geom.PastArch = true
-		}
-		t, err := r.u32()
-		if err != nil {
-			return geom, ggufStop(geom, err)
-		}
-		// The architecture names every other key, so it has to be read before they can be
-		// recognised. llama.cpp writes it first; if some writer does not, the keys simply are
-		// not matched and the row stays unknown.
-		if key == "general.architecture" {
-			if t != ggufTypeString {
-				return geom, errors.New("gguf: general.architecture is not a string")
+	//
+	// 🔴 A short window ends the scan and does NOT end the parse. The scan walks on into
+	// `tokenizer.ggml.tokens`, megabytes long, which no window this file fetches contains — so
+	// ending there is the normal way a good read finishes, and what was read still has to be
+	// folded. The error travels with the answer, so engineGGUFGeometryFrom can tell a read that
+	// ended past the architecture keys (PastArch) from one that ended inside them.
+	scan := func() error {
+		for i := uint64(0); i < kvCount; i++ {
+			key, err := r.str()
+			if err != nil {
+				return err
 			}
-			if arch, err = r.str(); err != nil {
-				return geom, err
+			// 🔴 Set from the KEY, before the value is parsed. The value that follows the first
+			// tokenizer key is the vocabulary array, which is exactly the thing no window contains —
+			// so a marker set after parsing it would never be set at all.
+			if strings.HasPrefix(key, "tokenizer.") {
+				geom.PastArch = true
 			}
-			continue
+			t, err := r.u32()
+			if err != nil {
+				return err
+			}
+			// The architecture names every other key, so it has to be read before they can be
+			// recognised. llama.cpp writes it first; if some writer does not, the keys simply are
+			// not matched and the row stays unknown.
+			if key == "general.architecture" {
+				if t != ggufTypeString {
+					return errors.New("gguf: general.architecture is not a string")
+				}
+				if arch, err = r.str(); err != nil {
+					return err
+				}
+				continue
+			}
+			field := ""
+			if arch != "" && strings.HasPrefix(key, arch+".") {
+				field = strings.TrimPrefix(key, arch+".")
+			}
+			// The two keys a model may write once per layer. Read into memory only for these: every
+			// other array is skipped, and the one that matters for that is the vocabulary.
+			if t == ggufTypeArray && (field == "attention.head_count_kv" || field == "attention.sliding_window_pattern") {
+				vals, err := r.intArray()
+				if err != nil {
+					return err
+				}
+				if field == "attention.head_count_kv" {
+					layers.headsKV = vals
+				} else {
+					layers.swaPattern = vals
+				}
+				continue
+			}
+			n, isInt, err := r.intValue(t)
+			if err != nil {
+				return err
+			}
+			if !isInt || field == "" {
+				continue
+			}
+			switch field {
+			case "block_count":
+				geom.Layers = n
+			case "attention.head_count_kv":
+				geom.HeadsKV = n
+			case "attention.key_length":
+				geom.KeyLen = n
+			case "attention.value_length":
+				geom.ValLen = n
+			case "embedding_length":
+				embedding = n
+			case "attention.head_count":
+				heads = n
+			case "nextn_predict_layers":
+				geom.NextN = n
+			case "full_attention_interval":
+				geom.FullAttnInterval = n
+			case "context_length":
+				geom.Ceiling = n
+			case "attention.sliding_window":
+				geom.SlidingWindow = n
+			case "attention.sliding_window_pattern":
+				layers.swaEvery = n
+			case "attention.key_length_swa":
+				layers.keyLenSWA = n
+			case "attention.value_length_swa":
+				layers.valLenSWA = n
+			case "attention.shared_kv_layers":
+				layers.sharedKV = n
+			}
+			// 🔴 No early return on complete(). The two modifiers are written AFTER
+			// attention.value_length (measured on Qwen3.8-27B: value_length is key 28 of 50 and
+			// full_attention_interval is key 36), so stopping at the four required fields is
+			// exactly how a hybrid model came out looking like a dense one.
 		}
-		n, isInt, err := r.intValue(t)
-		if err != nil {
-			return geom, ggufStop(geom, err)
-		}
-		if !isInt || arch == "" || !strings.HasPrefix(key, arch+".") {
-			continue
-		}
-		switch strings.TrimPrefix(key, arch+".") {
-		case "block_count":
-			geom.Layers = n
-		case "attention.head_count_kv":
-			geom.HeadsKV = n
-		case "attention.key_length":
-			geom.KeyLen = n
-		case "attention.value_length":
-			geom.ValLen = n
-		case "embedding_length":
-			embedding = n
-		case "attention.head_count":
-			heads = n
-		case "nextn_predict_layers":
-			geom.NextN = n
-		case "full_attention_interval":
-			geom.FullAttnInterval = n
-		case "context_length":
-			geom.Ceiling = n
-		}
-		// 🔴 No early return on complete(). The two modifiers are written AFTER
-		// attention.value_length (measured on Qwen3.8-27B: value_length is key 28 of 50 and
-		// full_attention_interval is key 36), so stopping at the four required fields is
-		// exactly how a hybrid model came out looking like a dense one.
+		return nil
+	}
+	scanErr := scan()
+	if scanErr != nil && !errors.Is(scanErr, errGGUFShort) {
+		return geom, scanErr
 	}
 	// 🔴 The fallback is `embedding_length / head_count`, and it is ONLY a fallback. Measured
 	// 2026-09-11: qwen3moe declares key_length = value_length = 128 while embedding_length /
@@ -420,10 +492,141 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 			geom.ValLen = embedding / heads
 		}
 	}
+	// A per-layer head count stands in for the scalar the four-number formula needs, so that
+	// complete() keeps meaning "the attention shape was declared". Its largest entry, because
+	// that formula is only the fallback for a row stored before the widths were — it must not
+	// come out SMALLER than the truth.
+	for _, h := range layers.headsKV {
+		geom.HeadsKV = max(geom.HeadsKV, h)
+	}
 	if !geom.complete() {
+		if scanErr != nil {
+			return geom, scanErr
+		}
 		return geom, errors.New("gguf: the header does not declare the attention geometry")
 	}
-	return geom, nil
+	// 🔴 A window that ended INSIDE the architecture keys may still be missing a per-layer key,
+	// so it goes back as short and the ladder tries the bigger window. One that ended past them
+	// (PastArch) has seen everything the fold uses: a fold error there is the header's own, and
+	// masking it as short would let the ladder store the geometry without its widths.
+	if scanErr != nil && !geom.PastArch {
+		return geom, scanErr
+	}
+	full, swa, err := ggufLayerWidths(arch, geom, layers)
+	if err != nil {
+		return geom, err
+	}
+	geom.FullWidth, geom.SWAWidth = full, swa
+	return geom, scanErr
+}
+
+// ggufLayerKeys is what a header says about individual layers, collected during the scan and
+// only interpreted at its end: gemma-4 writes head_count_kv as key 23 and the sliding pattern
+// that gives it meaning as key 33.
+type ggufLayerKeys struct {
+	headsKV    []int // <arch>.attention.head_count_kv when written per layer; 0 = no KV cache
+	swaPattern []int // <arch>.attention.sliding_window_pattern as an array; non-zero = sliding
+	swaEvery   int   // the same key as a scalar period
+	keyLenSWA  int   // <arch>.attention.key_length_swa
+	valLenSWA  int   // <arch>.attention.value_length_swa
+	sharedKV   int   // <arch>.attention.shared_kv_layers: trailing layers that reuse a cache
+}
+
+// ggufSWAPeriod is llama.cpp's default sliding-window layout for architectures whose header
+// declares a window but no pattern — GPT-OSS is one: `sliding_window = 128` and nothing about
+// which layers use it. Each entry mirrors the `load_swa_pattern(ml, n[, dense_first])` call in
+// llama.cpp's src/models/<arch>.cpp, and the layout is llama_hparams::set_swa_pattern: layer il
+// slides when il % n < n-1, or, dense first, when il % n != 0.
+//
+// 🔴 Only architectures whose cache is the plain sliding kind belong here. One missing is safe
+// — its layers are all counted as full, an over-estimate — but a wrong entry under-states a
+// cache, which is how a window that does not fit gets switched on. Chunked attention (llama4)
+// and phi3's declared-but-unused window are deliberately absent.
+var ggufSWAPeriod = map[string]struct {
+	every      int
+	denseFirst bool
+}{
+	"gpt-oss": {2, false}, // measured 2026-09-28: 12 of 24 layers over 1024 cells, 24.00 MiB
+	"gemma2":  {2, false},
+	"gemma3":  {6, false},
+	"cohere2": {4, false},
+	"exaone4": {4, false},
+}
+
+// ggufLayerWidths folds a header into FullWidth and SWAWidth, following llama.cpp's loader:
+//
+//   - the layers that run: block_count less nextn_predict_layers
+//   - a layer with no KV heads caches nothing (LFM2's convolutions), and neither does a layer
+//     that full_attention_interval makes recurrent (Qwen3.5's hybrids)
+//   - the last shared_kv_layers reuse an earlier layer's cache (gemma-3n and the small gemma-4s)
+//   - a layer slides when the pattern says so, and uses key_length_swa / value_length_swa
+//     where the header declares them
+//
+// Measured against llama-server on 2026-09-28 (-c 24576, four slots): gemma-4-12b 8 full
+// layers at 384.00 MiB and 40 sliding at 1440.00, gpt-oss-20b 12 and 12 at 576.00 and 24.00,
+// LFM2.5-8B-A1B 6 attention layers at 288.00 — each what engineKVCacheMiB computes from these.
+func ggufLayerWidths(arch string, g engineKVGeometry, k ggufLayerKeys) (full, swa int, err error) {
+	// A per-layer array that does not cover every block is a header this reader does not
+	// understand, and guessing the missing layers would be guessing the cache.
+	if k.headsKV != nil && len(k.headsKV) != g.Layers {
+		return 0, 0, fmt.Errorf("gguf: head_count_kv has %d entries for %d blocks", len(k.headsKV), g.Layers)
+	}
+	if k.swaPattern != nil && len(k.swaPattern) != g.Layers {
+		return 0, 0, fmt.Errorf("gguf: sliding_window_pattern has %d entries for %d blocks", len(k.swaPattern), g.Layers)
+	}
+	n := g.Layers
+	if g.NextN > 0 && g.NextN < n {
+		n -= g.NextN
+	}
+	cached := n
+	if k.sharedKV > 0 && k.sharedKV < n {
+		cached = n - k.sharedKV
+	}
+	period, known := ggufSWAPeriod[arch]
+	if k.swaEvery > 0 {
+		period.every, known = k.swaEvery, true
+	}
+	slides := func(il int) bool {
+		switch {
+		case g.SlidingWindow <= 0:
+			return false
+		case k.swaPattern != nil:
+			return k.swaPattern[il] != 0
+		case !known:
+			return false
+		case period.denseFirst:
+			return il%period.every != 0
+		}
+		return il%period.every < period.every-1
+	}
+	for il := 0; il < cached; il++ {
+		if g.FullAttnInterval > 1 && (il+1)%g.FullAttnInterval != 0 {
+			continue
+		}
+		heads := g.HeadsKV
+		if k.headsKV != nil {
+			heads = k.headsKV[il]
+		}
+		if heads <= 0 {
+			continue
+		}
+		if slides(il) {
+			kl, vl := g.KeyLen, g.ValLen
+			if k.keyLenSWA > 0 {
+				kl = k.keyLenSWA
+			}
+			if k.valLenSWA > 0 {
+				vl = k.valLenSWA
+			}
+			swa += heads * (kl + vl)
+		} else {
+			full += heads * (g.KeyLen + g.ValLen)
+		}
+	}
+	if full+swa == 0 {
+		return 0, 0, errors.New("gguf: no layer of this header holds a KV cache")
+	}
+	return full, swa, nil
 }
 
 // engineGGUFGeometry fetches enough of a GGUF file to read its geometry, over HTTP Range.
@@ -515,32 +718,97 @@ func engineGGUFBytes(ctx context.Context, url, token string, window int) ([]byte
 	return io.ReadAll(io.LimitReader(resp.Body, int64(window)))
 }
 
-// engineKVCacheMiB is the KV cache one model wants, in MiB.
+// The llama-server settings the sliding-window cache is sized by. The Control Plane passes none of
+// them (`LlmExtraArgs` defaults to `-ngl,99,--jinja,--no-mmap`), so these are the server's own
+// defaults: `--parallel` auto is 4 slots over one unified cache, and the micro-batch is 512.
+// Measured 2026-09-28, the log line `n_parallel is set to auto, using n_parallel = 4 and
+// kv_unified = true`. An operator who adds `-np` or `--swa-full` there moves the real figure.
+const (
+	engineLlmSlots  = 4
+	engineLlmUbatch = 512
+)
+
+// engineSWACells is how many tokens a sliding-window layer's cache holds: llama.cpp's
+// llama_kv_cache_iswa sizes it `GGML_PAD(min(n_ctx, n_swa × n_seq + n_ubatch), 256)` with a unified
+// cache. Every slot keeps its own window, and the micro-batch in flight is on top — so gpt-oss's
+// 128-token window is 1024 cells, not 128. contextTokens <= 0 asks for the cap alone.
+func engineSWACells(slidingWindow, contextTokens int) int {
+	cells := slidingWindow*engineLlmSlots + engineLlmUbatch
+	if contextTokens > 0 && contextTokens < cells {
+		cells = contextTokens
+	}
+	return (cells + 255) / 256 * 256
+}
+
+// engineKVCacheMiB is the KV cache one model wants at a window, in MiB — llama.cpp's own
+// `llama_kv_cache: size = …`, f16.
 //
-// `cacheLayers × n_head_kv × (key_length + value_length) × ctx × bytes(cache element)`, which
-// is llama.cpp's own `KV self size`. The two halves are kept apart rather than written as
-// `2 × head_dim` because a model may declare different key and value widths, and one that does
-// would be silently mis-sized by the doubled form.
+// `FullWidth × ctx + SWAWidth × engineSWACells(ctx)`, elements of two bytes. The full layers
+// grow with the window and the sliding ones stop at their cap. Measured 2026-09-28 against
+// llama-server at -c 24576 (see ggufLayerWidths): 1824, 600 and 288 MiB, exact to the MiB.
 //
-// The layer count is cacheLayers() and not block_count: see there for the two reasons they
-// differ and for the measurement that settled it.
+// A row stored before the widths were falls back to `cacheLayers × n_head_kv × (key_length +
+// value_length) × ctx`, which is right for a model whose layers all look alike and is what such
+// a row was sized by until its header is read again. The two halves are kept apart rather than
+// written as `2 × head_dim` because a model may declare different key and value widths.
 //
-// What this still does NOT count is the recurrent half of a hybrid model — the fixed-size SSM
-// state of the layers cacheLayers() drops. It is per SEQUENCE rather than per token, so it does
-// not belong in a figure the window multiplies, and llama.cpp allocates it outside the buffer
-// this function's measurement was taken from.
+// What this does NOT count is the fixed state of the layers that hold no KV cache — LFM2's
+// convolutions, a hybrid's recurrent layers. It is per sequence rather than per token, and small
+// where measured: LFM2.5-8B-A1B's is 1.12 MiB over 18 layers and four slots.
 func engineKVCacheMiB(g engineKVGeometry, contextTokens int) int {
 	if !g.complete() || contextTokens <= 0 {
 		return 0
 	}
-	layers := g.cacheLayers()
-	if layers <= 0 {
-		return 0
-	}
 	const bytesPerElement = 2 // f16; see the note at the top of this file
-	total := int64(layers) * int64(g.HeadsKV) * int64(g.KeyLen+g.ValLen) *
-		int64(contextTokens) * bytesPerElement
+	var total int64
+	if g.layered() {
+		total = int64(g.FullWidth) * int64(contextTokens) * bytesPerElement
+		if g.SWAWidth > 0 {
+			total += int64(g.SWAWidth) * int64(engineSWACells(g.SlidingWindow, contextTokens)) * bytesPerElement
+		}
+	} else {
+		layers := g.cacheLayers()
+		if layers <= 0 {
+			return 0
+		}
+		total = int64(layers) * int64(g.HeadsKV) * int64(g.KeyLen+g.ValLen) *
+			int64(contextTokens) * bytesPerElement
+	}
 	return int(total / (1024 * 1024))
+}
+
+// engineKVPricing is the cache as the panel prices it: MiB per 1024 tokens of window for the
+// layers that grow with it, plus the MiB the sliding-window layers hold at their cap whatever the
+// window. The panel multiplies the first and adds the second.
+//
+// 🔴 Splitting it is what keeps a sliding model's window from being priced linearly. gemma-4-12b's
+// sliding layers are 1440 of its 1824 MiB at 24,576 tokens and exactly the same 1440 at 131,072 —
+// one per-1k figure taken at 1024 tokens would put them in the rate and multiply them by 128.
+//
+// The fixed part is taken at the cap, so a window smaller than engineSWACells' cap (4608 tokens
+// for gemma-4) is over-stated by the difference: the safe direction, at windows nobody runs.
+func engineKVPricing(g engineKVGeometry) (per1k, fixed int) {
+	if !g.complete() {
+		return 0, 0
+	}
+	if !g.layered() {
+		layers := g.cacheLayers()
+		if layers <= 0 {
+			return 0, 0
+		}
+		return engineCeilMiB(int64(layers) * int64(g.HeadsKV) * int64(g.KeyLen+g.ValLen) * 1024 * 2), 0
+	}
+	const bytesPerElement = 2
+	per1k = engineCeilMiB(int64(g.FullWidth) * 1024 * bytesPerElement)
+	fixed = engineCeilMiB(int64(g.SWAWidth) * int64(engineSWACells(g.SlidingWindow, 0)) * bytesPerElement)
+	return per1k, fixed
+}
+
+// engineCeilMiB rounds bytes UP to MiB. 🔴 The panel multiplies per1k by the window, so a fraction
+// dropped here is dropped 256 times at 262,144 tokens: a width of 1,000 elements is 1.95 MiB per
+// 1k, and truncated to 1 it prices a 512 MiB cache at 256.
+func engineCeilMiB(bytes int64) int {
+	return int((bytes + 1<<20 - 1) >> 20)
 }
 
 // engineIngestGeometry is the ingest path's one attempt at a model's geometry.
@@ -628,16 +896,43 @@ func engineGeometryFile(m store.EngineModel) (string, bool) {
 	return "", false
 }
 
-// engineApplyGeometry writes a read header onto a row. One function because the six fields are
-// one fact: a row carrying four of them and not the other two is a row that estimates four times
-// too high, which is the bug this whole pass exists to close.
+// engineApplyGeometry writes a read header onto a row. One function, with engineRowGeometry and
+// engineStoreKV beside it, because the fields are one fact: a row carrying some of them and not
+// the rest estimates its cache off a shape no file has, which is the bug this whole pass exists
+// to close.
 func engineApplyGeometry(m *store.EngineModel, geom engineKVGeometry) {
 	m.KVLayers, m.KVHeadsKV = geom.Layers, geom.HeadsKV
 	m.KVKeyLen, m.KVValueLen = geom.KeyLen, geom.ValLen
 	m.KVNextN, m.KVFullAttnInterval = geom.NextN, geom.FullAttnInterval
+	m.KVFullWidth, m.KVSWAWidth, m.KVSlidingWindow = geom.FullWidth, geom.SWAWidth, geom.SlidingWindow
 	// Only when the header said so: the ingest road may already have it from the upstream API,
 	// and a 0 read off a header that does not declare one must not erase that.
 	if geom.Ceiling > 0 {
 		m.ContextCeiling = geom.Ceiling
 	}
 }
+
+// engineRowGeometry is the geometry a row stored — what every estimate of a registered model is
+// computed from.
+func engineRowGeometry(m store.EngineModel) engineKVGeometry {
+	return engineKVGeometry{
+		Layers: m.KVLayers, HeadsKV: m.KVHeadsKV, KeyLen: m.KVKeyLen, ValLen: m.KVValueLen,
+		NextN: m.KVNextN, FullAttnInterval: m.KVFullAttnInterval,
+		FullWidth: m.KVFullWidth, SWAWidth: m.KVSWAWidth, SlidingWindow: m.KVSlidingWindow,
+		Ceiling: m.ContextCeiling,
+	}
+}
+
+// engineStoreKV is a read header as the targeted writes take it.
+func engineStoreKV(g engineKVGeometry) store.EngineModelKV {
+	return store.EngineModelKV{
+		Layers: g.Layers, HeadsKV: g.HeadsKV, KeyLen: g.KeyLen, ValueLen: g.ValLen,
+		NextN: g.NextN, FullAttnInterval: g.FullAttnInterval,
+		FullWidth: g.FullWidth, SWAWidth: g.SWAWidth, SlidingWindow: g.SlidingWindow,
+		Ceiling: g.Ceiling,
+	}
+}
+
+// layered is whether this geometry was read layer by layer. A row stored before that carries
+// only the per-model numbers, which mis-size any model whose layers differ.
+func (g engineKVGeometry) layered() bool { return g.FullWidth > 0 || g.SWAWidth > 0 }

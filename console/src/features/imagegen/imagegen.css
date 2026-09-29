@@ -45,6 +45,10 @@
 .igen-body.igen-studio {
   grid-template-columns: minmax(300px, 1.1fr) minmax(320px, 1fr) minmax(280px, 0.9fr);
   overflow: hidden;
+  /* The composer sits on the pane's bottom edge, as in a session pane of its own; the grid's
+     bottom padding left a band under it (reported on a phone and on a PC). The scrolling
+     columns keep that room themselves. */
+  padding-bottom: 0;
 }
 
 .igen-studio > .igen-col-form,
@@ -52,7 +56,7 @@
   overflow: auto;
   min-height: 0;
   /* Room for the agent outline (.igen-hl), which a scrolling column would otherwise clip. */
-  padding: 4px 6px;
+  padding: 4px 6px 16px;
 }
 
 .igen-col-agent {
@@ -1368,8 +1372,9 @@
 
 /* The narrow pane's conversation needs every line (measured at 390x500, keyboard up: 31 px of
    transcript). The agent head fits one line, and while the member types in the composer the
-   draft bar and the head step aside; they come back on blur. Focus on the bar's own buttons
-   does not count, so the bar never moves under a finger that is pressing it. */
+   head steps aside; it comes back on blur. The draft bar stays: with the rows below hidden on
+   touch devices the conversation keeps ~450 px on the member's phone, and a member typing
+   wants the draft and its Trial button in view (they asked for it). */
 @container igenpane (max-width: 720px) {
   .igen-agent-head {
     flex-wrap: nowrap;
@@ -1379,8 +1384,24 @@
   .igen-agent-replace-label {
     display: none;
   }
-  .igen-agent:has(.mirror-compose textarea:focus) .igen-draftbar,
   .igen-agent:has(.mirror-compose textarea:focus) .igen-agent-head {
     display: none;
+  }
+}
+
+/* On a touch device the focused composer means the soft keyboard is up, and the two steps above
+   still leave the transcript almost nothing: at 411x440 the stub shows 85 px, and a real session
+   adds the context bar and the title suggestion on top (a member reported the latest turns gone
+   while typing). Everything but the transcript, the session head and the composer's own row
+   steps aside until blur. Touch only: a narrow desktop pane has no keyboard eating its height. */
+@media (hover: none) and (pointer: coarse) {
+  @container igenpane (max-width: 720px) {
+    .igen:has(.mirror-compose textarea:focus) > .view-head,
+    .igen:has(.mirror-compose textarea:focus) .igen-tabs,
+    .igen-agent:has(.mirror-compose textarea:focus) .mirror-ctxbar,
+    .igen-agent:has(.mirror-compose textarea:focus) .mirror-title-suggest,
+    .igen-agent:has(.mirror-compose textarea:focus) .mirror-suggest {
+      display: none;
+    }
   }
 }

@@ -78,6 +78,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// rev/at/scope is what actually governs, and what happened is recorded in the
 			// repo's restore commit (AF-Restore-Rev / -Scope).
 			return "memory.restore", q.Get("rev"), true
+		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/start"):
+			// #1028: the Settings row's press names the profile in the path, and there is no
+			// request. Matched before the request form, which would take "profiles" for an id.
+			return "aws.login.start", "profile: " + name, true
 		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/start"):
 			// ADR 0102. The request id is from the URL; the profile is only the Console's
 			// hint in the query (the Agent decides from the id alone), so it is labelled one.

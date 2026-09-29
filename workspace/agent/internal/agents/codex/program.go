@@ -31,7 +31,11 @@ func envOr(key, def string) string {
 // The bypass flags make codex run unattended like claude's --dangerously-skip-
 // permissions: the container IS the sandbox, and we author the injected hooks so
 // hook-trust is bypassed too (otherwise the status hooks wouldn't fire).
-func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string {
+//
+// awaitAddr, when set, prefixes the launch with a wait until the shared app-server at that
+// address has unloaded codexResumeID (see release.go): the TUI cannot open a thread the
+// daemon still holds.
+func buildProgram(model, effort, slotSid, codexResumeID, forkFrom, awaitAddr string) string {
 	if override := os.Getenv("AGENT_CODEX_CMD"); override != "" {
 		return override
 	}
@@ -48,12 +52,19 @@ func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string
 		val := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s}]}]`, event, tomlString(cmd))
 		return "-c " + session.ShellQuote(val)
 	}
-	parts := []string{"codex"}
-	if addr := os.Getenv("AF_CODEX_APP_SERVER_ADDR"); addr != "" {
-		// Global options must precede resume/fork. The TUI remains interactive; only
-		// its backend moves behind the local app-server observed by Agent Fleet.
-		parts = append(parts, "--remote", session.ShellQuote(addr))
+	// Never `--remote <shared app-server>`: that TUI forwards none of the -c overrides
+	// below and no cwd to the thread it opens (measured 0.157.1 and 0.158.0: thread/start
+	// carries `"cwd":null` and a config of web_search/bypass_hook_trust only). The thread
+	// runs in $HOME, the status hooks never fire so the resume id is never captured, and the
+	// af MCP child gets no AF_SESSION_NAME (docs/log/124 §3). Launched directly, codex takes
+	// the pane's cwd and this process's environment, which the af entry's env_vars forward.
+	var prefix string
+	if codexResumeID != "" && awaitAddr != "" {
+		// `;`, not `&&`: a failed wait must still launch codex, whose lock screen offers a retry.
+		prefix = session.ShellQuote(exe) + " codex-await-thread " + session.ShellQuote(awaitAddr) + " " +
+			session.ShellQuote(codexResumeID) + "; "
 	}
+	parts := []string{"codex"}
 	switch {
 	case codexResumeID != "":
 		parts = append(parts, "resume", session.ShellQuote(codexResumeID))
@@ -83,7 +94,7 @@ func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string
 		val := "model_reasoning_effort=" + tomlString(effort)
 		parts = append(parts, "-c", session.ShellQuote(val))
 	}
-	return strings.Join(parts, " ")
+	return prefix + strings.Join(parts, " ")
 }
 
 // tomlString renders s as a TOML basic string (double-quoted, backslash/quote

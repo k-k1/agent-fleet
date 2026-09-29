@@ -37,7 +37,7 @@ value you set is not the value in force, look one layer out.
 | Running time | when your workspace was running (a 24-hour x date heatmap) |
 | Git hosting | GitHub / Bitbucket connections |
 | Internal repos | repositories hosted by the deployment itself |
-| AWS SSM | remote login targets |
+| AWS profiles/SSM | AWS profiles and remote login targets |
 | Issue tracker | Jira and the other work-item sources |
 | Chat | Discord / Slack bridge |
 | MCP servers | integration servers available to your agents |

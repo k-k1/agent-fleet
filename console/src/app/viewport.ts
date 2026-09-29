@@ -37,6 +37,14 @@ export function wireViewport() {
     kbOpen = kb > 150; // ignore URL-bar show/hide; only react to a keyboard
     if (kbOpen) root.style.setProperty("--app-h", `${Math.round(visible)}px`);
     else root.style.removeProperty("--app-h"); // fall back to height:100%
+    // Fitting the height is half of it: the browser also PANS the visual viewport down to the
+    // focused input (vv.offsetTop > 0), so a frame left at the top of the layout viewport shows
+    // only its bottom part, with empty page below it. Reported on Android in the image studio:
+    // the transcript (the frame's upper part) gone, a gap under the composer. The frame follows
+    // the pan while the keyboard is up; a pinch zoom's pan is the member's and is left alone.
+    const top = kbOpen && zoom(vv) <= 1.01 ? Math.round(vv.offsetTop) : 0;
+    if (top > 0) root.style.setProperty("--app-top", `${top}px`);
+    else root.style.removeProperty("--app-top");
   };
   vv.addEventListener("resize", sync);
   vv.addEventListener("scroll", sync);

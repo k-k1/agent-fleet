@@ -1,0 +1,235 @@
+# 124. 画像生成スタジオ P0 の配備での受け入れ（ADR 0100 未解決 1・4 の実測）
+
+- 依頼: #959（ADR 0100 P0 の受け入れ）と #1089（#1074 の使い勝手の受け入れ）。
+- 配備: Agent バイナリは 2026-09-28 12:59 のビルド（#1093 のマージより後）。バイナリに `get_image_studio` /
+  `set_image_draft` / `run_image_trial` があることを `grep -a` で確かめた（陽性対照は `generate_image`）。
+- §1〜6 は機械で測った部分。スマホと Console の画面での確認は §7。
+
+## 1. 測り方
+
+`list_changed` を尊重するかは、エージェントの申告ではなくスタジオの編集ログで判定した。
+
+1. Agent の API（`POST /sessions`）でセッションを作る。最初の指示は「`PONG7` とだけ返す」。指示文に無い文字列を
+   待つことで、最初のターン（＝最初の tools/list）が終わったことを出力で確かめる。
+2. モデルを選んだスタジオを作り、`POST /imagegen/studios/{id}/bind` で結ぶ。75 秒待つ（監視は 1 分ごと）。
+3. `set_image_draft` で prompt を一意の値にするよう頼む。無ければ `NO_TOOL` と返させる。
+4. 判定はスタジオの `recent_log` に `author: agent` の行が増え、prompt がその値になったかどうか。
+5. 増えなければ `/halt` → `/start` で resume し、同じことをもう一度頼む。
+
+罠が 3 つあった。
+
+- **`POST /sessions/{name}/stop` はセッションをごみ箱へ移す**（ADR 0101）。resume できる停止は `/halt`。
+- **Terminal の kind は最初のターンの前から `status: idle` を返す。** idle を待つだけだと、最初の tools/list より
+  前に結んでしまい、測定にならない。出力に答えが出るのを待つ。
+- **codex の Terminal は `GET /sessions/{name}/output` が空を返す。** 画面は `tmux capture-pane -p -J` で読んだ。
+
+## 2. `list_changed` の尊重（未解決 1）
+
+| kind・実行方式 | 結んだ後、resume なしで届くか | resume 後 |
+|---|---|---|
+| claude・Terminal | 届く | — |
+| agy・Terminal | 届く | — |
+| copilot・Terminal | 届く | — |
+| kiro・Terminal | 届く | — |
+| opencode・Terminal | 届かない（`NO_TOOL`） | 届く |
+| codex・Managed | 届かない（`NO_TOOL`） | **届かない** |
+| codex・Terminal | 届かない | **届かない**（結んだ状態で作っても届かない。§3） |
+| cursor・Terminal | 測れず（無料プランで `Named models unavailable`） | — |
+| lcpp・Managed | 測れず（モデル目録が空） | — |
+
+opencode / muse / copilot / cursor / kiro の Managed は、コードで結びを断っている（`StudioSessionUnsupported`）。
+
+- **codex の Managed は resume でも拾わない。** 全セッションが 1 つの `codex app-server` を共有していて、
+  スレッドの af MCP 子プロセスは `/halt` と `/start` の前後で同じだった（PID も起動時刻も同じ）。
+  codex が一覧を取るのは最初の 1 回だけになる。
+- Console は動いているセッションを結ばない。スタジオから起こすときは、常に `studio` を付けて新しい
+  セッションを作る（`console/src/features/imagegen/attach.ts`）。**codex の Managed でも、結んだ状態で作れば
+  最初のターンから届く**ことを配備で確かめた。尊重しないことで実際に困るのは「エージェントの試走を許す」
+  トグルで、codex の Managed では ON にしても `run_image_trial` が出ない。→ #1132
+
+## 3. codex の Terminal はホームで動いている
+
+codex の Terminal は `codex --remote <共有 app-server>` で起動する。TUI のプロセスの cwd は worktree だが、
+開くスレッドはホームで動く。
+
+- TUI のヘッダは `directory: ~`。`pwd` を頼むと `/home/dev` と答えた。
+- 共有 app-server がそのスレッドのために起こした af MCP サーバには `AF_SESSION_NAME` が無く、cwd はホーム。
+  自分がどのセッションのものか分からない（Managed はスレッド設定で名前を渡している。
+  `internal/mcpreg/thread_codex.go`）。
+- そのため、**結んだ状態で作った codex の Terminal でも、スタジオのツールが一覧に無い**
+  （`tools.mcp__af__set_image_draft is not a function`）。ADR 0100 の「Terminal はすべての kind で P0 の 1 周が
+  閉じる」は、codex では成り立たない。
+- 別の tmux ソケットで `-C <worktree>` を足して起動すると、codex はそのフォルダを信頼するかを尋ねた。
+  スレッドの cwd は `-C` に従うということ。
+
+スタジオに限らない問題なので、別の Issue にした。→ #1131
+
+### 3.1 原因と修正（#1131・2026-09-28）
+
+`--remote` の TUI は、`-c` の上書きもプロセスの cwd も app-server に渡していなかった。隔離した `CODEX_HOME` と
+専用の app-server を立て、TUI との WebSocket を中継して記録した（codex-cli 0.157.1 と 0.158.0 で同じ結果）。
+
+- `thread/start` に載るのは `"cwd":null` と `"config":{"web_search":…,"bypass_hook_trust":true}` だけ。`-m` は
+  専用の欄（`model`）で渡るが、`-c` は 1 つも載らない。`-C <dir>` を足すと `cwd` だけは載る。
+- そのため `-c` で注入していた status hooks も発火しない（`--remote` 無しの直接起動なら同じ hook が発火する
+  ＝陽性対照）。hook は codex 自身のセッション ID を記録する唯一の経路なので、スレッド ID が残らず、
+  resume・転写・圧縮検知も効いていなかった。
+- `-c 'mcp_servers.af={…,env={AF_SESSION_NAME=…}}'` も、`-c 'mcp_servers.af.env.AF_SESSION_NAME=…'` も、
+  スレッドには届かない。af 子の環境は洗われて（HOME・LANG・PATH など＋明示した env だけ）、スレッド ID も無い。
+- 直接起動なら、スレッドは pane の cwd で動き、`env_vars = ["AF_SESSION_NAME"]` で名前が af 子に届く。
+- 信頼済みの親ディレクトリは、git リポジトリでない子ディレクトリを覆わない（0.157.1 で確認を求められた）。
+  一方、app-server の起動後に `config.toml` へ書き足した信頼は読まれる。
+
+修正: TUI の経路は `--remote` をやめて直接起動する。app-server も起こさない（Managed だけが使う）。
+信頼は `m.Dir` に加えて `m.CWD()` にも書く。app-server の需要から TUI の数を外す。
+
+### 3.2 配備後の受け入れと、Managed → Terminal の切り替え（2026-09-28）
+
+PR #1137 を配備した Agent で、Agent API から codex の Terminal を作って確かめた。
+
+- `pwd` は worktree。af 子の環境に `AF_SESSION_NAME` があり、cwd も worktree。`/output` は空でなくなった
+  （hook がスレッド ID を記録している）。
+- スタジオ: 結んだ後の走行中のセッションでは `NO_TOOL`（codex は `list_changed` を拾わない）。`/halt` → `/start` の
+  resume で会話が戻り、`set_image_draft` がスタジオの `recent_log` に `author: agent` の行を足した。
+- 🔴 **Managed → Terminal の切り替えは止まった。** 直接起動の TUI は履歴を出したあと「This conversation is open in
+  another app」で止まる。共有 app-server がスレッドを読み込んでいる間は、別プロセスの codex はそれを開けない。
+  書き手の接続は切り替えで `thread/unsubscribe` するが、読み取り専用のオブザーバが読み込み済みの全スレッドを購読し、
+  30 秒ごとの `thread/loaded/list` で付け直すので、5 分待っても読み込まれたままだった。
+- 隔離した app-server での実測: 最後の購読者が抜けてから約 70 秒で unload され、その時点でロックが解けて TUI が続く。
+
+修正: `BuildLaunch` が resume するスレッドを、オブザーバが unsubscribe して unload まで付け直さない。解放の印は
+時間では消さず、unload（`notLoaded` か sweep の一覧から消えたこと）か Managed の Resume でだけ消す。再接続と Agent の
+再起動をまたぐようにファイルにも残す。待機中の pane には誰も入力を読まないので、プロンプトは `codex_releasing`（409）で断り、
+初回配送は待機が終わるまで待つ。pane では `workspace-agent codex-await-thread <addr> <id>` が `thread/loaded/list` を見て unload を待ってから
+`codex resume` を起動する（最長 3 分。過ぎたら codex のロック画面に任せる）。隔離した app-server で、待機の表示のあと
+ロック画面なしで会話が開くことを確かめた。
+
+### 3.3 PR #1141 の配備後の受け入れ（2026-09-28）
+
+PR #1141 を配備した Agent（バイナリは 22:46 のビルド。`codex-await-thread` を含む）で、Agent API から確かめた。
+
+- **Managed → Terminal の切り替え**: Managed で合言葉を覚えさせてから `POST /sessions/{n}/driver {"driver":"tui"}`。
+  API は 0.04 秒で返り、pane に待機の行が出て、約 60 秒後にロック画面なしで入力欄が出た。合言葉を尋ねると正しく答えた
+  （会話は引き継がれている）。
+- **待機中の送信**: `/input` と `/turn`（start）はどちらも 409 `codex_releasing`。pane には何も入力されなかった。入力欄が
+  出た後の `/input` は 200 で届き、待機の印（`codex-await/<name>`）は消えた。
+- **Terminal の通常の resume**: 同じセッションで `/halt` → `/start`。待機の行は出ず、1.5 秒で入力欄が出た。
+
+残りの端の場合は #1147、「停止してから切り替える」簡素化の案は #1148。#1131 はこの結果で閉じた。
+
+## 4. 上限値（未解決 4）
+
+**要約の 1 KB（`knowledgeSummaryMax`）はこのままでよい。** 実際の利用で書かれた知識文書の要約は
+659〜878 バイトで、切り詰められたものは無かった（anima 801・flux1 659・qwen-image-edit-2511 773・sdxl 878。
+agy と abyssorangemix2 は要約が空）。
+
+**`get_image_studio` の 8 KB（`studioAgentViewMax`）もこのままでよい。** 実際のスタジオの下書き
+（prompt 1,277 バイト・negative 552 バイト）を試験用のスタジオに写して測った。
+
+| 状態 | 応答の大きさ | 内訳の大きいもの |
+|---|---|---|
+| 下書きだけ（知識なし） | 3,203 バイト | draft 2,171 |
+| sdxl のモデル＋人の編集 7 回 | 7,579 バイト | since 3,137・draft 2,181・knowledge 931 |
+| 試走 1 回の後（短い prompt） | 3,180 バイト | — |
+
+ふだんは 3 KB 前後で、編集が続くと上限に近づく。上限を超えたら `fitStudioAgentView` が軽いものから落とす
+（モデルの候補・古い版・要約の末尾・変更の詳細）。
+
+**測定中に見つけた不具合を直した。** 「前回から変わったこと」は、変更前と変更後を先頭 120 バイトで切っていた。
+長い prompt の末尾を直すと、両側がまったく同じ文字列になる（`prompt: "masterpiece, …" → "masterpiece, …"`）。
+長い文字列では、共通の先頭と末尾を落とし、違う部分を前後 24 文字と一緒に見せるようにした
+（`studioChangeWindow`）。
+
+## 5. 合図の行（レビューで受け入れに回した項目）
+
+実際に使われたスタジオの claude の転写（人の送信 11 回）を読んだ。
+
+- 入力欄からの送信 10 回すべてで、合図の行は **最後の行** にあった（`[studio v2 → get_image_studio]` から
+  `[studio v30 · 下書きが変わった · 新しい結果 7 → get_image_studio]` まで）。
+- 最初のターン（ペルソナ）には合図が無い。設計どおり。
+- メモ・peer・予約実行は入力欄を通らないので合図が付かない。決定 5 のとおり、エージェントは合図が無くても
+  最初に `get_image_studio` を読む。
+
+## 6. 冷えたエンジンでのエージェントの試走（#1089）
+
+claude の Terminal に `run_image_trial` を 1 回呼ばせた。
+
+- 押下の行（`press`）は 05:07:58.648、投入結果の行（`press_result ok`・ジョブ j2）は 05:07:58.649。
+  **ほぼ同時に書かれる。**
+- ジョブは `waking` のまま 14:14:14 ごろまで待ち、14:14:21 に完了した。**押下から 6 分 23 秒**。
+- ツールは 120 秒で戻り、`{"job":"j2","state":"running","note":"試走はまだ終わっていません…"}` と答えた。
+  結果は次の `get_image_studio` の `since` に `result` として出て、`versions` には `agent_trial` として出た。
+  履歴（`/imagegen/history`）にも同じ版で載った。
+
+ペインが再読込なしでこれを拾うかは、画面で見る項目（§7）。
+
+## 7. スマホと Console での確認（#1089）
+
+2026-09-28、利用者が Android（Chrome・GBoard・約 411×891）で確かめた。1〜4 は利用者の画面、5 は
+ヘッドレスで確かめた（古い保存レイアウトが利用者の手元に無いため）。
+
+| 項目 | 結果 |
+|---|---|
+| 1. 設定タブの帯でモデルを選び、会話タブだけで 1 周（エージェントが下書きを直す → 下書きバーから試走 → サムネイル） | ✅ |
+| 1. キーボードが出ていても転写が読める | ❌ → 修正（§7.1） |
+| 1. 入力欄の高さ | ❌（1 行分に縮んで、案内文の 2 行目が切れる）→ 修正（§7.1） |
+| 2. 冷えたエンジンの試走が再読込なしで届く（サムネイル・「結果 +N」） | ✅ |
+| 2. 「N 枚できました」の行 | ✅ 出る。ただし 8 秒で消えて見逃した → 見るまで残すよう変更（§7.2） |
+| 3. worktree の行から起動（claude の Terminal はその場、codex の Managed は新しい worktree）・選んだモデル | ✅ |
+| 3. 既定名「<作業コピー> · <kind>」 | ❌ 新しい worktree でも起動元の行の名前になった → 修正（§7.3） |
+| 4. 「＋ 新しいスタジオ」の置き換え・2 台目の端末・2 つのスタジオの結果と通知 | ✅ |
+| 5. `studioId: null` の古いペインの移行 | ✅（ヘッドレス。POST は 1 回で、プロンプト・ネガティブ・サイズが移り、端末内の下書きは消える。再読込しても 2 回目は無い） |
+
+❌ の項目は配備後にスマホでもう一度見る。
+
+### 7.1 キーボードで転写が消える・入力欄が縮む
+
+README 用のショットのスタブ（`console/scripts/shots/`）を 411×891 で開き、タッチを模擬（`Emulation.setTouchEmulationEnabled`。
+無いと `pointer: coarse` が一致しない）、フォーカスを模擬（`Emulation.setFocusEmulationEnabled`。無いと `:focus` が当たらない）した。
+入力欄にフォーカスしてから高さをキーボードの分だけ縮めて測った。
+
+- 狭いスタジオは入力中に下書きバーとエージェントの見出しを隠していたが、スタジオの見出し・タブ・ctx の行・タイトル案・
+  返信候補が残り、440px で転写は 85px だった。実機はさらに ctx の行とタイトル案の分だけ狭い。スクロールは末尾に付いていた
+  （末尾との距離 0）ので、原因は欄の狭さ。タッチ端末では、これらも入力中は隠すようにした。440px で 202px、520px で 282px になった。
+- `autoGrowTextarea` は空の入力欄も測っていた。Chromium は scrollHeight に案内文を含めるので、空のときの高さが
+  「その瞬間の幅で案内文が何行に折れるか」になり、次に下書きが変わるまで残る。空のときは `rows` の高さに戻すようにした
+  （スタブでは打って消すと 57→75px に伸びていたのが 57px のまま）。スタブでは縮む向きは再現できていないので、実機で見直す。
+
+🔴 2026-09-28 訂正: 上の 2 つを配備しても、スマホでは転写が消え、入力欄が縮み、入力欄の下に隙間ができた（入力中に帯が消えるので、
+新しい画面が動いていることは確かめた）。原因は欄の配分ではなかった。この Android では `interactive-widget=resizes-content` が効かず、
+ページの高さは変わらないまま、見えている範囲が縮んで入力欄の位置まで下へずれる（`visualViewport.offsetTop` > 0）。
+`viewport.ts` は枠の高さを見えている範囲に合わせるだけで、位置はページの先頭のままだったので、画面には枠の下半分とその下の空白が映っていた。
+**測り方の欠陥**: スタブでは画面の高さを縮めてキーボードを近似した。これは「ページごと縮む」Android の片方の振る舞いだけで、
+「見えている範囲だけが縮んでずれる」もう片方は再現できない。後者は、`--app-h` と `--app-top` を直接入れて測った。
+キーボード中はずれの分（`--app-top`）だけ枠の中身を下げるようにした。411×891 で `--app-h` 540px・`--app-top` 351px を入れると、
+中身は 351px から始まり、ページの高さは 891px のまま、転写の欄は 302px だった。
+
+🔴 2026-09-28 再訂正: 上の訂正も誤りだった。利用者が「消える」と言っていたのは**転写（ミラー）ではなく、試走ボタンのある下書きバー**で、
+入力中に下書きバーを隠すのは #1074 からの仕様だった（`imagegen.css` の狭いペインのフォーカス規則）。「転写」という語を両者が別の物に使っていた。
+利用者のスマホ（Android 10・Chrome 154）を USB と `adb forward` 越しの DevTools で直接測ると、Chrome のタブでは
+`interactive-widget=resizes-content` が効いてページの高さが 984→671px に縮み、見えている範囲のずれは 0、ミラーは 451px 見えていた。
+`--app-top` はこの端末では働かない（働く場面では位置の計算として正しいので残した）。入力中も下書きバーを出すようにし、
+同じ端末で上書きして確かめた（キーボード中、下書きバー 52px・ミラー 388px・入力欄 57px）。
+**教訓**: 画面の不具合を言葉で受けたら、先に「どの部品のことか」をスクリーンショットの上で指してもらう。実機の数値は DevTools の中継で取れる。
+
+### 7.4 スタジオのタイトル案
+
+スタジオのセッションは、タイトル案が毎回「画像生成スタジオでのプロンプト作成」になった。タイトル案（とブランチ名の案）は冒頭 2 ターンと
+直近 6 ターンを読み、スタジオの冒頭は Console が送るペルソナとエージェントの挨拶なので、何度作り直しても同じ題になる。
+冒頭のペルソナとその挨拶を材料から外すようにした（`withoutStudioPersona`。ペルソナの判定は `studioPersona` と同じ書き出しの定数で行う）。
+
+### 7.2 「N 枚できました」の行
+
+冷えたエンジンの試走は約 7 分かかり、行は 8 秒で消えていた。利用者は画面に戻ったときに見られず、右上のベルを探した
+（スタジオの完了はベルに載らない）。消えた後に数え直すので、「+3」の印の横に「1 枚」と出ることもあった。
+タイマーをやめ、結果を見るか ✕ まで残すようにした。
+
+- 残る課題: 試走を押したときの「N 枚を投入しました」は浮かぶトーストで、スマホでは入力欄に重なる。数秒で消えるので今回は扱わない。
+
+### 7.3 新しい worktree のスタジオ名
+
+既定名は、セッションを作る前に書いていた。新しい worktree の名前は Agent が作るまで決まらないので、起動元の行の名前になっていた
+（feature-issue-975 から切った codex のスタジオが「agent-fleet@feature-issue-975 · Codex」）。作成の応答の `repo` で付け直すようにした。
+この操作で既定名を付けたスタジオに限り、利用者がその間に付けた名前は残す。
+
+Follow-ups: #1131, #1132

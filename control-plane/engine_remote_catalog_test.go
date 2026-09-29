@@ -408,7 +408,7 @@ func TestRemoteRowIsAdoptedOnceTheFarFleetAnswers(t *testing.T) {
 // builder that was attached only with AWS, and a poller that needed SSM — and falling through
 // any of them leaves `/engine/…` unrouted.
 func TestBorrowingOnlyCPAdoptsThroughTheRealBuilder(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	_, srv := newFarFleet(t, farCatalogBody(t, farImageEngine(t)))
 	t.Setenv("AF_ENGINES_SSM_PARAM", "")
 	t.Setenv("AF_ENGINES_JSON", "")
@@ -431,6 +431,7 @@ func TestBorrowingOnlyCPAdoptsThroughTheRealBuilder(t *testing.T) {
 	if e.remote == nil || e.catalog.source == nil {
 		t.Fatal("the real builder gave the remote row no mirror to read")
 	}
+	awaitRemotePollExit(t, e)
 	if got := e.modelIDs(ctx); !reflect.DeepEqual(got, []string{"comfy/sdxl-base-1.0"}) {
 		t.Errorf("model ids = %v, want the borrowed checkpoint", got)
 	}
@@ -452,6 +453,15 @@ func waitForBorrowedRow(t *testing.T, reg *engineRegistry, key string) *engineRu
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// awaitRemotePollExit makes cleanup wait for the poll a newEngineRegistry(t.Context()) started;
+// t.Context is cancelled before cleanups run. Left running, its next fetch fails once the test
+// server is gone and logs into a later test's captureLog (the package runs past the 2-minute
+// interval).
+func awaitRemotePollExit(t *testing.T, e *engineRuntimeState) {
+	t.Helper()
+	t.Cleanup(e.remote.parent.polling.Wait)
 }
 
 // --- decision 7: what a second fetch may and may not change -----------------------

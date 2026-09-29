@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func readCodexConfig(t *testing.T) string {
@@ -60,5 +63,59 @@ func TestEnsureCodexFolderTrustedPreservesAndIsIdempotent(t *testing.T) {
 	twice := readCodexConfig(t)
 	if n := strings.Count(twice, `[projects."/home/dev/repos/novel-idea"]`); n != 1 {
 		t.Fatalf("section duplicated %d times:\n%s", n, twice)
+	}
+}
+
+// The thread runs in the session's CWD(), and trusting the working copy does not cover a
+// chosen subdirectory (the trust dialog still appeared for one), so a launch into a
+// subdirectory must pre-accept that folder as well — otherwise the TUI parks on the dialog.
+func TestBuildLaunchTrustsTheSubdirItRunsIn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "pkg", "app")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "trust-sub", Kind: session.KindCodex, Dir: dir, Subdir: "pkg/app"}
+	plan, err := New().BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	if plan.Cwd != sub {
+		t.Fatalf("plan.Cwd = %q, want the subdirectory %q", plan.Cwd, sub)
+	}
+	got := readCodexConfig(t)
+	for _, want := range []string{"[projects." + tomlString(dir) + "]", "[projects." + tomlString(sub) + "]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in:\n%s", want, got)
+		}
+	}
+}
+
+// codex matches trust against the resolved path, so a working copy reached through a symlink
+// must have its target listed as well, or the TUI parks on the trust dialog anyway.
+func TestBuildLaunchTrustsTheSymlinkTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	realResolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "trust-link", Kind: session.KindCodex, Dir: link, Subdir: "sub"}
+	if _, err := New().BuildLaunch(m, agents.LaunchOpts{}); err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	got := readCodexConfig(t)
+	for _, d := range []string{link, filepath.Join(link, "sub"), realResolved, filepath.Join(realResolved, "sub")} {
+		if want := "[projects." + tomlString(d) + "]"; !strings.Contains(got, want) {
+			t.Errorf("missing %s in:\n%s", want, got)
+		}
 	}
 }

@@ -420,6 +420,10 @@ type CreateReq struct {
 	// diverge from the branch — e.g. an auto branch temp/<x> in a wip-<x> folder. Empty
 	// => the folder is derived from the branch name.
 	Folder string `json:"folder"`
+	// WorkItem is the item a work-item launch was started for (ADR 0103 decision 8). It is
+	// recorded in the meta so a later rename through POST /repos/{name}/branch-name keeps
+	// {ref} and the kind. Every other launch leaves it nil.
+	WorkItem *session.WorkItemRef `json:"work_item,omitempty"`
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	// SSMAlias: the host bookmark's alias (CP disambiguates it with the profile when it
@@ -455,25 +459,10 @@ func resolveLiveModel(requested string, choices []agents.ModelChoice) (string, e
 	if requested == "" || len(choices) == 0 {
 		return requested, nil
 	}
-	norm := func(s string) string {
-		return strings.ToLower(strings.TrimSpace(s))
-	}
-	want := norm(requested)
-	// An exact id/label match wins outright, even when it also happens to be a
-	// prefix of another choice (e.g. "sakana/fugu" vs "sakana/fugu-ultra"): the
-	// fuzzy family-name matching below is only for when nothing matched exactly.
-	for _, choice := range choices {
-		if want == norm(choice.ID) || want == norm(choice.Label) {
-			return choice.ID, nil
-		}
-	}
-	var matches []string
-	for _, choice := range choices {
-		id, label := norm(choice.ID), norm(choice.Label)
-		if strings.HasSuffix(id, "-"+want) || strings.HasSuffix(label, "-"+want) ||
-			strings.HasPrefix(id, want+"-") || strings.HasPrefix(label, want+"-") {
-			matches = append(matches, choice.ID)
-		}
+	matched := agents.MatchModel(requested, choices)
+	matches := make([]string, len(matched))
+	for i, m := range matched {
+		matches[i] = m.ID
 	}
 	if len(matches) == 1 {
 		return matches[0], nil
@@ -484,7 +473,7 @@ func resolveLiveModel(requested string, choices []agents.ModelChoice) (string, e
 	}
 	return "", fmt.Errorf("モデル %q は利用できません。近い候補: %s。"+
 		"一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。",
-		requested, joinModelIDs(nearestModels(want, choices), modelSuggestLimit))
+		requested, joinModelIDs(nearestModels(strings.ToLower(requested), choices), modelSuggestLimit))
 }
 
 // retiredModelError is the wording for "the id is right, but the model is no longer
@@ -571,6 +560,37 @@ func commonPrefixLen(a, b string) int {
 		n++
 	}
 	return n
+}
+
+// cleanWorkItemRef trims a launch's work item and bounds it: it lives in the meta file,
+// which every session listing reads. nil when there is no key, since {ref} and the kind are
+// all a rename wants from it.
+func cleanWorkItemRef(in *session.WorkItemRef) *session.WorkItemRef {
+	if in == nil || strings.TrimSpace(in.Key) == "" {
+		return nil
+	}
+	out := &session.WorkItemRef{
+		Provider: clipRunes(strings.TrimSpace(in.Provider), 32),
+		Key:      clipRunes(strings.TrimSpace(in.Key), 200),
+		Title:    clipRunes(strings.TrimSpace(in.Title), 300),
+		Type:     clipRunes(strings.TrimSpace(in.Type), 64),
+	}
+	for _, l := range in.Labels {
+		if len(out.Labels) == 30 {
+			break
+		}
+		if l = clipRunes(strings.TrimSpace(l), 64); l != "" {
+			out.Labels = append(out.Labels, l)
+		}
+	}
+	return out
+}
+
+func clipRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }
 
 // CreateOrigin resolves a new session's origin (ADR 0029 §6) from the create request.
@@ -1055,7 +1075,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv, OriginSession: originSession,
-		Studio: studio,
+		Studio: studio, WorkItem: cleanWorkItemRef(req.WorkItem),
 	}
 	// pending from the first write of the meta: the pane must not offer a resend while the
 	// delivery below may still be typing (ADR 0100 decision 2).
@@ -1715,7 +1735,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
 		// The same slot keeps its studio (ADR 0100 decision 2); rebindStudioOnRecreate below moves
 		// the studio's own `session` over, or drops this copy when it cannot.
-		Studio: m.Studio,
+		Studio: m.Studio, WorkItem: m.WorkItem,
 	}
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
@@ -1795,6 +1815,8 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),
+		// The fork works in the same working copy, so it renames the same branch for the same item.
+		WorkItem: src.WorkItem,
 		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
 		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
 		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the

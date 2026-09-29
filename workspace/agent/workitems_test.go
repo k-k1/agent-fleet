@@ -20,6 +20,7 @@ func TestParseGitHubSearchItems(t *testing.T) {
 	   "repository_url":"https://api.github.com/repos/acme/web",
 	   "updated_at":"2026-08-25T01:02:03Z",
 	   "assignees":[{"login":"taro"},{"login":"hanako"}],
+	   "type":{"id":1,"name":"Bug"},
 	   "labels":[{"name":"bug","color":"D73A4A"},{"name":"p1","color":"url(x)"}]},
 	  {"number":46,"title":"draft pr","state":"open","draft":true,
 	   "html_url":"https://github.com/acme/web/pull/46",
@@ -56,6 +57,11 @@ func TestParseGitHubSearchItems(t *testing.T) {
 	}
 	if strings.Join(got.Labels, ",") != "bug,p1" {
 		t.Errorf("labels = %v", got.Labels)
+	}
+	// The issue type feeds the branch-name resolver's kind (ADR 0103 decision 4); an
+	// organisation without issue types sends null.
+	if got.Type != "Bug" || rows[1].Type != "" {
+		t.Errorf("type = %q / %q, want Bug / empty", got.Type, rows[1].Type)
 	}
 	// The colour is lowercased, and one that is not "rrggbb" is dropped rather than passed on
 	// to end up in the Console's CSS.

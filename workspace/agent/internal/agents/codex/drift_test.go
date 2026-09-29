@@ -107,8 +107,7 @@ var featureOverrideRe = regexp.MustCompile(`^features\.([a-z0-9_]+)=true$`)
 // prodProgram is the launch string under test (fresh slot: no resume/fork).
 func prodProgram(t *testing.T) string {
 	t.Helper()
-	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "") // TUI route, not --remote
-	return buildProgram("", "", "slot-drift", "", "")
+	return buildProgram("", "", "slot-drift", "", "", "")
 }
 
 // TestDriftCodexFeatureFlagsKnown asserts the feature gates our launch depends on still

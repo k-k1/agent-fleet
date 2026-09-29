@@ -810,11 +810,14 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	//
 	// 🔴 ABSENT, never 0, when the row has no geometry: "nobody could read it" and "it measured
 	// zero" are different facts, and a 0 would be drawn as a window that costs nothing.
-	if kv := engineKVCacheMiB(engineKVGeometry{
-		Layers: m.KVLayers, HeadsKV: m.KVHeadsKV, KeyLen: m.KVKeyLen, ValLen: m.KVValueLen,
-		NextN: m.KVNextN, FullAttnInterval: m.KVFullAttnInterval,
-	}, 1024); kv > 0 {
-		row["kv_mib_per_1k_tokens"] = kv
+	//
+	// kv_mib_fixed rides with it for the sliding-window layers, whose cache stops growing at
+	// their cap — see engineKVPricing. Absent when there are none, like its neighbour.
+	if per1k, fixed := engineKVPricing(engineRowGeometry(m)); per1k > 0 || fixed > 0 {
+		row["kv_mib_per_1k_tokens"] = per1k
+		if fixed > 0 {
+			row["kv_mib_fixed"] = fixed
+		}
 	}
 	// The architecture's own limit, under the SAME name the ingest form receives it by, because
 	// it is the same fact and the panel prices it the same way. 🔴 A ceiling, not a setting:

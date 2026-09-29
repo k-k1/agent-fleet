@@ -27,6 +27,15 @@ export interface WorkItem {
   /** "owner/name" when the provider has one — seeds the launch target. */
   repo: string;
   updatedAt: string;
+  /** CI of an open pull request's head commit (#1113). An empty state is "not read or none ran":
+   * issues, closed pull requests, Jira and Bitbucket rows, an older CP or Agent. */
+  checks: WorkItemChecks;
+  /** "clean" | "conflict" | "unknown" for an open GitHub pull request, "" when not read. */
+  mergeable: string;
+  /** The tracker's own issue type (GitHub's issue type, Jira's issuetype); "" or absent when the
+   * tracker has none or an older CP or Agent sent the row. The branch-name resolver maps it to a
+   * kind before the labels (ADR 0103 decision 4). */
+  type?: string;
 }
 
 export interface WorkItemQuery {
@@ -88,6 +97,7 @@ export function readWorkItems(res: unknown): { payload: WorkItemPayload | null; 
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 /** Keep only well-formed "rrggbb" entries. An older CP or Agent sends no map at all, and the
  * colour lands in an inline style, so nothing unchecked gets through. */
@@ -124,7 +134,23 @@ function normalizeItem(raw: unknown): WorkItem {
     labelColors: readLabelColors(r.labelColors),
     repo: str(r.repo),
     updatedAt: str(r.updatedAt),
+    checks: readChecks(r.checks),
+    mergeable: oneOf(r.mergeable, MERGEABLE),
   };
+}
+
+const CHECK_STATES = ["success", "failure", "pending"] as const;
+const MERGEABLE = ["clean", "conflict", "unknown"] as const;
+
+/** The value when it is one of `known`, else "". Both of these pick a class name and an icon, so
+ * a value this Console does not know draws nothing rather than something wrong. */
+function oneOf(v: unknown, known: readonly string[]): string {
+  return typeof v === "string" && known.includes(v) ? v : "";
+}
+
+function readChecks(v: unknown): WorkItemChecks {
+  const c = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  return { state: oneOf(c.state, CHECK_STATES), total: num(c.total), failed: num(c.failed), pending: num(c.pending) };
 }
 
 /** One reviewer's standing on a pull request. `state` is "approved", "changes_requested" or
@@ -172,8 +198,6 @@ export interface WorkItemDetail {
   checks: WorkItemChecks;
 }
 
-const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-
 /** Adopt one detail response. Every field is normalised for the same reason `normalizeItem`
  * exists: this crosses two service boundaries (Agent → CP → here), the two sides ship as
  * separate images, and one `null` where an array was expected blanks the whole Console. */
@@ -182,7 +206,6 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
   const d = res as Record<string, unknown> & { error?: ApiError | string };
   if (d.error) return { detail: null, error: d.error };
   if (!d.key && !d.url) return { detail: null };
-  const checks = (d.checks || {}) as Record<string, unknown>;
   return {
     detail: {
       provider: str(d.provider),
@@ -211,7 +234,7 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
             .map((r) => ({ name: str((r as Record<string, unknown>)?.name), state: str((r as Record<string, unknown>)?.state) }))
             .filter((r) => r.name)
         : [],
-      checks: { state: str(checks.state), total: num(checks.total), failed: num(checks.failed), pending: num(checks.pending) },
+      checks: readChecks(d.checks),
     },
   };
 }
@@ -275,6 +298,21 @@ export function checksTone(checks: WorkItemChecks): "ok" | "warn" | "bad" | "mut
       return "warn";
     default:
       return "muted";
+  }
+}
+
+/** The CI line with its counts: "failing" alone cannot say whether one job of forty is red.
+ * "" when there is nothing to say. */
+export function checksText(c: WorkItemChecks): string {
+  switch (c.state) {
+    case "failure":
+      return t("wi.detail_checks_failed", { failed: c.failed, total: c.total });
+    case "pending":
+      return t("wi.detail_checks_pending", { pending: c.pending, total: c.total });
+    case "success":
+      return t("wi.detail_checks_ok", { total: c.total });
+    default:
+      return "";
   }
 }
 
@@ -481,17 +519,23 @@ export function shortLocal(iso: string): string {
 
 /** Slug for a branch name: ASCII words from the title, dashed, short. Returns "" when the
  * title is all non-ASCII (Japanese titles are the normal case here) — the caller then
- * falls back to the key alone rather than emitting a branch of empty dashes. */
+ * falls back to the key alone rather than emitting a branch of empty dashes. A long title is
+ * cut at the last word boundary within `max`, as the Agent's TitleSlug does, so a name never
+ * ends mid-word; one word longer than `max` is cut at `max`. */
 export function titleSlug(title: string, max = 32): string {
   const s = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return s.length > max ? s.slice(0, max).replace(/-+$/, "") : s;
+  if (s.length <= max) return s;
+  if (s[max] === "-") return s.slice(0, max);
+  const cut = s.lastIndexOf("-", max - 1);
+  return cut > 0 ? s.slice(0, cut) : s.slice(0, max);
 }
 
-/** The default branch template. `{key}` is the item key with the owner/name prefix
- * dropped (the working copy already says which repo it is) and "#" turned into
+/** The default branch template when the Agent has no branch-name resolver; the resolver's own
+ * default is {prefix}{ref}-{slug} (ADR 0103 decision 6). `{key}` is the item key with the
+ * owner/name prefix dropped (the working copy already says which repo it is) and "#" turned into
  * "issue-" — "#" cannot appear in a git ref. The key keeps the case it was written in:
  * G3-1234 is how the ticket, the commit message and the PR title all spell it, so
  * lower-casing it to g3-1234 only made the branch the odd one out. `{slug}` is the ASCII
@@ -501,7 +545,8 @@ export function titleSlug(title: string, max = 32): string {
  * in the setting if you want it. */
 export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}";
 
-/** Branch name for a work item, from the user's template (docs/log/80 P2).
+/** Branch name for a work item, from the user's template (docs/log/80 P2). The fallback for an
+ * Agent without the branch-name resolver, which renders {key} and {slug} only.
  *
  * A template that yields something git would refuse is worse than no template, so the
  * result is sanitised: only [A-Za-z0-9._/-] survives, empty path segments collapse, and

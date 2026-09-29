@@ -18,14 +18,21 @@ import type { SessionFile } from "../mirror/sessionFiles.ts";
 import { workItemComment } from "./api.ts";
 import { composeReportDraft, reportTarget } from "./report.ts";
 import type { WorkItem, WorkItemSessionRef } from "./read.ts";
+import type { ResolvedSessionRef } from "./sessionRefs.ts";
+
+// "title · slug (branch)", or "slug (branch)" when the title is not known.
+const optionLabel = (s: WorkItemSessionRef, title: string) =>
+  (title ? `${title} · ${s.sessionName}` : s.sessionName) + (s.branch ? ` (${s.branch})` : "");
 
 interface Props {
   item: WorkItem;
   sessions: WorkItemSessionRef[];
+  /** Names each slug in the picker by its display name (#1108). */
+  sessionRef(name: string): ResolvedSessionRef;
   onClose(): void;
 }
 
-export function WorkItemReportModal({ item, sessions, onClose }: Props) {
+export function WorkItemReportModal({ item, sessions, sessionRef, onClose }: Props) {
   const tr = useT();
   const toast = useToast();
   const [sessionName, setSessionName] = useState(sessions[0]?.sessionName || "");
@@ -109,8 +116,7 @@ export function WorkItemReportModal({ item, sessions, onClose }: Props) {
             <select value={sessionName} onChange={(e) => setSessionName(e.target.value)}>
               {sessions.map((s) => (
                 <option key={s.id} value={s.sessionName}>
-                  {s.sessionName}
-                  {s.branch ? ` (${s.branch})` : ""}
+                  {optionLabel(s, sessionRef(s.sessionName).title)}
                 </option>
               ))}
             </select>

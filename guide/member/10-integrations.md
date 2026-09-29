@@ -237,10 +237,18 @@ replies.
 ## Logging in to another in-house host (SSM)
 
 You can log in to EC2 instances in your company's AWS via AWS SSM Session Manager. Configuration lives in
-**⚙ Settings → the "AWS SSM" tab**, split into **two layers**.
+**⚙ Settings → the "AWS profiles/SSM" tab**, split into **two layers**.
 
 - **Profile (shared settings)** — the access portal (IAM Identity Center) and account/role. A bundle of SSO settings reused across multiple hosts. Create one of these first.
 - **SSM host (individual)** — an alias for the login target → instance ID. For authentication you just pick a profile.
+
+Each profile row has **Log in**, which signs you in to IAM Identity Center for that profile without leaving the
+Console. It opens a login window; the sign-in code is created only when you press **Log in** there, and only that
+window shows it. The login serves SSM sessions and `af-aws-exec` for that profile. The button is off for a profile
+without both an account and a role, and for one whose name another label also maps to (see below).
+Beside the label, a badge shows the login state: **Signed in**, **Renews on use** (the access token has expired;
+while the portal session is open, the next use renews it) or **Not signed in**. It shows no time left: the
+workspace knows only the access token's expiry (about an hour), not when the portal session ends.
 
 **No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow — you
 approve the **`aws sso login`** URL shown in the terminal in your browser — and short-lived credentials are held
@@ -277,7 +285,8 @@ friends) win over `AWS_PROFILE`, so it does not pin who a command runs as.
 - Changes arrive **within about five minutes**, at the next workspace start, or immediately when you run
   `af-aws-exec`.
 
-**Logging in from a terminal.** Plain `aws sso login` opens a callback on `127.0.0.1` inside the workspace, which
+**Logging in from a terminal.** The profile row's **Log in** (above) does this in the Console. In a terminal, plain
+`aws sso login` opens a callback on `127.0.0.1` inside the workspace, which
 your browser cannot reach. Use the device-code flow instead:
 
 ```sh
@@ -312,6 +321,32 @@ af-aws-exec --profile <name> -- npx cdk deploy
   are obtained through the profile's SSO login alone — from a minimal config holding only its SSO settings, with
   endpoint overrides ignored — and then checked with AWS to be a session of that profile's permission-set role in
   that account. `--profile default` is refused: name the SSO profile.
+- **A profile that is not SSO.** Some accounts are reached only through a profile of your own in `~/.aws`: one that
+  assumes a role from a `source_profile` (`role_arn` + `source_profile`), or one with a `credential_process`.
+  `af-aws-exec` runs such a profile when you name its account with `--account`, which is required here:
+
+  ```sh
+  af-aws-exec --profile deploy-target --account <id> --region <region> -- ./deploy.sh
+  ```
+
+  The AWS CLI resolves the profile from your own files, with its own ways to the workload role (the container
+  credentials variables, IMDS) and endpoint overrides switched off, and the command runs only if AWS reports the
+  credentials in that account (and, for a role, as a session of that role). A `credential_process` is your own
+  program and runs as you wrote it: `af-aws-exec` checks the account of what it returns, not where it came from. It
+  is refused, before anything is fetched, when the profile or any profile in its `source_profile` chain (a
+  `[DEFAULT]` section included) sets `credential_source` (that takes the workspace's own credentials),
+  `web_identity_token_file`, `login_session` or `mfa_serial` (nobody can answer the MFA prompt when an agent runs the
+  command), when a profile in the chain names more than one way to get credentials (for example keys, even only a
+  session token or keys in `~/.aws/config`, beside a `credential_process` or on a role profile: the AWS CLI and
+  other SDKs would not agree on which to use), when the SSO profile a chain ends in is incomplete, or when the chain
+  is broken. Keep one way per profile: keys go in a profile of their own, named as `source_profile`. The one
+  exception is a role profile you name that is its own `source_profile` and holds the keys itself. When a
+  `credential_process` fails, its output is not shown; run it yourself to see why. Only temporary credentials are passed: a profile that resolves to long-lived keys is
+  refused, so use the keys to assume a role instead. If the chain ends in an SSO profile whose login is missing, the
+  command exits with code 3 and the `aws sso login` command for that SSO profile (at a terminal it starts the login
+  itself); the Console is not asked. These profiles do not appear in `af-aws-exec --list`, and they cannot share a
+  name with a Settings profile. The source keys stay in your `~/.aws` files as before; `af-aws-exec` never hands them
+  to the command.
 - The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
   falling back. At a terminal it starts the device-code login for you.
 - **When an agent's command needs the login**, it asks you in the Console instead: a toast at the bottom of the
@@ -322,7 +357,8 @@ af-aws-exec --profile <name> -- npx cdk deploy
   as a script in a shell session) and continues once you approve; if it has given up by then, the agent runs it again. **Close** keeps the request: it stays in the Console on your other devices too, so on a device
   whose browser cannot sign in, close it and press **Log in** in the Console on another one. **Cancel the request**
   is for a login you do not want: it withdraws the request, and for about a minute that profile is not asked for
-  again. Closing the toast only hides it in that tab. This covers your Settings profiles; for a profile you defined
+  again. Closing the toast only hides it in that tab. **Log in** on the profile's row in Settings works at any time, also
+  during that minute. This covers your Settings profiles; for a profile you defined
   yourself, or with `--no-login`, the command exits with code 3 and the login command to run in a terminal.
 - The command gets an AWS config that defines **only the profile you chose** (it hands back the same short-lived
   credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
@@ -346,8 +382,8 @@ af-aws-exec --profile <name> -- npx cdk deploy
   is **not** one of your Settings profiles (one you defined yourself) `--account` is required.
 - A name that means two things is refused: two Settings labels that map to it, or your own `~/.aws` definition of
   a Settings profile's name with a different account, role or sign-in portal.
-- Credentials last as long as the SSO role session (often one hour). A longer command fails when they expire
-  rather than switching identity.
+- Credentials last as long as the SSO role session, or the assumed role's session (often one hour). A longer
+  command fails when they expire rather than switching identity.
 
 ## Environment settings and recreating the workspace
 
@@ -360,7 +396,7 @@ workspace again).
   **not in this workspace yet**; picking one shows an **Install** button that fetches it right there (about
   200MB, into your home volume, so it survives restarts). Sessions started after it finishes get it as
   `JAVA_HOME` — no stop and start needed.
-- **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle — its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off.
+- **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle — its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off. Neither is Muse Code: it is installed from its card at the build this image pins and never updates itself; when a newer pinned build arrives with the image, the card offers **"Update Muse Code"** ([06](06-agents.md#muse-code)). lcpp has no CLI in the workspace to update — its engine belongs to the deployment.
 
 ### Recreating the workspace (danger zone)
 

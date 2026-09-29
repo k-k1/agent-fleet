@@ -133,3 +133,27 @@ func TestWorkspaceEnvCarriesTheAWSProfilesBridgeToken(t *testing.T) {
 		t.Fatalf("injected token %q does not verify to this membership: (%q,%v)", token, mid, ok)
 	}
 }
+
+// The Settings list carries the name the bridge exports each row under, and flags the
+// rows the bridge leaves out because their labels collide: the row's "Log in" (#1028)
+// sends that name, so the two must agree.
+func TestSettingsProfileListNamesMatchTheBridge(t *testing.T) {
+	rows := []store.SSMProfile{{ID: "a", Label: "prod app"}, {ID: "b", Label: "prod-app"}, {ID: "c", Label: "dev (JP)"}}
+	exported, _ := awsProfilesWire(rows)
+	byName := map[string]bool{}
+	for _, p := range exported {
+		byName[p.Name] = true
+	}
+	got := profileListWire(rows)
+	if len(got) != len(rows) {
+		t.Fatalf("list = %+v", got)
+	}
+	for _, p := range got {
+		if p.NameCollides == byName[p.Name] {
+			t.Errorf("%q: name %q, nameCollides %t, but exported by the bridge is %t", p.Label, p.Name, p.NameCollides, byName[p.Name])
+		}
+	}
+	if got[2].Name != "dev-JP-" {
+		t.Errorf("name = %q", got[2].Name)
+	}
+}

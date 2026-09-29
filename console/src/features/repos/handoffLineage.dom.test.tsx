@@ -103,3 +103,20 @@ describe("引き継ぎ提案から起こしたセッションの系譜", () => {
     expect(body.origin_proposal).toBeUndefined();
   });
 });
+
+// The same seed store carries the work item a launch came from; the Agent records it in the
+// session meta so a later rename keeps {ref} and the kind (ADR 0103 decision 8).
+describe("the work item of a work-item launch", () => {
+  const workItem = { provider: "jira", key: "PROJ-12", branch: "feature/PROJ-12", title: "Login fails", type: "Bug", labels: ["auth"] };
+
+  it("rides the create request, without the Console's own branch suggestion", async () => {
+    useLaunchSeed.getState().set("look at it", "PROJ-12", "", "", "", workItem);
+    await launch();
+    expect(createBody().work_item).toEqual({ provider: "jira", key: "PROJ-12", title: "Login fails", type: "Bug", labels: ["auth"] });
+  });
+
+  it("is not sent by any other launch", async () => {
+    await launch();
+    expect(createBody().work_item).toBeUndefined();
+  });
+});

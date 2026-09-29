@@ -267,10 +267,7 @@ func engineModelVramNeed(m store.EngineModel) (int, string) {
 	// operator's declared `context_tokens`, because llama.cpp allocates for the context it is
 	// GIVEN, not the one the model was trained at — measured, a 1.5B whose header says 32768
 	// allocated 448 MiB for the 16384 it was started with.
-	if kv := engineKVCacheMiB(engineKVGeometry{
-		Layers: m.KVLayers, HeadsKV: m.KVHeadsKV, KeyLen: m.KVKeyLen, ValLen: m.KVValueLen,
-		NextN: m.KVNextN, FullAttnInterval: m.KVFullAttnInterval,
-	}, m.ContextTokens); kv > 0 {
+	if kv := engineKVCacheMiB(engineRowGeometry(m), m.ContextTokens); kv > 0 {
 		return weights + kv, engineVramWeightsKV
 	}
 	return weights, engineVramFloor

@@ -425,3 +425,231 @@ func TestLoginRequestExpiresButNotUnderALiveAttempt(t *testing.T) {
 		t.Fatal("the request did not expire")
 	}
 }
+
+// exportedProd stands in for the sync the row's press runs: prod is in Settings and in
+// the managed block.
+func exportedProd(t *testing.T) {
+	t.Helper()
+	old := syncForLogin
+	syncForLogin = func() (SyncResult, error) {
+		return SyncResult{Settings: prodSettings, Exported: []string{"prod"}, Fetched: true}, nil
+	}
+	t.Cleanup(func() { syncForLogin = old })
+}
+
+func profileStart(name string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/aws-login/profiles/"+name+"/start", nil)
+	req.SetPathValue("name", name)
+	HandleProfileLoginStart(rec, req)
+	return rec
+}
+
+func startProfileAttempt(t *testing.T, name string) string {
+	t.Helper()
+	rec := profileStart(name)
+	var out struct {
+		Attempt string `json:"attempt"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil || out.Attempt == "" {
+		t.Fatalf("profile start = %d %s", rec.Code, rec.Body.String())
+	}
+	return out.Attempt
+}
+
+func profileAttemptView(name, attempt string) map[string]string {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/aws-login/profiles/"+name+"/attempts/"+attempt, nil)
+	req.SetPathValue("name", name)
+	req.SetPathValue("attempt", attempt)
+	HandleProfileLoginAttempt(rec, req)
+	out := map[string]string{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return out
+}
+
+func waitProfilePhase(t *testing.T, name, attempt, phase string) map[string]string {
+	t.Helper()
+	var v map[string]string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if v = profileAttemptView(name, attempt); v["phase"] == phase {
+			return v
+		}
+	}
+	t.Fatalf("profile attempt phase = %v, want %s", v, phase)
+	return nil
+}
+
+func TestProfileLoginRunsUnderACancelHoldAndSettlesIt(t *testing.T) {
+	cache := `$HOME/.aws/sso/cache/` + filepath.Base(ssoCachePath("af-prod"))
+	r, state := fileRequest(t, `echo "Open https://device.sso.ap-northeast-1.amazonaws.com/?user_code=WXYZ-1234"
+echo "Then enter the code:"; echo; echo "WXYZ-1234"
+while [ ! -f "$S/approve" ]; do sleep 0.02; done
+mkdir -p "$(dirname "`+cache+`")"
+printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}' > "`+cache+`"
+`)
+	exportedProd(t)
+	rec := httptest.NewRecorder()
+	creq := httptest.NewRequest(http.MethodPost, "/aws-login/"+r.ID+"/cancel", nil)
+	creq.SetPathValue("id", r.ID)
+	HandleLoginCancel(rec, creq)
+	if _, ok := liveMarker("af-prod", time.Now()); !ok {
+		t.Fatal("the cancel left no hold to test against")
+	}
+
+	a := startProfileAttempt(t, "prod")
+	v := waitProfilePhase(t, "prod", a, attemptAuthorize)
+	if v["code"] != "WXYZ-1234" {
+		t.Fatalf("profile attempt = %v", v)
+	}
+	// Neither route reads the other's code: not the request route, not another name.
+	if v := attemptView(t, r.ID, a); v["phase"] != attemptGone {
+		t.Fatalf("the request route answered for a row's attempt: %v", v)
+	}
+	if v := profileAttemptView("other", a); v["phase"] != attemptGone {
+		t.Fatalf("another profile name answered for prod's attempt: %v", v)
+	}
+	os.WriteFile(filepath.Join(state, "approve"), nil, 0o600)
+	waitProfilePhase(t, "prod", a, attemptDone)
+	if _, ok := liveMarker("af-prod", time.Now()); ok {
+		t.Fatal("the login did not void the cancel hold")
+	}
+}
+
+func TestProfileLoginSharesTheAttemptSlotAndOutlivesACancel(t *testing.T) {
+	r, _ := fileRequest(t, `echo "Open https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH"; sleep 5
+`)
+	exportedProd(t)
+	fromToast := startAttempt(t, r.ID)
+	waitPhase(t, r.ID, fromToast, attemptAuthorize)
+	if v := profileAttemptView("prod", fromToast); v["phase"] != attemptGone {
+		t.Fatalf("the row route answered for a request's attempt: %v", v)
+	}
+	fromRow := startProfileAttempt(t, "prod")
+	waitPhase(t, r.ID, fromToast, attemptReplaced)
+	waitProfilePhase(t, "prod", fromRow, attemptAuthorize)
+
+	rec := httptest.NewRecorder()
+	creq := httptest.NewRequest(http.MethodPost, "/aws-login/"+r.ID+"/cancel", nil)
+	creq.SetPathValue("id", r.ID)
+	HandleLoginCancel(rec, creq)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel = %d %s", rec.Code, rec.Body.String())
+	}
+	if v := profileAttemptView("prod", fromRow); v["phase"] != attemptAuthorize {
+		t.Fatalf("cancelling the request ended the row's login: %v", v)
+	}
+	loginAttempts.Lock()
+	cur := loginAttempts.byID[fromRow]
+	loginAttempts.Unlock()
+	cur.end(attemptFailed, "")
+}
+
+func TestProfileLoginRefusesWhatWasNotExported(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	old := LoginAWSBin
+	LoginAWSBin = func() (string, error) { return bin, nil }
+	t.Cleanup(func() { LoginAWSBin = old })
+	shadowed := prodSettings["prod"]
+	shadowed.Name, shadowed.Label = "mine", "mine"
+	half := prodSettings["prod"]
+	half.Name, half.Label, half.RoleName = "half", "half", ""
+	oldSync := syncForLogin
+	syncForLogin = func() (SyncResult, error) {
+		return SyncResult{Settings: map[string]Profile{"prod": prodSettings["prod"], "mine": shadowed, "half": half},
+			Exported: []string{"prod"}, Shadowed: []string{"mine"},
+			Incomplete: map[string]string{"half": IncompleteReason(half)}, Fetched: true}, nil
+	}
+	t.Cleanup(func() { syncForLogin = oldSync })
+	// The code is what the Console words the refusal by.
+	for name, want := range map[string]string{"nope": "not_a_settings_profile", "mine": "not_exported", "half": "incomplete_profile"} {
+		rec := profileStart(name)
+		if rec.Code < 400 || !strings.Contains(rec.Body.String(), `"`+want+`"`) {
+			t.Errorf("start %s = %d %s, want %s", name, rec.Code, rec.Body.String(), want)
+		}
+	}
+	loginAttempts.Lock()
+	defer loginAttempts.Unlock()
+	for _, s := range []string{"af-nope", "af-mine", "af-half"} {
+		if loginAttempts.current[s] != nil {
+			t.Errorf("a refused press started an attempt for %s", s)
+		}
+	}
+}
+
+func TestProfileLoginStatesSayNoMoreThanTheCacheKnows(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	withSettingsCache(t)
+	states := func() string {
+		rec := httptest.NewRecorder()
+		HandleProfileLoginStates(rec, httptest.NewRequest(http.MethodGet, "/aws-login/profiles", nil))
+		var out profileLoginStatesWire
+		if json.Unmarshal(rec.Body.Bytes(), &out) != nil || len(out.Profiles) != 1 || out.Profiles[0].Name != "prod" {
+			t.Fatalf("states = %s", rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "secret-") {
+			t.Fatalf("a token left the Agent: %s", rec.Body.String())
+		}
+		return out.Profiles[0].State
+	}
+	if s := states(); s != loginStateNone {
+		t.Fatalf("no cache: %s", s)
+	}
+	writeSSOCache(t, "secret-access", time.Now().Add(time.Hour))
+	if s := states(); s != loginStateSignedIn {
+		t.Fatalf("unexpired token: %s", s)
+	}
+	writeSSOCache(t, "secret-access", time.Now().Add(-time.Minute))
+	if s := states(); s != loginStateNone {
+		t.Fatalf("expired, nothing to renew with: %s", s)
+	}
+	// The access token lasts about an hour and the CLI renews it: expired is not logged out.
+	b, _ := json.Marshal(map[string]string{"accessToken": "secret-access", "refreshToken": "secret-refresh",
+		"expiresAt": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)})
+	os.WriteFile(ssoCachePath("af-prod"), b, 0o600)
+	if s := states(); s != loginStateRenew {
+		t.Fatalf("expired with a refresh token: %s", s)
+	}
+}
+
+func TestProfileLoginNeedsAFreshWrittenSettingsList(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	old := LoginAWSBin
+	LoginAWSBin = func() (string, error) { return bin, nil }
+	t.Cleanup(func() { LoginAWSBin = old })
+	oldSync := syncForLogin
+	t.Cleanup(func() { syncForLogin = oldSync })
+	for label, fn := range map[string]func() (SyncResult, error){
+		// The CP cannot be asked: the cache may predate the row that was pressed.
+		"cp down": func() (SyncResult, error) {
+			return SyncResult{Settings: prodSettings, Exported: []string{"prod"}, FromCache: true}, errors.New("CP unreachable")
+		},
+		// Fetched, but ~/.aws/config was not written: Exported names a block that is not there.
+		"write failed": func() (SyncResult, error) {
+			return SyncResult{Settings: prodSettings, Exported: []string{"prod"}, Fetched: true}, errors.New("read-only file system")
+		},
+		"bridge off": func() (SyncResult, error) { return SyncResult{}, ErrBridgeOff },
+	} {
+		syncForLogin = fn
+		rec := profileStart("prod")
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"settings_unavailable"`) {
+			t.Errorf("%s: start = %d %s", label, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestARowLoginDoesNotKeepARequestPastItsTTL(t *testing.T) {
+	r, _ := fileRequest(t, `echo "Open https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH"; sleep 5
+`)
+	exportedProd(t)
+	a := startProfileAttempt(t, "prod")
+	waitProfilePhase(t, "prod", a, attemptAuthorize)
+	later := time.Now().Add(loginRequestTTL + time.Minute)
+	if got := sweepLoginRequests(later); len(got) != 0 {
+		t.Fatalf("a row's login kept request %s past its TTL", r.ID)
+	}
+	loginAttempts.Lock()
+	cur := loginAttempts.byID[a]
+	loginAttempts.Unlock()
+	cur.end(attemptFailed, "")
+}

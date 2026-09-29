@@ -136,6 +136,9 @@ case "$args" in
   # tag that is NEITHER the template's Default nor the stale one 3i-7 repairs, so the ordinary
   # cases below show the LIVE value being honoured rather than agreeing by coincidence.
   *"ParameterKey=='EngineToolsImageTag'"*) echo "${STUB_ET_WANT-2026-09-16}" ;;
+  # The ComfyUI tag the LIVE stack asks for. The default answer is a tag no template ever
+  # shipped, i.e. somebody's choice, which update.sh must leave alone; 3i-9 sets the stale one.
+  *"ParameterKey=='ImageComfyImageTag'"*) echo "${STUB_COMFY_WANT-v0.36.0}" ;;
   *"ParameterKey=='LlmApiKeySsmParam'"*) echo "/af-ws/engine-llm-key" ;;
   # `<Role>OfferBudgetSec` on the LIVE stack. 180 is the OLD meaning's default (a per-offer
   # purchase clock); since ADR 0077 the parameter bounds the box's ECS registration instead and
@@ -149,7 +152,10 @@ case "$args" in
   # key, and `<Role>Enabled` was never set. This is the state the production deployment was
   # measured in on 2026-09-11, and the one an update silently deletes both roles from.
   # STUB_ENGINES_PRE_P6 unset = a stack already through P6: the key is not a parameter any more.
-  *"ParameterKey=='LlmEnabled'"*|*"ParameterKey=='ImageEnabled'"*) echo "" ;;
+  # STUB_ENGINES_IMAGE_ON = a stack through P6 that runs the image role, i.e. one that pulls
+  # af-comfyui. Left unset the role is off (or implied by a pre-P6 key, as above).
+  *"ParameterKey=='LlmEnabled'"*) echo "" ;;
+  *"ParameterKey=='ImageEnabled'"*) [ "${STUB_ENGINES_IMAGE_ON:-0}" = 1 ] && echo "true" || echo "" ;;
   *"ParameterKey=='LlmModelS3Key'"*)
     [ "${STUB_ENGINES_PRE_P6:-0}" = 1 ] && echo "llm/model.gguf" || echo "" ;;
   *"ParameterKey=='ImageModelS3Key'"*)
@@ -230,6 +236,9 @@ case "$args" in
   # af-llamacpp also has its own knob: the case that matters for --llm-digest is "the tag is
   # ALREADY in ECR" (a repeat stand-up — the common case once the repository is no longer
   # empty), which never reaches the crane copy branch at all.
+  # af-comfyui follows STUB_ECR_HAS unless told otherwise, so standup's cases are unchanged; the
+  # update cases need "the release images are there and the new ComfyUI tag is not".
+  *"ecr describe-images"*af-comfyui*) [ "${STUB_COMFY_IN_ECR:-${STUB_ECR_HAS:-0}}" = 1 ] || exit 1 ;;
   *"ecr describe-images"*af-llamacpp*) [ "${STUB_LLM_IN_ECR:-0}" = 1 ] || exit 1 ;;
   *"ecr describe-images"*)
     # After a teardown the ECR is empty. Forces standup down the crane copy path.
@@ -264,6 +273,7 @@ case "$1" in
     # nothing on the release route may bake an image, so that answer is where update.sh stops.
     case "$*" in
       *engine-tools*) [ "${STUB_ET_IN_GHCR:-1}" = 1 ] || exit 1 ;;
+      *comfyui*) [ "${STUB_COMFY_IN_GHCR:-1}" = 1 ] || exit 1 ;;
     esac
     echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
   auth) cat >/dev/null ;;
@@ -855,6 +865,79 @@ has "EngineToolsImageTag=$ET_DEFAULT"
 order "crane copy ghcr.io/k-k1/agent-fleet/engine-tools:$ET_DEFAULT" \
   "cloudformation deploy --stack-name af-ecs-engines"
 grep -q "exiting 78" "$WORK/out3i8" || fail "the repair did not say what it was repairing"
+
+echo "== case 3i-9: a stack still on an earlier ComfyUI Default is moved to the current one =="
+# A live stack records the resolved Default, so `deploy` keeps the ComfyUI tag of whichever
+# release created it; 0.23.0 had to ship a hand-run command for exactly that. update.sh moves a
+# stack on an earlier Default and leaves any other value alone. Copy and name are one repair:
+# name the tag without copying it and the image role cannot pull.
+COMFY_DEFAULT="$(sed -n '/^  ImageComfyImageTag:$/,/^  [A-Za-z]/p' "$ECS/cfn/60-engines.yaml" \
+  | sed -n 's/^ *Default: *//p' | head -1 | tr -d '"')"
+[ -n "$COMFY_DEFAULT" ] || fail "cfn/60-engines.yaml declares no Default for ImageComfyImageTag"
+COMFY_STALE="$(sed -n 's/^COMFY_STALE_DEFAULTS="\(.*\)"$/\1/p' "$ECS/update.sh")"
+[ -n "$COMFY_STALE" ] || fail "update.sh lists no earlier ImageComfyImageTag defaults"
+# The rule that keeps the list honest: whoever moves the Default appends the old one, and never
+# lists the current one (that would name the Default on every release and override nothing).
+case " $COMFY_STALE " in
+  *" $COMFY_DEFAULT "*) fail "COMFY_STALE_DEFAULTS lists the current Default $COMFY_DEFAULT" ;;
+esac
+COMFY_OLD="${COMFY_STALE##* }"
+COMFY_GHCR="crane copy ghcr.io/k-k1/agent-fleet/comfyui:$COMFY_DEFAULT"
+
+echo "   3i-9a: image role on — copied, then named"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+  STUB_COMFY_WANT="$COMFY_OLD" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9a" 2>&1 \
+  || { cat "$WORK/out3i9a"; fail "update.sh failed against a stack on an earlier ComfyUI Default"; }
+has "$COMFY_GHCR"
+has "ImageComfyImageTag=$COMFY_DEFAULT"
+order "$COMFY_GHCR" "cloudformation deploy --stack-name af-ecs-engines"
+grep -q "ImageComfyImageTag=$COMFY_DEFAULT ($COMFY_OLD was an earlier template default" "$WORK/out3i9a" \
+  || fail "the repair did not say what it was repairing"
+
+echo "   3i-9b: image role off — named, nothing copied"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 \
+  STUB_COMFY_WANT="$COMFY_OLD" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9b" 2>&1 \
+  || { cat "$WORK/out3i9b"; fail "update.sh failed against an LLM-only stack on an earlier ComfyUI Default"; }
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+has "ImageComfyImageTag=$COMFY_DEFAULT"
+
+echo "   3i-9c: a chosen tag, and the current one, are left alone"
+for want in v0.36.0 "$COMFY_DEFAULT"; do
+  : > "$LOG"
+  VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+    STUB_COMFY_WANT="$want" \
+    "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9c" 2>&1 \
+    || { cat "$WORK/out3i9c"; fail "update.sh failed against a stack on ImageComfyImageTag=$want"; }
+  hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+  hasnt "ImageComfyImageTag="
+done
+
+echo "   3i-9d: already in ECR — named, not copied again"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+  STUB_COMFY_WANT="$COMFY_OLD" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9d" 2>&1 \
+  || { cat "$WORK/out3i9d"; fail "update.sh failed with the new ComfyUI image already in ECR"; }
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+has "ImageComfyImageTag=$COMFY_DEFAULT"
+
+echo "   3i-9e: the new image is nowhere — warned, tag kept, release goes on"
+# The old tag still runs, so this is no reason to stop the release; naming the new tag with no
+# image behind it would be (the image role could not pull).
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_COMFY_IN_GHCR=0 STUB_ENGINES_LIVE=1 \
+  STUB_ENGINES_IMAGE_ON=1 STUB_COMFY_WANT="$COMFY_OLD" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9e" 2>&1 \
+  || { cat "$WORK/out3i9e"; fail "update.sh stopped the release over a missing ComfyUI image"; }
+grep -q "comfyui-image.yml" "$WORK/out3i9e" || fail "it did not say how to produce the image"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+hasnt "ImageComfyImageTag="
+has "cloudformation deploy --stack-name af-ecs-engines"
+has "cloudformation deploy --stack-name t-ingress"
 
 echo "== case 3i-5: a 20-platform change set that REPLACES something is handed back =="
 # Replacing an ECR repository throws its images away and replacing a role breaks every task

@@ -22,7 +22,7 @@ import {
   saveShell,
 } from "./catalogMemory.ts";
 import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
-import { modelFit, windowThatFits, windowWhenUnsized } from "./engineFit.ts";
+import { kvKnown, kvPriceOf, modelFit, NO_KV, windowThatFits, windowWhenUnsized } from "./engineFit.ts";
 import { familyVramMeasurement } from "./engineFamilyVram.ts";
 import { CivitaiVersionLadder, FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
 import {
@@ -1463,7 +1463,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         // same failure ADR 0089 was written about, reached through the error path instead of the
         // happy one. windowWhenUnsized is a stated fallback and the form says so.
         const weights = found.bytes ? Math.round(found.bytes / 1048576) : 0;
-        const fitted = windowThatFits(weights, found.kv_mib_per_1k_tokens || 0,
+        const fitted = windowThatFits(weights, kvPriceOf(found),
           row.class?.vram_mib || 0, found.context_length);
         const window = fitted || windowWhenUnsized(found.context_length);
         setContext(String(window)); setOutput(String(Math.floor(window / 8)));
@@ -1500,7 +1500,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   const cardMiB = row.class?.vram_mib || 0;
   // The verdict, from the one module that owns it (ADR 0089). A LoRA is deliberately left out:
   // an adapter is loaded beside a checkpoint and its own size is not what decides the start.
-  const fit = modelFit(weightsMiB, !image && !isLora ? resolved?.kv_mib_per_1k_tokens || 0 : 0,
+  const fit = modelFit(weightsMiB, !image && !isLora ? kvPriceOf(resolved) : NO_KV,
     contextTokens, isLora ? 0 : cardMiB, row.classes || []);
   const kvMiB = fit.kvMiB;
   const needMiB = fit.needMiB;
@@ -1830,9 +1830,9 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   // cache in their head, which is exactly what nobody should be asked to do — and is how a row
   // came to declare 262,144 on a card that holds a quarter of that.
   const editWeightsMiB = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
-  const editKvPer1k = !image && !lora ? model.kv_mib_per_1k_tokens || 0 : 0;
+  const editKv = !image && !lora ? kvPriceOf(model) : NO_KV;
   const editCardMiB = lora ? 0 : row.class?.vram_mib || 0;
-  const editFit = modelFit(editWeightsMiB, editKvPer1k, contextNumber || 0, editCardMiB, row.classes || []);
+  const editFit = modelFit(editWeightsMiB, editKv, contextNumber || 0, editCardMiB, row.classes || []);
   // The largest window this card actually holds, offered as one press. 0 when it cannot be
   // said (no geometry, no card, or the weights alone already fill it) and the button is then
   // not drawn — an "auto" that quietly does nothing is worse than no button.
@@ -1841,7 +1841,7 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   // upper bound would propose windows the model was never trained for, and an "auto" that
   // quietly does nothing is worse than no button.
   const editBestWindow = !image && !lora
-    ? windowThatFits(editWeightsMiB, editKvPer1k, editCardMiB, model.context_length || 0)
+    ? windowThatFits(editWeightsMiB, editKv, editCardMiB, model.context_length || 0)
     : 0;
   // What somebody measured this family at, when anybody has, and only for the BUILD they measured
   // (ADR 0094 decision 8). Read off the family being EDITED rather than the row's stored one, so
@@ -1899,7 +1899,7 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
       {!!editBestWindow && <Button variant="ghost" disabled={busy || editBestWindow === contextNumber} onClick={() => {
         setContext(String(editBestWindow)); setOutput(String(Math.floor(editBestWindow / 8)));
       }}>{(tr("admin.catalog_edit_window_fit" as never) as string).replace("{n}", editBestWindow.toLocaleString())}</Button>}
-      {!editKvPer1k && <> {tr("admin.fit_no_kv" as never)}</>}
+      {!kvKnown(editKv) && <> {tr("admin.fit_no_kv" as never)}</>}
     </p>}
     {!image && !lora && editFit.needMiB > 0 && <p className={`engine-operation-fit ${editFit.state === "over" ? "form-err" : "muted"}`}>
       {(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(editFit.weightsMiB))}

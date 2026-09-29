@@ -65,6 +65,8 @@ var Entries = []string{
 	"session-resume",
 	"session-translations",
 	"session-marks",
+	"codex-await",
+	"codex-released-threads.json",
 	"session-handoffs",
 	"carried-interaction",
 	"pending-question",

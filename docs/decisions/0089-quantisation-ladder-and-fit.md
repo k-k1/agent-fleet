@@ -141,6 +141,13 @@ The listing answers `kv_mib_per_1k_tokens` and `kv_from`. Per 1,024 tokens becau
 linear in the window, so one number prices every value anybody types and the formula stays in one
 place.
 
+🔴 Amended 2026-09-28 (#975): linear only for the layers that attend over the whole window. A
+sliding-window layer's cache stops at a cap (llama.cpp's `pad256(window × 4 slots + 512)` cells),
+so it arrives separately as `kv_mib_fixed` and the panel adds it once. Measured against
+llama-server at `-c 24576`: gemma-4-12b's sliding layers were 1440 of its 1824 MiB. Folded into a
+per-1k rate taken at 1,024 tokens they would have been multiplied, and the panel would have offered
+16k on a card that holds the model's whole 262k.
+
 🔴 It is a repository-wide estimate and names the file it was read from, because the geometry is not
 quite identical across a repository's own builds (64 vs 65 blocks, measured above). The row that is
 actually taken in gets its own header read at the resolve, and that is the number the press is

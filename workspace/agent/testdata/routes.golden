@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = registered without a method.
-# count: 308
+# count: 319
 GET /agents/memory/diff
 GET /agents/memory/export
 POST /agents/memory/import
@@ -24,9 +24,15 @@ DELETE /assistants/{id}
 GET /assistants/{id}
 PUT /assistants/{id}
 GET /aws-login
+GET /aws-login/profiles
+GET /aws-login/profiles/{name}/attempts/{attempt}
+POST /aws-login/profiles/{name}/start
 GET /aws-login/{id}/attempts/{attempt}
 POST /aws-login/{id}/cancel
 POST /aws-login/{id}/start
+POST /branch-rules/preview
+GET /branch-rules/user
+PUT /branch-rules/user
 GET /browser/attach-targets
 GET /browser/attachments
 POST /browser/attachments
@@ -67,10 +73,10 @@ GET /cleanup/archives
 DELETE /cleanup/archives/{id}
 POST /cleanup/archives/{id}/restore
 DELETE /cleanup/cache/{feature}
-GET /cleanup/tool-caches
-DELETE /cleanup/tool-caches/{name}
 GET /cleanup/leftovers
 DELETE /cleanup/leftovers/{kind}
+GET /cleanup/tool-caches
+DELETE /cleanup/tool-caches/{name}
 GET /cleanup/usage
 GET /codex/settings
 PUT /codex/settings
@@ -217,6 +223,9 @@ POST /repos/init
 POST /repos/svn
 DELETE /repos/{name}
 DELETE /repos/{name}/branch
+POST /repos/{name}/branch-name
+POST /repos/{name}/branch-name/check
+GET /repos/{name}/branch-rule
 GET /repos/{name}/branches
 GET /repos/{name}/changes
 POST /repos/{name}/checkout

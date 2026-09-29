@@ -31,7 +31,29 @@ vi.mock("./api.ts", () => ({
   bitbucketRepoList: (...a: unknown[]) => bitbucketRepoList(...a),
 }));
 
+// The session side (#1108): the archived shelf and restore go through the plain client, and
+// opening a session is observed rather than performed. By default the shelf cannot be read,
+// which is what a stopped workspace looks like.
+const clientApi = vi.fn();
+const clientRaw = vi.fn();
+// The branch-template preview (ADR 0103): an Agent without the resolver by default.
+const clientApiJSON = vi.fn();
+vi.mock("../../core/api/client.ts", async (orig) => ({
+  ...(await orig<typeof import("../../core/api/client.ts")>()),
+  api: (...a: unknown[]) => clientApi(...a),
+  apiJSON: (...a: unknown[]) => clientApiJSON(...a),
+  raw: (...a: unknown[]) => clientRaw(...a),
+}));
+// Both opens are counted as "opened"; openTerminal also records which one it was.
+const openChat = vi.fn();
+const openTerminal = vi.fn();
+vi.mock("../sessions/open.ts", () => ({
+  openSessionChat: (...a: unknown[]) => openChat(...a),
+  openSessionTerminal: (...a: unknown[]) => (openTerminal(...a), openChat(...a)),
+}));
+
 const { WorkItemsSection } = await import("./WorkItemsSection.tsx");
+const { useSessionsStore } = await import("../sessions/store.ts");
 const { useWorkItemStore } = await import("./store.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -107,6 +129,14 @@ const strayChildren = (panel: Element) =>
     .map((el) => el.className);
 
 beforeEach(() => {
+  clientApi.mockReset();
+  clientApi.mockRejectedValue(new Error("workspace stopped"));
+  clientRaw.mockReset();
+  clientApiJSON.mockReset();
+  clientApiJSON.mockResolvedValue({ error: { code: "http_404" } });
+  openChat.mockReset();
+  openTerminal.mockReset();
+  useSessionsStore.setState({ sessions: [], refresh: vi.fn(async () => {}) });
   workItemList.mockReset();
   workItemSearch.mockReset();
   workItemQueryCreate.mockReset();
@@ -173,6 +203,45 @@ describe("WorkItemsSection", () => {
     expect(color("enhancement")).toBe("#a2eeef");
     // No tracker colour (Jira, or a row cached before colours were carried): still coloured.
     expect(color("checkout")).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it("marks each open pull request's CI and conflicts on the row, and nothing else (#1113)", async () => {
+    const pr = (id: string, over: Record<string, unknown>) =>
+      item({ id, key: `acme/web#${id}`, kind: "pr", labels: [], ...over });
+    workItemList.mockResolvedValue({
+      items: [
+        pr("1", { checks: { state: "failure", total: 40, failed: 3, pending: 0 }, mergeable: "conflict" }),
+        pr("2", { checks: { state: "pending", total: 5, failed: 0, pending: 2 }, mergeable: "unknown" }),
+        pr("3", { checks: { state: "success", total: 7, failed: 0, pending: 0 }, mergeable: "clean" }),
+        // No checks ran: no mark at all, never a green one.
+        pr("4", { checks: { state: "", total: 0, failed: 0, pending: 0 }, mergeable: "clean" }),
+        // An issue from an older CP, without either field.
+        item({ id: "5", key: "acme/web#5" }),
+      ],
+      queries: [query],
+      sessions: [],
+      fetchedAt: "2026-08-26T09:00:00Z",
+      running: true,
+    });
+    await render();
+    const row = (key: string) =>
+      [...host.querySelectorAll<HTMLElement>(".wi-row")].find((r) => r.querySelector(".wi-key")?.getAttribute("title") === key)!;
+    const flags = (key: string) => row(key).querySelectorAll<HTMLElement>(".wi-flag");
+    const ci = `${t("wi.detail_checks")}: ${t("wi.detail_checks_failed", { failed: 3, total: 40 })}`;
+    const one = flags("acme/web#1");
+    expect([...one].map((f) => f.className)).toEqual(["wi-flag tone-bad", "wi-flag tone-bad"]);
+    expect(one[0].getAttribute("title")).toBe(ci);
+    expect(one[1].getAttribute("title")).toBe(t("wi.detail_merge_conflict"));
+    // The row is one button, so its label is what a screen reader announces: the status is in it.
+    expect(row("acme/web#1").getAttribute("aria-label")).toBe(
+      [t("wi.open_detail", { key: "acme/web#1" }), ci, t("wi.detail_merge_conflict")].join(" — "),
+    );
+    expect(row("acme/web#5").getAttribute("aria-label")).toBe(t("wi.open_detail", { key: "acme/web#5" }));
+    // "unknown" mergeability is not a conflict and not drawn.
+    expect([...flags("acme/web#2")].map((f) => f.className)).toEqual(["wi-flag tone-warn"]);
+    expect([...flags("acme/web#3")].map((f) => f.className)).toEqual(["wi-flag tone-ok"]);
+    expect(flags("acme/web#4").length).toBe(0);
+    expect(flags("acme/web#5").length).toBe(0);
   });
 
   it("survives a row with null labels (this blanked the whole Console)", async () => {
@@ -339,7 +408,16 @@ describe("WorkItemsSection", () => {
     expect(seed.prompt).toContain("gh issue view 45");
     expect(seed.prompt).not.toContain(">"); // the body is not pasted by default
     expect(seed.title).toContain("#45");
-    expect(seed.workItem).toEqual({ provider: "github", key: "acme/web#45", branch: "feature/issue-45" });
+    // The seed carries what the Agent's resolver names the branch from (ADR 0103 decision 8),
+    // with branchForItem's suggestion kept for an Agent without it.
+    expect(seed.workItem).toEqual({
+      provider: "github",
+      key: "acme/web#45",
+      branch: "feature/issue-45",
+      title: "ログイン後に一覧が空になる",
+      type: "",
+      labels: ["bug"],
+    });
     expect(useLaunchTarget.getState().target?.name).toBe("web");
     expect(useLaunchTarget.getState().inPlace).toBe(false);
   });
@@ -518,6 +596,64 @@ describe("WorkItemsSection", () => {
     expect(text()).toContain(t("wi.search_stopped"));
   });
 
+  // #1142: the box clears through its own button on every device, not the UA's search cancel.
+  it("clears the filter with its × button and with Escape", async () => {
+    const mixed = [...jiraRows(40), item({ id: "gh", key: "acme/web#45", title: "ログイン後に一覧が空になる" })];
+    workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    expect(host.querySelector(".wi-filter .proj-filter-clear")).toBeNull(); // nothing to clear yet
+    await act(async () => typeInto(input, "ログイン"));
+    expect(rows()).toBe(1);
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!.click());
+    expect(input.value).toBe("");
+    expect(rows()).toBe(10);
+    expect(host.querySelector(".wi-filter .proj-filter-clear")).toBeNull();
+
+    await act(async () => typeInto(input, "ログイン"));
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(input.value).toBe("");
+    expect(rows()).toBe(10);
+  });
+
+  it("returns focus to the filter only when the × was pressed from the keyboard", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    const clear = () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!;
+
+    // Enter / Space on a button fires a click with detail 0.
+    await act(async () => typeInto(input, "x"));
+    clear().focus();
+    await act(async () => clear().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
+    expect(input.value).toBe("");
+    expect(document.activeElement).toBe(input);
+
+    // A tap or mouse click (detail ≥ 1) must not focus the input: on a phone that pops the keyboard.
+    await act(async () => typeInto(input, "x"));
+    clear().focus();
+    await act(async () => clear().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+    expect(input.value).toBe("");
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  it("drops the error of a tracker search that was still in flight when the filter was cleared", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    let fail!: (v: unknown) => void;
+    workItemSearch.mockReturnValue(new Promise((res) => (fail = res)));
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    await act(async () => typeInto(input, "1028"));
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-search")!.click());
+    expect(workItemSearch).toHaveBeenCalledWith("1028");
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-filter .proj-filter-clear")!.click());
+    await act(async () => {
+      fail({ error: "boom" });
+      await Promise.resolve();
+    });
+    expect(host.querySelector(".wi-err")).toBeNull();
+  });
+
   it("shows no filter box on a rail that is not crowded", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(4), queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
@@ -612,6 +748,50 @@ describe("WorkItemsSection", () => {
     // still works.
     const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
     expect(expr.value).toContain("currentUser()");
+  });
+
+  // --- The branch template's preview comes from the Agent's resolver (ADR 0103) ---
+
+  const waitPreview = async () => {
+    for (let i = 0; i < 3; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 350))));
+  };
+
+  it("previews the template through the resolver, as typed, with the resolver's default as the placeholder", async () => {
+    clientApiJSON.mockImplementation(async (_url: string, _m: string, body: { template: string }) => ({
+      names: body.template === "{type}/{num}"
+        ? [{ name: "feature/45", name_empty: false, kind: "feature" }, { name: "bugfix/123", name_empty: false, kind: "bugfix" }]
+        : [{ name: "feature/45-fix-the-empty-list", name_empty: false, kind: "feature" }, { name: "fix/PROJ-123", name_empty: false, kind: "bugfix" }],
+    }));
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    const modal = await openQueries();
+    await waitPreview();
+    const field = modal.querySelector<HTMLInputElement>(".wi-qbranch input")!;
+    expect(field.placeholder).toBe("{prefix}{ref}-{slug}");
+    expect(modal.querySelector(".wi-qbranch .wi-qhint")?.textContent).toContain("feature/45-fix-the-empty-list / fix/PROJ-123");
+    const [url, , sent] = clientApiJSON.mock.calls.at(-1)!;
+    expect(url).toBe("api/branch-rules/preview");
+    expect((sent as { items: { type?: string }[] }).items[1].type).toBe("Bug");
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "{type}/{num}");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await waitPreview();
+    expect(modal.querySelector(".wi-qbranch .wi-qhint")?.textContent).toContain("feature/45 / bugfix/123");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  });
+
+  it("falls back to the Console's own rendering when the Agent has no resolver", async () => {
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    const modal = await openQueries();
+    await waitPreview();
+    expect(modal.querySelector<HTMLInputElement>(".wi-qbranch input")!.placeholder).toBe("feature/{key}");
+    expect(modal.querySelector(".wi-qbranch .wi-qhint")?.textContent).toContain("feature/issue-45 / feature/PROJ-123");
   });
 
   // --- §80.23: a Bitbucket query is assembled, never typed ---
@@ -870,5 +1050,179 @@ describe("WorkItemDetailModal — a pull request", () => {
     expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
     expect(useLaunchTarget.getState().existingBranch).toBe("");
     expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
+});
+
+describe("WorkItemsSection — the sessions a ticket was started in (#1108)", () => {
+  const ledgerRow = (sessionName: string, id = "l1") => ({
+    id,
+    provider: "github",
+    itemKey: "acme/web#45",
+    sessionName,
+    repo: "web",
+    branch: "issue-45",
+    createdAt: "",
+  });
+  const withLedger = (...names: string[]) =>
+    workItemList.mockResolvedValue({
+      items: [item()],
+      queries: [query],
+      sessions: names.map((n, i) => ledgerRow(n, `l${i}`)),
+      fetchedAt: "",
+      running: true,
+    });
+  const session = (name: string, title: string) => ({ name, title, kind: "claude", dir: "/home/dev/repos/web", createdAt: "" });
+  const entries = () => [...document.querySelectorAll<HTMLButtonElement>(".wi-dsession")];
+  const confirmButton = () => [...document.querySelectorAll<HTMLButtonElement>(".ui-confirm-actions button")].pop();
+  /** The list refresh after a restore brings these rows onto the live list. */
+  const listsAfterRefresh = (...rows: ReturnType<typeof session>[]) =>
+    useSessionsStore.setState({
+      refresh: vi.fn(async () => {
+        useSessionsStore.setState({ sessions: rows as never });
+      }),
+    });
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+  };
+
+  it("names a live session by its display name, keeping the slug beside it", async () => {
+    useSessionsStore.setState({ sessions: [session("sk7f3q9", "ログイン修正")] as never });
+    withLedger("sk7f3q9");
+    await render();
+    expect(host.querySelector(".wi-started")?.getAttribute("title")).toContain("ログイン修正");
+    await openRow();
+    const [e] = entries();
+    expect(e.querySelector(".wi-dname")?.textContent).toBe("ログイン修正");
+    expect(e.querySelector(".wi-dslug")?.textContent).toBe("sk7f3q9");
+    // Every slug was on the live list, so the shelf was never read.
+    expect(clientApi).not.toHaveBeenCalled();
+  });
+
+  it("marks an archived session, and restores then opens it on click", async () => {
+    clientApi.mockResolvedValue({ sessions: [session("sarch01", "古い調査")] });
+    clientRaw.mockResolvedValue({ ok: true });
+    listsAfterRefresh(session("sarch01", "古い調査"));
+    withLedger("sarch01");
+    await render();
+    await openRow();
+    await settle();
+    const [e] = entries();
+    expect(e.classList.contains("is-archived")).toBe(true);
+    expect(e.querySelector(".wi-dname")?.textContent).toBe("古い調査");
+    expect(e.textContent).toContain(t("wi.session_archived"));
+    await act(async () => e.click());
+    await settle();
+    // Nothing is restored before the user says so.
+    expect(clientRaw).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(t("wi.restore_title"));
+    await act(async () => confirmButton()!.click());
+    await settle();
+    expect(clientRaw).toHaveBeenCalledWith("api/sessions/sarch01/restore", { method: "POST" });
+    expect(useSessionsStore.getState().refresh).toHaveBeenCalled();
+    expect(openChat).toHaveBeenCalledWith("sarch01");
+  });
+
+  it("opens nothing and restores nothing when the restore is declined", async () => {
+    clientApi.mockResolvedValue({ sessions: [session("sarch01", "古い調査")] });
+    withLedger("sarch01");
+    await render();
+    await openRow();
+    await settle();
+    await act(async () => entries()[0].click());
+    await settle();
+    const cancel = document.querySelector<HTMLButtonElement>(".ui-confirm-actions button")!;
+    await act(async () => cancel.click());
+    await settle();
+    expect(clientRaw).not.toHaveBeenCalled();
+    expect(openChat).not.toHaveBeenCalled();
+  });
+
+  it("says a session is gone when it is on neither list, instead of doing nothing", async () => {
+    clientApi.mockResolvedValue({ sessions: [] });
+    withLedger("sgone00");
+    await render();
+    await openRow();
+    await settle();
+    const [e] = entries();
+    expect(e.classList.contains("is-gone")).toBe(true);
+    await act(async () => e.click());
+    await settle();
+    expect(openChat).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(t("wi.session_gone", { name: "sgone00" }));
+  });
+
+  it("still opens a missing slug when the shelf cannot be read (a stopped workspace)", async () => {
+    withLedger("sk7f3q9");
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
+    await settle();
+    expect(openChat).toHaveBeenCalledWith("sk7f3q9");
+  });
+
+  // api() resolves an error body rather than throwing; that is an unreadable shelf, not an
+  // empty one, so nothing may be called deleted.
+  it("does not call a session deleted when the shelf answers with an error body", async () => {
+    clientApi.mockResolvedValue({ error: { code: "workspace_stopped", status: 503 } });
+    withLedger("sarch01");
+    await render();
+    await openRow();
+    await settle();
+    const [e] = entries();
+    expect(e.classList.contains("is-gone")).toBe(false);
+    expect(e.textContent).not.toContain(t("wi.session_deleted"));
+    await act(async () => e.click());
+    await settle();
+    expect(openChat).toHaveBeenCalledWith("sarch01");
+    expect(document.body.textContent).not.toContain(t("wi.session_gone", { name: "sarch01" }));
+  });
+
+  it("still restores a session whose folder is gone, saying it cannot resume", async () => {
+    const gone = { ...session("sarch01", "古い調査"), resumable: false };
+    clientApi.mockResolvedValue({ sessions: [gone] });
+    clientRaw.mockResolvedValue({ ok: true });
+    listsAfterRefresh(gone);
+    withLedger("sarch01");
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
+    await settle();
+    expect(document.querySelector(".ui-confirm-body")?.textContent).toContain(t("wi.restore_folder_gone"));
+    await act(async () => confirmButton()!.click());
+    await settle();
+    expect(clientRaw).toHaveBeenCalledWith("api/sessions/sarch01/restore", { method: "POST" });
+    expect(openChat).toHaveBeenCalledWith("sarch01");
+  });
+
+  // refresh() keeps the old list when its read fails, and a chat pane for a session the list
+  // does not have draws nothing — so the restore is reported instead of opening a blank pane.
+  it("does not open a restored session the list refresh did not bring back", async () => {
+    clientApi.mockResolvedValue({ sessions: [session("sarch01", "古い調査")] });
+    clientRaw.mockResolvedValue({ ok: true });
+    withLedger("sarch01");
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
+    await settle();
+    await act(async () => confirmButton()!.click());
+    await settle();
+    expect(clientRaw).toHaveBeenCalled();
+    expect(openChat).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(t("wi.restored_not_listed", { name: "古い調査" }));
+  });
+
+  it("opens a restored session by the kind the list gives it", async () => {
+    const shell = { ...session("sarch01", "シェル作業"), kind: "shell" };
+    clientApi.mockResolvedValue({ sessions: [shell] });
+    clientRaw.mockResolvedValue({ ok: true });
+    listsAfterRefresh(shell);
+    withLedger("sarch01");
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-started")!.click());
+    await settle();
+    await act(async () => confirmButton()!.click());
+    await settle();
+    expect(openTerminal).toHaveBeenCalledWith("sarch01");
   });
 });

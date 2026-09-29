@@ -58,6 +58,9 @@ export type EngineModel = {
    *  🔴 ABSENT, never 0, when the row has no geometry: "nobody could read it" is not
    *  "it costs nothing". */
   kv_mib_per_1k_tokens?: number;
+  /** The sliding-window layers' cache, which the window does NOT multiply — added once (see
+   *  KVPrice). Absent when the model has none. */
+  kv_mib_fixed?: number;
   /** The model's OWN maximum window (`<arch>.context_length`), stored at ingest. 🔴 A ceiling,
    *  not a setting — the same fact and the same name the ingest form receives it by. It is what
    *  bounds a re-fit: without it the panel would propose windows the model was never trained
@@ -249,6 +252,8 @@ export type ResolvedSource = {
    *  be f16 and cannot be read at all (`-ctk`/`-ctv` are CloudFormation parameters that never
    *  reach the engine table), which is why the sentence that shows it says so. */
   kv_mib_per_1k_tokens?: number;
+  /** The sliding-window share, added once rather than multiplied — see KVPrice. */
+  kv_mib_fixed?: number;
   /** `base_model` translated into the family vocabulary this provider dispatches on, or absent
    *  when the CP would not name one. The picker's initial value — never the stored family, and
    *  never silently: ADR 0072 decision 2 keeps the declaration with the operator, because an

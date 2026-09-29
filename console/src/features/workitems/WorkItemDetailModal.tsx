@@ -42,9 +42,11 @@ import { errText } from "../../core/api/client.ts";
 import type { Repo } from "../repos/store.ts";
 import { workItemDetail } from "./api.ts";
 import { LabelBadge } from "./LabelBadge.tsx";
+import type { ResolvedSessionRef } from "./sessionRefs.ts";
 import {
   canComment,
   canReadLive,
+  checksText,
   checksTone,
   fullLocal,
   readWorkItemDetail,
@@ -149,6 +151,9 @@ interface Props {
   /** Called when there is no working copy at all: defer to the start hub, which has the clone
    * path. */
   onStartHub(): void;
+  /** What each started slug is now: its display name, and whether it is live, archived or gone
+   * (#1108). */
+  sessionRef(name: string): ResolvedSessionRef;
   onOpenSession(name: string): void;
   onReport(): void;
 }
@@ -161,6 +166,7 @@ export function WorkItemDetailModal({
   onClose,
   onPick,
   onStartHub,
+  sessionRef,
   onOpenSession,
   onReport,
 }: Props) {
@@ -239,15 +245,6 @@ export function WorkItemDetailModal({
             ? tr("wi.detail_merge_conflict")
             : tr("wi.detail_merge_unknown");
 
-  // The counts stay in the line: "failing" cannot say whether one job of forty is red.
-  const checksText = (c: WorkItemDetail["checks"]): string =>
-    c.state === "failure"
-      ? tr("wi.detail_checks_failed", { failed: c.failed, total: c.total })
-      : c.state === "pending"
-        ? tr("wi.detail_checks_pending", { pending: c.pending, total: c.total })
-        : c.state === "success"
-          ? tr("wi.detail_checks_ok", { total: c.total })
-          : "";
 
   const reviewSummary = (pr: WorkItemDetail): string => {
     const c = reviewCounts(pr.reviews);
@@ -423,15 +420,29 @@ export function WorkItemDetailModal({
           <section className="wi-dstarted">
             <h4>{tr("wi.detail_started")}</h4>
             <ul>
-              {started.map((s) => (
-                <li key={s.id}>
-                  <button type="button" className="wi-dsession" onClick={() => onOpenSession(s.sessionName)}>
-                    <Icon name="circle-filled" />
-                    {s.sessionName}
-                    {s.branch ? <span className="wi-dbranch">{s.branch}</span> : null}
-                  </button>
-                </li>
-              ))}
+              {/* The display name leads and the slug follows, since the slug is what other
+                  surfaces (the ledger, peer messages) name it by. An archived one says so here,
+                  before the click that offers to bring it back (#1108). */}
+              {started.map((s) => {
+                const ref = sessionRef(s.sessionName);
+                return (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      className={`wi-dsession is-${ref.state}`}
+                      title={ref.state === "archived" ? tr("wi.session_archived_hint") : undefined}
+                      onClick={() => onOpenSession(s.sessionName)}
+                    >
+                      <Icon name={ref.state === "archived" ? "archive" : "circle-filled"} />
+                      <span className="wi-dname">{ref.title || s.sessionName}</span>
+                      {ref.title ? <span className="wi-dslug">{s.sessionName}</span> : null}
+                      {s.branch ? <span className="wi-dbranch">{s.branch}</span> : null}
+                      {ref.state === "archived" && <span className="wi-dtag">{tr("wi.session_archived")}</span>}
+                      {ref.state === "gone" && <span className="wi-dtag">{tr("wi.session_deleted")}</span>}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
             {/* Reporting back. Pressing this posts nothing: it opens a modal for reading the
                 draft, and posting is a separate step inside it (ADR 0061 decision 6). */}

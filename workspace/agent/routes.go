@@ -181,6 +181,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /aws-login/{id}/start", awsx.HandleLoginStart)
 	mux.HandleFunc("GET /aws-login/{id}/attempts/{attempt}", awsx.HandleLoginAttempt)
 	mux.HandleFunc("POST /aws-login/{id}/cancel", awsx.HandleLoginCancel)
+	// The Settings row's "Log in" (#1028): the same attempts, without a request.
+	mux.HandleFunc("GET /aws-login/profiles", awsx.HandleProfileLoginStates)
+	mux.HandleFunc("POST /aws-login/profiles/{name}/start", awsx.HandleProfileLoginStart)
+	mux.HandleFunc("GET /aws-login/profiles/{name}/attempts/{attempt}", awsx.HandleProfileLoginAttempt)
 	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)
 	mux.HandleFunc("POST /sessions/{name}/start", sessionx.HandleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.
@@ -312,6 +316,16 @@ func buildMux() *http.ServeMux {
 	// Launch prompt templates (repo launch modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
+	// Branch naming resolver (ADR 0103 decision 7): the effective rule, a name for an item or
+	// a session, and the advisory check of a typed name.
+	mux.HandleFunc("GET /repos/{name}/branch-rule", handleGetBranchRule)
+	mux.HandleFunc("POST /repos/{name}/branch-name", handleBranchName)
+	mux.HandleFunc("POST /repos/{name}/branch-name/check", handleBranchNameCheck)
+	// The user layer of the branch rules. Its own store, not ui-prefs (ADR 0103 decision 2).
+	mux.HandleFunc("GET /branch-rules/user", handleGetUserBranchRules)
+	mux.HandleFunc("PUT /branch-rules/user", handlePutUserBranchRules)
+	// The template preview of the work-items settings, which name no working copy.
+	mux.HandleFunc("POST /branch-rules/preview", handleBranchRulesPreview)
 	// Project-scope MCP servers (docs/log/56 P0): read-only cross-file snapshot of the
 	// working copy's own .mcp.json / opencode.json / .codex/config.toml / etc.
 	// Separate axis from the MCP registry (docs/log/48) — never auto-triggered, never

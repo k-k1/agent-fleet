@@ -12,9 +12,10 @@ package sessionx
 // behind a switch click is the most surprising behaviour available.
 //
 // Conversation identity is carried by the per-slot sid store: going managed does a
-// thread/resume on the same thread id (the other direction, a TUI resume of a server-created
-// thread, is measured too, §12.3), and going tui rides BuildLaunch's usual resume
-// (codex resume <id> --remote / opencode --session <id>).
+// thread/resume on the same thread id, and going tui rides BuildLaunch's usual resume
+// (codex resume <id> / opencode --session <id>). §12.3 measured the codex TUI opening a
+// server-created thread through `--remote`; the direct launch reads the same rollout under
+// $CODEX_HOME but has not been measured on that path.
 
 import (
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -103,6 +105,12 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// codex: the pane will first wait for the app-server to release the thread; mark the
+	// hand-over now, before the managed runtime goes, so no prompt slips into either side
+	// meanwhile (codexHandOverGate).
+	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex {
+		codex.MarkSwitching(name)
+	}
 	// Stop the old managed runtime. For a managed→TUI switch of kiro, whose per-sid `.lock`
 	// guards the session cross-process, wait bounded for the child to exit + release the lock
 	// so the TUI's `--resume-id` relaunch below doesn't race it into an error or a split-brain
@@ -131,6 +139,7 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if err := startSessionTmux(m, false); err != nil {
+			codex.ClearHandOver(name) // no pane will take the conversation over
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
@@ -154,11 +163,15 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			dropManagedRuntime(m)
 		} else {
 			_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(name))).Run()
+			codex.ClearHandOver(name)
 		}
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	m = cur
+	if target == session.DriverTUI {
+		codex.EndSwitch(name) // the meta says Terminal now; see codex/release.go
+	}
 	if wasStopped {
 		fleetgraph.RecordRevive(name) // write site ③: only when the slot really was stopped
 	}

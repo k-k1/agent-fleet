@@ -51,19 +51,23 @@ function wire(vv: FakeVisualViewport) {
 }
 
 const appH = () => document.documentElement.style.getPropertyValue("--app-h");
+const appTop = () => document.documentElement.style.getPropertyValue("--app-top");
 
 beforeEach(() => {
   Object.defineProperty(window, "innerHeight", { value: LAYOUT_H, configurable: true });
   Object.defineProperty(window, "innerWidth", { value: LAYOUT_W, configurable: true });
   document.documentElement.style.removeProperty("--app-h");
+  document.documentElement.style.removeProperty("--app-top");
 });
 
 afterEach(() => {
   for (const vv of parked.splice(0)) {
     vv.pinch(1);
+    vv.offsetTop = 0;
     vv.emit("resize");
   }
   document.documentElement.style.removeProperty("--app-h");
+  document.documentElement.style.removeProperty("--app-top");
 });
 
 describe("wireViewport", () => {
@@ -123,6 +127,47 @@ describe("wireViewport", () => {
     vv.height = LAYOUT_H;
     vv.emit("resize");
     expect(appH()).toBe("");
+  });
+
+  // Android without resizes-content: the visual viewport shrinks AND pans down to the focused
+  // composer. A frame fitted in height but left at the top showed its bottom part over empty page.
+  it("moves the frame down to where the browser panned the visible area", () => {
+    const vv = new FakeVisualViewport(LAYOUT_H, LAYOUT_W);
+    wire(vv);
+
+    vv.height = LAYOUT_H - KEYBOARD;
+    vv.offsetTop = KEYBOARD;
+    vv.emit("resize");
+
+    expect(appH()).toBe(`${LAYOUT_H - KEYBOARD}px`);
+    expect(appTop()).toBe(`${KEYBOARD}px`);
+
+    vv.height = LAYOUT_H;
+    vv.offsetTop = 0;
+    vv.emit("resize");
+    expect(appTop()).toBe("");
+  });
+
+  it("follows a pan that arrives after the resize", () => {
+    const vv = new FakeVisualViewport(LAYOUT_H, LAYOUT_W);
+    wire(vv);
+    vv.height = LAYOUT_H - KEYBOARD;
+    vv.emit("resize");
+    expect(appTop()).toBe("");
+
+    vv.offsetTop = 150;
+    vv.emit("scroll");
+    expect(appTop()).toBe("150px");
+  });
+
+  it("does not move the frame for a pinch-zoom pan", () => {
+    const vv = new FakeVisualViewport(LAYOUT_H, LAYOUT_W);
+    wire(vv);
+    vv.pinch(2, LAYOUT_H - KEYBOARD);
+    vv.offsetTop = 300;
+    vv.emit("scroll");
+
+    expect(appTop()).toBe("");
   });
 
   describe("the focus auto-scroll re-pin", () => {

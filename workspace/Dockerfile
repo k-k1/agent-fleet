@@ -315,10 +315,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.283
-ARG OPENCODE_VERSION=1.18.32
-ARG CODEX_VERSION=0.157.1
-ARG COPILOT_VERSION=1.0.88
+ARG CLAUDE_CODE_VERSION=2.1.284
+ARG OPENCODE_VERSION=1.18.33
+ARG CODEX_VERSION=0.158.0
+ARG COPILOT_VERSION=1.0.89
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -344,10 +344,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.11
-ARG AGY_RELEASE_BUILD=6016716732497920
-ARG AGY_SHA256_X64=c91c62c5e6fa954f5a7e1d7b9ad417d749db4aa60a4ba0b3d604dec1b645d190
-ARG AGY_SHA256_ARM64=01513bc61f9592353045ba801ebb407fbccb8984fcbfde591bc6b681b24e92bc
+ARG AGY_VERSION=1.2.12
+ARG AGY_RELEASE_BUILD=5784551402897408
+ARG AGY_SHA256_X64=26c7c4c661d6c9beda734fcf305031056a6ea46e697c4533e8151179724e2950
+ARG AGY_SHA256_ARM64=bd338c9d19ab963d9d2bc027e4e797b470ea84bae02080e4fde4555357ea9444
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -391,9 +391,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.09.26-dd393fe
-ARG CURSOR_SHA256_X64=8085fd120f5c71f4eae7fea26a043718e5644e3071e4fab3220a0e58c51f9593
-ARG CURSOR_SHA256_ARM64=ab1178d0d8c10b254e7e427d1d673533a389338424e75034be9ab9da02845bde
+ARG CURSOR_VERSION=2026.09.28-64d2043
+ARG CURSOR_SHA256_X64=6e4cd936a4866b8a77c50ff51a564460d715772fabc477a01aa0f0455d9559f0
+ARG CURSOR_SHA256_ARM64=c737599b27d3d8d6743c72b487204e335f3a8ea2fdbaf18302ee207a646ffd8d
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -450,12 +450,12 @@ ARG KIRO_SHA256_ARM64=95e149b0b5e2be3c6f56d4e5ed1bc5313d2596ef39255529a553027fd8
 #   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url（匿名）
 #   curl -s "<manifest_url>" | jq .artifacts.x86_linux,.artifacts.aarch64_linux
 # sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
-# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 347,850,968 B / 307,828,824 B（1.4.0-R4161.1）。
+# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 355,154,136 B / 317,397,080 B（1.4.0-R4302.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.0-R4161.1
-ARG MUSE_SHA256_X64=1b68bd4518d53a2aaff063915df4d141b0a205e6d79038299d04e3a14e85a5b9
-ARG MUSE_SHA256_ARM64=38a0e3b7f59825ffc60f7fae65ac9727cf9bbb47fe4e687cc29cede9deb8fabf
+ARG MUSE_VERSION=1.4.0-R4302.1
+ARG MUSE_SHA256_X64=ad21c22965f8600b4473b4ab8354ff7cc483d4cb681b46f2952561d855c8ed86
+ARG MUSE_SHA256_ARM64=79cfba1b9e417b370bdb9154a546c524b7f32a34026e6164b6f3f122f0ea3386
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。

@@ -20,7 +20,7 @@ vi.mock("../core/api/client.ts", async (orig) => {
   return { ...real, api: (path: string) => api(path), isTransientErr: () => false };
 });
 
-const { requiresConcreteModel, resolveQuickLaunchModel, useAutoConcreteModel, useModelOptions } =
+const { requiresConcreteModel, resolveQuickLaunchModel, useAutoConcreteModel, useEffortOptions, useModelOptions } =
   await import("./agentModels.ts");
 
 function Probe({ kind }: { kind: string }) {
@@ -170,5 +170,29 @@ describe("resolveQuickLaunchModel", () => {
     api.mockClear();
     await expect(resolveQuickLaunchModel("codex", "")).resolves.toBe("");
     expect(api).not.toHaveBeenCalled();
+  });
+});
+
+describe("useEffortOptions for claude", () => {
+  function efforts(model: string) {
+    function EffortProbe() {
+      const opts = useEffortOptions("claude", model);
+      return <span data-testid="efforts">{opts.map(([v]) => v).join(",")}</span>;
+    }
+    act(() => {
+      root.render(<EffortProbe />);
+    });
+    return host.querySelector('[data-testid="efforts"]')?.textContent;
+  }
+
+  // create_session refuses an effort for these (claude.EffortsFor), so the launch dialog must
+  // not offer one either.
+  it("offers only Default for Haiku, by alias or by a registered full id", () => {
+    expect(efforts("haiku")).toBe("");
+    expect(efforts("claude-haiku-4-5")).toBe("");
+  });
+
+  it("offers the effort levels for other models (negative control)", () => {
+    expect(efforts("claude-opus-5-5")).toBe(",low,medium,high,xhigh,max");
   });
 });

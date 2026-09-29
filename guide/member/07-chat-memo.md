@@ -50,7 +50,7 @@ and does not tell us which model that was (cursor's Auto, for instance) — we l
 rather than print a guess.
 
 - **None** — answers within the chat alone, with no external tools. This is plenty for translation and summarization.
-- **AF read** — can read your workspace's session list, statuses, and output, plus agent usage / limits (claude / codex usage rates and reset times) and each session's context size and cumulative token spend (no writing).
+- **AF read** — can read your workspace's session list, statuses, and output, plus agent usage / limits (claude / codex / muse usage rates and reset times, agy's quota) and each session's context size and cumulative token spend (no writing).
 - **AF write** — in addition to reading, can send prompts to sessions (doing work on your behalf). Grant this only for trusted uses.
 
 The built-in **Fleet Operator** is the flagship example of "AF write": from chat it can
@@ -252,9 +252,9 @@ different agent*; a branch *copies the conversation as-is within the same agent*
 the exact wording and the fine details matter; hand off when you want another agent to take over.
 
 If the button isn't there, one of these applies: you can't branch from the agent's messages,
-nor from one that's still being sent. Only **claude, codex, opencode and copilot** sessions
-support it, and codex and opencode only in **managed** execution (the CLI launch command has
-no way to pass a branch point).
+nor from one that's still being sent. Only **claude, codex, opencode, copilot, lcpp and muse**
+sessions support it, and codex and opencode only in **managed** execution (the CLI launch command
+has no way to pass a branch point; lcpp and muse are always managed).
 
 ## Memo queue
 

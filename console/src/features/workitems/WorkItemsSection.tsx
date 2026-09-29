@@ -24,11 +24,13 @@
 //
 // Launching from the detail modal still just hands the existing launch stack (seed ->
 // useLaunchTarget -> LaunchModal), so worktree/branch/agent stay implemented in one place.
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
+import { api, raw } from "../../core/api/client.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useReposStore, type Repo } from "../repos/store.ts";
@@ -42,8 +44,11 @@ import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import { LabelBadge } from "./LabelBadge.tsx";
+import { readShelf, resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
 import {
   branchForItem,
+  checksText,
+  checksTone,
   dedupeWorkItems,
   fullLocal,
   matchWorkItem,
@@ -72,13 +77,18 @@ import "./workitems.css";
 interface RowProps {
   item: WorkItem;
   started: WorkItemSessionRef[];
+  /** What the started badge calls the first session: its display name when it is on the live
+   * list, else its slug (#1108). */
+  startedName: string;
   /** Meta this query repeats on every row — dropped from the line (docs/log/80 §80.18.2). */
   uniform: { repo: boolean; assignee: boolean };
   onOpen(item: WorkItem): void;
   onOpenSession(name: string): void;
 }
 
-const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, onOpenSession }: RowProps) {
+const CHECK_ICON: Record<string, string> = { success: "pass", failure: "error", pending: "clock" };
+
+const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, uniform, onOpen, onOpenSession }: RowProps) {
   const tr = useT();
   const tone = stateTone(item.state);
   const busy = started.length > 0;
@@ -91,6 +101,11 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
   const labels = railLabels(item.labels);
   const meta = !!(repo || assignee || labels.length);
   const when = railWhen(item.updatedAt);
+  // The row is one button, so its label is all a screen reader announces — the icons inside it
+  // are not read out. The CI and conflict status therefore go into the label as well.
+  const ciText = item.checks.state ? `${tr("wi.detail_checks")}: ${checksText(item.checks)}` : "";
+  const conflictText = item.mergeable === "conflict" ? tr("wi.detail_merge_conflict") : "";
+  const label = [tr("wi.open_detail", { key: item.key }), ciText, conflictText].filter(Boolean).join(" — ");
   return (
     // The whole row opens the detail modal. The external link and the started badge nested
     // inside it are controls of their own, so each stops propagation before acting; otherwise
@@ -99,7 +114,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
       className={"wi-row" + (item.state === "done" ? " done" : "")}
       role="button"
       tabIndex={0}
-      aria-label={tr("wi.open_detail", { key: item.key })}
+      aria-label={label}
       onClick={() => onOpen(item)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -119,6 +134,21 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
           <span className="wi-title" title={item.assignee ? `${item.title} — @${item.assignee}` : item.title}>
             {item.title}
           </span>
+          {/* CI and conflicts of an open pull request (#1113), so the rail answers "which of these
+              needs me" without opening each one. Icons only, with the detail modal's own wording
+              on hover: the title keeps the width. Nothing is drawn when nothing was read — an
+              issue, a closed PR, a provider without these — and "no checks" is that same nothing,
+              never a green mark. The same text is in the row's label above. */}
+          {ciText && (
+            <span className={`wi-flag tone-${checksTone(item.checks)}`} title={ciText}>
+              <Icon name={CHECK_ICON[item.checks.state] || "circle-large-outline"} />
+            </span>
+          )}
+          {conflictText && (
+            <span className="wi-flag tone-bad" title={conflictText}>
+              <Icon name="git-merge" />
+            </span>
+          )}
           {/* Shown only on rows that have been sitting: for anything touched today the sort
               order already says so, and it is not worth 23% of the title (measured: 38px of
               130px). */}
@@ -145,7 +175,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
         <button
           type="button"
           className="wi-started"
-          title={tr("wi.started_at", { name: started[0].sessionName })}
+          title={tr("wi.started_at", { name: startedName })}
           onClick={(e) => {
             e.stopPropagation();
             onOpenSession(started[0].sessionName);
@@ -174,6 +204,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
 export const WorkItemsSection = memo(function WorkItemsSection() {
   const tr = useT();
   const toast = useToast();
+  const askConfirm = useConfirm();
   const tenant = useTenantStore((s) => s.tenant);
   const payload = useWorkItemStore((s) => s.payload);
   const loaded = useWorkItemStore((s) => s.loaded);
@@ -196,6 +227,10 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const [remote, setRemote] = useState<{ needle: string; result: WorkItemSearchResult } | null>(null);
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remoteErr, setRemoteErr] = useState("");
+  // Bumped whenever the needle changes, so a search still in flight cannot bring back an error
+  // for a needle the user has already typed over or cleared.
+  const searchGen = useRef(0);
+  const filterInput = useRef<HTMLInputElement>(null);
 
   // Switching tenant must not leave the previous tenant's rows behind (as in the other stores).
   useEffect(() => {
@@ -230,21 +265,80 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const searchTracker = () => {
     if (!canSearch || remoteBusy || !payload?.running) return;
     const asked = q;
+    const gen = searchGen.current;
     setRemoteBusy(true);
     setRemoteErr("");
     void workItemSearch(asked)
       .then((res) => {
+        if (gen !== searchGen.current) return;
         const got = readWorkItemSearch(res);
         if (got.result) setRemote({ needle: asked, result: got.result });
         else setRemoteErr(errText(got.error) || tr("wi.search_failed"));
       })
       .finally(() => setRemoteBusy(false));
   };
+  const changeNeedle = (next: string) => {
+    searchGen.current++;
+    setNeedle(next);
+    setRemoteErr("");
+  };
   const labelOf = (id: string) => payload?.queries.find((x) => x.id === id)?.label || id;
 
-  const openSession = (name: string) => {
-    const s = sessions.find((x) => x.name === name);
+  // The ledger names a slug; what the modals show for it is looked up here (#1108). The shelf is
+  // read only while a modal lists a slug that is not on the live list.
+  const shownRefs = [detailOn, reportOn].flatMap((i) => (i ? sessionsForItem(ledger, i.key) : []));
+  const missing = [...new Set(shownRefs.map((r) => r.sessionName))].filter((n) => !sessions.some((s) => s.name === n));
+  const archived = useArchivedFor(missing);
+  const sessionRef = (name: string): ResolvedSessionRef => resolveSessionRef(name, sessions, archived);
+
+  const startedNameFor = (item: WorkItem) => {
+    const first = sessionsForItem(ledger, item.key)[0];
+    return first ? sessionRef(first.sessionName).title || first.sessionName : "";
+  };
+
+  const openLive = (name: string) => {
+    const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
     (agentOf(s?.kind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
+  };
+
+  // A slug that is not on the live list used to open nothing at all (#1108). Read the shelf
+  // fresh at the click — the row badge reaches here with no modal open — and offer to bring an
+  // archived session back; a slug on neither list is said to be gone. If the shelf cannot be
+  // read (a stopped workspace), fall through to the plain open, which is what it always did.
+  const openSession = async (name: string) => {
+    if (sessions.some((s) => s.name === name)) return openLive(name);
+    const shelf = readShelf(await api("api/sessions/archived").catch(() => null));
+    if (!shelf) return openLive(name);
+    const ref = resolveSessionRef(name, [], shelf);
+    if (ref.state === "gone") {
+      toast(t("wi.session_gone", { name }));
+      return;
+    }
+    const label = ref.title || name;
+    // A session whose folder is gone restores all the same, as on the shelf: its conversation
+    // can still be read, it just cannot resume — so the confirm says that rather than refusing.
+    const ok = await askConfirm({
+      title: tr("wi.restore_title"),
+      body:
+        tr("wi.restore_body", { name: label }) +
+        (ref.session?.resumable === false ? "\n" + tr("wi.restore_folder_gone") : ""),
+      confirmLabel: tr("arch.restore"),
+      danger: false,
+    });
+    if (!ok) return;
+    const res = await raw(`api/sessions/${encodeURIComponent(name)}/restore`, { method: "POST" }).catch(() => null);
+    if (!res?.ok) {
+      toast(t("arch.restore_failed"));
+      return;
+    }
+    // Open only once the row is on the list: a chat pane draws nothing for a session the list
+    // does not have, and refresh() keeps the old list when its read fails.
+    await useSessionsStore.getState().refresh();
+    if (!useSessionsStore.getState().sessions.some((s) => s.name === name)) {
+      toast(t("wi.restored_not_listed", { name: label }));
+      return;
+    }
+    openLive(name);
   };
 
   // reviewBranch: the PR's head branch, when the detail modal's live read resolved one and the
@@ -254,6 +348,9 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
       provider: item.provider,
       key: item.key,
       branch: branchForItem(item, settings.workItemBranchTemplate),
+      title: item.title,
+      type: item.type || "",
+      labels: item.labels ?? [],
     });
   };
 
@@ -365,20 +462,37 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
               on screen (§80.18.4). */}
           {crowded && (
             <div className="wi-filter">
-              <Icon name="search" />
-              <input
-                type="search"
-                value={needle}
-                placeholder={tr("wi.filter_ph")}
-                aria-label={tr("wi.filter_ph")}
-                onChange={(e) => {
-                  setNeedle(e.target.value);
-                  setRemoteErr("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") searchTracker();
-                }}
-              />
+              <div className="proj-filter">
+                <Icon name="search" />
+                <input
+                  ref={filterInput}
+                  type="search"
+                  value={needle}
+                  placeholder={tr("wi.filter_ph")}
+                  aria-label={tr("wi.filter_ph")}
+                  onChange={(e) => changeNeedle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") searchTracker();
+                    else if (e.key === "Escape") changeNeedle("");
+                  }}
+                />
+                {needle && (
+                  <button
+                    type="button"
+                    className="proj-filter-clear"
+                    title={tr("pj.clear")}
+                    onClick={(e) => {
+                      changeNeedle("");
+                      // The button unmounts with the needle, dropping keyboard focus to <body>. Only a
+                      // keyboard press (detail 0) gets it back: on a tap, focusing the input would pop
+                      // the soft keyboard over the rows the user cleared the filter to see.
+                      if (e.detail === 0) filterInput.current?.focus();
+                    }}
+                  >
+                    <Icon name="close" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
           <div className="wi-list">
@@ -387,6 +501,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                 key={item.id}
                 item={item}
                 started={sessionsForItem(ledger, item.key)}
+                startedName={startedNameFor(item)}
                 uniform={uniform[item.queryId] || { repo: false, assignee: false }}
                 onOpen={setDetailOn}
                 onOpenSession={openSession}
@@ -422,6 +537,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                   key={item.id}
                   item={item}
                   started={sessionsForItem(ledger, item.key)}
+                  startedName={startedNameFor(item)}
                   uniform={{ repo: false, assignee: false }}
                   onOpen={setDetailOn}
                   onOpenSession={openSession}
@@ -466,9 +582,10 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
           onClose={() => setDetailOn(null)}
           onPick={(target, inPlace, reviewBranch) => pickTarget(detailOn, target, inPlace, reviewBranch)}
           onStartHub={() => toStartHub(detailOn)}
+          sessionRef={sessionRef}
           onOpenSession={(name) => {
             setDetailOn(null);
-            openSession(name);
+            void openSession(name);
           }}
           // Close the detail modal before opening the report one: never stack two modals, since
           // both the Esc layering and the focus trap assume one at a time.
@@ -482,6 +599,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
         <WorkItemReportModal
           item={reportOn}
           sessions={sessionsForItem(ledger, reportOn.key)}
+          sessionRef={sessionRef}
           onClose={() => setReportOn(null)}
         />
       )}

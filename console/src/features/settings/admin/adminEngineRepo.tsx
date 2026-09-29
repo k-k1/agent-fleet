@@ -15,7 +15,7 @@ import { fmtDateTime } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
-import { modelFit, type Fit } from "./engineFit.ts";
+import { kvKnown, kvPriceOf, modelFit, NO_KV, type Fit } from "./engineFit.ts";
 import { quantLabel } from "./registeredGroups.ts";
 import type {
   EngineApiError, EngineModel, EngineRow, IngestCandidate, IngestVersion, IngestVersionsAnswer,
@@ -52,6 +52,7 @@ export function heldFiles(rows: EngineModel[], repo: string): Map<string, Engine
 type LadderAnswer = {
   files?: IngestCandidate[];
   kv_mib_per_1k_tokens?: number;
+  kv_mib_fixed?: number;
   kv_from?: string;
   error?: EngineApiError;
 };
@@ -99,7 +100,7 @@ export function RepoQuantLadder({ engine, repo, rows, readOnly, startOpen, onTak
 
   useEffect(() => { if (startOpen) void load(); }, [load, startOpen]);
 
-  const kvPer1k = answer?.kv_mib_per_1k_tokens || 0;
+  const kv = kvPriceOf(answer);
   // A repository file that is not a model — the importance matrix, a vision projector — is not a
   // choice anybody makes here. Dropped from THIS table only: the manual picker still lists them,
   // because hiding a file from somebody who came looking for it is the older fault.
@@ -124,12 +125,12 @@ export function RepoQuantLadder({ engine, repo, rows, readOnly, startOpen, onTak
           cannot count llama.cpp's compute buffers or the CUDA context. ADR 0074 measured what
           that costs — an L4 took 17 GB of weights and then died allocating the cache. */}
       <p className="admin-hint">{tr("admin.fit_estimate_note" as never)}
-        {!kvPer1k && <> {tr("admin.fit_no_kv" as never)}</>}
+        {!kvKnown(kv) && <> {tr("admin.fit_no_kv" as never)}</>}
         {!!answer?.kv_from && <> {(tr("admin.fit_kv_from" as never) as string).replace("{f}", quantLabel(answer.kv_from, repo))}</>}</p>
       {!candidates.length && <p className="muted">{tr("admin.repo_ladder_empty" as never)}</p>}
       <ul className="engine-repo-quants">{candidates.map((file) => {
         const weightsMiB = file.bytes ? Math.round(file.bytes / 1048576) : 0;
-        const fit = modelFit(weightsMiB, kvPer1k, contextTokens, cardMiB, engine.classes || []);
+        const fit = modelFit(weightsMiB, kv, contextTokens, cardMiB, engine.classes || []);
         const have = held.get(file.name);
         return <li key={file.name} className={have ? "held" : ""}>
           <span className="engine-repo-quant-mark" aria-hidden="true">{have ? "●" : "○"}</span>
@@ -204,7 +205,7 @@ export function CivitaiVersionLadder({ engine, versionRef, rows, readOnly, onTak
         const weightsMiB = version.bytes ? Math.round(version.bytes / 1048576) : 0;
         // No size, no verdict. A fit computed from a missing weight reads as "it fits" about a
         // model nobody has measured, which is the one thing this table must not say.
-        const fit = modelFit(weightsMiB, 0, 0, weightsMiB ? cardMiB : 0, engine.classes || []);
+        const fit = modelFit(weightsMiB, NO_KV, 0, weightsMiB ? cardMiB : 0, engine.classes || []);
         const have = held.has(version.ref);
         return <li key={version.ref} className={have ? "held" : ""}>
           <span className="engine-repo-quant-mark" aria-hidden="true">{have ? "●" : "○"}</span>

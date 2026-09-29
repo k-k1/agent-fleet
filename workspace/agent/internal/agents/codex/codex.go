@@ -9,7 +9,7 @@ package codex
 import (
 	"errors"
 	"fmt"
-	"log"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -159,14 +159,16 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
 	}
 	// Pre-accept codex's per-dir trust gate so a freshly cloned repo doesn't stall at
-	// the "Do you trust this directory?" prompt (the bypass flags don't cover it).
-	ensureFolderTrusted(m.Dir)
-	// The shared app-server starts on demand, and the TUI route is one of those demands:
-	// without waking it here buildProgram finds no marker (env), launches directly without
-	// --remote, and compaction detection, live rate limits and reroute observation
-	// (docs/log/27 P1) all disappear. Failure is not fatal — fall back to a direct launch.
-	if _, _, err := Serve().Ensure(); err != nil {
-		log.Printf("codex app-server unavailable; using direct TUI: %v", err)
+	// the "Do you trust this directory?" prompt (the bypass flags don't cover it). The
+	// thread runs in CWD(), and a trusted parent does not cover a chosen subdirectory
+	// (measured 0.157.1 outside a git repo: the prompt still appeared), so both are listed.
+	// codex matches trust against the resolved path (measured 0.158.0: launched through a
+	// symlink it named the target and asked again), so the target is listed too.
+	for _, d := range []string{m.Dir, m.CWD()} {
+		ensureFolderTrusted(d)
+		if real, err := filepath.EvalSymlinks(d); err == nil && real != d {
+			ensureFolderTrusted(real)
+		}
 	}
 	// Auth is codex's own ~/.codex/auth.json (codex login, written via the Connections
 	// flow), so no token is injected. State + per-slot resume are wired purely through
@@ -187,7 +189,12 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if forkFrom != "" && m.ForkAt != "" {
 		return agents.LaunchPlan{}, errors.New("発言時点からの分岐は managed のセッションでのみ利用できます")
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, sids.Read(cxSid), forkFrom), Cwd: m.CWD()}, nil
+	resumeID := sids.Read(cxSid)
+	// A thread the shared app-server still holds (a managed session switched to Terminal)
+	// locks the direct TUI out until the daemon unloads it; release.go explains the wait.
+	awaitAddr := releaseForTUI(resumeID)
+	launchHandOver(m.Name, awaitAddr != "")
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom, awaitAddr), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

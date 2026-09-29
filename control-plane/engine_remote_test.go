@@ -144,7 +144,7 @@ func TestEngineRegistryFromBorrowingAloneWiresNoAWS(t *testing.T) {
 	t.Setenv("AF_REMOTE_ENGINE_URL", "https://af.example.invalid")
 	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "afei_x.y")
 
-	reg := newEngineRegistry(context.Background(), nil)
+	reg := newEngineRegistry(t.Context(), nil)
 	if reg == nil {
 		t.Fatal("borrowing alone produced no registry — the gate still demands a table or AWS")
 	}
@@ -168,8 +168,9 @@ func TestEngineRegistryFromBorrowingAloneWiresNoAWS(t *testing.T) {
 		t.Fatal("the adopted row is not served")
 	}
 	if e.remote == nil {
-		t.Error("the adopted row has no remote handle — its credential and mirror have nowhere to live")
+		t.Fatal("the adopted row has no remote handle — its credential and mirror have nowhere to live")
 	}
+	awaitRemotePollExit(t, e)
 	// Everything a row this deployment does not own must NOT get (decision 1). The list is the
 	// same one ADR 0076 wrote for an external row.
 	for _, c := range []struct {

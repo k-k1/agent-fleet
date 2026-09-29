@@ -229,6 +229,18 @@
   gap: 8px;
   max-width: min(520px, 92vw);
 }
+/* Phone: below the top bars rather than over the composer (toastPlacement.ts); ToastProvider
+   sets `top` from the measured bars, and this is the place until it has. Spanning the width
+   instead of centring with `left: 50%`, which leaves a fixed box only the right half of the
+   screen to shrink-to-fit in. */
+.ui-toasts.ui-toasts-phone {
+  top: calc(var(--app-top, 0px) + 110px);
+  bottom: auto;
+  left: 8px;
+  right: 8px;
+  transform: none;
+  max-width: none;
+}
 .ui-toast {
   display: flex;
   align-items: flex-start;
@@ -249,10 +261,15 @@
 .ui-toast-success > .codicon:first-child { color: var(--ok); }
 .ui-toast-info { border-left-color: var(--accent); }
 .ui-toast-info > .codicon:first-child { color: var(--accent); }
+/* pre-line + the height cap: a launch failure can carry the end of the CLI's stderr (lines,
+   up to 2 KiB), which would otherwise run together into one wall covering the screen. */
 .ui-toast-msg {
   flex: 1;
   min-width: 0;
   word-break: break-word;
+  white-space: pre-line;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .ui-toast-x {
   background: none;

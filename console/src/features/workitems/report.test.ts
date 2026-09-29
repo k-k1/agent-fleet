@@ -9,6 +9,7 @@ const item: WorkItem = {
   key: "acme/web#45", title: "ログイン後に一覧が空になる", state: "open",
   url: "https://github.com/acme/web/issues/45", assignee: "taro", labels: [], labelColors: {},
   repo: "acme/web", updatedAt: "2026-08-26T00:00:00Z",
+  checks: { state: "", total: 0, failed: 0, pending: 0 }, mergeable: "",
 };
 const session: WorkItemSessionRef = {
   id: "l1", provider: "github", itemKey: "acme/web#45", sessionName: "sk7f3q9",

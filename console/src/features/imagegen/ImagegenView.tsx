@@ -78,9 +78,6 @@ import "./imagegen.css";
 /** Decision 2's cadence. Only ever runs while something is unfinished AND the tab is shown. */
 const POLL_MS = 2000;
 
-/** How long the "pictures are ready" line stays up; the results tab's badge outlasts it. */
-const NOTICE_MS = 8000;
-
 /** The pane width at which the columns fold into tabs — imagegen.css's `@container paneview`. */
 const NARROW_PX = 720;
 
@@ -761,12 +758,9 @@ function StudioPane({
   useEffect(() => {
     if (seesOut) setReady(0);
   }, [seesOut]);
-  // Each new batch restarts the clock; the badge keeps counting after the line has gone.
-  useEffect(() => {
-    if (!ready) return;
-    const id = window.setTimeout(() => setReady(0), NOTICE_MS);
-    return () => window.clearTimeout(id);
-  }, [ready]);
+  // No timeout: a trial on a cold engine takes about seven minutes, and a line that left after
+  // eight seconds was gone before the member looked back (#1089 phone check). It stays until the
+  // results are seen or it is closed, so its count and the tab's badge agree.
   useArrivals(madePaths, jobsRead, (n) => {
     if (!seesOut) setReady((r) => r + n);
   });
@@ -881,7 +875,8 @@ function StudioPane({
         <EmptyState icon="warning" title={tr("imggen.engine_unavailable")} />
       ) : (
         <>
-          <div className="igen-tabs" role="tablist">
+          {/* data-toast-chrome: a phone's toasts stay below this strip (ui/toastPlacement.ts). */}
+          <div className="igen-tabs" role="tablist" data-toast-chrome="">
             {(["chat", "form", "out"] as const).map((k) => (
               <button
                 key={k}

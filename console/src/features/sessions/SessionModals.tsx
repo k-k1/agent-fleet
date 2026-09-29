@@ -83,9 +83,13 @@ export function SessionModals() {
         />
       )}
       {branchRename && (
+        // Keyed by the session, so switching sessions starts afresh: no chips, proposal or pending
+        // answer of the previous one carries over.
         <BranchRenameModal
+          key={branchRename.name}
           name={branchRename.name}
           branch={branchRename.branch || ""}
+          repo={branchRename.repo || ""}
           onClose={close}
           onSaved={() => void refreshSessions()}
         />

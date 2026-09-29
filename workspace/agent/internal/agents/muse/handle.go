@@ -131,12 +131,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	if err != nil {
 		return err
 	}
-	// The host's own diagnostics go to stderr; keep them out of the Agent's log but do not
-	// let a full pipe buffer block the child.
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
+	// The host's own diagnostics go to stderr: keep them out of the Agent's log, but hold the
+	// tail so a failed start can say why.
+	tail, err := agents.StartWithStderrTail(cmd)
+	if err != nil {
 		return fmt.Errorf("muse serve の起動に失敗しました: %w", err)
 	}
+	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
 
 	cl := msp.NewClient(stdin, stdout, msp.Handler{
 		OnNotification: h.onNotify,
@@ -145,8 +146,10 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 
 	res, err := msp.Handshake(cl, clientVersion, []msp.CapabilityName{msp.CapabilityNameSessionMCP})
 	if err != nil {
+		err = tail.Wrap(fmt.Errorf("Muse Code との接続に失敗しました: %w", err))
 		stopChild(cmd, stdin)
-		return fmt.Errorf("Muse Code との接続に失敗しました: %w", err)
+		tail.Release() // no watch owns this child yet
+		return err
 	}
 	// A drifted fingerprint is a warning, not a refusal: the schema says so, and refusing to
 	// launch because a patch release re-rendered the bundle would be worse than decoding the
@@ -163,7 +166,9 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	h.mu.Unlock()
 
 	if err := h.openSession(cl, st); err != nil {
+		err = tail.Wrap(err)
 		stopChild(cmd, stdin)
+		tail.Release() // no watch owns this child yet
 		h.mu.Lock()
 		h.cmd, h.stdin, h.cl = nil, nil, nil
 		h.mu.Unlock()
@@ -174,7 +179,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	h.alive = true
 	h.state = agents.TurnCompleted
 	h.mu.Unlock()
-	go h.watch(cmd, cl)
+	go h.watch(cmd, tail, cl)
 	return nil
 }
 
@@ -303,9 +308,10 @@ func approvalModeFor(bypass bool) *msp.ApprovalMode {
 
 // watch turns a dead child into a dead handle. Without it a crashed host leaves the session
 // reading as live with nothing behind it, and the next Send blocks until its own timeout.
-func (h *threadHandle) watch(cmd *exec.Cmd, cl *msp.Client) {
+func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *msp.Client) {
 	<-cl.Closed()
 	_ = cmd.Wait()
+	tail.Release()
 	h.mu.Lock()
 	if h.cl != cl {
 		h.mu.Unlock() // already replaced by a newer spawn

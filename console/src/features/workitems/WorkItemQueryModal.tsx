@@ -19,6 +19,42 @@ import { BB_INTENTS, bbNeedsRepo, bbQueries, bbRepoNames, bbWorkspaceOf, bbWorks
 import type { BbIntent } from "./bitbucketQuery.ts";
 import { DEFAULT_BRANCH_TEMPLATE, branchForItem } from "./read.ts";
 import type { WorkItemQuery } from "./read.ts";
+import { previewBranchNames } from "../repos/branchRule.ts";
+import type { BranchItem } from "../repos/branchRule.ts";
+
+// The template preview's two worked examples. The Jira one is a Bug with a Japanese title, so
+// the preview shows both the kind's prefix and what an empty {slug} does.
+const PREVIEW_ITEMS: BranchItem[] = [
+  { provider: "github", key: "acme/web#45", title: "Fix the empty list" },
+  // i18n-exempt: the non-ASCII title sample itself; translating it destroys the example (docs/log/28 §4)
+  { provider: "jira", key: "PROJ-123", title: "ログイン後に一覧が空になる", type: "Bug" },
+];
+
+// The built-in template of the Agent's resolver (ADR 0103 decision 6), shown as the field's
+// placeholder when the Agent answers the preview.
+const RESOLVER_DEFAULT_TEMPLATE = "{prefix}{ref}-{slug}";
+
+/** The preview rendered by the Agent's resolver for the template as typed, so it shows what a
+ * launch will name the branch. null while the first answer is pending and when the Agent has
+ * no resolver; the caller then renders with the Console's own branchForItem. */
+function useBranchPreview(template: string): string[] | null {
+  const [names, setNames] = useState<string[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const timer = setTimeout(() => {
+      void previewBranchNames(template, PREVIEW_ITEMS).then((r) => {
+        if (!alive) return;
+        // An empty name falls back to temp/<random> at launch (decision 4).
+        setNames(r ? r.map((n) => (n.name_empty ? "temp/…" : n.name)) : null);
+      });
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [template]);
+  return names;
+}
 
 interface Props {
   queries: WorkItemQuery[];
@@ -85,6 +121,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
   const askConfirm = useConfirm();
   const repos = useReposStore((s) => s.repos);
   const settings = useSettings();
+  const preview = useBranchPreview(settings.workItemBranchTemplate);
   const [provider, setProvider] = useState("github");
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState(queries.length ? "" : DEFAULT_QUERY.github);
@@ -234,24 +271,25 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           </ul>
         )}
         {/* Branch name template (docs/log/80 P2). The preview is there because one worked example
-            conveys better than prose that {slug} is empty for a Japanese title, so the result is
-            feature/issue-45. */}
+            conveys better than prose what the template does — that {slug} is empty for a Japanese
+            title, and that a Bug gets the fix/ prefix. */}
         <div className="wi-qbranch">
           <label>
             <span>{tr("wi.branch_template")}</span>
             <input
               value={settings.workItemBranchTemplate}
-              placeholder={DEFAULT_BRANCH_TEMPLATE}
+              placeholder={preview ? RESOLVER_DEFAULT_TEMPLATE : DEFAULT_BRANCH_TEMPLATE}
               spellCheck={false}
               onChange={(e) => setSetting("workItemBranchTemplate", e.target.value)}
             />
           </label>
           <p className="wi-qhint">
-            {tr("wi.branch_preview", {
-              branch: branchForItem({ key: "acme/web#45", title: "Fix the empty list" }, settings.workItemBranchTemplate),
-              // i18n-exempt: the non-ASCII title sample itself; translating it destroys the example (docs/log/28 §4)
-              branch2: branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" }, settings.workItemBranchTemplate),
-            })}
+            {preview
+              ? tr("wi.branch_preview_rules", { branch: preview[0] ?? "", branch2: preview[1] ?? "" })
+              : tr("wi.branch_preview", {
+                  branch: branchForItem(PREVIEW_ITEMS[0], settings.workItemBranchTemplate),
+                  branch2: branchForItem(PREVIEW_ITEMS[1], settings.workItemBranchTemplate),
+                })}
           </p>
         </div>
         <div className="wi-qform">

@@ -18,8 +18,17 @@
 // So while measuring, the input's parent (the composer row) is pinned with min-height and the
 // shrink cannot escape. It only prevents shrinking, so overestimating by a few px by passing the
 // border-box value is harmless: scrollTop is never clamped in the direction of a shrinking box.
+//
+// An empty input takes its `rows` height instead of being measured: Chromium counts the placeholder
+// in scrollHeight, so an empty measure is "how many lines the placeholder wraps to at this width",
+// and the value then sticks until the next draft change. Seen on a phone in the image studio:
+// the composer came back one line tall with the placeholder's second line cut off.
 export function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
   if (!el) return;
+  if (!el.value) {
+    el.style.height = "";
+    return;
+  }
   const row = el.parentElement;
   const frozen = row ? Math.ceil(row.getBoundingClientRect().height) : 0;
   const prevMin = row ? row.style.minHeight : "";

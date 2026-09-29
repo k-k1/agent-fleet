@@ -613,6 +613,15 @@ move the default: the other order leaves `standup.sh` crane-copying a tag nobody
 fails before the stack and takes the engine role's creation with it. An existing deployment is
 unaffected either way — its captured parameter file names the tag it is already running.
 
+**Moving the default also means appending the old one to `COMFY_STALE_DEFAULTS` in
+`update.sh`.** A live stack records the default it was created with, and `deploy` keeps it.
+`update.sh` moves a stack whose tag is on that list to the new default: when the image role is
+on, it copies `comfyui:<new>` from GHCR into `af-comfyui` first. Any other value counts as a
+choice and is left alone. If the new image cannot be copied, the stack keeps its tag and the
+release carries on with a warning, because the old tag still runs.
+`deploy/local/ecs-lifecycle-stub-test.sh` (case 3i-9) fails while the list contains the
+current default.
+
 ### The `image` role's engine table fields
 
 `health` is `/system_stats` (unauthenticated, answers immediately — measured) and `provider` is

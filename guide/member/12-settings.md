@@ -17,7 +17,7 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 | Group | What is in it |
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / AI assistance / Agent instructions / Agent memory |
-| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS SSM |
+| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS profiles/SSM |
 | **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchain / Databases / Preview subdomains / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
@@ -267,8 +267,10 @@ issues and pull requests, Bitbucket pull requests — so that a session can be s
 - **Bitbucket** has no search across an account, so its query is **assembled from your connected
   repositories** — what to list × which target — instead of being typed by hand. Bitbucket items are
   **read only**: nothing is written back to them.
-- **Branch name template** — what a session started from a row branches as (`feature/{key}` by
-  default).
+- **Branch name template** — what a session started from a row branches as. Empty means the
+  default `{prefix}{ref}-{slug}` (e.g. `feature/45-empty-list`, `fix/PROJ-123`); the placeholders
+  are `{ref}` `{num}` `{key}` `{project}` `{type}` `{prefix}` `{slug}`, and the example under the
+  field shows what yours produces. A repository's own rules (git-flow and the like) win at launch.
 
 The list itself, and starting a session from a row, are in
 [02 Sessions](02-sessions.md#starting-from-the-issue-tracker).
@@ -311,9 +313,11 @@ search.
 Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
 → [10 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)
 
-### AWS SSM
+### AWS profiles/SSM
 
-Profiles (shared settings) and SSM hosts (individual) for logging in to another in-house host.
+Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
+for logging in to another in-house host. Each profile row has **Log in** to sign in to IAM Identity Center from the
+Console.
 → [10 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
 
 ---
@@ -460,7 +464,7 @@ is stopped). → [03 Repositories and git](03-code.md)
 
 Collect your own settings into **a single file**, take it away, and read it back on another deployment or
 account. It carries three things: **personal settings** (display, keys, notifications, agent defaults, …),
-your **AWS SSM** registrations, and your **agent instructions**.
+your **AWS profiles/SSM** registrations, and your **agent instructions**.
 
 - **Connections (Git / agent / AWS tokens and API keys) are NOT included.** Sign in again wherever you
   import. The flip side is that **this file is safe to hand to someone else** — handing a team the whole
@@ -516,7 +520,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | Change the Java / Node version | Toolchain |
 | Run a test suite that needs a database | Databases |
 | Show the app you are building to someone | Preview subdomains |
-| Get into another server | AWS SSM |
+| Get into another server | AWS profiles/SSM |
 | Keep code that cannot leave the building | Internal repositories |
 | Take my settings to another environment | Export / import |
 | The environment is broken | Danger zone |

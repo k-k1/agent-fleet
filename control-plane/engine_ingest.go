@@ -1292,10 +1292,8 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 		// passes nil and the checkpoint's numbers stand.
 		var kv *store.EngineModelKV
 		if strings.TrimSpace(req.FileFlag) == "" {
-			kv = &store.EngineModelKV{Layers: req.KVGeom.Layers, HeadsKV: req.KVGeom.HeadsKV,
-				KeyLen: req.KVGeom.KeyLen, ValueLen: req.KVGeom.ValLen,
-				NextN: req.KVGeom.NextN, FullAttnInterval: req.KVGeom.FullAttnInterval,
-				Ceiling: req.KVGeom.Ceiling}
+			stored := engineStoreKV(req.KVGeom)
+			kv = &stored
 		}
 		found, err := g.models.ReplaceEngineModelFile(ctx, req.Role, req.ModelID, file, kv)
 		if err != nil {
@@ -1378,6 +1376,8 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 		KVLayers: req.KVGeom.Layers, KVHeadsKV: req.KVGeom.HeadsKV,
 		KVKeyLen: req.KVGeom.KeyLen, KVValueLen: req.KVGeom.ValLen,
 		KVNextN: req.KVGeom.NextN, KVFullAttnInterval: req.KVGeom.FullAttnInterval,
+		KVFullWidth: req.KVGeom.FullWidth, KVSWAWidth: req.KVGeom.SWAWidth,
+		KVSlidingWindow: req.KVGeom.SlidingWindow,
 		// The architecture's own limit, kept so the row can be re-fitted later without going
 		// back through the ingest. 🔴 Stored, never APPLIED: what the model allows and what fits
 		// on the card are different questions (ADR 0089), and only the first is the publisher's
