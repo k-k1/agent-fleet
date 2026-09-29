@@ -3,7 +3,7 @@
 English | [日本語](0002-claude-auth-onboarding.ja.md)
 
 - Status: decided (the end of a chain of corrections, rounds 10 → 11 → 12)
-- See also: [HANDOFF §6.10.3](../HANDOFF.md) / [build/08 §8.5 Claude authentication and onboarding](../build/08-integrations.md) (formerly architecture §2.6) / [history/phase0-poc](../log/phase0-poc.md)
+- See also: HANDOFF §6.10.3 (retired 2026-09) / [build/08 §8.5 Claude authentication and onboarding](../build/08-integrations.md) (formerly architecture §2.6) / [history/phase0-poc](../log/phase0-poc.md)
 
 ## Context
 

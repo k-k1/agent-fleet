@@ -2270,7 +2270,7 @@ func (s *SQL) DeleteSetting(ctx context.Context, key string) error {
 }
 
 // AddUsage accumulates workspace running-seconds into the (membership, day)
-// showback bucket (docs/roadmap.md P3-9). Upsert += so repeated samples add up.
+// showback bucket (docs/log/roadmap.md P3-9). Upsert += so repeated samples add up.
 func (s *SQL) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage_daily(membership_id, tenant_id, day, running_secs)

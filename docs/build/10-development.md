@@ -113,8 +113,8 @@ the contract, and nothing is being tested while it is down.
   stale), and is everything that should be baked in present. It runs automatically
   after a build.
 
-Host-specific practice (PATH, docker group membership and so on) belongs to the
-handoff notes, not here.
+Host-specific practice (PATH, docker group membership and so on) is each host's own
+business and is not recorded here.
 
 ## 10.4 Testing
 

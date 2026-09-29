@@ -1,9 +1,9 @@
 # 19b. P3-9 実装記録 — showback（社内使用量の可視化）
 
-> 🗄 **実装記録** — 現状は [HANDOFF](../HANDOFF.md)、設計は [ロードマップ P3-9](../roadmap.md#p3-9-運用の成熟社内旧-phase-4-を吸収)。
+> 🗄 **実装記録** — 現状は [build/03 §3.7](../build/03-control-plane.ja.md)（旧 HANDOFF）、設計は [ロードマップ P3-9](roadmap.md#p3-9-運用の成熟社内旧-phase-4-を吸収)。
 > idle-stop は [p3-9-idle-stop](p3-9-idle-stop.md)。
 
-[12 Phase 3](../roadmap.md) の P3-9「運用の成熟」のうち **社内 showback**（部署別の使用量可視化・任意の chargeback、
+[12 Phase 3](roadmap.md) の P3-9「運用の成熟」のうち **社内 showback**（部署別の使用量可視化・任意の chargeback、
 外部課金なし）を実装。**段1＝バックエンド（累積 + API + CSV）**。Console ダッシュボードは段2（目視前提）。
 
 ## 19b.1 何を showback するか — workspace 占有（稼働時間）

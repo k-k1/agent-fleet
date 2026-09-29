@@ -19,8 +19,8 @@ text age at different speeds, and **they must never share a file**:
 |---|---|
 | Changes whenever the code changes — specs, procedures, capability tables | the shelves under `guide/`, and `docs/build/` |
 | Never changes again — a decision, a measurement, an incident, a retired option | `docs/decisions/`, or the frozen `docs/log/` |
-| Changes daily — what is running right now | `docs/HANDOFF.md` |
-| Open until someone closes it — follow-ups, residual work, unverified acceptance | GitHub issues (§10) |
+| Changes daily — what is running right now | nowhere in the repository. It is public, that state is stale within days, and the deployment itself is the answer |
+| Open until someone closes it — follow-ups, residual work, unverified acceptance, the plan ahead | GitHub issues (§10) |
 
 A file that mixes them cannot be reviewed for staleness, because there is no way to
 tell which sentences are supposed to still be true. If you catch yourself appending a

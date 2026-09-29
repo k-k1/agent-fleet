@@ -74,7 +74,7 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
      （Tier1＝無料・無認証の方は main への PR（codex 関連パス）と週次 cron で自動的に走る。）
 6. **ホスト反映**: ホストで `deploy/local/run-dev.sh`。イメージ再ビルド直後に
    `e2e-smoke.sh`（L1）が自動で走り、版一致を再検証する（rtk 同梱もここで確認される）。
-   ⚠️ ホストはメモリ制約 — 重いビルドを並走させない（[HANDOFF §2](../HANDOFF.md)）。
+   ⚠️ ホストはメモリ制約 — 重いビルドを並走させない。
 7. **Workspace 反映**: 各利用者が Console で **Stop→Start**（home は永続・repos は残る。
    CP からの強制入替はしない）。
 8. **反映確認（任意）**: 再起動後のコンテナ内で
@@ -111,7 +111,7 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
   CLAUDE.md / rtk 等）の存在を `docker run` で検証。run-dev.sh がビルド直後に自動実行
   （`WS_SMOKE=0` でスキップ）。単体でも `deploy/local/e2e-smoke.sh [image]` で実行可。
 
-ホスト固有の作法（PATH・docker グループ等）は HANDOFF §2 の領分で、ここには書かない。
+ホスト固有の作法（PATH・docker グループ等）はホストごとの事情なので、ここには書かない。
 
 ## 10.4 テスト
 

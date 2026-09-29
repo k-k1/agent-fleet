@@ -3,7 +3,7 @@
 English | [日本語](0001-self-host-vs-saas.ja.md)
 
 - Status: decided (2026-06-27)
-- See also: [Roadmap Phase 3](../roadmap.md) / [build/07 §7.9 Risks and open work](../build/07-security.md#79-risks-and-open-work) (formerly security §4.7)
+- See also: [Roadmap Phase 3](../log/roadmap.md) / [build/07 §7.9 Risks and open work](../build/07-security.md#79-risks-and-open-work) (formerly security §4.7)
 
 ## Context
 
@@ -40,7 +40,7 @@ The settled premises:
 | Scale | Small (1 deployment = tens to ~100 users). SQLite is the default database |
 
 The old `platform_admin` (i.e. us) is gone. The vendor does not appear anywhere in the
-runtime hierarchy ([Roadmap §12.1](../roadmap.md#121-アイデンティティ階層パッケージセルフホスト版)).
+runtime hierarchy ([Roadmap §12.1](../log/roadmap.md#121-アイデンティティ階層パッケージセルフホスト版)).
 
 ## Consequences
 

@@ -82,12 +82,11 @@ RUN apt-get update \
 COPY --from=docker:29-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build         /out/af-cp            /usr/local/bin/af-cp
 COPY --from=console       /src/console/dist     /app/console
-# Docs, baked so the CP can stage a role-scoped subset into each Workspace container
-# at start (workspace_docs.go). Context is the repo root, so docs/ is reachable.
-# DOCS_SRC lets the release pipeline point this COPY at a staged tree with the
-# internal denylist (docs/.distignore) applied — distribution images must not
-# carry HANDOFF/talk/history etc. (docs/log/35 §35.4.3). Self-hosted dev/ops builds
-# keep the default (full tree).
+# The user guide, baked so the CP can stage it into each Workspace container at start
+# (workspace_docs.go). deploy/compose/release.sh points DOCS_SRC at the tree
+# deploy/release/stage-docs.sh builds (guide/ plus the runbooks and the release
+# history) for every published and dev image. Without the argument the repository's
+# docs/ is copied as is — the developer tree, which holds none of the guide's shelves.
 ARG DOCS_SRC=docs
 COPY ${DOCS_SRC}/         /usr/local/share/agent-fleet/docs/
 # HOME is set so the docker CLI has a writable config dir when the container runs
