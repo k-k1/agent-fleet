@@ -389,6 +389,12 @@ P1 抜きの P2 は禁止（原則 2）。
 | cursor | ACP `session/request_permission`（managed のみ。TUI は観測不能） | 不可 | permission |
 | kiro | ペインのフッタ `requires approval`（TUI）/ ACP の許可（managed） | 不可 | permission |
 
+🔴 2026-09-30 追記（#1227）: cursor の TUI も pane から読めるようになった——許可メニューは
+permission（コマンド行を持ち越す）、plan 起動のビルド承認は plan（本文は JSONL の CreatePlan
+から）。同じ変更で、codex・opencode の質問は「pane の今のプロセスより前に出たもの」「ターンが
+終わったもの」を保留と数えなくなった。SIGKILL の後、codex は rollout に、opencode はストアに
+質問を開いたまま残し、再開しても後のターンが来ても閉じない（codex 0.159.0・opencode 1.18.33 で実測）。
+
 読み方を畳む側に散らさないため、入口は **`agents.ModalReporter`（`PendingModal`）1 つ**に
 寄せてある（`internal/agents/modal.go`）。claude だけは実装しない — そちらは hooks が書く
 `pending-*` が正で、同じことを 2 か所から主張させない。
