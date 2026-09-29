@@ -65,8 +65,11 @@ The decision and the options it rejected are ADR 0010. What the shape rests on:
   session gate (`exemptPrefix("/git/")`) because it authenticates itself (§91.5); the LFS
   routes under `/git/{slug}/{repo}/info/lfs/` are registered ahead of the smart-HTTP
   catch-all.
-- **Without `PUBLIC_BASE_URL` the provider is off**: creating a repository answers 503
-  `not_configured`, an LFS batch answers 503, and no token is injected into workspaces.
+- **Without `PUBLIC_BASE_URL` the provider is only partly off**: creating a repository
+  answers 503 `not_configured`, an LFS batch answers 503, and no token is injected into
+  workspaces. The smart-HTTP routes and the LFS transfer and lock routes stay registered
+  and still accept a valid token, listing still answers, and a credential the agent
+  seeded earlier stays in its store ([#1212](https://github.com/k-k1/agent-fleet/issues/1212)).
 
 ## 91.4 Storage
 
@@ -82,9 +85,11 @@ The decision and the options it rejected are ADR 0010. What the shape rests on:
   (`<repo>.git/lfs/objects/<oid[0:2]>/<oid[2:4]>/<oid>`), so a rename moves them and a
   delete removes them with the repository. The `lfs_object` table (tenant, repository,
   oid, size) makes the tenant's total a single sum rather than a walk; `lfs_lock` holds the
-  LFS locks. Both follow their repository on rename and delete.
-- The tables are `git_repo`, `lfs_object` and `lfs_lock` ([06](06-data.md)); there is
-  **deliberately no token table**.
+  LFS locks. Rename and delete update both after moving or removing the directory, and
+  ignore a failure there, so the rows can go stale; the ledger is best-effort in general
+  ([#1211](https://github.com/k-k1/agent-fleet/issues/1211)).
+- The tables themselves are described in [06](06-data.md). There is **deliberately no
+  token table**.
 
 ## 91.5 Authentication and the token model
 
@@ -122,9 +127,10 @@ enforces on **every request**:
   repository** (403);
 - the repository name is valid and present in `git_repo` (otherwise 404);
 - read requires an active membership, and **push is decided by role** (`canPush`). The
-  roles that may push are `member` and `tenant_admin`, which are the only membership
-  roles today, so the check refuses nothing yet; it exists so that a read-only role would
-  be refused.
+  roles that may push are `member` and `tenant_admin`. The column is free text, but the
+  code paths that create a membership or change its role (joining, inviting, the role
+  API) write only those two, so in practice the check refuses nothing yet; it exists so
+  that a read-only role would be refused.
 
 **Revocation is live**: deactivating a membership makes the same deterministic token
 stop working immediately, without a token table to update. **There is no rotation of a
@@ -212,7 +218,8 @@ time, and the helper serves any host in the store).
 - **Audit entries** `internal_git.repo.create`, `internal_git.repo.delete` and
   `internal_git.repo.rename`.
 - **An empty repository is selectable and clonable**: with no branches yet, the branches
-  endpoint still returns the default branch, and the picker offers it.
+  endpoint returns an empty list plus the repository's `default_branch`, and the
+  repository picker offers that name as a placeholder branch.
 - **A GC job** runs `git gc --auto` over every bare repository **sequentially**, out of
   respect for memory; its interval and grace period are listed in
   [03 §3.7](03-control-plane.md#37-background-jobs).
@@ -229,16 +236,22 @@ time, and the helper serves any host in the store).
     reads every small blob in the object store, reachable or not, and extracts the pointer
     ids. Two safety properties are worth keeping: **a grace period keeps recently written
     objects**, so an upload whose ref has not been pushed yet is not deleted; and **if
-    enumeration fails, nothing is deleted at all.** A deleted object also leaves the
-    ledger, which frees quota.
+    listing the objects or starting to read them fails, or the tenant cannot be resolved,
+    nothing is deleted.** A
+    failure while reading the pointer contents is *not* detected: the ids read so far are
+    taken as the whole set, and older unread objects are deleted
+    ([#1210](https://github.com/k-k1/agent-fleet/issues/1210)). A deleted object is also
+    removed from the ledger, best-effort, which frees quota.
 - **The client side needs no change**: the workspace image ships `git-lfs` with its
   filters in the system gitconfig, and LFS authenticates through the same credential
-  helper. A native workspace uses the host's `git-lfs`; the native package bundles `git`
-  for the CP only.
+  helper. The packaged native runtime runs the agent on an extracted workspace-image
+  rootfs (`AF_NATIVE_ROOTFS`), so it has the same `git-lfs`; the development mode that
+  runs a host-built agent (`AF_NATIVE_AGENT_BIN`) uses whatever the host has.
 - **Browsing without cloning**: a read-only tree, blob and commit API
   (`GET /api/internal-git/repos/{name}/tree|blob|commits`) reading the bare repository
   directly. Blobs above 1 MiB, binaries and LFS pointers are flagged rather than
   returned; an unborn branch lists as empty. **A ref must not start with a dash or
-  contain `..`; a path must not be absolute, contain a `..` segment or a control
+  contain `..`. A path has its leading and trailing slashes stripped, so it is always
+  relative to the repository root, and must not contain a `..` segment or a control
   character** — guarding against both traversal and a value being mistaken for an
   argument.
