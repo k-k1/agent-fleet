@@ -64,7 +64,8 @@ func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, fi
 	deadline := time.Now().Add(o.ConsoleWait)
 	cancelled := func() error {
 		return fmt.Errorf("%w for profile %q: the login request was cancelled in the Agent Fleet Console; "+
-			"ask the member, or log in in a terminal with: %s", ErrLoginRequired, o.Profile, hint)
+			"ask the member; they can press \"Log in\" on the profile in Settings > AWS profiles/SSM, "+
+			"or log in in a terminal with: %s", ErrLoginRequired, o.Profile, hint)
 	}
 
 	snap, creds, err := settle(aws, sso.Session, snap, deadline)

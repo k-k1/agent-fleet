@@ -85,5 +85,7 @@ export function AwsLoginHost() {
     return () => clearInterval(t);
   }, [polling, refresh]);
 
-  return modal ? <AwsLoginModal id={modal} /> : null;
+  // Keyed by the request: a notification for another request can switch the open modal, and
+  // the new one must not inherit the old attempt, its code or its poll.
+  return modal ? <AwsLoginModal key={modal} id={modal} /> : null;
 }

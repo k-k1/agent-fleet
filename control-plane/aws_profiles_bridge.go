@@ -6,7 +6,7 @@ package main
 //	                                                    │ the member's SSM profiles
 //	                                     managed block in ~/.aws/config
 //
-// Why this exists. The profiles a member registers in Settings → SSM live in this
+// Why this exists. The profiles a member registers in Settings → AWS profiles/SSM live in this
 // database, and the Agent only ever saw them inside a single SSM session launch or an
 // ops connection, each written to an isolated AWS_CONFIG_FILE. A plain `aws --profile
 // <name>`, an SDK or a build tool reads ~/.aws/config and found nothing, so members
