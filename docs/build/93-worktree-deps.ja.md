@@ -47,9 +47,11 @@ worktree 間で依存ツリーを勝手にリンクする仕組みは無い。`n
 **`$AF_WS_SCRATCH` を受け取るのは誰か。** control plane がこれを設定するのは `ecs` アダプタだけ
 （`control-plane/internal/runtime/runtime_ecs.go` の `registerTaskDef`）。`ecs-ec2` アダプタは意図して
 入れない——そこではホームが既にローカルの EBS にある（`runtime_ecs_ec2.go` の、ADR 0045 決定 10-3 を
-引く注記）。docker と native のアダプタも設定しない。イメージはどこでも `/scratch` ディレクトリを作る
-（`workspace/Dockerfile`）ので、ディレクトリがあることは何の目印にもならない。ここの仕組みはどれも
-変数を見る。`/scratch` の中身はタスク停止で消える。
+引く注記）。docker と native のアダプタも設定しない。workspace イメージは `/scratch` ディレクトリを作る
+（`workspace/Dockerfile`）ので docker や `ecs-ec2` にもあり、native の traditional モードはイメージを
+使わずホストでビルドした agent を動かす。つまりディレクトリがあることは何の目印にもならない: 2 つの
+退避の行は変数を見る（サブモジュールの種まきは変数に依らない）。変数がある環境では `/scratch` は
+タスクローカルで、タスク停止で空になる。
 
 **`af-scratch --auto` が見る目印**（深さ 3 まで・`AF_WS_SCRATCH_AUTO_DEPTH`）: `package.json` →
 `node_modules`、`Cargo.toml` か `pom.xml` → `target`、`pyproject.toml` → `.venv`、`build.gradle` /
@@ -89,8 +91,8 @@ Tool caches——は notes/environment.md の "Disk" が扱う。これらのキ
 
 **親クローンの実体を symlink で共有できる**。条件は 1 つ、**lockfile が親と同一**であること
 （2 つを `cmp -s` で比べ、`node_modules` を親のものへリンクする）。コマンドはここには繰り返さない:
-このレポのものは AGENTS.md に、すべてのエージェントが受け取るものは notes/worktrees.md にある。
-どちらも `ecs` では下の注意が要る。
+このレポのコマンドは AGENTS.md に、すべてのエージェントが受け取る一般則とその危険は
+notes/worktrees.md にある。`ln -s` を使う手順はどれも `ecs` では下の注意が要る。
 
 **2026-08 の実測**（このレポの `console/`・npm 10.9.8 / node 22.23.2 / Vite 7 系）。`console/` は
 その後 Vite 8 系に上がっており（`console/package.json`）、本書ではこれらを測り直していない。

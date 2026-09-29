@@ -52,9 +52,11 @@ manual step (93.3). What does happen automatically:
 (`registerTaskDef` in `control-plane/internal/runtime/runtime_ecs.go`). The `ecs-ec2`
 adapter leaves it out on purpose — home is already on local EBS there
 (`runtime_ecs_ec2.go`, the note citing ADR 0045 decision 10-3) — and the docker and native
-adapters do not set it. The image creates the `/scratch` directory everywhere
-(`workspace/Dockerfile`), so its existence says nothing: every mechanism here keys on the
-variable. Everything under `/scratch` is gone when the task stops.
+adapters do not set it. The workspace image creates a `/scratch` directory
+(`workspace/Dockerfile`), so it exists on docker and `ecs-ec2` too; the traditional native
+mode runs a host-built agent without the image. So the directory's existence says
+nothing: the two relocation rows key on the variable (submodule seeding does not depend on
+it). Where the variable is set, `/scratch` is task-local and emptied when the task stops.
 
 **The markers `af-scratch --auto` looks for** (searched to depth 3,
 `AF_WS_SCRATCH_AUTO_DEPTH`): `package.json` → `node_modules`; `Cargo.toml` or `pom.xml` →
@@ -99,8 +101,9 @@ snapshot.
 
 **The parent clone's tree can be shared by symlink**, with one condition: **the lockfile
 is identical to the parent's** (`cmp -s` the two, then link `node_modules` to the parent's).
-The commands are not repeated here: this repository's are in AGENTS.md, and the ones every
-agent gets are in notes/worktrees.md. Both need the caveat below on `ecs`.
+The commands are not repeated here: AGENTS.md has this repository's, and
+notes/worktrees.md gives every agent the general rule and its hazards. Any `ln -s` recipe
+needs the caveat below on `ecs`.
 
 **Measured in 2026-08** in this repository's `console/` (npm 10.9.8, node 22.23.2,
 Vite 7). `console/` has since moved to Vite 8 (`console/package.json`); this chapter did
