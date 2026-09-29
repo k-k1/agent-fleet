@@ -41,29 +41,30 @@ informed choice — not undisclosed bugs.
 
 ### On every deployment target
 
-- **The Control Plane holds the keys to every workspace.** It unwraps each
-  workspace's DEK and injects it at start, and it holds the platform's own power: the
-  host Docker socket on `docker`, an AWS task role on `ecs` / `ecs-ec2`
-  ([07 §7.1](docs/build/07-security.md#71-threat-model-and-trust-boundary)). A
-  compromise of the CP or the host therefore breaks isolation *within that one
-  deployment*. It does **not** reach other companies, which are separate deployments.
+- **A compromise of the Control Plane or the host breaks isolation within that
+  deployment**, because the CP can reach every workspace in it
+  ([07 §7.1](docs/build/07-security.md#71-threat-model-and-trust-boundary) says how).
+  It does **not** reach other companies as long as each runs its own deployment —
+  on AWS, in its own AWS account (see below).
 
 - **`AF_MASTER_KEY` is the root of the credential encryption.** Every per-workspace
   DEK is derived from it and wrapped by a tenant KEK that is derived from it too
   ([07 §7.6](docs/build/07-security.md#76-secrets-and-envelope-encryption)). **Losing it
-  = crypto-shred: all stored credentials become permanently undecryptable**, backups
-  included. Store it in a **separate vault** from the database and the homes, and back
-  it up independently: neither `deploy/compose/backup.sh` nor the AWS templates copy
-  it. On AWS it is the SSM SecureString `<SsmPrefix>/master-key` (`/af-cp` by default),
-  and `deploy/aws/ecs/teardown.sh --purge-secrets` deletes it. **Left unset, the CP
-  still starts, and members' stores are written in plaintext.** See
-  `deploy/compose/README.md`.
+  = crypto-shred: everything sealed under it becomes permanently undecryptable** —
+  each member's encrypted store and the tenant secrets in the database, backups
+  included. The agent CLIs' own sign-in state is not sealed by it and stays readable.
+  Store it in a **separate vault** from the database and the homes, and back it up
+  independently: neither `deploy/compose/backup.sh` nor the AWS templates copy it. On
+  AWS it is the SSM SecureString `<SsmPrefix>/master-key` (`/af-cp` by default), and
+  `deploy/aws/ecs/teardown.sh --purge-secrets` deletes it. **Left unset, the CP still
+  starts, and members' stores are written in plaintext** (`secrets.json` instead of
+  `secrets.enc`). See `deploy/compose/README.md`.
 
-- **Backups are sensitive.** Members' homes (with the encrypted store `secrets.enc`)
-  and the agent CLIs' sign-in state, which is plaintext, are in the archive
-  `deploy/compose/backup.sh` writes and, on AWS, in the file-system recovery points
-  (`Persistence=retain`) and the `ecs-ec2` home-volume snapshots the CP takes when it
-  hibernates or backs up a home. Protect where they are stored.
+- **Backups are sensitive.** Members' homes (with their store: `secrets.enc`, or the
+  plaintext `secrets.json` when no master key is set) and the agent CLIs' sign-in
+  state, which is plaintext, are in the archive `deploy/compose/backup.sh` writes and,
+  on AWS, in the file-system recovery points (`Persistence=retain`) and the `ecs-ec2`
+  home-volume snapshots the CP takes when it hibernates or backs up a home. Protect where they are stored.
 
 - **Anything running in a Workspace can read that user's own secrets.** Agents,
   their shells and every process they start (build scripts, package install hooks,
@@ -103,7 +104,8 @@ informed choice — not undisclosed bugs.
   container: the workspace is a bubblewrap sandbox that shares the host's network, and
   the CP refuses any `AUTH` other than `dev`, which answers as `super_admin` without a
   credential. Code running in a session can therefore reach the CP on the host's
-  loopback with the operator's rights. Run it only on a machine whose one user already owns it.
+  loopback with the operator's rights. Run it only on a machine whose one user
+  already owns it.
 
 ### `ecs` / `ecs-ec2` (AWS)
 
@@ -111,29 +113,32 @@ What follows is what the templates in `deploy/aws/ecs/cfn/` and the CP's AWS run
 declare.
 
 - **The operator's AWS account is inside the trust boundary.** Each workspace's
-  `AGENT_TOKEN` and DEK are SSM SecureStrings under `/af-ws/`, the CP's own secrets
-  are under `<SsmPrefix>`, and the homes and agent state are on the deployment's own
+  `AGENT_TOKEN` and DEK are SSM SecureStrings under `/af-ws/`, the CP's application
+  secrets are under `<SsmPrefix>`, the database password is an RDS-managed Secrets
+  Manager secret, and the homes and agent state are on the deployment's own
   storage. Encryption at rest is on with the account's default keys (no KMS key is
   named), so it protects the media, not the data from the account's own principals.
   Whoever administers the account can read every member's data.
 
 - **Give each deployment its own AWS account.** The CP task role (`CpTaskRole` in
-  `20-platform.yaml`) is scoped to the account and region, not to one deployment:
-  several of its statements name `Resource: "*"`, and the workspace parameters are one
-  account-wide prefix. A compromised CP can therefore reach other deployments, and
+  `20-platform.yaml`) is not scoped to one deployment: several of its statements name
+  `Resource: "*"` with no condition, and the workspace parameters are one prefix for
+  the whole account. A compromised CP can therefore reach other deployments, and
   other SSM-managed instances, in the same account
   ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)).
 
 - **Members share the deployment's infrastructure.** All members' workspaces run in
   one VPC and one ECS cluster (on `ecs-ec2`, on a pool of slot instances that pass
-  from one member to the next), and their data is in one file system and one
-  database. What separates them is listed per target in
+  from one member to the next), and their data is in one database and one file system
+  (on `ecs-ec2` each home is its own EBS volume; the file system keeps the agent
+  state). What separates them is listed per target in
   [07 §7.2](docs/build/07-security.md#72-isolation-controls).
 
-- **Every workload leaves through the CP's address.** Workspace tasks get no public
-  IP; the private subnets route out through one NAT gateway, which the CP uses too. An
-  outside service that trusts that address (a git host's IP allowlist, for example)
-  trusts every member's workload, not just the CP.
+- **Workloads reach the internet from the CP's address.** Workspace tasks get no
+  public IP; the private subnets send internet-bound traffic through one NAT gateway,
+  which the CP uses too (S3 goes through a gateway endpoint instead). An outside
+  service that trusts that address (a git host's IP allowlist, for example) trusts
+  every member's workload, not just the CP.
 
 - **Clean home and Recreate do not reach the member's home** on `ecs` / `ecs-ec2`
   ([#1225](https://github.com/k-k1/agent-fleet/issues/1225)). Do not rely on them to
