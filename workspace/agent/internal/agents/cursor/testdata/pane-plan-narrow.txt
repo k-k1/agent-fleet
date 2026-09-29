@@ -1,0 +1,44 @@
+
+  Cursor Agent
+  v2026.09.28-64d2043
+  Tip: Use /run-everything
+  to skip all approvals.
+
+
+  Make a one-step plan
+  to create a file
+  named narrowplan.txt
+  containing hello.
+  Keep the plan very
+  short.
+
+
+ ┌──────────────────────────┐
+ │ Suggested Plan           │
+ │                          │
+ │ Create narrowplan.txt    │
+ │                          │
+ │ Write hello to           │
+ │ narrowplan.txt           │
+ │ (narrowplan.txt) in      │
+ │ the workspace root.      │
+ │                          │
+ │  Saved to ~/.cursor/plans│
+ │  /Create                 │
+ │  narrowplan              │
+ │  file-f5f69bf0.plan.md   │
+ │ ──────────────────────── │
+ │                          │
+ │ Ready to build?          │
+ │                          │
+ │  → 1. Yes, build locally │
+ │  (b)                     │
+ │    2. No, propose        │
+ │  changes (p or Esc)      │
+ │                          │
+ └──────────────────────────┘
+
+
+
+
+

@@ -55,6 +55,9 @@
      グローバル `~/.cursor/hooks.json` の chatId→slot-sid キー付け問題を構造的に回避。
      許可待ち（allowlist 外コマンド確認）は JSONL に痕跡が無いため v1 は "question" を
      出さず "working" 扱い（許可カード化と rtk hook seam は Track D）。
+     🔴 2026-09-30 追記: 許可メニューと plan 起動のビルド承認（「Ready to build?」）は pane
+     から読むようにした（#1227・`internal/agents/cursor/modal.go`）。JSONL に痕跡が無いのは
+     2026.09.28 でも同じ（実測）で、貼り付け＋Enter はコマンドを実行し、プランをビルドした。
 - 状態(旧): 計画・Track 0 プローブ実施済み（2026-07-23 事前調査＋認証済み実測完了）。
   採用判断は [decisions/0023](../decisions/0023-cursor-agent-kind.ja.md)。
   実 CLI の実測は本ドキュメント末尾 §実測記録・§Track 0 実測結果（v2026.07.20-8cc9c0b を本コンテナで実測）。
@@ -336,6 +339,7 @@ chatId は別空間）。
    - i18n ja/en（launch_hint.cursor＋cursor カード文言 8 キー）＋ `i18n:lint` 通過
    - `questionKeys.ts`: 変更不要 — managed 質問は buildRespondAnswers（汎用・kind 非依存）、
      TUI cursor は v1 で "question" を出さない（許可待ち検知は Track D）。
+     🔴 2026-09-30 追記: #1227 で TUI も permission / plan を出すようになった（上の追記を参照）。
 4. availability: registry の `available` 述語＝`supported!==false && connected`（agy/copilot
    同型）。conns 未取得時は表示（rail の null=show-all）＝30886a1 教訓に整合。
 5. bridge: `internal/bridge/format.go` kindLabel に `case "cursor": return "Cursor"`

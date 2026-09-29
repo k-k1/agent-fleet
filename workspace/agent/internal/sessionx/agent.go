@@ -149,6 +149,13 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// (question / plan). The list badge (WireLive) and the chat chip (here) have to show the
 	// same state.
 	state := status.EffectiveModal(sid, status.LiveState(sid))
+	// codex (Terminal): its hooks report only working/idle, so the request_user_input dialog
+	// leaves the turn "working". The badge (WireLive) and the free-text gate read the rollout
+	// for it; the chip reads the same, or it says "in progress" while sends are refused with
+	// question_pending.
+	if m.Kind == session.KindCodex && state == "working" && codex.TerminalModal(m) != "" {
+		return "question"
+	}
 	isClaude := NormalizeKind(m.Kind) == session.KindClaude
 	// The pane is read exactly once (tmuxx.ReadPane). heal=false (/output) still does not look
 	// at the pane, but claude's usage-limit modal has to be reported regardless of heal, so

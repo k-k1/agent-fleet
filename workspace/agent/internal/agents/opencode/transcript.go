@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in the CP
 )
@@ -160,7 +161,7 @@ func LiveState(m session.Meta) string {
 	if md.Role == "assistant" && md.Time.Completed > 0 {
 		return "idle"
 	}
-	if len(pending(db, ses)) > 0 {
+	if len(openQuestion(db, ses, m)) > 0 {
 		return "question" // the in-flight turn is waiting on the user's answer
 	}
 	return "working" // an in-flight assistant turn, or a user message awaiting a reply
@@ -186,7 +187,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		Turns:      readSession(db, ses),
 		Path:       path,
 		Tasks:      tasks(db, ses),
-		Pending:    pending(db, ses),
+		Pending:    openQuestion(db, ses, m),
 		Mode:       mode(db, ses),
 		Queued:     queued(db, ses),
 		Compacting: compacting(db, ses),
@@ -314,24 +315,26 @@ func mode(db *sql.DB, ses string) string {
 	return "normal"
 }
 
-// pending returns the questions of a currently-running `question` tool part in
-// this session (opencode is awaiting the user's answer), or nil. Same shape as claude's
-// AskUserQuestion so the Console renders it interactively.
-func pending(db *sql.DB, ses string) []transcript.Question {
+// pending returns the questions of the latest `question` tool part still running in this
+// session, and when that part was created (epoch ms), or nil. Same shape as claude's
+// AskUserQuestion so the Console renders it interactively. Read it through openQuestion,
+// which drops a question no screen is showing.
+func pending(db *sql.DB, ses string) ([]transcript.Question, int64) {
 	rows, err := db.Query(
-		`SELECT data FROM part WHERE session_id = ? AND json_extract(data,'$.tool') = 'question' AND json_extract(data,'$.state.status') = 'running' ORDER BY time_created DESC LIMIT 1`,
+		`SELECT time_created, data FROM part WHERE session_id = ? AND json_extract(data,'$.tool') = 'question' AND json_extract(data,'$.state.status') = 'running' ORDER BY time_created DESC LIMIT 1`,
 		ses,
 	)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return nil
+		return nil, 0
 	}
+	var created int64
 	var pd []byte
-	if rows.Scan(&pd) != nil {
-		return nil
+	if rows.Scan(&created, &pd) != nil {
+		return nil, 0
 	}
 	var p struct {
 		State struct {
@@ -339,9 +342,52 @@ func pending(db *sql.DB, ses string) []transcript.Question {
 		} `json:"state"`
 	}
 	if json.Unmarshal(pd, &p) != nil {
+		return nil, 0
+	}
+	return questions(p.State.Input), created
+}
+
+// openQuestion is pending without a question that predates the Terminal pane's opencode
+// process. Esc and a SIGHUP both close the part (measured 1.18.33), but a SIGKILL leaves it
+// running for good, and the relaunch starts a fresh conversation while this slot's mapping
+// still names the old one until its first message — so the dead question would otherwise be
+// read as live, and refuse the very prompt that moves the mapping on.
+func openQuestion(db *sql.DB, ses string, m session.Meta) []transcript.Question {
+	qs, created := pending(db, ses)
+	if len(qs) == 0 {
 		return nil
 	}
-	return questions(p.State.Input)
+	// Asked only now, so the tmux round trip is paid only when a question is running.
+	if since := terminalSince(m); !since.IsZero() && created > 0 && created < since.UnixMilli() {
+		return nil
+	}
+	return qs
+}
+
+// terminalSince is where the records of the Terminal pane's current opencode process begin
+// (tmuxx.CLIRecordsSince). Zero for a managed session, whose questions come from the serve
+// daemon, and when no pane is running.
+func terminalSince(m session.Meta) time.Time {
+	if m.DriverKind() == session.DriverManaged {
+		return time.Time{}
+	}
+	t, _ := tmuxx.CLIRecordsSince(session.TmuxName(m.Name))
+	return t
+}
+
+// TerminalModal is the modal an opencode Terminal pane shows that typed text would decide:
+// "question" while the question tool waits, "" otherwise. A pasted line is dropped there and
+// the Enter picks the highlighted option (measured 1.18.33). Nothing else on that route waits
+// for a human, since `--auto` answers the permission prompts. A managed session answers "":
+// its driver refuses free text itself (ErrQuestionPending). So does a pane that is not running.
+func TerminalModal(m session.Meta) string {
+	if m.DriverKind() == session.DriverManaged || !tmuxx.HasSession(session.TmuxName(m.Name)) {
+		return ""
+	}
+	if LiveState(m) == "question" {
+		return "question"
+	}
+	return ""
 }
 
 // questions parses a question tool's state.input into transcript.Questions (identical

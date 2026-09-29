@@ -139,6 +139,11 @@ Agent 自身の画面読み取り（`internal/tmuxx/tmuxx.go` の `tmuxx.Capture
 
 **5 つのどれかが変わっていたら、キー列の生成側と本書を同じ変更で更新する。**
 
+cursor の Terminal の 2 つのメニュー——コマンドの承認（「Run this command?」）と plan 起動の
+ビルド承認（「Ready to build?」）——は pane から読んでいるので、これも撮り直して
+`internal/agents/cursor/testdata` と見比べる。文言が変わったメニューは「メニュー無し」と読まれ、
+そこへ打った自由入力はコマンドを承認し、プランをビルドしてしまう。
+
 ## 92.3 ここから得た不変条件
 
 修正の形そのもので、書き直しても保つべきもの:
@@ -150,9 +155,16 @@ Agent 自身の画面読み取り（`internal/tmuxx/tmuxx.go` の `tmuxx.Capture
   `question_pending`・`plan_pending`・`permission_pending`・`auth_expired`（claude の
   ログインが切れている）、それ以外は `interaction_pending`。ゲート（`promptBlocker`）は
   whitelist 方式（idle / working 以外を全部塞ぐ）。Enter がハイライト行を無音で確定する事故は、
-  プランでも許可プロンプトでも同型だから。ゲートに見えるのは kind ごとに読むものだけ——状態
-  ストア、状態フックの無い kind ならその kind 自身のプローブ——で、現在は codex・opencode・
-  cursor の Terminal セッションの保留モーダルが見えていない（#1227）。
+  プランでも許可プロンプトでも同型だから。ゲートに見えるのは kind ごとに読むものだけ——claude
+  はフックがモーダルを書き込む状態ストア、Terminal の経路を持つそれ以外の kind は、その kind
+  自身の生きた状態を読むのと同じ出どころ（`kindModalProbes`）。Terminal の経路を持つのにどちらも
+  無い kind はテストで落ちる。誰も書かない状態ストアに落ちて素通しになるからで、codex・opencode・
+  cursor がまさにそうだった（貼り付けた 1 行が先頭の選択肢を答え、コマンドを実行し、プランを
+  ビルドした。#1227 で実測）。
+- **モーダルが保留なのは、それを映せる画面がまだある間だけ**。モーダルより長生きした保留状態は、
+  もう答えるものが無いのに送信を全部断る。pane の今の CLI プロセスが起動するより前に出た質問は
+  保留ではなく、ターンが終わった質問も同じ。SIGKILL された codex・opencode は質問を rollout や
+  ストアに開いたまま残し、再開しても後のターンが来ても閉じられない。
 - **却下は「いいえ」の行へのキー移動ではない**。プラン承認メニューの行数は claude の版で
   変わり、固定の `Down×3` が「Yes」の行へ回り込んで、却下するはずのプランを承認した。承認は
   既定行での Enter、却下は割り込み（Escape）（`planDecision.ts`）。
@@ -176,7 +188,8 @@ Agent 自身の画面読み取り（`internal/tmuxx/tmuxx.go` の `tmuxx.Capture
   状態を導く。材料は状態ストア（`internal/status`。claude のフックが質問・プラン・許可の
   モーダルを書き込む）と、そうしたフックの無い kind の一部に向けた転写・イベントログ・pane の
   kind 別の読み取り（たとえば `opencode.LiveState` や `kiro.LiveState`）。ゲートの
-  `promptBlocker` はこのうち自分の選んだものを読む（92.3 を参照）。`internal/agents/modal.go`
+  `promptBlocker` は同じ kind 別の出どころを `kindModalProbes`（`session_io.go`）経由で読む。
+  codex・opencode・cursor ではそれぞれの `TerminalModal`（92.3 を参照）。`internal/agents/modal.go`
   の `PendingModal` は別の継ぎ目で、セッションが止まるときに保留のまま残ったモーダルを持ち越す
   （意図した停止の前か、セッション一覧が pane の消滅に初めて気づいたときに問う）——生きた
   モーダルの形をここから読まないこと。

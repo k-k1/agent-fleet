@@ -60,9 +60,9 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
   "err.plan_pending":
-    "The agent is waiting for a plan decision. Approve or reject it from the plan card before sending — typed text would be swallowed by the dialog and approve the plan.",
+    "The agent is waiting for a plan decision. Approve or reject it from the plan card (or in the terminal when there is none) before sending — typed text would be swallowed by the dialog and approve the plan.",
   "err.permission_pending":
-    "The agent is waiting for a permission decision. Allow or deny it from the permission card before sending — typed text would be swallowed by the menu and allow it.",
+    "The agent is waiting for a permission decision. Allow or deny it from the permission card (or in the terminal when there is none) before sending — typed text would be swallowed by the menu and allow it.",
   "err.interaction_pending":
     "The agent is showing an interactive prompt. Answer it from its card before sending.",
   "err.auth_expired":

@@ -28,8 +28,9 @@ import (
 // PendingModal is one kind's answer to "is something waiting on a human right now, and what
 // is it?".
 type PendingModal struct {
-	// Kind is "question" or "permission". plan is claude-specific (ExitPlanMode) and never
-	// appears here.
+	// Kind is "question", "permission" or "plan". claude's ExitPlanMode plan never comes
+	// through here (its hooks write it); "plan" is cursor's build approval, whose body is in
+	// Plan.
 	//
 	// The two are kept apart because what can still be done after a resume differs. A
 	// question's answer means something delivered as text, whereas an approval decision
@@ -49,6 +50,9 @@ type PendingModal struct {
 	// It is not always available — copilot's events.jsonl sometimes carries only a requestId
 	// — and is then empty, leaving the card to state the bare fact.
 	Detail string
+	// Plan is the plan body when Kind=="plan". The carried card shows it, and approving it
+	// delivers prose after the resume, the same as a carried claude plan.
+	Plan string
 	// Text is the prose immediately preceding the question, empty when there is none.
 	Text string
 }
