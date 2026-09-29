@@ -316,6 +316,16 @@ func TestAdminHomeBackupsEndpoints(t *testing.T) {
 		t.Errorf("deleting the backups was not audited with the count: %v", auditActions(t, st, tn))
 	}
 
+	// Nothing left to delete: the answer says 0 and nothing more is audited.
+	before := len(auditActions(t, st, tn))
+	w = callHomeBackups(adm, http.MethodDelete)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"deleted":0`) {
+		t.Fatalf("second DELETE home-backups = %d %s, want deleted 0", w.Code, w.Body.String())
+	}
+	if after := len(auditActions(t, st, tn)); after != before {
+		t.Errorf("a deletion that deleted nothing was audited (%d -> %d entries)", before, after)
+	}
+
 	// A runtime that keeps no copies says so, and nothing is audited.
 	_, mgr, _, tn2 := destroyFixture(t, fixedRuntimeFactory{&unreachableHomeRuntime{rec: &wipeRecorder{}, state: "stopped"}})
 	for _, method := range []string{http.MethodGet, http.MethodDelete} {

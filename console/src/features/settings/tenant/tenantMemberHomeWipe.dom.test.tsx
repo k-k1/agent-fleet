@@ -18,7 +18,7 @@ vi.mock("../../../core/api/client.ts", () => ({
   api: (...args: unknown[]) => api(...args),
   apiJSON: (...args: unknown[]) => apiJSON(...args),
   rawJSON: () => Promise.resolve(new Response("")),
-  errText: (e: { message?: string }) => e?.message || "",
+  errText: (e: { message?: string; code?: string }) => e?.message || e?.code || "",
   rel: (p: string) => p,
 }));
 vi.mock("../../../core/store/tenant.ts", () => ({
@@ -29,17 +29,18 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 import { MemberView } from "./tenantMemberDetail.tsx";
 
 const MEMBER = { user_key: "a-x-com", email: "a@x.com", role: "member", max_sessions: 2, status: "removed", state: "stopped" };
+const MEMBER_WITHOUT_HOME = { ...MEMBER, state: "none" };
 const BACKUPS = "api/admin/tenants/acme/members/a-x-com/home-backups";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-async function mount() {
+async function mount(member: typeof MEMBER = MEMBER) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<MemberView slug="acme" member={MEMBER} isSuper={false} onChanged={() => {}} onRemoved={() => {}} />);
+    root!.render(<MemberView slug="acme" member={member} isSuper={false} onChanged={() => {}} onRemoved={() => {}} />);
   });
   await act(async () => {
     await Promise.resolve();
@@ -134,5 +135,53 @@ describe("member detail: backups", () => {
     backupCount = 0;
     await mount();
     expect(document.body.textContent).not.toContain("バックアップを削除");
+  });
+});
+
+// A request that got no answer may have gone either way, so it is reported and the member
+// is read again — never left as an unhandled rejection with the dialog silently open.
+describe("member detail: no answer from the CP", () => {
+  it("reports a clean home that got no answer and reads the member again", async () => {
+    whoami = { home_erase: true, home_backups: true };
+    await mount();
+    apiJSON.mockRejectedValue(new TypeError("Failed to fetch"));
+    const backupReadsBefore = api.mock.calls.filter((c) => c[0] === BACKUPS).length;
+    await act(async () => buttonWith("home を掃除")!.click());
+    await act(async () => buttonWith("掃除する")!.click());
+    expect(toast).toHaveBeenCalledWith("network");
+    expect(buttonWith("掃除する")).toBeDefined();
+    expect(api.mock.calls.filter((c) => c[0] === BACKUPS).length).toBeGreaterThan(backupReadsBefore);
+  });
+
+  it("reports a backup deletion that got no answer and shows what is left", async () => {
+    whoami = { home_erase: true, home_backups: true };
+    await mount();
+    apiJSON.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(async () => buttonWith("バックアップを削除（2 件）")!.click());
+    backupCount = 1;
+    await act(async () => buttonWith("削除する")!.click());
+    expect(toast).toHaveBeenCalledWith("network");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(inDangerZone("バックアップを削除（1 件）")).toBe(true);
+  });
+});
+
+// Deleting the copies does not stop the schedule while the home exists, so the dialog says
+// so until the home has been cleaned.
+describe("member detail: backups of a home that still exists", () => {
+  it("warns that the schedule goes on while the home exists", async () => {
+    whoami = { home_erase: true, home_backups: true };
+    await mount();
+    await act(async () => buttonWith("バックアップを削除（2 件）")!.click());
+    expect(document.body.textContent).toContain("この人の home はまだ残っています");
+  });
+
+  it("does not warn once there is no home", async () => {
+    whoami = { home_erase: true, home_backups: true };
+    await mount(MEMBER_WITHOUT_HOME);
+    await act(async () => buttonWith("バックアップを削除（2 件）")!.click());
+    expect(document.body.textContent).not.toContain("この人の home はまだ残っています");
   });
 });

@@ -1427,13 +1427,17 @@ on its EBS volume.
   holds. It is Clean home rather than Destroy because the seven `homeKeep` entries and the Claude state are on
   EFS (decision 3-6): the service, the access points and the secrets stay, and the next start builds a fresh
   home from the golden, as for a new member. The hibernation snapshots go because `createHomeVolume` restores
-  the member's own snapshot first; one left behind would hand the erased home back. The one thing it does not
-  keep that docker keeps: a keep file a tool replaced since the last start (the entrypoint moves it to EFS at
-  the next boot) goes with the volume.
+  the member's own snapshot first; one left behind would hand the erased home back. They are listed twice —
+  again after a short settle once the volume is gone — because the pool sweeper advances a hibernation without
+  the lifecycle lease, and a capture it started just before the volume went can be missing from the first,
+  eventually consistent listing. The one thing it does not keep that docker keeps: a keep file a tool replaced
+  since the last start (the entrypoint moves it to EFS at the next boot) goes with the volume.
 - **Backups stay, and deleting them is a separate action.** A backup outliving the home is what decision 17
   made it for, so no cleanup takes one as a side effect. The member detail shows how many a member has and
   deletes them on the administrator's word (`GET/DELETE /api/admin/tenants/{slug}/members/{key}/home-backups`,
-  audited as `workspace.delete_backups`). Destroy still deletes them too.
+  audited as `workspace.delete_backups` when something was deleted). While the home still exists the backup
+  schedule goes on taking copies of it — the reaper takes them without a lock — so the deletion lists twice as
+  the erase does, and the offboarding order puts Clean home first. Destroy still deletes them too.
 - **A member's Recreate and Clean home are not offered on this target yet.** Emptying a home in place needs a
   running slot — waking one, or attaching a detached volume, takes longer than the 60 s the ingress gives a
   member's request, and the handler starts the workspace right after. The shape that fits is to mark the volume

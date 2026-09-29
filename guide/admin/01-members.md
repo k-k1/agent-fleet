@@ -88,7 +88,8 @@ order:
    undone.** Those logins and connections go only when the workspace is destroyed (below).
 4. **Delete backups** — shown only where the deployment keeps backup copies of homes, and only
    when this member has some. Clean home leaves them, and each one still holds the home as it was
-   when it was taken. **This cannot be undone.**
+   when it was taken. Do it after Clean home: while the home still exists, the tenant's backup
+   schedule goes on taking copies of it. **This cannot be undone.**
 
 Clean home is not offered on every deployment ([ref/deploy-targets](../ref/deploy-targets.md)).
 Where it is missing, the home is removed by **Destroy workspace** instead, which lists anything it

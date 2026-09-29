@@ -954,6 +954,8 @@ export const admin = {
   "admin.delete_backups_body_one": "この人の home のバックアップ {count} 件（最新: {newest}）を削除します。削除したバックアップから home を戻すことはできません。",
   "admin.delete_backups_body_other": "この人の home のバックアップ {count} 件（最新: {newest}）を削除します。削除したバックアップから home を戻すことはできません。",
   "admin.delete_backups_confirm": "削除する",
+  "admin.delete_backups_home_remains":
+    "この人の home はまだ残っています。テナントでバックアップが有効なら、次の定期バックアップで今の home のコピーがまた取られます。退職処理では、先に「home を掃除」してください。",
   "admin.delete_backups_done_one": "バックアップを {count} 件削除しました",
   "admin.delete_backups_done_other": "バックアップを {count} 件削除しました",
   "admin.grant_title": "{key} を {slug} の管理者にする",

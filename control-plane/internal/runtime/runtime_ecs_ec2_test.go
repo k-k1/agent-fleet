@@ -63,6 +63,12 @@ type fakeEC2 struct {
 	modificationState ec2types.VolumeModificationState
 	// modifyErr forces ModifyVolume to fail, standing in for EBS's 6-hour cooldown.
 	modifyErr error
+	// snapshotHiddenOnce keeps a snapshot out of the next DescribeSnapshots, the way the
+	// eventually consistent API can miss one that was created a moment ago.
+	snapshotHiddenOnce map[string]bool
+	// snapshotGone makes DeleteSnapshot answer NotFound for a snapshot, standing in for
+	// one that something else deleted after it was listed.
+	snapshotGone map[string]bool
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -75,6 +81,9 @@ func newFakeEC2() *fakeEC2 {
 		runErr:    map[string]error{},
 
 		modifications: map[string]*ec2types.VolumeModification{},
+
+		snapshotHiddenOnce: map[string]bool{},
+		snapshotGone:       map[string]bool{},
 	}
 }
 
@@ -365,7 +374,11 @@ func (f *fakeEC2) DescribeSnapshots(_ context.Context, in *ec2.DescribeSnapshots
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := &ec2.DescribeSnapshotsOutput{}
-	for _, s := range f.snapshots {
+	for id, s := range f.snapshots {
+		if f.snapshotHiddenOnce[id] {
+			delete(f.snapshotHiddenOnce, id)
+			continue
+		}
 		if !filterMatch(in.Filters, func(name string) []string {
 			if strings.HasPrefix(name, "tag:") {
 				return []string{ec2TagValue(s.Tags, strings.TrimPrefix(name, "tag:"))}
@@ -414,6 +427,9 @@ func (f *fakeEC2) DeleteSnapshot(_ context.Context, in *ec2.DeleteSnapshotInput,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("DeleteSnapshot %s", aws.ToString(in.SnapshotId))
+	if f.snapshotGone[aws.ToString(in.SnapshotId)] {
+		return nil, fmt.Errorf("InvalidSnapshot.NotFound: the snapshot '%s' does not exist", aws.ToString(in.SnapshotId))
+	}
 	delete(f.snapshots, aws.ToString(in.SnapshotId))
 	return &ec2.DeleteSnapshotOutput{}, nil
 }

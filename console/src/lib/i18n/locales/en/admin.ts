@@ -963,6 +963,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.delete_backups_body_one": "Deletes the {count} backup copy of this person's home (newest: {newest}). Once it is deleted, the home cannot be restored from it.",
   "admin.delete_backups_body_other": "Deletes the {count} backup copies of this person's home (newest: {newest}). Once they are deleted, the home cannot be restored from them.",
   "admin.delete_backups_confirm": "Delete",
+  "admin.delete_backups_home_remains":
+    "This person's home still exists. If backups are on for this tenant, the next scheduled backup takes a new copy of it. When offboarding, clean the home first.",
   "admin.delete_backups_done_one": "Deleted {count} backup copy",
   "admin.delete_backups_done_other": "Deleted {count} backup copies",
   "admin.grant_title": "Make {key} an admin of {slug}",

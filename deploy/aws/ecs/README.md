@@ -1403,7 +1403,8 @@ only copy that is not in the zone — snapshots are regional.
 - **Clean home does not delete them**, and nothing else does as a side effect. A tenant
   administrator deletes a member's copies on purpose from the member detail (*Delete backups*,
   audited as `workspace.delete_backups`) — the offboarding step for a home that must not
-  survive anywhere. Destroying the workspace deletes them too. Clean home itself deletes the
+  survive anywhere, taken after Clean home: while the home exists, the schedule keeps
+  taking copies of it. Destroying the workspace deletes them too. Clean home itself deletes the
   home volume and its hibernation snapshots; the member's logins and connections are on EFS
   and stay.
 

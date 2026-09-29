@@ -61,6 +61,9 @@ export function MemberView({
   // The copies of this home kept outside it. Clean home leaves them on purpose, so they are
   // shown — and deleted — on their own. null = not known (not loaded, or not kept here).
   const [backups, setBackups] = useState<{ count: number; newest?: string } | null>(null);
+  // Set once this view has cleaned the home. `member` is a snapshot taken when the row was
+  // clicked, so its state still says the home exists after the clean.
+  const [homeErased, setHomeErased] = useState(false);
   // Whether removal also destroys the workspace. Shown unchecked, so the current contract
   // (keep the home, and just re-invite if they come back) holds unless it is ticked.
   const [purge, setPurge] = useState(false);
@@ -121,6 +124,7 @@ export function MemberView({
   }, [base, homeBackups]);
   useEffect(() => {
     setBackups(null); // another member's count must not linger while this one loads
+    setHomeErased(false);
     void loadBackups();
   }, [loadBackups]);
 
@@ -240,14 +244,23 @@ export function MemberView({
   const cleanHome = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/admin/clean-home", "POST", { tenant_slug: slug, user_key: key });
+      const res = await apiJSON("api/admin/clean-home", "POST", { tenant_slug: slug, user_key: key }).catch(
+        () => ({ error: { code: "network" } }),
+      );
       // A refusal (not available here, another operation in progress) wiped nothing, and
-      // closing the dialog as if it had is how an offboarding gets recorded as done.
+      // closing the dialog as if it had is how an offboarding gets recorded as done. A
+      // request that got no answer may have gone either way — the CP finishes an erase it
+      // has started — so the member's state is read again rather than guessed.
       if (res?.error) {
         toast(errText(res.error));
+        if (res.error.code === "network") {
+          poll();
+          void loadBackups();
+        }
         return;
       }
       setConfirmClean(false);
+      setHomeErased(true);
       poll();
       onChanged();
       void loadBackups();
@@ -260,9 +273,11 @@ export function MemberView({
   const deleteBackups = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON(`${base}/home-backups`, "DELETE", {});
+      const res = await apiJSON(`${base}/home-backups`, "DELETE", {}).catch(() => ({ error: { code: "network" } }));
       if (res?.error) {
         toast(errText(res.error));
+        // Some copies may be gone even so; show what is left rather than the old count.
+        void loadBackups();
         return;
       }
       setConfirmDeleteBackups(false);
@@ -752,6 +767,11 @@ export function MemberView({
               newest: backups.newest ? fmtDateTime(backups.newest, DATETIME_FULL) : "—",
             })}
           </p>
+          {/* Deleting the copies does not stop the schedule: while the home exists, the next
+              backup takes a new copy of it. The offboarding order puts Clean home first. */}
+          {member.state !== "none" && !homeErased && (
+            <p className="muted">{tr("admin.delete_backups_home_remains")}</p>
+          )}
         </ConfirmDialog>
       )}
       {confirmRemove && (

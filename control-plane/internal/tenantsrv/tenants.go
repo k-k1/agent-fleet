@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -442,10 +443,15 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	_ = a.cp.Store().InsertAudit(ctx, store.AuditLog{
+	// The erase has happened whatever the audit write does, so a failed write is reported
+	// here rather than turned into a failed answer — but never dropped silently.
+	if err := a.cp.Store().InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 		Action: "workspace.clean_home", Target: ident.UserKey, At: store.NowTS(),
-	})
+	}); err != nil {
+		log.Printf("admin clean-home: %s's home in %s was erased by %s, but the audit entry was not written: %v",
+			ident.UserKey, t.Slug, caller.ID, err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
 }
 
@@ -479,7 +485,9 @@ func (a Admin) HomeBackups(w http.ResponseWriter, r *http.Request) {
 // those copies: the deliberate step Clean home leaves out, for a home that must not
 // survive anywhere. tenant_admin, the same gate as clean-home, and audited with how many
 // copies went. As in CleanHome, the deletion and its audit entry do not follow the
-// request, and copies deleted before a failure are still audited.
+// request, and copies deleted before a failure are still audited. While the home itself
+// still exists, the tenant's backup schedule goes on taking copies of it; an offboarding
+// cleans the home first.
 func (a Admin) DeleteHomeBackups(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	caller, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
@@ -497,15 +505,20 @@ func (a Admin) DeleteHomeBackups(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, homeBackupsUnsupported())
 		return
 	}
-	if n > 0 || err == nil {
+	// Audited when something was deleted, and only then: a request that found nothing to
+	// delete changed nothing.
+	if n > 0 {
 		detail := fmt.Sprintf("backup copies of the home deleted: %d", n)
 		if err != nil {
 			detail += "; the rest failed: " + err.Error()
 		}
-		_ = a.cp.Store().InsertAudit(ctx, store.AuditLog{
+		if aerr := a.cp.Store().InsertAudit(ctx, store.AuditLog{
 			ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 			Action: "workspace.delete_backups", Target: key, Detail: detail, At: store.NowTS(),
-		})
+		}); aerr != nil {
+			log.Printf("admin delete-backups: %d of %s's backups in %s were deleted by %s, but the audit entry was not written: %v",
+				n, key, t.Slug, caller.ID, aerr)
+		}
 	}
 	if err != nil {
 		writeAPIErr(w, internalErr(err))

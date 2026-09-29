@@ -4113,13 +4113,36 @@ func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
 	if err := e.releaseSlot(ctx); err != nil {
 		return err
 	}
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return err
+	}
 	if err := e.deleteHomeVolume(ctx); err != nil {
 		return err
 	}
-	// After the volume, not before: a hibernation that started from it just before it
-	// went is caught here, and none can start once it is gone.
+	// After the volume, not before: no capture of it can start once it is gone. One that
+	// started just before can still be missing from the first listing — the pool sweeper
+	// advances a hibernation without the lifecycle lease this erase holds — so look again
+	// once the listing has settled.
+	if err := e.deleteHomeSnapshots(ctx); err != nil {
+		return err
+	}
+	if vol == nil {
+		return nil // no volume was there to capture
+	}
+	if err := e.sleep(ctx, snapshotListingSettle); err != nil {
+		return err
+	}
 	return e.deleteHomeSnapshots(ctx)
 }
+
+// snapshotListingSettle is how long a deletion waits before listing snapshots a second
+// time. DescribeSnapshots is eventually consistent, and the snapshots these deletions race
+// are started by paths that take no lock against them (the pool sweeper's hibernation, the
+// reaper's backups); a copy created a moment before the first listing may be absent from
+// it. Measured on the sandbox account: a snapshot still pending is listed and deletable,
+// so the wait is for visibility only.
+const snapshotListingSettle = 10 * time.Second
 
 // deleteHomeVolume detaches (if needed) and deletes this workspace's home volume.
 // Absent volume = already done.
@@ -4643,10 +4666,15 @@ func (e *ecsEC2Runtime) deleteBackups(ctx context.Context) (int, error) {
 	}
 	n := 0
 	for _, s := range snaps {
-		if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
+		_, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId})
+		switch {
+		case err == nil:
+			n++
+		case isAWSNotFound(err):
+			// Gone already — another deletion got there first. Not ours to count.
+		default:
 			return n, fmt.Errorf("delete backup %s: %w", aws.ToString(s.SnapshotId), err)
 		}
-		n++
 	}
 	return n, nil
 }
@@ -4668,8 +4696,26 @@ func (e *ecsEC2Runtime) HomeBackups(ctx context.Context) (HomeBackups, error) {
 // DeleteHomeBackups is the step Clean home leaves out on purpose (see EraseHome). A copy
 // still being captured is deleted too: it would otherwise complete a moment later and
 // hold the very home the administrator meant to be rid of.
+//
+// The reaper takes backups without a lock, so while there is a home to capture, one it
+// started as the first listing was read can be missing from it; the second listing after
+// snapshotListingSettle catches that. A copy the schedule takes after this returns is not
+// a leftover but a new backup of the home as it now is — which is why an offboarding
+// cleans the home first.
 func (e *ecsEC2Runtime) DeleteHomeBackups(ctx context.Context) (int, error) {
-	return e.deleteBackups(ctx)
+	n, err := e.deleteBackups(ctx)
+	if err != nil {
+		return n, err
+	}
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil {
+		return n, err
+	}
+	if err := e.sleep(ctx, snapshotListingSettle); err != nil {
+		return n, err
+	}
+	m, err := e.deleteBackups(ctx)
+	return n + m, err
 }
 
 // --- drift sweeper (docs/log/64 §64.15.6) ---

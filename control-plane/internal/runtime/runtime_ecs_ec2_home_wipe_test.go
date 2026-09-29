@@ -187,3 +187,67 @@ func TestECSEC2HomeBackupsAreCountedAndDeletedOnRequest(t *testing.T) {
 		t.Error("deleting the backups deleted the home")
 	}
 }
+
+// The pool sweeper advances a hibernation without the lifecycle lease the erase holds, so
+// a capture it started just before the volume went can be missing from the first listing
+// (DescribeSnapshots is eventually consistent). Left behind, the next Start restores it —
+// the erased home, back.
+func TestECSEC2EraseHomeCatchesACaptureTheFirstListingMissed(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.ec2.snapshots["snap-late"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-late"), VolumeId: aws.String("vol-1"),
+		State: ec2types.SnapshotStatePending, StartTime: aws.Time(time.Now()),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(EC2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
+		},
+	}
+	h.ec2.snapshotHiddenOnce["snap-late"] = true
+	if err := h.rt.EraseHome(ctx); err != nil {
+		t.Fatalf("EraseHome: %v", err)
+	}
+	if _, ok := h.ec2.snapshots["snap-late"]; ok {
+		t.Error("a hibernation capture missing from the first listing survived the erase")
+	}
+	if _, ok := h.ec2.snapshots["snap-backup"]; !ok {
+		t.Error("the second listing took a backup")
+	}
+}
+
+// The reaper takes backups without a lock, so while the home exists a copy it started as
+// the first listing was read can be missing from it.
+func TestECSEC2DeleteHomeBackupsCatchesACopyTheFirstListingMissed(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.ec2.snapshots["snap-backup-late"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-backup-late"), VolumeId: aws.String("vol-1"),
+		State: ec2types.SnapshotStatePending, StartTime: aws.Time(time.Now()),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(EC2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleBackup)},
+		},
+	}
+	h.ec2.snapshotHiddenOnce["snap-backup-late"] = true
+	n, err := h.rt.DeleteHomeBackups(ctx)
+	if err != nil || n != 2 {
+		t.Fatalf("DeleteHomeBackups = %d, %v; want 2 (the listed copy and the late one)", n, err)
+	}
+	for _, id := range []string{"snap-backup", "snap-backup-late"} {
+		if _, ok := h.ec2.snapshots[id]; ok {
+			t.Errorf("%s survived the deletion", id)
+		}
+	}
+}
+
+// The count goes into the audit log and back to the administrator, so it must be what
+// this call deleted — not a copy another deletion removed first.
+func TestECSEC2DeleteHomeBackupsCountsOnlyWhatItDeleted(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.ec2.snapshotGone["snap-backup"] = true
+	n, err := h.rt.DeleteHomeBackups(ctx)
+	if err != nil || n != 0 {
+		t.Fatalf("DeleteHomeBackups = %d, %v; want 0 (the only copy was already gone)", n, err)
+	}
+}
