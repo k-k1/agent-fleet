@@ -116,22 +116,30 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
         <div key={r.role} className="admin-fgroup" data-role={r.role}>
           <h4>{tr(ROLE_LABEL[r.role])}</h4>
           {!r.tenant_allowed && <p className="admin-hint warn">{tr("tenant.engine_access_tenant_denied")}</p>}
-          <div className="le-presets">
+          {/* The same segmented toggle as the other admin mode switches (egress log-only /
+              enforce, the TTS mode), whose selected look is global in ui.css. */}
+          <span className="seg sm" role="radiogroup" aria-label={tr(ROLE_LABEL[r.role])}>
             <button
-              className={!r.members_only ? "chip on" : "chip"}
+              type="button"
+              role="radio"
+              aria-checked={!r.members_only}
+              className={"seg-btn" + (!r.members_only ? " active" : "")}
               disabled={busy || !r.tenant_allowed}
               onClick={() => r.members_only && put("", { role: r.role, members_only: false })}
             >
               {tr("tenant.engine_access_everyone")}
             </button>
             <button
-              className={r.members_only ? "chip on" : "chip"}
+              type="button"
+              role="radio"
+              aria-checked={r.members_only}
+              className={"seg-btn" + (r.members_only ? " active" : "")}
               disabled={busy || !r.tenant_allowed}
               onClick={() => !r.members_only && put("", { role: r.role, members_only: true })}
             >
               {tr("tenant.engine_access_members_only")}
             </button>
-          </div>
+          </span>
         </div>
       ))}
       <table className="admin-table engine-access-table">
