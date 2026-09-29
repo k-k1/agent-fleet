@@ -83,9 +83,18 @@ order:
    what actually cuts access. The workspace, its home and stored credentials are kept, so a mistake
    is undone by adding the same email address again.
 2. **Force-stop the workspace** — stop what is running ([02-limits.md](02-limits.md)).
-3. **Clean home** — erase the contents of home. **This cannot be undone.**
+3. **Clean home** — erase everything in their home **except their logins and connections** (git
+   credentials, SSH keys, the encrypted connection store, Claude and Codex logins). **This cannot be
+   undone.** Those logins and connections go only when the workspace is destroyed (below).
+4. **Delete backups** — shown only where the deployment keeps backup copies of homes, and only
+   when this member has some. Clean home leaves them, and each one still holds the home as it was
+   when it was taken. **This cannot be undone.**
 
-Someone you removed stays on the roster marked "removed". That is so steps 2 and 3 remain reachable
+Clean home is not offered on every deployment ([ref/deploy-targets](../ref/deploy-targets.md)).
+Where it is missing, the home is removed by **Destroy workspace** instead, which lists anything it
+could not delete.
+
+Someone you removed stays on the roster marked "removed". That is so steps 2 to 4 remain reachable
 afterwards — they have not vanished.
 
 **Deleting the row for good.** After you have destroyed a removed member's workspace, the same
@@ -107,7 +116,8 @@ Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the
 - **member (regular member)** — someone who writes code in their own workspace and runs sessions.
   They cannot enter tenant settings.
 - **tenant_admin (tenant administrator)** — can manage members within this tenant, view resources,
-  force-stop workspaces, set session limits, remove members and clean their home. **They cannot
+  force-stop workspaces, set session limits, remove members, clean their home and delete its
+  backups. **They cannot
   touch other tenants at all.** They cannot create tenants, change tenant-wide limits, grant admin
   rights, or change the login rules. = You.
 - **super_admin** — the deployment-wide administrator. Sees all tenants and can create tenants,

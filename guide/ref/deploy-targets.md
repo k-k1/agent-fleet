@@ -39,6 +39,9 @@ value instead of reverting code.
 | Cost attribution per member | — | — | ✓ | ✓ |
 | An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ |
 | A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ |
+| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | —⁷ | —⁷ |
+| Clean home by an administrator (offboarding) | ✓ | ✓ | —⁷ | ✓⁸ |
+| Deleting the backup copies of a member's home | — | — | — | ✓⁹ |
 
 ¹ Staged on the host and bind-mounted at start.
 
@@ -60,6 +63,22 @@ plan** (Codex / Antigravity); this row is about an engine the deployment provide
 ⁶ On `ecs-ec2`, the fleet's own GPU. On `docker` and `native`, a llama.cpp **already running
 on your own network**, pointed at with one environment variable
 ([operate/09](../operate/09-llm-lan.md)).
+
+⁷ Removing part of a home needs the home mounted. On `ecs` nothing the Control Plane runs
+can mount the member's EFS home; on `ecs-ec2` emptying it in place needs a running slot,
+which takes longer than a member's request is given. The Console does not show these
+buttons where the deployment cannot perform them, and the Control Plane refuses them
+before it stops anything.
+
+⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
+fresh home, as for a new member. On this target the logins, connections and Claude state
+are kept on EFS, outside the volume, so they survive as they do everywhere else. A file
+among them that a tool replaced since the workspace last started is on the volume until
+the next start, and goes with it.
+
+⁹ Only `ecs-ec2` keeps backup copies of a home, and only when the operator has turned
+backups on. Clean home leaves them: deleting them is a separate action in the member's
+detail. Discarding the workspace deletes them as well.
 
 ## Where the procedure lives
 

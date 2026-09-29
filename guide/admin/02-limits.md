@@ -232,7 +232,8 @@ container stops. **The work (home) is not lost.** The member can start it again 
 It is strictly a "pause for now" operation, not destructive.
 
 Below it, ruled off under **"Cannot be undone"**, are exactly what the heading says: "Clean home",
-"Remove member", "Discard workspace" and "Delete member permanently". **All of them are yours to
+"Delete backups", "Remove member", "Destroy workspace" and "Delete member permanently" (a deployment
+shows only the ones it can perform). **All of them are yours to
 run** — the point is that an employee leaving should not become a ticket for IT. Read what each
 confirmation dialog says it keeps and deletes before you press it. **Situations that need heavier
 measures** — the container is broken and restarting doesn't fix it, host-side intervention is

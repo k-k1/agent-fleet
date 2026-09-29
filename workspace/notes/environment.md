@@ -11,9 +11,11 @@ behaves. This is the long form of the operating policy loaded by your CLI at ses
 
 ## Persistence model (what survives what)
 
-- **Recreate** (Settings > Environment) tears the container down and starts a fresh one from the
+- **Recreate** (Settings > Danger zone) tears the container down and starts a fresh one from the
   latest image. **Only `~/repos` is deleted** — every cloned repo, *including uncommitted work*.
-  That is the one data-loss risk: commit / push before recreating.
+  That is the one data-loss risk: commit / push before recreating. Deployments whose homes the
+  control plane cannot reach do not offer Recreate or "clean home" at all (the tab is absent);
+  stop and start still work there.
 - **The rest of `~` persists** on a bind-mounted home volume that is re-attached to the new
   container: agent auth and state (`~/.claude`, `~/.codex`, `~/.local/share/opencode`,
   `~/.config/agent-fleet`), `~/.ssh` / `~/.git-credentials` / `~/.gitconfig`, tools under

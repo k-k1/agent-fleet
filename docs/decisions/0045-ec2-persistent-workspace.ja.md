@@ -9,6 +9,7 @@
   見送りの記録として書かれたもので、**転じた理由と採る形は決定 10** にある。決定 2（今は採らない）は
   決定 10 が上書きし、決定 5（着手ゲート）は**充足を待たずに着手する**判断で越えた。
   **決定 3・4・6〜9 は生きている**——実装に持ち込む罠と形の一覧である。
+- Follow-ups: #1259, #1260
 - 関連: [64-ec2-persistent-workspace.md](../log/64-ec2-persistent-workspace.md) /
   [0044-workspace-sizing.md](0044-workspace-sizing.ja.md) 決定 4（本 ADR を起こした宿題） /
   [63-workspace-sizing.md](../log/63-workspace-sizing.md) §63.4（EFS の I/O 実測） /
@@ -1293,3 +1294,43 @@ Workspace の破棄・完全削除は、罫線の下の **取り消せない操�
 `terminateSlot`）・`control-plane/workspace_lifecycle.go`（`runtimeSlotTerminator`）・
 `control-plane/internal/tenantsrv/tenants.go`（`TerminatePoolSlot`）・`control-plane/routes.go`・
 `console/src/features/settings/tenant/ec2Pool.tsx`。
+
+## 決定 31 — ホームの掃除はホームに届かせる。管理者の掃除はボリュームをその場で消し、メンバーの操作はこの形態ではまだ出さない（2026-09-30）
+
+作り直しと 2 種類のホームの掃除は、Control Plane 自身のデータディレクトリの下を消していた。docker と
+native ではそれがホームだが、AWS では CP タスクの空の `/tmp` で、存在しないパスの削除は成功する。この形態
+（と Fargate）では 3 つとも何も消さずに成功を返していた——メンバーの作業コピーは残り、管理者の退職処理の
+「home を掃除」は、退職者のホームを EBS に残したまま完了として監査に記録されていた。
+
+- **消すのはアダプタ。** `internal/runtime/home_wipe.go` に `homeWiper`（メンバーの作り直しとホームの掃除。
+  メンバーの要求の中で終える）と `homeEraser`（管理者のホームの掃除。今すぐ消し、停止したまま）を置いた。
+  ホームに届かないアダプタはどちらも名乗らない。CP は何も止める前に `home_wipe_unsupported` で断り、
+  Console は `whoami.home_wipe` / `home_erase` を見てボタンを出さない（runtime.go: ある配備では動き、別の
+  配備では黙って何もしないボタンは、ボタンが無いより悪い）。
+- **管理者のホームの掃除は、ホームのボリュームとその休眠スナップショットを削除する。** ボリュームを空に
+  するにはマウントが要るが、停止したワークスペースのホームは、たいてい眠ったスロットに付いているか、
+  外れているか、すでにスナップショットになっている。`DeleteVolume` はそのどの状態でも効き、ホームの中身の
+  量によらず同じ時間で終わる。Destroy ではなくホームの掃除であるのは、`homeKeep` の 7 項目と Claude の状態が
+  EFS にあるから（決定 3-6）——サービス・アクセスポイント・シークレットは残り、次の起動では新しいメンバーと
+  同じく golden から新しいホームが作られる。休眠スナップショットも消すのは、`createHomeVolume` が本人の
+  スナップショットを最初に復元するからで、1 つ残すと消したホームが戻ってくる。docker なら残るのに残らない
+  ものが 1 つある——前回の起動のあとでツールが置き換えた keep のファイル（entrypoint が次の起動で EFS へ
+  移す）は、ボリュームと一緒に消える。
+- **バックアップは残し、消すのは別の操作にする。** ホームより長生きすることが決定 17 でバックアップを作った
+  理由なので、どの片付けもついでには消さない。メンバー詳細にその人のバックアップの件数を出し、管理者の
+  指示で消す（`GET/DELETE /api/admin/tenants/{slug}/members/{key}/home-backups`、監査は
+  `workspace.delete_backups`）。Destroy はこれまでどおりバックアップも消す。
+- **メンバーの作り直しとホームの掃除は、この形態ではまだ出さない。** ホームをその場で空にするには動いている
+  スロットが要る——眠ったスロットを起こす、外れたボリュームを付ける、のどちらも、入口がメンバーの要求に
+  与える 60 秒を超え、しかもハンドラはその直後にワークスペースを起動する。合う形は、ボリュームに印を付け、
+  次の Start がマウントの後・タスクの前に消すこと。Fargate には EFS のホームをマウントする手段も、それを
+  動かす場所もまだ無い。どちらも状態の行の Follow-ups に挙げた。
+- **管理者の消去はリクエストに従わない。** 入口のアイドル時間を超えることがあり、途中で取り消されると——
+  スロットは返したがボリュームはまだ消していない——半分は起きたのに失敗と報告され、監査の記録も一緒に
+  失われる。代わりに 5 分の予算で最後まで走らせる。
+
+コード: `control-plane/internal/runtime/home_wipe.go`・`control-plane/internal/runtime/runtime_ecs_ec2.go`
+（`EraseHome`・`HomeBackups`・`DeleteHomeBackups`）・`control-plane/workspace_handlers.go`・
+`control-plane/workspace_lifecycle.go`（`cleanHomeByMembership`・`homeBackupsByMembership`）・
+`control-plane/internal/tenantsrv/tenants.go`・`console/src/features/settings/workspace/DangerTab.tsx`・
+`console/src/features/settings/tenant/tenantMemberDetail.tsx`。

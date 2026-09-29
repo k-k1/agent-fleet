@@ -13,6 +13,7 @@ English | [日本語](0045-ec2-persistent-workspace.ja.md)
   gate for starting) was passed by deciding **to start without waiting for it to be satisfied**.
   **Decisions 3, 4 and 6–9 are live** — they are the list of traps and shapes to carry into the
   implementation.
+- Follow-ups: #1259, #1260
 - See also: [64-ec2-persistent-workspace.md](../log/64-ec2-persistent-workspace.md) /
   [0044-workspace-sizing.md](0044-workspace-sizing.md) decision 4 (the homework that raised this ADR) /
   [63-workspace-sizing.md](../log/63-workspace-sizing.md) §63.4 (measuring EFS I/O) /
@@ -1405,3 +1406,45 @@ Code: `control-plane/internal/runtime/runtime_ecs_ec2.go` (`TerminateQuarantined
 `control-plane/workspace_lifecycle.go` (`runtimeSlotTerminator`),
 `control-plane/internal/tenantsrv/tenants.go` (`TerminatePoolSlot`), `control-plane/routes.go`,
 `console/src/features/settings/tenant/ec2Pool.tsx`.
+
+## Decision 31 — Clean home reaches the home: the administrator's deletes the volume now; a member's is not offered here yet (2026-09-30)
+
+Recreate and both kinds of Clean home removed files under the Control Plane's own data directory. That is the
+home on docker and native, and an empty `/tmp` in the CP task on AWS, where removing a path that does not exist
+succeeds. On this target (and on Fargate) all three reported success and removed nothing: a member kept their
+working copies, and an administrator's offboarding "Clean home" was audited as done while the leaver's home stayed
+on its EBS volume.
+
+- **The wipe is the adapter's.** `internal/runtime/home_wipe.go` declares `homeWiper` (a member's Recreate and
+  Clean home, inside the member's request) and `homeEraser` (an administrator's Clean home, now, left stopped).
+  An adapter that cannot reach its home claims neither. The CP refuses before it stops anything, with
+  `home_wipe_unsupported`, and the Console reads `whoami.home_wipe` / `home_erase` and does not show the button
+  (runtime.go: a button that works on one deployment profile and silently does nothing on another is worse than
+  no button).
+- **An administrator's Clean home deletes the home volume and its hibernation snapshots.** Emptying the volume
+  needs it mounted, and a stopped workspace's home is usually on a slot that has gone to sleep, detached, or
+  already a snapshot. `DeleteVolume` works in all of those states and takes the same time whatever the home
+  holds. It is Clean home rather than Destroy because the seven `homeKeep` entries and the Claude state are on
+  EFS (decision 3-6): the service, the access points and the secrets stay, and the next start builds a fresh
+  home from the golden, as for a new member. The hibernation snapshots go because `createHomeVolume` restores
+  the member's own snapshot first; one left behind would hand the erased home back. The one thing it does not
+  keep that docker keeps: a keep file a tool replaced since the last start (the entrypoint moves it to EFS at
+  the next boot) goes with the volume.
+- **Backups stay, and deleting them is a separate action.** A backup outliving the home is what decision 17
+  made it for, so no cleanup takes one as a side effect. The member detail shows how many a member has and
+  deletes them on the administrator's word (`GET/DELETE /api/admin/tenants/{slug}/members/{key}/home-backups`,
+  audited as `workspace.delete_backups`). Destroy still deletes them too.
+- **A member's Recreate and Clean home are not offered on this target yet.** Emptying a home in place needs a
+  running slot — waking one, or attaching a detached volume, takes longer than the 60 s the ingress gives a
+  member's request, and the handler starts the workspace right after. The shape that fits is to mark the volume
+  and let the next Start wipe it after the mount and before the task runs. Fargate has neither a way to mount
+  the EFS home nor a place to run one yet. Both are the follow-ups under the Status line.
+- **The administrator's erase does not follow the request.** It can outlast the ingress idle timeout; cancelled
+  halfway — slot released, volume not yet deleted — it would be reported as a failure while half of it had
+  happened, and the audit entry would be lost with it. It runs under its own five-minute budget instead.
+
+Code: `control-plane/internal/runtime/home_wipe.go`, `control-plane/internal/runtime/runtime_ecs_ec2.go`
+(`EraseHome`, `HomeBackups`, `DeleteHomeBackups`), `control-plane/workspace_handlers.go`,
+`control-plane/workspace_lifecycle.go` (`cleanHomeByMembership`, `homeBackupsByMembership`),
+`control-plane/internal/tenantsrv/tenants.go`, `console/src/features/settings/workspace/DangerTab.tsx`,
+`console/src/features/settings/tenant/tenantMemberDetail.tsx`.
