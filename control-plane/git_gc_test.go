@@ -146,24 +146,25 @@ func TestLFSGCPrune(t *testing.T) {
 // non-zero, enumeration fails and the prune deletes nothing — not even a genuine
 // orphan — rather than reading every unread pointer as unreferenced.
 func TestLFSGCPrunePass2Failure(t *testing.T) {
-	cases := map[string]string{
+	cases := map[string]struct{ script, wantErr string }{
 		// head exits after a few bytes; the pipeline's status is head's 0, so only
 		// the short stream gives the failure away.
-		"truncated stream": `git --git-dir "$1" cat-file --batch | head -c 20`,
-		"non-zero exit":    `git --git-dir "$1" cat-file --batch; exit 3`,
+		"truncated stream": {`git --git-dir "$1" cat-file --batch | head -c 20`, "response 1 of 1"},
+		"non-zero exit":    {`git --git-dir "$1" cat-file --batch; exit 3`, "exit status 3"},
 	}
-	for name, script := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newLFSGCFixture(t)
 			ctx := context.Background()
 			orig := lfsCatFileBatch
 			t.Cleanup(func() { lfsCatFileBatch = orig })
 			lfsCatFileBatch = func(ctx context.Context, bareDir string) *exec.Cmd {
-				return exec.CommandContext(ctx, "sh", "-c", script, "sh", bareDir)
+				return exec.CommandContext(ctx, "sh", "-c", tc.script, "sh", bareDir)
 			}
 
-			if ref, err := referencedLFSOIDs(ctx, f.bare); err == nil {
-				t.Fatalf("enumerate succeeded with %v, want an error", ref)
+			ref, err := referencedLFSOIDs(ctx, f.bare)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("enumerate = %v, %v; want an error containing %q", ref, err, tc.wantErr)
 			}
 
 			oidOrphan := oidOf([]byte("orphaned-object"))
@@ -181,6 +182,38 @@ func TestLFSGCPrunePass2Failure(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReferencedLFSOIDsIgnoresReplaceRefs: a refs/replace entry swapping the pointer
+// blob for a small non-pointer blob must not hide the pointer from enumeration.
+func TestReferencedLFSOIDsIgnoresReplaceRefs(t *testing.T) {
+	f := newLFSGCFixture(t)
+	pointerBlob := gitOut(t, f.bare, "--git-dir", f.bare, "rev-parse", "main:asset.bin")
+	decoy := filepath.Join(t.TempDir(), "decoy")
+	if err := os.WriteFile(decoy, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	decoyBlob := gitOut(t, f.bare, "--git-dir", f.bare, "hash-object", "-w", decoy)
+	gitRun(t, f.bare, nil, "--git-dir", f.bare, "replace", "-f", pointerBlob, decoyBlob)
+
+	ref, err := referencedLFSOIDs(context.Background(), f.bare)
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	if !ref[f.oidRef] {
+		t.Fatalf("replace ref hid the pointer: got %v, want %s", ref, f.oidRef)
+	}
+}
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // TestReadPointerBatch: every prefix of a valid response stream, and every response

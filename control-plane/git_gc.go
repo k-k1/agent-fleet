@@ -168,8 +168,12 @@ const pointerMaxBytes = 1024
 // conservative on purpose (git gc prunes those later; the next sweep reclaims the
 // object once the pointer is truly gone).
 func referencedLFSOIDs(ctx context.Context, bareDir string) (map[string]bool, error) {
+	// Both passes run with --no-replace-objects: a pushed refs/replace/<pointer> would
+	// otherwise make pass 2 read the replacement's content, so the pointer's oid drops out
+	// of the set with no error and its object is deleted.
+	//
 	// Pass 1: headers of all objects; keep small blobs (pointer candidates).
-	check := exec.CommandContext(ctx, "git", "--git-dir", bareDir,
+	check := exec.CommandContext(ctx, "git", "--no-replace-objects", "--git-dir", bareDir,
 		"cat-file", "--batch-check", "--batch-all-objects", "--unordered")
 	out, err := check.Output()
 	if err != nil {
@@ -231,7 +235,7 @@ func referencedLFSOIDs(ctx context.Context, bareDir string) (map[string]bool, er
 // lfsCatFileBatch builds pass 2's reader. A variable so a test can substitute a stream
 // that dies part-way.
 var lfsCatFileBatch = func(ctx context.Context, bareDir string) *exec.Cmd {
-	return exec.CommandContext(ctx, "git", "--git-dir", bareDir, "cat-file", "--batch")
+	return exec.CommandContext(ctx, "git", "--no-replace-objects", "--git-dir", bareDir, "cat-file", "--batch")
 }
 
 // readPointerBatch parses `git cat-file --batch` output answering candidates, asked in
