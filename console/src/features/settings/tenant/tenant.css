@@ -111,6 +111,18 @@
   flex: none;
 }
 
+/* Engine access (#1215): the two mode radios side by side, and the tenant-admin tag kept
+   apart from the user key it follows. */
+.engine-access-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.engine-access-table .af-note {
+  margin-left: 6px;
+}
+
 .usage-csv {
   display: inline-flex;
   align-items: center;
