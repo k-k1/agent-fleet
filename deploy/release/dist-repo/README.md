@@ -1,6 +1,6 @@
 # agent-fleet-dist
 
-English | [日本語](README.ja.md)
+English | [日本語](README.ja.md) · [agent-fleet.org](https://agent-fleet.org)
 
 **Don't replace your coding agents. Operate them.**
 

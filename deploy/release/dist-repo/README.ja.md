@@ -1,6 +1,6 @@
 # agent-fleet-dist
 
-[English](README.md) | 日本語
+[English](README.md) | 日本語 · [agent-fleet.org](https://agent-fleet.org/ja/)
 
 **エージェントは置き換えない。運用する。**
 
@@ -36,7 +36,7 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code�
   GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode / Muse Code のセッションと、
   フリート自身のチャットエンジン上の llama.cpp セッションを並べて実行。
   セッション毎のモデル選択に対応し、CLI の版は動作検証済みの組み合わせにピン止め
-  （self-update は opt-in）。上流が新しい版を出すと、毎日の監視が実物の CLI で契約テストを
+  （self-update は opt-in）。CLI の新しい版が出ると、毎日の監視が実物の CLI で契約テストを
   走らせます（[仕組み](https://github.com/k-k1/agent-fleet/blob/develop/docs/build/10-development.ja.md#上流-cli-の破壊検知版ドリフト監視--contract-テスト)）。
 - **異なるエージェント同士が協働する** — セッションは別種のセッションを子として
   起こせます（claude がレビューを codex に、codex が下請けを opencode に）。子は
@@ -129,8 +129,8 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code�
 
 ## エージェント種別ごとの機能対応
 
-すべての機能がすべてのエージェント CLI で使えるわけではありません（一部は上流の
-CLI が公開している範囲に依存します）。早見表は以下のとおりです（✓ = 対応、
+すべての機能がすべてのエージェント CLI で使えるわけではありません（一部は各
+CLI 自体が外に出している機能の範囲に左右されます）。早見表は以下のとおりです（✓ = 対応、
 — = 非対応 / 該当なし）:
 
 | 機能 | Claude | Codex | Cursor | Copilot | Kiro | Antigravity | OpenCode | llama.cpp | Muse Code | Shell |

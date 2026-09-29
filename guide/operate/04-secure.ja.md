@@ -208,6 +208,7 @@ docker compose up -d cp
 ## 脆弱性の報告窓口
 
 脆弱性を見つけたら、**公開 issue を立てず**に非公開で報告してください。優先は GitHub の Security →
-"Report a vulnerability"（非公開アドバイザリ）。報告に含める情報（対象バージョン/コミット・デプロイ
-形態・再現手順・観測した影響）と対応方針は `SECURITY.md` にあります。pre-1.0
+"Report a vulnerability"（非公開アドバイザリ）で、`security@agent-fleet.org` へのメールでも
+受け付けます。報告に含める情報（対象バージョン/コミット・デプロイ形態・再現手順・観測した影響）と
+対応方針は `SECURITY.md` にあります。pre-1.0
 のため、修正は最新タグに対して行われます。報告前に最新版へ更新してください。
