@@ -60,12 +60,12 @@ its doc comment is the contract. These are the parts that are easy to miss:
 
 | Obligation | What it means |
 |---|---|
-| **Start commits; it does not wait for the agent** | `Start` runs inside an HTTP request, so it returns once the launch is committed, never after the ingress idle timeout. A readiness overrun is **not** an error: returning one marks a booting workspace as failed while it runs ([03 §3.3](03-control-plane.md)) |
-| **Report `starting` honestly** | All four adapters report it. On docker and native it covers the window where the process is up and the entrypoint has not yet reached the agent; on ECS, a service that is still converging. **While a workspace is `starting`, callers must neither start it again nor idle-stop it.** The adapter has to time-box it, because a `starting` that never converges is a workspace nobody can operate |
-| **Keep no state in the Runtime value** | The manager builds a Runtime from the database row (`manager.runtimeFor`), may cache it, and may rebuild it at any time. A restarted CP or a second replica holds a different value. Find everything on the substrate by a deterministic name, a tag or a file, and write anything another request must read back to the substrate too. The existing adapters use `docker inspect`, a pidfile, the ECS service and EC2 tags ([09 §9.5](09-deploy.md)) |
-| **Two-stage graceful stop** | Signal, wait `AF_STOP_GRACE_SEC`, then kill, and hand the agent a **shorter** grace (`AGENT_STOP_GRACE_SEC`) so it can interrupt its panes and let tmux exit first ([03 §3.3](03-control-plane.md)) |
-| **An endpoint the CP can always reach** | `Endpoint()` has to resolve from every CP replica, including for a workspace created after the CP started. On ECS, a Service Connect alias does not do that for a service added later, and `agent_dial.go` exists to cover the gap |
-| **Deliver the env you were built with, at every start** | The factory's `New(ws, secretKey, extraEnv)` carries the DEK and per-workspace variables, and they differ from one start to the next (an unattended scheduler wake, a preview slug, the egress proxy variables). Container env is fixed at the instant of the start, so it has to go in there. **Never put the DEK or `AGENT_TOKEN` where the substrate can show it**: docker passes them in a 0600 env file rather than on the command line, and ECS passes an SSM reference rather than the value ([09 §9.5](09-deploy.md), [07 §7.6](07-security.md)) |
+| **Start commits the launch; the agent's readiness is not its result** | `Start` runs inside an HTTP request. It may wait a courtesy grace on the agent's `/healthz` (the local adapters do, via `WaitAgentHealthy`), but that wait must fit the ingress in front of it, and running past it is **not** an error: returning one marks a booting workspace as failed while it runs. ECS returns once the service is committed and converges in the background ([03 §3.3](03-control-plane.md), the head of `runtime_health.go`) |
+| **Report `starting` honestly** | `starting` means a launch is under way and the agent is not reachable yet. **While a workspace is `starting`, callers must neither start it again nor idle-stop it**, so a `starting` that never converges is a workspace nobody can operate. The port's doc comment asks the adapter to time-box it. Not every existing path does: a task ECS refuses to place keeps its service `starting` indefinitely, and `ecs-ec2` at least reports the reason as a boot phase (`notePlacementBlocked`). Give yours a deadline, or say why it cannot fail to converge |
+| **Lifecycle state lives on the substrate** | The manager builds a Runtime from the database row (`manager.runtimeFor`), may cache it, and may rebuild it at any time. A restarted CP or a second replica holds a different value. Whether a workspace exists, runs or is starting must therefore be recoverable from the substrate by a deterministic name, a tag or a file. The existing adapters use `docker inspect`, a pidfile, the ECS service and EC2 tags ([09 §9.5](09-deploy.md)). Process-local scratch is allowed for what may be lost, if you say what losing it costs: native keeps an uncommitted spawn in the value to clean it up, and `ecs-ec2` keeps its provisioning phase in a process-wide map that another replica cannot see |
+| **Two-stage graceful stop** | Signal, wait `AF_STOP_GRACE_SEC` (30 by default), then kill. The agent gets `AGENT_STOP_GRACE_SEC`, derived as that grace less a 5-second margin, so it can interrupt its panes and let tmux exit first; the derivation floors at 5 seconds, so a grace set below 10 leaves no margin (`stopGraceSec` / `agentStopGraceSec` in `runtime_docker.go`, [03 §3.3](03-control-plane.md)) |
+| **An endpoint the CP can always reach** | `Endpoint()` has to be reachable from wherever your target runs the CP: the same host for docker and native, which return a loopback address, and every CP replica on ECS. That includes a workspace created after the CP started. On ECS a Service Connect alias does not resolve for a service added later, and `agent_dial.go` exists to cover the gap |
+| **Deliver the env you were built with, at every start** | The factory's `New(ws, secretKey, extraEnv)` carries the DEK and per-workspace variables, and they can differ from one start to the next (an unattended scheduler wake, a preview slug). Container env is fixed at the instant of the start, so it has to go in there. The deployment-wide template env (`Config.ExtraEnv`: `WS_ENV` and the egress proxy variables) is a separate input, and today only docker and native pass it on ([09 §9.4](09-deploy.md)); decide deliberately whether yours does. **Never put the DEK or `AGENT_TOKEN` where the substrate can show it**: docker passes them in a 0600 env file rather than on the command line, and ECS passes an SSM reference rather than the value ([09 §9.5](09-deploy.md), [07 §7.6](07-security.md)) |
 | **Two persistent areas, surviving a stop** | The home at `/home/dev`, and Claude's state at `/var/lib/af/claude` (`CLAUDE_CONFIG_DIR`). The second one is kept apart from the home so that the file browser cannot reach it and a reset of the home leaves the Claude login alone. **Operations that change the home have to reach the real home**, wherever your target keeps it. How each existing target stores them is [01 §1.6](01-architecture.md) and [07 §7.2](07-security.md) |
 | **Destroy** | `runtimeDestroyer` is required of every adapter and asserted in `runtime.go`. It removes the home and every per-membership resource you created. Its `[]string` result lists what you **know** you could not remove, so it reaches the audit log instead of an operator assuming the data is gone |
 | **Per-user isolation, or refuse to run shared** | Answer every row of [07 §7.2](07-security.md) for your target. Where you cannot, do what `native` does: the factory refuses any `AUTH` other than `dev`, because without a container boundary nothing separates users |
@@ -74,29 +74,37 @@ its doc comment is the contract. These are the parts that are easy to miss:
 
 The CP asks for most per-target behaviour with a type assertion (`rt.(X)` on a Runtime,
 `m.rtFactory.(X)` on the factory) and branches on the answer. **An adapter that does not
-claim a capability still compiles; the feature is simply absent.** So claiming one is a
-statement about your substrate.
+claim a capability still compiles**, and the CP silently takes that capability's own
+fallback: it may hide a feature, switch to another delivery path, or show a default that
+describes some other target. So claiming one, or not, is a statement about your
+substrate.
 
-What the four adapters claim at the time of writing. The interfaces are the real list:
-grep `control-plane/*.go` for `rt.(` and `rtFactory.(`.
+These are the capabilities at the time of writing, with what the CP does without each.
+The interfaces are the real list: grep `control-plane/*.go` for `rt.(` and
+`rtFactory.(`, and grep for a method name to find the adapters that implement it and are
+worth reading. Which target supports what, as a user sees it, is
+[ref/deploy-targets](../../guide/ref/deploy-targets.md).
 
-| Capability | Declared in | Claimed by | Without it |
-|---|---|---|---|
-| `SizingProfile()`: what CPU, memory and disk mean here | `workspace_sizing.go` (`sizingProfiler`) | all four factories | you are described as docker |
-| `CostProfile()`: is there a bill, and what it covers | `cost_profile.go` (`costProfiler`) | all four factories | no cost view, and version info reports the runtime as `local` |
-| `WorkspaceImage()` | an inline interface in `main.go` and `version_info.go` | `ecs`, `ecs-ec2` | the startup banner names the docker template's image, and version info leaves the workspace image out |
-| `DocsMounter`: the guide is bind-mounted | `internal/runtime/runtime.go` | docker, native | the container pulls it from `GET /internal/docs` ([04 §4.9](04-agent.md)). Claiming it without a host path the container can see leaves the guide empty |
-| `Stale()`: would a stop and start run different code | `workspace_stale.go` | all four | never reported stale |
-| `BootPhase()` | an inline interface in `workspace_handlers.go` | native, `ecs-ec2` | the start dialog shows no phase |
-| `AcquireOperationFence` / `StartFencer` | `internal/runtime/runtime.go` | native | the database lease alone. An adapter whose lifecycle resource lives on the CP's host needs an OS-level fence as well |
-| `MachineProfile()`, `ResizeHome()` | `workspace_machine.go`, `workspace_home_resize.go` | `ecs-ec2` | no machine to name, no disk to grow |
-| `BeginHibernate()`, `BackupHome()` | `reaper.go` (idle tiers 3 and 4) | `ecs-ec2` | the tiers do not exist for you ([03 §3.7](03-control-plane.md)) |
-| `GoldenBakePool` / `GoldenSeedRuntime` | `internal/runtime/runtime_ecs_ec2_golden.go` | `ecs-ec2` | no golden snapshot is baked |
-| `PoolStatus`, `TerminateQuarantinedSlot`, `MaxSlots` | `workspace_lifecycle.go`, `limits.go` | `ecs-ec2` | no pool screen, and no check of tenant quotas against a fixed pool |
+| Capability | Declared in | Without it |
+|---|---|---|
+| `SizingProfile()`: what CPU, memory and disk mean here | `workspace_sizing.go` (`sizingProfiler`) | you are described as docker |
+| `CostProfile()`: is there a bill, and what it covers | `cost_profile.go` (`costProfiler`) | no cost view, and version info reports the runtime as `local` |
+| `WorkspaceImage()` | an inline interface in `main.go` and `version_info.go` | the startup banner names the docker template's image, and version info leaves the workspace image out |
+| `DocsMounter`: the guide is bind-mounted | `internal/runtime/runtime.go` | the container pulls it from `GET /internal/docs` ([04 §4.9](04-agent.md)). Claiming it without a host path the container can see leaves the guide empty |
+| `Stale()`: would a stop and start run different code | `workspace_stale.go` | never reported stale |
+| `BootPhase()` | an inline interface in `workspace_handlers.go` | the start dialog shows no phase |
+| `AcquireOperationFence` / `StartFencer` | `internal/runtime/runtime.go` | the database lease alone. An adapter whose lifecycle resource lives on the CP's host needs an OS-level fence as well |
+| `MachineProfile()`, `ResizeHome()` | `workspace_machine.go`, `workspace_home_resize.go` | no machine to name, no disk to grow |
+| `BeginHibernate()`, `BackupHome()` | `reaper.go` (idle tiers 3 and 4) | the tiers do not exist for you ([03 §3.7](03-control-plane.md)) |
+| `GoldenBakePool` / `GoldenSeedRuntime` | `internal/runtime/runtime_ecs_ec2_golden.go` | no golden snapshot is baked |
+| `PoolStatus`, `TerminateQuarantinedSlot`, `MaxSlots` | `workspace_lifecycle.go`, `limits.go` | no pool screen, and no check of tenant quotas against a fixed pool |
 
-The claiming direction is pinned with `var _ X = (*T)(nil)` next to the declaration.
-The not-claiming direction cannot be written that way, so
-`internal/runtime/capabilities_test.go` asserts it. Add your adapter to both.
+Only some of these are pinned. `Runtime`, `RuntimeFactory`, `runtimeDestroyer`, the golden
+interfaces and the hibernation chain (`runtime_seam.go`) have compile-time
+`var _ X = (*T)(nil)` assertions, and `internal/runtime/capabilities_test.go` asserts
+which adapters must **not** claim `DocsMounter` or `GoldenBakePool`. The rest, sizing and
+cost included, are matched only at run time. For each capability you claim or decline,
+add an assertion or a test case that fails if that changes.
 
 ## 21.4 What is not the adapter's job
 
@@ -107,9 +115,10 @@ The not-claiming direction cannot be written that way, so
 - **Engines.** A deployment has engines because its engine table declares them, not
   because of its runtime. No `control-plane/engine_*.go` file reads `AF_RUNTIME`
   ([09 §9.2](09-deploy.md), [03 §3.9](03-control-plane.md)).
-- **Egress policy.** The proxy variables reach every workspace through `extraEnv`. What
-  your target does own is the network the workspace sits in: what it can reach, and who
-  can reach its agent ([07 §7.2](07-security.md), [07 §7.8](07-security.md)).
+- **Egress policy.** The allowlist, the proxy and the enforce switch are the CP's. What
+  your target does own is the network the workspace sits in (what it can reach, and who
+  can reach its agent) and whether the proxy variables reach the container (§21.2;
+  [07 §7.2](07-security.md), [07 §7.8](07-security.md)).
 - **The workspace image** (§21.1).
 
 ## 21.5 Outside the adapter: a deploy tree, a runbook, a way to ship
@@ -141,8 +150,10 @@ The not-claiming direction cannot be written that way, so
 
 - **`internal/runtime/capabilities_test.go`** fails when an adapter claims staged docs or
   the golden bake that it should not. Add yours there.
-- **`internal/runtime/runtime_test.go`** checks which adapter each profile builds and
-  that an unknown profile is rejected. Add your profile's case.
+- **`internal/runtime/runtime_test.go`** checks that the docker aliases and `ecs` / `aws`
+  build their adapters and that an unknown profile is rejected; `native` has its own
+  factory tests in `runtime_native_test.go`, and `ecs-ec2` has no case there. Add one
+  for your profile.
 - **`scripts/docs-check.py` compares the first column of
   [ref/deploy-targets](../../guide/ref/deploy-targets.md) (both languages) with the case
   labels of `NewFactory`**, but only for the profiles named in its
