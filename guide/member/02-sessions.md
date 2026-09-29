@@ -57,7 +57,9 @@ New Codex / cursor / opencode / GitHub Copilot / Kiro sessions default to manage
 are Managed only, claude / agy use Terminal (CLI), and shell / SSM use only the terminal path.
 For kinds that support both methods, you can switch the execution method from the session's ⋯
 menu whenever the session is not stopped and the agent is not in the middle of processing. **The
-conversation carries over as is.** You can also open the chat view from Terminal (CLI), but
+conversation carries over as is.** Switching a codex session from Managed to Terminal (CLI) can
+take about a minute while codex lets go of the conversation; a message sent in that time is
+refused, and the terminal opens once it is free. You can also open the chat view from Terminal (CLI), but
 managed execution has no terminal screen.
 
 A Terminal (CLI) screen is kept alive behind the scenes even if you close the browser. You
@@ -148,12 +150,20 @@ synced in bulk.
   readable, but nothing here starts your workspace just to draw a list.
 - A long list **folds at 10 rows**, with "Show more (N left)" underneath — the count keeps counting
   all of them. Past ten rows you also get a **one-line filter**, which searches the rows already on
-  screen (key, title, assignee, labels, repository) and never asks the tracker for anything.
+  screen (key, title, assignee, labels, repository); **×** or Escape clears it. When it finds
+  nothing, or a query fetched only part of its matches, **Search the tracker** asks the tracker
+  with the words you typed.
+- An open GitHub pull request's row shows its **CI** (failing, running or passing) and a mark
+  when it **conflicts** with its base, as of the last fetch. When GitHub has no answer yet, nothing
+  is drawn.
 - A row carries **only what differs between rows**: when every row of a query has the same assignee
   or repository, that line is dropped. A relative time appears only on rows that have **not moved
   for a day or more** — for the rest, being near the top already says it.
 - **🔗** opens the item in its own tracker. A **dot badge** means somebody has already started this
   one, and clicking it opens that session — it is there to stop a second person *before* the launch.
+- The details list **Sessions already on this** by name. One that has since been archived can be
+  restored from there (it asks first; if its working folder is gone it restores but cannot resume),
+  and one that was deleted says so.
 
 ### From a row to a session
 
