@@ -57,6 +57,13 @@ func TestPostgresDeleteCascade(t *testing.T) {
 	if err := st.SetEngineGrant(ctx, tn.ID, mem.ID, EngineAccessLLM, true); err != nil {
 		t.Fatalf("engine access grant: %v", err)
 	}
+	// The gateway's per-request read (a LEFT JOIN with a CASE) runs only here on Postgres.
+	if one, err := st.GetMemberEngineAccess(ctx, tn.ID, mem.ID); err != nil || !one.Allows(mem.ID, EngineAccessLLM) {
+		t.Errorf("granted member refused on postgres (%+v err=%v)", one, err)
+	}
+	if one, err := st.GetMemberEngineAccess(ctx, tn.ID, "M-other"); err != nil || one.Allows("M-other", EngineAccessLLM) {
+		t.Errorf("ungranted member allowed on postgres (%+v err=%v)", one, err)
+	}
 
 	if err := st.DeleteMembership(ctx, mem.ID); err != nil {
 		t.Fatalf("DeleteMembership on postgres: %v", err)

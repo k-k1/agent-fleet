@@ -84,11 +84,12 @@ func TestEngineAccessRoundTripAndCascade(t *testing.T) {
 	if n := countRows(t, st, "engine_access_grant"); n != 0 {
 		t.Errorf("a deleted membership left %d grant row(s)", n)
 	}
-	// DeleteTenant with a live membership still holding a grant, and an orphan grant whose
-	// membership is already gone (the roster-check/insert race): both must go.
+	// DeleteTenant with an offboarded (inactive) membership still holding a grant — the only
+	// kind a tenant can have left when it is deleted — and an orphan grant whose membership is
+	// already gone (the roster-check/insert race): both must go.
 	must(st.SetEngineGrant(ctx, tn.ID, a, EngineAccessLLM, true))
 	must(st.SetEngineGrant(ctx, tn.ID, "M-vanished", EngineAccessLLM, true))
-	if err := st.SetMembershipStatus(ctx, a, "removed"); err != nil {
+	if err := st.SetMembershipStatus(ctx, a, "inactive"); err != nil {
 		t.Fatal(err)
 	}
 	must(st.DeleteTenant(ctx, tn.ID))
