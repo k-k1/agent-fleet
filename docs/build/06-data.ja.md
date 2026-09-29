@@ -23,10 +23,13 @@ updated: "2026-09"
     操作のフェンス（`AcquireWorkspaceOperationFence`、セッション advisory lock）はここにしか
     無い。SQLite は CP 1 台の構成。
 - **ユーザーの資格情報は DB に入れない。** ワークスペースの home にある暗号ストアに置く
-  （[07 §7.6](07-security.ja.md)）。DB が持つのは wrap 済みの DEK だけ。**DB が秘密を持つ
-  場所では、それはテナント鍵で封印してある**：テナント IdP のクライアントシークレット、
-  テナントの git OAuth シークレット、MCP のヘッダ、共有の提案や引き継ぎの本文。暗号文＋
-  `key_ref` で保存し、平文＋空の `key_ref` に落ちるのはマスターキーの無いデプロイだけ。
+  （[07 §7.6](07-security.ja.md)）。DB が持つのは wrap 済みの DEK だけ。**テナントが
+  預ける秘密はテナント鍵で封印する**：テナント IdP のクライアントシークレット、テナントの
+  git OAuth シークレット、MCP のヘッダ、共有の提案や引き継ぎの本文。暗号文＋`key_ref` で
+  保存し、平文＋空の `key_ref` に落ちるのはマスターキーの無いデプロイだけ。
+- ⚠️ **平文で保存する秘密が 1 つある：`workspace.agent_token`。** CP がそのワークスペースの
+  Agent に示す bearer である（[07 §7.5](07-security.ja.md)）。DB のコピーを持つ者は、
+  到達できるどの Agent にも CP として認証できる。だから DB のダンプやバックアップは秘密として扱う。
 - **RDS ではパスワードはプロセスが持ち続けてよい値ではない。** `AF_DB_PASSWORD` はタスク
   定義の `secrets` で届き、**ECS がこれを解決するのはタスク起動時の 1 回だけ**。RDS の
   マネージドなマスターパスワードは 7 日ごとにローテートする。そこで Postgres が `28P01` を
@@ -132,7 +135,8 @@ identity ──< membership >── tenant ──< git_repo, tenant_idp, tenant_
 
 membership ──< user_limit (1:1), ssm_profile ──< ssm_host, memo, memo_category,
                notification, schedule ──< schedule_run,
-               work_item_query ──< work_item_cache, work_item_session,
+               work_item_query ──< work_item_cache,
+               work_item_session (no link to a query or the cache),
                session_share (as owner or as recipient)
 ```
 
@@ -145,7 +149,10 @@ membership ──< user_limit (1:1), ssm_profile ──< ssm_host, memo, memo_ca
   差し替える。表示・管理者の俯瞰・クォータ判定にはミラーを使い、実際の操作は必ず Agent へ送る。
 - **削除は表を明示的に列挙する。** `DeleteWorkspace`・`DeleteMembership`
   （`membershipCascade`）・`DeleteTenant` は、宣言している表が一部しかない `ON DELETE CASCADE`
-  に頼らず、依存する表をすべて順に挙げる。membership の削除は「除名 → ワークスペースの破棄 →
+  に頼らず、依存する表を順に挙げる。例外が 1 つある。`DeleteWorkspace` は
+  `shared_session_catalog` の行を消し、`session_share_proposal` と `session_handoff_offer`
+  の削除はそこからの外部キーの cascade に任せる（両表とも両方言で宣言している）。
+  `membershipCascade` はこの 2 表も明示的に消す。membership の削除は「除名 → ワークスペースの破棄 →
   行の削除」の最後の手順で、取り消せない。**意図して残すのは履歴**：`audit_log`・
   `usage_daily`・`usage_hourly`・`cloud_cost_daily`・エンジンの帰属の表。消すと過去の合計が
   後から変わる。

@@ -24,10 +24,14 @@ English | [日本語](06-data.ja.md)
     session advisory lock) exists only here. SQLite is the single-CP profile.
 - **User credentials never go in the database.** They live in the encrypted store in
   the workspace's home ([07 §7.6](07-security.md)). All the database holds is the
-  wrapped DEK. **Where the database does hold a secret, it is sealed** under the tenant
-  key: a tenant IdP's client secret, a tenant git OAuth secret, MCP headers, the body of
-  a share proposal or a handoff. It is stored as ciphertext plus `key_ref`, and falls
-  back to plaintext with an empty `key_ref` only on a deployment with no master key.
+  wrapped DEK. **Tenant-supplied secrets are sealed** under the tenant key: a tenant
+  IdP's client secret, a tenant git OAuth secret, MCP headers, the body of a share
+  proposal or a handoff. They are stored as ciphertext plus `key_ref`, and fall back to
+  plaintext with an empty `key_ref` only on a deployment with no master key.
+- ⚠️ **One secret is stored in plaintext: `workspace.agent_token`**, the bearer the CP
+  presents to that workspace's agent ([07 §7.5](07-security.md)). Anyone holding a
+  copy of the database can authenticate as the CP to any agent they can reach, so treat a dump or a backup of it
+  as a secret.
 - **On RDS, the password is not a value the process may keep.** `AF_DB_PASSWORD`
   arrives through the task definition's `secrets`, **which ECS resolves once, at task
   start**. RDS rotates its managed master password every seven days. So when Postgres
@@ -136,7 +140,8 @@ identity ──< membership >── tenant ──< git_repo, tenant_idp, tenant_
 
 membership ──< user_limit (1:1), ssm_profile ──< ssm_host, memo, memo_category,
                notification, schedule ──< schedule_run,
-               work_item_query ──< work_item_cache, work_item_session,
+               work_item_query ──< work_item_cache,
+               work_item_session (no link to a query or the cache),
                session_share (as owner or as recipient)
 ```
 
@@ -149,8 +154,12 @@ membership ──< user_limit (1:1), ssm_profile ──< ssm_host, memo, memo_ca
   workspace's rows for the current list. Use the mirror for display, the administrator's
   overview and quota decisions, but send every real operation to the agent.
 - **Deletion names its tables explicitly.** `DeleteWorkspace`, `DeleteMembership`
-  (`membershipCascade`) and `DeleteTenant` list every dependent in order rather than
-  rely on `ON DELETE CASCADE`, which only a few tables declare. A membership is deleted
+  (`membershipCascade`) and `DeleteTenant` list their dependents in order rather than
+  rely on `ON DELETE CASCADE`, which only a few tables declare. There is one exception.
+  `DeleteWorkspace` deletes the `shared_session_catalog` rows and relies on the
+  foreign-key cascade from them to remove `session_share_proposal` and
+  `session_handoff_offer`, both of which declare it in both dialects.
+  `membershipCascade` deletes those two explicitly. A membership is deleted
   as the last step of remove → destroy the workspace → delete the row, and it is
   irreversible. **What is deliberately kept is the history**: `audit_log`,
   `usage_daily`, `usage_hourly`, `cloud_cost_daily` and the engine attribution tables.
