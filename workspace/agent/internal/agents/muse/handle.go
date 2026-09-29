@@ -734,8 +734,8 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 	return err
 }
 
-// accept starts, steers or queues the input. queued reports that it waits in the driver's
-// queue behind the running turn.
+// accept starts, steers or queues the input. queued reports that it waits behind a running
+// turn: in this driver's queue, or in the host's own (startTurn).
 func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err error) {
 	if id := agents.NormalizeMsgID(in.ClientMessageID); id != "" && ledger.SeenOrRecord(h.name, id) {
 		return false, nil // a resend after a reconnect must not start a second turn
@@ -756,15 +756,18 @@ func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err
 	if steer && running && turnID != "" {
 		return false, h.steerNow(in, turnID)
 	}
-	return false, h.startTurn(in)
+	return h.startTurn(in)
 }
 
-func (h *threadHandle) startTurn(in agents.TurnInput) error {
+// startTurn submits a turn. queued is the host's own answer that the input waits behind a turn
+// already running there (disposition "queued"). Between a turn/start and its turn/started this
+// handle does not know a turn is running, so its own queue cannot tell.
+func (h *threadHandle) startTurn(in agents.TurnInput) (queued bool, err error) {
 	h.mu.Lock()
 	cl, sid, effort := h.cl, h.sid, h.settings.Effort
 	h.mu.Unlock()
 	if cl == nil {
-		return errors.New("Muse Code のホストが起動していません")
+		return false, errors.New("Muse Code のホストが起動していません")
 	}
 	params := msp.TurnStartParams{
 		CommandID: msp.NewCommandID(),
@@ -774,13 +777,20 @@ func (h *threadHandle) startTurn(in agents.TurnInput) error {
 	if e := reasoningEffort(effort); e != nil {
 		params.ReasoningEffort = e
 	}
-	if err := cl.CallInto(msp.MethodTurnStart, params, callTimeout, nil); err != nil {
-		return err
+	raw, err := cl.Call(msp.MethodTurnStart, params, callTimeout)
+	if err != nil {
+		return false, err
 	}
+	// Read leniently: the turn is already admitted, so an answer without a disposition (or in
+	// another shape) must not turn it into a failed send. It reads as started, as before.
+	var res struct {
+		Disposition msp.TurnStartDisposition `json:"disposition"`
+	}
+	_ = json.Unmarshal(raw, &res)
 	// turn/started follows as a notification and is what actually moves the state; marking
 	// running here would race it into a stuck "working" if the host refused the turn after
 	// accepting the command.
-	return nil
+	return res.Disposition == msp.TurnStartDispositionQueued, nil
 }
 
 func (h *threadHandle) steerNow(in agents.TurnInput, turnID string) error {
@@ -808,7 +818,7 @@ func (h *threadHandle) pump() {
 	next := h.queue[0]
 	h.queue = h.queue[1:]
 	h.mu.Unlock()
-	if err := h.startTurn(next); err != nil {
+	if _, err := h.startTurn(next); err != nil {
 		log.Printf("muse: %s: queued turn failed to start: %v", h.name, err)
 	}
 }

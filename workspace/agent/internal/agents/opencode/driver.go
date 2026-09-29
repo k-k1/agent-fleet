@@ -391,8 +391,18 @@ func (h *threadHandle) Send(in agents.TurnInput) error {
 	return err
 }
 
-// SendQueued is Send reporting whether the input was held behind a running turn.
-func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) { return h.accept(in) }
+// SendQueued is Send reporting whether the input was held behind a running turn. That includes a
+// turn this handle did not start — an attached TUI's, or one a previous Agent process left
+// running: the pump waits for it in waitIdle before this input goes out.
+func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) {
+	h.mu.Lock()
+	addr, ses, dir, ours := h.addr, h.ses, h.dir, h.pumping || h.running
+	h.mu.Unlock()
+	// Asked before accept starts the pump: asked after, the session is busy with this very input.
+	foreign := !ours && ses != "" && serveSessionBusy(addr, ses, dir)
+	queued, err := h.accept(in)
+	return queued || (err == nil && foreign), err
+}
 
 // Steer is a follow-up input to the running turn (§4 queued). opencode v1 has no entry
 // point for mid-turn injection (see the file comment), so the semantics are "submit as

@@ -32,6 +32,7 @@
    | codex の `drain` → `Interrupt` | app-server の再起動 | 全部捨てる（`interruptAll`） |
    | `DropHandle` | 行の「停止」（halt）・アーカイブ・再作成・実行方式の切替 | 全部捨てる（#1255） |
    | lcpp の `dropHandle` → `Interrupt` | 同上 | 全部捨てる（`interruptAll`。自前でキューを消していない） |
+   | opencode の `drain`（`abortSession` を直接） | serve の再起動 | 変更なし。キューは残り、ポンプが次の項目を止まりかけの daemon へ送る（#1255） |
    | プロセスの再起動 | Agent の再起動 | キューはメモリだけ（#1255） |
 
    docs/log/27 §12.2-4 の「interrupt はキューも破棄する（停止の意思はキューに及ぶ）」は、peer 機能より前に
@@ -59,6 +60,18 @@
   when_ready 応答が `queued` をセッション名（文字列）に使っているから。`testdata/wiremap.golden` を取り直した。
 - `send_to_peer_session` は `held` のとき `delivered: false, queued: true` と注記（再送しない）を返す。
   ツール説明の delivered の定義も直した。
+- レビュー 1 巡目（codex / gpt-6-sol）で直した 2 点:
+  - muse は `running` を非同期の `turn/started` で初めて立てるので、`turn/start` の受理からそこまでの隙間の送信は
+    ホストへ直接行き、ホスト側のキューに入る（`ifBusy` の既定は `queue`）。`turn/start` の応答の
+    `disposition: "queued"` を読んで積まれたと返すようにした。MSP の定義では `turn/interrupt` は 1 ターンだけを
+    止め、積まれたターンを外すのは別コマンドの `turn/unqueue` なので、ホスト側に積まれた peer メッセージは停止
+    では消えない（仕様から読んだもので、実測はしていない）。
+  - opencode は、このハンドルが始めていないターン（手で付けた TUI、前の Agent が残したターン）が serve で
+    走っていると、ポンプが `waitIdle` で最大 60 秒待ってから送る。`accept` の前に serve の状態を見て、忙しければ
+    積まれたと返すようにした（`accept` の後に聞くと、自分の入力で忙しく見える）。
+- 据え置いた 1 点: opencode の `drain` はタイムアウトで `abortSession` を直接呼び、キューを消さない。指摘の案
+  （キューを消す）は、今は古い daemon の保存領域に届くかもしれない項目を、確実に黙って消すことになる。正しい直し方は
+  再起動のあいだキューを持ち越し、`Resume` に再開させる（daemon の死亡では既にそうしている、§31）ことで、#1255 で扱う。
 - 指針: `workspace/notes/agent-fleet.md`（待つならターンを終える。`wait_agent` はメッセージを待たない）と、
   `create_session` の `initial_prompt` の説明。
 - `guide/member/02-sessions`（英日）: マネージドの作業中はターンの後に届く。実行の停止では捨てない。

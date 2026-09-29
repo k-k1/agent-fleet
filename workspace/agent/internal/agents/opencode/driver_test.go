@@ -439,6 +439,33 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	_ = h.Interrupt() // release the kept turn so the pump drains before cleanup
 }
 
+// A turn this handle did not start (an attached TUI's, or one a previous Agent process left
+// running) holds the session too: the pump waits for it before the input goes out, so the input
+// is reported as queued, and it still runs once the session goes idle.
+func TestSendQueuedCountsATurnThisHandleDidNotStart(t *testing.T) {
+	m, srv := newMockServe(t)
+	h := newTestHandle(t, srv)
+	m.mu.Lock()
+	m.busy = true
+	m.mu.Unlock()
+	queued, err := h.SendQueued(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "msg_peer", KeepOnInterrupt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Error("input waiting behind another client's turn was reported as started")
+	}
+	m.mu.Lock()
+	m.busy = false
+	m.mu.Unlock()
+	waitState(t, h, agents.TurnCompleted)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.turns) != 1 || m.turns[0] != "from a peer" {
+		t.Errorf("turns = %q, want the input sent once the session went idle", m.turns)
+	}
+}
+
 // Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
 // on the way down.
 func TestAbortManagedDiscardsKeptInput(t *testing.T) {

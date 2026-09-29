@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -347,6 +348,40 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	}
 }
 
+// Between a turn/start and its turn/started the handle does not know a turn is running, so a
+// second send goes to the host, which queues it behind the first. The host's disposition is then
+// the only thing that tells the sender the message has not been read yet.
+func TestSendInTheStartGapReportsTheHostQueue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	var starts atomic.Int32
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		if starts.Add(1) == 1 {
+			return msp.TurnStartResult{Disposition: msp.TurnStartDispositionStarted, StartedNewTurn: true, TurnID: "t-1"}, nil
+		}
+		return msp.TurnStartResult{Disposition: msp.TurnStartDispositionQueued, TurnID: "t-2"}, nil
+	})
+
+	queued, err := h.SendQueued(agents.TurnInput{Prompt: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued {
+		t.Fatal("a turn the host started was reported as queued")
+	}
+	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("input the host queued behind the first turn was reported as started")
+	}
+	if got := starts.Load(); got != 2 {
+		t.Fatalf("turn/start count = %d, want 2 (the handle cannot know the first is running yet)", got)
+	}
+}
+
 // Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
 // on the host being shut down.
 func TestAbortManagedDiscardsKeptInput(t *testing.T) {
@@ -508,7 +543,7 @@ func TestClearEffortLeavesTheNextTurnWithoutOne(t *testing.T) {
 
 	// The control first: with an effort held, the turn carries it. Without this arm a turn
 	// that never carried one would pass the assertion below.
-	if err := h.startTurn(agents.TurnInput{Prompt: "one"}); err != nil {
+	if _, err := h.startTurn(agents.TurnInput{Prompt: "one"}); err != nil {
 		t.Fatalf("startTurn: %v", err)
 	}
 	if got := (<-turns)["reasoningEffort"]; got != "max" {
@@ -518,7 +553,7 @@ func TestClearEffortLeavesTheNextTurnWithoutOne(t *testing.T) {
 	if err := h.UpdateSettings(agents.ThreadSettings{ClearEffort: true}); err != nil {
 		t.Fatalf("UpdateSettings: %v", err)
 	}
-	if err := h.startTurn(agents.TurnInput{Prompt: "two"}); err != nil {
+	if _, err := h.startTurn(agents.TurnInput{Prompt: "two"}); err != nil {
 		t.Fatalf("startTurn: %v", err)
 	}
 	if raw := <-turns; raw["reasoningEffort"] != nil {
