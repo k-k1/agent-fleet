@@ -471,10 +471,13 @@ func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
 }
 
 // Assistant chat (docs/log/19) — headless-CLI LLM chat/translation, proxied to the
-// Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).
+// Agent verbatim (kind-agnostic). Routes that wait on a model for longer than the ingress idle
+// timeout go through the flushing stream proxy: the Agent holds them open with a heartbeat
+// (httpx.HeldOpen), and the buffered REST relay would sit on those bytes until the ALB cut in.
 func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	proxy := newAgentProxyAPI(cfg.mgr)
 	rest := proxy.withResolved(proxy.rest)
+	held := proxy.withResolved(proxy.stream)
 	mux.HandleFunc("GET /api/chat/conversations", rest)
 	mux.HandleFunc("POST /api/chat/conversations", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}", rest)
@@ -486,14 +489,14 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", rest)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", proxy.withResolved(proxy.stream)) // SSE (Phase B)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stop", rest)                               // cancel a detached in-flight turn
-	mux.HandleFunc("POST /api/chat/conversations/{id}/compact", rest)                            // summary carry-forward (docs/log/33 stage 2)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/compact", held)                            // summary carry-forward (docs/log/33 stage 2)
 	mux.HandleFunc("GET /api/chat/conversations/{id}/plan", rest)                                // read the work plan (docs/log/33 stage 5)
 	mux.HandleFunc("PUT /api/chat/conversations/{id}/plan", rest)                                // hand-edit the work plan (docs/log/33 stage 5)
-	mux.HandleFunc("POST /api/chat/conversations/{id}/plan/refresh", rest)                       // explicit work-plan refresh (same)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/plan/refresh", held)                       // explicit work-plan refresh (same)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", rest)
-	// One-shot advisory turn (docs/log/21 memo tidy-up) — stateless, tools off. Proxied verbatim.
-	mux.HandleFunc("POST /api/chat/ask", rest)
+	// One-shot advisory turn (docs/log/21 memo tidy-up) — stateless, tools off.
+	mux.HandleFunc("POST /api/chat/ask", held)
 }
 
 // Image generation (ADR 0081) — the pane that makes pictures without an LLM in the loop.
@@ -767,8 +770,9 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// (workspace/agent/fs_resolve.go).
 	mux.HandleFunc("POST /api/fs/resolve", rest)
 	// The editor's AI edit suggestion (docs/log/44 Phase 4) — read-only generation, not
-	// audited.
-	mux.HandleFunc("POST /api/fs/suggest-edit", rest)
+	// audited. The Agent holds it open with a heartbeat (httpx.HeldOpen), which only the
+	// flushing stream proxy passes through before the ingress idle timeout.
+	mux.HandleFunc("POST /api/fs/suggest-edit", proxy.withResolved(proxy.stream))
 	mux.HandleFunc("GET /api/fs/download", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -315,8 +316,10 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
+	req.Header.Set("X-AF-Relay", "cp") // the same log hint rest sets
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
+		log.Printf("agent stream proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.Path, err, r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
@@ -340,6 +343,11 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 			}
 		}
 		if rerr != nil {
+			// The status is already sent, so a stream the Agent cut short is otherwise a 200 in
+			// every log while the browser sees a missing final frame.
+			if !errors.Is(rerr, io.EOF) {
+				log.Printf("agent stream proxy: %s %s: body read: %v (ctx err=%v)", r.Method, r.URL.Path, rerr, r.Context().Err())
+			}
 			return
 		}
 	}
