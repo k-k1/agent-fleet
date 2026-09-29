@@ -32,7 +32,7 @@ fits (a).
 | Jira | the work-item inbox | a pasted email + API token, or **Atlassian OAuth (3LO) with a CP-owned callback, using the tenant's app** | CP | the encrypted store (§8.4.2) |
 | SVN servers | checkouts | a pasted username + password | none | the encrypted store, fed to `svn` by a wrapper |
 | Internal git | git hosting | a per-membership HMAC token | — | derived by the CP, never stored there; seeded into the agent's store ([91](91-internal-git.md)) |
-| Agent CLIs (claude, codex, opencode, cursor, kiro, agy, muse, copilot) | L2 agent auth | each CLI's own sign-in, driven by the agent | none | the CLI's own credentials file, or the encrypted store (§8.5, §8.6) |
+| Agent CLIs (claude, codex, opencode, cursor, kiro, agy, muse, copilot) | L2 agent auth | the CLI's own login driven by the agent, a pasted key, or another connection (§8.5, §8.6) | none | the CLI's own credentials file, or the encrypted store (§8.5, §8.6) |
 | External MCP clients | driving the fleet | a bearer PAT | — | only a hash, in the database ([06](06-data.md)) |
 | MCP servers a user or tenant adds | tools for the agents | whatever the server wants, written into each CLI's config | — | each CLI's own config file; per-user header secrets in the encrypted store (§8.7) |
 | AWS, the user's accounts | SSM sessions, `af-aws-exec` | SSO device code, started from the Console | none | the SSO cache **inside the workspace; the CP never sees it** (§8.8) |
@@ -373,9 +373,10 @@ deployment's table directly**, and never holds an upstream credential:
 
 - The CP injects a per-membership issuing token, `AF_ENGINE_ISSUE_TOKEN`, at workspace
   start. With it the agent buys, from `POST /internal/engine/token`, a gateway token
-  scoped to one engine and to one session, or to the whole workspace for image
-  generation and the boot-time probes (`engineToken`, cached until half its lifetime).
-  opencode receives it as `AF_ENGINE_TOKEN`; lcpp and image generation, which run inside
+  bound to the membership and one engine key, and also to one session when the caller
+  names one. The routes that name none — opencode's shared Managed daemon, image
+  generation and the boot-time probes — get a token for the whole workspace.
+  `engineToken` caches it until half its lifetime. opencode receives it as `AF_ENGINE_TOKEN`; lcpp and image generation, which run inside
   the agent, use it directly. Either way the call goes to the CP's gateway,
   `/engine/{key}/v1/…`, which is exempt from the login gate. The CP adds the upstream
   credential: `AF_ENGINE_API_KEY_<KEY>` in its environment for an external row, or an SSM

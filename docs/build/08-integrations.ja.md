@@ -31,7 +31,7 @@ updated: "2026-09"
 | Jira | 作業項目インボックス | email + API トークン貼付 / **Atlassian OAuth（3LO、CP 所有 callback・テナントのアプリ）** | CP | 暗号化ストア（§8.4.2）|
 | SVN サーバ | チェックアウト | ユーザー名 + パスワード貼付 | 不要 | 暗号化ストア（ラッパーが `svn` に渡す）|
 | 内部 git | git ホスティング | per-membership HMAC トークン | — | CP が都度導出し CP には保存しない。Agent のストアへ seed（[91](91-internal-git.ja.md)）|
-| エージェント CLI（claude・codex・opencode・cursor・kiro・agy・muse・copilot）| L2 エージェント認証 | 各 CLI 自身のサインインを Agent が駆動 | 不要 | CLI 自身の資格ファイル、または暗号化ストア（§8.5・§8.6）|
+| エージェント CLI（claude・codex・opencode・cursor・kiro・agy・muse・copilot）| L2 エージェント認証 | Agent が駆動する CLI 自身のログイン、貼付キー、または別の接続（§8.5・§8.6）| 不要 | CLI 自身の資格ファイル、または暗号化ストア（§8.5・§8.6）|
 | 外部 MCP クライアント | フリートの操作 | Bearer PAT | — | ハッシュのみ DB（[06](06-data.ja.md)）|
 | 利用者・テナントが足す MCP サーバ | エージェントのツール | サーバの求めるもの（各 CLI の設定に書き込む）| — | 各 CLI 自身の設定ファイル。利用者ごとのヘッダ秘密は暗号化ストア（§8.7）|
 | AWS（利用者のアカウント）| SSM セッション・`af-aws-exec` | SSO device code（Console から開始）| 不要 | SSO キャッシュは**ワークスペース内。CP は見ない**（§8.8）|
@@ -338,9 +338,11 @@ KMS custodian は 📋 — seam のみ（`KeyCustodian`、[07 §7.6](07-security
 **ワークスペースは配備のエンジン表にあるエンジンと直接話さず**、上流の資格も持たない:
 
 - CP はワークスペース起動時に per-membership の発行用トークン `AF_ENGINE_ISSUE_TOKEN` を
-  注入する。Agent はそれで `POST /internal/engine/token` から、1 エンジンと 1 セッション
-  （画像生成と起動時の問い合わせではワークスペース全体）に限ったゲートウェイトークンを買う（`engineToken`、寿命の半分までキャッシュ）。opencode は
-  それを `AF_ENGINE_TOKEN` として受け取り、Agent の中で動く lcpp と画像生成はそのまま使う。
+  注入する。Agent はそれで `POST /internal/engine/token` から、membership とエンジンの
+  キー 1 つに縛られ、呼び出し側が session を指定したときはその 1 セッションにも縛られる
+  ゲートウェイトークンを買う。指定しない経路（opencode の共有 Managed デーモン・画像生成・
+  起動時の問い合わせ）はワークスペース全体に効く。`engineToken` は寿命の半分までキャッシュする。
+  opencode はトークンを `AF_ENGINE_TOKEN` として受け取り、Agent の中で動く lcpp と画像生成はそのまま使う。
   どちらも呼び先はログインゲートの除外パスである CP のゲートウェイ `/engine/{key}/v1/…`。上流の資格は CP が足す: 外部の行なら CP 環境の
   `AF_ENGINE_API_KEY_<KEY>`、CP が管理する行なら SSM SecureString
   （[decisions/0083](../decisions/0083-openai-compat-image-provider.ja.md)）。
