@@ -341,7 +341,10 @@ flows are [08](08-integrations.md).
 - `UserPromptSubmit` → working;
 - `Stop` → idle;
 - `PreToolUse` with matcher `AskUserQuestion` → question, and `ExitPlanMode` → plan;
-- the `permission_prompt` notification → permission.
+- the `permission_prompt` notification → permission;
+- `MessageDisplay` → `message`, which leaves the state alone. It records the reply as it streams, line by
+  line: the prose a pending question card shows above the question, and the reply still being written
+  that `/messages?live=1` returns while a turn runs (`status/livetext.go`, #1250).
 
 **The hooks merge additively** at start and before each claude launch
 (`EnsureStatusHooks`). **`PreToolUse` is registered per matcher**, so the rtk hook

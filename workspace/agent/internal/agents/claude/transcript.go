@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -215,6 +216,69 @@ func AssistantText(line []byte) string {
 		}
 	}
 	return sb.String()
+}
+
+// latestTextScan bounds how far back LatestAssistantText looks for a text row. It runs on
+// the mirror's poll while a turn streams, and a long run of tool calls with no prose between
+// them should not turn every poll into a walk over the whole transcript.
+const latestTextScan = 400
+
+// LatestAssistantText is the text of the newest assistant message that has any: the text
+// blocks of every row of that API message, in file order. claude writes one response as
+// several rows (thinking / text / tool_use), and a response with more than one text block
+// (text around a server tool call) as more than one text row, so the newest text row alone
+// can be a fragment of it. "" when no text row is within latestTextScan lines of the end.
+func LatestAssistantText(lines [][]byte) string {
+	type row struct {
+		Type    string `json:"type"`
+		Message struct {
+			ID      string `json:"id"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	parse := func(line []byte) (row, string) {
+		var r row
+		if json.Unmarshal(line, &r) != nil {
+			return row{}, ""
+		}
+		var sb strings.Builder
+		if r.Type == "assistant" {
+			for _, c := range r.Message.Content {
+				if c.Type == "text" {
+					sb.WriteString(c.Text)
+				}
+			}
+		}
+		return r, sb.String()
+	}
+	stop := max(0, len(lines)-latestTextScan)
+	for i := len(lines) - 1; i >= stop; i-- {
+		if !bytes.Contains(lines[i], []byte(`"type":"assistant"`)) {
+			continue
+		}
+		r, text := parse(lines[i])
+		if text == "" {
+			continue
+		}
+		parts := []string{text}
+		// Earlier rows of the same message. They are contiguous but for bookkeeping rows; a
+		// user row (a prompt or a tool result) or another message's row ends them.
+		for j := i - 1; j >= 0; j-- {
+			p, t := parse(lines[j])
+			if p.Type == "user" || (p.Type == "assistant" && p.Message.ID != r.Message.ID) {
+				break
+			}
+			if p.Type == "assistant" && t != "" {
+				parts = append(parts, t)
+			}
+		}
+		slices.Reverse(parts)
+		return strings.Join(parts, "")
+	}
+	return ""
 }
 
 // CollectTurns builds the displayable turns from lines[lo:hi] (a window into the

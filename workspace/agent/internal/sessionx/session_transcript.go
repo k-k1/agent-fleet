@@ -271,6 +271,13 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			resp["queuedPrompts"] = q
 		}
 	}
+	// The reply claude is still writing (#1250): what the MessageDisplay hook has flushed and
+	// the transcript does not show yet. See session_livetext.go.
+	if wantsLiveReply(r, alive, state) {
+		if txt := liveReplyText(sid, lines, time.Now()); txt != "" {
+			resp["liveText"] = txt
+		}
+	}
 	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
 	// can't otherwise see, so the Console can prompt the user or show a compacting badge.
 	if alive {

@@ -113,6 +113,11 @@ func RunSessionStatusHook(args []string) {
 	// isn't in the transcript until the question is answered. Never touches the status.
 	if state == "message" {
 		status.AppendPendingText(sid, h.delta)
+		// The mirror's in-progress reply (#1250) is the session's own text only: a flush fired
+		// inside a subagent carries agent_id, and its prose is not this session's reply.
+		if h.agentID == "" {
+			status.AppendLiveText(sid, h.turnID, h.messageID, h.index, h.final, h.delta)
+		}
 		return
 	}
 	// permtool: a PreToolUse hook for edit/command tools that just records what is
@@ -390,6 +395,13 @@ type hookInput struct {
 	delta      string // MessageDisplay: a streaming chunk of the assistant's text
 	source     string // SessionStart: startup | resume | clear | compact
 	toolName   string // PreToolUse/PostToolUse: which tool fired this hook ("" = not a tool event)
+	// MessageDisplay's position of delta: which turn and assistant message it belongs to, and
+	// its flush counter within that message. message_id is a display id of claude's own; it
+	// cannot be joined to the transcript's message ids.
+	turnID    string
+	messageID string
+	index     int
+	final     bool // the message's last flush
 	// agentID is claude's agent_id: set only when the hook fired from within a subagent
 	// (its own docs: "Use this field (not agent_type) to distinguish subagent calls from
 	// main-thread calls"), and empty on the session's own thread — including --agent
@@ -406,6 +418,10 @@ func decodeHookStdin() hookInput {
 		Message          string `json:"message"`           // Notification
 		NotificationType string `json:"notification_type"` // Notification
 		Delta            string `json:"delta"`             // MessageDisplay (streaming text chunk)
+		TurnID           string `json:"turn_id"`           // MessageDisplay
+		MessageID        string `json:"message_id"`        // MessageDisplay
+		Index            int    `json:"index"`             // MessageDisplay
+		Final            bool   `json:"final"`             // MessageDisplay
 		ToolName         string `json:"tool_name"`         // PreToolUse
 		AgentID          string `json:"agent_id"`          // set only inside a subagent
 		Source           string `json:"source"`            // SessionStart (startup/resume/clear/compact)
@@ -426,6 +442,10 @@ func decodeHookStdin() hookInput {
 		message:    in.Message,
 		ntype:      in.NotificationType,
 		delta:      in.Delta,
+		turnID:     in.TurnID,
+		messageID:  in.MessageID,
+		index:      in.Index,
+		final:      in.Final,
 		source:     in.Source,
 		toolName:   in.ToolName,
 		agentID:    in.AgentID,
@@ -473,6 +493,12 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 	// question can still surface the prose that preceded it.
 	if state == "working" || state == "idle" {
 		status.RemovePendingText(sid)
+	}
+	// The streamed reply lives for the whole turn, across its tool calls, so only the turn's end
+	// drops it. A final flush that lands after Stop re-creates the file; the reader never shows
+	// it once the turn is over, and the next turn's end removes it.
+	if state == "idle" {
+		status.RemoveLiveText(sid)
 	}
 }
 

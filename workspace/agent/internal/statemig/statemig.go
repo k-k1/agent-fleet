@@ -73,6 +73,9 @@ var Entries = []string{
 	"pending-plan",
 	"pending-perm",
 	"pending-text",
+	// The reply claude is still streaming (status/livetext.go). Introduced directly under
+	// AgentStateDir; it never existed under .config.
+	"live-text",
 	"plan-file",
 	"plan-review",
 	// Per-agent id ledgers and message rings (agents.NewSidStore / NewMsgLedger).
