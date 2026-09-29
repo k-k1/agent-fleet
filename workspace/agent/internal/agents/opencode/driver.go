@@ -262,7 +262,7 @@ func AbortManaged() {
 		running := h.running
 		h.mu.Unlock()
 		if running {
-			_ = h.Interrupt()
+			_ = h.interruptAll()
 		}
 	}
 }
@@ -386,47 +386,59 @@ func (h *threadHandle) reconcile() {
 // --- ThreadHandle interface ---------------------------------------------------
 
 // Send starts a turn (the turn/start equivalent), queueing behind a running one.
-func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in) }
+func (h *threadHandle) Send(in agents.TurnInput) error {
+	_, err := h.accept(in)
+	return err
+}
+
+// SendQueued is Send reporting whether the input was held behind a running turn.
+func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) { return h.accept(in) }
 
 // Steer is a follow-up input to the running turn (§4 queued). opencode v1 has no entry
 // point for mid-turn injection (see the file comment), so the semantics are "submit as
 // the next turn once the running one finishes".
-func (h *threadHandle) Steer(in agents.TurnInput) error { return h.accept(in) }
+func (h *threadHandle) Steer(in agents.TurnInput) error {
+	_, err := h.accept(in)
+	return err
+}
 
-func (h *threadHandle) accept(in agents.TurnInput) error {
+// accept queues the input and starts the pump when none runs. queued reports that the input
+// waits behind a running turn (or behind earlier queued input) rather than starting now.
+func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 	if strings.TrimSpace(in.Prompt) == "" && len(in.Attachments) == 0 {
-		return errors.New("empty prompt")
+		return false, errors.New("empty prompt")
 	}
 	in.ClientMessageID = normalizeMsgID(in.ClientMessageID)
 	h.mu.Lock()
 	if !h.alive {
 		h.mu.Unlock()
-		return errors.New("runtime が停止しています（再開してください）")
+		return false, errors.New("runtime が停止しています（再開してください）")
 	}
 	if h.inter != nil {
 		// Free text sent while a question is pending invites a mis-answer (the same
 		// call /input's question_pending guard makes): steer the caller to the
 		// structured reply (Respond).
 		h.mu.Unlock()
-		return errQuestionPending
+		return false, errQuestionPending
 	}
 	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
 		h.mu.Unlock()
-		return nil // re-send; the persistent cross-process ledger makes it idempotent (§4)
+		return false, nil // re-send; the persistent cross-process ledger makes it idempotent (§4)
 	}
 	h.queue = append(h.queue, in)
 	start := !h.pumping
 	if start {
 		h.pumping = true
 	}
-	if len(h.queue) > 0 && (h.running || len(h.queue) > 1) {
+	queued = h.running || len(h.queue) > 1
+	if queued {
 		h.state = agents.TurnQueued
 	}
 	h.mu.Unlock()
 	if start {
 		go h.pump()
 	}
-	return nil
+	return queued, nil
 }
 
 // errQuestionPending is matched by the /turn handler to return the same
@@ -582,12 +594,23 @@ const abortedWithoutRequest = "[error] ターンが中断されました（こ�
 
 // Interrupt aborts the running turn and clears the queued follow-ups: the intent to stop
 // reaches the queue too, since nothing surprises a user more than an old follow-up
-// starting on its own once the turn finishes.
-func (h *threadHandle) Interrupt() error {
+// starting on its own once the turn finishes. KeepOnInterrupt input is the exception and
+// starts as the next turn — it is another session's message, not the user's own follow-up.
+func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+
+// interruptAll is Interrupt for Agent shutdown: the whole queue goes, because a kept entry
+// would be started on the way down.
+func (h *threadHandle) interruptAll() error { return h.interrupt(false) }
+
+func (h *threadHandle) interrupt(keep bool) error {
 	h.mu.Lock()
 	addr, ses, dir := h.addr, h.ses, h.dir
 	running := h.running
-	h.queue = nil
+	if keep {
+		h.queue = agents.KeptOnInterrupt(h.queue)
+	} else {
+		h.queue = nil
+	}
 	if running {
 		h.state = agents.TurnInterrupting
 		h.abortAsked = true

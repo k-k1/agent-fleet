@@ -473,7 +473,7 @@ func (s *Supervisor) drain() {
 	}
 	for _, h := range busyManaged() {
 		log.Printf("codex app-server: drain timeout — interrupting session %s", h.name)
-		_ = h.Interrupt()
+		_ = h.interruptAll()
 	}
 	// Give the interrupts a moment to land their turn/completed.
 	time.Sleep(2 * time.Second)

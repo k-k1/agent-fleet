@@ -229,7 +229,7 @@ func AbortManaged() {
 		running := h.running
 		h.mu.Unlock()
 		if running {
-			_ = h.Interrupt()
+			_ = h.interruptAll()
 		}
 	}
 }
@@ -579,25 +579,36 @@ func (h *threadHandle) runtimeLost() {
 
 // --- ThreadHandle interface ---------------------------------------------------
 
-func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in) }
+func (h *threadHandle) Send(in agents.TurnInput) error {
+	_, err := h.accept(in)
+	return err
+}
+
+// SendQueued is Send reporting whether the input was held behind a running turn.
+func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) { return h.accept(in) }
 
 // Steer is a driver-side queue: ACP has no mid-turn injection point, so the input is
 // submitted as the next turn once the current one finishes.
-func (h *threadHandle) Steer(in agents.TurnInput) error { return h.accept(in) }
+func (h *threadHandle) Steer(in agents.TurnInput) error {
+	_, err := h.accept(in)
+	return err
+}
 
-func (h *threadHandle) accept(in agents.TurnInput) error {
+// accept queues the input and starts the pump when none runs. queued reports that the input
+// waits behind a running turn (or behind earlier queued input) rather than starting now.
+func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 	if strings.TrimSpace(in.Prompt) == "" {
-		return errors.New("empty prompt")
+		return false, errors.New("empty prompt")
 	}
 	in.ClientMessageID = normalizeMsgID(in.ClientMessageID)
 	h.mu.Lock()
 	if !h.alive {
 		h.mu.Unlock()
-		return errors.New("runtime が停止しています（再開してください）")
+		return false, errors.New("runtime が停止しています（再開してください）")
 	}
 	if h.inter != nil {
 		h.mu.Unlock()
-		return agents.ErrQuestionPending
+		return false, agents.ErrQuestionPending
 	}
 	// The ledger makes a re-send idempotent when pump starts executing it, not here:
 	// recording it persistently before it is queued would make a re-send after a crash that
@@ -607,14 +618,15 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 	if start {
 		h.pumping = true
 	}
-	if h.running || len(h.queue) > 1 {
+	queued = h.running || len(h.queue) > 1
+	if queued {
 		h.state = agents.TurnQueued
 	}
 	h.mu.Unlock()
 	if start {
 		go h.pump()
 	}
-	return nil
+	return queued, nil
 }
 
 // pump processes the queue serially. The child is exclusive, so no waitIdle is needed.
@@ -694,12 +706,24 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	}
 }
 
-// Interrupt cancels the running turn and clears the queued follow-ups.
-func (h *threadHandle) Interrupt() error {
+// Interrupt cancels the running turn and clears the queued follow-ups: an expressed intent to
+// stop reaches the queue too. KeepOnInterrupt input is the exception and starts as the next
+// turn — it is another session's message, not the user's own follow-up.
+func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+
+// interruptAll is Interrupt for Agent shutdown: the whole queue goes, because a kept entry
+// would be started on the way down.
+func (h *threadHandle) interruptAll() error { return h.interrupt(false) }
+
+func (h *threadHandle) interrupt(keep bool) error {
 	h.mu.Lock()
 	cl, sid := h.cl, h.sid
 	running := h.running
-	h.queue = nil
+	if keep {
+		h.queue = agents.KeptOnInterrupt(h.queue)
+	} else {
+		h.queue = nil
+	}
 	if running {
 		h.state = agents.TurnInterrupting
 	}

@@ -199,7 +199,7 @@ func DropHandle(name string) {
 	cmd, stdin, running := h.cmd, h.stdin, h.running
 	h.mu.Unlock()
 	if running {
-		_ = h.Interrupt()
+		_ = h.interruptAll()
 	}
 	stopChild(cmd, stdin)
 }
@@ -239,7 +239,7 @@ func AbortManaged() {
 		running := h.running
 		h.mu.Unlock()
 		if running {
-			_ = h.Interrupt()
+			_ = h.interruptAll()
 		}
 	}
 }

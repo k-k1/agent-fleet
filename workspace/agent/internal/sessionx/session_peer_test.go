@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -250,5 +251,82 @@ func TestSessionInputRejectsOversizePeerMessage(t *testing.T) {
 func TestPeerValidateMessageAccepts16KiBBoundary(t *testing.T) {
 	if err := peerValidateMessage(strings.Repeat("x", peerMaxMessageBytes)); err != nil {
 		t.Fatalf("message at %d byte limit rejected: %v", peerMaxMessageBytes, err)
+	}
+}
+
+// queueingFakeHandle is a managed handle whose sends all wait behind a running turn (queued is
+// what SendQueued reports), recording each input it is given. The embedded nil ThreadHandle
+// makes anything else panic rather than answer with an invented value.
+type queueingFakeHandle struct {
+	agents.ThreadHandle
+	queued bool
+	got    chan agents.TurnInput
+}
+
+func (h *queueingFakeHandle) Send(in agents.TurnInput) error {
+	h.got <- in
+	return nil
+}
+
+func (h *queueingFakeHandle) SendQueued(in agents.TurnInput) (bool, error) {
+	h.got <- in
+	return h.queued, nil
+}
+
+type queueingFakeDriver struct {
+	agents.Driver
+	h *queueingFakeHandle
+}
+
+func (d *queueingFakeDriver) Resume(session.Meta) (agents.ThreadHandle, error) { return d.h, nil }
+
+// A peer message to a Managed session in the middle of a turn only waits in the driver's
+// queue. /input has to say so (held) — it is the sender's only way to tell "started a turn"
+// from "held" — and the input has to carry KeepOnInterrupt, or the stop that frees the turn
+// it waits behind discards it. The user's own send gets neither: the stop still reaches it.
+func TestPeerInputToBusyManagedSessionIsQueuedAndKept(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	h := &queueingFakeHandle{queued: true, got: make(chan agents.TurnInput, 2)}
+	prev, had := managedDrivers[session.KindCodex]
+	managedDrivers[session.KindCodex] = &queueingFakeDriver{h: h}
+	t.Cleanup(func() {
+		if had {
+			managedDrivers[session.KindCodex] = prev
+			return
+		}
+		delete(managedDrivers, session.KindCodex)
+	})
+	const name, from = "peer_busy", "peer_sender"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+
+	rec := postInput(t, name, `{"prompt":"PR #1 is ready for review","peer_from":"`+from+`","peer_intent":"request"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Held bool `json:"held"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Held {
+		t.Errorf("response = %s, want held=true for a message waiting behind the running turn", rec.Body.String())
+	}
+	if in := <-h.got; !in.KeepOnInterrupt {
+		t.Error("the peer message was queued without KeepOnInterrupt: a stop of the turn it waits behind discards it")
+	}
+
+	h.queued = false
+	rec = postInput(t, name, `{"prompt":"my own follow-up"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "held") {
+		t.Errorf("response = %s, want no held for input that started a turn", rec.Body.String())
+	}
+	if in := <-h.got; in.KeepOnInterrupt {
+		t.Error("the user's own input carries KeepOnInterrupt: the stop button would no longer reach it")
 	}
 }
