@@ -1140,6 +1140,18 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.tab_audit": "Audit",
   "tenant.tab_mcp": "MCP distribution",
   "tenant.tab_engines": "Inference engine models",
+  "tenant.tab_engine_access": "Engine access",
+  "tenant.engine_access_title": "Who may use the inference engines",
+  "tenant.engine_access_note":
+    "For the self-hosted chat engine (llm) and image engine (image), choose whether every member may use it or only the members you tick. Whether this tenant may use a role at all is the deployment admin's decision; you can only grant within it.",
+  "tenant.engine_access_llm": "Chat (llm)",
+  "tenant.engine_access_image": "Image generation (image)",
+  "tenant.engine_access_everyone": "Every member",
+  "tenant.engine_access_members_only": "Granted members only",
+  "tenant.engine_access_tenant_denied": "The deployment admin has turned this off for the tenant. It cannot be changed here.",
+  "tenant.engine_access_admin": "tenant admin",
+  "tenant.engine_access_ticks_note":
+    "A tick only matters for a role set to granted members only. Tenant admins are not granted automatically. Changes reach running workspaces at once.",
   "tenant.picker": "Tenant",
   "tenant.none": "You don't administer any tenant.",
   "tenant.forbidden": "You don't have permission to view this tenant's settings.",

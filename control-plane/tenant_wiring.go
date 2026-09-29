@@ -135,6 +135,18 @@ func (a adminAPI) setTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	a.srv().SetTenantSlotClass(w, r)
 }
 
+func (a adminAPI) tenantEngineAccess(w http.ResponseWriter, r *http.Request) {
+	a.srv().TenantEngineAccess(w, r)
+}
+
+func (a adminAPI) setTenantEngineAccess(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetTenantEngineAccess(w, r)
+}
+
+func (a adminAPI) setMemberEngineAccess(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetMemberEngineAccess(w, r)
+}
+
 // --- The seam adapter -----------------------------------------------------------------
 
 // cpTenant implements tenantsrv.CP over the CP manager. Every method is a one-liner

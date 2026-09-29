@@ -209,6 +209,12 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// can write (on the limits endpoint).
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/slot-class", adm.tenantSlotClass)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/slot-class", adm.setTenantSlotClass)
+	// Per-member grant of the self-hosted engine roles (#1215). tenant_admin, gated
+	// mid-handler: it can only narrow allow_engine_llm / allow_engine_image, which stay
+	// super_admin-only on the limits endpoint.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/engine-access", adm.tenantEngineAccess)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/engine-access", adm.setTenantEngineAccess)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/engine-access/members", adm.setMemberEngineAccess)
 	// Tenant-defined sign-in methods (docs/log/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (decision 30). The queue is deployment-wide.

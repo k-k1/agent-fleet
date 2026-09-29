@@ -1214,6 +1214,7 @@ func membershipCascade(membershipID string) []struct {
 		args []any
 	}{
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
+		{`DELETE FROM engine_access_grant WHERE membership_id=?`, id},
 		{`DELETE FROM pat WHERE membership_id=?`, id},
 		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		// sso_session was dropped by 0011 (ssm_profile replaced it). Deleting from a
@@ -1315,6 +1316,7 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 		`DELETE FROM tenant_idp WHERE tenant_id=?`,
 		`DELETE FROM tenant_git_oauth WHERE tenant_id=?`,
 		`DELETE FROM egress_allowlist WHERE tenant_id=?`,
+		`DELETE FROM engine_access_policy WHERE tenant_id=?`,
 		// The login rules and allowed_cidrs are columns on tenant, so this one
 		// statement takes them with it.
 		`DELETE FROM tenant WHERE id=?`,

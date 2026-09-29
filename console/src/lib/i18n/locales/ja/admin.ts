@@ -1131,6 +1131,18 @@ export const admin = {
   "tenant.tab_audit": "監査",
   "tenant.tab_mcp": "MCP 配布",
   "tenant.tab_engines": "推論エンジンのモデル",
+  "tenant.tab_engine_access": "推論エンジンの利用者",
+  "tenant.engine_access_title": "推論エンジンを使えるメンバー",
+  "tenant.engine_access_note":
+    "セルフホストのチャットエンジン（llm）と画像生成エンジン（image）を、全員に開くか、許可したメンバーだけに絞るかを種類ごとに選びます。テナント全体で使えるかどうかはデプロイ管理者が決め、ここではその範囲内でしか許可できません。",
+  "tenant.engine_access_llm": "チャット（llm）",
+  "tenant.engine_access_image": "画像生成（image）",
+  "tenant.engine_access_everyone": "メンバー全員",
+  "tenant.engine_access_members_only": "許可したメンバーだけ",
+  "tenant.engine_access_tenant_denied": "このテナントではデプロイ管理者が利用を止めています。ここでは変更できません。",
+  "tenant.engine_access_admin": "テナント管理者",
+  "tenant.engine_access_ticks_note":
+    "チェックが効くのは「許可したメンバーだけ」を選んだ種類だけです。テナント管理者も自動では許可されません。変更は実行中のワークスペースにもすぐ届きます。",
   "tenant.picker": "テナント",
   "tenant.none": "管理しているテナントがありません。",
   "tenant.forbidden": "このテナントの設定を見る権限がありません。",

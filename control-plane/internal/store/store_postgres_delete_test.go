@@ -51,6 +51,12 @@ func TestPostgresDeleteCascade(t *testing.T) {
 	if err := st.AddUsage(ctx, mem.ID, tn.ID, "2026-07-01", 3600); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
+	if err := st.SetEngineMembersOnly(ctx, tn.ID, EngineAccessLLM, true); err != nil {
+		t.Fatalf("engine access policy: %v", err)
+	}
+	if err := st.SetEngineGrant(ctx, tn.ID, mem.ID, EngineAccessLLM, true); err != nil {
+		t.Fatalf("engine access grant: %v", err)
+	}
 
 	if err := st.DeleteMembership(ctx, mem.ID); err != nil {
 		t.Fatalf("DeleteMembership on postgres: %v", err)
