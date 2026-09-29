@@ -64,13 +64,15 @@ func (g memberEngineGate) forbidden(api string) *apiError {
 }
 
 // engineGateFor is the request-time read for gates 1-3 and /props: uncached, like
-// tenantLimitsFor, because each call authorizes exactly one request.
+// tenantLimitsFor, because each call authorizes exactly one request. The member layer is the
+// narrowed read (one query, at most one row per role), since gate 3 runs on every relayed
+// request and the whole tenant's grants would scale that with the member count.
 func (g engineGateway) engineGateFor(ctx context.Context, mv store.MembershipView) (memberEngineGate, *apiError) {
 	lim, aerr := g.tenantLimitsFor(ctx, mv.TenantID)
 	if aerr != nil {
 		return memberEngineGate{}, aerr
 	}
-	acc, err := g.mgr.store.GetEngineAccess(ctx, mv.TenantID)
+	acc, err := g.mgr.store.GetMemberEngineAccess(ctx, mv.TenantID, mv.MembershipID)
 	if err != nil {
 		return memberEngineGate{}, internalErr(err)
 	}
@@ -78,7 +80,7 @@ func (g engineGateway) engineGateFor(ctx context.Context, mv store.MembershipVie
 }
 
 // memberEngineGateFor is gate 4's read: both layers from the per-tenant short-TTL cache
-// (tenantEngineLimitsFor), so the events tick still costs one read per tenant, not per tab.
+// (tenantEngineAccessFor), so the events tick still costs one read per tenant, not per tab.
 func memberEngineGateFor(ctx context.Context, mgr *manager, mv store.MembershipView) memberEngineGate {
 	lim, acc := tenantEngineAccessFor(ctx, mgr, mv.TenantID)
 	return memberEngineGate{lim: lim, acc: acc, membershipID: mv.MembershipID}

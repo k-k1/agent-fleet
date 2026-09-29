@@ -14,7 +14,8 @@ vi.mock("../../../core/api/client.ts", () => ({
   errText: (e: { message?: string }) => e?.message || "",
   rel: (p: string) => p,
 }));
-vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
+const toastSpy = vi.fn(() => () => {});
+vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toastSpy() }));
 
 import { MemberEngineAccessPanel, TenantEngineAccessView } from "./tenantEngineAccess.tsx";
 
@@ -51,6 +52,7 @@ const chip = (role: string, text: string) =>
 const tick = (label: string) => document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
 
 beforeEach(() => {
+  toastSpy.mockReturnValue(() => {});
   api.mockResolvedValue(VIEW);
   apiJSON.mockResolvedValue({});
 });
@@ -98,6 +100,30 @@ describe("tenant engine access", () => {
     expect(chip("image", "許可したメンバーだけ").disabled).toBe(true);
     expect(tick("bob 画像生成（image）").disabled).toBe(true);
     expect(group("image").textContent).toContain("デプロイ管理者");
+  });
+});
+
+describe("tenant engine access failures", () => {
+  it("says why the screen is empty instead of rendering nothing", async () => {
+    api.mockResolvedValue({ error: { code: "forbidden", message: "not a tenant admin" } });
+    await mount();
+    expect(document.querySelector(".engine-access")!.textContent).toContain("not a tenant admin");
+  });
+
+  it("re-reads after a save so the screen shows what the server stored", async () => {
+    await mount();
+    const before = api.mock.calls.length;
+    await act(async () => tick("bob チャット（llm）").click());
+    expect(api.mock.calls.length).toBe(before + 1);
+  });
+
+  it("tells the admin when the save request itself fails", async () => {
+    const toast = vi.fn();
+    toastSpy.mockReturnValue(toast);
+    apiJSON.mockRejectedValue(new Error("offline"));
+    await mount();
+    await act(async () => tick("bob チャット（llm）").click());
+    expect(toast).toHaveBeenCalledWith("保存できませんでした。接続を確かめてもう一度お試しください。");
   });
 });
 

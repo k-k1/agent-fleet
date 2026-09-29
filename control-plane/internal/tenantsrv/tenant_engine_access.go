@@ -83,7 +83,7 @@ func (a Admin) SetTenantEngineAccess(w http.ResponseWriter, r *http.Request) {
 	// Restricting a role takes it away from every member not on the list, so the running
 	// workspaces have to re-read their catalogue now rather than after the Agent's
 	// ten-minute cache (ADR 0084 decision 9).
-	a.cp.PushEngineCatalogChanged(r.Context(), t.ID)
+	a.cp.PushEngineCatalogChanged(r.Context(), t.ID, "engine access mode changed")
 	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "tenant.engine_access", Target: t.Slug,
@@ -134,7 +134,12 @@ func (a Admin) SetMemberEngineAccess(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	a.cp.PushEngineCatalogChanged(r.Context(), t.ID)
+	// A tick on a role still open to everyone changes nobody's access, so there is nothing to
+	// push: it only prepares the list for when the restriction is switched on, and that switch
+	// pushes. When the policy cannot be read, push anyway — a spare refresh is harmless.
+	if acc, err := a.cp.Store().GetEngineAccess(r.Context(), t.ID); err != nil || acc.MembersOnly[body.Role] {
+		a.cp.PushEngineCatalogChanged(r.Context(), t.ID, "engine access grant changed")
+	}
 	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "member.engine_access", Target: target.UserKey,

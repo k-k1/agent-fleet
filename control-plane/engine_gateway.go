@@ -494,8 +494,8 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// ADR 0084 decision 8, gate 3: the other safety net, for the session token's own 30-day
-	// life. mv is already in hand right after auth, so this sits next to the existing
-	// engine_off / engine_unavailable checks below rather than adding a second store round trip.
+	// life. It costs two small reads per request — the tenant row and this member's grant
+	// (#1215), the latter narrowed to at most one row per role.
 	gate, aerr := g.engineGateFor(r.Context(), mv)
 	if aerr != nil {
 		writeAPIErr(w, aerr)

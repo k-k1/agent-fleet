@@ -152,8 +152,9 @@ func (e *engineRuntimeState) queueRow() map[string]any {
 // the per-row truth decision 11's popover needs.
 //
 // gate is the CALLER's tenant limits and member grant (ADR 0084 decision 7, #1215), read once
-// per call — not once per row here — so both callers (the events tick and the REST fallback) pay exactly one tenant
-// lookup per invocation, cached or not, rather than this loop multiplying it by the row count.
+// per call — not once per row here — so both callers (the events tick and the REST fallback)
+// pay exactly one tenant lookup per invocation, cached or not, rather than this loop
+// multiplying it by the row count.
 func enginesMemberPayload(ctx context.Context, reg *engineRegistry, gate engineRoleGate) map[string]any {
 	out := []map[string]any{}
 	for _, e := range reg.list() {
@@ -185,12 +186,11 @@ func enginesMemberPayload(ctx context.Context, reg *engineRegistry, gate engineR
 // read. And it is a short TTL, not a read-once-per-connection cache — the latter was
 // considered and rejected, because a grant revoked mid-connection would then never reach an
 // already-open tab; the tenant would have to close and reopen it to see the pill disappear.
-// invalidateTenantEngineLimits (called from SetTenantLimits, tenant_wiring.go, right next to
-// the Agent-side push decision 9 already does) drops a tenant's entry the moment a super_admin
-// saves, so in practice a denial reaches an open tab on its very next tick — the TTL below is
-// only the fallback bound for whatever calls tenantEngineLimitsFor WITHOUT going through that
-// invalidation (there is none today; it exists so a future caller cannot regress to "stale
-// until reconnect" by skipping the eviction).
+// invalidateTenantEngineLimits (called from cpTenant.PushEngineCatalogChanged, tenant_wiring.go,
+// on every save of the tenant gate or the member grants) drops a tenant's entry at once, so in
+// practice a change reaches an open tab on its very next tick — the TTL below is only the
+// fallback bound for a write that skips that invalidation (there is none today; it exists so a
+// future writer cannot regress to "stale until reconnect").
 var tenantEngineLimitsCache sync.Map // tenantID (string) -> *tenantEngineLimitsEntry
 
 // tenantEngineLimitsTTL matches engineViewTTL's order of magnitude (engine_ecs.go): short
@@ -204,19 +204,13 @@ type tenantEngineLimitsEntry struct {
 	acc store.EngineAccess // the tenant_admin's per-member layer (#1215), cached with lim
 }
 
-// tenantEngineLimitsFor is gate 4's read, cached as described above. A read failure or a nil
-// store keeps whatever was cached before (zero value on a first failure, which resolves every
-// role as allowed) rather than treating the error as a denial — this stream is informational
-// only, and the request-time gates (engine_gateway.go) enforce access independently of what a
-// tab happens to be showing.
-func tenantEngineLimitsFor(ctx context.Context, mgr *manager, tenantID string) tenantLimits {
-	lim, _ := tenantEngineAccessFor(ctx, mgr, tenantID)
-	return lim
-}
-
-// tenantEngineAccessFor is tenantEngineLimitsFor with the member layer read alongside, in
-// the same cache entry, so adding the layer did not add a second read per tick. Both
-// reads fail open for the reason given above.
+// tenantEngineAccessFor is gate 4's read of both layers — the tenant limits and the member
+// grants (#1215) — cached as described above in one entry, so the member layer adds no read
+// per tick. The entry is replaced only when both reads succeed, so it never pairs a fresh
+// limits blob with stale grants. A read failure or a nil store keeps whatever was cached
+// before (zero value on a first failure, which resolves every role as allowed) rather than
+// treating the error as a denial — this stream is informational only, and the request-time
+// gates (engine_gateway.go) enforce access independently of what a tab happens to be showing.
 func tenantEngineAccessFor(ctx context.Context, mgr *manager, tenantID string) (tenantLimits, store.EngineAccess) {
 	if tenantID == "" {
 		return tenantLimits{}, store.EngineAccess{}

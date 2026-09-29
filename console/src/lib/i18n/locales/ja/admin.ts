@@ -1141,6 +1141,8 @@ export const admin = {
   "tenant.engine_access_members_only": "許可したメンバーだけ",
   "tenant.engine_access_tenant_denied": "このテナントではデプロイ管理者が利用を止めています。ここでは変更できません。",
   "tenant.engine_access_admin": "テナント管理者",
+  "tenant.engine_access_load_failed": "設定を読み込めませんでした。時間をおいて開き直してください。",
+  "tenant.engine_access_save_failed": "保存できませんでした。接続を確かめてもう一度お試しください。",
   "tenant.engine_access_state_tenant_off": "テナント全体で停止中のため使えません（デプロイ管理者の設定）。",
   "tenant.engine_access_state_everyone": "いまはメンバー全員が使えます。チェックは「許可したメンバーだけ」にしたときに効きます。",
   "tenant.engine_access_state_granted": "使えます（許可したメンバーだけ）。",

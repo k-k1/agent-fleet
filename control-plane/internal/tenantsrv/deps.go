@@ -70,7 +70,8 @@ type CP interface {
 	// engine catalogue view moved (ADR 0084 decision 9) — the tenant-scoped counterpart
 	// of the deployment-wide push engine_usage.go already does for an operator-side
 	// engine change. Fire-and-forget, like that one: the caller does not wait on it.
-	PushEngineCatalogChanged(ctx context.Context, tenantID string)
+	// reason only labels the log line on the Agent side.
+	PushEngineCatalogChanged(ctx context.Context, tenantID, reason string)
 	// InvalidateTenantLogin drops the cached per-tenant login rules. Those rules ARE
 	// the entry gate, so every write that changes who may sign in calls it.
 	InvalidateTenantLogin()

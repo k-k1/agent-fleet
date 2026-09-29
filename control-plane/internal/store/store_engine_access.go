@@ -41,6 +41,10 @@ func (a EngineAccess) Allows(membershipID, role string) bool {
 // EngineAccessStore holds the tenant_admin's per-member engine restriction (#1215).
 type EngineAccessStore interface {
 	GetEngineAccess(ctx context.Context, tenantID string) (EngineAccess, error)
+	// GetMemberEngineAccess is GetEngineAccess narrowed to one membership, in one query that
+	// reads at most one row per role: the gateway runs it on every relayed request, where
+	// reading the whole tenant's grants would scale each request with the member count.
+	GetMemberEngineAccess(ctx context.Context, tenantID, membershipID string) (EngineAccess, error)
 	SetEngineMembersOnly(ctx context.Context, tenantID, role string, on bool) error
 	// SetEngineGrant grants or revokes one role for one membership. The caller has
 	// checked that the membership belongs to tenantID.
@@ -79,6 +83,33 @@ func (s *SQL) GetEngineAccess(ctx context.Context, tenantID string) (EngineAcces
 			out.Grants[mid] = map[string]bool{}
 		}
 		out.Grants[mid][role] = true
+	}
+	return out, rows.Err()
+}
+
+func (s *SQL) GetMemberEngineAccess(ctx context.Context, tenantID, membershipID string) (EngineAccess, error) {
+	out := EngineAccess{MembersOnly: map[string]bool{}, Grants: map[string]map[string]bool{membershipID: {}}}
+	// Only restricted roles matter: a grant for a role open to everyone changes nothing, so
+	// the policy rows drive the query and the grant is joined onto them.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT p.role, CASE WHEN g.role IS NULL THEN 0 ELSE 1 END
+		   FROM engine_access_policy p
+		   LEFT JOIN engine_access_grant g ON g.membership_id=? AND g.role=p.role
+		  WHERE p.tenant_id=?`, membershipID, tenantID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role string
+		var granted int
+		if err := rows.Scan(&role, &granted); err != nil {
+			return out, err
+		}
+		out.MembersOnly[role] = true
+		if granted == 1 {
+			out.Grants[membershipID][role] = true
+		}
 	}
 	return out, rows.Err()
 }

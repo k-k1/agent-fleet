@@ -44,8 +44,12 @@ const ROLE_LABEL = {
 } as const satisfies Record<EngineRole, string>;
 
 function useEngineAccess(slug: string) {
+  const tr = useT();
   const toast = useToast();
   const [view, setView] = useState<EngineAccessView | null>(null);
+  // Why the first read produced nothing. The tenant screen has to say it (an empty page reads
+  // as a broken screen); the member panel ignores it and simply stays absent.
+  const [failed, setFailed] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const base = `api/admin/tenants/${encodeURIComponent(slug)}/engine-access`;
 
@@ -54,11 +58,17 @@ function useEngineAccess(slug: string) {
       const d = await api(base);
       // Shape-checked rather than trusted: a CP older than #1215 answers this path with
       // something else, and the member detail page must not break over a panel it can omit.
-      if (d && !d.error && Array.isArray(d.roles) && Array.isArray(d.members)) setView(d);
+      if (d && !d.error && Array.isArray(d.roles) && Array.isArray(d.members)) {
+        setView(d);
+        setFailed(null);
+      } else {
+        setFailed(d?.error ? errText(d.error) : tr("tenant.engine_access_load_failed"));
+      }
     } catch {
-      /* transient; the panel keeps its last values */
+      // Transient: a panel already drawn keeps its last values; a first read says it failed.
+      setFailed(tr("tenant.engine_access_load_failed"));
     }
-  }, [base]);
+  }, [base, tr]);
   useEffect(() => {
     load();
   }, [load]);
@@ -72,17 +82,28 @@ function useEngineAccess(slug: string) {
         return;
       }
       await load();
+    } catch {
+      // A rejected request (network down) would otherwise vanish as an unhandled rejection;
+      // the controlled checkbox snaps back, so without this the click just looks ignored.
+      toast(tr("tenant.engine_access_save_failed"));
     } finally {
       setBusy(false);
     }
   };
-  return { view, busy, put };
+  return { view, failed, busy, put };
 }
 
 export function TenantEngineAccessView({ slug }: { slug: string }) {
   const tr = useT();
-  const { view, busy, put } = useEngineAccess(slug);
-  if (!view) return null;
+  const { view, failed, busy, put } = useEngineAccess(slug);
+  if (!view) {
+    return (
+      <section className="admin-panel engine-access">
+        <h4>{tr("tenant.engine_access_title")}</h4>
+        <p className={failed ? "admin-hint warn" : "muted"}>{failed ?? tr("common.loading")}</p>
+      </section>
+    );
+  }
 
   const roleOf = (r: EngineRole) => view.roles.find((x) => x.role === r);
   const roles = view.roles.map((r) => r.role);

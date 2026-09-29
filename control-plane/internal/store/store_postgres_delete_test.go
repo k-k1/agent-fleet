@@ -67,6 +67,9 @@ func TestPostgresDeleteCascade(t *testing.T) {
 	if _, ok, err := st.GetUserLimit(ctx, mem.ID); err != nil || ok {
 		t.Errorf("the quota survived (ok=%v err=%v)", ok, err)
 	}
+	if acc, err := st.GetEngineAccess(ctx, tn.ID); err != nil || len(acc.Grants) != 0 {
+		t.Errorf("the engine grant survived (%+v err=%v)", acc.Grants, err)
+	}
 	if rows, err := st.ListUsage(ctx, tn.ID, "2026-07-01", "2026-07-01"); err != nil || len(rows) == 0 {
 		t.Errorf("occupancy history was deleted: %+v %v", rows, err)
 	}
@@ -76,6 +79,9 @@ func TestPostgresDeleteCascade(t *testing.T) {
 	}
 	if _, ok, _ := st.GetTenantBySlug(ctx, "sales"); ok {
 		t.Error("the tenant survived")
+	}
+	if acc, err := st.GetEngineAccess(ctx, tn.ID); err != nil || len(acc.MembersOnly) != 0 {
+		t.Errorf("the engine access policy survived (%+v err=%v)", acc.MembersOnly, err)
 	}
 	if rows, err := st.ListUsage(ctx, tn.ID, "2026-07-01", "2026-07-01"); err != nil || len(rows) == 0 {
 		t.Errorf("occupancy history was deleted with the tenant: %+v %v", rows, err)

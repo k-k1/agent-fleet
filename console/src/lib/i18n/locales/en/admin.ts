@@ -1150,6 +1150,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.engine_access_members_only": "Granted members only",
   "tenant.engine_access_tenant_denied": "The deployment admin has turned this off for the tenant. It cannot be changed here.",
   "tenant.engine_access_admin": "tenant admin",
+  "tenant.engine_access_load_failed": "Could not load the setting. Try reopening it in a moment.",
+  "tenant.engine_access_save_failed": "Could not save. Check the connection and try again.",
   "tenant.engine_access_state_tenant_off": "Not available: turned off for the whole tenant (deployment admin's setting).",
   "tenant.engine_access_state_everyone": "Every member may use it right now. The tick matters once the role is set to granted members only.",
   "tenant.engine_access_state_granted": "Available (granted members only).",

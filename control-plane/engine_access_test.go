@@ -227,3 +227,98 @@ type tenantEngineAccessView struct {
 		Grants       []string `json:"grants"`
 	} `json:"members"`
 }
+
+// /props runs the same gates as the relay, so an ungranted member is refused there too.
+func TestEnginePropsHonoursTheMemberGrant(t *testing.T) {
+	g, mid := engineTenantGateFixture(t)
+	ctx := t.Context()
+	mv, _, _ := g.mgr.store.GetMembershipByID(ctx, mid["allowed"])
+	props := func() (int, string) {
+		tok := mintEngineSessionToken(g.reg.signKey, mid["allowed"], "sess-1", "llm", time.Now().Add(time.Hour))
+		rec := httptest.NewRecorder()
+		g.props(rec, propsRequest(tok))
+		return rec.Code, rec.Body.String()
+	}
+	// Positive control: before the restriction the gate lets it through (whatever the box
+	// then answers, it is not the member refusal).
+	if code, body := props(); code == http.StatusForbidden {
+		t.Fatalf("positive control: %d %s", code, body)
+	}
+	if err := g.mgr.store.SetEngineMembersOnly(ctx, mv.TenantID, store.EngineAccessLLM, true); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := props(); code != http.StatusForbidden || !strings.Contains(body, "tenant admin") {
+		t.Errorf("ungranted member's /props = %d %s, want 403 naming the tenant admin", code, body)
+	}
+}
+
+// The tenant_admin of another tenant cannot read or write this tenant's list; a super_admin can.
+func TestTenantEngineAccessAPIOtherTenantAdminAndSuperAdmin(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, _, _ := networkFixture(t)
+	other, _ := st.CreateTenant(ctx, "other", "Other")
+	boss2, _ := st.UpsertIdentity(ctx, "boss2@example.com", "boss2-example-com", "")
+	if _, err := st.EnsureMembership(ctx, boss2.ID, other.ID, "tenant_admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertIdentity(ctx, "op@example.com", "op-example-com", "super_admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Positive control: the same caller is a working tenant_admin on their own tenant.
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants/other/engine-access", nil)
+	r.SetPathValue("slug", "other")
+	r.Header.Set("X-Forwarded-Email", "boss2@example.com")
+	w := httptest.NewRecorder()
+	newAdminAPI(mgr).tenantEngineAccess(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("positive control: own tenant = %d %s", w.Code, w.Body.String())
+	}
+
+	if w := callEngineAccess(mgr, http.MethodGet, "", "boss2@example.com", ""); w.Code != http.StatusForbidden {
+		t.Errorf("another tenant's admin GET = %d, want 403", w.Code)
+	}
+	if w := callEngineAccess(mgr, http.MethodPut, "", "boss2@example.com", `{"role":"llm","members_only":true}`); w.Code != http.StatusForbidden {
+		t.Errorf("another tenant's admin PUT = %d, want 403", w.Code)
+	}
+	if w := callEngineAccess(mgr, http.MethodGet, "", "op@example.com", ""); w.Code != http.StatusOK {
+		t.Errorf("super_admin GET = %d %s, want 200", w.Code, w.Body.String())
+	}
+}
+
+// A tick on a role still open to everyone changes nobody's access, so it pushes nothing; the
+// same tick on a restricted role pushes.
+func TestMemberGrantPushesOnlyForARestrictedRole(t *testing.T) {
+	pushed := make(chan string, 8)
+	orig := notifyEngineCatalogChangedForTenant
+	notifyEngineCatalogChangedForTenant = func(_ context.Context, _ *manager, _, reason string) { pushed <- reason }
+	t.Cleanup(func() { notifyEngineCatalogChangedForTenant = orig })
+
+	st, mgr, tn, mv, _ := networkFixture(t)
+	const boss = "boss@acme.co.jp"
+	grant := `{"membership_id":"` + mv.MembershipID + `","role":"image","granted":true}`
+	if w := callEngineAccess(mgr, http.MethodPut, "/members", boss, grant); w.Code != http.StatusOK {
+		t.Fatalf("grant = %d %s", w.Code, w.Body.String())
+	}
+	if err := st.SetEngineMembersOnly(context.Background(), tn.ID, store.EngineAccessImage, true); err != nil {
+		t.Fatal(err)
+	}
+	if w := callEngineAccess(mgr, http.MethodPut, "/members", boss, grant); w.Code != http.StatusOK {
+		t.Fatalf("grant = %d %s", w.Code, w.Body.String())
+	}
+	// The restricted-role push is the positive control: waiting for it also proves the open-role
+	// save (made first, on the same goroutine path) had its chance to push and did not.
+	select {
+	case reason := <-pushed:
+		if reason != "engine access grant changed" {
+			t.Errorf("reason = %q", reason)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the restricted-role grant did not push")
+	}
+	select {
+	case reason := <-pushed:
+		t.Errorf("a second push arrived (%q): the open-role grant pushed", reason)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

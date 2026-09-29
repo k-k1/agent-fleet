@@ -1317,6 +1317,9 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 		`DELETE FROM tenant_git_oauth WHERE tenant_id=?`,
 		`DELETE FROM egress_allowlist WHERE tenant_id=?`,
 		`DELETE FROM engine_access_policy WHERE tenant_id=?`,
+		// A grant written for a membership deleted between the roster check and the insert
+		// has no membership left to cascade from; the tenant id still reaches it.
+		`DELETE FROM engine_access_grant WHERE tenant_id=?`,
 		// The login rules and allowed_cidrs are columns on tenant, so this one
 		// statement takes them with it.
 		`DELETE FROM tenant WHERE id=?`,

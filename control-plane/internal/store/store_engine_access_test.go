@@ -84,10 +84,63 @@ func TestEngineAccessRoundTripAndCascade(t *testing.T) {
 	if n := countRows(t, st, "engine_access_grant"); n != 0 {
 		t.Errorf("a deleted membership left %d grant row(s)", n)
 	}
+	// DeleteTenant with a live membership still holding a grant, and an orphan grant whose
+	// membership is already gone (the roster-check/insert race): both must go.
 	must(st.SetEngineGrant(ctx, tn.ID, a, EngineAccessLLM, true))
-	must(st.DeleteMembership(ctx, a))
+	must(st.SetEngineGrant(ctx, tn.ID, "M-vanished", EngineAccessLLM, true))
+	if err := st.SetMembershipStatus(ctx, a, "removed"); err != nil {
+		t.Fatal(err)
+	}
 	must(st.DeleteTenant(ctx, tn.ID))
 	if n := countRows(t, st, "engine_access_policy"); n != 0 {
 		t.Errorf("a deleted tenant left %d policy row(s)", n)
+	}
+	if n := countRows(t, st, "engine_access_grant"); n != 0 {
+		t.Errorf("a deleted tenant left %d grant row(s)", n)
+	}
+}
+
+func TestGetMemberEngineAccessMatchesTheWholeTenantRead(t *testing.T) {
+	ctx := context.Background()
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	const tid = "T-1"
+	for _, c := range []struct {
+		role string
+		mo   bool
+	}{{EngineAccessLLM, true}, {EngineAccessImage, false}} {
+		if err := st.SetEngineMembersOnly(ctx, tid, c.role, c.mo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, g := range [][2]string{{"M-a", EngineAccessLLM}, {"M-a", EngineAccessImage}, {"M-b", EngineAccessImage}} {
+		if err := st.SetEngineGrant(ctx, tid, g[0], g[1], true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	whole, err := st.GetEngineAccess(ctx, tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mid := range []string{"M-a", "M-b", "M-none"} {
+		one, err := st.GetMemberEngineAccess(ctx, tid, mid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, role := range []string{EngineAccessLLM, EngineAccessImage} {
+			if one.Allows(mid, role) != whole.Allows(mid, role) {
+				t.Errorf("%s/%s: narrow read says %v, whole read says %v", mid, role, one.Allows(mid, role), whole.Allows(mid, role))
+			}
+		}
+	}
+	// Positive control: the fixture really does separate a and b on llm.
+	if !whole.Allows("M-a", EngineAccessLLM) || whole.Allows("M-b", EngineAccessLLM) {
+		t.Fatalf("fixture: %+v", whole)
 	}
 }
