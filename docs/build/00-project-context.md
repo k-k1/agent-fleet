@@ -27,7 +27,7 @@ The forward plan is [roadmap.md](../roadmap.md).
 | Topic | Decision | Rationale / notes |
 |------|------|-----------|
 | Agent auth | each user connects their own account/seat from the Console (Claude: OAuth code paste; Codex: ChatGPT device code or API key; Copilot rides the GitHub connection; Cursor / Kiro: browser sign-in; OpenCode: provider API keys or an opencode account) | the console surfaces each user's auth state and prompts re-login; a manual `/login` in the terminal still works as a fallback |
-| User isolation | one container per user | highly portable, strong isolation, fits AWS well |
+| User isolation | one container per user | highly portable, strong isolation, fits AWS well. Why it is one long-lived workspace per member rather than an environment per task: [decisions/0104](../decisions/0104-long-lived-member-workspace.md) |
 | Target scale | ~20 users (concurrent) | a single cluster + an orchestration layer is enough |
 | Persistence | `local`=bind mount / `aws`=EBS/EFS | home, clones, credentials and history are kept on disk |
 | Git auth | HTTPS tokens/OAuth via Console (Connections) | downgraded from SSH keys; the CP holds no secrets ([decisions/0003](../decisions/0003-ssh-to-connections.md)) |

@@ -26,7 +26,7 @@ Docker 無しの native という配布形態が出荷済み、0.x のリリー�
 | 論点 | 決定 | 理由・補足 |
 |------|------|-----------|
 | エージェント認証 | 利用者が自分のアカウント／席を Console から接続する（Claude: OAuth コード貼り付け、Codex: ChatGPT のデバイスコードか API キー、Copilot は GitHub 接続に相乗り、Cursor / Kiro: ブラウザサインイン、OpenCode: プロバイダの API キーか opencode アカウント） | Console が各人の認証状態を出して再ログインを促す。端末で手動 `/login` する逃げ道も残っている |
-| 利用者の隔離 | 1 利用者 1 コンテナ | 移植性が高く隔離が強い。AWS にもよく載る |
+| 利用者の隔離 | 1 利用者 1 コンテナ | 移植性が高く隔離が強い。AWS にもよく載る。タスクごとの環境でなくメンバーごとに長寿命のワークスペースを 1 つ持たせる理由は [decisions/0104](../decisions/0104-long-lived-member-workspace.ja.md) |
 | 想定規模 | 同時 20 人程度 | 1 クラスタ＋オーケストレーション層で足りる |
 | 永続化 | `local`=バインドマウント / `aws`=EBS/EFS | ホーム・クローン・資格情報・履歴をディスクに残す |
 | git 認証 | Console（接続）経由の HTTPS トークン／OAuth | SSH 鍵から格下げ。CP は秘密を持たない（[decisions/0003](../decisions/0003-ssh-to-connections.ja.md)） |
