@@ -186,15 +186,15 @@ Workspace イメージと Agent は全ターゲットで同一物 — それが�
   バックアップする。
 - **AWS では `WS_DATA` は何も持たない**（`30-ingress` は `/tmp` を指す）。状態は RDS・EFS、
   それに `ecs-ec2` ではメンバーの EBS home に分かれ、守られ方はそろっていない — **テンプレートが
-  バックアップを宣言しているのは RDS だけ（`Persistence=retain` のとき）で EFS には無く、EBS の home の
+  バックアップを宣言するのは RDS と EFS で、どちらも `Persistence=retain` のときだけ。EBS の home の
   バックアップは既定で無効。** スタック削除時にリソースを
   残すことはバックアップではない:
   - RDS: `10-data` の `Persistence=retain` が 7 日の自動バックアップ・最終スナップショット・
     削除保護を入れる。
-  - EFS: `Persistence=retain` はスタックを消したときにファイルシステムを残すだけ。テンプレートは
-    EFS のバックアップを宣言していない（`BackupPolicy` も AWS Backup のプランも無い）ので、
-    稼働中のファイルシステムで消えたり壊れたりしたものはそこからは戻せない（#1195）。ecs runbook の
-    アップグレード手順は、AWS Backup の復旧ポイントを手で取るよう求めている。
+  - EFS: `Persistence=retain` はスタックを消したときにファイルシステムを残し、専用のボールトへの
+    AWS Backup の日次プラン（復旧ポイントの保持は `EfsBackupRetentionDays`・既定 7 日）を加える。
+    復元は手作業 — メンバー 1 人分のディレクトリかファイルシステム全体を、稼働中のデータの横の
+    ディレクトリへ戻してから書き戻す: ecs runbook の §EFS backup and restore。
   - EBS の home（`ecs-ec2`）: 守るのは §9.5 の任意の home バックアップ
     （`AF_ECS_EC2_BACKUP_EVERY_SEC`・既定は無効）だけ。
 - **ECS のアップグレードはアプリのタグだけではない。** リリースが新しい ECR リポジトリと、まだ誰も
@@ -253,6 +253,7 @@ AWS の形態は課金の**形**が違う。VM 1 台は**人数によらずほ�
 | ロードバランサ | $18 | + 従量 |
 | シークレット・サービスディスカバリ・レジストリ | ≈ $1 | |
 | EFS | 使用量 | `ecs` では全員の home、`ecs-ec2` では資格情報だけ |
+| EFS のバックアップ | 使用量 | `Persistence=retain` のときだけ: バックアップ保存 $0.06/GB 月・日次 7 点 |
 | **床** | **≈ $107/月 + EFS** | |
 
 **Workspace 1 つあたり:**

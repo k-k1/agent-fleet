@@ -207,16 +207,16 @@ substrate underneath it.
   downgraded** — always back up first.
 - **On AWS `WS_DATA` holds nothing** (`30-ingress` points it at `/tmp`). The state is
   RDS, EFS and, on `ecs-ec2`, the members' EBS homes, and they are not protected alike —
-  **the templates declare backups for RDS only (with `Persistence=retain`) and none for
-  EFS, and the EBS home backups are off by default.** Retaining a resource when its
-  stack is deleted is not a backup:
+  **the templates declare backups for RDS and EFS only with `Persistence=retain`, and
+  the EBS home backups are off by default.** Retaining a resource when its stack is
+  deleted is not a backup:
   - RDS: `Persistence=retain` in `10-data` turns on 7-day automated backups, a final
     snapshot and deletion protection.
-  - EFS: `Persistence=retain` only keeps the file system when the stack is deleted. The
-    templates declare no EFS backup (no `BackupPolicy`, no AWS Backup plan), so
-    something deleted or corrupted on a running file system cannot be recovered from
-    it (#1195). The ecs runbook's upgrade step asks for an AWS Backup point taken by
-    hand.
+  - EFS: `Persistence=retain` keeps the file system when the stack is deleted and adds
+    a daily AWS Backup plan (points kept `EfsBackupRetentionDays`, 7 by default) in a
+    vault of its own. Restores are manual — one member's directories or the whole file
+    system, into a directory beside the live data and copied back: the ecs runbook's
+    §EFS backup and restore.
   - EBS homes (`ecs-ec2`): only the optional home backups of §9.5
     (`AF_ECS_EC2_BACKUP_EVERY_SEC`, off by default).
 - **On ECS an upgrade is not only the application's tag.** A release can also need a new
@@ -279,6 +279,7 @@ Properties to watch:
 | Load balancer | $18 | plus usage |
 | Secrets, service discovery, registry | ≈ $1 | |
 | EFS | by usage | every home on `ecs`; credentials only on `ecs-ec2` |
+| EFS backups | by usage | `Persistence=retain` only: $0.06/GB-month of backup storage, 7 daily points |
 | **Floor** | **≈ $107/month + EFS** | |
 
 **Per workspace:**

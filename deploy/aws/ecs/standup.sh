@@ -15,7 +15,8 @@
 #
 #  1. Order and capabilities. Each stack imports the previous one's exports, so the order
 #     is fixed. `10-data` declares `Transform: AWS::LanguageExtensions` and so needs
-#     CAPABILITY_AUTO_EXPAND; `20-platform` and `40-ec2-pool` create named IAM roles and
+#     CAPABILITY_AUTO_EXPAND, plus CAPABILITY_IAM for the EFS backup role it creates under
+#     Persistence=retain; `20-platform` and `40-ec2-pool` create named IAM roles and
 #     so need CAPABILITY_NAMED_IAM (without them the call is refused immediately).
 #  2. ECR starts empty. The ECR repositories are 20-platform resources with
 #     `EmptyOnDelete: true`, so a teardown took the images with them. Put them back with
@@ -133,6 +134,15 @@ done
 [ -z "$AF_STACK_POOL" ] || [ -r "$(af_params_file 40-ec2-pool)" ] || say_missing "AF_STACK_POOL=$AF_STACK_POOL but there is no params/40-ec2-pool"
 [ -z "$AF_STACK_TTS" ] || [ -r "$(af_params_file 50-tts)" ] || say_missing "AF_STACK_TTS=$AF_STACK_TTS but there is no params/50-tts"
 [ -z "${AF_STACK_ENGINES:-}" ] || [ -r "$(af_params_file 60-engines)" ] || say_missing "AF_STACK_ENGINES=$AF_STACK_ENGINES but there is no params/60-engines"
+# 10-data's EFS backup vault is "<stack>-efs-<8 hex>" and AWS stops vault names at 50, so a
+# longer data stack name rolls 10-data back — and only under retain, so a delete trial run
+# passes with the same name. params/10-data is what the deploy passes, so it counts even
+# when the recorded AF_PERSISTENCE disagrees.
+data_retain=0
+[ "$AF_PERSISTENCE" = retain ] && data_retain=1
+grep -qx 'Persistence=retain' "$(af_params_file 10-data)" 2>/dev/null && data_retain=1
+[ "$data_retain" = 0 ] || [ "${#AF_STACK_DATA}" -le 37 ] \
+  || say_missing "data stack name $AF_STACK_DATA is ${#AF_STACK_DATA} characters; under Persistence=retain it must be at most 37 (its EFS backup vault name stops at 50)"
 
 # The ECS service-linked role. A new account does not have it, and creating the cluster
 # with a Service Connect default namespace then fails with "ECS Service Linked Role is not
@@ -319,7 +329,7 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
 }
 
 deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network
-deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND
+deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND CAPABILITY_IAM
 deploy_stack "$AF_STACK_PLATFORM" 20-platform.yaml 20-platform CAPABILITY_NAMED_IAM
 
 # --- 4) images (ECR starts out empty) ----------------------------------------
