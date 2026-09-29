@@ -783,30 +783,43 @@ var comfyQwenEditFamilies = []struct {
 // worth of declared files.
 var comfyQwenEditFiles = comfyQwenEditFamilies[0].files
 
+// The inpaint graph has a golden of its own because the props reader rebuilds a job from it: its
+// mask arrives through LoadImage + ImageToMask rather than LoadImageMask, and a reader that only
+// knew the latter reported such a picture as a plain edit with no mask (TestPropsReadsTheMask).
 func TestComfyWorkflowQwenImageEditMatchesGoldenFixture(t *testing.T) {
+	ops := []struct {
+		op     Op
+		mask   string
+		suffix string
+	}{
+		{OpEdit, "", ""},
+		{OpInpaint, "af-mask.png", "-inpaint"},
+	}
 	for _, c := range comfyQwenEditFamilies {
-		t.Run(string(c.family), func(t *testing.T) {
-			p := comfyGoldenParams
-			p.Op, p.Images = OpEdit, []string{"af-photo.png"}
-			g, err := comfyBuildGraph(c.family, c.files, p)
-			if err != nil {
-				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
-			}
-			got, err := json.MarshalIndent(g, "", "  ")
-			if err != nil {
-				t.Fatal(err)
-			}
-			got = append(got, '\n')
-			path := filepath.Join("testdata", "comfy_"+string(c.family)+".golden.json")
-			want, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("reading %s: %v", path, err)
-			}
-			if string(got) != string(want) {
-				t.Errorf("%s's graph no longer matches %s.\nGot:\n%s\nIf this change is intended, "+
-					"overwrite the fixture and explain why in the commit.", c.family, path, got)
-			}
-		})
+		for _, o := range ops {
+			t.Run(string(c.family)+"/"+string(o.op), func(t *testing.T) {
+				p := comfyGoldenParams
+				p.Op, p.Images, p.Mask = o.op, []string{"af-photo.png"}, o.mask
+				g, err := comfyBuildGraph(c.family, c.files, p)
+				if err != nil {
+					t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
+				}
+				got, err := json.MarshalIndent(g, "", "  ")
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, '\n')
+				path := filepath.Join("testdata", "comfy_"+string(c.family)+o.suffix+".golden.json")
+				want, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("reading %s: %v", path, err)
+				}
+				if string(got) != string(want) {
+					t.Errorf("%s's graph no longer matches %s.\nGot:\n%s\nIf this change is intended, "+
+						"overwrite the fixture and explain why in the commit.", c.family, path, got)
+				}
+			})
+		}
 	}
 }
 
