@@ -424,6 +424,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest)  // LLM branch-name suggestion (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
 	mux.HandleFunc("GET /api/sessions/{name}/skills", rest)           // mirror skill picker (docs/log/50 / ADR0034)
+	mux.HandleFunc("GET /api/sessions/{name}/committed", rest)        // changed-files bar's "committed" verdict (docs/log/68 P2)
 	// Per-answer translation (docs/log/97) — the OWNER's route only, deliberately with no twin
 	// in registerSessionShareRoutes: pressing it runs a model in the owner's Workspace and
 	// spends the owner's tokens, so a recipient reading a shared session must not be able to
@@ -752,6 +753,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/repos/{name}/diff", rest)
 	mux.HandleFunc("GET /api/repos/{name}/log", rest)
 	mux.HandleFunc("GET /api/repos/{name}/graph", rest)
+	mux.HandleFunc("GET /api/repos/{name}/submodules", rest)
 	mux.HandleFunc("GET /api/repos/{name}/show", rest)
 	mux.HandleFunc("POST /api/repos/{name}/stage", rest)
 	mux.HandleFunc("POST /api/repos/{name}/unstage", rest)

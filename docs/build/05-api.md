@@ -111,7 +111,8 @@ agent unchanged (§5.3). "CP" means the CP answers it itself, usually from its d
 - **Path convention: the CP strips `/api` and forwards the rest unchanged**
   (`/api/sessions/x/halt` → `<agent>/sessions/x/halt`). **The CP's route table is an explicit
   allowlist**: an agent route with no line in `control-plane/routes.go` cannot be reached
-  from the Console. The relay rejects `.`, `..` and empty interior path segments with 400.
+  from the Console. `TestConsoleAPIPathsHaveCPRoutes` (`control-plane/console_routes_test.go`)
+  fails when a literal `api/...` path in `console/src` has no CP route. The relay rejects `.`, `..` and empty interior path segments with 400.
   It does not follow the agent's redirects. It adds `X-AF-Relay: cp`, a hint for the
   agent's log that the agent never decides anything on.
 - The agent-specific surfaces are `/ws/pty`, `/ws/browser`, `/ws/browser-attachments`,

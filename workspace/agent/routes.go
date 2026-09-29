@@ -227,6 +227,7 @@ func buildMux() *http.ServeMux {
 	// The "committed" verdict for the changed-files bar (docs/log/68 P2). Separate from the
 	// transcript's own list: it returns only paths that appeared in a commit made since the
 	// session started.
+	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /sessions/{name}/committed", sessionx.HandleSessionCommittedFiles)
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", sessionx.HandleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
