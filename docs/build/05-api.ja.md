@@ -176,15 +176,17 @@ membership を解決し直す。
   super_admin は配備全体を、tenant_admin は自テナントだけを見る（テナント別のルートではハンドラの中で
   検査する）。エンジンの一覧と取り込みのルートは、オペレーターが取り込みを許したテナントの
   tenant_admin も通す。
-- **キャッシュ**: JSON の `GET` はすべて弱い `ETag` を持ち、本文が変わらなければ `304` を返す
-  （`etagJSON`）。SSE とファイルのダウンロードは素通し。Console のハッシュ無しの入口（`index.html`
+- **キャッシュ**: 通常の `200` の JSON `GET` には弱い `ETag` を付け、本文が変わらなければ `304` を返す
+  （`etagJSON`）。`no-store` の応答、4 MiB を超える本文、途中で flush するハンドラ、SSE、
+  ファイルのダウンロードは素通し。Console のハッシュ無しの入口（`index.html`
   など）は `no-store` で配るので、デプロイは次の読み込みで効く。`/assets/` 以下のハッシュ付き
   ファイルは immutable として 1 年キャッシュさせる。
 
 ## 5.5 監査の書き込み点
 
-REST 中継は**変更系**の操作を 2xx のときに記録する（`auditActionTarget`）。対象は URL からだけ取り、
-本文は読まない:
+REST 中継は**変更系**の操作を 2xx のときに記録する（`auditActionTarget`）。対象は URL のパスか
+クエリから取る。例外は `PUT /api/fs/file` で、CP が検証済みの JSON 本文の `path` を使う。
+ファイルの内容は監査に残さない:
 
 - ファイルシステムへの書き込み（`fs.*`）
 - リポジトリの clone・svn checkout・削除と、取り込みジョブの取り消し（`repo.*`）

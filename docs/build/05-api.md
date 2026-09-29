@@ -190,15 +190,18 @@ The egress proxy, not a workspace, posts to `POST /internal/egress` and reads
   role-gated. A super_admin sees the whole deployment. A tenant_admin sees only their own
   tenant, checked inside the handler for per-tenant routes. The engine list and ingest
   routes also admit a tenant_admin whose tenant the operator allowed to ingest.
-- **Caching**: every JSON `GET` carries a weak `ETag`, and an unchanged body answers `304`
-  (`etagJSON`). SSE and file downloads pass through untouched. The Console's unhashed entry
+- **Caching**: an ordinary `200` JSON `GET` gets a weak `ETag`, and an unchanged body answers
+  `304` (`etagJSON`). A response marked `no-store`, a body over 4 MiB, a handler that flushes
+  mid-response, SSE and file downloads pass through untouched. The Console's unhashed entry
   points (`index.html` and the like) are served `no-store`, so a deployment is live at the
   next load. The content-hashed files under `/assets/` are cached for a year as immutable.
 
 ## 5.5 Where audit is written
 
-The REST relay records **mutating** operations on a 2xx (`auditActionTarget`), naming the
-target from the URL only, never from the body:
+The REST relay records **mutating** operations on a 2xx (`auditActionTarget`). The target
+comes from the URL path or query. The one exception is `PUT /api/fs/file`: the CP has already
+checked its JSON body, and uses the body's `path`. File contents are never stored in the audit
+log:
 
 - filesystem writes (`fs.*`);
 - repository clone, svn checkout and delete, and import-job cancel (`repo.*`);
