@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Showback (docs/roadmap.md P3-9, operational maturity). The infra cost worth attributing in
+// Showback (docs/log/roadmap.md P3-9, operational maturity). The infra cost worth attributing in
 // the BYO model is *workspace occupancy* — Claude usage is each user's own
 // subscription and not counted; what costs the operator RAM/CPU (or Fargate hours
 // on AWS) is how long each workspace runs. A background sampler credits every

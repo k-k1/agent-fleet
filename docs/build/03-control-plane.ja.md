@@ -104,7 +104,8 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 - **admin ツール** — read（`list_workspaces` / `get_usage` / `list_sessions` / `tail_audit` / egress 観測系）+
   write（`stop_workspace` / `stop_session` / `set_user_quota` / `propose_allowlist_change`＝提案のみ）。
   super_admin / tenant_admin で gate し、write は `audit_log` に `actor_kind=mcp` で記録する。
-- 残: dangerous ツール（鍵ローテ・recreate 等、confirm + dry-run 前提）📋 — [decisions/0006](../decisions/0006-mcp-unified.ja.md)。
+- **dangerous ツール**（鍵ローテ・recreate・idle な Workspace の一括停止）は予定しない。求める声が無く、
+  エージェントにそれをさせてよいかは、作る前にそれ自体の決定が要る（[decisions/0006](../decisions/0006-mcp-unified.ja.md)）。
 
 ## 3.6 memo キュー
 

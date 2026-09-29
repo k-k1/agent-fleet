@@ -20,7 +20,8 @@ invisible, on a single on-prem host (per-user Workspace / AuthGateway / network 
 milestone (P3-10): the Console rebuild (React + Vite), the AWS ECS adapter (P3-7) and the
 compose / ECS / Docker-less native distribution targets are shipped, with 0.x releases
 published to the [distribution repository](https://github.com/k-k1/agent-fleet-dist).
-The forward plan is [roadmap.md](../roadmap.md).
+Open work, the plan ahead included, is tracked in
+[GitHub issues](https://github.com/k-k1/agent-fleet/issues).
 
 ## Settled assumptions (v1)
 

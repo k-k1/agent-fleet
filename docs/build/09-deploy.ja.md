@@ -47,7 +47,7 @@ updated: "2026-07"
 | 入口 | 使いどころ | 備考 |
 |------|-----------|------|
 | **Caddy** | compose 標準 | `PUBLIC_DOMAIN` の DNS を向けるだけで Let's Encrypt 自動取得・更新（WS も透過）。CP と両方 host-net で loopback に到達。既存プロキシで前段する社は外せる（Caddyfile 代替2）|
-| **Tailscale Funnel** | local 運用の一形態 | Funnel → `127.0.0.1:8099` 直結。ホスト固有の手順は HANDOFF の領分 |
+| **Tailscale Funnel** | local 運用の一形態 | Funnel → `127.0.0.1:8099` 直結 |
 | **ALB + ACM** | aws 🚧 | TLS 終端のみ（認証は CP ネイティブ oauth）。ALB OIDC を使う場合は `AUTH=proxy` |
 
 入口を変えたら `PUBLIC_BASE_URL`（外部 https URL）を必ず合わせる — OAuth redirect_uri の素であり、

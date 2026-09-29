@@ -3,7 +3,7 @@
 [English](0001-self-host-vs-saas.md) | 日本語
 
 - 状態: 確定（2026-06-27）
-- 関連: [ロードマップ Phase 3](../roadmap.md) / [dev/07 §7.9 リスクと残課題](../build/07-security.ja.md#79-リスクと残課題)（旧 security §4.7）
+- 関連: [ロードマップ Phase 3](../log/roadmap.md) / [dev/07 §7.9 リスクと残課題](../build/07-security.ja.md#79-リスクと残課題)（旧 security §4.7）
 
 ## 背景
 
@@ -36,7 +36,7 @@ Phase 2 で「オンプレ 1 台・複数ユーザー相互不可視・at-rest �
 | デプロイ先 | 各社の選択（オンプレ Docker 既定 / 自社 AWS 任意） |
 | 規模 | 小（1 デプロイ = 数十〜百ユーザー）。DB は SQLite 既定 |
 
-旧 `platform_admin`（= 我々）は廃止。実行時の階層に vendor は登場しない（[ロードマップ §12.1](../roadmap.md#121-アイデンティティ階層パッケージセルフホスト版)）。
+旧 `platform_admin`（= 我々）は廃止。実行時の階層に vendor は登場しない（[ロードマップ §12.1](../log/roadmap.md#121-アイデンティティ階層（パッケージ・セルフホスト版）)）。
 
 ## 帰結
 

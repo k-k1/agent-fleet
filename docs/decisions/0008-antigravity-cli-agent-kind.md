@@ -3,7 +3,7 @@
 English | [日本語](0008-antigravity-cli-agent-kind.ja.md)
 
 - Status: **adopted** (2026-07-20. Implementation started on the Starter/experimental track, aiming at everyday use over the GCP route. The implementation plan is [32](../log/32-agy-agent-kind.md))
-- See also: [session.go](../../workspace/agent/internal/sessionx/session.go) (session integration) / [Codex auth](../../workspace/agent/internal/agents/codex/auth.go) (the current device-auth implementation) / [0006-mcp-unified](0006-mcp-unified.md) / [HANDOFF §agent kinds](../HANDOFF.md)
+- See also: [session.go](../../workspace/agent/internal/sessionx/session.go) (session integration) / [Codex auth](../../workspace/agent/internal/agents/codex/auth.go) (the current device-auth implementation) / [0006-mcp-unified](0006-mcp-unified.md) / [build/04 §4.3](../build/04-agent.md) (formerly HANDOFF §agent kinds)
 - Origin: a user request — "look into whether the antigravity cli can be built into Agent-Fleet" (investigated 2026-06-29/30)
 
 ## Context
@@ -40,14 +40,14 @@ operational/ToS policy question, not an implementation difference**.
 
 | Route (the BYO login tier) | Used for training | Quota | Fit with self-hosting | Verdict |
 |---|---|---|---|---|
-| **Company Workspace (Gemini for Business / AI Ultra for Business)** | **not collected** (stated explicitly) | enterprise allowance | company-owned seats — matches the direction in [overview](../HANDOFF.md) | ✅ **recommended** |
+| **Company Workspace (Gemini for Business / AI Ultra for Business)** | **not collected** (stated explicitly) | enterprise allowance | company-owned seats — matches the direction in [decisions/0001](0001-self-host-vs-saas.md) | ✅ **recommended** |
 | **A GCP project** | **not used** (nothing is stored outside the private environment) | consumption billing | each user brings their own GCP credentials → **GCP ToS** | ✅ **recommended** |
 | Personal **AI Pro ($20) / Ultra ($249.99)** | **trained on by default** (opt out by turning off "Gemini Apps Activity") | Pro refreshes every 5h, but there are reports of **a 5h lock after 2h** given `agy`'s heavy compute effort | technically BYO-able, but thin | ⚠ **personal evaluation only** (the same shape as "avoid personal Pro/Max" for claude) |
 | Consumer / free | trained on (as above) | **20 req/day/account** (shared across desktop/CLI/SDK) | unfit for production | ⚠ smoke testing only |
 | Claude models via `agy` | — | — | additionally bound by **Anthropic's commercial terms** | take care when combining |
 
 **The company Workspace and GCP project routes line up directly with Agent-Fleet's "1 company =
-1 deployment, self-hosted, BYO"** ([overview](../HANDOFF.md)) and do not step into the ToS grey
+1 deployment, self-hosted, BYO"** ([decisions/0001](0001-self-host-vs-saas.md)) and do not step into the ToS grey
 area that killed SaaS. Personal AI Pro passes the same device-auth technically, but on two
 counts — **training use (opt-out only) and quota exhaustion** — it is avoided for company use
 exactly as claude's personal plans are.
@@ -84,7 +84,7 @@ The same rut as adding codex/opencode. The footprint is small:
 ## PoC results (2026-06-30, in a throwaway `agent-fleet/workspace:dev` container)
 
 Done in a throwaway container from the existing image rather than by building one (to avoid
-[the host OOM risk](../HANDOFF.md)).
+the host OOM risk).
 
 - ✅ **Install works**: `curl -fsSL https://antigravity.google/cli/install.sh | bash` is
   **non-interactive, idempotent and sha512-verified**, installing to `$HOME/.local/bin/agy` (it

@@ -3,7 +3,7 @@
 [English](0002-claude-auth-onboarding.md) | 日本語
 
 - 状態: 確定（続10→11→12 の訂正連鎖の到達点）
-- 関連: [HANDOFF §6.10.3](../HANDOFF.md) / [dev/08 §8.5 Claude 認証・オンボーディング](../build/08-integrations.ja.md)（旧 architecture §2.6） / [history/phase0-poc](../log/phase0-poc.md)
+- 関連: HANDOFF §6.10.3（2026-09 廃止） / [dev/08 §8.5 Claude 認証・オンボーディング](../build/08-integrations.ja.md)（旧 architecture §2.6） / [history/phase0-poc](../log/phase0-poc.md)
 
 ## 背景
 

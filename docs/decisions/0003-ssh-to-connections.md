@@ -3,7 +3,7 @@
 English | [日本語](0003-ssh-to-connections.ja.md)
 
 - Status: decided (Phase 2). Replaces the old `docs/08-bitbucket.md` (the SSH-key model; deleted as obsolete)
-- See also: [HANDOFF §6.6](../HANDOFF.md) / [build/05 API contract](../build/05-api.md) (formerly api-agent §7.0, the API surface map) / [build/07 §7.6 Secrets and envelope encryption](../build/07-security.md#76-secrets-and-envelope-encryption) (formerly security §4.4)
+- See also: [build/08 Integrations](../build/08-integrations.md) (formerly HANDOFF §6.6) / [build/05 API contract](../build/05-api.md) (formerly api-agent §7.0, the API surface map) / [build/07 §7.6 Secrets and envelope encryption](../build/07-security.md#76-secrets-and-envelope-encryption) (formerly security §4.4)
 
 ## Context
 
@@ -37,6 +37,6 @@ via `proxyAgentREST`).
   distribution are all gone.
 - clone/fetch/**push** authenticate transparently; private repositories work through the same
   unified credential helper. A submodule's SSH URL is rewritten to HTTPS on a best-effort basis
-  after cloning ([HANDOFF §6.10.5](../HANDOFF.md)).
+  after cloning ([build/04 §4.6](../build/04-agent.md), formerly HANDOFF §6.10.5).
 - The CP does not hold Bitbucket/GitHub tokens (a smaller exposure surface). Responsibility
   stays scoped to each user.

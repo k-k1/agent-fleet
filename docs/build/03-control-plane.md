@@ -135,8 +135,9 @@ it is explicitly enabled.
   sessions".
 - **Admin tools**, split into read and write. Writes are gated on the administrator
   roles and recorded in the audit log with an MCP actor kind.
-- Still to come: the dangerous tools — key rotation, recreate — which are 📋 and assume
-  confirmation plus a dry run.
+- **The dangerous tools** (key rotation, recreate, stopping idle workspaces in bulk) are
+  not planned: nobody has asked for them, and letting an agent do these needs a decision
+  of its own before anything is built ([decisions/0006](../decisions/0006-mcp-unified.md)).
 
 ## 3.6 The memo queue
 

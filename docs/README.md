@@ -34,14 +34,14 @@ link into `docs/` (the other direction is free). See [CONVENTIONS §2](CONVENTIO
 ## Not shelves
 
 - **[log/](log/README.md)** — the frozen archive of the work journals that used to be
-  `docs/NN-*.md` and `docs/history/`. Not maintained, not shipped. It exists only so you
+  `docs/NN-*.md` and `docs/history/`, together with the Phase 0–3 roadmap and the dated
+  work log of June and July 2026. Not maintained, not shipped. It exists only so you
   can look up the things recorded nowhere else: **measurements, the causal chain of a
   production incident, an upstream CLI's contract, why something was abandoned.** Living
   documents never link here.
-- [HANDOFF.md](HANDOFF.md) — the development host's own runtime state and local
-  conventions. Changes daily.
-- **Open work** — follow-ups, residual work, acceptance runs not yet done — lives in
-  GitHub issues, not in the prose of a decision record or a journal
+- **Open work** — follow-ups, residual work, acceptance runs not yet done, and the plan
+  ahead — lives in GitHub issues, not in the prose of a decision record or a journal
   ([CONVENTIONS §10](CONVENTIONS.md)).
-- [roadmap.md](roadmap.md) / [CHANGELOG-handoff.md](CHANGELOG-handoff.md) — the
-  forward-looking plan, and the dated work log.
+- **The state of a running host or deployment** is not recorded in this tree: the
+  repository is public, and that state is stale within days. How to start one locally
+  is in [build/10](build/10-development.md) §10.3.

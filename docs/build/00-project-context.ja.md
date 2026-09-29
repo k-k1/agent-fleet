@@ -19,7 +19,7 @@ updated: "2026-09"
 Console の作り直し（React + Vite）、AWS ECS アダプタ（P3-7）、compose / ECS /
 Docker 無しの native という配布形態が出荷済み、0.x のリリースを
 [配布リポジトリ](https://github.com/k-k1/agent-fleet-dist)に公開しています。
-先の計画は [roadmap.md](../roadmap.md)。
+先の計画を含む未完の作業は [GitHub の Issue](https://github.com/k-k1/agent-fleet/issues) にあります。
 
 ## 決着している仮定（v1）
 
