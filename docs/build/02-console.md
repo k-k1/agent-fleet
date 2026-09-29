@@ -105,7 +105,8 @@ Two conventions recur in them:
   The pollers for the same data stay running and skip their tick while `pushHealthy()` is
   true, so a broken stream, or a CP without the route, loses nothing. The workspace and
   session pollers also drop their own result when a push frame for the same stream landed
-  while they were in flight (`pushStamp`); the other refreshes (work items, engines, for
+  while they were in flight (`pushStamp`) — except that the workspace refresh settling an
+  optimistic `…` state always lands; the other refreshes (work items, engines, for
   example) have no such guard. Every (re)connect re-reads whoami and the session list, because a frame
   is sent only when something changes. Data outside the push streams is polled on its own
   schedule (repos every 60 s, for example).
@@ -161,17 +162,19 @@ Two conventions recur in them:
 - **Two layout profiles**, chosen by a device-local preference: `split`, up to 4 columns
   of 1–2 cells with one view each; and `tabs`, up to 3 columns, where each cell holds tabs
   (24 views in all). Each profile keeps its own saved layout, so switching loses neither
-  arrangement. The runtime is not kept: after a switch the terminal service and the
-  browser registry dispose what the loaded layout no longer contains.
+  arrangement. After a switch the terminal service and the browser registry dispose the
+  runtimes whose View ids the loaded layout does not contain.
 - **The id contract is a hard invariant.** Swapping, drop-splitting and moving a tab
   keep both the View id and the Cell id; renumbering or duplicating is forbidden. For a
-  view that shows a terminal, a new View id builds a new xterm and a new WebGL context, and
-  **the terminal you just moved comes up blank**. The pure functions in `layout/ops.ts` and their tests enforce this.
+  view that shows a terminal, a new View id builds a new xterm instance (and its renderer),
+  and **the terminal you just moved comes up blank**. The pure functions in `layout/ops.ts` and their tests enforce this.
 - `layout/ops.ts` is `Layout in → Layout out`. A no-op returns the input by reference,
-  so the caller can skip the commit on `next === cur`. Every layout action goes through
-  the layout store's `commit()`, which pushes the layout into `history.state` (the URL
-  never changes) and persists it. The exceptions set the layout directly: loading a
-  saved layout or a profile, seeding a pop-out, and restoring from history.
+  so the caller can skip the commit on `next === cur`. Layout actions go through
+  the layout store's guarded paths, `commit()` and `commitAction()`. They record the
+  layout in `history.state` — a push for a navigation, a replace for activation, tab
+  selection and divider drags; the URL never changes — and schedule persistence once the
+  store is hydrated. Loading a saved layout or a profile, seeding a pop-out and restoring
+  from history set the layout directly.
 - **Persistence is per user and tenant, per tab.** The key is built by `LKEY_NEW` in
   `layout/migrate.ts`. A tab's own layout is in `sessionStorage`, so two tabs keep
   different layouts; `localStorage` holds the last one written, to seed a new tab. What is
