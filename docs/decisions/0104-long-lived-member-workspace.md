@@ -51,7 +51,7 @@ None of these records considers a per-task environment. No measurement compares 
 - The CLI state behind `CLAUDE_CONFIG_DIR` sits on a separate mount that nothing deletes.
 - The compute is stopped when idle ([log/p3-9-idle-stop](../log/p3-9-idle-stop.md); ADR 0055).
   On `ecs-ec2` it is not even the same machine each time: a pool of generic slots swaps the
-  member's EBS volume in (ADR 0045 decision 8).
+  member's EBS volume in (ADR 0045 decisions 8 and 10).
 
 ## Decision
 
@@ -90,7 +90,7 @@ The CP's reaper halts idle sessions and stops idle workspaces
 `control-plane/main.go`). A halted session is "resumable, because the transcript is on disk", and
 the next access starts the workspace again from its home.
 Build output that is cheap to regenerate may live on a disk that dies with the stop: `/scratch`
-(ADR 0044 decision 3).
+(ADR 0044 decisions 3 and 5).
 
 ## Why — the reasons the record gives
 
@@ -137,25 +137,33 @@ exactly that (H3) an exit criterion.
 
 ### Reason 3: a fresh environment rebuilds what the home keeps warm
 
-None of these was measured to compare with a per-task environment. They were measured while
-making the persistent shape fast, and they are the record's only numbers on the subject.
+This reason stands on weaker ground than reasons 1 and 2, and its parts are of different kinds.
+**The start times below are measurements**, but none of them compares a fresh environment with a
+persistent one. **The rebuild cost is not measured at all**: the record names it as a benefit and a
+concern, never with a number.
 
-**Start time is not the difference.** ADR 0045 first quoted 22–27 s for a hot slot swapping the
-member's volume in (decision 8). That figure was taken without Service Connect, which the product
-uses. Decision 10-5 corrected it to 13–95 s, and decision 12 re-measured 43–110 s (43.2 s for a hot
-free slot). Decision 12 then removed startup time from the reasons for that shape: against Fargate's
-warm restart (~84–105 s) there is almost no advantage, because ECS placement and container start take
-most of the time. A new user with an empty home on a cold slot took 144.0 s (decision 19). This
-ADR therefore does not claim that a long-lived workspace starts faster.
+**Start time: measured, but it does not separate the two options.** ADR 0045 first quoted 22–27 s
+for a hot slot swapping the member's volume in (decision 8). That figure was taken without Service
+Connect, which the product uses. Decision 10-5 corrected it to 13–95 s, decision 12 re-measured
+43–110 s, and decision 22 gives 43.2 s for a hot free slot. Decision 12 then removed startup time
+from the reasons for the EC2 shape: against Fargate's ~105 s warm restart there is almost no
+advantage, because ECS placement and container start take most of the time. That compares two
+persistent shapes, not a fresh environment with a persistent one. The one fresh-home figure, 144.0 s
+for a new user with an empty home on a cold slot (decision 19), differs from the others in the slot's
+state as well as in the home. **So the record has no like-for-like start-time comparison, and this
+ADR uses start time as a reason neither way.**
 
-What the record does show is the cost of rebuilding what the home keeps:
+**Rebuild cost: recorded as a benefit and a concern, not measured.**
 
-- **The record already counts rebuilding after a start as a cost.** Where build output lives on a
-  disk that dies with the stop (`/scratch`, ADR 0044 decision 3), it is rebuilt after every start.
-  ADR 0045 decision 2 listed "no regeneration each morning" among what the EC2 shape still offered
-  over that. Decision 5 made regeneration each morning (`npm ci` plus the first build) exceeding
-  5 minutes one of its gates. A single-shot environment per task would pay that rebuild per task,
-  and without the warm caches of the next bullet.
+- ADR 0045 decision 2 listed "no regeneration each morning" among what the EC2 shape still offered
+  once build output had moved to a disk that dies with the stop (`/scratch`, ADR 0044 decisions 3
+  and 5). That is a recorded benefit, not a measured time.
+- Decision 5 made regeneration each morning (`npm ci` plus the first build) exceeding 5 minutes one
+  of its gates. Decision 5 also states that none of its five gates could be shown by measurement,
+  and decision 10 went ahead without meeting them. The 5 minutes is a threshold nobody measured
+  against.
+- By inference, not measurement: a single-shot environment per task would repeat that rebuild for
+  every task that needs its dependencies, and without the warm caches of the next bullet.
 - **Warm caches make the Nth copy cheap.** [build/93](../build/93-worktree-deps.md) rests on
   "reinstalling is cheap and duplicating is expensive", because the caches in the home survive. A
   worktree's submodule seeded from the parent clone took 0.23 s for 41 MB with the remote offline,
@@ -193,8 +201,9 @@ not a rejection anyone wrote at the time.
   and carried interactions all read the CLI's local store and working directory (reason 2). Keeping
   them means carrying the store and the working copy out and back in, which is a persistent home
   under another name.
-- **Every task would rebuild its dependencies and caches** (reason 3). Start time is not counted
-  against it: the record shows no clear start-time gap (ADR 0045 decision 12).
+- **Every task that needs its dependencies would rebuild them, and its caches, from cold** (reason
+  3; an inference, since the rebuild cost is unmeasured). Start time is not counted against it: the
+  record has no like-for-like start-time comparison (reason 3).
 - **The features built since assume one home**, and each would need a layer across environments:
   - cross-session messaging (ADR 0041; decision 12 names one workspace as the boundary);
   - sessions spawned by sessions (ADR 0073);
@@ -222,21 +231,24 @@ Nothing was measured against this option.
 
 - **Idle-stop has to work, or the bill grows.** With bring-your-own seats, "the operator's cost is
   occupancy, not tokens" ([build/03](../build/03-control-plane.md)).
-  - [build/09](../build/09-deploy.md) §9.8.2: a workspace is about $0.049/hour. Weekdays at 8 hours
-    is $8.7 per person a month. Around the clock it is $36, and "that second row is also the bill
-    when scale-to-zero breaks".
-  - ADR 0055: one question left on screen kept a workspace nobody was touching on an m7i.large for
-    9.4 hours overnight. Its decision 1 lets only a working machine keep a container awake.
+  - [build/09](../build/09-deploy.md) §9.8.2 estimates from list prices (not from a bill): a
+    workspace is about $0.049/hour, so weekdays at 8 hours is $8.7 per person a month and around the
+    clock is $36. "That second row is also the bill when scale-to-zero breaks."
+  - With idle-stop's deployment defaults at 0 (off), a slot (m7i.large) stayed running 9.4 hours
+    overnight because nothing told it to stop. The defaults became 1 hour and 2 hours after that
+    ([log/64](../log/64-ec2-persistent-workspace.md) §64.26). ADR 0055 closed another route to the
+    same bill: a question left on screen kept a workspace from ever stopping. Its decision 1 lets
+    only a working machine keep a container awake.
   - On a single VM, idle-stop saves memory, not money (§9.8.1). There, the risk is that one host's
     RAM runs out and the OOM killer takes down the live fleet
     ([log/p3-9-idle-stop](../log/p3-9-idle-stop.md)).
 - **A member's sessions share one container's CPU, memory and disk.**
-  - Memory: by ADR 0073's estimate, a live claude session is 340–435 MB RSS and a 10 GiB cgroup
-    holds roughly 23 of them. ADR 0073 caps children per parent well below that, because nothing
-    bounds the number of parents.
+  - Memory: a live claude session measured 340–435 MB RSS. From that, ADR 0073 estimates that a
+    10 GiB cgroup holds roughly 23; its own amendment notes that the RSS sum overestimates. ADR 0073
+    caps children per parent well below that, because nothing bounds the number of parents.
   - Builds: the workspace policy's build-memory rules exist because builds sharing one container
     "caused real incidents" ([workspace-notes](../../workspace/workspace-notes.md)).
-  - Disk: `node_modules` is 349 MB per worktree unless it is shared
+  - Disk: in this repository, `node_modules` measured 349 MB per worktree unless it is shared
     ([build/93](../build/93-worktree-deps.md)).
   - Shared storage: on `ecs-ec2` the credentials and the CLI state (`CLAUDE_CONFIG_DIR`) are on one
     EFS file system that every workspace uses. When its burst credits ran out on 2026-09-16, the
