@@ -17,12 +17,22 @@ afterEach(() => {
   host = null;
 });
 
-function Harness({ onPage, onItem, second }: { onPage: () => void; onItem: () => void; second?: boolean }) {
+function Harness({
+  onPage,
+  onItem,
+  second,
+  passThrough,
+}: {
+  onPage: () => void;
+  onItem: () => void;
+  second?: boolean;
+  passThrough?: boolean;
+}) {
   const [open, setOpen] = useState(true);
   const [open2, setOpen2] = useState(!!second);
   const ref = useRef<HTMLDivElement>(null);
   const ref2 = useRef<HTMLDivElement>(null);
-  useDismiss(ref, open, () => setOpen(false));
+  useDismiss(ref, open, () => setOpen(false), { passThrough });
   useDismiss(ref2, open2, () => setOpen2(false));
   return (
     <>
@@ -141,5 +151,36 @@ describe("useDismiss outside press", () => {
     });
     expect(q("menu")).toBeNull();
     expect(onPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a pass-through layer closes and lets the click reach the page", () => {
+    const onPage = vi.fn();
+    mount({ onPage, onItem: vi.fn(), passThrough: true });
+    mouseClick(q("page")!);
+    expect(q("menu")).toBeNull();
+    expect(onPage).toHaveBeenCalledTimes(2); // mousedown + click
+  });
+
+  it("a pass-through layer lets a tap through as well", () => {
+    const onPage = vi.fn();
+    mount({ onPage, onItem: vi.fn(), passThrough: true });
+    const el = q("page")!;
+    act(() => {
+      pointer("pointerdown", el, "touch");
+      pointer("pointerup", el, "touch");
+      el.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    });
+    expect(q("menu")).toBeNull();
+    expect(onPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows the press when it also closes an ordinary layer", () => {
+    const onPage = vi.fn();
+    mount({ onPage, onItem: vi.fn(), second: true, passThrough: true });
+    mouseClick(q("page")!);
+    expect(q("menu")).toBeNull();
+    expect(q("menu2")).toBeNull();
+    expect(onPage).not.toHaveBeenCalled();
   });
 });

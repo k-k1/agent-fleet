@@ -14,12 +14,18 @@ import { useEscLayer } from "./escLayer.ts";
 // opening a submenu or clicking into a sibling popover keeps working. A secondary press is
 // never swallowed: right-clicking elsewhere closes this menu and opens that spot's own menu.
 //
+// A `passThrough` layer closes on an outside press but never withholds it. It is for an inline
+// completion list that sits next to live controls (the composer's skill picker): there a tap on
+// send means "send", and eating it made the first tap on send do nothing. A press that closes a
+// pass-through layer together with an ordinary one is still swallowed.
+//
 // onClose is read through a ref so the layer only re-registers when `open` toggles, not on
 // every render (callers can pass an inline `() => setOpen(false)` safely).
 export function useDismiss(
   ref: RefObject<HTMLElement | null> | Array<RefObject<HTMLElement | null>>,
   open: boolean,
   onClose: () => void,
+  { passThrough = false }: { passThrough?: boolean } = {},
 ): void {
   const cb = useRef(onClose);
   const refs = useRef(ref);
@@ -36,14 +42,16 @@ export function useDismiss(
         return current.some((r) => !!r.current && r.current.contains(target));
       },
       close: () => cb.current(),
+      passThrough,
     };
     return addLayer(layer);
-  }, [open]);
+  }, [open, passThrough]);
 }
 
 interface Layer {
   contains: (target: Node) => boolean;
   close: () => void;
+  passThrough: boolean;
 }
 
 const layers: Layer[] = [];
@@ -71,13 +79,15 @@ function eat(e: Event): void {
   e.stopImmediatePropagation();
 }
 
-// press closes every open layer the target is outside of, and reports whether the press
-// landed outside all of them — the case where the gesture must not reach the page.
+// press closes every open layer the target is outside of, and reports whether the gesture
+// must not reach the page: it landed outside all of them and closed at least one layer that
+// is not pass-through.
 function press(target: Node | null): boolean {
   if (!target || layers.length === 0) return false;
   const inside = layers.some((l) => l.contains(target));
-  for (const l of layers.slice()) if (!l.contains(target)) l.close();
-  return !inside;
+  const closing = layers.filter((l) => !l.contains(target));
+  for (const l of closing) l.close();
+  return !inside && closing.some((l) => !l.passThrough);
 }
 
 const onPointerDown = (e: PointerEvent) => {

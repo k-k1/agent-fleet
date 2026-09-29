@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -167,8 +168,12 @@ const pointerMaxBytes = 1024
 // conservative on purpose (git gc prunes those later; the next sweep reclaims the
 // object once the pointer is truly gone).
 func referencedLFSOIDs(ctx context.Context, bareDir string) (map[string]bool, error) {
+	// Both passes run with --no-replace-objects: a pushed refs/replace/<pointer> would
+	// otherwise make pass 2 read the replacement's content, so the pointer's oid drops out
+	// of the set with no error and its object is deleted.
+	//
 	// Pass 1: headers of all objects; keep small blobs (pointer candidates).
-	check := exec.CommandContext(ctx, "git", "--git-dir", bareDir,
+	check := exec.CommandContext(ctx, "git", "--no-replace-objects", "--git-dir", bareDir,
 		"cat-file", "--batch-check", "--batch-all-objects", "--unordered")
 	out, err := check.Output()
 	if err != nil {
@@ -184,13 +189,12 @@ func referencedLFSOIDs(ctx context.Context, bareDir string) (map[string]bool, er
 			candidates = append(candidates, f[0])
 		}
 	}
-	referenced := map[string]bool{}
 	if len(candidates) == 0 {
-		return referenced, nil
+		return map[string]bool{}, nil
 	}
 
 	// Pass 2: stream the candidate blobs' contents and extract pointer oids.
-	batch := exec.CommandContext(ctx, "git", "--git-dir", bareDir, "cat-file", "--batch")
+	batch := lfsCatFileBatch(ctx, bareDir)
 	stdin, err := batch.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -202,14 +206,6 @@ func referencedLFSOIDs(ctx context.Context, bareDir string) (map[string]bool, er
 	if err := batch.Start(); err != nil {
 		return nil, err
 	}
-	// Reap the child even when the loop breaks early: unless closing stdout/stdin releases
-	// cat-file's write with EPIPE, a full pipe keeps the child alive, Wait() blocks
-	// forever and every later GC stops with it.
-	defer func() {
-		stdin.Close()
-		stdout.Close()
-		_ = batch.Wait()
-	}()
 	go func() {
 		defer stdin.Close()
 		w := bufio.NewWriter(stdin)
@@ -220,26 +216,58 @@ func referencedLFSOIDs(ctx context.Context, bareDir string) (map[string]bool, er
 		w.Flush()
 	}()
 
-	r := bufio.NewReader(stdout)
-	for {
-		header, err := r.ReadString('\n')
+	referenced, readErr := readPointerBatch(stdout, candidates)
+	// Close both ends before Wait even when the read stopped early: unless that releases
+	// cat-file's write with EPIPE, a full pipe keeps the child alive, Wait() blocks
+	// forever and every later GC stops with it.
+	stdin.Close()
+	stdout.Close()
+	waitErr := batch.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if waitErr != nil {
+		return nil, fmt.Errorf("cat-file --batch: %w", waitErr)
+	}
+	return referenced, nil
+}
+
+// lfsCatFileBatch builds pass 2's reader. A variable so a test can substitute a stream
+// that dies part-way.
+var lfsCatFileBatch = func(ctx context.Context, bareDir string) *exec.Cmd {
+	return exec.CommandContext(ctx, "git", "--no-replace-objects", "--git-dir", bareDir, "cat-file", "--batch")
+}
+
+// readPointerBatch parses `git cat-file --batch` output answering candidates, asked in
+// that order, and returns the pointer oids the blobs carry. Any response it cannot
+// account for is an error, never a shorter set: pruneLFS reads an oid absent from the
+// set as unreferenced and deletes the object.
+func readPointerBatch(r io.Reader, candidates []string) (map[string]bool, error) {
+	br := bufio.NewReader(r)
+	referenced := map[string]bool{}
+	for i, want := range candidates {
+		header, err := br.ReadString('\n')
 		if err != nil {
-			break
+			return nil, fmt.Errorf("cat-file --batch: response %d of %d: %w", i+1, len(candidates), err)
 		}
-		f := strings.Fields(strings.TrimRight(header, "\n"))
-		if len(f) != 3 || f[1] != "blob" { // "missing" or unexpected — nothing to read
-			continue
+		// "<sha> missing" fails here too: pass 1 saw the blob, so it vanished mid-sweep
+		// and this sweep's picture is stale. The next sweep retries.
+		f := strings.Fields(header)
+		if len(f) != 3 || f[0] != want || f[1] != "blob" {
+			return nil, fmt.Errorf("cat-file --batch: unexpected header %q for %s", strings.TrimSpace(header), want)
 		}
 		size, err := strconv.Atoi(f[2])
-		if err != nil {
-			break
+		if err != nil || size <= 0 || size > pointerMaxBytes {
+			return nil, fmt.Errorf("cat-file --batch: bad size in header %q", strings.TrimSpace(header))
 		}
-		content := make([]byte, size)
-		if _, err := io.ReadFull(r, content); err != nil {
-			break
+		content := make([]byte, size+1) // the blob plus its trailing LF
+		if _, err := io.ReadFull(br, content); err != nil {
+			return nil, fmt.Errorf("cat-file --batch: content of %s: %w", want, err)
 		}
-		r.ReadByte() // trailing LF after content
-		if m := lfsPointerOID.FindSubmatch(content); m != nil {
+		if content[size] != '\n' {
+			return nil, fmt.Errorf("cat-file --batch: content of %s not followed by LF", want)
+		}
+		if m := lfsPointerOID.FindSubmatch(content[:size]); m != nil {
 			referenced[string(m[1])] = true
 		}
 	}
