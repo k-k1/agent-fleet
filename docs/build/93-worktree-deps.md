@@ -13,8 +13,9 @@ at once. What that costs is **not memory but disk, and whether a thing is shared
 the answer differs per ecosystem. This chapter holds the mechanism and the evidence. The
 rules themselves live elsewhere, each with its own reader:
 
-- **Every agent in every Workspace** reads the operating policy
-  ([workspace-notes.md](../../workspace/workspace-notes.md)) and its topic files:
+- **Every agent in every Workspace** starts with the operating policy
+  ([workspace-notes.md](../../workspace/workspace-notes.md)) loaded, and reads the topic
+  file for its situation when it needs it:
   [notes/worktrees.md](../../workspace/notes/worktrees.md) ("Dependencies in a worktree")
   and [notes/environment.md](../../workspace/notes/environment.md) (`/scratch`, disk,
   reclaiming cache space). These ship inside the image, where `docs/` does not, so they
@@ -43,15 +44,17 @@ manual step (93.3). What does happen automatically:
 
 | Mechanism | Where it runs | What it does | Code |
 |---|---|---|---|
-| Submodule seeding | every runtime, on `git worktree add` | clones each submodule from the parent clone's object store (hardlinked) before the normal update; the measurements are in [build/04](04-agent.md) §4.6 | `finishNewWorktree` → `seedSubmodulesFromParent` (`workspace/agent/internal/gitx/git.go`, `git_submodule_seed.go`) |
-| Build-output relocation | only where `$AF_WS_SCRATCH` is set, on a new clone or a new worktree (never on a relaunch into an existing one) | runs `af-scratch --auto`, which turns the build-output directory next to each marker file into a symlink into `/scratch` while it is still empty | `scratchAutoRelocate` (`workspace/agent/scratch.go`), `workspace/af-scratch.sh` |
-| Home-cache relocation | only where `$AF_WS_SCRATCH` is set **and** `/scratch` is at least `AF_WS_SCRATCH_MIN_GB` (30 GiB), at container start | replaces `~/.cache/go-build`, `~/.cache/uv` and `~/go/pkg/mod` (the default of `AF_WS_SCRATCH_DIRS`) with symlinks into `/scratch/home` | `workspace/entrypoint.sh` |
+| Submodule seeding | every runtime, on `git worktree add` | best effort: a submodule the parent clone has in its own store, and whose path in the worktree is still empty, is cloned from that store (hardlinked); anything skipped or failed is left to the normal update that follows. The measurements are in [build/04](04-agent.md) §4.6 | `finishNewWorktree` → `seedSubmodulesFromParent` (`workspace/agent/internal/gitx/git.go`, `git_submodule_seed.go`) |
+| Build-output relocation | only where `$AF_WS_SCRATCH` is set, on a new clone or a new worktree (never on a relaunch into an existing one) | runs `af-scratch --auto`, which tries to make the build-output directory next to each marker file a symlink into `/scratch`, ideally while it is still empty; best effort (errors are logged and swallowed) | `scratchAutoRelocate` (`workspace/agent/scratch.go`), `workspace/af-scratch.sh` |
+| Home-cache relocation | only where `$AF_WS_SCRATCH` is set **and** `/scratch` is at least `AF_WS_SCRATCH_MIN_GB` (30 GiB), at container start | tries to replace `~/.cache/go-build`, `~/.cache/uv` and `~/go/pkg/mod` (the default of `AF_WS_SCRATCH_DIRS`) with symlinks into `/scratch/home`; skipped when `/scratch/home` is not writable, and per directory when a move fails | `workspace/entrypoint.sh` |
 
 **Who gets `$AF_WS_SCRATCH`.** The control plane sets it in the `ecs` adapter only
 (`registerTaskDef` in `control-plane/internal/runtime/runtime_ecs.go`). The `ecs-ec2`
 adapter leaves it out on purpose — home is already on local EBS there
 (`runtime_ecs_ec2.go`, the note citing ADR 0045 decision 10-3) — and the docker and native
-adapters do not set it. Everything under `/scratch` is gone when the task stops.
+adapters do not set it. The image creates the `/scratch` directory everywhere
+(`workspace/Dockerfile`), so its existence says nothing: every mechanism here keys on the
+variable. Everything under `/scratch` is gone when the task stops.
 
 **The markers `af-scratch --auto` looks for** (searched to depth 3,
 `AF_WS_SCRATCH_AUTO_DEPTH`): `package.json` → `node_modules`; `Cargo.toml` or `pom.xml` →
@@ -69,15 +72,19 @@ output still moves.
 
 ## 93.2 At a glance
 
+The `/scratch` column is what 93.1 *attempts* on `ecs`: build output only next to a marker
+file it found (and not with `AF_WS_SCRATCH_AUTO=0`), home caches only on a disk of 30 GiB
+or more. It is not a guarantee for every project.
+
 | Ecosystem | Shared by default | Grows per worktree | On `ecs`, under `/scratch` | What to do |
 |---|---|---|---|---|
 | Node (npm) | `~/.npm` (the tarball cache only) | `node_modules`, hundreds of MB (93.3) | `node_modules` | symlink to the parent clone **only when the lockfiles match**; otherwise `npm ci --prefer-offline` from the warm cache |
 | Go | `~/go/pkg/mod` and `~/.cache/go-build` | effectively nothing | both caches, when the disk is ≥ 30 GiB | nothing. **The pressure is memory** — cap the test parallelism |
-| Python | `~/.cache/uv` (plain `pip` shares nothing) | `.venv`, tens to hundreds of MB (estimate) | `~/.cache/uv` when the disk is ≥ 30 GiB; `.venv` when there is a `pyproject.toml` | one `.venv` per worktree with `uv` |
+| Python | `~/.cache/uv`; `~/.cache/pip` (downloads only — a bare `pip install` lands in the shared `~/.local`, 93.5) | `.venv`, tens to hundreds of MB (estimate) | `~/.cache/uv` when the disk is ≥ 30 GiB; `.venv` when there is a `pyproject.toml` | one `.venv` per worktree with `uv` |
 | JVM | `~/.gradle` and `~/.m2` | `build/` or `target/` | `build/` or `target/` | nothing — just be careful how you stop the daemon |
-| Rust | `~/.cargo` (registry) | `target/`, gigabytes (estimate) | `target/` | keep it per worktree. **A shared target directory is not an option** (93.7) |
+| Rust | `~/.cargo` (registry) | `target/`, gigabytes (estimate) | `target/` | keep it per worktree; a shared target directory serialises parallel builds (93.7) |
 
-Check the disk with `df -h ~` (and `df -h /scratch` where it exists). Reclaiming cache
+Check the disk with `df -h ~` (and `df -h /scratch` where `$AF_WS_SCRATCH` is set). Reclaiming cache
 space — `npm cache clean --force`, `uv cache prune`, `go clean -cache`, or Settings >
 Machine > Tool caches — is covered in notes/environment.md ("Disk"). These caches are
 **shared by every worktree**, so do not clear them while another session is building.
@@ -86,19 +93,14 @@ Machine > Tool caches — is covered in notes/environment.md ("Disk"). These cac
 
 `node_modules` is duplicated whole per worktree. **Measured:** this repository's
 `console/node_modules` in the parent clone was 559 MB on disk (`du -sh`; 494 MB apparent
-size) and 20,719 files on 2026-09-29, in a Workspace without `/scratch`. The 2026-08
+size) and 20,719 files on 2026-09-29, in a Workspace without `$AF_WS_SCRATCH`. The 2026-08
 measurement was 349 MB; the tree grows with the dependencies, so read either number as a
 snapshot.
 
 **The parent clone's tree can be shared by symlink**, with one condition: **the lockfile
-is identical to the parent's**. The recipe for this repository is in AGENTS.md; in
-general:
-
-```bash
-cd <repo-wt>/<pkg>
-cmp -s package-lock.json ~/repos/<repo>/<pkg>/package-lock.json \
-  && ln -s ~/repos/<repo>/<pkg>/node_modules node_modules
-```
+is identical to the parent's** (`cmp -s` the two, then link `node_modules` to the parent's).
+The commands are not repeated here: this repository's are in AGENTS.md, and the ones every
+agent gets are in notes/worktrees.md. Both need the caveat below on `ecs`.
 
 **Measured in 2026-08** in this repository's `console/` (npm 10.9.8, node 22.23.2,
 Vite 7). `console/` has since moved to Vite 8 (`console/package.json`); this chapter did
@@ -118,14 +120,15 @@ not re-run these.
 - `npm install <pkg>` silently replaces the link with a real tree. Nothing breaks, but
   that worktree no longer shares and carries its own copy.
 
-**Where `/scratch` exists, the recipe above does not share anything.** `af-scratch --auto`
-has already made `node_modules` a symlink to an empty directory under `/scratch`, and
-`ln -s <target> node_modules` onto an existing symlink to a directory creates the new link
-*inside* that directory and exits 0. **Measured** with plain directories on 2026-09-29
+**Where `af-scratch --auto` has already made `node_modules` a symlink** (a new clone or
+worktree with `$AF_WS_SCRATCH` set, 93.1), the plain `ln -s` in that recipe shares
+nothing: `ln -s <target> node_modules` onto an existing symlink to a directory creates the
+new link *inside* that directory and exits 0. **Measured** with plain directories on 2026-09-29
 (GNU coreutils `ln`). Remove the pre-created link first (`rm -rf node_modules`, no
-slash); `ln -sfT` replaces a symlink and refuses a real directory. On that runtime the
-parent's `node_modules` is itself on `/scratch`, so it and every link to it are gone after
-a stop.
+slash); `ln -sfT` replaces a symlink and refuses a real directory. If the parent's own
+`node_modules` was relocated the same way, its target is on `/scratch`: after a stop the
+links in `~/repos` remain but point at nothing. A parent cloned without the relocation
+(before it existed, or with `AF_WS_SCRATCH_AUTO=0`) keeps its tree in the home.
 
 When the lockfiles differ, do not share — `npm ci --prefer-offline` installs from the
 warm `~/.npm`. pnpm is not installed; Node 22 ships `corepack`, so a project that uses
@@ -152,7 +155,9 @@ The image writes `break-system-packages = true` to `/etc/pip.conf`
 (`workspace/Dockerfile`), so the PEP 668 marker on Debian's Python does not stop a bare
 `pip install`. Run as `dev`, it **does not error** — pip falls back to a user install in
 `~/.local`. That location **persists and is shared by every project**, so it breaks
-quietly the moment two worktrees need different versions.
+quietly the moment two worktrees need different versions. (pip's download cache,
+`~/.cache/pip`, is shared too, and harmlessly — it is one of the caches Settings > Machine >
+Tool caches lists, `workspace/agent/tool_caches.go`.)
 
 The right answer is a virtual environment per worktree, with `uv`, which the image
 installs:
@@ -192,12 +197,14 @@ The Dockerfile installs no Rust toolchain, so install `rustup` yourself; `~/.car
 persists in the home (it is not in the relocation list) and its registry cache is shared
 automatically.
 
-The target directory reaches gigabytes, but **do not point several worktrees at a
-shared one** (`CARGO_TARGET_DIR`). Cargo takes a build lock on it, so parallel sessions
-**serialise, each waiting for the other's build** ("Blocking waiting for file lock on
-build directory"). Keep it per worktree and `cargo clean` when you are done — that is
-faster overall.
+The target directory reaches gigabytes (estimate). Pointing several worktrees at one
+shared target directory (`CARGO_TARGET_DIR`) saves that disk, but Cargo takes a build lock
+on it, so parallel sessions **serialise, each waiting for the other's build** ("Blocking
+waiting for file lock on build directory" — Cargo's behaviour, not measured here). With
+sessions building at the same time, a target directory per worktree is the default to
+prefer; a shared one trades that concurrency for disk.
 
-The same rule generalises: **share the caches in the home; never share the output
-directory in the worktree.** And with no root available, choose installers that work in
+The general shape: **the caches in the home are shared for free; sharing output in the
+worktree is the exception**, done only where the tool tolerates it — Node's
+`node_modules` under the lockfile condition of 93.3. And with no root available, choose installers that work in
 user space — `rustup`, `uv tool install`, `npm i -g` through the home's Node.

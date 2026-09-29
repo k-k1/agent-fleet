@@ -13,7 +13,8 @@ Workspace のセッションは基本的に 1 セッション = 1 worktree で�
 エコシステムごとに答えが違う。本書が持つのは仕組みと根拠で、作法そのものは読み手ごとに別の場所にある:
 
 - **すべての Workspace のすべてのエージェント**は運用ガイド
-  （[workspace-notes.md](../../workspace/workspace-notes.md)）とその topic file を読む:
+  （[workspace-notes.md](../../workspace/workspace-notes.md)）を読み込んだ状態で始まり、状況に応じた
+  topic file を必要なときに読む:
   [notes/worktrees.md](../../workspace/notes/worktrees.md)（"Dependencies in a worktree"）と
   [notes/environment.md](../../workspace/notes/environment.md)（`/scratch`・ディスク・キャッシュの掃除）。
   これらはイメージに焼かれて届くが `docs/` は届かないので、ここへはリンクできず、短い版を自前で持つ。
@@ -39,14 +40,16 @@ worktree 間で依存ツリーを勝手にリンクする仕組みは無い。`n
 
 | 仕組み | どこで動くか | 何をするか | コード |
 |---|---|---|---|
-| サブモジュールの種まき | 全ランタイム・`git worktree add` のとき | 通常の update の前に、各サブモジュールを親クローンのオブジェクトストアから clone する（hardlink）。実測は [build/04](04-agent.ja.md) §4.6 | `finishNewWorktree` → `seedSubmodulesFromParent`（`workspace/agent/internal/gitx/git.go`・`git_submodule_seed.go`）|
-| ビルド生成物の退避 | `$AF_WS_SCRATCH` があるときだけ・新しい clone か新しい worktree のとき（既存の worktree への再起動では動かない）| `af-scratch --auto` を叩き、目印ファイルの隣のビルド出力ディレクトリを、空のうちに `/scratch` への symlink にする | `scratchAutoRelocate`（`workspace/agent/scratch.go`）・`workspace/af-scratch.sh` |
-| ホームのキャッシュの退避 | `$AF_WS_SCRATCH` があり、**かつ** `/scratch` が `AF_WS_SCRATCH_MIN_GB`（30 GiB）以上のとき・コンテナ起動時 | `~/.cache/go-build` `~/.cache/uv` `~/go/pkg/mod`（`AF_WS_SCRATCH_DIRS` の既定値）を `/scratch/home` への symlink に置き換える | `workspace/entrypoint.sh` |
+| サブモジュールの種まき | 全ランタイム・`git worktree add` のとき | best effort: 親クローンが自分のストアに持っていて、worktree 側のパスがまだ空のサブモジュールを、そのストアから clone する（hardlink）。飛ばしたもの・失敗したものは後に続く通常の update に任せる。実測は [build/04](04-agent.ja.md) §4.6 | `finishNewWorktree` → `seedSubmodulesFromParent`（`workspace/agent/internal/gitx/git.go`・`git_submodule_seed.go`）|
+| ビルド生成物の退避 | `$AF_WS_SCRATCH` があるときだけ・新しい clone か新しい worktree のとき（既存の worktree への再起動では動かない）| `af-scratch --auto` を叩き、目印ファイルの隣のビルド出力ディレクトリを、なるべく空のうちに `/scratch` への symlink にしようとする。best effort（エラーはログに残して握りつぶす）| `scratchAutoRelocate`（`workspace/agent/scratch.go`）・`workspace/af-scratch.sh` |
+| ホームのキャッシュの退避 | `$AF_WS_SCRATCH` があり、**かつ** `/scratch` が `AF_WS_SCRATCH_MIN_GB`（30 GiB）以上のとき・コンテナ起動時 | `~/.cache/go-build` `~/.cache/uv` `~/go/pkg/mod`（`AF_WS_SCRATCH_DIRS` の既定値）を `/scratch/home` への symlink に置き換えようとする。`/scratch/home` に書けなければ丸ごと、移動に失敗すればそのディレクトリだけ飛ばす | `workspace/entrypoint.sh` |
 
 **`$AF_WS_SCRATCH` を受け取るのは誰か。** control plane がこれを設定するのは `ecs` アダプタだけ
 （`control-plane/internal/runtime/runtime_ecs.go` の `registerTaskDef`）。`ecs-ec2` アダプタは意図して
 入れない——そこではホームが既にローカルの EBS にある（`runtime_ecs_ec2.go` の、ADR 0045 決定 10-3 を
-引く注記）。docker と native のアダプタも設定しない。`/scratch` の中身はタスク停止で消える。
+引く注記）。docker と native のアダプタも設定しない。イメージはどこでも `/scratch` ディレクトリを作る
+（`workspace/Dockerfile`）ので、ディレクトリがあることは何の目印にもならない。ここの仕組みはどれも
+変数を見る。`/scratch` の中身はタスク停止で消える。
 
 **`af-scratch --auto` が見る目印**（深さ 3 まで・`AF_WS_SCRATCH_AUTO_DEPTH`）: `package.json` →
 `node_modules`、`Cargo.toml` か `pom.xml` → `target`、`pyproject.toml` → `.venv`、`build.gradle` /
@@ -61,15 +64,19 @@ worktree 間で依存ツリーを勝手にリンクする仕組みは無い。`n
 
 ## 93.2 早見表
 
+`/scratch` の列は `ecs` で 93.1 が*試みる*ことを書いたもの: ビルド出力は見つかった目印ファイルの隣だけ
+（`AF_WS_SCRATCH_AUTO=0` なら無し）、ホームのキャッシュはディスクが 30 GiB 以上のときだけ。どの
+プロジェクトでもそうなる保証ではない。
+
 | エコシステム | 既定で共有されるもの | worktree 毎に増えるもの | `ecs` で `/scratch` に載るもの | 作法 |
 |---|---|---|---|---|
 | Node (npm) | `~/.npm`（tarball キャッシュのみ）| `node_modules` 数百MB（93.3）| `node_modules` | lock 一致時**だけ**親クローンへ symlink。合わないなら温まったキャッシュから `npm ci --prefer-offline` |
 | Go | `~/go/pkg/mod` と `~/.cache/go-build` | 実質なし | ディスクが 30 GiB 以上なら両キャッシュ | 何もしない。**効くのはメモリ側**——テストの並列度を絞る |
-| Python | `~/.cache/uv`（素の `pip` は共有なし）| `.venv` 数十〜数百MB（見積もり）| ディスクが 30 GiB 以上なら `~/.cache/uv`。`pyproject.toml` があれば `.venv` | `uv` で WT 毎に `.venv` を作る |
+| Python | `~/.cache/uv`、`~/.cache/pip`（ダウンロードのみ——素の `pip install` の入れ先は共有の `~/.local`、93.5）| `.venv` 数十〜数百MB（見積もり）| ディスクが 30 GiB 以上なら `~/.cache/uv`。`pyproject.toml` があれば `.venv` | `uv` で WT 毎に `.venv` を作る |
 | JVM | `~/.gradle` と `~/.m2` | `build/` か `target/` | `build/` か `target/` | そのまま。daemon の止め方だけ注意 |
-| Rust | `~/.cargo`（registry）| `target/` 数GB（見積もり）| `target/` | WT 毎のまま。**共有 target ディレクトリは不可**（93.7）|
+| Rust | `~/.cargo`（registry）| `target/` 数GB（見積もり）| `target/` | WT 毎のまま。共有 target ディレクトリは並列ビルドを直列化する（93.7）|
 
-ディスクを見るのは `df -h ~`（`/scratch` がある環境では `df -h /scratch` も）。キャッシュの掃除
+ディスクを見るのは `df -h ~`（`$AF_WS_SCRATCH` がある環境では `df -h /scratch` も）。キャッシュの掃除
 ——`npm cache clean --force` / `uv cache prune` / `go clean -cache`、または Settings > Machine >
 Tool caches——は notes/environment.md の "Disk" が扱う。これらのキャッシュは**全 worktree 共有**
 なので、他セッションのビルド中は消さない。
@@ -77,17 +84,13 @@ Tool caches——は notes/environment.md の "Disk" が扱う。これらのキ
 ## 93.3 Node — 唯一「明示的に共有しないと損する」やつ
 
 `node_modules` は WT 毎に丸ごと増える。**実測:** このレポの親クローンの `console/node_modules` は
-2026-09-29、`/scratch` の無い Workspace で、ディスク上 559MB（`du -sh`・見かけのサイズ 494MB）、
+2026-09-29、`$AF_WS_SCRATCH` の無い Workspace で、ディスク上 559MB（`du -sh`・見かけのサイズ 494MB）、
 20,719 ファイルだった。2026-08 の実測は 349MB。依存とともに育つので、どちらの数字もその時点の値として読む。
 
-**親クローンの実体を symlink で共有できる**。条件は 1 つ、**lockfile が親と同一**であること。
-このレポの手順は AGENTS.md にある。一般形は:
-
-```bash
-cd <repo-wt>/<pkg>
-cmp -s package-lock.json ~/repos/<repo>/<pkg>/package-lock.json \
-  && ln -s ~/repos/<repo>/<pkg>/node_modules node_modules
-```
+**親クローンの実体を symlink で共有できる**。条件は 1 つ、**lockfile が親と同一**であること
+（2 つを `cmp -s` で比べ、`node_modules` を親のものへリンクする）。コマンドはここには繰り返さない:
+このレポのものは AGENTS.md に、すべてのエージェントが受け取るものは notes/worktrees.md にある。
+どちらも `ecs` では下の注意が要る。
 
 **2026-08 の実測**（このレポの `console/`・npm 10.9.8 / node 22.23.2 / Vite 7 系）。`console/` は
 その後 Vite 8 系に上がっており（`console/package.json`）、本書ではこれらを測り直していない。
@@ -105,13 +108,14 @@ cmp -s package-lock.json ~/repos/<repo>/<pkg>/package-lock.json \
 - `npm install <pkg>` はリンクを実体ツリーへ黙って置き換える。壊れはしないが、その worktree は
   共有をやめて自前のコピーを抱える。
 
-**`/scratch` がある環境では、上の手順は何も共有しない。** `af-scratch --auto` が `node_modules` を
-既に `/scratch` 下の空ディレクトリへの symlink にしており、ディレクトリを指す既存の symlink に対して
-`ln -s <target> node_modules` を打つと、新しいリンクはそのディレクトリの*中*に作られ、終了コードは 0 に
+**`af-scratch --auto` が `node_modules` を既に symlink にしている場合**（`$AF_WS_SCRATCH` がある環境の
+新しい clone か worktree、93.1）、その手順の素の `ln -s` は何も共有しない。ディレクトリを指す既存の
+symlink に対して `ln -s <target> node_modules` を打つと、新しいリンクはそのディレクトリの*中*に作られ、終了コードは 0 に
 なる。**実測**（2026-09-29・素のディレクトリで・GNU coreutils の `ln`）。先に作られたリンクを外してから
 張ること（`rm -rf node_modules`、スラッシュ無し）。`ln -sfT` は symlink なら置き換え、実体ディレクトリ
-なら拒否する。このランタイムでは親の `node_modules` 自体も `/scratch` にあるので、停止すると実体も
-そこへのリンクもすべて消える。
+なら拒否する。親自身の `node_modules` も同じように退避されていれば実体は `/scratch` にあり、停止後は
+`~/repos` 側のリンクは残るが指す先が無くなる。退避なしで clone された親（仕組みができる前か、
+`AF_WS_SCRATCH_AUTO=0`）は実体をホームに持ったまま。
 
 lockfile が食い違うときは共有せず、温まった `~/.npm` から `npm ci --prefer-offline` で入れる。
 pnpm は入っていないが Node 22 は `corepack` を同梱しているので、pnpm を使うプロジェクトなら
@@ -134,7 +138,9 @@ toolchain がモジュールキャッシュへダウンロードされる。ホ�
 イメージは `/etc/pip.conf` に `break-system-packages = true` を書いている（`workspace/Dockerfile`）ので、
 Debian の Python に付いた PEP 668 の印は素の `pip install` を止めない。`dev` で打つと**エラーには
 ならず**、pip は `~/.local` へのユーザーインストールに落ちる。ここは永続するうえ**全プロジェクトで
-共有**されるため、worktree 毎に要る版が違った時点で静かに壊れる。
+共有**されるため、worktree 毎に要る版が違った時点で静かに壊れる。（pip のダウンロードキャッシュ
+`~/.cache/pip` も共有されるが、こちらは無害——Settings > Machine > Tool caches が並べるキャッシュの
+1 つ、`workspace/agent/tool_caches.go`。）
 
 WT 毎に仮想環境を切るのが正で、イメージが入れている `uv` を使う:
 
@@ -168,11 +174,12 @@ worktree 特有の注意が 1 点: **`./gradlew --stop` はその利用者の、
 Dockerfile は Rust の toolchain を入れていないので、`rustup` は自分で入れる。`~/.cargo` はホームに
 あって永続し（退避の対象一覧に無い）、registry キャッシュはそこで自動的に共有される。
 
-target ディレクトリは数GB になるが、**複数の worktree で共有の target ディレクトリ
-（`CARGO_TARGET_DIR`）を指さない**こと。cargo は target ディレクトリにビルドロックを取るので、並列
-セッションが**互いのビルド完了を待って直列化する**（"Blocking waiting for file lock on build
-directory"）。WT 毎に持たせ、終わったら `cargo clean` する方が総合的に速い。
+target ディレクトリは数GB になる（見積もり）。複数の worktree で 1 つの共有 target ディレクトリ
+（`CARGO_TARGET_DIR`）を指せばそのディスクは浮くが、cargo は target ディレクトリにビルドロックを取る
+ので、並列セッションが**互いのビルド完了を待って直列化する**（"Blocking waiting for file lock on build
+directory"——cargo の挙動で、ここでの実測ではない）。セッションが同時にビルドするなら worktree 毎の
+target を既定にし、共有はその並列性をディスクと引き換えにするものと考える。
 
-同じ考え方が他の言語にも当てはまる: **キャッシュ（ホーム側）は共有する / 出力ディレクトリ
-（worktree 側）は共有しない**。root が無いので、ユーザー空間へ入れるインストーラを選ぶこと——
+全体の形: **ホーム側のキャッシュは黙っていても共有される / worktree 側の出力を共有するのは例外**で、
+道具がそれを許す場合に限る——93.3 の lockfile 条件下の Node の `node_modules`。root が無いので、ユーザー空間へ入れるインストーラを選ぶこと——
 `rustup`、`uv tool install`、ホームの Node を通した `npm i -g`。
