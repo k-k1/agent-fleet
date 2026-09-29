@@ -71,8 +71,8 @@ at-rest 暗号 + env 注入で実用十分とする設計判断。セッショ�
 
 デプロイ自前のモデルサーバー——llama.cpp・ComfyUI
 （[decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md)）——はどの Workspace の
-外にもある。**Workspace がそれに届くのは CP のゲートウェイ `/engine/<key>/v1/*` 経由だけ**
-（`engine_gateway.go`）:
+外にもある。**Workspace がそれに届くのは CP のゲートウェイ経由だけ**——`/engine/{key}/v1/*` と、
+走っているエンジンが起動したときの窓を Agent が読む `GET /engine/{key}/props`（`engine_gateway.go`）:
 
 - llama-server は変更系のエンドポイントを持ち、ComfyUI は認証を一切持たないので、
   **ポートに誰が届くかがアクセス制御**である。AWS ではエンジンの SG（`60-engines.yaml` の
@@ -81,8 +81,10 @@ at-rest 暗号 + env 注入で実用十分とする設計判断。セッショ�
   鍵で、読めなくても致命にしないのは意図どおり（`readEngineAPIKey`）。
 - ゲートウェイはログインの門から除外され、自前で認証する。Workspace は membership ごとの
   発行トークン（`AF_ENGINE_ISSUE_TOKEN`・`afei_…`）を持ち、`POST /internal/engine/token` で
-  エンジンのキー 1 つに縛られたセッショントークン（`afe_…`）と交換する。毎回、membership が
-  生きていることと、テナントがそのエンジンを使えることを確かめ直す。
+  membership とエンジンのキー 1 つに縛られたトークン（`afe_…`・有効 30 日）と交換する。
+  セッション単位になるのはセッションが自分のプロセスを持つ場合（ターミナルのセッション）だけで、
+  opencode の共有 Managed デーモンにはセッションの無いものが渡る。毎回、membership が生きている
+  ことと、テナントがそのエンジンを使えることを確かめ直す。
 - `docker` / `native` のエンジンは運用者がネットワーク上で既に動かしているもの
   （[decisions/0076](../decisions/0076-external-image-engine-on-lan.ja.md)）。その bearer は
   `AF_ENGINE_API_KEY_<KEY>` から来て、Workspace が直接届くかどうかは運用者のネットワーク次第。
@@ -293,8 +295,10 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 - 器は監査ログ（`audit_log`・[06](06-data.ja.md)）。actor の種類は user / admin / mcp / system、
   それに Claude 自身のツール呼び出しを転写から取り込むオプトイン（`AF_CLAUDE_AUDIT_INTERVAL`・
   既定オフ）の `claude`。
-- **記録するのは変更・破壊操作だけ。** 読み取りは既定オフ、**ターミナルの生ストリームは保存
-  しない**（秘密が混ざる）。proxy 層は対象を URL から取り、本文からは取らない。
+- **記録するのは変更・破壊操作だけ**で、読み取りの例外が 1 つ: メンバーのメモリを環境の外へ
+  持ち出す唯一の経路 `GET /api/agents/memory/export`（対象は形式）。**ターミナルの生ストリームは
+  保存しない**（秘密が混ざる）。proxy 層は対象を URL から取るが、`PUT /api/fs/file` だけは検証済みの
+  JSON 本文の path を対象にする。**ファイルの内容は記録しない**。
 - 書き込み点: CP の proxy 層、admin / テナントの API、MCP の書き込みツール（トークンの id を
   記録し、**役割は呼び出し時に live で解決**）。
 - 読み取り: `GET /api/admin/audit` と Console。テナントと役割で絞る。
@@ -305,7 +309,7 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 
 - **forward proxy**。同じバイナリのサブコマンド（`egress-proxy`・`AF_EGRESS_LISTEN` 既定 `:3128`）。
   CONNECT / HTTP 要求のホスト名で判定し、**TLS は復号しない**。loopback・link-local（クラウドの
-  メタデータのアドレスを含む）・未指定アドレスはどのモードでも拒否する。
+  メタデータのアドレスを含む）・未指定アドレスは、どのモードでも検査して拒否する設計である。
 - イベントは CP へ（`POST /internal/egress`・`AF_EGRESS_TOKEN`）送って日次集計（`egress_daily`）、
   ポリシーは `GET /internal/egress/policy` で配る。
 - **allowlist は版管理**（`egress_allowlist`: active / proposed / retired）+ デプロイ全体のモード

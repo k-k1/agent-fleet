@@ -80,8 +80,9 @@ is judged good enough; what it means for code running in a session is stated in
 
 The deployment's own model servers — llama.cpp, ComfyUI
 ([decisions/0071](../decisions/0071-self-hosted-inference-engines.md)) — are outside
-every workspace. **A workspace reaches one only through the CP's gateway,
-`/engine/<key>/v1/*`** (`engine_gateway.go`):
+every workspace. **A workspace reaches one only through the CP's gateway** —
+`/engine/{key}/v1/*`, plus `GET /engine/{key}/props`, which the agent reads to learn
+the context window the running engine started with (`engine_gateway.go`):
 
 - llama-server has mutating endpoints, and ComfyUI has no authentication at all, so
   **who can reach the port is the access control**. On AWS the engine security group
@@ -91,9 +92,11 @@ every workspace. **A workspace reaches one only through the CP's gateway,
   not fatal when it cannot be read (`readEngineAPIKey`).
 - The gateway is exempt from the login gate and authenticates on its own. The workspace
   holds a per-membership issuing token (`AF_ENGINE_ISSUE_TOKEN`, `afei_…`) and exchanges
-  it at `POST /internal/engine/token` for a session token (`afe_…`) bound to one engine
-  key. Every call re-checks that the membership is still live and that the tenant may use
-  that engine.
+  it at `POST /internal/engine/token` for a token (`afe_…`, valid for 30 days) bound to
+  the membership and one engine key. It is session-scoped only where a session is its own
+  process (a terminal session); opencode's shared Managed daemon gets one with no session.
+  Every call re-checks that the membership is still live and that the tenant may use that
+  engine.
 - An engine on `docker` / `native` is one the operator already runs on the network
   ([decisions/0076](../decisions/0076-external-image-engine-on-lan.md)); a bearer for it
   comes from `AF_ENGINE_API_KEY_<KEY>`, and whether a workspace could reach it directly is
@@ -351,9 +354,12 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 - The store is the audit log (`audit_log`, [06](06-data.md)), with an actor kind of
   user, admin, MCP or system — and `claude` for the opt-in import of Claude's own tool
   calls from its transcripts (`AF_CLAUDE_AUDIT_INTERVAL`, off by default).
-- **Only mutating and destructive operations are recorded.** Reads are off by default,
-  and **the raw terminal stream is never stored** — it would capture secrets. The proxy
-  layer takes the target from the URL, never from the body.
+- **Only mutating and destructive operations are recorded**, with one read as the
+  exception: `GET /api/agents/memory/export`, the one path that carries a member's
+  memory out of the environment (the target is the format). **The raw terminal stream is
+  never stored** — it would capture secrets. The proxy layer takes the target from the
+  URL, except `PUT /api/fs/file`, whose target is the path from the validated JSON body;
+  **file contents are never recorded**.
 - Written from the CP's proxy layer, the admin and tenant APIs, and the MCP write tools
   (which record the token's id, with **the role resolved live at call time**).
 - Read through `GET /api/admin/audit` and the Console, scoped by tenant and role.
@@ -364,8 +370,9 @@ Implemented:
 
 - **A forward proxy**, run as a subcommand of the same binary (`egress-proxy`,
   `AF_EGRESS_LISTEN`, default `:3128`). It decides by the host name of the CONNECT or
-  HTTP request and **does not decrypt TLS**. Loopback, link-local (the cloud metadata
-  address included) and unspecified destinations are refused in every mode.
+  HTTP request and **does not decrypt TLS**. It is designed to check for loopback,
+  link-local (the cloud metadata address included) and unspecified destinations and
+  refuse them in every mode.
 - Events go to the CP (`POST /internal/egress`, `AF_EGRESS_TOKEN`) and are aggregated
   daily (`egress_daily`); the policy is served back from `GET /internal/egress/policy`.
 - **The allowlist is versioned** (`egress_allowlist`: active / proposed / retired) with a
