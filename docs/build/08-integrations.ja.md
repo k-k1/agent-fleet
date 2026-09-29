@@ -36,7 +36,7 @@ updated: "2026-09"
 | 利用者・テナントが足す MCP サーバ | エージェントのツール | サーバの求めるもの（各 CLI の設定に書き込む）| — | 各 CLI 自身の設定ファイル。利用者ごとのヘッダ秘密は暗号化ストア（§8.7）|
 | AWS（利用者のアカウント）| SSM セッション・`af-aws-exec` | SSO device code（Console から開始）| 不要 | SSO キャッシュは**ワークスペース内。CP は見ない**（§8.8）|
 | AWS（配備自身のアカウント）| ECS ランタイム・エンジン・コスト・音声 | CP の IAM ロールで SDK | — | 何も保存しない（§8.8）|
-| エンジン（自配備・外部・別配備）| ローカル LLM・画像生成 | CP が発行するワークスペース単位のトークン。上流の資格は CP が足す | 不要 | 上流キーは CP の環境変数か SSM。借用トークンは CP の環境変数（§8.9）|
+| エンジン（自配備・外部・別配備）| ローカル LLM・画像生成 | Agent が CP から買うゲートウェイトークン（セッション単位かワークスペース単位）。上流の資格は CP が足す | 不要 | 上流キーは CP の環境変数か SSM。借用トークンは CP の環境変数。メンバー自身の llama.cpp サーバは暗号化ストア（§8.9）|
 | Hugging Face・Civitai | モデル取り込み | API トークン | 不要 | 封緘した配備全体の設定（§8.9）|
 | Discord・Slack | チャットブリッジ | ボットトークン（Slack はアプリレベルトークンも）、外向き WebSocket | 不要 | 暗号化ストア（§8.10）|
 | PagerDuty・Grafana | 運用ツールの MCP サーバ | API トークン | 不要 | 暗号化ストア（§8.10）|
@@ -210,26 +210,36 @@ refresh token 付き）。エンドポイントは `POST /api/connections/claude
 
 ## 8.6 その他のエージェント CLI
 
-どの kind が何に対応し、メンバーが Console からどうサインインするかは
-[ref/agents](../../guide/ref/agents.ja.md#サインインの仕方)。その下の契約は全 kind 共通:
-**Agent が CLI 自身のログインを駆動し、CLI が自分の資格を書き、どの kind もコールバックを
-要さない。** ログインの状態は Agent のメモリにしか無いので、CP はこれらのフローを
-`restLoginFlow` で中継し、ワークスペースが収束しきる前は、退役するタスクにフローを失わせる
-代わりに断る。
+どの kind がサインインでき、メンバーが Console からどうするかは
+[ref/agents](../../guide/ref/agents.ja.md#サインインの仕方)。この節はその下の契約だけを
+書く。**どの kind も CP のコールバックを要さない。** kind に資格が届く道は 3 つ:
 
-| kind | 方式 | エンドポイント（`/api/connections/` 配下）| 資格 |
-|---|---|---|---|
-| codex | stdin で API キー（`codex login --with-api-key`）、または ChatGPT device flow（PTY で `codex login --device-auth`、検証 URL とワンタイムコードをスクレイプ）| `codex/api-key`・`codex/device/{start,poll}`・`DELETE codex` | `~/.codex/auth.json`（CLI 所有）|
-| opencode | 環境変数名つきのプロバイダキー、または `opencode serve` 自身の API を通した opencode アカウントの device flow | `PUT opencode`・`DELETE opencode/{env}`・`opencode/oauth/{start,poll,cancel}`・`opencode/serve/restart` | キーは暗号化ストア。アカウントは opencode 自身の DB |
-| cursor | PTY で `cursor-agent login`、URL をスクレイプ。CLI がポーリングし、コードは貼らない | `cursor/{start,poll}`・`DELETE cursor` | `~/.config/cursor/auth.json`（CLI 所有）|
-| kiro | PTY で `kiro-cli login --use-device-flow`、URL とコードをスクレイプ | `kiro/{start,poll}`・`DELETE kiro`・`kiro/install` | CLI 自身の DB |
-| agy | PTY で対話 TUI（ヘッドレスのログインは無い）: Google OAuth、コードを貼り戻し、続けてオンボーディング | `agy/{start,complete}`・`DELETE agy` | CLI 自身のトークンファイル |
-| muse | **PTY でなくパイプ**で `muse login`、device URL とコードをスクレイプ。または API キー（アカウントでサインイン中は `account_login_present` で拒否）| `muse/{start,poll,api-key}`・`DELETE muse`・`muse/install` | `~/.config/muse/auth.json`（CLI 所有）|
-| copilot | 自前の方式は無く、`gh` ラッパー（§8.3）経由で GitHub の接続に乗る。Managed の子には `COPILOT_GITHUB_TOKEN` を渡す | —（状態のみ）| GitHub の接続 |
-| lcpp | 無し: CP からセッション単位のエンジントークン（§8.9）。メンバー自身の llama.cpp サーバを任意で指定でき、そちらが優先 | `PUT lcpp`・`DELETE lcpp`・`lcpp/check` | メンバーのサーバは暗号化ストア |
+- **CLI 自身のログインを Agent が駆動**し、その後 CLI が自分の資格を書く: codex・cursor・
+  kiro・agy・muse、および opencode のアカウントサインイン。
+- **メンバーが貼るキー**: opencode のプロバイダキーは暗号化ストアに置いて環境に注入する。
+  codex と muse の API キーは CLI に渡し、CLI が自分のファイルを書く。
+- **別の接続**: copilot は GitHub の接続（§8.3）に乗る。lcpp は配備のエンジン（§8.9）か
+  メンバー自身の llama.cpp サーバを使う。
 
-kind 固有の点:
+| kind | エンドポイント（`/api/connections/` 配下）| 資格の所在 |
+|---|---|---|
+| codex | `codex/api-key`・`codex/device/{start,poll}`・`DELETE codex` | `~/.codex/auth.json`（CLI 所有）|
+| opencode | `PUT opencode`・`DELETE opencode/{env}`・`opencode/oauth/{start,poll,cancel}`・`DELETE opencode/oauth`・`opencode/serve/restart` | キーは暗号化ストア。アカウントは opencode 自身の DB |
+| cursor | `cursor/{start,poll}`・`DELETE cursor` | `~/.config/cursor/auth.json`（CLI 所有）|
+| kiro | `kiro/{start,poll}`・`DELETE kiro`・`kiro/install` | CLI 自身の DB |
+| agy | `agy/{start,complete}`・`DELETE agy` | CLI 自身のトークンファイル |
+| muse | `muse/{start,poll,api-key}`・`DELETE muse`・`muse/install` | `~/.config/muse/auth.json`（CLI 所有）|
+| copilot | —（状態は `GET /api/connections` の 1 フィールド）| GitHub の接続。Managed の子には `COPILOT_GITHUB_TOKEN` として渡す |
+| lcpp | `PUT lcpp`・`DELETE lcpp`・`lcpp/check` | メンバー自身のサーバは暗号化ストア。配備のエンジントークンは保存しない |
 
+ログインの駆動方法（壊れるのはここ）:
+
+- ログインの状態は Agent のメモリにしか無いので、CP はこれらのフローを `restLoginFlow` で
+  中継し、ワークスペースが収束しきる前は、退役するタスクにフローを失わせる代わりに断る。
+- codex（`--device-auth`）・cursor・kiro・agy は PTY で動かし、Agent が画面から URL（と
+  コード）をスクレイプする。agy にはヘッドレスのログインが無く、Agent が対話 TUI を
+  オンボーディングまで辿る。muse は **PTY でなくパイプ**で動かす（PTY だと Enter を待って
+  止まる）。opencode のアカウントのフローは画面でなく `opencode serve` 自身の HTTP API を通る。
 - **codex**: 環境変数での資格注入は効かない（`codex login status` がログアウトのまま）ので、
   両経路とも CLI 自身にファイルを書かせる。OpenAI 側のポーリングは CLI が自分で行う。
   ChatGPT アカウントで device code ログインが無効だと、start は `no_url` で失敗する。接続済み
@@ -239,6 +249,7 @@ kind 固有の点:
   Managed のセッションは共有 `opencode serve` デーモンの環境で受け取る。キーを変えたら
   `serve/restart` が要るのはこのため。平文の auth ファイルは作らない
   （[04 §4.3](04-agent.ja.md)）。
+- **muse**: アカウントでサインイン中は、API キーの保存を `account_login_present` で拒否する。
 
 ## 8.7 MCP — 対外契約
 
@@ -272,7 +283,8 @@ codex は MCP の子を空の環境で起動するので、`AGENT_TOKEN`・`AGEN
 
 | 群 | 条件 |
 |---|---|
-| 引き継ぎ・`af_report`・`af_stop_after_turn`、Chromium Attach のツール、セッションの状態と使用量、メモ（一覧・追加・更新）| 常に |
+| 引き継ぎ・`af_report`・`af_stop_after_turn`、セッションの状態と使用量、メモ（一覧・追加・更新）| 常に |
+| Chromium Attach のツール | `--chromium-attach` 付きで起動したとき。組み込みの登録は常にこれを渡す（`mcp-stdio --self-report --chromium-attach`）|
 | `list_peer_sessions`・`send_to_peer_session` | 利用者のピアメッセージ設定 |
 | セッションの起動と操縦（`create_session` …）。操縦は呼び出し元自身の子にだけ届く | 利用者のセッション起動設定 |
 | `generate_image` | 利用者の画像生成設定、その上で `tools/list` ごとに判定 |
@@ -323,12 +335,18 @@ KMS custodian は 📋 — seam のみ（`KeyCustodian`、[07 §7.6](07-security
 ## 8.9 エンジン
 
 エンジンは配備が提供するモデルサーバ——llama.cpp、ComfyUI、OpenAI 互換の画像 API。
-**ワークスペースはエンジンと直接話さず**、上流の資格も持たない:
+**ワークスペースは配備のエンジン表にあるエンジンと直接話さず**、上流の資格も持たない:
 
-- Agent は `POST /internal/engine/token` からワークスペース単位のトークン（`AF_ENGINE_TOKEN`）を
-  得て、ログインゲートの除外パスである CP のゲートウェイ `/engine/{key}/v1/…` を呼ぶ。上流の
-  資格は CP が足す: 外部の行なら CP 環境の `AF_ENGINE_API_KEY_<KEY>`、CP が管理する行なら SSM
-  SecureString（[decisions/0083](../decisions/0083-openai-compat-image-provider.ja.md)）。
+- CP はワークスペース起動時に per-membership の発行用トークン `AF_ENGINE_ISSUE_TOKEN` を
+  注入する。Agent はそれで `POST /internal/engine/token` から、1 エンジンと 1 セッション
+  （画像生成と起動時の問い合わせではワークスペース全体）に限ったゲートウェイトークンを買う（`engineToken`、寿命の半分までキャッシュ）。opencode は
+  それを `AF_ENGINE_TOKEN` として受け取り、Agent の中で動く lcpp と画像生成はそのまま使う。
+  どちらも呼び先はログインゲートの除外パスである CP のゲートウェイ `/engine/{key}/v1/…`。上流の資格は CP が足す: 外部の行なら CP 環境の
+  `AF_ENGINE_API_KEY_<KEY>`、CP が管理する行なら SSM SecureString
+  （[decisions/0083](../decisions/0083-openai-compat-image-provider.ja.md)）。
+- **メンバー自身の llama.cpp サーバ**（§8.6 の lcpp）は例外で、Agent がその URL へ暗号化
+  ストアの任意の API キーを付けて直接アクセスし、CP は関わらない。設定されていれば配備の
+  エンジンより優先される。
 - **別配備のエンジンの借用**は CP から CP への外向きだけ
   （[decisions/0079](../decisions/0079-remote-engine-from-another-deployment.ja.md)）。借りる
   側は `AF_REMOTE_ENGINE_URL`・`AF_REMOTE_ENGINE_TOKEN`（貸す側の super_admin が

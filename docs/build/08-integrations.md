@@ -37,7 +37,7 @@ fits (a).
 | MCP servers a user or tenant adds | tools for the agents | whatever the server wants, written into each CLI's config | — | each CLI's own config file; per-user header secrets in the encrypted store (§8.7) |
 | AWS, the user's accounts | SSM sessions, `af-aws-exec` | SSO device code, started from the Console | none | the SSO cache **inside the workspace; the CP never sees it** (§8.8) |
 | AWS, the deployment's own | the ECS runtimes, engines, cost, speech | the SDK with the CP's IAM role | — | nothing (§8.8) |
-| Engines — the deployment's own, an external one, or another deployment's | local LLM and image generation | a per-workspace token minted by the CP; the CP adds the upstream credential | none | upstream keys in the CP environment or SSM; the borrowing token in the CP environment (§8.9) |
+| Engines — the deployment's own, an external one, or another deployment's | local LLM and image generation | a gateway token the agent buys from the CP, per session or per workspace; the CP adds the upstream credential | none | upstream keys in the CP environment or SSM; the borrowing token in the CP environment; a member's own llama.cpp server in the encrypted store (§8.9) |
 | Hugging Face, Civitai | model ingest | an API token | none | a sealed deployment setting (§8.9) |
 | Discord, Slack | the chat bridge | a bot token (+ Slack's app-level token), outbound WebSocket | none | the encrypted store (§8.10) |
 | PagerDuty, Grafana | the ops-tool MCP servers | an API token | none | the encrypted store (§8.10) |
@@ -232,26 +232,40 @@ endpoints are `POST /api/connections/claude/{start,complete}` and
 
 ## 8.6 The other agent CLIs
 
-What each kind supports, and how a member signs in from the Console, is
-[ref/agents](../../guide/ref/agents.md#how-to-sign-in). The contract underneath is
-the same for all of them: **the agent drives the CLI's own login, the CLI writes its own
-credentials, and no kind needs a callback.** A login's state lives only in the agent's
-memory, so the CP relays these flows through `restLoginFlow`, which refuses while the
-workspace is still converging rather than let a retiring task lose the flow.
+Which kinds can sign in, and how a member does it from the Console, is
+[ref/agents](../../guide/ref/agents.md#how-to-sign-in); this section is only the
+contract underneath. **No kind needs a CP callback.** A kind's credential reaches it in
+one of three ways:
 
-| Kind | Method | Endpoints (under `/api/connections/`) | Credential |
-|---|---|---|---|
-| codex | an API key over stdin (`codex login --with-api-key`), or a ChatGPT device flow (`codex login --device-auth` on a PTY, scraping the verification URL and one-time code) | `codex/api-key`, `codex/device/{start,poll}`, `DELETE codex` | `~/.codex/auth.json`, the CLI's own |
-| opencode | a provider key under an environment name, or an opencode account's device flow through `opencode serve`'s own API | `PUT opencode`, `DELETE opencode/{env}`, `opencode/oauth/{start,poll,cancel}`, `opencode/serve/restart` | keys in the encrypted store; the account in opencode's own database |
-| cursor | `cursor-agent login` on a PTY, scraping the URL; the CLI polls, no code is pasted | `cursor/{start,poll}`, `DELETE cursor` | `~/.config/cursor/auth.json`, the CLI's own |
-| kiro | `kiro-cli login --use-device-flow` on a PTY, scraping the URL and code | `kiro/{start,poll}`, `DELETE kiro`, `kiro/install` | the CLI's own database |
-| agy | its interactive TUI on a PTY — there is no headless login: Google OAuth, the code pasted back, then its onboarding | `agy/{start,complete}`, `DELETE agy` | the CLI's own token file |
-| muse | `muse login` over **a pipe, not a PTY**, scraping the device URL and code; or an API key, refused with `account_login_present` while an account is signed in | `muse/{start,poll,api-key}`, `DELETE muse`, `muse/install` | `~/.config/muse/auth.json`, the CLI's own |
-| copilot | none of its own: it rides the GitHub connection through the `gh` wrapper (§8.3), and the Managed child gets `COPILOT_GITHUB_TOKEN` | — (status only) | the GitHub connection |
-| lcpp | none: a per-session engine token from the CP (§8.9); optionally the member's own llama.cpp server, which wins | `PUT lcpp`, `DELETE lcpp`, `lcpp/check` | the member's server in the encrypted store |
+- **The CLI's own login, driven by the agent**, after which the CLI writes its own
+  credentials: codex, cursor, kiro, agy, muse, and opencode's account sign-in.
+- **A key the member pastes**: opencode's provider keys are kept in the encrypted store
+  and injected into the environment; codex's and muse's API keys are handed to the CLI,
+  which writes its own file.
+- **Another connection**: copilot rides the GitHub connection (§8.3); lcpp uses the
+  deployment's engine (§8.9) or the member's own llama.cpp server.
 
-Specific to one kind:
+| Kind | Endpoints (under `/api/connections/`) | Where the credential lives |
+|---|---|---|
+| codex | `codex/api-key`, `codex/device/{start,poll}`, `DELETE codex` | `~/.codex/auth.json`, the CLI's own |
+| opencode | `PUT opencode`, `DELETE opencode/{env}`, `opencode/oauth/{start,poll,cancel}`, `DELETE opencode/oauth`, `opencode/serve/restart` | keys in the encrypted store; the account in opencode's own database |
+| cursor | `cursor/{start,poll}`, `DELETE cursor` | `~/.config/cursor/auth.json`, the CLI's own |
+| kiro | `kiro/{start,poll}`, `DELETE kiro`, `kiro/install` | the CLI's own database |
+| agy | `agy/{start,complete}`, `DELETE agy` | the CLI's own token file |
+| muse | `muse/{start,poll,api-key}`, `DELETE muse`, `muse/install` | `~/.config/muse/auth.json`, the CLI's own |
+| copilot | — (its state is a field of `GET /api/connections`) | the GitHub connection; the Managed child gets it as `COPILOT_GITHUB_TOKEN` |
+| lcpp | `PUT lcpp`, `DELETE lcpp`, `lcpp/check` | the member's own server in the encrypted store; the deployment's engine token is not stored |
 
+How the logins are driven, which is where they break:
+
+- A login's state lives only in the agent's memory, so the CP relays these flows through
+  `restLoginFlow`, which refuses while the workspace is still converging rather than let
+  a retiring task lose the flow.
+- codex (`--device-auth`), cursor, kiro and agy run on a PTY, and the agent scrapes the
+  URL (and code) off the screen. agy has no headless login at all: the agent walks its
+  interactive TUI, including its onboarding. muse runs over **a pipe, not a PTY** — on a
+  PTY it waits for Enter. opencode's account flow goes through `opencode serve`'s own
+  HTTP API, not a screen.
 - **codex**: injecting the credential by environment does not work (`codex login status`
   stays logged out), so both paths make the CLI write its own file. The CLI polls OpenAI
   itself. When the ChatGPT account has device-code login switched off, the start fails
@@ -262,6 +276,8 @@ Specific to one kind:
   `tmux new-session -e`, and a Managed session through the environment of the shared
   `opencode serve` daemon, which is why changing a key needs `serve/restart`. No
   plaintext auth file is created ([04 §4.3](04-agent.md)).
+- **muse**: saving an API key is refused with `account_login_present` while an account is
+  signed in.
 
 ## 8.7 MCP — the outward contract
 
@@ -297,7 +313,8 @@ assembled in `mcpStdioToolList`:
 
 | Group | When |
 |---|---|
-| handoff, `af_report`, `af_stop_after_turn`; the Chromium attach tools; session status and usage; memos (list, add, update) | always |
+| handoff, `af_report`, `af_stop_after_turn`; session status and usage; memos (list, add, update) | always |
+| the Chromium attach tools | started with `--chromium-attach`, which the built-in registration always passes (`mcp-stdio --self-report --chromium-attach`) |
 | `list_peer_sessions`, `send_to_peer_session` | the user's peer-messaging setting |
 | launching and steering sessions (`create_session` …); driving reaches only the caller's own children | the user's session-spawn setting |
 | `generate_image` | the user's image-generation setting, then per `tools/list` |
@@ -351,14 +368,22 @@ A KMS custodian is 📋 — the seam only (`KeyCustodian`, [07 §7.6](07-securit
 ## 8.9 Engines
 
 Engines are model servers the deployment provides — llama.cpp, ComfyUI, an
-OpenAI-compatible image API. **A workspace never talks to an engine directly**, and
-never holds an upstream credential:
+OpenAI-compatible image API. **A workspace never talks to an engine in the
+deployment's table directly**, and never holds an upstream credential:
 
-- The agent obtains a per-workspace token from `POST /internal/engine/token`
-  (`AF_ENGINE_TOKEN`) and calls the CP's gateway, `/engine/{key}/v1/…`, which is exempt
-  from the login gate. The CP adds the upstream credential: `AF_ENGINE_API_KEY_<KEY>` in
-  its environment for an external row, or an SSM SecureString for one it manages
+- The CP injects a per-membership issuing token, `AF_ENGINE_ISSUE_TOKEN`, at workspace
+  start. With it the agent buys, from `POST /internal/engine/token`, a gateway token
+  scoped to one engine and to one session, or to the whole workspace for image
+  generation and the boot-time probes (`engineToken`, cached until half its lifetime).
+  opencode receives it as `AF_ENGINE_TOKEN`; lcpp and image generation, which run inside
+  the agent, use it directly. Either way the call goes to the CP's gateway,
+  `/engine/{key}/v1/…`, which is exempt from the login gate. The CP adds the upstream
+  credential: `AF_ENGINE_API_KEY_<KEY>` in its environment for an external row, or an SSM
+  SecureString for one it manages
   ([decisions/0083](../decisions/0083-openai-compat-image-provider.md)).
+- **A member's own llama.cpp server** (§8.6, lcpp) is the exception: the agent reaches
+  its URL directly, with the optional API key from the encrypted store, and the CP is not
+  involved. When it is set, it wins over the deployment's engine.
 - **Borrowing another deployment's engines** is CP to CP, outbound only
   ([decisions/0079](../decisions/0079-remote-engine-from-another-deployment.md)). The
   borrower sets `AF_REMOTE_ENGINE_URL`, `AF_REMOTE_ENGINE_TOKEN` (issued by the lender's
