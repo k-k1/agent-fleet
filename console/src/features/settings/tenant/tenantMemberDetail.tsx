@@ -10,7 +10,8 @@
 //	Size and limits   its own card, directly under the meters it explains. Editing a
 //	                  number is not an operation on anybody.
 //	Operations        force-stop, which is a pause and takes the work with it.
-//	  Cannot be undone   ruled off below it: clean home, remove, discard, delete.
+//	  Cannot be undone   ruled off below it: clean home, delete backups, remove, discard,
+//	                     delete.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -19,7 +20,9 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../../cost/CloudCostView.tsx";
 import { MemberUptimePanel } from "../../usage/UptimeHeatmap.tsx";
-import { useT } from "../../../lib/i18n/index.ts";
+import { tCount, useT } from "../../../lib/i18n/index.ts";
+import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
@@ -49,6 +52,15 @@ export function MemberView({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDestroy, setConfirmDestroy] = useState(false);
   const [confirmPurgeRow, setConfirmPurgeRow] = useState(false);
+  const [confirmDeleteBackups, setConfirmDeleteBackups] = useState(false);
+  // What this deployment's runtime can do to a home (whoami, control-plane
+  // internal/runtime/home_wipe.go). Clean home is not offered where the CP would refuse it,
+  // and the backup copies exist only where the runtime keeps them (the EC2 slot pool).
+  const homeErase = useTenantStore((s) => s.whoami?.home_erase === true);
+  const homeBackups = useTenantStore((s) => s.whoami?.home_backups === true);
+  // The copies of this home kept outside it. Clean home leaves them on purpose, so they are
+  // shown — and deleted — on their own. null = not known (not loaded, or not kept here).
+  const [backups, setBackups] = useState<{ count: number; newest?: string } | null>(null);
   // Whether removal also destroys the workspace. Shown unchecked, so the current contract
   // (keep the home, and just re-invite if they come back) holds unless it is ticked.
   const [purge, setPurge] = useState(false);
@@ -97,6 +109,20 @@ export function MemberView({
 
   const key = member.user_key;
   const base = `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}`;
+
+  const loadBackups = useCallback(async () => {
+    if (!homeBackups) return;
+    try {
+      const d = await api(`${base}/home-backups`);
+      setBackups(d && !d.error ? { count: d.count ?? 0, newest: d.newest } : null);
+    } catch {
+      /* keep the last answer; the button only appears when there is something to delete */
+    }
+  }, [base, homeBackups]);
+  useEffect(() => {
+    setBackups(null); // another member's count must not linger while this one loads
+    void loadBackups();
+  }, [loadBackups]);
 
   const poll = useCallback(async () => {
     try {
@@ -214,10 +240,34 @@ export function MemberView({
   const cleanHome = async () => {
     setBusy(true);
     try {
-      await apiJSON("api/admin/clean-home", "POST", { tenant_slug: slug, user_key: key });
+      const res = await apiJSON("api/admin/clean-home", "POST", { tenant_slug: slug, user_key: key });
+      // A refusal (not available here, another operation in progress) wiped nothing, and
+      // closing the dialog as if it had is how an offboarding gets recorded as done.
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
       setConfirmClean(false);
       poll();
       onChanged();
+      void loadBackups();
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Deleting the backup copies Clean home leaves: the step for a home that must not survive
+  // anywhere. Irreversible, audited by the CP.
+  const deleteBackups = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON(`${base}/home-backups`, "DELETE", {});
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirmDeleteBackups(false);
+      toast(tCount("admin.delete_backups_done", res?.deleted ?? 0));
+      void loadBackups();
     } finally {
       setBusy(false);
     }
@@ -634,9 +684,16 @@ export function MemberView({
             {/* clean-home is a tenant_admin action now (docs/log/61 §61.10.6 / decision 26):
                 the department knows who left, so the whole offboarding sequence
                 belongs to it rather than half of it being a ticket to IT. */}
-            <button className="danger-btn" onClick={() => setConfirmClean(true)}>
-              <Icon name="trash" /> {tr("admin.clean_home")}
-            </button>
+            {homeErase && (
+              <button className="danger-btn" onClick={() => setConfirmClean(true)}>
+                <Icon name="trash" /> {tr("admin.clean_home")}
+              </button>
+            )}
+            {homeBackups && backups && backups.count > 0 && (
+              <button className="danger-btn" disabled={busy} onClick={() => setConfirmDeleteBackups(true)}>
+                <Icon name="trash" /> {tCount("admin.delete_backups", backups.count)}
+              </button>
+            )}
             {member.status !== "removed" ? (
               <button className="danger-btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
                 <Icon name="close" /> {tr("admin.remove_member")}
@@ -651,6 +708,7 @@ export function MemberView({
               </button>
             )}
           </div>
+          {!homeErase && <p className="muted">{tr("admin.clean_home_unavailable")}</p>}
         </div>
       </section>
 
@@ -676,6 +734,24 @@ export function MemberView({
           <p>{tr("admin.clean_body")}</p>
           <p className="muted">{tr("admin.clean_keep")}</p>
           <p className="muted">{tr("admin.clean_delete")}</p>
+          {homeBackups && backups && backups.count > 0 && (
+            <p className="muted">{tCount("admin.clean_backups_stay", backups.count)}</p>
+          )}
+        </ConfirmDialog>
+      )}
+      {confirmDeleteBackups && backups && (
+        <ConfirmDialog
+          title={tr("admin.delete_backups_title", { key })}
+          confirmLabel={tr("admin.delete_backups_confirm")}
+          busy={busy}
+          onCancel={() => setConfirmDeleteBackups(false)}
+          onConfirm={deleteBackups}
+        >
+          <p>
+            {tCount("admin.delete_backups_body", backups.count, {
+              newest: backups.newest ? fmtDateTime(backups.newest, DATETIME_FULL) : "—",
+            })}
+          </p>
         </ConfirmDialog>
       )}
       {confirmRemove && (

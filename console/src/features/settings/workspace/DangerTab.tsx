@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { useWorkspaceStore } from "../../../core/store/workspace.ts";
+import { useWorkspaceStore, type LifecycleFailure } from "../../../core/store/workspace.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 import { useLayoutStore } from "../../../layout/store.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
 import { useReposStore } from "../../repos/store.ts";
@@ -15,16 +16,24 @@ import { confirmDirtyNavigation } from "../../editor/dirtyRegistry.ts";
 // routine toolchain selection. Still tucked deep in settings (not on the always-visible WS
 // bar) and behind a warning dialog, since recreating discards sessions and cloned repos
 // (logins/connections survive).
+//
+// Offered only where the deployment's runtime can reach the home (whoami.home_wipe). The
+// settings rail hides this tab everywhere else; reaching it anyway (a remembered section)
+// shows why instead of two buttons the CP would refuse.
 export function DangerTab() {
   const tr = useT();
   const toast = useToast();
+  const available = useTenantStore((s) => s.whoami?.home_wipe === true);
   // Both destructive actions share the same post-teardown refresh: everything the
   // views point at is about to go away (the terminal reconciler disposes the other
   // panes' xterms after resetToTerminal), then we refresh sessions/repos/files.
-  const runDestructive = async (action: () => Promise<string | null>, failMsg: string) => {
+  const runDestructive = async (action: () => Promise<LifecycleFailure | null>, failMsg: string) => {
     if (!(await confirmDirtyNavigation("workspace_lifecycle"))) return;
     const err = await action();
-    if (err) toast(failMsg + err);
+    if (err) toast(failMsg + err.message);
+    // A refusal left the workspace exactly as it was; resetting would close the member's
+    // panes for nothing.
+    if (err?.untouched) return;
     // The lifecycle store performs the dirty guard before issuing the request.
     // Resetting first could destroy a buffer before that guard is shown.
     useLayoutStore.getState().resetToTerminal();
@@ -35,7 +44,7 @@ export function DangerTab() {
   const [confirm, setConfirm] = useState<null | "recreate" | "cleanHome">(null);
   const [busy, setBusy] = useState(false);
 
-  const run = async (action: () => Promise<string | null>, failMsg: string) => {
+  const run = async (action: () => Promise<LifecycleFailure | null>, failMsg: string) => {
     setBusy(true);
     try {
       await runDestructive(action, failMsg);
@@ -46,6 +55,19 @@ export function DangerTab() {
   };
   const doRecreate = () => run(() => useWorkspaceStore.getState().recreate(true), tr("env.recreate_failed"));
   const doCleanHome = () => run(() => useWorkspaceStore.getState().cleanHome(true), tr("env.cleanhome_failed"));
+
+  if (!available) {
+    return (
+      <div className="display-settings">
+        <section className="danger-zone">
+          <h4 className="danger-zone-title">
+            <Icon name="warning" /> {tr("env.danger_zone")}
+          </h4>
+          <p className="muted">{tr("env.dz_unavailable")}</p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="display-settings">

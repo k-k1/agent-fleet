@@ -338,6 +338,8 @@ export const tools = {
   "env.dz_lose_sessions": "実行中のセッションは失われます",
   "env.dz_lose_repos": "クローン済みリポジトリ（未コミット変更を含む）は削除されます",
   "env.dz_lose_home_rest": "・キャッシュ・設定など、ホームのその他はすべて削除されます",
+  "env.dz_unavailable":
+    "この配備ではワークスペースの作り直しとホームの掃除を使えません（ホームが Control Plane から届かない場所にあります）。再起動はワークスペースバーから行えます。",
 
   // --- SSM 設定（features/settings/SsmTab.tsx）---
   "ssm.comm_failed": "通信に失敗しました: {msg}",

@@ -19,10 +19,18 @@ vi.mock("../../../core/api/client.ts", () => ({
   rawJSON: () => Promise.resolve(new Response("")),
   errText: (e: { message?: string }) => e?.message || "",
   rel: (p: string) => p,
+  // MemberView reads the deployment's home operations from the tenant store's whoami, and
+  // that store reads these at import.
+  getTenant: () => "",
+  getUser: () => "",
+  setTenant: () => {},
+  setUser: () => {},
+  isTransientErr: () => false,
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
 import { MemberView } from "./tenantMemberDetail.tsx";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 
 const MEMBER = {
   user_key: "a-x-com",
@@ -471,6 +479,8 @@ describe("member detail information architecture", () => {
   });
 
   it("puts cleaning a home and removing a member below the rule", async () => {
+    // Clean home is offered only where the runtime can reach the home.
+    useTenantStore.setState({ whoami: { home_erase: true } });
     await mount();
     expect(inDangerZone("home を掃除")).toBe(true);
     expect(inDangerZone("メンバーを外す")).toBe(true);
