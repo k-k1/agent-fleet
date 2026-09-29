@@ -36,10 +36,8 @@ import (
 // see rtkPrompt). Sections that have nothing to say are omitted rather than emitted empty.
 //
 // kind is the userinstr per-target name (userinstr.State.Body's map key / its Targets map).
-// "lcpp" is not one of userinstr's known kinds — it writes no file, so agent_instructions.go
-// never lists it as a distribution target (decision 5) — but that needs no special case here:
-// State.TargetOn defaults an unrecognised kind to on, exactly like a kind nobody has ever
-// bothered to turn off.
+// agent_instructions.go lists "lcpp" as a target with the "prompt" delivery, so the member's
+// per-kind switch in the Console is the TargetOn read here; an unset switch defaults to on.
 func SystemPrompt(cwd, kind string) string {
 	var parts []string
 	if fleet := strings.TrimSpace(userinstr.FleetNotes()); fleet != "" {

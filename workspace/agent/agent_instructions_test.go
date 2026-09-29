@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/userinstr"
 )
 
@@ -535,4 +536,73 @@ func TestMuseStatusMeasuresTheBlockNotTheFile(t *testing.T) {
 		return
 	}
 	t.Fatal("muse is not in the distribution status")
+}
+
+// lcpp writes no file, so its row is the only way a member can see that it receives the text
+// and the only way to turn it off. The switch has to be the very one harness.SystemPrompt
+// reads, or the row would be a control that controls nothing.
+func TestLcppRowIsTheSwitchTheHarnessReads(t *testing.T) {
+	instrEnv(t)
+	if err := userinstr.SaveText("LCPPTEXT\n"); err != nil {
+		t.Fatal(err)
+	}
+	lcppRow := func(targets []instrTarget) instrTarget {
+		t.Helper()
+		for _, tgt := range targets {
+			if tgt.Kind == "lcpp" {
+				return tgt
+			}
+		}
+		t.Fatal("lcpp is not in the distribution status")
+		return instrTarget{}
+	}
+	got := lcppRow(instrState().Targets)
+	if !got.Supported || !got.On || !got.Applied || got.Delivery != deliveryPrompt || got.Path != "" {
+		t.Fatalf("lcpp target = %+v", got)
+	}
+	if !strings.Contains(harness.SystemPrompt("", "lcpp"), "LCPPTEXT") {
+		t.Fatal("precondition: the harness should send the text while the row is on")
+	}
+
+	w := doJSON(t, "PUT", "/user-notes", `{"targets":{"lcpp":false}}`)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var st instrStateWire
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if got := lcppRow(st.Targets); got.On || !got.Applied {
+		t.Fatalf("lcpp target after unticking = %+v", got)
+	}
+	if strings.Contains(harness.SystemPrompt("", "lcpp"), "LCPPTEXT") {
+		t.Fatal("unticked lcpp row, but the harness still sends the text")
+	}
+	if !strings.Contains(read(t, claude.UserInstructionsPath()), "LCPPTEXT") {
+		t.Fatal("unticking lcpp must not affect the others")
+	}
+}
+
+// Every supported row has a "view" button, so every supported kind needs a preview.
+func TestPreviewCoversEverySupportedKind(t *testing.T) {
+	instrEnv(t)
+	if err := userinstr.SaveText("PREVIEWME\n"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	for _, kind := range instrSupportedKinds {
+		w := doJSON(t, "GET", "/user-notes/preview?kind="+kind, "")
+		if w.Code != 200 {
+			t.Fatalf("%s: status %d: %s", kind, w.Code, w.Body.String())
+		}
+		var body struct {
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(body.Content, "PREVIEWME") {
+			t.Fatalf("%s: preview does not show the user text:\n%s", kind, body.Content)
+		}
+	}
 }

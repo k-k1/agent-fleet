@@ -82,7 +82,8 @@ trying (and failing) to launch a terminal.
 
 ¹⁰ lcpp drives no CLI to write your instructions into. Instead, the harness reads the
 same fleet/your-own/project instruction layers itself and folds them into the system
-prompt on every turn.
+prompt on every turn. Its row in ⚙Settings → "Agent instructions" is the switch for your own
+layer, and takes effect from the next turn, running sessions included.
 
 ## How to sign in
 
