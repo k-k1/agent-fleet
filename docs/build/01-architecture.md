@@ -98,10 +98,11 @@ the CLI agents, in tmux or under a managed driver, plus the working copies (~/re
   engine already running elsewhere on the network is named by URL
   ([decisions/0076](../decisions/0076-external-image-engine-on-lan.md)). Either way a
   workspace reaches it only through the CP. While a cold engine starts, the gateway
-  holds a streaming request open with a heartbeat; a non-streaming one is answered
-  `503 engine_waking` with `Retry-After` after 45 seconds (75 for a borrowed engine),
-  and the caller retries while the engine keeps coming up. Speech set to `auto` falls
-  back to Polly until VOICEVOX answers.
+  holds a streaming request open with a heartbeat; a non-streaming one is held for at
+  most 45 seconds by default (75 for a borrowed engine; `AF_ENGINE_PLAIN_HOLD`) and
+  then answered `503 engine_waking` with `Retry-After`, and the caller retries while the
+  engine keeps coming up. Speech set to `auto` is read by Polly, when Polly is
+  configured, until VOICEVOX answers.
 
 ## 1.4 Authentication is two layers — do not conflate them
 
@@ -121,8 +122,10 @@ connection flow**. Details: L1 in [07 §7.3](07-security.md), L2 in
 ```
 Browser → CP /login → /oauth2/login → the provider → /oauth2/callback
   → admit or refuse, fail-closed: the provider's own gate (GitHub: membership of an
-    allowed organisation), then the allowlists (email / domain; with none configured,
-    only an existing membership or a tenant's auto-join domain lets a person in)
+    allowed organisation), then the allowlists (email / domain), which a tenant's
+    roster or auto-join domain can also satisfy. How they combine differs per
+    provider — GitHub with no email list anywhere admits every member of an allowed
+    organisation — and is 07 §7.3.1
   → issue a signed cookie → Console
 every request after that: authGate verifies the cookie → sets the email header
   (X-Forwarded-Email by default) → resolveIdentity → the tenant named by X-AF-Tenant
@@ -149,17 +152,19 @@ Console "Start" → CP POST /api/workspace/start
 
 A request that must reach the agent next — creating, forking or resuming a session, a
 carried answer — starts a stopped workspace itself (`AF_AUTOSTART`, on by default) and
-waits for the agent for up to 55 seconds (`AF_AGENT_READY_WAIT_SEC`, kept inside the
-ingress's idle timeout). Past that it answers `409 workspace_starting`, and the boot
-carries on. Connection tracking keeps a workspace warm; the reaper stops it once it has
-been idle (two hours by default, set per tenant).
+waits for the agent, 55 seconds by default (`AF_AGENT_READY_WAIT_SEC`). Past that it
+answers `409 workspace_starting`, and the boot carries on. An override has to stay below
+the ingress's idle timeout (60 seconds on the AWS load balancer), or the caller gets a
+504 instead of the 409. Connection tracking keeps a workspace warm; the reaper stops it
+once it has been idle (two hours by default, set per tenant).
 
 ### Creating a session
 
 ```
 Console: new session (kind, repo/dir, model, execution method, a new worktree by default)
-  → CP /api/sessions (quota check, DB mirror, then start the workspace and wait for
-    the agent as above) → agent /sessions
+  → CP /api/sessions: start the workspace and wait for the agent as above, then the
+    session quota (it counts the agent's live sessions, so it needs the agent up)
+    → agent /sessions
   → agent: persist the metadata and start it per driver
       managed: open or resume the conversation on the kind's runtime
       tui: start the CLI inside a tmux session, resuming if there is history
@@ -204,7 +209,7 @@ Only interface seams inside the CP change. The mapping and how to choose is
 |---|---|---|---|
 | running workspaces | `RuntimeFactory`, chosen by `AF_RUNTIME` | Docker Engine / sandboxed host processes | an ECS task on Fargate / on an EC2 slot from a pool |
 | the persistent home | inside the Runtime | a bind-mounted directory / a host directory | an EFS access point / a per-user EBS volume |
-| L1 authentication | the `AUTH` switch | `oauth` or `dev` / `dev` only | `oauth` (the template also accepts `dev`) |
+| L1 authentication | the `AUTH` switch | `oauth`, `proxy` or `dev` / `dev` only | `oauth` (the template also accepts `dev`) |
 | metadata | `Store` | SQLite (default, pure Go) | Postgres (RDS) |
 | at-rest keys | `KeyCustodian` | a local custodian derived from the master key | the same; a KMS custodian is only a seam ([decisions/0005](../decisions/0005-envelope-custodian.md), #969) |
 | ingress / TLS | outside the CP | Caddy / Funnel | ALB + ACM |

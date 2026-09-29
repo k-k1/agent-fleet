@@ -89,9 +89,10 @@ tmux 内または managed driver 配下の CLI エージェント + working copy
   [0077](../decisions/0077-engine-boxes-bought-by-cp.ja.md)）。`docker` と `native` では、ネットワーク上で
   すでに動いているエンジンを URL で指す（[decisions/0076](../decisions/0076-external-image-engine-on-lan.ja.md)）。
   どの場合も Workspace からは CP を通してだけ届く。冷えたエンジンの起動中、ストリーミングの要求は
-  ゲートウェイがハートビートを送って保持し、非ストリーミングの要求には 45 秒（借りた
-  エンジンは 75 秒）で `503 engine_waking`（`Retry-After` 付き）を返す。呼び出し側はエンジンが起き続ける間に再試行する。
-  読み上げは設定が `auto` なら、VOICEVOX が応答するまで Polly に切り替わる。
+  ゲートウェイがハートビートを送って保持する。非ストリーミングの要求は既定で最大 45 秒（借りた
+  エンジンは 75 秒。`AF_ENGINE_PLAIN_HOLD`）待ってから `503 engine_waking`（`Retry-After` 付き）を
+  返し、呼び出し側はエンジンが起き続ける間に再試行する。読み上げは設定が `auto` なら、Polly が
+  設定されている場合に限り、VOICEVOX が応答するまで Polly が読む。
 
 ## 1.4 認証は 2 層（重要・混同しない）
 
@@ -109,8 +110,9 @@ L2 = [08](08-integrations.ja.md)。
 ```
 Browser → CP /login → /oauth2/login → プロバイダ → /oauth2/callback
   → 入場の可否（fail-closed）: プロバイダ自身の門（GitHub は許可した organization への所属）、
-    次に許可リスト（メール/ドメイン。どれも設定していなければ、既存の membership か
-    テナントの auto-join ドメインだけが入れる）
+    次に許可リスト（メール/ドメイン）。テナントの名簿や auto-join ドメインでも満たせる。
+    組み合わせ方はプロバイダごとに違い（GitHub はメールの一覧がどこにも無ければ、許可した
+    organization の全員を通す）、詳細は 07 §7.3.1
   → 署名 cookie 発行 → Console
 以降の全リクエスト: authGate が cookie 検証 → メールヘッダを設定（既定 X-Forwarded-Email）
   → resolveIdentity → X-AF-Tenant ヘッダ（ヘッダを付けられない所は query の tenant）の
@@ -132,16 +134,17 @@ Console「Start」→ CP POST /api/workspace/start
 ```
 
 次に Agent へ届く必要がある要求（セッションの作成・fork・再開、持ち越した回答）は、停止中の
-Workspace を自分で起動し（`AF_AUTOSTART`、既定オン）、Agent の応答を最大 55 秒待つ
-（`AF_AGENT_READY_WAIT_SEC`。入口の idle timeout の内側に収める）。超えたら `409 workspace_starting`
-を返し、起動はそのまま続く。接続追跡で warm を保ち、アイドルが続くと reaper が停止する
+Workspace を自分で起動し（`AF_AUTOSTART`、既定オン）、Agent の応答を待つ（既定 55 秒、
+`AF_AGENT_READY_WAIT_SEC`）。超えたら `409 workspace_starting` を返し、起動はそのまま続く。
+上書きする値は入口の idle timeout（AWS のロードバランサでは 60 秒）より短く保つこと。
+長いと 409 より先に 504 が返る。接続追跡で warm を保ち、アイドルが続くと reaper が停止する
 （既定 2 時間、テナントごとに設定）。
 
 ### セッション作成
 ```
 Console: New session（kind, repo/dir, model, 実行方式, 既定は新しい worktree）
-  → CP /api/sessions（クォータ検証・DB ミラー。続いて上のとおり Workspace を起動して
-    Agent を待つ）→ Agent /sessions
+  → CP /api/sessions: 上のとおり Workspace を起動して Agent を待ち、次にセッション数の上限を
+    検査（Agent の稼働中セッションを数えるので Agent が要る）→ Agent /sessions
   → Agent: メタを永続化し、driver ごとに起動
       managed: kind の runtime 上で会話を開くか resume する
       tui: tmux session 内で CLI を起動し、履歴があれば resume
@@ -177,7 +180,7 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 |--------|-----------|---------------|-----|
 | Workspace の実行 | `RuntimeFactory`（`AF_RUNTIME` で選ぶ）| Docker Engine / サンドボックス化したホストのプロセス | Fargate の ECS タスク / プールの EC2 スロット上の ECS タスク |
 | 永続ホーム | Runtime 内 | bind mount したディレクトリ / ホストのディレクトリ | EFS アクセスポイント / 利用者ごとの EBS ボリューム |
-| L1 認証 | `AUTH` env 分岐 | `oauth` か `dev` / `dev` のみ | `oauth`（テンプレートは `dev` も受け付ける）|
+| L1 認証 | `AUTH` env 分岐 | `oauth`・`proxy`・`dev` / `dev` のみ | `oauth`（テンプレートは `dev` も受け付ける）|
 | メタデータ | `Store` | SQLite（既定・pure-Go）| Postgres（RDS）|
 | at-rest 鍵 | `KeyCustodian` | localCustodian（master 由来 KEK）| 同じ。KMS custodian は seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)・#969）|
 | 入口/TLS | （CP 外）| Caddy / Funnel | ALB + ACM |
