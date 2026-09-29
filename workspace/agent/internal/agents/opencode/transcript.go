@@ -364,13 +364,14 @@ func openQuestion(db *sql.DB, ses string, m session.Meta) []transcript.Question 
 	return qs
 }
 
-// terminalSince is the start of the Terminal pane's current opencode process. Zero for a
-// managed session, whose questions come from the serve daemon, and when no pane is running.
+// terminalSince is where the records of the Terminal pane's current opencode process begin
+// (tmuxx.CLIRecordsSince). Zero for a managed session, whose questions come from the serve
+// daemon, and when no pane is running.
 func terminalSince(m session.Meta) time.Time {
 	if m.DriverKind() == session.DriverManaged {
 		return time.Time{}
 	}
-	t, _ := tmuxx.SessionCreated(session.TmuxName(m.Name))
+	t, _ := tmuxx.CLIRecordsSince(session.TmuxName(m.Name))
 	return t
 }
 

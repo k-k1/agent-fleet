@@ -37,24 +37,59 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// modalWindow bounds the read to the bottom of the pane, where a menu replaces the composer,
-// so the assistant quoting "Run this command?" in its prose does not read as the menu. The
-// approval menu with the footer under it is 9 non-empty lines.
-const modalWindow = 12
+// paneMenus are the menus by their title and a row of their own. A plan box is read the same
+// way: its border is stripped with the rest of the layout (flatten).
+var paneMenus = []struct{ title, row, state string }{
+	{"Run this command?", "Skip & tell the agent what to do instead", "permission"},
+	{"Tell the agent what to do instead", "empty to skip", "permission"},
+	{"Ready to build?", "build locally", "plan"},
+}
+
+// composerMarks are the composer's placeholders (the same ones PaneMode reads). The composer is
+// drawn at the bottom whenever no menu has taken its place, a running turn included.
+var composerMarks = []string{"Add a follow-up", "Plan, search, build anything"}
 
 // paneModal classifies one captured frame: "permission" (a command approval), "plan" (the
-// build approval) or "". Each needs its title and one of its own rows inside the window.
+// build approval) or "". A live menu is the last thing on the screen, drawn where the composer
+// would be: its title must be followed by one of its own rows and by no composer. Prose that
+// quotes the words — this very file shown in a transcript — has the composer under it.
 func paneModal(s string) string {
-	tail := tailLines(s, modalWindow)
-	switch {
-	case strings.Contains(tail, "Run this command?") && strings.Contains(tail, "Skip & tell the agent what to do instead"):
-		return "permission"
-	case strings.Contains(tail, "Tell the agent what to do instead") && strings.Contains(tail, "empty to skip"):
-		return "permission"
-	case strings.Contains(tail, "Ready to build?") && strings.Contains(tail, "build locally"):
-		return "plan"
+	flat := flatten(s)
+	for _, m := range paneMenus {
+		i := strings.LastIndex(flat, m.title)
+		if i < 0 {
+			continue
+		}
+		rest := flat[i:]
+		if !strings.Contains(rest, m.row) {
+			continue
+		}
+		drawn := false
+		for _, c := range composerMarks {
+			drawn = drawn || strings.Contains(rest, c)
+		}
+		if !drawn {
+			return m.state
+		}
 	}
 	return ""
+}
+
+// flatten joins the pane's lines into one, each stripped of its padding and of the border cursor
+// draws around a plan. cursor wraps a menu row itself on a narrow pane (measured at 44 columns:
+// "Skip & tell the agent what to do" / "instead (esc or n)"), so a phrase is only whole once the
+// lines are joined.
+func flatten(s string) string {
+	var b strings.Builder
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.Trim(ln, " │"); ln != "" {
+			if b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteString(ln)
+		}
+	}
+	return b.String()
 }
 
 // TerminalModal is the modal a cursor Terminal pane shows that typed text would decide
@@ -90,8 +125,9 @@ func terminalPendingModal(m session.Meta) (agents.PendingModal, bool) {
 // wins: the transcript over it also draws "$ …" lines for commands already run. The layout
 // moves between versions, so the line is carried whole rather than parsed.
 func approvalLine(s string) string {
-	for _, ln := range strings.Split(tailLines(s, modalWindow), "\n") { // bottom line first
-		if ln = strings.Trim(strings.TrimSpace(ln), "│ "); strings.HasPrefix(ln, "$ ") {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if ln := strings.Trim(lines[i], " │"); strings.HasPrefix(ln, "$ ") {
 			return ln
 		}
 	}
@@ -127,16 +163,4 @@ func lastPlan(path string) string {
 		}
 	}
 	return plan
-}
-
-// tailLines returns the last n non-empty lines of s, bottom line first.
-func tailLines(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	var out []string
-	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			out = append(out, lines[i])
-		}
-	}
-	return strings.Join(out, "\n")
 }

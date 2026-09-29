@@ -80,6 +80,11 @@ func TestOpenQuestionIgnoresADeadProcess(t *testing.T) {
 		t.Errorf("dead question: Pending = %+v, want none", td.Pending)
 	}
 
+	fakeTmuxSession(t, asked.Truncate(time.Second)) // replaced within the question's second
+	if got := TerminalModal(m); got != "" {
+		t.Errorf("pane replaced within the question's second: TerminalModal = %q, want none", got)
+	}
+
 	fakeTmuxSession(t, time.Time{}) // no pane at all
 	if got := TerminalModal(m); got != "" {
 		t.Errorf("no pane: TerminalModal = %q, want none", got)

@@ -19,14 +19,18 @@ func readPane(t *testing.T, name string) string {
 }
 
 // The captures are the cursor 2026.09.28 panes of #1227's measurement: a command outside the
-// allowlist, the same approval after Esc, and a plan launch's build approval. Each is a
-// decision a pasted line + Enter makes silently (the command ran, the plan was built), so each
-// must read as one.
+// allowlist, the same approval after Esc, and a plan launch's build approval, at 140 columns
+// and on a narrow pane, where cursor wraps the rows itself ("Skip & tell the agent what to do"
+// / "instead (esc or n)" at 44 columns; the plan box at 30). Each is a decision a pasted line +
+// Enter makes silently (the command ran, the plan was built), so each must read as one.
 func TestPaneModalReadsMeasuredCaptures(t *testing.T) {
 	for file, want := range map[string]string{
-		"pane-approval.txt":     "permission",
-		"pane-approval-esc.txt": "permission",
-		"pane-plan.txt":         "plan",
+		"pane-approval.txt":        "permission",
+		"pane-approval-esc.txt":    "permission",
+		"pane-approval-narrow.txt": "permission",
+		"pane-plan.txt":            "plan",
+		"pane-plan-narrow.txt":     "plan",
+		"pane-composer-narrow.txt": "",
 	} {
 		if got := paneModal(readPane(t, file)); got != want {
 			t.Errorf("%s: paneModal = %q, want %q", file, got, want)
@@ -34,17 +38,29 @@ func TestPaneModalReadsMeasuredCaptures(t *testing.T) {
 	}
 }
 
-// Outside the menu the same words are prose: the assistant quoting them, or the scrollback of a
-// menu already answered. Reading them as a modal would refuse every send with no menu to
-// answer, so only the bottom of the pane counts.
-func TestPaneModalIgnoresTheWordsOutsideTheMenu(t *testing.T) {
-	quoted := "  I will ask you: Run this command? Skip & tell the agent what to do instead.\n" +
-		"  Ready to build? Yes, build locally.\n" + strings.Repeat("  …\n", modalWindow) +
-		"  → Add a follow-up\n\n  Auto · 3.7%\n  /home/dev/repos/proj\n"
+// Outside the menu the same words are prose: the assistant quoting them — this package's own
+// source shown in a transcript — or the scrollback of a menu already answered. Reading them as a
+// modal refuses every send with no menu to answer, so a menu counts only when no composer is
+// drawn after it, however close to the bottom the quote sits.
+func TestPaneModalIgnoresTheWordsAboveTheComposer(t *testing.T) {
+	composer := readPane(t, "pane-composer-narrow.txt")
+	at := strings.Index(composer, "  → Add a follow-up")
+	if at < 0 {
+		t.Fatal("fixture lost its composer")
+	}
+	for name, quote := range map[string]string{
+		"approval": "  case strings.Contains(tail, \"Run this command?\") &&\n  \"Skip & tell the agent what to do instead\"\n",
+		"feedback": "  Tell the agent what to do instead (Enter to send, empty to skip)\n",
+		"plan":     "  Ready to build? → 1. Yes, build locally (b)\n",
+	} {
+		pane := composer[:at] + quote + composer[at:]
+		if got := paneModal(pane); got != "" {
+			t.Errorf("%s quoted right above the composer: paneModal = %q, want none", name, got)
+		}
+	}
 	for name, pane := range map[string]string{
-		"quoted above the composer": quoted,
-		"empty capture":             "",
-		"idle composer":             "  → Plan, search, build anything\n\n  Auto\n  /home/dev/repos/proj\n",
+		"empty capture": "",
+		"new chat":      "  → Plan, search, build anything\n\n  Auto\n  /home/dev/repos/proj\n",
 	} {
 		if got := paneModal(pane); got != "" {
 			t.Errorf("%s: paneModal = %q, want none", name, got)
@@ -55,9 +71,13 @@ func TestPaneModalIgnoresTheWordsOutsideTheMenu(t *testing.T) {
 // The carried card says what was being approved. The transcript above the menu also draws "$ …"
 // lines for commands already run, so the one right above the menu is the one taken.
 func TestApprovalLineTakesTheMenusCommand(t *testing.T) {
-	for _, file := range []string{"pane-approval.txt", "pane-approval-esc.txt"} {
-		if got := approvalLine(readPane(t, file)); got != "$  touch out3.txt in ." {
-			t.Errorf("%s: approvalLine = %q", file, got)
+	for file, want := range map[string]string{
+		"pane-approval.txt":        "$  touch out3.txt in .",
+		"pane-approval-esc.txt":    "$  touch out3.txt in .",
+		"pane-approval-narrow.txt": "$  touch narrow.txt in .",
+	} {
+		if got := approvalLine(readPane(t, file)); got != want {
+			t.Errorf("%s: approvalLine = %q, want %q", file, got, want)
 		}
 	}
 }

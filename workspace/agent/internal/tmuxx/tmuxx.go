@@ -179,11 +179,15 @@ func HasSession(tn string) bool {
 	return Cmd("has-session", "-t", session.ExactTarget(tn)).Run() == nil
 }
 
-// SessionCreated returns when the tmux session tn was created; ok is false when there is no
-// such session. Every launch is a fresh new-session whose pane closes with the CLI, so this
-// is no later than the start of the CLI process running in it: anything the CLI recorded
-// before this instant was recorded by an earlier process, whose screen is gone.
-func SessionCreated(tn string) (time.Time, bool) {
+// CLIRecordsSince is the instant that separates what the CLI now running in tmux session tn
+// has recorded from what an earlier process in that pane left behind; ok is false when there
+// is no such session. Every launch is a fresh new-session whose pane closes with the CLI, so
+// anything recorded before the session was created belongs to a process that is gone. tmux
+// stamps the creation to the second, so the bound is the second after it: a record made in the
+// same second, by a process killed just before its pane was replaced, is still an earlier
+// one's, and the new CLI cannot have made it — no CLI boots and records a question within its
+// first second.
+func CLIRecordsSince(tn string) (time.Time, bool) {
 	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created}").Output()
 	if err != nil {
 		return time.Time{}, false
@@ -193,7 +197,7 @@ func SessionCreated(tn string) (time.Time, bool) {
 	if err != nil || sec <= 0 {
 		return time.Time{}, false
 	}
-	return time.Unix(sec, 0), true
+	return time.Unix(sec+1, 0), true
 }
 
 // SessionPaneID returns the active pane id (e.g. "%0") of a session's current

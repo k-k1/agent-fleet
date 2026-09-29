@@ -336,9 +336,9 @@ func (p *rolloutParser) noteLifecycle(kind, ts string) {
 // parts). So the turns are cloned first, and the pending question is removed from the
 // clone.
 //
-// since is the start of the process whose screen the question would be on (terminalSince);
-// an open question asked before it is left in the transcript as an unanswered block. Zero
-// applies no bound.
+// since is where the records of the process whose screen the question would be on begin
+// (terminalSince); an open question asked before it is left in the transcript as an
+// unanswered block. Zero applies no bound.
 func (p *rolloutParser) snapshot(since time.Time) ([]transcript.Turn, []transcript.Task, []transcript.Question, string) {
 	turns := cloneTurns(p.turns)
 	// Pending question = the open ask (openAsk). Its function_call is already in the
@@ -366,8 +366,8 @@ func (p *rolloutParser) openAsk() (string, bool) {
 	return "", false
 }
 
-// askedSince reports whether a question stamped ts can be on the screen of a process that
-// started at since. A zero since, or a stamp that does not parse, keeps the question.
+// askedSince reports whether a question stamped ts can be on the screen of the process whose
+// records begin at since. A zero since, or a stamp that does not parse, keeps the question.
 func askedSince(ts string, since time.Time) bool {
 	if since.IsZero() {
 		return true
@@ -376,15 +376,16 @@ func askedSince(ts string, since time.Time) bool {
 	return err != nil || !at.Before(since)
 }
 
-// terminalSince is the start of the Terminal pane's current codex process. A question asked
-// before it belongs to a process that is gone, and its dialog went with it: `codex resume`
-// does not bring it back (measured 0.159.0). Zero for a managed session, whose open question
-// is the handle's Interaction (managedEnrich), and when no pane is running.
+// terminalSince is where the records of the Terminal pane's current codex process begin
+// (tmuxx.CLIRecordsSince). A question asked before it belongs to a process that is gone, and
+// its dialog went with it: `codex resume` does not bring it back (measured 0.159.0). Zero for a
+// managed session, whose open question is the handle's Interaction (managedEnrich), and when no
+// pane is running.
 func terminalSince(m session.Meta) time.Time {
 	if m.DriverKind() == session.DriverManaged {
 		return time.Time{}
 	}
-	t, _ := tmuxx.SessionCreated(session.TmuxName(m.Name))
+	t, _ := tmuxx.CLIRecordsSince(session.TmuxName(m.Name))
 	return t
 }
 
@@ -1594,7 +1595,7 @@ func PendingQuestionID(m session.Meta) string {
 	// Asked only now, so the tmux round trip is paid only when a question is open.
 	var since time.Time
 	if m.DriverKind() != session.DriverManaged {
-		t, ok := tmuxx.SessionCreated(session.TmuxName(m.Name))
+		t, ok := tmuxx.CLIRecordsSince(session.TmuxName(m.Name))
 		if !ok {
 			return "" // no pane, no dialog
 		}

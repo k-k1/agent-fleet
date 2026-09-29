@@ -104,8 +104,8 @@ func TestSnapshotBoundsTheQuestionToTheProcess(t *testing.T) {
 		open  bool
 	}{
 		{time.Time{}, true},                 // no bound
-		{at("2026-09-30T02:25:30Z"), true},  // the pane was up before the question
-		{at("2026-09-30T02:25:47Z"), true},  // tmux's second-resolution stamp of the same second
+		{at("2026-09-30T02:25:30Z"), true},  // the pane's records begin before the question
+		{at("2026-09-30T02:25:48Z"), false}, // replaced within the second the question was asked
 		{at("2026-09-30T02:26:42Z"), false}, // relaunched after the process died
 	} {
 		turns, _, pending, _ := p.snapshot(c.since)
@@ -183,6 +183,17 @@ func TestPendingQuestionIDIsBoundToTheRunningPane(t *testing.T) {
 	fakeTmuxSession(t, asked.Add(time.Minute))
 	if got := PendingQuestionID(m); got != "" {
 		t.Errorf("pane relaunched after the question: PendingQuestionID = %q, want none", got)
+	}
+	// tmux stamps the creation to the second. A pane created in the second the question was asked
+	// can only be a replacement (the old codex was killed just before); one created the second
+	// before can have asked it.
+	fakeTmuxSession(t, asked.Truncate(time.Second))
+	if got := PendingQuestionID(m); got != "" {
+		t.Errorf("pane replaced within the question's second: PendingQuestionID = %q, want none", got)
+	}
+	fakeTmuxSession(t, asked.Truncate(time.Second).Add(-time.Second))
+	if got := PendingQuestionID(m); got != "call_q" {
+		t.Errorf("pane created the second before: PendingQuestionID = %q, want call_q", got)
 	}
 	fakeTmuxSession(t, time.Time{})
 	if got := PendingQuestionID(m); got != "" {
