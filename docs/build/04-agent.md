@@ -217,6 +217,36 @@ Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OS
   changes the pin and the model and adds one notice — **the per-backend resume handles
   and message cursors are preserved**, so switching back continues the native session.
 
+### Which language a prompt is written in
+
+The reader decides ([decisions/0033](../decisions/0033-stored-text-locale.md)): a prompt
+branches on the display locale when **a person reads what it produces**.
+
+| The prompt | Treatment |
+|---|---|
+| The user reads its output — an answer, a summary, a title, reply suggestions, a report | branch on the locale and write each language natively (the persona and instruction functions take `lang`) |
+| Only the model reads it — a tool description, an internal judgement | leave it as it is. The model understands either language, and keeping a second copy in step costs more than it buys |
+| It is display and instruction at once — the body of a report card | separate the two first. Translated whole, the instruction to the operator changes with it |
+
+- **The language of the output is a separate axis.** Branching changes the instruction,
+  not what the output is written in. Reply suggestions follow the conversation's
+  language — they are sent back into that session as they are, so switching them would
+  flip that session's language too. Summaries and plans keep the conversation's main
+  language, and a chat bridge follows its connection's notification language rather
+  than the Console's. Tipping all of these to the display locale recreates the original
+  bug in the other direction.
+- **The operator persona is never machine-translated.** It carries the prompt-injection
+  guard, so a mistranslation is a hole in the defence. Both versions keep the same
+  paragraphs in the same order, and `TestOperatorPersonaInjectionGuardParity` pins every
+  guard clause as a Japanese and English pair.
+- **Reuse the Console's words.** The plan's English headings are the chat input's
+  placeholder (`chat.plan.placeholder`); if the two differ, every plan update swaps one
+  for the other.
+- **A newly branched prompt owes a row in `workspace/agent/prompt_lang_test.go`**, which
+  fails when the English side holds a single Japanese character — `・` and full-width
+  brackets included, which slip in by habit. Without the row, the Japanese survives on
+  the English Console alone.
+
 ## 4.6 Git and the filesystem
 
 - **Repositories**: clone with terminal prompting disabled so it fails fast; status,
