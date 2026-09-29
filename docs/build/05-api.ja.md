@@ -102,9 +102,12 @@ membership 検証（§5.4）。「中継」は CP が呼び出しをそのまま
   （[07 §7.5](07-security.ja.md)）。
 - **パス規約: CP は `/api` を剥がして残りをそのまま転送する**
   （`/api/sessions/x/halt` → `<agent>/sessions/x/halt`）。**CP のルート表は明示的な許可リスト**で、
-  `control-plane/routes.go` に行が無い Agent のルートには Console から届かない。中継は `.`・`..`・
-  途中の空セグメントを含むパスを 400 で断り、Agent のリダイレクトは追わない。付ける
-  `X-AF-Relay: cp` は Agent のログ用のヒントで、Agent はこれで何も判断しない。
+  `control-plane/routes.go` に行が無い Agent のルートには Console から届かない。`console/src` に
+  書かれた `api/...` のパスを受けられる CP のルートが無ければ `TestConsoleAPIPathsHaveCPRoutes`
+  （`control-plane/console_routes_test.go`）が落ちる。`${…}` の段はルートのパラメータに、
+  パラメータが無い位置ではどのリテラルの段にも一致する。中継は `.`・`..`・途中の空セグメントを
+  含むパスを 400 で断り、Agent のリダイレクトは追わない。付ける `X-AF-Relay: cp` は Agent の
+  ログ用のヒントで、Agent はこれで何も判断しない。
 - Agent 固有の面は `/ws/pty`・`/ws/browser`・`/ws/browser-attachments`・`/browser/*`・
   `/proxy/{port}/{rest...}`。
 
