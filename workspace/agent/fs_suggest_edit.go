@@ -28,8 +28,9 @@ import (
 
 const (
 	// editSuggestTimeout: a replacement can be a much longer output than a one-line title,
-	// so this is a little wider than the existing 60-second pair (title/reply). The Console
-	// timeout is wider still (editor/api.ts SUGGEST_EDIT_TIMEOUT_MS).
+	// so this is wider than sessionx.SyncSuggestBudget (title/reply). The Console timeout is
+	// wider still (editor/api.ts SUGGEST_EDIT_TIMEOUT_MS). Both outlive the ingress idle
+	// timeout, which is why the route is held open with a heartbeat (httpx.HeldOpen).
 	editSuggestTimeout = 90 * time.Second
 	// editSuggestMaxBody: wire body limit, comfortably above the selection and context
 	// limits below and deliberately independent of PUT /fs/file's 16 MiB.

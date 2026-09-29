@@ -8,7 +8,7 @@ Description: >-
   here) and an RDS PostgreSQL instance for the MetadataStore. Imports network from
   the 00-network stack. Persistence=delete (default) is dev-ephemeral (DeletionPolicy
   Delete, no backups); a production environment deploys with Persistence=retain
-  (EFS Retain, RDS Snapshot + backups + deletion protection).
+  (EFS Retain + daily AWS Backup, RDS Snapshot + backups + deletion protection).
 
 Parameters:
   NetworkStackName:
@@ -62,9 +62,18 @@ Parameters:
     AllowedValues: [ delete, retain ]
     Description: >-
       delete (default) = dev-ephemeral, stack deletion drops EFS and RDS with no
-      backups. retain = production: EFS survives stack deletion (Retain), RDS
-      leaves a final snapshot (Snapshot), daily backups (7 days) and deletion
-      protection are enabled.
+      backups. retain = production: EFS survives stack deletion (Retain) and is
+      backed up daily by AWS Backup (EfsBackupRetentionDays), RDS leaves a final
+      snapshot (Snapshot), daily backups (7 days) and deletion protection are
+      enabled.
+  EfsBackupRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    Description: >-
+      Days each daily EFS recovery point is kept when Persistence=retain (ignored
+      otherwise). 7 matches the RDS automated backups. Billed per GB-month of
+      backup storage - see the ecs runbook, "EFS backup and restore".
 
 Conditions:
   IsRetain: !Equals [ !Ref Persistence, retain ]
@@ -118,6 +127,66 @@ Resources:
         !If [ IsProvisionedTp, !Ref EfsProvisionedThroughputMibps, !Ref "AWS::NoValue" ]
       FileSystemTags:
         - { Key: Name, Value: !Sub "af-${AWS::StackName}-efs" }
+
+  # Retain above only outlives a stack deletion; a file deleted or corrupted on the running
+  # file system (every home on ecs, the credentials on ecs-ec2) needs a recovery point.
+  # The vault is Retain because AWS refuses to delete a vault that holds recovery points -
+  # Delete would leave the stack in DELETE_FAILED. So a vault can outlive its stack, and
+  # its name carries the stack id: a fixed name made the next stand-up under the same
+  # stack name fail with AlreadyExists. teardown.sh finds every one by the
+  # "<stack>-efs-" prefix. Switching one stack retain -> delete -> retain still collides
+  # (the stack id does not change); delete the kept vault before switching back.
+  EfsBackupVault:
+    Type: AWS::Backup::BackupVault
+    Condition: IsRetain
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BackupVaultName: !Sub
+        - "${AWS::StackName}-efs-${Suffix}"
+        # First 8 hex digits of the stack id's UUID: vault names stop at 50 characters, which
+        # the whole UUID (36) would overrun, and this leaves 37 for the stack name.
+        - Suffix: !Select [ 0, !Split [ "-", !Select [ 2, !Split [ "/", !Ref "AWS::StackId" ] ] ] ]
+
+  EfsBackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Condition: IsRetain
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Sub "${AWS::StackName}-efs-daily"
+        BackupPlanRule:
+          - RuleName: daily
+            TargetBackupVault: !Ref EfsBackupVault
+            ScheduleExpression: cron(0 17 * * ? *)   # 02:00 in Tokyo, outside working hours
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 480
+            Lifecycle:
+              DeleteAfterDays: !Ref EfsBackupRetentionDays
+
+  EfsBackupRole:
+    Type: AWS::IAM::Role
+    Condition: IsRetain
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: backup.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores"
+
+  EfsBackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Condition: IsRetain
+    Properties:
+      BackupPlanId: !Ref EfsBackupPlan
+      BackupSelection:
+        SelectionName: efs
+        IamRoleArn: !GetAtt EfsBackupRole.Arn
+        Resources:
+          - !Sub "arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${FileSystem}"
 
   MountTarget0:
     Type: AWS::EFS::MountTarget
@@ -178,6 +247,10 @@ Outputs:
   EfsId:
     Value: !Ref FileSystem
     Export: { Name: !Sub "${AWS::StackName}-EfsId" }
+  EfsBackupVaultName:
+    Condition: IsRetain
+    Description: AWS Backup vault holding the daily EFS recovery points (Persistence=retain).
+    Value: !Ref EfsBackupVault
   DbEndpoint:
     Value: !GetAtt Db.Endpoint.Address
     Export: { Name: !Sub "${AWS::StackName}-DbEndpoint" }

@@ -155,7 +155,16 @@ func TestStartWithStderrTailWaitIgnoresGrandchild(t *testing.T) {
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("Wait took %v: it waited for the grandchild", d)
 	}
-	if got := tail.Snapshot(0, 100, 100); got != "child exiting" {
+	// The grandchild keeps EOF away, so no Snapshot wait can end early; poll instead. Under load
+	// the reader goroutine may not have run yet when Wait returns (measured: 2 of 40 empty with
+	// GOMAXPROCS=1 and busy CPUs).
+	var got string
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if got = tail.Snapshot(0, 100, 100); got != "" || time.Now().After(deadline) {
+			break
+		}
+	}
+	if got != "child exiting" {
 		t.Fatalf("snapshot = %q", got)
 	}
 }

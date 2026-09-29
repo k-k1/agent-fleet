@@ -95,7 +95,7 @@ explains them.
 | Agent memory management | member | Agent memory |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
-| AWS SSM | member | AWS SSM |
+| AWS profiles and SSM | member | AWS profiles/SSM |
 | Integration servers and tokens | member | MCP servers / MCP tokens |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |

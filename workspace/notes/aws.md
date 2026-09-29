@@ -1,6 +1,6 @@
 ---
 name: af-aws
-description: "Agent Fleet workspace: running AWS commands as the user - the workload-role trap, choosing the user's Settings > SSM profile with af-aws-exec --list, af-aws-exec --profile/--account/--region, what exit 3 and each refusal mean and who fixes them, the SSO device-code login the user has to approve, and why --keep-aws-config is never the fix. Read before any aws CLI, SDK, Terraform, CDK or deploy command about the user's AWS accounts or resources (reads included), or when one fails with an SSO token error, 'could not be found', or af-aws-exec exit 3."
+description: "Agent Fleet workspace: running AWS commands as the user - the workload-role trap, choosing the user's Settings > AWS profiles/SSM profile with af-aws-exec --list, af-aws-exec --profile/--account/--region, what exit 3 and each refusal mean and who fixes them, the SSO device-code login the user has to approve, and why --keep-aws-config is never the fix. Read before any aws CLI, SDK, Terraform, CDK or deploy command about the user's AWS accounts or resources (reads included), or when one fails with an SSO token error, 'could not be found', or af-aws-exec exit 3."
 user-invocable: false
 ---
 # AWS as the user: `af-aws-exec`
@@ -27,7 +27,7 @@ reads included, goes through `af-aws-exec`.
 af-aws-exec --list
 ```
 
-prints each of the user's Settings > SSM profiles as `name  account  role  ("label")`, and names
+prints each of the user's Settings > AWS profiles/SSM profiles as `name  account  role  ("label")`, and names
 the ones that are not exported (the user's own definition wins, a name two labels share, a label
 `default`). Choose by account and role, not by the name alone. If the task does not say which
 account, ask the user — do not guess from a name like `prod`.
@@ -60,10 +60,10 @@ af-aws-exec --profile <name> --account <id> [--region <region>] -- <command> [ar
 |---|---|---|
 | "SSO login for profile '<name>' requested in the Agent Fleet Console; waiting up to …" (stderr), then the command runs | The login was missing; the user was asked in the Console and approved it while the run waited. | Nothing: the command ran as usual. |
 | exit 3, "… the login was requested in the Agent Fleet Console and is waiting for the member to approve it there" | The user has not approved yet. A toast in their Console asks them, and the request stays up after your run ends. | Tell the user a login for that profile (name it) is waiting in the Console and to press "Log in" there. Rerun once they say it is done. Do not ask them to open a terminal. |
-| exit 3, "… the login request was cancelled in the Agent Fleet Console; ask the member, or log in in a terminal with: aws sso login …" | Someone cancelled the request in the Console; for about a minute no new request is shown for that profile. | Ask the user whether to go on. If yes, give them the printed command for their own terminal (in Claude Code: `!` at the prompt). |
-| exit 3, "SSO login required … log in with: aws sso login --profile '<name>' --use-device-code --no-browser" | The login is missing, expired or invalid and the Console could not be asked (a profile that is not a Settings profile, `--no-login`, or outside a workspace). Exit 3 is only ever a login. | You cannot log in for the user. Give them that exact command to run in their own terminal — in a Claude Code session they can type it at the prompt with a leading `!`, or run it in a Workspace terminal if that times out before they approve — and they approve a device code in their browser (only one they started themselves). Wait for them to say it is done, then rerun. |
+| exit 3, "… the login request was cancelled in the Agent Fleet Console; ask the member; they can press "Log in" on the profile in Settings > AWS profiles/SSM, or log in in a terminal with: aws sso login …" | Someone cancelled the request in the Console; for about a minute no new request is shown for that profile. | Ask the user whether to go on. If yes, they press "Log in" on that profile's row in Settings > AWS profiles/SSM (the hold does not stop it), or run the printed command in their own terminal (in Claude Code: `!` at the prompt). Rerun once they say it is done. |
+| exit 3, "SSO login required … log in with: aws sso login --profile '<name>' --use-device-code --no-browser" | The login is missing, expired or invalid and the Console could not be asked (a profile that is not a Settings profile, `--no-login`, or outside a workspace). Exit 3 is only ever a login. | You cannot log in for the user. For a Settings profile (`--list` shows it), they can press "Log in" on its row in Settings > AWS profiles/SSM. Otherwise give them that exact command to run in their own terminal — in a Claude Code session they can type it at the prompt with a leading `!`, or run it in a Workspace terminal if that times out before they approve — and they approve a device code in their browser (only one they started themselves). Wait for them to say it is done, then rerun. |
 | exit 1, "could not get credentials for profile …: <AWS error>" | Not a login problem: access denied, a broken CLI, a network error. | Report the AWS error to the user as it is; do not ask them to log in. |
-| "is ambiguous: Settings labels … all map to it" | Two Settings profiles share the name. | Tell the user; they rename one in Settings > SSM. |
+| "is ambiguous: Settings labels … all map to it" | Two Settings profiles share the name. | Tell the user; they rename one in Settings > AWS profiles/SSM. |
 | "in your own AWS config is …, but the Settings profile … is …; rename one" | The user's `~/.aws` defines the name differently. | Tell the user; do not pick one for them. |
 | "is not one of your Settings profiles; name the account … with --account" | A profile the user defined themselves. | Rerun with `--account` if you know the account; otherwise ask. |
 | "is account X, not the Y given with --account" | Wrong profile for this account. | Stop. Recheck `--list`; ask the user. |
@@ -76,7 +76,7 @@ af-aws-exec --profile <name> --account <id> [--region <region>] -- <command> [ar
 | "SSO login required for profile … (the SSO profile '<src>' its source_profile chain ends in) … log in with: aws sso login --profile '<src>' …" (exit 3) | A role assumed from an SSO profile whose login is missing; the Console is not asked for these. | Give the user that exact command for their own terminal, as for the exit 3 row above. |
 | "mixes sso_* settings with role_arn or credential_process" | One profile is both. | Report it; the user splits it into two profiles. |
 | "not defined in …" / "not an SSO profile" / "has no SSO account and role" / "the AWS CLI cannot read …" / "sso_session is empty" / "it sets <key> … but its sso-session …" / "… are only in [sso-session …]" | The profile or the file is not usable as is. | Report the message; the user fixes Settings or the file. |
-| "not exported: no account and role in Settings" / "Settings has an account but no role" / "… a role but no account" (in `--list` or from a run) | A Settings profile without both. With neither, `aws --profile` would run as the workspace's own role, so it is never exported. | Report it; the user sets both in Settings > SSM. Never use that name with bare `aws`. |
+| "not exported: no account and role in Settings" / "Settings has an account but no role" / "… a role but no account" (in `--list` or from a run) | A Settings profile without both. With neither, `aws --profile` would run as the workspace's own role, so it is never exported. | Report it; the user sets both in Settings > AWS profiles/SSM. Never use that name with bare `aws`. |
 | "your [sso-session af-<name>] in ~/.aws/config uses the name this profile's sso-session needs" | The user's own sso-session section blocks the export. | Report it; the user renames that section. |
 | "not exported: [DEFAULT] <line> (in ~/.aws/config)" (in `--list`, or from a run) | A `[DEFAULT]` line would make the AWS CLI refuse that Settings profile, or run it as another role. | Report it; the user removes that line from `[DEFAULT]`. |
 | "also sets <key>" | The profile carries a setting that another credential source uses (in the CLI, or in other SDKs), so the name could mean another identity. | Report it; the user removes that setting from the profile (or points a credential-sync tool such as yawsso at another name). Do not work around it. |
@@ -96,7 +96,8 @@ Inside the command:
   without `--profile`, or split the step into its own `af-aws-exec`.
 
 The Console login never shows a code the user did not start: the code is created only when they
-press "Log in" in the Console, and only that tab shows it. **Never run `aws sso login` or
+press "Log in" in the Console (in the toast's dialog, or on the profile's row in Settings > AWS
+profiles/SSM), and only that tab shows it. **Never run `aws sso login` or
 `af-aws-exec --login` in your own shell, and never pass a login URL or code to the user**: it waits
 for an approval nobody sees, and a code from you is exactly what the user is told never to approve.
 

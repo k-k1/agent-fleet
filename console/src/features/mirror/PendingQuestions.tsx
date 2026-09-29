@@ -167,7 +167,7 @@ export function PendingQuestions({
 
   // Every submit goes out through here: the draft is dropped as the answer leaves, and put
   // back if the send is refused. Answering is the one place where silence is
-  // indistinguishable from success (docs/build/92 §7) — a refusal keeps the card on screen,
+  // indistinguishable from success (docs/build/92 §92.3) — a refusal keeps the card on screen,
   // so its draft has to be there too, or the next tab switch loses what the user typed.
   const fire = (run: () => SubmitResult) => {
     clearDraft();

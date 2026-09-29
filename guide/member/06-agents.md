@@ -3,7 +3,7 @@ audience: "anyone choosing and connecting an agent"
 updated: "2026-09"
 ---
 
-# 06. Agents — connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor / Kiro
+# 06. Agents — connecting one, and choosing between them
 
 English | [日本語](06-agents.ja.md)
 
@@ -12,10 +12,12 @@ be running).
 
 ## Supported agents and how to choose
 
-Six major CLI coding agents are supported (the experimental Antigravity (agy) slot is
-covered in [08](10-integrations.md); the Managed-only lcpp and muse are in the feature
-matrix below). Connection changes take effect immediately; behavior settings apply **from
-each agent's new sessions**.
+Six major CLI coding agents are compared in the table below. Two more run Managed only —
+**Muse Code** (muse, [below](#muse-code)) and the fleet's own llama.cpp engine
+(**lcpp**, [below](#lcpp)) — and the experimental Antigravity (agy) slot is covered in
+[08](10-integrations.md); all of them have a column in the
+[feature matrix](#feature-matrix-all-agent-kinds). Connection changes take effect
+immediately; behavior settings apply **from each agent's new sessions**.
 
 | | claude | codex | opencode | copilot | cursor | kiro |
 |--|--------|-------|----------|---------|--------|------|
@@ -36,13 +38,17 @@ to switch between API keys from multiple providers, pick **opencode**; if you ha
 GitHub Copilot subscription, pick **copilot**; if you have a Cursor plan, pick
 **cursor**; if you use an AWS Builder ID (or Kiro plan), pick **kiro**. They all support
 the conversation view, answering questions, and handing a conversation off to another
-agent; the context gauge is on claude / codex / opencode / kiro / lcpp / muse.
+agent; the context gauge is on claude / codex / opencode / kiro / lcpp / muse. Beyond those
+six: if you have a Meta account (or a Meta Model API key), pick **muse**; if you want a model
+that needs no vendor account at all, pick **lcpp** — it runs on your organization's own
+engine (or a llama-server on your network), so there is no sign-in and no subscription limit.
 
 **Managed execution** for Codex / opencode / copilot / cursor / kiro lets you handle your everyday
 work entirely from the conversation view (Codex / opencode carry no extra per-session
 process, which makes them well suited to parallel work; copilot / cursor / kiro run a dedicated
 per-session process even when Managed). Pick **Terminal (CLI)** only when you need the
-CLI's own black screen. For details, see
+CLI's own black screen. lcpp and muse run Managed only — there is no Terminal (CLI) to pick;
+lcpp needs no per-session process either, while muse runs one per session. For details, see
 [02 Sessions](02-sessions.md#execution-method-managed-and-terminal-cli).
 The Managed chat view is separate from the assistant chat in the left pane, which doesn't use a repository.
 

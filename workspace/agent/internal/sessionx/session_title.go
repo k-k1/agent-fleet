@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
@@ -42,8 +44,17 @@ const (
 	// titleGenBackoff bounds how often a PERSISTENTLY failing generation (bad model
 	// name, CLI hiccup, ...) is retried — without it, a poll every 1.2-3s would retry
 	// on literally every tick forever.
-	titleGenBackoff     = 5 * time.Minute
-	TitleSuggestTimeout = 60 * time.Second
+	titleGenBackoff = 5 * time.Minute
+	// SyncSuggestBudget bounds a suggestion the Console waits for in one silent request: the
+	// AWS ingress drops a request that has sent no byte for idle_timeout.timeout_seconds (60 s,
+	// deploy/aws/ecs/cfn/30-ingress.yaml), so a model answering at 59 s succeeded here and
+	// reached the browser as a gateway error. The margin covers the CP hop in between.
+	// TestSyncSuggestBudgetStaysUnderTheIngressIdleTimeout reads the YAML and pins the relation.
+	SyncSuggestBudget   = 45 * time.Second
+	TitleSuggestTimeout = SyncSuggestBudget
+	// autoTitleGenTimeout bounds the background generation (generateSessionTitle), which no
+	// request waits on, so the ingress budget above does not apply to it.
+	autoTitleGenTimeout = 60 * time.Second
 )
 
 // titleGenState tracks, per session name, whether a generation is currently running
@@ -119,10 +130,10 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 	ok := false
 	defer func() { titleGenDone(name, ok) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), TitleSuggestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), autoTitleGenTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerAuto, Ref: name})
-	title, err := runTitleSuggestLLM(ctx, turns)
+	title, err := titleSuggestLLM(ctx, turns)
 	if err != nil || title == "" {
 		return // ok stays false -> backoff before the next attempt
 	}
@@ -134,7 +145,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 		if m.Title != "" || m.SuggestedTitle != "" || m.SuggestedTitleDismissed {
 			return false
 		}
-		m.SuggestedTitle = title
+		m.SuggestedTitle = withWorkItemKey(title, m.WorkItem)
 		return true
 	})
 }
@@ -187,6 +198,9 @@ const titleSuggestPersonaEN = "You read a session's conversation log and write t
 // TitleModel: a cheap/fast model is enough for a short label; override deployment-
 // wide with AF_TITLE_MODEL.
 func TitleModel() string { return envOr("AF_TITLE_MODEL", "haiku") }
+
+// titleSuggestLLM is the seam the title tests stub; production always runs runTitleSuggestLLM.
+var titleSuggestLLM = runTitleSuggestLLM
 
 func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
 	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
@@ -407,6 +421,79 @@ func CleanSuggestedTitle(s string) string {
 	return ""
 }
 
+// withWorkItemKey puts the launching work item's short key in front of a suggested title, the
+// way the Console's titleForItem names the session at launch; without it, accepting a
+// suggestion drops the only mention of the ticket from the session list. The key is added here
+// rather than asked of the model, so it is exact whatever the model writes. A key the model
+// already led with, short or full, is replaced rather than repeated. The key is kept whole and
+// the text is cut instead. A key with no room left for text is not added, since cutting it would
+// name a different ticket; no provider produces one (GitHub and Bitbucket give "#N", Jira keys
+// are short).
+func withWorkItemKey(title string, item *session.WorkItemRef) string {
+	if item == nil || title == "" {
+		return title
+	}
+	key := workItemShortKey(item.Key)
+	if key == "" || truncateToWidth(key, titleWidthCap-2) != key {
+		return title
+	}
+	rest := title
+	for _, lead := range []string{strings.TrimSpace(item.Key), key} {
+		if r, ok := cutKeyPrefix(title, lead); ok {
+			rest = r
+			break
+		}
+	}
+	return strings.TrimSpace(truncateToWidth(strings.TrimSpace(key+" "+rest), titleWidthCap))
+}
+
+// workItemShortKey mirrors the Console's shortKey (console/src/features/workitems/read.ts):
+// "owner/name#45" -> "#45", and a key without "#" (Jira) is already short.
+func workItemShortKey(key string) string {
+	key = strings.TrimSpace(key)
+	if i := strings.Index(key, "#"); i > 0 {
+		return key[i:]
+	}
+	return key
+}
+
+// cutKeyPrefix reports whether s opens with key (case-insensitively, as a model may lower-case
+// a Jira key) and returns what follows without its separator. The key must end at a word
+// boundary, so "#12" never matches a title that opens with "#123".
+func cutKeyPrefix(s, key string) (string, bool) {
+	// Compare rune for rune: case folding can change a rune's byte length.
+	n := 0
+	for i := utf8.RuneCountInString(key); i > 0 && n < len(s); i-- {
+		_, size := utf8.DecodeRuneInString(s[n:])
+		n += size
+	}
+	if key == "" || !strings.EqualFold(s[:n], key) {
+		return "", false
+	}
+	rest := s[n:]
+	if r, _ := utf8.DecodeRuneInString(rest); unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return "", false
+	}
+	return trimKeySeparator(rest), true
+}
+
+// trimKeySeparator drops what joins a key to the text ("#1146: x", "#1146 - x") without eating
+// the text's own punctuation: a separator counts only right after the key or before a space, so
+// "#1146 .NET 8" keeps its ".NET".
+func trimKeySeparator(rest string) string {
+	const blanks = " 　"
+	spaced := strings.TrimLeft(rest, blanks)
+	r, size := utf8.DecodeRuneInString(spaced)
+	if !strings.ContainsRune(":：.)）、-–—|/", r) {
+		return spaced
+	}
+	after := spaced[size:]
+	if trimmed := strings.TrimLeft(after, blanks); spaced == rest || trimmed != after || after == "" {
+		return trimmed
+	}
+	return spaced
+}
+
 const (
 	// titleReplyScanLines bounds how far into a chatty reply we look for the title;
 	// past a few lines it is commentary, not a forgotten title.
@@ -486,14 +573,30 @@ var titleLeadInPrefixes = []string{
 
 // titleCandidateLine turns one reply line into a title candidate, or "" if the line is
 // decoration/preamble rather than a title.
-func titleCandidateLine(line string) string {
-	s := strings.TrimSpace(line)
-	s = strings.Map(func(r rune) rune {
-		if strings.ContainsRune(titleMarkerChars, r) {
-			return -1
+// stripTitleMarkers drops titleMarkerChars, except a "#" that opens an issue number ("#1146",
+// "owner/repo#1146"): that is never markdown, and without it a title that names its work item
+// reads as a bare count and cannot be matched to the key withWorkItemKey adds.
+func stripTitleMarkers(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if strings.ContainsRune(titleMarkerChars, r) && !(r == '#' && isIssueNumber(s[i+1:])) {
+			continue
 		}
-		return r
-	}, s)
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// isIssueNumber reports whether s opens with digits that are not a list number: "1146 …" and
+// "1146. …" are issues, "1. …" is a numbered heading whose "#" is markdown. trimListNumber is
+// the one definition of a list number, so the two never disagree about the same line.
+func isIssueNumber(s string) bool {
+	r, _ := utf8.DecodeRuneInString(s)
+	return unicode.IsDigit(r) && trimListNumber(s) == s
+}
+
+func titleCandidateLine(line string) string {
+	s := stripTitleMarkers(strings.TrimSpace(line))
 	s = strings.TrimLeft(s, "-–—>・•●▶ 　\t")
 	s = trimListNumber(s)
 	s = strings.Trim(s, titleQuoteChars)
@@ -635,7 +738,7 @@ var (
 // backoff guard (titleGenClaim/titleGenDone) used by the automatic trigger too, so
 // a manual request and a concurrent automatic one can't double-fire for the same
 // session.
-func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn) (string, error) {
+func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn, item *session.WorkItemRef) (string, error) {
 	if len(withoutStudioPersona(turns)) == 0 {
 		return "", errNoTitleContent
 	}
@@ -646,7 +749,7 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 	defer func() { titleGenDone(name, succeeded) }()
 
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleSession, Trigger: usagex.TriggerManual, Ref: name})
-	title, err := runTitleSuggestLLM(ctx, turns)
+	title, err := titleSuggestLLM(ctx, turns)
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
 	}
@@ -656,7 +759,7 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 		return "", errors.New("title generation produced no usable title")
 	}
 	succeeded = true
-	return title, nil
+	return withWorkItemKey(title, item), nil
 }
 
 func writeTitleGenErr(w http.ResponseWriter, err error) {
@@ -693,7 +796,7 @@ func HandleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
 	defer cancel()
-	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m))
+	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m), m.WorkItem)
 	if err != nil {
 		writeTitleGenErr(w, err)
 		return
@@ -889,13 +992,14 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// The deadline starts before the transcript parse: the ingress counts that time too.
+	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
+	defer cancel()
 	turns := sessionTitleTurns(m)
 	if len(withoutStudioPersona(turns)) == 0 {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleNoContent, "not enough conversation yet (try after a few exchanges)")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), TitleSuggestTimeout)
-	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
 	kind, branch, err := runBranchSuggestLLM(ctx, turns, suggestionKinds(ctx, m.Dir))
 	if err != nil {

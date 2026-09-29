@@ -30,7 +30,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "ops.cw_profile_select": "Select a profile…",
   "ops.cw_manual_option": "Manual entry (a profile in your own ~/.aws)",
   "ops.cw_no_profiles": "No SSO profiles yet, so this falls back to manual entry.",
-  "ops.cw_open_ssm": "Set up in AWS SSM",
+  "ops.cw_open_ssm": "Set up in AWS profiles/SSM",
   "ops.cw_manual_placeholder": "Profile name in ~/.aws",
   "ops.cw_region_placeholder": "Region (optional)",
   "ops.cw_hint":

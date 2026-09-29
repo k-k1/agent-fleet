@@ -93,6 +93,9 @@ func HandleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "assistant title suggestion is turned off")
 		return
 	}
+	// The deadline starts before the conversation load: the ingress counts that time too.
+	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
+	defer cancel()
 	c, err := LoadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
@@ -102,8 +105,6 @@ func HandleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleNoContent, "not enough conversation yet to suggest a title")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
-	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTitleChat, Trigger: usagex.TriggerManual, Ref: c.ID})
 	title, err := runChatTitleSuggestLLM(ctx, c.Messages)
 	if err != nil || title == "" {

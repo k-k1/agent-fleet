@@ -189,7 +189,8 @@ to a marker that names its own request, so a marker left from an earlier request
 shows no toast. Without this, the next run would put the toast straight back. It exits 3 at once, saying
 that the login was cancelled in the Console, and prints the terminal command
 (`aws sso login --profile <name> --use-device-code --no-browser`): until #1028 there is no other way to log
-in from the Console during those minutes. A marker whose recorded cache state no longer matches the cache
+in from the Console during those minutes (🔄 the Settings row's "Log in" is that way since the
+[second revision](#revision--log-in-from-the-settings-profile-row-2026-09-29)). A marker whose recorded cache state no longer matches the cache
 counts as void, since a login elsewhere has made it moot. Only the Agent writes and removes markers.
 
 The device-code presentation (code, "Sign in" button that the member opens by hand, the warning) is
@@ -277,7 +278,7 @@ terminal.
   the member to approve in time. There the agent's usual outcome is the exit 3 and a rerun, not a command
   that completes after approval.
 - Not covered here, each a separate issue: a "Log in" action on a Settings > SSM profile row that opens the
-  same modal, and warning before an SSO session ends. The acceptance run against a real IAM Identity Center
+  same modal (🔄 added in the [second revision](#revision--log-in-from-the-settings-profile-row-2026-09-29)), and warning before an SSO session ends. The acceptance run against a real IAM Identity Center
   also stays open until a member runs it.
 
 ## Revision — a one-minute cancel hold, and "Close" keeps the request (2026-09-27)
@@ -313,3 +314,42 @@ Console of every other device, and the member can press "Log in" there. But the 
 
 Follow-up #1028 (a "Log in" on the Settings > SSM row) would give the member an entry point that no hold can
 block. This revision does not wait for it.
+
+## Revision — Log in from the Settings profile row (2026-09-29)
+
+Issue #1028. Decision 3's text on the hold and the Consequences bullet are left as written, with 🔄 pointers here.
+
+### Why it changes
+
+The Console could start a login only for a pending request. Before any agent asked, or during the minute after a
+cancel, the member's only way was the terminal command.
+
+### What changes
+
+1. **Each profile row in Settings has "Log in".** It opens a modal of the same form as the request's, and nothing
+   starts until the press inside it. The press calls `POST /api/aws-login/profiles/{name}/start`, and the modal
+   polls `GET /api/aws-login/profiles/{name}/attempts/{attempt}`. Decision 3's rules hold: the code reaches only
+   the tab that pressed. The row route answers only for attempts a row started, and the request route only for its
+   own request's, so neither reads the other's code.
+2. **No request is needed, so no cancel hold stops it.** It shares the one attempt per sso-session: a row press and
+   a toast press replace each other, and the modal says so. Cancelling a request no longer ends an attempt a row
+   started: that login is not the request's, and its success settles the request anyway.
+3. **The press asks the CP for Settings first**, the same pull the five-minute poll makes, because the row can be
+   newer than the last poll. It refuses a profile that is not in the managed block — shadowed by the member's own
+   `~/.aws`, held back by `[DEFAULT]`, refused by the INI allowlist — for the reason decision 1 gives, and one
+   without both an account and a role. It starts nothing when that pull fails or its list could not be written:
+   the cache it would fall back to can predate the row, and a failed write leaves `~/.aws/config` without the
+   profile. Each refusal has its own error code, which the modal words. A row's attempt does not keep a
+   request from expiring; only that request's own attempt does.
+4. **The CP relays both routes** through the same running-workspace check as the request's, and audits the start as
+   `aws.login.start` with the target `profile: <name>`. The Settings list now carries each profile's `name` and
+   whether another label maps to it (`nameCollides`), so the Console does not re-derive the name.
+5. **The Settings tab is renamed "AWS profiles/SSM"** (ja: 「AWS プロファイル/SSM」): it holds the profiles
+   `af-aws-exec` runs under, not only SSM hosts. The section id `ssm`, the `/api/ssm/*` routes, the export bundle's
+   key and the managed block's marker line in `~/.aws/config` keep their names. Renaming the marker would orphan the
+   block in every existing workspace.
+6. **Each row shows its login state**, from `GET /api/aws-login/profiles`: signed in (an access token that has not
+   expired), renews on use (expired, with a refresh token), or not signed in. It shows **no time left**. The cache
+   holds only the access token's expiry, about an hour, and the CLI renews that token until the portal session
+   ends, which the cache does not record. "40 minutes left" would be wrong by hours. Knowing when the session
+   really ends is what #1029 has to measure first. The route returns names and states only, never a token.

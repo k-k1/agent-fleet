@@ -2,6 +2,8 @@ package sessionx
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +29,9 @@ func TestSessionsInDir(t *testing.T) {
 	}
 	live := map[string]bool{"a": true, "b": true, "c": true, "e": true, "f": true} // "d" stopped
 
-	got := sessionsInDir(metas, live, "/repos/foo")
+	alive := func(m session.Meta) bool { return live[m.Name] }
+
+	got := sessionsInDir(metas, alive, "/repos/foo")
 	want := []string{"root", "subdir"} // sorted display names
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("sessionsInDir = %v, want %v", got, want)
@@ -35,8 +39,63 @@ func TestSessionsInDir(t *testing.T) {
 
 	// A clean working copy (no live sessions under it) must return empty so the
 	// checkout guard lets the switch through.
-	if got := sessionsInDir(metas, live, "/repos/baz"); len(got) != 0 {
+	if got := sessionsInDir(metas, alive, "/repos/baz"); len(got) != 0 {
 		t.Fatalf("sessionsInDir(clean) = %v, want empty", got)
+	}
+}
+
+// A running Managed session has no tmux session. The working-copy guards still have to see it:
+// deleting or switching the copy under a Managed turn is refused, and once the session stops
+// the same checkout goes through (#1169).
+func TestWorkingCopyGuardsSeeManagedSessions(t *testing.T) {
+	if _, err := execLookPathGit(); err != nil {
+		t.Skip("git not available")
+	}
+	home := withTempHome(t)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	dir := filepath.Join(home, "repos", "app")
+	gitInit(t, dir) // on "main", plus a "feature" branch
+	session.WriteMeta(session.Meta{Name: "m1169", Title: "managed-codex", Kind: session.KindCodex,
+		Driver: session.DriverManaged, Dir: filepath.Join(dir, "sub")})
+
+	alive := true
+	old := managedAlive
+	managedAlive = func(m session.Meta) bool { return alive && m.Name == "m1169" }
+	defer func() { managedAlive = old }()
+
+	// The import-job registry lives in package main; no import is running here, so false is
+	// exactly what main would answer. Without it the delete guard is never reached.
+	d := gitxStubDeps()
+	d.RepoJobActive = func(string) bool { return false }
+	gitx.Configure(d)
+	defer gitx.Configure(gitxStubDeps())
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/{name}/checkout", gitx.HandleRepoCheckout)
+	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"POST", "/repos/app/checkout", map[string]any{"branch": "feature"}},
+		{"DELETE", "/repos/app", nil},
+	} {
+		code, raw := roundtrip(t, srv, c.method, c.path, c.body)
+		if code != http.StatusConflict || !strings.Contains(string(raw), "managed-codex") {
+			t.Errorf("%s %s with a running Managed session = %d (%s), want 409 naming it", c.method, c.path, code, raw)
+		}
+	}
+	if b := gitx.GitCurrentBranch(dir); b != "main" {
+		t.Fatalf("branch after the refused checkout = %q, want main", b)
+	}
+
+	alive = false
+	do(t, srv, "POST", "/repos/app/checkout", map[string]any{"branch": "feature"}, http.StatusOK, nil)
+	if b := gitx.GitCurrentBranch(dir); b != "feature" {
+		t.Fatalf("branch after the session stopped = %q, want feature", b)
 	}
 }
 

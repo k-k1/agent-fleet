@@ -253,7 +253,7 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 			"(af-aws-exec never passes long-lived keys; see `af-aws-exec --list` for the Settings profiles)", profile)
 	}
 	if keys["sso_account_id"] == "" || keys["sso_role_name"] == "" {
-		return fmt.Errorf("profile %q has no SSO account and role; set both on the profile in Settings > SSM", profile)
+		return fmt.Errorf("profile %q has no SSO account and role; set both on the profile in Settings > AWS profiles/SSM", profile)
 	}
 	// These take the profile away from SSO in the CLI itself. role_arn does by presence
 	// alone: an empty `role_arn =` (set or inherited) still sends the CLI to assume-role
@@ -371,7 +371,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	}
 	if sp, ok := o.Settings[o.Profile]; ok {
 		if why := IncompleteReason(sp); why != "" {
-			return "", nil, nil, fmt.Errorf("profile %q is not exported: %s (Settings > SSM)", o.Profile, why)
+			return "", nil, nil, fmt.Errorf("profile %q is not exported: %s (Settings > AWS profiles/SSM)", o.Profile, why)
 		}
 		if _, rerr := renderProfile(sp); rerr != nil && len(keys) == 0 {
 			return "", nil, nil, fmt.Errorf("profile %q is not exported: %s", o.Profile, InvalidReason(sp, rerr))
@@ -557,7 +557,7 @@ func planChild(awsBin string, env []string, keys map[string]string, creds proces
 func checkAmbiguous(o ExecOptions) error {
 	for _, c := range o.Conflicts {
 		if c.Name == o.Profile {
-			return fmt.Errorf("profile %q is ambiguous: Settings labels %s all map to it; rename all but one in Settings > SSM",
+			return fmt.Errorf("profile %q is ambiguous: Settings labels %s all map to it; rename all but one in Settings > AWS profiles/SSM",
 				o.Profile, strings.Join(quoteAll(c.Labels), ", "))
 		}
 	}

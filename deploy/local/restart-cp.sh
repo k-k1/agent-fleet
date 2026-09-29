@@ -2,8 +2,8 @@
 # Rebuild ONLY the Control Plane (Go) + Console (Vite) and restart the running
 # `af-cp` host process in place — no Workspace image rebuild. Use this to reflect
 # changes under control-plane/ or console/ during dev. For Workspace/Agent changes
-# (workspace/), rebuild the image instead — see docs/HANDOFF.md §2 (the
-# "what-to-rebuild" quick reference).
+# (workspace/), rebuild the image instead — see docs/build/10-development.md
+# §10.2 (what each kind of change takes).
 #
 # Env is reproduced exactly as deploy/local/run-dev.sh would: oauth.env supplies
 # AUTH + secrets + CP_ADDR; the WS_* defaults below match run-dev.sh.

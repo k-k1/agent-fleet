@@ -3,7 +3,7 @@ audience: "エージェントを選んで接続する人"
 updated: "2026-09"
 ---
 
-# 06. エージェント — claude / codex / opencode / GitHub Copilot / Cursor / Kiro の接続と選び方
+# 06. エージェント — 接続の仕方と選び方
 
 [English](06-agents.md) | 日本語
 
@@ -11,8 +11,10 @@ updated: "2026-09"
 
 ## 対応エージェントと選び方
 
-主要 6 つの CLI コーディングエージェントに対応しています（実験枠の Antigravity（agy）は
-[08](10-integrations.ja.md)。マネージド専用の lcpp と muse は下の機能一覧表に掲載）。
+下の表で主要 6 つの CLI コーディングエージェントを比べています。ほかにマネージド専用の
+**Muse Code**（muse、[後述](#muse-code)）と、フリート自前の llama.cpp エンジン
+（**lcpp**、[後述](#lcpp)）があり、実験枠の Antigravity（agy）は [08](10-integrations.ja.md) で
+扱います。どれも[機能対応の早見表](#機能対応の早見表全種別)に列があります。
 接続の変更は即時、挙動設定は各エージェントの**新しいセッションから**反映されます。
 
 | | claude | codex | opencode | copilot | cursor | kiro |
@@ -35,11 +37,15 @@ Cursor のプランを持っているなら **cursor**、AWS Builder ID（や Ki
 **kiro**、という
 選び方になります。いずれも会話表示、質問への回答、他エージェントへの
 会話の引き継ぎに対応します（コンテキストゲージは claude / codex / opencode / kiro / lcpp / muse）。
+この 6 つ以外では、Meta のアカウント（または Meta Model API のキー）があるなら **muse**、
+ベンダーのアカウントを一切使わないモデルがよいなら **lcpp** です。lcpp は組織自前のエンジン
+（または自分のネットワークにある llama-server）で動くので、サインインもサブスクの上限もありません。
 
 Codex / opencode / copilot / cursor / kiro の**マネージド実行**は、会話画面から普段の操作を完結できます
 （Codex / opencode はセッションごとの追加プロセスを持たないため並行作業向き。copilot / cursor / kiro は
 マネージドでもセッションごとの専用プロセスで動きます）。CLI 固有の黒い画面が必要なときだけ
-**ターミナル（CLI）** を選びます。詳しくは
+**ターミナル（CLI）** を選びます。lcpp と muse はマネージドだけで動き、ターミナル（CLI）は
+選べません（lcpp はセッションごとのプロセスも持たず、muse はセッションごとに 1 つ動かします）。詳しくは
 [02 セッション](02-sessions.ja.md#実行方式-マネージドとターミナルcli)を参照してください。
 マネージドのチャット表示は、左ペインのリポジトリを使わないアシスタントチャットとは別です。
 

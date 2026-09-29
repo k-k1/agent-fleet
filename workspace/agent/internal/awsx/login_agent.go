@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -88,13 +89,14 @@ var loginAttempts = struct {
 	current map[string]*loginAttempt // by sso-session
 }{byID: map[string]*loginAttempt{}, current: map[string]*loginAttempt{}}
 
-// liveAttemptFor reports whether an attempt for ssoSession is still running: its request
-// must not expire under it.
-func liveAttemptFor(ssoSession string) bool {
+// liveAttemptFor reports whether an attempt for that request is still running: the
+// request must not expire under it. A login started from a Settings row does not count;
+// it would otherwise keep any request for the profile up for its whole 15 minutes.
+func liveAttemptFor(ssoSession, requestID string) bool {
 	loginAttempts.Lock()
 	a := loginAttempts.current[ssoSession]
 	loginAttempts.Unlock()
-	return a != nil && a.live()
+	return a != nil && a.requestID == requestID && a.live()
 }
 
 // pruneAttemptsLocked forgets attempts that ended long ago.
@@ -155,7 +157,7 @@ func sweepLoginRequests(now time.Time) []LoginRequest {
 				continue
 			}
 			last, perr := time.Parse(time.RFC3339Nano, r.LastAt)
-			if (perr != nil || now.Sub(last) >= loginRequestTTL) && !liveAttemptFor(r.SSOSession) {
+			if (perr != nil || now.Sub(last) >= loginRequestTTL) && !liveAttemptFor(r.SSOSession, r.ID) {
 				_ = os.Remove(path)
 				continue
 			}
@@ -278,7 +280,7 @@ func HandleLoginStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "no_aws_cli", err.Error())
 		return
 	}
-	a, err := startLoginAttempt(bin, req, sp)
+	a, err := startLoginAttempt(bin, req.SSOSession, req.ID, sp)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		return
@@ -287,13 +289,122 @@ func HandleLoginStart(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, loginStartWire{Attempt: a.id})
 }
 
+// syncForLogin pulls Settings from the CP and rewrites the managed block, as the poll
+// does. A row the member just added or edited can be up to PollInterval newer than the
+// last poll, and the press must log in to what the row shows.
+var syncForLogin = Sync
+
+// HandleProfileLoginStart is POST /aws-login/profiles/{name}/start: the Settings > AWS profiles/SSM
+// row's "Log in" (#1028). It needs no pending request, so no cancel hold can block it;
+// it shares the sso-session's one attempt slot with the request route, so the two
+// replace each other the same way two presses on one request do.
+func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	// Only a fresh list that was also written counts: the cache the offline path re-applies
+	// can predate the row the member pressed, and a failed write leaves names in Exported
+	// that are not in ~/.aws/config.
+	res, err := syncForLogin()
+	if err != nil || !res.Fetched {
+		msg := "the workspace could not read Settings just now"
+		if err != nil {
+			msg += ": " + err.Error()
+		}
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "settings_unavailable", msg)
+		return
+	}
+	sp, ok := res.Settings[name]
+	switch {
+	case !ok:
+		httpx.WriteErr(w, http.StatusNotFound, "not_a_settings_profile", "no Settings profile with that name reached this workspace")
+		return
+	case res.Incomplete[name] != "":
+		httpx.WriteErr(w, http.StatusConflict, "incomplete_profile", res.Incomplete[name])
+		return
+	case !slices.Contains(res.Exported, name):
+		// Shadowed by the member's own ~/.aws, held back by [DEFAULT], or refused by the
+		// INI allowlist: the same checks af-aws-exec passes before it files a request, so
+		// the login never writes a token under an af-<name> key a section of theirs uses.
+		httpx.WriteErr(w, http.StatusConflict, "not_exported", "this profile is not in ~/.aws/config; `af-aws-exec --list` says why")
+		return
+	}
+	bin, err := LoginAWSBin()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "no_aws_cli", err.Error())
+		return
+	}
+	a, err := startLoginAttempt(bin, "af-"+sp.Name, "", sp)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+		return
+	}
+	log.Printf("aws-login: start profile=%s from=settings relayed=%t", sp.Name, relayedByCP(r))
+	httpx.WriteJSON(w, http.StatusOK, loginStartWire{Attempt: a.id})
+}
+
+// Login states of a Settings profile's token cache, for the row's badge. There is no
+// "expires in": the cache holds only the access token's expiry (about an hour), which the
+// CLI renews with the refresh token until the portal session ends, and that end is written
+// nowhere the Agent can read (#1029).
+const (
+	loginStateSignedIn = "signed_in" // an access token that has not expired
+	loginStateRenew    = "renew"     // expired, but a refresh token may renew it on next use
+	loginStateNone     = "none"      // no cache, or nothing that can be renewed
+)
+
+type profileLoginStateWire struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+type profileLoginStatesWire struct {
+	Profiles []profileLoginStateWire `json:"profiles"`
+}
+
+// profileLoginState reads the token cache of ssoSession. Neither token leaves this function.
+func profileLoginState(ssoSession string, now time.Time) string {
+	if ReadCacheState(ssoSession).Unexpired(now) {
+		return loginStateSignedIn
+	}
+	var doc struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	if readJSON(ssoCachePath(ssoSession), &doc) && doc.RefreshToken != "" {
+		return loginStateRenew
+	}
+	return loginStateNone
+}
+
+// HandleProfileLoginStates is GET /aws-login/profiles: the login state of every Settings
+// profile the Agent knows, from the last poll's list (a read must not pull from the CP).
+func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	out := []profileLoginStateWire{}
+	for name := range loginSettings() {
+		out = append(out, profileLoginStateWire{Name: name, State: profileLoginState("af-"+name, now)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	httpx.WriteJSON(w, http.StatusOK, profileLoginStatesWire{Profiles: out})
+}
+
 // HandleLoginAttempt is GET /aws-login/{id}/attempts/{attempt}: the phase of one attempt,
 // and its URL and code only while it is waiting for the member.
 func HandleLoginAttempt(w http.ResponseWriter, r *http.Request) {
+	writeAttempt(w, r.PathValue("attempt"), func(a *loginAttempt) bool { return a.requestID == r.PathValue("id") })
+}
+
+// HandleProfileLoginAttempt is GET /aws-login/profiles/{name}/attempts/{attempt}. It
+// answers only for attempts a row started, so neither route reads the other's code.
+func HandleProfileLoginAttempt(w http.ResponseWriter, r *http.Request) {
+	writeAttempt(w, r.PathValue("attempt"), func(a *loginAttempt) bool {
+		return a.requestID == "" && a.profile == r.PathValue("name")
+	})
+}
+
+func writeAttempt(w http.ResponseWriter, id string, belongs func(*loginAttempt) bool) {
 	loginAttempts.Lock()
-	a := loginAttempts.byID[r.PathValue("attempt")]
+	a := loginAttempts.byID[id]
 	loginAttempts.Unlock()
-	if a == nil || a.requestID != r.PathValue("id") {
+	if a == nil || !belongs(a) {
 		// Unknown, or lost with an Agent restart: the modal offers to start again.
 		httpx.WriteJSON(w, http.StatusOK, loginAttemptWire{Phase: attemptGone})
 		return
@@ -319,7 +430,9 @@ func HandleLoginCancel(w http.ResponseWriter, r *http.Request) {
 	loginAttempts.Lock()
 	cur := loginAttempts.current[req.SSOSession]
 	loginAttempts.Unlock()
-	if cur != nil {
+	// A login the member started from Settings is not the request's to end: cancelling
+	// says "I do not want this request", and that login settles the request anyway.
+	if cur != nil && cur.requestID != "" {
 		cur.end(attemptCancelled, "")
 	}
 	unlock, err := lockLogin()
@@ -376,10 +489,11 @@ func newAttemptID() string {
 	return hex.EncodeToString(b)
 }
 
-// startLoginAttempt runs `aws sso login` for req's sso-session with a config holding
-// only what Settings says, detached from every pane.
-func startLoginAttempt(bin string, req LoginRequest, sp Profile) (*loginAttempt, error) {
-	ini, err := ssoOnlyConfig(ssoInfo{Session: req.SSOSession, Scopes: "sso:account:access", StartURL: sp.StartURL,
+// startLoginAttempt runs `aws sso login` for ssoSession with a config holding only what
+// Settings says, detached from every pane. requestID is "" for a login started from
+// Settings.
+func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*loginAttempt, error) {
+	ini, err := ssoOnlyConfig(ssoInfo{Session: ssoSession, Scopes: "sso:account:access", StartURL: sp.StartURL,
 		Region: sp.SSORegion, Account: sp.AccountID, Role: sp.RoleName})
 	if err != nil {
 		return nil, err
@@ -409,14 +523,14 @@ func startLoginAttempt(bin string, req LoginRequest, sp Profile) (*loginAttempt,
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = pw, pw
 
-	a := &loginAttempt{id: newAttemptID(), requestID: req.ID, ssoSession: req.SSOSession, profile: sp.Name,
+	a := &loginAttempt{id: newAttemptID(), requestID: requestID, ssoSession: ssoSession, profile: sp.Name,
 		allowed: allowedDeviceHosts(sp), phase: attemptStarting, stop: stop}
 
 	loginAttempts.Lock()
-	prev := loginAttempts.current[req.SSOSession]
+	prev := loginAttempts.current[ssoSession]
 	pruneAttemptsLocked(time.Now())
 	loginAttempts.byID[a.id] = a
-	loginAttempts.current[req.SSOSession] = a
+	loginAttempts.current[ssoSession] = a
 	loginAttempts.Unlock()
 	if prev != nil {
 		prev.end(attemptReplaced, "")
@@ -435,7 +549,7 @@ func startLoginAttempt(bin string, req LoginRequest, sp Profile) (*loginAttempt,
 		err := cmd.Wait()
 		pr.Close()
 		os.RemoveAll(dir)
-		if err == nil && ReadCacheState(req.SSOSession).Unexpired(time.Now()) {
+		if err == nil && ReadCacheState(ssoSession).Unexpired(time.Now()) {
 			a.end(attemptDone, "")
 			return
 		}

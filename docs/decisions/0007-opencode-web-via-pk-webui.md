@@ -6,7 +6,7 @@ English | [日本語](0007-opencode-web-via-pk-webui.ja.md)
   `opencode serve` + `bun serve-ui.ts`, the `/ocweb` proxy, the Console toggle) was removed in
   `temp/remove-opencode-web-opencode-web-ui`. opencode is used through the TUI in tmux (CLI)
   only. What follows is kept as the design record of the time.
-- See also: [reference/preview.md](../build/05-api.md) (the same proxy mechanism and WS constraints) / [HANDOFF §opencode](../HANDOFF.md) / it would have sat next to the rtk toggle ([the agent settings tab](../HANDOFF.md))
+- See also: [reference/preview.md](../build/05-api.md) (the same proxy mechanism and WS constraints) / [build/04 §4.3](../build/04-agent.md) (formerly HANDOFF §opencode) / it would have sat next to the rtk toggle ([the agent settings tab](../../guide/member/12-settings.md))
 
 ## Context
 

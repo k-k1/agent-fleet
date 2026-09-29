@@ -3,7 +3,7 @@
 [English](0008-antigravity-cli-agent-kind.md) | 日本語
 
 - 状態: **採用決定**（2026-07-20。Starter=実験枠で実装開始、GCP 経路で常用化を目指す。実装計画は [32](../log/32-agy-agent-kind.md)）
-- 関連: [session.go](../../workspace/agent/internal/sessionx/session.go)（セッション統合）/ [Codex auth](../../workspace/agent/internal/agents/codex/auth.go)（device-auth の現行実装）/ [0006-mcp-unified](0006-mcp-unified.ja.md) / [HANDOFF §エージェント種別](../HANDOFF.md)
+- 関連: [session.go](../../workspace/agent/internal/sessionx/session.go)（セッション統合）/ [Codex auth](../../workspace/agent/internal/agents/codex/auth.go)（device-auth の現行実装）/ [0006-mcp-unified](0006-mcp-unified.ja.md) / [dev/04 §4.3](../build/04-agent.ja.md)（旧 HANDOFF §エージェント種別）
 - 出自: ユーザー依頼「antigravity cli を Agent-Fleet に組み込めないか検討」（2026-06-29〜30 調査）
 
 ## 背景
@@ -37,14 +37,14 @@ Anthropic ToS を [0001](0001-self-host-vs-saas.ja.md) で慎重に詰めた以�
 
 | 経路（BYO ログイン階層） | 学習利用 | クォータ | セルフホスト適合 | 判定 |
 |------|---------|---------|------------------------------|------|
-| **会社 Workspace（Gemini for Business / AI Ultra for Business）** | **収集しない**（明示） | 企業枠 | 会社所有シート＝[overview](../HANDOFF.md) の方針と一致 | ✅ **推奨** |
+| **会社 Workspace（Gemini for Business / AI Ultra for Business）** | **収集しない**（明示） | 企業枠 | 会社所有シート＝[decisions/0001](0001-self-host-vs-saas.ja.md) の方針と一致 | ✅ **推奨** |
 | **GCP プロジェクト** | **されない**（私的環境外に保存せず） | 消費ベース課金 | 各ユーザーが自分の GCP 資格→**GCP ToS** | ✅ **推奨** |
 | 個人 **AI Pro（$20）/ Ultra（$249.99）** | **既定で学習**（「Gemini Apps Activity」オフでオプトアウト） | Pro=5h ごとリフレッシュだが `agy` の重い compute effort で**2h で 5h ロック**の報告 | 技術的には BYO 可だが細い | ⚠ **個人検証どまり**（claude の「個人 Pro/Max 避ける」と同型） |
 | 消費者/無料 | 学習（同上） | **1 日 20 req/アカウント**（desktop/CLI/SDK 共有） | 本番不向き | ⚠ 動作確認のみ |
 | Claude モデルを `agy` 経由 | — | — | 追加で **Anthropic 商用規約**にも拘束 | 併用時注意 |
 
 **会社 Workspace または GCP プロジェクト経路は Agent-Fleet の「1 社=1 デプロイ・自社
-セルフホスト・BYO」（[overview](../HANDOFF.md)）とそのまま一致**し、SaaS を断念させた ToS
+セルフホスト・BYO」（[decisions/0001](0001-self-host-vs-saas.ja.md)）とそのまま一致**し、SaaS を断念させた ToS
 グレーを踏まない。個人 AI Pro は技術的には同じ device-auth で通るが、**学習利用（オプト
 アウト頼み）＋クォータ枯渇**の 2 点で claude の個人プラン同様に会社運用では避ける。
 → **ゲート通過。会社 Workspace / GCP 経路を推奨前提とし、実装自体は階層非依存。**
@@ -73,7 +73,7 @@ codex/opencode 追加と同じ轍。触る範囲は限定的:
 
 ## PoC 結果（2026-06-30、使い捨てコンテナ `agent-fleet/workspace:dev`）
 
-ビルドせず既存イメージの使い捨てコンテナで実施（[ホスト OOM リスク](../HANDOFF.md)回避）。
+ビルドせず既存イメージの使い捨てコンテナで実施（ホスト OOM リスク回避）。
 
 - ✅ **インストール成功**: `curl -fsSL https://antigravity.google/cli/install.sh | bash` は
   **非対話・冪等・sha512 検証つき**で `$HOME/.local/bin/agy` に設置（Cloud Run の manifest→

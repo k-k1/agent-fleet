@@ -1,7 +1,7 @@
 ---
 audience: "はじめてこのリポジトリをビルドする人"
 source_of_truth: "コード + CI 定義"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
 # 10. 開発 — ビルド・反映・テスト・規約
@@ -14,334 +14,323 @@ updated: "2026-07"
 |--------------|------|
 | `console/` | ブラウザ SPA（React + Vite + zustand）。ビルド成果物 `console/dist` を CP が静的配信 |
 | `control-plane/` | Control Plane（Go・単独モジュール）。migrations を埋め込み、起動時に自動適用 |
-| `workspace/` | Workspace イメージ（Dockerfile / entrypoint）+ `workspace/agent/`（Agent・独立 Go モジュール）|
-| `deploy/` | デプロイ層（local / compose / aws）。runbook は各 README（[09](09-deploy.ja.md)）|
+| `workspace/` | Workspace イメージ（Dockerfile / entrypoint / opencode プラグイン / workspace notes）+ `workspace/agent/`（Agent・独立 Go モジュール）|
+| `deploy/` | デプロイ層（`local` / `compose` / `aws` / `native`）とリリース用ツール（`release/`）。runbook は各 README（[09](09-deploy.ja.md)）|
 | `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ）。CP + 実コンテナの疎通検証（§10.4）|
 | `console-e2e/` | Console UI E2E（Playwright）。ブラウザ → CP → 実コンテナの縦串検証（§10.4）|
+| `guide/` ・ `docs/` | 全コンテナに同梱される利用ガイドと、開発者向けドキュメント。両方の規範は [CONVENTIONS](../CONVENTIONS.ja.md) |
+| `scripts/` | リポジトリの検査: `docs-check.py`（リンク・front matter・`guide/ref` の表）と `vet-build-tags.sh` |
 
 ファイル単位の地図は [90-code-map](90-code-map.ja.md)。
 
-## 10.2 ビルドと反映の早見表
+## 10.2 変更を反映するには
 
-**要点: `docker run` は running 中のコンテナには no-op。新イメージの反映は必ず Stop→Start**
-（Start は `rm -f` → 新イメージで `run` ＝確実に入れ替わる）。ホーム（ログイン・接続・repos）は
-bind mount で永続し、イメージ更新の影響を受けない。
+**要点: 新イメージが効くのは Stop→Start のときだけ。** `docker run` は稼働中のコンテナには
+何もしない。docker ランタイムの Start はコンテナを消してから run し直すので、確実に入れ替わる。
+ホーム（ログイン・接続・repos）はそこでは bind mount で、イメージ更新の影響を受けない。
+Start が使うイメージと Workspace が走らせているイメージが違うと、Console に **要再起動** の
+バッジが出る（`control-plane/workspace_stale.go`）。
 
 | 変更したもの | 反映に必要な操作 |
 |--------------|------------------|
-| Console（`console/src`）| `vite build`（watch 可）→ ブラウザ**リロードのみ**（CP は dist を no-store 配信・CP 再起動不要）|
+| Console（`console/src`）| `npm --prefix console run build`（または `run dev` ＝ `vite build --watch`）→ ブラウザを**リロード**。CP は `console/dist` をディスクから読み、そのキャッシュヘッダ（[05 §5.4](05-api.ja.md#54-横断規約)）によってリロードで新しいビルドが効くので、CP 再起動は不要 |
 | CP の Go | CP を再ビルドして再起動（`restart-cp.sh`）。イメージ再ビルド不要 |
-| Agent の Go / イメージ焼き込み | イメージ再ビルド → 稼働中 Workspace は**利用者が Console で Stop→Start**（CP からの強制入替はしない）|
-| 焼き込み CLI（claude / opencode / codex）の版 | **§10.2.1 の runbook に従う**（ARG bump → push → CI 検証 → run-dev.sh → Stop→Start）|
-| rtk の版 | CLI 3 種と同じ**イメージ焼き込み・ARG ピン止め**（`workspace/Dockerfile` の `RTK_VERSION`。常時焼き込み `BAKE_RTK=1` 既定）。bump は ARG 書き換え → 再ビルド → Stop→Start。最新への追従は自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）でも可 — entrypoint が CLI 群と一緒に rtk も latest へ更新する（`~/.local/bin` shadow・OFF に戻すと焼き込み版へ復帰）。旧ホスト vendoring（`update-rtk.sh` → `vendor/rtk`）は廃止 |
+| Agent の Go / イメージに入るもの | イメージを再ビルド（`run-dev.sh`）→ 各利用者が Console で **Stop→Start**。CP が稼働中の Workspace を強制的に入れ替えることはない。`native` にはイメージが無く、`run-dev.sh native` が代わりに Agent バイナリを再ビルドする |
+| エージェント CLI・`rtk`・`gh`・Go のピン版 | §10.2.1 の runbook に従う |
 | entrypoint が適用する類（設定 seed・TZ 等）| Stop→Start のみ（再ビルド不要）|
-| 共有 JVM | 共有 dir を消して再 provision（`deploy/local/provision-jvm.sh`）|
+| 共有 JVM（docker ランタイム）| 共有ディレクトリを消して再 provision（`deploy/local/provision-jvm.sh`。JDK が既にあるディレクトリはスキップする）|
 
-### 10.2.1 焼き込みツールの版上げ runbook（定型運用）
+### 10.2.1 ピン版ツールの版上げ runbook（定型運用）
 
-CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは、この手順どおりに進める。
-背景: 版未指定の `npm install -g` は Docker レイヤキャッシュに当たり「再ビルドしても
-上がらない」罠があったため ARG ピン化した経緯（[04 §4.9](04-agent.ja.md)）。
+エージェント CLI・`rtk`・`gh`・Go の版を上げるときはこの手順で進める。版はすべて
+`workspace/Dockerfile` のビルド引数になっている。版未指定の `npm install -g` は Docker
+レイヤキャッシュに当たり、**再ビルドしても版が上がらない**ためである。ピンが Workspace に
+届く経路（イメージに焼き込む／既定の lean イメージでは版マニフェスト `versions.json` から
+起動時に導入する）は [04 §4.9](04-agent.ja.md#49-workspace-イメージと-entrypoint)。
 
-1. **latest 確認**
-   - CLI 3 種: `npm view @anthropic-ai/claude-code version`（`opencode-ai` / `@openai/codex` も同様）
-   - gh: [cli/cli の releases](https://github.com/cli/cli/releases) の最新
-   - Go: `workspace/agent/go.mod` の `go` ディレクティブと**歩調を合わせる**（go.mod を
-     上げないなら据え置く）。rtk: [rtk-ai/rtk の releases](https://github.com/rtk-ai/rtk/releases)
-     の最新（`ARG RTK_VERSION`。他 CLI と同じ焼き込みピン）。
-2. **ARG bump**: `workspace/Dockerfile` の `ARG CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` /
-   `CODEX_VERSION`（/ `GH_VERSION` / `GO_VERSION`）を書き換える。ARG 変更が確実に
-   キャッシュを破るので `--no-cache` は不要。
-3. **commit & push**: 1 行 diff・日本語メッセージ
-   （例 `build(workspace): 焼き込み CLI を bump（claude X.Y.Z）`）。
-4. **CI green を確認**: `.github/workflows/e2e.yml` は **push では走らない**（main への PR /
-   毎日 cron / 手動 dispatch のみ ＝ 課金分散）。作業ブランチでは自分で起こす:
-   `gh workflow run e2e.yml --ref <ブランチ>`。イメージ build → L1（**実版 = ピンの一致**・
-   versions.json）→ L2（フリート疎通）→ L3（Console UI）が回る。
-   `gh run watch $(gh run list --workflow e2e.yml --limit 1 --json databaseId --jq '.[0].databaseId')`
-   で完走を見届ける。red のまま先へ進まない。
-5. **（大きめの版上げのみ）実クレデンシャルを使うジョブ**: 枠の消費先が違うので
-   ワークフローも入力も**エージェント毎に別**。回したい物だけ立てる（既定は全て false）。
-   - claude のメジャー更新や認証・API まわりが疑わしいとき（L4 疎通スモーク）:
-     `gh workflow run e2e -f live=true`。secret `E2E_CLAUDE_OAUTH_TOKEN`
-     （`claude setup-token` で発行、Max/Pro 枠・追加課金なし）使用。失効時（トークン
-     再発行時）は setup-token をやり直して secret を更新する。
-     ※ これは headless の `claude -p` ＝ TUI もフッタも描画されない。状態検出の破壊は
-     ここでは見えない（それは `gh workflow run claude-tui-contract` の仕事）。
-   - codex の版上げで状態検出（Stop hook / rollout / turn 通知）が疑わしいとき（Tier2
-     ドリフト検知）: `gh workflow run codex-contract -f live=true`。secret
-     `E2E_CODEX_AUTH_JSON` 使用・ChatGPT サブスク枠を実測 ~45k tokens/回 消費する。
-     （Tier1＝無料・無認証の方は main への PR（codex 関連パス）と週次 cron で自動的に走る。）
-6. **ホスト反映**: ホストで `deploy/local/run-dev.sh`。イメージ再ビルド直後に
-   `e2e-smoke.sh`（L1）が自動で走り、版一致を再検証する（rtk 同梱もここで確認される）。
-   ⚠️ ホストはメモリ制約 — 重いビルドを並走させない（[HANDOFF §2](../HANDOFF.md)）。
-7. **Workspace 反映**: 各利用者が Console で **Stop→Start**（home は永続・repos は残る。
-   CP からの強制入替はしない）。
-8. **反映確認（任意）**: 再起動後のコンテナ内で
-   `EXPECT_… bash deploy/local/e2e-smoke.sh --inner`、または Console の
-   設定 → 環境「ツールのバージョン」（実効 / イメージ / ピン差分が見える）。
+1. **latest を確かめる。** `deploy/local/cli-drift-check.sh [cli]` が、全エージェント CLI と
+   `rtk` についてピンと公開 latest を並べて出す（CI と同じ取得元を読む）。gh はその releases
+   ページ。Go は `workspace/agent/go.mod` の `go` ディレクティブと歩調を合わせる（go.mod を
+   上げないなら据え置く）。
+2. **ビルド引数を書き換える**（`workspace/Dockerfile`）。バイナリで配られる CLI（agy・cursor・
+   kiro・muse）はアーキテクチャ別の sha256 もピンしている。取り方は各引数の上のコメントにある。
+   引数の変更は確実にキャッシュを破るので `--no-cache` は不要。
+3. **commit & push** — 小さな diff。メッセージは
+   [CONTRIBUTING](../../CONTRIBUTING.md#commits--prs) に従う。
+4. **E2E ワークフローの緑を待つ。** `e2e.yml` は **push では走らない**（main への PR・毎晩の
+   cron・手動 dispatch のみ）ので、作業ブランチでは自分で起こす:
+   `gh workflow run e2e.yml --ref <ブランチ>`。CLI を焼き込んだイメージ
+   （`BAKE_AGENT_CLIS=1`）をビルドし、L1（§10.3 に挙げたツールについて**導入された版 ＝ ピン**）→ L2（フリート疎通）→
+   L3（Console UI）を検証する。**red のまま先へ進まない。**
+5. **（大きめの版上げ）その CLI の contract を回す**（後述）。CLI ごとにワークフローも入力も
+   別なので、要るものだけ回す。実ターンを使うものはその CLI のサブスク枠を消費する。`live` 入力は
+   どちらも既定 false。`e2e.yml` の `live` は L4（headless の claude ターン）、`codex-contract.yml`
+   の `live` は Tier 2（ワークフローの記載で 1 回およそ 45k tokens・実測）。どちらも TUI を
+   描かないので、状態検出を見るのは contract ワークフローの仕事で L4 ではない。
+6. **ホストに反映**: `run-dev.sh`。ビルド直後にイメージスモーク（L1）が走る。既定の lean
+   イメージでは `versions.json` が新しいピンを持ち、CLI が焼かれていないことを確かめる。
+   `BAKE_AGENT_CLIS=1` なら導入された版も確かめる。
+7. **各 Workspace に反映**: 各利用者が Console で **Stop→Start**。lean イメージでは、自己更新がオフの
+   あいだ、メンバー自身の起動で entrypoint が boot-install 対象の CLI を `~/.local` で新しい
+   ピンへ進める（ネットワークが要る。失敗は次の起動で再試行）。自己更新がオンなら latest の
+   まま（下の補足を参照）。kiro と muse はオンデマンドで導入され、それぞれの導入経路でピンに
+   追従する（[04 §4.9](04-agent.ja.md#49-workspace-イメージと-entrypoint)）。home と repos は残る。
+8. **（任意）確認**: **設定 → ツールチェーン → ツールのバージョン** で、実効版・イメージ版・
+   ピン版が並んで見える。
 
 補足:
-- **毎日 cron**（e2e.yml、04:00 JST・develop 対象）がコード無変更でも上流 CLI / base image の
-  破壊を検出する。cron が red になったら上流変更起因を疑い、この runbook の 4〜5 で切り分ける。
-- 再ビルドせず特定メンバーだけ最新化したい場合は自己更新 opt-in
-  （AdminTab の `allow_agent_self_update` ＋ 設定 → 環境のトグル。Stop→Start で焼き込み版に戻る）。
+
+- **毎晩の定期実行**（`e2e.yml`、04:00 JST・develop 対象）が、このリポジトリに変更が無くても
+  上流 CLI や base image の破壊を検出する。red になったら上流を疑い、手順 4〜5 で切り分ける。
+- 再ビルドせず特定メンバーだけ先に進めたいときは、自己更新の opt-in がある。テナント設定で
+  許可し、メンバーが 設定 → ツールチェーン で Workspace ごとにオンにする。メンバー自身の起動では latest を
+  `~/.local` に入れ、無人の起動（スケジュール実行の wake）では更新を飛ばして導入済みの版を
+  保つ。オフにして Stop→Start するとピン版に戻る。
+
+**版上げを知らせる仕組みは生きているか？** 公開版が動いたことに気づくのは
+`cli-release-watch.yml` で、contract が最後に通った版は追跡 issue の `tested` 状態である。
+`tested` が進まないことは、上流が静かでもジョブが落ちていても同じに見える——2026-09-09 は
+後者で、気づいたのは翌朝だった。そこで **設定 → ツールチェーン** のツールのバージョン表の下に
+1 行 `上流のリリース監視: 最終成功 <相対時刻>` を出す。警告になるのは、watcher が読めなかった
+取得元を名指ししたときと、48 時間クリーンな実行が無いときだけ。CP は issue を匿名で 1 時間に
+1 回読んでキャッシュする（`control-plane/cli_release_watch.go`）。GitHub に届かない環境では、
+安心させる表示も警告も出さず、行そのものが出ない。**この行が警告しているときは手順 1 だけでは
+足りない**——drift の検査は latest が何かを教えるが、contract を dispatch するのは watcher で、
+それが止まっている間は何もテストされていない。
 
 ## 10.3 起動スクリプトの責務（`deploy/local/`）
 
-- **`run-dev.sh`** — 一括起動の**単一エントリポイント（サブコマンド式）**:
-  Workspace 実行環境の準備 → Console build → CP build → CP をホストプロセスで起動。
-  git-ignored の `deploy/local/oauth.env` を自動 source し、AUTH / OAuth / 暗号系 env を CP に渡す
-  （無ければ dev 素起動。項目は [oauth.env.example](../../deploy/local/oauth.env.example)）。
+- **`run-dev.sh`** — **単一のエントリポイント**（サブコマンド式）。Workspace 実行環境の準備
+  （共有 JDK・Workspace イメージとそのスモーク）→ Console build → CP build → CP をホスト
+  プロセスで起動。git-ignored の `deploy/local/oauth.env` があれば自動で source し
+  （雛形は [`oauth.env.example`](../../deploy/local/oauth.env.example)）、認証・暗号系の設定を
+  CP に渡す。無ければ dev の素起動。イメージは `BAKE_AGENT_CLIS=1` を付けない限り lean。
+  `WS_SMOKE=0` でスモークを飛ばす。
+
   | サブコマンド | 動き |
   |---|---|
   | （無指定）/ `local` | 開発既定。Docker ランタイム |
-  | `wsl` | WSL 個人利用プリセット（docker/cgroup preflight・`AUTH=dev` 固定）。旧 `wsl-quickstart.sh` はこれを exec する後方互換ラッパー |
-  | `native` | Docker なしコンテナレス（`AF_RUNTIME=native`・単一ユーザー・[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)）。agent をホストビルドして渡す |
-  | `reset [--all] [--yes]` | ローカルデータ初期化。既定は dev ユーザーのみ（DB・共有 JDK 温存）、`--all` で `WS_DATA` 全体。CP 稼働中は拒否し、docker/native 両方の残骸（コンテナ・agent プロセス・専用 tmux）を掃除してから消す |
+  | `wsl` | WSL プリセット（Docker と cgroup の preflight・`AUTH=dev` 固定）|
+  | `native` | Docker なしのコンテナレス（単一ユーザー・[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)）。Agent をホストでビルドして渡す |
+  | `reset [--all] [--yes]` | ローカルデータの初期化。既定は dev ユーザーの Workspace だけ（DB と共有 JDK は残す）、`--all` でデータディレクトリ全体。CP 稼働中は拒否し、両ランタイムの残骸を掃除してから消す |
 
-  サブコマンド無しのときは env `AF_RUNTIME` で後方互換分岐（`native|wsl` → コンテナレス）。
-  ※ env の `AF_RUNTIME=wsl` は「コンテナレス」の別名で、サブコマンド `wsl`（Docker プリセット）
-  とは別物。紛れるのでサブコマンド指定を推奨。
-- **`restart-cp.sh`** — 軽量反映: Console + CP だけ再ビルドし、稼働中の CP プロセスをその場で入れ替えて
-  `/healthz` まで検証。**Workspace イメージは再ビルドしない**。`SKIP_CONSOLE=1` で Go のみ。
-  env は oauth.env + run-dev.sh と同じ `WS_*` 既定を再現する。
-- **`e2e-smoke.sh`** — イメージスモーク（L1）: ビルド済みイメージ内の CLI 実版が Dockerfile の
-  ARG ピンと一致するか（＝キャッシュ staleness の検出）、焼き込み一式（agent / entrypoint /
-  CLAUDE.md / rtk 等）の存在を `docker run` で検証。run-dev.sh がビルド直後に自動実行
-  （`WS_SMOKE=0` でスキップ）。単体でも `deploy/local/e2e-smoke.sh [image]` で実行可。
+  ⚠️ サブコマンド無しのときは env の `AF_RUNTIME` で決まり、`AF_RUNTIME=wsl` は
+  「コンテナレス」の別名である——サブコマンド `wsl`（Docker プリセット）とは別物。紛れるので
+  サブコマンドを使う。
 
-ホスト固有の作法（PATH・docker グループ等）は HANDOFF §2 の領分で、ここには書かない。
+- **`restart-cp.sh`** — 軽量な反映: Console と CP だけを再ビルドし、稼働中の CP プロセスを
+  その場で入れ替えて `/healthz` を待つ。**Workspace イメージは再ビルドしない。**
+  `SKIP_CONSOLE=1` で Go 側のみ。`run-dev.sh` と同じ環境を再現し、`oauth.env` の存在を前提とする。
+- **`e2e-smoke.sh`** — イメージスモーク（L1）。ビルド済みイメージに対して `docker run` で
+  検証する。焼き込みイメージでは、導入された claude・opencode・codex・copilot・cursor・
+  kiro・muse の版が Dockerfile のピンと一致するか（＝キャッシュが古くないか）を確かめ、Go・`gh`・
+  Chromium はどのイメージでも版を突き合わせる。agy のバイナリは調べず、rtk は存在するか、
+  `rtk-unavailable` の印付きで無いかのどちらかなら通す。lean イメージでは CLI が焼かれていない
+  ことを確かめる。どちらでも `versions.json` をピンと突き合わせ、イメージ自身のファイル
+  （Agent・entrypoint・ポリシーの `CLAUDE.md` など）が揃っているかを見る。
+  `run-dev.sh` がビルドのたびに実行し、`deploy/local/e2e-smoke.sh [image]` で単体でも回せる。
+
+ホスト固有の作法（PATH・docker グループ等）はホストごとの事情なので、ここには書かない。
 
 ## 10.4 テスト
 
-Go は **2 モジュール**（`control-plane/` と `workspace/agent/`）でそれぞれ回す:
+製品は **2 つの Go モジュール** で、それぞれ別に回す（`e2e/` と `deploy/release/scan/` の
+リリーススキャナはそれぞれ独立モジュール）:
 
 ```bash
-(cd control-plane && go test ./...)
+(cd control-plane   && go test ./...)
 (cd workspace/agent && go test ./...)
 ```
 
-- CP 側は `httptest` ベースのスモークを多数含む（audit / egress / 内部 git smart-HTTP / LFS /
-  store 両実装など）。Postgres 系は `AF_TEST_DATABASE_URL` 未設定なら skip。
-- ⚠️ **マイグレーションを足したときは、実 Postgres でも 1 度回すこと。** 下の `-run` パターンは
-  4 本にマッチし、そのうち `TestPostgresStore` / `TestPostgresDeleteCascade` /
-  `TestSchemaDialectParity` の 3 本が「片方の系列にだけ足した」を捕まえる唯一の場所
-  （CI は `AF_TEST_DATABASE_URL` を持たない。[06 §6.4](06-data.ja.md)）。
-  Workspace では `af-db` がインストール・初期化・起動を担う。完了の定義は 4 PASS、0 SKIP:
+- CP 側は `httptest` ベースのスモークを多数含む（監査・egress・内部 git の smart-HTTP と LFS
+  など）。Postgres のテストは `AF_TEST_DATABASE_URL` が無ければ skip し、CI はこれを設定しない。
+- ⚠️ **マイグレーションを足したら、実 Postgres で 1 度回す** — 理由は
+  [06 §6.5](06-data.ja.md#65-マイグレーション作法)。下の `-run` パターンは 4 本
+  （`TestPostgresStore`・`TestPostgresPasswordRotation`・`TestPostgresDeleteCascade`・
+  `TestSchemaDialectParity`）にマッチする。Workspace では `af-db` がインストール・初期化・
+  起動を担い、完了の定義は 4 PASS、0 SKIP:
 
 ```bash
 # Workspace 内（af-db が使える場合）:
 (cd control-plane && \
   AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 \
   -run 'TestPostgres|TestSchemaDialectParity' ./...)
-af-db down    # ≈ 47 MB を解放してから次の重いビルドへ
+af-db down    # 次の重いビルドの前に止める
 ```
 
-  `af-db` は scram-sha-256 認証を使うため `TestPostgresPasswordRotation` も実行されパスする
-  （trust 認証の手組みハーネスではこのテストは skip された）。
-  `-count=1` はテストキャッシュを無効にする — キャッシュの `ok` は何も証明しない。
+  `af-db` は scram-sha-256 認証なので `TestPostgresPasswordRotation` も実行される
+  （trust 認証のサーバーでは skip する）。`-count=1` はテストキャッシュを無効にする——
+  キャッシュの `ok` は何も証明しない。Workspace の外では、自分で立てた使い捨ての Postgres を
+  `AF_TEST_DATABASE_URL` で指す。共有ホストでは unix socket にするとポートが衝突しない。
+  trust 認証なら 3 PASS・1 SKIP になる。
 
-  `af-db` が無い場合（Workspace 外の開発ホスト）:
+- **Console**（リポジトリ直下から）:
 
 ```bash
-PGT=~/.local/share/af-pgtest    # 無ければ: initdb -U postgres --auth=trust
-# TCP ではなく unix socket で上げる — 共有ホストではポートが衝突する。
-nohup "$PGT/dist/bin/postgres" -D "$PGT/data" -k "$PGT/sock" -h '' \
-  -c shared_buffers=32MB -c fsync=off > "$PGT/pg.log" 2>&1 &
-(cd control-plane && \
-  AF_TEST_DATABASE_URL="postgres://postgres@/postgres?host=$PGT/sock&sslmode=disable" \
-  go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./...)
-"$PGT/dist/bin/pg_ctl" -D "$PGT/data" stop -m fast   # 使い終わったら止める
-```
-- CI（GitHub Actions）: `ci.yml` が push/PR ごとに 3 コンポーネント（CP / Agent / Console）の
-  fmt・vet・test・build を検証。`e2e.yml`（下記 E2E）はイメージ build が重いため分離。
-  上流 CLI の破壊検知は別系統（`cli-drift.yml` + エージェント毎の `*-contract.yml`・後述）。
-- Console:
-
-```bash
-npm --prefix console test                                      # vitest run（layout エンジン ops ほか純関数）
-NODE_OPTIONS=--max-old-space-size=3072 npm --prefix console run build
+npm --prefix console test
+npm --prefix console run build
 ```
 
-本番 build は Node ヒープを上げないと OOM しうる（メモリ制約ホストでの一般指針は Workspace 配布の
-workspace-notes を参照）。gofmt + `go vet` clean・`npm run build` clean が提出前の基準
-（[CONTRIBUTING](../../CONTRIBUTING.md)）。
+  `build` スクリプトは Node ヒープを自分で上げる。テストが `node` と `dom` の 2 プロジェクトに
+  分かれていることと、`console/` を作業ディレクトリにして回さなければならない理由は
+  [AGENTS.md](../../AGENTS.md#running-the-console-tests)。
 
-> **コミット前に gofmt を必ず回す（ハードゲート）**。`ci.yml` は各 Go モジュールで
-> `gofmt -l .` を実行し、未整形ファイルが 1 つでもあれば fail する。`go build`/`go vet`/
-> `go test` が通ることは不十分（エディタの自動整形が `_test.go` を取りこぼす事例が実際に
-> すり抜けた）。触れた各モジュールで `gofmt -l .` が**何も出力しない**ことを確認し、出たら
-> `gofmt -w <file>` で直す:
-> ```bash
-> (cd control-plane && gofmt -l .)
-> (cd workspace/agent && gofmt -l .)
-> ```
+- **提出の基準**（`gofmt`・`go vet` が clean、`npm run build` が clean）と、ステージした内容に
+  禁止トークンのスキャンをかける pre-commit フックは
+  [CONTRIBUTING](../../CONTRIBUTING.md#ground-rules)。**`gofmt` はハードゲート**:
+  `go build`・`go vet`・`go test` が通っても、未整形ファイルが 1 つあれば `ci.yml` は落ちる。
+
+- **CI** — `ci.yml` は `main` と `develop` への push と PR のたびに、独立したジョブで回る:
+
+  | ジョブ | 見るもの |
+  |---|---|
+  | `control-plane`・`workspace-agent` | `gofmt -l`・`go vet`・`go build`（arm64 へのクロスコンパイルも）・`go test`、build tag 付きファイルの `go vet`。Agent 側は `entrypoint.sh` の構文も検査する |
+  | `console` | 型検査・lint・i18n lint・vitest・実ブラウザの検査 2 つ（`pdf:check`・`doc:check`）・本番ビルド |
+  | `deploy-scripts` | デプロイ用スクリプトとリリース監視の判断を、スタブの `aws` / `npm` / `curl` / `gh` に当てて検査。CloudFormation テンプレートが ASCII のみであることも |
+  | `secret-scan` | 全履歴に対する資格情報の混入検知（後述）|
+  | `release-scan` | 追跡ツリーに対する禁止トークンのゲート——pre-commit フックがステージ内容にかけるのと同じスキャナ |
+
+  `docs.yml` が同じトリガで `scripts/docs-check.py` を回す。E2E ワークフローはイメージの
+  build が重いので分けてある。上流 CLI の破壊検知は第 3 の系統（後述）。イメージを焼く
+  ワークフロー（たとえば開発配備用の Workspace イメージやエンジンのイメージ）と
+  `publish-dist.yml` は dispatch 専用。`release-gate.yml` は dispatch と、packaging ブランチで
+  自身を変更する push で走る（[deploy/release/notes](../../deploy/release/notes/README.md) を参照）。
 
 ### E2E（イメージスモーク + フリート疎通 + UI + 実 API）
 
-4 層構成。**L1 = `deploy/local/e2e-smoke.sh`**（§10.3、イメージ焼き込み内容の検証・数秒）、
-**L2 = `e2e/`**（独立 Go モジュール・stdlib のみ）、**L3 = `console-e2e/`**（Playwright）、
-**L4 = `e2e/live_test.go`**（実 API キー・手動のみ）。
+4 層構成。**L1** はイメージスモーク（§10.3・数秒）。**L2** は `e2e/`（独立 Go モジュール・
+stdlib のみ）。**L3** は `console-e2e/`（Playwright）。**L4**（`e2e/live_test.go`）は実
+クレデンシャルを使い、手動のみ。
 
-- **L2**: CP をヘッドレス（AUTH=dev）で起動し、公開 API だけで workspace 起動 →
-  **shell セッション**作成 → input（echo 打鍵）→ fs API で読み戻し → 停止、を実コンテナで
-  検証する。kind=shell なので **LLM クレデンシャル不要**。
-- **L3**: 実ブラウザで Console を開き、セッションを開いて xterm へ打鍵 → 効果を fs API で
-  観測（xterm は canvas 描画で DOM から文字が読めないため）。CP・コンテナの起動は
-  global-setup が行う（L2 の Node 版。DEV_USER=e2e-ui で分離）。
-- **L4**: shell セッション内で `claude -p`（headless、TUI オンボーディング非依存）を実行し、
-  焼き込み CLI が実際に Anthropic と会話できることを確認。**課金/サブスク枠を伴うため自動
-  トリガに載せない** — `E2E_ANTHROPIC_API_KEY`（API キー・従量課金）か
-  `E2E_CLAUDE_OAUTH_TOKEN`（`claude setup-token` の OAuth トークン・Max/Pro 枠）の
-  どちらかがある時だけ動く。
+- **L2**: CP をヘッドレスで起動し、公開 API だけで Workspace 起動 → **shell セッション**作成 →
+  打鍵 → fs API で効果を読み戻し → 停止、を実コンテナで検証する。shell セッションなので
+  **LLM クレデンシャルは不要**。
+- **L3**: 実ブラウザで Console を開き、セッションを開いて xterm へ打鍵し、効果を fs API で
+  観測する（xterm は canvas に描くので DOM から文字が読めないため）。ビルド済みの
+  `console/dist` が要り、ブラウザは `E2E_CHROMIUM_PATH` が無ければ `/usr/bin/chromium`。
+- **L4**: shell セッション内で `claude -p` を実行し、claude CLI が実際に Anthropic と会話できる
+  ことを確かめる。`E2E_ANTHROPIC_API_KEY`（従量課金）か `E2E_CLAUDE_OAUTH_TOKEN`
+  （`claude setup-token` のトークン・サブスク枠）があるときだけ動く。**課金かサブスク枠を
+  消費するので、自動トリガには載せない。**
 
 ```bash
-cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m   # L2（+L4 は key があれば）
-cd console-e2e && npm ci && npx playwright test                                  # L3（console/dist 要ビルド）
+cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m ./...
+cd console-e2e && npm ci && npx playwright test
 ```
 
-- 前提（docker + build 済みイメージ、L3 は console/dist も）が無ければ skip
-  （CI は `E2E_REQUIRE=1` で fail に格上げ）。
-- 実フリートが動く dev ホストでも安全: テスト毎に DEV_USER を分離（e2e / e2e-ui / e2e-live）・
-  ポートは動的確保・teardown 内蔵（コンテナ / ネットワーク / 一時データ）。
-  ただしメモリ制約ホストなので同時 1 実行。
-- CI は `.github/workflows/e2e.yml`: **main への PR**（workspace/CP/console/e2e の関連パス）+
-  **毎日 cron**（04:00 JST・develop 対象。コード無変更でも上流 CLI・base image の破壊を検出）+
-  手動 dispatch。**develop への push では走らない**（課金分散。作業ブランチで回すなら
-  `gh workflow run e2e.yml --ref <ブランチ>`）。`e2e` ジョブ（L1→L2）と `ui-e2e` ジョブ
-  （L3、失敗時は trace/CP ログを artifact 保存）が並列、`live-smoke`（L4）は workflow_dispatch の
-  `live` 入力 + secret（`E2E_ANTHROPIC_API_KEY` または `E2E_CLAUDE_OAUTH_TOKEN`）で明示 opt-in。
-  rtk は常時焼き込み（`BAKE_RTK=1` 既定・ARG ピン）なので CI のイメージにも入り、L1 が同梱を
-  検証する（旧ホスト vendoring 経路は廃止）。イメージ build は platform 指定なし ＝ **ランナーの
-  amd64 のみ**なので、arm64 側のアセット（agy / cursor / kiro の arch 別 sha256）はここでは
-  実ビルド検証されない。
+- `e2e.yml` は main への PR（関連パス）・develop に対する毎晩の cron・手動 dispatch で走り、
+  **push では走らない**。ジョブは `e2e`（L1 → L2）と `ui-e2e`（L3。失敗時は trace と CP ログを
+  artifact に残す）が並列、`live-smoke`（L4）は `live` 付きの dispatch のときだけ。イメージの
+  ビルドは platform を指定しないので **amd64 のみ**を検証する: arm64 側のアセット（agy・cursor・
+  kiro・muse の arch 別 sha256 ピン）はここではビルド検証されない。
+- 前提（docker・ビルド済みイメージ、L3 は `console/dist` も）が欠けると skip する。CI は
+  `E2E_REQUIRE=1` を立て、それを失敗に格上げする。
+- 実フリートが動く開発ホストでも安全: 層ごとに別の開発ユーザー（`e2e`・`e2e-ui`・`e2e-live`）を
+  使い、ポートは動的確保、teardown を内蔵している。メモリ制約ホストでは**同時に 1 つ**。
 
 ### 上流 CLI の破壊検知（版ドリフト監視 + contract テスト）
 
-**なぜ E2E だけでは足りないか**: `e2e.yml` は build-args を渡さないので常に
-`workspace/Dockerfile` の **ARG ピン版**を検証する。一方 self-update を opt-in した
-Workspace（`AF_AGENT_SELF_UPDATE_ALLOWED=1` かつ `AF_AGENT_SELF_UPDATE=1`）は entrypoint が
-起動毎に `@latest` を入れる ＝ **CI が見ている版と実フリートが走らせる版が別物**。さらに
-L4 は headless の `claude -p` で TUI もフッタも描画されない。この 2 つの穴のせいで、claude の
-状態検出（`internal/tmuxx`）の破壊は 3 回とも CI 緑のまま実フリートで人力発見された。
+**なぜ E2E だけでは足りないか。** `e2e.yml` は版のビルド引数を渡さないので、常に
+**ピン版**を検証する。自己更新を opt-in した Workspace は起動時に latest を入れる——
+**CI が見ている版と、フリートが走らせる版が別物になる**。加えて L4 は headless で、TUI も
+フッタも描かれない。この 2 つの穴のせいで、claude の状態検出
+（`workspace/agent/internal/tmuxx`）の破壊は（2026-07-17 時点で）**3 回**、CI 緑のまま
+実フリートで人手によって見つかった。
 
-塞ぎ方は **2 系統**（重複ではなく補完関係。片方だけでは機能しない）:
+塞ぎ方は補完し合う **2 系統**（片方だけでは機能しない）:
 
-| | `cli-drift.yml` | `*-contract.yml` |
+| | 版ドリフト（`cli-drift.yml`） | contract テスト（CLI ごとに 1 ワークフロー） |
 |---|---|---|
-| 見る物 | 版**番号**のズレ（ピン vs 公開 latest） | **挙動**（実 CLI に当てて壊れたか） |
+| 見る物 | 版の**番号**（ピン vs 公開 latest） | 実 CLI に当てた**挙動** |
 | 答える問い | 「見に行くべき時か？」 | 「実際に壊れたか？」 |
-| 費用 | 無料（`npm view` だけ） | 無料〜サブスク枠（Tier で違う） |
-| 頻度 | 毎日 cron | main への PR（関連パス）+ 週次 cron + dispatch（claude / copilot / agy / cursor / kiro は dispatch 専用）|
-| 赤くなる時 | 検査自体の失敗のみ（ドリフトは issue upsert） | 契約が破れた時 |
+| 費用 | 無料 | 無料〜サブスク枠（Tier による） |
+| 頻度 | 毎日 | main への PR（関連パス）+ 週次 cron + dispatch（claude・copilot・agy・cursor・kiro は dispatch 専用）|
+| 赤くなる時 | 検査自体が失敗したときだけ | 契約が破れたとき（外部サービスに依存するステップは報告のみのことがある。例: opencode の live な Tier B ターン）|
 
-ドリフトは**常態**（claude は数日で版が進む）なので `cli-drift.yml` は赤くせず追跡 issue を
-1 本 upsert する（解消で自動 close）。対象はミラー対応の7 CLI（claude / codex /
-opencode / copilot / agy / cursor / kiro）で、npm・GitHub Releases・各社 manifest を
-それぞれの公開版の正本として読む。
+ドリフトは**常態**（数日で版が進む CLI もある）なので、ドリフトのワークフローは赤くならない。
+追跡 issue を 1 本だけ最新に保ち、ドリフトが解消すれば閉じる。検査する行は
+`deploy/local/cli-drift-check.sh` の `TARGETS`: 版をピンしている全エージェント CLI と `rtk`。
+lcpp は入らない——セルフホストのエンジンに対してプロセス内で動き、上流の CLI を持たない。
 
-`cli-release-watch.yml` は毎日この公開版を前回処理版と比較し、**版が変わった CLI だけ**
-contract を dispatch する。状態は専用 issue `CLI release watcher state` の追記型コメント
-（`cli-release-state tested|seen <cli>=<version>`）に保存する。repository variables は
-`GITHUB_TOKEN` から書けず 403 になるため使わない。contract 成功時だけ `tested` を
-追記するので、失敗時は翌日も再試行する。7 CLI 全てに contract ワークフローがあり
-（copilot は GH OAuth token で実ターン、cursor / kiro も実ターン契約、agy はターン無しの
-pane probe）、release edge で無人 dispatch されるのは credential を安定供給できる
-claude / codex / opencode / copilot / agy（secret 未設定なら `seen` に落ちる）。
-cursor / kiro は refresh で回転する対話 credential のため自動 dispatch せず `seen` を
-記録し、secret 更新後に専用ワークフローを手動 dispatch する
-（「検出済み」と「テスト成功」を混同しない）。
+もう 1 本の `cli-release-watch.yml` は毎日公開版を比べ、**版が実際に変わった CLI だけ**
+contract を dispatch する（対象の kind は `deploy/local/cli-release-edges.sh` の `KINDS`）。
+状態は 1 本の issue に置く: `tested` と `seen` の印はコメントとして追記する。repository
+variables は既定のトークンで書けないためである（`deploy/local/cli-release-state.sh`）。
+`tested` を記録するのは contract が成功したときだけなので、失敗は翌日に再試行される。
+クレデンシャルを無人で供給できない CLI は dispatch しない。secret が無い場合と、
+クレデンシャルが回転する cursor・kiro がこれに当たる。それらは `seen` を記録し、secret を
+更新したあとで contract を手動 dispatch する——「検出した」を「テストした」として記録する
+ことはない。muse の contract はクレデンシャルが要らないので無人で dispatch される。
 
-**取得元 1 つの失敗では止まらない**。行ごとに取りに行き、読めなかった行は latest 不明として
-その行の dispatch と状態更新だけを飛ばし、他の行はそのまま進む。赤くなるのは**どの取得元も
-答えなかったとき**だけ。読めなかった行は job summary に名前が出て、さらに毎回の実行が
-自分の生存（最後に全行読めた時刻・最後に失敗した行）を状態 issue の `watcher` 欄に書く——
-`tested` が進まないのが「上流が静か」なのか「watcher が落ちた」のかを後から区別するため。
-判断は `deploy/local/cli-drift-stub-test.sh` が固定している。
+**取得元 1 つが読めなくても watcher は止まらない。** 行ごとに取得し、読めなかった行は
+latest 不明として報告して、その行の dispatch と状態更新だけを飛ばし、残りはそのまま進む。
+watcher が赤くなるのは、どの取得元も答えなかったときだけ。読めなかった行は job summary に
+名前が出て、毎回の実行が自分の生存（最後に全行読めた時刻・最後に失敗した行）を状態 issue の
+本文の `watcher` 欄に書く。`tested` が進まないのが「上流がリリースを止めた」のか
+「watcher が落ちた」のかを区別するためである。`deploy/local/cli-drift-stub-test.sh` が
+この 2 つの判断を固定している。
 
-**ワークフローはエージェント毎に 1 ファイル**（`claude-tui-contract.yml` /
-`codex-contract.yml` / `opencode-contract.yml` / `copilot-contract.yml` /
-`agy-contract.yml` / `cursor-contract.yml` / `kiro-contract.yml`）。パス条件も `workflow_dispatch` の入力も
-**ワークフロー単位**なので、`e2e.yml` に同居させると (1) 無関係な変更で走り、(2) 入力が
-他エージェントと混ざる（実際 codex の Tier2 と claude の live-smoke が 1 つの `live` 入力を
-共有し、1 回の dispatch で両方の枠が減っていた）。分離すればこの結合が構造的に起きない。
-`cli-drift.yml` と `cli-release-watch.yml` だけは7 CLI横断・毎日実行という性質が違うので
-エージェント別 contract から独立させる。同じく横断の例外が `mcp-config-contract.yml`
-（認証・課金不要）: MCP レジストリの materialize が書く各 CLI グローバル設定の**形**を、
-CLI 自身の `mcp add` に書かせた設定との構造比較（`mcp add` を持たない cursor と
-ヘッダを表現できない codex は CLI に af の書いたファイルを読み返させる）で検証する——
-検証対象がレジストリ側の 1 契約で複数 CLI に同時に跨がるため 1 本にまとめている（docs/48 §8）。
+**ワークフローは CLI ごとに 1 ファイル**（`claude-tui-contract.yml`、ほかは
+`<kind>-contract.yml`）。パス条件も dispatch の入力もワークフロー単位なので、1 ファイルに
+まとめると (1) 無関係な変更で走り、(2) 入力が混ざる——実際に codex の Tier 2 と claude の
+L4 が 1 つの `live` 入力を共有し、1 回の dispatch で両方の枠が減った。ファイルを分ければこの
+結合は構造的に起きない。横断の例外は毎日の watcher 2 本と、`mcp-config-contract.yml`
+（クレデンシャル不要）: レジストリ側の 1 つの契約——af が各 CLI のために書くグローバル MCP
+設定ファイルの形——を複数の CLI にまたがって一度に検証する。CI が見るのは claude・codex・
+opencode・copilot・cursor で、kiro（ログインが要る）と agy（ランナーで起動しない）はそこでは
+見られない。muse と lcpp にはこのファイルが無い——サーバーをワイヤ上とプロセス内で受け取る
+（`workspace/agent/internal/mcpreg/materialize.go` の `ServedKinds`）。
 
-このほか `release-gate.yml` がパッケージング（docs/35）の検証を担う: 配布物のビルド・
-lean variant の boot-install・既定（全焼き込み）ビルド・native の実 bwrap 起動・
-ECS リリース手順の静的検査・dist の stub publish/install を hosted runner の実イメージ
-ビルドで確認する。dev ホストでの重ビルドはフリートを OOM させ得るため常設トリガを持たず、
-ワークフロー自身を変更する push と `workflow_dispatch` でのみ走る。
-
-共通セットアップ（Go / Node / tmux / 実 CLI 導入）は
-**`.github/actions/setup-agent-cli`**（composite action）に集約。`version: pinned|latest|<版>`
-で「今焼く版」と「フリートが走らせる版」を撃ち分ける。`claude-tui-contract.yml` だけは
-実イメージを build してコンテナ内で TUI を起動するため、この action を使わない（意図的）。
-
-> 既知の非対称（未整理）: build tag が codex=`drift`/`driftlive`、opencode=`clicontract`、
-> claude=`tui_contract` と 3 流儀。揃えるならテスト側の tag と `-run` の対応も動くため、
-> ワークフロー整理とは別で扱う。
+共通セットアップ（Go・Node・tmux・実 CLI）は composite action
+`.github/actions/setup-agent-cli` にあり、`pinned | latest | <版>`（明示の版は npm の CLI
+のみ）で、同じテストを「焼く版」にも「フリートが走らせる版」にも向けられる。muse の contract
+はリリースの artifact を自分で導入する。マニフェストのチェックサムを検証すること自体が
+テスト対象の一部だからである。
 
 ### 公開リポジトリでの CI の前提（秘密情報の扱い）
 
-このリポジトリは公開を前提にしている。**secrets そのものはリポジトリ本体に存在せず**
-（リポジトリ設定に暗号化保管）、公開しても露出しない。加えて次を満たすように保つ:
+このリポジトリは公開されている。**secrets そのものはリポジトリには無い**（リポジトリ設定に
+暗号化して保管）。そのうえで次を保つ:
 
-- **fork PR には secrets を渡さない。** `pull_request` トリガは fork からの実行に
-  secrets を渡さない仕様なので、これに依存する。**`pull_request_target` と
-  `workflow_run` は使わない** — どちらも「fork 側が書いたコードに secrets 付きで
-  実行権を与える」典型的な穴。self-hosted runner も使わない。
-- **実認証を使うジョブは `workflow_dispatch`（＋`inputs.live`）限定にする。**
-  `codex-contract` の `live-drift`、`e2e` の `live-smoke`、各 `*-contract` がこれ。
-  PR では起動しないので、fork PR が secrets 不在で赤くなることもない。
-- **`run:` に `${{ github.event.* }}` を展開しない**（PR タイトル等からのシェル注入）。
-- **秘密はファイルへ書くだけにし、標準出力へ出さない。** 例: kiro の認証 DB は
-  8 分割 base64 を `printf | base64 --decode > <file>` で復元する（出力しない）。
-- **artifact と run ログは公開物として扱う。** 公開リポジトリでは誰でも
-  ダウンロードできる。ログ中の secrets は完全一致でマスクされるが、**そこから
-  派生した値はマスクされない** — `claude-tui-contract` の観測フレームは
-  ログイン済み TUI の画面なので、アップロード前にアカウント名とメールを伏字化する
-  ステップを挟んでいる（同種の値は [tmuxx のゴールデン](../../workspace/agent/internal/tmuxx/testdata/footers/)
-  でも伏字化済み）。
-- **`permissions:` は全ワークフローで明示する**（既定は read だが、既定が変わっても
-  最小権限が残るように）。
+- **fork PR には secrets を渡さない。** `pull_request` トリガは secrets を渡さない仕様で、
+  これに依存する。**`pull_request_target` と `workflow_run` は使わない**——どちらも
+  「fork が書いたコードに secrets 付きで実行権を与える」典型的な穴。self-hosted runner も
+  使わない。
+- **実クレデンシャルで認証するジョブは `workflow_dispatch` でのみ走る**（たとえば `e2e` の
+  `live-smoke`、`codex-contract` の `live-drift`、dispatch 専用の各 contract）。PR が起こす
+  ジョブはクレデンシャルの secret を読まないので、fork PR が secrets 不在で赤くなることもない。
+  定期実行のリリース watcher は、dispatch の前にそれらの secret があるかを確かめるだけ。
+- **`run:` に `${{ github.event.* }}` を展開しない**——PR タイトルからのシェル注入になる。
+- **秘密はファイルへ書き、標準出力に出さない。** たとえば kiro の認証 DB は 8 分割の base64 で
+  保管し、そのままファイルへ復元する。
+- **artifact と run ログは公開物として扱う。** 公開リポジトリでは誰でもダウンロードできる。
+  secrets は完全一致でマスクされるが、**そこから派生した値はマスクされない**——たとえば
+  ログイン済みセッションの観測 TUI フレームは、アップロード前にアカウント名とメールを伏字化する。
+- **`permissions:` を全ワークフローで明示する。** 既定が変わっても最小権限が残るように。
 
-**資格情報の混入検知（`ci.yml` の `secret-scan`）。** 公開リポジトリでは混入＝即公開で
-取り返しがつかないので、差分ではなく**毎回全履歴**を走査する（gitleaks・2436 commit /
-64MB で約 12 秒）。押さえどころ:
+**資格情報の混入検知**（`ci.yml` の `secret-scan`・gitleaks）。公開リポジトリでは混入は
+即公開で取り返しがつかないので、差分ではなく**毎回全履歴**を走査する。押さえどころ:
 
-- **`--log-opts` に `-m` を必ず付ける。** これが無いと gitleaks は merge commit を
-  飛ばし、**衝突解決で入った内容が未走査のまま緑になる**（本リポジトリでは該当する
-  merge が 138 件あり、初回スキャンで実際に穴が空いていた）。
-- gitleaks 本体は**版と sha256 を固定**して取得する（marketplace action に依存しない）。
-- 偽陽性は `.gitleaks.toml` で**値そのものを正規表現で**外す。**パスまるごとの除外はしない**
-  — そのファイルに本物が入っても気づけなくなる。現在の登録は伏字化テストの偽キー
-  （`AKIAQWERTYUIOPASDFGH`・`xoxb-123456789012-…` 等）と、`discord-client-secret` ルールに
-  形が似ているだけのエラーコード定数 1 件。
-- 初回の全履歴監査（2026-08-01）は**本物の資格情報ゼロ**。到達可能な全 blob 10,222 個を
-  展開して走査する方法でも裏を取った（`git log` 経由では拾えない内容を潰すため）。
+- **`-m` を必ず付ける。** 無いとスキャナは merge commit を飛ばし、**衝突解決で入った内容が
+  未走査のまま緑になる**——導入時点でこのリポジトリには該当する merge が 138 件あり、初回の
+  スキャンは実際にこの穴を抱えていた。
+- **スキャナの版とチェックサムを固定する。** marketplace action に依存しない。
+- **偽陽性は値そのものを正規表現で外す——パスだけでの除外はしない**（`.gitleaks.toml`。
+  `condition = "AND"` で値を 1 ファイルに絞ることはある）。パスで外すと、そのファイルに
+  本物が入っても気づけない。
+- 最初の全履歴監査（2026-08-01）は**本物の資格情報ゼロ**。コミットログを辿るのでなく、到達
+  可能な全 blob を展開して走査する方法でも裏を取った。
 
-## 10.5 コミット規約・ブランチ運用
+## 10.5 コミットとブランチ
 
-[CONTRIBUTING](../../CONTRIBUTING.md#commits--prs) が正（形式・帰属トレーラの詳細はそちら）。要点:
+これらの規則は [CONTRIBUTING](../../CONTRIBUTING.md) が持つ。
+[Ground rules](../../CONTRIBUTING.md#ground-rules) が秘密情報・pre-commit フック・コアを
+デプロイ非依存に保つこと・`gofmt` を、
+[Commits & PRs](../../CONTRIBUTING.md#commits--prs) が trunk とリリースのブランチ・
+メッセージの形式と言語・マイグレーションに要る前方互換の明記・`Co-Authored-By` の帰属を扱う。
+[AGENTS.md](../../AGENTS.md) はエージェントがコミット時に要る部分を繰り返し、そちらを指している。
 
-- 小さく焦点の合ったコミット。形式は `<type>(<scope>): 要約`（Conventional Commits）で
-  **subject も body も日本語**（英語で書き始めたら書き直す）。
-- エージェントのコミットは末尾に**実行モデル名**の `Co-Authored-By:` を付ける（Claude/Codex/
-  opencode 併用のため CLI 名でなくモデルで帰属）。旧 `Claude-Session:` 行は廃止。
-- **秘密をコミットしない**: `deploy/compose/.env`・`deploy/local/oauth.env`・`allowed-emails.txt` は
-  git-ignored。コミット前に diff を確認。
-- **コアを deploy 非依存に保つ**: Docker/compose 前提を CP コアに焼き込まず、ポート
-  （Runtime / KeyCustodian / Store / AuthGateway）の背後へ（[09 §9.2](09-deploy.ja.md)）。
-- migration 追加時は前方互換を確認し（起動時自動適用・ダウングレード非対応）、コミットに明記。
-- 検証方法（テスト + 挙動変更は実機での確認）を書き残す。
+## 10.6 ドキュメント
 
-## 10.6 ドキュメント更新責務
-
-何を変えたらどの dev/ ファイルを更新するかは [dev/README の早見表](README.ja.md)。
+何を変えたら何を更新するかは [更新トリガの表](README.ja.md#更新トリガ)。全棚が従う規範は
+[CONVENTIONS](../CONVENTIONS.ja.md)。

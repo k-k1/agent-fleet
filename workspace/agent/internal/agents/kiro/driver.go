@@ -471,11 +471,14 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("kiro runtime を起動できません: %w", err)
 	}
 	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
+	// Closed by watch once the exit is recorded; a failed start waits on it (awaitExitRecord).
+	exited := make(chan struct{})
 	// Snapshot the tail before stopChild: the stop sequence can make the CLI print noise
 	// that pushes the real cause out of the budget.
 	fail := func(err error) error {
 		err = tail.Wrap(err)
 		stopChild(cmd, stdin)
+		awaitExitRecord(exited)
 		return err
 	}
 	cl := newACPClient(stdin, stdout)
@@ -486,7 +489,6 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		h.onServerRequest(cl, id, method, params)
 	}
 	cl.onNotify = h.onNotify
-	exited := make(chan struct{})
 	go h.watch(cmd, tail, cl, exited)
 
 	if _, err := cl.call("initialize", map[string]any{
@@ -664,6 +666,20 @@ func currentModelOf(res json.RawMessage) string {
 	}
 	_ = json.Unmarshal(res, &out)
 	return out.Models.CurrentModelID
+}
+
+// exitRecordWait bounds how long a failed spawn waits for watch: longer than stopChild's
+// EOF → SIGTERM → SIGKILL sequence (4 s + 3 s), so a child that ignores EOF is still counted.
+const exitRecordWait = 10 * time.Second
+
+// awaitExitRecord holds a failed spawn until watch has written the exit record. Without it the
+// caller reports the failure before the record exists, and the write lands after the caller
+// has moved on — under a test's TempDir HOME, while or after that tree is removed.
+func awaitExitRecord(exited <-chan struct{}) {
+	select {
+	case <-exited:
+	case <-time.After(exitRecordWait):
+	}
 }
 
 // watch reaps the child and records its exit (attribution is exact here, unlike a daemon

@@ -39,8 +39,7 @@ func registerEngineMemberRoutes(mux *http.ServeMux, cfg config, reg *engineRegis
 }
 
 func (a engineMemberAPI) status(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	lim := tenantEngineLimitsFor(r.Context(), a.mgr, mv.TenantID)
-	writeJSON(w, http.StatusOK, enginesMemberPayload(r.Context(), a.reg, lim))
+	writeJSON(w, http.StatusOK, enginesMemberPayload(r.Context(), a.reg, memberEngineGateFor(r.Context(), a.mgr, mv)))
 }
 
 // engineMemberFields is what a member may see of one engine row (ADR 0084 decision 3): the
@@ -152,15 +151,16 @@ func (e *engineRuntimeState) queueRow() map[string]any {
 // pill is the Console's job, not this function's — collapsing them here would throw away exactly
 // the per-row truth decision 11's popover needs.
 //
-// lim is the CALLER's tenant limits (ADR 0084 decision 7), read once per call — not once per
-// row here — so both callers (the events tick and the REST fallback) pay exactly one tenant
-// lookup per invocation, cached or not, rather than this loop multiplying it by the row count.
-func enginesMemberPayload(ctx context.Context, reg *engineRegistry, lim tenantLimits) map[string]any {
+// gate is the CALLER's tenant limits and member grant (ADR 0084 decision 7, #1215), read once
+// per call — not once per row here — so both callers (the events tick and the REST fallback)
+// pay exactly one tenant lookup per invocation, cached or not, rather than this loop
+// multiplying it by the row count.
+func enginesMemberPayload(ctx context.Context, reg *engineRegistry, gate engineRoleGate) map[string]any {
 	out := []map[string]any{}
 	for _, e := range reg.list() {
-		// ADR 0084 decision 7/8, gate 4: a role this tenant was denied gets no row, the same
-		// "do not offer and then refuse" rule gate 1 applies to the catalogue (decision 5).
-		if !lim.engineRoleAllowed(e.def.api()) {
+		// ADR 0084 decision 7/8, gate 4: a role this tenant or member was denied gets no row, the
+		// same "do not offer and then refuse" rule gate 1 applies to the catalogue (decision 5).
+		if !gate.engineRoleAllowed(e.def.api()) {
 			continue
 		}
 		full, ok := e.memberSourceRow(ctx)
@@ -186,12 +186,11 @@ func enginesMemberPayload(ctx context.Context, reg *engineRegistry, lim tenantLi
 // read. And it is a short TTL, not a read-once-per-connection cache — the latter was
 // considered and rejected, because a grant revoked mid-connection would then never reach an
 // already-open tab; the tenant would have to close and reopen it to see the pill disappear.
-// invalidateTenantEngineLimits (called from SetTenantLimits, tenant_wiring.go, right next to
-// the Agent-side push decision 9 already does) drops a tenant's entry the moment a super_admin
-// saves, so in practice a denial reaches an open tab on its very next tick — the TTL below is
-// only the fallback bound for whatever calls tenantEngineLimitsFor WITHOUT going through that
-// invalidation (there is none today; it exists so a future caller cannot regress to "stale
-// until reconnect" by skipping the eviction).
+// invalidateTenantEngineLimits (called from cpTenant.PushEngineCatalogChanged, tenant_wiring.go,
+// on every save of the tenant gate or the member grants) drops a tenant's entry at once, so in
+// practice a change reaches an open tab on its very next tick — the TTL below is only the
+// fallback bound for a write that skips that invalidation (there is none today; it exists so a
+// future writer cannot regress to "stale until reconnect").
 var tenantEngineLimitsCache sync.Map // tenantID (string) -> *tenantEngineLimitsEntry
 
 // tenantEngineLimitsTTL matches engineViewTTL's order of magnitude (engine_ecs.go): short
@@ -202,33 +201,40 @@ type tenantEngineLimitsEntry struct {
 	mu  sync.Mutex
 	at  time.Time
 	lim tenantLimits
+	acc store.EngineAccess // the tenant_admin's per-member layer (#1215), cached with lim
 }
 
-// tenantEngineLimitsFor is gate 4's read, cached as described above. A read failure or a nil
-// store keeps whatever was cached before (zero value on a first failure, which resolves every
-// role as allowed) rather than treating the error as a denial — this stream is informational
-// only, and the request-time gates (engine_gateway.go) enforce access independently of what a
-// tab happens to be showing.
-func tenantEngineLimitsFor(ctx context.Context, mgr *manager, tenantID string) tenantLimits {
+// tenantEngineAccessFor is gate 4's read of both layers — the tenant limits and the member
+// grants (#1215) — cached as described above in one entry, so the member layer adds no read
+// per tick. The entry is replaced only when both reads succeed, so it never pairs a fresh
+// limits blob with stale grants. A read failure or a nil store keeps whatever was cached
+// before (zero value on a first failure, which resolves every role as allowed) rather than
+// treating the error as a denial — this stream is informational only, and the request-time
+// gates (engine_gateway.go) enforce access independently of what a tab happens to be showing.
+func tenantEngineAccessFor(ctx context.Context, mgr *manager, tenantID string) (tenantLimits, store.EngineAccess) {
 	if tenantID == "" {
-		return tenantLimits{}
+		return tenantLimits{}, store.EngineAccess{}
 	}
 	v, _ := tenantEngineLimitsCache.LoadOrStore(tenantID, &tenantEngineLimitsEntry{})
 	e := v.(*tenantEngineLimitsEntry)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.at.IsZero() && time.Since(e.at) < tenantEngineLimitsTTL {
-		return e.lim
+		return e.lim, e.acc
 	}
 	if mgr == nil || mgr.store == nil {
-		return e.lim
+		return e.lim, e.acc
 	}
 	t, err := mgr.store.GetTenant(ctx, tenantID)
 	if err != nil {
-		return e.lim
+		return e.lim, e.acc
 	}
-	e.lim, e.at = parseLimits(t.Limits), time.Now()
-	return e.lim
+	acc, err := mgr.store.GetEngineAccess(ctx, tenantID)
+	if err != nil {
+		return e.lim, e.acc
+	}
+	e.lim, e.acc, e.at = parseLimits(t.Limits), acc, time.Now()
+	return e.lim, e.acc
 }
 
 // invalidateTenantEngineLimits drops one tenant's cached entry, so the very next tick after a

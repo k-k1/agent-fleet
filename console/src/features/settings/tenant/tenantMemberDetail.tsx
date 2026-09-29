@@ -24,6 +24,7 @@ import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
+import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
 export function MemberView({
   slug,
@@ -539,6 +540,10 @@ export function MemberView({
         )}
         <HomeResizeNote resize={resize} />
       </section>
+
+      {/* Whether this person may use the self-hosted engines (#1215), next to the other
+          per-member limits. The same ticks as the tenant's engine access table. */}
+      <MemberEngineAccessPanel slug={slug} userKey={key} />
 
       {/* Cost over a period sits right after resources right now, in a separate card. Keeping
           them apart is ADR 0048 decision 2 (do not put time and dollars side by side): the

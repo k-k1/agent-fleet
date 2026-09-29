@@ -268,6 +268,133 @@ func TestPropsReadsTheQwenImage21Graph(t *testing.T) {
 	}
 }
 
+// An inpaint's mask, in both shapes this package writes: LoadImageMask on the latent families and
+// LoadImage + ImageToMask on the instruction-edit ones. The Qwen-Edit graphs are read from their
+// golden fixtures, so a change to that graph's shape has to be carried here too. Read with only
+// the first shape, a Qwen-Edit inpaint came back as op=edit with no mask, and reusing its settings
+// re-ran it as an edit of the whole picture.
+func TestPropsReadsTheMask(t *testing.T) {
+	sdxl, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"}, comfyParams{
+		Op: OpInpaint, Images: []string{"af-photo.png"}, Mask: "af-mask.png",
+		Prompt: "a fox", Seed: 1, Width: 1024, Height: 1024, BatchSize: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sdxlGraph, err := json.Marshal(sdxl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type want struct{ op, mask, inputs string }
+	type maskCase struct {
+		graph string
+		want  want
+	}
+	inpaint := want{string(OpInpaint), "af-mask.png", "af-photo.png"}
+	cases := map[string]maskCase{"sdxl": {string(sdxlGraph), inpaint}}
+	for _, f := range []comfyFamily{ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511} {
+		b, err := os.ReadFile(filepath.Join("testdata", "comfy_"+string(f)+"-inpaint.golden.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases[string(f)] = maskCase{string(b), inpaint}
+	}
+	// Other ComfyUIs' numeric ids, where only the edges say which LoadImage is which.
+	foreign := func(nodes string) string {
+		return `{
+	  "5": {"class_type": "VAEEncode", "inputs": {"pixels": ["3", 0], "vae": ["9", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}},
+	  "9": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},` + nodes + `}`
+	}
+	// The mask's loader sorts before the picture's.
+	cases["foreign"] = maskCase{foreign(`
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-mask.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}}`), inpaint}
+	// A graph with no Agent ids at all, for the shapes where the walk from the sampler matters.
+	numeric := func(nodes string) string {
+		return `{
+	  "5": {"class_type": "VAEEncode", "inputs": {"pixels": ["4", 0], "vae": ["9", 0]}},
+	  "9": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},` + nodes + `}`
+	}
+	// An edit whose picture has a sticker composited onto it through a matte before the encode:
+	// the walk follows ImageCompositeMasked's `destination`. The sticker sorts first and feeds no
+	// ImageToMask, so an id fallback would answer it; the matte is neither the mask nor the input.
+	cases["foreign-composite-edit"] = maskCase{numeric(`
+	  "0": {"class_type": "LoadImage", "inputs": {"image": "af-sticker.png"}},
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-matte.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "ImageCompositeMasked", "inputs": {"destination": ["3", 0], "source": ["0", 0], "mask": ["2", 0], "x": 0, "y": 0}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["5", 0]}}`),
+		want{string(OpEdit), "", "af-photo.png"}}
+	// The same composite on an inpaint whose one LoadImage is also its mask.
+	cases["foreign-composite-shared-loader"] = maskCase{numeric(`
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["3", 0], "channel": "alpha"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "ImageCompositeMasked", "inputs": {"destination": ["3", 0], "source": ["3", 0], "x": 0, "y": 0}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}}`),
+		want{string(OpInpaint), "af-photo.png", "af-photo.png"}}
+	// The walk stops at a custom node it cannot read, so the id fallback answers: it passes over
+	// the loader whose only use is the mask, even though that one sorts first.
+	cases["foreign-walk-stops"] = maskCase{numeric(`
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-mask.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "SomeoneElsesImageFilter", "inputs": {"src": ["3", 0]}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}}`), inpaint}
+	// A mask that is also previewed feeds something besides ImageToMask; a loader that feeds no
+	// ImageToMask at all is still the better answer for the picture.
+	cases["foreign-walk-stops-previewed-mask"] = maskCase{numeric(`
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-mask.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "SomeoneElsesImageFilter", "inputs": {"src": ["3", 0]}},
+	  "6": {"class_type": "PreviewImage", "inputs": {"images": ["1", 0]}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}}`), inpaint}
+	// And when the only LoadImage is shared by the mask and the picture, the fallback keeps it.
+	cases["foreign-walk-stops-shared-loader"] = maskCase{numeric(`
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["3", 0], "channel": "alpha"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "SomeoneElsesImageFilter", "inputs": {"src": ["3", 0]}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}}`),
+		want{string(OpInpaint), "af-photo.png", "af-photo.png"}}
+	// One picture loaded once and used for both the encode and the mask: it is still the input.
+	cases["foreign-shared-loader"] = maskCase{foreign(`
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["3", 0], "channel": "alpha"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}}`),
+		want{string(OpInpaint), "af-photo.png", "af-photo.png"}}
+	// An ImageToMask whose mask reaches the latent through anything but SetLatentNoiseMask is not
+	// an inpaint mask, and its loader is not the picture either.
+	cases["foreign-stray-image-to-mask"] = maskCase{foreign(`
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-matte.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "7": {"class_type": "LatentCompositeMasked", "inputs": {"destination": ["5", 0], "source": ["5", 0], "mask": ["2", 0], "x": 0, "y": 0}}`),
+		want{string(OpEdit), "", "af-photo.png"}}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "image-1-1.png")
+			if err := os.WriteFile(path, pngWithText(t, tinyPNG(t, 2, 2), "prompt", c.graph), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got := readImageProps(path)
+			if got.Op != c.want.op || got.Mask != c.want.mask {
+				t.Errorf("op/mask = %q/%q, want %q/%q", got.Op, got.Mask, c.want.op, c.want.mask)
+			}
+			if strings.Join(got.Inputs, ",") != c.want.inputs {
+				t.Errorf("inputs = %v, want %s", got.Inputs, c.want.inputs)
+			}
+		})
+	}
+}
+
 // A vendor-route picture has neither, and the answer says so rather than showing blanks that
 // read as "the seed was 0".
 func TestPropsAnswersNoneForAPictureWithNeither(t *testing.T) {

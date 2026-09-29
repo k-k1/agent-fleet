@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -78,6 +79,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// rev/at/scope is what actually governs, and what happened is recorded in the
 			// repo's restore commit (AF-Restore-Rev / -Scope).
 			return "memory.restore", q.Get("rev"), true
+		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/start"):
+			// #1028: the Settings row's press names the profile in the path, and there is no
+			// request. Matched before the request form, which would take "profiles" for an id.
+			return "aws.login.start", "profile: " + name, true
 		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/start"):
 			// ADR 0102. The request id is from the URL; the profile is only the Console's
 			// hint in the query (the Agent decides from the id alone), so it is labelled one.
@@ -311,8 +316,10 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
+	req.Header.Set("X-AF-Relay", "cp") // the same log hint rest sets
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
+		log.Printf("agent stream proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.Path, err, r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
@@ -336,6 +343,11 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 			}
 		}
 		if rerr != nil {
+			// The status is already sent, so a stream the Agent cut short is otherwise a 200 in
+			// every log while the browser sees a missing final frame.
+			if !errors.Is(rerr, io.EOF) {
+				log.Printf("agent stream proxy: %s %s: body read: %v (ctx err=%v)", r.Method, r.URL.Path, rerr, r.Context().Err())
+			}
 			return
 		}
 	}

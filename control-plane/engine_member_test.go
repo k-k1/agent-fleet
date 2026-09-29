@@ -596,6 +596,9 @@ func TestEnginesMemberPayloadDropsTheDeniedRole(t *testing.T) {
 	}
 }
 
+// limitsOf keeps the tenant layer of tenantEngineAccessFor's answer.
+func limitsOf(l tenantLimits, _ store.EngineAccess) tenantLimits { return l }
+
 // TestTenantEngineLimitsForCachesAndInvalidates pins the shape the ADR review called out: the
 // events tick reads this once per SUBSCRIBER every 4 seconds, so a direct GetTenant here would
 // turn "how many tabs are open" into "how many tenant reads per 4 seconds" — the same
@@ -613,7 +616,7 @@ func TestTenantEngineLimitsForCachesAndInvalidates(t *testing.T) {
 	}
 
 	// Positive control: a brand-new tenant nobody has touched resolves to allowed.
-	if !tenantEngineLimitsFor(ctx, mgr, tn.ID).engineRoleAllowed(engineAPIChat) {
+	if !limitsOf(tenantEngineAccessFor(ctx, mgr, tn.ID)).engineRoleAllowed(engineAPIChat) {
 		t.Fatal("positive control: an untouched tenant must resolve to allowed")
 	}
 
@@ -623,18 +626,18 @@ func TestTenantEngineLimitsForCachesAndInvalidates(t *testing.T) {
 	if err := st.SetTenantLimits(ctx, tn.ID, `{"allow_engine_llm":false}`); err != nil {
 		t.Fatalf("deny: %v", err)
 	}
-	if !tenantEngineLimitsFor(ctx, mgr, tn.ID).engineRoleAllowed(engineAPIChat) {
+	if !limitsOf(tenantEngineAccessFor(ctx, mgr, tn.ID)).engineRoleAllowed(engineAPIChat) {
 		t.Fatal("the cache must not have refreshed yet — the store write bypassed invalidation")
 	}
 
 	invalidateTenantEngineLimits(tn.ID)
-	if tenantEngineLimitsFor(ctx, mgr, tn.ID).engineRoleAllowed(engineAPIChat) {
+	if limitsOf(tenantEngineAccessFor(ctx, mgr, tn.ID)).engineRoleAllowed(engineAPIChat) {
 		t.Fatal("after invalidation, the fresh denial must be read")
 	}
 }
 
 // TestEventsStreamEnginesHidesADeniedRoleForThisSubscriber is the end-to-end path: a.stream
-// through tickAll, through the SAME tenantEngineLimitsFor call production uses — not
+// through tickAll, through the SAME tenantEngineAccessFor call production uses — not
 // enginesMemberPayload called directly with a hand-built tenantLimits, which the unit test above
 // already covers.
 func TestEventsStreamEnginesHidesADeniedRoleForThisSubscriber(t *testing.T) {

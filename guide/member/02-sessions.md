@@ -9,11 +9,11 @@ English | [日本語](02-sessions.ja.md)
 
 A session bundles one job you delegate to the AI into a single unit — its **conversation,
 working location, and execution state**. It is a separate concept from whether a terminal
-exists: Codex / opencode / GitHub Copilot / Kiro also run as sessions under managed execution,
-without a black screen. In the left pane, sessions appear under the **repository** that matches
-their working location; those that don't belong to a repository appear under **Other sessions**.
-You can have multiple sessions in parallel, each with its own independent conversation and
-working folder.
+exists: Codex / opencode / GitHub Copilot / Cursor / Kiro also run as sessions under managed
+execution, without a black screen, and lcpp / muse run no other way. In the left pane, sessions
+appear under the **repository** that matches their working location; those that don't belong to
+a repository appear under **Other sessions**. You can have multiple sessions in parallel, each
+with its own independent conversation and working folder.
 
 ## Session types
 
@@ -37,26 +37,30 @@ covered in [10 Advanced usage](10-integrations.md).)
 
 ## Execution method — Managed and Terminal (CLI)
 
-On the start screen for Codex / cursor / opencode / GitHub Copilot / Kiro you can choose the **execution
-method**. This is the difference in the path Agent Fleet uses to run the agent and deliver your
-instructions (internally, the "driver"). It chooses **how a session of the same kind is run** —
-it does not give the conversation a separate storage location or a separate working folder.
+On the start screen for Codex / cursor / opencode / GitHub Copilot / Kiro you can choose the
+**execution method** (lcpp and muse offer no choice — they are Managed only). This is the
+difference in the path Agent Fleet uses to run the agent and deliver your instructions
+(internally, the "driver"). It chooses **how a session of the same kind is run** — it does not
+give the conversation a separate storage location or a separate working folder.
 
 - **Managed (recommended, default)** — Agent Fleet controls the agent directly.
   You operate it through the chat view; there is no terminal. Codex / opencode run on a shared
   execution runtime and have no per-session CLI process, so they save memory and suit
   parallel work (GitHub Copilot, cursor, and Kiro run a dedicated per-session process even when managed,
-  so their memory use is on par with Terminal (CLI)).
+  so their memory use is on par with Terminal (CLI)). lcpp runs inside the workspace's Agent with no
+  process of its own; muse runs one process per session.
 - **Terminal (CLI)** — launches the agent's CLI per session, and you can operate its
   interactive screen directly from the terminal. Suited to cases that need CLI-specific screens
   or commands; each session uses extra memory.
 
-New Codex / cursor / opencode / GitHub Copilot / Kiro sessions default to managed. claude / agy use
-Terminal (CLI), and shell / SSM use only the terminal path. For kinds that support managed
-execution, you can switch the execution method from the session's ⋯ menu whenever the session
-is not stopped and the agent is not in the middle of processing. **The conversation carries over
-as is.** You can also open the chat view from Terminal (CLI), but managed execution has no
-terminal screen.
+New Codex / cursor / opencode / GitHub Copilot / Kiro sessions default to managed. lcpp / muse
+are Managed only, claude / agy use Terminal (CLI), and shell / SSM use only the terminal path.
+For kinds that support both methods, you can switch the execution method from the session's ⋯
+menu whenever the session is not stopped and the agent is not in the middle of processing. **The
+conversation carries over as is.** Switching a codex session from Managed to Terminal (CLI) can
+take about a minute while codex lets go of the conversation; a message sent in that time is
+refused, and the terminal opens once it is free. You can also open the chat view from Terminal (CLI), but
+managed execution has no terminal screen.
 
 A Terminal (CLI) screen is kept alive behind the scenes even if you close the browser. You
 never need to operate that keep-alive mechanism yourself.
@@ -146,12 +150,20 @@ synced in bulk.
   readable, but nothing here starts your workspace just to draw a list.
 - A long list **folds at 10 rows**, with "Show more (N left)" underneath — the count keeps counting
   all of them. Past ten rows you also get a **one-line filter**, which searches the rows already on
-  screen (key, title, assignee, labels, repository) and never asks the tracker for anything.
+  screen (key, title, assignee, labels, repository); **×** or Escape clears it. When it finds
+  nothing, or a query fetched only part of its matches, **Search the tracker** asks the tracker
+  with the words you typed.
+- An open GitHub pull request's row shows its **CI** (failing, running or passing) and a mark
+  when it **conflicts** with its base, as of the last fetch. When GitHub has no answer yet, nothing
+  is drawn.
 - A row carries **only what differs between rows**: when every row of a query has the same assignee
   or repository, that line is dropped. A relative time appears only on rows that have **not moved
   for a day or more** — for the rest, being near the top already says it.
 - **🔗** opens the item in its own tracker. A **dot badge** means somebody has already started this
   one, and clicking it opens that session — it is there to stop a second person *before* the launch.
+- The details list **Sessions already on this** by name. One that has since been archived can be
+  restored from there (it asks first; if its working folder is gone it restores but cannot resume),
+  and one that was deleted says so.
 
 ### From a row to a session
 
@@ -831,7 +843,7 @@ review the content and choose **"Approve and send"** or **"Reject"**.
 
 ## Changing the title and branch name
 
-- **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents; adopt it with "Use this".
+- **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents — a session started from an issue keeps the issue's key (`#1146`, `PROJ-123`) at the front; adopt it with "Use this".
 - **Rename the branch** — appears only for sessions running in a worktree. Renames that worktree's branch (the folder — that is, the session — stays as is). Buttons let you swap the prefix for one of the repository's branch naming rules (`feature/` `fix/` `hotfix/` … by default), and **"Ask AI to suggest"** proposes a branch name from the conversation, composed by the same rules — a session started from an issue keeps the issue's number in it. A name outside the rules only gets a note. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).
 
 ## Reading an answer in your own language (translation)

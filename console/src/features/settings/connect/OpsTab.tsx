@@ -269,7 +269,7 @@ function AWSProfileFields({ p }: { p: ReturnType<typeof useAWSProfile> }) {
   return (
     <>
       {/* Surface the silent SSM dependency: with no profiles we fall back to manual
-          entry — point the user at the AWS SSM tab where profiles are defined. */}
+          entry — point the user at the AWS profiles/SSM tab where profiles are defined. */}
       {p.profiles!.length === 0 && (
         <p className="ps-note">
           {tr("ops.cw_no_profiles")}{" "}

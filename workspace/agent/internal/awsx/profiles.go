@@ -1,4 +1,4 @@
-// Package awsx makes the member's SSO profiles (Settings → SSM, stored in the CP) usable
+// Package awsx makes the member's SSO profiles (Settings → AWS profiles/SSM, stored in the CP) usable
 // by ordinary AWS clients in the workspace, and runs a command under one of them with
 // scoped credentials (issue #998).
 //
@@ -421,12 +421,12 @@ func InvalidReason(p Profile, err error) string {
 	for _, f := range invalidFields {
 		switch {
 		case strings.HasSuffix(msg, "invalid "+f.field):
-			return fmt.Sprintf("%s %q is not a value an AWS config can hold (allowed: %s); fix it in Settings > SSM", f.words, f.value(p), f.allowed)
+			return fmt.Sprintf("%s %q is not a value an AWS config can hold (allowed: %s); fix it in Settings > AWS profiles/SSM", f.words, f.value(p), f.allowed)
 		case strings.HasSuffix(msg, f.field+" is required"):
-			return fmt.Sprintf("%s is missing; set it in Settings > SSM", f.words)
+			return fmt.Sprintf("%s is missing; set it in Settings > AWS profiles/SSM", f.words)
 		}
 	}
-	return "a Settings value cannot be written to the AWS config; check the profile in Settings > SSM"
+	return "a Settings value cannot be written to the AWS config; check the profile in Settings > AWS profiles/SSM"
 }
 
 // IncompleteReason says why a Settings profile without both an account and a role is

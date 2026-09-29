@@ -1,234 +1,301 @@
 ---
 audience: "デプロイ形態やアダプタを足す人"
 source_of_truth: "コード ＋ 各 runbook（`deploy/*/README.md`）"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
-# 09. デプロイ — 3形態・ポート&アダプタ・env 索引
+# 09. デプロイ — 形態・ポート&アダプタ・env 索引
 
 [English](09-deploy.md) | 日本語
 
-実手順（コマンド）は各 runbook が正で、本書は複製しない。本書は「どの形態があり、何が差し替わり、
-どのノブで制御するか」の地図。
+**実手順（コマンド）は各 runbook が正で、本書は複製しない。** 本書は「どの形態があり、何が
+差し替わり、どのノブで制御するか」の地図。ターゲットごとに何ができて何ができないか（複数利用者・
+利用者ごとの上限・エンジン・費用の按分）は [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)、
+ターゲットの足し方は [21](21-add-a-deploy-target.ja.md)。
 
-## 9.1 デプロイ3形態
+## 9.1 デプロイ形態
 
 | 形態 | 概要 | 状態 | runbook |
 |------|------|------|---------|
-| **local dev** | CP をホストプロセスで起動（`run-dev.sh` 一括 / `restart-cp.sh` 軽量反映）。`AUTH=dev`（単独）または `oauth`（共有）。run-dev.sh はサブコマンド式の単一エントリ（`local`/`wsl`/`native`/`reset`＝データ初期化） | ✅ 開発 + 小規模共有で運用中 | スクリプト冒頭コメント（[run-dev.sh](../../deploy/local/run-dev.sh) / [restart-cp.sh](../../deploy/local/restart-cp.sh)）。反映作法は [10](10-development.ja.md) |
-| **wsl（個人）** | local dev の WSL2 むけ即起動プリセット（native dockerd 前提・`AUTH=dev` 固定・JDK は bind-mount か on-demand）。Docker を入れられない場合は `run-dev.sh native`（コンテナレス 🚧・[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)） | ✅ 個人検証 | [../../deploy/local/README-wsl.md](../../deploy/local/README-wsl.md)（`run-dev.sh wsl`。旧 `wsl-quickstart.sh` はラッパー） |
-| **compose** | セルフホスト本命。CP コンテナ + Caddy（ACME 自動 TLS）。CP は loopback bind、DooD（ホストのデーモンを駆動）の3制約（host-net / `DATA_DIR` 同一絶対パス / docker gid）を compose 定義が封じ込める | ✅ | [../../deploy/compose/README.md](../../deploy/compose/README.md) |
-| **aws** | ネイティブ ECS アダプタ（CFN 4段）と、compose を単一 EC2 VM に載せる ec2-single の 2 通り | 🚧 実装済・実運用実績なし | [ecs](../../deploy/aws/ecs/README.md) / [ec2-single](../../deploy/aws/ec2-single/README.md) |
+| **local dev** | CP をホストプロセスで起動。`run-dev.sh` はサブコマンド式の単一エントリ（`local` / `wsl` / `native` / `reset`＝データ初期化）、`restart-cp.sh` は CP だけを入れ替える軽量反映。1 人なら `AUTH=dev`、共有するなら `oauth` | ✅ 開発 + 小規模共有で運用中 | [run-dev.sh](../../deploy/local/run-dev.sh) / [restart-cp.sh](../../deploy/local/restart-cp.sh) の冒頭コメント。反映作法は [10](10-development.ja.md) |
+| **wsl（個人）** | `run-dev.sh wsl`: local dev の WSL2 むけプリセット（native dockerd 前提・`AUTH=dev`） | ✅ 個人利用 | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
+| **native** | Docker 無し: CP と Console はホストプロセス、Workspace はダウンロードした rootfs 上の bubblewrap サンドボックスで動く。**1 人専用** — `native` ランタイムは `AUTH=dev` でないと起動を断る | ✅ パッケージとして配布 | [deploy/native/README.md](../../deploy/native/README.md) |
+| **compose** | セルフホスト本命。CP コンテナ + Caddy（自動 TLS）。CP は loopback に bind し、コンテナからホストの Docker デーモンを駆動するための **3 制約**（host ネットワーク・`DATA_DIR` を同じ絶対パスでマウント・docker グループ id）を compose 定義が封じ込める | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
+| **aws — ECS** | 静的基盤は CloudFormation、Workspace ごとのリソースは CP 自身の ECS アダプタが作る。Workspace は Fargate 上のタスク（`ecs`・テンプレートの既定）か、プールから取った EC2 スロット上のタスク（`ecs-ec2`） | ✅ 本番デプロイは `ecs-ec2` で稼働。`ecs` は sandbox で deploy → E2E → teardown まで実証 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
+| **aws — ec2-single** | compose を EC2 VM 1 台に載せる | ✅ 「clean host でリリースバンドルから起動」ゲートの実施環境 | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
 
-- ec2-single は「AWS 上の compose」＝形態としては compose の変種（P3-10 の完成ゲート
-  「clean host でリリースバンドルから起動」を実証済み）。
-- 認証モード（dev / oauth / proxy）の中身は [07 §7.3](07-security.ja.md) が正。ここでは繰り返さない。
+- **ec2-single は VM 上の compose** — ランタイムは `docker` で、別のプロファイルではない。
+- 認証モードの中身は [07 §7.3](07-security.ja.md) が正。ここでは繰り返さない。
 
 ## 9.2 ポート&アダプタ — 何をどのノブで差し替えるか
 
-**コア（Console / CP コアロジック / Agent / Workspace イメージ）は全ターゲット同一物**で、
-差し替わるのは CP 内の interface seam のみ（seam の一覧と local/aws 対応は [01 §1.6](01-architecture.ja.md)）。
-本節はその選択ノブ側:
+**コアは全ターゲットで同一物**で、差し替わるのは CP 内の interface seam のみ（seam の一覧は
+[01 §1.6](01-architecture.ja.md)）。本節はその選択ノブ側:
 
 | ポート（seam） | 切替ノブ | 選択肢 |
 |---------------|----------|--------|
-| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | 空・`local`・`docker` = Docker Engine（既定）/ `ecs`・`aws` = ECS 🚧 / `native`・`wsl` = コンテナレス（ホストプロセス・`AUTH=dev` 必須）。未知値は起動時 fail-fast |
-| `Store` | `AF_DB`（SQLite パス）/ `AF_DATABASE_URL` ほか `AF_DB_*` | SQLite（既定・pure-Go）/ Postgres |
-| `KeyCustodian` | `AF_MASTER_KEY` の有無 | 設定時 = localCustodian / 未設定 = 暗号化なし（dev のみ）。KMS/Vault は 📋 seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)）|
-| `AuthGateway` | `AUTH` | `dev` / `oauth` / `proxy`（[07 §7.3](07-security.ja.md)）|
-| Ingress / TLS | （CP 外・形態で決まる）| Caddy（compose）/ Tailscale Funnel（local 運用）/ ALB+ACM（aws）|
+| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | 空・`local`・`docker` = Docker Engine（既定）/ `ecs`・`aws` = Fargate 上の ECS / `ecs-ec2` = プールの EC2 スロット上の ECS（別名なし）/ `native`・`wsl` = サンドボックス化したホストプロセス（**`AUTH=dev` 必須**）。**未知値は起動時に fail-fast**（`unknown AF_RUNTIME profile`・`runtime.NewFactory`） |
+| `Store` | `AF_DB`（SQLite のパス）/ `AF_DATABASE_URL`、または `AF_DB_HOST` ほか `AF_DB_*` | SQLite（既定・pure Go）/ Postgres |
+| `KeyCustodian` | `AF_MASTER_KEY` の有無 | 設定時 = ローカル custodian / 未設定 = 暗号化なし（開発専用）。KMS / Vault は 📋（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)・#969） |
+| `AuthGateway` | `AUTH` | `dev`（未設定時の既定）/ `oauth`（compose と AWS のテンプレートが設定する）/ `proxy`（[07 §7.3](07-security.ja.md)） |
+| エンジン | エンジン表: `AF_ENGINES_SSM_PARAM` か `AF_ENGINES_JSON`、加えて `AF_LLM_URL` / `AF_COMFY_URL` からの役割ごとの 1 行 | AWS では CP が要求時に起動するエンジン。どこでも、ネットワーク上で既に動いているサーバを URL で指せる |
+| Ingress / TLS | CP 外 | Caddy（compose）/ Tailscale Funnel（local）/ ALB + ACM（aws） |
 
-## 9.3 入口（ingress）の選択肢と loopback 不変条件
+## 9.3 入口（ingress）の選択肢と「入口からしか届かない」不変条件
 
-**不変条件: CP は loopback（実運用は `CP_ADDR=127.0.0.1:8099`）に bind し、外部公開は常に入口の背後。**
-入口の仕事は TLS 終端と転送のみ（`AUTH=oauth` では認証も CP 自身が担い、`AUTH=proxy` のときだけ
-入口側が email ヘッダを注入する）。
+**不変条件: CP には入口を通してしか届かない。** 1 台のホストでは CP は loopback に bind する —
+イメージと compose は `CP_ADDR=127.0.0.1:8099` を設定する。コードの既定（`:8080`）と
+`run-dev.sh` の既定（`:8099`）は全インタフェースに bind するので、開発ホストで 1 人使うなら
+よいが、共有するなら誤り。AWS では CP タスクは自分のネットワークインタフェース内で `0.0.0.0` に
+bind し、そのセキュリティグループはロードバランサのものだけを通す。
+
+入口の仕事は TLS 終端と転送。`AUTH=oauth` では認証も CP 自身が担い、`AUTH=proxy` のときだけ
+入口側が identity ヘッダを注入する。
 
 | 入口 | 使いどころ | 備考 |
 |------|-----------|------|
 | **Caddy** | compose 標準 | `PUBLIC_DOMAIN` の DNS を向けるだけで Let's Encrypt 自動取得・更新（WS も透過）。CP と両方 host-net で loopback に到達。既存プロキシで前段する社は外せる（Caddyfile 代替2）|
-| **Tailscale Funnel** | local 運用の一形態 | Funnel → `127.0.0.1:8099` 直結。ホスト固有の手順は HANDOFF の領分 |
-| **ALB + ACM** | aws 🚧 | TLS 終端のみ（認証は CP ネイティブ oauth）。ALB OIDC を使う場合は `AUTH=proxy` |
+| **Tailscale Funnel** | local 運用の一形態 | Funnel → `127.0.0.1:8099` 直結 |
+| **ALB + ACM** | aws | TLS 終端のみ — 認証は CP に残る。`30-ingress.yaml` の `AuthMode` は `oauth`（既定）か `dev` だけを許し、テンプレートはロードバランサの OIDC を設定しない |
 
-入口を変えたら `PUBLIC_BASE_URL`（外部 https URL）を必ず合わせる — OAuth redirect_uri の素であり、
-https 前置きが Secure cookie の前提。
+- **入口を変えたら `PUBLIC_BASE_URL` を必ず合わせる** — OAuth の redirect の素であり、
+  `https` 前置きが Secure cookie の前提。
+- **CP の前にあるプロキシは 1 段ずつ `AF_TRUSTED_PROXY_HOPS` に数える**（既定 0 = `RemoteAddr`
+  を信じる）。compose の例示 env と AWS テンプレートは 1 を設定し、ALB の前に CDN を置けば 2。
+  テナントのネットワーク制限が見る送信元アドレスはこれで決まる（[07 §7.3](07-security.ja.md)）。
 
 ## 9.4 環境変数リファレンス（索引）
 
-**値・生成手順・注釈の正は [compose .env.example](../../deploy/compose/.env.example) と
-[local oauth.env.example](../../deploy/local/oauth.env.example)**。本表は索引（グループ・変数・詳細の所在）。
-括弧は未設定時の既定。
+**値・生成手順・注釈の正は例示 env ファイル**（[compose](../../deploy/compose/.env.example)・
+[local](../../deploy/local/oauth.env.example)）。AWS テンプレートはスタックのパラメータから
+自分で設定する（[PARAMETERS.md](../../deploy/aws/ecs/cfn/PARAMETERS.md)）。本表は索引にすぎない。
+括弧は未設定時のコードの既定。
 
 | グループ | 変数 | 役割 | 詳細 |
 |----------|------|------|------|
-| CP コア | `CP_ADDR`（`:8080`・実運用は `127.0.0.1:8099`）・`CONSOLE_DIR`・`AF_RUNTIME`（local）・`AF_DB`（`<WS_DATA>/control-plane.db`）・`PUBLIC_BASE_URL` | bind 先 / Console dist / Runtime 選択 / DB / 外部 URL | 本章 |
-| Workspace 起動テンプレ | `WS_IMAGE`・`WS_DATA`・`WS_MEMORY`（1g）・`WS_AGENT_PORT`（7700 起点の割当）・`WS_AGENT_HOST`（127.0.0.1）・`WS_JVM_DIR`・`WS_ENV`・`WS_SESSION_CMD` | CP が `docker run` に流し込む共通テンプレ | [04](04-agent.ja.md) |
-| L1 認証 | `AUTH`（dev）・`DEV_USER`（dev）・`AUTH_EMAIL_HEADER`・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_OIDC_PROVIDERS`＋`AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。許可リスト全空 = fail-closed。`TRUST` 未宣言の provider は無効化、有効な provider ゼロなら fatal | [07 §7.3](07-security.ja.md) / [61](../decisions/0043-login-idp.ja.md) |
-| プロビジョン / 権限 | `AF_PROVISION`（auto）・`SUPER_ADMIN_EMAILS` | 未知 identity の自動受入ポリシー / 初期 super_admin | [06](06-data.ja.md) |
-| at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（dev のみ）。**紛失 = crypto-shred**・データ領域と別金庫 | [07 §7.6](07-security.ja.md) |
-| git プロバイダ OAuth | **env は無い**（削除済み）| テナント管理者が Console（テナント設定 › 連携 › git プロバイダ OAuth）で登録する。`BITBUCKET_OAUTH_KEY/SECRET` は読まれず、`GITHUB_OAUTH_CLIENT_ID` は L1 の GitHub サインイン専用になった | [71](../decisions/0052-tenant-git-oauth.ja.md) |
-| scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（既定=session。人の判断待ち・docs/75）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m。打鍵の無い端末を在席と数える猶予・0 で無効）・`AF_IDLE_SWEEP_INTERVAL`・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング | [03](03-control-plane.ja.md) |
-| MCP | `AF_MCP_ENABLED` | CP `/mcp` エンドポイント有効化 | [08](08-integrations.ja.md) |
-| egress 🚧 | `AF_EGRESS_LISTEN`（:3128）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP 集約 | [07 §7.8](07-security.ja.md) |
-| Postgres | `AF_DATABASE_URL` または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`＋**パスワードの真値が居る場所** `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | Store=postgres 選択時のみ。部品から DSN を組む。ARN は、ローテートされたパスワードを**タスクを作り直さずに**拾うためのもの（[§9.9](#99-ヘルスとレディネスと動くパスワード)） | [06](06-data.ja.md) |
-| ECS アダプタ 🚧 | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,LOG_GROUP,TASK_CPU,TASK_MEMORY,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | CFN が作った静的基盤の座標を CP に渡す | [ecs runbook](../../deploy/aws/ecs/README.md) |
-| native アダプタ 🚧 | `AF_NATIVE_AGENT_BIN`（PATH の `workspace-agent`） | コンテナレス実行時の workspace-agent バイナリの所在 | — |
-| コンテナ内（CP が注入・運用者は直接設定しない） | `AGENT_ADDR`（:7700）・`AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_TMUX_SOCKET`/`AGENT_DOCS_DIR`（native のみ）・`AF_DOCS_TOKEN`（docs 取得ブリッジ・[04 §4.9](04-agent.ja.md)） | CP↔Agent 認証・DEK・停止猶予ほか | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
+| CP コア | `CP_ADDR`（`:8080`）・`CONSOLE_DIR`・`AF_RUNTIME`（`local`）・`AF_DB`（`<WS_DATA>/control-plane.db`）・`PUBLIC_BASE_URL`・`AF_PREVIEW_DOMAIN`・`AF_TRUSTED_PROXY_HOPS`（0） | bind 先・配る Console・アダプタの選択・外部 URL・プレビューのサブドメイン・送信元アドレス | 本章 |
+| Workspace 起動テンプレ | `WS_IMAGE`・`WS_DATA`（`/tmp/af-data`）・`WS_MEMORY`（`1g`）・`AF_MAX_WORKSPACE_MEM`・`WS_AGENT_PORT`（7700・Workspace ごとのポートの起点）・`WS_AGENT_HOST`（`127.0.0.1`）・`WS_JVM_DIR`・`WS_ENV`・`WS_SESSION_CMD` | CP が Workspace を起動するときに流し込む共通テンプレ。`WS_ENV` が届くのは `docker` と `native` の Workspace だけで、ECS 系ランタイムは渡さない | [04](04-agent.ja.md) |
+| L1 認証 | `AUTH`（`dev`）・`DEV_USER`（`dev`）・`AUTH_EMAIL_HEADER`（`X-Forwarded-Email`）・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_GITHUB_LOGIN_CLIENT_ID/SECRET`（または `GITHUB_OAUTH_CLIENT_ID/SECRET`）と `AF_GITHUB_ALLOWED_ORGS` ほか `AF_GITHUB_*`・`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。`AUTH=oauth` は有効な provider が無いと起動しない。OIDC の provider は `TRUST` の宣言が、GitHub は `AF_GITHUB_ALLOWED_ORGS` が必要で、無ければその provider は無効になる。**どの入口も受け入れないサインインは拒否される**: 入口はこれらの許可リスト・テナントの名簿・テナントの auto-join ドメイン・承認済みのテナント IdP。どれも無ければ全ログインが拒否される | [07 §7.3](07-security.ja.md) / [decisions/0043](../decisions/0043-login-idp.ja.md) |
+| プロビジョン / 権限 | `AF_PROVISION`（`auto`）・`SUPER_ADMIN_EMAILS` | 未知の identity をどう受け入れるか / 誰がデプロイ管理者か | [06](06-data.ja.md) |
+| at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（開発専用）。**紛失 = crypto-shred** — データとは別の金庫に置く | [07 §7.6](07-security.ja.md) |
+| git プロバイダ OAuth | **env は無い** | テナント管理者が Console で登録する。`BITBUCKET_OAUTH_KEY/SECRET` はもう読まれず、`GITHUB_OAUTH_CLIENT_ID` はサインイン専用 | [decisions/0052](../decisions/0052-tenant-git-oauth.ja.md) |
+| scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（session の値）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m）・`AF_IDLE_SWEEP_INTERVAL`（1m）・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング。アイドルのタイムアウトと掃引は `0` で無効 | [03](03-control-plane.ja.md) |
+| MCP | `AF_MCP_ENABLED` | `/mcp` がそもそも存在するか。有効になるのは文字列がちょうど `true` のときだけ | [08](08-integrations.ja.md) |
+| egress | `AF_EGRESS_LISTEN`（`:3128`）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP の集約。`AF_EGRESS_PROXY_ADDR` がプロキシ変数を注入するのは `docker` と `native` の Workspace だけ | [07 §7.8](07-security.ja.md) |
+| Postgres | `AF_DATABASE_URL`、または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`、それと**パスワードの真値が居る場所** `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | Store が Postgres のときだけ。部品から DSN を組む。ARN は、ローテートされたパスワードを**タスクを作り直さずに**拾うためのもの（§9.9） | [06](06-data.ja.md) |
+| ECS アダプタ | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,INFRA_ROLE,LOG_GROUP,WORKSPACE_IMAGE,TASK_CPU,TASK_MEMORY,WS_DISK_GB,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | テンプレートが作った静的基盤の座標。`ecs` も `ecs-ec2` も読む | [ecs runbook](../../deploy/aws/ecs/README.md) |
+| EC2 スロットプール | `AF_ECS_EC2_LAUNCH_TEMPLATE`（必須）・`AF_ECS_EC2_SLOT_TYPES`・`AF_ECS_EC2_DEFAULT_SLOT_CLASS`・`AF_ECS_EC2_AMI_ARM64`・`AF_ECS_EC2_MAX_SLOTS`（8）・`AF_ECS_EC2_HOME_GB`（50）・`AF_ECS_EC2_SLOT_SLEEP_SEC`（900）・`AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC`（0 = しない）・`AF_ECS_EC2_HIBERNATE_AFTER_SEC`（0 = 無効）・`AF_ECS_EC2_BACKUP_EVERY_SEC`（0 = 無効）・`AF_ECS_EC2_BACKUP_KEEP`（3）・`AF_ECS_EC2_GOLDEN_AUTOBAKE`（on）、ほかに掃引とタイミングのノブ `AF_ECS_EC2_*_SEC` | `ecs-ec2` 専用: スロットの型と上限・home の大きさ・§9.5 のアイドル段 | [ecs runbook](../../deploy/aws/ecs/README.md) §Optional: EC2 slot pool / [decisions/0045](../decisions/0045-ec2-persistent-workspace.ja.md) |
+| エンジン | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON`・`AF_LLM_URL`・`AF_COMFY_URL` / `AF_COMFY_API_KEY`・`AF_ENGINE_API_KEY_<KEY>`・`AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}`・`AF_ENGINE_ECS_CLUSTER`・`AF_ENGINE_WAKE_TIMEOUT`（900 秒）・`AF_ENGINE_PLAIN_HOLD`・`AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | エンジン表・エンジンの制御器・冷えたエンジンに対するゲートウェイの保留・別デプロイのエンジンの借用 | [decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md) / [0076](../decisions/0076-external-image-engine-on-lan.ja.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.ja.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.ja.md) |
+| 音声 | `AF_VOICEVOX_URL`（`http://127.0.0.1:50021`）・`AF_TTS_ECS_SERVICE` ほか `AF_TTS_ECS_*`・`AF_TTS_MAX_CHARS`（300）・`AF_POLLY_{REGION,ENGINE}` | URL で指す VOICEVOX、または CP がゼロから起こす ECS 上の VOICEVOX。Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.ja.md) |
+| コンテナレスアダプタ | `AF_NATIVE_AGENT_BIN`（`PATH` 上の `workspace-agent`）・`AF_NATIVE_ROOTFS`・`AF_NATIVE_BWRAP` | Agent バイナリの所在・bubblewrap サンドボックスを有効にする rootfs | [native runbook](../../deploy/native/README.md) |
+| Workspace 内（CP が注入・**運用者は設定しない**） | `AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_CP_BASE_URL` と機能ごとのトークン（`AF_DOCS_TOKEN`・`AF_MCP_TOKEN`・`AF_MEMO_TOKEN` …）・`native` ではさらに `AGENT_ADDR`・`AF_TMUX_SOCKET`・`AGENT_DOCS_DIR` | CP↔Agent 認証・DEK・停止猶予・Agent から CP への経路（`manager.workspaceExtraEnv`）。トークンと DEK は `docker` では 0600 の env ファイル、ECS では SSM SecureString のタスクシークレットで渡る | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
 
-網羅性の確認方法: 変数名そのものが grep アンカー。CP の読み値（`envOr` / `os.Getenv`）と
-`run-dev.sh` の透過リスト・`.env.example` を突き合わせる。
+網羅性の確認方法: **変数名そのものが grep アンカー。** CP の読み値（`envx.Or`・`envx.DurationOr`・
+`runtime.EnvInt`・`os.Getenv`）と例示 env ファイルを突き合わせる。`run-dev.sh` は渡すものを
+`exec env` ブロックで名指すが、あれはフィルタではない（export 済みの変数は全部 CP に届く）。
+また独自の既定（`CP_ADDR=:8099`・`WS_MEMORY=5g`）を置く。
 
-**JDK の提供はランタイムで異なる（`/usr/lib/jvm` を常在と仮定しない）**。`WS_JVM_DIR` は
-**local ランタイム専用**のノブで、ホストの共有 JDK を各コンテナへ `/usr/lib/jvm:ro` で
-bind-mount する。**ECS はこのマウントが無い**（`home`・`claude` の EFS のみ）ので `/usr/lib/jvm`
-は空になり得る。全ランタイム共通の受け皿は home ボリューム上の
-`~/.local/share/agent-fleet/jvm`（local=ボリューム / ECS=EFS で永続）で、`workspace-agent
-install-jdk <major>` が Adoptium から Temurin を入れる。Console のツール選択（toolchains）で
-Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JAVA_HOME` を通す。`availableJava`
-相当（`GET /env/toolchains` の `java_available`）は「on-disk（両ディレクトリ）∪ install 可能 major」を返す。
-**未導入の major を選んだときは、その場で入れるボタンが出る**（`POST /env/jdk-install` →
-`GET` でポーリング・agent `jdk_install_http.go`）。選択だけでは次回のコンテナ起動まで何も
-起きなかったのを、Stop → Start もターミナルも要らない一手に畳んだもの。導入後は
-`resolvedToolchains` が起動のたびに JDK ディレクトリを glob するので、**次に起動する
-セッションから** `JAVA_HOME` に入る（再起動不要）。
+**`0` がどこでも「無効」になるわけではない。** アイドルのタイムアウトは `0` を無効と読むが、
+`envx.DurationOr` で読む期間（`AF_SESSION_TTL`・`AF_USAGE_SAMPLE_INTERVAL` …）は `0` を未設定と
+みなして既定を使う。
 
-## 9.5 aws ターゲットの設計（縮約）🚧
+**JDK の提供はランタイムで異なる — `/usr/lib/jvm` が埋まっていると仮定しない。** `WS_JVM_DIR` を
+`/usr/lib/jvm` に読み取り専用で bind-mount するのは `docker` と、rootfs モードの `native` だけ。
+ECS 系ランタイムにはこのマウントが無いので、そのディレクトリは空になり得る。ランタイムに依らない
+受け皿は home ボリューム上の `~/.local/share/agent-fleet/jvm` で、`workspace-agent install-jdk <major>`
+が Adoptium から Temurin を入れる。Console で Java 版を選ぶと、entrypoint が未導入分を入れて
+`JAVA_HOME` を通す。`GET /env/toolchains` は両ディレクトリにあるもの ∪ 導入可能なもの
+（`java_available`）を示し、**未導入の版を選ぶとその場で入れるボタンが出る**（`POST /env/jdk-install`、
+その後 `GET` でポーリング）。導入後は `resolvedToolchains` が起動のたびにディレクトリを glob するので、
+再起動なしで**次のセッションから**効く。
 
-**P3-7 で実装済みだが実運用実績はない**（sandbox で deploy → E2E → teardown まで実証）。
+## 9.5 aws ターゲット
 
-- 対応関係: Runtime=ECS（1 Workspace = 1 Service・desired 0/1 = scale-to-zero）/ 永続ホーム=EFS
-  アクセスポイント（per-workspace root・uid/gid 固定）/ 秘密=SSM SecureString（DEK は task definition に
-  `valueFrom` ARN のみ・**平文 env に出さない**）/ CP→Agent 到達=Service Connect。
-- **所有権の境界**: CFN（`00-network / 10-data / 20-platform / 30-ingress` の4段 + `ec2-single`）は
-  静的基盤のみを 1 回構築。per-workspace リソース（Service・TaskDefinition・EFS AP・SSM param）は
-  **CP が実行時に決定論的な名前で作る**（アダプタはステートレス・CFN churn ゼロ）。
-- Runtime 契約の `starting` 状態は実質 ECS 専用（Fargate の cold image pull が分単位）。呼び出し側は
-  収束待ちの間、再 Start もアイドル停止もしない。docker アダプタは秒で上がるため実際には報告しない。
-  - この起動レイテンシの短縮（SOCI 遅延ロードの採否・代替案比較・実測計画）は
-    **条件付き採用**が結論で、SOCI の前提は
-    現構成が変更ゼロで満たす（PV 1.4.0 / ECR private / gzip）が、**~100s の内訳が未計測**のため
-    先に `describe-tasks` の `pullStartedAt`/`pullStoppedAt` で pull 時間を切り出すのがゲート。
-  - 初回 Start の 504 は **`AF_ECS_START_TIMEOUT_SEC`（当時 90s）の同期待ち > ALB idle（既定 60s）**が
-    直接原因で、SOCI とは独立に解消済み。**`Start` は
-    desiredCount 1 まででリターン**し、Agent の healthz 待ちは背景ゴルーチン（`watchReady`・ログ用）へ。
-    ここで同期待ちが成立し得ないのは、`running`/`starting` が手前で早期 return する以上、
-    `waitReady` に届く時点で必ず**タスクをゼロから起動している**ため（Fargate はイメージキャッシュ無し）。
-    収束は Console の `GET /api/workspace` ポーリングが拾う（Start 応答の `state` は元々見ていない）。
-- コスト特性（ec2-single との比較）は [§9.8](#98-コスト特性（ec2-single--ecs）)。
+CloudFormation スタックは 7 本で、配備順は `00-network → 10-data → 20-platform →
+（40-ec2-pool）→（50-tts）→（60-engines）→ 30-ingress`（括弧は任意）。各スタックが何を持つかは
+runbook の「Stack decomposition」。
+
+- **所有権の境界**: テンプレートは**静的基盤を 1 回だけ**作る。Workspace ごとのリソースは
+  **CP が実行時に決定論的な名前で作る** — アダプタはステートレス（全部名前かタグで見つける）で、
+  テンプレートは churn しない。
+- **共通の対応関係**: 1 Workspace = desired 0 か 1 の ECS サービス 1 本（scale-to-zero）。Agent
+  トークンと DEK は SSM SecureString パラメータなので、**DEK はタスク定義に参照としてだけ現れ、
+  平文では決して現れない**。CP から Agent へは Service Connect。CP 自身は `30-ingress` の
+  Fargate サービス（`desiredCount 1`）で、ストアは RDS Postgres。
+- **`ecs`（Fargate）**: home は root と uid/gid を固定した EFS アクセスポイント。Fargate は
+  イメージキャッシュを持たないので、毎回の起動でイメージをゼロから pull する。
+- **`ecs-ec2`（EC2 スロットプール・[decisions/0045](../decisions/0045-ec2-persistent-workspace.ja.md)）**:
+  - **スロットは同時に 1 メンバーだけが使う EC2 インスタンス。** CP が自分で買い
+    （`40-ec2-pool` の起動テンプレートから `RunInstances` — Auto Scaling グループも capacity
+    provider も無い）、上限は `AF_ECS_EC2_MAX_SLOTS`。タスクは `ec2InstanceId ==` の配置制約で
+    そのスロットに固定する。スロットのルートボリュームがイメージキャッシュになる。
+  - **home はメンバー自身の gp3 EBS ボリューム。** CP が `/dev/sdf` にアタッチし、SSM 経由で
+    マウントする。資格情報（`/var/lib/af/claude`）と `keep` 領域は EFS に残る。
+  - **新しい home はゴールデンスナップショットから作る** — 起動時インストールを済ませた home で、
+    Workspace イメージが変わるたびに CP が焼き、動いているイメージと合わなければ使わない。
+  - **アイドルは段になっている。** Stop は desired を 0 にして home をアタッチしたまま残すので、
+    メンバーは同じスロットに戻る。`AF_ECS_EC2_SLOT_SLEEP_SEC` を過ぎると空いたスロットを停止する
+    （ルートボリュームは課金され続ける）。`AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` を過ぎると、
+    先に home を外してから終了する。`AF_ECS_EC2_HIBERNATE_AFTER_SEC`（またはテナント自身の上限）を
+    過ぎると home をスナップショットにしてボリュームを消し、次の起動で戻す。
+    `AF_ECS_EC2_BACKUP_EVERY_SEC` は使用中の home の予備スナップショットを取る — EBS
+    ボリュームは AZ を出られないので、AZ を失ったときに戻る唯一の道。
+  - **デプロイがこれを選ぶ理由は I/O・本当に残る home・Fargate の上限を超える大きさで、起動時間
+    ではない。** アダプタ経由の実測で warm 起動は 43〜110 秒、Fargate は ~105 秒。EBS の home は
+    小さいファイルの書き込みが EFS の 8〜30 倍速い。
+- **Runtime 契約の `starting` 状態は実質 ECS 専用。** 収束待ちの間、呼び出し側は再 Start も
+  アイドル停止もしない。Docker アダプタは秒で上がるので報告しない。**Start は Agent を待たずに
+  返る**: `ecs` ではサービスの desired count を設定した時点で、`ecs-ec2` ではそれより前のことも
+  ある — スロットがまだ起動中・復帰中・登録中なら配置は背景（`finishStart`）で仕上がり、home に
+  付けた claim が状態を `starting` に保つ。どちらでも収束は Console の `GET /api/workspace`
+  ポーリングが拾う。同期待ちは戻せない: cold start はロードバランサの
+  idle timeout 60 秒より長く、504 になる。
+- **Fargate の起動は内訳を測ってある**: warm home の再起動 ~101 秒のうちイメージ pull は ~35 秒で、
+  遅延ロード（SOCI）は不採用になった。残りはタスク作成・ネットワークインタフェース・EFS マウント・
+  entrypoint。
+- **エンジンは別スタック。** `50-tts` は Fargate 上の VOICEVOX で、CP がゼロから起こす。
+  `60-engines` は llama.cpp と ComfyUI を、要求が来たときに CP が EC2 Fleet で買う GPU
+  インスタンス上の ECS サービスとして動かす。どちらも Workspace のランタイムには依存せず、CP は
+  エンジン表を通して見つける。
+- コスト特性は §9.8。
 
 ## 9.6 パリティと相違点
 
-| 観点 | local / compose | aws（ECS）🚧 |
-|------|-----------------|--------------|
-| Workspace イメージ / Agent | 同一物 | 同一物（移植の肝）|
-| scale-to-zero | docker stop / start | Service desired 0/1。アイドル判定ロジックは共通・Runtime が実体差を吸収 |
-| 隔離強度 | コンテナ境界（同一カーネル共有）| + タスク分離（Fargate はホスト共有なし）|
-| egress | docker network + ホスト FW（enforce は 🚧 [07 §7.8](07-security.ja.md)）| SG / NACL（Network Firewall は 📋）|
-| ストレージ性能 | ローカルディスク（速い）| EFS はメタデータ操作の多い git で遅延しうる |
-| 基盤権限 | docker.sock = ホスト root 相当（[07 §7.1](07-security.ja.md)）| IMDS 遮断 + Task Role 最小化 |
+Workspace イメージと Agent は全ターゲットで同一物 — それが分割の要点。能力の一覧は
+[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md) が正で、以下はその下にある基盤の違い。
+
+| 観点 | docker / compose | native | ecs（Fargate） | ecs-ec2 |
+|------|------------------|--------|----------------|---------|
+| scale-to-zero | コンテナの stop / start | プロセスの stop / start | desired 0/1 | desired 0/1、その先は §9.5 のアイドル段 |
+| 隔離 | コンテナ境界（カーネル共有） | bubblewrap サンドボックス・1 人 | ホストを共有しないタスク | 同時には他の誰も使わないインスタンス上のタスク |
+| egress | コンテナのネットワーク、任意で forward proxy（[07 §7.8](07-security.ja.md)） | ホストのもの | セキュリティグループ | セキュリティグループ |
+| home の置き場 | ローカルディレクトリ（速い） | ローカルディレクトリ | EFS: **git のようにメタデータ操作の多い作業は遅い** | EBS。資格情報は EFS |
+| 基盤権限 | Docker ソケットはホスト root 相当（[07 §7.1](07-security.ja.md)） | 利用者自身のアカウント | 最小のタスクロール・インスタンスメタデータ無し | 最小のタスクロール |
+
+**アイドル判定のロジックは共通**で、「停止」の実体の差は各 Runtime が吸収する。
 
 ## 9.7 バックアップ / リストア / アップグレードの設計前提
 
-- **`WS_DATA`（compose では `DATA_DIR`）が保全対象のすべて**: DB・per-user home（`secrets.enc` 含む）・
-  `claude-config`（平文 Claude 状態）・wrapped DEK・Caddy 証明書。再 provision 可能な `shared/jvm` のみ除外。
-- **`AF_MASTER_KEY` はデータ領域にもバックアップにも含めない**（別金庫で独立保管）。失えば全バックアップが
-  復号不能 = crypto-shred（[07 §7.6](07-security.ja.md)）。逆にアーカイブ側には平文 Claude 状態が入るので
-  アーカイブ自体も保護対象。
-- リストアはパス再ルート可: `DATA_DIR` の親パスが変わっても CP が Workspace 起動時に現在値へ付け替える
-  （basename は維持する契約）。
-- アップグレード: migration は CP 埋め込み・起動時自動適用・**ダウングレード非対応** → 更新前に必ずバックアップ。
-- **ECS のアップグレードはアプリのタグだけではない**: リリースが新しい ECR リポジトリと、まだ誰も
-  写していないイメージを必要とすることがある（0.19.0 で engines の fetch / ingest が
-  `af-engine-tools` に出た）。そのため `update.sh` は順序を 1 本に固定する——**リポジトリ
+- **1 台のホストでは `WS_DATA`（compose では `DATA_DIR`）が保全対象のすべて**: DB・暗号化
+  ストア `secrets.enc` を含む全員の home・平文の Agent 状態・wrap された DEK・Caddy の証明書。
+  除外するのは再 provision できるもの（`shared/jvm`）だけ。
+- **`AF_MASTER_KEY` はデータ領域にもバックアップにも入れない** — 別に保管する。失えば全バックアップが
+  復号不能になる。逆に、**アーカイブには平文の Agent 状態が入るので、アーカイブ自体も保護対象。**
+- リストアは親パスが変わってもよい: CP が起動時に付け替える。**ただし basename は契約**。
+- **アップグレードは埋め込みの migration を起動時に自動適用し、ダウングレードできない** — 必ず先に
+  バックアップする。
+- **AWS では `WS_DATA` は何も持たない**（`30-ingress` は `/tmp` を指す）。状態は RDS・EFS、
+  それに `ecs-ec2` ではメンバーの EBS home に分かれ、守られ方はそろっていない — **テンプレートが
+  バックアップを宣言するのは RDS と EFS で、どちらも `Persistence=retain` のときだけ。EBS の home の
+  バックアップは既定で無効。** スタック削除時にリソースを
+  残すことはバックアップではない:
+  - RDS: `10-data` の `Persistence=retain` が 7 日の自動バックアップ・最終スナップショット・
+    削除保護を入れる。
+  - EFS: `Persistence=retain` はスタックを消したときにファイルシステムを残し、専用のボールトへの
+    AWS Backup の日次プラン（復旧ポイントの保持は `EfsBackupRetentionDays`・既定 7 日）を加える。
+    復元は手作業 — メンバー 1 人分のディレクトリかファイルシステム全体を、稼働中のデータの横の
+    ディレクトリへ戻してから書き戻す: ecs runbook の §EFS backup and restore。
+  - EBS の home（`ecs-ec2`）: 守るのは §9.5 の任意の home バックアップ
+    （`AF_ECS_EC2_BACKUP_EVERY_SEC`・既定は無効）だけ。
+- **ECS のアップグレードはアプリのタグだけではない。** リリースが新しい ECR リポジトリと、まだ誰も
+  写していないイメージを必要とすることがある（エンジンの fetch / ingest の手順は
+  `af-engine-tools` にある）。そのため `update.sh` は順序を 1 本に固定する: **リポジトリ
   （20-platform、change set を出してから、置換が無いときだけ実行）→ イメージ（GHCR から
   `crane copy`）→ それを参照するスタック（60-engines）**。逆順でもその場では何も失敗せず、
-  スタックは配備でき、fetch コンテナだけが `CannotPullContainerError` のまま——サービスは
-  steady state を報告する。イメージを*焼く*ことだけは意図的にやらない: GHCR にも無ければ
-  止まり、焼くワークフロー名を出す。
-- 実手順（backup.sh / restore.sh / upgrade / air-gapped）: [compose runbook](../../deploy/compose/README.md)、
-  ECS は [ecs runbook](../../deploy/aws/ecs/README.md) の §Upgrade。
+  スタックは配備でき、fetch コンテナだけが `CannotPullContainerError` のまま、サービスは
+  steady state を報告する。イメージを*焼く*ことだけは意図的にやらない: GHCR にもタグが無ければ
+  止まり、焼くワークフローの名前を出す。
+- 実手順（`backup.sh`・`restore.sh`・アップグレード・air-gapped）は
+  [compose runbook](../../deploy/compose/README.md)、ECS は [ecs runbook](../../deploy/aws/ecs/README.md)
+  の §Upgrade。
 
 ## 9.8 コスト特性（ec2-single / ECS）
 
-aws ターゲットの 2 通り（[§9.1](#91-デプロイ3形態)）は課金の**形**が違う。ec2-single は
-**人数によらずほぼ定額**（VM 1 台）、ECS は**常設の床 + 人数×稼働時間**（scale-to-zero が効く）。
-選定はこの形の差で決まり、下の絶対額はその裏付けにすぎない。
+AWS の形態は課金の**形**が違う。VM 1 台は**人数によらずほぼ定額**、ECS は**常設の床 + 人数×稼働
+時間**で、scale-to-zero が効く。**選定はこの形で決まり**、下の絶対額はその裏付けにすぎない。
 
-> **数字の前提**: us-east-1 の Linux/x86 オンデマンド定価・730h/月・2026-07 時点。
-> Tokyo (ap-northeast-1) ほか AP/EU は概ね **+10〜30%**（実額は
-> [AWS Pricing Calculator](https://calculator.aws/) で引くこと。本表は桁感の資料であって見積書ではない）。
-> RI / Savings Plans / Compute Savings Plans（Fargate も対象）は未適用。
-> **Claude / codex / opencode の利用料は各ユーザーの個人サブスクで、以下に一切含まない。**
+> **前提**: *実測* と書いたもの以外は、AWS Pricing API による ap-northeast-1（東京）の定価・
+> 730 時間/月・2026-08 時点 — ecs runbook の「Cost & ephemerality」と
+> [decisions/0045](../decisions/0045-ec2-persistent-workspace.ja.md)。us-east-1 は概ね 30% 安い。
+> リザーブドインスタンスや Savings Plans は未適用。**エージェントのサブスクリプションは各利用者の
+> ものであり、一切含まない。**
 
-### 9.8.1 ec2-single — VM 1 台の定額
-
-構成は [ec2-single runbook](../../deploy/aws/ec2-single/README.md) の CFN 既定（t3.large / gp3 30GB /
-EIP / Route53）。TLS は Caddy の Let's Encrypt なので ALB も ACM も要らない。
+### 9.8.1 VM 1 台 — 定額
 
 | 項目 | 月額 | 備考 |
 |------|------|------|
-| EC2 t3.large（2vCPU/8GB） | $61 | t3.medium=$30 / t3.xlarge=$122（CFN の `InstanceType` 選択肢）|
-| EBS gp3 30GB | $2 | `DATA_DIR` ＝保全対象すべてが載る（[§9.7](#97-バックアップ--リストア--アップグレードの設計前提)）|
-| Elastic IP | $4 | 2024 以降パブリック IPv4 は常時課金 |
-| Route53 ホストゾーン | $1 | sslip.io を使うなら不要 |
-| **合計（t3.large）** | **≈ $67/月** | 人数が増えても**変わらない**（RAM が尽きるまで）|
+| インスタンス・30 GB のディスク・固定 IP | ≈ $87（t3.large・既定）/ ≈ $47（t3.medium） | テンプレートの選択肢は t3.medium・t3.large・t3.xlarge |
+| DNS ゾーン | $0.50 | テンプレートは既存の Route53 ホストゾーンを必要とする |
+| **合計** | **≈ $88/月** | **人数が増えても変わらない** — RAM が尽きるまで |
 
-**律速は RAM で、CPU ではない**。CP + Caddy + OS で ~1.5GB を引いた残りを `WS_MEMORY`
-（既定 1g）で割った数が同時起動できる Workspace 数 — t3.large で実用 **4〜5 並列**程度。
-runbook が t3.medium で `WS_MEMORY` を下げろと言うのはこの制約。
+**律速は RAM で、CPU ではない。** CP・Caddy・OS が要る分を引いた残りを `WS_MEMORY` で割った
+数が、上限まで使う Workspace を同時に動かせる数。compose の例示は 5g なので t3.large で 1 つ分 —
+チームで使う VM は全員のピークに合わせて選ぶことになる。runbook が t3.medium では上限を下げろと
+言うのもこのため。
 
 注意すべき性質:
-- **t3 はバースト系** — CPU クレジットを使い切ると基準性能（t3.large = 30%）に落ちる。
-  重いビルドが続く使い方では m6i など固定性能族に替える判断が要る。
-- **scale-to-zero が効かない** — アイドル停止は Workspace コンテナを落とすだけで、VM 課金は続く。
-  夜間・週末に費用を落とすなら VM 自体を停止するしかない（EBS/EIP は残る）。
-- **単一障害点** — VM が落ちれば全ユーザーが落ちる。隔離もコンテナ境界のみ（[§9.6](#96-パリティと相違点)）。
+
+- **バースト系のインスタンスファミリーは CPU クレジットを使い切ると基準性能に落ちる。** 重いビルドが
+  続くなら固定性能のファミリーにする。
+- **scale-to-zero は効かない。** アイドル停止は Workspace コンテナを止めるだけで、VM の課金は続く。
+  **週末の費用を削るには VM 自体を止める。**
+- **単一障害点**で、隔離はコンテナ境界だけ。
 
 ### 9.8.2 ECS — 常設の床 + 従量
 
-構成は CFN 4 段（[ecs runbook](../../deploy/aws/ecs/README.md)）。Workspace は既定
-1 vCPU / 2GB（`AF_ECS_TASK_CPU` / `AF_ECS_TASK_MEMORY`）。
-
-**常設の床（Workspace がゼロでも掛かる）:**
+**常設の床（Workspace が全部止まっていても掛かる）:**
 
 | 項目 | 月額 | 備考 |
 |------|------|------|
-| NAT Gateway | $33 | git / Anthropic への egress に必須。VPC エンドポイントでも消せない（runbook 参照）|
-| ALB | $20 | + LCU 従量 |
-| RDS db.t4g.micro（single-AZ, 20GB） | $15 | CP タスク入替を跨いで state が残る根拠 |
-| EFS Standard 50GB | $15 | per-workspace ホーム。使用量課金なので実データ次第 |
-| CP タスク Fargate（0.5vCPU/1GB, 24/7） | $18 | |
-| ECR / CloudWatch Logs / S3 / Route53 | $5〜10 | |
-| **床 合計** | **≈ $110/月** | |
+| NAT ゲートウェイ | $45 | Workspace は git やモデルの API へこれを通って出るうえ、起動経路（ECR・ログ・SSM）にも乗る。NAT インスタンス（≈ $8）にするのが最大の単一レバー |
+| CP タスク 24/7（0.5 vCPU / 1 GB） | $23 | |
+| データベース（RDS db.t4g.micro・20 GB） | $21 | CP タスクを入れ替えても状態が残る根拠 |
+| ロードバランサ | $18 | + 従量 |
+| シークレット・サービスディスカバリ・レジストリ | ≈ $1 | |
+| EFS | 使用量 | `ecs` では全員の home、`ecs-ec2` では資格情報だけ |
+| EFS のバックアップ | 使用量 | `Persistence=retain` のときだけ: バックアップ保存 $0.06/GB 月・日次 7 点 |
+| **床** | **≈ $107/月 + EFS** | |
 
-**Workspace 従量**（1 vCPU / 2GB = **$0.049/時**）:
+**Workspace 1 つあたり:**
 
-| 稼働パターン | 1 人あたり | 20 人 | 床込み合計 |
-|-------------|-----------|-------|-----------|
-| 平日 8h（176h/月・scale-to-zero 前提） | $8.7 | $174 | **≈ $285/月** |
-| 24/7（アイドル停止が効いていない状態） | $36 | $720 | ≈ $830/月 |
+| | `ecs`（Fargate・1 vCPU / 2 GB） | `ecs-ec2`（m7i.large・2 vCPU / 8 GB） |
+|---|---|---|
+| 稼働中 | $0.0616/時 | $0.130/時（m7i はどの大きさでも vCPU 時あたり $0.0651） |
+| 平日 8 時間 × 22 日 | ≈ $11 | ≈ $23 |
+| 24/7（アイドル停止が効いていない） | ≈ $45 | ≈ $95 |
+| 停止中 | EFS（home が使った分） | home の EBS（**確保した**分・$0.096/GB 月・50 GB で $4.80）、加えてスロットが終了されるまではそのルートボリューム（100 GB で $9.60） |
 
-24/7 の列は **scale-to-zero が壊れたときの請求額**でもある。`AF_AUTOSTART` /
-`AF_WS_IDLE_TIMEOUT` 系（[§9.4](#94-環境変数リファレンス（索引）)）が意図通り効いているかは、
-コスト面でも監視対象。
+- **24/7 の行は scale-to-zero が壊れたときの請求額でもある。** アイドル設定が実際に効いているかは、
+  運用だけでなく**費用**の問題でもある。
+- **EBS は確保した量、EFS は使った量で課金される**: 分岐点は home の使用率 26.7%
+  （$0.096 / $0.36）。休眠させると、20 GB 使った 50 GB の home が $4.80 から $1.00 の
+  スナップショットになる。
+- **EFS の I/O は別の費目**で、資格情報が残る `ecs-ec2` でも掛かる。本番デプロイで 1 日 *実測*
+  した elastic スループットの I/O（2026-09-17・CloudWatch × 単価）は Workspace 1 時間あたり約
+  $0.10 で、月 1,341 Workspace 時間という *見積り* を掛けると月約 $135 になる。CloudWatch で
+  測るこの方法自体は、前日の窓で Cost Explorer と突き合わせて 0.12% で一致した
+  （[decisions/0087](../decisions/0087-efs-metadata-io.ja.md)。まだ本番に届いていない修正も
+  そこに記録がある）。
+- **動かしっぱなしの GPU エンジンは他の全部を上回る**: g6.xlarge は $1.26/時（月 ≈ $918）。
+  CP はエンジンを要求時に起こしてアイドルで止め、`pause.sh` はまだ生きているエンジンの
+  インスタンスを掃除する。
+- **小さなデプロイの請求の大半は人ではなく床。** sandbox での *実測*（2026-08-01〜16）: メンバーに
+  帰属できたのは請求の最大 22.3% で、残りは NAT・DNS・税・EFS・CP・ロードバランサ・
+  データベース・パブリック IPv4 だった（[decisions/0048](../decisions/0048-member-cloud-cost.ja.md)）。`ecs-ec2` では
+  Console がコスト配分タグからメンバーごとの実費を示す。`ecs` のタグ付けは実機未検証のまま出ている。
 
 ### 9.8.3 使い分け
 
-| 人数 | ec2-single | ECS（平日 8h） | 判断 |
-|------|-----------|---------------|------|
-| 〜5 人 | **$67**（t3.large） | $154 | **ec2-single 一択** — ECS は床 $110 を回収できない |
-| 〜15 人 | $283（m6i.2xlarge 8vCPU/32GB） | $240 | ほぼ拮抗。運用の手間と隔離要件で決める |
-| 20 人 | $283〜368（32〜64GB 級）| **$285** | **ほぼ同額** — ここが分岐点で、以降は非コスト要因が支配的 |
-| 20 人・24/7 | $283 | $830 | 常時稼働なら VM 集約が圧倒的に安い |
-
-要するに **ECS がコストで勝つ場面はほぼ無い**。ECS を選ぶ理由はコストではなく、
-タスク単位の隔離・ユーザー単位の障害分離・イメージ更新の順次入替・IMDS 遮断 + Task Role
-最小化（[§9.6](#96-パリティと相違点)）であり、**scale-to-zero はその代償を「20 人あたりで
-VM 集約と同額」まで薄めるための仕組み**、と捉えるのが実態に近い。
-
-- **小規模・単一チーム → ec2-single**（= AWS 上の compose。形態としては compose の変種）。
-- **隔離要件やユーザー単位の可用性が要る → ECS**。ただし床 $110 とアイドル停止の健全性を前提条件として引き受ける。
-- どちらも 🚧 実運用実績なし（[§9.1](#91-デプロイ3形態)）。実額は最初の 1 か月の Cost Explorer で必ず答え合わせすること。
+- **1〜2 人、または VM 1 台に収まるチーム → ec2-single**（AWS 上の compose）。素直に安く、
+  全員のピークに合わせた VM でも定額のまま。
+- **ECS が費用で追いつくのは同時利用 8〜10 人あたり**（上の定価からの見積り）。そこでは VM を全員の
+  ピークに合わせて 24 時間動かすことになり、ECS は各 Workspace が動いた時間だけ課金する。
+- **それより少ない人数で ECS を選ぶのは、価格に関係なく得られるもののため**: タスク単位の隔離・
+  ユーザー単位の障害分離・イメージの順次入れ替え・より締まったメタデータとロールの構え（§9.6）。
+  **scale-to-zero は安くする仕組みではなく、床を薄める仕組み。**
+- **ECS の 2 つのランタイムの間では**、`ecs-ec2` は稼働 1 時間あたりが高いかわりに箱が大きく、
+  I/O・永続性・大きさを買う（§9.5）。Workspace ごとに運用するリソースも 4 種類増える。
+- **見積りは実際の請求と突き合わせる** — Cost Explorer と、`ecs-ec2` なら Console のメンバー別コスト表示で。
 
 ## 9.9 ヘルスとレディネスと動くパスワード
 

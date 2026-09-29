@@ -1214,6 +1214,7 @@ func membershipCascade(membershipID string) []struct {
 		args []any
 	}{
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
+		{`DELETE FROM engine_access_grant WHERE membership_id=?`, id},
 		{`DELETE FROM pat WHERE membership_id=?`, id},
 		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		// sso_session was dropped by 0011 (ssm_profile replaced it). Deleting from a
@@ -1315,6 +1316,10 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 		`DELETE FROM tenant_idp WHERE tenant_id=?`,
 		`DELETE FROM tenant_git_oauth WHERE tenant_id=?`,
 		`DELETE FROM egress_allowlist WHERE tenant_id=?`,
+		`DELETE FROM engine_access_policy WHERE tenant_id=?`,
+		// A grant written for a membership deleted between the roster check and the insert
+		// has no membership left to cascade from; the tenant id still reaches it.
+		`DELETE FROM engine_access_grant WHERE tenant_id=?`,
 		// The login rules and allowed_cidrs are columns on tenant, so this one
 		// statement takes them with it.
 		`DELETE FROM tenant WHERE id=?`,
@@ -2270,7 +2275,7 @@ func (s *SQL) DeleteSetting(ctx context.Context, key string) error {
 }
 
 // AddUsage accumulates workspace running-seconds into the (membership, day)
-// showback bucket (docs/roadmap.md P3-9). Upsert += so repeated samples add up.
+// showback bucket (docs/log/roadmap.md P3-9). Upsert += so repeated samples add up.
 func (s *SQL) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage_daily(membership_id, tenant_id, day, running_secs)

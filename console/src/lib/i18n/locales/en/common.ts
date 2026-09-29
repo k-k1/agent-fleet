@@ -191,7 +191,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "topbar.host_version": "Agent Fleet v{v}",
   "topbar.update_ready": "Update available · restart to apply v{v}",
   "topbar.update_badge": "Update",
-  "topbar.settings_title": "Settings (Display / Workspace / Agents / Git / AWS SSM / MCP)",
+  "topbar.settings_title": "Settings (Display / Workspace / Agents / Git / AWS profiles/SSM / MCP)",
 
   // === P2 small shared words ===
   "common.list_sep": ", ",

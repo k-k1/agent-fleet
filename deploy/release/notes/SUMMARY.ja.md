@@ -13,6 +13,31 @@
 
 ---
 
+## [0.25.0](0.25.0.ja.md) — 2026-09-29
+
+**CLI ピン** — Claude Code 2.1.284 / Codex 0.158.0 / OpenCode 1.18.33 / Copilot 1.0.89 / Antigravity 1.2.12 / Cursor 2026.09.28-64d2043 / Muse Code 1.4.0-R4302.1
+
+**New / Improved**
+
+- **[ブランチ名]** 課題管理から始めたセッションのブランチ名と起点をリポジトリの規則（`.agent-fleet/branches`・git-flow・Bitbucket のブランチモデル）から決める。注記だけで断らない。既定は `feature/1113-<題名の英単語>`、バグは `fix/` ([#1120](https://github.com/k-k1/agent-fleet/issues/1120), [#1124](https://github.com/k-k1/agent-fleet/issues/1124), [#1125](https://github.com/k-k1/agent-fleet/issues/1125))
+- **[課題管理]** 開いている PR に CI の状態とマージの衝突 ([#1113](https://github.com/k-k1/agent-fleet/issues/1113))
+- **[課題管理]** 「開始済み」の一覧にセッション名。アーカイブされたセッションを戻せる ([#1108](https://github.com/k-k1/agent-fleet/issues/1108))
+- **[AWS]** `af-aws-exec` が自分で定義した AssumeRole と `credential_process` のプロファイルを `--account` 付きで扱う ([#1107](https://github.com/k-k1/agent-fleet/issues/1107))
+- **[AWS]** 設定 › AWS プロファイル/SSM（旧「AWS SSM」）。プロファイルの行にログインとログイン状態のバッジ
+- **[エージェント]** 起動に失敗したマネージドのセッションが CLI の最後の出力を示す ([#1076](https://github.com/k-k1/agent-fleet/issues/1076))
+- **[MCP]** `create_session` で子の推論の強さ（effort）を指定 ([#1068](https://github.com/k-k1/agent-fleet/issues/1068))
+- **[画像生成]** スマホのスタジオ。入力中も下書きの帯が見え、入力欄は下端、トーストは入力欄を覆わない。「N 枚できました」は見るまで残る ([#1089](https://github.com/k-k1/agent-fleet/issues/1089), [#1090](https://github.com/k-k1/agent-fleet/issues/1090))
+- **[課題管理]** AI 提案のタイトルが課題のキーを残す。絞り込みがほかと同じ入力欄・×・Escape
+- **[質問カード]** 翻訳で抜けた欄をもう一度訳す ([#1114](https://github.com/k-k1/agent-fleet/issues/1114))
+- **[エンジン]** gemma-4・LFM2.5・GPT-OSS のメモリを正しく見積もる ([#975](https://github.com/k-k1/agent-fleet/issues/975))
+- **[ミラー]** 長い llama.cpp の会話が速く読める
+- **[ECS]** `update.sh` が以前の既定のままの ComfyUI のタグを動かす ([#965](https://github.com/k-k1/agent-fleet/issues/965))
+
+**Fixed**
+
+- **[codex]** ターミナル（CLI）の codex のセッションがホームで動き再開できなかった。マネージドからの切り替えが「open in another app」で止まっていた ([#1131](https://github.com/k-k1/agent-fleet/issues/1131))
+- **[ECS]** 返答に 1 分近くかかる AI の提案が AWS の配備で失敗していた
+
 ## [0.24.0](0.24.0.ja.md) — 2026-09-27
 
 **CLI ピン** — Claude Code 2.1.283 / Codex 0.157.1 / Antigravity 1.2.11 / Cursor 2026.09.26-dd393fe / Kiro 2.24.1 / Muse Code 1.4.0-R4161.1

@@ -1,9 +1,9 @@
 # 20b. P3-7 実装プラン — AWS デプロイ先アダプタ（ECS）
 
-> 🗄 **実装記録** — 現状は [HANDOFF](../HANDOFF.md)、設計は [ロードマップ P3-7](../roadmap.md#p3-7-デプロイ先アダプタオンプレ-docker-既定--自社-aws-任意)、
+> 🗄 **実装記録** — 現状は [build/09](../build/09-deploy.ja.md)（旧 HANDOFF）、設計は [ロードマップ P3-7](roadmap.md#p3-7-デプロイ先アダプタ（オンプレ-docker-既定--自社-aws-任意）)、
 > AWS 構成の具体像は [reference/aws](../build/09-deploy.ja.md)、港の思想は [reference/portability](../build/09-deploy.ja.md)。
 
-[12 Phase 3](../roadmap.md) の P3-7。各社が**自社のデプロイ先を選ぶ**（オンプレ Docker 既定／自社 AWS 任意）。
+[12 Phase 3](roadmap.md) の P3-7。各社が**自社のデプロイ先を選ぶ**（オンプレ Docker 既定／自社 AWS 任意）。
 **コアは無改修、周縁アダプタのみ差し替える**（ports & adapters, docs/09）。Workspace イメージと Agent は
 両ターゲットで**同一物**。差分は CP が呼ぶ周縁アダプタだけに閉じる。
 

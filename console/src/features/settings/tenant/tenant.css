@@ -111,6 +111,18 @@
   flex: none;
 }
 
+/* Engine access (#1215). The mode toggle sits on its own line rather than in a toolbar row
+   like the other admin toggles, and a block-level .seg would stretch across the panel; shrink
+   it to its labels so it reads the same as those. */
+.engine-access .seg {
+  display: inline-flex;
+}
+
+/* The tenant-admin tag, kept apart from the user key it follows. */
+.engine-access-table .af-note {
+  margin-left: 6px;
+}
+
 .usage-csv {
   display: inline-flex;
   align-items: center;
