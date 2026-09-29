@@ -26,6 +26,7 @@ name: muse-contract
 
 permissions:
   contents: read
+  issues: write
 
 on:
   pull_request:
@@ -162,3 +163,15 @@ jobs:
             echo '::error::the installed-binary compatibility check did not run (it skips without AF_MUSE_BIN)'
             exit 1
           }
+
+      # Only the watcher's `version=latest` dispatch records: a pin run that recorded an older
+      # version would move `tested` backwards and dispatch the contract again the next day.
+      # The version goes in verbatim, build id and all — the watcher compares it against the
+      # channel's `1.4.0-R4302.1`, and the digits-only extraction the other contracts use would
+      # leave that edge open forever.
+      - name: remember successfully tested latest
+        if: success() && inputs.version == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ steps.rel.outputs.version }}
+        run: deploy/local/cli-release-state.sh set tested muse "$VER"
