@@ -156,9 +156,41 @@ which one is stale.**
 
 `guide/ref/` tables whose axes exist in the code are checked against it: the agent columns
 must cover the `Kind*` constants in `workspace/agent/internal/session/session.go`, and
-the deployment rows must cover the profiles `newRuntimeFactory` accepts in
-`control-plane/runtime.go`. CI compares; it does not generate, so you keep control of
-the wording.
+the deployment rows must cover the profiles `NewFactory` accepts in
+`control-plane/internal/runtime/runtime.go`. CI compares; it does not generate, so you
+keep control of the wording.
+
+**The same applies to a fact no `ref/` table holds.** A fact written in two chapters
+drifts into two different wrong answers, and nothing checks it. The engine gateway
+token's scope was written in three chapters and was wrong in all three, differently.
+So put it where its own question lives, and link from the others: a boundary in
+`docs/build/07`, an outward contract in `08`, a responsibility in `03`. Where a fact
+genuinely belongs to two chapters, quote the other one's sentence rather than writing
+your own.
+
+## 6a. Three ways a true sentence goes wrong
+
+These are the mistakes this tree actually accumulated, each found more than once.
+
+**A number carries what kind of number it is.** A decision record holds measurements,
+list-price estimates and thresholds that were never met, often in one paragraph, and the
+reader who quotes only the conclusion loses which is which. So say it: "measured on the
+production deployment", "estimated from list price × assumed hours", "a condition the
+move went ahead without meeting". A start time quoted as current fact turned out to have
+been corrected twice by later measurements in the same record.
+
+**Never generalise a contract from the kinds you happened to read.** "Every managed kind
+speaks the runtime's session API" and "the conversation always lives in the CLI's native
+store" were both written from claude, codex and opencode, and both break on an
+in-process kind and on one whose native log is not stable. Before writing "every kind",
+check the one that is least like the others.
+
+**Do not claim a list is complete unless something checks it.** An exhaustive list is
+true on the day it is written and silently wrong afterwards. Either say "for example",
+or invert it and name what is excluded — "reads are not counted" outlives "these five
+routes are counted". A negative claim ("this is not backed up") is the one exception
+worth stating flatly, and then only bounded to what you looked at: "the templates
+declare no backup", not "there is no backup".
 
 ## 7. Never link into `docs/log/`
 
