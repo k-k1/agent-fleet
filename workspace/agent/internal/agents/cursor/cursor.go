@@ -65,9 +65,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// The cursor TUI state is classified from the tail of the JSONL transcript (state.go):
-	// no dependence on TUI strings, which is what the false-idle lesson asks for. The
-	// managed (ACP) route writes no transcript, so there the driver's runTurn boundaries
-	// are the state source.
+	// working vs idle never depends on TUI strings, which is what the false-idle lesson asks
+	// for. Only an open turn is checked against the pane, for the modals the JSONL cannot
+	// show. The managed (ACP) route writes no transcript, so there the driver's runTurn
+	// boundaries are the state source.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
 		// Liveness polling is where drift gets noticed (cursor has no hooks). resolveSid
@@ -89,13 +90,12 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 // PendingModal hands the modal that is waiting on a human to the carry-over, just before
 // the session is folded (docs/log/75 P5).
 //
-// For cursor the only such wait is ACP's `session/request_permission` (plan launches, or
-// when bypass is turned off). The TUI route's approval menu leaves no trace in the JSONL
-// (see the comment at the top of state.go) and cannot be observed — report what cannot be
-// obtained as absent.
+// Under managed the only such wait is ACP's `session/request_permission` (plan launches, or
+// when bypass is turned off). On the Terminal route the pane is read instead (modal.go): a
+// command approval and a plan launch's build approval exist nowhere else.
 //
-// Kind is permission. The Interaction itself calls itself a "question", but that is only the
-// shape that makes the Console draw a choice card; the answer's destination is the ACP
+// A managed approval is carried as Kind permission. The Interaction itself calls itself a
+// "question", but that is only the shape that makes the Console draw a choice card; the answer's destination is the ACP
 // JSON-RPC id. Once the child process is gone, letting the user pick yes or no delivers
 // nothing (docs/log/75 §75.6.4), so all that is carried over is the fact of what was asked.
 //
@@ -104,7 +104,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 // of the whole container escapes it.
 func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	if m.DriverKind() != session.DriverManaged {
-		return agents.PendingModal{}, false
+		return terminalPendingModal(m)
 	}
 	h := handleFor(m.Name)
 	if h == nil {

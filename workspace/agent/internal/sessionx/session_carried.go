@@ -318,7 +318,7 @@ func promoteCarriedOther(m session.Meta) bool {
 	if SessionAlive(m) {
 		reason = "halt"
 	}
-	c := status.Carried{Kind: pm.Kind, Permission: strings.TrimSpace(pm.Detail), Text: strings.TrimSpace(pm.Text)}
+	c := status.Carried{Kind: pm.Kind, Permission: strings.TrimSpace(pm.Detail), Plan: strings.TrimSpace(pm.Plan), Text: strings.TrimSpace(pm.Text)}
 	if pm.Kind == "question" {
 		raw, err := json.Marshal(pm.Questions)
 		if err != nil {

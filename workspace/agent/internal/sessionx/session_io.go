@@ -20,7 +20,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -1106,27 +1108,8 @@ func promptBlocker(name string) string {
 	if !ok {
 		return ""
 	}
-	// agy has no status hooks — its pending interactive prompt is detected via the
-	// conversation-DB probe instead (pending.go). It reports ONLY the blocking states
-	// ("question" / "permission"), so an empty probe means "nothing pending".
-	if meta.Kind == session.KindAgy {
-		st, _ := agy.Probe(meta)
-		return st
-	}
-	// copilot: no hooks — an unfinished permission.requested in events.jsonl is the only
-	// source of "pending" (it catches the tui's permission menu and managed's Interaction
-	// in the same shape).
-	if meta.Kind == session.KindCopilot {
-		return blockingState(copilot.LiveState(meta))
-	}
-	// kiro: no hooks — "question" (awaiting approval, "shell requires approval") is only
-	// returned by DriveState and never written to the status store, so the generic
-	// fallback below (status.Read) is always false for kiro. That is a hole through which
-	// free text sent while the approval panel is up passes unchecked on the TUI path, so
-	// guard by reading the TUI text directly (same shape as copilot; managed is already
-	// guarded by ErrQuestionPending).
-	if meta.Kind == session.KindKiro {
-		return blockingState(kiro.LiveState(meta))
+	if probe, ok := kindModalProbes[meta.Kind]; ok {
+		return blockingState(probe(meta))
 	}
 	// claude: when the credentials have expired, refuse on that ground before any modal
 	// (docs/log/47 §4-8). The TUI accepts the characters and the Enter goes through, yet
@@ -1147,6 +1130,31 @@ func promptBlocker(name string) string {
 	// on screen (plan_pending, not permission_pending) and the operator is pointed at
 	// the surface that can actually decide it.
 	return blockingState(effectiveModal(sid, st.State))
+}
+
+// kindModalProbes reads, for every kind whose modals never reach the status store, the modal
+// it is showing now ("" when none) — from the same source its own live state is built on, so
+// the refusal and the Console's badge agree. Every kind with a Terminal route is here except
+// claude, whose hooks write its question / plan / permission into the status store, and
+// shell / ssm, which have no modal; a kind missing from both would fall through to a status
+// store nothing fills and never be refused (TestPromptBlockerCoversEveryTerminalKind).
+var kindModalProbes = map[string]func(session.Meta) string{
+	// The conversation DB's last step (pending.go). It reports ONLY the blocking states
+	// ("question" / "permission"), so an empty probe means "nothing pending".
+	session.KindAgy: func(m session.Meta) string { st, _ := agy.Probe(m); return st },
+	// An unfinished permission.requested in events.jsonl — the tui's permission menu and
+	// managed's Interaction in the same shape.
+	session.KindCopilot: copilot.LiveState,
+	// The approval panel's text in the pane ("shell requires approval"), reported as
+	// "question"; managed is also guarded by ErrQuestionPending.
+	session.KindKiro: kiro.LiveState,
+	// Their hooks and plugin report working/idle at most, so the question (codex's rollout,
+	// opencode's store) and cursor's approval and build menus (the pane) are read where they
+	// live. Terminal route only: their managed drivers refuse free text themselves
+	// (ErrQuestionPending).
+	session.KindCodex:    codex.TerminalModal,
+	session.KindOpencode: opencode.TerminalModal,
+	session.KindCursor:   cursor.TerminalModal,
 }
 
 // blockingState maps a live state to "" (free) or the state itself (blocking). An
@@ -1182,9 +1190,9 @@ func blockedErrMessage(state string) string {
 	case "question":
 		return "a question is awaiting an answer; answer it via the question card, not free text"
 	case "plan":
-		return "a plan is awaiting approval; decide it from the plan card (typed text would be swallowed by the dialog and the Enter would approve it)"
+		return "a plan is awaiting approval; decide it from the plan card, or in the terminal when there is none (typed text would be swallowed by the dialog and the Enter would approve it)"
 	case "permission":
-		return "a permission prompt is awaiting a decision; answer it from the permission card (typed text would be swallowed by the menu and the Enter would allow it)"
+		return "a permission prompt is awaiting a decision; answer it from the permission card, or in the terminal when there is none (typed text would be swallowed by the menu and the Enter would allow it)"
 	case agents.StateAuth:
 		return "the claude login for this workspace has expired; re-authenticate from 設定 > エージェント (a prompt sent now would be accepted by the TUI but never start a turn)"
 	}

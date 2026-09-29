@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -107,7 +108,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 	for _, ln := range lines {
 		p.feed(ln)
 	}
-	return p.snapshot()
+	return p.snapshot(time.Time{})
 }
 
 // rolloutParser is the state parseRolloutFull threads through a rollout's lines, held as
@@ -135,6 +136,11 @@ type rolloutParser struct {
 	callTurn      map[string]int  // function_call call_id -> its tool/question turn index
 	answered      map[string]bool // call_ids whose function_call_output arrived
 	askCalls      []string        // request_user_input call_ids, in order (for pending)
+	// askCalls before this index were asked in a turn that has since ended, so none of them
+	// can still be on screen, answered or not. A SIGKILLed codex leaves its question with no
+	// output line at all, and neither `codex resume` nor any later turn writes one (measured
+	// 0.159.0): without this, that question stays "pending" for the rest of the rollout.
+	askOpenFrom int
 
 	// Last turn lifecycle event seen, for the missed-Stop heal (rolloutCompletedAfter).
 	// Folded in on the way past so that check costs nothing of its own.
@@ -252,8 +258,14 @@ func (p *rolloutParser) feed(ln []byte) {
 				p.curTurn = id
 			}
 			p.noteLifecycle("task_started", ev.Timestamp)
+			p.askOpenFrom = len(p.askCalls)
 		case "task_complete":
 			p.noteLifecycle("task_complete", ev.Timestamp)
+			p.askOpenFrom = len(p.askCalls)
+		case "turn_aborted":
+			// An interrupted turn (Esc) writes its question's output too; this only closes
+			// what a turn left with none.
+			p.askOpenFrom = len(p.askCalls)
 		case "token_count":
 			if in, out, read, win, ok := tokenUsage(ev.Payload); ok && p.lastAssistant >= 0 {
 				p.turns[p.lastAssistant].InTok = in
@@ -323,25 +335,57 @@ func (p *rolloutParser) noteLifecycle(kind, ts string) {
 // caller edits what it gets back (/messages rewrites userfile paths in place and drops
 // parts). So the turns are cloned first, and the pending question is removed from the
 // clone.
-func (p *rolloutParser) snapshot() ([]transcript.Turn, []transcript.Task, []transcript.Question, string) {
+//
+// since is the start of the process whose screen the question would be on (terminalSince);
+// an open question asked before it is left in the transcript as an unanswered block. Zero
+// applies no bound.
+func (p *rolloutParser) snapshot(since time.Time) ([]transcript.Turn, []transcript.Task, []transcript.Question, string) {
 	turns := cloneTurns(p.turns)
-	// Pending question = the last request_user_input still awaiting an answer. Its
-	// function_call is already in the rollout, so drop that turn from the transcript
-	// (it's surfaced interactively as pending instead) to avoid showing it twice — once
-	// answered it stays in the transcript as a normal answered question block.
+	// Pending question = the open ask (openAsk). Its function_call is already in the
+	// rollout, so drop that turn from the transcript (it's surfaced interactively as pending
+	// instead) to avoid showing it twice — once answered it stays in the transcript as a
+	// normal answered question block.
 	var pending []transcript.Question
-	for i := len(p.askCalls) - 1; i >= 0; i-- {
-		id := p.askCalls[i]
-		if p.answered[id] {
-			continue
-		}
-		if ti, ok := p.callTurn[id]; ok && len(turns[ti].Parts) > 0 {
+	if id, ok := p.openAsk(); ok {
+		if ti, ok := p.callTurn[id]; ok && len(turns[ti].Parts) > 0 && askedSince(turns[ti].TS, since) {
 			pending = turns[ti].Parts[0].Questions
 			turns = append(turns[:ti], turns[ti+1:]...)
 		}
-		break
 	}
 	return turns, append([]transcript.Task(nil), p.tasks...), pending, p.mode
+}
+
+// openAsk returns the question the parse leaves open: the last request_user_input with no
+// output, asked in a turn that has not ended.
+func (p *rolloutParser) openAsk() (string, bool) {
+	for i := len(p.askCalls) - 1; i >= p.askOpenFrom; i-- {
+		if id := p.askCalls[i]; !p.answered[id] {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// askedSince reports whether a question stamped ts can be on the screen of a process that
+// started at since. A zero since, or a stamp that does not parse, keeps the question.
+func askedSince(ts string, since time.Time) bool {
+	if since.IsZero() {
+		return true
+	}
+	at, err := time.Parse(time.RFC3339Nano, ts)
+	return err != nil || !at.Before(since)
+}
+
+// terminalSince is the start of the Terminal pane's current codex process. A question asked
+// before it belongs to a process that is gone, and its dialog went with it: `codex resume`
+// does not bring it back (measured 0.159.0). Zero for a managed session, whose open question
+// is the handle's Interaction (managedEnrich), and when no pane is running.
+func terminalSince(m session.Meta) time.Time {
+	if m.DriverKind() == session.DriverManaged {
+		return time.Time{}
+	}
+	t, _ := tmuxx.SessionCreated(session.TmuxName(m.Name))
+	return t
 }
 
 // cloneTurns copies turns deeply enough that a caller can rewrite them without reaching
@@ -368,7 +412,7 @@ func cloneTurns(in []transcript.Turn) []transcript.Turn {
 // payload type. Everything else is skipped without being decoded — see feed.
 func eventMsgUsed(kind string) bool {
 	switch kind {
-	case "task_started", "task_complete", "token_count", "context_compacted":
+	case "task_started", "task_complete", "turn_aborted", "token_count", "context_compacted":
 		return true
 	}
 	return false
@@ -1469,15 +1513,31 @@ func tokenUsage(payload json.RawMessage) (in, out, read, window int, ok bool) {
 }
 
 // HasPendingQuestion reports whether the slot's rollout currently ends in an
-// unanswered request_user_input — codex is sitting on its question dialog. Used by
-// WireLive to surface the "question" state (the question chip + notification) that
-// codex's injected hooks can't report (no notification hook fires for it). Light
+// unanswered request_user_input — codex is sitting on its question dialog. It is the
+// "question" state codex's injected hooks can't report (no hook fires for it): WireLive's
+// badge, DriveState's chip and the free-text gate (promptBlocker) all read it. Light
 // tail probe: only the last chunk of the rollout is scanned, so it stays cheap on
 // the sessions-list poll even for a long conversation.
 func HasPendingQuestion(m session.Meta) bool { return PendingQuestionID(m) != "" }
 
+// TerminalModal is the modal a codex Terminal pane shows that typed text would decide:
+// "question" while request_user_input waits, "" otherwise. A pasted line becomes a note on
+// the highlighted option, which the Enter then submits (measured 0.159.0). No approval prompt
+// reaches a human there: the pane runs with the bypass flags. A managed session answers "":
+// its driver refuses free text itself (ErrQuestionPending).
+func TerminalModal(m session.Meta) string {
+	if m.DriverKind() != session.DriverManaged && HasPendingQuestion(m) {
+		return "question"
+	}
+	return ""
+}
+
 // PendingQuestionID returns the stable request_user_input call id, used by the
 // durable notification outbox to deduplicate a prompt even after its event is acked.
+//
+// It applies the same two closures as snapshot, or a SIGKILLed question would stay pending
+// forever: a turn that ended leaves no question open, and on the Terminal route a question
+// older than the pane's codex process is not on anyone's screen (terminalSince).
 func PendingQuestionID(m session.Meta) string {
 	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
 	if path == "" {
@@ -1500,33 +1560,50 @@ func PendingQuestionID(m session.Meta) string {
 	if off > 0 && len(lines) > 0 {
 		lines = lines[1:] // drop the first, likely partial, line of a mid-file read
 	}
-	pendingCalls := map[string]bool{}
+	askedAt := map[string]string{} // open call id -> the timestamp of its function_call
 	for _, ln := range lines {
 		if strings.TrimSpace(ln) == "" {
 			continue
 		}
 		var ev struct {
-			Type    string `json:"type"`
-			Payload struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Payload   struct {
 				Type   string `json:"type"`
 				Name   string `json:"name"`
 				CallID string `json:"call_id"`
 			} `json:"payload"`
 		}
-		if json.Unmarshal([]byte(ln), &ev) != nil || ev.Type != "response_item" {
+		if json.Unmarshal([]byte(ln), &ev) != nil {
 			continue
 		}
-		switch ev.Payload.Type {
-		case "function_call":
+		switch ev.Type + "/" + ev.Payload.Type {
+		case "response_item/function_call":
 			if ev.Payload.Name == "request_user_input" && ev.Payload.CallID != "" {
-				pendingCalls[ev.Payload.CallID] = true
+				askedAt[ev.Payload.CallID] = ev.Timestamp
 			}
-		case "function_call_output", "custom_tool_call_output":
-			delete(pendingCalls, ev.Payload.CallID)
+		case "response_item/function_call_output", "response_item/custom_tool_call_output":
+			delete(askedAt, ev.Payload.CallID)
+		case "event_msg/task_started", "event_msg/task_complete", "event_msg/turn_aborted":
+			clear(askedAt)
 		}
 	}
-	for id := range pendingCalls {
-		return id
+	if len(askedAt) == 0 {
+		return ""
+	}
+	// Asked only now, so the tmux round trip is paid only when a question is open.
+	var since time.Time
+	if m.DriverKind() != session.DriverManaged {
+		t, ok := tmuxx.SessionCreated(session.TmuxName(m.Name))
+		if !ok {
+			return "" // no pane, no dialog
+		}
+		since = t
+	}
+	for id, ts := range askedAt {
+		if askedSince(ts, since) {
+			return id
+		}
 	}
 	return ""
 }
@@ -1541,7 +1618,11 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	path := rolloutPath(cxid)
 	td := agents.TranscriptData{Path: path, Compacting: compacting}
 	withRollout(path, slot, func(p *rolloutParser) {
-		td.Turns, td.Tasks, td.Pending, td.Mode = p.snapshot()
+		var since time.Time
+		if _, open := p.openAsk(); open {
+			since = terminalSince(m) // only when there is a question to bound: it runs tmux
+		}
+		td.Turns, td.Tasks, td.Pending, td.Mode = p.snapshot(since)
 	})
 	managedEnrich(m, &td)
 	return td, true

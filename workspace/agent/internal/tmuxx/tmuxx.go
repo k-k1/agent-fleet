@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -176,6 +177,23 @@ func atPromptFooter(s string) bool {
 
 func HasSession(tn string) bool {
 	return Cmd("has-session", "-t", session.ExactTarget(tn)).Run() == nil
+}
+
+// SessionCreated returns when the tmux session tn was created; ok is false when there is no
+// such session. Every launch is a fresh new-session whose pane closes with the CLI, so this
+// is no later than the start of the CLI process running in it: anything the CLI recorded
+// before this instant was recorded by an earlier process, whose screen is gone.
+func SessionCreated(tn string) (time.Time, bool) {
+	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created}").Output()
+	if err != nil {
+		return time.Time{}, false
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	sec, err := strconv.ParseInt(strings.TrimSpace(first), 10, 64)
+	if err != nil || sec <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0), true
 }
 
 // SessionPaneID returns the active pane id (e.g. "%0") of a session's current

@@ -29,7 +29,7 @@ func writeRollout(t *testing.T, path string, chunk string) {
 func snapshotOf(t *testing.T, path string) []transcript.Turn {
 	t.Helper()
 	var turns []transcript.Turn
-	if !withRollout(path, "", func(p *rolloutParser) { turns, _, _, _ = p.snapshot() }) {
+	if !withRollout(path, "", func(p *rolloutParser) { turns, _, _, _ = p.snapshot(time.Time{}) }) {
 		t.Fatalf("withRollout(%s) = false, want a readable rollout", path)
 	}
 	return turns
@@ -241,7 +241,7 @@ func TestRolloutConcurrentReaders(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
 				withRollout(path, "", func(p *rolloutParser) {
-					turns, _, _, _ := p.snapshot()
+					turns, _, _, _ := p.snapshot(time.Time{})
 					_ = turns
 				})
 			}
