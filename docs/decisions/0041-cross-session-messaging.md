@@ -233,3 +233,42 @@ peer-requested code change already passes. The policy text (`workspace/workspace
 substitution, quoted commands are text, no taking over denied work, no change to what governs
 this session now. Without this, review-driven fixes need a human relay for every edit that
 happens to touch a file named `CLAUDE.md` or `AGENTS.md`, which is the case the channel exists for.
+
+## Addendum (2026-09-30) — a message to a busy Managed session is queued, and a stop does not discard it
+
+Found through #1244 ([125-peer-message-held-behind-a-turn.md](../log/125-peer-message-held-behind-a-turn.md)).
+Two codex Managed children told to wait for a peer's message blocked in codex's `wait_agent`, and
+the sender got `delivered: true`. When the user stopped their turns, the messages vanished: they
+were not in the transcript, and neither side was told.
+
+- **What the code did.** The Context's "wait with `confirm:true` for evidence that the turn
+  actually started" holds only for claude on the Terminal route. On the Managed route `/input`
+  calls the driver's `Send`, which, while a turn runs, appends to an in-memory queue and returns.
+  So the sender was told `delivered` for a message nobody could see before the turn ended;
+  `turn/steer` was never involved. Every managed driver's `Interrupt` then discarded the whole
+  queue: docs/log/27 §12.2-4, "the intent to stop reaches the queue too", written for the user's
+  own follow-ups before peer messages existed.
+- **Decision.**
+  1. **A stop keeps peer messages.** Input sent with `peer_from` carries `KeepOnInterrupt`, and
+     `Interrupt` discards only unmarked input. The kept messages start as the next turn once the
+     interrupted one settles. The user's own queued follow-ups still go with the stop. Teardown
+     still discards everything: `DropHandle` (halt, archive, recreate, execution-method switch),
+     `AbortManaged` (Agent shutdown) and codex's daemon drain. The runtime a kept message would
+     start on is going away.
+  2. **The sender is told what happened.** The Managed `/input` answers `held: true` when the
+     prompt waits behind a running turn, and `send_to_peer_session` then returns
+     `delivered: false, queued: true` with a note not to resend. `delivered: true` means the
+     message reached the peer's agent (a new turn, or on the Terminal route input the CLI
+     accepted), never that it was read.
+  3. **A session waiting for a message ends its turn.** The fleet policy (`notes/agent-fleet.md`)
+     and `create_session`'s `initial_prompt` description say so. Waiting inside a tool keeps that
+     turn from ending, and the message waits behind it.
+- **Rejected.** Delivering to a busy codex / muse session with native `turn/steer`: the meaning
+  would differ per kind, it does not reach a recipient blocked inside one tool call, and what codex
+  does with an unconsumed steer on interrupt is unmeasured. Holding kept messages after a stop
+  until the next input: it needs a held state and a UI for it, and the incident needed the
+  opposite. Telling the sender about a discard: a new kind of message, when the discard itself can
+  be removed.
+- **Still open**: halt, archive and an Agent restart still lose a queued message (#1255). What each
+  Terminal CLI does with a prompt it queued when the turn is interrupted (#1256). Operator and
+  scheduled prompts are discarded by a stop the same way (#1257).

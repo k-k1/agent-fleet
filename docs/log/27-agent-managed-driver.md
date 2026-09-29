@@ -751,6 +751,8 @@ P2 の実装前プローブ（隔離 XDG ホームで `opencode serve` を起動
    → **Steer は driver 内キュー**（実行中 turn の完走後に次 turn として投入 — §4 の queued 状態
    そのもの）で実装。キューは `TranscriptData.Queued` に合流し キュー済み バッジに出る。
    interrupt はキューも破棄する（停止の意思はキューに及ぶ）。
+   🔴 2026-09-30: peer メッセージ（`KeepOnInterrupt`）は例外で、残して次のターンにする。停止を押す人が
+   書いたものではないため（ADR 0041 補遺 2026-09-30・docs/log/125）。
 5. **interrupt = `POST /session/{id}/abort`**: blocking /message は 200＋部分結果で返り、assistant
    message に `time.completed`＋error が刻まれる → `sessionResumable` は真に戻る（resume 安全）。
    `session.error`＋`session.idle` イベントが飛ぶ。

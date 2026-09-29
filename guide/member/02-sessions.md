@@ -658,6 +658,9 @@ one ("tell the session next door what we just did").
 - **Messages cross agent kinds** — claude to codex, opencode to cursor, and so on.
 - **They reach a stopped session** — it is resumed first, then the message is delivered.
 - **Delivery is confirmed; being read or acted on is not.** A reply is not guaranteed either.
+  A **Managed** session that is in the middle of a turn gets the message as its next turn, once
+  the current one ends. Stopping that run does not throw the message away; stopping the session
+  or the workspace before then does.
 - **Only plain text travels.** No conversation history, no files. To pass the context itself,
   use the handoff or the branch above.
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
