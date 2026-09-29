@@ -681,7 +681,17 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 			recordFleetGraphInstruct(meta.Name, src, reportTo, "", prompt)
 		}
 	}
-	if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
+	// A peer message must survive a stop of the turn it waits behind: the person pressing stop
+	// did not write it, and its sender is not watching to send it again (ADR 0041, addendum
+	// 2026-09-30).
+	in := agents.TurnInput{Prompt: prompt, KeepOnInterrupt: peerFrom != ""}
+	queued := false
+	if qs, ok := h.(agents.QueueingSender); ok {
+		queued, err = qs.SendQueued(in)
+	} else {
+		err = h.Send(in)
+	}
+	if err != nil {
 		if errors.Is(err, agents.ErrQuestionPending) {
 			httpx.WriteErr(w, http.StatusConflict, "question_pending",
 				"a question is awaiting an answer; answer it via the question card, not free text")
@@ -709,7 +719,15 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		mirrorUserInputAsync(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
 		fleetgraph.RecordInstruct("user", meta.Name, "", prompt)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})
+	// held: the prompt waits behind the running turn and nobody has read it yet. The managed
+	// path has no delivery confirmation to block on, so this is the only way a caller that is
+	// not watching (send_to_peer_session) can tell "started a turn" from "held". Not named
+	// "queued": this endpoint's when_ready answer already uses that key, for a session name.
+	resp := map[string]any{"sent": meta.Name}
+	if queued {
+		resp["held"] = true
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // submitPromptTUI is the shared {prompt}→TUI delivery behind /input's {prompt} path

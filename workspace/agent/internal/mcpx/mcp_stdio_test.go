@@ -1017,3 +1017,64 @@ func TestGetSessionStatusTrimsOnlyForSessions(t *testing.T) {
 		t.Errorf("the operator lost the pending plan body it needs: %s", got)
 	}
 }
+
+// A Managed peer in the middle of a turn only queues the message. Called delivered, it sends the
+// sender on as if the peer had read it; the result says queued instead, and not to resend.
+func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
+	withFleetSpawn(t, false)
+	mcpPeerMessagingEnabled = true
+	answer := `{"sent":"child1","held":true}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions/child1/status":
+			_, _ = w.Write([]byte(`{"alive":true,"ready":true,"status":"working"}`))
+		case "/sessions/child1/input":
+			_, _ = w.Write([]byte(answer))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	send := func() map[string]any {
+		t.Helper()
+		args, _ := json.Marshal(map[string]any{"name": "child1", "intent": "notice", "message": "PR #1 is up"})
+		params, _ := json.Marshal(map[string]any{"name": "send_to_peer_session", "arguments": json.RawMessage(args)})
+		resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
+		var parsed struct {
+			Result struct {
+				IsError bool `json:"isError"`
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(resp, &parsed); err != nil || parsed.Result.IsError || len(parsed.Result.Content) == 0 {
+			t.Fatalf("resp = %s err = %v", resp, err)
+		}
+		var out map[string]any
+		if err := json.Unmarshal([]byte(parsed.Result.Content[0].Text), &out); err != nil {
+			t.Fatalf("result not JSON: %v: %s", err, parsed.Result.Content[0].Text)
+		}
+		return out
+	}
+
+	got := send()
+	if got["delivered"] != false || got["queued"] != true {
+		t.Errorf("queued send = %v, want delivered=false queued=true", got)
+	}
+	if note, _ := got["note"].(string); note == "" {
+		t.Errorf("queued send carries no note: %v", got)
+	}
+
+	answer = `{"sent":"child1"}`
+	got = send()
+	if got["delivered"] != true {
+		t.Errorf("send that started a turn = %v, want delivered=true", got)
+	}
+	if _, ok := got["queued"]; ok {
+		t.Errorf("send that started a turn = %v, want no queued", got)
+	}
+}

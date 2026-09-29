@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,8 @@ import (
 // fakeACP is a scriptable ACP peer on the other end of the client's pipes.
 type fakeACP struct {
 	toClient  *io.PipeWriter
+	mu        sync.Mutex
+	prompts   []string // text of each session/prompt, in arrival order
 	gotPrompt chan int64
 	gotCancel chan struct{}
 	gotResp   chan json.RawMessage
@@ -49,6 +52,7 @@ func (f *fakeACP) serve(r io.Reader) {
 		var msg struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 		}
 		if json.Unmarshal(sc.Bytes(), &msg) != nil {
 			continue
@@ -61,6 +65,23 @@ func (f *fakeACP) serve(r io.Reader) {
 		_ = json.Unmarshal(msg.ID, &id)
 		switch msg.Method {
 		case "session/prompt":
+			var p struct {
+				Prompt []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"prompt"`
+			}
+			_ = json.Unmarshal(msg.Params, &p)
+			text := ""
+			for _, b := range p.Prompt {
+				if b.Type == "text" {
+					text = b.Text
+					break
+				}
+			}
+			f.mu.Lock()
+			f.prompts = append(f.prompts, text)
+			f.mu.Unlock()
 			f.gotPrompt <- id
 		case "session/cancel":
 			f.gotCancel <- struct{}{}
@@ -72,6 +93,13 @@ func (f *fakeACP) serve(r io.Reader) {
 			}
 		}
 	}
+}
+
+// promptTexts is the text of each session/prompt received, in order.
+func (f *fakeACP) promptTexts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.prompts...)
 }
 
 func (f *fakeACP) reply(id int64, result any) {
@@ -190,6 +218,90 @@ func TestInterruptCancels(t *testing.T) {
 	<-f.gotCancel
 	f.reply(id, map[string]any{"stopReason": "cancelled"})
 	waitState(t, h, agents.TurnCancelled)
+}
+
+// A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
+// the next turn, while the user's own queued follow-up still goes with the stop.
+func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
+	h, f := newTestHandle(t)
+	queued, err := h.SendQueued(agents.TurnInput{Prompt: "stuck", ClientMessageID: "m1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued {
+		t.Fatal("input to an idle session was reported as queued")
+	}
+	first := <-f.gotPrompt
+	waitState(t, h, agents.TurnRunning)
+	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "m2", KeepOnInterrupt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("input behind a running turn was not reported as queued")
+	}
+	if err := h.Steer(agents.TurnInput{Prompt: "own follow-up", ClientMessageID: "m3"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Interrupt(); err != nil {
+		t.Fatal(err)
+	}
+	<-f.gotCancel
+	f.reply(first, map[string]any{"stopReason": "cancelled"})
+	var second int64
+	select {
+	case second = <-f.gotPrompt:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the peer message did not start a turn after the stop")
+	}
+	// The kept turn is held by the fake, so the pump is parked in it: anything still queued now
+	// is something the stop failed to discard.
+	if got := h.queuedPrompts(); len(got) != 0 {
+		t.Errorf("queue after the kept turn started = %v, want the own follow-up discarded", got)
+	}
+	if got := f.promptTexts(); len(got) != 2 || got[1] != "from a peer" {
+		t.Errorf("prompts = %q, want the peer message as the turn after the stop", got)
+	}
+	f.reply(second, map[string]any{"stopReason": "end_turn"})
+	select {
+	case next := <-f.gotPrompt:
+		t.Error("the discarded follow-up started a turn")
+		f.reply(next, map[string]any{"stopReason": "end_turn"}) // let the pump drain before cleanup
+	case <-time.After(200 * time.Millisecond):
+	}
+	waitState(t, h, agents.TurnCompleted)
+}
+
+// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
+// on the way down.
+func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+	h, f := newTestHandle(t)
+	handlesMu.Lock()
+	handles[h.name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, h.name)
+		handlesMu.Unlock()
+	})
+	_ = h.Send(agents.TurnInput{Prompt: "long", ClientMessageID: "m1"})
+	id := <-f.gotPrompt
+	waitState(t, h, agents.TurnRunning)
+	_ = h.Send(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "m2", KeepOnInterrupt: true})
+	AbortManaged()
+	<-f.gotCancel
+	// The cancelled turn is still held by the fake, so the pump cannot have taken anything yet.
+	if got := h.queuedPrompts(); len(got) != 0 {
+		t.Errorf("queue after shutdown interrupt = %v", got)
+	}
+	f.reply(id, map[string]any{"stopReason": "cancelled"})
+	select {
+	case next := <-f.gotPrompt:
+		t.Error("a turn started after the shutdown interrupt")
+		f.reply(next, map[string]any{"stopReason": "end_turn"}) // let the pump drain before cleanup
+	case <-time.After(200 * time.Millisecond):
+		waitState(t, h, agents.TurnCancelled)
+	}
 }
 
 func TestPermissionInteractionRoundTrip(t *testing.T) {

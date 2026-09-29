@@ -204,7 +204,7 @@ func dropHandle(name string) <-chan struct{} {
 	if h == nil {
 		return nil
 	}
-	_ = h.Interrupt()
+	_ = h.interruptAll()
 	// Close the store's cached write handle (Store.Close's own doc comment: optional, but
 	// this IS the "eventual session-shutdown path" it names) and the MCP manager (mcpMgr.Close,
 	// killing any stdio children — decision 6's "子プロセスを取り残さないこと") only once any
@@ -263,7 +263,7 @@ func AbortManaged() {
 		running := h.running
 		h.mu.Unlock()
 		if running {
-			_ = h.Interrupt()
+			_ = h.interruptAll()
 		}
 	}
 }
@@ -392,26 +392,39 @@ func (h *threadHandle) settle() {
 
 // --- ThreadHandle interface --------------------------------------------------------
 
-func (h *threadHandle) Send(in agents.TurnInput) error  { return h.accept(in) }
-func (h *threadHandle) Steer(in agents.TurnInput) error { return h.accept(in) }
+func (h *threadHandle) Send(in agents.TurnInput) error {
+	_, err := h.accept(in)
+	return err
+}
+
+func (h *threadHandle) Steer(in agents.TurnInput) error {
+	_, err := h.accept(in)
+	return err
+}
+
+// SendQueued is Send reporting whether the input was held behind a running turn.
+func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) { return h.accept(in) }
 
 // accept queues in as the next turn (see Capabilities' own doc comment on the Steer
 // simplification) and starts the pump goroutine if it is not already draining the queue.
-func (h *threadHandle) accept(in agents.TurnInput) error {
+// queued reports that the input waits behind a running turn (or behind earlier queued input)
+// rather than starting now.
+func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 	if strings.TrimSpace(in.Prompt) == "" {
-		return errors.New("empty prompt")
+		return false, errors.New("empty prompt")
 	}
 	in.ClientMessageID = normalizeMsgID(in.ClientMessageID)
 	h.mu.Lock()
 	if h.inter != nil {
 		h.mu.Unlock()
-		return agents.ErrQuestionPending
+		return false, agents.ErrQuestionPending
 	}
 	h.queue = append(h.queue, in)
 	start := !h.pumping
 	if start {
 		h.pumping = true
 	}
+	queued = h.running || len(h.queue) > 1
 	h.mu.Unlock()
 	// Always move off whatever terminal state the handle was last left in — synchronously,
 	// on the caller's own goroutine — so a caller polling Snapshot() right after Send/Steer
@@ -422,7 +435,7 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 	if start {
 		go h.pump()
 	}
-	return nil
+	return queued, nil
 }
 
 // pump drains the queue serially — one runTurn at a time, matching every other driver's
@@ -592,15 +605,27 @@ func (h *threadHandle) failTurn(st *Store, msg string) {
 	h.finishTurn(agents.TurnFailed)
 }
 
-// Interrupt cancels the running turn's context and clears the queued follow-ups. A blocked
+// Interrupt cancels the running turn's context and clears the queued follow-ups, except
+// KeepOnInterrupt input (another session's message), which starts as the next turn. A blocked
 // approve()/askUser() (waitInteraction's own ctx.Done() case) unblocks the same way a
 // mid-Send/mid-tool cancellation would — Interrupt does not need to know which of the three
 // harness.Run was doing when it was called.
-func (h *threadHandle) Interrupt() error {
+func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+
+// interruptAll is Interrupt for teardown (dropHandle, Agent shutdown): the whole queue goes.
+// The pump checks neither liveness nor a context, so a kept entry would still be run by a
+// handle that dropHandle has already taken out of the map, on a store it is about to close.
+func (h *threadHandle) interruptAll() error { return h.interrupt(false) }
+
+func (h *threadHandle) interrupt(keep bool) error {
 	h.mu.Lock()
 	running := h.running
 	cancel := h.cancel
-	h.queue = nil
+	if keep {
+		h.queue = agents.KeptOnInterrupt(h.queue)
+	} else {
+		h.queue = nil
+	}
 	if running {
 		h.state = agents.TurnInterrupting
 	}

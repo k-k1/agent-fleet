@@ -177,7 +177,7 @@ internal/sessionx/session_io.go HandleSessionInput x1 {queued}
 internal/sessionx/session_io.go HandleSessionInput x3 {sent}
 internal/sessionx/session_io.go HandleSessionOutput x2 {alive,clipped,cursor,name,output,status}
 internal/sessionx/session_io.go HandleSessionStatus x1 {alive,kind,name,plan,questions,ready,status} cond{plan,questions}
-internal/sessionx/session_io.go handleManagedInputPrompt x1 {sent}
+internal/sessionx/session_io.go handleManagedInputPrompt x1 {held,sent} cond{held}
 internal/sessionx/session_marks.go HandleSessionMarks x1 {marks}
 internal/sessionx/session_marks.go HandleSessionMarks x2 {mark}
 internal/sessionx/session_paste.go SavePastedImageTo x1 {name,path}

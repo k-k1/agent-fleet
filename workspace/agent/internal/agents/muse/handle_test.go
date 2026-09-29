@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -281,6 +282,154 @@ func TestInterruptCancelsTheQueueAndCallsTurnInterrupt(t *testing.T) {
 	}
 }
 
+// A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
+// the next turn once the host reports the interrupted one finished, while the user's own
+// queued follow-up still goes with the stop.
+func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // accept records every send in the ledger
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	starts := make(chan string, 4)
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.TurnStartParams
+		json.Unmarshal(m.Params, &p)
+		starts <- *p.Input[0].Text
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Handle(msp.MethodTurnInterrupt, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+
+	queued, err := h.SendQueued(agents.TurnInput{Prompt: "stuck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued {
+		t.Fatal("input to an idle session was reported as queued")
+	}
+	<-starts
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("input behind a running turn was not reported as queued")
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "own follow-up"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.Interrupt(); err != nil {
+		t.Fatalf("interrupt: %v", err)
+	}
+	host.WaitForMethod(msp.MethodTurnInterrupt)
+	// Nothing drains before turn/completed, so the queue is exactly what the stop left.
+	h.mu.Lock()
+	var left []string
+	for _, in := range h.queue {
+		left = append(left, in.Prompt)
+	}
+	h.mu.Unlock()
+	if len(left) != 1 || left[0] != "from a peer" {
+		t.Fatalf("queue after the stop = %q, want only the peer message", left)
+	}
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{
+		TurnID: "t-1", SessionID: h.sid, Terminal: msp.TurnTerminalCancelled,
+	})
+	select {
+	case s := <-starts:
+		if s != "from a peer" {
+			t.Errorf("started %q, want the peer message", s)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the peer message did not start a turn after the stop")
+	}
+}
+
+// Between a turn/start and its turn/started the handle does not know a turn is running, so a
+// second send goes to the host, which queues it behind the first. The host's disposition is then
+// the only thing that tells the sender the message has not been read yet.
+func TestSendInTheStartGapReportsTheHostQueue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	var starts atomic.Int32
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		if starts.Add(1) == 1 {
+			return msp.TurnStartResult{Disposition: msp.TurnStartDispositionStarted, StartedNewTurn: true, TurnID: "t-1"}, nil
+		}
+		return msp.TurnStartResult{Disposition: msp.TurnStartDispositionQueued, TurnID: "t-2"}, nil
+	})
+
+	queued, err := h.SendQueued(agents.TurnInput{Prompt: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued {
+		t.Fatal("a turn the host started was reported as queued")
+	}
+	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("input the host queued behind the first turn was reported as started")
+	}
+	if got := starts.Load(); got != 2 {
+		t.Fatalf("turn/start count = %d, want 2 (the handle cannot know the first is running yet)", got)
+	}
+}
+
+// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
+// on the host being shut down.
+func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	handlesMu.Lock()
+	handles[h.name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, h.name)
+		handlesMu.Unlock()
+	})
+	starts := make(chan string, 4)
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.TurnStartParams
+		json.Unmarshal(m.Params, &p)
+		starts <- *p.Input[0].Text
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Handle(msp.MethodTurnInterrupt, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	AbortManaged()
+	host.WaitForMethod(msp.MethodTurnInterrupt)
+	h.mu.Lock()
+	left := len(h.queue)
+	h.mu.Unlock()
+	if left != 0 {
+		t.Errorf("%d entries queued after the shutdown interrupt, want none", left)
+	}
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{
+		TurnID: "t-1", SessionID: h.sid, Terminal: msp.TurnTerminalCancelled,
+	})
+	select {
+	case s := <-starts:
+		t.Errorf("a turn started after the shutdown interrupt: %q", s)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 // 🔴 A session started with no model chosen must name the safe model explicitly. Omitting
 // modelId is what hands the member to the host's own default, which is the contributor variant
 // (ADR 0095 decision 6 clamp 8) — and a session that "just works" is exactly the one nobody
@@ -394,7 +543,7 @@ func TestClearEffortLeavesTheNextTurnWithoutOne(t *testing.T) {
 
 	// The control first: with an effort held, the turn carries it. Without this arm a turn
 	// that never carried one would pass the assertion below.
-	if err := h.startTurn(agents.TurnInput{Prompt: "one"}); err != nil {
+	if _, err := h.startTurn(agents.TurnInput{Prompt: "one"}); err != nil {
 		t.Fatalf("startTurn: %v", err)
 	}
 	if got := (<-turns)["reasoningEffort"]; got != "max" {
@@ -404,7 +553,7 @@ func TestClearEffortLeavesTheNextTurnWithoutOne(t *testing.T) {
 	if err := h.UpdateSettings(agents.ThreadSettings{ClearEffort: true}); err != nil {
 		t.Fatalf("UpdateSettings: %v", err)
 	}
-	if err := h.startTurn(agents.TurnInput{Prompt: "two"}); err != nil {
+	if _, err := h.startTurn(agents.TurnInput{Prompt: "two"}); err != nil {
 		t.Fatalf("startTurn: %v", err)
 	}
 	if raw := <-turns; raw["reasoningEffort"] != nil {

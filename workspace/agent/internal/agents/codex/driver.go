@@ -490,7 +490,7 @@ func AbortManaged() {
 		running := h.running
 		h.mu.Unlock()
 		if running {
-			_ = h.Interrupt()
+			_ = h.interruptAll()
 		}
 	}
 }
@@ -611,7 +611,13 @@ func (h *threadHandle) runtimeLost() {
 // --- ThreadHandle interface ---------------------------------------------------
 
 // Send starts a turn (turn/start), queueing behind a running one.
-func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in) }
+func (h *threadHandle) Send(in agents.TurnInput) error {
+	_, err := h.accept(in)
+	return err
+}
+
+// SendQueued is Send reporting whether the input was held behind a running turn.
+func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) { return h.accept(in) }
 
 // Steer injects a follow-up into the RUNNING turn via native turn/steer (measured: keyed
 // on expectedTurnId, it joins the same turn). When no turn is running (a race just after
@@ -633,7 +639,8 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 	cl, tid, turnID, running := h.client, h.tid, h.turnID, h.running
 	h.mu.Unlock()
 	if !running || turnID == "" {
-		return h.accept(in)
+		_, err := h.accept(in)
+		return err
 	}
 	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
 		return nil // resend: the ledger makes it idempotent (§4)
@@ -660,26 +667,28 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 	return nil
 }
 
-func (h *threadHandle) accept(in agents.TurnInput) error {
+// accept queues the input and starts the pump when none runs. queued reports that the input
+// waits behind a running turn (or behind earlier queued input) rather than starting now.
+func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 	if strings.TrimSpace(in.Prompt) == "" && len(in.Attachments) == 0 {
-		return errors.New("empty prompt")
+		return false, errors.New("empty prompt")
 	}
 	in.ClientMessageID = agents.NormalizeMsgID(in.ClientMessageID)
 	h.mu.Lock()
 	if !h.alive {
 		h.mu.Unlock()
-		return errors.New("runtime が停止しています（再開してください）")
+		return false, errors.New("runtime が停止しています（再開してください）")
 	}
 	if h.inter != nil {
 		// Free text sent while a question is pending invites a wrong answer (the same
 		// judgement as /input's question_pending guard); steer to the structured
 		// answer (Respond).
 		h.mu.Unlock()
-		return agents.ErrQuestionPending
+		return false, agents.ErrQuestionPending
 	}
 	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
 		h.mu.Unlock()
-		return nil // resend: the ledger makes it idempotent (§4)
+		return false, nil // resend: the ledger makes it idempotent (§4)
 	}
 	h.queue = append(h.queue, in)
 	// An externally running turn taken over by Resume has no pump goroutine. In that case
@@ -689,14 +698,15 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 	if start {
 		h.pumping = true
 	}
-	if h.running || len(h.queue) > 1 {
+	queued = h.running || len(h.queue) > 1
+	if queued {
 		h.state = agents.TurnQueued
 	}
 	h.mu.Unlock()
 	if start {
 		go h.pump()
 	}
-	return nil
+	return queued, nil
 }
 
 // pump processes the queue serially: run one turn/start, wait for its
@@ -815,13 +825,23 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 	}
 }
 
-// Interrupt aborts the running turn and clears the queued follow-ups: the intent to stop
-// reaches the queue too.
-func (h *threadHandle) Interrupt() error {
+// Interrupt aborts the running turn and clears the queued follow-ups — the intent to stop
+// reaches the queue too — except KeepOnInterrupt input, which starts as the next turn.
+func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+
+// interruptAll is Interrupt for teardown (Agent shutdown, daemon drain): the whole queue goes,
+// because a kept entry would be started on the runtime being shut down.
+func (h *threadHandle) interruptAll() error { return h.interrupt(false) }
+
+func (h *threadHandle) interrupt(keep bool) error {
 	h.mu.Lock()
 	cl, tid, turnID := h.client, h.tid, h.turnID
 	running := h.running || turnID != "" // turnID only: a running turn taken over after an agent restart
-	h.queue = nil
+	if keep {
+		h.queue = agents.KeptOnInterrupt(h.queue)
+	} else {
+		h.queue = nil
+	}
 	if running {
 		h.state = agents.TurnInterrupting
 	}

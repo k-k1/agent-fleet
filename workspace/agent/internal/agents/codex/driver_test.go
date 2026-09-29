@@ -33,14 +33,18 @@ type mockCodexServer struct {
 	wmu    sync.Mutex
 	mu     sync.Mutex
 
-	calls          []mockRPC
-	turns          []string
-	clientIDs      []string
-	activeTurn     string
-	nextTurn       int
-	autoComplete   bool
-	failNextSteer  bool
-	failNextStart  json.RawMessage // when set, turn/start answers with this JSON-RPC error instead of starting a turn
+	calls         []mockRPC
+	turns         []string
+	clientIDs     []string
+	activeTurn    string
+	nextTurn      int
+	autoComplete  bool
+	failNextSteer bool
+	failNextStart json.RawMessage // when set, turn/start answers with this JSON-RPC error instead of starting a turn
+	// holdInterrupt answers turn/interrupt without completing the turn, so a test can read the
+	// queue while the pump is still parked in the interrupted turn — after the completion the
+	// pump may already have taken what the interrupt left, and an empty queue proves nothing.
+	holdInterrupt  bool
 	experimental   bool
 	clientResponse chan rpcMsg
 	// callSignal is closed and replaced every time a call is recorded, so a waiter can BLOCK
@@ -160,7 +164,12 @@ func (m *mockCodexServer) serve(conn *websocket.Conn) {
 			}
 		case "turn/interrupt":
 			m.result(msg.ID, map[string]any{})
-			m.complete("interrupted")
+			m.mu.Lock()
+			hold := m.holdInterrupt
+			m.mu.Unlock()
+			if !hold {
+				m.complete("interrupted")
+			}
 		default:
 			m.result(msg.ID, map[string]any{})
 		}
@@ -509,6 +518,78 @@ func TestInterruptCancelsTurnAndClearsQueue(t *testing.T) {
 	}
 	if got := m.callCount("turn/interrupt"); got != 1 {
 		t.Fatalf("turn/interrupt count = %d", got)
+	}
+}
+
+// A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
+// the next turn, while the user's own queued follow-up still goes with the stop.
+func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-interrupt-keep")
+	registerCodexTestHandle(t, h)
+	queued, err := h.SendQueued(agents.TurnInput{Prompt: "stuck", ClientMessageID: "af_stuck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued {
+		t.Fatal("input to an idle thread was reported as queued")
+	}
+	waitCodexState(t, h, agents.TurnRunning)
+	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "af_peer", KeepOnInterrupt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("input behind a running turn was not reported as queued")
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "own follow-up", ClientMessageID: "af_own"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.Interrupt(); err != nil {
+		t.Fatal(err)
+	}
+	// The kept turn is left running (no autoComplete), so the pump is parked in it: anything
+	// still queued now is something the stop failed to discard.
+	waitCodexCalls(t, m, "turn/start", 2)
+	waitCodexState(t, h, agents.TurnRunning)
+	if got := h.queuedPrompts(); len(got) != 0 {
+		t.Fatalf("queue after the kept turn started = %v, want the own follow-up discarded", got)
+	}
+	m.mu.Lock()
+	turns := append([]string(nil), m.turns...)
+	m.mu.Unlock()
+	if len(turns) != 2 || turns[1] != "from a peer" {
+		t.Fatalf("turns = %q, want the peer message as the turn after the stop", turns)
+	}
+	m.complete("completed") // settle the kept turn while this test's HOME is still in place
+	waitCodexState(t, h, agents.TurnCompleted)
+}
+
+// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
+// on the way down.
+func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-abort-kept")
+	registerCodexTestHandle(t, h)
+	if err := h.Send(agents.TurnInput{Prompt: "long", ClientMessageID: "af_long"}); err != nil {
+		t.Fatal(err)
+	}
+	waitCodexState(t, h, agents.TurnRunning)
+	if err := h.Send(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "af_peer", KeepOnInterrupt: true}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.holdInterrupt = true
+	m.mu.Unlock()
+	AbortManaged()
+	if got := h.queuedPrompts(); len(got) != 0 {
+		t.Fatalf("queue after shutdown interrupt = %v", got)
+	}
+	m.complete("interrupted")
+	waitCodexState(t, h, agents.TurnCancelled)
+	if got := m.callCount("turn/start"); got != 1 {
+		t.Fatalf("turn/start count = %d, want no turn started after the shutdown interrupt", got)
 	}
 }
 

@@ -27,6 +27,26 @@ type TurnInput struct {
 	// submission after a reconnect, idempotent. The ledger that backs it holds operational
 	// metadata only, never conversation content (§9.5).
 	ClientMessageID string
+	// KeepOnInterrupt marks input from a sender who is not the one pressing stop — another
+	// session's message (ADR 0041). Interrupt leaves it queued, and it starts as the next turn
+	// once the interrupted one settles. Unmarked input is the stop's own target and is discarded
+	// with the turn (docs/log/27 §12.2-4). Without the mark, the stop that frees a stuck turn
+	// would also discard the message that turn was keeping out, and its sender would never know.
+	// Teardown (DropHandle, AbortManaged, a daemon drain) still discards it: the runtime it would
+	// start on is going away.
+	KeepOnInterrupt bool
+}
+
+// KeptOnInterrupt is what an Interrupt leaves in a driver's queue: the KeepOnInterrupt
+// entries, in their order. nil when there are none.
+func KeptOnInterrupt(queue []TurnInput) []TurnInput {
+	var kept []TurnInput
+	for _, in := range queue {
+		if in.KeepOnInterrupt {
+			kept = append(kept, in)
+		}
+	}
+	return kept
 }
 
 // ThreadSettings is a dynamic settings update (§9.4-3: changing the model/effort of a
@@ -176,6 +196,15 @@ type ThreadHandle interface {
 	Respond(reply InteractionReply) error
 	Events() <-chan Event
 	Snapshot() (ThreadSnapshot, error)
+}
+
+// QueueingSender is implemented by a handle whose Send can hold input behind a running turn.
+// SendQueued is Send that also says which happened: queued = true when the input waits in the
+// driver's queue for the running turn to end, false when it went to the runtime as a turn of
+// its own. A sender that is not watching (a peer session) needs the difference — a queued
+// message has not been seen yet, and a model that proceeds as if it had goes wrong.
+type QueueingSender interface {
+	SendQueued(in TurnInput) (queued bool, err error)
 }
 
 // Capabilities is the capability declaration Console renders from (§3.1). Console holds no

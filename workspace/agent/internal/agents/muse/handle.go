@@ -719,41 +719,55 @@ func (h *threadHandle) clearAsk(match func(*pendingAsk) bool) {
 // Send starts a turn, queueing it when one is already running. MSP would accept a queued turn
 // itself (turn/start has an ifBusy policy), but AF owns the queue for every managed kind and
 // the Console renders it, so the queue stays here.
-func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in, false) }
+func (h *threadHandle) Send(in agents.TurnInput) error {
+	_, err := h.accept(in, false)
+	return err
+}
+
+// SendQueued is Send reporting whether the input was held behind a running turn.
+func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) { return h.accept(in, false) }
 
 // Steer injects input into the RUNNING turn. MSP carries it natively, so unlike the ACP kinds
 // this is not a queue in disguise — but a steer with no turn to steer is a plain send.
-func (h *threadHandle) Steer(in agents.TurnInput) error { return h.accept(in, true) }
+func (h *threadHandle) Steer(in agents.TurnInput) error {
+	_, err := h.accept(in, true)
+	return err
+}
 
-func (h *threadHandle) accept(in agents.TurnInput, steer bool) error {
+// accept starts, steers or queues the input. queued reports that it waits behind a running
+// turn: in this driver's queue, or in the host's own (startTurn).
+func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err error) {
 	if id := agents.NormalizeMsgID(in.ClientMessageID); id != "" && ledger.SeenOrRecord(h.name, id) {
-		return nil // a resend after a reconnect must not start a second turn
+		return false, nil // a resend after a reconnect must not start a second turn
 	}
 	h.mu.Lock()
 	if !h.alive || h.cl == nil {
 		h.mu.Unlock()
-		return errors.New("Muse Code のホストが起動していません")
+		return false, errors.New("Muse Code のホストが起動していません")
 	}
 	running, turnID := h.running, h.turnID
 	if running && !steer {
 		h.queue = append(h.queue, in)
 		h.mu.Unlock()
-		return nil
+		return true, nil
 	}
 	h.mu.Unlock()
 
 	if steer && running && turnID != "" {
-		return h.steerNow(in, turnID)
+		return false, h.steerNow(in, turnID)
 	}
 	return h.startTurn(in)
 }
 
-func (h *threadHandle) startTurn(in agents.TurnInput) error {
+// startTurn submits a turn. queued is the host's own answer that the input waits behind a turn
+// already running there (disposition "queued"). Between a turn/start and its turn/started this
+// handle does not know a turn is running, so its own queue cannot tell.
+func (h *threadHandle) startTurn(in agents.TurnInput) (queued bool, err error) {
 	h.mu.Lock()
 	cl, sid, effort := h.cl, h.sid, h.settings.Effort
 	h.mu.Unlock()
 	if cl == nil {
-		return errors.New("Muse Code のホストが起動していません")
+		return false, errors.New("Muse Code のホストが起動していません")
 	}
 	params := msp.TurnStartParams{
 		CommandID: msp.NewCommandID(),
@@ -763,13 +777,20 @@ func (h *threadHandle) startTurn(in agents.TurnInput) error {
 	if e := reasoningEffort(effort); e != nil {
 		params.ReasoningEffort = e
 	}
-	if err := cl.CallInto(msp.MethodTurnStart, params, callTimeout, nil); err != nil {
-		return err
+	raw, err := cl.Call(msp.MethodTurnStart, params, callTimeout)
+	if err != nil {
+		return false, err
 	}
+	// Read leniently: the turn is already admitted, so an answer without a disposition (or in
+	// another shape) must not turn it into a failed send. It reads as started, as before.
+	var res struct {
+		Disposition msp.TurnStartDisposition `json:"disposition"`
+	}
+	_ = json.Unmarshal(raw, &res)
 	// turn/started follows as a notification and is what actually moves the state; marking
 	// running here would race it into a stuck "working" if the host refused the turn after
 	// accepting the command.
-	return nil
+	return res.Disposition == msp.TurnStartDispositionQueued, nil
 }
 
 func (h *threadHandle) steerNow(in agents.TurnInput, turnID string) error {
@@ -797,7 +818,7 @@ func (h *threadHandle) pump() {
 	next := h.queue[0]
 	h.queue = h.queue[1:]
 	h.mu.Unlock()
-	if err := h.startTurn(next); err != nil {
+	if _, err := h.startTurn(next); err != nil {
 		log.Printf("muse: %s: queued turn failed to start: %v", h.name, err)
 	}
 }
@@ -892,10 +913,23 @@ func imageMediaType(path string) (string, bool) {
 	return "", false
 }
 
-func (h *threadHandle) Interrupt() error {
+// Interrupt stops the running turn and clears the queued follow-ups, except KeepOnInterrupt
+// input (another session's message), which starts as the next turn once the host reports the
+// interrupted one finished.
+func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+
+// interruptAll is Interrupt for teardown (DropHandle, Agent shutdown): the whole queue goes,
+// because a kept entry would be started on the host being shut down.
+func (h *threadHandle) interruptAll() error { return h.interrupt(false) }
+
+func (h *threadHandle) interrupt(keep bool) error {
 	h.mu.Lock()
 	cl, sid, turnID := h.cl, h.sid, h.turnID
-	h.queue = nil
+	if keep {
+		h.queue = agents.KeptOnInterrupt(h.queue)
+	} else {
+		h.queue = nil
+	}
 	if h.running {
 		h.state = agents.TurnInterrupting
 	}

@@ -33,6 +33,10 @@ type scriptedClient struct {
 	tokIdx         int
 	onSend         func(messages []harness.Message, tools []harness.ToolDef)
 	sendDelay      time.Duration // simulate a slow/cancellable engine round trip
+	// holdCancel, when set, keeps a cancelled round trip from returning until it is closed, so
+	// a test can read the queue while the pump is still parked in the interrupted turn — once
+	// the turn returns, the pump may already have taken what the interrupt left.
+	holdCancel chan struct{}
 }
 
 func (c *scriptedClient) Send(ctx context.Context, messages []harness.Message, tools []harness.ToolDef) (harness.Turn, error) {
@@ -43,6 +47,9 @@ func (c *scriptedClient) Send(ctx context.Context, messages []harness.Message, t
 		select {
 		case <-time.After(c.sendDelay):
 		case <-ctx.Done():
+			if c.holdCancel != nil {
+				<-c.holdCancel
+			}
 			return harness.Turn{}, ctx.Err()
 		}
 	}
@@ -530,6 +537,162 @@ func TestDriverInterruptCancelsRunningTurn(t *testing.T) {
 		t.Fatalf("Interrupt: %v", err)
 	}
 	waitState(t, h, agents.TurnCancelled)
+}
+
+// promptRecorder is a scriptedClient.onSend that records the prompt each engine round trip
+// answers (the newest user message) and signals on started as each one begins.
+func promptRecorder(prompts *[]string, mu *sync.Mutex, started chan<- struct{}) func([]harness.Message, []harness.ToolDef) {
+	return func(messages []harness.Message, _ []harness.ToolDef) {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == harness.RoleUser {
+				mu.Lock()
+				*prompts = append(*prompts, messages[i].Content)
+				mu.Unlock()
+				break
+			}
+		}
+		started <- struct{}{}
+	}
+}
+
+func queueLen(h agents.ThreadHandle) int {
+	th := h.(*threadHandle)
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	return len(th.queue)
+}
+
+// A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
+// the next turn, while the user's own queued follow-up still goes with the stop.
+func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
+	testHome(t)
+	var mu sync.Mutex
+	var prompts []string
+	started := make(chan struct{}, 8)
+	client := &scriptedClient{sendDelay: 30 * time.Second, turns: []harness.Turn{{Content: "too late"}}}
+	client.onSend = promptRecorder(&prompts, &mu, started)
+	wireEngine(t, client)
+
+	m := testMeta(t, "sess-interrupt-keep")
+	h, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	qs := h.(agents.QueueingSender)
+	queued, err := qs.SendQueued(agents.TurnInput{Prompt: "stuck"})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if queued {
+		t.Fatal("input to an idle session was reported as queued")
+	}
+	<-started
+	queued, err = qs.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !queued {
+		t.Fatal("input behind a running turn was not reported as queued")
+	}
+	if err := h.Steer(agents.TurnInput{Prompt: "own follow-up"}); err != nil {
+		t.Fatalf("Steer: %v", err)
+	}
+	if err := h.Interrupt(); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the peer message did not start a turn after the stop")
+	}
+	// The kept turn's round trip is parked in sendDelay: anything still queued now is something
+	// the stop failed to discard.
+	if n := queueLen(h); n != 0 {
+		t.Errorf("queue after the kept turn started holds %d entries, want the own follow-up discarded", n)
+	}
+	mu.Lock()
+	got := append([]string(nil), prompts...)
+	mu.Unlock()
+	if len(got) != 2 || got[1] != "from a peer" {
+		t.Errorf("prompts = %q, want the peer message as the turn after the stop", got)
+	}
+}
+
+// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
+// on the way down.
+func TestDriverAbortManagedDiscardsKeptInput(t *testing.T) {
+	testHome(t)
+	var mu sync.Mutex
+	var prompts []string
+	started := make(chan struct{}, 8)
+	client := &scriptedClient{sendDelay: 30 * time.Second, holdCancel: make(chan struct{})}
+	client.onSend = promptRecorder(&prompts, &mu, started)
+	wireEngine(t, client)
+
+	m := testMeta(t, "sess-abort-kept")
+	h, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "long"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	<-started
+	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	AbortManaged()
+	if n := queueLen(h); n != 0 {
+		t.Errorf("queue after shutdown interrupt holds %d entries, want none", n)
+	}
+	close(client.holdCancel)
+	waitState(t, h, agents.TurnCancelled)
+	select {
+	case <-started:
+		t.Error("a turn started after the shutdown interrupt")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// Dropping the handle (halt, archive) is teardown too, and here the pump checks neither
+// liveness nor a context: a kept entry would go on running on a handle already out of the map,
+// against a store about to be closed.
+func TestDriverDropHandleDiscardsKeptInput(t *testing.T) {
+	testHome(t)
+	var mu sync.Mutex
+	var prompts []string
+	started := make(chan struct{}, 8)
+	client := &scriptedClient{sendDelay: 30 * time.Second, holdCancel: make(chan struct{})}
+	client.onSend = promptRecorder(&prompts, &mu, started)
+	wireEngine(t, client)
+
+	m := testMeta(t, "sess-drop-kept")
+	h, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "long"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	<-started
+	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	done := dropHandle(m.Name)
+	if n := queueLen(h); n != 0 {
+		t.Errorf("queue after dropHandle holds %d entries, want none", n)
+	}
+	close(client.holdCancel)
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("handle was not released within 30s")
+	}
+	select {
+	case <-started:
+		t.Error("a turn started on a dropped handle")
+	case <-time.After(200 * time.Millisecond):
+	}
 }
 
 // TestDriverRestartSettleAborted is the positive control for §4.4's restart recovery: a store
