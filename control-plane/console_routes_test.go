@@ -99,8 +99,9 @@ func consoleAPIPaths(t *testing.T) map[string][]string {
 // extractAPIPaths returns the path part of every literal in line that opens with `api/` or
 // `/api/`, without the leading slash and without the query. Each `${…}` becomes dynSeg; its
 // braces are balanced so a nested template (`${p ? `?x=${v}` : ""}`) is consumed whole.
-// A literal bound to a variable (`const base = `api/x/${id}“) is a base the code extends
-// later, so it comes back with a trailing "/" and matches as a prefix.
+// A literal bound to a variable (const base = `api/x/${id}`) is a base the code extends
+// later, so it comes back with a trailing "/" and matches as a prefix, unless it carries a
+// query, which makes it a complete path.
 func extractAPIPaths(line string) []string {
 	var out []string
 	for i := 0; i < len(line); i++ {
@@ -141,7 +142,7 @@ func extractAPIPaths(line string) []string {
 		}
 		path := sb.String()
 		before := strings.TrimRight(line[:i], " ")
-		if strings.HasSuffix(before, "=") && !strings.HasSuffix(path, "/") &&
+		if !ended && strings.HasSuffix(before, "=") && !strings.HasSuffix(path, "/") &&
 			!strings.HasSuffix(before, "==") && !strings.HasSuffix(before, "!=") {
 			path += "/"
 		}
@@ -151,50 +152,55 @@ func extractAPIPaths(line string) []string {
 	return out
 }
 
-// anyRouteMatches reports whether some route could serve path. Path segments: dynSeg alone
-// matches any segment; text before an embedded dynSeg must prefix the route segment
-// (`cancel${hint}`, where hint is a query); a trailing "/" means the literal may be extended
-// with more segments, so the route at that prefix or any route below it counts.
+// anyRouteMatches reports whether some route could serve path, narrowing the candidates one
+// segment at a time. A dynSeg segment matches a `{param}` route segment; it matches a literal
+// one only where no candidate has a `{param}` at that position, because otherwise
+// `api/sessions/${name}` would be served by `GET /api/sessions/usage` and a missing
+// `DELETE /api/sessions/{name}` would pass. Where every sibling is literal the Console is
+// picking one of them (`api/connections/${kind}`). Text before an embedded dynSeg must prefix
+// the route segment (`cancel${hint}`, where hint is a query). A trailing "/" means the literal
+// may be extended with more segments, so the route at that prefix or any route below it counts.
 func anyRouteMatches(routes [][]string, path string) bool {
 	segs := strings.Split(path, "/")
 	open := segs[len(segs)-1] == ""
 	if open {
 		segs = segs[:len(segs)-1]
 	}
-	for _, r := range routes {
-		if routeMatches(r, segs, open) {
+	isParam := func(rs string) bool { return strings.HasPrefix(rs, "{") }
+	cands := routes
+	for i, s := range segs {
+		paramHere := false
+		if s == dynSeg {
+			for _, r := range cands {
+				if i < len(r) && isParam(r[i]) {
+					paramHere = true
+				}
+			}
+		}
+		var next [][]string
+		for _, r := range cands {
+			if i >= len(r) {
+				continue
+			}
+			rs := r[i]
+			if strings.HasSuffix(rs, "...}") {
+				return true
+			}
+			lit, _, embedded := strings.Cut(s, dynSeg)
+			switch {
+			case isParam(rs), s == dynSeg && !paramHere, rs == s,
+				s != dynSeg && embedded && strings.HasPrefix(rs, lit):
+				next = append(next, r)
+			}
+		}
+		cands = next
+	}
+	for _, r := range cands {
+		if len(r) == len(segs) || (open && len(r) > len(segs)) {
 			return true
 		}
 	}
 	return false
-}
-
-func routeMatches(route, segs []string, open bool) bool {
-	for i, s := range segs {
-		if i >= len(route) {
-			return false
-		}
-		rs := route[i]
-		if strings.HasSuffix(rs, "...}") {
-			return true
-		}
-		if strings.HasPrefix(rs, "{") || s == dynSeg {
-			continue
-		}
-		if lit, _, dyn := strings.Cut(s, dynSeg); dyn {
-			if !strings.HasPrefix(rs, lit) {
-				return false
-			}
-			continue
-		}
-		if rs != s {
-			return false
-		}
-	}
-	if open {
-		return len(route) >= len(segs)
-	}
-	return len(route) == len(segs)
 }
 
 func TestExtractAPIPaths(t *testing.T) {
@@ -206,6 +212,7 @@ func TestExtractAPIPaths(t *testing.T) {
 		"apiJSON(\"api/a/\" + encodeURIComponent(id) + \"/state\", \"POST\")":                {"api/a/"},
 		"fetch(\"https://example.test/\")":                                                   nil,
 		"const path = `api/shared-sessions/${encodeURIComponent(id)}`;":                      {"api/shared-sessions/" + dynSeg + "/"},
+		"const url = `api/a/${x}?q=1`;":                                                      {"api/a/" + dynSeg},
 		"if (p === \"api/x\") {":                                                             {"api/x"},
 		"api(\"api/a?q=b c\") + api('api/b')":                                                {"api/a", "api/b"},
 	}
@@ -219,7 +226,10 @@ func TestExtractAPIPaths(t *testing.T) {
 
 func TestAnyRouteMatches(t *testing.T) {
 	routes := [][]string{
+		strings.Split("api/sessions/usage", "/"),
 		strings.Split("api/sessions/{name}/stop", "/"),
+		strings.Split("api/connections/aws", "/"),
+		strings.Split("api/connections/git/{host}", "/"),
 		strings.Split("api/aws-login/{id}/cancel", "/"),
 		strings.Split("api/admin/egress/allowlist/{id}/state", "/"),
 		strings.Split("api/drawio/stencils/{name...}", "/"),
@@ -228,6 +238,11 @@ func TestAnyRouteMatches(t *testing.T) {
 		"api/sessions/" + dynSeg + "/stop":                 true,
 		"api/sessions/" + dynSeg + "/committed":            false,
 		"api/sessions/x/stop/more":                         false,
+		"api/sessions/" + dynSeg:                           false,
+		"api/sessions/usage":                               true,
+		"api/connections/" + dynSeg:                        true,
+		"api/connections/" + dynSeg + "/" + dynSeg:         true,
+		"api/connections/" + dynSeg + "/x/y":               false,
 		"api/aws-login/" + dynSeg + "/cancel" + dynSeg:     true,
 		"api/admin/egress/allowlist/":                      true,
 		"api/admin/egress/":                                true,
