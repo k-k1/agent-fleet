@@ -196,6 +196,10 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/admin/workspaces", adm.destroyWorkspace)  // irreversible; inactive members only (ADR 0045 decision 13)
 	mux.HandleFunc("POST /api/admin/stop-workspace", adm.stopWorkspace)
 	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/log/61 §61.10.6)
+	// The copies of a member's home the runtime keeps outside it (ecs-ec2 backups). Clean
+	// home leaves them on purpose; deleting them is this separate, audited step.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/home-backups", adm.homeBackups)
+	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/members/{key}/home-backups", adm.deleteHomeBackups)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", adm.withSuperAdmin(adm.setTenantLimits))
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/login", adm.withSuperAdmin(adm.setTenantLogin)) // per-tenant login rules (docs/log/61 §61.9.7)
 	// The tenant's own source-network restriction (docs/log/66, ADR 0047). tenant_admin,

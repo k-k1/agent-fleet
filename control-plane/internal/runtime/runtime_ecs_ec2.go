@@ -4078,10 +4078,47 @@ func (e *ecsEC2Runtime) Destroy(ctx context.Context) ([]string, error) {
 	// Backups are a different role and so are invisible to every other cleanup here.
 	// Without this they would outlive the person and bill forever — the exact thing
 	// Destroy exists to stop (docs/log/64 §64.18.1).
-	if err := e.deleteBackups(ctx); err != nil {
+	if _, err := e.deleteBackups(ctx); err != nil {
 		return nil, err
 	}
 	return e.base.Destroy(ctx)
+}
+
+// EraseHome is an administrator's Clean home on the slot pool: the home volume and its
+// hibernation snapshots are deleted, and the next start builds a fresh home the way a new
+// member's is built (from the golden snapshot, or empty).
+//
+// Deleting the volume rather than emptying it is what lets this happen now. Emptying needs
+// the filesystem mounted, and a stopped workspace's home is usually on a slot that has
+// gone to sleep (SSM cannot reach it), detached, or already a hibernation snapshot.
+// DeleteVolume works in every one of those states, and takes the same time whatever the
+// home holds.
+//
+// It is still Clean home and not Destroy. The seven homeKeep entries live on EFS
+// (ADR 0045 decision 3-6), and so does the Claude state, so the member's logins,
+// connections and identity survive. They survive as of the workspace's last start: a keep
+// file that a tool replaced since then, instead of writing through its link, sits on the
+// volume until the entrypoint moves it back at the next boot, and goes with the volume.
+//
+// The hibernation snapshots have to go as well, because createHomeVolume restores the
+// member's own snapshot before anything else; one left behind would hand the erased home
+// back at the next start. Backups stay: they are copies outside the home, and
+// DeleteHomeBackups is the separate step that removes them.
+func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
+	if err := e.Stop(ctx); err != nil {
+		return err
+	}
+	// releaseSlot waits for the task to be gone and refuses while the service wants one,
+	// so a workspace somebody started in the meantime keeps its home.
+	if err := e.releaseSlot(ctx); err != nil {
+		return err
+	}
+	if err := e.deleteHomeVolume(ctx); err != nil {
+		return err
+	}
+	// After the volume, not before: a hibernation that started from it just before it
+	// went is caught here, and none can start once it is gone.
+	return e.deleteHomeSnapshots(ctx)
 }
 
 // deleteHomeVolume detaches (if needed) and deletes this workspace's home volume.
@@ -4595,20 +4632,44 @@ func (e *ecsEC2Runtime) pruneBackups(ctx context.Context, snaps []ec2types.Snaps
 	return nil
 }
 
-// deleteBackups removes every backup of this membership. Only Destroy calls it: a backup
-// outliving its home is the entire point, so nothing short of "this person is being
-// removed for good" may take one.
-func (e *ecsEC2Runtime) deleteBackups(ctx context.Context) error {
+// deleteBackups removes every backup of this membership and returns how many it removed.
+// Only two things call it: Destroy, and an administrator deleting the backups on purpose
+// (DeleteHomeBackups). A backup outliving its home is the entire point, so no cleanup,
+// sweep or Clean home may take one as a side effect.
+func (e *ecsEC2Runtime) deleteBackups(ctx context.Context) (int, error) {
 	snaps, err := e.backupSnapshots(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	n := 0
 	for _, s := range snaps {
 		if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
-			return fmt.Errorf("delete backup %s: %w", aws.ToString(s.SnapshotId), err)
+			return n, fmt.Errorf("delete backup %s: %w", aws.ToString(s.SnapshotId), err)
 		}
+		n++
 	}
-	return nil
+	return n, nil
+}
+
+// HomeBackups counts this member's backup copies for the administrator deciding whether
+// to delete them.
+func (e *ecsEC2Runtime) HomeBackups(ctx context.Context) (HomeBackups, error) {
+	snaps, err := e.backupSnapshots(ctx) // newest first
+	if err != nil {
+		return HomeBackups{}, err
+	}
+	out := HomeBackups{Count: len(snaps)}
+	if len(snaps) > 0 {
+		out.Newest = backupStamp(snaps[0])
+	}
+	return out, nil
+}
+
+// DeleteHomeBackups is the step Clean home leaves out on purpose (see EraseHome). A copy
+// still being captured is deleted too: it would otherwise complete a moment later and
+// hold the very home the administrator meant to be rid of.
+func (e *ecsEC2Runtime) DeleteHomeBackups(ctx context.Context) (int, error) {
+	return e.deleteBackups(ctx)
 }
 
 // --- drift sweeper (docs/log/64 §64.15.6) ---
