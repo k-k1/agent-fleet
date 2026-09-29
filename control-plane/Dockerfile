@@ -1,9 +1,10 @@
 # Control Plane image (P3-10 段1). Multi-stage, self-contained:
 #   1. console  — builds the Vite + React Console into /app/console (served no-store)
 #   2. build    — compiles the CP into a static binary (CGO off; modernc/sqlite is pure Go)
-#   3. runtime  — debian-slim + the `docker` CLI for docker-out-of-docker (DooD)
+#   3. docs     — stages the user guide (deploy/release/stage-docs.sh)
+#   4. runtime  — debian-slim + the `docker` CLI for docker-out-of-docker (DooD)
 #
-# Build context is the REPO ROOT (needs both console/ and control-plane/):
+# Build context is the REPO ROOT (needs console/, control-plane/, guide/ and deploy/):
 #   docker build -f control-plane/Dockerfile -t agent-fleet/control-plane:dev .
 # or via deploy/compose/docker-compose.yml (`build.context: ../..`).
 #
@@ -58,7 +59,33 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
     go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/af-cp .
 
-# --- 3. runtime --------------------------------------------------------------
+# --- 3. the user guide -------------------------------------------------------
+# The tree a workspace receives: guide/ plus the runbooks and the release history,
+# staged by the same script the native tar uses. It runs here rather than before the
+# build so that every way of building this file ships the guide: `docker compose up
+# --build` has no hook to run a script first, and an image without the guide leaves
+# the Console's user-guide button and the in-container agents with nothing to read.
+# A missing guide/, runbook or release note fails the build rather than shipping a gap.
+# Architecture-independent text, so native on the builder like the stages above.
+#
+# Only the script's inputs are copied, never deploy/ whole: a working copy can hold
+# gitignored key material there (deploy/aws/ec2-single/*-key), and an intermediate
+# layer is not private — release.sh's CP_CACHE_REF exports every layer with mode=max.
+# The runbook list mirrors RUNBOOKS in stage-docs.sh, which fails the build if one
+# listed there is not copied here.
+FROM --platform=$BUILDPLATFORM debian:trixie-slim AS docs
+WORKDIR /src
+COPY guide/                             guide/
+COPY deploy/release/stage-docs.sh       deploy/release/
+COPY deploy/release/notes/              deploy/release/notes/
+COPY deploy/compose/README.md           deploy/compose/
+COPY deploy/native/README.md            deploy/native/
+COPY deploy/local/README-wsl.md         deploy/local/
+COPY deploy/aws/ecs/README.md           deploy/aws/ecs/
+COPY deploy/aws/ec2-single/README.md    deploy/aws/ec2-single/
+RUN bash deploy/release/stage-docs.sh /out/docs
+
+# --- 4. runtime --------------------------------------------------------------
 FROM debian:trixie-slim
 # Links the GHCR package to this repository (ADR 0037): the container registry
 # resolves org.opencontainers.image.source to decide which repo a package belongs
@@ -83,12 +110,8 @@ COPY --from=docker:29-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build         /out/af-cp            /usr/local/bin/af-cp
 COPY --from=console       /src/console/dist     /app/console
 # The user guide, baked so the CP can stage it into each Workspace container at start
-# (workspace_docs.go). deploy/compose/release.sh points DOCS_SRC at the tree
-# deploy/release/stage-docs.sh builds (guide/ plus the runbooks and the release
-# history) for every published and dev image. Without the argument the repository's
-# docs/ is copied as is — the developer tree, which holds none of the guide's shelves.
-ARG DOCS_SRC=docs
-COPY ${DOCS_SRC}/         /usr/local/share/agent-fleet/docs/
+# (workspace_docs.go).
+COPY --from=docs          /out/docs/            /usr/local/share/agent-fleet/docs/
 # HOME is set so the docker CLI has a writable config dir when the container runs
 # as an arbitrary uid (compose sets user: "1000:1000"; that uid has no /etc/passwd
 # home). CONSOLE_DIR points the CP at the baked-in Console assets.

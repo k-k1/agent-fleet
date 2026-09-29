@@ -98,9 +98,8 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       # Through release.sh, deliberately — the same script publish-dist reaches. A second
-      # buildx invocation written here would drift from the real one, and the first thing
-      # to drift would be the docs staging (stage-docs.sh), which is how internal
-      # documents would end up inside an image nobody thought was a distribution.
+      # buildx invocation written here would drift from the real one (build arguments,
+      # platforms, provenance), and the image would stop being what a release ships.
       - name: bake
         env:
           REGISTRY: ghcr.io/${{ github.repository }}

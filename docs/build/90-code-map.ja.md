@@ -73,7 +73,7 @@ updated: "2026-09"
 | 音声合成 | `tts*.go`・`enkana*.go` |
 | 共有と引き継ぎ | `session_share*.go`・`session_handoff.go` |
 | ワークアイテム | `workitems*.go` |
-| ロール別 docs | `workspace_docs.go`（ステージ）と `docs_bridge.go`（取得経路）|
+| コンテナ内のガイド | `workspace_docs.go`（ステージ）と `docs_bridge.go`（取得経路）|
 | アイドル停止 | `reaper.go`（`connRegistry` を含む）・`session_activity.go`・`idle_forecast.go` |
 
 ## 90.4 `workspace/agent/`
@@ -132,7 +132,7 @@ updated: "2026-09"
 | ファイル | 何か |
 |---|---|
 | `Dockerfile` | Workspace イメージ。`workspace/` をコンテキストにしてビルドする |
-| `entrypoint.sh` | 起動時の seed のあと、イメージのコマンド `workspace-agent` を `exec` する。ロール別ガイドの配布はこの仕事ではない: マウントされるか、agent が取りに行く（`docs_sync.go`）|
+| `entrypoint.sh` | 起動時の seed のあと、イメージのコマンド `workspace-agent` を `exec` する。ガイドの配布はこの仕事ではない: マウントされるか、agent が取りに行く（`docs_sync.go`）|
 | `workspace-notes.md` | 全コンテナが受け取る運用ポリシーの、常時読み込まれる短い部分（禁止事項と罠）|
 | `notes/` | そのトピックファイル（イメージでは `/usr/local/share/agent-fleet/notes/`）。ポリシーの索引が指す手順 |
 | `af-db.sh`・`af-aws-exec.sh`・`af-scratch.sh`・`af-arch-repair.sh` | `PATH` 上の `af-*` コマンド。最初の 2 つは `workspace-agent` を exec するだけ |

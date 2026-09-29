@@ -146,7 +146,7 @@ updated: "2026-09"
 | 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 07](../operate/07-image-engine.ja.md) |
 | 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 08](../operate/08-borrowed-engine.ja.md) |
-| コンテナ内のロール別ドキュメント | — | 自動 | [roles.md](roles.ja.md) |
+| コンテナ内のユーザーガイド | — | 自動 | [roles.md](roles.ja.md) |
 
 ## 詳細が「—」の行
 
