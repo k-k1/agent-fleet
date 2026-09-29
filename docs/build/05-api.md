@@ -56,6 +56,13 @@ membership check (§5.4).
 
 - Long operations — start, clone — are **synchronous plus polling**; a job queue was
   considered and not adopted.
+- **Held routes.** A model can take longer to answer than the ingress idle timeout (60 s), so
+  `POST /api/chat/conversations/{id}/{compact,plan/refresh}`, `POST /api/chat/ask` and
+  `POST /api/fs/suggest-edit` answer a request carrying `Accept: text/event-stream` with 200,
+  a `: keepalive` comment every 20 s, and one final frame
+  `data: {"status": <the status>, "body": <the JSON body>}`. Without that header they answer
+  plain JSON as before (the MCP `ask_assistant` tool relies on this). The CP relays them
+  through its flushing stream proxy (`httpx.HeldOpen` on the agent side).
 - `GET /api/workspace/stats` is assembled by the CP reading the cgroup directly, and it
   reports OOM evidence both for a child process inside the container and for the
   container as a whole ([decisions/0014](../decisions/0014-agent-exit-recording.md)).

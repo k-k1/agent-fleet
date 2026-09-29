@@ -1,4 +1,4 @@
-import { rel } from "../../core/api/client.ts";
+import { fetchHeld, rel } from "../../core/api/client.ts";
 import { requireRevision } from "./buffer.ts";
 
 export interface EditableFile {
@@ -151,7 +151,8 @@ export async function probeFileMeta(path: string): Promise<FileProbeResult> {
 // --- AI edit suggestions (docs/log/44 Phase 4) ---
 
 // LLM generation does not fit in the 15s file-IO budget. Kept wider than the Agent's
-// editSuggestTimeout (90s) so the server-side timeout normally settles first.
+// editSuggestTimeout (90s) so the server-side timeout normally settles first; the route is
+// held open with a heartbeat, so the ingress idle timeout does not cut it first (fetchHeld).
 export const SUGGEST_EDIT_TIMEOUT_MS = 100_000;
 
 export interface SuggestEditRequest {
@@ -166,7 +167,7 @@ export type SuggestEditResult =
   | { ok: true; summary: string; replacement: string }
   | { ok: false; code: string };
 
-/** POST /api/fs/suggest-edit — a synchronous call asking only for the replacement text.
+/** POST /api/fs/suggest-edit — asks only for the replacement text.
  *  The envelope (paneId/requestId/sourceRevision) is held by the client and merged into
  *  the response, so it never goes on the wire. Never throws: a suggestion is advisory,
  *  so every failure folds into a code. */
@@ -174,7 +175,7 @@ export async function suggestEdit(request: SuggestEditRequest): Promise<SuggestE
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SUGGEST_EDIT_TIMEOUT_MS);
   try {
-    const response = await fetch(rel("api/fs/suggest-edit"), {
+    const answer = await fetchHeld("api/fs/suggest-edit", {
       method: "POST",
       headers: { "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify(request),
@@ -182,13 +183,13 @@ export async function suggestEdit(request: SuggestEditRequest): Promise<SuggestE
     });
     let body: unknown = null;
     try {
-      body = await response.json();
+      body = JSON.parse(answer.text);
     } catch {
       body = null;
     }
-    if (!response.ok) {
+    if (answer.status < 200 || answer.status >= 300) {
       const error = (body as { error?: Partial<FileApiError> } | null)?.error;
-      return { ok: false, code: error?.code || `http_${response.status}` };
+      return { ok: false, code: error?.code || `http_${answer.status}` };
     }
     const value = body as { summary?: unknown; replacement?: unknown } | null;
     if (typeof value?.summary !== "string" || typeof value?.replacement !== "string") {

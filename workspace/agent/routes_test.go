@@ -170,3 +170,30 @@ func TestBrowserAttachmentRetargetRouteRegistered(t *testing.T) {
 		t.Fatalf("route pattern=%q", pattern)
 	}
 }
+
+// #1151: these routes wait on a model for longer than the ingress idle timeout, so a caller
+// asking for an event stream must get one. Every request here fails validation at once, which
+// is enough: the wrapper commits the stream before the handler runs.
+func TestSlowModelRoutesAreHeldOpen(t *testing.T) {
+	h := smokeHandler(t)
+	for _, path := range []string{
+		"/chat/conversations/no-such-conversation/compact",
+		"/chat/conversations/no-such-conversation/plan/refresh",
+		"/chat/ask",
+		"/fs/suggest-edit",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer smoke-token")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+			t.Errorf("POST %s: Content-Type = %q, want text/event-stream (body %q)", path, ct, rec.Body.String())
+			continue
+		}
+		if !strings.Contains(rec.Body.String(), `data: {"status":4`) {
+			t.Errorf("POST %s: want the handler's 4xx in the final frame, got %q", path, rec.Body.String())
+		}
+	}
+}

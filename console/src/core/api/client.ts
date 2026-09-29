@@ -209,44 +209,107 @@ export const api = (path: string, opts?: RequestInit): Promise<any> => {
       etagCache.set(url, cached);
       return cached.json;
     }
-    const text = await r.text();
-    if (text) {
-      try {
-        const parsed = JSON.parse(text);
-        // The active tenant accepts a different sign-in method than this session
-        // was minted with (docs/log/61 §61.9.4). Latch it so a dialog can offer the
-        // re-sign-in link — otherwise every request for that tenant just fails and
-        // the person is left with no way to reach it. Mirrors the 401 latch above.
-        if (parsed?.error?.code === "provider_required" && selectedTenant) {
-          signalProviderRequired({ tenant: selectedTenant, provider: "" });
-        }
-        // Keep the HTTP status with the payload: the code alone cannot say whether a
-        // failure is the backend's (retry) or the request's (stop) — see isTransientErr.
-        // Only error bodies are stamped, and those are never ETag-cached (2xx only).
-        if (!r.ok && parsed?.error && typeof parsed.error === "object") parsed.error.status = r.status;
-        if (method === "GET" && r.ok) {
-          const etag = r.headers.get("ETag");
-          if (etag) {
-            etagCache.delete(url);
-            etagCache.set(url, { etag, json: parsed });
-            if (etagCache.size > ETAG_CACHE_MAX) {
-              for (const oldest of etagCache.keys()) {
-                etagCache.delete(oldest);
-                break;
-              }
-            }
+    return apiResult(r.status, r.statusText, await r.text(), (parsed) => {
+      if (method !== "GET") return;
+      const etag = r.headers.get("ETag");
+      if (etag) {
+        etagCache.delete(url);
+        etagCache.set(url, { etag, json: parsed });
+        if (etagCache.size > ETAG_CACHE_MAX) {
+          for (const oldest of etagCache.keys()) {
+            etagCache.delete(oldest);
+            break;
           }
         }
-        return parsed;
-      } catch {
-        // Non-JSON body (plain-text proxy error, HTML error page): fall through
-        // and synthesize a result from the HTTP status.
       }
-    }
-    if (r.ok) return {};
-    return { error: { code: "http_" + r.status, message: text.trim() || r.status + " " + r.statusText } };
+    });
   });
 };
+
+// apiResult turns a finished answer — HTTP status and raw body — into what api() resolves
+// with. onParsedOK sees a parsed 2xx body, the only kind that may be cached.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function apiResult(status: number, statusText: string, text: string, onParsedOK?: (parsed: unknown) => void): any {
+  const ok = status >= 200 && status < 300;
+  if (text) {
+    try {
+      const parsed = JSON.parse(text);
+      // The active tenant accepts a different sign-in method than this session
+      // was minted with (docs/log/61 §61.9.4). Latch it so a dialog can offer the
+      // re-sign-in link — otherwise every request for that tenant just fails and
+      // the person is left with no way to reach it. Mirrors the 401 latch above.
+      if (parsed?.error?.code === "provider_required" && selectedTenant) {
+        signalProviderRequired({ tenant: selectedTenant, provider: "" });
+      }
+      // Keep the HTTP status with the payload: the code alone cannot say whether a
+      // failure is the backend's (retry) or the request's (stop) — see isTransientErr.
+      // Only error bodies are stamped, and those are never ETag-cached (2xx only).
+      if (!ok && parsed?.error && typeof parsed.error === "object") parsed.error.status = status;
+      if (ok) onParsedOK?.(parsed);
+      return parsed;
+    } catch {
+      // Non-JSON body (plain-text proxy error, HTML error page): fall through
+      // and synthesize a result from the HTTP status.
+    }
+  }
+  if (ok) return {};
+  return { error: { code: "http_" + status, message: text.trim() || status + " " + statusText } };
+}
+
+// HeldAnswer is the final status and raw body of a held route (see fetchHeld).
+export interface HeldAnswer {
+  status: number;
+  statusText: string;
+  text: string;
+}
+
+// fetchHeld calls a route the Agent holds open while a model answers (compaction, plan
+// refresh, ask, the edit suggestion — httpx.HeldOpen). Such an answer can take minutes, and
+// the ingress drops a connection that moves no byte for 60 s, so the request asks for an
+// event stream: the Agent then sends a keepalive comment every 20 s and one final
+// `data: {"status":…,"body":…}` frame carrying what it would have answered as plain JSON.
+// A plain JSON answer (errors the CP writes itself, an Agent from before the change) is
+// read as it is. A stream that ends without its final frame reads as a 502.
+export async function fetchHeld(path: string, init: RequestInit): Promise<HeldAnswer> {
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "text/event-stream");
+  const r = await fetch(rel(path), { ...init, headers });
+  if (!(r.headers.get("Content-Type") ?? "").startsWith("text/event-stream") || !r.body) {
+    return { status: r.status, statusText: r.statusText, text: await r.text() };
+  }
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buf += done ? dec.decode() : dec.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      if (!frame.startsWith("data:")) continue; // a ": keepalive" comment
+      try {
+        const final = JSON.parse(frame.slice(5)) as { status?: unknown; body?: unknown };
+        if (typeof final.status !== "number") continue;
+        void reader.cancel();
+        const text = final.body === undefined ? "" : JSON.stringify(final.body);
+        return { status: final.status, statusText: "", text };
+      } catch {
+        continue;
+      }
+    }
+    if (done) return { status: 502, statusText: "held answer ended without its final frame", text: "" };
+  }
+}
+
+// apiHeld is apiJSON for a held route: same body, same resolved shapes.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const apiHeld = (path: string, method: string, body?: unknown): Promise<any> =>
+  fetchHeld(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then((a) => apiResult(a.status, a.statusText, a.text));
 
 // apiJSON is a convenience for the common "POST/PUT JSON body" shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -685,7 +748,7 @@ export const chatStop = (id: string): Promise<Response> =>
 // provider session, resets the resume handles, and carries only the summary into a fresh
 // session on the next turn. Returns the updated conversation (or {error}).
 export const chatCompact = (id: string): Promise<Conversation & { error?: ApiError }> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
+  apiHeld(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
 // Work plan (docs/log/33 stage 5): a slot carried verbatim across compaction. `set` is a
 // manual edit (an empty string clears it); `refresh` re-derives the plan from the recent
 // conversation in a one-shot headless run — it does not use the conversation's provider
@@ -693,7 +756,7 @@ export const chatCompact = (id: string): Promise<Conversation & { error?: ApiErr
 export const chatSetPlan = (id: string, plan: string): Promise<Conversation & { error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan`, "PUT", { plan });
 export const chatRefreshPlan = (id: string): Promise<Conversation & { error?: ApiError }> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan/refresh`, "POST");
+  apiHeld(`api/chat/conversations/${encodeURIComponent(id)}/plan/refresh`, "POST");
 // Send returns the assistant message + the updated conversation, or {error} on failure.
 export const chatSend = (
   id: string,
@@ -968,7 +1031,7 @@ export const askAssistant = (
   prompt: string,
   assistant?: string,
 ): Promise<{ assistant?: string; reply?: string; error?: ApiError }> =>
-  apiJSON("api/chat/ask", "POST", { prompt, assistant });
+  apiHeld("api/chat/ask", "POST", { prompt, assistant });
 
 // Fleet session graph (ADR 0096 decision 7): the one Agent read, CP-allowlisted. `since`/
 // `until` are unix millis (the DTO's own units — never the ledger's RFC3339, which never

@@ -315,6 +315,7 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
+	req.Header.Set("X-AF-Relay", "cp") // the same log hint rest sets
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
