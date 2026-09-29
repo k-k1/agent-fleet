@@ -192,14 +192,17 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
 
 ### 新しい kind が埋める面
 
-**埋める面は毎回同じ。** どれもコード上の契約で、以下では claude・codex・opencode を実例に使う。
+**kind は対応する driver の面を埋める**。面は毎回同じ。どれもコード上の契約で、以下では claude・
+codex・opencode を実例に使う。
 どの kind がどの driver に対応するか、利用者が各 kind にどうサインインするかは
 [ref/agents](../../guide/ref/agents.ja.md)（サインインは
 [サインインの仕方](../../guide/ref/agents.ja.md#サインインの仕方)の節）。サインインのフローは
 [08](08-integrations.ja.md)。
 
-- **tmux での起動と id の持ち方**: kind の `BuildLaunch` が `agents.LaunchPlan` を返す。id を捕捉するか
-  押し付けるかを先に決めること（§4.2）。
+- **tmux での起動と id の持ち方**（Terminal の経路を持つ kind）: kind の `BuildLaunch` が
+  `agents.LaunchPlan` を返す。id を捕捉するか押し付けるかを先に決めること（§4.2）。managed 専用の kind
+  （`Caps().ManagedOnly`: lcpp、muse）にこの面は無く、`BuildLaunch` は常に `ErrNoTerminalRoute` で
+  断る。
   - claude は押し付ける。新しいスロットは `--session-id`、既存のスロットは `LiveSID()` を通した
     `--resume`。ほかに `--name`・`--model`・`--fork-session`。
   - codex は捕捉する。`codex resume <id>` か `codex fork <id>` を直接起動し、共有の app server は
@@ -210,12 +213,17 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
   - codex: 共有 app server の `thread/start` / `thread/resume`
   - opencode: 共有サーバーの v1 session API とイベントストリーム
   - lcpp は外部の API を呼ばない。`Resume` が Agent の中でハンドルを作り、自分のストアを開く。
-- **会話の正本**: どこに置くかは kind ごとに決め、kind 自前の転写リーダーを付ける（§4.7）。
-  - claude・codex・opencode は、両 driver とも CLI の native のストアを読む。claude の JSONL、
-    codex の rollout JSONL、opencode の SQLite（`message` / `part`）。
-  - lcpp は自分のストアがそのまま会話。
-  - muse は live の item ストリームを我々のストアへ書き写す。CLI のディスク上のログは内部の
-    runtime 形式で、安定の約束が無いため。
+- **会話の正本と転写の読み元**: どちらも kind ごとに決め、読み元には kind 自前の転写リーダーを
+  付ける（§4.7）。
+  - claude・codex・opencode: 両 driver とも、CLI の native のストアが正本で読み元でもある。
+    claude の JSONL、codex の rollout JSONL、opencode の SQLite（`message` / `part`）。
+  - lcpp: 自分のストアが正本で読み元でもある。会話の写しはほかに無い。
+  - muse: **会話の正本は muse のホスト**。転写は、live の item ストリームから我々のストアへ書いた
+    **表示用のミラー**から読む（`muse/transcript.go`）。ミラーを置くのは、転写がローカルのディスク
+    読みでなければならず、ホストを起動してはいけないため。ホストのディスク上のログは内部の
+    runtime 形式で、安定の約束も無い。ミラーの書き込みに失敗しても、セッションは止めない。
+    Agent が見ていない間に走ったターン（ターンの途中で Agent が落ちた場合）はホストには残るが、
+    ミラーには無い。ホストの `session/read` から埋めるのは #1197。
 - **live 状態**は kind が出すものを状態ストアへ正規化する（§4.4）。
   - claude: hook と tmux のプローブ
   - codex: managed では runtime のイベント。TUI では working / idle を hook で、取りこぼしたターン
@@ -264,7 +272,8 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
   `501 respond_unsupported` / `settings_unsupported` を返す。
 - **CLI が読める native のストアを持つなら、会話の本文を独自のストアへ複製しない。** native の
   ストアが読みの正本のままで、転写は出口で正規化する
-  （[decisions/0015](../decisions/0015-agent-managed-driver.ja.md)）。例外は上に書いた lcpp と muse
+  （[decisions/0015](../decisions/0015-agent-managed-driver.ja.md)）。例外は上に書いた lcpp（ストアが
+  会話そのもの）と muse（ストアはホストの会話の表示用ミラー）
   （[decisions/0093](../decisions/0093-lcpp-agent-kind.ja.md)、
   [0095](../decisions/0095-muse-agent-kind.ja.md)）。
 

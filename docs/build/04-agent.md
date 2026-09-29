@@ -222,14 +222,17 @@ and each declares its process model in `Capabilities.ProcessModel`
 
 ### The surfaces a new kind fills
 
-**The surfaces are the same every time.** Each one is a contract in the code; claude,
-codex and opencode are the worked examples below. Which kind supports which driver, and
+**A kind fills the surfaces of the drivers it supports**, and they are the same every
+time. Each one is a contract in the code; claude, codex and opencode are the worked
+examples below. Which kind supports which driver, and
 how a user signs in to each, are [ref/agents](../../guide/ref/agents.md) (sign-in is
 its [How to sign in](../../guide/ref/agents.md#how-to-sign-in) section); the sign-in
 flows are [08](08-integrations.md).
 
-- **Launching in tmux, and holding the id**: the kind's `BuildLaunch` returns an
-  `agents.LaunchPlan`. Decide whether the id is captured or imposed first (§4.2).
+- **Launching in tmux, and holding the id** (kinds with a Terminal route): the kind's
+  `BuildLaunch` returns an `agents.LaunchPlan`. Decide whether the id is captured or
+  imposed first (§4.2). A managed-only kind (`Caps().ManagedOnly`: lcpp, muse) has no
+  such surface; its `BuildLaunch` always refuses with `ErrNoTerminalRoute`.
   - claude imposes it: `--session-id` for a new slot and `--resume` through `LiveSID()`
     for an existing one, plus `--name`, `--model` and `--fork-session`.
   - codex captures it: `codex resume <id>` or `codex fork <id>`, launched directly and
@@ -241,13 +244,18 @@ flows are [08](08-integrations.md).
   - opencode: the shared server's v1 session API and its event stream.
   - lcpp calls no external API: `Resume` builds the handle and opens its own store
     inside the agent.
-- **The conversation's truth**: each kind decides where it lives and gives it a
-  transcript reader of its own (§4.7).
-  - claude, codex and opencode read their CLI's native store, for both drivers:
+- **The conversation's truth, and where the transcript is read from**: each kind
+  decides both and gives the second a transcript reader of its own (§4.7).
+  - claude, codex and opencode: the CLI's native store is both, for both drivers:
     claude's JSONL, codex's rollout JSONL, opencode's SQLite (`message` / `part`).
-  - lcpp's own store is the conversation itself.
-  - muse writes its live item stream into a store of ours, because the CLI's on-disk log
-    is an internal runtime format with no stability promise.
+  - lcpp: its own store is both; there is no other copy of the conversation.
+  - muse: **the muse host owns the conversation**; the transcript is read from a
+    **mirror** in our store, written from the live item stream (`muse/transcript.go`).
+    The mirror exists because the transcript must be a local disk read, never a spawned
+    host, and the host's on-disk log is an internal runtime format with no stability
+    promise. A failure to write the mirror is never fatal to the session. A turn that ran
+    while the agent was not watching (it died mid-turn) is still on the host but missing
+    from the mirror; backfilling it from the host's `session/read` is #1197.
 - **Live state** is normalised into the status store (§4.4) from whatever the kind
   emits.
   - claude: hooks plus a tmux probe.
@@ -306,7 +314,8 @@ flows are [08](08-integrations.md).
 - **Where the CLI keeps a readable native store, the conversation body is never copied
   into a store of our own.** The native store stays the read truth, and the transcript
   is normalised on the way out
-  ([decisions/0015](../decisions/0015-agent-managed-driver.md)). lcpp and muse are the
+  ([decisions/0015](../decisions/0015-agent-managed-driver.md)). lcpp (whose store is the
+  conversation) and muse (whose store is a display mirror of the host's) are the
   exceptions described above
   ([decisions/0093](../decisions/0093-lcpp-agent-kind.md),
   [0095](../decisions/0095-muse-agent-kind.md)).
