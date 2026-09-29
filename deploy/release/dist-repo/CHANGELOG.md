@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.25.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.25.0) — 2026-09-29
+
+Branch names for a session started from a work item now follow the repository's own rules — its
+git-flow settings, a `.agent-fleet/branches` file or Bitbucket's branching model. Open pull requests in
+Work items show their CI status and conflicts. `af-aws-exec` runs your assume-role and
+`credential_process` profiles, and Settings › AWS profiles/SSM logs in from the profile's row. A
+Managed session that fails to start now shows what its CLI printed.
+
 ## [0.24.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.24.0) — 2026-09-27
 
 The AWS profiles in Settings now work with the AWS CLI, SDKs and build tools in your workspace, and

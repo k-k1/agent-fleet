@@ -14,6 +14,31 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.25.0](0.25.0.md) — 2026-09-29
+
+**CLI pins** — Claude Code 2.1.284, Codex 0.158.0, OpenCode 1.18.33, Copilot 1.0.89, Antigravity 1.2.12, Cursor 2026.09.28-64d2043, Muse Code 1.4.0-R4302.1
+
+**New / Improved**
+
+- **[branch names]** A session started from a work item takes its branch name and base from the repository's rules (`.agent-fleet/branches`, git-flow, Bitbucket's branching model); advisory only; the default becomes `feature/1113-<title words>`, `fix/` for a bug ([#1120](https://github.com/k-k1/agent-fleet/issues/1120), [#1124](https://github.com/k-k1/agent-fleet/issues/1124), [#1125](https://github.com/k-k1/agent-fleet/issues/1125))
+- **[issue tracker]** Open PRs show CI status and merge conflicts ([#1113](https://github.com/k-k1/agent-fleet/issues/1113))
+- **[issue tracker]** The "already started" list shows session names and restores archived sessions ([#1108](https://github.com/k-k1/agent-fleet/issues/1108))
+- **[AWS]** `af-aws-exec` runs your own assume-role and `credential_process` profiles with `--account` ([#1107](https://github.com/k-k1/agent-fleet/issues/1107))
+- **[AWS]** Settings › AWS profiles/SSM (was "AWS SSM"): Log in and a login-state badge on each profile row
+- **[agents]** A Managed session that fails to start shows the last lines its CLI printed ([#1076](https://github.com/k-k1/agent-fleet/issues/1076))
+- **[MCP]** `create_session` takes the child's reasoning effort ([#1068](https://github.com/k-k1/agent-fleet/issues/1068))
+- **[image generation]** Studio on a phone: draft bar in view while typing, composer on the bottom edge, toasts off the composer; "N pictures are ready" stays until seen ([#1089](https://github.com/k-k1/agent-fleet/issues/1089), [#1090](https://github.com/k-k1/agent-fleet/issues/1090))
+- **[issue tracker]** AI-suggested titles keep the work item's key; the filter gets the shared box, × and Escape
+- **[question cards]** A translation asks again for the fields it dropped ([#1114](https://github.com/k-k1/agent-fleet/issues/1114))
+- **[engines]** gemma-4, LFM2.5 and GPT-OSS memory sized correctly ([#975](https://github.com/k-k1/agent-fleet/issues/975))
+- **[mirror]** Long llama.cpp conversations read faster
+- **[ECS]** `update.sh` moves a ComfyUI tag still on an earlier default ([#965](https://github.com/k-k1/agent-fleet/issues/965))
+
+**Fixed**
+
+- **[codex]** Terminal (CLI) codex sessions ran in the home directory and could not resume; switching Managed → Terminal stopped at "open in another app" ([#1131](https://github.com/k-k1/agent-fleet/issues/1131))
+- **[ECS]** AI suggestions that took close to a minute failed on AWS deployments
+
 ## [0.24.0](0.24.0.md) — 2026-09-27
 
 **CLI pins** — Claude Code 2.1.283, Codex 0.157.1, Antigravity 1.2.11, Cursor 2026.09.26-dd393fe, Kiro 2.24.1, Muse Code 1.4.0-R4161.1
