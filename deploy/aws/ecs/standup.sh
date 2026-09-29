@@ -134,6 +134,11 @@ done
 [ -z "$AF_STACK_POOL" ] || [ -r "$(af_params_file 40-ec2-pool)" ] || say_missing "AF_STACK_POOL=$AF_STACK_POOL but there is no params/40-ec2-pool"
 [ -z "$AF_STACK_TTS" ] || [ -r "$(af_params_file 50-tts)" ] || say_missing "AF_STACK_TTS=$AF_STACK_TTS but there is no params/50-tts"
 [ -z "${AF_STACK_ENGINES:-}" ] || [ -r "$(af_params_file 60-engines)" ] || say_missing "AF_STACK_ENGINES=$AF_STACK_ENGINES but there is no params/60-engines"
+# 10-data's EFS backup vault is "<stack>-efs-<8 hex>" and AWS stops vault names at 50, so a
+# longer data stack name rolls 10-data back — and only under retain, so a delete trial run
+# passes with the same name.
+[ "$AF_PERSISTENCE" != retain ] || [ "${#AF_STACK_DATA}" -le 37 ] \
+  || say_missing "data stack name $AF_STACK_DATA is ${#AF_STACK_DATA} characters; under Persistence=retain it must be at most 37 (its EFS backup vault name stops at 50)"
 
 # The ECS service-linked role. A new account does not have it, and creating the cluster
 # with a Service Connect default namespace then fails with "ECS Service Linked Role is not

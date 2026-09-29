@@ -1692,7 +1692,7 @@ copies of each home"). So under `Persistence=retain` `10-data` also declares:
 
 | Resource | What it is |
 |---|---|
-| `EfsBackupVault` | vault `<data stack>-efs-<8 hex digits of the stack id>` (e.g. `af-ecs-data-efs-1a2b3c4d`; the stack output `EfsBackupVaultName`). `DeletionPolicy: Retain` — AWS refuses to delete a vault that still holds recovery points |
+| `EfsBackupVault` | vault `<data stack>-efs-<8 hex digits of the stack id>` (e.g. `af-ecs-data-efs-1a2b3c4d`; the stack output `EfsBackupVaultName`). `DeletionPolicy: Retain` — AWS refuses to delete a vault that still holds recovery points. Vault names stop at 50 characters, so under `retain` the data stack name is limited to 37 (`standup.sh` checks) |
 | `EfsBackupPlan` | one rule, daily at 17:00 UTC (02:00 JST), each point kept `EfsBackupRetentionDays` (default **7**, the same as RDS) |
 | `EfsBackupSelection` + `EfsBackupRole` | this file system only, backed up with the AWS-managed backup/restore policies |
 

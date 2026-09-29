@@ -176,7 +176,9 @@ if [ "$AF_PERSISTENCE" = retain ]; then
   echo "    retain         : RDS final snapshot + EFS $EFS_ID are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
 fi
 for v in $VAULTS; do
-  if [ "$AF_PERSISTENCE" = retain ] && [ "$PURGE_RETAINED" = 1 ]; then fate="deleted (--purge-retained)"; else fate="kept"; fi
+  if [ "$AF_PERSISTENCE" != retain ]; then
+    fate="kept — persistence=delete, so --purge-retained does not apply; delete it by hand (README §Teardown, step 9)"
+  elif [ "$PURGE_RETAINED" = 1 ]; then fate="deleted (--purge-retained)"; else fate="kept"; fi
   echo "    efs backups    : vault $v ($(count "$(list_recovery_points "$v")") recovery points) is $fate"
 done
 echo ""

@@ -85,6 +85,14 @@ cp -a "$STATE/params/." "$STATE4/params/"
 cp "$STATE/env" "$STATE4/env"
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
+# A fifth (profile p5): retain with a data stack name one character past what its EFS
+# backup vault name leaves room for (37).
+STATE5="$AF_DEPLOY_STATE_DIR/p5.ap-northeast-1.t-ingress"
+mkdir -p "$STATE5/params"
+cp -a "$STATE/params/." "$STATE5/params/"
+sed -e 's/^AF_PERSISTENCE=delete$/AF_PERSISTENCE=retain/' \
+    -e 's/^AF_STACK_DATA=t-data$/AF_STACK_DATA=t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/' "$STATE/env" > "$STATE5/env"
+
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
 #!/usr/bin/env bash
@@ -172,11 +180,13 @@ case "$args" in
   *"Outputs[].join"*)                printf '\n' ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
+  *"--profile p5"*"ParameterKey=='DataStackName'"*) echo "t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
   *"ParameterKey=='DataStackName'"*) echo "t-data" ;;
   *"ParameterKey=='PlatformStackName'"*) echo "t-platform" ;;
   *"ParameterKey=='WsRuntime'"*) echo "ecs-ec2" ;;
   *"ParameterKey=='ImageTag'"*) echo "9.9.9-dev-test" ;;
   *"--profile p2"*"ParameterKey=='Persistence'"*) echo "retain" ;;
+  *"--profile p5"*"ParameterKey=='Persistence'"*) echo "retain" ;;
   *"ParameterKey=='Persistence'"*) echo "delete" ;;
   *"ParameterKey=='CpArch'"*) echo "x86_64" ;;
   *"ParameterKey=='Ec2SlotLaunchTemplate'"*) echo "lt-OLD" ;;
@@ -263,9 +273,12 @@ case "$args" in
   # One vault a retain period left, found by the "<data stack>-efs-" prefix whatever the
   # deployment's persistence is now; gone once teardown has deleted it. STUB_VAULT_ABSENT is
   # a retain deployment from before 10-data declared backups.
-  *"backup list-backup-vaults"*)
+  # Only the query filtered to this deployment's prefix sees its vault; anything broader
+  # also sees another deployment's, which teardown must never empty.
+  *"backup list-backup-vaults"*"starts_with(BackupVaultName,'t-data-efs-')"*)
     [ "${STUB_VAULT_ABSENT:-0}" = 1 ] || grep -q "backup delete-backup-vault" "$STUB_LOG" \
       || echo "t-data-efs-1a2b3c4d" ;;
+  *"backup list-backup-vaults"*) printf 't-data-efs-1a2b3c4d\tother-data-efs-deadbeef\n' ;;
   # The vault holds a point until teardown deletes it. Keep answering "one point" after
   # that and the wait for the vault to empty spins for five minutes. STUB_RP_STUCK is a
   # point that will not go (a backup job still running).
@@ -357,7 +370,7 @@ order_again "ecs update-service --cluster t-cluster --service af-t-ingress-cp --
 # 6. persistence=delete deletes no backups, but a vault left from a retain period is named in
 #    the plan and counted in the sweep instead of vanishing from view.
 hasnt "backup delete-"
-grep -q "vault t-data-efs-1a2b3c4d .* is kept" "$WORK/out2" || fail "the plan did not name the leftover vault"
+grep -q "vault t-data-efs-1a2b3c4d .* is kept — persistence=delete" "$WORK/out2" || fail "the plan did not name the leftover vault and how to delete it"
 grep -q "efs backup vaults *1" "$WORK/out2" || fail "the sweep did not count the leftover vault"
 # 6. By default secrets are kept (so it can be stood up again in the same account)
 has "ssm delete-parameter --name /af-ws/alice"
@@ -365,6 +378,14 @@ hasnt "ssm delete-parameter --name /af-cp"
 # 7. ACM's validation CNAME is sent back with the TTL and value matching exactly
 has '"TTL":300'
 has "val.acm-validations.aws."
+
+echo "== case 2b: standup refuses a retain data stack name its backup vault cannot carry =="
+: > "$LOG"
+if "$ECS/standup.sh" --profile p5 --region ap-northeast-1 --stack t-ingress > "$WORK/out2b" 2>&1 </dev/null; then
+  fail "standup accepted a 38-character data stack name under retain"
+fi
+grep -q "must be at most 37" "$WORK/out2b" || fail "standup did not say why the data stack name was refused"
+hasnt "cloudformation deploy"
 
 echo "== case 3: standup order and the launch template hand-off =="
 : > "$LOG"
@@ -1237,6 +1258,8 @@ has "backup delete-recovery-point --backup-vault-name t-data-efs-1a2b3c4d --reco
 order "backup delete-recovery-point" "backup delete-backup-vault --backup-vault-name t-data-efs-1a2b3c4d"
 order_again "backup delete-backup-vault" "backup list-backup-vaults"
 grep -q "efs backup vaults *0" "$WORK/out7" || fail "the sweep did not re-count the vaults"
+# The prefix is the only thing that keeps another deployment's backups out of the purge.
+hasnt "--backup-vault-name other-"
 
 echo "== case 7b: retain from before the EFS backups — no vault, nothing to delete =="
 : > "$LOG"
