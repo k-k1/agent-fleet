@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -304,14 +306,15 @@ func TestECSEC2ACaptureTheEraseNeverSawIsNeverRestored(t *testing.T) {
 }
 
 // The mark only says what came before it. A home created after the erase and hibernated
-// later is the member's own home and is restored as usual.
+// later — weeks later in practice, and in any case past the erase's window — is the
+// member's own home and is restored as usual.
 func TestECSEC2AHomeHibernatedAfterAnEraseIsRestored(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
 	if err := h.rt.EraseHome(ctx); err != nil {
 		t.Fatalf("EraseHome: %v", err)
 	}
-	h.ec2.snapshots["snap-new"] = homeSnapshotAt("snap-new", time.Now().Add(time.Minute), ec2types.SnapshotStateCompleted)
+	h.ec2.snapshots["snap-new"] = homeSnapshotAt("snap-new", time.Now().Add(eraseWindow+eraseClockMargin+time.Minute), ec2types.SnapshotStateCompleted)
 	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "snap-new" {
 		t.Fatalf("restoreSnapshot = %q, %v; want the hibernation of the new home", got, err)
 	}
@@ -367,5 +370,83 @@ func TestECSEC2HomeBackupsSaysWhetherTheHomeExists(t *testing.T) {
 	}
 	if b, err := h.rt.HomeBackups(ctx); err != nil || b.HomeExists {
 		t.Fatalf("after the erase: %+v, %v; want no home", b, err)
+	}
+}
+
+// The mark goes first. If it cannot be written, nothing is destroyed: a home that is still
+// there is still the member's, while a home deleted without the mark is one a stray
+// snapshot could bring back.
+func TestECSEC2EraseHomeDestroysNothingWithoutTheMark(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.efs.tagErr = errors.New("ThrottlingException: rate exceeded")
+	if err := h.rt.EraseHome(ctx); err == nil {
+		t.Fatal("EraseHome succeeded although the mark could not be written")
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Error("the volume was deleted without the mark in place")
+	}
+	if _, ok := h.ec2.snapshots["snap-hib"]; !ok {
+		t.Error("the hibernation snapshot was deleted without the mark in place")
+	}
+}
+
+// The mark is dated past the erase's own window, so a capture that races the erase — it
+// starts before the volume goes, which is before the deadline — is covered even if it
+// starts after the erase began.
+func TestECSEC2TheEraseMarkCoversTheWholeErase(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	before := time.Now()
+	if err := h.rt.EraseHome(ctx); err != nil {
+		t.Fatalf("EraseHome: %v", err)
+	}
+	mark, err := h.rt.homeErasedAt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mark.Before(before.Add(eraseWindow)) {
+		t.Errorf("mark %s does not reach past the erase window (started %s)", mark, before)
+	}
+	h.ec2.snapshots["snap-racing"] = homeSnapshotAt("snap-racing", time.Now().Add(eraseWindow/2), ec2types.SnapshotStateCompleted)
+	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "" {
+		t.Fatalf("a capture inside the erase window: restoreSnapshot = %q, %v; want none", got, err)
+	}
+}
+
+// One call lists at most 100 access points and a file system carries two per member.
+// A member whose access points are on a later page must still be found: the mark is
+// written on theirs, no duplicate is created, and Destroy removes both.
+func TestECSEC2AccessPointsAreFoundPastTheFirstPage(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.efs.pageSize = 100
+	var others []efstypes.AccessPointDescription
+	for i := 0; i < 150; i++ {
+		id := fmt.Sprintf("fsap-other-%d", i)
+		others = append(others, efstypes.AccessPointDescription{AccessPointId: aws.String(id),
+			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String(fmt.Sprintf("M-x%d", i))},
+				{Key: aws.String("af-role"), Value: aws.String("keep-ec2")}}})
+	}
+	h.efs.aps = append(others, h.efs.aps...) // the member's two now sit on the second page
+	if err := h.rt.EraseHome(ctx); err != nil {
+		t.Fatalf("EraseHome: %v", err)
+	}
+	if len(h.efs.createCalls) != 0 {
+		t.Errorf("a second keep access point was created (%d) because the first page did not show the member's", len(h.efs.createCalls))
+	}
+	if keepMark(t, h) == "" {
+		t.Error("the mark was not written on the member's keep access point on the second page")
+	}
+	if _, err := h.rt.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	for _, ap := range h.efs.aps {
+		if tagValue(ap.Tags, "af-membership") == "M-1" {
+			t.Errorf("Destroy left %s behind on the second page", aws.ToString(ap.AccessPointId))
+		}
+	}
+	if len(h.efs.aps) != 150 {
+		t.Errorf("Destroy touched other members' access points: %d left, want 150", len(h.efs.aps))
 	}
 }

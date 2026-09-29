@@ -412,18 +412,41 @@ func (e *ecsRuntime) Destroy(ctx context.Context) ([]string, error) {
 	return leftovers, nil
 }
 
+// accessPoints lists every access point on the deployment's file system, following
+// NextToken. One call returns at most 100 (the API's default page), and one file system
+// carries two access points per member, so a lookup that read only the first page would,
+// past 50 members, miss a member's access point: ensureAccessPoint would create a second
+// one on every Start, Destroy would leave some behind, and the home-erase mark would be
+// written nowhere.
+func (e *ecsRuntime) accessPoints(ctx context.Context) ([]efstypes.AccessPointDescription, error) {
+	var all []efstypes.AccessPointDescription
+	var token *string
+	for {
+		out, err := e.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
+			FileSystemId: aws.String(e.cfg.efsFileSystem),
+			NextToken:    token,
+		})
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, out.AccessPoints...)
+		if aws.ToString(out.NextToken) == "" {
+			return all, nil
+		}
+		token = out.NextToken
+	}
+}
+
 // destroySharedResources removes the per-membership EFS access points and SSM secrets —
 // the part of the teardown that is identical on both launch types. Split out so the EC2
 // adapter can run it in its own order (slot and volume first, then this).
 func (e *ecsRuntime) destroySharedResources(ctx context.Context) ([]string, error) {
-	out, err := e.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
-		FileSystemId: aws.String(e.cfg.efsFileSystem),
-	})
+	aps, err := e.accessPoints(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var leftovers []string
-	for _, ap := range out.AccessPoints {
+	for _, ap := range aps {
 		if tagValue(ap.Tags, "af-membership") != e.membershipID {
 			continue
 		}
@@ -555,13 +578,11 @@ func (e *ecsRuntime) watchReady(ctx context.Context) {
 // given role (home|claude), creating it (tagged af-membership/af-role) if absent.
 // Deterministic tag lookup = no CP-side state.
 func (e *ecsRuntime) ensureAccessPoint(ctx context.Context, role, path string) (string, error) {
-	out, err := e.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
-		FileSystemId: aws.String(e.cfg.efsFileSystem),
-	})
+	aps, err := e.accessPoints(ctx)
 	if err != nil {
 		return "", err
 	}
-	for _, ap := range out.AccessPoints {
+	for _, ap := range aps {
 		if tagValue(ap.Tags, "af-membership") == e.membershipID && tagValue(ap.Tags, "af-role") == role {
 			return aws.ToString(ap.AccessPointId), nil
 		}

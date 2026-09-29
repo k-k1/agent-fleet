@@ -1430,11 +1430,13 @@ on its EBS volume.
   the member's own snapshot first; one left behind would hand the erased home back. The pool sweeper advances a
   hibernation without the lifecycle lease, so a capture it started just before the volume went can be missing
   from an eventually consistent listing, and no wait makes a listing complete. The snapshots are listed twice
-  (again after a short settle) as cleanup, and the guarantee is a mark instead: the erase stamps
-  `af-home-erased-at` on the member's keep access point, which outlives the erase, and the restore path never
-  restores a home snapshot that started before it — it deletes it. Measured on the sandbox account against the
-  StartTime EBS reports: a snapshot taken after the mark is restored, the same snapshot is refused once the mark
-  is newer. The one thing it does not keep that docker keeps: a keep file a tool replaced since the last start
+  (again after a short settle) as cleanup, and the guarantee is a mark instead: before anything is destroyed,
+  the erase stamps `af-home-erased-at` on the member's keep access point, which outlives the erase, dated past
+  the erase's own five-minute window; the restore path never restores a home snapshot that started before it —
+  it deletes it. Every snapshot of the erased home starts before its volume goes, and the volume goes inside the
+  window or not at all, so the mark covers them; and if the mark cannot be written, nothing is destroyed.
+  Measured on the sandbox account against the StartTime EBS reports: a snapshot taken inside the window is
+  refused, one taken after a mark is restored. The one thing it does not keep that docker keeps: a keep file a tool replaced since the last start
   (the entrypoint moves it to EFS at the next boot) goes with the volume.
 - **Backups stay, and deleting them is a separate action.** A backup outliving the home is what decision 17
   made it for, so no cleanup takes one as a side effect. The member detail shows how many a member has and

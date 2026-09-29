@@ -1411,13 +1411,11 @@ func (e *ecsEC2Runtime) prepare(ctx context.Context) (ec2Prep, error) {
 // the rootDirectory paths are IDENTICAL — a deployment that switches profiles keeps its
 // Claude state and logins.
 func (e *ecsEC2Runtime) ensureAccessPoint(ctx context.Context, role, path string) (string, error) {
-	out, err := e.base.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
-		FileSystemId: aws.String(e.base.cfg.efsFileSystem),
-	})
+	aps, err := e.base.accessPoints(ctx)
 	if err != nil {
 		return "", err
 	}
-	for _, ap := range out.AccessPoints {
+	for _, ap := range aps {
 		if tagValue(ap.Tags, "af-membership") == e.base.membershipID && tagValue(ap.Tags, "af-role") == role {
 			return aws.ToString(ap.AccessPointId), nil
 		}
@@ -4111,6 +4109,17 @@ func (e *ecsEC2Runtime) Destroy(ctx context.Context) ([]string, error) {
 // back at the next start. Backups stay: they are copies outside the home, and
 // DeleteHomeBackups is the separate step that removes them.
 func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
+	// The mark goes first, before anything is destroyed, and it is dated past this erase's
+	// own deadline. Every snapshot of the home that this erase deletes — or that races it —
+	// starts before the volume is gone, and the volume goes before the deadline or not at
+	// all; so the mark covers them whether or not the listings below see them, and if the
+	// mark cannot be written nothing has been touched. A later snapshot of the NEW home is
+	// weeks away (hibernation) or a backup, which the mark never applies to.
+	ctx, cancel := context.WithTimeout(ctx, eraseWindow)
+	defer cancel()
+	if err := e.markHomeErased(ctx, e.now().Add(eraseWindow+eraseClockMargin)); err != nil {
+		return err
+	}
 	if err := e.Stop(ctx); err != nil {
 		return err
 	}
@@ -4132,28 +4141,34 @@ func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
 	if err := e.sleep(ctx, snapshotListingSettle); err != nil {
 		return err
 	}
-	if err := e.deleteHomeSnapshots(ctx); err != nil {
-		return err
-	}
 	// The second look is cleanup, not the guarantee: no wait makes an eventually
-	// consistent listing complete. The guarantee is this mark, which the restore path
-	// honours whatever the listings showed.
-	return e.markHomeErased(ctx)
+	// consistent listing complete. The guarantee is the mark written first, which the
+	// restore path honours whatever the listings showed.
+	return e.deleteHomeSnapshots(ctx)
 }
 
-// markHomeErased stamps the member's keep access point with the moment their home was
-// erased (efsTagHomeErasedAt). Every snapshot of the erased volume started before now,
-// because the volume is gone. A member who never started has no access point and no home,
-// so there is nothing to mark.
-func (e *ecsEC2Runtime) markHomeErased(ctx context.Context) error {
-	ap, err := e.keepAccessPoint(ctx)
-	if err != nil || ap == nil {
-		return err
+// eraseWindow bounds EraseHome, and the erase mark is dated past it: an erase that has
+// not deleted the volume by then fails, and the home it failed to delete stays the
+// member's. eraseClockMargin covers the CP's clock running behind the StartTime EBS stamps
+// on a snapshot.
+const (
+	eraseWindow      = 5 * time.Minute
+	eraseClockMargin = time.Minute
+)
+
+// markHomeErased stamps the member's keep access point with the time before which every
+// home snapshot is a copy of the erased home (efsTagHomeErasedAt). The access point is
+// created when it is missing — a member who has not started since it was lost still has
+// the next Start to be protected — so the mark always has somewhere to go.
+func (e *ecsEC2Runtime) markHomeErased(ctx context.Context, at time.Time) error {
+	id, err := e.ensureAccessPoint(ctx, "keep-ec2", "/home-keep/"+e.base.membershipID)
+	if err != nil {
+		return fmt.Errorf("keep access point of %s: %w", e.base.name, err)
 	}
 	if _, err := e.base.efs.TagResource(ctx, &efs.TagResourceInput{
-		ResourceId: ap.AccessPointId,
+		ResourceId: aws.String(id),
 		Tags: []efstypes.Tag{{Key: aws.String(efsTagHomeErasedAt),
-			Value: aws.String(e.now().UTC().Format(time.RFC3339Nano))}},
+			Value: aws.String(at.UTC().Format(time.RFC3339Nano))}},
 	}); err != nil {
 		return fmt.Errorf("mark the home of %s as erased: %w", e.base.name, err)
 	}
@@ -4186,15 +4201,13 @@ func (e *ecsEC2Runtime) homeErasedAt(ctx context.Context) (time.Time, error) {
 
 // keepAccessPoint finds this member's keep access point (the role prepare creates), or nil.
 func (e *ecsEC2Runtime) keepAccessPoint(ctx context.Context) (*efstypes.AccessPointDescription, error) {
-	out, err := e.base.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
-		FileSystemId: aws.String(e.base.cfg.efsFileSystem),
-	})
+	aps, err := e.base.accessPoints(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for i, ap := range out.AccessPoints {
+	for i, ap := range aps {
 		if tagValue(ap.Tags, "af-membership") == e.base.membershipID && tagValue(ap.Tags, "af-role") == "keep-ec2" {
-			return &out.AccessPoints[i], nil
+			return &aps[i], nil
 		}
 	}
 	return nil, nil

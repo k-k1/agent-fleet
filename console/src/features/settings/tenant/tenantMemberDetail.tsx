@@ -13,7 +13,7 @@
 //	  Cannot be undone   ruled off below it: clean home, delete backups, remove, discard,
 //	                     delete.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { api, apiJSON, errText, type ApiError } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -28,6 +28,14 @@ import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
+
+// GET …/home-backups: the copies of a member's home kept outside it, and whether the home
+// itself still exists (control-plane runtime.HomeBackups).
+interface HomeBackupsView {
+  count: number;
+  newest?: string;
+  home_exists?: boolean;
+}
 
 export function MemberView({
   slug,
@@ -63,7 +71,7 @@ export function MemberView({
   // home_exists comes from the same answer: while the home exists the backup schedule goes
   // on copying it, and only the CP can say whether it does (`member` is a snapshot from
   // when the row was clicked).
-  const [backups, setBackups] = useState<{ count: number; newest?: string; home_exists?: boolean } | null>(null);
+  const [backups, setBackups] = useState<HomeBackupsView | null>(null);
   // Whether removal also destroys the workspace. Shown unchecked, so the current contract
   // (keep the home, and just re-invite if they come back) holds unless it is ticked.
   const [purge, setPurge] = useState(false);
@@ -113,15 +121,40 @@ export function MemberView({
   const key = member.user_key;
   const base = `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}`;
 
-  const loadBackups = useCallback(async () => {
-    if (!homeBackups) return;
+  // fetchBackups asks the CP and never throws: an answer, or why there is none.
+  const fetchBackups = useCallback(async (): Promise<{ backups?: HomeBackupsView; error?: ApiError }> => {
     try {
       const d = await api(`${base}/home-backups`);
-      setBackups(d && !d.error ? { count: d.count ?? 0, newest: d.newest, home_exists: d.home_exists === true } : null);
+      if (d && !d.error) return { backups: { count: d.count ?? 0, newest: d.newest, home_exists: d.home_exists === true } };
+      return { error: d?.error ?? { code: "unknown" } };
     } catch {
-      /* keep the last answer; the button only appears when there is something to delete */
+      return { error: { code: "network" } };
     }
-  }, [base, homeBackups]);
+  }, [base]);
+  const loadBackups = useCallback(async () => {
+    if (!homeBackups) return;
+    const r = await fetchBackups();
+    if (r.backups) setBackups(r.backups);
+    // No answer keeps the last one; the button only appears when there is something to delete.
+    else if (r.error?.code !== "network") setBackups(null);
+  }, [fetchBackups, homeBackups]);
+  // The delete dialog opens only on a fresh answer: whether the home still exists — and so
+  // whether the schedule goes on copying it — may have changed since this view loaded, and
+  // a confirmation that leaves that warning out on a stale answer is worse than none.
+  const openDeleteBackups = async () => {
+    setBusy(true);
+    try {
+      const r = await fetchBackups();
+      if (!r.backups) {
+        toast(errText(r.error));
+        return;
+      }
+      setBackups(r.backups);
+      if (r.backups.count > 0) setConfirmDeleteBackups(true);
+    } finally {
+      setBusy(false);
+    }
+  };
   useEffect(() => {
     setBackups(null); // another member's count must not linger while this one loads
     void loadBackups();
@@ -704,16 +737,7 @@ export function MemberView({
               </button>
             )}
             {homeBackups && backups && backups.count > 0 && (
-              <button
-                className="danger-btn"
-                disabled={busy}
-                onClick={() => {
-                  // Read again: whether the home still exists (and so whether the schedule
-                  // goes on) may have changed since this view loaded.
-                  void loadBackups();
-                  setConfirmDeleteBackups(true);
-                }}
-              >
+              <button className="danger-btn" disabled={busy} onClick={() => void openDeleteBackups()}>
                 <Icon name="trash" /> {tCount("admin.delete_backups", backups.count)}
               </button>
             )}

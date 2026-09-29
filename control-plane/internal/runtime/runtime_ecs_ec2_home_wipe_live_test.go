@@ -204,7 +204,9 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 			t.Fatalf("EraseHome left no readable mark on %s: %v, %v", keepAP, mark, err)
 		}
 		t.Logf("erase mark on %s: %s", keepAP, mark.Format(time.RFC3339Nano))
-		// A home created after the erase and hibernated is the member's own: restored.
+		if !mark.After(time.Now().Add(eraseWindow - time.Minute)) {
+			t.Errorf("the mark %s is not dated past the erase's own window", mark.Format(time.RFC3339))
+		}
 		vol2, err := eye.CreateVolume(ctx, &ec2.CreateVolumeInput{
 			AvailabilityZone: aws.String(az), Size: aws.Int32(1), VolumeType: ec2types.VolumeTypeGp3, Encrypted: aws.Bool(true),
 			TagSpecifications: []ec2types.TagSpecification{{ResourceType: ec2types.ResourceTypeVolume, Tags: tags("scratch")}},
@@ -216,20 +218,24 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 			t.Fatalf("second throwaway volume never became available: %v", err)
 		}
 		volID = aws.ToString(vol2.VolumeId)
+		// A home snapshot that starts inside the erase's window is what a racing capture
+		// looks like: refused and deleted, judged by the StartTime EBS stamped on it.
+		racing := snapshot(ec2RoleHome)
+		waitCompleted(racing)
+		if got, err := rt.restoreSnapshot(ctx); err != nil || got != "" {
+			t.Fatalf("a snapshot inside the erase window: restoreSnapshot = %q, %v; want none", got, err)
+		}
+		if !gone(racing) {
+			t.Errorf("the snapshot inside the erase window was left billing")
+		}
+		// A snapshot that starts after the mark is the member's own home: restored.
+		if err := rt.markHomeErased(ctx, time.Now()); err != nil {
+			t.Fatalf("markHomeErased: %v", err)
+		}
 		later := snapshot(ec2RoleHome)
 		waitCompleted(later)
 		if got, err := rt.restoreSnapshot(ctx); err != nil || got != later {
-			t.Fatalf("a hibernation taken after the erase: restoreSnapshot = %q, %v; want %s", got, err, later)
-		}
-		// Stamped again now, that same snapshot predates the mark: never restored, deleted.
-		if err := rt.markHomeErased(ctx); err != nil {
-			t.Fatalf("markHomeErased: %v", err)
-		}
-		if got, err := rt.restoreSnapshot(ctx); err != nil || got != "" {
-			t.Fatalf("a snapshot older than the mark: restoreSnapshot = %q, %v; want none", got, err)
-		}
-		if !gone(later) {
-			t.Errorf("the snapshot older than the mark was left billing")
+			t.Fatalf("a snapshot after the mark: restoreSnapshot = %q, %v; want %s", got, err, later)
 		}
 	}
 

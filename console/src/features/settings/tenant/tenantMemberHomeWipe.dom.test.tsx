@@ -187,6 +187,21 @@ describe("member detail: backups of a home that still exists", () => {
     expect(document.body.textContent).not.toContain("この人の home はまだ残っています");
   });
 
+  // Without a fresh answer the dialog does not open: its warning would rest on a stale one.
+  it("does not open the dialog when the CP cannot be asked", async () => {
+    whoami = { home_erase: true, home_backups: true };
+    await mount();
+    api.mockImplementation((p: string) =>
+      p === BACKUPS ? Promise.reject(new TypeError("Failed to fetch")) : Promise.resolve({ running: false, sessions: [] }),
+    );
+    await act(async () => buttonWith("バックアップを削除（2 件）")!.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(toast).toHaveBeenCalledWith("network");
+    expect(buttonWith("削除する")).toBeUndefined();
+  });
+
   // The roster row is a snapshot: a home cleaned here, or started again elsewhere, is only
   // known to the CP. Opening the dialog asks again, and the warning follows the answer.
   it("asks the CP again when the dialog opens", async () => {
