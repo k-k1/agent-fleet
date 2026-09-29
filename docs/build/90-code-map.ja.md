@@ -26,22 +26,22 @@ updated: "2026-09"
 
 ## 90.2 両方の Go モジュールで成り立つ 2 つの規則
 
-**ルートのハンドラ。** どちらのバイナリもルート表を `buildMux`（`routes.go`）で組み、
-完全な一覧を `testdata/routes.golden` に持つ（`TestRouteTableGolden` が照合する）。`buildMux` は
-一部のルートを自分で登録し、残りはモジュール内の別ファイルにある機能別の関数に任せる（たとえば
-CP の `registerEngineRoutes`、agent の `browserx.RegisterRoutes`）。だからメソッドとパスを
-`routes.golden` で確かめ、その文字列（たとえば `"GET /api/admin/engines"`）をモジュール全体で
-grep する。登録している行がハンドラ名を示し、ハンドラ名がファイルかパッケージを教えてくれる
-（`sessionx.HandleCreateSession` なら `internal/sessionx`）。各ルートの用途は [05](05-api.ja.md)。
+**ルートのハンドラ。** どちらのバイナリもルート表を `buildMux`（`routes.go`）で組む。
+`buildMux` は一部のルートを自分で登録し、残りはモジュール内の別ファイルにある機能別の関数に任せる
+（たとえば CP の `registerEngineRoutes`、agent の `browserx.RegisterRoutes`）。だからメソッドと
+パス（たとえば `"GET /api/admin/engines"`）をモジュール全体で grep する。登録している行がハンドラ名を
+示し、ハンドラ名がファイルかパッケージを教えてくれる（`sessionx.HandleCreateSession` なら
+`internal/sessionx`）。`testdata/routes.golden` は `TestRouteTableGolden` がテスト用の構成で組んだ
+ルート表で、モジュールが何を提供しているかを手早く見るには向くが、全ルートではない: CP のエンジン
+ゲートウェイのルートはエンジンが設定されているときだけ登録され、golden には 1 つも無い。各ルートの用途は [05](05-api.ja.md)。
 
 **`internal/` 配下のパッケージは `package main` を import しない。** `main` から要るものは
 渡してもらう。継ぎ目の広いパッケージはその必要を自分の `deps.go` で宣言し、`main` が起動時に
 一度だけ `*_wiring.go` か `*_seam.go` から渡す（たとえば CP の `mcp_wiring.go`・`tenant_wiring.go`・
 `runtime_seam.go`、agent の `session_wiring.go`・`browser_seam.go`）。コンストラクタの引数で
 受け取るものもある: `internal/auth` はテナント秘密を開く関数を `auth.NewTenantIdPRegistry` で
-受け取り、それを呼ぶのは CP の `main.go`。だから呼び出しを追って関数フィールドやインタフェースに
-行き着いたら、実装はパッケージの中ではなく `main` 側（配線ファイルか、コンストラクタの呼び出し元）を
-探す。この継ぎ目の規則は [decisions/0067](../decisions/0067-parallel-refactor.ja.md)（決定 5）。
+受け取り、それを呼ぶのは CP の `main.go`。だから呼び出しを追ってこうして注入された関数フィールドや
+インタフェースに行き着いたら、`main` 側の配線ファイルかコンストラクタの呼び出し元を見る。この継ぎ目の規則は [decisions/0067](../decisions/0067-parallel-refactor.ja.md)（決定 5）。
 バイナリが 2 つある理由と層の分け方は
 [decisions/0012](../decisions/0012-go-internal-refactor.ja.md)。
 

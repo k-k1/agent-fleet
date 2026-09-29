@@ -27,14 +27,16 @@ level down. Two things outside those directories are also worth knowing:
 
 ## 90.2 Two rules that hold in both Go modules
 
-**A route's handler.** Each binary builds its route table in `buildMux` (`routes.go`),
-and keeps the complete list in `testdata/routes.golden`, which `TestRouteTableGolden`
-checks. `buildMux` registers some routes itself and hands the rest to per-feature
-functions elsewhere in the module (for example `registerEngineRoutes` in the CP,
-`browserx.RegisterRoutes` in the agent). So take the method and path from
-`routes.golden` and grep that string, `"GET /api/admin/engines"` say, across the whole
-module: the line that registers it names the handler, and the handler's name tells you
-the file or package (`sessionx.HandleCreateSession` is in `internal/sessionx`). What each
+**A route's handler.** Each binary builds its route table in `buildMux` (`routes.go`).
+`buildMux` registers some routes itself and hands the rest to per-feature functions
+elsewhere in the module (for example `registerEngineRoutes` in the CP,
+`browserx.RegisterRoutes` in the agent). So grep the method and path across the whole
+module, `"GET /api/admin/engines"` say: the line that registers it names the handler,
+and the handler's name tells you the file or package (`sessionx.HandleCreateSession` is
+in `internal/sessionx`). `testdata/routes.golden` is the route table as
+`TestRouteTableGolden` builds it in its test configuration. It is a quick way to see what
+a module serves, but not every route: in the CP, the engine gateway's routes are
+registered only when an engine is configured, and the golden has none of them. What each
 route is for is [05](05-api.md).
 
 **A package under `internal/` never imports `package main`.** What it needs from `main`
@@ -43,10 +45,10 @@ is handed to it. The packages with the widest seams declare that need in their o
 (for example `mcp_wiring.go`, `tenant_wiring.go` and `runtime_seam.go` in the CP, and
 `session_wiring.go` and `browser_seam.go` in the agent). Others take it as a constructor
 argument: `internal/auth` gets the tenant-secret opener through
-`auth.NewTenantIdPRegistry`, called from the CP's `main.go`. So when a call ends at a
-function field or an interface, look for the implementation on the `main` side (the
-wiring file, or the caller of the constructor), not in the package itself. The rules
-for these seams are in [decisions/0067](../decisions/0067-parallel-refactor.md) (decision
+`auth.NewTenantIdPRegistry`, called from the CP's `main.go`. So when a call ends at one of
+these injected function fields or interfaces, look at the wiring file or the
+constructor's caller on the `main` side. The rules for these seams are in
+[decisions/0067](../decisions/0067-parallel-refactor.md) (decision
 5). Why there are two binaries, and how they are layered, is in
 [decisions/0012](../decisions/0012-go-internal-refactor.md).
 
