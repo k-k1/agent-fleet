@@ -344,10 +344,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.12
-ARG AGY_RELEASE_BUILD=5784551402897408
-ARG AGY_SHA256_X64=26c7c4c661d6c9beda734fcf305031056a6ea46e697c4533e8151179724e2950
-ARG AGY_SHA256_ARM64=bd338c9d19ab963d9d2bc027e4e797b470ea84bae02080e4fde4555357ea9444
+ARG AGY_VERSION=1.2.13
+ARG AGY_RELEASE_BUILD=6662628811079680
+ARG AGY_SHA256_X64=b0f195d37973be7b08c3b705d7fbbcd948dacb4a3c2176ee52ca29f7159bdc21
+ARG AGY_SHA256_ARM64=43bf59be5895475f8a32d4f94f1241f665986ea41a3622579e03b74e1b63dcfb
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -433,9 +433,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.24.1
-ARG KIRO_SHA256_X64=89e26b61707a3a17bcf0d0dfa7043366d94b48bfe35e9605058bd5de4b7199ce
-ARG KIRO_SHA256_ARM64=95e149b0b5e2be3c6f56d4e5ed1bc5313d2596ef39255529a553027fd87abff5
+ARG KIRO_VERSION=2.25.0
+ARG KIRO_SHA256_X64=3e924de9697717b99891bb5f7d2a4bd9c768b8bfa1c498b35b3d242948512984
+ARG KIRO_SHA256_ARM64=e5564c94516f8ab745ba92790ec91b0e024d3ab6b41e33bde067d9119679354e
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
@@ -450,12 +450,12 @@ ARG KIRO_SHA256_ARM64=95e149b0b5e2be3c6f56d4e5ed1bc5313d2596ef39255529a553027fd8
 #   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url（匿名）
 #   curl -s "<manifest_url>" | jq .artifacts.x86_linux,.artifacts.aarch64_linux
 # sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
-# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 355,154,136 B / 317,397,080 B（1.4.0-R4302.1）。
+# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 358,783,192 B / 320,280,664 B（1.4.1-R4380.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.0-R4302.1
-ARG MUSE_SHA256_X64=ad21c22965f8600b4473b4ab8354ff7cc483d4cb681b46f2952561d855c8ed86
-ARG MUSE_SHA256_ARM64=79cfba1b9e417b370bdb9154a546c524b7f32a34026e6164b6f3f122f0ea3386
+ARG MUSE_VERSION=1.4.1-R4380.1
+ARG MUSE_SHA256_X64=0179bbe00a3a36ef60951131821e137d4b9a59ae4d5b8dc3a798221cc507cfa2
+ARG MUSE_SHA256_ARM64=98e87ca384f9b6bd54b493eaf4e83bc7f2638ffdc86d1941e95b6e3385cf0b92
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
