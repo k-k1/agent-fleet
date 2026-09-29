@@ -34,7 +34,7 @@ value instead of reverting code.
 | Per-user disk sizing | — | — | ✓ | ✓ |
 | Idle auto-stop | ✓ | ✓ | ✓ | ✓ |
 | Stop / start preserving home | ✓ | ✓ | ✓ | ✓ |
-| Role-scoped documentation in the container | ✓¹ | ✓¹ | ✓² | ✓² |
+| The user guide inside the container | ✓¹ | ✓¹ | ✓² | ✓² |
 | Browser pane | ✓ | ✓³ | ✓ | ✓ |
 | Cost attribution per member | — | — | ✓ | ✓ |
 | An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ |
@@ -46,8 +46,8 @@ value instead of reverting code.
 ¹ Staged on the host and bind-mounted at start.
 
 ² There is no host path to mount into a task, so the container fetches the identical
-subset from the Control Plane over an internal endpoint instead. Same decision, two
-delivery mechanisms, one implementation of "what may this role see".
+tree from the Control Plane over an internal endpoint instead. One tree, two delivery
+mechanisms.
 
 ³ The lean image used by `native` does not bake Chromium; it is downloaded on demand
 the first time.

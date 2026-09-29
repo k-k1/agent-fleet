@@ -141,7 +141,7 @@ membership を解決し直す。
 | `/internal/memos*`・`/internal/memo-categories*` | `AF_MEMO_TOKEN` | オペレーターのメモツール |
 | `/internal/schedules*` | `AF_SCHEDULE_TOKEN` | オペレーターのスケジュールツール（作成を含む）|
 | `GET /internal/mcp-servers` | `AF_MCP_TOKEN` | テナント配布の MCP サーバのポーリング |
-| `GET /internal/docs` | `AF_DOCS_TOKEN` | ロール別のガイドを tar.gz で（[04 §4.9](04-agent.ja.md)）|
+| `GET /internal/docs` | `AF_DOCS_TOKEN` | ユーザーガイドを tar.gz で（[04 §4.9](04-agent.ja.md)）|
 | `GET /internal/aws-profiles` | `AF_AWS_PROFILES_TOKEN` | メンバーのプロファイルを `~/.aws/config` に書く |
 | `POST /internal/git-oauth/{bitbucket,jira}/refresh` | `AF_GIT_OAUTH_TOKEN` | refresh grant を CP が代行し、テナントの client secret を CP に残す（[ADR 0052](../decisions/0052-tenant-git-oauth.ja.md)）|
 | `POST /internal/engine/token`・`GET /internal/engine/catalog` | `AF_ENGINE_ISSUE_TOKEN` | セッション単位のエンジントークンと、起動メニューが読むエンジンのカタログ |

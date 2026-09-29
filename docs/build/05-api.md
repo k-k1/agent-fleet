@@ -153,7 +153,7 @@ and the CP resolves that membership on each call.
 | `/internal/memos*`, `/internal/memo-categories*` | `AF_MEMO_TOKEN` | the operator's memo tools |
 | `/internal/schedules*` | `AF_SCHEDULE_TOKEN` | the operator's schedule tools, including create |
 | `GET /internal/mcp-servers` | `AF_MCP_TOKEN` | the poll for the tenant's distributed MCP servers |
-| `GET /internal/docs` | `AF_DOCS_TOKEN` | the role-scoped guide as a tar.gz ([04 §4.9](04-agent.md)) |
+| `GET /internal/docs` | `AF_DOCS_TOKEN` | the user guide as a tar.gz ([04 §4.9](04-agent.md)) |
 | `GET /internal/aws-profiles` | `AF_AWS_PROFILES_TOKEN` | the member's profiles, written into `~/.aws/config` |
 | `POST /internal/git-oauth/{bitbucket,jira}/refresh` | `AF_GIT_OAUTH_TOKEN` | the refresh grant runs on the CP, so the tenant's client secret stays there ([ADR 0052](../decisions/0052-tenant-git-oauth.md)) |
 | `POST /internal/engine/token`, `GET /internal/engine/catalog` | `AF_ENGINE_ISSUE_TOKEN` | a session-scoped engine token, and the engine catalogue the launch menu reads |
