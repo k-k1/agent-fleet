@@ -33,7 +33,9 @@ the shape without weighing an alternative:
 - **Phase 0** ([log/phase0-poc](../log/phase0-poc.md)) tested whether `claude /login` works headless.
   Two of its hypotheses are this decision in small. H3: the credentials persist in the bind-mounted
   home, and claude runs **after the container is recreated without logging in again**. H6: a claude
-  in tmux can be detached and **brought back with `--resume`**. Both passed (2026-06-26).
+  in tmux can be detached and **brought back with `--resume`**. The journal records a result for H1–H3
+  only: they passed (2026-06-26). H6 stays an unchecked hypothesis with its procedure, and the
+  Phase 1 results (§11.10) do not name `--resume` either.
 - **Phase 1** ([log/phase1-plan](../log/phase1-plan.md) §11.1, §11.4) built the container for one
   user, with `./data/home/<user>` bind-mounted as `~`. It was still a single workspace (§11.10).
   The Agent inside it lists, starts and stops **several** `claude_*` tmux sessions.
@@ -104,8 +106,9 @@ Build output that is cheap to regenerate may live on a disk that dies with the s
   - a setup token in an environment variable is read by `claude -p` only;
   - a synthesised `.credentials.json` without a refresh token is rejected by the TUI;
   - the API-key variable is billed as API usage and can disable subscription features.
-- **The other kinds keep their credential in their own directory** or in the encrypted store in
-  the home ([build/04](../build/04-agent.md) §4.3, "Credential location").
+- **codex and opencode keep theirs in the home too**: codex in its own directory, opencode in the
+  encrypted store ([build/04](../build/04-agent.md) §4.3, "Credential location"). That table covers
+  these three kinds only; this ADR does not claim the same for the others.
 - **A copy of the credential goes stale when it rotates.** ADR 0087 found that a credential rotated
   while borrowed stays on the old volume. "With a provider that retires used refresh tokens, the
   user is asked to sign in again." ADR 0095's probes kept the real `XDG_CONFIG_HOME` for the same
@@ -116,37 +119,43 @@ exactly that (H3) an exit criterion.
 
 ### Reason 2: a conversation lives in the CLI's local store, and resuming it reads that store
 
-- **The CLI's own store is the truth.** For claude and codex it is their own JSONL; for opencode,
-  its own database ([build/04](../build/04-agent.md) §4.3). "The conversation body is never copied
-  into a store of our own" (§4.3, ADR 0015).
+- **The CLI's own store is the truth**, for the three kinds [build/04](../build/04-agent.md) §4.3
+  tabulates: claude and codex keep their own JSONL, opencode its own database. For the managed
+  boundary, §4.3 adds that "the conversation body is never copied into a store of our own"
+  (ADR 0015).
 - **Resuming needs the store and the working directory.** A resumed session reads the store, and
-  the agent kinds "cannot resume if the working directory is gone" (§4.2). Phase 0's H6 was this
-  property.
+  build/04 states that the agent kinds "cannot resume if the working directory is gone" (§4.2).
+  Phase 0's H6 hypothesised this property; the record of it working is the production behaviour
+  build/04 describes, not a Phase 0 result.
 - **Halting is only cheap because of this.** The idle-stop plan calls halting a claude session
   "effectively hibernate": the conversation is kept in JSONL and `claude --resume` brings it back
   with its context ([log/p3-9-idle-stop](../log/p3-9-idle-stop.md) §19.1). The same plan states
   the invariant: only the infrastructure is stopped; the conversation, the home and the credentials
   persist and are restored on the next access.
-- **The features downstream assume this.** ADR 0055 carries a pending interaction over a stop. ADR
-  0097 retains stopped sessions (they are archived and never deleted).
+- **The features downstream assume this.** ADR 0055 carries a pending interaction over a stop. When
+  a stopped session's TTL expires, ADR 0097 archives it instead of deleting it automatically.
 
-### Reason 3: a fresh environment pays its start and its regeneration again
+### Reason 3: a fresh environment rebuilds what the home keeps warm
 
 None of these was measured to compare with a per-task environment. They were measured while
-making the persistent shape fast. They are the record's only numbers for what a fresh environment
-costs in this system:
+making the persistent shape fast, and they are the record's only numbers on the subject.
 
-| Start | Time | Source |
-|---|---|---|
-| A new user, empty home, cold slot | 144.0 s | ADR 0045 decision 19 |
-| Returning to a warm home on Fargate | ~84–105 s | ADR 0045 decisions 2, 5 and 8 |
-| A hot slot swapping the member's volume in | 22–27 s | ADR 0045 decision 8 |
+**Start time is not the difference.** ADR 0045 first quoted 22–27 s for a hot slot swapping the
+member's volume in (decision 8). That figure was taken without Service Connect, which the product
+uses. Decision 10-5 corrected it to 13–95 s, and decision 12 re-measured 43–110 s (43.2 s for a hot
+free slot). Decision 12 then removed startup time from the reasons for that shape: against Fargate's
+warm restart (~84–105 s) there is almost no advantage, because ECS placement and container start take
+most of the time. A new user with an empty home on a cold slot took 144.0 s (decision 19). This
+ADR therefore does not claim that a long-lived workspace starts faster.
 
-- **The image cache** takes the pull from 31.8 s to 0.09 s (ADR 0045 decision 1).
-- **Regeneration** has its own cost. `npm ci` is 105 s against 11 s once `node_modules` is on local
-  disk (ADR 0045 decision 2, citing ADR 0044 decision 3). ADR 0045 decision 5 made regeneration
-  each morning (`npm ci` plus the first build) exceeding 5 minutes one of its gates for moving to
-  the EC2 shape.
+What the record does show is the cost of rebuilding what the home keeps:
+
+- **The record already counts rebuilding after a start as a cost.** Where build output lives on a
+  disk that dies with the stop (`/scratch`, ADR 0044 decision 3), it is rebuilt after every start.
+  ADR 0045 decision 2 listed "no regeneration each morning" among what the EC2 shape still offered
+  over that. Decision 5 made regeneration each morning (`npm ci` plus the first build) exceeding
+  5 minutes one of its gates. A single-shot environment per task would pay that rebuild per task,
+  and without the warm caches of the next bullet.
 - **Warm caches make the Nth copy cheap.** [build/93](../build/93-worktree-deps.md) rests on
   "reinstalling is cheap and duplicating is expensive", because the caches in the home survive. A
   worktree's submodule seeded from the parent clone took 0.23 s for 41 MB with the remote offline,
@@ -171,19 +180,21 @@ over something else.
 
 ## Rejected: an environment per task
 
-The option is a container (or pod) per task, built from the image and a fresh checkout, and
-discarded when the task ends. **No record weighs it.** The reasons below are reconstructed from what
-the recorded decisions depend on. They are not a rejection anyone wrote at the time.
+The option weighed here is a **single-shot** container (or pod) per task, built from the image and a
+fresh checkout, **with no store shared across tasks**, and discarded when the task ends. **No record
+weighs it.** The reasons below are reconstructed from what the recorded decisions depend on. They are
+not a rejection anyone wrote at the time.
 
 - **Every task would need the member's login inside it.** The routes that inject a credential do not
   work for the interactive TUI (reason 1). Copying the config directory into each task and throwing
-  it away loses every rotation made while borrowed: the ADR 0087 case, once per task.
+  it away would expose each task to the mechanism ADR 0087 found: a rotation made while the copy was
+  in use stays in the copy.
 - **The conversation would be discarded with the environment.** Resume, fork, halting for idle-stop
   and carried interactions all read the CLI's local store and working directory (reason 2). Keeping
   them means carrying the store and the working copy out and back in, which is a persistent home
   under another name.
-- **Every task would start cold.** Start and regeneration run again per task (reason 3): 144 s for a
-  cold, empty start against 22–27 s for a hot swap.
+- **Every task would rebuild its dependencies and caches** (reason 3). Start time is not counted
+  against it: the record shows no clear start-time gap (ADR 0045 decision 12).
 - **The features built since assume one home**, and each would need a layer across environments:
   - cross-session messaging (ADR 0041; decision 12 names one workspace as the boundary);
   - sessions spawned by sessions (ADR 0073);
@@ -199,6 +210,13 @@ What a per-task environment would have given, and this choice gives up:
 - no need for worktree discipline;
 - a clean state per task;
 - nothing left behind to retain or clean up.
+
+**A middle option was not weighed and is not measured:** a container per task that mounts the
+member's persistent store (credentials, CLI state, clones and caches) and starts on a warm slot.
+It keeps the home and changes only the unit of compute. Reasons 1–3 do not argue against it. The
+one thing the record says that bears on it: the features in the fourth bullet above assume a
+member's sessions share one container (ADR 0041 decision 12 makes one workspace the boundary).
+Nothing was measured against this option.
 
 ## Consequences — the costs of the choice
 
@@ -251,8 +269,8 @@ What a per-task environment would have given, and this choice gives up:
   accepts an injected, refreshable credential without losing subscription features — none of ADR
   0002's attempts got there — and conversations that resume from somewhere other than the local store.
   Reasons 1 and 2 would then weaken.
-- **A fresh environment starts, caches included, about as fast as a hot swap does now (22–27 s).**
-  Reason 3 would then weaken.
+- **A fresh environment gets its dependency trees and caches as cheaply as the home does now**,
+  for example from a shared or pre-seeded cache. Reason 3 would then weaken.
 - **A tenant needs a member's own tasks isolated from each other**, for example to run untrusted
   repositories side by side. Today the container is the only wall (build/07 §7.1).
 - **Idle-stop cannot be made reliable on some runtime.** There, this shape costs the around-the-clock
