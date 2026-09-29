@@ -93,8 +93,9 @@ the context window the running engine started with (`engine_gateway.go`):
 - The gateway is exempt from the login gate and authenticates on its own. The workspace
   holds a per-membership issuing token (`AF_ENGINE_ISSUE_TOKEN`, `afei_…`) and exchanges
   it at `POST /internal/engine/token` for a token (`afe_…`, valid for 30 days) bound to
-  the membership and one engine key. It is session-scoped only where a session is its own
-  process (a terminal session); opencode's shared Managed daemon gets one with no session.
+  the membership, one engine key and, when the caller names one, one session — an lcpp
+  session or a terminal opencode session. Where the caller names none (opencode's shared
+  Managed daemon, image generation, the boot-time probes) it covers the whole workspace.
   Every call re-checks that the membership is still live and that the tenant may use that
   engine.
 - An engine on `docker` / `native` is one the operator already runs on the network

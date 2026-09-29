@@ -81,9 +81,10 @@ at-rest 暗号 + env 注入で実用十分とする設計判断。セッショ�
   鍵で、読めなくても致命にしないのは意図どおり（`readEngineAPIKey`）。
 - ゲートウェイはログインの門から除外され、自前で認証する。Workspace は membership ごとの
   発行トークン（`AF_ENGINE_ISSUE_TOKEN`・`afei_…`）を持ち、`POST /internal/engine/token` で
-  membership とエンジンのキー 1 つに縛られたトークン（`afe_…`・有効 30 日）と交換する。
-  セッション単位になるのはセッションが自分のプロセスを持つ場合（ターミナルのセッション）だけで、
-  opencode の共有 Managed デーモンにはセッションの無いものが渡る。毎回、membership が生きている
+  membership とエンジンのキー 1 つ、それに呼び出し側が指定したときは 1 セッション（lcpp の
+  セッションやターミナルの opencode セッション）に縛られたトークン（`afe_…`・有効 30 日）と交換する。
+  指定しない経路（opencode の共有 Managed デーモン・画像生成・起動時の問い合わせ）では
+  Workspace 全体が単位になる。毎回、membership が生きている
   ことと、テナントがそのエンジンを使えることを確かめ直す。
 - `docker` / `native` のエンジンは運用者がネットワーク上で既に動かしているもの
   （[decisions/0076](../decisions/0076-external-image-engine-on-lan.ja.md)）。その bearer は
