@@ -27,18 +27,25 @@ level down. Two things outside those directories are also worth knowing:
 
 ## 90.2 Two rules that hold in both Go modules
 
-**A route's handler.** Each binary registers every route in `buildMux` (`routes.go`), and
-keeps the complete list in `testdata/routes.golden`, which `TestRouteTableGolden` checks.
-So grep the path in `routes.go`, and the handler it names tells you the file or package:
-`sessionx.HandleCreateSession` is in `internal/sessionx`. What each route is for is
-[05](05-api.md).
+**A route's handler.** Each binary builds its route table in `buildMux` (`routes.go`),
+and keeps the complete list in `testdata/routes.golden`, which `TestRouteTableGolden`
+checks. `buildMux` registers some routes itself and hands the rest to per-feature
+functions elsewhere in the module (for example `registerEngineRoutes` in the CP,
+`browserx.RegisterRoutes` in the agent). So take the method and path from
+`routes.golden` and grep that string, `"GET /api/admin/engines"` say, across the whole
+module: the line that registers it names the handler, and the handler's name tells you
+the file or package (`sessionx.HandleCreateSession` is in `internal/sessionx`). What each
+route is for is [05](05-api.md).
 
-**A package under `internal/` never imports `package main`.** When one needs something
-from `main`, it declares that need in its own `deps.go`. `main` supplies it once at boot,
-from a `*_wiring.go` or `*_seam.go` file (for example `mcp_wiring.go`, `tenant_wiring.go`
-and `runtime_seam.go` in the CP, and `session_wiring.go` and `browser_seam.go` in the
-agent). So when a call ends at a function field or an interface declared in `deps.go`,
-look for the implementation in `main`'s wiring file, not in the package itself. The rules
+**A package under `internal/` never imports `package main`.** What it needs from `main`
+is handed to it. The packages with the widest seams declare that need in their own
+`deps.go`, and `main` supplies it once at boot from a `*_wiring.go` or `*_seam.go` file
+(for example `mcp_wiring.go`, `tenant_wiring.go` and `runtime_seam.go` in the CP, and
+`session_wiring.go` and `browser_seam.go` in the agent). Others take it as a constructor
+argument: `internal/auth` gets the tenant-secret opener through
+`auth.NewTenantIdPRegistry`, called from the CP's `main.go`. So when a call ends at a
+function field or an interface, look for the implementation on the `main` side (the
+wiring file, or the caller of the constructor), not in the package itself. The rules
 for these seams are in [decisions/0067](../decisions/0067-parallel-refactor.md) (decision
 5). Why there are two binaries, and how they are layered, is in
 [decisions/0012](../decisions/0012-go-internal-refactor.md).
@@ -107,9 +114,10 @@ package's files (and its `deps.go`, where it has one) say what it holds.
 | Terminal and preview | `terminal*.go`, `preview.go` |
 | Clean-up | `cleanup_*.go`, `leftovers.go`, `tool_caches.go`, `cli_version_prune.go` |
 
-The rest of `internal/` is small shared helpers, for example `httpx`, `paths`, `fstore`,
-`pathguard`, `filemeta`, `tmuxx` and `transcript`. `wiretest` and `ingresstest` are
-imported only by tests.
+Other packages hold features of their own, for example `branchrule` (branch naming),
+`uiprefs` (saved UI preferences) and `statemig` (a one-time move of the agent's state).
+Small shared helpers include `httpx`, `paths`, `fstore`, `pathguard`, `filemeta`,
+`tmuxx` and `transcript`. `wiretest` and `ingresstest` are imported only by tests.
 
 ## 90.5 `console/src/`
 
@@ -154,5 +162,5 @@ runbook is the README in its directory ([09](09-deploy.md)). Where to start insi
 | The engine images this repository builds | `deploy/aws/ecs/comfyui/` and `deploy/aws/ecs/engine-tools/` |
 | Probes and benchmarks against real AWS | `deploy/aws/ecs/harness/` |
 | Building the release artifacts | `deploy/release/build.sh`, the single entry point. The native package's builders are `deploy/release/native/` |
-| The public distribution repository, and release notes | `deploy/release/dist-repo/` is the seed of that repository; `deploy/release/notes/` holds one file per released version |
+| The public distribution repository, and release notes | `deploy/release/dist-repo/` is the seed of that repository; `deploy/release/notes/` holds the release notes of each version, in English and Japanese |
 | The forbidden-token scanner | `deploy/release/scan-forbidden.sh` and its Go module, `deploy/release/scan/` |

@@ -26,16 +26,21 @@ updated: "2026-09"
 
 ## 90.2 両方の Go モジュールで成り立つ 2 つの規則
 
-**ルートのハンドラ。** どちらのバイナリも全ルートを `buildMux`（`routes.go`）で登録し、
-完全な一覧を `testdata/routes.golden` に持つ（`TestRouteTableGolden` が照合する）。だから
-パスを `routes.go` で grep すれば、そこに書かれたハンドラ名がファイルかパッケージを教えてくれる。
-`sessionx.HandleCreateSession` なら `internal/sessionx` にある。各ルートの用途は [05](05-api.ja.md)。
+**ルートのハンドラ。** どちらのバイナリもルート表を `buildMux`（`routes.go`）で組み、
+完全な一覧を `testdata/routes.golden` に持つ（`TestRouteTableGolden` が照合する）。`buildMux` は
+一部のルートを自分で登録し、残りはモジュール内の別ファイルにある機能別の関数に任せる（たとえば
+CP の `registerEngineRoutes`、agent の `browserx.RegisterRoutes`）。だからメソッドとパスを
+`routes.golden` で確かめ、その文字列（たとえば `"GET /api/admin/engines"`）をモジュール全体で
+grep する。登録している行がハンドラ名を示し、ハンドラ名がファイルかパッケージを教えてくれる
+（`sessionx.HandleCreateSession` なら `internal/sessionx`）。各ルートの用途は [05](05-api.ja.md)。
 
-**`internal/` 配下のパッケージは `package main` を import しない。** `main` の何かが要るときは、
-その必要を自分の `deps.go` で宣言する。`main` は起動時に一度だけ `*_wiring.go` か `*_seam.go`
-からそれを渡す（たとえば CP の `mcp_wiring.go`・`tenant_wiring.go`・`runtime_seam.go`、agent の
-`session_wiring.go`・`browser_seam.go`）。だから呼び出しを追って `deps.go` で宣言された関数
-フィールドやインタフェースに行き着いたら、実装はパッケージの中ではなく `main` 側の配線ファイルを
+**`internal/` 配下のパッケージは `package main` を import しない。** `main` から要るものは
+渡してもらう。継ぎ目の広いパッケージはその必要を自分の `deps.go` で宣言し、`main` が起動時に
+一度だけ `*_wiring.go` か `*_seam.go` から渡す（たとえば CP の `mcp_wiring.go`・`tenant_wiring.go`・
+`runtime_seam.go`、agent の `session_wiring.go`・`browser_seam.go`）。コンストラクタの引数で
+受け取るものもある: `internal/auth` はテナント秘密を開く関数を `auth.NewTenantIdPRegistry` で
+受け取り、それを呼ぶのは CP の `main.go`。だから呼び出しを追って関数フィールドやインタフェースに
+行き着いたら、実装はパッケージの中ではなく `main` 側（配線ファイルか、コンストラクタの呼び出し元）を
 探す。この継ぎ目の規則は [decisions/0067](../decisions/0067-parallel-refactor.ja.md)（決定 5）。
 バイナリが 2 つある理由と層の分け方は
 [decisions/0012](../decisions/0012-go-internal-refactor.ja.md)。
@@ -102,8 +107,10 @@ updated: "2026-09"
 | 端末と preview | `terminal*.go`・`preview.go` |
 | 後片付け | `cleanup_*.go`・`leftovers.go`・`tool_caches.go`・`cli_version_prune.go` |
 
-`internal/` の残りは小さな共有ヘルパーで、たとえば `httpx`・`paths`・`fstore`・`pathguard`・
-`filemeta`・`tmuxx`・`transcript`。`wiretest` と `ingresstest` はテストからしか import されない。
+ほかにも独自の機能を持つパッケージがあり、たとえば `branchrule`（ブランチ名の決定）・`uiprefs`
+（保存された UI 設定）・`statemig`（agent の状態の一度きりの移動）。小さな共有ヘルパーには
+`httpx`・`paths`・`fstore`・`pathguard`・`filemeta`・`tmuxx`・`transcript` がある。`wiretest` と
+`ingresstest` はテストからしか import されない。
 
 ## 90.5 `console/src/`
 
@@ -146,5 +153,5 @@ updated: "2026-09"
 | このリポジトリがビルドするエンジンイメージ | `deploy/aws/ecs/comfyui/` と `deploy/aws/ecs/engine-tools/` |
 | 実 AWS に対するプローブとベンチマーク | `deploy/aws/ecs/harness/` |
 | リリース成果物のビルド | `deploy/release/build.sh`（唯一の入り口）。native パッケージのビルダーは `deploy/release/native/` |
-| 公開配布リポジトリとリリースノート | `deploy/release/dist-repo/` がそのリポジトリの種、`deploy/release/notes/` がリリースした版ごとに 1 ファイル |
+| 公開配布リポジトリとリリースノート | `deploy/release/dist-repo/` がそのリポジトリの種、`deploy/release/notes/` が版ごとのリリースノート（英語と日本語）|
 | 禁止語スキャナ | `deploy/release/scan-forbidden.sh` とその Go モジュール `deploy/release/scan/` |
