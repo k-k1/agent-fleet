@@ -12,17 +12,19 @@ updated: "2026-09"
 API の境界、データモデル、脅威モデル、外部連携、ビルドとテストの作法、そして
 エージェント種別やデプロイ形態を足すときになぞる型。
 
-この棚に何を書き、何を他の棚に任せるか、どう書くか（ワイヤ契約と grep できるアンカー。
-行番号は書かない）は [CONVENTIONS §9](../CONVENTIONS.ja.md#9-棚ごとの担当) と
-[§4](../CONVENTIONS.ja.md#4-棚ごとの語彙) にあります。次のものは複製せずリンクします。
+この棚に無いものを探している？
 
 - 配備の運用: [guide/operate/](../../guide/operate/README.ja.md)
 - メンバーや管理者が見るもの・行うこと: [guide/member/](../../guide/member/README.ja.md)、
   [guide/admin/](../../guide/admin/README.ja.md)
 - どの種別・プロバイダ・形態・ロールが何に対応するか: [guide/ref/](../../guide/ref/README.ja.md)
-  （[CONVENTIONS §6](../CONVENTIONS.ja.md)）
 - なぜそうなっているか（退けた案を含む）: [decisions/](../decisions/)
-- まだ誰かがやるべきこと: GitHub Issue（[CONVENTIONS §10](../CONVENTIONS.ja.md#10-未完の作業は文でなく-issue-に)）
+- まだ誰かがやるべきこと: GitHub Issue
+
+この棚での書き方（ワイヤ契約と grep できるアンカー。行番号は書かない）と何を置くかは
+[CONVENTIONS §4](../CONVENTIONS.ja.md#4-棚ごとの語彙) と
+[§9](../CONVENTIONS.ja.md#9-棚ごとの担当)、未完の作業は
+[§10](../CONVENTIONS.ja.md#10-未完の作業は文でなく-issue-に)。
 
 ## 更新トリガ
 
@@ -48,6 +50,8 @@ API の境界、データモデル、脅威モデル、外部連携、ビルド�
 [08](08-integrations.ja.md) → [01](01-architecture.ja.md)。**種別や形態を足す？**
 [20](20-add-an-agent.ja.md) か [21](21-add-a-deploy-target.ja.md)。
 
+この表は手で保守しています。完全な一覧はこのディレクトリの番号付きファイルです。
+
 | | |
 |---|---|
 | [00 プロジェクトの前提](00-project-context.ja.md) | 他の章が拠って立つ前提: 現状・決着している仮定（v1）・何から作られたか |
@@ -55,7 +59,7 @@ API の境界、データモデル、脅威モデル、外部連携、ビルド�
 | [02 Console](02-console.ja.md) | ブラウザ側の SPA: スタック・状態とサーバ同期・ペイン・情報設計・表示の体系・i18n・ビルドとテスト |
 | [03 Control Plane](03-control-plane.ja.md) | 責務・リクエストの一生・Runtime 抽象・MCP サーバ・バックグラウンドジョブ・自前エンジン |
 | [04 Agent](04-agent.ja.md) | セッションモデル・種別の統合・状態バッジ・チャット・転写と使用量・秘密情報・Workspace イメージ・ブラウザマネージャ |
-| [05 API](05-api.ja.md) | 2 つの境界の地図（全ルートはルートのゴールデン）・中継経路・横断規約・監査の書き込み点 |
+| [05 API](05-api.ja.md) | 2 つの境界の地図・中継経路・横断規約・監査の書き込み点 |
 | [06 データ](06-data.ja.md) | ストアの構成・エンティティとその関係・DB に無いもの・マイグレーション作法 |
 | [07 セキュリティ](07-security.ja.md) | 脅威モデル・隔離・認証 2 層・CP ↔ agent 認証・封筒暗号・監査・egress |
 | [08 外部連携](08-integrations.ja.md) | 外部プロバイダと、それが落ちる 2 つの型（CP がコールバックを持つか否か）、各々の契約 |
@@ -66,4 +70,4 @@ API の境界、データモデル、脅威モデル、外部連携、ビルド�
 | [90 コードマップ](90-code-map.ja.md) | ディレクトリごとの grep の起点——目録ではなく例 |
 | [91 内部 git](91-internal-git.ja.md) | テナント内の git ホスティング: この形の理由・保存先・トークンモデル・接続点 |
 | [92 TUI の駆動](92-driving-a-tui.ja.md) | キー列で駆動するモーダル画面の検証と、CLI 更新のたびのチェックリスト |
-| [93 worktree の依存](93-worktree-deps.ja.md) | worktree が共有するもの / 重複するもの（言語別・実測）|
+| [93 worktree の依存](93-worktree-deps.ja.md) | worktree が共有するもの / 重複するもの（言語別）|
