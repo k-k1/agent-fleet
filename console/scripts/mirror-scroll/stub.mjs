@@ -48,6 +48,12 @@ const PAGE = Number(arg("pagesize", 400)); // jsonl lines per window; the server
 // whole 作業過程 disclosure with it. Poll 3 reports idle for one round (claude's Stop hook / a TUI
 // heal), which is what folds a turn that is still running.
 const WORKING = arg("working", "0") === "1";
+// With --working, also answer ?live=1 with the reply still being written (liveText, #1250): one
+// more line per poll while the turn runs, absent on the idle round. Off by default, so every other
+// scenario's body is unchanged.
+const LIVE = arg("live", "0") === "1";
+const liveTextAt = (n) =>
+  Array.from({ length: n + 2 }, (_, i) => `${i + 1}. 入力検証の規則を 1 つずつ見直しています（${i + 1} 行目）`).join("\n");
 const WORK_ROWS = Number(arg("workrows", 30)); // tool+text pairs in that live trace
 // Write each reply as one jsonl row PER PART instead of a single row (see buildTurns).
 const SPLIT = arg("split", "0") === "1";
@@ -192,6 +198,7 @@ function messages(session, q) {
     // Repeating firstLine:0/hasMore:false on every poll (which this used to do) wipes out what the
     // tail reply just advertised, one poll after it arrived — there is then nothing above to load.
     ...(PAGING ? {} : { firstLine: 0, hasMore: false }),
+    ...(LIVE && status === "working" && q.get("live") === "1" ? { liveText: liveTextAt(n) } : {}),
   };
   // Line indices must differ per session (a real jsonl's do), or switching sessions would
   // reuse the previous one's anchored reply idx and mask a bug.

@@ -214,6 +214,9 @@ export const settings = {
   "agents.expand_thinking": "思考を展開して表示",
   "agents.expand_thinking_note":
     "オンにすると、ミラーの「思考」を最初から開いた状態で表示します。オフ（既定）では畳んだまま出るので、見出しをクリックすると読めます。表示だけの設定で、エージェントの動作は変わりません。",
+  "agents.stream_replies": "返答をストリーミング表示",
+  "agents.stream_replies_note":
+    "オン（既定）にすると、Claude が書いている途中の返答をミラーに行ごとに表示します。オフにすると、書き終えた返答だけを表示します。表示だけの設定で、ターミナルとエージェントの動作は変わりません。",
   "agents.rtk_row": "RTK（トークン節約）",
   "agents.rtk_unavailable": "このワークスペースに rtk がありません",
   "agents.settings": "設定",

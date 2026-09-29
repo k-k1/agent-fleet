@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseImageProviderOrder, expandImageProviderOrder, expandThinking, getSettings, type ImageFleetRow, IMAGE_PROVIDER_FLEET_GROUP, imageProviderLabel, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, normalizeImageProviderOrder, type Settings } from "./settings.ts";
+import { collapseImageProviderOrder, expandImageProviderOrder, expandThinking, getSettings, streamReplies, type ImageFleetRow, IMAGE_PROVIDER_FLEET_GROUP, imageProviderLabel, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, normalizeImageProviderOrder, type Settings } from "./settings.ts";
 
 // Pure logic, but it lives in the jsdom project (.dom.test.tsx): settings.ts touches
 // localStorage at load time through the API client, so under node the import itself fails.
@@ -32,6 +32,31 @@ describe("expandThinking", () => {
     expect(expandThinking(s, "codex")).toBe(false);
     expect(expandThinking(s, undefined)).toBe(false);
     expect(expandThinking(withThinking(undefined), "opencode")).toBe(false);
+  });
+});
+
+// "Stream replies" (#1250) is kind-scoped like expandThinking but defaults the other way: an
+// unset kind streams, and only an explicit false turns it off. A broken stored value must not
+// switch the feature off behind the user's back.
+const withStream = (map: unknown): Settings =>
+  ({ ...getSettings(), streamReplies: map } as Settings);
+
+describe("streamReplies", () => {
+  it("defaults to on", () => {
+    expect(streamReplies(withStream({}), "claude")).toBe(true);
+    expect(streamReplies(withStream(undefined), "claude")).toBe(true);
+  });
+
+  it("is off only for an explicit false, per kind", () => {
+    const s = withStream({ claude: false, codex: true });
+    expect(streamReplies(s, "claude")).toBe(false);
+    expect(streamReplies(s, "codex")).toBe(true);
+    expect(streamReplies(withStream({ claude: "no" }), "claude")).toBe(true);
+  });
+
+  it("is off when there is no kind to read it for", () => {
+    expect(streamReplies(withStream({}), undefined)).toBe(false);
+    expect(streamReplies(withStream({}), "")).toBe(false);
   });
 });
 
