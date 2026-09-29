@@ -80,7 +80,7 @@ an index. The value in parentheses is the code's default when the variable is un
 |---|---|---|---|
 | CP core | `CP_ADDR` (`:8080`) · `CONSOLE_DIR` · `AF_RUNTIME` (`local`) · `AF_DB` (`<WS_DATA>/control-plane.db`) · `PUBLIC_BASE_URL` · `AF_PREVIEW_DOMAIN` · `AF_TRUSTED_PROXY_HOPS` (0) | where it listens, what it serves, which adapter, the public URL, preview subdomains, the client address | this chapter |
 | Workspace template | `WS_IMAGE` · `WS_DATA` (`/tmp/af-data`) · `WS_MEMORY` (`1g`) · `AF_MAX_WORKSPACE_MEM` · `WS_AGENT_PORT` (7700, the base of the per-workspace ports) · `WS_AGENT_HOST` (`127.0.0.1`) · `WS_JVM_DIR` · `WS_ENV` · `WS_SESSION_CMD` | the common template the CP fills in when starting a workspace. `WS_ENV` reaches `docker` and `native` workspaces only; the ECS runtimes do not pass it on | [04](04-agent.md) |
-| L1 auth | `AUTH` (`dev`) · `DEV_USER` (`dev`) · `AUTH_EMAIL_HEADER` (`X-Forwarded-Email`) · `GOOGLE_OAUTH_CLIENT_ID/SECRET` · `AF_GITHUB_LOGIN_CLIENT_ID/SECRET` (or `GITHUB_OAUTH_CLIENT_ID/SECRET`) with `AF_GITHUB_ALLOWED_ORGS` and the other `AF_GITHUB_*` · `AF_OIDC_PROVIDERS` + `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}` · `AF_COOKIE_SECRET` · `AF_SESSION_TTL` (168h) · `AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console login. **Every list empty means fail-closed.** A provider that declares no `TRUST` is disabled, and **zero working providers is fatal** | [07 §7.3](07-security.md) / [decisions/0043](../decisions/0043-login-idp.md) |
+| L1 auth | `AUTH` (`dev`) · `DEV_USER` (`dev`) · `AUTH_EMAIL_HEADER` (`X-Forwarded-Email`) · `GOOGLE_OAUTH_CLIENT_ID/SECRET` · `AF_GITHUB_LOGIN_CLIENT_ID/SECRET` (or `GITHUB_OAUTH_CLIENT_ID/SECRET`) with `AF_GITHUB_ALLOWED_ORGS` and the other `AF_GITHUB_*` · `AF_OIDC_PROVIDERS` + `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}` · `AF_COOKIE_SECRET` · `AF_SESSION_TTL` (168h) · `AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console login, with `AUTH=oauth` refusing to boot without a working provider. An OIDC provider must declare `TRUST`, and GitHub needs `AF_GITHUB_ALLOWED_ORGS`; either is disabled otherwise. **A sign-in is refused unless some way in admits it**: these allowlists, a tenant's roster, a tenant's auto-join domains or an approved tenant IdP. With none of them, every login is denied | [07 §7.3](07-security.md) / [decisions/0043](../decisions/0043-login-idp.md) |
 | Provisioning and roles | `AF_PROVISION` (`auto`) · `SUPER_ADMIN_EMAILS` | how an unknown identity is admitted; who is a deployment administrator | [06](06-data.md) |
 | At-rest encryption | `AF_MASTER_KEY` | unset means plaintext (development only). **Losing it is a crypto-shred** — keep it in a vault separate from the data | [07 §7.6](07-security.md) |
 | Git provider OAuth | **there are none** | a tenant administrator registers the apps in the Console. `BITBUCKET_OAUTH_KEY/SECRET` are no longer read, and `GITHUB_OAUTH_CLIENT_ID` is for sign-in only | [decisions/0052](../decisions/0052-tenant-git-oauth.md) |
@@ -159,9 +159,11 @@ optional. The runbook's "Stack decomposition" says what each one owns.
     faster than on EFS.
 - **The `starting` state in the Runtime contract is effectively ECS-only.** While it is
   converging, callers neither re-start it nor idle-stop it; the Docker adapter comes up
-  in seconds and never reports it. **Start returns as soon as the desired count is
-  set**, the wait for the agent's health runs in a background goroutine, and the Console
-  observes convergence by polling `GET /api/workspace`. A synchronous wait cannot come
+  in seconds and never reports it. **Start returns without waiting for the agent**: on
+  `ecs` once the service's desired count is set, and on `ecs-ec2` possibly earlier — when
+  the slot is still starting, waking or registering, the placement finishes in the
+  background (`finishStart`) and the claim on the home keeps the state at `starting`.
+  Either way the Console observes convergence by polling `GET /api/workspace`. A synchronous wait cannot come
   back: a cold start outlives the load balancer's 60 s idle timeout and turns into a
   504.
 - **The Fargate start has been broken down**: of a ~101 s warm-home restart, the image
@@ -192,10 +194,10 @@ substrate underneath it.
 
 ## 9.7 Backup, restore and upgrade — the assumptions
 
-- **`WS_DATA` (`DATA_DIR` in compose) is everything you must preserve**: the database,
-  every user's home including the encrypted store `secrets.enc`, the plaintext agent
-  state, the wrapped DEKs, and the Caddy certificates. Only what can be re-provisioned
-  (`shared/jvm`) is excluded.
+- **On one host, `WS_DATA` (`DATA_DIR` in compose) is everything you must preserve**:
+  the database, every user's home including the encrypted store `secrets.enc`, the
+  plaintext agent state, the wrapped DEKs, and the Caddy certificates. Only what can be
+  re-provisioned (`shared/jvm`) is excluded.
 - **`AF_MASTER_KEY` goes in neither the data directory nor the backup** — keep it
   separately. Losing it makes every backup undecryptable. Conversely, **the archive
   contains plaintext agent state, so the archive itself needs protecting.**
@@ -203,9 +205,11 @@ substrate underneath it.
   basename is a contract**.
 - **Upgrades apply the embedded migrations automatically at start and cannot be
   downgraded** — always back up first.
-- On AWS the state is RDS (`Persistence=retain` in `10-data` turns on snapshots, 7-day
-  backups and deletion protection), EFS, and on `ecs-ec2` the members' EBS homes and
-  their snapshots.
+- **On AWS `WS_DATA` holds nothing** (`30-ingress` points it at `/tmp`). The state is
+  RDS, EFS and, on `ecs-ec2`, the members' EBS homes, and each is backed up on its own
+  terms: `Persistence=retain` in `10-data` gives RDS snapshots, 7-day backups and
+  deletion protection and keeps EFS when the stack goes; the EBS homes are covered only
+  by the optional home backups of §9.5.
 - **On ECS an upgrade is not only the application's tag.** A release can also need a new
   ECR repository and an image nothing has copied in yet (the engines' fetch and ingest
   steps live in `af-engine-tools`), so `update.sh` holds one order: **the repository
@@ -240,7 +244,7 @@ it.
 | DNS zone | $0.50 | the template needs an existing Route53 hosted zone |
 | **Total** | **≈ $88/month** | **it does not change as people are added** — until the RAM runs out |
 
-**RAM is the limit, not CPU.** Subtract the CP, Caddy and the OS (about 1.5 GB) and
+**RAM is the limit, not CPU.** Subtract what the CP, Caddy and the OS need and
 divide what is left by `WS_MEMORY`: that is how many workspaces can run at their limit
 at once. The compose example sets 5g, which leaves room for one on a t3.large, so a VM
 for a team is sized for everyone's peak — and the runbook tells you to lower the limit
@@ -283,17 +287,22 @@ Properties to watch:
   full ($0.096 / $0.36). Hibernation turns a 50 GB home with 20 GB in it from $4.80 into
   a $1.00 snapshot.
 - **EFS I/O is a line of its own**, and on `ecs-ec2` too, because the credentials stay
-  there. *Measured* on the production deployment in September 2026: about $135/month of
-  elastic-throughput I/O (CloudWatch × unit price, reconciled with Cost Explorer to
-  0.12%) — [decisions/0087](../decisions/0087-efs-metadata-io.md).
+  there. On the production deployment, one day of *measured* elastic-throughput I/O
+  (2026-09-17, CloudWatch × unit price) came to about $0.10 per workspace-hour, which is
+  about $135/month once multiplied by an *estimated* 1,341 workspace-hours a month. The
+  CloudWatch method itself was checked against Cost Explorer on the previous day's
+  window, where the two agreed to 0.12%
+  ([decisions/0087](../decisions/0087-efs-metadata-io.md), which also records the
+  fixes that had not reached production yet).
 - **A GPU engine left running dwarfs everything else**: a g6.xlarge is $1.26/h (≈ $918
   a month). The CP starts engines on demand and stops them when idle, and `pause.sh`
   sweeps any engine instance still alive.
 - **Most of a small deployment's bill is the floor, not people.** *Measured* on a sandbox
   over 2026-08-01 to 16: at most 22.3% of the bill could be attributed to a member; the
-  rest was NAT, DNS, tax, EFS and the CP
-  ([decisions/0048](../decisions/0048-member-cloud-cost.md)). On `ecs` and `ecs-ec2` the
-  Console shows each member's actual spend from cost allocation tags.
+  rest was NAT, DNS, tax, EFS, the CP, the load balancer and the database
+  ([decisions/0048](../decisions/0048-member-cloud-cost.md)). On `ecs-ec2` the Console
+  shows each member's actual spend from cost allocation tags; the tagging for `ecs`
+  ships unverified on real hardware.
 
 ### 9.8.3 Choosing between them
 
@@ -309,8 +318,8 @@ Properties to watch:
 - **Between the two ECS runtimes**, `ecs-ec2` costs more per running hour for a bigger
   box, and buys I/O, persistence and size (§9.5). It also adds four more resources per
   workspace to operate.
-- **Check the estimates against the actual bill** — the Console's per-member cost view
-  and Cost Explorer.
+- **Check the estimates against the actual bill** — Cost Explorer, and on `ecs-ec2` the
+  Console's per-member cost view.
 
 ## 9.9 Health, readiness, and a credential that moves
 

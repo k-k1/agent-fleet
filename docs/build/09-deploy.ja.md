@@ -75,7 +75,7 @@ bind し、そのセキュリティグループはロードバランサのもの
 |----------|------|------|------|
 | CP コア | `CP_ADDR`（`:8080`）・`CONSOLE_DIR`・`AF_RUNTIME`（`local`）・`AF_DB`（`<WS_DATA>/control-plane.db`）・`PUBLIC_BASE_URL`・`AF_PREVIEW_DOMAIN`・`AF_TRUSTED_PROXY_HOPS`（0） | bind 先・配る Console・アダプタの選択・外部 URL・プレビューのサブドメイン・送信元アドレス | 本章 |
 | Workspace 起動テンプレ | `WS_IMAGE`・`WS_DATA`（`/tmp/af-data`）・`WS_MEMORY`（`1g`）・`AF_MAX_WORKSPACE_MEM`・`WS_AGENT_PORT`（7700・Workspace ごとのポートの起点）・`WS_AGENT_HOST`（`127.0.0.1`）・`WS_JVM_DIR`・`WS_ENV`・`WS_SESSION_CMD` | CP が Workspace を起動するときに流し込む共通テンプレ。`WS_ENV` が届くのは `docker` と `native` の Workspace だけで、ECS 系ランタイムは渡さない | [04](04-agent.ja.md) |
-| L1 認証 | `AUTH`（`dev`）・`DEV_USER`（`dev`）・`AUTH_EMAIL_HEADER`（`X-Forwarded-Email`）・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_GITHUB_LOGIN_CLIENT_ID/SECRET`（または `GITHUB_OAUTH_CLIENT_ID/SECRET`）と `AF_GITHUB_ALLOWED_ORGS` ほか `AF_GITHUB_*`・`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。**許可リストが全部空なら fail-closed。** `TRUST` を宣言しない provider は無効化、**有効な provider がゼロなら fatal** | [07 §7.3](07-security.ja.md) / [decisions/0043](../decisions/0043-login-idp.ja.md) |
+| L1 認証 | `AUTH`（`dev`）・`DEV_USER`（`dev`）・`AUTH_EMAIL_HEADER`（`X-Forwarded-Email`）・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_GITHUB_LOGIN_CLIENT_ID/SECRET`（または `GITHUB_OAUTH_CLIENT_ID/SECRET`）と `AF_GITHUB_ALLOWED_ORGS` ほか `AF_GITHUB_*`・`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。`AUTH=oauth` は有効な provider が無いと起動しない。OIDC の provider は `TRUST` の宣言が、GitHub は `AF_GITHUB_ALLOWED_ORGS` が必要で、無ければその provider は無効になる。**どの入口も受け入れないサインインは拒否される**: 入口はこれらの許可リスト・テナントの名簿・テナントの auto-join ドメイン・承認済みのテナント IdP。どれも無ければ全ログインが拒否される | [07 §7.3](07-security.ja.md) / [decisions/0043](../decisions/0043-login-idp.ja.md) |
 | プロビジョン / 権限 | `AF_PROVISION`（`auto`）・`SUPER_ADMIN_EMAILS` | 未知の identity をどう受け入れるか / 誰がデプロイ管理者か | [06](06-data.ja.md) |
 | at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（開発専用）。**紛失 = crypto-shred** — データとは別の金庫に置く | [07 §7.6](07-security.ja.md) |
 | git プロバイダ OAuth | **env は無い** | テナント管理者が Console で登録する。`BITBUCKET_OAUTH_KEY/SECRET` はもう読まれず、`GITHUB_OAUTH_CLIENT_ID` はサインイン専用 | [decisions/0052](../decisions/0052-tenant-git-oauth.ja.md) |
@@ -144,9 +144,11 @@ runbook の「Stack decomposition」。
     ではない。** アダプタ経由の実測で warm 起動は 43〜110 秒、Fargate は ~105 秒。EBS の home は
     小さいファイルの書き込みが EFS の 8〜30 倍速い。
 - **Runtime 契約の `starting` 状態は実質 ECS 専用。** 収束待ちの間、呼び出し側は再 Start も
-  アイドル停止もしない。Docker アダプタは秒で上がるので報告しない。**Start は desired count を
-  設定した時点で返り**、Agent のヘルス待ちは背景ゴルーチンが担い、収束は Console の
-  `GET /api/workspace` ポーリングが拾う。同期待ちは戻せない: cold start はロードバランサの
+  アイドル停止もしない。Docker アダプタは秒で上がるので報告しない。**Start は Agent を待たずに
+  返る**: `ecs` ではサービスの desired count を設定した時点で、`ecs-ec2` ではそれより前のことも
+  ある — スロットがまだ起動中・復帰中・登録中なら配置は背景（`finishStart`）で仕上がり、home に
+  付けた claim が状態を `starting` に保つ。どちらでも収束は Console の `GET /api/workspace`
+  ポーリングが拾う。同期待ちは戻せない: cold start はロードバランサの
   idle timeout 60 秒より長く、504 になる。
 - **Fargate の起動は内訳を測ってある**: warm home の再起動 ~101 秒のうちイメージ pull は ~35 秒で、
   遅延ロード（SOCI）は不採用になった。残りはタスク作成・ネットワークインタフェース・EFS マウント・
@@ -174,16 +176,18 @@ Workspace イメージと Agent は全ターゲットで同一物 — それが�
 
 ## 9.7 バックアップ / リストア / アップグレードの設計前提
 
-- **`WS_DATA`（compose では `DATA_DIR`）が保全対象のすべて**: DB・暗号化ストア `secrets.enc` を
-  含む全員の home・平文の Agent 状態・wrap された DEK・Caddy の証明書。除外するのは再
-  provision できるもの（`shared/jvm`）だけ。
+- **1 台のホストでは `WS_DATA`（compose では `DATA_DIR`）が保全対象のすべて**: DB・暗号化
+  ストア `secrets.enc` を含む全員の home・平文の Agent 状態・wrap された DEK・Caddy の証明書。
+  除外するのは再 provision できるもの（`shared/jvm`）だけ。
 - **`AF_MASTER_KEY` はデータ領域にもバックアップにも入れない** — 別に保管する。失えば全バックアップが
   復号不能になる。逆に、**アーカイブには平文の Agent 状態が入るので、アーカイブ自体も保護対象。**
 - リストアは親パスが変わってもよい: CP が起動時に付け替える。**ただし basename は契約**。
 - **アップグレードは埋め込みの migration を起動時に自動適用し、ダウングレードできない** — 必ず先に
   バックアップする。
-- AWS での状態は RDS（`10-data` の `Persistence=retain` でスナップショット・7 日のバックアップ・
-  削除保護が入る）、EFS、それに `ecs-ec2` ではメンバーの EBS home とそのスナップショット。
+- **AWS では `WS_DATA` は何も持たない**（`30-ingress` は `/tmp` を指す）。状態は RDS・EFS、
+  それに `ecs-ec2` ではメンバーの EBS home で、それぞれ別にバックアップする: `10-data` の
+  `Persistence=retain` は RDS のスナップショット・7 日のバックアップ・削除保護を入れ、スタックを
+  消しても EFS を残す。EBS の home を守るのは §9.5 の任意の home バックアップだけ。
 - **ECS のアップグレードはアプリのタグだけではない。** リリースが新しい ECR リポジトリと、まだ誰も
   写していないイメージを必要とすることがある（エンジンの fetch / ingest の手順は
   `af-engine-tools` にある）。そのため `update.sh` は順序を 1 本に固定する: **リポジトリ
@@ -215,7 +219,7 @@ AWS の形態は課金の**形**が違う。VM 1 台は**人数によらずほ�
 | DNS ゾーン | $0.50 | テンプレートは既存の Route53 ホストゾーンを必要とする |
 | **合計** | **≈ $88/月** | **人数が増えても変わらない** — RAM が尽きるまで |
 
-**律速は RAM で、CPU ではない。** CP・Caddy・OS（約 1.5 GB）を引いた残りを `WS_MEMORY` で割った
+**律速は RAM で、CPU ではない。** CP・Caddy・OS が要る分を引いた残りを `WS_MEMORY` で割った
 数が、上限まで使う Workspace を同時に動かせる数。compose の例示は 5g なので t3.large で 1 つ分 —
 チームで使う VM は全員のピークに合わせて選ぶことになる。runbook が t3.medium では上限を下げろと
 言うのもこのため。
@@ -256,16 +260,19 @@ AWS の形態は課金の**形**が違う。VM 1 台は**人数によらずほ�
 - **EBS は確保した量、EFS は使った量で課金される**: 分岐点は home の使用率 26.7%
   （$0.096 / $0.36）。休眠させると、20 GB 使った 50 GB の home が $4.80 から $1.00 の
   スナップショットになる。
-- **EFS の I/O は別の費目**で、資格情報が残る `ecs-ec2` でも掛かる。本番デプロイでの *実測*
-  （2026-09）: elastic スループットの I/O が月約 $135（CloudWatch × 単価、Cost Explorer と
-  0.12% で一致）— [decisions/0087](../decisions/0087-efs-metadata-io.ja.md)。
+- **EFS の I/O は別の費目**で、資格情報が残る `ecs-ec2` でも掛かる。本番デプロイで 1 日 *実測*
+  した elastic スループットの I/O（2026-09-17・CloudWatch × 単価）は Workspace 1 時間あたり約
+  $0.10 で、月 1,341 Workspace 時間という *見積り* を掛けると月約 $135 になる。CloudWatch で
+  測るこの方法自体は、前日の窓で Cost Explorer と突き合わせて 0.12% で一致した
+  （[decisions/0087](../decisions/0087-efs-metadata-io.ja.md)。まだ本番に届いていない修正も
+  そこに記録がある）。
 - **動かしっぱなしの GPU エンジンは他の全部を上回る**: g6.xlarge は $1.26/時（月 ≈ $918）。
   CP はエンジンを要求時に起こしてアイドルで止め、`pause.sh` はまだ生きているエンジンの
   インスタンスを掃除する。
 - **小さなデプロイの請求の大半は人ではなく床。** sandbox での *実測*（2026-08-01〜16）: メンバーに
-  帰属できたのは請求の最大 22.3% で、残りは NAT・DNS・税・EFS・CP だった
-  （[decisions/0048](../decisions/0048-member-cloud-cost.ja.md)）。`ecs` と `ecs-ec2` では、
-  Console がコスト配分タグからメンバーごとの実費を示す。
+  帰属できたのは請求の最大 22.3% で、残りは NAT・DNS・税・EFS・CP・ロードバランサ・
+  データベースだった（[decisions/0048](../decisions/0048-member-cloud-cost.ja.md)）。`ecs-ec2` では
+  Console がコスト配分タグからメンバーごとの実費を示す。`ecs` のタグ付けは実機未検証のまま出ている。
 
 ### 9.8.3 使い分け
 
@@ -278,7 +285,7 @@ AWS の形態は課金の**形**が違う。VM 1 台は**人数によらずほ�
   **scale-to-zero は安くする仕組みではなく、床を薄める仕組み。**
 - **ECS の 2 つのランタイムの間では**、`ecs-ec2` は稼働 1 時間あたりが高いかわりに箱が大きく、
   I/O・永続性・大きさを買う（§9.5）。Workspace ごとに運用するリソースも 4 種類増える。
-- **見積りは実際の請求と突き合わせる** — Console のメンバー別コスト表示と Cost Explorer で。
+- **見積りは実際の請求と突き合わせる** — Cost Explorer と、`ecs-ec2` なら Console のメンバー別コスト表示で。
 
 ## 9.9 ヘルスとレディネスと動くパスワード
 
