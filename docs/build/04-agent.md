@@ -215,21 +215,39 @@ and each declares its process model in `Capabilities.ProcessModel`
   bare `POST /sessions` with no driver gets `tui`.
 - A new kind with both drivers must be added to both callers.
 
-### The surfaces, shown for three kinds
+### The surfaces a new kind fills
 
-**The surfaces a new kind must fill are the same every time.**
+**The surfaces are the same every time.** Each one is a contract in the code; claude,
+codex and opencode are the worked examples below. Which kind supports which driver, and
+how a user signs in to each, are [ref/agents](../../guide/ref/agents.md) (sign-in is
+its [How to sign in](../../guide/ref/agents.md#how-to-sign-in) section); the sign-in
+flows are [08](08-integrations.md).
 
-| Surface | claude | codex | opencode |
-|---|---|---|---|
-| TUI launch | `--session-id` / `--resume` plus `--name` and `--model` (and `--fork-session`) | `codex resume <id>` or `codex fork <id>`, launched directly, never through the shared app server; the id is captured by a hook | `opencode --session <id>`; the id is captured by a plugin |
-| Managed launch | — | the shared app server's `thread/start` / `thread/resume` | the shared server's v1 session API and its event stream |
-| Conversation truth | its own JSONL | its rollout JSONL, for both drivers | its own SQLite (`message` / `part`), for both drivers |
-| Live state | hooks plus a tmux probe | managed: runtime events. TUI: hooks for working / idle, the rollout for a missed turn end and for a pending question | managed: server events. TUI: the plugin |
-| Sign-in | `claude auth login --claudeai` ([08](08-integrations.md)) | `codex login` (API key or device flow) | provider keys in the encrypted store, or opencode's own OAuth |
-| Credential location | `CLAUDE_CONFIG_DIR`, moved out of the browsable home | `~/.codex` | the encrypted store, and `~/.local/share/opencode` |
-
-The filesystem denylist (§4.6) must cover wherever a kind writes credentials or
-state.
+- **Launching in tmux, and holding the id**: the kind's `BuildLaunch` returns an
+  `agents.LaunchPlan`. Decide whether the id is captured or imposed first (§4.2).
+  - claude imposes it: `--session-id` for a new slot and `--resume` through `LiveSID()`
+    for an existing one, plus `--name`, `--model` and `--fork-session`.
+  - codex captures it: `codex resume <id>` or `codex fork <id>`, launched directly and
+    never through the shared app server; a hook re-records the id.
+  - opencode captures it: `opencode --session <id>`; its plugin re-records the id.
+- **Launching under managed**: a `Driver` registered in `managedDrivers`, speaking the
+  runtime's own session API.
+  - codex: the shared app server's `thread/start` / `thread/resume`.
+  - opencode: the shared server's v1 session API and its event stream.
+- **The conversation's truth** is the CLI's native store, for both drivers, read by a
+  transcript reader of the kind's own (§4.7): claude's JSONL, codex's rollout JSONL,
+  opencode's SQLite (`message` / `part`).
+- **Live state** is whatever the CLI emits, normalised into the status store (§4.4).
+  - claude: hooks plus a tmux probe.
+  - codex: runtime events under managed. Under TUI, hooks for working / idle, and the
+    rollout for a missed turn end and for a pending question.
+  - opencode: server events under managed, the plugin under TUI.
+- **Where credentials land** must be in the filesystem denylist (`fsDeny`, §4.6), along
+  with anything else the kind writes state into.
+  - claude: `CLAUDE_CONFIG_DIR`, moved out of the browsable home.
+  - codex: `~/.codex`.
+  - opencode: provider keys in the encrypted store, handed over as `LaunchPlan.Env`; its
+    own OAuth sign-in under `~/.local/share/opencode`.
 
 - ⚠️ **Environment reaches the process through `tmux new-session -e`**
   (`agents.LaunchPlan.Env`, applied by `startSessionTmux`). **Never prefix secrets onto

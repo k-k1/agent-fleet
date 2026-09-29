@@ -186,20 +186,37 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
   driver 無しの素の `POST /sessions` は `tui` になる。
 - 両方の driver を持つ kind を足すときは、両方の呼び出し側に足すこと。
 
-### 3 種別で見る「埋める面」
+### 新しい kind が埋める面
 
-**新しい kind が埋める面は毎回同じ。**
+**埋める面は毎回同じ。** どれもコード上の契約で、以下では claude・codex・opencode を実例に使う。
+どの kind がどの driver に対応するか、利用者が各 kind にどうサインインするかは
+[ref/agents](../../guide/ref/agents.ja.md)（サインインは
+[サインインの仕方](../../guide/ref/agents.ja.md#サインインの仕方)の節）。サインインのフローは
+[08](08-integrations.ja.md)。
 
-| 面 | claude | codex | opencode |
-|---|---|---|---|
-| TUI の起動 | `--session-id` / `--resume` と `--name`・`--model`（と `--fork-session`） | `codex resume <id>` か `codex fork <id>` を直接起動する。共有の app server は経由しない。id は hook で捕捉 | `opencode --session <id>`。id は plugin で捕捉 |
-| managed の起動 | — | 共有 app server の `thread/start` / `thread/resume` | 共有サーバーの v1 session API とイベントストリーム |
-| 会話の正本 | 自前の JSONL | rollout JSONL（両 driver 共通） | 自前の SQLite（`message` / `part`。両 driver 共通） |
-| live 状態 | hook と tmux のプローブ | managed: runtime のイベント。TUI: working / idle は hook、取りこぼしたターン終了と保留中の質問は rollout | managed: サーバーのイベント。TUI: plugin |
-| サインイン | `claude auth login --claudeai`（[08](08-integrations.ja.md)） | `codex login`（API キーか device flow） | 暗号化ストアのプロバイダキー、または opencode 自身の OAuth |
-| 資格情報の置き場 | `CLAUDE_CONFIG_DIR`（閲覧できる home の外へ退避） | `~/.codex` | 暗号化ストアと `~/.local/share/opencode` |
-
-kind が資格情報や状態を書く場所は、ファイルシステムの denylist（§4.6）で覆うこと。
+- **tmux での起動と id の持ち方**: kind の `BuildLaunch` が `agents.LaunchPlan` を返す。id を捕捉するか
+  押し付けるかを先に決めること（§4.2）。
+  - claude は押し付ける。新しいスロットは `--session-id`、既存のスロットは `LiveSID()` を通した
+    `--resume`。ほかに `--name`・`--model`・`--fork-session`。
+  - codex は捕捉する。`codex resume <id>` か `codex fork <id>` を直接起動し、共有の app server は
+    経由しない。id は hook が記録し直す。
+  - opencode は捕捉する。`opencode --session <id>` で、id は plugin が記録し直す。
+- **managed での起動**: `managedDrivers` に登録した `Driver` が、runtime 自身の session API を話す。
+  - codex: 共有 app server の `thread/start` / `thread/resume`
+  - opencode: 共有サーバーの v1 session API とイベントストリーム
+- **会話の正本**は両 driver とも CLI の native のストアで、kind 自前の転写リーダーが読む（§4.7）。
+  claude の JSONL、codex の rollout JSONL、opencode の SQLite（`message` / `part`）。
+- **live 状態**は CLI が出すものを状態ストアへ正規化する（§4.4）。
+  - claude: hook と tmux のプローブ
+  - codex: managed では runtime のイベント。TUI では working / idle を hook で、取りこぼしたターン
+    終了と保留中の質問を rollout で拾う。
+  - opencode: managed ではサーバーのイベント、TUI では plugin
+- **資格情報の置き場**は、kind が状態を書くほかの場所と合わせて、ファイルシステムの denylist
+  （`fsDeny`、§4.6）に入れること。
+  - claude: `CLAUDE_CONFIG_DIR`（閲覧できる home の外へ退避）
+  - codex: `~/.codex`
+  - opencode: プロバイダキーは暗号化ストアに置き、`LaunchPlan.Env` で渡す。opencode 自身の OAuth
+    サインインは `~/.local/share/opencode` の下。
 
 - ⚠️ **環境変数は `tmux new-session -e` でプロセスへ届ける**（`agents.LaunchPlan.Env`、適用は
   `startSessionTmux`）。**秘密をコマンドの前置にしてはいけない**。前置は `/proc/*/cmdline` と tmux の
