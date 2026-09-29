@@ -20,11 +20,7 @@ API の境界、データモデル、脅威モデル、外部連携、ビルド�
 - どの種別・プロバイダ・形態・ロールが何に対応するか: [guide/ref/](../../guide/ref/README.ja.md)
 - なぜそうなっているか（退けた案を含む）: [decisions/](../decisions/)
 - まだ誰かがやるべきこと: GitHub Issue
-
-この棚での書き方（ワイヤ契約と grep できるアンカー。行番号は書かない）と何を置くかは
-[CONVENTIONS §4](../CONVENTIONS.ja.md#4-棚ごとの語彙) と
-[§9](../CONVENTIONS.ja.md#9-棚ごとの担当)、未完の作業は
-[§10](../CONVENTIONS.ja.md#10-未完の作業は文でなく-issue-に)。
+- この棚を含む全棚の書き方の約束: [CONVENTIONS](../CONVENTIONS.ja.md)
 
 ## 更新トリガ
 

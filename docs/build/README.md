@@ -21,11 +21,7 @@ Looking for something this shelf does not hold?
 - which kind, provider, target or role supports what: [guide/ref/](../../guide/ref/README.md)
 - why it is like this, including what was rejected: [decisions/](../decisions/)
 - anything still to be done: GitHub issues
-
-How to write on this shelf (wire contracts, grep-able anchors, never line numbers) and what
-belongs on it are [CONVENTIONS §4](../CONVENTIONS.md#4-vocabulary-per-shelf) and
-[§9](../CONVENTIONS.md#9-what-each-shelf-is-responsible-for); open work is
-[§10](../CONVENTIONS.md#10-open-work-is-an-issue-not-a-sentence).
+- the conventions for writing on any shelf, this one included: [CONVENTIONS](../CONVENTIONS.md)
 
 ## Update trigger
 
