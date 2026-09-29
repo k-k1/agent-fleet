@@ -16,17 +16,17 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
-import { TenantEngineAccessView } from "./tenantEngineAccess.tsx";
+import { MemberEngineAccessPanel, TenantEngineAccessView } from "./tenantEngineAccess.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-async function mount() {
+async function mount(node = <TenantEngineAccessView slug="acme" />) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<TenantEngineAccessView slug="acme" />);
+    root!.render(node);
   });
   await act(async () => {
     await Promise.resolve();
@@ -98,5 +98,33 @@ describe("tenant engine access", () => {
     expect(chip("image", "許可したメンバーだけ").disabled).toBe(true);
     expect(tick("bob 画像生成（image）").disabled).toBe(true);
     expect(group("image").textContent).toContain("デプロイ管理者");
+  });
+});
+
+describe("member detail engine access", () => {
+  const panel = () => document.querySelector<HTMLElement>(".member-engine-access");
+  const box = (role: string) => panel()!.querySelector<HTMLInputElement>(`[data-role="${role}"] input`)!;
+
+  it("shows this member's ticks and what they mean right now", async () => {
+    await mount(<MemberEngineAccessPanel slug="acme" userKey="bob" />);
+    expect(box("llm").checked).toBe(false);
+    expect(panel()!.querySelector('[data-role="llm"]')!.textContent).toContain("使えません");
+    expect(box("image").disabled).toBe(true);
+  });
+
+  it("writes through the same members endpoint as the table", async () => {
+    await mount(<MemberEngineAccessPanel slug="acme" userKey="bob" />);
+    await act(async () => box("llm").click());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/engine-access/members", "PUT", {
+      membership_id: "M-b",
+      role: "llm",
+      granted: true,
+    });
+  });
+
+  it("renders nothing for someone not on the active roster", async () => {
+    await mount(<MemberEngineAccessPanel slug="acme" userKey="gone" />);
+    // Positive control is the first case above: the same mount does render for bob.
+    expect(panel()).toBeNull();
   });
 });

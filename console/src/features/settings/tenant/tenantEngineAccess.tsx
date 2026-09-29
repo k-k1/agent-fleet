@@ -8,6 +8,10 @@
 //
 // The ticks stay editable while a role is open to everyone: the server keeps the list, so an
 // admin can prepare it before switching the restriction on and nobody loses access in between.
+//
+// The same ticks appear once more on the member detail (MemberEngineAccessPanel), reading and
+// writing the same endpoint, so the two surfaces cannot disagree. The mode stays here only: it is
+// a tenant-wide choice and has no place on one person's page.
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -39,8 +43,7 @@ const ROLE_LABEL = {
   image: "tenant.engine_access_image",
 } as const satisfies Record<EngineRole, string>;
 
-export function TenantEngineAccessView({ slug }: { slug: string }) {
-  const tr = useT();
+function useEngineAccess(slug: string) {
   const toast = useToast();
   const [view, setView] = useState<EngineAccessView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,7 +52,9 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
   const load = useCallback(async () => {
     try {
       const d = await api(base);
-      if (d && !d.error) setView(d);
+      // Shape-checked rather than trusted: a CP older than #1215 answers this path with
+      // something else, and the member detail page must not break over a panel it can omit.
+      if (d && !d.error && Array.isArray(d.roles) && Array.isArray(d.members)) setView(d);
     } catch {
       /* transient; the panel keeps its last values */
     }
@@ -57,8 +62,6 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
   useEffect(() => {
     load();
   }, [load]);
-
-  if (!view) return null;
 
   const put = async (path: string, body: object) => {
     setBusy(true);
@@ -73,6 +76,13 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
       setBusy(false);
     }
   };
+  return { view, busy, put };
+}
+
+export function TenantEngineAccessView({ slug }: { slug: string }) {
+  const tr = useT();
+  const { view, busy, put } = useEngineAccess(slug);
+  if (!view) return null;
 
   const roleOf = (r: EngineRole) => view.roles.find((x) => x.role === r);
   const roles = view.roles.map((r) => r.role);
@@ -139,6 +149,44 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
         </tbody>
       </table>
       <p className="admin-hint">{tr("tenant.engine_access_ticks_note")}</p>
+    </section>
+  );
+}
+
+// MemberEngineAccessPanel is one member's row of the table above, on their detail page. Absent for
+// a removed member (the server lists active members only) and until the first read answers.
+export function MemberEngineAccessPanel({ slug, userKey }: { slug: string; userKey: string }) {
+  const tr = useT();
+  const { view, busy, put } = useEngineAccess(slug);
+  const m = view?.members.find((x) => x.user_key === userKey);
+  if (!view || !m) return null;
+
+  // What the member can actually do right now, so the page answers "can they use it?" without
+  // the reader having to combine the mode, the tick and the tenant switch in their head.
+  const status = (r: RoleView) => {
+    if (!r.tenant_allowed) return tr("tenant.engine_access_state_tenant_off");
+    if (!r.members_only) return tr("tenant.engine_access_state_everyone");
+    return m.grants.includes(r.role) ? tr("tenant.engine_access_state_granted") : tr("tenant.engine_access_state_not_granted");
+  };
+
+  return (
+    <section className="admin-panel member-engine-access">
+      <h4>{tr("tenant.engine_access_title")}</h4>
+      {view.roles.map((r) => (
+        <div key={r.role} className="admin-fgroup" data-role={r.role}>
+          <label className="admin-check">
+            <input
+              type="checkbox"
+              checked={m.grants.includes(r.role)}
+              disabled={busy || !r.tenant_allowed}
+              onChange={(e) => put("/members", { membership_id: m.membership_id, role: r.role, granted: e.target.checked })}
+            />
+            <span>{tr(ROLE_LABEL[r.role])}</span>
+          </label>
+          <p className="admin-hint">{status(r)}</p>
+        </div>
+      ))}
+      <p className="admin-hint">{tr("tenant.engine_access_member_note")}</p>
     </section>
   );
 }

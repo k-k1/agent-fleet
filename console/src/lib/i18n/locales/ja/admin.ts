@@ -1141,6 +1141,11 @@ export const admin = {
   "tenant.engine_access_members_only": "許可したメンバーだけ",
   "tenant.engine_access_tenant_denied": "このテナントではデプロイ管理者が利用を止めています。ここでは変更できません。",
   "tenant.engine_access_admin": "テナント管理者",
+  "tenant.engine_access_state_tenant_off": "テナント全体で停止中のため使えません（デプロイ管理者の設定）。",
+  "tenant.engine_access_state_everyone": "いまはメンバー全員が使えます。チェックは「許可したメンバーだけ」にしたときに効きます。",
+  "tenant.engine_access_state_granted": "使えます（許可したメンバーだけ）。",
+  "tenant.engine_access_state_not_granted": "使えません（許可したメンバーだけ・未許可）。",
+  "tenant.engine_access_member_note": "「メンバー全員／許可したメンバーだけ」の切り替えは「運用 › 推論エンジンの利用者」で行います。",
   "tenant.engine_access_ticks_note":
     "チェックが効くのは「許可したメンバーだけ」を選んだ種類だけです。テナント管理者も自動では許可されません。変更は実行中のワークスペースにもすぐ届きます。",
   "tenant.picker": "テナント",

@@ -51,7 +51,8 @@ currently in effect. When you want it changed, ask your IT department / deployme
 A role the tenant is allowed above ("Inference engine use") is open to every member by default.
 Under **Operations › Engine access** you choose, per role (Chat (llm) / Image generation (image)),
 **Every member** or **Granted members only**. With the latter, only the members ticked in the table
-may use that role.
+may use that role. The same ticks also appear on the member detail page, which says whether that
+person can use each role right now (either place edits the same setting).
 
 - **Tenant admins are not granted automatically.** If you use it yourself, tick your own row too.
 - A role the deployment admin turned off for the whole tenant cannot be changed here (it is shown,
