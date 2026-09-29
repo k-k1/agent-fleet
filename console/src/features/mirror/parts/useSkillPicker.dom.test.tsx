@@ -1,6 +1,6 @@
 // The skill picker stays up as an argument hint while a skill's arguments are typed. A tap on
-// a composer control next to it (send) has to reach that control on the first try: the hint
-// closes, but the press is not withheld the way an ordinary popover's outside press is.
+// a composer control next to it (send) has to reach that control on the first try, while the
+// active candidate list, which overlaps the transcript, still withholds an outside tap.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { useRef, useState } from "react";
 import { act } from "react";
@@ -88,5 +88,17 @@ describe("useSkillPicker argument hint", () => {
     expect(q("hint")).not.toBeNull(); // the passive hint is up, so a dismiss layer is live
     act(() => tap(q("send")!));
     expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("the active list still only closes on an outside tap", async () => {
+    const onSend = vi.fn();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(<Composer onSend={onSend} />));
+    await act(async () => type(q("input") as HTMLTextAreaElement, "/iss"));
+    expect(q("hint")).not.toBeNull(); // candidates for "/iss" are listed
+    act(() => tap(q("send")!));
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
