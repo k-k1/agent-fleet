@@ -47,10 +47,10 @@ const VIEW = {
 };
 
 const group = (role: string) => document.querySelector<HTMLElement>(`.engine-access [data-role="${role}"]`)!;
-const radio = (role: string, text: string) =>
-  Array.from(group(role).querySelectorAll<HTMLLabelElement>(".engine-access-mode label"))
-    .find((l) => (l.textContent || "").trim() === text)!
-    .querySelector<HTMLInputElement>('input[type="radio"]')!;
+const seg = (role: string, text: string) =>
+  Array.from(group(role).querySelectorAll<HTMLButtonElement>(".seg .seg-btn")).find(
+    (b) => (b.textContent || "").trim() === text,
+  )!;
 const tick = (label: string) => document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
 
 beforeEach(() => {
@@ -70,17 +70,17 @@ afterEach(() => {
 describe("tenant engine access", () => {
   it("shows the mode per role and each member's ticks", async () => {
     await mount();
-    expect(radio("llm", "許可したメンバーだけ").checked).toBe(true);
-    expect(radio("llm", "メンバー全員").checked).toBe(false);
-    // Positive control on the other role: an open role has the other radio selected.
-    expect(radio("image", "メンバー全員").checked).toBe(true);
+    expect(seg("llm", "許可したメンバーだけ").className).toContain("active");
+    expect(seg("llm", "メンバー全員").className).not.toContain("active");
+    // Positive control on the other role: an open role has the other button active.
+    expect(seg("image", "メンバー全員").className).toContain("active");
     expect(tick("alice チャット（llm）").checked).toBe(true);
     expect(tick("bob チャット（llm）").checked).toBe(false);
   });
 
   it("opens a restricted role to everyone with one PUT", async () => {
     await mount();
-    await act(async () => radio("llm", "メンバー全員").click());
+    await act(async () => seg("llm", "メンバー全員").click());
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/engine-access", "PUT", {
       role: "llm",
       members_only: false,
@@ -100,8 +100,8 @@ describe("tenant engine access", () => {
   it("does not let a tenant-denied role be edited", async () => {
     await mount();
     // Positive control: the allowed role's controls are live.
-    expect(radio("llm", "メンバー全員").disabled).toBe(false);
-    expect(radio("image", "許可したメンバーだけ").disabled).toBe(true);
+    expect(seg("llm", "メンバー全員").disabled).toBe(false);
+    expect(seg("image", "許可したメンバーだけ").disabled).toBe(true);
     expect(tick("bob 画像生成（image）").disabled).toBe(true);
     expect(group("image").textContent).toContain("デプロイ管理者");
   });

@@ -116,30 +116,30 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
         <div key={r.role} className="admin-fgroup" data-role={r.role}>
           <h4>{tr(ROLE_LABEL[r.role])}</h4>
           {!r.tenant_allowed && <p className="admin-hint warn">{tr("tenant.engine_access_tenant_denied")}</p>}
-          {/* Radios, not chips: the two are one exclusive choice, and a radio shows which is
-              in force without a stylesheet of its own. */}
-          <div className="engine-access-mode" role="radiogroup" aria-label={tr(ROLE_LABEL[r.role])}>
-            <label className="admin-check">
-              <input
-                type="radio"
-                name={`engine-access-${r.role}`}
-                checked={!r.members_only}
-                disabled={busy || !r.tenant_allowed}
-                onChange={() => put("", { role: r.role, members_only: false })}
-              />
-              <span>{tr("tenant.engine_access_everyone")}</span>
-            </label>
-            <label className="admin-check">
-              <input
-                type="radio"
-                name={`engine-access-${r.role}`}
-                checked={r.members_only}
-                disabled={busy || !r.tenant_allowed}
-                onChange={() => put("", { role: r.role, members_only: true })}
-              />
-              <span>{tr("tenant.engine_access_members_only")}</span>
-            </label>
-          </div>
+          {/* The same segmented toggle as the other admin mode switches (egress log-only /
+              enforce, the TTS mode), whose selected look is global in ui.css. */}
+          <span className="seg sm" role="radiogroup" aria-label={tr(ROLE_LABEL[r.role])}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!r.members_only}
+              className={"seg-btn" + (!r.members_only ? " active" : "")}
+              disabled={busy || !r.tenant_allowed}
+              onClick={() => r.members_only && put("", { role: r.role, members_only: false })}
+            >
+              {tr("tenant.engine_access_everyone")}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={r.members_only}
+              className={"seg-btn" + (r.members_only ? " active" : "")}
+              disabled={busy || !r.tenant_allowed}
+              onClick={() => !r.members_only && put("", { role: r.role, members_only: true })}
+            >
+              {tr("tenant.engine_access_members_only")}
+            </button>
+          </span>
         </div>
       ))}
       <table className="admin-table engine-access-table">
