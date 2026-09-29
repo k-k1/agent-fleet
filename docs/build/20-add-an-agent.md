@@ -1,36 +1,44 @@
 ---
 audience: "someone integrating a new CLI coding agent"
 source_of_truth: "the existing `internal/agents/<kind>` packages — copy the closest one"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 20. Adding an agent kind
 
 English | [日本語](20-add-an-agent.ja.md)
 
-Seven kinds have been added this way. **The surfaces are the same every time**, and the
-mistakes are the same every time too — this chapter is both lists.
+**Which surfaces a kind fills follows from which drivers it has**, and within that they
+are the same every time. So are the mistakes. This chapter is both lists.
 
 Before writing code, read [04 §4.3](04-agent.md) for the shape and
 [ref/agents.md](../../guide/ref/agents.md) for what the existing kinds actually support.
 
 ## 20.1 Decide three things first
 
-**1. Which drivers?** Terminal only, managed only, or both. Managed means a structured
-API and no pane; Terminal means driving the CLI's own screen through tmux. Both is more
-work but is what most kinds ended up needing.
+**1. Which drivers?** A **Terminal (CLI)** route runs the CLI's own screen in a tmux
+pane: the kind's `BuildLaunch` returns the pane program. A **Managed** route has no
+pane: a `Driver` (`internal/agents/driver.go`) runs turns through a structured API.
+There are three shapes, and each exists today — which kind has which is
+[ref/agents](../../guide/ref/agents.md):
+
+- **Terminal only** — no `Driver`.
+- **Both** — more work, since every surface below is filled for each route.
+- **Managed only** — `Caps().ManagedOnly` is set. `BuildLaunch` always returns
+  `ErrNoTerminalRoute`, `POST /sessions/{name}/driver` refuses a `tui` target, and
+  create defaults an unspecified driver to `managed`. This fits a kind with no pane
+  program at all, such as one that runs inside the agent.
+
+A Managed route also picks a **process model** (`Capabilities.ProcessModel`): a daemon
+shared per workspace, a child process per session, or code inside the agent itself. The
+kinds that use each, and the protocols they speak, are the table in
+[04 §4.3](04-agent.md).
 
 **2. How is the conversation id held?** This is the decision that causes silent
-breakage later, so make it deliberately ([04 §4.2](04-agent.md)):
-
-- **Captured** — the CLI mints the id, and a hook, a plugin or a disk scan re-records it
-  **on every event**. If the CLI moves to a different session, the next event follows.
-  **Prefer this.**
-- **Imposed** — you mint it and pass it in. Everything downstream then assumes the CLI
-  is still using it, **and it breaks silently the day it is not.** If you must impose,
-  **ship the recovery path in the same change** — the rule is: only when the imposed id
-  exists nowhere on the CLI's side, only when **exactly one** candidate matches, and
-  **do nothing when it is ambiguous.**
+breakage later, so make it deliberately. **Prefer capturing it** (the CLI mints it and
+every event re-records it). If you impose it, **ship the recovery path in the same
+change**. The rule for that path, and which kind does what, are
+[04 §4.2](04-agent.md) ("Conversation ids: captured and imposed").
 
 **3. What proves it works?** Not the CLI's own status output, and not a banner. **A real
 prompt producing a real answer.** This has been wrong enough times to be a rule
@@ -38,39 +46,58 @@ prompt producing a real answer.** This has been wrong enough times to be a rule
 
 ## 20.2 The surfaces to fill
 
+Fill the rows for the drivers your kind has. The paths are under `workspace/agent/`
+unless they name another tree.
+
 | Surface | Where | Notes |
 |---|---|---|
-| The kind constant and its capabilities | `internal/session`, and the `Caps()` of your package | **Do not set a capability you have not driven end to end.** [ref/agents.md](../../guide/ref/agents.md) is checked against this by CI |
-| Launch | your package's launch builder | Environment goes **prefixed onto the command**, never through the tmux session environment (§20.3) |
-| Live state | hooks, a plugin, or runtime events | Normalise to working / idle / question ([04 §4.4](04-agent.md)) |
-| Transcript | a reader for the CLI's own storage | **Read its native store; never copy conversations into a store of ours.** The parsers stay separate |
-| Sign-in | the connections API | Prefer a method needing **no callback** ([08](08-integrations.md)) |
-| Credential location and the filesystem denylist | your package, plus the denylist | Anything the CLI writes credentials into must be **hidden from the file browser** |
-| MCP materialisation | `internal/mcpreg` | Each CLI has its own config shape and placeholder dialect |
-| Agent instructions | the instruction distributor | If the CLI has no per-user place for them, **say so in the UI** rather than silently dropping them |
-| Console descriptor | the agent registry | One descriptor; **the UI branches on capabilities, not on the kind** |
-| Version pin | the image build arguments and the version manifest | [10 §10.2.1](10-development.md) |
-| A contract workflow | `.github/workflows/<kind>-contract.yml` | **One file per agent** — §20.5 |
+| The kind constant and its registration | `Kind*` in `internal/session/session.go`; `agentRegistry` in `internal/sessionx/agent.go`; for Managed, `managedDrivers` in `internal/sessionx/session_turn.go` | **A kind missing from `agentRegistry` silently becomes claude**: `NormalizeKind` and `AgentOf` fall back to it |
+| Capabilities | `Caps()` in your package; `Capabilities()` on your `Driver` | **Do not set a capability you have not driven end to end** (§20.4) |
+| Terminal launch | your package's `BuildLaunch`, returning `agents.LaunchPlan` | Environment goes in `LaunchPlan.Env`, **never prefixed onto the command** (§20.3). A managed-only kind returns `ErrNoTerminalRoute` |
+| Managed runtime | your `Driver`: `Resume` returns a `ThreadHandle` | Its shape follows the process model ([04 §4.3](04-agent.md)) |
+| Which driver a caller picks | Console: `managedDriver` and `terminalDriver` in `console/src/agents/registry.ts`. The in-container MCP `create_session` (`mcpStdioCall`). The CP: `create_session` in `control-plane/internal/mcpsrv/mcp.go` and `injectDriver` in `control-plane/scheduler_wake.go` | The agent defaults an unspecified driver to `tui`, so **a kind with both drivers that should start Managed is added to every caller**. A managed-only kind is defaulted by the agent, but the Console still needs `terminalDriver: false` |
+| Live state | hooks, a plugin, a poll of the CLI's store, or runtime events | Normalise into the status store: working / idle / question, plus `plan` and `permission` ([04 §4.4](04-agent.md)) |
+| Transcript | a reader behind `Agent.Transcript` | **Where the CLI keeps a readable, stable native store, read it; never copy the conversation into a store of ours.** The parsers stay separate. A kind with no such store owns one, as the two exceptions in [04 §4.3](04-agent.md) do |
+| Sign-in | the agent's `/connections/<kind>/…` handlers, **and** each route relayed by name in `control-plane/routes.go` (`restLogin` for a login flow) | No kind needs a CP callback ([08 §8.6](08-integrations.md)); a kind with nothing to sign in to has no flow |
+| Credential location and the filesystem denylist | your package, plus `fsDeny` (`fs.go`) | Anything the CLI writes credentials or state into must be **hidden from the file browser** |
+| MCP | `internal/mcpreg`: a writer in `writerFor` and an entry in `MaterializedKinds` when the CLI reads a config file; `ServedKinds` when servers reach it another way (on the wire, or in-process); `knownKinds`, and `mcpKnownKinds` in `control-plane/internal/mcpsrv/mcp_server.go` | Each CLI has its own config shape and placeholder dialect. A config-file kind whose CLI can run in CI goes into `mcp-config-contract.yml` too |
+| Agent instructions | `agent_instructions.go`: `instrSupportedKinds` and the per-kind apply, or `instrUnsupported` with a reason code | The Console lists both. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it |
+| Console descriptor | `SESSION_KINDS` in `console/src/types/session.ts`, and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances. Some screens still switch on the kind name, so grep them (below) |
+| Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
+| A contract workflow | its own file under `.github/workflows/` | **One file per agent**, registered with the release watcher (§20.5) |
+
+The table is not a complete list of where kind names appear. Some lists are still kept
+by hand: for example the bracketed-paste kinds in `internal/sessionx/session_io.go`,
+`usageMeasuredForKind` in `usage_fold.go`, and `isDynamic` (the kinds with a live model
+catalogue) in `console/src/lib/agentModels.ts`.
+Grep `workspace/agent`, `control-plane` and `console/src` for an existing kind with the
+same drivers as yours, and decide each hit.
 
 ## 20.3 The traps that have actually bitten
 
-Every one of these cost real debugging time.
+Every one of these cost real debugging time. The first three are the launch contracts in
+[04 §4.3](04-agent.md), which holds their evidence.
 
-- ⚠️ **`tmux new-session -e` does not reach the process.** It sets the session
-  environment, not the child's. **Prefix the command.**
+- ⚠️ **Environment reaches the process through `tmux new-session -e`**: put it in
+  `LaunchPlan.Env` and `startSessionTmux` passes it. **Never prefix secrets onto the
+  command** — a prefix lands in `/proc/*/cmdline` and in tmux's `pane_start_command`,
+  readable by anything in the workspace.
 - ⚠️ **Reap your children.** The agent is not PID 1. `Start()` without a matching wait
   leaks a PID **forever**, and the path that leaks is always the failure path — "kill it
   on a start timeout and return". Two runtimes shipped that bug.
 - ⚠️ **Nested hook schemas parse when written flat, and then never fire.** No error, no
   log — resume silently starts a new conversation instead.
-- ⚠️ **tmux target matching is a prefix match.** Always use the exact form, or you will
-  eventually kill the wrong session.
+- ⚠️ **tmux target matching is a prefix match.** Use `session.ExactTarget` (`=<name>`)
+  for session targets, or you will eventually kill the wrong session. `capture-pane`
+  does not accept that form and needs a pane target (`internal/tmuxx`).
 - ⚠️ **A model that only exists in a picker is not a model id.** Resolve against the live
-  catalogue at creation and **refuse before the clone or worktree happens** — an invalid
-  model that only fails after launch leaves debris behind.
-- ⚠️ **Free plans are a different product.** One CLI's free tier has no model catalogue
-  *and* rejects the reasoning-effort flag — so passing that flag unconditionally fails to
-  start **for exactly the users least able to diagnose it**.
+  catalogue at creation (`resolveLiveModel` in `HandleCreateSession`) and **refuse
+  before the clone or worktree happens** — an invalid model that only fails after launch
+  leaves debris behind.
+- ⚠️ **Free plans are a different product.** copilot's Free plan offers only Auto, and
+  Auto rejects `--effort` (`internal/agents/copilot/program.go`); cursor's Free plan
+  cannot launch a named model (`internal/agents/cursor/models.go`). A flag passed
+  unconditionally fails to start **for exactly the users least able to diagnose it**.
 - ⚠️ **A trust or onboarding prompt is not authentication.** A CLI can be signed in and
   still show a wizard, which looks identical to being signed out
   ([08 §8.5](08-integrations.md)).
@@ -80,44 +107,70 @@ Every one of these cost real debugging time.
 
 ## 20.4 Do not set a capability you have not driven
 
-`Caps()` is not documentation — the Console shows or hides controls by it, and
-[ref/agents.md](../../guide/ref/agents.md) is compared against it in CI. The rule this repository
-learned: **a capability is set only when the path has been driven end to end on the real
-CLI.** The specific case: allowing the permission prompt to be skipped requires that
-**a pending approval can actually be answered from the Console**. Removing the flag is
-easy for any kind — but a session stopped at a dialog **the user cannot see or answer**
-is, from their side, indistinguishable from a hang.
+`Caps()` and the Console descriptor's `caps` are not documentation: the Console shows or
+hides controls by them, and the server refuses by them. For example, create answers
+`permission_choice_unsupported` for a kind without `PermissionChoice`. The rule this
+repository learned: **a capability is set only when the path has been driven end to end
+on the real CLI.** The specific case: allowing the permission prompt to be skipped
+requires that **a pending approval can actually be answered from the Console**. Removing
+the flag is easy for any kind — but a session stopped at a dialog **the user cannot see
+or answer** is, from their side, indistinguishable from a hang.
 
 The same applies to the other direction: **when a capability is genuinely absent, do not
 render the control at all.** A button that does nothing is worse than no button.
 
+Two checks hold [ref/agents.md](../../guide/ref/agents.md) to the code, each over a named
+set of rows:
+
+- `scripts/docs-check.py` (its `ref` check, run on every PR by `docs.yml`) requires a
+  column for every `Kind*` constant, and the rows in `CAPS_ROWS` to match `Caps()`
+  exactly. Every `Caps` field is either in `CAPS_ROWS` or excused in `CAPS_UNMAPPED`.
+- `console/src/agents/guideTable.test.ts` matches the rows in `ROW_TO_CAP` against the
+  descriptors' `caps`, and names the rows it leaves out in `UNMAPPED_ROWS`, each with a
+  reason.
+
+Neither reads a `Driver`'s `Capabilities()`, and neither checks an unmapped row. Those
+cells are yours to get right.
+
 ## 20.5 Verification, and why the workflow is per agent
 
-Local tests are not enough, for two reasons that are documented in
-[10 §10.4](10-development.md): CI only ever sees **the pinned version**, while a
-workspace that opted into self-update runs `@latest`; and the headless smoke test draws
-no TUI, so nothing about the interactive screen is exercised. **Breakage in state
-detection escaped a green CI three times.**
+Local tests are not enough: CI builds the pinned version while a self-updating workspace
+runs the latest, and the headless smoke test draws no TUI. Why, and why that makes one
+workflow file per agent a rule, is [10 §10.4](10-development.md) ("Detecting upstream CLI
+breakage").
 
-So a new kind needs a **contract workflow of its own**. It must be its own file:
-path filters and dispatch inputs are per workflow, and sharing one caused a single
-dispatch to spend **two different agents' quotas**.
+So a new kind needs a **contract workflow of its own**. What it can check depends on the
+kind: most drive the real CLI with a test credential, while a kind whose protocol can be
+checked offline may need none. A kind that runs no vendor CLI has nothing to contract
+against.
 
-Register it with the daily drift watcher as well, so a published version change
-dispatches the contract automatically — but only if its credentials can be supplied
-unattended. **A credential that rotates through an interactive refresh is recorded as
-"seen" and dispatched by hand**; conflating "we noticed a new version" with "we tested
-it" is how a regression ships.
+Register it with the daily release watcher, `cli-release-watch.yml`, so that a published
+version change dispatches it. `cli-drift.yml` only reports pins that fall behind; it
+dispatches nothing. Registering takes four places:
+
+- the kind in `KINDS` of `deploy/local/cli-release-edges.sh`;
+- its row in `deploy/local/cli-drift-check.sh`;
+- its lines in the workflow's state, edge and dispatch steps;
+- in the contract itself, a success step that runs
+  `deploy/local/cli-release-state.sh set tested <kind> <version>`. **Without it, the
+  watcher sees the release as new every day and dispatches it every day.**
+
+Dispatch unattended only when the credential can be supplied unattended. **A credential
+that rotates through an interactive refresh is recorded as "seen" and dispatched by
+hand**, and so is a release that arrives while its credential is not configured.
+"seen" never advances "tested": conflating "we noticed a new version" with "we tested it"
+is how a regression ships.
 
 ## 20.6 Finishing
 
 A kind is not done when it runs. It is done when:
 
-1. `Caps()` matches what you actually drove;
-2. [ref/agents.md](../../guide/ref/agents.md) has its column filled — **CI compares the fork and
-   permission rows against `Caps()` exactly**, so a mismatch fails the build;
-3. [use/06-agents](../../guide/member/06-agents.md) tells a user how to connect it, using the
-   Console's own words;
-4. the contract workflow exists and has passed against the real CLI;
+1. `Caps()`, and a `Driver`'s `Capabilities()`, match what you actually drove;
+2. [ref/agents.md](../../guide/ref/agents.md) has its column filled, and the two checks
+   in §20.4 pass;
+3. [member/06-agents](../../guide/member/06-agents.md) tells a user how to connect it,
+   using the Console's own words (`console/src/lib/i18n/locales/`);
+4. the contract workflow exists, is registered with the release watcher, and has passed
+   against the real CLI;
 5. if anything was settled that could plausibly be reopened — why this driver, why this
    id strategy — [decisions/](../decisions/) has the record.
