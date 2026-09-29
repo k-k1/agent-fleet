@@ -88,14 +88,16 @@ tmux 内または managed driver 配下の CLI エージェント + working copy
   （[decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md)・
   [0077](../decisions/0077-engine-boxes-bought-by-cp.ja.md)）。`docker` と `native` では、ネットワーク上で
   すでに動いているエンジンを URL で指す（[decisions/0076](../decisions/0076-external-image-engine-on-lan.ja.md)）。
-  どの場合も Workspace からは CP を通してだけ届き、冷えたエンジンが起きるまでの最初のリクエストは
-  CP のゲートウェイが持ちこたえる。
+  どの場合も Workspace からは CP を通してだけ届く。冷えたエンジンの起動中、ストリーミングの要求は
+  ゲートウェイがハートビートを送って保持し、非ストリーミングの要求には 45 秒（借りた
+  エンジンは 75 秒）で `503 engine_waking`（`Retry-After` 付き）を返す。呼び出し側はエンジンが起き続ける間に再試行する。
+  読み上げは設定が `auto` なら、VOICEVOX が応答するまで Polly に切り替わる。
 
 ## 1.4 認証は 2 層（重要・混同しない）
 
 | 層 | 対象 | 方式 | 保存先 |
 |----|------|------|--------|
-| **L1 Console 認証** | 誰が Console を使えるか | `AUTH=oauth`（CP 自身のログイン。Google・GitHub・任意の OIDC プロバイダ。compose と AWS のテンプレートが設定する値）/ `proxy`（外部ゲートウェイのメールヘッダを信頼）/ `dev`（固定 ID。`AUTH` 未設定時の既定）| 署名セッション cookie（CP）|
+| **L1 Console 認証** | 誰が Console を使えるか | `AUTH=oauth`（CP 自身のログイン。Google・GitHub・任意の OIDC プロバイダ。compose と AWS のテンプレートが設定する値）/ `proxy`（外部ゲートウェイのメールヘッダを信頼）/ `dev`（固定 ID。`AUTH` 未設定時の既定で、`native` が受け付ける唯一のモード）| 署名セッション cookie（CP）|
 | **L2 エージェント認証** | 各ユーザーのエージェントを誰として動かすか | 各自のプロバイダへのサインイン | Workspace 内: CLI 自身の設定、または `secrets.enc` |
 
 L2 はユーザー本人の作業で、Console は**状態の可視化と接続 UI** を担う。詳細: L1 = [07 §7.3](07-security.ja.md)、
@@ -106,29 +108,40 @@ L2 = [08](08-integrations.ja.md)。
 ### ログイン（L1, AUTH=oauth）
 ```
 Browser → CP /login → /oauth2/login → プロバイダ → /oauth2/callback
-  → 許可リスト検証（メール/ドメイン, fail-closed）→ 署名 cookie 発行 → Console
+  → 入場の可否（fail-closed）: プロバイダ自身の門（GitHub は許可した organization への所属）、
+    次に許可リスト（メール/ドメイン。どれも設定していなければ、既存の membership か
+    テナントの auto-join ドメインだけが入れる）
+  → 署名 cookie 発行 → Console
 以降の全リクエスト: authGate が cookie 検証 → メールヘッダを設定（既定 X-Forwarded-Email）
   → resolveIdentity → X-AF-Tenant ヘッダ（ヘッダを付けられない所は query の tenant）の
-  テナントを membership で検証 → ハンドラ
+  テナントを、membership・テナントが許可するプロバイダ・許可する接続元アドレスで検証 → ハンドラ
 ```
+
+規則の全体は [07 §7.3](07-security.ja.md)。
 
 ### Workspace 起動 / アタッチ
 ```
-Console「Start」→ CP: workspace.state 確認
-  stopped → Runtime.Start → Agent が応答するまで待つ
+Console「Start」→ CP POST /api/workspace/start
+  stopped → Runtime.Start（Agent に届くようになる前に戻ることがある）
             docker: 停止中の残骸を消し、現在のイメージで run。DEK を unwrap して AF_SECRET_KEY に注入
             ecs / ecs-ec2: 利用者の ECS サービスを起こす（ecs-ec2 ではプールのスロットに
-                     利用者の EBS ホームを付けて）
+                     利用者の EBS ホームを付けて）。収束するまで状態は `starting` で、
+                     Console がポーリングし続ける
   running → そのまま
-→ 以降 CP は Agent へ中継可能に。接続追跡で warm を保ち、アイドルが続くと reaper が停止する
-  （既定 2 時間、テナントごとに設定）
+→ 応答はその時点の状態を返す
 ```
+
+次に Agent へ届く必要がある要求（セッションの作成・fork・再開、持ち越した回答）は、停止中の
+Workspace を自分で起動し（`AF_AUTOSTART`、既定オン）、Agent の応答を最大 55 秒待つ
+（`AF_AGENT_READY_WAIT_SEC`。入口の idle timeout の内側に収める）。超えたら `409 workspace_starting`
+を返し、起動はそのまま続く。接続追跡で warm を保ち、アイドルが続くと reaper が停止する
+（既定 2 時間、テナントごとに設定）。
 
 ### セッション作成
 ```
 Console: New session（kind, repo/dir, model, 実行方式, 既定は新しい worktree）
-  → CP /api/sessions（クォータ検証・DB ミラー。停止中の Workspace は先に起動する＝
-    AF_AUTOSTART、既定オン）→ Agent /sessions
+  → CP /api/sessions（クォータ検証・DB ミラー。続いて上のとおり Workspace を起動して
+    Agent を待つ）→ Agent /sessions
   → Agent: メタを永続化し、driver ごとに起動
       managed: kind の runtime 上で会話を開くか resume する
       tui: tmux session 内で CLI を起動し、履歴があれば resume
@@ -164,7 +177,7 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 |--------|-----------|---------------|-----|
 | Workspace の実行 | `RuntimeFactory`（`AF_RUNTIME` で選ぶ）| Docker Engine / サンドボックス化したホストのプロセス | Fargate の ECS タスク / プールの EC2 スロット上の ECS タスク |
 | 永続ホーム | Runtime 内 | bind mount したディレクトリ / ホストのディレクトリ | EFS アクセスポイント / 利用者ごとの EBS ボリューム |
-| L1 認証 | `AUTH` env 分岐 | `oauth`（1 人なら `dev`）| `oauth` |
+| L1 認証 | `AUTH` env 分岐 | `oauth` か `dev` / `dev` のみ | `oauth`（テンプレートは `dev` も受け付ける）|
 | メタデータ | `Store` | SQLite（既定・pure-Go）| Postgres（RDS）|
 | at-rest 鍵 | `KeyCustodian` | localCustodian（master 由来 KEK）| 同じ。KMS custodian は seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)・#969）|
 | 入口/TLS | （CP 外）| Caddy / Funnel | ALB + ACM |

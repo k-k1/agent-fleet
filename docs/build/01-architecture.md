@@ -97,14 +97,17 @@ the CLI agents, in tmux or under a managed driver, plus the working copies (~/re
   [0077](../decisions/0077-engine-boxes-bought-by-cp.md)). On `docker` and `native`, an
   engine already running elsewhere on the network is named by URL
   ([decisions/0076](../decisions/0076-external-image-engine-on-lan.md)). Either way a
-  workspace reaches it only through the CP, whose gateway holds the first request while
-  a cold engine starts.
+  workspace reaches it only through the CP. While a cold engine starts, the gateway
+  holds a streaming request open with a heartbeat; a non-streaming one is answered
+  `503 engine_waking` with `Retry-After` after 45 seconds (75 for a borrowed engine),
+  and the caller retries while the engine keeps coming up. Speech set to `auto` falls
+  back to Polly until VOICEVOX answers.
 
 ## 1.4 Authentication is two layers — do not conflate them
 
 | Layer | Answers | How | Stored |
 |---|---|---|---|
-| **L1, Console** | who may use the Console at all | `AUTH=oauth` (the CP's own login with Google, GitHub or any OIDC provider; what the compose and AWS templates set) / `proxy` (trust an upstream gateway's email header) / `dev` (a fixed identity; the default when `AUTH` is unset) | a signed session cookie held by the CP |
+| **L1, Console** | who may use the Console at all | `AUTH=oauth` (the CP's own login with Google, GitHub or any OIDC provider; what the compose and AWS templates set) / `proxy` (trust an upstream gateway's email header) / `dev` (a fixed identity; the default when `AUTH` is unset, and the only mode `native` accepts) | a signed session cookie held by the CP |
 | **L2, agent** | as whom each user's agent runs | each person's own sign-in with the provider | inside the workspace: the CLI's own config, or `secrets.enc` |
 
 L2 is the user's own business; the Console's job is to **show its state and offer the
@@ -117,33 +120,46 @@ connection flow**. Details: L1 in [07 §7.3](07-security.md), L2 in
 
 ```
 Browser → CP /login → /oauth2/login → the provider → /oauth2/callback
-  → check the allowlist (email / domain, fail-closed) → issue a signed cookie → Console
+  → admit or refuse, fail-closed: the provider's own gate (GitHub: membership of an
+    allowed organisation), then the allowlists (email / domain; with none configured,
+    only an existing membership or a tenant's auto-join domain lets a person in)
+  → issue a signed cookie → Console
 every request after that: authGate verifies the cookie → sets the email header
   (X-Forwarded-Email by default) → resolveIdentity → the tenant named by X-AF-Tenant
   (the `tenant` query parameter where a browser cannot set headers) is checked against
-  a membership → the handler
+  a membership, the tenant's allowed providers and its allowed source addresses
+  → the handler
 ```
+
+The full rules are [07 §7.3](07-security.md).
 
 ### Starting or attaching to a workspace
 
 ```
-Console "Start" → CP checks workspace.state
-  stopped → Runtime.Start → wait until the agent answers
+Console "Start" → CP POST /api/workspace/start
+  stopped → Runtime.Start, which returns before the agent is necessarily reachable
             docker: remove any stopped remnant, run the current image, and inject the
                     unwrapped DEK as AF_SECRET_KEY
             ecs / ecs-ec2: bring the member's ECS service up (on ecs-ec2, on a pool
-                    slot with the member's EBS home attached)
+                    slot with the member's EBS home attached); the state reads
+                    `starting` until it converges, and the Console keeps polling
   running → nothing to do
-→ the CP can now relay to the agent. Connection tracking keeps it warm; the reaper
-  stops it once it has been idle (two hours by default, set per tenant).
+→ the response carries the live state
 ```
+
+A request that must reach the agent next — creating, forking or resuming a session, a
+carried answer — starts a stopped workspace itself (`AF_AUTOSTART`, on by default) and
+waits for the agent for up to 55 seconds (`AF_AGENT_READY_WAIT_SEC`, kept inside the
+ingress's idle timeout). Past that it answers `409 workspace_starting`, and the boot
+carries on. Connection tracking keeps a workspace warm; the reaper stops it once it has
+been idle (two hours by default, set per tenant).
 
 ### Creating a session
 
 ```
 Console: new session (kind, repo/dir, model, execution method, a new worktree by default)
-  → CP /api/sessions (quota check, DB mirror; a stopped workspace is started first,
-    AF_AUTOSTART, on by default) → agent /sessions
+  → CP /api/sessions (quota check, DB mirror, then start the workspace and wait for
+    the agent as above) → agent /sessions
   → agent: persist the metadata and start it per driver
       managed: open or resume the conversation on the kind's runtime
       tui: start the CLI inside a tmux session, resuming if there is history
@@ -188,7 +204,7 @@ Only interface seams inside the CP change. The mapping and how to choose is
 |---|---|---|---|
 | running workspaces | `RuntimeFactory`, chosen by `AF_RUNTIME` | Docker Engine / sandboxed host processes | an ECS task on Fargate / on an EC2 slot from a pool |
 | the persistent home | inside the Runtime | a bind-mounted directory / a host directory | an EFS access point / a per-user EBS volume |
-| L1 authentication | the `AUTH` switch | `oauth` (`dev` for a single person) | `oauth` |
+| L1 authentication | the `AUTH` switch | `oauth` or `dev` / `dev` only | `oauth` (the template also accepts `dev`) |
 | metadata | `Store` | SQLite (default, pure Go) | Postgres (RDS) |
 | at-rest keys | `KeyCustodian` | a local custodian derived from the master key | the same; a KMS custodian is only a seam ([decisions/0005](../decisions/0005-envelope-custodian.md), #969) |
 | ingress / TLS | outside the CP | Caddy / Funnel | ALB + ACM |
