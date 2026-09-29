@@ -7,17 +7,25 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// TestLFSGCPrune drives the real referenced-oid enumeration + orphan prune. It
-// commits an LFS pointer (plain git, no git-lfs needed) so one oid is referenced,
-// seeds a referenced object + an orphan object + a young orphan on disk, and checks
-// that only the aged, unreferenced object is pruned (file + ledger), quota freed.
-func TestLFSGCPrune(t *testing.T) {
+// lfsGCFixture is a bare repo whose history commits one LFS pointer (plain git, no
+// git-lfs needed), so oidRef is referenced, plus the ledger the prune reconciles.
+type lfsGCFixture struct {
+	st       *store.SQL
+	tenantID string
+	dataRoot string
+	bare     string
+	oidRef   string
+}
+
+func newLFSGCFixture(t *testing.T) *lfsGCFixture {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -28,7 +36,7 @@ func TestLFSGCPrune(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer st.Close()
+	t.Cleanup(func() { st.Close() })
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -43,8 +51,6 @@ func TestLFSGCPrune(t *testing.T) {
 	gitRun(t, tmp, nil, "init", "--bare", "--initial-branch=main", bare)
 
 	env := []string{"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@x", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@x"}
-
-	// Commit an LFS pointer referencing oidRef (plain git — the pointer is just text).
 	oidRef := oidOf([]byte("the-referenced-object"))
 	wc := filepath.Join(tmp, "wc")
 	gitRun(t, tmp, env, "clone", bare, wc)
@@ -55,67 +61,166 @@ func TestLFSGCPrune(t *testing.T) {
 	gitRun(t, wc, env, "add", "asset.bin")
 	gitRun(t, wc, env, "commit", "-m", "add lfs pointer")
 	gitRun(t, wc, env, "push", "origin", "HEAD:main")
+	return &lfsGCFixture{st: st, tenantID: dflt.ID, dataRoot: dataRoot, bare: bare, oidRef: oidRef}
+}
+
+func (f *lfsGCFixture) objPath(oid string) string {
+	return filepath.Join(f.bare, "lfs", "objects", oid[0:2], oid[2:4], oid)
+}
+
+// seed writes an object file aged by age and records it in the ledger.
+func (f *lfsGCFixture) seed(t *testing.T, oid string, size int64, age time.Duration) {
+	t.Helper()
+	p := f.objPath(oid)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, bytes.Repeat([]byte("x"), int(size)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mt := time.Now().Add(-age)
+	if err := os.Chtimes(p, mt, mt); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.PutLFSObject(context.Background(), f.tenantID, "shared", oid, size); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *lfsGCFixture) exists(oid string) bool {
+	_, err := os.Stat(f.objPath(oid))
+	return err == nil
+}
+
+// TestLFSGCPrune drives the real referenced-oid enumeration + orphan prune: of a
+// referenced object, an aged orphan and a young orphan, only the aged, unreferenced
+// object is pruned (file + ledger), quota freed.
+func TestLFSGCPrune(t *testing.T) {
+	f := newLFSGCFixture(t)
+	ctx := context.Background()
 
 	// Enumeration must see the referenced oid.
-	ref, err := referencedLFSOIDs(ctx, bare)
+	ref, err := referencedLFSOIDs(ctx, f.bare)
 	if err != nil {
 		t.Fatalf("enumerate: %v", err)
 	}
-	if !ref[oidRef] {
-		t.Fatalf("referenced oid %s not found; got %v", oidRef, ref)
+	if !ref[f.oidRef] {
+		t.Fatalf("referenced oid %s not found; got %v", f.oidRef, ref)
 	}
 
-	// Seed object files: referenced (aged), orphan (aged), orphan (young).
 	oidOrphan := oidOf([]byte("orphaned-object"))
 	oidYoung := oidOf([]byte("young-orphan-object"))
-	seed := func(oid string, size int64, age time.Duration) {
-		p := filepath.Join(bare, "lfs", "objects", oid[0:2], oid[2:4], oid)
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, bytes.Repeat([]byte("x"), int(size)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		mt := time.Now().Add(-age)
-		if err := os.Chtimes(p, mt, mt); err != nil {
-			t.Fatal(err)
-		}
-		if err := st.PutLFSObject(ctx, dflt.ID, "shared", oid, size); err != nil {
-			t.Fatal(err)
-		}
-	}
-	seed(oidRef, 100, 2*time.Hour)    // referenced → keep regardless of age
-	seed(oidOrphan, 200, 2*time.Hour) // aged orphan → prune
-	seed(oidYoung, 50, 0)             // young orphan → grace keeps it
+	f.seed(t, f.oidRef, 100, 2*time.Hour)  // referenced → keep regardless of age
+	f.seed(t, oidOrphan, 200, 2*time.Hour) // aged orphan → prune
+	f.seed(t, oidYoung, 50, 0)             // young orphan → grace keeps it
 
-	if n, _ := st.TenantLFSBytes(ctx, dflt.ID); n != 350 {
+	if n, _ := f.st.TenantLFSBytes(ctx, f.tenantID); n != 350 {
 		t.Fatalf("pre-GC ledger bytes = %d, want 350", n)
 	}
 
-	g := newGitGC(st, dataRoot, 0, time.Hour) // grace = 1h
-	g.pruneLFS(ctx, "default", "shared", bare)
+	g := newGitGC(f.st, f.dataRoot, 0, time.Hour) // grace = 1h
+	g.pruneLFS(ctx, "default", "shared", f.bare)
 
-	exists := func(oid string) bool {
-		_, err := os.Stat(filepath.Join(bare, "lfs", "objects", oid[0:2], oid[2:4], oid))
-		return err == nil
-	}
-	if !exists(oidRef) {
+	if !f.exists(f.oidRef) {
 		t.Error("referenced object was pruned")
 	}
-	if exists(oidOrphan) {
+	if f.exists(oidOrphan) {
 		t.Error("aged orphan was NOT pruned")
 	}
-	if !exists(oidYoung) {
+	if !f.exists(oidYoung) {
 		t.Error("young orphan was pruned despite grace window")
 	}
 	// Ledger: orphan row gone (quota freed), the other two remain.
-	if n, _ := st.TenantLFSBytes(ctx, dflt.ID); n != 150 { // 100 (ref) + 50 (young)
+	if n, _ := f.st.TenantLFSBytes(ctx, f.tenantID); n != 150 { // 100 (ref) + 50 (young)
 		t.Fatalf("post-GC ledger bytes = %d, want 150", n)
 	}
-	oids, _ := st.ListLFSObjectOIDs(ctx, dflt.ID, "shared")
+	oids, _ := f.st.ListLFSObjectOIDs(ctx, f.tenantID, "shared")
 	for _, o := range oids {
 		if o == oidOrphan {
 			t.Error("orphan ledger row not deleted")
+		}
+	}
+}
+
+// TestLFSGCPrunePass2Failure: when the pointer stream dies part-way or cat-file exits
+// non-zero, enumeration fails and the prune deletes nothing — not even a genuine
+// orphan — rather than reading every unread pointer as unreferenced.
+func TestLFSGCPrunePass2Failure(t *testing.T) {
+	cases := map[string]string{
+		// head exits after a few bytes; the pipeline's status is head's 0, so only
+		// the short stream gives the failure away.
+		"truncated stream": `git --git-dir "$1" cat-file --batch | head -c 20`,
+		"non-zero exit":    `git --git-dir "$1" cat-file --batch; exit 3`,
+	}
+	for name, script := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newLFSGCFixture(t)
+			ctx := context.Background()
+			orig := lfsCatFileBatch
+			t.Cleanup(func() { lfsCatFileBatch = orig })
+			lfsCatFileBatch = func(ctx context.Context, bareDir string) *exec.Cmd {
+				return exec.CommandContext(ctx, "sh", "-c", script, "sh", bareDir)
+			}
+
+			if ref, err := referencedLFSOIDs(ctx, f.bare); err == nil {
+				t.Fatalf("enumerate succeeded with %v, want an error", ref)
+			}
+
+			oidOrphan := oidOf([]byte("orphaned-object"))
+			f.seed(t, f.oidRef, 100, 2*time.Hour)
+			f.seed(t, oidOrphan, 200, 2*time.Hour)
+			newGitGC(f.st, f.dataRoot, 0, time.Hour).pruneLFS(ctx, "default", "shared", f.bare)
+			if !f.exists(f.oidRef) {
+				t.Error("referenced object was pruned after a failed enumeration")
+			}
+			if !f.exists(oidOrphan) {
+				t.Error("orphan was pruned after a failed enumeration")
+			}
+			if n, _ := f.st.TenantLFSBytes(ctx, f.tenantID); n != 300 {
+				t.Errorf("ledger bytes = %d, want 300 (nothing deleted)", n)
+			}
+		})
+	}
+}
+
+// TestReadPointerBatch: every prefix of a valid response stream, and every response
+// that does not answer the candidate asked, is an error rather than a partial set.
+func TestReadPointerBatch(t *testing.T) {
+	shaA := strings.Repeat("a", 40)
+	shaB := strings.Repeat("b", 40)
+	oid := oidOf([]byte("obj"))
+	pointer := fmt.Sprintf("version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize 3\n", oid)
+	answer := func(sha, body string) string {
+		return fmt.Sprintf("%s blob %d\n%s\n", sha, len(body), body)
+	}
+	full := answer(shaA, "not a pointer") + answer(shaB, pointer)
+	candidates := []string{shaA, shaB}
+
+	ref, err := readPointerBatch(strings.NewReader(full), candidates)
+	if err != nil {
+		t.Fatalf("full stream: %v", err)
+	}
+	if len(ref) != 1 || !ref[oid] {
+		t.Fatalf("full stream = %v, want only %s", ref, oid)
+	}
+
+	for n := 0; n < len(full); n++ {
+		if ref, err := readPointerBatch(strings.NewReader(full[:n]), candidates); err == nil {
+			t.Fatalf("prefix of %d/%d bytes returned %v, want an error", n, len(full), ref)
+		}
+	}
+
+	bad := map[string]string{
+		"missing":          answer(shaA, "x") + shaB + " missing\n",
+		"wrong sha":        answer(shaB, pointer) + answer(shaA, "x"),
+		"not a blob":       answer(shaA, "x") + shaB + " tree 5\nxxxxx\n",
+		"bad size":         answer(shaA, "x") + shaB + " blob ten\n",
+		"oversized":        answer(shaA, "x") + fmt.Sprintf("%s blob %d\n", shaB, pointerMaxBytes+1),
+		"no LF after body": answer(shaA, "x") + fmt.Sprintf("%s blob 2\nxyz", shaB),
+	}
+	for name, stream := range bad {
+		if ref, err := readPointerBatch(strings.NewReader(stream), candidates); err == nil {
+			t.Errorf("%s: returned %v, want an error", name, ref)
 		}
 	}
 }
