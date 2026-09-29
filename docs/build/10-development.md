@@ -77,9 +77,10 @@ manifest `versions.json` on the default lean image — is
    the new pins and that no CLI is baked in; with `BAKE_AGENT_CLIS=1` it also checks
    the installed versions.
 7. **Reflect it in each workspace**: every user does **Stop → Start** from the Console.
-   On a lean image the entrypoint moves the boot-installed CLIs to the new pin in
-   `~/.local` at that start (it needs the network; a failure is retried at the next
-   start). kiro and muse are installed on demand instead, and follow the pin through
+   On a lean image, while self-update is off, the entrypoint moves the boot-installed
+   CLIs to the new pin in `~/.local` at a start the member makes (it needs the network;
+   a failure is retried at the next start). With self-update on they stay on latest
+   (see the note below). kiro and muse are installed on demand instead, and follow the pin through
    their own installers ([04 §4.9](04-agent.md#49-the-workspace-image-and-its-entrypoint)).
    Home and repositories survive.
 8. **(Optional) confirm** from **Settings → Toolchains → Tool versions**, which shows
@@ -137,9 +138,11 @@ dispatched the contract, and nothing is being tested while it is down.
 - **`e2e-smoke.sh`** — the image smoke test (L1), run with `docker run` against a
   built image. On a baked image it checks that the installed claude, opencode, codex,
   copilot, cursor, kiro and muse match the Dockerfile's pins (that is, the cache is
-  not stale), as do Go, `gh` and Chromium on every image; agy and rtk are checked for
-  presence only. On a lean image it checks that no CLI is baked in. Either way it checks `versions.json` against the pins and
-  that everything that should be in the image is present. `run-dev.sh` runs it after
+  not stale), as do Go, `gh` and Chromium on every image. It does not probe agy's binary,
+  and accepts rtk either present or absent with an `rtk-unavailable` marker. On a lean
+  image it checks that no CLI is baked in. Either way it checks `versions.json` against
+  the pins and that the image's own files (the agent, the entrypoint, the policy
+  `CLAUDE.md` and the like) are present. `run-dev.sh` runs it after
   every build; `deploy/local/e2e-smoke.sh [image]` runs it alone.
 
 Host-specific practice (PATH, docker group membership and so on) is each host's own

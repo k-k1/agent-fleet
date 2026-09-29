@@ -70,9 +70,10 @@ Start が使うイメージと Workspace が走らせているイメージが違
 6. **ホストに反映**: `run-dev.sh`。ビルド直後にイメージスモーク（L1）が走る。既定の lean
    イメージでは `versions.json` が新しいピンを持ち、CLI が焼かれていないことを確かめる。
    `BAKE_AGENT_CLIS=1` なら導入された版も確かめる。
-7. **各 Workspace に反映**: 各利用者が Console で **Stop→Start**。lean イメージでは、その起動で
-   entrypoint が boot-install 対象の CLI を `~/.local` で新しいピンへ進める（ネットワークが要る。
-   失敗は次の起動で再試行）。kiro と muse はオンデマンドで導入され、それぞれの導入経路でピンに
+7. **各 Workspace に反映**: 各利用者が Console で **Stop→Start**。lean イメージでは、自己更新がオフの
+   あいだ、メンバー自身の起動で entrypoint が boot-install 対象の CLI を `~/.local` で新しい
+   ピンへ進める（ネットワークが要る。失敗は次の起動で再試行）。自己更新がオンなら latest の
+   まま（下の補足を参照）。kiro と muse はオンデマンドで導入され、それぞれの導入経路でピンに
    追従する（[04 §4.9](04-agent.ja.md#49-workspace-イメージと-entrypoint)）。home と repos は残る。
 8. **（任意）確認**: **設定 → ツールチェーン → ツールのバージョン** で、実効版・イメージ版・
    ピン版が並んで見える。
@@ -123,9 +124,10 @@ Start が使うイメージと Workspace が走らせているイメージが違
 - **`e2e-smoke.sh`** — イメージスモーク（L1）。ビルド済みイメージに対して `docker run` で
   検証する。焼き込みイメージでは、導入された claude・opencode・codex・copilot・cursor・
   kiro・muse の版が Dockerfile のピンと一致するか（＝キャッシュが古くないか）を確かめ、Go・`gh`・
-  Chromium はどのイメージでも版を突き合わせる。agy と rtk は存在の確認だけ。lean イメージでは
-  CLI が焼かれていないことを確かめる。
-  どちらでも `versions.json` をピンと突き合わせ、イメージに入るべきものが揃っているかを見る。
+  Chromium はどのイメージでも版を突き合わせる。agy のバイナリは調べず、rtk は存在するか、
+  `rtk-unavailable` の印付きで無いかのどちらかなら通す。lean イメージでは CLI が焼かれていない
+  ことを確かめる。どちらでも `versions.json` をピンと突き合わせ、イメージ自身のファイル
+  （Agent・entrypoint・ポリシーの `CLAUDE.md` など）が揃っているかを見る。
   `run-dev.sh` がビルドのたびに実行し、`deploy/local/e2e-smoke.sh [image]` で単体でも回せる。
 
 ホスト固有の作法（PATH・docker グループ等）はホストごとの事情なので、ここには書かない。
