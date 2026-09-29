@@ -51,6 +51,19 @@ func TestPostgresDeleteCascade(t *testing.T) {
 	if err := st.AddUsage(ctx, mem.ID, tn.ID, "2026-07-01", 3600); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
+	if err := st.SetEngineMembersOnly(ctx, tn.ID, EngineAccessLLM, true); err != nil {
+		t.Fatalf("engine access policy: %v", err)
+	}
+	if err := st.SetEngineGrant(ctx, tn.ID, mem.ID, EngineAccessLLM, true); err != nil {
+		t.Fatalf("engine access grant: %v", err)
+	}
+	// The gateway's per-request read (a LEFT JOIN with a CASE) runs only here on Postgres.
+	if one, err := st.GetMemberEngineAccess(ctx, tn.ID, mem.ID); err != nil || !one.Allows(mem.ID, EngineAccessLLM) {
+		t.Errorf("granted member refused on postgres (%+v err=%v)", one, err)
+	}
+	if one, err := st.GetMemberEngineAccess(ctx, tn.ID, "M-other"); err != nil || one.Allows("M-other", EngineAccessLLM) {
+		t.Errorf("ungranted member allowed on postgres (%+v err=%v)", one, err)
+	}
 
 	if err := st.DeleteMembership(ctx, mem.ID); err != nil {
 		t.Fatalf("DeleteMembership on postgres: %v", err)
@@ -61,6 +74,9 @@ func TestPostgresDeleteCascade(t *testing.T) {
 	if _, ok, err := st.GetUserLimit(ctx, mem.ID); err != nil || ok {
 		t.Errorf("the quota survived (ok=%v err=%v)", ok, err)
 	}
+	if acc, err := st.GetEngineAccess(ctx, tn.ID); err != nil || len(acc.Grants) != 0 {
+		t.Errorf("the engine grant survived (%+v err=%v)", acc.Grants, err)
+	}
 	if rows, err := st.ListUsage(ctx, tn.ID, "2026-07-01", "2026-07-01"); err != nil || len(rows) == 0 {
 		t.Errorf("occupancy history was deleted: %+v %v", rows, err)
 	}
@@ -70,6 +86,9 @@ func TestPostgresDeleteCascade(t *testing.T) {
 	}
 	if _, ok, _ := st.GetTenantBySlug(ctx, "sales"); ok {
 		t.Error("the tenant survived")
+	}
+	if acc, err := st.GetEngineAccess(ctx, tn.ID); err != nil || len(acc.MembersOnly) != 0 {
+		t.Errorf("the engine access policy survived (%+v err=%v)", acc.MembersOnly, err)
 	}
 	if rows, err := st.ListUsage(ctx, tn.ID, "2026-07-01", "2026-07-01"); err != nil || len(rows) == 0 {
 		t.Errorf("occupancy history was deleted with the tenant: %+v %v", rows, err)

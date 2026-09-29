@@ -1061,7 +1061,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 	// ADR 0084 decision 9: push the change to the tenant's running workspaces at once, or
 	// a grant revoked here stays live in the Agent's opencode config and gateway cache for
 	// up to ten minutes — decision 8 exists specifically to rule that window out.
-	a.cp.PushEngineCatalogChanged(r.Context(), t.ID)
+	a.cp.PushEngineCatalogChanged(r.Context(), t.ID, "tenant limits changed")
 	// This endpoint had NO audit trail at all before ADR 0084 — every other admin write in
 	// this file does. A switch that can take image generation and self-hosted chat away
 	// from a whole tenant needs one; MaxWorkspaces etc. changing silently was already a

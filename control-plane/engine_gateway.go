@@ -250,13 +250,13 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 	// ADR 0084 decision 8, gate 2: a safety net for the up-to-ten-minute window the catalogue
 	// (gate 1) stays cached on the Agent side. Without this, a tenant denied mid-window could
 	// still buy a session token for the role it no longer holds.
-	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	gate, aerr := g.engineGateFor(r.Context(), mv)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	if !lim.engineRoleAllowed(eng.def.api()) {
-		writeAPIErr(w, engineForbiddenErr(eng.def.api()))
+	if aerr := gate.forbidden(eng.def.api()); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	exp := time.Now().Add(engineSessionTokenTTL)
@@ -279,7 +279,7 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	gate, aerr := g.engineGateFor(r.Context(), mv)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -289,10 +289,10 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 		if e.mode(r.Context()) == engineModeOff {
 			continue // an engine an admin switched off is not offered, rather than offered and refused
 		}
-		// ADR 0084 decision 7/8, gate 1 (the main one): a role this tenant was denied is
+		// ADR 0084 decision 7/8, gate 1 (the main one): a role this tenant or member was denied is
 		// dropped from the catalogue exactly like an engine switched off — never offered and
 		// then refused, which is the shape decision 8 rules out.
-		if !lim.engineRoleAllowed(e.def.api()) {
+		if !gate.engineRoleAllowed(e.def.api()) {
 			continue
 		}
 		served, _ := e.servedModel()
@@ -494,15 +494,15 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// ADR 0084 decision 8, gate 3: the other safety net, for the session token's own 30-day
-	// life. mv is already in hand right after auth, so this sits next to the existing
-	// engine_off / engine_unavailable checks below rather than adding a second store round trip.
-	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	// life. It costs two small reads per request — the tenant row and this member's grant
+	// (#1215), the latter narrowed to at most one row per role.
+	gate, aerr := g.engineGateFor(r.Context(), mv)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	if !lim.engineRoleAllowed(eng.def.api()) {
-		writeAPIErr(w, engineForbiddenErr(eng.def.api()))
+	if aerr := gate.forbidden(eng.def.api()); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	if eng.mode(r.Context()) == engineModeOff {
@@ -634,13 +634,13 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	gate, aerr := g.engineGateFor(r.Context(), mv)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	if !lim.engineRoleAllowed(eng.def.api()) {
-		writeAPIErr(w, engineForbiddenErr(eng.def.api()))
+	if aerr := gate.forbidden(eng.def.api()); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	if eng.mode(r.Context()) == engineModeOff {
