@@ -34,7 +34,7 @@ the Console shows a **Restart needed** badge (`control-plane/workspace_stale.go`
 
 | What you changed | What it takes |
 |---|---|
-| Console (`console/src`) | `npm --prefix console run build` (or `run dev`, which is `vite build --watch`) → **reload the browser**. The CP reads `console/dist` from disk and serves the page with `no-store` (the hashed `/assets/` files are immutable), so it does not need restarting |
+| Console (`console/src`) | `npm --prefix console run build` (or `run dev`, which is `vite build --watch`) → **reload the browser**. The CP reads `console/dist` from disk, and its caching headers ([05 §5.4](05-api.md#54-cross-cutting-rules)) let a reload pick up the new build, so the CP does not need restarting |
 | The CP's Go | rebuild and restart the CP (`restart-cp.sh`). No image rebuild |
 | The agent's Go, or anything in the image | rebuild the image (`run-dev.sh`) → each user does **Stop → Start** from the Console. The CP never force-swaps a running workspace. Under `native` there is no image: `run-dev.sh native` rebuilds the agent binary instead |
 | The pinned version of an agent CLI, `rtk`, `gh` or Go | follow the runbook in §10.2.1 |

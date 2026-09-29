@@ -33,7 +33,7 @@ Start が使うイメージと Workspace が走らせているイメージが違
 
 | 変更したもの | 反映に必要な操作 |
 |--------------|------------------|
-| Console（`console/src`）| `npm --prefix console run build`（または `run dev` ＝ `vite build --watch`）→ ブラウザを**リロード**。CP は `console/dist` をディスクから読み、ページを `no-store` で配信する（ハッシュ付きの `/assets/` は immutable）ので CP 再起動は不要 |
+| Console（`console/src`）| `npm --prefix console run build`（または `run dev` ＝ `vite build --watch`）→ ブラウザを**リロード**。CP は `console/dist` をディスクから読み、そのキャッシュヘッダ（[05 §5.4](05-api.ja.md#54-横断規約)）によってリロードで新しいビルドが効くので、CP 再起動は不要 |
 | CP の Go | CP を再ビルドして再起動（`restart-cp.sh`）。イメージ再ビルド不要 |
 | Agent の Go / イメージに入るもの | イメージを再ビルド（`run-dev.sh`）→ 各利用者が Console で **Stop→Start**。CP が稼働中の Workspace を強制的に入れ替えることはない。`native` にはイメージが無く、`run-dev.sh native` が代わりに Agent バイナリを再ビルドする |
 | エージェント CLI・`rtk`・`gh`・Go のピン版 | §10.2.1 の runbook に従う |
