@@ -166,19 +166,29 @@ func recallSettings(m *session.Meta) {
 // has no process to corrupt (branch drift for those is handled elsewhere). Archived
 // sessions are ignored. A subdir cwd still counts because checkout rewrites the
 // whole working tree, not just the repo root.
+//
+// Liveness is driver-aware, as in SessionAlive: a Managed session has no tmux session,
+// so a tmux-only set lets its working copy be deleted or switched mid-turn.
 func LiveSessionsInDir(dir string) []string {
-	return sessionsInDir(session.ListMetas(), tmuxx.LiveSessionNames(), dir)
+	live := tmuxx.LiveSessionNames()
+	return sessionsInDir(session.ListMetas(), func(m session.Meta) bool {
+		return live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m))
+	}, dir)
 }
 
+// managedAlive is ManagedAlive behind a seam: the kinds keep their runtime handles in
+// unexported maps, so a test cannot otherwise stand up a running Managed session.
+var managedAlive = ManagedAlive
+
 // sessionsInDir is the pure core of LiveSessionsInDir (tmux/fs kept out so it is
-// testable): from metas + the live set, the display names of running, non-archived
+// testable): from metas + the liveness test, the display names of running, non-archived
 // sessions whose cwd equals dir or sits strictly beneath it. The trailing
 // PathSeparator on the prefix test is load-bearing — it keeps "/r/foo" from matching
 // a sibling "/r/foobar".
-func sessionsInDir(metas []session.Meta, live map[string]bool, dir string) []string {
+func sessionsInDir(metas []session.Meta, alive func(session.Meta) bool, dir string) []string {
 	var names []string
 	for _, m := range metas {
-		if m.Archived || !live[m.Name] {
+		if m.Archived || !alive(m) {
 			continue
 		}
 		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
