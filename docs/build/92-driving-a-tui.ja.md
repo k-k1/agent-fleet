@@ -177,8 +177,9 @@ Agent 自身の画面読み取り（`internal/tmuxx/tmuxx.go` の `tmuxx.Capture
   モーダルを書き込む）と、そうしたフックの無い kind の一部に向けた転写・イベントログ・pane の
   kind 別の読み取り（たとえば `opencode.LiveState` や `kiro.LiveState`）。ゲートの
   `promptBlocker` はこのうち自分の選んだものを読む（92.3 を参照）。`internal/agents/modal.go`
-  の `PendingModal` は別の継ぎ目で、セッションを止めるときに持ち越すものを止める直前に 1 回だけ
-  問う——生きたモーダルの形をここから読まないこと。
+  の `PendingModal` は別の継ぎ目で、セッションが止まるときに保留のまま残ったモーダルを持ち越す
+  （意図した停止の前か、セッション一覧が pane の消滅に初めて気づいたときに問う）——生きた
+  モーダルの形をここから読まないこと。
 - **配送** — `workspace/agent/internal/sessionx/session_io.go` の
   `POST /sessions/{name}/input`: `{keys}`（`sendNamedKeys`）、`{seq}`（キー手順とテキスト
   手順）、`{prompt}`（`submitPromptTUI` → `typeLineAndSubmit`）、`allowedKey` の whitelist、

@@ -198,8 +198,9 @@ What to re-read when this playbook finds a change:
   per-kind readers of a transcript, event log or pane (`opencode.LiveState` or
   `kiro.LiveState`, for example). The gate, `promptBlocker`, reads its own selection of
   these (see 92.3). `PendingModal` in `internal/agents/modal.go` is a different seam:
-  what a session carries over when it is stopped, asked once just before the stop — do
-  not read the live modal shapes from it.
+  it preserves a modal left pending when a session stops (asked before a deliberate halt,
+  or when the session list first notices a pane that has gone) — do not read the live
+  modal shapes from it.
 - **The delivery** — `POST /sessions/{name}/input` in
   `workspace/agent/internal/sessionx/session_io.go`: `{keys}` (`sendNamedKeys`), `{seq}`
   (key and text steps), `{prompt}` (`submitPromptTUI` → `typeLineAndSubmit`), the
