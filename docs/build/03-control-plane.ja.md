@@ -1,7 +1,7 @@
 ---
 audience: "Control Plane を変える人"
 source_of_truth: "コード（本書は地図と設計意図）"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
 # 03. Control Plane
@@ -9,38 +9,73 @@ updated: "2026-07"
 [English](03-control-plane.md) | 日本語
 
 CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一バイナリ）。ブラウザは常に CP とだけ話し、
-CP は tmux にも working copy にも直接触れず必ず Agent 経由で操作する（[01 §1.3](01-architecture.ja.md)）。
-本書は「CP に何が住んでいて、どう繋がるか」。ワイヤ契約は [05](05-api.ja.md)、セキュリティ設計は [07](07-security.ja.md)。
+**CP は tmux にも working copy にも直接触れない**。Workspace の中のことは必ず Agent 経由
+（[01 §1.3](01-architecture.ja.md)）。内部 git プロバイダの bare リポジトリは CP 自身が持つ。本書は
+「CP に何が住んでいて、どう繋がるか」。ワイヤ契約は [05](05-api.ja.md)、セキュリティ設計は [07](07-security.ja.md)。
 
 ## 3.1 責務地図
 
-- **Console 静的配信** — `console/dist` を `/`（catch-all）で `no-store` 配信。デプロイ即反映（[05 §5.4](05-api.ja.md)）。
-- **authGate（L1 認証）** — `AUTH=oauth` では CP 自身がエッジ: 全リクエストの署名 cookie 検証、受信
-  `X-Forwarded-Email` の削除と検証済み値の再注入、許可リスト fail-closed。dev/proxy モードはゲート無し（[07 §7.3](07-security.ja.md)）。
-- **identity / tenant 解決** — 検証済み email → `identity`、`X-AF-Tenant`（→query）→ membership 検証。
-  未知 identity のプロビジョニング（`AF_PROVISION` auto|invite）と super_admin 付与（`SUPER_ADMIN_EMAILS`）もここ。§3.2。
-- **Workspace ライフサイクル** — membership 1 件 = コンテナ 1 本の払い出し、Start/Stop/Recreate、状態の DB 同期。
-  実行基盤は Runtime アダプタ（docker|ecs）越し。§3.3。
-- **Agent 中継** — REST / SSE / terminal WS / browser REST+WS / preview の5経路で公開 API をAgentへ転送。経路の特性は [05 §5.3](05-api.ja.md)。
-- **MetadataStore** — tenant/identity/workspace/セッションミラー等の永続化。SQLite 既定・Postgres 可（[06](06-data.ja.md)）。
-- **監査** — proxy 層（変更系）・admin API・MCP write・システムジョブが `audit_log` へ記録。
-  書き込み点は [05 §5.5](05-api.ja.md)、設計は [07 §7.7](07-security.ja.md)。
-- **MCP サーバ** — `/mcp` で member/admin ツールを外部の Claude クライアントに公開。§3.5。
-- **内蔵 git プロバイダ** — bare リポジトリ + smart-HTTP + LFS を CP 自身がホスト（Agent 非経由・[91](91-internal-git.ja.md)）。
-- **egress 統制** — forward proxy への policy 配布・観測イベント集約・admin API。§3.8。
-- **memo キュー** — membership 単位のメモ永続と一括送信。コンテナ停止中も使える「CP 完結」機能。§3.6。
-- **定時実行（scheduler）** — スケジュール定義を CP DB に永続し、CP 内 goroutine（`scheduler.go`）が cron 評価・発火
-  （tz は埋め込み IANA DB で DST 込み解決）。作成/編集はオペレーター経由の `/internal/schedules`
-  （`AF_SCHEDULE_TOKEN`）、Console の `/api/schedules` は閲覧・管理のみ（[docs/38](../decisions/0021-scheduled-execution.ja.md)）。
-- **通知** — Agent の通知 outbox を取得時に CP ストアへ drain し、`/api/notifications` で一覧・既読管理
-  （保持 7 日。`notification.go`）。
-- **MCP サーバレジストリ（テナント配布）** — tenant_admin が全メンバーへ配る MCP サーバ定義を CP DB に保持
-  （`/api/admin/mcp-servers` + Agent が poll する `/internal/mcp-servers`）。メンバー個人の登録
-  （`/api/mcp-servers`）は Agent 側で合成され CP は中継のみ（[docs/48](../decisions/0031-mcp-registry.ja.md)）。
-- **バックグラウンドジョブ** — reaper / usage サンプラー / git GC / claude-audit sweep。§3.7。
-- なお**掃除**（cleanup: 調査・削除・gz ごみ箱 `/api/sessions/cleanup`・`/api/cleanup/archives*`）と
-  **エージェントメモリ管理**（snapshot/restore/export `/api/agents/memory/*`・[docs/39](../decisions/0022-agent-memory-management.ja.md)）は
-  **Agent 側の機能**で、CP はそのまま中継する（Agent 中継の一部）。
+- **Console の配信** — `CONSOLE_DIR` のビルド成果物を `/`（catch-all）で配る。入口のファイル
+  （`index.html`・`version.json`・`sw.js`・manifest）は `no-store` なので、デプロイは次の読み込みで
+  反映される。`/assets/` 配下のコンテンツハッシュ付きファイルは `public, max-age=31536000, immutable`
+  （`registerStatic`）。配備にブランド色があれば、favicon・PWA アイコン・manifest を配信時に塗り替える
+  （`brand.go`）。
+- **authGate（L1 認証）** — `AUTH=oauth` では CP 自身がエッジ: 全リクエストで署名 cookie を検証し、
+  許可リストも毎回確かめ直す（cookie の期限前でも退職者を締め出すため）。**受信した identity ヘッダは
+  削除し、検証済みの値を入れ直す**。fail-closed。`dev` と `proxy` にゲートは無い（[07 §7.3](07-security.ja.md)）。
+- **identity / tenant 解決** — 検証済み email → identity。`X-AF-Tenant`（ヘッダを付けられないブラウザ
+  経路では query の `tenant`）を membership と突き合わせる。未知 identity のプロビジョニング
+  （`AF_PROVISION`、`auto` か `invite`）と配備管理者ロール（`SUPER_ADMIN_EMAILS`。起動時に、載っていない
+  人を降格もする）もここ（§3.2）。
+- **Workspace ライフサイクル** — membership 1 件 = Workspace 1 つ: 払い出し・start・stop・recreate・
+  clean-home と、状態の DB 同期。実行基盤は Runtime アダプタ越し（§3.3）。
+- **Agent 中継** — REST / SSE / terminal WS / browser REST+WS / preview の 5 経路
+  （[05 §5.3](05-api.ja.md)）。**REST 中継は許可リスト**: 中継する経路はどれも CP が登録したルート
+  （`routes.go` と隣の `register*Routes` 関数群）で、CP にルートの無い Agent エンドポイントには
+  ブラウザから届かない。preview は `AF_PREVIEW_DOMAIN` があれば Workspace ごとのサブドメインでも答える
+  （[decisions/0062](../decisions/0062-preview-subdomain.ja.md)）。
+- **Console へのプッシュ経路** — `GET /api/events` は CP 自身の SSE。workspace・sessions・stats・
+  notifications・engines のポーリングを 1 本の接続に畳み、JSON が変わったストリームだけを送る。
+  idle-stop の活性には数えない。
+- **Workspace → CP のブリッジ** — `/internal/` 配下のエンドポイントで、Agent は CP が起動時に注入した
+  membership ごとのトークンで呼ぶ（§3.4）: memo・スケジュール・テナント MCP レジストリ・ドキュメント・
+  エンジントークン・git OAuth の更新・AWS プロファイル。
+- **MetadataStore** — SQLite が既定（`AF_DB`）、`AF_DATABASE_URL` か `AF_DB_HOST` があれば Postgres
+  （[06](06-data.ja.md)）。
+- **監査** — 選ばれた変更系の中継・admin API・MCP write・システムジョブが記録する。書き込み点は
+  [05 §5.5](05-api.ja.md)、設計は [07 §7.7](07-security.ja.md)。
+- **MCP サーバ** — member / admin ツールを外部クライアントに公開（§3.5）。
+- **内蔵 git プロバイダ** — bare リポジトリ + smart HTTP + LFS を CP 自身がホストする（**Agent 非経由**・
+  [91](91-internal-git.ja.md)）。
+- **egress 統制** — forward proxy への policy 配布・観測イベントの集約・admin と member の API（§3.8）。
+- **memo キュー** — membership 単位のメモと一括送信。**CP 完結**なので Workspace 停止中も使える（§3.6）。
+- **定時実行（scheduler）** — スケジュール定義を CP の DB に持ち、goroutine が発火させる（tz は埋め込み
+  IANA DB で DST 込みで解決）。作成は `/internal/schedules`（`AF_SCHEDULE_TOKEN`）経由で、オペレーターの
+  会話が自然文を spec に訳して使う。Console の `/api/schedules` は一覧・編集・一時停止・再開・即時実行・
+  削除はできるが作成はできない（[decisions/0021](../decisions/0021-scheduled-execution.ja.md)）。
+- **通知** — Agent の outbox を取得時に CP ストアへ drain し、一覧と既読状態を出す
+  （`/api/notifications`、保持 7 日）。
+- **テナント MCP レジストリ** — tenant_admin が全メンバーへ配る MCP サーバ定義
+  （`/api/admin/mcp-servers`。Agent は `/internal/mcp-servers` を poll する）。メンバー個人の登録は
+  Agent 側で合成され、CP は中継するだけ（[decisions/0031](../decisions/0031-mcp-registry.ja.md)）。
+- **自前エンジン** — エンジン表とモデルカタログ、Workspace がエンジンに届くためのゲートウェイ、
+  エンジンの起動と停止（§3.9）。
+- **読み上げ** — CP 自身が VOICEVOX か Polly を呼ぶ（`/api/tts/*`）。AWS では VOICEVOX はオンデマンドの
+  ECS サービスで、エンジンと同じコントローラが動かす（[decisions/0070](../decisions/0070-tts-ondemand-engine.ja.md)）。
+- **コストと使用量** — 全ターゲットでの占有秒と、請求書がある配備ではメンバー別に按分した AWS の請求額
+  （§3.7、[decisions/0048](../decisions/0048-member-cloud-cost.ja.md)）。
+- **メンバーをまたぐ機能** — CP が規則を持ち、中身は持ち主の Agent に聞く: セッション共有（共有規則は
+  毎リクエスト DB で評価する）・引き継ぎの申し出（[decisions/0057](../decisions/0057-member-handoff.ja.md)）・
+  作業項目の受信箱（CP は保存クエリと秘密でないメタデータのキャッシュを持ち、取得は Agent が自分の
+  プロバイダトークンで行う。[decisions/0061](../decisions/0061-work-item-inbox.ja.md)）。
+- **バックグラウンドジョブ** — reaper・usage サンプラー・クラウドコストのポーラー・git GC・監査
+  sweep・ecs-ec2 のプールのジョブ（§3.7）。
+
+いくつかの機能は **Agent 側のもの**で、CP は中継するだけ: 掃除（cleanup）・エージェントメモリ管理
+（[decisions/0022](../decisions/0022-agent-memory-management.ja.md)）・セッションのごみ箱
+（[decisions/0101](../decisions/0101-session-delete-via-trash.ja.md)）・画像生成のジョブとスタジオ
+（[decisions/0081](../decisions/0081-image-generation-pane.ja.md)・
+[0100](../decisions/0100-image-generation-studio.ja.md)）。
 
 実装ファイルへの対応は [90-code-map](90-code-map.ja.md)。
 
@@ -48,108 +83,203 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 
 公開 API はどれも同じ前段を通る（認可の原則・エラー形は [05 §5.4](05-api.ja.md) が正）:
 
-1. **authGate**（oauth モードのみ）— cookie 検証と email 注入。`/oauth2/*`・`/login`・`/healthz`・`/readyz` 等は除外、
-   `/mcp`（Bearer PAT）と `/git/*`（Basic git token）は自前認証（[07 §7.3](07-security.ja.md)）。
-2. **resolveIdentity** — email → `identity`（dev は固定 `DEV_USER`）。未知なら `AF_PROVISION=auto` で
-   既定テナントへ自動プロビジョン、`invite` なら拒否。
-3. **membership 検証** — `X-AF-Tenant` ヘッダ → `?tenant=` query の順で解決し membership と突き合わせ。
-4. **rtFor（workspace runtime 解決）** — membership → `workspace` 行（無ければ払い出し §3.3）→ DEK 解決（§3.4）
-   → RuntimeFactory で Runtime 構築（membership id キーの in-memory キャッシュ、DB が正）。
-   全 ingress が接続追跡（conns）に活性を記録する。
-5. **handler or proxy** — CP 完結（memo / pat / ssm / admin / ws-settings / 内蔵 git）はここで処理、
-   他は5経路（[05 §5.3](05-api.ja.md)）で Agent へ。中継は workspace running が前提（stopped=409）だが、
-   意図の明確な操作（セッション作成 / fork / start）だけは `AF_AUTOSTART`（既定 on）が冷えた workspace を
-   起こしてから通す。端末接続や読み取りは自動起動しない。auto-start 側は `ensureWorkspaceReady`
-   （起動 → Agent 到達待ち、既定 55 秒 = ingress idle timeout の内側）を通り、間に合わなければ
-   409 `workspace_starting` で返す — 起動自体は裏で続くので、再試行が次に通る（docs/38 ★6 恒久対応）。
+1. **authGate**（oauth モードのみ）— cookie 検証と email 注入。除外はそれぞれのルートの隣で宣言する
+   （`exemptExact` / `exemptPrefix`）: ログインと OAuth の経路、`/healthz` と `/readyz`、それに自前で
+   認証する面 — `/mcp`（Bearer PAT）・`/git/`（git トークンの Basic 認証）・`/internal/`（用途別の
+   ブリッジトークン）・`/engine/`（エンジンのセッショントークン）（[07 §7.3](07-security.ja.md)）。
+2. **identity 解決** — email → identity（dev は固定の `DEV_USER`）。membership の無い人は、自動参加
+   ドメインが合うテナントに入るか、既定テナントへ自動プロビジョン（`AF_PROVISION=auto`）されるか、
+   拒否される（`invite`）。
+3. **membership 検証** — `X-AF-Tenant`、次に query のフォールバック。
+4. **Workspace runtime 解決** — membership → workspace 行（無ければ払い出し、§3.3）→ DEK の unwrap
+   （§3.4）→ factory で Runtime を構築（メモリにキャッシュするが DB が正）。**全 ingress が接続追跡に
+   活性を記録する**。
+5. **処理または中継** — CP 完結の面はここで答え、それ以外は 5 経路のどれかで Agent へ
+   （[05 §5.3](05-api.ja.md)）。
+
+中継は Workspace が running であることが前提（stopped は 409）で、**Workspace の起動は Agent を待たない**:
+`POST /api/workspace/start` は起動が確定した時点のライブな状態を返す。ECS ではタスクが収束するまで
+`starting` と読め、Console がポーリングを続ける。
+
+**次の一歩で Agent を要する要求** — セッションの作成・fork・再開（`POST /api/sessions`・`…/fork`・
+`…/start`）、持ち越した回答（`…/carried-answer`）、SSM ノードの検索 — は、停止中の Workspace を自分で
+起こし（`AF_AUTOSTART`、既定 on）、`ensureWorkspaceReady` で Agent を待つ: 既定 55 秒
+（`AF_AGENT_READY_WAIT_SEC`）で、起動自体の待ちも数えるよう要求の到着時点から測る。過ぎれば
+`409 workspace_starting` を返し、起動は裏で続くので再試行が通る。この待ちは ingress のアイドル
+タイムアウト（AWS のロードバランサで 60 秒）より短くなければならず、超えると呼び出し側には 409 でなく
+504 が届く。セッションの作成と fork はセッション上限の**前に**待つ。上限は Agent の生きているセッションを
+数えるので、Agent が起きていないと数えられない。端末の接続・attention ビーコン・読み取り系は
+Workspace を起こさない。
 
 ## 3.3 manager と Runtime 抽象
 
-- **manager** が per-membership の資材を初回に払い出し DB へ永続する: コンテナ名 `af-ws-<slug>-<key>`・
-  専用ネットワーク `af-net-<slug>-<key>`・home `<WS_DATA>/<slug>/<key>/home`
-  （**既定テナントは slug 無し**の `af-ws-<key>` / `af-net-<key>` / `<WS_DATA>/<key>/home` —
-  既存デプロイをそのまま使い続けるための互換分岐。`workspaceNames`）・Agent ポート（`WS_AGENT_PORT` 基点で採番）・
-  `AGENT_TOKEN`。CP 再起動では DB の行が正で、既存コンテナは inspect で採用し**再作成しない**（再起動耐性）。
-- **Runtime / RuntimeFactory interface** が実行基盤を抽象化し、全呼び出し点（handler・reaper・admin・MCP）が
-  factory 経由で構築する。docker / ecs はプロファイル 1 箇所の切替（`AF_RUNTIME`）。対応表は
-  [01 §1.6](01-architecture.ja.md)、デプロイ選定は [09](09-deploy.ja.md)。
-- **Start** = docker run 相当: home と claude-config の 2 マウント、専用ネットワーク（`af-net-*`）の ensure、
-  `AGENT_TOKEN` / `AF_SECRET_KEY` / `CLAUDE_CONFIG_DIR` 等の env 注入、Agent healthy 待ち。
-  **Stop** は二段の graceful stop: SIGTERM →猶予（`AF_STOP_GRACE_SEC` 既定 30s。Agent には安全マージンを
-  差し引いた `AGENT_STOP_GRACE_SEC` を渡し、pane の Ctrl-C → tmux 終了を先に済ませる）→ SIGKILL。
-- **接続追跡（conns）** — 端末/preview/browser viewerのlong-lived接続数・セッション別アタッチ・最終リクエスト時刻を
-  in-memory で記録。開いている接続がある限り workspace は warm に保たれ、reaper（§3.7）の判定材料になる。
-  browser viewerは`visibility=false`中と切断後の猶予Pageを接続数へ含めない。
+- **manager** が membership ごとの資材を初回に払い出し DB へ永続する: 名前（`af-ws-<slug>-<key>`・
+  `af-net-<slug>-<key>`・`<WS_DATA>/<slug>/<key>`。既定テナントは slug 無しの `af-ws-<key>` 形を保つ —
+  **既存デプロイとの互換のため**。`manager.workspaceNames`）、Agent ポート（`WS_AGENT_PORT` から採番）、
+  `AGENT_TOKEN`。CP 再起動では DB の行が正で、状態は実行基盤から読み取り、作り直さない。
+- **`Runtime` / `RuntimeFactory`** が実行基盤を抽象化し、**全呼び出し点** — handler・reaper・admin・MCP —
+  が factory 経由で構築する。`AF_RUNTIME` で `docker`（既定。`local` も可）・`native`（`wsl`）・
+  `ecs`（`aws`）・`ecs-ec2` のどれかを選び（`runtime.NewFactory`）、それ以外は起動時に失敗する。
+  それぞれで何ができるかは [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)、選び方は
+  [09](09-deploy.ja.md)。
+- **`Start` は Agent の応答でなく、起動の確定で返る**（`Runtime` interface の契約）。ローカルのアダプタは
+  `/healthz` を礼儀程度に待ち、ECS はサービスを確定させて非同期に収束させる。`State` は `running`・
+  `starting`・`stopped`・`none` を返し、`starting` の Workspace は再 Start も idle-stop もしてはならない。
+  準備が間に合わないのはエラーではない。`docker` の Start は停止済みの残骸を消し、home と Claude の
+  設定をマウントし、トークンと鍵を env に入れて現行イメージを起動する。
+- **Stop は二段の graceful stop**: SIGTERM → 猶予（`AF_STOP_GRACE_SEC`、30 秒）→ SIGKILL。Agent には
+  意図的に*短い*猶予（`AGENT_STOP_GRACE_SEC`）を渡し、pane を中断して tmux を先に終わらせる。
+- **ライフサイクル操作は Workspace ごとに直列化する** — start・stop・recreate・clean-home はローカルの
+  ロックと DB のリースを取るので、同時のリクエストも別の CP レプリカも「確かめてから起動」の間に
+  割り込めない。
+- **接続追跡** — long-lived 接続の数・セッション別アタッチ・最終リクエスト時刻・最後の端末キー入力を
+  メモリに記録し、他のレプリカ向けに更新式の presence リースを DB へ出す。reaper はこれを読む（§3.7）。
+  端末はキー入力がある間だけ presence に数え（`AF_PRESENCE_IDLE_TIMEOUT`、30 分）、ブラウザペインは
+  見えている間だけ数える。`POST /api/workspace/attention` は、入力せずに読んでいる人のための Console の
+  ビーコン。
 
-## 3.4 起動時の鍵配線
+## 3.4 起動時の配線: 鍵とトークン
 
-暗号設計そのもの（封筒暗号・KEK 導出・crypto-shred の限界）は [07 §7.6](07-security.ja.md)。CP 側の配線だけ書く:
+暗号設計そのもの（封筒暗号・鍵導出・crypto-shred の限界）は [07 §7.6](07-security.ja.md)。ここは配線だけ:
 
-- **boot 時**: `AF_MASTER_KEY` があればハッシュして master 鍵とし、KeyCustodian（現実装 localCustodian）を
-  構成する。無ければ暗号なし（dev、Agent は平文保存）。
-- **workspace 解決時**: `wrapped_dek` を custodian で unwrap（初回はレガシー DEK を導出して wrap 保存 —
-  既存 `secrets.enc` を再暗号化しないための互換点）→ 平文 DEK を `AF_SECRET_KEY` としてコンテナ起動時に
-  env 注入。Agent は暗号方式に無関心で、鍵の出自を知らない。
+- **boot 時**: `AF_MASTER_KEY` をハッシュして master 鍵とし、鍵カストディアン（`localCustodian`）を
+  構成する。無ければ暗号は一切無い（開発専用）。
+- **Workspace 解決時**: 包まれた DEK をカストディアンで unwrap し（初回はレガシー DEK を導出して包んで
+  保存する — 既存ストアを再暗号化しないための互換点）、平文 DEK を `AF_SECRET_KEY` として注入する。
+  **Agent は暗号方式に無関心で、鍵の出自を知らない。**
+- **ブリッジトークン**も同時に注入する（`workspaceExtraEnv`）: 用途ごとに membership 単位のトークンが 1 つ —
+  `AF_INTERNAL_GIT_TOKEN`・`AF_MEMO_TOKEN`・`AF_SCHEDULE_TOKEN`・`AF_MCP_TOKEN`・`AF_DOCS_TOKEN`・
+  `AF_ENGINE_ISSUE_TOKEN`・`AF_GIT_OAUTH_TOKEN`・`AF_AWS_PROFILES_TOKEN`、それに `AF_CP_BASE_URL`。
+  どれも決定的（master 鍵から導いた鍵、無ければ `WS_DATA` に置いた乱数の鍵による membership id の
+  HMAC）なので、起動のたびに注入し直しても何も変わらない。**それぞれ自分のエンドポイントしか開けない**:
+  memo のトークンが漏れても、テナントの MCP の秘密は読めない。`PUBLIC_BASE_URL` が無ければどれも
+  注入しない。コンテナが CP に届く宛先がそれだから。
 
 ## 3.5 MCP サーバ
 
-設計と決定は [decisions/0006](../decisions/0006-mcp-unified.ja.md)。`AF_MCP_ENABLED=true` のときだけ `/mcp` を登録する。
+設計と決定は [decisions/0006](../decisions/0006-mcp-unified.ja.md)。`/mcp` は `AF_MCP_ENABLED=true` の
+ときだけ登録する。
 
-- **トランスポート**は Streamable HTTP の最小形: POST の JSON-RPC 2.0（単発 + batch）に `application/json` で
-  応答（SSE なし）。エッジは `/mcp` を Bearer のまま素通しする必要がある。
-- **認証は PAT**（Console 発行・DB はハッシュのみ・[06](06-data.ja.md)）。role は発行時に凍結せず
-  **呼び出しごとに live 再解決**、tenant はトークン固定でクライアント供給を受けない。
-- **member 4 ツール**（`list_my_sessions` / `get_session_status` / `get_session_output` / `send_to_session`）
-  — 主目的は「手元の Claude が自分の遠隔 claude セッション群を駆動する」こと。
-- **admin ツール** — read（`list_workspaces` / `get_usage` / `list_sessions` / `tail_audit` / egress 観測系）+
-  write（`stop_workspace` / `stop_session` / `set_user_quota` / `propose_allowlist_change`＝提案のみ）。
-  super_admin / tenant_admin で gate し、write は `audit_log` に `actor_kind=mcp` で記録する。
+- **トランスポート**は Streamable HTTP の最小形: POST の JSON-RPC 2.0（単発 + batch）に JSON で応答し、
+  SSE は無い。プロトコルの両世代に応える: ステートレスな 2026-07-28 版（`server/discover`、版は各要求の
+  `_meta`）と、旧来の `initialize` ハンドシェイク。**エッジは `/mcp` を Bearer のまま素通しする必要がある。**
+- **認証は PAT**（Console で発行・DB はハッシュのみ・[06](06-data.ja.md)）。スコープ（`read` か `write`）は
+  発行時に固定され、発行者自身の上限で頭打ち。**role は呼び出しごとに live で解決**し、tenant はトークンで
+  固定でクライアントからは受け取らない。
+- **member ツール**（`internal/mcpsrv/mcp.go` の `memberTools()`）— 自分のセッションの観測と操縦（一覧・
+  状態・出力・送信・作成・停止・再開）、掃除とそのアーカイブ、使用量、リポジトリとモデル、memo キュー。
+  目的は「手元の Claude が自分の遠隔セッションを駆動する」こと。
+- **admin ツール**（`adminTools()`）— read（Workspace・使用量・セッション・監査ログ・egress の統計と
+  許可リスト）と write（Workspace やセッションの停止・メンバーの上限設定・許可リスト変更の提案）。
+  `super_admin` かそのテナントの `tenant_admin` に見え、write は監査ログに `actor_kind=mcp` で残る。
 - **dangerous ツール**（鍵ローテ・recreate・idle な Workspace の一括停止）は予定しない。求める声が無く、
   エージェントにそれをさせてよいかは、作る前にそれ自体の決定が要る（[decisions/0006](../decisions/0006-mcp-unified.ja.md)）。
 
 ## 3.6 memo キュー
 
-「溜めて一括でセッションへ送る」メモ（テーブルは [06](06-data.ja.md)）。
-実装済み・main マージ済み（CP CRUD / flush / 整理用 `/api/chat/ask` 露出 / Console UI の全フェーズ。
-docs/21 冒頭の「未実装」注記は設計時点のもの）。
+溜めて一括でセッションへ送るメモ（テーブルは [06](06-data.ja.md)）。
 
-- **CRUD は CP 完結**: membership 解決だけで済み workspace を起動しない — 停止中でも別端末から追加・整理できる。
-  repo × category の 2 段でグルーピング。同期はサーバプッシュが無いためポーリング粒度。
-- **flush**（`POST /api/memos/flush`）: `ids` リストで選択（レポ全体 / カテゴリ / 個別の 3 粒度を統一表現）→
-  category 見出しで 1 メッセージに連結 → 対象セッションの input へ **1 回だけ**送信 → `sent_at` 打刻。
-  送信だけは Agent 経由なので runtime 解決（autostart 対象）。
-- **retention**: 送信済みは削除せず 7 日残し、一覧取得時に lazy sweep で掃除する。
+- **CRUD は CP 完結**: membership 解決だけで済み、**Workspace を起動しない** — 停止中でも別端末から
+  追加・整理できる。グルーピングは repo × category の 2 段。
+- **flush**（`POST /api/memos/flush`）は id のリストを受け（「レポ全体」「カテゴリ」「これら」を 1 つの
+  表現で扱う）、category 見出しで 1 メッセージに連結し、対象セッションの input へ**1 回だけ**送り、
+  送信済みと打刻する。Agent が要るのは送信だけなので、runtime を解決するのも送信だけ。
+- **コンテナ内のオペレーター**は同じ handler に `/internal/memos` から `AF_MEMO_TOKEN` で届く。
+- **保持**: 送信済みは送信時に消さず 7 日残し、一覧取得時に lazy に掃除する。
 
 ## 3.7 バックグラウンドジョブ
 
-いずれも CP 内の goroutine。間隔は env で、`0` は無効化（安全側の既定を持つものが多い）。
+いずれも CP 内の goroutine。間隔は env で、`0` は無効化。
 
-- **reaper（idle-stop）** — `AF_IDLE_SWEEP_INTERVAL`（既定 1m。タイムアウト自体は既定無効で、テナント limits
-  か env で opt-in）。二段構え: **tier 1** = アタッチされていない idle な claude セッションが
-  `session_idle_timeout` を超えたら halt（jsonl があるので再開可能。shell は halt しない）。**tier 2** =
-  活性のない workspace（開いた接続 0・working/question セッション無し・最終リクエストから
-  `ws_idle_timeout` 経過）を docker stop。判定材料は接続追跡（§3.3）。starting 状態は触らない。
-- **usage サンプラー（showback）** — `AF_USAGE_SAMPLE_INTERVAL`（既定 5m）。running な workspace に占有秒を
-  日次バケツ（`usage_daily`）へ加算。BYO モデルで運用者コストなのは Claude 使用量でなく占有時間、という設計。
-- **git GC** — `AF_GIT_GC_INTERVAL`（既定 24h）。内蔵 git の bare を `git gc --auto` + LFS 孤児 prune
-  （`AF_LFS_GC_GRACE` 既定 14d で進行中 push と競合しない）。共有ホストの RAM を守るため逐次実行（[91](91-internal-git.ja.md)）。
-- **claude-audit sweep** — `AF_CLAUDE_AUDIT_INTERVAL`（既定 0=off・opt-in）。コンテナ内 claude の直接操作は
-  CP proxy を通らず見えないが、Agent→CP 方向は塞いであるので **CP が pull** する: 各 running claude
-  セッションの transcript を読み Write/Edit/Bash を `actor_kind=claude` で監査。セッション毎 cursor で増分、
-  初見は baseline のみ（過去分を遡って監査しない）。
-- なお **metrics** は常駐ジョブではなく on-demand: CP がホストプロセスとして /proc と cgroup v2 を直読みし、
-  自分の workspace の mem/CPU チップ（全ユーザー）とホスト統計（super_admin 限定 — 相互不可視のため他
-  テナントの混み具合を漏らさない）を返す。
+- **reaper（idle-stop）** — `AF_IDLE_SWEEP_INTERVAL`（1 分）。**既定で有効**: セッションは 1 時間で
+  （`AF_SESSION_IDLE_TIMEOUT`）、人の判断待ち — 質問・プラン承認・許可 — のセッションは
+  `AF_INTERACTION_IDLE_TIMEOUT` で（未設定ならセッションの値）、Workspace は 2 時間で
+  （`AF_WS_IDLE_TIMEOUT`）idle になる。これらは配備の既定値で、テナントの limits がそれぞれを `0` も
+  含めて上書きする。4 段:
+  - **tier 1** は、アタッチされていない idle なセッションを halt する — `shell` と `ssm` 以外の全 kind
+    （この 2 つは halt が実行中のジョブを殺すため対象外）。再開できる。
+  - **tier 2** は、presence（§3.3）が無く、Workspace を引き留めるセッションも、走っているリポジトリの
+    取り込みや画像ジョブも無く、最終リクエストから時間が経った Workspace を止める。`starting` の
+    Workspace には触らない。reaper は見たものを公開するので、管理画面の「なぜ止まらないか」は reaper
+    自身の答えになる。
+  - **tier 3**（ecs-ec2 のみ）は、`AF_ECS_EC2_HIBERNATE_AFTER_SEC` より長く止まっている Workspace の
+    home を休眠させる: EBS ボリュームをスナップショットして削除し、次の起動で戻す。既定 off。
+  - **tier 4**（ecs-ec2 のみ）は、Workspace が何をしていても `AF_ECS_EC2_BACKUP_EVERY_SEC` ごとに home を
+    別のアベイラビリティゾーンへ写す。既定 off。
+- **usage サンプラー** — `AF_USAGE_SAMPLE_INTERVAL`（5 分）ごとに、running な Workspace の占有秒を日次と
+  時間単位のバケツへ加算する。稼働ヒートマップの元にもなる。モデルの資格情報は利用者持ちなので、
+  **運用者のコストはトークンでなく占有時間**で、それをこれが測る。
+- **クラウドコストのポーラー** — 請求書のある runtime（AWS のターゲット）では、`AF_CLOUD_COST_INTERVAL`
+  （6 時間）ごとに Cost Explorer を直近 `AF_CLOUD_COST_WINDOW_DAYS`（7 日）分読み、コスト配分タグで
+  メンバー別に按分する。`docker` と `native` では何もせず、コストの画面も無い。
+- **git GC** — `AF_GIT_GC_INTERVAL`（24 時間）ごとに内蔵 git の bare で `git gc --auto` を走らせ、
+  `AF_LFS_GC_GRACE`（14 日）より古い LFS の孤児を prune する（進行中の push と競合しない）。**共有ホストの
+  RAM を守るため逐次実行**（[91](91-internal-git.ja.md)）。
+- **scheduler** — `AF_SCHEDULER_INTERVAL`（1 分）ごとに期限の来たスケジュールを発火させ、スケジュールごとの
+  ゆらぎ（`AF_SCHEDULE_JITTER`、2 分）で散らす。発火は停止中の Workspace を CLI の自己更新無しで起こし、
+  `AF_SCHEDULE_WAKE_TIMEOUT`（起動予算の 300 秒）まで待ち、`AF_SCHEDULE_SETTLE` の間 keep-alive を保つ。
+- **監査 sweep** — `AF_CLAUDE_AUDIT_INTERVAL`、opt-in で既定 off。コンテナ内で claude がすることは CP の
+  proxy を通らないので見えない。Agent → CP 方向は意図的に塞いであるので **CP が pull する**: running な
+  claude セッションの transcript を読み、書き込み・編集・コマンドを監査する（`actor_kind=claude`）。
+  セッションごとの cursor で進み、**初めて見たセッションは baseline を取るだけ** — 過去を遡って監査しない。
+- **ecs-ec2 のプール** — ドリフト sweeper（`AF_ECS_EC2_SWEEP_SEC`、5 分）がスロット・ボリューム・所有者
+  タグを AWS から導き直し、落ちた CP がやりかけたことを終わらせる。golden スナップショットの自動焼き
+  （`AF_ECS_EC2_GOLDEN_AUTOBAKE`、on）は、Workspace イメージが変わると、新しい home の元になる
+  スナップショットを焼き直す。idle-stop の有無に関わらず動く。
+- **エンジン** — ロールごとのコントローラ・エンジン表の再読込・借用カタログのポーリング（§3.9）。
+- **metrics は常駐ジョブでなく on-demand。** CP が Workspace と同じホストにいれば `/proc` とコンテナの
+  cgroup を直接読み、そうでなければ（ECS）Agent に聞く。ホスト全体の統計は配備管理者に限る — あるテナントが
+  他のテナントの負荷を推し量れないように。
 
 ## 3.8 egress 統制の CP 側
 
-設計・段階運用（log-only → allowlist → enforce 🚧）は [07 §7.8](07-security.ja.md) と
-[07 §7.8](07-security.ja.md)。CP に住んでいるのは次の 4 点だけ:
+設計と段階運用 — log-only → allowlist → enforce — は [07 §7.8](07-security.ja.md)。CP に住んでいるもの:
 
-- **egress-proxy サブコマンド** — 同一バイナリ/イメージを `control-plane egress-proxy` で起動すると
-  forward proxy として併走する（FQDN 判定・TLS 非復号）。
-- **policy 配布** — `GET /internal/egress/policy` が実効 allowlist + mode を proxy へ返す。
-- **ingest** — `POST /internal/egress`（`AF_EGRESS_TOKEN` 認証）で観測イベントを受け、`egress_daily` へ
-  日次集計（would-block は day×host で dedup して監査にも記録）。
-- **admin API** — `/api/admin/egress*` で観測統計・allowlist（active/proposed/retired）・mode 切替（super_admin）。
-- コンテナ側の配線は `AF_EGRESS_PROXY_ADDR` 設定時のみ全 workspace に proxy env を注入（既定 off = 何も変わらない）。
+- **egress-proxy サブコマンド** — `control-plane egress-proxy` で同じバイナリが forward proxy として動く
+  （FQDN 判定・TLS 非復号・`AF_EGRESS_LISTEN`、`:3128`）。遮断するのは enforce のときだけ。
+- **policy 配布** — `GET /internal/egress/policy` が実効の許可リストとモードを proxy へ返す。
+- **ingest** — `POST /internal/egress`（`AF_EGRESS_TOKEN`）で観測イベントを受けて日次に集計する。
+  would-block は日 × ホストで重複を除き、監査ログにも記録する。
+- **admin API** — `/api/admin/egress*`、`super_admin` のみ: 統計・許可リスト（active / proposed /
+  retired）・log-only / enforce の切替。
+- **member の面** — `GET /api/egress/check` は Workspace がそのホストに届くかを答え、
+  `POST /api/egress/propose` は*提案*のエントリを出す。承認は配備管理者の仕事のまま。
+
+コンテナ側の配線は `AF_EGRESS_PROXY_ADDR` があるときだけで、全 Workspace に proxy の env を注入する。
+**既定は off で、何も変わらない**。
+
+## 3.9 自前エンジン
+
+エンジンとは何か、どのターゲットに何があるかは [01 §1.3](01-architecture.ja.md) と
+[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)。CP がすべてを持ち、Workspace がエンジンと
+直接話すことは無い（[decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md)）。
+
+- **エンジン表** — ロール（`llm`・`image`・`comfy`）ごとに 1 行で、プロバイダ（`llamacpp`・`comfy`・
+  `openai-compat`）とライフサイクルを持つ: この配備自身の ECS サービス、`external`（ここでは誰も起動しない
+  URL）、`remote`（別の配備のもの）。AWS では `AF_ENGINES_SSM_PARAM`、インラインなら `AF_ENGINES_JSON`
+  から読み、`docker` と `native` では `AF_LLM_URL` と `AF_COMFY_URL` が `external` の行を足す
+  （[decisions/0076](../decisions/0076-external-image-engine-on-lan.ja.md)）。SSM の形は 10 秒ごとに読み直すが、
+  その場で効くのはオファーの並びとキャパシティプロバイダだけ。
+- **モデルカタログ** — モデルは表の項目でなく DB の行（[decisions/0072](../decisions/0072-engine-model-catalog.ja.md)）。
+  CP は Hugging Face か Civitai の出所を解決し、S3 へ書く取り込みタスクを起動する。CP 自身は S3 を
+  読むだけ。エンジンが読み込むアクティブセットを公開する。
+- **ゲートウェイ** — `/engine/{key}/v1/*`（と `GET /engine/{key}/props`）。エンジン表があるときだけ
+  登録する。Workspace は発行用トークン（`AF_ENGINE_ISSUE_TOKEN`）を持ち、`POST /internal/engine/token` で
+  1 ロールだけを開く短命のセッショントークンに替える。モデルが読めるのはこの 2 つ目のトークン
+  （`AF_ENGINE_TOKEN`）。membership とテナントのロール別の許可は毎リクエスト確かめる。
+- **コールドスタート** — ストリーミングの要求にはすぐ 200 を返してハートビートで保つ。非ストリーミングの
+  要求は `AF_ENGINE_PLAIN_HOLD`（45 秒、借りたエンジンは 75 秒）保持してから、`Retry-After` 付きの
+  `503 engine_waking` で答え、エンジンはそのまま起き続ける。45 秒はロードバランサの 60 秒のアイドル
+  タイムアウトに応答を収めるため。
+- **起動と停止** — ロールごとのコントローラが ECS サービスを 0 と 1 の間で動かし（`off`・`on`・
+  `ondemand`）、Admin → 推論エンジンでロールごとに設定したアイドル時間で止める（既定値は
+  `AF_ENGINE_<KEY>_*_SEC`）。`ecs-ec2` で行がオファーを宣言していれば、CP は GPU インスタンスを自分で
+  買う: オファーごとに `CreateFleet(type=instant)` を 1 回、宣言の順に。自分の箱はタグで探し直す
+  （[decisions/0077](../decisions/0077-engine-boxes-bought-by-cp.ja.md)）。Spot のオファーは配備管理者が受け
+  入れてから使う（[decisions/0075](../decisions/0075-engine-purchase-offers.ja.md)）。インスタンスクラスは
+  [decisions/0074](../decisions/0074-engine-instance-classes.ja.md)。
+- **借用** — `AF_REMOTE_ENGINE_URL` と `AF_REMOTE_ENGINE_TOKEN`（貸し手が `POST /api/admin/engines/issue-token`
+  で発行するトークン）があれば、CP は貸し手のカタログを 2 分ごとに取り込み、セッショントークンを貸し手から
+  買う（[decisions/0079](../decisions/0079-remote-engine-from-another-deployment.ja.md)）。
+- **API** — 管理者向けは `/api/admin/engines…`、メンバー向けは `GET /api/engines/status` と `/api/events`
+  の `engines` ストリーム、Agent と借り手の配備向けは `GET /internal/engine/catalog`。

@@ -1,7 +1,7 @@
 ---
 audience: "someone changing the Control Plane"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
 # 03. Control Plane
@@ -10,52 +10,92 @@ English | [日本語](03-control-plane.ja.md)
 
 The CP is the only resident backend outside the workspaces — one Go binary. The
 browser only ever talks to it, and **it never touches tmux or a working copy itself**:
-everything goes through the agent ([01 §1.3](01-architecture.md)). This chapter is
-"what lives in the CP and how it connects". The wire contracts are [05](05-api.md); the
+everything in a workspace goes through the agent ([01 §1.3](01-architecture.md)). The
+bare repositories of the internal git provider are the CP's own. This chapter is "what
+lives in the CP and how it connects". The wire contracts are [05](05-api.md); the
 security design is [07](07-security.md).
 
 ## 3.1 Responsibilities
 
-- **Serving the Console** — the built bundle at `/` with `no-store`, so a deployment is
-  live immediately ([05 §5.4](05-api.md)).
+- **Serving the Console** — the built bundle from `CONSOLE_DIR` on the `/` catch-all.
+  The entry points (`index.html`, `version.json`, `sw.js`, the manifest) are `no-store`,
+  so a deployment is live at the next load; the content-hashed files under `/assets/`
+  are `public, max-age=31536000, immutable` (`registerStatic`). The favicon, PWA icons
+  and manifest are recoloured on the fly when the deployment is branded (`brand.go`).
 - **The auth gate (L1)** — with `AUTH=oauth` the CP *is* the edge: it verifies the
-  signed cookie on every request, **strips any inbound identity header and re-injects
-  the verified value**, and fails closed against the allowlist. The dev and proxy modes
-  have no gate ([07 §7.3](07-security.md)).
-- **Resolving identity and tenant** — verified email → identity; the tenant header, then
-  a query fallback, checked against a membership. Provisioning an unknown identity and
-  granting deployment-administrator rights also happen here (§3.2).
-- **Workspace lifecycle** — one membership means one container: allocation, start, stop,
-  recreate, and mirroring the state to the database. The substrate is behind the Runtime
-  adapter (§3.3).
+  signed cookie on every request, re-checks the allowlist so offboarding takes effect
+  before the cookie expires, **deletes any inbound identity header and re-injects the
+  verified value**, and fails closed. `dev` and `proxy` have no gate
+  ([07 §7.3](07-security.md)).
+- **Resolving identity and tenant** — verified email → identity; `X-AF-Tenant` (the
+  `tenant` query parameter where a browser cannot set headers) checked against a
+  membership. Provisioning an unknown identity (`AF_PROVISION`, `auto` or `invite`) and
+  the deployment-administrator role (`SUPER_ADMIN_EMAILS`, which also demotes anyone no
+  longer listed at boot) happen here too (§3.2).
+- **Workspace lifecycle** — one membership means one workspace: allocation, start,
+  stop, recreate, clean-home, and mirroring the state to the database. The substrate is
+  behind the Runtime adapter (§3.3).
 - **Relaying to the agent** — five paths: REST, SSE, terminal WebSocket, browser
-  REST + WebSocket, and preview ([05 §5.3](05-api.md)).
-- **The metadata store** — SQLite by default, Postgres available ([06](06-data.md)).
-- **Audit** — the proxy layer (mutating calls), the admin API, MCP writes and system
-  jobs all record. Where it is written is [05 §5.5](05-api.md); the design is
+  REST + WebSocket, and preview ([05 §5.3](05-api.md)). **The REST relay is an
+  allowlist**: every relayed path is a route the CP registers (`routes.go` and the
+  `register*Routes` functions beside it), so an agent endpoint without a CP route is
+  unreachable from the browser. Preview also answers on per-workspace subdomains when
+  `AF_PREVIEW_DOMAIN` is set ([decisions/0062](../decisions/0062-preview-subdomain.md)).
+- **The Console's push channel** — `GET /api/events` is the CP's own SSE stream. It
+  folds the workspace, sessions, stats, notifications and engines polls into one
+  connection and sends only the streams whose JSON changed. It does not count as
+  activity for idle-stop.
+- **The workspace → CP bridges** — endpoints under `/internal/` that an agent calls
+  with a per-membership token the CP injected at start (§3.4): memos, schedules, the
+  tenant MCP registry, documentation, engine tokens, the git OAuth refresh and AWS
+  profiles.
+- **The metadata store** — SQLite by default (`AF_DB`), Postgres when `AF_DATABASE_URL`
+  or `AF_DB_HOST` is set ([06](06-data.md)).
+- **Audit** — selected mutating relays, the admin API, MCP writes and system jobs all
+  record. Where it is written is [05 §5.5](05-api.md); the design is
   [07 §7.7](07-security.md).
 - **An MCP server** — exposes member and admin tools to an external client (§3.5).
 - **A built-in git provider** — bare repositories over smart HTTP with LFS, hosted by
   the CP itself, **not through the agent** ([91](91-internal-git.md)).
 - **Egress control** — distributing policy to the forward proxy, aggregating observed
-  events, and the admin API (§3.8).
+  events, and the admin and member APIs (§3.8).
 - **The memo queue** — per-membership memos and batch send. A **CP-only** feature, so it
-  works while the container is stopped (§3.6).
+  works while the workspace is stopped (§3.6).
 - **The scheduler** — schedule definitions live in the CP's database and a goroutine
-  evaluates cron expressions and fires them, resolving time zones (including DST) from
-  an embedded IANA database. Creation and editing go through an internal endpoint used
-  by the operator conversation; the Console's own endpoint is read and manage only
+  fires them, resolving time zones (including DST) from an embedded IANA database.
+  Creating one goes through `/internal/schedules` (`AF_SCHEDULE_TOKEN`), which the
+  operator conversation uses to turn natural language into a spec; the Console's
+  `/api/schedules` can list, edit, pause, resume, run and delete, but not create
   ([decisions/0021](../decisions/0021-scheduled-execution.md)).
 - **Notifications** — the agent's outbox is drained into the CP's store when fetched,
-  and exposed as a list with read-state management (kept 7 days).
+  and exposed as a list with read state (`/api/notifications`, kept 7 days).
 - **The tenant MCP registry** — server definitions a tenant administrator distributes to
-  every member. A member's own registrations are composed on the agent side and merely
-  relayed ([decisions/0031](../decisions/0031-mcp-registry.md)).
-- **Background jobs** — the reaper, the usage sampler, git GC, and the audit sweep
-  (§3.7).
+  every member (`/api/admin/mcp-servers`, polled by the agent at `/internal/mcp-servers`).
+  A member's own registrations are composed on the agent side and merely relayed
+  ([decisions/0031](../decisions/0031-mcp-registry.md)).
+- **Self-hosted engines** — the engine table and model catalogue, the gateway a
+  workspace reaches them through, and starting and stopping them (§3.9).
+- **Speech** — the CP calls VOICEVOX or Polly itself (`/api/tts/*`); on AWS, VOICEVOX
+  is an on-demand ECS service driven by the same controller as the engines
+  ([decisions/0070](../decisions/0070-tts-ondemand-engine.md)).
+- **Cost and usage** — occupancy seconds on every target, and the AWS invoice
+  attributed per member where there is one (§3.7,
+  [decisions/0048](../decisions/0048-member-cloud-cost.md)).
+- **What crosses members** — the CP holds the rules and asks the owner's agent for the
+  content: session sharing (the share rules are evaluated against the database on every
+  request), handoff offers ([decisions/0057](../decisions/0057-member-handoff.md)), and
+  the work-item inbox, where the CP keeps the saved queries and a cache of non-secret
+  metadata while the agent fetches with its own provider tokens
+  ([decisions/0061](../decisions/0061-work-item-inbox.md)).
+- **Background jobs** — the reaper, the usage sampler, the cloud-cost poller, git GC,
+  the audit sweep and the ecs-ec2 pool jobs (§3.7).
 
-Note that **cleanup** and **agent memory management** are *agent* features; the CP just
-relays them ([decisions/0022](../decisions/0022-agent-memory-management.md)).
+Some features are the *agent's*, and the CP only relays them: cleanup, agent memory
+management ([decisions/0022](../decisions/0022-agent-memory-management.md)), the
+session trash ([decisions/0101](../decisions/0101-session-delete-via-trash.md)), and
+image-generation jobs and studios
+([decisions/0081](../decisions/0081-image-generation-pane.md),
+[0100](../decisions/0100-image-generation-studio.md)).
 
 Which file implements what is [90-code-map](90-code-map.md).
 
@@ -65,12 +105,15 @@ Every public API call goes through the same front half (the authorisation princi
 and error shapes are [05 §5.4](05-api.md)):
 
 1. **The auth gate** (oauth mode only) — verify the cookie and inject the email. The
-   OAuth routes, the login landing and the health check are excluded; the MCP endpoint
-   (bearer PAT) and the git endpoints (basic auth) authenticate themselves
-   ([07 §7.3](07-security.md)).
-2. **Resolve the identity** — email → identity. An unknown one is auto-provisioned into
-   the default tenant, or rejected, according to the provisioning mode.
-3. **Check the membership** — the tenant header, then the query fallback.
+   exemptions are declared next to the routes they belong to (`exemptExact` /
+   `exemptPrefix`): the login and OAuth routes, `/healthz` and `/readyz`, and the
+   surfaces that authenticate themselves — `/mcp` (a bearer PAT), `/git/` (basic auth
+   with a git token), `/internal/` (per-purpose bridge tokens) and `/engine/` (an engine
+   session token) ([07 §7.3](07-security.md)).
+2. **Resolve the identity** — email → identity (`dev` uses the fixed `DEV_USER`). A
+   person with no membership joins a tenant whose auto-join domain matches, or is
+   provisioned into the default tenant (`AF_PROVISION=auto`) or refused (`invite`).
+3. **Check the membership** — `X-AF-Tenant`, then the query fallback.
 4. **Resolve the workspace runtime** — membership → workspace row (allocating one if
    needed, §3.3) → unwrap the DEK (§3.4) → build the Runtime through the factory,
    cached in memory but with the database as the truth. **Every ingress records
@@ -78,119 +121,249 @@ and error shapes are [05 §5.4](05-api.md)):
 5. **Handle or proxy** — CP-only surfaces are answered here; everything else goes to the
    agent over one of the five paths ([05 §5.3](05-api.md)).
 
-Relaying requires the workspace to be running (stopped is a 409), **but operations with
-an unambiguous intent** — creating a session, forking, starting — wake a cold workspace
-first. Attaching a terminal, and anything read-only, does not auto-start. The
-auto-start path waits for the agent to become reachable, **inside the ingress idle
-timeout**, and returns a "workspace starting" 409 if it does not make it — the start
-itself continues in the background, so the retry succeeds.
+Relaying requires the workspace to be running (stopped is a 409), and **starting a
+workspace does not wait for its agent**: `POST /api/workspace/start` returns the live
+state as soon as the launch is committed, which on ECS reads `starting` until the task
+converges, and the Console keeps polling.
+
+**The requests that need the agent in their very next step** — creating, forking or
+resuming a session (`POST /api/sessions`, `…/fork`, `…/start`), a carried answer
+(`…/carried-answer`) and the SSM node lookup — start a stopped workspace themselves
+(`AF_AUTOSTART`, on by default) and wait for the agent in `ensureWorkspaceReady`: 55
+seconds by default (`AF_AGENT_READY_WAIT_SEC`), measured from the request's arrival so
+the start's own wait is counted. Past that they answer `409 workspace_starting` and the
+boot carries on, so a retry gets through. The wait has to stay below the ingress's idle
+timeout (60 seconds on the AWS load balancer), or the caller sees a 504 instead.
+Session create and fork wait **before** the session quota, because the quota counts the
+agent's live sessions. Attaching a terminal, the attention beacon and anything
+read-only never start a workspace.
 
 ## 3.3 The manager and the Runtime abstraction
 
 - **The manager** allocates each membership's resources once and persists them: the
-  container name, a dedicated network, the home directory path, the agent port, and the
-  agent token. The default tenant keeps an older, slug-free naming **for compatibility
-  with deployments that already exist**. Across a CP restart the database row is the
-  truth, and an existing container is **adopted by inspection rather than recreated**.
+  names (`af-ws-<slug>-<key>`, `af-net-<slug>-<key>` and `<WS_DATA>/<slug>/<key>`; the
+  default tenant keeps the slug-free `af-ws-<key>` form **for compatibility with
+  deployments that already exist** — `manager.workspaceNames`), the agent port (counted
+  up from `WS_AGENT_PORT`), and `AGENT_TOKEN`. Across a CP restart the database row is
+  the truth, and the state is read from the substrate rather than recreated.
 - **`Runtime` / `RuntimeFactory`** abstract the substrate, and **every call site** —
-  handlers, the reaper, admin, MCP — builds through the factory. Docker and ECS are one
-  profile switch ([01 §1.6](01-architecture.md), [09](09-deploy.md)).
-- **Start** mounts the home and the agent config, ensures the dedicated network, injects
-  the tokens and keys, and waits for the agent to be healthy. **Stop is two-stage and
-  graceful**: SIGTERM, a grace period, then SIGKILL. The agent is handed a *shorter*
-  grace than the outer one, deliberately, so it can interrupt the pane and let tmux exit
-  before the hammer falls.
-- **Connection tracking** counts long-lived connections, per-session attachment, and the
-  last request time, in memory. **A workspace stays warm while anything is open**, and
-  this is what the reaper reads (§3.7). A hidden browser page, and one inside its
-  post-disconnect grace, deliberately do not count.
+  handlers, the reaper, admin, MCP — builds through the factory. `AF_RUNTIME` picks one
+  of `docker` (the default, also `local`), `native` (`wsl`), `ecs` (`aws`) or `ecs-ec2`
+  (`runtime.NewFactory`); anything else fails at boot. What each can do is
+  [ref/deploy-targets](../../guide/ref/deploy-targets.md); choosing one is
+  [09](09-deploy.md).
+- **`Start` returns once the launch is committed, not once the agent answers** (the
+  `Runtime` interface's contract). The local adapters wait a courtesy grace on
+  `/healthz`; ECS commits a service and converges asynchronously. `State` reports
+  `running`, `starting`, `stopped` or `none`, and a `starting` workspace must be neither
+  started again nor idle-stopped. A readiness overrun is not an error. On `docker`,
+  Start removes any stopped remnant, runs the current image with the home and the
+  Claude config mounted and the tokens and keys in the environment.
+- **Stop is two-stage and graceful**: SIGTERM, a grace period (`AF_STOP_GRACE_SEC`, 30
+  s), then SIGKILL. The agent is handed a *shorter* grace (`AGENT_STOP_GRACE_SEC`),
+  deliberately, so it can interrupt the pane and let tmux exit before the hammer falls.
+- **Lifecycle operations are serialised per workspace** — start, stop, recreate and
+  clean-home take a local lock and a lease in the database, so neither a concurrent
+  request nor another CP replica can interleave with a check-then-start.
+- **Connection tracking** counts long-lived connections, per-session attachment, the
+  last request time and the last terminal keystroke, in memory, and publishes a
+  renewable presence lease to the database for other replicas. This is what the reaper
+  reads (§3.7). A terminal counts as presence only while it is typed in
+  (`AF_PRESENCE_IDLE_TIMEOUT`, 30 minutes); a browser pane counts only while it is
+  visible; `POST /api/workspace/attention` is the Console's beacon for a person reading
+  without typing.
 
-## 3.4 Key wiring at start
+## 3.4 Wiring at start: keys and tokens
 
 The cryptography itself — envelope encryption, key derivation, the limits of
 crypto-shredding — is [07 §7.6](07-security.md). Only the wiring is here:
 
-- **At boot**, the master key is hashed into the key custodian if it is set. Without it
-  there is no encryption at all (development only).
+- **At boot**, `AF_MASTER_KEY` is hashed into the master key and the key custodian
+  (`localCustodian`) is built from it. Without it there is no encryption at all
+  (development only).
 - **When a workspace is resolved**, the wrapped DEK is unwrapped by the custodian (the
   first time, a legacy DEK is derived and wrapped — a compatibility point that avoids
-  re-encrypting an existing store), and the plaintext DEK is injected into the container
-  as an environment variable. **The agent is indifferent to the scheme and never learns
-  where the key came from.**
+  re-encrypting an existing store), and the plaintext DEK is injected as
+  `AF_SECRET_KEY`. **The agent is indifferent to the scheme and never learns where the
+  key came from.**
+- **The bridge tokens** are injected at the same time (`workspaceExtraEnv`): one
+  per-membership token per purpose — `AF_INTERNAL_GIT_TOKEN`, `AF_MEMO_TOKEN`,
+  `AF_SCHEDULE_TOKEN`, `AF_MCP_TOKEN`, `AF_DOCS_TOKEN`, `AF_ENGINE_ISSUE_TOKEN`,
+  `AF_GIT_OAUTH_TOKEN` and `AF_AWS_PROFILES_TOKEN`, with `AF_CP_BASE_URL`. Each is
+  deterministic (an HMAC of the membership id under a key derived from the master key,
+  or from a random key kept in `WS_DATA` when there is none), so re-injecting it on
+  every start changes nothing, and **each opens its own endpoint only**: a leaked memo
+  token cannot read the tenant's MCP secrets. None is injected without
+  `PUBLIC_BASE_URL`, because that is the address the container reaches the CP at.
 
 ## 3.5 The MCP server
 
 The design and the decision are
-[decisions/0006](../decisions/0006-mcp-unified.md). The endpoint is only registered when
-it is explicitly enabled.
+[decisions/0006](../decisions/0006-mcp-unified.md). `/mcp` is only registered when
+`AF_MCP_ENABLED=true`.
 
-- **Transport** is the minimal Streamable HTTP form: JSON-RPC over POST — single and
-  batch — answered as JSON, with no SSE. **The edge must pass the endpoint through with
-  its bearer intact.**
+- **Transport** is the minimal Streamable HTTP form: JSON-RPC 2.0 over POST — single
+  and batch — answered as JSON, with no SSE. It serves both protocol eras: the
+  stateless 2026-07-28 revision (`server/discover`, the version in each request's
+  `_meta`) and the older `initialize` handshake. **The edge must pass `/mcp` through
+  with its bearer intact.**
 - **Authentication is a personal access token**, issued from the Console and stored only
-  as a hash ([06](06-data.md)). **The role is not frozen at issue time — it is resolved
-  live on every call** — and the tenant is fixed by the token rather than supplied by
-  the client.
-- **Four member tools**, whose purpose is "let the Claude on my laptop drive my remote
-  sessions".
-- **Admin tools**, split into read and write. Writes are gated on the administrator
-  roles and recorded in the audit log with an MCP actor kind.
+  as a hash ([06](06-data.md)). Its scope (`read` or `write`) is fixed at issue and
+  capped by the issuer's own; **the role is resolved live on every call**, and the
+  tenant is fixed by the token rather than supplied by the client.
+- **Member tools** (`memberTools()` in `internal/mcpsrv/mcp.go`) — observe and drive
+  your own sessions (list, status, output, send, create, stop, resume), cleanup and its
+  archives, usage, repositories and models, and the memo queue. Their purpose is "let
+  the Claude on my laptop drive my remote sessions".
+- **Admin tools** (`adminTools()`) — read (workspaces, usage, sessions, the audit log,
+  egress statistics and allowlist) and write (stop a workspace or a session, set a
+  member's quota, propose an allowlist change). A caller who is `super_admin` or the
+  tenant's `tenant_admin` sees them; writes are recorded in the audit log with
+  `actor_kind=mcp`.
 - **The dangerous tools** (key rotation, recreate, stopping idle workspaces in bulk) are
   not planned: nobody has asked for them, and letting an agent do these needs a decision
   of its own before anything is built ([decisions/0006](../decisions/0006-mcp-unified.md)).
 
 ## 3.6 The memo queue
 
-Memos you accumulate and send to a session in one go (the table is
+Memos you accumulate and send to a session in one go (the tables are
 [06](06-data.md)).
 
 - **CRUD is CP-only**: it needs a membership and nothing else, so **it does not start a
   workspace** — you can add and organise memos from another device while yours is
   stopped. Grouping is two levels, repository × category.
-- **Flush** takes a list of ids (one representation covering "the whole repository",
-  "a category" and "these ones"), joins them into a single message under category
-  headings, sends it to the target session's input **exactly once**, and stamps them as
-  sent. Only the send needs the agent, so only the send can auto-start.
+- **Flush** (`POST /api/memos/flush`) takes a list of ids (one representation covering
+  "the whole repository", "a category" and "these ones"), joins them into a single
+  message under category headings, sends it to the target session's input **exactly
+  once**, and stamps them as sent. Only the send needs the agent, so only the send
+  resolves the runtime.
+- **The in-container operator** reaches the same handlers under `/internal/memos` with
+  `AF_MEMO_TOKEN`.
 - **Retention**: sent memos are kept for 7 days and swept lazily when the list is
   fetched, rather than deleted on send.
 
 ## 3.7 Background jobs
 
-All are goroutines inside the CP. Intervals come from the environment, and `0` disables.
+All are goroutines inside the CP. Intervals come from the environment, and `0`
+disables.
 
-- **The reaper (idle stop)**. Two tiers. **Tier 1** halts an idle, unattached agent
-  session past its timeout — resumable, because the transcript is on disk; a shell
-  session is never halted. **Tier 2** stops a workspace with no activity at all: no open
-  connections, no working or questioning session, and nothing since the last request.
-  The evidence is the connection tracker (§3.3), and **a starting workspace is never
-  touched**.
-- **The usage sampler** adds occupied seconds to a daily bucket for each running
-  workspace. With bring-your-own model credentials, **the operator's cost is occupancy,
+- **The reaper (idle stop)** — `AF_IDLE_SWEEP_INTERVAL` (1 minute). **On by default**:
+  a session idles out after an hour (`AF_SESSION_IDLE_TIMEOUT`), a session waiting on a
+  person — a question, a plan approval, a permission — after `AF_INTERACTION_IDLE_TIMEOUT`
+  (the session value unless set), and a workspace after two hours
+  (`AF_WS_IDLE_TIMEOUT`). Those are deployment defaults; a tenant's limits override
+  each, `0` included. Four tiers:
+  - **Tier 1** halts an idle, unattached session — every kind but `shell` and `ssm`,
+    whose halt would kill the running job. It is resumable.
+  - **Tier 2** stops a workspace with no presence (§3.3), no session that holds it, no
+    repository import or image job running, and nothing since the last request. A
+    `starting` workspace is never touched. The reaper publishes what it saw, so the
+    admin screen explains "why won't it stop" with the reaper's own answer.
+  - **Tier 3** (ecs-ec2 only) hibernates the home of a workspace stopped for longer than
+    `AF_ECS_EC2_HIBERNATE_AFTER_SEC`: the EBS volume is snapshotted and deleted, and the
+    next start restores it. Off by default.
+  - **Tier 4** (ecs-ec2 only) copies each home to another Availability Zone every
+    `AF_ECS_EC2_BACKUP_EVERY_SEC`, whatever the workspace is doing. Off by default.
+- **The usage sampler** — `AF_USAGE_SAMPLE_INTERVAL` (5 minutes) adds occupied seconds
+  to daily and hourly buckets for each running workspace, which also feeds the uptime
+  heatmap. With bring-your-own model credentials, **the operator's cost is occupancy,
   not tokens** — which is what this measures.
-- **Git GC** runs `git gc --auto` on the internal bare repositories and prunes orphaned
-  LFS objects after a grace period, so it cannot race a push in flight. It runs
-  **sequentially, to protect a shared host's RAM** ([91](91-internal-git.md)).
-- **The audit sweep** (opt-in, off by default). An agent's own actions inside the
-  container do not pass through the CP's proxy and are therefore invisible; the
-  agent → CP direction is deliberately closed, so **the CP pulls instead**, reading each
-  running session's transcript and auditing its writes and commands. It advances a
-  per-session cursor, and **a session seen for the first time only sets a baseline** —
-  it does not retroactively audit the past.
-- **Metrics are on demand, not a job.** As a host process the CP reads `/proc` and the
-  cgroup directly. Host-wide statistics are limited to a deployment administrator, so
-  one tenant cannot infer another's load.
+- **The cloud-cost poller** — where the runtime has a bill (the AWS targets), it reads
+  Cost Explorer every `AF_CLOUD_COST_INTERVAL` (6 hours) over a trailing
+  `AF_CLOUD_COST_WINDOW_DAYS` (7) and attributes spend per member by cost allocation
+  tag. On `docker` and `native` it does nothing, and there is no cost screen.
+- **Git GC** — `AF_GIT_GC_INTERVAL` (24 hours) runs `git gc --auto` on the internal bare
+  repositories and prunes orphaned LFS objects older than `AF_LFS_GC_GRACE` (14 days),
+  so it cannot race a push in flight. It runs **sequentially, to protect a shared host's
+  RAM** ([91](91-internal-git.md)).
+- **The scheduler** — `AF_SCHEDULER_INTERVAL` (1 minute) fires due schedules, spread by
+  a per-schedule jitter (`AF_SCHEDULE_JITTER`, 2 minutes). A fire wakes a stopped
+  workspace without the CLI self-update, waits up to `AF_SCHEDULE_WAKE_TIMEOUT` (the
+  300-second boot budget) and holds a keep-alive for `AF_SCHEDULE_SETTLE`.
+- **The audit sweep** — `AF_CLAUDE_AUDIT_INTERVAL`, opt-in, off by default. What claude
+  does inside the container does not pass through the CP's proxy and is therefore
+  invisible; the agent → CP direction is deliberately closed, so **the CP pulls
+  instead**, reading each running claude session's transcript and auditing its writes,
+  edits and commands (`actor_kind=claude`). It advances a per-session cursor, and **a
+  session seen for the first time only sets a baseline** — it does not retroactively
+  audit the past.
+- **The ecs-ec2 pool** — a drift sweeper (`AF_ECS_EC2_SWEEP_SEC`, 5 minutes) re-derives
+  slots, volumes and owner tags from AWS and finishes whatever a crashed CP left
+  half-done, and the golden-snapshot auto-bake (`AF_ECS_EC2_GOLDEN_AUTOBAKE`, on)
+  rebakes the snapshot new homes are seeded from when the workspace image changes. It
+  runs whether or not idle-stop is on.
+- **The engines** — each role's controller, the engine-table reload and the borrowed
+  catalogue poll (§3.9).
+- **Metrics are on demand, not a job.** When the CP shares a host with the workspace it
+  reads `/proc` and the container's cgroup directly; otherwise (ECS) it asks the agent.
+  Host-wide statistics are limited to a deployment administrator, so one tenant cannot
+  infer another's load.
 
 ## 3.8 The CP's half of egress control
 
-The design and the staged rollout — log-only → allowlist → enforce 🚧 — are
-[07 §7.8](07-security.md). Only four things live in the CP:
+The design and the staged rollout — log-only → allowlist → enforce — are
+[07 §7.8](07-security.md). What lives in the CP:
 
-- **An egress-proxy subcommand**, so the same binary and image can run as a forward
-  proxy alongside (FQDN-based, no TLS interception).
-- **Policy distribution** to that proxy.
-- **Ingest** of observed events into a daily aggregate, with would-block entries
-  de-duplicated per day and host and also recorded to the audit log.
-- **An admin API** for the statistics, the allowlist and the mode switch.
+- **An egress-proxy subcommand** — `control-plane egress-proxy` runs the same binary as
+  a forward proxy (FQDN-based, no TLS interception, `AF_EGRESS_LISTEN`, `:3128`). It
+  only blocks when enforce is on.
+- **Policy distribution** — `GET /internal/egress/policy` returns the effective
+  allowlist and mode to the proxy.
+- **Ingest** — `POST /internal/egress` (`AF_EGRESS_TOKEN`) takes observed events into a
+  daily aggregate, with would-block entries de-duplicated per day and host and also
+  recorded to the audit log.
+- **The admin API** — `/api/admin/egress*`, `super_admin` only: the statistics, the
+  allowlist (active, proposed, retired) and the log-only / enforce switch.
+- **The member face** — `GET /api/egress/check` says whether a workspace can reach a
+  host, and `POST /api/egress/propose` files a *proposed* entry that a deployment
+  administrator still has to approve.
 
-The container side is only wired when the proxy address is configured; **the default is
-off, and nothing changes**.
+The container side is only wired when `AF_EGRESS_PROXY_ADDR` is set, which injects the
+proxy environment into every workspace; **the default is off, and nothing changes**.
+
+## 3.9 Self-hosted engines
+
+What an engine is, and which target can have which, are [01 §1.3](01-architecture.md)
+and [ref/deploy-targets](../../guide/ref/deploy-targets.md). The CP owns all of it —
+the workspace never talks to an engine directly
+([decisions/0071](../decisions/0071-self-hosted-inference-engines.md)).
+
+- **The engine table** — one row per role (`llm`, `image`, `comfy`), with a provider
+  (`llamacpp`, `comfy`, `openai-compat`) and a lifecycle: this deployment's own ECS
+  service, `external` (a URL nobody here starts), or `remote` (another deployment's).
+  It comes from `AF_ENGINES_SSM_PARAM` on AWS or `AF_ENGINES_JSON` inline; on `docker`
+  and `native`, `AF_LLM_URL` and `AF_COMFY_URL` add an `external` row
+  ([decisions/0076](../decisions/0076-external-image-engine-on-lan.md)). The SSM form
+  is re-read every 10 seconds, but only the offer ladder and the capacity provider
+  apply live.
+- **The model catalogue** — models are database rows, not table entries
+  ([decisions/0072](../decisions/0072-engine-model-catalog.md)). The CP resolves a
+  Hugging Face or Civitai source and starts an ingest task that writes to S3; the CP
+  itself only reads S3. The active set is published for the engine to load.
+- **The gateway** — `/engine/{key}/v1/*` (and `GET /engine/{key}/props`), registered
+  only when an engine table exists. A workspace holds the issuing token
+  (`AF_ENGINE_ISSUE_TOKEN`) and exchanges it at `POST /internal/engine/token` for a
+  short-lived session token that opens one role; that second token is the one a model
+  can read, as `AF_ENGINE_TOKEN`. The membership and the tenant's per-role permission
+  are checked on every request.
+- **Cold starts** — a streaming request is answered 200 at once and kept alive with a
+  heartbeat; a non-streaming one is held for `AF_ENGINE_PLAIN_HOLD` (45 seconds, 75 for
+  a borrowed engine) and then answered `503 engine_waking` with `Retry-After` while the
+  engine keeps coming up. 45 seconds keeps the response inside the load balancer's
+  60-second idle timeout.
+- **Starting and stopping** — a controller per role moves the ECS service between 0 and
+  1 (`off`, `on` or `ondemand`) and stops it after an idle period set per role under
+  Admin → Inference engines (`AF_ENGINE_<KEY>_*_SEC` for the defaults). On `ecs-ec2`,
+  when the row declares offers, the CP buys the GPU instance itself with one
+  `CreateFleet(type=instant)` per offer, in the declared order, and finds its boxes
+  again by tag ([decisions/0077](../decisions/0077-engine-boxes-bought-by-cp.md)). A
+  Spot offer is used only after a deployment administrator accepts it
+  ([decisions/0075](../decisions/0075-engine-purchase-offers.md)); instance classes are
+  [decisions/0074](../decisions/0074-engine-instance-classes.md).
+- **Borrowing** — with `AF_REMOTE_ENGINE_URL` and `AF_REMOTE_ENGINE_TOKEN` (a token the
+  lender issues at `POST /api/admin/engines/issue-token`), the CP adopts the lender's
+  catalogue every 2 minutes and buys session tokens from it
+  ([decisions/0079](../decisions/0079-remote-engine-from-another-deployment.md)).
+- **The APIs** — `/api/admin/engines…` for administrators, `GET /api/engines/status`
+  and the `engines` stream of `/api/events` for members, and `GET
+  /internal/engine/catalog` for the agent and for a borrowing deployment.
