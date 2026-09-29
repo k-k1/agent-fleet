@@ -169,8 +169,10 @@ func anyRouteMatches(routes [][]string, path string) bool {
 	isParam := func(rs string) bool { return strings.HasPrefix(rs, "{") }
 	cands := routes
 	for i, s := range segs {
+		// A segment that opens with a substitution (`${name}${query}` too) is dynamic as a whole.
+		dyn := strings.HasPrefix(s, dynSeg)
 		paramHere := false
-		if s == dynSeg {
+		if dyn {
 			for _, r := range cands {
 				if i < len(r) && isParam(r[i]) {
 					paramHere = true
@@ -188,8 +190,8 @@ func anyRouteMatches(routes [][]string, path string) bool {
 			}
 			lit, _, embedded := strings.Cut(s, dynSeg)
 			switch {
-			case isParam(rs), s == dynSeg && !paramHere, rs == s,
-				s != dynSeg && embedded && strings.HasPrefix(rs, lit):
+			case isParam(rs), dyn && !paramHere, rs == s,
+				!dyn && embedded && strings.HasPrefix(rs, lit):
 				next = append(next, r)
 			}
 		}
@@ -239,6 +241,7 @@ func TestAnyRouteMatches(t *testing.T) {
 		"api/sessions/" + dynSeg + "/committed":            false,
 		"api/sessions/x/stop/more":                         false,
 		"api/sessions/" + dynSeg:                           false,
+		"api/sessions/" + dynSeg + dynSeg:                  false,
 		"api/sessions/usage":                               true,
 		"api/connections/" + dynSeg:                        true,
 		"api/connections/" + dynSeg + "/" + dynSeg:         true,
