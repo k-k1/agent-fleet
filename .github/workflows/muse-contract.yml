@@ -55,8 +55,14 @@ jobs:
   drift:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      version: ${{ steps.rel.outputs.version }}
     steps:
+      # This job runs a downloaded binary, and the checksum it is verified against comes from
+      # the same vendor, so it keeps a read-only token and none in .git/config.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v5
         with:
@@ -162,3 +168,29 @@ jobs:
             echo '::error::the installed-binary compatibility check did not run (it skips without AF_MUSE_BIN)'
             exit 1
           }
+
+  # The one write to the state issue, in a job that never runs muse: `issues: write` stays out
+  # of reach of the binary the drift job executes.
+  record:
+    needs: drift
+    # Only a passing `version=latest` run records (the watcher's dispatch, or a manual one): a
+    # pin run that recorded an older version would move `tested` backwards and dispatch the
+    # contract again the next day.
+    if: inputs.version == 'latest'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Verbatim, build id and all: the watcher compares against the channel's
+      # `1.4.0-R4302.1`, and the digits-only extraction the other contracts use would leave
+      # that edge open forever.
+      - name: remember successfully tested latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.drift.outputs.version }}
+        run: deploy/local/cli-release-state.sh set tested muse "$VER"

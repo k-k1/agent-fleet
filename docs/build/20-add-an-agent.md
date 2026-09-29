@@ -174,7 +174,8 @@ dispatches nothing. Registering takes four places:
 - in the contract itself, a success step that runs
   `deploy/local/cli-release-state.sh set tested <kind> <version>`. **Without it, the
   watcher sees the release as new every day and dispatches it every day.**
-  `muse-contract.yml` has no such step, and that is what happens to it today.
+  Record the version in the same shape as the watcher's latest for that kind: muse's
+  carries its build id (`1.4.0-R4302.1`), so cutting it to `1.4.0` leaves the edge open.
 
 Dispatch unattended only when the credential can be supplied unattended. **A credential
 that rotates through an interactive refresh is recorded as "seen" and dispatched by
