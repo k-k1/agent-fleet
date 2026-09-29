@@ -164,9 +164,12 @@ keep control of the wording.
 drifts into two different wrong answers, and nothing checks it. The engine gateway
 token's scope was written in three chapters and was wrong in all three, differently.
 So put it where its own question lives, and link from the others: a boundary in
-`docs/build/07`, an outward contract in `08`, a responsibility in `03`. Where a fact
-genuinely belongs to two chapters, quote the other one's sentence rather than writing
-your own.
+`docs/build/07`, an outward contract in `08`, a responsibility in `03`. A chapter that
+needs the fact but does not own it writes the context its own reader needs and links
+that section — **it does not restate the fact**, not even word for word. A quotation is
+still a second copy, it does not follow the original when that is corrected, and the two
+language files cannot quote the same sentence anyway. If a value really has to appear
+twice, say in both places that it does, and name the other one.
 
 ## 6a. Three ways a true sentence goes wrong
 
@@ -182,14 +185,19 @@ been corrected twice by later measurements in the same record.
 **Never generalise a contract from the kinds you happened to read.** "Every managed kind
 speaks the runtime's session API" and "the conversation always lives in the CLI's native
 store" were both written from claude, codex and opencode, and both break on an
-in-process kind and on one whose native log is not stable. Before writing "every kind",
-check the one that is least like the others.
+in-process kind and on one whose native log is not stable — **for different reasons
+each**, which is why one counter-example does not clear the claim. A sentence about
+every kind is checked against every registered kind: the `Kind*` constants, each one's
+`Driver` and `Capabilities`. Starting with the kind least like the others finds the
+mistake soonest, but it does not finish the check.
 
 **Do not claim a list is complete unless something checks it.** An exhaustive list is
-true on the day it is written and silently wrong afterwards. Either say "for example",
-or invert it and name what is excluded — "reads are not counted" outlives "these five
-routes are counted". A negative claim ("this is not backed up") is the one exception
-worth stating flatly, and then only bounded to what you looked at: "the templates
+true on the day it is written and silently wrong afterwards — and **inverting it is
+still a claim about everything**: "reads are not counted" reads as a rule, and the
+preview routes count a `GET`. So either say "for example", or invert it *and* keep the
+hedge: what the code shows, bounded ("as a rule … for example … these are not a
+complete list"). A negative claim about the absence of something ("this is not backed
+up") is worth stating flatly, and then only bounded to where you looked: "the templates
 declare no backup", not "there is no backup".
 
 ## 7. Never link into `docs/log/`
