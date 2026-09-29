@@ -14,7 +14,8 @@
 //      invites the same question again; cursor has no local user layer (it lives in the Cursor
 //      account), so it is listed permanently with that reason.
 //   3. Say that it only takes effect from the next session: running sessions are not
-//      retroactively changed.
+//      retroactively changed. lcpp is the exception: it has no file (delivery "prompt", no
+//      path), and its harness re-reads the text every turn, which its row's wording says.
 import { useCallback, useState } from "react";
 import {
   api,
@@ -226,7 +227,7 @@ export function InstructionsTab() {
                     <span className="instr-delivery">
                       {tMaybe(`instr.delivery_${t.delivery}`) ?? t.delivery}
                     </span>
-                    <code title={t.path}>{t.path}</code>
+                    {t.path && <code title={t.path}>{t.path}</code>}
                   </>
                 )}
               </td>
@@ -247,7 +248,7 @@ export function InstructionsTab() {
               <td>
                 {t.supported && (
                   <Button variant="ghost" onClick={() => void openPeek(t.kind)}>
-                    {tr("instr.peek")}
+                    {t.path ? tr("instr.peek") : tr("instr.peek_prompt")}
                   </Button>
                 )}
               </td>
@@ -265,13 +266,18 @@ export function InstructionsTab() {
       {peek && (
         <div className="instr-peek">
           <div className="instr-peek-head">
-            <code>{peek.path}</code>
+            {peek.path ? (
+              <code>{peek.path}</code>
+            ) : (
+              <span>{tr("instr.peek_prompt_head")}</span>
+            )}
             <Button variant="ghost" icon="close" onClick={() => setPeek(null)}>
               {tr("common.close")}
             </Button>
           </div>
           <pre className="instr-peek-body">
-            {peek.content || tr("instr.peek_empty")}
+            {peek.content ||
+              tr(peek.path ? "instr.peek_empty" : "instr.peek_prompt_empty")}
           </pre>
         </div>
       )}
