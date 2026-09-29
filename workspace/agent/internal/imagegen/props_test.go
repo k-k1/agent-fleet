@@ -312,31 +312,71 @@ func TestPropsReadsTheMask(t *testing.T) {
 	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
 	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
 	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}}`), inpaint}
-	// The walk from the sampler stops at a node it does not know (ImageCompositeMasked names its
-	// picture `destination`), so the id fallback answers, and it must pass over the mask's loader.
-	cases["foreign-walk-stops"] = maskCase{`{
+	// A graph with no Agent ids at all, for the shapes where the walk from the sampler matters.
+	numeric := func(nodes string) string {
+		return `{
+	  "5": {"class_type": "VAEEncode", "inputs": {"pixels": ["4", 0], "vae": ["9", 0]}},
+	  "9": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},` + nodes + `}`
+	}
+	// An edit whose picture has a sticker composited onto it through a matte before the encode:
+	// the walk follows ImageCompositeMasked's `destination`. The sticker sorts first and feeds no
+	// ImageToMask, so an id fallback would answer it; the matte is neither the mask nor the input.
+	cases["foreign-composite-edit"] = maskCase{numeric(`
+	  "0": {"class_type": "LoadImage", "inputs": {"image": "af-sticker.png"}},
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-matte.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "ImageCompositeMasked", "inputs": {"destination": ["3", 0], "source": ["0", 0], "mask": ["2", 0], "x": 0, "y": 0}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["5", 0]}}`),
+		want{string(OpEdit), "", "af-photo.png"}}
+	// The same composite on an inpaint whose one LoadImage is also its mask.
+	cases["foreign-composite-shared-loader"] = maskCase{numeric(`
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["3", 0], "channel": "alpha"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "ImageCompositeMasked", "inputs": {"destination": ["3", 0], "source": ["3", 0], "x": 0, "y": 0}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}}`),
+		want{string(OpInpaint), "af-photo.png", "af-photo.png"}}
+	// The walk stops at a custom node it cannot read, so the id fallback answers: it passes over
+	// the loader whose only use is the mask, even though that one sorts first.
+	cases["foreign-walk-stops"] = maskCase{numeric(`
 	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-mask.png"}},
 	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
 	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
-	  "4": {"class_type": "ImageCompositeMasked", "inputs": {"destination": ["3", 0], "source": ["3", 0], "x": 0, "y": 0}},
-	  "5": {"class_type": "VAEEncode", "inputs": {"pixels": ["4", 0], "vae": ["9", 0]}},
+	  "4": {"class_type": "SomeoneElsesImageFilter", "inputs": {"src": ["3", 0]}},
 	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
-	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}},
-	  "9": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}}
-	}`, inpaint}
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}}`), inpaint}
+	// A mask that is also previewed feeds something besides ImageToMask; a loader that feeds no
+	// ImageToMask at all is still the better answer for the picture.
+	cases["foreign-walk-stops-previewed-mask"] = maskCase{numeric(`
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-mask.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "SomeoneElsesImageFilter", "inputs": {"src": ["3", 0]}},
+	  "6": {"class_type": "PreviewImage", "inputs": {"images": ["1", 0]}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}}`), inpaint}
+	// And when the only LoadImage is shared by the mask and the picture, the fallback keeps it.
+	cases["foreign-walk-stops-shared-loader"] = maskCase{numeric(`
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["3", 0], "channel": "alpha"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
+	  "4": {"class_type": "SomeoneElsesImageFilter", "inputs": {"src": ["3", 0]}},
+	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}},
+	  "8": {"class_type": "KSampler", "inputs": {"seed": 1, "latent_image": ["7", 0]}}`),
+		want{string(OpInpaint), "af-photo.png", "af-photo.png"}}
 	// One picture loaded once and used for both the encode and the mask: it is still the input.
 	cases["foreign-shared-loader"] = maskCase{foreign(`
 	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["3", 0], "channel": "alpha"}},
 	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
 	  "7": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5", 0], "mask": ["2", 0]}}`),
 		want{string(OpInpaint), "af-photo.png", "af-photo.png"}}
-	// An ImageToMask that never reaches the sampler is not an inpaint mask, and its loader is not
-	// the picture either.
+	// An ImageToMask whose mask reaches the latent through anything but SetLatentNoiseMask is not
+	// an inpaint mask, and its loader is not the picture either.
 	cases["foreign-stray-image-to-mask"] = maskCase{foreign(`
 	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-matte.png"}},
 	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
 	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}},
-	  "7": {"class_type": "LatentUpscaleBy", "inputs": {"samples": ["5", 0], "scale_by": 1}}`),
+	  "7": {"class_type": "LatentCompositeMasked", "inputs": {"destination": ["5", 0], "source": ["5", 0], "mask": ["2", 0], "x": 0, "y": 0}}`),
 		want{string(OpEdit), "", "af-photo.png"}}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

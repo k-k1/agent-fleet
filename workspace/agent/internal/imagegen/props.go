@@ -479,9 +479,8 @@ func (g comfyReadGraph) props() ImageProps {
 			Weight: floatOf(g[id].Inputs["strength_model"]),
 		})
 	}
-	// The mask first, because it decides which LoadImage is NOT the picture.
-	mask, maskLoader, hasMask := g.maskPath(sampler, hasSampler)
-	if n, ok := g.inputImage(sampler, hasSampler, maskLoader); ok {
+	mask, hasMask := g.maskPath(sampler, hasSampler)
+	if n, ok := g.inputImage(sampler, hasSampler); ok {
 		out.Inputs = []string{stringOf(n.Inputs["image"])}
 		out.Op = string(OpEdit)
 	}
@@ -511,52 +510,57 @@ func (g comfyReadGraph) props() ImageProps {
 // LoadImageMask on the latent families (comfyRequestLatent), and LoadImage feeding ImageToMask on
 // the instruction-edit ones (comfyQwenEditNoiseMask). Knowing only the first, the reader answered
 // a Qwen-Edit inpaint as a plain edit with no mask, and "reuse these settings" re-ran it as an
-// edit of the whole picture. loader is the id of that LoadImage, empty for LoadImageMask.
+// edit of the whole picture.
 //
 // The ImageToMask shape counts only when its mask reaches the sampler's latent through
 // SetLatentNoiseMask: ImageToMask is a general-purpose node, and one elsewhere in a foreign graph
 // would otherwise turn an edit into an inpaint with somebody's matte as the mask.
-func (g comfyReadGraph) maskPath(sampler comfyReadNode, hasSampler bool) (path, loader string, ok bool) {
+func (g comfyReadGraph) maskPath(sampler comfyReadNode, hasSampler bool) (string, bool) {
 	if _, n, found := g.node("mask", "LoadImageMask"); found {
-		return stringOf(n.Inputs["image"]), "", true
+		return stringOf(n.Inputs["image"]), true
 	}
 	if !hasSampler {
-		return "", "", false
+		return "", false
 	}
 	id, linked := linkTarget(sampler.Inputs["latent_image"])
 	if !linked || g[id].Class != "SetLatentNoiseMask" {
-		return "", "", false
+		return "", false
 	}
 	id, linked = linkTarget(g[id].Inputs["mask"])
 	if !linked || g[id].Class != "ImageToMask" {
-		return "", "", false
+		return "", false
 	}
 	id, linked = linkTarget(g[id].Inputs["image"])
 	if !linked || g[id].Class != "LoadImage" {
-		return "", "", false
+		return "", false
 	}
-	return stringOf(g[id].Inputs["image"]), id, true
+	return stringOf(g[id].Inputs["image"]), true
 }
 
 // inputImage is the picture an edit started from: the Agent's own `img`, else the LoadImage the
-// sampler's latent is encoded from, else the first LoadImage by id that is not the mask's loader.
-// The walk comes before the fallback because a foreign graph may load one picture for both the
-// encode and ImageToMask, and excluding the mask's loader outright would leave no input at all.
-func (g comfyReadGraph) inputImage(sampler comfyReadNode, hasSampler bool, maskLoader string) (comfyReadNode, bool) {
+// sampler's latent is encoded from, else a LoadImage chosen by id. The walk comes first because
+// only the edges tell a picture from a mask on a graph with numeric ids; one picture may even be
+// loaded once for both the encode and ImageToMask.
+//
+// The id fallback prefers a LoadImage that feeds no ImageToMask, then one that also feeds
+// something else, and never picks one whose only use is ImageToMask: that is a mask or a matte,
+// and a reproduction that took it as the input would edit the mask.
+func (g comfyReadGraph) inputImage(sampler comfyReadNode, hasSampler bool) (comfyReadNode, bool) {
 	if n, ok := g["img"]; ok && n.Class == "LoadImage" {
 		return n, true
 	}
 	if hasSampler {
 		// Bounded like textBehind: latent_image -> SetLatentNoiseMask.samples -> VAEEncode.pixels
-		// -> a scale node's image -> LoadImage is four hops, and a foreign graph may be a cycle.
+		// -> ImageCompositeMasked.destination / a scale node's image -> LoadImage, and a foreign
+		// graph may be a cycle.
 		id, ok := linkTarget(sampler.Inputs["latent_image"])
-		for hop := 0; ok && hop < 6; hop++ {
+		for hop := 0; ok && hop < 8; hop++ {
 			n := g[id]
 			if n.Class == "LoadImage" {
 				return n, true
 			}
 			next := ""
-			for _, key := range []string{"samples", "pixels", "image"} {
+			for _, key := range []string{"samples", "pixels", "image", "destination"} {
 				if t, linked := linkTarget(n.Inputs[key]); linked {
 					next = t
 					break
@@ -565,8 +569,23 @@ func (g comfyReadGraph) inputImage(sampler comfyReadNode, hasSampler bool, maskL
 			id, ok = next, next != ""
 		}
 	}
-	for _, id := range sortedKeys(g) {
-		if g[id].Class == "LoadImage" && id != maskLoader {
+	toMask, toOther := map[string]bool{}, map[string]bool{}
+	for _, n := range g {
+		for _, v := range n.Inputs {
+			if id, ok := linkTarget(v); ok {
+				if n.Class == "ImageToMask" {
+					toMask[id] = true
+				} else {
+					toOther[id] = true
+				}
+			}
+		}
+	}
+	for _, shared := range []bool{false, true} {
+		for _, id := range sortedKeys(g) {
+			if g[id].Class != "LoadImage" || (toMask[id] && !(shared && toOther[id])) {
+				continue
+			}
 			return g[id], true
 		}
 	}
