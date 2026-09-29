@@ -113,6 +113,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.approval_escalated": "escalated for your decision",
   "mirror.approval_hint": "Denying stops this tool; the session keeps going.",
   "mirror.questioning": "Question pending",
+  "mirror.writing": "Writing…",
   "mirror.typing": "{name} is typing",
   "mirror.stop_run": "Stop the run (Esc)",
   "mirror.resume_session": "Resume this session",

@@ -215,6 +215,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.expand_thinking": "Show thinking expanded",
   "agents.expand_thinking_note":
     "When on, the mirror's “Thinking” block starts expanded. When off (the default) it stays collapsed — click the heading to read it. Display only; the agent's behavior is unchanged.",
+  "agents.stream_replies": "Stream replies in the chat view",
+  "agents.stream_replies_note":
+    "When on (the default), the mirror shows Claude's reply line by line while it is being written. When off, a reply appears once Claude has finished writing it. Display only; the terminal and the agent are unaffected.",
   "agents.rtk_row": "RTK (token savings)",
   "agents.rtk_unavailable": "This workspace has no rtk.",
   "agents.settings": "Settings",

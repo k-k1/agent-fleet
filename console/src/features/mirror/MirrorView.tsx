@@ -15,6 +15,7 @@ import {
   surfaceAccent,
   effectiveTheme,
   expandThinking,
+  streamReplies,
 } from "../../lib/settings.ts";
 import { isQuickReplyCandidate, isQuickReplyPinned, recordQuickReply, unhideQuickReply } from "../../lib/quickReplies.ts";
 import { SuggestChipMenu } from "./SuggestChipMenu.tsx";
@@ -82,7 +83,7 @@ import { ForkAtModal } from "./ForkAtModal.tsx";
 import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
-import { ApprovalCard, PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
+import { ApprovalCard, LiveReplyCard, PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
 import { CarriedBlock } from "./CarriedBlock.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
@@ -263,6 +264,16 @@ export function MirrorView({
   const dirGone = sessionMeta?.resumable === false && !alive;
   const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
+  // The reply claude is still writing (#1250), sent by the Agent only while a turn runs and only
+  // when this poll asked for it (?live=1). Only claude's route streams it; the per-kind setting
+  // turns it off. Read through a ref inside the poll loop, which outlives renders.
+  const liveOn = sessionMeta?.kind === "claude" && streamReplies(settings, sessionMeta?.kind);
+  const liveOnRef = useRef(liveOn);
+  liveOnRef.current = liveOn;
+  const [liveText, setLiveText] = useState("");
+  useEffect(() => {
+    if (!liveOn) setLiveText(""); // switched off: drop what is shown now, not at the next poll
+  }, [liveOn]);
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
   // A MANAGED session's tool approval. Kept apart from pendingPerm because the two are
@@ -444,6 +455,7 @@ export function MirrorView({
     setQueuedPrompts([]);
     setAlive(!!sessionMeta?.alive);
     setPending(null);
+    setLiveText(""); // the reply being written belongs to the session being left
     setPendingPlan(null);
     setPendingPerm(null);
     setMode("");
@@ -494,9 +506,12 @@ export function MirrorView({
         // windowed read brings turns we have never patched with answers, and the Agent ignores
         // the parameter there for that reason.
         const agg = !first && aggSigRef.current ? `&agg=${encodeURIComponent(aggSigRef.current)}` : "";
+        // live=1 asks for the reply still being written. Left off when the setting is, so the
+        // request and its response stay exactly what they were before the setting existed.
+        const live = liveOnRef.current ? "&live=1" : "";
         const url = first
-          ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}`
-          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}${agg}`;
+          ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}${live}`
+          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}${agg}${live}`;
         const d = await api(url);
         if (!alive) return;
         // Refreshing marks rides the transcript poll rather than adding a cycle of its own;
@@ -608,6 +623,7 @@ export function MirrorView({
             setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
             setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
             setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
+            setLiveText(liveOnRef.current && typeof d.liveText === "string" ? d.liveText : "");
             setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
             setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
             setPendingApproval(isPendingApproval(d.pendingApproval) ? d.pendingApproval : null);
@@ -726,7 +742,7 @@ export function MirrorView({
   useLayoutEffect(() => {
     scroll.applyFollow({ groups, loaded, busy, pending, pendingPlan, pendingPerm: pendingPerm || (pendingApproval ? pendingApproval.id : null) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, pending, pendingPlan, pendingPerm, pendingApproval, status, bgBusy, finalizing, pendingSends, queuedPrompts]);
+  }, [turns, pending, pendingPlan, pendingPerm, pendingApproval, status, bgBusy, finalizing, pendingSends, queuedPrompts, liveText]);
 
 
 
@@ -2053,6 +2069,11 @@ export function MirrorView({
             onCancel={() => void sendInterrupt()}
             translate={translate}
           />
+        )}
+        {liveText && busy && !pending && !pendingPlan && !pendingPerm && !pendingApproval && (
+          // Above the typing row: that row keeps the stop button and says the turn is still
+          // running; this is what the turn has written so far.
+          <LiveReplyCard agentName={agentName} text={liveText} repo={sessionMeta?.repo ?? null} onOpenFile={openFile} />
         )}
         {busy && !pending && <TypingRow agentName={agentName} sending={sending} onStop={() => void sendInterrupt()} />}
         </div>

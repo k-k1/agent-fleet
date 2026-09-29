@@ -118,6 +118,7 @@ export const mirror = {
   "mirror.approval_escalated": "判断が委ねられました",
   "mirror.approval_hint": "拒否するとこのツールだけが止まり、セッションは続きます。",
   "mirror.questioning": "質問中",
+  "mirror.writing": "書いている途中",
   "mirror.typing": "{name} が入力中",
   // 実行制御
   "mirror.stop_run": "実行を停止（Esc）",

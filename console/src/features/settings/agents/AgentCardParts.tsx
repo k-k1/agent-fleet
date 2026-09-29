@@ -63,6 +63,26 @@ export function ThinkingRow({ kind }: { kind: string }) {
   );
 }
 
+// StreamRepliesRow: "stream replies in the chat view" (kind-scoped, ON by default; #1250). While a
+// reply is being written the mirror shows it line by line; off, a reply appears once the agent
+// has finished writing it. Only on the cards of kinds whose Agent route sends the in-progress
+// reply (claude).
+export function StreamRepliesRow({ kind }: { kind: string }) {
+  const s = useSettings();
+  const tr = useT();
+  return (
+    <>
+      <SettingRow label={tr("agents.stream_replies")}>
+        <OnOff
+          value={s.streamReplies[kind] !== false}
+          onChange={(v) => setSettings({ streamReplies: { ...s.streamReplies, [kind]: v } })}
+        />
+      </SettingRow>
+      <p className="ps-note">{tr("agents.stream_replies_note")}</p>
+    </>
+  );
+}
+
 // The connection body shown while the workspace is stopped: launch defaults below stay
 // reachable, but the auth flow (Agent-proxied) waits for start.
 export function ConnPaused() {

@@ -297,6 +297,8 @@ codex・opencode を実例に使う。
 - `Stop` → idle
 - `PreToolUse` の matcher `AskUserQuestion` → question、`ExitPlanMode` → plan
 - `permission_prompt` の通知 → permission
+- `MessageDisplay` → `message`（状態は変えない）。流れてくる返答を行ごとに記録する。保留中の質問カードが質問の上に出す文章と、
+  ターンの実行中に `/messages?live=1` が返す「書いている途中の返答」の元になる（`status/livetext.go`、#1250）。
 
 **hook は加算でマージする**。起動時と、claude を起動する直前に行う（`EnsureStatusHooks`）。
 **`PreToolUse` は matcher 単位で登録する**ので、rtk の hook（`Bash`）と状態の hook が共存し、

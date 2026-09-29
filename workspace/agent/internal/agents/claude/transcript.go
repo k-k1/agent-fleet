@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -215,6 +217,126 @@ func AssistantText(line []byte) string {
 		}
 	}
 	return sb.String()
+}
+
+// The helpers below tell whether the reply claude is streaming (the MessageDisplay text the
+// mirror shows while it is written, #1250) has reached the transcript yet. They compare text,
+// because MessageDisplay's message_id is a display id that no transcript row carries.
+
+// liveScan bounds how far back the text lookups below read. They run on the mirror's poll
+// while a turn streams, and a long run of tool calls should not turn every poll into a walk
+// over the whole transcript.
+const liveScan = 400
+
+// memoryTag matches the memory citation tags claude strips from what it DISPLAYS but keeps in
+// the transcript: <cc-memory filenames="…"> and its other spellings (measured in the 2.1.284
+// bundle). Without stripping them the stored text never matches the displayed stream. claude
+// allows up to 1024 characters after the name; RE2 caps a repeat at 1000, hence the split.
+var memoryTag = regexp.MustCompile(`</?(?:cc-memory|cc_memory|ccmemory|CC-MEMORY|CC_MEMORY|CCMEMORY)(?:[\s/][^>]{0,1000}[^>]{0,23})?>`)
+
+// DisplayedText is stored assistant text as claude displays it.
+func DisplayedText(s string) string { return memoryTag.ReplaceAllString(s, "") }
+
+// liveRow is the part of a transcript row the live-reply helpers read.
+type liveRow struct {
+	Type      string `json:"type"`
+	Timestamp string `json:"timestamp"`
+	Message   struct {
+		Content json.RawMessage `json:"content"` // a string for a typed prompt, blocks otherwise
+	} `json:"message"`
+}
+
+type contentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func parseLiveRow(line []byte) (liveRow, bool) {
+	var r liveRow
+	return r, json.Unmarshal(line, &r) == nil
+}
+
+// text is an assistant row's text blocks, joined.
+func (r liveRow) text() string {
+	if r.Type != "assistant" {
+		return ""
+	}
+	var blocks []contentBlock
+	if json.Unmarshal(r.Message.Content, &blocks) != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, b := range blocks {
+		if b.Type == "text" {
+			sb.WriteString(b.Text)
+		}
+	}
+	return sb.String()
+}
+
+// PendingAssistantText is the text, as displayed, of the assistant rows after the newest user
+// row: the message claude is writing now, as far as its rows have landed. Its tool results can
+// only come after it ends, so no row of an earlier message is after that user row.
+func PendingAssistantText(lines [][]byte) string {
+	var parts []string
+	for i := len(lines) - 1; i >= max(0, len(lines)-liveScan); i-- {
+		r, ok := parseLiveRow(lines[i])
+		if !ok {
+			continue
+		}
+		if r.Type == "user" {
+			break
+		}
+		if t := r.text(); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	slices.Reverse(parts)
+	return DisplayedText(strings.Join(parts, ""))
+}
+
+// MessageTextFrom is the text, as displayed, of the assistant message that started at start: the
+// text rows between the user row it answers and the next user row. The user row it answers is
+// the newest one written before start — the prompt, or the previous message's tool results —
+// and the next one is its own tool results. An earlier message of the turn is before that
+// boundary however alike its text is. ok is false when no user row with a readable timestamp
+// before start is within reach.
+//
+// start comes from the Agent's own clock (when the hook appended a flush), the row timestamps
+// from claude's. They are the same machine's clock, and the boundary row is written before the
+// message is even requested, so the gap between them is the model's latency at the least.
+func MessageTextFrom(lines [][]byte, start time.Time) (string, bool) {
+	from := -1
+	for i := len(lines) - 1; i >= max(0, len(lines)-liveScan); i-- {
+		if !bytes.Contains(lines[i], []byte(`"type":"user"`)) {
+			continue
+		}
+		r, ok := parseLiveRow(lines[i])
+		if !ok || r.Type != "user" {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339Nano, r.Timestamp); err == nil && !at.After(start) {
+			from = i
+			break
+		}
+	}
+	if from < 0 {
+		return "", false
+	}
+	var parts []string
+	for _, line := range lines[from+1:] {
+		r, ok := parseLiveRow(line)
+		if !ok {
+			continue
+		}
+		if r.Type == "user" {
+			break
+		}
+		if t := r.text(); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	return DisplayedText(strings.Join(parts, "")), true
 }
 
 // CollectTurns builds the displayable turns from lines[lo:hi] (a window into the

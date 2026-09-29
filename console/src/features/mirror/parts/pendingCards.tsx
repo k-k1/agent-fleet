@@ -243,6 +243,27 @@ export function QuestionCard({
 
 /** Typing indicator. The stop button lives here so it never shifts the composer; see the note
  *  at the button. */
+/** The reply the agent is still writing (#1250): what it has streamed so far and the transcript
+ *  does not hold yet. The Agent stops sending it the moment the real turn lands, which then takes
+ *  its place, so it carries no actions of its own. */
+export function LiveReplyCard({
+  agentName,
+  text,
+  repo,
+  onOpenFile,
+}: {
+  agentName: string;
+  text: string;
+  repo: string | null;
+  onOpenFile: (path: string, line?: number, column?: number) => void;
+}) {
+  return (
+    <PendingTurn agentName={agentName} note={tr("mirror.writing")}>
+      <MarkdownView source={text} repo={repo} onOpenFile={onOpenFile} />
+    </PendingTurn>
+  );
+}
+
 export function TypingRow({
   agentName,
   sending,
