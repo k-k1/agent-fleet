@@ -108,8 +108,14 @@ prompt on every turn.
 | codex | Working / Question / Plan ready / Ready |
 | opencode | Working / Question / Ready |
 | copilot | Working / Awaiting permission / Ready |
-| cursor | Working / Ready |
+| cursor | Working / Awaiting permission / Plan ready / Ready |
 | kiro | Working / Awaiting permission / Ready |
+
+On a Terminal (CLI) session, cursor stops for a command approval only when **Tool
+permissions** asks for approval or the session started in plan mode, and for a build
+decision only in a plan launch. The mirror shows the state but draws no card for it:
+answer in the terminal. Text sent from anywhere while it waits is refused, because the
+menu would take its Enter as "run" or "build".
 
 `shell` and `ssm` have no conversation and therefore no state model and no
 notifications. agy's states are not separately documented — treat its mirror as

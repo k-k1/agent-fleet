@@ -154,6 +154,11 @@ Run at least these five: ① single-select by keys, ② typing a full label and 
 **If any of the five has changed, the sequence builder and this chapter must be updated
 in the same change.**
 
+cursor's two Terminal menus — the command approval ("Run this command?") and a plan
+launch's build approval ("Ready to build?") — are read off the pane, so re-capture them
+too and compare with `internal/agents/cursor/testdata`: a reworded menu reads as no menu,
+and free text typed into it approves the command or builds the plan.
+
 ## 92.3 The invariants this produced
 
 These are the shape of the fix, and worth preserving through any rewrite:
@@ -167,9 +172,17 @@ These are the shape of the fix, and worth preserving through any rewrite:
   `interaction_pending` for any other. The gate (`promptBlocker`) is a whitelist:
   everything that is not idle or working is blocked, because Enter confirming a
   highlighted row silently is the same accident in the plan and permission modals too.
-  It only sees what it reads for each kind — the status store, or a kind's own probe
-  where there are no status hooks — and today it does not see the pending modals of
-  codex, opencode and cursor Terminal sessions (#1227).
+  It only sees what it reads for each kind: the status store for claude, whose hooks
+  write its modals there, and for every other kind with a Terminal route the source the
+  kind's own live state is read from (`kindModalProbes`). A kind with a Terminal route
+  and neither fails a test, because it would fall through to a status store nothing
+  fills — as codex, opencode and cursor did, where a pasted line answered the first
+  option, ran the command or built the plan (measured, #1227).
+- **A modal is pending only while a screen can still show it.** A pending state that
+  outlives its modal refuses every send with nothing left to answer. A question asked
+  before the pane's current CLI process started is not pending, nor is one whose turn
+  has ended: a SIGKILLed codex or opencode leaves its question open in the rollout or the
+  store for good, and neither a resume nor a later turn closes it.
 - **A reject is not a key walk to a "no" row.** The plan-approval menu's length depends
   on the claude version, and a fixed `Down × 3` wrapped round onto a "Yes" row and
   approved the plan it meant to reject. Approve is Enter on the default row; reject is an
@@ -196,8 +209,10 @@ What to re-read when this playbook finds a change:
   session's live state: the status store (`internal/status`), which claude's hooks fill
   with its question, plan and permission modals, and, for some kinds without such hooks,
   per-kind readers of a transcript, event log or pane (`opencode.LiveState` or
-  `kiro.LiveState`, for example). The gate, `promptBlocker`, reads its own selection of
-  these (see 92.3). `PendingModal` in `internal/agents/modal.go` is a different seam:
+  `kiro.LiveState`, for example). The gate, `promptBlocker`, reads the same per-kind
+  sources through `kindModalProbes` (`session_io.go`); for codex, opencode and cursor
+  that is each kind's `TerminalModal` (see 92.3). `PendingModal` in
+  `internal/agents/modal.go` is a different seam:
   it preserves a modal left pending when a session stops (asked before a deliberate halt,
   or when the session list first notices a pane that has gone) — do not read the live
   modal shapes from it.
