@@ -68,8 +68,9 @@ informed choice — not undisclosed bugs.
   on AWS, in the file system's daily AWS Backup recovery points (`Persistence=retain`)
   and the `ecs-ec2` home-volume snapshots the CP takes when it hibernates or backs up a
   home. The database — wrapped DEKs, tenant secrets sealed under the master key — is in
-  that archive too, and on AWS in its automated backups and final snapshot
-  (`Persistence=retain`). Protect where they are stored.
+  that archive when it is the default SQLite file under `DATA_DIR` (a database moved
+  elsewhere with `AF_DB` or `AF_DATABASE_URL` needs its own backup), and on AWS in its
+  automated backups and final snapshot (`Persistence=retain`). Protect where they are stored.
 
 - **Anything running in a Workspace can read that user's own secrets.** Agents,
   their shells and every process they start (build scripts, package install hooks,
