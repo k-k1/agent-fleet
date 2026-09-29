@@ -22,6 +22,9 @@ docs
 deploy/local/oauth.env
 deploy/local/allowed-emails.txt
 deploy/compose/.env
+deploy/aws/ec2-single/*-key
+deploy/aws/ec2-single/*-key.pub
+deploy/aws/ec2-single/*.pem
 
 # Release artifacts (huge tars) must never enter the CP build context.
 deploy/compose/dist

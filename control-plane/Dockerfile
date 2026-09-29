@@ -67,10 +67,22 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
 # the Console's user-guide button and the in-container agents with nothing to read.
 # A missing guide/, runbook or release note fails the build rather than shipping a gap.
 # Architecture-independent text, so native on the builder like the stages above.
+#
+# Only the script's inputs are copied, never deploy/ whole: a working copy can hold
+# gitignored key material there (deploy/aws/ec2-single/*-key), and an intermediate
+# layer is not private — release.sh's CP_CACHE_REF exports every layer with mode=max.
+# The runbook list mirrors RUNBOOKS in stage-docs.sh, which fails the build if one
+# listed there is not copied here.
 FROM --platform=$BUILDPLATFORM debian:trixie-slim AS docs
 WORKDIR /src
-COPY guide/  guide/
-COPY deploy/ deploy/
+COPY guide/                             guide/
+COPY deploy/release/stage-docs.sh       deploy/release/
+COPY deploy/release/notes/              deploy/release/notes/
+COPY deploy/compose/README.md           deploy/compose/
+COPY deploy/native/README.md            deploy/native/
+COPY deploy/local/README-wsl.md         deploy/local/
+COPY deploy/aws/ecs/README.md           deploy/aws/ecs/
+COPY deploy/aws/ec2-single/README.md    deploy/aws/ec2-single/
 RUN bash deploy/release/stage-docs.sh /out/docs
 
 # --- 4. runtime --------------------------------------------------------------

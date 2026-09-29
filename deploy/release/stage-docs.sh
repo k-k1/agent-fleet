@@ -51,7 +51,8 @@ tar -C "$ROOT/guide" -cf - . | tar -C "$DEST" -xf -
 # --- 2. the runbooks ----------------------------------------------------------
 # The map is explicit rather than a glob: which files are runbooks is an editorial
 # decision, and a stray README appearing under deploy/ should not silently become
-# documentation that ships to customers.
+# documentation that ships to customers. control-plane/Dockerfile's `docs` stage copies
+# each of these by name, so a new entry has to be added there too.
 RUNBOOKS=(
   "compose:deploy/compose/README.md"
   "native:deploy/native/README.md"

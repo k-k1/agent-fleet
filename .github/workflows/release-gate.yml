@@ -102,15 +102,23 @@ jobs:
             test -f "$d/operate/runbooks/aws-ecs.md"
             # The release history is copied in too (ref/releases): every ledger version,
             # and not the notes of versions that were never published.
-            test -f "$d/ref/releases/SUMMARY.md" && test -f "$d/ref/releases/SUMMARY.ja.md"
+            test -f "$d/ref/releases/SUMMARY.md"
+            test -f "$d/ref/releases/SUMMARY.ja.md"
             test -f "$d/ref/releases/$LATEST.md"
-            test ! -e "$d/ref/releases/0.8.1.md" && test ! -e "$d/ref/releases/index.tsv"
+            test ! -e "$d/ref/releases/0.8.1.md"
+            test ! -e "$d/ref/releases/index.tsv"
             test ! -e "$d/ref/releases/README.md"
-            test ! -e "$d/log" && test ! -e "$d/decisions" && test ! -e "$d/build"
-            test ! -e "$d/use" && test ! -e "$d/guide" && test ! -e "$d/dev"
-            test ! -e "$d/CONVENTIONS.md" && test ! -e "$d/HANDOFF.md"
+            test ! -e "$d/log"
+            test ! -e "$d/decisions"
+            test ! -e "$d/build"
+            test ! -e "$d/use"
+            test ! -e "$d/guide"
+            test ! -e "$d/dev"
+            test ! -e "$d/CONVENTIONS.md"
+            test ! -e "$d/HANDOFF.md"
             test ! -e "$d/CHANGELOG-handoff.md"
-            test ! -e "$d/roadmap.md" && test ! -e "$d/img"'
+            test ! -e "$d/roadmap.md"
+            test ! -e "$d/img"'
           # version stamp: after boot, /api/version behind auth returns VERSION
           # (AUTH=dev has no gate). Booting with no mounts is intentional — the CP's
           # MkdirAll(dbPath parent) supports it, and this gate once caught an
@@ -214,11 +222,18 @@ jobs:
           # denylist era. build.sh has staged through the allowlist since docs/.distinclude
           # landed, so neither has been in the tar for a long time and this gate could only
           # fail. Assert what is actually shipped: the guide, and none of the developer tree.
-          test -d "$C/docs/member" && test -d "$C/docs/ref"
+          test -d "$C/docs/member"
+          test -d "$C/docs/ref"
           test -f "$C/docs/operate/runbooks/compose.md"
-          test ! -e "$C/docs/build" && test ! -e "$C/docs/decisions" && test ! -e "$C/docs/log"
-          test ! -e "$C/docs/HANDOFF.md" && test ! -e "$C/docs/talk" && test ! -e "$C/docs/history"
-          test -f "$C/NOTICE" && test -f "$C/README.md" && test -f "$C/LICENSE"
+          test ! -e "$C/docs/build"
+          test ! -e "$C/docs/decisions"
+          test ! -e "$C/docs/log"
+          test ! -e "$C/docs/HANDOFF.md"
+          test ! -e "$C/docs/talk"
+          test ! -e "$C/docs/history"
+          test -f "$C/NOTICE"
+          test -f "$C/README.md"
+          test -f "$C/LICENSE"
           grep -q "github.com/k-k1/agent-fleet-dist" "$C/NOTICE"
           test "$(cat "$C/VERSION")" = "$VERSION"
           # the image-env manifest is injected into the rootfs (CP rootfs mode
@@ -499,8 +514,11 @@ jobs:
             set -e
             d=/usr/local/share/agent-fleet/docs
             for s in member admin operate ref assets; do test -d "$d/$s"; done
-            test -f "$d/README.md" && test -f "$d/README.ja.md"
+            test -f "$d/README.md"
+            test -f "$d/README.ja.md"
             test -f "$d/operate/runbooks/compose.md"
             test -f "$d/ref/releases/SUMMARY.md"
-            test ! -e "$d/log" && test ! -e "$d/decisions" && test ! -e "$d/build"
+            test ! -e "$d/log"
+            test ! -e "$d/decisions"
+            test ! -e "$d/build"
             test ! -e "$d/CONVENTIONS.md"'
