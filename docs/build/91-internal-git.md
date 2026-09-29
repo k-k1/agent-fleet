@@ -86,7 +86,7 @@ The decision and the options it rejected are ADR 0010. What the shape rests on:
   delete removes them with the repository. The `lfs_object` table (tenant, repository,
   oid, size) makes the tenant's total a single sum rather than a walk; `lfs_lock` holds the
   LFS locks. Rename and delete update both after moving or removing the directory, and
-  ignore a failure there, so the rows can go stale; the ledger is best-effort in general
+  ignore a failure there, so the rows can go stale: these LFS follow-up updates are best-effort
   ([#1211](https://github.com/k-k1/agent-fleet/issues/1211)).
 - The tables themselves are described in [06](06-data.md). There is **deliberately no
   token table**.
@@ -237,9 +237,9 @@ time, and the helper serves any host in the store).
     ids. Two safety properties are worth keeping: **a grace period keeps recently written
     objects**, so an upload whose ref has not been pushed yet is not deleted; and **if
     listing the objects or starting to read them fails, or the tenant cannot be resolved,
-    nothing is deleted.** A
-    failure while reading the pointer contents is *not* detected: the ids read so far are
-    taken as the whole set, and older unread objects are deleted
+    nothing is deleted.** A failure while reading the pointer contents is *not* detected:
+    the ids read so far are taken as the whole set, and objects whose pointers were not
+    read may be deleted once they are past the grace period
     ([#1210](https://github.com/k-k1/agent-fleet/issues/1210)). A deleted object is also
     removed from the ledger, best-effort, which frees quota.
 - **The client side needs no change**: the workspace image ships `git-lfs` with its
