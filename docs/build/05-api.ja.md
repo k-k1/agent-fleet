@@ -51,6 +51,13 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 
 - 旧 `/agent-fleet` プレフィクスは**廃止**（ルート配信）。`/agent-fleet*` は互換リダイレクトのみ。
 - 非同期操作（起動・clone）は**同期 + ポーリング**で運用（`/jobs` 構想は未採用）。
+- **保持ルート**: モデルの応答は ingress の idle timeout（60 秒）より長くかかり得るため、
+  `POST /api/chat/conversations/{id}/{compact,plan/refresh}`・`POST /api/chat/ask`・
+  `POST /api/fs/suggest-edit` は `Accept: text/event-stream` 付きの要求に 200 で応じ、
+  20 秒ごとに `: keepalive` コメントを送り、最後に
+  `data: {"status": <ステータス>, "body": <JSON 本文>}` を 1 フレーム返す。ヘッダが無ければ従来どおり
+  素の JSON（MCP の `ask_assistant` ツールはこちら）。CP は flush する stream 中継で通す
+  （Agent 側は `httpx.HeldOpen`）。
 - `GET /api/workspace/stats` の応答は CP がホストから cgroup v2 を直読みして組む（`metrics.go`）:
   稼働時 `{running:true, mem_used, mem_max?, cpu_pct?, oom_kill_total?, oom_recent?}`、
   停止時 `{running:false, oom_killed?, exit_code?}`。`oom_recent`/`oom_killed` は OOM 検知

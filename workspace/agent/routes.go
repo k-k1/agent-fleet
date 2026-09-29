@@ -19,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 )
@@ -245,18 +246,23 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", chatx.HandleChatSuggestReplies) // LLM reply suggestion v2 (preview only)
 	mux.HandleFunc("DELETE /chat/conversations/{id}", chatx.HandleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/lock", sessionx.HandleChatLock) // deletion lock (docs/log/45)
+	// Not held open (httpx.HeldOpen): the Console sends turns through /stream below, and nothing
+	// else in the tree calls this route through the ingress.
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", chatx.HandleChatSend)
-	mux.HandleFunc("POST /chat/conversations/{id}/stream", chatx.HandleChatStream)            // SSE (Phase B)
-	mux.HandleFunc("POST /chat/conversations/{id}/stop", chatx.HandleChatStop)                // cancel a detached in-flight turn
-	mux.HandleFunc("POST /chat/conversations/{id}/compact", chatx.HandleChatCompact)          // summary carry-forward (docs/log/33 stage 2)
-	mux.HandleFunc("GET /chat/conversations/{id}/plan", chatx.HandleChatPlanGet)              // read the work plan (docs/log/33 stage 5; the light face for MCP)
-	mux.HandleFunc("PUT /chat/conversations/{id}/plan", chatx.HandleChatPlanSet)              // hand-edit the work plan (docs/log/33 stage 5)
-	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", chatx.HandleChatPlanRefresh) // explicit work-plan refresh (same)
+	mux.HandleFunc("POST /chat/conversations/{id}/stream", chatx.HandleChatStream) // SSE (Phase B)
+	mux.HandleFunc("POST /chat/conversations/{id}/stop", chatx.HandleChatStop)     // cancel a detached in-flight turn
+	// Compaction, plan refresh, ask and the edit suggestion wait on a model for longer than the
+	// ingress idle timeout, so the Console reaches them held open with a heartbeat (#1151).
+	mux.HandleFunc("POST /chat/conversations/{id}/compact", httpx.HeldOpen(chatx.HandleChatCompact))          // summary carry-forward (docs/log/33 stage 2)
+	mux.HandleFunc("GET /chat/conversations/{id}/plan", chatx.HandleChatPlanGet)                              // read the work plan (docs/log/33 stage 5; the light face for MCP)
+	mux.HandleFunc("PUT /chat/conversations/{id}/plan", chatx.HandleChatPlanSet)                              // hand-edit the work plan (docs/log/33 stage 5)
+	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", httpx.HeldOpen(chatx.HandleChatPlanRefresh)) // explicit work-plan refresh (same)
 	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", sessionx.HandleChatPasteImage)
 	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", sessionx.HandleChatPastedImage)
-	// Assistant-to-assistant consult (docs/log/19): af_write orchestrators' ask_assistant tool
-	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
-	mux.HandleFunc("POST /chat/ask", chatx.HandleChatAsk)
+	// Stateless advisory turn: af_write orchestrators' ask_assistant tool calls it directly
+	// through the local stdio MCP (plain JSON), and the Console's memo tidy and read-aloud
+	// summary reach it through the CP (held open).
+	mux.HandleFunc("POST /chat/ask", httpx.HeldOpen(chatx.HandleChatAsk))
 	// Assistant turn fired by a schedule (docs/log/38 session_mode=assistant): the CP
 	// scheduler runs one turn synchronously against a conversation (UUID/slug), delegating
 	// to runOperatorTurn (assistant_turn.go).
@@ -360,7 +366,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /fs/resolve", handleFSResolve)
 	// The editor's AI edit suggestion (docs/log/44 Phase 4) — a read-only generation channel
 	// that never touches the fs.
-	mux.HandleFunc("POST /fs/suggest-edit", handleFSSuggestEdit)
+	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(handleFSSuggestEdit))
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
 	mux.HandleFunc("GET /fs/changes", handleFSChanges)
