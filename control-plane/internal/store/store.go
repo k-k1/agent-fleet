@@ -136,7 +136,7 @@ type AllowlistEntry struct {
 }
 
 // UsageRow is one (membership, day) showback bucket enriched with human labels
-// for reporting (docs/roadmap.md P3-9). RunningSecs is accumulated workspace
+// for reporting (docs/log/roadmap.md P3-9). RunningSecs is accumulated workspace
 // occupancy in seconds. A member with no membership record still surfaces (its
 // workspace outlived the membership) with empty UserKey/Email.
 type UsageRow struct {
@@ -1411,7 +1411,7 @@ type SettingsStore interface {
 	DeleteSetting(ctx context.Context, key string) error
 }
 
-// UsageStore is showback usage (docs/roadmap.md P3-9). AddUsage accumulates
+// UsageStore is showback usage (docs/log/roadmap.md P3-9). AddUsage accumulates
 // workspace running-seconds into the (membership, day) bucket; ListUsage
 // returns the per-day rows in [fromDay, toDay] (inclusive, YYYY-MM-DD), scoped
 // to one tenant or, when tenantID=="", every tenant (super_admin).

@@ -1,6 +1,6 @@
 # 10. Phase 0 PoC 手順書（ローカル Docker / `/login` 検証）
 
-ロードマップ [Phase 0](../roadmap.md) の実行手順。
+ロードマップ [Phase 0](roadmap.md) の実行手順。
 最小スキャフォールド（`phase0/`）で検証した（検証完了後に scaffold は削除済み）。本書は「何を確かめ、何を記録し、どこで合格とするか」を記録として残す。
 
 > **状態: 検証完了（2026-06-26 / claude v2.1.193）。** 最大リスク（ヘッドレスでの `/login`）は解消。
@@ -128,7 +128,7 @@ PoC の成果は「動いた/動かない」ではなく**手順の確定**。�
 
 - H1〜H3 が満たされ、`/login` 手順が [02 §2.6](../build/08-integrations.ja.md#85-claude-認証オンボーディングl2-の本丸) に文書反映される。
 - H4〜H6 を確認し、Phase 1（Agent 化）に必要な操作一覧が確定する。
-- これらで [01 未決 #3（旧 requirements、現 roadmap に統合）](../roadmap.md)（`/login` 対話フロー）をクローズ。
+- これらで [01 未決 #3（旧 requirements、現 roadmap に統合）](roadmap.md)（`/login` 対話フロー）をクローズ。
 
 ## 10.8 既知のリスクと代替
 

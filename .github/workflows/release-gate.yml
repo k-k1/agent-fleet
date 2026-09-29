@@ -491,8 +491,7 @@ jobs:
       - name: build CP image (default DOCS_SRC = full docs tree)
         run: |
           set -eux
+          # Only that the default build succeeds. Without DOCS_SRC the image carries the
+          # repository's docs/ as is, which is the developer tree rather than the guide
+          # (ADR 0064), so asserting its contents here would pin the wrong tree.
           docker build -f control-plane/Dockerfile -t agent-fleet/control-plane:ci-default .
-          # in-house builds keep the full tree (HANDOFF present = denylist applies
-          # to distribution only)
-          docker run --rm --entrypoint /bin/sh agent-fleet/control-plane:ci-default -c '
-            test -f /usr/local/share/agent-fleet/docs/HANDOFF.md'

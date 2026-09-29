@@ -86,11 +86,6 @@ GUIDE_SHELVES = ("member", "admin", "operate", "ref")
 BILINGUAL = LIVING + ("decisions",)
 # Japanese-only = out of scope for the bilingual checks. log/ is the frozen archive.
 JA_ONLY_DIRS = ("log",)
-JA_ONLY_FILES = (
-    "docs/HANDOFF.md",
-    "docs/CHANGELOG-handoff.md",
-    "docs/roadmap.md",
-)
 
 # Living files that are allowed to reference log/.
 FROZEN_REF_ALLOWLIST: set[str] = {
@@ -185,7 +180,7 @@ def all_docs() -> list[str]:
 
 def bilingual_scope(relpath: str) -> bool:
     s = shelf(relpath)
-    if s in JA_ONLY_DIRS or relpath in JA_ONLY_FILES:
+    if s in JA_ONLY_DIRS:
         return False
     if not s:  # directly in a tree: only README / CONVENTIONS are bilingual
         return os.path.basename(relpath).split(".")[0] in ("README", "CONVENTIONS")

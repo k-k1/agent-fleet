@@ -5,7 +5,12 @@
 訂正が連鎖した項目は HANDOFF 側に最終結論のみ載る（途中経過の誤りは教訓として圧縮）。
 
 > **本ログは 2026-07-15 で打ち切り。** 以降の変遷は git 履歴（develop）と
-> [docs/README.md](README.md) の索引・各設計ドキュメント（docs/NN）を参照。
+> [docs/README.md](../README.md) の索引・各設計ドキュメント（docs/NN）を参照。
+
+> 🔴 **2026-09-29: `docs/HANDOFF.md` を廃止し、このログは `docs/CHANGELOG-handoff.md` から log/ へ移した**（#1170）。
+> 上の「現状は HANDOFF の各テーマ節」はもう成り立たない。現状の仕様は [build/](../build/README.ja.md)、
+> 決定は [decisions/](../decisions/)、未完の作業は GitHub の Issue にある。移動の際、本文の個人情報
+> 2 か所（例示に使っていた実際のメールアドレスと、別メンバーの名前）だけを伏せた。
 
 ## 2026-06-26
 - Phase 1 MVP 完了（commit `dd2330e`）。Workspace Agent + Control Plane + 最小 Console、`/login` フルチェーン検証。
@@ -51,11 +56,11 @@
 - 続き19: 表示設定のサーバー保存（端末間同期、`ui_prefs.go`）/ 管理設定を別モーダルに分離（`AdminDialog`）。
 - 続き20: スマホ端末対応（監視＋軽操作）。`@media(max-width:760px)` に閉じ込め、左ペインをドロワー化（ハンバーガー/バックドロップ/選択で自動クローズ）・モーダル全画面・タッチターゲット拡大。端末に最小コントロールキー列（Esc/Tab/矢印/Ctrl-C/Enter, `TermKeys.jsx`）+ `visualViewport` refit + 1本指スワイプでスクロールバック。`sendInput` は PTY 直送（Gboard を不要に呼ばない）。
 - 続き21: Workspace image にツールチェーン追加。Go（公式 tarball・`ARG GO_VERSION=1.26.4`・アーキ検出、`~/go` 永続）+ C/C++ 基盤（build-essential/pkg-config/python3-dev=cgo・node-gyp・wheel ソースビルド）+ jq/unzip/zip/wget/gnupg/htop/fd/bat。実ビルド + cgo 検証済。image 約1.0G→2.82GB。git-delta は bookworm 非収録で除外、sudo は隔離維持で非導入。
-- サービスプレビュー（`/preview/<port>` 経路、commit `23975c8`）。CP `handlePreview`（`rtFor` 認証 + `Bearer` 付与 + `X-Forwarded-*`）→ Agent `/proxy/<port>`（ReverseProxy）→ コンテナ内 `127.0.0.1:<port>`。隔離不変。Console は WS バーのポート入力＋新タブ（`?tenant=` fallback）。HTTP のみ（WS/HMR は次段）。詳細は現行 [dev/05 §5.3](build/05-api.md)（当時参照した reference/preview と HANDOFF §6.10.9 は再編で廃止）。
+- サービスプレビュー（`/preview/<port>` 経路、commit `23975c8`）。CP `handlePreview`（`rtFor` 認証 + `Bearer` 付与 + `X-Forwarded-*`）→ Agent `/proxy/<port>`（ReverseProxy）→ コンテナ内 `127.0.0.1:<port>`。隔離不変。Console は WS バーのポート入力＋新タブ（`?tenant=` fallback）。HTTP のみ（WS/HMR は次段）。詳細は現行 [dev/05 §5.3](../build/05-api.md)（当時参照した reference/preview と HANDOFF §6.10.9 は再編で廃止）。
 ## 2026-06-29
 - 設定→接続で**認証アカウントを表示**。claude（`claude auth status` の email/plan）、codex（`auth.json` の `auth_mode` + id_token claims から email/plan、例 `…@gmail.com · plus`）。
 - 接続を **「エージェント / git ホスティング」にカテゴリ分け**。GitHub/Bitbucket も実アカウント表示（`/user`・`/2.0/user`、store キャッシュ＝polled endpoint で都度 API を叩かない、`gitEntry.Login`/`bitbucketCreds.Account`）。
-- git 接続に **ID（ハンドル）+ email** を表示（GitHub `/user`、Bitbucket `/2.0/user` + `/user/emails`、`gitEntry.Email`/`bitbucketCreds.Email` にキャッシュ）。例: github `k-k1 · k1.kami@gmail.com` / bitbucket `bb-user · dev@example.com`。
+- git 接続に **ID（ハンドル）+ email** を表示（GitHub `/user`、Bitbucket `/2.0/user` + `/user/emails`、`gitEntry.Email`/`bitbucketCreds.Email` にキャッシュ）。例: github `k-k1 · user@example.com` / bitbucket `bb-user · dev@example.com`。
 - 表示: アイコンセット選択を折り返しチップ化（スマホで見切れ解消、`ChipChoice`）。設定/管理モーダルのヘッダ余白拡大 + ✕ タップ域確保（スマホは `safe-area-inset-top`）。
 - セッション一覧/ファイルツリーの UI 微修正: (1) 停止中セッション名を `--muted`→`--fg` opacity0.72 で可読に / (2) 接続中セッションは**先頭固定（hoist）を維持** + pin バッジを行の**右上に絶対配置**（セッション名は左寄せ固定。`.session-row` を `position:relative`、pin は `position:absolute`）/ (3) ファイルツリー選択色のハードコード（`#2a3a44`/`#2f5a6a`）を `--hover-bg`/`--active-bg` に＝ライトモードで暗いままを解消 / (4) **`.pane-head` に `z-index:3`** ＝sticky なセクションヘッダ（SESSIONS 等）が sticky なピン行に覆われないように。
 - ピン留め行の sticky 固定が効かない回帰を修正。pin 右上化で足した `.list>li.session-row{position:relative}` が `.session-row.pinned{position:sticky}` を**詳細度で上書き**し上部固定を無効化（少し下にズレる/SESSIONS の隙間から見える）。pin はピン留め行のみ＝sticky が包含ブロックなので relative 不要 → 削除して sticky 復活。
@@ -89,7 +94,7 @@
 - **単一ペインでも閉じるボタンを表示**（`PaneHost.jsx`/`state.jsx`）。従来 `canClose={total>1}` で1枚時は非表示だった。中身のある単一ペイン（セッション/ファイル/SCM、またはセッション表示中の端末）に閉じるボタンを出し、`closePane` の「最後の1枚は no-op」を**空端末へリセット**（`resetToTerminal`）に変更＝中身をクリア。空端末1枚（base 状態）のみ無効（WsBar「全ペインを閉じる」と同じ判定 `isBlankSingle`）。
 - **WS 状態ラベルを平易化**（`WsBar.jsx` `wsLabel()`）。CP は docker 由来の生 state（`runtime.go state()` = running/stopped/**none**）を返す。Stop は `docker rm -f`＝コンテナ削除なので**通常の停止は `none`**（データは bind mount で保持・Start で再作成）、`stopped` はコンテナ自走終了（クラッシュ/OOM）時のみ。生語が UI に漏れ「none＝意味不明」だったのを `none/stopped→停止`・`running→稼働中`・transient も和訳し、生 state は tooltip に退避。表示層のみ（状態機械の値・ロジックは不変）。
 - **ドキュメント整合（Phase 3 区切り）**: 実体（Console 刷新済・MCP 段1=member ライブ）に対し roadmap/README 索引/decision 0006 が「P3-6 未着手」のままだったのを修正。Phase 3 は「機能構築チャプター（P3-1〜5 + Console 刷新 + P3-6 段1）」を一旦区切り、配布工程（P3-7〜10）が残＝roadmap の完了ゲート（第2デプロイ E2E）は未達ゆえマイルストーンは進行中のまま。
-- **P3-6 admin MCP ツール（read/write）実装・ライブ E2E green**。`/mcp` に admin ツールを追加: read=`list_workspaces`/`get_usage`/`list_sessions`、write=`stop_workspace`/`stop_session`/`set_user_quota`。ライブ検証（運用者デプロイ・CP 再起動後、DB 直挿しの一時 admin PAT で）= super_admin 全10ツール+host stats／tenant_admin は admin 可視・host stats 無し／plain member は member 4ツールのみ・admin は 401／write が `audit_log`(actor_kind=mcp) 記録、を確認。検証 PAT は後始末で削除。※検証中 `stop_workspace` のターゲット選定ミスで naoki の稼働 workspace を 1 件停止（データは bind mount で保持・セッション meta 永続ゆえ再接続で復帰）。`mcp.go` に `mcpTool.admin` + `adminPrincipal`（PAT→**live role 再解決**で super_admin / その PAT tenant の tenant_admin を gate、tenant はトークン固定）。read は既存 admin サービス層、write は `stopWorkspaceByMembership`/Agent `/halt`/`PutUserLimit` を薄く wrap。write は **`AuditLog`（`actor_kind=mcp`）へ記録**——その土台として **migration 0007 `audit_log` + store `InsertAudit`/`ListAuditByTenant`** を新設（従来 `AuditLog` はスキーマ未作成だった）。ハマり: 監査マイグレーションのコメント内 `;` で migrator の `Split(";")` がコメントを途中分割し SQL 構文エラー → コメントから `;` を除去。dangerous 段（rotate_key/stop_all_idle）は土台（鍵ローテ・idle 検出・tail_audit）待ちで残。
+- **P3-6 admin MCP ツール（read/write）実装・ライブ E2E green**。`/mcp` に admin ツールを追加: read=`list_workspaces`/`get_usage`/`list_sessions`、write=`stop_workspace`/`stop_session`/`set_user_quota`。ライブ検証（運用者デプロイ・CP 再起動後、DB 直挿しの一時 admin PAT で）= super_admin 全10ツール+host stats／tenant_admin は admin 可視・host stats 無し／plain member は member 4ツールのみ・admin は 401／write が `audit_log`(actor_kind=mcp) 記録、を確認。検証 PAT は後始末で削除。※検証中 `stop_workspace` のターゲット選定ミスで 別メンバーの稼働 workspace を 1 件停止（データは bind mount で保持・セッション meta 永続ゆえ再接続で復帰）。`mcp.go` に `mcpTool.admin` + `adminPrincipal`（PAT→**live role 再解決**で super_admin / その PAT tenant の tenant_admin を gate、tenant はトークン固定）。read は既存 admin サービス層、write は `stopWorkspaceByMembership`/Agent `/halt`/`PutUserLimit` を薄く wrap。write は **`AuditLog`（`actor_kind=mcp`）へ記録**——その土台として **migration 0007 `audit_log` + store `InsertAudit`/`ListAuditByTenant`** を新設（従来 `AuditLog` はスキーマ未作成だった）。ハマり: 監査マイグレーションのコメント内 `;` で migrator の `Split(";")` がコメントを途中分割し SQL 構文エラー → コメントから `;` を除去。dangerous 段（rotate_key/stop_all_idle）は土台（鍵ローテ・idle 検出・tail_audit）待ちで残。
 
 ## 2026-07-15
 - **docs/27＋ADR 0015 起草: エージェント制御の Managed Driver 化**。Codex TUI のモデル勝手切替バグ（暫定対処 `9414525`）を発端に、3 エージェント横断の設計を確定: Codex/OpenCode は共有 runtime（app-server / serve）＋構造化 RPC の managed を既定・ユーザー選択の CLI ルート常設、Claude は現状 TUI 維持（Session Manager 案は凍結・付録温存）。既存 read 層温存＋Driver/RuntimeSupervisor 増築、記録は「read=ネイティブストア正本／live=イベント／write=API」三層、認証・config 反映は generation＋drain、着手順 P1（Codex 観測拡張）→P1.5（Console managed UI）→P2（OpenCode）→P3（Codex 既定化）。並行設計セッション sol×fable の統合。実装未着手。
