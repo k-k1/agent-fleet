@@ -181,23 +181,76 @@ func HasSession(tn string) bool {
 
 // CLIRecordsSince is the instant that separates what the CLI now running in tmux session tn
 // has recorded from what an earlier process in that pane left behind; ok is false when there
-// is no such session. Every launch is a fresh new-session whose pane closes with the CLI, so
-// anything recorded before the session was created belongs to a process that is gone. tmux
-// stamps the creation to the second, so the bound is the second after it: a record made in the
-// same second, by a process killed just before its pane was replaced, is still an earlier
-// one's, and the new CLI cannot have made it — no CLI boots and records a question within its
-// first second.
+// is no such session. Every launch is a fresh new-session whose pane closes with the CLI, and
+// the CLI runs under the pane's own process, so the start of that process is the bound: an
+// earlier process in the pane was dead before it began, and the CLI records nothing before it.
+//
+// tmux stamps the session's creation only to the second, too coarse to split a question the
+// new CLI asked in its first second from one a process killed in that same second left behind,
+// so the pane process's start is read from /proc instead. Where /proc is missing (a native
+// macOS Agent) the bound falls back to the second after the stamp: a question of that second
+// is then read as the earlier process's, which lets a send through the way it went before
+// the gate knew about questions, rather than refusing one with nothing on screen to answer.
 func CLIRecordsSince(tn string) (time.Time, bool) {
-	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created}").Output()
+	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created} #{pane_pid}").Output()
 	if err != nil {
 		return time.Time{}, false
 	}
 	first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
-	sec, err := strconv.ParseInt(strings.TrimSpace(first), 10, 64)
+	f := strings.Fields(first)
+	if len(f) == 0 {
+		return time.Time{}, false
+	}
+	sec, err := strconv.ParseInt(f[0], 10, 64)
 	if err != nil || sec <= 0 {
 		return time.Time{}, false
 	}
+	if len(f) > 1 {
+		if pid, err := strconv.Atoi(f[1]); err == nil {
+			if start, ok := ProcessStart(pid); ok {
+				return start, true
+			}
+		}
+	}
 	return time.Unix(sec+1, 0), true
+}
+
+// clockTicks is USER_HZ, the unit of a /proc/<pid>/stat start time: 100 on every Linux ABI.
+const clockTicks = 100
+
+// ProcessStart returns when process pid started, to the clock tick: its start in ticks since
+// boot (/proc/<pid>/stat, field 22) set against the uptime now (/proc/uptime). ok is false
+// where /proc is missing or once the process is gone.
+func ProcessStart(pid int) (time.Time, bool) {
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return time.Time{}, false
+	}
+	// The command (field 2) is in parentheses and may itself hold spaces and ")".
+	i := strings.LastIndexByte(string(stat), ')')
+	if i < 0 {
+		return time.Time{}, false
+	}
+	f := strings.Fields(string(stat[i+1:])) // f[0] is field 3
+	if len(f) < 20 {
+		return time.Time{}, false
+	}
+	ticks, err := strconv.ParseInt(f[19], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	up, err := os.ReadFile("/proc/uptime")
+	now := time.Now()
+	if err != nil {
+		return time.Time{}, false
+	}
+	upStr, _, _ := strings.Cut(strings.TrimSpace(string(up)), " ")
+	uptime, err := strconv.ParseFloat(upStr, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	age := uptime - float64(ticks)/clockTicks
+	return now.Add(-time.Duration(age * float64(time.Second))), true
 }
 
 // SessionPaneID returns the active pane id (e.g. "%0") of a session's current

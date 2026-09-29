@@ -3,20 +3,26 @@ package opencode
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// fakeTmuxSession puts a tmux on PATH whose session was created at created (zero: no session).
-func fakeTmuxSession(t *testing.T, created time.Time) {
+// fakeTmuxSession puts a tmux on PATH whose session was created at created (zero: no session),
+// its pane running process pid when one is given.
+func fakeTmuxSession(t *testing.T, created time.Time, pid ...int) {
 	t.Helper()
 	bin := t.TempDir()
 	stamp := ""
 	if !created.IsZero() {
 		stamp = fmt.Sprint(created.Unix())
+		if len(pid) > 0 {
+			stamp += fmt.Sprintf(" %d", pid[0])
+		}
 	}
 	script := `#!/bin/sh
 [ -n "` + stamp + `" ] || exit 1
@@ -123,4 +129,45 @@ func TestOpencodeQuestionClosedByDismissOrHangup(t *testing.T) {
 			}
 		})
 	}
+}
+
+// With the pane's process readable, its start splits even the second tmux stamps: a question the
+// new opencode asks within that second is its own, and one left from before it is not.
+func TestOpenQuestionIsSplitAtThePaneProcessStart(t *testing.T) {
+	pid, start := startPaneProcess(t) // before a fake tmux takes over PATH
+	for name, c := range map[string]struct {
+		asked time.Time
+		want  string
+	}{
+		"asked by the pane's own opencode": {start.Add(100 * time.Millisecond), "question"},
+		"left from before it":              {start.Add(-100 * time.Millisecond), ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := questionStore(t, c.asked.UnixMilli())
+			fakeTmuxSession(t, c.asked.Truncate(time.Second), pid)
+			if got := TerminalModal(m); got != c.want {
+				t.Errorf("TerminalModal = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// startPaneProcess starts a process that stands in for the pane's, and returns it with its start
+// as the Agent reads it. Call it before a fake tmux takes over PATH.
+func startPaneProcess(t *testing.T) (int, time.Time) {
+	t.Helper()
+	bin, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatalf("no sleep binary: %v", err)
+	}
+	cmd := exec.Command(bin, "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	start, ok := tmuxx.ProcessStart(cmd.Process.Pid)
+	if !ok {
+		t.Skip("no /proc to read a process start from")
+	}
+	return cmd.Process.Pid, start
 }

@@ -30,9 +30,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -45,19 +47,28 @@ var paneMenus = []struct{ title, row, state string }{
 	{"Ready to build?", "build locally", "plan"},
 }
 
-// composerMarks are the composer's placeholders (the same ones PaneMode reads). The composer is
-// drawn at the bottom whenever no menu has taken its place, a running turn included.
+// composerMarks are the composer's placeholders (the same ones PaneMode reads).
 var composerMarks = []string{"Add a follow-up", "Plan, search, build anything"}
 
-// paneModal classifies one captured frame: "permission" (a command approval), "plan" (the
-// build approval) or "". A live menu is the last thing on the screen, drawn where the composer
-// would be: its title must be followed by one of its own rows and by no composer. Prose that
-// quotes the words — this very file shown in a transcript — has the composer under it.
-func paneModal(s string) string {
+// paneModal classifies one captured frame of a pane whose CLI runs in one of cwds (the working
+// directory as cursor prints it, cwdForms): "permission" (a command approval), "plan" (the
+// build approval) or "".
+//
+// A live menu takes the composer's place at the bottom of the screen, so a frame whose composer
+// is still there holds no menu, whatever the prose above it quotes — this very file shown in a
+// transcript, say. The composer is recognised by the working directory cursor prints on its last
+// lines, which stays when a typed draft replaces the placeholder, and by a placeholder after the
+// menu. Of the menus whose title is followed by one of its own rows, the lowest wins: a plan
+// that explains the approval menu quotes its words above "Ready to build?".
+func paneModal(s string, cwds ...string) string {
+	if composerAtBottom(s, cwds) {
+		return ""
+	}
 	flat := flatten(s)
+	state, at := "", -1
 	for _, m := range paneMenus {
 		i := strings.LastIndex(flat, m.title)
-		if i < 0 {
+		if i <= at {
 			continue
 		}
 		rest := flat[i:]
@@ -69,10 +80,51 @@ func paneModal(s string) string {
 			drawn = drawn || strings.Contains(rest, c)
 		}
 		if !drawn {
-			return m.state
+			state, at = m.state, i
 		}
 	}
-	return ""
+	return state
+}
+
+// composerAtBottom reports whether the frame ends with one of cwds, the working directory
+// cursor prints under its composer. A long path wraps mid-word on a narrow pane (measured), so
+// the last lines are joined back before comparing.
+func composerAtBottom(s string, cwds []string) bool {
+	var lines []string
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			lines = append(lines, ln)
+		}
+	}
+	joined := ""
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-8; i-- {
+		joined = lines[i] + joined
+		for _, c := range cwds {
+			if c != "" && joined == c {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cwdForms are the ways cursor may print the session's working directory under its composer:
+// in full, or under $HOME as "~/…" (both measured), for the path as launched and as resolved.
+func cwdForms(m session.Meta) []string {
+	var forms []string
+	home := paths.HomeDir()
+	add := func(p string) {
+		forms = append(forms, p)
+		if home != "" && (p == home || strings.HasPrefix(p, home+"/")) {
+			forms = append(forms, "~"+strings.TrimPrefix(p, home))
+		}
+	}
+	cwd := m.CWD()
+	add(cwd)
+	if real, err := filepath.EvalSymlinks(cwd); err == nil && real != cwd {
+		add(real)
+	}
+	return forms
 }
 
 // flatten joins the pane's lines into one, each stripped of its padding and of the border cursor
@@ -99,7 +151,7 @@ func TerminalModal(m session.Meta) string {
 	if m.DriverKind() == session.DriverManaged {
 		return ""
 	}
-	return paneModal(tmuxx.CapturePane(session.TmuxName(m.Name)))
+	return paneModal(tmuxx.CapturePane(session.TmuxName(m.Name)), cwdForms(m)...)
 }
 
 // terminalPendingModal hands a Terminal pane's modal to the carry-over (docs/log/75 P5). An
@@ -107,7 +159,7 @@ func TerminalModal(m session.Meta) string {
 // plan carries its body, which the CreatePlan call it waits behind recorded in the JSONL.
 func terminalPendingModal(m session.Meta) (agents.PendingModal, bool) {
 	s := tmuxx.CapturePane(session.TmuxName(m.Name))
-	switch paneModal(s) {
+	switch paneModal(s, cwdForms(m)...) {
 	case "permission":
 		return agents.PendingModal{Kind: "permission", Detail: approvalLine(s)}, true
 	case "plan":

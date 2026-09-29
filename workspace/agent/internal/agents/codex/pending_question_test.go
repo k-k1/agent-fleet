@@ -3,12 +3,14 @@ package codex
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Rollout lines in the shapes codex 0.159.0 wrote during #1227's measurement, ids neutral.
@@ -118,15 +120,19 @@ func TestSnapshotBoundsTheQuestionToTheProcess(t *testing.T) {
 	}
 }
 
-// fakeTmuxSession puts a tmux on PATH whose session was created at created (zero: no session).
-// It logs every call, so a test can tell whether the pane was consulted.
-func fakeTmuxSession(t *testing.T, created time.Time) (logPath string) {
+// fakeTmuxSession puts a tmux on PATH whose session was created at created (zero: no session),
+// its pane running process pid when one is given. It logs every call, so a test can tell
+// whether the pane was consulted.
+func fakeTmuxSession(t *testing.T, created time.Time, pid ...int) (logPath string) {
 	t.Helper()
 	bin := t.TempDir()
 	logPath = filepath.Join(bin, "tmux.log")
 	stamp := ""
 	if !created.IsZero() {
 		stamp = fmt.Sprint(created.Unix())
+		if len(pid) > 0 {
+			stamp += fmt.Sprintf(" %d", pid[0])
+		}
 	}
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "` + logPath + `"
@@ -166,6 +172,7 @@ func writeSlotRollout(t *testing.T, m session.Meta, id string, lines ...[]byte) 
 // On the Terminal route a question must belong to the pane's running codex; under managed the
 // pane does not exist, and only the turn boundary applies.
 func TestPendingQuestionIDIsBoundToTheRunningPane(t *testing.T) {
+	pid, start := startPaneProcess(t) // before a fake tmux takes over PATH
 	t.Setenv("HOME", t.TempDir())
 	m := session.Meta{Name: "cx-q", Dir: t.TempDir(), Kind: session.KindCodex}
 	asked := time.Date(2026, 9, 30, 2, 25, 47, 331e6, time.UTC)
@@ -200,6 +207,25 @@ func TestPendingQuestionIDIsBoundToTheRunningPane(t *testing.T) {
 		t.Errorf("no pane: PendingQuestionID = %q, want none", got)
 	}
 
+	// With the pane's process readable, its start splits even the second tmux stamps: a question
+	// the new codex asks within that second is its own, and one left from before it is not.
+	fresh := start.Add(100 * time.Millisecond)
+	writeSlotRollout(t, m, "01a0ee31-0000-7000-8000-000000000001",
+		taskStarted(fresh.Add(-50*time.Millisecond).Format(time.RFC3339Nano), "t9"),
+		askUser(fresh.Format(time.RFC3339Nano), "call_new", "Which animal?"))
+	fakeTmuxSession(t, fresh.Truncate(time.Second), pid)
+	if got := PendingQuestionID(m); got != "call_new" {
+		t.Errorf("asked by the pane's own codex within the stamped second: PendingQuestionID = %q, want call_new", got)
+	}
+	stale := start.Add(-100 * time.Millisecond)
+	writeSlotRollout(t, m, "01a0ee31-0000-7000-8000-000000000001",
+		taskStarted(stale.Add(-50*time.Millisecond).Format(time.RFC3339Nano), "t8"),
+		askUser(stale.Format(time.RFC3339Nano), "call_old", "Which animal?"))
+	if got := PendingQuestionID(m); got != "" {
+		t.Errorf("asked before the pane's process started: PendingQuestionID = %q, want none", got)
+	}
+	writeSlotRollout(t, m, "01a0ee31-0000-7000-8000-000000000001", lines...)
+
 	managed := m
 	managed.Driver = session.DriverManaged
 	logPath := fakeTmuxSession(t, asked.Add(time.Minute))
@@ -221,4 +247,24 @@ func TestPendingQuestionIDIsBoundToTheRunningPane(t *testing.T) {
 	if got := TerminalModal(m); got != "" {
 		t.Errorf("TerminalModal = %q, want none", got)
 	}
+}
+
+// startPaneProcess starts a process that stands in for the pane's, and returns it with its start
+// as the Agent reads it. Call it before a fake tmux takes over PATH.
+func startPaneProcess(t *testing.T) (int, time.Time) {
+	t.Helper()
+	bin, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatalf("no sleep binary: %v", err)
+	}
+	cmd := exec.Command(bin, "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	start, ok := tmuxx.ProcessStart(cmd.Process.Pid)
+	if !ok {
+		t.Skip("no /proc to read a process start from")
+	}
+	return cmd.Process.Pid, start
 }

@@ -3,6 +3,7 @@ package cursor
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,39 +33,79 @@ func TestPaneModalReadsMeasuredCaptures(t *testing.T) {
 		"pane-plan-narrow.txt":     "plan",
 		"pane-composer-narrow.txt": "",
 	} {
-		if got := paneModal(readPane(t, file)); got != want {
+		if got := paneModal(readPane(t, file), fixtureCwd); got != want {
 			t.Errorf("%s: paneModal = %q, want %q", file, got, want)
 		}
 	}
 }
 
+// fixtureCwd is the working directory the captures print under their composer.
+const fixtureCwd = "/home/dev/repos/proj"
+
 // Outside the menu the same words are prose: the assistant quoting them — this package's own
 // source shown in a transcript — or the scrollback of a menu already answered. Reading them as a
-// modal refuses every send with no menu to answer, so a menu counts only when no composer is
-// drawn after it, however close to the bottom the quote sits.
+// modal refuses every send with no menu to answer. A live menu takes the composer's place, so
+// while the composer is on screen nothing reads as a menu: not with a draft typed over its
+// placeholder, and not when a long working directory wraps under it.
 func TestPaneModalIgnoresTheWordsAboveTheComposer(t *testing.T) {
 	composer := readPane(t, "pane-composer-narrow.txt")
 	at := strings.Index(composer, "  → Add a follow-up")
 	if at < 0 {
 		t.Fatal("fixture lost its composer")
 	}
-	for name, quote := range map[string]string{
+	quotes := map[string]string{
 		"approval": "  case strings.Contains(tail, \"Run this command?\") &&\n  \"Skip & tell the agent what to do instead\"\n",
 		"feedback": "  Tell the agent what to do instead (Enter to send, empty to skip)\n",
 		"plan":     "  Ready to build? → 1. Yes, build locally (b)\n",
-	} {
-		pane := composer[:at] + quote + composer[at:]
-		if got := paneModal(pane); got != "" {
-			t.Errorf("%s quoted right above the composer: paneModal = %q, want none", name, got)
+	}
+	draft := strings.Replace(composer, "→ Add a follow-up", "→ a draft the user has not sent", 1)
+	long := "/home/dev/repos/a-very-long-directory-name-for-wrapping/another-long-segment-here/proj"
+	wrapped := strings.Replace(composer, "  "+fixtureCwd+"\n",
+		"  /home/dev/repos/a-very-long-directory-name-for-\n  wrapping/another-long-segment-here/proj\n", 1)
+	for name, quote := range quotes {
+		for frame, c := range map[string]struct{ pane, cwd string }{
+			"placeholder":  {composer, fixtureCwd},
+			"draft":        {draft, fixtureCwd},
+			"wrapped path": {wrapped, long},
+			"~ path":       {strings.Replace(draft, fixtureCwd, "~/repos/proj", 1), "~/repos/proj"},
+		} {
+			i := strings.Index(c.pane, "  → ")
+			if got := paneModal(c.pane[:i]+quote+c.pane[i:], c.cwd); got != "" {
+				t.Errorf("%s quoted above the composer (%s): paneModal = %q, want none", name, frame, got)
+			}
 		}
 	}
 	for name, pane := range map[string]string{
 		"empty capture": "",
-		"new chat":      "  → Plan, search, build anything\n\n  Auto\n  /home/dev/repos/proj\n",
+		"new chat":      "  → Plan, search, build anything\n\n  Auto\n  " + fixtureCwd + "\n",
 	} {
-		if got := paneModal(pane); got != "" {
+		if got := paneModal(pane, fixtureCwd); got != "" {
 			t.Errorf("%s: paneModal = %q, want none", name, got)
 		}
+	}
+}
+
+// A plan may explain the approval menu, quoting its words inside the box above "Ready to build?",
+// and a transcript above an approval may quote the build approval. The menu on screen is the
+// lowest one, and the refusal and the carried card must name that one.
+func TestPaneModalTakesTheLowestMenu(t *testing.T) {
+	plan := readPane(t, "pane-plan.txt")
+	i := strings.Index(plan, " │ Ready to build?")
+	if i < 0 {
+		t.Fatal("fixture lost its title")
+	}
+	quoting := plan[:i] + " │ The approval reads Run this command? with Skip & tell the agent what to do instead. │\n" + plan[i:]
+	if got := paneModal(quoting, fixtureCwd); got != "plan" {
+		t.Errorf("plan that quotes the approval menu: paneModal = %q, want plan", got)
+	}
+	approval := readPane(t, "pane-approval.txt")
+	j := strings.Index(approval, " Run this command?")
+	if j < 0 {
+		t.Fatal("fixture lost its title")
+	}
+	quoted := approval[:j] + "  Earlier it asked Ready to build? and I chose build locally.\n" + approval[j:]
+	if got := paneModal(quoted, fixtureCwd); got != "permission" {
+		t.Errorf("approval under a quote of the build approval: paneModal = %q, want permission", got)
 	}
 }
 
@@ -204,5 +245,22 @@ func TestTerminalModalLeavesManagedToItsDriver(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(logPath); len(b) > 0 {
 		t.Errorf("managed session ran tmux:\n%s", b)
+	}
+}
+
+// cursor prints the working directory under its composer in full, or as "~/…" under $HOME
+// (measured); both have to be recognised, or the composer of a session under $HOME is missed.
+func TestCwdFormsCoverTheHomeAbbreviation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "repos", "proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := cwdForms(session.Meta{Name: "cu-cwd", Dir: dir, Kind: session.KindCursor})
+	for _, want := range []string{dir, "~/repos/proj"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("cwdForms = %q, missing %q", got, want)
+		}
 	}
 }
