@@ -31,8 +31,9 @@
 #     deletion of an exporting stack is cancelled silently while an importer is alive and
 #     only the wait loop keeps spinning
 #  9. `Persistence=retain` needs deletion protection removed or step 8 fails. The final
-#     snapshot and the EFS are kept — that is what retain means, so they go only when
-#     `--purge-retained` is given
+#     snapshot, the EFS and its AWS Backup vault are kept — that is what retain means, so
+#     they go only when `--purge-retained` is given. The vault's recovery points still
+#     expire on their own (EfsBackupRetentionDays), since the lifecycle is on each point
 # 10. Task definitions (they cost nothing but outlive the stacks)
 # 11. The ACM validation CNAMEs, which stay in the zone otherwise — and then the next
 #     deployment's certificate validates "too fast", which means the issuing path was
@@ -41,9 +42,9 @@
 # ## What this never touches
 #
 # The hosted zone itself; `/af-cp/*` (deleted only with `--purge-secrets`); the RDS final
-# snapshot and EFS that retain kept (only with `--purge-retained`); and anything that does
-# not match this deployment's tags or names — under Control Tower the account also holds
-# `StackSet-*`, `<org>-baseline-*` and Account Factory VPCs.
+# snapshot, EFS and EFS backup vault that retain kept (only with `--purge-retained`); and
+# anything that does not match this deployment's tags or names — under Control Tower the
+# account also holds `StackSet-*`, `<org>-baseline-*` and Account Factory VPCs.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,7 +61,8 @@ usage: teardown.sh --profile <p> --region <r> [--yes] [--purge-retained] [--purg
                     stacks are gone, and they are what a rebuild needs
   --yes             actually delete (without it: inventory + plan only)
   --purge-retained  also delete what Persistence=retain deliberately kept (RDS final
-                    snapshot, EFS filesystem). Ignored when persistence=delete
+                    snapshot, EFS filesystem, the EFS backup vault and its recovery
+                    points). Ignored when persistence=delete
   --purge-secrets   also delete /af-cp/* (cookie-secret, master-key, IdP client secret).
                     Keep them to redeploy into the same account
   --dry-run         print every write instead of making it
@@ -106,6 +108,13 @@ SSM_PREFIX="$(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)"
 HOSTED_ZONE="$(af_stack_param "$AF_STACK_INGRESS" HostedZoneId)"
 [ -n "$HOSTED_ZONE" ] || HOSTED_ZONE="$(captured_param HostedZoneId)"
 EFS_ID="$(af_stack_output "$AF_STACK_DATA" EfsId)"
+# 10-data names the vault after its own stack, so the fallback still finds it on a re-run
+# after the stacks are gone.
+BACKUP_VAULT=""
+if [ "$AF_PERSISTENCE" = retain ]; then
+  BACKUP_VAULT="$(af_stack_output "$AF_STACK_DATA" EfsBackupVaultName)"
+  [ -n "$BACKUP_VAULT" ] || BACKUP_VAULT="$AF_STACK_DATA-efs"
+fi
 DB_ID=""
 if af_stack_exists "$AF_STACK_DATA"; then
   DB_ID="$("${AWS[@]}" cloudformation describe-stack-resource --stack-name "$AF_STACK_DATA" \
@@ -145,6 +154,11 @@ list_aps() {
   "${AWS[@]}" efs describe-access-points --file-system-id "$EFS_ID" \
     --query 'AccessPoints[].AccessPointId' --output text 2>/dev/null | txt || true
 }
+list_recovery_points() {
+  [ -n "$BACKUP_VAULT" ] || return 0
+  "${AWS[@]}" backup list-recovery-points-by-backup-vault --backup-vault-name "$BACKUP_VAULT" \
+    --query 'RecoveryPoints[].RecoveryPointArn' --output text 2>/dev/null | txt || true
+}
 WS_SVCS="$(list_ws_svcs)"; SLOTS="$(list_slots)"; HOMES="$(list_homes)"; SNAPS="$(list_snaps)"; APS="$(list_aps)"
 ENGINE_BOXES="$(list_engine_boxes)"
 count() {
@@ -153,7 +167,7 @@ count() {
 echo "    runtime residue: workspaces=$(count "$WS_SVCS") pool-instances=$(count "$SLOTS") (engine boxes=$(count "$ENGINE_BOXES")) volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
 echo "    keeping        : hosted zone $HOSTED_ZONE / $SSM_PREFIX/* $([ "$PURGE_SECRETS" = 1 ] && echo '(NO — --purge-secrets)')"
 if [ "$AF_PERSISTENCE" = retain ]; then
-  echo "    retain         : RDS final snapshot + EFS $EFS_ID are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
+  echo "    retain         : RDS final snapshot + EFS $EFS_ID + backup vault $BACKUP_VAULT ($(count "$(list_recovery_points)") recovery points) are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
 fi
 echo ""
 echo "⚠️ ECR (af-control-plane / af-workspace) is a 20-platform resource with EmptyOnDelete: true."
@@ -414,8 +428,37 @@ if [ "$AF_PERSISTENCE" = retain ]; then
           || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
       fi
     fi
+    # AWS refuses to delete a vault that still holds recovery points, and deleting a point
+    # is asynchronous (it sits in DELETING for a while), so wait for the vault to empty.
+    RPS="$(list_recovery_points)"
+    if [ -n "${RPS// /}" ]; then
+      echo "==> 9c. deleting $(count "$RPS") EFS recovery points in $BACKUP_VAULT"
+      for rp in $RPS; do
+        if [ "$AF_DRY" = 1 ]; then
+          echo "DRY: backup delete-recovery-point --backup-vault-name $BACKUP_VAULT --recovery-point-arn $rp"
+        else
+          err="$("${AWS[@]}" backup delete-recovery-point --backup-vault-name "$BACKUP_VAULT" \
+            --recovery-point-arn "$rp" 2>&1)" || echo "    ⚠️ not deleted: $rp: $(printf '%s' "$err" | tail -1)"
+        fi
+      done
+    fi
+    # A deployment that went retain before 10-data declared backups has no vault at all.
+    if [ -n "$BACKUP_VAULT" ] && "${AWS[@]}" backup describe-backup-vault \
+        --backup-vault-name "$BACKUP_VAULT" >/dev/null 2>&1; then
+      echo "==> 9d. deleting the EFS backup vault $BACKUP_VAULT"
+      if [ "$AF_DRY" = 1 ]; then
+        echo "DRY: backup delete-backup-vault --backup-vault-name $BACKUP_VAULT"
+      else
+        for _ in $(seq 1 30); do
+          [ -z "$(list_recovery_points)" ] && break
+          sleep 10
+        done
+        err="$("${AWS[@]}" backup delete-backup-vault --backup-vault-name "$BACKUP_VAULT" 2>&1)" \
+          || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
+      fi
+    fi
   else
-    echo "==> 9. persistence=retain: kept the RDS final snapshot and EFS $EFS_ID (--purge-retained deletes them)"
+    echo "==> 9. persistence=retain: kept the RDS final snapshot, EFS $EFS_ID and backup vault $BACKUP_VAULT (--purge-retained deletes them)"
   fi
 fi
 
@@ -510,14 +553,19 @@ rds_left="$("${AWS[@]}" rds describe-db-instances \
 snap_left="$("${AWS[@]}" rds describe-db-snapshots --snapshot-type manual \
   --query "DBSnapshots[?starts_with(DBSnapshotIdentifier,'$AF_STACK_DATA')].DBSnapshotIdentifier" \
   --output text 2>/dev/null | txt || true)"
+vault_left=""
+[ -n "$BACKUP_VAULT" ] && vault_left="$("${AWS[@]}" backup describe-backup-vault --backup-vault-name "$BACKUP_VAULT" \
+  --query 'BackupVaultName' --output text 2>/dev/null | txt || true)"
 if [ "$AF_PERSISTENCE" = retain ] && [ "$PURGE_RETAINED" != 1 ]; then
   printf '    %-22s %s\n' "efs (kept by retain)" "$(count "$efs_left")"
   printf '    %-22s %s\n' "rds snap (retain)" "$(count "$snap_left")"
+  printf '    %-22s %s\n' "efs vault (retain)" "$(count "$vault_left")"
   left "rds instances" "$rds_left"
 else
   left "efs filesystems" "$efs_left"
   left "rds instances" "$rds_left"
   left "rds snapshots" "$snap_left"
+  left "efs backup vaults" "$vault_left"
 fi
 
 cat <<EOF

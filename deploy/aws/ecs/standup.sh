@@ -15,7 +15,8 @@
 #
 #  1. Order and capabilities. Each stack imports the previous one's exports, so the order
 #     is fixed. `10-data` declares `Transform: AWS::LanguageExtensions` and so needs
-#     CAPABILITY_AUTO_EXPAND; `20-platform` and `40-ec2-pool` create named IAM roles and
+#     CAPABILITY_AUTO_EXPAND, plus CAPABILITY_IAM for the EFS backup role it creates under
+#     Persistence=retain; `20-platform` and `40-ec2-pool` create named IAM roles and
 #     so need CAPABILITY_NAMED_IAM (without them the call is refused immediately).
 #  2. ECR starts empty. The ECR repositories are 20-platform resources with
 #     `EmptyOnDelete: true`, so a teardown took the images with them. Put them back with
@@ -319,7 +320,7 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
 }
 
 deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network
-deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND
+deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND CAPABILITY_IAM
 deploy_stack "$AF_STACK_PLATFORM" 20-platform.yaml 20-platform CAPABILITY_NAMED_IAM
 
 # --- 4) images (ECR starts out empty) ----------------------------------------

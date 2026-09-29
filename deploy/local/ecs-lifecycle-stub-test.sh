@@ -104,6 +104,9 @@ case "$args" in
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
+  # No output: the path of a teardown re-run after 10-data is gone, where the vault is found
+  # by the name 10-data gives it.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsBackupVaultName']"*) echo "" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "lt-NEW" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
@@ -260,6 +263,12 @@ case "$args" in
   *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*) echo "${STUB_DB_STATUS:-available}" ;;
   *"rds describe-db-instances"*) echo "" ;;
   *"efs describe-file-systems"*) echo "" ;;   # checking after deletion, so empty
+  # The vault holds a point until teardown deletes it. Keep answering "one point" after
+  # that and the wait for the vault to empty spins for five minutes.
+  *"backup list-recovery-points-by-backup-vault"*)
+    grep -q "backup delete-recovery-point" "$STUB_LOG" \
+      || echo "arn:aws:backup:ap-northeast-1:123456789012:recovery-point:rp-1" ;;
+  *"backup describe-backup-vault"*) echo "" ;;
 esac
 FAKE
 cat > "$STUB/crane" <<'FAKE'
@@ -360,6 +369,7 @@ order "crane copy ghcr.io/k-k1/agent-fleet/workspace:9.9.9-dev-test" "cloudforma
 order "cloudformation deploy --stack-name t-pool" "cloudformation deploy --stack-name t-ingress"
 # Get a capability wrong and it is refused immediately
 grep -q "deploy --stack-name t-data .*CAPABILITY_AUTO_EXPAND" "$LOG" || fail "10-data needs CAPABILITY_AUTO_EXPAND"
+grep -q "deploy --stack-name t-data .*CAPABILITY_IAM" "$LOG" || fail "10-data needs CAPABILITY_IAM (the EFS backup role)"
 grep -q "deploy --stack-name t-platform .*CAPABILITY_NAMED_IAM" "$LOG" || fail "20-platform needs CAPABILITY_NAMED_IAM"
 grep -q "deploy --stack-name t-pool .*CAPABILITY_NAMED_IAM" "$LOG" || fail "40-ec2-pool needs CAPABILITY_NAMED_IAM"
 # The rebuilt pool's *new* launch template has to reach 30. Leave the old value in and both
@@ -1196,7 +1206,10 @@ order "rds modify-db-instance --db-instance-identifier t-db --no-deletion-protec
 # Do not touch what retain kept
 hasnt "rds delete-db-snapshot"
 hasnt "efs delete-file-system"
+hasnt "backup delete-recovery-point"
+hasnt "backup delete-backup-vault"
 grep -q "retain" "$WORK/out6" || fail "it did not say that retain kept things"
+grep -q "backup vault t-data-efs" "$WORK/out6" || fail "it did not say that retain kept the EFS backup vault"
 
 echo "== case 7: retain + --purge-retained — delete everything, and confirm it is gone =="
 : > "$LOG"
@@ -1209,5 +1222,11 @@ has "rds delete-db-snapshot --db-snapshot-identifier t-data-snapshot-db-xyz"
 has "efs delete-file-system --file-system-id fs-1"
 # The sweep looks the real resources up again and counts them (nothing is left behind silently)
 order "efs delete-file-system" "efs describe-file-systems --file-system-id fs-1"
+# The vault refuses deletion while it holds a recovery point, so the points go first, and
+# the vault is found by its name even though 10-data (and its output) is already gone.
+order "cloudformation wait stack-delete-complete --stack-name t-network" "backup delete-recovery-point"
+has "backup delete-recovery-point --backup-vault-name t-data-efs --recovery-point-arn arn:aws:backup:ap-northeast-1:123456789012:recovery-point:rp-1"
+order "backup delete-recovery-point" "backup delete-backup-vault --backup-vault-name t-data-efs"
+order "backup delete-backup-vault" "backup describe-backup-vault --backup-vault-name t-data-efs --query BackupVaultName"
 
 echo "OK: deployment lifecycle stub test passed"
