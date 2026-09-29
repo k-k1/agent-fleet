@@ -1776,7 +1776,7 @@ deleted, the points already taken keep expiring on their own schedule; `teardown
 --purge-retained` deletes them and the vault at once.
 
 ⚠️ The restore steps above are written from the AWS Backup documentation and have not
-yet been run end to end on a real deployment.
+yet been run end to end on a real deployment (#1235).
 
 ## Lifecycle scripts (stand up / pause / tear down)
 
