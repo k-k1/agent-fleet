@@ -206,8 +206,10 @@ substrate underneath it.
 - **Upgrades apply the embedded migrations automatically at start and cannot be
   downgraded** — always back up first.
 - **On AWS `WS_DATA` holds nothing** (`30-ingress` points it at `/tmp`). The state is
-  RDS, EFS and, on `ecs-ec2`, the members' EBS homes, and each is backed up on its own
-  terms. **Retaining a resource when its stack is deleted is not a backup.**
+  RDS, EFS and, on `ecs-ec2`, the members' EBS homes, and they are not protected alike —
+  **the templates declare backups for RDS only (with `Persistence=retain`) and none for
+  EFS, and the EBS home backups are off by default.** Retaining a resource when its
+  stack is deleted is not a backup:
   - RDS: `Persistence=retain` in `10-data` turns on 7-day automated backups, a final
     snapshot and deletion protection.
   - EFS: `Persistence=retain` only keeps the file system when the stack is deleted. The
