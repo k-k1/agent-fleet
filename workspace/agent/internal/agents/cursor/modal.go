@@ -88,8 +88,12 @@ func paneModal(s string, cwds ...string) string {
 
 // composerAtBottom reports whether the frame ends with one of cwds, the working directory
 // cursor prints under its composer. A long path wraps mid-word on a narrow pane (measured), so
-// the last lines are joined back before comparing.
+// the last lines are joined back, as many as it takes to reach the longest form.
 func composerAtBottom(s string, cwds []string) bool {
+	longest := 0
+	for _, c := range cwds {
+		longest = max(longest, len(c))
+	}
 	var lines []string
 	for _, ln := range strings.Split(s, "\n") {
 		if ln = strings.TrimSpace(ln); ln != "" {
@@ -97,7 +101,7 @@ func composerAtBottom(s string, cwds []string) bool {
 		}
 	}
 	joined := ""
-	for i := len(lines) - 1; i >= 0 && i >= len(lines)-8; i-- {
+	for i := len(lines) - 1; i >= 0 && len(joined) < longest; i-- {
 		joined = lines[i] + joined
 		for _, c := range cwds {
 			if c != "" && joined == c {

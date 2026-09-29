@@ -59,6 +59,16 @@ func TestPaneModalIgnoresTheWordsAboveTheComposer(t *testing.T) {
 		"plan":     "  Ready to build? → 1. Yes, build locally (b)\n",
 	}
 	draft := strings.Replace(composer, "→ Add a follow-up", "→ a draft the user has not sent", 1)
+	deep := "/home/dev/repos/" + strings.Repeat("a-deep-directory-level/", 11) + "proj"
+	var cut []string
+	for rest := deep; rest != ""; {
+		n := min(26, len(rest)) // a 30-column pane, less the indent
+		cut, rest = append(cut, "  "+rest[:n]), rest[n:]
+	}
+	if len(cut) < 9 {
+		t.Fatalf("the deep path wraps into %d lines, want 9 or more", len(cut))
+	}
+	deepDraft := strings.Replace(draft, "  "+fixtureCwd+"\n", strings.Join(cut, "\n")+"\n", 1)
 	long := "/home/dev/repos/a-very-long-directory-name-for-wrapping/another-long-segment-here/proj"
 	wrapped := strings.Replace(composer, "  "+fixtureCwd+"\n",
 		"  /home/dev/repos/a-very-long-directory-name-for-\n  wrapping/another-long-segment-here/proj\n", 1)
@@ -68,6 +78,7 @@ func TestPaneModalIgnoresTheWordsAboveTheComposer(t *testing.T) {
 			"draft":        {draft, fixtureCwd},
 			"wrapped path": {wrapped, long},
 			"~ path":       {strings.Replace(draft, fixtureCwd, "~/repos/proj", 1), "~/repos/proj"},
+			"deep path":    {deepDraft, deep},
 		} {
 			i := strings.Index(c.pane, "  → ")
 			if got := paneModal(c.pane[:i]+quote+c.pane[i:], c.cwd); got != "" {

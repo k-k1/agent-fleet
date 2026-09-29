@@ -30,7 +30,16 @@ func startSleeper(t *testing.T) (pid int, after, before time.Time) {
 // /proc reads a start to the clock tick (10 ms), and uptime moves in the same steps.
 const tickSlack = 50 * time.Millisecond
 
+// needProc skips what only /proc can answer: a native macOS Agent has none, and falls back.
+func needProc(t *testing.T) {
+	t.Helper()
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("no /proc on this system")
+	}
+}
+
 func TestProcessStartIsWhenTheProcessStarted(t *testing.T) {
+	needProc(t)
 	pid, after, before := startSleeper(t)
 	start, ok := ProcessStart(pid)
 	if !ok {
@@ -62,6 +71,7 @@ func fakeServer(t *testing.T, line string) {
 // second left behind is not. Without a readable pane process it falls back to the second after
 // the stamp, and without a session there is no bound at all.
 func TestCLIRecordsSinceIsThePaneProcessStart(t *testing.T) {
+	needProc(t)
 	pid, after, before := startSleeper(t)
 	stamp := after.Truncate(time.Second)
 
@@ -70,12 +80,21 @@ func TestCLIRecordsSinceIsThePaneProcessStart(t *testing.T) {
 	if !ok || got.Before(after.Add(-tickSlack)) || got.After(before.Add(tickSlack)) || got.Equal(stamp.Add(time.Second)) {
 		t.Errorf("CLIRecordsSince = %v, %v; want the pane process start within [%v, %v]", got, ok, after, before)
 	}
+}
 
+// Where the pane's process cannot be read — no /proc, or a pane that reports none — the bound is
+// the second after tmux's stamp; without a session there is none at all. This holds on every
+// system, so it is checked apart from the /proc read.
+func TestCLIRecordsSinceFallsBackToTheStampedSecond(t *testing.T) {
+	stamp := time.Now().Truncate(time.Second)
 	fakeServer(t, fmt.Sprint(stamp.Unix()))
 	if got, ok := CLIRecordsSince("claude_rs"); !ok || !got.Equal(stamp.Add(time.Second)) {
 		t.Errorf("no pane process: CLIRecordsSince = %v, %v; want %v", got, ok, stamp.Add(time.Second))
 	}
-
+	fakeServer(t, fmt.Sprintf("%d %d", stamp.Unix(), -1))
+	if got, ok := CLIRecordsSince("claude_rs"); !ok || !got.Equal(stamp.Add(time.Second)) {
+		t.Errorf("unreadable pane process: CLIRecordsSince = %v, %v; want %v", got, ok, stamp.Add(time.Second))
+	}
 	fakeServer(t, "")
 	if _, ok := CLIRecordsSince("claude_rs"); ok {
 		t.Error("no session: CLIRecordsSince answered")
