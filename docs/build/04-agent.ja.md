@@ -78,8 +78,12 @@ updated: "2026-09"
 ### 再開
 
 - `POST /sessions/{name}/start` は、停止中のセッションを接続せずに再開する。両 driver 共通。
-- managed は保存した native の会話 id を自分の runtime で resume する。Agent の起動時には、各 kind の
-  `ReconcileManaged` が生きているハンドルを組み直す。
+- managed のセッションは driver の `Resume` で開き直す。やり方はプロセスモデルに従う。
+  - codex と opencode は、native の id を共有デーモンで resume する。
+  - copilot・cursor・kiro・muse は、セッションごとの子を起動し、スロットに記録した会話を開き直す。
+  - lcpp は、Agent の中でスロット自身のストアを開く。
+
+  Agent の起動時には、各 kind の `ReconcileManaged` が生きているハンドルを組み直す。
 - **エージェント種別は、作業ディレクトリが消えていると再開できない**。home へはフォールバックしない。
   `shell` はフォールバックし、`ssm` は常に home で始まる。
 - ⚠️ **claude が再開できるのは、JSONL に本物の user か assistant の行があるときだけ**
@@ -201,12 +205,18 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
   - codex は捕捉する。`codex resume <id>` か `codex fork <id>` を直接起動し、共有の app server は
     経由しない。id は hook が記録し直す。
   - opencode は捕捉する。`opencode --session <id>` で、id は plugin が記録し直す。
-- **managed での起動**: `managedDrivers` に登録した `Driver` が、runtime 自身の session API を話す。
+- **managed での起動**: `managedDrivers` に登録した `Driver`。何を動かすかは `ProcessModel`（上の表）
+  に従う。
   - codex: 共有 app server の `thread/start` / `thread/resume`
   - opencode: 共有サーバーの v1 session API とイベントストリーム
-- **会話の正本**は両 driver とも CLI の native のストアで、kind 自前の転写リーダーが読む（§4.7）。
-  claude の JSONL、codex の rollout JSONL、opencode の SQLite（`message` / `part`）。
-- **live 状態**は CLI が出すものを状態ストアへ正規化する（§4.4）。
+  - lcpp は外部の API を呼ばない。`Resume` が Agent の中でハンドルを作り、自分のストアを開く。
+- **会話の正本**: どこに置くかは kind ごとに決め、kind 自前の転写リーダーを付ける（§4.7）。
+  - claude・codex・opencode は、両 driver とも CLI の native のストアを読む。claude の JSONL、
+    codex の rollout JSONL、opencode の SQLite（`message` / `part`）。
+  - lcpp は自分のストアがそのまま会話。
+  - muse は live の item ストリームを我々のストアへ書き写す。CLI のディスク上のログは内部の
+    runtime 形式で、安定の約束が無いため。
+- **live 状態**は kind が出すものを状態ストアへ正規化する（§4.4）。
   - claude: hook と tmux のプローブ
   - codex: managed では runtime のイベント。TUI では working / idle を hook で、取りこぼしたターン
     終了と保留中の質問を rollout で拾う。
@@ -215,8 +225,12 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
   （`fsDeny`、§4.6）に入れること。
   - claude: `CLAUDE_CONFIG_DIR`（閲覧できる home の外へ退避）
   - codex: `~/.codex`
-  - opencode: プロバイダキーは暗号化ストアに置き、`LaunchPlan.Env` で渡す。opencode 自身の OAuth
-    サインインは `~/.local/share/opencode` の下。
+  - opencode: プロバイダキーは暗号化ストアに置き、opencode 自身の OAuth サインインは
+    `~/.local/share/opencode` の下。キーは TUI のセッションへは `LaunchPlan.Env` で届く。共有の
+    `opencode serve` はプロセスの環境（`cmd.Env`）として受け取り、起動時に一度だけ読む。だから
+    キーの変更はデーモンの再起動を待つ。再起動は Console が勧める（設定 → エージェント、
+    `POST /connections/opencode/serve/restart`）。実行中のターンを drain し、タイムアウト時点で
+    まだ動いているものは打ち切るので、Agent が自分の判断で行うことはない。
 
 - ⚠️ **環境変数は `tmux new-session -e` でプロセスへ届ける**（`agents.LaunchPlan.Env`、適用は
   `startSessionTmux`）。**秘密をコマンドの前置にしてはいけない**。前置は `/proc/*/cmdline` と tmux の
@@ -248,8 +262,11 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
   振り分ける。
 - `/respond` と `/settings` は managed だけ。TUI のセッションには
   `501 respond_unsupported` / `settings_unsupported` を返す。
-- **会話の本文を独自のストアへ複製しない。** native のストアが読みの正本のままで、転写は出口で
-  正規化する（[decisions/0015](../decisions/0015-agent-managed-driver.ja.md)）。
+- **CLI が読める native のストアを持つなら、会話の本文を独自のストアへ複製しない。** native の
+  ストアが読みの正本のままで、転写は出口で正規化する
+  （[decisions/0015](../decisions/0015-agent-managed-driver.ja.md)）。例外は上に書いた lcpp と muse
+  （[decisions/0093](../decisions/0093-lcpp-agent-kind.ja.md)、
+  [0095](../decisions/0095-muse-agent-kind.ja.md)）。
 
 ## 4.4 状態バッジ
 

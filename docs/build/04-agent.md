@@ -88,8 +88,13 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
 
 - `POST /sessions/{name}/start` resumes a stopped session without attaching, for both
   drivers.
-- A managed session resumes its native conversation id on its runtime. At agent boot,
-  each kind's `ReconcileManaged` rebuilds the live handles.
+- A managed session is reopened by its driver's `Resume`, following its process model:
+  - codex and opencode resume the native id on the shared daemon;
+  - copilot, cursor, kiro and muse start their per-session child and reopen the
+    conversation recorded for the slot;
+  - lcpp opens the slot's own store inside the agent.
+
+  At agent boot, each kind's `ReconcileManaged` rebuilds the live handles.
 - **An agent kind cannot resume if its working directory is gone** — it does not fall
   back to the home directory. `shell` does, and `ssm` always starts in the home.
 - ⚠️ **claude is resumable only when its JSONL holds a real user or assistant line**
@@ -230,14 +235,21 @@ flows are [08](08-integrations.md).
   - codex captures it: `codex resume <id>` or `codex fork <id>`, launched directly and
     never through the shared app server; a hook re-records the id.
   - opencode captures it: `opencode --session <id>`; its plugin re-records the id.
-- **Launching under managed**: a `Driver` registered in `managedDrivers`, speaking the
-  runtime's own session API.
+- **Launching under managed**: a `Driver` registered in `managedDrivers`. What it drives
+  follows its `ProcessModel` (the table above).
   - codex: the shared app server's `thread/start` / `thread/resume`.
   - opencode: the shared server's v1 session API and its event stream.
-- **The conversation's truth** is the CLI's native store, for both drivers, read by a
-  transcript reader of the kind's own (§4.7): claude's JSONL, codex's rollout JSONL,
-  opencode's SQLite (`message` / `part`).
-- **Live state** is whatever the CLI emits, normalised into the status store (§4.4).
+  - lcpp calls no external API: `Resume` builds the handle and opens its own store
+    inside the agent.
+- **The conversation's truth**: each kind decides where it lives and gives it a
+  transcript reader of its own (§4.7).
+  - claude, codex and opencode read their CLI's native store, for both drivers:
+    claude's JSONL, codex's rollout JSONL, opencode's SQLite (`message` / `part`).
+  - lcpp's own store is the conversation itself.
+  - muse writes its live item stream into a store of ours, because the CLI's on-disk log
+    is an internal runtime format with no stability promise.
+- **Live state** is normalised into the status store (§4.4) from whatever the kind
+  emits.
   - claude: hooks plus a tmux probe.
   - codex: runtime events under managed. Under TUI, hooks for working / idle, and the
     rollout for a missed turn end and for a pending question.
@@ -246,8 +258,14 @@ flows are [08](08-integrations.md).
   with anything else the kind writes state into.
   - claude: `CLAUDE_CONFIG_DIR`, moved out of the browsable home.
   - codex: `~/.codex`.
-  - opencode: provider keys in the encrypted store, handed over as `LaunchPlan.Env`; its
-    own OAuth sign-in under `~/.local/share/opencode`.
+  - opencode: provider keys are kept in the encrypted store, and its own OAuth sign-in
+    under `~/.local/share/opencode`. The keys reach a TUI session through
+    `LaunchPlan.Env`. The shared `opencode serve` gets them as its process environment
+    (`cmd.Env`) and reads them once, at start. So a key change waits for a restart of
+    the daemon, which the Console offers (Settings → Agents,
+    `POST /connections/opencode/serve/restart`); it drains running turns and cuts off
+    any still running at the timeout, so it is never done on the agent's own
+    initiative.
 
 - ⚠️ **Environment reaches the process through `tmux new-session -e`**
   (`agents.LaunchPlan.Env`, applied by `startSessionTmux`). **Never prefix secrets onto
@@ -285,9 +303,13 @@ flows are [08](08-integrations.md).
   structured API, TUI to the key-input path.
 - `/respond` and `/settings` exist only for managed. A TUI session gets
   `501 respond_unsupported` / `settings_unsupported`.
-- **The conversation body is never copied into a store of our own.** The native store
-  stays the read truth, and the transcript is normalised on the way out
-  ([decisions/0015](../decisions/0015-agent-managed-driver.md)).
+- **Where the CLI keeps a readable native store, the conversation body is never copied
+  into a store of our own.** The native store stays the read truth, and the transcript
+  is normalised on the way out
+  ([decisions/0015](../decisions/0015-agent-managed-driver.md)). lcpp and muse are the
+  exceptions described above
+  ([decisions/0093](../decisions/0093-lcpp-agent-kind.md),
+  [0095](../decisions/0095-muse-agent-kind.md)).
 
 ## 4.4 State badges
 
