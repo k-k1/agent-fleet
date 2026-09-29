@@ -64,7 +64,7 @@ unless they name another tree.
 | Agent instructions | `agent_instructions.go`: `instrSupportedKinds` and the per-kind apply, or `instrUnsupported` with a reason code | The Console's list of targets is built from these two lists. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead: lcpp does, each turn, through `harness.SystemPrompt`, and is in neither list, so the Console shows no lcpp row |
 | Console descriptor | `SESSION_KINDS` in `console/src/types/session.ts`, and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances. Some screens still switch on the kind name, so grep them (below) |
 | Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
-| A contract workflow | its own file under `.github/workflows/`, for a kind that depends on a versioned external product | **One file per agent**, registered with the release watcher. A kind with no such product checks its drift another way (§20.5) |
+| A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
 The table is not a complete list of where kind names appear. Some lists are still kept
 by hand: for example the bracketed-paste kinds in `internal/sessionx/session_io.go`,
@@ -90,9 +90,10 @@ Every one of these cost real debugging time. The first three are the launch cont
 - ⚠️ **tmux target matching is a prefix match.** Use `session.ExactTarget` (`=<name>`)
   for session targets, or you will eventually kill the wrong session. `capture-pane`
   does not accept that form and needs a pane target (`internal/tmuxx`).
-- ⚠️ **A model that only exists in a picker is not a model id.** If your kind has a live
-  catalogue, add it to the resolution in `HandleCreateSession` (`resolveLiveModel`), which
-  **refuses before the clone or worktree happens** — an invalid model that only fails
+- ⚠️ **A model that only exists in a picker is not a model id.** If the picker, or another
+  caller such as MCP `create_session`, can send a label or abbreviation your launch path
+  cannot accept, add the kind to the resolution in `HandleCreateSession`
+  (`resolveLiveModel`), which **refuses before the clone or worktree happens** — an invalid model that only fails
   after launch leaves debris behind. The refusal needs a readable catalogue: when it
   cannot be read, the value passes through and the start proceeds. Which kinds are
   resolved, and the rest of the rule, are [04 §4.2](04-agent.md) ("Other session
@@ -151,13 +152,17 @@ runs the latest, and the headless smoke test draws no TUI. Why, and why that mak
 workflow file per agent a rule, is [10 §10.4](10-development.md) ("Detecting upstream CLI
 breakage").
 
-So a kind that depends on a versioned external product needs a **contract workflow of its
+So a kind whose CLI or host the workspace image pins needs a **contract workflow of its
 own**. What it can check depends on the kind. Most drive the real CLI with a test
 credential. `muse-contract.yml` needs none: it checks the host's protocol schema and the
-shape of its version line, and never runs a turn. A kind with no vendor product checks the
-axis it does depend on another way: lcpp's is the llama.cpp server's API, pinned by an
-opt-in live test against a real engine (`internal/harness/live_contract_test.go`, build
-tag `manuallive`), which no workflow runs.
+shape of its version line, and never runs a turn.
+
+lcpp is the exception. It runs no vendor CLI, and the llama.cpp server it talks to comes
+with the engine — the deployment's, or the member's own server
+([08 §8.6](08-integrations.md)) — not with the workspace image, so no workflow and no
+release watcher covers it. Its contract with that server's API is an opt-in live test run
+by hand against a real engine (`internal/harness/live_contract_test.go`, build tag
+`manuallive`).
 
 Register it with the daily release watcher, `cli-release-watch.yml`, so that a published
 version change dispatches it. `cli-drift.yml` only reports pins that fall behind; it
@@ -187,8 +192,9 @@ A kind is not done when it runs. It is done when:
    in §20.4 pass;
 3. [member/06-agents](../../guide/member/06-agents.md) tells a user how to connect it,
    using the Console's own words (`console/src/lib/i18n/locales/`);
-4. if the kind depends on a versioned external product, its contract workflow exists,
-   is registered with the release watcher, and has passed against a real release;
-   otherwise the check that stands in for it (§20.5) has passed;
+4. if the workspace image pins its CLI or host, its contract workflow exists, is
+   registered with the release watcher, and has passed against a real release; otherwise
+   a check against what it does depend on has passed, run by hand if no workflow can run
+   it (§20.5);
 5. if anything was settled that could plausibly be reopened — why this driver, why this
    id strategy — [decisions/](../decisions/) has the record.

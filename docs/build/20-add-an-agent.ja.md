@@ -61,7 +61,7 @@ updated: "2026-09"
 | エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または理由コード付きで `instrUnsupported` | Console の配布先一覧はこの 2 つから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしており、どちらの一覧にも無いので、Console に lcpp の行は出ない |
 | Console の descriptor | `console/src/types/session.ts` の `SESSION_KINDS` と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
 | 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、`deploy/local/cli-drift-check.sh` の行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
-| contract ワークフロー | `.github/workflows/` の下に専用ファイル（版のある外部製品に依存する種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。そういう製品を持たない種別は別の方法でドリフトを見る（§20.5）|
+| contract ワークフロー | `.github/workflows/` の下に専用ファイル（ワークスペースイメージが CLI やホストをピンする種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。lcpp はイメージで何もピンせず、代わりに手動の検査を持つ（§20.5）|
 
 この表は kind 名が現れる場所の完全な一覧ではありません。手で持っている一覧がまだあります。
 たとえば `internal/sessionx/session_io.go` の bracketed paste を使う種別、`usage_fold.go` の
@@ -85,8 +85,9 @@ updated: "2026-09"
 - ⚠️ **tmux の target は前方一致**。セッションの target には `session.ExactTarget`（`=<name>`）を使う。
   いつか違うセッションを kill します。`capture-pane` はこの形を受け付けず、pane の target が要ります
   （`internal/tmuxx`）。
-- ⚠️ **ピッカーの表示名はモデル id ではない**。live カタログを持つ種別なら `HandleCreateSession` の
-  解決（`resolveLiveModel`）に足す。これが **clone / worktree の副作用より前に拒否**します。
+- ⚠️ **ピッカーの表示名はモデル id ではない**。ピッカーや MCP の `create_session` など他の呼び出し側が、
+  起動経路の受け付けない表示名や略称を送り得るなら、その種別を `HandleCreateSession` の解決
+  （`resolveLiveModel`）に足す。これが **clone / worktree の副作用より前に拒否**します。
   起動後に落ちる無効モデルはゴミを残します。拒否できるのはカタログが読めるときだけで、読めないときは
   指定値のまま起動を続けます。どの種別が解決されるかと規則の残りは [04 §4.2](04-agent.ja.md)
   （「その他のセッション操作」）です。
@@ -139,12 +140,16 @@ updated: "2026-09"
 エージェント毎に 1 ファイルにするのが規則であることは [10 §10.4](10-development.ja.md)
 （「上流 CLI の破壊検知」）にあります。
 
-なので、版のある外部製品に依存する種別には**専用の contract ワークフロー**が要ります。何を検査
-できるかは種別次第です。多くはテスト用の資格情報で実 CLI を駆動します。`muse-contract.yml` は
-資格情報を要さず、ホストのプロトコルスキーマと版表示の形を検査するだけで、ターンは回しません。
-ベンダーの製品を持たない種別は、実際に依存している軸を別の方法で見ます。lcpp の軸は llama.cpp
-サーバーの API で、実エンジンに対するオプトインの live テスト（`internal/harness/live_contract_test.go`、
-ビルドタグ `manuallive`）が押さえています。これを走らせるワークフローはありません。
+なので、ワークスペースイメージが CLI やホストをピンする種別には**専用の contract ワークフロー**が
+要ります。何を検査できるかは種別次第です。多くはテスト用の資格情報で実 CLI を駆動します。
+`muse-contract.yml` は資格情報を要さず、ホストのプロトコルスキーマと版表示の形を検査するだけで、
+ターンは回しません。
+
+lcpp は例外です。ベンダーの CLI を動かさず、話し相手の llama.cpp サーバーはワークスペースイメージ
+ではなくエンジン（配備のもの、または利用者自身のサーバー。[08 §8.6](08-integrations.ja.md)）と
+一緒に来るので、どのワークフローもリリース監視も対象にしていません。そのサーバーの API との契約は、
+実エンジンに対して手で走らせるオプトインの live テスト（`internal/harness/live_contract_test.go`、
+ビルドタグ `manuallive`）です。
 
 毎日のリリース監視 `cli-release-watch.yml` に登録し、公開版が変わったら dispatch されるようにします。
 `cli-drift.yml` はピンの遅れを報告するだけで、何も dispatch しません。登録は 4 か所です。
@@ -170,7 +175,8 @@ updated: "2026-09"
 2. [ref/agents.md](../../guide/ref/agents.ja.md) の列が埋まり、§20.4 の 2 つの検査が通っている。
 3. [member/06-agents](../../guide/member/06-agents.ja.md) に、**Console の言葉で**
    （`console/src/lib/i18n/locales/`）接続の仕方が書いてある。
-4. 版のある外部製品に依存する種別なら、contract ワークフローが在り、リリース監視に登録され、
-   実リリースに対して通っている。そうでなければ、代わりの検査（§20.5）が通っている。
+4. ワークスペースイメージがその CLI やホストをピンするなら、contract ワークフローが在り、
+   リリース監視に登録され、実リリースに対して通っている。そうでなければ、実際に依存している相手に
+   対する検査が通っている。ワークフローで走らせられないなら手で走らせる（§20.5）。
 5. 蒸し返され得る論点（なぜこの driver か、なぜこの id 戦略か）を決着させたなら、
    [decisions/](../decisions/) に記録が在る。
