@@ -399,8 +399,8 @@ type hookInput struct {
 	toolName   string // PreToolUse/PostToolUse: which tool fired this hook ("" = not a tool event)
 	// MessageDisplay's position of delta: which turn and assistant message it belongs to, and
 	// its flush counter within that message. message_id is a display id of claude's own; it
-	// cannot be joined to the transcript's message ids. prompt_id can: the prompt's rows carry
-	// it as promptId.
+	// cannot be joined to the transcript's message ids. prompt_id names the turn, and
+	// UserPromptSubmit / PostToolUse carry it too.
 	promptID  string
 	turnID    string
 	messageID string
@@ -422,7 +422,7 @@ func decodeHookStdin() hookInput {
 		Message          string `json:"message"`           // Notification
 		NotificationType string `json:"notification_type"` // Notification
 		Delta            string `json:"delta"`             // MessageDisplay (streaming text chunk)
-		PromptID         string `json:"prompt_id"`         // MessageDisplay
+		PromptID         string `json:"prompt_id"`         // MessageDisplay, UserPromptSubmit, PostToolUse
 		TurnID           string `json:"turn_id"`           // MessageDisplay
 		MessageID        string `json:"message_id"`        // MessageDisplay
 		Index            int    `json:"index"`             // MessageDisplay
@@ -505,6 +505,12 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 	// it once the turn is over, and the next turn's end removes it.
 	if state == "idle" {
 		status.RemoveLiveText(sid)
+	}
+	// Which turn is running, for the streamed reply: UserPromptSubmit and every PostToolUse carry
+	// the turn's prompt_id. A message streamed under another id is from an earlier turn — one that
+	// ended without Stop, or a flush that landed after it. A subagent's hooks are not this turn.
+	if state == "working" && h.promptID != "" && h.agentID == "" {
+		status.WriteLivePrompt(sid, h.promptID)
 	}
 }
 

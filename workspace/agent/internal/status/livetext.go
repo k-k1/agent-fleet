@@ -23,6 +23,12 @@ import (
 // message back together from the records.
 var liveTexts = fstore.Strings(paths.AgentStateDir, "live-text", ".jsonl")
 
+// livePrompts holds, per sid, the prompt_id of the turn now running, written by every hook of
+// that turn that carries one (WriteLivePrompt). A streamed message whose prompt_id is not this
+// one belongs to an earlier turn. It shares live-text's directory, as last-tool shares
+// pending-perm's.
+var livePrompts = fstore.Strings(paths.AgentStateDir, "live-text", ".prompt")
+
 const (
 	// liveTextFileCap stops appending once the file is this large. The file is removed at every
 	// turn end, and one turn's streamed text stays far below this; the cap only bounds a
@@ -66,6 +72,10 @@ type LiveReply struct {
 	FinalAt time.Time
 	// LastAt is when the newest flush in Text was appended.
 	LastAt time.Time
+	// PrevFinalAt is when the previous message of the same turn got its final flush; zero when
+	// there is none in the file. That message's transcript rows were all written before it, so
+	// a row older than this is not the newest message's.
+	PrevFinalAt time.Time
 }
 
 // AppendLiveText records one MessageDisplay flush. An empty delta is kept only when it is the
@@ -121,12 +131,14 @@ func ReadLiveText(sid string) (LiveReply, bool) {
 	size := fi.Size()
 	for window := int64(liveTextWindow); ; window *= 4 {
 		off := max(0, size-window)
-		recs, ok := newestMessage(f, off, size)
+		recs, prevFinal, ok := newestMessage(f, off, size)
 		if !ok {
 			return LiveReply{}, false
 		}
 		if recs[0].Index == 0 {
-			return assemble(recs), true
+			out := assemble(recs)
+			out.PrevFinalAt = prevFinal
+			return out, true
 		}
 		if off == 0 {
 			return LiveReply{}, false
@@ -135,17 +147,17 @@ func ReadLiveText(sid string) (LiveReply, bool) {
 }
 
 // newestMessage reads [off, size) of the file and returns the records of its newest message,
-// in index order.
-func newestMessage(f *os.File, off, size int64) ([]liveRecord, bool) {
+// in index order, and the latest final flush among the other messages of the same turn.
+func newestMessage(f *os.File, off, size int64) ([]liveRecord, time.Time, bool) {
 	buf, err := io.ReadAll(io.NewSectionReader(f, off, size-off))
 	if err != nil {
-		return nil, false
+		return nil, time.Time{}, false
 	}
 	if off > 0 {
 		// The window starts mid-line; that fragment belongs to a record we cannot read whole.
 		i := bytes.IndexByte(buf, '\n')
 		if i < 0 {
-			return nil, false
+			return nil, time.Time{}, false
 		}
 		buf = buf[i+1:]
 	}
@@ -165,10 +177,24 @@ func newestMessage(f *os.File, off, size int64) ([]liveRecord, bool) {
 	}
 	recs := byMsg[newest]
 	if len(recs) == 0 {
-		return nil, false
+		return nil, time.Time{}, false
 	}
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i].Index < recs[j].Index })
-	return recs, true
+	var prevFinal int64
+	for k, rs := range byMsg {
+		if k == newest || k.turn != newest.turn {
+			continue
+		}
+		for _, r := range rs {
+			if r.Final && r.At > prevFinal {
+				prevFinal = r.At
+			}
+		}
+	}
+	if prevFinal == 0 {
+		return recs, time.Time{}, true
+	}
+	return recs, time.Unix(0, prevFinal), true
 }
 
 // assemble joins a message's records, which start at index 0, up to the first missing index.
@@ -196,5 +222,17 @@ func assemble(recs []liveRecord) LiveReply {
 	return out
 }
 
-// RemoveLiveText drops sid's streamed text; called when the turn ends.
+// RemoveLiveText drops sid's streamed text; called when the turn ends. The prompt marker stays:
+// the next turn's first hook overwrites it.
 func RemoveLiveText(sid string) { liveTexts.Remove(sid) }
+
+// WriteLivePrompt records the prompt_id of the turn now running. A blind write of the whole
+// value: every hook of one turn carries the same id, a queued prompt submitted mid-turn
+// included (measured on claude 2.1.284), so concurrent writers never disagree.
+func WriteLivePrompt(sid, promptID string) { _ = livePrompts.Write(sid, promptID) }
+
+// ReadLivePrompt is the prompt_id WriteLivePrompt last recorded for sid, "" when none.
+func ReadLivePrompt(sid string) string {
+	v, _ := livePrompts.Read(sid)
+	return v
+}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+	"time"
 )
 
 func jsonlRows(rows ...string) [][]byte {
@@ -81,31 +82,42 @@ func TestTurnAssistantTexts(t *testing.T) {
 		asstRow("msg_3", "text", "alpha."),
 	)...)
 	want := []string{"The file says alpha.", "Reading the file."}
-	if got := TurnAssistantTexts(lines, "p2"); !slices.Equal(got, want) {
+	if got := TurnAssistantTexts(lines, "p2", time.Time{}); !slices.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 	// Without an id the newest prompt still bounds the turn.
-	if got := TurnAssistantTexts(lines, ""); !slices.Equal(got, want) {
+	if got := TurnAssistantTexts(lines, "", time.Time{}); !slices.Equal(got, want) {
 		t.Fatalf("with no prompt id got %q, want %q", got, want)
 	}
 	// A turn with no text yet reports none, not the previous turn's answer.
 	fresh := jsonlRows(promptRow("p1", "first"), asstRow("msg_1", "text", "Done."), promptRow("p2", "second"))
-	if got := TurnAssistantTexts(fresh, "p2"); len(got) != 0 {
+	if got := TurnAssistantTexts(fresh, "p2", time.Time{}); len(got) != 0 {
 		t.Fatalf("got %q for a turn that has written nothing", got)
 	}
 }
 
-// A message is superseded once a newer prompt has come; the current prompt, an id the
-// transcript does not show, and no id at all are not.
-func TestPromptSuperseded(t *testing.T) {
-	lines := twoTurns()
-	if !PromptSuperseded(lines, "p1") {
-		t.Fatal("p1 is followed by p2, but was not reported superseded")
+// Rows written before since belong to messages that ended before it; they are left out, and a
+// row whose timestamp does not parse stays in.
+func TestTurnAssistantTextsSince(t *testing.T) {
+	at := func(row, ts string) string {
+		var m map[string]any
+		_ = json.Unmarshal([]byte(row), &m)
+		m["timestamp"] = ts
+		b, _ := json.Marshal(m)
+		return string(b)
 	}
-	for _, id := range []string{"p2", "p9", ""} {
-		if PromptSuperseded(lines, id) {
-			t.Fatalf("%q reported superseded", id)
-		}
+	lines := jsonlRows(
+		promptRow("p2", "second"),
+		at(asstRow("msg_2", "text", "Done."), "2026-09-30T01:00:00.000Z"),
+		asstRow("msg_2", "tool_use", ""),
+		resultRow("p2"),
+		at(asstRow("msg_3", "text", "Done."), "2026-09-30T01:00:05.000Z"),
+		asstRow("msg_4", "text", "no timestamp"),
+	)
+	since, _ := time.Parse(time.RFC3339, "2026-09-30T01:00:03Z")
+	want := []string{"no timestamp", "Done."}
+	if got := TurnAssistantTexts(lines, "p2", since); !slices.Equal(got, want) {
+		t.Fatalf("got %q, want msg_4 and msg_3 only", got)
 	}
 }
 

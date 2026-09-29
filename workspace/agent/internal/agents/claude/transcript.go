@@ -228,10 +228,6 @@ func AssistantText(line []byte) string {
 // over the whole transcript.
 const liveScan = 400
 
-// promptScan bounds PromptSuperseded, which reads only user rows and must reach back past the
-// turn that is running now.
-const promptScan = 2000
-
 // memoryTag matches the memory citation tags claude strips from what it DISPLAYS but keeps in
 // the transcript: <cc-memory filenames="…"> and its other spellings (measured in the 2.1.284
 // bundle). Without stripping them the stored text never matches the displayed stream. claude
@@ -243,9 +239,10 @@ func DisplayedText(s string) string { return memoryTag.ReplaceAllString(s, "") }
 
 // liveRow is the part of a transcript row the live-reply helpers read.
 type liveRow struct {
-	Type     string `json:"type"`
-	PromptID string `json:"promptId"`
-	Message  struct {
+	Type      string `json:"type"`
+	PromptID  string `json:"promptId"`
+	Timestamp string `json:"timestamp"`
+	Message   struct {
 		ID      string          `json:"id"`
 		Content json.RawMessage `json:"content"` // a string for a typed prompt, blocks otherwise
 	} `json:"message"`
@@ -319,8 +316,10 @@ func PendingAssistantText(lines [][]byte) string {
 
 // TurnAssistantTexts is the text, as displayed, of each assistant message of the turn that
 // answers promptID, newest first: back to that prompt's row. A message is all the rows that
-// share its id (one row per content block). An empty promptID stops at the newest prompt.
-func TurnAssistantTexts(lines [][]byte, promptID string) []string {
+// share its id (one row per content block). An empty promptID stops at the newest prompt. Rows
+// written before since are left out; a zero since, or a row whose timestamp does not parse,
+// leaves them in.
+func TurnAssistantTexts(lines [][]byte, promptID string, since time.Time) []string {
 	var out []string
 	var cur []string
 	curID := ""
@@ -349,6 +348,11 @@ func TurnAssistantTexts(lines [][]byte, promptID string) []string {
 		if t == "" {
 			continue
 		}
+		if !since.IsZero() {
+			if at, err := time.Parse(time.RFC3339Nano, r.Timestamp); err == nil && at.Before(since) {
+				continue
+			}
+		}
 		if r.Message.ID != curID {
 			flush()
 			curID = r.Message.ID
@@ -357,36 +361,6 @@ func TurnAssistantTexts(lines [][]byte, promptID string) []string {
 	}
 	flush()
 	return out
-}
-
-// PromptSuperseded reports whether promptID belongs to an earlier turn: the transcript's newest
-// promptId is another one, and promptID appears before it. An id the transcript does not show
-// (yet) is not superseded, and neither is anything when either side has no id at all.
-func PromptSuperseded(lines [][]byte, promptID string) bool {
-	if promptID == "" {
-		return false
-	}
-	newest := ""
-	for i := len(lines) - 1; i >= max(0, len(lines)-promptScan); i-- {
-		if !bytes.Contains(lines[i], []byte(`"promptId":"`)) {
-			continue
-		}
-		r, ok := parseLiveRow(lines[i])
-		if !ok || r.PromptID == "" {
-			continue
-		}
-		if newest == "" {
-			newest = r.PromptID
-			if newest == promptID {
-				return false
-			}
-			continue
-		}
-		if r.PromptID == promptID {
-			return true
-		}
-	}
-	return false
 }
 
 // CollectTurns builds the displayable turns from lines[lo:hi] (a window into the

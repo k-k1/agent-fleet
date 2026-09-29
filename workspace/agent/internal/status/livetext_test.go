@@ -191,6 +191,42 @@ func TestLiveTextConcurrentAppends(t *testing.T) {
 	}
 }
 
+// The previous message of the turn tells the reader which transcript rows are too old to be the
+// newest message's: its final flush is the boundary. The first message of a turn has none, and
+// another turn's message does not count.
+func TestLiveTextPrevFinalAt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	app("s", "t1", "m1", 0, false, "first\n")
+	if lr := readLive(t, "s"); !lr.PrevFinalAt.IsZero() {
+		t.Fatalf("the first message got PrevFinalAt %v, want zero", lr.PrevFinalAt)
+	}
+	app("s", "t1", "m1", 1, true, "")
+	m1 := readLive(t, "s").FinalAt
+	app("s", "t1", "m2", 0, false, "second\n")
+	if lr := readLive(t, "s"); !lr.PrevFinalAt.Equal(m1) {
+		t.Fatalf("got PrevFinalAt %v, want m1's final flush %v", lr.PrevFinalAt, m1)
+	}
+	app("s", "t2", "m1", 0, false, "next turn\n")
+	if lr := readLive(t, "s"); !lr.PrevFinalAt.IsZero() {
+		t.Fatalf("a new turn's first message got PrevFinalAt %v from the previous turn", lr.PrevFinalAt)
+	}
+}
+
+// The running turn's prompt id is a plain overwrite, and it outlives RemoveLiveText: the next
+// turn's first hook is what replaces it.
+func TestLivePrompt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if got := ReadLivePrompt("s"); got != "" {
+		t.Fatalf("got %q before anything was written", got)
+	}
+	WriteLivePrompt("s", "p1")
+	WriteLivePrompt("s", "p2")
+	RemoveLiveText("s")
+	if got := ReadLivePrompt("s"); got != "p2" {
+		t.Fatalf("got %q, want the last written id p2", got)
+	}
+}
+
 func TestRemoveLiveText(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	app("s", "t1", "m1", 0, false, "x\n")

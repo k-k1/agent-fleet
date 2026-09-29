@@ -46,12 +46,13 @@ func liveReplyText(sid string, lines [][]byte, now time.Time) string {
 	if !ok {
 		return ""
 	}
+	current := status.ReadLivePrompt(sid)
 	switch {
 	case lr.Final && now.Sub(lr.FinalAt) > liveFinalGrace:
 		return ""
 	case !lr.Final && now.Sub(lr.LastAt) > liveStaleAfter:
 		return ""
-	case claude.PromptSuperseded(lines, lr.Prompt):
+	case lr.Prompt != "" && current != "" && lr.Prompt != current:
 		// A message of an earlier turn. A turn that ends without Stop (interrupted, healed from
 		// the pane) leaves its last message in the file, and a flush that lands after Stop
 		// re-creates it, while the next turn has not streamed anything yet.
@@ -63,9 +64,9 @@ func liveReplyText(sid string, lines [][]byte, now time.Time) string {
 	}
 	if lr.Final {
 		// Complete, so its rows are in the transcript or about to be. Compared with the messages
-		// of its own turn only: an earlier turn's answer that happens to start the same way is
-		// not this one.
-		for _, t := range claude.TurnAssistantTexts(lines, lr.Prompt) {
+		// of its own turn written since the previous message ended: an earlier answer that
+		// happens to start the same way is not this one.
+		for _, t := range claude.TurnAssistantTexts(lines, lr.Prompt, lr.PrevFinalAt) {
 			if strings.HasPrefix(strings.TrimSpace(t), text) {
 				return ""
 			}

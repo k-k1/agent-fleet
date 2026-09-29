@@ -67,6 +67,14 @@ func toolRow(msgID string) string {
 	}})
 }
 
+// stamped sets a row's transcript timestamp.
+func stamped(row string, at time.Time) string {
+	var m map[string]any
+	_ = json.Unmarshal([]byte(row), &m)
+	m["timestamp"] = at.UTC().Format(time.RFC3339Nano)
+	return jsonRow(m)
+}
+
 func rowsOf(rows ...string) [][]byte {
 	out := make([][]byte, len(rows))
 	for i, r := range rows {
@@ -153,13 +161,44 @@ func TestLiveReplyTextFinalMessageLandedInItsTurn(t *testing.T) {
 }
 
 // A message of an earlier turn — left behind by a turn that ended without Stop, or re-created
-// by a flush that landed after it — is not the reply of the turn now running.
+// by a flush that landed after it — is not the reply of the turn now running. The running turn
+// is what its hooks recorded, so this holds before the new prompt's row reaches the transcript,
+// and however long the previous turn was.
 func TestLiveReplyTextSupersededTurn(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	flush("p1", "m9", 0, false, "Half a reply\n")
-	lines := rowsOf(promptRow("p1"), promptRow("p2"))
+	status.WriteLivePrompt("s", "p1")
+	lines := rowsOf(promptRow("p1"))
+	if got := liveReplyText("s", lines, time.Now()); got != "Half a reply" {
+		t.Fatalf("got %q while p1 is the running turn, want it", got)
+	}
+	status.WriteLivePrompt("s", "p2") // p2's UserPromptSubmit; its row is not in the transcript yet
 	if got := liveReplyText("s", lines, time.Now()); got != "" {
 		t.Fatalf("got %q from the previous turn, want nothing", got)
+	}
+	long := rowsOf(promptRow("p1"))
+	for range 3000 {
+		long = append(long, []byte(toolRow("msg_x")), []byte(resultRow("p1")))
+	}
+	long = append(long, []byte(promptRow("p2")))
+	if got := liveReplyText("s", long, time.Now()); got != "" {
+		t.Fatalf("got %q after a 6000-row previous turn, want nothing", got)
+	}
+}
+
+// A finished message is not taken for an earlier message of its turn that said the same thing:
+// rows written before the previous message's final flush are that message's, not this one's.
+func TestLiveReplyTextSameTextAsThePreviousMessage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	lines := rowsOf(promptRow("p1"), stamped(textRow("msg_1", "Done."), time.Now().Add(-time.Minute)), toolRow("msg_1"), resultRow("p1"))
+	flush("p1", "m1", 0, true, "Done.")
+	flush("p1", "m2", 0, true, "Done.")
+	if got := liveReplyText("s", lines, time.Now()); got != "Done." {
+		t.Fatalf("got %q before m2's row landed, want m2 shown", got)
+	}
+	lines = append(lines, []byte(stamped(textRow("msg_2", "Done."), time.Now().Add(time.Second))))
+	if got := liveReplyText("s", lines, time.Now()); got != "" {
+		t.Fatalf("got %q after m2's row landed, want nothing", got)
 	}
 }
 
@@ -259,6 +298,25 @@ func TestMessageDisplayHookFeedsLiveText(t *testing.T) {
 	feedStatusHook(t, "idle", `{"session_id":"`+sid+`"}`)
 	if _, ok := status.ReadLiveText(sid); ok {
 		t.Fatal("the streamed reply survived the end of the turn")
+	}
+}
+
+// Every hook of the running turn that carries its prompt_id records it — UserPromptSubmit and
+// PostToolUse alike — except a subagent's.
+func TestWorkingHooksRecordTheTurnPrompt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "sess-prompt"
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","hook_event_name":"UserPromptSubmit","prompt_id":"p1","prompt":"go"}`)
+	if got := status.ReadLivePrompt(sid); got != "p1" {
+		t.Fatalf("after UserPromptSubmit got %q, want p1", got)
+	}
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"Bash","prompt_id":"px","agent_id":"a1"}`)
+	if got := status.ReadLivePrompt(sid); got != "p1" {
+		t.Fatalf("a subagent's PostToolUse moved it to %q", got)
+	}
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"Read","prompt_id":"p2"}`)
+	if got := status.ReadLivePrompt(sid); got != "p2" {
+		t.Fatalf("after PostToolUse of p2 got %q, want p2", got)
 	}
 }
 
