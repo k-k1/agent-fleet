@@ -83,7 +83,7 @@ func (r *reachableHomeRuntime) EraseHome(context.Context) error {
 }
 
 func (r *reachableHomeRuntime) HomeBackups(context.Context) (runtime.HomeBackups, error) {
-	return runtime.HomeBackups{Count: r.backups, Newest: time.Date(2026, 9, 29, 4, 0, 0, 0, time.UTC)}, nil
+	return runtime.HomeBackups{Count: r.backups, Newest: time.Date(2026, 9, 29, 4, 0, 0, 0, time.UTC), HomeExists: true}, nil
 }
 
 func (r *reachableHomeRuntime) DeleteHomeBackups(context.Context) (int, error) {
@@ -297,11 +297,12 @@ func TestAdminHomeBackupsEndpoints(t *testing.T) {
 
 	w := callHomeBackups(adm, http.MethodGet)
 	var got struct {
-		Count  int    `json:"count"`
-		Newest string `json:"newest"`
+		Count      int    `json:"count"`
+		Newest     string `json:"newest"`
+		HomeExists bool   `json:"home_exists"`
 	}
-	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || got.Count != 3 || got.Newest == "" {
-		t.Fatalf("GET home-backups = %d %s, want count 3 with a newest time", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || got.Count != 3 || got.Newest == "" || !got.HomeExists {
+		t.Fatalf("GET home-backups = %d %s, want count 3 with a newest time and the home present", w.Code, w.Body.String())
 	}
 
 	w = callHomeBackups(adm, http.MethodDelete)

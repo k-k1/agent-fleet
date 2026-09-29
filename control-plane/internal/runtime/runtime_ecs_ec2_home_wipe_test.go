@@ -203,7 +203,7 @@ func TestECSEC2EraseHomeCatchesACaptureTheFirstListingMissed(t *testing.T) {
 			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
 		},
 	}
-	h.ec2.snapshotHiddenOnce["snap-late"] = true
+	h.ec2.snapshotHidden["snap-late"] = 1
 	if err := h.rt.EraseHome(ctx); err != nil {
 		t.Fatalf("EraseHome: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestECSEC2DeleteHomeBackupsCatchesACopyTheFirstListingMissed(t *testing.T) 
 			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleBackup)},
 		},
 	}
-	h.ec2.snapshotHiddenOnce["snap-backup-late"] = true
+	h.ec2.snapshotHidden["snap-backup-late"] = 1
 	n, err := h.rt.DeleteHomeBackups(ctx)
 	if err != nil || n != 2 {
 		t.Fatalf("DeleteHomeBackups = %d, %v; want 2 (the listed copy and the late one)", n, err)
@@ -249,5 +249,123 @@ func TestECSEC2DeleteHomeBackupsCountsOnlyWhatItDeleted(t *testing.T) {
 	n, err := h.rt.DeleteHomeBackups(ctx)
 	if err != nil || n != 0 {
 		t.Fatalf("DeleteHomeBackups = %d, %v; want 0 (the only copy was already gone)", n, err)
+	}
+}
+
+func keepMark(t *testing.T, h *ec2Harness) string {
+	t.Helper()
+	for _, ap := range h.efs.aps {
+		if aws.ToString(ap.AccessPointId) == "fsap-keep" {
+			for _, tag := range ap.Tags {
+				if aws.ToString(tag.Key) == efsTagHomeErasedAt {
+					return aws.ToString(tag.Value)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func homeSnapshotAt(id string, start time.Time, state ec2types.SnapshotState) *ec2types.Snapshot {
+	return &ec2types.Snapshot{
+		SnapshotId: aws.String(id), VolumeId: aws.String("vol-1"), State: state, StartTime: aws.Time(start),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(EC2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
+		},
+	}
+}
+
+// No wait makes an eventually consistent listing complete, so the erase leaves a mark that
+// the restore path honours whatever the listings showed: a hibernation capture both
+// listings missed is never handed back as the member's home.
+func TestECSEC2ACaptureTheEraseNeverSawIsNeverRestored(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.ec2.snapshots["snap-unseen"] = homeSnapshotAt("snap-unseen", time.Now().Add(-time.Second), ec2types.SnapshotStateCompleted)
+	h.ec2.snapshotHidden["snap-unseen"] = 2 // both of the erase's listings miss it
+	if err := h.rt.EraseHome(ctx); err != nil {
+		t.Fatalf("EraseHome: %v", err)
+	}
+	mark := keepMark(t, h)
+	if _, err := time.Parse(time.RFC3339Nano, mark); err != nil {
+		t.Fatalf("the keep access point carries no readable erase mark (%q): %v", mark, err)
+	}
+	if _, ok := h.ec2.snapshots["snap-unseen"]; !ok {
+		t.Fatal("setup: the unseen capture was deleted, so this test proves nothing")
+	}
+	got, err := h.rt.restoreSnapshot(ctx)
+	if err != nil || got != "" {
+		t.Fatalf("restoreSnapshot = %q, %v; the erased home must never come back", got, err)
+	}
+	if _, ok := h.ec2.snapshots["snap-unseen"]; ok {
+		t.Error("the copy of the erased home was left billing after the restore path saw it")
+	}
+}
+
+// The mark only says what came before it. A home created after the erase and hibernated
+// later is the member's own home and is restored as usual.
+func TestECSEC2AHomeHibernatedAfterAnEraseIsRestored(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	if err := h.rt.EraseHome(ctx); err != nil {
+		t.Fatalf("EraseHome: %v", err)
+	}
+	h.ec2.snapshots["snap-new"] = homeSnapshotAt("snap-new", time.Now().Add(time.Minute), ec2types.SnapshotStateCompleted)
+	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "snap-new" {
+		t.Fatalf("restoreSnapshot = %q, %v; want the hibernation of the new home", got, err)
+	}
+}
+
+// An unreadable mark is not "never erased": the Start fails rather than guessing.
+func TestECSEC2AnUnreadableEraseMarkFailsTheRestore(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.efs.aps[0].Tags = append(h.efs.aps[0].Tags, efstypes.Tag{Key: aws.String(efsTagHomeErasedAt), Value: aws.String("yesterday")})
+	if _, err := h.rt.restoreSnapshot(ctx); err == nil {
+		t.Fatal("restoreSnapshot ignored an unreadable erase mark")
+	}
+}
+
+// The offboarding order deletes the backups after the home is gone. A copy the reaper
+// started just before Clean home deleted the volume can still be missing from the first
+// listing then, so the second one runs whether or not a volume exists.
+func TestECSEC2DeleteHomeBackupsRelistsAfterTheHomeIsGone(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	if err := h.rt.EraseHome(ctx); err != nil {
+		t.Fatalf("EraseHome: %v", err)
+	}
+	h.ec2.snapshots["snap-backup-late"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-backup-late"), VolumeId: aws.String("vol-1"),
+		State: ec2types.SnapshotStatePending, StartTime: aws.Time(time.Now()),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(EC2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleBackup)},
+		},
+	}
+	h.ec2.snapshotHidden["snap-backup-late"] = 1
+	n, err := h.rt.DeleteHomeBackups(ctx)
+	if err != nil || n != 2 {
+		t.Fatalf("DeleteHomeBackups = %d, %v; want 2 (the listed backup and the late one)", n, err)
+	}
+	if _, ok := h.ec2.snapshots["snap-backup-late"]; ok {
+		t.Error("a backup missing from the first listing survived because no volume was left")
+	}
+}
+
+// Whether the home still exists decides what deleting the backups means (the schedule goes
+// on copying a home that exists), so the answer comes from AWS, not from a roster snapshot.
+func TestECSEC2HomeBackupsSaysWhetherTheHomeExists(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	if b, err := h.rt.HomeBackups(ctx); err != nil || !b.HomeExists {
+		t.Fatalf("with a home volume: %+v, %v; want HomeExists", b, err)
+	}
+	if err := h.rt.EraseHome(ctx); err != nil {
+		t.Fatalf("EraseHome: %v", err)
+	}
+	if b, err := h.rt.HomeBackups(ctx); err != nil || b.HomeExists {
+		t.Fatalf("after the erase: %+v, %v; want no home", b, err)
 	}
 }

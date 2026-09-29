@@ -29,7 +29,6 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 import { MemberView } from "./tenantMemberDetail.tsx";
 
 const MEMBER = { user_key: "a-x-com", email: "a@x.com", role: "member", max_sessions: 2, status: "removed", state: "stopped" };
-const MEMBER_WITHOUT_HOME = { ...MEMBER, state: "none" };
 const BACKUPS = "api/admin/tenants/acme/members/a-x-com/home-backups";
 
 let root: Root | null = null;
@@ -53,14 +52,16 @@ const inDangerZone = (text: string) =>
   Array.from(document.querySelectorAll(".danger-zone button")).some((b) => (b.textContent || "").trim() === text);
 
 let backupCount = 0;
+let homeExists = true;
 beforeEach(() => {
   apiJSON.mockReset();
   toast.mockReset();
   api.mockReset();
   backupCount = 2;
+  homeExists = true;
   api.mockImplementation((p: string) =>
     p === BACKUPS
-      ? Promise.resolve({ count: backupCount, newest: "2026-09-29T04:00:00Z" })
+      ? Promise.resolve({ count: backupCount, newest: "2026-09-29T04:00:00Z", home_exists: homeExists })
       : Promise.resolve({ running: false, sessions: [] }),
   );
 });
@@ -178,10 +179,25 @@ describe("member detail: backups of a home that still exists", () => {
     expect(document.body.textContent).toContain("この人の home はまだ残っています");
   });
 
-  it("does not warn once there is no home", async () => {
+  it("does not warn once the CP says there is no home", async () => {
     whoami = { home_erase: true, home_backups: true };
-    await mount(MEMBER_WITHOUT_HOME);
+    homeExists = false;
+    await mount();
     await act(async () => buttonWith("バックアップを削除（2 件）")!.click());
     expect(document.body.textContent).not.toContain("この人の home はまだ残っています");
+  });
+
+  // The roster row is a snapshot: a home cleaned here, or started again elsewhere, is only
+  // known to the CP. Opening the dialog asks again, and the warning follows the answer.
+  it("asks the CP again when the dialog opens", async () => {
+    whoami = { home_erase: true, home_backups: true };
+    homeExists = false;
+    await mount();
+    homeExists = true; // started again from somewhere else since this view loaded
+    await act(async () => buttonWith("バックアップを削除（2 件）")!.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("この人の home はまだ残っています");
   });
 });

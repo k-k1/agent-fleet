@@ -63,9 +63,9 @@ type fakeEC2 struct {
 	modificationState ec2types.VolumeModificationState
 	// modifyErr forces ModifyVolume to fail, standing in for EBS's 6-hour cooldown.
 	modifyErr error
-	// snapshotHiddenOnce keeps a snapshot out of the next DescribeSnapshots, the way the
-	// eventually consistent API can miss one that was created a moment ago.
-	snapshotHiddenOnce map[string]bool
+	// snapshotHidden keeps a snapshot out of the next N DescribeSnapshots calls, the way
+	// the eventually consistent API can miss one that was created a moment ago.
+	snapshotHidden map[string]int
 	// snapshotGone makes DeleteSnapshot answer NotFound for a snapshot, standing in for
 	// one that something else deleted after it was listed.
 	snapshotGone map[string]bool
@@ -82,8 +82,8 @@ func newFakeEC2() *fakeEC2 {
 
 		modifications: map[string]*ec2types.VolumeModification{},
 
-		snapshotHiddenOnce: map[string]bool{},
-		snapshotGone:       map[string]bool{},
+		snapshotHidden: map[string]int{},
+		snapshotGone:   map[string]bool{},
 	}
 }
 
@@ -375,8 +375,8 @@ func (f *fakeEC2) DescribeSnapshots(_ context.Context, in *ec2.DescribeSnapshots
 	defer f.mu.Unlock()
 	out := &ec2.DescribeSnapshotsOutput{}
 	for id, s := range f.snapshots {
-		if f.snapshotHiddenOnce[id] {
-			delete(f.snapshotHiddenOnce, id)
+		if f.snapshotHidden[id] > 0 {
+			f.snapshotHidden[id]--
 			continue
 		}
 		if !filterMatch(in.Filters, func(name string) []string {

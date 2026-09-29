@@ -125,6 +125,28 @@ func (f *fakeEFS) CreateAccessPoint(_ context.Context, in *efs.CreateAccessPoint
 	return &efs.CreateAccessPointOutput{AccessPointId: id}, nil
 }
 
+func (f *fakeEFS) TagResource(_ context.Context, in *efs.TagResourceInput, _ ...func(*efs.Options)) (*efs.TagResourceOutput, error) {
+	for i, ap := range f.aps {
+		if aws.ToString(ap.AccessPointId) != aws.ToString(in.ResourceId) {
+			continue
+		}
+		for _, nt := range in.Tags {
+			replaced := false
+			for j, t := range ap.Tags {
+				if aws.ToString(t.Key) == aws.ToString(nt.Key) {
+					f.aps[i].Tags[j].Value = nt.Value
+					replaced = true
+				}
+			}
+			if !replaced {
+				f.aps[i].Tags = append(f.aps[i].Tags, nt)
+			}
+		}
+		return &efs.TagResourceOutput{}, nil
+	}
+	return nil, fmt.Errorf("AccessPointNotFound: %s", aws.ToString(in.ResourceId))
+}
+
 func (f *fakeEFS) DeleteAccessPoint(_ context.Context, in *efs.DeleteAccessPointInput, _ ...func(*efs.Options)) (*efs.DeleteAccessPointOutput, error) {
 	f.deleteCalls = append(f.deleteCalls, in)
 	var kept []efstypes.AccessPointDescription

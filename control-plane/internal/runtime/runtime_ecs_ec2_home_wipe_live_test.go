@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 )
 
 // TestECSEC2LiveEraseHome drives an administrator's Clean home and the backup deletion
@@ -24,10 +26,15 @@ import (
 // only asked about a service that does not exist. The attached path (unmount over SSM,
 // detach) is releaseSlot, which Destroy and hibernation already run in production.
 //
+// With AF_ECS_EFS_ID it also creates a keep access point for the throwaway membership (no
+// mount, so no directory is ever made) and checks the erase mark: that EraseHome stamps it,
+// and that the restore path compares it with the StartTime AWS reports — the CP's clock
+// against EBS's, which no fake can stand in for.
+//
 // Opt-in; it bills a few minutes of a 1 GiB volume and its snapshots:
 //
 //	AF_ECS_EC2_LIVE_ERASE=1 AF_ECS_REGION=<region> AF_ECS_CLUSTER=<cluster> \
-//	  AF_ECS_EC2_LIVE_AZ=<az> go test -run TestECSEC2LiveEraseHome -v ./internal/runtime/
+//	  AF_ECS_EC2_LIVE_AZ=<az> [AF_ECS_EFS_ID=<fs>] go test -run TestECSEC2LiveEraseHome -v ./internal/runtime/
 func TestECSEC2LiveEraseHome(t *testing.T) {
 	if os.Getenv("AF_ECS_EC2_LIVE_ERASE") != "1" {
 		t.Skip("set AF_ECS_EC2_LIVE_ERASE=1 with AF_ECS_REGION, AF_ECS_CLUSTER and AF_ECS_EC2_LIVE_AZ to run")
@@ -46,9 +53,10 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 	}
 	sfx := time.Now().UTC().Format("20060102150405")
 	membership, pool, name := "live-erase-"+sfx, "af-live-erase-"+sfx, "af-ws-live-erase-"+sfx
+	fsID := os.Getenv("AF_ECS_EFS_ID")
 	rt := &ecsEC2Runtime{
-		base: &ecsRuntime{cfg: ecsConfig{region: region, cluster: cluster}, ecs: ecs.NewFromConfig(pac),
-			name: name, membershipID: membership},
+		base: &ecsRuntime{cfg: ecsConfig{region: region, cluster: cluster, efsFileSystem: fsID},
+			ecs: ecs.NewFromConfig(pac), efs: efs.NewFromConfig(pac), name: name, membershipID: membership},
 		ec2:   ec2.NewFromConfig(pac),
 		pool:  ec2PoolConfig{pool: pool},
 		now:   time.Now,
@@ -62,10 +70,31 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 		t.Fatalf("aws config: %v", err)
 	}
 	eye := ec2.NewFromConfig(ac)
+	efsEye := efs.NewFromConfig(ac)
 	mine := []ec2types.Filter{tagFilter(EC2TagMembership, membership)}
+	var keepAP string
+	if fsID == "" {
+		t.Log("NOT VERIFIED: the erase mark (set AF_ECS_EFS_ID to create a throwaway keep access point)")
+	} else {
+		out, err := efsEye.CreateAccessPoint(ctx, &efs.CreateAccessPointInput{
+			FileSystemId: aws.String(fsID),
+			RootDirectory: &efstypes.RootDirectory{Path: aws.String("/home-keep/" + membership),
+				CreationInfo: &efstypes.CreationInfo{OwnerUid: aws.Int64(1000), OwnerGid: aws.Int64(1000), Permissions: aws.String("0700")}},
+			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String(membership)},
+				{Key: aws.String("af-role"), Value: aws.String("keep-ec2")}},
+		})
+		if err != nil {
+			t.Fatalf("create the throwaway keep access point: %v", err)
+		}
+		keepAP = aws.ToString(out.AccessPointId)
+	}
 	t.Cleanup(func() {
 		c, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		if keepAP != "" {
+			t.Logf("cleanup: deleting the throwaway keep access point %s", keepAP)
+			_, _ = efsEye.DeleteAccessPoint(c, &efs.DeleteAccessPointInput{AccessPointId: aws.String(keepAP)})
+		}
 		if out, err := eye.DescribeSnapshots(c, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}, Filters: mine}); err == nil {
 			for _, s := range out.Snapshots {
 				t.Logf("cleanup: deleting leftover snapshot %s", aws.ToString(s.SnapshotId))
@@ -166,6 +195,42 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 	}
 	if got, err := rt.restoreSnapshot(ctx); err != nil || got != "" {
 		t.Errorf("after the erase the next Start would restore %q (err %v), want a fresh home", got, err)
+	}
+
+	// --- the erase mark, against AWS's own StartTime ---
+	if keepAP != "" {
+		mark, err := rt.homeErasedAt(ctx)
+		if err != nil || mark.IsZero() {
+			t.Fatalf("EraseHome left no readable mark on %s: %v, %v", keepAP, mark, err)
+		}
+		t.Logf("erase mark on %s: %s", keepAP, mark.Format(time.RFC3339Nano))
+		// A home created after the erase and hibernated is the member's own: restored.
+		vol2, err := eye.CreateVolume(ctx, &ec2.CreateVolumeInput{
+			AvailabilityZone: aws.String(az), Size: aws.Int32(1), VolumeType: ec2types.VolumeTypeGp3, Encrypted: aws.Bool(true),
+			TagSpecifications: []ec2types.TagSpecification{{ResourceType: ec2types.ResourceTypeVolume, Tags: tags("scratch")}},
+		})
+		if err != nil {
+			t.Fatalf("create the second throwaway volume: %v", err)
+		}
+		if err := rt.waitVolumeAttachable(ctx, aws.ToString(vol2.VolumeId)); err != nil {
+			t.Fatalf("second throwaway volume never became available: %v", err)
+		}
+		volID = aws.ToString(vol2.VolumeId)
+		later := snapshot(ec2RoleHome)
+		waitCompleted(later)
+		if got, err := rt.restoreSnapshot(ctx); err != nil || got != later {
+			t.Fatalf("a hibernation taken after the erase: restoreSnapshot = %q, %v; want %s", got, err, later)
+		}
+		// Stamped again now, that same snapshot predates the mark: never restored, deleted.
+		if err := rt.markHomeErased(ctx); err != nil {
+			t.Fatalf("markHomeErased: %v", err)
+		}
+		if got, err := rt.restoreSnapshot(ctx); err != nil || got != "" {
+			t.Fatalf("a snapshot older than the mark: restoreSnapshot = %q, %v; want none", got, err)
+		}
+		if !gone(later) {
+			t.Errorf("the snapshot older than the mark was left billing")
+		}
 	}
 
 	// --- the separate, deliberate deletion of the backups ---

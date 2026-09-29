@@ -1427,11 +1427,15 @@ on its EBS volume.
   holds. It is Clean home rather than Destroy because the seven `homeKeep` entries and the Claude state are on
   EFS (decision 3-6): the service, the access points and the secrets stay, and the next start builds a fresh
   home from the golden, as for a new member. The hibernation snapshots go because `createHomeVolume` restores
-  the member's own snapshot first; one left behind would hand the erased home back. They are listed twice —
-  again after a short settle once the volume is gone — because the pool sweeper advances a hibernation without
-  the lifecycle lease, and a capture it started just before the volume went can be missing from the first,
-  eventually consistent listing. The one thing it does not keep that docker keeps: a keep file a tool replaced
-  since the last start (the entrypoint moves it to EFS at the next boot) goes with the volume.
+  the member's own snapshot first; one left behind would hand the erased home back. The pool sweeper advances a
+  hibernation without the lifecycle lease, so a capture it started just before the volume went can be missing
+  from an eventually consistent listing, and no wait makes a listing complete. The snapshots are listed twice
+  (again after a short settle) as cleanup, and the guarantee is a mark instead: the erase stamps
+  `af-home-erased-at` on the member's keep access point, which outlives the erase, and the restore path never
+  restores a home snapshot that started before it — it deletes it. Measured on the sandbox account against the
+  StartTime EBS reports: a snapshot taken after the mark is restored, the same snapshot is refused once the mark
+  is newer. The one thing it does not keep that docker keeps: a keep file a tool replaced since the last start
+  (the entrypoint moves it to EFS at the next boot) goes with the volume.
 - **Backups stay, and deleting them is a separate action.** A backup outliving the home is what decision 17
   made it for, so no cleanup takes one as a side effect. The member detail shows how many a member has and
   deletes them on the administrator's word (`GET/DELETE /api/admin/tenants/{slug}/members/{key}/home-backups`,

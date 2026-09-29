@@ -61,6 +61,7 @@ type efsAPI interface {
 	DescribeAccessPoints(context.Context, *efs.DescribeAccessPointsInput, ...func(*efs.Options)) (*efs.DescribeAccessPointsOutput, error)
 	CreateAccessPoint(context.Context, *efs.CreateAccessPointInput, ...func(*efs.Options)) (*efs.CreateAccessPointOutput, error)
 	DeleteAccessPoint(context.Context, *efs.DeleteAccessPointInput, ...func(*efs.Options)) (*efs.DeleteAccessPointOutput, error)
+	TagResource(context.Context, *efs.TagResourceInput, ...func(*efs.Options)) (*efs.TagResourceOutput, error)
 }
 
 type ssmAPI interface {

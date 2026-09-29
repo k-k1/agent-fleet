@@ -69,6 +69,9 @@ type HomeBackups struct {
 	Count int `json:"count"`
 	// Newest is when the most recent copy was taken; zero when Count is 0.
 	Newest time.Time `json:"newest,omitzero"`
+	// HomeExists says the home itself is still there. While it is, the backup schedule
+	// goes on taking copies of it, so deleting the backups is not the end of them.
+	HomeExists bool `json:"home_exists"`
 }
 
 // Which adapter claims which port. The claiming direction is pinned here; the adapters

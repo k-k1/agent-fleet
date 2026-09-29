@@ -60,10 +60,10 @@ export function MemberView({
   const homeBackups = useTenantStore((s) => s.whoami?.home_backups === true);
   // The copies of this home kept outside it. Clean home leaves them on purpose, so they are
   // shown — and deleted — on their own. null = not known (not loaded, or not kept here).
-  const [backups, setBackups] = useState<{ count: number; newest?: string } | null>(null);
-  // Set once this view has cleaned the home. `member` is a snapshot taken when the row was
-  // clicked, so its state still says the home exists after the clean.
-  const [homeErased, setHomeErased] = useState(false);
+  // home_exists comes from the same answer: while the home exists the backup schedule goes
+  // on copying it, and only the CP can say whether it does (`member` is a snapshot from
+  // when the row was clicked).
+  const [backups, setBackups] = useState<{ count: number; newest?: string; home_exists?: boolean } | null>(null);
   // Whether removal also destroys the workspace. Shown unchecked, so the current contract
   // (keep the home, and just re-invite if they come back) holds unless it is ticked.
   const [purge, setPurge] = useState(false);
@@ -117,14 +117,13 @@ export function MemberView({
     if (!homeBackups) return;
     try {
       const d = await api(`${base}/home-backups`);
-      setBackups(d && !d.error ? { count: d.count ?? 0, newest: d.newest } : null);
+      setBackups(d && !d.error ? { count: d.count ?? 0, newest: d.newest, home_exists: d.home_exists === true } : null);
     } catch {
       /* keep the last answer; the button only appears when there is something to delete */
     }
   }, [base, homeBackups]);
   useEffect(() => {
     setBackups(null); // another member's count must not linger while this one loads
-    setHomeErased(false);
     void loadBackups();
   }, [loadBackups]);
 
@@ -255,12 +254,12 @@ export function MemberView({
         toast(errText(res.error));
         if (res.error.code === "network") {
           poll();
+          onChanged();
           void loadBackups();
         }
         return;
       }
       setConfirmClean(false);
-      setHomeErased(true);
       poll();
       onChanged();
       void loadBackups();
@@ -705,7 +704,16 @@ export function MemberView({
               </button>
             )}
             {homeBackups && backups && backups.count > 0 && (
-              <button className="danger-btn" disabled={busy} onClick={() => setConfirmDeleteBackups(true)}>
+              <button
+                className="danger-btn"
+                disabled={busy}
+                onClick={() => {
+                  // Read again: whether the home still exists (and so whether the schedule
+                  // goes on) may have changed since this view loaded.
+                  void loadBackups();
+                  setConfirmDeleteBackups(true);
+                }}
+              >
                 <Icon name="trash" /> {tCount("admin.delete_backups", backups.count)}
               </button>
             )}
@@ -769,9 +777,7 @@ export function MemberView({
           </p>
           {/* Deleting the copies does not stop the schedule: while the home exists, the next
               backup takes a new copy of it. The offboarding order puts Clean home first. */}
-          {member.state !== "none" && !homeErased && (
-            <p className="muted">{tr("admin.delete_backups_home_remains")}</p>
-          )}
+          {backups.home_exists && <p className="muted">{tr("admin.delete_backups_home_remains")}</p>}
         </ConfirmDialog>
       )}
       {confirmRemove && (
