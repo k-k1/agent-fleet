@@ -139,6 +139,35 @@ describe("InstructionsTab", () => {
     expect(apiJSON).not.toHaveBeenCalled();
   });
 
+  it("shows a row with no file without an empty path, and previews the prompt", async () => {
+    api.mockReset();
+    api.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.startsWith("api/user-notes/preview")
+          ? { kind: "lcpp", path: "", exists: true, content: "PROMPTBODY" }
+          : {
+              ...payload,
+              targets: [
+                ...payload.targets,
+                { kind: "lcpp", supported: true, on: true, applied: true, delivery: "prompt" },
+              ],
+            },
+      ),
+    );
+    await mount();
+    const row = rows()[3];
+    expect(row.querySelector(".instr-where code")).toBeNull();
+    // The delivery reads as prose, never as the raw code.
+    expect(row.querySelector(".instr-delivery")?.textContent).not.toBe("prompt");
+    const view = row.querySelector<HTMLButtonElement>(".ui-btn")!;
+    await act(async () => {
+      view.click();
+    });
+    expect(api).toHaveBeenCalledWith("api/user-notes/preview?kind=lcpp");
+    expect(document.querySelector(".instr-peek-head code")).toBeNull();
+    expect(document.querySelector(".instr-peek-body")?.textContent).toBe("PROMPTBODY");
+  });
+
   it("PUTs the body on save", async () => {
     apiJSON.mockResolvedValue({ ...payload, text: "short\n" });
     await mount();

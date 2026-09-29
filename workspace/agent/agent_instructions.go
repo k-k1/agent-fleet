@@ -38,6 +38,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -58,6 +59,7 @@ const (
 	deliveryFile    = "file"    // drop a file AF owns outright
 	deliveryCompose = "compose" // compose into a file shared with others, between markers
 	deliveryConfig  = "config"  // an AF-owned file, referenced from the CLI's own config
+	deliveryPrompt  = "prompt"  // no artifact: AF's own harness folds it into the system prompt
 )
 
 // instrTarget is where one kind's instructions go. Unsupported kinds are LISTED as rows
@@ -81,7 +83,7 @@ type instrTarget struct {
 
 // instrSupportedKinds are the kinds the body can be distributed to, in the Console's
 // display order.
-var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro", "muse"}
+var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro", "lcpp", "muse"}
 
 // instrUnsupported are the kinds it cannot reach, with the reason (measured, docs/log/60
 // §60.3).
@@ -153,6 +155,7 @@ func applyInstructionsLocked() {
 	note("agy", agy.ApplyUserInstructions(st.Body("agy")))
 	note("kiro", kiro.ApplyUserInstructions(st.Body("kiro")))
 	note("muse", muse.ApplyUserInstructions(st.Body("muse")))
+	// lcpp has nothing to write: harness.SystemPrompt reads userinstr on every turn.
 
 	// 3. rtk is always last (it comes last within the file too).
 	applyRTKLocked()
@@ -194,6 +197,12 @@ func instrState() instrStateWire {
 		case "kiro":
 			t.Delivery, t.Path = deliveryFile, kiro.UserInstructionsPath()
 			t.Applied = fileExists(t.Path) == want
+		case "lcpp":
+			// Nothing on disk to measure: the harness re-reads the saved state at the start of
+			// every turn, so what is saved is what the next turn sends — running sessions
+			// included.
+			t.Delivery = deliveryPrompt
+			t.Applied = true
 		case "muse":
 			// The same shape as codex and agy: one AGENTS.md shared with the fleet policy, so
 			// the measurement has to be the BLOCK's presence. `fileExists` would report
@@ -298,7 +307,7 @@ func handleUserNotesPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUserNotesPreview shows what a kind will actually read — the composed file for
-// codex, the referenced file for the others. It is the last step in keeping "written"
+// codex, the system prompt for lcpp, the referenced file for the others. It is the last step in keeping "written"
 // apart from "in effect", the one that lets the user check with their own eyes.
 func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
@@ -316,13 +325,24 @@ func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 		path = agy.AgentsPath()
 	case "kiro":
 		path = kiro.UserInstructionsPath()
+	case "muse":
+		path = muse.AgentsPath()
+	case "lcpp":
+		// No file: path stays empty and the content below is the system prompt the harness
+		// would send, minus the project layer, which depends on the session's working copy.
 	case "fleet":
 		path = paths.FleetNotesPath()
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "unknown_kind", "no instruction target for this kind")
 		return
 	}
-	body, err := os.ReadFile(path)
+	var body []byte
+	var err error
+	if path == "" {
+		body = []byte(harness.SystemPrompt("", kind))
+	} else {
+		body, err = os.ReadFile(path)
+	}
 	if err != nil && !os.IsNotExist(err) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
 		return

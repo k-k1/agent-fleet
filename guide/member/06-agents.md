@@ -365,6 +365,8 @@ Instructions come in three layers, and this setting is the **middle** one.
 
 - **It is never committed to a repository.** It affects you, not your colleagues.
 - It applies to **sessions started from now on**. Running sessions keep what they read at start.
+  lcpp is the exception: it has no file to write, so its row says it is added to the system
+  prompt every turn, and a running lcpp session picks up a change on its next turn.
 - It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro / lcpp / muse.
   **Cursor is the only one that can't take it**, and it still appears in the list with the reason
   (Cursor keeps User Rules in your Cursor account, with no local per-user place for instructions).

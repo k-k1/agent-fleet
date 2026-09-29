@@ -58,7 +58,7 @@ updated: "2026-09"
 | サインイン | Agent の `/connections/<kind>/…` ハンドラ、**および** `control-plane/routes.go` で 1 本ずつ名指しで中継するルート（ログインフローは `restLogin`）| CP へのコールバックが要る種別は無い（[08 §8.6](08-integrations.ja.md)）。サインインする相手が無い種別にはフローも無い |
 | 資格の置き場と fs denylist | 自パッケージと `fsDeny`（`fs.go`）| CLI が資格情報や状態を書く場所は**ファイルブラウザから隠す** |
 | MCP | `internal/mcpreg`: CLI が設定ファイルを読むなら `writerFor` の writer と `MaterializedKinds` への追加、別経路（ワイヤ上・プロセス内）で渡るなら `ServedKinds`。`knownKinds` と、`control-plane/internal/mcpsrv/mcp_server.go` の `mcpKnownKinds` | CLI ごとに設定の形もプレースホルダ方言も違う。設定ファイル型で CLI を CI で動かせる種別は `mcp-config-contract.yml` にも足す |
-| エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または理由コード付きで `instrUnsupported` | Console の配布先一覧はこの 2 つから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしており、どちらの一覧にも無いので、Console に lcpp の行は出ない |
+| エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または理由コード付きで `instrUnsupported` | Console の配布先一覧はこの 2 つから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしている。こうした種別も `instrSupportedKinds` に載せ、配信方式 `prompt`・パス無し・`Applied` は true とする（行のスイッチがハーネスの読む値そのものになる）。プレビューの case も足す |
 | Console の descriptor | `console/src/types/session.ts` の `SESSION_KINDS` と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
 | 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、`deploy/local/cli-drift-check.sh` の行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
 | contract ワークフロー | `.github/workflows/` の下に専用ファイル（ワークスペースイメージが CLI やホストをピンする種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。lcpp はイメージで何もピンせず、代わりに手動の検査を持つ（§20.5）|
