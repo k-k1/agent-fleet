@@ -85,13 +85,15 @@ cp -a "$STATE/params/." "$STATE4/params/"
 cp "$STATE/env" "$STATE4/env"
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
-# A fifth (profile p5): retain with a data stack name one character past what its EFS
-# backup vault name leaves room for (37).
+# A fifth (profile p5): a data stack name one character past what its EFS backup vault name
+# leaves room for (37), and retain only in params/10-data — the value the deploy passes —
+# while the recorded persistence still says delete.
 STATE5="$AF_DEPLOY_STATE_DIR/p5.ap-northeast-1.t-ingress"
 mkdir -p "$STATE5/params"
 cp -a "$STATE/params/." "$STATE5/params/"
 sed -e 's/^AF_PERSISTENCE=delete$/AF_PERSISTENCE=retain/' \
     -e 's/^AF_STACK_DATA=t-data$/AF_STACK_DATA=t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/' "$STATE/env" > "$STATE5/env"
+echo "Persistence=retain" > "$STATE5/params/10-data"
 
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
@@ -186,7 +188,6 @@ case "$args" in
   *"ParameterKey=='WsRuntime'"*) echo "ecs-ec2" ;;
   *"ParameterKey=='ImageTag'"*) echo "9.9.9-dev-test" ;;
   *"--profile p2"*"ParameterKey=='Persistence'"*) echo "retain" ;;
-  *"--profile p5"*"ParameterKey=='Persistence'"*) echo "retain" ;;
   *"ParameterKey=='Persistence'"*) echo "delete" ;;
   *"ParameterKey=='CpArch'"*) echo "x86_64" ;;
   *"ParameterKey=='Ec2SlotLaunchTemplate'"*) echo "lt-OLD" ;;

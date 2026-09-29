@@ -136,8 +136,12 @@ done
 [ -z "${AF_STACK_ENGINES:-}" ] || [ -r "$(af_params_file 60-engines)" ] || say_missing "AF_STACK_ENGINES=$AF_STACK_ENGINES but there is no params/60-engines"
 # 10-data's EFS backup vault is "<stack>-efs-<8 hex>" and AWS stops vault names at 50, so a
 # longer data stack name rolls 10-data back — and only under retain, so a delete trial run
-# passes with the same name.
-[ "$AF_PERSISTENCE" != retain ] || [ "${#AF_STACK_DATA}" -le 37 ] \
+# passes with the same name. params/10-data is what the deploy passes, so it counts even
+# when the recorded AF_PERSISTENCE disagrees.
+data_retain=0
+[ "$AF_PERSISTENCE" = retain ] && data_retain=1
+grep -qx 'Persistence=retain' "$(af_params_file 10-data)" 2>/dev/null && data_retain=1
+[ "$data_retain" = 0 ] || [ "${#AF_STACK_DATA}" -le 37 ] \
   || say_missing "data stack name $AF_STACK_DATA is ${#AF_STACK_DATA} characters; under Persistence=retain it must be at most 37 (its EFS backup vault name stops at 50)"
 
 # The ECS service-linked role. A new account does not have it, and creating the cluster
