@@ -31,7 +31,7 @@ localCustodian の KEK は AF_MASTER_KEY 由来。よって **master を握れ�
 3. **per-tenant `key_ref` の配線**（テナント鍵の概念を実体化）。
 
 **真の per-tenant crypto-shred（テナント鍵を disable してそのテナントだけ復号不能化）は Vault/KMS アダプタで達成**。
-P3-3 はその手前までを安全に敷く（[12 §12.3](roadmap.md#123-tos-と分離の留意自社ホスト前提) の正直さに準拠）。
+P3-3 はその手前までを安全に敷く（[12 §12.3](roadmap.md#123-tos-と分離の留意（自社ホスト前提）) の正直さに準拠）。
 
 ## 15.3 スキーマ（migration `0003`）
 

@@ -1,6 +1,6 @@
 # 13. P3-1 実装プラン — MetadataStore（SQLite）導入
 
-> 🗄 **歴史的記録（完了）** — 現状は [build/06](../build/06-data.ja.md)（旧 HANDOFF §6.9）、設計は [ロードマップ P3-1](roadmap.md#p3-1-metadatastoresqlite-既定-全ての土台)。以下は当時の実装プラン。
+> 🗄 **歴史的記録（完了）** — 現状は [build/06](../build/06-data.ja.md)（旧 HANDOFF §6.9）、設計は [ロードマップ P3-1](roadmap.md#p3-1-metadatastore（sqlite-既定）-全ての土台)。以下は当時の実装プラン。
 
 [12 Phase 3](roadmap.md) の最初のワークストリーム **P3-1（DB 化）** の実装計画。
 現状は `control-plane/manager.go` の `rts`（in-memory map）が source of truth で、port/token を

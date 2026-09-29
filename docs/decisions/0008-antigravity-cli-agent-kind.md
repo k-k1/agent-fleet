@@ -3,7 +3,7 @@
 English | [日本語](0008-antigravity-cli-agent-kind.ja.md)
 
 - Status: **adopted** (2026-07-20. Implementation started on the Starter/experimental track, aiming at everyday use over the GCP route. The implementation plan is [32](../log/32-agy-agent-kind.md))
-- See also: [session.go](../../workspace/agent/internal/sessionx/session.go) (session integration) / [Codex auth](../../workspace/agent/internal/agents/codex/auth.go) (the current device-auth implementation) / [0006-mcp-unified](0006-mcp-unified.md) / [guide/ref/agents](../../guide/ref/agents.md) (formerly HANDOFF §agent kinds)
+- See also: [session.go](../../workspace/agent/internal/sessionx/session.go) (session integration) / [Codex auth](../../workspace/agent/internal/agents/codex/auth.go) (the current device-auth implementation) / [0006-mcp-unified](0006-mcp-unified.md) / [build/04 §4.3](../build/04-agent.md) (formerly HANDOFF §agent kinds)
 - Origin: a user request — "look into whether the antigravity cli can be built into Agent-Fleet" (investigated 2026-06-29/30)
 
 ## Context

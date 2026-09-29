@@ -3,7 +3,7 @@
 [English](0005-envelope-custodian.md) | 日本語
 
 - 状態: 確定（P3-3）
-- 関連: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [dev/07 §7.6 シークレット管理と封筒暗号](../build/07-security.ja.md#76-シークレット管理と封筒暗号)（旧 security §4.4） / [ロードマップ §12.3](../log/roadmap.md#123-tos-と分離の留意自社ホスト前提)
+- 関連: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [dev/07 §7.6 シークレット管理と封筒暗号](../build/07-security.ja.md#76-シークレット管理と封筒暗号)（旧 security §4.4） / [ロードマップ §12.3](../log/roadmap.md#123-tos-と分離の留意（自社ホスト前提）)
 
 ## 背景
 

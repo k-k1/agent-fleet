@@ -243,9 +243,9 @@ branches on the display locale when **a person reads what it produces**.
   placeholder (`chat.plan.placeholder`); if the two differ, every plan update swaps one
   for the other.
 - **A newly branched prompt owes a row in `workspace/agent/prompt_lang_test.go`**, which
-  fails when the English side holds a single Japanese character — `・` and full-width
-  brackets included, which slip in by habit. Without the row, the Japanese survives on
-  the English Console alone.
+  fails when the English side holds a single kana, kanji, CJK punctuation mark or
+  full-width ASCII character — `・` and full-width brackets included, which slip in by habit.
+  Without the row, the Japanese survives on the English Console alone.
 
 ## 4.6 Git and the filesystem
 

@@ -6,7 +6,7 @@
   実装（pk-opencode-webui の焼き込み・`opencode serve`＋`bun serve-ui.ts`・`/ocweb`
   プロキシ・Console トグル）を撤去。opencode の利用は tmux 内 TUI（CLI）に一本化。
   以下は当時の設計記録として残す。
-- 関連: [reference/preview.md](../build/05-api.ja.md)（同じプロキシ機構・WS 制約）/ [dev/08 §8.6](../build/08-integrations.ja.md)（旧 HANDOFF §opencode） / rtk トグル（[エージェント設定タブ](../../guide/member/12-settings.ja.md)）の隣に並ぶ機能
+- 関連: [reference/preview.md](../build/05-api.ja.md)（同じプロキシ機構・WS 制約）/ [dev/04 §4.3](../build/04-agent.ja.md)（旧 HANDOFF §opencode） / rtk トグル（[エージェント設定タブ](../../guide/member/12-settings.ja.md)）の隣に並ぶ機能
 
 ## 背景
 

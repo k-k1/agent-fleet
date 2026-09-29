@@ -40,7 +40,7 @@ The settled premises:
 | Scale | Small (1 deployment = tens to ~100 users). SQLite is the default database |
 
 The old `platform_admin` (i.e. us) is gone. The vendor does not appear anywhere in the
-runtime hierarchy ([Roadmap §12.1](../log/roadmap.md#121-アイデンティティ階層パッケージセルフホスト版)).
+runtime hierarchy ([Roadmap §12.1](../log/roadmap.md#121-アイデンティティ階層（パッケージ・セルフホスト版）)).
 
 ## Consequences
 

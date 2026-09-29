@@ -1,6 +1,6 @@
 # 19. P3-9 実装プラン — アイドル自動停止（scale-to-zero, 二段構え）
 
-> 🗄 **実装記録** — 現状は [build/03 §3.7](../build/03-control-plane.ja.md)（旧 HANDOFF）、設計は [ロードマップ P3-9](roadmap.md#p3-9-運用の成熟社内旧-phase-4-を吸収)。
+> 🗄 **実装記録** — 現状は [build/03 §3.7](../build/03-control-plane.ja.md)（旧 HANDOFF）、設計は [ロードマップ P3-9](roadmap.md#p3-9-運用の成熟（社内・旧-phase-4-を吸収）)。
 
 [12 Phase 3](roadmap.md) の P3-9 のうち **idle-stop（scale-to-zero）** を前倒し実装。オンプレ単一ホストは
 RAM 逼迫で live fleet を OOM させる（[host-oom-fleet-risk]）ため、実運用上きわめて重要。**BYO ゆえ止めるのは
