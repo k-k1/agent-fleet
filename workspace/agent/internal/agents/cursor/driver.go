@@ -374,11 +374,14 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("cursor runtime を起動できません: %w", err)
 	}
 	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
+	// Closed by watch once the exit is recorded; a failed start waits on it (awaitExitRecord).
+	exited := make(chan struct{})
 	// Snapshot the tail before stopChild: the stop sequence can make the CLI print noise
 	// that pushes the real cause out of the budget.
 	fail := func(err error) error {
 		err = tail.Wrap(err)
 		stopChild(cmd)
+		awaitExitRecord(exited)
 		return err
 	}
 	cl := newACPClient(stdin, stdout)
@@ -389,7 +392,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		h.onServerRequest(cl, id, method, params)
 	}
 	cl.onNotify = h.onNotify
-	go h.watch(cmd, tail, cl)
+	go h.watch(cmd, tail, cl, exited)
 
 	if _, err := cl.call("initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
@@ -490,10 +493,25 @@ func currentModelOf(res json.RawMessage) string {
 	return out.Models.CurrentModelID
 }
 
+// exitRecordWait bounds how long a failed spawn waits for watch: longer than stopChild's
+// SIGTERM → SIGKILL sequence (3 s), so a child that ignores SIGTERM is still counted.
+const exitRecordWait = 5 * time.Second
+
+// awaitExitRecord holds a failed spawn until watch has written the exit record. Without it the
+// caller reports the failure before the record exists, and the write lands after the caller
+// has moved on — under a test's TempDir HOME, while or after that tree is removed.
+func awaitExitRecord(exited <-chan struct{}) {
+	select {
+	case <-exited:
+	case <-time.After(exitRecordWait):
+	}
+}
+
 // watch reaps the child and records its exit. With one child per session the exit can be
 // attributed exactly, unlike a daemon supervisor. An exit caused by SIGTERM
 // (DropHandle/Shutdown) becomes "stopped" and the Console shows the ordinary stopped state.
-func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClient) {
+func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *acpClient, exited chan struct{}) {
+	defer close(exited) // releases a failed spawn's awaitExitRecord
 	_ = cmd.Wait()
 	tail.Release()
 	code, sig := 0, 0
