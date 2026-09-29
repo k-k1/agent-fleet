@@ -195,7 +195,10 @@ export function useSkillPicker({
   };
   // Close on outside click. A click inside the textarea (caret move) is excluded: onSelect
   // re-tracks the token there and the list should stay alive, so inputRef is part of refs.
-  useDismiss([skillPopRef, skillBtnRef, inputRef], skillListVisible, closeSkillPicker);
+  // Pass-through: the list sits right above send, attach and history search, and a tap on one
+  // of them means that control - swallowing it made the first tap on send after typing a
+  // skill's arguments do nothing.
+  useDismiss([skillPopRef, skillBtnRef, inputRef], skillListVisible, closeSkillPicker, { passThrough: true });
 
   // Open from the button, or close it if already open (the "/" button).
   const toggleFromButton = () => {
