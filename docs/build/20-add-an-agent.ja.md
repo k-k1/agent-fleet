@@ -49,7 +49,7 @@ updated: "2026-09"
 | 面 | 置き場 | 注意 |
 |---|---|---|
 | kind 定数と登録 | `internal/session/session.go` の `Kind*`、`internal/sessionx/agent.go` の `agentRegistry`、マネージドなら `internal/sessionx/session_turn.go` の `managedDrivers` | **`agentRegistry` に無い kind は黙って claude になる**。`NormalizeKind` と `AgentOf` がそこへ落とす |
-| capability | 自パッケージの `Caps()`、自 `Driver` の `Capabilities()` | **通しで駆動していない capability を立てない**（§20.4）|
+| capability | 自パッケージの `Caps()`、自 `Driver` の `Capabilities()` | **利用者に見える capability は、通しで駆動するまで立てない**。`Capabilities()` は driver の実装を宣言する（§20.4）|
 | ターミナル起動 | 自パッケージの `BuildLaunch`（`agents.LaunchPlan` を返す）| 環境変数は `LaunchPlan.Env` に入れ、**コマンドに前置しない**（§20.3）。マネージド専用の種別は `ErrNoTerminalRoute` を返す |
 | マネージドの実行系 | 自 `Driver`。`Resume` が `ThreadHandle` を返す | 形はプロセスモデルに従う（[04 §4.3](04-agent.ja.md)）|
 | 呼び出し側がどちらの driver を選ぶか | Console: `console/src/agents/registry.ts` の `managedDriver` と `terminalDriver`。コンテナ内 MCP の `create_session`（`mcpStdioCall`）。CP: `control-plane/internal/mcpsrv/mcp.go` の `create_session` と `control-plane/scheduler_wake.go` の `injectDriver` | Agent は driver 未指定を `tui` にするので、**両対応でマネージドで始めたい種別は全部の呼び出し側に足す**。マネージド専用は Agent が既定を決めるが、Console には `terminalDriver: false` が要る |
@@ -58,10 +58,10 @@ updated: "2026-09"
 | サインイン | Agent の `/connections/<kind>/…` ハンドラ、**および** `control-plane/routes.go` で 1 本ずつ名指しで中継するルート（ログインフローは `restLogin`）| CP へのコールバックが要る種別は無い（[08 §8.6](08-integrations.ja.md)）。サインインする相手が無い種別にはフローも無い |
 | 資格の置き場と fs denylist | 自パッケージと `fsDeny`（`fs.go`）| CLI が資格情報や状態を書く場所は**ファイルブラウザから隠す** |
 | MCP | `internal/mcpreg`: CLI が設定ファイルを読むなら `writerFor` の writer と `MaterializedKinds` への追加、別経路（ワイヤ上・プロセス内）で渡るなら `ServedKinds`。`knownKinds` と、`control-plane/internal/mcpsrv/mcp_server.go` の `mcpKnownKinds` | CLI ごとに設定の形もプレースホルダ方言も違う。設定ファイル型で CLI を CI で動かせる種別は `mcp-config-contract.yml` にも足す |
-| エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または理由コード付きで `instrUnsupported` | Console は両方を一覧する。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる** |
+| エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または理由コード付きで `instrUnsupported` | Console の配布先一覧はこの 2 つから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしており、どちらの一覧にも無いので、Console に lcpp の行は出ない |
 | Console の descriptor | `console/src/types/session.ts` の `SESSION_KINDS` と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
 | 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、`deploy/local/cli-drift-check.sh` の行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
-| contract ワークフロー | `.github/workflows/` の下に専用ファイル | **エージェント毎に 1 ファイル**。リリース監視に登録する（§20.5）|
+| contract ワークフロー | `.github/workflows/` の下に専用ファイル（版のある外部製品に依存する種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。そういう製品を持たない種別は別の方法でドリフトを見る（§20.5）|
 
 この表は kind 名が現れる場所の完全な一覧ではありません。手で持っている一覧がまだあります。
 たとえば `internal/sessionx/session_io.go` の bracketed paste を使う種別、`usage_fold.go` の
@@ -85,9 +85,11 @@ updated: "2026-09"
 - ⚠️ **tmux の target は前方一致**。セッションの target には `session.ExactTarget`（`=<name>`）を使う。
   いつか違うセッションを kill します。`capture-pane` はこの形を受け付けず、pane の target が要ります
   （`internal/tmuxx`）。
-- ⚠️ **ピッカーの表示名はモデル id ではない**。作成時に live カタログで解決し
-  （`HandleCreateSession` の `resolveLiveModel`）、**clone / worktree の副作用より前に拒否**する。
-  起動後に落ちる無効モデルはゴミを残します。
+- ⚠️ **ピッカーの表示名はモデル id ではない**。live カタログを持つ種別なら `HandleCreateSession` の
+  解決（`resolveLiveModel`）に足す。これが **clone / worktree の副作用より前に拒否**します。
+  起動後に落ちる無効モデルはゴミを残します。拒否できるのはカタログが読めるときだけで、読めないときは
+  指定値のまま起動を続けます。どの種別が解決されるかと規則の残りは [04 §4.2](04-agent.ja.md)
+  （「その他のセッション操作」）です。
 - ⚠️ **無料プランは別の製品**。copilot の Free プランは Auto しか使えず、Auto は `--effort` を拒否します
   （`internal/agents/copilot/program.go`）。cursor の Free プランは名前指定のモデルで起動できません
   （`internal/agents/cursor/models.go`）。無条件に付けたフラグは、**最も切り分けが難しい利用者の
@@ -102,10 +104,18 @@ updated: "2026-09"
 `Caps()` も Console の descriptor の `caps` もドキュメントではありません。Console はこれで操作要素を
 出し分け、サーバーはこれで断ります。たとえば `PermissionChoice` の無い種別の作成には
 `permission_choice_unsupported` が返ります。このリポジトリが学んだ規則は
-**「実 CLI で通しで駆動した capability だけを立てる」**。具体例: 権限確認のスキップを選べるように
-するには、**承認待ちが Console から実際に答えられる**ことが要ります。フラグを外すだけならどの
-kind でもできますが、**利用者に見えず答えられないダイアログ**で止まったセッションは、
+**「利用者に見える capability は、実物の実行系で通しで駆動したものだけを立てる」**。実物とは
+ベンダーの CLI やホスト、プロセス内で動く種別なら実エンジンです。具体例: 権限確認のスキップを
+選べるようにするには、**承認待ちが Console から実際に答えられる**ことが要ります。フラグを外すだけ
+ならどの kind でもできますが、**利用者に見えず答えられないダイアログ**で止まったセッションは、
 その人から見れば**黙って固まったのと同じ**です。
+
+`Driver` の `Capabilities()` は別の主張で、driver が何を実装しているかの宣言です。テスト以外で
+読むのは `GET /sessions/{name}/settings` の 1 か所だけで、`DynamicModel`・`DynamicEffort`・
+`DynamicMode` を渡します（`internal/sessionx/session_turn.go`）。違いは muse に出ています。
+承認の経路は作られてテスト済みなので driver は `Permissions` を立てますが、ワークスペースの muse
+セッションは承認を一度も出さないと実測されたので、`Caps()` の `PermissionChoice` は false です
+（`muse/driver.go`・`muse/muse.go`）。Console に届くフィールドは利用者向けの水準で扱います。
 
 逆向きも同じです。**能力が本当に無いなら、操作要素をそもそも出さない。**
 押しても何も起きないボタンは、ボタンが無いより悪い。
@@ -129,10 +139,12 @@ kind でもできますが、**利用者に見えず答えられないダイア�
 エージェント毎に 1 ファイルにするのが規則であることは [10 §10.4](10-development.ja.md)
 （「上流 CLI の破壊検知」）にあります。
 
-なので新しい種別には**専用の contract ワークフロー**が要ります。何を検査できるかは種別次第です。
-多くはテスト用の資格情報で実 CLI を駆動しますが、プロトコルをオフラインで検査できる種別なら
-資格情報は要らないこともあります。ベンダーの CLI を動かさない種別には、突き合わせる相手が
-ありません。
+なので、版のある外部製品に依存する種別には**専用の contract ワークフロー**が要ります。何を検査
+できるかは種別次第です。多くはテスト用の資格情報で実 CLI を駆動します。`muse-contract.yml` は
+資格情報を要さず、ホストのプロトコルスキーマと版表示の形を検査するだけで、ターンは回しません。
+ベンダーの製品を持たない種別は、実際に依存している軸を別の方法で見ます。lcpp の軸は llama.cpp
+サーバーの API で、実エンジンに対するオプトインの live テスト（`internal/harness/live_contract_test.go`、
+ビルドタグ `manuallive`）が押さえています。これを走らせるワークフローはありません。
 
 毎日のリリース監視 `cli-release-watch.yml` に登録し、公開版が変わったら dispatch されるようにします。
 `cli-drift.yml` はピンの遅れを報告するだけで、何も dispatch しません。登録は 4 か所です。
@@ -142,6 +154,7 @@ kind でもできますが、**利用者に見えず答えられないダイア�
 - ワークフローの状態・エッジ・dispatch の各ステップに行を足す。
 - contract 自身に、成功時に `deploy/local/cli-release-state.sh set tested <kind> <version>` を
   走らせるステップを置く。**これが無いと、監視はそのリリースを毎日新しいと見て、毎日 dispatch します。**
+  `muse-contract.yml` にはこのステップが無く、今まさにそうなっています。
 
 無人で dispatch するのは、資格情報を無人で供給できる場合だけです。**対話的な refresh で回転する
 資格情報のものは「seen」として記録し、手で dispatch**します。資格情報が未設定のうちに来たリリースも
@@ -152,10 +165,12 @@ kind でもできますが、**利用者に見えず答えられないダイア�
 
 動いたら完了、ではありません。次が済んで完了です。
 
-1. `Caps()` と、`Driver` の `Capabilities()` が、**実際に駆動した内容**と一致している。
+1. `Caps()` が実物の実行系で**実際に駆動した内容**と、`Driver` の `Capabilities()` が driver の
+   実装と一致している（§20.4）。
 2. [ref/agents.md](../../guide/ref/agents.ja.md) の列が埋まり、§20.4 の 2 つの検査が通っている。
 3. [member/06-agents](../../guide/member/06-agents.ja.md) に、**Console の言葉で**
    （`console/src/lib/i18n/locales/`）接続の仕方が書いてある。
-4. contract ワークフローが在り、リリース監視に登録され、実 CLI に対して通っている。
+4. 版のある外部製品に依存する種別なら、contract ワークフローが在り、リリース監視に登録され、
+   実リリースに対して通っている。そうでなければ、代わりの検査（§20.5）が通っている。
 5. 蒸し返され得る論点（なぜこの driver か、なぜこの id 戦略か）を決着させたなら、
    [decisions/](../decisions/) に記録が在る。

@@ -52,7 +52,7 @@ unless they name another tree.
 | Surface | Where | Notes |
 |---|---|---|
 | The kind constant and its registration | `Kind*` in `internal/session/session.go`; `agentRegistry` in `internal/sessionx/agent.go`; for Managed, `managedDrivers` in `internal/sessionx/session_turn.go` | **A kind missing from `agentRegistry` silently becomes claude**: `NormalizeKind` and `AgentOf` fall back to it |
-| Capabilities | `Caps()` in your package; `Capabilities()` on your `Driver` | **Do not set a capability you have not driven end to end** (§20.4) |
+| Capabilities | `Caps()` in your package; `Capabilities()` on your `Driver` | **Do not set a capability the member sees until you have driven it end to end.** `Capabilities()` declares what the driver implements (§20.4) |
 | Terminal launch | your package's `BuildLaunch`, returning `agents.LaunchPlan` | Environment goes in `LaunchPlan.Env`, **never prefixed onto the command** (§20.3). A managed-only kind returns `ErrNoTerminalRoute` |
 | Managed runtime | your `Driver`: `Resume` returns a `ThreadHandle` | Its shape follows the process model ([04 §4.3](04-agent.md)) |
 | Which driver a caller picks | Console: `managedDriver` and `terminalDriver` in `console/src/agents/registry.ts`. The in-container MCP `create_session` (`mcpStdioCall`). The CP: `create_session` in `control-plane/internal/mcpsrv/mcp.go` and `injectDriver` in `control-plane/scheduler_wake.go` | The agent defaults an unspecified driver to `tui`, so **a kind with both drivers that should start Managed is added to every caller**. A managed-only kind is defaulted by the agent, but the Console still needs `terminalDriver: false` |
@@ -61,10 +61,10 @@ unless they name another tree.
 | Sign-in | the agent's `/connections/<kind>/…` handlers, **and** each route relayed by name in `control-plane/routes.go` (`restLogin` for a login flow) | No kind needs a CP callback ([08 §8.6](08-integrations.md)); a kind with nothing to sign in to has no flow |
 | Credential location and the filesystem denylist | your package, plus `fsDeny` (`fs.go`) | Anything the CLI writes credentials or state into must be **hidden from the file browser** |
 | MCP | `internal/mcpreg`: a writer in `writerFor` and an entry in `MaterializedKinds` when the CLI reads a config file; `ServedKinds` when servers reach it another way (on the wire, or in-process); `knownKinds`, and `mcpKnownKinds` in `control-plane/internal/mcpsrv/mcp_server.go` | Each CLI has its own config shape and placeholder dialect. A config-file kind whose CLI can run in CI goes into `mcp-config-contract.yml` too |
-| Agent instructions | `agent_instructions.go`: `instrSupportedKinds` and the per-kind apply, or `instrUnsupported` with a reason code | The Console lists both. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it |
+| Agent instructions | `agent_instructions.go`: `instrSupportedKinds` and the per-kind apply, or `instrUnsupported` with a reason code | The Console's list of targets is built from these two lists. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead: lcpp does, each turn, through `harness.SystemPrompt`, and is in neither list, so the Console shows no lcpp row |
 | Console descriptor | `SESSION_KINDS` in `console/src/types/session.ts`, and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances. Some screens still switch on the kind name, so grep them (below) |
 | Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
-| A contract workflow | its own file under `.github/workflows/` | **One file per agent**, registered with the release watcher (§20.5) |
+| A contract workflow | its own file under `.github/workflows/`, for a kind that depends on a versioned external product | **One file per agent**, registered with the release watcher. A kind with no such product checks its drift another way (§20.5) |
 
 The table is not a complete list of where kind names appear. Some lists are still kept
 by hand: for example the bracketed-paste kinds in `internal/sessionx/session_io.go`,
@@ -90,10 +90,13 @@ Every one of these cost real debugging time. The first three are the launch cont
 - ⚠️ **tmux target matching is a prefix match.** Use `session.ExactTarget` (`=<name>`)
   for session targets, or you will eventually kill the wrong session. `capture-pane`
   does not accept that form and needs a pane target (`internal/tmuxx`).
-- ⚠️ **A model that only exists in a picker is not a model id.** Resolve against the live
-  catalogue at creation (`resolveLiveModel` in `HandleCreateSession`) and **refuse
-  before the clone or worktree happens** — an invalid model that only fails after launch
-  leaves debris behind.
+- ⚠️ **A model that only exists in a picker is not a model id.** If your kind has a live
+  catalogue, add it to the resolution in `HandleCreateSession` (`resolveLiveModel`), which
+  **refuses before the clone or worktree happens** — an invalid model that only fails
+  after launch leaves debris behind. The refusal needs a readable catalogue: when it
+  cannot be read, the value passes through and the start proceeds. Which kinds are
+  resolved, and the rest of the rule, are [04 §4.2](04-agent.md) ("Other session
+  operations").
 - ⚠️ **Free plans are a different product.** copilot's Free plan offers only Auto, and
   Auto rejects `--effort` (`internal/agents/copilot/program.go`); cursor's Free plan
   cannot launch a named model (`internal/agents/cursor/models.go`). A flag passed
@@ -110,11 +113,20 @@ Every one of these cost real debugging time. The first three are the launch cont
 `Caps()` and the Console descriptor's `caps` are not documentation: the Console shows or
 hides controls by them, and the server refuses by them. For example, create answers
 `permission_choice_unsupported` for a kind without `PermissionChoice`. The rule this
-repository learned: **a capability is set only when the path has been driven end to end
-on the real CLI.** The specific case: allowing the permission prompt to be skipped
+repository learned: **a capability the member sees is set only when the path has been
+driven end to end on the real runtime** — the vendor CLI or host, or for an in-process
+kind the real engine. The specific case: allowing the permission prompt to be skipped
 requires that **a pending approval can actually be answered from the Console**. Removing
 the flag is easy for any kind — but a session stopped at a dialog **the user cannot see
 or answer** is, from their side, indistinguishable from a hang.
+
+A `Driver`'s `Capabilities()` is a different claim: it declares what the driver
+implements. Its one reader outside tests is `GET /sessions/{name}/settings`, which passes
+on `DynamicModel`, `DynamicEffort` and `DynamicMode` (`internal/sessionx/session_turn.go`).
+muse shows the difference: its driver sets `Permissions`, because the approval path is
+built and tested, while its `Caps()` leaves `PermissionChoice` false, because a muse
+session in a workspace was measured to raise no approval at all (`muse/driver.go`,
+`muse/muse.go`). A field that does reach the Console is held to the member's bar.
 
 The same applies to the other direction: **when a capability is genuinely absent, do not
 render the control at all.** A button that does nothing is worse than no button.
@@ -139,10 +151,13 @@ runs the latest, and the headless smoke test draws no TUI. Why, and why that mak
 workflow file per agent a rule, is [10 §10.4](10-development.md) ("Detecting upstream CLI
 breakage").
 
-So a new kind needs a **contract workflow of its own**. What it can check depends on the
-kind: most drive the real CLI with a test credential, while a kind whose protocol can be
-checked offline may need none. A kind that runs no vendor CLI has nothing to contract
-against.
+So a kind that depends on a versioned external product needs a **contract workflow of its
+own**. What it can check depends on the kind. Most drive the real CLI with a test
+credential. `muse-contract.yml` needs none: it checks the host's protocol schema and the
+shape of its version line, and never runs a turn. A kind with no vendor product checks the
+axis it does depend on another way: lcpp's is the llama.cpp server's API, pinned by an
+opt-in live test against a real engine (`internal/harness/live_contract_test.go`, build
+tag `manuallive`), which no workflow runs.
 
 Register it with the daily release watcher, `cli-release-watch.yml`, so that a published
 version change dispatches it. `cli-drift.yml` only reports pins that fall behind; it
@@ -154,6 +169,7 @@ dispatches nothing. Registering takes four places:
 - in the contract itself, a success step that runs
   `deploy/local/cli-release-state.sh set tested <kind> <version>`. **Without it, the
   watcher sees the release as new every day and dispatches it every day.**
+  `muse-contract.yml` has no such step, and that is what happens to it today.
 
 Dispatch unattended only when the credential can be supplied unattended. **A credential
 that rotates through an interactive refresh is recorded as "seen" and dispatched by
@@ -165,12 +181,14 @@ is how a regression ships.
 
 A kind is not done when it runs. It is done when:
 
-1. `Caps()`, and a `Driver`'s `Capabilities()`, match what you actually drove;
+1. `Caps()` matches what you drove on the real runtime, and a `Driver`'s
+   `Capabilities()` matches what the driver implements (§20.4);
 2. [ref/agents.md](../../guide/ref/agents.md) has its column filled, and the two checks
    in §20.4 pass;
 3. [member/06-agents](../../guide/member/06-agents.md) tells a user how to connect it,
    using the Console's own words (`console/src/lib/i18n/locales/`);
-4. the contract workflow exists, is registered with the release watcher, and has passed
-   against the real CLI;
+4. if the kind depends on a versioned external product, its contract workflow exists,
+   is registered with the release watcher, and has passed against a real release;
+   otherwise the check that stands in for it (§20.5) has passed;
 5. if anything was settled that could plausibly be reopened — why this driver, why this
    id strategy — [decisions/](../decisions/) has the record.
