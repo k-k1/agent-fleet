@@ -101,8 +101,12 @@ Which file implements what is [90-code-map](90-code-map.md).
 
 ## 3.2 The life of a request
 
-Every public API call goes through the same front half (the authorisation principles
-and error shapes are [05 §5.4](05-api.md)):
+A member's API call goes through the same front half (the authorisation principles
+and error shapes are [05 §5.4](05-api.md)). The steps below are the full form, the
+`withResolved` wrapper that anything touching the workspace uses. CP-only surfaces —
+the memo queue, schedules, the saved work-item queries — use `withMembership` instead,
+which stops after step 3 and never builds a Runtime; a few that need no tenant at all
+(PATs, the tenant picker) use `withIdentity` and stop after step 2.
 
 1. **The auth gate** (oauth mode only) — verify the cookie and inject the email. The
    exemptions are declared next to the routes they belong to (`exemptExact` /
@@ -116,13 +120,20 @@ and error shapes are [05 §5.4](05-api.md)):
 3. **Check the membership** — `X-AF-Tenant`, then the query fallback.
 4. **Resolve the workspace runtime** — membership → workspace row (allocating one if
    needed, §3.3) → unwrap the DEK (§3.4) → build the Runtime through the factory,
-   cached in memory but with the database as the truth. **Every ingress records
-   liveness** in the connection tracker.
+   cached in memory but with the database as the truth.
 5. **Handle or proxy** — CP-only surfaces are answered here; everything else goes to the
    agent over one of the five paths ([05 §5.3](05-api.md)).
 
-Relaying requires the workspace to be running (stopped is a 409), and **starting a
-workspace does not wait for its agent**: `POST /api/workspace/start` returns the live
+Only the operations that mean activity record it for idle-stop: a relayed REST call
+that is not `GET` or `HEAD`, a chat stream, and the long-lived connections of §3.3.
+Background polling, `/api/events` included, never keeps a workspace warm.
+
+What a request meets when the workspace is not running depends on its path
+([05 §5.3](05-api.md)). The general REST relay (`agentProxyAPI.rest`) does not check
+the state; it dials, and an agent it cannot reach is a `502`. A terminal checks first and
+answers `409 workspace_starting` or `409 workspace_stopped`; a login flow refuses with
+`409 workspace_starting` until the workspace is `running`. **Starting a workspace does
+not wait for its agent**: `POST /api/workspace/start` returns the live
 state as soon as the launch is committed, which on ECS reads `starting` until the task
 converges, and the Console keeps polling.
 
@@ -305,8 +316,10 @@ The design and the staged rollout — log-only → allowlist → enforce — are
 [07 §7.8](07-security.md). What lives in the CP:
 
 - **An egress-proxy subcommand** — `control-plane egress-proxy` runs the same binary as
-  a forward proxy (FQDN-based, no TLS interception, `AF_EGRESS_LISTEN`, `:3128`). It
-  only blocks when enforce is on.
+  a forward proxy (FQDN-based, no TLS interception, `AF_EGRESS_LISTEN`, `:3128`). A host
+  outside the allowlist is blocked only when enforce is on; loopback, link-local (the
+  cloud metadata address included) and unspecified destinations are refused in every
+  mode.
 - **Policy distribution** — `GET /internal/egress/policy` returns the effective
   allowlist and mode to the proxy.
 - **Ingest** — `POST /internal/egress` (`AF_EGRESS_TOKEN`) takes observed events into a
@@ -324,9 +337,12 @@ proxy environment into every workspace; **the default is off, and nothing change
 ## 3.9 Self-hosted engines
 
 What an engine is, and which target can have which, are [01 §1.3](01-architecture.md)
-and [ref/deploy-targets](../../guide/ref/deploy-targets.md). The CP owns all of it —
-the workspace never talks to an engine directly
-([decisions/0071](../decisions/0071-self-hosted-inference-engines.md)).
+and [ref/deploy-targets](../../guide/ref/deploy-targets.md). The CP owns the engines in
+the deployment's table, and **a workspace never talks to one of them directly**
+([decisions/0071](../decisions/0071-self-hosted-inference-engines.md)). The exception is
+a member's own llama.cpp server, set up as an lcpp connection: the agent dials its URL
+itself, the CP is not involved, and when it is set it wins over the deployment's engine
+([08](08-integrations.md)).
 
 - **The engine table** — one row per role (`llm`, `image`, `comfy`), with a provider
   (`llamacpp`, `comfy`, `openai-compat`) and a lifecycle: this deployment's own ECS
@@ -343,9 +359,12 @@ the workspace never talks to an engine directly
 - **The gateway** — `/engine/{key}/v1/*` (and `GET /engine/{key}/props`), registered
   only when an engine table exists. A workspace holds the issuing token
   (`AF_ENGINE_ISSUE_TOKEN`) and exchanges it at `POST /internal/engine/token` for a
-  short-lived session token that opens one role; that second token is the one a model
-  can read, as `AF_ENGINE_TOKEN`. The membership and the tenant's per-role permission
-  are checked on every request.
+  token valid for 30 days, bound to the membership, one engine key and, when the caller
+  names one, one session. Where the caller names none (opencode's shared Managed daemon,
+  image generation, the boot-time probes) it covers the whole workspace. That second
+  token is the one a model can read: opencode receives it as `AF_ENGINE_TOKEN`. Every
+  call re-checks that the membership is still live and that the tenant may use that
+  engine.
 - **Cold starts** — a streaming request is answered 200 at once and kept alive with a
   heartbeat; a non-streaming one is held for `AF_ENGINE_PLAIN_HOLD` (45 seconds, 75 for
   a borrowed engine) and then answered `503 engine_waking` with `Retry-After` while the

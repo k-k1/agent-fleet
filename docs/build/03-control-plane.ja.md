@@ -81,7 +81,10 @@ CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一
 
 ## 3.2 リクエストの一生
 
-公開 API はどれも同じ前段を通る（認可の原則・エラー形は [05 §5.4](05-api.ja.md) が正）:
+メンバーの API 呼び出しは同じ前段を通る（認可の原則・エラー形は [05 §5.4](05-api.ja.md) が正）。
+以下は完全形で、Workspace に触れるものが使うラッパー `withResolved` の手順。CP 完結の面 — memo キュー・
+スケジュール・保存済みの作業項目クエリ — は代わりに `withMembership` を使い、手順 3 で止まって Runtime を
+作らない。テナントすら要らないもの（PAT・テナントの選択）は `withIdentity` で、手順 2 で止まる。
 
 1. **authGate**（oauth モードのみ）— cookie 検証と email 注入。除外はそれぞれのルートの隣で宣言する
    （`exemptExact` / `exemptPrefix`）: ログインと OAuth の経路、`/healthz` と `/readyz`、それに自前で
@@ -92,12 +95,17 @@ CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一
    拒否される（`invite`）。
 3. **membership 検証** — `X-AF-Tenant`、次に query のフォールバック。
 4. **Workspace runtime 解決** — membership → workspace 行（無ければ払い出し、§3.3）→ DEK の unwrap
-   （§3.4）→ factory で Runtime を構築（メモリにキャッシュするが DB が正）。**全 ingress が接続追跡に
-   活性を記録する**。
+   （§3.4）→ factory で Runtime を構築（メモリにキャッシュするが DB が正）。
 5. **処理または中継** — CP 完結の面はここで答え、それ以外は 5 経路のどれかで Agent へ
    （[05 §5.3](05-api.ja.md)）。
 
-中継は Workspace が running であることが前提（stopped は 409）で、**Workspace の起動は Agent を待たない**:
+idle-stop の活性を記録するのは、活動を意味する操作だけ: `GET` / `HEAD` 以外の REST 中継、チャットの
+ストリーム、§3.3 の long-lived 接続。裏のポーリングは `/api/events` も含めて Workspace を温めない。
+
+Workspace が running でないときに要求が何に出会うかは経路で違う（[05 §5.3](05-api.ja.md)）。一般の REST
+中継（`agentProxyAPI.rest`）は状態を確かめずに接続し、Agent に届かなければ `502`。端末は先に確かめて
+`409 workspace_starting` か `409 workspace_stopped` を返し、ログインのフローは `running` になるまで
+`409 workspace_starting` で断る。**Workspace の起動は Agent を待たない**:
 `POST /api/workspace/start` は起動が確定した時点のライブな状態を返す。ECS ではタスクが収束するまで
 `starting` と読め、Console がポーリングを続ける。
 
@@ -236,7 +244,9 @@ Workspace を起こさない。
 設計と段階運用 — log-only → allowlist → enforce — は [07 §7.8](07-security.ja.md)。CP に住んでいるもの:
 
 - **egress-proxy サブコマンド** — `control-plane egress-proxy` で同じバイナリが forward proxy として動く
-  （FQDN 判定・TLS 非復号・`AF_EGRESS_LISTEN`、`:3128`）。遮断するのは enforce のときだけ。
+  （FQDN 判定・TLS 非復号・`AF_EGRESS_LISTEN`、`:3128`）。許可リストに無いホストを遮断するのは
+  enforce のときだけで、loopback・link-local（クラウドのメタデータのアドレスを含む）・unspecified の宛先は
+  どのモードでも拒否する。
 - **policy 配布** — `GET /internal/egress/policy` が実効の許可リストとモードを proxy へ返す。
 - **ingest** — `POST /internal/egress`（`AF_EGRESS_TOKEN`）で観測イベントを受けて日次に集計する。
   would-block は日 × ホストで重複を除き、監査ログにも記録する。
@@ -251,8 +261,10 @@ Workspace を起こさない。
 ## 3.9 自前エンジン
 
 エンジンとは何か、どのターゲットに何があるかは [01 §1.3](01-architecture.ja.md) と
-[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)。CP がすべてを持ち、Workspace がエンジンと
-直接話すことは無い（[decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md)）。
+[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)。配備のエンジン表にあるエンジンは CP が持ち、
+**Workspace がそれと直接話すことは無い**（[decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md)）。
+例外はメンバー自身の llama.cpp サーバ（lcpp の接続として設定したもの）で、Agent がその URL に自分で
+つなぎ、CP は関わらない。設定されていれば配備のエンジンより優先される（[08](08-integrations.ja.md)）。
 
 - **エンジン表** — ロール（`llm`・`image`・`comfy`）ごとに 1 行で、プロバイダ（`llamacpp`・`comfy`・
   `openai-compat`）とライフサイクルを持つ: この配備自身の ECS サービス、`external`（ここでは誰も起動しない
@@ -265,8 +277,11 @@ Workspace を起こさない。
   読むだけ。エンジンが読み込むアクティブセットを公開する。
 - **ゲートウェイ** — `/engine/{key}/v1/*`（と `GET /engine/{key}/props`）。エンジン表があるときだけ
   登録する。Workspace は発行用トークン（`AF_ENGINE_ISSUE_TOKEN`）を持ち、`POST /internal/engine/token` で
-  1 ロールだけを開く短命のセッショントークンに替える。モデルが読めるのはこの 2 つ目のトークン
-  （`AF_ENGINE_TOKEN`）。membership とテナントのロール別の許可は毎リクエスト確かめる。
+  有効 30 日のトークンに替える。これは membership とエンジンのキー 1 つに縛られ、呼び出し側が
+  セッションを指定したときはその 1 セッションにも縛られる。指定しない経路（opencode の共有 Managed
+  デーモン・画像生成・起動時の問い合わせ）ではワークスペース全体に効く。モデルが読めるのはこの
+  2 つ目のトークンで、opencode は `AF_ENGINE_TOKEN` として受け取る。membership がまだ有効か、
+  テナントがそのエンジンを使えるかは、呼び出しのたびに確かめ直す。
 - **コールドスタート** — ストリーミングの要求にはすぐ 200 を返してハートビートで保つ。非ストリーミングの
   要求は `AF_ENGINE_PLAIN_HOLD`（45 秒、借りたエンジンは 75 秒）保持してから、`Retry-After` 付きの
   `503 engine_waking` で答え、エンジンはそのまま起き続ける。45 秒はロードバランサの 60 秒のアイドル
