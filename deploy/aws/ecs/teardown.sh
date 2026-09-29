@@ -108,13 +108,14 @@ SSM_PREFIX="$(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)"
 HOSTED_ZONE="$(af_stack_param "$AF_STACK_INGRESS" HostedZoneId)"
 [ -n "$HOSTED_ZONE" ] || HOSTED_ZONE="$(captured_param HostedZoneId)"
 EFS_ID="$(af_stack_output "$AF_STACK_DATA" EfsId)"
-# 10-data names the vault after its own stack, so the fallback still finds it on a re-run
-# after the stacks are gone.
-BACKUP_VAULT=""
-if [ "$AF_PERSISTENCE" = retain ]; then
-  BACKUP_VAULT="$(af_stack_output "$AF_STACK_DATA" EfsBackupVaultName)"
-  [ -n "$BACKUP_VAULT" ] || BACKUP_VAULT="$AF_STACK_DATA-efs"
-fi
+# 10-data names its EFS backup vault `<data stack>-efs-<stack id suffix>`, so every vault an
+# earlier build of the same stack name left behind is found by prefix, the stack does not
+# have to exist, and a deployment that is on `delete` now still shows the vault of its
+# retain period.
+VAULT_PREFIX="$AF_STACK_DATA-efs-"
+# How long 9d waits for deleted recovery points to leave the vault (tests shorten it).
+VAULT_WAIT_TRIES="${AF_VAULT_WAIT_TRIES:-30}"
+VAULT_WAIT_SEC="${AF_VAULT_WAIT_SEC:-10}"
 DB_ID=""
 if af_stack_exists "$AF_STACK_DATA"; then
   DB_ID="$("${AWS[@]}" cloudformation describe-stack-resource --stack-name "$AF_STACK_DATA" \
@@ -154,21 +155,30 @@ list_aps() {
   "${AWS[@]}" efs describe-access-points --file-system-id "$EFS_ID" \
     --query 'AccessPoints[].AccessPointId' --output text 2>/dev/null | txt || true
 }
-list_recovery_points() {
-  [ -n "$BACKUP_VAULT" ] || return 0
-  "${AWS[@]}" backup list-recovery-points-by-backup-vault --backup-vault-name "$BACKUP_VAULT" \
+list_vaults() {
+  "${AWS[@]}" backup list-backup-vaults \
+    --query "BackupVaultList[?starts_with(BackupVaultName,'$VAULT_PREFIX')].BackupVaultName" \
+    --output text 2>/dev/null | txt || true
+}
+list_recovery_points() {  # list_recovery_points <vault>
+  "${AWS[@]}" backup list-recovery-points-by-backup-vault --backup-vault-name "$1" \
     --query 'RecoveryPoints[].RecoveryPointArn' --output text 2>/dev/null | txt || true
 }
 WS_SVCS="$(list_ws_svcs)"; SLOTS="$(list_slots)"; HOMES="$(list_homes)"; SNAPS="$(list_snaps)"; APS="$(list_aps)"
 ENGINE_BOXES="$(list_engine_boxes)"
+VAULTS="$(list_vaults)"
 count() {
   if [ -z "${1// /}" ]; then echo 0; else printf '%s\n' "$1" | wc -l | tr -d ' '; fi
 }
 echo "    runtime residue: workspaces=$(count "$WS_SVCS") pool-instances=$(count "$SLOTS") (engine boxes=$(count "$ENGINE_BOXES")) volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
 echo "    keeping        : hosted zone $HOSTED_ZONE / $SSM_PREFIX/* $([ "$PURGE_SECRETS" = 1 ] && echo '(NO — --purge-secrets)')"
 if [ "$AF_PERSISTENCE" = retain ]; then
-  echo "    retain         : RDS final snapshot + EFS $EFS_ID + backup vault $BACKUP_VAULT ($(count "$(list_recovery_points)") recovery points) are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
+  echo "    retain         : RDS final snapshot + EFS $EFS_ID are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
 fi
+for v in $VAULTS; do
+  if [ "$AF_PERSISTENCE" = retain ] && [ "$PURGE_RETAINED" = 1 ]; then fate="deleted (--purge-retained)"; else fate="kept"; fi
+  echo "    efs backups    : vault $v ($(count "$(list_recovery_points "$v")") recovery points) is $fate"
+done
 echo ""
 echo "⚠️ ECR (af-control-plane / af-workspace) is a 20-platform resource with EmptyOnDelete: true."
 echo "   Deleting the stack deletes the images with it. A rebuild starts over from crane copy."
@@ -429,36 +439,39 @@ if [ "$AF_PERSISTENCE" = retain ]; then
       fi
     fi
     # AWS refuses to delete a vault that still holds recovery points, and deleting a point
-    # is asynchronous (it sits in DELETING for a while), so wait for the vault to empty.
-    RPS="$(list_recovery_points)"
-    if [ -n "${RPS// /}" ]; then
-      echo "==> 9c. deleting $(count "$RPS") EFS recovery points in $BACKUP_VAULT"
+    # is asynchronous (it sits in DELETING for a while), so wait for the vault to empty. A
+    # deployment that went retain before 10-data declared backups has no vault at all.
+    for v in $(list_vaults); do
+      RPS="$(list_recovery_points "$v")"
+      echo "==> 9c. deleting $(count "$RPS") EFS recovery points and the vault $v"
       for rp in $RPS; do
         if [ "$AF_DRY" = 1 ]; then
-          echo "DRY: backup delete-recovery-point --backup-vault-name $BACKUP_VAULT --recovery-point-arn $rp"
+          echo "DRY: backup delete-recovery-point --backup-vault-name $v --recovery-point-arn $rp"
         else
-          err="$("${AWS[@]}" backup delete-recovery-point --backup-vault-name "$BACKUP_VAULT" \
+          err="$("${AWS[@]}" backup delete-recovery-point --backup-vault-name "$v" \
             --recovery-point-arn "$rp" 2>&1)" || echo "    ⚠️ not deleted: $rp: $(printf '%s' "$err" | tail -1)"
         fi
       done
-    fi
-    # A deployment that went retain before 10-data declared backups has no vault at all.
-    if [ -n "$BACKUP_VAULT" ] && "${AWS[@]}" backup describe-backup-vault \
-        --backup-vault-name "$BACKUP_VAULT" >/dev/null 2>&1; then
-      echo "==> 9d. deleting the EFS backup vault $BACKUP_VAULT"
       if [ "$AF_DRY" = 1 ]; then
-        echo "DRY: backup delete-backup-vault --backup-vault-name $BACKUP_VAULT"
-      else
-        for _ in $(seq 1 30); do
-          [ -z "$(list_recovery_points)" ] && break
-          sleep 10
-        done
-        err="$("${AWS[@]}" backup delete-backup-vault --backup-vault-name "$BACKUP_VAULT" 2>&1)" \
-          || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
+        echo "DRY: backup delete-backup-vault --backup-vault-name $v"
+        continue
       fi
-    fi
+      for _ in $(seq 1 "$VAULT_WAIT_TRIES"); do
+        [ -z "$(list_recovery_points "$v")" ] && break
+        sleep "$VAULT_WAIT_SEC"
+      done
+      still="$(list_recovery_points "$v")"
+      if [ -n "$still" ]; then
+        # Typically a backup job that started before the plan went: its point cannot be
+        # deleted while it is being created, and appears once the job finishes.
+        echo "    ⚠️ $(count "$still") recovery points still in $v after $((VAULT_WAIT_TRIES * VAULT_WAIT_SEC))s" \
+          "(a backup job still running?) — re-run with --purge-retained later"
+      fi
+      err="$("${AWS[@]}" backup delete-backup-vault --backup-vault-name "$v" 2>&1)" \
+        || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
+    done
   else
-    echo "==> 9. persistence=retain: kept the RDS final snapshot, EFS $EFS_ID and backup vault $BACKUP_VAULT (--purge-retained deletes them)"
+    echo "==> 9. persistence=retain: kept the RDS final snapshot, EFS $EFS_ID and the EFS backup vault (--purge-retained deletes them)"
   fi
 fi
 
@@ -553,9 +566,7 @@ rds_left="$("${AWS[@]}" rds describe-db-instances \
 snap_left="$("${AWS[@]}" rds describe-db-snapshots --snapshot-type manual \
   --query "DBSnapshots[?starts_with(DBSnapshotIdentifier,'$AF_STACK_DATA')].DBSnapshotIdentifier" \
   --output text 2>/dev/null | txt || true)"
-vault_left=""
-[ -n "$BACKUP_VAULT" ] && vault_left="$("${AWS[@]}" backup describe-backup-vault --backup-vault-name "$BACKUP_VAULT" \
-  --query 'BackupVaultName' --output text 2>/dev/null | txt || true)"
+vault_left="$(list_vaults)"
 if [ "$AF_PERSISTENCE" = retain ] && [ "$PURGE_RETAINED" != 1 ]; then
   printf '    %-22s %s\n' "efs (kept by retain)" "$(count "$efs_left")"
   printf '    %-22s %s\n' "rds snap (retain)" "$(count "$snap_left")"

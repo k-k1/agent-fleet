@@ -130,16 +130,23 @@ Resources:
 
   # Retain above only outlives a stack deletion; a file deleted or corrupted on the running
   # file system (every home on ecs, the credentials on ecs-ec2) needs a recovery point.
-  # The vault is named, not generated, so teardown.sh can still find it once the stack is
-  # gone, and it is Retain because AWS refuses to delete a vault that holds recovery
-  # points - Delete would leave the stack in DELETE_FAILED.
+  # The vault is Retain because AWS refuses to delete a vault that holds recovery points -
+  # Delete would leave the stack in DELETE_FAILED. So a vault can outlive its stack, and
+  # its name carries the stack id: a fixed name made the next stand-up under the same
+  # stack name fail with AlreadyExists. teardown.sh finds every one by the
+  # "<stack>-efs-" prefix. Switching one stack retain -> delete -> retain still collides
+  # (the stack id does not change); delete the kept vault before switching back.
   EfsBackupVault:
     Type: AWS::Backup::BackupVault
     Condition: IsRetain
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BackupVaultName: !Sub "${AWS::StackName}-efs"
+      BackupVaultName: !Sub
+        - "${AWS::StackName}-efs-${Suffix}"
+        # First 8 hex digits of the stack id's UUID: vault names stop at 50 characters, which
+        # the whole UUID (36) would overrun, and this leaves 37 for the stack name.
+        - Suffix: !Select [ 0, !Split [ "-", !Select [ 2, !Split [ "/", !Ref "AWS::StackId" ] ] ] ]
 
   EfsBackupPlan:
     Type: AWS::Backup::BackupPlan

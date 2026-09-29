@@ -193,8 +193,8 @@ Workspace イメージと Agent は全ターゲットで同一物 — それが�
     削除保護を入れる。
   - EFS: `Persistence=retain` はスタックを消したときにファイルシステムを残し、専用のボールトへの
     AWS Backup の日次プラン（復旧ポイントの保持は `EfsBackupRetentionDays`・既定 7 日）を加える。
-    復元は手作業 — メンバー 1 人分のディレクトリか、ファイルシステム全体を新しいものへ: ecs runbook の
-    §EFS backup and restore。
+    復元は手作業 — メンバー 1 人分のディレクトリかファイルシステム全体を、稼働中のデータの横の
+    ディレクトリへ戻してから書き戻す: ecs runbook の §EFS backup and restore。
   - EBS の home（`ecs-ec2`）: 守るのは §9.5 の任意の home バックアップ
     （`AF_ECS_EC2_BACKUP_EVERY_SEC`・既定は無効）だけ。
 - **ECS のアップグレードはアプリのタグだけではない。** リリースが新しい ECR リポジトリと、まだ誰も

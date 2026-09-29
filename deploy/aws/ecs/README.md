@@ -702,7 +702,7 @@ service supports it:
 | ecs | 20-platform cluster + 30-ingress service | Create/Delete/Describe cluster & service, RegisterTaskDefinition, plus `iam:CreateServiceLinkedRole` once per account |
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
 | efs | 10-data filesystem + mount targets | CreateFileSystem/DeleteFileSystem/CreateMountTarget/DeleteMountTarget/Describe* |
-| backup | 10-data EFS backup vault + plan (`Persistence=retain`) | Create/Delete/Get/Update BackupVault, BackupPlan, BackupSelection; `backup-storage:MountCapsule` and `kms:CreateGrant`/`DescribeKey` on the default `aws/backup` key; teardown: ListRecoveryPointsByBackupVault/DeleteRecoveryPoint |
+| backup | 10-data EFS backup vault + plan (`Persistence=retain`), the runbook's backup/restore, teardown | CreateBackupVault/DescribeBackupVault/DeleteBackupVault/ListBackupVaults, Create/Get/Update/Delete BackupPlan, Create/Get/Delete BackupSelection, ListBackupPlans; `backup-storage:MountCapsule` and `kms:CreateGrant`/`DescribeKey` on the default `aws/backup` key; StartBackupJob/StartRestoreJob/DescribeRestoreJob, ListRecoveryPointsByBackupVault/DeleteRecoveryPoint, and `iam:PassRole` on the 10-data backup role |
 | rds | 10-data instance | CreateDBInstance/DeleteDBInstance/CreateDBSubnetGroup/Describe* (ManageMasterUserPassword also needs `secretsmanager:*` on the RDS-managed secret + `kms:DescribeKey`) |
 | elasticloadbalancing | 30-ingress ALB/TG/listeners | Create/Delete/Describe/Modify load balancers, target groups, listeners |
 | acm | 30-ingress cert | RequestCertificate/DeleteCertificate/DescribeCertificate |
@@ -1692,7 +1692,7 @@ copies of each home"). So under `Persistence=retain` `10-data` also declares:
 
 | Resource | What it is |
 |---|---|
-| `EfsBackupVault` | vault `<data stack>-efs` (e.g. `af-ecs-data-efs`). `DeletionPolicy: Retain` — AWS refuses to delete a vault that still holds recovery points |
+| `EfsBackupVault` | vault `<data stack>-efs-<8 hex digits of the stack id>` (e.g. `af-ecs-data-efs-1a2b3c4d`; the stack output `EfsBackupVaultName`). `DeletionPolicy: Retain` — AWS refuses to delete a vault that still holds recovery points |
 | `EfsBackupPlan` | one rule, daily at 17:00 UTC (02:00 JST), each point kept `EfsBackupRetentionDays` (default **7**, the same as RDS) |
 | `EfsBackupSelection` + `EfsBackupRole` | this file system only, backed up with the AWS-managed backup/restore policies |
 
@@ -1700,19 +1700,34 @@ copies of each home"). So under `Persistence=retain` `10-data` also declares:
 copy, crash-consistent (taken while workspaces are running), and **never restored
 automatically** — a restore is always one of the operator steps below.
 
+Because the vault is `Retain`, it outlives its stack: `teardown.sh` without
+`--purge-retained` keeps it, and so does switching a stack from `retain` to `delete`.
+The stack id in its name keeps a later stand-up under the same stack name from
+colliding with it, and `teardown.sh` lists every `<data stack>-efs-*` vault in its plan
+and sweep whatever the persistence. One case still collides: switching the *same* stack
+`retain` → `delete` → `retain` (the stack id is unchanged). Delete the kept vault first
+(§Teardown, step 9 shows how).
+
 **Turning it on for a deployment that already runs.** `update.sh` does not touch
-`10-data`, so the backups arrive only when that stack is updated by hand. With
-`--parameter-overrides` naming nothing else, every parameter keeps its current value:
+`10-data`, so the backups arrive only when that stack is updated by hand. Without
+`--parameter-overrides`, every parameter keeps its current value. Create the change set
+without executing it, read it, then execute it:
 
 ```bash
 aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
-  --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-fail-on-empty-changeset \
+  --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset \
   --profile <p> --region <r>
+# the command prints the change set's ARN
+aws cloudformation describe-change-set --change-set-name <arn> \
+  --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output table
+aws cloudformation execute-change-set --change-set-name <arn>
 aws backup list-backup-plans --query "BackupPlansList[].BackupPlanName"   # af-ecs-data-efs-daily
 ```
 
-⚠️ Check `EfsThroughputMode` in the change set first — the stack update moves the live
-file system to whatever the parameter says (see the warning in `10-data.yaml`).
+⚠️ Execute only if the change set adds the four `EfsBackup*` resources and nothing else —
+in particular no `Modify` of `FileSystem`. A stack update moves the live file system to
+whatever `EfsThroughputMode` says (see the warning in `10-data.yaml`), and any
+`Replacement` there is a new, empty file system.
 
 **On demand** (before an upgrade, or before touching someone's home by hand):
 
@@ -1721,8 +1736,10 @@ EFS=$(aws cloudformation describe-stacks --stack-name af-ecs-data \
   --query "Stacks[0].Outputs[?OutputKey=='EfsId'].OutputValue" --output text)
 ROLE=$(aws cloudformation describe-stack-resource --stack-name af-ecs-data \
   --logical-resource-id EfsBackupRole --query StackResourceDetail.PhysicalResourceId --output text)
+VAULT=$(aws cloudformation describe-stacks --stack-name af-ecs-data \
+  --query "Stacks[0].Outputs[?OutputKey=='EfsBackupVaultName'].OutputValue" --output text)
 ACCT=$(aws sts get-caller-identity --query Account --output text)
-aws backup start-backup-job --backup-vault-name af-ecs-data-efs \
+aws backup start-backup-job --backup-vault-name "$VAULT" \
   --resource-arn "arn:aws:elasticfilesystem:<r>:$ACCT:file-system/$EFS" \
   --iam-role-arn "arn:aws:iam::$ACCT:role/$ROLE" --lifecycle DeleteAfterDays=7
 ```
@@ -1730,13 +1747,14 @@ aws backup start-backup-job --backup-vault-name af-ecs-data-efs \
 **Pick a recovery point** (newest last):
 
 ```bash
-aws backup list-recovery-points-by-backup-vault --backup-vault-name af-ecs-data-efs \
+aws backup list-recovery-points-by-backup-vault --backup-vault-name "$VAULT" \
   --query 'sort_by(RecoveryPoints,&CreationDate)[].[CreationDate,Status,RecoveryPointArn]' --output text
 ```
 
-**Restore one member's directory.** AWS Backup never restores over live data: an
-item-level restore into the same file system lands under a new top-level directory,
-`/aws-backup-restore_<timestamp>/`, beside the originals. Up to five paths per job:
+**Restore one member's directory.** AWS Backup never restores over live data: a
+restore into the same file system lands under a new top-level directory,
+`/aws-backup-restore_<timestamp>/`, beside the originals, keeping the paths below it.
+Up to five paths per job:
 
 ```bash
 aws backup start-restore-job --recovery-point-arn <rp-arn> \
@@ -1761,12 +1779,14 @@ subnets with the workspace security group, an EFS volume on `$EFS` with root dir
 3. Start the workspace, have the member confirm, then delete `.before-restore` and the
    `aws-backup-restore_*` directory — EFS bills both until then.
 
-**Restore the whole file system.** A full restore always goes to a new file system
-(`newFileSystem=true`); the live one is not overwritten. Moving the deployment onto it
-is not a template change — `EfsId` is exported to the stacks above and the Control Plane
-has created access points on the old ID — so treat it as a disaster-recovery step:
-restore into a new file system, then copy the needed directories back onto the live one
-with the same one-off task as above (mounting both), rather than re-pointing the stacks.
+**Restore the whole file system.** The same command without `ItemsToRestore` restores
+everything into `/aws-backup-restore_<timestamp>/` on the live file system; put back
+what is needed with the same one-off task, workspaces stopped. Restore into a new file
+system (`"newFileSystem":"true"`, no `file-system-id`) only when the live one itself is
+gone. Moving the deployment onto a new file system is not a template change — `EfsId`
+is exported to the stacks above and the Control Plane has created access points on the
+old ID — so even then, copy the directories onto the file system the stacks name
+rather than re-pointing them.
 
 **Cost** (ap-northeast-1, AWS Pricing API, 2026-09): warm backup storage **$0.06 per
 GB-month**; a restore **$0.024 per GB**, plus **$0.60 per item-level restore job**.
@@ -1937,12 +1957,13 @@ aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protectio
 # after af-ecs-data is deleted:
 aws rds delete-db-snapshot --db-snapshot-identifier af-ecs-data-snapshot-db-<suffix>  # DeletionPolicy: Snapshot leaves one
 aws efs delete-file-system --file-system-id <efs>                                     # DeletionPolicy: Retain keeps it
-# the EFS backup vault (DeletionPolicy: Retain) cannot be deleted until its recovery points are:
-for rp in $(aws backup list-recovery-points-by-backup-vault --backup-vault-name af-ecs-data-efs \
+# each EFS backup vault (DeletionPolicy: Retain) cannot be deleted until its recovery points are:
+aws backup list-backup-vaults --query "BackupVaultList[?starts_with(BackupVaultName,'af-ecs-data-efs-')].BackupVaultName"
+for rp in $(aws backup list-recovery-points-by-backup-vault --backup-vault-name <vault> \
     --query 'RecoveryPoints[].RecoveryPointArn' --output text); do
-  aws backup delete-recovery-point --backup-vault-name af-ecs-data-efs --recovery-point-arn "$rp"
+  aws backup delete-recovery-point --backup-vault-name <vault> --recovery-point-arn "$rp"
 done
-aws backup delete-backup-vault --backup-vault-name af-ecs-data-efs                    # once the points are gone
+aws backup delete-backup-vault --backup-vault-name <vault>                            # once the points are gone
 ```
 
 **10. Task definitions.** They cost nothing but they outlive every stack.

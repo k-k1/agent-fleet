@@ -104,9 +104,6 @@ case "$args" in
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
-  # No output: the path of a teardown re-run after 10-data is gone, where the vault is found
-  # by the name 10-data gives it.
-  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsBackupVaultName']"*) echo "" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "lt-NEW" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
@@ -263,12 +260,18 @@ case "$args" in
   *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*) echo "${STUB_DB_STATUS:-available}" ;;
   *"rds describe-db-instances"*) echo "" ;;
   *"efs describe-file-systems"*) echo "" ;;   # checking after deletion, so empty
+  # One vault a retain period left, found by the "<data stack>-efs-" prefix whatever the
+  # deployment's persistence is now; gone once teardown has deleted it. STUB_VAULT_ABSENT is
+  # a retain deployment from before 10-data declared backups.
+  *"backup list-backup-vaults"*)
+    [ "${STUB_VAULT_ABSENT:-0}" = 1 ] || grep -q "backup delete-backup-vault" "$STUB_LOG" \
+      || echo "t-data-efs-1a2b3c4d" ;;
   # The vault holds a point until teardown deletes it. Keep answering "one point" after
-  # that and the wait for the vault to empty spins for five minutes.
+  # that and the wait for the vault to empty spins for five minutes. STUB_RP_STUCK is a
+  # point that will not go (a backup job still running).
   *"backup list-recovery-points-by-backup-vault"*)
-    grep -q "backup delete-recovery-point" "$STUB_LOG" \
+    { [ "${STUB_RP_STUCK:-0}" != 1 ] && grep -q "backup delete-recovery-point" "$STUB_LOG"; } \
       || echo "arn:aws:backup:ap-northeast-1:123456789012:recovery-point:rp-1" ;;
-  *"backup describe-backup-vault"*) echo "" ;;
 esac
 FAKE
 cat > "$STUB/crane" <<'FAKE'
@@ -351,6 +354,11 @@ order "cloudformation wait stack-delete-complete --stack-name t-data" "cloudform
 #    leaves orphans)
 order_again "ecs update-service --cluster t-cluster --service af-t-ingress-cp --desired-count 0" \
             "ec2 describe-instances"
+# 6. persistence=delete deletes no backups, but a vault left from a retain period is named in
+#    the plan and counted in the sweep instead of vanishing from view.
+hasnt "backup delete-"
+grep -q "vault t-data-efs-1a2b3c4d .* is kept" "$WORK/out2" || fail "the plan did not name the leftover vault"
+grep -q "efs backup vaults *1" "$WORK/out2" || fail "the sweep did not count the leftover vault"
 # 6. By default secrets are kept (so it can be stood up again in the same account)
 has "ssm delete-parameter --name /af-ws/alice"
 hasnt "ssm delete-parameter --name /af-cp"
@@ -1209,7 +1217,7 @@ hasnt "efs delete-file-system"
 hasnt "backup delete-recovery-point"
 hasnt "backup delete-backup-vault"
 grep -q "retain" "$WORK/out6" || fail "it did not say that retain kept things"
-grep -q "backup vault t-data-efs" "$WORK/out6" || fail "it did not say that retain kept the EFS backup vault"
+grep -q "vault t-data-efs-1a2b3c4d (1 recovery points) is kept" "$WORK/out6" || fail "it did not say that retain kept the EFS backup vault"
 
 echo "== case 7: retain + --purge-retained — delete everything, and confirm it is gone =="
 : > "$LOG"
@@ -1223,10 +1231,34 @@ has "efs delete-file-system --file-system-id fs-1"
 # The sweep looks the real resources up again and counts them (nothing is left behind silently)
 order "efs delete-file-system" "efs describe-file-systems --file-system-id fs-1"
 # The vault refuses deletion while it holds a recovery point, so the points go first, and
-# the vault is found by its name even though 10-data (and its output) is already gone.
+# the vault is found by its prefix even though 10-data is already gone.
 order "cloudformation wait stack-delete-complete --stack-name t-network" "backup delete-recovery-point"
-has "backup delete-recovery-point --backup-vault-name t-data-efs --recovery-point-arn arn:aws:backup:ap-northeast-1:123456789012:recovery-point:rp-1"
-order "backup delete-recovery-point" "backup delete-backup-vault --backup-vault-name t-data-efs"
-order "backup delete-backup-vault" "backup describe-backup-vault --backup-vault-name t-data-efs --query BackupVaultName"
+has "backup delete-recovery-point --backup-vault-name t-data-efs-1a2b3c4d --recovery-point-arn arn:aws:backup:ap-northeast-1:123456789012:recovery-point:rp-1"
+order "backup delete-recovery-point" "backup delete-backup-vault --backup-vault-name t-data-efs-1a2b3c4d"
+order_again "backup delete-backup-vault" "backup list-backup-vaults"
+grep -q "efs backup vaults *0" "$WORK/out7" || fail "the sweep did not re-count the vaults"
+
+echo "== case 7b: retain from before the EFS backups — no vault, nothing to delete =="
+: > "$LOG"
+STUB_VAULT_ABSENT=1 \
+  "$ECS/teardown.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --purge-retained > "$WORK/out7b" </dev/null
+has "backup list-backup-vaults"
+hasnt "backup delete-recovery-point"
+hasnt "backup delete-backup-vault"
+
+echo "== case 7c: --dry-run --purge-retained prints the backup deletions and makes none =="
+: > "$LOG"
+"$ECS/teardown.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --purge-retained --dry-run > "$WORK/out7c" </dev/null
+hasnt "backup delete-"
+grep -q "DRY: backup delete-recovery-point --backup-vault-name t-data-efs-1a2b3c4d" "$WORK/out7c" \
+  || fail "dry-run did not print the recovery-point deletion"
+grep -q "DRY: backup delete-backup-vault --backup-vault-name t-data-efs-1a2b3c4d" "$WORK/out7c" \
+  || fail "dry-run did not print the vault deletion"
+
+echo "== case 7d: a recovery point that will not go is reported, not waited on forever =="
+: > "$LOG"
+STUB_RP_STUCK=1 AF_VAULT_WAIT_TRIES=2 AF_VAULT_WAIT_SEC=0 \
+  "$ECS/teardown.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --purge-retained > "$WORK/out7d" </dev/null
+grep -q "1 recovery points still in t-data-efs-1a2b3c4d" "$WORK/out7d" || fail "a stuck recovery point went unreported"
 
 echo "OK: deployment lifecycle stub test passed"

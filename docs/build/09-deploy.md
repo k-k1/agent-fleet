@@ -214,8 +214,9 @@ substrate underneath it.
     snapshot and deletion protection.
   - EFS: `Persistence=retain` keeps the file system when the stack is deleted and adds
     a daily AWS Backup plan (points kept `EfsBackupRetentionDays`, 7 by default) in a
-    vault of its own. Restores are manual — one member's directories, or the whole file
-    system into a new one: the ecs runbook's §EFS backup and restore.
+    vault of its own. Restores are manual — one member's directories or the whole file
+    system, into a directory beside the live data and copied back: the ecs runbook's
+    §EFS backup and restore.
   - EBS homes (`ecs-ec2`): only the optional home backups of §9.5
     (`AF_ECS_EC2_BACKUP_EVERY_SEC`, off by default).
 - **On ECS an upgrade is not only the application's tag.** A release can also need a new
