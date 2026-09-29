@@ -70,12 +70,12 @@ type LiveReply struct {
 	Final bool
 	// FinalAt is when that last flush was appended; zero unless Final.
 	FinalAt time.Time
-	// LastAt is when the newest flush in Text was appended.
+	// FirstAt is the earliest append among the message's flushes: as close as the store gets to
+	// when the message started. The user row it answers (a prompt or the previous message's
+	// tool results) was written before it, and its own tool results after it.
+	FirstAt time.Time
+	// LastAt is the latest append among the flushes in Text.
 	LastAt time.Time
-	// PrevFinalAt is when the previous message of the same turn got its final flush; zero when
-	// there is none in the file. That message's transcript rows were all written before it, so
-	// a row older than this is not the newest message's.
-	PrevFinalAt time.Time
 }
 
 // AppendLiveText records one MessageDisplay flush. An empty delta is kept only when it is the
@@ -131,14 +131,12 @@ func ReadLiveText(sid string) (LiveReply, bool) {
 	size := fi.Size()
 	for window := int64(liveTextWindow); ; window *= 4 {
 		off := max(0, size-window)
-		recs, prevFinal, ok := newestMessage(f, off, size)
+		recs, ok := newestMessage(f, off, size)
 		if !ok {
 			return LiveReply{}, false
 		}
 		if recs[0].Index == 0 {
-			out := assemble(recs)
-			out.PrevFinalAt = prevFinal
-			return out, true
+			return assemble(recs), true
 		}
 		if off == 0 {
 			return LiveReply{}, false
@@ -147,17 +145,17 @@ func ReadLiveText(sid string) (LiveReply, bool) {
 }
 
 // newestMessage reads [off, size) of the file and returns the records of its newest message,
-// in index order, and the latest final flush among the other messages of the same turn.
-func newestMessage(f *os.File, off, size int64) ([]liveRecord, time.Time, bool) {
+// in index order.
+func newestMessage(f *os.File, off, size int64) ([]liveRecord, bool) {
 	buf, err := io.ReadAll(io.NewSectionReader(f, off, size-off))
 	if err != nil {
-		return nil, time.Time{}, false
+		return nil, false
 	}
 	if off > 0 {
 		// The window starts mid-line; that fragment belongs to a record we cannot read whole.
 		i := bytes.IndexByte(buf, '\n')
 		if i < 0 {
-			return nil, time.Time{}, false
+			return nil, false
 		}
 		buf = buf[i+1:]
 	}
@@ -177,29 +175,20 @@ func newestMessage(f *os.File, off, size int64) ([]liveRecord, time.Time, bool) 
 	}
 	recs := byMsg[newest]
 	if len(recs) == 0 {
-		return nil, time.Time{}, false
+		return nil, false
 	}
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i].Index < recs[j].Index })
-	var prevFinal int64
-	for k, rs := range byMsg {
-		if k == newest || k.turn != newest.turn {
-			continue
-		}
-		for _, r := range rs {
-			if r.Final && r.At > prevFinal {
-				prevFinal = r.At
-			}
-		}
-	}
-	if prevFinal == 0 {
-		return recs, time.Time{}, true
-	}
-	return recs, time.Unix(0, prevFinal), true
+	return recs, true
 }
 
 // assemble joins a message's records, which start at index 0, up to the first missing index.
 func assemble(recs []liveRecord) LiveReply {
 	out := LiveReply{Prompt: recs[0].Prompt}
+	first := recs[0].At
+	for _, rec := range recs {
+		first = min(first, rec.At)
+	}
+	out.FirstAt = time.Unix(0, first)
 	var text bytes.Buffer
 	next := 0
 	for _, rec := range recs {
@@ -210,11 +199,14 @@ func assemble(recs []liveRecord) LiveReply {
 			break // an earlier flush has not landed yet
 		}
 		text.WriteString(rec.Delta)
-		out.LastAt = time.Unix(0, rec.At)
+		// Appends arrive out of index order, so the latest one is not necessarily this last.
+		if at := time.Unix(0, rec.At); at.After(out.LastAt) {
+			out.LastAt = at
+		}
 		next++
 		if rec.Final {
 			out.Final = true
-			out.FinalAt = out.LastAt
+			out.FinalAt = time.Unix(0, rec.At)
 			break
 		}
 	}

@@ -62,22 +62,21 @@ func liveReplyText(sid string, lines [][]byte, now time.Time) string {
 	if text == "" {
 		return ""
 	}
-	if lr.Final {
-		// Complete, so its rows are in the transcript or about to be. Compared with the messages
-		// of its own turn written since the previous message ended: an earlier answer that
-		// happens to start the same way is not this one.
-		for _, t := range claude.TurnAssistantTexts(lines, lr.Prompt, lr.PrevFinalAt) {
-			if strings.HasPrefix(strings.TrimSpace(t), text) {
-				return ""
-			}
-		}
-	} else if landed := strings.TrimSpace(claude.PendingAssistantText(lines)); landed != "" {
-		// Still being written, so the only rows of it that can be in the transcript are the ones
-		// after the newest user row. A response with text on both sides of a server tool call
-		// lands one text block at a time; what is left is the part still missing.
+	// What of this message is in the transcript already: the rows between the user row it
+	// answers and its own tool results (MessageTextFrom). Without row timestamps to find that
+	// boundary, the rows after the newest user row, which is exact while the message is still
+	// being written.
+	landed, ok := claude.MessageTextFrom(lines, lr.FirstAt)
+	if !ok {
+		landed = claude.PendingAssistantText(lines)
+	}
+	landed = strings.TrimSpace(landed)
+	if landed != "" {
 		if strings.HasPrefix(landed, text) {
 			return ""
 		}
+		// A response with text on both sides of a server tool call lands one text block at a
+		// time; what is left is the part still missing.
 		if strings.HasPrefix(text, landed) {
 			text = strings.TrimSpace(text[len(landed):])
 			if text == "" {
@@ -85,6 +84,9 @@ func liveReplyText(sid string, lines [][]byte, now time.Time) string {
 			}
 		}
 	}
+	// Left over: a one-line message has its only flush at its end, so a tool of its own that
+	// finishes before the hook has appended that flush puts its tool results before FirstAt, and
+	// the boundary lands after the message. It is then shown until liveFinalGrace ends.
 	if len(text) > liveTextMax {
 		cut := text[len(text)-liveTextMax:]
 		if i := strings.IndexByte(cut, '\n'); i >= 0 {

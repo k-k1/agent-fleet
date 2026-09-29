@@ -191,24 +191,19 @@ func TestLiveTextConcurrentAppends(t *testing.T) {
 	}
 }
 
-// The previous message of the turn tells the reader which transcript rows are too old to be the
-// newest message's: its final flush is the boundary. The first message of a turn has none, and
-// another turn's message does not count.
-func TestLiveTextPrevFinalAt(t *testing.T) {
+// FirstAt is the earliest append among the message's flushes, whichever index it carried: a
+// later flush's hook can finish first. It is the message's own, not the previous message's.
+func TestLiveTextFirstAt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	app("s", "t1", "m1", 0, false, "first\n")
-	if lr := readLive(t, "s"); !lr.PrevFinalAt.IsZero() {
-		t.Fatalf("the first message got PrevFinalAt %v, want zero", lr.PrevFinalAt)
-	}
-	app("s", "t1", "m1", 1, true, "")
-	m1 := readLive(t, "s").FinalAt
-	app("s", "t1", "m2", 0, false, "second\n")
-	if lr := readLive(t, "s"); !lr.PrevFinalAt.Equal(m1) {
-		t.Fatalf("got PrevFinalAt %v, want m1's final flush %v", lr.PrevFinalAt, m1)
-	}
-	app("s", "t2", "m1", 0, false, "next turn\n")
-	if lr := readLive(t, "s"); !lr.PrevFinalAt.IsZero() {
-		t.Fatalf("a new turn's first message got PrevFinalAt %v from the previous turn", lr.PrevFinalAt)
+	app("s", "t1", "m1", 0, true, "earlier message")
+	time.Sleep(2 * time.Millisecond)
+	before := time.Now()
+	app("s", "t1", "m2", 1, false, "second\n")
+	time.Sleep(2 * time.Millisecond)
+	app("s", "t1", "m2", 0, false, "first\n")
+	lr := readLive(t, "s")
+	if lr.FirstAt.Before(before) || !lr.FirstAt.Before(lr.LastAt) {
+		t.Fatalf("FirstAt %v, want m2's flush 1 (after %v, before LastAt %v)", lr.FirstAt, before, lr.LastAt)
 	}
 }
 

@@ -83,9 +83,21 @@ func rowsOf(rows ...string) [][]byte {
 	return out
 }
 
-// The turn answering p1 so far: its first message said something and ran a tool.
+// ago is a transcript time before any flush a test appends.
+func ago(d time.Duration) time.Time { return time.Now().Add(-d) }
+
+// later is a transcript time after the flushes a test appends: a row the message itself wrote.
+func later(row string) []byte { return []byte(stamped(row, time.Now().Add(time.Second))) }
+
+// The turn answering p1 so far: its first message said something and ran a tool, all written
+// before the message under test started.
 func afterFirstTool() [][]byte {
-	return rowsOf(promptRow("p1"), textRow("msg_1", "Reading the file."), toolRow("msg_1"), resultRow("p1"))
+	return rowsOf(
+		stamped(promptRow("p1"), ago(60*time.Second)),
+		stamped(textRow("msg_1", "Reading the file."), ago(58*time.Second)),
+		stamped(toolRow("msg_1"), ago(57*time.Second)),
+		stamped(resultRow("p1"), ago(56*time.Second)),
+	)
 }
 
 func TestLiveReplyTextWhileStreaming(t *testing.T) {
@@ -123,19 +135,27 @@ func TestLiveReplyTextSendsOnlyWhatHasNotLanded(t *testing.T) {
 // The previous turn's answer is not this message, even when this one starts the same way: it
 // must not hide the reply, streaming or finished.
 func TestLiveReplyTextNotConfusedByThePreviousTurn(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	lines := rowsOf(promptRow("p1"), textRow("msg_1", "Done.\nNext, the tests.\nAll green."), promptRow("p2"))
-	flush("p2", "m1", 0, false, "Done.\n")
-	if got := liveReplyText("s", lines, time.Now()); got != "Done." {
-		t.Fatalf("got %q, want the new reply although the last answer said the same", got)
-	}
-	flush("p2", "m1", 1, false, "Next, the tests.\n")
-	if got := liveReplyText("s", lines, time.Now()); got != "Done.\nNext, the tests." {
-		t.Fatalf("got %q, want it whole, not hidden behind the previous answer", got)
-	}
-	flush("p2", "m1", 2, true, "")
-	if got := liveReplyText("s", lines, time.Now()); got != "Done.\nNext, the tests." {
-		t.Fatalf("finished but not landed got %q, want it still shown", got)
+	for _, withTimes := range []bool{true, false} {
+		t.Setenv("HOME", t.TempDir())
+		rows := []string{promptRow("p1"), textRow("msg_1", "Done.\nNext, the tests.\nAll green."), promptRow("p2")}
+		if withTimes {
+			for i := range rows {
+				rows[i] = stamped(rows[i], ago(time.Duration(10-i)*time.Second))
+			}
+		}
+		lines := rowsOf(rows...)
+		flush("p2", "m1", 0, false, "Done.\n")
+		if got := liveReplyText("s", lines, time.Now()); got != "Done." {
+			t.Fatalf("times=%v: got %q, want the new reply although the last answer said the same", withTimes, got)
+		}
+		flush("p2", "m1", 1, false, "Next, the tests.\n")
+		if got := liveReplyText("s", lines, time.Now()); got != "Done.\nNext, the tests." {
+			t.Fatalf("times=%v: got %q, want it whole, not hidden behind the previous answer", withTimes, got)
+		}
+		flush("p2", "m1", 2, true, "")
+		if got := liveReplyText("s", lines, time.Now()); got != "Done.\nNext, the tests." {
+			t.Fatalf("times=%v: finished but not landed got %q, want it still shown", withTimes, got)
+		}
 	}
 }
 
@@ -149,12 +169,13 @@ func TestLiveReplyTextNotConfusedByThePreviousMessage(t *testing.T) {
 	}
 }
 
-// A finished message is looked for among the messages of its own turn.
+// A finished message whose tool has already run is still found: its rows are the ones before
+// its own tool results.
 func TestLiveReplyTextFinalMessageLandedInItsTurn(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	flush("p1", "m2", 0, false, "It says alpha.\n")
 	flush("p1", "m2", 1, true, "")
-	lines := append(afterFirstTool(), []byte(textRow("msg_2", "It says alpha.\n")), []byte(toolRow("msg_2")), []byte(resultRow("p1")))
+	lines := append(afterFirstTool(), later(textRow("msg_2", "It says alpha.\n")), later(toolRow("msg_2")), later(resultRow("p1")))
 	if got := liveReplyText("s", lines, time.Now()); got != "" {
 		t.Fatalf("got %q for a finished message whose row is in the transcript, want nothing", got)
 	}
@@ -187,18 +208,64 @@ func TestLiveReplyTextSupersededTurn(t *testing.T) {
 }
 
 // A finished message is not taken for an earlier message of its turn that said the same thing:
-// rows written before the previous message's final flush are that message's, not this one's.
+// that message's rows are before the user row this one answers.
 func TestLiveReplyTextSameTextAsThePreviousMessage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	lines := rowsOf(promptRow("p1"), stamped(textRow("msg_1", "Done."), time.Now().Add(-time.Minute)), toolRow("msg_1"), resultRow("p1"))
+	lines := rowsOf(
+		stamped(promptRow("p1"), ago(60*time.Second)),
+		stamped(textRow("msg_1", "Done."), ago(58*time.Second)),
+		stamped(toolRow("msg_1"), ago(57*time.Second)),
+		stamped(resultRow("p1"), ago(56*time.Second)),
+	)
 	flush("p1", "m1", 0, true, "Done.")
 	flush("p1", "m2", 0, true, "Done.")
 	if got := liveReplyText("s", lines, time.Now()); got != "Done." {
 		t.Fatalf("got %q before m2's row landed, want m2 shown", got)
 	}
-	lines = append(lines, []byte(stamped(textRow("msg_2", "Done."), time.Now().Add(time.Second))))
+	lines = append(lines, later(textRow("msg_2", "Done.")))
 	if got := liveReplyText("s", lines, time.Now()); got != "" {
 		t.Fatalf("got %q after m2's row landed, want nothing", got)
+	}
+}
+
+// The previous message's final flush can straggle in after this message's row has landed. The
+// boundary is this message's own start, so the straggler does not move it.
+func TestLiveReplyTextLateFinalOfThePreviousMessage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	flush("p1", "m1", 0, false, "Reading the file.\n")
+	flush("p1", "m2", 0, true, "Done.")
+	lines := append(afterFirstTool(), later(textRow("msg_2", "Done.")))
+	time.Sleep(2 * time.Millisecond)
+	flush("p1", "m1", 1, true, "") // m1's last hook, late
+	if got := liveReplyText("s", lines, time.Now()); got != "" {
+		t.Fatalf("got %q with m2's row in the transcript, want nothing", got)
+	}
+}
+
+// Nor does the size of the message: one past the store's first read window, with the same text
+// as the previous message, is shown until its own row lands.
+func TestLiveReplyTextLongMessageSameAsThePrevious(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var long strings.Builder
+	line := strings.Repeat("y", 1000) + "\n"
+	flush("p1", "m1", 0, true, "earlier")
+	for i := range 300 {
+		flush("p1", "m2", i, false, line)
+		long.WriteString(line)
+	}
+	flush("p1", "m2", 300, true, "")
+	lines := rowsOf(
+		stamped(promptRow("p1"), ago(60*time.Second)),
+		stamped(textRow("msg_1", long.String()), ago(58*time.Second)),
+		stamped(toolRow("msg_1"), ago(57*time.Second)),
+		stamped(resultRow("p1"), ago(56*time.Second)),
+	)
+	if got := liveReplyText("s", lines, time.Now()); got == "" {
+		t.Fatal("got nothing before m2's row landed, want its tail")
+	}
+	lines = append(lines, later(textRow("msg_2", long.String())))
+	if got := liveReplyText("s", lines, time.Now()); got != "" {
+		t.Fatalf("got %d bytes after m2's row landed, want nothing", len(got))
 	}
 }
 
@@ -217,17 +284,24 @@ func TestLiveReplyTextStaleWithoutFinal(t *testing.T) {
 }
 
 // claude stores memory citation tags that it does not display. The stored text still counts as
-// the streamed one.
+// the streamed one, through the boundary and through its fallback (rows without timestamps).
 func TestLiveReplyTextMemoryTags(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	flush("p1", "m2", 0, false, "Use the wrapper.\n")
 	stored := `Use <cc-memory filenames="build.md">the wrapper</cc-memory>.` + "\n"
-	lines := append(afterFirstTool(), []byte(textRow("msg_2", stored)))
-	if got := liveReplyText("s", lines, time.Now()); got != "" {
-		t.Fatalf("got %q while the row (with memory tags) has landed, want nothing", got)
+	for _, withTimes := range []bool{true, false} {
+		t.Setenv("HOME", t.TempDir())
+		flush("p1", "m2", 0, false, "Use the wrapper.\n")
+		lines := afterFirstTool()
+		if !withTimes {
+			lines = rowsOf(promptRow("p1"), textRow("msg_1", "Reading the file."), toolRow("msg_1"), resultRow("p1"))
+		}
+		lines = append(lines, []byte(textRow("msg_2", stored)))
+		if got := liveReplyText("s", lines, time.Now()); got != "" {
+			t.Fatalf("times=%v: got %q while the row (with memory tags) has landed, want nothing", withTimes, got)
+		}
 	}
+	// Finished and past its own tool call: only the boundary can find its rows.
 	flush("p1", "m2", 1, true, "")
-	lines = append(lines, []byte(toolRow("msg_2")), []byte(resultRow("p1")))
+	lines := append(afterFirstTool(), later(textRow("msg_2", stored)), later(toolRow("msg_2")), later(resultRow("p1")))
 	if got := liveReplyText("s", lines, time.Now()); got != "" {
 		t.Fatalf("got %q for the finished message, want nothing", got)
 	}

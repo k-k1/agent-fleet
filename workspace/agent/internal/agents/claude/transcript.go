@@ -240,10 +240,8 @@ func DisplayedText(s string) string { return memoryTag.ReplaceAllString(s, "") }
 // liveRow is the part of a transcript row the live-reply helpers read.
 type liveRow struct {
 	Type      string `json:"type"`
-	PromptID  string `json:"promptId"`
 	Timestamp string `json:"timestamp"`
 	Message   struct {
-		ID      string          `json:"id"`
 		Content json.RawMessage `json:"content"` // a string for a typed prompt, blocks otherwise
 	} `json:"message"`
 }
@@ -276,23 +274,6 @@ func (r liveRow) text() string {
 	return sb.String()
 }
 
-// isPrompt: a user row that starts a turn, as opposed to one carrying tool results.
-func (r liveRow) isPrompt() bool {
-	if r.Type != "user" {
-		return false
-	}
-	var blocks []contentBlock
-	if json.Unmarshal(r.Message.Content, &blocks) != nil {
-		return true // a plain string: a typed prompt
-	}
-	for _, b := range blocks {
-		if b.Type == "tool_result" {
-			return false
-		}
-	}
-	return true
-}
-
 // PendingAssistantText is the text, as displayed, of the assistant rows after the newest user
 // row: the message claude is writing now, as far as its rows have landed. Its tool results can
 // only come after it ends, so no row of an earlier message is after that user row.
@@ -314,53 +295,48 @@ func PendingAssistantText(lines [][]byte) string {
 	return DisplayedText(strings.Join(parts, ""))
 }
 
-// TurnAssistantTexts is the text, as displayed, of each assistant message of the turn that
-// answers promptID, newest first: back to that prompt's row. A message is all the rows that
-// share its id (one row per content block). An empty promptID stops at the newest prompt. Rows
-// written before since are left out; a zero since, or a row whose timestamp does not parse,
-// leaves them in.
-func TurnAssistantTexts(lines [][]byte, promptID string, since time.Time) []string {
-	var out []string
-	var cur []string
-	curID := ""
-	flush := func() {
-		if len(cur) > 0 {
-			slices.Reverse(cur)
-			out = append(out, DisplayedText(strings.Join(cur, "")))
-		}
-		cur, curID = nil, ""
-	}
+// MessageTextFrom is the text, as displayed, of the assistant message that started at start: the
+// text rows between the user row it answers and the next user row. The user row it answers is
+// the newest one written before start — the prompt, or the previous message's tool results —
+// and the next one is its own tool results. An earlier message of the turn is before that
+// boundary however alike its text is. ok is false when no user row with a readable timestamp
+// before start is within reach.
+//
+// start comes from the Agent's own clock (when the hook appended a flush), the row timestamps
+// from claude's. They are the same machine's clock, and the boundary row is written before the
+// message is even requested, so the gap between them is the model's latency at the least.
+func MessageTextFrom(lines [][]byte, start time.Time) (string, bool) {
+	from := -1
 	for i := len(lines) - 1; i >= max(0, len(lines)-liveScan); i-- {
+		if !bytes.Contains(lines[i], []byte(`"type":"user"`)) {
+			continue
+		}
 		r, ok := parseLiveRow(lines[i])
+		if !ok || r.Type != "user" {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339Nano, r.Timestamp); err == nil && !at.After(start) {
+			from = i
+			break
+		}
+	}
+	if from < 0 {
+		return "", false
+	}
+	var parts []string
+	for _, line := range lines[from+1:] {
+		r, ok := parseLiveRow(line)
 		if !ok {
 			continue
 		}
 		if r.Type == "user" {
-			if promptID != "" && r.PromptID != "" && r.PromptID != promptID {
-				break // another turn's row
-			}
-			if r.isPrompt() {
-				break
-			}
-			continue
+			break
 		}
-		t := r.text()
-		if t == "" {
-			continue
+		if t := r.text(); t != "" {
+			parts = append(parts, t)
 		}
-		if !since.IsZero() {
-			if at, err := time.Parse(time.RFC3339Nano, r.Timestamp); err == nil && at.Before(since) {
-				continue
-			}
-		}
-		if r.Message.ID != curID {
-			flush()
-			curID = r.Message.ID
-		}
-		cur = append(cur, t)
 	}
-	flush()
-	return out
+	return DisplayedText(strings.Join(parts, "")), true
 }
 
 // CollectTurns builds the displayable turns from lines[lo:hi] (a window into the
