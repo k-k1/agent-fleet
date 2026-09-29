@@ -48,8 +48,8 @@ CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一
 - **内蔵 git プロバイダ** — bare リポジトリ + smart HTTP + LFS を CP 自身がホストする（**Agent 非経由**・
   [91](91-internal-git.ja.md)）。
 - **egress 統制** — forward proxy への policy 配布・観測イベントの集約・admin と member の API（§3.8）。
-- **memo キュー** — membership 単位のメモと一括送信。CRUD は **CP 完結**なので Workspace 停止中も編集でき、Agent が
-  要るのは送信だけ（§3.6）。
+- **memo キュー** — membership 単位のメモと一括送信。メモの本文とカテゴリの CRUD は **CP 完結**なので Workspace
+  停止中も使える。flush と画像の添付は Agent が要る（§3.6）。
 - **定時実行（scheduler）** — スケジュール定義を CP の DB に持ち、goroutine が発火させる（tz は埋め込み
   IANA DB で DST 込みで解決）。作成は `/internal/schedules`（`AF_SCHEDULE_TOKEN`）経由で、オペレーターの
   会話が自然文を spec に訳して使う。Console の `/api/schedules` は一覧・編集・一時停止・再開・即時実行・
@@ -104,7 +104,8 @@ CRUD・スケジュール・保存済みの作業項目クエリ — は `withMe
 
 idle-stop の活性の時計を進めるのは、コードが `touchWorkspace` を呼ぶ箇所で、経路ごとに決まっている —
 中継を通る書き込み・ストリーム・接続・preview のアクセス・明示的な起動・attention ビーコン・スケジュールの
-起床など。意図して**数えない**のは裏での読み取り: 中継される `GET` / `HEAD` と `/api/events`。だから
+起床など。読み取りは原則として**数えない** — 例えば中継される `GET` / `HEAD`、`/api/events`、CP 自身が
+答える読み取りやポーリング（`GET /api/workspace`・memo の一覧）。これらは例で、網羅ではない。だから
 開きっぱなしの Console が Workspace を温め続けることは無い。
 
 Workspace が running でないときに要求が何に出会うかは経路で違う（[05 §5.3](05-api.ja.md)）。一般の REST
@@ -145,7 +146,7 @@ Workspace を起こさない。
 - **ライフサイクル操作は Workspace ごとに直列化する** — start・stop・recreate・clean-home はローカルの
   ロックと DB のリースを取るので、同時のリクエストも別の CP レプリカも「確かめてから起動」の間に
   割り込めない。
-- **接続追跡** — long-lived 接続の数・セッション別アタッチ・最終リクエスト時刻・最後の端末キー入力を
+- **接続追跡** — long-lived 接続の数・セッション別アタッチ・最後に記録された活性（§3.2）・最後の端末キー入力を
   メモリに記録し、他のレプリカ向けに更新式の presence リースを DB へ出す。reaper はこれを読む（§3.7）。
   端末はキー入力がある間だけ presence に数え（`AF_PRESENCE_IDLE_TIMEOUT`、30 分）、ブラウザペインは
   見えている間だけ数える。`POST /api/workspace/attention` は、入力せずに読んでいる人のための Console の
@@ -192,11 +193,13 @@ Workspace を起こさない。
 
 溜めて一括でセッションへ送るメモ（テーブルは [06](06-data.ja.md)）。
 
-- **CRUD は CP 完結**: membership 解決だけで済み、**Workspace を起動しない** — 停止中でも別端末から
-  追加・整理できる。グルーピングは repo × category の 2 段。
+- **メモの本文とカテゴリの CRUD は CP 完結**: membership 解決だけで済み、**Workspace を起動しない** —
+  停止中でも別端末から追加・整理できる。グルーピングは repo × category の 2 段。
+- **画像の添付はコンテナの中に置く**: メモは参照を持つだけで、`POST /api/memos/paste-image`・
+  `GET /api/memos/images/{file}`・`POST /api/memos/images/gc` は Agent へ中継する。
 - **flush**（`POST /api/memos/flush`）は id のリストを受け（「レポ全体」「カテゴリ」「これら」を 1 つの
   表現で扱う）、category 見出しで 1 メッセージに連結し、対象セッションの input へ**1 回だけ**送り、
-  送信済みと打刻する。Agent が要るのは送信だけなので、runtime を解決するのも送信だけ。
+  送信済みと打刻する。送信には Agent が要るので、flush は runtime を解決する。
 - **コンテナ内のオペレーター**は同じ handler に `/internal/memos` から `AF_MEMO_TOKEN` で届く。
 - **保持**: 送信済みは送信時に消さず 7 日残し、一覧取得時に lazy に掃除する。
 
@@ -212,7 +215,7 @@ Workspace を起こさない。
   - **tier 1** は、アタッチされていない idle なセッションを halt する — `shell` と `ssm` 以外の全 kind
     （この 2 つは halt が実行中のジョブを殺すため対象外）。再開できる。
   - **tier 2** は、presence（§3.3）が無く、Workspace を引き留めるセッションも、走っているリポジトリの
-    取り込みや画像ジョブも無く、最終リクエストから時間が経った Workspace を止める。`starting` の
+    取り込みや画像ジョブも無く、記録された活性（§3.2）からタイムアウトを過ぎた Workspace を止める。`starting` の
     Workspace には触らない。reaper は見たものを公開するので、管理画面の「なぜ止まらないか」は reaper
     自身の答えになる。
   - **tier 3**（ecs-ec2 のみ）は、`AF_ECS_EC2_HIBERNATE_AFTER_SEC` より長く止まっている Workspace の

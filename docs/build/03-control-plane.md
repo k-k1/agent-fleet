@@ -59,8 +59,9 @@ security design is [07](07-security.md).
   the CP itself, **not through the agent** ([91](91-internal-git.md)).
 - **Egress control** — distributing policy to the forward proxy, aggregating observed
   events, and the admin and member APIs (§3.8).
-- **The memo queue** — per-membership memos and batch send. The CRUD is **CP-only**, so
-  memos can be edited while the workspace is stopped; only the send needs the agent (§3.6).
+- **The memo queue** — per-membership memos and batch send. The CRUD of memo text and
+  categories is **CP-only**, so it works while the workspace is stopped; the flush and
+  the image attachments need the agent (§3.6).
 - **The scheduler** — schedule definitions live in the CP's database and a goroutine
   fires them, resolving time zones (including DST) from an embedded IANA database.
   Creating one goes through `/internal/schedules` (`AF_SCHEDULE_TOKEN`), which the
@@ -128,9 +129,10 @@ its own (`withPreviewResolved`), because a new tab cannot carry the tenant heade
 
 Idle-stop's activity clock is advanced where the code calls `touchWorkspace`, path by
 path — writes through the relay, streams, connections, preview traffic, explicit
-starts, the attention beacon and a scheduled wake among them. What deliberately does
-**not** count is background reading: a relayed `GET` or `HEAD`, and `/api/events`. A
-Console left open therefore never keeps a workspace warm.
+starts, the attention beacon and a scheduled wake among them. Reading, as a rule, does
+**not** count — for example a relayed `GET` or `HEAD`, `/api/events`, and the reads and
+polls the CP answers itself (`GET /api/workspace`, the memo list). These examples are
+not a complete list. A Console left open therefore never keeps a workspace warm.
 
 What a request meets when the workspace is not running depends on its path
 ([05 §5.3](05-api.md)). The general REST relay (`agentProxyAPI.rest`) does not check
@@ -181,7 +183,7 @@ read-only never start a workspace.
   clean-home take a local lock and a lease in the database, so neither a concurrent
   request nor another CP replica can interleave with a check-then-start.
 - **Connection tracking** counts long-lived connections, per-session attachment, the
-  last request time and the last terminal keystroke, in memory, and publishes a
+  last recorded activity (§3.2) and the last terminal keystroke, in memory, and publishes a
   renewable presence lease to the database for other replicas. This is what the reaper
   reads (§3.7). A terminal counts as presence only while it is typed in
   (`AF_PRESENCE_IDLE_TIMEOUT`, 30 minutes); a browser pane counts only while it is
@@ -244,14 +246,18 @@ The design and the decision are
 Memos you accumulate and send to a session in one go (the tables are
 [06](06-data.md)).
 
-- **CRUD is CP-only**: it needs a membership and nothing else, so **it does not start a
-  workspace** — you can add and organise memos from another device while yours is
-  stopped. Grouping is two levels, repository × category.
+- **The CRUD of memo text and categories is CP-only**: it needs a membership and
+  nothing else, so **it does not start a workspace** — you can add and organise memos
+  from another device while yours is stopped. Grouping is two levels, repository ×
+  category.
+- **Image attachments live in the container**: a memo stores references, and
+  `POST /api/memos/paste-image`, `GET /api/memos/images/{file}` and
+  `POST /api/memos/images/gc` are relayed to the agent.
 - **Flush** (`POST /api/memos/flush`) takes a list of ids (one representation covering
   "the whole repository", "a category" and "these ones"), joins them into a single
   message under category headings, sends it to the target session's input **exactly
-  once**, and stamps them as sent. Only the send needs the agent, so only the send
-  resolves the runtime.
+  once**, and stamps them as sent. The send needs the agent, so the flush resolves the
+  runtime.
 - **The in-container operator** reaches the same handlers under `/internal/memos` with
   `AF_MEMO_TOKEN`.
 - **Retention**: sent memos are kept for 7 days and swept lazily when the list is
@@ -271,7 +277,8 @@ disables.
   - **Tier 1** halts an idle, unattached session — every kind but `shell` and `ssm`,
     whose halt would kill the running job. It is resumable.
   - **Tier 2** stops a workspace with no presence (§3.3), no session that holds it, no
-    repository import or image job running, and nothing since the last request. A
+    repository import or image job running, and no recorded activity (§3.2) within the
+    timeout. A
     `starting` workspace is never touched. The reaper publishes what it saw, so the
     admin screen explains "why won't it stop" with the reaper's own answer.
   - **Tier 3** (ecs-ec2 only) hibernates the home of a workspace stopped for longer than
