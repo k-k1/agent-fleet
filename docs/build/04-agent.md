@@ -1,7 +1,7 @@
 ---
 audience: "someone changing the workspace agent, or adding an agent kind"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
 # 04. The workspace agent
@@ -10,142 +10,297 @@ English | [日本語](04-agent.ja.md)
 
 ## 4.1 What it is
 
-A resident Go process inside the per-user container, running unprivileged under an init
-that reaps zombies. **From the CP's point of view it is the only actor**: everything
-that touches the runtime, tmux, git, the filesystem or a CLI agent goes through it, and
-the CP only relays ([05](05-api.md)). Every endpoint requires the bearer token
-([07 §7.5](07-security.md)). Sharing the container's network namespace is what lets it
-reach in-container services over loopback.
+A resident Go process inside each workspace, running unprivileged (`USER dev`) under an
+init that reaps zombies (`--init` on docker, `InitProcessEnabled` on the ECS targets;
+`native` has no container and no init). **From the CP's point of view it is the only
+actor**: everything that touches the runtime, tmux, the working copies, the filesystem
+or a CLI agent goes through it, and the CP only relays ([05](05-api.md)).
+
+- Every endpoint except `GET /healthz` sits behind `httpx.RequireToken`, a bearer check
+  against `AGENT_TOKEN` ([07 §7.5](07-security.md)). With `AGENT_TOKEN` unset the check
+  is off, which is for local development only.
+- Sharing the workspace's network namespace is what lets it reach in-workspace services
+  over loopback: the preview relay (`/proxy/{port}/…`, `handlePreview`) and the browser
+  manager's navigation (§4.10).
 
 ## 4.2 The session model
 
 **A session is one logical slot binding a conversation, a working directory, settings
-and execution state.** `kind` is the agent; `driver` is how it is controlled. **Only
-`driver=tui` owns a tmux session**; a managed session is a thread on a runtime shared
-per workspace, with **no pane and no process of its own**. The deterministic internal
-id is derived from the directory and name; **the agent's own conversation id is stored
-separately.**
+and execution state.** `kind` is the agent; `driver` is how it is controlled.
 
-- **Metadata is persisted** outside the browsable area, on the home volume, so **the
-  list and resumability survive stop and start**. A stopped session is auto-archived —
-  never deleted — once its TTL is up (ADR 0097).
-- **The list is metadata-driven, merged with per-driver liveness.** Orphaned tmux
-  sessions with no metadata are listed too, sniffing the kind from the pane's command —
-  this deliberately closes the "it is running but not in the list" dead end.
-- **Four ways to end one**: `halt` stops the driver and keeps the metadata (resumable);
-  `stop` stops it and drops the metadata (the CLI's native history survives);
-  `archive` / `restore` hide and unhide; `recreate` archives the old and starts a fresh
-  conversation in the same place.
-- **Resuming**: a managed session resumes its native conversation id on the shared
-  runtime, and a restart of the agent reconstructs the live handles by reconciliation.
-  **The agent kinds cannot resume if the working directory is gone** — they do not fall
-  back to the home directory; a plain shell does.
-  - ⚠️ Deciding resumability from "a transcript file exists" is wrong for claude: with
-    remote control on, **a line is written before any conversation happens**, so
-    `--resume` dies immediately. The check must be for a real conversation turn. Related:
-    the seeded default is **remote control off** for a new workspace, and an existing one
-    is nudged to off **once** — but **a value the user explicitly set is respected**.
+- **Only `driver=tui` owns a tmux session**, named `claude_<name>` for every kind
+  (`session.TmuxName`).
+- A `driver=managed` session has no pane. Its process depends on the kind's managed
+  driver (§4.3): a daemon shared by the workspace, a child process per session, or code
+  inside the agent.
+- The internal id is deterministic, `session.UUID` over the directory and the name.
+  **The agent's own conversation id is stored separately.**
+- **The name is allocated by the server** (`allocSessionName`); a name in the create
+  request is ignored. A caller that must not create twice sends an `idempotency_key`
+  and can look it up with `GET /sessions-idempotency/{key}`.
 
+### Metadata and the list
+
+- **Metadata is persisted** in `~/.local/state/agent-fleet/sessions`
+  (`session.MetaDir`, overridden by `AF_SESSIONS_DIR`). It is on the home volume and
+  hidden from the file browser, so **the list and resumability survive stop and start**.
+- **A stopped session is auto-archived — never deleted — once its TTL is up**
+  ([decisions/0097](../decisions/0097-session-retention.md)).
+  - The TTL is the user's setting (`sessionStoppedArchiveDays`, which can be "never"),
+    else `AF_SESSION_STOPPED_TTL`, else 7 days (`session.StoppedTTL`).
+  - Locked sessions are exempt.
+  - The sweep runs inside the list handler; there is no timer.
+- **The list is metadata-driven, merged with per-driver liveness**: the runtime handle
+  for managed, tmux for tui (`HandleListSessions`).
+  - Orphaned `claude_*` tmux sessions with no metadata are listed too. Their kind is
+    sniffed from the pane's command (`tmuxx.PaneKind`, which knows claude, codex and
+    opencode and calls anything else `shell`).
+  - This deliberately closes the "it is running but not in the list" dead end.
+- **The CP mirrors the list into its database** (`sessionsPayload`,
+  `store.ReplaceSessions`). While the workspace is stopped, or the agent cannot be
+  reached, the CP serves the mirror with `alive:false`
+  ([06 §6.3](06-data.md)).
+
+### Ending, deleting and restoring
+
+| Operation | Endpoint | Effect |
+|---|---|---|
+| halt | `POST /sessions/{name}/halt` | stops the driver, keeps the metadata; the row stays as stopped and can be resumed |
+| delete | `DELETE /sessions/{name}[?stop=1]`, or its old name `POST /sessions/{name}/stop` | moves the session **to the trash** (`trashSession`, [decisions/0101](../decisions/0101-session-delete-via-trash.md)); see below |
+| archive / restore | `POST /sessions/{name}/archive`, `…/restore` | hides the row and brings it back as stopped |
+| recreate | `POST /sessions/{name}/recreate` | archives the old slot and starts a new conversation with the same directory, kind, driver and settings; if the launch fails, the old slot is restored |
+| lock | `POST /sessions/{name}/lock` | refuses delete and TTL archiving (403); archive is still allowed |
+
+- **The trash** writes an archive of the metadata and the transcript, then removes the
+  metadata.
+  - A running session is halted first with `?stop=1` (and by `/stop`); without it the
+    delete is refused with `409 session_running`.
+  - A locked session is refused (403). One that resumes while it is being moved gets
+    `session_resumed`, and nothing is deleted.
+  - `POST /cleanup/archives/{id}/restore` brings a trashed session back.
+  - **Deleting never touches the working copy**, so a restored session does not come
+    back to a missing folder.
+- **Every path that folds a session away promotes its carried work first**
+  (`PromoteCarriedFor`, before any kill or handle drop). A new path of that kind must do
+  the same.
+
+### Resuming
+
+- `POST /sessions/{name}/start` resumes a stopped session without attaching, for both
+  drivers.
+- A managed session resumes its native conversation id on its runtime. At agent boot,
+  each kind's `ReconcileManaged` rebuilds the live handles.
+- **An agent kind cannot resume if its working directory is gone** — it does not fall
+  back to the home directory. `shell` does, and `ssm` always starts in the home.
+- ⚠️ **claude is resumable only when its JSONL holds a real user or assistant line**
+  (`claude.JSONLResumable`). With remote control on, **a `bridge-session` line is
+  written before any conversation happens**, so treating "the file exists" as
+  resumable makes `--resume` die immediately. A non-resumable file is dropped and the
+  slot starts fresh with `--session-id`.
+  - Related: the entrypoint seeds **remote control off**
+    (`remoteControlAtStartup: false`) for a new workspace. An existing settings file
+    without the key gets it once; **a value the user set explicitly is left alone**.
 - ⚠️ **claude sometimes restarts itself, and when it does it drops the session id.**
-  Switching to the full-screen TUI, restarting after sign-in, changing model — the
-  restart argv is rebuilt **from the configuration flags only**, and structurally cannot
-  contain the id or the display name (measured: both were on the launch command, and
-  neither was on the live process). **A claude that lost its id starts a brand-new
-  conversation under a random one**, so the deterministic transcript never appears
-  again. Without a remedy the mirror sits at "no conversation yet" forever, the status
-  is written under a different id, and **the session vanishes from the Console
-  entirely** — taking usage, abort detection and reporting with it.
-  The fix is a **ledger** mapping the slot to the agent's real id, recorded when a hook
-  announces itself, keyed on the session-name environment variable. **That variable is
-  part of the tmux session environment, so it survives the restart** — which is exactly
-  why it was chosen over guesswork like matching the working directory.
+  Switching to the full-screen TUI, restarting after sign-in, changing model: the
+  restart argv is rebuilt **from the configuration flags only**, and structurally
+  cannot contain `--session-id` or `--name` (measured on 2.1.239: both were on the
+  launch command, neither was on the live process).
+  - **A claude that lost its id starts a brand-new conversation under a random one**, so
+    the deterministic transcript never appears again.
+  - Without a remedy, the mirror sits at "no conversation yet" forever and the status is
+    written under a different id. **The session vanishes from the Console entirely**,
+    taking usage, abort detection and reporting with it.
+  - The fix is the `claude-sid` **ledger** (`internal/agents/claude/sid.go`, an
+    `agents.SidStore`), which maps the slot to claude's real id. It is recorded when a
+    hook announces itself, keyed on `AF_SESSION_NAME`.
+  - **That variable is part of the tmux session environment, so it survives the
+    restart**, which is why it was chosen over guesswork like matching the working
+    directory. The transcript location and the `--resume` target both go through
+    `LiveSID()`.
 
-- **There are two ways to hold a conversation id, and they fail differently.**
-  - **Captured**: the CLI mints the id and we re-record it on **every event**, so if the
-    CLI moves to another session we follow on the next event (measured: zero drift).
-  - **Imposed**: we mint the id and pass it in, and everything downstream assumes it is
-    still in use — **which breaks silently the moment the CLI stops using it** (the
-    claude case above).
-  **When you add a kind that imposes an id, you must ship the recovery path with it.**
-  Recovery only runs when the imposed id exists nowhere on the CLI's side, and only
-  adopts a candidate when **exactly one** matches the directory, was created after the
-  slot, and is not already claimed. **When it is ambiguous, do nothing** — showing
-  somebody else's conversation is worse than staying stuck.
+### Conversation ids: captured and imposed
+
+There are two ways to hold a conversation id, and they fail differently.
+
+- **Captured**: the CLI mints the id and we re-record it on **every event**, so if the
+  CLI moves to another session we follow on the next event.
+  - codex (a hook), opencode (a plugin), agy and kiro (a disk scan).
+  - Measured: zero drift (codex 58/58, opencode 16/16).
+- **Imposed**: we mint the id and pass it in, and everything downstream assumes it is
+  still in use — **which breaks silently the moment the CLI stops using it** (the
+  claude case above).
+  - claude and copilot (`--session-id`), cursor (`--resume`).
+- lcpp and muse are neither: their stores are keyed on the slot itself.
+
+**When you add a kind that imposes an id, you must ship the recovery path with it.**
+
+- claude has the hook-fed ledger above. copilot and cursor, which have no status hook,
+  re-find the id on disk (`ResolveImposedSID`, `internal/agents/imposedsid.go`).
+- Recovery runs only when the imposed id exists nowhere on the CLI's side.
+- It adopts a candidate only when **exactly one** matches the directory, was created
+  after the slot, and is not already claimed. **When it is ambiguous, do nothing**:
+  showing somebody else's conversation is worse than staying stuck.
+- The evidence: copilot's `session-state/<id>/workspace.yaml` (`cwd`, `created_at`);
+  cursor's `projects/<cwd-slug>/agent-transcripts/<chatId>/`, whose directory mtime is
+  the creation time (appends do not move it — measured).
+
+### Other session operations
 
 - ⚠️ **tmux target matching is a prefix match.** `claude_foo` matches `claude_foo-sh`,
-  which can misidentify — and mis-kill. **Every target reference in this repository uses
-  the exact form.**
-- **The CP mirrors the list into its database**, so the list is visible even while the
-  workspace is stopped ([06 §6.3](06-data.md)).
-- **Fork** branches a new slot carrying the conversation. An optional body branches
-  **from a past message** instead; the anchor is a kind-specific opaque id, and each
-  kind answers whether it can. The mechanism differs: some use the runtime's own
-  parameter (which requires managed), others truncate the transcript (which works in a
-  TUI).
-- **Switching driver** stops and resumes the same conversation, and refuses mid-turn.
-- **Model resolution at creation** checks a requested model against the live catalogue
-  and expands an abbreviation into the full identifier. **An ambiguous or unavailable
-  model is refused before the clone or worktree happens** — closing the "it starts and
-  then dies on an invalid model" trap. If the catalogue cannot be read, the value is
-  kept and the start proceeds.
+  which can misidentify, and mis-kill, a session. **Every target reference in this
+  repository uses the exact form** (`session.ExactTarget`, `=name`). Pane-level
+  commands such as `capture-pane` and `send-keys` resolve the pane id first
+  (`tmuxx.SessionPaneID`), because `=name` does not address a pane.
+- **Fork** (`POST /sessions/{name}/fork`) branches a new slot carrying the
+  conversation, with the same kind and driver.
+  - An optional body `{"at": <anchorId>, "include": bool}` branches **from a past
+    message** instead. The anchor is `transcript.Turn.AnchorID`, a kind-specific opaque
+    id, and each kind's `ForkAtResolver` answers whether it can
+    (`agents.ErrForkAtRoute` → `fork_at_unsupported`).
+  - The mechanism differs by kind:
+    - codex and opencode use the runtime's own parameter, so they need managed;
+    - muse uses its runtime's cut point;
+    - claude and copilot truncate a copy of the transcript, which works in a TUI;
+    - lcpp truncates its own store.
+  - Which kinds fork at all is [ref/agents](../../guide/ref/agents.md).
+- **Switching driver** (`POST /sessions/{name}/driver`) stops and resumes the same
+  conversation under the other driver. It applies to kinds that have both, it is
+  refused mid-turn (`409 busy_switch`), and it keeps the kind, directory and native
+  id.
+- **Model resolution at creation** (`resolveLiveModel`, for codex, copilot, opencode
+  and lcpp) checks a requested model against the live catalogue and expands a picker
+  label or a unique abbreviation into the full identifier.
+  - **An ambiguous or unavailable model is refused with `400 bad_model` before the
+    clone or worktree happens**. That closes the "it starts and then dies on an invalid
+    model" trap. lcpp also refuses an empty model.
+  - A model the user hid is refused for every kind (`model_hidden`).
+  - If the catalogue cannot be read (offline, CLI not installed), the value is kept and
+    the start proceeds.
   - ⚠️ copilot on the free plan has **no catalogue and only auto**, and **auto does not
-    accept a reasoning-effort flag**. So the launch code passes that flag **only for a
-    concrete model** — passing it with auto fails to start, which a free-plan user would
-    hit every time.
+    accept `--effort`**. So the launch code passes the flag **only for a concrete
+    model**. Passing it with auto fails to start, which a free-plan user would hit every
+    time. The Console's `useEffortOptions` offers only the default in that case.
+- **Titles and branches**: `POST /sessions/{name}/title/{suggest,accept,dismiss,set}`
+  proposes and sets the display name from the conversation (`suggest` is also what
+  regenerates one). `suggest-branch` proposes a branch name from the conversation, and
+  `rename-branch` applies one.
 
 ## 4.3 The pattern for integrating a kind
 
-The kinds are claude, codex, cursor, opencode, agy, copilot, kiro, lcpp, muse, plus shell
-and ssm. Codex, opencode, cursor, copilot and kiro default to managed; lcpp and muse are
-managed only (no TUI route at all — lcpp's driver runs inside the agent, muse's as a
-per-session child); claude, agy, shell and ssm are TUI only.
+The kinds are the `Kind*` constants in `internal/session/session.go`: claude, codex,
+cursor, opencode, agy, copilot, kiro, lcpp, muse, plus shell and ssm. Which of them
+support Managed, Terminal (CLI) or both is [ref/agents](../../guide/ref/agents.md).
+**Adding one is [20 Adding an agent kind](20-add-an-agent.md)**; this section is the
+shape.
 
-**The surfaces a new kind must fill are the same every time** — the template was
-established when opencode was added and reused for codex. **Adding one is
-[20 Adding an agent kind](20-add-an-agent.md)**; this section is the shape.
+### Managed drivers and where the default comes from
+
+The managed drivers are registered in `managedDrivers` (`internal/sessionx/session_turn.go`),
+and each declares its process model in `Capabilities.ProcessModel`
+(`internal/agents/<kind>/driver.go`):
+
+| `ProcessModel` | Kinds | What runs |
+|---|---|---|
+| `shared-daemon` | codex, opencode | one daemon per workspace (codex's app server, `opencode serve`); a session is a thread on it |
+| `per-session-child` | copilot, cursor, kiro, muse | one child process per session: ACP for copilot, cursor and kiro (`acp.go`), MSP for muse (`internal/msp`) |
+| `in-process` | lcpp | code inside the agent; no child process |
+
+- **The agent itself defaults an unspecified driver to `tui`**, except for a kind whose
+  `Caps().ManagedOnly` is set (lcpp, muse), which defaults to `managed`
+  (`HandleCreateSession`).
+- **The "Managed by default" users see comes from the callers.** The Console's launch
+  UI starts a kind whose registry entry has `managedDriver: true`
+  (`console/src/agents/registry.ts`) as managed. The in-container MCP `create_session`
+  sends `managed` for codex, opencode, copilot, cursor and kiro (`mcpStdioCall`). A
+  bare `POST /sessions` with no driver gets `tui`.
+- A new kind with both drivers must be added to both callers.
+
+### The surfaces, shown for three kinds
+
+**The surfaces a new kind must fill are the same every time.**
 
 | Surface | claude | codex | opencode |
 |---|---|---|---|
-| Default driver | tui | managed | managed |
-| TUI launch | an imposed id plus resume | resume, with the id captured by a hook | a session flag, with the id captured by a plugin |
-| Managed launch | — | the shared app server's thread API | the shared server's session API |
-| Conversation truth | its own JSONL | its own JSONL, for both drivers | its own database, for both drivers |
-| Live state | hooks plus a tmux probe | runtime events when managed; hooks and a probe when TUI | server events when managed; the plugin when TUI |
-| Sign-in | its own OAuth ([08 §8.5](08-integrations.md)) | its own login (key or device flow) | an environment key, **prefixed onto the command** |
-| Credential location | its own config directory, moved out of the home | its own directory | the encrypted store |
-| Filesystem denylist | its config paths | its directory | its data directory |
+| TUI launch | `--session-id` / `--resume` plus `--name` and `--model` (and `--fork-session`) | `codex resume <id>` or `codex fork <id>`, launched directly, never through the shared app server; the id is captured by a hook | `opencode --session <id>`; the id is captured by a plugin |
+| Managed launch | — | the shared app server's `thread/start` / `thread/resume` | the shared server's v1 session API and its event stream |
+| Conversation truth | its own JSONL | its rollout JSONL, for both drivers | its own SQLite (`message` / `part`), for both drivers |
+| Live state | hooks plus a tmux probe | managed: runtime events. TUI: hooks for working / idle, the rollout for a missed turn end and for a pending question | managed: server events. TUI: the plugin |
+| Sign-in | `claude auth login --claudeai` ([08](08-integrations.md)) | `codex login` (API key or device flow) | provider keys in the encrypted store, or opencode's own OAuth |
+| Credential location | `CLAUDE_CONFIG_DIR`, moved out of the browsable home | `~/.codex` | the encrypted store, and `~/.local/share/opencode` |
 
-- ⚠️ **`tmux new-session -e` does not reach the process** — it only sets the session
-  environment. **Prefixing the command is this repository's convention** for injecting
-  environment. Note that claude no longer needs it at all, which also removed a secret
-  from the command line.
+The filesystem denylist (§4.6) must cover wherever a kind writes credentials or
+state.
+
+- ⚠️ **Environment reaches the process through `tmux new-session -e`**
+  (`agents.LaunchPlan.Env`, applied by `startSessionTmux`). **Never prefix secrets onto
+  the command**: a prefix lands in `/proc/*/cmdline` and in tmux's
+  `pane_start_command`, readable by anything in the workspace. Only the non-secret
+  toolchain exports (`toolchainShellPrefix`: `JAVA_HOME`, node, `TZ`) are prefixed.
 - ⚠️ **Always reap child processes.** The agent is not PID 1, so nothing collects for
-  you and an un-waited child leaks a PID forever. The convenience helpers wait
-  internally and are safe; **when you start a process yourself, every path — including
-  the failures — must reach a wait.** The easy leak is "kill it on a start timeout and
-  return", which really happened for two runtimes. The shared login-flow helper does
-  kill *and* wait, and there is a regression test.
-- ⚠️ **codex's hooks use the same nested schema as claude's.** Writing them flat
-  **parses but silently never fires** — a known trap where resume quietly starts a new
-  conversation instead.
-- The token-saving wrapper works differently per agent: a hook, a plugin that rewrites
-  commands, or **an instruction block, which is best-effort only**. On/off is expressed
-  by the presence of the artefact, with a persisted preference as the truth.
+  you, and an un-waited child leaks a PID as `<defunct>` forever.
+  - `Run`, `Output` and `CombinedOutput` wait internally and are safe.
+  - **When you start a process yourself (`cmd.Start`, `pty.Start`), every path,
+    including the failures, must reach a wait.**
+  - The easy leak is "kill it on a start timeout and return", which really happened
+    for the codex and opencode daemons.
+  - The shared login-flow helper, `agents.Flow.Close()`, kills *and* waits
+    (`internal/agents/flow_test.go`).
+- ⚠️ **codex's hooks use the same nested schema as claude's**
+  (`hooks.<Event>=[{hooks=[{type,command}]}]`). Written flat, they **parse but
+  silently never fire**, and resume quietly starts a new conversation instead.
+- **rtk, the token-saving proxy, is wired differently per kind** (`agent_rtk.go`),
+  and only when rtk is in the image:
+  - claude: a `PreToolUse`/`Bash` hook;
+  - opencode: a plugin that rewrites commands;
+  - copilot: a `preToolUse` hook;
+  - codex and agy: **an instruction block in `AGENTS.md`, which is best-effort only**.
 
-The managed boundary is a small set of interfaces. The turn, respond and settings
-endpoints are **driver-independent semantics**; managed dispatches to the structured
-API and TUI to the key-input path. **The conversation body is never copied into a store
-of our own** — the native store stays the read truth, and the transcript is normalised
-on the way out ([decisions/0015](../decisions/0015-agent-managed-driver.md)).
+  On/off is the presence of that artefact. For codex, opencode, agy and copilot the
+  persisted preference (`rtk.json`, `GET/PUT /agents/rtk`) is the truth and is
+  re-applied at start. For claude it is the hook in its settings.
+
+### The managed boundary
+
+- The boundary is the `Driver`, `ThreadHandle` and `Capabilities` types in
+  `internal/agents/driver.go`.
+- `POST /sessions/{name}/turn` is driver-independent: managed dispatches to the
+  structured API, TUI to the key-input path.
+- `/respond` and `/settings` exist only for managed. A TUI session gets
+  `501 respond_unsupported` / `settings_unsupported`.
+- **The conversation body is never copied into a store of our own.** The native store
+  stays the read truth, and the transcript is normalised on the way out
+  ([decisions/0015](../decisions/0015-agent-managed-driver.md)).
 
 ## 4.4 State badges
 
-The outward vocabulary is normalised to **working / idle / question**. Hooks fire a
-subcommand that records the state to a file per session. Hooks merge additively per
-session start, and **the pre-tool hook is registered per matcher**, so the token-saving
-wrapper and the state hook coexist and **toggling one does not break the other**.
-Managed drivers write to the same store from runtime events. The Console polls, draws
-the badge, and raises a browser notification on the transitions that need a human.
+- The stored state (`internal/status`) is **working / idle / question**. Two refinements
+  of question also exist: `plan` (a plan awaiting approval) and `permission` (a tool
+  awaiting approval).
+- A turn's end also carries a transition label that feeds notifications but is not a
+  stored state: `failed`, `aborted`, `blocked`, `auth`, `limited`, `spend_limit`
+  (`internal/agents/notify.go`).
+- The store is one file per session under `~/.local/state/agent-fleet/session-status/`.
+
+**Hooks fire the `session-status` subcommand** (`RunSessionStatusHook`):
+
+- claude passes the state and reads its id from the hook's stdin;
+- opencode's plugin passes the state and the id;
+- codex passes the state, the id and `codex`.
+
+**claude's hooks**:
+
+- `UserPromptSubmit` → working;
+- `Stop` → idle;
+- `PreToolUse` with matcher `AskUserQuestion` → question, and `ExitPlanMode` → plan;
+- the `permission_prompt` notification → permission.
+
+**The hooks merge additively** at start and before each claude launch
+(`EnsureStatusHooks`). **`PreToolUse` is registered per matcher**, so the rtk hook
+(`Bash`) and the state hooks coexist, and **toggling one does not break the other**.
+
+Every managed driver writes to the same store from its runtime events. The Console polls
+every 4 seconds, draws the badge, and raises a browser notification on the transitions
+that need a human (working → idle, and into question).
 
 ### Terminal notifications (OSC 9 / 99 / 777)
 
@@ -160,10 +315,10 @@ passthrough wrapper (`ESC P tmux; … ESC \`) both reach `pipe-pane` byte for by
 - **Not a notification:** `OSC 9;<digits>…` is ConEmu's control family — `9;4` is a
   progress bar that agy and opencode emit every turn, `9;9` a shell's cwd — and kitty's
   `p=?` is a capability query.
-- **Dropped for hook-driven kinds** (claude, codex, opencode): their hooks already put
-  answer-ready / question / permission in the outbox, so an OSC notification would
-  report the same moment twice. cmux applies the same rule and sets claude's
-  `preferredNotifChannel` to `notifications_disabled`.
+- **Dropped for hook-driven kinds** (claude, codex, opencode; `terminalNotifyHasHooks`):
+  their hooks already put answer-ready / question / permission in the outbox, so an OSC
+  notification would report the same moment twice. cmux applies the same rule and sets
+  claude's `preferredNotifChannel` to `notifications_disabled`.
 - **Throttled per session**: the same text again within 30 s is dropped, and at most
   5 per minute are kept.
 - Only 7-bit introducers and terminators are parsed; 0x9c/0x9d are UTF-8 continuation
@@ -184,38 +339,70 @@ Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OS
 
 ## 4.5 Chat and assistants (a headless CLI)
 
-- **Chat is not a tmux session.** It is a parallel subsystem driving the CLI in headless
-  mode against its own conversation store, streamed over SSE.
-- **The credentials are the same single file the interactive sessions use.** An older
-  scheme of a symlink plus copy-back was removed: a refresh writes through a temporary
-  file and a rename, **which turned the link into a real file**, and two processes could
-  then hold different refresh tokens. User and project settings, and MCP entries, are
-  deliberately excluded from chat.
-- **The fallback is visible.** The conversation records the requested agent, and each
-  message plus the conversation record **which backend actually ran**, so the UI follows
-  a switch immediately rather than lying about it.
-- **An in-container stdio MCP server** is attached to chat — no token, no egress, and
-  its identity is the container itself. **Read-only by default**; a flag advertises the
-  writing tools. **The gate is the visible tool set, not a permission prompt.** This is
-  deliberately a separate implementation and scope from the CP's endpoint.
-- **A second, narrower stdio server is materialised into the interactive CLIs.** It
-  advertises **only the report tool and the browser-attach tools** and refuses the fleet
-  tools both in advertisement and on call.
-- **Unattended approval for codex**: a headless chat has no approval UI, so the granted
-  MCP server is set to auto-approve — without it every call is cancelled. **The
-  read-only sandbox is kept**, so MCP works but shell and file changes do not.
-- **Assistants** are templates of persona, model, knowledge and tool scope. Asking one
-  runs a single turn **with tools forced off** — one hop and no side effects, guaranteed
-  structurally rather than by instruction.
-- **Model resolution** snapshots the model into the conversation at creation and never
-  rewrites it, protecting reproducibility from a provider changing its default. But
-  **the conversation holds one model, chosen for the agent it was created for**, so when
-  another backend actually runs — a fallback, or a mid-conversation switch — the model
-  is re-resolved from *that* CLI's setting. **Passing the stored value straight through
-  would feed one vendor's model id to another.**
-- **Switching agent mid-conversation** is a dedicated endpoint (refused mid-turn). It
-  changes the pin and the model and adds one notice — **the per-backend resume handles
-  and message cursors are preserved**, so switching back continues the native session.
+- **Chat is not a tmux session.** It is a parallel subsystem driving a CLI in headless
+  mode against its own conversation store (`~/.config/agent-fleet/chats/<id>.json`),
+  streamed over SSE (`POST /chat/conversations/{id}/stream`; [05](05-api.md)). The
+  backends are `chatx.ChatProviders`: claude, codex, opencode, agy, cursor, lcpp and
+  muse.
+- **claude's credentials are the same single file the interactive sessions use**
+  (`CLAUDE_CONFIG_DIR`).
+  - An older scheme of a symlink plus copy-back was removed. A refresh writes through a
+    temporary file and a rename, **which turned the link into a real file**, and two
+    processes could then hold different refresh tokens.
+  - User and project settings are excluded with `--setting-sources ""`, and other MCP
+    entries with `--strict-mcp-config` whenever a server is attached.
+  - Transcripts from the old dedicated config directory are migrated once, create-only
+    (`migrateLegacyChatClaudeProjects`).
+- **The fallback is visible.** The conversation's `agent` is the one requested; each
+  message's `agent` and the conversation's `active_agent` record **which backend
+  actually ran**. The stream opens with an `agent` frame, so the UI follows a switch
+  immediately rather than lying about it.
+- **An in-container stdio MCP server** (`workspace-agent mcp-stdio`) is attached to
+  chat. It needs no token and no egress; its identity is the workspace itself.
+  - claude takes it through `--mcp-config`, codex through `-c mcp_servers.af.*`,
+    opencode through `OPENCODE_CONFIG`, and agy through its server list. cursor, lcpp
+    and muse chats get none.
+  - **Read-only by default** (`mcpStdioTools`). `--write` adds the writing tools
+    (`mcpStdioWriteTools`): starting, steering, stopping and deleting sessions, memos,
+    schedules, browser control, and cleanup.
+  - **The gate is the visible tool set, not a permission prompt.** This is deliberately
+    a separate implementation and scope from the CP's MCP endpoint.
+- **A second, narrower server is materialised into the interactive CLIs** as the
+  `mcpreg` builtin `af`, which runs `mcp-stdio --self-report --chromium-attach`.
+  - It always advertises the self-report tools: `af_report`, `af_stop_after_turn` and
+    `propose_session_handoff`.
+  - It also always advertises a small observation set: session status and usage, and
+    the memo tools. The seven Chromium attach tools come with `--chromium-attach`.
+  - The user's preferences add `--peer-messaging`, `--image-gen` and `--fleet-spawn`
+    (`builtinRunArgsFor`).
+  - Anything not advertised is refused on call too (`mcpAdvertised`).
+- **Unattended approval for codex**: a headless chat has no approval UI. Besides
+  `-a never`, the attached MCP servers are set to
+  `default_tools_approval_mode="approve"`; without it every call is cancelled.
+  **The read-only sandbox (`-s read-only`) is kept**, so MCP works but shell and file
+  changes do not.
+- **Assistants** (`/assistants*`) are templates of persona, model, knowledge and tool
+  scope (`af_read`, `af_write` or `none`). Asking one (`ask_assistant`) runs a single
+  turn **with tools forced off**: one hop and no side effects, guaranteed structurally
+  rather than by instruction.
+- **Model resolution** (`ResolveChatModel`) snapshots a model into the conversation at
+  creation and never rewrites it. That protects reproducibility from a provider changing
+  its default.
+  - The order is: an explicit model; the user's per-agent row (ui-prefs
+    `assistantModels`); then a recommended model read from the live catalogue
+    (`recommendedAssistantModel`).
+  - But **the conversation holds one model, chosen for the agent it was created for**.
+    When another backend actually runs (a fallback, or a mid-conversation switch),
+    `chatModelFor` re-resolves the model from *that* CLI's setting. **Passing the
+    stored value straight through would feed one vendor's model id to another.**
+- **Switching agent mid-conversation** is `PATCH /chat/conversations/{id}` with
+  `agent` (it also takes `title`). It is refused mid-turn (409) and for a kind without
+  headless chat (400).
+  - It changes the pin and the model and adds one notice. **The per-backend resume
+    handles and message cursors are preserved**, so switching back continues the native
+    session.
+  - History the other backend has not seen is replayed on the next send
+    (`syncProviderPrompt`), the same path as a fallback.
 
 ### Which language a prompt is written in
 
@@ -250,163 +437,337 @@ branches on the display locale when **a person reads what it produces**.
 
 ## 4.6 Git and the filesystem
 
-- **Repositories**: clone with terminal prompting disabled so it fails fast; status,
-  branches, checkout, fetch, fast-forward, delete. Submodules are best-effort after the
-  clone; **the parent clone deliberately does not recurse**, because an SSH-registered
-  submodule would fail the whole clone.
-- **Submodule sync** fetches into the worktree's own git directory — a full re-clone
-  separate from the parent. **Measured: killing an in-progress submodule update wedges
-  it permanently.** The git directory is left without a HEAD, the working tree is empty,
-  every later update fails, **and nothing reports it** — status is clean and the
-  submodule listing looks healthy. A large submodule hits this on every start. So:
-  1. past the start budget the agent **stops waiting but does not kill** — it continues
-     in the background and reports the outcome;
-  2. starting without the submodule is logged **and notified**;
-  3. an already-wedged submodule is repaired by the one recipe that was measured to
-     work — complete the transfer, then force-checkout the recorded revision. **Only
-     empty working trees are touched, so local changes are never destroyed.**
-- **Seeding from the parent** is what makes that re-clone stop costing anything. **Measured
-  (git 2.47): make a submodule's remote unreachable and a fresh worktree's update fails**,
-  even though the parent holds every object on the same disk — nothing links the two stores.
-  So before the update runs, each submodule is cloned locally out of the parent's own copy:
-  **measured 0.23 s for a 41 MB submodule with the remote offline**, with the objects
-  hardlinked to the parent's, so the worktree's store cost 168 KB rather than 41 MB. N
-  worktrees no longer cost N times the submodule's size.
-  - The local-path protocol is re-enabled **for that one invocation only**, and only for a
-    path the agent computed itself — never for a URL out of `.gitmodules`, which is where
-    CVE-2022-39253 lives.
-  - The URL override is passed on the command line, not written to config: **the config file
-    is shared with the parent and every sibling worktree**, so writing the local path there
-    would redirect their fetches too.
-  - Afterwards the submodule's origin is put back to the real remote, taken from config —
-    `git submodule sync` re-reads `.gitmodules` and would undo the SSH→HTTPS rewrite.
-  - Anything the parent does not have is simply left to the normal update that follows.
-  - **Nested submodules are seeded too**, by descending: a nested one's objects sit under its
-    parent submodule's own store. It cannot be done in one pass — a nested submodule is
-    declared only inside its parent submodule, which does not exist until that one is cloned.
-  - The start budget is therefore 10 s rather than 60, and submodules are fetched with
-    **four jobs** (git's own default is one, i.e. strictly sequential).
-- **The recursive update needs `--init` to reach a nested submodule at all.** Measured (git
-  2.47): without it, `update --recursive` clones the top level, descends into it, finds the
-  nested entry uninitialized and **skips it — exit 0 and no output**, leaving an empty
-  directory that only the recursive status reports as missing. The initial `submodule init`
-  cannot cover this: it expands the top-level `.gitmodules`, and a nested one is unreadable
-  until its parent submodule is checked out. (This is also what makes the SSH→HTTPS rewrite
-  rules for nested clones reachable.)
+- **Repositories**: clone with `GIT_TERMINAL_PROMPT=0` so it fails fast, with the name
+  checked against a pattern. Also status (`git status --porcelain=v2`), branches,
+  checkout, fetch, fast-forward and delete.
+  - Submodules are best-effort after the clone, with SSH URLs rewritten to HTTPS.
+  - **The parent clone deliberately does not recurse**, because an SSH-registered
+    submodule would fail the whole clone.
+- **Submodule sync** (`internal/gitx/git_submodule.go`) fetches into the worktree's own
+  git directory (`.git/worktrees/<wt>/modules/…`), a clone separate from the parent's.
+  - **Measured (git 2.39): killing an in-progress submodule update wedges it
+    permanently.** The git directory is left without a HEAD and the working tree is
+    empty. Every later update fails with "Unable to find current revision", **and
+    nothing reports it**: status is clean and the submodule listing looks healthy.
+  - So the rules are:
+    1. Past the start budget (`submoduleWaitTimeout`, 10 s), the agent **stops waiting
+       but does not kill**. The update continues in the background, and its outcome is
+       logged and notified. Only the 60-minute `submoduleHardTimeout` kills git; that
+       leaves a wedge the next launch repairs.
+    2. Starting without the submodule is logged **and notified** (`submodule-sync`).
+    3. An already-wedged submodule is repaired by the one recipe that was measured to
+       work: `fetch` to complete the transfer, then `checkout --detach --force` of the
+       recorded revision. **Only empty working trees are touched, so local changes are
+       never destroyed.** A reused worktree is re-synced the same way.
+- **Seeding from the parent** (`git_submodule_seed.go`) is what makes that separate
+  clone cost almost nothing.
+  - **Measured (git 2.47): make a submodule's remote unreachable and a fresh worktree's
+    update fails**, even though the parent holds every object on the same disk; nothing
+    links the two stores.
+  - So before the update runs, each submodule is cloned locally from the parent's
+    `.git/modules/<name>`. **Measured: 0.23 s for a 41 MB submodule with the remote
+    offline.** The objects are hardlinked to the parent's, so the worktree's store cost
+    168 KB rather than 41 MB, and N worktrees no longer cost N times the submodule's
+    size.
+  - `protocol.file.allow=always` is set **for that one invocation only**, and only for a
+    path the agent computed itself. It is never set for a URL out of `.gitmodules`,
+    which is where CVE-2022-39253 lives.
+  - The URL override is passed with `-c`, not written to config. **The config file is
+    shared with the parent and every sibling worktree**, so writing the local path
+    there would redirect their fetches too.
+  - Afterwards the submodule's origin is put back to the real remote, taken from config.
+    `git submodule sync` would re-read `.gitmodules` and undo the SSH→HTTPS rewrite.
+  - Anything the parent does not have is left to the normal update that follows.
+  - **Nested submodules are seeded too**, by descending (at most 8 levels): a nested
+    one's objects sit under its parent submodule's own store. It cannot be done in one
+    pass, because a nested submodule is declared only inside its parent submodule, which
+    does not exist until that one is cloned.
+  - Submodules are fetched with `--jobs 4`; git's own default is one, strictly
+    sequential.
+- **The recursive update needs `--init` to reach a nested submodule at all.**
+  - Measured (git 2.47): without it, `update --recursive` clones the top level and
+    descends into it. There it finds the nested entry uninitialized and **skips it,
+    with exit 0 and no output**. That leaves an empty directory which only
+    `submodule status --recursive` reports as missing.
+  - The initial `submodule init` cannot cover this. It expands the top-level
+    `.gitmodules`, and a nested one is unreadable until its parent submodule is checked
+    out.
+  - This is also what makes the nested SSH→HTTPS rewrite rules
+    (`submoduleInsteadOfArgs`) reachable.
 - **SCM read and write**: changes, diff, log, graph, show, stage, unstage, discard,
-  commit. Revisions are validated and responses are size-capped.
-- **The filesystem API** defends against traversal, caps sizes and detects binaries.
-  **The denylist** hides — and refuses direct access to — the agent configuration
-  directories, this product's own configuration, SSH keys, git credentials and the cloud
-  credential cache.
+  commit. Revisions are checked as hex, and responses are size-capped.
+- **The filesystem API** (tree, file, upload, rename and the rest, rooted at the home)
+  defends against traversal, re-checks a path after resolving symlinks, caps sizes and
+  detects binaries.
+- **The denylist** (`fsDeny` in `fs.go`) hides from listings, and refuses direct
+  access to (400), everything that holds credentials or agent state:
+  - the agents' own directories (claude, codex, opencode, agy, copilot, cursor, kiro,
+    muse);
+  - this product's configuration and state (`.config/agent-fleet`,
+    `.local/state/agent-fleet`, `.local/share/agent-fleet`);
+  - `.ssh`, `.git-credentials`, and `.aws` (the SSO token cache and generated config).
+
+  One read-only exception serves codex's generated images.
 - **LFS** is installed system-wide in the image, so clone and checkout smudge normally.
-- Git authentication is the unified credential helper, decrypting on demand
-  ([07 §7.6](07-security.md)).
+  A pointer left unsmudged is detected by the file API and badged in the viewer.
+- Git authentication is one credential helper (`workspace-agent cred`) that decrypts on
+  demand ([07 §7.6](07-security.md)).
 
 ## 4.7 Transcripts and usage
 
 - Transcripts are returned as **a window at the tail with backward paging**
-  ([decisions/0009](../decisions/0009-transcript-paging.md)).
+  (`GET /sessions/{name}/messages`, [decisions/0009](../decisions/0009-transcript-paging.md)).
 - Each kind has a reader for its own storage format, and they all normalise to a common
   turn shape. **The parsers are deliberately not merged.**
-- Usage is aggregated from each CLI's own local records.
+- Usage per kind has its own source:
+  - `GET /claude/usage` and `/codex/usage`: the CLIs' local records, plus claude's
+    captured status line;
+  - `/copilot/usage`: GitHub's API;
+  - `/muse/usage`: what the runtime last reported;
+  - `/connections/agy/usage`.
+
+  The cross-session ledger is `/sessions/usage` and `/usage/series`.
 
 ## 4.8 Secrets — the agent's responsibility
 
-It owns the encrypted store and supplies credentials through subcommands that **never
-create a plaintext file**. The key is injected by the CP at start; the agent is
-indifferent to how it was provisioned ([07 §7.6](07-security.md)).
+The agent owns the encrypted store, `secrets.enc` (AES-256-GCM, 0600, written through a
+temporary file and a rename under a lock).
 
-★ **One thing deliberately does not live here: a git provider's OAuth client secret**
-([decisions/0052](../decisions/0052-tenant-git-oauth.md)). It is the *tenant's*
-credential, so copying it into **every member's** store is avoided by keeping it in the
-CP; the agent asks the CP to perform the refresh, and **the user's own refresh token
-stays here.**
-★ The bridge's coordinates are copied into the encrypted store at start rather than read
-from the environment — **the credential helper is a separate process started by git, and
-its environment cannot be guaranteed.**
+- **It supplies credentials through subcommands that never create a plaintext file**:
+  `workspace-agent cred`, the git credential helper. `bitbucket-cred` is an alias of it.
+- The key, `AF_SECRET_KEY`, is injected by the CP at start. The agent is indifferent to
+  how it was provisioned ([07 §7.6](07-security.md)).
+- Without a key (a CP with no master key injects none), the same code path writes a
+  plaintext `secrets.json`.
+- Old plaintext credentials are folded into the store at start and deleted
+  (`migrateLegacySecrets`).
+
+**One thing deliberately does not live here: a git provider's OAuth client secret**
+([decisions/0052](../decisions/0052-tenant-git-oauth.md), decision 7).
+
+- It is the *tenant's* credential. Keeping it in the CP avoids copying it into
+  **every member's** store.
+- The agent asks the CP to perform the refresh (`POST /internal/git-oauth/bitbucket/refresh`,
+  and the same for Jira). **The user's own refresh token stays here.**
+- The bridge's coordinates (`AF_CP_BASE_URL`, `AF_GIT_OAUTH_TOKEN`) are copied into the
+  encrypted store at start (`seedGitOAuthBridge`), rather than read from the
+  environment. **The credential helper is a separate process started by git, and its
+  environment cannot be guaranteed.** The internal git provider's token is handled the
+  same way (`seedInternalGit`).
 
 ## 4.9 The workspace image and its entrypoint
 
+`workspace/Dockerfile` is multi-stage: a `golang:*-trixie` builder, then
+`node:22-trixie-slim` (Debian 13, [decisions/0068](../decisions/0068-debian-13-base.md)).
 **The image and the agent are common to every deployment target** — that is the point of
 the split ([09](09-deploy.md)).
 
 - **The agent CLIs arrive by one of two routes**, and **the distribution default is
-  lean**:
-  - **Lean**: the CLIs are **not baked in** — a safe default that does not redistribute
-    proprietary software. The entrypoint **boot-installs the pinned versions** from the
-    official sources into the home on first start (**persistent, so later starts skip
-    silently**; no network is a warning, not a failure, and it retries next time). Two
-    large CLIs, kiro and muse, are excluded even from that and installed on demand (muse
-    from its connection card).
-  - **Baked**: an explicit knob for a deployment that wants a fast first start.
-- **The version pins are the same build arguments on both routes**, and **every pin is
-  written into a manifest inside the image**, which the version report, the smoke test
-  and the boot-install all read. The manifest also covers the operations-tooling
-  servers — two of which **cannot be asked their version by running them** (one starts a
-  server, the other has no version flag), so their version is read from the installed
-  package metadata instead. **A new server of that kind must be handled the same way.**
+  lean** (`BAKE_AGENT_CLIS=0`; [decisions/0037](../decisions/0037-registry-policy.md)).
+  - **Lean**: claude, opencode, codex, copilot, cursor, agy and rtk are **not baked
+    in**. That is the safe default, because it does not redistribute proprietary
+    software.
+    - The entrypoint **boot-installs the pinned versions** from the official sources
+      into `~/.local` on first start.
+    - The home persists, so later starts skip silently.
+    - No network is a warning, not a failure, and the install retries on the next
+      start.
+    - When the user has not opted into self-update, a CLI that updated itself is put
+      back to the pin.
+    - kiro (about 855 MB unpacked) and muse are excluded even from that and installed
+      on demand: kiro by its launch guard (`install-kiro --if-needed`), muse from its
+      connection card (`install-muse`).
+  - **Baked** (`BAKE_AGENT_CLIS=1`): an explicit knob for a deployment that wants a fast
+    first start.
+- **The version pins are the same build arguments on both routes**
+  (`CLAUDE_CODE_VERSION`, `CODEX_VERSION`, … — the bump runbook is
+  [10 §10.2.1](10-development.md)).
+  - **Every pin is written to `/usr/local/share/agent-fleet/versions.json`**, whatever
+    the knobs say. That covers the agent CLIs, the toolchains and the database servers.
+  - The manifest is read by `GET /env/tool-versions` (Settings → Toolchains, "Tool
+    versions"), the smoke test and the boot-install.
+  - Two of the operations-tooling MCP servers **cannot be asked their version by
+    running them**: `--version` starts one of them, and the other has no version flag.
+    So their version is read from the installed package metadata instead
+    (`toolSpec.PyDist`, `uvToolVersion`). **A new server of that kind must be handled
+    the same way.**
+- **Common tools** (`BAKE_OPTIONAL_TOOLS=1`, the default):
+  - the Go toolchain (`GO_VERSION`, kept in step with `go.mod`);
+  - build-essential and python3 (pip is allowed to install for the user);
+  - git-lfs, tzdata and the usual command-line tools;
+  - a pinned Debian Chromium with Japanese fonts.
+
+  `BAKE_OPTIONAL_TOOLS=0` is the lean root filesystem for `native`: those tools are
+  installed on demand instead (`install-chromium` and the like).
+- **Chromium keeps its sandbox.**
+  - The setuid sandbox helper is verified at build time. Every other setuid or setgid
+    bit is stripped from the image.
+  - Chromium runs with `--disable-dev-shm-usage`.
+  - The docker runtime adds `SYS_ADMIN` to the bounding set so the helper can create
+    namespaces; `dev` gets no effective capability. The ECS runtimes add none.
+- **JDKs are outside the image**, in two roots:
+  - a shared directory of Temurin JDKs, mounted read-only at `/usr/lib/jvm` on docker
+    (⚠️ the JDKs' `cacerts` symlinks must be materialised when that directory is
+    built, or the trust store is empty);
+  - `~/.local/share/agent-fleet/jvm`, which `workspace-agent install-jdk` fills. On ECS
+    nothing is mounted, so it is the only root there.
+
+  `JAVA_HOME` follows the Settings → Toolchains choice, and the lookup prefers the
+  workspace's own architecture (`jvmSearchDirs`). Node is installed per version by
+  `workspace-agent install-node` into nvm's layout.
+- **Layer order**: the heavy, rarely-changing layers come first. The frequently-changing
+  copies (the agent binary, the entrypoint, the plugin, the notes) come last, so a
+  small fix does not bust the cache. `CMD` is the absolute
+  `/usr/local/bin/workspace-agent`, so a copy in `~/.local/bin` cannot shadow it.
+- **The entrypoint seeds only what is absent**:
+  - claude's `settings.json` (the skip-permissions prompt, remote control, notifications,
+    the rtk hook);
+  - `~/.gradle/gradle.properties`, with conservative values for a memory-constrained
+    host.
+
+  After that the settings UI is the truth; forcing values on every start would fight
+  it.
+- **The entrypoint re-applies on every start**:
+  - the opencode plugin;
+  - opencode's `permission=allow`;
+  - cursor's update channel;
+  - kiro's auto-update switch.
+- **The workspace guide is distributed by the agent, not the entrypoint**
+  ([decisions/0042](../decisions/0042-user-instructions.md)).
+  - claude reads the image's managed policy, `/etc/claude-code/CLAUDE.md`.
+  - `reconcileAgentInstructions()` merges the guide **between markers** into the
+    `AGENTS.md` of codex, opencode, agy and muse, and leaves everything outside the
+    markers alone. A plain copy used to overwrite the whole file on every start and
+    wipe what the user had added.
+  - copilot and kiro get a dedicated file (`agent-fleet-guide.*`).
+  - **cursor has no local user scope and cannot receive it.**
+  - The topic files (`workspace/notes/`) ship under `/usr/local/share/agent-fleet/notes/`
+    and are registered as skills for claude, codex, opencode and muse
+    (`fleetskills.Apply`).
+  - ⚠️ `workspace/.dockerignore` excludes `**/*.md`. The guide, the topic files and the
+    assistants' knowledge (the one `//go:embed` input) each need a `!` exception.
+- **Timezone**: the toolchains setting `timezone` (default `Asia/Tokyo`) is exported as
+  `TZ` by the entrypoint; an unknown zone warns and falls back to UTC. It takes effect
+  on the next stop and start.
+- **The user guide is mounted, or fetched**
+  ([decisions/0064](../decisions/0064-docs-three-audiences.md)).
+  - Every member gets the same tree: the `guide/` shelves and the root READMEs
+    (`guideRoots` in `control-plane/workspace_docs.go`). The developer documentation
+    never ships.
+  - On docker and native the CP stages that tree (`stageWorkspaceDocs`) and mounts it
+    read-only at `/usr/local/share/agent-fleet/docs`.
+  - The ECS tasks have no host path the CP can write, so the agent fetches the same
+    tree at start instead. It calls `GET /internal/docs` (`control-plane/docs_bridge.go`)
+    with a per-membership `AF_DOCS_TOKEN` (`docs_sync.go`).
+  - **A mount always wins**: a non-empty docs directory is not fetched over.
+  - The archive is not trusted:
+    - regular files only;
+    - no absolute or `..` paths;
+    - caps on the file count and the total size;
+    - it is extracted to a staging directory and renamed into place only when the gzip
+      stream was read to the end, so a cut download never appears as half the docs.
+  - The mount point is owned by `dev` in the image for that reason.
+- claude updates itself only under `~/.local`; a baked copy stays fixed. A launcher left
+  dangling by an old home path is repaired by the entrypoint.
+- **Applying a change**: touching the image or the entrypoint means rebuilding the image
+  and a stop and start of the workspace ([10](10-development.md)).
 
 ## 4.10 The browser manager
 
-One Chromium process per workspace, started lazily and driven over a pipe, owning an
-independent context and page per id. **It refuses the agent's own port, external
-top-level navigation and the management endpoints**, so a page's traffic stays inside
-the container's loopback.
+`BrowserManager` (`internal/browserx`) runs one Chromium process per workspace, started
+lazily and driven over a CDP pipe. It owns an independent browser context and page per
+browser id.
 
-The wire protocol sends a ready frame, then state, navigation, console and error
-messages as text and **raw JPEG as binary**. From the Console it accepts only viewport,
-pointer, wheel, key and text, navigation and visibility — **raw debugging protocol is
-never exposed**.
+- **The surface**: `POST /browser/pages`, `GET` and `DELETE /browser/pages/{id}`, and
+  the WebSocket `GET /ws/browser?id=`.
+- **What it refuses**: the agent's own port, and any top-level navigation off loopback
+  (`allowedTopLevelBrowserURL`). Subresources may go to ordinary external hosts under
+  the workspace's egress policy, but never to the management endpoints: the container
+  host aliases, the cloud metadata hosts, the CP, link-local addresses
+  (`forbiddenBrowserResource`).
+- **The wire protocol** (version 1) sends a `ready` frame first. After that come state,
+  navigation, console and error messages as text, and **raw JPEG as binary**.
+- **From the Console it accepts only** viewport (with pinch zoom), pointer, wheel, key
+  and text, navigation, visibility and copy. **Raw debugging protocol is never
+  exposed.**
+- The user-visible ceilings are in [ref/limits.md](../../guide/ref/limits.md). The
+  defaults can be tuned per workspace (`AF_BROWSER_MAX_FPS`, `AF_BROWSER_PAGE_LIMIT`,
+  `AF_BROWSER_DETACHED_GRACE_SEC`, `AF_BROWSER_JPEG_QUALITY`). An idle Chromium is
+  stopped after `AF_BROWSER_IDLE_SEC`.
+- **The frame rate is enforced at capture, not merely by throttling the send.** The
+  acknowledgement is delayed by a one-frame worker, so Chromium is limited at capture
+  and encode rather than producing frames that are thrown away.
+- The pipe has fixed message and queue limits (8 MiB per message; 256 events or
+  32 MiB queued). **When a required event saturates them, the browser is terminated
+  and the page moves to `crashed`** rather than growing the queue.
 
-The ceilings are in [ref/limits.md](../../guide/ref/limits.md). The frame rate is enforced **not
-merely by throttling the send** but by delaying the acknowledgement to a one-frame
-worker, **so Chromium is limited at capture and encode** rather than producing frames
-that are thrown away. The pipe has fixed message and queue limits, and **when a required
-event saturates them the browser is terminated and the page moves to crashed** rather
-than growing the queue.
+The details are [decisions/0018](../decisions/0018-container-browser-pane.md).
+
+**Attaching to a Chromium someone else started** is a separate manager
+([decisions/0038](../decisions/0038-chromium-attach-view.md)).
+
+- The surface is `/browser/attach-targets`, `/browser/attachments*` and
+  `GET /ws/browser-attachments`, behind the `attach_chromium` family of MCP tools.
+- Control modes are `view-only`, `user-control` and `locked`. The MCP tool starts
+  view-only, where the user's clicks do nothing; the HTTP handoff starts
+  `user-control`.
+- A target is identified by the GUID on the second line of Chromium's
+  `DevToolsActivePort`, not by the port, so a reused port cannot silently attach to
+  another session's browser.
+- Detaching never closes the target.
 
 ## 4.11 tmux server scope, and isolating a second instance
 
-> **Why this section exists.** During an integration test, a second agent started on a
-> different port **ran `kill-server` against the shared default socket** on shutdown,
-> and **destroyed every unrelated running session — four times**, including the
-> developer's own.
+> **Why this section exists.** During an integration test
+> ([decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md)), a second agent
+> started on a different port **ran `kill-server` against the shared default socket**
+> on shutdown. It **destroyed every unrelated running session, four times**, including
+> the developer's own.
 
 **The permanent fixes:**
 
-- In production there is one agent per container, and it is the sole creator of the
+- In production there is one agent per workspace, and it is the sole creator of the
   default socket's tmux server. The old shutdown relied on that. **The assumption breaks
   the instant a second instance exists** in the same environment.
-- **`kill-server` is banned outright in agent product code.** Shutting down kills
-  **only the sessions this instance owns** — its own metadata intersected with what is
-  live — by exact target. **A live session with no metadata of ours is not touched**: it
-  is impossible to tell "another instance's work" from "an orphan that lost its
-  metadata". In production, killing the owned sessions leaves the server to exit on its
-  own, which reaches the same end state as before.
-- **All tmux execution funnels through one helper.** Setting the socket variable sends
-  every call to a dedicated server, isolated from the default socket **and from an
-  inherited session variable**.
-- Both rules are held by tripwire tests that detect the banned call and any bypass of
-  the funnel.
+- **`kill-server` is banned outright in agent product code.**
+  - Shutting down kills **only the sessions this instance owns** — its own metadata
+    intersected with what is live (`ownedLiveSessions`) — by exact target.
+  - **A live session with no metadata of ours is not touched.** It is impossible to
+    tell "another instance's work" from "an orphan that lost its metadata".
+  - In production, killing the owned sessions leaves the server to exit on its own,
+    which reaches the same end state as before.
+- **All tmux execution funnels through `tmuxx.Cmd`.** Setting `AF_TMUX_SOCKET=<name>`
+  sends every call to `tmux -L <name>`, a dedicated server isolated from the default
+  socket **and from an inherited `$TMUX`**.
+- Both rules are held by tripwire tests in `workspace/agent/tmux_guard_test.go`, which
+  detect the banned call and any bypass of the funnel.
 
-**How to start a second instance safely** (in-container tests, local debugging) — **all
-three of these, or it collides with the real one**:
+**How to start a second instance safely** (in-container tests, local debugging).
+**Separate the socket, the metadata directory and the port, or it collides with the
+real one**, and give it its own `HOME` as well:
 
 ```sh
+d=$(mktemp -d) && mkdir "$d/home"
+HOME="$d/home" \
 AF_TMUX_SOCKET=af-e2e-$$ \
-AF_SESSIONS_DIR="$HOME/tmp/e2e-$$/sessions" \
+AF_SESSIONS_DIR="$d/sessions" \
 AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
 ./workspace-agent
 ```
 
-- **The socket** — ⚠️ without it, starting from inside a tmux pane (that is, your usual
-  development session) **inherits the session variable and reliably targets the shared
+- **The socket**: ⚠️ without `AF_TMUX_SOCKET`, starting from inside a tmux pane (your
+  usual development session) **inherits `$TMUX` and reliably targets the shared
   server**. That was the direct cause of the incident.
-- **The metadata directory** — sharing it makes the second instance believe the real
-  sessions are its own and **stop them on shutdown**.
-- **The port** — to avoid colliding with the real agent.
-- Clean up with `kill-server` **against your own socket only**. Typing it against the
-  shared one is forbidden.
-- Tests isolate the same way: either a dedicated socket, or the environment variable
-  when the test goes through product code.
+- **The metadata directory**: sharing it makes the second instance believe the real
+  sessions are its own and **stop them on shutdown** (ownership is read from the
+  metadata).
+- **The port**: the agent binds `AGENT_ADDR` before any boot work and exits if it is
+  taken, so a clash fails fast rather than half-starting.
+- **The home**: the boot work rewrites files across the home. It migrates state,
+  reconciles every CLI's instruction file, re-registers the status hooks, and renames
+  the `af` MCP server in every CLI's configuration. A second instance on the real home
+  rewrites the real sessions' setup.
+- Clean up with `tmux -L af-e2e-$$ kill-server`, **against your own socket only**.
+  Typing `kill-server` against the shared one is forbidden.
+- Tests isolate the same way. A test that runs tmux directly uses its own `-L` socket;
+  a test that goes through product code sets `AF_TMUX_SOCKET` with `t.Setenv`.

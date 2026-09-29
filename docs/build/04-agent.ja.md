@@ -1,7 +1,7 @@
 ---
 audience: "Workspace Agent、またはエージェント種別を変える人"
 source_of_truth: "コード（本書は地図と設計意図）"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
 # 04. Workspace Agent と Workspace イメージ
@@ -10,194 +10,341 @@ updated: "2026-07"
 
 ## 4.1 位置づけ
 
-per-user コンテナ内で常駐する Go プロセス。コンテナの PID 1 は `--init`（tini、ゾンビ reap のため）で、
-その配下で非特権ユーザーとして動く。CP から見た**唯一の実行主体**——runtime・tmux・git・fs・CLI エージェントに
-触るのは必ず Agent（CP は中継のみ、[05](05-api.ja.md)）。全 API は `requireToken`（Bearer
-`AGENT_TOKEN`）で保護（[07 §7.5](07-security.ja.md)）。コンテナ netns を共有するため、コンテナ内サービスへ
-loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直接navigation）。
+各 Workspace の中で常駐する Go プロセス。非特権ユーザー（`USER dev`）として、ゾンビを回収する init の
+配下で動く（docker は `--init`、ECS 系は `InitProcessEnabled`。`native` はコンテナが無いので init も無い）。
+**CP から見た唯一の実行主体**で、runtime・tmux・作業コピー・ファイルシステム・CLI エージェントに触るのは
+必ず Agent。CP は中継するだけ（[05](05-api.ja.md)）。
+
+- `GET /healthz` を除く全エンドポイントは `httpx.RequireToken`（`AGENT_TOKEN` との Bearer 照合）の
+  内側にある（[07 §7.5](07-security.ja.md)）。`AGENT_TOKEN` が未設定だと照合は無効になる。これは
+  手元の開発専用。
+- Workspace のネットワーク名前空間を共有しているので、Workspace 内のサービスへ loopback で届く。
+  使っているのはプレビューの中継（`/proxy/{port}/…`、`handlePreview`）と BrowserManager の
+  ナビゲーション（§4.10）。
 
 ## 4.2 セッションモデル
 
-**1 Session = 会話・作業 dir・設定・実行状態を束ねる論理スロット**。`kind` はエージェント種別、
-`driver` は制御経路を表す。`driver=tui` だけが tmux session（プレフィクス `claude_`）を 1 本持ち、
-`driver=managed` は Workspace 単位の共有 runtime 上の thread なので pane もセッション専用プロセスも持たない。
-決定的 sid = uuidv5(dir, name) は status 等の AF 内部キーであり、エージェント自身の会話 ID は別に保存する。
+**1 セッション = 会話・作業ディレクトリ・設定・実行状態を束ねる論理スロット**。`kind` はエージェント種別、
+`driver` は制御経路。
 
-- **メタ永続**: per-session メタ（kind/dir/model/repo/createdAt/stoppedAt/Archived）を
-  `~/.config/agent-fleet/sessions`（denylist 配下・home volume、`AF_SESSIONS_DIR`）に保存。
-  **Stop→Start を跨いで一覧と再開が生きる**。停止 TTL（利用者設定 `sessionStoppedArchiveDays` → `AF_SESSION_STOPPED_TTL` → 7d の順）を
-  過ぎた行は**自動でアーカイブへ移す**（消さない。ADR 0097）。
-- **一覧はメタ駆動 + driver ごとの live 状態マージ**。managed は runtime handle、tui は tmux を生存判定に使う。
-  メタの無い生 `claude_*` tmux（孤児）も列挙し、ペインの起動コマンドから kind を sniff——
-  「動いているのに一覧に出ない」手詰まりを封じる。
-- **止め方の 3 すくみ + 1**:
-  - `halt` = 現 driver を停止・メタ保持 → 停止中として一覧に残る（再開可）
-  - `stop` = 現 driver を停止・メタ破棄 → 一覧から消える（エージェント native の会話履歴は残る）
-  - `archive`/`restore` = メタ+履歴保持で非表示 ↔ stopped 復帰
-  - `recreate` = 旧メタと履歴を archive し、同じ dir/kind/driver で新しい slug の会話を起動
-- **再開**: managed は保存した native conversation ID を共有 runtime へ resume し、Agent / daemon 再起動時は
-  reconciliation で live handle を再構築する。claude/codex/opencode は driver にかかわらず
-  **作業 dir 消失で再開不可**（resumable=false、home フォールバックしない）。shell は home フォールバック。claude の resume 判定は
-  jsonl に実会話行（user/assistant）があるか——
-  ⚠️ Remote Control が ON のとき会話前でも `bridge-session` 1 行が書かれるため「jsonl 存在=resume 可」に
-  すると `--resume` が即死する。non-resumable なら jsonl を捨てて `--session-id` 新規。（entrypoint の
-  seed 既定は **新規 WS で Remote Control OFF**＝`remoteControlAtStartup: false`。既存 WS も
-  settings.json に `remoteControlAtStartup` キーが無ければ起動時に一度だけ `false` を補って既定 OFF に揃える
-  ——ただしユーザーが Console で明示設定した値（キー在り）は上書きせず尊重する。）
-- ⚠️ **claude は自分でセッションを作り直すことがあり、そのとき `--session-id` を落とす**。
-  フルスクリーン TUI への切替（`/tui`・切替ダイアログ）、サインイン後の再起動、モデル切替などで
-  claude は自身を起動し直すが、その再起動 argv は**設定系フラグだけ**から組み直され、`--session-id` と
-  `--name` は構造上そこに入らない（2.1.239 実測: 起動コマンドに両方あったのに、生きているプロセスの argv は
-  `claude.exe --allow-dangerously-skip-permissions --model opus --permission-mode bypassPermissions`）。
-  `--session-id` を失った claude は**ランダムな新 id でまっさらな会話**を始めるので、決定論 sid の jsonl は
-  二度と現れない。決定論 sid しか見ていないと、ミラーは「まだ会話はありません」のまま固まり、hook 由来の
-  status も別 id で書かれて Console からセッションが丸ごと消える（使用量・中断検知・報告リコンサイラも同時に落ちる）。
-  対処は `claude-sid` 台帳（slot sid → claude の実 id、codex/opencode と同じ `agents.SidStore`）で、
-  hook が名乗った id を `AF_SESSION_NAME` を手掛かりに slot へ引き戻して記録する
-  （`internal/agents/claude/sid.go`）。`AF_SESSION_NAME` は tmux セッションの env なので**再起動をまたいで残る**——
-  cwd 一致のような当て推量と違い取り違えようがない、というのがこの手掛かりを選ぶ理由。転写の所在も `--resume` の
-  相手も、以降は台帳を通した `LiveSID()` で決める。
-- **会話 id の持ち方は 2 系統ある**。**捕捉型**（codex は hook、opencode は plugin、agy/kiro は
-  ディスク探索）は CLI 自身が採番した id を**イベントごとに再記録**するので、CLI が別セッションへ
-  移っても次のイベントで追従する（実測でドリフト 0: codex 58/58・opencode 16/16）。**押し付け型**
-  （claude `--session-id`・copilot `--session-id`・cursor `--resume`）は我々が採番した id を渡し、
-  以後それが使われている前提で転写も状態も引く——**CLI がその id を使わなくなった瞬間に静かに壊れる**
-  （上記の claude 実例）。押し付け型に新しい種別を足すときは、必ず取りこぼしの回収経路も一緒に用意すること。
-  claude は hook が session_id を名乗るのでそれを使い、**status hook を持たない copilot/cursor は
-  ディスクから拾い直す**（`internal/agents/imposedsid.go` の `ResolveImposedSID`）。回収は
-  「押し付けた id が CLI 側に**一つも存在しない**とき」に限り、cwd 一致・スロット作成時刻以降・
-  他スロット未取得の候補が**ちょうど 1 つ**のときだけ採用する（曖昧なら動かさない——誤採用で
-  他人の会話を映すのは、固まったままより悪い）。帰属の材料は copilot が
-  `session-state/<sid>/workspace.yaml` の `cwd`/`created_at`、cursor は転写パスに cwd が入っている
-  `projects/<slug>/agent-transcripts/<chatID>/`（作成時刻はそのディレクトリの mtime。追記では動かない——実測）。
-- ⚠️ **tmux の `-t` は前方一致**（exact→prefix→fnmatch）。`claude_foo` が `claude_foo-sh` に一致して
-  誤判定・誤 kill しうるため、target 参照は全て `=name` の exact 形式で行うのが本リポジトリの規約。
-- **DB ミラー（B 案）**: CP の `GET /api/sessions` は running 時に Agent から取得して DB を洗い替え、
-  stopped 時は DB から `alive:false` 配信＝**Workspace 停止中でも一覧が見える**（[06 §6.3](06-data.ja.md)）。
-- **fork**: claude/codex/opencode/copilot の会話履歴を引き継いだ新セッションを別スロットに分岐
-  （`POST /sessions/{name}/fork`）。新スロットは元の kind と driver を引き継ぐ。任意ボディ
-  `{"at": <anchorId>, "include": bool}` で**過去の発言時点**から分岐できる（docs/55）。分岐点の
-  アンカーは `transcript.Turn.AnchorID`（kind 固有の不透明 ID）で、包含差の吸収と起動方式の
-  可否は各 kind の `ForkAtResolver` が答える（`agents.ErrForkAtRoute` → `fork_at_unsupported`）。
-  実現手段は kind で割れる: codex/opencode は runtime API の公式パラメータ（managed 必須）、
-  claude/copilot は転写の切り詰め（TUI でも可）。
-- **driver 切替**: Codex / OpenCode は `POST /sessions/{name}/driver` で同じ会話を `managed` ⇄ `tui` に
-  stop→resume する。実行中 turn がある間は `409 busy_switch`。kind・dir・native conversation ID は維持する。
-- **モデル解決（作成時）**: codex/opencode/copilot を明示モデル付きで作成する際、Agent は live カタログ
-  （`codex debug models` / `opencode models` / copilot は `/model` ピッカーの PTY スクレイプ）に照らして、
-  ピッカー表示名や一意な略称（例 `terra`）を完全な slug（`gpt-5.6-terra`）へ解決する（`resolveLiveModel`）。
-  曖昧・利用不可なら **clone/worktree の副作用前に `400 bad_model` で拒否**——「起動後に無効モデルで落ちる」罠を
-  封じる。カタログを読めない縮退時（オフライン / CLI 未導入）は指定値を保持して通常起動を続ける。MCP 経由の起動は
-  先に read ツール `list_models` で候補 id を確認してから `create_session` に渡す。claude は起動時に自前の
-  picker/`--model` に委ねるため対象外。
-  - copilot は **Free プランだと Auto のみ**でモデル catalog が空（＝既定だけ）。かつ **Auto は `--effort` 非対応**
-    （`Model "auto" does not support reasoning effort configuration`）なので、起動コード（`program.go`/`driver.go`）は
-    **concrete な非 auto モデルの時だけ `--effort` を渡す**。auto/未指定で effort を付けると起動失敗する（Free で常時
-    踏むフットガン）ため、フロントの `useEffortOptions` も copilot+auto/未指定では effort を既定のみにする。
-- **ブランチ支援**: `suggest-branch`（セッション会話を要約して AI がブランチ名を提案）/ `rename-branch`。
-- タイトル系（`/title/{suggest,accept,dismiss,regenerate,set}`）は会話からの表示名提案。
+- **tmux セッションを持つのは `driver=tui` だけ**。名前は kind を問わず `claude_<name>`
+  （`session.TmuxName`）。
+- `driver=managed` のセッションはペインを持たない。どのプロセスで動くかは kind の managed driver
+  次第（§4.3）で、Workspace で共有するデーモン、セッションごとの子プロセス、Agent 内のコードの
+  いずれか。
+- 内部 id は決定的で、ディレクトリと名前から `session.UUID` で作る。**エージェント自身の会話 id は
+  別に保存する。**
+- **名前はサーバーが割り当てる**（`allocSessionName`）。作成要求の名前は無視される。二重作成を
+  避けたい呼び出し側は `idempotency_key` を送り、`GET /sessions-idempotency/{key}` で引ける。
 
-## 4.3 エージェント kind / driver 統合パターン
+### メタデータと一覧
 
-kind = `claude` / `codex` / `cursor` / `opencode` / `agy` / `copilot` / `kiro` / `lcpp` / `muse` / `shell` / `ssm`（agy は [32](../decisions/0008-antigravity-cli-agent-kind.ja.md)、copilot は [36](../decisions/0019-copilot-agent-kind.ja.md)、kiro は [decisions/0026](../decisions/0026-kiro-agent-kind.ja.md)、lcpp は [decisions/0093](../decisions/0093-lcpp-agent-kind.ja.md)、muse は [decisions/0095](../decisions/0095-muse-agent-kind.ja.md) — copilot / cursor / kiro は Terminal+Managed 両対応・per-session child の ACP driver、agy は Terminal 専用、lcpp / muse は Managed 専用で lcpp の driver は Agent 内・muse は per-session child）。
-Codex / OpenCode / cursor / copilot / kiro は managed が新規既定で、tui は明示選択。lcpp / muse は managed のみ（tui 経路なし）。Claude / agy / shell / SSM は tui のみ。
-**新 kind を足すときに埋める面**は毎回同じ（雛形は opencode 追加時に確立、codex で再利用）:
+- **メタデータは `~/.local/state/agent-fleet/sessions` に保存する**（`session.MetaDir`。
+  `AF_SESSIONS_DIR` で上書き可）。home ボリューム上にあり、ファイルブラウザからは隠れている。
+  だから **Stop → Start を跨いで一覧と再開が生きる**。
+- **停止したセッションは TTL を過ぎると自動でアーカイブへ移る。消しはしない**
+  （[decisions/0097](../decisions/0097-session-retention.ja.md)）。
+  - TTL は利用者の設定（`sessionStoppedArchiveDays`。「しない」も選べる）、無ければ
+    `AF_SESSION_STOPPED_TTL`、無ければ 7 日（`session.StoppedTTL`）。
+  - ロックされたセッションは対象外。
+  - 掃引は一覧ハンドラの中で走る。タイマーは無い。
+- **一覧はメタデータ駆動で、driver ごとの生存状態を重ねる**（`HandleListSessions`）。managed は
+  runtime のハンドル、tui は tmux を見る。
+  - メタデータの無い `claude_*` の tmux セッション（孤児）も列挙する。kind はペインの起動コマンドから
+    推定する（`tmuxx.PaneKind`。分かるのは claude・codex・opencode で、それ以外は `shell` 扱い）。
+  - 「動いているのに一覧に出ない」手詰まりを意図して封じている。
+- **CP は一覧を DB へミラーする**（`sessionsPayload`、`store.ReplaceSessions`）。Workspace が停止中か
+  Agent に届かないときは、CP がミラーを `alive:false` で返す（[06 §6.3](06-data.ja.md)）。
+
+### 止める・消す・戻す
+
+| 操作 | エンドポイント | 効果 |
+|---|---|---|
+| halt | `POST /sessions/{name}/halt` | driver を止め、メタデータは残す。停止中として一覧に残り、再開できる |
+| 削除 | `DELETE /sessions/{name}[?stop=1]`、または旧名の `POST /sessions/{name}/stop` | セッションを**ごみ箱へ移す**（`trashSession`、[decisions/0101](../decisions/0101-session-delete-via-trash.ja.md)）。下記 |
+| archive / restore | `POST /sessions/{name}/archive`・`…/restore` | 行を隠す／停止中として戻す |
+| recreate | `POST /sessions/{name}/recreate` | 旧スロットをアーカイブし、同じディレクトリ・kind・driver・設定で新しい会話を始める。起動に失敗したら旧スロットを戻す |
+| lock | `POST /sessions/{name}/lock` | 削除と TTL アーカイブを断る（403）。archive はできる |
+
+- **ごみ箱**はメタデータと転写のアーカイブを書き、それからメタデータを消す。
+  - 動いているセッションは `?stop=1`（と `/stop`）なら先に halt する。付けないと
+    `409 session_running` で断る。
+  - ロック中は断る（403）。移している最中に再開したものは `session_resumed` で、何も消さない。
+  - `POST /cleanup/archives/{id}/restore` でごみ箱から戻す。
+  - **削除は作業コピーに触らない**。だから戻したセッションが消えたフォルダへ戻ることはない。
+- **セッションを畳む経路はどれも、持ち越し中の作業を先に昇格させる**（`PromoteCarriedFor`。
+  kill やハンドル破棄より前）。そういう経路を新しく足すときも同じにすること。
+
+### 再開
+
+- `POST /sessions/{name}/start` は、停止中のセッションを接続せずに再開する。両 driver 共通。
+- managed は保存した native の会話 id を自分の runtime で resume する。Agent の起動時には、各 kind の
+  `ReconcileManaged` が生きているハンドルを組み直す。
+- **エージェント種別は、作業ディレクトリが消えていると再開できない**。home へはフォールバックしない。
+  `shell` はフォールバックし、`ssm` は常に home で始まる。
+- ⚠️ **claude が再開できるのは、JSONL に本物の user か assistant の行があるときだけ**
+  （`claude.JSONLResumable`）。Remote Control が ON だと、**会話の前に `bridge-session` の行が 1 行
+  書かれる**。だから「ファイルがある＝再開できる」とすると `--resume` が即死する。再開できない
+  ファイルは捨てて、`--session-id` で新しく始める。
+  - 関連: entrypoint は新規 Workspace に **Remote Control OFF**（`remoteControlAtStartup: false`）を
+    置く。既存の設定ファイルにキーが無ければ一度だけ補う。**利用者が明示した値はそのまま尊重する**。
+- ⚠️ **claude は自分で起動し直すことがあり、そのとき session id を落とす。**
+  フルスクリーン TUI への切替、サインイン後の再起動、モデル切替などで起きる。再起動の argv は
+  **設定系フラグだけ**から組み直されるので、構造上 `--session-id` も `--name` も入らない
+  （2.1.239 で実測: 起動コマンドには両方あったのに、生きているプロセスにはどちらも無かった）。
+  - **id を失った claude は、ランダムな id でまっさらな会話を始める**。決定的な id の転写は二度と
+    現れない。
+  - 手当てが無いと、ミラーは「まだ会話はありません」のまま固まり、状態も別の id で書かれる。
+    **Console からセッションが丸ごと消え**、使用量・中断検知・報告も一緒に落ちる。
+  - 対処は `claude-sid` **台帳**（`internal/agents/claude/sid.go`、`agents.SidStore`）で、
+    スロットを claude の実 id へ対応づける。hook が名乗ったときに `AF_SESSION_NAME` を手掛かりに
+    記録する。
+  - **この変数は tmux セッションの環境にあるので、再起動を跨いで残る**。作業ディレクトリの一致の
+    ような当て推量ではなくこれを選んだのはそのため。転写の場所も `--resume` の相手も `LiveSID()` を
+    通して決める。
+
+### 会話 id: 捕捉型と押し付け型
+
+会話 id の持ち方は 2 系統あり、壊れ方が違う。
+
+- **捕捉型**: CLI が採番した id を**イベントのたびに**記録し直す。CLI が別のセッションへ移っても、
+  次のイベントで追従する。
+  - codex（hook）、opencode（plugin）、agy と kiro（ディスク探索）。
+  - 実測でドリフト 0（codex 58/58、opencode 16/16）。
+- **押し付け型**: 我々が採番した id を渡し、以後はそれが使われている前提ですべてを引く。
+  **CLI がその id を使わなくなった瞬間に、静かに壊れる**（上の claude の例）。
+  - claude と copilot（`--session-id`）、cursor（`--resume`）。
+- lcpp と muse はどちらでもない。ストアのキーがスロットそのもの。
+
+**id を押し付ける kind を足すときは、回収経路も必ず一緒に出すこと。**
+
+- claude には上の hook 由来の台帳がある。状態 hook を持たない copilot と cursor はディスクから拾い
+  直す（`ResolveImposedSID`、`internal/agents/imposedsid.go`）。
+- 回収が走るのは、押し付けた id が CLI 側のどこにも無いときだけ。
+- 候補を採るのは、ディレクトリが一致し、スロットより後に作られ、他のスロットが取っていない候補が
+  **ちょうど 1 つ**のときだけ。**曖昧なら何もしない**。他人の会話を映すのは、固まったままより悪い。
+- 手掛かりは、copilot が `session-state/<id>/workspace.yaml` の `cwd` と `created_at`。cursor は
+  `projects/<cwd のスラグ>/agent-transcripts/<chatId>/` で、作成時刻はそのディレクトリの mtime
+  （追記では動かない。実測）。
+
+### その他のセッション操作
+
+- ⚠️ **tmux のターゲット指定は前方一致**。`claude_foo` が `claude_foo-sh` に一致し、取り違えや
+  誤 kill が起きうる。**このリポジトリのターゲット参照はすべて完全一致形**（`session.ExactTarget`、
+  `=name`）。`capture-pane` や `send-keys` のようなペイン単位のコマンドは先にペイン id を引く
+  （`tmuxx.SessionPaneID`）。`=name` ではペインを指せないため。
+- **fork**（`POST /sessions/{name}/fork`）は会話を引き継いだ新しいスロットを分岐させる。kind と driver
+  は元と同じ。
+  - 任意のボディ `{"at": <anchorId>, "include": bool}` を付けると、**過去の発言の時点**から分岐する。
+    アンカーは `transcript.Turn.AnchorID`（kind ごとの不透明な id）で、できるかどうかは各 kind の
+    `ForkAtResolver` が答える（`agents.ErrForkAtRoute` → `fork_at_unsupported`）。
+  - 実現手段は kind で割れる。
+    - codex と opencode は runtime の公式パラメータを使うので、managed が要る。
+    - muse は runtime の切り取り点を使う。
+    - claude と copilot は転写の写しを切り詰める。TUI でも動く。
+    - lcpp は自分のストアを切り詰める。
+  - どの kind が fork できるかは [ref/agents](../../guide/ref/agents.ja.md)。
+- **driver の切替**（`POST /sessions/{name}/driver`）は、同じ会話を止めてもう一方の driver で再開する。
+  両方の driver を持つ kind が対象。ターンの実行中は断る（`409 busy_switch`）。kind・ディレクトリ・
+  native の id は保つ。
+- **作成時のモデル解決**（`resolveLiveModel`。codex・copilot・opencode・lcpp）は、指定されたモデルを
+  live のカタログに照らし、ピッカーの表示名や一意な略称を完全な識別子へ展開する。
+  - **曖昧か使えないモデルは、clone や worktree の前に `400 bad_model` で断る**。「起動してから無効な
+    モデルで落ちる」罠を封じるため。lcpp は空のモデルも断る。
+  - 利用者が隠したモデルは、kind を問わず断る（`model_hidden`）。
+  - カタログを読めないとき（オフライン、CLI 未導入）は指定値をそのまま使い、起動を続ける。
+  - ⚠️ Free プランの copilot は**カタログが無く auto だけ**で、**auto は `--effort` を受け付けない**。
+    だから起動コードは**具体的なモデルのときだけ**このフラグを渡す。auto に付けると起動に失敗し、
+    Free の利用者が毎回踏む。Console の `useEffortOptions` もその場合は既定だけを出す。
+- **タイトルとブランチ**: `POST /sessions/{name}/title/{suggest,accept,dismiss,set}` は会話から表示名を
+  提案し、設定する（作り直しも `suggest`）。`suggest-branch` は会話からブランチ名を提案し、
+  `rename-branch` がそれを適用する。
+
+## 4.3 エージェント種別を統合する型
+
+kind は `internal/session/session.go` の `Kind*` 定数で、claude・codex・cursor・opencode・agy・copilot・
+kiro・lcpp・muse と、shell・ssm。どれが Managed・ターミナル（CLI）・両方に対応するかは
+[ref/agents](../../guide/ref/agents.ja.md)。**足し方は [20 エージェント種別の追加](20-add-an-agent.ja.md)**。
+この節は型の説明。
+
+### managed driver と既定の出どころ
+
+managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に登録され、それぞれ
+`Capabilities.ProcessModel`（`internal/agents/<kind>/driver.go`）でプロセスモデルを宣言する。
+
+| `ProcessModel` | kind | 何が動くか |
+|---|---|---|
+| `shared-daemon` | codex、opencode | Workspace に 1 つのデーモン（codex の app server、`opencode serve`）。セッションはその上のスレッド |
+| `per-session-child` | copilot、cursor、kiro、muse | セッションごとに子プロセス 1 つ。copilot・cursor・kiro は ACP（`acp.go`）、muse は MSP（`internal/msp`） |
+| `in-process` | lcpp | Agent 内のコード。子プロセスは無い |
+
+- **Agent 自身は、driver 未指定を `tui` にする**。例外は `Caps().ManagedOnly` の kind（lcpp、muse）で、
+  こちらは `managed` になる（`HandleCreateSession`）。
+- **利用者が見る「既定は Managed」は呼び出し側が決めている**。Console の起動 UI は、registry の項目が
+  `managedDriver: true` の kind（`console/src/agents/registry.ts`）を managed で起動する。コンテナ内
+  MCP の `create_session` は codex・opencode・copilot・cursor・kiro に `managed` を送る（`mcpStdioCall`）。
+  driver 無しの素の `POST /sessions` は `tui` になる。
+- 両方の driver を持つ kind を足すときは、両方の呼び出し側に足すこと。
+
+### 3 種別で見る「埋める面」
+
+**新しい kind が埋める面は毎回同じ。**
 
 | 面 | claude | codex | opencode |
-|----|--------|-------|----------|
-| 既定 driver | tui | managed（app-server）| managed（serve）|
-| tui 起動 | `--session-id`/`--resume` + `--name` + `--model` | `codex --remote … resume`、旧会話 ID は hook で捕捉 | `opencode --session <id>`、ID は plugin で捕捉 |
-| managed 起動 | — | 共有 app-server の `thread/start|resume` | 共有 serve の v1 session API |
-| 会話正本 | JSONL | rollout JSONL（両 driver 共通）| SQLite `message` / `part`（両 driver 共通）|
-| live 状態 | hooks + tmux probe | managed=RPC event、tui=hooks/probe＋observer | managed=SSE event、tui=plugin/probe |
-| 認証経路 | `claude auth login --claudeai`（[08 §8.5](08-integrations.ja.md)）| `codex login`（API キー / device flow）| env キーを**コマンド前置**で注入（`secrets.enc` 保存）|
-| 資格の置き場 | `CLAUDE_CONFIG_DIR`（home 外退避）| `~/.codex`（CLI 所有）| `secrets.enc`（Agent 所有）|
-| fs denylist | `.claude`・`.claude.json` ほか | `~/.codex` | `~/.local/share/opencode` |
-| Console 側 | registry に表示・capability（fork/imagePaste/headlessChat 等）| 同 | 同 |
+|---|---|---|---|
+| TUI の起動 | `--session-id` / `--resume` と `--name`・`--model`（と `--fork-session`） | `codex resume <id>` か `codex fork <id>` を直接起動する。共有の app server は経由しない。id は hook で捕捉 | `opencode --session <id>`。id は plugin で捕捉 |
+| managed の起動 | — | 共有 app server の `thread/start` / `thread/resume` | 共有サーバーの v1 session API とイベントストリーム |
+| 会話の正本 | 自前の JSONL | rollout JSONL（両 driver 共通） | 自前の SQLite（`message` / `part`。両 driver 共通） |
+| live 状態 | hook と tmux のプローブ | managed: runtime のイベント。TUI: working / idle は hook、取りこぼしたターン終了と保留中の質問は rollout | managed: サーバーのイベント。TUI: plugin |
+| サインイン | `claude auth login --claudeai`（[08](08-integrations.ja.md)） | `codex login`（API キーか device flow） | 暗号化ストアのプロバイダキー、または opencode 自身の OAuth |
+| 資格情報の置き場 | `CLAUDE_CONFIG_DIR`（閲覧できる home の外へ退避） | `~/.codex` | 暗号化ストアと `~/.local/share/opencode` |
 
-- ⚠️ **env は `tmux new-session -e` ではプロセスに届かない**（セッション環境止まり）。env 注入は
-  **コマンド前置**（`NAME='v' … prog`）が本リポジトリの規約。claude は auth login 方式採用後
-  前置も廃止（秘密の cmdline 露出を解消）。
-- ⚠️ **子プロセスは必ず reap する**（workspace-agent は PID 1 ではない — init の自動回収がなく、
-  Wait されない子は永久に `<defunct>` で残り PID をリークする）。`.Run()`/`.Output()`/
-  `.CombinedOutput()` は内部で Wait するので安全。`cmd.Start()` / `pty.Start()` で自前管理する
-  場合は**異常系を含む全経路**で `cmd.Wait()`（または waiter goroutine）に到達させること。
-  漏れやすいのは「起動タイムアウトで `Process.Kill()` して return」する失敗経路
-  （codex app-server / opencode serve で実例、2026-07 修正）。PTY ログインフロー共有の
-  `agents.Flow.Close()` は Kill＋Wait まで面倒を見る（agy /usage スクレイプのゾンビ蓄積で顕在化、
-  `internal/agents/flow_test.go` が回帰テスト。経緯は [32](../decisions/0008-antigravity-cli-agent-kind.ja.md)）。
-- ⚠️ codex のフックは claude と同じ**入れ子スキーマ**（`hooks.<Event>=[{hooks=[{type,command}]}]`）。
-  フラットに書くと**パースは通るが無音で発火しない**（resume が新規化する既知の罠）。
-- RTK（安全化ラッパー、vendor 時のみ）は 3 エージェントで機構が違う: claude=settings.json の
-  PreToolUse/Bash フック（透過）/ opencode=プラグインでコマンド書換（透過）/ codex=AGENTS.md への
-  指示ブロック（**ベストエフォート**）。codex/opencode の on/off 実体は artifact の有無で、永続 pref
-  `~/.config/agent-fleet/rtk.json` を正として起動時と `GET/PUT /agents/rtk` が pref→artifact を適用。
+kind が資格情報や状態を書く場所は、ファイルシステムの denylist（§4.6）で覆うこと。
 
-managed の共通境界は `Driver` / `ThreadHandle` / `RuntimeSupervisor`。`/turn`・`/respond`・`/settings` は
-意味論 API として driver 非依存に受け、managed は構造化 API、tui は既存のキー入力経路へ委譲する。
-会話本文を AF 独自ストアへ複製せず、native store を read の正本として transcript を正規化する。
-実装判断とプロトコル実測は [ADR 0015](../decisions/0015-agent-managed-driver.ja.md) と
-[実装記録](../decisions/0015-agent-managed-driver.ja.md) を参照。
+- ⚠️ **環境変数は `tmux new-session -e` でプロセスへ届ける**（`agents.LaunchPlan.Env`、適用は
+  `startSessionTmux`）。**秘密をコマンドの前置にしてはいけない**。前置は `/proc/*/cmdline` と tmux の
+  `pane_start_command` に載り、Workspace の中の何からでも読める。前置にするのは秘密でない
+  ツールチェーンの export（`toolchainShellPrefix`: `JAVA_HOME`・node・`TZ`）だけ。
+- ⚠️ **子プロセスは必ず回収する。** Agent は PID 1 ではないので誰も回収してくれず、Wait されない子は
+  `<defunct>` のまま PID を永久に漏らす。
+  - `Run`・`Output`・`CombinedOutput` は中で Wait するので安全。
+  - **自分で起動する（`cmd.Start`、`pty.Start`）なら、失敗を含むすべての経路で Wait に到達させること。**
+  - 漏れやすいのは「起動タイムアウトで kill して return」する経路で、codex と opencode のデーモンで
+    実際に起きた。
+  - ログインフロー共通の `agents.Flow.Close()` は kill も Wait もする（`internal/agents/flow_test.go`）。
+- ⚠️ **codex の hook は claude と同じ入れ子のスキーマ**（`hooks.<Event>=[{hooks=[{type,command}]}]`）。
+  平らに書くと**パースは通るが黙って発火しない**。その結果 resume が新しい会話を始めてしまう。
+- **rtk（トークン節約のプロキシ）の配線は kind ごとに違う**（`agent_rtk.go`）。イメージに rtk が
+  あるときだけ。
+  - claude: `PreToolUse`/`Bash` の hook
+  - opencode: コマンドを書き換える plugin
+  - copilot: `preToolUse` の hook
+  - codex と agy: **`AGENTS.md` の指示ブロックで、ベストエフォートでしかない**
 
-## 4.4 状態バッジ機構
+  オン・オフはその成果物の有無で表す。codex・opencode・agy・copilot は永続設定（`rtk.json`、
+  `GET/PUT /agents/rtk`）が正で、起動時に適用し直す。claude は設定ファイルの hook そのもの。
 
-状態の外向き語彙は `working` / `idle` / `question` に正規化する。claude の hooks が
-`workspace-agent session-status <state> <sid>` を発火し
-`~/.config/agent-fleet/session-status/<sid>.json` に記録。状態は
-**working**（UserPromptSubmit）/ **idle**（Stop=入力待ち）/ **question**（PreToolUse matcher
-`AskUserQuestion`）。hooks はセッション起動毎に加算マージし、PreToolUse は **matcher 単位**で
-RTK（`Bash`）と状態（`AskUserQuestion`）が共存できる（トグルが互いを壊さない）。
-Codex / OpenCode の managed driver は runtime event から同じ status store と通知 seam へ書く。
-tui では codex は同型フック＋observer、opencode はプラグイン通知を使う。
-Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待ち / 停止中を描画し、idle/question 遷移で
-ブラウザ通知。
+### managed の境界
 
-## 4.5 チャット・アシスタント面（headless CLI）
+- 境界は `internal/agents/driver.go` の `Driver`・`ThreadHandle`・`Capabilities` 型。
+- `POST /sessions/{name}/turn` は driver に依存しない。managed は構造化 API へ、TUI はキー入力の経路へ
+  振り分ける。
+- `/respond` と `/settings` は managed だけ。TUI のセッションには
+  `501 respond_unsupported` / `settings_unsupported` を返す。
+- **会話の本文を独自のストアへ複製しない。** native のストアが読みの正本のままで、転写は出口で
+  正規化する（[decisions/0015](../decisions/0015-agent-managed-driver.ja.md)）。
 
-要点:
+## 4.4 状態バッジ
 
-- **チャットは tmux セッションではない**。Agent 内の並列サブシステムで、`claude -p`（headless）を
-  会話ストア（`~/.config/agent-fleet/chats/<id>.json`）と組で駆動。ストリームは SSE（[05 §5.3](05-api.ja.md)）。
-- **Claude config-dir**: OAuth 資格情報は対話セッションと同じ `CLAUDE_CONFIG_DIR` の
-  単一ファイルを直接使う。旧 symlink + copy-back は refresh 時の tmp+rename でリンクが
-  実ファイル化し、並行プロセスが異なる refresh token を持ち得たため廃止。チャットへの
-  user/project 設定混入は `--setting-sources ""`、MCP 混入は `--strict-mcp-config` で遮断する。
-  旧専用 config-dir の transcript は初回実行時に共有 projects へ create-only で移行する。
-- **フォールバックの可視化**: 会話の `agent` は作成時の希望値として保持し、各 assistant
-  message の `agent` と会話の `active_agent` に実際の実行 backend を記録する。SSE は最初に
-  `agent` frame を返し、Console の live bubble/header も Claude→Codex 等へ即時追従する。
-- **コンテナ内 stdio MCP**: チャットの claude には `workspace-agent mcp-stdio` を `--mcp-config` で
-  付与（PAT 不要・egress 不要・身元=自コンテナ）。既定 read-only、`--write` 時のみ
-  `create_session`・`send_to_session`・`list_assistants`・`ask_assistant`・
-  `get_chat_plan`／`set_chat_plan`（作業計画）を**広告**する（権限プロンプトでなく
-  「見えるツール集合」がゲート）。CP の `/mcp` とは**別実装・別スコープ**（意図的な二重管理、
-  [03](03-control-plane.ja.md)）。
-- **対話セッション用 stdio MCP**: mcpreg builtin `af`を各CLIのnative設定へmaterializeし、
-  `workspace-agent mcp-stdio --self-report --chromium-attach`で起動する。広告・callを
-  `af_report`＋Chromium Attach View 7種だけに固定し、アシスタント用のフリートread/writeは渡さない。
-  `--self-report`単独は後方互換として`af_report` 1本、`--chromium-attach`単独はscopeを拡張しない。
-- **Codex の無人承認**: headless chat は承認 UI を持たないため `-a never` に加え、明示的に
-  grant した AF MCP server を `default_tools_approval_mode="approve"` にする（未指定だと
-  `user cancelled MCP tool call`）。一方 `-s read-only` は維持し、MCP は実行できても
-  shell/file 経由の変更は許さない。
-- **アシスタント**（`/assistants*`）: persona/model/knowledge/tools(af_read|af_write|none) を持つ
-  テンプレート。`ask_assistant` は相手ターンを強制 tools=none で 1 ショット実行＝1 ホップで停止・
-  副作用なしを構造で担保。
-- **モデル解決**: 新規会話の作成時にテンプレートまたはリクエストの明示モデルを最優先し、空なら
-  agent ごとの既定を会話メタへスナップショットする（Codex=`gpt-5.6-luna`、
-  OpenCode=`opencode/nemotron-3-ultra-free`）。既存会話や明示指定を後から書き換えず、
-  プロバイダ／カタログの既定変化から会話の再現性を守る。ただし会話が持つモデルは1本＝
-  **作成時 agent 基準**なので、実際に回す backend が別のとき（認証フォールバック／途中切替）は
-  `chatModelFor(conv, kind)` がその CLI の設定行（ui-prefs `assistantModels`）から解決し直す。
-  会話の値をそのまま渡すと別 CLI に他社のモデル id を食わせることになる。
-- **途中でのエージェント切替**: `PATCH /chat/conversations/{id}` は `title` と `agent` を受ける
-  （両方省略は 400、headless chat 非対応 kind は 400、実行中ターンは 409）。設定の
-  「エージェント優先順位」は新規会話と one-shot にしか効かないので、進行中の会話を動かす口が
-  これ。切替はピン留めと Model の差し替え＋notice 1行だけで、backend 毎の resume ハンドルと
-  メッセージカーソルは温存する（戻したとき native セッションを続きから使うため）。未知の履歴は
-  次の送信で `syncProviderPrompt` が再生する＝フォールバックと同じ経路。
-- 向き不向き: チャットは短〜中の翻訳/要約/Q&A。ファイル出力を伴う大規模作業はセッションへ
-  （Files の「セッションに送る…」がパス参照で渡す）。
+- 保存される状態（`internal/status`）は **working / idle / question**。question を細かくした `plan`
+  （承認待ちの計画）と `permission`（承認待ちのツール）もある。
+- ターンの終わりには遷移ラベルも付く。通知には使うが、保存される状態ではない: `failed`・`aborted`・
+  `blocked`・`auth`・`limited`・`spend_limit`（`internal/agents/notify.go`）。
+- 保存先はセッションごとに 1 ファイルで、`~/.local/state/agent-fleet/session-status/` の下。
+
+**hook は `session-status` サブコマンドを呼ぶ**（`RunSessionStatusHook`）。
+
+- claude は状態を渡し、id は hook の stdin から読む。
+- opencode の plugin は状態と id を渡す。
+- codex は状態・id・`codex` を渡す。
+
+**claude の hook**:
+
+- `UserPromptSubmit` → working
+- `Stop` → idle
+- `PreToolUse` の matcher `AskUserQuestion` → question、`ExitPlanMode` → plan
+- `permission_prompt` の通知 → permission
+
+**hook は加算でマージする**。起動時と、claude を起動する直前に行う（`EnsureStatusHooks`）。
+**`PreToolUse` は matcher 単位で登録する**ので、rtk の hook（`Bash`）と状態の hook が共存し、
+**片方を切り替えてももう片方を壊さない**。
+
+managed driver はどれも runtime のイベントから同じストアへ書く。Console は 4 秒ごとにポーリングして
+バッジを描き、人の手が要る遷移（working → idle、question への遷移）でブラウザ通知を出す。
+
+### 端末通知（OSC 9 / 99 / 777）
+
+プログラムは OSC 9（iTerm2）・OSC 99（kitty）・OSC 777 `notify`（rxvt / Ghostty）で端末にデスクトップ
+通知を頼める。**そのバイト列を見られるのは `pipe-pane` の記録係（`record-terminal`）だけ**。接続用の
+WebSocket が運ぶのは tmux の再描画で、tmux はこのシーケンスを飲み込む。記録係はストリームを走査し
+（`internal/oscnotify`）、送信箱に `terminal-notification` イベントを置く（`sessionx.TerminalNotifier`）。
+tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux; … ESC \`）も、`pipe-pane` へバイト
+単位でそのまま届く。
+
+- **通知ではないもの:** `OSC 9;<数字>…` は ConEmu の制御群（`9;4` は agy と opencode が毎ターン出す
+  進捗バー、`9;9` はシェルの cwd）。kitty の `p=?` は機能の問い合わせ。
+- **hook で状態を出す kind では捨てる**（claude・codex・opencode。`terminalNotifyHasHooks`）。
+  回答完了・質問・承認はすでに hook が送信箱に入れているので、OSC の通知は同じ瞬間を二度知らせる
+  ことになる。cmux も同じ規則で、claude の `preferredNotifChannel` を `notifications_disabled` に
+  している。
+- **セッションごとに間引く**: 30 秒以内の同じ文面は捨て、1 分に 5 件まで。
+- 解釈するのは 7 ビットの導入子と終端子だけ。0x9c/0x9d は日本語の UTF-8 の継続バイトで、C1 制御
+  ではない。
+
+各 kind が出しうるもの（バイナリを読んだ結果。2026-09-27。実機での捕捉はしていない）:
+
+| kind（版） | 出すもの | 備考 |
+|---|---|---|
+| claude 2.1.283 | 既定では何も出さない | `preferredNotifChannel=auto` は端末から方式を選び、tmux の下では何も見つけない。`iterm2` / `kitty` / `ghostty` を選ぶと OSC 9 / 99 / 777 を出し、`$TMUX` があれば tmux のパススルーで包む。こちらでは変えない（hook が正）。 |
+| codex 0.157.1 | 既定では何も出さない | `tui.notifications` と `notification_method = osc9 \| bel`。有効にしない（hook が正）。 |
+| opencode | OSC 9;4 の進捗。OSC 99 は `p=?` の問い合わせの後ろにある | tmux は問い合わせに答えない。 |
+| agy | OSC 9;4 の進捗だけ | 入力待ちの間は通知しない（`agents/agy/pending.go`）。 |
+| copilot、cursor、kiro | 見つからない | — |
+| shell | 利用者が動かすもの次第 | 一番の受益者。 |
+
+Follow-ups: #1069（claude の `PushNotification` ツール。OSC でしか通知しない）。
+
+## 4.5 チャットとアシスタント（headless CLI）
+
+- **チャットは tmux セッションではない。** Agent 内の並列サブシステムで、CLI を headless で自前の
+  会話ストア（`~/.config/agent-fleet/chats/<id>.json`）と組にして動かし、SSE で流す
+  （`POST /chat/conversations/{id}/stream`、[05](05-api.ja.md)）。バックエンドは `chatx.ChatProviders`
+  で、claude・codex・opencode・agy・cursor・lcpp・muse。
+- **claude の資格情報は、対話セッションと同じ 1 ファイル**（`CLAUDE_CONFIG_DIR`）。
+  - 以前の symlink と書き戻しの方式は廃止した。refresh は一時ファイルと rename で書くので、**リンクが
+    実ファイルに化け**、2 つのプロセスが別々の refresh token を持ちえた。
+  - 利用者とプロジェクトの設定は `--setting-sources ""` で、ほかの MCP の項目はサーバーを付けるとき
+    `--strict-mcp-config` で締め出す。
+  - 旧専用 config ディレクトリの転写は、一度だけ作成のみで移す（`migrateLegacyChatClaudeProjects`）。
+- **フォールバックは見える。** 会話の `agent` は希望した値。各メッセージの `agent` と会話の
+  `active_agent` には**実際に動いたバックエンド**を記録する。ストリームは最初に `agent` フレームを
+  送るので、UI は切替に即座に追従し、嘘をつかない。
+- **コンテナ内の stdio MCP サーバー**（`workspace-agent mcp-stdio`）をチャットに付ける。トークンも
+  egress も要らず、身元は Workspace そのもの。
+  - claude には `--mcp-config`、codex には `-c mcp_servers.af.*`、opencode には `OPENCODE_CONFIG`、
+    agy にはサーバー一覧で渡す。cursor・lcpp・muse のチャットには付かない。
+  - **既定は読み取りだけ**（`mcpStdioTools`）。`--write` で書き込み系（`mcpStdioWriteTools`）が加わる。
+    セッションの起動・操作・停止・削除、メモ、スケジュール、ブラウザ操作、掃除など。
+  - **ゲートは見えるツールの集合で、権限プロンプトではない。** CP の MCP エンドポイントとは、意図して
+    実装もスコープも分けている。
+- **対話 CLI には、もっと狭い 2 本目のサーバーを置く**。`mcpreg` の組み込み `af` で、
+  `mcp-stdio --self-report --chromium-attach` を起動する。
+  - 自己報告のツール（`af_report`・`af_stop_after_turn`・`propose_session_handoff`）は常に広告する。
+  - 小さな観測用のツール（セッションの状態と使用量、メモ）も常に広告する。Chromium アタッチの 7 本は
+    `--chromium-attach` で付く。
+  - 利用者の設定で `--peer-messaging`・`--image-gen`・`--fleet-spawn` が加わる
+    （`builtinRunArgsFor`）。
+  - 広告していないツールは、呼ばれても断る（`mcpAdvertised`）。
+- **codex の無人承認**: headless のチャットには承認 UI が無い。`-a never` に加えて、付けた MCP
+  サーバーを `default_tools_approval_mode="approve"` にする。無いと呼び出しがすべて取り消される。
+  **読み取り専用のサンドボックス（`-s read-only`）は保つ**ので、MCP は動くがシェルやファイルの変更は
+  できない。
+- **アシスタント**（`/assistants*`）は、persona・モデル・知識・ツールの範囲（`af_read`・`af_write`・
+  `none`）を持つテンプレート。問い合わせ（`ask_assistant`）は**ツールを強制的に切った** 1 ターンで
+  動く。1 ホップで副作用なし、を指示でなく構造で保証する。
+- **モデル解決**（`ResolveChatModel`）は作成時にモデルを会話へスナップショットし、以後書き換えない。
+  プロバイダが既定を変えても再現性を守るため。
+  - 順序は、明示のモデル、利用者のエージェント別の行（ui-prefs の `assistantModels`）、live の
+    カタログから選ぶ推奨モデル（`recommendedAssistantModel`）。
+  - ただし**会話が持つモデルは 1 本で、作成時のエージェント向け**。実際に別のバックエンドが動くとき
+    （フォールバック、途中切替）は、`chatModelFor` が*その* CLI の設定から選び直す。**保存値を
+    そのまま渡すと、他社のモデル id を食わせることになる。**
+- **会話の途中でのエージェント切替**は `PATCH /chat/conversations/{id}` の `agent`（`title` も受ける）。
+  ターンの実行中は断り（409）、headless チャットの無い kind も断る（400）。
+  - ピン留めとモデルを差し替え、お知らせを 1 行足すだけ。**バックエンドごとの resume ハンドルと
+    メッセージカーソルは残す**ので、戻せば native のセッションが続きから使える。
+  - 相手のバックエンドが見ていない履歴は次の送信で再生する（`syncProviderPrompt`）。フォールバックと
+    同じ経路。
 
 ### prompt をどの言語で書くか
 
@@ -225,222 +372,287 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   落ちる検査で、つい書いてしまう `・` や全角括弧も拾います。足し忘れると、英語の Console に
   だけ日本語が残ります。
 
-## 4.6 git / fs 面
+## 4.6 git とファイルシステム
 
-- **repos**: clone（`GIT_TERMINAL_PROMPT=0` で fail-fast、name は正規表現で traversal 防御）/
-  status（porcelain=v2 解析）/ branches / checkout / fetch / ff / delete。
-  clone 後 submodule は best-effort（SSH URL を HTTPS へ書換えて update。親 clone には
-  `--recurse-submodules` を付けない——SSH 登録 submodule で親ごと失敗するため）。
-- **submodule 同期（`git_submodule.go`）**: worktree/clone 起動は submodule を per-worktree の
-  gitdir（`.git/worktrees/<wt>/modules/…`）へ取得する＝**親とは別に丸ごとクローンし直す**。
-  実測（git 2.39）**取得中の `submodule update` を kill すると submodule は wedge する**——
-  gitdir だけ残り HEAD が未生成、作業ツリーは空、以後の `submodule update` は
-  "Unable to find current revision" で恒久的に失敗、しかも `git status` はクリーンで
-  `git submodule status` も健全な空白プレフィクスを出すため誰も気づかない。1.4GB 級の
-  submodule はこれを毎起動で踏む。よって同期は
-  (1) 起動予算（60 秒）を過ぎても**待つのをやめるだけで kill しない**（背番で継続、
-  完了/失敗はログと通知）、(2) 未取得のまま起動したらログ＋通知（kind `submodule-sync`）、
-  (3) 既に wedge した submodule は実測の唯一効くレシピ——`fetch` で転送を完了させ、親が記録する
-  sha を `checkout --detach --force`——で修復する。作業ツリーが空のものだけが対象なので
-  ローカル変更を壊さない。worktree 再利用（再起動）時も未取得なら再同期する。
-- **親からの種付け（`git_submodule_seed.go`）**: 上の「親とは別に丸ごとクローンし直す」は
-  worktree 作成が遅い理由そのもの。実測（git 2.47）**submodule の remote を到達不能にすると
-  新規 worktree の `submodule update` は失敗する**——同じディスク上の親が全オブジェクトを
-  持っていても使われない。そこで update の前に、親の `.git/modules/<name>` からローカルに
-  クローンして種を置く。実測: 41MB の submodule が**remote オフラインのまま 0.23 秒**、
-  オブジェクトは親とハードリンク（同一 inode）なので新ストアは 41MB ではなく 168KB。
-  worktree を N 本作っても submodule のディスクが N 倍にならない。
-  - `protocol.file.allow=always` は**この 1 回の呼び出しにだけ**、しかも自前で組み立てた親の
-    パスに対してのみ付ける（CVE-2022-39253 は `.gitmodules` 由来のローカル URL の話なので、
-    そちらには決して付けない）。
-  - url の差し替えは `git config` ではなく `-c`。`.git/config` は親と全 worktree の共有物で、
-    そこにローカルパスを書くと他のコピーの fetch まで親へ向いてしまう。
-  - クローン後は origin を本来の remote へ戻す。`git submodule sync` は `.gitmodules` を
-    読み直すので上の SSH→HTTPS 書換えを潰す——config の url を使うこと。
-  - 親が持っていない submodule／pin 先はそのまま後続の通常 update が埋める。
-  - **入れ子の submodule も降りて種付けする**（入れ子のオブジェクトは親 submodule 自身の
-    ストア配下にある）。1 パスでは無理——入れ子は親 submodule の中にしか宣言が無く、
-    その親を clone するまで存在しないため。
-  - 待ち時間は 60 秒 → 10 秒。種付けが効く経路にはもう fetch するものが無く、ここで待つのは
-    本物のネットワーク clone だけになったため。合わせて `--jobs 4`（git 既定は 1＝直列）。
-- 🔴 **`update --recursive` は `--init` が無いと入れ子に届かない**。実測（git 2.47）: 付けないと
-  トップレベルを clone → 中へ降りる → 入れ子が未 init なので**スキップ（exit 0・出力も無し）**。
-  空ディレクトリが残り、`submodule status --recursive` が `-` を出すまで誰も気づかない。
-  先行の `submodule init` では代用できない（トップレベルの `.gitmodules` しか展開できず、
-  入れ子は親 submodule を checkout するまで読めない）。入れ子向けの SSH→HTTPS 書換え規則
-  （`submoduleInsteadOfArgs`）も、`--init` が無い間は到達不能だった。
-- **SCM（read/write git）**: changes / diff / log / graph / show / stage / unstage / discard / commit。
-  sha は hex 検証、応答はサイズ上限でキャップ。
-- **fs**: home ルートのツリー/ファイル/アップロード/リネーム等。traversal 防御・サイズ上限・
-  バイナリ判定。**denylist**（一覧非表示 + 直アクセス 400）: `.claude`・`.claude.json`・
-  `.config/agent-fleet`・`.ssh`・`.git-credentials`・`~/.local/share/opencode`・`~/.codex`・
-  `~/.aws`（SSM ログインの SSO トークンキャッシュと生成 config）。
-- **Git LFS**: image に git-lfs 同梱・system install。clone/checkout で smudge。残ポインタは
-  fs が検出してビュアーにバッジ（既存 working copy は手動 `git lfs pull`）。
-- git 認証は統一 cred helper が `secrets.enc` を都度復号して出力（[07 §7.6](07-security.ja.md)、
-  Bitbucket は refresh 内蔵の専用 helper。[08](08-integrations.ja.md)）。
+- **リポジトリ**: clone は `GIT_TERMINAL_PROMPT=0` で即座に失敗させ、名前はパターンで検査する。ほかに
+  status（`git status --porcelain=v2`）・branches・checkout・fetch・fast-forward・delete。
+  - clone 後の submodule はベストエフォートで、SSH の URL を HTTPS へ書き換える。
+  - **親の clone は意図して再帰しない**。SSH で登録された submodule があると clone ごと失敗するため。
+- **submodule の同期**（`internal/gitx/git_submodule.go`）は、worktree 自身の git ディレクトリ
+  （`.git/worktrees/<wt>/modules/…`）へ取得する。親とは別のクローンになる。
+  - **実測（git 2.39）: 取得中の submodule update を kill すると、submodule は恒久的に固まる。**
+    git ディレクトリに HEAD が無く、作業ツリーは空。以後の update は "Unable to find current
+    revision" で失敗し続け、**しかも何も知らせない**。status はクリーンで、submodule の一覧も健全に
+    見える。
+  - だから規則はこうなる。
+    1. 起動の予算（`submoduleWaitTimeout`、10 秒）を過ぎたら、Agent は**待つのをやめるが kill は
+       しない**。update は裏で続き、結果はログと通知に出る。git を kill するのは 60 分の
+       `submoduleHardTimeout` だけで、そのとき残る固まりは次の起動が直す。
+    2. submodule 無しで起動したら、ログに加えて**通知もする**（`submodule-sync`）。
+    3. すでに固まった submodule は、実測で唯一効いた手順で直す。`fetch` で転送を終わらせ、記録された
+       リビジョンを `checkout --detach --force` する。**作業ツリーが空のものしか触らないので、
+       ローカルの変更は壊さない。** 再利用する worktree も同じように同期し直す。
+- **親からの種付け**（`git_submodule_seed.go`）が、その別クローンのコストをほぼ消す。
+  - **実測（git 2.47）: submodule の remote を到達不能にすると、新しい worktree の update は失敗
+    する**。同じディスクの親が全オブジェクトを持っていても使われない。2 つのストアをつなぐものが
+    無いため。
+  - そこで update の前に、各 submodule を親の `.git/modules/<name>` からローカルに clone する。
+    **実測: 41 MB の submodule が remote オフラインのまま 0.23 秒**。オブジェクトは親とハードリンク
+    なので、worktree のストアは 41 MB でなく 168 KB。worktree を N 本作っても submodule の容量は
+    N 倍にならない。
+  - `protocol.file.allow=always` は**その 1 回の呼び出しにだけ**、しかも Agent が自分で組み立てた
+    パスにだけ付ける。`.gitmodules` 由来の URL には決して付けない。CVE-2022-39253 はそちらの話。
+  - URL の差し替えは設定に書かず `-c` で渡す。**設定ファイルは親と兄弟の worktree 全部の共有物**
+    なので、そこにローカルパスを書くと、ほかのコピーの fetch まで向きが変わる。
+  - 終わったら submodule の origin を本来の remote へ戻す。値は設定から取る。`git submodule sync` は
+    `.gitmodules` を読み直し、SSH→HTTPS の書き換えを潰してしまう。
+  - 親が持っていないものは、そのあとの通常の update に任せる。
+  - **入れ子の submodule も降りて種付けする**（最大 8 段）。入れ子のオブジェクトは親 submodule 自身の
+    ストアの下にある。1 回では済まない。入れ子は親 submodule の中でしか宣言されておらず、その親を
+    clone するまで存在しないため。
+  - submodule は `--jobs 4` で取得する。git の既定は 1 で、完全に直列。
+- **再帰の update は、`--init` が無いと入れ子に届かない。**
+  - 実測（git 2.47）: 付けないと、`update --recursive` はトップレベルを clone して中へ降りる。そこで
+    入れ子が未 init なのを見て、**exit 0・出力なしでスキップする**。空のディレクトリが残り、
+    `submodule status --recursive` を見るまで誰も気づかない。
+  - 先に `submodule init` を走らせても代わりにならない。展開できるのはトップレベルの `.gitmodules`
+    だけで、入れ子のものは親 submodule を checkout するまで読めない。
+  - 入れ子向けの SSH→HTTPS 書き換え規則（`submoduleInsteadOfArgs`）が届くようになったのも、これの
+    おかげ。
+- **SCM の読み書き**: changes・diff・log・graph・show・stage・unstage・discard・commit。リビジョンは
+  16 進で検査し、応答にはサイズ上限がある。
+- **ファイルシステム API**（home を根にしたツリー・ファイル・アップロード・リネームなど）は、
+  トラバーサルを防ぎ、シンボリックリンクを解決した後のパスも検査し、サイズに上限を設け、バイナリを
+  判定する。
+- **denylist**（`fs.go` の `fsDeny`）は、資格情報やエージェントの状態を持つ場所を一覧から隠し、直接の
+  アクセスも断る（400）。
+  - エージェント各自のディレクトリ（claude・codex・opencode・agy・copilot・cursor・kiro・muse）
+  - この製品の設定と状態（`.config/agent-fleet`・`.local/state/agent-fleet`・
+    `.local/share/agent-fleet`）
+  - `.ssh`・`.git-credentials`・`.aws`（SSO のトークンキャッシュと生成した設定）
 
-## 4.7 transcript / usage
+  例外は 1 つで、codex が生成した画像だけは読める。
+- **LFS** はイメージにシステム全体で入っているので、clone と checkout は普通に smudge する。smudge
+  されずに残ったポインタはファイル API が検出し、ビュアーがバッジを出す。
+- git の認証は 1 本の資格情報ヘルパー（`workspace-agent cred`）が、その都度復号して渡す
+  （[07 §7.6](07-security.ja.md)）。
 
-- claude の会話 jsonl は**末尾ウィンドウ読み込み + 逆方向ページング**で返す
-  （`GET /sessions/{name}/messages`、[decisions/0009](../decisions/0009-transcript-paging.ja.md)）。
-- codex / opencode にも各 CLI の保存形式（jsonl / SQLite store）を読む transcript リーダーがあり、
-  driver にかかわらず出力を共通の turn 形に揃える（パーサは統合しない——docs/23 の方針）。
-- usage: `GET /claude/usage`・`GET /codex/usage`（各 CLI のローカル記録から集計）。
+## 4.7 転写と使用量
 
-## 4.8 secrets（Agent 側の責務）
+- 転写は**末尾のウィンドウと、後ろ向きのページング**で返す（`GET /sessions/{name}/messages`、
+  [decisions/0009](../decisions/0009-transcript-paging.ja.md)）。
+- kind ごとに自分の保存形式を読むリーダーがあり、どれも共通のターン形に揃える。**パーサは意図して
+  統合しない。**
+- 使用量の出どころは kind ごとに違う。
+  - `GET /claude/usage` と `/codex/usage`: CLI のローカル記録と、claude は捕捉したステータスライン
+  - `/copilot/usage`: GitHub の API
+  - `/muse/usage`: runtime が最後に報告した値
+  - `/connections/agy/usage`
 
-`secrets.enc`（AES-256-GCM・0600）の所有と、`workspace-agent cred` / `workspace-agent bitbucket-cred`
-サブコマンドによる**平文ファイルを作らない**資格供給。鍵 `AF_SECRET_KEY` は CP が起動時注入
-（封筒暗号の全体像は [07 §7.6](07-security.ja.md)。Agent は暗号 provisioning に無関心）。
-起動時に旧平文資格の自動移行あり。`AF_MASTER_KEY` 未設定の dev では平文 `secrets.json`（同一経路）。
+  セッションを横断する台帳は `/sessions/usage` と `/usage/series`。
 
-★ **ここに置かない物が 1 つある: git プロバイダの OAuth アプリの client_secret**
-（[71](../decisions/0052-tenant-git-oauth.ja.md) §71.8）。テナントの資格情報なので、全メンバーの
-`secrets.enc` に複製されるのを避けて CP に残す。Bitbucket の refresh は Agent が
-`POST /internal/git-oauth/bitbucket/refresh` を呼んで代行させる（本人の refresh token は
-ここに残る）。★ ブリッジの座標（`AF_CP_BASE_URL` + `AF_GIT_OAUTH_TOKEN`）は起動時に
-`secrets.Data.GitOAuthBridge` へ写す——cred helper は git が起動する**別プロセス**で、
-その環境変数は保証できない（内部 git トークンが同じ理由で同じ扱い）。
+## 4.8 秘密情報（Agent の責務）
+
+Agent は暗号化ストア `secrets.enc`（AES-256-GCM、0600。ロックの下で一時ファイルと rename で書く）を
+持つ。
+
+- **資格情報は、平文のファイルを作らないサブコマンドで渡す**: git の資格情報ヘルパー
+  `workspace-agent cred`。`bitbucket-cred` はその別名。
+- 鍵 `AF_SECRET_KEY` は CP が起動時に注入する。どう用意されたかに Agent は関心を持たない
+  （[07 §7.6](07-security.ja.md)）。
+- 鍵が無いとき（マスターキーの無い CP は注入しない）は、同じ経路で平文の `secrets.json` を書く。
+- 古い平文の資格情報は、起動時にストアへ取り込んで消す（`migrateLegacySecrets`）。
+
+**ここに意図して置かない物が 1 つある: git プロバイダの OAuth クライアントシークレット**
+（[decisions/0052](../decisions/0052-tenant-git-oauth.ja.md) の決定 7）。
+
+- これは*テナントの*資格情報。CP に置けば、**メンバー全員の**ストアへ写さずに済む。
+- Agent は CP に refresh を代行させる（`POST /internal/git-oauth/bitbucket/refresh`。Jira も同じ）。
+  **利用者本人の refresh token はここに残る。**
+- ブリッジの座標（`AF_CP_BASE_URL`・`AF_GIT_OAUTH_TOKEN`）は、環境変数から読まず、起動時に暗号化
+  ストアへ写す（`seedGitOAuthBridge`）。**資格情報ヘルパーは git が起動する別プロセスで、その環境
+  変数は保証できない。** 内部 git プロバイダのトークンも同じ扱い（`seedInternalGit`）。
 
 ## 4.9 Workspace イメージと entrypoint
 
-`workspace/Dockerfile`（multi-stage golang→node:22-slim。サイズは BAKE ノブで大きく変わる）。
-**イメージと Agent は全デプロイターゲット共通**（移植の肝、[09](09-deploy.ja.md)）。
+`workspace/Dockerfile` はマルチステージで、`golang:*-trixie` でビルドし、`node:22-trixie-slim` に載せる
+（Debian 13、[decisions/0068](../decisions/0068-debian-13-base.ja.md)）。**イメージと Agent は全デプロイ
+ターゲット共通**で、それが分割の要点（[09](09-deploy.ja.md)）。
 
-- **エージェント CLI は 2 経路**（`ARG BAKE_AGENT_CLIS`、**既定 0 = lean**。docs/35 §35.4.1）:
-  - **lean（既定）**: claude / opencode / codex / copilot / cursor / agy / rtk を**イメージに焼かない**
-    （プロプライエタリ CLI を再配布しない安全既定）。entrypoint の **boot-install** が初回起動時に
-    `versions.json` のピン版を公式配布元（npm / GitHub Releases 等）から `~/.local` へ導入する
-    （home 永続なので 2 回目以降は無音スキップ。ネット不通は WARN で続行し次回起動時に再試行。
-    self-update opt-in が OFF の起動では進んだ版をピンへ戻す repin あり）。
-    kiro（展開後 ~855MB）と muse は全ユーザー一律の boot-install をせず、利用時にオンデマンド導入
-    （muse は接続カードの導入ボタンから）。
-  - **`BAKE_AGENT_CLIS=1`**: 上記 CLI を焼き込み（初回起動を速くしたい自社デプロイ向けの明示ノブ）。
-- **版ピンはどちらの経路でも同じ `ARG`**（`CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` /
-  `CODEX_VERSION` / `COPILOT_VERSION` / `CURSOR_VERSION` / `AGY_VERSION` / `KIRO_VERSION` /
-  `MUSE_VERSION` / `RTK_VERSION`——bump 手順は [10 §10.2.1 の runbook](10-development.ja.md)）。BAKE ノブに関わらず
-  全ピンを `/usr/local/share/agent-fleet/versions.json` に書き出し、Agent の
-  `GET /env/tool-versions`（設定→環境「ツールのバージョン」: 実効 / 焼き込み / ~/.local
-  override / ピン差分の read-only 表示）と e2e-smoke と boot-install が参照する。
-  この表にはエージェント CLI に加えて **AWS / ops MCP 系**（`awscli` / `mcp-grafana` /
-  `cloudwatch-mcp` / `aws-mcp`）も並ぶ。後 2 つは `uv tool install` の Python サーバーで、
-  **exec で版を訊けない**（cloudwatch は `--version` でサーバーが起動し、AWS MCP プロキシは
-  `--version` を持たない）ため、`toolSpec.PyDist` を付けて venv の dist-info 名から読む
-  （`uvToolVersion`）。新しい Python MCP サーバーを足すときは同じ扱いにすること。
-- **焼き込み（共通ツール、`BAKE_OPTIONAL_TOOLS`=既定 1 ほか）**:
-  Go toolchain（`ARG GO_VERSION`、go.mod と歩調）、
-  build-essential + python3（+ `break-system-packages`、pip --user は home 永続）、vim・git-lfs・
-  jq 等の定番、tzdata、amd64/arm64共通の固定版Debian Chromium（setuid sandbox helperをbuild時検証）と
-  日本語font。Chromiumはsandbox有効、`--disable-dev-shm-usage`で起動する。Docker runtimeはsetuid helperのnamespace作成用に
-  `SYS_ADMIN`をbounding setへ追加するが、`dev`にはeffective capabilityを付けず、helper以外のsetuid/setgid bitはimageから除く。
-  **Java は image 外**:
-  共有 JVM dir（Temurin 8/21/25）を `/usr/lib/jvm:ro` で
-  マウント（イメージ 2.1G→1.0G の削減。⚠️ Temurin の cacerts symlink は抽出時に実体化しないと
-  空トラストストアになる）。node は nvm（home・オンデマンド）。
-- **レイヤ順の意図**: 重く変わらない RUN（toolchain・npm -g）を前段、頻繁に変わる COPY
-  （agent バイナリ・entrypoint・plugin・notes）を最後尾に集約——小修正でキャッシュを壊さない。
-- **entrypoint の seed 方針 = 「無い時のみ」**: `settings.json`（skip-permissions / RC /
-  通知 / rtk フック）、`~/.gradle/gradle.properties`（メモリ制約ホスト向けの保守的既定）。
-  以後は設定 UI が真実（毎起動 force すると UI と喧嘩する）。**毎起動 refresh するもの**:
-  opencode plugin。
-  ⚠️ **利用ガイド（`workspace-notes.md`）の配布は entrypoint から agent へ移した**（docs/60 / ADR 0042）。
-  claude=`/etc/claude-code/CLAUDE.md`（managed policy・image 焼込）は据え置き、codex・opencode・agy の
-  `AGENTS.md` は agent の `reconcileAgentInstructions()` が**マーカー付きで合成**し、copilot・kiro へは
-  AF 専用ファイル（`agent-fleet-guide.*`）で配る。**cursor はローカルに user スコープが無く配れない。**
-  以前の `cp -f` はファイルを丸ごと上書きしており、利用者がそこへ書き足した文章が毎起動で
-  消えていた（＝ユーザー層を作れない原因）。同じ 1 人の書き手がフリート方針・ユーザー指示・
-  rtk ブロックを順に置き、マーカー外は温存する。
-  ⚠️ `.dockerignore` は `**/*.md` 除外に `!workspace-notes.md` 例外が必要（`//go:embed` も同様）。
-- **タイムゾーン**: toolchains 設定の `timezone`（既定 `Asia/Tokyo`）を entrypoint が `export TZ`。
-  反映は Stop→Start。
-- **ロール別 docs のマウント**: エージェントが環境仕様の QA に docs で根拠付き回答できるよう、
-  `docs/` を **CP イメージ**に焼き込み（`control-plane/Dockerfile`、context=repo root）、コンテナ
-  起動時に **CP が呼び出し元メンバーのロールで許可分だけ**を `<dataDir>/docs` へステージ
-  （`control-plane/workspace_docs.go` `stageWorkspaceDocs`）→ `dockerRuntime.Start` が
-  `/usr/local/share/agent-fleet/docs:ro` でマウント。共有イメージには docs を含めないので、
-  member のコンテナは内部 docs をディスク上に一切持たない（＝ provisioning 時点でロール分離）。
-  露出範囲: `member`→`guide/member` と `dev/`、`tenant_admin`→`guide/` と `dev/`、
-  `super_admin`→全 docs。decision / history などの非公開資料は super_admin に限る。毎起動で
-  再ステージ（ロール変更が次回起動で反映・イメージ版に追従）。
-  - **ECS は「マウント」ではなく「取得」**（旧: 未配線）。Fargate / EC2 のタスクには CP が
-    書けるホスト経路が無く、`<dataDir>` は EFS AP なので bind-mount の継ぎ目が存在しない。
-    その結果 ECS の Workspace は docs ディレクトリが**空のまま**で、Console の「利用ガイド」が
-    何も開かず、コンテナ内エージェントも環境仕様を引く先を失っていた。そこで CP に
-    `GET /internal/docs`（`control-plane/docs_bridge.go`・per-membership の `AF_DOCS_TOKEN`）を
-    置き、**同じ `roleDocsRoots` で切った同じ部分集合**を tar.gz で配る。Agent は起動時に
-    `docs_sync.go` が取得して `/usr/local/share/agent-fleet/docs` へ展開する。
-    - **マウントが常に勝つ**: docs ディレクトリが空でないときは取得しない（docker / native は
-      read-only マウント。native rootfs では `/` が read-only なので書けもしない）。
-    - ロール分離は変わらず **CP 側**（トークン→メンバーシップ→**その場で引く**ロール）。要求側は
-      範囲を選べないので、member が decision / history を引くことはできない。
-    - アーカイブは信用しない: 通常ファイルのみ・絶対パス/`..` を拒否・件数と総バイト数に上限。
-      展開はステージングへ行い、gzip の末尾まで読めた場合だけ本番へ rename する（切れた
-      ダウンロードが「途中まで入った docs」として公開されない）。
-    - このため workspace イメージは docs マウント点だけ `chown 1000:1000` してある
-      （docker / native ではその上にマウントが被るので無関係）。
-- claude の自己更新は `~/.local` 側のみ・焼き込み版は固定。壊れた symlink（旧 home パス）は
-  entrypoint が検出して repair。
-- 反映ルール: image / entrypoint に触れたら **image 再ビルド + 利用者の Stop→Start**（[10](10-development.ja.md)）。
+- **エージェント CLI の入り方は 2 通り**で、**配布の既定は lean**（`BAKE_AGENT_CLIS=0`、
+  [decisions/0037](../decisions/0037-registry-policy.ja.md)）。
+  - **lean**: claude・opencode・codex・copilot・cursor・agy・rtk を**イメージに焼かない**。
+    プロプライエタリなソフトを再配布しない安全な既定。
+    - entrypoint が初回起動時に、**ピンした版を公式の配布元から `~/.local` へ入れる**。
+    - home は永続なので、2 回目以降は黙ってスキップする。
+    - ネットワークが無いのは警告で、失敗ではない。次の起動で入れ直す。
+    - 利用者が自己更新を選んでいなければ、勝手に更新した CLI をピンへ戻す。
+    - kiro（展開後約 855 MB）と muse はそこからも外し、必要になったときに入れる。kiro は起動時の
+      ガード（`install-kiro --if-needed`）が、muse は接続カード（`install-muse`）が入れる。
+  - **焼き込み**（`BAKE_AGENT_CLIS=1`）: 初回起動を速くしたいデプロイ向けの明示的なノブ。
+- **版のピンはどちらの経路でも同じビルド引数**（`CLAUDE_CODE_VERSION`・`CODEX_VERSION`…。上げる手順は
+  [10 §10.2.1](10-development.ja.md)）。
+  - **ノブに関係なく、すべてのピンを `/usr/local/share/agent-fleet/versions.json` に書き出す**。
+    エージェント CLI、ツールチェーン、データベースサーバーまで含む。
+  - これを読むのは `GET /env/tool-versions`（設定 → ツールチェーン「ツールのバージョン」）、
+    スモークテスト、初回導入。
+  - 運用ツール系の MCP サーバーのうち 2 つは、**実行して版を訊けない**。片方は `--version` で
+    サーバーが起動してしまい、もう片方には版のフラグが無い。だから版は導入済みパッケージの
+    メタデータから読む（`toolSpec.PyDist`、`uvToolVersion`）。**同じ性質のサーバーを足すときも同じ
+    扱いにすること。**
+- **共通ツール**（`BAKE_OPTIONAL_TOOLS=1`、既定）:
+  - Go ツールチェーン（`GO_VERSION`。`go.mod` と歩調を合わせる）
+  - build-essential と python3（pip は利用者の領域へ入れられる）
+  - git-lfs・tzdata と定番のコマンド
+  - 版を固定した Debian の Chromium と日本語フォント
+
+  `BAKE_OPTIONAL_TOOLS=0` は `native` 向けの軽いルートファイルシステムで、これらを必要時に入れる
+  （`install-chromium` など）。
+- **Chromium はサンドボックスを保つ。**
+  - setuid のサンドボックスヘルパーはビルド時に検証する。ほかの setuid・setgid ビットはイメージから
+    すべて外す。
+  - Chromium は `--disable-dev-shm-usage` で起動する。
+  - docker の runtime は、ヘルパーが名前空間を作れるよう bounding set に `SYS_ADMIN` を足す。`dev` に
+    実効ケーパビリティは無い。ECS の runtime は何も足さない。
+- **JDK はイメージの外にあり、置き場は 2 つ。**
+  - Temurin の JDK を集めた共有ディレクトリ。docker では `/usr/lib/jvm` に読み取り専用でマウントする
+    （⚠️ そのディレクトリを作るとき、JDK の `cacerts` のシンボリックリンクを実体化しておかないと、
+    トラストストアが空になる）。
+  - `~/.local/share/agent-fleet/jvm`。`workspace-agent install-jdk` が入れる。ECS では何もマウント
+    しないので、ここが唯一の置き場。
+
+  `JAVA_HOME` は 設定 → ツールチェーン の選択に従い、探索は Workspace 自身のアーキテクチャを優先する
+  （`jvmSearchDirs`）。Node は `workspace-agent install-node` が版ごとに nvm の配置へ入れる。
+- **レイヤの順序**: 重くてめったに変わらないレイヤを前に置く。よく変わるコピー（Agent のバイナリ・
+  entrypoint・plugin・notes）は最後にまとめ、小さな修正でキャッシュを壊さない。`CMD` は絶対パスの
+  `/usr/local/bin/workspace-agent` なので、`~/.local/bin` のコピーには乗っ取られない。
+- **entrypoint は無いものだけを置く**:
+  - claude の `settings.json`（権限スキップの確認、Remote Control、通知、rtk の hook）
+  - `~/.gradle/gradle.properties`（メモリの限られたホスト向けの控えめな値）
+
+  そのあとは設定 UI が正。毎回の起動で値を押し付けると UI と喧嘩する。
+- **entrypoint が毎回の起動で当て直すもの**:
+  - opencode の plugin
+  - opencode の `permission=allow`
+  - cursor の更新チャネル
+  - kiro の自動更新スイッチ
+- **Workspace の利用ガイドは entrypoint でなく Agent が配る**
+  （[decisions/0042](../decisions/0042-user-instructions.ja.md)）。
+  - claude はイメージの managed policy `/etc/claude-code/CLAUDE.md` を読む。
+  - `reconcileAgentInstructions()` が codex・opencode・agy・muse の `AGENTS.md` へ、**マーカーの間に**
+    ガイドを合成する。マーカーの外には触らない。以前の単純なコピーは毎回の起動でファイルを丸ごと
+    上書きし、利用者が書き足した内容を消していた。
+  - copilot と kiro には専用のファイル（`agent-fleet-guide.*`）で渡す。
+  - **cursor にはローカルの利用者スコープが無く、渡せない。**
+  - トピックファイル（`workspace/notes/`）は `/usr/local/share/agent-fleet/notes/` に入り、claude・
+    codex・opencode・muse ではスキルとしても登録する（`fleetskills.Apply`）。
+  - ⚠️ `workspace/.dockerignore` は `**/*.md` を除外している。ガイド・トピックファイル・アシスタントの
+    知識（唯一の `//go:embed` の入力）には、それぞれ `!` の例外が要る。
+- **タイムゾーン**: ツールチェーン設定の `timezone`（既定 `Asia/Tokyo`）を entrypoint が `TZ` として
+  export する。知らないゾーンは警告して UTC にする。反映は次の Stop → Start。
+- **利用ガイドはマウントするか、取得する**（[decisions/0064](../decisions/0064-docs-three-audiences.ja.md)）。
+  - 全メンバーが同じツリーを受け取る。`guide/` の棚とルートの README（`control-plane/workspace_docs.go`
+    の `guideRoots`）。開発者向けの文書は配らない。
+  - docker と native では、CP がそのツリーを用意し（`stageWorkspaceDocs`）、
+    `/usr/local/share/agent-fleet/docs` に読み取り専用でマウントする。
+  - ECS のタスクには CP が書けるホストのパスが無いので、Agent が起動時に同じツリーを取得する。
+    メンバーシップごとの `AF_DOCS_TOKEN` で `GET /internal/docs`（`control-plane/docs_bridge.go`）を
+    呼ぶ（`docs_sync.go`）。
+  - **マウントが常に勝つ**。docs ディレクトリが空でなければ取得で上書きしない。
+  - アーカイブは信用しない。
+    - 通常ファイルだけ
+    - 絶対パスと `..` は拒否
+    - ファイル数と総サイズに上限
+    - 展開はステージングのディレクトリへ行い、gzip を最後まで読めたときだけ本番へ rename する。
+      途中で切れたダウンロードが「半分だけの docs」として見えることはない。
+  - そのため、イメージのマウント点は `dev` の所有にしてある。
+- claude の自己更新は `~/.local` の中だけで、焼き込んだ版は固定。古い home パスで宙に浮いた起動
+  リンクは entrypoint が直す。
+- **変更の反映**: イメージか entrypoint に触れたら、イメージを作り直し、Workspace を Stop → Start する
+  （[10](10-development.ja.md)）。
 
 ## 4.10 BrowserManager
 
-`BrowserManager`はWorkspace当たり1つのChromium processをpipe CDPで遅延起動し、browserIdごとに独立
-BrowserContext + Pageを所有する。公開内部面は`POST/GET/DELETE /browser/pages*`と`GET /ws/browser?id=`。
-Agent自身の7700、外部top-level navigation、管理endpointを拒否し、PageのHTTP/WS/SSEはコンテナloopback内で完結する。
+`BrowserManager`（`internal/browserx`）は Workspace ごとに Chromium のプロセスを 1 つ、必要になった
+ときに起動し、CDP のパイプで動かす。ブラウザ id ごとに独立したブラウザコンテキストとページを持つ。
 
-WS wire v1は最初のtext `ready`、以降の状態/navigation/console/error textと、生JPEG binaryを送る。
-Consoleから受けるのはviewport、mouse/wheel/key/text、navigate/reload/history、visibilityだけでraw CDPは公開しない。
-Page上限2、最大1600×1200/DPR 1、12fps/quality 70、latest-frame 1枚、非表示/切断猶予60秒が既定。
-12fpsはWebSocket送信だけでなく、Pageごとの容量1 frame workerがCDP ACKを`1/maxFPS`遅延して
-Chromiumのcapture/encode元から制限する。pipe CDPは1 message 8 MiB・event 256件/合計32 MiBで固定し、必須eventの飽和時は
-waiter goroutineやqueue memoryを増やさずChromiumを終了してPageを`crashed`へ遷移させる。
-詳細契約とW5検証結果は[設計31](../decisions/0018-container-browser-pane.ja.md)を参照。
+- **面**: `POST /browser/pages`、`GET` と `DELETE /browser/pages/{id}`、WebSocket の
+  `GET /ws/browser?id=`。
+- **断るもの**: Agent 自身のポートと、loopback 以外へのトップレベルのナビゲーション
+  （`allowedTopLevelBrowserURL`）。サブリソースは Workspace の egress ポリシーの下で普通の外部ホストへ
+  出てよいが、管理用のエンドポイントには決して出さない。コンテナホストの別名、クラウドの
+  メタデータホスト、CP、リンクローカルのアドレスがそれにあたる（`forbiddenBrowserResource`）。
+- **ワイヤプロトコル**（バージョン 1）は最初に `ready` フレームを送る。以後は状態・ナビゲーション・
+  コンソール・エラーをテキストで、**生の JPEG をバイナリで**送る。
+- **Console から受け付けるのは** viewport（ピンチズーム付き）・ポインタ・ホイール・キーとテキスト・
+  ナビゲーション・可視性・コピーだけ。**生のデバッグプロトコルは決して出さない。**
+- 利用者から見える上限は [ref/limits.md](../../guide/ref/limits.ja.md)。既定値は Workspace ごとに
+  調整できる（`AF_BROWSER_MAX_FPS`・`AF_BROWSER_PAGE_LIMIT`・`AF_BROWSER_DETACHED_GRACE_SEC`・
+  `AF_BROWSER_JPEG_QUALITY`）。使われていない Chromium は `AF_BROWSER_IDLE_SEC` 後に止める。
+- **フレームレートは送信の間引きでなく、キャプチャの時点で効かせる。** 容量 1 フレームのワーカーが
+  確認応答を遅らせるので、Chromium はキャプチャとエンコードの段階で抑えられ、捨てるフレームを作ら
+  ない。
+- パイプにはメッセージとキューの固定上限がある（1 メッセージ 8 MiB、キューは 256 件か 32 MiB）。
+  **必須のイベントで上限に達したら、キューを伸ばさずにブラウザを終了し、ページを `crashed` にする。**
 
-## 4.11 tmux サーバのスコープと第 2 インスタンスの隔離（開発・E2E 必読）
+詳細は [decisions/0018](../decisions/0018-container-browser-pane.ja.md)。
 
-> 経緯: agy 統合の M1 E2E（[32](../decisions/0008-antigravity-cli-agent-kind.ja.md)、2026-07-20）で、テスト用に別ポートで
-> 起動した agent の shutdown が**共有デフォルトソケットへ `tmux kill-server` を実行**し、
-> 並行稼働中の無関係なセッション（開発者自身の claude CLI 含む）を計 4 回全滅させた。
-> 本節の規約はその再発防止（恒久対応 + 開発時の安全手順）。
+**他者が起動した Chromium へのアタッチ**は別のマネージャー
+（[decisions/0038](../decisions/0038-chromium-attach-view.ja.md)）。
 
-**設計上の前提と恒久対応**:
+- 面は `/browser/attach-targets`・`/browser/attachments*`・`GET /ws/browser-attachments` で、MCP の
+  `attach_chromium` 系ツールの裏にある。
+- 操作モードは `view-only`・`user-control`・`locked`。MCP ツールは view-only で始まり、利用者の
+  クリックは効かない。HTTP のハンドオフは `user-control` で始まる。
+- 対象はポートでなく、Chromium の `DevToolsActivePort` の 2 行目にある GUID で識別する。使い回された
+  ポートで、他セッションのブラウザへ黙ってアタッチしないため。
+- デタッチしても対象は閉じない。
 
-- 本番は 1 コンテナ 1 agent で、デフォルトソケットの tmux サーバは agent が唯一の作成者。
-  旧 shutdown はこの前提に依拠して `kill-server`（サーバごと全滅・列挙不要で確実）を使っていたが、
-  前提は**同一環境に第 2 インスタンスがいる瞬間に崩れる**（kind の問題ではない —
-  ソケットは kind 間で分離されておらず、managed はそもそも pane を持たないため、
-  通常運用では顕在化しなかっただけ）。
-- **`kill-server` は agent 製品コードで全面禁止**。停止（graceful shutdown / halt / stop）は
-  **自インスタンス管理下（自メタ ∩ live）のセッションへの `kill-session`（exact target）のみ**。
-  自分のメタが無い live セッションは「他インスタンスの作業」か「メタ喪失の孤児」かを
-  区別できないので触らない（孤児は C-c の礼儀を失うだけで、コンテナの SIGKILL と運命を共にする。
-  本番では所有セッションを消せばサーバは exit-empty で自然終了し、旧挙動と同じ終状態になる）。
-- **tmux の exec は `tmuxx.Cmd` に集約**（`exec.Command("tmux", …)` 直呼び禁止）。
-  `AF_TMUX_SOCKET=<name>` を設定すると全 tmux 呼び出しが `tmux -L <name>` になり、
-  デフォルトソケットにも**継承した `$TMUX` にも**届かない専用サーバへ完全隔離される。
-- 以上 2 点は `workspace/agent/tmux_guard_test.go` の tripwire（`kill-server` のコード行検出・
-  funnel 迂回検出）が回帰を止める。
+## 4.11 tmux サーバーのスコープと第 2 インスタンスの隔離
 
-**第 2 インスタンスを起動する安全なやり方（コンテナ内 E2E・手元デバッグ）**:
+> **この節がある理由。** 統合テスト（[decisions/0008](../decisions/0008-antigravity-cli-agent-kind.ja.md)）で、
+> 別ポートで起動した 2 つ目の Agent が、終了時に**共有のデフォルトソケットへ `kill-server` を実行**した。
+> **無関係に動いていたセッションが 4 回全滅し**、開発者自身のものも含まれていた。
+
+**恒久対応:**
+
+- 本番は 1 Workspace に 1 Agent で、デフォルトソケットの tmux サーバーを作るのは Agent だけ。以前の
+  終了処理はそれを前提にしていた。**同じ環境に 2 つ目のインスタンスがいる瞬間に、その前提は崩れる。**
+- **`kill-server` は Agent の製品コードで全面禁止。**
+  - 終了時に kill するのは**このインスタンスが所有するセッションだけ**。自分のメタデータと生きている
+    ものの積（`ownedLiveSessions`）を、完全一致のターゲットで。
+  - **自分のメタデータが無い生きたセッションには触らない。** 「別インスタンスの作業」と「メタデータを
+    失った孤児」を見分けられないため。
+  - 本番では、所有セッションを消せばサーバーは自然に終わり、以前と同じ終状態になる。
+- **tmux の実行はすべて `tmuxx.Cmd` に集める。** `AF_TMUX_SOCKET=<name>` を設定すると、全呼び出しが
+  `tmux -L <name>` になる。デフォルトソケットからも、**継承した `$TMUX` からも**切り離された専用
+  サーバー。
+- この 2 つは `workspace/agent/tmux_guard_test.go` の仕掛け線テストが守る。禁止した呼び出しと、
+  集約の迂回を検出する。
+
+**第 2 インスタンスを安全に起動する方法**（コンテナ内のテスト、手元のデバッグ）。**ソケット・
+メタデータのディレクトリ・ポートを分けること。どれかを共有すると本物と衝突する。**
+さらに `HOME` も分ける。
 
 ```sh
-# 3 点セットが必須: ソケット・メタ dir・ポート。どれか 1 つでも共有すると本物と衝突する。
+d=$(mktemp -d) && mkdir "$d/home"
+HOME="$d/home" \
 AF_TMUX_SOCKET=af-e2e-$$ \
-AF_SESSIONS_DIR="$HOME/tmp/e2e-$$/sessions" \
+AF_SESSIONS_DIR="$d/sessions" \
 AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
 ./workspace-agent
 ```
 
-- `AF_TMUX_SOCKET` — 専用 tmux サーバ（`-L`）。⚠️ これ無しで tmux pane 内（＝いつもの
-  開発セッション）から起動すると `$TMUX` を継承し**確実に共有サーバへ向く**。インシデントの直接原因。
-- `AF_SESSIONS_DIR` — メタの分離。共有すると本物のセッションを「自分の管理下」と誤認して
-  停止対象にしてしまう（shutdown の owned 判定はメタが根拠）。
-- `AGENT_ADDR` — 本物の `:7700` とのポート衝突回避。
-- 資格・設定を汚したくなければ sandbox `HOME` も併用（docs/32 の M1 E2E 方式）。
-- 後片付けは**専用ソケットに対してのみ** `tmux -L af-e2e-$$ kill-server` が許される
-  （自分だけのサーバだから）。共有デフォルトソケットへの `kill-server` 手打ちは厳禁。
-- Go テストも同様に隔離する: tmux を直接叩くテストは `tmux -L <専用>`、製品コード経路
-  （`tmuxx.Cmd` 経由）を通すテストは `t.Setenv("AF_TMUX_SOCKET", …)`。従来の contract テスト群は
-  「製品コードが素の tmux を叩くため -L を使えない」制約下で共有ソケット上に自前セッションを
-  作っていた（`opencode_contract_test.go` 冒頭の注記）が、この制約は `AF_TMUX_SOCKET` で解消済み。
+- **ソケット**: ⚠️ `AF_TMUX_SOCKET` 無しで tmux のペインの中（いつもの開発セッション）から起動すると、
+  **`$TMUX` を継承して確実に共有サーバーへ向く**。事故の直接の原因。
+- **メタデータのディレクトリ**: 共有すると、2 つ目のインスタンスが本物のセッションを自分のものと
+  思い込み、**終了時に止めてしまう**（所有の判定はメタデータが根拠）。
+- **ポート**: Agent は起動処理の前に `AGENT_ADDR` を bind し、使用中なら終了する。衝突は中途半端に
+  起動せず、すぐ失敗する。
+- **home**: 起動処理は home のあちこちのファイルを書き換える。状態の移行、全 CLI の指示ファイルの
+  合成、状態 hook の再登録、全 CLI の設定にある `af` MCP サーバーの名前の付け替え。本物の home で
+  2 つ目を動かすと、本物のセッションの設定を書き換えてしまう。
+- 後片付けは `tmux -L af-e2e-$$ kill-server` で、**自分のソケットに対してだけ**行う。共有のソケットへ
+  `kill-server` を打つのは禁止。
+- テストも同じように隔離する。tmux を直接叩くテストは専用の `-L` ソケットを使い、製品コードを通す
+  テストは `t.Setenv` で `AF_TMUX_SOCKET` を設定する。
