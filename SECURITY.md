@@ -50,9 +50,11 @@ informed choice — not undisclosed bugs.
 - **`AF_MASTER_KEY` is the root of the credential encryption.** Every per-workspace
   DEK is derived from it and wrapped by a tenant KEK that is derived from it too
   ([07 §7.6](docs/build/07-security.md#76-secrets-and-envelope-encryption)). **Losing it
-  = crypto-shred: everything sealed under it becomes permanently undecryptable** —
-  each member's encrypted store and the tenant secrets in the database, backups
-  included. The agent CLIs' own sign-in state is not sealed by it and stays readable.
+  = crypto-shred: the CP can no longer unwrap any DEK or open the tenant secrets in
+  the database**, backups included. A member's encrypted store then stays readable
+  only through a copy of its DEK that still exists, such as the one a running
+  workspace holds. The agent CLIs' own sign-in state is not sealed by it and stays
+  readable.
   Store it in a **separate vault** from the database and the homes, and back it up
   independently: neither `deploy/compose/backup.sh` nor the AWS templates copy it. On
   AWS it is the SSM SecureString `<SsmPrefix>/master-key` (`/af-cp` by default), and
