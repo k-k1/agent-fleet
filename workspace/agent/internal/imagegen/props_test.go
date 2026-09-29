@@ -268,6 +268,55 @@ func TestPropsReadsTheQwenImage21Graph(t *testing.T) {
 	}
 }
 
+// An inpaint's mask, in both shapes this package writes: LoadImageMask on the latent families and
+// LoadImage + ImageToMask on the instruction-edit ones. The Qwen-Edit graphs are read from their
+// golden fixtures, so a change to that graph's shape has to be carried here too. Read with only
+// the first shape, a Qwen-Edit inpaint came back as op=edit with no mask, and reusing its settings
+// re-ran it as an edit of the whole picture.
+func TestPropsReadsTheMask(t *testing.T) {
+	sdxl, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"}, comfyParams{
+		Op: OpInpaint, Images: []string{"af-photo.png"}, Mask: "af-mask.png",
+		Prompt: "a fox", Seed: 1, Width: 1024, Height: 1024, BatchSize: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sdxlGraph, err := json.Marshal(sdxl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graphs := map[string]string{"sdxl": string(sdxlGraph)}
+	for _, f := range []comfyFamily{ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511} {
+		b, err := os.ReadFile(filepath.Join("testdata", "comfy_"+string(f)+"-inpaint.golden.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		graphs[string(f)] = string(b)
+	}
+	// Another ComfyUI's numeric ids, where the mask's loader sorts before the picture's: the class
+	// fallback has to tell the two LoadImage nodes apart by what they feed.
+	graphs["foreign"] = `{
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "af-mask.png"}},
+	  "2": {"class_type": "ImageToMask", "inputs": {"image": ["1", 0], "channel": "red"}},
+	  "3": {"class_type": "LoadImage", "inputs": {"image": "af-photo.png"}}
+	}`
+	for name, graph := range graphs {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "image-1-1.png")
+			if err := os.WriteFile(path, pngWithText(t, tinyPNG(t, 2, 2), "prompt", graph), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got := readImageProps(path)
+			if got.Op != string(OpInpaint) || got.Mask != "af-mask.png" {
+				t.Errorf("op/mask = %q/%q, want inpaint/af-mask.png", got.Op, got.Mask)
+			}
+			if strings.Join(got.Inputs, ",") != "af-photo.png" {
+				t.Errorf("inputs = %v, want the picture alone — the mask's own LoadImage is not a reference", got.Inputs)
+			}
+		})
+	}
+}
+
 // A vendor-route picture has neither, and the answer says so rather than showing blanks that
 // read as "the seed was 0".
 func TestPropsAnswersNoneForAPictureWithNeither(t *testing.T) {

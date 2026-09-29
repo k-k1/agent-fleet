@@ -479,7 +479,7 @@ func (g comfyReadGraph) props() ImageProps {
 			Weight: floatOf(g[id].Inputs["strength_model"]),
 		})
 	}
-	if _, n, ok := g.node("img", "LoadImage"); ok {
+	if n, ok := g.inputImage(); ok {
 		out.Inputs = []string{stringOf(n.Inputs["image"])}
 		out.Op = string(OpEdit)
 	}
@@ -495,14 +495,55 @@ func (g comfyReadGraph) props() ImageProps {
 			out.Inputs = append(out.Inputs, stringOf(n.Inputs["image"]))
 		}
 	}
-	if _, n, ok := g.node("mask", "LoadImageMask"); ok {
-		out.Mask = stringOf(n.Inputs["image"])
+	if mask, ok := g.maskPath(); ok {
+		out.Mask = mask
 		out.Op = string(OpInpaint)
 	}
 	if out.Op == "" {
 		out.Op = string(OpGenerate)
 	}
 	return out
+}
+
+// maskPath is the file an inpaint's mask was loaded from, in both shapes this package writes:
+// LoadImageMask on the latent families (comfyRequestLatent), and LoadImage feeding ImageToMask on
+// the instruction-edit ones (comfyQwenEditNoiseMask). Knowing only the first, the reader answered
+// a Qwen-Edit inpaint as a plain edit with no mask, and "reuse these settings" re-ran it as an
+// edit of the whole picture.
+func (g comfyReadGraph) maskPath() (string, bool) {
+	if _, n, ok := g.node("mask", "LoadImageMask"); ok {
+		return stringOf(n.Inputs["image"]), true
+	}
+	if _, n, ok := g.node("mask", "ImageToMask"); ok {
+		if id, linked := linkTarget(n.Inputs["image"]); linked && g[id].Class == "LoadImage" {
+			return stringOf(g[id].Inputs["image"]), true
+		}
+	}
+	return "", false
+}
+
+// inputImage is the picture an edit started from. The class-type fallback skips a LoadImage that
+// only carries a mask into ImageToMask: on a graph with numeric ids the mask's loader can sort
+// first, and the reproduction would then edit the mask.
+func (g comfyReadGraph) inputImage() (comfyReadNode, bool) {
+	if n, ok := g["img"]; ok && n.Class == "LoadImage" {
+		return n, true
+	}
+	maskLoaders := map[string]bool{}
+	for _, n := range g {
+		if n.Class != "ImageToMask" {
+			continue
+		}
+		if id, ok := linkTarget(n.Inputs["image"]); ok {
+			maskLoaders[id] = true
+		}
+	}
+	for _, id := range sortedKeys(g) {
+		if g[id].Class == "LoadImage" && !maskLoaders[id] {
+			return g[id], true
+		}
+	}
+	return comfyReadNode{}, false
 }
 
 // comfyTextEncodeFields names, per text-encode class, the input the prompt is written into. The
