@@ -15,10 +15,11 @@ Terminal (CLI) のセッションでは、Console はエージェントのモー
 対して再検証する**。
 
 マネージドのセッションには本書は当てはまらない。キーを送るペインが無く、Console は保留中の
-対話に Agent の構造化された経路で答える（たとえば質問なら `POST /sessions/{name}/respond`）。どの kind に Terminal の
-経路があり、それぞれどのモーダル状態を出すかは [エージェント機能表](../../guide/ref/agents.ja.md)
-にある——たとえば lcpp と muse には経路そのものが無い（`BuildLaunch` が `ErrNoTerminalRoute`
-を返す）。
+対話に Agent の構造化された経路で答える（たとえば質問なら `POST /sessions/{name}/respond`）。
+どの kind に Terminal の経路があるかは [エージェント機能表](../../guide/ref/agents.ja.md) に
+ある——たとえば lcpp と muse には経路そのものが無い（`BuildLaunch` が `ErrNoTerminalRoute`
+を返す）。その経路で kind がどのモーダルを出すかは、その kind のキー列ビルダーと保留モーダルの
+プローブから読むのが確実（[92.4](#924-駆動コードの所在) を参照）。
 
 **このプレイブックを生んだ日付つきの実測と事件記録は凍結アーカイブにある**——特定の CLI 版に
 紐づいた記録で、現役の棚には置けない（寿命が違う）。ここに置くのは、**古びない方法**だけ。
@@ -29,31 +30,45 @@ Terminal (CLI) のセッションでは、Console はエージェントのモー
 例は claude の質問モーダル（`AskUserQuestion`）を駆動する。方法は他の kind にもそのまま使えるが、
 キー列は使い回せない（[92.4](#924-駆動コードの所在) を参照）。
 
-> フリートの生きたセッションには触らないこと。作業ディレクトリはスクラッチに。
-> **質問 1 回＝実際に 1 ターン分のコストがかかる。**
+> フリートの生きたセッションには触らないこと。**質問 1 回＝実際に 1 ターン分のコストがかかる。**
+> 下のコマンドにはどれも理由がある——省くと何が起きるかは
+> [92.1.1](#9211-プローブの隔離--3-つの罠) にある。
 
 ```bash
-# 1) 使い捨てセッションを起動。スクラッチのディレクトリは Agent が事前に信頼済みにした
-#    場所ではない（claude のフォルダ信頼プロンプトを事前承認するのは自分の起動ディレクトリ
-#    だけ）ので、初回はそのプロンプトで止まる。Enter を押す前に pane を読むこと。
-tmux new-session -d -s auqtest -x 140 -y 50 "claude '<質問を1つだけさせるプロンプト>'"
+# 0) スクラッチのディレクトリ・自分専用の tmux ソケット・会話 ID。$AF_WORK_DIR は
+#    マネージドのセッションでは未設定なので、決められた代替先に落とす。シェルがコマンド
+#    ごとに保たれないなら、3 つの値を控えて使い回すこと。
+w="${AF_WORK_DIR:-$HOME/.af-work/$(basename "$PWD")}/probe" && mkdir -p "$w"
+sock="probe-${AF_SESSION_NAME:-$$}"
+sid=$(cat /proc/sys/kernel/random/uuid)
+
+# 1) 呼び出し元セッションの env を落とし、スクラッチのディレクトリで使い捨てセッションを
+#    起動。claude がそのディレクトリをまだ信頼済みにしていなければ、初回はフォルダ信頼
+#    プロンプトで止まる。Enter を押す前に pane を読むこと。
+env -u AF_SESSION_NAME -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT \
+    -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_EXECPATH -u CLAUDE_PID -u AI_AGENT \
+  tmux -L "$sock" new-session -d -s auqtest -x 140 -y 50 -c "$w" \
+  "claude --session-id $sid --model sonnet --dangerously-skip-permissions '<質問を1つだけさせるプロンプト>'"
 
 # 2) モーダル表示を待って観察
-tmux capture-pane -p -t auqtest | tail -30
+tmux -L "$sock" capture-pane -p -t auqtest | tail -30
 
-# 3) Agent と同じ入力を再現。-l はリテラルの打鍵で {seq} のテキスト手順に当たる。
-#    キー名だけなら {keys} / {seq} のキー手順。Agent は 1 回の {keys} / {seq} 要求の
-#    手順の間に 90ms 空ける（Enter の前も同じ）。
-tmux send-keys -t auqtest -l 'テキスト'
+# 3) Agent と同じ入力を再現。ここでは単一選択の 2 番目の選択肢を、Console の {keys} と
+#    同じ形で選ぶ。Agent は 1 回の {keys} / {seq} 要求の手順の間に 90ms 空ける
+#    （Enter の前も同じ）。
+tmux -L "$sock" send-keys -t auqtest Down
 sleep 0.09
-tmux send-keys -t auqtest Down
+tmux -L "$sock" send-keys -t auqtest Enter
+#    自由入力なら: 選択肢の数だけ Down で Type 行へ移り、本文をリテラルで
+#    （{seq} のテキスト手順＝send-keys -l）打ってから Enter:
+#    tmux -L "$sock" send-keys -t auqtest -l 'テキスト'
 
 # 4) 何が回答されたかを読み戻す（claude は「User answered …」行を出す。
 #    pane で折り返されていたら -J がつなぐ）
-tmux capture-pane -p -J -t auqtest -S -60 | grep -A3 "answered"
+tmux -L "$sock" capture-pane -p -J -t auqtest -S -60 | grep -A3 "answered"
 
-# 5) 後片付け
-tmux kill-session -t auqtest
+# 5) 後片付け——自分のソケットにだけ打つ
+tmux -L "$sock" kill-server
 ```
 
 打鍵したプロンプト（`{prompt}`）はキー手順と間合いが違う。Agent は本文を打ち込み、
@@ -67,16 +82,18 @@ Agent 自身の画面読み取り（`internal/tmuxx/tmuxx.go` の `tmuxx.Capture
 分かれている。状態検出に何が見えているかを確かめるときは同じ取り方で読み、折り返された 1 行を
 丸ごと欲しいときだけ `-J` を足す。
 
-### 92.1.1 プローブの隔離 — 実際に踏んだ罠 2 つ
+### 92.1.1 プローブの隔離 — 3 つの罠
 
-上の素の形は**セッションの中から実行すると危ない**。2 つ直しておくこと。
+セッションの中から実行するとき、これらの備えが無いプローブはフリートに干渉する。
 
-1. **専用ソケットで立てる**（`tmux -L probe …`）。本番の Agent は tmux コマンドをすべて
-   既定ソケットで打つ（`tmuxx.Cmd`。動かすのは `AF_TMUX_SOCKET` だけ）ので、既定ソケットは
-   **Agent が所有する tmux サーバーそのもの**。そこで `kill-server` を打てば**ワークスペースの
-   全セッションが死ぬ**し、Agent の `claude_` 接頭辞を付けたプローブは meta の無い孤児
-   セッションとして一覧に出る。`-L` なら完全に別サーバー。
-2. **セッション名の env と CLI 自身の env を落としてから起動する。**Agent が起動するペインは
+1. **自分専用の tmux ソケット**（`tmux -L "$sock"`）。`-L` が無いと、ペインの中から起動した
+   プローブは Agent が所有する tmux サーバー——ワークスペースの生きたセッションが全部載っている
+   サーバー——に乗る。そこで `kill-server` を打てば全部が死ぬ。Agent のサーバーがなぜ共有で、
+   Agent のコードがどう他のサーバーに触れないようにしているかは
+   [04 §4.11](04-agent.ja.md#411-tmux-サーバーのスコープと第-2-インスタンスの隔離)。ソケット名は
+   固定の `probe` ではなくセッションごとに付ける。さもないとこの手順を同時に回す 2 つの
+   セッションが 1 つのサーバーを共有し、セッション名がぶつかる。
+2. **セッション名の env と CLI 自身の env を落としてから起動する**。Agent が起動するペインは
    どれも `AF_SESSION_NAME` を持ち、claude の状態フックはユーザーの `settings.json` に
    入っているので、セッションの中から起動したプローブもそのフックを鳴らす——そして
    `NormalizeHookSID`（`internal/agents/claude/sid.go`）がそれを**呼び出し元のセッションに
@@ -85,19 +102,13 @@ Agent 自身の画面読み取り（`internal/tmuxx/tmuxx.go` の `tmuxx.Capture
    台帳がプローブの会話を指した（**次の再開で別の会話が復元されうる**）。今回はホスト側が
    自分のフックを撃つたびに自己修復されて実害に至らなかったが、**アイドルなセッションから
    測っていたら残っていた**。CLI 自身の env の継承はもっと悪く（実測）、子セッション扱いに
-   なって**フックがそもそも鳴らない**。
-
-```bash
-mkdir -p "$AF_WORK_DIR/probe"
-env -u AF_SESSION_NAME -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT \
-    -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_EXECPATH -u CLAUDE_PID -u AI_AGENT \
-  tmux -L probe new-session -d -s p1 -x 200 -y 50 -c "$AF_WORK_DIR/probe" \
-  "claude --session-id $(uuidgen) --model sonnet --dangerously-skip-permissions"
-```
-
-`AF_SESSION_NAME` が無ければフックは claude が報告する会話 ID で状態を記録するので、
-session-id を明示すると状態ファイルと保留ファイルの所在が確定する。そのまま観測でき、
-後片付けもその id だけで済む。
+   なって**フックがそもそも鳴らない**。`AF_SESSION_NAME` が無ければフックは claude が報告する
+   会話 ID で状態を記録するので、それを明示すると状態ファイルと保留ファイルの所在が確定する。
+   そのまま観測でき、後片付けもその id だけで済む。
+3. **スクラッチのディレクトリで起動する**（`-c`）。無いとプローブは今の作業ディレクトリを
+   引き継ぐ——Agent がすでに信頼済みにしたかもしれないリポジトリ（`ensureFolderTrusted`）——
+   ので、新規の起動と同じ条件にならず、プローブが書くものは自分のチェックアウトに落ちる。
+   使い捨てのファイルは `/tmp` にも置かない。全セッションで共有されている。
 
 ### 92.1.2 各パターンを出させるプロンプト
 
@@ -160,6 +171,9 @@ session-id を明示すると状態ファイルと保留ファイルの所在が
   `buildClaudeSeq` / `buildClaudeSubmit`、1 問 1 ページのメニュー（codex・opencode・agy。
   agy の書き込み行は Enter で入ってから本文を受ける）は `buildMenuSeq`、マネージドのセッションは
   `buildRespondAnswers`。プランと許可のボタンは `MirrorView.tsx` で配線している。
+- **何を保留とみなすか** — claude のモーダルはフックと状態ストア（`internal/status`）を通って
+  Agent に届く。それ以外の kind は `workspace/agent/internal/agents/<kind>/` の `PendingModal`
+  メソッドから自分の保留を報告する。
 - **配送** — `workspace/agent/internal/sessionx/session_io.go` の
   `POST /sessions/{name}/input`: `{keys}`（`sendNamedKeys`）、`{seq}`（キー手順とテキスト
   手順）、`{prompt}`（`submitPromptTUI` → `typeLineAndSubmit`）、`allowedKey` の whitelist、

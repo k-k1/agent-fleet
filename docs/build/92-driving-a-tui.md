@@ -18,9 +18,11 @@ changes, or the CLI is updated.
 None of this applies to a managed session, which has no pane to key: the Console answers
 its pending interactions through the Agent's structured routes (a question through
 `POST /sessions/{name}/respond`, for example).
-Which kinds have a Terminal route at all, and which modal states each one shows, is in
+Which kinds have a Terminal route at all is in
 [the agent capability table](../../guide/ref/agents.md) — lcpp and muse, for example,
-have none (their `BuildLaunch` returns `ErrNoTerminalRoute`).
+have none (their `BuildLaunch` returns `ErrNoTerminalRoute`). Which modals a kind puts up
+on that route is best read from its key-sequence builder and its pending-modal probe
+(see [92.4](#924-where-the-driving-code-lives)).
 
 **The dated incident and measurement records that produced this playbook are in the
 frozen archive** — they are pinned to specific CLI versions and do not belong on a
@@ -33,31 +35,45 @@ sends**, and observe the pane. The example drives claude's question modal
 (`AskUserQuestion`); the method carries over to the other kinds, but their key
 sequences do not (see [92.4](#924-where-the-driving-code-lives)).
 
-> Do not touch the fleet's live sessions. Use a scratch directory. **Each question
-> costs a real turn.**
+> Do not touch the fleet's live sessions. **Each question costs a real turn.** Every
+> command below has a reason — [92.1.1](#9211-isolating-the-probe--three-traps) says
+> what goes wrong without it.
 
 ```bash
-# 1) start a throwaway session. A scratch directory is not one the Agent pre-trusted
-#    (it pre-accepts claude's folder-trust prompt only for its own launch directories),
-#    so the first run stops at that prompt: read the pane before pressing Enter.
-tmux new-session -d -s auqtest -x 140 -y 50 "claude '<a prompt that asks one question>'"
+# 0) a scratch directory, a tmux socket of your own and a session id. $AF_WORK_DIR is
+#    unset in a Managed session; the fallback is the documented one. If your shell does
+#    not persist between commands, note the three values and reuse them.
+w="${AF_WORK_DIR:-$HOME/.af-work/$(basename "$PWD")}/probe" && mkdir -p "$w"
+sock="probe-${AF_SESSION_NAME:-$$}"
+sid=$(cat /proc/sys/kernel/random/uuid)
+
+# 1) start a throwaway session in the scratch directory, without the calling session's
+#    variables. If claude has not trusted that directory yet, the first run stops at
+#    its folder-trust prompt: read the pane before pressing Enter.
+env -u AF_SESSION_NAME -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT \
+    -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_EXECPATH -u CLAUDE_PID -u AI_AGENT \
+  tmux -L "$sock" new-session -d -s auqtest -x 140 -y 50 -c "$w" \
+  "claude --session-id $sid --model sonnet --dangerously-skip-permissions '<a prompt that asks one question>'"
 
 # 2) wait for the modal and look
-tmux capture-pane -p -t auqtest | tail -30
+tmux -L "$sock" capture-pane -p -t auqtest | tail -30
 
-# 3) reproduce the Agent's input. -l types literal text, as a {seq} text step does;
-#    a bare key name is a {keys} / {seq} key step. The Agent leaves 90 ms between the
-#    steps of one {keys} or {seq} request, the Enter included.
-tmux send-keys -t auqtest -l 'some text'
+# 3) reproduce the Agent's input: here, the second option of a single-select, as the
+#    Console's {keys} sends it. The Agent leaves 90 ms between the steps of one {keys}
+#    or {seq} request, the Enter included.
+tmux -L "$sock" send-keys -t auqtest Down
 sleep 0.09
-tmux send-keys -t auqtest Down
+tmux -L "$sock" send-keys -t auqtest Enter
+#    Free text instead: Down once per option to reach the type-in row, then the text
+#    as a literal ({seq} text step, send-keys -l), then Enter:
+#    tmux -L "$sock" send-keys -t auqtest -l 'some text'
 
 # 4) read back what was actually answered (claude prints a "User answered …" line;
 #    -J joins it if the pane wrapped it)
-tmux capture-pane -p -J -t auqtest -S -60 | grep -A3 "answered"
+tmux -L "$sock" capture-pane -p -J -t auqtest -S -60 | grep -A3 "answered"
 
-# 5) clean up
-tmux kill-session -t auqtest
+# 5) clean up — your own socket only
+tmux -L "$sock" kill-server
 ```
 
 A typed prompt (`{prompt}`) is paced differently from key steps: the Agent types it,
@@ -71,16 +87,17 @@ The Agent's own screen readers (`tmuxx.CapturePane`, `ReadPane` and the state pr
 split exactly as they see it. Read the pane the same way when you are checking what
 state detection sees, and add `-J` only when you need one wrapped line whole.
 
-### 92.1.1 Isolating the probe — two traps that were actually hit
+### 92.1.1 Isolating the probe — three traps
 
-The naive form above is **dangerous when run from inside a session**. Fix two things.
+Run from inside a session, a probe without these precautions interferes with the fleet.
 
-1. **Use a dedicated tmux socket** (`tmux -L probe …`). In production the Agent runs
-   every tmux command on the default socket (`tmuxx.Cmd`; only `AF_TMUX_SOCKET` moves
-   it), so the default socket is **the server the Agent itself owns**: a `kill-server`
-   there takes **every session in the workspace** down, and a probe named with the
-   Agent's `claude_` prefix is listed as an orphan session with no metadata. A separate
-   socket is a separate server.
+1. **A tmux socket of your own** (`tmux -L "$sock"`). Without `-L`, a probe started from
+   inside a pane lands on the tmux server the Agent owns, the one every live session in
+   the workspace runs on: a `kill-server` there takes them all down. Why the Agent's
+   server is shared and how its code keeps off other servers is
+   [04 §4.11](04-agent.md#411-tmux-server-scope-and-isolating-a-second-instance). Name the
+   socket per session, not a fixed `probe`: two sessions running this recipe would
+   otherwise share one server and collide on the session name.
 2. **Drop the session-name environment variable**, and the CLI's own session
    variables, before starting the probe. Every pane the Agent starts carries
    `AF_SESSION_NAME`, and claude's status hooks are installed in its user
@@ -93,19 +110,15 @@ The naive form above is **dangerous when run from inside a session**. Fix two th
    restored the wrong conversation**. It self-healed here only because the host session
    kept firing its own hooks; measuring from an idle session would have left it.
    Inheriting the CLI's own variables is worse still (measured): the probe is treated as
-   a child session and **the hooks never fire at all**.
-
-```bash
-mkdir -p "$AF_WORK_DIR/probe"
-env -u AF_SESSION_NAME -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT \
-    -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_EXECPATH -u CLAUDE_PID -u AI_AGENT \
-  tmux -L probe new-session -d -s p1 -x 200 -y 50 -c "$AF_WORK_DIR/probe" \
-  "claude --session-id $(uuidgen) --model sonnet --dangerously-skip-permissions"
-```
-
-With no `AF_SESSION_NAME` the hooks key their state by the session id claude reports,
-so passing an explicit session id fixes where the status and pending files land: you
-can watch them directly and clean up exactly that id afterwards.
+   a child session and **the hooks never fire at all**. With no `AF_SESSION_NAME` the
+   hooks key their state by the session id claude reports, so passing an explicit one
+   fixes where the status and pending files land: you can watch them directly and clean
+   up exactly that id afterwards.
+3. **Start it in the scratch directory** (`-c`). Without it the probe inherits your
+   working directory — a repository the Agent may already have marked trusted
+   (`ensureFolderTrusted`) — so the run no longer matches a fresh one, and whatever the
+   probe writes lands in your checkout. Keep throwaway files out of `/tmp` too: it is
+   shared by every session.
 
 ### 92.1.2 Prompts that produce each case
 
@@ -178,6 +191,9 @@ What to re-read when this playbook finds a change:
   the one-page-per-question menus (codex, opencode, agy; agy's write-in row is entered
   with Enter before it takes text), `buildRespondAnswers` for managed sessions. Plan and
   permission buttons are wired in `MirrorView.tsx`.
+- **What counts as pending** — claude's modals reach the Agent through its hooks and the
+  status store (`internal/status`); the other kinds report theirs from a `PendingModal`
+  method in `workspace/agent/internal/agents/<kind>/`.
 - **The delivery** — `POST /sessions/{name}/input` in
   `workspace/agent/internal/sessionx/session_io.go`: `{keys}` (`sendNamedKeys`), `{seq}`
   (key and text steps), `{prompt}` (`submitPromptTUI` → `typeLineAndSubmit`), the
