@@ -276,7 +276,8 @@ export function InstructionsTab() {
             </Button>
           </div>
           <pre className="instr-peek-body">
-            {peek.content || tr("instr.peek_empty")}
+            {peek.content ||
+              tr(peek.path ? "instr.peek_empty" : "instr.peek_prompt_empty")}
           </pre>
         </div>
       )}

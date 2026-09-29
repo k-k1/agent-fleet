@@ -26,6 +26,7 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
 import { InstructionsTab } from "./InstructionsTab.tsx";
+import { t } from "../../../lib/i18n/index.ts";
 
 const payload = {
   text: "always speak Japanese\n",
@@ -166,6 +167,31 @@ describe("InstructionsTab", () => {
     expect(api).toHaveBeenCalledWith("api/user-notes/preview?kind=lcpp");
     expect(document.querySelector(".instr-peek-head code")).toBeNull();
     expect(document.querySelector(".instr-peek-body")?.textContent).toBe("PROMPTBODY");
+  });
+
+  it("says a path-less row applies to running sessions too, and names an empty prompt as such", async () => {
+    api.mockReset();
+    api.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.startsWith("api/user-notes/preview")
+          ? { kind: "lcpp", path: "", exists: true, content: "" }
+          : {
+              ...payload,
+              targets: [
+                { kind: "lcpp", supported: true, on: true, applied: true, delivery: "prompt" },
+              ],
+            },
+      ),
+    );
+    await mount();
+    const hints = Array.from(document.querySelectorAll(".ds-hint"), (e) => e.textContent);
+    expect(hints.some((h) => h?.includes("lcpp"))).toBe(true);
+    await act(async () => {
+      rows()[0].querySelector<HTMLButtonElement>(".ui-btn")!.click();
+    });
+    expect(document.querySelector(".instr-peek-body")?.textContent).toBe(
+      t("instr.peek_prompt_empty"),
+    );
   });
 
   it("PUTs the body on save", async () => {
