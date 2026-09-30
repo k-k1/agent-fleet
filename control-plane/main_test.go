@@ -3,12 +3,15 @@ package main
 
 import (
 	"bufio"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -111,38 +114,61 @@ func (f *fakeFlushHijack) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // example env files, the ECS parameters) promises that "0" switches them off. Reading
 // one through envx.DurationOr turns that "0" into the default and the loop keeps
 // running, so each must be read through intervalOff — which is a call-site property,
-// hence a scan of the package's sources rather than a test of either parser.
+// hence a scan of the package's syntax trees rather than a test of either parser.
+// Syntax, not text: a regex also matches comments and misses a call split over lines.
 func TestZeroDisabledLoopsAreReadWithIntervalOff(t *testing.T) {
-	names := []string{
-		"AF_USAGE_SAMPLE_INTERVAL",
-		"AF_GIT_GC_INTERVAL",
-		"AF_SCHEDULER_INTERVAL",
-		"AF_CLOUD_COST_INTERVAL",
+	names := map[string]int{
+		"AF_USAGE_SAMPLE_INTERVAL": 0,
+		"AF_GIT_GC_INTERVAL":       0,
+		"AF_SCHEDULER_INTERVAL":    0,
+		"AF_CLOUD_COST_INTERVAL":   0,
 	}
-	files, err := filepath.Glob("*.go")
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var src strings.Builder
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Files {
+			ast.Inspect(f, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				for _, arg := range call.Args {
+					name, ok := getenvName(arg)
+					if _, watched := names[name]; !ok || !watched {
+						continue
+					}
+					names[name]++
+					if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "intervalOff" {
+						t.Errorf("%s: %s is read with %s; \"0\" must disable the loop, so read it with intervalOff",
+							fset.Position(call.Pos()), name, types.ExprString(call.Fun))
+					}
+				}
+				return true
+			})
 		}
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		src.Write(b)
 	}
-	for _, n := range names {
-		read := regexp.MustCompile(`(\w+(?:\.\w+)?)\(os\.Getenv\("`+n+`"\)`).FindAllStringSubmatch(src.String(), -1)
-		if len(read) == 0 {
+	for n, reads := range names {
+		if reads == 0 {
 			t.Errorf("%s: no read found — the scan has gone blind; update it", n)
 		}
-		for _, m := range read {
-			if m[1] != "intervalOff" {
-				t.Errorf("%s is read with %s; \"0\" must disable the loop, so read it with intervalOff", n, m[1])
-			}
-		}
 	}
+}
+
+// getenvName returns NAME for the expression os.Getenv("NAME").
+func getenvName(e ast.Expr) (string, bool) {
+	call, ok := e.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 || types.ExprString(call.Fun) != "os.Getenv" {
+		return "", false
+	}
+	lit, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	name, err := strconv.Unquote(lit.Value)
+	return name, err == nil
 }
