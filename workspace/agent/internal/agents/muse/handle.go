@@ -231,11 +231,15 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 			SessionID: prev.ID,
 		}, callTimeout, &res)
 		if err == nil {
+			items, ok := h.resumeHistory(cl, prev.ID, res.History)
 			h.mu.Lock()
 			h.sid, h.path = prev.ID, prev.Path
 			h.setModelLocked(res.Session.ModelID)
-			h.rebuildBgLocked(res.History)
+			h.rebuildBgLocked(items)
 			h.mu.Unlock()
+			if ok {
+				h.backfillMirror(items)
+			}
 			return nil
 		}
 		if !msp.HasCode(err, msp.ErrCodeSessionNotFound) {

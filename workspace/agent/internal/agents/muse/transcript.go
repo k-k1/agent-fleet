@@ -17,8 +17,8 @@
 // lcpp. The difference from lcpp is worth stating: there the store IS the conversation, here
 // the host owns it and this is a MIRROR of what AF saw. What that costs is a turn that ran
 // while AF was not watching, which under decision 2 (managed-only, AF is the only writer) can
-// only happen if the Agent died mid-turn — and `session/read` on the next Resume is the
-// documented way to backfill it.
+// only happen if the Agent died mid-turn — and the next Resume backfills it from the host's
+// folded history (backfill.go).
 package muse
 
 import (

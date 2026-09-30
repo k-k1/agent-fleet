@@ -74,20 +74,13 @@ func (h *threadHandle) trackBgLocked(it msp.Item) {
 }
 
 // rebuildBgLocked replaces the set with what a resumed history says is still running. The
-// history is the HOST's fold from the session/resume result, not AF's own item store: the
-// store only knows what reached it, and measured, it holds an `inProgress` tool call whose task
-// the host's log records as finished — the terminal revision arrived while nobody was
-// listening. Caller holds h.mu.
-func (h *threadHandle) rebuildBgLocked(hist msp.SessionHistory) {
+// items are the HOST's fold (resumeHistory), not AF's own item store: the store only knows
+// what reached it, and measured, it holds an `inProgress` tool call whose task the host's log
+// records as finished — the terminal revision arrived while nobody was listening. Caller holds
+// h.mu.
+func (h *threadHandle) rebuildBgLocked(items []msp.Item) {
 	h.bg = nil
 	now := time.Now()
-	items := hist.Items
-	if hist.Mode == msp.HistoryModeSnapshot || hist.Mode == msp.HistoryModeAnchoredSnapshot {
-		if hist.Snapshot == nil {
-			return
-		}
-		items = hist.Snapshot.State.Items
-	}
 	for _, it := range items {
 		if r := bgReason(it); r != "" && !itemTerminal(it.Status) && it.ItemID != "" {
 			if h.bg == nil {
