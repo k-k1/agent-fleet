@@ -47,7 +47,7 @@ func internalGitCredentialHost(publicBaseURL string) string {
 // `InternalRepo`, console/src/features/settings/workspace/InternalReposTab.tsx).
 //
 // was: map[string]any{"name":…, "default_branch":…, "clone_url":…, "created_at":…, "provider":…}
-// All five keys are unconditional, so no omitempty: default_branch and created_at can be
+// All six keys are unconditional, so no omitempty: default_branch and created_at can be
 // empty strings, and omitempty would drop the key and change the wire.
 //
 // provider is always the constant "internal". The Console's `InternalRepo` neither
@@ -59,17 +59,35 @@ type internalRepoWire struct {
 	CloneURL      string `json:"clone_url"`
 	CreatedAt     string `json:"created_at"`
 	Provider      string `json:"provider"`
+	// CanManage says whether the caller may rename or delete this repository
+	// (canManageRepo), so the Console offers only the buttons that would succeed.
+	CanManage bool `json:"can_manage"`
 }
 
-func (a gitServerAPI) repoDTO(slug string, g store.GitRepo) internalRepoWire {
+func (a gitServerAPI) repoDTO(mv store.MembershipView, g store.GitRepo) internalRepoWire {
 	return internalRepoWire{
 		Name:          g.Name,
 		DefaultBranch: g.DefaultBranch,
-		CloneURL:      a.cloneURL(slug, g.Name),
+		CloneURL:      a.cloneURL(mv.TenantSlug, g.Name),
 		CreatedAt:     g.CreatedAt,
 		Provider:      "internal",
+		CanManage:     canManageRepo(mv, g),
 	}
 }
+
+// canManageRepo reports whether mv may rename or delete g: a role that may push, and
+// either the repository's creator or a tenant_admin. Deleting removes the bare and
+// its LFS objects for everyone in the tenant, so pushing to a repository is not enough.
+// created_by holds the creator's membership id; a row without one is the tenant_admin's.
+func canManageRepo(mv store.MembershipView, g store.GitRepo) bool {
+	if !canPush(mv.Role) {
+		return false
+	}
+	return mv.Role == "tenant_admin" || (g.CreatedBy != "" && g.CreatedBy == mv.MembershipID)
+}
+
+var errGitRepoManageForbidden = &apiError{http.StatusForbidden, errCodeGitRepoManageForbidden,
+	"only the repository's creator or a tenant administrator may rename or delete it"}
 
 // reposList (GET /api/internal-git/repos) lists the tenant's internal repos for
 // the RepoPicker/GitTab.
@@ -81,7 +99,7 @@ func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ store.
 	}
 	out := make([]internalRepoWire, 0, len(repos))
 	for _, g := range repos {
-		out = append(out, a.repoDTO(mv.TenantSlug, g))
+		out = append(out, a.repoDTO(mv, g))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repos": out})
 }
@@ -92,6 +110,13 @@ func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ store.
 func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	if a.publicBaseURL == "" {
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "not_configured", "internal git requires PUBLIC_BASE_URL"})
+		return
+	}
+	// The same gate as a push: a role that may not write to a repository may not bring
+	// one into existence either.
+	if !canPush(mv.Role) {
+		writeAPIErr(w, &apiError{http.StatusForbidden, errCodeGitRepoCreateForbidden,
+			"your role in this tenant may not create repositories"})
 		return
 	}
 	var body struct {
@@ -146,7 +171,7 @@ func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 	a.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.create", name, "branch="+branch)
-	writeJSON(w, http.StatusOK, a.repoDTO(mv.TenantSlug, g))
+	writeJSON(w, http.StatusOK, a.repoDTO(mv, g))
 }
 
 // enforceGitRepoQuota returns a 409 apiError when the tenant is at or over its
@@ -189,11 +214,17 @@ func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "invalid repo name"})
 		return
 	}
-	if _, exists, err := a.store.GetGitRepo(r.Context(), mv.TenantID, name); err != nil {
+	g, exists, err := a.store.GetGitRepo(r.Context(), mv.TenantID, name)
+	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
-	} else if !exists {
+	}
+	if !exists {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
+		return
+	}
+	if !canManageRepo(mv, g) {
+		writeAPIErr(w, errGitRepoManageForbidden)
 		return
 	}
 	// The bare and its LFS objects cannot be restored, so who asked is on record before
@@ -252,6 +283,10 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
 		return
 	}
+	if !canManageRepo(mv, g) {
+		writeAPIErr(w, errGitRepoManageForbidden)
+		return
+	}
 	if _, taken, err := a.store.GetGitRepo(r.Context(), mv.TenantID, newName); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -284,7 +319,7 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident s
 	}
 	in.Done(r.Context(), "to="+newName, http.StatusOK)
 	g.Name = newName
-	writeJSON(w, http.StatusOK, a.repoDTO(mv.TenantSlug, g))
+	writeJSON(w, http.StatusOK, a.repoDTO(mv, g))
 }
 
 // branches (GET /api/internal-git/repos/{name}/branches) reads the bare's refs

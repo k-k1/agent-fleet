@@ -72,6 +72,8 @@ can copy the clone URL or **"Browse"** the contents (browsing without cloning). 
 prototypes and in-team sharing.
 
 - A repository can be **renamed**, and **deleted** when no longer needed (deletion cannot be undone).
+  Only **the person who created it or a tenant administrator** can do either; on other rows the two
+  buttons are not shown.
 - The tab talks to the control plane directly, so **it works while the workspace is stopped**.
 - It also serves as a home for code that must not leave the building. Clone it like any other
   repository — "Start" → "Clone a new repository…" — by pasting the URL you copied.

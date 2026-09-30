@@ -94,9 +94,13 @@ push したブランチを共有する）、**エージェント用の非公開�
 
 **管理・閲覧の API** は、通常のセッションの本人確認とテナント解決（`X-AF-Tenant`、
 `withMembership` 経由）をそのまま使い、解決したテナントにスコープする。追加の資格情報は
-要らない。確かめるのは有効なメンバーシップだけで、**ロールは見ない**。どのメンバーでも、
-テナントのどのリポジトリでも作成・改名・削除できる（push だけではない）
-（[#1200](https://github.com/k-k1/agent-fleet/issues/1200)）。
+要らない。有効なメンバーシップに加えてロールを確かめる（`canManageRepo`）: リポジトリの
+**作成**には push できるロール（`canPush`）が要り、**改名と削除**にはさらに、そのリポジトリを
+作った人（`git_repo.created_by`、メンバーシップの ID）か `tenant_admin` であることが要る。
+それ以外は監査の依頼を書く前に `403`（`git_repo_create_forbidden` /
+`git_repo_manage_forbidden`）で断る。`created_by` の無い行を扱えるのは `tenant_admin` だけ。
+一覧はリポジトリごとに `can_manage` を返し、Console は成功する場合にだけ改名と削除を出す。
+一覧・閲覧・clone はこれまでどおり全メンバーに開いている。
 
 **git の面**は、**メンバーシップごとの決定的な HMAC トークンを使い、トークンのテーブルは
 一切持たない**: `afg_<base64url(membership id)>.<tag>`。tag はメンバーシップ ID の

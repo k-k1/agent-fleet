@@ -557,7 +557,7 @@ export const tools = {
   "git.count": "{count} 個",
   "git.available": "利用可",
   "git.internal_desc":
-    "外部アカウント不要。テナント内でリポジトリを共有できます（クローン / push 可）。認証は自動注入されるトークンで透過。",
+    "外部アカウント不要。テナント内でリポジトリを共有できます（クローン / push 可）。認証は自動注入されるトークンで透過。名前の変更と削除は、作成した人かテナント管理者だけができます。",
   "git.repo_name_placeholder": "リポジトリ名（例: my-repo）",
   "git.create": "作成",
   "git.internal_empty": "リポジトリはまだありません。上で作成してください。",
@@ -566,6 +566,7 @@ export const tools = {
   "git.internal_delete_title": "リポジトリを削除しますか？",
   "git.internal_delete_confirm": "内部リポジトリ「{name}」を削除します。取り消せません。よろしいですか？",
   "git.delete_failed": "削除に失敗しました",
+  "git.delete_failed_msg": "削除に失敗: {msg}",
   "git.deleted": "「{name}」を削除しました",
   "git.rename_failed": "リネームに失敗: {msg}",
   "git.renamed": "「{old}」→「{new}」にリネームしました",

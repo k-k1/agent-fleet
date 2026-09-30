@@ -556,7 +556,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.count": "{count}",
   "git.available": "Available",
   "git.internal_desc":
-    "No external account needed. Share repositories within the tenant (clone / push). Auth is transparent via an auto-injected token.",
+    "No external account needed. Share repositories within the tenant (clone / push). Auth is transparent via an auto-injected token. Only a repository's creator or a tenant administrator can rename or delete it.",
   "git.repo_name_placeholder": "Repository name (e.g. my-repo)",
   "git.create": "Create",
   "git.internal_empty": "No repositories yet. Create one above.",
@@ -565,6 +565,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.internal_delete_title": "Delete repository?",
   "git.internal_delete_confirm": "This deletes internal repository “{name}”. It can't be undone. Proceed?",
   "git.delete_failed": "Failed to delete.",
+  "git.delete_failed_msg": "Failed to delete: {msg}",
   "git.deleted": "Deleted “{name}”",
   "git.rename_failed": "Failed to rename: {msg}",
   "git.renamed": "Renamed “{old}” → “{new}”",
