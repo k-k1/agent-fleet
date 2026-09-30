@@ -32,7 +32,7 @@ Other tools such as Zabbix can be connected manually with the PoC steps below (t
 
 **These are experimental steps.** Manual steps for tools not yet in the "Ops & monitoring" tab (CloudWatch / Zabbix, etc.), or for when you want to connect a **Terminal (CLI) claude session** rather than chat.
 
-- Scope: Terminal (CLI) claude sessions. **A server added here by hand with `claude mcp add` does not reach chat (the assistant)**: assistants run with a strict MCP configuration that holds only the servers chosen for them. To give an assistant a tool, register the server under Settings > Connections > [MCP servers](12-settings.md#mcp-servers) with assistants as a target, then pick it in the assistant's edit form under "MCP servers (optional)". Only assistants you created can be edited; the built-in ones (SRE, Fleet Operator, Agent Fleet) cannot.
+- Scope: Terminal (CLI) claude sessions. **To give chat (an assistant) a tool, register the server under Settings > Connections > [MCP servers](12-settings.md#mcp-servers)** with assistants as a target, then pick it in the assistant's edit form under "MCP servers (optional)". Only assistants you created can be edited; the built-in ones (SRE Assistant, Fleet Operator, Agent Fleet Assistant) cannot. A server added by hand with `claude mcp add` is not a way to attach one: it never appears in that choice, and a claude-based assistant that has MCP servers or Agent Fleet tools attached runs with a strict MCP configuration that leaves it out.
 - Prerequisite: outbound connectivity from the workspace to each monitoring tool's endpoint. PyPI access is needed for `uvx`'s first fetch.
 - ⚠️ **Token handling (a PoC-only compromise)**: tokens passed via `claude mcp add -e` are **stored in plaintext** in `~/.claude.json`. Because it's inside the home volume it survives a container recreate, but never write tokens into a repository, and use **read-only, dedicated tokens only**. Fixing this plaintext problem (integrating into Connections) is the main goal of Phase 1.
 
@@ -159,6 +159,6 @@ Don't forget to revoke the tokens as well (delete the Grafana SA token and the P
 ## Known limitations (= to be resolved in Phase 1 and later)
 
 - Tokens sit in plaintext in `~/.claude.json` (→ moving to Connections + secrets.enc)
-- Servers added with `claude mcp add` are not usable from chat / the assistant (→ register them in [MCP servers](12-settings.md#mcp-servers) instead, and attach them to an assistant you created)
+- Servers added with `claude mcp add` cannot be attached to chat / an assistant (→ register them in [MCP servers](12-settings.md#mcp-servers) instead, and attach them to an assistant you created)
 - Alert bodies and logs are **input an attacker can influence**. Do not break the read-only setup. If you experiment with writes, do it explicitly in a dedicated assistant/session
 - uvx-based servers fetch from PyPI on first launch (egress required). On a memory-constrained host, don't start too many at once
