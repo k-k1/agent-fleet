@@ -546,3 +546,110 @@ func TestLiveHandle(t *testing.T) {
 		t.Fatal("LiveHandle did not return the registered handle")
 	}
 }
+
+// A first stop that arrives while turn/start is out, before the host answers "queued", takes
+// the input for the turn being started. Once the answer shows the input waits behind another
+// client's turn, the stop belongs to that turn: it goes there, and the input starts later
+// untouched (decision 1). A second stop after the answer, or a discard_queue before it, stays on
+// the input and stops it at turn/started.
+func TestFirstStopBeforeTheQueuedAnswerGoesToTheTurnAhead(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		before     agents.InterruptOpts // the stop sent while the answer is held back
+		secondStop bool                 // another stop after the answer
+		stopsInput bool                 // the input is interrupted at its turn/started
+	}{
+		{"first stop is redirected", agents.InterruptOpts{}, false, false},
+		{"second stop after the answer stops the input", agents.InterruptOpts{}, true, true},
+		{"discard_queue stays on the input", agents.InterruptOpts{DiscardQueue: true}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &threadHandle{}
+			host := newTestHandle(t, h)
+			acceptInterrupts(host)
+			release := make(chan struct{})
+			starts := make(chan msp.TurnStartParams, 1)
+			host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+				var p msp.TurnStartParams
+				json.Unmarshal(m.Params, &p)
+				starts <- p
+				<-release
+				return msp.TurnStartResult{Disposition: msp.TurnStartDispositionQueued, TurnID: p.CommandID}, nil
+			})
+			sent := make(chan bool, 1)
+			go func() {
+				queued, _ := h.SendQueued(peerInput("from a peer", "cm-peer"))
+				sent <- queued
+			}()
+			p := nextStart(t, starts)
+			if _, err := h.Interrupt(tc.before); err != nil {
+				t.Fatal(err)
+			}
+			if n := interrupts(host); n != 0 {
+				t.Fatalf("%d turn/interrupt before the host answered, want none", n)
+			}
+			close(release)
+			if !<-sent {
+				t.Fatal("the host's queued answer was not reported as queued")
+			}
+
+			// ① the stop reaches the turn ahead (unnamed: this handle never saw it start).
+			wantAhead := 0
+			if tc.before == (agents.InterruptOpts{}) {
+				wantAhead = 1
+				deadline := time.Now().Add(5 * time.Second)
+				for interrupts(host) == 0 {
+					if time.Now().After(deadline) {
+						t.Fatal("the first stop never reached the turn running ahead of the input")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				for _, m := range host.Received() {
+					if m.Method == msp.MethodTurnInterrupt {
+						if got := interruptTarget(t, m); got != "" {
+							t.Fatalf("redirected stop targeted %q, want the host's running turn", got)
+						}
+					}
+				}
+			}
+			if tc.secondStop {
+				res, err := h.Interrupt(agents.InterruptOpts{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.Stop != agents.StopSecond {
+					t.Fatalf("stop after the answer = %s, want second (the redirect opened an episode)", res.Stop)
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+			if n := interrupts(host); n != wantAhead {
+				t.Fatalf("%d turn/interrupt before the input started, want %d", n, wantAhead)
+			}
+
+			// ② the input starts; ③ a stop still on it lands the moment it does.
+			host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})
+			final, finalSt := msp.TurnTerminalCompleted, agents.TurnCompleted
+			if tc.stopsInput {
+				waitEvent(t, h, agents.TurnInterrupting)
+				host.WaitFor(func(m msptest.Message) bool {
+					return m.Method == msp.MethodTurnInterrupt && interruptTarget(t, m) == p.CommandID
+				})
+				final, finalSt = msp.TurnTerminalCancelled, agents.TurnCancelled
+			} else {
+				waitEvent(t, h, agents.TurnRunning)
+			}
+			completed(t, h, host, p.CommandID, final, finalSt)
+			time.Sleep(50 * time.Millisecond)
+			want := wantAhead
+			if tc.stopsInput {
+				want++
+			}
+			if n := interrupts(host); n != want {
+				t.Fatalf("%d turn/interrupt in all, want %d", n, want)
+			}
+			if !settled(h) {
+				t.Fatal("the queue is not settled after the input's turn ended")
+			}
+		})
+	}
+}

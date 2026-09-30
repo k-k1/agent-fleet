@@ -908,6 +908,7 @@ func (h *threadHandle) launch(t *agents.Taken, id string) (queued bool, err erro
 	h.mu.Lock()
 	h.calling = false
 	var stop bool
+	redirectTo, redirect := "", false
 	if err == nil && h.starting == id {
 		switch disp {
 		case msp.TurnStartDispositionSteered:
@@ -918,13 +919,20 @@ func (h *threadHandle) launch(t *agents.Taken, id string) (queued bool, err erro
 			h.tq().Settle(t)
 		case msp.TurnStartDispositionQueued:
 			// Held in the host's queue behind a turn this handle did not start: queued, not the
-			// turn being stopped, so a first stop lets it continue (decision 1).
-			h.tq().Hold(t, true)
+			// turn being stopped, so a first stop lets it continue (decision 1). A first stop that
+			// came before this answer took the input for the turn being started; it belongs to
+			// the turn running ahead of it, and goes there the way Interrupt stops that turn.
+			if h.tq().Hold(t, true) {
+				redirect, redirectTo = true, h.turnID
+			}
 		}
 	}
 	h.mu.Unlock()
 	if stop {
 		_ = h.interruptTurn("")
+	}
+	if redirect {
+		_ = h.interruptTurn(redirectTo)
 	}
 	return disp == msp.TurnStartDispositionQueued, err
 }
