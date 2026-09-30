@@ -51,6 +51,9 @@ type fakeBrowserCDP struct {
 	// caused it has returned. This hook is the only way to pin that ordering down
 	// deterministically instead of racing for it.
 	onCall map[string]func()
+	// navigateErrorText is Page.navigate's errorText: how Chromium reports a
+	// navigation that failed or was aborted without committing.
+	navigateErrorText string
 }
 
 func newFakeBrowserCDP() *fakeBrowserCDP {
@@ -92,6 +95,10 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 			sessionID = f.attachSessionID
 		}
 		response = map[string]any{"sessionId": sessionID}
+	case "Page.navigate":
+		if f.navigateErrorText != "" {
+			response = map[string]any{"errorText": f.navigateErrorText}
+		}
 	case "Page.getFrameTree":
 		response = map[string]any{"frameTree": map[string]any{"frame": map[string]any{"id": "frame-1"}}}
 	case "Page.getLayoutMetrics":

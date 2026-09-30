@@ -212,7 +212,24 @@ func (m *browserManager) Create(req browserCreateRequest) (browserPageResponse, 
 		p.loaderID = nav.LoaderID
 	}
 	p.mu.Unlock()
-	if nav.ErrorText != "" {
+	if nav.ErrorText == "net::ERR_ABORTED" {
+		// Aborted without committing (a 204, a denied download): the tab is
+		// still on its about:blank, a live document, so it reads ready like any
+		// aborted navigation. p.url keeps the requested target so a reload
+		// retries it. A loader other than this navigation's or the committed
+		// one belongs to a newer navigation, whose own events end it.
+		p.mu.Lock()
+		restore := p.loaderID == nav.LoaderID || p.loaderID == p.committedLoaderID
+		if restore {
+			p.topRequestID = ""
+			p.loaderID = p.committedLoaderID
+			p.unreachable = p.committedUnreachable
+		}
+		p.mu.Unlock()
+		if restore {
+			p.markLoaded()
+		}
+	} else if nav.ErrorText != "" {
 		p.mu.Lock()
 		p.unreachable = true
 		p.mu.Unlock()
