@@ -551,3 +551,50 @@ func waitPumpGone(t *testing.T, h *threadHandle) {
 		}
 	}
 }
+
+// DropHandle landing after the pump committed an input but before runTurn installed its waiter
+// finds no turnEnd to end. runTurn must still send the committed input and deliver its pending
+// stop, and then return rather than wait on a handle nobody routes to (found in review of
+// #1341).
+func TestDropHandleBeforeTheTurnWaiterIsInstalled(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-drop-before-waiter")
+	registerCodexTestHandle(t, h)
+	// The pump's state right after its commit, before it calls runTurn.
+	h.mu.Lock()
+	h.tq().Accept(memberInput("in flight", "af_before_waiter"))
+	taken := h.tq().Take()
+	h.tq().Commit(taken)
+	h.running, h.pumping = true, true
+	gen := h.gen
+	h.mu.Unlock()
+
+	DropHandle(h.name)
+	done := make(chan struct{})
+	go func() { h.runTurn(taken, gen); close(done) }()
+	t.Cleanup(func() { h.runtimeLost(); <-done })
+	waitCodexCalls(t, m, "turn/start", 1)
+	waitCodexCalls(t, m, "turn/interrupt", 1)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runTurn outlived DropHandle when the teardown preceded its waiter")
+	}
+}
+
+// A turn end already in the buffer is kept: DropHandle's send is non-blocking and does not
+// overwrite what the dispatcher or runtimeLost delivered first.
+func TestDropHandleKeepsAnAlreadyBufferedTurnEnd(t *testing.T) {
+	_, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-drop-buffered")
+	registerCodexTestHandle(t, h)
+	end := make(chan agents.TurnState, 1)
+	end <- agents.TurnCompleted
+	h.mu.Lock()
+	h.turnEnd = end
+	h.mu.Unlock()
+	DropHandle(h.name)
+	if got := <-end; got != agents.TurnCompleted {
+		t.Fatalf("buffered end = %s, want completed", got)
+	}
+}
