@@ -139,8 +139,9 @@ const SCENES = [
     // The image-generation studio (ADR 0081, ADR 0100): the bound claude session's mirror on
     // the left, the studio's draft in the middle (the negative locked), and the trial slot, a
     // batch mid-run, the results and the studio's pictures on the right. The stub's second read
-    // of the studio carries one more agent edit, so the settle outlasts the pane's 2 s poll and
-    // the prompt field is outlined as the agent's.
+    // of the studio carries one more agent edit (dim light, lanterns), which the pane only picks up
+    // on its 2 s poll; the shot waits for it, so the prompt field is outlined as the agent's and the
+    // chat's last edit card is matched to its history entry.
     name: "imagegen",
     sections: FOCUS_TREE,
     width: 1800,
@@ -150,7 +151,8 @@ const SCENES = [
       colRatios: [1],
       activeId: "p0",
     },
-    settle: 3500,
+    ready: `[...document.querySelectorAll("textarea")].some((t) => /lanterns/.test(t.value)) &&
+      !/どの編集かを特定できません|Could not tell which edit this was/.test(document.body.innerText)`,
   },
   {
     // The file viewer, for the features page on agent-fleet.org: a Markdown design note rendered
