@@ -97,6 +97,14 @@ if [ "$DO_NATIVE" = 1 ]; then
     aarch64 | arm64) ARCH=arm64 ;;
     *) echo "ERROR: --native builds for amd64 or arm64 hosts only (this is $(uname -m))" >&2; exit 2 ;;
   esac
+  # This host's af-cp/bwrap paired with another architecture's rootfs downloads,
+  # verifies and extracts fine, then dies with Exec format error at workspace start
+  # on the user's machine. A hand-delivered C has no publish-time check to stop it,
+  # so refuse here — before the docker builds below spend minutes.
+  if [ -n "$ROOTFS_JSON" ] && ! grep -q "\"url\": \".*-linux-$ARCH\.tar\.zst\"" "$ROOTFS_JSON"; then
+    echo "ERROR: $ROOTFS_JSON names a rootfs for another architecture (this host builds $ARCH)" >&2
+    exit 2
+  fi
   PKG_NAME="agent-fleet-native-$VERSION-linux-$ARCH"
   NATIVE_DIR="$HERE/native"
   WORK="$DIST/.native-work"
@@ -138,11 +146,6 @@ if [ "$DO_NATIVE" = 1 ]; then
   if [ -n "$ROOTFS_JSON" ]; then
     echo "==> [native] reuse rootfs manifest: $ROOTFS_JSON"
     cp "$ROOTFS_JSON" "$OUT/rootfs.json"
-    # This host's af-cp/bwrap paired with another architecture's rootfs downloads,
-    # verifies and extracts fine, then dies with Exec format error at workspace start
-    # on the user's machine. A hand-delivered C has no publish-time check to stop it.
-    grep -q "\"url\": \".*-linux-$ARCH\.tar\.zst\"" "$OUT/rootfs.json" \
-      || { echo "ERROR: $ROOTFS_JSON names a rootfs for another architecture (this host builds $ARCH)" >&2; exit 2; }
   else
     WS_NATIVE_IMAGE="agent-fleet/workspace:native-$VERSION"
     echo "==> [native] build lean rootfs image ($WS_NATIVE_IMAGE)"
