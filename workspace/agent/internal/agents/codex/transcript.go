@@ -263,8 +263,10 @@ func (p *rolloutParser) feed(ln []byte) {
 			p.noteLifecycle("task_complete", ev.Timestamp)
 			p.askOpenFrom = len(p.askCalls)
 		case "turn_aborted":
-			// An interrupted turn (Esc) writes its question's output too; this only closes
-			// what a turn left with none.
+			// Esc fires no Stop hook (measured 0.159.0), so this is the only record that an
+			// interrupted turn is over. An interrupted question writes its own output too;
+			// askOpenFrom only closes what a turn left with none.
+			p.noteLifecycle("turn_aborted", ev.Timestamp)
 			p.askOpenFrom = len(p.askCalls)
 		case "token_count":
 			if in, out, read, win, ok := tokenUsage(ev.Payload); ok && p.lastAssistant >= 0 {
@@ -1629,13 +1631,15 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	return td, true
 }
 
-// rolloutCompletedAfter reports whether codex recorded completion of the current
-// turn after the status store was optimistically moved to working. Stop hooks are
-// the primary state source, but some codex versions occasionally leave that hook
-// unfired even though the TUI has returned to its composer. The rollout lifecycle
-// is an independent, append-only completion signal we can use to heal that stale
-// working state. Requiring a timestamp at/after workingSince prevents the previous
-// turn's task_complete from making a newly-submitted prompt look idle.
+// rolloutCompletedAfter reports whether codex recorded the end of the current turn —
+// task_complete, or turn_aborted for an Esc interrupt — after the status store was
+// optimistically moved to working. Stop hooks are the primary state source, but some
+// codex versions occasionally leave that hook unfired even though the TUI has returned
+// to its composer, and an interrupt never fires it at all. The rollout lifecycle is an
+// independent, append-only end-of-turn signal we can use to heal that stale working
+// state. Requiring a timestamp at/after workingSince prevents the previous turn's end
+// from making a newly-submitted prompt look idle; a later task_started replaces the
+// lifecycle outright.
 func rolloutCompletedAfter(m session.Meta, workingSince time.Time) bool {
 	slot := session.UUID(m.Dir, m.Name)
 	path := rolloutPath(sids.Read(slot))
@@ -1647,7 +1651,8 @@ func rolloutCompletedAfter(m session.Meta, workingSince time.Time) bool {
 	// was one of the two paths that kept the Agent busy (rolloutcache.go).
 	done := false
 	withRollout(path, slot, func(p *rolloutParser) {
-		done = p.lifecycle == "task_complete" && !p.lifecycleAt.IsZero() && !p.lifecycleAt.Before(workingSince)
+		ended := p.lifecycle == "task_complete" || p.lifecycle == "turn_aborted"
+		done = ended && !p.lifecycleAt.IsZero() && !p.lifecycleAt.Before(workingSince)
 	})
 	return done
 }
