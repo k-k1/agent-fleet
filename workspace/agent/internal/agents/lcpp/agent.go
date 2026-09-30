@@ -129,15 +129,12 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	inter := h.inter
 	mode := h.settings.Mode
 	todos := h.todos
-	var queued []string
-	for _, in := range h.queue {
-		queued = append(queued, in.Prompt)
-	}
+	queued, items, discards := h.q.Texts(), h.q.Items(), h.q.Discards()
 	h.mu.Unlock()
 	if inter != nil {
 		td.Pending = inter.Questions
 	}
-	td.Queued = queued
+	td.Queued, td.QueuedItems, td.Discards = queued, items, discards
 	if mode != "" {
 		td.Mode = mode
 	} else {

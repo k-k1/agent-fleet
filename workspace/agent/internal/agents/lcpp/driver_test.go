@@ -559,11 +559,12 @@ func queueLen(h agents.ThreadHandle) int {
 	th := h.(*threadHandle)
 	th.mu.Lock()
 	defer th.mu.Unlock()
-	return len(th.queue)
+	return th.q.Len()
 }
 
 // A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
-// the next turn, while the user's own queued follow-up still goes with the stop.
+// the next turn. The member's own queued follow-up continues too (ADR 0105 decision 1), and a
+// second stop discards it and hands it back (decisions 2 and 4).
 func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	testHome(t)
 	var mu sync.Mutex
@@ -579,7 +580,7 @@ func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 	qs := h.(agents.QueueingSender)
-	queued, err := qs.SendQueued(agents.TurnInput{Prompt: "stuck"})
+	queued, err := qs.SendQueued(member("m1", "stuck"))
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -587,34 +588,49 @@ func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 		t.Fatal("input to an idle session was reported as queued")
 	}
 	<-started
-	queued, err = qs.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	queued, err = qs.SendQueued(peer("m2", "from a peer"))
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if !queued {
 		t.Fatal("input behind a running turn was not reported as queued")
 	}
-	if err := h.Steer(agents.TurnInput{Prompt: "own follow-up"}); err != nil {
+	if err := h.Steer(member("m3", "own follow-up")); err != nil {
 		t.Fatalf("Steer: %v", err)
 	}
-	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
-		t.Fatalf("Interrupt: %v", err)
+	if res, err := h.Interrupt(agents.InterruptOpts{}); err != nil || res.Stop != agents.StopFirst {
+		t.Fatalf("Interrupt = %+v, %v; want a first stop", res, err)
 	}
 	select {
 	case <-started:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the peer message did not start a turn after the stop")
 	}
-	// The kept turn's round trip is parked in sendDelay: anything still queued now is something
-	// the stop failed to discard.
-	if n := queueLen(h); n != 0 {
-		t.Errorf("queue after the kept turn started holds %d entries, want the own follow-up discarded", n)
+	// The kept turn's round trip is parked in sendDelay: the own follow-up must still be
+	// queued behind it.
+	if n := queueLen(h); n != 1 {
+		t.Errorf("queue after the kept turn started holds %d entries, want the own follow-up kept", n)
 	}
 	mu.Lock()
 	got := append([]string(nil), prompts...)
 	mu.Unlock()
 	if len(got) != 2 || got[1] != "from a peer" {
 		t.Errorf("prompts = %q, want the peer message as the turn after the stop", got)
+	}
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil || res.Stop != agents.StopSecond || res.Discard == nil ||
+		len(res.Discard.Items) != 1 || res.Discard.Items[0].Text != "own follow-up" {
+		t.Fatalf("second Interrupt = %+v, %v; want the own follow-up discarded and returned", res, err)
+	}
+	waitState(t, h, agents.TurnCancelled)
+	select {
+	case <-started:
+		t.Error("the discarded follow-up started a turn")
+	case <-time.After(200 * time.Millisecond):
+	}
+	td, ok := agentImpl{}.Transcript(m)
+	if !ok || len(td.Discards) != 1 || td.Discards[0].ID != res.Discard.ID {
+		t.Errorf("messages payload discards = %+v (ok %v), want the second stop's", td.Discards, ok)
 	}
 }
 
@@ -638,7 +654,7 @@ func TestDriverAbortManagedDiscardsKeptInput(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	<-started
-	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+	if err := h.Send(peer("m2", "from a peer")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	AbortManaged()
@@ -675,7 +691,7 @@ func TestDriverDropHandleDiscardsKeptInput(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	<-started
-	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+	if err := h.Send(peer("m2", "from a peer")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	done := dropHandle(m.Name)

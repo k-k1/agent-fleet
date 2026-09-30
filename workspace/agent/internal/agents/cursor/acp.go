@@ -147,6 +147,14 @@ func (c *acpClient) write(v any) error {
 // (a turn legitimately runs for minutes/hours — interrupt or child death
 // unblocks it).
 func (c *acpClient) call(method string, params any, timeout time.Duration) (json.RawMessage, error) {
+	return c.callWritten(method, params, timeout, nil)
+}
+
+// callWritten is call that runs written once the request is on the child's stdin, before the
+// wait. session/prompt answers only when the turn ends, so this is the only point at which the
+// driver can say the runtime has the input (ADR 0105 decision 3). written is not run when the
+// write fails. It runs on the caller's goroutine, ahead of the wait, so it must not block.
+func (c *acpClient) callWritten(method string, params any, timeout time.Duration, written func()) (json.RawMessage, error) {
 	c.mu.Lock()
 	c.nextID++
 	id := c.nextID
@@ -160,6 +168,9 @@ func (c *acpClient) call(method string, params any, timeout time.Duration) (json
 		delete(c.pending, id)
 		c.mu.Unlock()
 		return nil, err
+	}
+	if written != nil {
+		written()
 	}
 	var timer <-chan time.Time
 	if timeout > 0 {
