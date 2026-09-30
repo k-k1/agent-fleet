@@ -1,4 +1,4 @@
-//go:build clicontract
+//go:build contract
 
 // opencode TUI contract test — the drift alarm for the pane-scraping probes, which had
 // ZERO test coverage: paneMode (session_io.go) and the footer string it anchors on.
@@ -14,7 +14,7 @@
 // testing without the flag reproduces a bug that does not exist in the fleet (verified:
 // 1.17.13 / 1.17.18 / 1.18.3 all render identically, with and without the flag).
 //
-//	go test -tags clicontract -run TestContractOpencodeTUI ./
+//	go test -tags contract -run TestContractOpencodeTUI ./
 package main
 
 import (
@@ -137,7 +137,7 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 // back to running with no af tools at all, which is exactly the class of failure this
 // test exists to catch loudly.
 //
-//	go test -tags clicontract -run TestContractOpencodeEnvConfig ./
+//	go test -tags contract -run TestContractOpencodeEnvConfig ./
 func TestContractOpencodeEnvConfig(t *testing.T) {
 	requireBins(t, "opencode")
 	home, dir := t.TempDir(), t.TempDir()
@@ -186,7 +186,7 @@ func TestContractOpencodeEnvConfig(t *testing.T) {
 // the --conv-less entry would win and every opencode assistant would stop reporting back
 // (docs/log/30), with nothing else looking broken.
 //
-//	go test -tags clicontract -run TestContractOpencodeConfigPrecedence ./
+//	go test -tags contract -run TestContractOpencodeConfigPrecedence ./
 func TestContractOpencodeConfigPrecedence(t *testing.T) {
 	requireBins(t, "opencode")
 	home, dir := t.TempDir(), t.TempDir()

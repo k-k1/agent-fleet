@@ -1,4 +1,4 @@
-//go:build manuallive
+//go:build contract_manual
 
 package harness
 
@@ -10,7 +10,7 @@ package harness
 // live_manual_test.go (AF_LCPP_LIVE_BASE / AF_LCPP_LIVE_TOKEN), never part of
 // `go test ./...`, never touches a real GPU box unless explicitly invoked:
 //
-//	go test ./internal/harness/ -tags manuallive -run TestManualLiveEngineContract -v -timeout 15m
+//	go test ./internal/harness/ -tags contract_manual -run TestManualLiveEngineContract -v -timeout 15m
 //
 // What this pins (each measured live against the dev deployment's "llm" engine,
 // b10830-465e49b9c, 2026-09-21 — see this file's own t.Logf output for the version a

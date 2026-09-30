@@ -1,4 +1,4 @@
-//go:build clicontract
+//go:build contract
 
 // opencode CLI contract tests — the drift alarm for the store and app-server contracts
 // this package reads. Unlike the rest of the package's tests (synthetic `CREATE TABLE`
@@ -18,7 +18,7 @@
 // Tier A (this file, default): deterministic, no LLM turn. Tier B (live_contract_test.go):
 // one free-model turn; flaky by nature (external service) and gated + non-blocking.
 //
-//	go test -tags clicontract ./internal/agents/opencode/
+//	go test -tags contract ./internal/agents/opencode/
 package opencode
 
 import (

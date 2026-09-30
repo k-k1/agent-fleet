@@ -1,4 +1,4 @@
-//go:build tui_contract
+//go:build contract
 
 // Live TUI contract probe for plan approval - Tier 2 (run from claude-tui-contract.yml).
 //

@@ -57,7 +57,7 @@ jobs:
         working-directory: workspace/agent
         env:
           E2E_REQUIRE: "1"
-        run: go test -tags tui_contract -run '^TestKiroTUIMirrorContract$' -count=1 -v -timeout 15m .
+        run: go test -tags contract -run '^TestKiroTUIMirrorContract$' -count=1 -v -timeout 15m .
       - name: remember successfully tested latest
         if: success() && inputs.cli_version == 'latest'
         env:

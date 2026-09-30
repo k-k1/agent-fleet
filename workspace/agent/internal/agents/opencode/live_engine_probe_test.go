@@ -1,10 +1,10 @@
-//go:build clicontract
+//go:build contract
 
 // Tier B, like live_contract_test.go: this one shells out to the REAL opencode binary, which
 // is not on every machine and is not what the unit tests are for. It is the launch-menu half
 // of ADR 0071 P0's definition of done, and the only way to check it is to ask the CLI.
 //
-//	go test -tags clicontract -run TestLiveOpencodeListsTheEngineModel ./internal/agents/opencode/
+//	go test -tags contract -run TestLiveOpencodeListsTheEngineModel ./internal/agents/opencode/
 package opencode
 
 import (

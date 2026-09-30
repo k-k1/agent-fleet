@@ -1,8 +1,8 @@
-//go:build driftlive
+//go:build contract_live
 
-// codex CLI drift detection (Tier 2, and it SPENDS REAL TURNS). The `driftlive` build tag
-// keeps this out of a plain `go test ./...` and out of Tier 1 (tag `drift`); in CI it runs
-// only when workflow_dispatch's live input is set (live-drift in codex-contract.yml).
+// codex CLI drift detection (Tier 2, and it SPENDS REAL TURNS). The `contract_live` build
+// tag keeps this out of a plain `go test ./...` and out of Tier 1 (tag `contract`); in CI it
+// runs only when workflow_dispatch's live input is set (live-drift in codex-contract.yml).
 //
 // Tier 1 (drift_test.go) covers what can be settled before reaching the API — free and
 // unauthenticated. This file owns only the four things that cannot be observed without

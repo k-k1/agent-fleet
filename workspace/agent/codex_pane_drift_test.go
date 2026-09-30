@@ -1,6 +1,6 @@
-//go:build drift
+//go:build contract
 
-// Drift detection for the codex TUI pane (Tier 1). The `drift` build tag keeps it out of
+// Drift detection for the codex TUI pane (Tier 1). The `contract` build tag keeps it out of
 // an ordinary `go test ./...`, since it needs the real codex binary and a real tmux.
 // Sibling: internal/agents/codex/drift_test.go (features / config / hooks).
 //

@@ -1,7 +1,7 @@
-//go:build drift
+//go:build contract
 
 // Tier 1 drift detection for the wording of a plan verdict (the ExitPlanMode tool_result).
-// The `drift` build tag keeps it out of a normal `go test ./...` — it needs a real CLI or
+// The `contract` build tag keeps it out of a normal `go test ./...` — it needs a real CLI or
 // real transcripts.
 //
 // Why it exists: the approved/rejected badge is produced by reading wording claude returns

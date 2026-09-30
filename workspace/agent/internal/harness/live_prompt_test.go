@@ -7,7 +7,7 @@ import (
 )
 
 // wantParallelSystemPrompt and wantParallelTaskZero are the exact historical strings that used
-// to be inlined directly in TestManualLiveAgenticSession (live_manual_test.go, manuallive-tagged
+// to be inlined directly in TestManualLiveAgenticSession (live_manual_test.go, contract_manual-tagged
 // and therefore not exercised by a normal `go test ./...`). Comparing against a second, literal
 // copy here — rather than only checking for the presence/absence of a substring — is what makes
 // this test able to catch an accidental change to the default (parallel=true) path, which must

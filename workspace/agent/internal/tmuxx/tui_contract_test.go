@@ -1,4 +1,4 @@
-//go:build tui_contract
+//go:build contract
 
 // claude TUI footer contract probe (P1).
 //
@@ -14,7 +14,7 @@
 // make it a test that does not exercise the real code, repeating the failure it is meant to
 // catch. This is the only place the real functions can be called directly. CI installs Go,
 // tmux and claude on the runner through the shared setup action and runs
-// `go test -tags tui_contract ./internal/tmuxx/` (claude-tui-contract.yml); the full Workspace
+// `go test -tags contract ./internal/tmuxx/` (claude-tui-contract.yml); the full Workspace
 // image is not needed.
 //
 // Why `claude -p` will not do: the existing L4 (e2e/live_test.go) uses headless -p, which

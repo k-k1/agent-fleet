@@ -1,7 +1,9 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
+import { usePrefersReducedMotion } from "../../../lib/device.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
+import { useTypewriter } from "../useTypewriter.ts";
 import { PlanBlock } from "../transcript/blocks.tsx";
 import { PendingQuestions } from "../PendingQuestions.tsx";
 import { questionDraftKey } from "../questionDraft.ts";
@@ -246,21 +248,34 @@ export function QuestionCard({
  *  at the button. */
 /** The reply the agent is still writing (#1250): what it has streamed so far and the transcript
  *  does not hold yet. The Agent stops sending it the moment the real turn lands, which then takes
- *  its place, so it carries no actions of its own. */
+ *  its place, so it carries no actions of its own.
+ *
+ *  `mode` is the "stream replies" setting: "lines" shows each poll's text as it comes, "typewriter"
+ *  types the new text out between polls (#1274, useTypewriter) — through MarkdownView's streaming
+ *  render, which is the cheap one (no link wiring, no copy buttons, no mermaid) and ends in a
+ *  caret, since it runs once per frame. Reduced motion turns typewriter into lines. */
 export function LiveReplyCard({
   agentName,
   text,
   repo,
   onOpenFile,
+  mode = "lines",
 }: {
   agentName: string;
   text: string;
   repo: string | null;
   onOpenFile: (path: string, line?: number, column?: number) => void;
+  mode?: "lines" | "typewriter";
 }) {
+  const reducedMotion = usePrefersReducedMotion();
+  const typewriter = mode === "typewriter" && !reducedMotion;
+  const host = useRef<HTMLDivElement>(null);
+  const shown = useTypewriter(text, typewriter, host);
   return (
     <PendingTurn agentName={agentName} note={tr("mirror.writing")}>
-      <MarkdownView source={text} repo={repo} onOpenFile={onOpenFile} />
+      <div ref={host} className={typewriter ? "mirror-live typewriter" : "mirror-live"}>
+        <MarkdownView source={shown} repo={repo} onOpenFile={onOpenFile} streaming={typewriter} />
+      </div>
     </PendingTurn>
   );
 }

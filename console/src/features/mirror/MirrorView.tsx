@@ -321,8 +321,10 @@ export function MirrorView({
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
   // The reply claude is still writing (#1250), sent by the Agent only while a turn runs and only
   // when this poll asked for it (?live=1). Only claude's route streams it; the per-kind setting
-  // turns it off. Read through a ref inside the poll loop, which outlives renders.
-  const liveOn = sessionMeta?.kind === "claude" && streamReplies(settings, sessionMeta?.kind);
+  // turns it off. Line by line and typewriter (#1274) differ only in how LiveReplyCard shows it:
+  // the request is the same. Read through a ref inside the poll loop, which outlives renders.
+  const liveMode = sessionMeta?.kind === "claude" ? streamReplies(settings, sessionMeta?.kind) : "off";
+  const liveOn = liveMode !== "off";
   const liveOnRef = useRef(liveOn);
   liveOnRef.current = liveOn;
   const [liveText, setLiveText] = useState("");
@@ -2271,7 +2273,13 @@ export function MirrorView({
         {liveText && busy && !pending && !pendingPlan && !pendingPerm && !pendingApproval && (
           // Above the typing row: that row keeps the stop button and says the turn is still
           // running; this is what the turn has written so far.
-          <LiveReplyCard agentName={agentName} text={liveText} repo={sessionMeta?.repo ?? null} onOpenFile={openFile} />
+          <LiveReplyCard
+            agentName={agentName}
+            text={liveText}
+            repo={sessionMeta?.repo ?? null}
+            onOpenFile={openFile}
+            mode={liveMode === "typewriter" ? "typewriter" : "lines"}
+          />
         )}
         {stopRowVisible({ managed, busy, queued: queuedCount > 0, question: !!pending, approval: !!pendingApproval }) && (
           <TypingRow

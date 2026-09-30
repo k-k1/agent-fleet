@@ -36,27 +36,40 @@ describe("expandThinking", () => {
 });
 
 // "Stream replies" (#1250) is kind-scoped like expandThinking but defaults the other way: an
-// unset kind streams, and only an explicit false turns it off. A broken stored value must not
-// switch the feature off behind the user's back.
+// unset kind streams. Since #1274 the value is a mode: typewriter for an unset kind, and the
+// booleans it stored as an on/off switch carry over (false stays off, true is typewriter). A
+// broken stored value must not switch the feature off behind the user's back.
 const withStream = (map: unknown): Settings =>
   ({ ...getSettings(), streamReplies: map } as Settings);
 
 describe("streamReplies", () => {
-  it("defaults to on", () => {
-    expect(streamReplies(withStream({}), "claude")).toBe(true);
-    expect(streamReplies(withStream(undefined), "claude")).toBe(true);
+  it("defaults to typewriter", () => {
+    expect(streamReplies(withStream({}), "claude")).toBe("typewriter");
+    expect(streamReplies(withStream(undefined), "claude")).toBe("typewriter");
   });
 
-  it("is off only for an explicit false, per kind", () => {
+  it("reads the three modes, per kind", () => {
+    const s = withStream({ claude: "lines", codex: "off", opencode: "typewriter" });
+    expect(streamReplies(s, "claude")).toBe("lines");
+    expect(streamReplies(s, "codex")).toBe("off");
+    expect(streamReplies(s, "opencode")).toBe("typewriter");
+  });
+
+  it("carries the old switch over: false is off, true is typewriter", () => {
     const s = withStream({ claude: false, codex: true });
-    expect(streamReplies(s, "claude")).toBe(false);
-    expect(streamReplies(s, "codex")).toBe(true);
-    expect(streamReplies(withStream({ claude: "no" }), "claude")).toBe(true);
+    expect(streamReplies(s, "claude")).toBe("off");
+    expect(streamReplies(s, "codex")).toBe("typewriter");
+  });
+
+  it("treats a broken value as the default", () => {
+    expect(streamReplies(withStream({ claude: "no" }), "claude")).toBe("typewriter");
+    expect(streamReplies(withStream({ claude: 1 }), "claude")).toBe("typewriter");
+    expect(streamReplies(withStream("x"), "claude")).toBe("typewriter");
   });
 
   it("is off when there is no kind to read it for", () => {
-    expect(streamReplies(withStream({}), undefined)).toBe(false);
-    expect(streamReplies(withStream({}), "")).toBe(false);
+    expect(streamReplies(withStream({}), undefined)).toBe("off");
+    expect(streamReplies(withStream({}), "")).toBe("off");
   });
 });
 
