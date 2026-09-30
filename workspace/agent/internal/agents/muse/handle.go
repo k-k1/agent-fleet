@@ -70,11 +70,24 @@ type threadHandle struct {
 	state     agents.TurnState
 	turnID    string // the running turn, for steer's expectedTurnId
 
-	running  bool
-	queue    []agents.TurnInput
-	settings agents.ThreadSettings
-	inter    *agents.Interaction
-	pending  *pendingAsk // what inter is waiting on, in muse's own vocabulary
+	running bool
+	// runGen moves every time the host reports a turn running, so the idle fallback
+	// (settleIdle) closes only the turn it saw go idle.
+	runGen uint64
+	queue  []agents.TurnInput
+	// starting is the commandId of a turn/start the host has not yet reported as turn/started,
+	// and the handle counts as busy until it does. The ack comes back before turn/started
+	// (measured on 1.4.0: ~30 ms apart), and a turn/start sent in that gap lands in the host's
+	// own queue (disposition "queued"), which this driver neither shows nor stops.
+	starting string
+	// startingKeep is the KeepOnInterrupt of the input behind starting, and stopStarting records
+	// a stop that arrived before its turn existed: turn/started then interrupts it at once, so
+	// input already out of h.queue is still subject to the stop.
+	startingKeep bool
+	stopStarting bool
+	settings     agents.ThreadSettings
+	inter        *agents.Interaction
+	pending      *pendingAsk // what inter is waiting on, in muse's own vocabulary
 	// settledUserInputID and settledApprovalID block re-deliveries after an answer; one per
 	// channel is enough because IDs are unique per session — only the last settled prompt can
 	// arrive again before the host sends userInput/settled or approval/resolved.
@@ -180,6 +193,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	h.state = agents.TurnCompleted
 	h.mu.Unlock()
 	go h.watch(cmd, tail, cl)
+	go h.pump() // what a lost host left queued, in order, ahead of whatever Resume is for
 	return nil
 }
 
@@ -312,13 +326,20 @@ func (h *threadHandle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *msp.Cli
 	<-cl.Closed()
 	_ = cmd.Wait()
 	tail.Release()
+	h.hostLost(cl)
+}
+
+// hostLost is watch's verdict once the child behind cl is gone.
+func (h *threadHandle) hostLost(cl *msp.Client) {
 	h.mu.Lock()
 	if h.cl != cl {
 		h.mu.Unlock() // already replaced by a newer spawn
 		return
 	}
-	wasRunning := h.running
+	wasRunning := h.running || h.starting != ""
+	// The queue stays: the next Resume respawns the host and spawn drains it, in order.
 	h.alive, h.running, h.cl = false, false, nil
+	h.starting, h.stopStarting = "", false
 	h.mu.Unlock()
 	if wasRunning {
 		// A turn cut off by a dead host is aborted, not failed: a resend fixes it, and the
@@ -345,11 +366,27 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		}
 		h.mu.Lock()
 		h.turnID, h.running = p.TurnID, true
+		h.runGen++
 		h.state = agents.TurnRunning
 		h.turnModel = h.model
+		// An empty commandId is a host that does not say whose turn this is; the turn is
+		// running either way, so it is taken as ours rather than leaving the handle busy.
+		stop := false
+		if h.starting != "" && (p.CommandID == "" || p.CommandID == h.starting || p.TurnID == h.starting) {
+			stop = h.stopStarting
+			h.starting, h.stopStarting = "", false
+		}
+		if stop {
+			h.state = agents.TurnInterrupting
+		}
+		st := h.state
 		h.mu.Unlock()
 		agents.MarkTurnStart(h.slotSid)
-		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+		h.emit(agents.Event{Kind: "turn_state", TurnState: st})
+		if stop {
+			// Off the read goroutine: interrupt waits for the host's answer.
+			go func() { _ = h.interruptTurn(p.TurnID) }()
+		}
 
 	case msp.NotificationTurnCompleted:
 		var p msp.TurnCompletedParams
@@ -539,12 +576,17 @@ func (h *threadHandle) onStatus(p msp.SessionStatusChangedParams) {
 	case p.Status == msp.SessionStatusRunning:
 		h.state = agents.TurnRunning
 		h.running = true
+		h.runGen++
 	case p.Status == msp.SessionStatusIdle:
 		// Idle closes a turn only when one was running; a session sitting idle from the
-		// start has no turn to end.
+		// start has no turn to end. It shows the turn as done but does not release the queue:
+		// the host sends idle BEFORE turn/completed (measured on 1.4.0, same millisecond), so
+		// releasing here would start the next turn ahead of the completion that ends this one.
+		// settleIdle is the fallback for a completion that never comes.
 		if h.running {
-			h.running = false
 			h.state = agents.TurnCompleted
+			gen := h.runGen
+			time.AfterFunc(idleSettleGrace, func() { h.settleIdle(gen) })
 		}
 	case p.Status == msp.SessionStatusNotLoaded:
 		h.state = agents.TurnUnknown
@@ -552,6 +594,26 @@ func (h *threadHandle) onStatus(p msp.SessionStatusChangedParams) {
 	st := h.state
 	h.mu.Unlock()
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
+}
+
+// idleSettleGrace is how long an idle status waits for its turn/completed before settleIdle
+// closes the turn by itself. The two arrive together on a healthy host, so this only bounds
+// how long a lost completion can hold the queue.
+var idleSettleGrace = 3 * time.Second
+
+// settleIdle closes a turn that went idle without a turn/completed, and releases the queue.
+func (h *threadHandle) settleIdle(gen uint64) {
+	h.mu.Lock()
+	if !h.running || h.runGen != gen {
+		h.mu.Unlock()
+		return
+	}
+	h.running, h.turnID, h.turnModel = false, "", ""
+	h.state = agents.TurnCompleted
+	h.mu.Unlock()
+	agents.MarkTurnEnd(h.slotSid, agents.TurnCompleted)
+	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCompleted})
+	h.pump()
 }
 
 func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
@@ -573,11 +635,23 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 		}
 	}
 	h.mu.Lock()
+	// A completion for a turn this handle no longer tracks (settleIdle already closed it and
+	// the queue has moved on) must not end the turn that replaced it.
+	if p.TurnID != "" && (h.turnID != "" || h.starting != "") && p.TurnID != h.turnID && p.TurnID != h.starting {
+		h.mu.Unlock()
+		return
+	}
+	if p.TurnID != "" && p.TurnID == h.starting {
+		h.starting, h.stopStarting = "", false // ended before it was ever reported started
+	}
 	h.running, h.state, h.turnID = false, st, ""
 	h.mu.Unlock()
 	agents.MarkTurnEndErr(h.slotSid, st, failure)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
-	h.pump()
+	// Never on this goroutine: finishTurn runs on the client's reader, and pump waits for the
+	// turn/start ack that only the reader can deliver — the reader would stall until the call
+	// timed out, with every notification behind it.
+	go h.pump()
 }
 
 // museAuthRequired is the error kind a turn ends with when no credential is configured. It is
@@ -746,23 +820,52 @@ func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err
 		return false, errors.New("Muse Code のホストが起動していません")
 	}
 	running, turnID := h.running, h.turnID
-	if running && !steer {
-		h.queue = append(h.queue, in)
-		h.mu.Unlock()
-		return true, nil
-	}
-	h.mu.Unlock()
-
 	if steer && running && turnID != "" {
+		h.mu.Unlock()
 		return false, h.steerNow(in, turnID)
 	}
-	return h.startTurn(in)
+	// Behind a running turn, a turn/start still in flight, or older queued input: queue it.
+	// The last case is a queue a lost host left behind; checking only running would let this
+	// input start at once, ahead of it.
+	if running || h.starting != "" || len(h.queue) > 0 {
+		h.queue = append(h.queue, in)
+		h.mu.Unlock()
+		h.pump()
+		return true, nil
+	}
+	id := h.beginStartLocked(in)
+	h.mu.Unlock()
+
+	queued, err = h.startTurn(in, id)
+	if err != nil && h.abandonStart(id) {
+		go h.pump() // input queued behind the failed start would otherwise wait for the next Send
+	}
+	return queued, err
 }
 
-// startTurn submits a turn. queued is the host's own answer that the input waits behind a turn
-// already running there (disposition "queued"). Between a turn/start and its turn/started this
-// handle does not know a turn is running, so its own queue cannot tell.
-func (h *threadHandle) startTurn(in agents.TurnInput) (queued bool, err error) {
+// beginStartLocked marks a turn/start as in flight and returns its commandId. Caller holds h.mu.
+func (h *threadHandle) beginStartLocked(in agents.TurnInput) string {
+	h.starting = msp.NewCommandID()
+	h.startingKeep, h.stopStarting = in.KeepOnInterrupt, false
+	return h.starting
+}
+
+// abandonStart clears an in-flight turn/start that will never report turn/started. It reports
+// whether id was still the one in flight.
+func (h *threadHandle) abandonStart(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.starting != id {
+		return false
+	}
+	h.starting, h.stopStarting = "", false
+	return true
+}
+
+// startTurn submits a turn under commandId id (beginStartLocked). queued is the host's own
+// answer that the input waits behind a turn running there (disposition "queued"): one this
+// handle did not start, since its own turns keep it busy until turn/started.
+func (h *threadHandle) startTurn(in agents.TurnInput, id string) (queued bool, err error) {
 	h.mu.Lock()
 	cl, sid, effort := h.cl, h.sid, h.settings.Effort
 	h.mu.Unlock()
@@ -770,7 +873,7 @@ func (h *threadHandle) startTurn(in agents.TurnInput) (queued bool, err error) {
 		return false, errors.New("Muse Code のホストが起動していません")
 	}
 	params := msp.TurnStartParams{
-		CommandID: msp.NewCommandID(),
+		CommandID: id,
 		SessionID: sid,
 		Input:     skillPart(cl, sid, inputParts(in)),
 	}
@@ -789,7 +892,11 @@ func (h *threadHandle) startTurn(in agents.TurnInput) (queued bool, err error) {
 	_ = json.Unmarshal(raw, &res)
 	// turn/started follows as a notification and is what actually moves the state; marking
 	// running here would race it into a stuck "working" if the host refused the turn after
-	// accepting the command.
+	// accepting the command. A steered input joined a turn already running, so no turn/started
+	// of its own will come.
+	if res.Disposition == msp.TurnStartDispositionSteered {
+		h.abandonStart(id)
+	}
 	return res.Disposition == msp.TurnStartDispositionQueued, nil
 }
 
@@ -808,18 +915,47 @@ func (h *threadHandle) steerNow(in agents.TurnInput, turnID string) error {
 	}, callTimeout, nil)
 }
 
-// pump starts the next queued turn once the previous one has settled.
+// pump starts the next queued turn once the previous one has settled. It is safe to call at
+// any time: while a turn runs or a start is in flight it does nothing.
 func (h *threadHandle) pump() {
-	h.mu.Lock()
-	if !h.alive || h.running || len(h.queue) == 0 {
+	for {
+		h.mu.Lock()
+		if !h.alive || h.cl == nil || h.running || h.starting != "" || len(h.queue) == 0 {
+			h.mu.Unlock()
+			return
+		}
+		next := h.queue[0]
+		h.queue = h.queue[1:]
+		id := h.beginStartLocked(next)
 		h.mu.Unlock()
-		return
-	}
-	next := h.queue[0]
-	h.queue = h.queue[1:]
-	h.mu.Unlock()
-	if _, err := h.startTurn(next); err != nil {
+		_, err := h.startTurn(next, id)
+		if err == nil {
+			return
+		}
+		h.mu.Lock()
+		hostGone := !h.alive || h.cl == nil
+		h.mu.Unlock()
+		if hostGone || errors.Is(err, msp.ErrClosed) {
+			// The host went away with the input: it goes back to the head of the queue for the
+			// respawn to start, rather than being lost to a crash nobody saw.
+			h.abandonStart(id)
+			h.mu.Lock()
+			h.queue = append([]agents.TurnInput{next}, h.queue...)
+			h.mu.Unlock()
+			return
+		}
+		if !h.abandonStart(id) {
+			return // the turn started after all (a late ack); its completion pumps the rest
+		}
+		// Refused by a live host: resending the same input would be refused again, so it is
+		// dropped — but as a failed turn the member can see, not a log line — and the queue
+		// moves on.
 		log.Printf("muse: %s: queued turn failed to start: %v", h.name, err)
+		h.mu.Lock()
+		h.state = agents.TurnFailed
+		h.mu.Unlock()
+		agents.MarkTurnEndErr(h.slotSid, agents.TurnFailed, err.Error())
+		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnFailed})
 	}
 }
 
@@ -924,15 +1060,33 @@ func (h *threadHandle) interruptAll() error { return h.interrupt(false) }
 
 func (h *threadHandle) interrupt(keep bool) error {
 	h.mu.Lock()
-	cl, sid, turnID := h.cl, h.sid, h.turnID
+	turnID := h.turnID
 	if keep {
 		h.queue = agents.KeptOnInterrupt(h.queue)
 	} else {
 		h.queue = nil
 	}
-	if h.running {
+	// Input whose turn/start is in flight has left the queue but not yet become a turn. The stop
+	// applies to it as if it were still queued: turn/started interrupts it on arrival.
+	if h.starting != "" && !(keep && h.startingKeep) {
+		h.stopStarting = true
+	}
+	if h.running || h.stopStarting {
 		h.state = agents.TurnInterrupting
 	}
+	stopNothing := !h.running && h.starting != ""
+	h.mu.Unlock()
+	if stopNothing {
+		// No turn exists yet, and a bare turn/interrupt would find nothing to stop.
+		return nil
+	}
+	return h.interruptTurn(turnID)
+}
+
+// interruptTurn sends turn/interrupt, for turnID when known.
+func (h *threadHandle) interruptTurn(turnID string) error {
+	h.mu.Lock()
+	cl, sid := h.cl, h.sid
 	h.mu.Unlock()
 	if cl == nil {
 		return errors.New("Muse Code のホストが起動していません")

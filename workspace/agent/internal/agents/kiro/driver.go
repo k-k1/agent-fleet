@@ -596,6 +596,9 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 			"sessionId": sid, "modeId": acpModeID(wantMode),
 		}, 15*time.Second)
 	}
+	// Input a lost child left queued starts now, in order, rather than waiting for the next
+	// accept to restart the pump.
+	h.resumePump()
 	return nil
 }
 
@@ -809,7 +812,10 @@ func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 func (h *threadHandle) pump() {
 	for {
 		h.mu.Lock()
-		if len(h.queue) == 0 || !h.alive {
+		// A closed client counts as gone before watch marks the handle: the failed turn wakes
+		// this loop first, and the next input would be taken, recorded in the ledger and lost
+		// on a dead pipe. It stays queued for resumePump after the respawn.
+		if len(h.queue) == 0 || !h.alive || h.cl == nil || h.cl.dead() {
 			h.pumping = false
 			h.mu.Unlock()
 			return
@@ -828,6 +834,20 @@ func (h *threadHandle) pump() {
 		h.mu.Lock()
 		h.running = false
 		h.mu.Unlock()
+	}
+}
+
+// resumePump restarts the pump for input that was queued when the child died: the pump exits
+// on a dead child and leaves the queue in place.
+func (h *threadHandle) resumePump() {
+	h.mu.Lock()
+	start := !h.pumping && h.alive && len(h.queue) > 0
+	if start {
+		h.pumping = true
+	}
+	h.mu.Unlock()
+	if start {
+		go h.pump()
 	}
 }
 

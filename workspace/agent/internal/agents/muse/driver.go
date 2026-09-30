@@ -196,7 +196,7 @@ func DropHandle(name string) {
 	h.mu.Lock()
 	h.alive = false
 	h.queue = nil
-	cmd, stdin, running := h.cmd, h.stdin, h.running
+	cmd, stdin, running := h.cmd, h.stdin, h.running || h.starting != ""
 	h.mu.Unlock()
 	if running {
 		_ = h.interruptAll()
@@ -228,7 +228,7 @@ func ManagedBusy(name string) bool {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.running || len(h.queue) > 0
+	return h.running || h.starting != "" || len(h.queue) > 0
 }
 
 // AbortManaged interrupts every running managed turn (the equivalent of the per-pane Ctrl-C
@@ -236,7 +236,7 @@ func ManagedBusy(name string) bool {
 func AbortManaged() {
 	for _, h := range liveHandles() {
 		h.mu.Lock()
-		running := h.running
+		running := h.running || h.starting != ""
 		h.mu.Unlock()
 		if running {
 			_ = h.interruptAll()
