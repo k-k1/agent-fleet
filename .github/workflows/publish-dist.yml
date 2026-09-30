@@ -40,6 +40,14 @@ on:
         description: 'Build the control-plane image for arm64 as well as amd64, so a deployment can set CpArch=arm64 (docs/log/72). On by default: it costs ~71s because the CP cross-compiles.'
         type: boolean
         default: true
+      # The way out when only the arm64 native build is broken (an upstream tool
+      # without an arm64 asset, a stuck arm64 runner queue): publish-dist.sh requires
+      # amd64 alone, so turning this off ships an amd64-only native package instead
+      # of no release at all.
+      native_arm64:
+        description: 'Build the native package and its rootfs for linux-arm64 as well as linux-amd64 (docs/log/35 §35.4.2). On by default; turn it off only to ship a release while the arm64 native build is broken.'
+        type: boolean
+        default: true
 
 concurrency:
   group: publish-dist
@@ -75,12 +83,9 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+        # include: entries cannot be conditional, so the arch list is built instead
+        arch: ${{ fromJSON(inputs.native_arm64 && '["amd64","arm64"]' || '["amd64"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 60
     env:
       VERSION: ${{ inputs.version }}

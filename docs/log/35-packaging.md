@@ -865,6 +865,7 @@ PRSS が 400」を再確認して CI を実測地点にしたが、ゲート初�
 - (j) 実 publish 一巡（**ユーザー実施** — §35.8.2）: dist repo 新設 → publish-dist.yml
   dispatch → Releases に `v<v>` / `rootfs-<r>` が付く → 任意の Linux で install
   ワンライナー → `af start` が rootfs を**実 URL から** DL して起動。
+  🔴 2026-09-30（#1345）: 以後 `rootfs-<r>` は作らず、R は `v<v>` に添付される（§35.4.2 の訂正）。
 - (k) 素の WSL2 実機 E2E（**ユーザー実施** — §35.8.1 チェックリスト）: 通し E2E +
   chromium sandbox 実測 + オフライン再起動。
 
@@ -1280,6 +1281,9 @@ git tag -a v0.3.0 <build commit> -m "agent-fleet 0.3.0" && git push origin v0.3.
 
 注意: app リリース `v<v>` は不変（同 tag への再 publish は fail する仕様）。やり直す
 時は版を上げる。rootfs tag `rootfs-<r>` は内容ハッシュなので衝突＝同一物・自動再利用。
+🔴 2026-09-30（#1345）: rootfs tag は新規に作らない（R は `v<v>` に添付・§35.4.2 の訂正）。
+`v<v>` が draft で残っているのは前回の upload 途中失敗なので、版は上げずに
+`gh release delete v<v> --yes` して再実行する（publish-dist.sh がそう案内する）。
 また `workflow_dispatch` は **publish-dist.yml が default branch（develop）に存在する
 ことが前提**（無いと `gh workflow run` が 404。実行 ref に在るだけでは不可 — ゲート j
 実走で確認）。

@@ -242,7 +242,8 @@ do_update() {
   name="agent-fleet-native-$target-linux-$arch"
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   echo "==> downloading $name.tar.gz"
-  fetch "$DIST_URL_BASE/v$target/$name.tar.gz" "$tmp/$name.tar.gz" || exit 1
+  fetch "$DIST_URL_BASE/v$target/$name.tar.gz" "$tmp/$name.tar.gz" \
+    || { echo "ERROR: cannot download $name.tar.gz (does v$target publish a linux-$arch package?)" >&2; exit 1; }
   fetch "$DIST_URL_BASE/v$target/SHA256SUMS" "$tmp/SHA256SUMS" || exit 1
   echo "==> verifying (sha256)"
   grep -E "  $name\.tar\.gz\$" "$tmp/SHA256SUMS" > "$tmp/want.sum" \

@@ -54,7 +54,8 @@ case "$*" in
   # with the asset names that release holds.
   "release view rootfs-"*) [ "${STUB_ROOTFS_EXISTS:-0}" = 1 ] || exit 1
                            printf '%s\n' ${STUB_ROOTFS_ASSETS:-}; exit 0 ;;
-  "release view v"*)       [ "${STUB_APP_EXISTS:-0}" = 1 ] && exit 0 || exit 1 ;;
+  "release view v"*)       [ "${STUB_APP_EXISTS:-0}" = 1 ] || exit 1
+                           case "$*" in *isDraft*) echo "${STUB_APP_DRAFT:-false}" ;; esac; exit 0 ;;
   "release create "*)
     # keep a copy of the SHA256SUMS that would be uploaded, for the asset-set check
     for a in "$@"; do case "$a" in */SHA256SUMS) cp "$a" "$STUB_SUMS_OUT" ;; esac; done
@@ -219,6 +220,16 @@ grep -q "already exists" "$WORK/err3.txt" || { cat "$WORK/err3.txt"; fail "no im
 grep -q "release create v$V" "$LOG" && fail "created app release despite collision"
 echo "ok"
 
+echo "== case 3b: a leftover draft v<v> → says delete-and-rerun, not bump =="
+: > "$LOG"
+rc=0
+STUB_APP_EXISTS=1 STUB_APP_DRAFT=true VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" \
+  > /dev/null 2> "$WORK/err3b.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1, got $rc"
+grep -q "exists only as a draft" "$WORK/err3b.txt" || { cat "$WORK/err3b.txt"; fail "no draft guidance"; }
+grep -q "release create" "$LOG" && fail "created a release over a draft"
+echo "ok"
+
 echo "== case 4: rootfs URL disagrees with publish target → fail =="
 make_dist "https://github.com/other/elsewhere/releases/download/v$V/$RN"
 : > "$LOG"
@@ -253,15 +264,26 @@ echo "ok"
 
 echo "== case 7: assets over 2GiB are skipped with a warning =="
 # No released asset is that large since ADR 0037 dropped the images tar, but the
-# guard stays: the native tar could grow, and silently attaching something the
-# API will reject is worse than skipping it loudly.
-truncate -s 3G "$DISTD/$CN.tar.gz"   # sparse — no real disk use
+# guard stays: the bundle tar carries R and can outgrow the limit, and silently
+# attaching something the API will reject is worse than skipping it loudly.
+truncate -s 3G "$DISTD/$CN-bundle.tar.gz"   # sparse — no real disk use
+sums
 : > "$LOG"
 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/err7.txt"
 grep -q "over the 2GiB" "$WORK/err7.txt" || fail "no over-limit warning"
-grep -q -- "$CN.tar.gz" <(grep "release create v$V" "$LOG") \
+grep -q -- "$CN-bundle.tar.gz" <(grep "release create v$V" "$LOG") \
   && fail "attached the oversized asset"
-expect_sums "agent-fleet-$V.tar.gz" "$RN"
+expect_sums "agent-fleet-$V.tar.gz" "$CN.tar.gz" "$RN"
+echo "ok"
+
+echo "== case 7b: an oversized amd64 C fails instead of shipping without it =="
+truncate -s 3G "$DISTD/$CN.tar.gz"
+: > "$LOG"
+rc=0
+VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/err7b.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1, got $rc"
+grep -q "cannot go out without it" "$WORK/err7b.txt" || { cat "$WORK/err7b.txt"; fail "no amd64-oversize guidance"; }
+grep -q "release create" "$LOG" && fail "published without the amd64 package"
 make_dist
 echo "ok"
 
@@ -332,6 +354,45 @@ grep -q "stub notes for $V" "$B" || fail "English notes missing from body"
 grep -q "## 日本語" "$B" || fail "Japanese section missing from body"
 grep -qF "$RN" "$B" || fail "rootfs file missing from body"
 grep -q "agent-fleet-$V.tar.gz" "$B" || fail "asset footer missing from body"
+echo "ok"
+
+echo "== case 11b: notes-body.sh reads a bare <r> as amd64 =="
+VERSION=$V ROOTFS=$RV "$ROOT/deploy/release/notes-body.sh" > "$WORK/body11b.md"
+grep -qF "agent-fleet-rootfs-$RV-linux-amd64.tar.zst" "$WORK/body11b.md" || fail "bare <r> not read as amd64"
+grep -qF "$CN.tar.gz" "$WORK/body11b.md" || fail "amd64 native tar missing for a bare <r>"
+echo "ok"
+
+echo "== case 13: an attached asset with no SHA256SUMS line → fail, no create =="
+sed -i "/  $RN\$/d" "$DISTD/SHA256SUMS"
+: > "$LOG"
+rc=0
+VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/err13.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1, got $rc"
+grep -q "has no line for $RN" "$WORK/err13.txt" || { cat "$WORK/err13.txt"; fail "no missing-line guidance"; }
+grep -q "release create" "$LOG" && fail "published with an unsummed asset"
+make_dist
+echo "ok"
+
+echo "== case 14: an asset changed after SHA256SUMS → fail, no create =="
+printf x >> "$DISTD/agent-fleet-$V.tar.gz"
+: > "$LOG"
+rc=0
+VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/err14.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1, got $rc"
+grep -q "no longer matches" "$WORK/err14.txt" || { cat "$WORK/err14.txt"; fail "no changed-asset guidance"; }
+grep -q "release create" "$LOG" && fail "published a changed asset"
+make_dist
+echo "ok"
+
+echo "== case 15: a stale R of another <r> left in dist is neither attached nor summed =="
+STALE="agent-fleet-rootfs-deadbeef0000-linux-amd64.tar.zst"
+head -c 10 /dev/urandom > "$DISTD/$STALE"
+sums
+: > "$LOG"
+VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null
+grep "release create v$V" "$LOG" | grep -qF "$STALE" && fail "attached a stale rootfs"
+expect_sums "agent-fleet-$V.tar.gz" "$CN.tar.gz" "$RN"
+make_dist
 echo "ok"
 
 echo "== case 12: seeded NOTICE keeps the primary-distribution URL =="

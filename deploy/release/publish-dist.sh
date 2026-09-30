@@ -94,10 +94,13 @@ for arch in amd64 arm64; do
         || die "$R_NAME is over the 2GiB GitHub Releases asset limit; $C_NAME would point at nothing"
       R_ASSETS+=("$R_TAR")
       ;;
+    # `*` also spans a `/`; such a URL yields a tag that `gh release view` rejects.
     "$URL_BASE/"*"/$R_NAME")
       r_tag="${R_URL#"$URL_BASE/"}"; r_tag="${r_tag%%/*}"
+      # grep without -q reads to EOF: -q exits at the first match and, under
+      # pipefail, gh's SIGPIPE would fail a release that does hold the asset.
       gh release view "$r_tag" -R "$REPO" --json assets -q '.assets[].name' 2>/dev/null \
-        | grep -qxF "$R_NAME" \
+        | grep -xF "$R_NAME" >/dev/null \
         || die "$C_NAME reuses $R_NAME from release $r_tag, which does not hold it
   (a --rootfs-json reuse build is only valid against an already published <r>)"
       echo "==> [publish] $arch rootfs $R_VER reused from $r_tag (no upload)"
@@ -170,6 +173,13 @@ fi
 
 # ---- app release -------------------------------------------------------------------
 if gh release view "v$VERSION" -R "$REPO" >/dev/null 2>&1; then
+  # gh creates a release with assets as a draft and publishes it after the last
+  # upload, so a draft here is an earlier run that died mid-upload — not a release
+  # anyone has, and bumping the version would be the wrong advice.
+  if [ "$(gh release view "v$VERSION" -R "$REPO" --json isDraft -q .isDraft 2>/dev/null)" = true ]; then
+    die "v$VERSION exists only as a draft: an earlier publish failed while uploading.
+  Delete it (gh release delete v$VERSION -R $REPO --yes) and rerun."
+  fi
   die "v$VERSION already exists (releases are immutable — bump the version and retry)"
 fi
 assets=()
@@ -183,6 +193,8 @@ for f in "${cands[@]}"; do
   [ -f "$p" ] || continue
   size="$(stat -c%s "$p")"
   if [ "$size" -ge "$GH_MAX_ASSET" ]; then
+    [ "$f" != "agent-fleet-native-$VERSION-linux-amd64.tar.gz" ] \
+      || die "$f is over the 2GiB GitHub Releases asset limit, and the release cannot go out without it"
     echo "WARN: $f is ${size} bytes, over the 2GiB GitHub Releases asset limit — skipping" >&2
     echo "      (hand the file over out of band — docs/log/35 §35.2)" >&2
     continue

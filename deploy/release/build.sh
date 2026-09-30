@@ -138,6 +138,11 @@ if [ "$DO_NATIVE" = 1 ]; then
   if [ -n "$ROOTFS_JSON" ]; then
     echo "==> [native] reuse rootfs manifest: $ROOTFS_JSON"
     cp "$ROOTFS_JSON" "$OUT/rootfs.json"
+    # This host's af-cp/bwrap paired with another architecture's rootfs downloads,
+    # verifies and extracts fine, then dies with Exec format error at workspace start
+    # on the user's machine. A hand-delivered C has no publish-time check to stop it.
+    grep -q "\"url\": \".*-linux-$ARCH\.tar\.zst\"" "$OUT/rootfs.json" \
+      || { echo "ERROR: $ROOTFS_JSON names a rootfs for another architecture (this host builds $ARCH)" >&2; exit 2; }
   else
     WS_NATIVE_IMAGE="agent-fleet/workspace:native-$VERSION"
     echo "==> [native] build lean rootfs image ($WS_NATIVE_IMAGE)"
