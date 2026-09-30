@@ -167,8 +167,12 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 		from := len(snapshot())
 		evaluate(expr)
 		if !waitFor(10*time.Second, func() bool {
-			recs := snapshot()[from:]
-			return len(recs) > 0 && recs[0].state == "loading" && p.response().State != "loading"
+			for _, r := range snapshot()[from:] {
+				if r.state == "loading" {
+					return p.response().State != "loading"
+				}
+			}
+			return false
 		}) {
 			t.Fatalf("%s: never left loading: %+v (page %+v)", step, snapshot()[from:], p.response())
 		}
@@ -211,6 +215,35 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 	if !waitFor(10*time.Second, func() bool { return p.response().State != "loading" }) {
 		t.Fatalf("failed navigation left the page loading: %+v", snapshot()[next:])
 	}
+	// The error page's commit, its load and the aborted re-navigation that its
+	// chrome-error:// URL provokes (measured: ~0.3 s) must all keep it.
+	time.Sleep(time.Second)
+	if got := p.response().State; got != "target-unreachable" {
+		t.Fatalf("error page settled in state %q, want target-unreachable: %+v", got, snapshot()[next:])
+	}
+
+	// Going back leaves the error page for a live document; an aborted
+	// navigation from there returns to that document, not to the error page.
+	// Runtime.evaluate does not answer on the error page; go back through CDP.
+	var history struct {
+		CurrentIndex int `json:"currentIndex"`
+		Entries      []struct {
+			ID int `json:"id"`
+		} `json:"entries"`
+	}
+	if err := m.call(cdp, p.sessionID, "Page.getNavigationHistory", map[string]any{}, &history); err != nil {
+		t.Fatal(err)
+	}
+	if history.CurrentIndex < 1 {
+		t.Fatalf("no entry to go back to: %+v", history)
+	}
+	if err := m.call(cdp, p.sessionID, "Page.navigateToHistoryEntry", map[string]any{"entryId": history.Entries[history.CurrentIndex-1].ID}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(10*time.Second, func() bool { return p.response().State == "ready" }) {
+		t.Fatalf("going back from the error page never reached ready: %+v (page %+v)", snapshot()[next:], p.response())
+	}
+	aborted("204 No Content after going back", `location.href = '/no-content'`)
 }
 
 // TestBrowserLoadedStateFollowsTheTrackedLoader drives the same rules with
@@ -301,9 +334,18 @@ func TestBrowserLoadedStateFollowsTheTrackedLoader(t *testing.T) {
 	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L7","url":"http://127.0.0.1:3000/down","navigationType":"differentDocument"}`)
 	event("Network.loadingFailed", `{"requestId":"L7","type":"Document","errorText":"net::ERR_CONNECTION_REFUSED"}`)
 	expect("connection refused", "target-unreachable")
-	event("Page.frameNavigated", `{"frame":{"id":"frame-1","loaderId":"L7","url":"http://127.0.0.1:3000/down"}}`)
+	event("Page.frameNavigated", `{"frame":{"id":"frame-1","loaderId":"L7","url":"chrome-error://chromewebdata/","unreachableUrl":"http://127.0.0.1:3000/down"}}`)
 	startDocument("L8")
 	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L8","url":"http://127.0.0.1:3000/204","navigationType":"differentDocument"}`)
 	abort("L8")
 	expect("aborted navigation over an error page", "target-unreachable")
+
+	// Going back restores the healthy L6 document from the back/forward cache:
+	// it commits with no document request and no response.
+	event("Page.frameNavigated", `{"frame":{"id":"frame-1","loaderId":"L6","url":"http://127.0.0.1:3000/b"},"type":"BackForwardCacheRestore"}`)
+	expect("document restored from the cache", "ready")
+	startDocument("L9")
+	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L9","url":"http://127.0.0.1:3000/204","navigationType":"differentDocument"}`)
+	abort("L9")
+	expect("aborted navigation over a document restored from the cache", "ready")
 }

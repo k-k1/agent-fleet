@@ -626,18 +626,29 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 				ParentID string `json:"parentId"`
 				LoaderID string `json:"loaderId"`
 				URL      string `json:"url"`
+				// UnreachableURL is set only on an error page.
+				UnreachableURL string `json:"unreachableUrl"`
 			} `json:"frame"`
+			Type string `json:"type"`
 		}
 		if json.Unmarshal(ev.Params, &v) == nil && v.Frame.ParentID == "" {
 			p.mu.Lock()
 			p.mainFrameID = v.Frame.ID
 			p.loaderID = v.Frame.LoaderID
 			p.committedLoaderID = v.Frame.LoaderID
-			// An error page commits after the loadingFailed that marked it.
-			p.committedUnreachable = p.unreachable
+			// Taken from the committed document itself: a back/forward-cache
+			// restore commits with no network events, so p.unreachable may still
+			// describe the error page it replaced.
+			p.committedUnreachable = v.Frame.UnreachableURL != ""
+			p.unreachable = p.committedUnreachable
 			if u, err := url.Parse(v.Frame.URL); err == nil && allowedTopLevelBrowserURL(u) {
 				p.url = normalizeLoopbackURL(u).String()
 				p.mu.Unlock()
+				// A document restored from the back/forward cache is already
+				// loaded: no lifecycle event and no frameStoppedLoading follow.
+				if v.Type == "BackForwardCacheRestore" {
+					p.markLoaded()
+				}
 				p.refreshNavigation()
 			} else {
 				safeURL := p.url
