@@ -1,0 +1,128 @@
+# Open or update the one CLI pin-bump PR.
+#
+# cli-drift.yml says the pins are behind and cli-release-watch.yml dispatches the
+# contracts that record `tested`. This closes the loop: every kind whose public latest
+# has passed its contract (`tested == latest`) gets its `ARG` pins and checksums rewritten
+# in workspace/Dockerfile, on one fixed branch, in one PR that waits for a human. The
+# decision and the edit are deploy/local/cli-pin-bump.sh (tested by
+# cli-pin-bump-stub-test.sh); this file only calls it and pushes.
+#
+# The token is a secret, not GITHUB_TOKEN: a push or PR made with GITHUB_TOKEN starts no
+# other workflow, so the PR's CI would never run and it could never be merged on green.
+# CLI_PIN_BUMP_TOKEN is a fine-grained PAT (or GitHub App token) limited to this
+# repository with Contents and Pull requests read/write. Setup: docs/build/10-development.md
+# §10.2.2.
+name: cli-pin-bump
+
+on:
+  # A contract that just recorded `tested` is the moment a bump can become possible.
+  workflow_run:
+    workflows:
+      - claude-tui-contract
+      - codex-contract
+      - opencode-contract
+      - copilot-contract
+      - agy-contract
+      - cursor-contract
+      - kiro-contract
+      - muse-contract
+    types: [completed]
+  schedule:
+    - cron: "0 23 * * *" # daily 08:00 JST, a backstop after the 05:30 watcher's dispatches
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: cli-pin-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BRANCH: automation/cli-pin-bump
+    steps:
+      # Always develop, never the triggering run's ref: a contract run on a PR must not
+      # decide what the bump is based on.
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: rewrite the pins
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BODY_FILE: ${{ runner.temp }}/body.md
+        run: deploy/local/cli-pin-bump.sh
+
+      - name: open or update the bump PR
+        if: steps.bump.outputs.count != '0'
+        env:
+          TOKEN: ${{ secrets.CLI_PIN_BUMP_TOKEN }}
+          TITLE: ${{ steps.bump.outputs.title }}
+          BODY_FILE: ${{ runner.temp }}/body.md
+        run: |
+          set -euo pipefail
+          if [ -z "$TOKEN" ]; then
+            echo "::error::CLI_PIN_BUMP_TOKEN is not set. A PR opened with GITHUB_TOKEN would never run CI. Create a fine-grained PAT for this repository only (Contents: read and write, Pull requests: read and write) and save it as the Actions secret CLI_PIN_BUMP_TOKEN (docs/build/10-development.md §10.2.2)."
+            cat "$BODY_FILE" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          export GH_TOKEN="$TOKEN"
+          remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          {
+            printf '%s\n\n' "$TITLE"
+            echo "Automated by cli-pin-bump.yml: each bumped kind passed its contract on the"
+            echo "new version. Evidence and the kinds left at their pin are in the PR body."
+          } > "$RUNNER_TEMP/msg.txt"
+          git commit -q -F "$RUNNER_TEMP/msg.txt" -- workspace/Dockerfile
+
+          # Re-push only when the Dockerfile would differ: a force-push restarts CI, and
+          # every contract completion runs this job.
+          pushed=true
+          if git fetch -q "$remote" "refs/heads/$BRANCH" 2>/dev/null &&
+             git diff --quiet FETCH_HEAD HEAD -- workspace/Dockerfile; then
+            pushed=false
+            head="$(git rev-parse FETCH_HEAD)"
+            echo "The bump branch already carries this edit; not re-pushed."
+          else
+            git push -q --force "$remote" "HEAD:refs/heads/$BRANCH"
+          fi
+
+          num="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open \
+            --json number --jq 'first | .number // empty')"
+          if [ -n "$num" ]; then
+            gh pr edit "$num" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$BODY_FILE"
+            echo "Updated PR #$num." >> "$GITHUB_STEP_SUMMARY"
+          else
+            # A human closed this exact edit without merging it: that is a "no", and
+            # reopening it after every contract run would override it. A new version
+            # changes the Dockerfile, is pushed, and gets a fresh PR.
+            declined=""
+            if [ "$pushed" = false ]; then
+              declined="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state closed \
+                --json number,headRefOid,mergedAt \
+                --jq "[.[] | select(.mergedAt == null and .headRefOid == \"$head\") | .number] | first // empty")"
+            fi
+            if [ -n "$declined" ]; then
+              echo "::notice::PR #$declined proposed this same bump and was closed without merging; not reopened."
+              exit 0
+            fi
+            gh pr create --repo "$GITHUB_REPOSITORY" --base develop --head "$BRANCH" \
+              --title "$TITLE" --body-file "$BODY_FILE"
+          fi
+          cat "$BODY_FILE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: nothing to bump
+        if: steps.bump.outputs.count == '0'
+        run: echo "No drifting kind has passed its contract on latest; nothing to bump." >> "$GITHUB_STEP_SUMMARY"

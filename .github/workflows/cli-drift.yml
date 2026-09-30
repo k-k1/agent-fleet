@@ -89,7 +89,9 @@ jobs:
           1. Inspect the corresponding `cli-release-watch` dispatch/result.
           2. For a CLI without an unattended contract, run its signed-in fleet TUI/mirror
              probe from the companion issue.
-          3. If all is well, bump the ARGs and their architecture checksums where applicable.
+          3. Kinds whose latest passed its contract are bumped by `cli-pin-bump.yml` in one
+             PR (`automation/cli-pin-bump`); cursor and kiro need their contract dispatched
+             by hand first, and rtk is bumped by hand.
 
           <sub>Auto-updated by cli-drift.yml. Closes automatically once the pins catch up
           to latest.</sub>

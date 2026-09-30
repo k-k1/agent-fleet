@@ -8,6 +8,7 @@
 #   cli-release-state.sh get tested codex
 #   cli-release-state.sh set tested codex 0.145.0
 #   cli-release-state.sh set watcher ok 2026-09-11T05:30:12Z
+#   cli-release-state.sh evidence tested codex 0.145.0   # the run that recorded it
 #
 # Namespaces:
 #   tested   a successful automated contract, appended as a comment (one per version)
@@ -109,14 +110,32 @@ case "$cmd" in
       gh issue edit "$num" --body-file "$tmp_body" >/dev/null
       exit 0
     fi
-    gh issue comment "$num" \
-      --body "<!-- cli-release-state $namespace $cli=$version -->" >/dev/null
+    # Inside Actions, the run that recorded the marker goes into the same comment: it is
+    # the evidence cli-pin-bump.sh links in its PR, and the only place it survives.
+    marker="<!-- cli-release-state $namespace $cli=$version -->"
+    if [ -n "${GITHUB_RUN_ID:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+      marker="$marker"$'\n\n'"Recorded by ${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+    fi
+    gh issue comment "$num" --body "$marker" >/dev/null
+    ;;
+  evidence)
+    # The run that recorded <cli>=<version>: the URL written with that marker, or the
+    # comment's own URL for a marker recorded before runs were written down. Empty when
+    # the version was never recorded.
+    [ "$namespace" != watcher ] || { echo "evidence has no watcher form" >&2; exit 2; }
+    [[ "$version" =~ ^[0-9A-Za-z._+-]+$ ]] || { echo "invalid value: $version" >&2; exit 2; }
+    num="$(issue_number)"
+    [ -n "$num" ] || exit 0
+    gh issue view "$num" --json comments --jq \
+      "[.comments[] | select(.body | startswith(\"<!-- cli-release-state $namespace $cli=$version -->\"))]
+       | last // empty
+       | ((.body | capture(\"Recorded by (?<u>https://[^ \\\\n]+)\") | .u) // .url)"
     ;;
   ensure)
     ensure_issue >/dev/null
     ;;
   *)
-    echo "usage: $0 get <tested|seen|watcher> <cli|item> | set <tested|seen|watcher> <cli|item> <value> | ensure <namespace> <cli>" >&2
+    echo "usage: $0 get <tested|seen|watcher> <cli|item> | set <tested|seen|watcher> <cli|item> <value> | evidence <tested|seen> <cli> <value> | ensure <namespace> <cli>" >&2
     exit 2
     ;;
 esac

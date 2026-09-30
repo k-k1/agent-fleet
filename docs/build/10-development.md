@@ -43,7 +43,9 @@ the Console shows a **Restart needed** badge (`control-plane/workspace_stale.go`
 
 ### 10.2.1 Bumping a pinned tool — the standard procedure
 
-Follow this when raising the version of an agent CLI, `rtk`, `gh` or Go. Every version
+Follow this when raising the version of `rtk`, `gh` or Go, or an agent CLI by hand. For
+the agent CLIs the usual route is the bump PR that §10.2.2 opens automatically; steps 1–3
+below are what it does for you, and steps 4 onward still apply to it. Every version
 is a build argument in `workspace/Dockerfile`, because an unpinned `npm install -g`
 hits the Docker layer cache and **a rebuild does not actually raise the version**. How
 the pins reach a workspace — baked into the image, or boot-installed from the version
@@ -109,6 +111,63 @@ for 48 hours. The CP reads the issue anonymously once an hour and caches it
 rather than either reassuring or alarming. **When the line warns, step 1 above is not
 enough** — the drift check says what latest is, but the watcher is what would have
 dispatched the contract, and nothing is being tested while it is down.
+
+### 10.2.2 Automated agent-CLI bumps (`cli-pin-bump.yml`)
+
+`cli-pin-bump.yml` keeps **one** pull request against `develop`, on the fixed branch
+`automation/cli-pin-bump`, that raises every agent-CLI pin whose new version has already
+passed its contract. It runs when a contract workflow completes, daily at 08:00 JST as a
+backstop, and on dispatch. The decision and the edit are `deploy/local/cli-pin-bump.sh`;
+`deploy/local/cli-pin-bump-stub-test.sh` pins them.
+
+- **Which kinds move.** A kind is bumped only when its pin differs from the public latest
+  **and** the release-state issue records `tested` for exactly that latest. Every
+  contract records `tested` only after a passing `latest` run, never for a pinned-version
+  run. For claude that contract is `claude-tui-contract.yml`, which drives the real TUI
+  against the footer and spinner detection that
+  `workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt` documents. Every drifting
+  kind that is left out is listed in the PR body with the reason.
+- **Checksums** come from the sources the Dockerfile comments name: agy's per-arch
+  manifests (both archives are downloaded, checked against the manifest's sha512 and
+  hashed to sha256; the release build id comes from the manifest URL); kiro's stable
+  manifest and muse's versioned release manifest, where the x86_64 download must hash to
+  the published value; cursor publishes none, so both tarballs are hashed as downloaded.
+  A mismatch, or a manifest that has moved on to another version, leaves that kind at
+  its pin. The npm kinds have no checksum.
+- **The edit** touches only the bumped kinds' `ARG` lines, is checked line by line
+  before it replaces the file, and a second run changes nothing.
+- **The PR** carries the evidence table — each kind's `pin → latest`, a link to the
+  contract run that recorded `tested` (`cli-release-state.sh` writes the run URL into the
+  marker comment), and where the checksums came from. The branch is force-updated only
+  when the Dockerfile edit changes. Nothing merges it: review it, wait for CI and follow
+  §10.2.1 from step 4. Once it is merged, `cli-drift.yml` closes the drift issue on its
+  next run if no other pin is behind. Closing it without merging is respected until a
+  newer version changes the edit.
+
+**What stays manual:**
+
+- **cursor and kiro** credentials rotate, so the watcher never dispatches their
+  contracts. Refresh the secret, then `gh workflow run cursor-contract.yml -f
+  cli_version=latest` (or `kiro-contract.yml`); the bump follows when it passes.
+- **claude, copilot and agy** are dispatched only while their contract secrets are set;
+  without one, run the fleet probe from the companion issue and dispatch the contract
+  once the secret is back.
+- **rtk** has a release source but no contract, so there is no `tested` to gate on. It
+  is listed as drifting and bumped by hand (§10.2.1).
+
+**The token (one-time setup, by a repository admin).** A push or PR made with
+`GITHUB_TOKEN` starts no other workflow, so the bump PR's CI would never run. The job
+therefore pushes and opens the PR with the Actions secret **`CLI_PIN_BUMP_TOKEN`**, and
+fails with an error naming it when it has something to push and the secret is missing.
+Create a **fine-grained personal access token** with *Repository access* limited to this
+repository and the permissions **Contents: Read and write** and **Pull requests: Read and
+write** (nothing else). A GitHub App with the same two permissions, installed on this
+repository only, works too, but its tokens last an hour, so it needs a token-minting step
+(`actions/create-github-app-token`) in front of the push instead of a stored secret.
+
+Save it under **Settings → Secrets and variables → Actions → New repository secret** as
+`CLI_PIN_BUMP_TOKEN`. A PAT expires; when it does, the job goes red with the same
+message, and the drift issue keeps reporting the pins as behind.
 
 ## 10.3 What the start scripts do (`deploy/local/`)
 
@@ -300,7 +359,8 @@ goes red only when not one source answered. The rows that could not be read are 
 in the job summary, and every run writes its own liveness — last clean fetch, last
 failing rows — into the `watcher` block of the state issue's body, so a `tested` version
 that has stopped moving can be told apart from an upstream that has stopped releasing.
-`deploy/local/cli-drift-stub-test.sh` pins both decisions.
+`deploy/local/cli-drift-stub-test.sh` pins both decisions. The last step, the bump PR
+itself, is `cli-pin-bump.yml` (§10.2.2).
 
 **One workflow file per CLI** (`claude-tui-contract.yml`, and `<kind>-contract.yml` for
 the others). Path filters and dispatch inputs are per workflow, so putting them in one

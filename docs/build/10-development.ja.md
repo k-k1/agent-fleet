@@ -42,7 +42,9 @@ Start が使うイメージと Workspace が走らせているイメージが違
 
 ### 10.2.1 ピン版ツールの版上げ runbook（定型運用）
 
-エージェント CLI・`rtk`・`gh`・Go の版を上げるときはこの手順で進める。版はすべて
+`rtk`・`gh`・Go の版、またはエージェント CLI を手で上げるときはこの手順で進める。エージェント
+CLI は通常 §10.2.2 が自動で開く版上げ PR で上がる。下の手順 1〜3 はそれが代わりにやることで、
+手順 4 以降はその PR にもそのまま当てはまる。版はすべて
 `workspace/Dockerfile` のビルド引数になっている。版未指定の `npm install -g` は Docker
 レイヤキャッシュに当たり、**再ビルドしても版が上がらない**ためである。ピンが Workspace に
 届く経路（イメージに焼き込む／既定の lean イメージでは版マニフェスト `versions.json` から
@@ -97,6 +99,58 @@ Start が使うイメージと Workspace が走らせているイメージが違
 安心させる表示も警告も出さず、行そのものが出ない。**この行が警告しているときは手順 1 だけでは
 足りない**——drift の検査は latest が何かを教えるが、contract を dispatch するのは watcher で、
 それが止まっている間は何もテストされていない。
+
+### 10.2.2 エージェント CLI の版上げの自動化（`cli-pin-bump.yml`）
+
+`cli-pin-bump.yml` は、新しい版で contract がすでに通ったエージェント CLI のピンをまとめて
+上げる PR を、固定ブランチ `automation/cli-pin-bump` から `develop` へ**1 本だけ**保つ。
+contract ワークフローが終わったとき、保険として毎日 08:00 JST、手動 dispatch で走る。判断と
+書き換えは `deploy/local/cli-pin-bump.sh`、それを固定するのが
+`deploy/local/cli-pin-bump-stub-test.sh`。
+
+- **上がる kind。** ピンが公開 latest と違い、**かつ** release-state issue の `tested` が
+  その latest とちょうど一致する kind だけ。どの contract も `tested` を記録するのは
+  `latest` 実行が通ったときだけで、ピン版の実行では記録しない。claude の contract は
+  `claude-tui-contract.yml` で、`workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt`
+  が記すフッター／スピナー検出を実 TUI で確かめる。ドリフトしているのに外した kind は、理由と
+  一緒に PR 本文に並ぶ。
+- **チェックサム**は Dockerfile のコメントが名指しする取得元から取る。agy はアーキ別
+  manifest（両アーカイブを落として manifest の sha512 と照合し、sha256 を計算する。release
+  build id は manifest の URL から取る）。kiro は stable manifest、muse は版付き release
+  manifest で、x86_64 のダウンロードが掲載値と一致しなければならない。cursor は上流が
+  チェックサムを出さないので、両 tarball を落としたままハッシュする。不一致や、manifest が
+  別の版に進んでいた場合、その kind はピンのまま。npm の kind にチェックサムは無い。
+- **書き換え**は上げる kind の `ARG` 行だけに触れ、ファイルを置き換える前に 1 行ずつ
+  照合する。2 回目の実行は何も変えない。
+- **PR** には証拠表が載る — kind ごとの `ピン → latest`、`tested` を記録した contract 実行への
+  リンク（`cli-release-state.sh` が実行 URL をマーカーのコメントに書く）、チェックサムの出どころ。
+  ブランチの force-push は Dockerfile の書き換えが変わったときだけ。自動ではマージしない。
+  レビューして CI を待ち、§10.2.1 の手順 4 から進める。マージ後、他にピンの遅れが無ければ
+  `cli-drift.yml` が次の実行で drift issue を閉じる。マージせずに閉じた PR は、より新しい版で
+  書き換えが変わるまで開き直さない。
+
+**手作業で残るもの:**
+
+- **cursor と kiro** は資格情報がローテートするので、watcher は contract を dispatch しない。
+  secret を更新してから `gh workflow run cursor-contract.yml -f cli_version=latest`
+  （または `kiro-contract.yml`）。通れば版上げが続く。
+- **claude・copilot・agy** は contract の secret があるときだけ dispatch される。無ければ
+  付随 issue のフリート確認を回し、secret が戻ってから contract を dispatch する。
+- **rtk** は取得元はあるが contract が無く、`tested` で門番できない。ドリフトとして一覧に
+  出るだけで、版上げは手で行う（§10.2.1）。
+
+**トークン（リポジトリ管理者が一度だけ設定する）。** `GITHUB_TOKEN` による push や PR は他の
+ワークフローを起動しないので、そのままでは版上げ PR の CI が走らない。そこでジョブは Actions
+secret **`CLI_PIN_BUMP_TOKEN`** で push と PR 作成を行い、push するものがあるのに secret が
+無ければ、その名前を挙げたエラーで落ちる。**fine-grained personal access token** を作り、
+*Repository access* をこのリポジトリだけに絞って、権限は **Contents: Read and write** と
+**Pull requests: Read and write** のみにする。同じ 2 権限でこのリポジトリだけに入れた GitHub
+App でもよいが、トークンの寿命が 1 時間なので、保存した secret ではなく push の前にトークンを
+発行する手順（`actions/create-github-app-token`）が要る。
+
+**Settings → Secrets and variables → Actions → New repository secret** に
+`CLI_PIN_BUMP_TOKEN` として保存する。PAT には期限があり、切れると同じメッセージでジョブが
+red になる（drift issue はピンの遅れを報告し続ける）。
 
 ## 10.3 起動スクリプトの責務（`deploy/local/`）
 
@@ -269,7 +323,8 @@ watcher が赤くなるのは、どの取得元も答えなかったときだけ
 名前が出て、毎回の実行が自分の生存（最後に全行読めた時刻・最後に失敗した行）を状態 issue の
 本文の `watcher` 欄に書く。`tested` が進まないのが「上流がリリースを止めた」のか
 「watcher が落ちた」のかを区別するためである。`deploy/local/cli-drift-stub-test.sh` が
-この 2 つの判断を固定している。
+この 2 つの判断を固定している。最後の一歩である版上げ PR そのものは `cli-pin-bump.yml`
+（§10.2.2）が開く。
 
 **ワークフローは CLI ごとに 1 ファイル**（`claude-tui-contract.yml`、ほかは
 `<kind>-contract.yml`）。パス条件も dispatch の入力もワークフロー単位なので、1 ファイルに
