@@ -8,12 +8,13 @@ into containers, so the directory boundary *is* the distribution boundary. When 
 boundary erodes, links break silently in the reader's copy, so the conventions are
 machine-checked here rather than left to human review.
 
-Fourteen checks:
+Fifteen checks:
 
   links      relative links resolve (anchors ignored)
   anchors    a #fragment points at a heading that exists (matched with Console's slug rule)
   closure    no link out of guide/ — the shipped tree is self-contained
   chapters   chapter numbers agree with the file name and with cross-reference labels
+  index      every file on a living shelf is linked from that shelf's README (per language)
   lang       bilingual closure (en links to .md, ja to .ja.md) and the counterpart exists
   header     every file on a living shelf has front matter (audience / source_of_truth / updated)
   vocab      no implementation vocabulary (AF_* / kind= / /api/) on reader-facing shelves
@@ -454,6 +455,32 @@ def check_chapters(files: list[str], f: Findings) -> None:
                     f"{src}: wrong chapter number in a cross-reference"
                     f" -> [{label}]({target}) (the target is {dest_num})"
                 )
+
+
+def check_index(files: list[str], f: Findings) -> None:
+    """Does each living shelf's README link every file on the shelf?
+
+    The README is the shelf's table of contents. `check_chapters` reconciles the numbers
+    of the rows that exist, but a chapter added without a row is invisible to it and was
+    only ever found by a reader. Each language is checked against its own README
+    (`README.md` for X.md, `README.ja.md` for X.ja.md).
+    """
+    present = {rel(p) for p in files}
+    for path in files:
+        src = rel(path)
+        name = os.path.basename(src)
+        if shelf(src) not in LIVING or src.count("/") != 2 or name.startswith("README."):
+            continue
+        index = os.path.join(os.path.dirname(src), "README.ja.md" if is_ja(src) else "README.md")
+        if index not in present:
+            continue  # a missing README is check_lang's business
+        index_path = os.path.join(ROOT, index)
+        linked = {
+            os.path.normpath(os.path.join(os.path.dirname(index_path), m.group(2).split("#", 1)[0]))
+            for m in LINK_RE.finditer(strip_code(read(index_path)))
+        }
+        if os.path.normpath(path) not in linked:
+            f.error(f"{src}: not linked from the shelf index {index}")
 
 
 def check_lang(files: list[str], f: Findings) -> None:
@@ -1442,7 +1469,7 @@ def main() -> int:
         default="",
         help=(
             "comma-separated check names "
-            "(links,anchors,closure,chapters,lang,header,vocab,frozen,"
+            "(links,anchors,closure,chapters,index,lang,header,vocab,frozen,"
             "ref,settings,features,knowledge,notes,emphasis)"
         ),
     )
@@ -1461,6 +1488,8 @@ def main() -> int:
         check_closure(files, f)
     if run("chapters"):
         check_chapters(files, f)
+    if run("index"):
+        check_index(files, f)
     if run("lang"):
         check_lang(files, f)
     if run("header"):

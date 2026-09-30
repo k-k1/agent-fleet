@@ -12,6 +12,45 @@ sys.modules[spec.name] = check
 spec.loader.exec_module(check)
 
 
+class IndexTests(unittest.TestCase):
+    """A living shelf's README links every file on the shelf, per language."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.shelf = self.root / "docs/build"
+        self.shelf.mkdir(parents=True)
+        for name in ("01-a.md", "01-a.ja.md", "lite.md", "lite.ja.md"):
+            (self.shelf / name).write_text("# x\n")
+        (self.shelf / "README.md").write_text("[1](01-a.md#top) and [lite](lite.md)\n")
+        (self.shelf / "README.ja.md").write_text("[1](01-a.ja.md) and [lite](lite.ja.md)\n")
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+
+    def errors(self):
+        check._cache.clear()
+        findings = check.Findings()
+        files = sorted(str(p) for p in self.shelf.glob("*.md"))
+        check.check_index(files, findings)
+        return "\n".join(findings.errors)
+
+    def test_complete_index_passes(self):
+        self.assertEqual(self.errors(), "")
+
+    def test_unlisted_chapter_is_an_error_per_language(self):
+        (self.shelf / "02-b.md").write_text("# x\n")
+        (self.shelf / "02-b.ja.md").write_text("# x\n")
+        (self.shelf / "README.ja.md").write_text("[1](01-a.ja.md) [lite](lite.ja.md) [2](02-b.md)\n")
+        errors = self.errors()
+        self.assertIn("docs/build/02-b.md: not linked from the shelf index docs/build/README.md", errors)
+        self.assertIn("docs/build/02-b.ja.md: not linked from the shelf index docs/build/README.ja.md", errors)
+
+    def test_link_inside_code_does_not_count(self):
+        (self.shelf / "README.md").write_text("`[1](01-a.md)` [lite](lite.md)\n")
+        self.assertIn("01-a.md: not linked", self.errors())
+
+
 class NotesTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
