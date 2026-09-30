@@ -42,8 +42,8 @@ type gitOAuthBody struct {
 }
 
 // list (GET /api/admin/tenants/{slug}/git-oauth) — one entry per KNOWN provider, whether
-// or not a row exists. The screen is a fixed pair of cards, so an unregistered provider
-// has to come back as an empty card rather than be absent.
+// or not a row exists. The screen shows one card per provider in gitOAuthProviders, so an
+// unregistered provider has to come back as an empty card rather than be absent.
 func (a tenantGitOAuthAPI) list(w http.ResponseWriter, r *http.Request) {
 	_, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
@@ -147,9 +147,10 @@ func (a tenantGitOAuthAPI) save(w http.ResponseWriter, r *http.Request) {
 }
 
 // remove (DELETE /api/admin/tenants/{slug}/git-oauth/{provider}) takes the OAuth option
-// away from this tenant's members. Connections already made keep working: the token is
-// in the member's workspace and Bitbucket's refresh credentials were copied there at
-// connect time — this removes the way to make NEW ones.
+// away from this tenant's members and removes the way to make NEW connections. Existing
+// tokens stay in the members' workspaces, but Bitbucket and Jira tokens are refreshed
+// through the CP's bridge (git_oauth_bridge.go) with this row's key and secret, so each
+// such connection stops at its token's next expiry.
 func (a tenantGitOAuthAPI) remove(w http.ResponseWriter, r *http.Request) {
 	provider := strings.ToLower(strings.TrimSpace(r.PathValue("provider")))
 	if !validGitOAuthProvider(provider) {

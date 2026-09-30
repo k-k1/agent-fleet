@@ -161,11 +161,11 @@ GITHUB_OAUTH_CLIENT_SECRET=<client-secret>
 AF_GITHUB_ALLOWED_DOMAINS=example.com    # strongly recommended; see below
 ```
 
-- The OAuth App is the same one the Console's GitHub "Connect" button uses
-  (`GITHUB_OAUTH_CLIENT_ID`) — just add the redirect URI
-  `<PUBLIC_BASE_URL>/oauth2/callback` to it. Set `AF_GITHUB_LOGIN_CLIENT_ID` /
-  `AF_GITHUB_LOGIN_CLIENT_SECRET` instead if you would rather the login use an app
-  of its own (approving an app for an org approves it for both flows).
+- The OAuth App needs the redirect URI `<PUBLIC_BASE_URL>/oauth2/callback`.
+  `AF_GITHUB_LOGIN_CLIENT_ID` / `AF_GITHUB_LOGIN_CLIENT_SECRET` take precedence over
+  the `GITHUB_OAUTH_*` names when set. It may be the same app a tenant registers for
+  the Console's GitHub "Connect" button (see below); approving an app for an org then
+  approves it for both flows.
 - ★ **If your org restricts third-party OAuth apps, an org owner must approve the
   app.** Until they do, the membership check sees nothing and *everybody* is
   rejected — with settings that look correct.
