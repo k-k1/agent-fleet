@@ -365,6 +365,7 @@ func (h *threadHandle) hostLost(cl *msp.Client) {
 	}
 	h.alive, h.running, h.cl = false, false, nil
 	h.starting = ""
+	h.sentImages = nil // nothing this host was sent can be echoed any more
 	h.mu.Unlock()
 	if wasRunning {
 		// A turn cut off by a dead host is aborted, not failed: a resend fixes it, and the
@@ -956,6 +957,13 @@ func (h *threadHandle) launch(t *agents.Taken, id string) (queued bool, err erro
 func (h *threadHandle) startFailed(t *agents.Taken, id string, err error, requeue bool) (started bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// A turn that did not start never echoes a userMessage, and a requeued one goes out again
+	// under a new commandId, so this id's images would never be collected.
+	defer func() {
+		if !started {
+			delete(h.sentImages, id)
+		}
+	}()
 	if h.tq().Head() != t {
 		return false
 	}
@@ -1018,12 +1026,18 @@ func (h *threadHandle) steerNow(in agents.TurnInput, turnID string) error {
 	id := msp.NewCommandID()
 	parts, images := inputPartsImages(in)
 	h.noteImages(id, images)
-	return cl.CallInto(msp.MethodTurnSteer, msp.TurnSteerParams{
+	err := cl.CallInto(msp.MethodTurnSteer, msp.TurnSteerParams{
 		CommandID:      id,
 		SessionID:      sid,
 		ExpectedTurnID: turnID,
 		Input:          skillPart(cl, sid, parts),
 	}, callTimeout, nil)
+	if err != nil {
+		h.mu.Lock()
+		delete(h.sentImages, id) // a refused steer echoes nothing
+		h.mu.Unlock()
+	}
+	return err
 }
 
 // noteImages remembers which paths went out as image parts under commandId id, for onItem to

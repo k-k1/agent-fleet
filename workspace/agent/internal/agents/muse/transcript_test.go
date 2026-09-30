@@ -704,3 +704,14 @@ func TestTranscriptPutsImagePathsInTheUserTurn(t *testing.T) {
 	}
 	check(fork)
 }
+
+// An image sent with no words at all: the text is nothing but the placeholder, and the turn
+// becomes the path alone rather than an empty bubble.
+func TestAnImageOnlyUserTurnBecomesItsPath(t *testing.T) {
+	tn := transcript.Turn{Role: "user", Text: "[Image #1]", Parts: []transcript.Part{{Kind: "text", Text: "[Image #1]"}}}
+	p := "/home/dev/.cache/agent-fleet/pasted/k/paste-1.png"
+	withImagePaths(&tn, []string{p})
+	if tn.Text != p || tn.Parts[0].Text != p {
+		t.Fatalf("turn = %+v, want the path alone", tn)
+	}
+}

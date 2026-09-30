@@ -119,12 +119,12 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	// An assistant turn is labelled with the model of its first item. session/setModel takes
 	// effect at the next model call, so a turn that spans a switch shows the model it began on.
 	for i := range td.Turns {
-		m := meta[td.Turns[i].AnchorID]
+		im := meta[td.Turns[i].AnchorID]
 		if td.Turns[i].Role == "assistant" && td.Turns[i].Model == "" {
-			td.Turns[i].Model = m.model
+			td.Turns[i].Model = im.model
 		}
-		if td.Turns[i].Role == "user" && len(m.images) > 0 {
-			withImagePaths(&td.Turns[i], m.images)
+		if td.Turns[i].Role == "user" && len(im.images) > 0 {
+			withImagePaths(&td.Turns[i], im.images)
 		}
 	}
 

@@ -22,6 +22,12 @@ describe("echoLanded", () => {
     expect(echoLanded({ text: "確認して", sinceIdx: 99, attachmentPaths: [path] }, [{ role: "user", text: actual, idx: 42 }], notNoise)).toBe(true);
   });
 
+  it("a managed muse image send resolves against its turn, which carries the bare paths", () => {
+    const path = "/home/dev/.cache/agent-fleet/pasted/sid/paste-1.png";
+    const turn = { role: "user", text: `確認して ${path}`, idx: 11 };
+    expect(echoLanded({ text: "確認して", sinceIdx: 10, attachmentPaths: [path] }, [turn], notNoise)).toBe(true);
+  });
+
   it("does not resolve on a different attachment or an earlier turn with the same text", () => {
     expect(
       echoLanded(

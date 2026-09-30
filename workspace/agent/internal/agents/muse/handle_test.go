@@ -760,3 +760,55 @@ func TestSentImagesAreStampedOnTheirUserMessage(t *testing.T) {
 		t.Errorf("sentImages still holds %v after both messages arrived", h.sentImages)
 	}
 }
+
+// A send that never becomes a userMessage — a refused turn/start, a refused turn/steer, a host
+// that died — must not leave its images behind in sentImages: the handle lives as long as the
+// session, and nothing else would ever collect them.
+func TestSentImagesAreDroppedWhenNoUserMessageCanFollow(t *testing.T) {
+	newStore(t)
+	shot := filepath.Join(t.TempDir(), "paste-1.png")
+	if err := os.WriteFile(shot, []byte{0x89, 'P', 'N', 'G'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending := func(h *threadHandle) int {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.sentImages)
+	}
+	settled := func(h *threadHandle, why string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for pending(h) != 0 {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: sentImages still holds %d entries", why, pending(h))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	refuse := func(m msptest.Message) (any, *msp.Error) {
+		return nil, &msp.Error{Code: -32602, Message: "invalid params"}
+	}
+
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodTurnStart, refuse)
+	_ = h.Send(agents.TurnInput{Prompt: "look", Attachments: []string{shot}})
+	host.WaitForMethod(msp.MethodTurnStart)
+	settled(h, "refused turn/start")
+
+	h2 := &threadHandle{}
+	host2 := newTestHandle(t, h2)
+	host2.Handle(msp.MethodTurnSteer, refuse)
+	host2.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h2.sid})
+	waitEvent(t, h2, agents.TurnRunning)
+	if err := h2.Steer(agents.TurnInput{Prompt: "and this", Attachments: []string{shot}}); err == nil {
+		t.Fatal("the refused steer reported success")
+	}
+	settled(h2, "refused turn/steer")
+
+	h3 := &threadHandle{}
+	newTestHandle(t, h3)
+	h3.noteImages("in-flight", []string{shot})
+	h3.hostLost(h3.cl)
+	settled(h3, "host lost")
+}
