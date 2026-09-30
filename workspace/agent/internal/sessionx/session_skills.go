@@ -114,7 +114,11 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 	}
 	ownNative := len(skills) > 0 // claude/codex scan their own root; muse's is in skill/list when live
 	skills = appendForeignSkills(skills, chainUp(cwd, meta.Dir), cwd, nativeConvs)
-	skills = appendUserForeignSkills(skills, meta.Kind, ownNative)
+	// lcpp's own file tools refuse any path outside the session's CWD (harness resolvePath), so
+	// a user root would be offered and then fail to open.
+	if meta.Kind != session.KindLcpp {
+		skills = appendUserForeignSkills(skills, meta.Kind, ownNative)
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 }
 

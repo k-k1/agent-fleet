@@ -601,6 +601,14 @@ func TestUserSkillsOfOtherKindsAreForeign(t *testing.T) {
 	foreign("muse", mu, "cx-only", ".codex", filepath.Join(codexRoot, "skills"))
 	foreign("muse", mu, "muse-only", ".muse", museRoot)
 
+	// lcpp's file tools cannot read outside its CWD, so it is offered none of the user roots.
+	lc := list("u_lcpp", session.KindLcpp)
+	for _, name := range []string{"issue-to-pr", "cx-only", "muse-only"} {
+		if s, ok := lc[name]; ok {
+			t.Errorf("lcpp: %s offered from a root its tools cannot read: %#v", name, s)
+		}
+	}
+
 	// Live host: `skill/list` already covers muse's own root. The selector differs from the
 	// frontmatter name on purpose — with matching names the dedupe alone would hide a missing
 	// root exclusion (measured by mutation).

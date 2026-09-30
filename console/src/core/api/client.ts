@@ -1117,7 +1117,7 @@ export interface SessionSkill {
   // Cross-skill injection (docs/log/50 §8): a skill from ANOTHER convention this kind's
   // CLI won't discover natively. The composer turns it into a "read {path} and follow
   // its instructions" prompt — plain text, so it works on any kind/driver.
-  path?: string; // repo-relative SKILL.md path
+  path?: string; // SKILL.md path: repo-relative, or absolute for a tree outside the CWD (a user root, an ancestor)
   origin?: string; // convention dir (".claude" | ".codex" | ".agents" | ".muse") — shown as a badge
 }
 export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
