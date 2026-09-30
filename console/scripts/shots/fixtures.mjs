@@ -614,10 +614,10 @@ export function imagegenStatus(locale) {
         negative_always: "watermark, signature",
         models: [
           {
-            id: "illustrious-v2",
+            id: "demo-illustration-xl",
             // ADR 0090: what a member is shown instead of the id. The id stays the value the
             // generation names — the fixture carries both so the shot proves which is drawn.
-            label: "OnomaAI/Illustrious-XL v2.0",
+            label: "Demo Illustration XL v2",
             description: ja ? "イラスト向けの SDXL 系" : "An SDXL-family illustration checkpoint",
             family: "sdxl",
             warm: true,
@@ -631,12 +631,13 @@ export function imagegenStatus(locale) {
             steps_range: [20, 40],
             cfg_range: [5, 9],
             trial_steps: 10,
-            license_name: "CreativeML Open RAIL++-M",
+            license_name: "Example Model License",
             license_url: "https://example.com/license",
             source_url: "https://example.com/model",
           },
           {
-            id: "flux1-dev",
+            id: "demo-sentences",
+            label: "Demo Sentence Model",
             description: ja ? "文章で指示する系統" : "Prompted in sentences",
             family: "flux1",
             sizes: ["1024x1024", "1216x832"],
@@ -674,7 +675,7 @@ export function imagegenJobs(locale) {
     studio: STUDIO_ID,
     state: "done",
     label: locale === "ja" ? "cfg 振り" : "cfg sweep",
-    model: "illustrious-v2",
+    model: "demo-illustration-xl",
     family: "sdxl",
     seed,
     size: "1216x832",
@@ -709,7 +710,7 @@ export function imagegenJobs(locale) {
         studio: STUDIO_ID,
         state: "done",
         trial: true,
-        model: "illustrious-v2",
+        model: "demo-illustration-xl",
         family: "sdxl",
         seed: 815_723_004,
         size: "1216x832",
@@ -725,7 +726,7 @@ export function imagegenJobs(locale) {
         studio: STUDIO_ID,
         state: "running",
         label: locale === "ja" ? "cfg 振り" : "cfg sweep",
-        model: "illustrious-v2",
+        model: "demo-illustration-xl",
         family: "sdxl",
         seed: 815_723_016,
         size: "1216x832",
@@ -737,8 +738,8 @@ export function imagegenJobs(locale) {
       { id: "j15", group: "g1", studio: STUDIO_ID, state: "queued", position: 2, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
       // Pressed in the other studio, and one a session made with generate_image: the studio pane
       // folds both under "other studios and sessions" (ADR 0100 decision 10, revision 10).
-      { id: "k1", group: "g2", studio: OTHER_STUDIO_ID, state: "queued", position: 3, label: locale === "ja" ? "表紙" : "Cover", model: "illustrious-v2" },
-      { id: "s1", state: "done", model: "illustrious-v2", started_at: iso(900), finished_at: iso(880), files: [file(99, 1)] },
+      { id: "k1", group: "g2", studio: OTHER_STUDIO_ID, state: "queued", position: 3, label: locale === "ja" ? "表紙" : "Cover", model: "demo-illustration-xl" },
+      { id: "s1", state: "done", model: "demo-illustration-xl", started_at: iso(900), finished_at: iso(880), files: [file(99, 1)] },
       done(12, 815_723_015),
       done(11, 815_723_014),
       done(10, 815_723_013),
@@ -749,14 +750,14 @@ export function imagegenJobs(locale) {
 export function imagegenProps(locale, p) {
   return {
     source: "sidecar",
-    model: "illustrious-v2",
+    model: "demo-illustration-xl",
     family: "sdxl",
     seed: 815_723_015,
     size: "1216x832",
     // Nested, the same shape the request carries them in.
     params: { steps: 28, cfg: 6, sampler: "dpmpp_2m", scheduler: "karras" },
     loras: [{ name: "add-detail", weight: 0.8 }],
-    prompt: "1girl, harbour at dusk, masterpiece, best quality",
+    prompt: "harbour at dusk, fishing boats, masterpiece, best quality",
     negative: "worst quality, low quality, watermark, signature",
     provider: "comfy",
     job: "j12",
@@ -1671,11 +1672,11 @@ export const OTHER_STUDIO_ID = "0b7d9e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d";
 
 const studioDraft = (dark) => ({
   provider: "comfy",
-  model: "illustrious-v2",
+  model: "demo-illustration-xl",
   prompt: dark
-    ? "1girl, blue hair, school uniform, harbour at dusk, dim light, lanterns, masterpiece, best quality"
-    : "1girl, blue hair, school uniform, harbour at dusk, masterpiece, best quality",
-  negativePrompt: "extra fingers",
+    ? "harbour at dusk, fishing boats, cat sitting on the sea wall, calm water, dim light, lanterns, masterpiece, best quality"
+    : "harbour at dusk, fishing boats, cat sitting on the sea wall, calm water, masterpiece, best quality",
+  negativePrompt: "people, blurry",
   size: "1216x832",
   params: { steps: 28, cfg: 5, sampler: "dpmpp_2m", scheduler: "karras" },
   loras: [{ name: "add-detail", weight: 0.8 }],
@@ -1691,7 +1692,7 @@ const studioLog = (reads) => {
       kind: "edit",
       at: ago(14),
       author: "human",
-      changes: [{ field: "negativePrompt", before: "", after: "extra fingers" }],
+      changes: [{ field: "negativePrompt", before: "", after: "people, blurry" }],
       draft: studioDraft(false),
     },
     {
@@ -1701,7 +1702,7 @@ const studioLog = (reads) => {
       author: "agent",
       session: "swnd7qa",
       changes: [
-        { field: "prompt", before: "1girl, harbour at dusk", after: studioDraft(false).prompt },
+        { field: "prompt", before: "harbour at dusk", after: studioDraft(false).prompt },
         { field: "params.cfg", before: 7, after: 5 },
       ],
       draft: studioDraft(false),
@@ -1790,7 +1791,7 @@ const imagegenCreatedList = () => created.map(({ id, title, created_at, updated_
 export function imagegenDraftLog() {
   return {
     entries: [
-      { seq: 3, kind: "edit", at: ago(18), author: "human", changes: [{ field: "model", before: "", after: "illustrious-v2" }], draft: studioDraft(false) },
+      { seq: 3, kind: "edit", at: ago(18), author: "human", changes: [{ field: "model", before: "", after: "demo-illustration-xl" }], draft: studioDraft(false) },
       { seq: 4, kind: "edit", at: ago(16), author: "agent", session: "swnd7qa", changes: [{ field: "size", after: "1216x832" }], draft: studioDraft(false) },
     ],
   };
@@ -1836,12 +1837,12 @@ export function imagegenPersona(locale) {
   };
 }
 
-// The studio's conversation: the agent read a character sheet and filled the draft.
+// The studio's conversation: the agent read a scene note and filled the draft.
 export function studioTurns(locale) {
   const ja = locale === "ja";
   const say = (idx, min, text) => ({ role: "user", idx, ts: ago(min), text, parts: [{ kind: "text", text }] });
   return [
-    say(1, 13, ja ? "docs/chars/aoi.md を読んで、その子を港の夕暮れに" : "Read docs/chars/aoi.md and put her in a harbour at dusk"),
+    say(1, 13, ja ? "docs/scenes/harbour.md を読んで、その港を夕暮れの絵に" : "Read docs/scenes/harbour.md and paint that harbour at dusk"),
     {
       role: "assistant",
       idx: 2,
@@ -1850,13 +1851,13 @@ export function studioTurns(locale) {
       text: "",
       parts: [
         { kind: "tool", tool: "mcp__af_40ed9852__get_image_studio" },
-        { kind: "tool", tool: "Read", info: "docs/chars/aoi.md", output: ja ? "31 行を読み込みました" : "read 31 lines" },
+        { kind: "tool", tool: "Read", info: "docs/scenes/harbour.md", output: ja ? "31 行を読み込みました" : "read 31 lines" },
         { kind: "tool", tool: "mcp__af_40ed9852__set_image_draft" },
         {
           kind: "text",
           text: ja
-            ? "青髪と制服の指定を入れ、cfg を 7 から 5 に下げました。生成は押してください。"
-            : "Added the blue hair and the uniform, and lowered cfg from 7 to 5. Press generate when ready.",
+            ? "漁船と防波堤の猫を入れ、cfg を 7 から 5 に下げました。生成は押してください。"
+            : "Added the fishing boats and a cat on the sea wall, and lowered cfg from 7 to 5. Press generate when ready.",
         },
       ],
     },
