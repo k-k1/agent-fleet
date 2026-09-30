@@ -30,9 +30,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// tmuxSession starts prog in a detached pane on the DEFAULT tmux server (paneMode shells
-// out to plain `tmux`, so a private -L socket can't be used) under an isolated HOME. The
-// name is test-specific and killed on cleanup, so a live fleet's sessions are untouched.
+// tmuxSession starts prog in a detached pane on the DEFAULT tmux server under an isolated
+// HOME. The name is test-specific and killed on cleanup, so a live fleet's sessions are
+// untouched. A private server would also work — product tmux calls go through tmuxx.Cmd,
+// which honours AF_TMUX_SOCKET (shutdown_isolation_test.go) — but this test does not use one.
 func tmuxSession(t *testing.T, name, dir, prog string) {
 	t.Helper()
 	_ = exec.Command("tmux", "kill-session", "-t", name).Run()

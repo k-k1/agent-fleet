@@ -1,42 +1,50 @@
 #!/usr/bin/env bash
-# Workspace 起動時に最新の Claude CLI を用意してから Agent を起動する。
-# claude はイメージに焼き込まず、永続ホーム(~/.local)へ install し、次回以降は
-# update で最新化する。ネットワーク不通でも Agent 起動は止めない（端末は使える）。
+# Prepare the agent CLIs (claude in particular), then exec the Agent.
+# Where the CLIs come from depends on how the image was built (workspace/Dockerfile):
+#   BAKE_AGENT_CLIS=0 (the default, lean image): no agent CLI is baked. The boot-install
+#     block below installs claude/opencode/codex/copilot/cursor/agy/rtk at their
+#     versions.json pins into the persistent ~/.local and keeps them on those pins.
+#   BAKE_AGENT_CLIS=1: they are baked at /usr/local, pinned to the image version.
+# If claude is still missing after that, the latest is installed into ~/.local via
+# claude.ai/install.sh; a ~/.local claude in a non-lean image is updated on every start.
+# No network never stops the Agent from starting (the terminal still works).
 #
-# 制御 env:
-#   CLAUDE_INSTALL=0      … claude の用意をスキップ（オフライン/軽量検証）
-#   CLAUDE_AUTO_UPDATE=0  … 既存 claude の起動時 update を抑止
+# Control env:
+#   CLAUDE_INSTALL=0      … skip the claude install/update step (offline / lightweight checks;
+#                           the lean boot-install still runs)
+#   CLAUDE_AUTO_UPDATE=0  … skip the start-time `claude update` of a non-lean ~/.local claude
 set -e
 export PATH="$HOME/.local/bin:$PATH"
 
-# --- 資格情報だけ別の永続領域に残す（ADR 0045 決定 3-6・ecs-ec2 ランタイムのみ） --
-# AF_WS_KEEP は「home とは別に、確実に生き残る場所」を指す。EC2 プール型では home が
-# **単一 AZ の EBS 1 本**になるので、それを失うとログイン情報まで一緒に失う。認証・接続・
-# identity（`homeKeep` の 7 つ・合計 100 MiB 未満）だけを EFS 側へ逃がし、home からは
-# symlink で見せる。CP が AF_WS_KEEP を注入しないランタイム（docker / native / Fargate）
-# では丸ごと no-op で、home の実体はそのまま。
+# --- Keep credentials on a separate durable volume (ADR 0045 decisions 3-6; ecs-ec2 only) --
+# AF_WS_KEEP points at a place that survives independently of home. In the EC2 pool model
+# home is a single single-AZ EBS volume, and losing it would take the logins with it. Only
+# auth, connections and identity (the 7 `homeKeep` entries, under 100 MiB in total) move to
+# EFS and are exposed in home through symlinks. Runtimes where the CP does not inject
+# AF_WS_KEEP (docker / native / Fargate) make this a no-op and home stays as it is.
 #
-# claude/gh などが触る前に済ませる必要があるので、entrypoint の最初に置く。
+# It must run before claude/gh touch these files, hence first in the entrypoint.
 if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; then
   AF_KEEP_DIRS="${AF_WS_KEEP_DIRS:-.config .ssh .claude .codex}"
-  # keep_dir_exists — その rel が「ディレクトリとして keep 側に実体が要る」方かどうか。
-  # ファイル側（.gitconfig 等）は実体が無くてよいので対象外。
+  # keep_is_dir — whether rel must exist on the keep side as a directory. File entries
+  # (.gitconfig etc.) may legitimately be absent, so they are excluded.
   keep_is_dir() { case " $AF_KEEP_DIRS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
   for rel in $AF_KEEP_DIRS ${AF_WS_KEEP_FILES:-.git-credentials .gitconfig .claude.json}; do
     src="$HOME/$rel"; dst="$AF_WS_KEEP/$rel"
     if [ -L "$src" ] && [ "$(readlink "$src")" = "$dst" ]; then
-      # 既に正しい symlink。**ただし向き先が無いことがある。** golden snapshot から作った
-      # home は種が張った symlink を丸ごと持ってくるのに、keep 側（EFS）は新規ユーザーごとに
-      # 空だからである。ここで作らずに素通りすると `~/.config` は宙に浮いたままになり、
-      # 後段の `mkdir -p "$HOME/.config/opencode"` が **File exists** で落ちて、`set -e` で
-      # entrypoint ごと死ぬ —— タスクが延々と再起動するだけで、原因はどこにも出ない。
-      # （実機で踏んだ: 本番配備の golden 初号機が起動不能になった。）
+      # Already the correct symlink, but its target may be missing: a home built from a
+      # golden snapshot carries the seed's symlinks, while the keep side (EFS) is empty for
+      # every new user. Skipping here leaves `~/.config` dangling, the later
+      # `mkdir -p "$HOME/.config/opencode"` fails with File exists, and `set -e` kills the
+      # entrypoint — the task restart-loops with no cause logged anywhere.
+      # (Observed: the first golden instance of a production deployment could not boot.)
       keep_is_dir "$rel" && mkdir -p "$dst" 2>/dev/null || true
       continue
     fi
     if [ -e "$src" ] || [ -L "$src" ]; then
-      # home 側に実体がある。初回の移行のほか、**書き込みが symlink を実体で置き換えた**
-      # 後（tmp へ書いて rename する実装がこれをやる）にもここへ来るので、新しい方を残す。
+      # home holds a real file. Besides the first migration, this also happens after a write
+      # replaced the symlink with a real file (write-to-tmp-then-rename does that), so keep
+      # whichever is newer.
       if [ ! -e "$dst" ] || [ "$src" -nt "$dst" ]; then
         rm -rf "$dst" 2>/dev/null || true
         mv "$src" "$dst" 2>/dev/null || { echo "[entrypoint] keep: $rel を退避できませんでした"; continue; }
@@ -45,28 +53,28 @@ if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; the
       fi
     fi
     keep_is_dir "$rel" && mkdir -p "$dst" 2>/dev/null || true
-    # ファイル側は実体が無くても dangling symlink を張っておく: 後から普通に書けば
-    # EFS 側にできる（O_CREAT は symlink を辿る）。
+    # File entries get a dangling symlink too: a later ordinary write creates the file on
+    # the EFS side (O_CREAT follows the symlink).
     ln -sfn "$dst" "$src" && echo "[entrypoint] keep: ~/$rel -> $dst"
   done
 fi
 
-# --- home が別アーキの上に載ったときの自己修復（docs/log/70 §70.5） ---------------
-# home（`~`）は永続する。ecs-ec2 では EBS 1 本が人について回り、docs/log/70 で「どのインスタンスに
-# 載るか」が per-member の設定になるので、**x86 で埋めた home が arm64 のスロットに付く**
-# ことが起こり得る。そのときファイルシステムは正常にマウントされ、壊れるのはバイナリ
-# だけである——症状は「昨日まで動いていた claude が Exec format error」で、原因（インスタンスが
-# 変わった）はどこにも出ない。
+# --- Self-repair when home lands on another architecture (docs/log/70 §70.5) ------
+# home (`~`) persists. On ecs-ec2 one EBS volume follows the member, and docs/log/70 makes
+# the instance a per-member setting, so a home populated on x86 can be attached to an
+# arm64 slot. The filesystem then mounts fine and only the binaries break — the symptom is
+# "claude worked yesterday, now Exec format error", and the cause (the instance changed)
+# is logged nowhere.
 #
-# そこで `~` にアーキの刻印を置き、変わっていたら**製品が入れたものだけ**を捨てて、
-# 下の boot-install に入れ直させる。刻印が無い home（この変更より前からある home）は
-# 「いまのアーキで作られた」とみなして刻むだけ——それが唯一安全な既定である。
+# So stamp the architecture into `~`, and when it changed, discard only what the product
+# installed so the boot-install below reinstalls it. A home without a stamp is assumed to
+# have been built on the current architecture and is just stamped — the only safe default.
 #
-# ⚠️ 捨てる対象は下の boot-install ブロックが入れるものと 1:1 で対応する。
-#    CLI を足したらここにも足すこと（docs/log/70 §70.5 の表）。
-# ⚠️ `~/repos` には絶対に触らない（利用者の未コミットの作業がある）。`~/.local/bin` に
-#    利用者が自分で入れたツールも消さない——消せば「勝手に消えた」になる。壊れている
-#    事実だけ伝えて、入れ直すかは本人に委ねる。
+# The discard list must match what the boot-install block installs, 1:1. When adding a
+# CLI there, add it here too (the table in docs/log/70 §70.5).
+# Never touch `~/repos` (the user's uncommitted work lives there). Do not delete tools the
+# user put in `~/.local/bin` either — that would read as "they vanished". Report that they
+# are broken and leave reinstalling to the user.
 af_arch_now="$(dpkg --print-architecture 2>/dev/null || uname -m)"
 case "$af_arch_now" in x86_64) af_arch_now=amd64 ;; aarch64) af_arch_now=arm64 ;; esac
 AF_ARCH_STAMP="$HOME/.local/share/agent-fleet/arch"
@@ -74,16 +82,16 @@ af_arch_was="$(cat "$AF_ARCH_STAMP" 2>/dev/null || true)"
 if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
   echo "[entrypoint] arch: この home は $af_arch_was で作られ、いま $af_arch_now の上に居ます"
   echo "[entrypoint] arch: アーキ依存の導入物を入れ直します（初回は数分かかることがあります）"
-  # 🔴 消す前に、利用者自身の npm グローバルを版つきで控える。`~/.local/lib/node_modules`
-  # には製品の CLI と利用者の `npm i -g` が同居していて、下のループはディレクトリごと
-  # 消す（native addon が壊れている以上それが正しい）。しかし boot-install が戻すのは
-  # **製品の 4 本だけ**なので、控えないと利用者の分だけが黙って消える。復旧は最後の
-  # af-arch-repair が行う。
+  # Before deleting, record the user's own npm globals with their versions.
+  # `~/.local/lib/node_modules` holds both the product CLIs and the user's `npm i -g`, and
+  # the loop below deletes the whole directory (correct, since native addons are broken).
+  # boot-install restores only the product's 4 CLIs, so without this record the user's
+  # packages silently disappear. af-arch-repair restores them at the end of the start.
   mkdir -p "$HOME/.local/share/agent-fleet" 2>/dev/null || true
   node -e '
     const fs = require("fs"), path = require("path");
     const root = process.argv[1];
-    // boot-install が自分で戻すものは控えない（二重導入になる）。
+    // Skip what boot-install restores itself (it would be installed twice).
     const skip = new Set(["@anthropic-ai/claude-code", "opencode-ai", "@openai/codex", "@github/copilot"]);
     const out = [];
     const add = (rel) => {
@@ -95,7 +103,7 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
     let ents = [];
     try { ents = fs.readdirSync(root); } catch { process.exit(0); }
     for (const e of ents) {
-      if (e.startsWith("@")) {              // スコープ付きは 1 段下りる
+      if (e.startsWith("@")) {              // scoped packages: descend one level
         try { for (const s of fs.readdirSync(path.join(root, e))) add(e + "/" + s); } catch {}
       } else if (e !== ".bin") add(e);
     }
@@ -115,22 +123,24 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
     { [ -e "$HOME/$rel" ] || [ -L "$HOME/$rel" ]; } || continue
     rm -rf "${HOME:?}/$rel" && echo "[entrypoint] arch: 削除 ~/$rel"
   done
-  # cursor の `agent` エイリアスは symlink のときだけ落とす（同名の自前スクリプトを
-  # 巻き込まないため）。
+  # Remove cursor's `agent` alias only when it is a symlink, so a user's own script of the
+  # same name is left alone.
   if [ -L "$HOME/.local/bin/agent" ]; then rm -f "$HOME/.local/bin/agent"; fi
-  # JDK は名前にアーキが入っている（temurin-<major>-jdk-<arch>）ので、他アーキの分だけ
-  # 落とせばよい。**入れ直しはこの同じ起動の中で自動的に済む**——下の java ブロックが
-  # 選択中の版を探し、`find_jh` は他アーキのディレクトリを採らないので「無い」と判定して
-  # `workspace-agent install-jdk` を呼ぶ。利用者の操作は要らない。
-  # ⚠️ 戻るのは **toolchains.json で選択中の版だけ**。選択していないのに入れてあった版は
-  #    ここで消えたまま戻らない（必要なら Console のツールチェーンで入れ直す）。
+  # JDK directories carry the architecture in their name (temurin-<major>-jdk-<arch>), so
+  # only the other architecture's ones need to go. The reinstall happens automatically in
+  # this same start: the java block below looks for the selected version, `find_jh` ignores
+  # other-arch directories and reports it missing, and `workspace-agent install-jdk` runs.
+  # No user action is needed.
+  # Only the version selected in toolchains.json comes back. Other installed but unselected
+  # versions stay gone (reinstall them from the Console's toolchains if needed).
   for d in "$HOME"/.local/share/agent-fleet/jvm/temurin-*-jdk-*; do
     [ -d "$d" ] || continue
     case "$d" in *-jdk-"$af_arch_now") continue ;; esac
     rm -rf "$d" && echo "[entrypoint] arch: 削除 ${d#"$HOME"/}"
   done
-  # 復旧そのものは起動の最後（node / java / go の選択が済んでから）に回す。ここで走らせると
-  # 選択前の python / node で入れ直すことになる。印だけ置いて af-arch-repair に渡す。
+  # The repair itself runs at the end of the start, once node / java / go are selected;
+  # running it here would reinstall with the pre-selection python / node. Just leave the
+  # marker for af-arch-repair.
   AF_ARCH_REPAIR_FROM="$af_arch_was"
 fi
 if [ -n "$af_arch_now" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
@@ -138,21 +148,21 @@ if [ -n "$af_arch_now" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
   printf '%s\n' "$af_arch_now" > "$AF_ARCH_STAMP" 2>/dev/null || true
 fi
 
-# --- ベースイメージの python の major が動いたときの通知（docs/decisions/0068 決定 4） ---
-# 上のアーキ刻印と同じ仕掛けだが、**何も消さない**ところが決定的に違う。
+# --- Notice when the base image's python major changes (docs/decisions/0068 decision 4) ---
+# Same mechanism as the arch stamp above, with one essential difference: it deletes nothing.
 #
-# `pip install --user` の産物は `~/.local/lib/python<major>/site-packages` にあり、python が
-# 3.11 → 3.13 に動くと**消えるのではなく見えなくなる**（新しい python は別のディレクトリを
-# 見る）。拡張は `…cpython-311-….so` の ABI タグ付きなので寄せても駄目で、入れ直しが要る。
-# さらに `~/.local/bin` のランチャは `#!/usr/bin/python3` なので**残って起動し**、新しい
-# python で即 ModuleNotFoundError になる——症状は「昨日まで動いていた」で、原因はどこにも
-# 出ない。だから知らせる。
+# `pip install --user` output lives in `~/.local/lib/python<major>/site-packages`. When python
+# moves 3.11 → 3.13 it is not deleted but becomes invisible (the new python looks in another
+# directory). Extensions carry an ABI tag (`…cpython-311-….so`), so moving them over does not
+# work; they need reinstalling. And the launchers in `~/.local/bin` use `#!/usr/bin/python3`,
+# so they still start and fail at once with ModuleNotFoundError under the new python — "it
+# worked yesterday", with no cause shown anywhere. Hence the notice.
 #
-# ⚠️ 入れ直しはこちらでやらない。起動時にネットワークを要求し、数分かかり、黙って別の
-#    バージョンを解決するからで、これは上のアーキ自己修復が「利用者が自分で入れた
-#    `~/.local` のツールは消さない」と決めているのと同じ線引きである。
-# ⚠️ これは**アーキのイベントではない**。amd64 のメンバーも全員が新イメージの初回起動で
-#    1 回踏むので、上のブロックには原理的に乗らない。
+# Reinstalling is not done here: it needs the network at start, takes minutes, and silently
+# resolves different versions — the same line the arch self-repair draws by not deleting
+# tools the user installed into `~/.local`.
+# This is not an architecture event: every amd64 member also hits it once, on the first
+# start of a new image, so it cannot live in the block above.
 af_py_now="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
 AF_PY_STAMP="$HOME/.local/share/agent-fleet/python-major"
 af_py_was="$(cat "$AF_PY_STAMP" 2>/dev/null || true)"
@@ -163,10 +173,10 @@ if [ -n "$af_py_now" ] && [ -n "$af_py_was" ] && [ "$af_py_was" != "$af_py_now" 
   af_py_old_sp="$HOME/.local/lib/python$af_py_was/site-packages"
   af_py_pkgs=""
   if [ -d "$af_py_old_sp" ]; then
-    # dist-info のディレクトリ名は `<name>-<version>.dist-info`。名前だけを取り出す。
-    # ⚠️ dist-info 側の名前は `-` が `_` に正規化されている（cfn-lint → cfn_lint）ので
-    #    PEP 503 の正準形（`-`）へ戻す。そのまま出すと pip には通るが、利用者が
-    #    PyPI で検索したときに見つからない名前を見せることになる。
+    # dist-info directories are named `<name>-<version>.dist-info`; take the name only.
+    # dist-info names normalise `-` to `_` (cfn-lint → cfn_lint), so map back to the PEP 503
+    # canonical form (`-`). pip accepts either, but the user would otherwise be shown a
+    # name that a PyPI search does not find.
     for d in "$af_py_old_sp"/*.dist-info; do
       [ -d "$d" ] || continue
       b="$(basename "$d" .dist-info)"
@@ -174,7 +184,7 @@ if [ -n "$af_py_now" ] && [ -n "$af_py_was" ] && [ "$af_py_was" != "$af_py_now" 
     done
   fi
   if [ -n "$af_py_pkgs" ]; then
-    # shellcheck disable=SC2086 # 意図的な word splitting（前後の空白を潰して 1 行にする）
+    # shellcheck disable=SC2086 # intentional word splitting (collapses the whitespace onto one line)
     echo "[entrypoint] python: ⚠️ 次は python$af_py_was 用のまま残っており、$af_py_now からは見えません:"
     echo "[entrypoint] python:   $(echo $af_py_pkgs)"
     echo "[entrypoint] python:   入れ直す: pip install --user --force-reinstall $(echo $af_py_pkgs)"
@@ -201,12 +211,15 @@ fi
 
 # claude records installMethod="native" and self-checks its launcher at
 # ~/.local/bin/claude on every start, warning "claude command … missing or broken"
-# when it is gone/dangling. After the node→dev rename that launcher dangled (it
-# pointed at the old /home/node/.local/share/claude/…). Removing it isn't enough —
+# when it is gone or dangling (e.g. a home from before the node→dev user rename, whose
+# launcher points at /home/node/.local/share/claude/…). Removing it isn't enough —
 # claude still expects a native install — so REPAIR it via the baked claude
 # (`claude install`), which reinstalls a valid ~/.local install (and keeps it
-# auto-updatable). Gated on installMethod=native so fresh homes just use the baked
-# /usr/local claude. Best-effort (needs network); claude still runs if it fails.
+# auto-updatable). This needs /usr/local/bin/claude, so it only runs in a
+# BAKE_AGENT_CLIS=1 image, and only for homes with installMethod=native; fresh homes
+# there just use the baked claude. In the lean default image there is no /usr/local
+# claude and the boot-install below provides ~/.local/bin/claude instead.
+# Best-effort (needs network); claude still runs if it fails.
 CCD_EARLY="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 if [ -x /usr/local/bin/claude ] && [ ! -e "$HOME/.local/bin/claude" ] \
    && grep -q '"installMethod"[[:space:]]*:[[:space:]]*"native"' "$CCD_EARLY/.claude.json" 2>/dev/null; then
@@ -217,17 +230,18 @@ if [ -x /usr/local/bin/claude ] && [ ! -e "$HOME/.local/bin/claude" ] \
     || echo "[entrypoint] WARN: claude install failed (using baked /usr/local)"
 fi
 
-# gh 透過認証（§8.3）: 焼き込みの /usr/local/bin/gh は git と同一トークンを注入する
-# ラッパー。home volume に実体の ~/.local/bin/gh が残っていると PATH 先頭で焼き込み
-# ラッパーを隠し、透過認証が効かなくなる。シンボリックリンク以外（=実バイナリ）なら
-# 除去して PATH をラッパーへ通す（標準イメージは ~/.local/bin に gh を置かない）。
+# gh transparent auth (§8.3): the baked /usr/local/bin/gh is a wrapper that injects the
+# same token as git. A real ~/.local/bin/gh left on the home volume comes first on PATH,
+# hides the wrapper and breaks transparent auth. If it is not a symlink (i.e. a real
+# binary), remove it so PATH reaches the wrapper (the standard image never puts gh in
+# ~/.local/bin).
 if [ -e "$HOME/.local/bin/gh" ] && [ ! -L "$HOME/.local/bin/gh" ]; then
   echo "[entrypoint] removing shadowing $HOME/.local/bin/gh (use baked gh auth wrapper)"
   rm -f "$HOME/.local/bin/gh"
 fi
 
 # Relocate Claude state out of the browsable home BEFORE claude runs (docs/17
-# P3-5 段2): when CLAUDE_CONFIG_DIR points outside home, migrate a pre-existing
+# P3-5 stage 2): when CLAUDE_CONFIG_DIR points outside home, migrate a pre-existing
 # ~/.claude into it once (must precede claude install/update, which would
 # otherwise populate the new dir first and skip the migration). Auth also works
 # via the per-session env token, so a glitch here is non-fatal. The Console file
@@ -241,31 +255,33 @@ if [ "$CCD" != "$HOME/.claude" ] && [ -d "$HOME/.claude" ] && [ -z "$(ls -A "$CC
   fi
 fi
 
-# --- 作業ディスクへの退避（ADR 0044 決定 3・docs/log/63 §63.5） -------------------
-# AF_WS_SCRATCH が指すのはタスクローカルの速いディスクで、**コンテナ停止で消える**。
-# CP は ECS ランタイムのときだけこれを注入する（docker/native はホストのローカル
-# ディスクを bind mount しているので、逃がす動機が無い）。
+# --- Move to the scratch disk (ADR 0044 decision 3; docs/log/63 §63.5) -----------
+# AF_WS_SCRATCH is a fast task-local disk that vanishes when the container stops. The CP
+# injects it only on the ECS runtimes (docker/native bind-mount a host-local disk, so
+# there is nothing to gain by moving).
 #
-# 逃がすのは「ファイル数が多く、再生成が安い」ものだけ。EFS のペナルティは 1 ファイル
-# 約 14.5ms 固定で帯域差は 1MiB 約 1ms しか無いため、平均ファイルサイズが小さいものだけが
-# 致命的に遅い（実測 docs/log/63 §63.4）。~/.npm は 20GiB あってもファイル数は 6,756 なので
-# **EFS に残す**——残すことで、朝いちばんの npm ci がネットワーク無しで走る。
+# Only move what has many files and is cheap to regenerate. EFS costs a fixed ~14.5 ms per
+# file while the bandwidth difference is only ~1 ms per MiB, so only data with a small
+# average file size is fatally slow (measured, docs/log/63 §63.4). ~/.npm can be 20 GiB but
+# has only 6,756 files, so it stays on EFS — which lets the first npm ci of the morning run
+# without network.
 #
-# 既にホーム側に実体がある場合は、EFS 上の削除が遅い（数万ファイルで数分）ので
-# 退避してから背景で消す。中身はいずれも製品が「消してよい」と宣言しているもの
-# （home 掃除の対象）なので、失われても再生成できる。
+# If a real directory already exists in home, deleting it on EFS is slow (minutes for tens
+# of thousands of files), so move it aside and delete it in the background. Everything here
+# is declared safe to delete by the product (home cleanup targets), so it can be
+# regenerated if lost.
 if [ -n "${AF_WS_SCRATCH:-}" ]; then
-  # 退避先の実サイズを見てから決める。Fargate 既定の 20 GiB にはイメージ層と /tmp も
-  # 同居しており、実測の go-build 9GiB + uv 1GiB を足すと余裕が無い。作業ディスクを
-  # 明示的に広げたデプロイでだけ有効にする——つまり **ディスクの設定そのものが
-  # このスイッチ**で、既定のままのデプロイは従来どおり全部 EFS で動く。
+  # Decide from the scratch disk's actual size. Fargate's default 20 GiB also holds the image
+  # layers and /tmp, and the measured go-build 9 GiB + uv 1 GiB leave no headroom. Only
+  # deployments that explicitly enlarged the scratch disk enable this — the disk setting is
+  # itself the switch, and a default deployment keeps everything on EFS.
   scratch_kb=$(df -Pk "$AF_WS_SCRATCH" 2>/dev/null | awk 'NR==2{print $2}')
   scratch_min_kb=$(( ${AF_WS_SCRATCH_MIN_GB:-30} * 1024 * 1024 ))
   if [ -z "$scratch_kb" ] || [ "$scratch_kb" -lt "$scratch_min_kb" ]; then
     echo "[entrypoint] scratch: 作業ディスクが小さいため退避しません（$(( ${scratch_kb:-0} / 1048576 )) GiB < ${AF_WS_SCRATCH_MIN_GB:-30} GiB）"
   elif mkdir -p "$AF_WS_SCRATCH/home" 2>/dev/null && [ -w "$AF_WS_SCRATCH/home" ]; then
-    # 既定は go のビルドキャッシュ・モジュールキャッシュと uv。いずれも実測で
-    # ファイル数が飛び抜けて多い（uv は 1GiB に 10 万ファイル）。
+    # Defaults: the go build cache, the go module cache and uv — measured to have by far
+    # the most files (uv: 100k files in 1 GiB).
     for rel in ${AF_WS_SCRATCH_DIRS:-.cache/go-build .cache/uv go/pkg/mod}; do
       src="$HOME/$rel"; dst="$AF_WS_SCRATCH/home/$rel"
       mkdir -p "$dst" 2>/dev/null || continue
@@ -282,60 +298,61 @@ if [ -n "${AF_WS_SCRATCH:-}" ]; then
       ln -s "$dst" "$src" && echo "[entrypoint] scratch: ~/$rel -> $dst"
     done
   else
-    # EBS をマウントした場合など、所有者が dev でないと書けない。ここで止める理由は
-    # 無いので、EFS のまま（＝従来どおり）動かして事実だけ残す。
+    # e.g. a mounted EBS volume not owned by dev is not writable. No reason to stop here:
+    # keep running on EFS and just log the fact.
     echo "[entrypoint] scratch: $AF_WS_SCRATCH に書けないため退避をスキップします"
   fi
 fi
 
-# --- boot-install（lean 配布 variant、docs/log/35 §35.4.1 / §35.7.1-6） -----------
-# BAKE_AGENT_CLIS=0 で焼いたイメージ/rootfs はエージェント CLI
-# （claude/opencode/codex/copilot/cursor/agy/rtk）を含まない。ここで versions.json の
-# ピン版（= e2e-smoke で動作検証した版）を ~/.local へ導入する。各デプロイ先が
-# 公式配布元（npm / GitHub Releases / Google）から直接取得する形なので、当方に
-# よる再配布に当たらない（各社が各配布元の規約を自ら受諾する）。焼き込み
-# （/usr/local/bin）か home（~/.local/bin）に既に居る CLI は触らない。ネット不通は
-# WARN で続行（Agent 起動は止めない — 端末は使える。次回起動時に再試行）。
+# --- boot-install (lean variant; docs/log/35 §35.4.1 / §35.7.1-6) ----------------
+# An image/rootfs built with BAKE_AGENT_CLIS=0 (the default) contains no agent CLIs
+# (claude/opencode/codex/copilot/cursor/agy/rtk). Install their versions.json pins (the
+# versions e2e-smoke verified) into ~/.local here. Each deployment fetches directly from the
+# official distribution (npm / GitHub Releases / Google), so this is not redistribution by
+# us (each party accepts the distributor's terms itself). A CLI already present, baked
+# (/usr/local/bin, BAKE_AGENT_CLIS=1) or in home (~/.local/bin), is not reinstalled, except
+# that the repin below moves a drifted ~/.local copy back to the pin. No network → WARN and
+# continue (the Agent still starts, the terminal works, the next start retries).
 #
-# 🔴 **この節の `( set -e … ) && ok || WARN` の中では `set -e` が効かない。**
-# POSIX（と bash・dash 実測 5.2.37 / trixie の dash）は「AND-OR リストの最後以外の
-# コマンド」で -e を無視すると定めており、サブシェル全体がその左辺なので、**中で
-# 明示的に `set -e` と書いても無視される**。実測（ADR 0095 段 1 門 A、2026-09-20）:
+# Inside this section's `( set -e … ) && ok || WARN`, `set -e` has no effect.
+# POSIX (and bash and dash — measured on bash 5.2.37 / trixie's dash) ignores -e in every
+# command of an AND-OR list except the last, and the whole subshell is the left operand, so
+# even an explicit `set -e` inside it is ignored. Measured (ADR 0095 stage 1, gate A):
 #
 #   ( set -e; echo "0000  f" | sha256sum -c - >/dev/null; echo INSTALLED ) && echo OK
-#   → "WARNING: 1 computed checksum did NOT match" を出したうえで INSTALLED と OK
+#   → prints "WARNING: 1 computed checksum did NOT match", then INSTALLED and OK
 #
-# ＝ **sha256 検証は飾りで、検証に落ちた成果物がそのまま ~/.local へ入り「成功」と
-# 記録される**。boot-install は 5 か所すべてこの形だったので、検証と「その先へ
-# 進ませない」を errexit に頼らず **`|| exit 1` で明示**する（`exit` は errexit と
-# 無関係に効く）。⚠️ `if ( set -e; … ); then` へ書き換えるのは**直らない** —— if の
-# 条件もまた -e が無視される文脈だから。
+# i.e. the sha256 check would be decorative: an artifact that failed it lands in ~/.local
+# and is logged as a success. So the check and "do not go past it" are made explicit with
+# `|| exit 1` instead of relying on errexit (`exit` works regardless of errexit). Rewriting
+# it as `if ( set -e; … ); then` does not fix it — an if condition is also a context where
+# -e is ignored.
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
-# agy_effective_version — 「いま在る agy は何版か」。
+# agy_effective_version — the version of the agy that is actually installed now.
 #
-# ⚠️ マーカー（.agy.version）は **AF が最後に入れた版**であって、**いま在る版ではない**。
-# agy は自分を書き換えることがあり（実測・docs/log/70 §70.14.9: 1.1.17 で起動した 34 秒後に
-# 1.1.19 になり、ログに `auto_updater.go:305 Spawned background update process` が
-# 残っていた）、マーカーは AF が書くファイルなのでその更新では動かない。
+# The marker (.agy.version) is the version AF last installed, not the one present now. agy
+# can rewrite itself (measured, docs/log/70 §70.14.9: started as 1.1.17, 34 s later it was
+# 1.1.19 with `auto_updater.go:305 Spawned background update process` in its log), and the
+# marker is AF's own file, so that update does not move it.
 #
-# その自己更新の直接の原因は `AGY_CLI_DISABLE_AUTO_UPDATE=1` という**値の誤り**で、
-# 受け付けるのは `true` だけだった（Dockerfile で修正済み）。ここを実体比較のままに
-# しておくのは、封殺が外れる経路が他にもあるから: 利用者の明示的な `agy update`、
-# 自己更新 opt-in（下の shadow ブロック）、そして**古いイメージで焼かれた home**は
-# 封殺が効いていなかった時代の版を抱えたまま永続する。
+# The direct cause of that self-update was a wrong value, `AGY_CLI_DISABLE_AUTO_UPDATE=1`,
+# where only `true` is accepted (fixed in the Dockerfile). This still compares the binary
+# because the lock can be bypassed in other ways: an explicit `agy update` by the user, the
+# self-update opt-in (the shadow block below), and homes populated by older images, which
+# keep a version from before the lock worked.
 #
-# だから marker だけで repin を判定すると **marker == pin なのに実体が違う**状態が
-# 固着する。しかも実害は静かで、その版で出力形式が変わっていれば「セッションは動く
-# のに黙って別のモデル」になる（§70.14.8 で実際にそうなった）。
+# Deciding the repin from the marker alone therefore gets stuck at "marker == pin, binary
+# differs". The harm is quiet: if that version changed its output format, the session runs
+# but silently on a different model (it happened, §70.14.8).
 #
-# だから常に実体を問う。カーネルが RDRAND を取り下げた x86 ホストでは素の起動が
-# SIGABRT する（decisions/0008）ので、Agent が全 spawn に当てるのと同じ
-# OPENSSL_ia32cap マスクを当てて問う（0008 の 2026-09-07 決定。RDRAND 提示ホストには
-# 当たらない）。arm64 は §70.13 の実測で素のまま安全と確定している（BoringCrypto が
-# 乱数を命令でなく getrandom(2) から取るため、`rng` を持たない Graviton2 でも RC=0）。
-# マスクは呼び出し単位で当てる — export すると agy 以外の全プロセスに及ぶ。
+# So always ask the binary. On x86 hosts whose kernel withdrew RDRAND a plain start SIGABRTs
+# (decisions/0008), so apply the same OPENSSL_ia32cap mask the Agent applies to every spawn
+# (0008's 2026-09-07 decision; hosts that expose RDRAND do not get it). arm64 is confirmed
+# safe unmasked by the §70.13 measurement (BoringCrypto takes randomness from getrandom(2),
+# not the instruction, so RC=0 even on Graviton2, which lacks `rng`).
+# The mask is applied per call — exporting it would reach every process, not just agy.
 agy_effective_version() {
   local bin="$HOME/.local/bin/agy" v=""
   if [ ! -x "$bin" ]; then :
@@ -347,31 +364,33 @@ agy_effective_version() {
   [ -n "$v" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
   printf '%s' "$v"
 }
-# lean 判定: claude が焼かれておらず versions.json にピンがある = lean variant。
-# lean では下の CLAUDE_INSTALL ブロックの起動時 update も抑止してピン版を維持する
-# （最新への追従は self-update opt-in の仕事）。
+# Lean detection: claude is not baked and versions.json has a pin for it → lean variant.
+# In lean, the start-time update in the CLAUDE_INSTALL block below is suppressed too, to keep
+# the pin (tracking latest is the self-update opt-in's job).
 LEAN_CLIS=0
 if [ ! -x /usr/local/bin/claude ] && [ -n "$(vj_pin claude)" ]; then LEAN_CLIS=1; fi
 if [ "$LEAN_CLIS" = 1 ]; then
-  # lean 配布 variant であることを明示（agent.log で「なぜ DL したか / しなかったか」を
-  # 追えるように）。初回起動は npm/GitHub から数分かけて DL するが、~/.local は home
-  # ボリュームに永続するので 2 回目以降（オフライン再起動含む）は下の各ブロックが
-  # cli_present=true で無音スキップし即起動する。これは設計どおりの正常動作で、
-  # 「rootfs に CLI が焼かれている」わけではない（docs/log/35 §35.7.2-8）。
+  # Say explicitly that this is the lean variant, so agent.log shows why CLIs were or were
+  # not downloaded. The first start downloads from npm/GitHub for several minutes; ~/.local
+  # persists on the home volume, so later starts (offline restarts included) skip silently
+  # via cli_present=true and start immediately. That is by design, not a sign that the CLIs
+  # are baked into the rootfs (docs/log/35 §35.7.2-8).
   echo "[entrypoint] lean variant: ensuring pinned agent CLIs under ~/.local (versions.json)"
-  # ピン再固定（repin）: self-update opt-in が OFF のこの起動では、過去の ON が
-  # ~/.local を最新へ進めていても versions.json のピン版へ戻す。焼き込み variant の
-  # 「OFF に戻して Stop→Start で焼き込み版へ復帰」と同じ意味論を lean にも与える。
-  # 従来は cli_present の在/不在ガードだけだったため、一度 ON で進んだ版が OFF に
-  # 戻しても永久に残った（kiro の起動ガードで直したのと同型の穴 — docs/log/43 §4-2）。
-  # 無人起動（AF_AGENT_SELF_UPDATE_SKIP=1）は「今回は触らない」意味論なので温存。
+  # Repin: on a start where the self-update opt-in is OFF, put ~/.local back on the
+  # versions.json pin even if an earlier ON moved it ahead. This gives lean the same
+  # semantics as the baked variant's "turn it OFF and Stop→Start to return to the baked
+  # version". A presence check alone would keep a version advanced under ON forever after
+  # OFF (the same hole as the one fixed in the kiro start guard — docs/log/43 §4-2).
+  # An unattended start (AF_AGENT_SELF_UPDATE_SKIP=1) means "leave it alone this time", so
+  # it keeps whatever is installed.
   REPIN=0
   if [ "${AF_AGENT_SELF_UPDATE_SKIP:-0}" != "1" ] \
      && { [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" != "1" ] || [ "${AF_AGENT_SELF_UPDATE:-0}" != "1" ]; }; then
     REPIN=1
   fi
-  # npm 配布の 4 CLI はまとめて 1 回の npm install（prefix=$HOME/.local → ~/.local/bin）。
-  # repin 判定用の導入済み版は npm ls 1 回で取る（CLI 自体の --version は数秒かかる）。
+  # The 4 npm-distributed CLIs go in a single npm install (prefix=$HOME/.local → ~/.local/bin).
+  # Their installed versions for the repin check come from one npm ls (each CLI's own
+  # --version takes seconds).
   NPM_LS=""
   if [ "$REPIN" = 1 ]; then
     NPM_LS="$(npm ls -g --prefix "$HOME/.local" --depth=0 --json 2>/dev/null || true)"
@@ -387,7 +406,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
     if ! cli_present "$cli"; then
       NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"
     elif [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/$cli" ]; then
-      # 進んだ shadow をピンへ戻す。npm 管理でない導入（版が取れない）は触らない。
+      # Move a drifted copy back to the pin. Installs npm does not manage (no version) are left alone.
       cur="$(npm_cur "$pkg")"
       if [ -n "$cur" ] && [ "$cur" != "$ver" ]; then NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; fi
     fi
@@ -401,7 +420,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
   else
     echo "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)"
   fi
-  # rtk: GitHub Releases のピン版（checksum 検証つき — Dockerfile 焼き込みと同じ経路）。
+  # rtk: the pinned GitHub Releases build, checksum-verified (same path as the Dockerfile bake).
   RTK_NEED=0
   if [ -n "$(vj_pin rtk)" ]; then
     if ! cli_present rtk; then
@@ -431,10 +450,10 @@ if [ "$LEAN_CLIS" = 1 ]; then
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
       tar xzf "${asset}"
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
-      # ⚠️ 実行して確かめてから残す。arm64 の配布は gnu ビルドだけで GLIBC_2.39 を要求し、
-      # このイメージ（Debian 12・glibc 2.36）では **DL も sha256 も通ったうえで起動だけが
-      # できない**（実測 2026-08-22・docs/log/70 §70.9.2）。確かめずに置くと、PATH の先頭に
-      # 動かない rtk が居座り、失敗するのは使った瞬間になる。
+      # Keep it only after running it. The arm64 release is a gnu build requiring GLIBC_2.39,
+      # and on this image (Debian 12, glibc 2.36) it downloads and passes sha256 but cannot
+      # start (measured 2026-08-22, docs/log/70 §70.9.2). Left unchecked, a broken rtk sits
+      # first on PATH and fails only when it is used.
       if ! err="$("$HOME/.local/bin/rtk" --version 2>&1)"; then
         rm -f "$HOME/.local/bin/rtk"
         echo "[entrypoint] rtk はこの環境では動かないため導入しません: $err"
@@ -445,9 +464,10 @@ if [ "$LEAN_CLIS" = 1 ]; then
   elif cli_present rtk; then
     echo "[entrypoint] boot-install: rtk already present (skip)"
   fi
-  # agy: 公式installer manifestが示す不変GCS objectのピン版。
-  # （versions.json の agy + agy_build + agy_sha256 で取得・検証 — Dockerfile焼き込みと同じ経路）。
-  # self-update の版比較マーカーも書いておく（ピン導入直後の無駄な再取得を防ぐ）。
+  # agy: the pinned immutable GCS object named by the official installer manifest, fetched
+  # and verified via versions.json's agy + agy_build + agy_sha256 (same path as the Dockerfile
+  # bake). Also write the self-update version marker, so the pin is not re-fetched right
+  # after installing it.
   AGY_NEED=0
   if [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
     if ! cli_present agy; then
@@ -479,17 +499,17 @@ if [ "$LEAN_CLIS" = 1 ]; then
   elif cli_present agy; then
     echo "[entrypoint] boot-install: agy already present (skip)"
   fi
-  # cursor（kind="cursor"、docs/log/40）: 版付き tarball の Node.js バンドルを
-  # ~/.local/share/cursor-agent/versions/<版>/ へ展開し ~/.local/bin/cursor-agent を張る
-  # （上流 install.sh と同レイアウト・Dockerfile 焼き込みと同経路）。sha256 は
-  # versions.json の cursor_sha256（arch 依存の焼き込み値）で検証。
+  # cursor (kind="cursor", docs/log/40): unpack the versioned tarball's Node.js bundle into
+  # ~/.local/share/cursor-agent/versions/<version>/ and link ~/.local/bin/cursor-agent (the
+  # upstream install.sh layout; same path as the Dockerfile bake). sha256 is checked against
+  # versions.json's cursor_sha256 (a per-architecture value written at image build).
   CUR_NEED=0
   if [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
     if ! cli_present cursor-agent; then
       CUR_NEED=1
     elif [ "$REPIN" = 1 ] && [ -L "$HOME/.local/bin/cursor-agent" ]; then
-      # 現在版は symlink 先の versions/<版>/ から取る（cursor-agent --version は
-      # Node 起動で数秒かかるためパスで判定）。
+      # Read the current version from the symlink target's versions/<version>/ (cursor-agent
+      # --version takes seconds to start Node, so decide from the path).
       cur_ver="$(readlink "$HOME/.local/bin/cursor-agent" 2>/dev/null | sed -n 's#.*/versions/\([^/]*\)/.*#\1#p')"
       if [ -n "$cur_ver" ] && [ "$cur_ver" != "$(vj_pin cursor)" ]; then CUR_NEED=1; fi
     fi
@@ -499,9 +519,9 @@ if [ "$LEAN_CLIS" = 1 ]; then
       set -e
       cver="$(vj_pin cursor)"; csha="$(vj_pin cursor_sha256)"
       dir="$HOME/.local/share/cursor-agent/versions/${cver}"
-      # repin 時: self-update（上流 install.sh）は新版を別ディレクトリに足すだけで
-      # ピン版の展開先は残っているのが普通 — 残っていれば ~100MB の再取得を省いて
-      # symlink の張り替えだけで戻す。
+      # On repin: the self-update (upstream install.sh) only adds the new version in another
+      # directory, so the pinned version's tree usually still exists — if so, skip the
+      # ~100 MB re-download and just repoint the symlink.
       if [ ! -x "$dir/cursor-agent" ]; then
         arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
         case "$arch" in
@@ -518,7 +538,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       fi
       mkdir -p "$HOME/.local/bin"
       ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent"
-      # self-update の install.sh が張る agent エイリアスが残っていれば同じ版へ揃える
+      # If the self-update install.sh left an `agent` alias, point it at the same version.
       if [ -L "$HOME/.local/bin/agent" ]; then ln -sf "$dir/cursor-agent" "$HOME/.local/bin/agent"; fi
     ) && echo "[entrypoint] boot-install cursor $(vj_pin cursor)" \
       || echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"
@@ -527,15 +547,17 @@ if [ "$LEAN_CLIS" = 1 ]; then
   fi
 fi
 
-# Kiro CLI（kind="kiro"、docs/log/43 Track B / §4-2）は ~855MB と桁違いに巨大なため、
-# 上の CLI 群と違い全ユーザー一律の boot-install は「しない」— kiro を使うユーザーの
-# 初回起動時に `workspace-agent install-kiro` が ~/.local へ manifest sha256 ピン付きで
-# 導入する（オンデマンド・利用ユーザー限定）。導入済み home 版のピン追従（versions.json
-# が上がったら再導入）は kiro 起動ガードの `workspace-agent install-kiro --if-needed` が
-# 毎起動見るので、ここでは 855MB の DL を起動時にぶら下げない。ここでやるのは自己更新封殺の毎起動再固定
-# だけ: kiro は copilot の COPILOT_AUTO_UPDATE のような build ENV ノブを持たず、
-# app.disableAutoupdates（~/.kiro/settings/cli.json・平文）で止める設定型なので、
-# 焼き込み（/usr/local・BAKE=1）でも home 導入済みでも毎起動固定する。未導入なら無音スキップ。
+# Kiro CLI (kind="kiro", docs/log/43 Track B / §4-2) is ~855 MB, an order of magnitude larger,
+# so unlike the CLIs above it is not boot-installed for every user: `workspace-agent
+# install-kiro` installs it into ~/.local, pinned by manifest sha256, the first time a kiro
+# session starts (on demand, only for users of kiro). Following the pin for a home install
+# (reinstalling when versions.json moves) is done on every start by the kiro start guard's
+# `workspace-agent install-kiro --if-needed`, so no 855 MB download hangs off container
+# start here. This block only re-applies the self-update lock on every start: kiro has no
+# build ENV knob like copilot's COPILOT_AUTO_UPDATE and is stopped by a setting,
+# app.disableAutoupdates (~/.kiro/settings/cli.json, plain text), so it is re-pinned on every
+# start whether baked (/usr/local, BAKE_AGENT_CLIS=1 only) or installed in home. Silent skip
+# when kiro is not installed.
 if command -v kiro-cli >/dev/null 2>&1; then
   kiro-cli settings app.disableAutoupdates true >/dev/null 2>&1 || true
   kiro-cli settings chat.disableTrustAllConfirmation true >/dev/null 2>&1 || true
@@ -547,8 +569,8 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
     case "$(command -v claude)" in
       "$HOME"/*)
         # User-home install (~/.local) takes PATH precedence → keep it current.
-        # lean の boot-install 品はピン維持なので起動時 update をしない（最新への
-        # 追従は self-update opt-in が担う）。
+        # A lean boot-installed copy stays on its pin, so no start-time update (tracking
+        # latest is the self-update opt-in's job).
         if [ "$LEAN_CLIS" = 1 ]; then
           :
         elif [ "${CLAUDE_AUTO_UPDATE:-1}" = "1" ]; then
@@ -557,7 +579,8 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
         fi
         ;;
       *)
-        # Baked into the image (/usr/local) → version-pinned, no self-update.
+        # Outside home = baked at /usr/local (BAKE_AGENT_CLIS=1 images only)
+        # → version-pinned, no self-update.
         : ;;
     esac
   else
@@ -571,46 +594,53 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
   fi
 fi
 
-# Agent CLI self-update (opt-in + operator-gated). In a baked image (BAKE_AGENT_CLIS=1)
-# the CLIs (claude/opencode/codex/copilot) and agy sit at /usr/local, pinned to the image
-# version, and so does rtk unless the build set BAKE_RTK=0; the lean default is described
-# further down. Both
+# Agent CLI self-update (opt-in + operator-gated). Where the pinned baseline lives depends
+# on how the image was built: with BAKE_AGENT_CLIS=1 the CLIs (claude/opencode/codex/
+# copilot), agy and cursor sit at /usr/local, pinned to the image version, and so does rtk
+# unless the build set BAKE_RTK=0. In the lean default (BAKE_AGENT_CLIS=0) nothing is at
+# /usr/local and the boot-install above put the versions.json pins into ~/.local (see
+# "lean variant" below). Both
 # gates come from the CP as env at container start: AF_AGENT_SELF_UPDATE_ALLOWED=1 (the
 # tenant policy) AND AF_AGENT_SELF_UPDATE=1 (the member's per-workspace opt-in, stored
 # in the CP DB so it can be toggled while the container is stopped).
 #
-# Model (all self-updatable tools identical): the baked /usr/local copy is the PINNED,
-# IMMUTABLE baseline — self-update never writes it. When ON, latest is installed under
-# ~/.local as a PATH-first shadow ("$HOME/.local/bin:$PATH", top of file); when OFF the
-# else branch removes that shadow so PATH falls back to the /usr/local pin — no container
-# recreate needed. This unifies the npm trio with the agy/rtk/cursor shadows below and
-# keeps the known-good baked baseline untouched even if an @latest release is broken.
+# Model with a BAKE_AGENT_CLIS=1 image (all self-updatable tools identical): the baked
+# /usr/local copy is the PINNED, IMMUTABLE baseline — self-update never writes it. When
+# ON, latest is installed under ~/.local as a PATH-first shadow ("$HOME/.local/bin:$PATH",
+# top of file); when OFF the else branch removes that shadow so PATH falls back to the
+# /usr/local pin — no container recreate needed. This unifies the npm trio with the
+# agy/rtk/cursor shadows below and keeps the known-good baked baseline untouched even if
+# an @latest release is broken.
 #
-# lean variant (no /usr/local bake): the boot-install品 under ~/.local IS the pin, so
-# there is no separate immutable baseline — ON updates it in place. Reverting on OFF is
-# the boot-install REPIN's job (it reinstalls the versions.json pin over a drifted
-# ~/.local earlier in this script); the shadow cleanup below stays gated on the
-# /usr/local pin existing because in lean there is nothing to fall back to.
+# lean variant (the default; no /usr/local bake): the boot-installed copy under ~/.local
+# IS the pin, so there is no separate immutable baseline — ON updates it in place.
+# Reverting on OFF is the boot-install REPIN's job (it reinstalls the versions.json pin
+# over a drifted ~/.local earlier in this script); the shadow cleanup below stays gated on
+# the /usr/local pin existing because in lean there is nothing to fall back to.
 #
-# 無人起動の抑止（AF_AGENT_SELF_UPDATE_SKIP=1）: スケジュール実行の wake など「人が
-# 見ていない起動」では、opt-in が ON でも今回の boot に限り更新を走らせない。狙いは 2 つ。
-#   ① 起動時間: 更新は exec workspace-agent より前の同期処理なので、そのまま /healthz の
-#      待ち時間になる（4CLI cold で実測 35s、agy 15s、cursor 6s ＝ 全部走ると約60s）。
-#   ② 事故: 未検証の @latest を無人で引くと、その版の破壊的変更でエージェントが動かない
-#      まま無人実行に入る（TUI 文字列契約の破損は本リポジトリで再発済み）。更新は人が
-#      いる起動＝手動 Start に寄せる。
-# ここは「今回はスキップ」であって OFF ではない。下の else（opt-in OFF）は ~/.local の
-# shadow を撤去して焼き込み版へ戻す意味論を持つので、無人起動でそれを踏むと 1.3GB の
-# uninstall→次回 reinstall のチャーンになる。専用の分岐に分けているのはそのため。
+# Unattended starts (AF_AGENT_SELF_UPDATE_SKIP=1): on a start nobody is watching, such as a
+# scheduled-run wake, no update runs on this boot even with the opt-in ON. Two reasons:
+#   1. Start time: the update runs synchronously before exec workspace-agent, so it adds
+#      directly to the /healthz wait (measured cold: 4 CLIs 35 s, agy 15 s, cursor 6 s —
+#      about 60 s when all of them run).
+#   2. Breakage: pulling an unverified @latest unattended means a breaking change in that
+#      release leaves the agent broken going into an unattended run (TUI string contract
+#      breakage has recurred in this repo). Updates belong on starts with a person
+#      present, i.e. a manual Start.
+# This is "skip this time", not OFF. The else branch below (opt-in OFF) removes the
+# ~/.local shadow to fall back to the baked version, so hitting it on unattended starts
+# would churn a 1.3 GB uninstall→reinstall next time. Hence the separate branch.
 if [ "${AF_AGENT_SELF_UPDATE_SKIP:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: skipped for this boot (unattended start) — keeping installed versions"
 elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
-  # 常に ~/.local を対象（/usr/local ピンは不変。PATH 先勝ちの shadow だけ更新・版比較）。
+  # Always target ~/.local (a baked /usr/local pin is immutable; only the PATH-first
+  # shadow is updated and compared).
   NPM_PREFIX_DIR="$HOME/.local"
   NPM_PREFIX_ARG="--prefix $HOME/.local"
-  # 版比較スキップ: レジストリの latest と（PATH 実効 prefix の）導入版が全一致なら再
-  # インストールを丸ごと省く（毎起動の tarball 取得を新リリース時だけに）。判定不能時は更新。
+  # Skip when unchanged: if every package's installed version (in the effective PATH
+  # prefix) equals the registry latest, skip the reinstall entirely (tarballs are fetched
+  # only on a new release). When it cannot be decided, update.
   NPM_NEED=$(NPM_PREFIX_DIR="$NPM_PREFIX_DIR" node -e '
     const { execSync } = require("child_process");
     const pfx = process.env.NPM_PREFIX_DIR ? " --prefix " + process.env.NPM_PREFIX_DIR : "";
@@ -633,18 +663,17 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   else
     echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
   fi
-  # agy (Antigravity) も同じ opt-in で最新へ。npm でなく Google の install.sh 供給で、
-  # 焼き込みは root 所有の /usr/local/bin のため ~/.local/bin へ入れて PATH 先勝ちで
-  # 差し替える（shadow 方式）。版比較スキップ: install.sh と同じ配布 manifest（軽量
-  # JSON）から latest を取り、前回導入時に記録したマーカーと一致なら ~187MB の再取得を
-  # 省く。比較は agy_effective_version()（実体を問えるホストでは実体・そうでなければ
-  # マーカー）。⚠️ かつてここは marker 決め打ちで、「agy 自身の自己更新で進んでいたら
-  # 比較がズレて再導入されるだけで無害」と書いてあった。無害ではなかった——自己更新は
-  # marker を動かさないので、ピン側（repin）では marker == pin のまま実体だけが先へ
-  # 行って固着する（docs/log/70 §70.14.9）。ここ（opt-in ON 側）では逆に、実体が既に
-  # latest でも marker が古いせいで毎回 ~187MB を取り直していた。
-  # install.sh は既存バイナリがあると更新せず即 exit 0 する仕様なので、空の temp dir
-  # へ導入してから差し替える（失敗時は旧 shadow 温存）。
+  # agy (Antigravity) follows the same opt-in to latest. It ships via Google's install.sh
+  # rather than npm, and a baked copy (BAKE_AGENT_CLIS=1) is in root-owned /usr/local/bin,
+  # so it goes into ~/.local/bin and wins on PATH (shadow). Skip when unchanged: take
+  # latest from the same distribution manifest install.sh uses (small JSON) and skip the
+  # ~187 MB re-download when it matches agy_effective_version() (the binary where it can be
+  # asked, otherwise the marker). Comparing the marker alone is wrong both ways: agy's own
+  # self-update does not move the marker, so on the pin side (repin) "marker == pin" sticks
+  # while the binary moves ahead (docs/log/70 §70.14.9), and here (opt-in ON) a stale marker
+  # re-downloaded ~187 MB on every start even when the binary was already latest.
+  # install.sh exits 0 without updating when a binary already exists, so install into an
+  # empty temp dir and then swap it in (the previous shadow survives a failure).
   AGY_MARK="$HOME/.local/bin/.agy.version"
   agy_arch="$(dpkg --print-architecture 2>/dev/null || uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
   agy_latest="$(curl -fsSL --max-time 15 \
@@ -665,12 +694,13 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
     fi
     rm -rf "$agy_tmp"
   fi
-  # rtk も同じ opt-in で最新へ。焼き込みの /usr/local/bin/rtk は root 所有で上書き
-  # できないため、latest release を ~/.local/bin へ入れて PATH 先勝ちで差し替える
-  # （claude の user-install と同じ構図）。checksum 検証つき・失敗はソフト（焼き込み
-  # 版のまま続行）。OFF に戻すと下の分岐がこの shadow を除去し、焼き込み版へ戻る。
-  # 版比較スキップ: GitHub の /releases/latest リダイレクトから latest タグを取り、
-  # PATH 先勝ちの `rtk --version`（shadow か焼き込み）と一致なら取得を省く。
+  # rtk follows the same opt-in to latest. A baked /usr/local/bin/rtk (BAKE_AGENT_CLIS=1 and
+  # BAKE_RTK=1) is root-owned and cannot be overwritten, so the latest release goes into
+  # ~/.local/bin and wins on PATH (same shape as claude's user install). Checksum-verified;
+  # failure is soft (continue on the current version). Turning the opt-in OFF makes the
+  # branch below remove this shadow and fall back to the baked version, when there is one.
+  # Skip when unchanged: take the latest tag from GitHub's /releases/latest redirect and
+  # skip the download when it matches the PATH-first `rtk --version` (shadow or baked).
   rtk_latest="$(curl -fsSI -o /dev/null -w '%{redirect_url}' --max-time 15 \
     https://github.com/rtk-ai/rtk/releases/latest 2>/dev/null | sed -n 's#.*/tag/v##p')"
   rtk_cur="$(rtk --version 2>/dev/null | head -1 | awk '{print $2}')"
@@ -695,13 +725,15 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
     || echo "[entrypoint] WARN: rtk update failed (using baked version)"
   fi
-  # cursor も同じ opt-in で最新へ。npm でなく上流の版ピン install.sh 供給で、焼き込みは
-  # root 所有の /usr/local に置くため、install.sh の既定インストール先 ~/.local へ入れて
-  # PATH 先勝ちで差し替える（shadow 方式・agy/rtk と同構図）。install.sh は
-  # ~/.local/bin/{agent,cursor-agent} を張り ~/.local/share/cursor-agent へ展開する。
-  # OFF に戻すと下の分岐がこの shadow を除去し焼き込み版へ戻る。版比較スキップ:
-  # install.sh（軽量スクリプト・版ピン埋め込み）から latest 版を取り、PATH 先勝ちの
-  # `cursor-agent --version`（shadow か焼き込み）と一致なら ~100MB の再取得を省く。
+  # cursor follows the same opt-in to latest. It ships via upstream's version-pinned
+  # install.sh rather than npm; a baked copy (BAKE_AGENT_CLIS=1) lives in root-owned
+  # /usr/local, so install into install.sh's default ~/.local and win on PATH (shadow,
+  # same shape as agy/rtk). install.sh links ~/.local/bin/{agent,cursor-agent} and unpacks
+  # into ~/.local/share/cursor-agent. Turning the opt-in OFF makes the branch below remove
+  # this shadow and fall back to the baked version, when there is one. Skip when unchanged:
+  # take the latest version from install.sh (a small script with the version embedded)
+  # and skip the ~100 MB re-download when it matches the PATH-first `cursor-agent
+  # --version` (shadow or baked).
   cursor_latest="$(curl -fsSL --max-time 15 https://cursor.com/install 2>/dev/null \
     | grep -oE 'lab/[0-9][0-9.]*-[a-f0-9]+' | head -1 | sed 's#lab/##')"
   cursor_cur="$(cursor-agent --disable-auto-update --version 2>/dev/null | head -1)"
@@ -714,33 +746,35 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
     echo "[entrypoint] WARN: cursor update failed (using $([ -e "$HOME/.local/bin/cursor-agent" ] && echo previous || echo baked) version)"
   fi
 else
-  # Opt-in が無効（テナント不許可 or メンバー OFF）: 過去の opt-in が残した
-  # ~/.local/bin の rtk / agy shadow は焼き込み版を PATH で隠すので除去し、CLI 群と
-  # 同じ「OFF に戻して Stop→Start で焼き込み版へ復帰」の意味論に揃える。
-  # lean（焼き込みが無い）では ~/.local が boot-install 品そのものなので消さない —
-  # 「復帰先の焼き込み版がある時だけ shadow を掃除」に限定する。lean のピン復帰は
-  # 上の boot-install の REPIN（ピン版の再導入）が担う。
-  # npm 系4CLI: 焼き込みピン(/usr/local)がある時だけ ~/.local の shadow を撤去し、PATH を
-  # 焼き込みピンへ即復帰させる（lean=~/.local がピン本体の時は消さない）。
+  # Opt-in disabled (tenant disallows it or member OFF): rtk / agy shadows an earlier
+  # opt-in left in ~/.local/bin hide the baked version on PATH, so remove them, matching
+  # the CLIs' "turn it OFF and Stop→Start to return to the baked version" semantics.
+  # In lean (nothing baked) ~/.local is the boot-installed copy itself, so it is not
+  # deleted — a shadow is cleaned up only when a baked version exists to fall back to.
+  # Returning lean to the pin is the boot-install REPIN's job above.
+  # The 4 npm CLIs: remove the ~/.local shadow only when the baked pin (/usr/local) exists,
+  # so PATH falls back to it at once (never in lean, where ~/.local is the pin itself).
   if [ -x /usr/local/bin/claude ]; then
     npm uninstall -g --prefix "$HOME/.local" \
       @anthropic-ai/claude-code opencode-ai @openai/codex @github/copilot >/dev/null 2>&1 || true
   fi
   if [ -x /usr/local/bin/rtk ]; then rm -f "$HOME/.local/bin/rtk"; fi
   if [ -x /usr/local/bin/agy ]; then rm -f "$HOME/.local/bin/agy" "$HOME/.local/bin/.agy.version"; fi
-  # cursor: install.sh は agent/cursor-agent の両シンボリックリンクと share ツリーを
-  # 作るので両方畳む（焼き込み /usr/local/bin/cursor-agent がある時のみ = 復帰先あり）。
+  # cursor: install.sh creates both the agent and cursor-agent symlinks and the share tree,
+  # so remove all of them (only when a baked /usr/local/bin/cursor-agent exists to fall
+  # back to).
   if [ -x /usr/local/bin/cursor-agent ]; then
     rm -f "$HOME/.local/bin/cursor-agent" "$HOME/.local/bin/agent"
     rm -rf "$HOME/.local/share/cursor-agent"
   fi
 fi
 
-# 既定 settings.json を seed（ファイルが無い時のみ。以後は Console の Claude 設定が真実）。
-#   skipDangerousModePermissionPrompt … bypass 警告での誤 exit を防ぐ
-#   remoteControlAtStartup            … 起動時の Remote Control は既定 OFF（新規WSのみ。以後は Console 設定が真実）
-#   agentPushNotifEnabled             … プッシュ通知を有効化
-#   hooks(PreToolUse/Bash → rtk hook claude) … rtk がコンテナにあれば seed（トークン節約）
+# Seed the default settings.json (only when the file is absent; after that the Console's
+# Claude settings are the source of truth).
+#   skipDangerousModePermissionPrompt … prevents an accidental exit on the bypass warning
+#   remoteControlAtStartup            … Remote Control at start is OFF by default (new workspaces only; the Console setting rules after that)
+#   agentPushNotifEnabled             … enables push notifications
+#   hooks(PreToolUse/Bash → rtk hook claude) … seeded when rtk is in the container (saves tokens)
 SETTINGS="$CCD/settings.json"
 mkdir -p "$CCD"
 if [ ! -f "$SETTINGS" ]; then
@@ -758,9 +792,9 @@ if [ ! -f "$SETTINGS" ]; then
     && echo "[entrypoint] seeded default $SETTINGS (rtk=$RTK)" \
     || echo "[entrypoint] WARN: failed to seed $SETTINGS"
 else
-  # 既存WS: remoteControlAtStartup キーが未設定なら一度だけ false を補い、既定 OFF へ揃える。
-  # キーが既にある（ユーザーが Console で true/false を明示設定した）場合は尊重して上書きしない。
-  # キー補完後は次回以降キーが存在するため再度は触らない＝「一度だけ」。
+  # Existing workspace: if remoteControlAtStartup is unset, add false once to match the OFF
+  # default. If the key exists (the user set true/false in the Console), respect it. Once
+  # added, the key exists on later starts, so this happens only once.
   node -e '
     const fs = require("fs"), p = process.argv[1];
     let s; try { s = JSON.parse(fs.readFileSync(p, "utf8")); } catch { process.exit(0); }
@@ -824,14 +858,17 @@ PY
 # fleet/rtk.json toggle — NOT seeded here — so the Console on/off choice survives
 # restarts. The agent runs immediately after this entrypoint (exec workspace-agent).
 
-# cursor auto-update 封殺（docs/log/40 Track B）: バンドル解析で背景自己更新は
-# `disableAutoUpdate || channel==="static"` でスキップされる。AF は起動フラグ
-# --disable-auto-update を全経路で渡すが、ユーザーが素で `cursor-agent` を叩いた
-# 場合の背景更新（~/.local へ home shadow を作り PATH で焼き込みを隠す）まで防ぐには
-# 恒久設定が要る。~/.cursor/cli-config.json の channel を "static" に固定する（起動毎
-# 再固定 — 00dacc5 教訓）。channel 鍵のみ触り他は保存。JSON でなければ触らない。
-# self-update opt-in で ~/.local に shadow を入れた版にも同じ config が効くが、opt-in の
-# 更新は install.sh 明示実行なので無害（cursor 自身の背景更新だけを止める）。
+# Lock cursor's auto-update (docs/log/40 Track B): per the bundle analysis, the background
+# self-update is skipped when `disableAutoUpdate || channel==="static"`. AF passes
+# --disable-auto-update on every launch path, but stopping the background update when the
+# user runs `cursor-agent` directly (which writes a ~/.local copy that moves it off the pin,
+# and in a BAKE_AGENT_CLIS=1 image shadows the baked copy on PATH) needs a persistent
+# setting: pin channel to "static" in ~/.cursor/cli-config.json. It is re-pinned on every
+# start, because a setting pinned once stays flipped if it is later changed. Only the
+# channel key is touched and the rest is kept; a non-JSON file is left alone.
+# The same config applies to a version the self-update opt-in put into ~/.local; that is
+# harmless because the opt-in updates by running install.sh explicitly (only cursor's own
+# background update is stopped).
 if command -v cursor-agent >/dev/null 2>&1; then
   CUR_CFG="$HOME/.cursor/cli-config.json"
   mkdir -p "$HOME/.cursor"
@@ -857,20 +894,20 @@ os.replace(tmp, p)
 PY
 fi
 
-# Workspace 利用ガイドと**ユーザー指示**の配置は agent 側が持つ（docs/log/60 / ADR 0042 の
-# reconcileAgentInstructions）。ここは置き場のディレクトリだけ用意する。
-#   claude   … /etc/claude-code/CLAUDE.md（イメージ焼込の managed policy。ここでは触らない）
-#              ＋ $CLAUDE_CONFIG_DIR/CLAUDE.md（ユーザー指示・agent が書く）
-#   codex    … ~/.codex/AGENTS.md（フリート方針 + ユーザー指示 + rtk を agent が合成）
-#   opencode … ~/.config/opencode/AGENTS.md（フリート方針）＋ opencode.json の
-#              instructions が指す AF 専用ファイル（ユーザー指示）
+# Placing the Workspace guide and the user instructions is the agent's job
+# (reconcileAgentInstructions; docs/log/60 / ADR 0042). This only creates the directories.
+#   claude   … /etc/claude-code/CLAUDE.md (managed policy baked into the image; not touched here)
+#              + $CLAUDE_CONFIG_DIR/CLAUDE.md (user instructions, written by the agent)
+#   codex    … ~/.codex/AGENTS.md (fleet policy + user instructions + rtk, composed by the agent)
+#   opencode … ~/.config/opencode/AGENTS.md (fleet policy) + an AF-only file referenced by
+#              opencode.json's instructions (user instructions)
 #
-# ⚠️ ここは以前 `cp -f` でこの 2 ファイルを丸ごと上書きしていた。つまり利用者が
-# AGENTS.md へ書き足した文章はコンテナ再起動のたびに黙って消えており、それが
-# 「ユーザー層を自力で作れない」原因そのものだった（docs/log/60 実害①）。いまは agent が
-# フリート方針 + ユーザー指示 + rtk ブロックを**1 人の書き手**としてマーカー付きで
-# 合成し、マーカー外は温存する。agent はこの直後に exec され、セッションを起こすのは
-# その agent 自身なので、合成前のファイルを読むセッションは存在しない。
+# Never `cp -f` these files from here: overwriting them wiped whatever the user added to
+# AGENTS.md on every container restart, which is exactly why users could not build their own
+# layer (docs/log/60, harm 1). The agent is the single writer: it composes fleet policy +
+# user instructions + the rtk block inside markers and preserves everything outside them.
+# The agent is exec'd right after this and starts every session itself, so no session ever
+# reads a file before it is composed.
 mkdir -p "$HOME/.codex" "$HOME/.config/opencode"
 
 # Gradle defaults for a shared, memory-constrained host (seed only when missing, so
@@ -925,10 +962,11 @@ fi
 # everywhere, download it into the home volume now (persists on the volume / EFS, so
 # only the first launch pays the download). Soft-fail: no network → keep going.
 if [ -n "$JAVA_VER" ]; then
-  # ⚠️ 「glob して先頭」に戻さないこと。どちらの置き場も temurin-<major>-jdk-<arch> と
-  # いう名前で、"amd64" は "arm64" より先に並ぶ。x86 で埋めた home を arm64 のスロットに
-  # 付けた瞬間、先頭は**必ず動かない方**になる（docs/log/70 §70.5.1・workspace-agent 側の
-  # javaHomeFor も同じ規則）。自分のアーキの接尾辞を優先し、他アーキは採らない。
+  # Never go back to "glob and take the first". Both locations name JDKs
+  # temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so once a home populated
+  # on x86 is attached to an arm64 slot, the first match is always the one that cannot run
+  # (docs/log/70 §70.5.1; workspace-agent's javaHomeFor follows the same rule). Prefer this
+  # architecture's suffix and never take another architecture's.
   find_jh() {
     for d in /usr/lib/jvm "$HOME/.local/share/agent-fleet/jvm"; do
       [ -d "$d" ] || continue
@@ -937,8 +975,8 @@ if [ -n "$JAVA_VER" ]; then
         [ -d "$c" ] || continue
         case "$c" in
           *-jdk-"$af_arch_now") printf '%s\n' "$c"; return 0 ;;
-          *-jdk-amd64 | *-jdk-arm64) continue ;;              # 他アーキ: 採らない
-          *) [ -n "$jh" ] || jh="$c" ;;                       # 接尾辞なし: 予備
+          *-jdk-amd64 | *-jdk-arm64) continue ;;              # other arch: never take
+          *) [ -n "$jh" ] || jh="$c" ;;                       # no suffix: fallback
         esac
       done
       [ -n "$jh" ] && { printf '%s\n' "$jh"; return 0; }
@@ -993,14 +1031,15 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
     curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash >/dev/null 2>&1 \
       || echo "[entrypoint] WARN: nvm install failed (continuing)"
   fi
-  # ⚠️ 版を入れるのは nvm ではなく `workspace-agent install-node` にした。理由は 2 つ:
-  # ① nvm 自体が入らない環境（GitHub へ出られない等）でも選択が効くこと、② Console の
-  # 「導入」ボタンと**同じ経路**であること——JDK で同型の穴（選んだのに入らない）を直した
-  # のと同じ形である（docs/decisions/0068）。置き場は nvm と同じ
-  # ~/.nvm/versions/node/v<full> なので nvm とも共存する。導入済みなら即戻る。
-  # stdout に導入先の bin ディレクトリを返すので、それを PATH の先頭へ置く。
-  # ⚠️ ここで `ls | tail -1` に戻さないこと——それが辞書順で v22.9.0 を掴んだ元のバグで、
-  #    install-node は数値比較で解決している（env_toolchains.go nodeBinFor と同じ規則）。
+  # Versions are installed by `workspace-agent install-node`, not nvm, for two reasons:
+  # 1. the selection works even where nvm itself cannot be installed (no route to GitHub
+  # etc.); 2. it is the same path as the Console's install button — the same fix as for
+  # the JDK's "selected but never installed" hole (docs/decisions/0068). It installs into
+  # nvm's layout, ~/.nvm/versions/node/v<full>, so it coexists with nvm, and returns at once
+  # when already installed. It prints the installed bin directory on stdout, which goes
+  # first on PATH.
+  # Never go back to `ls | tail -1` here: lexical order picked v22.9.0 over newer releases;
+  # install-node resolves numerically (the same rule as nodeBinFor in env_toolchains.go).
   af_node_bin="$(workspace-agent install-node "$NODE_VER" 2>/dev/null || true)"
   if [ -n "$af_node_bin" ] && [ -x "$af_node_bin/node" ]; then
     export PATH="$af_node_bin:$PATH"
@@ -1011,9 +1050,9 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
     nvm alias default "$NODE_VER" >/dev/null 2>&1
     nvm use "$NODE_VER" >/dev/null 2>&1
   fi
-  # ⚠️ 選択した版になったかを必ず突き合わせる。導入も `nvm use` も失敗すると `node -v` は
-  # **イメージの素の node** を答える。突き合わせずに版を出していたので、ログは成功に見える
-  # のに選択と違う node が走っている、という状態が無言で通っていた。
+  # Always check that the selected version is what runs. If both the install and `nvm use`
+  # fail, `node -v` answers with the image's base node; without this check the log looks
+  # successful while a node other than the selected one runs.
   af_node_now="$(node -v 2>/dev/null)"
   case "${af_node_now#v}" in
     "${NODE_VER#v}" | "${NODE_VER#v}".*) echo "[entrypoint] node $af_node_now" ;;
@@ -1021,22 +1060,25 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
   esac
 fi
 
-# --- アーキ変更の自動復旧（利用者自身の導入物）------------------------------------
-# ここまで来ていれば node / java / go の選択は済んでいるので、入れ直しは**選択された
-# ツールチェーンで**行われる。JDK と node（選択中の版）は既にそれぞれのブロックが自力で
-# 戻しているので、残っているのは利用者自身が入れたもの＝af-arch-repair の担当。
-# ⚠️ python の major も同時に動いた起動では pip の入れ直しをさせない（同じ版が新しい
-#    python 用に存在するとは限らず、黙って別バージョンに解決される）。通知だけに落とす。
+# --- Automatic repair after an architecture change (the user's own installs) ------
+# By now node / java / go are selected, so the reinstall uses the selected toolchains. The
+# JDK and node (selected versions) were already restored by their own blocks; what remains
+# is what the user installed themselves, which is af-arch-repair's job.
+# When the python major changed in the same start, pip reinstalls are not attempted (the
+# same version may not exist for the new python, and it would silently resolve another
+# one); that degrades to a notice.
 if [ -n "${AF_ARCH_REPAIR_FROM:-}" ] || [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ]; then
   AF_REPAIR_PY=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1) \
     af-arch-repair "${AF_ARCH_REPAIR_FROM:-?}" "$af_arch_now" || true
 fi
-# 直せなかった分（~/repos の生成物・自前バイナリ）を利用者に届く場所へ出す。
-# ⚠️ ここまでの [entrypoint] / [arch-repair] の出力はコンテナの stdout ＝運用者の
-#    docker logs にしか出ない。利用者に見せる経路は無いので、通知にしないと
-#    「Exec format error だけが原因不明で出る」が続く（docs/decisions/0068 決定 4）。
-# 残骸が無ければ何もしない。残骸の**内容**をキーにするので、同じままなら増えず、
-# 直せば自然に消える（arch_residue.go）。
+# Surface what could not be repaired (build outputs under ~/repos, self-built binaries)
+# where the user will see it. The [entrypoint] / [arch-repair] output above goes only to
+# the container's stdout, i.e. the operator's docker logs; there is no path to the user,
+# so without a notification "Exec format error with no known cause" keeps happening
+# (docs/decisions/0068 decision 4).
+# Nothing to report → nothing happens. It is keyed on the residue's content, so an
+# unchanged residue does not pile up and fixing it makes the notice go away
+# (arch_residue.go).
 workspace-agent notify-arch-residue "${AF_ARCH_REPAIR_FROM:-}" || true
 
 exec "$@"
