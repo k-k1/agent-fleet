@@ -289,19 +289,21 @@ disables.
 - **The usage sampler** — `AF_USAGE_SAMPLE_INTERVAL` (5 minutes) adds occupied seconds
   to daily and hourly buckets for each running workspace, which also feeds the uptime
   heatmap. With bring-your-own model credentials, **the operator's cost is occupancy,
-  not tokens** — which is what this measures.
+  not tokens** — which is what this measures. `0` turns it off.
 - **The cloud-cost poller** — where the runtime has a bill (the AWS targets), it reads
   Cost Explorer every `AF_CLOUD_COST_INTERVAL` (6 hours) over a trailing
   `AF_CLOUD_COST_WINDOW_DAYS` (7) and attributes spend per member by cost allocation
-  tag. On `docker` and `native` it does nothing, and there is no cost screen.
+  tag. On `docker` and `native` it does nothing, and there is no cost screen. `0` turns
+  it off.
 - **Git GC** — `AF_GIT_GC_INTERVAL` (24 hours) runs `git gc --auto` on the internal bare
   repositories and prunes orphaned LFS objects older than `AF_LFS_GC_GRACE` (14 days),
   so it cannot race a push in flight. It runs **sequentially, to protect a shared host's
-  RAM** ([91](91-internal-git.md)).
+  RAM** ([91](91-internal-git.md)). `0` turns it off.
 - **The scheduler** — `AF_SCHEDULER_INTERVAL` (1 minute) fires due schedules, spread by
   a per-schedule jitter (`AF_SCHEDULE_JITTER`, 2 minutes). A fire wakes a stopped
   workspace without the CLI self-update, waits up to `AF_SCHEDULE_WAKE_TIMEOUT` (the
-  300-second boot budget) and holds a keep-alive for `AF_SCHEDULE_SETTLE`.
+  300-second boot budget) and holds a keep-alive for `AF_SCHEDULE_SETTLE`. `0` turns it
+  off: nothing fires, and the Console hides the Schedules section.
 - **The audit sweep** — `AF_CLAUDE_AUDIT_INTERVAL`, opt-in, off by default. What claude
   does inside the container does not pass through the CP's proxy and is therefore
   invisible; the agent → CP direction is deliberately closed, so **the CP pulls
