@@ -34,8 +34,10 @@ const (
 // homeWiper is the member's half. The caller has stopped the workspace, calls WipeHome,
 // and starts the workspace again at once, all inside one request behind the ingress idle
 // timeout (60 s on the AWS deployment). The contract is "the next start does not see what
-// was removed", and an adapter claims the port only if it can keep that promise within
-// that request together with the Start.
+// was removed", and an adapter claims the port only if it can keep that promise without
+// holding that request past the timeout. docker and native remove it in the call; ecs-ec2
+// marks the home and its Start removes it before the task runs, because reaching the home
+// can mean waking a slot (runtime_ecs_ec2_home_wipe.go).
 type homeWiper interface {
 	WipeHome(ctx context.Context, what HomeWipe) error
 }
@@ -79,6 +81,8 @@ type HomeBackups struct {
 var (
 	_ homeWiper        = (*dockerRuntime)(nil)
 	_ homeWiper        = (*nativeRuntime)(nil)
+	_ homeWiper        = (*ecsEC2Runtime)(nil)
+	_ homeWipeGate     = (*ecsEC2Runtime)(nil)
 	_ homeEraser       = (*dockerRuntime)(nil)
 	_ homeEraser       = (*nativeRuntime)(nil)
 	_ homeEraser       = (*ecsEC2Runtime)(nil)
@@ -89,6 +93,25 @@ var (
 // for. The CP checks CanWipeHome / CanEraseHome before it stops anything, so reaching this
 // error means that check was skipped.
 var ErrHomeWipeUnsupported = errors.New("this deployment's runtime cannot reach the workspace home")
+
+// homeWipeGate is claimed by an adapter that can be asked for a member's wipe at a moment
+// it cannot honour it — ecs-ec2, whose Start finishes in a background half the handler's
+// lease does not cover. The handler asks before it stops anything.
+type homeWipeGate interface {
+	HomeWipeBlocked(ctx context.Context) error
+}
+
+// ErrHomeWipeWhileStarting refuses a member's wipe while a Start of the same workspace is
+// still converging in the background.
+var ErrHomeWipeWhileStarting = errors.New("the workspace is still starting; try again once it has started")
+
+// HomeWipeBlocked is nil when a member's Recreate or Clean home may proceed on rt now.
+func HomeWipeBlocked(ctx context.Context, rt Runtime) error {
+	if g, ok := rt.(homeWipeGate); ok {
+		return g.HomeWipeBlocked(ctx)
+	}
+	return nil
+}
 
 // CanWipeHome reports whether a member's Recreate and Clean home can run on rt.
 func CanWipeHome(rt Runtime) bool {

@@ -61,12 +61,10 @@ func TestHomePortsAreClaimedOnlyWhereTheHomeIsReachable(t *testing.T) {
 	if _, ok := fargate.(homeBackupKeeper); ok {
 		t.Error("ecsRuntime claims homeBackupKeeper, but Fargate keeps no copies of a home")
 	}
-	// The slot pool can erase (delete the volume) but not wipe for a member: emptying a
-	// home in place needs it mounted on a running slot, which a member's request behind the
-	// ingress idle timeout cannot wait for.
-	if _, ok := any((*ecsEC2Runtime)(nil)).(homeWiper); ok {
-		t.Error("ecsEC2Runtime claims homeWiper, but its wipe does not fit a member's request")
-	}
+	// The slot pool claims every port (home_wipe.go pins that direction). Its member's wipe
+	// is kept by the Start that follows the request, not inside it: see
+	// runtime_ecs_ec2_home_wipe.go, and the tests there that pin the order mount → wipe →
+	// task.
 	// Only the slot pool keeps backup copies.
 	for _, rt := range []any{(*dockerRuntime)(nil), (*nativeRuntime)(nil)} {
 		if _, ok := rt.(homeBackupKeeper); ok {

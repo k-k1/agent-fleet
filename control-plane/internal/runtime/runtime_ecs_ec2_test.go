@@ -71,6 +71,12 @@ type fakeEC2 struct {
 	snapshotGone map[string]bool
 	// deleteVolumeErr makes DeleteVolume fail without deleting.
 	deleteVolumeErr error
+	// createTagsErr makes CreateTags fail, without tagging anything, for a request that
+	// names this tag key.
+	createTagsErr map[string]error
+	// deleteTagsErr makes DeleteTags fail, without deleting anything, for a request that
+	// names this tag key.
+	deleteTagsErr map[string]error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -485,6 +491,12 @@ func (f *fakeEC2) DetachVolume(_ context.Context, in *ec2.DetachVolumeInput, _ .
 func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, t := range in.Tags {
+		if err := f.createTagsErr[aws.ToString(t.Key)]; err != nil {
+			f.log("CreateTags REFUSED %s", aws.ToString(t.Key))
+			return nil, err
+		}
+	}
 	for _, r := range in.Resources {
 		// Volumes AND instances: quarantining a slot re-stamps af-role on the INSTANCE
 		// (decision 20), and a fake that only knew about volumes reported "tag written" while
@@ -494,6 +506,8 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 			tags = &v.Tags
 		} else if i := f.instances[r]; i != nil {
 			tags = &i.Tags
+		} else if sn := f.snapshots[r]; sn != nil {
+			tags = &sn.Tags
 		} else {
 			continue
 		}
@@ -520,6 +534,12 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...func(*ec2.Options)) (*ec2.DeleteTagsOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, d := range in.Tags {
+		if err := f.deleteTagsErr[aws.ToString(d.Key)]; err != nil {
+			f.log("DeleteTags REFUSED %s", aws.ToString(d.Key))
+			return nil, err
+		}
+	}
 	for _, r := range in.Resources {
 		// Instances as well as volumes, for the same reason CreateTags above handles
 		// both: the slot's owner tags (af-membership / af-tenant, ADR 0048 decision 3) are
@@ -530,6 +550,8 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 			tags = &v.Tags
 		} else if i := f.instances[r]; i != nil {
 			tags = &i.Tags
+		} else if sn := f.snapshots[r]; sn != nil {
+			tags = &sn.Tags
 		} else {
 			continue
 		}
@@ -537,7 +559,10 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 		for _, t := range *tags {
 			drop := false
 			for _, d := range in.Tags {
-				if aws.ToString(d.Key) == aws.ToString(t.Key) {
+				// A Value in the request deletes the tag only while it still has that
+				// value, like the real API; a nil Value deletes it whatever it holds.
+				if aws.ToString(d.Key) == aws.ToString(t.Key) &&
+					(d.Value == nil || aws.ToString(d.Value) == aws.ToString(t.Value)) {
 					drop = true
 				}
 			}
@@ -628,6 +653,9 @@ type fakeSSMCmd struct {
 	// sink shares the EC2 fake's call log so a test can assert the ORDER of an SSM
 	// command against an EC2 call — "umount before detach" spans both.
 	sink *fakeEC2
+	// onSend, when set, is called with each command as it is sent, so a test can look at
+	// the rest of the fake world at that moment.
+	onSend func(cmd string)
 }
 
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
@@ -637,6 +665,9 @@ func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ 
 	f.commands = append(f.commands, cmd)
 	if f.sink != nil {
 		f.sink.log("SSM %s", cmd)
+	}
+	if f.onSend != nil {
+		f.onSend(cmd)
 	}
 	// The command id carries the command text so GetCommandInvocation can decide
 	// whether this particular step is the one the test wants to fail.

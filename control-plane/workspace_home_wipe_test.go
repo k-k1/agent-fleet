@@ -153,6 +153,31 @@ func TestMemberHomeWipeRunsBetweenStopAndStart(t *testing.T) {
 	}
 }
 
+// startingHomeRuntime reaches the home but is still converging a Start in the background
+// (ecs-ec2 with a live claim), so it refuses a member's wipe for now.
+type startingHomeRuntime struct{ reachableHomeRuntime }
+
+func (r *startingHomeRuntime) HomeWipeBlocked(context.Context) error {
+	return runtime.ErrHomeWipeWhileStarting
+}
+
+// A Start converging in the background holds no lease, so stopping under it would not
+// stop it. The refusal comes before the Stop, and says so with a code the Console reads
+// as "nothing happened".
+func TestMemberHomeWipeRefusedWhileAStartConverges(t *testing.T) {
+	for _, op := range []string{"recreate", "clean-home"} {
+		rec := &wipeRecorder{}
+		mgr, res := wipeResolved(t, &startingHomeRuntime{reachableHomeRuntime{unreachableHomeRuntime: unreachableHomeRuntime{rec: rec, state: "starting"}}})
+		w := callMemberWipe(newWorkspaceAPI(mgr, false), op, res)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), errCodeHomeWipeWhileStarting) {
+			t.Errorf("%s while starting = %d %s, want 409 %s", op, w.Code, w.Body.String(), errCodeHomeWipeWhileStarting)
+		}
+		if got := rec.log(); got != "" {
+			t.Errorf("%s was refused but the runtime saw %q", op, got)
+		}
+	}
+}
+
 // The administrator's Clean home: the offboarding step, which leaves the workspace stopped.
 func TestAdminCleanHomeErasesThroughTheRuntime(t *testing.T) {
 	ctx := context.Background()

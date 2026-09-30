@@ -159,7 +159,7 @@ func TestHomeOperationsPerProfile(t *testing.T) {
 		{"docker", &dockerFactory{rootDataDir: StaticRootDataDir("/srv/data", "")}, HomeOperations{Wipe: true, Erase: true}},
 		{"native", &nativeFactory{rootDataDir: StaticRootDataDir("/srv/data", "")}, HomeOperations{Wipe: true, Erase: true}},
 		{"ecs", &ecsFactory{}, HomeOperations{}},
-		{"ecs-ec2", newEC2Harness(t).factory(), HomeOperations{Erase: true, Backups: true}},
+		{"ecs-ec2", newEC2Harness(t).factory(), HomeOperations{Wipe: true, Erase: true, Backups: true}},
 	}
 	for _, c := range cases {
 		if got := HomeOperationsOf(c.f); got != c.want {

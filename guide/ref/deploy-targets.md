@@ -39,7 +39,7 @@ value instead of reverting code.
 | Cost attribution per member | — | — | ✓ | ✓ |
 | An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ |
 | A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ |
-| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | —⁷ | —⁷ |
+| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | —⁷ | ✓¹⁰ |
 | Clean home by an administrator (offboarding) | ✓ | ✓ | —⁷ | ✓⁸ |
 | Deleting the backup copies of a member's home | — | — | — | ✓⁹ |
 
@@ -64,11 +64,10 @@ plan** (Codex / Antigravity); this row is about an engine the deployment provide
 on your own network**, pointed at with one environment variable
 ([operate/09](../operate/09-llm-lan.md)).
 
-⁷ Removing part of a home needs the home mounted. On `ecs` nothing the Control Plane runs
-can mount the member's EFS home; on `ecs-ec2` emptying it in place needs a running slot,
-which takes longer than a member's request is given. The Console does not show these
-buttons where the deployment cannot perform them, and the Control Plane refuses them
-before it stops anything.
+⁷ Removing part of a home needs the home mounted, and on `ecs` nothing the Control Plane
+runs can mount the member's EFS home. The Console does not show these buttons where the
+deployment cannot perform them, and the Control Plane refuses them before it stops
+anything.
 
 ⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
 fresh home, as for a new member. On this target the logins, connections and Claude state
@@ -79,6 +78,16 @@ the next start, and goes with it.
 ⁹ Only `ecs-ec2` keeps backup copies of a home, and only when the operator has turned
 backups on. Clean home leaves them: deleting them is a separate action in the member's
 detail. Discarding the workspace deletes them as well.
+
+¹⁰ The request marks the home and returns; the start it triggers removes the files after
+the home is mounted and before the workspace runs, so the starting dialog shows the removal
+as a step of the start, and a large home makes that start longer. This works whether the
+member's machine was asleep, the home was detached, or it had been put away as a
+hibernation copy. If the removal fails, the workspace stays stopped and the next start
+tries again; it never starts with what was to be removed. While a start is still in
+progress both are refused without stopping anything; press again once it has started.
+Clean home keeps the logins and connections by name, including one a tool replaced since
+the last start. After Clean home the first start reinstalls the agent CLIs, as on `docker`.
 
 ## Where the procedure lives
 

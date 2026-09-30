@@ -33,6 +33,9 @@ type fakeECS struct {
 	// definition changes (docs/log/64 §64.39.4). Nothing else models deployments, because
 	// nothing else looks at them.
 	activeDeploymentPolls int
+	// drainingPolls makes DescribeServices report a task still running for the next N
+	// answers of a service at desired 0: the old task after a Stop, before it exits.
+	drainingPolls int
 }
 
 func (f *fakeECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesInput, _ ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
@@ -41,6 +44,10 @@ func (f *fakeECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesIn
 		s, ok := f.services[n]
 		if !ok {
 			continue
+		}
+		if f.drainingPolls > 0 && s.DesiredCount == 0 {
+			f.drainingPolls--
+			s.RunningCount = 1
 		}
 		if f.activeDeploymentPolls > 0 {
 			f.activeDeploymentPolls--

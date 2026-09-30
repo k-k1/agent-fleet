@@ -143,6 +143,21 @@ func homeWipeUnsupportedErr(op string) *apiError {
 		op + " is not available on this deployment: its runtime cannot reach the workspace home"}
 }
 
+// homeWipeBlockedErr asks the runtime whether a member's wipe may run now, before anything
+// is stopped (runtime.HomeWipeBlocked). Under the lifecycle lease no Start can begin, so
+// the answer holds until the wipe is recorded.
+func homeWipeBlockedErr(ctx context.Context, rt runtime.Runtime) *apiError {
+	err := runtime.HomeWipeBlocked(ctx, rt)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, runtime.ErrHomeWipeWhileStarting):
+		return &apiError{http.StatusConflict, errCodeHomeWipeWhileStarting, err.Error()}
+	default:
+		return internalErr(err)
+	}
+}
+
 func newWorkspaceAPI(m *manager, autostart bool) workspaceAPI {
 	return workspaceAPI{memberAuth{m}, newAgentProxyAPI(m), autostart}
 }
@@ -256,6 +271,10 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
+	if aerr := homeWipeBlockedErr(lease.Context(), res.rt); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	// Stop tolerates "does not exist yet" and the like (best-effort), but abort when the
 	// workspace is still alive — deleting under a live bind-mount leaves it inconsistent.
 	// "starting" (container up, Agent not answering yet) counts as alive: it is running
@@ -324,6 +343,10 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 	defer releaseFence()
 	if err := lease.checkpoint(r.Context()); err != nil {
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	if aerr := homeWipeBlockedErr(lease.Context(), res.rt); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	// As in recreate: abort when Stop failed and the workspace is still alive, to avoid
