@@ -698,6 +698,32 @@ describe("WorkItemsSection", () => {
     expect(document.activeElement).not.toBe(input);
   });
 
+  it("hands focus to the opposite fold button only when the fold was toggled from the keyboard (#1360)", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const fold = () => host.querySelector<HTMLButtonElement>(".wi-more")!;
+    const press = async (detail: number) => {
+      fold().focus();
+      await act(async () => fold().dispatchEvent(new MouseEvent("click", { bubbles: true, detail })));
+    };
+
+    // Keyboard (detail 0): the pressed button unmounts, focus lands on the one that replaced it.
+    await press(0);
+    expect(fold().textContent).toBe(t("wi.show_less"));
+    expect(document.activeElement).toBe(fold());
+    await press(0);
+    expect(fold().textContent).toBe(t("wi.show_more", { n: 31 }));
+    expect(document.activeElement).toBe(fold());
+
+    // Pointer (detail >= 1): no focus jump in either direction.
+    await press(1);
+    expect(fold().textContent).toBe(t("wi.show_less"));
+    expect(document.activeElement).not.toBe(fold());
+    await press(1);
+    expect(fold().textContent).toBe(t("wi.show_more", { n: 31 }));
+    expect(document.activeElement).not.toBe(fold());
+  });
+
   it("drops the error of a tracker search that was still in flight when the filter was cleared", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     let fail!: (v: unknown) => void;
