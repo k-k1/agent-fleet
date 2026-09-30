@@ -553,15 +553,37 @@ const REPO_TREE = {
   server: ["cmd", "internal"],
 };
 
+// Files next to those folders, so a Files section opened on docs/ lists what the "files" scene has
+// open. The launch dialog's picker keeps only the folders, so it is unaffected.
+const REPO_FILES = {
+  docs: ["architecture.drawio", "checkout-flow.md", "runbook.md"],
+};
+
 export function fsTree(locale, p) {
   if (p === "repos") return { path: p, entries: repos(locale).map((r) => ({ name: r.name, type: "dir" })) };
   const m = /^repos\/[^/]+\/?(.*)$/.exec(p);
   const names = m ? REPO_TREE[m[1]] || [] : [];
-  return { path: p, entries: names.map((name) => ({ name, type: "dir" })) };
+  const files = m ? REPO_FILES[m[1]] || [] : [];
+  return {
+    path: p,
+    entries: [...names.map((name) => ({ name, type: "dir" })), ...files.map((name) => ({ name, type: "file", size: 2048 }))],
+  };
 }
 
+// The raw bytes of a fictional file, or null for a path the stub does not know. Served by
+// fs/download: the draw.io viewer reads the diagram from there, not from fs/file.
+export function fileBytes(locale, p) {
+  const f = FILES[p];
+  return f ? f(locale) : null;
+}
+
+// Known paths answer the fictional files of the "files" scene (FILES, further down); any other
+// path keeps answering an empty file, as before.
 export function fsFile(locale, p) {
-  return { path: p, content: "" };
+  const f = FILES[p];
+  if (!f) return { path: p, content: "" };
+  const content = f(locale);
+  return { path: p, content, size: Buffer.byteLength(content), editable: true, revision: "demo-1" };
 }
 
 // Image generation (ADR 0081). The pane's whole surface comes from two routes, so the
@@ -840,6 +862,12 @@ export function assistants(locale) {
 // were green while the real thing was unusable: neither the weight of 41 rows nor every row
 // carrying the same assignee shows up in three items. Hence the Jira side is deliberately one
 // assignee, several projects, more than 40 items.
+// Head-commit check summaries for the pull-request rows (console/src/features/workitems/read.ts
+// WorkItemChecks). An empty state means "the provider reported none", which must not read as green.
+const CI_GREEN = { state: "success", total: 7, failed: 0, pending: 0 };
+const CI_RED = { state: "failure", total: 8, failed: 1, pending: 0 };
+const CI_RUNNING = { state: "pending", total: 5, failed: 0, pending: 2 };
+
 export function workItems(locale) {
   const ja = locale === "ja";
   const it = (id, key, title, over = {}) => ({
@@ -921,13 +949,13 @@ export function workItems(locale) {
   });
   const bbRows = ja
     ? [
-        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda"),
-        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress" }),
+        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda", { checks: CI_GREEN }),
+        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING }),
         bb(3, "acme/gateway#88", "レート制限のヘッダを返す", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ]
     : [
-        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda"),
-        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress" }),
+        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda", { checks: CI_GREEN }),
+        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING }),
         bb(3, "acme/gateway#88", "Return the rate limit headers", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ];
   // 38 items = 5 projects mixed, same assignee on every row. With the 3 GitHub ones, 41 in all.
@@ -947,6 +975,10 @@ export function workItems(locale) {
         kind: "pr",
         labels: ["ui"],
         updatedAt: ago(150),
+        // The row the features-page still opens (workItemDetail): a red CI and a conflict are the
+        // two marks that make a PR worth opening before starting a review on it.
+        checks: CI_RED,
+        mergeable: "conflict",
       }),
       // Keep one row with no labels. While the CP emitted a nil slice (null in JSON), this shape
       // turned the whole Console blank (docs/log/80 §80.17.5). Do not remove it.
@@ -1855,5 +1887,174 @@ export function gitflow() {
     origin: ["main", "develop"],
     native: false,
     committed: [],
+  };
+}
+
+// ---- file viewer: the fictional files fsFile serves -------------------------------------------
+// For the features-page still (scene "files"). Paths are workspace-relative, the way the Agent
+// answers them ("repos/<repo>/…").
+const CHECKOUT_DOC = {
+  en: `---
+title: Checkout flow
+owner: payments-team
+status: reviewed
+updated: "2026-09-18"
+---
+
+# Checkout flow
+
+How an order goes from the cart to a charged card. The stock reservation comes **before**
+the payment authorisation, so a card is never charged for items that are gone.
+
+## Sequence
+
+\`\`\`mermaid
+sequenceDiagram
+  participant B as Browser
+  participant A as Checkout API
+  participant S as Stock
+  participant P as Payments
+  B->>A: POST /checkout
+  A->>A: validate(cart)
+  A->>S: reserve(items)
+  S-->>A: reserved (15 min hold)
+  A->>P: authorize(total)
+  P-->>A: authorized
+  A-->>B: 201 order created
+\`\`\`
+
+## Validation rules
+
+| Rule | Error | Where |
+|---|---|---|
+| Cart is not empty | \`CART_EMPTY\` | src/checkout/validate.ts:18 |
+| Total is above zero after coupons | \`TOTAL_ZERO\` | src/checkout/validate.ts:42 |
+| Coupons stack at most twice | \`COUPON_LIMIT\` | src/checkout/coupons.ts:77 |
+
+\`\`\`ts
+export function assertPayable(total: Money): void {
+  if (total.minor <= 0) throw new CheckoutError("TOTAL_ZERO");
+}
+\`\`\`
+
+## Open questions
+
+- [x] Release the stock hold when the authorisation fails
+- [ ] Retry the authorisation once on a gateway timeout
+`,
+  ja: `---
+title: 購入フロー
+owner: payments-team
+status: reviewed
+updated: "2026-09-18"
+---
+
+# 購入フロー
+
+カートから決済完了までの流れ。在庫の確保を決済の与信より**先に**行うので、在庫切れの商品に
+課金されることはない。
+
+## シーケンス
+
+\`\`\`mermaid
+sequenceDiagram
+  participant B as ブラウザ
+  participant A as Checkout API
+  participant S as 在庫
+  participant P as 決済
+  B->>A: POST /checkout
+  A->>A: validate(cart)
+  A->>S: reserve(items)
+  S-->>A: 確保（15 分保持）
+  A->>P: authorize(total)
+  P-->>A: 与信 OK
+  A-->>B: 201 注文作成
+\`\`\`
+
+## 検証ルール
+
+| ルール | エラー | 場所 |
+|---|---|---|
+| カートが空でない | \`CART_EMPTY\` | src/checkout/validate.ts:18 |
+| クーポン適用後の合計が 0 より大きい | \`TOTAL_ZERO\` | src/checkout/validate.ts:42 |
+| クーポンの併用は 2 枚まで | \`COUPON_LIMIT\` | src/checkout/coupons.ts:77 |
+
+\`\`\`ts
+export function assertPayable(total: Money): void {
+  if (total.minor <= 0) throw new CheckoutError("TOTAL_ZERO");
+}
+\`\`\`
+
+## 未決事項
+
+- [x] 与信に失敗したら在庫の確保を解除する
+- [ ] 決済ゲートウェイのタイムアウトで与信を 1 回だけ再試行する
+`,
+};
+
+// An uncompressed draw.io document (the viewer reads plain <mxGraphModel> as well as the
+// compressed form the desktop app writes). Labels stay English in both locales: they are
+// component names, the way a real team's diagram would carry them.
+const box = (id, label, x, y, w, h, style) =>
+  `<mxCell id="${id}" value="${label}" style="${style}" vertex="1" parent="1"><mxGeometry x="${x}" y="${y}" width="${w}" height="${h}" as="geometry"/></mxCell>`;
+const edge = (id, s, t, label = "") =>
+  `<mxCell id="${id}" value="${label}" style="endArrow=block;html=1;strokeWidth=2;strokeColor=#6c8ebf;fontSize=12;" edge="1" parent="1" source="${s}" target="${t}"><mxGeometry relative="1" as="geometry"/></mxCell>`;
+const SVC = "rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;";
+const EXT = "rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;";
+const DB = "shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=12;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;";
+const ARCH_DRAWIO = `<mxfile host="drawio"><diagram id="arch" name="webshop"><mxGraphModel dx="1000" dy="700" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="900" pageHeight="700" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>${[
+  box("web", "Browser", 20, 150, 120, 60, EXT),
+  box("cdn", "CDN", 200, 150, 110, 60, EXT),
+  box("api", "Checkout API", 380, 150, 150, 60, SVC),
+  box("stock", "Stock service", 620, 50, 150, 60, SVC),
+  box("pay", "Payments", 620, 250, 150, 60, EXT),
+  box("db", "PostgreSQL", 395, 300, 120, 80, DB),
+  box("q", "Order events", 620, 400, 150, 50, "rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;"),
+  edge("e1", "web", "cdn"),
+  edge("e2", "cdn", "api", "HTTPS"),
+  edge("e3", "api", "stock", "reserve"),
+  edge("e4", "api", "pay", "authorize"),
+  edge("e5", "api", "db"),
+  edge("e6", "db", "q", "outbox"),
+].join("")}</root></mxGraphModel></diagram></mxfile>`;
+
+const FILES = {
+  "repos/webshop/docs/checkout-flow.md": (locale) => CHECKOUT_DOC[locale === "ja" ? "ja" : "en"],
+  "repos/webshop/docs/architecture.drawio": () => ARCH_DRAWIO,
+};
+
+// The live read of demo/webshop#308 behind the work-item detail panel (read.ts WorkItemDetail):
+// red CI and a conflict, one approval and one change request — the state that makes a reviewer
+// want to look before starting a session on the head branch.
+export function workItemDetail(locale, key) {
+  if (key !== "demo/webshop#308") return { error: { code: "not_found", message: "no such item" } };
+  const ja = locale === "ja";
+  return {
+    provider: "github",
+    key,
+    kind: "pr",
+    title: ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form",
+    state: "open",
+    url: "https://github.com/demo/webshop/pull/308",
+    author: "Kai Morgan",
+    assignee: "demo",
+    labels: ["ui"],
+    labelColors: { ui: "1d76db" },
+    repo: "demo/webshop",
+    updatedAt: ago(150),
+    draft: false,
+    merged: false,
+    mergeable: "conflict",
+    baseBranch: "develop",
+    headBranch: "feat/postcode-autofill",
+    additions: 214,
+    deletions: 37,
+    changedFiles: 9,
+    comments: 4,
+    reviews: [
+      { name: "Sora Nishida", state: "approved" },
+      { name: "Rin Takada", state: "changes_requested" },
+    ],
+    checks: CI_RED,
   };
 }

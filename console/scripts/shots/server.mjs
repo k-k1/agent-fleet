@@ -99,6 +99,9 @@ const exact = {
   // Work items (docs/log/80). Unhandled routes only answer {}, so without this the rail's new
   // surface always renders empty and verifies nothing.
   "/api/work-items": () => fx.workItems(LOCALE),
+  // A pull request's live read, fetched when its detail panel opens (read.ts WorkItemDetail).
+  // Without it the panel shows no CI, conflict or review state — the point of opening it.
+  "/api/work-items/detail": (q, method, body) => fx.workItemDetail(LOCALE, body?.key || ""),
   // The state where the tenant has registered an OAuth app (docs/log/80 §80.17). Without it
   // Jira's "connect with OAuth" always renders disabled and the flow cannot be checked.
   "/api/git-oauth": () => ({
@@ -217,6 +220,8 @@ const exact = {
   }),
   // The left rail's Changes view — cross-repo, one call (see FilesChanges).
   "/api/fs/changes": () => fx.fsChanges(LOCALE),
+  // The file viewer's git change marks (CodeView LineMarks). None: the fictional files are clean.
+  "/api/fs/linemarks": () => ({ added: [], modified: [], deleted: [] }),
 };
 
 const re = [
@@ -407,6 +412,14 @@ const server = http.createServer((req, res) => {
   // stub answers a generated PNG whose colour is derived from the path (different cards look
   // different, and the same card is stable between runs).
   if (p === "/api/fs/download") {
+    // A fictional file the "files" scene opens is served as itself: the draw.io viewer fetches
+    // the diagram from here, and a swatch in its place leaves the pane blank without an error.
+    const known = fx.fileBytes(LOCALE, url.searchParams.get("path") || "");
+    if (known !== null) {
+      res.writeHead(200, { "content-type": "application/octet-stream", "cache-control": "no-store" });
+      res.end(known);
+      return;
+    }
     res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" });
     res.end(swatchPNG(url.searchParams.get("path") || ""));
     return;

@@ -153,6 +153,46 @@ const SCENES = [
     settle: 3500,
   },
   {
+    // The file viewer, for the features page on agent-fleet.org: a Markdown design note rendered
+    // with its front matter, Mermaid sequence diagram and table, beside the team's draw.io
+    // architecture diagram. Mermaid and the draw.io viewer (4 MB, handed to its frame by the
+    // page) both load lazily, so the shot waits for both: the sequence diagram's SVG, and the zoom
+    // the draw.io pane's header shows once the viewer has drawn (FileHeadControls diagramState).
+    name: "files",
+    sections: FOCUS_TREE,
+    width: 1800,
+    height: 1000,
+    layout: {
+      cols: [
+        col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/checkout-flow.md" })]),
+        col("c1", [pane("p1", null, { kind: "file", filePath: "repos/webshop/docs/architecture.drawio" })]),
+      ],
+      colRatios: [0.55, 0.45],
+      activeId: "p0",
+    },
+    ready: `!!document.querySelector(".mermaid-diagram svg") &&
+      [...document.querySelectorAll(".fi-meta")].some((el) => /\\d%/.test(el.textContent || ""))`,
+  },
+  {
+    // The work-item inbox, for the features page: GitHub, Jira and Bitbucket rows with the CI and
+    // conflict marks on the pull requests, and the detail panel of the red, conflicting one
+    // (demo/webshop#308) — its checks, reviews and the buttons that start a session or a review
+    // on its head branch.
+    name: "workitems",
+    sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 0, files: 0 },
+    width: 1600,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "sessions", showStopped: false })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+      [...document.querySelectorAll(".wi-row")].find((el) => el.textContent.includes("#308"))?.click();
+      // Unfold "Review this pull request" so the shot shows how a review starts on the head branch.
+      await new Promise((r) => setTimeout(r, 900));
+      [...document.querySelectorAll("[role=dialog] details > summary, .modal details > summary")].pop()?.click();
+    })()`,
+    settle: 1800,
+  },
+  {
     // The sessions overview (ADR 0078): every running session as a card, grouped by
     // repository and family. Shot for the user guide (guide/assets/), not the README.
     name: "overview",
@@ -322,6 +362,19 @@ try {
       });
       if (!r.result?.value) break;
       await sleep(500);
+    }
+    // A picture drawn after the page is up (Mermaid, the draw.io viewer) names its finished state in
+    // scene.ready. The shot waits for it and fails instead of writing a half-drawn picture: the
+    // fixed wait above is not enough on a busy host (measured: files-ja came out with the Mermaid
+    // source and a blank diagram), and `settle` only applies to scenes with an action.
+    if (scene.ready) {
+      let ok = false;
+      for (let i = 0; i < 60 && !ok; i++) {
+        const r = await cdp.send("Runtime.evaluate", { expression: scene.ready, returnByValue: true });
+        ok = !!r.result?.value;
+        if (!ok) await sleep(500);
+      }
+      if (!ok) throw new Error(`scene ${scene.name} not ready after 30 s: ${scene.ready}`);
     }
     if (scene.action) {
       await cdp.send("Runtime.evaluate", { expression: scene.action, awaitPromise: true });
