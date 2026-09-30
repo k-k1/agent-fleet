@@ -407,13 +407,24 @@ func TestCompletedItemDropsItsFragments(t *testing.T) {
 	done.Text = sp("partial answer")
 	host.Notify(msp.NotificationItemCompleted, msp.ItemCompletedParams{Item: done, SessionID: h.sid})
 
+	// Wait for the store, not for the fragments: onItem drops the fragment before it appends,
+	// so returning on an empty overlay leaves the append writing under this test's HOME.
 	deadline = time.After(5 * time.Second)
-	for len(h.streamingText()) > 0 {
+	for {
+		if items, _ := openStore("sid-drop").Items(); len(items) == 1 {
+			if got := items[0].Text; got == nil || *got != "partial answer" {
+				t.Errorf("stored text = %v", got)
+			}
+			break
+		}
 		select {
 		case <-deadline:
-			t.Fatalf("fragments survived the completed item: %v", h.streamingText())
+			t.Fatal("the completed item never reached the store")
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+	if f := h.streamingText(); len(f) > 0 {
+		t.Errorf("fragments survived the completed item: %v", f)
 	}
 }
 
