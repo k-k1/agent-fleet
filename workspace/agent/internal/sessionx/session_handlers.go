@@ -263,6 +263,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		sessions = append(sessions, wireSession(m, false))
 	}
+	pruneOverviewFacts(func(name string) bool { _, ok := metas[name]; return ok })
 	// Surface ORPHAN sessions: a live claude_* tmux session with no meta. These are
 	// invisible to the meta-driven list above, so the auto-namer would reuse their
 	// name and HandleCreateSession then fails with "session already running" — a

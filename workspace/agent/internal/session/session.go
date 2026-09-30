@@ -236,8 +236,8 @@ type Session struct {
 	// than this has already been re-authenticated, so the mirror stops offering a fix for
 	// something the user has already fixed (docs/log/47 §4-11).
 	AuthOkAt string `json:"authOkAt,omitempty"`
-	// Context: current context-window fill (newest assistant turn's prompt tokens),
-	// claude only, nil when none recorded yet. Drives the Console's ContextBar in
+	// Context: current context-window fill (newest assistant turn's prompt tokens), nil when
+	// none recorded yet or for a kind whose transcript carries no usage (agy, shell, ssm). Drives the Console's ContextBar in
 	// both the terminal and chat heads without a separate transcript poll.
 	Context *ContextUsage `json:"context,omitempty"`
 	// Branch is the session's start branch (Meta.Branch). CurrentBranch is the
@@ -307,8 +307,8 @@ type Session struct {
 	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
 	// LastSay is the opening line of the agent's newest utterance — one line, whitespace
 	// collapsed, capped at 120 runes by the agent that produced it (ADR 0078 decision 12).
-	// Empty when the session has not spoken yet, and for every kind but claude, whose
-	// transcripts this is not yet read from (P1.1).
+	// Empty when the session has not spoken yet, and for agy, shell and ssm, which are not
+	// read for it (sessionx/overview_facts.go).
 	//
 	// The capping is deliberately on THIS side of the wire: a card shows one ellipsized line
 	// whatever arrives, so a whole answer relayed to the Console would be payload nobody
@@ -317,9 +317,9 @@ type Session struct {
 	LastSay string `json:"lastSay,omitempty"`
 	// TokenSpends is each recent REPLY's newly-consumed tokens (uncached input + newly-cached
 	// + output), oldest first, capped at the newest two dozen — the trend the overview card
-	// draws beside the context gauge (ADR 0078 decision 13). Empty for every kind but claude.
+	// draws beside the context gauge (ADR 0078 decision 13). Empty for agy, shell and ssm.
 	//
-	// One point per reply, not per transcript row: claude writes a reply's text and each of
+	// One point per reply, not per transcript row: an agent writes a reply's text and each of
 	// its tool calls as separate records, and the Console folds exactly that run into one
 	// block, so the two sides must fold it the same way or the card and the chat would draw
 	// different trends for one session. Display only.

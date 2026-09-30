@@ -19,10 +19,10 @@ import (
 // poll, for every session. 120 fills a wide card and truncates a narrow one.
 const lastSayMax = 120
 
-// tokenSpendMax caps the trend at the newest N turns, for the same reason: the card draws a
+// TokenSpendMax caps the trend at the newest N turns, for the same reason: the card draws a
 // sparkline about 120px wide, so more points than this are pixels nobody can tell apart —
 // paid for per session, per poll. The Console needs two to draw anything at all.
-const tokenSpendMax = 24
+const TokenSpendMax = 24
 
 // tailCache memoizes both facts per sid, keyed by the transcript's mtime — the same
 // arrangement as ctxCache (context.go), for the same reason: an unchanged jsonl must cost a
@@ -42,7 +42,7 @@ type tailFacts struct {
 // TailFacts returns what the sessions list carries about a claude session's conversation:
 // say is the opening line of the newest thing it SAID (the last assistant record with text,
 // collapsed to one line and capped), and spends is the newly-consumed tokens of each of the
-// last tokenSpendMax assistant turns, oldest first. Both are empty when the session has not
+// last TokenSpendMax assistant turns, oldest first. Both are empty when the session has not
 // spoken yet, or when sid has no log at all.
 //
 // Three rules keep it affordable on the polled list, and all three are load-bearing:
@@ -85,7 +85,7 @@ func TailFacts(sid string) (say string, spends []int) {
 		if !ok {
 			continue
 		}
-		next.say = lastSayLine(s)
+		next.say = LastSayLine(s)
 		// A window can hold the utterance but too few turns to draw a trend; keep the
 		// series that was already known rather than making the sparkline blink out.
 		if len(sp) >= 2 {
@@ -136,8 +136,8 @@ func scanTail(p string) (say string, spends []int, ok bool) {
 	if truncated && len(spends) > 0 {
 		spends = spends[1:]
 	}
-	if len(spends) > tokenSpendMax {
-		spends = spends[len(spends)-tokenSpendMax:]
+	if len(spends) > TokenSpendMax {
+		spends = spends[len(spends)-TokenSpendMax:]
 	}
 	return say, spends, ok
 }
@@ -234,11 +234,11 @@ func tailLines(p string) (lines [][]byte, truncated bool) {
 	return lines, fi.Size() > transcriptTailWindow
 }
 
-// lastSayLine folds an utterance into the single line a card can show: every run of
+// LastSayLine folds an utterance into the single line a card can show: every run of
 // whitespace — the paragraph breaks and the indentation of a Markdown answer included —
 // becomes one space, and the result is capped at lastSayMax runes. Runes, not bytes: cutting
 // a Japanese answer mid-codepoint would emit invalid UTF-8 onto the wire.
-func lastSayLine(s string) string {
+func LastSayLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if r := []rune(s); len(r) > lastSayMax {
 		return strings.TrimRight(string(r[:lastSayMax]), " ") + "…"

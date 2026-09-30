@@ -88,7 +88,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
   // model switched mid-conversation — and on a grid the question is always "what is running
   // in here now". Falls back to the launch model until the session has answered once.
   const model = s.context?.model || s.model;
-  // Context fill, claude only. The gauge is the mirror's own ContextBar, so one session's
+  // Context fill (absent for agy / shell / ssm). The gauge is the mirror's own ContextBar, so one session's
   // card and its chat can never disagree about how full it is.
   const used = s.context ? s.context.read + s.context.create + s.context.fresh : 0;
   const ctx = s.context && used > 0 ? s.context : null;
