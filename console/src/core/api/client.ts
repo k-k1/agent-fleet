@@ -1118,7 +1118,7 @@ export interface SessionSkill {
   // CLI won't discover natively. The composer turns it into a "read {path} and follow
   // its instructions" prompt — plain text, so it works on any kind/driver.
   path?: string; // repo-relative SKILL.md path
-  origin?: string; // convention dir (".claude" | ".codex" | ".agents") — shown as a badge
+  origin?: string; // convention dir (".claude" | ".codex" | ".agents" | ".muse") — shown as a badge
 }
 export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
   api(`api/sessions/${encodeURIComponent(session)}/skills`);

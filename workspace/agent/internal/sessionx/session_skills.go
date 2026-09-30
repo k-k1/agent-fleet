@@ -10,6 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -29,7 +30,8 @@ import (
 // On top of that, every chat kind also gets the other conventions' SKILL.md trees as foreign
 // entries (cross-skill injection — §8): a skill the CLI does not discover by itself can still be
 // run through a "read Path and follow its instructions" prompt, which writes no files and cares
-// about neither kind nor driver. shell/ssm come back empty.
+// about neither kind nor driver. The other kinds' user-level roots (claude, codex, muse) are
+// offered the same way (appendUserForeignSkills). shell/ssm come back empty.
 // Read-only and rescanned each time — the picker calls this once on open, so no cache.
 //
 // Everything below starts from meta.CWD(), not meta.Dir: a session launched with a Subdir runs
@@ -110,7 +112,9 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 		return
 	}
+	ownNative := len(skills) > 0 // claude/codex scan their own root; muse's is in skill/list when live
 	skills = appendForeignSkills(skills, chainUp(cwd, meta.Dir), cwd, nativeConvs)
+	skills = appendUserForeignSkills(skills, meta.Kind, ownNative)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 }
 
@@ -209,50 +213,107 @@ func appendForeignSkills(native []sessionSkill, dirs []string, cwd string, nativ
 				continue
 			}
 			root := filepath.Join(dir, filepath.FromSlash(conv))
-			ents, err := os.ReadDir(root)
-			if err != nil {
-				continue
-			}
-			for _, e := range ents {
-				if !e.IsDir() {
-					continue
+			// Relative to the CWD when the tree is right there (the usual case, and what the
+			// picker has always shown); absolute for a tree that sits above it, where a
+			// relative path would be read against the wrong directory.
+			rel := filepath.Clean(dir) == filepath.Clean(cwd)
+			out = appendForeignRoot(out, seen, root, "project", strings.SplitN(conv, "/", 2)[0], func(name string) string {
+				if rel {
+					return conv + "/" + name + "/SKILL.md"
 				}
-				b, err := os.ReadFile(filepath.Join(root, e.Name(), "SKILL.md"))
-				if err != nil {
-					continue
-				}
-				fm, _ := splitFrontmatter(string(b))
-				if isNo(fm["user-invocable"]) {
-					continue
-				}
-				nm := fm["name"]
-				if nm == "" {
-					nm = e.Name()
-				}
-				if nm == "" || seen[nm] || len(out) >= maxSessionSkills {
-					continue
-				}
-				seen[nm] = true
-				// Relative to the CWD when the tree is right there (the usual case, and what the
-				// picker has always shown); absolute for a tree that sits above it, where a
-				// relative path would be read against the wrong directory.
-				path := conv + "/" + e.Name() + "/SKILL.md"
-				if filepath.Clean(dir) != filepath.Clean(cwd) {
-					path = filepath.Join(root, e.Name(), "SKILL.md")
-				}
-				out = append(out, sessionSkill{
-					Name:         nm,
-					Description:  fm["description"],
-					ArgumentHint: fm["argument-hint"],
-					Source:       "project",
-					Type:         "skill",
-					Path:         path,
-					Origin:       strings.SplitN(conv, "/", 2)[0], // ".claude" | ".codex" | ".agents"
-				})
-			}
+				return filepath.Join(root, name, "SKILL.md")
+			})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// userSkillRoot is another kind's user-level skills root, offered as foreign entries.
+type userSkillRoot struct {
+	kind   string // the session kind that owns the root, so a session never gets its own back
+	origin string // the Origin badge (".claude" | ".codex" | ".muse")
+	dir    func() string
+}
+
+// userSkillRoots are the member's own skills of the kinds that have a user root holding
+// claude-compatible SKILL.md trees (docs/log/50 §7.6). opencode's root is not here: it holds
+// nothing but the fleet skills, and opencode itself already reads ~/.claude/skills.
+var userSkillRoots = []userSkillRoot{
+	{session.KindClaude, ".claude", func() string { return filepath.Join(claude.ConfigDir(), "skills") }},
+	{session.KindCodex, ".codex", func() string { return filepath.Join(paths.CodexHome(), "skills") }},
+	{session.KindMuse, ".muse", muse.SkillsDir},
+}
+
+// appendUserForeignSkills adds the OTHER kinds' user-level skills the same way
+// appendForeignSkills adds the repository's: a skill set up for claude is then one pick away
+// from a codex or muse session too, with no copy anywhere. After the project entries, so a
+// project skill of the same name wins, and after the native ones, so the CLI's own copy wins.
+// ownNative says the session's own root is already covered by its native list; when it is not
+// (a muse session with no live host to ask), that root is offered like any other.
+//
+// The fleet topic skills (fleetskills) are skipped: AF writes the same set into every root, and
+// the policy text already points every kind at the files they wrap.
+func appendUserForeignSkills(skills []sessionSkill, kind string, ownNative bool) []sessionSkill {
+	seen := map[string]bool{}
+	for _, s := range skills {
+		seen[s.Name] = true
+	}
+	out := skills
+	for _, r := range userSkillRoots {
+		if r.kind == kind && ownNative {
+			continue
+		}
+		root := r.dir()
+		out = appendForeignRoot(out, seen, root, "user", r.origin, func(name string) string {
+			return filepath.Join(root, name, "SKILL.md")
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// appendForeignRoot adds one <root>/*/SKILL.md tree as foreign entries, skipping names already
+// in seen (and recording the ones it adds), `user-invocable: false` and AF's own fleet skills.
+// pathOf turns a skill's directory name into the Path the injection prompt will read.
+func appendForeignRoot(out []sessionSkill, seen map[string]bool, root, source, origin string, pathOf func(string) string) []sessionSkill {
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return out
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(root, e.Name(), "SKILL.md"))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(b), fleetskills.Marker) {
+			continue
+		}
+		fm, _ := splitFrontmatter(string(b))
+		if isNo(fm["user-invocable"]) {
+			continue
+		}
+		nm := fm["name"]
+		if nm == "" {
+			nm = e.Name()
+		}
+		if nm == "" || seen[nm] || len(out) >= maxSessionSkills {
+			continue
+		}
+		seen[nm] = true
+		out = append(out, sessionSkill{
+			Name:         nm,
+			Description:  fm["description"],
+			ArgumentHint: fm["argument-hint"],
+			Source:       source,
+			Type:         "skill",
+			Path:         pathOf(e.Name()),
+			Origin:       origin,
+		})
+	}
 	return out
 }
 

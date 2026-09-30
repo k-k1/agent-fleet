@@ -148,6 +148,10 @@
   color: var(--kind-codex);
   border-color: color-mix(in srgb, var(--kind-codex) 55%, var(--border));
 }
+.mirror-skill-src.kind-muse {
+  color: var(--kind-muse);
+  border-color: color-mix(in srgb, var(--kind-muse) 55%, var(--border));
+}
 /* "Show N more" row (docs/log/50 §9): the fold that keeps the CLI-bundled tier below the user's
    own entries. One line, muted, selectable like an item (sel-index), with the "//" shortcut at
    the right edge in the same key style as the keyboard help. */

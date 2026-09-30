@@ -10,6 +10,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -284,6 +285,10 @@ func TestCursorSkills(t *testing.T) {
 
 func TestHandleSessionSkills(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	// Every kind's user root is read as a foreign source now, so a real one on the test machine
+	// would change the counts below.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".claude", "skills", "scout", "SKILL.md"),
 		"---\nname: scout\ndescription: 調査\n---\nbody")
@@ -446,6 +451,9 @@ func TestSessionSkillsRouteRegistered(t *testing.T) {
 // member a native row and an injection row for one skill.
 func TestMuseNativeSkills(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	dir := t.TempDir()
 	// The frontmatter name deliberately differs from the selector the host reports. A tree whose
 	// names agree would be deduped by name alone, and this test would pass with the convention
@@ -498,4 +506,113 @@ func TestMuseNativeSkills(t *testing.T) {
 	if s, ok := byName["importer-legacy"]; ok {
 		t.Errorf("`.agents/skills` was offered as a foreign entry as well: %#v", s)
 	}
+}
+
+// A skill the member set up for one kind is offered to the others as a foreign entry: claude's
+// issue-to-pr reaches codex and muse, codex's reaches claude, muse's reaches both. A session
+// never gets its own root back as foreign while its native list covers it, the fleet topic
+// skills AF writes into every root stay out, and a project skill of the same name wins.
+func TestUserSkillsOfOtherKindsAreForeign(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeRoot := filepath.Join(t.TempDir(), "claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeRoot)
+	codexRoot := filepath.Join(t.TempDir(), "codex")
+	t.Setenv("CODEX_HOME", codexRoot)
+	orig := claudeBundledSkills
+	claudeBundledSkills = func() []string { return nil }
+	t.Cleanup(func() { claudeBundledSkills = orig })
+	origMuse := museNativeSkills
+	t.Cleanup(func() { museNativeSkills = origMuse })
+
+	dir := t.TempDir()
+	skill := func(root, name, extra string) {
+		writeFile(t, filepath.Join(root, name, "SKILL.md"), "---\nname: "+name+"\ndescription: d\n"+extra+"---\n")
+	}
+	skill(filepath.Join(claudeRoot, "skills"), "issue-to-pr", "")
+	skill(filepath.Join(claudeRoot, "skills"), "hidden", "user-invocable: false\n")
+	skill(filepath.Join(claudeRoot, "skills"), "scout", "") // also a project skill below
+	writeFile(t, filepath.Join(claudeRoot, "skills", "af-build", "SKILL.md"),
+		"---\nname: af-build\ndescription: d\n---\n"+fleetskills.Marker+"\nbody")
+	skill(filepath.Join(codexRoot, "skills"), "cx-only", "")
+	museRoot := filepath.Join(home, ".config", "muse", "skills")
+	skill(museRoot, "muse-only", "")
+	skill(filepath.Join(dir, ".claude", "skills"), "scout", "")
+
+	list := func(name, kind string) map[string]sessionSkill {
+		t.Helper()
+		session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: kind})
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/skills", nil)
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		HandleSessionSkills(rec, req)
+		var resp struct{ Skills []sessionSkill }
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]sessionSkill{}
+		for _, s := range resp.Skills {
+			if _, dup := out[s.Name]; dup {
+				t.Errorf("%s: %s listed twice", kind, s.Name)
+			}
+			out[s.Name] = s
+		}
+		if _, ok := out["hidden"]; ok {
+			t.Errorf("%s: a user-invocable: false skill was offered", kind)
+		}
+		// claude lists its own root natively, fleet skills included; only the foreign route
+		// leaves them out.
+		if s, ok := out["af-build"]; ok && s.Path != "" {
+			t.Errorf("%s: the fleet skill came in as foreign: %#v", kind, s)
+		}
+		if s := out["scout"]; s.Source != "project" {
+			t.Errorf("%s: scout = %#v, want the project copy", kind, s)
+		}
+		return out
+	}
+	foreign := func(kind string, got map[string]sessionSkill, name, origin, root string) {
+		t.Helper()
+		s, ok := got[name]
+		want := filepath.Join(root, name, "SKILL.md")
+		if !ok || s.Invoke != "" || s.Source != "user" || s.Origin != origin || s.Path != want {
+			t.Errorf("%s: %s = %#v (present %v), want a user foreign entry from %s at %s", kind, name, s, ok, origin, want)
+		}
+	}
+
+	cl := list("u_claude", session.KindClaude)
+	if s := cl["issue-to-pr"]; s.Invoke != "/issue-to-pr " {
+		t.Errorf("claude: its own skill should stay native: %#v", s)
+	}
+	foreign("claude", cl, "cx-only", ".codex", filepath.Join(codexRoot, "skills"))
+	foreign("claude", cl, "muse-only", ".muse", museRoot)
+
+	cx := list("u_codex", session.KindCodex)
+	if s := cx["cx-only"]; s.Invoke != "$cx-only " {
+		t.Errorf("codex: its own skill should stay native: %#v", s)
+	}
+	foreign("codex", cx, "issue-to-pr", ".claude", filepath.Join(claudeRoot, "skills"))
+	foreign("codex", cx, "muse-only", ".muse", museRoot)
+
+	// No live host: muse's own root has no native list to live in, so it comes in as foreign.
+	museNativeSkills = func(string) []muse.Skill { return nil }
+	mu := list("u_muse", session.KindMuse)
+	foreign("muse", mu, "issue-to-pr", ".claude", filepath.Join(claudeRoot, "skills"))
+	foreign("muse", mu, "cx-only", ".codex", filepath.Join(codexRoot, "skills"))
+	foreign("muse", mu, "muse-only", ".muse", museRoot)
+
+	// Live host: `skill/list` already covers muse's own root. The selector differs from the
+	// frontmatter name on purpose — with matching names the dedupe alone would hide a missing
+	// root exclusion (measured by mutation).
+	museNativeSkills = func(string) []muse.Skill {
+		return []muse.Skill{{Selector: "muse-only-sel", Source: "user"}}
+	}
+	mu = list("u_muse_live", session.KindMuse)
+	if s := mu["muse-only-sel"]; s.Invoke != "/muse-only-sel " {
+		t.Errorf("muse live: its own skill should be the native row: %#v", s)
+	}
+	if s, ok := mu["muse-only"]; ok {
+		t.Errorf("muse live: its own root came back as foreign too: %#v", s)
+	}
+	foreign("muse", mu, "issue-to-pr", ".claude", filepath.Join(claudeRoot, "skills"))
 }
