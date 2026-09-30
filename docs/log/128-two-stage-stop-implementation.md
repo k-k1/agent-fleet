@@ -24,10 +24,10 @@
 |---|---|
 | 作る | `NewTurnQueue(name, ledger, LedgerAtAccept)`（codex・opencode・muse）/ `LedgerAtTake`（copilot・cursor・kiro・lcpp）。ledger の記録はキューがする。ドライバは自分で `SeenOrRecord` しない |
 | 受け付け | `Accept(in) (id, dup)`。`dup` は LedgerAtAccept の再送（積まれない）。利用者の新しい入力はエピソードを終える |
-| キューを通らない受け付け | `Accepted(in)`（codex のネイティブ steer）、`AcceptRecorded(in)`（steer が失敗してキューに落ちるとき） |
+| キューを通らない受け付け | `AcceptOutside(in) (id, dup)`（codex のネイティブ steer）。再送の判定と ledger の記録もここでするので、ドライバは `SeenOrRecord` しない。`dup` なら何も送らない。steer が失敗してキューに落ちるときは `AcceptRecorded(in)` |
 | ポンプ | `Take()` → （別のターンの後ろで待つ間は `Hold(t, true)`）→ ロックの中の最後に `Commit(t)`（false なら送らない）→ ロックを外して送る → ランタイムが受け取ったら `Received(t)`（true なら停止をポンプが届ける）→ ターンが落ち着いたら `Settle(t)` |
 | 受け取る前にランタイムが消えた | `Requeue(t)`（停止待ちなら false、送り直さない） |
-| 停止 | `Interrupt(opts) InterruptOutcome`。`Result`（`/turn` の応答）と `Head`（取り出し済みの項目への処置） |
+| 停止 | `Interrupt(opts, busy) InterruptOutcome`。`busy` は、ランタイムで何かのターン（このドライバのものでも、別のクライアントのものでもよい）が走っているか。`Result` は `/turn` の応答、`Head` は取り出し済みの項目への処置 |
 | 取り除く | `Remove(id)` → 項目 / `ErrAlreadyStarted` / `ErrNotQueued` |
 | 捨てた入力 | `Discards()`、`DismissDiscard(id)`（直近 5 回分） |
 | 後片付け（決定 8） | `DropAll()`（捨てた入力として残さない） |
@@ -37,7 +37,7 @@
 
 - `HeadNone`: 取り出し済みの項目は無い。このキューから始めていない実行中のターン（再起動後に引き継いだもの）があれば、ドライバが止める。
 - `HeadKept`: 別のターンの後ろで待っている（`Hold`）。1 回目の停止では続ける。
-- `HeadCancelled`: まだ取り消せた。`Commit` が false を返すので、送られない。ドライバはそのターンを `TurnCancelled` にする。
+- `HeadCancelled`: まだ取り消せた。取り出し前でも、`busy=false` のときのキューの先頭は「始めかけの入力」として、1 回目の停止でここに入る（キューから消え、捨てた入力には入らない）。`Commit` が false を返すので、送られない。ドライバはそのターンを `TurnCancelled` にする。
 - `HeadStopPending`: 確定済み。`Received` が true を返したときに、ポンプが停止を届ける。
 - `HeadStopNow`: ランタイムが受け取り済み。停止する側が、その場で届ける。
 
@@ -59,7 +59,10 @@ RemoveQueued(id string) (QueueItem, error)
 DismissDiscard(id string) bool
 ```
 
-`TranscriptData` に `QueuedItems []QueueItem` と `Discards []Discard` を足した。段 0 の時点では、7 ドライバとも古い停止の上にかぶせたシムになっている。
+`TranscriptData` に `QueuedItems []QueueItem` と `Discards []Discard` を足した。
+
+各ドライバは `agents.LiveHandles`（`LiveHandle(meta) (ThreadHandle, bool)`）も実装する。これは何も起動せずに、生きているハンドルだけを返す。
+`/turn` の remove / dismiss_discard はこれを使う。ハンドルが無ければ、404 `not_queued` / `{"dismissed":false}` を返す。止まっているランタイムを、古いタブからの操作で起こさないため。段 0 の時点では、7 ドライバとも古い停止の上にかぶせたシムになっている。
 
 ### 1.4 wire（fixture: `workspace/agent/testdata/stop-queue-wire.json`）
 
@@ -84,7 +87,7 @@ DismissDiscard(id string) bool
 | `workspace/agent/testdata/stop-queue-wire.json` | 統合役 |
 | `internal/agents/codex/**`、`opencode/**`、`muse/**` | B-drv1 |
 | `internal/agents/copilot/**`、`cursor/**`、`kiro/**`、`lcpp/**` | B-drv2 |
-| `internal/sessionx/session_turn.go`（`/turn` の op）、`session_transcript.go`（messages）、sessionx の新しいテスト | B-wire |
+| `internal/sessionx/session_turn.go`（`/turn` の op）、`session_transcript.go`（messages）、sessionx の新しいテスト | B-wire（完了・マージ済み。以後は統合役） |
 | `internal/sessionx/session_io.go`、`session_peer_test.go`（KeepOnInterrupt の除去） | 統合役（最後に） |
 | `internal/sessionx/bridge_inbound.go`、`session_handlers.go`、`session_carried.go`、`abort_resume.go`、`auth_resume.go` | 凍結（#1291 で済み） |
 | `workspace/agent/testdata/wiremap.golden` | B-wire。ドライバのレーンが map リテラルを変えた場合は、各自のブランチで再生成し、統合役がマージ後にもう一度再生成する |
@@ -103,4 +106,11 @@ DismissDiscard(id string) bool
 
 ## 4. 経過
 
-（統合役が追記する）
+- 段 0: #1291 を PR #1295 でマージ。契約を凍結し、`TurnQueue` を本実装した。
+- B-wire: マージ済み（`/turn` の 3 op、messages の 2 項目、fixture の全件を再生、陽性対照 8 種）。
+- codex レビュー（1 巡目、共通キューと wire）で 4 件の指摘があり、すべて直した。
+  - 🔴 受け付けた後、ポンプが取り出す前に 1 回目の停止が来ると、始めかけの入力が停止を擦り抜けて始まっていた。`Interrupt` に `busy` を足して直した。
+  - 🟡 LedgerAtTake で `Requeue` した項目を、次の `Take` が再送とみなして捨てていた。`Take` の時点で記録済みの項目には印を付けて、判定を免除した。
+  - 🟡 ネイティブ steer の `Accepted` は再送でもエピソードを終えていた。`AcceptOutside` に置き換え、再送の判定と ledger の記録もここでするようにした。
+  - 🟡 remove / dismiss_discard が `Resume` で止まっているランタイムを起こしていた。`LiveHandles` を足して直した。
+

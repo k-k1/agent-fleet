@@ -160,6 +160,10 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 			"managed driver はこの kind ではまだ利用できません")
 		return
 	}
+	if req.Op == "remove" || req.Op == "dismiss_discard" {
+		handleQueueEdit(w, d, meta, req)
+		return
+	}
 	h, err := d.Resume(meta)
 	if err != nil {
 		writeRuntimeErr(w, err)
@@ -178,33 +182,6 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 		// null, which the Console reads as "no notice".
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"sent": meta.Name, "op": req.Op, "stop": res.Stop, "discard": res.Discard,
-		})
-		return
-	case "remove":
-		if req.ID == "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "missing_id", "id is required for remove")
-			return
-		}
-		item, err := h.RemoveQueued(req.ID)
-		switch {
-		case errors.Is(err, agents.ErrAlreadyStarted):
-			httpx.WriteErr(w, http.StatusConflict, "already_started", "the input has already started; it can no longer be removed")
-		case errors.Is(err, agents.ErrNotQueued):
-			httpx.WriteErr(w, http.StatusNotFound, "not_queued", "no such queued input")
-		case err != nil:
-			writeRuntimeErr(w, err)
-		default:
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name, "op": req.Op, "removed": item})
-		}
-		return
-	case "dismiss_discard":
-		if req.ID == "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "missing_id", "id is required for dismiss_discard")
-			return
-		}
-		// Idempotent: false means another tab dismissed it first, or newer discards pushed it out.
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"sent": meta.Name, "op": req.Op, "dismissed": h.DismissDiscard(req.ID),
 		})
 		return
 	default: // start / steer
@@ -237,6 +214,51 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 		cancelStopArmOnNewPrompt(meta.Name) // new work supersedes a stop-after-turn arm (docs/log/85)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name, "op": req.Op})
+}
+
+// handleQueueEdit applies remove and dismiss_discard (ADR 0105 decisions 4-5) to the live
+// handle only. A session whose runtime is down has no queue and no kept discards — both live in
+// the Agent's memory with the handle — so Resume would start a daemon or a host just to answer
+// "nothing there" to a stale bubble or notice in some tab.
+func handleQueueEdit(w http.ResponseWriter, d agents.Driver, meta session.Meta, req turnReq) {
+	if req.ID == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "missing_id", "id is required for "+req.Op)
+		return
+	}
+	var h agents.ThreadHandle
+	if lh, ok := d.(agents.LiveHandles); ok {
+		h, _ = lh.LiveHandle(meta)
+	} else {
+		var err error
+		if h, err = d.Resume(meta); err != nil {
+			writeRuntimeErr(w, err)
+			return
+		}
+	}
+	switch req.Op {
+	case "remove":
+		item, err := agents.QueueItem{}, agents.ErrNotQueued
+		if h != nil {
+			item, err = h.RemoveQueued(req.ID)
+		}
+		switch {
+		case errors.Is(err, agents.ErrAlreadyStarted):
+			httpx.WriteErr(w, http.StatusConflict, "already_started", "the input has already started; it can no longer be removed")
+		case errors.Is(err, agents.ErrNotQueued):
+			httpx.WriteErr(w, http.StatusNotFound, "not_queued", "no such queued input")
+		case err != nil:
+			writeRuntimeErr(w, err)
+		default:
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name, "op": req.Op, "removed": item})
+		}
+		return
+	case "dismiss_discard":
+		// Idempotent: false means another tab dismissed it first, or newer discards pushed it out.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"sent": meta.Name, "op": req.Op, "dismissed": h != nil && h.DismissDiscard(req.ID),
+		})
+		return
+	}
 }
 
 // HandleSessionRespond (POST /sessions/{name}/respond) answers a pending
