@@ -133,11 +133,12 @@ type manager struct {
 	gitDevMasterOnce sync.Once
 	gitDevMaster     []byte
 
-	// internalGitHost is the host of PUBLIC_BASE_URL (docs/reference/internal-git-
-	// provider). When set, each workspace gets a deterministic per-membership git
-	// token injected for this host so clone/push against the CP's self-hosted repos
-	// authenticate transparently via the cred helper. Empty (no PUBLIC_BASE_URL) =
-	// internal git disabled.
+	// internalGitHost is the host of PUBLIC_BASE_URL, port included
+	// (internalGitCredentialHost; docs/reference/internal-git-provider). When set,
+	// each workspace gets a deterministic per-membership git token injected for this
+	// host so clone/push against the CP's self-hosted repos authenticate
+	// transparently via the cred helper. Empty (no PUBLIC_BASE_URL) = internal git
+	// disabled.
 	internalGitHost string
 
 	// publicBaseURL is PUBLIC_BASE_URL verbatim (scheme + host). Injected into each

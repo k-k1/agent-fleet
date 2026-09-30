@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -237,7 +238,7 @@ func gitProviderHost(remote string) (string, string) {
 	// The tenant's self-hosted git (docs/reference/internal-git-provider) has a
 	// deployment-specific host, so match it dynamically from the CP-injected env
 	// and badge it as "internal" rather than the bare host.
-	if ih := internalGitHost(); ih != "" && strings.EqualFold(host, ih) {
+	if ih := internalGitHostName(); ih != "" && strings.EqualFold(host, ih) {
 		return "internal", host
 	}
 	switch {
@@ -250,6 +251,17 @@ func gitProviderHost(remote string) (string, string) {
 	default:
 		return host, host
 	}
+}
+
+// internalGitHostName is the internal git host without its port. The injected value
+// carries the port (it is the credential key, matching git's `host=`), while
+// gitProviderHost reduces every remote to its bare host name.
+func internalGitHostName() string {
+	ih := internalGitHost()
+	if h, _, err := net.SplitHostPort(ih); err == nil {
+		return h
+	}
+	return ih
 }
 
 // RepoStatus mirrors docs/06 §6.4's status response shape.

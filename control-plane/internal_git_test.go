@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -91,5 +92,48 @@ func TestInternalGitListTenantScoped(t *testing.T) {
 	g.withMembership(g.reposList)(w, r)
 	if want := "https://fleet.example.com/git/default/alpha.git"; !strings.Contains(w.Body.String(), want) {
 		t.Fatalf("clone_url missing %q in %s", want, w.Body.String())
+	}
+}
+
+// The credential key the workspace gets must be what git's credential protocol sends as
+// `host=` for the clone URL: the authority, port included. A bare host name misses the
+// lookup for any base with an explicit port, and clone/push then run unauthenticated.
+func TestInternalGitCredentialHostKeepsThePort(t *testing.T) {
+	cases := []struct{ base, want string }{
+		{"http://127.0.0.1:8080", "127.0.0.1:8080"},
+		{"https://af.example:8443/", "af.example:8443"},
+		{"https://af.example", "af.example"},
+		{"http://[::1]:8080", "[::1]:8080"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := internalGitCredentialHost(c.base); got != c.want {
+			t.Errorf("internalGitCredentialHost(%q) = %q, want %q", c.base, got, c.want)
+		}
+	}
+}
+
+// End to end on the CP side: the injected AF_INTERNAL_GIT_HOST is the authority of the
+// clone URL the same deployment hands out.
+func TestWorkspaceEnvInternalGitHostMatchesCloneURL(t *testing.T) {
+	_, mgr, mv := bridgeEnv(t)
+	mgr.dataRoot = t.TempDir()
+	base := "http://127.0.0.1:8080"
+	mgr.publicBaseURL = base
+	mgr.internalGitHost = internalGitCredentialHost(base)
+
+	ws := store.Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID}
+	var host string
+	for _, kv := range mgr.workspaceExtraEnv(context.Background(), ws) {
+		if v, ok := strings.CutPrefix(kv, "AF_INTERNAL_GIT_HOST="); ok {
+			host = v
+		}
+	}
+	clone, err := url.Parse(gitServerAPI{publicBaseURL: base}.cloneURL("t", "r"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != clone.Host {
+		t.Fatalf("AF_INTERNAL_GIT_HOST = %q, want the clone URL's authority %q", host, clone.Host)
 	}
 }
