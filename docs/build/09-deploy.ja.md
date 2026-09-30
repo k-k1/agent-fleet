@@ -143,9 +143,12 @@ runbook の「Stack decomposition」。
   - **デプロイがこれを選ぶ理由は I/O・本当に残る home・Fargate の上限を超える大きさで、起動時間
     ではない。** アダプタ経由の実測で warm 起動は 43〜110 秒、Fargate は ~105 秒。EBS の home は
     小さいファイルの書き込みが EFS の 8〜30 倍速い。
-- **Runtime 契約の `starting` 状態は実質 ECS 専用。** 収束待ちの間、呼び出し側は再 Start も
-  アイドル停止もしない。Docker アダプタは秒で上がるので報告しない。**Start は Agent を待たずに
-  返る**: `ecs` ではサービスの desired count を設定した時点で、`ecs-ec2` ではそれより前のことも
+- **Runtime 契約の `starting` 状態は、起動の収束待ちの間、全アダプタが報告する。** その間、呼び出し側は
+  再 Start もアイドル停止もしない。ローカルのアダプタ（`docker`・`native`）は、Start のマーカーが
+  立っていて Agent がまだ `/healthz` に答えていない間これを報告する。Start が Agent を待つのは猶予
+  （アダプタの既定値か `AF_AGENT_HEALTH_WAIT_SEC`）だけで、その後は返り、`State` は最長 `AgentBootBudget` まで
+  `starting` を返し続ける（`runtime_health.go`）。**ECS では Start は Agent を待たずに返る**:
+  `ecs` ではサービスの desired count を設定した時点で、`ecs-ec2` ではそれより前のことも
   ある — スロットがまだ起動中・復帰中・登録中なら配置は背景（`finishStart`）で仕上がり、home に
   付けた claim が状態を `starting` に保つ。どちらでも収束は Console の `GET /api/workspace`
   ポーリングが拾う。同期待ちは戻せない: cold start はロードバランサの

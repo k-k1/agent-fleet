@@ -157,9 +157,12 @@ optional. The runbook's "Stack decomposition" says what each one owns.
     Fargate's ceiling — not start time.** Measured through the adapter, a warm start
     takes 43–110 s against Fargate's ~105 s; small-file writes on the EBS home are 8–30×
     faster than on EFS.
-- **The `starting` state in the Runtime contract is effectively ECS-only.** While it is
-  converging, callers neither re-start it nor idle-stop it; the Docker adapter comes up
-  in seconds and never reports it. **Start returns without waiting for the agent**: on
+- **Every adapter reports the Runtime contract's `starting` state** while a start is
+  converging, and callers neither re-start nor idle-stop it then. The local adapters
+  (`docker`, `native`) report it while Start's marker is armed and the agent has not
+  answered `/healthz` yet: Start waits for the agent only for a grace (the adapter's
+  default, or `AF_AGENT_HEALTH_WAIT_SEC`) and then returns, and `State` keeps saying `starting` for up to `AgentBootBudget`
+  (`runtime_health.go`). **On ECS, Start returns without waiting for the agent**: on
   `ecs` once the service's desired count is set, and on `ecs-ec2` possibly earlier — when
   the slot is still starting, waking or registering, the placement finishes in the
   background (`finishStart`) and the claim on the home keeps the state at `starting`.
