@@ -8,6 +8,7 @@ English | [日本語](0103-branch-naming-rules.ja.md)
   the built-in shape (decision 6), the repository outranking the user and the tenant (decision 2),
   and rules being advisory only (decision 8). The user also chose `{ref}` for the Jira default and
   switching users with an empty template to the new default without a compatibility shim.
+- Amended 2026-09-30 (#1329): decision 9 may create a local branch tracking an origin branch.
 - Follow-ups: #1124, #1125, #1126 (P0) / #1127 (P1) / #1128, #1129 (P2)
 - Related: [0061](0061-work-item-inbox.md) decision 12 (the work-item default `feature/{key}`, replaced
   here) / [0031](0031-mcp-registry.md) (the tenant distribution this ADR's tenant layer copies)
@@ -365,10 +366,44 @@ repository (parent clone) gets **Initialize Git Flow**.
     writes. That is the same exposure as running `git flow init` twice by hand, and it is accepted.
   - A failure reports which keys were written. Pressing again rewrites them all.
   - Every value passes decision 3's ref-name check before anything is written.
-- **It writes on a person's press only, and never creates a branch.** If the development branch
+- ~~**It writes on a person's press only, and never creates a branch.**~~ If the development branch
   exists neither locally nor on `origin`, it refuses. `git flow init` would create it; this does not.
+  **Changed on 2026-09-30 — see the amendment below.**
 - **The suggestion.** The work-item launch offers it (`gitflow: suggest`) when `origin` has `develop`
   and no repository source declares anything. It only offers; it never initialises by itself.
+
+#### Amendment (2026-09-30, #1329): a local branch tracking an origin-only branch
+
+gitflow-avh counts a repository as initialised only when both `gitflow.branch.master` and
+`gitflow.branch.develop` name **local** branches (`gitflow_has_{master,develop}_configured` →
+`git_local_branch_exists`). In a fresh clone whose `develop` is only on `origin`, `git flow feature
+start` still refused after the keys were written, and a hint telling the person to run
+`git branch develop origin/develop` left decision 9's own acceptance to them.
+
+- **Saving may create a local branch that tracks an existing origin branch.** For the production and
+  development branches, when `refs/heads/<b>` is missing and `refs/remotes/origin/<b>` exists, the
+  Agent creates `<b>` at origin's commit and sets its upstream to `origin/<b>` (what
+  `git branch --track` does) before writing any key, under the same per-clone lock. The ref is created
+  with `git update-ref --no-deref <ref> <commit> ""`, which fails when a plain ref exists. It does not
+  fail over a dangling symbolic ref (measured: it replaces it), so the Agent refuses a branch that is a
+  symbolic ref, dangling or not, before the create; with `--no-deref` on every write, nothing reaches
+  through one to another branch.
+- **A failed upstream leaves the branch in place**, reported as `untracked`. Once the ref exists another
+  worktree or checkout may adopt it at any moment, and no lock covers every git caller (the Agent's own
+  checkout routes included), so deleting it again could leave a checked-out `HEAD` unborn. A retry skips
+  it as existing, so the dialog gives the `git branch --set-upstream-to=origin/<b> <b>` that finishes it.
+- **The limits are unchanged in spirit:**
+  - it never creates a branch that is not on `origin` (one on neither side is still refused, before
+    anything is created);
+  - it never switches the checked-out branch, and refuses a branch that is an unborn `HEAD` in any of its worktrees,
+    since creating it would give the work tree a commit it was never checked out at, and refuses
+    to create anything when the worktree list cannot be read;
+  - it never moves an existing local branch, even one behind or diverged from `origin`'s (a branch that
+    appears meanwhile makes the create refuse).
+- **The answer names what was created** (`created`), on success and on failure. A branch that cannot be
+  created stops the save before any key is written; a retry skips the branches that now exist.
+- It is still on a person's press only. The dialog says, per field, that saving creates the local
+  branch; the command hint is gone. A branch only local stays as it is.
 
 ### Decision 10: the tenant layer (P1)
 

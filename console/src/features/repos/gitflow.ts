@@ -27,9 +27,11 @@ export interface GitflowState {
   committed: string[];
 }
 
+/** `created` lists the local branches made to track their origin branch; `untracked`, those among
+ * them left without their upstream, which saving again cannot repair. */
 export type GitflowSaveResult =
-  | { ok: true; written: string[] }
-  | { ok: false; code: string; message: string; field?: string; written?: string[] };
+  | { ok: true; written: string[]; created: string[] }
+  | { ok: false; code: string; message: string; field?: string; written?: string[]; created?: string[]; untracked?: string[] };
 
 /** The config key each field writes, in the dialog's order. */
 export const GITFLOW_KEY: Record<keyof GitflowValues, string> = {
@@ -59,7 +61,7 @@ export async function fetchGitflow(repo: string): Promise<GitflowState | null> {
 export async function saveGitflow(repo: string, expected: Record<string, string>, values: GitflowValues): Promise<GitflowSaveResult> {
   try {
     const j = await apiJSON(`${path(repo)}/init`, "POST", { expected, values });
-    if (j && Array.isArray(j.written) && !j.error) return { ok: true, written: j.written };
+    if (j && Array.isArray(j.written) && !j.error) return { ok: true, written: j.written, created: Array.isArray(j.created) ? j.created : [] };
     const e = (j?.error ?? {}) as { code?: string; message?: string; field?: string };
     return {
       ok: false,
@@ -67,6 +69,8 @@ export async function saveGitflow(repo: string, expected: Record<string, string>
       message: e.message || String(j?.error ?? ""),
       field: e.field,
       written: Array.isArray(j?.written) ? j.written : undefined,
+      created: Array.isArray(j?.created) ? j.created : undefined,
+      untracked: Array.isArray(j?.untracked) ? j.untracked : undefined,
     };
   } catch (err) {
     return { ok: false, code: "network", message: String(err) };
@@ -74,8 +78,8 @@ export async function saveGitflow(repo: string, expected: Record<string, string>
 }
 
 /** Where a branch is: both, only on origin, only local, or nowhere. The git flow CLI and Fork
- * accept a branch only when it is local (measured with gitflow-avh 1.12.4-dev), and Initialize
- * Git Flow never creates one. */
+ * accept a branch only when it is local (measured with gitflow-avh 1.12.4-dev), so saving gives
+ * an origin-only one a local branch tracking it. */
 export type BranchPlace = "both" | "origin" | "local" | "missing";
 
 export function branchPlace(st: GitflowState, name: string): BranchPlace {
@@ -98,8 +102,13 @@ export function gitflowChanges(st: GitflowState, v: GitflowValues): { key: strin
   return out;
 }
 
-// Branch names git accepts may still carry `;`, `$(…)` and the like: the command is meant to be
-// copied into a shell, so anything beyond the plain characters is single-quoted.
+// Branch names git accepts may still carry `;`, `$(…)` and the like: the repair command is meant
+// to be copied into a shell, so anything beyond the plain characters is single-quoted.
 export function shellQuote(v: string): string {
   return /^[A-Za-z0-9._/-]+$/.test(v) ? v : "'" + v.replace(/'/g, "'\\''") + "'";
+}
+
+/** The command that gives a branch left untracked its upstream. */
+export function upstreamCommand(branch: string): string {
+  return `git branch --set-upstream-to=${shellQuote("origin/" + branch)} ${shellQuote(branch)}`;
 }

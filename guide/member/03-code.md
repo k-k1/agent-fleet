@@ -139,15 +139,19 @@ development branch with git-flow's prefixes.
   `main` and `master` exist.
 - **What it writes:** the `gitflow.branch.*` and `gitflow.prefix.*` keys, into the base copy's git
   config. `support/` is added only when it is not set, and an empty bugfix prefix leaves that
-  setting as it is. Nothing is committed, and no branch is created or switched.
+  setting as it is. Nothing is committed and nothing is checked out.
 - **Shared:** every worktree and session of the repository reads these settings at once. Settings
   that already exist and would change are listed before you save, and the button reads
   **Overwrite**. If someone changes them while the dialog is open, saving is refused and the
   dialog reloads.
 - **Refused** when the production or development branch exists neither locally nor on `origin`.
-- **Only on origin:** Agent Fleet can branch from it as it is, but the `git flow` command and Fork
-  also want a local branch. The dialog shows the command that makes one
-  (`git branch develop origin/develop`); run it yourself if you use those tools.
+- **Only on origin:** the `git flow` command and Fork want the production and development branches
+  locally, so saving creates a local branch tracking the one on `origin` (like
+  `git branch --track develop origin/develop`). The dialog says so under the field, and the message
+  after saving names the branches it created. It never checks one out, and it never moves a local
+  branch that already exists, even when it differs from `origin`'s. If the branch is created but its
+  upstream cannot be set, saving again will not fix that; the dialog shows the
+  `git branch --set-upstream-to=…` command to run instead.
 - A committed `.agent-fleet/branches` or `.gitflow` takes precedence over these settings where the
   two overlap, and the dialog says so.
 - When you start work from an issue in a repository whose `origin` has `develop` and that declares

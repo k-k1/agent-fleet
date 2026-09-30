@@ -1423,9 +1423,14 @@
 .gitflow-prefixes .ui-field {
   min-width: 0;
 }
-.gitflow-place code,
+.gitflow-cmd,
 .gitflow-changes code {
   overflow-wrap: anywhere;
+}
+.gitflow-cmd {
+  display: block;
+  margin-top: 4px;
+  user-select: all;
 }
 .gitflow-changes ul {
   margin: 4px 0 0;

@@ -46,15 +46,21 @@ type gitflowInitRequest struct {
 }
 
 type gitflowInitOut struct {
-	Written []string                `json:"written"`
+	Written []string `json:"written"`
+	// Created lists the local branches made to track their origin branch.
+	Created []string                `json:"created"`
 	State   branchrule.GitflowState `json:"state"`
 }
 
-// gitflowWriteFailed is the 500 of a `git config` that failed part-way: the keys written
-// before it travel with the error, so the dialog can say what state the clone is in.
+// gitflowWriteFailed is the 500 of an init that failed part-way: the branches created and
+// the keys written before it travel with the error, so the dialog can say what state the
+// clone is in.
 type gitflowWriteFailed struct {
 	Error   gitflowErrBody `json:"error"`
 	Written []string       `json:"written"`
+	Created []string       `json:"created"`
+	// Untracked lists created branches left without their upstream.
+	Untracked []string `json:"untracked,omitempty"`
 }
 
 // gitflowErrOut is the usual error envelope plus the field the dialog marks.
@@ -70,7 +76,8 @@ type gitflowErrBody struct {
 
 // POST /repos/{name}/gitflow/init writes git-flow's keys into the clone's config. The
 // config is shared by every worktree of the repository, so a name that is a worktree
-// initialises its parent clone; nothing switches a branch and nothing creates one.
+// initialises its parent clone. Nothing switches a branch; the only branch it creates is a
+// local one tracking an origin branch the values name.
 func handleGitflowInit(w http.ResponseWriter, r *http.Request) {
 	var req gitflowInitRequest
 	if e := httpx.DecodeStrictJSON(r, &req, 8<<10); e != nil {
@@ -85,13 +92,14 @@ func handleGitflowInit(w http.ResponseWriter, r *http.Request) {
 	for _, p := range []*string{&v.Production, &v.Development, &v.Feature, &v.Bugfix, &v.Release, &v.Hotfix, &v.VersionTag} {
 		*p = strings.TrimSpace(*p)
 	}
-	written, err := branchrule.InitGitflow(dir, req.Expected, v)
+	res, err := branchrule.InitGitflow(dir, req.Expected, v)
 	var inv *branchrule.GitflowInvalidError
 	var miss *branchrule.GitflowBranchMissingError
 	var wf *branchrule.GitflowWriteError
+	var bf *branchrule.GitflowBranchError
 	switch {
 	case err == nil:
-		httpx.WriteJSON(w, http.StatusOK, gitflowInitOut{Written: written, State: branchrule.ReadGitflow(r.Context(), dir, gitflowReadOptions(dir))})
+		httpx.WriteJSON(w, http.StatusOK, gitflowInitOut{Written: res.Written, Created: res.Created, State: branchrule.ReadGitflow(r.Context(), dir, gitflowReadOptions(dir))})
 	case errors.Is(err, branchrule.ErrGitflowChanged):
 		httpx.WriteErr(w, http.StatusConflict, "gitflow_changed", err.Error())
 	case errors.As(err, &inv):
@@ -100,7 +108,11 @@ func handleGitflowInit(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, gitflowErrOut{Error: gitflowErrBody{Code: "branch_missing", Message: err.Error(), Field: miss.Field}})
 	case errors.As(err, &wf):
 		httpx.WriteJSON(w, http.StatusInternalServerError, gitflowWriteFailed{
-			Error: gitflowErrBody{Code: "write_failed", Message: err.Error()}, Written: wf.Written,
+			Error: gitflowErrBody{Code: "write_failed", Message: err.Error()}, Written: wf.Written, Created: wf.Created,
+		})
+	case errors.As(err, &bf):
+		httpx.WriteJSON(w, http.StatusInternalServerError, gitflowWriteFailed{
+			Error: gitflowErrBody{Code: "branch_failed", Message: err.Error()}, Written: []string{}, Created: bf.Created, Untracked: bf.Untracked,
 		})
 	default:
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())

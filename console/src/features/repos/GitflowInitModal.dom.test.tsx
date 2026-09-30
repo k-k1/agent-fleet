@@ -2,9 +2,9 @@
 // of the repository, so what is held here is about not overwriting anything unseen:
 //   - existing keys the save would change are listed, and the button says "Overwrite";
 //   - the save carries the keys the dialog opened with, and a 409 reloads instead of retrying;
-//   - a branch only on origin is flagged, because the git flow CLI needs a local one and this
-//     never creates it;
-//   - a write that stopped part-way names the keys already written.
+//   - a branch only on origin is flagged: saving creates a local branch tracking it, because the
+//     git flow CLI needs one;
+//   - a write that stopped part-way names the branches created and the keys already written.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -92,14 +92,14 @@ afterEach(() => {
 
 describe("GitflowInitModal", () => {
   it("prefills, flags an origin-only branch, and sends the keys it opened with", async () => {
-    apiJSON.mockImplementation(async () => ({ written: ["gitflow.branch.develop"], state: FRESH }));
+    apiJSON.mockImplementation(async () => ({ written: ["gitflow.branch.develop"], created: ["develop"], state: FRESH }));
     await render([FRESH]);
     expect(api).toHaveBeenCalledWith("api/repos/web/gitflow");
     expect(input("production").value).toBe("main");
     expect(input("development").value).toBe("develop");
     expect(input("feature").value).toBe("feature/");
-    // develop is only on origin: the git flow CLI would still refuse, so say how to fix it.
-    expect(document.querySelector(".gitflow-place")?.textContent).toContain("git branch develop origin/develop");
+    // develop is only on origin: say that saving makes the local branch the git flow CLI needs.
+    expect(document.querySelector(".gitflow-place")?.textContent).toBe(t("gitflow.origin_only", { branch: "develop" }));
     expect(text()).toContain(t("gitflow.shared"));
     expect(submit().textContent).toBe(t("gitflow.submit"));
     expect(input("production").getAttribute("type")).toBe("text"); // the shared .ui-field input styles
@@ -111,6 +111,24 @@ describe("GitflowInitModal", () => {
       values: { ...PREFILL, bugfix: "bugfix/" },
     });
     expect(events).toEqual(["saved", "closed"]);
+    expect(text()).toContain(t("gitflow.saved_created", { name: "web", branches: "develop" }));
+  });
+
+  it("names the branches created when creating the next one failed", async () => {
+    apiJSON.mockImplementationOnce(async () => ({
+      error: { code: "branch_failed", message: "creating the local branch \"develop\" failed" },
+      written: [],
+      created: ["main"],
+    }));
+    await render([{ ...FRESH, local: [], origin: ["develop", "main"] }, FRESH]);
+    await press();
+    const err = document.querySelector(".gitflow-err")?.textContent || "";
+    expect(err).toContain(t("gitflow.err_branch_failed", { err: 'creating the local branch "develop" failed' }));
+    expect(err).toContain(t("gitflow.err_created", { branches: "main" }));
+    expect(events).toEqual([]);
+    // The state is reloaded, so main is no longer shown as origin-only.
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(document.querySelectorAll(".gitflow-place")).toHaveLength(1);
   });
 
   it("lists the existing keys a save would overwrite", async () => {
@@ -170,6 +188,24 @@ describe("GitflowInitModal", () => {
       values: { ...PREFILL, development: "dev" },
     });
     expect(events).toEqual(["saved", "closed"]);
+  });
+
+  it("gives the repair command for a branch left without its upstream", async () => {
+    apiJSON.mockImplementationOnce(async () => ({
+      error: { code: "branch_failed", message: "upstream failed" },
+      written: [],
+      created: ["main", "develop"],
+      untracked: ["develop"],
+    }));
+    await render([{ ...FRESH, local: [] }, { ...FRESH, local: ["main", "develop"] }]);
+    await press();
+    const err = document.querySelector(".gitflow-err")?.textContent || "";
+    expect(err).toContain(t("gitflow.err_untracked", { err: "upstream failed", branches: "develop" }));
+    // main was created whole before develop failed: the summary names every created branch.
+    expect(err).toContain(t("gitflow.err_created", { branches: "main, develop" }));
+    const cmds = [...document.querySelectorAll(".gitflow-cmd")].map((c) => c.textContent);
+    expect(cmds).toEqual(["git branch --set-upstream-to=origin/develop develop"]);
+    expect(events).toEqual([]);
   });
 
   it("says so when the Agent has nothing to show", async () => {

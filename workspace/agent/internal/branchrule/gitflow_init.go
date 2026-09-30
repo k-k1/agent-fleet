@@ -12,7 +12,9 @@ import (
 
 // Initialize Git Flow (ADR 0103 decision 9) writes git-flow's own avh-form keys into the
 // clone's config, so the `git flow` CLI, Fork, git-flow-next and the resolver all read the
-// same declaration. It writes on a person's press only and never creates a branch.
+// same declaration. It writes on a person's press only. The one branch it may create is a
+// local branch tracking an origin branch the dialog names, because gitflow-avh counts a repo
+// as initialised only when both branches exist locally (decision 9's amendment, #1329).
 
 // GitflowKeys are the keys Initialize Git Flow owns. The 409 check compares exactly these.
 var GitflowKeys = []string{
@@ -62,7 +64,7 @@ type GitflowInvalidError struct {
 func (e *GitflowInvalidError) Error() string { return e.Field + ": " + e.Reason }
 
 // GitflowBranchMissingError is the refusal for a branch that exists neither locally nor on
-// origin: `git flow init` would create it, and this never creates a branch.
+// origin: `git flow init` would create it, and this never creates one absent from origin.
 type GitflowBranchMissingError struct {
 	Field, Branch string
 }
@@ -71,11 +73,13 @@ func (e *GitflowBranchMissingError) Error() string {
 	return fmt.Sprintf("%s branch %q exists neither locally nor on origin", e.Field, e.Branch)
 }
 
-// GitflowWriteError is a failed `git config`; Written lists the keys already written, so
-// the person knows what state the clone is in. Pressing again rewrites them all.
+// GitflowWriteError is a failed `git config`; Written lists the keys already written and
+// Created the tracking branches made before them, so the person knows what state the clone
+// is in. Pressing again rewrites the keys and skips the branches that now exist.
 type GitflowWriteError struct {
 	Key     string
 	Written []string
+	Created []string
 	Err     error
 }
 
@@ -84,6 +88,29 @@ func (e *GitflowWriteError) Error() string {
 }
 
 func (e *GitflowWriteError) Unwrap() error { return e.Err }
+
+// GitflowBranchError is a failed tracking-branch creation. No key has been written yet;
+// Created lists the branches made, and Untracked those among them left without their
+// upstream, which a retry skips as existing and so cannot repair.
+type GitflowBranchError struct {
+	Branch    string
+	Created   []string
+	Untracked []string
+	Err       error
+}
+
+func (e *GitflowBranchError) Error() string {
+	return "creating the local branch " + quote(e.Branch) + " failed: " + e.Err.Error()
+}
+
+func (e *GitflowBranchError) Unwrap() error { return e.Err }
+
+// GitflowResult is what a successful InitGitflow did.
+type GitflowResult struct {
+	Written []string
+	// Created lists the local branches made to track their origin branch.
+	Created []string
+}
 
 // currentGitflow is the owned keys' present values, from one --get-regexp read.
 func currentGitflow(kvs []kv) map[string]string {
@@ -244,23 +271,74 @@ func sameKeys(a, b map[string]string) bool {
 	return true
 }
 
+// checkedOut is the branches the repository's worktrees have checked out, unborn ones
+// included. An error means the check could not be made, and the caller must then change no
+// ref.
+func checkedOut(dir string) (map[string]bool, error) {
+	out, err := gitx.Run(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	heads := map[string]bool{}
+	for _, l := range strings.Split(out, "\n") {
+		if ref, ok := strings.CutPrefix(l, "branch "); ok {
+			heads[ref] = true
+		}
+	}
+	return heads, nil
+}
+
+// isSymref reports a ref that is a symbolic ref, dangling or not. show-ref calls a dangling
+// one absent, and a write through it would create or delete the branch it names instead.
+func isSymref(dir, ref string) bool {
+	return gitx.Cmd(dir, "symbolic-ref", "--quiet", ref).Run() == nil
+}
+
+// createTracking makes refs/heads/<b> at origin/<b>'s commit with origin/<b> as its upstream,
+// the result of `git branch --track`. A failed upstream leaves the branch in place, reported
+// by untracked: once the ref exists, another worktree or checkout may adopt it at any moment,
+// and no lock covers every git caller, so taking it back could delete a checked-out branch.
+// Every ref write is --no-deref, so none can reach through a symbolic ref to another branch.
+func createTracking(dir, b string) (made, untracked bool, err error) {
+	ref := "refs/heads/" + b
+	sha, err := gitx.Run(dir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+b+"^{commit}")
+	if err != nil || sha == "" {
+		return false, false, errors.New("it is not on origin")
+	}
+	// The empty old value makes update-ref refuse a ref that exists, so a branch that appeared
+	// since the caller's check is never moved.
+	if _, err := gitx.Run(dir, "update-ref", "--no-deref", "-m", "branch: Created from origin/"+b, ref, sha, ""); err != nil {
+		return false, false, err
+	}
+	if _, err := gitx.Run(dir, "branch", "--set-upstream-to=refs/remotes/origin/"+b, "--", b); err != nil {
+		return true, true, fmt.Errorf("the branch was created but its upstream could not be set: %w", err)
+	}
+	return true, false, nil
+}
+
 // InitGitflow writes git-flow's keys into dir's config (POST …/gitflow/init). expected is
 // the Current the dialog opened with; when the keys differ now, nothing is written and the
 // answer is ErrGitflowChanged. The production branch is refused like the development branch
 // when it exists neither locally nor on origin: it is the hotfix base, and a missing one
 // would only resurface as a warning at every hotfix launch.
 //
-// The prefixes are written first and the two branch keys last: the resolver ignores the avh
+// A production or development branch that is only on origin first gets a local branch
+// tracking it, since gitflow-avh refuses a repo whose branches are not local. That is the
+// only branch this creates: never one absent from origin, never over an existing local
+// branch, and never with a checkout.
+//
+// The prefixes are written next and the two branch keys last: the resolver ignores the avh
 // form until both branch keys exist, so a first initialisation is seen whole or not at all.
 // An empty bugfix prefix leaves the bugfix key as it is, and support/ is written only when
 // the support key is absent, as `git flow init -d` does.
-func InitGitflow(dir string, expected map[string]string, v GitflowValues) ([]string, error) {
+func InitGitflow(dir string, expected map[string]string, v GitflowValues) (GitflowResult, error) {
+	res := GitflowResult{Written: []string{}, Created: []string{}}
 	if err := validateGitflow(v); err != nil {
-		return nil, err
+		return res, err
 	}
 	for _, f := range []struct{ field, branch string }{{"production", v.Production}, {"development", v.Development}} {
 		if !refExists(dir, "refs/heads/"+f.branch) && !refExists(dir, "refs/remotes/origin/"+f.branch) {
-			return nil, &GitflowBranchMissingError{f.field, f.branch}
+			return res, &GitflowBranchMissingError{f.field, f.branch}
 		}
 	}
 	lock := CloneLock(dir)
@@ -271,7 +349,35 @@ func InitGitflow(dir string, expected map[string]string, v GitflowValues) ([]str
 		expected = map[string]string{}
 	}
 	if !sameKeys(cur, expected) {
-		return nil, ErrGitflowChanged
+		return res, ErrGitflowChanged
+	}
+	for _, b := range []string{v.Production, v.Development} {
+		if refExists(dir, "refs/heads/"+b) {
+			continue
+		}
+		if isSymref(dir, "refs/heads/"+b) {
+			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: errors.New("it is a symbolic ref")}
+		}
+		// A worktree naming a branch that has no ref has it unborn, and the ref would give it a
+		// commit: a switch in all but name, leaving that index and work tree out of step.
+		heads, err := checkedOut(dir)
+		if err != nil {
+			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: fmt.Errorf("the worktrees could not be listed: %w", err)}
+		}
+		if heads["refs/heads/"+b] {
+			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: errors.New("a worktree has it checked out, not yet born")}
+		}
+		made, untracked, err := createTracking(dir, b)
+		if made {
+			res.Created = append(res.Created, b)
+		}
+		if err != nil {
+			be := &GitflowBranchError{Branch: b, Created: res.Created, Err: err}
+			if untracked {
+				be.Untracked = []string{b}
+			}
+			return res, be
+		}
 	}
 	writes := []kv{{"gitflow.prefix.feature", v.Feature}}
 	if v.Bugfix != "" {
@@ -289,13 +395,12 @@ func InitGitflow(dir string, expected map[string]string, v GitflowValues) ([]str
 		kv{"gitflow.branch.master", v.Production},
 		kv{"gitflow.branch.develop", v.Development},
 	)
-	written := []string{}
 	for _, w := range writes {
 		// --replace-all: a key set twice by hand would otherwise make `git config` refuse.
 		if _, err := gitx.Run(dir, "config", "--local", "--replace-all", w.key, w.value); err != nil {
-			return written, &GitflowWriteError{Key: w.key, Written: written, Err: err}
+			return res, &GitflowWriteError{Key: w.key, Written: res.Written, Created: res.Created, Err: err}
 		}
-		written = append(written, w.key)
+		res.Written = append(res.Written, w.key)
 	}
-	return written, nil
+	return res, nil
 }
