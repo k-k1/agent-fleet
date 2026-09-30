@@ -213,7 +213,7 @@ type Session struct {
 	RemoteUrl  string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
 	State      string `json:"state"`     // claude live state: working | idle | question | ""
 	Alive      bool   `json:"alive"`     // true = live tmux session; false = stopped
-	Resumable  bool   `json:"resumable"` // false = stopped claude whose working dir is gone
+	Resumable  bool   `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
 	// running under the pane. Lets the Console mark a session that is waiting for input
 	// as "still working in bg".
@@ -374,12 +374,13 @@ func ExactTarget(tn string) string { return "=" + tn }
 
 // Meta records how to (re)launch a session. tmux destroys a session when
 // its program exits (e.g. the user quits claude), losing the kind/dir/model we
-// need to relaunch. We persist it in the home volume so the session stays listed
-// and clicking it re-runs claude --resume in the SAME session id (derived from
-// dir+name). Home survives Stop→Start, so a stopped session remains listed and
-// resumable across a Workspace restart (claude --resume reads the jsonl, also
-// persisted). The dir is denylisted in the file browser. "Recreate" wipes home,
-// intentionally clearing sessions too.
+// need to relaunch. We persist it in the home volume (MetaDir) so the session stays
+// listed and clicking it re-runs claude --resume in the SAME session id (derived from
+// dir+name). Home survives Stop→Start and Recreate (which deletes only ~/repos), so a
+// stopped session remains listed across both. After a Recreate an agent session's
+// working dir is usually gone, so it is listed as not resumable; shell and ssm sessions
+// stay resumable (shell falls back to home, ssm starts there). The dir is denylisted in the file
+// browser.
 type Meta struct {
 	Name string `json:"name"`
 	Dir  string `json:"dir"`

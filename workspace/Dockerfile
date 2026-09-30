@@ -65,18 +65,19 @@ RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 RUN pip install --no-cache-dir uv \
     && uv --version && uvx --version
 
-# --- 配布ノブ（docs/log/35 §35.4.1・§35.7.1-5） ----------------------------------
-# BAKE_AGENT_CLIS=0  … エージェント CLI（claude/opencode/codex/copilot/cursor/agy/rtk）を
-#   焼かない lean variant（ライセンス理由: プロプライエタリ CLI は再配布不可扱い）。
-#   entrypoint の boot-install が versions.json のピン版を初回起動時に ~/.local へ導入。
-# BAKE_OPTIONAL_TOOLS=0 … chromium+CJK フォント・Go・awscli+SSM plugin・ops MCP 群を
-#   焼かない（サイズ理由・native rootfs 用。chromium の実行時ライブラリと
-#   fontconfig/DejaVu だけは残し、chromium 本体はオンデマンド DL — P2）。
-# 既定 BAKE_AGENT_CLIS=0 = プロプライエタリ CLI を焼かない安全既定。素の `docker build`
-#   でも再配布不可の CLI をイメージに含めないため、うっかり配布しても事故らない。CLI も
-#   焼いて初回起動を速くしたい自社デプロイは BAKE_AGENT_CLIS=1 を明示（run-dev.sh も対応）。
-# 既定 BAKE_OPTIONAL_TOOLS=1 = サイズ系ツール（chromium/CJK フォント・Go・awscli 等）は
-#   従来どおり焼き込み（ライセンス無関係・native lean rootfs だけが 0）。
+# --- Distribution knobs (docs/log/35 §35.4.1, §35.7.1-5) ---------------------------
+# BAKE_AGENT_CLIS=0 … do not bake the agent CLIs (claude/opencode/codex/copilot/cursor/
+#   agy/rtk): the lean variant, because the proprietary CLIs are treated as not
+#   redistributable. The entrypoint's boot-install puts the versions.json pins into
+#   ~/.local on first start.
+# BAKE_OPTIONAL_TOOLS=0 … do not bake chromium + CJK fonts, Go, awscli + SSM plugin or
+#   the ops MCP servers (size; for the native rootfs). The chromium runtime libraries
+#   and fontconfig/DejaVu stay; chromium itself is downloaded on demand.
+# BAKE_AGENT_CLIS defaults to 0 so that a plain `docker build` never puts a
+#   non-redistributable CLI into an image that might be shared by accident. Own
+#   deployments that want a faster first start pass BAKE_AGENT_CLIS=1 (run-dev.sh can).
+# BAKE_OPTIONAL_TOOLS defaults to 1: the size-only tools carry no licence concern, and
+#   only the native lean rootfs sets 0.
 ARG BAKE_AGENT_CLIS=0
 ARG BAKE_OPTIONAL_TOOLS=1
 
@@ -251,11 +252,11 @@ RUN set -eux; \
     rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gharch}"; \
     /usr/local/libexec/gh --version
 
-# rtk (token-saving claude Bash hook): fetched pinned at build time, ALWAYS baked
-# by default — the former host-vendoring path (run-dev.sh copying a host binary into
-# vendor/) is gone, so every deployment gets the same pinned rtk like the other
-# CLIs. BAKE_RTK=0 remains as an escape hatch for airgapped builds (no build-time
-# GitHub fetch); the entrypoint seeds the hook only when `rtk` is on PATH.
+# rtk (token-saving claude Bash hook): fetched pinned at build time, but only when
+# both BAKE_RTK=1 and BAKE_AGENT_CLIS=1. In the default lean build (BAKE_AGENT_CLIS=0)
+# the entrypoint's boot-install puts the rtk pin from versions.json into ~/.local/bin
+# instead (docs/log/35 §35.4.1). BAKE_RTK=0 is the escape hatch for airgapped builds
+# (no build-time GitHub fetch); the entrypoint seeds the hook only when `rtk` is on PATH.
 # rtk-ai/rtk is public, so the asset + checksums download without auth.
 #
 # ⚠️ amd64 gets a STATIC musl binary. arm64 has no musl asset: upstream publishes only
@@ -276,8 +277,6 @@ RUN set -eux; \
 # reads it, and "absent with no reason" stays a failure).
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
-# BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
-# が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/log/35 §35.4.1）。
 ARG BAKE_RTK=1
 ARG RTK_VERSION=0.50.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
