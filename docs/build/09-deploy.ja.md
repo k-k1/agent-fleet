@@ -146,7 +146,8 @@ runbook の「Stack decomposition」。
 - **Runtime 契約の `starting` 状態は、起動の収束待ちの間、全アダプタが報告する。** その間、呼び出し側は
   再 Start もアイドル停止もしない。ローカルのアダプタ（`docker`・`native`）は、Start のマーカーが
   立っていて Agent がまだ `/healthz` に答えていない間これを報告する。Start が Agent を待つのは猶予
-  （アダプタの既定値か `AF_AGENT_HEALTH_WAIT_SEC`）だけで、その後は返り、`State` は最長 `AgentBootBudget` まで
+  （アダプタの既定値か `AF_AGENT_HEALTH_WAIT_SEC`）だけで、その後は返り、`State` は Agent が答えるか
+  マーカーの期限——Start がマーカーを立てた時点から `AgentBootBudget` と猶予の長い方——が過ぎるまで
   `starting` を返し続ける（`runtime_health.go`）。**ECS では Start は Agent を待たずに返る**:
   `ecs` ではサービスの desired count を設定した時点で、`ecs-ec2` ではそれより前のことも
   ある — スロットがまだ起動中・復帰中・登録中なら配置は背景（`finishStart`）で仕上がり、home に

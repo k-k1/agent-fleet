@@ -161,7 +161,9 @@ optional. The runbook's "Stack decomposition" says what each one owns.
   converging, and callers neither re-start nor idle-stop it then. The local adapters
   (`docker`, `native`) report it while Start's marker is armed and the agent has not
   answered `/healthz` yet: Start waits for the agent only for a grace (the adapter's
-  default, or `AF_AGENT_HEALTH_WAIT_SEC`) and then returns, and `State` keeps saying `starting` for up to `AgentBootBudget`
+  default, or `AF_AGENT_HEALTH_WAIT_SEC`) and then returns, and `State` keeps saying
+  `starting` until the agent answers or the marker's deadline passes — the longer of
+  `AgentBootBudget` and that grace, counted from when Start armed it
   (`runtime_health.go`). **On ECS, Start returns without waiting for the agent**: on
   `ecs` once the service's desired count is set, and on `ecs-ec2` possibly earlier — when
   the slot is still starting, waking or registering, the placement finishes in the
