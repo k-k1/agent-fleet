@@ -100,3 +100,29 @@ func TestCLIRecordsSinceFallsBackToTheStampedSecond(t *testing.T) {
 		t.Error("no session: CLIRecordsSince answered")
 	}
 }
+
+// CLIStartedAfter rounds the other way where only tmux's stamp is known: a record of the
+// stamped second may be the new CLI's, so the bound is that second itself. With the pane's
+// process readable, see TestCLIStartedAfterIsThePaneProcessStart.
+func TestCLIStartedAfterKeepsTheStampedSecondLive(t *testing.T) {
+	stamp := time.Now().Truncate(time.Second)
+	fakeServer(t, fmt.Sprint(stamp.Unix()))
+	if got, ok := CLIStartedAfter("claude_rs"); !ok || !got.Equal(stamp) {
+		t.Errorf("no pane process: CLIStartedAfter = %v, %v; want %v", got, ok, stamp)
+	}
+	fakeServer(t, "")
+	if _, ok := CLIStartedAfter("claude_rs"); ok {
+		t.Error("no session: CLIStartedAfter answered")
+	}
+}
+
+// With the pane's process readable, CLIStartedAfter is its start, like CLIRecordsSince.
+func TestCLIStartedAfterIsThePaneProcessStart(t *testing.T) {
+	needProc(t)
+	pid, after, before := startSleeper(t)
+	fakeServer(t, fmt.Sprintf("%d %d", after.Truncate(time.Second).Unix(), pid))
+	got, ok := CLIStartedAfter("claude_rs")
+	if !ok || got.Before(after.Add(-tickSlack)) || got.After(before.Add(tickSlack)) {
+		t.Errorf("CLIStartedAfter = %v, %v; want the pane process start within [%v, %v]", got, ok, after, before)
+	}
+}

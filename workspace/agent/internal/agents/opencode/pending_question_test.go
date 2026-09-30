@@ -239,3 +239,36 @@ func TestLiveStateIsSplitAtThePaneProcessStart(t *testing.T) {
 		})
 	}
 }
+
+// Where only tmux's second-resolution stamp is known (no /proc, a native macOS Agent), a turn
+// written within the stamped second may be the new process's, so it stays working; only one
+// certainly older than the pane reads idle. A message created before the pane but still being
+// written by its process is live too.
+func TestLiveStateKeepsTheStampedSecondLive(t *testing.T) {
+	stamp := time.Date(2026, 9, 30, 2, 17, 18, 0, time.UTC)
+	for name, c := range map[string]struct {
+		created, updated time.Time
+		want             string
+	}{
+		"written in the stamped second":          {stamp.Add(500 * time.Millisecond), stamp.Add(500 * time.Millisecond), "working"},
+		"written before the stamped second":      {stamp.Add(-500 * time.Millisecond), stamp.Add(-500 * time.Millisecond), "idle"},
+		"created before, updated after the pane": {stamp.Add(-time.Minute), stamp.Add(time.Minute), "working"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := newOpencodeLiveStore(t)
+			m := session.Meta{Dir: "/home/dev/repos/x", Name: "oc-stamp", Kind: session.KindOpencode}
+			if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES('ses_t',NULL,?,1)`, m.Dir); err != nil {
+				t.Fatal(err)
+			}
+			sids.Write(session.UUID(m.Dir, m.Name), "ses_t")
+			if _, err := db.Exec(`INSERT INTO message(id,session_id,time_created,time_updated,data) VALUES('m1','ses_t',?,?,?)`,
+				c.created.UnixMilli(), c.updated.UnixMilli(), `{"role":"assistant","time":{"created":1}}`); err != nil {
+				t.Fatal(err)
+			}
+			fakeTmuxSession(t, stamp) // no pane pid: the stamp is all there is
+			if got := LiveState(m); got != c.want {
+				t.Errorf("LiveState = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
