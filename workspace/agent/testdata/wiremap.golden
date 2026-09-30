@@ -194,9 +194,9 @@ internal/sessionx/session_turn.go HandleSessionRespond x1 {id,responded}
 internal/sessionx/session_turn.go HandleSessionSettings x1 {effort,mode,model,updated}
 internal/sessionx/session_turn.go HandleSessionTurn x2 {op,sent}
 internal/sessionx/session_turn.go handleManagedTurn x1 {discard,op,sent,stop}
-internal/sessionx/session_turn.go handleManagedTurn x1 {dismissed,op,sent}
-internal/sessionx/session_turn.go handleManagedTurn x1 {op,removed,sent}
 internal/sessionx/session_turn.go handleManagedTurn x1 {op,sent}
+internal/sessionx/session_turn.go handleQueueEdit x1 {dismissed,op,sent}
+internal/sessionx/session_turn.go handleQueueEdit x1 {op,removed,sent}
 internal/sessionx/session_usage.go HandleSessionsUsage x1 {sessions}
 jdk_install_http.go handleJDKInstall x3 {error,java_available,java_installed,major,state}
 kiro_install_http.go handleKiroInstall x1 {error,installed,pin,state,updateAvailable,version} cond{installed,pin,updateAvailable,version}

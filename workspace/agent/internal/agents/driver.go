@@ -27,15 +27,6 @@ type TurnInput struct {
 	// submission after a reconnect, idempotent. The ledger that backs it holds operational
 	// metadata only, never conversation content (§9.5).
 	ClientMessageID string
-	// KeepOnInterrupt marks input from a sender who is not the one pressing stop — another
-	// session's message (ADR 0041). Interrupt leaves it queued, and it starts as the next turn
-	// once the interrupted one settles. Unmarked input is the stop's own target and is discarded
-	// with the turn (docs/log/27 §12.2-4). Without the mark, the stop that frees a stuck turn
-	// would also discard the message that turn was keeping out, and its sender would never know.
-	// Teardown (DropHandle, AbortManaged, a daemon drain) still discards it: the runtime it would
-	// start on is going away.
-	KeepOnInterrupt bool
-
 	// Origin is who this input came from (ADR 0105 decision 1). Every constructor of a
 	// TurnInput sets it; the stop rules read it to tell the member's own input from the rest.
 	Origin Origin
@@ -73,18 +64,6 @@ func (o Origin) IsMember() bool {
 		return true
 	}
 	return false
-}
-
-// KeptOnInterrupt is what an Interrupt leaves in a driver's queue: the KeepOnInterrupt
-// entries, in their order. nil when there are none.
-func KeptOnInterrupt(queue []TurnInput) []TurnInput {
-	var kept []TurnInput
-	for _, in := range queue {
-		if in.KeepOnInterrupt {
-			kept = append(kept, in)
-		}
-	}
-	return kept
 }
 
 // ThreadSettings is a dynamic settings update (§9.4-3: changing the model/effort of a
