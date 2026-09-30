@@ -225,7 +225,8 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   // Collapsing removes most of the section's height at once; without compensation the
   // rail's scroll clamp lands the viewport on a later section (#1348). The press captures
   // the section and its scroller, and once the shrunken list has rendered the section top
-  // is pinned back to the scroller top, so the eye stays on the section that shrank.
+  // is pinned back to the scroller top when it had scrolled above it, so the eye stays
+  // on the section that shrank.
   const collapseAnchor = useRef<{ sec: Element; scroller: Element } | null>(null);
   useLayoutEffect(() => {
     const anchor = collapseAnchor.current;
