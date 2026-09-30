@@ -91,6 +91,11 @@ func mustInterrupt(t *testing.T, h *threadHandle, opts agents.InterruptOpts, wan
 	return res
 }
 
+// hangGuard bounds every wait for something that must happen. It is a hang guard, not a
+// latency budget: on a loaded host the pump's first file writes (status, ledger) have taken
+// seconds, and a 5 s wait turned that into a red run (cursor, go test -p 2).
+const hangGuard = 30 * time.Second
+
 func expectPrompt(t *testing.T, f *fakeACP, want string) int64 {
 	t.Helper()
 	select {
@@ -100,19 +105,39 @@ func expectPrompt(t *testing.T, f *fakeACP, want string) int64 {
 			t.Fatalf("session/prompt carried %q, want %q (all: %q)", got[len(got)-1], want, got)
 		}
 		return id
-	case <-time.After(5 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatalf("no session/prompt for %q", want)
 	}
 	return 0
 }
 
-func expectNoPrompt(t *testing.T, f *fakeACP) {
+// expectNoPrompt waits for the pump to go idle, answering any turn that starts, and then checks
+// that none did. A turn in flight keeps the pump busy until it is answered, so once the pump is
+// idle and the fake has caught up with the client, every prompt sent is in f.gotPrompt.
+func expectNoPrompt(t *testing.T, h *threadHandle, f *fakeACP) {
 	t.Helper()
+	deadline := time.Now().Add(hangGuard)
+	for {
+		select {
+		case id := <-f.gotPrompt:
+			t.Errorf("an unexpected turn started: %q", f.promptTexts())
+			f.reply(id, map[string]any{"stopReason": "end_turn"}) // let the pump drain
+			continue
+		default:
+		}
+		if pumpIdle(h) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pump did not go idle")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	syncFake(t, h)
 	select {
-	case id := <-f.gotPrompt:
+	case <-f.gotPrompt:
 		t.Errorf("an unexpected turn started: %q", f.promptTexts())
-		f.reply(id, map[string]any{"stopReason": "end_turn"}) // let the pump drain before cleanup
-	case <-time.After(300 * time.Millisecond):
+	default:
 	}
 }
 
@@ -120,18 +145,39 @@ func expectCancel(t *testing.T, f *fakeACP) {
 	t.Helper()
 	select {
 	case <-f.gotCancel:
-	case <-time.After(5 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatal("no session/cancel")
 	}
 }
 
-func expectNoCancel(t *testing.T, f *fakeACP) {
+// expectNoCancel checks that no session/cancel was sent. Called with the pump idle: every
+// cancel is written by Interrupt or by the pump, so once the fake has caught up, it is here.
+func expectNoCancel(t *testing.T, h *threadHandle, f *fakeACP) {
 	t.Helper()
+	syncFake(t, h)
 	select {
 	case <-f.gotCancel:
 		t.Error("an unexpected session/cancel")
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
+}
+
+// syncFake returns once the fake has handled every line the client wrote before it: the fake
+// reads and answers in order, so the answer to this request comes after all of them.
+func syncFake(t *testing.T, h *threadHandle) {
+	t.Helper()
+	h.mu.Lock()
+	cl := h.cl
+	h.mu.Unlock()
+	if _, err := cl.call("test/sync", map[string]any{}, hangGuard); err != nil {
+		t.Fatalf("syncing with the fake: %v", err)
+	}
+}
+
+func pumpIdle(h *threadHandle) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return !h.pumping && !h.running
 }
 
 // settled waits for the pump to finish and returns what the queue shows then.
@@ -234,7 +280,7 @@ func TestSecondStopDiscardsRestIncludingPeer(t *testing.T) {
 	}
 	expectCancel(t, f)
 	f.reply(second, map[string]any{"stopReason": "cancelled"})
-	expectNoPrompt(t, f)
+	expectNoPrompt(t, h, f)
 
 	items, discards, ep := settled(t, h)
 	if len(items) != 0 || ep {
@@ -272,7 +318,7 @@ func TestDiscardQueueOutsideEpisode(t *testing.T) {
 	}
 	expectCancel(t, f)
 	f.reply(first, map[string]any{"stopReason": "cancelled"})
-	expectNoPrompt(t, f)
+	expectNoPrompt(t, h, f)
 	items, discards, ep := settled(t, h)
 	if len(items) != 0 || len(discards) != 1 || ep {
 		t.Errorf("after discard_queue: items %v, discards %v, episode %v", items, discards, ep)
@@ -286,7 +332,7 @@ func TestDiscardQueueOutsideEpisode(t *testing.T) {
 	if res.Discard != nil {
 		t.Errorf("an idle discard_queue returned %+v", res.Discard)
 	}
-	expectNoCancel(t, f)
+	expectNoCancel(t, h, f)
 }
 
 // holdAtCommit parks the pump between Take and Commit and reports when it got there.
@@ -312,7 +358,7 @@ func TestTakenBeforeCommitIsNeverSent(t *testing.T) {
 			t.Fatalf("discard = %+v, want the taken m1", res.Discard)
 		}
 		release()
-		expectNoPrompt(t, f)
+		expectNoPrompt(t, h, f)
 		items, discards, _ := settled(t, h)
 		if len(items) != 0 || len(discards) != 1 {
 			t.Errorf("items %v, discards %v", items, discards)
@@ -320,7 +366,7 @@ func TestTakenBeforeCommitIsNeverSent(t *testing.T) {
 		if st := h.currentState(); st != agents.TurnCancelled {
 			t.Errorf("state = %s, want cancelled", st)
 		}
-		expectNoCancel(t, f)
+		expectNoCancel(t, h, f)
 	})
 	t.Run("first stop", func(t *testing.T) {
 		// With no other turn running, the taken input is the turn being stopped: it does not
@@ -331,7 +377,7 @@ func TestTakenBeforeCommitIsNeverSent(t *testing.T) {
 		<-taken
 		wantFirstStopDiscard(t, mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst), "m1")
 		release()
-		expectNoPrompt(t, f)
+		expectNoPrompt(t, h, f)
 		items, discards, ep := settled(t, h)
 		if len(items) != 0 || len(discards) != 1 || ep {
 			t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
@@ -350,7 +396,7 @@ func TestTakenBeforeCommitIsNeverSent(t *testing.T) {
 			t.Fatalf("RemoveQueued = %+v, %v", it, err)
 		}
 		release()
-		expectNoPrompt(t, f)
+		expectNoPrompt(t, h, f)
 		if items, _, _ := settled(t, h); len(items) != 0 {
 			t.Errorf("items %v", items)
 		}
@@ -363,7 +409,7 @@ func TestStopPendingIsDeliveredAfterTheWrite(t *testing.T) {
 	h, f := newTestHandle(t)
 	f.writes.hold()
 	mustSend(t, h, member("m1", "one"))
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(hangGuard)
 	for {
 		h.mu.Lock()
 		items := h.q.Items()
@@ -455,7 +501,7 @@ func TestEpisodeEndsOnlyOnNewMemberInput(t *testing.T) {
 	for _, want := range []string{"two", "three", "four"} {
 		f.reply(expectPrompt(t, f, want), map[string]any{"stopReason": "end_turn"})
 	}
-	expectNoPrompt(t, f) // the resent two is dropped by the ledger when taken
+	expectNoPrompt(t, h, f) // the resent two is dropped by the ledger when taken
 	items, discards, ep := settled(t, h)
 	if len(items) != 0 || len(discards) != 0 || ep {
 		t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
@@ -561,7 +607,7 @@ func TestPromptLostOnADeadChildIsRequeued(t *testing.T) {
 	h, f := newTestHandle(t)
 	f.writes.hold()
 	mustSend(t, h, member("m1", "one"))
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(hangGuard)
 	for {
 		h.mu.Lock()
 		items := h.q.Items()
@@ -637,7 +683,7 @@ func TestResendLeavesStateAndPumpAlone(t *testing.T) {
 	if err != nil || queued {
 		t.Fatalf("idle resend: queued %v, err %v; want false, nil", queued, err)
 	}
-	expectNoPrompt(t, f)
+	expectNoPrompt(t, h, f)
 	settled(t, h)
 	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnCompleted {
 		t.Errorf("state after an idle resend = %s, want completed", snap.TurnState)
@@ -654,7 +700,7 @@ func TestResendLeavesStateAndPumpAlone(t *testing.T) {
 		t.Errorf("state after a resend during a turn = %s, want running", snap.TurnState)
 	}
 	f.reply(second, map[string]any{"stopReason": "end_turn"})
-	expectNoPrompt(t, f)
+	expectNoPrompt(t, h, f)
 	items, _, _ := settled(t, h)
 	if len(items) != 0 {
 		t.Errorf("items %v", items)
@@ -710,7 +756,7 @@ func TestStopAnswersPendingPermission(t *testing.T) {
 		if !jsonContains(raw, `"outcome":"cancelled"`) || !jsonContains(raw, `"id":0`) {
 			t.Errorf("answer to the permission = %s, want outcome cancelled for id 0", raw)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatal("the pending permission was not answered")
 	}
 	if snap, _ := h.Snapshot(); snap.Interaction != nil || snap.TurnState != agents.TurnInterrupting {
@@ -743,8 +789,8 @@ func TestStopWithNothingTakenLeavesNoInterrupting(t *testing.T) {
 		t.Error("state is interrupting with no turn to stop")
 	}
 	release()
-	expectNoPrompt(t, f)
-	expectNoCancel(t, f)
+	expectNoPrompt(t, h, f)
+	expectNoCancel(t, h, f)
 	settled(t, h)
 	if st := h.currentState(); st != agents.TurnCancelled {
 		t.Errorf("state = %s, want cancelled", st)
