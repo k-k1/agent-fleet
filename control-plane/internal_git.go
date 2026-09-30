@@ -195,15 +195,16 @@ func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
 		return
 	}
+	// The repo row goes with its LFS ledger and lock rows in one transaction, before
+	// the disk: a failure leaves everything as it was and the request can be retried.
 	if err := a.store.DeleteGitRepo(r.Context(), mv.TenantID, name); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	_ = os.RemoveAll(filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git"))
-	// The bare (incl. its lfs/objects) is gone; drop the LFS ledger + lock rows so
-	// the tenant's capacity quota frees up and no stale locks linger.
-	_ = a.store.DeleteLFSObjectsByRepo(r.Context(), mv.TenantID, name)
-	_ = a.store.DeleteLFSLocksByRepo(r.Context(), mv.TenantID, name)
+	dir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
+	if err := os.RemoveAll(dir); err != nil {
+		log.Printf("internal git: delete %s: ledger rows removed but the bare remains: %v", dir, err)
+	}
 	a.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.delete", name, "")
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": name})
 }
@@ -253,14 +254,13 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "rename_failed", err.Error()})
 		return
 	}
+	// RenameGitRepo repoints the LFS ledger and locks in the same transaction, matching
+	// the lfs/objects that just moved with the .git dir.
 	if err := a.store.RenameGitRepo(r.Context(), mv.TenantID, oldName, newName); err != nil {
 		_ = os.Rename(newDir, oldDir) // roll back the move so disk and ledger stay consistent
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	// The on-disk lfs/objects moved with the .git dir; repoint the LFS ledger + locks.
-	_ = a.store.RenameLFSObjectsRepo(r.Context(), mv.TenantID, oldName, newName)
-	_ = a.store.RenameLFSLocksRepo(r.Context(), mv.TenantID, oldName, newName)
 	a.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.rename", oldName, "to="+newName)
 	g.Name = newName
 	writeJSON(w, http.StatusOK, a.repoDTO(mv.TenantSlug, g))

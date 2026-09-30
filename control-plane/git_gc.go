@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -142,10 +144,23 @@ func (g *gitGC) pruneLFS(ctx context.Context, slug, repo, bareDir string) {
 		if g.lfsGrace > 0 && info.ModTime().After(cutoff) {
 			return nil // too young — might be an in-flight push
 		}
-		if err := os.Remove(path); err != nil {
+		// Ledger row first: if it cannot go, the file stays and the next sweep retries,
+		// rather than a removed file leaving a row that over-counts the quota forever.
+		if err := g.store.DeleteLFSObject(ctx, tenant.ID, repo, oid); err != nil {
+			log.Printf("lfs-gc: %s/%s: ledger delete %s failed, keeping the object: %v", slug, repo, oid, err)
 			return nil
 		}
-		_ = g.store.DeleteLFSObject(ctx, tenant.ID, repo, oid)
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			// Already gone (a repo delete got there first) counts as removed. Otherwise
+			// the file stays, so its row has to come back: an upload of an existing
+			// object is a no-op and would never write it again.
+			if perr := g.store.PutLFSObject(ctx, tenant.ID, repo, oid, info.Size()); perr != nil {
+				log.Printf("lfs-gc: %s/%s: remove %s failed (%v) and restoring its ledger row failed: %v", slug, repo, oid, err, perr)
+			} else {
+				log.Printf("lfs-gc: %s/%s: remove %s failed, object kept: %v", slug, repo, oid, err)
+			}
+			return nil
+		}
 		freed++
 		bytes += info.Size()
 		return nil

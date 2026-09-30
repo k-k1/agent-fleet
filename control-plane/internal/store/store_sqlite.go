@@ -1889,18 +1889,51 @@ func (s *SQL) CountGitReposByTenant(ctx context.Context, tenantID string) (int, 
 	return n, err
 }
 
-// RenameGitRepo renames one repo within a tenant. The (tenant_id, name) UNIQUE
-// constraint makes a collision with an existing name an error (surfaced as a 409
-// by the caller after a pre-check).
-func (s *SQL) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE git_repo SET name=? WHERE tenant_id=? AND name=?`, newName, tenantID, oldName)
-	return err
+// gitRepoTables are the tables keyed by (tenant_id, repo name) that follow a repo
+// through rename and delete. Changing them together is what keeps the LFS quota and
+// the locks from drifting away from the repo on disk.
+var gitRepoTables = []struct{ table, col string }{
+	{"git_repo", "name"},
+	{"lfs_object", "repo_name"},
+	{"lfs_lock", "repo_name"},
 }
 
+// RenameGitRepo renames one repo within a tenant, together with its LFS ledger and
+// lock rows, in one transaction. The (tenant_id, name) UNIQUE constraint makes a
+// collision with an existing name an error (surfaced as a 409 by the caller after a
+// pre-check).
+func (s *SQL) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, t := range gitRepoTables {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE `+t.table+` SET `+t.col+`=? WHERE tenant_id=? AND `+t.col+`=?`,
+			newName, tenantID, oldName); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteGitRepo deletes one repo's row with its LFS ledger and lock rows, in one
+// transaction: a stale ledger over-counts the tenant's LFS quota, and stale locks
+// would be inherited by a later repo of the same name.
 func (s *SQL) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, t := range gitRepoTables {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM `+t.table+` WHERE tenant_id=? AND `+t.col+`=?`, tenantID, name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // --- Git LFS object ledger (docs/reference/internal-git-provider, P3) ---
@@ -1919,18 +1952,6 @@ func (s *SQL) TenantLFSBytes(ctx context.Context, tenantID string) (int64, error
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(size), 0) FROM lfs_object WHERE tenant_id=?`, tenantID).Scan(&n)
 	return n, err
-}
-
-func (s *SQL) DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
-	return err
-}
-
-func (s *SQL) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE lfs_object SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
-	return err
 }
 
 func (s *SQL) DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error {
@@ -2036,18 +2057,6 @@ func (s *SQL) DeleteLFSLock(ctx context.Context, tenantID, repo, id string) erro
 	return err
 }
 
-func (s *SQL) DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
-	return err
-}
-
-func (s *SQL) RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE lfs_lock SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
-	return err
-}
-
 func (s *SQL) MembershipOwnerName(ctx context.Context, membershipID string) (string, error) {
 	var email, key string
 	err := s.db.QueryRowContext(ctx,
@@ -2063,6 +2072,16 @@ func (s *SQL) MembershipOwnerName(ctx context.Context, membershipID string) (str
 		return email, nil
 	}
 	return key, nil
+}
+
+func (s *SQL) LFSObjectSize(ctx context.Context, tenantID, repo, oid string) (int64, bool, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT size FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=?`, tenantID, repo, oid).Scan(&n)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	return n, err == nil, err
 }
 
 func (s *SQL) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
