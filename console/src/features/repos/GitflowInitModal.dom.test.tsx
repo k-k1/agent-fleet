@@ -190,6 +190,21 @@ describe("GitflowInitModal", () => {
     expect(events).toEqual(["saved", "closed"]);
   });
 
+  it("gives the repair command for a branch left without its upstream", async () => {
+    apiJSON.mockImplementationOnce(async () => ({
+      error: { code: "branch_failed", message: "upstream failed" },
+      written: [],
+      created: ["develop"],
+      untracked: ["develop"],
+    }));
+    await render([FRESH, { ...FRESH, local: ["main", "develop"] }]);
+    await press();
+    const err = document.querySelector(".gitflow-err")?.textContent || "";
+    expect(err).toContain(t("gitflow.err_untracked", { err: "upstream failed", branches: "develop" }));
+    expect(document.querySelector(".gitflow-cmd")?.textContent).toBe("git branch --set-upstream-to=origin/develop develop");
+    expect(events).toEqual([]);
+  });
+
   it("says so when the Agent has nothing to show", async () => {
     await render([{ error: { code: "not_git", message: "not a git working copy" } }]);
     expect(text()).toContain(t("gitflow.unavailable"));

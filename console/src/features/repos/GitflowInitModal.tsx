@@ -16,7 +16,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { branchPlace, fetchGitflow, gitflowChanges, saveGitflow } from "./gitflow.ts";
+import { branchPlace, fetchGitflow, gitflowChanges, saveGitflow, upstreamCommand } from "./gitflow.ts";
 import type { GitflowState, GitflowValues } from "./gitflow.ts";
 
 interface GitflowInitModalProps {
@@ -39,7 +39,7 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
   const [st, setSt] = useState<GitflowState | null | undefined>(undefined);
   const [v, setV] = useState<GitflowValues | null>(null);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<{ text: string; field?: string } | null>(null);
+  const [err, setErr] = useState<{ text: string; field?: string; cmds?: string[] } | null>(null);
 
   const load = async () => {
     const s = await fetchGitflow(repo);
@@ -108,7 +108,14 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
         if (s) setSt(s);
       }
       if (res.code === "branch_failed") {
-        setErr({ text: tr("gitflow.err_branch_failed", { err: res.message }) + madeNote });
+        const untracked = res.untracked ?? [];
+        // A branch left without its upstream exists now, so saving again skips it: say how to
+        // finish it by hand instead of promising a retry fixes it.
+        setErr(
+          untracked.length
+            ? { text: tr("gitflow.err_untracked", { err: res.message, branches: untracked.join(", ") }), cmds: untracked.map(upstreamCommand) }
+            : { text: tr("gitflow.err_branch_failed", { err: res.message }) + madeNote },
+        );
         return;
       }
       setErr({
@@ -216,6 +223,11 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
         {err && (
           <p className="ui-field-hint svn-auth-err gitflow-err" role="alert">
             {err.text}
+            {err.cmds?.map((c) => (
+              <code key={c} className="gitflow-cmd">
+                {c}
+              </code>
+            ))}
           </p>
         )}
       </div>

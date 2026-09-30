@@ -395,9 +395,9 @@ func TestInitGitflowRefusesUnbornCheckedOutBranch(t *testing.T) {
 	}
 }
 
-// A failed upstream takes the new ref back, so the retry makes a tracking branch rather than
-// skipping an untracked one.
-func TestInitGitflowFailedUpstreamLeavesNoBranch(t *testing.T) {
+// A failed upstream leaves the branch and says it is untracked: the retry skips it as
+// existing, so the person has to be told to set the upstream.
+func TestInitGitflowFailedUpstreamReportsUntracked(t *testing.T) {
 	dir := newRepo(t)
 	remoteBranch(t, dir, "develop")
 	lock := filepath.Join(dir, ".git", "config.lock")
@@ -406,21 +406,18 @@ func TestInitGitflowFailedUpstreamLeavesNoBranch(t *testing.T) {
 	}
 	_, err := InitGitflow(dir, nil, defaultValues())
 	var be *GitflowBranchError
-	if !errors.As(err, &be) || be.Branch != "develop" || len(be.Created) != 0 {
+	if !errors.As(err, &be) || be.Branch != "develop" || !reflect.DeepEqual(be.Created, []string{"develop"}) || !reflect.DeepEqual(be.Untracked, []string{"develop"}) {
 		t.Fatalf("err = %#v", err)
 	}
-	if refExists(dir, "refs/heads/develop") {
-		t.Error("an untracked develop was left behind")
+	if !refExists(dir, "refs/heads/develop") || len(configKeys(t, dir)) != 0 {
+		t.Error("want develop kept and no key written")
 	}
 	if err := os.Remove(lock); err != nil {
 		t.Fatal(err)
 	}
 	res, err := InitGitflow(dir, nil, defaultValues())
-	if err != nil || !reflect.DeepEqual(res.Created, []string{"develop"}) {
+	if err != nil || len(res.Created) != 0 {
 		t.Fatalf("again: created = %v err = %v", res.Created, err)
-	}
-	if got := upstream(t, dir, "develop"); got != "origin/develop" {
-		t.Errorf("upstream = %q", got)
 	}
 }
 
@@ -456,11 +453,6 @@ func shimGit(t *testing.T, pre string) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// failUpstream makes the upstream step fail after running hook against the repository.
-func failUpstream(dir, hook string) string {
-	return `case "$*" in *--set-upstream-to=*) cd "` + dir + `" && ` + hook + `; exit 1;; esac`
-}
-
 // A symbolic ref is not written through: a dangling develop → foreign must not create foreign.
 func TestInitGitflowRefusesSymbolicRef(t *testing.T) {
 	dir := newRepo(t)
@@ -476,47 +468,5 @@ func TestInitGitflowRefusesSymbolicRef(t *testing.T) {
 	}
 	if got := git(t, dir, "symbolic-ref", "refs/heads/develop"); got != "refs/heads/foreign" {
 		t.Errorf("develop now = %q", got)
-	}
-}
-
-// The rollback leaves alone a branch someone adopted between its creation and the failed
-// upstream, and reports it as created.
-func TestInitGitflowRollbackSparesAdoptedBranch(t *testing.T) {
-	cases := []struct {
-		name  string
-		hook  func(dir, wt string) string
-		check func(t *testing.T, dir, wt string)
-	}{
-		{"checked out in a worktree", func(dir, wt string) string {
-			return `"$REAL" worktree add -q "` + wt + `" develop`
-		}, func(t *testing.T, dir, wt string) {
-			if !refExists(dir, "refs/heads/develop") || git(t, wt, "symbolic-ref", "HEAD") != "refs/heads/develop" {
-				t.Error("the worktree's branch was deleted")
-			}
-		}},
-		{"replaced by a symbolic ref to main", func(dir, wt string) string {
-			return `"$REAL" symbolic-ref refs/heads/develop refs/heads/main`
-		}, func(t *testing.T, dir, wt string) {
-			if !refExists(dir, "refs/heads/main") {
-				t.Error("main was deleted through the symbolic ref")
-			}
-		}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			dir := newRepo(t)
-			remoteBranch(t, dir, "develop")
-			wt := filepath.Join(t.TempDir(), "wt")
-			shimGit(t, failUpstream(dir, c.hook(dir, wt)))
-			_, err := InitGitflow(dir, nil, defaultValues())
-			var be *GitflowBranchError
-			if !errors.As(err, &be) || !reflect.DeepEqual(be.Created, []string{"develop"}) || !strings.Contains(be.Error(), "left without an upstream") {
-				t.Fatalf("err = %#v", err)
-			}
-			c.check(t, dir, wt)
-			if head := git(t, dir, "symbolic-ref", "--short", "HEAD"); head != "main" {
-				t.Errorf("HEAD moved to %q", head)
-			}
-		})
 	}
 }

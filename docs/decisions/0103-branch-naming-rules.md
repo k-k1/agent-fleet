@@ -384,11 +384,13 @@ start` still refused after the keys were written, and a hint telling the person 
   development branches, when `refs/heads/<b>` is missing and `refs/remotes/origin/<b>` exists, the
   Agent creates `<b>` at origin's commit and sets its upstream to `origin/<b>` (what
   `git branch --track` does) before writing any key, under the same per-clone lock. The ref is created
-  with `git update-ref --no-deref <ref> <commit> ""`, which fails when the ref exists. A failed upstream
-  deletes it again, so a retry makes it whole, but only while it is still a plain ref at the commit it
-  was created at and no worktree has checked it out; otherwise it stays and is reported as created
-  without an upstream. No ref write dereferences, and a branch that is a symbolic ref (even a
-  dangling one) is refused, so nothing reaches through one to another branch.
+  with `git update-ref --no-deref <ref> <commit> ""`, which fails when the ref exists. No ref write
+  dereferences, and a branch that is a symbolic ref (even a dangling one) is refused, so nothing reaches
+  through one to another branch.
+- **A failed upstream leaves the branch in place**, reported as `untracked`. Once the ref exists another
+  worktree or checkout may adopt it at any moment, and no lock covers every git caller (the Agent's own
+  checkout routes included), so deleting it again could leave a checked-out `HEAD` unborn. A retry skips
+  it as existing, so the dialog gives the `git branch --set-upstream-to=origin/<b> <b>` that finishes it.
 - **The limits are unchanged in spirit:**
   - it never creates a branch that is not on `origin` (one on neither side is still refused, before
     anything is created);

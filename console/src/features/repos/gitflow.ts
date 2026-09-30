@@ -27,10 +27,11 @@ export interface GitflowState {
   committed: string[];
 }
 
-/** `created` lists the local branches made to track their origin branch. */
+/** `created` lists the local branches made to track their origin branch; `untracked`, those among
+ * them left without their upstream, which saving again cannot repair. */
 export type GitflowSaveResult =
   | { ok: true; written: string[]; created: string[] }
-  | { ok: false; code: string; message: string; field?: string; written?: string[]; created?: string[] };
+  | { ok: false; code: string; message: string; field?: string; written?: string[]; created?: string[]; untracked?: string[] };
 
 /** The config key each field writes, in the dialog's order. */
 export const GITFLOW_KEY: Record<keyof GitflowValues, string> = {
@@ -69,6 +70,7 @@ export async function saveGitflow(repo: string, expected: Record<string, string>
       field: e.field,
       written: Array.isArray(j?.written) ? j.written : undefined,
       created: Array.isArray(j?.created) ? j.created : undefined,
+      untracked: Array.isArray(j?.untracked) ? j.untracked : undefined,
     };
   } catch (err) {
     return { ok: false, code: "network", message: String(err) };
@@ -98,4 +100,15 @@ export function gitflowChanges(st: GitflowState, v: GitflowValues): { key: strin
     if (key in st.current && st.current[key] !== to) out.push({ key, from: st.current[key], to });
   }
   return out;
+}
+
+// Branch names git accepts may still carry `;`, `$(…)` and the like: the repair command is meant
+// to be copied into a shell, so anything beyond the plain characters is single-quoted.
+export function shellQuote(v: string): string {
+  return /^[A-Za-z0-9._/-]+$/.test(v) ? v : "'" + v.replace(/'/g, "'\\''") + "'";
+}
+
+/** The command that gives a branch left untracked its upstream. */
+export function upstreamCommand(branch: string): string {
+  return `git branch --set-upstream-to=${shellQuote("origin/" + branch)} ${shellQuote(branch)}`;
 }

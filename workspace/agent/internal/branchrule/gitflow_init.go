@@ -90,11 +90,13 @@ func (e *GitflowWriteError) Error() string {
 func (e *GitflowWriteError) Unwrap() error { return e.Err }
 
 // GitflowBranchError is a failed tracking-branch creation. No key has been written yet;
-// Created lists the branches made before it.
+// Created lists the branches made, and Untracked those among them left without their
+// upstream, which a retry skips as existing and so cannot repair.
 type GitflowBranchError struct {
-	Branch  string
-	Created []string
-	Err     error
+	Branch    string
+	Created   []string
+	Untracked []string
+	Err       error
 }
 
 func (e *GitflowBranchError) Error() string {
@@ -293,44 +295,25 @@ func isSymref(dir, ref string) bool {
 }
 
 // createTracking makes refs/heads/<b> at origin/<b>'s commit with origin/<b> as its upstream,
-// the result of `git branch --track`, in two steps: `git branch` creates the ref before it
-// writes the upstream, so its failure leaves an untracked branch a retry would skip. Here a
-// failed upstream takes the ref back, unless someone has adopted it meanwhile (moved it,
-// replaced it, checked it out); then it stays, reported as made, and the error says so.
+// the result of `git branch --track`. A failed upstream leaves the branch in place, reported
+// by untracked: once the ref exists, another worktree or checkout may adopt it at any moment,
+// and no lock covers every git caller, so taking it back could delete a checked-out branch.
 // Every ref write is --no-deref, so none can reach through a symbolic ref to another branch.
-func createTracking(dir, b string) (made bool, err error) {
+func createTracking(dir, b string) (made, untracked bool, err error) {
 	ref := "refs/heads/" + b
 	sha, err := gitx.Run(dir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+b+"^{commit}")
 	if err != nil || sha == "" {
-		return false, errors.New("it is not on origin")
+		return false, false, errors.New("it is not on origin")
 	}
 	// The empty old value makes update-ref refuse a ref that exists, so a branch that appeared
 	// since the caller's check is never moved.
 	if _, err := gitx.Run(dir, "update-ref", "--no-deref", "-m", "branch: Created from origin/"+b, ref, sha, ""); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if _, err := gitx.Run(dir, "branch", "--set-upstream-to=refs/remotes/origin/"+b, "--", b); err != nil {
-		left := func(why string) (bool, error) {
-			return true, fmt.Errorf("%w (the branch was left without an upstream: %s)", err, why)
-		}
-		if isSymref(dir, ref) {
-			return left("it became a symbolic ref")
-		}
-		heads, lerr := checkedOut(dir)
-		if lerr != nil {
-			return left("the worktrees could not be listed")
-		}
-		if heads[ref] {
-			return left("a worktree checked it out")
-		}
-		// The old value keeps a ref moved since then; the checks above narrow, not close, the
-		// window for a shell git outside the Agent's lock.
-		if _, derr := gitx.Run(dir, "update-ref", "--no-deref", "-d", ref, sha); derr != nil {
-			return left(derr.Error())
-		}
-		return false, err
+		return true, true, fmt.Errorf("the branch was created but its upstream could not be set: %w", err)
 	}
-	return true, nil
+	return true, false, nil
 }
 
 // InitGitflow writes git-flow's keys into dir's config (POST …/gitflow/init). expected is
@@ -384,12 +367,16 @@ func InitGitflow(dir string, expected map[string]string, v GitflowValues) (Gitfl
 		if heads["refs/heads/"+b] {
 			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: errors.New("a worktree has it checked out, not yet born")}
 		}
-		made, err := createTracking(dir, b)
+		made, untracked, err := createTracking(dir, b)
 		if made {
 			res.Created = append(res.Created, b)
 		}
 		if err != nil {
-			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: err}
+			be := &GitflowBranchError{Branch: b, Created: res.Created, Err: err}
+			if untracked {
+				be.Untracked = []string{b}
+			}
+			return res, be
 		}
 	}
 	writes := []kv{{"gitflow.prefix.feature", v.Feature}}

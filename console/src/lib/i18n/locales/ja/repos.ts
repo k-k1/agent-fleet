@@ -451,6 +451,7 @@ export const repos = {
   "gitflow.err_changed": "このダイアログを開いている間に設定が変わりました。読み直したので、確かめてからもう一度保存してください。",
   "gitflow.err_branch_missing": "{branch} はローカルにも origin にもありません。先に push するか fetch してください。",
   "gitflow.err_branch_failed": "ローカルブランチを作れませんでした（{err}）。設定は書き込んでいません。もう一度保存すると続きから行います。",
+  "gitflow.err_untracked": "{branches} は作りましたが、origin を追跡する設定ができませんでした（{err}）。もう一度保存しても直らないので、リポジトリで次を実行してください:",
   "gitflow.err_created": "作成済みのローカルブランチ: {branches}。",
   "gitflow.err_invalid": "使えない値です: {detail}",
   "gitflow.err_failed": "設定を書き込めませんでした: {err}",

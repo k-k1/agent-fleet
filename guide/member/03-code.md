@@ -149,7 +149,9 @@ development branch with git-flow's prefixes.
   locally, so saving creates a local branch tracking the one on `origin` (like
   `git branch --track develop origin/develop`). The dialog says so under the field, and the message
   after saving names the branches it created. It never checks one out, and it never moves a local
-  branch that already exists, even when it differs from `origin`'s.
+  branch that already exists, even when it differs from `origin`'s. If the branch is created but its
+  upstream cannot be set, saving again will not fix that; the dialog shows the
+  `git branch --set-upstream-to=…` command to run instead.
 - A committed `.agent-fleet/branches` or `.gitflow` takes precedence over these settings where the
   two overlap, and the dialog says so.
 - When you start work from an issue in a repository whose `origin` has `develop` and that declares

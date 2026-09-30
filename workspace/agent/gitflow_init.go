@@ -59,6 +59,8 @@ type gitflowWriteFailed struct {
 	Error   gitflowErrBody `json:"error"`
 	Written []string       `json:"written"`
 	Created []string       `json:"created"`
+	// Untracked lists created branches left without their upstream.
+	Untracked []string `json:"untracked,omitempty"`
 }
 
 // gitflowErrOut is the usual error envelope plus the field the dialog marks.
@@ -110,7 +112,7 @@ func handleGitflowInit(w http.ResponseWriter, r *http.Request) {
 		})
 	case errors.As(err, &bf):
 		httpx.WriteJSON(w, http.StatusInternalServerError, gitflowWriteFailed{
-			Error: gitflowErrBody{Code: "branch_failed", Message: err.Error()}, Written: []string{}, Created: bf.Created,
+			Error: gitflowErrBody{Code: "branch_failed", Message: err.Error()}, Written: []string{}, Created: bf.Created, Untracked: bf.Untracked,
 		})
 	default:
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
