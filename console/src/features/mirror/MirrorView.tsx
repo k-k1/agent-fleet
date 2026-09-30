@@ -1142,8 +1142,8 @@ export function MirrorView({
     setTimeout(() => tickRef.current?.(), 250);
   };
 
-  // The discard notice's two actions (decision 4). The first restore and a close both tell
-  // the driver to drop the discard, so other tabs stop offering it; a failure there only
+  // The discard notice's two actions (decision 4). Restoring the last member entry and a close
+  // both tell the driver to drop the discard, so other tabs stop offering it; a failure there only
   // leaves it offered elsewhere, and nothing is ever sent twice, so it is not reported.
   const restoreDiscard = (d: Discard) => {
     if (draftBusy) {

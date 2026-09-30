@@ -40,7 +40,8 @@ const preview = (s: string): string => {
 /** DiscardNotice tells the member what a second stop (or stop-and-discard) threw away
  *  (ADR 0105 decision 4). Their own input comes back into the input box one message per
  *  press, never sent; input of other origins is only listed, since the member did not write
- *  it. Closing, like the first restore, tells the driver to drop the discard. */
+ *  it. Closing, like restoring the last of the member's entries, tells the driver to drop
+ *  the discard. */
 export function DiscardNotice({
   notices,
   draftBusy,

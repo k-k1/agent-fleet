@@ -95,6 +95,17 @@ const click = async (el: Element | null) => {
   await settle(2);
 };
 const composer = () => $<HTMLTextAreaElement>("textarea");
+// Empties the composer the way typing does: React owns the value property, so the write has to
+// go through the native setter for onChange to fire. The staged attachment chips go too.
+async function clearComposer() {
+  await act(async () => {
+    const el = composer()!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, "");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  for (const x of $$(".ma-del")) await click(x);
+  await settle(2);
+}
 const toasts = () => $$(".ui-toast-msg").map((e) => e.textContent || "");
 
 beforeEach(() => {
@@ -258,10 +269,23 @@ describe("discard notice", () => {
     await click($(".md-restore"));
     expect(composer()!.value).toBe("look at this");
     expect($$(".ma-chip").length).toBe(1); // its attachment came back too
-    // The first restore tells the driver, so other tabs stop offering it.
-    expect(turnBodies).toEqual([{ op: "dismiss_discard", id: "dsc_0002" }]);
     // The next one waits for an empty input box rather than overwriting it.
     expect($<HTMLButtonElement>(".md-restore")!.disabled).toBe(true);
+  });
+
+  it("dismisses only once the last of the member's inputs is back, not after the first", async () => {
+    messages = { status: "idle", messages: [], ...M.idle_after_a_second_stop };
+    turn = () => answer(T.dismiss_discard);
+    await mount();
+    await click($(".md-restore"));
+    expect(composer()!.value).toBe("look at this");
+    // One of two is back. Dismissing now would lose the other on the server if the tab closed.
+    expect(turnBodies).toEqual([]);
+    await clearComposer();
+    await click($(".md-restore"));
+    expect(composer()!.value).toBe("from slack");
+    expect(turnBodies).toEqual([{ op: "dismiss_discard", id: "dsc_0002" }]);
+    expect($(".mirror-discard")).toBeNull();
   });
 
   it("stays shown for the rest after the poll no longer carries the dismissed discard", async () => {

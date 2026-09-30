@@ -71,16 +71,15 @@ export function discardView(d: Discard): DiscardView {
   return { discard: d, member, others };
 }
 
-/** Where a tab stands with one discard. `restored` counts the member entries it has put back;
- *  `dismissed` says it already told the driver to drop the discard. */
+/** Where a tab stands with one discard: how many of its member entries it has put back. */
 export interface DiscardProgress {
   restored: number;
-  dismissed: boolean;
 }
 
 export interface DiscardNoticeState {
-  /** Discards this tab is still working through, kept locally: the driver forgets a
-   *  discard as soon as the first entry is restored, and the rest must stay reachable. */
+  /** Discards this tab is part-way through restoring, with the discard itself: the count is
+   *  this tab's alone, and a poll that drops the discard (another tab finished or closed it)
+   *  must not take the rest away from under a member who is still putting them back. */
   held: Record<string, { discard: Discard; progress: DiscardProgress }>;
   /** Discards this tab is done with. A poll that still carries one (it left before the
    *  dismissal landed) must not bring the notice back. */
@@ -100,34 +99,32 @@ export function visibleDiscards(polled: Discard[], st: DiscardNoticeState): { vi
 }
 
 /** restoreStep takes the next member entry of a discard. It returns the entry, the new state,
- *  and whether this step must tell the driver to drop the discard (the first restore does,
- *  so other tabs stop offering the same text). Taking the last member entry closes the
- *  notice: what is left is only the list of other origins, which the member has seen. */
+ *  and whether this step must tell the driver to drop the discard.
+ *
+ *  Only the step that puts back the LAST member entry dismisses it, and that step also closes
+ *  the notice (what is left is the list of other origins, which the member has seen). A
+ *  restore is the whole one-by-one run (decision 4): dismissing on the first entry would lose
+ *  the rest on the server too if this tab closed half-way. */
 export function restoreStep(
   st: DiscardNoticeState,
   d: Discard,
 ): { item: QueueItem | null; next: DiscardNoticeState; dismiss: boolean } {
   if (st.closed[d.id]) return { item: null, next: st, dismiss: false };
   const view = discardView(d);
-  const cur = st.held[d.id]?.progress ?? { restored: 0, dismissed: false };
-  const item = view.member[cur.restored] ?? null;
+  const restored = st.held[d.id]?.progress.restored ?? 0;
+  const item = view.member[restored] ?? null;
   if (!item) return { item: null, next: st, dismiss: false };
-  const progress = { restored: cur.restored + 1, dismissed: true };
-  const done = progress.restored >= view.member.length;
+  const done = restored + 1 >= view.member.length;
   const held = { ...st.held };
   if (done) delete held[d.id];
-  else held[d.id] = { discard: d, progress };
-  return {
-    item,
-    next: { held, closed: done ? { ...st.closed, [d.id]: true } : st.closed },
-    dismiss: !cur.dismissed,
-  };
+  else held[d.id] = { discard: d, progress: { restored: restored + 1 } };
+  return { item, next: { held, closed: done ? { ...st.closed, [d.id]: true } : st.closed }, dismiss: done };
 }
 
-/** closeStep closes a notice. It tells the driver only if no restore already did. */
+/** closeStep closes a notice, which always tells the driver: a discard with no member entry
+ *  (peer, schedule … only) is dismissed here and nowhere else. */
 export function closeStep(st: DiscardNoticeState, id: string): { next: DiscardNoticeState; dismiss: boolean } {
-  const dismissed = !!st.held[id]?.progress.dismissed;
   const held = { ...st.held };
   delete held[id];
-  return { next: { held, closed: { ...st.closed, [id]: true } }, dismiss: !dismissed };
+  return { next: { held, closed: { ...st.closed, [id]: true } }, dismiss: true };
 }

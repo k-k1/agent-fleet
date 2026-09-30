@@ -153,23 +153,32 @@ describe("discard notices", () => {
     expect(v.member.map((i) => i.id)).toEqual(["cm_d", "af_i"]);
     expect(v.others.map((i) => i.id)).toEqual(["af_e", "af_f", "af_g", "af_h"]);
   });
-  it("restores one member entry per step, dismisses on the first, and closes after the last", () => {
+  it("restores one member entry per step, and dismisses and closes only after the last", () => {
     const s1 = restoreStep(emptyDiscardNotices, d());
     expect(s1.item?.id).toBe("cm_d");
-    expect(s1.dismiss).toBe(true);
-    // The driver forgets it now; the tab keeps it for the rest.
+    // One of two is back: the driver must keep the discard, or closing the tab now would lose
+    // the other one on the server too.
+    expect(s1.dismiss).toBe(false);
     expect(visibleDiscards([], s1.next).map((n) => [n.view.discard.id, n.restored])).toEqual([["dsc_0002", 1]]);
     const s2 = restoreStep(s1.next, d());
     expect(s2.item?.id).toBe("af_i");
-    expect(s2.dismiss).toBe(false);
+    expect(s2.dismiss).toBe(true);
     expect(visibleDiscards([d()], s2.next)).toEqual([]);
     expect(restoreStep(s2.next, d()).item).toBeNull();
   });
-  it("close dismisses unless a restore already did, and a stale poll cannot bring it back", () => {
+  it("close always dismisses, and a stale poll cannot bring it back", () => {
     const c = closeStep(emptyDiscardNotices, "dsc_0002");
     expect(c.dismiss).toBe(true);
     expect(visibleDiscards([d()], c.next)).toEqual([]);
+    // Half-way through a restore, closing is what gives the rest up.
     const r = restoreStep(emptyDiscardNotices, d());
-    expect(closeStep(r.next, "dsc_0002").dismiss).toBe(false);
+    expect(closeStep(r.next, "dsc_0002").dismiss).toBe(true);
+  });
+  it("a discard with no member input has nothing to restore and is dismissed only by close", () => {
+    const peerOnly: Discard = { ...d(), items: d().items.filter((i) => !isMemberOrigin(i.origin)) };
+    const r = restoreStep(emptyDiscardNotices, peerOnly);
+    expect(r.item).toBeNull();
+    expect(r.dismiss).toBe(false);
+    expect(closeStep(emptyDiscardNotices, peerOnly.id).dismiss).toBe(true);
   });
 });
