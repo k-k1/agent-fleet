@@ -56,6 +56,14 @@ describe("splitPastedImages", () => {
       files: [],
     });
   });
+  it("reads a muse user turn: the words, then the bare image paths", () => {
+    // The Agent's muse transcript replaces the host's [Image #N] placeholders with the paths it
+    // sent (agents/muse withImagePaths): no instruction, no marker, space-separated.
+    const landed = `sticky にできないか ${P1} ${P2}`;
+    expect(splitPastedImages(landed)).toEqual({ text: "sticky にできないか", images: ["paste-1.png", "paste-2.jpg"], files: [] });
+    expect(samePastedPrompt(landed, "sticky にできないか")).toBe(true);
+    expect(splitPastedImages(P1)).toEqual({ text: "", images: ["paste-1.png"], files: [] });
+  });
   it("matches a Codex image-bearing rollout turn to its optimistic echo", () => {
     const landed = `確認して <image name=[Image #1] path="${P1}">`;
     expect(samePastedPrompt(landed, "確認して")).toBe(true);

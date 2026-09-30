@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -46,6 +47,9 @@ type record struct {
 	// Model is the model the host reported as selected when AF saw the item; items carry no
 	// model of their own. Empty on lines written before it was recorded.
 	Model string `json:"model,omitempty"`
+	// Images are the paths of the attachments AF sent as `image` parts, on a `userMessage`
+	// only. The wire echoes their metadata but never the path (handle.go's sentImages).
+	Images []string `json:"images,omitempty"`
 }
 
 // store is one session's append-only item log.
@@ -85,7 +89,13 @@ func (s *store) Append(it msp.Item) error { return s.AppendFrom(it, "") }
 
 // AppendFrom is Append recording the model in force when the item arrived.
 func (s *store) AppendFrom(it msp.Item, model string) error {
-	line, err := json.Marshal(record{Seen: time.Now().UTC().Format(time.RFC3339Nano), Item: it, Model: model})
+	return s.appendRecord(record{Item: it, Model: model})
+}
+
+// appendRecord writes one record, stamping when AF saw it.
+func (s *store) appendRecord(r record) error {
+	r.Seen = time.Now().UTC().Format(time.RFC3339Nano)
+	line, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
@@ -108,12 +118,18 @@ func (s *store) AppendFrom(it msp.Item, model string) error {
 // is FIRST-SEEN order, which is the order the conversation happened in — sorting by revision
 // or by id would reshuffle a turn whose tool call completed after the text that follows it.
 func (s *store) Items() ([]msp.Item, error) {
-	items, _, err := s.itemsWithModels()
+	items, _, err := s.itemsWithMeta()
 	return items, err
 }
 
-// itemsWithModels is Items plus the recorded model of each item, by item id.
-func (s *store) itemsWithModels() ([]msp.Item, map[string]string, error) {
+// itemMeta is what AF recorded beside an item rather than in it.
+type itemMeta struct {
+	model  string
+	images []string
+}
+
+// itemsWithMeta is Items plus AF's own stamps on each item, by item id.
+func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := os.Open(s.Path())
@@ -127,7 +143,7 @@ func (s *store) itemsWithModels() ([]msp.Item, map[string]string, error) {
 
 	var order []string
 	byID := map[string]msp.Item{}
-	models := map[string]string{}
+	meta := map[string]itemMeta{}
 	sc := bufio.NewScanner(f)
 	// One item can carry a whole tool output, so the stock 64 KiB line limit would turn a
 	// large-but-legitimate record into a truncated conversation.
@@ -145,16 +161,22 @@ func (s *store) itemsWithModels() ([]msp.Item, map[string]string, error) {
 			continue
 		}
 		byID[r.Item.ItemID] = r.Item
-		// The first stamp wins: a later revision of the same item may arrive after a switch.
-		if _, stamped := models[r.Item.ItemID]; !stamped && r.Model != "" {
-			models[r.Item.ItemID] = r.Model
+		// The first stamp wins: a later revision of the same item may arrive after a switch,
+		// and only the first revision of a user message carries its images.
+		m := meta[r.Item.ItemID]
+		if m.model == "" {
+			m.model = r.Model
 		}
+		if m.images == nil {
+			m.images = r.Images
+		}
+		meta[r.Item.ItemID] = m
 	}
 	items := make([]msp.Item, 0, len(order))
 	for _, id := range order {
 		items = append(items, byID[id])
 	}
-	return items, models, sc.Err()
+	return items, meta, sc.Err()
 }
 
 // Remove drops the stored conversation (a slot whose identity is being discarded).
@@ -165,6 +187,26 @@ func (s *store) Remove() {
 }
 
 // --- items to turns ----------------------------------------------------------
+
+// imagePlaceholder is how the host writes an `image` part into a user message's text.
+var imagePlaceholder = regexp.MustCompile(`\[Image #\d+\]`)
+
+// withImagePaths puts the paths of a user turn's images into its text, replacing the host's
+// `[Image #N]` placeholders. The mirror finds thumbnails (and reconciles the send's echo) by
+// the pasted path in the text (console/src/lib/pastedImages.ts), the same way it reads the
+// path codex leaves in its rollout; a placeholder gives it nothing to load.
+func withImagePaths(t *transcript.Turn, images []string) {
+	text := strings.TrimSpace(imagePlaceholder.ReplaceAllString(t.Text, ""))
+	text = strings.TrimSpace(text + " " + strings.Join(images, " "))
+	t.Text = text
+	for i := range t.Parts {
+		if t.Parts[i].Kind == "text" {
+			t.Parts[i].Text = text
+			return
+		}
+	}
+	t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: text})
+}
 
 // turnsFromItems renders the item log as the mirror's turn model.
 //
@@ -455,7 +497,7 @@ func appendStreaming(turns []transcript.Turn, items []msp.Item, fragments map[st
 // The destination is written once and never merged into: a store that already exists belongs
 // to a slot that has already lived, and copying over it would splice two conversations.
 func (s *store) ForkAt(newSID, cutTurnID string) error {
-	items, models, err := s.itemsWithModels()
+	items, meta, err := s.itemsWithMeta()
 	if err != nil {
 		return err
 	}
@@ -476,7 +518,8 @@ func (s *store) ForkAt(newSID, cutTurnID string) error {
 		return nil
 	}
 	for i := 0; i <= cut && i < len(items); i++ {
-		if err := dst.AppendFrom(items[i], models[items[i].ItemID]); err != nil {
+		m := meta[items[i].ItemID]
+		if err := dst.appendRecord(record{Item: items[i], Model: m.model, Images: m.images}); err != nil {
 			return err
 		}
 	}
