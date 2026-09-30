@@ -751,6 +751,8 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/repos/{name}/branch-rule", rest)
 	mux.HandleFunc("POST /api/repos/{name}/branch-name", rest)
 	mux.HandleFunc("POST /api/repos/{name}/branch-name/check", rest)
+	mux.HandleFunc("GET /api/repos/{name}/gitflow", rest)
+	mux.HandleFunc("POST /api/repos/{name}/gitflow/init", rest)
 	mux.HandleFunc("GET /api/branch-rules/user", rest)
 	mux.HandleFunc("PUT /api/branch-rules/user", rest)
 	mux.HandleFunc("POST /api/branch-rules/preview", rest)

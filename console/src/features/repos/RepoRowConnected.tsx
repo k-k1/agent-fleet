@@ -21,6 +21,7 @@ import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSes
 import { RepoRow } from "./RepoRow.tsx";
 import { useStartWork } from "./useStartWork.ts";
 import { SvnAuthModal } from "./SvnAuthModal.tsx";
+import { GitflowInitModal } from "./GitflowInitModal.tsx";
 import { DeleteCopyModal } from "./DeleteCopyModal.tsx";
 import { StopSessionsModal } from "./StopSessionsModal.tsx";
 import { liveSessionCount } from "./stopTree.ts";
@@ -61,6 +62,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, onArchi
   const [authOpen, setAuthOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
+  const [gitflowOpen, setGitflowOpen] = useState(false);
   // The subtree both plan dialogs work on. A row rendered outside the tree (the flat Repos
   // list) has no subtree; a leaf of one is the same shape. Memoized because each dialog
   // freezes its plan on this object's identity.
@@ -146,6 +148,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, onArchi
         toast(tr("rp.svn_cleanup_success", { name: r.name }), { kind: "success" });
       } : undefined}
       onReauth={r.vcs === "svn" ? () => setAuthOpen(true) : undefined}
+      onGitflowInit={() => setGitflowOpen(true)}
       // Deletion lock (docs/log/45): pin/unpin a working copy (worktrees included) against deletion.
       onToggleLock={async (locked) => {
         const res = await repoSetLock(r.name, locked);
@@ -241,6 +244,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, onArchi
         onDeleted={(count) => toast(tr("rp.del.done", { count }), { kind: "success" })}
       />
     )}
+    {gitflowOpen && <GitflowInitModal repo={r.name} onClose={() => setGitflowOpen(false)} />}
     {authOpen && (
       <SvnAuthModal
         repo={r.name}

@@ -156,6 +156,9 @@ type branchNameOut struct {
 	Provisional bool                 `json:"provisional"`
 	Warnings    []branchrule.Warning `json:"warnings"`
 	Sources     map[string]any       `json:"sources"`
+	// Gitflow lets a work-item launch offer Initialize Git Flow (decision 9) without a
+	// second call.
+	Gitflow string `json:"gitflow"`
 }
 
 // branchCheckOut is POST /repos/{name}/branch-name/check.
@@ -217,7 +220,7 @@ func handleBranchName(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, branchNameOut{
 		Name: res.Name, NameEmpty: res.NameEmpty, Base: base, BaseBranch: branch, Kind: res.Kind,
-		Warnings: warningsOrEmpty(warns), Sources: c.sources(res.Sources),
+		Warnings: warningsOrEmpty(warns), Sources: c.sources(res.Sources), Gitflow: c.repo.Gitflow,
 	})
 }
 

@@ -92,6 +92,8 @@ export interface RepoRowProps {
   onCleanup?: () => void;
   /** SVN only: open the re-authentication dialog (docs/log/41 amendment). */
   onReauth?: () => void;
+  /** Git parent clones only: open Initialize Git Flow (ADR 0103 decision 9). */
+  onGitflowInit?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
   onStartWork: (opts: LaunchOpts) => Promise<LaunchResult>;
   onBranchChanged?: () => void;
@@ -99,7 +101,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -433,6 +435,14 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onParentFF(); }}>
                   <Icon name="arrow-up" /> {tr("repo.ff_parent")}
+                </button>
+              </li>
+            )}
+            {/* The parent clone owns the config every worktree reads, so it is offered there only. */}
+            {!isSvn && !r.worktree && onGitflowInit && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onGitflowInit(); }}>
+                  <Icon name="git-branch" /> {tr("repo.gitflow_init")}
                 </button>
               </li>
             )}

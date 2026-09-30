@@ -24,6 +24,8 @@ export interface LaunchBranchName {
   rereading: boolean;
   /** Read Bitbucket's branching model again and re-resolve (the "pending" case). */
   reread: () => void;
+  /** Resolve again, e.g. after Initialize Git Flow wrote a declaration. */
+  resolveAgain: () => void;
   /** Mark a field as the person's own: a later answer no longer overwrites it. */
   touchName: () => void;
   touchBase: () => void;
@@ -96,6 +98,7 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
     warnings,
     rereading,
     reread,
+    resolveAgain: () => void resolve(),
     touchName: () => {
       nameTouched.current = true;
     },

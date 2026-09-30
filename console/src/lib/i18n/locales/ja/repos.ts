@@ -1,5 +1,5 @@
 // 日本語 カタログ / ドメイン: repos
-// キー接頭辞: rp, repo, scm, pj, igb, proj
+// キー接頭辞: rp, repo, scm, pj, igb, proj, gitflow
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -420,4 +420,36 @@ export const repos = {
   "scm.diff_load_failed": "(diff 取得失敗)",
   "scm.no_file_selected": "(ファイル未選択)",
   "repo.start_studio": "画像スタジオを始める",
+  // --- Initialize Git Flow (ADR 0103 decision 9) ---
+  "repo.gitflow_init": "Git Flow を初期化",
+  "gitflow.title": "Git Flow を初期化 — {name}",
+  "gitflow.intro":
+    "git-flow の設定（gitflow.* キー）を、git flow init と同じようにこのクローンの git 設定へ書き込みます。以後、作業項目から作るブランチはこれに従います。コミットはせず、ブランチの作成や切り替えもしません。",
+  "gitflow.shared": "このリポジトリのすべてのワークツリーとセッションが、この設定を同時に読みます。",
+  "gitflow.committed": "リポジトリの {files} が、重なる項目ではこの設定より優先されます。",
+  "gitflow.native": "このクローンには git-flow-next 自身の設定（gitflow.version）もあり、そちらが優先されます。",
+  "gitflow.unavailable": "このリポジトリの git 設定を読めませんでした。Workspace が起動しているか確認してください。",
+  "gitflow.field.production": "本番ブランチ",
+  "gitflow.field.development": "開発ブランチ",
+  "gitflow.field.feature": "feature の接頭辞",
+  "gitflow.field.bugfix": "bugfix の接頭辞",
+  "gitflow.field.release": "release の接頭辞",
+  "gitflow.field.hotfix": "hotfix の接頭辞",
+  "gitflow.field.versiontag": "バージョンタグの接頭辞",
+  "gitflow.optional": "（任意）",
+  "gitflow.bugfix_hint": "bugfix の接頭辞を空にすると、今の設定をそのまま残します（未設定なら無しのまま）。support/ は未設定のときだけ足します。",
+  "gitflow.origin_only":
+    "origin にだけあります。Agent Fleet はこのまま使えますが、git flow コマンドと Fork にはローカルブランチも必要です（ここでは作りません）:",
+  "gitflow.missing": "{branch} はローカルにも origin にもありません。このままでは初期化できません。",
+  "gitflow.overwrites": "次の設定はすでにあり、上書きされます:",
+  "gitflow.submit": "初期化",
+  "gitflow.submit_save": "保存",
+  "gitflow.submit_overwrite": "上書きする",
+  "gitflow.saving": "保存中…",
+  "gitflow.saved": "{name} の Git Flow を初期化しました",
+  "gitflow.err_changed": "このダイアログを開いている間に設定が変わりました。読み直したので、確かめてからもう一度保存してください。",
+  "gitflow.err_branch_missing": "{branch} はローカルにも origin にもありません。先に push するか fetch してください。",
+  "gitflow.err_invalid": "使えない値です: {detail}",
+  "gitflow.err_failed": "設定を書き込めませんでした: {err}",
+  "gitflow.err_partial": "書き込みが途中で止まりました（{err}）。書き込み済み: {keys}。もう一度保存するとすべて書き直します。",
 };

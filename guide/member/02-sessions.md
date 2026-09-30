@@ -182,7 +182,8 @@ workspace is stopped.
   branch naming rules: by default the issue type or labels pick the prefix, then the number and
   the title, e.g. `feature/45-empty-list` or `fix/PROJ-123`. A repository that declares git-flow
   or a Bitbucket branching model gets its own prefixes and base, and the dialog says where the
-  base came from. A name outside the rules only gets a note; nothing is refused. The template is
+  base came from. A repository whose `origin` has `develop` but declares nothing gets an offer to
+  [initialize Git Flow](03-code.md#initialize-git-flow). A name outside the rules only gets a note; nothing is refused. The template is
   in the settings tab. A pull request launches on its own head branch instead (below).
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and

@@ -30,7 +30,7 @@ let host: HTMLDivElement;
 
 const WT: Repo = { name: "app@wip-x", path: "/home/dev/repos/app@wip-x", branch: "temp/x", worktree: true, parent: "app" };
 
-async function render(r: Repo): Promise<void> {
+async function render(r: Repo, extra: { onGitflowInit?: () => void } = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <RepoRow
@@ -39,6 +39,7 @@ async function render(r: Repo): Promise<void> {
         onOpen={() => {}}
         onLaunch={() => {}}
         onStartWork={async () => ({ ok: true }) as never}
+        {...extra}
       />,
     );
   });
@@ -113,5 +114,28 @@ describe("RepoRow worktree row", () => {
     expect(itemFor("画像スタジオを始める")).toBeTruthy();
     _imagegenAvailability.reset();
     useWorkspaceStore.setState({ state: "…" });
+  });
+});
+
+describe("RepoRow Initialize Git Flow", () => {
+  const CLONE: Repo = { name: "app", path: "/home/dev/repos/app", branch: "main", vcs: "git" };
+
+  it("is offered on a git parent clone and opens the dialog", async () => {
+    const open = vi.fn();
+    await render(CLONE, { onGitflowInit: open });
+    await openMenu();
+    await act(async () => itemFor("Git Flow を初期化")!.click());
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("is not offered on a worktree or an svn working copy", async () => {
+    await render(WT, { onGitflowInit: () => {} });
+    await openMenu();
+    expect(itemFor("Git Flow を初期化")).toBeUndefined();
+    act(() => root!.unmount());
+    root = createRoot(host);
+    await render({ ...CLONE, vcs: "svn" }, { onGitflowInit: () => {} });
+    await openMenu();
+    expect(itemFor("Git Flow を初期化")).toBeUndefined();
   });
 });

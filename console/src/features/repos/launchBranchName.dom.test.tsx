@@ -14,14 +14,24 @@ type Json = Record<string, unknown>;
 let branchName: (body: Json) => Promise<Json> = async () => ({ error: { code: "http_404" } });
 let check: (body: Json) => Json = () => ({ warnings: [] });
 let refresh: () => Promise<Json> = async () => ({ kinds: [] });
+const gitflowState: Json = {
+  current: {},
+  prefill: { production: "main", development: "develop", feature: "feature/", bugfix: "", release: "release/", hotfix: "hotfix/", versiontag: "" },
+  local: ["main", "develop"],
+  origin: ["main", "develop"],
+  native: false,
+  committed: [],
+};
 const apiMock = vi.fn(async (url: string): Promise<Json> => {
   if (url.includes("branch-rule?refresh=1")) return refresh();
   if (url.includes("branch-rule")) return { kinds: [] };
+  if (url.endsWith("/gitflow")) return gitflowState;
   return { branches: [] };
 });
 const apiJSONMock = vi.fn(async (url: string, _method: string, body: Json): Promise<Json> => {
   if (url.endsWith("/branch-name")) return branchName(body);
   if (url.endsWith("/branch-name/check")) return check(body);
+  if (url.endsWith("/gitflow/init")) return { written: ["gitflow.branch.develop"], state: gitflowState };
   return {};
 });
 
@@ -37,6 +47,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
+const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 
@@ -92,16 +103,19 @@ async function typeInto(el: HTMLInputElement, text: string): Promise<void> {
 async function render(withItem = true, repo = "web", it: typeof item = item, prompt?: string): Promise<void> {
   await act(async () => {
     root!.render(
-      <LaunchModal
-        repo={repo}
-        branch="main"
-        kinds={["claude"]}
-        initialNewBranch="feature/issue-45"
-        initialPrompt={prompt}
-        workItem={withItem ? it : undefined}
-        onClose={() => {}}
-        onLaunch={onLaunch}
-      />,
+      // The app wraps every dialog in it; the Git Flow dialog toasts on save.
+      <ToastProvider>
+        <LaunchModal
+          repo={repo}
+          branch="main"
+          kinds={["claude"]}
+          initialNewBranch="feature/issue-45"
+          initialPrompt={prompt}
+          workItem={withItem ? it : undefined}
+          onClose={() => {}}
+          onLaunch={onLaunch}
+        />
+      </ToastProvider>,
     );
   });
   await settle();
@@ -150,6 +164,30 @@ describe("work-item launch through the branch-name resolver", () => {
     expect(document.querySelector(".launch-base-source")?.textContent).toContain("gitflow.branch.develop");
     await click(byText("Start"));
     expect(onLaunch.mock.calls[0][0]).toMatchObject({ newBranch: "fix/45-empty-list-after-login", base: "develop" });
+  });
+
+  it("offers Initialize Git Flow when origin has develop and nothing is declared, then re-resolves", async () => {
+    let declared = false;
+    branchName = async () =>
+      declared
+        ? resolved()
+        : resolved({ base: "head", base_branch: "main", sources: { base: "builtin: builtin" }, gitflow: "suggest" });
+    await render();
+    await click(secHead());
+    expect(baseField().value).toBe("main");
+    expect(document.querySelector(".launch-gitflow-suggest")).toBeTruthy();
+    await click(byText("Initialize Git Flow…"));
+    expect(apiMock.mock.calls.some((c) => c[0] === "api/repos/web/gitflow")).toBe(true);
+    declared = true;
+    const save = must(
+      buttons().find((b) => b.getAttribute("type") === "submit" && b.textContent === "Initialize"),
+      "the dialog's Initialize",
+    );
+    await click(save);
+    expect(apiJSONMock.mock.calls.some((c) => c[0] === "api/repos/web/gitflow/init")).toBe(true);
+    // Nothing initialises by itself: the write came from the press, and the base follows it.
+    expect(baseField().value).toBe("develop");
+    expect(document.querySelector(".launch-gitflow-suggest")).toBeNull();
   });
 
   it("keeps the Console's own suggestion when the Agent has no resolver", async () => {
