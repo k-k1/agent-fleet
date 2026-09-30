@@ -400,6 +400,7 @@ echo "== case 11: POSITIVE CONTROL -- the stranger's codex marker is what the tr
 # Trust the stranger (as the pre-fix reader did) and codex must bump: otherwise case 1's
 # "codex stays" never depended on authorship at all.
 cp "$ROOT/workspace/Dockerfile" "$DF"
+issue_with "$L_MUSE"   # drop case 10's trusted codex marker: only the stranger's may remain
 jq '.comments |= map(.authorAssociation = "COLLABORATOR")' "$STUB_ISSUE" > "$WORK/i" && mv "$WORK/i" "$STUB_ISSUE"
 run_bump
 code_is 0
