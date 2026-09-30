@@ -49,7 +49,7 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # the full history is required
       - name: install gitleaks (version+checksum pinned)
@@ -77,8 +77,8 @@ jobs:
       run:
         working-directory: deploy/release/scan
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: deploy/release/scan/go.mod
       - name: gofmt
@@ -105,8 +105,8 @@ jobs:
       run:
         working-directory: control-plane
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: control-plane/go.mod
           cache-dependency-path: control-plane/go.sum
@@ -144,8 +144,8 @@ jobs:
       run:
         working-directory: workspace/agent
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: workspace/agent/go.mod
           cache-dependency-path: workspace/agent/go.sum
@@ -193,7 +193,7 @@ jobs:
   deploy-scripts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: capture / teardown restore point
         run: ./deploy/aws/ecs/capture-restore-test.sh
       # This check also runs in release-gate.yml, and running it only there means a PR that
@@ -230,8 +230,8 @@ jobs:
       run:
         working-directory: console
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
