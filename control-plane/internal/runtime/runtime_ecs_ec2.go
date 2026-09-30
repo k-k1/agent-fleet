@@ -1138,12 +1138,20 @@ func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
 	log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed: %s", e.base.name, why)
 }
 
-// clearBlockedPhase removes a blocked phase once the task is actually running. Scoped to
-// the prefix on purpose: any other phase belongs to a Start that is still in flight, and
+// clearBlockedPhase removes a blocked phase once nothing blocks the task any more. Scoped
+// to the prefix on purpose: any other phase belongs to a Start that is still in flight, and
 // clearing that from a poll would blank the starting dialog mid-boot.
+//
+// CompareAndDelete, not read-then-setPhase(""): this runs on `starting` polls, while a
+// Start may be storing its own progress, and an unconditional delete between the read
+// and the write would erase that progress instead.
 func (e *ecsEC2Runtime) clearBlockedPhase() {
-	if strings.HasPrefix(e.BootPhase(), blockedPhasePrefix) {
-		e.setPhase("")
+	v, ok := startPhase.Load(e.base.name)
+	if !ok {
+		return
+	}
+	if s, _ := v.(string); strings.HasPrefix(s, blockedPhasePrefix) {
+		startPhase.CompareAndDelete(e.base.name, v)
 	}
 }
 
