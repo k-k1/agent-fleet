@@ -11,7 +11,8 @@ machine-checked here rather than left to human review.
 Fifteen checks:
 
   links      relative links resolve (anchors ignored)
-  anchors    a #fragment points at a heading that exists (matched with Console's slug rule)
+  anchors    a #fragment points at a heading that exists (Console's slug rule in guide/,
+             GitHub's elsewhere); living shelves and decisions/
   closure    no link out of guide/ — the shipped tree is self-contained
   chapters   chapter numbers agree with the file name and with cross-reference labels
   index      every file on a living shelf is linked from that shelf's README (per language)
@@ -218,7 +219,6 @@ def check_links(files: list[str], f: Findings) -> None:
 
 INLINE_MARKUP = (
     (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),  # a link keeps only its visible text
-    (re.compile(r"`([^`]*)`"), r"\1"),
     (re.compile(r"\*\*([^*]*)\*\*"), r"\1"),
     (re.compile(r"\*([^*]*)\*"), r"\1"),
 )
@@ -226,10 +226,24 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$", re.M)
 
 
 def heading_text(raw: str) -> str:
-    """Build, from a heading line, the same string a browser sees as `textContent`."""
+    """Build, from a heading line, the same string a browser sees as `textContent`.
+
+    Code spans are set aside first: their content is literal, so `` `[a](b)` `` keeps
+    `[a](b)` rather than being read as a link.
+    """
+    spans: list[str] = []
+
+    def hold(m: re.Match[str]) -> str:
+        code = m.group(2).replace("\n", " ")
+        if code.startswith(" ") and code.endswith(" ") and code.strip():
+            code = code[1:-1]  # CommonMark strips one space from each side
+        spans.append(code)
+        return f"\0{len(spans) - 1}\0"
+
+    raw = CODE_SPAN_RE.sub(hold, raw)
     for pattern, repl in INLINE_MARKUP:
         raw = pattern.sub(repl, raw)
-    return raw
+    return re.sub("\0(\\d+)\0", lambda m: spans[int(m.group(1))], raw)
 
 
 def console_slug(text: str) -> str:
@@ -239,10 +253,9 @@ def console_slug(text: str) -> str:
     drop everything that is not a letter, digit, space or hyphen, and collapse a *run* of
     spaces into a single hyphen.
 
-    GitHub (github-slugger) emits one hyphen per space, so the two rules disagree on any
+    GitHub emits one hyphen per space, so the two rules disagree on any
     heading containing a symbol surrounded by spaces, such as `—` or `/` (`a — b` is
-    `a-b` in the Console and `a--b` on GitHub). Fullwidth parentheses go the other way:
-    the Console drops them, GitHub keeps them.
+    `a-b` in the Console and `a--b` on GitHub).
 
     Which rule wins was decided by measurement: across the repository, 52 links resolve
     only under the Console rule and 10 only under GitHub's. The Console is also where
@@ -256,16 +269,28 @@ def console_slug(text: str) -> str:
     return re.sub(r"\s+", "-", t)
 
 
-# github-slugger: lowercase and trim, drop punctuation (the general-punctuation range,
-# which includes `—`, plus the supplemental-punctuation range and ASCII symbols),
-# and emit one hyphen per space. `-`, `_` and fullwidth parentheses survive.
-GITHUB_PUNCT_RE = re.compile(
-    "[ -⁯⸀-⹿\\\\'!\"#$%&()*+,./:;<=>?@\\[\\]^`{|}~]"
-)
+# GitHub's heading ids (github-slugger, script/generate-regex.js): lowercase and trim,
+# keep letters, marks, decimal and letter numbers, connector punctuation such as `_`,
+# `-` and spaces, drop everything else, and emit one hyphen per space. Fullwidth
+# parentheses `（）` and `・` are dropped like any other punctuation (measured against
+# the ids GitHub rendered for every docs/ heading with a non-ASCII character: 6,453 of
+# 6,455 match; the two misses contain `<…>`, which GitHub renders as an HTML tag).
+GITHUB_KEEP_CATEGORIES = ("Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl", "Pc")
+# Symbols (So) that are Alphabetic, which github-slugger keeps: circled and squared
+# Latin letters (Ⓐ, ⓘ, 🄰 …). Python's unicodedata has no Alphabetic property.
+GITHUB_KEEP_SYMBOLS = re.compile("[\u24b6-\u24e9\U0001f130-\U0001f149\U0001f150-\U0001f169\U0001f170-\U0001f189]")
 
 
 def github_slug(text: str) -> str:
-    return re.sub(r"\s", "-", GITHUB_PUNCT_RE.sub("", text.lower().strip()))
+    t = text.lower().strip()
+    t = "".join(
+        c
+        for c in t
+        if c in " -"
+        or unicodedata.category(c) in GITHUB_KEEP_CATEGORIES
+        or GITHUB_KEEP_SYMBOLS.match(c)
+    )
+    return t.replace(" ", "-")
 
 
 def heading_slugs(path: str) -> set[str]:
@@ -276,6 +301,12 @@ def heading_slugs(path: str) -> set[str]:
     repository root (CONTRIBUTING.md and the like) are only ever read on GitHub, so they
     use github-slugger. Applying one rule to both reports anchors that are correct on
     GitHub, such as `CONTRIBUTING.md#commits--prs`, as broken — which is what happened.
+
+    Only fenced blocks are removed, so that a `#` line inside one is not read as a
+    heading. Inline code stays: both renderers keep its text in the id
+    (`` (`console/src/`) `` gives `consolesrc`), and `heading_text` drops the backticks.
+    `FENCE_RE` cannot be used here: it pairs any two ``` runs, including the delimiters
+    of an inline code span, and does not know `~~~` fences.
     """
     rule = (
         console_slug
@@ -284,7 +315,7 @@ def heading_slugs(path: str) -> set[str]:
     )
     return {
         rule(heading_text(m.group(2)))
-        for m in HEADING_RE.finditer(strip_code(read(path)))
+        for m in HEADING_RE.finditer(strip_fenced_blocks(read(path)))
     }
 
 
@@ -297,7 +328,9 @@ def check_anchors(files: list[str], f: Findings) -> None:
     """
     for path in files:
         src = rel(path)
-        if shelf(src) not in LIVING:
+        # decisions/ is not living (no front matter), but an ADR's anchors are read on
+        # GitHub like any other; log/ is the frozen archive and is left as written.
+        if shelf(src) not in LIVING + ("decisions",):
             continue
         for m in LINK_RE.finditer(strip_code(read(path))):
             target = m.group(2)
@@ -1325,6 +1358,30 @@ def check_ref(f: Findings) -> None:
 
 FENCE_RE = re.compile(r"```.*?```", re.S)
 INLINE_RE = re.compile(r"`[^`\n]*`")
+FENCE_OPEN_RE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
+
+
+def strip_fenced_blocks(body: str) -> str:
+    """Blank out CommonMark fenced code blocks line by line (``` or ~~~, closed by a
+    run of the same character at least as long; an unclosed fence runs to the end)."""
+    out: list[str] = []
+    fence = ""
+    for line in body.splitlines(keepends=True):
+        text = line.rstrip("\r\n")
+        if not fence:
+            m = FENCE_OPEN_RE.fullmatch(text)
+            # A backtick fence's info string cannot contain a backtick; such a line is
+            # an inline code span, not a fence.
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                fence = m.group(1)
+                out.append("\n")
+            else:
+                out.append(line)
+            continue
+        if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{%d,}[ \t]*" % len(fence), text):
+            fence = ""
+        out.append("\n")
+    return "".join(out)
 
 
 def strip_code(body: str) -> str:

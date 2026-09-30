@@ -84,7 +84,7 @@ an index. The value in parentheses is the code's default when the variable is un
 | Provisioning and roles | `AF_PROVISION` (`auto`) · `SUPER_ADMIN_EMAILS` | how an unknown identity is admitted; who is a deployment administrator | [06](06-data.md) |
 | At-rest encryption | `AF_MASTER_KEY` | unset means plaintext (development only). **Losing it is a crypto-shred** — keep it in a vault separate from the data | [07 §7.6](07-security.md) |
 | Git provider OAuth | **there are none** | a tenant administrator registers the apps in the Console. `BITBUCKET_OAUTH_KEY/SECRET` are no longer read, and `GITHUB_OAUTH_CLIENT_ID` is for sign-in only | [decisions/0052](../decisions/0052-tenant-git-oauth.md) |
-| Scale-to-zero and showback | `AF_AUTOSTART` (on) · `AF_SESSION_IDLE_TIMEOUT` (1h) · `AF_INTERACTION_IDLE_TIMEOUT` (the session value) · `AF_WS_IDLE_TIMEOUT` (2h) · `AF_PRESENCE_IDLE_TIMEOUT` (30m) · `AF_IDLE_SWEEP_INTERVAL` (1m) · `AF_STOP_GRACE_SEC` (30, at most 120) · `AF_USAGE_SAMPLE_INTERVAL` (5m) | auto-start, idle stop, the grace period, usage sampling. For the idle timeouts and the sweep, `0` means off | [03](03-control-plane.md) |
+| Scale-to-zero and showback | `AF_AUTOSTART` (on) · `AF_SESSION_IDLE_TIMEOUT` (1h) · `AF_INTERACTION_IDLE_TIMEOUT` (the session value) · `AF_WS_IDLE_TIMEOUT` (2h) · `AF_PRESENCE_IDLE_TIMEOUT` (30m) · `AF_IDLE_SWEEP_INTERVAL` (1m) · `AF_STOP_GRACE_SEC` (30, at most 120) · `AF_USAGE_SAMPLE_INTERVAL` (5m) | auto-start, idle stop, the grace period, usage sampling. For the idle timeouts, the sweep and the usage sampler, `0` means off | [03](03-control-plane.md) |
 | MCP | `AF_MCP_ENABLED` | whether `/mcp` exists at all; only the exact string `true` enables it | [08](08-integrations.md) |
 | Egress | `AF_EGRESS_LISTEN` (`:3128`) · `AF_EGRESS_TOKEN` · `AF_EGRESS_{INGEST,POLICY}_URL` · `AF_EGRESS_PROXY_ADDR` · `AF_EGRESS_ENFORCE` · `AF_EGRESS_ALLOWLIST` | the forward-proxy subcommand and the CP's aggregation. `AF_EGRESS_PROXY_ADDR` injects the proxy variables into `docker` and `native` workspaces only | [07 §7.8](07-security.md) |
 | Postgres | `AF_DATABASE_URL`, or `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`, and **where the password really lives**: `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | only when the store is Postgres. The parts are composed into a DSN; the ARN is what lets a rotated password be picked up without replacing the task (§9.9) | [06](06-data.md) |
@@ -101,9 +101,11 @@ Cross-check what the CP reads (`envx.Or`, `envx.DurationOr`, `runtime.EnvInt`,
 `exec env` block, but that block is not a filter — every exported variable reaches the
 CP — and it sets its own defaults (`CP_ADDR=:8099`, `WS_MEMORY=5g`).
 
-**`0` does not mean "off" everywhere.** The idle timeouts parse `0` as off; a duration
-read with `envx.DurationOr` (`AF_SESSION_TTL`, `AF_USAGE_SAMPLE_INTERVAL` …) treats `0`
-as unset and uses the default.
+**`0` does not mean "off" everywhere.** The idle timeouts, the idle sweep and the
+background loops documented as switchable (`AF_USAGE_SAMPLE_INTERVAL`,
+`AF_CLOUD_COST_INTERVAL`, `AF_GIT_GC_INTERVAL`, `AF_SCHEDULER_INTERVAL`) are read with
+`intervalOff` and parse `0` as off; any other duration read with `envx.DurationOr`
+(`AF_SESSION_TTL`, `AF_SCHEDULE_SETTLE` …) treats `0` as unset and uses the default.
 
 **How a JDK is provided differs by runtime — never assume `/usr/lib/jvm` is populated.**
 `WS_JVM_DIR` is bind-mounted read-only at `/usr/lib/jvm` on `docker` and on `native` in

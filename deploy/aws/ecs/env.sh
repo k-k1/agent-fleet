@@ -324,6 +324,51 @@ af_engine_tools_ensure() {
   af_engine_tools_copy "$host" "$tag"
 }
 
+# af_ecr_pin_verify <flag> <ecr-host> <repo> <tag> <pin> — print the digest <repo>:<tag> in ECR
+# actually holds, and when <pin> (a standup.sh --*-digest value) is set, return 1 unless it
+# matches. A no-op under AF_DRY.
+#
+# It runs whether or not this stand-up copied anything: a repeat stand-up (the common case, once
+# the repository is no longer empty) never reaches the copy, so a check placed only there would
+# verify nothing after the first run. The read is best-effort — without a pin, failing to read
+# must not fail a copy that already succeeded.
+#
+# A pin that does not match fails rather than being accepted or silently re-copied over an image
+# an engine may be running: a pin that silently does nothing is worse than none, and whether
+# retagging is safe right now is a human's call. "Could not read the digest back" and "read it,
+# and it differs" say different things, because the first is not evidence the pin is wrong (ECR
+# auth can lapse, a read can time out) and telling someone to delete/retag over a read that
+# never happened sends them the wrong way.
+af_ecr_pin_verify() {
+  local flag="$1" host="$2" repo="$3" tag="$4" pin="$5" landed
+  [ "${AF_DRY:-0}" = 1 ] && return 0
+  # Exit status, not the placeholder text, decides "could this be read at all".
+  if landed="$(crane digest "$host/$repo:$tag" 2>/dev/null)"; then
+    echo "    · $repo:$tag digest: $landed"
+  else
+    landed=""
+    echo "    · $repo:$tag digest: (could not read back)"
+  fi
+  if [ -z "$pin" ] || [ "$landed" = "$pin" ]; then return 0; fi
+  if [ -z "$landed" ]; then
+    echo "ERROR: $flag $pin was requested, but the digest of" >&2
+    echo "       $repo:$tag in ECR could not be read back, so the pin cannot be" >&2
+    echo "       verified. This is NOT evidence the pin is wrong - check ECR auth (the" >&2
+    echo "       'crane auth login' above) and whether 'crane digest" >&2
+    echo "       $host/$repo:$tag' works by hand before assuming the image" >&2
+    echo "       itself is the problem." >&2
+  else
+    echo "ERROR: $flag $pin was requested, but $repo:$tag in ECR" >&2
+    echo "       is $landed — most likely copied before this pin was chosen (a" >&2
+    echo "       repeat stand-up does not re-copy an image already in ECR). A pin that" >&2
+    echo "       silently does nothing is worse than none." >&2
+    echo "       Fix: drop $flag to accept what's already there, or delete/retag" >&2
+    echo "       $repo:$tag in ECR so the copy above actually runs against the" >&2
+    echo "       requested digest." >&2
+  fi
+  return 1
+}
+
 # af_comfy_ensure <ecr-host> <tag> — make sure af-comfyui:<tag> is in ECR, for update.sh moving
 # a stack off a stale ImageComfyImageTag. Same answers as af_engine_tools_ensure; the image is
 # baked only by comfyui-image.yml, so 1 is something no script here can fix. 3 = the copy itself

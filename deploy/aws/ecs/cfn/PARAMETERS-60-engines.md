@@ -613,6 +613,16 @@ move the default: the other order leaves `standup.sh` crane-copying a tag nobody
 fails before the stack and takes the engine role's creation with it. An existing deployment is
 unaffected either way — its captured parameter file names the tag it is already running.
 
+**The tag is not the content.** `comfyui-image.yml` re-dispatched with an existing tag
+overwrites it in GHCR, so `comfyui:<tag>` names whatever was baked last.
+`standup.sh --comfy-digest sha256:<64 hex>` copies that exact digest of `<--from>/comfyui`
+instead, with the same contract as `--llm-digest` above: the destination is still
+`af-comfyui:<ImageComfyImageTag>`, the digest in ECR is read back and printed on every run, and a
+pin that does not match what is already there, or that cannot be read back, fails before
+`60-engines` is deployed. Resolve the digest when you mean to pin it
+(`crane digest ghcr.io/k-k1/agent-fleet/comfyui:<tag>`). `update.sh`'s copy of a moved default
+takes no pin.
+
 **Moving the default also means appending the old one to `COMFY_STALE_DEFAULTS` in
 `update.sh`.** A live stack records the default it was created with, and `deploy` keeps it.
 `update.sh` moves a stack whose tag is on that list to the new default: when the image role is

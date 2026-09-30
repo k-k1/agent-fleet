@@ -303,10 +303,17 @@ case "$1" in
     esac
     echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
   auth) cat >/dev/null ;;
-  # standup.sh reads this back after every llm copy to record what actually landed in ECR.
+  # standup.sh reads this back after every llm / ComfyUI copy to record what actually landed in
+  # ECR. af-comfyui has its own knobs so a ComfyUI pin can be tested with the llm read-back fine.
   digest)
-    [ "${STUB_CRANE_DIGEST_FAILS:-0}" = 1 ] && exit 1
-    echo "sha256:${STUB_CRANE_DIGEST:-fake000000000000000000000000000000000000000000000000000000000}" ;;
+    case "$*" in
+      *af-comfyui*)
+        [ "${STUB_COMFY_DIGEST_FAILS:-0}" = 1 ] && exit 1
+        echo "sha256:${STUB_COMFY_DIGEST:-fake000000000000000000000000000000000000000000000000000000000}" ;;
+      *)
+        [ "${STUB_CRANE_DIGEST_FAILS:-0}" = 1 ] && exit 1
+        echo "sha256:${STUB_CRANE_DIGEST:-fake000000000000000000000000000000000000000000000000000000000}" ;;
+    esac ;;
 esac
 FAKE
 cat > "$STUB/curl" <<'FAKE'
@@ -590,6 +597,61 @@ grep -q -- "most likely copied before this pin was chosen" "$WORK/out3g6.err" \
   && fail "an unreadable digest was explained with the real-mismatch wording (misdirects to delete/retag ECR)"
 diff <(sort -u "$WORK/out3g5.err") <(sort -u "$WORK/out3g6.err") >/dev/null \
   && fail "an unreadable digest produced the exact same message as a real mismatch"
+
+echo "== case 3g-7: --comfy-digest pins the ComfyUI copy source, not the destination tag =="
+# ImageComfyImageTag looks like a version, but re-dispatching comfyui-image.yml with the same tag
+# overwrites it in GHCR, so the tag alone does not say which bytes a stand-up copies.
+COMFY_DST="123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-comfyui:v0.37.0"
+printf 'ServiceConnectNamespace=af.internal\nImageEnabled=true\n' > "$STATE4/params/60-engines"
+: > "$LOG"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null \
+  || fail "standup with only the image role failed"
+has "crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.37.0 $COMFY_DST"
+# Unpinned, the read-back still runs, so the output says what was copied.
+has "crane digest $COMFY_DST"
+: > "$LOG"
+STUB_COMFY_DIGEST="$PIN_HEX" "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --comfy-digest "$PIN" \
+  > "$WORK/out3g7" 2>&1 </dev/null || { cat "$WORK/out3g7"; fail "standup with --comfy-digest failed"; }
+has "crane copy ghcr.io/k-k1/agent-fleet/comfyui@$PIN $COMFY_DST"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui:"
+has "crane digest $COMFY_DST"
+has "cloudformation deploy --stack-name af-ecs-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --comfy-digest not-a-digest \
+  >/dev/null 2>"$WORK/out3g7.err" </dev/null && fail "a malformed --comfy-digest was accepted"
+grep -q -- "--comfy-digest" "$WORK/out3g7.err" || fail "the malformed --comfy-digest was not explained"
+
+echo "== case 3g-8: 🔴 --comfy-digest is checked against an image already in ECR =="
+# A repeat stand-up never reaches the copy, so the pin has to be verified on that branch too.
+: > "$LOG"
+STUB_COMFY_IN_ECR=1 STUB_COMFY_DIGEST="$PIN_HEX" \
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --comfy-digest "$PIN" \
+  > "$WORK/out3g8" 2>&1 </dev/null || { cat "$WORK/out3g8"; fail "standup refused a --comfy-digest that matched what was already in ECR"; }
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+has "cloudformation deploy --stack-name af-ecs-engines"
+: > "$LOG"
+STUB_COMFY_IN_ECR=1 STUB_COMFY_DIGEST="${OTHER_DIGEST#sha256:}" \
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --comfy-digest "$PIN" \
+  >"$WORK/out3g8.out" 2>"$WORK/out3g8.err" </dev/null \
+  && fail "a --comfy-digest mismatch against what is already in ECR was silently accepted"
+grep -q -- "--comfy-digest" "$WORK/out3g8.err" || fail "the ComfyUI digest mismatch was not explained"
+grep -q "af-comfyui:v0.37.0 in ECR" "$WORK/out3g8.err" || fail "the ComfyUI digest mismatch did not name af-comfyui"
+hasnt "cloudformation deploy --stack-name af-ecs-engines"
+
+echo "== case 3g-9: an unreadable ComfyUI digest is explained as unreadable =="
+: > "$LOG"
+STUB_COMFY_IN_ECR=1 STUB_COMFY_DIGEST_FAILS=1 \
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --comfy-digest "$PIN" \
+  >"$WORK/out3g9.out" 2>"$WORK/out3g9.err" </dev/null \
+  && fail "a failed ComfyUI digest read-back with --comfy-digest set was silently accepted"
+hasnt "cloudformation deploy --stack-name af-ecs-engines"
+grep -q "could not be read back" "$WORK/out3g9.err" || fail "an unreadable ComfyUI digest was not explained as unreadable"
+grep -q -- "most likely copied before this pin was chosen" "$WORK/out3g9.err" \
+  && fail "an unreadable ComfyUI digest was explained with the real-mismatch wording"
+# Without a pin, an unreadable digest must not fail a copy that already succeeded.
+: > "$LOG"
+STUB_COMFY_DIGEST_FAILS=1 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes \
+  > "$WORK/out3g9b" 2>&1 </dev/null || { cat "$WORK/out3g9b"; fail "an unpinned stand-up failed on an unreadable ComfyUI digest"; }
+has "cloudformation deploy --stack-name af-ecs-engines"
 
 # A capture taken before ADR 0072 phase P6 names a model key and says nothing about Enabled,
 # because until P6 the key ALSO decided whether the role's service existed. Two things have to
