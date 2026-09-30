@@ -18,8 +18,9 @@ Console.
 - **Delivery model**: a packaged product, self-hosted by each company. **One company =
   one deployment.** SaaS was abandoned on terms-of-service grounds
   ([decisions/0001](../decisions/0001-self-host-vs-saas.md)).
-- **Scale assumed**: about 20 concurrent people, several sessions each. One host — or
-  one cluster — is enough.
+- **Scale assumed**: several sessions per person, one host or one cluster per
+  deployment. The member count it is sized for is in
+  [00 → Settled assumptions](00-project-context.md#settled-assumptions-v1).
 - **Agent credentials are brought by the user.** Each person signs in with their own
   account ([08](08-integrations.md)).
 - **The deployment target is the company's choice**: Docker on one host by default, a

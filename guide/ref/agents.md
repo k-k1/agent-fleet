@@ -88,7 +88,7 @@ layer, and takes effect from the next turn, running sessions included.
 ## How to sign in
 
 | Kind | Sign-in |
-|---|:--:|---|
+|---|---|
 | claude | OAuth: approve in your browser, then paste the code back. Shows the account email and plan once connected. |
 | codex | A ChatGPT subscription via device code (turn on device-code authentication in ChatGPT's security settings first), or an OpenAI API key. |
 | opencode | Two controls. **"Use opencode"** (off by default; while off, stored keys and sign-ins are ignored) and **"opencode.ai billing"** (None (my own keys) / Free models only / Go (subscription) / Zen (metered)). The latter decides how opencode.ai is used only — the providers you connect yourself stay in the list on every choice. Keys are the API key of whichever LLM provider you want, stored as an environment variable (presets fill the name in; several at once). |
@@ -104,7 +104,7 @@ layer, and takes effect from the next turn, running sessions included.
 ## States shown in the mirror
 
 | Kind | States |
-|---|:--:|---|
+|---|---|
 | claude | Working / Question / Plan ready / Awaiting permission / Ready |
 | codex | Working / Question / Plan ready / Ready |
 | opencode | Working / Question / Ready |
