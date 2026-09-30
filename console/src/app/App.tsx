@@ -1,10 +1,10 @@
-// App shell for the next console — P1: terminal + layout core (docs/log/22).
+// App shell: the left rail and the main PaneHost (split or tabbed panes over live
+// xterm PTYs and the other pane kinds), wired to the zustand stores.
 //
-// The main area is the real PaneHost (split panes + live xterm PTYs) wired to
-// the zustand stores; the rail carries a provisional sessions list (full
-// SessionsSection lands in P2). Boot order: resolve tenant → per-tenant layout
-// restore (with old-format migration) → per-user display prefs → workspace +
-// sessions polling. History (back/forward) traverses layout states.
+// Boot order: the push channel (api/events) and its fallback pollers start first,
+// then the tenant resolves, then hydrateUIPrefs(); only then is `booted` set, and
+// the per-tenant sync effect loads that tenant's layout. History (back/forward)
+// traverses layout states.
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useT } from "../lib/i18n/index.ts";
@@ -355,8 +355,7 @@ export function App() {
   }, []);
 
   // Per-tenant sync: on boot completion AND on tenant switch — restore that
-  // tenant's saved split (migrating the old console's format on first load)
-  // and refetch tenant-scoped data.
+  // tenant's saved layout and refetch tenant-scoped data.
   useEffect(() => {
     if (!booted) return;
     // Never leave the previous tenant's owner data in memory for the accumulated ui-prefs

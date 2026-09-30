@@ -1,10 +1,7 @@
-// Layout (de)serialization + migration from the old console's flat pane format.
-//
-// The old console persists a wide flat Pane (kind + 13 nullable payload fields)
-// under localStorage "af.layout.<slug>". The next console persists the new shape
-// (pane.session + discriminated content) under "af.layout2.<slug>" so the two
-// entries never clobber each other while running in parallel; when layout2 is
-// missing we MIGRATE the old key so the user's split carries over. All input is
+// Layout (de)serialization. The layout is stored under LKEY_NEW's per-user,
+// per-tenant key; older keys are not read (see LKEY_NEW). normalizeStored still
+// accepts the old console's flat pane shape (kind + nullable payload fields)
+// alongside the current one (pane.session + discriminated content). All input is
 // untrusted JSON — validated field by field; anything unusable degrades to a
 // blank terminal pane (never a crash), an unusable layout to null.
 import type { Cell, Layout, PaneContent, View } from "./types.ts";
