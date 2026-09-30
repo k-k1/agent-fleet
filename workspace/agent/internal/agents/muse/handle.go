@@ -113,6 +113,9 @@ type threadHandle struct {
 	ctxWindow   *int64      // windowTokens; nil when the basis carries no limit
 	ctxHasUsage bool        // false until the first notification arrives
 	spends      []turnSpend // per-turn token trend from session/tokenUsage, newest last (context.go)
+	// spendsDropped holds the turn ids most recently pushed out of spends, so a late event
+	// for one of them cannot re-enter as a new turn.
+	spendsDropped []string
 }
 
 // pendingAsk is the wire identity of the thing an Interaction is standing in for. Two
@@ -239,6 +242,7 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		}
 		log.Printf("muse: %s: stored session %s is gone; starting a fresh one", h.name, prev.ID)
 	}
+	h.resetUsage() // a different conversation from here on
 
 	// A slot born from a fork opens by copying the source rather than starting empty. It is
 	// tried once, at birth: after this the slot has a stored session and takes the resume

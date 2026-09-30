@@ -78,10 +78,13 @@ type turnSpend struct {
 
 // recordTokenUsage folds one session/tokenUsage into the trend. It keys on the turn id rather
 // than on turn/completed, so the trend does not depend on which of the two the host sends
-// first. The uncached prompt is promptTokens minus the cache read: promptTokens is the
-// server's counted-once figure, and inputTokens alone is provider-convention-dependent
-// (ADR 0095 B1-1 measured the cache inside it). Usage with no turn id is not a reply, so it
-// is skipped.
+// first, and it looks the id up among every turn it holds: MSP orders events by viewCursor,
+// which says nothing about turn ids arriving contiguously, and a late event matched only
+// against the newest turn would split its own turn in two and count its prompt twice. A turn
+// already dropped past spendKeep stays dropped rather than coming back as the newest.
+// The uncached prompt is promptTokens minus the cache read: promptTokens is the server's
+// counted-once figure, and inputTokens alone is provider-convention-dependent (ADR 0095 B1-1
+// measured the cache inside it). Usage with no turn id is not a reply, so it is skipped.
 func (h *threadHandle) recordTokenUsage(p msp.SessionTokenUsageParams) {
 	if p.TurnID == "" {
 		return
@@ -93,23 +96,49 @@ func (h *threadHandle) recordTokenUsage(p msp.SessionTokenUsageParams) {
 	uncached := max(int(p.PromptTokens-read), 0)
 	h.ctxMu.Lock()
 	defer h.ctxMu.Unlock()
-	if n := len(h.spends); n > 0 && h.spends[n-1].turnID == p.TurnID {
-		h.spends[n-1].out += int(p.Usage.OutputTokens)
-		h.spends[n-1].uncached = uncached
-		return
+	for i := range h.spends {
+		if h.spends[i].turnID == p.TurnID {
+			h.spends[i].out += int(p.Usage.OutputTokens)
+			h.spends[i].uncached = uncached
+			return
+		}
+	}
+	for _, id := range h.spendsDropped {
+		if id == p.TurnID {
+			return
+		}
 	}
 	h.spends = append(h.spends, turnSpend{turnID: p.TurnID, out: int(p.Usage.OutputTokens), uncached: uncached})
-	if len(h.spends) > spendKeep {
-		h.spends = append(h.spends[:0:0], h.spends[len(h.spends)-spendKeep:]...)
+	if over := len(h.spends) - spendKeep; over > 0 {
+		for _, s := range h.spends[:over] {
+			h.spendsDropped = append(h.spendsDropped, s.turnID)
+		}
+		if n := len(h.spendsDropped); n > spendKeep {
+			h.spendsDropped = append(h.spendsDropped[:0:0], h.spendsDropped[n-spendKeep:]...)
+		}
+		h.spends = append(h.spends[:0:0], h.spends[over:]...)
 	}
+}
+
+// resetUsage forgets the context reading and the trend. openSession calls it when the slot
+// opens a conversation other than the one the handle has been reading — a fresh start after
+// the stored session is gone, or a fork — because the handle outlives its host and the old
+// conversation's fill and spends would otherwise stand in for the new one's. A successful
+// session/resume keeps them: it is the same conversation.
+func (h *threadHandle) resetUsage() {
+	h.ctxMu.Lock()
+	h.ctxUsed, h.ctxWindow, h.ctxHasUsage = 0, nil, false
+	h.spends, h.spendsDropped = nil, nil
+	h.ctxMu.Unlock()
 }
 
 // ManagedSpends returns the newest per-turn spends of a live managed muse session, oldest
 // first; nil when there is no live handle or no turn has reported usage.
 //
 // It is live-only by necessity: AF's item store carries no usage (measured on 1.4.0: zero
-// items with it), and session/resume replays no session/tokenUsage (ADR 0095 B1-1), so a
-// restarted host starts the trend afresh. It is also partial the way decision 10 says:
+// items with it), and session/resume replays no session/tokenUsage (ADR 0095 B1-1). A host
+// respawned into the same conversation keeps the trend on its handle; a restarted Agent has
+// no handle and starts it afresh. It is also partial the way decision 10 says:
 // subagent and observer model calls never reach session/tokenUsage.
 func ManagedSpends(name string) []int {
 	h := handleFor(name)

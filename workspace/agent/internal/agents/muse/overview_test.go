@@ -5,7 +5,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -97,5 +99,82 @@ func TestManagedSpendsKeepsNewest(t *testing.T) {
 	}
 	if got[0] != 5+1 || got[len(got)-1] != spendKeep+4+1 {
 		t.Errorf("kept %v, want the newest %d oldest first", got, spendKeep)
+	}
+}
+
+func spendEvent(turn string, prompt, out int64) msp.SessionTokenUsageParams {
+	return msp.SessionTokenUsageParams{TurnID: turn, PromptTokens: prompt, Usage: msp.TokenUsage{OutputTokens: out}}
+}
+
+// A late event for an earlier turn folds into that turn: matched against the newest turn only,
+// it would split turn A in two and count its prompt twice ([110 220 155] instead of [165 220]).
+func TestManagedSpendsFoldsAnInterleavedTurn(t *testing.T) {
+	h := &threadHandle{}
+	h.recordTokenUsage(spendEvent("a", 100, 10))
+	h.recordTokenUsage(spendEvent("b", 200, 20))
+	h.recordTokenUsage(spendEvent("a", 150, 5))
+	registerHandle(t, "ov-interleave", h)
+	if got, want := ManagedSpends("ov-interleave"), []int{150 + 10 + 5, 220}; !reflect.DeepEqual(got, want) {
+		t.Errorf("spends = %v, want %v", got, want)
+	}
+}
+
+// A late event for a turn already pushed out of the kept window stays out rather than coming
+// back as the newest turn.
+func TestManagedSpendsIgnoresADroppedTurn(t *testing.T) {
+	h := &threadHandle{}
+	for i := 0; i < spendKeep+1; i++ {
+		h.recordTokenUsage(spendEvent(fmt.Sprintf("turn-%d", i), 1, 1))
+	}
+	h.recordTokenUsage(spendEvent("turn-0", 1000, 1))
+	registerHandle(t, "ov-dropped", h)
+	got := ManagedSpends("ov-dropped")
+	if len(got) != spendKeep || got[len(got)-1] != 2 {
+		t.Errorf("spends = %v, want %d turns of 2 with turn-0 not revived", got, spendKeep)
+	}
+}
+
+// The handle outlives its host. When the stored session is gone and the slot starts a fresh
+// conversation, the old conversation's fill and trend must not stand in for the new one's; a
+// successful resume is the same conversation and keeps them.
+func TestOpenSessionResetsUsageOnlyForANewConversation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		found bool
+	}{{"resumed", true}, {"fresh start", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c1"}
+			host := newTestHandle(t, h)
+			name := "ov-reset-" + map[bool]string{true: "resume", false: "fresh"}[tc.found]
+			registerHandle(t, name, h)
+			writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000c2", Path: "/tmp/old.jsonl"})
+			sess := map[string]any{"sessionId": "01a0c1d6-0000-7000-8000-0000000000c3", "path": "/tmp/s.jsonl", "status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 0}
+			host.Handle(msp.MethodSessionResume, func(msptest.Message) (any, *msp.Error) {
+				if !tc.found {
+					return nil, &msp.Error{Code: msp.ErrCodeSessionNotFound, Message: "gone"}
+				}
+				return map[string]any{"session": sess, "history": map[string]any{}, "pendingRequests": []any{}, "viewCursor": "c1"}, nil
+			})
+			host.Handle(msp.MethodSessionStart, func(msptest.Message) (any, *msp.Error) {
+				return map[string]any{"session": sess, "viewCursor": "c1"}, nil
+			})
+			h.recordTokenUsage(spendEvent("old", 100, 10))
+			h.ctxMu.Lock()
+			h.ctxUsed, h.ctxHasUsage = 5000, true
+			h.ctxMu.Unlock()
+
+			if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+				t.Fatalf("openSession: %v", err)
+			}
+			_, _, hasCtx := ManagedContext(name)
+			spends := ManagedSpends(name)
+			if tc.found && (!hasCtx || len(spends) != 1) {
+				t.Errorf("resumed: context=%v spends=%v, want both kept", hasCtx, spends)
+			}
+			if !tc.found && (hasCtx || spends != nil) {
+				t.Errorf("fresh start: context=%v spends=%v, want both reset", hasCtx, spends)
+			}
+		})
 	}
 }
