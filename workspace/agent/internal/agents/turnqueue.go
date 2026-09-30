@@ -72,6 +72,10 @@ type QueueItem struct {
 const (
 	DiscardSecondStop = "second_stop"
 	DiscardQueue      = "discard_queue"
+	// DiscardFirstStop is the input a first stop stopped before it was sent: the turn being
+	// stopped had not reached the runtime yet, so its text would otherwise be nowhere — not in
+	// the transcript, not in the queue.
+	DiscardFirstStop = "first_stop"
 )
 
 // Discard is what one discarding stop threw away, kept so the member can take it back
@@ -167,8 +171,12 @@ type TurnQueue struct {
 	queue       []TurnInput
 	head        *Taken
 	stopPending bool
-	episode     bool
-	discards    []Discard
+	// pendingFirst: the pending stop came from a first stop only. It was aimed at the head as
+	// the turn being started; if the head turns out to wait behind another turn (Hold), that
+	// stop belongs to the running turn instead and the head continues.
+	pendingFirst bool
+	episode      bool
+	discards     []Discard
 	// recorded holds the ids Requeue put back after LedgerAtTake's Take had recorded them, so
 	// the next Take does not read them as resends and drop them.
 	recorded map[string]bool
@@ -180,26 +188,27 @@ func NewTurnQueue(name string, ledger *MsgLedger, at LedgerPoint) *TurnQueue {
 }
 
 // Accept queues in and returns its id (ClientMessageID, minted when empty). dup reports a
-// resend the LedgerAtAccept ledger has already seen: it is not queued, and the caller answers
-// it as accepted. On LedgerAtTake a resend is queued as before and dropped at Take.
+// resend: an id the ledger has seen, or (LedgerAtTake) one still queued or taken. It is not
+// queued, and the caller answers it as accepted.
 //
 // New member input ends the stop episode (decision 2); a resend does not, and neither does
 // input of any other origin.
 func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
-	resend := false
 	switch q.at {
 	case LedgerAtAccept:
 		if q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
 			return in.ClientMessageID, true
 		}
 	case LedgerAtTake:
-		resend = q.holds(in.ClientMessageID) || (q.ledger != nil && q.ledger.Seen(q.name, in.ClientMessageID))
+		// Not queued a second time: Take would drop it anyway, but until then it would show
+		// twice in Items and in a discard, and the Console would restore the same text twice.
+		if q.holds(in.ClientMessageID) || (q.ledger != nil && q.ledger.Seen(q.name, in.ClientMessageID)) {
+			return in.ClientMessageID, true
+		}
 	}
 	q.queue = append(q.queue, in)
-	if !resend {
-		q.noteAccepted(in)
-	}
+	q.noteAccepted(in)
 	return in.ClientMessageID, false
 }
 
@@ -273,7 +282,7 @@ func (q *TurnQueue) Take() *Taken {
 			continue
 		}
 		q.head = &Taken{In: in}
-		q.stopPending = false
+		q.stopPending, q.pendingFirst = false, false
 		return q.head
 	}
 	q.maybeEndEpisode()
@@ -282,10 +291,23 @@ func (q *TurnQueue) Take() *Taken {
 
 // Hold marks the taken entry as waiting behind a turn this driver did not start (opencode's
 // waitIdle, muse's host-side queue). A first stop lets a held entry continue.
-func (q *TurnQueue) Hold(t *Taken, held bool) {
-	if t == q.head {
-		t.held = held
+//
+// redirect reports that a first stop had set stop-pending on t while it looked like the turn
+// being started (muse: turn/start sent, its "queued" answer not back yet). t is queued after
+// all, so the pending stop is lifted and the caller delivers it to the turn t waits behind
+// instead; the stop episode opens, since t is still to run. A pending stop from a second stop or
+// a discard stays: t is stopped when it starts.
+func (q *TurnQueue) Hold(t *Taken, held bool) (redirect bool) {
+	if t != q.head {
+		return false
 	}
+	t.held = held
+	if held && q.stopPending && q.pendingFirst {
+		q.stopPending, q.pendingFirst = false, false
+		q.episode = true
+		return true
+	}
+	return false
 }
 
 // Commit is the pump's last act under the lock before it hands t to the runtime. false: a stop
@@ -305,7 +327,7 @@ func (q *TurnQueue) Received(t *Taken) (deliverStop bool) {
 		return false
 	}
 	t.phase, t.held = phaseReceived, false
-	deliverStop, q.stopPending = q.stopPending, false
+	deliverStop, q.stopPending, q.pendingFirst = q.stopPending, false, false
 	return deliverStop
 }
 
@@ -315,7 +337,7 @@ func (q *TurnQueue) Settle(t *Taken) {
 	if t != q.head {
 		return
 	}
-	q.head, q.stopPending = nil, false
+	q.head, q.stopPending, q.pendingFirst = nil, false, false
 	q.maybeEndEpisode()
 }
 
@@ -328,7 +350,7 @@ func (q *TurnQueue) Requeue(t *Taken) bool {
 	}
 	q.head = nil
 	if q.stopPending {
-		q.stopPending = false
+		q.stopPending, q.pendingFirst = false, false
 		q.maybeEndEpisode()
 		return false
 	}
@@ -355,10 +377,20 @@ func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 	var out InterruptOutcome
 	if !second {
 		out.Result.Stop = StopFirst
+		var stopped *TurnInput
+		if h := q.head; h != nil && h.phase == phaseTaken && !h.held {
+			in := h.In
+			stopped = &in
+		}
 		out.Head = q.stopHead(false)
 		if out.Head == HeadNone && !busy && len(q.queue) > 0 {
+			in := q.queue[0]
+			stopped = &in
 			q.queue = q.queue[1:]
 			out.Head = HeadCancelled
+		}
+		if stopped != nil {
+			out.Result.Discard = q.keepDiscard(DiscardFirstStop, []QueueItem{itemOf(*stopped, "")})
 		}
 		q.episode = len(q.queue) > 0 || out.Head == HeadKept
 		return out
@@ -379,14 +411,32 @@ func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 	q.queue = nil
 	q.episode = false
 	if len(items) > 0 {
-		d := Discard{ID: mintID("dsc_"), At: q.now().Format(time.RFC3339), Reason: reason, Items: items}
-		q.discards = append(q.discards, d)
-		if len(q.discards) > maxDiscards {
-			q.discards = q.discards[len(q.discards)-maxDiscards:]
-		}
-		out.Result.Discard = &d
+		out.Result.Discard = q.keepDiscard(reason, items)
 	}
 	return out
+}
+
+// keepDiscard records a discard for return (decision 4), keeping the last maxDiscards.
+func (q *TurnQueue) keepDiscard(reason string, items []QueueItem) *Discard {
+	for _, it := range items {
+		q.recordGone(it.ID)
+	}
+	d := Discard{ID: mintID("dsc_"), At: q.now().Format(time.RFC3339), Reason: reason, Items: items}
+	q.discards = append(q.discards, d)
+	if len(q.discards) > maxDiscards {
+		q.discards = q.discards[len(q.discards)-maxDiscards:]
+	}
+	return &d
+}
+
+// recordGone marks a discarded or removed id as seen on LedgerAtTake, where Take never got to
+// record it. Without it a retry under the same ClientMessageID would run on copilot, cursor,
+// kiro and lcpp and be dropped on codex, opencode and muse; now it is dropped everywhere. What
+// the member puts back and sends again goes out under a new id.
+func (q *TurnQueue) recordGone(id string) {
+	if q.at == LedgerAtTake && q.ledger != nil {
+		q.ledger.SeenOrRecord(q.name, id)
+	}
 }
 
 // stopHead applies a stop to the taken entry. A first stop spares a held entry: it is queued,
@@ -402,6 +452,8 @@ func (q *TurnQueue) stopHead(second bool) HeadAction {
 		q.head = nil
 		return HeadCancelled
 	case h.phase == phaseCommitted:
+		// A second stop on top of a pending first one makes it a second stop's.
+		q.pendingFirst = !second && (!q.stopPending || q.pendingFirst)
 		q.stopPending = true
 		return HeadStopPending
 	default:
@@ -420,12 +472,14 @@ func (q *TurnQueue) Remove(id string) (QueueItem, error) {
 		q.head = nil
 		q.dropQueued(id)
 		q.maybeEndEpisode()
+		q.recordGone(id)
 		return itemOf(h.In, ""), nil
 	}
 	for _, in := range q.queue {
 		if in.ClientMessageID == id {
 			q.dropQueued(id)
 			q.maybeEndEpisode()
+			q.recordGone(id)
 			return itemOf(in, ""), nil
 		}
 	}

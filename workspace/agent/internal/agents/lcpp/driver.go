@@ -101,6 +101,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		sid:       sid,
 		cwd:       m.CWD(),
 		store:     Open(sid),
+		q:         agents.NewTurnQueue(m.Name, ledger, agents.LedgerAtTake),
 		events:    make(chan agents.Event, 64),
 		state:     agents.TurnCompleted,
 		settings:  agents.ThreadSettings{Model: m.Model, Effort: m.Effort, Mode: m.Mode},
@@ -159,6 +160,16 @@ func ensureForked(m session.Meta, sid string) error {
 	return nil
 }
 
+// LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
+// /turn queue edits use it. The handle is the runtime here, so being in the map is being live.
+func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
+	h := handleFor(m.Name)
+	if h == nil {
+		return nil, false
+	}
+	return h, true
+}
+
 // --- handle registry -----------------------------------------------------------
 
 var handlesMu sync.Mutex
@@ -184,7 +195,7 @@ func ManagedBusy(name string) bool {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.running || len(h.queue) > 0
+	return h.running || h.q.Len() > 0
 }
 
 // DropHandle detaches a managed session from its runtime: interrupt any running turn and
@@ -338,13 +349,22 @@ type threadHandle struct {
 	// drops bypass whatever the stored preference is — agents.BypassPermissions' own rule).
 	skipPerm bool
 
-	mu           sync.Mutex
-	settings     agents.ThreadSettings
-	todos        []harness.TodoItem
-	state        agents.TurnState
-	running      bool
-	pumping      bool
-	queue        []agents.TurnInput
+	mu       sync.Mutex
+	settings agents.ThreadSettings
+	todos    []harness.TodoItem
+	state    agents.TurnState
+	running  bool
+	pumping  bool
+	q        *agents.TurnQueue // every method under mu (agents.TurnQueue's contract)
+	// stopping marks the turn in flight as one a stop was aimed at, so it lands as cancelled.
+	// The displayed state cannot carry this: accept overwrites it with queued.
+	stopping bool
+	// beforeCommit, when set, runs between the pump's Take and its Commit with mu released: the
+	// window in which a stop or a removal can still cancel the taken entry. Tests only.
+	beforeCommit func()
+	// afterAccept, when set, runs right after accept releases mu: where a stop can land before
+	// accept returns. Tests only.
+	afterAccept  func()
 	cancel       context.CancelFunc
 	runningSince time.Time
 	inter        *agents.Interaction
@@ -419,19 +439,29 @@ func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 		h.mu.Unlock()
 		return false, agents.ErrQuestionPending
 	}
-	h.queue = append(h.queue, in)
+	// The queue records the ledger when the pump takes the entry (LedgerAtTake).
+	if _, dup := h.q.Accept(in); dup {
+		// A resend: it is queued or was taken already, so neither the state nor the pump has
+		// anything to learn. Moving to queued here would stick, with no turn to leave it.
+		h.mu.Unlock()
+		return false, nil
+	}
 	start := !h.pumping
 	if start {
 		h.pumping = true
 	}
-	queued = h.running || len(h.queue) > 1
+	queued = h.running || h.q.Len() > 1
+	// Always move off whatever terminal state the handle was last left in, before accept
+	// returns, so a caller polling Snapshot() right after Send/Steer can never mistake the
+	// PREVIOUS turn's leftover TurnCompleted for THIS one's (runTurn's own
+	// setState(TurnStarting) only runs once the pump goroutine gets to it). Under h.mu: a stop
+	// that lands after the unlock must not have its TurnCancelled overwritten by this.
+	h.state = agents.TurnQueued
 	h.mu.Unlock()
-	// Always move off whatever terminal state the handle was last left in — synchronously,
-	// on the caller's own goroutine — so a caller polling Snapshot() right after Send/Steer
-	// returns can never mistake the PREVIOUS turn's leftover TurnCompleted for THIS one's
-	// (runTurn's own setState(TurnStarting) only runs once the pump goroutine gets to it,
-	// which is not guaranteed to have happened yet when accept returns).
-	h.setState(agents.TurnQueued)
+	if h.afterAccept != nil {
+		h.afterAccept()
+	}
+	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnQueued})
 	if start {
 		go h.pump()
 	}
@@ -443,23 +473,19 @@ func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 func (h *threadHandle) pump() {
 	for {
 		h.mu.Lock()
-		if len(h.queue) == 0 {
+		t := h.q.Take()
+		if t == nil {
 			h.pumping = false
 			h.mu.Unlock()
 			return
 		}
-		in := h.queue[0]
-		h.queue = h.queue[1:]
-		if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
-			h.mu.Unlock()
-			continue // resend — the ledger makes it idempotent at start
-		}
 		h.running = true
 		h.mu.Unlock()
 
-		h.runTurn(in)
+		h.runTurn(t)
 
 		h.mu.Lock()
+		h.q.Settle(t)
 		h.running = false
 		h.mu.Unlock()
 	}
@@ -470,16 +496,33 @@ func (h *threadHandle) pump() {
 // persist exactly the delta Run produced (diff.go's newMessagesSince — see store.go's
 // AppendMessage doc comment for why the naive "everything past the old length" is wrong once
 // a compaction fires inside the same Run call).
-func (h *threadHandle) runTurn(in agents.TurnInput) {
+func (h *threadHandle) runTurn(t *agents.Taken) {
 	agents.MarkTurnStart(h.sid)
 	h.setState(agents.TurnStarting)
+	if h.beforeCommit != nil {
+		h.beforeCommit()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.mu.Lock()
+	// The last act under the lock before the input reaches the loop (ADR 0105 decision 3): a
+	// stop or a removal that took the lock first has cancelled it, and it never starts.
+	if !h.q.Commit(t) {
+		h.mu.Unlock()
+		cancel()
+		h.finishTurn(agents.TurnCancelled)
+		return
+	}
+	// In-process, the runtime holds the input from here: a stop from now on cancels ctx.
 	h.cancel = cancel
+	stopNow := h.q.Received(t)
+	h.stopping = stopNow
 	settings := h.settings
 	todos := h.todos
 	h.mu.Unlock()
+	if stopNow {
+		cancel()
+	}
 	defer func() {
 		h.mu.Lock()
 		h.cancel = nil
@@ -487,7 +530,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	}()
 
 	st := h.store
-	if _, err := st.AppendUser(in.Prompt); err != nil {
+	if _, err := st.AppendUser(t.In.Prompt); err != nil {
 		log.Printf("lcpp: persisting user turn: %v", err)
 		h.finishTurn(agents.TurnFailed)
 		return
@@ -572,7 +615,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	}
 
 	h.mu.Lock()
-	interrupted := h.state == agents.TurnInterrupting
+	interrupted := h.stopping
 	h.inter, h.replyCh = nil, nil
 	h.mu.Unlock()
 
@@ -605,48 +648,68 @@ func (h *threadHandle) failTurn(st *Store, msg string) {
 	h.finishTurn(agents.TurnFailed)
 }
 
-// Interrupt cancels the running turn's context and clears the queued follow-ups, except
-// KeepOnInterrupt input (another session's message), which starts as the next turn. A blocked
-// approve()/askUser() (waitInteraction's own ctx.Done() case) unblocks the same way a
-// mid-Send/mid-tool cancellation would — Interrupt does not need to know which of the three
-// harness.Run was doing when it was called.
-// Interrupt, RemoveQueued and DismissDiscard: the ADR 0105 contract. Stage-0 shims over the
-// old stop until this driver moves onto agents.TurnQueue (#1292).
-func (h *threadHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
-	return agents.InterruptResult{Stop: agents.StopFirst}, h.interrupt(true)
-}
-
-func (h *threadHandle) RemoveQueued(string) (agents.QueueItem, error) {
-	return agents.QueueItem{}, agents.ErrNotQueued
-}
-
-func (h *threadHandle) DismissDiscard(string) bool { return false }
-
-// interruptAll is Interrupt for teardown (dropHandle, Agent shutdown): the whole queue goes.
-// The pump checks neither liveness nor a context, so a kept entry would still be run by a
-// handle that dropHandle has already taken out of the map, on a store it is about to close.
-func (h *threadHandle) interruptAll() error { return h.interrupt(false) }
-
-func (h *threadHandle) interrupt(keep bool) error {
+// Interrupt is the Console's stop (ADR 0105 decisions 1-3). The queue decides what the stop
+// is; this cancels the running turn's context when it has to. A blocked approve()/askUser()
+// (waitInteraction's own ctx.Done() case) unblocks the same way a mid-Send/mid-tool
+// cancellation would.
+func (h *threadHandle) Interrupt(opts agents.InterruptOpts) (agents.InterruptResult, error) {
 	h.mu.Lock()
-	running := h.running
+	out := h.q.Interrupt(opts, h.running)
+	h.stopLocked(out.Head)
+	return out.Result, nil
+}
+
+// stopLocked delivers a stop to the turn in flight per head, and releases h.mu. HeadCancelled
+// on a taken entry needs nothing: the pump's Commit fails and lands the turn as cancelled.
+// HeadStopPending does not arise here, because runTurn commits and receives under one lock.
+func (h *threadHandle) stopLocked(head agents.HeadAction) {
 	cancel := h.cancel
-	if keep {
-		h.queue = agents.KeptOnInterrupt(h.queue)
-	} else {
-		h.queue = nil
+	if head == agents.HeadCancelled && !h.running {
+		// The input accepted while nothing ran, stopped before the pump took it: no runTurn will
+		// land a verdict, and accept left the state at queued.
+		h.state = agents.TurnCancelled
+		h.mu.Unlock()
+		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCancelled})
+		return
 	}
-	if running {
+	stop := head == agents.HeadStopNow || head == agents.HeadStopPending || (head == agents.HeadNone && h.running)
+	if stop {
+		h.stopping = true
 		h.state = agents.TurnInterrupting
 	}
 	h.mu.Unlock()
-	if !running {
-		return nil
+	if !stop {
+		return
 	}
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnInterrupting})
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// RemoveQueued takes one entry out while it is cancellable (decision 5).
+func (h *threadHandle) RemoveQueued(id string) (agents.QueueItem, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.q.Remove(id)
+}
+
+// DismissDiscard drops a kept discard (decision 4).
+func (h *threadHandle) DismissDiscard(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.q.DismissDiscard(id)
+}
+
+// interruptAll is the stop for teardown (dropHandle, Agent shutdown; decision 8): the whole
+// queue goes and nothing is kept for return. The pump checks neither liveness nor a context,
+// so anything left queued would still be run by a handle that dropHandle has already taken out
+// of the map, on a store it is about to close.
+func (h *threadHandle) interruptAll() error {
+	h.mu.Lock()
+	h.q.DropAll()
+	out := h.q.Interrupt(agents.InterruptOpts{}, h.running)
+	h.stopLocked(out.Head)
 	return nil
 }
 

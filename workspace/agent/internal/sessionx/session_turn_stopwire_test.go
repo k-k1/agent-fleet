@@ -162,6 +162,7 @@ var stopWireTurnCases = map[string]struct {
 	"interrupt_second":                       {stage: stageInterrupt, wantCall: "interrupt"},
 	"interrupt_discard_queue":                {stage: stageInterrupt, wantCall: "interrupt"},
 	"interrupt_discard_queue_nothing_queued": {stage: stageInterrupt, wantCall: "interrupt"},
+	"interrupt_first_stops_unsent_start":     {stage: stageInterrupt, wantCall: "interrupt"},
 	"interrupt_tui":                          {tui: true},
 	"interrupt_discard_queue_tui":            {tui: true},
 	"remove": {wantCall: "remove", stage: func(t *testing.T, h *stopWireHandle, resp json.RawMessage) {
@@ -393,23 +394,24 @@ func TestMessagesStopQueueWireFixture(t *testing.T) {
 	}
 }
 
-// Where the two new keys part ways: queuedItems is only meaningful while a turn runs (it
-// hides a stale leftover, like queuedPrompts), discardedInputs is what a member sees after the
-// turn went idle, or the session stopped.
+// Where the keys part ways. queuedPrompts keeps its working gate (it hides a stale TUI
+// leftover). queuedItems comes only from a Managed driver's own queue, so it has no leftovers to
+// hide and shows whenever the runtime is up — a codex question raised with input queued behind
+// it included. discardedInputs is what a member sees after the turn went idle, or stopped.
 func TestMessagesStopQueueKeysGates(t *testing.T) {
 	item := agents.QueueItem{ID: "cm_a", Text: "next", Origin: agents.Origin{Kind: agents.OriginMember}, State: agents.EntryQueued}
 	discard := agents.Discard{ID: "dsc_1", At: "2026-09-30T12:00:00Z", Reason: agents.DiscardSecondStop,
 		Items: []agents.QueueItem{{ID: "cm_x", Text: "old", Origin: agents.Origin{Kind: agents.OriginMember}}}}
 	cases := []struct {
-		name                   string
-		alive                  bool
-		state                  string
-		wantItems, wantDiscard bool
+		name                                string
+		alive                               bool
+		state                               string
+		wantItems, wantPrompts, wantDiscard bool
 	}{
-		{"working", true, "working", true, true},
-		{"idle", true, "idle", false, true},
-		{"question", true, "question", false, true},
-		{"stopped", false, "stopped", false, true},
+		{"working", true, "working", true, true, true},
+		{"idle", true, "idle", true, false, true},
+		{"question", true, "question", true, false, true},
+		{"stopped", false, "stopped", false, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -428,8 +430,8 @@ func TestMessagesStopQueueKeysGates(t *testing.T) {
 			if _, ok := resp["queuedItems"]; ok != tc.wantItems {
 				t.Errorf("queuedItems present = %v, want %v", ok, tc.wantItems)
 			}
-			if _, ok := resp["queuedPrompts"]; ok != tc.wantItems {
-				t.Errorf("queuedPrompts present = %v, want %v (the two share one gate)", ok, tc.wantItems)
+			if _, ok := resp["queuedPrompts"]; ok != tc.wantPrompts {
+				t.Errorf("queuedPrompts present = %v, want %v", ok, tc.wantPrompts)
 			}
 			if _, ok := resp["discardedInputs"]; ok != tc.wantDiscard {
 				t.Errorf("discardedInputs present = %v, want %v", ok, tc.wantDiscard)

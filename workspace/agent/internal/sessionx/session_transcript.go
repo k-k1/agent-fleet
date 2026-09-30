@@ -444,9 +444,11 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && state == "working" && len(td.Queued) > 0 {
 		resp["queuedPrompts"] = td.Queued
 	}
-	// The same queue with ids, origins and states (ADR 0105 decision 5), under the same gate.
-	// queuedPrompts stays for older Consoles.
-	if alive && state == "working" && len(td.QueuedItems) > 0 {
+	// The same queue with ids, origins and states (ADR 0105 decision 5). queuedPrompts stays
+	// for older Consoles. Not gated on working: only a Managed driver fills QueuedItems, from
+	// its own queue, so there are no stale leftovers to hide — and a codex question raised with
+	// input queued behind it is exactly when the member needs to see that queue (decision 3).
+	if alive && len(td.QueuedItems) > 0 {
 		resp["queuedItems"] = td.QueuedItems
 	}
 	// What the last stops discarded and the driver keeps for return (decision 4). Not gated on

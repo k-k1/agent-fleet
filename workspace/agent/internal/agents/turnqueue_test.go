@@ -153,7 +153,7 @@ func TestEpisodeEndsOnNewMemberInputOnly(t *testing.T) {
 			q.Accept(peer("p"))
 			q.Accept(TurnInput{Prompt: "x", ClientMessageID: "o", Origin: Origin{Kind: OriginOperator}})
 			q.Accept(TurnInput{Prompt: "x", ClientMessageID: "u"}) // unset origin
-			if _, dup := q.Accept(member("b")); dup != (at == LedgerAtAccept) {
+			if _, dup := q.Accept(member("b")); !dup || q.Len() != 4 {
 				t.Fatalf("resend dup = %v", dup)
 			}
 			if !q.Episode() {
@@ -270,15 +270,20 @@ func TestCommittedEntryStopHandOver(t *testing.T) {
 }
 
 // A first stop on the lone input whose start is in flight stops it (it is the turn being
-// stopped), and it is not kept as a discard.
+// stopped). It never reached the runtime, so its text is kept as a first_stop discard: without
+// that it would be in neither the transcript nor the queue.
 func TestFirstStopOnLoneStartingInput(t *testing.T) {
 	q := newQ(t, LedgerAtAccept)
 	q.Accept(member("a"))
 	h := q.Take()
 	out := q.Interrupt(InterruptOpts{}, true)
-	if out.Head != HeadCancelled || out.Result.Discard != nil || q.Episode() {
+	if out.Head != HeadCancelled || q.Episode() {
 		t.Fatalf("out = %+v episode=%v", out, q.Episode())
 	}
+	if d := out.Result.Discard; d == nil || d.Reason != DiscardFirstStop {
+		t.Fatalf("the stopped input was not kept for return: %+v", d)
+	}
+	sameIDs(t, "kept", q.Discards()[0].Items, "a")
 	if q.Commit(h) {
 		t.Fatal("the stopped start still committed")
 	}
@@ -480,9 +485,10 @@ func TestFirstStopBeforeThePumpTakesTheLoneInput(t *testing.T) {
 	q.Accept(member("a"))
 	q.Accept(member("b"))
 	out := q.Interrupt(InterruptOpts{}, false)
-	if out.Head != HeadCancelled || out.Result.Discard != nil {
+	if out.Head != HeadCancelled || out.Result.Discard == nil || out.Result.Discard.Reason != DiscardFirstStop {
 		t.Fatalf("out = %+v", out)
 	}
+	sameIDs(t, "kept", out.Result.Discard.Items, "a")
 	sameIDs(t, "left", q.Items(), "b")
 	if !q.Episode() {
 		t.Fatal("b is still queued: the episode must be open")
@@ -536,6 +542,100 @@ func TestAcceptOutsideResend(t *testing.T) {
 		}
 		if _, dup := q.AcceptOutside(member("s")); !dup {
 			t.Fatalf("%v: the same steer twice was not a dup", at)
+		}
+	}
+}
+
+// A resend of an id already queued is not queued twice: a discard would carry it twice and the
+// Console would restore the same text twice.
+func TestResendIsQueuedOnce(t *testing.T) {
+	for _, at := range []LedgerPoint{LedgerAtAccept, LedgerAtTake} {
+		q := newQ(t, at)
+		q.Accept(member("a"))
+		running(t, q)
+		q.Accept(member("b"))
+		q.Accept(member("b"))
+		d := q.Interrupt(InterruptOpts{DiscardQueue: true}, true).Result.Discard
+		sameIDs(t, fmt.Sprint(at, " discarded"), d.Items, "b")
+	}
+}
+
+// muse: turn/start is sent while another client's turn runs, and a first stop lands before the
+// "queued" answer. The stop was pending on the head as the turn being started; once Hold says it
+// waits behind that other turn, the stop is redirected to it and the head continues.
+func TestHoldRedirectsAFirstStopPendingOnTheHead(t *testing.T) {
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(member("a"))
+	h := q.Take()
+	q.Commit(h)
+	if out := q.Interrupt(InterruptOpts{}, false); out.Head != HeadStopPending {
+		t.Fatalf("head = %v", out.Head)
+	}
+	if !q.Hold(h, true) {
+		t.Fatal("the first stop was not redirected to the turn the head waits behind")
+	}
+	if q.Received(h) {
+		t.Fatal("the redirected stop still reached the held input when it started")
+	}
+	if !q.Episode() {
+		t.Fatal("the held input still runs: the episode must be open")
+	}
+
+	// From a second stop (or a discard) the pending stop stays on the head.
+	for _, second := range []InterruptOpts{{DiscardQueue: true}, {}} {
+		q2 := newQ(t, LedgerAtAccept)
+		q2.Accept(member("a"))
+		h2 := q2.Take()
+		q2.Commit(h2)
+		q2.Accept(member("b")) // queued behind: a first stop opens an episode
+		q2.Interrupt(InterruptOpts{}, false)
+		if out := q2.Interrupt(second, false); out.Result.Stop == StopFirst {
+			t.Fatalf("%+v: not a discarding stop", second)
+		}
+		if q2.Hold(h2, true) {
+			t.Fatalf("%+v: a discarding stop was redirected away from the head", second)
+		}
+		if !q2.Received(h2) {
+			t.Fatalf("%+v: the discarding stop did not reach the head when it started", second)
+		}
+	}
+}
+
+// A committed start stopped by a first stop is not kept: it has reached the runtime, and the
+// transcript is where it shows.
+func TestFirstStopOnCommittedStartKeepsNothing(t *testing.T) {
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(member("a"))
+	h := q.Take()
+	q.Commit(h)
+	if out := q.Interrupt(InterruptOpts{}, false); out.Result.Discard != nil {
+		t.Fatalf("committed input kept as a discard: %+v", out.Result.Discard)
+	}
+	// Held behind another turn: a first stop keeps it running, nothing is discarded.
+	q2 := newQ(t, LedgerAtAccept)
+	q2.Accept(member("a"))
+	h2 := q2.Take()
+	q2.Hold(h2, true)
+	if out := q2.Interrupt(InterruptOpts{}, true); out.Result.Discard != nil || out.Head != HeadKept {
+		t.Fatalf("held input: %+v", out)
+	}
+}
+
+// On LedgerAtTake a discarded or removed id was never recorded by Take; it is recorded when it
+// goes, so a retry under the same id is dropped like on LedgerAtAccept.
+func TestLedgerAtTakeRecordsDiscardedAndRemovedIDs(t *testing.T) {
+	q := newQ(t, LedgerAtTake)
+	q.Accept(member("a"))
+	running(t, q)
+	q.Accept(member("b"))
+	q.Accept(member("c"))
+	if _, err := q.Remove("c"); err != nil {
+		t.Fatal(err)
+	}
+	q.Interrupt(InterruptOpts{DiscardQueue: true}, true)
+	for _, id := range []string{"b", "c"} {
+		if _, dup := q.Accept(member(id)); !dup {
+			t.Errorf("a retry of %s after it was discarded or removed was queued again", id)
 		}
 	}
 }

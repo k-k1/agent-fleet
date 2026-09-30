@@ -23,9 +23,9 @@
 | 場面 | 呼ぶもの |
 |---|---|
 | 作る | `NewTurnQueue(name, ledger, LedgerAtAccept)`（codex・opencode・muse）/ `LedgerAtTake`（copilot・cursor・kiro・lcpp）。ledger の記録はキューがする。ドライバは自分で `SeenOrRecord` しない |
-| 受け付け | `Accept(in) (id, dup)`。`dup` は LedgerAtAccept の再送（積まれない）。利用者の新しい入力はエピソードを終える |
+| 受け付け | `Accept(in) (id, dup)`。`dup` は再送で、積まれない。対象は、ledger が見たことのある id と、LedgerAtTake でキューにある／取り出し済みの id。利用者の新しい入力はエピソードを終える |
 | キューを通らない受け付け | `AcceptOutside(in) (id, dup)`（codex のネイティブ steer）。再送の判定と ledger の記録もここでするので、ドライバは `SeenOrRecord` しない。`dup` なら何も送らない。steer が失敗してキューに落ちるときは `AcceptRecorded(in)` |
-| ポンプ | `Take()` → （別のターンの後ろで待つ間は `Hold(t, true)`）→ ロックの中の最後に `Commit(t)`（false なら送らない）→ ロックを外して送る → ランタイムが受け取ったら `Received(t)`（true なら停止をポンプが届ける）→ ターンが落ち着いたら `Settle(t)` |
+| ポンプ | `Take()` → （別のターンの後ろで待つ間は `Hold(t, true)`。戻り値 `redirect` が true なら、1 回目の停止が始めかけの入力に向けて保留していた停止を、待っている先のターンへ届け直す）→ ロックの中の最後に `Commit(t)`（false なら送らない）→ ロックを外して送る → ランタイムが受け取ったら `Received(t)`（true なら停止をポンプが届ける）→ ターンが落ち着いたら `Settle(t)` |
 | 受け取る前にランタイムが消えた | `Requeue(t)`（停止待ちなら false、送り直さない） |
 | 停止 | `Interrupt(opts, busy) InterruptOutcome`。`busy` は、ランタイムで何かのターン（このドライバのものでも、別のクライアントのものでもよい）が走っているか。`Result` は `/turn` の応答、`Head` は取り出し済みの項目への処置 |
 | 取り除く | `Remove(id)` → 項目 / `ErrAlreadyStarted` / `ErrNotQueued` |
@@ -37,7 +37,7 @@
 
 - `HeadNone`: 取り出し済みの項目は無い。このキューから始めていない実行中のターン（再起動後に引き継いだもの）があれば、ドライバが止める。
 - `HeadKept`: 別のターンの後ろで待っている（`Hold`）。1 回目の停止では続ける。
-- `HeadCancelled`: まだ取り消せた。取り出し前でも、`busy=false` のときのキューの先頭は「始めかけの入力」として、1 回目の停止でここに入る（キューから消え、捨てた入力には入らない）。`Commit` が false を返すので、送られない。ドライバはそのターンを `TurnCancelled` にする。
+- `HeadCancelled`: まだ取り消せた。取り出し前でも、`busy=false` のときのキューの先頭は「始めかけの入力」として、1 回目の停止でここに入る（キューから消え、`first_stop` の捨てた入力として残る）。`Commit` が false を返すので、送られない。ドライバはそのターンを `TurnCancelled` にする。
 - `HeadStopPending`: 確定済み。`Received` が true を返したときに、ポンプが停止を届ける。
 - `HeadStopNow`: ランタイムが受け取り済み。停止する側が、その場で届ける。
 
@@ -47,8 +47,8 @@
 
 まだ ADR に書かれておらず、統合役が決めたこと:
 
-- 他にターンが走っていないときに取り出された入力を 1 回目の停止が止めた場合、その入力は「止めるターン」として扱う。捨てた入力には入れない。
-  走っているターンを止めても、そのターンの入力が戻らないのと同じ扱い。
+- 他にターンが走っていないときに取り出された（または受け付けただけの）入力を、1 回目の停止が止めた場合、その入力は「止めるターン」として扱う。
+  ランタイムに届く前に止めた入力は、捨てた入力（理由 `first_stop`）として戻せるように残す。最終レビューで、会話にもキューにも残らず消えると分かったため、当初の「残さない」を改めた。ADR 決定 1 にも追記した。
 - 出どころが空の入力は、利用者の入力として扱わない。
 
 ### 1.3 `ThreadHandle`（`internal/agents/driver.go`）
@@ -113,4 +113,19 @@ DismissDiscard(id string) bool
   - 🟡 LedgerAtTake で `Requeue` した項目を、次の `Take` が再送とみなして捨てていた。`Take` の時点で記録済みの項目には印を付けて、判定を免除した。
   - 🟡 ネイティブ steer の `Accepted` は再送でもエピソードを終えていた。`AcceptOutside` に置き換え、再送の判定と ledger の記録もここでするようにした。
   - 🟡 remove / dismiss_discard が `Resume` で止まっているランタイムを起こしていた。`LiveHandles` を足して直した。
-
+- B-drv2（copilot・cursor・kiro・lcpp）をマージした。陽性対照は 35 件。
+  - ACP は、`session/prompt` を書いた時点で受け取ったとみなす（`callWritten`）。
+  - 報告された指摘への対応: LedgerAtTake でキューにある id の再送が 2 回積まれ、捨てた入力にも 2 回出ていた。`Accept` が `dup` を返すようにした。
+- B-drv1（codex・opencode・muse）をマージし、`KeepOnInterrupt` / `KeptOnInterrupt` を消した。
+- codex レビュー（2 巡目、7 ドライバ）の指摘:
+  - 🔴 muse で、`turn/start` の応答（queued）が返る前に 1 回目の停止が来ると、停止待ちが保留された入力に残り、後で始まったときにそれを止めていた。
+    `Hold` が `redirect` を返して、その停止を先のターンへ振り替えるようにした。
+  - 🟡 ACP と lcpp の accept が `dup` を無視していた（アイドル時の再送で状態が queued のまま残る、送り手へ held と誤報する）。レーンに差し戻した。
+- Opus の最終レビュー: 🔴 1 件、🟡 4 件、🔵 9 件。
+  - 🔴 codex と muse では、実行中に送った訂正はネイティブの steer でターンに入り、停止でターンと一緒に終わる。ADR 決定 1 に追記し、ガイドにも書いた。
+  - 🟡 codex の質問中は `queuedItems` が出なかった。`queuedItems` を working で絞るのをやめた（ドライバ自身のキューなので、古い残りは無い）。
+  - 🟡 質問カードの取り消しと、peer の吹き出しの「入力欄へ戻す」は Console に、ACP の停止で許可の要求に答えていない件は B-drv2 に差し戻した。
+  - 🔵 1 回目の停止で送る前に止めた入力が消えていた。`first_stop` の捨てた入力として残すようにした。
+  - 🔵 LedgerAtTake で、捨てた id・取り除いた id を ledger に記録するようにした。
+  - 🔵 ガイドの抜けを直した。
+  - 🔵 生き残った変異と古いコメントは各レーンに差し戻した。
