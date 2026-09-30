@@ -49,7 +49,7 @@ jobs:
     steps:
       # Always develop, never the triggering run's ref: a contract run on a PR must not
       # decide what the bump is based on.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: develop
           persist-credentials: false

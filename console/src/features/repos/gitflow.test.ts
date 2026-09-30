@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../core/api/client.ts", () => ({ api: vi.fn(), apiJSON: vi.fn() }));
-const { shellQuote } = await import("./gitflow.ts");
+const { shellQuote, upstreamCommand } = await import("./gitflow.ts");
 
-// The origin-only note is a command to paste into a shell, and git accepts branch names that a
+// The untracked-branch repair is a command to paste into a shell, and git accepts branch names that a
 // shell would split or expand.
 describe("shellQuote", () => {
   it("leaves plain branch names alone", () => {
@@ -14,5 +14,12 @@ describe("shellQuote", () => {
     expect(shellQuote("dev;echo")).toBe("'dev;echo'");
     expect(shellQuote("dev$(id)")).toBe("'dev$(id)'");
     expect(shellQuote("it's")).toBe("'it'\\''s'");
+  });
+});
+
+describe("upstreamCommand", () => {
+  it("names origin's branch as the upstream, quoted like the branch", () => {
+    expect(upstreamCommand("develop")).toBe("git branch --set-upstream-to=origin/develop develop");
+    expect(upstreamCommand("dev;x")).toBe("git branch --set-upstream-to='origin/dev;x' 'dev;x'");
   });
 });

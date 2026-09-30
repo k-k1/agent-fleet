@@ -48,7 +48,7 @@ jobs:
     env:
       DISABLE_AUTOUPDATER: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: guard secret
         env:
@@ -138,7 +138,7 @@ jobs:
       # Make wording drift visible even on green (the observed spinner/footer lines are printed).
       - name: upload observed frames
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: claude-tui-contract-log
           path: /tmp/contract-public.log

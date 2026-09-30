@@ -129,18 +129,18 @@ type LaunchPlan struct {
 type LiveInfo struct {
 	State          string                // claude/opencode/codex live state; "" for shell/ssm
 	RemoteURL      string                // claude Remote Control URL, "" otherwise
-	Context        *session.ContextUsage // claude context fill, nil otherwise
+	Context        *session.ContextUsage // context fill; nil = sessionx derives it from Transcript()
 	Resumable      bool                  // false = stopped agent whose working dir is gone
 	BackgroundBusy bool                  // claude: idle turn but a run_in_background task lingers
 	// BackgroundBusyReason names WHAT is running (claude.BGReason*): "process" | "subagent"
 	// | "shell". "" when nothing is. Display-only — the badge lights on BackgroundBusy.
 	BackgroundBusyReason string
 	// LastSay is the opening line of the agent's newest utterance, already folded to one
-	// line and capped (claude.TailFacts); "" for the kinds that do not supply one yet, which
-	// the Console renders as a card with no such line rather than an empty one.
+	// line and capped (claude.TailFacts). "" leaves it to sessionx, which derives it from
+	// Transcript() for the kinds that do not read it themselves (overview_facts.go).
 	LastSay string
 	// TokenSpends is each recent reply's newly-consumed tokens, oldest first — the trend the
-	// overview card draws. nil for the kinds that do not supply one yet.
+	// overview card draws. nil leaves it to sessionx, as for LastSay.
 	TokenSpends []int
 }
 

@@ -26,7 +26,7 @@ jobs:
     env:
       COPILOT_AUTO_UPDATE: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: guard GitHub OAuth credential
         env:
           TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}

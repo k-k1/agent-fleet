@@ -35,7 +35,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No dependencies (standard library only), so the runner's python3 is used as is.
       - name: docs-check regression tests

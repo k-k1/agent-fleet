@@ -160,7 +160,7 @@ test("tenant admin: sign-in methods are editable but approval is not offered, an
 test("tenant admin: Admin disappears, and members and operations are reachable from tenant settings", async ({ page }) => {
   await page.route("**/api/**", async (route) => {
     const p = new URL(route.request().url()).pathname;
-    if (p === "/api/whoami") return route.fulfill({ json: { auth_mode: "dev", user: "alice", email: "alice@acme.co.jp" } });
+    if (p === "/api/whoami") return route.fulfill({ json: { auth_mode: "dev", user: "alice", email: "alice@acme.co.jp", home_erase: true } });
     if (p === "/api/tenants")
       return route.fulfill({ json: { tenants: [{ slug: "acme", name: "Acme", role: "tenant_admin" }], super_admin: false } });
     if (p === "/api/workspace") return route.fulfill({ json: { state: "running" } });

@@ -7,14 +7,16 @@
 // The config is shared by every worktree and session of the repository, so the dialog says
 // so, lists every existing key it would change, and sends back the keys it opened with: the
 // Agent answers 409 when someone changed them meanwhile, and the dialog reloads rather than
-// overwrite what it never showed. It never creates or switches a branch.
+// overwrite what it never showed. It never switches a branch; the only one it creates is a
+// local branch tracking an origin-only production or development branch, which gitflow-avh
+// needs (ADR 0103 decision 9's amendment).
 import { useEffect, useId, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { branchPlace, fetchGitflow, gitflowChanges, saveGitflow, shellQuote } from "./gitflow.ts";
+import { branchPlace, fetchGitflow, gitflowChanges, saveGitflow, upstreamCommand } from "./gitflow.ts";
 import type { GitflowState, GitflowValues } from "./gitflow.ts";
 
 interface GitflowInitModalProps {
@@ -37,7 +39,7 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
   const [st, setSt] = useState<GitflowState | null | undefined>(undefined);
   const [v, setV] = useState<GitflowValues | null>(null);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<{ text: string; field?: string } | null>(null);
+  const [err, setErr] = useState<{ text: string; field?: string; cmds?: string[] } | null>(null);
 
   const load = async () => {
     const s = await fetchGitflow(repo);
@@ -71,7 +73,12 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
     try {
       const res = await saveGitflow(repo, st.current, v);
       if (res.ok) {
-        toast(tr("gitflow.saved", { name: repo }), { kind: "success" });
+        toast(
+          res.created.length
+            ? tr("gitflow.saved_created", { name: repo, branches: res.created.join(", ") })
+            : tr("gitflow.saved", { name: repo }),
+          { kind: "success" },
+        );
         onSaved?.();
         onClose();
         return;
@@ -91,16 +98,34 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
         return;
       }
       const written = res.written ?? [];
-      if (written.length) {
-        // The keys written so far changed the config: without the new state as `expected`, the
-        // "save again" the message asks for would be a 409. The typed values stay.
+      const created = res.created ?? [];
+      const madeNote = created.length ? " " + tr("gitflow.err_created", { branches: created.join(", ") }) : "";
+      if (written.length || created.length) {
+        // Keys written so far changed the config: without the new state as `expected`, the
+        // "save again" the message asks for would be a 409. Created branches are local now, so
+        // their fields stop saying one will be made. The typed values stay.
         const s = await fetchGitflow(repo);
         if (s) setSt(s);
       }
+      if (res.code === "branch_failed") {
+        const untracked = res.untracked ?? [];
+        // A branch left without its upstream exists now, so saving again skips it: say how to
+        // finish it by hand instead of promising a retry fixes it.
+        setErr(
+          untracked.length
+            ? {
+                text: tr("gitflow.err_untracked", { err: res.message, branches: untracked.join(", ") }) + madeNote,
+                cmds: untracked.map(upstreamCommand),
+              }
+            : { text: tr("gitflow.err_branch_failed", { err: res.message }) + madeNote },
+        );
+        return;
+      }
       setErr({
-        text: written.length
-          ? tr("gitflow.err_partial", { err: res.message, keys: written.join(", ") })
-          : tr("gitflow.err_failed", { err: res.message }),
+        text:
+          (written.length
+            ? tr("gitflow.err_partial", { err: res.message, keys: written.join(", ") })
+            : tr("gitflow.err_failed", { err: res.message })) + madeNote,
       });
     } finally {
       setBusy(false);
@@ -119,11 +144,7 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
       case "local":
         return null;
       case "origin":
-        return (
-          <span className="ui-field-hint warn gitflow-place">
-            {tr("gitflow.origin_only")} <code>{`git branch ${shellQuote(name)} ${shellQuote("origin/" + name)}`}</code>
-          </span>
-        );
+        return <span className="ui-field-hint gitflow-place">{tr("gitflow.origin_only", { branch: name })}</span>;
       default:
         return <span className="ui-field-hint warn gitflow-place">{tr("gitflow.missing", { branch: name })}</span>;
     }
@@ -205,6 +226,11 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
         {err && (
           <p className="ui-field-hint svn-auth-err gitflow-err" role="alert">
             {err.text}
+            {err.cmds?.map((c) => (
+              <code key={c} className="gitflow-cmd">
+                {c}
+              </code>
+            ))}
           </p>
         )}
       </div>

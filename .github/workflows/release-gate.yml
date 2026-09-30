@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: build release artifacts (A+D)
         run: VERSION=$VERSION deploy/release/build.sh --compose
@@ -194,7 +194,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: build native artifacts (C+R+D)
         run: VERSION=$VERSION deploy/release/build.sh --native
@@ -341,7 +341,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No --ignore-checks: a warning here is a template edit, not a flag. The step runs
       # under `bash -e`, so cfn-lint's exit 4 (warnings only) fails it too, which is the
@@ -394,7 +394,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: shellcheck + syntax
         run: |
@@ -495,7 +495,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: build workspace image (baked variant, explicit BAKE_AGENT_CLIS=1)
         run: docker build --build-arg BAKE_AGENT_CLIS=1 -t agent-fleet/workspace:ci-default workspace

@@ -68,7 +68,7 @@ func TestGitflowInitRoutes(t *testing.T) {
 
 	var out gitflowInitOut
 	do(t, srv, "POST", "/repos/app/gitflow/init", body, http.StatusOK, &out)
-	if len(out.Written) != 7 || out.State.Current["gitflow.branch.develop"] != "develop" {
+	if len(out.Written) != 7 || out.State.Current["gitflow.branch.develop"] != "develop" || len(out.Created) != 1 || out.Created[0] != "develop" {
 		t.Fatalf("init = %+v", out)
 	}
 	do(t, srv, "POST", "/repos/app/branch-name", map[string]any{"item": map[string]any{"provider": "github", "key": "acme/app#1", "title": "x"}}, http.StatusOK, &named)
