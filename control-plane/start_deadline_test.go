@@ -166,6 +166,14 @@ func TestSampleStopsAnOverdueStart(t *testing.T) {
 	if _, ok := u.deadline.seen[ws.ID]; ok {
 		t.Error("the clock of a stopped launch was kept")
 	}
+	notes := deadlineNotifications(t, st, ws.MembershipID)
+	if len(notes) != 1 {
+		t.Fatalf("start-deadline notifications = %d after one automatic stop, want 1", len(notes))
+	}
+	if n := notes[0]; n.TargetType != "workspace" || n.TargetID != "" ||
+		n.Payload != `{"limitMinutes":30,"phase":"blocked: no container instance met all of its requirements"}` {
+		t.Errorf("notification = %+v, want a workspace target carrying the last phase and the limit", n)
+	}
 
 	rt.state = "running"
 	u.deadline.seen[ws.ID] = time.Now().Add(-31 * time.Minute)
@@ -174,6 +182,25 @@ func TestSampleStopsAnOverdueStart(t *testing.T) {
 	if n := rt.stops.Load(); n != 1 {
 		t.Fatalf("Stop calls = %d after a running sweep, want still 1", n)
 	}
+	if n := len(deadlineNotifications(t, st, ws.MembershipID)); n != 1 {
+		t.Errorf("start-deadline notifications = %d after a sweep that stopped nothing, want still 1", n)
+	}
+}
+
+// deadlineNotifications lists the member's start-deadline notifications.
+func deadlineNotifications(t *testing.T, st store.NotificationStore, membershipID string) []store.Notification {
+	t.Helper()
+	rows, err := st.ListNotifications(context.Background(), membershipID, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []store.Notification
+	for _, n := range rows {
+		if n.Kind == "start-deadline" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // The decision is re-taken under the fences: a Start that stamped last_active_at while the
@@ -267,6 +294,9 @@ func TestStartDeadlineLeavesAnAnsweringAgent(t *testing.T) {
 	d.stop(ctx, rt, ws)
 	if n := rt.stops.Load(); n != 0 {
 		t.Fatalf("Stop calls = %d with an Agent answering, want 0", n)
+	}
+	if n := len(deadlineNotifications(t, st, ws.MembershipID)); n != 0 {
+		t.Fatalf("start-deadline notifications = %d for a launch it left alone, want 0", n)
 	}
 	srv.Close()
 	d.stop(ctx, rt, ws)

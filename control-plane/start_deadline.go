@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sort"
 	"sync"
@@ -246,5 +247,20 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 	d.mu.Unlock()
 	log.Printf("start-deadline: stopped %s (tenant %s): still starting %s after its launch with no task running (last phase %q)",
 		ws.ContainerName, ws.TenantID, d.limitFor(rt), phase)
+	d.notify(ctx, ws, d.limitFor(rt), phase)
 	return
+}
+
+// notify tells the member that their launch was stopped and why. Without it they see only
+// starting -> stopped, and on ecs-ec2 the Stop has just cleared the phase that named the
+// reason, so the notification is the one place it survives until the next attempt. Only this
+// path writes it: a stop the member or the reaper asked for adds nothing.
+func (d *startDeadline) notify(ctx context.Context, ws store.Workspace, limit time.Duration, phase string) {
+	now := store.NowTS()
+	payload, _ := json.Marshal(map[string]any{"phase": phase, "limitMinutes": int(limit.Round(time.Minute) / time.Minute)})
+	n := store.Notification{EventID: "start-deadline:" + ws.ID + ":" + now, MembershipID: ws.MembershipID,
+		Kind: "start-deadline", TargetType: "workspace", Payload: string(payload), CreatedAt: now}
+	if err := d.mgr.store.InsertNotification(ctx, n); err != nil {
+		log.Printf("start-deadline: notify %s: %v", ws.ContainerName, err)
+	}
 }
