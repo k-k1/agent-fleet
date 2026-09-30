@@ -512,11 +512,14 @@ func (h *threadHandle) pump() {
 		// Guard for TUI co-use: wait while another client's turn is running (the same
 		// 60s as the maximum drain), then send anyway — serve handles /message serially
 		// even when busy. Waiting there, the input is queued behind that turn (ADR 0105
-		// decision 1): a first stop lets it continue, a second one discards it.
+		// decision 1): a first stop lets it continue, a second one discards it. It counts as
+		// held from before the status call, so a first stop that lands during that HTTP round
+		// trip cannot take it for the turn being started while serve is still running
+		// another client's.
+		h.mu.Lock()
+		h.tq().Hold(t, true)
+		h.mu.Unlock()
 		if serveSessionBusy(addr, ses, dir) {
-			h.mu.Lock()
-			h.tq().Hold(t, true)
-			h.mu.Unlock()
 			waitIdle(addr, ses, dir, 60*time.Second)
 		}
 		if h.commit(t) {
@@ -696,7 +699,7 @@ func (h *threadHandle) DismissDiscard(id string) bool {
 }
 
 // interruptAll is the stop for Agent shutdown: the whole queue goes and nothing is kept for
-// return (decision 8), because a kept entry would be started on the way down.
+// return (decision 8), because anything left queued would be started on the way down.
 func (h *threadHandle) interruptAll() error {
 	_, err := h.interrupt(agents.InterruptOpts{DiscardQueue: true}, true)
 	return err

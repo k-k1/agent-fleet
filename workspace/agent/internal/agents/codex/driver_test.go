@@ -508,7 +508,7 @@ func TestResumedActiveTurnQueuesUntilCompletion(t *testing.T) {
 
 // Agent shutdown interrupts through the teardown path: the whole queue goes, peer input
 // included, and nothing is kept for return (ADR 0105 decision 8).
-func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+func TestAbortManagedDiscardsTheQueue(t *testing.T) {
 	m, cl := newMockCodexServer(t)
 	h := newCodexTestHandle(t, cl, "codex-abort-kept")
 	registerCodexTestHandle(t, h)

@@ -280,7 +280,7 @@ func TestStopInTheStartGapInterruptsTheTurnOnArrival(t *testing.T) {
 		t.Fatalf("%d turn/interrupt sent before the turn existed", n)
 	}
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})
-	m := host.WaitForMethod(msp.MethodTurnInterrupt)
+	m := waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 	var ip msp.TurnInterruptParams
 	json.Unmarshal(m.Params, &ip)
 	if ip.TurnID == nil || *ip.TurnID != p.CommandID {
@@ -309,5 +309,5 @@ func TestStopInTheStartGapStopsPeerInputToo(t *testing.T) {
 		t.Fatal(err)
 	}
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})
-	host.WaitForMethod(msp.MethodTurnInterrupt)
+	waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 }
