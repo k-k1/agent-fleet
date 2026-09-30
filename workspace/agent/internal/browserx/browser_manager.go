@@ -216,10 +216,12 @@ func (m *browserManager) Create(req browserCreateRequest) (browserPageResponse, 
 		// Aborted without committing (a 204, a denied download): the tab is
 		// still on its about:blank, a live document, so it reads ready like any
 		// aborted navigation. p.url keeps the requested target so a reload
-		// retries it. A loader other than this navigation's or the committed
-		// one belongs to a newer navigation, whose own events end it.
+		// retries it. Only while this navigation's loader is still the tracked
+		// one: any other belongs to a newer navigation, pending or already
+		// committed, whose own events end it. Network.loadingFailed may have
+		// restored the state first; then the loader is no longer this one.
 		p.mu.Lock()
-		restore := p.loaderID == nav.LoaderID || p.loaderID == p.committedLoaderID
+		restore := p.loaderID == nav.LoaderID
 		if restore {
 			p.topRequestID = ""
 			p.loaderID = p.committedLoaderID

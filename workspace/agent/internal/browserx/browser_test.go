@@ -97,7 +97,7 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 		response = map[string]any{"sessionId": sessionID}
 	case "Page.navigate":
 		if f.navigateErrorText != "" {
-			response = map[string]any{"errorText": f.navigateErrorText}
+			response = map[string]any{"loaderId": "L1", "errorText": f.navigateErrorText}
 		}
 	case "Page.getFrameTree":
 		response = map[string]any{"frameTree": map[string]any{"frame": map[string]any{"id": "frame-1"}}}

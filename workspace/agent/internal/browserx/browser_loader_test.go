@@ -486,3 +486,59 @@ func TestBrowserInitialNavigationErrorText(t *testing.T) {
 		m.Close()
 	}
 }
+
+// TestBrowserAbortedInitialNavigationLeavesANewerOneAlone has the initial
+// navigation L1 aborted by a newer one, L2, whose events the loop handles
+// before Page.navigate answers. Whether L2 is still pending or already
+// committed, the late ERR_ABORTED must not end it: the page stays loading on
+// L2's request until L2's own load.
+func TestBrowserAbortedInitialNavigationLeavesANewerOneAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events []browserCDPEvent
+	}{
+		{"pending", []browserCDPEvent{
+			{Method: "Page.frameStartedNavigating", Params: json.RawMessage(`{"frameId":"frame-1","loaderId":"L2","url":"http://127.0.0.1:3000/next","navigationType":"differentDocument"}`)},
+			{Method: "Fetch.requestPaused", Params: json.RawMessage(`{"requestId":"r-L2","networkId":"L2","frameId":"frame-1","resourceType":"Document","request":{"url":"http://127.0.0.1:3000/next"}}`)},
+		}},
+		{"committed, not loaded", []browserCDPEvent{
+			{Method: "Page.frameStartedNavigating", Params: json.RawMessage(`{"frameId":"frame-1","loaderId":"L2","url":"http://127.0.0.1:3000/next","navigationType":"differentDocument"}`)},
+			{Method: "Fetch.requestPaused", Params: json.RawMessage(`{"requestId":"r-L2","networkId":"L2","frameId":"frame-1","resourceType":"Document","request":{"url":"http://127.0.0.1:3000/next"}}`)},
+			{Method: "Page.frameNavigated", Params: json.RawMessage(`{"frame":{"id":"frame-1","loaderId":"L2","url":"http://127.0.0.1:3000/next"}}`)},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cdp := newFakeBrowserCDP()
+			cdp.navigateErrorText = "net::ERR_ABORTED"
+			m := fakeBrowserManager(cdp)
+			t.Cleanup(m.Close)
+			var p *browserPage
+			cdp.setOnCall("Page.navigate", func() {
+				m.mu.Lock()
+				for _, page := range m.pages {
+					p = page
+				}
+				m.mu.Unlock()
+				// The initial navigation's own start, then the newer one's.
+				m.handleEvent(cdp, browserCDPEvent{Method: "Page.frameStartedNavigating", SessionID: p.sessionID, Params: json.RawMessage(`{"frameId":"frame-1","loaderId":"L1","url":"http://127.0.0.1:3000/","navigationType":"differentDocument"}`)})
+				for _, ev := range tc.events {
+					ev.SessionID = p.sessionID
+					m.handleEvent(cdp, ev)
+				}
+			})
+			if _, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}}); err != nil {
+				t.Fatal(err)
+			}
+			p.mu.Lock()
+			state, loader, top := p.state, p.loaderID, p.topRequestID
+			p.mu.Unlock()
+			if state != "loading" || loader != "L2" || top != "L2" {
+				t.Fatalf("after the initial abort: state=%q loader=%q topRequest=%q, want loading on L2", state, loader, top)
+			}
+			m.handleEvent(cdp, browserCDPEvent{Method: "Page.lifecycleEvent", SessionID: p.sessionID, Params: json.RawMessage(`{"frameId":"frame-1","loaderId":"L2","name":"load"}`)})
+			if got := p.response().State; got != "ready" {
+				t.Fatalf("L2's load: state %q, want ready", got)
+			}
+		})
+	}
+}
