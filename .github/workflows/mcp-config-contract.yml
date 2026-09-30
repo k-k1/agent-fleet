@@ -27,7 +27,7 @@ permissions:
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "workspace/agent/internal/mcpreg/**"
       - "workspace/agent/internal/paths/paths.go"
@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   materialize-drift:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     strategy:
       fail-fast: false

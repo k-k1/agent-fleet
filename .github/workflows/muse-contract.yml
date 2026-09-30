@@ -29,7 +29,7 @@ permissions:
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "workspace/agent/internal/msp/**"
       - "workspace/agent/internal/agents/muse/**"
@@ -53,7 +53,7 @@ concurrency:
 
 jobs:
   drift:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     outputs:
       version: ${{ steps.rel.outputs.version }}
@@ -177,7 +177,7 @@ jobs:
     # pin run that recorded an older version would move `tested` backwards and dispatch the
     # contract again the next day.
     if: inputs.version == 'latest'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
