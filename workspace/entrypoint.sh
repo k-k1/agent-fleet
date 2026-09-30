@@ -572,8 +572,9 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
 fi
 
 # Agent CLI self-update (opt-in + operator-gated). In a baked image (BAKE_AGENT_CLIS=1)
-# the CLIs (claude/opencode/codex/copilot), agy, and rtk sit at /usr/local, pinned to
-# the image version; the lean default is described further down. Both
+# the CLIs (claude/opencode/codex/copilot) and agy sit at /usr/local, pinned to the image
+# version, and so does rtk unless the build set BAKE_RTK=0; the lean default is described
+# further down. Both
 # gates come from the CP as env at container start: AF_AGENT_SELF_UPDATE_ALLOWED=1 (the
 # tenant policy) AND AF_AGENT_SELF_UPDATE=1 (the member's per-workspace opt-in, stored
 # in the CP DB so it can be toggled while the container is stopped).
