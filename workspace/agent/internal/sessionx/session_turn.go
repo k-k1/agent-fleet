@@ -81,13 +81,23 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
 		return
 	}
-	if req.Op != "start" && req.Op != "steer" && req.Op != "interrupt" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_op", "op must be start, steer or interrupt")
+	switch req.Op {
+	case "start", "steer", "interrupt", "remove", "dismiss_discard":
+	default:
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_op", "op must be start, steer, interrupt, remove or dismiss_discard")
 		return
 	}
 	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	// The queue ops belong to the Managed drivers (ADR 0105 decision 6): on Terminal the queue
+	// lives inside the CLI and Agent Fleet can neither empty it nor list it. Refused before
+	// any tmux probe, so it reads the same whether or not the pane is up.
+	if meta.DriverKind() != session.DriverManaged && ((req.Op == "interrupt" && req.DiscardQueue) || req.Op == "remove" || req.Op == "dismiss_discard") {
+		httpx.WriteErr(w, http.StatusConflict, "not_managed",
+			"the queue is held by the CLI in a Terminal session; stop and queue editing are Managed-only")
 		return
 	}
 	// Interrupt included: mid-switch the meta still says managed, and handleManagedTurn's
@@ -155,12 +165,48 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 		writeRuntimeErr(w, err)
 		return
 	}
+	// interrupt, remove and dismiss_discard start no turn: none of them may mark the session
+	// working or cancel a stop-after-turn arm (the arm is cancelled by new work, not by a stop).
 	switch req.Op {
 	case "interrupt":
-		if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
+		res, err := h.Interrupt(agents.InterruptOpts{DiscardQueue: req.DiscardQueue})
+		if err != nil {
 			writeRuntimeErr(w, err)
 			return
 		}
+		// discard is a typed nil pointer when nothing cancellable was queued: it goes out as
+		// null, which the Console reads as "no notice".
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"sent": meta.Name, "op": req.Op, "stop": res.Stop, "discard": res.Discard,
+		})
+		return
+	case "remove":
+		if req.ID == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "missing_id", "id is required for remove")
+			return
+		}
+		item, err := h.RemoveQueued(req.ID)
+		switch {
+		case errors.Is(err, agents.ErrAlreadyStarted):
+			httpx.WriteErr(w, http.StatusConflict, "already_started", "the input has already started; it can no longer be removed")
+		case errors.Is(err, agents.ErrNotQueued):
+			httpx.WriteErr(w, http.StatusNotFound, "not_queued", "no such queued input")
+		case err != nil:
+			writeRuntimeErr(w, err)
+		default:
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name, "op": req.Op, "removed": item})
+		}
+		return
+	case "dismiss_discard":
+		if req.ID == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "missing_id", "id is required for dismiss_discard")
+			return
+		}
+		// Idempotent: false means another tab dismissed it first, or newer discards pushed it out.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"sent": meta.Name, "op": req.Op, "dismissed": h.DismissDiscard(req.ID),
+		})
+		return
 	default: // start / steer
 		if strings.TrimSpace(req.Prompt) == "" && len(req.Attachments) == 0 {
 			httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt is required for start/steer")

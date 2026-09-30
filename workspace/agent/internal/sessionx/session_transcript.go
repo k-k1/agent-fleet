@@ -444,6 +444,16 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && state == "working" && len(td.Queued) > 0 {
 		resp["queuedPrompts"] = td.Queued
 	}
+	// The same queue with ids, origins and states (ADR 0105 decision 5), under the same gate.
+	// queuedPrompts stays for older Consoles.
+	if alive && state == "working" && len(td.QueuedItems) > 0 {
+		resp["queuedItems"] = td.QueuedItems
+	}
+	// What the last stops discarded and the driver keeps for return (decision 4). Not gated on
+	// the state: the notice is exactly what a member sees after the turn went idle.
+	if len(td.Discards) > 0 {
+		resp["discardedInputs"] = td.Discards
+	}
 	// Compaction in flight (opencode session.time_compacting): reuse the chat's claude
 	// compacting block (spinner-only — opencode reports no progress percentage).
 	if alive && td.Compacting {
