@@ -83,11 +83,10 @@ until it is running, then reconnect.
   not a substitute for DevTools — there is no DOM, Network, Sources or Storage.
 - Upload and download, clipboard, drag and drop, audio, video, WebRTC, permission
   prompts and multiple tabs are all out of scope.
-- **Smartphones cannot start this flow.** At a 390×844 viewport the `⋯` in the
-  workspace action bar overflows and overlaps other controls, so it cannot be tapped.
-  Everything after that point works — the toolbar, tapping the canvas, Japanese input,
-  the Console drawer — but there is no way in, so do not tell a phone user to open the
-  pane. Desktop and tablet only.
+- **On a smartphone the entry point moves into `⋯`.** At phone widths the workspace
+  action bar has no Preview button; `⋯` at its right end opens a popover that holds the
+  same port / path fields and "Open in pane". From there it is the same flow — the
+  toolbar, tapping the canvas, Japanese input, the Console drawer.
 
 ## For agents working inside a Workspace
 

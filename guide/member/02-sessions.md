@@ -694,7 +694,7 @@ is why `/list-agents` does nothing here; use the Agent Fleet version above inste
 | A stopped session | Can't be reached | **Resumed, then delivered** |
 | Record of it | One collapsed line in the terminal | A badge with the sender in the chat view |
 | Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |
-| Holding or refusing on the receiving side | Available | Not yet — only the workspace-wide on/off |
+| Holding or refusing on the receiving side | Available | Not offered — every session in a workspace is yours, so there is no one to refuse; only the workspace-wide on/off |
 
 The block is applied **through the launch settings** (a version shipped where environment variables
 no longer closed it). If something does arrive over Claude's own channel anyway, **it shows up in
