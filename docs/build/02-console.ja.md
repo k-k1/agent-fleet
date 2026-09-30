@@ -53,6 +53,8 @@ CP が配信する（§2.7）。Console と CP の会話は次のとおり。
 | `lib/` | 純ロジックと小さな hook。例: コミットグラフのレーン・ファイルアイコンとメタデータ・端末の色味・UI 設定の同期（`settings.ts`）・作業グループ。i18n は `lib/i18n/`（§2.8）|
 | `styles/` | テーマ変数の唯一の置き場 `tokens.css` と、リセットの `base.css` |
 | `types/` | 横断のドメイン型。例: セッション・チャット・メモ |
+| `assets/` | 同梱の SVG: `brandicons/`（エージェント CLI・接続先サービス・モデル提供元。`lib/brandicons.ts` が引く）と `fileicons/`（ファイルアイコンのセットごとに 1 フォルダ。`lib/fileicons.ts` が引く）。それぞれ出典とライセンスを `ATTRIBUTION.md` に置く |
+| `marp-themes/` | 独自の Marp テーマ。`/* @theme name */` ヘッダ付きの CSS 1 ファイルが 1 テーマで、`features/viewer/MarpView.tsx` が登録し、デッキは `theme: <name>` で選ぶ |
 | `test/` | dom テストのセットアップと、ソース全体に掛ける静的検査（例: 生の制御文字が無い・兄弟要素の key が重複しない）|
 
 **`features/`** は機能ごとに 1 ディレクトリで、コンポーネント・たいてい `store.ts`・多くは `api.ts`・

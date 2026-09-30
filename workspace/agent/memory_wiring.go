@@ -3,9 +3,7 @@ package main
 // memory_wiring.go — wires `internal/memoryx`'s outward dependencies (memoryx → main) in
 // one place.
 //
-// The opposite direction (main → memoryx) lives as aliases in alias_memory.go. They are two
-// files because aliases are peeled off wholesale at a wave boundary while the wiring stays
-// (memoryx reaching for errcodes.go is a relationship a reclaim does not remove).
+// The opposite direction (main → memoryx) needs no file: main names memoryx.X directly.
 //
 // Never give the wiring defaults. `memoryx.Configure` panics on anything left unwired.
 // Everything here is a string, so an accepted zero value would send the code `""` to the

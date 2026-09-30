@@ -13,8 +13,8 @@
 // reflect-based completeness check. With an interface, a missing member is a compile
 // error, so the check itself is unnecessary.
 //
-// The other direction — main calling into mcpsrv — is absorbed by
-// control-plane/alias_mcp.go alone.
+// The other direction — main calling into mcpsrv — needs no seam: main names mcpsrv.X
+// directly.
 package mcpsrv
 
 import (
@@ -28,7 +28,7 @@ import (
 )
 
 // CP is everything mcpsrv needs from the control plane. The implementation is
-// control-plane/alias_mcp.go's adapter over *manager.
+// control-plane/mcp_wiring.go's adapter over *manager.
 type CP interface {
 	// --- Data ------------------------------------------------------------------
 	// Store is the CP metadata store. mcpsrv reads PATs, identities, memberships,

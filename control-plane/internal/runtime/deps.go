@@ -21,7 +21,7 @@ import (
 )
 
 // Workspace is the CP's workspace record as the adapters read it. It is a field-for-
-// field copy of the CP's own Workspace (control-plane/store.go), and main converts
+// field copy of the CP's own Workspace (control-plane/internal/store/store.go), and main converts
 // with a plain struct conversion — so if either side gains, loses or retypes a field
 // the conversion stops compiling rather than silently dropping it.
 //

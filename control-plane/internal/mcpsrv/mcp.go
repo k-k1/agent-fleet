@@ -40,7 +40,7 @@ const mcpSessionOutputTailBytes = 32 << 10
 type API struct{ cp CP }
 
 // New builds the /mcp handler set over the CP seam. The CP's own wiring is
-// control-plane/alias_mcp.go.
+// control-plane/mcp_wiring.go.
 //
 // It refuses to build on a stale scope copy. scopeRead / scopeWrite below are the
 // VALUES of pat.go's ladder written out a second time, and nothing but this check ties

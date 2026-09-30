@@ -7,7 +7,7 @@ package browserx
 //
 // The names are the same as before the move, so the calls in the moved files did not
 // change by a single character. Wiring happens exactly once, in the init of package main's
-// alias_browser.go.
+// browser_seam.go.
 //
 // Calling one while it is still nil panics. A harmless default would let a test pass green
 // with the wiring forgotten, so a missing wire fails loudly instead. The browserx-only

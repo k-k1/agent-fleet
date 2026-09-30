@@ -3,9 +3,7 @@ package main
 // session_wiring.go wires `internal/sessionx`'s outward dependencies (sessionx → main) in one
 // place.
 //
-// The other direction (main → sessionx) lives in alias_session.go as aliases. They are two
-// files because the aliases are peeled away wholesale at a wave boundary while this wiring
-// stays: sessionx's need for errcodes.go and fs.go outlives the reclamation.
+// The other direction (main → sessionx) needs no file: main names sessionx.X directly.
 //
 // The name follows the sibling families (git_wiring.go / mcp_wiring.go / memory_wiring.go):
 // family name + _wiring. The destination package is `internal/sessionx` rather than
