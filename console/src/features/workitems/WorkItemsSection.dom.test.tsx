@@ -539,6 +539,36 @@ describe("WorkItemsSection", () => {
     expect(scroller.scrollTop).toBe(500);
   });
 
+  it("leaves scrollTop alone when the section top is still visible on collapse", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <div className="app-rail-scroll">
+              <WorkItemsSection />
+            </div>
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    expect(rows()).toBe(41);
+    const scroller = host.querySelector(".app-rail-scroll") as HTMLElement;
+    const sec = host.querySelector(".ui-section") as HTMLElement;
+    // Everything fits on screen: the section top sits below the scroller top, so no rows
+    // above the viewport disappear and the browser keeps scrollTop on its own.
+    scroller.scrollTop = 0;
+    scroller.getBoundingClientRect = () => ({ top: 0 }) as unknown as DOMRect;
+    sec.getBoundingClientRect = () => ({ top: 80 }) as unknown as DOMRect;
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    expect(rows()).toBe(10);
+    expect(scroller.scrollTop).toBe(0);
+  });
+
   // docs/log/80 §80.20: reported from the real rail — the same JQL saved twice turned 41 items
   // into 82 rows.
   it("keeps one row when two queries return the same ticket, and the badge does not count the duplicate", async () => {

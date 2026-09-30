@@ -233,7 +233,11 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     collapseAnchor.current = null;
     if (!anchor.sec.isConnected || !anchor.scroller.isConnected) return;
     const sc = anchor.scroller as HTMLElement;
-    sc.scrollTop += anchor.sec.getBoundingClientRect().top - anchor.scroller.getBoundingClientRect().top;
+    // Only pull back up. When the section top is still visible (d >= 0) nothing above
+    // the viewport was removed, so the browser keeps scrollTop on its own and pinning
+    // the top would wrongly push the rail down.
+    const d = anchor.sec.getBoundingClientRect().top - anchor.scroller.getBoundingClientRect().top;
+    if (d < 0) sc.scrollTop += d;
   }, [expanded]);
   // The tracker search answers the needle it was pressed for; typing on makes it stale, so it
   // is dropped rather than shown under a filter it no longer matches.

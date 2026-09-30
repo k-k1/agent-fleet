@@ -41,11 +41,10 @@
 
 /* One-line filter, shown only on a crowded rail (docs/log/80 §80.18.4). It is not a query UI:
    no operators. The box and its clear button are `.proj-filter`, so every left-pane filter
-   looks and clears the same way. */
-/* Pinned filter, mirroring the repo tree's .proj-filter-bar: sticks just below the
-   section header (--sec-head-h, published by Section) so a crowded rail keeps the
-   filter in reach while the rows scroll. Opaque full-width band so rows don't show
-   through; below the header band, above the rows. */
+   looks and clears the same way. Pinned like the repo tree's .proj-filter-bar: sticks just
+   below the section header (--sec-head-h, published by Section) so a crowded rail keeps the
+   filter in reach while the rows scroll. Opaque full-width band so rows don't show through;
+   below the header band (z:3), above the rows, which carry no z-index. */
 .wi-filter {
   position: sticky;
   top: var(--sec-head-h, 34px);
