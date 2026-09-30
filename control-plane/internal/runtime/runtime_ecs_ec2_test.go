@@ -4609,6 +4609,44 @@ func TestECSPlacementBlockedIgnoresTheWaitItCausedItself(t *testing.T) {
 	}
 }
 
+// A task placed after the complaint makes it moot, however old it is. State() stays
+// `starting` until the rollout COMPLETES, and on the dev deployment that came 122 s after
+// the task started: the event aged past the grace in between, and the member was told
+// "Cannot start. Waiting will not help" about a workspace that was already up (#1271).
+func TestECSPlacementBlockedIgnoresAnEventATaskOutlived(t *testing.T) {
+	now := time.Now()
+	deploy := now.Add(-163 * time.Second)
+	complained := placeEvent(now.Add(-152*time.Second), unplaceable) // past the grace
+	started := placeEvent(now.Add(-122*time.Second), "(service af-ws-x) has started 1 tasks: (task abc).")
+	placed := func(running int32, events ...ecstypes.ServiceEvent) ecstypes.Service {
+		s := svcWithEvents(1, running, deploy, events...)
+		s.Deployments[0].RunningCount = running
+		s.Deployments[0].RolloutState = ecstypes.DeploymentRolloutStateInProgress
+		return s
+	}
+
+	if got := ecsPlacementBlocked(placed(1, started, complained), now); got != "" {
+		t.Fatalf("a running task, rollout still in progress, was called blocked: %q", got)
+	}
+
+	// The running count alone decides, so a change in ECS's wording cannot bring this back.
+	if got := ecsPlacementBlocked(placed(1, complained), now); got != "" {
+		t.Fatalf("a PRIMARY deployment with a running task was called blocked: %q", got)
+	}
+
+	// The task has since died and the count is back at 0: the complaint still predates a
+	// placement, so it explains nothing about why there is no task now.
+	if got := ecsPlacementBlocked(placed(0, started, complained), now); got != "" {
+		t.Fatalf("a complaint older than a started task was reported: %q", got)
+	}
+
+	// A wall that rises after the start is still named once it has stood.
+	again := placeEvent(now.Add(-placementBlockedGrace-time.Second), unplaceable)
+	if got := ecsPlacementBlocked(placed(0, again, started, complained), now); !strings.Contains(got, "missing an attribute") {
+		t.Fatalf("a wall newer than the started task was hidden: %q", got)
+	}
+}
+
 // It only reaches the Console once it is on the phase, and clearing it when the task
 // starts running is part of the contract: a phase left behind keeps bootPhase != "", and
 // the start dialog stays on screen.

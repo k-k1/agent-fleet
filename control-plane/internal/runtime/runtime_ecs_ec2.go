@@ -1163,10 +1163,23 @@ const blockedPhasePrefix = "blocked: "
 //
 // ⚠️ And an event has to STAND for placementBlockedGrace before it counts, because the
 // same sentence is emitted by a wait the CP created itself — see that constant.
+//
+// ⚠️ A task placed after the event makes the event moot, however old it is. State() keeps
+// answering `starting` until the rollout COMPLETES, which can be minutes after the task
+// started (measured: 122 s), so the grace alone does not stop a placed task from being
+// called a wall. Two checks, because each misses a case the other covers: the PRIMARY
+// deployment's runningCount does not depend on ECS's wording, and a newer "has started"
+// event still answers when that task has since died and runningCount is back at 0.
 func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 	var since time.Time
 	for _, d := range s.Deployments {
-		if aws.ToString(d.Status) == "PRIMARY" && d.CreatedAt != nil {
+		if aws.ToString(d.Status) != "PRIMARY" {
+			continue
+		}
+		if d.RunningCount >= 1 {
+			return "" // a workspace service wants one task, and it is placed
+		}
+		if d.CreatedAt != nil {
 			since = *d.CreatedAt
 		}
 	}
@@ -1174,7 +1187,12 @@ func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 		if ev.CreatedAt == nil || ev.CreatedAt.Before(since) {
 			continue
 		}
-		if msg := aws.ToString(ev.Message); strings.Contains(msg, "unable to place a task") {
+		msg := aws.ToString(ev.Message)
+		if strings.Contains(msg, "has started ") {
+			// Newest first: every complaint past this point predates a task that was placed.
+			return ""
+		}
+		if strings.Contains(msg, "unable to place a task") {
 			// Not `return ""` on a young one: ECS lists newest first, and a wedge that
 			// ECS re-emitted leaves a fresh copy in front of the aged original. Skipping
 			// forward reports the original; a bare return would hide the wall every time
@@ -1203,8 +1221,8 @@ func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 //
 // 120s is that 55-second window with margin. Erring long is the cheap direction: a real
 // wedge is permanent, so the only cost is naming it later, while erring short is the bug
-// above. The transient case never reports even after ageing past this, because by then
-// the task is RUNNING and State() takes the branch that clears the phase instead.
+// above. Once the task is placed the event is moot however old it gets; ecsPlacementBlocked
+// checks that itself rather than relying on State() having reached `running` first.
 const placementBlockedGrace = 120 * time.Second
 
 // Start brings the workspace up on a slot. Everything that can be slow is pushed off
