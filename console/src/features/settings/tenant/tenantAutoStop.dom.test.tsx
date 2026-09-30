@@ -81,7 +81,9 @@ describe("a start the Control Plane stopped", () => {
   });
 
   it("names the limit, the last phase and the time in the member detail", async () => {
-    api.mockResolvedValue({ running: false, sessions: [] });
+    api.mockImplementation((p: string) =>
+      Promise.resolve(p.endsWith("/stats") ? { running: false, auto_stop: STOPPED.auto_stop } : { sessions: [] }),
+    );
     await render(
       <MemberView slug="acme" member={STOPPED} isSuper={false} onChanged={() => {}} onRemoved={() => {}} />,
     );
@@ -90,6 +92,22 @@ describe("a start the Control Plane stopped", () => {
     expect(text).toContain(`It was still starting after 30 min. Last step: ${en["wsstart.blocked"]} — ${PHASE}`);
     expect(text).toContain(en["admin.auto_stop_at"].split("{at}")[1].trim());
   });
+
+  // The detail is opened from a roster snapshot that still carries auto_stop. Once the member
+  // restarts, the poll is what counts: the header says Running and the old reason must go,
+  // and a launch still starting has no reason either (the CP omits it then).
+  for (const [name, stats] of [
+    ["running", { running: true }],
+    ["starting", { running: false, starting: true }],
+  ] as const) {
+    it(`drops the snapshot's reason once the poll says ${name}`, async () => {
+      api.mockImplementation((p: string) => Promise.resolve(p.endsWith("/stats") ? stats : { sessions: [] }));
+      await render(
+        <MemberView slug="acme" member={STOPPED} isSuper={false} onChanged={() => {}} onRemoved={() => {}} />,
+      );
+      expect(document.body.textContent).not.toContain(en["noti.kind_start_deadline"]);
+    });
+  }
 
   it("says nothing extra for a member without the record", async () => {
     api.mockResolvedValue({ running: false, sessions: [] });

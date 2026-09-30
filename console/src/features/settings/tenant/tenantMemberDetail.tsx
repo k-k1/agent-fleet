@@ -445,7 +445,8 @@ export function MemberView({
           lists them all: "s5 is running" and "s3 is pinned" call for different next moves from
           the operator (wait, or ask for the pin to be released). */}
       <MemberIdleDetail idle={member.idle} state={member.state} />
-      <MemberAutoStopDetail autoStop={member.auto_stop} />
+      {/* From the poll, never from `member`: that snapshot keeps the reason after a restart. */}
+      <MemberAutoStopDetail autoStop={stats?.auto_stop} />
 
       <section className="admin-panel">
         <h4>{tr("admin.ws_resources")}</h4>

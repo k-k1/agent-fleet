@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -96,5 +97,64 @@ func TestAdminMembersShowTheStartDeadlineStop(t *testing.T) {
 	var n int
 	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_auto_stop`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("auto-stop rows after DeleteWorkspace = %d (err %v), want 0", n, err)
+	}
+}
+
+// failStartStub is a stopped workspace whose next Start fails, as an ecs-ec2 Start does when
+// preparing secrets or the home fails after the launch began.
+type failStartStub struct{ deadlineStub }
+
+func (r *failStartStub) Start(context.Context) error { return errors.New("prepare secrets: denied") }
+
+// A new launch is a new story whether or not it succeeds: a Start that fails must not leave
+// the admin reading the previous launch's deadline stop as the reason it is down.
+func TestAFailedStartClearsThePreviousAutoStop(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	if err := st.SetWorkspaceState(ctx, ws.ID, "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetWorkspaceAutoStop(ctx, ws.ID, store.WorkspaceAutoStop{Kind: "start-deadline", Phase: "blocked: x", StoppedAt: store.NowTS()}); err != nil {
+		t.Fatal(err)
+	}
+	rt := &failStartStub{deadlineStub{state: "stopped"}}
+	res := &resolved{rt: rt, ws: ws, mv: store.MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}}
+	if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStartedRT(ctx, res, rt); aerr == nil {
+		t.Fatal("the Start did not fail, the test proves nothing")
+	}
+	if as := store.CurrentAutoStop(ctx, st, ws.MembershipID, rt.State(ctx)); as != nil {
+		t.Errorf("after a failed Start the admin still reads %+v", *as)
+	}
+}
+
+// The member detail polls /stats and reads the reason from there: the roster row it was
+// opened from is a snapshot that would keep the reason after the member restarted.
+func TestMemberStatsCarriesTheAutoStopOnlyWhileDown(t *testing.T) {
+	for _, c := range []struct {
+		state string
+		want  bool
+	}{{"stopped", true}, {"starting", false}, {"running", false}} {
+		st, mgr, _, _ := destroyFixture(t, stateOnlyFactory{state: c.state})
+		if err := st.SetWorkspaceAutoStop(context.Background(), "W-1",
+			store.WorkspaceAutoStop{Kind: "start-deadline", Phase: "blocked: x", LimitMinutes: 30, StoppedAt: store.NowTS()}); err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants/sales/members/leaver-acme-co-jp/stats", nil)
+		r.SetPathValue("slug", "sales")
+		r.SetPathValue("key", "leaver-acme-co-jp")
+		r.Header.Set("X-Forwarded-Email", "boss@acme.co.jp")
+		w := httptest.NewRecorder()
+		newAdminAPI(mgr).memberStats(w, r)
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("state=%s: %d %v", c.state, w.Code, err)
+		}
+		as, _ := out["auto_stop"].(map[string]any)
+		if got := as != nil; got != c.want {
+			t.Errorf("state=%s: auto_stop=%v, want present=%v", c.state, out["auto_stop"], c.want)
+		}
+		if as != nil && (as["kind"] != "start-deadline" || as["phase"] != "blocked: x") {
+			t.Errorf("state=%s: auto_stop=%v", c.state, as)
+		}
 	}
 }

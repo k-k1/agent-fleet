@@ -1312,6 +1312,9 @@ type WorkspaceStore interface {
 	// every start path ends there, so none of them can leave a stale reason behind.
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
 	SetWorkspaceAutoStop(ctx context.Context, workspaceID string, a WorkspaceAutoStop) error
+	// ClearWorkspaceAutoStop is called just before a Start: a start that then fails must not
+	// read as the previous launch's stop.
+	ClearWorkspaceAutoStop(ctx context.Context, workspaceID string) error
 	GetWorkspaceAutoStopByMembership(ctx context.Context, membershipID string) (WorkspaceAutoStop, bool, error)
 	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
 	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)

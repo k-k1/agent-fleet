@@ -1691,6 +1691,12 @@ func (s *SQL) SetWorkspaceAutoStop(ctx context.Context, workspaceID string, a Wo
 	return err
 }
 
+// ClearWorkspaceAutoStop deletes the automatic-stop record, if any.
+func (s *SQL) ClearWorkspaceAutoStop(ctx context.Context, workspaceID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM workspace_auto_stop WHERE workspace_id=?`, workspaceID)
+	return err
+}
+
 // GetWorkspaceAutoStopByMembership returns the automatic-stop record of the membership's
 // workspace; ok is false when there is none.
 func (s *SQL) GetWorkspaceAutoStopByMembership(ctx context.Context, membershipID string) (WorkspaceAutoStop, bool, error) {
