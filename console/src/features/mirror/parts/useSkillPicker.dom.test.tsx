@@ -101,4 +101,31 @@ describe("useSkillPicker outside tap", () => {
     act(() => tap(q("send")!));
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  // The dismissed token has to trigger a render on its own: a typing-initiated list never set
+  // skillBtnOpen, so closing it changes no other state and the list would stay drawn.
+  it("an outside tap closes the argument hint at once", async () => {
+    const onSend = vi.fn();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(<Composer onSend={onSend} />));
+    await act(async () => type(q("input") as HTMLTextAreaElement, "/issue-to-pr opus"));
+    expect(q("hint")).not.toBeNull();
+    act(() => tap(q("send")!));
+    expect(q("hint")).toBeNull();
+  });
+
+  it("Esc closes a typed list at once", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(<Composer onSend={() => {}} />));
+    await act(async () => type(q("input") as HTMLTextAreaElement, "/iss"));
+    expect(q("hint")).not.toBeNull();
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(q("hint")).toBeNull();
+  });
 });
