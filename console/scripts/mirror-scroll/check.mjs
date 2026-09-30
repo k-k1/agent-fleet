@@ -66,7 +66,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //                    completion anchor: parked at the final answer's first line. `complete-live`
 //                    (the answer streamed into view) must stay at the bottom instead.
 //                    `complete-midprose` (narration streamed, then more tools, then the answer
-//                    landed in one go) is the anchor again: nothing of the answer was seen.
+//                    landed in one go) is the anchor again: nothing of the answer was seen, and
+//                    so is `complete-earlyprose` (narration streamed before the reply had any row).
 const SCENARIOS = [
   { name: "long", turns: 200, images: 3, imgdelay: 3000, mermaid: 0 },
   { name: "mermaid", turns: 12, images: 0, imgdelay: 0, mermaid: 3 },
@@ -80,6 +81,7 @@ const SCENARIOS = [
   { name: "complete-plain", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, late: "answer", expectBottom: false, expectLive: false },
   { name: "complete-live", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, live: true, late: "answer", expectBottom: true, expectLive: true },
   { name: "complete-midprose", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, live: true, late: "midprose", expectBottom: false, expectLive: true },
+  { name: "complete-earlyprose", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, live: true, late: "earlyprose", expectBottom: false, expectLive: true },
   // 120 turns = 240 jsonl lines served 120 at a time, so the tail page is 60 turns: enough height
   // for the prepend to matter, little enough to read up through within a scenario's time budget.
   { name: "paging", turns: 120, images: 0, imgdelay: 0, mermaid: 0, mode: "paging", paging: true, pagesize: 120 },

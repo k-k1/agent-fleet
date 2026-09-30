@@ -84,16 +84,15 @@ export function useMirrorScroll() {
   // (docs/log/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
   // fire exactly once per reply.
   const answerAnchoredRef = useRef<number | undefined>(undefined);
-  // How many parts the current exchange's reply had the last time its in-progress text (the
-  // "Writing…" block, #1250) was on screen; null when it never was. At completion this says
-  // whether what streamed was the FINAL ANSWER: text seen with N parts landed lands at index N
-  // or later, so if the work fold's boundary (workSplit.at) is at or before N, the reader has
-  // read the answer at the tail and the completion anchor would take them away from it
-  // (#1396). Text that streamed and was then followed by more tool runs was narration, not
-  // the answer, and the anchor still applies. Keyed by the prompt, not the reply block: the
-  // first text of a reply streams before any of its rows exist.
+  // How many parts the tracked reply had the last time its in-progress text (the "Writing…"
+  // block, #1250) was on screen; null when it never was. At completion this says whether what
+  // streamed was the FINAL ANSWER: text seen with N parts landed lands at index N or later, so
+  // if the work fold's boundary (workSplit.at) is at or before N, the reader has read the answer
+  // at the tail and the completion anchor would take them away from it (#1396). Text that
+  // streamed and was then followed by more tool runs was narration, not the answer, and the
+  // anchor still applies. Text seen before any row of the reply exists is not recorded for the
+  // same reason: rows of tools then land before it, so it can never be past the boundary.
   const liveSeenRef = useRef<number | null>(null);
-  const promptIdxRef = useRef<number | undefined>(undefined);
   // False until the first content settle for a session. On open we land at the bottom (as
   // before) and mark the reply already present as "seen", so only replies that arrive while
   // the user is watching get anchored to the top — history isn't retro-scrolled.
@@ -360,12 +359,6 @@ export function useMirrorScroll() {
     // "start of the reply", on the block at the TOP of the window. The newest block is the live one.
     const reply = u >= 0 ? groups[u + 1] : groups[groups.length - 1];
     const replyIdx = reply && reply.role !== "user" ? reply.idx : undefined;
-    const promptIdx = u >= 0 ? groups[u].idx : undefined;
-    if (promptIdx !== promptIdxRef.current) {
-      promptIdxRef.current = promptIdx;
-      liveSeenRef.current = null;
-    }
-    if (live) liveSeenRef.current = replyIdx !== undefined ? reply.parts.length : 0;
 
     // First settle for this session: land at the bottom (the familiar "open shows the
     // latest" position) and remember whatever reply is already there, so history isn't
@@ -401,7 +394,9 @@ export function useMirrorScroll() {
       if (replyIdx !== anchoredIdxRef.current) {
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
+        liveSeenRef.current = null;
       }
+      if (live) liveSeenRef.current = reply.parts.length;
       // Still working, a background run (subagent/Workflow) is appending, or we're
       // bridging the idle→reply gap (finalizing) — follow the bottom so the streamed tail
       // (and the typing indicator) stay in view.
@@ -481,7 +476,6 @@ export function useMirrorScroll() {
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
     liveSeenRef.current = null;
-    promptIdxRef.current = undefined;
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
   };
 
