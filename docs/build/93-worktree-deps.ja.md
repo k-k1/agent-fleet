@@ -92,7 +92,8 @@ Tool caches——は notes/environment.md の "Disk" が扱う。これらのキ
 **親クローンの実体を symlink で共有できる**。条件は 1 つ、**lockfile が親と同一**であること
 （2 つを `cmp -s` で比べ、`node_modules` を親のものへリンクする）。コマンドはここには繰り返さない:
 このレポのコマンドは AGENTS.md に、すべてのエージェントが受け取る一般則とその危険は
-notes/worktrees.md にある。どちらも素の `ln -s` ではなく `ln -sfT` で張る（理由は下記）。
+notes/worktrees.md にある。どちらも素の `ln -s` ではなく `ln -sfT` で張り、張る前に親の
+`node_modules/.package-lock.json` があることを確かめる（理由はどちらも下記）。
 
 **2026-08 の実測**（このレポの `console/`・npm 10.9.8 / node 22.23.2 / Vite 7 系）。`console/` は
 その後 Vite 8 系に上がっており（`console/package.json`）、本書ではこれらを測り直していない。
@@ -116,7 +117,8 @@ symlink に対して `ln -s <target> node_modules` を打つと、新しいリ�
 なる。**実測**（2026-09-29・素のディレクトリで・GNU coreutils の `ln`）。先に作られたリンクを外してから
 張ること（`rm -rf node_modules`、スラッシュ無し）。`ln -sfT` は symlink なら置き換え、実体ディレクトリ
 なら拒否する。親自身の `node_modules` も同じように退避されていれば実体は `/scratch` にあり、停止後は
-`~/repos` 側のリンクは残るが指す先が無くなる。退避なしで clone された親（仕組みができる前か、
+`~/repos` 側のリンクは残るが指す先が無くなる。`ln -sfT` はそのリンクへも終了コード 0 で張り替え、
+worktree に導入済みのツリーを死んだリンクで置き換えてしまうので、張る前に `.package-lock.json` を確かめる。退避なしで clone された親（仕組みができる前か、
 `AF_WS_SCRATCH_AUTO=0`）は実体をホームに持ったまま。
 
 lockfile が食い違うときは共有せず、温まった `~/.npm` から `npm ci --prefer-offline` で入れる。

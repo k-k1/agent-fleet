@@ -81,7 +81,10 @@ N worktrees means N copies of every per-project dependency tree, unless the ecos
   `ln -sfT <parent>/node_modules node_modules`, never a plain `ln -s`**: where `node_modules` is
   already a symlink (the `/scratch` one below), a plain `ln -s` silently creates the link *inside*
   its target and exits 0, leaving the empty tree in place. `ln -sfT` replaces a symlink and
-  refuses a real directory. **`npm ci` through that link
+  refuses a real directory. Link only after checking the parent's tree is really there
+  (`[ -e <parent>/node_modules/.package-lock.json ]`): the parent's own `node_modules` may be a
+  `/scratch` link left dangling by a stop, and `-f` would swap your working link for a dead one,
+  exit 0. **`npm ci` through that link
   empties the parent's `node_modules`** and breaks every session using it — and
   `rm -rf node_modules/` (trailing slash) deletes through the link the same way. Remove the link
   with `rm -rf node_modules` (no trailing slash) before any install. `npm install <pkg>` replaces

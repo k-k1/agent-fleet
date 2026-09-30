@@ -79,6 +79,7 @@ worktree's lockfile matches the parent clone's, share the parent's tree instead:
 ```
 cd console
 cmp -s package-lock.json ~/repos/agent-fleet/console/package-lock.json \
+  && [ -e ~/repos/agent-fleet/console/node_modules/.package-lock.json ] \
   && ln -sfT ~/repos/agent-fleet/console/node_modules node_modules
 ```
 
@@ -86,6 +87,11 @@ cmp -s package-lock.json ~/repos/agent-fleet/console/package-lock.json \
 a symlink into `/scratch`, and a plain `ln -s` onto a symlink to a directory creates the link
 *inside* that directory and still exits 0 — the worktree keeps the empty tree. `ln -sfT`
 replaces the symlink, and refuses (exit 1) when `node_modules` is a real install.
+
+The `.package-lock.json` test is what stops `-f` from doing harm: the parent's own
+`node_modules` can be a `/scratch` link left dangling by a stop, or never installed, and
+`ln -sfT` would then swap a worktree tree you already installed for a link to nothing, exit 0.
+When the test fails, keep your own link and `npm ci --prefer-offline`.
 
 `npm run build`, the tests and the whole node project resolve through the link
 (measured: the full suite is green, 242 files, and the production build succeeds).

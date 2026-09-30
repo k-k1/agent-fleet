@@ -103,7 +103,8 @@ snapshot.
 is identical to the parent's** (`cmp -s` the two, then link `node_modules` to the parent's).
 The commands are not repeated here: AGENTS.md has this repository's, and
 notes/worktrees.md gives every agent the general rule and its hazards. Both link with
-`ln -sfT`, never a plain `ln -s`, for the reason below.
+`ln -sfT`, never a plain `ln -s`, and only after checking that the parent's
+`node_modules/.package-lock.json` exists — both for the reasons below.
 
 **Measured in 2026-08** in this repository's `console/` (npm 10.9.8, node 22.23.2,
 Vite 7). `console/` has since moved to Vite 8 (`console/package.json`); this chapter did
@@ -130,7 +131,9 @@ new link *inside* that directory and exits 0. **Measured** with plain directorie
 (GNU coreutils `ln`). Remove the pre-created link first (`rm -rf node_modules`, no
 slash); `ln -sfT` replaces a symlink and refuses a real directory. If the parent's own
 `node_modules` was relocated the same way, its target is on `/scratch`: after a stop the
-links in `~/repos` remain but point at nothing. A parent cloned without the relocation
+links in `~/repos` remain but point at nothing, and `ln -sfT` onto such a link still exits
+0 — replacing a worktree tree already installed with a dead link — hence the
+`.package-lock.json` check before linking. A parent cloned without the relocation
 (before it existed, or with `AF_WS_SCRATCH_AUTO=0`) keeps its tree in the home.
 
 When the lockfiles differ, do not share — `npm ci --prefer-offline` installs from the
