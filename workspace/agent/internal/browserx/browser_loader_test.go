@@ -1,12 +1,14 @@
 package browserx
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -215,8 +217,7 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 	if !waitFor(10*time.Second, func() bool { return p.response().State != "loading" }) {
 		t.Fatalf("failed navigation left the page loading: %+v", snapshot()[next:])
 	}
-	// The error page's commit, its load and the aborted re-navigation that its
-	// chrome-error:// URL provokes (measured: ~0.3 s) must all keep it.
+	// The error page's commit and its load must both keep it.
 	time.Sleep(time.Second)
 	if got := p.response().State; got != "target-unreachable" {
 		t.Fatalf("error page settled in state %q, want target-unreachable: %+v", got, snapshot()[next:])
@@ -348,4 +349,201 @@ func TestBrowserLoadedStateFollowsTheTrackedLoader(t *testing.T) {
 	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L9","url":"http://127.0.0.1:3000/204","navigationType":"differentDocument"}`)
 	abort("L9")
 	expect("aborted navigation over a document restored from the cache", "ready")
+}
+
+// browserEventTap passes a real CDP connection through, recording each event
+// at the moment the manager's event loop takes it. The relay is unbuffered, so
+// an event appears here only once the loop is free to receive it.
+type browserEventTap struct {
+	browserCDP
+	out  chan browserCDPEvent
+	mu   sync.Mutex
+	seen []browserCDPEvent
+}
+
+func tapBrowserEvents(cdp browserCDP) *browserEventTap {
+	t := &browserEventTap{browserCDP: cdp, out: make(chan browserCDPEvent)}
+	go func() {
+		for {
+			select {
+			case ev := <-cdp.Events():
+				select {
+				case t.out <- ev:
+					t.mu.Lock()
+					t.seen = append(t.seen, ev)
+					t.mu.Unlock()
+				case <-cdp.Done():
+					return
+				}
+			case <-cdp.Done():
+				return
+			}
+		}
+	}()
+	return t
+}
+
+func (t *browserEventTap) Events() <-chan browserCDPEvent { return t.out }
+
+func (t *browserEventTap) events() []browserCDPEvent {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]browserCDPEvent(nil), t.seen...)
+}
+
+// TestBrowserErrorPageKeepsTheEventLoopRunning navigates to a dead loopback
+// port. Chromium commits its own error page (chrome-error://chromewebdata/);
+// the event loop must go on taking events right after that commit, the page
+// must read target-unreachable with the loopback URL it failed on, and a later
+// navigation must still work.
+func TestBrowserErrorPageKeepsTheEventLoopRunning(t *testing.T) {
+	factory := browserTestCDPFactory(t)
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><title>live</title>`))
+	}))
+	defer app.Close()
+	u, err := url.Parse(app.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tap *browserEventTap
+	m := NewBrowserManager(browserManagerConfig{
+		MaxPages: 1, DetachedGrace: time.Minute, ChromiumIdle: time.Minute,
+		CommandTimeout: 10 * time.Second, FrameInterval: time.Second / 12, JPEGQuality: 70,
+		CDPFactory: func(ctx context.Context) (browserCDP, error) {
+			cdp, err := factory(ctx)
+			if err != nil {
+				return nil, err
+			}
+			tap = tapBrowserEvents(cdp)
+			return tap, nil
+		},
+	})
+	defer m.Close()
+	created, err := m.Create(browserCreateRequest{
+		Port: port, Path: "/", Viewport: browserViewportRequest{Width: 800, Height: 600, DeviceScaleFactor: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	cdp := m.cdp
+	m.mu.Unlock()
+	if !waitFor(10*time.Second, func() bool { return p.response().State == "ready" }) {
+		t.Fatalf("first navigation never reached ready: %+v", p.response())
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadURL := "http://127.0.0.1:" + strconv.Itoa(l.Addr().(*net.TCPAddr).Port) + "/"
+	_ = l.Close()
+	from := len(tap.events())
+	if err := m.call(cdp, p.sessionID, "Runtime.evaluate", map[string]any{"expression": "location.href = '" + deadURL + "'"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	errorPageAt := -1
+	if !waitFor(10*time.Second, func() bool {
+		evs := tap.events()
+		for i := from; i < len(evs); i++ {
+			if evs[i].Method == "Page.frameNavigated" && strings.Contains(string(evs[i].Params), `"chrome-error://`) {
+				errorPageAt = i
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("the error page never committed: %+v", p.response())
+	}
+	// The error page's own lifecycle events follow its commit at once; a loop
+	// blocked in the commit's handler takes none of them.
+	if !waitFor(2*time.Second, func() bool { return len(tap.events()) > errorPageAt+1 }) {
+		t.Fatalf("the event loop took no event within 2 s of the error page's commit")
+	}
+	time.Sleep(500 * time.Millisecond) // a late event must not change it either
+	if got := p.response(); got.State != "target-unreachable" || got.URL != deadURL {
+		t.Fatalf("error page: %+v, want target-unreachable at %s", got, deadURL)
+	}
+	for _, ev := range tap.events()[errorPageAt:] {
+		if ev.Method == "Page.frameStartedNavigating" {
+			t.Errorf("the error page provoked a navigation of its own: %s", ev.Params)
+		}
+	}
+
+	nav := make(chan error, 1)
+	go func() {
+		nav <- m.call(cdp, p.sessionID, "Page.navigate", map[string]any{"url": app.URL + "/again"}, nil)
+	}()
+	if !waitFor(5*time.Second, func() bool {
+		got := p.response()
+		return got.State == "ready" && got.URL == app.URL+"/again"
+	}) {
+		t.Fatalf("a navigation after the error page never reached ready: %+v", p.response())
+	}
+	if err := <-nav; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBrowserFrameNavigatedNeverNavigatesFromTheEventLoop pins both halves of
+// the error-page stall with synthetic events: Chromium's error page for a
+// loopback URL is left alone, and the navigation back from a document outside
+// loopback does not hold the event loop while Chromium answers it.
+func TestBrowserFrameNavigatedNeverNavigatesFromTheEventLoop(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeBrowserManager(cdp)
+	t.Cleanup(m.Close)
+	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	m.mu.Unlock()
+	navigations := func() int {
+		n := 0
+		for _, method := range cdp.methods() {
+			if method == "Page.navigate" {
+				n++
+			}
+		}
+		return n
+	}
+	before := navigations()
+	m.handleEvent(cdp, browserCDPEvent{Method: "Page.frameNavigated", SessionID: p.sessionID, Params: json.RawMessage(
+		`{"frame":{"id":"frame-1","loaderId":"L1","url":"chrome-error://chromewebdata/","unreachableUrl":"http://localhost:3001/down"}}`)})
+	if got := navigations(); got != before {
+		t.Fatalf("the error page of a loopback URL provoked %d navigation(s)", got-before)
+	}
+	p.mu.Lock()
+	unreachable, pageURL := p.unreachable, p.url
+	p.mu.Unlock()
+	if !unreachable || pageURL != "http://127.0.0.1:3001/down" {
+		t.Fatalf("error page: unreachable=%v url=%q, want true at the normalized failed URL", unreachable, pageURL)
+	}
+
+	release := make(chan struct{})
+	defer close(release)
+	cdp.setOnCall("Page.navigate", func() { <-release })
+	handled := make(chan struct{})
+	go func() {
+		m.handleEvent(cdp, browserCDPEvent{Method: "Page.frameNavigated", SessionID: p.sessionID, Params: json.RawMessage(
+			`{"frame":{"id":"frame-1","loaderId":"L2","url":"https://example.com/"}}`)})
+		close(handled)
+	}()
+	select {
+	case <-handled:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("the commit outside loopback held the event loop until Page.navigate answered")
+	}
+	if !waitFor(time.Second, func() bool { return navigations() == before+1 }) {
+		t.Fatal("the commit outside loopback was not navigated back")
+	}
 }
