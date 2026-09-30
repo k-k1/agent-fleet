@@ -94,6 +94,53 @@ describe("notification row headings", () => {
     expect(sub).toBe("demo/node_modules, mytool");
   });
 
+  // The start deadline stopped a launch that never finished (#1298). The workspace is the
+  // subject, so displayName is empty, and the last phase is the only record of why: on ecs-ec2
+  // the stop clears it from the workspace itself. Row and OS notification must both carry it.
+  it("a start-deadline stop names the limit and the last phase on the notification and the row", () => {
+    setLocale("en");
+    const n = {
+      kind: "start-deadline",
+      displayName: "",
+      payload: { limitMinutes: 30, phase: "blocked: no container instance met all of its requirements" },
+    };
+    const w = notificationWording(n);
+    expect(w.title).toBe(en["notif.start_deadline.title"]);
+    expect(w.body).toBe(
+      `It was still starting after 30 min. Last step: ${en["wsstart.blocked"]} — blocked: no container instance met all of its requirements`,
+    );
+    expect(w.speech).toBe(en["notif.start_deadline.speech"]);
+    expect(notificationRowSubtitle(n)).toBe(w.body);
+    expect(notificationKindLabel("start-deadline")).toBe(en["noti.kind_start_deadline"]);
+    setLocale("ja");
+  });
+
+  // The phase is worded the way the starting dialog words it; the member reading the
+  // notification in Japanese must not be left with "slot: creating" alone.
+  it("a start-deadline stop words a known phase, keeps the raw text, and passes an unknown one through", () => {
+    for (const [loc, cat] of [["ja", ja], ["en", en]] as const) {
+      setLocale(loc);
+      const body = (phase: string) =>
+        notificationWording({ kind: "start-deadline", displayName: "", payload: { limitMinutes: 30, phase } }).body;
+      const limit = cat["notif.start_deadline.body_limit"].replace("{minutes}", "30");
+      const sep = loc === "ja" ? "。最後の段階：" : ". Last step: ";
+      expect(body("slot: creating")).toBe(`${limit}${sep}${cat["wsstart.slot_creating"]} — slot: creating`);
+      expect(body("blocked: no container instance")).toBe(`${limit}${sep}${cat["wsstart.blocked"]} — blocked: no container instance`);
+      expect(body("task: pending")).toBe(`${limit}${sep}task: pending`);
+      expect(body("")).toBe(limit);
+    }
+    setLocale("ja");
+  });
+
+  it("a start-deadline stop without a phase still says why", () => {
+    setLocale("ja");
+    const w = notificationWording({ kind: "start-deadline", displayName: "", payload: { limitMinutes: 30, phase: "" } });
+    expect(w.body).toBe("30 分たっても起動中のままでした");
+    expect(notificationWording({ kind: "start-deadline", displayName: "", payload: {} }).body).toBe(
+      ja["notif.start_deadline.body_generic"],
+    );
+  });
+
   it("a kind that does have a session keeps displayName as its subtitle", () => {
     setLocale("ja");
     expect(notificationRowSubtitle({ kind: "answer-ready", displayName: "プラン検証", payload: {} })).toBe("プラン検証");

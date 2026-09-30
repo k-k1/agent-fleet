@@ -236,8 +236,9 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
   （ECS なら、たいていクラスターがタスクを配置できない場合）を停止し、容量を掴み続けないようにします。
   原因を直せばユーザーはもう一度 **「起動」** を押せます。30 分は最後の起動から数えます。Control Plane
   がそれより後に初めて起動中と見た場合（Control Plane の再起動後など）はその時点から数えます。判定は
-  usage のサンプルごと（5 分）なので、停止は最大 1 サンプル分遅れます。Control Plane のログに残ります
-  （`start-deadline: stopped …`・最後の起動フェーズ付き）。`AF_WORKSPACE_START_DEADLINE` で上限を変え、
+  usage のサンプルごと（5 分）なので、停止は最大 1 サンプル分遅れます。メンバーには Console の通知センターに
+  起動を止めた旨の通知が最後の起動フェーズ（`ecs-ec2` ならタスクを配置できない理由）付きで届き、Control Plane
+  のログにも残ります（`start-deadline: stopped …`）。`AF_WORKSPACE_START_DEADLINE` で上限を変え、
   `0` で無効。`ecs-ec2` ではプール自身の起動予算（`AF_ECS_EC2_CLAIM_TTL_SEC`・`AF_ECS_EC2_WAIT_SEC`）
   より短くはなりません。usage サンプラーの上で動くため、`AF_USAGE_SAMPLE_INTERVAL=0` でも無効になります。
 
