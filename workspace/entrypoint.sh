@@ -37,7 +37,6 @@ if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; the
       # every new user. Skipping here leaves `~/.config` dangling, the later
       # `mkdir -p "$HOME/.config/opencode"` fails with File exists, and `set -e` kills the
       # entrypoint — the task restart-loops with no cause logged anywhere.
-      # (Observed: the first golden instance of a production deployment could not boot.)
       keep_is_dir "$rel" && mkdir -p "$dst" 2>/dev/null || true
       continue
     fi
@@ -337,19 +336,17 @@ cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # 1.1.19 with `auto_updater.go:305 Spawned background update process` in its log), and the
 # marker is AF's own file, so that update does not move it.
 #
-# The direct cause of that self-update was a wrong value, `AGY_CLI_DISABLE_AUTO_UPDATE=1`,
-# where only `true` is accepted (fixed in the Dockerfile). This still compares the binary
-# because the lock can be bypassed in other ways: an explicit `agy update` by the user, the
-# self-update opt-in (the shadow block below), and homes populated by older images, which
-# keep a version from before the lock worked.
+# The Dockerfile's AGY_CLI_DISABLE_AUTO_UPDATE lock does not make the marker trustworthy:
+# an explicit `agy update` by the user, the self-update opt-in (the shadow block below) and
+# homes populated by older images all move the binary without moving the marker.
 #
 # Deciding the repin from the marker alone therefore gets stuck at "marker == pin, binary
 # differs". The harm is quiet: if that version changed its output format, the session runs
-# but silently on a different model (it happened, §70.14.8).
+# but silently on a different model (docs/log/70 §70.14.8).
 #
 # So always ask the binary. On x86 hosts whose kernel withdrew RDRAND a plain start SIGABRTs
 # (decisions/0008), so apply the same OPENSSL_ia32cap mask the Agent applies to every spawn
-# (0008's 2026-09-07 decision; hosts that expose RDRAND do not get it). arm64 is confirmed
+# (only on hosts without RDRAND, as 0008 decides). arm64 is confirmed
 # safe unmasked by the §70.13 measurement (BoringCrypto takes randomness from getrandom(2),
 # not the instruction, so RC=0 even on Graviton2, which lacks `rng`).
 # The mask is applied per call — exporting it would reach every process, not just agy.
@@ -380,7 +377,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # versions.json pin even if an earlier ON moved it ahead. This gives lean the same
   # semantics as the baked variant's "turn it OFF and Stop→Start to return to the baked
   # version". A presence check alone would keep a version advanced under ON forever after
-  # OFF (the same hole as the one fixed in the kiro start guard — docs/log/43 §4-2).
+  # OFF (the kiro start guard closes the same hole — docs/log/43 §4-2).
   # An unattended start (AF_AGENT_SELF_UPDATE_SKIP=1) means "leave it alone this time", so
   # it keeps whatever is installed.
   REPIN=0
@@ -450,10 +447,10 @@ if [ "$LEAN_CLIS" = 1 ]; then
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
       tar xzf "${asset}"
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
-      # Keep it only after running it. The arm64 release is a gnu build requiring GLIBC_2.39,
-      # and on this image (Debian 12, glibc 2.36) it downloads and passes sha256 but cannot
-      # start (measured 2026-08-22, docs/log/70 §70.9.2). Left unchecked, a broken rtk sits
-      # first on PATH and fails only when it is used.
+      # Keep it only after running it: a matching checksum says nothing about whether the
+      # binary's runtime libraries match this image (the arm64 release is a gnu build that
+      # needs a recent glibc — docs/log/70 §70.9.2). A binary that fails --version is not
+      # left on PATH, where it would fail only when used.
       if ! err="$("$HOME/.local/bin/rtk" --version 2>&1)"; then
         rm -f "$HOME/.local/bin/rtk"
         echo "[entrypoint] rtk はこの環境では動かないため導入しません: $err"
@@ -671,7 +668,7 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   # asked, otherwise the marker). Comparing the marker alone is wrong both ways: agy's own
   # self-update does not move the marker, so on the pin side (repin) "marker == pin" sticks
   # while the binary moves ahead (docs/log/70 §70.14.9), and here (opt-in ON) a stale marker
-  # re-downloaded ~187 MB on every start even when the binary was already latest.
+  # would re-download ~187 MB on every start even when the binary is already latest.
   # install.sh exits 0 without updating when a binary already exists, so install into an
   # empty temp dir and then swap it in (the previous shadow survives a failure).
   AGY_MARK="$HOME/.local/bin/.agy.version"
@@ -902,9 +899,9 @@ fi
 #   opencode … ~/.config/opencode/AGENTS.md (fleet policy) + an AF-only file referenced by
 #              opencode.json's instructions (user instructions)
 #
-# Never `cp -f` these files from here: overwriting them wiped whatever the user added to
-# AGENTS.md on every container restart, which is exactly why users could not build their own
-# layer (docs/log/60, harm 1). The agent is the single writer: it composes fleet policy +
+# Never `cp -f` these files from here: overwriting them erases whatever the user added to
+# AGENTS.md outside the markers on every container restart (docs/log/60, harm 1). The agent
+# is the single writer: it composes fleet policy +
 # user instructions + the rtk block inside markers and preserves everything outside them.
 # The agent is exec'd right after this and starts every session itself, so no session ever
 # reads a file before it is composed.
