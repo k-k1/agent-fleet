@@ -167,11 +167,38 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
 }
 /* Stop lives in the typing-indicator row now (only while working) — push it to the far
    right of that row. */
-.mirror-stop {
+.mirror-stop-ctl {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.mirror-stop {
   font-size: 12px;
   padding: 2px 10px;
   color: var(--err);
+}
+/* The caret that opens "stop and discard the queue" (Managed only, ADR 0105 decision 3).
+   Emphasised while the chat sees something queued, with the count beside the glyph. */
+.mirror-stop-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  padding: 2px 5px;
+  color: var(--muted);
+}
+.mirror-stop-more.hot {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 55%, transparent);
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+.mirror-stop-count {
+  font-size: 11px;
+  font-weight: 600;
+}
+.ui-menu-item.danger.hot {
+  font-weight: 600;
 }
 .typing-dots {
   display: inline-flex;
@@ -256,4 +283,53 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
 .mirror-jump .codicon {
   font-size: 13px;
   color: var(--topbar-accent);
+}
+/* What a second stop threw away (ADR 0105 decision 4), just above the composer so "put
+   back" and the input box it fills are next to each other. */
+.mirror-discards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 12px 0;
+}
+.mirror-discard {
+  border: 1px solid color-mix(in srgb, var(--err) 40%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--err) 6%, var(--panel));
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.mirror-discard .md-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-discard .md-msg {
+  flex: 1;
+  min-width: 0;
+}
+.mirror-discard .md-restore,
+.mirror-discard .md-close {
+  font-size: 12px;
+  padding: 1px 8px;
+}
+.mirror-discard .md-items {
+  margin: 4px 0 0;
+  padding: 0 0 0 20px;
+  list-style: none;
+}
+.mirror-discard .md-item {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.mirror-discard .md-origin {
+  flex: none;
+  font-weight: 600;
+}
+.mirror-discard .md-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

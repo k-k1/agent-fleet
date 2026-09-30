@@ -1,8 +1,33 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionApprove, sessionPlanRespond, sessionPlanFile, sessionSettings, downloadURL } from "../../core/api/client.ts";
-import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
+import {
+  api,
+  apiJSON,
+  raw,
+  errText,
+  pasteImage,
+  sessionTurn,
+  sessionInterrupt,
+  sessionRemoveQueued,
+  sessionDismissDiscard,
+  parseQueueItems,
+  parseDiscards,
+  sessionRespond,
+  sessionApprove,
+  sessionPlanRespond,
+  sessionPlanFile,
+  sessionSettings,
+  downloadURL,
+} from "../../core/api/client.ts";
+import type {
+  CarriedInteraction,
+  Discard,
+  InteractionAnswer,
+  ManagedThreadSettings,
+  QueueItem,
+  TurnResult,
+} from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 import { composerSend } from "./composerSend.ts";
@@ -27,6 +52,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDraft, writeDraft } from "../../lib/draft.ts";
 import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
+import type { Attachment } from "../../lib/attachDraft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
@@ -85,6 +111,18 @@ import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts
 import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
 import { ApprovalCard, LiveReplyCard, PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
 import { CarriedBlock } from "./CarriedBlock.tsx";
+import { DiscardNotice } from "./parts/DiscardNotice.tsx";
+import {
+  actionable,
+  closeStep,
+  emptyDiscardNotices,
+  injectionSource,
+  queueEntries,
+  restoreStep,
+  stopRowVisible,
+  visibleDiscards,
+  type DiscardNoticeState,
+} from "./stopQueue.ts";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
 // The transcript rendering layer, shared with the shared-session view (docs/log/59). What the
@@ -257,6 +295,19 @@ export function MirrorView({
   // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
   // echoes get a "queued" badge; the rest render as synthetic queued bubbles.
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
+  // The same queue with ids, origins and states (ADR 0105), sent only by a Managed session on
+  // an Agent that has it. null = not sent: the bubbles then come from queuedPrompts and carry
+  // no actions.
+  const [queuedItems, setQueuedItems] = useState<QueueItem[] | null>(null);
+  // What second stops threw away and the driver still keeps (decision 4), and this tab's own
+  // progress through them — see stopQueue.ts for why a restored discard is held locally.
+  const [discards, setDiscards] = useState<Discard[]>([]);
+  const [discardNotices, setDiscardNotices] = useState<DiscardNoticeState>(emptyDiscardNotices);
+  // Queue entries with a remove request in flight, so a double click sends one request.
+  const queueOpsRef = useRef<Set<string>>(new Set());
+  const queueShown = useMemo(() => queueEntries(queuedItems, queuedPrompts), [queuedItems, queuedPrompts]);
+  const queuedCount = queueShown.length;
+  const discardView = useMemo(() => visibleDiscards(discards, discardNotices), [discards, discardNotices]);
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   // The working dir was removed (repo/worktree deleted): the transcript survives
   // (stored under the agent's home), so history stays readable, but resume is
@@ -453,6 +504,10 @@ export function MirrorView({
     setTasks([]);
     setFiles([]);
     setQueuedPrompts([]);
+    setQueuedItems(null);
+    setDiscards([]);
+    setDiscardNotices(emptyDiscardNotices);
+    queueOpsRef.current = new Set();
     setAlive(!!sessionMeta?.alive);
     setPending(null);
     setLiveText(""); // the reply being written belongs to the session being left
@@ -621,6 +676,10 @@ export function MirrorView({
               setFiles(Array.isArray(d.files) ? d.files : []);
             }
             setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
+            setQueuedItems(parseQueueItems(d.queuedItems));
+            // The poll, not the interrupt's answer, is what the notice trusts: an answer lost
+            // to a closed tab or a dropped connection comes back here (decision 4).
+            setDiscards(parseDiscards(d.discardedInputs));
             setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
             setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
             setLiveText(liveOnRef.current && typeof d.liveText === "string" ? d.liveText : "");
@@ -1011,10 +1070,13 @@ export function MirrorView({
 
   // sendInterrupt stops the running turn — the equivalent of turn/interrupt, which under tui
   // becomes Escape (opencode's sub-agent detail-view special case is handled server-side in
-  // /turn). The stop button only appears while working or while a background run lingers, and
-  // the next poll resyncs the real state either way, so no optimistic state change is needed.
-  const sendInterrupt = async () => {
-    if (sending) return;
+  // /turn). The next poll resyncs the real state, so no optimistic state change is needed.
+  //
+  // It neither checks nor sets `sending`: a stop must stay pressable while an earlier stop is
+  // still in flight, because on a Managed session that is exactly when the second stop — the
+  // one that ends what the queue started — is needed (ADR 0105 decision 2). discardQueue is the
+  // menu's "stop and discard the queue" (decision 3), which only a Managed session offers.
+  const sendInterrupt = async (discardQueue = false) => {
     if (wsDown()) return; // WS stopped: no live turn to interrupt (also plan-reject / question-cancel)
     // An explicit stop (also plan-reject / question-cancel) means the user does NOT expect
     // a reply to render, so disarm the idle→reply bridge — otherwise the spinner would
@@ -1022,11 +1084,82 @@ export function MirrorView({
     wasWorkingRef.current = false;
     finalizingRef.current = false;
     setFinalizing(false);
-    setSending(true);
-    const res = await sessionTurn(session, "interrupt");
+    const res = await sessionInterrupt(session, discardQueue && managed);
     if (!res.ok) toast(res.message || tr("mirror.stop_failed"));
-    setSending(false);
+    // A first stop lets the queue go on, which looks like the stop did nothing unless said.
+    else if (managed && res.stop === "first" && queuedCount > 0) toast(tr("mirror.stop_first_continues"));
     setTimeout(() => tickRef.current?.(), 400);
+  };
+
+  // The input box is taken: putting queued or discarded text there would overwrite it.
+  const draftBusy = !!draft.trim() || attachments.length > 0;
+
+  // intoDraft puts a queued or discarded input back into the composer. It is never sent from
+  // here: sending it again is the member's own act, and a new send gets a new message id —
+  // the old entry's id is never reused, or a driver that records ids at accept time would
+  // drop the resend as a duplicate (decision 5).
+  const intoDraft = (item: QueueItem) => {
+    setHistIdx(null);
+    setDraft(item.text);
+    if (item.attachments?.length) {
+      attach.revive(
+        item.attachments.map(
+          (p): Attachment => ({ id: "", name: p.split("/").pop() || p, type: "", image: false, path: p, url: "" }),
+        ),
+      );
+    }
+    inputRef.current?.focus();
+  };
+
+  // takeQueued removes one still-queued entry (decision 5) and, for "back to input", puts it
+  // into the composer — only once the removal succeeded, so the text is never both queued and
+  // in the draft. already_started is the normal loss of a race with the pump, not an error.
+  const takeQueued = async (id: string, restore: boolean) => {
+    if (wsDown()) return;
+    if (restore && draftBusy) {
+      toast(tr("mirror.queued_restore_busy"));
+      return;
+    }
+    if (queueOpsRef.current.has(id)) return;
+    queueOpsRef.current.add(id);
+    const res = await sessionRemoveQueued(session, id);
+    queueOpsRef.current.delete(id);
+    if (res.ok) {
+      const gone = res.removed;
+      if (gone) {
+        // The optimistic echo of this input would otherwise wait forever for a turn that will
+        // never come.
+        const text = gone.text.trim();
+        applyEchoes((p) => {
+          const i = p.findIndex((e) => e.text.trim() === text);
+          return i < 0 ? p : [...p.slice(0, i), ...p.slice(i + 1)];
+        });
+        if (restore) intoDraft(gone);
+      }
+    } else if (res.code === "already_started") toast(tr("mirror.queued_already_started"));
+    else if (res.code === "not_queued") toast(tr("mirror.queued_gone"));
+    else toast(res.message || tr("mirror.send_failed"));
+    setTimeout(() => tickRef.current?.(), 250);
+  };
+
+  // The discard notice's two actions (decision 4). The first restore and a close both tell
+  // the driver to drop the discard, so other tabs stop offering it; a failure there only
+  // leaves it offered elsewhere, and nothing is ever sent twice, so it is not reported.
+  const restoreDiscard = (d: Discard) => {
+    if (draftBusy) {
+      toast(tr("mirror.discarded_restore_busy"));
+      return;
+    }
+    const step = restoreStep(discardNotices, d);
+    if (!step.item) return;
+    setDiscardNotices(step.next);
+    if (step.dismiss) void sessionDismissDiscard(session, d.id);
+    intoDraft(step.item);
+  };
+  const closeDiscard = (id: string) => {
+    const step = closeStep(discardNotices, id);
+    setDiscardNotices(step.next);
+    if (step.dismiss) void sessionDismissDiscard(session, id);
   };
 
   // sendApproval answers a MANAGED session's pending tool approval. It mirrors sendRespond,
@@ -1547,33 +1680,40 @@ export function MirrorView({
   // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
   // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
   // new identity, which is what makes the memoized TranscriptTurn below actually skip.
+  //
+  // With queuedItems (ADR 0105) each entry also brings its id — the bubble's actions act on it —
+  // and its origin, so a queued peer or schedule input wears the badge it will wear once it runs.
   const grouped = useMemo(() => {
-    const queuedLeft = [...queuedPrompts];
-    const takeQueued = (text: string): boolean => {
-      const i = queuedLeft.findIndex((q) => q.trim() === text);
-      if (i < 0) return false;
-      queuedLeft.splice(i, 1);
-      return true;
+    const queuedLeft = [...queueShown];
+    const takeQueued = (text: string) => {
+      const i = queuedLeft.findIndex((q) => q.text.trim() === text);
+      if (i < 0) return null;
+      return queuedLeft.splice(i, 1)[0];
     };
     const echoTurns: Turn[] = pendingSends
       .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
-      .map((e) => ({
-        role: "user",
-        text: e.text,
-        idx: 1e9 + e.id,
-        pending: true,
-        queued: takeQueued(e.text),
-      }));
+      .map((e) => {
+        const q = takeQueued(e.text);
+        return {
+          role: "user",
+          text: e.text,
+          idx: 1e9 + e.id,
+          pending: true,
+          queued: !!q,
+          ...(q?.item ? { queueId: q.item.id, queueActionable: actionable(q.item) } : {}),
+        };
+      });
     const queuedTurns: Turn[] = queuedLeft.map((q, i) => ({
       role: "user",
-      text: q,
+      text: q.text,
       idx: 2e9 + i,
       queued: true,
+      ...(q.item ? { queueId: q.item.id, queueActionable: actionable(q.item), ...injectionSource(q.item) } : {}),
     }));
     const extras = [...queuedTurns, ...echoTurns];
     const baseTurns = coalesceUserActions(turns);
     return groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
-  }, [turns, pendingSends, queuedPrompts]);
+  }, [turns, pendingSends, queueShown]);
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
   // under them when it does. See blockIdentity.ts.
@@ -1715,6 +1855,7 @@ export function MirrorView({
     forkAt: openForkAt,
     onReauth: () => useSettingsUI.getState().openSettings("agents"),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
+    queue: { restore: (id) => void takeQueued(id, true), remove: (id) => void takeQueued(id, false) },
   };
 
   // What this reader may DO with the transcript. The mirror is the session's owner inside
@@ -1760,6 +1901,12 @@ export function MirrorView({
       translate,
       // Read while a turn renders; the host hands a new one exactly when what it draws changed.
       toolCard,
+      // Only the owner of a Managed session can edit its queue; a Terminal (CLI) session's
+      // queue lives in the CLI (ADR 0105 decision 6).
+      queue:
+        managed && !readOnly
+          ? { restore: (id) => actsRef.current.queue!.restore(id), remove: (id) => actsRef.current.queue!.remove(id) }
+          : undefined,
     }),
     [
       rejectedGen,
@@ -1775,6 +1922,8 @@ export function MirrorView({
       marks,
       translate,
       toolCard,
+      managed,
+      readOnly,
     ],
   );
 
@@ -2075,7 +2224,16 @@ export function MirrorView({
           // running; this is what the turn has written so far.
           <LiveReplyCard agentName={agentName} text={liveText} repo={sessionMeta?.repo ?? null} onOpenFile={openFile} />
         )}
-        {busy && !pending && <TypingRow agentName={agentName} sending={sending} onStop={() => void sendInterrupt()} />}
+        {stopRowVisible({ managed, busy, queued: queuedCount > 0, question: !!pending, approval: !!pendingApproval }) && (
+          <TypingRow
+            agentName={agentName}
+            typing={busy && !pending}
+            managed={managed}
+            queuedCount={queuedCount}
+            onStop={() => void sendInterrupt()}
+            onDiscard={() => void sendInterrupt(true)}
+          />
+        )}
         </div>
         <JumpPills
           showJump={scroll.showJump}
@@ -2086,6 +2244,9 @@ export function MirrorView({
       </div>
 
       {aboveComposer}
+      {managed && !readOnly && running && !composerBlock && (
+        <DiscardNotice notices={discardView} draftBusy={draftBusy} onRestore={restoreDiscard} onClose={closeDiscard} />
+      )}
       {readOnly ? (
         dirGone ? (
           <DirGoneNotice />

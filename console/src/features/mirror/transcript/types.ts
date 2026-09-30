@@ -83,6 +83,10 @@ export interface Turn {
   anchorId?: string;
   pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
   queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
+  // queueId: the queue entry's id when the Agent sent `queuedItems` (ADR 0105 decision 5), and
+  // queueActionable whether that entry can still be taken back or removed (state "queued").
+  queueId?: string;
+  queueActionable?: boolean;
   source?: string; // user turn origin: "operator" = fleet-operator injected (docs/log/30 ②), else own input
   // peerFrom: the SESSION that sent a source==="peer" turn, when the Agent could name it.
   // Empty for AF's own peer sends, whose envelope already names the sender in the body; it is
@@ -150,6 +154,8 @@ export interface Group {
   folded: number;
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
   queued?: boolean; // holds a prompt claude reports queued for the running turn
+  queueId?: string; // the one queue entry this block shows (Turn.queueId); never folded
+  queueActionable?: boolean;
   source?: string; // user group origin: "operator" = fleet-operator injected (docs/log/30 ②)
   peerFrom?: string; // sender of a source==="peer" group when the Agent named it (Turn.peerFrom)
 }
