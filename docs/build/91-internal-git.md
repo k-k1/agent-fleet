@@ -65,11 +65,13 @@ The decision and the options it rejected are ADR 0010. What the shape rests on:
   session gate (`exemptPrefix("/git/")`) because it authenticates itself (§91.5); the LFS
   routes under `/git/{slug}/{repo}/info/lfs/` are registered ahead of the smart-HTTP
   catch-all.
-- **Without `PUBLIC_BASE_URL` the provider is only partly off**: creating a repository
-  answers 503 `not_configured`, an LFS batch answers 503, and no token is injected into
-  workspaces. The smart-HTTP routes and the LFS transfer and lock routes stay registered
-  and still accept a valid token, listing still answers, and a credential the agent
-  seeded earlier stays in its store ([#1212](https://github.com/k-k1/agent-fleet/issues/1212)).
+- **Without `PUBLIC_BASE_URL` the provider is off for git**: every `/git/` route (smart
+  HTTP, LFS transfer and locks) answers 503 before authenticating (`requireBase`),
+  creating a repository answers 503 `not_configured`, and no token is injected into
+  workspaces. A credential the agent seeded earlier stays in its store but no longer
+  opens anything. The session-authenticated management API (listing, browsing,
+  rename, delete) keeps working so existing repositories can still be inspected or
+  removed; its clone URLs are relative while the base is unset.
 
 ## 91.4 Storage
 

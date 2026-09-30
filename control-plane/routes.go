@@ -1044,20 +1044,22 @@ func registerInternalGitRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/tree", g.withMembership(g.tree))
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/blob", g.withMembership(g.blob))
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/commits", g.withMembership(g.commits))
+	// Every /git/ route goes through requireBase: without PUBLIC_BASE_URL the provider
+	// is off, and a token seeded while it was on must not keep working.
 	// Git LFS face (docs/reference/internal-git-provider, P3). More specific than the
 	// smart-HTTP catch-all below, so these win for LFS paths; git-http-backend never
 	// sees them. Same Basic git-token auth (session-exempt under /git/).
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", g.lfsBatch)
-	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", g.lfsUpload)
-	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", g.lfsDownload)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", g.requireBase(g.lfsBatch))
+	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", g.requireBase(g.lfsUpload))
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", g.requireBase(g.lfsDownload))
 	// LFS file locking API (create / list / verify / unlock).
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", g.lfsLockCreate)
-	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", g.lfsLocksList)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", g.lfsLocksVerify)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", g.lfsUnlock)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", g.requireBase(g.lfsLockCreate))
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", g.requireBase(g.lfsLocksList))
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", g.requireBase(g.lfsLocksVerify))
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", g.requireBase(g.lfsUnlock))
 	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
 	// token (session-exempt, like /mcp); handles every method.
-	mux.HandleFunc("/git/{slug}/{repo...}", g.gitHTTP)
+	mux.HandleFunc("/git/{slug}/{repo...}", g.requireBase(g.gitHTTP))
 }
 
 // Browser Page lifecycle + restricted rendering/input WebSocket (docs/log/31).

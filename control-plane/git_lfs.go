@@ -83,10 +83,6 @@ func (a gitServerAPI) lfsBatch(w http.ResponseWriter, r *http.Request) {
 		aerr.writeLFS(w)
 		return
 	}
-	if a.publicBaseURL == "" {
-		writeLFSErr(w, http.StatusServiceUnavailable, "internal git not configured (PUBLIC_BASE_URL)")
-		return
-	}
 	var req struct {
 		Operation string `json:"operation"`
 		Objects   []struct {
