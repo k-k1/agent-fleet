@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,20 @@ import (
 // unified cred helper's token injection authenticates it transparently.
 func (a gitServerAPI) cloneURL(slug, name string) string {
 	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + name + ".git"
+}
+
+// internalGitCredentialHost is the key the Agent seeds the internal git credential
+// under (AF_INTERNAL_GIT_HOST). It has to equal the `host=` line git's credential
+// protocol sends for cloneURL, and git sends the authority with its port whenever the
+// URL carries one — so this is u.Host, not u.Hostname(): a base such as
+// http://127.0.0.1:8080 otherwise leaves every clone and push without credentials.
+// Empty when the base is unset or unparsable (internal git disabled).
+func internalGitCredentialHost(publicBaseURL string) string {
+	u, err := url.Parse(strings.TrimSpace(publicBaseURL))
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
 
 // internalRepoWire is the wire shape of one internal git repository (the Console's

@@ -226,8 +226,8 @@ func main() {
 	// Internal git provider: the clone host workspaces authenticate against is the
 	// public base's host (Caddy TLS terminus). Recorded on the manager so each
 	// workspace start injects a token for it (docs/reference/internal-git-provider).
+	mgr.internalGitHost = internalGitCredentialHost(publicBaseURL)
 	if u, err := url.Parse(publicBaseURL); err == nil {
-		mgr.internalGitHost = u.Hostname()
 		wsAllowedOriginHost = u.Host // WS origin allowlist (checkWSOrigin)
 	}
 	// Full public base (scheme+host) for the in-container memo bridge (AF_CP_BASE_URL).

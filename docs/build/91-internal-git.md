@@ -110,14 +110,14 @@ and there is no recovery problem. (Reusing the personal-access-token table was r
 it cannot be reconstructed, which makes injection non-idempotent, and it would pollute
 the user's own token list.)
 
-At every workspace start `workspaceExtraEnv` injects `AF_INTERNAL_GIT_HOST` (the host
-name of `PUBLIC_BASE_URL`) and `AF_INTERNAL_GIT_TOKEN`. The agent's `seedInternalGit`
-writes them into its credential store as an ordinary git credential
+At every workspace start `workspaceExtraEnv` injects `AF_INTERNAL_GIT_HOST` (the
+authority of `PUBLIC_BASE_URL`, port included) and `AF_INTERNAL_GIT_TOKEN`. The agent's
+`seedInternalGit` writes them into its credential store as an ordinary git credential
 (`x-access-token` and the token) at startup, and **the unified credential helper
 (`runCredHelper`) serves any host found in the store**, so clone and push authenticate
-with no further work. The key it is stored under is the host name alone, without a
-port, while git asks for `host:port` when the URL carries an explicit one — so the
-lookup only matches a `PUBLIC_BASE_URL` on its scheme's default port ([#1198](https://github.com/k-k1/agent-fleet/issues/1198)).
+with no further work. The key keeps the port because git asks for `host:port` whenever
+the clone URL carries an explicit one; `gitProviderHost` compares the bare host name
+when it badges a remote as internal.
 
 The smart-HTTP and LFS handlers share `authorizeGitRepo`, which verifies the token,
 resolves the membership **live** (`GetMembershipByID`, active memberships only), and

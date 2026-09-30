@@ -105,13 +105,13 @@ HMAC-SHA256 を切り詰めたもの（`mintGitToken`・`verifyGitToken`）。�
 冪等にならず、利用者自身のトークン一覧も汚すため。）
 
 ワークスペースの起動のたびに、`workspaceExtraEnv` が `AF_INTERNAL_GIT_HOST`
-（`PUBLIC_BASE_URL` のホスト名）と `AF_INTERNAL_GIT_TOKEN` を注入する。agent は起動時に
-`seedInternalGit` でこれを通常の git 資格情報（`x-access-token` とトークン）として自分の
-資格情報ストアに書き込み、**統一の資格情報ヘルパー（`runCredHelper`）はストアにある
-どのホストにも答える**ので、clone と push はそれ以上何もしなくても認証が通る。格納の鍵は
-ポートを含まないホスト名だけだが、git は URL にポートが明示されていると `host:port` で
-問い合わせる。そのため照合が当たるのは、`PUBLIC_BASE_URL` がスキームの既定ポートのときだけ
-である（[#1198](https://github.com/k-k1/agent-fleet/issues/1198)）。
+（`PUBLIC_BASE_URL` のオーソリティ。ポートを含む）と `AF_INTERNAL_GIT_TOKEN` を注入する。
+agent は起動時に `seedInternalGit` でこれを通常の git 資格情報（`x-access-token` と
+トークン）として自分の資格情報ストアに書き込み、**統一の資格情報ヘルパー
+（`runCredHelper`）はストアにあるどのホストにも答える**ので、clone と push はそれ以上
+何もしなくても認証が通る。鍵がポートを含むのは、git が clone URL にポートが明示されて
+いると `host:port` で問い合わせるからである。リモートを internal と判定する
+`gitProviderHost` はポートを除いたホスト名で比べる。
 
 smart HTTP と LFS のハンドラは `authorizeGitRepo` を共有する。トークンを検証し、
 メンバーシップを**その場で**引き（`GetMembershipByID`。有効なメンバーシップのみ）、
