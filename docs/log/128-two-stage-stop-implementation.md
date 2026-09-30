@@ -129,3 +129,15 @@ DismissDiscard(id string) bool
   - 🔵 LedgerAtTake で、捨てた id・取り除いた id を ledger に記録するようにした。
   - 🔵 ガイドの抜けを直した。
   - 🔵 生き残った変異と古いコメントは各レーンに差し戻した。
+- 最終レビューの差し戻しを 3 レーンとも取り込んだ。
+  - muse の質問の取り消しは `userInput/cancel` で送る（決定 7 の「ランタイム自身の断り」）。
+  - ACP の停止は、保留中の許可の要求に cancelled で答える。
+  - Console は、質問カードの取り消しを、Managed のどの kind でも `/respond` の cancel で送る。
+- ACP と lcpp の、固定時間で待つテストは、共有ホストの I/O 圧で 15 秒止まることがあった（`/proc/pressure/io` の full avg60 がほぼ 40%）。
+  必ず起きることは 30 秒の hang guard で待ち、「起きないこと」はポンプのアイドルと同期してから確かめる形に直した。
+- 最終状態: `workspace/agent` で `go vet ./...`、`gofmt -l`（空）、`go test -p 2 ./...` がすべて緑。Console は、全テスト 3962 件・型検査・lint・build が緑（レーン C の報告）。
+- 残件:
+  - #1307（codex の DropHandle 後にポンプが残る。今回の変更より前からある）
+  - #1255（Agent の再起動を越えて残るキュー）
+  - #1256（Terminal の残りの CLI の測定）
+  - ACP で、書いた直後の `session/cancel` の順序は実機で測っていない（決定 3 のとおり best effort）。

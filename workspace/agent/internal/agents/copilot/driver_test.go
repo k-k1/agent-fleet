@@ -189,11 +189,11 @@ func endTurnsBeforeHomeRestore(t *testing.T, h *threadHandle) {
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {
 	t.Helper()
-	for i := 0; i < 100; i++ {
+	for deadline := time.Now().Add(hangGuard); time.Now().Before(deadline); {
 		if h.currentState() == want {
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("state never reached %s (now %s)", want, h.currentState())
 }
@@ -211,11 +211,7 @@ func TestSendCompletesTurn(t *testing.T) {
 	if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "m1"}); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-f.gotPrompt:
-		t.Fatal("duplicate ClientMessageID must not start a turn")
-	case <-time.After(200 * time.Millisecond):
-	}
+	expectNoPrompt(t, h, f) // a duplicate ClientMessageID must not start a turn
 }
 
 func TestSteerQueuesBehindRunning(t *testing.T) {
@@ -251,7 +247,7 @@ func TestInterruptCancels(t *testing.T) {
 // A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
 // the next turn. The member's own queued follow-up continues too (ADR 0105 decision 1), and a
 // second stop discards it and hands it back (decisions 2 and 4).
-func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
+func TestStopFreesPeerInputAndKeepsOwnForSecondStop(t *testing.T) {
 	h, f := newTestHandle(t)
 	queued, err := h.SendQueued(member("m1", "stuck"))
 	if err != nil {
@@ -278,13 +274,13 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	var second int64
 	select {
 	case second = <-f.gotPrompt:
-	case <-time.After(5 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatal("the peer message did not start a turn after the stop")
 	}
-	// The kept turn is held by the fake, so the pump is parked in it: the own follow-up must
+	// The continued turn is held by the fake, so the pump is parked in it: the own follow-up must
 	// still be queued behind it.
 	if got := waitingTexts(h); !equal(got, []string{"own follow-up"}) {
-		t.Errorf("queue after the kept turn started = %v, want the own follow-up kept", got)
+		t.Errorf("queue after the continued turn started = %v, want the own follow-up still queued", got)
 	}
 	if got := f.promptTexts(); len(got) != 2 || got[1] != "from a peer" {
 		t.Errorf("prompts = %q, want the peer message as the turn after the stop", got)
@@ -295,7 +291,7 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	}
 	<-f.gotCancel
 	f.reply(second, map[string]any{"stopReason": "cancelled"})
-	expectNoPrompt(t, f)
+	expectNoPrompt(t, h, f)
 	_, discards, _ := settled(t, h)
 	if len(discards) != 1 || discards[0].Items[0].Text != "own follow-up" {
 		t.Errorf("kept discards = %+v, want the own follow-up returned", discards)
@@ -303,9 +299,9 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	waitState(t, h, agents.TurnCancelled)
 }
 
-// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
+// Agent shutdown interrupts through the teardown path: anything queued would otherwise start
 // on the way down.
-func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+func TestAbortManagedDiscardsQueuedInput(t *testing.T) {
 	h, f := newTestHandle(t)
 	handlesMu.Lock()
 	handles[h.name] = h
@@ -326,7 +322,7 @@ func TestAbortManagedDiscardsKeptInput(t *testing.T) {
 		t.Errorf("queue after shutdown interrupt = %v", got)
 	}
 	f.reply(id, map[string]any{"stopReason": "cancelled"})
-	expectNoPrompt(t, f)
+	expectNoPrompt(t, h, f)
 	items, discards, ep := settled(t, h)
 	if len(items) != 0 || len(discards) != 0 || ep {
 		t.Errorf("after shutdown: items %v, discards %v, episode %v (teardown keeps nothing)", items, discards, ep)

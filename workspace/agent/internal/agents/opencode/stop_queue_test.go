@@ -305,8 +305,8 @@ func TestDropHandleDiscardsTheQueue(t *testing.T) {
 }
 
 // Input the pump has not taken yet is the turn being started only when serve runs nothing
-// (decision 1): then a first stop cancels it; behind another client's turn it is queued and
-// continues.
+// (decision 1): then a first stop cancels it and keeps it for return (first_stop); behind
+// another client's turn it is queued and continues.
 func TestFirstStopOnInputNotYetTaken(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -332,14 +332,18 @@ func TestFirstStopOnInputNotYetTaken(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if res.Stop != agents.StopFirst || res.Discard != nil {
-				t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+			wantKept := 1 - tc.left
+			if res.Stop != agents.StopFirst || (res.Discard != nil) != (wantKept == 1) {
+				t.Fatalf("stop = %+v, want a first stop keeping %d unsent input", res, wantKept)
+			}
+			if res.Discard != nil && (res.Discard.Reason != agents.DiscardFirstStop || res.Discard.Items[0].ID != "msg_soon") {
+				t.Fatalf("discard = %+v, want the unsent input as first_stop", res.Discard)
 			}
 			h.mu.Lock()
 			left, kept := h.tq().Len(), h.tq().Discards()
 			h.mu.Unlock()
-			if left != tc.left || len(kept) != 0 {
-				t.Fatalf("after the stop: %d queued, %d kept; want %d queued and nothing kept", left, len(kept), tc.left)
+			if left != tc.left || len(kept) != wantKept {
+				t.Fatalf("after the stop: %d queued, %d kept; want %d queued and %d kept", left, len(kept), tc.left, wantKept)
 			}
 			endForeignTurn(m)
 			h.pump()

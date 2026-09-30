@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,4 +130,52 @@ func TestRemoveHeldInput(t *testing.T) {
 	if got := sentTurns(m); len(got) != 0 {
 		t.Fatalf("turns sent after the removal = %q, want none", got)
 	}
+}
+
+// The pump asks serve whether another client's turn runs before it waits behind it. The input
+// counts as held from before that question, so a first stop landing while the answer is still
+// on the way lets it continue behind the foreign turn instead of taking it for the turn being
+// started.
+func TestFirstStopDuringTheBusyCheckKeepsTheInput(t *testing.T) {
+	m, srv := newMockServe(t)
+	m.turnDelay = 50 * time.Millisecond
+	h := newTestHandle(t, srv)
+	gate, entered := make(chan struct{}), make(chan struct{}, 1)
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			m.mu.Lock()
+			m.statusGate, m.statusEntered = nil, nil
+			m.mu.Unlock()
+			close(gate)
+		})
+	}
+	// Registered after newTestHandle's pump wait, so it runs first: a failing test must not
+	// leave the pump parked in the status call.
+	t.Cleanup(release)
+	m.mu.Lock()
+	m.busy, m.statusGate, m.statusEntered = true, gate, entered
+	m.mu.Unlock()
+	if err := h.Send(memberInput("own follow-up", "msg_own")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pump never asked serve whether it was busy")
+	}
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stop != agents.StopFirst || res.Discard != nil {
+		t.Fatalf("stop = %+v, want a first stop that leaves the waiting input alone", res)
+	}
+	release()
+	endForeignTurn(m)
+	waitPumpIdle(t, h)
+	if got := sentTurns(m); len(got) != 1 || got[0] != "own follow-up" {
+		t.Fatalf("turns sent after the stop = %q, want the input that waited", got)
+	}
+	waitState(t, h, agents.TurnCompleted)
 }

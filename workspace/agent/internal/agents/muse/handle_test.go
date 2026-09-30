@@ -269,7 +269,7 @@ func TestFirstStopInterruptsTheTurnAndKeepsTheQueue(t *testing.T) {
 	if res.Stop != agents.StopFirst || res.Discard != nil {
 		t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
 	}
-	m := host.WaitForMethod(msp.MethodTurnInterrupt)
+	m := waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 	var p msp.TurnInterruptParams
 	json.Unmarshal(m.Params, &p)
 	if p.TurnID == nil || *p.TurnID != "t-3" {
@@ -334,7 +334,7 @@ func TestSecondStopDiscardsTheRestPeerIncluded(t *testing.T) {
 	if res.Stop != agents.StopSecond || res.Discard == nil || len(res.Discard.Items) != 1 || res.Discard.Items[0].ID != "cm-peer" {
 		t.Fatalf("second stop = %+v, want the peer message discarded", res)
 	}
-	host.WaitFor(func(m msptest.Message) bool {
+	waitSent(t, host, func(m msptest.Message) bool {
 		var p msp.TurnInterruptParams
 		return m.Method == msp.MethodTurnInterrupt && json.Unmarshal(m.Params, &p) == nil && p.TurnID != nil && *p.TurnID == own.CommandID
 	})
@@ -422,7 +422,7 @@ func TestHostQueuedDispositionReportsQueued(t *testing.T) {
 
 // Agent shutdown interrupts through the teardown path: the whole queue goes, peer input
 // included, and nothing is kept for return (ADR 0105 decision 8).
-func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+func TestAbortManagedDiscardsTheQueue(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
@@ -451,7 +451,7 @@ func TestAbortManagedDiscardsKeptInput(t *testing.T) {
 	}
 
 	AbortManaged()
-	host.WaitForMethod(msp.MethodTurnInterrupt)
+	waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 	h.mu.Lock()
 	left, kept := h.tq().Len(), h.tq().Discards()
 	h.mu.Unlock()

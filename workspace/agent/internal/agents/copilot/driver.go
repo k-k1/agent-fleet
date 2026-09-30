@@ -776,7 +776,7 @@ func (h *threadHandle) received(t *agents.Taken, cl *acpClient, sid string) {
 	stop := h.q.Received(t)
 	h.mu.Unlock()
 	if stop {
-		_ = cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+		_ = h.deliverStop(cl, sid)
 	}
 }
 
@@ -784,36 +784,57 @@ func (h *threadHandle) received(t *agents.Taken, cl *acpClient, sid string) {
 // is; this delivers it to the entry in flight.
 func (h *threadHandle) Interrupt(opts agents.InterruptOpts) (agents.InterruptResult, error) {
 	h.mu.Lock()
-	out := h.q.Interrupt(opts, h.running)
+	// busy: every turn this driver runs comes from the queue, so with nothing taken nothing
+	// runs. h.running alone also covers the pump's tail after a taken entry was cancelled or
+	// removed, when the runtime has no turn.
+	out := h.q.Interrupt(opts, h.q.Head() != nil)
 	return out.Result, h.stopLocked(out.Head)
 }
 
-// stopLocked delivers a stop to the turn in flight per head, and releases h.mu. HeadCancelled
-// on a taken entry needs nothing: the pump's Commit fails and lands the turn as cancelled.
+// stopLocked delivers a stop to the turn in flight per head, and releases h.mu. HeadNone needs
+// nothing: every turn this driver runs has a taken entry, so with none there is no turn — only,
+// at most, the pump's tail after a cancelled Commit, which must not be left interrupting.
 func (h *threadHandle) stopLocked(head agents.HeadAction) error {
 	cl, sid := h.cl, h.sid
-	if head == agents.HeadCancelled && !h.running {
-		// The input accepted while nothing ran, stopped before the pump took it: no runTurn will
-		// land a verdict, and accept left the state at queued.
+	switch head {
+	case agents.HeadCancelled:
+		// Never sent. A taken entry's Commit fails and runTurn lands the same verdict; input the
+		// pump had not taken yet has no runTurn at all, and accept left the state at queued.
 		h.state = agents.TurnCancelled
 		h.mu.Unlock()
 		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCancelled})
 		return nil
-	}
-	cancelNow := head == agents.HeadStopNow || (head == agents.HeadNone && h.running)
-	if cancelNow || head == agents.HeadStopPending {
-		h.stopping = true
-		h.state = agents.TurnInterrupting
-	}
-	h.mu.Unlock()
-	if !cancelNow && head != agents.HeadStopPending {
+	case agents.HeadStopNow, agents.HeadStopPending:
+	default:
+		h.mu.Unlock()
 		return nil
 	}
+	h.stopping = true
+	h.state = agents.TurnInterrupting
+	h.mu.Unlock()
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnInterrupting})
-	if !cancelNow || cl == nil {
+	if head == agents.HeadStopPending || cl == nil {
 		return nil // HeadStopPending: received delivers it once the prompt is written
 	}
-	return cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+	return h.deliverStop(cl, sid)
+}
+
+// deliverStop cancels the running turn. ACP requires a pending session/request_permission to
+// be answered cancelled once the turn is cancelled; a runtime that waits for that answer keeps
+// the turn interrupting and the card up. The stop is reachable under the card, so it cannot
+// rely on the card's own Cancel.
+func (h *threadHandle) deliverStop(cl *acpClient, sid string) error {
+	h.mu.Lock()
+	permID := h.permID
+	if permID != nil {
+		h.inter, h.permID, h.permOpts = nil, nil, nil
+	}
+	h.mu.Unlock()
+	err := cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+	if permID != nil {
+		_ = cl.respond(permID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
+	}
+	return err
 }
 
 // RemoveQueued takes one entry out while it is cancellable (decision 5).
@@ -835,7 +856,7 @@ func (h *threadHandle) DismissDiscard(id string) bool {
 func (h *threadHandle) interruptAll() error {
 	h.mu.Lock()
 	h.q.DropAll()
-	out := h.q.Interrupt(agents.InterruptOpts{}, h.running)
+	out := h.q.Interrupt(agents.InterruptOpts{}, h.q.Head() != nil)
 	return h.stopLocked(out.Head)
 }
 
