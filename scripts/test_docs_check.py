@@ -23,6 +23,8 @@ class GithubSlugTests(unittest.TestCase):
             ("5.1 公開面（Console ↔ CP）", "51-公開面console--cp"),
             ("Commits & PRs", "commits--prs"),
             ("snake_case — kept", "snake_case--kept"),
+            ("A ⓘ B", "a-ⓘ-b"),  # an Alphabetic symbol (So) is kept
+            ("🄰 ↔ Ⓩ 🅐 🆉 ⓪", "🄰--ⓩ-🅐-🆉-"),  # the kept ranges end where they should
         ):
             with self.subTest(text=text):
                 self.assertEqual(check.github_slug(text), rendered)
