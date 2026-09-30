@@ -137,9 +137,10 @@ dispatched the contract, and nothing is being tested while it is down.
   `run-dev.sh`'s environment, and requires `oauth.env` to exist.
 - **`e2e-smoke.sh`** — the image smoke test (L1), run with `docker run` against a
   built image. On a baked image it checks that the installed claude, opencode, codex,
-  copilot, cursor, kiro and muse match the Dockerfile's pins (that is, the cache is
-  not stale), as do Go, `gh` and Chromium on every image. It does not probe agy's binary,
-  and accepts rtk either present or absent with an `rtk-unavailable` marker. On a lean
+  copilot, cursor, kiro, muse, agy and rtk match the Dockerfile's pins (that is, the
+  cache is not stale), as do Go, `gh` and Chromium on every image. agy is asked through
+  the same `OPENSSL_ia32cap` mask the Agent uses when the host has no RDRAND, and rtk
+  may instead be absent with an `rtk-unavailable` marker (arm64). On a lean
   image it checks that no CLI is baked in. Either way it checks `versions.json` against
   the pins and that the image's own files (the agent, the entrypoint, the policy
   `CLAUDE.md` and the like) are present. `run-dev.sh` runs it after

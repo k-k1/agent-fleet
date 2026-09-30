@@ -14,9 +14,8 @@
 #	// RDRAND 要件は x86 の FIPS 乱数モジュール固有（0008）。arm64 等では課さない。
 #
 # **That "arm64 では課さない" is an assumption that has never been executed.** The L1
-# image smoke deliberately does not run `agy --version` (it would SIGABRT on the build
-# host), so building the arm64 image proves nothing about agy — it is the one CLI that
-# came out of that build unverified (docs/log/70 §70.9.5).
+# image smoke runs `agy --version`, but only on whatever host builds the image, so it
+# says nothing about the Graviton generations below (docs/log/70 §70.9.5).
 #
 # ## Why three generations and not one
 #
