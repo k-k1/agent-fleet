@@ -218,8 +218,11 @@ CPROLE=arn:aws:iam::$ACCOUNT:role/$N-cp
 SRC_CONFIG=${AWS_CONFIG_FILE:-$HOME/.aws/config}
 {
   if [ -r "$SRC_CONFIG" ]; then
+    # Only the text between "[" and the first "]" names the section: a trailing comment
+    # or a CRLF's \r after it must not stop the old CP section from being dropped.
     awk -v p="$N-cp" '
-      /^[ \t]*\[/ { h = $0; gsub(/[][ \t"]/, "", h); skip = (h == "profile" p) }
+      /^[ \t]*\[/ { h = $0; sub(/^[ \t]*\[/, "", h); sub(/\].*/, "", h); gsub(/[ \t"]/, "", h)
+                    skip = (h == "profile" p) }
       !skip' "$SRC_CONFIG"
     echo
   fi

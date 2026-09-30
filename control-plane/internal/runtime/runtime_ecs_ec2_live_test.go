@@ -70,14 +70,33 @@ func useCPTaskRole(t *testing.T) {
 	who.Env = append(os.Environ(), "AWS_CONFIG_FILE="+cfgFile)
 	out, err := who.Output()
 	arn := strings.TrimSpace(string(out))
-	role := prof // setup.sh names the profile after the role
-	if r := os.Getenv("AF_HARNESS_CP_ROLE"); r != "" {
-		role = r[strings.LastIndex(r, "/")+1:]
+	roleARN := os.Getenv("AF_HARNESS_CP_ROLE")
+	if roleARN == "" && os.Getenv("AF_HARNESS_ACCOUNT") != "" {
+		roleARN = "arn:aws:iam::" + os.Getenv("AF_HARNESS_ACCOUNT") + ":role/" + prof // setup.sh names the profile after the role
 	}
-	if err != nil || !strings.Contains(arn, ":assumed-role/"+role+"/") {
-		t.Fatalf("profile %s does not answer as role %s (got %q, err %v)", prof, role, arn, err)
+	if err != nil {
+		t.Fatalf("profile %s: aws sts get-caller-identity: %v", prof, err)
+	}
+	if err := isAssumedRoleOf(arn, roleARN); err != nil {
+		t.Fatalf("profile %s does not answer as the CP task role: %v", prof, err)
 	}
 	t.Logf("the product runs as %s (profile %s) — the CP task role's permissions, not the deployer's", arn, prof)
+}
+
+// isAssumedRoleOf reports whether stsARN is a session of roleARN, matching partition,
+// account and role name exactly: a role of the same name in another account can carry
+// different permissions, so a name-only match would vouch for the wrong policy.
+func isAssumedRoleOf(stsARN, roleARN string) error {
+	rp := strings.SplitN(roleARN, ":", 6)
+	if len(rp) != 6 || rp[0] != "arn" || rp[2] != "iam" || rp[4] == "" || !strings.HasPrefix(rp[5], "role/") {
+		return fmt.Errorf("expected CP role %q is not an IAM role ARN (set AF_HARNESS_CP_ROLE or AF_HARNESS_ACCOUNT)", roleARN)
+	}
+	name := rp[5][strings.LastIndex(rp[5], "/")+1:] // an assumed-role ARN drops the role's path
+	want := "arn:" + rp[1] + ":sts::" + rp[4] + ":assumed-role/" + name + "/"
+	if !strings.HasPrefix(stsARN, want) || len(stsARN) == len(want) {
+		return fmt.Errorf("got %q, want a session of %s (%s…)", stsARN, roleARN, want)
+	}
+	return nil
 }
 
 // TestECSEC2LiveLifecycle drives the real ecs-ec2 adapter against real AWS: one cold
