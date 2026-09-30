@@ -241,13 +241,13 @@ func TestLastSayLine(t *testing.T) {
 			strings.Repeat("あ", lastSayMax-1) + " ののの", strings.Repeat("あ", lastSayMax-1) + "…"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := lastSayLine(c.in); got != c.want {
-				t.Errorf("lastSayLine(%q) = %q, want %q", c.in, got, c.want)
+			if got := LastSayLine(c.in); got != c.want {
+				t.Errorf("LastSayLine(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
 	}
 	// Bytes would cut a Japanese answer mid-codepoint and put invalid UTF-8 on the wire.
-	if got := []rune(lastSayLine(strings.Repeat("あ", 300))); len(got) != lastSayMax+1 {
+	if got := []rune(LastSayLine(strings.Repeat("あ", 300))); len(got) != lastSayMax+1 {
 		t.Errorf("capped length = %d runes, want %d + the ellipsis", len(got), lastSayMax)
 	}
 }
@@ -323,17 +323,17 @@ func TestTokenSpendsFoldsOneReplyIntoOnePoint(t *testing.T) {
 		eq(t, got, []int{11})
 	})
 
-	t.Run("keeps only the newest tokenSpendMax replies", func(t *testing.T) {
+	t.Run("keeps only the newest TokenSpendMax replies", func(t *testing.T) {
 		var lines []string
-		for i := 1; i <= tokenSpendMax+10; i++ {
+		for i := 1; i <= TokenSpendMax+10; i++ {
 			lines = append(lines, sayWithUsage("x", i, 0, 0, 0), humanTurn)
 		}
 		got := spendsIn(t, lines...)
-		if len(got) != tokenSpendMax {
-			t.Fatalf("len(spends) = %d, want %d", len(got), tokenSpendMax)
+		if len(got) != TokenSpendMax {
+			t.Fatalf("len(spends) = %d, want %d", len(got), TokenSpendMax)
 		}
-		if got[len(got)-1] != tokenSpendMax+10 {
-			t.Errorf("last spend = %d, want the newest reply (%d)", got[len(got)-1], tokenSpendMax+10)
+		if got[len(got)-1] != TokenSpendMax+10 {
+			t.Errorf("last spend = %d, want the newest reply (%d)", got[len(got)-1], TokenSpendMax+10)
 		}
 	})
 

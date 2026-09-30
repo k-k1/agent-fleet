@@ -90,7 +90,7 @@ export interface Session {
   // resend on failed / unknown, and never while it is pending.
   initialPromptState?: "pending" | "delivered" | "failed" | "unknown";
   model?: string; // claude model
-  context?: SessionContextUsage; // claude context-window usage (the Agent's session.ContextUsage)
+  context?: SessionContextUsage; // context-window usage (the Agent's session.ContextUsage); absent for agy/shell/ssm
   branch?: string; // git branch the working copy was on when the session started
   currentBranch?: string; // working copy's branch now, set only when it differs from `branch`
   branchDrift?: boolean; // true = the working tree was switched off `branch` under the session
@@ -114,7 +114,7 @@ export interface Session {
   handoffPending?: boolean;
   // The opening line of the agent's newest utterance — one line, already whitespace-collapsed
   // and capped at 120 runes by the Agent (ADR 0078 decision 12). Absent until the session has
-  // said something, and for every kind but claude (P1.1). Display only, on the overview card:
+  // said something, and for agy, shell and ssm. Display only, on the overview card:
   // it is a fragment of an answer with no turn boundary and no timestamp, so nothing may
   // decide anything from it.
   lastSay?: string;
@@ -122,8 +122,8 @@ export interface Session {
   // oldest first, capped at the newest two dozen by the Agent — the trend the overview card
   // draws beside its context gauge (ADR 0078 decision 13). One point per reply, folded the
   // same way the mirror's groupTurns folds one, so a session's card and its chat show the
-  // same shape. Absent for every kind but claude, and while fewer than two replies are known
-  // (two is the minimum the Sparkline can draw). Display only.
+  // same shape. Absent for agy, shell and ssm, and until a reply with usage is known.
+  // Display only.
   tokenSpends?: number[];
   // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
   // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and

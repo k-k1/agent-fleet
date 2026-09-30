@@ -68,6 +68,18 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// The live-dependent fields (state / remote URL / context / resumable / bg-busy)
 	// diverge by kind — the agent computes them (see WireLive per implementation).
 	li := AgentOf(m.Kind).WireLive(m, alive)
+	// The overview card's usage facts, for the kinds whose WireLive does not read them itself
+	// (overview_facts.go). A field the agent did fill wins: lcpp knows its window exactly.
+	f := overviewFactsFor(m, alive)
+	if li.Context == nil {
+		li.Context = f.ctx
+	}
+	if li.TokenSpends == nil {
+		li.TokenSpends = f.spends
+	}
+	if li.LastSay == "" {
+		li.LastSay = f.say
+	}
 	// For the four hook-less TUI kinds this poll may be the first (and for a session nobody
 	// opens in the Console, the ONLY) place that sees the turn end, so record WHEN it ended —
 	// and nothing else, notification included (turn_end_poll.go, docs/log/89 §89.3). It runs
