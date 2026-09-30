@@ -153,7 +153,7 @@ Point at files and symbols, not line numbers.
 | `control-plane/internal_git.go` | List, create, delete, rename, branches, `cloneURL`, the repository quota, audit entries |
 | `control-plane/internal_git_browse.go` | Tree, blob and commit browsing without a clone |
 | `control-plane/git_lfs.go`, `git_lfs_locks.go` | The LFS batch API and basic transfer; the lock API |
-| `control-plane/git_gc.go` | The GC job and orphan LFS collection |
+| `control-plane/git_gc.go` | The GC job, orphan LFS collection and the LFS ledger reconcile |
 | `control-plane/internal/store/migrations/` `0014_git_repo.sql`, `0015_lfs_object.sql`, `0016_lfs_lock.sql` | The SQLite tables. Postgres has them in `migrations-pg/0001_init.sql` |
 | `control-plane/main.go`, `workspace_lifecycle.go` `workspaceExtraEnv` | `PUBLIC_BASE_URL` → `internalGitHost`; the per-start injection of `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN` |
 | `workspace/agent/cred_helper.go` | `seedInternalGit`, `internalGitHost`, `runCredHelper` |
@@ -251,6 +251,17 @@ time, and the helper serves any host in the store).
     ([#1210](https://github.com/k-k1/agent-fleet/issues/1210)). An object to be deleted
     leaves the ledger first, which frees quota; if that fails the object is kept
     for the next sweep.
+  - **Ledger reconcile** runs first in the same pass, for every repository. A ledger row
+    whose object file is absent and whose `created_at` is older than the same grace period
+    is deleted and logged: an upload whose publish failed, or whose process died between
+    the ledger write and the rename, leaves such a row, and it would otherwise over-count
+    the tenant's quota until the same oid is uploaded again. A retried upload moves the
+    row's `created_at` to now, and the delete re-checks the age in the same statement, so
+    an upload in flight keeps its row. A grace period of 0 turns the reconcile off, and a
+    repository whose bare has moved away mid-sweep (a rename in progress) is left alone.
+    **A store error (listing the rows, deleting one, or
+    resolving the tenant) ends the repository's pass: nothing further is deleted, neither
+    ledger rows nor object files.**
 - **The client side needs no change**: the workspace image ships `git-lfs` with its
   filters in the system gitconfig, and LFS authenticates through the same credential
   helper. The packaged native runtime runs the agent on an extracted workspace-image

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -134,9 +135,9 @@ func TestLFSGCPrune(t *testing.T) {
 	if n, _ := f.st.TenantLFSBytes(ctx, f.tenantID); n != 150 { // 100 (ref) + 50 (young)
 		t.Fatalf("post-GC ledger bytes = %d, want 150", n)
 	}
-	oids, _ := f.st.ListLFSObjectOIDs(ctx, f.tenantID, "shared")
-	for _, o := range oids {
-		if o == oidOrphan {
+	rows, _ := f.st.ListLFSObjects(ctx, f.tenantID, "shared")
+	for _, o := range rows {
+		if o.OID == oidOrphan {
 			t.Error("orphan ledger row not deleted")
 		}
 	}
@@ -273,5 +274,166 @@ func TestReferencedLFSOIDsEmpty(t *testing.T) {
 	}
 	if len(ref) != 0 {
 		t.Fatalf("empty repo should reference nothing, got %v", ref)
+	}
+}
+
+// backdate moves a ledger row's created_at into the past, as if it were written age ago.
+func (f *lfsGCFixture) backdate(t *testing.T, oid string, age time.Duration) {
+	t.Helper()
+	at := time.Now().UTC().Add(-age).Format(time.RFC3339)
+	if _, err := f.st.DB().ExecContext(context.Background(),
+		`UPDATE lfs_object SET created_at=? WHERE tenant_id=? AND repo_name=? AND oid=?`, at, f.tenantID, "shared", oid); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// putRow records a ledger row with no object file behind it: the publish failed, or the
+// process died before the rename.
+func (f *lfsGCFixture) putRow(t *testing.T, oid string, size int64, age time.Duration) {
+	t.Helper()
+	if err := f.st.PutLFSObject(context.Background(), f.tenantID, "shared", oid, size); err != nil {
+		t.Fatal(err)
+	}
+	f.backdate(t, oid, age)
+}
+
+func (f *lfsGCFixture) ledger(t *testing.T) map[string]bool {
+	t.Helper()
+	rows, err := f.st.ListLFSObjects(context.Background(), f.tenantID, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, o := range rows {
+		out[o.OID] = true
+	}
+	return out
+}
+
+// Issue #1335: a ledger row whose object never landed on disk is removed once it is older
+// than the grace window, so it stops counting against the tenant's quota. A fresh one, and
+// one whose upload was just retried, may belong to an upload still in flight and stay. The
+// repo has no lfs/objects directory at all, which is what a first upload that never
+// published leaves.
+func TestLFSGCReconcilesLedgerRowsWithoutAFile(t *testing.T) {
+	f := newLFSGCFixture(t)
+	ctx := context.Background()
+	oidStale := oidOf([]byte("never-published"))
+	oidFresh := oidOf([]byte("publishing-now"))
+	oidRetried := oidOf([]byte("retried-just-now"))
+	f.putRow(t, oidStale, 200, 2*time.Hour)
+	f.putRow(t, oidFresh, 50, 0)
+	f.putRow(t, oidRetried, 30, 2*time.Hour)
+	if err := f.st.PutLFSObject(ctx, f.tenantID, "shared", oidRetried, 30); err != nil {
+		t.Fatal(err)
+	}
+
+	newGitGC(f.st, f.dataRoot, 0, time.Hour).pruneLFS(ctx, "default", "shared", f.bare)
+
+	got := f.ledger(t)
+	if got[oidStale] {
+		t.Error("a ledger row older than the grace window with no object file was kept")
+	}
+	if !got[oidFresh] {
+		t.Error("a fresh ledger row was removed; its upload may still be in flight")
+	}
+	if !got[oidRetried] {
+		t.Error("a ledger row whose upload was just retried was removed")
+	}
+	if n, _ := f.st.TenantLFSBytes(ctx, f.tenantID); n != 80 {
+		t.Errorf("ledger bytes = %d, want 80 (50 fresh + 30 retried)", n)
+	}
+}
+
+// A row whose file is on disk is never reconciled away, however old.
+func TestLFSGCReconcileKeepsRowsWithAFile(t *testing.T) {
+	f := newLFSGCFixture(t)
+	ctx := context.Background()
+	f.seed(t, f.oidRef, 100, 2*time.Hour)
+	f.backdate(t, f.oidRef, 2*time.Hour)
+	newGitGC(f.st, f.dataRoot, 0, time.Hour).pruneLFS(ctx, "default", "shared", f.bare)
+	if !f.ledger(t)[f.oidRef] || !f.exists(f.oidRef) {
+		t.Error("a referenced object with its file on disk lost its row or its file")
+	}
+}
+
+// ledgerFailingStore fails one ledger call and passes everything else through.
+type ledgerFailingStore struct {
+	*store.SQL
+	failList, failDelete bool
+}
+
+func (s ledgerFailingStore) ListLFSObjects(ctx context.Context, tenantID, repo string) ([]store.LFSObject, error) {
+	if s.failList {
+		return nil, errors.New("lfs_object: database is locked")
+	}
+	return s.SQL.ListLFSObjects(ctx, tenantID, repo)
+}
+
+func (s ledgerFailingStore) DeleteStaleLFSObject(ctx context.Context, tenantID, repo, oid, cutoff string) (bool, error) {
+	if s.failDelete {
+		return false, errors.New("lfs_object: database is locked")
+	}
+	return s.SQL.DeleteStaleLFSObject(ctx, tenantID, repo, oid, cutoff)
+}
+
+// A store error in the reconcile aborts the whole pass: no ledger row and no object file is
+// touched, not even an orphan the prune would otherwise delete.
+func TestLFSGCReconcileStoreErrorAbortsThePass(t *testing.T) {
+	for name, st := range map[string]func(*store.SQL) ledgerFailingStore{
+		"list fails":   func(s *store.SQL) ledgerFailingStore { return ledgerFailingStore{SQL: s, failList: true} },
+		"delete fails": func(s *store.SQL) ledgerFailingStore { return ledgerFailingStore{SQL: s, failDelete: true} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newLFSGCFixture(t)
+			ctx := context.Background()
+			oidStale := oidOf([]byte("never-published"))
+			oidOrphan := oidOf([]byte("orphaned-object"))
+			f.putRow(t, oidStale, 200, 2*time.Hour)
+			f.seed(t, oidOrphan, 100, 2*time.Hour)
+
+			newGitGC(st(f.st), f.dataRoot, 0, time.Hour).pruneLFS(ctx, "default", "shared", f.bare)
+
+			got := f.ledger(t)
+			if !got[oidStale] || !got[oidOrphan] {
+				t.Errorf("ledger after a store error = %v, want both rows untouched", got)
+			}
+			if !f.exists(oidOrphan) {
+				t.Error("the orphan's file was pruned although the pass hit a store error")
+			}
+		})
+	}
+}
+
+// A rename moves the bare before RenameGitRepo moves the rows. A sweep that reads the rows
+// under the old name in between must not read every object as absent and drop the rows,
+// which would under-count the quota for good (batch reports the objects as present, so they
+// are never uploaded again).
+func TestLFSGCReconcileLeavesTheRowsOfARepoMovedMidSweep(t *testing.T) {
+	f := newLFSGCFixture(t)
+	ctx := context.Background()
+	oid := oidOf([]byte("moved-with-the-repo"))
+	f.seed(t, oid, 100, 2*time.Hour)
+	f.backdate(t, oid, 2*time.Hour)
+	if err := os.Rename(f.bare, filepath.Join(filepath.Dir(f.bare), "renamed.git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := newGitGC(f.st, f.dataRoot, 0, time.Hour).reconcileLFSLedger(ctx, f.tenantID, "default", "shared", f.bare); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ledger(t)[oid] {
+		t.Error("the row of an object that moved with its repo was dropped")
+	}
+}
+
+// With no grace period the reconcile does not run: a row written this second may belong to
+// an upload between its ledger write and its rename.
+func TestLFSGCReconcileNeedsAGracePeriod(t *testing.T) {
+	f := newLFSGCFixture(t)
+	oid := oidOf([]byte("publishing-this-second"))
+	f.putRow(t, oid, 10, 0)
+	newGitGC(f.st, f.dataRoot, 0, 0).pruneLFS(context.Background(), "default", "shared", f.bare)
+	if !f.ledger(t)[oid] {
+		t.Error("with AF_LFS_GC_GRACE=0 the reconcile dropped a row written this second")
 	}
 }

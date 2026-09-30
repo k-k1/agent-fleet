@@ -270,8 +270,8 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 		os.Remove(tmpName)
 		// The row stays. A concurrent upload of the same oid may have found it and be
 		// relying on it, and no check-then-delete here is atomic with that upload. The
-		// cost is an over-count until this oid is uploaded again; the quota checks credit
-		// the row to that retry.
+		// cost is an over-count until this oid is uploaded again (the quota checks credit
+		// the row to that retry) or GC drops the row once it outlives the grace period.
 		log.Printf("lfs: publish failed, ledger row kept tenant=%s repo=%s oid=%s: %v",
 			mv.TenantID, name, oid, err)
 		writeLFSErr(w, http.StatusInternalServerError, "publish failed")
