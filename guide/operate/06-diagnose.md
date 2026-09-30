@@ -188,11 +188,10 @@ with `docker run`. To stop them for sure, use force-stop in the Admin panel; or,
 whole host down, `docker stop` the remaining `af-ws-*` separately ([02](03-run.md)).
 
 **Q. Can it be distributed across multiple hosts (HA / horizontal scaling)?**
-A. The delivery model is one company = one deployment = one host. The CP is premised on driving
-the host's Docker daemon, and distribution across multiple hosts or HA configurations are out
-of scope for now. For the design direction toward larger scale, see
-`docs/build/09-deploy.md` (the aws target is implemented but has no production track
-record).
+A. The delivery model is one company = one deployment. On compose the CP drives one host's
+Docker daemon, so workspaces do not spread across hosts; the ecs / ecs-ec2 targets place
+workspaces on AWS instead ([01](01-choose.md)). The Control Plane itself runs as a single
+instance on every target — there is no HA configuration.
 
 **Q. I want to use authentication other than Google (Microsoft 365 / LDAP / SAML, etc.).**
 A. Natively (`AUTH=oauth`) the CP speaks OIDC, so **Microsoft Entra ID, Okta, Keycloak, Auth0,

@@ -93,9 +93,13 @@ in the Console.
    you to confirm reality in log-only first before switching.
 
 > Current implementation scope: **observation (log-only) and allowlist management work, and the
-> proxy itself can block (enforce)**. The always-on container-side wiring that routes workspace
-> traffic through the proxy (internal network + proxy env injection) is **not built yet**, so
-> **switching to enforce does not yet constrain a workspace**.
+> proxy itself can block (enforce)**. Setting `AF_EGRESS_PROXY_ADDR` on the Control Plane injects
+> `http_proxy` / `https_proxy` / `no_proxy` into every workspace container (off by default), so
+> programs that honour those variables go through the proxy. What is **not built yet** is forcing
+> traffic through it — an internal network or security-group egress rule that leaves the proxy as
+> the only way out, and templates that run the proxy — so a process that ignores the variables
+> still goes straight out, and **switching to enforce does not yet constrain a workspace**
+> ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in `docs/build/07-security.md` §7.8.
 

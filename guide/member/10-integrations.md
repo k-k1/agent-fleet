@@ -168,8 +168,8 @@ workspace is running.
   Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
   (up to 200 entries; not stored persistently).
 
-> **Smartphones are not supported in the current version.** At around 390px width (phones), the entry point in
-> the action bar overflows off screen and you cannot start. Please use a **desktop or tablet**.
+> **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead — the port
+> and path fields and "Open in pane" are in the popover it opens.
 
 ## Operating a browser the agent opened
 
