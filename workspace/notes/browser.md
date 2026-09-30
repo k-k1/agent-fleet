@@ -79,8 +79,8 @@ what it shows, and never claim a page "looks right" based on it.
   `target-unreachable` = the port isn't listening yet (start the server, then Reload);
   `crashed` / `disconnected` = the in-container Chromium died or the socket dropped, and they
   reconnect from the toolbar. The full table is `ref/browser-pane.md` in the shipped guide.
-- The **smartphone layout doesn't expose this flow yet** (desktop and tablet do), so don't tell a
-  phone user to open the pane.
+- On a **smartphone** the action bar has no Preview button; the same port / path fields and
+  "Open in pane" are in the popover behind **⋯** at the right end of the bar.
 - **Verification honesty:** only say you "verified" / 「確認しました」 a UI when **you** drove it
   with your own headless Chromium and saw the result — never on the basis of a pane you cannot
   see. Stop the dev server when done, and never copy secrets surfacing in the app (API keys,

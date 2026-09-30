@@ -217,8 +217,9 @@ Two ways to make it true:
 
 - **Egress control in enforce mode** ([04 Securing it](04-secure.md)): a private
   address that is not on the allowlist is refused. Note the caveat on that page —
-  observation and allowlist management work today, enforcement itself is follow-up
-  work — so this is the direction, not yet the answer.
+  the proxy can block, but nothing yet forces workspace traffic through it
+  ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)) — so this is the
+  direction, not yet the answer.
 - **A reverse proxy in front of ComfyUI** that requires a bearer token, with that
   token given to the Control Plane alone through `AF_COMFY_API_KEY`. This is the one
   that works today. **The proxy must also let `/system_stats` through with the same

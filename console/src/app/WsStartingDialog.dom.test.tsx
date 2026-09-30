@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { phaseKey } from "./WsStartingDialog.tsx";
+import { phaseKey } from "../lib/bootPhase.ts";
 import { ja } from "../lib/i18n/locales/ja.ts";
 import { en } from "../lib/i18n/locales/en.ts";
 

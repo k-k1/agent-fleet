@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sort"
 	"sync"
@@ -234,6 +235,9 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 		log.Printf("start-deadline: stop %s: %v", ws.ContainerName, err)
 		return
 	}
+	// Told before the checkpoint: the Stop has already cleared the phase, and a lost lease
+	// below would otherwise lose the one record of why, with no later sweep to write it.
+	d.notify(ctx, fresh, d.limitFor(rt), phase)
 	if err := lease.checkpoint(ctx); err != nil {
 		log.Printf("start-deadline: lifecycle lost after stop %s: %v", ws.ContainerName, err)
 		return
@@ -247,4 +251,26 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 	log.Printf("start-deadline: stopped %s (tenant %s): still starting %s after its launch with no task running (last phase %q)",
 		ws.ContainerName, ws.TenantID, d.limitFor(rt), phase)
 	return
+}
+
+// notify tells the member that their launch was stopped and why. Without it they see only
+// starting -> stopped, and on ecs-ec2 the Stop has just cleared the phase that named the
+// reason, so the notification is the one place it survives until the next attempt. Only this
+// path writes it: a stop the member or the reaper asked for adds nothing.
+//
+// ws must be the row read under the lease: its last_active_at is the launch's own stamp, so
+// the event ID names the launch and a second stop of the same launch (another replica whose
+// sweep raced a lost lease) collapses into the first notification instead of adding one.
+func (d *startDeadline) notify(ctx context.Context, ws store.Workspace, limit time.Duration, phase string) {
+	now := store.NowTS()
+	launch := ws.LastActiveAt
+	if launch == "" {
+		launch = now
+	}
+	payload, _ := json.Marshal(map[string]any{"phase": phase, "limitMinutes": int(limit.Round(time.Minute) / time.Minute)})
+	n := store.Notification{EventID: "start-deadline:" + ws.ID + ":" + launch, MembershipID: ws.MembershipID,
+		Kind: "start-deadline", TargetType: "workspace", Payload: string(payload), CreatedAt: now}
+	if err := d.mgr.store.InsertNotification(ctx, n); err != nil {
+		log.Printf("start-deadline: notify %s: %v", ws.ContainerName, err)
+	}
 }

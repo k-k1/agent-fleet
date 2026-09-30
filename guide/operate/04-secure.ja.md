@@ -80,8 +80,13 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
    ください」と警告します。
 
 > 現状の実装範囲: **観測（log-only）と許可リスト管理が動作し、proxy 自体は遮断（enforce）できます**。
-> ただし Workspace の通信を proxy へ通すコンテナ側の常時配線（内部網 + proxy env 注入）は**まだ
-> ありません**。そのため **enforce へ切り替えても、まだ Workspace は縛られません**。
+> compose（Docker）ターゲットでは、Control Plane に `AF_EGRESS_PROXY_ADDR` を設定すると、すべての
+> Workspace コンテナに `http_proxy` / `https_proxy` / `no_proxy`（と大文字の同名変数）が注入され
+> （既定はオフ）、これらの変数に従うプログラムは proxy を通ります。ecs / ecs-ec2 ターゲットでは、
+> この設定は Workspace に渡りません。**まだ無い**のは proxy を通ることの強制——proxy だけを出口に残す内部網や
+> セキュリティグループの egress ルール、proxy を動かすテンプレート——です。変数を無視する
+> プロセスはそのまま外へ出るので、**enforce へ切り替えても、まだ Workspace は縛られません**
+> （[#1181](https://github.com/k-k1/agent-fleet/issues/1181)）。
 > 今は「観測して許可リストを育てる」段階まで運用できる、と理解してください。設計の全体像は
 > `docs/build/07-security.ja.md` §7.8。
 

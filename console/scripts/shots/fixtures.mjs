@@ -553,15 +553,37 @@ const REPO_TREE = {
   server: ["cmd", "internal"],
 };
 
+// Files next to those folders, so a Files section opened on docs/ lists what the "files" scene has
+// open. The launch dialog's picker keeps only the folders, so it is unaffected.
+const REPO_FILES = {
+  docs: ["architecture.drawio", "checkout-flow.md", "runbook.md"],
+};
+
 export function fsTree(locale, p) {
   if (p === "repos") return { path: p, entries: repos(locale).map((r) => ({ name: r.name, type: "dir" })) };
   const m = /^repos\/[^/]+\/?(.*)$/.exec(p);
   const names = m ? REPO_TREE[m[1]] || [] : [];
-  return { path: p, entries: names.map((name) => ({ name, type: "dir" })) };
+  const files = m ? REPO_FILES[m[1]] || [] : [];
+  return {
+    path: p,
+    entries: [...names.map((name) => ({ name, type: "dir" })), ...files.map((name) => ({ name, type: "file", size: 2048 }))],
+  };
 }
 
+// The raw bytes of a fictional file, or null for a path the stub does not know. Served by
+// fs/download: the draw.io viewer reads the diagram from there, not from fs/file.
+export function fileBytes(locale, p) {
+  const f = FILES[p];
+  return f ? f(locale) : null;
+}
+
+// Known paths answer the fictional files of the "files" scene (FILES, further down); any other
+// path keeps answering an empty file, as before.
 export function fsFile(locale, p) {
-  return { path: p, content: "" };
+  const f = FILES[p];
+  if (!f) return { path: p, content: "" };
+  const content = f(locale);
+  return { path: p, content, size: Buffer.byteLength(content), editable: true, revision: "demo-1" };
 }
 
 // Image generation (ADR 0081). The pane's whole surface comes from two routes, so the
@@ -592,10 +614,10 @@ export function imagegenStatus(locale) {
         negative_always: "watermark, signature",
         models: [
           {
-            id: "illustrious-v2",
+            id: "demo-illustration-xl",
             // ADR 0090: what a member is shown instead of the id. The id stays the value the
             // generation names — the fixture carries both so the shot proves which is drawn.
-            label: "OnomaAI/Illustrious-XL v2.0",
+            label: "Demo Illustration XL v2",
             description: ja ? "イラスト向けの SDXL 系" : "An SDXL-family illustration checkpoint",
             family: "sdxl",
             warm: true,
@@ -609,12 +631,13 @@ export function imagegenStatus(locale) {
             steps_range: [20, 40],
             cfg_range: [5, 9],
             trial_steps: 10,
-            license_name: "CreativeML Open RAIL++-M",
+            license_name: "Example Model License",
             license_url: "https://example.com/license",
             source_url: "https://example.com/model",
           },
           {
-            id: "flux1-dev",
+            id: "demo-sentences",
+            label: "Demo Sentence Model",
             description: ja ? "文章で指示する系統" : "Prompted in sentences",
             family: "flux1",
             sizes: ["1024x1024", "1216x832"],
@@ -652,7 +675,7 @@ export function imagegenJobs(locale) {
     studio: STUDIO_ID,
     state: "done",
     label: locale === "ja" ? "cfg 振り" : "cfg sweep",
-    model: "illustrious-v2",
+    model: "demo-illustration-xl",
     family: "sdxl",
     seed,
     size: "1216x832",
@@ -687,7 +710,7 @@ export function imagegenJobs(locale) {
         studio: STUDIO_ID,
         state: "done",
         trial: true,
-        model: "illustrious-v2",
+        model: "demo-illustration-xl",
         family: "sdxl",
         seed: 815_723_004,
         size: "1216x832",
@@ -703,7 +726,7 @@ export function imagegenJobs(locale) {
         studio: STUDIO_ID,
         state: "running",
         label: locale === "ja" ? "cfg 振り" : "cfg sweep",
-        model: "illustrious-v2",
+        model: "demo-illustration-xl",
         family: "sdxl",
         seed: 815_723_016,
         size: "1216x832",
@@ -715,8 +738,8 @@ export function imagegenJobs(locale) {
       { id: "j15", group: "g1", studio: STUDIO_ID, state: "queued", position: 2, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
       // Pressed in the other studio, and one a session made with generate_image: the studio pane
       // folds both under "other studios and sessions" (ADR 0100 decision 10, revision 10).
-      { id: "k1", group: "g2", studio: OTHER_STUDIO_ID, state: "queued", position: 3, label: locale === "ja" ? "表紙" : "Cover", model: "illustrious-v2" },
-      { id: "s1", state: "done", model: "illustrious-v2", started_at: iso(900), finished_at: iso(880), files: [file(99, 1)] },
+      { id: "k1", group: "g2", studio: OTHER_STUDIO_ID, state: "queued", position: 3, label: locale === "ja" ? "表紙" : "Cover", model: "demo-illustration-xl" },
+      { id: "s1", state: "done", model: "demo-illustration-xl", started_at: iso(900), finished_at: iso(880), files: [file(99, 1)] },
       done(12, 815_723_015),
       done(11, 815_723_014),
       done(10, 815_723_013),
@@ -727,14 +750,14 @@ export function imagegenJobs(locale) {
 export function imagegenProps(locale, p) {
   return {
     source: "sidecar",
-    model: "illustrious-v2",
+    model: "demo-illustration-xl",
     family: "sdxl",
     seed: 815_723_015,
     size: "1216x832",
     // Nested, the same shape the request carries them in.
     params: { steps: 28, cfg: 6, sampler: "dpmpp_2m", scheduler: "karras" },
     loras: [{ name: "add-detail", weight: 0.8 }],
-    prompt: "1girl, harbour at dusk, masterpiece, best quality",
+    prompt: "harbour at dusk, fishing boats, masterpiece, best quality",
     negative: "worst quality, low quality, watermark, signature",
     provider: "comfy",
     job: "j12",
@@ -840,6 +863,12 @@ export function assistants(locale) {
 // were green while the real thing was unusable: neither the weight of 41 rows nor every row
 // carrying the same assignee shows up in three items. Hence the Jira side is deliberately one
 // assignee, several projects, more than 40 items.
+// Head-commit check summaries for the pull-request rows (console/src/features/workitems/read.ts
+// WorkItemChecks). An empty state means "the provider reported none", which must not read as green.
+const CI_GREEN = { state: "success", total: 7, failed: 0, pending: 0 };
+const CI_RED = { state: "failure", total: 8, failed: 1, pending: 0 };
+const CI_RUNNING = { state: "pending", total: 5, failed: 0, pending: 2 };
+
 export function workItems(locale) {
   const ja = locale === "ja";
   const it = (id, key, title, over = {}) => ({
@@ -921,13 +950,13 @@ export function workItems(locale) {
   });
   const bbRows = ja
     ? [
-        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda"),
-        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress" }),
+        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda", { checks: CI_GREEN }),
+        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING }),
         bb(3, "acme/gateway#88", "レート制限のヘッダを返す", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ]
     : [
-        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda"),
-        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress" }),
+        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda", { checks: CI_GREEN }),
+        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING }),
         bb(3, "acme/gateway#88", "Return the rate limit headers", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ];
   // 38 items = 5 projects mixed, same assignee on every row. With the 3 GitHub ones, 41 in all.
@@ -947,6 +976,10 @@ export function workItems(locale) {
         kind: "pr",
         labels: ["ui"],
         updatedAt: ago(150),
+        // The row the features-page still opens (workItemDetail): a red CI and a conflict are the
+        // two marks that make a PR worth opening before starting a review on it.
+        checks: CI_RED,
+        mergeable: "conflict",
       }),
       // Keep one row with no labels. While the CP emitted a nil slice (null in JSON), this shape
       // turned the whole Console blank (docs/log/80 §80.17.5). Do not remove it.
@@ -1639,11 +1672,11 @@ export const OTHER_STUDIO_ID = "0b7d9e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d";
 
 const studioDraft = (dark) => ({
   provider: "comfy",
-  model: "illustrious-v2",
+  model: "demo-illustration-xl",
   prompt: dark
-    ? "1girl, blue hair, school uniform, harbour at dusk, dim light, lanterns, masterpiece, best quality"
-    : "1girl, blue hair, school uniform, harbour at dusk, masterpiece, best quality",
-  negativePrompt: "extra fingers",
+    ? "harbour at dusk, fishing boats, cat sitting on the sea wall, calm water, dim light, lanterns, masterpiece, best quality"
+    : "harbour at dusk, fishing boats, cat sitting on the sea wall, calm water, masterpiece, best quality",
+  negativePrompt: "people, blurry",
   size: "1216x832",
   params: { steps: 28, cfg: 5, sampler: "dpmpp_2m", scheduler: "karras" },
   loras: [{ name: "add-detail", weight: 0.8 }],
@@ -1659,7 +1692,7 @@ const studioLog = (reads) => {
       kind: "edit",
       at: ago(14),
       author: "human",
-      changes: [{ field: "negativePrompt", before: "", after: "extra fingers" }],
+      changes: [{ field: "negativePrompt", before: "", after: "people, blurry" }],
       draft: studioDraft(false),
     },
     {
@@ -1669,7 +1702,7 @@ const studioLog = (reads) => {
       author: "agent",
       session: "swnd7qa",
       changes: [
-        { field: "prompt", before: "1girl, harbour at dusk", after: studioDraft(false).prompt },
+        { field: "prompt", before: "harbour at dusk", after: studioDraft(false).prompt },
         { field: "params.cfg", before: 7, after: 5 },
       ],
       draft: studioDraft(false),
@@ -1758,7 +1791,7 @@ const imagegenCreatedList = () => created.map(({ id, title, created_at, updated_
 export function imagegenDraftLog() {
   return {
     entries: [
-      { seq: 3, kind: "edit", at: ago(18), author: "human", changes: [{ field: "model", before: "", after: "illustrious-v2" }], draft: studioDraft(false) },
+      { seq: 3, kind: "edit", at: ago(18), author: "human", changes: [{ field: "model", before: "", after: "demo-illustration-xl" }], draft: studioDraft(false) },
       { seq: 4, kind: "edit", at: ago(16), author: "agent", session: "swnd7qa", changes: [{ field: "size", after: "1216x832" }], draft: studioDraft(false) },
     ],
   };
@@ -1804,12 +1837,12 @@ export function imagegenPersona(locale) {
   };
 }
 
-// The studio's conversation: the agent read a character sheet and filled the draft.
+// The studio's conversation: the agent read a scene note and filled the draft.
 export function studioTurns(locale) {
   const ja = locale === "ja";
   const say = (idx, min, text) => ({ role: "user", idx, ts: ago(min), text, parts: [{ kind: "text", text }] });
   return [
-    say(1, 13, ja ? "docs/chars/aoi.md を読んで、その子を港の夕暮れに" : "Read docs/chars/aoi.md and put her in a harbour at dusk"),
+    say(1, 13, ja ? "docs/scenes/harbour.md を読んで、その港を夕暮れの絵に" : "Read docs/scenes/harbour.md and paint that harbour at dusk"),
     {
       role: "assistant",
       idx: 2,
@@ -1818,13 +1851,13 @@ export function studioTurns(locale) {
       text: "",
       parts: [
         { kind: "tool", tool: "mcp__af_40ed9852__get_image_studio" },
-        { kind: "tool", tool: "Read", info: "docs/chars/aoi.md", output: ja ? "31 行を読み込みました" : "read 31 lines" },
+        { kind: "tool", tool: "Read", info: "docs/scenes/harbour.md", output: ja ? "31 行を読み込みました" : "read 31 lines" },
         { kind: "tool", tool: "mcp__af_40ed9852__set_image_draft" },
         {
           kind: "text",
           text: ja
-            ? "青髪と制服の指定を入れ、cfg を 7 から 5 に下げました。生成は押してください。"
-            : "Added the blue hair and the uniform, and lowered cfg from 7 to 5. Press generate when ready.",
+            ? "漁船と防波堤の猫を入れ、cfg を 7 から 5 に下げました。生成は押してください。"
+            : "Added the fishing boats and a cat on the sea wall, and lowered cfg from 7 to 5. Press generate when ready.",
         },
       ],
     },
@@ -1855,5 +1888,174 @@ export function gitflow() {
     origin: ["main", "develop"],
     native: false,
     committed: [],
+  };
+}
+
+// ---- file viewer: the fictional files fsFile serves -------------------------------------------
+// For the features-page still (scene "files"). Paths are workspace-relative, the way the Agent
+// answers them ("repos/<repo>/…").
+const CHECKOUT_DOC = {
+  en: `---
+title: Checkout flow
+owner: payments-team
+status: reviewed
+updated: "2026-09-18"
+---
+
+# Checkout flow
+
+How an order goes from the cart to a charged card. The stock reservation comes **before**
+the payment authorisation, so a card is never charged for items that are gone.
+
+## Sequence
+
+\`\`\`mermaid
+sequenceDiagram
+  participant B as Browser
+  participant A as Checkout API
+  participant S as Stock
+  participant P as Payments
+  B->>A: POST /checkout
+  A->>A: validate(cart)
+  A->>S: reserve(items)
+  S-->>A: reserved (15 min hold)
+  A->>P: authorize(total)
+  P-->>A: authorized
+  A-->>B: 201 order created
+\`\`\`
+
+## Validation rules
+
+| Rule | Error | Where |
+|---|---|---|
+| Cart is not empty | \`CART_EMPTY\` | src/checkout/validate.ts:18 |
+| Total is above zero after coupons | \`TOTAL_ZERO\` | src/checkout/validate.ts:42 |
+| Coupons stack at most twice | \`COUPON_LIMIT\` | src/checkout/coupons.ts:77 |
+
+\`\`\`ts
+export function assertPayable(total: Money): void {
+  if (total.minor <= 0) throw new CheckoutError("TOTAL_ZERO");
+}
+\`\`\`
+
+## Open questions
+
+- [x] Release the stock hold when the authorisation fails
+- [ ] Retry the authorisation once on a gateway timeout
+`,
+  ja: `---
+title: 購入フロー
+owner: payments-team
+status: reviewed
+updated: "2026-09-18"
+---
+
+# 購入フロー
+
+カートから決済完了までの流れ。在庫の確保を決済の与信より**先に**行うので、在庫切れの商品に
+課金されることはない。
+
+## シーケンス
+
+\`\`\`mermaid
+sequenceDiagram
+  participant B as ブラウザ
+  participant A as Checkout API
+  participant S as 在庫
+  participant P as 決済
+  B->>A: POST /checkout
+  A->>A: validate(cart)
+  A->>S: reserve(items)
+  S-->>A: 確保（15 分保持）
+  A->>P: authorize(total)
+  P-->>A: 与信 OK
+  A-->>B: 201 注文作成
+\`\`\`
+
+## 検証ルール
+
+| ルール | エラー | 場所 |
+|---|---|---|
+| カートが空でない | \`CART_EMPTY\` | src/checkout/validate.ts:18 |
+| クーポン適用後の合計が 0 より大きい | \`TOTAL_ZERO\` | src/checkout/validate.ts:42 |
+| クーポンの併用は 2 枚まで | \`COUPON_LIMIT\` | src/checkout/coupons.ts:77 |
+
+\`\`\`ts
+export function assertPayable(total: Money): void {
+  if (total.minor <= 0) throw new CheckoutError("TOTAL_ZERO");
+}
+\`\`\`
+
+## 未決事項
+
+- [x] 与信に失敗したら在庫の確保を解除する
+- [ ] 決済ゲートウェイのタイムアウトで与信を 1 回だけ再試行する
+`,
+};
+
+// An uncompressed draw.io document (the viewer reads plain <mxGraphModel> as well as the
+// compressed form the desktop app writes). Labels stay English in both locales: they are
+// component names, the way a real team's diagram would carry them.
+const box = (id, label, x, y, w, h, style) =>
+  `<mxCell id="${id}" value="${label}" style="${style}" vertex="1" parent="1"><mxGeometry x="${x}" y="${y}" width="${w}" height="${h}" as="geometry"/></mxCell>`;
+const edge = (id, s, t, label = "") =>
+  `<mxCell id="${id}" value="${label}" style="endArrow=block;html=1;strokeWidth=2;strokeColor=#6c8ebf;fontSize=12;" edge="1" parent="1" source="${s}" target="${t}"><mxGeometry relative="1" as="geometry"/></mxCell>`;
+const SVC = "rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;";
+const EXT = "rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;";
+const DB = "shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=12;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;";
+const ARCH_DRAWIO = `<mxfile host="drawio"><diagram id="arch" name="webshop"><mxGraphModel dx="1000" dy="700" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="900" pageHeight="700" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>${[
+  box("web", "Browser", 20, 150, 120, 60, EXT),
+  box("cdn", "CDN", 200, 150, 110, 60, EXT),
+  box("api", "Checkout API", 380, 150, 150, 60, SVC),
+  box("stock", "Stock service", 620, 50, 150, 60, SVC),
+  box("pay", "Payments", 620, 250, 150, 60, EXT),
+  box("db", "PostgreSQL", 395, 300, 120, 80, DB),
+  box("q", "Order events", 620, 400, 150, 50, "rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;"),
+  edge("e1", "web", "cdn"),
+  edge("e2", "cdn", "api", "HTTPS"),
+  edge("e3", "api", "stock", "reserve"),
+  edge("e4", "api", "pay", "authorize"),
+  edge("e5", "api", "db"),
+  edge("e6", "db", "q", "outbox"),
+].join("")}</root></mxGraphModel></diagram></mxfile>`;
+
+const FILES = {
+  "repos/webshop/docs/checkout-flow.md": (locale) => CHECKOUT_DOC[locale === "ja" ? "ja" : "en"],
+  "repos/webshop/docs/architecture.drawio": () => ARCH_DRAWIO,
+};
+
+// The live read of demo/webshop#308 behind the work-item detail panel (read.ts WorkItemDetail):
+// red CI and a conflict, one approval and one change request — the state that makes a reviewer
+// want to look before starting a session on the head branch.
+export function workItemDetail(locale, key) {
+  if (key !== "demo/webshop#308") return { error: { code: "not_found", message: "no such item" } };
+  const ja = locale === "ja";
+  return {
+    provider: "github",
+    key,
+    kind: "pr",
+    title: ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form",
+    state: "open",
+    url: "https://github.com/demo/webshop/pull/308",
+    author: "Kai Morgan",
+    assignee: "demo",
+    labels: ["ui"],
+    labelColors: { ui: "1d76db" },
+    repo: "demo/webshop",
+    updatedAt: ago(150),
+    draft: false,
+    merged: false,
+    mergeable: "conflict",
+    baseBranch: "develop",
+    headBranch: "feat/postcode-autofill",
+    additions: 214,
+    deletions: 37,
+    changedFiles: 9,
+    comments: 4,
+    reviews: [
+      { name: "Sora Nishida", state: "approved" },
+      { name: "Rin Takada", state: "changes_requested" },
+    ],
+    checks: CI_RED,
   };
 }
