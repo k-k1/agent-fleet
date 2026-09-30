@@ -28,7 +28,7 @@ const (
 	RecreateLocal   = "local"   // the local branch still exists
 	RecreateRemote  = "remote"  // only a remote-tracking branch is left
 	RecreateTrash   = "trash"   // the branch was deleted through the Console, which kept its SHA
-	RecreateMerged  = "merged"  // the branch is gone, but a merge commit still names its head
+	RecreateMerged  = "merged"  // the branch is gone, but a merge commit or its merged pull request still names its head
 	RecreateNew     = "new"     // nothing is left: a fresh branch of the same name off the parent
 )
 
@@ -42,7 +42,8 @@ type RecreateCandidate struct {
 	// Ref is the remote-tracking ref for RecreateRemote ("origin/x") and the base branch for
 	// RecreateNew ("" = the parent's HEAD).
 	Ref string `json:"ref,omitempty"`
-	// PR is the pull request number a RecreateMerged merge commit names, when it names one.
+	// PR is the pull request a RecreateMerged head came from: the number its merge commit
+	// names, or the forge's merged pull request for a squash or rebase merge.
 	PR int `json:"pr,omitempty"`
 	// InUse is the folder of the working copy that has Branch checked out. git holds a
 	// branch in one worktree at a time, so the only ways forward are opening that copy or
@@ -114,6 +115,8 @@ func ResolveRecreate(parent, name string, branches []string, trashSHA func(branc
 		return deleted
 	}
 	inUse := branchOccupants(parent)
+	forge := newMergedPRFinder(parent)
+	defer forge.close()
 	out := deleted
 	for _, b := range names {
 		if sha := GitBranchSHA(parent, b); sha != "" {
@@ -137,6 +140,10 @@ func ResolveRecreate(parent, name string, branches []string, trashSHA func(branc
 			}
 		}
 		if sha, pr := mergedBranchHead(parent, b); sha != "" {
+			out = append(out, RecreateCandidate{Source: RecreateMerged, Branch: b, SHA: sha, PR: pr})
+			continue
+		}
+		if sha, pr := forge.head(b); sha != "" {
 			out = append(out, RecreateCandidate{Source: RecreateMerged, Branch: b, SHA: sha, PR: pr})
 			continue
 		}
@@ -374,7 +381,8 @@ const mergeLogTimeout = 20 * time.Second
 // mergedBranchHead finds the newest merge commit whose subject names branch and returns its
 // second parent — the branch head that was merged — plus the pull request number when the
 // subject carries one. Works offline, which is why it is preferred to asking the forge. A
-// squash or rebase merge leaves no such commit and answers "".
+// squash or rebase merge leaves no such commit and answers ""; mergedPRFinder asks the forge
+// for those.
 func mergedBranchHead(dir, branch string) (string, int) {
 	ctx, cancel := context.WithTimeout(context.Background(), mergeLogTimeout)
 	defer cancel()

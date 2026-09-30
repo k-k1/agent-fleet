@@ -61,5 +61,6 @@ claude / opencode / cursor は、自分の保存先も cwd ごとに持つ。だ
 
 - 消した worktree の未コミットの変更と ignore 対象のファイルは戻らない（今後の削除については #1042 で直す）。
 - squash / rebase マージのブランチは、マージコミットが残らないので新しいブランチになる（#1043）。
+  - 🔴 2026-10-01 訂正: #1043 で、origin が github.com なら GitHub 接続のトークンでマージ済み PR（`head=<owner>:<branch>`）を引き、その head（手元に無ければ `refs/pull/N/head` を fetch）を `merged` 候補にするようにした。接続が無い・届かない・GitHub 以外は従来どおり新しいブランチ。
 - `workingCopyId` は新しい値になる。worktree 単位の共有ルールは戻らない。
 - 別のパスへ履歴を移す案（#1040 の P2）は、この PR では扱っていない。
