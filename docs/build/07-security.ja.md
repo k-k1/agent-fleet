@@ -287,8 +287,10 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 CP は起動するが、起動時に `WARNING` をログに出し、super_admin の `GET /api/admin/tenants` の
 `deployment_warnings` に `plaintext_secrets` を載せる。Console の管理モーダルはこれを帯で表示する
 （`master_key_guard.go`）。拒否でなく警告にしたのは、鍵なしで動いている既存の配備を更新で止めないため。
-後から鍵を設定しても透過ではない。agent はその後 `secrets.enc` を読み、`secrets.json` を移行しないので、
-メンバーは保存していた認証情報をつなぎ直すことになる。古い `secrets.json` は消すまで各ホームとすべての
+後から鍵を設定しても透過ではない。動いているワークスペースは起動時の環境のままなので、停止して起動し直す
+まで `AF_SECRET_KEY` を持たない（動作中のコンテナへの `Start` は状態を確かめるだけ）。起動し直した後の
+agent は `secrets.enc` を読み、`secrets.json` を移行しないので、メンバーは保存していた認証情報を
+つなぎ直すことになる。古い `secrets.json` は消すまで各ホームとすべての
 バックアップに残るので、その認証情報は漏れたものとして扱い、ローテーションする。
 
 **封筒暗号 + custodian 抽象**（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)）:

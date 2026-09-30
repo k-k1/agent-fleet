@@ -248,9 +248,11 @@ workspaces stay up — they are not compose services), then tars `${DATA_DIR}`
 > their homes. That is for `AUTH=dev` only; with any other `AUTH` the CP still starts
 > but logs `WARNING: AUTH=… but AF_MASTER_KEY is not set` and shows a banner in the
 > admin screen. Adding the key to a deployment that ran without one is not
-> transparent: members reconnect the credentials they had stored, and the old
-> `~/.config/agent-fleet/secrets.json` stays in each home and in your backups —
-> delete it and rotate the credentials it held.
+> transparent. In order: set the key and restart the CP; stop and start every
+> existing workspace (a running one keeps its keyless environment and goes on
+> writing plaintext); members reconnect the credentials they had stored; then
+> delete the old `~/.config/agent-fleet/secrets.json` in each home (it is in your
+> backups too) and rotate the credentials it held.
 
 > ⚠️ **`AF_MASTER_KEY` is NOT in the backup** (it lives in `.env`). Store it in a
 > **separate vault**. Losing it makes every backup undecryptable (crypto-shred).

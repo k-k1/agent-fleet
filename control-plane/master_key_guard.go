@@ -6,11 +6,12 @@ package main
 // silent leak anywhere else (#1080).
 //
 // ⚠️ A warning, not a refusal to start. Deployments already running without a key would stop
-// on upgrade, and setting the key is not a quiet fix they can make on the spot: the Agent reads
-// secrets.enc once a key is present and never migrates or deletes secrets.json, so every member
-// has to reconnect what they had stored, and the old file has to be deleted and its credentials
-// rotated. The operator has to plan that, so the CP says it loudly at
-// start and to super_admins in the Console instead.
+// on upgrade, and setting the key is not a quiet fix they can make on the spot: a running
+// workspace keeps its keyless environment until it is stopped and started, and the Agent then
+// reads secrets.enc and never migrates or deletes secrets.json, so every member has to
+// reconnect what they had stored, and the old file has to be deleted and its credentials
+// rotated. The operator has to plan that, so the CP says it loudly at start and to super_admins
+// in the Console instead.
 
 // deploymentWarnPlaintextSecrets is the code GET /api/admin/tenants carries in
 // deployment_warnings; the Console renders it as admin.deploy_warn_plaintext_secrets.
@@ -18,7 +19,8 @@ const deploymentWarnPlaintextSecrets = "plaintext_secrets"
 
 const plaintextSecretsLog = "WARNING: AUTH=%s but AF_MASTER_KEY is not set: workspace credentials " +
 	"(git tokens, the Claude token, API keys, MCP and chat connections) are stored UNENCRYPTED in each member's home. " +
-	"Set AF_MASTER_KEY (see deploy/compose/README.md, \"Master key\"); members reconnect their credentials afterwards"
+	"Set AF_MASTER_KEY and restart, stop and start every existing workspace, then have members reconnect " +
+	"their credentials (see guide/operate/04-secure.md)"
 
 // plaintextSecrets reports whether this deployment stores workspace credentials unencrypted
 // while signing real people in.

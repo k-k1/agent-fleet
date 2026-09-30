@@ -11,7 +11,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.title": "Admin",
   "admin.forbidden": "You don't have permission (super_admin only).",
   "admin.deploy_warn_plaintext_secrets":
-    "This deployment has no master key (AF_MASTER_KEY), so members' stored credentials — git tokens, the Claude token, API keys, MCP and chat connections — are kept unencrypted in their homes. Set the key in the Control Plane's environment; members then reconnect what they had stored. The old unencrypted file stays in each home and in backups until deleted, so rotate those credentials.",
+    "This deployment has no master key (AF_MASTER_KEY), so members' stored credentials — git tokens, the Claude token, API keys, MCP and chat connections — are kept unencrypted in their homes. Set the key in the Control Plane's environment and restart it, then stop and start every existing workspace (a running one has no key yet), and only then have members reconnect what they had stored. The old unencrypted file stays in each home and in backups until deleted, so delete it and rotate those credentials.",
   "admin.mode_sessions": "Sessions",
   "admin.mode_usage": "Running time",
   "admin.mode_audit": "Audit",
