@@ -22,14 +22,15 @@ Inside a Workspace, CLI agents **execute arbitrary code** (operation that includ
 that "a user's session runs untrusted code," and what we protect is "other users' data, the
 CP/host infrastructure, secrets, and data exfiltration." The primary isolation boundary sits
 between the **Workspace (low trust)** and the **CP and the infrastructure it runs on (high
-trust)**.
+trust)** on the multi-user targets (`docker`, `ecs`, `ecs-ec2`). `native` has no such boundary:
+it is single-user, and its one user is the operator (`SECURITY.md` → "`docker` and `native`").
 
 Skipping every tool approval is the **default, not a fixed rule**: each user can turn approvals
 back on per agent kind (Settings > Agents) or for a single session at launch. That changes how
 much a mistake costs, **not where the boundary is** — only some agent kinds offer the choice,
 the mode can be cycled back from inside the TUI, and the CLI's own settings are not locked down. Treat tool
 approval as a way to catch accidents, and keep treating the workspace boundary as the only real
-containment.
+containment on the multi-user targets.
 
 - **The CP can reach every workspace in its deployment.** It starts them, hands each one its
   DEK, and on `docker` drives the host's daemon through the mounted Docker socket. Consequently,
@@ -46,12 +47,10 @@ The list of residual risks — what each one is and why — is `SECURITY.md` →
 risks", grouped by deployment target (every target, `docker` and `native`, `ecs` /
 `ecs-ec2`). Read it for the risks themselves; this section keeps only the operational steps.
 
-- **Who can reach the CP's infrastructure can reach every workspace.** On `docker`, anyone who
-  can run the CP container or reach the Docker socket controls the host: **minimize the set of
-  people who can SSH into the host or run sudo / docker there**. If you want to narrow the
-  Docker API surface, put the socket behind a filtering proxy (e.g.
-  `tecnativa/docker-socket-proxy`). On AWS, **give each deployment its own AWS account** and
-  limit who administers it — the account's principals can read every member's data.
+- **Restrict administrative access to what the CP runs on.** On `docker`, **minimize the set
+  of people who can SSH into the host or run sudo / docker there**, and consider putting the
+  Docker socket behind a filtering proxy (e.g. `tecnativa/docker-socket-proxy`). On AWS,
+  **give each deployment its own AWS account** and limit who administers it.
 - **`AF_MASTER_KEY`**: **store it in a vault separate from the DB and homes, and back it up
   independently**. Never place it in the data area or in backup archives (by design it never
   goes in). For when it is generated and how to store it, see [02 §2](02-install.md); for the
