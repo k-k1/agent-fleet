@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // gatedWriter is the client's stdin in tests. hold() keeps every write from reaching the fake
@@ -21,6 +22,7 @@ type gatedWriter struct {
 	w    io.Writer
 	mu   sync.Mutex
 	gate chan struct{}
+	err  error
 }
 
 func (g *gatedWriter) Write(p []byte) (int, error) {
@@ -29,8 +31,24 @@ func (g *gatedWriter) Write(p []byte) (int, error) {
 	g.mu.Unlock()
 	if gate != nil {
 		<-gate
+		g.mu.Lock()
+		err := g.err
+		g.err = nil
+		g.mu.Unlock()
+		if err != nil {
+			return 0, err
+		}
 	}
 	return g.w.Write(p)
+}
+
+// releaseWith ends the hold with the held write failing, as a write to a dead child does.
+func (g *gatedWriter) releaseWith(err error) {
+	g.mu.Lock()
+	g.err = err
+	close(g.gate)
+	g.gate = nil
+	g.mu.Unlock()
 }
 
 func (g *gatedWriter) hold() {
@@ -499,4 +517,111 @@ func waitingTexts(h *threadHandle) []string {
 		}
 	}
 	return out
+}
+
+var _ agents.LiveHandles = managedDriver{}
+
+// Input accepted while nothing runs is the turn being started even before the pump takes it: a
+// first stop in that window stops it, and what was queued behind it continues.
+func TestFirstStopBeforeThePumpTakes(t *testing.T) {
+	h, f := newTestHandle(t)
+	h.mu.Lock()
+	h.pumping = true // hold the pump off: the window between accept and Take
+	h.mu.Unlock()
+	mustSend(t, h, member("m1", "one"))
+	mustSend(t, h, member("m2", "two"))
+	if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
+		t.Errorf("first stop discarded %+v", res.Discard)
+	}
+	if st := h.currentState(); st != agents.TurnCancelled {
+		t.Errorf("state after stopping the starting input = %s, want cancelled", st)
+	}
+	if got := waitingTexts(h); !equal(got, []string{"two"}) || !episode(h) {
+		t.Fatalf("after the stop: waiting %q, episode %v; want two queued in an episode", got, episode(h))
+	}
+	h.mu.Lock()
+	h.pumping = false
+	h.mu.Unlock()
+	h.resumePump()
+	f.reply(expectPrompt(t, f, "two"), map[string]any{"stopReason": "end_turn"})
+	items, discards, ep := settled(t, h)
+	if got := f.promptTexts(); !equal(got, []string{"two"}) {
+		t.Errorf("prompts = %q, want the stopped one never sent", got)
+	}
+	if len(items) != 0 || len(discards) != 0 || ep {
+		t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
+	}
+	if st := h.currentState(); st != agents.TurnCompleted {
+		t.Errorf("state = %s, want completed", st)
+	}
+}
+
+// A prompt whose write fails because the child died goes back to the queue and reaches the
+// respawned child: the ledger entry Take made does not turn it into a resend.
+func TestPromptLostOnADeadChildIsRequeued(t *testing.T) {
+	h, f := newTestHandle(t)
+	f.writes.hold()
+	mustSend(t, h, member("m1", "one"))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		h.mu.Lock()
+		items := h.q.Items()
+		h.mu.Unlock()
+		if len(items) == 1 && items[0].State == agents.EntryCommitted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the entry never became committed: %+v", items)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	f.toClient.Close() // the child dies with the prompt still unwritten
+	h.mu.Lock()
+	cl := h.cl
+	h.mu.Unlock()
+	for !cl.dead() {
+		time.Sleep(5 * time.Millisecond)
+	}
+	f.writes.releaseWith(io.ErrClosedPipe)
+	waitPumpIdle(t, h)
+	if got := h.queuedPrompts(); !equal(got, []string{"one"}) {
+		t.Fatalf("queue after the lost write = %q, want [one]", got)
+	}
+
+	cl2, f2 := newFakeACP(t)
+	h.mu.Lock()
+	h.cl, h.alive = cl2, true
+	h.mu.Unlock()
+	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+		h.onServerRequest(h.cl, id, method, params)
+	}
+	h.cl.onNotify = h.onNotify
+	h.resumePump()
+	f2.reply(expectPrompt(t, f2, "one"), map[string]any{"stopReason": "end_turn"})
+	if items, _, _ := settled(t, h); len(items) != 0 {
+		t.Errorf("items %v", items)
+	}
+	if st := h.currentState(); st != agents.TurnCompleted {
+		t.Errorf("state = %s, want completed", st)
+	}
+}
+
+// LiveHandle never starts anything: no handle, no answer.
+func TestLiveHandle(t *testing.T) {
+	h, _ := newTestHandle(t)
+	m := session.Meta{Name: h.name, Driver: session.DriverManaged}
+	if got, ok := (managedDriver{}).LiveHandle(m); ok || got != nil {
+		t.Fatalf("LiveHandle with no handle = %v, %v", got, ok)
+	}
+	handlesMu.Lock()
+	handles[h.name] = h
+	handlesMu.Unlock()
+	defer func() {
+		handlesMu.Lock()
+		delete(handles, h.name)
+		handlesMu.Unlock()
+	}()
+	if got, ok := (managedDriver{}).LiveHandle(m); !ok || got != agents.ThreadHandle(h) {
+		t.Fatalf("LiveHandle = %v, %v, want the registered handle", got, ok)
+	}
 }

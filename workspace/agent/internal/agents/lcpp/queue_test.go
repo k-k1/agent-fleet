@@ -456,3 +456,58 @@ func TestStoppedTurnLandsCancelledAfterASend(t *testing.T) {
 		t.Errorf("the stopped turn landed as %q (events %v), want cancelled", verdict, seen)
 	}
 }
+
+var _ agents.LiveHandles = managedDriver{}
+
+// Input accepted while nothing runs is the turn being started even before the pump takes it: a
+// first stop in that window stops it, and what was queued behind it continues.
+func TestFirstStopBeforeThePumpTakes(t *testing.T) {
+	h, c, _ := startHandle(t, "sess-q-window")
+	h.mu.Lock()
+	h.pumping = true // hold the pump off: the window between accept and Take
+	h.mu.Unlock()
+	mustSend(t, h, member("m1", "one"))
+	mustSend(t, h, member("m2", "two"))
+	if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
+		t.Errorf("first stop discarded %+v", res.Discard)
+	}
+	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnCancelled {
+		t.Errorf("state after stopping the starting input = %s, want cancelled", snap.TurnState)
+	}
+	if n := queueLen(h); !episode(h) || n != 1 {
+		t.Fatalf("after the stop: episode %v, queued %d; want two queued in an episode", episode(h), n)
+	}
+	go h.pump() // pumping is still true: this is the pump accept would have started
+	expectStarted(t, c, "two")
+	c.answer(t)
+	items, discards, ep := settled(t, h)
+	if got := c.seen(); !equal(got, []string{"two"}) {
+		t.Errorf("engine round trips = %q, want the stopped one never run", got)
+	}
+	if len(items) != 0 || len(discards) != 0 || ep {
+		t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
+	}
+	if got := userRecords(t, h); !equal(got, []string{"two"}) {
+		t.Errorf("stored user turns = %q, want two only", got)
+	}
+	waitState(t, h, agents.TurnCompleted)
+}
+
+// LiveHandle never starts anything: no handle, no answer.
+func TestLiveHandle(t *testing.T) {
+	testHome(t)
+	m := testMeta(t, "sess-q-live")
+	if got, ok := (managedDriver{}).LiveHandle(m); ok || got != nil {
+		t.Fatalf("LiveHandle before Resume = %v, %v", got, ok)
+	}
+	if handleFor(m.Name) != nil {
+		t.Fatal("LiveHandle created a handle")
+	}
+	h, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if got, ok := (managedDriver{}).LiveHandle(m); !ok || got != h {
+		t.Fatalf("LiveHandle = %v, %v, want the resumed handle", got, ok)
+	}
+}

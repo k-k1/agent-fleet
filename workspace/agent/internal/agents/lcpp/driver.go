@@ -160,6 +160,16 @@ func ensureForked(m session.Meta, sid string) error {
 	return nil
 }
 
+// LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
+// /turn queue edits use it. The handle is the runtime here, so being in the map is being live.
+func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
+	h := handleFor(m.Name)
+	if h == nil {
+		return nil, false
+	}
+	return h, true
+}
+
 // --- handle registry -----------------------------------------------------------
 
 var handlesMu sync.Mutex
@@ -632,16 +642,24 @@ func (h *threadHandle) failTurn(st *Store, msg string) {
 // cancellation would.
 func (h *threadHandle) Interrupt(opts agents.InterruptOpts) (agents.InterruptResult, error) {
 	h.mu.Lock()
-	out := h.q.Interrupt(opts)
+	out := h.q.Interrupt(opts, h.running)
 	h.stopLocked(out.Head)
 	return out.Result, nil
 }
 
 // stopLocked delivers a stop to the turn in flight per head, and releases h.mu. HeadCancelled
-// needs nothing: the pump's Commit fails and lands the turn as cancelled. HeadStopPending does
-// not arise here, because runTurn commits and receives under one lock.
+// on a taken entry needs nothing: the pump's Commit fails and lands the turn as cancelled.
+// HeadStopPending does not arise here, because runTurn commits and receives under one lock.
 func (h *threadHandle) stopLocked(head agents.HeadAction) {
 	cancel := h.cancel
+	if head == agents.HeadCancelled && !h.running {
+		// The input accepted while nothing ran, stopped before the pump took it: no runTurn will
+		// land a verdict, and accept left the state at queued.
+		h.state = agents.TurnCancelled
+		h.mu.Unlock()
+		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCancelled})
+		return
+	}
 	stop := head == agents.HeadStopNow || head == agents.HeadStopPending || (head == agents.HeadNone && h.running)
 	if stop {
 		h.stopping = true
@@ -678,7 +696,7 @@ func (h *threadHandle) DismissDiscard(id string) bool {
 func (h *threadHandle) interruptAll() error {
 	h.mu.Lock()
 	h.q.DropAll()
-	out := h.q.Interrupt(agents.InterruptOpts{})
+	out := h.q.Interrupt(agents.InterruptOpts{}, h.running)
 	h.stopLocked(out.Head)
 	return nil
 }

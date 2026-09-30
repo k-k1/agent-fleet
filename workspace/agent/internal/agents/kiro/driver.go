@@ -168,6 +168,17 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	return h, nil
 }
 
+// LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
+// /turn queue edits use it. A handle whose runtime died is still returned, because its queue
+// survives for the respawn and can still be edited.
+func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
+	h := handleFor(m.Name)
+	if h == nil {
+		return nil, false
+	}
+	return h, true
+}
+
 // --- handle registry ---------------------------------------------------------
 
 var handlesMu sync.Mutex
@@ -892,15 +903,26 @@ func (h *threadHandle) runTurn(t *agents.Taken) {
 	// user_message_chunk. Only after Commit: a cancelled entry never became a turn.
 	h.buf.addUserTurn(t.In.Prompt)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	written := false
 	res, err := cl.callWritten("session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    []map[string]any{{"type": "text", "text": t.In.Prompt}},
-	}, 0, func() { h.received(t, cl, sid) }) // no timeout — a turn runs as long as it runs
+	}, 0, func() { written = true; h.received(t, cl, sid) }) // no timeout — a turn runs as long as it runs
 	h.buf.flushAsst() // close the open assistant turn: ACP has no turn_ended notification
 	h.mu.Lock()
 	interrupted := h.stopping
 	h.inter, h.permID, h.permOpts = nil, nil, nil // the turn ended = nothing is waiting
 	h.mu.Unlock()
+	if err != nil && !written && cl.dead() {
+		// The child died before it got the prompt: put it back for resumePump after the
+		// respawn, unless a stop was aimed at it.
+		h.mu.Lock()
+		requeued := h.q.Requeue(t)
+		h.mu.Unlock()
+		if !requeued {
+			interrupted = true
+		}
+	}
 	if err != nil {
 		if interrupted {
 			h.setState(agents.TurnCancelled)
@@ -941,14 +963,22 @@ func (h *threadHandle) received(t *agents.Taken, cl *acpClient, sid string) {
 // is; this delivers it to the entry in flight.
 func (h *threadHandle) Interrupt(opts agents.InterruptOpts) (agents.InterruptResult, error) {
 	h.mu.Lock()
-	out := h.q.Interrupt(opts)
+	out := h.q.Interrupt(opts, h.running)
 	return out.Result, h.stopLocked(out.Head)
 }
 
 // stopLocked delivers a stop to the turn in flight per head, and releases h.mu. HeadCancelled
-// needs nothing: the pump's Commit fails and lands the turn as cancelled.
+// on a taken entry needs nothing: the pump's Commit fails and lands the turn as cancelled.
 func (h *threadHandle) stopLocked(head agents.HeadAction) error {
 	cl, sid := h.cl, h.sid
+	if head == agents.HeadCancelled && !h.running {
+		// The input accepted while nothing ran, stopped before the pump took it: no runTurn will
+		// land a verdict, and accept left the state at queued.
+		h.state = agents.TurnCancelled
+		h.mu.Unlock()
+		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCancelled})
+		return nil
+	}
 	cancelNow := head == agents.HeadStopNow || (head == agents.HeadNone && h.running)
 	if cancelNow || head == agents.HeadStopPending {
 		h.stopping = true
@@ -984,7 +1014,7 @@ func (h *threadHandle) DismissDiscard(id string) bool {
 func (h *threadHandle) interruptAll() error {
 	h.mu.Lock()
 	h.q.DropAll()
-	out := h.q.Interrupt(agents.InterruptOpts{})
+	out := h.q.Interrupt(agents.InterruptOpts{}, h.running)
 	return h.stopLocked(out.Head)
 }
 
