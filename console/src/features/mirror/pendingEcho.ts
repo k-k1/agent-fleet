@@ -106,3 +106,19 @@ export function echoLanded(e: PendingEcho, turns: TranscriptTurn[], isNoise: (t:
     return !!e.attachmentPaths?.length && e.attachmentPaths.every((path) => (t.text || "").includes(path));
   });
 }
+
+// withoutDiscarded drops the echoes whose input a discard threw away (ADR 0105 decision 4, any
+// reason). Such an input never becomes a transcript turn, so its echo would sit at "Pending"
+// for good. One echo per discarded text: two identical sends discarded once leave one echo.
+// The discarded text is what went on the wire, so the studio signal is stripped like
+// echoLanded does before comparing.
+export function withoutDiscarded<E extends PendingEcho>(echoes: E[], texts: string[]): E[] {
+  if (!texts.length || !echoes.length) return echoes;
+  const out = [...echoes];
+  for (const text of texts) {
+    const bare = stripStudioSignal(text);
+    const i = out.findIndex((e) => !e.launch && samePastedPrompt(bare, e.text));
+    if (i >= 0) out.splice(i, 1);
+  }
+  return out.length === echoes.length ? echoes : out;
+}

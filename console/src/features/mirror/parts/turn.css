@@ -149,6 +149,18 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
 }
+/* A still-cancellable queue entry's actions (ADR 0105 decision 5): take it back into the
+   input box, or remove it. Small, beside the pill, so they read as the pill's own. */
+.mt-queue-acts {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 6px;
+}
+.mt-queue-act {
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 6px;
+}
 /* Operator-injected user turn (docs/log/30 ②): the prompt came from the fleet operator
    assistant, not the user's own keyboard. A distinct pill + a left accent on the bubble
    so the two are never confused. */
