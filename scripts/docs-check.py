@@ -217,7 +217,6 @@ def check_links(files: list[str], f: Findings) -> None:
 
 INLINE_MARKUP = (
     (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),  # a link keeps only its visible text
-    (re.compile(r"`([^`]*)`"), r"\1"),
     (re.compile(r"\*\*([^*]*)\*\*"), r"\1"),
     (re.compile(r"\*([^*]*)\*"), r"\1"),
 )
@@ -225,10 +224,24 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$", re.M)
 
 
 def heading_text(raw: str) -> str:
-    """Build, from a heading line, the same string a browser sees as `textContent`."""
+    """Build, from a heading line, the same string a browser sees as `textContent`.
+
+    Code spans are set aside first: their content is literal, so `` `[a](b)` `` keeps
+    `[a](b)` rather than being read as a link.
+    """
+    spans: list[str] = []
+
+    def hold(m: re.Match[str]) -> str:
+        code = m.group(2).replace("\n", " ")
+        if code.startswith(" ") and code.endswith(" ") and code.strip():
+            code = code[1:-1]  # CommonMark strips one space from each side
+        spans.append(code)
+        return f"\0{len(spans) - 1}\0"
+
+    raw = CODE_SPAN_RE.sub(hold, raw)
     for pattern, repl in INLINE_MARKUP:
         raw = pattern.sub(repl, raw)
-    return raw
+    return re.sub("\0(\\d+)\0", lambda m: spans[int(m.group(1))], raw)
 
 
 def console_slug(text: str) -> str:
@@ -279,6 +292,8 @@ def heading_slugs(path: str) -> set[str]:
     Only fenced blocks are removed, so that a `#` line inside one is not read as a
     heading. Inline code stays: both renderers keep its text in the id
     (`` (`console/src/`) `` gives `consolesrc`), and `heading_text` drops the backticks.
+    `FENCE_RE` cannot be used here: it pairs any two ``` runs, including the delimiters
+    of an inline code span, and does not know `~~~` fences.
     """
     rule = (
         console_slug
@@ -287,7 +302,7 @@ def heading_slugs(path: str) -> set[str]:
     )
     return {
         rule(heading_text(m.group(2)))
-        for m in HEADING_RE.finditer(FENCE_RE.sub("", read(path)))
+        for m in HEADING_RE.finditer(strip_fenced_blocks(read(path)))
     }
 
 
@@ -1298,6 +1313,30 @@ def check_ref(f: Findings) -> None:
 
 FENCE_RE = re.compile(r"```.*?```", re.S)
 INLINE_RE = re.compile(r"`[^`\n]*`")
+FENCE_OPEN_RE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
+
+
+def strip_fenced_blocks(body: str) -> str:
+    """Blank out CommonMark fenced code blocks line by line (``` or ~~~, closed by a
+    run of the same character at least as long; an unclosed fence runs to the end)."""
+    out: list[str] = []
+    fence = ""
+    for line in body.splitlines(keepends=True):
+        text = line.rstrip("\r\n")
+        if not fence:
+            m = FENCE_OPEN_RE.fullmatch(text)
+            # A backtick fence's info string cannot contain a backtick; such a line is
+            # an inline code span, not a fence.
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                fence = m.group(1)
+                out.append("\n")
+            else:
+                out.append(line)
+            continue
+        if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{%d,}[ \t]*" % len(fence), text):
+            fence = ""
+        out.append("\n")
+    return "".join(out)
 
 
 def strip_code(body: str) -> str:

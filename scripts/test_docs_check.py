@@ -177,8 +177,17 @@ class AnchorTests(unittest.TestCase):
         self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#22-where-things-live-"))
 
     def test_heading_inside_a_fence_is_not_a_heading(self):
-        heading = "```sh\n# not a heading\n```"
-        self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#not-a-heading"))
+        for heading in ("```sh\n# not a heading\n```", "~~~markdown\n# `not a heading`\n~~~"):
+            with self.subTest(heading=heading):
+                self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#not-a-heading"))
+
+    def test_triple_backtick_code_span_is_not_a_fence(self):
+        self.assertEqual(self.errors("## Syntax ```target```", "02-target.md#syntax-target"), "")
+
+    def test_code_span_content_is_literal(self):
+        heading = "## Syntax `[label](target)`"
+        self.assertEqual(self.errors(heading, "02-target.md#syntax-labeltarget"), "")
+        self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#syntax-label"))
 
 
 if __name__ == "__main__":
