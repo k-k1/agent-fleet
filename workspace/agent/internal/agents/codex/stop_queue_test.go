@@ -357,7 +357,8 @@ func TestQuestionCancelIsAFirstStop(t *testing.T) {
 }
 
 // Input accepted into an idle thread that the pump has not taken yet is the turn being started
-// (decision 1): a first stop cancels it, and it is not kept as a discard.
+// (decision 1): a first stop cancels it, and since it never reached the runtime it is kept for
+// return as a first_stop discard.
 func TestFirstStopCancelsInputNotYetTaken(t *testing.T) {
 	m, cl := newMockCodexServer(t)
 	h := newCodexTestHandle(t, cl, "codex-not-taken")
@@ -372,15 +373,16 @@ func TestFirstStopCancelsInputNotYetTaken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Stop != agents.StopFirst || res.Discard != nil {
-		t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+	if res.Stop != agents.StopFirst || res.Discard == nil || res.Discard.Reason != agents.DiscardFirstStop ||
+		len(res.Discard.Items) != 1 || res.Discard.Items[0].ID != "af_soon" {
+		t.Fatalf("stop = %+v, want a first stop keeping the unsent input", res)
 	}
 	h.mu.Lock()
 	left, kept, st := h.tq().Len(), h.tq().Discards(), h.state
 	h.pumping = false
 	h.mu.Unlock()
-	if left != 0 || len(kept) != 0 || st != agents.TurnCancelled {
-		t.Fatalf("after the stop: %d queued, %d kept, state %s; want the input cancelled", left, len(kept), st)
+	if left != 0 || len(kept) != 1 || kept[0].ID != res.Discard.ID || st != agents.TurnCancelled {
+		t.Fatalf("after the stop: %d queued, %d kept, state %s; want the input cancelled and kept", left, len(kept), st)
 	}
 	h.pump()
 	if got := m.callCount("turn/start"); got != 0 {
@@ -419,4 +421,77 @@ func TestLiveHandle(t *testing.T) {
 	if !ok || got != agents.ThreadHandle(h) {
 		t.Fatal("LiveHandle did not return the registered handle")
 	}
+}
+
+// A turn a previous Agent left running (taken over by Resume, no pump) is a running turn: a
+// first stop ends it and the input queued behind it continues, rather than being taken for the
+// turn being started.
+func TestFirstStopOnATakenOverTurnKeepsTheQueue(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-taken-over-first")
+	registerCodexTestHandle(t, h)
+	h.mu.Lock()
+	h.running, h.turnID, h.state = true, "turn_external", agents.TurnRunning
+	h.mu.Unlock()
+	if err := h.Send(memberInput("after it", "af_after")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stop != agents.StopFirst || res.Discard != nil {
+		t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+	}
+	waitCodexCalls(t, m, "turn/interrupt", 1)
+	dispatchNotification(rpcMsg{Method: "turn/completed", Params: json.RawMessage(
+		`{"threadId":"thr_test","turn":{"id":"turn_external","status":"interrupted"}}`)})
+	waitCodexCalls(t, m, "turn/start", 1)
+	m.complete("completed")
+	waitPumpDone(t, h)
+	if got := fmt.Sprint(sentTurns(m)); got != "[after it]" {
+		t.Fatalf("turns = %s, want the queued input to run after the taken-over turn", got)
+	}
+}
+
+// DropHandle while a turn/start is out leaves a stop pending on it, so the turn it creates is
+// interrupted as soon as the answer names it.
+func TestDropHandleStopsTheTurnInFlight(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	hold := make(chan struct{})
+	m.holdStart = hold
+	h := newCodexTestHandle(t, cl, "codex-drop-in-flight")
+	registerCodexTestHandle(t, h)
+	if err := h.Send(memberInput("in flight", "af_flight")); err != nil {
+		t.Fatal(err)
+	}
+	waitCodexCalls(t, m, "turn/start", 1)
+	// The mock answers nothing while turn/start is held, DropHandle's unsubscribe included, so
+	// DropHandle runs aside; alive=false is set in the same critical section as its stop.
+	dropped := make(chan struct{})
+	go func() {
+		DropHandle(h.name)
+		close(dropped)
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		h.mu.Lock()
+		alive := h.alive
+		h.mu.Unlock()
+		if !alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("DropHandle never took the lock")
+		}
+	}
+	if got := m.callCount("turn/interrupt"); got != 0 {
+		t.Fatalf("turn/interrupt sent before the turn had an id: %d", got)
+	}
+	close(hold)
+	<-dropped
+	waitCodexCalls(t, m, "turn/interrupt", 1)
+	// The dropped handle is out of the registry, so no turn/completed reaches its pump; losing
+	// the connection is what ends that wait.
+	h.runtimeLost()
+	waitPumpDone(t, h)
 }

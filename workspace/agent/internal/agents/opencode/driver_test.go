@@ -134,7 +134,11 @@ type mockServe struct {
 	// already have taken what the interrupt left, and an empty queue proves nothing.
 	holdAbort   bool
 	statusPolls int // GET /session/status calls, so a test can tell the pump reached waitIdle
-	aborts      int
+	// statusGate, when set, holds every GET /session/status until it is closed, and
+	// statusEntered is signalled as each one arrives: the window of the pump's busy check.
+	statusGate    chan struct{}
+	statusEntered chan struct{}
+	aborts        int
 	// turnBody overrides the assistant message the blocking /message call answers with.
 	// opencode reports a provider-side failure INSIDE a 200 response (errors.go), so a
 	// failing turn is simulated by the body, not by the status code.
@@ -146,8 +150,20 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /session/status", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
-		busy := m.busy
 		m.statusPolls++
+		gate, entered := m.statusGate, m.statusEntered
+		m.mu.Unlock()
+		if entered != nil {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+		}
+		if gate != nil {
+			<-gate
+		}
+		m.mu.Lock()
+		busy := m.busy
 		m.mu.Unlock()
 		if busy {
 			w.Write([]byte(`{"ses_test":{"type":"busy"}}`))
@@ -395,7 +411,7 @@ func TestSendQueuedCountsATurnThisHandleDidNotStart(t *testing.T) {
 
 // Agent shutdown interrupts through the teardown path: the whole queue goes, peer input
 // included, and nothing is kept for return (ADR 0105 decision 8).
-func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+func TestAbortManagedDiscardsTheQueue(t *testing.T) {
 	m, srv := newMockServe(t)
 	m.turnDelay = 5 * time.Second
 	h := newTestHandle(t, srv)

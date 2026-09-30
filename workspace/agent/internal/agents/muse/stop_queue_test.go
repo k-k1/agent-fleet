@@ -53,6 +53,28 @@ func interruptTarget(t *testing.T, m msptest.Message) string {
 	return *p.TurnID
 }
 
+// waitSent is the host's WaitFor with a deadline: a stop that is never delivered fails the test
+// in seconds rather than hanging until the package timeout.
+func waitSent(t *testing.T, host *msptest.Host, pred func(msptest.Message) bool) msptest.Message {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, m := range host.Received() {
+			if pred(m) {
+				return m
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the expected message never reached the host")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func isMethod(method string) func(msptest.Message) bool {
+	return func(m msptest.Message) bool { return m.Method == method }
+}
+
 // started reports p's turn started the way the host does, and waits until the handle runs it.
 func started(t *testing.T, h *threadHandle, host *msptest.Host, p msp.TurnStartParams) {
 	t.Helper()
@@ -218,7 +240,7 @@ func TestHostQueuedInputAndTheTwoStops(t *testing.T) {
 			}
 			// The first stop ends the turn the host runs ahead of it, which this handle cannot
 			// name; a second stop adds nothing while no turn of ours exists.
-			first := host.WaitForMethod(msp.MethodTurnInterrupt)
+			first := waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 			if got := interruptTarget(t, first); got != "" {
 				t.Fatalf("first stop targeted %q, want the host's running turn", got)
 			}
@@ -229,7 +251,7 @@ func TestHostQueuedInputAndTheTwoStops(t *testing.T) {
 			host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})
 			if tc.interOn {
 				waitEvent(t, h, agents.TurnInterrupting)
-				host.WaitFor(func(m msptest.Message) bool {
+				waitSent(t, host, func(m msptest.Message) bool {
 					return m.Method == msp.MethodTurnInterrupt && interruptTarget(t, m) == p.CommandID
 				})
 			} else {
@@ -370,7 +392,7 @@ func TestStopPendingInputIsNotRequeuedWhenTheHostDies(t *testing.T) {
 		t.Fatal(err)
 	}
 	completed(t, h, host, fp.CommandID, msp.TurnTerminalCompleted, agents.TurnCompleted)
-	host.WaitFor(func(m msptest.Message) bool {
+	waitSent(t, host, func(m msptest.Message) bool {
 		var p msp.TurnStartParams
 		return m.Method == msp.MethodTurnStart && json.Unmarshal(m.Params, &p) == nil && *p.Input[0].Text == "doomed"
 	})
@@ -461,8 +483,8 @@ func TestDropHandleDiscardsTheQueue(t *testing.T) {
 }
 
 // Input a lost host left queued, which the respawned host's pump has not taken yet, is the turn
-// being started when nothing runs (decision 1): a first stop cancels it without keeping it,
-// and nothing is interrupted on the host.
+// being started when nothing runs (decision 1): a first stop cancels it and keeps it for return
+// (first_stop), and nothing is interrupted on the host.
 func TestFirstStopCancelsInputNotYetTaken(t *testing.T) {
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
@@ -485,8 +507,9 @@ func TestFirstStopCancelsInputNotYetTaken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Stop != agents.StopFirst || res.Discard != nil {
-		t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+	if res.Stop != agents.StopFirst || res.Discard == nil || res.Discard.Reason != agents.DiscardFirstStop ||
+		res.Discard.Items[0].ID != "cm-left" {
+		t.Fatalf("stop = %+v, want a first stop keeping the unsent input", res)
 	}
 	h.pump()
 	noStart(t, starts2, "the cancelled input")
@@ -631,7 +654,7 @@ func TestFirstStopBeforeTheQueuedAnswerGoesToTheTurnAhead(t *testing.T) {
 			final, finalSt := msp.TurnTerminalCompleted, agents.TurnCompleted
 			if tc.stopsInput {
 				waitEvent(t, h, agents.TurnInterrupting)
-				host.WaitFor(func(m msptest.Message) bool {
+				waitSent(t, host, func(m msptest.Message) bool {
 					return m.Method == msp.MethodTurnInterrupt && interruptTarget(t, m) == p.CommandID
 				})
 				final, finalSt = msp.TurnTerminalCancelled, agents.TurnCancelled
@@ -651,5 +674,116 @@ func TestFirstStopBeforeTheQueuedAnswerGoesToTheTurnAhead(t *testing.T) {
 				t.Fatal("the queue is not settled after the input's turn ended")
 			}
 		})
+	}
+}
+
+// One first stop is delivered once. With another client's turn already running when this
+// handle's turn/start is still out, the host will queue the input behind that turn: the stop
+// goes to the running turn at once, and neither the "queued" answer nor the input's own
+// turn/started delivers it a second time.
+func TestFirstStopWithAForeignTurnRunningIsDeliveredOnce(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	acceptInterrupts(host)
+	release := make(chan struct{})
+	starts := make(chan msp.TurnStartParams, 1)
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.TurnStartParams
+		json.Unmarshal(m.Params, &p)
+		starts <- p
+		<-release
+		return msp.TurnStartResult{Disposition: msp.TurnStartDispositionQueued, TurnID: p.CommandID}, nil
+	})
+	sent := make(chan bool, 1)
+	go func() {
+		queued, _ := h.SendQueued(peerInput("from a peer", "cm-peer"))
+		sent <- queued
+	}()
+	p := nextStart(t, starts)
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: "other-client", TurnID: "t-foreign", SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+
+	// The fake host answers nothing while it holds turn/start back, the turn/interrupt included,
+	// so the stop runs aside; its decision is made under the lock before it sends anything, and
+	// the state it sets there says the decision is made.
+	type result struct {
+		res agents.InterruptResult
+		err error
+	}
+	stopped := make(chan result, 1)
+	go func() {
+		res, err := h.Interrupt(agents.InterruptOpts{})
+		stopped <- result{res, err}
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		h.mu.Lock()
+		st := h.state
+		h.mu.Unlock()
+		if st == agents.TurnInterrupting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the stop never took the lock")
+		}
+	}
+	close(release)
+	r := <-stopped
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if r.res.Stop != agents.StopFirst || r.res.Discard != nil {
+		t.Fatalf("stop = %+v, want a first stop discarding nothing", r.res)
+	}
+	if got := interruptTarget(t, waitSent(t, host, isMethod(msp.MethodTurnInterrupt))); got != "t-foreign" {
+		t.Fatalf("the stop targeted %q, want the running foreign turn", got)
+	}
+	if !<-sent {
+		t.Fatal("the host's queued answer was not reported as queued")
+	}
+	completed(t, h, host, "t-foreign", msp.TurnTerminalCancelled, agents.TurnCancelled)
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	completed(t, h, host, p.CommandID, msp.TurnTerminalCompleted, agents.TurnCompleted)
+	time.Sleep(100 * time.Millisecond)
+	if n := interrupts(host); n != 1 {
+		t.Fatalf("%d turn/interrupt for one stop, want 1", n)
+	}
+	if !settled(h) {
+		t.Fatal("the queue is not settled after the input's turn ended")
+	}
+}
+
+// Input the host steers into a turn already running gets no turn/started of its own. A stop that
+// was waiting for it is delivered when the "steered" answer arrives, to that running turn.
+func TestStopPendingOnSteeredInputStopsTheRunningTurn(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	acceptInterrupts(host)
+	release := make(chan struct{})
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		<-release
+		return msp.TurnStartResult{Disposition: msp.TurnStartDispositionSteered}, nil
+	})
+	done := make(chan struct{})
+	go func() {
+		_ = h.Send(memberInput("joins the running turn", "cm-steered"))
+		close(done)
+	}()
+	waitSent(t, host, isMethod(msp.MethodTurnStart))
+	if _, err := h.Interrupt(agents.InterruptOpts{DiscardQueue: true}); err != nil {
+		t.Fatal(err)
+	}
+	if n := interrupts(host); n != 0 {
+		t.Fatalf("%d turn/interrupt before the answer, want none", n)
+	}
+	close(release)
+	<-done
+	waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
+	time.Sleep(100 * time.Millisecond)
+	if n := interrupts(host); n != 1 {
+		t.Fatalf("%d turn/interrupt, want exactly 1", n)
+	}
+	if !settled(h) {
+		t.Fatal("the steered input is still the head")
 	}
 }

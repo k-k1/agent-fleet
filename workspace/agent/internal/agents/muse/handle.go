@@ -1176,6 +1176,15 @@ func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agen
 	turnID, running := h.turnID, h.running
 	out := h.tq().Interrupt(opts, running)
 	pending := out.Head == agents.HeadStopPending
+	if pending && running && out.Result.Stop == agents.StopFirst {
+		// The head's turn/start is out while a turn already runs on the host, so the host will
+		// queue it behind that turn: this first stop is the running turn's, delivered below, and
+		// the head continues. Holding it now takes the pending stop off it, so neither its
+		// "queued" answer (launch's redirect) nor its turn/started delivers the same stop again.
+		if t := h.tq().Head(); t != nil && h.tq().Hold(t, true) {
+			pending = false
+		}
+	}
 	cancelled := out.Head == agents.HeadCancelled && !running
 	switch {
 	case cancelled:
@@ -1322,9 +1331,19 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 
 	var err error
-	if ask.isApproval() {
+	switch {
+	case ask.isApproval():
 		err = h.decideApproval(cl, sid, ask, reply)
-	} else {
+	case reply.Decision == agents.DecisionCancel || reply.Decision == agents.DecisionDeny:
+		// Declining a question is the runtime's own refusal (ADR 0105 decision 7): the tool call
+		// resolves as cancelled and the turn goes on, so the queue is not touched. Answering
+		// every question with nothing instead would read to the model as a real answer.
+		err = cl.CallInto(msp.MethodUserInputCancel, msp.UserInputCancelParams{
+			CommandID:   msp.NewCommandID(),
+			SessionID:   sid,
+			UserInputID: ask.userInputID,
+		}, callTimeout, nil)
+	default:
 		err = h.answerUserInput(cl, sid, ask, reply)
 	}
 	if err != nil && !msp.Settled(err) {
