@@ -137,6 +137,9 @@ func main() {
 		// implement the same interface for true per-tenant crypto-shred.
 		mgr.custodian = newLocalCustodian(mgr.master32)
 	}
+	if mgr.plaintextSecrets() {
+		log.Printf(plaintextSecretsLog, mgr.authMode)
+	}
 
 	// MetadataStore (P3-1, docs/13): SQLite is the source of truth for the
 	// tenant/user/workspace records. Migrate, ensure the default tenant, then

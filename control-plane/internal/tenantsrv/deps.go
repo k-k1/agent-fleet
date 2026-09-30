@@ -48,6 +48,9 @@ type CP interface {
 	// has (main.go). nil means "not built yet" and is checked as such: setTenantLogin
 	// only refuses a provider when the set exists.
 	KnownProviderIDs() map[string]bool
+	// DeploymentWarnings lists deployment-level problems only a super_admin can fix, as codes
+	// the Console localises (plaintext_secrets: no master key outside dev). Never nil.
+	DeploymentWarnings() []string
 
 	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	MembershipsFor(ctx context.Context, ident store.Identity) ([]store.MembershipView, *APIError)

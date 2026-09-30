@@ -338,6 +338,19 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 | A signed-in GitHub user's access token | **process memory only** | the CP only; lost on restart, and that person is asked to sign in again |
 | Personal access tokens | only a SHA-256 hash, in the database | shown in plaintext exactly once, at issue |
 
+⚠️ **Without `AF_MASTER_KEY` the store is plaintext.** No master key means no DEK, and the
+agent then writes the same store as `secrets.json`, unencrypted. That is the intent under
+`AUTH=dev`. Under any other `AUTH` the CP starts anyway but logs a `WARNING` at start-up and
+lists `plaintext_secrets` in `deployment_warnings` on a super_admin's `GET /api/admin/tenants`,
+which the Console's admin modal shows as a banner (`master_key_guard.go`). It warns rather
+than refuses so that a deployment already running without a key is not stopped by an upgrade:
+setting the key later is not transparent. A running workspace keeps the environment it was
+started with, so it has no `AF_SECRET_KEY` until it is stopped and started again (`Start` on a
+running container only inspects it). After that restart the agent reads `secrets.enc` and never
+migrates `secrets.json`, so members reconnect what they had stored — and the old
+`secrets.json` stays in each home, and in every backup, until someone deletes it; treat those
+credentials as exposed and rotate them.
+
 **Envelope encryption with a custodian abstraction**
 ([decisions/0005](../decisions/0005-envelope-custodian.md)):
 

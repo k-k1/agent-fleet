@@ -55,6 +55,15 @@ risks", grouped by deployment target (every target, `docker` and `native`, `ecs`
   independently**. Never place it in the data area or in backup archives (by design it never
   goes in). For when it is generated and how to store it, see [02 §2](02-install.md); for the
   identity requirement at restore time, see [03](03-run.md).
+  **Without it, members' stored credentials are kept unencrypted in their homes.** That is
+  only meant for `AUTH=dev`: under any other `AUTH` the Control Plane still starts, but logs a
+  `WARNING` at start-up and shows a warning banner in the administration screen. Setting the
+  key on a deployment that has been running without one is not transparent, so plan it with
+  your members, in this order: set the key and restart the Control Plane; **stop and start
+  every existing workspace** (one that keeps running still has no key and goes on writing
+  plaintext); then members reconnect the credentials they had stored. Finally delete the old
+  unencrypted file (`~/.config/agent-fleet/secrets.json` in each home), which is also in your
+  backups, and rotate the credentials it held.
 - **Backups**: strictly control who can access where they are stored, and enforce at-rest
   encryption there.
 

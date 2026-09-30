@@ -63,7 +63,7 @@ internal/tenantsrv/tenants.go Admin.DeleteMembership x1 {deleted,tenant}
 internal/tenantsrv/tenants.go Admin.DeleteTenant x1 {deleted,memberships_deleted}
 internal/tenantsrv/tenants.go Admin.DestroyWorkspace x1 {destroyed,leftovers,tenant}
 internal/tenantsrv/tenants.go Admin.ListMembers x1 {members,tenant}
-internal/tenantsrv/tenants.go Admin.ListTenants x1 {super_admin,tenants}
+internal/tenantsrv/tenants.go Admin.ListTenants x1 {deployment_warnings,super_admin,tenants} cond{deployment_warnings}
 internal/tenantsrv/tenants.go Admin.PoolStatus x1 {runtime}
 internal/tenantsrv/tenants.go Admin.RemoveMembership x1 {leftovers,purged,removed,tenant}
 internal/tenantsrv/tenants.go Admin.SetMembershipRole x1 {role,tenant,user_key}

@@ -46,6 +46,7 @@ import (
 var cpTenantDelegates = map[string]string{
 	"Store":                         "store",
 	"KnownProviderIDs":              "knownProviderIDs",
+	"DeploymentWarnings":            "deploymentWarnings",
 	"EvictMembershipCache":          "evictMembershipCache", // ↕ same type, swappable
 	"EvictTenantCache":              "evictTenantCache",     // ↕
 	"PushEngineCatalogChanged":      "notifyEngineCatalogChangedForTenant",
