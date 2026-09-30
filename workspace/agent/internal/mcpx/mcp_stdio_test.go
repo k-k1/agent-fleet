@@ -1079,38 +1079,48 @@ func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
 	}
 }
 
-// The server instructions must name every tool group the session surface can advertise, and
-// only the ones its flags turn on: a model reads them before the tool list.
+// The server instructions must name exactly the tool groups mcpStdioToolList advertises: a model
+// reads them before the tool list, and a group described but not advertised (or the reverse)
+// sends it looking for a tool it lacks. Every flag combination is checked against the real list,
+// so a condition wired to the wrong flag on either side fails.
 func TestMCPStdioInstructionsFollowSessionSurface(t *testing.T) {
 	withMCPFlags(t, false, true, false)
 	oldPeer, oldSpawn := mcpPeerMessagingEnabled, mcpFleetSpawnEnabled
 	t.Cleanup(func() { mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = oldPeer, oldSpawn })
-	mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = false, false
 
-	bare := mcpStdioInstructions()
-	for _, want := range []string{"completion report", "handoff", "memos", "session status", "image generation"} {
-		if !strings.Contains(bare, want) {
-			t.Errorf("session instructions miss %q: %s", want, bare)
-		}
+	groups := []struct{ tool, phrase string }{
+		{"af_report", "completion report"},
+		{"propose_session_handoff", "handoff proposal"},
+		{"af_stop_after_turn", "stop after this turn"},
+		{"get_session_status", "session status"},
+		{"get_session_usage", "usage"},
+		{"add_memo", "memos"},
+		{"list_chromium_targets", "Chromium"},
+		{"send_to_peer_session", "peer sessions"},
+		{"create_session", "child sessions"},
 	}
-	for _, absent := range []string{"Chromium", "peer", "child sessions"} {
-		if strings.Contains(bare, absent) {
-			t.Errorf("session instructions mention %q with its flag off: %s", absent, bare)
-		}
-	}
+	for mask := 0; mask < 8; mask++ {
+		chromium, peer, spawn := mask&1 != 0, mask&2 != 0, mask&4 != 0
+		setSessionChromiumEnabled(chromium)
+		mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = peer, spawn
 
-	setSessionChromiumEnabled(true)
-	mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = true, true
-	full := mcpStdioInstructions()
-	for _, want := range []string{"Chromium", "peer sessions", "child sessions"} {
-		if !strings.Contains(full, want) {
-			t.Errorf("session instructions miss %q with its flag on: %s", want, full)
+		advertised := map[string]bool{}
+		for _, tool := range mcpStdioToolList() {
+			advertised[tool["name"].(string)] = true
 		}
-	}
-	for _, s := range []string{bare, full} {
-		for _, r := range s {
+		got := mcpStdioInstructions()
+		for _, g := range groups {
+			if advertised[g.tool] != strings.Contains(got, g.phrase) {
+				t.Errorf("chromium=%v peer=%v spawn=%v: %s advertised=%v but instructions mention %q=%v: %s",
+					chromium, peer, spawn, g.tool, advertised[g.tool], g.phrase, !advertised[g.tool], got)
+			}
+		}
+		if !strings.Contains(got, "image generation") {
+			t.Errorf("session instructions must name image generation as conditional: %s", got)
+		}
+		for _, r := range got {
 			if r > 0x7f {
-				t.Fatalf("instructions must be English ASCII: %s", s)
+				t.Fatalf("instructions must be English ASCII: %s", got)
 			}
 		}
 	}
