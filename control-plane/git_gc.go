@@ -142,10 +142,16 @@ func (g *gitGC) pruneLFS(ctx context.Context, slug, repo, bareDir string) {
 		if g.lfsGrace > 0 && info.ModTime().After(cutoff) {
 			return nil // too young — might be an in-flight push
 		}
-		if err := os.Remove(path); err != nil {
+		// Ledger row first: if it cannot go, the file stays and the next sweep retries,
+		// rather than a removed file leaving a row that over-counts the quota forever.
+		if err := g.store.DeleteLFSObject(ctx, tenant.ID, repo, oid); err != nil {
+			log.Printf("lfs-gc: %s/%s: ledger delete %s failed, keeping the object: %v", slug, repo, oid, err)
 			return nil
 		}
-		_ = g.store.DeleteLFSObject(ctx, tenant.ID, repo, oid)
+		if err := os.Remove(path); err != nil {
+			log.Printf("lfs-gc: %s/%s: remove %s failed after its ledger row went: %v", slug, repo, oid, err)
+			return nil
+		}
 		freed++
 		bytes += info.Size()
 		return nil

@@ -85,9 +85,12 @@ The decision and the options it rejected are ADR 0010. What the shape rests on:
   (`<repo>.git/lfs/objects/<oid[0:2]>/<oid[2:4]>/<oid>`), so a rename moves them and a
   delete removes them with the repository. The `lfs_object` table (tenant, repository,
   oid, size) makes the tenant's total a single sum rather than a walk; `lfs_lock` holds the
-  LFS locks. Rename and delete update both after moving or removing the directory, and
-  ignore a failure there, so the rows can go stale: these LFS follow-up updates are best-effort
-  ([#1211](https://github.com/k-k1/agent-fleet/issues/1211)).
+  LFS locks. Rename and delete change the `git_repo` row and both LFS tables in one
+  transaction (`RenameGitRepo` / `DeleteGitRepo`). Delete commits it before removing the
+  directory, so a store error fails the request with nothing changed; rename moves the
+  directory first and moves it back if the transaction fails. An upload writes its ledger
+  row before it publishes the object and fails the request if it cannot, because a
+  published object is never uploaded again.
 - The tables themselves are described in [06](06-data.md). There is **deliberately no
   token table**.
 
@@ -240,8 +243,9 @@ time, and the helper serves any host in the store).
     nothing is deleted.** A failure while reading the pointer contents is *not* detected:
     the ids read so far are taken as the whole set, and objects whose pointers were not
     read may be deleted once they are past the grace period
-    ([#1210](https://github.com/k-k1/agent-fleet/issues/1210)). A deleted object is also
-    removed from the ledger, best-effort, which frees quota.
+    ([#1210](https://github.com/k-k1/agent-fleet/issues/1210)). An object to be deleted
+    leaves the ledger first, which frees quota; if that fails the object is kept
+    for the next sweep.
 - **The client side needs no change**: the workspace image ships `git-lfs` with its
   filters in the system gitconfig, and LFS authenticates through the same credential
   helper. The packaged native runtime runs the agent on an extracted workspace-image

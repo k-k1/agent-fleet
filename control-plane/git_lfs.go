@@ -159,8 +159,8 @@ func (a gitServerAPI) lfsBatch(w http.ResponseWriter, r *http.Request) {
 
 // lfsUpload stores an object (PUT .../info/lfs/objects/{oid}). It streams the
 // body to a temp file while hashing, enforces the tenant capacity cap mid-stream,
-// verifies the sha256 matches the oid, then atomically publishes it and records the
-// ledger row. A re-upload of a present object is a no-op 200 (dedup).
+// verifies the sha256 matches the oid, then records the ledger row and atomically
+// publishes it. A re-upload of a present object is a no-op 200 (dedup).
 func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg, oid := r.PathValue("slug"), r.PathValue("repo"), r.PathValue("oid")
 	name, mv, _, aerr := a.authorizeGitRepo(r, slug, repoSeg)
@@ -241,16 +241,28 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tmp.Close()
-	if err := os.Rename(tmpName, dest); err != nil {
-		os.Remove(tmpName)
-		writeLFSErr(w, http.StatusInternalServerError, "publish failed")
-		return
-	}
+	// Ledger row before the object is published. Once published, batch reports the
+	// object as present and the client never uploads it again, so a ledger miss after
+	// that point would under-count the quota for good. A published file is never
+	// removed on a ledger error: a concurrent upload of the same oid may own it.
 	if err := a.store.PutLFSObject(r.Context(), mv.TenantID, name, oid, written); err != nil {
-		// The object is stored; a ledger miss only under-counts the quota. Log-worthy
-		// but not client-facing.
+		os.Remove(tmpName)
 		log.Printf("lfs: ledger record failed tenant=%s repo=%s oid=%s size=%d: %v",
 			mv.TenantID, name, oid, written, err)
+		writeLFSErr(w, http.StatusInternalServerError, "store error")
+		return
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		os.Remove(tmpName)
+		// Drop the row only when no other upload published the object meanwhile.
+		if !fileExists(dest) {
+			if derr := a.store.DeleteLFSObject(r.Context(), mv.TenantID, name, oid); derr != nil {
+				log.Printf("lfs: publish failed and ledger row left behind tenant=%s repo=%s oid=%s: %v",
+					mv.TenantID, name, oid, derr)
+			}
+		}
+		writeLFSErr(w, http.StatusInternalServerError, "publish failed")
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
