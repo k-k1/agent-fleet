@@ -682,15 +682,17 @@ Agent は暗号化ストア `secrets.enc`（AES-256-GCM、0600。ロックの下
 
 **第 2 インスタンスを安全に起動する方法**（コンテナ内のテスト、手元のデバッグ）。**ソケット・
 メタデータのディレクトリ・ポートを分けること。どれかを共有すると本物と衝突する。**
-さらに `HOME` も分ける。
+さらに `HOME` を分け、共有の CLI デーモンに繋がせず、空の環境から起動する。
 
 ```sh
 d=$(mktemp -d) && mkdir "$d/home"
-HOME="$d/home" \
-AF_TMUX_SOCKET=af-e2e-$$ \
-AF_SESSIONS_DIR="$d/sessions" \
-AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
-./workspace-agent
+env -i PATH="$PATH" TERM="${TERM:-xterm-256color}" LANG=C.UTF-8 \
+  HOME="$d/home" \
+  AF_TMUX_SOCKET=af-e2e-$$ \
+  AF_SESSIONS_DIR="$d/sessions" \
+  AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
+  AF_CODEX_APP_SERVER_DISABLE=1 AF_OPENCODE_SERVE_DISABLE=1 \
+  ./workspace-agent
 ```
 
 - **ソケット**: ⚠️ `AF_TMUX_SOCKET` 無しで tmux のペインの中（いつもの開発セッション）から起動すると、
@@ -702,6 +704,17 @@ AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
 - **home**: 起動処理は home のあちこちのファイルを書き換える。状態の移行、全 CLI の指示ファイルの
   合成、状態 hook の再登録、全 CLI の設定にある `af` MCP サーバーの名前の付け替え。本物の home で
   2 つ目を動かすと、本物のセッションの設定を書き換えてしまう。
+- **共有デーモン**: Agent は起動時、既定のアドレス（`ws://127.0.0.1:7798`）で待ち受けている codex
+  app-server があればそれを採用する。書き手の接続を開き、そのデーモンが読み込んでいる全スレッドに
+  観察役を付ける。本物のインスタンスのセッションも例外ではない（実測: フラグ無しで起動した第 2
+  インスタンスが 5 本を観察した）。opencode serve のデーモン（`http://127.0.0.1:7799`）も、
+  マネージドの opencode セッションが 1 つでもあれば同じように届く。`AF_CODEX_APP_SERVER_DISABLE=1`
+  と `AF_OPENCODE_SERVE_DISABLE=1` で両方から切り離す。ターミナル（CLI）の codex・opencode
+  セッションはこれらが無くても動く。
+- **環境変数**: `env -i` は列挙した変数だけを渡す。セッションのシェルから起動すると、そうしなければ
+  第 2 インスタンスはそのシェルの Control Plane の URL とトークン（`AF_CP_BASE_URL`・
+  `AF_MCP_TOKEN` など）や、`CLAUDE_CONFIG_DIR`・`CODEX_HOME` のような CLI の状態ディレクトリを
+  継承する。これらは `HOME` に関係なく本物のインスタンスの状態を指す。
 - 後片付けは `tmux -L af-e2e-$$ kill-server` で、**自分のソケットに対してだけ**行う。共有のソケットへ
   `kill-server` を打つのは禁止。
 - テストも同じように隔離する。tmux を直接叩くテストは専用の `-L` ソケットを使い、製品コードを通す

@@ -802,15 +802,18 @@ The details are [decisions/0018](../decisions/0018-container-browser-pane.md).
 
 **How to start a second instance safely** (in-container tests, local debugging).
 **Separate the socket, the metadata directory and the port, or it collides with the
-real one**, and give it its own `HOME` as well:
+real one**. Give it its own `HOME`, keep it off the shared CLI daemons, and start it from
+an empty environment:
 
 ```sh
 d=$(mktemp -d) && mkdir "$d/home"
-HOME="$d/home" \
-AF_TMUX_SOCKET=af-e2e-$$ \
-AF_SESSIONS_DIR="$d/sessions" \
-AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
-./workspace-agent
+env -i PATH="$PATH" TERM="${TERM:-xterm-256color}" LANG=C.UTF-8 \
+  HOME="$d/home" \
+  AF_TMUX_SOCKET=af-e2e-$$ \
+  AF_SESSIONS_DIR="$d/sessions" \
+  AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
+  AF_CODEX_APP_SERVER_DISABLE=1 AF_OPENCODE_SERVE_DISABLE=1 \
+  ./workspace-agent
 ```
 
 - **The socket**: ⚠️ without `AF_TMUX_SOCKET`, starting from inside a tmux pane (your
@@ -825,6 +828,19 @@ AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
   reconciles every CLI's instruction file, re-registers the status hooks, and renames
   the `af` MCP server in every CLI's configuration. A second instance on the real home
   rewrites the real sessions' setup.
+- **The shared daemons**: at boot the Agent adopts a codex app-server already listening
+  on its default address (`ws://127.0.0.1:7798`). It opens a writer connection and
+  attaches its observer to every thread that daemon has loaded, including the real
+  instance's sessions (measured: a second instance started without the flag observed five
+  of them). The opencode serve daemon (`http://127.0.0.1:7799`) is reachable the same way
+  once a Managed opencode session exists. `AF_CODEX_APP_SERVER_DISABLE=1` and
+  `AF_OPENCODE_SERVE_DISABLE=1` keep the second instance off both. Terminal (CLI) codex
+  and opencode sessions still run without them.
+- **The environment**: `env -i` passes only the variables listed. Started from a
+  session's shell, the second instance would otherwise inherit that shell's Control Plane
+  URL and tokens (`AF_CP_BASE_URL`, `AF_MCP_TOKEN`, …) and CLI state directories such as
+  `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, which point back at the real instance's state
+  whatever `HOME` says.
 - Clean up with `tmux -L af-e2e-$$ kill-server`, **against your own socket only**.
   Typing `kill-server` against the shared one is forbidden.
 - Tests isolate the same way. A test that runs tmux directly uses its own `-L` socket;
