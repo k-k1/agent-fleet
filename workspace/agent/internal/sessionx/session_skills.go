@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -113,9 +114,14 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ownNative := len(skills) > 0 // claude/codex scan their own root; muse's is in skill/list when live
-	skills = appendForeignSkills(skills, chainUp(cwd, meta.Dir), cwd, nativeConvs)
 	// lcpp's own file tools refuse any path outside the session's CWD (harness resolvePath), so
-	// a user root would be offered and then fail to open.
+	// a tree above a Subdir CWD, a SKILL.md symlinked out of it or a user root would be offered
+	// and then fail to open. Every other kind reads through its CLI, which has no such fence.
+	var readable func(string) bool
+	if meta.Kind == session.KindLcpp {
+		readable = func(p string) bool { return harness.Readable(cwd, p) }
+	}
+	skills = appendForeignSkills(skills, chainUp(cwd, meta.Dir), cwd, nativeConvs, readable)
 	if meta.Kind != session.KindLcpp {
 		skills = appendUserForeignSkills(skills, meta.Kind, ownNative)
 	}
@@ -200,8 +206,9 @@ var foreignConvs = []string{".claude/skills", ".codex/skills", ".agents/skills"}
 // (empty Invoke, Path/Origin set). dirs is the CWD chain (deepest first), cwd the directory the
 // agent actually runs in — the Path has to resolve from there, since the Console pastes it into a
 // "read Path" prompt. A name that also exists natively keeps the native entry, and
-// `user-invocable: false` is excluded here too.
-func appendForeignSkills(native []sessionSkill, dirs []string, cwd string, nativeConvs []string) []sessionSkill {
+// `user-invocable: false` is excluded here too. readable, when non-nil, drops every entry whose
+// Path it rejects, before the entry can claim its name.
+func appendForeignSkills(native []sessionSkill, dirs []string, cwd string, nativeConvs []string, readable func(string) bool) []sessionSkill {
 	seen := map[string]bool{}
 	for _, s := range native {
 		seen[s.Name] = true
@@ -222,10 +229,14 @@ func appendForeignSkills(native []sessionSkill, dirs []string, cwd string, nativ
 			// relative path would be read against the wrong directory.
 			rel := filepath.Clean(dir) == filepath.Clean(cwd)
 			out = appendForeignRoot(out, seen, root, "project", strings.SplitN(conv, "/", 2)[0], func(name string) string {
+				p := filepath.Join(root, name, "SKILL.md")
 				if rel {
-					return conv + "/" + name + "/SKILL.md"
+					p = conv + "/" + name + "/SKILL.md"
 				}
-				return filepath.Join(root, name, "SKILL.md")
+				if readable != nil && !readable(p) {
+					return ""
+				}
+				return p
 			})
 		}
 	}
@@ -279,7 +290,8 @@ func appendUserForeignSkills(skills []sessionSkill, kind string, ownNative bool)
 
 // appendForeignRoot adds one <root>/*/SKILL.md tree as foreign entries, skipping names already
 // in seen (and recording the ones it adds), `user-invocable: false` and AF's own fleet skills.
-// pathOf turns a skill's directory name into the Path the injection prompt will read.
+// pathOf turns a skill's directory name into the Path the injection prompt will read; "" skips
+// the entry.
 func appendForeignRoot(out []sessionSkill, seen map[string]bool, root, source, origin string, pathOf func(string) string) []sessionSkill {
 	ents, err := os.ReadDir(root)
 	if err != nil {
@@ -304,7 +316,8 @@ func appendForeignRoot(out []sessionSkill, seen map[string]bool, root, source, o
 		if nm == "" {
 			nm = e.Name()
 		}
-		if nm == "" || seen[nm] || len(out) >= maxSessionSkills {
+		path := pathOf(e.Name())
+		if nm == "" || path == "" || seen[nm] || len(out) >= maxSessionSkills {
 			continue
 		}
 		seen[nm] = true
@@ -314,7 +327,7 @@ func appendForeignRoot(out []sessionSkill, seen map[string]bool, root, source, o
 			ArgumentHint: fm["argument-hint"],
 			Source:       source,
 			Type:         "skill",
-			Path:         pathOf(e.Name()),
+			Path:         path,
 			Origin:       origin,
 		})
 	}

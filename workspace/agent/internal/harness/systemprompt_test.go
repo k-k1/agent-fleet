@@ -175,3 +175,32 @@ func TestForeignSkillsSkipsUserInvocableFalse(t *testing.T) {
 		t.Fatalf("missing the visible skill:\n%s", got)
 	}
 }
+
+// The model opens an advertised skill with the read tool, which refuses anything outside cwd
+// (resolvePath). A session launched into a Subdir must therefore not be told about a tree above
+// its cwd, nor about a SKILL.md that is a symlink out of it — only what the tool can open.
+func TestForeignSkillsAdvertisesOnlyWhatTheReadToolCanOpen(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".git", "HEAD"), "x\n")
+	cwd := filepath.Join(root, "pkg", "sub")
+	writeFile(t, filepath.Join(root, ".claude", "skills", "up", "SKILL.md"), "---\nname: up\n---\nbody")
+	writeFile(t, filepath.Join(cwd, ".claude", "skills", "here", "SKILL.md"), "---\nname: here\n---\nbody")
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "linked", "SKILL.md"), "---\nname: linked\n---\nbody")
+	if err := os.MkdirAll(filepath.Join(cwd, ".agents", "skills", "linked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "linked", "SKILL.md"), filepath.Join(cwd, ".agents", "skills", "linked", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := foreignSkills(cwd)
+	if len(got) != 1 || got[0].Name != "here" {
+		t.Fatalf("want only the skill inside cwd, got %#v", got)
+	}
+	for _, s := range got {
+		if _, err := resolvePath(cwd, s.Path); err != nil {
+			t.Errorf("advertised %s at %q, which the read tool refuses: %v", s.Name, s.Path, err)
+		}
+	}
+}

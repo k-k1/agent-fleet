@@ -175,7 +175,7 @@ func TestForeignSkillPathResolvesFromTheCWD(t *testing.T) {
 	writeFile(t, filepath.Join(cwd, ".claude", "skills", "here", "SKILL.md"), "---\nname: here\n---\nbody")
 
 	byName := map[string]sessionSkill{}
-	for _, sk := range appendForeignSkills(nil, chainUp(cwd, dir), cwd, nil) {
+	for _, sk := range appendForeignSkills(nil, chainUp(cwd, dir), cwd, nil, nil) {
 		byName[sk.Name] = sk
 	}
 	if sk := byName["here"]; sk.Path != ".claude/skills/here/SKILL.md" || sk.Origin != ".claude" {
@@ -183,6 +183,60 @@ func TestForeignSkillPathResolvesFromTheCWD(t *testing.T) {
 	}
 	if sk := byName["up"]; sk.Path != filepath.Join(dir, ".claude", "skills", "up", "SKILL.md") {
 		t.Errorf("a tree above the CWD needs an absolute path: %#v", sk)
+	}
+}
+
+// lcpp reads a picked skill with its own read tool, which refuses anything outside the session's
+// CWD (harness resolvePath). Launched into a Subdir, it must be offered neither a tree above the
+// CWD nor a SKILL.md symlinked out of it; any other kind still gets the whole chain.
+func TestLcppSubdirOffersOnlyReadableForeignSkills(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	dir := t.TempDir()
+	cwd := filepath.Join(dir, "path", "to")
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "up", "SKILL.md"), "---\nname: up\n---\nbody")
+	writeFile(t, filepath.Join(cwd, ".claude", "skills", "here", "SKILL.md"), "---\nname: here\n---\nbody")
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "linked", "SKILL.md"), "---\nname: linked\n---\nbody")
+	if err := os.MkdirAll(filepath.Join(cwd, ".agents", "skills", "linked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "linked", "SKILL.md"), filepath.Join(cwd, ".agents", "skills", "linked", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	list := func(name, kind string) map[string]sessionSkill {
+		t.Helper()
+		session.WriteMeta(session.Meta{Name: name, Dir: dir, Subdir: "path/to", Kind: kind})
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/skills", nil)
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		HandleSessionSkills(rec, req)
+		var resp struct {
+			Skills []sessionSkill `json:"skills"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]sessionSkill{}
+		for _, sk := range resp.Skills {
+			out[sk.Name] = sk
+		}
+		return out
+	}
+
+	lc := list("sub_lcpp", session.KindLcpp)
+	if len(lc) != 1 || lc["here"].Path != ".claude/skills/here/SKILL.md" {
+		t.Fatalf("lcpp should be offered only the skill inside its CWD, got %#v", lc)
+	}
+	// positive control: kiro (same foreign-only bucket, no CWD fence) still sees all three
+	ki := list("sub_kiro", session.KindKiro)
+	for _, name := range []string{"here", "up", "linked"} {
+		if _, ok := ki[name]; !ok {
+			t.Errorf("kiro lost %s: %#v", name, ki)
+		}
 	}
 }
 
