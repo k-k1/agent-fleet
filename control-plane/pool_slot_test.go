@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -100,7 +101,7 @@ func TestTerminatePoolSlotPassesTheAdaptersRefusalsThrough(t *testing.T) {
 			}
 			rows, _ := st.ListAuditByTenant(context.Background(), "", 10)
 			for _, a := range rows {
-				if a.Action == "pool.slot_terminate" {
+				if a.Action == "pool.slot_terminate" && (a.HTTPStatus != tc.want || !strings.HasPrefix(a.Detail, "error ")) {
 					t.Fatalf("a refused terminate was audited as one: %+v", a)
 				}
 			}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -396,12 +395,12 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 // homes.
 //
 // This widens a permission, so it is always audited: who wiped whose home in which tenant.
-// The wipe and its audit entry do not follow the request: the wipe can outlast the ingress
-// idle timeout on ecs-ec2, and a home erased with no record of who erased it is the one
-// outcome the audit exists to prevent.
+// The request is recorded before anything is stopped, and refused when that record cannot
+// be written (beginIrreversible). The wipe and its outcome entry do not follow the request:
+// the wipe can outlast the ingress idle timeout on ecs-ec2.
 //
 // A runtime that cannot reach the home is refused with home_wipe_unsupported before
-// anything is stopped, and nothing is audited, because nothing happened.
+// anything is stopped; its outcome entry says so.
 func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
@@ -429,29 +428,28 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "workspace.clean_home", Target: ident.UserKey,
+	})
+	if !ok {
+		return
+	}
 	ctx := context.WithoutCancel(r.Context())
 	if err := a.cp.CleanHomeByMembership(ctx, mem.ID); err != nil {
 		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			writeAPIErr(w, a.cp.WorkspaceLifecycleLeaseError(err))
+			refuseIrreversible(w, r, in, a.cp.WorkspaceLifecycleLeaseError(err))
 			return
 		}
 		if errors.Is(err, runtime.ErrHomeWipeUnsupported) {
-			writeAPIErr(w, &APIError{http.StatusNotImplemented, "home_wipe_unsupported",
+			refuseIrreversible(w, r, in, &APIError{http.StatusNotImplemented, "home_wipe_unsupported",
 				"clean home is not available on this deployment: its runtime cannot reach the workspace home"})
 			return
 		}
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
-	// The erase has happened whatever the audit write does, so a failed write is reported
-	// here rather than turned into a failed answer — but never dropped silently.
-	if err := a.cp.Store().InsertAudit(ctx, store.AuditLog{
-		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
-		Action: "workspace.clean_home", Target: ident.UserKey, At: store.NowTS(),
-	}); err != nil {
-		log.Printf("admin clean-home: %s's home in %s was erased by %s, but the audit entry was not written: %v",
-			ident.UserKey, t.Slug, caller.ID, err)
-	}
+	in.Done(ctx, "home erased", http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
 }
 
@@ -484,8 +482,8 @@ func (a Admin) HomeBackups(w http.ResponseWriter, r *http.Request) {
 // DeleteHomeBackups (DELETE /api/admin/tenants/{slug}/members/{key}/home-backups) deletes
 // those copies: the deliberate step Clean home leaves out, for a home that must not
 // survive anywhere. tenant_admin, the same gate as clean-home, and audited with how many
-// copies went. As in CleanHome, the deletion and its audit entry do not follow the
-// request, and copies deleted before a failure are still audited. While the home itself
+// copies went. As in CleanHome, the request is recorded first, the deletion and its outcome
+// entry do not follow the request, and copies deleted before a failure are still counted. While the home itself
 // still exists, the tenant's backup schedule goes on taking copies of it; an offboarding
 // cleans the home first.
 func (a Admin) DeleteHomeBackups(w http.ResponseWriter, r *http.Request) {
@@ -499,31 +497,27 @@ func (a Admin) DeleteHomeBackups(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "workspace.delete_backups", Target: key,
+	})
+	if !ok {
+		return
+	}
 	ctx := context.WithoutCancel(r.Context())
 	n, supported, err := a.cp.DeleteHomeBackupsByMembership(ctx, mem.ID)
 	if !supported && err == nil {
-		writeAPIErr(w, homeBackupsUnsupported())
+		refuseIrreversible(w, r, in, homeBackupsUnsupported())
 		return
 	}
-	// Audited when something was deleted, and only then: a request that found nothing to
-	// delete changed nothing.
-	if n > 0 {
-		detail := fmt.Sprintf("backup copies of the home deleted: %d", n)
-		if err != nil {
-			detail += "; the rest failed: " + err.Error()
-		}
-		if aerr := a.cp.Store().InsertAudit(ctx, store.AuditLog{
-			ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
-			Action: "workspace.delete_backups", Target: key, Detail: detail, At: store.NowTS(),
-		}); aerr != nil {
-			log.Printf("admin delete-backups: %d of %s's backups in %s were deleted by %s, but the audit entry was not written: %v",
-				n, key, t.Slug, caller.ID, aerr)
-		}
-	}
+	detail := fmt.Sprintf("backup copies of the home deleted: %d", n)
 	if err != nil {
+		detail += "; the rest failed: " + err.Error()
+		in.Done(ctx, detail, http.StatusInternalServerError)
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	in.Done(ctx, detail, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n, "tenant": t.Slug})
 }
 
@@ -587,34 +581,37 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 			"remove the membership first; an active member's workspace cannot be destroyed"})
 		return
 	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "workspace.destroy", Target: ident.UserKey,
+	})
+	if !ok {
+		return
+	}
 	leftovers, err := a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			writeAPIErr(w, a.cp.WorkspaceLifecycleLeaseError(err))
+			refuseIrreversible(w, r, in, a.cp.WorkspaceLifecycleLeaseError(err))
 			return
 		}
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
-	writeAuditDestroy(r, a.cp.Store(), t.ID, caller.ID, ident.UserKey, leftovers)
+	in.Done(r.Context(), destroyedDetail("workspace destroyed (home and runtime resources deleted)", leftovers), http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"destroyed": ident.UserKey, "tenant": t.Slug, "leftovers": leftovers,
 	})
 }
 
-// writeAuditDestroy records who destroyed whose workspace, and — the part that matters —
-// what could NOT be deleted. On Fargate the EFS directories survive their access points
-// and keep billing (docs/log/64 §64.18.4); if that only ever appeared in an HTTP response
-// nobody would ever find it again.
-func writeAuditDestroy(r *http.Request, st store.Store, tenantID, actorID, userKey string, leftovers []string) {
-	detail := "workspace destroyed (home and runtime resources deleted)"
+// destroyedDetail appends what could NOT be deleted — the part of a destroy's audit entry that
+// matters. On Fargate the EFS directories survive their access points and keep billing
+// (docs/log/64 §64.18.4); if that only ever appeared in an HTTP response nobody would ever
+// find it again.
+func destroyedDetail(detail string, leftovers []string) string {
 	if len(leftovers) > 0 {
 		detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
 	}
-	_ = st.InsertAudit(r.Context(), store.AuditLog{
-		ID: store.NewID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
-		Action: "workspace.destroy", Target: userKey, Detail: detail, At: store.NowTS(),
-	})
+	return detail
 }
 
 // CreateTenant (POST /api/admin/tenants {slug,name}).
@@ -760,6 +757,9 @@ func (a Admin) checkInviteDomain(r *http.Request, t store.Tenant, email, key str
 // would orphan the schedules, audit entries and shares that reference it.
 // Reinstating is just re-inviting — EnsureMembership reactivates.
 //
+// The request is recorded before the status changes (beginIrreversible), purge or not: the
+// deactivation is the offboarding itself, and purge makes it irreversible.
+//
 // tenant_admin (their own tenant) or super_admin, matching who owns the roster.
 func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -826,8 +826,16 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.remove", Target: ident.UserKey,
+		Detail: "purge=" + strconv.FormatBool(body.Purge),
+	})
+	if !ok {
+		return
+	}
 	if err := a.cp.Store().SetMembershipStatus(r.Context(), mem.ID, "inactive"); err != nil {
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
 	// Drop the cached runtime as well as the login caches: the workspace stays on
@@ -841,25 +849,14 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// The membership IS deactivated at this point — say so rather than
 			// returning a bare 500 that reads as "nothing happened".
-			_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
-				ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
-				Action: "membership.remove", Target: ident.UserKey,
-				Detail: "status=inactive; purge FAILED: " + err.Error(), At: store.NowTS(),
-			})
+			in.Done(r.Context(), "status=inactive; purge FAILED: "+err.Error(), http.StatusInternalServerError)
 			writeAPIErr(w, &APIError{http.StatusInternalServerError, "purge_failed",
 				"the membership was deactivated but the workspace could not be destroyed: " + err.Error()})
 			return
 		}
-		detail = "status=inactive; workspace destroyed (purge)"
-		if len(leftovers) > 0 {
-			detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
-		}
+		detail = destroyedDetail("status=inactive; workspace destroyed (purge)", leftovers)
 	}
-	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
-		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
-		Action: "membership.remove", Target: ident.UserKey,
-		Detail: detail, At: store.NowTS(),
-	})
+	in.Done(r.Context(), detail, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed": ident.UserKey, "tenant": t.Slug,
 		"purged": body.Purge, "leftovers": leftovers,
@@ -915,18 +912,21 @@ func (a Admin) DeleteMembership(w http.ResponseWriter, r *http.Request) {
 			"destroy the workspace first; deleting the row would leave the home and its cloud resources billing"})
 		return
 	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.delete", Target: key,
+	})
+	if !ok {
+		return
+	}
 	if err := a.cp.Store().DeleteMembership(r.Context(), mem.ID); err != nil {
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
 	a.cp.EvictMembershipCache(mem.ID)
 	a.cp.InvalidateTenantLogin()
-	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
-		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
-		Action: "membership.delete", Target: key,
-		Detail: "membership row and its per-membership rows deleted; audit, cost and occupancy history kept",
-		At:     store.NowTS(),
-	})
+	in.Done(r.Context(), "membership row and its per-membership rows deleted; audit, cost and occupancy history kept",
+		http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": key, "tenant": t.Slug})
 }
 
@@ -1008,22 +1008,24 @@ func (a Admin) DeleteTenant(w http.ResponseWriter, r *http.Request, ident store.
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	// ⚠️ The slug goes in Target: the audit view resolves tenant_id → slug through
+	// ListTenants (audit.go), so these rows' tenant column is blank once the tenant is gone.
+	// The name has to be inside the entry itself.
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
+		Action: "tenant.delete", Target: t.Slug, Detail: "tenant \"" + t.Name + "\"",
+	})
+	if !ok {
+		return
+	}
 	if err := a.cp.Store().DeleteTenant(ctx, t.ID); err != nil {
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
 	a.cp.EvictTenantCache(t.ID)
 	a.cp.InvalidateTenantLogin()
-	// ⚠️ Written AFTER the delete, and with the slug in Target: the audit view resolves
-	// tenant_id → slug through ListTenants (audit.go), so this row's tenant column will
-	// be blank from now on. The name has to be inside the entry itself.
-	_ = a.cp.Store().InsertAudit(ctx, store.AuditLog{
-		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
-		Action: "tenant.delete", Target: t.Slug,
-		Detail: "tenant \"" + t.Name + "\" deleted; " + strconv.Itoa(len(removed)) +
-			" removed membership(s) deleted with it; audit, cost and occupancy history kept",
-		At: store.NowTS(),
-	})
+	in.Done(ctx, "tenant \""+t.Name+"\" deleted; "+strconv.Itoa(len(removed))+
+		" removed membership(s) deleted with it; audit, cost and occupancy history kept", http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deleted": t.Slug, "memberships_deleted": len(removed),
 	})
@@ -1384,33 +1386,36 @@ func (a Admin) TerminatePoolSlot(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "instance id required"})
 		return
 	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: "", ActorKind: "admin", ActorID: ident.ID,
+		Action: "pool.slot_terminate", Target: id,
+	})
+	if !ok {
+		return
+	}
 	reason, ok, err := a.cp.TerminateQuarantinedSlot(r.Context(), id)
 	if !ok {
-		writeAPIErr(w, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
 		return
 	}
 	switch {
 	case errors.Is(err, runtime.ErrSlotNotFound):
-		writeAPIErr(w, &APIError{http.StatusNotFound, "no_such_slot", err.Error()})
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_such_slot", err.Error()})
 		return
 	case errors.Is(err, runtime.ErrSlotNotQuarantined):
-		writeAPIErr(w, &APIError{http.StatusConflict, "slot_not_quarantined", err.Error()})
+		refuseIrreversible(w, r, in, &APIError{http.StatusConflict, "slot_not_quarantined", err.Error()})
 		return
 	case errors.Is(err, runtime.ErrSlotInUse):
-		writeAPIErr(w, &APIError{http.StatusConflict, "slot_in_use", err.Error()})
+		refuseIrreversible(w, r, in, &APIError{http.StatusConflict, "slot_in_use", err.Error()})
 		return
 	case err != nil:
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
 	// The quarantine reason lived in the instance's tags, and the instance is going away.
 	// Keeping it here is what lets decision 23's "the evidence is deliberately kept" still
 	// hold after somebody presses the button.
-	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
-		ID: store.NewID(), TenantID: "", ActorKind: "admin", ActorID: ident.ID,
-		Action: "pool.slot_terminate", Target: id, Detail: "quarantined: " + reason,
-		HTTPStatus: http.StatusOK, At: store.NowTS(),
-	})
+	in.Done(r.Context(), "quarantined: "+reason, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"instance_id": id, "terminated": true, "quarantine_reason": reason})
 }
 

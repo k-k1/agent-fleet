@@ -328,4 +328,5 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.home_wipe_unsupported": "Not available on this deployment: its workspace homes are out of the control plane's reach, so nothing was stopped.",
   "err.home_wipe_while_starting": "The workspace is still starting, so nothing was stopped. Try again once it has started.",
   "err.home_backups_unsupported": "This deployment keeps no backups of workspace homes.",
+  "err.audit_unavailable": "Nothing was done: the audit log could not record who asked for it. Try again once the database is back.",
 };
