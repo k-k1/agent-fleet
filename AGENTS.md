@@ -83,8 +83,9 @@ cmp -s package-lock.json ~/repos/agent-fleet/console/package-lock.json \
   && ln -sfT ~/repos/agent-fleet/console/node_modules node_modules
 ```
 
-`-fT` is not optional. Where `$AF_WS_SCRATCH` is set, the worktree's `node_modules` is already
-a symlink into `/scratch`, and a plain `ln -s` onto a symlink to a directory creates the link
+`-fT` is not optional. `node_modules` may already be a symlink (an earlier share, or a
+worktree where `af-scratch` pre-created one into `/scratch`), and a plain `ln -s` onto a
+symlink to a directory creates the link
 *inside* that directory and still exits 0 — the worktree keeps the empty tree. `ln -sfT`
 replaces the symlink, and refuses (exit 1) when `node_modules` is a real install.
 

@@ -1148,7 +1148,7 @@ func finishNewWorktree(dir, parentDir string) {
 	// first; the ensure below then only has to cover what the parent did not have.
 	seedSubmodulesFromParent(dir, parentDir)
 	gitSubmodulesEnsure(dir) // per-worktree submodule checkout; parent untouched (verified)
-	// A new worktree starts without node_modules/target/.venv, which is exactly when
+	// A new worktree starts without target/ or build/, which is exactly when
 	// relocating them is free. Only on creation: an existing worktree may already hold
 	// a populated tree on EFS, and moving that on a relaunch would stall the session.
 	scratchAutoRelocate(dir)

@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# af-scratch — ビルド生成物をタスクローカルの速いディスクへ逃がす（ADR 0044 決定 3）。
+# af-scratch — move build output onto the task-local fast disk (ADR 0044 decision 3).
 #
-#   af-scratch node_modules       # ./node_modules を /scratch へ移して symlink を張る
-#   af-scratch target .venv       # 複数まとめて
-#   af-scratch --status           # いま何が逃がされているか
-#   af-scratch --auto <dir>       # dir 配下のプロジェクトを見て先回りで逃がす（Agent が clone 直後に叩く）
+#   af-scratch target             # move ./target to /scratch and leave a symlink
+#   af-scratch target build       # several at once
+#   af-scratch --status           # what is relocated now
+#   af-scratch --auto <dir>       # relocate ahead of time for the projects under dir (the Agent runs this on a new clone)
 #
-# なぜ必要か（実測 docs/log/63 §63.4）: ECS では `~` が EFS（NFS）に載っており、1 ファイル
-# あたり約 14.5ms の固定ペナルティがある。`node_modules` のような数万ファイルの木は
-# これで 9 倍以上遅くなり、並列度を上げても vCPU を増やしても改善しない。逃がすと
-# `npm ci` が 105 秒から 11 秒側になる（Console 相当・外挿）。
+# Why (measured, docs/log/63 §63.4): on ECS `~` is EFS (NFS), with a fixed ~14.5ms per
+# file. A tree of tens of thousands of files is 9x+ slower there, and neither more
+# parallelism nor more vCPUs helps.
 #
-# 代わりに払うもの: **Workspace を停止すると中身は消える**。だから対象は「再生成できる
-# 生成物」だけにすること——追跡ファイルや未コミットの変更を逃がしてはいけない。
-# パッケージのキャッシュ（~/.npm）は EFS に残っているので、作り直しにネットワークは要らない。
+# The price: **the contents are gone when the Workspace stops**, so only regenerable
+# output belongs here — never tracked files or uncommitted work.
+#
+# node_modules cannot be relocated this way: npm (arborist `_createSparseTree`) replaces
+# any symlink on the path from a package to the project root with a real directory, so
+# the first `npm ci` / `npm install` puts the tree back on EFS — and `npm ci` empties the
+# scratch side first. Measured with npm 10.9.9, even on a no-op `npm install`.
 set -euo pipefail
 
 MODE="${1:-}"
@@ -43,11 +46,14 @@ if [ "${1:-}" = "--status" ]; then
   exit 0
 fi
 
-# --- --auto: 作業コピーを見て「これから作られる生成物」を先回りで逃がす -------------
+# --- --auto: look at the working copy and relocate the output it is about to produce ---
 #
-# 手で `af-scratch node_modules` を張る形だと、実際には **1 回目の npm ci が EFS 上で走って
-# しまってから**逃がすことになり、効き幅（105s → 11s）が取れないうえ、数万ファイルを
-# EFS から読み直して移す羽目になる。だから「まだ無いうちに symlink だけ張っておく」。
+# Linking while the directory does not exist yet means the first build already writes
+# to /scratch; relocating afterwards re-reads the whole tree off EFS to move it.
+#
+# Only target/ and build/ are pre-created. node_modules is not (see the header), and
+# neither is .venv: `python3 -m venv .venv` refuses a symlink ("Unable to create
+# directory", Python 3.13), so a pre-created link breaks the stock command.
 #
 # 安全側の規則:
 #   - 既に symlink → 触らない（利用者が親クローンへ張った共有かもしれない）
@@ -55,8 +61,8 @@ fi
 #   - 実体があり、git が無視している → 移して symlink に置き換える
 #   - 実体が無い → 空の逃がし先を作って symlink を張る（この経路が本命）
 #
-# 副作用として `[ -d node_modules ] || npm install` の形をしたスクリプトは
-# 「もう入っている」と誤認する（空ディレクトリでも -d は真）。AF_WS_SCRATCH_AUTO=0 で切れる。
+# Side effect: `[ -d build ] || …` style scripts see the empty link as done.
+# AF_WS_SCRATCH_AUTO=0 turns the step off.
 auto_relocate() {
   target="$1"
   if [ -L "$target" ]; then return 0; fi
@@ -84,14 +90,12 @@ if [ "$MODE" = "--auto" ]; then
   # 生成物ディレクトリ自身と .git には降りない（node_modules の中の package.json を拾わない）。
   find "$root" -maxdepth "$depth" \
     \( -name .git -o -name node_modules -o -name .venv -o -name target -o -name build -o -name dist \) -prune -o \
-    -type f \( -name package.json -o -name Cargo.toml -o -name pyproject.toml -o -name pom.xml \
+    -type f \( -name Cargo.toml -o -name pom.xml \
                -o -name build.gradle -o -name build.gradle.kts \) -print 2>/dev/null |
     while read -r marker; do
       d="$(dirname "$marker")"
       case "$(basename "$marker")" in
-        package.json)               arts="node_modules" ;;
         Cargo.toml|pom.xml)         arts="target" ;;
-        pyproject.toml)             arts=".venv" ;;
         build.gradle|build.gradle.kts) arts="build" ;;
         *)                          arts="" ;;
       esac
@@ -102,7 +106,16 @@ fi
 
 [ $# -gt 0 ] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
+status=0
 for target in "$@"; do
+  case "$(basename "$target")" in
+    node_modules)
+      echo "af-scratch: node_modules は逃がせません。npm がリンクを実体ディレクトリに置き換えて EFS へ戻し、npm ci は逃がし先を空にします。" >&2
+      status=1
+      continue ;;
+    .venv)
+      echo "af-scratch: 注意: .venv へのリンクは uv venv / uv sync なら使えますが、python3 -m venv .venv は失敗します。" >&2 ;;
+  esac
   if [ -L "$target" ]; then
     echo "af-scratch: $target は既に symlink です（-> $(readlink "$target")）。何もしません。"
     continue
@@ -120,3 +133,4 @@ for target in "$@"; do
   ln -s "$dest" "$target"
   echo "af-scratch: $target -> $dest（Workspace 停止で消えます）"
 done
+exit "$status"
