@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Agent Fleet — compose a GitHub release body from the checked-in release notes.
 #
-#   VERSION=0.3.0 ROOTFS=0acd1112b7b0 deploy/release/notes-body.sh > body.md
+#   VERSION=0.3.0 ROOTFS="amd64=0acd1112b7b0 arm64=5c0ffee00000" deploy/release/notes-body.sh > body.md
+#
+# ROOTFS lists <arch>=<r> for every native package in the release; a bare <r>
+# means amd64 alone (the older single-architecture releases).
 #
 # Reads deploy/release/notes/<version>.md (English, canonical) and, when present,
 # deploy/release/notes/<version>.ja.md (Japanese), and appends an artifact footer.
@@ -14,9 +17,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 VERSION="${VERSION:?set VERSION=<semver> (e.g. VERSION=0.3.0)}"
-ROOTFS="${ROOTFS:?set ROOTFS=<rootfs content hash> (e.g. ROOTFS=0acd1112b7b0)}"
+ROOTFS="${ROOTFS:?set ROOTFS=<arch>=<rootfs content hash> ... (e.g. ROOTFS=amd64=0acd1112b7b0)}"
 REPO="${REPO:-k-k1/agent-fleet-dist}"
-ARCH="${ARCH:-amd64}"
 # Registry the compose edition pulls from (ADR 0037).
 IMAGE_BASE="${IMAGE_BASE:-ghcr.io/k-k1/agent-fleet}"
 # NOTES_DIR is overridable so the stub test can point at a fixture instead of
@@ -35,15 +37,22 @@ if [ -f "$JA" ]; then
   cat "$JA"
 fi
 
+natives="" rootfs=""
+for pair in $ROOTFS; do
+  case "$pair" in *=*) arch="${pair%%=*}"; r="${pair#*=}" ;; *) arch=amd64; r="$pair" ;; esac
+  natives+=" · \`agent-fleet-native-$VERSION-linux-$arch.tar.gz\` (native, $arch)"
+  rootfs+="${rootfs:+ · }\`agent-fleet-rootfs-$r-linux-$arch.tar.zst\`"
+done
+
 cat <<EOF
 
 ---
 
 **Install (native)** — \`curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash\` then \`af start\`
 
-**Assets** — \`agent-fleet-$VERSION.tar.gz\` (Compose bundle) · \`agent-fleet-native-$VERSION-linux-$ARCH.tar.gz\` (native) · \`SHA256SUMS\`
+**Assets** — \`agent-fleet-$VERSION.tar.gz\` (Compose bundle)$natives · \`SHA256SUMS\`
 
 **Container images** — \`$IMAGE_BASE/control-plane:$VERSION\` and \`$IMAGE_BASE/workspace:$VERSION\` (pulled by \`docker compose\`; the bundle's \`.env.example\` already points at them)
 
-**Workspace rootfs** — [\`rootfs-$ROOTFS\`](https://github.com/$REPO/releases/tag/rootfs-$ROOTFS), fetched on first start and verified against the \`rootfs.json\` sha256 inside the native tar. Verify every download against \`SHA256SUMS\`.
+**Workspace rootfs** — $rootfs, fetched by \`af start\` on first start from the URL in the native tar's \`rootfs.json\` and verified against its sha256. Verify every download against \`SHA256SUMS\`.
 EOF

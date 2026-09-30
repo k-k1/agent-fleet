@@ -8,7 +8,11 @@
 #               (docker save) by default to satisfy the P1 gate (A+B+D). Images
 #               are the distribution variant (workspace: BAKE_AGENT_CLIS=0 lean /
 #               CP: docs staged from guide/ only).
-#   --native  … C (native tar) + R (lean rootfs) — docs/log/35 §35.7.2-7.
+#   --native  … C (native tar) + R (lean rootfs) — docs/log/35 §35.7.2-7, for the
+#               host's CPU architecture (amd64 or arm64). Every step is a plain
+#               `docker build` on the host platform, so the other architecture comes
+#               from running this on a host of that architecture (publish-dist.yml
+#               runs it once per arch), not from a flag.
 #   --bundle-rootfs     … with --native, also produce the self-contained variant
 #                          bundling R (-bundle tar).
 #   --rootfs-json <path> … reuse an existing rootfs.json and skip generating R
@@ -20,7 +24,7 @@
 #      (default https://github.com/k-k1/agent-fleet-dist/releases/download — §35.4.2).
 #      WS_PLATFORMS … CPU architectures for the WORKSPACE image, e.g.
 #      "linux/amd64,linux/arm64" (docs/log/70 §70.9). Empty = the host's, as before.
-#      Needs --push. The native package (C/R) stays amd64 (docs/log/35 §35.3.1).
+#      Needs --push. The native package (C/R) follows the host instead (--native).
 #      CP_PLATFORMS … the same, for the CONTROL PLANE image (docs/log/72), so a
 #      deployment can run the Fargate service itself on Graviton. Independent of
 #      WS_PLATFORMS; also needs --push.
@@ -78,17 +82,29 @@ if [ "$DO_COMPOSE" = 1 ]; then
   [ "$DO_PUSH" = 1 ] && extra+=(--push)
   [ "$DO_IMAGES_TAR" = 1 ] && extra+=(--save)
   # WS_PLATFORMS / CP_PLATFORMS pass straight through (docs/log/70 §70.9, docs/log/72): the
-  # two images are the artifacts that can exist for more than one CPU architecture,
-  # and it is release.sh that knows how to build one that way. The native package
-  # (C/R) below stays amd64 — it is a single-host hand-off, not a fleet substrate.
+  # two images are the artifacts that can exist for more than one CPU architecture
+  # in one build, and it is release.sh that knows how to build one that way. The
+  # native package (C/R) below is one architecture per run: the host's.
   DIST_DIR="$DIST" VERSION="$VERSION" REGISTRY="${REGISTRY:-$DEFAULT_REGISTRY}" \
     WS_PLATFORMS="${WS_PLATFORMS:-}" CP_PLATFORMS="${CP_PLATFORMS:-}" \
     bash "$ROOT/deploy/compose/release.sh" "${extra[@]+"${extra[@]}"}"
 fi
 
 if [ "$DO_NATIVE" = 1 ]; then
-  # C (native tar) + R (lean rootfs) — docs/log/35 §35.7.2-7. amd64 first (§35.3.1).
-  ARCH=amd64
+  # C (native tar) + R (lean rootfs) — docs/log/35 §35.7.2-7.
+  case "$(uname -m)" in
+    x86_64) ARCH=amd64 ;;
+    aarch64 | arm64) ARCH=arm64 ;;
+    *) echo "ERROR: --native builds for amd64 or arm64 hosts only (this is $(uname -m))" >&2; exit 2 ;;
+  esac
+  # This host's af-cp/bwrap paired with another architecture's rootfs downloads,
+  # verifies and extracts fine, then dies with Exec format error at workspace start
+  # on the user's machine. A hand-delivered C has no publish-time check to stop it,
+  # so refuse here — before the docker builds below spend minutes.
+  if [ -n "$ROOTFS_JSON" ] && ! grep -q "\"url\": \".*-linux-$ARCH\.tar\.zst\"" "$ROOTFS_JSON"; then
+    echo "ERROR: $ROOTFS_JSON names a rootfs for another architecture (this host builds $ARCH)" >&2
+    exit 2
+  fi
   PKG_NAME="agent-fleet-native-$VERSION-linux-$ARCH"
   NATIVE_DIR="$HERE/native"
   WORK="$DIST/.native-work"
@@ -159,11 +175,15 @@ if [ "$DO_NATIVE" = 1 ]; then
     R_SHA="$(sha256sum "$R_TAR" | awk '{print $1}')"
     R_SIZE="$(stat -c%s "$R_TAR")"
     URL_BASE="${ROOTFS_URL_BASE:-https://github.com/k-k1/agent-fleet-dist/releases/download}"
+    # R is attached to the app release v<v> itself (docs/log/35 §35.4.2). <r>
+    # changes with every version anyway — workspace-agent inside it is stamped with
+    # VERSION — so a separate rootfs-<r> release never saved an upload. The client
+    # still caches the extracted rootfs by <r>, which is why <r> stays in the name.
     # Formatting pairs with the af launcher's sed parser (keep one key per line).
     cat > "$OUT/rootfs.json" <<EOF
 {
   "version": "$R_VER",
-  "url": "$URL_BASE/rootfs-$R_VER/agent-fleet-rootfs-$R_VER-linux-$ARCH.tar.zst",
+  "url": "$URL_BASE/v$VERSION/agent-fleet-rootfs-$R_VER-linux-$ARCH.tar.zst",
   "sha256": "$R_SHA",
   "size": $R_SIZE
 }

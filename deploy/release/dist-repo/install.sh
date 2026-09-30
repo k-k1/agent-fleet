@@ -15,6 +15,7 @@
 #   AF_DIST_URL_BASE  override the download URL base (for testing/mirrors;
 #                     requires AF_VERSION)
 #   AF_NO_AUTOUPDATE  set to 1 to skip enabling the daily update timer (docs/log/42)
+#   AF_ARCH           amd64 | arm64 (default: this machine's; for testing)
 set -euo pipefail
 
 REPO="${AF_DIST_REPO:-k-k1/agent-fleet-dist}"
@@ -22,12 +23,15 @@ DEFAULT_BASE="https://github.com/$REPO/releases/download"
 BASE="${AF_DIST_URL_BASE:-$DEFAULT_BASE}"
 PREFIX="${AF_PREFIX:-$HOME/.local}"
 VER="${AF_VERSION:-}"
-ARCH=amd64
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 [ "$(uname -s)" = Linux ] || die "Linux only (including WSL2)"
-[ "$(uname -m)" = x86_64 ] || die "only linux-amd64 is distributed for now ($(uname -m) is unsupported)"
+case "${AF_ARCH:-$(uname -m)}" in
+  x86_64 | amd64) ARCH=amd64 ;;
+  aarch64 | arm64) ARCH=arm64 ;;
+  *) die "only linux-amd64 and linux-arm64 are distributed (${AF_ARCH:-$(uname -m)} is unsupported)" ;;
+esac
 
 fetch() { # fetch <url> <out>
   if command -v curl >/dev/null 2>&1; then
@@ -61,7 +65,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "==> downloading agent-fleet $VER: $BASE/v$VER/$NAME.tar.gz"
-fetch "$BASE/v$VER/$NAME.tar.gz" "$TMP/$NAME.tar.gz"
+# Older releases carry amd64 only, so a pinned old version is the usual way
+# to reach a missing arm64 tar; say so instead of leaving a bare 404.
+fetch "$BASE/v$VER/$NAME.tar.gz" "$TMP/$NAME.tar.gz" \
+  || die "cannot download $NAME.tar.gz (does v$VER publish a linux-$ARCH package?)"
 fetch "$BASE/v$VER/SHA256SUMS" "$TMP/SHA256SUMS"
 
 echo "==> verifying (sha256)"

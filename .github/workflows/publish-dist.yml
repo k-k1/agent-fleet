@@ -40,15 +40,25 @@ on:
         description: 'Build the control-plane image for arm64 as well as amd64, so a deployment can set CpArch=arm64 (docs/log/72). On by default: it costs ~71s because the CP cross-compiles.'
         type: boolean
         default: true
+      # The way out when only the arm64 native build is broken (an upstream tool
+      # without an arm64 asset, a stuck arm64 runner queue): publish-dist.sh requires
+      # amd64 alone, so turning this off ships an amd64-only native package instead
+      # of no release at all.
+      native_arm64:
+        description: 'Build the native package and its rootfs for linux-arm64 as well as linux-amd64 (docs/log/35 §35.4.2). On by default; turn it off only to ship a release while the arm64 native build is broken.'
+        type: boolean
+        default: true
 
 concurrency:
   group: publish-dist
   cancel-in-progress: false
 
 jobs:
-  publish:
+  # Its own job so a missing secret or a typo in the version fails in seconds, not
+  # after the native builds below have spent a quarter of an hour.
+  preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 5
     env:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ secrets.DIST_PUBLISH_TOKEN }}
@@ -62,7 +72,76 @@ jobs:
           echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$' \
             || { echo "::error::version is not semver: $VERSION"; exit 1; }
 
+  # The native package (C) and its rootfs (R), once per CPU architecture. build.sh
+  # --native builds for the host it runs on — every step is a plain `docker build`,
+  # and the rootfs cannot be cross-built cheaply (the workspace image pays ~10 min
+  # under QEMU) — so arm64 comes from a native arm64 runner, free for this public
+  # repository. Both halves land in the one release the publish job creates
+  # (docs/log/35 §35.4.2).
+  native:
+    needs: preflight
+    strategy:
+      fail-fast: true
+      matrix:
+        # include: entries cannot be conditional, so the arch list is built instead
+        arch: ${{ fromJSON(inputs.native_arm64 && '["amd64","arm64"]' || '["amd64"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
       - uses: actions/checkout@v7
+
+      - name: build native artifacts (C+R) for ${{ matrix.arch }}
+        run: VERSION=$VERSION deploy/release/build.sh --native
+
+      # A runner label that quietly resolved to the other architecture would publish
+      # two amd64 packages under two names; the ELF header is the ground truth.
+      - name: verify the packaged binaries are ${{ matrix.arch }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          cd deploy/release/dist
+          C="agent-fleet-native-$VERSION-linux-$ARCH"
+          test -f "$C.tar.gz"
+          ls agent-fleet-rootfs-*-linux-"$ARCH".tar.zst
+          case "$ARCH" in amd64) want='Advanced Micro Devices X86-64' ;; arm64) want='AArch64' ;; esac
+          tar xzf "$C.tar.gz" "$C/bin/af-cp" "$C/bin/bwrap"
+          for b in af-cp bwrap; do
+            got="$(readelf -h "$C/bin/$b" | sed -n 's/^ *Machine: *//p')"
+            echo "$b: $got"
+            [ "$got" = "$want" ] || { echo "::error::$b is '$got', expected '$want'"; exit 1; }
+          done
+          rm -rf "$C"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.arch }}
+          path: |
+            deploy/release/dist/agent-fleet-native-*.tar.gz
+            deploy/release/dist/agent-fleet-rootfs-*.tar.zst
+          if-no-files-found: error
+          compression-level: 0 # already gzip / zstd
+          retention-days: 3
+
+  publish:
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ secrets.DIST_PUBLISH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Into the dist dir BEFORE build.sh runs: its closing SHA256SUMS then covers
+      # both architectures' C and R alongside A.
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: native-*
+          merge-multiple: true
+          path: deploy/release/dist
 
       # arm64 only. The workspace image is the one artifact that has to exist for a
       # second CPU architecture (an ecs-ec2 slot can be Graviton — docs/log/70), and the
@@ -101,13 +180,13 @@ jobs:
       - name: stub self-check
         run: deploy/local/dist-stub-test.sh
 
-      - name: build all artifacts (A+C+R+D) and push images to GHCR
+      - name: build compose artifacts (A+D) and push images to GHCR
         env:
           # Empty unless asked for, so an ordinary release is the single-architecture
           # build it has always been.
           WS_PLATFORMS: ${{ inputs.workspace_arm64 && 'linux/amd64,linux/arm64' || '' }}
           CP_PLATFORMS: ${{ inputs.control_plane_arm64 && 'linux/amd64,linux/arm64' || '' }}
-        run: VERSION=$VERSION deploy/release/build.sh --all --push
+        run: VERSION=$VERSION deploy/release/build.sh --compose --push
 
       # A manifest list is invisible to `docker images`, so "did the arm64 half
       # actually get published" cannot be answered by looking at the local docker —
