@@ -74,7 +74,8 @@ and observe outbound destinations, all from the browser. Splitting departments i
 **Delivery model and security posture.** One company, one deployment, on its own
 infrastructure. Isolation between companies is guaranteed by **separate deployments**,
 not by in-process boundaries, so the blast radius of a compromise is confined to one
-deployment. Inside a workspace, the boundaries assume the agent **executes arbitrary
+deployment — on AWS, only when each deployment has its own AWS account
+([04 Securing it](04-secure.md)). Inside a workspace, the boundaries assume the agent **executes arbitrary
 code**; what is protected is other users' data, the control plane and host, the
 secrets, and exfiltration.
 

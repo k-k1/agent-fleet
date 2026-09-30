@@ -45,14 +45,26 @@ at once**:
   `AGENT_TOKEN` and DEK, attaches home volumes, runs shell commands on the slots over
   `ssm:SendCommand`, and (with the engines stack) buys GPU instances. `SendCommand` is
   limited to the `AWS-RunShellScript` document on instances tagged with this pool's
-  `af-pool` and `af-role=slot`; other instances in the account, engine boxes included,
-  are out of its reach.
+  `af-pool` and `af-role=slot`. While those tags stay correct, a CP bug that picks the
+  wrong target cannot send a shell command to an instance outside that set, engine
+  boxes included ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)). That is
+  all the fence does. `Ec2SlotPool` grants `ec2:CreateTags` on `Resource: "*"` with no
+  condition, so a tagging bug or a compromised CP can retag any instance into the pool,
+  and the same statement's instance and volume actions (stop, terminate, detach, …)
+  have no fence at all.
 - On every target it unwraps the DEKs and injects them in plaintext (§7.6).
 
 It does not spread between companies, because those are separate deployments — which is
 the strength of the delivery model
-([decisions/0001](../decisions/0001-self-host-vs-saas.md)). Candidate mitigations:
-rootless Docker, a socket proxy, a narrower CP role.
+([decisions/0001](../decisions/0001-self-host-vs-saas.md)). **On `ecs` / `ecs-ec2` that
+holds only when each deployment has its own AWS account.** `CpTaskRole` is scoped to the
+account, not to the deployment: `EcsDrive`, `Ec2SlotPool` and `EcsContainerInstances`
+name `Resource: "*"` with no condition, and `SsmWorkspaceParams` covers
+`parameter/af-ws/*`, one prefix for the whole account with no deployment in the path.
+A compromised CP can therefore update or delete another deployment's services, stop,
+terminate or snapshot its instances and volumes, and read or overwrite its workspaces'
+`AGENT_TOKEN` and DEK. Candidate mitigations: rootless Docker, a socket proxy, a
+narrower CP role.
 
 ## 7.2 Isolation controls
 
@@ -421,8 +433,8 @@ from what you measured, and only then switch to enforce.
    ([decisions/0056](../decisions/0056-tool-permission-choice.md)), but that is not a
    substitute for isolation (§7.1).
 2. **Compromise of the CP or host collapses one deployment at once** (§7.1). The
-   mitigation is that it does not spread between companies. The CP's AWS role can
-   still be narrowed ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)).
+   mitigation is that it does not spread between companies — on AWS, only across
+   separate AWS accounts. The CP's AWS role can still be narrowed ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)).
 3. **Revoking and rotating long-lived agent credentials** — the framework is there, but
    real revocation waits for Vault or KMS (§7.6).
 4. **Supply chain** — provenance and regular updates for what is baked into the
