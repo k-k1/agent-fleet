@@ -295,8 +295,9 @@ disables.
   task running (the adapter's `runtime.TaskCounter`, or else the agent answering), is stopped under the lifecycle fences, like an explicit stop. An
   adapter with background launch work (`runtime.LaunchBudgeter`, ecs-ec2) raises the limit
   to its own budget. The stops run off the walk, at most two at a time and each within two
-  minutes; a busy fence skips the workspace until the next sample, and a workspace already
-  tried waits 15 minutes so the others get their turn. Only a
+  minutes. Free workers go to the overdue workspaces whose last attempt that got past the
+  fences is oldest, so all of them are reached in turn; a busy fence does not count as an
+  attempt, and that workspace is first in line on the next sample. Only a
   launch that cannot converge gets there — a task ECS refuses to place, for one. `0` turns
   it off, and so does switching the sampler off.
 - **The cloud-cost poller** — where the runtime has a bill (the AWS targets), it reads

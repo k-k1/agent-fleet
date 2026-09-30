@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -39,7 +40,7 @@ type startDeadline struct {
 	mu       sync.Mutex
 	seen     map[string]time.Time // workspace ID -> first sweep that found it starting
 	inflight map[string]bool      // workspace IDs with a stop running (dispatch)
-	tried    map[string]time.Time // workspace ID -> when its last stop was dispatched
+	tried    map[string]time.Time // workspace ID -> when a stop last got as far as deciding
 	wg       sync.WaitGroup       // the dispatched stops; tests wait on it
 }
 
@@ -59,45 +60,57 @@ var startDeadlineFenceWait = 10 * time.Second // a var so a test can shorten it
 // queued behind it.
 var startDeadlineStopBudget = 2 * time.Minute
 
-// startDeadlineRetryAfter spaces the attempts on one workspace. Without it the same two
-// workspaces, first in the walk and failing every time, would take both workers on every
-// sample and nothing after them would ever be tried.
-const startDeadlineRetryAfter = 15 * time.Minute
-
 func newStartDeadline(mgr *manager, after time.Duration) *startDeadline {
 	return &startDeadline{mgr: mgr, after: after, seen: map[string]time.Time{},
 		inflight: map[string]bool{}, tried: map[string]time.Time{}}
 }
 
-// dispatch runs stop for an overdue workspace on its own goroutine, one per workspace and
-// at most startDeadlineWorkers in all, so the walk that found it never waits on the fences
-// or the probes. A workspace tried within startDeadlineRetryAfter waits its turn.
-func (d *startDeadline) dispatch(ctx context.Context, rt runtime.Runtime, ws store.Workspace) {
-	now := time.Now()
+// overdueStart is one workspace a walk found past its deadline.
+type overdueStart struct {
+	rt runtime.Runtime
+	ws store.Workspace
+}
+
+// dispatch runs stop for the overdue workspaces one walk found, each on its own goroutine,
+// one per workspace and at most startDeadlineWorkers in all, so the walk never waits on the
+// fences or the probes. The free workers go to the workspaces whose last decided attempt
+// is oldest, never-tried first: the walk's order is fixed, and handing them out in that
+// order would give the same first few every worker on every sample. An attempt that could
+// not get past the fences is not a decided one, so that workspace stays at the front.
+func (d *startDeadline) dispatch(ctx context.Context, found []overdueStart) {
+	if d == nil || len(found) == 0 {
+		return
+	}
 	d.mu.Lock()
-	if last, ok := d.tried[ws.ID]; ok && now.Sub(last) < startDeadlineRetryAfter {
-		d.mu.Unlock()
-		return
+	var queue []overdueStart
+	for _, o := range found {
+		if !d.inflight[o.ws.ID] {
+			queue = append(queue, o)
+		}
 	}
-	if d.inflight[ws.ID] || len(d.inflight) >= startDeadlineWorkers {
-		d.mu.Unlock()
-		return
+	sort.SliceStable(queue, func(i, j int) bool {
+		return d.tried[queue[i].ws.ID].Before(d.tried[queue[j].ws.ID])
+	})
+	queue = queue[:min(len(queue), max(startDeadlineWorkers-len(d.inflight), 0))]
+	for _, o := range queue {
+		d.inflight[o.ws.ID] = true
 	}
-	d.inflight[ws.ID] = true
-	d.tried[ws.ID] = now
 	d.mu.Unlock()
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		defer func() {
+	for _, o := range queue {
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			stopCtx, cancel := context.WithTimeout(ctx, startDeadlineStopBudget)
+			decided := d.stop(stopCtx, o.rt, o.ws)
+			cancel()
 			d.mu.Lock()
-			delete(d.inflight, ws.ID)
+			delete(d.inflight, o.ws.ID)
+			if decided {
+				d.tried[o.ws.ID] = time.Now()
+			}
 			d.mu.Unlock()
 		}()
-		stopCtx, cancel := context.WithTimeout(ctx, startDeadlineStopBudget)
-		defer cancel()
-		d.stop(stopCtx, rt, ws)
-	}()
+	}
 }
 
 // taskRunning reports whether rt has a workspace task up. When the adapter cannot tell,
@@ -168,11 +181,12 @@ func (d *startDeadline) retain(ids map[string]bool) {
 }
 
 // stop ends an overdue launch the way an explicit stop would, under the same three
-// fences, so it cannot cross a Start, a recreate or an approved shared operation. None of
+// fences, so it cannot cross a Start, a recreate or an approved shared operation. It
+// reports whether it held them and took the decision (see dispatch). None of
 // them is waited for past startDeadlineFenceWait. The decision is taken again once they
 // are held: a Start that won the race meanwhile has stamped last_active_at and is not
 // overdue.
-func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.Workspace) {
+func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.Workspace) (decided bool) {
 	lock := d.mgr.startLockFor(ws.ID)
 	if !lock.TryLock() {
 		return // a lifecycle operation is in flight on this CP; the next sweep looks again
@@ -196,6 +210,9 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 		log.Printf("start-deadline: lifecycle lost %s: %v", ws.ContainerName, err)
 		return
 	}
+	// From here on the attempt counts as decided whatever it concludes: the fences were
+	// ours, so another workspace should get the next free worker.
+	decided = true
 	fresh, ok, err := d.mgr.store.GetWorkspaceByMembership(lease.Context(), ws.MembershipID)
 	if err != nil || !ok {
 		log.Printf("start-deadline: refresh workspace %s: found=%v err=%v", ws.ContainerName, ok, err)
@@ -229,4 +246,5 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 	d.mu.Unlock()
 	log.Printf("start-deadline: stopped %s (tenant %s): still starting %s after its launch with no task running (last phase %q)",
 		ws.ContainerName, ws.TenantID, d.limitFor(rt), phase)
+	return
 }

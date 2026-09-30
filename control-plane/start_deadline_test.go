@@ -326,21 +326,17 @@ func TestStartDeadlineTrustsTheAdaptersTaskCount(t *testing.T) {
 	}
 }
 
-// The stops run off the sampler's walk, and at most startDeadlineWorkers of them at once:
-// however many launches are overdue, the walk neither waits for them nor piles up
-// goroutines behind one held fence. The next walk hands the workers to the workspaces that
-// have not been tried yet, rather than to the same first two again.
-func TestStartDeadlineCapsAndRotatesStops(t *testing.T) {
+// gateFixture makes n overdue workspaces, each with its own gateStub, and a walk that
+// dispatches all of them at once and reports which ones reached their fence. A stop that
+// reaches the fence is held there until the walk has counted it.
+func gateFixture(t *testing.T, n int) (*startDeadline, []overdueStart, []*gateStub, func(want int) []int) {
+	t.Helper()
 	ctx := context.Background()
 	st, ws, mgr := reaperLifecycleFixture(t)
 	d := newStartDeadline(mgr, 30*time.Minute)
-
-	type cand struct {
-		w  store.Workspace
-		rt *gateStub
-	}
-	var cands []cand
-	for i := 0; i < startDeadlineWorkers+3; i++ {
+	var found []overdueStart
+	var stubs []*gateStub
+	for i := 0; i < n; i++ {
 		ident, err := st.UpsertIdentity(ctx, fmt.Sprintf("cap-%d@example.com", i), fmt.Sprintf("cap-%d", i), "")
 		if err != nil {
 			t.Fatal(err)
@@ -351,53 +347,82 @@ func TestStartDeadlineCapsAndRotatesStops(t *testing.T) {
 		}
 		w := ws
 		w.ID, w.MembershipID = store.NewID(), m.ID
-		cands = append(cands, cand{w, &gateStub{deadlineStub: deadlineStub{state: "starting"}, release: make(chan struct{})}})
+		rt := &gateStub{deadlineStub: deadlineStub{state: "starting"}}
+		stubs = append(stubs, rt)
+		found = append(found, overdueStart{rt, w})
 	}
-	walk := func() []int {
-		for _, c := range cands {
-			d.dispatch(ctx, c.rt, c.w) // must return at once
+	walk := func(want int) []int {
+		before := make([]int32, n)
+		gate := make(chan struct{})
+		for i, rt := range stubs {
+			before[i] = rt.entered.Load()
+			rt.release = gate
 		}
-		deadline := time.Now().Add(5 * time.Second)
-		for len(d.inflightIDs()) < startDeadlineWorkers && time.Now().Before(deadline) {
-			time.Sleep(10 * time.Millisecond)
-		}
-		for waited := 0; waited < 50; waited++ { // let every dispatched stop reach its fence
-			n := int32(0)
-			for _, c := range cands {
-				if !c.rt.released {
-					n += c.rt.entered.Load()
+		d.dispatch(ctx, found) // must return at once
+		var running []int
+		for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+			running = running[:0]
+			for i, rt := range stubs {
+				if rt.entered.Load() > before[i] {
+					running = append(running, i)
 				}
 			}
-			if int(n) >= startDeadlineWorkers {
+			if len(running) >= want {
 				break
 			}
-			time.Sleep(10 * time.Millisecond)
 		}
-		var running []int
-		for i, c := range cands {
-			if c.rt.entered.Load() > 0 && !c.rt.released {
-				running = append(running, i)
-			}
-		}
-		for _, i := range running {
-			cands[i].rt.released = true
-			close(cands[i].rt.release)
-		}
+		time.Sleep(20 * time.Millisecond)
+		close(gate)
 		d.wg.Wait()
 		return running
 	}
+	return d, found, stubs, walk
+}
 
-	if got := walk(); len(got) != startDeadlineWorkers {
-		t.Fatalf("first walk ran stops %v, want %d at once", got, startDeadlineWorkers)
-	}
-	second := walk()
-	if len(second) != startDeadlineWorkers {
-		t.Fatalf("second walk ran stops %v, want %d", second, startDeadlineWorkers)
-	}
-	for _, i := range second {
-		if i < startDeadlineWorkers {
-			t.Fatalf("second walk retried workspace %d before the untried ones (ran %v)", i, second)
+// At most startDeadlineWorkers stops run at once, and the walk's fixed order does not
+// decide who gets them: the workspaces tried least recently go first, so with more overdue
+// than workers every one of them is reached.
+func TestStartDeadlineCapsAndRotatesStops(t *testing.T) {
+	const n = 7
+	_, _, _, walk := gateFixture(t, n)
+	reached := map[int]bool{}
+	var first, last []int
+	for i := 0; i < 4; i++ {
+		last = walk(startDeadlineWorkers)
+		if i == 0 {
+			first = last
 		}
+		if len(last) != startDeadlineWorkers {
+			t.Fatalf("walk %d ran stops %v, want %d at once", i+1, last, startDeadlineWorkers)
+		}
+		for _, j := range last {
+			reached[j] = true
+		}
+	}
+	if len(reached) != n {
+		t.Fatalf("four walks reached %v, want all %d workspaces", reached, n)
+	}
+	// The two first-walk stops finish in either order, so either can be the oldest attempt.
+	oldest := map[int]bool{first[0]: true, first[1]: true}
+	if !((last[0] == 6 && oldest[last[1]]) || (last[1] == 6 && oldest[last[0]])) {
+		t.Errorf("fourth walk ran %v, want 6 and one of the first walk's %v", last, first)
+	}
+}
+
+// A stop that could not get past the fences has not tried anything, so the workspace keeps
+// its place at the front instead of waiting behind everybody else.
+func TestStartDeadlineRetriesAContendedStopFirst(t *testing.T) {
+	d, found, _, walk := gateFixture(t, 4)
+	lock := d.mgr.startLockFor(found[0].ws.ID)
+	lock.Lock() // a recreate on this CP holds workspace 0
+	got := walk(1)
+	lock.Unlock()
+	if len(got) != 1 || got[0] != 1 {
+		t.Fatalf("first walk reached %v, want [1] (0 is held by the recreate)", got)
+	}
+	got = walk(startDeadlineWorkers)
+	if len(got) != 2 || got[0] != 0 || got[1] != 2 {
+		t.Fatalf("second walk reached %v, want [0 2]: the contended one first", got)
 	}
 }
 
@@ -413,7 +438,7 @@ func TestStartDeadlineStopHasABudget(t *testing.T) {
 	d := newStartDeadline(mgr, 30*time.Minute)
 	d.seen[ws.ID] = time.Now().Add(-time.Hour)
 
-	d.dispatch(ctx, rt, ws)
+	d.dispatch(ctx, []overdueStart{{rt, ws}})
 	done := make(chan struct{})
 	go func() { d.wg.Wait(); close(done) }()
 	select {
@@ -447,9 +472,8 @@ func (d *startDeadline) inflightIDs() []string {
 // gateStub counts the stops that reached its fence and holds them there until release.
 type gateStub struct {
 	deadlineStub
-	entered  atomic.Int32
-	release  chan struct{}
-	released bool
+	entered atomic.Int32
+	release chan struct{}
 }
 
 func (r *gateStub) AcquireOperationFence(ctx context.Context) (func(), error) {

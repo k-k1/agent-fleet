@@ -97,6 +97,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 	// this pass never reached — a confident answer produced by a failure.
 	complete := true
 	found := map[string]bool{}
+	var overdue []overdueStart
 	for _, t := range tenants {
 		wss, err := u.mgr.store.ListWorkspaces(ctx, t.ID)
 		if err != nil {
@@ -109,7 +110,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 			rt := u.mgr.runtimeFor(ws, "")
 			state := rt.State(ctx)
 			if u.deadline.observe(ws, rt, state, time.Now()) {
-				u.deadline.dispatch(ctx, rt, ws)
+				overdue = append(overdue, overdueStart{rt, ws})
 				continue
 			}
 			if state != "running" {
@@ -124,6 +125,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 			}
 		}
 	}
+	u.deadline.dispatch(ctx, overdue)
 	if !complete {
 		return
 	}
