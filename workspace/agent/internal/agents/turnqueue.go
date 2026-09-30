@@ -72,6 +72,10 @@ type QueueItem struct {
 const (
 	DiscardSecondStop = "second_stop"
 	DiscardQueue      = "discard_queue"
+	// DiscardFirstStop is the input a first stop stopped before it was sent: the turn being
+	// stopped had not reached the runtime yet, so its text would otherwise be nowhere — not in
+	// the transcript, not in the queue.
+	DiscardFirstStop = "first_stop"
 )
 
 // Discard is what one discarding stop threw away, kept so the member can take it back
@@ -373,10 +377,20 @@ func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 	var out InterruptOutcome
 	if !second {
 		out.Result.Stop = StopFirst
+		var stopped *TurnInput
+		if h := q.head; h != nil && h.phase == phaseTaken && !h.held {
+			in := h.In
+			stopped = &in
+		}
 		out.Head = q.stopHead(false)
 		if out.Head == HeadNone && !busy && len(q.queue) > 0 {
+			in := q.queue[0]
+			stopped = &in
 			q.queue = q.queue[1:]
 			out.Head = HeadCancelled
+		}
+		if stopped != nil {
+			out.Result.Discard = q.keepDiscard(DiscardFirstStop, []QueueItem{itemOf(*stopped, "")})
 		}
 		q.episode = len(q.queue) > 0 || out.Head == HeadKept
 		return out
@@ -397,14 +411,32 @@ func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 	q.queue = nil
 	q.episode = false
 	if len(items) > 0 {
-		d := Discard{ID: mintID("dsc_"), At: q.now().Format(time.RFC3339), Reason: reason, Items: items}
-		q.discards = append(q.discards, d)
-		if len(q.discards) > maxDiscards {
-			q.discards = q.discards[len(q.discards)-maxDiscards:]
-		}
-		out.Result.Discard = &d
+		out.Result.Discard = q.keepDiscard(reason, items)
 	}
 	return out
+}
+
+// keepDiscard records a discard for return (decision 4), keeping the last maxDiscards.
+func (q *TurnQueue) keepDiscard(reason string, items []QueueItem) *Discard {
+	for _, it := range items {
+		q.recordGone(it.ID)
+	}
+	d := Discard{ID: mintID("dsc_"), At: q.now().Format(time.RFC3339), Reason: reason, Items: items}
+	q.discards = append(q.discards, d)
+	if len(q.discards) > maxDiscards {
+		q.discards = q.discards[len(q.discards)-maxDiscards:]
+	}
+	return &d
+}
+
+// recordGone marks a discarded or removed id as seen on LedgerAtTake, where Take never got to
+// record it. Without it a retry under the same ClientMessageID would run on copilot, cursor,
+// kiro and lcpp and be dropped on codex, opencode and muse; now it is dropped everywhere. What
+// the member puts back and sends again goes out under a new id.
+func (q *TurnQueue) recordGone(id string) {
+	if q.at == LedgerAtTake && q.ledger != nil {
+		q.ledger.SeenOrRecord(q.name, id)
+	}
 }
 
 // stopHead applies a stop to the taken entry. A first stop spares a held entry: it is queued,
@@ -440,12 +472,14 @@ func (q *TurnQueue) Remove(id string) (QueueItem, error) {
 		q.head = nil
 		q.dropQueued(id)
 		q.maybeEndEpisode()
+		q.recordGone(id)
 		return itemOf(h.In, ""), nil
 	}
 	for _, in := range q.queue {
 		if in.ClientMessageID == id {
 			q.dropQueued(id)
 			q.maybeEndEpisode()
+			q.recordGone(id)
 			return itemOf(in, ""), nil
 		}
 	}

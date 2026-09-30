@@ -42,6 +42,24 @@
         }
       }
     },
+    "interrupt_first_stops_unsent_start": {
+      "_note": "A first stop that stopped input before it reached the runtime (nothing else was running). Its text is kept for return like any discard.",
+      "request": {"op": "interrupt"},
+      "status": 200,
+      "response": {
+        "sent": "fixture-session",
+        "op": "interrupt",
+        "stop": "first",
+        "discard": {
+          "id": "dsc_0003",
+          "at": "2026-09-30T12:02:00Z",
+          "reason": "first_stop",
+          "items": [
+            {"id": "cm_j", "text": "just sent", "origin": {"kind": "member"}}
+          ]
+        }
+      }
+    },
     "interrupt_discard_queue_nothing_queued": {
       "request": {"op": "interrupt", "discard_queue": true},
       "status": 200,
@@ -104,7 +122,7 @@
       "response": {"error": {"code": "not_managed", "message": "prose"}}
     }
   },
-  "_messages_note": "The ADR 0105 keys of GET /sessions/{name}/messages on a Managed session. queuedPrompts stays for older Consoles and the claude TUI route; queuedItems and queuedPrompts appear only while the session is working, discardedInputs whenever the driver keeps any.",
+  "_messages_note": "The ADR 0105 keys of GET /sessions/{name}/messages on a Managed session. queuedPrompts stays for older Consoles and the claude TUI route and appears only while the session is working; queuedItems whenever the runtime is up and the queue holds anything (a codex question with input queued behind it included); discardedInputs whenever the driver keeps any.",
   "messages": {
     "working": {
       "queuedPrompts": ["no, do X instead", "[agent-fleet:peer from=other-session] PR #1 is ready", "then deploy it"],

@@ -160,7 +160,9 @@ What **"Stop"** does with messages that are waiting in the queue depends on the 
 - **The first stop ends the running turn only.** What is queued — your own follow-ups and other
   sessions' messages alike — then runs, one message per turn, in order. This is what you want when
   you queued a correction ("no, do X instead") and stop the turn so the correction takes effect
-  now.
+  now. On **codex** and **muse** a message you send while a turn runs is not queued: the agent takes
+  it into the running turn at once, so there is usually no need to stop. If you stop anyway, it
+  ends with that turn; the next turn still sees it in the conversation.
 - **A second stop ends the rest.** Any stop until the queue has run out (and the last turn it
   started has settled) stops what is running and discards everything still queued, messages from
   other sessions included. It needs no timing: you can press it a minute later. Sending a new
@@ -172,17 +174,19 @@ What **"Stop"** does with messages that are waiting in the queue depends on the 
   highlighted, with a count, while the chat shows something queued.
 - **Discarded input comes back.** A notice says how many queued messages were discarded.
   **"Put back"** returns your own discarded messages to the input box one at a time, without
-  sending them; messages from other sessions, the operator or a schedule are only listed. The
-  last five discards per session are kept in the Agent's memory, so a restart of the Agent loses
-  them, as it loses the queue itself.
+  sending them; messages from other sessions, the operator or a schedule are only listed. A
+  message you sent a moment before pressing Stop, which had not reached the agent yet, comes back
+  the same way. The last five discards per session are kept in the Agent's memory; they go, like
+  the queue itself, when the session is stopped, archived or switched to another execution
+  method, and when the Agent restarts.
 - **A queued message can be taken out without stopping.** A queued bubble offers **"Back to
   input"** and **"Remove"** until the message is being handed to the agent; after that it shows
   without actions.
 
 What a stop can never take back is input the agent already holds. On codex and muse a stop that
-arrives while a message is being handed over still stops it the moment the agent starts it; on
-copilot, cursor, kiro and OpenCode that stop is best effort, and the message can take a first step
-before it stops.
+arrives while a message is being handed over still stops it the moment the agent starts it (lcpp
+runs inside the Agent and stops it the same way); on copilot, cursor, kiro and OpenCode that stop
+is best effort, and the message can take a first step before it stops.
 
 **Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends Esc and the CLI decides. In
 the measured versions, claude and codex sent the queued message on the first Esc, and a second
@@ -190,7 +194,8 @@ Esc stopped it; OpenCode kept it in its history. The discard action and the noti
 there, because the queue lives inside the CLI.
 
 **Rejecting a plan** and **having another session review the plan** send the same stop, and follow
-the same rules.
+the same rules. **Cancelling a question** follows them on codex only, where cancelling stops the
+turn; the other agents answer the question as declined and leave the queue alone.
 
 ### Reusing something you sent earlier
 
