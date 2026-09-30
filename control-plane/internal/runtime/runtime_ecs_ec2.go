@@ -1281,6 +1281,11 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 	if place.wipe != "" {
 		place.deferred = true
 	}
+	if place.deferred && place.claimErr != nil {
+		// Nothing has been launched; the attachment stays, so a retry takes the cheap path.
+		e.setPhase("")
+		return fmt.Errorf("mark the start of %s as converging: %w", e.base.name, place.claimErr)
+	}
 	if place.deferred {
 		// The slot is not attachable yet (pending instance) or not registered with ECS
 		// yet (just started, waking, or gone dark). Finish in the background; the claim
@@ -1298,6 +1303,9 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 			e.bg(ctx, func(c context.Context) {
 				defer e.setPhase("")
 				next, perr := e.placeHome(c)
+				if perr == nil {
+					perr = next.claimErr
+				}
 				if perr != nil {
 					log.Printf("ecs-ec2 start: re-placing %s after losing slot %s: %v", e.base.name, place.instanceID, perr)
 					e.unclaim(c, place.volumeID)
@@ -1512,9 +1520,15 @@ type ec2Placement struct {
 	// measured. Waiting for `stopped` is a background job, not something a Start inside
 	// an HTTP request can sit on.
 	wake bool
-	// wipe is the home's pending ec2TagHomeWipe, "" when there is none. launch performs it
-	// between the mount and the task, and Start always defers a placement that carries one.
+	// wipe is the home's pending mark (homeWipeKey), "" when there is none. launch
+	// performs it between the mount and the task, and Start always defers a placement
+	// that carries one.
 	wipe HomeWipe
+	// claimErr is the claim write that failed. Inline it costs nothing — the caller holds
+	// the lifecycle lease until launch returns — but a background half without a claim is
+	// invisible: State() does not say `starting`, and a member's wipe (HomeWipeBlocked)
+	// would be let through while that half goes on to scale up past the mark.
+	claimErr error
 }
 
 // placeHome resolves the volume and the slot, attaching the two together when it can.
@@ -1588,8 +1602,9 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				// there (lazy release). This is both the affinity ("the same user gets the
 				// same slot") and the cheapest path: no attach, no mount to redo.
 				volID := aws.ToString(vol.VolumeId)
-				if err := e.claim(ctx, volID, inst); err != nil {
-					log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+				claimErr := e.claim(ctx, volID, inst)
+				if claimErr != nil {
+					log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, claimErr)
 				}
 				e.clearDormancy(ctx, volID)
 				running, err := e.instanceRunning(ctx, inst)
@@ -1620,7 +1635,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				// is the ~90s path rather than the 135s of building a new one.
 				return ec2Placement{
 					volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
-					deferred: !ready, wake: !running, wipe: homeWipeOf(vol),
+					deferred: !ready, wake: !running, wipe: homeWipeOf(vol), claimErr: claimErr,
 				}, nil
 			}
 		}
@@ -1671,13 +1686,14 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 		}
 		// Claim it for the whole launch, not just until the attach: State() reads this
 		// tag to say `starting`, and Start early-returns on `starting`.
-		if err := e.claim(ctx, volID, s.id); err != nil {
-			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+		claimErr := e.claim(ctx, volID, s.id)
+		if claimErr != nil {
+			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, claimErr)
 		}
 		// A hot, already-registered slot is the only case that can finish inline.
 		return ec2Placement{
 			volumeID: volID, instanceID: s.id, az: azFilter,
-			deferred: !(s.running && s.registered), wake: !s.running, wipe: homeWipeOf(vol),
+			deferred: !(s.running && s.registered), wake: !s.running, wipe: homeWipeOf(vol), claimErr: claimErr,
 		}, nil
 	}
 	// No free slot. Growing the pool is preferred while there is room — it disturbs
@@ -1718,15 +1734,16 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			if err := e.attachHomeWithRetry(ctx, volID, victim); err != nil {
 				return ec2Placement{}, fmt.Errorf("attach %s to the reclaimed slot %s: %w", volID, victim, err)
 			}
-			if err := e.claim(ctx, volID, victim); err != nil {
-				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+			claimErr := e.claim(ctx, volID, victim)
+			if claimErr != nil {
+				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, claimErr)
 			}
 			e.clearDormancy(ctx, volID)
 			running, err := e.instanceRunning(ctx, victim)
 			if err != nil {
 				return ec2Placement{}, err
 			}
-			return ec2Placement{volumeID: volID, instanceID: victim, az: azFilter, deferred: true, wake: !running, wipe: homeWipeOf(vol)}, nil
+			return ec2Placement{volumeID: volID, instanceID: victim, az: azFilter, deferred: true, wake: !running, wipe: homeWipeOf(vol), claimErr: claimErr}, nil
 		}
 	}
 	// RunInstances answers immediately with a PENDING instance that cannot accept a
@@ -1800,6 +1817,9 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 		log.Printf("ecs-ec2 start: slot %s is not coming back; re-placing %s", p.instanceID, e.base.name)
 		e.setPhase("slot: replacing")
 		next, perr := e.placeHome(ctx)
+		if perr == nil {
+			perr = next.claimErr // this half runs in the background: see ec2Placement.claimErr
+		}
 		if perr != nil {
 			log.Printf("ecs-ec2 start: re-placing %s after losing slot %s: %v", e.base.name, p.instanceID, perr)
 			e.unclaim(ctx, p.volumeID)

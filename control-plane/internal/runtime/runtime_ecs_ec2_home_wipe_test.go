@@ -1058,3 +1058,38 @@ func TestECSEC2CleanHomeAlsoClearsAPendingRecreate(t *testing.T) {
 		t.Errorf("after a Clean home the volume still asks for %q", got)
 	}
 }
+
+// Without its claim a background Start is invisible to HomeWipeBlocked, and a Recreate
+// pressed meanwhile would pass the gate while that Start scales up past the mark. So a
+// Start that cannot write its claim does not go to the background at all.
+func TestECSEC2StartDoesNotConvergeInTheBackgroundWithoutAClaim(t *testing.T) {
+	ctx := context.Background()
+	for name, setup := range map[string]func(h *ec2Harness){
+		"attached to an unregistered slot": func(h *ec2Harness) { h.ci.registered["i-hot"] = false },
+		"a pending wipe on a hot slot": func(h *ec2Harness) {
+			h.ec2.setTag("vol-1", homeWipeKey(HomeWipeRepos), "2026-09-30T00:00:00Z")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := memberWipeHarness(t)
+			setup(h)
+			h.ec2.createTagsErr = map[string]error{EC2TagClaim: errors.New("throttled")}
+			if err := h.rt.Start(ctx); err == nil {
+				t.Error("Start went ahead without a claim")
+			}
+			if len(h.deferred) != 0 {
+				t.Errorf("a background half was started without a claim (deferred=%d)", len(h.deferred))
+			}
+			h.runDeferred(ctx)
+			if scaledUp(h) {
+				t.Error("the service was scaled up by a Start nobody could see")
+			}
+		})
+	}
+	// Inline, the caller's lease covers the whole launch, so a lost claim is only a log line.
+	h := memberWipeHarness(t)
+	h.ec2.createTagsErr = map[string]error{EC2TagClaim: errors.New("throttled")}
+	if err := h.rt.Start(ctx); err != nil || !scaledUp(h) {
+		t.Errorf("an inline Start without its claim = %v (scaledUp %v); want it to finish", err, scaledUp(h))
+	}
+}

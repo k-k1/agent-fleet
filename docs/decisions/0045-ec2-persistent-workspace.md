@@ -1492,7 +1492,10 @@ it stood.
   and the next Start removes it together with the work done since. Re-reading the mark right before the scale-up
   still leaves a window between that read and `UpdateService`. So before it stops anything the handler asks
   `runtime.HomeWipeBlocked`, and while the claim is live it refuses with `home_wipe_while_starting` (409, nothing
-  stopped). No Start can begin while the handler holds the lease, so the answer holds until the mark is written. A
+  stopped). No Start can begin while the handler holds the lease, so the answer holds until the mark is written.
+  The gate relies on the claim, so a Start that cannot write it ends with an error instead of going to the
+  background (placeHome used to log the failure and go on); one that finishes inline does so inside the handler's
+  lease and may go on without it. A
   Start that keeps converging past the claim's expiry (15 minutes by default) slips through; by then `State()`
   already answers `stopped`, which is the existing limit that also allows a second Start.
 - **The removal is in the Start's background half, after the mount and before the task.** `placeHome` puts the

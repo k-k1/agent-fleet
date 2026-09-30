@@ -71,6 +71,9 @@ type fakeEC2 struct {
 	snapshotGone map[string]bool
 	// deleteVolumeErr makes DeleteVolume fail without deleting.
 	deleteVolumeErr error
+	// createTagsErr makes CreateTags fail, without tagging anything, for a request that
+	// names this tag key.
+	createTagsErr map[string]error
 	// deleteTagsErr makes DeleteTags fail, without deleting anything, for a request that
 	// names this tag key.
 	deleteTagsErr map[string]error
@@ -488,6 +491,12 @@ func (f *fakeEC2) DetachVolume(_ context.Context, in *ec2.DetachVolumeInput, _ .
 func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, t := range in.Tags {
+		if err := f.createTagsErr[aws.ToString(t.Key)]; err != nil {
+			f.log("CreateTags REFUSED %s", aws.ToString(t.Key))
+			return nil, err
+		}
+	}
 	for _, r := range in.Resources {
 		// Volumes AND instances: quarantining a slot re-stamps af-role on the INSTANCE
 		// (decision 20), and a fake that only knew about volumes reported "tag written" while
