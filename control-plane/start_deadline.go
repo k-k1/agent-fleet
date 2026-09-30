@@ -235,9 +235,11 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 		log.Printf("start-deadline: stop %s: %v", ws.ContainerName, err)
 		return
 	}
-	// Told before the checkpoint: the Stop has already cleared the phase, and a lost lease
-	// below would otherwise lose the one record of why, with no later sweep to write it.
+	// Told and recorded before the checkpoint: the Stop has already cleared the phase, and a
+	// lost lease below would otherwise lose the one record of why, with no later sweep to
+	// write it.
 	d.notify(ctx, fresh, d.limitFor(rt), phase)
+	d.record(ctx, fresh, d.limitFor(rt), phase)
 	if err := lease.checkpoint(ctx); err != nil {
 		log.Printf("start-deadline: lifecycle lost after stop %s: %v", ws.ContainerName, err)
 		return
@@ -253,6 +255,19 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 	return
 }
 
+// record keeps the reason on the workspace for its tenant admins (#1384): the
+// notification reaches the member alone, so without it the admin views read plain
+// "stopped". The next start deletes it (store.SetWorkspaceState).
+func (d *startDeadline) record(ctx context.Context, ws store.Workspace, limit time.Duration, phase string) {
+	a := store.WorkspaceAutoStop{Kind: "start-deadline", Phase: phase,
+		LimitMinutes: limitMinutes(limit), StoppedAt: store.NowTS()}
+	if err := d.mgr.store.SetWorkspaceAutoStop(ctx, ws.ID, a); err != nil {
+		log.Printf("start-deadline: record %s: %v", ws.ContainerName, err)
+	}
+}
+
+func limitMinutes(limit time.Duration) int { return int(limit.Round(time.Minute) / time.Minute) }
+
 // notify tells the member that their launch was stopped and why. Without it they see only
 // starting -> stopped, and on ecs-ec2 the Stop has just cleared the phase that named the
 // reason, so the notification is the one place it survives until the next attempt. Only this
@@ -267,7 +282,7 @@ func (d *startDeadline) notify(ctx context.Context, ws store.Workspace, limit ti
 	if launch == "" {
 		launch = now
 	}
-	payload, _ := json.Marshal(map[string]any{"phase": phase, "limitMinutes": int(limit.Round(time.Minute) / time.Minute)})
+	payload, _ := json.Marshal(map[string]any{"phase": phase, "limitMinutes": limitMinutes(limit)})
 	n := store.Notification{EventID: "start-deadline:" + ws.ID + ":" + launch, MembershipID: ws.MembershipID,
 		Kind: "start-deadline", TargetType: "workspace", Payload: string(payload), CreatedAt: now}
 	if err := d.mgr.store.InsertNotification(ctx, n); err != nil {

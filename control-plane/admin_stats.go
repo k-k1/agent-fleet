@@ -69,7 +69,16 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	// only when the docker read came up empty — the member detail screen polls every 4
 	// seconds, and this laziness is what keeps a docker deployment from running
 	// `docker inspect` twice on every poll.
-	out := workspaceStats(ctx, a.mgr, rt, sync.OnceValue(func() string { return rt.State(ctx) }))
+	state := sync.OnceValue(func() string { return rt.State(ctx) })
+	out := workspaceStats(ctx, a.mgr, rt, state)
+	// The member detail is opened from a roster snapshot and polls only this, so the
+	// automatic-stop reason rides here: read from the snapshot, it outlived the restart
+	// that cleared it. A running workspace has none, which spares that poll the State call.
+	if out["running"] != true {
+		if as := store.CurrentAutoStop(ctx, a.mgr.store, mem.ID, state()); as != nil {
+			out["auto_stop"] = as
+		}
+	}
 	// Disk prefers the host-side du. Where CP and Workspace share a host, that is the
 	// size of the home tree itself — the only figure readable while the container is
 	// stopped, which taking stock of stopped workspaces needs. On ECS the path is not on

@@ -45,7 +45,8 @@ A start that does not finish within the deployment's limit (30 minutes by defaul
 automatically, so it stops holding capacity. The notification center (the bell) then shows
 **"Workspace start stopped automatically"** with the last step the start reached — on AWS it
 often says why no machine could take the workspace. Press **Start** to try again; if it stops
-the same way, pass that line on to your administrator.
+the same way, tell your administrator: they see the same reason on your entry in the member
+list until you start again.
 
 ### Sessions or repositories have vanished from the left pane
 

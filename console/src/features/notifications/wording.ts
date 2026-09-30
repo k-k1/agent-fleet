@@ -57,6 +57,18 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   return n.displayName;
 }
 
+// startDeadlineBody words why the start deadline stopped a launch: the limit, then the last
+// boot phase. The tenant admin's member view (#1384) reads the same record the member's
+// notification carries, so both go through here and cannot word one stop two ways.
+export function startDeadlineBody(limitMinutes: unknown, rawPhase: unknown): string {
+  const minutes = Number(limitMinutes) || 0;
+  const raw = typeof rawPhase === "string" ? rawPhase.trim() : "";
+  const key = raw ? phaseKey(raw) : "wsstart.generic";
+  const phase = key === "wsstart.generic" ? raw : `${t(key)} — ${raw}`;
+  const limit = minutes > 0 ? t("notif.start_deadline.body_limit", { minutes }) : t("notif.start_deadline.body_generic");
+  return phase ? t("notif.start_deadline.body_phase", { limit, phase }) : limit;
+}
+
 // Notification wording is deliberately browser-state free: the center, desktop
 // delivery, TTS replay, and node tests must all resolve the same localized text.
 export interface NotificationWordingInput {
@@ -242,14 +254,9 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // words it, with the raw text kept beside it: for "blocked:" that raw ECS sentence is the
     // actual cause. An unknown phase is shown as is. Clicking opens nothing: the workspace is
     // the subject.
-    const minutes = Number(n.payload.limitMinutes) || 0;
-    const raw = typeof n.payload.phase === "string" ? n.payload.phase.trim() : "";
-    const key = raw ? phaseKey(raw) : "wsstart.generic";
-    const phase = key === "wsstart.generic" ? raw : `${t(key)} — ${raw}`;
-    const limit = minutes > 0 ? t("notif.start_deadline.body_limit", { minutes }) : t("notif.start_deadline.body_generic");
     return {
       title: t("notif.start_deadline.title"),
-      body: phase ? t("notif.start_deadline.body_phase", { limit, phase }) : limit,
+      body: startDeadlineBody(n.payload.limitMinutes, n.payload.phase),
       speech: t("notif.start_deadline.speech"),
     };
   }
