@@ -38,7 +38,7 @@ on:
   # Contract checks are concentrated on PRs to main (when relevant paths changed)
   # and the weekly cron.
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "workspace/agent/internal/agents/opencode/**"
       - "workspace/opencode-plugin/**"
@@ -58,7 +58,7 @@ concurrency:
 
 jobs:
   contract:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       # A pinned contract must stay pinned. Without the same guard as the workspace

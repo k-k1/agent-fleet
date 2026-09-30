@@ -22,7 +22,7 @@ on:
   # Contract checks are concentrated on PRs to main (when relevant paths changed)
   # and the weekly cron.
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "workspace/agent/internal/agents/codex/**"
       - "workspace/agent/session_io.go"
@@ -60,7 +60,7 @@ jobs:
     # The matrix checks both the Dockerfile ARG pin (= baked fallback) and @latest
     # (= self-update-enabled workspaces). cli-release-watch dispatches this workflow
     # only when latest moves; the weekly cron remains the backstop.
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -112,7 +112,7 @@ jobs:
     # pre-turn `codex login status` and mid-turn 401 messages, and fail with a message
     # that spells out re-login → secret update.
     if: github.event_name == 'workflow_dispatch' && inputs.live
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
