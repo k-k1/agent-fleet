@@ -289,7 +289,18 @@ func writeDef(out *bytes.Buffer, b *schemaBundle, name string, n *node) error {
 		fmt.Fprintf(out, "type %s = json.RawMessage\n\n", name)
 		return nil
 	default:
-		fmt.Fprintf(out, "type %s %s\n\n", name, scalarType(n))
+		typ := scalarType(n)
+		if typ == "json.RawMessage" {
+			// An alias, never a defined type: `type X json.RawMessage` drops RawMessage's
+			// UnmarshalJSON, so X decodes as a plain []byte and any array or object in it fails
+			// the WHOLE enclosing message. Measured: Muse 1.4.0 fills
+			// ModelCatalogEntry.variants with an array of efforts, every model/list answer
+			// failed to decode, and a session started with no model fell back to the host's
+			// data-sharing default.
+			fmt.Fprintf(out, "type %s = json.RawMessage\n\n", name)
+			return nil
+		}
+		fmt.Fprintf(out, "type %s %s\n\n", name, typ)
 		return nil
 	}
 }
