@@ -26,6 +26,9 @@ import (
 //   - LFS orphan prune deletes large objects no reachable pointer references
 //     anymore (force-push, history rewrite, deleted pointer), freeing disk and
 //     the tenant's capacity quota.
+//   - LFS ledger reconcile deletes ledger rows whose object file never landed
+//     (a failed publish, or a crash between the ledger write and the rename), which
+//     would otherwise over-count the quota until the same oid is uploaded again.
 //
 // It runs SEQUENTIALLY with --auto so the memory footprint stays tiny on the
 // shared host (see host-oom-fleet-risk). Off when the interval is 0
@@ -109,10 +112,23 @@ func (g *gitGC) sweep(ctx context.Context) {
 	}
 }
 
-// pruneLFS deletes LFS objects under a repo that no reachable git pointer
-// references, subject to the grace window. Conservative: on any enumeration error
-// it deletes nothing. No-op (and no git cost) for repos with no LFS objects.
+// pruneLFS reconciles a repo's LFS ledger with its object files, then deletes LFS
+// objects that no reachable git pointer references, both subject to the grace window.
+// Conservative: on any enumeration or store error it deletes nothing further. No git
+// cost for repos with no LFS objects.
 func (g *gitGC) pruneLFS(ctx context.Context, slug, repo, bareDir string) {
+	tenant, ok, err := g.store.GetTenantBySlug(ctx, slug)
+	if err != nil {
+		log.Printf("lfs-gc: %s/%s: tenant lookup failed, skipping the pass: %v", slug, repo, err)
+		return
+	}
+	if !ok {
+		return // can't resolve the tenant → don't touch the ledger/objects
+	}
+	if err := g.reconcileLFSLedger(ctx, tenant.ID, slug, repo, bareDir); err != nil {
+		log.Printf("lfs-gc: %s/%s: ledger reconcile failed, skipping the pass: %v", slug, repo, err)
+		return
+	}
 	objRoot := filepath.Join(bareDir, "lfs", "objects")
 	if fi, err := os.Stat(objRoot); err != nil || !fi.IsDir() {
 		return // repo has no LFS objects
@@ -121,10 +137,6 @@ func (g *gitGC) pruneLFS(ctx context.Context, slug, repo, bareDir string) {
 	if err != nil {
 		log.Printf("lfs-gc: %s: enumerate refs failed, skipping prune: %v", bareDir, err)
 		return
-	}
-	tenant, ok, err := g.store.GetTenantBySlug(ctx, slug)
-	if err != nil || !ok {
-		return // can't resolve the tenant → don't touch the ledger/objects
 	}
 
 	cutoff := time.Now().Add(-g.lfsGrace)
@@ -168,6 +180,53 @@ func (g *gitGC) pruneLFS(ctx context.Context, slug, repo, bareDir string) {
 	if freed > 0 {
 		log.Printf("lfs-gc: %s/%s: pruned %d orphan object(s), %d bytes", slug, repo, freed, bytes)
 	}
+}
+
+// reconcileLFSLedger deletes ledger rows older than the grace window whose object file
+// is absent. Such a row is left by an upload whose publish failed or whose process died
+// between the ledger write and the rename; the upload path keeps it on purpose (a
+// concurrent upload of the same oid may rely on it) and only a retry of the same oid would
+// ever correct it. The grace window is what keeps an upload in flight from losing its
+// row: PutLFSObject restarts a row's age, and the delete re-checks the age atomically.
+//
+// A zero grace skips it: a row written this second, whose upload is between the ledger
+// write and the rename, would count as stale.
+//
+// Any store error is returned at once, so the caller skips the rest of the pass.
+func (g *gitGC) reconcileLFSLedger(ctx context.Context, tenantID, slug, repo, bareDir string) error {
+	if g.lfsGrace <= 0 {
+		return nil
+	}
+	rows, err := g.store.ListLFSObjects(ctx, tenantID, repo)
+	if err != nil {
+		return fmt.Errorf("list ledger: %w", err)
+	}
+	cutoff := time.Now().UTC().Add(-g.lfsGrace).Format(time.RFC3339)
+	for _, o := range rows {
+		if !validOID(o.OID) || o.CreatedAt > cutoff {
+			continue
+		}
+		// Only a file that is certainly absent drops its row; any other stat error keeps it.
+		p := filepath.Join(bareDir, "lfs", "objects", o.OID[0:2], o.OID[2:4], o.OID)
+		if _, err := os.Stat(p); !errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		// Checked after the object, not before: a rename moves the bare before it moves the
+		// rows, so an object missing because the whole repo moved mid-sweep shows up here
+		// as a missing bare, and the rows are left for RenameGitRepo to carry.
+		if _, err := os.Stat(bareDir); err != nil {
+			return nil
+		}
+		gone, err := g.store.DeleteStaleLFSObject(ctx, tenantID, repo, o.OID, cutoff)
+		if err != nil {
+			return fmt.Errorf("delete ledger row %s: %w", o.OID, err)
+		}
+		if gone {
+			log.Printf("lfs-gc: %s/%s: removed ledger row %s (%d bytes, recorded %s): its object file is absent",
+				slug, repo, o.OID, o.Size, o.CreatedAt)
+		}
+	}
+	return nil
 }
 
 var lfsPointerOID = regexp.MustCompile(`(?m)^oid sha256:([0-9a-f]{64})$`)

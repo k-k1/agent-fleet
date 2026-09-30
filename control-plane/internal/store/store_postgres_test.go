@@ -483,13 +483,27 @@ func TestPostgresStore(t *testing.T) {
 	if _, ok, err := st.LFSObjectSize(ctx, tn.ID, "r1", "missing"); err != nil || ok {
 		t.Fatalf("lfs object size of a missing row = (%v,%v), want (false,nil)", ok, err)
 	}
+	// A second Put refreshes created_at (ON CONFLICT DO UPDATE), and the stale delete
+	// honours its cutoff.
+	oidB := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	for range 2 {
+		if err := st.PutLFSObject(ctx, tn.ID, "r1", oidB, 5); err != nil {
+			t.Fatalf("put lfs object twice: %v", err)
+		}
+	}
+	if gone, err := st.DeleteStaleLFSObject(ctx, tn.ID, "r1", oidB, "2000-01-01T00:00:00Z"); err != nil || gone {
+		t.Fatalf("stale delete before the row's age = (%v,%v), want (false,nil)", gone, err)
+	}
+	if gone, err := st.DeleteStaleLFSObject(ctx, tn.ID, "r1", oidB, "9999-01-01T00:00:00Z"); err != nil || !gone {
+		t.Fatalf("stale delete after the row's age = (%v,%v), want (true,nil)", gone, err)
+	}
 	if err := st.CreateLFSLock(ctx, LFSLock{ID: NewID(), TenantID: tn.ID, RepoName: "r1", Path: "a.bin", OwnerID: "m", OwnerName: "o", LockedAt: NowTS()}); err != nil {
 		t.Fatalf("lfs lock: %v", err)
 	}
 	if err := st.RenameGitRepo(ctx, tn.ID, "r1", "r2"); err != nil {
 		t.Fatalf("rename git repo: %v", err)
 	}
-	if oids, _ := st.ListLFSObjectOIDs(ctx, tn.ID, "r2"); len(oids) != 1 {
+	if oids, _ := st.ListLFSObjects(ctx, tn.ID, "r2"); len(oids) != 1 {
 		t.Fatalf("lfs ledger did not follow the rename: %v", oids)
 	}
 	if _, ok, _ := st.GetLFSLockByPath(ctx, tn.ID, "r2", "a.bin"); !ok {

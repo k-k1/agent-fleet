@@ -237,7 +237,8 @@ Workspace を起こさない。
   （6 時間）ごとに Cost Explorer を直近 `AF_CLOUD_COST_WINDOW_DAYS`（7 日）分読み、コスト配分タグで
   メンバー別に按分する。`docker` と `native` では何もせず、コストの画面も無い。`0` で止まる。
 - **git GC** — `AF_GIT_GC_INTERVAL`（24 時間）ごとに内蔵 git の bare で `git gc --auto` を走らせ、
-  `AF_LFS_GC_GRACE`（14 日）より古い LFS の孤児を prune する（進行中の push と競合しない）。**共有ホストの
+  `AF_LFS_GC_GRACE`（14 日）より古い LFS の孤児を prune する（進行中の push と競合しない）。オブジェクトが
+  ディスクに届かなかった台帳の行も、同じ猶予期間を過ぎたら消す。**共有ホストの
   RAM を守るため逐次実行**（[91](91-internal-git.ja.md)）。`0` で止まる。
 - **scheduler** — `AF_SCHEDULER_INTERVAL`（1 分）ごとに期限の来たスケジュールを発火させ、スケジュールごとの
   ゆらぎ（`AF_SCHEDULE_JITTER`、2 分）で散らす。発火は停止中の Workspace を CLI の自己更新無しで起こし、

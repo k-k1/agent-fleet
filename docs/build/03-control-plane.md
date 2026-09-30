@@ -308,7 +308,8 @@ disables.
   it off.
 - **Git GC** — `AF_GIT_GC_INTERVAL` (24 hours) runs `git gc --auto` on the internal bare
   repositories and prunes orphaned LFS objects older than `AF_LFS_GC_GRACE` (14 days),
-  so it cannot race a push in flight. It runs **sequentially, to protect a shared host's
+  so it cannot race a push in flight. Ledger rows whose object never landed on disk are
+  dropped after the same grace period. It runs **sequentially, to protect a shared host's
   RAM** ([91](91-internal-git.md)). `0` turns it off.
 - **The scheduler** — `AF_SCHEDULER_INTERVAL` (1 minute) fires due schedules, spread by
   a per-schedule jitter (`AF_SCHEDULE_JITTER`, 2 minutes). A fire wakes a stopped

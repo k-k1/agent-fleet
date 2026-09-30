@@ -1942,7 +1942,7 @@ func (s *SQL) PutLFSObject(ctx context.Context, tenantID, repo, oid string, size
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO lfs_object(tenant_id, repo_name, oid, size, created_at)
 		 VALUES(?, ?, ?, ?, ?)
-		 ON CONFLICT(tenant_id, repo_name, oid) DO NOTHING`,
+		 ON CONFLICT(tenant_id, repo_name, oid) DO UPDATE SET created_at=excluded.created_at`,
 		tenantID, repo, oid, size, NowTS())
 	return err
 }
@@ -2084,22 +2084,33 @@ func (s *SQL) LFSObjectSize(ctx context.Context, tenantID, repo, oid string) (in
 	return n, err == nil, err
 }
 
-func (s *SQL) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
+func (s *SQL) ListLFSObjects(ctx context.Context, tenantID, repo string) ([]LFSObject, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT oid FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
+		`SELECT oid, size, created_at FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []LFSObject
 	for rows.Next() {
-		var oid string
-		if err := rows.Scan(&oid); err != nil {
+		var o LFSObject
+		if err := rows.Scan(&o.OID, &o.Size, &o.CreatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, oid)
+		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQL) DeleteStaleLFSObject(ctx context.Context, tenantID, repo, oid, cutoff string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=? AND created_at<=?`,
+		tenantID, repo, oid, cutoff)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (s *SQL) InsertAudit(ctx context.Context, a AuditLog) error {

@@ -143,7 +143,7 @@ smart HTTP と LFS のハンドラは `authorizeGitRepo` を共有する。ト�
 | `control-plane/internal_git.go` | 一覧・作成・削除・改名・ブランチ一覧、`cloneURL`、リポジトリ数の上限、監査の記録 |
 | `control-plane/internal_git_browse.go` | clone なしのツリー・blob・コミット閲覧 |
 | `control-plane/git_lfs.go`、`git_lfs_locks.go` | LFS の batch API と basic 転送、ロック API |
-| `control-plane/git_gc.go` | GC ジョブと LFS 孤児の回収 |
+| `control-plane/git_gc.go` | GC ジョブ、LFS 孤児の回収、LFS 台帳の突き合わせ |
 | `control-plane/internal/store/migrations/` `0014_git_repo.sql`・`0015_lfs_object.sql`・`0016_lfs_lock.sql` | SQLite のテーブル。Postgres では `migrations-pg/0001_init.sql` にある |
 | `control-plane/main.go`、`workspace_lifecycle.go` `workspaceExtraEnv` | `PUBLIC_BASE_URL` → `internalGitHost`、起動ごとの `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN` の注入 |
 | `workspace/agent/cred_helper.go` | `seedInternalGit`・`internalGitHost`・`runCredHelper` |
@@ -228,6 +228,14 @@ native パッケージは静的ビルドの `git` と `git-http-backend` を同�
     過ぎていれば消されうる
     （[#1210](https://github.com/k-k1/agent-fleet/issues/1210)）。消すオブジェクトは
     先に台帳から外し、容量の枠を空ける。外せなければオブジェクトは次の掃除まで残す。
+  - **台帳の突き合わせ**が同じパスの最初に、全リポジトリを対象に走る。オブジェクトのファイルが
+    無く、`created_at` が同じ猶予期間より古い台帳の行は消してログに残す。公開（rename）に失敗した
+    アップロードや、台帳を書いてから rename するまでの間にプロセスが死んだアップロードがこういう行を
+    残し、放っておくと同じ oid が再びアップロードされるまでテナントの容量を多く数え続ける。
+    アップロードをやり直すと行の `created_at` は今に進み、削除は同じ文の中で古さを確かめ直すので、
+    進行中のアップロードの行は消えない。猶予期間が 0 なら突き合わせは走らず、掃除の途中で bare が
+    動いた（改名中の）リポジトリには手を出さない。**ストアのエラー（行の一覧・行の削除・テナントの解決）は
+    そのリポジトリのパスを終わらせる: それ以上は台帳の行もオブジェクトのファイルも消さない。**
 - **クライアント側は何も変えなくてよい**: ワークスペースのイメージは `git-lfs` を同梱し、
   フィルタをシステムの gitconfig に置いている。LFS は同じ資格情報ヘルパーで認証する。
   パッケージ版の native ランタイムは、展開したワークスペースイメージの rootfs

@@ -162,8 +162,9 @@ func TestGitGCSweep(t *testing.T) {
 		t.Fatalf("init bare: %v: %s", err, out)
 	}
 	// Sweeping a real bare completes without error (gc --auto is a no-op on a fresh
-	// repo, but the walk + exec path is exercised). No LFS dir → prune is skipped.
-	newGitGC(nil, dataRoot, 0, 0).sweep(context.Background())
+	// repo, but the walk + exec path is exercised). No LFS dir → prune is skipped, but the
+	// ledger reconcile still reads the store, so it needs one.
+	newGitGC(newP2Env(t).st, dataRoot, 0, 0).sweep(context.Background())
 	if _, err := os.Stat(bare); err != nil {
 		t.Fatalf("bare gone after gc: %v", err)
 	}

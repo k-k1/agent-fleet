@@ -1349,6 +1349,9 @@ type GitRepoStore interface {
 // stored bytes for the capacity quota. Repo delete/rename move the ledger through
 // GitRepoStore (the bytes on disk move with the .git dir).
 type LFSObjectStore interface {
+	// PutLFSObject records an upload. On a row that already exists it keeps the size and
+	// moves created_at to now, so a retry of a failed publish restarts the grace period GC
+	// gives a row whose file is absent (DeleteStaleLFSObject).
 	PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error
 	TenantLFSBytes(ctx context.Context, tenantID string) (int64, error)
 	// DeleteLFSObject drops one object's ledger row (used by LFS GC when it prunes
@@ -1358,9 +1361,20 @@ type LFSObjectStore interface {
 	// A row can exist without its file (a failed publish keeps it), and a retry of that
 	// upload must not be charged for the same bytes twice.
 	LFSObjectSize(ctx context.Context, tenantID, repo, oid string) (int64, bool, error)
-	// ListLFSObjectOIDs returns the oids the ledger records for a repo — the set GC
-	// walks to reconcile against what git still references.
-	ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error)
+	// ListLFSObjects returns the ledger rows of a repo — the set GC reconciles against
+	// the object files on disk.
+	ListLFSObjects(ctx context.Context, tenantID, repo string) ([]LFSObject, error)
+	// DeleteStaleLFSObject drops one row only if its created_at is at or before cutoff
+	// (RFC 3339 UTC, as NowTS writes it), and reports whether it did. The age test sits in
+	// the DELETE itself so an upload that refreshes the row after GC read it is not lost.
+	DeleteStaleLFSObject(ctx context.Context, tenantID, repo, oid, cutoff string) (bool, error)
+}
+
+// LFSObject is one lfs_object ledger row.
+type LFSObject struct {
+	OID       string
+	Size      int64
+	CreatedAt string
 }
 
 // LFSLockStore is the Git LFS file-lock ledger (P3). CreateLFSLock inserts a
