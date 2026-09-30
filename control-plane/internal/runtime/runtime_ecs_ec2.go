@@ -4325,22 +4325,27 @@ func (e *ecsEC2Runtime) ensureKeepAccessPoint(ctx context.Context) (string, eras
 	return aws.ToString(ap.AccessPointId), rec, err
 }
 
-// dropStalePendingErase takes back a pending erase whose volume is still this member's
-// live home. Start runs under the lifecycle lease, so no erase is running now: that erase
-// failed and could not take its mark back, and left in place it would refuse the
-// legitimate hibernation copies of the very home that survived it. Best-effort — a mark
-// left behind only means the restore path keeps refusing until this runs again.
+// dropStalePendingErase takes back every pending mark when this member's live home is one
+// of them. Start runs under the lifecycle lease, so no erase is running now: the erase
+// that marked the live volume failed before deleting it and could not take its marks back.
+// The other pending marks — older volumes a leftover copy came from — are from such an
+// erase too: an erase destroys only the live volume, and while a mark is pending no new
+// home can be created (restoreSnapshot), so a live home that is itself marked means no
+// pending erase got as far as destroying anything. Left in place, any of them would refuse
+// this very home's hibernation copy once it hibernates. Best-effort — marks left behind
+// only mean the restore path keeps refusing until this runs again.
 func (e *ecsEC2Runtime) dropStalePendingErase(ctx context.Context, apID string, rec eraseRecord) {
 	vol, err := e.homeVolume(ctx)
 	if err != nil || vol == nil || !slices.Contains(rec.pending, aws.ToString(vol.VolumeId)) {
 		return
 	}
-	rec.unmarkPending([]string{aws.ToString(vol.VolumeId)})
+	stale := strings.Join(rec.pending, ", ")
+	rec.pending = nil
 	if err := e.writeEraseRecord(ctx, apID, &rec, nil); err != nil {
-		log.Printf("ecs-ec2: %s still carries a pending erase of its live home %s: %v", e.base.name, aws.ToString(vol.VolumeId), err)
+		log.Printf("ecs-ec2: %s still carries a pending erase (%s) although %s is its live home: %v", e.base.name, stale, aws.ToString(vol.VolumeId), err)
 		return
 	}
-	log.Printf("ecs-ec2: took back a pending erase of %s, which is still the live home of %s", aws.ToString(vol.VolumeId), e.base.name)
+	log.Printf("ecs-ec2: took back a pending erase (%s); %s is still the live home of %s", stale, aws.ToString(vol.VolumeId), e.base.name)
 }
 
 // keepAccessPoint finds this member's keep access point (the role prepare creates), or nil.

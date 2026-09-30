@@ -458,18 +458,41 @@ func TestECSEC2AnEraseThatCannotConfirmBlocksTheRestoreUntilItIsRerun(t *testing
 	}
 }
 
-// A failed erase whose mark could not be taken back leaves it pending on a home that is
-// still alive. The owner's next Start — which holds the lifecycle lease, so no erase is
-// running — takes it back, and the home's hibernation copies are restorable again.
+// A failed erase whose marks could not be taken back leaves them pending on a home that is
+// still alive: the live volume's, and that of an older volume a leftover copy came from.
+// The owner's next Start — which holds the lifecycle lease, so no erase is running — takes
+// them all back. Left behind, the older volume's mark would refuse this home's own copy
+// once it hibernates.
 func TestECSEC2AStartOnTheLiveHomeTakesBackAStalePendingErase(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
-	h.efs.aps[0].Tags = append(h.efs.aps[0].Tags, efstypes.Tag{Key: aws.String(efsTagErasedVolumes), Value: aws.String("vol-7 pending:vol-1 pending:vol-9")})
+	h.efs.aps[0].Tags = append(h.efs.aps[0].Tags, efstypes.Tag{Key: aws.String(efsTagErasedVolumes), Value: aws.String("vol-7")})
+	h.ec2.snapshots["snap-old"] = homeSnapshotOf("snap-old", "vol-9", time.Now().Add(-48*time.Hour), ec2types.SnapshotStateCompleted)
+	h.ec2.deleteVolumeErr = errors.New("RequestLimitExceeded")
+	h.efs.tagErrOn = func(call int) error {
+		if call >= 2 { // the marks are written; taking them back fails
+			return errors.New("ServiceUnavailable")
+		}
+		return nil
+	}
+	if err := h.rt.EraseHome(ctx); err == nil {
+		t.Fatal("EraseHome succeeded although the volume is still there")
+	}
+	if mark := keepMark(t, h); mark != "vol-7 pending:vol-1 pending:vol-9" {
+		t.Fatalf("setup: record = %q, want both marks left pending", mark)
+	}
+	h.efs.tagErrOn = nil
+	h.ec2.deleteVolumeErr = nil
 	if _, err := h.rt.prepare(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if mark := keepMark(t, h); mark != "vol-7 pending:vol-9" {
-		t.Errorf("record = %q; want the live home's pending mark gone and the rest kept", mark)
+	if mark := keepMark(t, h); mark != "vol-7" {
+		t.Fatalf("record = %q; want every pending mark taken back and the erased volume kept", mark)
+	}
+	// The home hibernates later; its own copy is what the next Start restores.
+	delete(h.ec2.volumes, "vol-1")
+	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "snap-hib" {
+		t.Fatalf("restoreSnapshot = %q, %v; the home no erase reached must come back", got, err)
 	}
 }
 

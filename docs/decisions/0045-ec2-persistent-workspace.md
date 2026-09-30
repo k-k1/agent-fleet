@@ -1439,8 +1439,10 @@ on its EBS volume.
   nothing is destroyed. Once the volume is gone the marks become plain ids. While a mark is pending the restore
   path restores nothing, because the volume may already be gone and any copy listed could be the home being
   erased; running Clean home again finishes the erase. An erase that fails with the volume still there takes its
-  mark back, and if that write fails too, the member's next Start takes back a pending mark on the volume that is
-  still its live home (a Start holds the lifecycle lease, so no erase is running then). Both halves are needed:
+  marks back, and if that write fails too, the member's next Start takes back every pending mark once it finds
+  its live home among them. A Start holds the lifecycle lease, so no erase is running then, and while a mark is
+  pending no home can be created, so a live home that is itself marked means no pending erase destroyed anything
+  — not even the marks on older volumes a leftover copy came from. Both halves are needed:
   an id written only after the deletion is lost whenever that one write fails, and a mark left on a home that
   survived would refuse its only legitimate hibernation copy. A tag value holds 256 characters, so the oldest ids
   with no copy left drop off first; an id whose copy is still listed is never dropped — the write fails instead.
