@@ -470,3 +470,25 @@ func TestInitGitflowRefusesSymbolicRef(t *testing.T) {
 		t.Errorf("develop now = %q", got)
 	}
 }
+
+// A branch another git caller creates between the check and the create is not moved: the
+// create refuses a ref that exists.
+func TestInitGitflowCreateRefusesBranchThatAppeared(t *testing.T) {
+	dir := newRepo(t)
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "on origin")
+	remoteBranch(t, dir, "develop")
+	git(t, dir, "reset", "-q", "--hard", "HEAD~1")
+	local := git(t, dir, "rev-parse", "HEAD")
+	shimGit(t, `for a in "$@"; do [ "$a" = update-ref ] && { "$REAL" -C "`+dir+`" branch --no-track -f develop HEAD; break; }; done`)
+	_, err := InitGitflow(dir, nil, defaultValues())
+	var be *GitflowBranchError
+	if !errors.As(err, &be) || be.Branch != "develop" || len(be.Created) != 0 {
+		t.Fatalf("err = %#v", err)
+	}
+	if got := git(t, dir, "rev-parse", "refs/heads/develop"); got != local {
+		t.Errorf("develop moved to %s, want %s", got, local)
+	}
+	if got := configKeys(t, dir); len(got) != 0 {
+		t.Errorf("config = %v", got)
+	}
+}

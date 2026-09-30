@@ -64,7 +64,7 @@ type GitflowInvalidError struct {
 func (e *GitflowInvalidError) Error() string { return e.Field + ": " + e.Reason }
 
 // GitflowBranchMissingError is the refusal for a branch that exists neither locally nor on
-// origin: `git flow init` would create it, and this never creates a branch.
+// origin: `git flow init` would create it, and this never creates one absent from origin.
 type GitflowBranchMissingError struct {
 	Field, Branch string
 }

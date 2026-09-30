@@ -357,9 +357,10 @@ gitflow-avh は、`gitflow.branch.master` と `gitflow.branch.develop` の両方
 - **保存は、既存の origin ブランチを追跡するローカルブランチを作ってよい。** 本番と開発のブランチについて、
   `refs/heads/<b>` が無く `refs/remotes/origin/<b>` があるとき、Agent はどのキーを書くより前に、同じ
   clone ごとのロックの下で、`<b>` を origin のコミットに作り、上流を `origin/<b>` にする（`git branch --track`
-  と同じ結果）。ref は `git update-ref --no-deref <ref> <commit> ""` で作るので、すでにあれば失敗する。
-  ref の書き込みはどれもシンボリック ref をたどらず、シンボリック ref のブランチ（宙に浮いたものも）は断るので、
-  それを通して別のブランチに触れることはない。
+  と同じ結果）。ref は `git update-ref --no-deref <ref> <commit> ""` で作るので、普通の ref がすでにあれば失敗する。
+  宙に浮いたシンボリック ref の上では失敗しない（実測: 置き換える）ので、Agent は作る前に、シンボリック ref
+  のブランチを宙に浮いているかどうかにかかわらず断る。書き込みはどれも `--no-deref` なので、それを通して
+  別のブランチに触れることはない。
 - **上流の設定に失敗しても、ブランチは残す**（`untracked` として報告）。ref ができた瞬間から別の worktree や
   チェックアウトがそれを使いうるし、すべての git 呼び出しを覆うロックは無い（Agent 自身のチェックアウトの
   経路も含む）。消し戻すと、チェックアウト中の `HEAD` を未生成にしかねない。押し直しても既存として飛ばす

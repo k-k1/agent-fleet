@@ -384,8 +384,9 @@ start` still refused after the keys were written, and a hint telling the person 
   development branches, when `refs/heads/<b>` is missing and `refs/remotes/origin/<b>` exists, the
   Agent creates `<b>` at origin's commit and sets its upstream to `origin/<b>` (what
   `git branch --track` does) before writing any key, under the same per-clone lock. The ref is created
-  with `git update-ref --no-deref <ref> <commit> ""`, which fails when the ref exists. No ref write
-  dereferences, and a branch that is a symbolic ref (even a dangling one) is refused, so nothing reaches
+  with `git update-ref --no-deref <ref> <commit> ""`, which fails when a plain ref exists. It does not
+  fail over a dangling symbolic ref (measured: it replaces it), so the Agent refuses a branch that is a
+  symbolic ref, dangling or not, before the create; with `--no-deref` on every write, nothing reaches
   through one to another branch.
 - **A failed upstream leaves the branch in place**, reported as `untracked`. Once the ref exists another
   worktree or checkout may adopt it at any moment, and no lock covers every git caller (the Agent's own

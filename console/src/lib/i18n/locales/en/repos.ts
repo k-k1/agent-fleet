@@ -453,7 +453,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "gitflow.saved_created": "Initialized Git Flow on {name} and created the local branches {branches}",
   "gitflow.err_changed": "The settings changed while this dialog was open. They have been reloaded — check them and save again.",
   "gitflow.err_branch_missing": "{branch} exists neither locally nor on origin. Push or fetch it first.",
-  "gitflow.err_branch_failed": "Could not create a local branch ({err}). No setting was written; save again to retry.",
+  "gitflow.err_branch_failed": "Could not create a local branch ({err}). No setting was written. Fix the cause, then save again.",
   "gitflow.err_untracked": "{branches} was created but could not be set to track origin ({err}). Saving again will not fix that; run this in the repository:",
   "gitflow.err_created": "Local branches already created: {branches}.",
   "gitflow.err_invalid": "Not a valid value: {detail}",
