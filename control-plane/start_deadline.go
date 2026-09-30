@@ -39,6 +39,7 @@ type startDeadline struct {
 	mu       sync.Mutex
 	seen     map[string]time.Time // workspace ID -> first sweep that found it starting
 	inflight map[string]bool      // workspace IDs with a stop running (dispatch)
+	tried    map[string]time.Time // workspace ID -> when its last stop was dispatched
 	wg       sync.WaitGroup       // the dispatched stops; tests wait on it
 }
 
@@ -53,20 +54,37 @@ const startDeadlineWorkers = 2
 // the next sweep.
 var startDeadlineFenceWait = 10 * time.Second // a var so a test can shorten it
 
+// startDeadlineStopBudget bounds one whole stop — lease, fences, the task count, Stop — so
+// a hung AWS call cannot hold a worker for good and switch the deadline off for everybody
+// queued behind it.
+var startDeadlineStopBudget = 2 * time.Minute
+
+// startDeadlineRetryAfter spaces the attempts on one workspace. Without it the same two
+// workspaces, first in the walk and failing every time, would take both workers on every
+// sample and nothing after them would ever be tried.
+const startDeadlineRetryAfter = 15 * time.Minute
+
 func newStartDeadline(mgr *manager, after time.Duration) *startDeadline {
-	return &startDeadline{mgr: mgr, after: after, seen: map[string]time.Time{}, inflight: map[string]bool{}}
+	return &startDeadline{mgr: mgr, after: after, seen: map[string]time.Time{},
+		inflight: map[string]bool{}, tried: map[string]time.Time{}}
 }
 
 // dispatch runs stop for an overdue workspace on its own goroutine, one per workspace and
 // at most startDeadlineWorkers in all, so the walk that found it never waits on the fences
-// or the probes.
+// or the probes. A workspace tried within startDeadlineRetryAfter waits its turn.
 func (d *startDeadline) dispatch(ctx context.Context, rt runtime.Runtime, ws store.Workspace) {
+	now := time.Now()
 	d.mu.Lock()
+	if last, ok := d.tried[ws.ID]; ok && now.Sub(last) < startDeadlineRetryAfter {
+		d.mu.Unlock()
+		return
+	}
 	if d.inflight[ws.ID] || len(d.inflight) >= startDeadlineWorkers {
 		d.mu.Unlock()
 		return
 	}
 	d.inflight[ws.ID] = true
+	d.tried[ws.ID] = now
 	d.mu.Unlock()
 	d.wg.Add(1)
 	go func() {
@@ -76,7 +94,9 @@ func (d *startDeadline) dispatch(ctx context.Context, rt runtime.Runtime, ws sto
 			delete(d.inflight, ws.ID)
 			d.mu.Unlock()
 		}()
-		d.stop(ctx, rt, ws)
+		stopCtx, cancel := context.WithTimeout(ctx, startDeadlineStopBudget)
+		defer cancel()
+		d.stop(stopCtx, rt, ws)
 	}()
 }
 
@@ -113,6 +133,7 @@ func (d *startDeadline) observe(ws store.Workspace, rt runtime.Runtime, state st
 	defer d.mu.Unlock()
 	if state != "starting" {
 		delete(d.seen, ws.ID)
+		delete(d.tried, ws.ID)
 		return false
 	}
 	since, ok := d.seen[ws.ID]
@@ -137,6 +158,11 @@ func (d *startDeadline) retain(ids map[string]bool) {
 	for id := range d.seen {
 		if !ids[id] {
 			delete(d.seen, id)
+		}
+	}
+	for id := range d.tried {
+		if !ids[id] {
+			delete(d.tried, id)
 		}
 	}
 }

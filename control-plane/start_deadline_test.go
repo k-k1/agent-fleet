@@ -328,13 +328,18 @@ func TestStartDeadlineTrustsTheAdaptersTaskCount(t *testing.T) {
 
 // The stops run off the sampler's walk, and at most startDeadlineWorkers of them at once:
 // however many launches are overdue, the walk neither waits for them nor piles up
-// goroutines behind one held fence.
-func TestStartDeadlineCapsConcurrentStops(t *testing.T) {
+// goroutines behind one held fence. The next walk hands the workers to the workspaces that
+// have not been tried yet, rather than to the same first two again.
+func TestStartDeadlineCapsAndRotatesStops(t *testing.T) {
 	ctx := context.Background()
 	st, ws, mgr := reaperLifecycleFixture(t)
-	rt := &gateStub{deadlineStub: deadlineStub{state: "starting"}, release: make(chan struct{})}
 	d := newStartDeadline(mgr, 30*time.Minute)
 
+	type cand struct {
+		w  store.Workspace
+		rt *gateStub
+	}
+	var cands []cand
 	for i := 0; i < startDeadlineWorkers+3; i++ {
 		ident, err := st.UpsertIdentity(ctx, fmt.Sprintf("cap-%d@example.com", i), fmt.Sprintf("cap-%d", i), "")
 		if err != nil {
@@ -346,25 +351,105 @@ func TestStartDeadlineCapsConcurrentStops(t *testing.T) {
 		}
 		w := ws
 		w.ID, w.MembershipID = store.NewID(), m.ID
-		d.dispatch(ctx, rt, w) // must return at once
+		cands = append(cands, cand{w, &gateStub{deadlineStub: deadlineStub{state: "starting"}, release: make(chan struct{})}})
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for rt.entered.Load() < startDeadlineWorkers && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	walk := func() []int {
+		for _, c := range cands {
+			d.dispatch(ctx, c.rt, c.w) // must return at once
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for len(d.inflightIDs()) < startDeadlineWorkers && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		for waited := 0; waited < 50; waited++ { // let every dispatched stop reach its fence
+			n := int32(0)
+			for _, c := range cands {
+				if !c.rt.released {
+					n += c.rt.entered.Load()
+				}
+			}
+			if int(n) >= startDeadlineWorkers {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		var running []int
+		for i, c := range cands {
+			if c.rt.entered.Load() > 0 && !c.rt.released {
+				running = append(running, i)
+			}
+		}
+		for _, i := range running {
+			cands[i].rt.released = true
+			close(cands[i].rt.release)
+		}
+		d.wg.Wait()
+		return running
 	}
-	time.Sleep(50 * time.Millisecond)
-	if n := rt.entered.Load(); n != startDeadlineWorkers {
-		t.Fatalf("%d stops running at once, want %d", n, startDeadlineWorkers)
+
+	if got := walk(); len(got) != startDeadlineWorkers {
+		t.Fatalf("first walk ran stops %v, want %d at once", got, startDeadlineWorkers)
 	}
-	close(rt.release)
-	d.wg.Wait()
+	second := walk()
+	if len(second) != startDeadlineWorkers {
+		t.Fatalf("second walk ran stops %v, want %d", second, startDeadlineWorkers)
+	}
+	for _, i := range second {
+		if i < startDeadlineWorkers {
+			t.Fatalf("second walk retried workspace %d before the untried ones (ran %v)", i, second)
+		}
+	}
+}
+
+// A stop whose runtime call never returns gives its worker back after
+// startDeadlineStopBudget; otherwise two hung AWS calls would switch the deadline off.
+func TestStartDeadlineStopHasABudget(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	setLastActive(t, st, ws.ID, time.Now().Add(-2*time.Hour))
+	defer func(b time.Duration) { startDeadlineStopBudget = b }(startDeadlineStopBudget)
+	startDeadlineStopBudget = 200 * time.Millisecond
+	rt := &hangStub{deadlineStub: deadlineStub{state: "starting"}}
+	d := newStartDeadline(mgr, 30*time.Minute)
+	d.seen[ws.ID] = time.Now().Add(-time.Hour)
+
+	d.dispatch(ctx, rt, ws)
+	done := make(chan struct{})
+	go func() { d.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hung Stop held its worker past the budget")
+	}
+	if ids := d.inflightIDs(); len(ids) != 0 {
+		t.Fatalf("workers still held: %v", ids)
+	}
+}
+
+// hangStub's Stop blocks until its context ends, like an AWS call that never answers.
+type hangStub struct{ deadlineStub }
+
+func (r *hangStub) Stop(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (d *startDeadline) inflightIDs() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var ids []string
+	for id := range d.inflight {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // gateStub counts the stops that reached its fence and holds them there until release.
 type gateStub struct {
 	deadlineStub
-	entered atomic.Int32
-	release chan struct{}
+	entered  atomic.Int32
+	release  chan struct{}
+	released bool
 }
 
 func (r *gateStub) AcquireOperationFence(ctx context.Context) (func(), error) {
