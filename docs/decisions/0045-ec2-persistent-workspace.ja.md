@@ -1358,3 +1358,50 @@ native ではそれがホームだが、AWS では CP タスクの空の `/tmp` 
 `control-plane/workspace_lifecycle.go`（`cleanHomeByMembership`・`homeBackupsByMembership`）・
 `control-plane/internal/tenantsrv/tenants.go`・`console/src/features/settings/workspace/DangerTab.tsx`・
 `console/src/features/settings/tenant/tenantMemberDetail.tsx`。
+
+## 決定 32 — メンバーの作り直しとホームの掃除は、ホームに印を付けて次の Start で消す（2026-09-30）
+
+決定 31 の「メンバーの作り直しとホームの掃除は、この形態ではまだ出さない」を置き換える。そこで挙げた
+形——ボリュームに印を付け、次の Start がマウントの後・タスクの前に消す——をそのまま採った。
+
+- **要求は印を付けるだけ。** `ecsEC2Runtime.WipeHome` はホームのボリュームと休眠スナップショットに
+  `af-home-wipe=repos|clean` を付けて戻る。SSM には触れないので、眠ったスロットでも外れたボリュームでも
+  休眠したホームでも、入口の 60 秒に収まる。印は広げる方向にしか書き換えない——`clean` が待っているところに
+  作り直しが来ても `repos` に狭めない。ボリュームもスナップショットも無いメンバーはホームがまだ無く、
+  次の Start が新しく作るので何もしない。
+- **消すのは Start の裏側、マウントの後・タスクの前。** `placeHome` がボリュームの印を配置に載せ、印がある
+  Start は、本来その場で終わる温かいスロットでも必ず裏へ回す——消す時間はホームの大きさで決まり、要求の
+  スレッドには置けない。`launch` はマウントの直後に `waitTasksGone`（Stop は desired を 0 にしただけで、
+  古いタスクはまだホームを bind mount で掴んでいる）→ SSM で削除 → 印を外す、の順に進め、それからサービスを
+  1 に上げる。印を外すのは削除が成功した後、タスクを起こすのは印が外れた後。途中で失敗すれば印が残って次の
+  Start が繰り返すが、それまでにタスクは動いていないのでホームに新しいものは無く、繰り返しても安全である。
+  逆順にすると、DeleteTags を失った後の普通の Start がメンバーのその後の作業を消す。失敗したときは claim を
+  外し、ワークスペースは claim の期限切れを待たずに `stopped` になる。印を外す DeleteTags には値を付け、
+  途中でより強い印に書き換わっていればそれは残る。
+- **印はホームと一緒に休眠と復元をくぐる。** 休眠の `CreateSnapshot` はボリュームの印をスナップショットの
+  タグに写す。捕獲が完了してボリュームを消す直前にも、その呼び出しで読んだボリュームの印をスナップショットに
+  写す。`WipeHome` はボリュームに書いてからスナップショットを一覧する順で、休眠はボリュームを読んでから
+  消し、それも捕獲が完了した後に限る——だから印がその読みより後に付いたなら、一覧した時点で完了済みの
+  スナップショットは必ず存在し、`WipeHome` 自身がそれに印を付ける。どの順に交錯しても、印は次の Start が
+  ホームを作る元に届く。`createHomeVolume` は復元元のスナップショットの印を新しいボリュームの
+  `TagSpecifications` に含め、その値のまま（タグ付きで）`placeHome` に返す——作ったばかりのボリュームを
+  Describe し直さない。
+- **削除のコマンドは `mountpoint -q` から始める。** SSM のコマンドはスロットの root で走るので、ボリュームが
+  そこにマウントされていなければ、削除はルートボリューム上の空のディレクトリに対して成功し、何も消えないまま
+  消したと報告される。ホームは `<マウント先>/dev`（タスクの bind mount 元）で、まだどのタスクも起動していない
+  ホームにはこのディレクトリが無く、消すものも無い。作り直しは `~/repos` だけ、ホームの掃除は直下の
+  `homeKeep` 7 項目を名前で残してほかを消す。種類は見ない——ふだんは EFS への symlink だが、前回の起動の
+  あとでツールが置き換えた keep のファイルは次の起動で entrypoint が移すまでここにある実体で、それも残す
+  （管理者の消去ではボリュームと一緒に消える。決定 31）。`rm` は `--one-file-system` で、symlink を辿らない。
+- **採らなかったもの。** 印を EFS の keep アクセスポイント（決定 31 の消去の記録と同じ場所）に置けば、
+  休眠と復元に写す必要は無くなる。だが印がボリュームの世代と切れるので、消去で新しく作ったホーム——golden
+  から作ったもの——にも効き、golden が入れた `~/.local` を消してしまう。印はそれを向けたホームに付ける。
+- ホームの掃除のあとの最初の起動は、docker と同じく entrypoint が `~/.local` を入れ直す（boot-install）ので
+  遅い。バックアップのスナップショットは復元の経路に乗らないので、印を写さない。
+
+Follow-ups: #1259（実機での受け入れ——眠ったスロット・外れたボリューム・休眠したホームの 3 状態）。
+
+コード: `control-plane/internal/runtime/runtime_ecs_ec2_home_wipe.go`（`WipeHome`・`wipeMountedHome`・
+`homeWipeCommand`）・`control-plane/internal/runtime/runtime_ecs_ec2.go`（`Start`・`placeHome`・`launch`・
+`hibernate`・`createHomeVolume`・`restoreSource`）・`control-plane/internal/runtime/home_wipe.go`・
+`console/src/app/WsStartingDialog.tsx`。

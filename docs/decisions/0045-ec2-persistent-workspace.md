@@ -1472,3 +1472,55 @@ Code: `control-plane/internal/runtime/home_wipe.go`, `control-plane/internal/run
 `control-plane/workspace_lifecycle.go` (`cleanHomeByMembership`, `homeBackupsByMembership`),
 `control-plane/internal/tenantsrv/tenants.go`, `console/src/features/settings/workspace/DangerTab.tsx`,
 `console/src/features/settings/tenant/tenantMemberDetail.tsx`.
+
+## Decision 32 — A member's Recreate and Clean home mark the home, and the next Start removes it (2026-09-30)
+
+This replaces decision 31's "a member's Recreate and Clean home are not offered on this target yet". The shape
+named there — mark the volume, and let the next Start wipe it after the mount and before the task — is adopted as
+it stood.
+
+- **The request only marks.** `ecsEC2Runtime.WipeHome` tags the home volume and its hibernation snapshots
+  `af-home-wipe=repos|clean` and returns. It does not touch SSM, so it fits the ingress's 60 s whether the slot is
+  asleep, the volume detached or the home hibernated. A mark only ever widens: a Recreate arriving while `clean` is
+  pending does not narrow it to `repos`. A member with neither a volume nor a snapshot has no home yet, and the next
+  Start builds a new one, so nothing is done.
+- **The removal is in the Start's background half, after the mount and before the task.** `placeHome` puts the
+  volume's mark on the placement, and a Start that carries one always goes to the background, even on a hot slot
+  that would otherwise finish inline — the removal takes as long as the home is big, and cannot sit on the
+  request's thread. Right after the mount, `launch` goes through `waitTasksGone` (Stop only set desired to 0, and
+  the old task still holds the home as its bind mount) → the removal over SSM → dropping the mark, and only then
+  raises the service to 1. The mark goes only after the removal succeeded, and the task starts only after the mark
+  is gone. A failure anywhere in between leaves the mark for the next Start to repeat, which is safe because no task
+  has run since and nothing new is in the home. The reverse order would let an ordinary Start after a lost
+  DeleteTags remove the work the member did since. On failure the claim is dropped, so the workspace is `stopped`
+  at once rather than when the claim expires. The DeleteTags that drops the mark names its value, so a stronger mark
+  written in the meantime survives.
+- **The mark goes through hibernation and restore with the home.** Hibernation's `CreateSnapshot` copies the
+  volume's mark onto the snapshot's tags, and right before it deletes the volume after the capture completes, it
+  copies the mark it read from the volume in that call as well. `WipeHome` writes the volume before it lists the
+  snapshots; hibernation reads the volume before it deletes it, and deletes it only once the capture has
+  completed. A mark that lands after that read is therefore listed after a completed snapshot exists, and
+  `WipeHome` marks it itself. However the two interleave, the mark reaches what the next Start builds the home
+  from. `createHomeVolume` includes the restored-from snapshot's mark in the new volume's `TagSpecifications`, and
+  returns the volume to `placeHome` with those tags rather than describing a volume created a moment ago.
+- **The removal command begins with `mountpoint -q`.** An SSM command runs as root on the slot, so if the volume
+  were not mounted there the removal would succeed on an empty directory of the root volume and report the home
+  cleared with nothing removed. The home is `<mount point>/dev` (the task's bind-mount source). A home no task has
+  booted yet has no such directory, and nothing to remove. Recreate removes `~/repos` alone; Clean home removes
+  everything at the top level except the seven `homeKeep` entries, kept by name. Their type is not looked at:
+  normally they are links into EFS, but a keep file a tool replaced since the last start is a plain file here until
+  the entrypoint moves it at the next boot, and it is kept too (the administrator's erase loses it with the volume,
+  decision 31). `rm` runs with `--one-file-system` and does not follow links.
+- **Rejected.** Putting the mark on the EFS keep access point (where decision 31 keeps its erase record) would
+  remove the need to copy it through hibernation and restore. But the mark would then be cut loose from the
+  volume's generation, apply to a home created after an erase — one built from the golden — and remove the
+  `~/.local` the golden provided. The mark belongs on the home it was meant for.
+- The first start after Clean home is slow, because the entrypoint reinstalls `~/.local` (boot-install), as on
+  docker. Backup snapshots are not on the restore path, so the mark is not copied onto them.
+
+Follow-ups: #1259 (acceptance on real hardware — a sleeping slot, a detached volume and a hibernated home).
+
+Code: `control-plane/internal/runtime/runtime_ecs_ec2_home_wipe.go` (`WipeHome`, `wipeMountedHome`,
+`homeWipeCommand`), `control-plane/internal/runtime/runtime_ecs_ec2.go` (`Start`, `placeHome`, `launch`,
+`hibernate`, `createHomeVolume`, `restoreSource`), `control-plane/internal/runtime/home_wipe.go`,
+`console/src/app/WsStartingDialog.tsx`.

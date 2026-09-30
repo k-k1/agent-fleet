@@ -34,8 +34,10 @@ const (
 // homeWiper is the member's half. The caller has stopped the workspace, calls WipeHome,
 // and starts the workspace again at once, all inside one request behind the ingress idle
 // timeout (60 s on the AWS deployment). The contract is "the next start does not see what
-// was removed", and an adapter claims the port only if it can keep that promise within
-// that request together with the Start.
+// was removed", and an adapter claims the port only if it can keep that promise without
+// holding that request past the timeout. docker and native remove it in the call; ecs-ec2
+// marks the home and its Start removes it before the task runs, because reaching the home
+// can mean waking a slot (runtime_ecs_ec2_home_wipe.go).
 type homeWiper interface {
 	WipeHome(ctx context.Context, what HomeWipe) error
 }
@@ -79,6 +81,7 @@ type HomeBackups struct {
 var (
 	_ homeWiper        = (*dockerRuntime)(nil)
 	_ homeWiper        = (*nativeRuntime)(nil)
+	_ homeWiper        = (*ecsEC2Runtime)(nil)
 	_ homeEraser       = (*dockerRuntime)(nil)
 	_ homeEraser       = (*nativeRuntime)(nil)
 	_ homeEraser       = (*ecsEC2Runtime)(nil)

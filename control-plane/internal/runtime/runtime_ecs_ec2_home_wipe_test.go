@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -599,5 +602,383 @@ func TestECSEC2AccessPointsAreFoundPastTheFirstPage(t *testing.T) {
 	}
 	if len(h.efs.aps) != 150 {
 		t.Errorf("Destroy touched other members' access points: %d left, want 150", len(h.efs.aps))
+	}
+}
+
+// --- a member's Recreate and Clean home (runtime_ecs_ec2_home_wipe.go) ---
+
+// memberWipeHarness is a stopped member whose home is still on a hot, registered slot:
+// the one placement a plain Start finishes inline, so any deferral is the wipe's doing.
+func memberWipeHarness(t *testing.T) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	h.ci.registered["i-hot"] = true
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	return h
+}
+
+// scaledUp says whether the service was asked for a task — the moment the home is handed
+// to the workspace.
+func scaledUp(h *ec2Harness) bool {
+	for _, c := range h.ecs.updateCalls {
+		if aws.ToInt32(c.DesiredCount) >= 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// callIndex is the position of the first call with prefix in the shared EC2/SSM log.
+func callIndex(h *ec2Harness, prefix string) int {
+	for i, c := range h.ec2.calls {
+		if strings.HasPrefix(c, prefix) {
+			return i
+		}
+	}
+	return -1
+}
+
+// The request only marks; the Start after it goes to the background even on the slot
+// that would otherwise finish inline, and there the removal sits between the mount and the
+// task, with the mark gone before the task.
+func TestECSEC2MemberWipeRunsBetweenTheMountAndTheTask(t *testing.T) {
+	ctx := context.Background()
+	h := memberWipeHarness(t)
+	if err := h.rt.WipeHome(ctx, HomeWipeRepos); err != nil {
+		t.Fatalf("WipeHome: %v", err)
+	}
+	if len(h.ssmc.commands) != 0 {
+		t.Fatalf("WipeHome reached the slot (%v); a sleeping slot would hold the request past the ingress timeout", h.ssmc.commands)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe); got != string(HomeWipeRepos) {
+		t.Fatalf("mark = %q, want repos", got)
+	}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(h.deferred) != 1 || scaledUp(h) {
+		t.Fatalf("a Start with a pending wipe must hand off before the task: deferred=%d scaledUp=%v", len(h.deferred), scaledUp(h))
+	}
+	if st := h.rt.State(ctx); st != "starting" {
+		t.Errorf("State during the wipe = %q, want starting", st)
+	}
+	h.runDeferred(ctx)
+	mount, wipe := callIndex(h, "SSM af-mount"), callIndex(h, "SSM mountpoint -q")
+	if mount < 0 || wipe < 0 || mount > wipe {
+		t.Fatalf("want the mount before the wipe, got mount=%d wipe=%d in %v", mount, wipe, h.ec2.calls)
+	}
+	if cmd := h.ec2.calls[wipe]; !strings.Contains(cmd, "/af-home/M-1/dev/repos") || strings.Contains(cmd, "find ") {
+		t.Errorf("a Recreate must remove ~/repos and nothing else: %s", cmd)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe); got != "" {
+		t.Errorf("the mark survived a completed wipe (%q); the next Start would remove the member's new work", got)
+	}
+	if !scaledUp(h) {
+		t.Error("the workspace was not started after the wipe")
+	}
+}
+
+// A wipe that did not happen must not be followed by a task that sees the home it was
+// supposed to remove, and it must not be lost: the next Start does it.
+func TestECSEC2FailedMemberWipeLeavesTheWorkspaceStoppedAndMarked(t *testing.T) {
+	ctx := context.Background()
+	h := memberWipeHarness(t)
+	h.ssmc.fail["rm -rf"] = true
+	if err := h.rt.WipeHome(ctx, HomeWipeRepos); err != nil {
+		t.Fatalf("WipeHome: %v", err)
+	}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if scaledUp(h) {
+		t.Fatal("the task started although the wipe failed")
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe); got != string(HomeWipeRepos) {
+		t.Errorf("mark after a failed wipe = %q, want it kept for the next Start", got)
+	}
+	if st := h.rt.State(ctx); st != "stopped" {
+		t.Errorf("State after a failed wipe = %q, want stopped (not starting until the claim expires)", st)
+	}
+
+	delete(h.ssmc.fail, "rm -rf")
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if !scaledUp(h) || ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe) != "" {
+		t.Errorf("the next Start did not finish the wipe: scaledUp=%v tags=%v", scaledUp(h), h.ec2.volumes["vol-1"].Tags)
+	}
+}
+
+// The mark goes before the task starts. A task started with the mark still on would have
+// its work removed by the member's next ordinary Start.
+func TestECSEC2MemberWipeDoesNotStartTheTaskWhileTheMarkRemains(t *testing.T) {
+	ctx := context.Background()
+	h := memberWipeHarness(t)
+	h.ec2.deleteTagsErr = map[string]error{ec2TagHomeWipe: errors.New("throttled")}
+	if err := h.rt.WipeHome(ctx, HomeWipeRepos); err != nil {
+		t.Fatalf("WipeHome: %v", err)
+	}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if scaledUp(h) {
+		t.Error("the task started while the mark was still on the home")
+	}
+}
+
+// A Recreate after a pending Clean home must not narrow it; a Clean home after a pending
+// Recreate widens it.
+func TestECSEC2MemberWipeMarkOnlyWidens(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		first, second, want HomeWipe
+	}{
+		{HomeWipeClean, HomeWipeRepos, HomeWipeClean},
+		{HomeWipeRepos, HomeWipeClean, HomeWipeClean},
+		{HomeWipeRepos, HomeWipeRepos, HomeWipeRepos},
+	} {
+		h := memberWipeHarness(t)
+		for _, w := range []HomeWipe{c.first, c.second} {
+			if err := h.rt.WipeHome(ctx, w); err != nil {
+				t.Fatalf("WipeHome(%s): %v", w, err)
+			}
+		}
+		if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe); got != string(c.want) {
+			t.Errorf("%s then %s: mark = %q, want %s", c.first, c.second, got, c.want)
+		}
+	}
+}
+
+// A hibernated home has no volume: the mark goes on the snapshot, the restore carries it
+// onto the new volume, and the Start that restored it performs it.
+func TestECSEC2MemberWipeOfAHibernatedHomeHappensAfterTheRestore(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.snapshots["snap-hib"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-hib"), VolumeId: aws.String("vol-gone"),
+		State: ec2types.SnapshotStateCompleted, StartTime: aws.Time(time.Now().Add(-24 * time.Hour)),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(EC2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleHome)},
+		},
+	}
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.WipeHome(ctx, HomeWipeClean); err != nil {
+		t.Fatalf("WipeHome: %v", err)
+	}
+	if got := ec2TagValue(h.ec2.snapshots["snap-hib"].Tags, ec2TagHomeWipe); got != string(HomeWipeClean) {
+		t.Fatalf("mark on the hibernation snapshot = %q, want clean", got)
+	}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if scaledUp(h) {
+		t.Fatal("the restored home was handed to a task before the wipe")
+	}
+	var restored string
+	for id, v := range h.ec2.volumes {
+		if aws.ToString(v.SnapshotId) == "snap-hib" {
+			restored = id
+		}
+	}
+	if restored == "" {
+		t.Fatal("the home was not restored from its snapshot")
+	}
+	h.runDeferred(ctx)
+	wipe := callIndex(h, "SSM mountpoint -q")
+	if wipe < 0 || !strings.Contains(h.ec2.calls[wipe], "find ") {
+		t.Fatalf("the restored home was not cleaned: %v", h.ec2.calls)
+	}
+	if got := ec2TagValue(h.ec2.volumes[restored].Tags, ec2TagHomeWipe); got != "" {
+		t.Errorf("mark on the restored volume after the wipe = %q", got)
+	}
+	if !scaledUp(h) {
+		t.Error("the workspace was not started after the wipe")
+	}
+}
+
+// The capture copies the mark, and a mark that reached only the volume after the capture
+// started is put on the snapshot before the volume goes — otherwise the restore hands back
+// the home the member asked to have cleared.
+func TestECSEC2HibernationCarriesAPendingMemberWipe(t *testing.T) {
+	ctx := context.Background()
+
+	h := hibernateHarness(t, 60*24*time.Hour)
+	h.ec2.setTag("vol-1", ec2TagHomeWipe, string(HomeWipeRepos))
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate: %v", err)
+	}
+	for id, s := range h.ec2.snapshots {
+		if got := ec2TagValue(s.Tags, ec2TagHomeWipe); got != string(HomeWipeRepos) {
+			t.Errorf("capture %s of a marked home carries %q, want repos", id, got)
+		}
+	}
+
+	h = hibernateHarness(t, 60*24*time.Hour)
+	h.ec2.snapshotState = ec2types.SnapshotStatePending
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate step 1: %v", err)
+	}
+	// The mark lands on the volume only, as when WipeHome listed the snapshots before the
+	// capture existed.
+	h.ec2.setTag("vol-1", ec2TagHomeWipe, string(HomeWipeClean))
+	for _, s := range h.ec2.snapshots {
+		s.State = ec2types.SnapshotStateCompleted
+	}
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate step 2: %v", err)
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; ok {
+		t.Fatal("the volume was kept; this test wants the step that deletes it")
+	}
+	for id, s := range h.ec2.snapshots {
+		if got := ec2TagValue(s.Tags, ec2TagHomeWipe); got != string(HomeWipeClean) {
+			t.Errorf("snapshot %s lost the mark the volume carried when it was deleted: %q", id, got)
+		}
+	}
+}
+
+// The command itself, run by sh against a real directory. `mountpoint` is stubbed on PATH:
+// the one thing a test cannot provide is a mounted volume.
+func TestHomeWipeCommandOnADirectory(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	setup := func(t *testing.T, mounted bool) (string, []string) {
+		t.Helper()
+		root := t.TempDir()
+		mp := filepath.Join(root, "af-home", "M-1")
+		home := filepath.Join(mp, "dev")
+		keepDir := filepath.Join(root, "keep")
+		for _, d := range []string{home + "/repos/app/.git", home + "/.local/bin", home + "/.cache", keepDir + "/.config"} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, f := range []string{home + "/repos/app/main.go", home + "/.bashrc", home + "/.local/bin/claude"} {
+			if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// A keep entry as the entrypoint leaves it (a link into EFS), and one a tool
+		// replaced with a plain file since the last boot.
+		if err := os.Symlink(keepDir+"/.config", home+"/.config"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(home+"/.gitconfig", []byte("[user]"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(root, "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		code := "1"
+		if mounted {
+			code = "0"
+		}
+		if err := os.WriteFile(bin+"/mountpoint", []byte("#!/bin/sh\nexit "+code+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return mp, append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	}
+	run := func(t *testing.T, mp string, env []string, what HomeWipe) error {
+		t.Helper()
+		cmd, err := homeWipeCommand(mp, what)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := exec.Command("sh", "-c", cmd)
+		c.Env = env
+		out, err := c.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%w: %s", err, out)
+		}
+		return nil
+	}
+	exists := func(p string) bool { _, err := os.Lstat(p); return err == nil }
+
+	t.Run("recreate", func(t *testing.T) {
+		mp, env := setup(t, true)
+		if err := run(t, mp, env, HomeWipeRepos); err != nil {
+			t.Fatal(err)
+		}
+		if exists(mp + "/dev/repos") {
+			t.Error("~/repos survived a Recreate")
+		}
+		for _, p := range []string{"/dev/.local/bin/claude", "/dev/.bashrc", "/dev/.config", "/dev/.gitconfig"} {
+			if !exists(mp + p) {
+				t.Errorf("a Recreate removed %s", p)
+			}
+		}
+	})
+	t.Run("clean", func(t *testing.T) {
+		mp, env := setup(t, true)
+		if err := run(t, mp, env, HomeWipeClean); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{"/dev/repos", "/dev/.local", "/dev/.cache", "/dev/.bashrc"} {
+			if exists(mp + p) {
+				t.Errorf("Clean home left %s", p)
+			}
+		}
+		for _, p := range []string{"/dev/.config", "/dev/.gitconfig"} {
+			if !exists(mp + p) {
+				t.Errorf("Clean home removed the keep entry %s", p)
+			}
+		}
+		if !exists(filepath.Join(filepath.Dir(filepath.Dir(mp)), "keep", ".config")) {
+			t.Error("Clean home followed the keep link into EFS")
+		}
+	})
+	t.Run("not mounted", func(t *testing.T) {
+		mp, env := setup(t, false)
+		if err := run(t, mp, env, HomeWipeClean); err == nil {
+			t.Error("a wipe of an unmounted home reported success")
+		}
+		if !exists(mp + "/dev/repos/app/main.go") {
+			t.Error("a wipe of an unmounted home removed files")
+		}
+	})
+	t.Run("no home yet", func(t *testing.T) {
+		mp, env := setup(t, true)
+		if err := os.RemoveAll(mp + "/dev"); err != nil {
+			t.Fatal(err)
+		}
+		if err := run(t, mp, env, HomeWipeRepos); err != nil {
+			t.Errorf("a home no task has booted has nothing to remove: %v", err)
+		}
+	})
+}
+
+// Stop only lowered the desired count. The old task holds the home as its bind mount
+// until it exits, and removing files under it would pull them out of a running workspace.
+func TestECSEC2MemberWipeWaitsForTheOldTaskToExit(t *testing.T) {
+	ctx := context.Background()
+	h := memberWipeHarness(t)
+	h.ecs.drainingPolls = 50 // outlasts every other DescribeServices before the mount
+	draining := -1
+	h.ssmc.onSend = func(cmd string) {
+		if strings.HasPrefix(cmd, "mountpoint -q") {
+			draining = h.ecs.drainingPolls
+		}
+	}
+	if err := h.rt.WipeHome(ctx, HomeWipeRepos); err != nil {
+		t.Fatalf("WipeHome: %v", err)
+	}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if draining != 0 {
+		t.Errorf("the wipe was sent while the old task was still running (%d polls of it left)", draining)
 	}
 }
