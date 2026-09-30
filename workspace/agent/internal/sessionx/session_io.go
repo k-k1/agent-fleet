@@ -287,13 +287,6 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("keys/seq must have at most %d elements", maxInputSteps))
 		return
 	}
-	// Refused before anything records this prompt's origin (the mirror badge, the fleet
-	// graph, the peer rate limit): a refused send must leave no trace that a later identical
-	// user message could inherit. submitPromptTUI checks again at the moment of typing.
-	if body.Prompt != "" && !body.WhenReady && len(body.Keys) == 0 && len(body.Seq) == 0 &&
-		!codexHandOverGate(w, name) {
-		return
-	}
 	// Peer send (docs/log/58 / ADR 0041). Every invariant is satisfied here before the
 	// request joins the ordinary injection path. It sits BEFORE the managed/tui split for
 	// the same reason as the self-report hint line: otherwise one of the two paths slips
@@ -745,9 +738,6 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 		writeBlockedErr(w, st)
 		return false
 	}
-	if !codexHandOverGate(w, name) {
-		return false
-	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
 	// send_to_session right after create (no initial_prompt) would vanish. Its
 	// composer footer is persistent once drawn ("? for shortcuts" idle / "esc to
@@ -783,52 +773,6 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	}
 	return true
 }
-
-// codexHandOverGate guards a prompt to a codex session that is being handed from the shared
-// app-server to a Terminal pane (codex/release.go). It covers the whole hand-over:
-//
-//   - from the switch's first step to the waiter's exit (Awaiting): refused, on either
-//     driver. Until the pane is up the meta still says managed, and a managed send would
-//     Resume the thread on the app-server and lock the new pane out again.
-//   - after the wait (JustReleased, until a composer is seen): codex is starting, so the
-//     prompt holds until its composer footer is drawn — and is refused if it is not drawn
-//     within 15 s. A slow start or codex's own lock screen (whose r/f/q keys typed text would
-//     press) is not a composer. The first footer seen ends the hand-over.
-//
-// Outside a hand-over it costs one stat. On refusal the HTTP error is written and false is
-// returned.
-func codexHandOverGate(w http.ResponseWriter, name string) bool {
-	meta, ok := session.ReadMeta(name)
-	if !ok || meta.Kind != session.KindCodex {
-		return true
-	}
-	refuse := func() bool {
-		httpx.WriteErr(w, http.StatusConflict, "codex_releasing",
-			"managed 実行方式からこの会話を引き継いでいる途中です（通常 1 分ほど）。codex の入力欄が出てから送ってください")
-		return false
-	}
-	if codex.Awaiting(name) {
-		return refuse()
-	}
-	if meta.DriverKind() == session.DriverManaged || !codex.JustReleased(name) {
-		return true
-	}
-	tn := session.TmuxName(name)
-	for deadline := time.Now().Add(codexComposerWait); time.Now().Before(deadline); {
-		if PaneMode(meta.Kind, tn) != "" {
-			codex.ClearHandOver(name)
-			return true
-		}
-		if codex.Awaiting(name) {
-			return refuse()
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return refuse()
-}
-
-// codexComposerWait bounds codexHandOverGate's hold after the wait; a variable for tests.
-var codexComposerWait = 15 * time.Second
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
 // path such as /home/dev/x, which has a second slash).
@@ -971,16 +915,10 @@ func typeInitialPrompt(name, prompt string) string {
 	if kind == session.KindShell {
 		ready = true
 	}
-	// A codex pane waiting for the app-server to release its thread (codex/release.go) has no
-	// composer for up to ThreadReleaseTimeout; the budget above starts once codex does.
-	releaseDeadline := time.Now().Add(codex.ThreadReleaseTimeout + 15*time.Second)
 	for i := 0; !ready && i < 60; i++ {
 		if PaneMode(kind, tn) != "" {
 			ready = true
 			break
-		}
-		if kind == session.KindCodex && codex.Awaiting(name) && time.Now().Before(releaseDeadline) {
-			i = 0
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

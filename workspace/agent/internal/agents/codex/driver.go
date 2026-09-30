@@ -215,8 +215,8 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		// across cli⇄managed) both ride on it.
 		sids.Write(slotSid, tid)
 	}
-	// A Terminal launch may have asked the observer to stay off this thread (release.go); the
-	// managed session owns it again now.
+	// A stop had the observer stay off this thread (release.go); the managed session owns it
+	// again now.
 	RestoreObservedThread(tid)
 	// After resume the policies can have fallen back to the config defaults (measured), so
 	// re-assert them. A failure is not fatal: the turn still runs, only on the readOnly side.
@@ -442,8 +442,9 @@ func liveHandles() []*threadHandle {
 
 // DropHandle detaches a managed session from its runtime handle (stop / halt /
 // archive / exclusive switch): interrupt any running turn, unsubscribe the writer
-// connection from the thread, forget the handle. The conversation's source of truth
-// (the rollout) stays, and a later Resume (or the TUI's `codex resume`) reattaches.
+// connection from the thread, have the observer let go of it too (release.go), forget
+// the handle. The conversation's source of truth (the rollout) stays, and a later Resume
+// (or the TUI's `codex resume`, once the server has unloaded the thread) reattaches.
 func DropHandle(name string) {
 	handlesMu.Lock()
 	h := handles[name]
@@ -470,6 +471,13 @@ func DropHandle(name string) {
 		}
 	}
 	h.mu.Unlock()
+	if tid != "" {
+		ReleaseObservedThread(tid)
+		// The observer's turn/completed is what clears a compaction cut off without its
+		// item/completed; released, it never sees the interrupted turn end, and the thread would
+		// read "compacting" on its next Resume or Terminal launch.
+		SetCompacting(tid, false)
+	}
 	if cl == nil {
 		return
 	}
@@ -536,11 +544,22 @@ func ReconcileManaged(reason string) {
 		if m.StoppedAt != "" && handleFor(m.Name) == nil {
 			continue // deliberately stopped — resume only on user action
 		}
+		release, ok := ReconcileClaim(m.Name)
+		if !ok {
+			continue // switching to Terminal, or already there: m was read before the switch
+		}
 		if _, err := d.Resume(m); err != nil {
 			log.Printf("codex managed: reconcile %s (%s): %v", m.Name, reason, err)
 		}
+		release()
 	}
 }
+
+// ReconcileClaim is the seam package sessionx fills with its switch guard: ReconcileManaged
+// resumes from a meta it read before a switch to Terminal may have begun, so it takes the same
+// claim as every other Managed Resume, or it would load the thread again behind Terminal
+// metadata. ok=false skips the session; release ends the claim.
+var ReconcileClaim = func(name string) (release func(), ok bool) { return func() {}, true }
 
 // reconcileAll is the supervisor-facing wrapper (serve.go, after a daemon death or restart).
 func reconcileAll(reason string) { ReconcileManaged(reason) }

@@ -19,6 +19,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -81,6 +82,26 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// codex goes to Terminal only from a stopped session: the TUI cannot open a thread the
+	// shared app-server still has loaded, and it unloads one only about a minute after the stop
+	// (codex/release.go). Refusing here keeps a prompt from being sent into either side
+	// meanwhile.
+	// The claim comes first: a Resume that finishes before it shows up as alive below, and one
+	// in flight makes the claim fail.
+	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex {
+		end, ok := beginCodexTerminalSwitch(name)
+		if !ok {
+			httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, errDriverSwitching.Error())
+			return
+		}
+		defer end()
+		if switchSourceAlive(m) {
+			httpx.WriteErr(w, http.StatusConflict, errCodeCodexStopFirst,
+				"codex のセッションは停止してからターミナル（CLI）に切り替えてください（停止から 1 分ほどで切り替えられます）")
+			return
+		}
+	}
+
 	// Drain condition: never take a running (or queued) turn with us. For tui that is the
 	// status store's working state (from hooks), for managed the handle's running/queue.
 	sid := session.UUID(m.Dir, name)
@@ -105,12 +126,6 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// codex: the pane will first wait for the app-server to release the thread; mark the
-	// hand-over now, before the managed runtime goes, so no prompt slips into either side
-	// meanwhile (codexHandOverGate).
-	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex {
-		codex.MarkSwitching(name)
-	}
 	// Stop the old managed runtime. For a managed→TUI switch of kiro, whose per-sid `.lock`
 	// guards the session cross-process, wait bounded for the child to exit + release the lock
 	// so the TUI's `--resume-id` relaunch below doesn't race it into an error or a split-brain
@@ -132,15 +147,18 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		m.Driver = "" // tui persists as "" (the convention that keeps existing meta byte-identical)
 	}
 	if target == session.DriverManaged {
-		d, _ := driverOf(m)
+		// Unguarded: the meta on disk still says Terminal until this launch succeeds, which the
+		// guard would read as a stale caller (switch_guard.go).
+		d := managedDrivers[m.Kind]
 		if _, err := mcpx.StartManagedSession(d, m); err != nil {
 			writeRuntimeErr(w, err)
 			return
 		}
 	} else {
 		if err := startSessionTmux(m, false); err != nil {
-			codex.ClearHandOver(name) // no pane will take the conversation over
-			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+			if !writeCodexReleasingErr(w, err) {
+				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+			}
 			return
 		}
 	}
@@ -163,17 +181,34 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			dropManagedRuntime(m)
 		} else {
 			_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(name))).Run()
-			codex.ClearHandOver(name)
 		}
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	m = cur
-	if target == session.DriverTUI {
-		codex.EndSwitch(name) // the meta says Terminal now; see codex/release.go
-	}
 	if wasStopped {
 		fleetgraph.RecordRevive(name) // write site ③: only when the slot really was stopped
 	}
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, true))
+}
+
+// errCodeCodexStopFirst refuses a codex Managed-to-Terminal switch while the session runs.
+const errCodeCodexStopFirst = "codex_stop_first"
+
+// switchSourceAlive is ManagedAlive; a variable so tests can stand in a live runtime.
+var switchSourceAlive = ManagedAlive
+
+// writeCodexReleasingErr answers a launch refused for a codex switch: the shared app-server
+// still holds the conversation (codex.ErrThreadReleasing), or a switch to Terminal holds the
+// session (errDriverSwitching). Both are 409, retry shortly. It reports whether err was one.
+func writeCodexReleasingErr(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, codex.ErrThreadReleasing):
+		httpx.WriteErr(w, http.StatusConflict, "codex_releasing", err.Error())
+	case errors.Is(err, errDriverSwitching):
+		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
+	default:
+		return false
+	}
+	return true
 }

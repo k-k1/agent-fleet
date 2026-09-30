@@ -40,9 +40,13 @@ var managedDrivers = map[string]agents.Driver{
 	session.KindMuse:     muse.NewDriver(),
 }
 
-// driverOf resolves the managed driver for a session's kind.
+// driverOf resolves the managed driver for a session's kind. codex's comes guarded against a
+// switch to Terminal (switch_guard.go).
 func driverOf(m session.Meta) (agents.Driver, bool) {
 	d, ok := managedDrivers[m.Kind]
+	if ok && m.Kind == session.KindCodex {
+		return switchGuardedDriver{d}, true
+	}
 	return d, ok
 }
 
@@ -98,11 +102,6 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 	if meta.DriverKind() != session.DriverManaged && ((req.Op == "interrupt" && req.DiscardQueue) || req.Op == "remove" || req.Op == "dismiss_discard") {
 		httpx.WriteErr(w, http.StatusConflict, "not_managed",
 			"the queue is held by the CLI in a Terminal session; stop and queue editing are Managed-only")
-		return
-	}
-	// Interrupt included: mid-switch the meta still says managed, and handleManagedTurn's
-	// Resume would take the thread back from the pane that is about to open it.
-	if !codexHandOverGate(w, name) {
 		return
 	}
 	if meta.DriverKind() == session.DriverManaged {

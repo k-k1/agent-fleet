@@ -116,7 +116,9 @@ Session API は**意味論**操作と**端末**操作を分ける。turn・respo
 Agent が managed driver の構造化 API か TUI へのキー入力に振り分ける。`/input` はどちらの driver でも
 プロンプトを取るが、生の `keys`・`seq` は TUI だけ。`/output` は転写を持つ種別が要り、PTY ソケットは
 pane を持つセッションにしか無い。`/driver` は 1 つの会話を停止→再開で別の実行方式へ移す。移し先の
-方式が無い種別は `400 driver_unsupported`、ターンの途中は `409 busy_switch` で断る。
+方式が無い種別は `400 driver_unsupported`、ターンの途中は `409 busy_switch` で断る。codex を managed から
+Terminal へ移せるのは停止後だけで（`409 codex_stop_first`）、共有 app-server がまだ読み込んでいる codex の
+スレッドを Terminal で起動する要求は、`/driver` でも `/start` でも `409 codex_releasing` で断る。
 
 **CP が自分で呼ぶもの。** これらに通じる Console のルートは無い:
 

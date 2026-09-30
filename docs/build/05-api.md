@@ -127,7 +127,10 @@ or as keystrokes to a TUI. `/input` takes a prompt on either driver, but raw `ke
 only on a TUI. `/output` needs a kind that has a transcript, and the PTY socket exists only
 for a session that has a pane. `/driver` moves one conversation between execution methods by
 stopping and resuming it. It refuses a kind that lacks the target method
-(`400 driver_unsupported`) and a session mid-turn (`409 busy_switch`).
+(`400 driver_unsupported`) and a session mid-turn (`409 busy_switch`). codex goes from managed
+to Terminal only once stopped (`409 codex_stop_first`), and a Terminal launch of a codex thread
+the shared app-server still has loaded, by `/driver` or `/start`, is refused with
+`409 codex_releasing`.
 
 **Calls the CP makes itself.** No Console route leads to these:
 

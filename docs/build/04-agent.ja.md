@@ -154,6 +154,11 @@ updated: "2026-09"
 - **driver の切替**（`POST /sessions/{name}/driver`）は、同じ会話を止めてもう一方の driver で再開する。
   両方の driver を持つ kind が対象。ターンの実行中は断る（`409 busy_switch`）。kind・ディレクトリ・
   native の id は保つ。
+  - codex を managed から Terminal へ移すのは停止したセッションだけ（`409 codex_stop_first`）。直接起動の
+    codex TUI は共有 app-server が読み込んでいるスレッドを開けず、サーバーは最後の購読者が離れて約 70 秒後に
+    スレッドを下ろす。そこで `DropHandle` は writer に加えて読み取り専用のオブザーバにもスレッドを手放させ、
+    まだ読み込まれているスレッドを resume する Terminal 起動は `409 codex_releasing` で断る
+    （`codex/release.go`。`thread/loaded/list` を 1 回読む）。
 - **作成時のモデル解決**（`resolveLiveModel`。codex・copilot・opencode・lcpp）は、指定されたモデルを
   live のカタログに照らし、ピッカーの表示名や一意な略称を完全な識別子へ展開する。
   - **曖昧か使えないモデルは、clone や worktree の前に `400 bad_model` で断る**。「起動してから無効な

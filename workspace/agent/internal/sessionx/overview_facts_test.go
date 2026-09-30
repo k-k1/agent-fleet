@@ -17,8 +17,13 @@ import (
 // TestMain turns the overview read off for the whole package: every test that builds a wire
 // session would otherwise start a detached goroutine reading the real ~/.codex, opencode store
 // or copilot log of the machine running the tests. The tests below that need it stub it back.
+//
+// It also hides a real shared codex app-server the workspace may advertise
+// (AF_CODEX_APP_SERVER_ADDR): a codex Terminal launch probes it (codex/release.go), and no test
+// may reach it. The ones that need a server start a fake and set the address themselves.
 func TestMain(m *testing.M) {
 	overviewFactsRead = func(session.Meta) ([]transcript.Turn, bool) { return nil, false }
+	_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
 	os.Exit(m.Run())
 }
 
