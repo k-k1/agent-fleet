@@ -511,3 +511,77 @@ func TestLiveHandle(t *testing.T) {
 		t.Fatalf("LiveHandle = %v, %v, want the resumed handle", got, ok)
 	}
 }
+
+// A resend is answered as accepted and nothing else: not queued, no state change, no turn —
+// whether the session is idle or another turn is running.
+func TestResendLeavesStateAndPumpAlone(t *testing.T) {
+	h, c, _ := startHandle(t, "sess-q-resend")
+	mustSend(t, h, peer("m1", "one"))
+	expectStarted(t, c, "one")
+	c.answer(t)
+	settled(t, h)
+	waitState(t, h, agents.TurnCompleted)
+
+	queued, err := h.SendQueued(peer("m1", "one")) // idle
+	if err != nil || queued {
+		t.Fatalf("idle resend: queued %v, err %v; want false, nil", queued, err)
+	}
+	expectNoStart(t, c)
+	settled(t, h)
+	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnCompleted {
+		t.Errorf("state after an idle resend = %s, want completed", snap.TurnState)
+	}
+
+	mustSend(t, h, member("m2", "two"))
+	expectStarted(t, c, "two")
+	queued, err = h.SendQueued(peer("m1", "one")) // a processed id, while another turn runs
+	if err != nil || queued {
+		t.Fatalf("resend during a turn: queued %v, err %v; want false, nil", queued, err)
+	}
+	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnRunning {
+		t.Errorf("state after a resend during a turn = %s, want running", snap.TurnState)
+	}
+	c.answer(t)
+	expectNoStart(t, c)
+	items, _, _ := settled(t, h)
+	if len(items) != 0 {
+		t.Errorf("items %v", items)
+	}
+	if got := c.seen(); !equal(got, []string{"one", "two"}) {
+		t.Errorf("engine round trips = %q, want one and two once each", got)
+	}
+	waitState(t, h, agents.TurnCompleted)
+}
+
+// A stop landing between accept's unlock and its return: when it takes the input being started
+// (nothing runs, the pump has not taken it), its cancelled verdict must stand — accept's own move
+// to queued must already be behind it.
+func TestAcceptRacingAStopKeepsTheVerdict(t *testing.T) {
+	h, c, _ := startHandle(t, "sess-q-race")
+	h.mu.Lock()
+	h.pumping = true // hold the pump off, so the stop finds the input untaken
+	h.mu.Unlock()
+	var res agents.InterruptResult
+	h.afterAccept = func() {
+		h.afterAccept = nil
+		res, _ = h.Interrupt(agents.InterruptOpts{})
+	}
+	queued, err := h.SendQueued(member("m1", "one"))
+	if err != nil || queued {
+		t.Fatalf("SendQueued = %v, %v", queued, err)
+	}
+	if res.Stop != agents.StopFirst || res.Discard != nil {
+		t.Errorf("stop = %+v, want a first stop that discards nothing", res)
+	}
+	h.mu.Lock()
+	left := h.q.Len()
+	h.pumping = false
+	h.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("the stop left %d entries, want the starting input taken", left)
+	}
+	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnCancelled {
+		t.Errorf("state = %s, want the stop's cancelled", snap.TurnState)
+	}
+	expectNoStart(t, c)
+}

@@ -362,6 +362,9 @@ type threadHandle struct {
 	// beforeCommit, when set, runs between the pump's Take and its Commit with mu released: the
 	// window in which a stop or a removal can still cancel the taken entry. Tests only.
 	beforeCommit func()
+	// afterAccept, when set, runs right after accept releases mu: where a stop can land before
+	// accept returns. Tests only.
+	afterAccept  func()
 	cancel       context.CancelFunc
 	runningSince time.Time
 	inter        *agents.Interaction
@@ -437,19 +440,28 @@ func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 		return false, agents.ErrQuestionPending
 	}
 	// The queue records the ledger when the pump takes the entry (LedgerAtTake).
-	h.q.Accept(in)
+	if _, dup := h.q.Accept(in); dup {
+		// A resend: it is queued or was taken already, so neither the state nor the pump has
+		// anything to learn. Moving to queued here would stick, with no turn to leave it.
+		h.mu.Unlock()
+		return false, nil
+	}
 	start := !h.pumping
 	if start {
 		h.pumping = true
 	}
 	queued = h.running || h.q.Len() > 1
+	// Always move off whatever terminal state the handle was last left in, before accept
+	// returns, so a caller polling Snapshot() right after Send/Steer can never mistake the
+	// PREVIOUS turn's leftover TurnCompleted for THIS one's (runTurn's own
+	// setState(TurnStarting) only runs once the pump goroutine gets to it). Under h.mu: a stop
+	// that lands after the unlock must not have its TurnCancelled overwritten by this.
+	h.state = agents.TurnQueued
 	h.mu.Unlock()
-	// Always move off whatever terminal state the handle was last left in — synchronously,
-	// on the caller's own goroutine — so a caller polling Snapshot() right after Send/Steer
-	// returns can never mistake the PREVIOUS turn's leftover TurnCompleted for THIS one's
-	// (runTurn's own setState(TurnStarting) only runs once the pump goroutine gets to it,
-	// which is not guaranteed to have happened yet when accept returns).
-	h.setState(agents.TurnQueued)
+	if h.afterAccept != nil {
+		h.afterAccept()
+	}
+	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnQueued})
 	if start {
 		go h.pump()
 	}
