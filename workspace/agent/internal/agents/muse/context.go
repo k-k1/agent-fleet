@@ -16,6 +16,7 @@ package muse
 import (
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -59,4 +60,84 @@ func (agentImpl) ContextFill(m session.Meta) *transcript.Context {
 		Window: window,
 		At:     time.Now().UTC().Format(time.RFC3339),
 	}
+}
+
+// spendKeep caps the per-turn spends a handle remembers at what the overview card draws
+// (claude.TokenSpendMax); older turns would only grow the handle and the list payload.
+const spendKeep = 24
+
+// turnSpend is one turn's share of the token trend, folded from its session/tokenUsage
+// events: output summed over every model completion, plus the uncached prompt of the LAST
+// one — each completion re-states the whole prompt, so summing prompts would count the
+// context once per tool call (the Console's spendOf, and sessionx's foldOverviewFacts).
+type turnSpend struct {
+	turnID   string
+	out      int
+	uncached int
+}
+
+// recordTokenUsage folds one session/tokenUsage into the trend. It keys on the turn id rather
+// than on turn/completed, so the trend does not depend on which of the two the host sends
+// first. The uncached prompt is promptTokens minus the cache read: promptTokens is the
+// server's counted-once figure, and inputTokens alone is provider-convention-dependent
+// (ADR 0095 B1-1 measured the cache inside it). Usage with no turn id is not a reply, so it
+// is skipped.
+func (h *threadHandle) recordTokenUsage(p msp.SessionTokenUsageParams) {
+	if p.TurnID == "" {
+		return
+	}
+	read := p.Usage.CachedTokens
+	if p.Usage.CacheReadTokens != nil {
+		read = *p.Usage.CacheReadTokens
+	}
+	uncached := max(int(p.PromptTokens-read), 0)
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
+	if n := len(h.spends); n > 0 && h.spends[n-1].turnID == p.TurnID {
+		h.spends[n-1].out += int(p.Usage.OutputTokens)
+		h.spends[n-1].uncached = uncached
+		return
+	}
+	h.spends = append(h.spends, turnSpend{turnID: p.TurnID, out: int(p.Usage.OutputTokens), uncached: uncached})
+	if len(h.spends) > spendKeep {
+		h.spends = append(h.spends[:0:0], h.spends[len(h.spends)-spendKeep:]...)
+	}
+}
+
+// ManagedSpends returns the newest per-turn spends of a live managed muse session, oldest
+// first; nil when there is no live handle or no turn has reported usage.
+//
+// It is live-only by necessity: AF's item store carries no usage (measured on 1.4.0: zero
+// items with it), and session/resume replays no session/tokenUsage (ADR 0095 B1-1), so a
+// restarted host starts the trend afresh. It is also partial the way decision 10 says:
+// subagent and observer model calls never reach session/tokenUsage.
+func ManagedSpends(name string) []int {
+	h := handleFor(name)
+	if h == nil {
+		return nil
+	}
+	h.ctxMu.Lock()
+	defer h.ctxMu.Unlock()
+	var out []int
+	for _, s := range h.spends {
+		if n := s.out + s.uncached; n > 0 {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// overviewContext is the overview card's fill: the same reading and window fallback as
+// ContextFill, so a card and its mirror draw the same numbers. MSP gives one counted-once
+// figure, so it is a single segment with no cache breakdown.
+func overviewContext(name string) *session.ContextUsage {
+	used, win, ok := ManagedContext(name)
+	if !ok {
+		return nil
+	}
+	c := &session.ContextUsage{Fresh: int(used), Window: MuseDefaultWindow, WindowSource: "estimated"}
+	if win != nil && *win > 0 {
+		c.Window, c.WindowSource = int(*win), "recorded"
+	}
+	return c
 }
