@@ -79,7 +79,7 @@ N worktrees means N copies of every per-project dependency tree, unless the ecos
 - **Node is the expensive one** (300 MB+ per worktree). You may share the parent clone's tree by
   symlink when the lockfiles are identical (`cmp -s` them first) — **link with
   `ln -sfT <parent>/node_modules node_modules`, never a plain `ln -s`**: where `node_modules` is
-  already a symlink (the `/scratch` one below), a plain `ln -s` silently creates the link *inside*
+  already a symlink (an earlier share, or an older `/scratch` link), a plain `ln -s` silently creates the link *inside*
   its target and exits 0, leaving the empty tree in place. `ln -sfT` replaces a symlink and
   refuses a real directory. Link only after checking the parent's tree is really there
   (`[ -e <parent>/node_modules/.package-lock.json ]`): the parent's own `node_modules` may be a
@@ -89,6 +89,7 @@ N worktrees means N copies of every per-project dependency tree, unless the ecos
   `rm -rf node_modules/` (trailing slash) deletes through the link the same way. Remove the link
   with `rm -rf node_modules` (no trailing slash) before any install. `npm install <pkg>` replaces
   the link with a real tree: fine, just no longer shared.
-- When `$AF_WS_SCRATCH` is set, `node_modules` / `target` / `.venv` / `build` are already symlinks
-  into `/scratch` in a fresh checkout — see `/usr/local/share/agent-fleet/notes/environment.md`.
+- When `$AF_WS_SCRATCH` is set, `target` / `build` are already symlinks into `/scratch` in a fresh
+  checkout; `node_modules` and `.venv` are not (npm and `python3 -m venv` undo or refuse the link) —
+  see `/usr/local/share/agent-fleet/notes/environment.md`.
 - Go / Gradle / Maven / Cargo already share one cache; nothing to do.

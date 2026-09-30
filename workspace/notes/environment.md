@@ -41,16 +41,18 @@ regenerable caches live there (Go build cache, Go modules, `uv`); `~/.npm` delib
 home so a rebuild needs no network. Nothing in this section applies when `$AF_WS_SCRATCH` is
 unset — there is no working disk and every path stays where you put it.
 
-- **Build artifacts are relocated for you the moment a working copy is created**: `node_modules`
-  (next to a `package.json`), `target` (`Cargo.toml`/`pom.xml`), `.venv` (`pyproject.toml`) and
-  `build` (`build.gradle`) become symlinks into `/scratch` *before* anything installs into them —
-  that first `npm ci` is exactly the cost being avoided. So an empty `node_modules` symlink in a
-  fresh checkout is expected, not a broken install; but `[ -d node_modules ] || npm install` now
-  thinks the install happened, so **run installs unconditionally**. Anything git tracks is never
-  moved.
-- Move one yourself any time: `af-scratch node_modules` (`af-scratch --status` lists what is
-  relocated). Build output only (`node_modules`, `target`, `dist`, `.venv`) — **never tracked
-  files or uncommitted work**, which an ordinary stop destroys.
+- **Build output is relocated for you the moment a working copy is created**: `target`
+  (`Cargo.toml`/`pom.xml`) and `build` (`build.gradle`) become symlinks into `/scratch` *before*
+  the first build writes to them. So an empty `target` / `build` symlink in a fresh checkout is
+  expected; a `[ -d build ] || …` check now thinks the build happened, so **run builds
+  unconditionally**. Anything git tracks is never moved.
+- **`node_modules` and `.venv` stay in the home.** npm replaces a symlinked `node_modules` with a
+  real directory on every install (and `npm ci` empties the link's target first), so it cannot be
+  relocated; `af-scratch node_modules` refuses. `python3 -m venv .venv` fails on a symlink;
+  `uv venv` / `uv sync` work through one, so `af-scratch .venv` is fine if you use uv.
+- Move one yourself any time: `af-scratch target` (`af-scratch --status` lists what is
+  relocated). Build output only (`target`, `build`, `dist`) — **never tracked files or
+  uncommitted work**, which an ordinary stop destroys.
 
 ## Memory / CPU — how to check your own numbers
 

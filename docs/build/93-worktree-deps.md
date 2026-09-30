@@ -59,9 +59,11 @@ nothing: the two relocation rows key on the variable (submodule seeding does not
 it). Where the variable is set, `/scratch` is task-local and emptied when the task stops.
 
 **The markers `af-scratch --auto` looks for** (searched to depth 3,
-`AF_WS_SCRATCH_AUTO_DEPTH`): `package.json` → `node_modules`; `Cargo.toml` or `pom.xml` →
-`target`; `pyproject.toml` → `.venv`; `build.gradle` / `build.gradle.kts` → `build`. The
-`case` in `af-scratch.sh` holds the real list. An existing symlink is left alone, and an
+`AF_WS_SCRATCH_AUTO_DEPTH`): `Cargo.toml` or `pom.xml` → `target`; `build.gradle` /
+`build.gradle.kts` → `build`. The `case` in `af-scratch.sh` holds the real list.
+`node_modules` and `.venv` are left out on purpose: npm replaces a symlinked
+`node_modules` with a real directory (93.3), and `python3 -m venv .venv` refuses a
+symlink (93.5). An existing symlink is left alone, and an
 existing directory is moved only if `git check-ignore` says it is ignored.
 `AF_WS_SCRATCH_AUTO=0` turns the whole step off.
 
@@ -80,9 +82,9 @@ or more. It is not a guarantee for every project.
 
 | Ecosystem | Shared by default | Grows per worktree | On `ecs`, under `/scratch` | What to do |
 |---|---|---|---|---|
-| Node (npm) | `~/.npm` (the tarball cache only) | `node_modules`, hundreds of MB (93.3) | `node_modules` | symlink to the parent clone **only when the lockfiles match**; otherwise `npm ci --prefer-offline` from the warm cache |
+| Node (npm) | `~/.npm` (the tarball cache only) | `node_modules`, hundreds of MB (93.3) | nothing — npm undoes a symlink (93.3) | symlink to the parent clone **only when the lockfiles match**; otherwise `npm ci --prefer-offline` from the warm cache |
 | Go | `~/go/pkg/mod` and `~/.cache/go-build` | effectively nothing | both caches, when the disk is ≥ 30 GiB | nothing. **The pressure is memory** — cap the test parallelism |
-| Python | `~/.cache/uv`; `~/.cache/pip` (downloads only — a bare `pip install` lands in the shared `~/.local`, 93.5) | `.venv`, tens to hundreds of MB (estimate) | `~/.cache/uv` when the disk is ≥ 30 GiB; `.venv` when there is a `pyproject.toml` | one `.venv` per worktree with `uv` |
+| Python | `~/.cache/uv`; `~/.cache/pip` (downloads only — a bare `pip install` lands in the shared `~/.local`, 93.5) | `.venv`, tens to hundreds of MB (estimate) | `~/.cache/uv` when the disk is ≥ 30 GiB; `.venv` only by hand (`af-scratch .venv`, with uv) | one `.venv` per worktree with `uv` |
 | JVM | `~/.gradle` and `~/.m2` | `build/` or `target/` | `build/` or `target/` | nothing — just be careful how you stop the daemon |
 | Rust | `~/.cargo` (registry) | `target/`, gigabytes (estimate) | `target/` | keep it per worktree; a shared target directory serialises parallel builds (93.7) |
 
@@ -126,8 +128,17 @@ not re-run these.
 - `npm install <pkg>` silently replaces the link with a real tree. Nothing breaks, but
   that worktree no longer shares and carries its own copy.
 
-**Where `af-scratch --auto` has already made `node_modules` a symlink** (a new clone or
-worktree with `$AF_WS_SCRATCH` set, 93.1), a plain `ln -s` shares
+**npm does not keep a symlinked `node_modules` of its own choosing.** Arborist
+(`_createSparseTree` in `@npmcli/arborist`'s `reify.js`) renames aside any symlink on the
+path from a package to the project root and creates a real directory. **Measured** with
+npm 10.9.9 on 2026-09-30: with `node_modules` → an empty directory, `npm ci` and
+`npm install` both exit 0 and leave a real `node_modules`; with the target already
+populated, even a no-op `npm install` replaces the link, and `npm ci` empties the target
+first. That is why `af-scratch` no longer relocates `node_modules` (93.1). A link to the
+parent's tree is the one symlink worth having, and it lasts only until the next install.
+
+**Where `node_modules` is already a symlink** (a clone or worktree made while
+`af-scratch --auto` still pre-created one), a plain `ln -s` shares
 nothing: `ln -s <target> node_modules` onto an existing symlink to a directory creates the
 new link *inside* that directory and exits 0. **Measured** with plain directories on 2026-09-29
 (GNU coreutils `ln`). Remove the pre-created link first (`rm -rf node_modules`, no
@@ -177,10 +188,12 @@ uv venv && uv pip install -r requirements.txt
 uv's documented default on Linux is to hardlink packages from its cache, so a second
 worktree costs little disk — when the cache and the `.venv` are on the same file system;
 across file systems uv falls back to copying. That is uv's documentation, not a
-measurement here. It matters on `ecs`: with a working disk under 30 GiB the uv cache
-stays in the home while a relocated `.venv` is on `/scratch`. Note also that
-`af-scratch --auto` pre-creates `.venv` only for a `pyproject.toml`; a project with only
-a `requirements.txt` needs `af-scratch .venv` by hand.
+measurement here. It matters on `ecs` only when you relocate `.venv` by hand
+(`af-scratch .venv`): with a working disk under 30 GiB the uv cache stays in the home
+while that `.venv` is on `/scratch`. Otherwise both stay in the home. `af-scratch --auto` does
+not pre-create `.venv`: `python3 -m venv .venv` fails on a symlink ("Unable to create
+directory", Python 3.13.5). `uv venv` and `uv sync` work through one (uv 0.11.28, measured
+2026-09-30), so with uv `af-scratch .venv` by hand is fine.
 
 **Never copy or symlink a virtual environment between worktrees** — it has absolute paths
 baked in.

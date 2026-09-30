@@ -53,9 +53,10 @@ worktree 間で依存ツリーを勝手にリンクする仕組みは無い。`n
 退避の行は変数を見る（サブモジュールの種まきは変数に依らない）。変数がある環境では `/scratch` は
 タスクローカルで、タスク停止で空になる。
 
-**`af-scratch --auto` が見る目印**（深さ 3 まで・`AF_WS_SCRATCH_AUTO_DEPTH`）: `package.json` →
-`node_modules`、`Cargo.toml` か `pom.xml` → `target`、`pyproject.toml` → `.venv`、`build.gradle` /
-`build.gradle.kts` → `build`。正の一覧は `af-scratch.sh` の `case` にある。既存の symlink には触らず、
+**`af-scratch --auto` が見る目印**（深さ 3 まで・`AF_WS_SCRATCH_AUTO_DEPTH`）: `Cargo.toml` か
+`pom.xml` → `target`、`build.gradle` / `build.gradle.kts` → `build`。正の一覧は `af-scratch.sh` の
+`case` にある。`node_modules` と `.venv` はわざと外している: npm は symlink の `node_modules` を
+実体ディレクトリに置き換え（93.3）、`python3 -m venv .venv` は symlink を拒む（93.5）。既存の symlink には触らず、
 既存のディレクトリは `git check-ignore` が無視対象と言うときだけ移す。`AF_WS_SCRATCH_AUTO=0` でこの
 処理ごと切れる。
 
@@ -72,9 +73,9 @@ worktree 間で依存ツリーを勝手にリンクする仕組みは無い。`n
 
 | エコシステム | 既定で共有されるもの | worktree 毎に増えるもの | `ecs` で `/scratch` に載るもの | 作法 |
 |---|---|---|---|---|
-| Node (npm) | `~/.npm`（tarball キャッシュのみ）| `node_modules` 数百MB（93.3）| `node_modules` | lock 一致時**だけ**親クローンへ symlink。合わないなら温まったキャッシュから `npm ci --prefer-offline` |
+| Node (npm) | `~/.npm`（tarball キャッシュのみ）| `node_modules` 数百MB（93.3）| なし——npm が symlink を戻す（93.3）| lock 一致時**だけ**親クローンへ symlink。合わないなら温まったキャッシュから `npm ci --prefer-offline` |
 | Go | `~/go/pkg/mod` と `~/.cache/go-build` | 実質なし | ディスクが 30 GiB 以上なら両キャッシュ | 何もしない。**効くのはメモリ側**——テストの並列度を絞る |
-| Python | `~/.cache/uv`、`~/.cache/pip`（ダウンロードのみ——素の `pip install` の入れ先は共有の `~/.local`、93.5）| `.venv` 数十〜数百MB（見積もり）| ディスクが 30 GiB 以上なら `~/.cache/uv`。`pyproject.toml` があれば `.venv` | `uv` で WT 毎に `.venv` を作る |
+| Python | `~/.cache/uv`、`~/.cache/pip`（ダウンロードのみ——素の `pip install` の入れ先は共有の `~/.local`、93.5）| `.venv` 数十〜数百MB（見積もり）| ディスクが 30 GiB 以上なら `~/.cache/uv`。`.venv` は手で（`af-scratch .venv`・uv を使うとき）| `uv` で WT 毎に `.venv` を作る |
 | JVM | `~/.gradle` と `~/.m2` | `build/` か `target/` | `build/` か `target/` | そのまま。daemon の止め方だけ注意 |
 | Rust | `~/.cargo`（registry）| `target/` 数GB（見積もり）| `target/` | WT 毎のまま。共有 target ディレクトリは並列ビルドを直列化する（93.7）|
 
@@ -112,8 +113,16 @@ notes/worktrees.md にある。どちらも素の `ln -s` ではなく `ln -sfT`
 - `npm install <pkg>` はリンクを実体ツリーへ黙って置き換える。壊れはしないが、その worktree は
   共有をやめて自前のコピーを抱える。
 
-**`af-scratch --auto` が `node_modules` を既に symlink にしている場合**（`$AF_WS_SCRATCH` がある環境の
-新しい clone か worktree、93.1）、素の `ln -s` は何も共有しない。ディレクトリを指す既存の
+**npm は自分で選んだのでない symlink の `node_modules` を残さない。** Arborist
+（`@npmcli/arborist` の `reify.js` の `_createSparseTree`）は、パッケージからプロジェクトのルートまでの
+途中にある symlink を脇へ退け、実体ディレクトリを作る。**実測**（2026-09-30・npm 10.9.9）: `node_modules`
+→ 空ディレクトリの状態で `npm ci` も `npm install` も終了コード 0 で実体の `node_modules` を残す。リンク先が
+既に埋まっていても、何もしない `npm install` ですらリンクを置き換え、`npm ci` は先にリンク先を空にする。
+だから `af-scratch` は `node_modules` を退避しない（93.1）。持つ価値のある symlink は親の実体へのリンク
+だけで、それも次の install までしかもたない。
+
+**`node_modules` が既に symlink になっている場合**（`af-scratch --auto` がまだ先回りで作っていた頃の
+clone か worktree）、素の `ln -s` は何も共有しない。ディレクトリを指す既存の
 symlink に対して `ln -s <target> node_modules` を打つと、新しいリンクはそのディレクトリの*中*に作られ、終了コードは 0 に
 なる。**実測**（2026-09-29・素のディレクトリで・GNU coreutils の `ln`）。先に作られたリンクを外してから
 張ること（`rm -rf node_modules`、スラッシュ無し）。`ln -sfT` は symlink なら置き換え、実体ディレクトリ
@@ -155,10 +164,12 @@ uv venv && uv pip install -r requirements.txt
 
 uv の Linux での既定はキャッシュからの hardlink なので、2 個目の worktree はディスクをあまり食わない
 ——キャッシュと `.venv` が同じファイルシステムにある場合に限る。ファイルシステムを跨ぐと uv はコピーに
-落ちる。これは uv のドキュメントの記述で、ここでの実測ではない。`ecs` で効いてくる: 作業ディスクが
-30 GiB 未満だと uv のキャッシュはホームに残り、退避された `.venv` は `/scratch` にある。また
-`af-scratch --auto` が `.venv` を先回りで作るのは `pyproject.toml` があるときだけで、`requirements.txt`
-だけのプロジェクトは `af-scratch .venv` を手で打つ。
+落ちる。これは uv のドキュメントの記述で、ここでの実測ではない。`ecs` で効いてくるのは `.venv` を
+手で退避した（`af-scratch .venv`）ときだけ: 作業ディスクが 30 GiB 未満だと uv のキャッシュはホームに
+残り、その `.venv` は `/scratch` にある。手で退避しなければ両方ともホームにある。
+`af-scratch --auto` は `.venv` を先回りで作らない: `python3 -m venv .venv` は symlink だと失敗する
+（"Unable to create directory"・Python 3.13.5）。`uv venv` と `uv sync` は symlink 越しでも動く
+（2026-09-30 実測・uv 0.11.28）ので、uv を使うなら `af-scratch .venv` を手で打ってよい。
 
 **仮想環境を worktree 間でコピー / symlink してはいけない**（絶対パスを埋め込んでいる）。
 
