@@ -159,50 +159,46 @@ type foreignSkill struct {
 	Path        string
 }
 
-// foreignSkills scans every foreignSkillConvs tree from cwd up to the git root (the same
-// boundary projectInstructions uses) for a SKILL.md, skipping any marked `user-invocable:
-// false` in its frontmatter — the same flag session_skills.go's appendForeignSkills honours.
+// foreignSkills scans every foreignSkillConvs tree in cwd for a SKILL.md, skipping any marked
+// `user-invocable: false` in its frontmatter — the same flag session_skills.go's
+// appendForeignSkills honours. cwd alone, not the chain up to the git root that
+// projectInstructions reads: the model has to open the file with the read tool, and that tool
+// refuses anything outside cwd (resolvePath), so a tree above it would be advertised and then
+// fail to open. For the same reason a SKILL.md that is a symlink out of cwd is skipped.
 func foreignSkills(cwd string) []foreignSkill {
 	if cwd == "" {
 		return nil
 	}
 	seen := map[string]bool{}
 	var out []foreignSkill
-	for _, dir := range chainUpToGitRoot(cwd) {
-		for _, conv := range foreignSkillConvs {
-			root := filepath.Join(dir, filepath.FromSlash(conv))
-			ents, err := os.ReadDir(root)
+	for _, conv := range foreignSkillConvs {
+		root := filepath.Join(cwd, filepath.FromSlash(conv))
+		ents, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(root, e.Name(), "SKILL.md"))
 			if err != nil {
 				continue
 			}
-			for _, e := range ents {
-				if !e.IsDir() {
-					continue
-				}
-				b, err := os.ReadFile(filepath.Join(root, e.Name(), "SKILL.md"))
-				if err != nil {
-					continue
-				}
-				fm := skillFrontmatter(string(b))
-				if isDisabledSkill(fm["user-invocable"]) {
-					continue
-				}
-				name := fm["name"]
-				if name == "" {
-					name = e.Name()
-				}
-				if name == "" || seen[name] {
-					continue
-				}
-				seen[name] = true
-				path := conv + "/" + e.Name() + "/SKILL.md"
-				if filepath.Clean(dir) != filepath.Clean(cwd) {
-					// A tree above cwd needs an absolute path: relative-to-cwd would resolve
-					// against the wrong directory once the read tool actually opens it.
-					path = filepath.Join(root, e.Name(), "SKILL.md")
-				}
-				out = append(out, foreignSkill{Name: name, Description: fm["description"], Path: path})
+			fm := skillFrontmatter(string(b))
+			if isDisabledSkill(fm["user-invocable"]) {
+				continue
 			}
+			name := fm["name"]
+			if name == "" {
+				name = e.Name()
+			}
+			path := conv + "/" + e.Name() + "/SKILL.md"
+			if name == "" || seen[name] || !Readable(cwd, path) {
+				continue
+			}
+			seen[name] = true
+			out = append(out, foreignSkill{Name: name, Description: fm["description"], Path: path})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
