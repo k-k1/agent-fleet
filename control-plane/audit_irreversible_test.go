@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -230,5 +232,77 @@ func TestEngineModelPurgeRefusesWithoutAnAuditRecord(t *testing.T) {
 	// Forgetting without ?purge=1 is not gated on the audit log.
 	if code, out := adminModel(t, a, "DELETE", "image", "tmp-model", ""); code != http.StatusOK {
 		t.Errorf("forget without purge and the audit log down = %d %v, want 200", code, out)
+	}
+}
+
+// failingSSMWriter refuses every publish of the active set.
+type failingSSMWriter struct{}
+
+func (failingSSMWriter) PutParameter(context.Context, *ssm.PutParameterInput, ...func(*ssm.Options)) (*ssm.PutParameterOutput, error) {
+	return nil, errors.New("ssm: throttled")
+}
+
+// catalogUnreadableStore fails the catalogue read the purge takes its S3 keys from.
+type catalogUnreadableStore struct{ store.Store }
+
+func (catalogUnreadableStore) ListEngineModels(context.Context, string) ([]store.EngineModel, error) {
+	return nil, errors.New("catalogue: connection reset")
+}
+
+// One purge request is one request row and one outcome row, and the outcome says what the
+// client was answered: 200 with nothing else, 502 when the active set could not be
+// published, and "unknown" — not "no file" — when the catalogue could not be read.
+func TestEngineModelPurgeWritesOnePairWithTheAnsweredOutcome(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		setup      func(a *engineAdminAPI, e *engineRuntimeState)
+		wantStatus int
+		wantDetail string
+	}{
+		{"published", func(*engineAdminAPI, *engineRuntimeState) {}, http.StatusOK, "no ingest task"},
+		{"publish fails", func(_ *engineAdminAPI, e *engineRuntimeState) {
+			e.ssm, e.activeParam = failingSSMWriter{}, "/af/engines/image/active"
+		}, http.StatusBadGateway, "the active set was not published: "},
+		{"catalogue unreadable", func(a *engineAdminAPI, _ *engineRuntimeState) {
+			a.mgr.store = catalogUnreadableStore{a.mgr.store}
+		}, http.StatusOK, "whether it had files is unknown"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, e, st := engineModelAdminAPI(t)
+			if err := st.PutEngineModel(t.Context(), store.EngineModel{Role: "image", ID: "tmp-model", Kind: "checkpoint",
+				BaseModel: "flux1", Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/tmp.safetensors"}}}); err != nil {
+				t.Fatal(err)
+			}
+			e.catalog.invalidate()
+			c.setup(&a, e)
+
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest("DELETE", "/api/admin/engines/image/models/tmp-model?purge=1", nil)
+			r.SetPathValue("key", "image")
+			r.SetPathValue("id", "tmp-model")
+			a.deleteModel(rec, r, store.Identity{ID: "u1"})
+			if rec.Code != c.wantStatus {
+				t.Fatalf("purge = %d %s, want %d", rec.Code, rec.Body.String(), c.wantStatus)
+			}
+			logs, err := st.ListAuditByTenant(t.Context(), "", 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var req, out []store.AuditLog
+			for _, l := range logs {
+				switch l.Action {
+				case "engine.image.model.requested":
+					req = append(req, l)
+				case "engine.image.model":
+					out = append(out, l)
+				}
+			}
+			if len(req) != 1 || len(out) != 1 {
+				t.Fatalf("audit rows = %+v, want one request and one outcome", logs)
+			}
+			if out[0].HTTPStatus != c.wantStatus || !strings.Contains(out[0].Detail, c.wantDetail) {
+				t.Errorf("outcome = %d %q, want %d containing %q", out[0].HTTPStatus, out[0].Detail, c.wantStatus, c.wantDetail)
+			}
+		})
 	}
 }

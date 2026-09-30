@@ -1645,10 +1645,14 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	// getting one (ADR 0072 decision 7). The ingest task does it, in MODE=delete, because that
 	// task is the one principal in the deployment allowed to write in that bucket at all.
 	purged := ""
-	if purge != nil && len(keys) == 0 {
-		purge.Done(r.Context(), "the row held no file to delete", http.StatusOK)
-	}
-	if purge != nil && len(keys) > 0 {
+	switch {
+	case purge != nil && len(keys) == 0 && lerr != nil:
+		// No keys because the catalogue could not be read, not because the row had none.
+		purged = "the row is gone; whether it had files is unknown: the catalogue could not be read (" +
+			lerr.Error() + ")"
+	case purge != nil && len(keys) == 0:
+		purged = "the row held no file to delete"
+	case purge != nil:
 		// 🔴 A file may belong to more than one row, and decision 2 says so on purpose:
 		// `text_encoders/` is SHARED — SD3.5 and FLUX.1 read the same T5-XXL and CLIP-L, so one
 		// ingest is pointed at from both rows' `files[]`. Handing this row's keys straight to
@@ -1686,15 +1690,23 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 				}
 			}
 		}
-		purge.Done(r.Context(), purged, http.StatusOK)
 	}
 	e.catalog.invalidate()
 	// A deleted row may have been enabled, so the box's active set really has changed.
 	if perr := e.publishActiveSet(r.Context()); perr != nil {
+		if purge != nil {
+			purge.Done(r.Context(), purged+"; the active set was not published: "+perr.Error(), http.StatusBadGateway)
+		}
 		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEnginePublishFailed, perr.Error()})
 		return
 	}
-	a.audit(r.Context(), ident, "engine."+key+".model", "forget "+id)
+	// A purge's outcome row is its whole record; a second "forget" row would make one request
+	// read as two.
+	if purge != nil {
+		purge.Done(r.Context(), purged, http.StatusOK)
+	} else {
+		a.audit(r.Context(), ident, "engine."+key+".model", "forget "+id)
+	}
 	go notifyEngineCatalogChanged(context.WithoutCancel(r.Context()), a.mgr, key)
 	row := a.row(r.Context(), e)
 	if purged != "" {
