@@ -93,9 +93,11 @@ in the Console.
    you to confirm reality in log-only first before switching.
 
 > Current implementation scope: **observation (log-only) and allowlist management work, and the
-> proxy itself can block (enforce)**. Setting `AF_EGRESS_PROXY_ADDR` on the Control Plane injects
-> `http_proxy` / `https_proxy` / `no_proxy` into every workspace container (off by default), so
-> programs that honour those variables go through the proxy. What is **not built yet** is forcing
+> proxy itself can block (enforce)**. On the compose (Docker) target, setting `AF_EGRESS_PROXY_ADDR`
+> on the Control Plane injects `http_proxy` / `https_proxy` / `no_proxy` (and their upper-case forms)
+> into every workspace container (off by default), so programs that honour those variables go through
+> the proxy. The ecs / ecs-ec2 targets do not pass this setting on to workspaces. What is **not built
+> yet** is forcing
 > traffic through it — an internal network or security-group egress rule that leaves the proxy as
 > the only way out, and templates that run the proxy — so a process that ignores the variables
 > still goes straight out, and **switching to enforce does not yet constrain a workspace**

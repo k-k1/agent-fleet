@@ -38,10 +38,10 @@ configure a name, a description (the greeting when a conversation starts), a per
 (instructions on role and tone), the agent / model to use, and **tool permissions**.
 
 If you leave the model blank, new conversations use the model set for that agent under ⚙ Settings →
-Assistant → **Assistant models** ([12](12-settings.md)); when that is "Recommended", a fast, low-cost
-model is picked from what your account lists — for example the newest Luna for codex, and for
-opencode GLM when your account offers it, otherwise Nemotron (the full list is in
-[06](06-agents.md)). If you specify
+Assistant → **Assistant models** ([12](12-settings.md)); when that is "Recommended", each agent's own
+default rule picks a fast, low-cost model — usually the newest Luna for codex, and for opencode GLM
+when your account lists it, otherwise Nemotron. Models you excluded are skipped, and when nothing
+qualifies the CLI's own default is used (details in [06](06-agents.md)). If you specify
 a model here, that choice wins, and the model of a conversation you've already started
 doesn't change afterwards.
 
