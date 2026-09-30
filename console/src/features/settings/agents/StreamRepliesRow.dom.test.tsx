@@ -1,6 +1,7 @@
-// Settings > Agents > Claude > "Stream replies in the chat view" (#1250). It is on for a kind
-// nobody has touched, and switching it writes an explicit per-kind value that the mirror reads
-// (settings.streamReplies) without touching any other kind.
+// Settings > Agents > Claude > "Stream replies in the chat view" (#1250, #1274). It is typewriter
+// for a kind nobody has touched, a stored boolean from the on/off days reads as off / typewriter,
+// and choosing writes an explicit per-kind mode that the mirror reads (settings.streamReplies)
+// without touching any other kind.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -42,18 +43,33 @@ afterEach(() => {
 });
 
 describe("StreamRepliesRow", () => {
-  it("shows on for an untouched kind", () => {
+  it("shows typewriter for an untouched kind", () => {
     render();
-    expect(button(t("common.on")).classList.contains("active")).toBe(true);
-    expect(streamReplies(getSettings(), "claude")).toBe(true);
+    expect(button(t("agents.stream_replies_typewriter")).classList.contains("active")).toBe(true);
+    expect(button(t("common.off")).classList.contains("active")).toBe(false);
+    expect(streamReplies(getSettings(), "claude")).toBe("typewriter");
   });
 
-  it("switches the kind off and on again, leaving other kinds alone", () => {
+  it("shows a stored boolean as off / typewriter", () => {
+    setSetting("streamReplies", { claude: false });
     render();
+    expect(button(t("common.off")).classList.contains("active")).toBe(true);
+    act(() => root?.unmount());
+    setSetting("streamReplies", { claude: true });
+    render();
+    expect(button(t("agents.stream_replies_typewriter")).classList.contains("active")).toBe(true);
+  });
+
+  it("writes the chosen mode for the kind alone", () => {
+    render();
+    act(() => button(t("agents.stream_replies_lines")).click());
+    expect(getSettings().streamReplies).toEqual({ codex: false, claude: "lines" });
+    expect(streamReplies(getSettings(), "claude")).toBe("lines");
+    expect(button(t("agents.stream_replies_lines")).classList.contains("active")).toBe(true);
     act(() => button(t("common.off")).click());
-    expect(getSettings().streamReplies).toEqual({ codex: false, claude: false });
-    expect(streamReplies(getSettings(), "claude")).toBe(false);
-    act(() => button(t("common.on")).click());
-    expect(getSettings().streamReplies).toEqual({ codex: false, claude: true });
+    expect(getSettings().streamReplies).toEqual({ codex: false, claude: "off" });
+    expect(streamReplies(getSettings(), "claude")).toBe("off");
+    act(() => button(t("agents.stream_replies_typewriter")).click());
+    expect(getSettings().streamReplies).toEqual({ codex: false, claude: "typewriter" });
   });
 });

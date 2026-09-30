@@ -215,8 +215,10 @@ export const settings = {
   "agents.expand_thinking_note":
     "オンにすると、ミラーの「思考」を最初から開いた状態で表示します。オフ（既定）では畳んだまま出るので、見出しをクリックすると読めます。表示だけの設定で、エージェントの動作は変わりません。",
   "agents.stream_replies": "返答をストリーミング表示",
+  "agents.stream_replies_lines": "行ごと",
+  "agents.stream_replies_typewriter": "文字送り",
   "agents.stream_replies_note":
-    "オン（既定）にすると、Claude が書いている途中の返答をミラーに行ごとに表示します。オフにすると、書き終えた返答だけを表示します。表示だけの設定で、ターミナルとエージェントの動作は変わりません。",
+    "Claude が書いている途中の返答をミラーにどう表示するか。文字送り（既定）は届いた文を 1 文字ずつ表示し、行ごとは届いた行をそのまま表示し、オフは書き終えた返答だけを表示します。表示だけの設定で、ターミナルとエージェントの動作は変わりません。",
   "agents.rtk_row": "RTK（トークン節約）",
   "agents.rtk_unavailable": "このワークスペースに rtk がありません",
   "agents.settings": "設定",

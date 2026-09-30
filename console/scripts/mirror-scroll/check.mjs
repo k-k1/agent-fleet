@@ -58,6 +58,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //                    grown tall, the transcript must not float off the bottom on each keystroke
 //                    (measured: 154px from one keystroke). Checked with scroll anchoring disabled
 //                    (see the note on runTyping).
+//   live           - a session mid-turn, with the reply it is still writing (?live=1) shown in
+//                    typewriter mode (#1274). Between two polls the block must pass through
+//                    lengths that are neither poll's text, and must only ever grow.
 const SCENARIOS = [
   { name: "long", turns: 200, images: 3, imgdelay: 3000, mermaid: 0 },
   { name: "mermaid", turns: 12, images: 0, imgdelay: 0, mermaid: 3 },
@@ -67,6 +70,7 @@ const SCENARIOS = [
   { name: "shared", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "shared", shared: true },
   { name: "typing", turns: 60, images: 0, imgdelay: 0, mermaid: 0, mode: "typing" },
   { name: "working", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "working", working: true },
+  { name: "live", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "live", working: true, live: true },
   // 120 turns = 240 jsonl lines served 120 at a time, so the tail page is 60 turns: enough height
   // for the prepend to matter, little enough to read up through within a scenario's time budget.
   { name: "paging", turns: 120, images: 0, imgdelay: 0, mermaid: 0, mode: "paging", paging: true, pagesize: 120 },
@@ -523,6 +527,54 @@ async function runWorking(cdp) {
   };
 }
 
+// live: the reply claude is still writing, typed out (#1274). The stub adds one whole line to
+// liveText per poll (~1.2 s apart); typewriter mode reveals it character by character in between.
+// Sampled every 100 ms: a sample is "mid-line" when the block's text does not end on a line the
+// stub wrote whole, and that is the feature — a build that shows each poll at once never produces
+// one (it is what the previous, line-by-line render did, and what --mode lines still does). The
+// other contract is that the text only grows between two samples that both have the block: the
+// stub's idle round (poll 3) takes the block away for one poll, so a sample without it resets
+// the comparison rather than counting as a shrink.
+async function runLive(cdp) {
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+  await sleep(1500); // the first poll after opening
+  // Main-thread cost of the reveal, for the record: every frame re-parses the block's Markdown,
+  // and this is what a phone pays for the look. Under the scenario's CPU throttle (--cpu).
+  await cdp.send("Performance.enable");
+  const script = async () => (await cdp.send("Performance.getMetrics")).metrics.find((m) => m.name === "ScriptDuration")?.value ?? 0;
+  const script0 = await script();
+  const LIVE_TEXT = `(() => {
+    const el = document.querySelector(".mirror-live");
+    if (!el) return null;
+    return { typewriter: el.classList.contains("typewriter"), text: el.textContent.replace(/▍/g, "").replace(/\\s+$/, "") };
+  })()`;
+  const samples = [];
+  const lens = [];
+  let shrinks = 0;
+  let absent = 0;
+  let typewriter = false;
+  let prev = null;
+  for (let i = 0; i < 70; i++) {
+    await sleep(100);
+    const s = await cdp.ev(LIVE_TEXT);
+    if (!s) { absent++; prev = null; continue; }
+    typewriter = typewriter || s.typewriter;
+    const len = s.text.length;
+    lens.push(len);
+    if (prev !== null && len < prev) shrinks++;
+    prev = len;
+    samples.push({ len, mid: len > 0 && !s.text.endsWith("）") });
+  }
+  const scriptS = (await script()) - script0;
+  const mid = samples.filter((s) => s.mid).length;
+  const distinct = new Set(lens).size;
+  const ok = typewriter && samples.length > 20 && mid >= 5 && shrinks === 0 && distinct >= 8;
+  return {
+    ok,
+    note: `typewriter=${typewriter} samples=${samples.length} (absent ${absent})  mid-line=${mid}  distinct lengths=${distinct}  shrinks=${shrinks}  lengths ${lens[0]}→${lens[lens.length - 1]}  script ${scriptS.toFixed(2)}s/7s (cpu x${CPU})`,
+  };
+}
+
 // paging: read up into a long session until "load earlier messages" fires, and stay on the same
 // content while the prepended page lays out.
 //
@@ -667,7 +719,7 @@ async function runScenario(sc, chrome) {
     "--turns", String(sc.turns), "--images", String(sc.images), "--imgdelay", String(sc.imgdelay),
     "--mermaid", String(sc.mermaid), "--shared", sc.shared ? "1" : "0",
     "--paging", sc.paging ? "1" : "0", "--pagesize", String(sc.pagesize || 400),
-    "--working", sc.working ? "1" : "0", "--split", sc.split ? "1" : "0", "--asks", String(sc.asks || 1), "--longans", String(sc.longans || 1)], { stdio: ["ignore", "ignore", "inherit"] });
+    "--working", sc.working ? "1" : "0", "--live", sc.live ? "1" : "0", "--split", sc.split ? "1" : "0", "--asks", String(sc.asks || 1), "--longans", String(sc.longans || 1)], { stdio: ["ignore", "ignore", "inherit"] });
   try {
     await fetchJSON(`${BASE}api/whoami`);
     const results = [];
@@ -705,6 +757,7 @@ async function runScenario(sc, chrome) {
         : sc.mode === "shared" ? await runShared(cdp)
         : sc.mode === "typing" ? await runTyping(cdp)
         : sc.mode === "working" ? await runWorking(cdp)
+        : sc.mode === "live" ? await runLive(cdp)
         : sc.mode === "paging" ? await runPaging(cdp)
         : sc.mode === "readup" ? await runReadUp(cdp)
         : await runLanding(cdp);
