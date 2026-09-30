@@ -53,10 +53,12 @@ messages, and what claude and codex did in the measured runs.
   replaces `KeepOnInterrupt`, which only said "not the member". Today the origin never reaches the driver, so
   **every place that builds a `TurnInput` sets it**:
   - `/turn` start and steer (the Console's composer): member;
-  - `/input`: peer, operator, schedule, or spawn, as `badgeOriginOf` decides for the badge today;
+  - `/input`: peer, operator, schedule, or spawn, as `badgeOriginOf` decides for the badge today, and member
+    when it decides nothing (an unmarked send);
   - `injectSessionPrompt` / `injectManagedPrompt`: shared by the chat bridge (bridge) and auto-resume
     (`abort_resume.go`, auto-resume), so it takes the origin as a parameter;
-  - `create_session`'s initial prompt: spawn or operator, as `noteCreateOrigin` records it;
+  - `create_session`'s initial prompt: along `noteCreateOrigin`'s branches, operator (`report_to`), schedule
+    (manual runs included), spawn, or member (the ordinary Console launch and a handoff);
   - the resend of a carried answer (`sendManagedPrompt`): member.
 
   **Member input** in decisions 2 and 4 is the member and bridge origins: what a person typed as this session's
@@ -67,8 +69,8 @@ messages, and what claude and codex did in the measured runs.
   adds a failed turn with the error).
 - An input that waits **behind a running turn** is queued, wherever it waits: in the driver's queue, held by the
   pump (opencode, behind another client's turn, not yet sent), or in muse's host-side queue (sent). A first stop lets
-  it continue; a second stop stops or discards it. Only input that has not been sent can be removed or returned
-  (decisions 4 and 5).
+  it continue; a second stop stops or discards it. Only input that is still cancellable (decision 3) can be
+  removed or returned (decisions 4 and 5).
 
 ### Decision 2: a second stop ends the stop episode and discards the rest
 
@@ -112,17 +114,20 @@ it works without timing.
   takes the lock first cancels the entry, and it never starts. A discard that comes after the commit treats the
   entry as sent. Checking a mark and then sending outside the lock is not enough, because a discard can land
   between the two; that includes opencode's `abortAsked` check today.
-- A committed entry is stopped on a best-effort basis: as soon as the runtime names its turn (muse's
-  `stopStarting`, codex's `stopStart`), or with the runtime's own cancel once the call is under way (ACP
-  `session/cancel`, opencode's abort).
+- A stop that finds an entry committed marks it **stop-pending**, and the stop is delivered only once the runtime
+  holds the input, never before: a cancel that overtook the input would find nothing and let it run. The point at
+  which the runtime holds it is per driver: when the runtime names the turn (muse's `stopStarting` at
+  `turn/started`, codex's `stopStart` at the `turn/start` answer); once the `session/prompt` request has been
+  written (ACP, then `session/cancel`); and once serve reports the session busy with it (opencode, then its abort).
+  The pump checks the mark at that point. So committed input is always stopped, but it can take its first step
+  first.
 - **It is always reachable** in a Managed session that is running or has anything queued. That includes the time a
   question or approval card is shown, and it does not depend on the card's Cancel. Today the stop button is not
   rendered while a question is pending, and a codex question can be raised with input already queued behind it.
 - **What the brake guarantees**: no input that was still uncommitted when the discard took the lock starts after
-  it. Committed input and input already sent to the runtime are stopped, on a best-effort basis, as soon as the
-  runtime names its turn (muse at `turn/started`, codex at the `turn/start` answer), so it can take its first step
-  before the stop lands. muse input queued on the host side
-  behind a turn this driver did not start is outside the guarantee until `turn/unqueue` is measured.
+  it. Committed input is stopped as soon as the runtime holds it (above), so it can take its first step before the
+  stop lands. muse input queued on the host side behind a turn this driver did not start is outside the guarantee
+  until `turn/unqueue` is measured.
 
 ### Decision 4: what is discarded comes back, from the driver
 
@@ -133,7 +138,8 @@ session's messages payload. The
 `/turn interrupt` response carries the same list, but the Console does not depend on it: a response lost to a closed
 tab or a dropped connection is recovered by the next poll.
 
-Each entry carries its text, its attachments and its origin (decision 1). Only unsent input is here.
+Each entry carries its text, its attachments and its origin (decision 1). Only input that was still cancellable
+(decision 3) when it was discarded is here.
 
 The Console shows a notice, for example "Stopped. 2 queued messages were discarded", with an action that puts the
 discarded **member input** back into the input box, one message after another. It never sends. Discarded input of
@@ -152,12 +158,14 @@ the counterpart of claude's "Press up to edit queued messages", and the precise 
 
 - Every queued entry has an id, and the id travels to the bubble; today `queuedPrompts` carries text only. The id is
   the entry's `ClientMessageID` where there is one, and a driver-minted id otherwise.
-- A new `/turn` op removes an entry by id **only if it has not been sent**, atomically against the pump. It returns
-  the entry, or `already_started` when the pump got there first. A stale bubble in another tab gets the same answer.
+- A new `/turn` op removes an entry by id **while it is cancellable**: queued, or taken by the pump but not yet
+  committed (decision 3). It takes the same lock and uses the same commit point, so removal and discard draw one
+  line. It returns the entry, or `already_started` once the entry is committed. A stale bubble in another tab gets
+  the same answer.
 - The Console puts the text back into the input box only when the removal succeeded. Sending it again is a new send
   with a new `ClientMessageID`. The removed entry's own id is never reused, because drivers that record the ledger at
   accept time would drop the resend as a duplicate.
-- Entries already sent to the runtime (decision 1) are shown but have no actions.
+- Committed entries and entries already sent to the runtime (decision 1) are shown but have no actions.
 
 ### Decision 6: Terminal (CLI) sessions keep the CLI's own behaviour
 
