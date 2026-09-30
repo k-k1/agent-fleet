@@ -603,7 +603,7 @@ func (n *nativeRuntime) rootfsEnv() ([]string, error) {
 
 // processEnv builds the agent process environment from scratch. Base runtime
 // vars first, then the workspace extraEnv (template + per-workspace) so a
-// deployment override (e.g. proxy env, GITHUB_OAUTH_CLIENT_ID) wins — flattened
+// deployment override (e.g. proxy env) wins — flattened
 // through a map so no key ever appears twice.
 func (n *nativeRuntime) processEnv(home, claudeCfg string) []string {
 	env := map[string]string{
