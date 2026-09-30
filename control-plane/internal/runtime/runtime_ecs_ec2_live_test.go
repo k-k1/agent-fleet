@@ -64,11 +64,20 @@ func useCPTaskRole(t *testing.T) {
 	if cr.SessionToken == "" {
 		t.Fatalf("profile %s handed out long-lived credentials (%s) — that is the deployer, not an assumed role", prof, cr.AccessKeyID)
 	}
-	who := exec.Command("aws", "sts", "get-caller-identity", "--query", "Arn", "--output", "text")
-	who.Env = append(os.Environ(), "AWS_CONFIG_FILE="+cfgFile, "AWS_PROFILE="+prof)
-	arn, _ := who.Output()
-	t.Logf("the product runs as %s (profile %s) — the CP task role's permissions, not the deployer's",
-		strings.TrimSpace(string(arn)), prof)
+	// --profile, not AWS_PROFILE: the CLI prefers AWS_ACCESS_KEY_ID in the environment
+	// (af-aws-exec sets it) over AWS_PROFILE, and would report the deployer.
+	who := exec.Command("aws", "sts", "get-caller-identity", "--profile", prof, "--query", "Arn", "--output", "text")
+	who.Env = append(os.Environ(), "AWS_CONFIG_FILE="+cfgFile)
+	out, err := who.Output()
+	arn := strings.TrimSpace(string(out))
+	role := prof // setup.sh names the profile after the role
+	if r := os.Getenv("AF_HARNESS_CP_ROLE"); r != "" {
+		role = r[strings.LastIndex(r, "/")+1:]
+	}
+	if err != nil || !strings.Contains(arn, ":assumed-role/"+role+"/") {
+		t.Fatalf("profile %s does not answer as role %s (got %q, err %v)", prof, role, arn, err)
+	}
+	t.Logf("the product runs as %s (profile %s) — the CP task role's permissions, not the deployer's", arn, prof)
 }
 
 // TestECSEC2LiveLifecycle drives the real ecs-ec2 adapter against real AWS: one cold
