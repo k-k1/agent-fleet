@@ -53,6 +53,24 @@ func newKeyboardTestPage(t *testing.T, factory browserCDPFactory, html string, v
 	p := m.pages[created.ID]
 	cdp := m.cdp
 	m.mu.Unlock()
+	// "ready" is not "the test document is live": the initial about:blank's own
+	// networkIdle marks the page ready while the navigation is still pending
+	// (measured: ~1 s before the document committed when its response was held),
+	// and Input.dispatchMouseEvent then lands on about:blank. Wait for the
+	// document the input events are meant for.
+	docLoaded := fmt.Sprintf(`location.href.startsWith(%q) && document.readyState === "complete"`, app.URL+"/")
+	var loaded struct {
+		Result struct {
+			Value bool `json:"value"`
+		} `json:"result"`
+	}
+	if !waitFor(10*time.Second, func() bool {
+		loaded.Result.Value = false
+		return m.call(cdp, p.sessionID, "Runtime.evaluate", map[string]any{"expression": docLoaded, "returnByValue": true}, &loaded) == nil &&
+			loaded.Result.Value
+	}) {
+		t.Fatalf("test document never finished loading in the Chromium page")
+	}
 	v := &browserViewer{page: p, control: make(chan browserOutbound, 16), done: make(chan struct{})}
 	p.mu.Lock()
 	p.viewer, p.visible = v, true

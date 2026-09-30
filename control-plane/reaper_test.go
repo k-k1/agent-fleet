@@ -191,9 +191,14 @@ func TestReaperStopWaitsForLocalWorkspaceOperation(t *testing.T) {
 
 func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 	tests := []struct {
-		name     string
-		activate func(*manager, *reaperFenceRuntime, store.Workspace) error
+		name      string
+		activate  func(*manager, *reaperFenceRuntime, store.Workspace) error
+		wantStops int32
 	}{
+		// The control: with nothing happening during the wait, the same sweep does stop.
+		{name: "no activity", activate: func(*manager, *reaperFenceRuntime, store.Workspace) error {
+			return nil
+		}, wantStops: 1},
 		{name: "connection resumed", activate: func(m *manager, _ *reaperFenceRuntime, ws store.Workspace) error {
 			m.conns.addConn(ws.ID, "", false)
 			return nil
@@ -225,12 +230,16 @@ func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 			rt := newReaperFenceRuntime(t)
 			done := make(chan struct{})
 			go func() {
-				rp.stopWorkspace(context.Background(), rt, ws, time.Second)
+				// The workspace has never been active (no LastActiveAt, no connection, zero
+				// bootTime), so it is idle under any timeout, while activity stamped during the
+				// fence wait stays fresh under this one however long a loaded host takes to
+				// reach the re-check (1 s went red under load).
+				rp.stopWorkspace(context.Background(), rt, ws, time.Hour)
 				close(done)
 			}()
 			select {
 			case <-rt.fenceEntered:
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("reaper did not wait at runtime fence")
 			}
 			if err := tc.activate(mgr, rt, ws); err != nil {
@@ -239,11 +248,11 @@ func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 			close(rt.fenceRelease)
 			select {
 			case <-done:
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("reaper did not finish activity revalidation")
 			}
-			if rt.stops.Load() != 0 {
-				t.Fatal("reaper stopped workspace that became active during fence wait")
+			if got := rt.stops.Load(); got != tc.wantStops {
+				t.Fatalf("Stop calls = %d, want %d", got, tc.wantStops)
 			}
 		})
 	}
