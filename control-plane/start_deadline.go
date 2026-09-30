@@ -28,15 +28,24 @@ import (
 // without creating a new one, so a launch seconds old would read as days overdue.
 //
 // Overdue is not yet wedged. `starting` also covers a rollout whose new task already
-// answers while an old one drains, so an Agent that answers is never stopped here — that
-// would take a working session down to end a wait that is not blocking anybody.
+// runs while an old one drains, so a workspace with a running task is never stopped here —
+// that would take a working session down to end a wait that is not blocking anybody. The
+// adapter's own count decides where there is one (runtime.TaskCounter); elsewhere an Agent
+// that answers does.
 type startDeadline struct {
 	mgr   *manager
 	after time.Duration // <= 0 disables the deadline
 
-	mu   sync.Mutex
-	seen map[string]time.Time // workspace ID -> first sweep that found it starting
+	mu       sync.Mutex
+	seen     map[string]time.Time // workspace ID -> first sweep that found it starting
+	inflight map[string]bool      // workspace IDs with a stop running (dispatch)
+	wg       sync.WaitGroup       // the dispatched stops; tests wait on it
 }
+
+// startDeadlineWorkers caps the stops running at once. They run off the sampler's walk,
+// which must keep its 5-minute rhythm however many launches are overdue; a workspace
+// that finds no free worker is picked up by the next sample.
+const startDeadlineWorkers = 2
 
 // startDeadlineFenceWait bounds the wait for the fences. The deadline runs on the usage
 // sampler's walk, and waiting behind a recreate that holds them for minutes would drop that
@@ -45,7 +54,44 @@ type startDeadline struct {
 var startDeadlineFenceWait = 10 * time.Second // a var so a test can shorten it
 
 func newStartDeadline(mgr *manager, after time.Duration) *startDeadline {
-	return &startDeadline{mgr: mgr, after: after, seen: map[string]time.Time{}}
+	return &startDeadline{mgr: mgr, after: after, seen: map[string]time.Time{}, inflight: map[string]bool{}}
+}
+
+// dispatch runs stop for an overdue workspace on its own goroutine, one per workspace and
+// at most startDeadlineWorkers in all, so the walk that found it never waits on the fences
+// or the probes.
+func (d *startDeadline) dispatch(ctx context.Context, rt runtime.Runtime, ws store.Workspace) {
+	d.mu.Lock()
+	if d.inflight[ws.ID] || len(d.inflight) >= startDeadlineWorkers {
+		d.mu.Unlock()
+		return
+	}
+	d.inflight[ws.ID] = true
+	d.mu.Unlock()
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		defer func() {
+			d.mu.Lock()
+			delete(d.inflight, ws.ID)
+			d.mu.Unlock()
+		}()
+		d.stop(ctx, rt, ws)
+	}()
+}
+
+// taskRunning reports whether rt has a workspace task up. When the adapter cannot tell,
+// the answer is yes: a deadline that skips one sample costs five minutes, a wrong Stop
+// costs somebody's session.
+func (d *startDeadline) taskRunning(ctx context.Context, rt runtime.Runtime) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if tc, ok := rt.(runtime.TaskCounter); ok {
+		n, err := tc.RunningTasks(ctx)
+		return err != nil || n > 0
+	}
+	_, err := d.mgr.agentSessionsEnv(ctx, rt)
+	return err == nil
 }
 
 // limitFor is the deadline for rt's launches: never inside the adapter's own background
@@ -132,11 +178,8 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 	if !d.observe(fresh, rt, rt.State(lease.Context()), time.Now()) {
 		return
 	}
-	probeCtx, cancelProbe := context.WithTimeout(lease.Context(), 5*time.Second)
-	_, probeErr := d.mgr.agentSessionsEnv(probeCtx, rt)
-	cancelProbe()
-	if probeErr == nil {
-		return // an Agent answers: a rollout still settling, not a launch that cannot place
+	if d.taskRunning(lease.Context(), rt) {
+		return // a rollout still settling, not a launch that cannot place
 	}
 	// Read before Stop: on ecs-ec2 this is the ECS sentence naming why the task cannot be
 	// placed, and Stop clears it.
@@ -158,6 +201,6 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 	d.mu.Lock()
 	delete(d.seen, ws.ID)
 	d.mu.Unlock()
-	log.Printf("start-deadline: stopped %s (tenant %s): still starting %s after its launch with no Agent answering (last phase %q)",
+	log.Printf("start-deadline: stopped %s (tenant %s): still starting %s after its launch with no task running (last phase %q)",
 		ws.ContainerName, ws.TenantID, d.limitFor(rt), phase)
 }

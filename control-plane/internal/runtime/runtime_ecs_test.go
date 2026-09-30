@@ -531,6 +531,29 @@ func TestECSState(t *testing.T) {
 	}
 }
 
+// RunningTasks is what keeps the CP's start deadline off a workspace whose rollout is still
+// settling: `starting` with a task already up must count that task.
+func TestECSRunningTasks(t *testing.T) {
+	fe := &fakeECS{services: map[string]ecstypes.Service{}}
+	rt := newTestECS(fe, &fakeEFS{}, &fakeSSM{})
+	if n, err := rt.RunningTasks(context.Background()); err != nil || n != 0 {
+		t.Fatalf("missing service: RunningTasks = %d, %v; want 0, nil", n, err)
+	}
+	fe.services["af-ws-acme-alice"] = ecstypes.Service{
+		Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1,
+		Deployments: []ecstypes.Deployment{
+			{Id: aws.String("new"), RolloutState: ecstypes.DeploymentRolloutStateInProgress},
+			{Id: aws.String("old"), RolloutState: ecstypes.DeploymentRolloutStateCompleted},
+		},
+	}
+	if got := rt.State(context.Background()); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	if n, err := rt.RunningTasks(context.Background()); err != nil || n != 1 {
+		t.Fatalf("RunningTasks = %d, %v; want 1, nil", n, err)
+	}
+}
+
 func TestECSSecretsSkippedWhenEmpty(t *testing.T) {
 	fs := &fakeSSM{}
 	rt := newTestECS(&fakeECS{}, &fakeEFS{}, fs)

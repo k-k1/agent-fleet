@@ -292,9 +292,10 @@ disables.
   not tokens** — which is what this measures. The same walk enforces the ceiling on
   `starting` (`start_deadline.go`): a workspace still `starting` `AF_WORKSPACE_START_DEADLINE`
   (30 minutes) after the later of its last Start and this CP's first sighting, with no
-  agent answering, is stopped under the lifecycle fences, like an explicit stop. An
+  task running (the adapter's `runtime.TaskCounter`, or else the agent answering), is stopped under the lifecycle fences, like an explicit stop. An
   adapter with background launch work (`runtime.LaunchBudgeter`, ecs-ec2) raises the limit
-  to its own budget, and a busy fence skips the workspace until the next sample. Only a
+  to its own budget. The stops run off the walk, at most two at a time, and a busy fence
+  skips the workspace until the next sample. Only a
   launch that cannot converge gets there — a task ECS refuses to place, for one. `0` turns
   it off, and so does switching the sampler off.
 - **The cloud-cost poller** — where the runtime has a bill (the AWS targets), it reads

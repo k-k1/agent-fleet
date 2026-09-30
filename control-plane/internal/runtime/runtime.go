@@ -106,6 +106,15 @@ type LaunchBudgeter interface {
 	LaunchBudget() time.Duration
 }
 
+// TaskCounter is implemented by an adapter that can say directly how many workspace tasks
+// run while it reports `starting` (ECS: the service's runningCount, which stays up while a
+// rollout settles). The CP's start deadline takes that over probing the Agent: an Agent
+// that is slow to answer is no proof that nothing runs, and stopping on that guess would
+// take a working session down.
+type TaskCounter interface {
+	RunningTasks(ctx context.Context) (int, error)
+}
+
 func acquireRuntimeOperationFence(ctx context.Context, rt Runtime) (func(), error) {
 	if f, ok := rt.(runtimeOperationFencer); ok {
 		return f.AcquireOperationFence(ctx)

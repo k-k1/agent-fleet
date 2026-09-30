@@ -358,6 +358,17 @@ func (e *ecsRuntime) describeService(ctx context.Context) (ecstypes.Service, boo
 // container and SIGKILLs after the task def's stopTimeout (set from
 // AF_STOP_GRACE_SEC at registration, i.e. a grace change applies from the next
 // Start) — the Agent's shutdown handler does the in-container Ctrl-C sweep.
+// RunningTasks satisfies TaskCounter. A missing service runs nothing.
+func (e *ecsRuntime) RunningTasks(ctx context.Context) (int, error) {
+	s, ok, err := e.describeService(ctx)
+	if err != nil || !ok {
+		return 0, err
+	}
+	return int(s.RunningCount), nil
+}
+
+var _ TaskCounter = (*ecsRuntime)(nil)
+
 func (e *ecsRuntime) Stop(ctx context.Context) error {
 	_, ok, err := e.describeService(ctx)
 	if err != nil {

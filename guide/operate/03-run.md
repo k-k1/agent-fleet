@@ -253,7 +253,7 @@ art as it serves it.
 ## Idle stop and force-stop
 
 - **A start that never finishes is stopped**: a Workspace that has been starting for
-  **30 minutes** with no agent answering — on ECS, typically a task the cluster refuses to
+  **30 minutes** with no task running — on ECS, typically a task the cluster refuses to
   place — is stopped, so it no longer holds capacity and the user can press **Start** again
   once the cause is fixed. The 30 minutes count from its last Start, or from when the
   Control Plane first saw it starting if that is later (after a Control Plane restart, for

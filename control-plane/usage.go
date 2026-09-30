@@ -109,7 +109,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 			rt := u.mgr.runtimeFor(ws, "")
 			state := rt.State(ctx)
 			if u.deadline.observe(ws, rt, state, time.Now()) {
-				u.deadline.stop(ctx, rt, ws)
+				u.deadline.dispatch(ctx, rt, ws)
 				continue
 			}
 			if state != "running" {

@@ -1042,6 +1042,13 @@ func (e *ecsEC2Runtime) LaunchBudget() time.Duration {
 // Without it the CP's start deadline could stop a launch its background work then revives.
 var _ LaunchBudgeter = (*ecsEC2Runtime)(nil)
 
+// RunningTasks satisfies TaskCounter: the service is the base adapter's.
+func (e *ecsEC2Runtime) RunningTasks(ctx context.Context) (int, error) {
+	return e.base.RunningTasks(ctx)
+}
+
+var _ TaskCounter = (*ecsEC2Runtime)(nil)
+
 func (e *ecsEC2Runtime) generation() *atomic.Int64 {
 	v, _ := startGen.LoadOrStore(e.base.name, &atomic.Int64{})
 	return v.(*atomic.Int64)

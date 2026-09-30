@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -61,6 +63,15 @@ type budgetStub struct {
 }
 
 func (r *budgetStub) LaunchBudget() time.Duration { return r.budget }
+
+// countStub is an adapter that counts its tasks itself, as ECS does.
+type countStub struct {
+	deadlineStub
+	tasks int
+	err   error
+}
+
+func (r *countStub) RunningTasks(context.Context) (int, error) { return r.tasks, r.err }
 
 func TestStartDeadlineObserve(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
@@ -144,6 +155,7 @@ func TestSampleStopsAnOverdueStart(t *testing.T) {
 
 	u.deadline.seen[ws.ID] = time.Now().Add(-31 * time.Minute)
 	u.sample(ctx)
+	u.deadline.wg.Wait()
 	if n := rt.stops.Load(); n != 1 {
 		t.Fatalf("Stop calls = %d for a launch 31 minutes old, want 1", n)
 	}
@@ -158,6 +170,7 @@ func TestSampleStopsAnOverdueStart(t *testing.T) {
 	rt.state = "running"
 	u.deadline.seen[ws.ID] = time.Now().Add(-31 * time.Minute)
 	u.sample(ctx)
+	u.deadline.wg.Wait()
 	if n := rt.stops.Load(); n != 1 {
 		t.Fatalf("Stop calls = %d after a running sweep, want still 1", n)
 	}
@@ -281,5 +294,85 @@ func TestStartDeadlineRespectsTheLifecycleLease(t *testing.T) {
 	d.stop(ctx, rt, ws)
 	if n := rt.stops.Load(); n != 0 {
 		t.Fatalf("Stop calls = %d while the lifecycle lease was held elsewhere, want 0", n)
+	}
+}
+
+// Where the adapter counts its own tasks, that count decides, not the Agent probe: a task
+// that runs is kept even when its Agent does not answer, and a count that cannot be read
+// keeps it too.
+func TestStartDeadlineTrustsTheAdaptersTaskCount(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	setLastActive(t, st, ws.ID, time.Now().Add(-2*time.Hour))
+	d := newStartDeadline(mgr, 30*time.Minute)
+
+	for _, tc := range []struct {
+		name  string
+		tasks int
+		err   error
+		stops int32
+	}{
+		{"a task runs, its Agent does not answer", 1, nil, 0},
+		{"the count cannot be read", 0, errors.New("throttled"), 0},
+		{"nothing runs", 0, nil, 1},
+	} {
+		rt := &countStub{deadlineStub: deadlineStub{state: "starting"}, tasks: tc.tasks, err: tc.err}
+		d.seen[ws.ID] = time.Now().Add(-time.Hour)
+		d.stop(ctx, rt, ws)
+		if n := rt.stops.Load(); n != tc.stops {
+			t.Errorf("%s: Stop calls = %d, want %d", tc.name, n, tc.stops)
+		}
+		setLastActive(t, st, ws.ID, time.Now().Add(-2*time.Hour))
+	}
+}
+
+// The stops run off the sampler's walk, and at most startDeadlineWorkers of them at once:
+// however many launches are overdue, the walk neither waits for them nor piles up
+// goroutines behind one held fence.
+func TestStartDeadlineCapsConcurrentStops(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	rt := &gateStub{deadlineStub: deadlineStub{state: "starting"}, release: make(chan struct{})}
+	d := newStartDeadline(mgr, 30*time.Minute)
+
+	for i := 0; i < startDeadlineWorkers+3; i++ {
+		ident, err := st.UpsertIdentity(ctx, fmt.Sprintf("cap-%d@example.com", i), fmt.Sprintf("cap-%d", i), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := st.EnsureMembership(ctx, ident.ID, ws.TenantID, "member")
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := ws
+		w.ID, w.MembershipID = store.NewID(), m.ID
+		d.dispatch(ctx, rt, w) // must return at once
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for rt.entered.Load() < startDeadlineWorkers && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := rt.entered.Load(); n != startDeadlineWorkers {
+		t.Fatalf("%d stops running at once, want %d", n, startDeadlineWorkers)
+	}
+	close(rt.release)
+	d.wg.Wait()
+}
+
+// gateStub counts the stops that reached its fence and holds them there until release.
+type gateStub struct {
+	deadlineStub
+	entered atomic.Int32
+	release chan struct{}
+}
+
+func (r *gateStub) AcquireOperationFence(ctx context.Context) (func(), error) {
+	r.entered.Add(1)
+	select {
+	case <-r.release:
+		return func() {}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
