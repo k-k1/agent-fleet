@@ -4645,6 +4645,61 @@ func TestECSPlacementBlockedIgnoresAnEventATaskOutlived(t *testing.T) {
 	if got := ecsPlacementBlocked(placed(0, again, started, complained), now); !strings.Contains(got, "missing an attribute") {
 		t.Fatalf("a wall newer than the started task was hidden: %q", got)
 	}
+
+	// Timestamps decide, not positions: the API does not promise newest first.
+	if got := ecsPlacementBlocked(placed(0, complained, started), now); got != "" {
+		t.Fatalf("an out-of-order complaint older than the start was reported: %q", got)
+	}
+	if got := ecsPlacementBlocked(placed(0, started, complained, again), now); !strings.Contains(got, "missing an attribute") {
+		t.Fatalf("an out-of-order start hid the newer wall: %q", got)
+	}
+}
+
+// The wall had already been named when the task was finally placed: the rollout keeps
+// State() at `starting`, and the phase has to go on that poll rather than when the rollout
+// completes, or the member reads "Waiting will not help" about a task that is running.
+func TestECSEC2BlockedPhaseClearsOnceTheTaskIsPlaced(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	defer h.rt.setPhase("")
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	now := time.Now()
+	wedged := ecstypes.Service{
+		Status: aws.String("ACTIVE"), DesiredCount: 1,
+		Deployments: []ecstypes.Deployment{{
+			Status: aws.String("PRIMARY"), CreatedAt: aws.Time(now.Add(-10 * time.Minute)),
+			RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+		}},
+		Events: []ecstypes.ServiceEvent{placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)},
+	}
+	h.ecs.services["af-ws-acme-alice"] = wedged
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	if ph := h.rt.BootPhase(); !strings.HasPrefix(ph, blockedPhasePrefix) {
+		t.Fatalf("the wall was not named: %q", ph)
+	}
+
+	placed := wedged
+	placed.RunningCount = 1
+	placed.Deployments = []ecstypes.Deployment{wedged.Deployments[0]}
+	placed.Deployments[0].RunningCount = 1
+	h.ecs.services["af-ws-acme-alice"] = placed
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting while the rollout is in progress", got)
+	}
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("the blocked phase outlived the task being placed: %q", ph)
+	}
+
+	// A Start's own progress is not the poll's to clear.
+	h.rt.setPhase("home: attaching")
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "home: attaching" {
+		t.Fatalf("a live Start's phase was wiped by a poll: %q", ph)
+	}
 }
 
 // It only reaches the Console once it is on the phase, and clearing it when the task

@@ -1122,9 +1122,12 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
 	why := ecsPlacementBlocked(s, time.Now())
 	if why == "" {
-		// Still coming up normally. Do NOT clear the phase here: an ordinary Start is
-		// concurrently writing its own progress ("slot: creating", "home: attaching")
-		// and this poll must not wipe it.
+		// Only the blocked phase goes: a task placed after the wall was named leaves State()
+		// at `starting` until the rollout completes, and keeping "Waiting will not help" up
+		// for that stretch is the bug this answer exists to prevent. Any other phase is an
+		// ordinary Start writing its progress ("slot: creating", "home: attaching"), and
+		// this poll must not wipe that.
+		e.clearBlockedPhase()
 		return
 	}
 	phase := blockedPhasePrefix + why
@@ -1169,7 +1172,12 @@ const blockedPhasePrefix = "blocked: "
 // started (measured: 122 s), so the grace alone does not stop a placed task from being
 // called a wall. Two checks, because each misses a case the other covers: the PRIMARY
 // deployment's runningCount does not depend on ECS's wording, and a newer "has started"
-// event still answers when that task has since died and runningCount is back at 0.
+// event still answers when that task has since died and runningCount is back at 0. A
+// "has started" event is the PRIMARY's own: ec2SingleTaskDeployment (maximum 100%,
+// minimum 0%) drains the outgoing deployment and never starts a task under it.
+//
+// Compared by CreatedAt rather than by position: the API lists newest first in practice
+// but does not promise it, and a misread order would hide a real wall behind a start.
 func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 	var since time.Time
 	for _, d := range s.Deployments {
@@ -1184,19 +1192,18 @@ func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 		}
 	}
 	for _, ev := range s.Events {
+		if ev.CreatedAt != nil && ev.CreatedAt.After(since) && strings.Contains(aws.ToString(ev.Message), "has started ") {
+			since = *ev.CreatedAt // every complaint up to here predates a task that was placed
+		}
+	}
+	for _, ev := range s.Events {
 		if ev.CreatedAt == nil || ev.CreatedAt.Before(since) {
 			continue
 		}
-		msg := aws.ToString(ev.Message)
-		if strings.Contains(msg, "has started ") {
-			// Newest first: every complaint past this point predates a task that was placed.
-			return ""
-		}
-		if strings.Contains(msg, "unable to place a task") {
-			// Not `return ""` on a young one: ECS lists newest first, and a wedge that
-			// ECS re-emitted leaves a fresh copy in front of the aged original. Skipping
-			// forward reports the original; a bare return would hide the wall every time
-			// ECS repeated itself.
+		if msg := aws.ToString(ev.Message); strings.Contains(msg, "unable to place a task") {
+			// Not `return ""` on a young one: a wedge that ECS re-emitted leaves a fresh
+			// copy beside the aged original. Skipping it reports the original; a bare
+			// return would hide the wall every time ECS repeated itself.
 			if now.Sub(aws.ToTime(ev.CreatedAt)) < placementBlockedGrace {
 				continue
 			}
