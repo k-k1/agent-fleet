@@ -67,6 +67,8 @@ Scripted scenarios played through the real Console, written as animated WebP to
 | `review` | a session starts a reviewer of another kind, gets one report back, and the fleet graph draws it (~27 s) | landing page |
 | `plan` | approve a plan card, then stage and commit from the Changes pane (~24 s) | landing page |
 | `unattended` | a schedule wakes a stopped workspace; a usage limit is waited out and resumed (~27 s) | landing page |
+| `orchestrate` | one Claude session splits a design review across Codex, Antigravity and Muse Code, gathers three reports, and the fleet graph draws four lanes (~31 s) | landing page (features) |
+| `sre` | the SRE assistant reads PagerDuty and CloudWatch (read-only); the fleet operator starts the fix session (~33 s) | landing page (features) |
 
 ```bash
 npm --prefix console run build          # console/dist must exist (the real bundle)
@@ -88,6 +90,11 @@ node console/scripts/shots/demo.mjs --scenario day --locale en    # and ja, and 
   That phone's Slack thread is **redrawn**, not recorded: its texts and buttons are the chat
   bridge's own strings (`workspace/agent/internal/bridge/format.go`, `slack_interact.go`,
   `workspace/agent/internal/sessionx/bridge_answer.go`), so update them together.
+- `sre` streams the assistants' replies: a scenario's `stream()` answers a route as Server-Sent
+  Events (the chat's `POST …/stream`), frame by frame.
+- `orchestrate` and `sre` press the rail's repos Refresh behind the scenes after a worktree is
+  created: the Console otherwise picks new worktrees up on its 60-second poll, and until then a
+  new session sits under "other sessions".
 - `unattended` runs the page on a story clock (its `seed().init` replaces `Date`), so relative
   labels such as "started 2 hours ago" agree with the scene rather than with the machine.
 - `--keep-frames` leaves the raw PNG frames in the temp directory it prints, for checking a

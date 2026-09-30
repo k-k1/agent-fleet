@@ -435,6 +435,10 @@ const server = http.createServer((req, res) => {
       try {
         sent = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : null;
       } catch {}
+      // A demo scenario can answer a route as a Server-Sent Events stream (the chat's
+      // POST …/stream): a list of { delay, data } frames written in order.
+      const frames = DEMO?.stream?.(p, req.method, sent);
+      if (frames) return void streamFrames(res, frames);
       const body = JSON.stringify(apiBody(p, url.searchParams, req.method, sent));
       res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
       res.end(body);
@@ -450,6 +454,15 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream", "cache-control": "no-store" });
   res.end(buf);
 });
+
+async function streamFrames(res, frames) {
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+  for (const f of frames) {
+    await new Promise((r) => setTimeout(r, f.delay || 0));
+    res.write(`data: ${JSON.stringify(typeof f.data === "function" ? f.data() : f.data)}\n\n`);
+  }
+  res.end();
+}
 
 // ---- terminal WebSocket -----------------------------------------------------------
 // Minimal server-side WebSocket: handshake + unmasked binary frames. The Console's
