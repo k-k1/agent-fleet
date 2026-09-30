@@ -210,10 +210,10 @@ func TestResumedEntriesTheHostNeverMentionsDropAtTurnEnd(t *testing.T) {
 	name := "bg-orphan"
 	registerHandle(t, name, h)
 	h.mu.Lock()
-	h.rebuildBgLocked(msp.SessionHistory{Mode: msp.HistoryModeInline, Items: []msp.Item{
+	h.rebuildBgLocked([]msp.Item{
 		toolItem("orphan", "bash", msp.ItemStatusInProgress, 1),
 		toolItem("alive", "bash", msp.ItemStatusInProgress, 1),
-	}})
+	})
 	h.mu.Unlock()
 	host.Notify(msp.NotificationItemUpdated, msp.ItemCompletedParams{Item: toolItem("alive", "bash", msp.ItemStatusInProgress, 2)})
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-2", SessionID: h.sid})
@@ -245,10 +245,10 @@ func TestResumedEntriesExpireWithoutATurnUnlessConfirmedLive(t *testing.T) {
 	name := "bg-grace"
 	registerHandle(t, name, h)
 	h.mu.Lock()
-	h.rebuildBgLocked(msp.SessionHistory{Mode: msp.HistoryModeInline, Items: []msp.Item{
+	h.rebuildBgLocked([]msp.Item{
 		toolItem("orphan", "bash", msp.ItemStatusInProgress, 1),
 		toolItem("alive", "read_file", msp.ItemStatusInProgress, 1),
-	}})
+	})
 	h.mu.Unlock()
 	if busy, reason := BackgroundWork(name); !busy || reason != bgReasonShell {
 		t.Fatalf("inside the grace: BackgroundWork = %v %q, want busy shell", busy, reason)
@@ -297,9 +297,9 @@ func TestResumeWithNoTurnGoesIdleAfterTheGrace(t *testing.T) {
 	name := "bg-grace-orphan"
 	registerHandle(t, name, h)
 	h.mu.Lock()
-	h.rebuildBgLocked(msp.SessionHistory{Mode: msp.HistoryModeInline, Items: []msp.Item{
+	h.rebuildBgLocked([]msp.Item{
 		toolItem("orphan", "bash", msp.ItemStatusInProgress, 1),
-	}})
+	})
 	h.mu.Unlock()
 	if busy, _ := BackgroundWork(name); !busy {
 		t.Fatal("inside the grace the rebuilt entry does not count")

@@ -267,7 +267,9 @@ flows are [08](08-integrations.md).
     host, and the host's on-disk log is an internal runtime format with no stability
     promise. A failure to write the mirror is never fatal to the session. A turn that ran
     while the agent was not watching (it died mid-turn) is still on the host but missing
-    from the mirror; backfilling it from the host's `session/read` is #1197.
+    from the mirror until the next resume, which appends what the mirror lacks from the
+    host's folded history — the one `session/resume` carries, or `session/read` when the
+    resume served none (`muse/backfill.go`). The backfill is never fatal either.
 - **Live state** is normalised into the status store (§4.4) from whatever the kind
   emits.
   - claude: hooks plus a tmux probe.

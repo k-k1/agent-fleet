@@ -109,6 +109,11 @@ type threadHandle struct {
 	// bg is the tool calls still running, by item id, for BackgroundWork (background.go).
 	bg map[string]bgEntry
 
+	// holding and held keep live items out of the mirror while a resume backfills it
+	// (holdItems).
+	holding bool
+	held    []record
+
 	// Live context fill (session/contextUsage). Separate lock from mu so onNotify
 	// can record context without contending with turn plumbing. Read by ManagedContext.
 	ctxMu       sync.Mutex
@@ -225,17 +230,23 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 // worse, and the old session.jsonl is still on disk either way.
 func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) error {
 	if prev, ok := readSession(h.slotSid); ok && prev.ID != "" {
+		h.holdItems()
+		defer h.releaseItems()
 		var res msp.SessionResumeResult
 		err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
 			CommandID: msp.NewCommandID(),
 			SessionID: prev.ID,
 		}, callTimeout, &res)
 		if err == nil {
+			items, ok := h.resumeHistory(cl, prev.ID, res.History)
 			h.mu.Lock()
 			h.sid, h.path = prev.ID, prev.Path
 			h.setModelLocked(res.Session.ModelID)
-			h.rebuildBgLocked(res.History)
+			h.rebuildBgLocked(items)
 			h.mu.Unlock()
+			if ok {
+				h.backfillMirror(items)
+			}
 			return nil
 		}
 		if !msp.HasCode(err, msp.ErrCodeSessionNotFound) {
@@ -549,7 +560,6 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 func (h *threadHandle) onItem(it msp.Item) {
 	h.mu.Lock()
 	delete(h.streaming, it.ItemID)
-	h.trackBgLocked(it)
 	sid, model := h.slotSid, h.turnModel
 	if model == "" {
 		model = h.model
@@ -561,10 +571,43 @@ func (h *threadHandle) onItem(it msp.Item) {
 		images = h.sentImages[*it.CommandID]
 		delete(h.sentImages, *it.CommandID)
 	}
+	r := record{Item: it, Model: model, Images: images}
+	if h.holding {
+		h.held = append(h.held, r)
+		h.mu.Unlock()
+		return
+	}
+	h.trackBgLocked(it)
 	h.mu.Unlock()
-	if err := openStore(sid).appendRecord(record{Item: it, Model: model, Images: images}); err != nil {
+	if err := openStore(sid).appendRecord(r); err != nil {
 		log.Printf("muse: %s: transcript append: %v", h.name, err)
 	}
+}
+
+// holdItems makes onItem keep live items in memory instead of writing them, from before
+// session/resume is sent until the backfill has written the host's fold (releaseItems). The
+// resume subscribes the connection, so a live item can reach the store before the fold does;
+// first seen ahead of the history it follows, it would read as older than all of it.
+func (h *threadHandle) holdItems() {
+	h.mu.Lock()
+	h.holding = true
+	h.mu.Unlock()
+}
+
+// releaseItems writes the held items in arrival order and resumes direct writes. It writes
+// under h.mu so an item arriving meanwhile cannot overtake them, and it tracks their
+// background work only now, after the resume's rebuild would have replaced it.
+func (h *threadHandle) releaseItems() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := openStore(h.slotSid)
+	for _, r := range h.held {
+		h.trackBgLocked(r.Item)
+		if err := st.appendRecord(r); err != nil {
+			log.Printf("muse: %s: transcript append: %v", h.name, err)
+		}
+	}
+	h.held, h.holding = nil, false
 }
 
 // onDelta accumulates a streaming fragment. Deltas are NOT persisted: the `item/completed`

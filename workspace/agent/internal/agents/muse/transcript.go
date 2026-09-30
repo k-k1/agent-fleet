@@ -17,8 +17,8 @@
 // lcpp. The difference from lcpp is worth stating: there the store IS the conversation, here
 // the host owns it and this is a MIRROR of what AF saw. What that costs is a turn that ran
 // while AF was not watching, which under decision 2 (managed-only, AF is the only writer) can
-// only happen if the Agent died mid-turn — and `session/read` on the next Resume is the
-// documented way to backfill it.
+// only happen if the Agent died mid-turn — and the next Resume backfills it from the host's
+// folded history (backfill.go).
 package muse
 
 import (
@@ -50,6 +50,9 @@ type record struct {
 	// Images are the paths of the attachments AF sent as `image` parts, on a `userMessage`
 	// only. The wire echoes their metadata but never the path (handle.go's sentImages).
 	Images []string `json:"images,omitempty"`
+	// Order, on a line with no item, is the host's own item order as of a resume backfill
+	// (backfill.go). An older Agent skips the line as an item without an id.
+	Order []string `json:"order,omitempty"`
 }
 
 // store is one session's append-only item log.
@@ -150,8 +153,17 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 	for sc.Scan() {
 		var r record
-		if json.Unmarshal(sc.Bytes(), &r) != nil || r.Item.ItemID == "" {
+		if json.Unmarshal(sc.Bytes(), &r) != nil {
 			continue // a torn last line after a crash must not lose the whole history
+		}
+		if r.Item.ItemID == "" {
+			// Applied where it stands, to the order built so far: a later, shorter fold (an
+			// anchored snapshot) must not undo what an earlier one put right before its anchor,
+			// and an item first seen after the line lands after the fold it describes.
+			if len(r.Order) > 0 {
+				order = mergeOrder(order, r.Order, byID)
+			}
+			continue
 		}
 		prev, seen := byID[r.Item.ItemID]
 		if !seen {
@@ -177,6 +189,52 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		items = append(items, byID[id])
 	}
 	return items, meta, sc.Err()
+}
+
+// mergeOrder puts the items in the host's order where the host has spoken, and keeps every
+// other item where AF saw it. First-seen order is the conversation's order only when nothing
+// was missed: an item backfilled after a failed mirror write or a lost notification is
+// first seen at the end, and turnsFromItems would fold a missed reply into the NEXT user
+// message's turn. So the host's order wins for the items it lists. An item it does not list
+// follows the latest-placed host item it followed in seen: one from before a compaction
+// anchor (preceding every listed item) stays in front. A live item newer than the fold is
+// never in seen here — the resume holds live items until the order line is written
+// (holdItems), so they are first seen after it.
+func mergeOrder(seen, host []string, byID map[string]msp.Item) []string {
+	if len(host) == 0 {
+		return seen
+	}
+	idx := make(map[string]int, len(host))
+	for i, id := range host {
+		if _, ok := byID[id]; ok {
+			if _, dup := idx[id]; !dup {
+				idx[id] = i
+			}
+		}
+	}
+	var front []string
+	after := make(map[int][]string)
+	last := -1
+	for _, id := range seen {
+		if i, ok := idx[id]; ok {
+			last = max(last, i)
+			continue
+		}
+		if last < 0 {
+			front = append(front, id)
+		} else {
+			after[last] = append(after[last], id)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	out = append(out, front...)
+	for i, id := range host {
+		if j, ok := idx[id]; ok && j == i {
+			out = append(out, id)
+		}
+		out = append(out, after[i]...)
+	}
+	return out
 }
 
 // Remove drops the stored conversation (a slot whose identity is being discarded).
