@@ -81,6 +81,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: deploy/release/scan/go.mod
+          # The scanner has no dependencies and so no go.sum: a cache would hold nothing,
+          # and asking for one annotates every run with "Restore cache failed".
+          cache: false
       - name: gofmt
         run: |
           out=$(gofmt -l .)
