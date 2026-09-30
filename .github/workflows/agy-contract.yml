@@ -46,7 +46,7 @@ jobs:
         working-directory: workspace/agent
         env:
           E2E_REQUIRE: "1"
-        run: go test -tags drift -run '^TestDriftAgyPaneMode$' -count=1 -v -timeout 12m ./...
+        run: go test -tags contract -run '^TestDriftAgyPaneMode$' -count=1 -v -timeout 12m ./...
 
       # The contract for the scrape path. The pane contract above only exercises
       # BuildLaunch, so nothing put the /usage scrape (pre-trusting the scratch dir → TUI
@@ -76,7 +76,7 @@ jobs:
         working-directory: workspace/agent
         env:
           E2E_REQUIRE: "1"
-        run: go test -tags drift -run '^TestDriftAgyModelsCatalog$' -count=1 -v -timeout 5m ./...
+        run: go test -tags contract -run '^TestDriftAgyModelsCatalog$' -count=1 -v -timeout 5m ./...
       - name: remember successfully tested latest
         if: success() && inputs.cli_version == 'latest'
         env:

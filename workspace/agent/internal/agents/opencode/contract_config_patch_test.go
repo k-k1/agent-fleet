@@ -1,9 +1,9 @@
-//go:build clicontract
+//go:build contract
 
 // Tier A, like contract_test.go: the drift alarm for PATCH /global/config, which is what
 // lets an engine change reach a running daemon instead of replacing it.
 //
-//	cd workspace/agent && go test -tags clicontract -run TestContractConfigPatch ./internal/agents/opencode/
+//	cd workspace/agent && go test -tags contract -run TestContractConfigPatch ./internal/agents/opencode/
 //
 // Two facts are pinned, and the fleet reads differently if either moves:
 //

@@ -1,7 +1,7 @@
-//go:build drift
+//go:build contract
 
 // The contract of project-local MCP scopes (docs/log/48 §8.4). It runs against the REAL
-// agent CLIs, so the `drift` build tag keeps it out of `go test ./...`.
+// agent CLIs, so the `contract` build tag keeps it out of `go test ./...`.
 //
 // Why it is needed: af writes exactly one place in each CLI, its user/global scope, and
 // leaves the repository's project scope (`.mcp.json` / `.cursor/mcp.json` / `opencode.json`

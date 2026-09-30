@@ -391,6 +391,25 @@ explicit version for the npm CLIs only), so the same test can be aimed at "what 
 bake" or "what the fleet runs". muse's contract installs the release artifact itself,
 because verifying the manifest's checksum is part of what it tests.
 
+**Build tags.** The Go tests that need something a plain `go test ./...` cannot assume sit
+behind one of three build tags in `workspace/agent`. The tag says what running the test
+costs; which CLI it exercises is in the test name (`TestDriftCodex…`, `TestContract…`,
+`Test<Kind>TUIMirrorContract`), and every workflow selects its tests with `-run`.
+
+| Tag | Needs | Without it |
+|---|---|---|
+| `contract` | the real CLI on `PATH` (and tmux for the pane tests). Some tests that spend a turn also wait for their own opt-in (`CLAUDE_CONTRACT_LIVE`, `COPILOT_CONTRACT_LIVE`, `OPENCODE_CONTRACT_LIVE`, `AF_IMAGEGEN_LIVE`); the TUI probes (`TestClaudeTUIContractLive`, `TestClaudePlanApprovalContractLive`, `Test<Kind>TUIMirrorContract`) do not, and run a real turn wherever the CLI is signed in | skips, or fails under `E2E_REQUIRE=1` |
+| `contract_live` | real codex credentials; every test spends real turns (`codex-contract.yml`'s `live-drift`, dispatch only) | fails |
+| `contract_manual` | a person: an engine endpoint they provide (`AF_LCPP_LIVE_*`) or an interactive sign-in (`AF_AGY_LOGIN`); no workflow runs it | skips |
+
+On a machine where the CLIs are signed in, a bare `go test -tags contract ./...` therefore
+spends real turns on several vendors at once: narrow it with `-run` to one CLI, as the
+workflows do.
+
+`ci.yml` vets all three through `scripts/vet-build-tags.sh`, which also fails on any tag it
+does not know, so a new tag is added there or it goes red. The `e2e` module has its own
+`e2e` tag (§10.4, end to end).
+
 ### Working in a public repository
 
 This repository is public. **The secrets themselves are not in it** — they are stored

@@ -1,4 +1,4 @@
-//go:build drift
+//go:build contract
 
 // Same server NAME in config.toml and in the thread config: which definition wins?
 // This decides whether af must re-emit every server (replacement model) or may send

@@ -1,7 +1,7 @@
-//go:build drift
+//go:build contract
 
 // The MCP configuration reload contract of codex app-server (docs/log/48 P3). This test runs
-// against the real codex binary and is excluded from `go test ./...` by the `drift` build tag.
+// against the real codex binary and is excluded from `go test ./...` by the `contract` build tag.
 //
 // Why it is needed: session materialize in the MCP registry works by rewriting
 // `$CODEX_HOME/config.toml`, and a tui session relaunches codex every time, so the file is
@@ -72,7 +72,7 @@ func TestDriftCodexAppServerRereadsMCPConfig(t *testing.T) {
 	// keeps running (~115MB each, still holding its socket). That is the same trap
 	// reapProcessGroup exists for, but this call site has no context to cancel — so put
 	// the pair in its own process group and signal the group. Measured before this fix:
-	// a single `-tags drift` run left two orphaned app-servers behind on the host.
+	// a single `-tags contract` run left two orphaned app-servers behind on the host.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("codex app-server: %v", err)

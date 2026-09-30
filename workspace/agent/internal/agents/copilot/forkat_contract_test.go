@@ -1,4 +1,4 @@
-//go:build clicontract
+//go:build contract
 
 // copilot contract test (it SPENDS REAL TURNS): drift detection for forking at a message
 // (docs/log/55).
@@ -9,7 +9,7 @@
 // and if that one won, the mirror would show the history cut while the agent still
 // remembered all of it. A synthetic test stays green either way, so this is the only alarm.
 //
-//	COPILOT_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLiveCopilotForkAt ./internal/agents/copilot/
+//	COPILOT_CONTRACT_LIVE=1 go test -tags contract -run TestContractLiveCopilotForkAt ./internal/agents/copilot/
 //
 // Cost: 3 real turns (one-line replies). COPILOT_HOME is isolated, so the real ~/.copilot is
 // never touched (authentication uses the environment's GitHub token / saved credential).

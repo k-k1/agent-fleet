@@ -1,4 +1,4 @@
-//go:build clicontract
+//go:build contract
 
 // Does the AF caller plugin (workspace/opencode-plugin/agent-fleet-caller.js) really hand
 // af's MCP child the calling opencode session, per call? contract_mcp_identity_test.go

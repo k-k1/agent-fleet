@@ -1,7 +1,7 @@
-//go:build drift
+//go:build contract
 
 // Drift detection for materialize (docs/log/48 §13). These tests run against the REAL agent CLI
-// binaries and are kept out of an ordinary `go test ./...` by the build tag `drift`.
+// binaries and are kept out of an ordinary `go test ./...` by the build tag `contract`.
 //
 // Why they are needed: materialize stands on a contract we believe unilaterally — "this CLI's
 // config file has this shape". When a CLI changes shape, af's unit tests stay green (they only
