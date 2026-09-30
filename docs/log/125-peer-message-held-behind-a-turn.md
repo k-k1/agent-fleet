@@ -107,3 +107,25 @@
   付かない。mcpx: `held` のとき `delivered: false, queued: true, note`。
 - `go test ./...`（workspace/agent）は緑。wiremap.golden の差分は `handleManagedInputPrompt {held,sent} cond{held}`
   の 1 行だけ。
+
+## 6. 実機確認（2026-09-30、マージ後の配備）
+
+PR #1268 のマージ（f906a77cf）後に配備した Agent で確かめた。証拠には Agent が返す JSON（ツールの返り値、
+`/messages` の転写と `queuedPrompts`）だけを使い、プローブ役のセッションの自己申告は使っていない。
+
+- **配備の確認**: `/usr/local/bin/workspace-agent` の mtime は 08:37:28、マージは 08:00:33（どちらも JST）。
+  `grep -a` で、今回足したツール説明・`peerQueuedNote`・`KeepOnInterrupt`・`create_session` に足した一文が
+  それぞれ 1 件見つかった。陽性対照の既存文字列（`メッセージを届けられませんでした`）も 1 件、コメントにしか無い
+  文字列は 0 件。セッションに配られたツール説明も新しい文言になっていた。
+- **codex Managed**（gpt-6-luna。`sleep 180` を 1 回だけ実行させたプローブ）:
+  - モデルは `exec_command` で `sleep` を裏で走らせ、`wait` ツールで待った。事件と同じ「ツールの中で待つ」形になった。
+  - そこへ `send_to_peer_session` を送ると `delivered: false, queued: true`（Agent の応答は `held: true`）と注記が
+    返った。`/messages` では封筒付きの本文が `queuedPrompts` に出て、転写には無かった。
+  - `POST /sessions/{name}/turn {"op":"interrupt"}`（チャットの「実行を停止」と同じ）で止めると、`wait` は
+    「aborted by user after 3.0s」になった。peer メッセージは停止と同じ秒（00:36:41.459Z）に、**別の anchor の
+    新しい user ターン**として `source: peer` 付きで転写に入った。
+- **opencode Managed**（既定モデル。`bash` で `sleep 180` を実行させたプローブ）:
+  - 作業中に、利用者自身の追い打ちを `/turn` の steer（作業中に Console の入力欄が送るもの）で送り、続けて peer
+    メッセージを送った。`queuedPrompts` は 2 件になった。
+  - 停止すると peer メッセージだけが次のターンになり（`source: peer`）、`queuedPrompts` は空になった。追い打ちは
+    転写のどこにも無く（同じ検索で peer の本文は見つかる）、その後 40 秒 idle のままだった。
