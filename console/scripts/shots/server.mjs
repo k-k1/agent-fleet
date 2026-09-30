@@ -5,7 +5,7 @@
 // with no backend, no Docker and no real data. Unknown /api paths answer {} and are
 // logged, so a missing endpoint shows up as a log line instead of a hung view.
 //
-//   node console/scripts/shots/server.mjs [--port 8765] [--locale ja]
+//   node console/scripts/shots/server.mjs [--port 8765] [--locale ja] [--demo <scenario>]
 import http from "node:http";
 import zlib from "node:zlib";
 import fs from "node:fs";
@@ -36,6 +36,12 @@ const IDLE = argv.includes("--idle") || process.env.SHOTS_IDLE === "1";
 // wrong at scale (a real fleet reached 78 lanes, where an arrow from outside the figure
 // became a 2,400px line across every row — docs/log/101 §101.13).
 const FLEET_LANES = Number(arg("fleet-lanes", "0")) || 0;
+// --demo <scenario>: the stateful fleet a demo recording drives (demo.mjs, demo/<scenario>.mjs).
+// Launches create sessions and worktrees, and POST /__demo/phase moves the story on. Off, nothing
+// changes.
+const DEMO_NAME = argv.includes("--demo") ? arg("demo", "day") : "";
+if (DEMO_NAME && !/^[a-z]+$/.test(DEMO_NAME)) throw new Error(`--demo: bad scenario name ${DEMO_NAME}`);
+const DEMO = DEMO_NAME ? (await import(`./demo/${DEMO_NAME}.mjs`)).fixtures(LOCALE, fx) : null;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -384,6 +390,8 @@ const withStudioEdits = (s) => {
 };
 
 function apiBody(pathname, query, method = "GET", body = null) {
+  const demo = DEMO?.route(pathname, query, method, body);
+  if (demo !== undefined) return demo;
   if (exact[pathname]) return exact[pathname](query, method, body);
   for (const [rx, fn] of re) {
     const m = rx.exec(pathname);
@@ -424,6 +432,12 @@ const server = http.createServer((req, res) => {
     res.end(swatchPNG(url.searchParams.get("path") || ""));
     return;
   }
+  if (DEMO && p === "/__demo/phase") {
+    const phase = url.searchParams.get("phase") || "";
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(DEMO.setPhase(phase)));
+    return;
+  }
   if (p.startsWith("/api/")) {
     // The request body is read for the handlers that keep what was sent (a new studio's title
     // and draft), so a flow that creates something shows it back instead of a blank.
@@ -434,6 +448,10 @@ const server = http.createServer((req, res) => {
       try {
         sent = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : null;
       } catch {}
+      // A demo scenario can answer a route as a Server-Sent Events stream (the chat's
+      // POST …/stream): a list of { delay, data } frames written in order.
+      const frames = DEMO?.stream?.(p, req.method, sent);
+      if (frames) return void streamFrames(res, frames);
       const body = JSON.stringify(apiBody(p, url.searchParams, req.method, sent));
       res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
       res.end(body);
@@ -449,6 +467,15 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream", "cache-control": "no-store" });
   res.end(buf);
 });
+
+async function streamFrames(res, frames) {
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+  for (const f of frames) {
+    await new Promise((r) => setTimeout(r, f.delay || 0));
+    res.write(`data: ${JSON.stringify(typeof f.data === "function" ? f.data() : f.data)}\n\n`);
+  }
+  res.end();
+}
 
 // ---- terminal WebSocket -----------------------------------------------------------
 // Minimal server-side WebSocket: handshake + unmasked binary frames. The Console's
