@@ -23,8 +23,8 @@ patent grant; no separate CLA is required.
   staged content only — a fraction of a second — and refuses the commit if a
   string this project keeps out of its history (real host names, customer names)
   is in it. `ci.yml`'s `release-scan` job runs the same scanner over the whole
-  tracked tree, but only *after* the merge, when the string is already in
-  `develop` and taking it out costs a second commit. Deliberate exception:
+  tracked tree on PRs and pushes, when the string is already in a commit. The
+  local hook catches it before it enters history. Deliberate exception:
   a path glob in `deploy/release/forbidden.allow` — third-party content only.
 - **Keep the core deploy-agnostic.** Don't bake Docker/compose assumptions into
   the Control Plane. Deployment specifics belong behind the ports (Runtime,
@@ -53,18 +53,22 @@ neither on the host — only Docker.
 
 ## Commits & PRs
 
-**`develop` is the trunk** (and the default branch). Day-to-day work is pushed
-straight to `develop` and merged as it lands (single maintainer, no review gate);
-**"done" means merged into `develop`**. Don't create branches on your own — the
-Console hands each worktree session its own branch. Remote:
+**`develop` is the trunk** (and the default branch). Day-to-day changes go through
+a work branch → pull request → `develop`; do not push them directly to `develop`.
+Issues are optional; link the related issue in the PR when one exists. The
+maintainer checks the changes and verification results, then merges after the
+required CI checks pass. Approval from another person is not required.
+**"done" means merged into `develop`**. Agents must not create branches on their
+own — the Console hands each worktree session its own branch. Remote:
 `git@github.com:k-k1/agent-fleet.git`.
 
 **`main` is the always-green stable branch** and is updated only through
 `develop` → `main` pull requests (a release train, once or twice a week or at the
 end of a phase). Hosted CI comes in two tiers. `ci.yml` (gofmt / vet / test /
-build) runs on **every push to `develop`** as well as on the `main` gate — the
-repository is public, so its runners are free, and gating it on `main` alone left
-the trunk unverified for a month at a time. `e2e.yml` and the contract workflows
+build) runs on **pull requests targeting `develop` or `main` and every push to
+either branch**. PR checks verify changes before they reach the trunk; push
+checks verify the integrated result. The repository is public, so its runners
+are free. `e2e.yml` and the contract workflows
 do spend an external LLM quota, so those stay concentrated on the `develop` →
 `main` PR, their nightly / weekly cron over `develop`, and manual dispatch (several
 contract workflows run on dispatch only).
