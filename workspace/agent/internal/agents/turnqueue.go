@@ -180,26 +180,27 @@ func NewTurnQueue(name string, ledger *MsgLedger, at LedgerPoint) *TurnQueue {
 }
 
 // Accept queues in and returns its id (ClientMessageID, minted when empty). dup reports a
-// resend the LedgerAtAccept ledger has already seen: it is not queued, and the caller answers
-// it as accepted. On LedgerAtTake a resend is queued as before and dropped at Take.
+// resend: an id the ledger has seen, or (LedgerAtTake) one still queued or taken. It is not
+// queued, and the caller answers it as accepted.
 //
 // New member input ends the stop episode (decision 2); a resend does not, and neither does
 // input of any other origin.
 func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
-	resend := false
 	switch q.at {
 	case LedgerAtAccept:
 		if q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
 			return in.ClientMessageID, true
 		}
 	case LedgerAtTake:
-		resend = q.holds(in.ClientMessageID) || (q.ledger != nil && q.ledger.Seen(q.name, in.ClientMessageID))
+		// Not queued a second time: Take would drop it anyway, but until then it would show
+		// twice in Items and in a discard, and the Console would restore the same text twice.
+		if q.holds(in.ClientMessageID) || (q.ledger != nil && q.ledger.Seen(q.name, in.ClientMessageID)) {
+			return in.ClientMessageID, true
+		}
 	}
 	q.queue = append(q.queue, in)
-	if !resend {
-		q.noteAccepted(in)
-	}
+	q.noteAccepted(in)
 	return in.ClientMessageID, false
 }
 

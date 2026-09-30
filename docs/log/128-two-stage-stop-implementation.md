@@ -23,7 +23,7 @@
 | 場面 | 呼ぶもの |
 |---|---|
 | 作る | `NewTurnQueue(name, ledger, LedgerAtAccept)`（codex・opencode・muse）/ `LedgerAtTake`（copilot・cursor・kiro・lcpp）。ledger の記録はキューがする。ドライバは自分で `SeenOrRecord` しない |
-| 受け付け | `Accept(in) (id, dup)`。`dup` は LedgerAtAccept の再送（積まれない）。利用者の新しい入力はエピソードを終える |
+| 受け付け | `Accept(in) (id, dup)`。`dup` は再送で、積まれない。対象は、ledger が見たことのある id と、LedgerAtTake でキューにある／取り出し済みの id。利用者の新しい入力はエピソードを終える |
 | キューを通らない受け付け | `AcceptOutside(in) (id, dup)`（codex のネイティブ steer）。再送の判定と ledger の記録もここでするので、ドライバは `SeenOrRecord` しない。`dup` なら何も送らない。steer が失敗してキューに落ちるときは `AcceptRecorded(in)` |
 | ポンプ | `Take()` → （別のターンの後ろで待つ間は `Hold(t, true)`）→ ロックの中の最後に `Commit(t)`（false なら送らない）→ ロックを外して送る → ランタイムが受け取ったら `Received(t)`（true なら停止をポンプが届ける）→ ターンが落ち着いたら `Settle(t)` |
 | 受け取る前にランタイムが消えた | `Requeue(t)`（停止待ちなら false、送り直さない） |
@@ -113,4 +113,6 @@ DismissDiscard(id string) bool
   - 🟡 LedgerAtTake で `Requeue` した項目を、次の `Take` が再送とみなして捨てていた。`Take` の時点で記録済みの項目には印を付けて、判定を免除した。
   - 🟡 ネイティブ steer の `Accepted` は再送でもエピソードを終えていた。`AcceptOutside` に置き換え、再送の判定と ledger の記録もここでするようにした。
   - 🟡 remove / dismiss_discard が `Resume` で止まっているランタイムを起こしていた。`LiveHandles` を足して直した。
-
+- B-drv2（copilot・cursor・kiro・lcpp）をマージした。陽性対照は 35 件。
+  - ACP は、`session/prompt` を書いた時点で受け取ったとみなす（`callWritten`）。
+  - 報告された指摘への対応: LedgerAtTake でキューにある id の再送が 2 回積まれ、捨てた入力にも 2 回出ていた。`Accept` が `dup` を返すようにした。

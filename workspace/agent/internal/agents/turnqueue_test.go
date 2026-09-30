@@ -153,7 +153,7 @@ func TestEpisodeEndsOnNewMemberInputOnly(t *testing.T) {
 			q.Accept(peer("p"))
 			q.Accept(TurnInput{Prompt: "x", ClientMessageID: "o", Origin: Origin{Kind: OriginOperator}})
 			q.Accept(TurnInput{Prompt: "x", ClientMessageID: "u"}) // unset origin
-			if _, dup := q.Accept(member("b")); dup != (at == LedgerAtAccept) {
+			if _, dup := q.Accept(member("b")); !dup || q.Len() != 4 {
 				t.Fatalf("resend dup = %v", dup)
 			}
 			if !q.Episode() {
@@ -537,5 +537,19 @@ func TestAcceptOutsideResend(t *testing.T) {
 		if _, dup := q.AcceptOutside(member("s")); !dup {
 			t.Fatalf("%v: the same steer twice was not a dup", at)
 		}
+	}
+}
+
+// A resend of an id already queued is not queued twice: a discard would carry it twice and the
+// Console would restore the same text twice.
+func TestResendIsQueuedOnce(t *testing.T) {
+	for _, at := range []LedgerPoint{LedgerAtAccept, LedgerAtTake} {
+		q := newQ(t, at)
+		q.Accept(member("a"))
+		running(t, q)
+		q.Accept(member("b"))
+		q.Accept(member("b"))
+		d := q.Interrupt(InterruptOpts{DiscardQueue: true}, true).Result.Discard
+		sameIDs(t, fmt.Sprint(at, " discarded"), d.Items, "b")
 	}
 }
