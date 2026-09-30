@@ -29,6 +29,15 @@ func tokenUsage(turn string, prompt, cacheRead, out int64) map[string]any {
 	}
 }
 
+func turnStarted(turn string) map[string]any {
+	return map[string]any{
+		"sessionId":   "01a0c1d6-0000-7000-8000-000000000001",
+		"turnId":      turn,
+		"sourceRange": map[string]any{},
+		"viewCursor":  "1",
+	}
+}
+
 // The overview card of a running muse session carries the same context fill the mirror
 // draws and one spend per turn. A turn's spend is its output summed over every model
 // completion plus the LAST completion's uncached prompt: each completion re-states the whole
@@ -44,9 +53,11 @@ func TestWireLiveCarriesContextAndSpends(t *testing.T) {
 	}
 
 	// Turn A: two completions. Spend = (21857-20721) + 300 + 200.
+	host.Notify(msp.NotificationTurnStarted, turnStarted("turn-a"))
 	host.Notify(msp.NotificationSessionTokenUsage, tokenUsage("turn-a", 20776, 0, 300))
 	host.Notify(msp.NotificationSessionTokenUsage, tokenUsage("turn-a", 21857, 20721, 200))
 	// Turn B: one completion, cache read only partly covers the prompt.
+	host.Notify(msp.NotificationTurnStarted, turnStarted("turn-b"))
 	host.Notify(msp.NotificationSessionTokenUsage, tokenUsage("turn-b", 23000, 21000, 50))
 	host.Notify(msp.NotificationSessionContextUsage, map[string]any{
 		"sessionId":   "01a0c1d6-0000-7000-8000-000000000001",
@@ -86,11 +97,7 @@ func TestWireLiveCarriesContextAndSpends(t *testing.T) {
 func TestManagedSpendsKeepsNewest(t *testing.T) {
 	h := &threadHandle{}
 	for i := 0; i < spendKeep+5; i++ {
-		h.recordTokenUsage(msp.SessionTokenUsageParams{
-			TurnID:       fmt.Sprintf("turn-%d", i),
-			PromptTokens: int64(i),
-			Usage:        msp.TokenUsage{OutputTokens: 1},
-		})
+		usageInTurn(h, fmt.Sprintf("turn-%d", i), int64(i), 1)
 	}
 	registerHandle(t, "ov-cap", h)
 	got := ManagedSpends("ov-cap")
@@ -106,13 +113,22 @@ func spendEvent(turn string, prompt, out int64) msp.SessionTokenUsageParams {
 	return msp.SessionTokenUsageParams{TurnID: turn, PromptTokens: prompt, Usage: msp.TokenUsage{OutputTokens: out}}
 }
 
+// usageInTurn records one completion's usage while turn is the handle's running turn, as the host
+// delivers it between turn/started and turn/completed.
+func usageInTurn(h *threadHandle, turn string, prompt, out int64) {
+	h.mu.Lock()
+	h.turnID = turn
+	h.mu.Unlock()
+	h.recordTokenUsage(spendEvent(turn, prompt, out))
+}
+
 // A late event for an earlier turn folds into that turn: matched against the newest turn only,
 // it would split turn A in two and count its prompt twice ([110 220 155] instead of [165 220]).
 func TestManagedSpendsFoldsAnInterleavedTurn(t *testing.T) {
 	h := &threadHandle{}
-	h.recordTokenUsage(spendEvent("a", 100, 10))
-	h.recordTokenUsage(spendEvent("b", 200, 20))
-	h.recordTokenUsage(spendEvent("a", 150, 5))
+	usageInTurn(h, "a", 100, 10)
+	usageInTurn(h, "b", 200, 20)
+	h.recordTokenUsage(spendEvent("a", 150, 5)) // late, while b is running
 	registerHandle(t, "ov-interleave", h)
 	if got, want := ManagedSpends("ov-interleave"), []int{150 + 10 + 5, 220}; !reflect.DeepEqual(got, want) {
 		t.Errorf("spends = %v, want %v", got, want)
@@ -120,11 +136,11 @@ func TestManagedSpendsFoldsAnInterleavedTurn(t *testing.T) {
 }
 
 // A late event for a turn already pushed out of the kept window stays out rather than coming
-// back as the newest turn.
+// back as the newest turn — however many turns ago it ran, so twice the window here.
 func TestManagedSpendsIgnoresADroppedTurn(t *testing.T) {
 	h := &threadHandle{}
-	for i := 0; i < spendKeep+1; i++ {
-		h.recordTokenUsage(spendEvent(fmt.Sprintf("turn-%d", i), 1, 1))
+	for i := 0; i < 2*spendKeep+1; i++ {
+		usageInTurn(h, fmt.Sprintf("turn-%d", i), 1, 1)
 	}
 	h.recordTokenUsage(spendEvent("turn-0", 1000, 1))
 	registerHandle(t, "ov-dropped", h)
@@ -159,7 +175,7 @@ func TestOpenSessionResetsUsageOnlyForANewConversation(t *testing.T) {
 			host.Handle(msp.MethodSessionStart, func(msptest.Message) (any, *msp.Error) {
 				return map[string]any{"session": sess, "viewCursor": "c1"}, nil
 			})
-			h.recordTokenUsage(spendEvent("old", 100, 10))
+			usageInTurn(h, "old", 100, 10)
 			h.ctxMu.Lock()
 			h.ctxUsed, h.ctxHasUsage = 5000, true
 			h.ctxMu.Unlock()
@@ -176,5 +192,17 @@ func TestOpenSessionResetsUsageOnlyForANewConversation(t *testing.T) {
 				t.Errorf("fresh start: context=%v spends=%v, want both reset", hasCtx, spends)
 			}
 		})
+	}
+}
+
+// Usage can beat turn/started to the handle: the turn is then known only as the commandId AF
+// minted for turn/start, and that is enough to take it.
+func TestManagedSpendsTakesUsageBeforeTurnStarted(t *testing.T) {
+	h := &threadHandle{starting: "cmd-1"}
+	h.recordTokenUsage(spendEvent("cmd-1", 100, 10))
+	h.recordTokenUsage(spendEvent("stranger", 100, 10))
+	registerHandle(t, "ov-early", h)
+	if got, want := ManagedSpends("ov-early"), []int{110}; !reflect.DeepEqual(got, want) {
+		t.Errorf("spends = %v, want %v", got, want)
 	}
 }

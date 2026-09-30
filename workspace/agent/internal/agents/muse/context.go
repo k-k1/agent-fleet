@@ -80,8 +80,17 @@ type turnSpend struct {
 // than on turn/completed, so the trend does not depend on which of the two the host sends
 // first, and it looks the id up among every turn it holds: MSP orders events by viewCursor,
 // which says nothing about turn ids arriving contiguously, and a late event matched only
-// against the newest turn would split its own turn in two and count its prompt twice. A turn
-// already dropped past spendKeep stays dropped rather than coming back as the newest.
+// against the newest turn would split its own turn in two and count its prompt twice.
+//
+// A turn id it does not hold is taken only when it is the turn this handle is running —
+// h.starting (minted before turn/start goes out, so it covers usage that beats turn/started)
+// or h.turnID. Anything else is a turn already pushed out of spendKeep, and reviving it as the
+// newest bar is wrong however long ago it ran, so no tombstone list of any size would do.
+// What this relies on: a completion's usage is delivered before its turn's turn/completed,
+// because both cite durable records (sourceRange), a model completion is recorded before the
+// turn's terminal, and viewCursor is strictly monotonic. Were that ever violated the cost is
+// a missing bar, never a wrong one.
+//
 // The uncached prompt is promptTokens minus the cache read: promptTokens is the server's
 // counted-once figure, and inputTokens alone is provider-convention-dependent (ADR 0095 B1-1
 // measured the cache inside it). Usage with no turn id is not a reply, so it is skipped.
@@ -94,6 +103,9 @@ func (h *threadHandle) recordTokenUsage(p msp.SessionTokenUsageParams) {
 		read = *p.Usage.CacheReadTokens
 	}
 	uncached := max(int(p.PromptTokens-read), 0)
+	h.mu.Lock()
+	current := p.TurnID == h.starting || p.TurnID == h.turnID
+	h.mu.Unlock()
 	h.ctxMu.Lock()
 	defer h.ctxMu.Unlock()
 	for i := range h.spends {
@@ -103,20 +115,12 @@ func (h *threadHandle) recordTokenUsage(p msp.SessionTokenUsageParams) {
 			return
 		}
 	}
-	for _, id := range h.spendsDropped {
-		if id == p.TurnID {
-			return
-		}
+	if !current {
+		return
 	}
 	h.spends = append(h.spends, turnSpend{turnID: p.TurnID, out: int(p.Usage.OutputTokens), uncached: uncached})
-	if over := len(h.spends) - spendKeep; over > 0 {
-		for _, s := range h.spends[:over] {
-			h.spendsDropped = append(h.spendsDropped, s.turnID)
-		}
-		if n := len(h.spendsDropped); n > spendKeep {
-			h.spendsDropped = append(h.spendsDropped[:0:0], h.spendsDropped[n-spendKeep:]...)
-		}
-		h.spends = append(h.spends[:0:0], h.spends[over:]...)
+	if len(h.spends) > spendKeep {
+		h.spends = append(h.spends[:0:0], h.spends[len(h.spends)-spendKeep:]...)
 	}
 }
 
@@ -128,7 +132,7 @@ func (h *threadHandle) recordTokenUsage(p msp.SessionTokenUsageParams) {
 func (h *threadHandle) resetUsage() {
 	h.ctxMu.Lock()
 	h.ctxUsed, h.ctxWindow, h.ctxHasUsage = 0, nil, false
-	h.spends, h.spendsDropped = nil, nil
+	h.spends = nil
 	h.ctxMu.Unlock()
 }
 
