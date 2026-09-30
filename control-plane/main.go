@@ -340,7 +340,12 @@ func main() {
 		// Recorded before the goroutine starts: the heatmap API divides by it, and a
 		// zero here would make every cell read as "ran the whole hour" (docs/log/83).
 		mgr.usageInterval = iv
-		go newUsageSampler(mgr, iv).run(context.Background())
+		sampler := newUsageSampler(mgr, iv)
+		// The ceiling on `starting` (start_deadline.go). 30 minutes is several times the
+		// slowest launch that does converge — a Fargate cold pull, an ecs-ec2 slot built
+		// from nothing — and only a launch that cannot converge reaches it. "0" = off.
+		sampler.deadline = newStartDeadline(mgr, intervalOff(os.Getenv("AF_WORKSPACE_START_DEADLINE"), 30*time.Minute))
+		go sampler.run(context.Background())
 	}
 
 	// Cloud cost (docs/log/67 + ADR 0048): the AWS invoice, attributed per member by cost

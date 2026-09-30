@@ -1117,9 +1117,10 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 // start that is never going to converge says WHY instead of spinning.
 //
 // ⚠️ This is the one place State() writes something, which is worth the exception.
-// `starting` here means only "desired >= 1 and nothing is running yet", and it has no
-// timeout — a task ECS refuses to place holds that forever (docs/log/70 §70.14.6: a task
-// definition declaring ARM64 while pinned to an x86_64 slot). ECS says exactly why in
+// `starting` here means only "desired >= 1 and nothing is running yet", and the adapter
+// sets it no timeout — a task ECS refuses to place holds that until the CP's start
+// deadline stops it (start_deadline.go; docs/log/70 §70.14.6: a task definition declaring
+// ARM64 while pinned to an x86_64 slot). ECS says exactly why in
 // the service events; the CP was throwing that away and reporting a bare `starting`,
 // so the only way to find out was `aws ecs describe-services` by hand. Nothing else in
 // the read path can reach the events — BootPhase() takes no context and cannot call
@@ -1142,7 +1143,7 @@ func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
 		return // already said, and this runs every 4s
 	}
 	e.setPhase(phase)
-	log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed: %s", e.base.name, why)
+	log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed or the start deadline stops it: %s", e.base.name, why)
 }
 
 // clearBlockedPhase removes a blocked phase once nothing blocks the task any more. Scoped
@@ -1354,6 +1355,10 @@ func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
 			return err
 		}
 	}
+	// A blocked phase outlives the start it described otherwise: State() only clears it on
+	// running/starting, and the Console keeps its starting dialog open while any phase is
+	// reported — so a stopped workspace would sit behind "cannot be placed" for good.
+	e.clearBlockedPhase()
 	// Record when the dormancy started. If this write is lost (CP restart mid-Stop) the
 	// sweeper stamps it the first time it sees an idle attachment, so the worst case is
 	// that the slot sleeps one sweep later.

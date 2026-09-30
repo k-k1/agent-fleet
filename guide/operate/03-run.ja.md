@@ -232,6 +232,12 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
 
 ## アイドル停止と force-stop
 
+- **終わらない起動は停止されます**: 起動から **30 分**経っても起動中のままの Workspace（ECS なら、
+  たいていクラスターがタスクを配置できない場合）を停止し、容量を掴み続けないようにします。原因を
+  直せばユーザーはもう一度 **「起動」** を押せます。Control Plane のログに残ります
+  （`start-deadline: stopped …`・最後の起動フェーズ付き）。`AF_WORKSPACE_START_DEADLINE` で上限を変え、
+  `0` で無効。usage サンプラーの上で動くため、`AF_USAGE_SAMPLE_INTERVAL=0` でも無効になります。
+
 - **アイドル自動停止（scale-to-zero）**: 使われていない claude セッションを **1 時間**で停止し、
   何も動いていない Workspace を **2 時間**で停止します。**これが既定**で、
   `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT`（質問や承認待ちで止まっているセッション）/ `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT`（打鍵の無い端末を在席と数える猶予・既定 30 分）で変えられます（テナント単位の上書きは Admin UI。

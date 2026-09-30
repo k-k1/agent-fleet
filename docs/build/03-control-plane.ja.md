@@ -224,7 +224,10 @@ Workspace を起こさない。
     別のアベイラビリティゾーンへ写す。既定 off。
 - **usage サンプラー** — `AF_USAGE_SAMPLE_INTERVAL`（5 分）ごとに、running な Workspace の占有秒を日次と
   時間単位のバケツへ加算する。稼働ヒートマップの元にもなる。モデルの資格情報は利用者持ちなので、
-  **運用者のコストはトークンでなく占有時間**で、それをこれが測る。
+  **運用者のコストはトークンでなく占有時間**で、それをこれが測る。同じ巡回が `starting` の上限も執行する
+  （`start_deadline.go`）: 起動から `AF_WORKSPACE_START_DEADLINE`（30 分）経っても `starting` のままの
+  Workspace を、明示の停止と同じライフサイクルの柵の下で停止する。そこに届くのは収束し得ない起動だけ
+  （ECS が配置を拒むタスクなど）。`0` で無効。サンプラーを止めてもこれは止まる。
 - **クラウドコストのポーラー** — 請求書のある runtime（AWS のターゲット）では、`AF_CLOUD_COST_INTERVAL`
   （6 時間）ごとに Cost Explorer を直近 `AF_CLOUD_COST_WINDOW_DAYS`（7 日）分読み、コスト配分タグで
   メンバー別に按分する。`docker` と `native` では何もせず、コストの画面も無い。

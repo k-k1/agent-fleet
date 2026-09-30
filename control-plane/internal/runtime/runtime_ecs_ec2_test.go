@@ -4733,6 +4733,44 @@ func TestECSEC2BlockedPhaseClearsOnceTheTaskIsPlaced(t *testing.T) {
 	}
 }
 
+// Stopping a wedged launch — by hand, or by the CP's start deadline — must take the blocked
+// phase with it. State() only clears it on running/starting, and the Console keeps its start
+// dialog up while any phase is reported, so a stopped workspace would sit behind "Waiting
+// will not help" until the next Start.
+func TestECSEC2StopClearsTheBlockedPhase(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	defer h.rt.setPhase("")
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	now := time.Now()
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{
+		Status: aws.String("ACTIVE"), DesiredCount: 1,
+		Deployments: []ecstypes.Deployment{{
+			Status: aws.String("PRIMARY"), CreatedAt: aws.Time(now.Add(-time.Hour)),
+			RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+		}},
+		Events: []ecstypes.ServiceEvent{placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)},
+	}
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	if ph := h.rt.BootPhase(); !strings.HasPrefix(ph, blockedPhasePrefix) {
+		t.Fatalf("the wall was not named: %q", ph)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	if got := h.rt.State(ctx); got != "stopped" {
+		t.Fatalf("State after Stop = %q, want stopped", got)
+	}
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("the blocked phase outlived the stop: %q", ph)
+	}
+}
+
 // It only reaches the Console once it is on the phase, and clearing it when the task
 // starts running is part of the contract: a phase left behind keeps bootPhase != "", and
 // the start dialog stays on screen.

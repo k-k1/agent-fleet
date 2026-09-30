@@ -35,8 +35,12 @@ type Runtime interface {
 	//              (pinned boot-install, opt-in CLI self-update). Callers must NOT
 	//              re-Start (the adapter would force a new deployment / kill the boot)
 	//              and must NOT idle-stop it; read paths treat it like stopped (Agent
-	//              not reachable yet). Always time-boxed by the adapter — a "starting"
-	//              that never converges is a workspace nobody can operate.
+	//              not reachable yet). Always time-boxed — a "starting" that never
+	//              converges is a workspace nobody can operate. docker and native end
+	//              their own window (AgentBootBudget); ECS cannot tell a slow launch
+	//              from one that will never place, so the CP's start deadline
+	//              (start_deadline.go) Stops it instead. Stop must therefore work on
+	//              a "starting" workspace.
 	//   stopped  — exists but not running (docker: exited container; ECS: desired 0)
 	//   none     — no container / service
 	State(ctx context.Context) string // running | starting | stopped | none
