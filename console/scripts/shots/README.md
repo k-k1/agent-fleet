@@ -35,7 +35,10 @@ node console/scripts/shots/capture.mjs --locale en
 - **Everything is fictional.** Invented repo names, session titles, commits, authors
   and a scripted conversation, under `demo@example.com` / tenant `demo`. Never point
   this at a real fleet — published screenshots must not carry a tenant name, an
-  address, a private repo, or an agent account's usage numbers.
+  address, a private repo, or an agent account's usage numbers. That covers third-party
+  image models too: a real checkpoint's name beside a licence line reads as an endorsement
+  and a licence claim, so the studio's models are invented (`sdxl` / `flux1` are Agent
+  Fleet's own family ids and stay).
 - Fixture shapes follow the real wire contracts (`console/src/types/session.ts`,
   `console/src/features/repos/store.ts`,
   `workspace/agent/internal/transcript/transcript.go`, `console/src/lib/gitgraph.ts`).
