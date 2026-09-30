@@ -151,15 +151,17 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 	// One item can carry a whole tool output, so the stock 64 KiB line limit would turn a
 	// large-but-legitimate record into a truncated conversation.
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
-	var hostOrder []string
 	for sc.Scan() {
 		var r record
 		if json.Unmarshal(sc.Bytes(), &r) != nil {
 			continue // a torn last line after a crash must not lose the whole history
 		}
 		if r.Item.ItemID == "" {
+			// Applied where it stands, to the order built so far: a later, shorter fold (an
+			// anchored snapshot) must not undo what an earlier one put right before its anchor,
+			// and an item first seen after the line lands after the fold it describes.
 			if len(r.Order) > 0 {
-				hostOrder = r.Order // the latest backfill's fold covers every earlier one
+				order = mergeOrder(order, r.Order, byID)
 			}
 			continue
 		}
@@ -182,7 +184,6 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		}
 		meta[r.Item.ItemID] = m
 	}
-	order = mergeOrder(order, hostOrder, byID)
 	items := make([]msp.Item, 0, len(order))
 	for _, id := range order {
 		items = append(items, byID[id])
@@ -195,9 +196,10 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 // was missed: an item backfilled after a failed mirror write or a lost notification is
 // first seen at the end, and turnsFromItems would fold a missed reply into the NEXT user
 // message's turn. So the host's order wins for the items it lists. An item it does not list
-// follows the latest-placed host item AF had seen before it: an item from before a
-// compaction anchor (seen before any) stays in front, a live item written after the fold
-// stays behind it.
+// follows the latest-placed host item it followed in seen: one from before a compaction
+// anchor (preceding every listed item) stays in front. A live item newer than the fold is
+// never in seen here — the resume holds live items until the order line is written
+// (holdItems), so they are first seen after it.
 func mergeOrder(seen, host []string, byID map[string]msp.Item) []string {
 	if len(host) == 0 {
 		return seen

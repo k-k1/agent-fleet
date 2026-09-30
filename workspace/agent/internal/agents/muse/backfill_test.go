@@ -264,8 +264,8 @@ func TestBackfillPutsAMiddleGapInTheHostsOrder(t *testing.T) {
 	}
 }
 
-// A live item the host sent after its fold stays after it, whether it reached the store
-// before the backfill ran or after.
+// A live item stored after the fold stays after it: one the mirror already had behind the
+// fold's last item, and one written after the backfill.
 func TestBackfillKeepsLiveItemsAfterTheFold(t *testing.T) {
 	live := textItem("live-1", msp.ItemKindAgentMessage, "newer", 1)
 	st := mirrorWith(t, "00000000-0000-5000-8000-0000000000e2", u1, u2, a2, live)
@@ -304,5 +304,70 @@ func TestBackfillWritesNothingOverAnIntactMirror(t *testing.T) {
 	after, _ := os.ReadFile(st.Path())
 	if !bytes.Equal(before, after) {
 		t.Errorf("an intact mirror was written to:\n%s", after[len(before):])
+	}
+}
+
+// A second backfill over a shorter fold (an anchored snapshot after a compaction) must not undo
+// what the first put right before that anchor: order lines apply one after the other.
+func TestASecondShorterFoldKeepsTheFirstFix(t *testing.T) {
+	st := mirrorWith(t, "00000000-0000-5000-8000-0000000000e5", u1, u2, a2)
+	if _, err := st.backfill([]msp.Item{u1, a1, u2, a2}); err != nil {
+		t.Fatal(err)
+	}
+	u3 := textItem("u3", msp.ItemKindUserMessage, "third", 1)
+	a3 := textItem("a3", msp.ItemKindAgentMessage, "reply three", 1)
+	b3 := toolItem("b3", "bash", msp.ItemStatusCompleted, 2)
+	for _, it := range []msp.Item{u3, a3} {
+		if err := st.appendRecord(record{Item: it}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.backfill([]msp.Item{u3, b3, a3}); err != nil {
+		t.Fatal(err)
+	}
+	wantOrder(t, st, "u1", "a1", "u2", "a2", "u3", "b3", "a3")
+}
+
+// resumeDeliveringLive answers session/resume with fold, and sends live ahead of the answer:
+// the resume subscribes the connection, so a live item can beat the backfill to the store.
+func resumeDeliveringLive(t *testing.T, host *msptest.Host, fold []msp.Item, live msp.Item) {
+	t.Helper()
+	sess := map[string]any{"sessionId": "01a0c1d6-0000-7000-8000-0000000000d2", "path": "/tmp/s.jsonl", "status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 2}
+	host.Handle(msp.MethodSessionResume, func(msptest.Message) (any, *msp.Error) {
+		host.Notify(msp.NotificationItemStarted, msp.ItemStartedParams{Item: live})
+		return map[string]any{"session": sess, "history": map[string]any{"mode": "inline", "items": fold}, "pendingRequests": []any{}, "viewCursor": "c9"}, nil
+	})
+}
+
+// A live item newer than the fold lands after all of it, whatever the mirror held before: empty,
+// missing the fold's tail, or holding items from before an anchor (which stay in front).
+func TestLiveItemsDuringAResumeLandAfterTheFold(t *testing.T) {
+	live := textItem("live", msp.ItemKindUserMessage, "new prompt", 1)
+	p0 := textItem("p0", msp.ItemKindUserMessage, "before the anchor", 1)
+	for _, tc := range []struct {
+		name   string
+		mirror []msp.Item
+		fold   []msp.Item
+		want   []string
+	}{
+		{"empty mirror", nil, []msp.Item{u1, a1}, []string{"u1", "a1", "live"}},
+		{"tail missing", []msp.Item{u1}, []msp.Item{u1, a1, u2, a2}, []string{"u1", "a1", "u2", "a2", "live"}},
+		{"item before the anchor", []msp.Item{p0, u2}, []msp.Item{u1, a1, u2, a2}, []string{"p0", "u1", "a1", "u2", "a2", "live"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000f1"}
+			st := mirrorWith(t, h.slotSid, tc.mirror...)
+			host := newTestHandle(t, h)
+			registerHandle(t, "bf-live-"+tc.name, h)
+			writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000d2", Path: "/tmp/s.jsonl"})
+			resumeDeliveringLive(t, host, tc.fold, live)
+			if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+				t.Fatalf("openSession: %v", err)
+			}
+			wantOrder(t, st, tc.want...)
+			// Direct writes resume once the backfill is done.
+			h.onItem(textItem("after", msp.ItemKindAgentMessage, "answer", 1))
+			wantOrder(t, st, append(tc.want, "after")...)
+		})
 	}
 }
