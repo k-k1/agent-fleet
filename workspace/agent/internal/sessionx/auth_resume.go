@@ -30,6 +30,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -161,7 +162,7 @@ func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now t
 	st.Attempts++
 	st.LastTry = now.Format(time.RFC3339)
 	_ = authResumeStates.Write(m.Name, st)
-	if err := abortResumeInject(m.Name, prompt); err != nil {
+	if err := abortResumeInject(m.Name, prompt, agents.Origin{Kind: agents.OriginAutoResume}); err != nil {
 		st.Attempts--
 		st.DeliverTries++
 		if st.DeliverTries >= authResumeMaxDeliverTries {

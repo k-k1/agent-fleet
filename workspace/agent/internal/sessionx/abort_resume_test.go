@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -23,6 +24,7 @@ import (
 
 type abortFixture struct {
 	sent      []string // resume prompts that were injected successfully
+	origins   []agents.Origin
 	injectErr error
 	pane      tmuxx.PaneRead
 }
@@ -33,11 +35,12 @@ func newAbortFixture(t *testing.T) *abortFixture {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	f := &abortFixture{pane: tmuxx.PaneRead{OK: true, Idle: true}}
 	origInject, origPane := abortResumeInject, abortResumeReadingPane
-	abortResumeInject = func(name, prompt string) error {
+	abortResumeInject = func(name, prompt string, origin agents.Origin) error {
 		if f.injectErr != nil {
 			return f.injectErr
 		}
 		f.sent = append(f.sent, prompt)
+		f.origins = append(f.origins, origin)
 		return nil
 	}
 	abortResumeReadingPane = func(string) tmuxx.PaneRead { return f.pane }
@@ -91,6 +94,10 @@ func TestAbortResumeWaitsThenSends(t *testing.T) {
 	abortResumeAttempt(m, abState(t, m.Name), a, cut.Add(abortResumeFirstDelay+time.Second))
 	if len(f.sent) != 1 {
 		t.Fatalf("resume prompts = %d, want 1: %v", len(f.sent), f.sent)
+	}
+	// ADR 0105 decision 1: an auto-resume is not member input, so it never ends a stop episode.
+	if f.origins[0] != (agents.Origin{Kind: agents.OriginAutoResume}) {
+		t.Errorf("resume origin = %+v, want auto-resume", f.origins[0])
 	}
 	if st := abState(t, m.Name); st.Attempts != 1 {
 		t.Errorf("attempts = %d, want 1", st.Attempts)
