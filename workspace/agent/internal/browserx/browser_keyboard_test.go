@@ -53,11 +53,9 @@ func newKeyboardTestPage(t *testing.T, factory browserCDPFactory, html string, v
 	p := m.pages[created.ID]
 	cdp := m.cdp
 	m.mu.Unlock()
-	// "ready" is not "the test document is live": the initial about:blank's own
-	// networkIdle marks the page ready while the navigation is still pending
-	// (measured: ~1 s before the document committed when its response was held),
-	// and Input.dispatchMouseEvent then lands on about:blank. Wait for the
-	// document the input events are meant for.
+	// "ready" means the navigation's loader fired load or networkIdle, which is
+	// not quite "the document is complete"; the input events below land on
+	// whatever document is live, so wait for the one they are meant for.
 	docLoaded := fmt.Sprintf(`location.href.startsWith(%q) && document.readyState === "complete"`, app.URL+"/")
 	var loaded struct {
 		Result struct {
