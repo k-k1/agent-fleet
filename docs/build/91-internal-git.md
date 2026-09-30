@@ -221,7 +221,10 @@ time, and the helper serves any host in the store).
 - **A per-tenant repository cap** (`max_git_repos` in the tenant limits, 0 = unlimited),
   enforced at creation with 409 `quota_exceeded`.
 - **Audit entries** `internal_git.repo.create`, `internal_git.repo.delete` and
-  `internal_git.repo.rename`.
+  `internal_git.repo.rename`. Delete and rename cannot be undone (the bare and its LFS objects
+  go; every clone's origin URL breaks), so they record `<action>.requested` before touching the
+  ledger or the disk and **refuse with `503 audit_unavailable` when that write fails**, then
+  write the outcome row ([07 §7.7](07-security.md#77-audit)). Create stays best-effort after the fact.
 - **An empty repository is selectable and clonable**: with no branches yet, the branches
   endpoint returns an empty list plus the repository's `default_branch`, and the
   repository picker offers that name as a placeholder branch.

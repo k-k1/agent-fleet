@@ -48,8 +48,8 @@ keep it in mind.
 ### Operations that cannot be undone leave two rows
 
 Clean home, deleting a home's backups, destroying a workspace, removing a member, deleting a
-member for good, deleting a tenant, terminating a pool slot and purging an engine model's files
-are recorded **before** they run, as `<action>.requested` (for example
+member for good, deleting a tenant, terminating a pool slot, purging an engine model's files, deleting a tenant's
+sign-in method and deleting or renaming an internal repository are recorded **before** they run, as `<action>.requested` (for example
 `workspace.destroy.requested`), and again when they finish, as `<action>` with the outcome in its
 detail: what was done, what could not be deleted, or the error. If the request cannot be written
 to the audit log, the operation is refused with "the audit log could not record who asked for it"

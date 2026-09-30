@@ -1392,6 +1392,12 @@ func (a Admin) TerminatePoolSlot(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "instance id required"})
 		return
 	}
+	// Before the intent write: a runtime with no pool has nothing to terminate, and must say
+	// so even when the database is down rather than blame the audit log.
+	if !a.cp.HasSlotPool() {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
+		return
+	}
 	in, ok := a.beginIrreversible(w, r, store.AuditLog{
 		TenantID: "", ActorKind: "admin", ActorID: ident.ID,
 		Action: "pool.slot_terminate", Target: id,

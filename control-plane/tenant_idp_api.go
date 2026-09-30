@@ -454,12 +454,22 @@ func (a tenantIdPAPI) remove(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "tenant_idp_not_found", "unknown sign-in method"})
 		return
 	}
+	// The row holds the client secret and the approval, and neither comes back with a
+	// re-created row, so the request is on record before it goes (store.BeginIrreversible).
+	detail := "issuer=" + row.Issuer
+	in, ok := beginIrreversible(w, r, a.mgr.store, store.AuditLog{
+		TenantID: t.ID, ActorKind: "admin", ActorID: ident.ID,
+		Action: "tenant_idp.delete", Target: auth.TenantProviderID(t.Slug, row.Name), Detail: detail,
+	})
+	if !ok {
+		return
+	}
 	if err := a.mgr.store.DeleteTenantIdP(r.Context(), t.ID, row.ID); err != nil {
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
 	a.mgr.tenantIdP.Invalidate()
-	a.audit(r, ident, t.ID, "tenant_idp.delete", auth.TenantProviderID(t.Slug, row.Name), "issuer="+row.Issuer)
+	in.Done(r.Context(), detail, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": row.ID})
 }
 

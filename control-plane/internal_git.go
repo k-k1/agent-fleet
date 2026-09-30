@@ -171,8 +171,9 @@ func (a gitServerAPI) enforceGitRepoQuota(ctx context.Context, tenantID string) 
 	return nil
 }
 
-// auditGit records an internal-git mutation in the audit ledger. Best-effort:
-// a logging failure never blocks the operation.
+// auditGit records a reversible internal-git mutation (create) in the audit ledger.
+// Best-effort: a logging failure never blocks the operation. Delete and rename cannot be
+// undone and go through beginIrreversible instead.
 func (a gitServerAPI) auditGit(ctx context.Context, tenantID, actorID, action, target, detail string) {
 	_ = a.store.InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
@@ -195,17 +196,28 @@ func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
 		return
 	}
+	// The bare and its LFS objects cannot be restored, so who asked is on record before
+	// anything goes, and nothing goes when that record cannot be written.
+	in, ok := beginIrreversible(w, r, a.store, store.AuditLog{
+		TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
+		Action: "internal_git.repo.delete", Target: name,
+	})
+	if !ok {
+		return
+	}
 	// The repo row goes with its LFS ledger and lock rows in one transaction, before
 	// the disk: a failure leaves everything as it was and the request can be retried.
 	if err := a.store.DeleteGitRepo(r.Context(), mv.TenantID, name); err != nil {
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
 	dir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
+	outcome := ""
 	if err := os.RemoveAll(dir); err != nil {
 		log.Printf("internal git: delete %s: ledger rows removed but the bare remains: %v", dir, err)
+		outcome = "ledger rows removed but the bare remains: " + err.Error()
 	}
-	a.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.delete", name, "")
+	in.Done(r.Context(), outcome, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": name})
 }
 
@@ -248,20 +260,29 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 
+	// A rename breaks every existing clone's origin URL and frees the old name for someone
+	// else's repository, so it is held to the same intent-first record as a delete.
+	in, ok := beginIrreversible(w, r, a.store, store.AuditLog{
+		TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
+		Action: "internal_git.repo.rename", Target: oldName, Detail: "to=" + newName,
+	})
+	if !ok {
+		return
+	}
 	oldDir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, oldName+".git")
 	newDir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, newName+".git")
 	if err := os.Rename(oldDir, newDir); err != nil {
-		writeAPIErr(w, &apiError{http.StatusInternalServerError, "rename_failed", err.Error()})
+		refuseIrreversible(w, r, in, &apiError{http.StatusInternalServerError, "rename_failed", err.Error()})
 		return
 	}
 	// RenameGitRepo repoints the LFS ledger and locks in the same transaction, matching
 	// the lfs/objects that just moved with the .git dir.
 	if err := a.store.RenameGitRepo(r.Context(), mv.TenantID, oldName, newName); err != nil {
 		_ = os.Rename(newDir, oldDir) // roll back the move so disk and ledger stay consistent
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
-	a.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.rename", oldName, "to="+newName)
+	in.Done(r.Context(), "to="+newName, http.StatusOK)
 	g.Name = newName
 	writeJSON(w, http.StatusOK, a.repoDTO(mv.TenantSlug, g))
 }

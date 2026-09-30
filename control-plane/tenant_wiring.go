@@ -255,6 +255,10 @@ func (d cpTenant) PoolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, 
 	return d.m.poolStatus(ctx)
 }
 
+func (d cpTenant) HasSlotPool() bool {
+	return d.m.hasSlotPool()
+}
+
 func (d cpTenant) TerminateQuarantinedSlot(ctx context.Context, instanceID string) (string, bool, error) {
 	return d.m.terminateQuarantinedSlot(ctx, instanceID)
 }

@@ -673,6 +673,12 @@ type runtimeSlotTerminator interface {
 	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, err error)
 }
 
+// hasSlotPool reports whether terminateQuarantinedSlot has anything to drive.
+func (m *manager) hasSlotPool() bool {
+	_, ok := m.rtFactory.(runtimeSlotTerminator)
+	return ok
+}
+
 // terminateQuarantinedSlot removes one quarantined box on an operator's word, returning the
 // quarantine reason so the caller can keep it in the audit log — the box is about to stop
 // existing, and its tags with it. ok=false on every runtime that has no pool.

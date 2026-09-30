@@ -92,6 +92,9 @@ type CP interface {
 	IdleForecastFor(wsID string) (any, bool)
 	PoolBudget(ctx context.Context, overrideTenantID string, overrideMax int) (runtime.PoolBudget, bool, error)
 	PoolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, error)
+	// HasSlotPool reports whether this runtime has a slot pool at all. It needs no database,
+	// so a poolless runtime can answer 404 before the audit intent is written.
+	HasSlotPool() bool
 	// TerminateQuarantinedSlot ends one quarantined slot and returns why it was
 	// quarantined, so the audit entry outlives the instance and its tags. ok=false
 	// where there is no pool, exactly as PoolStatus reports it.

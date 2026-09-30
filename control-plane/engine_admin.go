@@ -1617,12 +1617,10 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	// row can be registered again.
 	var purge *store.AuditIntent
 	if r.URL.Query().Get("purge") == "1" {
-		var aerr error
-		purge, aerr = store.BeginIrreversible(r.Context(), a.mgr.store, store.AuditLog{
+		var ok bool
+		if purge, ok = beginIrreversible(w, r, a.mgr.store, store.AuditLog{
 			ActorKind: "admin", ActorID: ident.ID, Action: "engine." + key + ".model", Target: "purge " + id,
-		})
-		if aerr != nil {
-			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, errCodeAuditUnavailable, "nothing was done: " + aerr.Error()})
+		}); !ok {
 			return
 		}
 	}
