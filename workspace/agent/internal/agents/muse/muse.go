@@ -111,7 +111,7 @@ func (agentImpl) ClearResume(sid string) {
 // at-rest file is not an option).
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	st := openStore(slotSid(m))
-	items, models, err := st.itemsWithModels()
+	items, meta, err := st.itemsWithMeta()
 	if err != nil {
 		return agents.TranscriptData{}, false
 	}
@@ -119,8 +119,12 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	// An assistant turn is labelled with the model of its first item. session/setModel takes
 	// effect at the next model call, so a turn that spans a switch shows the model it began on.
 	for i := range td.Turns {
+		m := meta[td.Turns[i].AnchorID]
 		if td.Turns[i].Role == "assistant" && td.Turns[i].Model == "" {
-			td.Turns[i].Model = models[td.Turns[i].AnchorID]
+			td.Turns[i].Model = m.model
+		}
+		if td.Turns[i].Role == "user" && len(m.images) > 0 {
+			withImagePaths(&td.Turns[i], m.images)
 		}
 	}
 

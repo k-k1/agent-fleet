@@ -100,6 +100,12 @@ type threadHandle struct {
 	// by item id. In memory only — see onDelta.
 	streaming map[string]string
 
+	// sentImages maps a commandId to the paths of the attachments that went out as `image`
+	// parts under it, until the host's `userMessage` for that command arrives. The item echoes
+	// image metadata only (no path, `[Image #N]` in its text), and the mirror finds thumbnails
+	// by path, so without this the member's own screenshots vanish from the bubble.
+	sentImages map[string][]string
+
 	// Live context fill (session/contextUsage). Separate lock from mu so onNotify
 	// can record context without contending with turn plumbing. Read by ManagedContext.
 	ctxMu       sync.Mutex
@@ -516,8 +522,15 @@ func (h *threadHandle) onItem(it msp.Item) {
 	if model == "" {
 		model = h.model
 	}
+	var images []string
+	if it.Kind == msp.ItemKindUserMessage && it.CommandID != nil {
+		// Taken on the first revision only; the store's fold keeps the first stamp for the
+		// revisions that follow, the same way it keeps the model.
+		images = h.sentImages[*it.CommandID]
+		delete(h.sentImages, *it.CommandID)
+	}
 	h.mu.Unlock()
-	if err := openStore(sid).AppendFrom(it, model); err != nil {
+	if err := openStore(sid).appendRecord(record{Item: it, Model: model, Images: images}); err != nil {
 		log.Printf("muse: %s: transcript append: %v", h.name, err)
 	}
 }
@@ -969,10 +982,12 @@ func (h *threadHandle) startTurn(in agents.TurnInput, id string) (msp.TurnStartD
 	if cl == nil {
 		return "", errors.New("Muse Code のホストが起動していません")
 	}
+	parts, images := inputPartsImages(in)
+	h.noteImages(id, images)
 	params := msp.TurnStartParams{
 		CommandID: id,
 		SessionID: sid,
-		Input:     skillPart(cl, sid, inputParts(in)),
+		Input:     skillPart(cl, sid, parts),
 	}
 	if e := reasoningEffort(effort); e != nil {
 		params.ReasoningEffort = e
@@ -1000,12 +1015,30 @@ func (h *threadHandle) steerNow(in agents.TurnInput, turnID string) error {
 	if cl == nil {
 		return errors.New("Muse Code のホストが起動していません")
 	}
+	id := msp.NewCommandID()
+	parts, images := inputPartsImages(in)
+	h.noteImages(id, images)
 	return cl.CallInto(msp.MethodTurnSteer, msp.TurnSteerParams{
-		CommandID:      msp.NewCommandID(),
+		CommandID:      id,
 		SessionID:      sid,
 		ExpectedTurnID: turnID,
-		Input:          skillPart(cl, sid, inputParts(in)),
+		Input:          skillPart(cl, sid, parts),
 	}, callTimeout, nil)
+}
+
+// noteImages remembers which paths went out as image parts under commandId id, for onItem to
+// stamp on the `userMessage` the host echoes back. Noted before the call rather than after:
+// the item can arrive before the call returns.
+func (h *threadHandle) noteImages(id string, images []string) {
+	if len(images) == 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.sentImages == nil {
+		h.sentImages = map[string][]string{}
+	}
+	h.sentImages[id] = images
 }
 
 // pump starts the next queued turn once the previous one has settled. It is safe to call at
@@ -1067,18 +1100,28 @@ const maxInlineImageBytes = 8 << 20
 // attachment. A member who pasted a screenshot must never end up with a turn that mentions
 // nothing at all, and the path is still useful to the model.
 func inputParts(in agents.TurnInput) []msp.TurnInputPart {
+	parts, _ := inputPartsImages(in)
+	return parts
+}
+
+// inputPartsImages is inputParts plus the paths that became `image` parts — only those: a
+// path that fell back to a text part is already in the item's text, and listing it again
+// would show it twice.
+func inputPartsImages(in agents.TurnInput) ([]msp.TurnInputPart, []string) {
 	parts := []msp.TurnInputPart{{Type: msp.TurnInputPartTypeText, Text: strPtr(in.Prompt)}}
+	var images []string
 	for _, a := range in.Attachments {
 		if strings.TrimSpace(a) == "" {
 			continue
 		}
 		if p, ok := imagePart(a); ok {
 			parts = append(parts, p)
+			images = append(images, a)
 			continue
 		}
 		parts = append(parts, msp.TurnInputPart{Type: msp.TurnInputPartTypeText, Text: strPtr(a)})
 	}
-	return parts
+	return parts, images
 }
 
 // imagePart reads an attachment into an `image` part, or reports false so the caller keeps the

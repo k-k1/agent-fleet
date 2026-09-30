@@ -632,10 +632,15 @@ func TestInputPartsSendsAnImageAndFallsBackToThePath(t *testing.T) {
 	f.Close()
 	missing := filepath.Join(dir, "gone.png")
 
-	parts := inputParts(agents.TurnInput{
+	parts, images := inputPartsImages(agents.TurnInput{
 		Prompt:      "look",
 		Attachments: []string{image, notImage, empty, huge, missing, "  "},
 	})
+	// Only the inlined image is reported: the fallbacks already carry their path in the text,
+	// and the transcript would show them twice.
+	if len(images) != 1 || images[0] != image {
+		t.Errorf("images = %q, want only %s", images, image)
+	}
 
 	if len(parts) != 6 {
 		t.Fatalf("parts = %d, want prompt + 5 attachments (the blank one is dropped): %+v", len(parts), parts)
@@ -693,5 +698,65 @@ func TestImageMediaTypeCoversWhatThePasteEndpointAccepts(t *testing.T) {
 		if !ok || got != tc.want {
 			t.Errorf("imageMediaType(%q) = %q/%v, want %q", tc.name, got, ok, tc.want)
 		}
+	}
+}
+
+// The host's userMessage carries no path for an image, so the driver has to remember which
+// paths went out under which commandId — on turn/start and on turn/steer alike — and stamp them
+// on the item when it comes back. Without this the mirror has nothing to load a thumbnail from.
+func TestSentImagesAreStampedOnTheirUserMessage(t *testing.T) {
+	newStore(t)
+	dir := t.TempDir()
+	shot := filepath.Join(dir, "paste-1.png")
+	if err := os.WriteFile(shot, []byte{0x89, 'P', 'N', 'G'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	starts := recordStarts(host)
+	host.Handle(msp.MethodTurnSteer, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+
+	if err := h.Send(agents.TurnInput{Prompt: "look", Attachments: []string{shot}}); err != nil {
+		t.Fatal(err)
+	}
+	start := nextStart(t, starts)
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: start.CommandID, TurnID: start.CommandID, SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	if err := h.Steer(agents.TurnInput{Prompt: "and this", Attachments: []string{shot}}); err != nil {
+		t.Fatal(err)
+	}
+	var steer msp.TurnSteerParams
+	if err := json.Unmarshal(host.WaitForMethod(msp.MethodTurnSteer).Params, &steer); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ id, cmd string }{{"u-start", start.CommandID}, {"u-steer", steer.CommandID}} {
+		first := item(msp.ItemKindUserMessage, tc.id, 1)
+		first.Text, first.CommandID = sp("look[Image #1]"), sp(tc.cmd)
+		h.onItem(first)
+		again := first // a later revision of the same item arrives without a fresh stamp
+		again.Revision = 2
+		h.onItem(again)
+	}
+	other := item(msp.ItemKindUserMessage, "u-other", 1)
+	other.CommandID = sp("someone-else")
+	h.onItem(other)
+
+	_, meta, err := openStore(h.slotSid).itemsWithMeta()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"u-start", "u-steer"} {
+		if got := meta[id].images; len(got) != 1 || got[0] != shot {
+			t.Errorf("%s: images = %q, want [%s]", id, got, shot)
+		}
+	}
+	if got := meta["u-other"].images; got != nil {
+		t.Errorf("an unrelated user message got images %q", got)
+	}
+	if len(h.sentImages) != 0 {
+		t.Errorf("sentImages still holds %v after both messages arrived", h.sentImages)
 	}
 }

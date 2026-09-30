@@ -655,14 +655,52 @@ func TestAMidTurnSwitchKeepsTheTurnsModel(t *testing.T) {
 	late.Text = sp("a")
 	h.onItem(late)
 
-	_, models, err := openStore(slotSid(m)).itemsWithModels()
+	_, meta, err := openStore(slotSid(m)).itemsWithMeta()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if models["a1"] != "model-a" || models["a2"] != "model-a" {
-		t.Fatalf("a1=%q a2=%q, want model-a for both (the turn started on it)", models["a1"], models["a2"])
+	if meta["a1"].model != "model-a" || meta["a2"].model != "model-a" {
+		t.Fatalf("a1=%q a2=%q, want model-a for both (the turn started on it)", meta["a1"].model, meta["a2"].model)
 	}
 	if h.turnModel != "" || h.model != "model-b" {
 		t.Fatalf("after the turn: turnModel=%q model=%q, want \"\" and model-b", h.turnModel, h.model)
 	}
+}
+
+// A user turn with images shows their paths in place of the host's placeholders, which is
+// what the mirror reads thumbnails from; a fork keeps them.
+func TestTranscriptPutsImagePathsInTheUserTurn(t *testing.T) {
+	newStore(t)
+	m := metaFor(t, "muse-images")
+	st := openStore(slotSid(m))
+	u := item(msp.ItemKindUserMessage, "u1", 1)
+	u.Text = sp("make it sticky[Image #1][Image #2]")
+	p1, p2 := "/home/dev/.cache/agent-fleet/pasted/k/paste-1.png", "/home/dev/.cache/agent-fleet/pasted/k/paste-2.png"
+	if err := st.appendRecord(record{Item: u, Images: []string{p1, p2}}); err != nil {
+		t.Fatal(err)
+	}
+	plain := item(msp.ItemKindUserMessage, "u2", 1)
+	plain.Text = sp("typed [Image #1] with nothing attached")
+	if err := st.Append(plain); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(m session.Meta) {
+		t.Helper()
+		td, _ := New().Transcript(m)
+		want := "make it sticky " + p1 + " " + p2
+		if len(td.Turns) != 2 || td.Turns[0].Text != want || td.Turns[0].Parts[0].Text != want {
+			t.Fatalf("turns = %+v, want the first to read %q", td.Turns, want)
+		}
+		// No recorded images, no rewrite: the placeholder is all this turn has to say.
+		if td.Turns[1].Text != "typed [Image #1] with nothing attached" {
+			t.Errorf("a turn without recorded images was rewritten: %q", td.Turns[1].Text)
+		}
+	}
+	check(m)
+	fork := metaFor(t, "muse-images-fork")
+	if err := st.ForkAt(slotSid(fork), ""); err != nil {
+		t.Fatal(err)
+	}
+	check(fork)
 }
