@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: restore split Kiro auth state
         env:
           AUTH_B64_1: ${{ secrets.E2E_KIRO_AUTH_DB_B64_1 }}

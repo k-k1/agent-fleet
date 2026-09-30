@@ -67,7 +67,7 @@ jobs:
       TAG: armtime-${{ github.run_id }}
       IMG: ${{ inputs.target }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -76,12 +76,12 @@ jobs:
       # costs seconds and it is not what is being measured; installing it between two
       # timed steps would put its cost inside one of them.
       - name: set up QEMU (arm64)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
       - name: set up buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # The build command for the chosen image, in one place, so all three variants
       # below differ ONLY in --platform and in which Dockerfile they read. $1 = builder
