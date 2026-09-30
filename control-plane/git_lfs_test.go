@@ -262,3 +262,44 @@ func TestLFSRoutePrecedence(t *testing.T) {
 		t.Fatalf("git path should route to the git handler (lfs=%v git=%v)", hitLFS, hitGit)
 	}
 }
+
+// Without PUBLIC_BASE_URL the provider is off: every token-authenticated /git/ route
+// refuses, even for a valid token seeded while the base was set. Creation and LFS batch
+// always did; smart HTTP, LFS transfer and locks used to keep serving.
+func TestGitSurfaceRefusedWithoutPublicBase(t *testing.T) {
+	e := newLFSEnv(t)
+	oid := oidOf([]byte("x"))
+	routes := []struct{ method, path string }{
+		{"GET", "/git/default/shared.git/info/refs?service=git-upload-pack"},
+		{"POST", "/git/default/shared.git/git-receive-pack"},
+		{"POST", "/git/default/shared.git/info/lfs/objects/batch"},
+		{"PUT", "/git/default/shared.git/info/lfs/objects/" + oid},
+		{"GET", "/git/default/shared.git/info/lfs/objects/" + oid},
+		{"POST", "/git/default/shared.git/info/lfs/locks"},
+		{"GET", "/git/default/shared.git/info/lfs/locks"},
+		{"POST", "/git/default/shared.git/info/lfs/locks/verify"},
+		{"POST", "/git/default/shared.git/info/lfs/locks/1/unlock"},
+	}
+	serve := func(base string, method, path string) *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		registerInternalGitRoutes(mux, config{mgr: e.g.mgr, publicBaseURL: base})
+		r := httptest.NewRequest(method, path, strings.NewReader("{}"))
+		r.SetBasicAuth("x-access-token", e.token)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+	for _, rt := range routes {
+		w := serve("", rt.method, rt.path)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s %s without a base: got %d (%s), want 503", rt.method, rt.path, w.Code, w.Body.String())
+		}
+		if strings.Contains(rt.path, "/info/lfs/") && !strings.HasPrefix(w.Header().Get("Content-Type"), lfsContentType) {
+			t.Errorf("%s %s: LFS refusal is not an LFS error body (%q)", rt.method, rt.path, w.Header().Get("Content-Type"))
+		}
+	}
+	// With the base set the gate is transparent.
+	if w := serve("https://fleet.example.com", "GET", "/git/default/shared.git/info/lfs/locks"); w.Code != http.StatusOK {
+		t.Fatalf("locks list with a base: got %d (%s), want 200", w.Code, w.Body.String())
+	}
+}

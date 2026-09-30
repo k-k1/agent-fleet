@@ -229,6 +229,27 @@ func (a gitServerAPI) authorizeGitRepo(r *http.Request, slug, repoSeg string) (n
 	return name, mv, membershipID, nil
 }
 
+// requireBase refuses the token-authenticated /git/ surface (smart HTTP, LFS
+// transfer and locks) when PUBLIC_BASE_URL is unset. Repository creation and LFS
+// batch already need the base to build URLs; without this the rest stayed open to any
+// token a workspace was seeded with while the base was set, so "unset" disabled only
+// half the provider. The refusal comes before authentication: it says nothing about
+// a repository or a token. LFS clients get the JSON error body they expect.
+func (a gitServerAPI) requireBase(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.publicBaseURL != "" {
+			h(w, r)
+			return
+		}
+		const msg = "internal git not configured (PUBLIC_BASE_URL)"
+		if strings.Contains(r.URL.Path, "/info/lfs/") {
+			writeLFSErr(w, http.StatusServiceUnavailable, msg)
+			return
+		}
+		http.Error(w, msg, http.StatusServiceUnavailable)
+	}
+}
+
 // gitHTTP serves clone/fetch/push for /git/{slug}/{repo...}. It authenticates
 // and confines via authorizeGitRepo, gates push by role, then hands off to
 // git-http-backend within the tenant's own git tree.
