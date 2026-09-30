@@ -205,7 +205,10 @@ native パッケージは静的ビルドの `git` と `git-http-backend` を同�
 - **テナントごとのリポジトリ数の上限**（テナントの制限の `max_git_repos`、0 は無制限）。
   作成時に強制し、超えれば 409 `quota_exceeded`。
 - **監査の記録** `internal_git.repo.create`・`internal_git.repo.delete`・
-  `internal_git.repo.rename`。
+  `internal_git.repo.rename`。削除と改名は取り消せない（bare と LFS オブジェクトが消える／
+  既存の clone のリモート URL が切れる）ので、台帳にもディスクにも触れる前に
+  `<action>.requested` を書き、**書けなければ `503 audit_unavailable` で断る**。終わったら結果の行を
+  書く（[07 §7.7](07-security.ja.md#77-監査)）。作成はこれまでどおり事後のベストエフォート。
 - **空のリポジトリも選べて clone できる**: ブランチがまだ無いとき、ブランチ一覧の
   エンドポイントは空の一覧とリポジトリの `default_branch` を返し、リポジトリピッカーが
   その名前を仮のブランチとして選択肢に出す。

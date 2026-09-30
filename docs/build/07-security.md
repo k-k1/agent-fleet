@@ -381,7 +381,8 @@ credentials as exposed and rotate them.
   (which record the token's id, with **the role resolved live at call time**).
 - **Irreversible admin actions record the request first** (`store.BeginIrreversible`):
   clean home, home-backup deletion, workspace destroy, membership remove and delete, tenant
-  delete, pool-slot terminate and engine-model purge write `<action>.requested` before acting
+  delete, pool-slot terminate, engine-model purge, tenant sign-in method (IdP) delete and
+  internal-git repository delete and rename write `<action>.requested` before acting
   and **refuse with `503 audit_unavailable` when that write fails**, then `<action>` with the
   outcome and the answered status. A failed outcome write is logged, not returned: the action
   has happened and the request row still names who asked. Every other audit write stays

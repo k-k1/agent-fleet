@@ -24,7 +24,7 @@ var ErrAuditUnavailable = errors.New("the audit log could not be written")
 // intent row is written first and must succeed, so the worst a later failure can leave is a
 // request whose outcome is unknown, never an action with no record of who asked for it.
 type AuditIntent struct {
-	st   Store
+	st   AuditStore
 	base AuditLog
 }
 
@@ -34,7 +34,7 @@ type AuditIntent struct {
 //
 // The writes do not follow the request's cancellation: an action that outlives its client
 // still owes its record.
-func BeginIrreversible(ctx context.Context, st Store, a AuditLog) (*AuditIntent, error) {
+func BeginIrreversible(ctx context.Context, st AuditStore, a AuditLog) (*AuditIntent, error) {
 	intent := a
 	intent.ID = NewID()
 	intent.Action = a.Action + AuditRequestedSuffix

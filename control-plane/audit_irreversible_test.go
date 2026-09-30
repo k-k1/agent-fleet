@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -304,5 +306,135 @@ func TestEngineModelPurgeWritesOnePairWithTheAnsweredOutcome(t *testing.T) {
 				t.Errorf("outcome = %d %q, want %d containing %q", out[0].HTTPStatus, out[0].Detail, c.wantStatus, c.wantDetail)
 			}
 		})
+	}
+}
+
+// Issue #1334: a runtime with no slot pool has nothing to terminate, and says so with a 404
+// even when the audit log is down. The intent write used to come first and answer 503.
+func TestTerminatePoolSlotWithNoPoolIs404EvenWithTheAuditLogDown(t *testing.T) {
+	st, adm := poolSlotFixture(t, &destroyingFactory{})
+	adm.mgr.store = auditFailingStore{st, failEveryAudit}
+	if w := callTerminateSlot(adm, "i-x"); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"no_pool"`) {
+		t.Fatalf("terminate on a poolless runtime with the audit log down = %d %s, want 404 no_pool", w.Code, w.Body.String())
+	}
+}
+
+// auditPair returns the request and outcome rows of action, failing unless there is exactly
+// one of each.
+func auditPair(t *testing.T, st store.Store, tenantID, action string) (req, out store.AuditLog) {
+	t.Helper()
+	logs, err := st.ListAuditByTenant(context.Background(), tenantID, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reqs, outs []store.AuditLog
+	for _, l := range logs {
+		switch l.Action {
+		case action + store.AuditRequestedSuffix:
+			reqs = append(reqs, l)
+		case action:
+			outs = append(outs, l)
+		}
+	}
+	if len(reqs) != 1 || len(outs) != 1 {
+		t.Fatalf("audit rows for %s = %+v, want one request and one outcome", action, logs)
+	}
+	return reqs[0], outs[0]
+}
+
+// Issue #1334: deleting a tenant's sign-in method loses its client secret and its approval.
+func TestTenantIdPDeleteRefusesWithoutAnAuditRecord(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	mgr := p4Manager(t, st)
+	tn, _ := st.CreateTenant(ctx, "sub", "Sub")
+	admin, _ := st.UpsertIdentity(ctx, "admin@sub.co.jp", "admin-sub-co-jp", "")
+	if _, err := st.EnsureMembership(ctx, admin.ID, tn.ID, "tenant_admin"); err != nil {
+		t.Fatal(err)
+	}
+	row := seedTenantIdP(t, st, tn.ID, "entra", "sub.co.jp", "active")
+	call := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodDelete, "/api/admin/tenants/sub/idp/"+row.ID, nil)
+		r.SetPathValue("slug", "sub")
+		r.SetPathValue("id", row.ID)
+		r.Header.Set("X-Forwarded-Email", "admin@sub.co.jp")
+		w := httptest.NewRecorder()
+		newTenantIdPAPI(mgr, nil).remove(w, r)
+		return w
+	}
+
+	mgr.store = auditFailingStore{st, failEveryAudit}
+	wantAuditUnavailable(t, "delete sign-in method", call())
+	if _, found, err := st.GetTenantIdP(ctx, tn.ID, row.ID); err != nil || !found {
+		t.Fatalf("sign-in method after the refusal: found=%v err=%v, want it still there", found, err)
+	}
+
+	mgr.store = st
+	if w := call(); w.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s, want 200", w.Code, w.Body.String())
+	}
+	req, out := auditPair(t, st, tn.ID, "tenant_idp.delete")
+	if req.ActorID != admin.ID || out.ActorID != admin.ID || out.HTTPStatus != http.StatusOK || !strings.Contains(out.Detail, "issuer=") {
+		t.Errorf("request %+v / outcome %+v, want both by the admin and a 200 naming the issuer", req, out)
+	}
+}
+
+// Issue #1334: deleting an internal repository removes the bare and its LFS objects, and a
+// rename breaks every clone's origin; neither happens without a record of who asked.
+func TestInternalGitDeleteAndRenameRefuseWithoutAnAuditRecord(t *testing.T) {
+	ctx := context.Background()
+	e := newP2Env(t)
+	e.seedRepo(t, "keep")
+	dir := filepath.Join(e.g.dataRoot, "git", "default", "keep.git")
+	call := func(method, path, name string, body any, h func(http.ResponseWriter, *http.Request, store.Identity, store.MembershipView)) *httptest.ResponseRecorder {
+		w, r := e.req(method, path, body)
+		r.SetPathValue("name", name)
+		e.g.withMembership(h)(w, r)
+		return w
+	}
+
+	e.g.store = auditFailingStore{e.st, failEveryAudit}
+	wantAuditUnavailable(t, "delete repo", call(http.MethodDelete, "/api/internal-git/repos/keep", "keep", nil, e.g.repoDelete))
+	wantAuditUnavailable(t, "rename repo", call(http.MethodPost, "/api/internal-git/repos/keep/rename", "keep",
+		map[string]string{"new_name": "moved"}, e.g.repoRename))
+	if _, ok, err := e.st.GetGitRepo(ctx, e.tenantID, "keep"); err != nil || !ok {
+		t.Fatalf("repo row after the refusals: ok=%v err=%v, want it still there under its name", ok, err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("bare after the refusals: %v, want it untouched", err)
+	}
+
+	e.g.store = e.st
+	if w := call(http.MethodPost, "/api/internal-git/repos/keep/rename", "keep", map[string]string{"new_name": "moved"}, e.g.repoRename); w.Code != http.StatusOK {
+		t.Fatalf("rename = %d %s, want 200", w.Code, w.Body.String())
+	}
+	if _, out := auditPair(t, e.st, e.tenantID, "internal_git.repo.rename"); out.HTTPStatus != http.StatusOK || out.Detail != "to=moved" {
+		t.Errorf("rename outcome = %+v, want 200 to=moved", out)
+	}
+	if w := call(http.MethodDelete, "/api/internal-git/repos/moved", "moved", nil, e.g.repoDelete); w.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s, want 200", w.Code, w.Body.String())
+	}
+	if req, out := auditPair(t, e.st, e.tenantID, "internal_git.repo.delete"); req.Target != "moved" || out.HTTPStatus != http.StatusOK {
+		t.Errorf("delete request %+v / outcome %+v, want target moved and a 200", req, out)
+	}
+}
+
+// A rename that fails on disk after the request was recorded closes it with the failure,
+// so the lone request row does not read as an outcome that was lost.
+func TestInternalGitRenameFailureClosesTheRequest(t *testing.T) {
+	e := newP2Env(t)
+	e.seedRepo(t, "gone")
+	if err := os.RemoveAll(filepath.Join(e.g.dataRoot, "git", "default", "gone.git")); err != nil {
+		t.Fatal(err)
+	}
+	w, r := e.req(http.MethodPost, "/api/internal-git/repos/gone/rename", map[string]string{"new_name": "other"})
+	r.SetPathValue("name", "gone")
+	e.g.withMembership(e.g.repoRename)(w, r)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("rename of a missing bare = %d %s, want 500", w.Code, w.Body.String())
+	}
+	if _, out := auditPair(t, e.st, e.tenantID, "internal_git.repo.rename"); out.HTTPStatus != http.StatusInternalServerError ||
+		!strings.HasPrefix(out.Detail, "error rename_failed: ") {
+		t.Errorf("rename outcome = %+v, want the 500 and rename_failed", out)
 	}
 }

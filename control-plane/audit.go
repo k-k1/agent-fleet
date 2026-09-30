@@ -3,7 +3,29 @@ package main
 import (
 	"net/http"
 	"strconv"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
+
+// beginIrreversible records the request for an action that cannot be undone before it runs
+// (store.BeginIrreversible), and answers 503 audit_unavailable when that record cannot be
+// written. The caller acts only on ok, and closes the intent exactly once, directly or
+// through refuseIrreversible. internal/tenantsrv has the same pair for its admin routes.
+func beginIrreversible(w http.ResponseWriter, r *http.Request, st store.AuditStore, e store.AuditLog) (*store.AuditIntent, bool) {
+	in, err := store.BeginIrreversible(r.Context(), st, e)
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, errCodeAuditUnavailable, "nothing was done: " + err.Error()})
+		return nil, false
+	}
+	return in, true
+}
+
+// refuseIrreversible answers e and records it as the outcome of in. The detail does not
+// claim nothing happened: an internal error can come from halfway through the action.
+func refuseIrreversible(w http.ResponseWriter, r *http.Request, in *store.AuditIntent, e *apiError) {
+	in.Done(r.Context(), "error "+e.code+": "+e.message, e.status)
+	writeAPIErr(w, e)
+}
 
 // Audit log read side (docs/log/20 M1). The write side lives in proxy.go (auditActionTarget
 // + InsertAudit) and mcp.go/ssm.go. This exposes the ledger to operators; there is no
