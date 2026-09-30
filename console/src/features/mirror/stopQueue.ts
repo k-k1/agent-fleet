@@ -23,6 +23,10 @@ export function queueEntries(items: QueueItem[] | null, prompts: string[]): Queu
  *  entry that is still cancellable (decision 5). Committed and sent entries are shown bare. */
 export const actionable = (item: QueueItem | undefined): item is QueueItem => !!item && item.state === "queued";
 
+/** restorable says whether a bubble may also offer "back to the input box": a still-queued
+ *  entry the member wrote (decision 4). Removing is open to every origin. */
+export const restorable = (item: QueueItem | undefined): boolean => actionable(item) && isMemberOrigin(item.origin);
+
 /** injectionSource maps a queued entry's origin onto Turn.source, so a queued peer or
  *  schedule input wears the same badge it will wear once it runs. The member's own input
  *  carries none. */

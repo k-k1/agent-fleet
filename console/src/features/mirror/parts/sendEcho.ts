@@ -10,6 +10,12 @@ export type SendEcho = PendingEcho & { id: number };
 
 export const echoStore = new Map<string, SendEcho[]>();
 
+// The discard ids whose echoes have been swept (MirrorView, withoutDiscarded), per session and at
+// module level like the echoes. A discard stays listed until it is restored or closed, so it is
+// swept once, when first seen: sweeping on every poll would also eat the echo of the member
+// re-sending the same text after putting it back.
+export const sweptDiscards = new Map<string, Set<string>>();
+
 let echoSeqCounter = 0;
 
 /** Next echo id. The counter is module-scoped, so a remount cannot collide with stashed ids. */

@@ -244,6 +244,8 @@ export const mirror = {
   "mirror.stop_first_continues": "停止しました。キューの入力が続けて始まります。それも止めるには、もう一度停止を押してください。",
   "mirror.discarded_one": "停止しました。積まれていた {count} 件を捨てました。",
   "mirror.discarded_other": "停止しました。積まれていた {count} 件を捨てました。",
+  "mirror.discarded_first_stop_one": "送る前に止めました。{count} 件を戻せます。",
+  "mirror.discarded_first_stop_other": "送る前に止めました。{count} 件を戻せます。",
   "mirror.discarded_restore": "戻す",
   "mirror.discarded_restore_n": "戻す（{done}/{total}）",
   "mirror.discarded_restore_title": "捨てたあなたの入力を、1 件ずつ入力欄へ戻します。送信はしません。",

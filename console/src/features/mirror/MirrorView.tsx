@@ -11,6 +11,8 @@ import {
   sessionInterrupt,
   sessionRemoveQueued,
   sessionDismissDiscard,
+  sessionCancelInteraction,
+  isMemberOrigin,
   parseQueueItems,
   parseDiscards,
   sessionRespond,
@@ -94,8 +96,8 @@ import { ViewHead } from "../../ui/ViewHead.tsx";
 import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 // workSplit lives in transcript/ alongside the turn rendering (owned by TranscriptTurn).
 import { awaitingReply, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
-import { echoLanded, echoNeedsResync } from "./pendingEcho.ts";
-import { echoStore, nextEchoId, type SendEcho } from "./parts/sendEcho.ts";
+import { echoLanded, echoNeedsResync, withoutDiscarded } from "./pendingEcho.ts";
+import { echoStore, nextEchoId, sweptDiscards, type SendEcho } from "./parts/sendEcho.ts";
 import { findDiffPane, findPane, findPlanPane } from "./parts/panes.ts";
 import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
@@ -118,6 +120,7 @@ import {
   emptyDiscardNotices,
   injectionSource,
   queueEntries,
+  restorable,
   restoreStep,
   stopRowVisible,
   visibleDiscards,
@@ -1091,6 +1094,30 @@ export function MirrorView({
     setTimeout(() => tickRef.current?.(), 400);
   };
 
+  // cancelQuestion declines a Managed session's pending question (see the QuestionCard's
+  // onCancel). Failures speak, as in sendRespond: silence would leave the card looking dead.
+  const cancelQuestion = async (id: string) => {
+    if (wsDown()) return;
+    const res = await sessionCancelInteraction(session, id);
+    if (!res.ok) toast(res.message || tr("mirror.answer_send_failed"));
+    setTimeout(() => tickRef.current?.(), 400);
+  };
+
+  // An echo whose input a discard threw away never lands, so it is swept when the discard is
+  // first seen (withoutDiscarded / sweptDiscards). Waits for stateSession: on the commit where
+  // `session` changes, `discards` still belongs to the session being left.
+  useEffect(() => {
+    if (stateSession !== session || !discards.length) return;
+    let swept = sweptDiscards.get(session);
+    if (!swept) sweptDiscards.set(session, (swept = new Set()));
+    const fresh = discards.filter((d) => !swept!.has(d.id));
+    if (!fresh.length) return;
+    for (const d of fresh) swept.add(d.id);
+    const texts = fresh.flatMap((d) => d.items.map((i) => i.text));
+    applyEchoes((p) => withoutDiscarded(p, texts));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discards, session, stateSession]);
+
   // The input box is taken: putting queued or discarded text there would overwrite it.
   const draftBusy = !!draft.trim() || attachments.length > 0;
 
@@ -1134,7 +1161,9 @@ export function MirrorView({
           const i = p.findIndex((e) => e.text.trim() === text);
           return i < 0 ? p : [...p.slice(0, i), ...p.slice(i + 1)];
         });
-        if (restore) intoDraft(gone);
+        // The bubble offers "back to input" on member input only; this keeps a stale bubble
+        // from putting a peer's envelope into the draft all the same (decision 4).
+        if (restore && isMemberOrigin(gone.origin)) intoDraft(gone);
       }
     } else if (res.code === "already_started") toast(tr("mirror.queued_already_started"));
     else if (res.code === "not_queued") toast(tr("mirror.queued_gone"));
@@ -1700,7 +1729,9 @@ export function MirrorView({
           idx: 1e9 + e.id,
           pending: true,
           queued: !!q,
-          ...(q?.item ? { queueId: q.item.id, queueActionable: actionable(q.item) } : {}),
+          ...(q?.item
+            ? { queueId: q.item.id, queueActionable: actionable(q.item), queueRestorable: restorable(q.item) }
+            : {}),
         };
       });
     const queuedTurns: Turn[] = queuedLeft.map((q, i) => ({
@@ -1708,7 +1739,14 @@ export function MirrorView({
       text: q.text,
       idx: 2e9 + i,
       queued: true,
-      ...(q.item ? { queueId: q.item.id, queueActionable: actionable(q.item), ...injectionSource(q.item) } : {}),
+      ...(q.item
+        ? {
+            queueId: q.item.id,
+            queueActionable: actionable(q.item),
+            queueRestorable: restorable(q.item),
+            ...injectionSource(q.item),
+          }
+        : {}),
     }));
     const extras = [...queuedTurns, ...echoTurns];
     const baseTurns = coalesceUserActions(turns);
@@ -2215,7 +2253,11 @@ export function MirrorView({
               // is rejected server-side with bad_interaction, and sendRespond toasts that.
               managed ? (answers) => sendRespond(pending[0]?.id || "", answers) : undefined
             }
-            onCancel={() => void sendInterrupt()}
+            // Managed: decline the question through /respond, which every driver answers with the
+            // runtime's own rejection (codex alone turns it into a stop, ADR 0105 decision 7). A
+            // stop here would be a second stop inside an episode and discard the queue. Terminal
+            // (CLI): the card's Cancel is the Esc, as before.
+            onCancel={() => void (managed ? cancelQuestion(pending[0]?.id || "") : sendInterrupt())}
             translate={translate}
           />
         )}

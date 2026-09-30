@@ -18,6 +18,7 @@ import {
   discardView,
   emptyDiscardNotices,
   queueEntries,
+  restorable,
   restoreStep,
   stopRowVisible,
   visibleDiscards,
@@ -128,6 +129,14 @@ describe("queueEntries", () => {
       "cm_b",
     ]);
     expect(queueEntries(null, m.queuedPrompts).every((e) => !e.item)).toBe(true);
+  });
+});
+
+describe("restorable", () => {
+  it("only the member's own still-queued input may go back into the input box", () => {
+    const items = parseQueueItems(fixture.messages.working.queuedItems)!;
+    // committed member / queued peer / queued discord
+    expect(items.map(restorable)).toEqual([false, false, true]);
   });
 });
 

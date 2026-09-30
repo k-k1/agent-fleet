@@ -64,7 +64,11 @@ export function DiscardNotice({
           <div className="mirror-discard" key={discard.id} role="status">
             <div className="md-head">
               <Icon name="trash" />
-              <span className="md-msg">{tCount("mirror.discarded", discard.items.length)}</span>
+              <span className="md-msg">
+                {/* first_stop: the stop caught input before it reached the runtime (nothing else
+                    ran), so nothing was "queued" and "discarded" would misstate it. */}
+                {tCount(discard.reason === "first_stop" ? "mirror.discarded_first_stop" : "mirror.discarded", discard.items.length)}
+              </span>
               {left > 0 && (
                 <button
                   type="button"

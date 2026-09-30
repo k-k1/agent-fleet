@@ -733,6 +733,16 @@ export const sessionRespond = (
     answers,
   }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
+// sessionCancelInteraction declines a MANAGED session's pending question by id. It is the
+// question card's Cancel on Managed, never a stop: ADR 0105 decision 7 lets only codex follow
+// the stop rules there (its driver turns the cancel into an Interrupt); every other driver
+// answers with the runtime's own rejection, which leaves the queue alone. A /turn interrupt
+// here would instead be a second stop inside an episode and discard the queue.
+export const sessionCancelInteraction = (session: string, id: string): Promise<TurnResult> =>
+  apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", { id, decision: "cancel" }).then((r) =>
+    r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true },
+  );
+
 // sessionApprove answers a MANAGED session's pending tool approval by interaction id.
 // It is deliberately separate from sessionRespond: an approval takes allow/deny, not an
 // answer, and a TUI session's permission dialog is driven by keystrokes instead — the Agent

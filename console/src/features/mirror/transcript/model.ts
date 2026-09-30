@@ -396,6 +396,7 @@ export function groupTurns(turns: Turn[]): Group[] {
         queued: !!t.queued,
         queueId: t.queueId,
         queueActionable: !!t.queueActionable,
+        queueRestorable: !!t.queueRestorable,
         source: t.source,
         peerFrom: t.peerFrom,
       });

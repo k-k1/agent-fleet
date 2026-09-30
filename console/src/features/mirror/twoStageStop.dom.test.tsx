@@ -13,6 +13,7 @@ import { MirrorView } from "./MirrorView.tsx";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import type { Session } from "../../types/session.ts";
+import { echoStore, sweptDiscards } from "./parts/sendEcho.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
@@ -31,6 +32,8 @@ const SESSION = "fixture-session";
 let messages: Json;
 let turn: (body: Json) => Promise<{ status: number; body: Json }>;
 let turnBodies: Json[];
+let respondBodies: Json[];
+let polls = 0;
 
 const answer = (c: { status: number; response: Json }) => Promise.resolve({ status: c.status, body: c.response });
 
@@ -39,12 +42,19 @@ function stubFetch() {
     const url = String(input);
     const json = (status: number, body: Json) =>
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-    if (url.includes(`/sessions/${SESSION}/messages`)) return json(200, { cursor: 1, alive: true, ...messages });
+    if (url.includes(`/sessions/${SESSION}/messages`)) {
+      polls++;
+      return json(200, { cursor: 1, alive: true, ...messages });
+    }
     if (url.includes(`/sessions/${SESSION}/turn`)) {
       const body = JSON.parse(String(init?.body ?? "{}"));
       turnBodies.push(body);
       const r = await turn(body);
       return json(r.status, r.body);
+    }
+    if (url.includes(`/sessions/${SESSION}/respond`)) {
+      respondBodies.push(JSON.parse(String(init?.body ?? "{}")));
+      return json(200, {});
     }
     return json(200, {});
   });
@@ -79,6 +89,20 @@ async function settle(rounds = 5) {
   }
 }
 
+// repoll waits, in real time, until the mirror has fetched /messages again and applied it. The
+// poll runs every 1.2-3 s, so a test that needs a later poll to have happened must wait for
+// one: settling React alone would pass without the poll it claims to test ever running.
+async function repoll() {
+  const n = polls;
+  for (let i = 0; i < 100 && polls === n; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+  }
+  if (polls === n) throw new Error("no poll came");
+  await settle(3);
+}
+
 async function until(cond: () => boolean, what: string) {
   for (let i = 0; i < 50; i++) {
     if (cond()) return;
@@ -86,6 +110,8 @@ async function until(cond: () => boolean, what: string) {
   }
   throw new Error("timed out waiting for " + what);
 }
+
+const QUESTION = { id: "q1", question: "Which?", options: [{ label: "A" }, { label: "B" }] };
 
 const $ = <E extends Element = HTMLElement>(sel: string) => document.querySelector<E>(sel);
 const $$ = (sel: string) => Array.from(document.querySelectorAll<HTMLElement>(sel));
@@ -111,6 +137,10 @@ const toasts = () => $$(".ui-toast-msg").map((e) => e.textContent || "");
 beforeEach(() => {
   localStorage.clear();
   turnBodies = [];
+  respondBodies = [];
+  // Both are module-level per session name, and every test uses the same name.
+  echoStore.clear();
+  sweptDiscards.clear();
   messages = { status: "working", messages: [] };
   turn = () => answer(T.interrupt_first);
   useWorkspaceStore.setState({ state: "running" });
@@ -184,17 +214,36 @@ describe("stop and discard the queue", () => {
     expect($(".mirror-stop-more")).toBeTruthy();
   });
 
-  it("is reachable while a question card is shown", async () => {
-    messages = {
-      status: "waiting",
-      messages: [],
-      pendingQuestions: [{ id: "q1", question: "Which?", options: [{ label: "A" }, { label: "B" }] }],
-      ...M.working,
-    };
+  it("is reachable while a question card is shown, with nothing queued", async () => {
+    // A pending question reads status "question", not "working": nothing but the question
+    // itself keeps the brake on screen here.
+    messages = { status: "question", messages: [], pendingQuestions: [QUESTION] };
     await mount();
-    expect($(".mq-opt") || $(".mirror-q")).toBeTruthy(); // the card is up
+    expect($(".mq-cancel")).toBeTruthy(); // the card is up
     expect($(".mirror-stop")).toBeTruthy();
     expect($(".mirror-stop-more")).toBeTruthy();
+    expect($(".mirror-stop-more")!.classList.contains("hot")).toBe(false);
+  });
+
+  it("shows the queue behind a question with its actions, and emphasises the brake", async () => {
+    // queuedItems now comes whenever the runtime is up and holds a queue — a codex question
+    // with input queued behind it included.
+    messages = { status: "question", messages: [], pendingQuestions: [QUESTION], queuedItems: M.working.queuedItems };
+    await mount();
+    expect($(".mq-cancel")).toBeTruthy();
+    expect($$(".mirror-turn.user")).toHaveLength(3);
+    expect($$(".mt-queue-remove")).toHaveLength(2);
+    const more = $(".mirror-stop-more")!;
+    expect(more.classList.contains("hot")).toBe(true);
+    expect(more.textContent).toContain("3");
+  });
+
+  it("a Managed question's Cancel declines it through /respond, never as a stop", async () => {
+    messages = { status: "question", messages: [], pendingQuestions: [QUESTION], queuedItems: M.working.queuedItems };
+    await mount();
+    await click($(".mq-cancel"));
+    expect(respondBodies).toEqual([{ id: "q1", decision: "cancel" }]);
+    expect(turnBodies).toEqual([]);
   });
 
   it("is not offered on Terminal (CLI), whose queue lives in the CLI", async () => {
@@ -223,9 +272,11 @@ describe("queued bubbles", () => {
     await mount();
     const bubbles = $$(".mirror-turn.user");
     expect(bubbles).toHaveLength(3); // one per entry, never folded together
-    const acts = bubbles.map((b) => b.querySelectorAll(".mt-queue-act").length);
-    // cm_a is committed; af_c and cm_b are still queued.
-    expect(acts).toEqual([0, 2, 2]);
+    const acts = (sel: string) => bubbles.map((b) => b.querySelectorAll(sel).length);
+    // cm_a is committed; af_c (a peer) and cm_b (discord, the member) are still queued. Only
+    // the member's own input may go back into the input box; any queued entry may be removed.
+    expect(acts(".mt-queue-remove")).toEqual([0, 1, 1]);
+    expect(acts(".mt-queue-restore")).toEqual([0, 0, 1]);
     // A queued peer message wears its origin badge before it runs.
     expect(bubbles[1].classList.contains("from-peer")).toBe(true);
   });
@@ -294,7 +345,7 @@ describe("discard notice", () => {
     await mount();
     await click($(".md-restore"));
     messages = { status: "idle", messages: [] };
-    await settle(10);
+    await repoll();
     expect($(".mirror-discard")).toBeTruthy();
   });
 
@@ -305,8 +356,39 @@ describe("discard notice", () => {
     expect($(".mirror-discard")).toBeTruthy();
     await click($(".md-close"));
     expect(turnBodies).toEqual([T.dismiss_discard.request]);
-    await settle(10);
+    await repoll(); // still carries the discard
     expect($(".mirror-discard")).toBeNull();
+  });
+
+  it("words a first stop's discard as stopped before sending", async () => {
+    messages = { status: "idle", messages: [], discardedInputs: [T.interrupt_first_stops_unsent_start.response.discard] };
+    await mount();
+    expect($(".mirror-discard .md-msg")!.textContent).toMatch(/送る前に止めました。1 件を戻せます|Stopped before it was sent\. 1 input/);
+  });
+
+  it("sweeps the Pending echo of an input a discard threw away, once", async () => {
+    messages = { status: "working", messages: [] };
+    turn = () => Promise.resolve({ status: 200, body: { sent: SESSION, op: "steer" } });
+    await mount();
+    const send = async (text: string) => {
+      await act(async () => {
+        const el = composer()!;
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, text);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await click($(".mirror-send"));
+    };
+    await send("just sent");
+    expect($$(".mirror-turn.user .mt-pending")).toHaveLength(1);
+    messages = { status: "idle", messages: [], discardedInputs: [T.interrupt_first_stops_unsent_start.response.discard] };
+    await repoll();
+    expect($$(".mirror-turn.user")).toHaveLength(0);
+    // The member puts it back and sends it again: the still-listed discard must not eat it. The
+    // session now reads working, so the next poll is a new payload and is applied in full.
+    await send("just sent");
+    messages = { ...messages, status: "working" };
+    await repoll();
+    expect($$(".mirror-turn.user .mt-pending")).toHaveLength(1);
   });
 
   it("is not shown on Terminal (CLI)", async () => {

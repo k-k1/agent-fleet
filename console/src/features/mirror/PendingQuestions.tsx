@@ -257,8 +257,8 @@ export function PendingQuestions({
       ))}
       <div className="mq-submit-row mq-footer">
         {onCancel && (
-          // Cancel the question without answering — dismiss the AUQ (Escape for TUI,
-          // Interrupt for managed) so the user can steer into a normal discussion instead
+          // Cancel the question without answering — dismiss the AUQ (Escape for TUI, a
+          // /respond cancel for managed) so the user can steer into a normal discussion instead
           // of being forced to pick an option first. Always available, even for forms we
           // can't drive from chat (the terminal-hint case).
           <button
