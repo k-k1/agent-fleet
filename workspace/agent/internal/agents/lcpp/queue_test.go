@@ -326,13 +326,11 @@ func TestTakenBeforeCommitIsNeverSent(t *testing.T) {
 		taken, release := holdAtCommit(h)
 		mustSend(t, h, member("m1", "one"))
 		<-taken
-		if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
-			t.Errorf("first stop discarded %+v", res.Discard)
-		}
+		wantFirstStopDiscard(t, mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst), "m1")
 		release()
 		expectNoStart(t, c)
 		items, discards, ep := settled(t, h)
-		if len(items) != 0 || len(discards) != 0 || ep {
+		if len(items) != 0 || len(discards) != 1 || ep {
 			t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
 		}
 		waitState(t, h, agents.TurnCancelled)
@@ -468,9 +466,7 @@ func TestFirstStopBeforeThePumpTakes(t *testing.T) {
 	h.mu.Unlock()
 	mustSend(t, h, member("m1", "one"))
 	mustSend(t, h, member("m2", "two"))
-	if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
-		t.Errorf("first stop discarded %+v", res.Discard)
-	}
+	wantFirstStopDiscard(t, mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst), "m1")
 	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnCancelled {
 		t.Errorf("state after stopping the starting input = %s, want cancelled", snap.TurnState)
 	}
@@ -484,7 +480,7 @@ func TestFirstStopBeforeThePumpTakes(t *testing.T) {
 	if got := c.seen(); !equal(got, []string{"two"}) {
 		t.Errorf("engine round trips = %q, want the stopped one never run", got)
 	}
-	if len(items) != 0 || len(discards) != 0 || ep {
+	if len(items) != 0 || len(discards) != 1 || ep {
 		t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
 	}
 	if got := userRecords(t, h); !equal(got, []string{"two"}) {
@@ -570,9 +566,7 @@ func TestAcceptRacingAStopKeepsTheVerdict(t *testing.T) {
 	if err != nil || queued {
 		t.Fatalf("SendQueued = %v, %v", queued, err)
 	}
-	if res.Stop != agents.StopFirst || res.Discard != nil {
-		t.Errorf("stop = %+v, want a first stop that discards nothing", res)
-	}
+	wantFirstStopDiscard(t, res, "m1")
 	h.mu.Lock()
 	left := h.q.Len()
 	h.pumping = false
@@ -584,4 +578,36 @@ func TestAcceptRacingAStopKeepsTheVerdict(t *testing.T) {
 		t.Errorf("state = %s, want the stop's cancelled", snap.TurnState)
 	}
 	expectNoStart(t, c)
+}
+
+// wantFirstStopDiscard checks a first stop that stopped input before it was sent: that input
+// comes back as a first_stop discard (docs/log/128 §1.2).
+func wantFirstStopDiscard(t *testing.T, res agents.InterruptResult, id string) {
+	t.Helper()
+	if res.Stop != agents.StopFirst || res.Discard == nil || res.Discard.Reason != agents.DiscardFirstStop ||
+		!equal(ids(res.Discard.Items), []string{id}) {
+		t.Errorf("first stop = %+v, want %s kept as a first_stop discard", res, id)
+	}
+}
+
+// A stop in the pump's tail — the taken entry already removed, nothing run — has no turn to
+// stop and does not leave the state interrupting.
+func TestStopWithNothingTakenLeavesNoInterrupting(t *testing.T) {
+	h, c, _ := startHandle(t, "sess-q-tail")
+	taken, release := holdAtCommit(h)
+	mustSend(t, h, member("m1", "one"))
+	<-taken
+	if _, err := h.RemoveQueued("m1"); err != nil {
+		t.Fatal(err)
+	}
+	if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
+		t.Errorf("a stop with nothing queued discarded %+v", res.Discard)
+	}
+	if snap, _ := h.Snapshot(); snap.TurnState == agents.TurnInterrupting {
+		t.Error("state is interrupting with no turn to stop")
+	}
+	release()
+	expectNoStart(t, c)
+	settled(t, h)
+	waitState(t, h, agents.TurnCancelled)
 }

@@ -324,18 +324,16 @@ func TestTakenBeforeCommitIsNeverSent(t *testing.T) {
 	})
 	t.Run("first stop", func(t *testing.T) {
 		// With no other turn running, the taken input is the turn being stopped: it does not
-		// start, and it is not kept as discarded input either (docs/log/128 §1.2).
+		// start, and it is kept as a first_stop discard for return (docs/log/128 §1.2).
 		h, f := newTestHandle(t)
 		taken, release := holdAtCommit(h)
 		mustSend(t, h, member("m1", "one"))
 		<-taken
-		if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
-			t.Errorf("first stop discarded %+v", res.Discard)
-		}
+		wantFirstStopDiscard(t, mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst), "m1")
 		release()
 		expectNoPrompt(t, f)
 		items, discards, ep := settled(t, h)
-		if len(items) != 0 || len(discards) != 0 || ep {
+		if len(items) != 0 || len(discards) != 1 || ep {
 			t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
 		}
 		if st := h.currentState(); st != agents.TurnCancelled {
@@ -379,6 +377,9 @@ func TestStopPendingIsDeliveredAfterTheWrite(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst)
+	if st := h.currentState(); st != agents.TurnInterrupting {
+		t.Errorf("state with the stop pending = %s, want interrupting", st)
+	}
 	f.writes.release()
 	id := expectPrompt(t, f, "one")
 	expectCancel(t, f)
@@ -530,9 +531,7 @@ func TestFirstStopBeforeThePumpTakes(t *testing.T) {
 	h.mu.Unlock()
 	mustSend(t, h, member("m1", "one"))
 	mustSend(t, h, member("m2", "two"))
-	if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
-		t.Errorf("first stop discarded %+v", res.Discard)
-	}
+	wantFirstStopDiscard(t, mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst), "m1")
 	if st := h.currentState(); st != agents.TurnCancelled {
 		t.Errorf("state after stopping the starting input = %s, want cancelled", st)
 	}
@@ -548,7 +547,7 @@ func TestFirstStopBeforeThePumpTakes(t *testing.T) {
 	if got := f.promptTexts(); !equal(got, []string{"two"}) {
 		t.Errorf("prompts = %q, want the stopped one never sent", got)
 	}
-	if len(items) != 0 || len(discards) != 0 || ep {
+	if len(items) != 0 || len(discards) != 1 || ep {
 		t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
 	}
 	if st := h.currentState(); st != agents.TurnCompleted {
@@ -665,5 +664,89 @@ func TestResendLeavesStateAndPumpAlone(t *testing.T) {
 	}
 	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnCompleted {
 		t.Errorf("state = %s, want completed", snap.TurnState)
+	}
+}
+
+// wantFirstStopDiscard checks a first stop that stopped input before it was sent: that input
+// comes back as a first_stop discard (docs/log/128 §1.2).
+func wantFirstStopDiscard(t *testing.T, res agents.InterruptResult, id string) {
+	t.Helper()
+	if res.Stop != agents.StopFirst || res.Discard == nil || res.Discard.Reason != agents.DiscardFirstStop ||
+		!equal(ids(res.Discard.Items), []string{id}) {
+		t.Errorf("first stop = %+v, want %s kept as a first_stop discard", res, id)
+	}
+}
+
+// A stop under a permission card answers the pending session/request_permission cancelled, as
+// ACP requires, and takes the card down: it must not rely on the card's own Cancel.
+func TestStopAnswersPendingPermission(t *testing.T) {
+	h, f := newTestHandle(t)
+	mustSend(t, h, member("m1", "run something"))
+	id := expectPrompt(t, f, "run something")
+	waitState(t, h, agents.TurnRunning)
+	f.send(map[string]any{"jsonrpc": "2.0", "id": 0, "method": "session/request_permission", "params": map[string]any{
+		"sessionId": "sess-1",
+		"toolCall":  map[string]any{"toolCallId": "t9", "title": "Run echo", "kind": "execute"},
+		"options": []map[string]any{
+			{"optionId": "allow_once", "kind": "allow_once", "name": "Allow once"},
+			{"optionId": "reject_once", "kind": "reject_once", "name": "Deny"},
+		},
+	}})
+	waitState(t, h, agents.TurnWaitingInteraction)
+	for { // the prompt is received (its write returned), so the stop is delivered at once
+		h.mu.Lock()
+		n := len(h.q.Items())
+		h.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst)
+	expectCancel(t, f)
+	select {
+	case raw := <-f.gotResp:
+		if !jsonContains(raw, `"outcome":"cancelled"`) || !jsonContains(raw, `"id":0`) {
+			t.Errorf("answer to the permission = %s, want outcome cancelled for id 0", raw)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pending permission was not answered")
+	}
+	if snap, _ := h.Snapshot(); snap.Interaction != nil || snap.TurnState != agents.TurnInterrupting {
+		t.Errorf("after the stop: interaction %+v, state %s; want none, interrupting", snap.Interaction, snap.TurnState)
+	}
+	if td := payload(t, h); len(td.Pending) != 0 {
+		t.Errorf("the card is still shown: %+v", td.Pending)
+	}
+	f.reply(id, map[string]any{"stopReason": "cancelled"})
+	settled(t, h)
+	if st := h.currentState(); st != agents.TurnCancelled {
+		t.Errorf("state = %s, want cancelled", st)
+	}
+}
+
+// A stop in the pump's tail — the taken entry already removed, nothing sent — has no turn to
+// stop: it sends no cancel and does not leave the state interrupting.
+func TestStopWithNothingTakenLeavesNoInterrupting(t *testing.T) {
+	h, f := newTestHandle(t)
+	taken, release := holdAtCommit(h)
+	mustSend(t, h, member("m1", "one"))
+	<-taken
+	if _, err := h.RemoveQueued("m1"); err != nil {
+		t.Fatal(err)
+	}
+	if res := mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst); res.Discard != nil {
+		t.Errorf("a stop with nothing queued discarded %+v", res.Discard)
+	}
+	if st := h.currentState(); st == agents.TurnInterrupting {
+		t.Error("state is interrupting with no turn to stop")
+	}
+	release()
+	expectNoPrompt(t, f)
+	expectNoCancel(t, f)
+	settled(t, h)
+	if st := h.currentState(); st != agents.TurnCancelled {
+		t.Errorf("state = %s, want cancelled", st)
 	}
 }
