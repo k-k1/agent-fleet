@@ -1107,9 +1107,20 @@ var kindModalProbes = map[string]func(session.Meta) string{
 	// opencode's store) and cursor's approval and build menus (the pane) are read where they
 	// live. Terminal route only: their managed drivers refuse free text themselves
 	// (ErrQuestionPending).
-	session.KindCodex:    codex.TerminalModal,
+	session.KindCodex:    codexModal,
 	session.KindOpencode: opencode.TerminalModal,
 	session.KindCursor:   cursor.TerminalModal,
+}
+
+// codexModal adds to codex's question the screens its Terminal pane draws outside the
+// conversation — the update menu, the lock screen, the model-switch nudge — which take a typed
+// line's keys just the same (codex.PaneScreen). They stay out of codex.TerminalModal, which the
+// chat chip reads as "question".
+func codexModal(m session.Meta) string {
+	if q := codex.TerminalModal(m); q != "" {
+		return q
+	}
+	return codex.TerminalScreen(m)
 }
 
 // blockingState maps a live state to "" (free) or the state itself (blocking). An
@@ -1148,6 +1159,12 @@ func blockedErrMessage(state string) string {
 		return "a plan is awaiting approval; decide it from the plan card, or in the terminal when there is none (typed text would be swallowed by the dialog and the Enter would approve it)"
 	case "permission":
 		return "a permission prompt is awaiting a decision; answer it from the permission card, or in the terminal when there is none (typed text would be swallowed by the menu and the Enter would allow it)"
+	case "update":
+		return "codex is showing its update menu; choose Skip from the Console's notice or in the terminal (typed text would be taken by the menu, whose first row, Update now, exits the session)"
+	case "locked":
+		return "codex cannot open this conversation because another app holds it; close it there, then press r in the terminal (typed keys act on the lock screen: f forks the conversation, q exits)"
+	case "model_switch":
+		return "codex is offering to switch to a smaller model near the usage limit; answer it in the terminal (typed text would be taken by the menu and the Enter would switch the model)"
 	case agents.StateAuth:
 		return "the claude login for this workspace has expired; re-authenticate from 設定 > エージェント (a prompt sent now would be accepted by the TUI but never start a turn)"
 	}

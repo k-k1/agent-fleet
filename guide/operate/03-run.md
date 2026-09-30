@@ -260,7 +260,8 @@ art as it serves it.
   instance), and it is checked once per usage sample (5 minutes), so the stop comes up to
   one sample late. The member gets a notification in the Console's notification center saying
   the start was stopped, with the last start phase (on `ecs-ec2`, why the task could not be
-  placed), and the Control Plane log says so too (`start-deadline: stopped …`). `AF_WORKSPACE_START_DEADLINE` changes the limit and `0` turns it off; on
+  placed), the tenant's admins see the same reason on that member's roster row and member
+  detail until the next start, and the Control Plane log says so too (`start-deadline: stopped …`). `AF_WORKSPACE_START_DEADLINE` changes the limit and `0` turns it off; on
   `ecs-ec2` it is never shorter than the pool's own launch budget (`AF_ECS_EC2_CLAIM_TTL_SEC`,
   `AF_ECS_EC2_WAIT_SEC`). It runs on the usage sampler, so `AF_USAGE_SAMPLE_INTERVAL=0` turns
   it off too.

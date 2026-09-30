@@ -804,6 +804,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.idle_hold_imagejob_row": "an image generation job is running or queued",
   "admin.idle_hold_pin_row": "session {session} has a keep-awake pin ({left} left)",
   "admin.idle_hold_watching_row": "someone is working here (recent typing or Console interaction)",
+  "admin.auto_stop_at": "Stopped at {at}. The member was notified. This clears on the next start.",
   "admin.idle_observed": "As observed at {at} (may lag by up to one sweep interval)",
   "admin.idle_stop_at": "Scheduled idle-stop: {at} (the reaper's latest read)",
   "admin.idle_off": "Idle-stop off",

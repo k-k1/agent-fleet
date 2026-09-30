@@ -523,6 +523,12 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	if armed := a.mgr.armPreviewForStart(ctx, res, extraEnv); armed != nil {
 		rt = armed
 	}
+	// The previous automatic stop stops describing this workspace once a new launch is
+	// attempted, whether or not it succeeds: a Start that fails (secrets, home, launch)
+	// would otherwise read as the old deadline stop to the tenant admin.
+	if err := a.mgr.store.ClearWorkspaceAutoStop(ctx, res.ws.ID); err != nil {
+		log.Printf("clear auto-stop (ws=%s): %v", res.ws.ID, err)
+	}
 	if err := rt.Start(ctx); err != nil {
 		return internalErr(err)
 	}

@@ -18,7 +18,8 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { remainingShort } from "../../../lib/sessionview.ts";
 import { fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
-import type { Member, MemberIdle, WsSizing } from "../parts/adminShared.ts";
+import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
+import { startDeadlineBody } from "../../notifications/wording.ts";
 
 // MembersPanel — the roster and "add member", as one component so the tenant settings modal
 // and the admin modal use the same implementation.
@@ -84,6 +85,7 @@ export function MembersPanel({
               <span className="mr-role">{m.status === "removed" ? tr("admin.member_removed") : m.role}</span>
               <MemberSizeChips m={m} sizing={sizing} />
               <MemberIdleChip idle={m.idle} state={m.state} />
+              <MemberAutoStopChip autoStop={m.auto_stop} />
               <Icon name="chevron-right" className="mr-go" />
             </button>
           ))}
@@ -193,6 +195,40 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
         </>
       )}
       <p className="admin-hint">{tr("admin.idle_observed", { at: new Date(idle.observedAt).toLocaleTimeString() })}</p>
+    </section>
+  );
+}
+
+// MemberAutoStopChip — the workspace is down because the Control Plane stopped it, not
+// because anybody asked (#1384). Without it the roster reads plain "stopped", and the member's
+// notification is the only record of why. Warning colour: nothing restarts it, and the
+// member may be waiting on the admin to fix what blocked the launch.
+function MemberAutoStopChip({ autoStop }: { autoStop?: MemberAutoStop }) {
+  const tr = useT();
+  if (!autoStop) return null;
+  return (
+    <span className="mr-idle hold" title={autoStopReason(autoStop)}>
+      {autoStop.kind === "start-deadline" ? tr("noti.kind_start_deadline") : autoStop.kind}
+    </span>
+  );
+}
+
+function autoStopReason(a: MemberAutoStop): string {
+  return a.kind === "start-deadline" ? startDeadlineBody(a.limit_minutes, a.phase) : a.phase;
+}
+
+// MemberAutoStopDetail — the same record in the member detail, with the raw phase in full
+// (on ecs-ec2 it is the ECS sentence naming the constraint the admin has to fix) and when.
+export function MemberAutoStopDetail({ autoStop }: { autoStop?: MemberAutoStop }) {
+  const tr = useT();
+  if (!autoStop) return null;
+  return (
+    <section className="admin-panel">
+      <h4>{autoStop.kind === "start-deadline" ? tr("noti.kind_start_deadline") : autoStop.kind}</h4>
+      <p>{autoStopReason(autoStop)}</p>
+      <p className="admin-hint">
+        {tr("admin.auto_stop_at", { at: new Date(autoStop.stopped_at).toLocaleString() })}
+      </p>
     </section>
   );
 }

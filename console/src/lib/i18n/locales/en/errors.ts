@@ -69,7 +69,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.permission_pending":
     "The agent is waiting for a permission decision. Allow or deny it from the permission card (or in the terminal when there is none) before sending — typed text would be swallowed by the menu and allow it.",
   "err.interaction_pending":
-    "The agent is showing an interactive prompt. Answer it from its card before sending.",
+    "The agent is showing an interactive prompt. Answer it from its card (or in the terminal when there is none) before sending.",
   "err.auth_expired":
     "This workspace's Claude login has expired. Re-authenticate from Settings > Agents before sending (sent now, the terminal would take the text but no turn would ever start).",
   "err.codex_releasing":

@@ -660,7 +660,14 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			// describe the error page it replaced.
 			p.committedUnreachable = v.Frame.UnreachableURL != ""
 			p.unreachable = p.committedUnreachable
-			if u, err := url.Parse(v.Frame.URL); err == nil && allowedTopLevelBrowserURL(u) {
+			committed := v.Frame.URL
+			if v.Frame.UnreachableURL != "" {
+				// Chromium's own error page (chrome-error://chromewebdata/) for a
+				// loopback URL that failed: the page is target-unreachable at that
+				// URL, not a navigation away from loopback.
+				committed = v.Frame.UnreachableURL
+			}
+			if u, err := url.Parse(committed); err == nil && allowedTopLevelBrowserURL(u) {
 				p.url = normalizeLoopbackURL(u).String()
 				p.mu.Unlock()
 				// A document restored from the back/forward cache is already
@@ -673,7 +680,12 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 				safeURL := p.url
 				p.mu.Unlock()
 				p.notifyJSON(map[string]any{"type": "page-error", "text": "top-level navigation outside loopback was blocked"})
-				_ = m.call(cdp, p.sessionID, "Page.navigate", map[string]any{"url": safeURL}, nil)
+				// Sent, never awaited: Page.navigate answers only once the
+				// navigation commits, and its document request waits for
+				// Fetch.requestPaused, which only this loop handles. Not deferred
+				// to a goroutine either: it must reach Chromium before any later
+				// event is handled, or it could undo a newer loopback navigation.
+				_ = cdp.Send("Page.navigate", map[string]any{"url": safeURL}, p.sessionID)
 			}
 		}
 	case "Network.responseReceived":

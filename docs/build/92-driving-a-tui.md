@@ -177,7 +177,12 @@ These are the shape of the fix, and worth preserving through any rewrite:
   kind's own live state is read from (`kindModalProbes`). A kind with a Terminal route
   and neither fails a test, because it would fall through to a status store nothing
   fills — as codex, opencode and cursor did, where a pasted line answered the first
-  option, ran the command or built the plan (measured, #1227).
+  option, ran the command or built the plan (measured, #1227). Screens that are not modals
+  but take typed keys are refused the same way: codex's update menu (its first row, "Update
+  now", exits the process), its conversation lock screen (f forks, q exits) and its
+  model-switch nudge near a usage limit, and opencode's permission prompt on a pane without
+  `--auto`. Each exists only in the pane; the states are `update`, `locked`, `model_switch`
+  and `permission` (#1263).
 - **A modal is pending only while a screen can still show it.** A pending state that
   outlives its modal refuses every send with nothing left to answer. A question asked
   before the pane's current CLI process started is not pending, nor is one whose turn

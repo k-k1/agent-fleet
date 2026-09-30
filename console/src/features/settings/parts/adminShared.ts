@@ -75,6 +75,19 @@ export interface Member {
    *  from what the reaper actually sees (presence, pins, background work), and the screen
    *  people open to find out why a workspace will not stop would then give a different one. */
   idle?: MemberIdle;
+  /** Why the Control Plane itself stopped the workspace (#1384), present only while it is
+   *  still down after that stop. The member got a notification; this is the admin's only
+   *  view of it short of the CP log. */
+  auto_stop?: MemberAutoStop;
+}
+
+/** GET …/members auto_stop (store.WorkspaceAutoStop). kind is "start-deadline" today; phase is
+ *  the last boot phase before the stop, raw (worded through startDeadlineBody). */
+export interface MemberAutoStop {
+  kind: string;
+  phase: string;
+  limit_minutes: number;
+  stopped_at: string;
 }
 
 export interface MemberIdle {

@@ -324,6 +324,11 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 				"container":   container, "state": state,
 				"status": status,
 			}
+			// Why the CP itself stopped it (#1384): the member was notified, but a notification
+			// never reaches the admin, who would otherwise see plain "stopped".
+			if as := store.CurrentAutoStop(r.Context(), a.cp.Store(), m.MembershipID, state); as != nil {
+				row["auto_stop"] = as
+			}
 			// The idle forecast (docs/log/75 P4): the reaper's last observation of
 			// when this stops and who is holding it open. The point is that nothing
 			// is recomputed here — a screen that derived it itself would drift from

@@ -1,0 +1,30 @@
+
+  >_ OpenAI Codex (v0.159.2)
+     /home/dev/.af-work/s7jxd4o/probe/cwd
+
+  Hello, world. Hello, you.
+
+⚠ Heads up, you have less than 25% of your
+  weekly limit left. Run /status for a
+  breakdown.
+
+⚠ Heads up, you have less than 25% of your
+  5h limit left. Run /status for a
+  breakdown.
+
+
+› Run the shell command sleep 8 and then
+  reply with ok.
+
+
+• I’ll run sleep 8, then reply with ok.
+
+• ok
+
+  Worked for 8s • 17:57
+                          ⚠ weekly 11% left
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol default · /home/dev/.af-work/…
+  ← for agents · ? for shortcuts   ⚠ 3 · f2
