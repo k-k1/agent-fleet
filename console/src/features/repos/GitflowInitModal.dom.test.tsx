@@ -102,6 +102,7 @@ describe("GitflowInitModal", () => {
     expect(document.querySelector(".gitflow-place")?.textContent).toContain("git branch develop origin/develop");
     expect(text()).toContain(t("gitflow.shared"));
     expect(submit().textContent).toBe(t("gitflow.submit"));
+    expect(input("production").getAttribute("type")).toBe("text"); // the shared .ui-field input styles
 
     await type(input("bugfix"), "bugfix/");
     await press();

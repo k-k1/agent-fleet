@@ -14,7 +14,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { branchPlace, fetchGitflow, gitflowChanges, saveGitflow } from "./gitflow.ts";
+import { branchPlace, fetchGitflow, gitflowChanges, saveGitflow, shellQuote } from "./gitflow.ts";
 import type { GitflowState, GitflowValues } from "./gitflow.ts";
 
 interface GitflowInitModalProps {
@@ -121,7 +121,7 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
       case "origin":
         return (
           <span className="ui-field-hint warn gitflow-place">
-            {tr("gitflow.origin_only")} <code>{`git branch ${name} origin/${name}`}</code>
+            {tr("gitflow.origin_only")} <code>{`git branch ${shellQuote(name)} ${shellQuote("origin/" + name)}`}</code>
           </span>
         );
       default:
@@ -158,6 +158,7 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
               <label key={f} className="ui-field">
                 <span className="ui-field-label">{tr(`gitflow.field.${f}`)}</span>
                 <input
+                  type="text"
                   name={f}
                   value={v[f]}
                   list={listId}
@@ -174,6 +175,7 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
                 <label key={f} className="ui-field">
                   <span className="ui-field-label">{tr(`gitflow.field.${f}`)}</span>
                   <input
+                    type="text"
                     name={f}
                     value={v[f]}
                     onChange={(e) => set(f)(e.target.value)}

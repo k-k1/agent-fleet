@@ -97,3 +97,9 @@ export function gitflowChanges(st: GitflowState, v: GitflowValues): { key: strin
   }
   return out;
 }
+
+// Branch names git accepts may still carry `;`, `$(…)` and the like: the command is meant to be
+// copied into a shell, so anything beyond the plain characters is single-quoted.
+export function shellQuote(v: string): string {
+  return /^[A-Za-z0-9._/-]+$/.test(v) ? v : "'" + v.replace(/'/g, "'\\''") + "'";
+}
