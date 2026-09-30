@@ -661,10 +661,12 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 				safeURL := p.url
 				p.mu.Unlock()
 				p.notifyJSON(map[string]any{"type": "page-error", "text": "top-level navigation outside loopback was blocked"})
-				// Never on the event loop: Page.navigate answers only once the
+				// Sent, never awaited: Page.navigate answers only once the
 				// navigation commits, and its document request waits for
-				// Fetch.requestPaused, which only this loop handles.
-				go func() { _ = m.call(cdp, p.sessionID, "Page.navigate", map[string]any{"url": safeURL}, nil) }()
+				// Fetch.requestPaused, which only this loop handles. Not deferred
+				// to a goroutine either: it must reach Chromium before any later
+				// event is handled, or it could undo a newer loopback navigation.
+				_ = cdp.Send("Page.navigate", map[string]any{"url": safeURL}, p.sessionID)
 			}
 		}
 	case "Network.responseReceived":
