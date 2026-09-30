@@ -6,7 +6,7 @@ package mcpsrv
 // Only the four the tests in this package actually reach are wired — store, master32,
 // custodian and the token signing master. The rest panic instead of returning a value: a
 // fake that returned zero values would let a test that forgot to wire something go green
-// on an empty result. (The real wiring is main's alias_mcp.go.)
+// on an empty result. (The real wiring is main's mcp_wiring.go.)
 //
 // No exhaustiveness check is needed here, unlike the reflect-based one in mcpx: the seam
 // is an interface rather than a struct of function fields, so a missing implementation is
@@ -41,7 +41,7 @@ func (c testCP) TenantSel(*http.Request) string { unwired("TenantSel"); return "
 // ScopeRank is wired for real even in the fake: New uses it to catch a stale copy, and
 // panicking here would put that check out of reach of the mcpsrv unit tests. The values
 // are not a copy of pat.go's — they only express that a ladder exists (the real ones
-// arrive through cpDeps from alias_mcp.go).
+// arrive through cpDeps from mcp_wiring.go).
 func (c testCP) ScopeRank(scope string) int {
 	switch scope {
 	case "read":

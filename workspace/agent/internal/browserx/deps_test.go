@@ -7,7 +7,7 @@ import (
 )
 
 // TestMain wires up deps.go's function variables for the browserx-only test binary.
-// In production package main's alias_browser.go does that wiring, but there is no package
+// In production package main's browser_seam.go does that wiring, but there is no package
 // main in this binary, so entering chromium resolution with them still nil panics (deps.go
 // deliberately does not silence that).
 //

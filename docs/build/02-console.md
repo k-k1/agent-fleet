@@ -58,6 +58,8 @@ is [decisions/0011](../decisions/0011-console-rebuild.md). The principles:
 | `lib/` | Pure logic and small hooks, for example the commit-graph lanes, file icons and metadata, terminal tints, UI-preference sync (`settings.ts`), working sets. i18n lives in `lib/i18n/` (§2.8) |
 | `styles/` | `tokens.css`, the only home for theme variables, plus `base.css` (the reset) |
 | `types/` | Cross-cutting domain types, for example sessions, chat and memos |
+| `assets/` | Bundled SVGs: `brandicons/` (agent CLIs, services, model providers; resolved by `lib/brandicons.ts`) and `fileicons/` (one folder per file-icon set; resolved by `lib/fileicons.ts`). Each has an `ATTRIBUTION.md` with the sources and licences |
+| `marp-themes/` | Custom Marp themes, one CSS file each with a `/* @theme name */` header; `features/viewer/MarpView.tsx` registers them so a deck can pick one with `theme: <name>` |
 | `test/` | The dom test setup, and static checks over the whole source tree (for example no raw control characters, no duplicate sibling keys) |
 
 **`features/`** holds one directory per feature: its components, usually a `store.ts`,

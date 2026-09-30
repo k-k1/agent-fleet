@@ -97,7 +97,7 @@ type ServerAPI struct {
 }
 
 // NewServerAPI builds both faces over the CP seam. The CP's own wiring is
-// control-plane/alias_mcp.go.
+// control-plane/mcp_wiring.go.
 func NewServerAPI(cp CP) ServerAPI { return ServerAPI{cp, cp.Store()} }
 
 // --- wire shapes -----------------------------------------------------------------

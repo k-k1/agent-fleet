@@ -4,7 +4,7 @@
 // stay here, because the delivery stage runs through mcp_stdio.go's agentSendToSession (check
 // the state, POST /input, and resume a stopped session before re-sending). browserx borrows
 // that through a function variable, and the wiring is done by package main's
-// alias_browser.go init, so this package's test binary is the only place the REAL wiring can
+// browser_seam.go init, so this package's test binary is the only place the REAL wiring can
 // be driven. Move these to browserx and swap in a double, and a broken agentSendToSession
 // would still leave them green.
 //
