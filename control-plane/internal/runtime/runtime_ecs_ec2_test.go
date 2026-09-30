@@ -4609,6 +4609,99 @@ func TestECSPlacementBlockedIgnoresTheWaitItCausedItself(t *testing.T) {
 	}
 }
 
+// A task placed after the complaint makes it moot, however old it is. State() stays
+// `starting` until the rollout COMPLETES, and on the dev deployment that came 122 s after
+// the task started: the event aged past the grace in between, and the member was told
+// "Cannot start. Waiting will not help" about a workspace that was already up (#1271).
+func TestECSPlacementBlockedIgnoresAnEventATaskOutlived(t *testing.T) {
+	now := time.Now()
+	deploy := now.Add(-163 * time.Second)
+	complained := placeEvent(now.Add(-152*time.Second), unplaceable) // past the grace
+	started := placeEvent(now.Add(-122*time.Second), "(service af-ws-x) has started 1 tasks: (task abc).")
+	placed := func(running int32, events ...ecstypes.ServiceEvent) ecstypes.Service {
+		s := svcWithEvents(1, running, deploy, events...)
+		s.Deployments[0].RunningCount = running
+		s.Deployments[0].RolloutState = ecstypes.DeploymentRolloutStateInProgress
+		return s
+	}
+
+	if got := ecsPlacementBlocked(placed(1, started, complained), now); got != "" {
+		t.Fatalf("a running task, rollout still in progress, was called blocked: %q", got)
+	}
+
+	// The running count alone decides, so a change in ECS's wording cannot bring this back.
+	if got := ecsPlacementBlocked(placed(1, complained), now); got != "" {
+		t.Fatalf("a PRIMARY deployment with a running task was called blocked: %q", got)
+	}
+
+	// The task has since died and the count is back at 0: the complaint still predates a
+	// placement, so it explains nothing about why there is no task now.
+	if got := ecsPlacementBlocked(placed(0, started, complained), now); got != "" {
+		t.Fatalf("a complaint older than a started task was reported: %q", got)
+	}
+
+	// A wall that rises after the start is still named once it has stood.
+	again := placeEvent(now.Add(-placementBlockedGrace-time.Second), unplaceable)
+	if got := ecsPlacementBlocked(placed(0, again, started, complained), now); !strings.Contains(got, "missing an attribute") {
+		t.Fatalf("a wall newer than the started task was hidden: %q", got)
+	}
+
+	// Timestamps decide, not positions: the API does not promise newest first.
+	if got := ecsPlacementBlocked(placed(0, complained, started), now); got != "" {
+		t.Fatalf("an out-of-order complaint older than the start was reported: %q", got)
+	}
+	if got := ecsPlacementBlocked(placed(0, started, complained, again), now); !strings.Contains(got, "missing an attribute") {
+		t.Fatalf("an out-of-order start hid the newer wall: %q", got)
+	}
+}
+
+// The wall had already been named when the task was finally placed: the rollout keeps
+// State() at `starting`, and the phase has to go on that poll rather than when the rollout
+// completes, or the member reads "Waiting will not help" about a task that is running.
+func TestECSEC2BlockedPhaseClearsOnceTheTaskIsPlaced(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	defer h.rt.setPhase("")
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	now := time.Now()
+	wedged := ecstypes.Service{
+		Status: aws.String("ACTIVE"), DesiredCount: 1,
+		Deployments: []ecstypes.Deployment{{
+			Status: aws.String("PRIMARY"), CreatedAt: aws.Time(now.Add(-10 * time.Minute)),
+			RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+		}},
+		Events: []ecstypes.ServiceEvent{placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)},
+	}
+	h.ecs.services["af-ws-acme-alice"] = wedged
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	if ph := h.rt.BootPhase(); !strings.HasPrefix(ph, blockedPhasePrefix) {
+		t.Fatalf("the wall was not named: %q", ph)
+	}
+
+	placed := wedged
+	placed.RunningCount = 1
+	placed.Deployments = []ecstypes.Deployment{wedged.Deployments[0]}
+	placed.Deployments[0].RunningCount = 1
+	h.ecs.services["af-ws-acme-alice"] = placed
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting while the rollout is in progress", got)
+	}
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("the blocked phase outlived the task being placed: %q", ph)
+	}
+
+	// A Start's own progress is not the poll's to clear.
+	h.rt.setPhase("home: attaching")
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "home: attaching" {
+		t.Fatalf("a live Start's phase was wiped by a poll: %q", ph)
+	}
+}
+
 // It only reaches the Console once it is on the phase, and clearing it when the task
 // starts running is part of the contract: a phase left behind keeps bootPhase != "", and
 // the start dialog stays on screen.

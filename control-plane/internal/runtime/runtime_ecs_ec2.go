@@ -1122,9 +1122,12 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
 	why := ecsPlacementBlocked(s, time.Now())
 	if why == "" {
-		// Still coming up normally. Do NOT clear the phase here: an ordinary Start is
-		// concurrently writing its own progress ("slot: creating", "home: attaching")
-		// and this poll must not wipe it.
+		// Only the blocked phase goes: a task placed after the wall was named leaves State()
+		// at `starting` until the rollout completes, and keeping "Waiting will not help" up
+		// for that stretch is the bug this answer exists to prevent. Any other phase is an
+		// ordinary Start writing its progress ("slot: creating", "home: attaching"), and
+		// this poll must not wipe that.
+		e.clearBlockedPhase()
 		return
 	}
 	phase := blockedPhasePrefix + why
@@ -1135,12 +1138,20 @@ func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
 	log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed: %s", e.base.name, why)
 }
 
-// clearBlockedPhase removes a blocked phase once the task is actually running. Scoped to
-// the prefix on purpose: any other phase belongs to a Start that is still in flight, and
+// clearBlockedPhase removes a blocked phase once nothing blocks the task any more. Scoped
+// to the prefix on purpose: any other phase belongs to a Start that is still in flight, and
 // clearing that from a poll would blank the starting dialog mid-boot.
+//
+// CompareAndDelete, not read-then-setPhase(""): this runs on `starting` polls, while a
+// Start may be storing its own progress, and an unconditional delete between the read
+// and the write would erase that progress instead.
 func (e *ecsEC2Runtime) clearBlockedPhase() {
-	if strings.HasPrefix(e.BootPhase(), blockedPhasePrefix) {
-		e.setPhase("")
+	v, ok := startPhase.Load(e.base.name)
+	if !ok {
+		return
+	}
+	if s, _ := v.(string); strings.HasPrefix(s, blockedPhasePrefix) {
+		startPhase.CompareAndDelete(e.base.name, v)
 	}
 }
 
@@ -1163,11 +1174,34 @@ const blockedPhasePrefix = "blocked: "
 //
 // ⚠️ And an event has to STAND for placementBlockedGrace before it counts, because the
 // same sentence is emitted by a wait the CP created itself — see that constant.
+//
+// ⚠️ A task placed after the event makes the event moot, however old it is. State() keeps
+// answering `starting` until the rollout COMPLETES, which can be minutes after the task
+// started (measured: 122 s), so the grace alone does not stop a placed task from being
+// called a wall. Two checks, because each misses a case the other covers: the PRIMARY
+// deployment's runningCount does not depend on ECS's wording, and a newer "has started"
+// event still answers when that task has since died and runningCount is back at 0. A
+// "has started" event is the PRIMARY's own: ec2SingleTaskDeployment (maximum 100%,
+// minimum 0%) drains the outgoing deployment and never starts a task under it.
+//
+// Compared by CreatedAt rather than by position: the API lists newest first in practice
+// but does not promise it, and a misread order would hide a real wall behind a start.
 func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 	var since time.Time
 	for _, d := range s.Deployments {
-		if aws.ToString(d.Status) == "PRIMARY" && d.CreatedAt != nil {
+		if aws.ToString(d.Status) != "PRIMARY" {
+			continue
+		}
+		if d.RunningCount >= 1 {
+			return "" // a workspace service wants one task, and it is placed
+		}
+		if d.CreatedAt != nil {
 			since = *d.CreatedAt
+		}
+	}
+	for _, ev := range s.Events {
+		if ev.CreatedAt != nil && ev.CreatedAt.After(since) && strings.Contains(aws.ToString(ev.Message), "has started ") {
+			since = *ev.CreatedAt // every complaint up to here predates a task that was placed
 		}
 	}
 	for _, ev := range s.Events {
@@ -1175,10 +1209,9 @@ func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 			continue
 		}
 		if msg := aws.ToString(ev.Message); strings.Contains(msg, "unable to place a task") {
-			// Not `return ""` on a young one: ECS lists newest first, and a wedge that
-			// ECS re-emitted leaves a fresh copy in front of the aged original. Skipping
-			// forward reports the original; a bare return would hide the wall every time
-			// ECS repeated itself.
+			// Not `return ""` on a young one: a wedge that ECS re-emitted leaves a fresh
+			// copy beside the aged original. Skipping it reports the original; a bare
+			// return would hide the wall every time ECS repeated itself.
 			if now.Sub(aws.ToTime(ev.CreatedAt)) < placementBlockedGrace {
 				continue
 			}
@@ -1203,8 +1236,8 @@ func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 //
 // 120s is that 55-second window with margin. Erring long is the cheap direction: a real
 // wedge is permanent, so the only cost is naming it later, while erring short is the bug
-// above. The transient case never reports even after ageing past this, because by then
-// the task is RUNNING and State() takes the branch that clears the phase instead.
+// above. Once the task is placed the event is moot however old it gets; ecsPlacementBlocked
+// checks that itself rather than relying on State() having reached `running` first.
 const placementBlockedGrace = 120 * time.Second
 
 // Start brings the workspace up on a slot. Everything that can be slow is pushed off
