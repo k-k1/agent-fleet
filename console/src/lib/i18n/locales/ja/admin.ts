@@ -8,6 +8,8 @@ export const admin = {
   // --- 管理（features/settings/AdminTab.tsx。super_admin / tenant_admin）---
   "admin.title": "管理",
   "admin.forbidden": "権限がありません（super_admin のみ）。",
+  "admin.deploy_warn_plaintext_secrets":
+    "この配備にはマスターキー（AF_MASTER_KEY）がありません。メンバーが保存した認証情報（git のトークン・Claude のトークン・API キー・MCP やチャット連携の接続情報）は、各ホームに暗号化されずに置かれています。Control Plane の環境変数にキーを設定してください。設定後、メンバーは保存していた認証情報をつなぎ直す必要があります。暗号化されていない古いファイルは削除するまで各ホームとバックアップに残るので、その認証情報はローテーションしてください。",
   "admin.mode_sessions": "セッション",
   "admin.mode_usage": "稼働時間",
   "admin.mode_audit": "監査",

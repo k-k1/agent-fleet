@@ -163,6 +163,7 @@ var _ tenantsrv.CP = cpTenant{}
 
 func (d cpTenant) Store() store.Store                { return d.m.store }
 func (d cpTenant) KnownProviderIDs() map[string]bool { return d.m.knownProviderIDs }
+func (d cpTenant) DeploymentWarnings() []string      { return d.m.deploymentWarnings() }
 func (d cpTenant) EvictMembershipCache(mid string)   { d.m.evictMembershipCache(mid) }
 func (d cpTenant) EvictTenantCache(tid string)       { d.m.evictTenantCache(tid) }
 func (d cpTenant) PushEngineCatalogChanged(ctx context.Context, tenantID, reason string) {

@@ -107,6 +107,10 @@ export function AdminTab() {
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [isSuper, setIsSuper] = useState(false); // super_admin: unlocks deployment-wide controls
+  // Deployment-level problems only the operator can fix (CP environment), as codes. Shown on
+  // every section rather than one of them: a deployment storing credentials in plaintext is not
+  // something an administrator should have to go looking for (#1080).
+  const [warnings, setWarnings] = useState<string[]>([]);
   // Whether this deployment HAS a slot pool. One cheap probe at mount; the endpoint
   // answers {"runtime":"other"} everywhere else.
   const [hasPool, setHasPool] = useState(false);
@@ -152,6 +156,7 @@ export function AdminTab() {
       }
       setTenants(d.tenants || []);
       setIsSuper(!!d.super_admin);
+      setWarnings(Array.isArray(d.deployment_warnings) ? d.deployment_warnings : []);
     } catch {
       setForbidden(true);
     }
@@ -292,6 +297,11 @@ export function AdminTab() {
             {currentLabel}
           </span>
         </div>
+        {warnings.includes("plaintext_secrets") && (
+          <p className="admin-hint warn" role="alert">
+            {tr("admin.deploy_warn_plaintext_secrets")}
+          </p>
+        )}
         <div className="admin">{body()}</div>
       </div>
     </div>

@@ -170,7 +170,13 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 		}
 		out = append(out, row)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
+	resp := map[string]any{"tenants": out, "super_admin": isSuper}
+	// Only the deployment operator can act on these (they are CP environment), so a
+	// tenant_admin's answer does not carry them.
+	if isSuper {
+		resp["deployment_warnings"] = a.cp.DeploymentWarnings()
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // SetTenantLogin (PUT /api/admin/tenants/{slug}/login) stores the per-tenant login

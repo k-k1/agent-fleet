@@ -244,6 +244,14 @@ workspaces stay up — they are not compose services), then tars `${DATA_DIR}`
 (DB + homes + `secrets.enc` + wrapped DEKs + Caddy certs; the re-provisionable
 `shared/jvm` is excluded).
 
+> ⚠️ **Leaving `AF_MASTER_KEY` empty stores members' credentials unencrypted** in
+> their homes. That is for `AUTH=dev` only; with any other `AUTH` the CP still starts
+> but logs `WARNING: AUTH=… but AF_MASTER_KEY is not set` and shows a banner in the
+> admin screen. Adding the key to a deployment that ran without one is not
+> transparent: members reconnect the credentials they had stored, and the old
+> `~/.config/agent-fleet/secrets.json` stays in each home and in your backups —
+> delete it and rotate the credentials it held.
+
 > ⚠️ **`AF_MASTER_KEY` is NOT in the backup** (it lives in `.env`). Store it in a
 > **separate vault**. Losing it makes every backup undecryptable (crypto-shred).
 > The archive itself contains plaintext Claude state — protect it.

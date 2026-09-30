@@ -282,6 +282,15 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 | GitHub でサインイン中の人の access token | **プロセス内メモリのみ** | CP のみ。再起動で消え、その人は再ログインを求められる |
 | PAT | DB に SHA-256 ハッシュのみ | 平文は発行時 1 回だけ表示 |
 
+⚠️ **`AF_MASTER_KEY` が無いと保管庫は平文になる。** マスター鍵が無ければ DEK も無く、agent は同じ
+保管庫を暗号化せずに `secrets.json` として書く。`AUTH=dev` ではそれが意図どおり。それ以外の `AUTH` では
+CP は起動するが、起動時に `WARNING` をログに出し、super_admin の `GET /api/admin/tenants` の
+`deployment_warnings` に `plaintext_secrets` を載せる。Console の管理モーダルはこれを帯で表示する
+（`master_key_guard.go`）。拒否でなく警告にしたのは、鍵なしで動いている既存の配備を更新で止めないため。
+後から鍵を設定しても透過ではない。agent はその後 `secrets.enc` を読み、`secrets.json` を移行しないので、
+メンバーは保存していた認証情報をつなぎ直すことになる。古い `secrets.json` は消すまで各ホームとすべての
+バックアップに残るので、その認証情報は漏れたものとして扱い、ローテーションする。
+
 **封筒暗号 + custodian 抽象**（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)）:
 
 - Workspace ごとの DEK をテナントごとの KEK で wrap して保存（`wrapped_dek`）。CP が Workspace
