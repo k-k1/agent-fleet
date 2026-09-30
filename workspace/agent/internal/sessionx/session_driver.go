@@ -86,10 +86,20 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	// shared app-server still has loaded, and it unloads one only about a minute after the stop
 	// (codex/release.go). Refusing here keeps a prompt from being sent into either side
 	// meanwhile.
-	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex && switchSourceAlive(m) {
-		httpx.WriteErr(w, http.StatusConflict, errCodeCodexStopFirst,
-			"codex のセッションは停止してからターミナル（CLI）に切り替えてください（停止から 1 分ほどで切り替えられます）")
-		return
+	// The claim comes first: a Resume that finishes before it shows up as alive below, and one
+	// in flight makes the claim fail.
+	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex {
+		end, ok := beginCodexTerminalSwitch(name)
+		if !ok {
+			httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, errDriverSwitching.Error())
+			return
+		}
+		defer end()
+		if switchSourceAlive(m) {
+			httpx.WriteErr(w, http.StatusConflict, errCodeCodexStopFirst,
+				"codex のセッションは停止してからターミナル（CLI）に切り替えてください（停止から 1 分ほどで切り替えられます）")
+			return
+		}
 	}
 
 	// Drain condition: never take a running (or queued) turn with us. For tui that is the
@@ -137,7 +147,9 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		m.Driver = "" // tui persists as "" (the convention that keeps existing meta byte-identical)
 	}
 	if target == session.DriverManaged {
-		d, _ := driverOf(m)
+		// Unguarded: the meta on disk still says Terminal until this launch succeeds, which the
+		// guard would read as a stale caller (switch_guard.go).
+		d := managedDrivers[m.Kind]
 		if _, err := mcpx.StartManagedSession(d, m); err != nil {
 			writeRuntimeErr(w, err)
 			return

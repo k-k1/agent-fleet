@@ -40,9 +40,13 @@ var managedDrivers = map[string]agents.Driver{
 	session.KindMuse:     muse.NewDriver(),
 }
 
-// driverOf resolves the managed driver for a session's kind.
+// driverOf resolves the managed driver for a session's kind. codex's comes guarded against a
+// switch to Terminal (switch_guard.go).
 func driverOf(m session.Meta) (agents.Driver, bool) {
 	d, ok := managedDrivers[m.Kind]
+	if ok && m.Kind == session.KindCodex {
+		return switchGuardedDriver{d}, true
+	}
 	return d, ok
 }
 

@@ -37,6 +37,10 @@ import (
 // else stays 502 + runtime_failed. Both carry err.Error() as the message: a generic code cannot
 // express the "why", so the Console shows it alongside via errDetail().
 func writeRuntimeErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, errDriverSwitching) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
+		return
+	}
 	if errors.Is(err, codex.ErrNotLoggedIn) || errors.Is(err, opencode.ErrNotConnected) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeAgentNotConnected, err.Error())
 		return

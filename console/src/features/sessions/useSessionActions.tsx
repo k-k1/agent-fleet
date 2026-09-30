@@ -19,9 +19,9 @@ import type { Session } from "../../types/session.ts";
 
 /** One row of a bulk tidy: an AI session goes to the archive, a shell / ssm to the trash
  *  (stopped first if it runs). Both are restorable (ADR 0101). Never throws. */
-// The /driver refusals worded from the catalogue: codex must be stopped first, or is still letting
-// go of its conversation.
-const SWITCH_REFUSALS = new Set(["codex_stop_first", "codex_releasing"]);
+// The /driver refusals worded from the catalogue: codex must be stopped first, is still letting go
+// of its conversation, or is being resumed or switched by another request.
+const SWITCH_REFUSALS = new Set(["codex_stop_first", "codex_releasing", "driver_switching"]);
 
 const tidyOne = (s: Session, op: "archive" | "delete") =>
   (op === "archive"

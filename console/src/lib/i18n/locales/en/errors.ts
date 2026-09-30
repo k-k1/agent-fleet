@@ -74,6 +74,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
     "This workspace's Claude login has expired. Re-authenticate from Settings > Agents before sending (sent now, the terminal would take the text but no turn would ever start).",
   "err.codex_releasing":
     "codex has not let go of this conversation yet (usually about a minute after the stop). Try again shortly.",
+  "err.driver_switching": "This session is switching its execution method. Try again once the switch is done.",
   "err.codex_stop_first": "Stop this codex session first, then switch it to terminal execution (about a minute after the stop).",
   "err.not_running": "The session is stopped. Resume it before sending.",
   // The workspace is mid-boot (container up, Agent not answering yet) and something
