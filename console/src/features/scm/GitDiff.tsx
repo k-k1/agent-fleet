@@ -36,10 +36,15 @@ interface DiffRow {
 
 // splitDiffFiles breaks a unified diff into one entry per file — each `diff --git`
 // starts a new file. A bare diff with no such header becomes a single entry.
-function splitDiffFiles(text: string): DiffFile[] {
+export function splitDiffFiles(text: string): DiffFile[] {
   const files: DiffFile[] = [];
   let cur: DiffFile | null = null;
-  for (const line of text.split("\n")) {
+  // git terminates the diff with "\n", so split leaves one "" that is not a line; kept, it
+  // renders as a numbered empty context row. Drop that one only: an empty line inside a
+  // hunk still has to advance both counters.
+  const lines = text.split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  for (const line of lines) {
     if (line.startsWith("diff --git ") || line.startsWith("diff --cc ") || !cur) {
       cur = { lines: [] };
       files.push(cur);
@@ -106,7 +111,7 @@ function diffPath(lines: string[]): string {
 // diffRows turns a file's lines into renderable rows, tracking old/new line numbers
 // across hunks. Redundant file-meta lines (diff/index/---/+++/mode) are dropped —
 // the fold header already shows the path; a binary/empty body yields no code rows.
-function diffRows(lines: string[]): DiffRow[] {
+export function diffRows(lines: string[]): DiffRow[] {
   const rows: DiffRow[] = [];
   let oldLn = 0, newLn = 0;
   for (const text of lines) {
