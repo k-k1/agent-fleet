@@ -198,13 +198,17 @@ const errCodeCodexStopFirst = "codex_stop_first"
 // switchSourceAlive is ManagedAlive; a variable so tests can stand in a live runtime.
 var switchSourceAlive = ManagedAlive
 
-// writeCodexReleasingErr answers a Terminal launch that codex refused because the shared
-// app-server still holds the conversation (codex.ErrThreadReleasing): 409, retry shortly.
-// It reports whether err was that refusal.
+// writeCodexReleasingErr answers a launch refused for a codex switch: the shared app-server
+// still holds the conversation (codex.ErrThreadReleasing), or a switch to Terminal holds the
+// session (errDriverSwitching). Both are 409, retry shortly. It reports whether err was one.
 func writeCodexReleasingErr(w http.ResponseWriter, err error) bool {
-	if !errors.Is(err, codex.ErrThreadReleasing) {
+	switch {
+	case errors.Is(err, codex.ErrThreadReleasing):
+		httpx.WriteErr(w, http.StatusConflict, "codex_releasing", err.Error())
+	case errors.Is(err, errDriverSwitching):
+		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
+	default:
 		return false
 	}
-	httpx.WriteErr(w, http.StatusConflict, "codex_releasing", err.Error())
 	return true
 }

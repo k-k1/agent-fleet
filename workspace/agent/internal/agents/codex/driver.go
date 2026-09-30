@@ -534,11 +534,22 @@ func ReconcileManaged(reason string) {
 		if m.StoppedAt != "" && handleFor(m.Name) == nil {
 			continue // deliberately stopped — resume only on user action
 		}
+		release, ok := ReconcileClaim(m.Name)
+		if !ok {
+			continue // switching to Terminal, or already there: m was read before the switch
+		}
 		if _, err := d.Resume(m); err != nil {
 			log.Printf("codex managed: reconcile %s (%s): %v", m.Name, reason, err)
 		}
+		release()
 	}
 }
+
+// ReconcileClaim is the seam package sessionx fills with its switch guard: ReconcileManaged
+// resumes from a meta it read before a switch to Terminal may have begun, so it takes the same
+// claim as every other Managed Resume, or it would load the thread again behind Terminal
+// metadata. ok=false skips the session; release ends the claim.
+var ReconcileClaim = func(name string) (release func(), ok bool) { return func() {}, true }
 
 // reconcileAll is the supervisor-facing wrapper (serve.go, after a daemon death or restart).
 func reconcileAll(reason string) { ReconcileManaged(reason) }

@@ -76,8 +76,16 @@ func TestCodexSwitchRefusesAResumeMidSwitch(t *testing.T) {
 	prevAgent := agentRegistry[session.KindCodex]
 	t.Cleanup(func() { agentRegistry[session.KindCodex] = prevAgent })
 	var mid *httptest.ResponseRecorder
+	reconcileMid := true
 	agentRegistry[session.KindCodex] = probeHookAgent{Agent: prevAgent, afterProbe: func() {
 		mid = postTurn(t, name, `{"op":"interrupt"}`)
+		// ReconcileManaged (a daemon restart, an Agent boot) resumes from a meta read before
+		// the switch; it takes the same claim.
+		if release, ok := codex.ReconcileClaim(name); ok {
+			release()
+		} else {
+			reconcileMid = false
+		}
 	}}
 
 	if rec := postDriver(t, name, `{"driver":"tui"}`); rec.Code != http.StatusOK {
@@ -88,6 +96,13 @@ func TestCodexSwitchRefusesAResumeMidSwitch(t *testing.T) {
 	}
 	if mid == nil || mid.Code != http.StatusConflict || !strings.Contains(mid.Body.String(), errCodeDriverSwitching) {
 		t.Fatalf("/turn mid-switch: %+v, want 409 %s", mid, errCodeDriverSwitching)
+	}
+	if reconcileMid {
+		t.Fatal("reconcile got a Resume claim mid-switch")
+	}
+	if release, ok := codex.ReconcileClaim(name); ok {
+		release()
+		t.Fatal("reconcile got a Resume claim after the switch wrote Terminal")
 	}
 	// After the switch the meta says Terminal; a caller that read managed before must not
 	// bring the thread back either.

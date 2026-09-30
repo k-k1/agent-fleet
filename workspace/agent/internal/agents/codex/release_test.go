@@ -142,3 +142,24 @@ func TestDropHandleReleasesTheObservedThread(t *testing.T) {
 		t.Fatal("a stopped thread still reads compacting")
 	}
 }
+
+// ReconcileManaged resumes from metas read before a switch to Terminal may have begun, so it
+// asks the switch guard first and skips a session the guard refuses (#1339 review).
+func TestReconcileManagedAsksTheSwitchClaim(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	const name = "reconcile-claim"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	var asked []string
+	prev := ReconcileClaim
+	ReconcileClaim = func(n string) (func(), bool) { asked = append(asked, n); return nil, false }
+	t.Cleanup(func() { ReconcileClaim = prev })
+
+	ReconcileManaged("test")
+	if len(asked) != 1 || asked[0] != name {
+		t.Fatalf("claims asked = %v, want [%s]", asked, name)
+	}
+	if handleFor(name) != nil {
+		t.Fatal("a refused claim still resumed the session")
+	}
+}

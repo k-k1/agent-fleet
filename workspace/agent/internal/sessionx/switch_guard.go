@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -51,24 +52,42 @@ type switchGuardedDriver struct{ agents.Driver }
 // before the switch wrote Terminal would otherwise bring the thread back under Terminal
 // metadata. A meta not on disk yet (a session being created) is not Terminal.
 func (d switchGuardedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	release, err := claimCodexResume(m.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return d.Driver.Resume(m)
+}
+
+// claimCodexResume is the Resume side of the claim, shared with codex.ReconcileClaim.
+func claimCodexResume(name string) (release func(), err error) {
 	codexSwitchMu.Lock()
-	if codexSwitching[m.Name] {
+	if codexSwitching[name] {
 		codexSwitchMu.Unlock()
 		return nil, errDriverSwitching
 	}
-	codexResuming[m.Name]++
+	codexResuming[name]++
 	codexSwitchMu.Unlock()
-	defer func() {
+	release = func() {
 		codexSwitchMu.Lock()
-		if codexResuming[m.Name]--; codexResuming[m.Name] <= 0 {
-			delete(codexResuming, m.Name)
+		if codexResuming[name]--; codexResuming[name] <= 0 {
+			delete(codexResuming, name)
 		}
 		codexSwitchMu.Unlock()
-	}()
-	if cur, ok := session.ReadMeta(m.Name); ok && cur.DriverKind() != session.DriverManaged {
+	}
+	if cur, ok := session.ReadMeta(name); ok && cur.DriverKind() != session.DriverManaged {
+		release()
 		return nil, errDriverSwitching
 	}
-	return d.Driver.Resume(m)
+	return release, nil
+}
+
+func init() {
+	codex.ReconcileClaim = func(name string) (func(), bool) {
+		release, err := claimCodexResume(name)
+		return release, err == nil
+	}
 }
 
 // LiveHandle passes the codex driver's registry lookup through (the /turn queue edits), which

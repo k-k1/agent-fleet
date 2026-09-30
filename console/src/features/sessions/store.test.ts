@@ -109,6 +109,20 @@ describe("sessions store", () => {
     expect(toastMock.mock.calls[0][1]).toMatchObject({ kind: "error" });
   });
 
+  it("keeps the server's message for an uncatalogued refusal", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "start_failed", message: "tmux: no server" } }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ sessions: [row("ssko6g5", false)] }));
+
+    await expect(useSessionsStore.getState().start("ssko6g5")).resolves.toBe(false);
+    expect(String(toastMock.mock.calls[0][0])).toContain("tmux: no server");
+  });
+
   // The accepted POST is authoritative (docs/log/85): the row has to say "stopping after
   // this turn" straight away, or the only feedback for an arm set from the ⋯ menu is a toast
   // that disappears, and the arm the session set on the user's word stays invisible until the

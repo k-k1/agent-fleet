@@ -114,7 +114,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       const r = await api(`api/sessions/${encodeURIComponent(name)}/start`, { method: "POST" });
       if (r?.error) {
         ok = false;
-        toast(tMaybe("err." + r.error.code) ?? tr("srow.resume_failed"), { kind: "error" });
+        // An uncatalogued code (start_failed carrying tmux's stderr, say) keeps the server's
+        // message: it is the only clue to why.
+        const msg = typeof r.error.message === "string" ? r.error.message.trim() : "";
+        toast(tMaybe("err." + r.error.code) ?? (msg ? `${tr("srow.resume_failed")}: ${msg}` : tr("srow.resume_failed")), {
+          kind: "error",
+        });
       }
     } catch {
       // Never silent. Swallowing this left the caller to "resume" into a pane that
