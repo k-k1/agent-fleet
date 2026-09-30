@@ -602,6 +602,8 @@ type threadHandle struct {
 	events   chan agents.Event
 	lastErr  *codexError // failure detail of the last turn (errors.go); managedEnrich appends
 	// it as a synthetic trailing error turn until clearLastError runs at the next turn start.
+
+	bg bgCache // the thread's background terminals, for BackgroundWork (background.go)
 }
 
 // tq returns the handle's queue, creating it on first use. Caller holds h.mu.
@@ -1355,6 +1357,7 @@ func dispatchNotification(msg rpcMsg) {
 				return
 			}
 			agents.MarkTurnEndErr(h.slotSid, st, failure)
+			h.kickBg()
 			h.mu.Lock()
 			end := h.turnEnd
 			if h.turnID == p.Turn.ID {

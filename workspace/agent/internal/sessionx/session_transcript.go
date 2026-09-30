@@ -461,6 +461,14 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && td.Compacting {
 		resp["terminalState"] = "compacting"
 	}
+	// Work an earlier turn left running, for the header's "background running" — the same
+	// answer the kind's WireLive gives the session list, and under claude's gate: only when
+	// not already working.
+	if br, ok := AgentOf(meta.Kind).(agents.BackgroundReporter); ok && alive && (state == "idle" || state == "") {
+		busy, reason := br.BackgroundWork(meta)
+		resp["backgroundBusy"] = busy
+		resp["backgroundBusyReason"] = reason
+	}
 	// Session-level context fill for agents with no per-turn token usage in their
 	// transcript (agy): the ContextBar's fallback source. Cached agent-side; the
 	// call is non-blocking (a stale reading triggers a background refresh).

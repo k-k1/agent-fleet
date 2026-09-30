@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -58,6 +59,10 @@ type appClient struct {
 	// onClosed fires once when the read loop exits (supervisor sets it before
 	// starting the loop).
 	onClosed func()
+
+	// noBgTerminals is set once this server refused thread/backgroundTerminals/list as an
+	// unknown method (background.go), so an older CLI is not asked on every poll.
+	noBgTerminals atomic.Bool
 }
 
 // dialAppServer opens the websocket (ws:// or unix://, mirroring package main's

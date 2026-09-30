@@ -57,6 +57,11 @@ type mockCodexServer struct {
 	// holdStart, when set, keeps turn/start unanswered until it is closed: the window in which
 	// the client has sent the start but does not yet know the turn's id.
 	holdStart chan struct{}
+
+	// bgTerminals is what thread/backgroundTerminals/list answers with; bgUnknown answers it
+	// the way a CLI without the method does.
+	bgTerminals []map[string]any
+	bgUnknown   bool
 }
 
 func newMockCodexServer(t *testing.T) (*mockCodexServer, *appClient) {
@@ -170,6 +175,16 @@ func (m *mockCodexServer) serve(conn *websocket.Conn) {
 			} else {
 				m.result(msg.ID, map[string]any{})
 			}
+		case "thread/backgroundTerminals/list":
+			m.mu.Lock()
+			data, unknown := append([]map[string]any{}, m.bgTerminals...), m.bgUnknown
+			m.mu.Unlock()
+			if unknown {
+				m.write(map[string]any{"id": json.RawMessage(msg.ID), "error": map[string]any{
+					"code": -32600, "message": "Invalid request: unknown variant `thread/backgroundTerminals/list`, expected one of `initialize`"}})
+				continue
+			}
+			m.result(msg.ID, map[string]any{"data": data, "nextCursor": nil})
 		case "turn/interrupt":
 			m.result(msg.ID, map[string]any{})
 			m.mu.Lock()

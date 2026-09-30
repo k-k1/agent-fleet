@@ -214,14 +214,16 @@ type Session struct {
 	State      string `json:"state"`     // claude live state: working | idle | question | ""
 	Alive      bool   `json:"alive"`     // true = live tmux session; false = stopped
 	Resumable  bool   `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
-	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
-	// running under the pane. Lets the Console mark a session that is waiting for input
-	// as "still working in bg".
+	// BackgroundBusy: state is idle (turn done) but work an earlier turn started is still
+	// running — claude: a run_in_background task under the pane; muse: a tool call still in
+	// progress; managed codex: a background terminal. Lets the Console mark a session that is
+	// waiting for input as "still working in bg".
 	BackgroundBusy bool `json:"backgroundBusy"`
 	// BackgroundBusyReason: WHAT is running behind the idle prompt — "process" (a
-	// run_in_background worker), "subagent" (a background Task/Workflow agent, which
-	// spawns no process), "shell" (a Monitor / waiting background shell). Display only:
-	// the badge lights on BackgroundBusy, this only chooses its wording, so an unknown
+	// run_in_background worker, or a muse tool other than bash), "subagent" (a background
+	// Task/Workflow agent, which spawns no process), "shell" (a Monitor / waiting background
+	// shell, a muse bash, a codex background terminal). Display only: the badge lights on
+	// BackgroundBusy, this only chooses its wording, so an unknown
 	// (or dropped) value falls back to the generic "running in background".
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
 	// RateLimitResumeAt is set ONLY when State == agents.StateLimited: the time (RFC3339) of

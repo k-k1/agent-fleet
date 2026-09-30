@@ -87,6 +87,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	}
 	sid := slotSid(m)
 	li.State = status.EffectiveModal(sid, status.LiveState(sid))
+	// A tool call left running by an earlier turn is work behind the idle prompt, the case
+	// claude's badge covers with its process scans; here it is an in-memory read.
+	if li.State == "idle" {
+		li.BackgroundBusy, li.BackgroundBusyReason = agentImpl{}.BackgroundWork(m)
+	}
 	// The overview card's gauge and trend come from the live handle, never from Transcript():
 	// AF's item store carries no usage, so sessionx's transcript fold finds nothing for muse.
 	// Both are in-memory reads — no MSP round trip on the 4 s list poll.
@@ -94,6 +99,10 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li.TokenSpends = ManagedSpends(m.Name)
 	return li
 }
+
+// BackgroundWork is the agents.BackgroundReporter read: a tool call an earlier turn left
+// running (background.go).
+func (agentImpl) BackgroundWork(m session.Meta) (bool, string) { return BackgroundWork(m.Name) }
 
 // ClearResume forgets the muse session id captured for this slot, so a recreate starts a
 // fresh conversation instead of trying to reload one.

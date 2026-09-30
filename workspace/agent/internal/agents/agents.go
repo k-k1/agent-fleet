@@ -131,7 +131,7 @@ type LiveInfo struct {
 	RemoteURL      string                // claude Remote Control URL, "" otherwise
 	Context        *session.ContextUsage // context fill; nil = sessionx derives it from Transcript()
 	Resumable      bool                  // false = stopped agent whose working dir is gone
-	BackgroundBusy bool                  // claude: idle turn but a run_in_background task lingers
+	BackgroundBusy bool                  // idle turn, but work an earlier turn started still runs
 	// BackgroundBusyReason names WHAT is running (claude.BGReason*): "process" | "subagent"
 	// | "shell". "" when nothing is. Display-only — the badge lights on BackgroundBusy.
 	BackgroundBusyReason string
@@ -327,6 +327,16 @@ func (r RecalledSettings) Apply(m *session.Meta) bool {
 // (expensive, PTY-scrape) refresh. nil = no reading yet.
 type ContextReporter interface {
 	ContextFill(m session.Meta) *transcript.Context
+}
+
+// BackgroundReporter is an optional Agent capability: whether work an earlier turn left
+// running (a command, a task) is still going behind an idle prompt, and what it is — the
+// LiveInfo.BackgroundBusy pair. A kind that reports it in WireLive implements this too, so the
+// /messages handler can put the same answer in the mirror header without running a whole
+// WireLive; the two surfaces must not disagree. Only asked while the session is idle, and it
+// must not block: it runs on the list poll.
+type BackgroundReporter interface {
+	BackgroundWork(m session.Meta) (busy bool, reason string)
 }
 
 // Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves
