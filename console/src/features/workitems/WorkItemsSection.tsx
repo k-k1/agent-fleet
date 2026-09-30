@@ -249,6 +249,21 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   // for a needle the user has already typed over or cleared.
   const searchGen = useRef(0);
   const filterInput = useRef<HTMLInputElement>(null);
+  // The two fold buttons render on opposite conditions, so the pressed one unmounts with the
+  // toggle and keyboard focus falls to <body>. A keyboard press hands focus to the opposite
+  // button; a tap leaves it alone, like the filter's clear button. Runs after the pin above,
+  // and never scrolls: the default focus() scroll would undo that pin.
+  const foldFocus = useRef(false);
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  const lessBtn = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (!foldFocus.current) return;
+    foldFocus.current = false;
+    // A filter that leaves nothing hidden collapses with no show-more to land on; the filter
+    // input renders whenever show-less could have been pressed, so it is the fallback.
+    const to = (expanded ? lessBtn : moreBtn).current || filterInput.current;
+    to?.focus({ preventScroll: true });
+  }, [expanded]);
 
   // Switching tenant must not leave the previous tenant's rows behind (as in the other stores).
   useEffect(() => {
@@ -580,15 +595,25 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
           {/* Always name the remaining count. The section badge still counts everything, so this
               line is what explains that nothing is being hidden. */}
           {hidden > 0 && (
-            <button type="button" className="wi-more" onClick={() => setExpanded(true)}>
+            <button
+              ref={moreBtn}
+              type="button"
+              className="wi-more"
+              onClick={(e) => {
+                foldFocus.current = e.detail === 0;
+                setExpanded(true);
+              }}
+            >
               {tr("wi.show_more", { n: hidden })}
             </button>
           )}
           {expanded && crowded && (
             <button
+              ref={lessBtn}
               type="button"
               className="wi-more"
               onClick={(e) => {
+                foldFocus.current = e.detail === 0;
                 // Captured here because the button unmounts with the collapse: after the
                 // state flip it is detached and can no longer reach its ancestors.
                 const sec = e.currentTarget.closest(".ui-section");
