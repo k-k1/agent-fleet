@@ -600,3 +600,196 @@ func TestBrowserFrameNavigatedNeverNavigatesFromTheEventLoop(t *testing.T) {
 		t.Fatalf("a navigation was sent after a newer loopback commit: %v", got)
 	}
 }
+
+// TestBrowserAbortedInitialNavigationIsReady opens pages on URLs whose
+// navigation Chromium aborts without committing (a 204, a download). The tab
+// stays on its about:blank, a live document, so the page must read ready as an
+// aborted navigation later on does, never target-unreachable; navigating it
+// afterwards must still work.
+func TestBrowserAbortedInitialNavigationIsReady(t *testing.T) {
+	factory := browserTestCDPFactory(t)
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/no-content":
+			w.WriteHeader(http.StatusNoContent)
+		case "/download":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Content-Disposition", `attachment; filename="x.bin"`)
+			_, _ = w.Write([]byte("x"))
+		default:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<!doctype html><title>live</title>`))
+		}
+	}))
+	defer app.Close()
+	u, err := url.Parse(app.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewBrowserManager(browserManagerConfig{
+		MaxPages: 1, DetachedGrace: time.Minute, ChromiumIdle: time.Minute,
+		CommandTimeout: 10 * time.Second, FrameInterval: time.Second / 12, JPEGQuality: 70,
+		CDPFactory: factory,
+	})
+	defer m.Close()
+	for _, path := range []string{"/no-content", "/download"} {
+		// Record every state from the moment Create registers the page: the
+		// navigation's outcome lands inside Create.
+		var recMu sync.Mutex
+		var states []string
+		stop := make(chan struct{})
+		polled := make(chan struct{})
+		go func() {
+			defer close(polled)
+			last := ""
+			for {
+				select {
+				case <-stop:
+					return
+				case <-time.After(time.Millisecond):
+				}
+				m.mu.Lock()
+				var p *browserPage
+				for _, page := range m.pages {
+					p = page
+				}
+				m.mu.Unlock()
+				if p == nil {
+					continue
+				}
+				if state := p.response().State; state != last {
+					last = state
+					recMu.Lock()
+					states = append(states, state)
+					recMu.Unlock()
+				}
+			}
+		}()
+		created, err := m.Create(browserCreateRequest{
+			Port: port, Path: path, Viewport: browserViewportRequest{Width: 800, Height: 600, DeviceScaleFactor: 1},
+		})
+		if err != nil {
+			close(stop)
+			t.Fatal(err)
+		}
+		m.mu.Lock()
+		p := m.pages[created.ID]
+		cdp := m.cdp
+		m.mu.Unlock()
+		ok := waitFor(10*time.Second, func() bool { return p.response().State == "ready" })
+		time.Sleep(300 * time.Millisecond) // a late event must not flip it either
+		close(stop)
+		<-polled
+		recMu.Lock()
+		seen := append([]string(nil), states...)
+		recMu.Unlock()
+		if !ok {
+			t.Fatalf("%s: never reached ready: %v (page %+v)", path, seen, p.response())
+		}
+		for _, s := range seen {
+			if s == "target-unreachable" {
+				t.Errorf("%s: reported target-unreachable although about:blank is live: %v", path, seen)
+				break
+			}
+		}
+		if got := p.response(); got.State != "ready" || got.URL != app.URL+path {
+			t.Errorf("%s: %+v, want ready at the requested URL", path, got)
+		}
+
+		if err := m.call(cdp, p.sessionID, "Page.navigate", map[string]any{"url": app.URL + "/after"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if !waitFor(10*time.Second, func() bool {
+			got := p.response()
+			return got.State == "ready" && got.URL == app.URL+"/after"
+		}) {
+			t.Fatalf("%s: a navigation after the aborted one never reached ready: %+v", path, p.response())
+		}
+		m.Delete(created.ID)
+	}
+}
+
+// TestBrowserInitialNavigationErrorText decides the initial state from
+// Page.navigate's errorText alone: an abort leaves the live about:blank (ready),
+// any other failure is target-unreachable.
+func TestBrowserInitialNavigationErrorText(t *testing.T) {
+	for _, tc := range []struct{ errorText, want string }{
+		{"net::ERR_ABORTED", "ready"},
+		{"net::ERR_CONNECTION_REFUSED", "target-unreachable"},
+	} {
+		cdp := newFakeBrowserCDP()
+		cdp.navigateErrorText = tc.errorText
+		m := fakeBrowserManager(cdp)
+		created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/no-content", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.mu.Lock()
+		p := m.pages[created.ID]
+		m.mu.Unlock()
+		if got := p.response(); got.State != tc.want || got.URL != "http://127.0.0.1:3000/no-content" {
+			t.Errorf("%s: %+v, want %s at the requested URL", tc.errorText, got, tc.want)
+		}
+		m.Close()
+	}
+}
+
+// TestBrowserAbortedInitialNavigationLeavesANewerOneAlone has the initial
+// navigation L1 aborted by a newer one, L2, whose events the loop handles
+// before Page.navigate answers. Whether L2 is still pending or already
+// committed, the late ERR_ABORTED must not end it: the page stays loading on
+// L2's request until L2's own load.
+func TestBrowserAbortedInitialNavigationLeavesANewerOneAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events []browserCDPEvent
+	}{
+		{"pending", []browserCDPEvent{
+			{Method: "Page.frameStartedNavigating", Params: json.RawMessage(`{"frameId":"frame-1","loaderId":"L2","url":"http://127.0.0.1:3000/next","navigationType":"differentDocument"}`)},
+			{Method: "Fetch.requestPaused", Params: json.RawMessage(`{"requestId":"r-L2","networkId":"L2","frameId":"frame-1","resourceType":"Document","request":{"url":"http://127.0.0.1:3000/next"}}`)},
+		}},
+		{"committed, not loaded", []browserCDPEvent{
+			{Method: "Page.frameStartedNavigating", Params: json.RawMessage(`{"frameId":"frame-1","loaderId":"L2","url":"http://127.0.0.1:3000/next","navigationType":"differentDocument"}`)},
+			{Method: "Fetch.requestPaused", Params: json.RawMessage(`{"requestId":"r-L2","networkId":"L2","frameId":"frame-1","resourceType":"Document","request":{"url":"http://127.0.0.1:3000/next"}}`)},
+			{Method: "Page.frameNavigated", Params: json.RawMessage(`{"frame":{"id":"frame-1","loaderId":"L2","url":"http://127.0.0.1:3000/next"}}`)},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cdp := newFakeBrowserCDP()
+			cdp.navigateErrorText = "net::ERR_ABORTED"
+			m := fakeBrowserManager(cdp)
+			t.Cleanup(m.Close)
+			var p *browserPage
+			cdp.setOnCall("Page.navigate", func() {
+				m.mu.Lock()
+				for _, page := range m.pages {
+					p = page
+				}
+				m.mu.Unlock()
+				// The initial navigation's own start, then the newer one's.
+				m.handleEvent(cdp, browserCDPEvent{Method: "Page.frameStartedNavigating", SessionID: p.sessionID, Params: json.RawMessage(`{"frameId":"frame-1","loaderId":"L1","url":"http://127.0.0.1:3000/","navigationType":"differentDocument"}`)})
+				for _, ev := range tc.events {
+					ev.SessionID = p.sessionID
+					m.handleEvent(cdp, ev)
+				}
+			})
+			if _, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}}); err != nil {
+				t.Fatal(err)
+			}
+			p.mu.Lock()
+			state, loader, top := p.state, p.loaderID, p.topRequestID
+			p.mu.Unlock()
+			if state != "loading" || loader != "L2" || top != "L2" {
+				t.Fatalf("after the initial abort: state=%q loader=%q topRequest=%q, want loading on L2", state, loader, top)
+			}
+			m.handleEvent(cdp, browserCDPEvent{Method: "Page.lifecycleEvent", SessionID: p.sessionID, Params: json.RawMessage(`{"frameId":"frame-1","loaderId":"L2","name":"load"}`)})
+			if got := p.response().State; got != "ready" {
+				t.Fatalf("L2's load: state %q, want ready", got)
+			}
+		})
+	}
+}
