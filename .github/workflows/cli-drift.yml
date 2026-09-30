@@ -4,7 +4,7 @@
 # the live fleet runs**. The ARG pins in workspace/Dockerfile only apply at bake
 # time; a Workspace opted into self-update (AF_AGENT_SELF_UPDATE_ALLOWED=1 and
 # AF_AGENT_SELF_UPDATE=1) has entrypoint.sh install @latest on every boot. Meanwhile
-# e2e.yml passes no build-args and always verifies a pinned-version image = CI stays
+# e2e.yml passes no version build-args and always verifies a pinned-version image = CI stays
 # green even when a new release breaks things (which is why claude state detection
 # broke 3 times and was found by humans every time).
 #

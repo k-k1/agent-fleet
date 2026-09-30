@@ -4,7 +4,7 @@
 # Why this exists: the ARG pins in workspace/Dockerfile only take effect at bake
 # time. A Workspace with AF_AGENT_SELF_UPDATE_ALLOWED=1 and AF_AGENT_SELF_UPDATE=1
 # has entrypoint.sh run `npm i -g <cli>@latest` on every boot, so **the live fleet
-# runs versions ahead of the pins**. Meanwhile CI (e2e.yml) passes no build-args
+# runs versions ahead of the pins**. Meanwhile CI (e2e.yml) passes no version build-args
 # and always verifies a pinned-version image = CI tests something other than
 # production.
 #
