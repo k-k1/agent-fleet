@@ -50,10 +50,17 @@ messages, and what claude and codex did in the measured runs.
   text.
 - `TurnInput` carries **its origin**, in the vocabulary of the mirror's injection badges (`recordInjection`): the
   member, a peer and its sending session, a spawn, the operator (`report_to`), a schedule, the chat bridge. This
-  replaces `KeepOnInterrupt`, which only said "not the member". Today the origin never reaches the driver: `/input`
-  derives it (`badgeOriginOf`) only for the badge, and the chat bridge does not go through `/input` at all
-  (`injectManagedPrompt` sends a `TurnInput` with no origin). Both paths pass it on. **Member input** in decisions
-  2 and 4 means input a person typed as this session's user: the Console's composer and the chat bridge.
+  replaces `KeepOnInterrupt`, which only said "not the member". Today the origin never reaches the driver, so
+  **every place that builds a `TurnInput` sets it**:
+  - `/turn` start and steer (the Console's composer): member;
+  - `/input`: peer, operator, schedule, or spawn, as `badgeOriginOf` decides for the badge today;
+  - `injectSessionPrompt` / `injectManagedPrompt`: shared by the chat bridge (bridge) and auto-resume
+    (`abort_resume.go`, auto-resume), so it takes the origin as a parameter;
+  - `create_session`'s initial prompt: spawn or operator, as `noteCreateOrigin` records it;
+  - the resend of a carried answer (`sendManagedPrompt`): member.
+
+  **Member input** in decisions 2 and 4 is the member and bridge origins: what a person typed as this session's
+  user. Everything else, auto-resume and a manually run schedule included, is not.
 - An input whose start is in flight **while no other turn runs** is not queued: it is the turn being stopped. A
   first stop stops it, as muse (`stopStarting`) and codex (`stopStart`) already do once the runtime names the turn.
   If the start fails, no turn was made and there is nothing to stop. The failed start is shown as it is today (codex
@@ -97,17 +104,24 @@ it works without timing.
 
 - It sends `/turn {"op":"interrupt","discard_queue":true}`. The driver discards all unsent input and stops the
   running turn under the lock that `accept` takes, whatever the episode state. A plain `interrupt` never does this.
-- **Taken is not sent.** Every driver takes an entry out of its queue and sends it in two steps, releasing the lock
-  in between (the ACP pump before `session/prompt`, muse's `beginStartLocked` before `turn/start`, opencode's
-  release before `/message`). An entry in that gap carries a cancel mark. The pump checks the mark under the lock
-  immediately before the send call starts, and a discard sets it. opencode's `abortAsked` check before `/message`
-  already has this shape. Once the send call has started, the input counts as sent.
+- **Taken is not sent, and the line is drawn under the lock.** Every driver takes an entry out of its queue and
+  sends it in two steps, releasing the lock in between (the ACP pump before `session/prompt`, muse's
+  `beginStartLocked` before `turn/start`, opencode's release before `/message`). A taken entry is either
+  **cancellable** or **committed**. The pump's last act under the lock, before it releases the lock to call the
+  runtime, is to move the entry from cancellable to committed, unless a discard has cancelled it. A discard that
+  takes the lock first cancels the entry, and it never starts. A discard that comes after the commit treats the
+  entry as sent. Checking a mark and then sending outside the lock is not enough, because a discard can land
+  between the two; that includes opencode's `abortAsked` check today.
+- A committed entry is stopped on a best-effort basis: as soon as the runtime names its turn (muse's
+  `stopStarting`, codex's `stopStart`), or with the runtime's own cancel once the call is under way (ACP
+  `session/cancel`, opencode's abort).
 - **It is always reachable** in a Managed session that is running or has anything queued. That includes the time a
   question or approval card is shown, and it does not depend on the card's Cancel. Today the stop button is not
   rendered while a question is pending, and a codex question can be raised with input already queued behind it.
-- **What the brake guarantees**: no unsent input, taken or not, starts after it. Input already sent to the runtime is
-  stopped, on a best-effort basis, as soon as the runtime names its turn (muse at `turn/started`, codex at the
-  `turn/start` answer), so it can take its first step before the stop lands. muse input queued on the host side
+- **What the brake guarantees**: no input that was still uncommitted when the discard took the lock starts after
+  it. Committed input and input already sent to the runtime are stopped, on a best-effort basis, as soon as the
+  runtime names its turn (muse at `turn/started`, codex at the `turn/start` answer), so it can take its first step
+  before the stop lands. muse input queued on the host side
   behind a turn this driver did not start is outside the guarantee until `turn/unqueue` is measured.
 
 ### Decision 4: what is discarded comes back, from the driver
@@ -207,8 +221,8 @@ restart instead is #1255's work.
 - For claude and codex, the chat now behaves the same on Terminal and Managed, within what was measured.
 - The `Interrupt` contract changes in all seven Managed drivers: `KeptOnInterrupt` goes, `TurnInput` gains its
   origin, and each driver gains the stop episode, the discard-queue interrupt, the kept discards, queue entry ids,
-  the removal op, the cancel mark on taken entries and a side-effect-free ledger lookup. `/input` and the chat
-  bridge's `injectManagedPrompt` pass the origin through, and the messages payload gains the ids and the discards.
+  the removal op, the cancellable/committed state of taken entries and a side-effect-free ledger lookup. Every
+  `TurnInput` constructor sets the origin, and the messages payload gains the ids and the discards.
   The Console gains the stop control's menu action (kept reachable while a question or approval is pending), the
   notice and the bubble actions, and stops disabling Stop while a stop is pending. The member guide's sessions
   chapter (en/ja) states the two stops.
