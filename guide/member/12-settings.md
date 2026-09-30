@@ -287,9 +287,9 @@ This is where you add tools Agent Fleet does not ship with — an internal wiki,
 search.
 
 - **Transport** — **stdio** (run an executable inside the workspace: command, arguments, environment variables)
-  or **remote (HTTP)** (URL and headers). **Environment variable and header values are stored encrypted** and
-  handed to the server only when it starts, so they never sit in a config file in the clear. Put credentials in
-  a header, not in the URL.
+  or **remote (HTTP)** (URL and headers). **Environment variable and header values are stored encrypted**. The
+  configuration handed to the CLI that runs the server can still contain them (in an owner-only file in your
+  home, never in a repository). Put credentials in a header, not in the URL.
 - **Targets** — whether it is handed to **assistants**, **sessions**, or both (clear both and the entry stays
   but goes nowhere). Leave **target agents** empty to cover every agent.
 - **Connection test** — reports the server name, version, tool count and round-trip time.

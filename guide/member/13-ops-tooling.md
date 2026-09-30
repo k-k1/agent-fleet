@@ -34,7 +34,7 @@ For other tools such as Zabbix, register their MCP server under Settings > Conne
 
 - Scope: Terminal (CLI) claude sessions. **To give chat (an assistant) a tool, register the server under Settings > Connections > [MCP servers](12-settings.md#mcp-servers)** with assistants as a target, then pick it in the assistant's edit form under "MCP servers (optional)". Only assistants you created can be edited; the built-in ones (SRE Assistant, Fleet Operator, Agent Fleet Assistant) cannot. A server added by hand with `claude mcp add` is not a way to attach one: it never appears in that choice, and a claude-based assistant that has MCP servers or Agent Fleet tools attached runs with a strict MCP configuration that leaves it out.
 - Prerequisite: outbound connectivity from the workspace to each monitoring tool's endpoint. PyPI access is needed for `uvx`'s first fetch.
-- ⚠️ **Token handling (a PoC-only compromise)**: tokens passed via `claude mcp add -e` are **stored in plaintext** in `~/.claude.json`. Because it's inside the home volume it survives a container recreate, but never write tokens into a repository, and use **read-only, dedicated tokens only**. To keep tokens encrypted, register the server under [MCP servers](12-settings.md#mcp-servers) instead: values entered there are stored encrypted and handed over only when the server starts.
+- ⚠️ **Token handling (a PoC-only compromise)**: tokens passed via `claude mcp add -e` are **stored in plaintext** in `~/.claude.json`. Because it's inside the home volume it survives a container recreate, but never write tokens into a repository, and use **read-only, dedicated tokens only**. To keep the stored token encrypted, register the server under [MCP servers](12-settings.md#mcp-servers) instead: the registration is stored encrypted, though the configuration handed to the CLI can still contain the token.
 
 ## 0. Prep (one time only; survives a recreate)
 
@@ -158,7 +158,7 @@ Don't forget to revoke the tokens as well (delete the Grafana SA token and the P
 
 ## Limits of the manual route
 
-- Tokens sit in plaintext in `~/.claude.json` (→ register the server in [MCP servers](12-settings.md#mcp-servers) to keep them encrypted)
+- Tokens sit in plaintext in `~/.claude.json` (→ register the server in [MCP servers](12-settings.md#mcp-servers) to keep the registration encrypted)
 - Servers added with `claude mcp add` cannot be attached to chat / an assistant (→ register them in [MCP servers](12-settings.md#mcp-servers) instead, and attach them to an assistant you created)
 - Alert bodies and logs are **input an attacker can influence**. Do not break the read-only setup. If you experiment with writes, do it explicitly in a dedicated assistant/session
 - uvx-based servers fetch from PyPI on first launch (egress required). On a memory-constrained host, don't start too many at once
