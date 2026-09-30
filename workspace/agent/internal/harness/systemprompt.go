@@ -66,7 +66,7 @@ var projectInstructionFiles = []string{"AGENTS.md", "CLAUDE.md"}
 
 // projectInstructions reads a working copy's own instructions, walking from cwd UP to the
 // nearest git root and no further — the same boundary codex's own project-skill scope uses
-// (internal/sessionx's codexSkillDirs/gitRoot, session_skills.go:306-324: "codex resolves
+// (internal/sessionx's codexSkillDirs/gitRoot in session_skills.go: "codex resolves
 // project skills from the CWD up to the GIT ROOT and no further … with no .git above the CWD
 // it reads the CWD alone"). lcpp drives no CLI of its own to crib a boundary from, and
 // AGENTS.md is itself the codex/opencode convention, so this reuses codex's own choice rather
@@ -145,7 +145,7 @@ func gitRootAbove(p string) (string, bool) {
 // foreignSkillConvs are the SKILL.md tree conventions lcpp has no native way to discover (it
 // drives no CLI at all), advertised instead the same "read Path and follow its instructions"
 // way the Console already offers other kinds' foreign entries (docs/log/50 §8). The three
-// names are duplicated from internal/sessionx's own foreignConvs (session_skills.go:127-129)
+// names are duplicated from internal/sessionx's own foreignConvs (session_skills.go)
 // rather than imported: this ADR's own layering has P2's kind wiring import internal/harness
 // (the managed driver wraps this package), not the other way round, and importing sessionx
 // from here for a 3-string slice is not worth risking that cycle later.

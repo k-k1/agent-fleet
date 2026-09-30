@@ -74,6 +74,7 @@ describe("originKind", () => {
   it("maps the origin convention dir to a kind (.agents is shared = null)", () => {
     expect(originKind(".claude")).toBe("claude");
     expect(originKind(".codex")).toBe("codex");
+    expect(originKind(".muse")).toBe("muse");
     expect(originKind(".agents")).toBeNull();
     expect(originKind(undefined)).toBeNull();
   });
