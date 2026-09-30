@@ -366,6 +366,13 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
   **file contents are never recorded**.
 - Written from the CP's proxy layer, the admin and tenant APIs, and the MCP write tools
   (which record the token's id, with **the role resolved live at call time**).
+- **Irreversible admin actions record the request first** (`store.BeginIrreversible`):
+  clean home, home-backup deletion, workspace destroy, membership remove and delete, tenant
+  delete, pool-slot terminate and engine-model purge write `<action>.requested` before acting
+  and **refuse with `503 audit_unavailable` when that write fails**, then `<action>` with the
+  outcome and the answered status. A failed outcome write is logged, not returned: the action
+  has happened and the request row still names who asked. Every other audit write stays
+  best-effort after the fact.
 - Read through `GET /api/admin/audit` and the Console, scoped by tenant and role.
 
 ## 7.8 Egress control 🚧

@@ -265,8 +265,8 @@ func auditActions(t *testing.T, st *store.SQL, tn store.Tenant) []string {
 	return out
 }
 
-// Over HTTP: a refusal is a 501 with the Console's code and leaves no audit entry, because
-// nothing happened; a clean home that ran is audited.
+// Over HTTP: a refusal is a 501 with the Console's code, and its audit outcome says it was
+// refused; a clean home that ran is audited as done.
 func TestAdminCleanHomeEndpoint(t *testing.T) {
 	body := `{"tenant_slug":"sales","user_key":"leaver-acme-co-jp"}`
 
@@ -278,7 +278,7 @@ func TestAdminCleanHomeEndpoint(t *testing.T) {
 		t.Errorf("clean home on an unreachable home = %d %s, want 501 home_wipe_unsupported", w.Code, w.Body.String())
 	}
 	for _, a := range auditActions(t, st, tn) {
-		if strings.HasPrefix(a, "workspace.clean_home") {
+		if strings.HasPrefix(a, "workspace.clean_home:") && !strings.HasPrefix(a, "workspace.clean_home:error home_wipe_unsupported") {
 			t.Errorf("a refused clean home was audited as done: %q", a)
 		}
 	}
@@ -292,7 +292,7 @@ func TestAdminCleanHomeEndpoint(t *testing.T) {
 	}
 	found := false
 	for _, a := range auditActions(t, st, tn) {
-		found = found || strings.HasPrefix(a, "workspace.clean_home")
+		found = found || a == "workspace.clean_home:home erased"
 	}
 	if !found {
 		t.Error("a clean home that ran left no audit entry")
@@ -342,17 +342,20 @@ func TestAdminHomeBackupsEndpoints(t *testing.T) {
 		t.Errorf("deleting the backups was not audited with the count: %v", auditActions(t, st, tn))
 	}
 
-	// Nothing left to delete: the answer says 0 and nothing more is audited.
-	before := len(auditActions(t, st, tn))
+	// Nothing left to delete: the answer says 0, and so does the outcome entry.
 	w = callHomeBackups(adm, http.MethodDelete)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"deleted":0`) {
 		t.Fatalf("second DELETE home-backups = %d %s, want deleted 0", w.Code, w.Body.String())
 	}
-	if after := len(auditActions(t, st, tn)); after != before {
-		t.Errorf("a deletion that deleted nothing was audited (%d -> %d entries)", before, after)
+	zero := false
+	for _, a := range auditActions(t, st, tn) {
+		zero = zero || a == "workspace.delete_backups:backup copies of the home deleted: 0"
+	}
+	if !zero {
+		t.Errorf("audit entries = %v, want the second deletion recorded as 0", auditActions(t, st, tn))
 	}
 
-	// A runtime that keeps no copies says so, and nothing is audited.
+	// A runtime that keeps no copies says so.
 	_, mgr, _, tn2 := destroyFixture(t, fixedRuntimeFactory{&unreachableHomeRuntime{rec: &wipeRecorder{}, state: "stopped"}})
 	for _, method := range []string{http.MethodGet, http.MethodDelete} {
 		w := callHomeBackups(newAdminAPI(mgr), method)

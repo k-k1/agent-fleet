@@ -7,6 +7,10 @@ package main
 const (
 	errCodeQuotaSessions = "quota_sessions"
 
+	// An irreversible admin action refused because its request could not be written to the
+	// audit log first (store.BeginIrreversible). internal/tenantsrv emits the same literal.
+	errCodeAuditUnavailable = "audit_unavailable"
+
 	// File editor API (docs/log/44 Phase 1). The CP validates the public envelope
 	// before proxying and preserves the Agent's matching stable codes.
 	errCodeFSBadPath            = "bad_path"
