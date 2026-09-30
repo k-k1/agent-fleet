@@ -115,26 +115,30 @@ it works without timing.
   entry as sent. Checking a mark and then sending outside the lock is not enough, because a discard can land
   between the two; that includes opencode's `abortAsked` check today.
 - A committed entry moves on to **received** once the runtime holds it. The stop is delivered only then, never
-  before: a cancel that overtook the input would find nothing and let it run. The point is per driver. For muse
-  and codex it is when the runtime names the turn (`turn/started`; the `turn/start` answer). For ACP it is once the
-  `session/prompt` request has been written.
+  before: a cancel that overtook the input would find nothing and let it run. For muse and codex, the point is when
+  the runtime names the turn (`turn/started`; the `turn/start` answer).
 - The hand-over is decided under the lock, so exactly one side delivers the stop. A stop that finds the entry
   committed sets **stop-pending** and leaves the delivery to the pump. The pump, when it marks the entry received,
-  delivers the stop itself if stop-pending is set (muse's `stopStarting`, codex's `stopStart`, ACP's
-  `session/cancel`). A stop that finds the entry already received delivers the stop itself, at once. Neither side
-  checks once and walks away.
-- opencode is the exception. serve's `/session/status` reports a session busy or idle, with no id that ties it to
-  this input, and `/message` blocks until the turn ends. So the pump cannot tell that serve holds this input
-  rather than another client's turn. It could also miss a short turn entirely. There, a committed entry's stop is
-  best effort: an abort sent on a busy status can hit another client's turn, and the input can still run
-  afterwards.
+  delivers the stop itself if stop-pending is set (muse's `stopStarting`, codex's `stopStart`). A stop that finds
+  the entry already received delivers the stop itself, at once. Neither side checks once and walks away.
+- **ACP and opencode have no such point**, so there a committed entry's stop is best effort.
+  - ACP: `session/prompt` answers only when the turn ends. Having written the request to the child's stdin says
+    nothing about whether the runtime has registered the turn. A `session/cancel` written right after it may be
+    handled first, find nothing, and let the prompt run. The drivers use the same hand-over with the write as the
+    point, and send `session/cancel` then. The ordering of a cancel right after the write is unmeasured
+    (docs/log/127 measured none of this), and until it is measured per ACP runtime the stop is not promised.
+  - opencode: serve's `/session/status` reports a session busy or idle, with no id that ties it to this input, and
+    `/message` blocks until the turn ends. So the pump cannot tell that serve holds this input rather than another
+    client's turn. It could also miss a short turn entirely. An abort sent on a busy status can hit another
+    client's turn, and the input can still run afterwards.
 - **It is always reachable** in a Managed session that is running or has anything queued. That includes the time a
   question or approval card is shown, and it does not depend on the card's Cancel. Today the stop button is not
   rendered while a question is pending, and a codex question can be raised with input already queued behind it.
 - **What the brake guarantees**: no input that was still uncommitted when the discard took the lock starts after
   it. Committed input is stopped as soon as the runtime holds it (above), so it can take its first step before the
-  stop lands, and on opencode that stop is best effort. muse input queued on the host side behind a turn this
-  driver did not start is outside the guarantee until `turn/unqueue` is measured.
+  stop lands. That stop is guaranteed on muse and codex, and best effort on the ACP drivers and opencode. muse
+  input queued on the host side behind a turn this driver did not start is outside the guarantee until
+  `turn/unqueue` is measured.
 
 ### Decision 4: what is discarded comes back, from the driver
 
