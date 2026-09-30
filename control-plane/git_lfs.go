@@ -254,13 +254,11 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := os.Rename(tmpName, dest); err != nil {
 		os.Remove(tmpName)
-		// Drop the row only when no other upload published the object meanwhile.
-		if !fileExists(dest) {
-			if derr := a.store.DeleteLFSObject(r.Context(), mv.TenantID, name, oid); derr != nil {
-				log.Printf("lfs: publish failed and ledger row left behind tenant=%s repo=%s oid=%s: %v",
-					mv.TenantID, name, oid, derr)
-			}
-		}
+		// The row stays. A concurrent upload of the same oid may have found it and be
+		// relying on it, and no check-then-delete here is atomic with that upload. The
+		// cost is an over-count until this oid is uploaded again.
+		log.Printf("lfs: publish failed, ledger row kept tenant=%s repo=%s oid=%s: %v",
+			mv.TenantID, name, oid, err)
 		writeLFSErr(w, http.StatusInternalServerError, "publish failed")
 		return
 	}

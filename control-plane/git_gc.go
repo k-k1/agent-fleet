@@ -149,7 +149,13 @@ func (g *gitGC) pruneLFS(ctx context.Context, slug, repo, bareDir string) {
 			return nil
 		}
 		if err := os.Remove(path); err != nil {
-			log.Printf("lfs-gc: %s/%s: remove %s failed after its ledger row went: %v", slug, repo, oid, err)
+			// The file stays, so its row has to come back: an upload of an existing
+			// object is a no-op and would never write it again.
+			if perr := g.store.PutLFSObject(ctx, tenant.ID, repo, oid, info.Size()); perr != nil {
+				log.Printf("lfs-gc: %s/%s: remove %s failed (%v) and restoring its ledger row failed: %v", slug, repo, oid, err, perr)
+			} else {
+				log.Printf("lfs-gc: %s/%s: remove %s failed, object kept: %v", slug, repo, oid, err)
+			}
 			return nil
 		}
 		freed++
