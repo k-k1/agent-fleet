@@ -180,8 +180,9 @@ verifies is the pinned versions). Check that no upstream breakage has slipped in
    trust the pin).
 2. Re-verify the state-detection footer contract — recapture real panes following
    `workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt` and diff against the corpus.
-3. If all is well, bump the Dockerfile ARGs (= bring what CI verifies back in line with
-   the live fleet).
+3. If all is well, the Dockerfile ARGs are bumped (= what CI verifies is brought back in
+   line with the live fleet) by `cli-pin-bump.yml`, for each kind whose latest passed its
+   contract.
 EOF
   echo
   echo "Drift detected: the live fleet (self-update enabled) is running latest."

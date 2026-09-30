@@ -219,6 +219,10 @@ jobs:
       # a night. No `act` here, so the decision lives in scripts and is tested as such.
       - name: CLI release watcher decisions (real scripts, stub npm/curl/gh)
         run: ./deploy/local/cli-drift-stub-test.sh
+      # The bump PR is opened unattended; which kinds move and which checksums are
+      # accepted is decided here, so it is tested here.
+      - name: CLI pin bump decisions (real script, stub drift/gh/curl)
+        run: ./deploy/local/cli-pin-bump-stub-test.sh
 
   console:
     runs-on: ubuntu-latest

@@ -177,6 +177,12 @@ dispatches nothing. Registering takes four places:
   Record the version in the same shape as the watcher's latest for that kind: muse's
   carries its build id (`1.4.0-R4302.1`), so cutting it to `1.4.0` leaves the edge open.
 
+For the pin to be bumped automatically once that contract passes
+([10 §10.2.2](10-development.md#1022-automated-agent-cli-bumps-cli-pin-bumpyml)), add the
+kind to `KINDS` in `deploy/local/cli-pin-bump.sh` (plus a `resolve_<kind>` that fetches
+and checks its checksums, if it pins any) and its contract's `name:` to the
+`workflow_run` list of `cli-pin-bump.yml`.
+
 Dispatch unattended only when the credential can be supplied unattended. **A credential
 that rotates through an interactive refresh is recorded as "seen" and dispatched by
 hand**, and so is a release that arrives while its credential is not configured.

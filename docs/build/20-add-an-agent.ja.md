@@ -162,6 +162,12 @@ lcpp は例外です。ベンダーの CLI を動かさず、話し相手の lla
   記録する版は、監視がその種別の最新として読む版と同じ形にします。muse の版はビルド ID を含む
   （`1.4.0-R4302.1`）ので、`1.4.0` に削るとエッジが閉じません。
 
+その contract が通ったあとピンを自動で上げさせる
+（[10 §10.2.2](10-development.ja.md#1022-エージェント-cli-の版上げの自動化cli-pin-bumpyml)）には、
+`deploy/local/cli-pin-bump.sh` の `KINDS` に種別を足し（チェックサムをピンするなら、それを取得・
+照合する `resolve_<kind>` も）、`cli-pin-bump.yml` の `workflow_run` の一覧に contract の
+`name:` を足します。
+
 無人で dispatch するのは、資格情報を無人で供給できる場合だけです。**対話的な refresh で回転する
 資格情報のものは「seen」として記録し、手で dispatch**します。資格情報が未設定のうちに来たリリースも
 同じ扱いです。「seen」は「tested」を進めません——「新しい版に気づいた」と「テストが通った」を
