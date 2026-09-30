@@ -1,10 +1,12 @@
 package gitx
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -37,10 +39,14 @@ func fakeGitHub(t *testing.T, prs map[string][]map[string]any) *atomic.Int32 {
 			return
 		}
 		list := prs[q.Get("head")]
-		if list == nil {
-			list = []map[string]any{}
+		per, _ := strconv.Atoi(q.Get("per_page"))
+		page, _ := strconv.Atoi(q.Get("page"))
+		if per <= 0 || page <= 0 {
+			t.Errorf("unpaged request %s", r.URL)
+			per, page = 30, 1
 		}
-		_ = json.NewEncoder(w).Encode(list)
+		lo, hi := min((page-1)*per, len(list)), min(page*per, len(list))
+		_ = json.NewEncoder(w).Encode(append([]map[string]any{}, list[lo:hi]...))
 	}))
 	t.Cleanup(srv.Close)
 	base, tok := githubAPIBase, githubToken
@@ -182,4 +188,59 @@ func TestResolveRecreateForgeUnavailable(t *testing.T) {
 		fakeGitHub(t, map[string][]map[string]any{"o:sq": {pullJSON(6, "sq", strings.Repeat("ab", 20), true)}})
 		newOnly(t, parent)
 	})
+}
+
+// A merged pull request below a full page of closed retries is still found, and one whose
+// head repository is gone or a fork is passed over for the one from repo itself.
+func TestGitHubMergedPRPagesAndHeadRepo(t *testing.T) {
+	good := strings.Repeat("a1", 20)
+	var list []map[string]any
+	for i := 0; i < githubPullsPerPage+20; i++ {
+		list = append(list, pullJSON(1000-i, "sq", strings.Repeat("0f", 20), false))
+	}
+	orphan := pullJSON(900, "sq", strings.Repeat("b2", 20), true)
+	orphan["head"].(map[string]any)["repo"] = nil
+	fork := pullJSON(899, "sq", strings.Repeat("c3", 20), true)
+	fork["head"].(map[string]any)["repo"] = map[string]any{"full_name": "someone/r"}
+	list = append(list, orphan, fork, pullJSON(898, "sq", good, true))
+	hits := fakeGitHub(t, map[string][]map[string]any{"o:sq": list})
+
+	if sha, pr := githubMergedPR(context.Background(), "tok", "o/r", "sq"); sha != good || pr != 898 {
+		t.Errorf("githubMergedPR = %s, %d; want %s, 898", sha, pr, good)
+	}
+	if n := hits.Load(); n != 2 {
+		t.Errorf("pages asked = %d, want 2", n)
+	}
+}
+
+// The token never follows a redirect off the API's scheme and host: Go's default client would
+// forward Authorization to the same hostname on another port, or from https to http.
+func TestGitHubMergedPRRefusesCrossOriginRedirect(t *testing.T) {
+	var leaked atomic.Int32
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			leaked.Add(1)
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{pullJSON(1, "sq", strings.Repeat("d4", 20), true)})
+	}))
+	t.Cleanup(sink.Close)
+	redirect := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, sink.URL+r.URL.RequestURI(), http.StatusFound)
+	})
+	base, transport := githubAPIBase, githubHTTPClient.Transport
+	t.Cleanup(func() { githubAPIBase, githubHTTPClient.Transport = base, transport })
+
+	for name, srv := range map[string]*httptest.Server{
+		"another port":  httptest.NewServer(redirect),
+		"https to http": httptest.NewTLSServer(redirect),
+	} {
+		t.Cleanup(srv.Close)
+		githubAPIBase, githubHTTPClient.Transport = srv.URL, srv.Client().Transport
+		if sha, _ := githubMergedPR(context.Background(), "tok", "o/r", "sq"); sha != "" {
+			t.Errorf("%s: followed the redirect to %s", name, sha)
+		}
+	}
+	if n := leaked.Load(); n != 0 {
+		t.Errorf("the token reached the redirect target %d times", n)
+	}
 }

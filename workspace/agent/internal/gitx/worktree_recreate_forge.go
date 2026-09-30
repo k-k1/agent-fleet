@@ -3,6 +3,8 @@ package gitx
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -108,51 +110,90 @@ func (f *mergedPRFinder) head(branch string) (string, int) {
 	return sha, pr
 }
 
+// githubPullsPerPage and githubPullsPages bound the listing: a branch with more closed pull
+// requests than this is not worth the plan's time.
+const (
+	githubPullsPerPage = 100
+	githubPullsPages   = 5
+)
+
+// githubHTTPClient refuses any redirect that leaves the first request's scheme and host. Go's
+// default forwards Authorization to the same hostname whatever the scheme or port, so a
+// redirect to http:// would carry the token in the clear.
+var githubHTTPClient = &http.Client{CheckRedirect: sameOriginRedirect}
+
+func sameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("too many redirects")
+	}
+	if o := via[0].URL; req.URL.Scheme != o.Scheme || !strings.EqualFold(req.URL.Host, o.Host) {
+		return fmt.Errorf("redirect off %s://%s refused", o.Scheme, o.Host)
+	}
+	return nil
+}
+
 // githubMergedPR finds the newest merged pull request whose head is branch in repo itself (a
-// fork's branch is not the one this working copy pushed). GitHub lists newest first.
+// fork's branch, or one whose repository is gone and so cannot be shown to be repo's, is not
+// the one this working copy pushed). GitHub lists newest first.
 func githubMergedPR(ctx context.Context, token, repo, branch string) (string, int) {
 	owner, _, ok := splitRepo(repo)
 	if !ok {
 		return "", 0
 	}
-	q := url.Values{"state": {"closed"}, "head": {owner + ":" + branch}, "per_page": {"30"}}
+	for page := 1; page <= githubPullsPages; page++ {
+		prs, ok := githubClosedPullsPage(ctx, token, repo, owner+":"+branch, page)
+		if !ok {
+			return "", 0
+		}
+		for _, p := range prs {
+			if p.MergedAt == nil || *p.MergedAt == "" || p.Number <= 0 || p.Head.Ref != branch || !isHexSHA(p.Head.SHA) {
+				continue
+			}
+			if p.Head.Repo == nil || !strings.EqualFold(p.Head.Repo.FullName, repo) {
+				continue
+			}
+			return p.Head.SHA, p.Number
+		}
+		if len(prs) < githubPullsPerPage {
+			break
+		}
+	}
+	return "", 0
+}
+
+type githubPull struct {
+	Number   int     `json:"number"`
+	MergedAt *string `json:"merged_at"`
+	Head     struct {
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
+		Repo *struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
+	} `json:"head"`
+}
+
+func githubClosedPullsPage(ctx context.Context, token, repo, head string, page int) ([]githubPull, bool) {
+	q := url.Values{"state": {"closed"}, "head": {head},
+		"per_page": {strconv.Itoa(githubPullsPerPage)}, "page": {strconv.Itoa(page)}}
 	req, err := http.NewRequestWithContext(ctx, "GET", githubAPIBase+"/repos/"+EscapeRepoPath(repo)+"/pulls?"+q.Encode(), nil)
 	if err != nil {
-		return "", 0
+		return nil, false
 	}
 	GithubHeaders(req, token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := githubHTTPClient.Do(req)
 	if err != nil {
-		return "", 0
+		return nil, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", 0
+		return nil, false
 	}
-	var prs []struct {
-		Number   int     `json:"number"`
-		MergedAt *string `json:"merged_at"`
-		Head     struct {
-			Ref  string `json:"ref"`
-			SHA  string `json:"sha"`
-			Repo *struct {
-				FullName string `json:"full_name"`
-			} `json:"repo"`
-		} `json:"head"`
+	var prs []githubPull
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&prs); err != nil {
+		return nil, false
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&prs); err != nil {
-		return "", 0
-	}
-	for _, p := range prs {
-		if p.MergedAt == nil || *p.MergedAt == "" || p.Number <= 0 || p.Head.Ref != branch || !isHexSHA(p.Head.SHA) {
-			continue
-		}
-		if p.Head.Repo != nil && !strings.EqualFold(p.Head.Repo.FullName, repo) {
-			continue
-		}
-		return p.Head.SHA, p.Number
-	}
-	return "", 0
+	return prs, true
 }
 
 func isHexSHA(s string) bool {
