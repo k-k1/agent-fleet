@@ -123,9 +123,10 @@ Start が使うイメージと Workspace が走らせているイメージが違
   `SKIP_CONSOLE=1` で Go 側のみ。`run-dev.sh` と同じ環境を再現し、`oauth.env` の存在を前提とする。
 - **`e2e-smoke.sh`** — イメージスモーク（L1）。ビルド済みイメージに対して `docker run` で
   検証する。焼き込みイメージでは、導入された claude・opencode・codex・copilot・cursor・
-  kiro・muse の版が Dockerfile のピンと一致するか（＝キャッシュが古くないか）を確かめ、Go・`gh`・
-  Chromium はどのイメージでも版を突き合わせる。agy のバイナリは調べず、rtk は存在するか、
-  `rtk-unavailable` の印付きで無いかのどちらかなら通す。lean イメージでは CLI が焼かれていない
+  kiro・muse・agy・rtk の版が Dockerfile のピンと一致するか（＝キャッシュが古くないか）を確かめ、
+  Go・`gh`・Chromium はどのイメージでも版を突き合わせる。RDRAND の無いホストでは agy を Agent と
+  同じ `OPENSSL_ia32cap` マスク付きで問い、rtk は `rtk-unavailable` の印付きで無い場合（arm64）
+  も通す。lean イメージでは CLI が焼かれていない
   ことを確かめる。どちらでも `versions.json` をピンと突き合わせ、イメージ自身のファイル
   （Agent・entrypoint・ポリシーの `CLAUDE.md` など）が揃っているかを見る。
   `run-dev.sh` がビルドのたびに実行し、`deploy/local/e2e-smoke.sh [image]` で単体でも回せる。
