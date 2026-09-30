@@ -1,4 +1,5 @@
 import { t, type MsgKey } from "../../lib/i18n/index.ts";
+import { phaseKey } from "../../lib/bootPhase.ts";
 
 // Row headings for the notification center. Every kind wording() handles must appear here too: a
 // missing kind renders the raw identifier (`handoff-offer`) in the row instead of a translation,
@@ -237,10 +238,14 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // The Control Plane stopped a launch that stayed "starting" past its deadline
     // (control-plane/start_deadline.go). The member saw only starting -> stopped, and the phase
     // that named the cause (on ecs-ec2, why ECS cannot place the task) was cleared by the stop,
-    // so the phase is carried here and shown verbatim. Clicking opens nothing: the workspace is
+    // so the phase is carried here. A phase the starting dialog knows is worded the way it
+    // words it, with the raw text kept beside it: for "blocked:" that raw ECS sentence is the
+    // actual cause. An unknown phase is shown as is. Clicking opens nothing: the workspace is
     // the subject.
     const minutes = Number(n.payload.limitMinutes) || 0;
-    const phase = typeof n.payload.phase === "string" ? n.payload.phase.trim() : "";
+    const raw = typeof n.payload.phase === "string" ? n.payload.phase.trim() : "";
+    const key = raw ? phaseKey(raw) : "wsstart.generic";
+    const phase = key === "wsstart.generic" ? raw : `${t(key)} — ${raw}`;
     const limit = minutes > 0 ? t("notif.start_deadline.body_limit", { minutes }) : t("notif.start_deadline.body_generic");
     return {
       title: t("notif.start_deadline.title"),

@@ -22,11 +22,19 @@ type deadlineStub struct {
 	endpoint     string
 	fenceEntered chan struct{}
 	fenceRelease chan struct{}
+	stopErr      error  // Stop fails with it, leaving the state alone
+	onStop       func() // runs inside a successful Stop
 }
 
 func (r *deadlineStub) Start(context.Context) error { return nil }
 func (r *deadlineStub) Stop(context.Context) error {
 	r.stops.Add(1)
+	if r.stopErr != nil {
+		return r.stopErr
+	}
+	if r.onStop != nil {
+		r.onStop()
+	}
 	r.mu.Lock()
 	r.state = "stopped"
 	r.mu.Unlock()
@@ -513,5 +521,63 @@ func (r *gateStub) AcquireOperationFence(ctx context.Context) (func(), error) {
 		return func() {}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// The notification names the launch, not the moment: a second stop of the same launch adds
+// nothing, and the next launch gets its own.
+func TestStartDeadlineNotifiesOncePerLaunch(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	d := newStartDeadline(mgr, 30*time.Minute)
+	ws.LastActiveAt = "2026-10-01T10:00:00Z"
+
+	d.notify(ctx, ws, 30*time.Minute, "blocked: x")
+	time.Sleep(1100 * time.Millisecond) // NowTS has second resolution
+	d.notify(ctx, ws, 30*time.Minute, "blocked: x")
+	if n := len(deadlineNotifications(t, st, ws.MembershipID)); n != 1 {
+		t.Fatalf("notifications = %d after two stops of one launch, want 1", n)
+	}
+	ws.LastActiveAt = "2026-10-01T11:00:00Z"
+	d.notify(ctx, ws, 30*time.Minute, "blocked: x")
+	if n := len(deadlineNotifications(t, st, ws.MembershipID)); n != 2 {
+		t.Fatalf("notifications = %d after a stop of the next launch, want 2", n)
+	}
+}
+
+// A Stop that succeeded has cleared the phase, so the member is told even when the lease is
+// lost right after it; a Stop that failed stopped nothing and tells nobody anything.
+func TestStartDeadlineNotifiesOnlyOnASuccessfulStop(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	setLastActive(t, st, ws.ID, time.Now().Add(-2*time.Hour))
+	d := newStartDeadline(mgr, 30*time.Minute)
+
+	failing := &deadlineStub{state: "starting", stopErr: errors.New("ecs: throttled")}
+	d.seen[ws.ID] = time.Now().Add(-time.Hour)
+	d.stop(ctx, failing, ws)
+	if n := failing.stops.Load(); n != 1 {
+		t.Fatalf("Stop calls = %d, want 1", n)
+	}
+	if n := len(deadlineNotifications(t, st, ws.MembershipID)); n != 0 {
+		t.Fatalf("notifications = %d after a Stop that failed, want 0", n)
+	}
+
+	// The lease is taken away while Stop runs, so the checkpoint after it fails.
+	losing := &deadlineStub{state: "starting", onStop: func() {
+		if _, err := st.DB().ExecContext(ctx, `DELETE FROM session_share_owner_lease`); err != nil {
+			t.Error(err)
+		}
+	}}
+	d.stop(ctx, losing, ws)
+	if n := losing.stops.Load(); n != 1 {
+		t.Fatalf("Stop calls = %d, want 1", n)
+	}
+	got, _, err := st.GetWorkspaceByMembership(ctx, ws.MembershipID)
+	if err != nil || got.State == "stopped" {
+		t.Fatalf("recorded state = %q (err %v): the checkpoint did not fail, the test proves nothing", got.State, err)
+	}
+	if n := len(deadlineNotifications(t, st, ws.MembershipID)); n != 1 {
+		t.Fatalf("notifications = %d after a Stop whose lease was lost, want 1", n)
 	}
 }
