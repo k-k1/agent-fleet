@@ -37,7 +37,7 @@ usage() {
 usage: VERSION=<v> update.sh --profile <p> --region <r>
                              [--stack <af-ecs-ingress>] [--template <cfn/30-ingress.yaml>]
                              [--push] [--images-tar <B.tar.gz>] [--registry <prefix>]
-                             [--force] [--dry-run]
+                             [--comfy-digest <sha256:…>] [--force] [--dry-run]
   --profile     aws cli profile (required)
   --region      region of the deployment (required)
   --stack       ingress stack name (default af-ecs-ingress) — the one with ImageTag
@@ -45,6 +45,10 @@ usage: VERSION=<v> update.sh --profile <p> --region <r>
   --push        run release-ecr.sh first (build must already have produced the images)
   --images-tar  passed through to release-ecr.sh (air-gap B tar)
   --registry    passed through to release-ecr.sh (local image name prefix)
+  --comfy-digest pin the ComfyUI image copied when this update moves ImageComfyImageTag off an
+                earlier default to this digest of GHCR's comfyui (sha256:<64 hex>). Same
+                contract as standup.sh --comfy-digest; ignored (with a warning) when no
+                ComfyUI image is copied
   --force       force a new CP deployment even when CloudFormation reports a change
   --dry-run     print what would happen; touch nothing
 EOF
@@ -52,7 +56,7 @@ EOF
 
 VERSION="${VERSION:?set VERSION=<tag> (the ImageTag both images are pushed under)}"
 PROFILE=""; REGION=""; STACK="af-ecs-ingress"; TEMPLATE=""
-PUSH=0; IMAGES_TAR=""; LOCAL_REGISTRY=""; FORCE=0; DRY=0
+PUSH=0; IMAGES_TAR=""; LOCAL_REGISTRY=""; FORCE=0; DRY=0; COMFY_DIGEST=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)    PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -62,6 +66,7 @@ while [ $# -gt 0 ]; do
     --push)       PUSH=1 ;;
     --images-tar) IMAGES_TAR="${2:?--images-tar needs a path}"; shift ;;
     --registry)   LOCAL_REGISTRY="${2:?--registry needs a value}"; shift ;;
+    --comfy-digest) COMFY_DIGEST="${2:?--comfy-digest needs a sha256:<64 hex> value}"; shift ;;
     --force)      FORCE=1 ;;
     --dry-run)    DRY=1 ;;
     -h|--help)    usage; exit 0 ;;
@@ -70,6 +75,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
+if [ -n "$COMFY_DIGEST" ] && ! [[ "$COMFY_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "--comfy-digest wants sha256:<64 lowercase hex characters> (got '$COMFY_DIGEST')" >&2
+  exit 2
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -n "$TEMPLATE" ] || TEMPLATE="$HERE/cfn/30-ingress.yaml"
@@ -164,6 +173,12 @@ if [ -n "$ENGINES_STACK" ]; then
   fi
 fi
 echo "      5. $STACK (30-ingress, ImageTag=$VERSION)"
+# The pin only applies to the copy above. Said here, before anything runs, so a pin that would
+# otherwise do nothing is not mistaken for one that was checked.
+if [ -n "$COMFY_DIGEST" ] && { [ "$COMFY_REPAIR" != 1 ] || [ "$COMFY_PULLED" != 1 ]; }; then
+  echo "WARNING: --comfy-digest is ignored: this update copies no ComfyUI image (it only does" >&2
+  echo "         so when it moves ImageComfyImageTag off an earlier default and the image role is on)." >&2
+fi
 
 # --- 1a-pre) ADR 0083 migration guard: EcrSdcppUri --------------------------
 # EcrSdcpp/EcrSdcppUri (20-platform) and 60-engines' import of it were retired TOGETHER, and
@@ -421,15 +436,26 @@ if [ -n "$ENGINES_STACK" ]; then
   if [ "$COMFY_REPAIR" = 1 ] && [ "$COMFY_PULLED" = 1 ]; then
     echo "==> ComfyUI image for $ENGINES_STACK: af-comfyui:$COMFY_TAG"
     comfy_rc=0
-    af_comfy_ensure "$ECR_HOST" "$COMFY_TAG" || comfy_rc=$?
+    af_comfy_ensure "$ECR_HOST" "$COMFY_TAG" "$COMFY_DIGEST" || comfy_rc=$?
     if [ "$comfy_rc" != 0 ]; then
+      comfy_src="$AF_GHCR_DEFAULT/comfyui:$COMFY_TAG"
+      [ -n "$COMFY_DIGEST" ] && comfy_src="$AF_GHCR_DEFAULT/comfyui@$COMFY_DIGEST"
+      # A pin that fails is handled like a missing image: the stack is not pointed at bytes
+      # nobody vouched for, and the old tag, already in ECR, still runs.
       case "$comfy_rc" in
-        1) echo "WARNING: comfyui:$COMFY_TAG is in neither ECR nor GHCR — run comfyui-image.yml with tag=$COMFY_TAG." >&2 ;;
+        1)
+          if [ -n "$COMFY_DIGEST" ]; then
+            # A re-bake would not bring these bytes back; the pin itself is what to check.
+            echo "WARNING: $comfy_src is not in GHCR — check the --comfy-digest value." >&2
+          else
+            echo "WARNING: comfyui:$COMFY_TAG is in neither ECR nor GHCR — run comfyui-image.yml with tag=$COMFY_TAG." >&2
+          fi ;;
         2) echo "WARNING: af-comfyui:$COMFY_TAG is not in ECR and there is no crane to carry it over." >&2 ;;
-        *) echo "WARNING: copying comfyui:$COMFY_TAG into ECR failed." >&2 ;;
+        4) echo "WARNING: af-comfyui:$COMFY_TAG in ECR could not be verified against --comfy-digest (above)." >&2 ;;
+        *) echo "WARNING: copying $comfy_src into ECR failed." >&2 ;;
       esac
       echo "         $ENGINES_STACK keeps ImageComfyImageTag=$comfy_live. Once the image is there:" >&2
-      echo "           crane copy $AF_GHCR_DEFAULT/comfyui:$COMFY_TAG $ECR_HOST/af-comfyui:$COMFY_TAG" >&2
+      echo "           crane copy $comfy_src $ECR_HOST/af-comfyui:$COMFY_TAG" >&2
       echo "         and re-run update.sh." >&2
       COMFY_REPAIR=0
     fi

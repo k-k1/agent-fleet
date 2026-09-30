@@ -942,7 +942,8 @@ by the Control Plane rather than delegated (ADR 0077 decisions 1 and 5).
    sha256:<...>` pins the exact content that copy fetches without touching `LlmImageTag`; leave
    it unset and the copy is exactly what it always was.
    `standup.sh --comfy-digest sha256:<...>` does the same for the ComfyUI copy, whose tag a
-   re-dispatch of `comfyui-image.yml` can overwrite.
+   re-dispatch of `comfyui-image.yml` can overwrite, and `update.sh --comfy-digest` for the copy
+   it makes when it moves a stack off an earlier `ImageComfyImageTag` default.
 
 ### Turning it on
 
