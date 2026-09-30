@@ -17,6 +17,12 @@
 # claude-tui-contract.yml, which drives the real TUI against internal/tmuxx's footer and
 # spinner detection — the check the drift issue's footer-corpus step asks for.
 #
+# The gate is deliberately equality, never a version comparison (cursor's dates and
+# muse's build ids do not order like semver). The cost: when a kind publishes again
+# before its bump is merged, it drops out of the PR until its contract passes on the new
+# latest, which the watcher dispatches the same day. With nothing left to bump the job
+# does not touch an open PR, whose edit is still a tested version.
+#
 # rtk is deliberately left out: it has a release source but no contract, so there is no
 # `tested` to gate on. It is listed as drifting and bumped by hand.
 #
@@ -305,8 +311,14 @@ join_and() {
 
 title=""
 [ "${#bumped[@]}" -eq 0 ] || title="build(workspace): bump $(join_and "${bumped[@]}") CLI pins"
+# Names the edit itself (which ARGs get which values), independent of the branch and of
+# the rest of the Dockerfile, so a PR a human closed can be recognised when the same
+# edit comes round again.
+edit_id=""
+[ "$changes" = 0 ] || edit_id="$(sort "$edits" | sha256sum | cut -c1-16)"
 {
   printf 'count=%s\n' "${#bumped[@]}"
+  printf 'edit_id=%s\n' "$edit_id"
   printf 'bumped=%s\n' "$(IFS=,; printf '%s' "${bumped[*]-}")"
   printf 'title=%s\n' "$title"
 } >> "$OUT"
@@ -333,7 +345,10 @@ if [ -n "$BODY_FILE" ]; then
     echo
     echo "Opened by \`cli-pin-bump.yml\` (\`deploy/local/cli-pin-bump.sh\`). Nothing merges it"
     echo "automatically. Once it is merged, \`cli-drift.yml\` closes the drift issue on its next"
-    echo "run if no other pin is behind."
+    echo "run if no other pin is behind. Closing it without merging declines this exact edit;"
+    echo "it is proposed again only when a version changes."
+    echo
+    echo "<!-- cli-pin-bump edit=$edit_id -->"
   } > "$BODY_FILE"
 fi
 

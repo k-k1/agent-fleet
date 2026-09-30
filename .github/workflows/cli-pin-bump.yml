@@ -66,6 +66,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.CLI_PIN_BUMP_TOKEN }}
           TITLE: ${{ steps.bump.outputs.title }}
+          EDIT_ID: ${{ steps.bump.outputs.edit_id }}
           BODY_FILE: ${{ runner.temp }}/body.md
         run: |
           set -euo pipefail
@@ -76,6 +77,18 @@ jobs:
           fi
           export GH_TOKEN="$TOKEN"
           remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # A human closed a PR carrying this exact edit without merging it: that is a
+          # "no", and re-proposing it after every contract run would override it. Matched
+          # on the edit id in the body, so a deleted branch or an unrelated Dockerfile
+          # change on develop does not bring it back; a new version does.
+          declined="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state closed \
+            --json number,mergedAt,body \
+            --jq "[.[] | select(.mergedAt == null and (.body | contains(\"<!-- cli-pin-bump edit=$EDIT_ID -->\"))) | .number] | first // empty")"
+          if [ -n "$declined" ]; then
+            echo "::notice::PR #$declined proposed this same edit and was closed without merging; not proposed again."
+            exit 0
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -89,11 +102,8 @@ jobs:
 
           # Re-push only when the Dockerfile would differ: a force-push restarts CI, and
           # every contract completion runs this job.
-          pushed=true
           if git fetch -q "$remote" "refs/heads/$BRANCH" 2>/dev/null &&
              git diff --quiet FETCH_HEAD HEAD -- workspace/Dockerfile; then
-            pushed=false
-            head="$(git rev-parse FETCH_HEAD)"
             echo "The bump branch already carries this edit; not re-pushed."
           else
             git push -q --force "$remote" "HEAD:refs/heads/$BRANCH"
@@ -105,19 +115,6 @@ jobs:
             gh pr edit "$num" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$BODY_FILE"
             echo "Updated PR #$num." >> "$GITHUB_STEP_SUMMARY"
           else
-            # A human closed this exact edit without merging it: that is a "no", and
-            # reopening it after every contract run would override it. A new version
-            # changes the Dockerfile, is pushed, and gets a fresh PR.
-            declined=""
-            if [ "$pushed" = false ]; then
-              declined="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state closed \
-                --json number,headRefOid,mergedAt \
-                --jq "[.[] | select(.mergedAt == null and .headRefOid == \"$head\") | .number] | first // empty")"
-            fi
-            if [ -n "$declined" ]; then
-              echo "::notice::PR #$declined proposed this same bump and was closed without merging; not reopened."
-              exit 0
-            fi
             gh pr create --repo "$GITHUB_REPOSITORY" --base develop --head "$BRANCH" \
               --title "$TITLE" --body-file "$BODY_FILE"
           fi
@@ -125,4 +122,5 @@ jobs:
 
       - name: nothing to bump
         if: steps.bump.outputs.count == '0'
-        run: echo "No drifting kind has passed its contract on latest; nothing to bump." >> "$GITHUB_STEP_SUMMARY"
+        # An open bump PR is left as it is: its edit is still a version that passed.
+        run: echo "No drifting kind has passed its contract on latest; nothing to bump, and any open bump PR is left as it is." >> "$GITHUB_STEP_SUMMARY"

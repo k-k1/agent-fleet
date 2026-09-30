@@ -247,6 +247,9 @@ body_has "| codex | \`$P_CODEX\` | \`$L_CODEX\` | no passing \`latest\` contract
 body_has "| muse | \`$P_MUSE\` | \`$L_MUSE\` | checksum refused: the x86 artifact hashes to"
 body_has "| rtk | \`$P_RTK\` | \`$L_RTK\` | no contract gates it"
 body_hasnt "| opencode |"   # in sync: neither bumped nor listed
+ID_1="$(sed -n 's/^edit_id=//p' "$WORK/gh_out")"
+[ "${#ID_1}" = 16 ] || fail "edit_id is not set: '$ID_1'"
+body_has "<!-- cli-pin-bump edit=$ID_1 -->"
 AFTER_1="$WORK/Dockerfile.after1"
 cp "$DF" "$AFTER_1"
 
@@ -258,6 +261,7 @@ run_bump
 code_is 0
 cmp -s "$AFTER_1" "$DF" || fail "the second run changed the Dockerfile"
 out_has "count=0"
+out_has "edit_id="
 out_has "bumped="
 out_has "title="
 P_CLAUDE="$(pin_of CLAUDE_CODE_VERSION)"; P_AGY="$(pin_of AGY_VERSION)"
@@ -270,6 +274,13 @@ run_bump
 code_is 0
 expect_changed "${BUMP_OK[@]}" "${MUSE_OK[@]}"
 out_has "bumped=claude,agy,cursor,kiro,muse"
+# A different edit is a different id: a declined case-1 PR must not swallow this one.
+ID_3="$(sed -n 's/^edit_id=//p' "$WORK/gh_out")"
+[ -n "$ID_3" ] && [ "$ID_3" != "$ID_1" ] || fail "edit_id did not change with the edit ($ID_1 / $ID_3)"
+# The id names the edit alone: the same edit over a Dockerfile changed elsewhere keeps it.
+{ echo "# unrelated line"; cat "$ROOT/workspace/Dockerfile"; } > "$DF"
+run_bump
+out_has "edit_id=$ID_3"
 
 echo "== case 4: muse's contract passed on an older build -> muse stays =="
 cp "$ROOT/workspace/Dockerfile" "$DF"

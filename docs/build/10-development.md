@@ -126,7 +126,10 @@ backstop, and on dispatch. The decision and the edit are `deploy/local/cli-pin-b
   run. For claude that contract is `claude-tui-contract.yml`, which drives the real TUI
   against the footer and spinner detection that
   `workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt` documents. Every drifting
-  kind that is left out is listed in the PR body with the reason.
+  kind that is left out is listed in the PR body with the reason. The gate is equality,
+  not a version comparison, so a kind that publishes again before its bump is merged
+  drops out of the PR until its contract passes on the new latest (the watcher dispatches
+  it the same day). When nothing is left to bump, an open PR is left as it is.
 - **Checksums** come from the sources the Dockerfile comments name: agy's per-arch
   manifests (both archives are downloaded, checked against the manifest's sha512 and
   hashed to sha256; the release build id comes from the manifest URL); kiro's stable
@@ -141,8 +144,9 @@ backstop, and on dispatch. The decision and the edit are `deploy/local/cli-pin-b
   marker comment), and where the checksums came from. The branch is force-updated only
   when the Dockerfile edit changes. Nothing merges it: review it, wait for CI and follow
   §10.2.1 from step 4. Once it is merged, `cli-drift.yml` closes the drift issue on its
-  next run if no other pin is behind. Closing it without merging is respected until a
-  newer version changes the edit.
+  next run if no other pin is behind. Closing it without merging declines that exact edit
+  (recognised by an id in the body, even after the branch is deleted) until a version
+  changes.
 
 **What stays manual:**
 

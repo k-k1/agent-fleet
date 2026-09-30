@@ -113,7 +113,9 @@ contract ワークフローが終わったとき、保険として毎日 08:00 J
   `latest` 実行が通ったときだけで、ピン版の実行では記録しない。claude の contract は
   `claude-tui-contract.yml` で、`workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt`
   が記すフッター／スピナー検出を実 TUI で確かめる。ドリフトしているのに外した kind は、理由と
-  一緒に PR 本文に並ぶ。
+  一緒に PR 本文に並ぶ。門番は等値比較で版の大小は比べないので、版上げがマージされる前に次の版が
+  出た kind は、新しい latest で contract が通るまで PR から外れる（watcher が同日に dispatch
+  する）。上げるものが無くなったときは、開いている PR に触らない。
 - **チェックサム**は Dockerfile のコメントが名指しする取得元から取る。agy はアーキ別
   manifest（両アーカイブを落として manifest の sha512 と照合し、sha256 を計算する。release
   build id は manifest の URL から取る）。kiro は stable manifest、muse は版付き release
@@ -126,8 +128,8 @@ contract ワークフローが終わったとき、保険として毎日 08:00 J
   リンク（`cli-release-state.sh` が実行 URL をマーカーのコメントに書く）、チェックサムの出どころ。
   ブランチの force-push は Dockerfile の書き換えが変わったときだけ。自動ではマージしない。
   レビューして CI を待ち、§10.2.1 の手順 4 から進める。マージ後、他にピンの遅れが無ければ
-  `cli-drift.yml` が次の実行で drift issue を閉じる。マージせずに閉じた PR は、より新しい版で
-  書き換えが変わるまで開き直さない。
+  `cli-drift.yml` が次の実行で drift issue を閉じる。マージせずに閉じると、その書き換えそのものを
+  断ったことになり（本文の id で見分けるので、ブランチを消しても効く）、版が変わるまで再提案しない。
 
 **手作業で残るもの:**
 
