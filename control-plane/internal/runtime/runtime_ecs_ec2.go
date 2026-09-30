@@ -230,12 +230,13 @@ const (
 	// EARLIER one", and mistaking the second for the first deletes a volume holding work
 	// that was never captured. Only a snapshot started after this mark counts.
 	EC2TagHibernating = "af-hibernating"
-	// ec2TagHomeWipe is a member's Recreate or Clean home that has not happened yet: its
-	// value is the HomeWipe the next Start performs on the slot, after the mount and before
+	// ec2TagHomeWipePrefix + a HomeWipe marks a member's Recreate or Clean home that has
+	// not happened yet: the next Start performs it on the slot, after the mount and before
 	// the task (ADR 0045 decision 32). It lives on the home — the volume, and the
 	// hibernation snapshots that stand in for it — because that is the one thing every
 	// later Start reads, whichever CP runs it and whatever became of the slot meanwhile.
-	ec2TagHomeWipe = "af-home-wipe"
+	// One key per kind: see homeWipeKey.
+	ec2TagHomeWipePrefix = "af-home-wipe-"
 
 	ec2RoleHome = "home"
 	ec2RoleSlot = "slot"
@@ -4578,9 +4579,13 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 				return nil
 			}
 			// A Recreate or Clean home marked after this capture started is only on the
-			// volume. Once the volume is gone the snapshot is the home, so the mark has to
-			// be on it first (WipeHome explains why this read is late enough).
-			if w := homeWipeOf(vol); w != "" {
+			// volume. Once the volume is gone the snapshot is the home, so the marks have
+			// to be on it first (WipeHome explains why this read is late enough). Only
+			// added, so a stronger mark already on the snapshot is never narrowed.
+			for _, w := range []HomeWipe{HomeWipeRepos, HomeWipeClean} {
+				if ec2TagValue(vol.Tags, homeWipeKey(w)) == "" {
+					continue
+				}
 				if err := e.markHomeWipe(ctx, aws.ToString(s.SnapshotId), s.Tags, w); err != nil {
 					return err
 				}

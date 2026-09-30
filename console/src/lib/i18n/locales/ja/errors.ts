@@ -317,5 +317,6 @@ export const errors = {
   "err.imagegen_no_provider": "この要求を捌ける画像エンジンがありません。",
   "err.imagegen_unknown_provider": "その画像エンジンはこの配備にありません。",
   "err.home_wipe_unsupported": "この配備では使えない操作です。ホームが Control Plane から届かない場所にあるため、何も停止せずに断りました。",
+  "err.home_wipe_while_starting": "ワークスペースがまだ起動中です。何も停止していません。起動し終わってからもう一度実行してください。",
   "err.home_backups_unsupported": "この配備はホームのバックアップを取っていません。",
 };

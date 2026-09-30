@@ -1480,10 +1480,21 @@ named there — mark the volume, and let the next Start wipe it after the mount 
 it stood.
 
 - **The request only marks.** `ecsEC2Runtime.WipeHome` tags the home volume and its hibernation snapshots
-  `af-home-wipe=repos|clean` and returns. It does not touch SSM, so it fits the ingress's 60 s whether the slot is
-  asleep, the volume detached or the home hibernated. A mark only ever widens: a Recreate arriving while `clean` is
-  pending does not narrow it to `repos`. A member with neither a volume nor a snapshot has no home yet, and the next
-  Start builds a new one, so nothing is done.
+  `af-home-wipe-repos` / `af-home-wipe-clean` and returns. It does not touch SSM, so it fits the ingress's 60 s
+  whether the slot is asleep, the volume detached or the home hibernated. Each kind has its own key, and a mark is
+  only ever added, never rewritten. With one key holding the stronger kind, a writer that had read `repos` — the
+  sweeper's hibernation, which holds no lease — could overwrite a `clean` that landed after its read, and Clean home
+  would silently shrink to a Recreate. With both keys present, `clean` is performed. A member with neither a volume
+  nor a snapshot has no home yet, and the next Start builds a new one, so nothing is done.
+- **Refused while a Start is converging.** A Start's background half holds no lifecycle lease. The handler's Stop
+  does not stop it, and it raises the service to 1 with the placement it read before the mark existed, while the
+  handler's own Start returns early on `starting` — the workspace runs on a home whose removal is still pending,
+  and the next Start removes it together with the work done since. Re-reading the mark right before the scale-up
+  still leaves a window between that read and `UpdateService`. So before it stops anything the handler asks
+  `runtime.HomeWipeBlocked`, and while the claim is live it refuses with `home_wipe_while_starting` (409, nothing
+  stopped). No Start can begin while the handler holds the lease, so the answer holds until the mark is written. A
+  Start that keeps converging past the claim's expiry (15 minutes by default) slips through; by then `State()`
+  already answers `stopped`, which is the existing limit that also allows a second Start.
 - **The removal is in the Start's background half, after the mount and before the task.** `placeHome` puts the
   volume's mark on the placement, and a Start that carries one always goes to the background, even on a hot slot
   that would otherwise finish inline — the removal takes as long as the home is big, and cannot sit on the
@@ -1493,11 +1504,12 @@ it stood.
   is gone. A failure anywhere in between leaves the mark for the next Start to repeat, which is safe because no task
   has run since and nothing new is in the home. The reverse order would let an ordinary Start after a lost
   DeleteTags remove the work the member did since. On failure the claim is dropped, so the workspace is `stopped`
-  at once rather than when the claim expires. The DeleteTags that drops the mark names its value, so a stronger mark
-  written in the meantime survives.
+  at once rather than when the claim expires. What is dropped is the marks this removal covered: a Clean home drops
+  a pending Recreate's mark with its own.
 - **The mark goes through hibernation and restore with the home.** Hibernation's `CreateSnapshot` copies the
-  volume's mark onto the snapshot's tags, and right before it deletes the volume after the capture completes, it
-  copies the mark it read from the volume in that call as well. `WipeHome` writes the volume before it lists the
+  volume's marks onto the snapshot's tags, and right before it deletes the volume after the capture completes, it
+  adds the marks it read from the volume in that call as well (only adds, so a stronger mark already on the snapshot
+  stays). `WipeHome` writes the volume before it lists the
   snapshots; hibernation reads the volume before it deletes it, and deletes it only once the capture has
   completed. A mark that lands after that read is therefore listed after a completed snapshot exists, and
   `WipeHome` marks it itself. However the two interleave, the mark reaches what the next Start builds the home

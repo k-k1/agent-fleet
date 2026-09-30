@@ -82,6 +82,7 @@ var (
 	_ homeWiper        = (*dockerRuntime)(nil)
 	_ homeWiper        = (*nativeRuntime)(nil)
 	_ homeWiper        = (*ecsEC2Runtime)(nil)
+	_ homeWipeGate     = (*ecsEC2Runtime)(nil)
 	_ homeEraser       = (*dockerRuntime)(nil)
 	_ homeEraser       = (*nativeRuntime)(nil)
 	_ homeEraser       = (*ecsEC2Runtime)(nil)
@@ -92,6 +93,25 @@ var (
 // for. The CP checks CanWipeHome / CanEraseHome before it stops anything, so reaching this
 // error means that check was skipped.
 var ErrHomeWipeUnsupported = errors.New("this deployment's runtime cannot reach the workspace home")
+
+// homeWipeGate is claimed by an adapter that can be asked for a member's wipe at a moment
+// it cannot honour it — ecs-ec2, whose Start finishes in a background half the handler's
+// lease does not cover. The handler asks before it stops anything.
+type homeWipeGate interface {
+	HomeWipeBlocked(ctx context.Context) error
+}
+
+// ErrHomeWipeWhileStarting refuses a member's wipe while a Start of the same workspace is
+// still converging in the background.
+var ErrHomeWipeWhileStarting = errors.New("the workspace is still starting; try again once it has started")
+
+// HomeWipeBlocked is nil when a member's Recreate or Clean home may proceed on rt now.
+func HomeWipeBlocked(ctx context.Context, rt Runtime) error {
+	if g, ok := rt.(homeWipeGate); ok {
+		return g.HomeWipeBlocked(ctx)
+	}
+	return nil
+}
 
 // CanWipeHome reports whether a member's Recreate and Clean home can run on rt.
 func CanWipeHome(rt Runtime) bool {

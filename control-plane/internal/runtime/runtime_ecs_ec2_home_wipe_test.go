@@ -653,7 +653,7 @@ func TestECSEC2MemberWipeRunsBetweenTheMountAndTheTask(t *testing.T) {
 	if len(h.ssmc.commands) != 0 {
 		t.Fatalf("WipeHome reached the slot (%v); a sleeping slot would hold the request past the ingress timeout", h.ssmc.commands)
 	}
-	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe); got != string(HomeWipeRepos) {
+	if got := string(pendingHomeWipe(h.ec2.volumes["vol-1"].Tags)); got != string(HomeWipeRepos) {
 		t.Fatalf("mark = %q, want repos", got)
 	}
 	if err := h.rt.Start(ctx); err != nil {
@@ -673,7 +673,7 @@ func TestECSEC2MemberWipeRunsBetweenTheMountAndTheTask(t *testing.T) {
 	if cmd := h.ec2.calls[wipe]; !strings.Contains(cmd, "/af-home/M-1/dev/repos") || strings.Contains(cmd, "find ") {
 		t.Errorf("a Recreate must remove ~/repos and nothing else: %s", cmd)
 	}
-	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe); got != "" {
+	if got := string(pendingHomeWipe(h.ec2.volumes["vol-1"].Tags)); got != "" {
 		t.Errorf("the mark survived a completed wipe (%q); the next Start would remove the member's new work", got)
 	}
 	if !scaledUp(h) {
@@ -697,7 +697,7 @@ func TestECSEC2FailedMemberWipeLeavesTheWorkspaceStoppedAndMarked(t *testing.T) 
 	if scaledUp(h) {
 		t.Fatal("the task started although the wipe failed")
 	}
-	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe); got != string(HomeWipeRepos) {
+	if got := string(pendingHomeWipe(h.ec2.volumes["vol-1"].Tags)); got != string(HomeWipeRepos) {
 		t.Errorf("mark after a failed wipe = %q, want it kept for the next Start", got)
 	}
 	if st := h.rt.State(ctx); st != "stopped" {
@@ -709,7 +709,7 @@ func TestECSEC2FailedMemberWipeLeavesTheWorkspaceStoppedAndMarked(t *testing.T) 
 		t.Fatalf("second Start: %v", err)
 	}
 	h.runDeferred(ctx)
-	if !scaledUp(h) || ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe) != "" {
+	if !scaledUp(h) || string(pendingHomeWipe(h.ec2.volumes["vol-1"].Tags)) != "" {
 		t.Errorf("the next Start did not finish the wipe: scaledUp=%v tags=%v", scaledUp(h), h.ec2.volumes["vol-1"].Tags)
 	}
 }
@@ -719,7 +719,7 @@ func TestECSEC2FailedMemberWipeLeavesTheWorkspaceStoppedAndMarked(t *testing.T) 
 func TestECSEC2MemberWipeDoesNotStartTheTaskWhileTheMarkRemains(t *testing.T) {
 	ctx := context.Background()
 	h := memberWipeHarness(t)
-	h.ec2.deleteTagsErr = map[string]error{ec2TagHomeWipe: errors.New("throttled")}
+	h.ec2.deleteTagsErr = map[string]error{homeWipeKey(HomeWipeRepos): errors.New("throttled")}
 	if err := h.rt.WipeHome(ctx, HomeWipeRepos); err != nil {
 		t.Fatalf("WipeHome: %v", err)
 	}
@@ -749,7 +749,7 @@ func TestECSEC2MemberWipeMarkOnlyWidens(t *testing.T) {
 				t.Fatalf("WipeHome(%s): %v", w, err)
 			}
 		}
-		if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHomeWipe); got != string(c.want) {
+		if got := string(pendingHomeWipe(h.ec2.volumes["vol-1"].Tags)); got != string(c.want) {
 			t.Errorf("%s then %s: mark = %q, want %s", c.first, c.second, got, c.want)
 		}
 	}
@@ -775,7 +775,7 @@ func TestECSEC2MemberWipeOfAHibernatedHomeHappensAfterTheRestore(t *testing.T) {
 	if err := h.rt.WipeHome(ctx, HomeWipeClean); err != nil {
 		t.Fatalf("WipeHome: %v", err)
 	}
-	if got := ec2TagValue(h.ec2.snapshots["snap-hib"].Tags, ec2TagHomeWipe); got != string(HomeWipeClean) {
+	if got := string(pendingHomeWipe(h.ec2.snapshots["snap-hib"].Tags)); got != string(HomeWipeClean) {
 		t.Fatalf("mark on the hibernation snapshot = %q, want clean", got)
 	}
 	if err := h.rt.Start(ctx); err != nil {
@@ -798,7 +798,7 @@ func TestECSEC2MemberWipeOfAHibernatedHomeHappensAfterTheRestore(t *testing.T) {
 	if wipe < 0 || !strings.Contains(h.ec2.calls[wipe], "find ") {
 		t.Fatalf("the restored home was not cleaned: %v", h.ec2.calls)
 	}
-	if got := ec2TagValue(h.ec2.volumes[restored].Tags, ec2TagHomeWipe); got != "" {
+	if got := string(pendingHomeWipe(h.ec2.volumes[restored].Tags)); got != "" {
 		t.Errorf("mark on the restored volume after the wipe = %q", got)
 	}
 	if !scaledUp(h) {
@@ -813,12 +813,12 @@ func TestECSEC2HibernationCarriesAPendingMemberWipe(t *testing.T) {
 	ctx := context.Background()
 
 	h := hibernateHarness(t, 60*24*time.Hour)
-	h.ec2.setTag("vol-1", ec2TagHomeWipe, string(HomeWipeRepos))
+	h.ec2.setTag("vol-1", homeWipeKey(HomeWipeRepos), "2026-09-30T00:00:00Z")
 	if err := h.rt.hibernate(ctx); err != nil {
 		t.Fatalf("hibernate: %v", err)
 	}
 	for id, s := range h.ec2.snapshots {
-		if got := ec2TagValue(s.Tags, ec2TagHomeWipe); got != string(HomeWipeRepos) {
+		if got := string(pendingHomeWipe(s.Tags)); got != string(HomeWipeRepos) {
 			t.Errorf("capture %s of a marked home carries %q, want repos", id, got)
 		}
 	}
@@ -830,7 +830,7 @@ func TestECSEC2HibernationCarriesAPendingMemberWipe(t *testing.T) {
 	}
 	// The mark lands on the volume only, as when WipeHome listed the snapshots before the
 	// capture existed.
-	h.ec2.setTag("vol-1", ec2TagHomeWipe, string(HomeWipeClean))
+	h.ec2.setTag("vol-1", homeWipeKey(HomeWipeClean), "2026-09-30T00:00:00Z")
 	for _, s := range h.ec2.snapshots {
 		s.State = ec2types.SnapshotStateCompleted
 	}
@@ -841,7 +841,7 @@ func TestECSEC2HibernationCarriesAPendingMemberWipe(t *testing.T) {
 		t.Fatal("the volume was kept; this test wants the step that deletes it")
 	}
 	for id, s := range h.ec2.snapshots {
-		if got := ec2TagValue(s.Tags, ec2TagHomeWipe); got != string(HomeWipeClean) {
+		if got := string(pendingHomeWipe(s.Tags)); got != string(HomeWipeClean) {
 			t.Errorf("snapshot %s lost the mark the volume carried when it was deleted: %q", id, got)
 		}
 	}
@@ -980,5 +980,81 @@ func TestECSEC2MemberWipeWaitsForTheOldTaskToExit(t *testing.T) {
 	h.runDeferred(ctx)
 	if draining != 0 {
 		t.Errorf("the wipe was sent while the old task was still running (%d polls of it left)", draining)
+	}
+}
+
+// A Start still converging in the background holds no lease, so a Stop does not stop it
+// and it would scale up past a mark written now. The wipe is refused before anything is
+// touched, and allowed once that Start has finished.
+func TestECSEC2MemberWipeIsRefusedWhileAStartConverges(t *testing.T) {
+	ctx := context.Background()
+	h := memberWipeHarness(t)
+	h.ci.registered["i-hot"] = false // not registered yet: this Start goes to the background
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(h.deferred) != 1 {
+		t.Fatalf("want a background Start, deferred=%d", len(h.deferred))
+	}
+	if err := HomeWipeBlocked(ctx, h.rt); !errors.Is(err, ErrHomeWipeWhileStarting) {
+		t.Errorf("HomeWipeBlocked during a converging Start = %v, want ErrHomeWipeWhileStarting", err)
+	}
+	if err := h.rt.WipeHome(ctx, HomeWipeRepos); !errors.Is(err, ErrHomeWipeWhileStarting) {
+		t.Errorf("WipeHome during a converging Start = %v, want ErrHomeWipeWhileStarting", err)
+	}
+	if got := pendingHomeWipe(h.ec2.volumes["vol-1"].Tags); got != "" {
+		t.Errorf("a refused wipe left a mark (%s) that the converging Start does not know about", got)
+	}
+	h.ci.registered["i-hot"] = true
+	h.runDeferred(ctx)
+	if err := HomeWipeBlocked(ctx, h.rt); err != nil {
+		t.Errorf("HomeWipeBlocked after the Start finished = %v, want nil", err)
+	}
+}
+
+// Marks are only ever added. A copy made from a volume read before a Clean home was
+// marked must not turn the snapshot's clean back into a Recreate.
+func TestECSEC2HibernationNeverNarrowsASnapshotsMark(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour)
+	h.ec2.snapshotState = ec2types.SnapshotStatePending
+	h.ec2.setTag("vol-1", homeWipeKey(HomeWipeRepos), "2026-09-30T00:00:00Z")
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate step 1: %v", err)
+	}
+	// A Clean home lands on the snapshot only (WipeHome reached it after hibernate's read
+	// of the volume in the next step).
+	for id, s := range h.ec2.snapshots {
+		s.State = ec2types.SnapshotStateCompleted
+		s.Tags = append(s.Tags, ec2types.Tag{Key: aws.String(homeWipeKey(HomeWipeClean)), Value: aws.String("2026-09-30T00:00:01Z")})
+		_ = id
+	}
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate step 2: %v", err)
+	}
+	for id, s := range h.ec2.snapshots {
+		if got := pendingHomeWipe(s.Tags); got != HomeWipeClean {
+			t.Errorf("snapshot %s now asks for %q; the Clean home was narrowed", id, got)
+		}
+	}
+}
+
+// A Clean home removes ~/repos too, so a Recreate pending beside it is done with it. Left
+// behind, that mark would have the next Start remove the repositories the member cloned
+// after this one.
+func TestECSEC2CleanHomeAlsoClearsAPendingRecreate(t *testing.T) {
+	ctx := context.Background()
+	h := memberWipeHarness(t)
+	for _, w := range []HomeWipe{HomeWipeRepos, HomeWipeClean} {
+		if err := h.rt.WipeHome(ctx, w); err != nil {
+			t.Fatalf("WipeHome(%s): %v", w, err)
+		}
+	}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if got := pendingHomeWipe(h.ec2.volumes["vol-1"].Tags); got != "" {
+		t.Errorf("after a Clean home the volume still asks for %q", got)
 	}
 }

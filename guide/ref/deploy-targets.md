@@ -84,9 +84,10 @@ the home is mounted and before the workspace runs, so the starting dialog shows 
 as a step of the start, and a large home makes that start longer. This works whether the
 member's machine was asleep, the home was detached, or it had been put away as a
 hibernation copy. If the removal fails, the workspace stays stopped and the next start
-tries again; it never starts with what was to be removed. Clean home keeps the logins and
-connections by name, including one a tool replaced since the last start. After Clean home
-the first start reinstalls the agent CLIs, as on `docker`.
+tries again; it never starts with what was to be removed. While a start is still in
+progress both are refused without stopping anything; press again once it has started.
+Clean home keeps the logins and connections by name, including one a tool replaced since
+the last start. After Clean home the first start reinstalls the agent CLIs, as on `docker`.
 
 ## Where the procedure lives
 

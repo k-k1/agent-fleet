@@ -160,4 +160,7 @@ const (
 	// "not on this deployment": nothing was stopped, pressing again changes nothing, and the
 	// Console hides both buttons there, so a stale page is the usual way to meet it.
 	errCodeHomeWipeUnsupported = "home_wipe_unsupported"
+	// The same request while a Start of that workspace is still converging in the
+	// background (ecs-ec2). Nothing was stopped; pressing again once it has started works.
+	errCodeHomeWipeWhileStarting = "home_wipe_while_starting"
 )

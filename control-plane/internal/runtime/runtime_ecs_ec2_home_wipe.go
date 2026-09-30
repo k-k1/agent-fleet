@@ -14,11 +14,31 @@ import (
 	"log"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
+
+// HomeWipeBlocked refuses a member's Recreate or Clean home while a Start is still
+// converging (a live claim). That Start's background half holds no lifecycle lease, so the
+// handler's Stop does not stop it: it would scale the service up with the placement it
+// read before the mark existed, and the handler's own Start would return early on
+// `starting` — a workspace running on a home whose removal is still pending, which the
+// next Start then carries out under the member's new work. No Start can begin while the
+// handler holds the lease, so a check made then, before its Stop, stays true until the
+// mark is written.
+func (e *ecsEC2Runtime) HomeWipeBlocked(ctx context.Context) error {
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return fmt.Errorf("describe home volume: %w", err)
+	}
+	if vol != nil && e.claimLive(vol) {
+		return ErrHomeWipeWhileStarting
+	}
+	return nil
+}
 
 // WipeHome marks the home for the next Start and returns; it removes nothing itself.
 //
@@ -39,6 +59,9 @@ func (e *ecsEC2Runtime) WipeHome(ctx context.Context, what HomeWipe) error {
 		return fmt.Errorf("describe home volume: %w", err)
 	}
 	if vol != nil {
+		if e.claimLive(vol) {
+			return ErrHomeWipeWhileStarting
+		}
 		if err := e.markHomeWipe(ctx, aws.ToString(vol.VolumeId), vol.Tags, what); err != nil {
 			return err
 		}
@@ -55,39 +78,59 @@ func (e *ecsEC2Runtime) WipeHome(ctx context.Context, what HomeWipe) error {
 	return nil
 }
 
-// markHomeWipe writes what onto one resource of the home, unless the mark already there
-// removes at least as much: a Recreate after a pending Clean home must not narrow it. A
-// resource that vanished in the meantime is not an error — the volume goes when its
-// hibernation completes, and the caller marks the snapshot that replaced it.
+// homeWipeKey is the tag that marks one kind of pending wipe. Each kind has its own key
+// and a mark is only ever added, never rewritten: with one key holding the strongest kind,
+// a writer that read `repos` could overwrite a `clean` that landed after its read (the
+// sweeper's hibernate runs without the lease), and Clean home would silently shrink to a
+// Recreate.
+func homeWipeKey(what HomeWipe) string { return ec2TagHomeWipePrefix + string(what) }
+
+// pendingHomeWipe is the wipe a resource's tags ask for: the strongest mark present, ""
+// for none.
+func pendingHomeWipe(tags []ec2types.Tag) HomeWipe {
+	for _, w := range []HomeWipe{HomeWipeClean, HomeWipeRepos} {
+		if ec2TagValue(tags, homeWipeKey(w)) != "" {
+			return w
+		}
+	}
+	return ""
+}
+
+// markHomeWipe adds what's mark to one resource of the home. A resource that vanished in
+// the meantime is not an error — the volume goes when its hibernation completes, and the
+// caller marks the snapshot that replaced it.
 func (e *ecsEC2Runtime) markHomeWipe(ctx context.Context, resourceID string, tags []ec2types.Tag, what HomeWipe) error {
-	cur := HomeWipe(ec2TagValue(tags, ec2TagHomeWipe))
-	if cur == what || cur == HomeWipeClean {
+	if ec2TagValue(tags, homeWipeKey(what)) != "" {
 		return nil
 	}
 	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{resourceID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHomeWipe), Value: aws.String(string(what))}},
+		Tags: []ec2types.Tag{{Key: aws.String(homeWipeKey(what)),
+			Value: aws.String(e.now().UTC().Format(time.RFC3339))}},
 	}); err != nil && !isAWSNotFound(err) {
 		return fmt.Errorf("mark %s for %s: %w", resourceID, what, err)
 	}
 	return nil
 }
 
-// homeWipeOf is the pending wipe a volume or snapshot carries, "" for none.
+// homeWipeOf is the pending wipe a volume carries, "" for none.
 func homeWipeOf(vol *ec2types.Volume) HomeWipe {
 	if vol == nil {
 		return ""
 	}
-	return HomeWipe(ec2TagValue(vol.Tags, ec2TagHomeWipe))
+	return pendingHomeWipe(vol.Tags)
 }
 
-// homeWipeTags is the mark to copy onto whatever is built from a resource carrying tags:
+// homeWipeTags are the marks to copy onto whatever is built from a resource carrying tags:
 // the snapshot a hibernation takes, the volume a restore creates.
 func homeWipeTags(tags []ec2types.Tag) []ec2types.Tag {
-	if v := ec2TagValue(tags, ec2TagHomeWipe); v != "" {
-		return []ec2types.Tag{{Key: aws.String(ec2TagHomeWipe), Value: aws.String(v)}}
+	var out []ec2types.Tag
+	for _, t := range tags {
+		if strings.HasPrefix(aws.ToString(t.Key), ec2TagHomeWipePrefix) {
+			out = append(out, ec2types.Tag{Key: t.Key, Value: t.Value})
+		}
 	}
-	return nil
+	return out
 }
 
 // wipeMountedHome performs p.wipe on the mounted home and then drops the mark. launch calls
@@ -112,11 +155,15 @@ func (e *ecsEC2Runtime) wipeMountedHome(ctx context.Context, p ec2Placement) err
 	if err := e.runOnSlot(ctx, p.instanceID, cmd); err != nil {
 		return err
 	}
-	// With the value: a DeleteTags that names one deletes only a tag that still has it, so
-	// a stronger mark written in the meantime survives for the next Start.
+	// Every mark this wipe covered: a Clean home removes ~/repos too, so a Recreate
+	// pending beside it is done as well.
+	done := []ec2types.Tag{{Key: aws.String(homeWipeKey(p.wipe))}}
+	if p.wipe == HomeWipeClean {
+		done = append(done, ec2types.Tag{Key: aws.String(homeWipeKey(HomeWipeRepos))})
+	}
 	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{p.volumeID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHomeWipe), Value: aws.String(string(p.wipe))}},
+		Tags:      done,
 	}); err != nil {
 		return fmt.Errorf("drop the %s mark on %s: %w", p.wipe, p.volumeID, err)
 	}

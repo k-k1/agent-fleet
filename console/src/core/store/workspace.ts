@@ -23,9 +23,14 @@ export interface LifecycleFailure {
 }
 
 // The refusals the CP sends before it stops the workspace (control-plane/workspace_handlers.go):
-// not available on this deployment, another lifecycle operation holding the lease, and a stop
-// that failed while the workspace kept running.
-const UNTOUCHED_CODES = new Set(["home_wipe_unsupported", "workspace_operation_in_progress", "stop_failed"]);
+// not available on this deployment, a start still converging, another lifecycle operation
+// holding the lease, and a stop that failed while the workspace kept running.
+const UNTOUCHED_CODES = new Set([
+  "home_wipe_unsupported",
+  "home_wipe_while_starting",
+  "workspace_operation_in_progress",
+  "stop_failed",
+]);
 
 // lifecycleFailure turns a lifecycle POST's answer into the caller's failure, or null when it
 // succeeded. The code picks the localized wording (errText); a code with no catalog entry keeps
