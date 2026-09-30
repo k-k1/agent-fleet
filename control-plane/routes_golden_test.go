@@ -164,6 +164,21 @@ func TestRouteTableConditionalRoutesAreKnown(t *testing.T) {
 	}
 }
 
+// TestRouteSwitchExemptionsDoNotOutliveTheTest — a switch's authGate exemption must be gone
+// once the test that turned it on ends, or a later all-off mux still lets /engine/ through.
+func TestRouteSwitchExemptionsDoNotOutliveTheTest(t *testing.T) {
+	t.Run("engine on", func(t *testing.T) {
+		smokeEnvWith(t, "engine")
+		if !isAuthExempt("/engine/llm/v1/models") {
+			t.Fatal("the engine switch did not exempt /engine/: the check below proves nothing")
+		}
+	})
+	smokeEnv(t)
+	if isAuthExempt("/engine/llm/v1/models") {
+		t.Error("/engine/ is still auth-exempt after the engine switch's test ended")
+	}
+}
+
 // muxRoutes extracts the registered (method, path) pairs from an assembled *http.ServeMux.
 //
 // It reaches into net/http's internal representation by reflection. The public API offers no
