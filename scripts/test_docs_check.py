@@ -148,5 +148,38 @@ class CapsRowTests(unittest.TestCase):
         self.assertEqual(sorted(set(fields) - mapped), [])
 
 
+class AnchorTests(unittest.TestCase):
+    """#fragment links against the heading ids GitHub renders for docs/."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.shelf = self.root / "docs/build"
+        self.shelf.mkdir(parents=True)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.root / "guide")).start()
+
+    def errors(self, heading, link):
+        target = self.shelf / "02-target.md"
+        target.write_text(f"# Target\n\n{heading}\n\nBody\n")
+        source = self.shelf / "01-source.md"
+        source.write_text(f"See [it]({link}).\n")
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_anchors([str(source), str(target)], findings)
+        return "\n".join(findings.errors)
+
+    def test_inline_code_in_a_heading_keeps_its_text(self):
+        heading = "## 2.2 Where things live (`console/src/`)"
+        self.assertEqual(self.errors(heading, "02-target.md#22-where-things-live-consolesrc"), "")
+        self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#22-where-things-live-"))
+
+    def test_heading_inside_a_fence_is_not_a_heading(self):
+        heading = "```sh\n# not a heading\n```"
+        self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#not-a-heading"))
+
+
 if __name__ == "__main__":
     unittest.main()

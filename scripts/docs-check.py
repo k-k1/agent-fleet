@@ -275,6 +275,10 @@ def heading_slugs(path: str) -> set[str]:
     repository root (CONTRIBUTING.md and the like) are only ever read on GitHub, so they
     use github-slugger. Applying one rule to both reports anchors that are correct on
     GitHub, such as `CONTRIBUTING.md#commits--prs`, as broken — which is what happened.
+
+    Only fenced blocks are removed, so that a `#` line inside one is not read as a
+    heading. Inline code stays: both renderers keep its text in the id
+    (`` (`console/src/`) `` gives `consolesrc`), and `heading_text` drops the backticks.
     """
     rule = (
         console_slug
@@ -283,7 +287,7 @@ def heading_slugs(path: str) -> set[str]:
     )
     return {
         rule(heading_text(m.group(2)))
-        for m in HEADING_RE.finditer(strip_code(read(path)))
+        for m in HEADING_RE.finditer(FENCE_RE.sub("", read(path)))
     }
 
 
