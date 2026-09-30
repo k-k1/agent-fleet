@@ -272,23 +272,28 @@ func TestWireEquivGitBlob(t *testing.T) {
 
 // --- (6) gitServerAPI.repoDTO (Console: InternalRepo) ---
 
-type internalRepoIn struct{ Name, DefaultBranch, CloneURL, CreatedAt string }
+type internalRepoIn struct {
+	Name, DefaultBranch, CloneURL, CreatedAt string
+	CanManage                                bool
+}
 
 func TestWireEquivInternalRepo(t *testing.T) {
 	inputs := []internalRepoIn{
 		{Name: "web", DefaultBranch: "main", CloneURL: "https://x/git/web", CreatedAt: "2026-09-03T00:00:00Z"},
 		{Name: "bare", DefaultBranch: "", CloneURL: "", CreatedAt: ""}, // keys appear even when empty
+		{Name: "mine", CanManage: true},
 	}
 	got := wiretest.AssertEquiv(t, "gitServerAPI.repoDTO", inputs,
 		func(in internalRepoIn) any { // old (copy of the map literal in internal_git.go)
 			return map[string]any{
 				"name": in.Name, "default_branch": in.DefaultBranch,
 				"clone_url": in.CloneURL, "created_at": in.CreatedAt, "provider": "internal",
+				"can_manage": in.CanManage, // not in the map literal: a field the struct gained later
 			}
 		},
 		func(in internalRepoIn) any {
 			return internalRepoWire{Name: in.Name, DefaultBranch: in.DefaultBranch,
-				CloneURL: in.CloneURL, CreatedAt: in.CreatedAt, Provider: "internal"}
+				CloneURL: in.CloneURL, CreatedAt: in.CreatedAt, Provider: "internal", CanManage: in.CanManage}
 		})
 	t.Logf("comparison mode: %s", got)
 }

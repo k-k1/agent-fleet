@@ -102,8 +102,14 @@ Two surfaces.
 
 **The management and browsing API** uses the ordinary session identity and tenant
 resolution (`X-AF-Tenant`, through `withMembership`), scoped to the resolved tenant. No
-extra credential. It checks for an active membership and **no role**: any member can
-create, rename or delete any of the tenant's repositories, not only push to them ([#1200](https://github.com/k-k1/agent-fleet/issues/1200)).
+extra credential. On top of the active membership it checks the role (`canManageRepo`):
+**creating** a repository needs a role that may push (`canPush`), and **renaming or
+deleting** one also needs to be its creator (`git_repo.created_by`, a membership id) or a
+`tenant_admin`. Anyone else gets `403` (`git_repo_create_forbidden` /
+`git_repo_manage_forbidden`), before the audit intent is written. A row with no
+`created_by` is manageable by a `tenant_admin` only. The list reports `can_manage` per
+repository so the Console shows rename and delete only where they would succeed; listing,
+browsing and cloning stay open to every member.
 
 **The git surface** uses a **deterministic HMAC token per membership, with no token
 table at all**: `afg_<base64url(membership id)>.<tag>`, where the tag is a truncated

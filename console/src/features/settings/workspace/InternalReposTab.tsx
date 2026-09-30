@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
+import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { InternalRepoBrowser } from "./InternalRepoBrowser.tsx";
@@ -20,6 +20,9 @@ interface InternalRepo {
   clone_url: string;
   default_branch?: string;
   created_at?: string;
+  // Whether this caller may rename or delete it: its creator or a tenant_admin. Absent
+  // means a CP that does not restrict either, so only an explicit false hides the buttons.
+  can_manage?: boolean;
 }
 
 export function InternalReposTab() {
@@ -46,7 +49,7 @@ export function InternalReposTab() {
     try {
       const res = await apiJSON("api/internal-git/repos", "POST", { name: n });
       if (res && res.error) {
-        toast(tr("git.create_failed", { msg: res.error.message || res.error.code || "" }));
+        toast(tr("git.create_failed", { msg: errText(res.error) }));
         return;
       }
       toast(tr("git.created", { name: res.name }));
@@ -65,9 +68,9 @@ export function InternalReposTab() {
       danger: true,
     });
     if (!ok) return;
-    const res = await raw(`api/internal-git/repos/${encodeURIComponent(rn)}`, { method: "DELETE" });
-    if (!res.ok) {
-      toast(tr("git.delete_failed"));
+    const res = await api(`api/internal-git/repos/${encodeURIComponent(rn)}`, { method: "DELETE" });
+    if (!res || res.error) {
+      toast(res?.error ? tr("git.delete_failed_msg", { msg: errText(res.error) }) : tr("git.delete_failed"));
       return;
     }
     toast(tr("git.deleted", { name: rn }), { kind: "success", persist: true });
@@ -79,7 +82,7 @@ export function InternalReposTab() {
       new_name: newName,
     });
     if (res && res.error) {
-      toast(tr("git.rename_failed", { msg: res.error.message || res.error.code || "" }));
+      toast(tr("git.rename_failed", { msg: errText(res.error) }));
       return false;
     }
     toast(tr("git.renamed", { old: oldName, new: res.name }));
@@ -142,7 +145,8 @@ export function InternalReposTab() {
 }
 
 // InternalRepoRow is one repo in the internal list: name (editable via rename), its clone
-// URL (click to copy), and delete. Rename edit-state is per-row.
+// URL (click to copy), and delete. Rename and delete are shown only to a caller the CP says
+// may use them. Rename edit-state is per-row.
 function InternalRepoRow({
   repo,
   onCopy,
@@ -222,12 +226,16 @@ function InternalRepoRow({
       <button type="button" className="ghost" title={tr("git.browse_title")} onClick={onBrowse}>
         {tr("git.browse")}
       </button>
-      <button type="button" className="ghost" title={tr("git.rename")} onClick={() => setEditing(true)}>
-        {tr("git.rename")}
-      </button>
-      <button type="button" className="ghost danger conn-disconnect" title={tr("common.delete")} onClick={onRemove}>
-        {tr("common.delete")}
-      </button>
+      {repo.can_manage !== false && (
+        <>
+          <button type="button" className="ghost" title={tr("git.rename")} onClick={() => setEditing(true)}>
+            {tr("git.rename")}
+          </button>
+          <button type="button" className="ghost danger conn-disconnect" title={tr("common.delete")} onClick={onRemove}>
+            {tr("common.delete")}
+          </button>
+        </>
+      )}
     </li>
   );
 }

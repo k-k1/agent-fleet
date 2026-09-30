@@ -167,4 +167,10 @@ const (
 	// The same request while a Start of that workspace is still converging in the
 	// background (ecs-ec2). Nothing was stopped; pressing again once it has started works.
 	errCodeHomeWipeWhileStarting = "home_wipe_while_starting"
+
+	// Internal-git repository management refused by role. Create needs a role that
+	// may push; delete and rename also need to be the repository's creator or a
+	// tenant_admin, because deleting takes the bare and its LFS objects with it.
+	errCodeGitRepoCreateForbidden = "git_repo_create_forbidden"
+	errCodeGitRepoManageForbidden = "git_repo_manage_forbidden"
 )

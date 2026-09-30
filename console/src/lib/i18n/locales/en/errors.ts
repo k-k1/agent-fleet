@@ -331,4 +331,6 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.home_wipe_while_starting": "The workspace is still starting, so nothing was stopped. Try again once it has started.",
   "err.home_backups_unsupported": "This deployment keeps no backups of workspace homes.",
   "err.audit_unavailable": "Nothing was done: the audit log could not record who asked for it. Try again once the database is back.",
+  "err.git_repo_create_forbidden": "Your role in this tenant cannot create repositories.",
+  "err.git_repo_manage_forbidden": "Only the person who created a repository, or a tenant administrator, can rename or delete it.",
 };

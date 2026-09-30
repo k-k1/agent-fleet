@@ -328,4 +328,6 @@ export const errors = {
   "err.home_wipe_while_starting": "ワークスペースがまだ起動中です。何も停止していません。起動し終わってからもう一度実行してください。",
   "err.home_backups_unsupported": "この配備はホームのバックアップを取っていません。",
   "err.audit_unavailable": "何もしませんでした。誰が依頼したかを監査ログに記録できなかったためです。データベースが復旧してから再度お試しください。",
+  "err.git_repo_create_forbidden": "このテナントでのあなたの役割では、リポジトリを作成できません。",
+  "err.git_repo_manage_forbidden": "リポジトリの名前の変更と削除は、作成した人かテナント管理者だけができます。",
 };
