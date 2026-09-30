@@ -2,9 +2,12 @@
 
 [English](0105-stop-continues-into-the-queue.md) | 日本語
 
-- 状態: **accepted**（2026-09-30）・未実装（#1289）。実測は [docs/log/127](../log/127-cli-stop-with-queued-input.md)。
+- 状態: **accepted**（2026-09-30）・**実装済み**（2026-09-30）。Agent と 7 つの Managed ドライバは #1308、Console は #1309、
+  入力の出どころは #1295。実際のフリートではまだ動かしていない。作り方・契約・レビューは [docs/log/128](../log/128-two-stage-stop-implementation.md)。
+  実装中に決定 1 と 4 を改訂した（本文の該当箇所に印がある）。実測は [docs/log/127](../log/127-cli-stop-with-queued-input.md)。
   2 段階にする形は #1258 の議論での利用者の提案で、その後の実測で、測った場面では claude と codex がそう動くと分かった。
-- Follow-ups: #1289（実装）、#1256（未測定の CLI）、#1255（再起動を越えて残るキュー）
+- Follow-ups: #1289（実装。実フリートでの確認まで開いたまま）、#1256（未測定の CLI）、#1255（再起動を越えて残るキュー）、
+  #1307（DropHandle の後も codex のポンプが残る）
 - 置き換え: docs/log/27 §12.2-4（「停止の意思はキューに及ぶ」）。[0041](0041-cross-session-messaging.ja.md) の
   補遺 2026-09-30 の決定 1（停止を生き残るのは peer メッセージだけ）を改める。
 - 関連: docs/log/125 §4、docs/log/126 §4
