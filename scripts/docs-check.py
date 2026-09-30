@@ -11,7 +11,8 @@ machine-checked here rather than left to human review.
 Fourteen checks:
 
   links      relative links resolve (anchors ignored)
-  anchors    a #fragment points at a heading that exists (matched with Console's slug rule)
+  anchors    a #fragment points at a heading that exists (Console's slug rule in guide/,
+             GitHub's elsewhere); living shelves and decisions/
   closure    no link out of guide/ — the shipped tree is self-contained
   chapters   chapter numbers agree with the file name and with cross-reference labels
   lang       bilingual closure (en links to .md, ja to .ja.md) and the counterpart exists
@@ -326,7 +327,9 @@ def check_anchors(files: list[str], f: Findings) -> None:
     """
     for path in files:
         src = rel(path)
-        if shelf(src) not in LIVING:
+        # decisions/ is not living (no front matter), but an ADR's anchors are read on
+        # GitHub like any other; log/ is the frozen archive and is left as written.
+        if shelf(src) not in LIVING + ("decisions",):
             continue
         for m in LINK_RE.finditer(strip_code(read(path))):
             target = m.group(2)
