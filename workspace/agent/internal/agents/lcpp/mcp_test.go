@@ -652,11 +652,16 @@ func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
 
 	oldBudget, oldBackoff := mcpSyncBudget, mcpSyncBackoff
 	mcpSyncBudget = 150 * time.Millisecond
-	mcpSyncBackoff = 10 * time.Second // long enough to still be cooling down for turn 2 below
+	// Far beyond anything a loaded host can stretch two turns to: turn 2 must land inside the
+	// window by construction, not by racing a clock.
+	mcpSyncBackoff = time.Hour
 	t.Cleanup(func() { mcpSyncBudget, mcpSyncBackoff = oldBudget, oldBackoff })
 
 	if _, err := mcpreg.Create(mcpreg.ServerDef{
 		Name: "hangs", Transport: mcpreg.TransportStdio, Command: sortBin,
+		// The longest handshake a def may declare: without mcpSyncBudget the first turn would
+		// block this long, so waitState gives up on it (measured) before the cap below is read.
+		TimeoutMS: 120000,
 		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindLcpp},
 	}); err != nil {
 		t.Fatalf("mcpreg.Create: %v", err)
@@ -699,10 +704,10 @@ func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
 		t.Fatalf("first turn = %v, expected it to pay close to the sync budget (%v) — is this test actually hitting the connect timeout?", first, mcpSyncBudget)
 	}
 	// ...and mcpSyncBudget actually CAPS that wait — without it, the first turn would instead
-	// pay mcpc's own uncapped defaultHandshakeTimeout (10s) against this same silent server. The
-	// bound is half of that, not a multiple of the budget: a loaded host stretches the turn's
-	// own work, and a tight wall-clock bound turned that into red runs.
-	if first > 5*time.Second {
+	// pay the def's own 120 s handshake timeout against this same silent server. The bound sits
+	// far from both: a loaded host stretches the turn's own work (a 6 s engine round trip broke
+	// the former 5 s bound), and the uncapped wait is six times this one.
+	if first > 20*time.Second {
 		t.Fatalf("first turn = %v, expected it capped near the sync budget (%v) — is syncMCPServers still wrapping Sync in a timeout?", first, mcpSyncBudget)
 	}
 	// The second turn must be backed off entirely — no connect attempt. Read from the backoff
