@@ -2,10 +2,14 @@
 
 English | [日本語](0105-stop-continues-into-the-queue.ja.md)
 
-- Status: **accepted** (2026-09-30), not implemented (#1289). The measurements are in [docs/log/127](../log/127-cli-stop-with-queued-input.md).
+- Status: **accepted** (2026-09-30), **implemented** (2026-09-30): the Agent and the seven Managed drivers in #1308,
+  the Console in #1309, the input origin in #1295. Not yet run on a live fleet. How it was built, the contract and the
+  reviews are in [docs/log/128](../log/128-two-stage-stop-implementation.md). Decisions 1 and 4 were amended during the
+  implementation (marked in place). The measurements are in [docs/log/127](../log/127-cli-stop-with-queued-input.md).
   The two-stage shape was the user's proposal in the #1258 discussion. The measurements then showed that claude
   and codex behave this way in the cases measured.
-- Follow-ups: #1289 (implementation), #1256 (the CLIs not yet measured), #1255 (a queue that survives a restart)
+- Follow-ups: #1289 (implementation; open until a live-fleet run), #1256 (the CLIs not yet measured), #1255 (a queue
+  that survives a restart), #1307 (a codex pump that outlives DropHandle)
 - Supersedes: docs/log/27 §12.2-4 ("a stop reaches the queue"). Amends [0041](0041-cross-session-messaging.md)
   addendum 2026-09-30, decision 1 (only peer messages survive a stop).
 - Related: docs/log/125 §4, docs/log/126 §4
