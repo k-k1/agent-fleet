@@ -47,14 +47,18 @@ messages, and what claude and codex did in the measured runs.
 - Queued inputs keep running **one per turn**, in order. claude put two queued inputs into one request, but that is
   not adopted here: a peer message's envelope and its `source: peer` in the transcript would blur into the member's
   text.
-- `TurnInput` carries **where it came from**: the member, or a peer and the sending session's name. This replaces
-  `KeepOnInterrupt`, which only said "not the member". Today `peer_from` stops at `/input` and never reaches the
-  driver, so decisions 2 and 3 need the field.
-- Some input has left the queue but is not yet a turn (docs/log/126): opencode's input held behind another client's
-  turn has **not** been sent, while muse's in-flight `turn/start` and codex before the `turn/start` answer **have**.
-  All of them count as queued for decisions 1 and 2. A first stop lets them continue; a second stop stops them.
-  Only input that has not been sent can be removed or returned (decisions 3 and 4). Stopping a sent input is a stop
-  of its turn, which the transcript already shows as interrupted.
+- `TurnInput` carries **its origin**, in the vocabulary `/input` already uses for the injection badge
+  (`badgeOriginOf`): the member, a peer and its sending session, the operator (`report_to`), a schedule, the chat
+  bridge. This replaces `KeepOnInterrupt`, which only said "not the member". Today the origin stops at `/input` and
+  never reaches the driver. **Member input** in decisions 2 and 4 means input a person typed as this session's user:
+  the Console's composer and the chat bridge.
+- An input whose start is in flight **while no other turn runs** is not queued: it is the turn being stopped. A
+  first stop stops it, as muse (`stopStarting`) and codex (`stopStart`) already do once the runtime names the turn.
+  If the start fails, no turn was made, and there is nothing to stop or show.
+- An input that waits **behind a running turn** is queued, wherever it waits: in the driver's queue, held by the
+  pump (opencode, behind another client's turn, not yet sent), or in muse's host-side queue (sent). A first stop lets
+  it continue; a second stop stops or discards it. Only input that has not been sent can be removed or returned
+  (decisions 4 and 5).
 
 ### Decision 2: a second stop ends the stop episode and discards the rest
 
@@ -65,8 +69,11 @@ a second stop into a first one.
 
 - The episode lasts **until the queue is empty and the last turn it started has settled**, however many queued
   inputs that takes.
-- It also ends when **the member's new input is accepted**, whether the input starts a turn or is queued. A ledger
-  duplicate or a refused send does not count. Peer input arriving does not end it.
+- It also ends when **new member input is accepted** (decision 1), whether it starts a turn or is queued. Input of
+  any other origin does not end it. A refused send does not count, and neither does a resend. The resend check is
+  made at accept time by looking the `ClientMessageID` up in the ledger without recording it, and against the ids
+  already queued: copilot, cursor, kiro and lcpp record the ledger only when the pump takes the entry, so their
+  `accept` alone cannot tell a resend from new input.
 - **Any stop during the episode is a second stop.** It stops the running turn, or the input in flight, and
   **discards everything still queued**, peer messages included. It then ends the episode.
 - A stop outside an episode is a first stop.
@@ -80,27 +87,38 @@ which disables the button until the first request answers, and that is exactly w
 
 ### Decision 3: one action stops everything
 
-While anything is queued, the stop control offers a second action next to it: **stop and discard the queue**. This
-is a second stop in one action. It is the emergency brake the context asks for, and it works without timing. It is
-shown only when there is something to discard, so the composer does not carry a permanent second button.
+The stop control **always** carries a second action in its menu: **stop and discard the queue**. It is emphasised
+while the Console sees something queued, but it is there even when the Console's view is stale, because the queue
+on the server may already hold input the last poll did not show. It is the emergency brake the context asks for, and
+it works without timing.
+
+- It sends `/turn {"op":"interrupt","discard_queue":true}`. The driver discards all unsent input and stops the
+  running turn under the lock that `accept` takes, whatever the episode state. A plain `interrupt` never does this.
+- **What the brake guarantees**: no unsent input starts after it. Input already sent to the runtime is stopped as soon
+  as the runtime names its turn (muse at `turn/started`, codex at the `turn/start` answer), so it can take its first
+  step before the stop lands. muse input queued on the host side behind a turn this driver did not start is outside
+  the guarantee until `turn/unqueue` is measured.
 
 ### Decision 4: what is discarded comes back, from the driver
 
-The driver keeps the entries a second stop (or decision 3) discarded, per session, until the next discard replaces
-them. It exposes them next to `queuedPrompts` in the session's messages payload, under a discard id. The
+The driver keeps the entries a second stop (or decision 3) discarded, per session and **per discard id**, until the
+member restores or dismisses that discard. A later discard does not replace an earlier one. The driver keeps at most
+the last 5 discards per session and drops the oldest beyond that. It exposes them next to `queuedPrompts` in the
+session's messages payload. The
 `/turn interrupt` response carries the same list, but the Console does not depend on it: a response lost to a closed
 tab or a dropped connection is recovered by the next poll.
 
-Each entry carries its text, its attachments and its source (decision 1). Only unsent input is here.
+Each entry carries its text, its attachments and its origin (decision 1). Only unsent input is here.
 
 The Console shows a notice, for example "Stopped. 2 queued messages were discarded", with an action that puts the
-member's own discarded text back into the input box, one message after another. It never sends. Discarded peer
-messages are listed by sender in the same notice. They are not put back into the input box, because the member did
-not write them. The action is offered once per discard id per tab. Two tabs can each put the text into their own
-draft, but nothing is sent twice, because sending is the member's own act, and it gets a new `ClientMessageID`.
+discarded **member input** back into the input box, one message after another. It never sends. Discarded input of
+other origins (peer, operator, schedule) is listed by origin in the same notice. It is not put back into the input
+box, because the member did not write it. Restoring or dismissing tells the driver to drop that discard, so other
+tabs stop offering it at their next poll. Two tabs can still each put the text into their own draft before that,
+but nothing is sent twice: sending is the member's own act, and it gets a new `ClientMessageID`.
 
 Limits: the kept entries live in the Agent's memory, so they are lost with an Agent restart, like the queue itself
-(#1255). This decision gives no protection beyond that.
+(#1255), and a sixth discard drops the oldest. This decision gives no protection beyond that.
 
 ### Decision 5: the queue can be edited without stopping
 
@@ -119,15 +137,17 @@ the counterpart of claude's "Press up to edit queued messages", and the precise 
 ### Decision 6: Terminal (CLI) sessions keep the CLI's own behaviour
 
 On the Terminal route, Stop stays an Esc to the CLI, and a second press is a second Esc. In the measured runs, claude
-and codex continued into the queue on the first Esc and stopped that turn on the second. claude's rewind menu did
-not open during a running turn. Nothing was left queued after the first Esc in those runs, so whether a second Esc
-also discards further queued input was not observed. Agent Fleet does not add a queue or an episode of its own on
-this route. opencode's Terminal behaviour differs (its queued input stays in the history) and is left as the CLI's.
+and codex sent the queued input on the first Esc, and the second Esc stopped the request that carried it. Turn
+boundaries inside the CLI were not observed. claude's rewind menu did not open while a request was running. Nothing
+was left queued after the first Esc in those runs, so whether a second Esc also discards further queued input was
+not observed. Agent Fleet does not add a queue or an episode of its own on this route, and decision 3's discard
+action is not offered there: the queue lives inside the CLI, and Agent Fleet cannot empty it. opencode's Terminal
+behaviour differs (its queued input stays in the history) and is left as the CLI's.
 
 ### Decision 7: which other actions follow the rule
 
-- **Rejecting a plan** and **launching a plan review elsewhere** send the Console's stop, so they follow decisions 1
-  and 2 on every execution method.
+- **Rejecting a plan** and **launching a plan review elsewhere** send the Console's stop. On Managed they follow
+  decisions 1 and 2. On Terminal the stop is an Esc, and the CLI decides (decision 6).
 - **Cancelling or denying a question** reaches `Interrupt` only on codex, so only codex follows decisions 1 and 2
   there. The other drivers answer the runtime's own rejection (opencode's question reject, the ACP permission's
   `cancelled` outcome, lcpp's answer channel). That answer does not touch the queue and is unchanged.
@@ -157,9 +177,11 @@ restart instead is #1255's work.
   the first stop a full brake, but it costs an extra action in the common "apply my correction now" case. It also
   makes Managed disagree with the Terminal route in the other direction. It survives as the recovery path in
   decision 4.
-- **Two permanent controls** ("stop this turn" and "stop everything") shown all the time. They need space in a
-  composer that already carries many controls, and they force a choice even when nothing is queued. Decision 3 shows
-  the second one only when it would do something.
+- **Two permanent buttons** ("stop this turn" and "stop everything") side by side. They need space in a composer
+  that already carries many controls, and they force a choice even when nothing is queued. Decision 3 puts the
+  second action in the stop control's menu instead, always reachable and emphasised only when something is queued.
+- **Show the discard action only while the Console sees a queue.** Rejected in decision 3: the Console's view lags
+  the server by a poll, and the brake must not depend on it.
 - **Press twice within N seconds.** Rejected in decision 2: it is unreliable over polling and mobile latency, and it
   cannot be expressed on the Terminal route anyway.
 - **Merge the queue into one request, as claude did in the measured run.** Rejected in decision 1 for provenance.
@@ -168,13 +190,15 @@ restart instead is #1255's work.
 ## Consequences
 
 - The plain first stop is no longer a full brake when something is queued. The full brake is decision 3's action,
-  and decision 2's second stop, which needs no timing. The stop button's hint should say that a second press ends
-  what was continued. The wording is left to the implementation, taken from the Console's own strings.
+  and decision 2's second stop, which needs no timing. Neither can take back input the runtime already holds, and
+  the Terminal route has neither (decision 6). The stop button's hint should say that a second press ends what was
+  continued. The wording is left to the implementation, taken from the Console's own strings.
 - For claude and codex, the chat now behaves the same on Terminal and Managed, within what was measured.
 - The `Interrupt` contract changes in all seven Managed drivers: `KeptOnInterrupt` goes, `TurnInput` gains its
-  source, and each driver gains the stop episode, the kept discard list, queue entry ids and the removal op.
-  `/input` passes `peer_from` through, and the messages payload gains the ids and the discard list. The Console
-  gains the stop control's second action, the notice and the bubble actions, and stops disabling Stop while a stop
-  is pending. The member guide's sessions chapter (en/ja) states the two stops.
+  origin, and each driver gains the stop episode, the discard-queue interrupt, the kept discards, queue entry ids,
+  the removal op and a side-effect-free ledger lookup. `/input` passes the origin through, and the messages payload
+  gains the ids and the discards. The Console gains the stop control's menu action, the notice and the bubble
+  actions, and stops disabling Stop while a stop is pending. The member guide's sessions chapter (en/ja) states the
+  two stops.
 - The tests added in #1244 and #1258 that assert "own input is discarded by a stop" are inverted, not deleted: they
   become "own input continues after a first stop, and is discarded (and kept for return) by a second".

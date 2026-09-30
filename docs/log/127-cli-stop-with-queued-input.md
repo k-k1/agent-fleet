@@ -20,7 +20,7 @@
 | CLI | 積んだときの表示 | 中断すると、積まれた入力は | 2 回目の Esc |
 |---|---|---|---|
 | claude 2.1.285 | 入力の下に積まれ、「Press up to edit queued messages」「ctrl+x ctrl+s to send now」 | **その場で次のリクエストとして送られた**。先頭に `[Request interrupted by user]` が付く。2 件積んだ 1 回の場面では、2 件が **1 つのリクエストに入って**送られた（CLI の中のターン境界までは見ていない） | 続いたリクエストを止めた。0.3 秒で 2 回押しても同じで、巻き戻しメニューは開かなかった（ターン実行中だったため、と読んでいる） |
-| codex 0.159.2 | 「Messages to be submitted after next tool call (press esc to interrupt and send immediately)」 | **その場で送られる**。画面に「Model interrupted to submit steer instructions.」 | 続いたターンを止めた（「Conversation interrupted」） |
+| codex 0.159.2 | 「Messages to be submitted after next tool call (press esc to interrupt and send immediately)」 | **その場で送られた**。画面に「Model interrupted to submit steer instructions.」 | 続いたリクエストを止めた（画面に「Conversation interrupted」。CLI の中のターン境界は見ていない） |
 | opencode 1.18.33 | 会話に `QUEUED` 印付きの利用者メッセージとして出る | 中断には Esc が 2 回要る（1 回目で「esc again to interrupt」）。中断しても **単独では送られない**。履歴には印なしで残る。次に送った入力と一緒に、文脈として次のリクエストに載った（利用者メッセージ 3 件） | — |
 
 記録の抜粋（時刻、利用者メッセージ数、最後の本文）:
