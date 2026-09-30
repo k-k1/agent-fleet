@@ -139,11 +139,15 @@ func ResolveRecreate(parent, name string, branches []string, trashSHA func(branc
 				continue
 			}
 		}
-		if sha, pr := mergedBranchHead(parent, b); sha != "" {
-			out = append(out, RecreateCandidate{Source: RecreateMerged, Branch: b, SHA: sha, PR: pr})
-			continue
+		// A branch name can be merged more than once (a merge commit, then reused and
+		// squash-merged), and only the forge knows the squash. So even with an offline answer
+		// the forge is asked for a merge after it; head asks nothing when it is not
+		// configured, and any failure keeps the offline answer.
+		sha, pr, at := mergedBranchHead(parent, b)
+		if fsha, fpr := forge.head(b, at); fsha != "" {
+			sha, pr = fsha, fpr
 		}
-		if sha, pr := forge.head(b); sha != "" {
+		if sha != "" {
 			out = append(out, RecreateCandidate{Source: RecreateMerged, Branch: b, SHA: sha, PR: pr})
 			continue
 		}
@@ -380,22 +384,23 @@ const mergeLogTimeout = 20 * time.Second
 
 // mergedBranchHead finds the newest merge commit whose subject names branch and returns its
 // second parent — the branch head that was merged — plus the pull request number when the
-// subject carries one. Works offline, which is why it is preferred to asking the forge. A
-// squash or rebase merge leaves no such commit and answers ""; mergedPRFinder asks the forge
-// for those.
-func mergedBranchHead(dir, branch string) (string, int) {
+// subject carries one and the merge commit's committer date. Works offline. A squash or
+// rebase merge leaves no such commit and answers ""; mergedPRFinder asks the forge for those,
+// and for one newer than the date.
+func mergedBranchHead(dir, branch string) (string, int, time.Time) {
 	ctx, cancel := context.WithTimeout(context.Background(), mergeLogTimeout)
 	defer cancel()
 	out, err := CmdContext(ctx, dir, "log", "--branches", "--remotes", "--merges", "-F", "--grep="+branch,
-		"-n", "200", "--format=%P%x09%s").Output()
+		"-n", "200", "--format=%P%x09%ct%x09%s").Output()
 	if err != nil {
-		return "", 0
+		return "", 0, time.Time{}
 	}
 	for _, ln := range strings.Split(string(out), "\n") {
-		parents, subject, ok := strings.Cut(ln, "\t")
-		if !ok {
+		f := strings.SplitN(ln, "\t", 3)
+		if len(f) != 3 {
 			continue
 		}
+		parents, subject := f[0], f[2]
 		ps := strings.Fields(parents)
 		if len(ps) < 2 {
 			continue
@@ -411,10 +416,11 @@ func mergedBranchHead(dir, branch string) (string, int) {
 			continue
 		}
 		if commitExists(dir, ps[1]) {
-			return ps[1], pr
+			ct, _ := strconv.ParseInt(f[1], 10, 64)
+			return ps[1], pr, time.Unix(ct, 0)
 		}
 	}
-	return "", 0
+	return "", 0, time.Time{}
 }
 
 func matchGroup(re *regexp.Regexp, s string, i int) string {

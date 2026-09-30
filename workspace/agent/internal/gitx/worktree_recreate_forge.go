@@ -79,8 +79,11 @@ func (f *mergedPRFinder) close() {
 
 // head returns the head commit of the newest merged pull request from branch, fetching it
 // from origin when the object is not in the repository, plus the pull request number; "" when
-// there is none or the forge cannot be asked.
-func (f *mergedPRFinder) head(branch string) (string, int) {
+// there is none or the forge cannot be asked. With after set (the offline merge commit's
+// date), a pull request counts only when it was merged strictly later: the merge commit's
+// own pull request carries its date, and an unreadable merged_at is no reason to override a
+// good offline answer.
+func (f *mergedPRFinder) head(branch string, after time.Time) (string, int) {
 	if !f.resolved {
 		f.resolved = true
 		if f.repo = githubRepoOf(f.dir); f.repo != "" {
@@ -93,9 +96,15 @@ func (f *mergedPRFinder) head(branch string) (string, int) {
 	if f.ctx == nil || f.ctx.Err() != nil {
 		return "", 0
 	}
-	sha, pr := githubMergedPR(f.ctx, f.token, f.repo, branch)
+	sha, pr, mergedAt := githubMergedPR(f.ctx, f.token, f.repo, branch)
 	if sha == "" {
 		return "", 0
+	}
+	if !after.IsZero() {
+		t, err := time.Parse(time.RFC3339, mergedAt)
+		if err != nil || !t.After(after) {
+			return "", 0
+		}
 	}
 	if !commitExists(f.dir, sha) {
 		// The branch was never fetched here, or its objects went with it. GitHub keeps every
@@ -134,16 +143,16 @@ func sameOriginRedirect(req *http.Request, via []*http.Request) error {
 
 // githubMergedPR finds the newest merged pull request whose head is branch in repo itself (a
 // fork's branch, or one whose repository is gone and so cannot be shown to be repo's, is not
-// the one this working copy pushed). GitHub lists newest first.
-func githubMergedPR(ctx context.Context, token, repo, branch string) (string, int) {
+// the one this working copy pushed), and its merged_at as sent. GitHub lists newest first.
+func githubMergedPR(ctx context.Context, token, repo, branch string) (string, int, string) {
 	owner, _, ok := splitRepo(repo)
 	if !ok {
-		return "", 0
+		return "", 0, ""
 	}
 	for page := 1; page <= githubPullsPages; page++ {
 		prs, ok := githubClosedPullsPage(ctx, token, repo, owner+":"+branch, page)
 		if !ok {
-			return "", 0
+			return "", 0, ""
 		}
 		for _, p := range prs {
 			if p.MergedAt == nil || *p.MergedAt == "" || p.Number <= 0 || p.Head.Ref != branch || !isHexSHA(p.Head.SHA) {
@@ -152,13 +161,13 @@ func githubMergedPR(ctx context.Context, token, repo, branch string) (string, in
 			if p.Head.Repo == nil || !strings.EqualFold(p.Head.Repo.FullName, repo) {
 				continue
 			}
-			return p.Head.SHA, p.Number
+			return p.Head.SHA, p.Number, *p.MergedAt
 		}
 		if len(prs) < githubPullsPerPage {
 			break
 		}
 	}
-	return "", 0
+	return "", 0, ""
 }
 
 type githubPull struct {

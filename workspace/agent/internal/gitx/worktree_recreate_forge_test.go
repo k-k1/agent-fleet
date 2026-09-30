@@ -205,7 +205,7 @@ func TestGitHubMergedPRPagesAndHeadRepo(t *testing.T) {
 	list = append(list, orphan, fork, pullJSON(898, "sq", good, true))
 	hits := fakeGitHub(t, map[string][]map[string]any{"o:sq": list})
 
-	if sha, pr := githubMergedPR(context.Background(), "tok", "o/r", "sq"); sha != good || pr != 898 {
+	if sha, pr, _ := githubMergedPR(context.Background(), "tok", "o/r", "sq"); sha != good || pr != 898 {
 		t.Errorf("githubMergedPR = %s, %d; want %s, 898", sha, pr, good)
 	}
 	if n := hits.Load(); n != 2 {
@@ -236,11 +236,114 @@ func TestGitHubMergedPRRefusesCrossOriginRedirect(t *testing.T) {
 	} {
 		t.Cleanup(srv.Close)
 		githubAPIBase, githubHTTPClient.Transport = srv.URL, srv.Client().Transport
-		if sha, _ := githubMergedPR(context.Background(), "tok", "o/r", "sq"); sha != "" {
+		if sha, _, _ := githubMergedPR(context.Background(), "tok", "o/r", "sq"); sha != "" {
 			t.Errorf("%s: followed the redirect to %s", name, sha)
 		}
 	}
 	if n := leaked.Load(); n != 0 {
 		t.Errorf("the token reached the redirect target %d times", n)
 	}
+}
+
+// A branch name merged twice — first through a merge commit, then reused and squash-merged —
+// resolves to the later merge. The merge commit alone answers offline with the older head, so
+// the forge is asked as well and the newer of the two wins; any doubt keeps the offline answer.
+func TestResolveRecreateMergedTwicePrefersNewest(t *testing.T) {
+	setup := func(t *testing.T) (parent, oldSHA, newSHA string) {
+		parent = recreateFixture(t)
+		origin := onGitHub(t, parent)
+		oldSHA = commitOn(t, origin, "reused")
+		t.Setenv("GIT_COMMITTER_DATE", "2026-09-10T00:00:00Z")
+		gitAt(t, origin, "update-ref", "refs/pull/7/head", oldSHA)
+		gitAt(t, origin, "merge", "-q", "--no-ff", "-m", "Merge pull request #7 from o/reused", "reused")
+		gitAt(t, origin, "branch", "-q", "-D", "reused")
+		t.Setenv("GIT_COMMITTER_DATE", "2026-09-20T00:00:00Z")
+		gitAt(t, origin, "checkout", "-q", "-b", "reused", "main")
+		writeFile(t, filepath.Join(origin, "reused-again"), "again")
+		gitAt(t, origin, "add", "-A")
+		gitAt(t, origin, "commit", "-q", "-m", "reused again")
+		newSHA = strings.TrimSpace(gitAt(t, origin, "rev-parse", "HEAD"))
+		gitAt(t, origin, "checkout", "-q", "main")
+		gitAt(t, origin, "update-ref", "refs/pull/9/head", newSHA)
+		gitAt(t, origin, "merge", "-q", "--squash", "reused")
+		gitAt(t, origin, "commit", "-q", "-m", "reused (#9)")
+		gitAt(t, origin, "branch", "-q", "-D", "reused")
+		gitAt(t, parent, "fetch", "-q", "--prune")
+		if commitExists(parent, newSHA) {
+			t.Fatal("fixture: the squash-merged head is already in the clone")
+		}
+		return parent, oldSHA, newSHA
+	}
+	merged := func(n int, sha, at string) map[string]any {
+		p := pullJSON(n, "reused", sha, true)
+		p["merged_at"] = at
+		return p
+	}
+	resolve := func(t *testing.T, parent string) RecreateCandidate {
+		t.Helper()
+		got := ResolveRecreate(parent, "app@x", []string{"reused"}, nil, nil)
+		if len(got) != 1 {
+			t.Fatalf("candidates = %+v, want one", got)
+		}
+		return got[0]
+	}
+
+	t.Run("forge newer wins", func(t *testing.T) {
+		parent, oldSHA, newSHA := setup(t)
+		hits := fakeGitHub(t, map[string][]map[string]any{"o:reused": {
+			merged(9, newSHA, "2026-09-20T00:00:00Z"), merged(7, oldSHA, "2026-09-10T00:00:00Z")}})
+		if c, want := resolve(t, parent), (RecreateCandidate{Source: RecreateMerged, Branch: "reused", SHA: newSHA, PR: 9}); c != want {
+			t.Errorf("candidate = %+v, want %+v", c, want)
+		}
+		if n := hits.Load(); n != 1 {
+			t.Errorf("forge asked %d times, want 1", n)
+		}
+	})
+	offline := func(oldSHA string) RecreateCandidate {
+		return RecreateCandidate{Source: RecreateMerged, Branch: "reused", SHA: oldSHA, PR: 7}
+	}
+	t.Run("forge has the same merge", func(t *testing.T) {
+		parent, oldSHA, _ := setup(t)
+		fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(7, oldSHA, "2026-09-10T00:00:00Z")}})
+		if c := resolve(t, parent); c != offline(oldSHA) {
+			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
+		}
+	})
+	t.Run("forge older", func(t *testing.T) {
+		parent, oldSHA, newSHA := setup(t)
+		fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(9, newSHA, "2026-09-01T00:00:00Z")}})
+		if c := resolve(t, parent); c != offline(oldSHA) {
+			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
+		}
+	})
+	t.Run("forge merged_at unreadable", func(t *testing.T) {
+		parent, oldSHA, newSHA := setup(t)
+		fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(9, newSHA, "yesterday")}})
+		if c := resolve(t, parent); c != offline(oldSHA) {
+			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
+		}
+	})
+	t.Run("forge error", func(t *testing.T) {
+		parent, oldSHA, _ := setup(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+		fakeGitHub(t, nil)
+		githubAPIBase = srv.URL
+		if c := resolve(t, parent); c != offline(oldSHA) {
+			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
+		}
+	})
+	t.Run("no connection", func(t *testing.T) {
+		parent, oldSHA, newSHA := setup(t)
+		hits := fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(9, newSHA, "2026-09-20T00:00:00Z")}})
+		githubToken = func() string { return "" }
+		if c := resolve(t, parent); c != offline(oldSHA) {
+			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
+		}
+		if hits.Load() != 0 {
+			t.Error("the forge was asked without a token")
+		}
+	})
 }
