@@ -1,0 +1,30 @@
+
+  ┃
+  ┃  Use the read tool to read the file /home/
+  ┃  dev/.af-work/s7jxd4o/probe/outside/note.
+  ┃  txt and tell me its content.
+  ┃
+
+     ⠧ Read /home/dev/.af-work/s7jxd4o/probe/
+       outside/note.txt
+
+     ▣  Build · Big Pickle
+
+
+
+  ┃
+  ┃  △ Permission required
+  ┃    ← Access external directory /home/dev/
+  ┃      .af-work/s7jxd4o/probe/outside
+  ┃
+  ┃  Patterns
+  ┃
+  ┃  - /home/dev/.af-work/s7jxd4o/probe/
+  ┃  outside/*
+  ┃
+  ┃
+  ┃   Allow once   Allow always   Reject
+  ┃
+  ┃  ctrl+f fullscreen  ⇆ select  enter confirm
+  ┃
+

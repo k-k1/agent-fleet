@@ -1,0 +1,40 @@
+
+  ┃
+  ┃  Use the read tool to read the file /home/dev/.af-work/s7jxd4o/probe/outside/note.txt and
+  ┃  tell me its content.
+  ┃
+
+     ⠇ Read /home/dev/.af-work/s7jxd4o/probe/outside/note.txt
+
+     ▣  Build · Big Pickle
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃  △ Always allow
+  ┃
+  ┃  This will allow the following patterns until OpenCode is restarted
+  ┃
+  ┃  - /home/dev/.af-work/s7jxd4o/probe/outside/*
+  ┃
+  ┃
+  ┃   Confirm   Cancel                                                  ⇆ select  enter confirm
+  ┃
+

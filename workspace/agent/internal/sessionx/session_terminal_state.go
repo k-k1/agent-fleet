@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -81,14 +82,13 @@ func classifyClaudePane(s string) (string, *compactProgress) {
 // codexTerminalState detects codex terminal-only states the chat can't otherwise see,
 // the codex counterpart of sessionTerminalState. Returns:
 //
-//	"update" — parked at the startup "✨ Update available!" menu (1. Update now /
-//	           2. Skip / 3. Skip until next version). Keystrokes go to the menu, and
-//	           "Update now" exits the process (the pane's tmux session dies with it),
-//	           so the mirror must surface the choice instead of accepting a prompt.
+//	"update" — parked at the startup update menu (1. Update now / 2. Skip / 3. Skip until
+//	           next version). Keystrokes go to the menu, and "Update now" exits the process
+//	           (the pane's tmux session dies with it), so the mirror must surface the choice
+//	           instead of accepting a prompt.
 //	""       — none detected.
 //
-// Best-effort, like sessionTerminalState: the wording is codex-CLI-specific
-// (verified on 0.144.3), so a version bump may need the match strings updated.
+// The menu is read by codex.PaneScreen, which the free-text gate shares.
 func codexTerminalState(name string) string {
 	pane := tmuxx.SessionPaneID(session.TmuxName(name))
 	if pane == "" {
@@ -104,12 +104,10 @@ func codexTerminalState(name string) string {
 	return ""
 }
 
-// isCodexUpdateMenu matches the update menu in captured pane text. Both markers are
-// required: after a choice is made the "Update available!" banner STAYS on screen
-// (redrawn above the composer), and only the menu's "Press enter to continue" footer
-// goes away — the banner alone must not re-trigger the state.
+// isCodexUpdateMenu matches the update menu in captured pane text. The banner the menu leaves
+// above the composer after a choice must not re-trigger the state (codex.PaneScreen).
 func isCodexUpdateMenu(s string) bool {
-	return strings.Contains(s, "Update available!") && strings.Contains(s, "Press enter to continue")
+	return codex.PaneScreen(s) == "update"
 }
 
 // parseCompactProgress reads the percent and elapsed timer off a pane already known to

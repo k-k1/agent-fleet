@@ -398,16 +398,19 @@ func terminalStartedAfter(m session.Meta) time.Time {
 }
 
 // TerminalModal is the modal an opencode Terminal pane shows that typed text would decide:
-// "question" while the question tool waits, "" otherwise. A pasted line is dropped there and
-// the Enter picks the highlighted option (measured 1.18.33). Nothing else on that route waits
-// for a human, since `--auto` answers the permission prompts. A managed session answers "":
-// its driver refuses free text itself (ErrQuestionPending). So does a pane that is not running.
+// "question" while the question tool waits, "permission" while the permission prompt is up
+// (screen.go), "" otherwise. A pasted line is dropped in both and the Enter picks the
+// highlighted option (measured 1.18.33). A managed session answers "": its driver refuses free
+// text itself (ErrQuestionPending). So does a pane that is not running.
 func TerminalModal(m session.Meta) string {
 	if m.DriverKind() == session.DriverManaged || !tmuxx.HasSession(session.TmuxName(m.Name)) {
 		return ""
 	}
 	if LiveState(m) == "question" {
 		return "question"
+	}
+	if terminalPermission(m) {
+		return "permission"
 	}
 	return ""
 }
