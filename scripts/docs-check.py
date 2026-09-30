@@ -251,10 +251,9 @@ def console_slug(text: str) -> str:
     drop everything that is not a letter, digit, space or hyphen, and collapse a *run* of
     spaces into a single hyphen.
 
-    GitHub (github-slugger) emits one hyphen per space, so the two rules disagree on any
+    GitHub emits one hyphen per space, so the two rules disagree on any
     heading containing a symbol surrounded by spaces, such as `—` or `/` (`a — b` is
-    `a-b` in the Console and `a--b` on GitHub). Fullwidth parentheses go the other way:
-    the Console drops them, GitHub keeps them.
+    `a-b` in the Console and `a--b` on GitHub).
 
     Which rule wins was decided by measurement: across the repository, 52 links resolve
     only under the Console rule and 10 only under GitHub's. The Console is also where
@@ -268,16 +267,28 @@ def console_slug(text: str) -> str:
     return re.sub(r"\s+", "-", t)
 
 
-# github-slugger: lowercase and trim, drop punctuation (the general-punctuation range,
-# which includes `—`, plus the supplemental-punctuation range and ASCII symbols),
-# and emit one hyphen per space. `-`, `_` and fullwidth parentheses survive.
-GITHUB_PUNCT_RE = re.compile(
-    "[ -⁯⸀-⹿\\\\'!\"#$%&()*+,./:;<=>?@\\[\\]^`{|}~]"
-)
+# GitHub's heading ids (github-slugger, script/generate-regex.js): lowercase and trim,
+# keep letters, marks, decimal and letter numbers, connector punctuation such as `_`,
+# `-` and spaces, drop everything else, and emit one hyphen per space. Fullwidth
+# parentheses `（）` and `・` are dropped like any other punctuation (measured against
+# the ids GitHub rendered for every docs/ heading with a non-ASCII character: 6,453 of
+# 6,455 match; the two misses contain `<…>`, which GitHub renders as an HTML tag).
+GITHUB_KEEP_CATEGORIES = ("Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl", "Pc")
+# Symbols (So) that are Alphabetic, which github-slugger keeps: circled and squared
+# Latin letters (Ⓐ, ⓘ, 🄰 …). Python's unicodedata has no Alphabetic property.
+GITHUB_KEEP_SYMBOLS = re.compile("[\u24b6-\u24e9\U0001f130-\U0001f149\U0001f150-\U0001f169\U0001f170-\U0001f189]")
 
 
 def github_slug(text: str) -> str:
-    return re.sub(r"\s", "-", GITHUB_PUNCT_RE.sub("", text.lower().strip()))
+    t = text.lower().strip()
+    t = "".join(
+        c
+        for c in t
+        if c in " -"
+        or unicodedata.category(c) in GITHUB_KEEP_CATEGORIES
+        or GITHUB_KEEP_SYMBOLS.match(c)
+    )
+    return t.replace(" ", "-")
 
 
 def heading_slugs(path: str) -> set[str]:

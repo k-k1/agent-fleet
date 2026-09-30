@@ -12,6 +12,24 @@ sys.modules[spec.name] = check
 spec.loader.exec_module(check)
 
 
+class GithubSlugTests(unittest.TestCase):
+    """github_slug against ids GitHub actually rendered for docs/ headings."""
+
+    def test_rendered_ids(self):
+        for text, rendered in (
+            ("1.7 できていること・いないこと", "17-できていることいないこと"),
+            ("1.6 ポート&アダプタ（プラットフォーム依存の差し替え点）", "16-ポートアダプタプラットフォーム依存の差し替え点"),
+            ("7.3 L1 Console 認証（AUTH 3 モード）", "73-l1-console-認証auth-3-モード"),
+            ("5.1 公開面（Console ↔ CP）", "51-公開面console--cp"),
+            ("Commits & PRs", "commits--prs"),
+            ("snake_case — kept", "snake_case--kept"),
+            ("A ⓘ B", "a-ⓘ-b"),  # an Alphabetic symbol (So) is kept
+            ("🄰 ↔ Ⓩ 🅐 🆉 ⓪", "🄰--ⓩ-🅐-🆉-"),  # the kept ranges end where they should
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(check.github_slug(text), rendered)
+
+
 class NotesTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
