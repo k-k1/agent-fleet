@@ -215,8 +215,8 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		// across cli⇄managed) both ride on it.
 		sids.Write(slotSid, tid)
 	}
-	// A Terminal launch may have asked the observer to stay off this thread (release.go); the
-	// managed session owns it again now.
+	// A stop had the observer stay off this thread (release.go); the managed session owns it
+	// again now.
 	RestoreObservedThread(tid)
 	// After resume the policies can have fallen back to the config defaults (measured), so
 	// re-assert them. A failure is not fatal: the turn still runs, only on the readOnly side.
@@ -442,8 +442,9 @@ func liveHandles() []*threadHandle {
 
 // DropHandle detaches a managed session from its runtime handle (stop / halt /
 // archive / exclusive switch): interrupt any running turn, unsubscribe the writer
-// connection from the thread, forget the handle. The conversation's source of truth
-// (the rollout) stays, and a later Resume (or the TUI's `codex resume`) reattaches.
+// connection from the thread, have the observer let go of it too (release.go), forget
+// the handle. The conversation's source of truth (the rollout) stays, and a later Resume
+// (or the TUI's `codex resume`, once the server has unloaded the thread) reattaches.
 func DropHandle(name string) {
 	handlesMu.Lock()
 	h := handles[name]
@@ -460,6 +461,9 @@ func DropHandle(name string) {
 	h.tq().DropAll()
 	h.tq().Interrupt(agents.InterruptOpts{DiscardQueue: true}, running || turnID != "")
 	h.mu.Unlock()
+	if tid != "" {
+		ReleaseObservedThread(tid)
+	}
 	if cl == nil {
 		return
 	}

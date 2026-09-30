@@ -176,6 +176,12 @@ There are two ways to hold a conversation id, and they fail differently.
   conversation under the other driver. It applies to kinds that have both, it is
   refused mid-turn (`409 busy_switch`), and it keeps the kind, directory and native
   id.
+  - codex goes from managed to Terminal only from a stopped session
+    (`409 codex_stop_first`). A direct codex TUI cannot open a thread the shared app-server
+    has loaded, and the server unloads one about 70 s after its last subscriber leaves.
+    So `DropHandle` has the read-only observer let go of the thread as well as the writer,
+    and a Terminal launch that would resume a thread still loaded is refused with
+    `409 codex_releasing` (`codex/release.go`: one `thread/loaded/list`).
 - **Model resolution at creation** (`resolveLiveModel`, for codex, copilot, opencode
   and lcpp) checks a requested model against the live catalogue and expands a picker
   label or a unique abbreviation into the full identifier.

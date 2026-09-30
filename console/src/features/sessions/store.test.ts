@@ -21,8 +21,10 @@ const toastMock = vi.fn();
 vi.mock("../../ui/toast.ts", () => ({ toast: (...a: unknown[]) => toastMock(...a) }));
 
 let useSessionsStore: typeof import("./store.ts")["useSessionsStore"];
+let tMaybe: typeof import("../../lib/i18n/index.ts")["tMaybe"];
 beforeAll(async () => {
   ({ useSessionsStore } = await import("./store.ts"));
+  ({ tMaybe } = await import("../../lib/i18n/index.ts"));
 });
 
 const jsonResponse = (body: unknown) =>
@@ -85,6 +87,25 @@ describe("sessions store", () => {
 
     await expect(useSessionsStore.getState().start("ssko6g5")).resolves.toBe(false);
     expect(toastMock).toHaveBeenCalledTimes(1);
+    expect(toastMock.mock.calls[0][1]).toMatchObject({ kind: "error" });
+  });
+
+  // api() resolves an HTTP error instead of throwing, so a refused start used to read as a
+  // success: the pane attached to a session nobody started. codex answers 409 codex_releasing
+  // while it still holds a just-stopped conversation, and that reason must reach the user.
+  it("reports a refused resume with the server's reason", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "codex_releasing", message: "still held" } }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ sessions: [row("ssko6g5", false)] }));
+
+    await expect(useSessionsStore.getState().start("ssko6g5")).resolves.toBe(false);
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    expect(toastMock.mock.calls[0][0]).toBe(tMaybe("err.codex_releasing"));
     expect(toastMock.mock.calls[0][1]).toMatchObject({ kind: "error" });
   });
 

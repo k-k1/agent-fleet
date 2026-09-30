@@ -73,7 +73,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.auth_expired":
     "This workspace's Claude login has expired. Re-authenticate from Settings > Agents before sending (sent now, the terminal would take the text but no turn would ever start).",
   "err.codex_releasing":
-    "This conversation is still being handed over from managed execution (usually about a minute). Send once the codex composer appears.",
+    "codex has not let go of this conversation yet (usually about a minute after the stop). Try again shortly.",
+  "err.codex_stop_first": "Stop this codex session first, then switch it to terminal execution (about a minute after the stop).",
   "err.not_running": "The session is stopped. Resume it before sending.",
   // The workspace is mid-boot (container up, Agent not answering yet) and something
   // that needs the Agent arrived. Not a failure — a "not yet", so it asks for a retry.

@@ -329,7 +329,7 @@ func (o *codexObserver) release(threadID string) {
 // as an attach.
 const codexUnsubscribeMark = "unsubscribe:"
 
-// codexReleased holds the threads a Terminal launch asked the observer to let go of (see
+// codexReleased holds the threads a stopped managed session had the observer let go of (see
 // codex/release.go). A hold ends only when the thread is seen unloaded (a notLoaded broadcast,
 // or its absence from a sweep) or a managed Resume takes the thread back — never by time: if
 // the thread is still loaded, re-attaching makes the observer its last holder again and locks

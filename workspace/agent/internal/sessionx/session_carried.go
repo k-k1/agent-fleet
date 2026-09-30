@@ -262,7 +262,9 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if err := ensureSessionTmux(name, false); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+		if !writeCodexReleasingErr(w, err) {
+			httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+		}
 		return
 	}
 	// The carried entry is dropped here: delivery is asynchronous (there is a CLI boot to

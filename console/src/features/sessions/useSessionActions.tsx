@@ -13,7 +13,7 @@ import { openSessionChat, openSessionTerminal } from "./open.ts";
 import { chatCreate } from "../chat/api.ts";
 import { openChat } from "../chat/open.ts";
 import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
-import { t, useT, getLocale } from "../../lib/i18n/index.ts";
+import { t, tMaybe, useT, getLocale } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -295,7 +295,7 @@ export function useSessionActions(): SessionActions {
       toast(
         code === "busy_switch"
           ? t("sess.switch_busy")
-          : j?.error?.message || t("sess.switch_failed"),
+          : (code && tMaybe("err." + code)) || j?.error?.message || t("sess.switch_failed"),
       );
       return;
     }

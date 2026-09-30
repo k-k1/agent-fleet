@@ -8,7 +8,7 @@ import { api, isTransientErr } from "../../core/api/client.ts";
 import { pushHealthy, pushStamp } from "../../core/push/events.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { toast } from "../../ui/toast.ts";
-import { t as tr } from "../../lib/i18n/index.ts";
+import { t as tr, tMaybe } from "../../lib/i18n/index.ts";
 import { noteSessions } from "./waiting.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -108,7 +108,14 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   async start(name: string) {
     let ok = true;
     try {
-      await api(`api/sessions/${encodeURIComponent(name)}/start`, { method: "POST" });
+      // api() resolves an HTTP error as `{error}` rather than throwing: a refused start (codex
+      // still letting go of its conversation, 409 codex_releasing) must be told apart from one
+      // that happened.
+      const r = await api(`api/sessions/${encodeURIComponent(name)}/start`, { method: "POST" });
+      if (r?.error) {
+        ok = false;
+        toast(tMaybe("err." + r.error.code) ?? tr("srow.resume_failed"), { kind: "error" });
+      }
     } catch {
       // Never silent. Swallowing this left the caller to "resume" into a pane that
       // waits on a session nobody started, with no error and no way to retry.

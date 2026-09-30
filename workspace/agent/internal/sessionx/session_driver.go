@@ -19,6 +19,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -81,6 +82,16 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// codex goes to Terminal only from a stopped session: the TUI cannot open a thread the
+	// shared app-server still has loaded, and it unloads one only about a minute after the stop
+	// (codex/release.go). Refusing here keeps a prompt from being sent into either side
+	// meanwhile.
+	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex && switchSourceAlive(m) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeCodexStopFirst,
+			"codex のセッションは停止してからターミナル（CLI）に切り替えてください（停止から 1 分ほどで切り替えられます）")
+		return
+	}
+
 	// Drain condition: never take a running (or queued) turn with us. For tui that is the
 	// status store's working state (from hooks), for managed the handle's running/queue.
 	sid := session.UUID(m.Dir, name)
@@ -104,12 +115,6 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 			return
 		}
-	}
-	// codex: the pane will first wait for the app-server to release the thread; mark the
-	// hand-over now, before the managed runtime goes, so no prompt slips into either side
-	// meanwhile (codexHandOverGate).
-	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindCodex {
-		codex.MarkSwitching(name)
 	}
 	// Stop the old managed runtime. For a managed→TUI switch of kiro, whose per-sid `.lock`
 	// guards the session cross-process, wait bounded for the child to exit + release the lock
@@ -139,8 +144,9 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if err := startSessionTmux(m, false); err != nil {
-			codex.ClearHandOver(name) // no pane will take the conversation over
-			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+			if !writeCodexReleasingErr(w, err) {
+				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+			}
 			return
 		}
 	}
@@ -163,17 +169,30 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			dropManagedRuntime(m)
 		} else {
 			_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(name))).Run()
-			codex.ClearHandOver(name)
 		}
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	m = cur
-	if target == session.DriverTUI {
-		codex.EndSwitch(name) // the meta says Terminal now; see codex/release.go
-	}
 	if wasStopped {
 		fleetgraph.RecordRevive(name) // write site ③: only when the slot really was stopped
 	}
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, true))
+}
+
+// errCodeCodexStopFirst refuses a codex Managed-to-Terminal switch while the session runs.
+const errCodeCodexStopFirst = "codex_stop_first"
+
+// switchSourceAlive is ManagedAlive; a variable so tests can stand in a live runtime.
+var switchSourceAlive = ManagedAlive
+
+// writeCodexReleasingErr answers a Terminal launch that codex refused because the shared
+// app-server still holds the conversation (codex.ErrThreadReleasing): 409, retry shortly.
+// It reports whether err was that refusal.
+func writeCodexReleasingErr(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, codex.ErrThreadReleasing) {
+		return false
+	}
+	httpx.WriteErr(w, http.StatusConflict, "codex_releasing", err.Error())
+	return true
 }

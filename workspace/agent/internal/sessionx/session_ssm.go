@@ -52,7 +52,9 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 	force := r.URL.Query().Get("force") == "1"
 	if err := ensureSessionTmux(name, force); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+		if !writeCodexReleasingErr(w, err) {
+			httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+		}
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})

@@ -56,11 +56,11 @@ give the conversation a separate storage location or a separate working folder.
 New Codex / cursor / opencode / GitHub Copilot / Kiro sessions default to managed. lcpp / muse
 are Managed only, claude / agy use Terminal (CLI), and shell / SSM use only the terminal path.
 For kinds that support both methods, you can switch the execution method from the session's ⋯
-menu whenever the session is not stopped and the agent is not in the middle of processing. **The
-conversation carries over as is.** Switching a codex session from Managed to Terminal (CLI) can
-take about a minute while codex lets go of the conversation; a message sent in that time is
-refused, and the terminal opens once it is free. You can also open the chat view from Terminal (CLI), but
-managed execution has no terminal screen.
+menu whenever the agent is not in the middle of processing. **The conversation carries over as
+is.** A codex session goes from Managed to Terminal (CLI) only while it is stopped: stop it first,
+then switch. codex lets go of the conversation about a minute after the stop; until then the
+switch, and a resume on Terminal (CLI), is refused with a message to try again shortly. You can
+also open the chat view from Terminal (CLI), but managed execution has no terminal screen.
 
 A Terminal (CLI) screen is kept alive behind the scenes even if you close the browser. You
 never need to operate that keep-alive mechanism yourself.
