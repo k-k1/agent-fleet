@@ -23,6 +23,22 @@ export function useIsMobile(): boolean {
   return m;
 }
 
+// usePrefersReducedMotion follows the OS "reduce motion" preference. Where it is set, the
+// mirror's typewriter reveal (#1274) shows a reply's text at once, the way line-by-line does.
+export const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+export function usePrefersReducedMotion(): boolean {
+  const [m, setM] = useState(() => typeof window !== "undefined" && Boolean(window.matchMedia?.(REDUCED_MOTION_QUERY)?.matches));
+  useEffect(() => {
+    const mq = window.matchMedia?.(REDUCED_MOTION_QUERY);
+    if (!mq) return;
+    const fn = () => setM(mq.matches);
+    mq.addEventListener("change", fn);
+    fn();
+    return () => mq.removeEventListener("change", fn);
+  }, []);
+  return m;
+}
+
 // coarsePointer reports a touch-primary device (phone / tablet), where focusing an
 // input pops the on-screen keyboard. We use it to SUPPRESS auto-focus on view
 // switch / attach: switching between terminal and chat to read shouldn't summon the
