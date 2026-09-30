@@ -2,10 +2,10 @@
 
 English | [日本語](0105-stop-continues-into-the-queue.ja.md)
 
-- Status: **proposed** (2026-09-30). The measurements are in [docs/log/127](../log/127-cli-stop-with-queued-input.md).
+- Status: **accepted** (2026-09-30), not implemented (#1289). The measurements are in [docs/log/127](../log/127-cli-stop-with-queued-input.md).
   The two-stage shape was the user's proposal in the #1258 discussion. The measurements then showed that claude
   and codex behave this way in the cases measured.
-- Follow-ups: #1282 (this decision), #1256 (the CLIs not yet measured), #1255 (a queue that survives a restart)
+- Follow-ups: #1289 (implementation), #1256 (the CLIs not yet measured), #1255 (a queue that survives a restart)
 - Supersedes: docs/log/27 §12.2-4 ("a stop reaches the queue"). Amends [0041](0041-cross-session-messaging.md)
   addendum 2026-09-30, decision 1 (only peer messages survive a stop).
 - Related: docs/log/125 §4, docs/log/126 §4

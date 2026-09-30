@@ -2,9 +2,9 @@
 
 [English](0105-stop-continues-into-the-queue.md) | 日本語
 
-- 状態: **proposed**（2026-09-30）。実測は [docs/log/127](../log/127-cli-stop-with-queued-input.md)。
+- 状態: **accepted**（2026-09-30）・未実装（#1289）。実測は [docs/log/127](../log/127-cli-stop-with-queued-input.md)。
   2 段階にする形は #1258 の議論での利用者の提案で、その後の実測で、測った場面では claude と codex がそう動くと分かった。
-- Follow-ups: #1282（この決定）、#1256（未測定の CLI）、#1255（再起動を越えて残るキュー）
+- Follow-ups: #1289（実装）、#1256（未測定の CLI）、#1255（再起動を越えて残るキュー）
 - 置き換え: docs/log/27 §12.2-4（「停止の意思はキューに及ぶ」）。[0041](0041-cross-session-messaging.ja.md) の
   補遺 2026-09-30 の決定 1（停止を生き残るのは peer メッセージだけ）を改める。
 - 関連: docs/log/125 §4、docs/log/126 §4
