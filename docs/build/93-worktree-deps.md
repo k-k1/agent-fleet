@@ -99,11 +99,14 @@ size) and 20,719 files on 2026-09-29, in a Workspace without `$AF_WS_SCRATCH`. T
 measurement was 349 MB; the tree grows with the dependencies, so read either number as a
 snapshot.
 
-**The parent clone's tree can be shared by symlink**, with one condition: **the lockfile
-is identical to the parent's** (`cmp -s` the two, then link `node_modules` to the parent's).
+**The parent clone's tree can be shared by symlink**, on two conditions: **the lockfile
+is identical to the parent's** (`cmp -s` the two), and **the parent's tree is really
+installed** (its `node_modules/.package-lock.json` exists). Then link `node_modules` to
+the parent's.
 The commands are not repeated here: AGENTS.md has this repository's, and
-notes/worktrees.md gives every agent the general rule and its hazards. Any `ln -s` recipe
-needs the caveat below on `ecs`.
+notes/worktrees.md gives every agent the general rule and its hazards. Both link with
+`ln -sfT`, never a plain `ln -s`, and only after checking that the parent's
+`node_modules/.package-lock.json` exists — both for the reasons below.
 
 **Measured in 2026-08** in this repository's `console/` (npm 10.9.8, node 22.23.2,
 Vite 7). `console/` has since moved to Vite 8 (`console/package.json`); this chapter did
@@ -124,13 +127,15 @@ not re-run these.
   that worktree no longer shares and carries its own copy.
 
 **Where `af-scratch --auto` has already made `node_modules` a symlink** (a new clone or
-worktree with `$AF_WS_SCRATCH` set, 93.1), the plain `ln -s` in that recipe shares
+worktree with `$AF_WS_SCRATCH` set, 93.1), a plain `ln -s` shares
 nothing: `ln -s <target> node_modules` onto an existing symlink to a directory creates the
 new link *inside* that directory and exits 0. **Measured** with plain directories on 2026-09-29
 (GNU coreutils `ln`). Remove the pre-created link first (`rm -rf node_modules`, no
 slash); `ln -sfT` replaces a symlink and refuses a real directory. If the parent's own
 `node_modules` was relocated the same way, its target is on `/scratch`: after a stop the
-links in `~/repos` remain but point at nothing. A parent cloned without the relocation
+links in `~/repos` remain but point at nothing, and `ln -sfT` onto such a link still exits
+0 — replacing a worktree tree already installed with a dead link — hence the
+`.package-lock.json` check before linking. A parent cloned without the relocation
 (before it existed, or with `AF_WS_SCRATCH_AUTO=0`) keeps its tree in the home.
 
 When the lockfiles differ, do not share — `npm ci --prefer-offline` installs from the
