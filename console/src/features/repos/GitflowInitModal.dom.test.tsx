@@ -194,14 +194,17 @@ describe("GitflowInitModal", () => {
     apiJSON.mockImplementationOnce(async () => ({
       error: { code: "branch_failed", message: "upstream failed" },
       written: [],
-      created: ["develop"],
+      created: ["main", "develop"],
       untracked: ["develop"],
     }));
-    await render([FRESH, { ...FRESH, local: ["main", "develop"] }]);
+    await render([{ ...FRESH, local: [] }, { ...FRESH, local: ["main", "develop"] }]);
     await press();
     const err = document.querySelector(".gitflow-err")?.textContent || "";
     expect(err).toContain(t("gitflow.err_untracked", { err: "upstream failed", branches: "develop" }));
-    expect(document.querySelector(".gitflow-cmd")?.textContent).toBe("git branch --set-upstream-to=origin/develop develop");
+    // main was created whole before develop failed: the summary names every created branch.
+    expect(err).toContain(t("gitflow.err_created", { branches: "main, develop" }));
+    const cmds = [...document.querySelectorAll(".gitflow-cmd")].map((c) => c.textContent);
+    expect(cmds).toEqual(["git branch --set-upstream-to=origin/develop develop"]);
     expect(events).toEqual([]);
   });
 

@@ -113,7 +113,10 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
         // finish it by hand instead of promising a retry fixes it.
         setErr(
           untracked.length
-            ? { text: tr("gitflow.err_untracked", { err: res.message, branches: untracked.join(", ") }), cmds: untracked.map(upstreamCommand) }
+            ? {
+                text: tr("gitflow.err_untracked", { err: res.message, branches: untracked.join(", ") }) + madeNote,
+                cmds: untracked.map(upstreamCommand),
+              }
             : { text: tr("gitflow.err_branch_failed", { err: res.message }) + madeNote },
         );
         return;
