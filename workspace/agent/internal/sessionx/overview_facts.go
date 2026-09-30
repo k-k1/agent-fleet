@@ -95,7 +95,7 @@ func overviewFactsFor(m session.Meta, alive bool) overviewFacts {
 // for, not whatever the map holds by then: a prune and a re-add in between leave a new entry
 // with its own refresh in flight, which this one must neither mark idle nor overwrite.
 func refreshOverviewFacts(e *overviewFactsEntry, m session.Meta, alive bool) {
-	var turns []transcript.Turn
+	var facts overviewFacts
 	ok := false
 	defer func() {
 		// Transcript() runs outside any HTTP handler here, so nothing else would recover a
@@ -112,12 +112,16 @@ func refreshOverviewFacts(e *overviewFactsEntry, m session.Meta, alive bool) {
 		// A failed read keeps what was known: it says nothing about the conversation, and a
 		// card that blanks on a transient error reads as a reset.
 		if ok {
-			e.facts = foldOverviewFacts(turns)
+			e.facts = facts
 		}
 	}()
 	overviewFactsSem <- struct{}{}
 	defer func() { <-overviewFactsSem }()
-	turns, ok = overviewFactsRead(m)
+	turns, read := overviewFactsRead(m)
+	if read {
+		facts = foldOverviewFacts(turns) // inside the recovered region, like the read
+	}
+	ok = read
 }
 
 // pruneOverviewFacts drops the entries of sessions that no longer exist, so the cache cannot
