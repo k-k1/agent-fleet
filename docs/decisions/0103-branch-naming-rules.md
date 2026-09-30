@@ -382,19 +382,24 @@ start` still refused after the keys were written, and a hint telling the person 
 
 - **Saving may create a local branch that tracks an existing origin branch.** For the production and
   development branches, when `refs/heads/<b>` is missing and `refs/remotes/origin/<b>` exists, the
-  Agent runs `git branch --track <b> origin/<b>` before writing any key, under the same per-clone lock.
+  Agent creates `<b>` at origin's commit and sets its upstream to `origin/<b>` (what
+  `git branch --track` does) before writing any key, under the same per-clone lock. The ref is created
+  with `git update-ref <ref> <commit> ""`, which fails when the ref exists, and a failed upstream deletes
+  it again only if it still points where it was created, so a retry makes it whole.
 - **The limits are unchanged in spirit:**
   - it never creates a branch that is not on `origin` (one on neither side is still refused, before
     anything is created);
   - it never switches the checked-out branch, and refuses a branch that is an unborn `HEAD` in any of its worktrees,
-    since creating it would give the work tree a commit it was never checked out at;
-  - it never moves an existing local branch, even one behind or diverged from `origin`'s (no `-f`, so a
-    branch that appears meanwhile makes `git branch` refuse).
+    since creating it would give the work tree a commit it was never checked out at, and refuses
+    to create anything when the worktree list cannot be read;
+  - it never moves an existing local branch, even one behind or diverged from `origin`'s (a branch that
+    appears meanwhile makes the create refuse).
 - **The answer names what was created** (`created`), on success and on failure. A branch that cannot be
   created stops the save before any key is written; a retry skips the branches that now exist.
 - It is still on a person's press only. The dialog says, per field, that saving creates the local
   branch; the command hint is gone. A branch only local stays as it is.
-: the tenant layer (P1)
+
+### Decision 10: the tenant layer (P1)
 
 - The tenant admin keeps a list of rules with `match` in the CP.
 - The Agent polls `GET /internal/branch-rules` every five minutes and keeps the last copy when the CP is

@@ -395,16 +395,55 @@ func TestInitGitflowRefusesUnbornCheckedOutBranch(t *testing.T) {
 	}
 }
 
-// git makes the ref before it writes the upstream: a failed upstream still reports the branch.
-func TestInitGitflowReportsBranchMadeWithoutUpstream(t *testing.T) {
+// A failed upstream takes the new ref back, so the retry makes a tracking branch rather than
+// skipping an untracked one.
+func TestInitGitflowFailedUpstreamLeavesNoBranch(t *testing.T) {
 	dir := newRepo(t)
 	remoteBranch(t, dir, "develop")
-	if err := os.WriteFile(filepath.Join(dir, ".git", "config.lock"), nil, 0o644); err != nil {
+	lock := filepath.Join(dir, ".git", "config.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := InitGitflow(dir, nil, defaultValues())
 	var be *GitflowBranchError
-	if !errors.As(err, &be) || be.Branch != "develop" || !reflect.DeepEqual(be.Created, []string{"develop"}) {
+	if !errors.As(err, &be) || be.Branch != "develop" || len(be.Created) != 0 {
 		t.Fatalf("err = %#v", err)
+	}
+	if refExists(dir, "refs/heads/develop") {
+		t.Error("an untracked develop was left behind")
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	res, err := InitGitflow(dir, nil, defaultValues())
+	if err != nil || !reflect.DeepEqual(res.Created, []string{"develop"}) {
+		t.Fatalf("again: created = %v err = %v", res.Created, err)
+	}
+	if got := upstream(t, dir, "develop"); got != "origin/develop" {
+		t.Errorf("upstream = %q", got)
+	}
+}
+
+// When the worktrees cannot be listed, nothing may be created: an unborn HEAD could go unseen.
+func TestInitGitflowCreatesNothingWhenWorktreesUnreadable(t *testing.T) {
+	dir := newRepo(t)
+	remoteBranch(t, dir, "develop")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+	bin := t.TempDir()
+	shim := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = worktree ] && exit 128; done\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, err = InitGitflow(dir, nil, defaultValues())
+	var be *GitflowBranchError
+	if !errors.As(err, &be) || be.Branch != "develop" || !strings.Contains(be.Error(), "worktrees") {
+		t.Fatalf("err = %#v", err)
+	}
+	if refExists(dir, "refs/heads/develop") || len(configKeys(t, dir)) != 0 {
+		t.Error("something was created or written")
 	}
 }

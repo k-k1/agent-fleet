@@ -271,16 +271,46 @@ func sameKeys(a, b map[string]string) bool {
 
 // unbornHeads is the branches the repository's worktrees have checked out without a commit.
 // A branch without a local ref that a worktree names is unborn there; listing every named
-// branch is enough, since the caller asks only about branches that have no ref.
-func unbornHeads(dir string) map[string]bool {
-	out, _ := gitx.Run(dir, "worktree", "list", "--porcelain")
+// branch is enough, since the caller asks only about branches that have no ref. An error
+// means the check could not be made, and the caller must then create nothing.
+func unbornHeads(dir string) (map[string]bool, error) {
+	out, err := gitx.Run(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
 	heads := map[string]bool{}
 	for _, l := range strings.Split(out, "\n") {
 		if ref, ok := strings.CutPrefix(l, "branch "); ok {
 			heads[ref] = true
 		}
 	}
-	return heads
+	return heads, nil
+}
+
+// createTracking makes refs/heads/<b> at origin/<b>'s commit with origin/<b> as its upstream,
+// the result of `git branch --track`, in two steps so a failure leaves nothing half-made:
+// `git branch` creates the ref before it writes the upstream, and a retry would then skip the
+// branch and leave it untracked. made reports a ref that stayed despite the error.
+func createTracking(dir, b string) (made bool, err error) {
+	ref := "refs/heads/" + b
+	sha, err := gitx.Run(dir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+b+"^{commit}")
+	if err != nil || sha == "" {
+		return false, errors.New("it is not on origin")
+	}
+	// The empty old value makes update-ref refuse a ref that exists, so a branch that appeared
+	// since the caller's check is never moved.
+	if _, err := gitx.Run(dir, "update-ref", "-m", "branch: Created from origin/"+b, ref, sha, ""); err != nil {
+		return false, err
+	}
+	if _, err := gitx.Run(dir, "branch", "--set-upstream-to=refs/remotes/origin/"+b, "--", b); err != nil {
+		// Deleted only while it still points where it was created: someone who moved it since
+		// owns it now.
+		if _, derr := gitx.Run(dir, "update-ref", "-d", ref, sha); derr != nil {
+			return true, fmt.Errorf("%w (the branch was left without an upstream: %v)", err, derr)
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // InitGitflow writes git-flow's keys into dir's config (POST …/gitflow/init). expected is
@@ -322,26 +352,22 @@ func InitGitflow(dir string, expected map[string]string, v GitflowValues) (Gitfl
 		if refExists(dir, "refs/heads/"+b) {
 			continue
 		}
-		if !refExists(dir, "refs/remotes/origin/"+b) {
-			// Deleted by a fetch --prune since the check above.
-			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: errors.New("it is not on origin")}
-		}
 		// An unborn HEAD naming this branch, in any worktree, would be born by the ref: a
 		// switch in all but name, leaving that index and work tree out of step with the commit.
-		if unbornHeads(dir)["refs/heads/"+b] {
+		unborn, err := unbornHeads(dir)
+		if err != nil {
+			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: fmt.Errorf("the worktrees could not be listed: %w", err)}
+		}
+		if unborn["refs/heads/"+b] {
 			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: errors.New("a worktree has it checked out, not yet born")}
 		}
-		// Without -f `git branch` refuses a name that appeared since the check, so an existing
-		// branch is never moved; --track sets the upstream whatever branch.autoSetupMerge says.
-		if _, err := gitx.Run(dir, "branch", "--track", "--", b, "refs/remotes/origin/"+b); err != nil {
-			// git creates the ref before it writes the upstream, so a failure can leave the
-			// branch made without tracking; report it as created rather than hide it.
-			if refExists(dir, "refs/heads/"+b) {
-				res.Created = append(res.Created, b)
-			}
+		made, err := createTracking(dir, b)
+		if made {
+			res.Created = append(res.Created, b)
+		}
+		if err != nil {
 			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: err}
 		}
-		res.Created = append(res.Created, b)
 	}
 	writes := []kv{{"gitflow.prefix.feature", v.Feature}}
 	if v.Bugfix != "" {
