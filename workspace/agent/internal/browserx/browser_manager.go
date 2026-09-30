@@ -92,8 +92,13 @@ type browserPage struct {
 	// committed. Only its load/networkIdle may mark the page ready: the initial
 	// about:blank and the previous document both go network-idle while the next
 	// document is still in flight (measured: ~1 s before a held response).
-	loaderID   string
-	refreshing atomic.Bool
+	loaderID string
+	// committedLoaderID and committedUnreachable describe the document the main
+	// frame last committed. A navigation aborted before its commit leaves that
+	// document live, so the page returns to it rather than to the aborted loader.
+	committedLoaderID    string
+	committedUnreachable bool
+	refreshing           atomic.Bool
 }
 
 func DefaultBrowserManagerConfig() browserManagerConfig {
@@ -627,6 +632,9 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			p.mu.Lock()
 			p.mainFrameID = v.Frame.ID
 			p.loaderID = v.Frame.LoaderID
+			p.committedLoaderID = v.Frame.LoaderID
+			// An error page commits after the loadingFailed that marked it.
+			p.committedUnreachable = p.unreachable
 			if u, err := url.Parse(v.Frame.URL); err == nil && allowedTopLevelBrowserURL(u) {
 				p.url = normalizeLoopbackURL(u).String()
 				p.mu.Unlock()
@@ -655,16 +663,36 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 		var v struct {
 			Type      string `json:"type"`
 			RequestID string `json:"requestId"`
+			Canceled  bool   `json:"canceled"`
 		}
 		if json.Unmarshal(ev.Params, &v) == nil && v.Type == "Document" {
 			p.mu.Lock()
 			isTop := v.RequestID != "" && v.RequestID == p.topRequestID
-			if isTop {
+			if !isTop {
+				p.mu.Unlock()
+				return
+			}
+			if !v.Canceled {
 				p.unreachable = true
+				p.mu.Unlock()
+				p.setState("target-unreachable")
+				return
+			}
+			// Canceled (net::ERR_ABORTED) is a navigation that ended without
+			// replacing the page: a 204, a denied download, window.stop(). The
+			// committed document is still live. A navigation's document request
+			// ID is its loader ID, so a loader that matches neither belongs to a
+			// newer navigation already under way, whose own events end it.
+			restore := p.loaderID == v.RequestID || p.loaderID == p.committedLoaderID
+			if restore {
+				p.topRequestID = ""
+				p.loaderID = p.committedLoaderID
+				p.unreachable = p.committedUnreachable
 			}
 			p.mu.Unlock()
-			if isTop {
-				p.setState("target-unreachable")
+			if restore {
+				p.markLoaded()
+				p.refreshNavigation()
 			}
 		}
 	// Page.loadEventFired is not handled: it names no loader, so it cannot tell
@@ -686,8 +714,9 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 	case "Page.frameStoppedLoading":
 		// A navigation that ends without committing emits no lifecycle event of
 		// its own loader. Network.loadingFailed usually ends it first (measured:
-		// a 204, a denied download, window.stop()); for one that does not, the
-		// main frame stopping is the only sign the page is no longer loading.
+		// a 204, a denied download and window.stop() arrive there as canceled);
+		// for one that does not, the main frame stopping is the only sign the
+		// page is no longer loading.
 		var v struct {
 			FrameID string `json:"frameId"`
 		}

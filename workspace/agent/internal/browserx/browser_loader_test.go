@@ -37,6 +37,17 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			served.Add(1)
 			_, _ = w.Write([]byte(`<!doctype html><title>held</title><a href="/slow">next</a>`))
+		case "/no-content":
+			w.WriteHeader(http.StatusNoContent)
+		case "/download":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Content-Disposition", `attachment; filename="x.bin"`)
+			_, _ = w.Write([]byte("x"))
+		case "/stalled":
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -149,6 +160,36 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 	}
 	next = len(snapshot())
 
+	// A top-level navigation that is aborted without committing leaves the
+	// previous document live: it must end "ready", never "target-unreachable".
+	aborted := func(step, expr string) {
+		t.Helper()
+		from := len(snapshot())
+		evaluate(expr)
+		if !waitFor(10*time.Second, func() bool {
+			recs := snapshot()[from:]
+			return len(recs) > 0 && recs[0].state == "loading" && p.response().State != "loading"
+		}) {
+			t.Fatalf("%s: never left loading: %+v (page %+v)", step, snapshot()[from:], p.response())
+		}
+		time.Sleep(300 * time.Millisecond) // a late event must not flip it either
+		for _, r := range snapshot()[from:] {
+			if r.state == "target-unreachable" {
+				t.Errorf("%s: reported target-unreachable although the document is still live: %+v", step, snapshot()[from:])
+				break
+			}
+		}
+		if got := p.response().State; got != "ready" {
+			t.Errorf("%s: state %q, want ready", step, got)
+		}
+	}
+	aborted("204 No Content", `location.href = '/no-content'`)
+	aborted("denied download", `location.href = '/download'`)
+	aborted("window.stop()", `location.href = '/stalled'; setTimeout(() => window.stop(), 300)`)
+	from := len(snapshot())
+	evaluate(`document.querySelector('a').click()`)
+	next = expectReady("link click after the aborted navigations", from, served.Load()+1)
+
 	// A navigation that fails must end, not stay loading.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -226,4 +267,43 @@ func TestBrowserLoadedStateFollowsTheTrackedLoader(t *testing.T) {
 	expect("a subframe stopping", "loading")
 	event("Page.frameStoppedLoading", `{"frameId":"frame-1"}`)
 	expect("main frame stopped without a commit", "ready")
+
+	loader := func() string {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.loaderID
+	}
+	abort := func(networkID string) {
+		event("Network.loadingFailed", `{"requestId":"`+networkID+`","type":"Document","errorText":"net::ERR_ABORTED","canceled":true}`)
+	}
+	startDocument("L4")
+	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L4","url":"http://127.0.0.1:3000/204","navigationType":"differentDocument"}`)
+	abort("L4")
+	expect("aborted navigation", "ready")
+	if got := loader(); got != "L2" {
+		t.Fatalf("aborted navigation left loader %q tracked, want the committed L2", got)
+	}
+
+	startDocument("L5")
+	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L5","url":"http://127.0.0.1:3000/a","navigationType":"differentDocument"}`)
+	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L6","url":"http://127.0.0.1:3000/b","navigationType":"differentDocument"}`)
+	abort("L5")
+	expect("navigation aborted by a newer one", "loading")
+	if got := loader(); got != "L6" {
+		t.Fatalf("superseded navigation's abort moved the loader to %q, want L6", got)
+	}
+	startDocument("L6")
+	event("Page.frameNavigated", `{"frame":{"id":"frame-1","loaderId":"L6","url":"http://127.0.0.1:3000/b"}}`)
+	event("Page.lifecycleEvent", `{"frameId":"frame-1","loaderId":"L6","name":"load"}`)
+	expect("newer navigation's load", "ready")
+
+	startDocument("L7")
+	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L7","url":"http://127.0.0.1:3000/down","navigationType":"differentDocument"}`)
+	event("Network.loadingFailed", `{"requestId":"L7","type":"Document","errorText":"net::ERR_CONNECTION_REFUSED"}`)
+	expect("connection refused", "target-unreachable")
+	event("Page.frameNavigated", `{"frame":{"id":"frame-1","loaderId":"L7","url":"http://127.0.0.1:3000/down"}}`)
+	startDocument("L8")
+	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L8","url":"http://127.0.0.1:3000/204","navigationType":"differentDocument"}`)
+	abort("L8")
+	expect("aborted navigation over an error page", "target-unreachable")
 }
