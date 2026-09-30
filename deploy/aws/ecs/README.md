@@ -1400,6 +1400,13 @@ only copy that is not in the zone — snapshots are regional.
 - The trigger is the idle-stop reaper, so `AF_IDLE_SWEEP_INTERVAL=0` turns backups off too.
 - The Slots tab shows, per home, how old its newest spare copy is — and says so loudly when
   there is none.
+- **Clean home does not delete them**, and nothing else does as a side effect. A tenant
+  administrator deletes a member's copies on purpose from the member detail (*Delete backups*,
+  audited as `workspace.delete_backups`) — the offboarding step for a home that must not
+  survive anywhere, taken after Clean home: while the home exists, the schedule keeps
+  taking copies of it. Destroying the workspace deletes them too. Clean home itself deletes the
+  home volume and its hibernation snapshots; the member's logins and connections are on EFS
+  and stay.
 
 **Baking the workspace image into the slot AMI: tried, measured, removed.** A slot's root
 volume IS the image cache, so baking the image in does remove the pull (31.8s → **0.185s**,

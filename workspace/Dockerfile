@@ -315,9 +315,9 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.284
+ARG CLAUDE_CODE_VERSION=2.1.285
 ARG OPENCODE_VERSION=1.18.33
-ARG CODEX_VERSION=0.158.0
+ARG CODEX_VERSION=0.159.2
 ARG COPILOT_VERSION=1.0.89
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
@@ -433,9 +433,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.25.0
-ARG KIRO_SHA256_X64=3e924de9697717b99891bb5f7d2a4bd9c768b8bfa1c498b35b3d242948512984
-ARG KIRO_SHA256_ARM64=e5564c94516f8ab745ba92790ec91b0e024d3ab6b41e33bde067d9119679354e
+ARG KIRO_VERSION=2.26.0
+ARG KIRO_SHA256_X64=fad32095530facd3ed28d4210798804d2340373643b69f256492798f9befd479
+ARG KIRO_SHA256_ARM64=8715b1c199fdc3176d929d839398175cab48269db0644ffa6dad5813d64c9817
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
@@ -450,12 +450,12 @@ ARG KIRO_SHA256_ARM64=e5564c94516f8ab745ba92790ec91b0e024d3ab6b41e33bde067d91196
 #   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url（匿名）
 #   curl -s "<manifest_url>" | jq .artifacts.x86_linux,.artifacts.aarch64_linux
 # sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
-# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 358,783,192 B / 320,280,664 B（1.4.1-R4380.1）。
+# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.1-R4380.1
-ARG MUSE_SHA256_X64=0179bbe00a3a36ef60951131821e137d4b9a59ae4d5b8dc3a798221cc507cfa2
-ARG MUSE_SHA256_ARM64=98e87ca384f9b6bd54b493eaf4e83bc7f2638ffdc86d1941e95b6e3385cf0b92
+ARG MUSE_VERSION=1.4.1-R4503.1
+ARG MUSE_SHA256_X64=8b53c9cdbc025bc2d9068bc7016e2c1e51c3a0c608821da17528ad23be900a12
+ARG MUSE_SHA256_ARM64=a6d46239975adac282aa829d2a5bd1cd3119334c18ecfa776d4377daebddb595
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。

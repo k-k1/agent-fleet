@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { useSettingsUI, rememberSettingsSection } from "./store.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -131,6 +132,9 @@ export function SettingsDialog() {
   const costProfile = useCostProfile();
   // Hidden while null (still deciding), so no rail item appears and then disappears.
   const previewAvail = usePreviewAvailable();
+  // The Danger zone holds Recreate and Clean home only, and both need a runtime that can reach
+  // the home (whoami.home_wipe). Hidden until whoami says so, since both destroy data.
+  const homeWipe = useTenantStore((s) => s.whoami?.home_wipe === true);
   const closeSettings = useSettingsUI((s) => s.closeSettings);
   const settingsSection = useSettingsUI((s) => s.settingsSection);
   // Initial section comes from the store (a requested deep-link, else the restored
@@ -199,6 +203,7 @@ export function SettingsDialog() {
                 {g.items
                   .filter(([key]) => key !== "cost" || costProfile?.available)
                   .filter(([key]) => key !== "preview" || previewAvail === true)
+                  .filter(([key]) => key !== "danger" || homeWipe)
                   .map(([key, label]) => (
                     <button
                       key={key}

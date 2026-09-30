@@ -404,6 +404,11 @@ In **⚙ Settings → the "Danger zone" tab** is **"Recreate the workspace"**. I
 container and rebuilds it from the latest image; pressing **"Recreate"** shows a confirmation. What stays and
 what goes is as follows.
 
+Not every deployment offers this tab. Recreating and cleaning home remove files from the home
+itself, and on some deployments the home is out of the control plane's reach
+([ref/deploy-targets](../ref/deploy-targets.md)); there the tab is not shown. Stopping and starting
+the workspace from the workspace bar works everywhere.
+
 - **What is lost** — running sessions, and **cloned repositories (`~/repos`, including uncommitted changes)**.
   `~/repos` is the **only** thing deleted.
 - **What stays** — everything else in your home (`~`) remains. Logins and connections (GitHub / Bitbucket /

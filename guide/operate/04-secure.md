@@ -186,7 +186,10 @@ Take the steps in this order — the first one is what revokes access, the rest 
 1. **Remove the membership** (or take them off the allowlist).
 2. **Stop the workspace** (Admin panel → the member → "Force-stop workspace").
 3. **Clean the home** — only after they have pushed anything they still want. `~/repos` is not
-   recoverable afterwards.
+   recoverable afterwards. It keeps their logins and connections, and on deployments that take
+   backups of homes it keeps those too; "Delete backups" and destroying the workspace remove
+   them. Where the deployment does not offer Clean home, destroying the workspace is the step
+   ([ref/deploy-targets](../ref/deploy-targets.md)).
 
 Two asymmetries are worth knowing *before* somebody leaves rather than after:
 

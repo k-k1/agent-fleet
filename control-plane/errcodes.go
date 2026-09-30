@@ -154,4 +154,10 @@ const (
 	errCodeCivitaiTokenEmpty       = "civitai_token_empty"
 	errCodeCivitaiTokenStoreFailed = "civitai_token_store_failed"
 	errCodeCivitaiTokenPutFailed   = "civitai_token_put_failed"
+
+	// A member's Recreate or Clean home on a deployment whose runtime cannot reach the
+	// workspace home (internal/runtime/home_wipe.go). Its own code because the answer is
+	// "not on this deployment": nothing was stopped, pressing again changes nothing, and the
+	// Console hides both buttons there, so a stale page is the usual way to meet it.
+	errCodeHomeWipeUnsupported = "home_wipe_unsupported"
 )

@@ -1,8 +1,11 @@
 package tenantsrv
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -393,6 +396,12 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 // homes.
 //
 // This widens a permission, so it is always audited: who wiped whose home in which tenant.
+// The wipe and its audit entry do not follow the request: the wipe can outlast the ingress
+// idle timeout on ecs-ec2, and a home erased with no record of who erased it is the one
+// outcome the audit exists to prevent.
+//
+// A runtime that cannot reach the home is refused with home_wipe_unsupported before
+// anything is stopped, and nothing is audited, because nothing happened.
 func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
@@ -420,19 +429,107 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
-	if err := a.cp.CleanHomeByMembership(r.Context(), mem.ID); err != nil {
+	ctx := context.WithoutCancel(r.Context())
+	if err := a.cp.CleanHomeByMembership(ctx, mem.ID); err != nil {
 		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
 			writeAPIErr(w, a.cp.WorkspaceLifecycleLeaseError(err))
+			return
+		}
+		if errors.Is(err, runtime.ErrHomeWipeUnsupported) {
+			writeAPIErr(w, &APIError{http.StatusNotImplemented, "home_wipe_unsupported",
+				"clean home is not available on this deployment: its runtime cannot reach the workspace home"})
 			return
 		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
+	// The erase has happened whatever the audit write does, so a failed write is reported
+	// here rather than turned into a failed answer — but never dropped silently.
+	if err := a.cp.Store().InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 		Action: "workspace.clean_home", Target: ident.UserKey, At: store.NowTS(),
-	})
+	}); err != nil {
+		log.Printf("admin clean-home: %s's home in %s was erased by %s, but the audit entry was not written: %v",
+			ident.UserKey, t.Slug, caller.ID, err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
+}
+
+// HomeBackups (GET /api/admin/tenants/{slug}/members/{key}/home-backups) counts the copies
+// the runtime keeps of a member's home outside it (ecs-ec2's backup snapshots). Clean home
+// leaves them on purpose, so an administrator finishing an offboarding has to be able to
+// see that they exist before deciding to delete them. tenant_admin, like clean-home.
+func (a Admin) HomeBackups(w http.ResponseWriter, r *http.Request) {
+	_, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	mem, _, _, aerr := a.cp.ResolveMember(r, t.Slug, r.PathValue("key"))
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	b, supported, err := a.cp.HomeBackupsByMembership(r.Context(), mem.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !supported {
+		writeAPIErr(w, homeBackupsUnsupported())
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
+
+// DeleteHomeBackups (DELETE /api/admin/tenants/{slug}/members/{key}/home-backups) deletes
+// those copies: the deliberate step Clean home leaves out, for a home that must not
+// survive anywhere. tenant_admin, the same gate as clean-home, and audited with how many
+// copies went. As in CleanHome, the deletion and its audit entry do not follow the
+// request, and copies deleted before a failure are still audited. While the home itself
+// still exists, the tenant's backup schedule goes on taking copies of it; an offboarding
+// cleans the home first.
+func (a Admin) DeleteHomeBackups(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	caller, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	mem, _, _, aerr := a.cp.ResolveMember(r, t.Slug, key)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	n, supported, err := a.cp.DeleteHomeBackupsByMembership(ctx, mem.ID)
+	if !supported && err == nil {
+		writeAPIErr(w, homeBackupsUnsupported())
+		return
+	}
+	// Audited when something was deleted, and only then: a request that found nothing to
+	// delete changed nothing.
+	if n > 0 {
+		detail := fmt.Sprintf("backup copies of the home deleted: %d", n)
+		if err != nil {
+			detail += "; the rest failed: " + err.Error()
+		}
+		if aerr := a.cp.Store().InsertAudit(ctx, store.AuditLog{
+			ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+			Action: "workspace.delete_backups", Target: key, Detail: detail, At: store.NowTS(),
+		}); aerr != nil {
+			log.Printf("admin delete-backups: %d of %s's backups in %s were deleted by %s, but the audit entry was not written: %v",
+				n, key, t.Slug, caller.ID, aerr)
+		}
+	}
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n, "tenant": t.Slug})
+}
+
+func homeBackupsUnsupported() *APIError {
+	return &APIError{http.StatusNotImplemented, "home_backups_unsupported",
+		"this deployment keeps no backup copies of workspace homes"}
 }
 
 // DestroyWorkspace (DELETE /api/admin/workspaces {tenant_slug,user_key}) is the
