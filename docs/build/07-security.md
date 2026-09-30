@@ -45,10 +45,13 @@ at once**:
   `AGENT_TOKEN` and DEK, attaches home volumes, runs shell commands on the slots over
   `ssm:SendCommand`, and (with the engines stack) buys GPU instances. `SendCommand` is
   limited to the `AWS-RunShellScript` document on instances tagged with this pool's
-  `af-pool` and `af-role=slot`, so a CP bug cannot reach other instances in the
-  account, engine boxes included ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)).
-  Against a compromised CP that fence is thin: `Ec2SlotPool` grants `ec2:CreateTags`
-  on `Resource: "*"`, and the tags are what the fence reads.
+  `af-pool` and `af-role=slot`. While those tags stay correct, a CP bug that picks the
+  wrong target cannot send a shell command to an instance outside that set, engine
+  boxes included ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)). That is
+  all the fence does. `Ec2SlotPool` grants `ec2:CreateTags` on `Resource: "*"` with no
+  condition, so a tagging bug or a compromised CP can retag any instance into the pool,
+  and the same statement's instance and volume actions (stop, terminate, detach, …)
+  have no fence at all.
 - On every target it unwraps the DEKs and injects them in plaintext (§7.6).
 
 It does not spread between companies, because those are separate deployments — which is
