@@ -16,8 +16,18 @@ import (
 // smokeEnv wires the real route table (buildMux) to a real SQLite store in dev
 // auth mode — no docker / agent involved. docs/log/23 P0-2: these are the regression
 // detectors for handler moves; they assert status + known JSON keys, not shapes.
+//
+// Every env-conditional registration is pinned off (routeSwitches), so the table does not
+// depend on the caller's environment; smokeEnvWith switches named ones on.
 func smokeEnv(t *testing.T) (config, *http.ServeMux) {
 	t.Helper()
+	return smokeEnvWith(t)
+}
+
+// smokeEnvWith is smokeEnv with the named routeSwitches turned on.
+func smokeEnvWith(t *testing.T, on ...string) (config, *http.ServeMux) {
+	t.Helper()
+	setRouteSwitches(t, on...)
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {

@@ -729,10 +729,10 @@ func TestCivitaiPaginationUsesMetadataCursor(t *testing.T) {
 
 // 🔴 Looking at what exists must not depend on having an engine, or on its being switched on.
 //
-// The WIRING half of this is pinned by `testdata/routes.golden`, which is taken with no engine
-// table: these routes appear in it only because they are registered outside
-// registerEngineRoutes' `if reg == nil` guard. Re-nesting them puts the golden back to 440
-// routes, which is what made the panel answer 404 on a deployment without 60-engines.
+// The WIRING half of this is pinned by TestRouteTableConditionalRoutesAreKnown, whose all-off
+// table has no engine: these routes appear in it only because they are registered outside
+// registerEngineRoutes' `if reg == nil` guard. Re-nesting them drops them from that table,
+// which is what made the panel answer 404 on a deployment without 60-engines.
 //
 // Two different deployments hit this: one that has not adopted 60-engines at all (the panel is
 // empty, and "there is nothing here" is the worst answer to "what could I run?"), and one that

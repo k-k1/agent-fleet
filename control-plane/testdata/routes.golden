@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
-# ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 560
+# ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).
+# count: 566
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -479,6 +479,8 @@ GET /api/tts/speakers
 GET /api/tts/status
 POST /api/tts/synthesize
 POST /api/tts/wake
+POST /api/update/apply
+GET /api/update/status
 GET /api/usage/me/hourly
 GET /api/usage/series
 GET /api/user-notes
@@ -510,6 +512,8 @@ GET /brand/icon-192.png
 GET /brand/icon-512.png
 GET /brand/icon-maskable-192.png
 GET /brand/icon-maskable-512.png
+GET /engine/{key}/props
+ANY /engine/{key}/v1/{path...}
 ANY /git/{slug}/{repo...}
 GET /git/{slug}/{repo}/info/lfs/locks
 POST /git/{slug}/{repo}/info/lfs/locks
@@ -523,6 +527,8 @@ GET /internal/aws-profiles
 GET /internal/docs
 POST /internal/egress
 GET /internal/egress/policy
+GET /internal/engine/catalog
+POST /internal/engine/token
 POST /internal/git-oauth/bitbucket/refresh
 POST /internal/git-oauth/jira/refresh
 GET /internal/mcp-servers
