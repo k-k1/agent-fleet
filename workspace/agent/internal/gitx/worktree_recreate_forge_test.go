@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // squashMerged gives origin a branch with one commit, publishes it as refs/pull/<pr>/head the
@@ -302,38 +303,60 @@ func TestResolveRecreateMergedTwicePrefersNewest(t *testing.T) {
 	offline := func(oldSHA string) RecreateCandidate {
 		return RecreateCandidate{Source: RecreateMerged, Branch: "reused", SHA: oldSHA, PR: 7}
 	}
-	t.Run("forge has the same merge", func(t *testing.T) {
-		parent, oldSHA, _ := setup(t)
-		fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(7, oldSHA, "2026-09-10T00:00:00Z")}})
+	// GitHub lists by creation, not by merge: a pull request opened earlier can be merged
+	// later, and the latest merge wins wherever it sits in the list.
+	t.Run("forge newest merge listed later", func(t *testing.T) {
+		parent, oldSHA, newSHA := setup(t)
+		hits := fakeGitHub(t, map[string][]map[string]any{"o:reused": {
+			merged(11, strings.Repeat("e5", 20), "2026-09-01T00:00:00Z"), merged(9, newSHA, "2026-09-20T00:00:00Z"),
+			merged(7, oldSHA, "2026-09-10T00:00:00Z")}})
+		if c, want := resolve(t, parent), (RecreateCandidate{Source: RecreateMerged, Branch: "reused", SHA: newSHA, PR: 9}); c != want {
+			t.Errorf("candidate = %+v, want %+v", c, want)
+		}
+		if n := hits.Load(); n != 1 {
+			t.Errorf("forge asked %d times, want 1", n)
+		}
+	})
+	// keepsOffline also shows the forge was really asked, and that an answer not newer than
+	// the merge commit is never fetched.
+	keepsOffline := func(t *testing.T, parent, oldSHA, newSHA string, hits *atomic.Int32) {
+		t.Helper()
 		if c := resolve(t, parent); c != offline(oldSHA) {
 			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
 		}
+		if n := hits.Load(); n != 1 {
+			t.Errorf("forge asked %d times, want 1", n)
+		}
+		if commitExists(parent, newSHA) {
+			t.Error("the forge's head was fetched although the offline answer stands")
+		}
+	}
+	t.Run("forge has the same merge", func(t *testing.T) {
+		parent, oldSHA, newSHA := setup(t)
+		hits := fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(7, oldSHA, "2026-09-10T00:00:00Z")}})
+		keepsOffline(t, parent, oldSHA, newSHA, hits)
 	})
 	t.Run("forge older", func(t *testing.T) {
 		parent, oldSHA, newSHA := setup(t)
-		fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(9, newSHA, "2026-09-01T00:00:00Z")}})
-		if c := resolve(t, parent); c != offline(oldSHA) {
-			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
-		}
+		hits := fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(9, newSHA, "2026-09-01T00:00:00Z")}})
+		keepsOffline(t, parent, oldSHA, newSHA, hits)
 	})
 	t.Run("forge merged_at unreadable", func(t *testing.T) {
 		parent, oldSHA, newSHA := setup(t)
-		fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(9, newSHA, "yesterday")}})
-		if c := resolve(t, parent); c != offline(oldSHA) {
-			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
-		}
+		hits := fakeGitHub(t, map[string][]map[string]any{"o:reused": {merged(9, newSHA, "yesterday")}})
+		keepsOffline(t, parent, oldSHA, newSHA, hits)
 	})
 	t.Run("forge error", func(t *testing.T) {
-		parent, oldSHA, _ := setup(t)
+		parent, oldSHA, newSHA := setup(t)
+		var hits atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
 			http.Error(w, "boom", http.StatusInternalServerError)
 		}))
 		t.Cleanup(srv.Close)
 		fakeGitHub(t, nil)
 		githubAPIBase = srv.URL
-		if c := resolve(t, parent); c != offline(oldSHA) {
-			t.Errorf("candidate = %+v, want %+v", c, offline(oldSHA))
-		}
+		keepsOffline(t, parent, oldSHA, newSHA, &hits)
 	})
 	t.Run("no connection", func(t *testing.T) {
 		parent, oldSHA, newSHA := setup(t)
@@ -346,4 +369,31 @@ func TestResolveRecreateMergedTwicePrefersNewest(t *testing.T) {
 			t.Error("the forge was asked without a token")
 		}
 	})
+}
+
+// The latest merge is chosen across pages: a later page can hold a pull request merged after
+// every one on the first, and an unreadable merged_at ranks below any readable one.
+func TestGitHubMergedPRPicksLatestMergeAcrossPages(t *testing.T) {
+	late := strings.Repeat("a7", 20)
+	var list []map[string]any
+	for i := 0; i < githubPullsPerPage; i++ {
+		p := pullJSON(1000-i, "sq", strings.Repeat("0e", 20), true)
+		p["merged_at"] = "2026-09-01T00:00:00Z"
+		if i == 0 {
+			p["merged_at"] = "not a date"
+		}
+		list = append(list, p)
+	}
+	p := pullJSON(10, "sq", late, true)
+	p["merged_at"] = "2026-09-20T00:00:00Z"
+	list = append(list, p)
+	hits := fakeGitHub(t, map[string][]map[string]any{"o:sq": list})
+
+	sha, pr, at := githubMergedPR(context.Background(), "tok", "o/r", "sq")
+	if sha != late || pr != 10 || !at.Equal(time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("githubMergedPR = %s, %d, %v; want %s, 10, 2026-09-20", sha, pr, at, late)
+	}
+	if n := hits.Load(); n != 2 {
+		t.Errorf("pages asked = %d, want 2", n)
+	}
 }

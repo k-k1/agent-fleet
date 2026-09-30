@@ -80,9 +80,9 @@ func (f *mergedPRFinder) close() {
 // head returns the head commit of the newest merged pull request from branch, fetching it
 // from origin when the object is not in the repository, plus the pull request number; "" when
 // there is none or the forge cannot be asked. With after set (the offline merge commit's
-// date), a pull request counts only when it was merged strictly later: the merge commit's
-// own pull request carries its date, and an unreadable merged_at is no reason to override a
-// good offline answer.
+// date), the latest merged pull request counts only when it was merged strictly later: the
+// merge commit's own pull request carries its date, and an unreadable merged_at is no reason
+// to override a good offline answer.
 func (f *mergedPRFinder) head(branch string, after time.Time) (string, int) {
 	if !f.resolved {
 		f.resolved = true
@@ -97,14 +97,8 @@ func (f *mergedPRFinder) head(branch string, after time.Time) (string, int) {
 		return "", 0
 	}
 	sha, pr, mergedAt := githubMergedPR(f.ctx, f.token, f.repo, branch)
-	if sha == "" {
+	if sha == "" || (!after.IsZero() && !mergedAt.After(after)) {
 		return "", 0
-	}
-	if !after.IsZero() {
-		t, err := time.Parse(time.RFC3339, mergedAt)
-		if err != nil || !t.After(after) {
-			return "", 0
-		}
 	}
 	if !commitExists(f.dir, sha) {
 		// The branch was never fetched here, or its objects went with it. GitHub keeps every
@@ -141,18 +135,25 @@ func sameOriginRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// githubMergedPR finds the newest merged pull request whose head is branch in repo itself (a
-// fork's branch, or one whose repository is gone and so cannot be shown to be repo's, is not
-// the one this working copy pushed), and its merged_at as sent. GitHub lists newest first.
-func githubMergedPR(ctx context.Context, token, repo, branch string) (string, int, string) {
+// githubMergedPR finds the most recently merged pull request whose head is branch in repo
+// itself (a fork's branch, or one whose repository is gone and so cannot be shown to be
+// repo's, is not the one this working copy pushed), and when it was merged. GitHub lists by
+// creation, and a pull request opened earlier can be merged later, so every page is read
+// rather than stopping at the first merged one. An unreadable merged_at ranks below every
+// readable one and comes back as the zero time. A page that fails ends the scan with what the
+// earlier pages found.
+func githubMergedPR(ctx context.Context, token, repo, branch string) (string, int, time.Time) {
 	owner, _, ok := splitRepo(repo)
 	if !ok {
-		return "", 0, ""
+		return "", 0, time.Time{}
 	}
+	var sha string
+	var num int
+	var at time.Time
 	for page := 1; page <= githubPullsPages; page++ {
 		prs, ok := githubClosedPullsPage(ctx, token, repo, owner+":"+branch, page)
 		if !ok {
-			return "", 0, ""
+			break
 		}
 		for _, p := range prs {
 			if p.MergedAt == nil || *p.MergedAt == "" || p.Number <= 0 || p.Head.Ref != branch || !isHexSHA(p.Head.SHA) {
@@ -161,13 +162,16 @@ func githubMergedPR(ctx context.Context, token, repo, branch string) (string, in
 			if p.Head.Repo == nil || !strings.EqualFold(p.Head.Repo.FullName, repo) {
 				continue
 			}
-			return p.Head.SHA, p.Number, *p.MergedAt
+			t, _ := time.Parse(time.RFC3339, *p.MergedAt)
+			if sha == "" || t.After(at) {
+				sha, num, at = p.Head.SHA, p.Number, t
+			}
 		}
 		if len(prs) < githubPullsPerPage {
 			break
 		}
 	}
-	return "", 0, ""
+	return sha, num, at
 }
 
 type githubPull struct {
