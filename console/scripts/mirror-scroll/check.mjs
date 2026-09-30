@@ -65,6 +65,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //                    and its work trace folds (#1396). `complete-plain` (no live block) is the
 //                    completion anchor: parked at the final answer's first line. `complete-live`
 //                    (the answer streamed into view) must stay at the bottom instead.
+//                    `complete-midprose` (narration streamed, then more tools, then the answer
+//                    landed in one go) is the anchor again: nothing of the answer was seen.
 const SCENARIOS = [
   { name: "long", turns: 200, images: 3, imgdelay: 3000, mermaid: 0 },
   { name: "mermaid", turns: 12, images: 0, imgdelay: 0, mermaid: 3 },
@@ -75,8 +77,9 @@ const SCENARIOS = [
   { name: "typing", turns: 60, images: 0, imgdelay: 0, mermaid: 0, mode: "typing" },
   { name: "working", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "working", working: true },
   { name: "live", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "live", working: true, live: true },
-  { name: "complete-plain", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, late: true, expectBottom: false },
-  { name: "complete-live", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, live: true, late: true, expectBottom: true },
+  { name: "complete-plain", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, late: "answer", expectBottom: false, expectLive: false },
+  { name: "complete-live", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, live: true, late: "answer", expectBottom: true, expectLive: true },
+  { name: "complete-midprose", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "complete", working: true, live: true, late: "midprose", expectBottom: false, expectLive: true },
   // 120 turns = 240 jsonl lines served 120 at a time, so the tail page is 60 turns: enough height
   // for the prepend to matter, little enough to read up through within a scenario's time budget.
   { name: "paging", turns: 120, images: 0, imgdelay: 0, mermaid: 0, mode: "paging", paging: true, pagesize: 120 },
@@ -581,14 +584,24 @@ async function runLive(cdp) {
   };
 }
 
-// complete: a reply arrives while the reader watches (--late), streams, and completes on the
-// stub's idle round, which folds its work trace. Without a live block the mirror parks the reader
-// at the final answer's first line (the completion anchor: they saw nothing of the answer until
-// now). With the answer streamed into view (--live) that same scroll is the defect of #1396 — the
-// reader was reading the tail — so the view must stay at the bottom. Both are asserted from the
-// same run shape, with expectBottom deciding which.
-async function runComplete(cdp, expectBottom) {
-  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+// complete: a reply arrives while the reader watches (--late), streams, and completes, which
+// folds its work trace. Without a live block the mirror parks the reader at the final answer's
+// first line (the completion anchor: they saw nothing of the answer until now). With the answer
+// streamed into view (--live, --late answer) that same scroll is the defect of #1396 — the reader
+// was reading the tail — so the view must stay at the bottom. With only narration streamed and
+// the answer landing in one go after more tools (--late midprose) the anchor applies again. The
+// arrival order is asserted too: the live block must be seen while the answer's row is not yet
+// there (the real Agent's order), or a build that keys on "some live text was seen" would pass.
+async function runComplete(cdp, { expectBottom, expectLive }) {
+  // Under the CPU throttle the left pane can still be booting after the 5 s the caller waited
+  // (seen: 3 runs in a row failing here while the same stub shape rendered fine), so give it a
+  // few more seconds instead of failing the run.
+  let opened = await cdp.ev(OPEN_SESSION);
+  for (let i = 0; i < 20 && opened !== "ok"; i++) {
+    await sleep(500);
+    opened = await cdp.ev(OPEN_SESSION);
+  }
+  if (opened !== "ok") throw new Error("could not find the session row in the left pane");
   // Scroll anchoring off, as in the other mid-turn scenarios — and here it is not optional: with it
   // on, headless Chromium walks the completion anchor's own scrollTop write back to the bottom
   // (measured: gap 0 in 3/3 runs, where the same build parks the reader with anchoring off), so a
@@ -599,13 +612,23 @@ async function runComplete(cdp, expectBottom) {
     await sleep(250);
     before = await cdp.ev(PROBE);
   }
-  // Wait for the reply to arrive (poll 1), the idle that follows to fold it (poll 2) and the view to settle.
+  // Watch the reply arrive and complete: whether the live block was on screen before the final
+  // answer's row landed, then the fold.
+  const ANSWER_LANDED = `(() => {
+    const t = [...document.querySelectorAll(".mirror-body [data-turn-idx]")];
+    return !!t.length && t[t.length - 1].textContent.includes("最終 7 番目の応答");
+  })()`;
   let folded = false;
-  for (let i = 0; i < 20 && !folded; i++) {
-    await sleep(1000);
+  let liveBeforeAnswer = false;
+  let liveEver = false;
+  for (let i = 0; i < 50 && !folded; i++) {
+    await sleep(400);
+    const live = await cdp.ev(`!!document.querySelector(".mirror-live")`);
+    liveEver = liveEver || live;
+    if (live && !(await cdp.ev(ANSWER_LANDED))) liveBeforeAnswer = true;
     folded = await cdp.ev(LIVE_FOLDED);
   }
-  if (!folded) throw new Error("the live reply never folded (no idle round?)");
+  if (!folded) throw new Error("the live reply never folded (never completed?)");
   await sleep(1500);
   const p = await cdp.ev(PROBE);
   const answerTop = await cdp.ev(`(() => {
@@ -620,10 +643,11 @@ async function runComplete(cdp, expectBottom) {
   // nothing compensates that (measured: 555px). What matters is that it is in view and the
   // reader is off the bottom, not the px.
   const parked = answerTop !== null && answerTop >= -40 && answerTop <= 720;
-  const ok = before.turns > 0 && p.work > 0 && (expectBottom ? atBottom && !p.jump : parked && !atBottom);
+  const orderOk = expectLive ? liveBeforeAnswer : !liveEver;
+  const ok = before.turns > 0 && p.work > 0 && orderOk && (expectBottom ? atBottom && !p.jump : parked && !atBottom);
   return {
     ok,
-    note: `${before.turns}→${p.turns} turns, folded traces=${p.work}  gap=${p.gap}px answerTop=${answerTop}px jump=${p.jump}  expected ${expectBottom ? "at the bottom" : "parked at the answer"}`,
+    note: `${before.turns}→${p.turns} turns, folded traces=${p.work}  live before answer=${liveBeforeAnswer} (ever ${liveEver})  gap=${p.gap}px answerTop=${answerTop}px jump=${p.jump}  expected ${expectBottom ? "at the bottom" : "parked at the answer"}`,
   };
 }
 
@@ -771,7 +795,7 @@ async function runScenario(sc, chrome) {
     "--turns", String(sc.turns), "--images", String(sc.images), "--imgdelay", String(sc.imgdelay),
     "--mermaid", String(sc.mermaid), "--shared", sc.shared ? "1" : "0",
     "--paging", sc.paging ? "1" : "0", "--pagesize", String(sc.pagesize || 400),
-    "--working", sc.working ? "1" : "0", "--live", sc.live ? "1" : "0", "--late", sc.late ? "1" : "0", "--split", sc.split ? "1" : "0", "--asks", String(sc.asks || 1), "--longans", String(sc.longans || 1)], { stdio: ["ignore", "ignore", "inherit"] });
+    "--working", sc.working ? "1" : "0", "--live", sc.live ? "1" : "0", "--late", sc.late || "0", "--split", sc.split ? "1" : "0", "--asks", String(sc.asks || 1), "--longans", String(sc.longans || 1)], { stdio: ["ignore", "ignore", "inherit"] });
   try {
     await fetchJSON(`${BASE}api/whoami`);
     const results = [];
@@ -810,7 +834,7 @@ async function runScenario(sc, chrome) {
         : sc.mode === "typing" ? await runTyping(cdp)
         : sc.mode === "working" ? await runWorking(cdp)
         : sc.mode === "live" ? await runLive(cdp)
-        : sc.mode === "complete" ? await runComplete(cdp, !!sc.expectBottom)
+        : sc.mode === "complete" ? await runComplete(cdp, { expectBottom: !!sc.expectBottom, expectLive: !!sc.expectLive })
         : sc.mode === "paging" ? await runPaging(cdp)
         : sc.mode === "readup" ? await runReadUp(cdp)
         : await runLanding(cdp);

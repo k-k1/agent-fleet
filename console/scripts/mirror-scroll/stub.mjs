@@ -53,11 +53,18 @@ const WORKING = arg("working", "0") === "1";
 // scenario's body is unchanged.
 const LIVE = arg("live", "0") === "1";
 // With --working, hold the live reply back from the opening fetch so it ARRIVES while the reader
-// is watching (poll 1), and then let it COMPLETE for good: idle from poll 2 on, parts frozen. A
-// reply already on screen at open is never completion-anchored (the mirror marks it seen at its
-// first settle), and the plain working scenario's idle lasts one round, so without this the
-// completion anchor is unreachable here.
-const LATE = arg("late", "0") === "1";
+// is watching, and then let it COMPLETE for good (idle, parts frozen). A reply already on screen
+// at open is never completion-anchored (the mirror marks it seen at its first settle), and the
+// plain working scenario's idle lasts one round, so without this the completion anchor is
+// unreachable here. Two arrival orders, both the real Agent's — liveText is text NOT yet in the
+// transcript, and lands as a row a poll later:
+//   answer   - poll 1: the reply row with its work trace, liveText = the final answer being
+//              written; poll 2: the answer lands, idle.
+//   midprose - poll 1: the row with its first tool, liveText = a line of narration; poll 2: that
+//              narration lands and MORE tools follow, nothing streams; poll 3: the final answer
+//              lands in one go (never streamed), idle.
+const LATE = (() => { const v = arg("late", "0"); return v === "0" ? "" : v === "1" ? "answer" : v; })();
+const LATE_DONE = LATE === "midprose" ? 3 : 2; // the poll from which the reply is complete
 const liveTextAt = (n) =>
   Array.from({ length: n + 2 }, (_, i) => `${i + 1}. 入力検証の規則を 1 つずつ見直しています（${i + 1} 行目）`).join("\n");
 const WORK_ROWS = Number(arg("workrows", 30)); // tool+text pairs in that live trace
@@ -195,8 +202,20 @@ function messages(session, q) {
   // transcript (awaitingReply is false).
   // "idle" spelled out, not "": the mirror only takes a status it was actually sent
   // (`if (d.status)`), so an empty string leaves the previous one standing.
-  const status = WORKING ? ((LATE ? n >= 2 : n === 2) ? "idle" : "working") : "";
-  const partsAt = LATE ? Math.min(n, 2) : n; // a completed reply stops growing
+  const status = WORKING ? ((LATE ? n >= LATE_DONE : n === 2) ? "idle" : "working") : "";
+  // The late reply's parts at poll n (see LATE), frozen once complete.
+  const lateParts = () => {
+    if (n >= LATE_DONE) return LIVE_WORK;
+    if (LATE === "midprose") return n === 1 ? [LIVE_WORK[0]] : LIVE_WORK.slice(0, -1);
+    return LIVE_WORK.slice(0, -1); // answer: the trace, its final answer still being written
+  };
+  // What is being written at poll n, i.e. text not in the transcript yet.
+  const lateLive = () => {
+    if (n < 1 || n >= LATE_DONE) return null;
+    if (LATE === "midprose") return n === 1 ? LIVE_WORK[1].text : null;
+    return LIVE_WORK[LIVE_WORK.length - 1].text;
+  };
+  const liveNow = LATE ? lateLive() : liveTextAt(n);
   const body = {
     name: session, cursor: LINES, status, alive: true,
     mode: "Default", tasks: [], pendingQuestions: null,
@@ -205,13 +224,13 @@ function messages(session, q) {
     // Repeating firstLine:0/hasMore:false on every poll (which this used to do) wipes out what the
     // tail reply just advertised, one poll after it arrived — there is then nothing above to load.
     ...(PAGING ? {} : { firstLine: 0, hasMore: false }),
-    ...(LIVE && status === "working" && q.get("live") === "1" ? { liveText: liveTextAt(n) } : {}),
+    ...(LIVE && status === "working" && q.get("live") === "1" && liveNow ? { liveText: liveNow } : {}),
   };
   // Line indices must differ per session (a real jsonl's do), or switching sessions would
   // reuse the previous one's anchored reply idx and mask a bug.
   const off = session === "sk4rq2f" ? 0 : 1000;
   const all = (off ? TURNS_BODY.map((t) => ({ ...t, idx: t.idx + off })) : TURNS_BODY).map((t) =>
-    WORKING && t.idx === off + LINES - 1 ? { ...t, parts: livePartsAt(partsAt) } : t,
+    WORKING && t.idx === off + LINES - 1 ? { ...t, parts: LATE ? lateParts() : livePartsAt(n) } : t,
   );
   // The turns a reader sees: with --late the opening fetch stops short of the live reply, whose
   // prompt is then the newest thing; the reply itself comes with the first incremental poll.
