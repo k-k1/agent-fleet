@@ -400,14 +400,30 @@ func mcpStdioDiscoverResult() map[string]any {
 	}
 }
 
+// mcpStdioInstructions summarises the surface mcpStdioToolList advertises, from the same
+// capability flags, so a model reading it is not told a narrower story than the tool list. It
+// reads flags only: image generation and the studio are decided by a live loopback call per
+// tools/list, so they are named as conditional rather than probed here. Keep it short — it is
+// in every session's context.
 func mcpStdioInstructions() string {
-	if selfReportOnly() {
-		if sessionChromiumEnabled() {
-			return "Agent Fleet の対話セッション用ローカル MCP。自分の完了申告と Chromium Attach View の引き渡しだけを提供する。"
+	if !selfReportOnly() {
+		if writeEnabled() {
+			return "Agent Fleet local MCP for the assistant: observe and steer the sessions in your own Workspace."
 		}
-		return "Agent Fleet の対話セッション用ローカル MCP。自分の完了申告だけを提供する。"
+		return "Agent Fleet local MCP for the assistant: observe the sessions in your own Workspace."
 	}
-	return "Agent Fleet のアシスタント用ローカル MCP。自分の Workspace のセッションを観測し、--write のときは操縦もする。"
+	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user"}
+	if sessionChromiumEnabled() {
+		parts = append(parts, "Chromium hand-off to the user")
+	}
+	if mcpPeerMessagingEnabled {
+		parts = append(parts, "messages to peer sessions")
+	}
+	if mcpFleetSpawnEnabled {
+		parts = append(parts, "starting and steering your own child sessions")
+	}
+	return "Agent Fleet local MCP for this session's own tools: " + strings.Join(parts, ", ") +
+		"; image generation and image-studio tools when available to this session."
 }
 
 // mcpStdioToolList is the advertised tool set. The assistant surface gets read-only
