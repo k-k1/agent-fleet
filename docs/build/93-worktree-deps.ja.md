@@ -92,7 +92,7 @@ Tool caches——は notes/environment.md の "Disk" が扱う。これらのキ
 **親クローンの実体を symlink で共有できる**。条件は 1 つ、**lockfile が親と同一**であること
 （2 つを `cmp -s` で比べ、`node_modules` を親のものへリンクする）。コマンドはここには繰り返さない:
 このレポのコマンドは AGENTS.md に、すべてのエージェントが受け取る一般則とその危険は
-notes/worktrees.md にある。`ln -s` を使う手順はどれも `ecs` では下の注意が要る。
+notes/worktrees.md にある。どちらも素の `ln -s` ではなく `ln -sfT` で張る（理由は下記）。
 
 **2026-08 の実測**（このレポの `console/`・npm 10.9.8 / node 22.23.2 / Vite 7 系）。`console/` は
 その後 Vite 8 系に上がっており（`console/package.json`）、本書ではこれらを測り直していない。
@@ -111,7 +111,7 @@ notes/worktrees.md にある。`ln -s` を使う手順はどれも `ecs` では�
   共有をやめて自前のコピーを抱える。
 
 **`af-scratch --auto` が `node_modules` を既に symlink にしている場合**（`$AF_WS_SCRATCH` がある環境の
-新しい clone か worktree、93.1）、その手順の素の `ln -s` は何も共有しない。ディレクトリを指す既存の
+新しい clone か worktree、93.1）、素の `ln -s` は何も共有しない。ディレクトリを指す既存の
 symlink に対して `ln -s <target> node_modules` を打つと、新しいリンクはそのディレクトリの*中*に作られ、終了コードは 0 に
 なる。**実測**（2026-09-29・素のディレクトリで・GNU coreutils の `ln`）。先に作られたリンクを外してから
 張ること（`rm -rf node_modules`、スラッシュ無し）。`ln -sfT` は symlink なら置き換え、実体ディレクトリ

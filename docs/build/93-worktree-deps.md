@@ -102,8 +102,8 @@ snapshot.
 **The parent clone's tree can be shared by symlink**, with one condition: **the lockfile
 is identical to the parent's** (`cmp -s` the two, then link `node_modules` to the parent's).
 The commands are not repeated here: AGENTS.md has this repository's, and
-notes/worktrees.md gives every agent the general rule and its hazards. Any `ln -s` recipe
-needs the caveat below on `ecs`.
+notes/worktrees.md gives every agent the general rule and its hazards. Both link with
+`ln -sfT`, never a plain `ln -s`, for the reason below.
 
 **Measured in 2026-08** in this repository's `console/` (npm 10.9.8, node 22.23.2,
 Vite 7). `console/` has since moved to Vite 8 (`console/package.json`); this chapter did
@@ -124,7 +124,7 @@ not re-run these.
   that worktree no longer shares and carries its own copy.
 
 **Where `af-scratch --auto` has already made `node_modules` a symlink** (a new clone or
-worktree with `$AF_WS_SCRATCH` set, 93.1), the plain `ln -s` in that recipe shares
+worktree with `$AF_WS_SCRATCH` set, 93.1), a plain `ln -s` shares
 nothing: `ln -s <target> node_modules` onto an existing symlink to a directory creates the
 new link *inside* that directory and exits 0. **Measured** with plain directories on 2026-09-29
 (GNU coreutils `ln`). Remove the pre-created link first (`rm -rf node_modules`, no
