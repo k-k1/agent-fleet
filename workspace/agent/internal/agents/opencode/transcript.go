@@ -143,7 +143,8 @@ func LiveState(m session.Meta) string {
 		return "idle" // no conversation yet — sitting at the composer
 	}
 	var data []byte
-	switch err := db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data); {
+	var touched int64 // the newest message's last write, in the store's epoch millis
+	switch err := db.QueryRow(`SELECT data, MAX(time_created, COALESCE(time_updated, 0)) FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data, &touched); {
 	case errors.Is(err, sql.ErrNoRows):
 		return "idle" // a conversation with no messages yet — genuinely at the composer
 	case err != nil:
@@ -159,6 +160,15 @@ func LiveState(m session.Meta) string {
 		return "" // message payload isn't the shape we parse — unknown, not idle
 	}
 	if md.Role == "assistant" && md.Time.Completed > 0 {
+		return "idle"
+	}
+	// A turn left incomplete by an earlier opencode process is not running: a SIGKILL leaves
+	// it that way for good, and the relaunch starts a fresh conversation while the slot's
+	// mapping still names this one until its first message. Bounded like openQuestion but
+	// rounded towards live (terminalStartedAfter), so a completed conversation the relaunch
+	// resumed still reads idle above, and a turn the current process started or is still
+	// writing still reads working.
+	if since := terminalStartedAfter(m); !since.IsZero() && touched > 0 && touched < since.UnixMilli() {
 		return "idle"
 	}
 	if len(openQuestion(db, ses, m)) > 0 {
@@ -372,6 +382,18 @@ func terminalSince(m session.Meta) time.Time {
 		return time.Time{}
 	}
 	t, _ := tmuxx.CLIRecordsSince(session.TmuxName(m.Name))
+	return t
+}
+
+// terminalStartedAfter is terminalSince rounded towards live where only tmux's second-resolution
+// stamp is known (tmuxx.CLIStartedAfter): a turn written in the pane's first second may be the
+// new process's, and reading a running turn as idle hides its stop button and lets the reaper
+// take the workspace.
+func terminalStartedAfter(m session.Meta) time.Time {
+	if m.DriverKind() == session.DriverManaged {
+		return time.Time{}
+	}
+	t, _ := tmuxx.CLIStartedAfter(session.TmuxName(m.Name))
 	return t
 }
 
