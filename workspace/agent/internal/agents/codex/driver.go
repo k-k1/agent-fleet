@@ -455,10 +455,20 @@ func DropHandle(name string) {
 	h.mu.Lock()
 	cl, tid, turnID, running := h.client, h.tid, h.turnID, h.running
 	h.alive = false
+	h.dropped = true
 	// Teardown discards the queue (ADR 0105 decision 8). An input whose turn/start is in flight
 	// is left a pending stop, so the turn it creates is interrupted when the answer names it.
 	h.tq().DropAll()
 	h.tq().Interrupt(agents.InterruptOpts{DiscardQueue: true}, running || turnID != "")
+	// The handle is out of the registry, so the turn/completed our turn/interrupt produces
+	// reaches nobody: end the pump's wait here, or it lives until the connection drops. A turn
+	// still starting reads it once turn/start answers, after delivering its pending stop.
+	if end := h.turnEnd; end != nil {
+		select {
+		case end <- agents.TurnCancelled:
+		default:
+		}
+	}
 	h.mu.Unlock()
 	if cl == nil {
 		return
@@ -558,6 +568,9 @@ type threadHandle struct {
 	pumping bool
 	turnID  string // the active turn (the target of turn/steer and turn/interrupt)
 	turnEnd chan agents.TurnState
+	// dropped is set by DropHandle. A pump that committed an input just before it installs
+	// turnEnd after the teardown, which could no longer end its wait; runTurn reads this instead.
+	dropped bool
 	// q is the input queue and the whole of ADR 0105's stop rules (agents.TurnQueue); every
 	// call holds mu. Read it through tq.
 	q        *agents.TurnQueue
@@ -789,6 +802,11 @@ func (h *threadHandle) runTurn(t *agents.Taken, gen int) {
 	cl, tid := h.client, h.tid
 	end := make(chan agents.TurnState, 1)
 	h.turnEnd = end
+	if h.dropped {
+		// DropHandle ran between the pump's commit and here. The committed input still goes out
+		// and its pending stop is delivered below; only the wait must not outlive the handle.
+		end <- agents.TurnCancelled
+	}
 	h.mu.Unlock()
 
 	res, err := cl.call("turn/start", map[string]any{
