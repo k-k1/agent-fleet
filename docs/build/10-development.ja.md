@@ -350,6 +350,24 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
 はリリースの artifact を自分で導入する。マニフェストのチェックサムを検証すること自体が
 テスト対象の一部だからである。
 
+**ビルドタグ。** 素の `go test ./...` が前提にできないものを要する Go テストは、
+`workspace/agent` で 3 つのビルドタグのどれかの後ろにある。タグが表すのは走らせる代償で、
+どの CLI を相手にするかはテスト名（`TestDriftCodex…`・`TestContract…`・
+`Test<Kind>TUIMirrorContract`）が表し、ワークフローはどれも `-run` でテストを選ぶ。
+
+| タグ | 要るもの | 無いとき |
+|---|---|---|
+| `contract` | `PATH` 上の実 CLI（ペインのテストは tmux も）。実ターンを使うテストの一部は自分のオプトイン（`CLAUDE_CONTRACT_LIVE`・`COPILOT_CONTRACT_LIVE`・`OPENCODE_CONTRACT_LIVE`・`AF_IMAGEGEN_LIVE`）も待つ。TUI のプローブ（`TestClaudeTUIContractLive`・`TestClaudePlanApprovalContractLive`・`Test<Kind>TUIMirrorContract`）は待たず、CLI がサインイン済みなら実ターンを走らせる | skip。`E2E_REQUIRE=1` なら失敗 |
+| `contract_live` | 実 codex のクレデンシャル。どのテストも実ターンを使う（`codex-contract.yml` の `live-drift`、dispatch のみ） | 失敗 |
+| `contract_manual` | 人: その人が用意するエンジンのエンドポイント（`AF_LCPP_LIVE_*`）か対話のサインイン（`AF_AGY_LOGIN`）。どのワークフローも走らせない | skip |
+
+したがって CLI がサインイン済みの機械で素の `go test -tags contract ./...` を走らせると、複数の
+ベンダーの実ターンを一度に使う。ワークフローと同じく `-run` で 1 つの CLI に絞る。
+
+`ci.yml` は 3 つとも `scripts/vet-build-tags.sh` で vet する。このスクリプトは知らないタグが
+あれば失敗するので、新しいタグはそこへ足さないと赤くなる。`e2e` モジュールには別に `e2e` タグが
+ある（§10.4 の E2E）。
+
 ### 公開リポジトリでの CI の前提（秘密情報の扱い）
 
 このリポジトリは公開されている。**secrets そのものはリポジトリには無い**（リポジトリ設定に

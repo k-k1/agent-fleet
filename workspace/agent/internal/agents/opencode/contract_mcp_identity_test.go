@@ -1,4 +1,4 @@
-//go:build clicontract
+//go:build contract
 
 // Can a managed opencode session's MCP child be told WHICH session it serves?
 //

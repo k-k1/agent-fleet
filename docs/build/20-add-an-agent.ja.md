@@ -149,7 +149,7 @@ lcpp は例外です。ベンダーの CLI を動かさず、話し相手の lla
 ではなくエンジン（配備のもの、または利用者自身のサーバー。[08 §8.6](08-integrations.ja.md)）と
 一緒に来るので、どのワークフローもリリース監視も対象にしていません。そのサーバーの API との契約は、
 実エンジンに対して手で走らせるオプトインの live テスト（`internal/harness/live_contract_test.go`、
-ビルドタグ `manuallive`）です。
+ビルドタグ `contract_manual`）です。
 
 毎日のリリース監視 `cli-release-watch.yml` に登録し、公開版が変わったら dispatch されるようにします。
 `cli-drift.yml` はピンの遅れを報告するだけで、何も dispatch しません。登録は 4 か所です。

@@ -86,6 +86,6 @@ jobs:
           # Fail rather than skip when the CLI is missing: a silent skip is a false green.
           E2E_REQUIRE: "1"
         run: |
-          go test -tags drift -count=1 -v -timeout 10m \
+          go test -tags contract -count=1 -v -timeout 10m \
             -run '^TestDrift${{ matrix.test }}' \
             ./internal/mcpreg/

@@ -1,7 +1,7 @@
-//go:build drift
+//go:build contract
 
 // Drift detection for the agy TUI pane (Tier 1), sibling of codex_pane_drift_test.go.
-// The `drift` build tag keeps it out of a plain `go test ./...` because it needs a real agy
+// The `contract` build tag keeps it out of a plain `go test ./...` because it needs a real agy
 // binary and a real tmux.
 //
 // What it covers is paneMode's agy branch, which depends on the composer footer's fixed

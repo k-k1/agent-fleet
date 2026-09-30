@@ -1,4 +1,4 @@
-//go:build tui_contract
+//go:build contract
 
 package main
 

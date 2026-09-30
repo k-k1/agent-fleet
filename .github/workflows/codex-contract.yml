@@ -50,7 +50,7 @@ jobs:
   drift:
     # Tier 1. Runs against the real codex binary in a real tmux pane to detect breakage
     # of the hooks schema, -c config keys, and the TUI footer spec (workspace/agent's
-    # `-tags drift` tests). No image build needed, so it finishes in tens of seconds.
+    # `-tags contract` tests). No image build needed, so it finishes in tens of seconds.
     #
     # Free, no auth: every verified path (features list / config validation /
     # UserPromptSubmit firing / footer rendering) completes before any API call
@@ -81,9 +81,10 @@ jobs:
         env:
           # Fail instead of skip when the CLI is missing (a silent skip is a false green).
           E2E_REQUIRE: "1"
-        # The drift build tag is shared with agy's signed-in pane probe. Restrict by
-        # test name so a codex-only runner never fails merely because agy is absent.
-        run: go test -tags drift -run '^TestDriftCodex' -v -timeout 10m ./...
+        # The contract build tag is shared with every other kind's probes (agy's signed-in
+        # pane probe among them). Restrict by test name so a codex-only runner never fails
+        # merely because another CLI is absent.
+        run: go test -tags contract -run '^TestDriftCodex' -v -timeout 10m ./...
       - name: remember successfully tested latest
         if: matrix.version == 'latest' && github.event_name != 'pull_request'
         env:
@@ -133,4 +134,4 @@ jobs:
         working-directory: workspace/agent
         env:
           E2E_CODEX_AUTH_JSON: ${{ secrets.E2E_CODEX_AUTH_JSON }}
-        run: go test -tags driftlive -run TestLiveDrift -v -timeout 20m ./...
+        run: go test -tags contract_live -run TestLiveDrift -v -timeout 20m ./...

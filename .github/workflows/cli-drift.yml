@@ -143,5 +143,5 @@ jobs:
         env:
           E2E_REQUIRE: "1" # CLI が入っていないのに skip で緑になるのを防ぐ
         run: |
-          go test -tags drift -run '^TestDriftClaudePlanResultLiterals$' \
+          go test -tags contract -run '^TestDriftClaudePlanResultLiterals$' \
             -count=1 -v -timeout 5m .

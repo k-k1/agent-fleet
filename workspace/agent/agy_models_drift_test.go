@@ -1,7 +1,7 @@
-//go:build drift
+//go:build contract
 
 // Drift detection for agy's model catalog (Tier 1), the sibling of agy_pane_drift_test.go.
-// The `drift` build tag keeps it out of a normal `go test ./...`: it needs the real agy
+// The `contract` build tag keeps it out of a normal `go test ./...`: it needs the real agy
 // binary and a real sign-in, because `agy models` calls an authenticated API.
 //
 // What it covers is the dependency on the OUTPUT FORMAT of `agy models`. In 1.1.19 that went

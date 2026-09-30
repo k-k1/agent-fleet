@@ -420,11 +420,16 @@ export interface Settings {
   // whether always-expanded reads well depends on the backend — hence a Record keyed by kind
   // like hiddenModels (an unset kind is false).
   expandThinking: Record<string, boolean>;
-  // Show the reply the agent is still writing in the mirror, line by line (kind-scoped;
-  // Settings > Agents > each card > behaviour settings; #1250). Unlike expandThinking an unset
-  // kind is ON: off is the opt-out for those who would rather see a reply once it is complete.
-  // Only kinds whose Agent route sends the in-progress reply read it (claude).
-  streamReplies: Record<string, boolean>;
+  // How the mirror shows the reply the agent is still writing (kind-scoped; Settings > Agents >
+  // each card > behaviour settings; #1250, #1274): "off", "lines" (each poll's text as it comes)
+  // or "typewriter" (typed out between polls). Unlike expandThinking an unset kind is ON —
+  // typewriter — and off is the opt-out for those who would rather see a reply once it is
+  // complete. Booleans are what the setting stored while it was an on/off switch: false is off,
+  // true is typewriter; read through streamReplies(), never directly. Off is still written as
+  // false (StreamRepliesRow), so an older Console sharing the synced prefs — whose accessor takes
+  // any non-false value as on — stays off too. Only kinds whose Agent route sends the in-progress
+  // reply read it (claude).
+  streamReplies: Record<string, boolean | StreamRepliesMode>;
   // ON/OFF for the CHAT title suggestion (Settings > AI assist; the rename dialog's "ask AI for
   // a suggestion" (「AIに提案してもらう」) button — the assistant has no automatic banner). Split out of
   // autoTitleSuggest so sessions and chats gate independently; load()/hydrateUIPrefs
@@ -1530,11 +1535,17 @@ export function expandThinking(s: Settings, kind?: string | null): boolean {
   return s.expandThinking?.[kind] === true;
 }
 
-// streamReplies is a kind's "stream replies in the chat view" setting. Unset, and a corrupt saved
-// value, mean on; only an explicit false turns it off.
-export function streamReplies(s: Settings, kind?: string | null): boolean {
-  if (!kind) return false;
-  return s.streamReplies?.[kind] !== false;
+export type StreamRepliesMode = "off" | "lines" | "typewriter";
+
+// streamReplies is a kind's "stream replies in the chat view" setting. Unset, `true` (the switch
+// it used to be, left on) and a corrupt saved value all mean typewriter; only an explicit false
+// or "off" turns it off, so a member who switched it off before the third mode existed stays off.
+export function streamReplies(s: Settings, kind?: string | null): StreamRepliesMode {
+  if (!kind) return "off";
+  const v = s.streamReplies?.[kind];
+  if (v === false || v === "off") return "off";
+  if (v === "lines") return "lines";
+  return "typewriter";
 }
 
 let state = load();

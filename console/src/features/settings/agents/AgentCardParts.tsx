@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button } from "../../../ui/Button.tsx";
 import { ModelPicker } from "../../../ui/ModelPicker.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { agentLaunchDefault, useSettings, setSettings, ASSISTANT_RECOMMENDED_MODEL, CLAUDE_MODELS } from "../../../lib/settings.ts";
+import { agentLaunchDefault, useSettings, setSettings, streamReplies, ASSISTANT_RECOMMENDED_MODEL, CLAUDE_MODELS, type StreamRepliesMode } from "../../../lib/settings.ts";
 import { useAutoConcreteModel, useEffortOptions, useModelOptions, type ModelOption } from "../../../lib/agentModels.ts";
 import { modelMatchesHidden } from "../../../lib/modelDeny.ts";
 import { forgetHiddenRepoModels } from "../../../lib/repoLast.ts";
@@ -63,19 +63,28 @@ export function ThinkingRow({ kind }: { kind: string }) {
   );
 }
 
-// StreamRepliesRow: "stream replies in the chat view" (kind-scoped, ON by default; #1250). While a
-// reply is being written the mirror shows it line by line; off, a reply appears once the agent
-// has finished writing it. Only on the cards of kinds whose Agent route sends the in-progress
-// reply (claude).
+// StreamRepliesRow: "stream replies in the chat view" (kind-scoped; #1250, #1274). Off / line by
+// line / typewriter, typewriter by default; a stored boolean from the on/off days reads through
+// streamReplies(). Only on the cards of kinds whose Agent route sends the in-progress reply
+// (claude).
 export function StreamRepliesRow({ kind }: { kind: string }) {
   const s = useSettings();
   const tr = useT();
+  const options: [StreamRepliesMode, string][] = [
+    ["off", tr("common.off")],
+    ["lines", tr("agents.stream_replies_lines")],
+    ["typewriter", tr("agents.stream_replies_typewriter")],
+  ];
   return (
     <>
       <SettingRow label={tr("agents.stream_replies")}>
-        <OnOff
-          value={s.streamReplies[kind] !== false}
-          onChange={(v) => setSettings({ streamReplies: { ...s.streamReplies, [kind]: v } })}
+        <Choice
+          value={streamReplies(s, kind)}
+          options={options}
+          // Off is stored as the boolean it always was: an older Console reading the synced
+          // prefs takes any non-false value as on, so the string "off" would turn its mirror
+          // back on. streamReplies() reads both.
+          onChange={(v: StreamRepliesMode) => setSettings({ streamReplies: { ...s.streamReplies, [kind]: v === "off" ? false : v } })}
         />
       </SettingRow>
       <p className="ps-note">{tr("agents.stream_replies_note")}</p>
