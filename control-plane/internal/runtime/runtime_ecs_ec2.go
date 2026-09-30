@@ -1033,6 +1033,15 @@ func (e *ecsEC2Runtime) BootPhase() string {
 	return ""
 }
 
+// LaunchBudget satisfies LaunchBudgeter. Both clocks start at Start: the claim keeps
+// State() at `starting`, and backgroundWithin cancels the background launch at waitBudget.
+func (e *ecsEC2Runtime) LaunchBudget() time.Duration {
+	return max(e.pool.claimTTL, e.pool.waitBudget)
+}
+
+// Without it the CP's start deadline could stop a launch its background work then revives.
+var _ LaunchBudgeter = (*ecsEC2Runtime)(nil)
+
 func (e *ecsEC2Runtime) generation() *atomic.Int64 {
 	v, _ := startGen.LoadOrStore(e.base.name, &atomic.Int64{})
 	return v.(*atomic.Int64)

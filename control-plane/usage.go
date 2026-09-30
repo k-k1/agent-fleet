@@ -108,7 +108,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 			found[ws.ID] = true
 			rt := u.mgr.runtimeFor(ws, "")
 			state := rt.State(ctx)
-			if u.deadline.observe(ws, state, time.Now()) {
+			if u.deadline.observe(ws, rt, state, time.Now()) {
 				u.deadline.stop(ctx, rt, ws)
 				continue
 			}

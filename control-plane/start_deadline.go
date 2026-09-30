@@ -26,6 +26,10 @@ import (
 // The PRIMARY deployment's CreatedAt looks like the natural clock and is wrong: an
 // ecs-ec2 restart on an unchanged task definition scales the old deployment back up
 // without creating a new one, so a launch seconds old would read as days overdue.
+//
+// Overdue is not yet wedged. `starting` also covers a rollout whose new task already
+// answers while an old one drains, so an Agent that answers is never stopped here — that
+// would take a working session down to end a wait that is not blocking anybody.
 type startDeadline struct {
 	mgr   *manager
 	after time.Duration // <= 0 disables the deadline
@@ -34,13 +38,28 @@ type startDeadline struct {
 	seen map[string]time.Time // workspace ID -> first sweep that found it starting
 }
 
+// startDeadlineFenceWait bounds the wait for the fences. The deadline runs on the usage
+// sampler's walk, and waiting behind a recreate that holds them for minutes would drop that
+// walk's samples for every workspace after this one. A busy workspace is simply retried on
+// the next sweep.
+var startDeadlineFenceWait = 10 * time.Second // a var so a test can shorten it
+
 func newStartDeadline(mgr *manager, after time.Duration) *startDeadline {
 	return &startDeadline{mgr: mgr, after: after, seen: map[string]time.Time{}}
 }
 
+// limitFor is the deadline for rt's launches: never inside the adapter's own background
+// launch budget (runtime.LaunchBudgeter), whatever the operator configured.
+func (d *startDeadline) limitFor(rt runtime.Runtime) time.Duration {
+	if b, ok := rt.(runtime.LaunchBudgeter); ok {
+		return max(d.after, b.LaunchBudget())
+	}
+	return d.after
+}
+
 // observe records one sweep's view of ws and reports whether its launch has run past the
 // deadline. Any state other than `starting` resets the clock.
-func (d *startDeadline) observe(ws store.Workspace, state string, now time.Time) bool {
+func (d *startDeadline) observe(ws store.Workspace, rt runtime.Runtime, state string, now time.Time) bool {
 	if d == nil || d.after <= 0 {
 		return false
 	}
@@ -58,7 +77,7 @@ func (d *startDeadline) observe(ws store.Workspace, state string, now time.Time)
 	if ts, err := time.Parse(time.RFC3339, ws.LastActiveAt); err == nil && ts.After(since) {
 		since = ts
 	}
-	return now.Sub(since) >= d.after
+	return now.Sub(since) >= d.limitFor(rt)
 }
 
 // retain drops the clocks of workspaces a complete sweep no longer found, so a workspace
@@ -77,12 +96,15 @@ func (d *startDeadline) retain(ids map[string]bool) {
 }
 
 // stop ends an overdue launch the way an explicit stop would, under the same three
-// fences, so it cannot cross a Start, a recreate or an approved shared operation. The
-// decision is taken again once they are held: a Start that won the race while this waited
-// has stamped last_active_at and is not overdue.
+// fences, so it cannot cross a Start, a recreate or an approved shared operation. None of
+// them is waited for past startDeadlineFenceWait. The decision is taken again once they
+// are held: a Start that won the race meanwhile has stamped last_active_at and is not
+// overdue.
 func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.Workspace) {
 	lock := d.mgr.startLockFor(ws.ID)
-	lock.Lock()
+	if !lock.TryLock() {
+		return // a lifecycle operation is in flight on this CP; the next sweep looks again
+	}
 	defer lock.Unlock()
 	lease, err := acquireWorkspaceLifecycleLease(ctx, d.mgr.store, ws.MembershipID)
 	if err != nil {
@@ -90,7 +112,9 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 		return
 	}
 	defer lease.Close()
-	releaseFence, err := d.mgr.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
+	fenceCtx, cancelFence := context.WithTimeout(lease.Context(), startDeadlineFenceWait)
+	releaseFence, err := d.mgr.acquireWorkspaceOperationFence(fenceCtx, ws.ID, rt)
+	cancelFence()
 	if err != nil {
 		log.Printf("start-deadline: runtime fence %s: %v", ws.ContainerName, err)
 		return
@@ -105,8 +129,14 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 		log.Printf("start-deadline: refresh workspace %s: found=%v err=%v", ws.ContainerName, ok, err)
 		return
 	}
-	if !d.observe(fresh, rt.State(lease.Context()), time.Now()) {
+	if !d.observe(fresh, rt, rt.State(lease.Context()), time.Now()) {
 		return
+	}
+	probeCtx, cancelProbe := context.WithTimeout(lease.Context(), 5*time.Second)
+	_, probeErr := d.mgr.agentSessionsEnv(probeCtx, rt)
+	cancelProbe()
+	if probeErr == nil {
+		return // an Agent answers: a rollout still settling, not a launch that cannot place
 	}
 	// Read before Stop: on ecs-ec2 this is the ECS sentence naming why the task cannot be
 	// placed, and Stop clears it.
@@ -128,6 +158,6 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 	d.mu.Lock()
 	delete(d.seen, ws.ID)
 	d.mu.Unlock()
-	log.Printf("start-deadline: stopped %s (tenant %s): still starting %s after its launch (last phase %q)",
-		ws.ContainerName, ws.TenantID, d.after, phase)
+	log.Printf("start-deadline: stopped %s (tenant %s): still starting %s after its launch with no Agent answering (last phase %q)",
+		ws.ContainerName, ws.TenantID, d.limitFor(rt), phase)
 }

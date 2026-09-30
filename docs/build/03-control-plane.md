@@ -291,9 +291,12 @@ disables.
   heatmap. With bring-your-own model credentials, **the operator's cost is occupancy,
   not tokens** — which is what this measures. The same walk enforces the ceiling on
   `starting` (`start_deadline.go`): a workspace still `starting` `AF_WORKSPACE_START_DEADLINE`
-  (30 minutes) after its launch is stopped under the lifecycle fences, like an explicit
-  stop. Only a launch that cannot converge gets there — a task ECS refuses to place, for
-  one. `0` turns it off, and so does switching the sampler off.
+  (30 minutes) after the later of its last Start and this CP's first sighting, with no
+  agent answering, is stopped under the lifecycle fences, like an explicit stop. An
+  adapter with background launch work (`runtime.LaunchBudgeter`, ecs-ec2) raises the limit
+  to its own budget, and a busy fence skips the workspace until the next sample. Only a
+  launch that cannot converge gets there — a task ECS refuses to place, for one. `0` turns
+  it off, and so does switching the sampler off.
 - **The cloud-cost poller** — where the runtime has a bill (the AWS targets), it reads
   Cost Explorer every `AF_CLOUD_COST_INTERVAL` (6 hours) over a trailing
   `AF_CLOUD_COST_WINDOW_DAYS` (7) and attributes spend per member by cost allocation

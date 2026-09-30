@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Runtime is the port that abstracts where a Workspace container runs and how the
@@ -94,6 +95,15 @@ type runtimeOperationFencer interface {
 type StartFencer interface {
 	AbortUncommittedStart(context.Context) error
 	CommitStart()
+}
+
+// LaunchBudgeter is implemented by an adapter whose Start hands part of the launch to
+// background work that Stop does not cancel. LaunchBudget is how long after Start that
+// work may still act — scale the service back up behind a Stop — so the CP's start
+// deadline never fires inside it: a Stop it issued there would be undone while the
+// database says "stopped".
+type LaunchBudgeter interface {
+	LaunchBudget() time.Duration
 }
 
 func acquireRuntimeOperationFence(ctx context.Context, rt Runtime) (func(), error) {
