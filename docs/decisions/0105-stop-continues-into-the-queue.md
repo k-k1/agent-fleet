@@ -29,9 +29,10 @@ effect now throws the correction away. The rule is also inconsistent: a peer mes
 input does not. A member who switches the same session between Terminal and Managed gets opposite results from the
 same button.
 
-Pulling in the other direction, the member must always have **one action that stops everything**, without racing a
-timer. A follow-up that assumes the stopped turn succeeded ("then deploy it") must not go on with no way to stop it
-first.
+Pulling in the other direction, a Managed session must always offer **one action that stops everything**, without
+racing a timer. A follow-up that assumes the stopped turn succeeded ("then deploy it") must not go on with no way to
+stop it first. On the Terminal route the queue lives inside the CLI, and Agent Fleet cannot promise this there
+(decision 6).
 
 The same `Interrupt` also backs things that are not labelled Stop. The Console's stop is also what rejecting a plan
 and launching a plan review elsewhere send. On codex, cancelling or denying a question calls `Interrupt` too.
@@ -47,14 +48,16 @@ messages, and what claude and codex did in the measured runs.
 - Queued inputs keep running **one per turn**, in order. claude put two queued inputs into one request, but that is
   not adopted here: a peer message's envelope and its `source: peer` in the transcript would blur into the member's
   text.
-- `TurnInput` carries **its origin**, in the vocabulary `/input` already uses for the injection badge
-  (`badgeOriginOf`): the member, a peer and its sending session, the operator (`report_to`), a schedule, the chat
-  bridge. This replaces `KeepOnInterrupt`, which only said "not the member". Today the origin stops at `/input` and
-  never reaches the driver. **Member input** in decisions 2 and 4 means input a person typed as this session's user:
-  the Console's composer and the chat bridge.
+- `TurnInput` carries **its origin**, in the vocabulary of the mirror's injection badges (`recordInjection`): the
+  member, a peer and its sending session, a spawn, the operator (`report_to`), a schedule, the chat bridge. This
+  replaces `KeepOnInterrupt`, which only said "not the member". Today the origin never reaches the driver: `/input`
+  derives it (`badgeOriginOf`) only for the badge, and the chat bridge does not go through `/input` at all
+  (`injectManagedPrompt` sends a `TurnInput` with no origin). Both paths pass it on. **Member input** in decisions
+  2 and 4 means input a person typed as this session's user: the Console's composer and the chat bridge.
 - An input whose start is in flight **while no other turn runs** is not queued: it is the turn being stopped. A
   first stop stops it, as muse (`stopStarting`) and codex (`stopStart`) already do once the runtime names the turn.
-  If the start fails, no turn was made, and there is nothing to stop or show.
+  If the start fails, no turn was made and there is nothing to stop. The failed start is shown as it is today (codex
+  adds a failed turn with the error).
 - An input that waits **behind a running turn** is queued, wherever it waits: in the driver's queue, held by the
   pump (opencode, behind another client's turn, not yet sent), or in muse's host-side queue (sent). A first stop lets
   it continue; a second stop stops or discards it. Only input that has not been sent can be removed or returned
@@ -94,10 +97,18 @@ it works without timing.
 
 - It sends `/turn {"op":"interrupt","discard_queue":true}`. The driver discards all unsent input and stops the
   running turn under the lock that `accept` takes, whatever the episode state. A plain `interrupt` never does this.
-- **What the brake guarantees**: no unsent input starts after it. Input already sent to the runtime is stopped as soon
-  as the runtime names its turn (muse at `turn/started`, codex at the `turn/start` answer), so it can take its first
-  step before the stop lands. muse input queued on the host side behind a turn this driver did not start is outside
-  the guarantee until `turn/unqueue` is measured.
+- **Taken is not sent.** Every driver takes an entry out of its queue and sends it in two steps, releasing the lock
+  in between (the ACP pump before `session/prompt`, muse's `beginStartLocked` before `turn/start`, opencode's
+  release before `/message`). An entry in that gap carries a cancel mark. The pump checks the mark under the lock
+  immediately before the send call starts, and a discard sets it. opencode's `abortAsked` check before `/message`
+  already has this shape. Once the send call has started, the input counts as sent.
+- **It is always reachable** in a Managed session that is running or has anything queued. That includes the time a
+  question or approval card is shown, and it does not depend on the card's Cancel. Today the stop button is not
+  rendered while a question is pending, and a codex question can be raised with input already queued behind it.
+- **What the brake guarantees**: no unsent input, taken or not, starts after it. Input already sent to the runtime is
+  stopped, on a best-effort basis, as soon as the runtime names its turn (muse at `turn/started`, codex at the
+  `turn/start` answer), so it can take its first step before the stop lands. muse input queued on the host side
+  behind a turn this driver did not start is outside the guarantee until `turn/unqueue` is measured.
 
 ### Decision 4: what is discarded comes back, from the driver
 
@@ -165,7 +176,7 @@ restart instead is #1255's work.
 - Notifying the sending session that its peer message was discarded. Decision 4 makes the discard visible on the
   receiving side only. docs/log/125 §4 rejected a sender notification for its protocol cost, and that still stands.
 - Removing input that the runtime already holds. That covers muse's host-side queue (`turn/unqueue` is unmeasured)
-  and codex's in-flight start. Decision 1 stops such input; it does not return it.
+  and codex's in-flight start. Decisions 2 and 3 stop such input once it becomes a turn; they do not return it.
 - Whether a stop aborts a turn this driver did not start (opencode: an attached TUI's turn). docs/log/126 §4 records
   the current inconsistency.
 
@@ -196,9 +207,10 @@ restart instead is #1255's work.
 - For claude and codex, the chat now behaves the same on Terminal and Managed, within what was measured.
 - The `Interrupt` contract changes in all seven Managed drivers: `KeptOnInterrupt` goes, `TurnInput` gains its
   origin, and each driver gains the stop episode, the discard-queue interrupt, the kept discards, queue entry ids,
-  the removal op and a side-effect-free ledger lookup. `/input` passes the origin through, and the messages payload
-  gains the ids and the discards. The Console gains the stop control's menu action, the notice and the bubble
-  actions, and stops disabling Stop while a stop is pending. The member guide's sessions chapter (en/ja) states the
-  two stops.
+  the removal op, the cancel mark on taken entries and a side-effect-free ledger lookup. `/input` and the chat
+  bridge's `injectManagedPrompt` pass the origin through, and the messages payload gains the ids and the discards.
+  The Console gains the stop control's menu action (kept reachable while a question or approval is pending), the
+  notice and the bubble actions, and stops disabling Stop while a stop is pending. The member guide's sessions
+  chapter (en/ja) states the two stops.
 - The tests added in #1244 and #1258 that assert "own input is discarded by a stop" are inverted, not deleted: they
   become "own input continues after a first stop, and is discarded (and kept for return) by a second".
