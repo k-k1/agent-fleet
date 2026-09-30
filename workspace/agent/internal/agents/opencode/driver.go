@@ -314,10 +314,17 @@ type threadHandle struct {
 	abortAsked bool
 	running    bool // a turn goroutine is in flight (pump busy)
 	pumping    bool
-	queue      []agents.TurnInput
-	settings   agents.ThreadSettings
-	inter      *agents.Interaction // pending question (the payload of waiting_interaction)
-	events     chan agents.Event
+	// held is set while the pump holds an input out of the queue but has not sent it yet (it
+	// waits in waitIdle behind a turn this handle did not start). A stop treats that input as
+	// still queued: dropHeld tells the pump to discard it, and heldKeep spares a KeepOnInterrupt
+	// input the way KeptOnInterrupt spares a queued one.
+	held     bool
+	heldKeep bool
+	dropHeld bool
+	queue    []agents.TurnInput
+	settings agents.ThreadSettings
+	inter    *agents.Interaction // pending question (the payload of waiting_interaction)
+	events   chan agents.Event
 }
 
 func (h *threadHandle) sessionID() string {
@@ -477,18 +484,34 @@ func (h *threadHandle) pump() {
 		h.queue = h.queue[1:]
 		addr, ses, dir := h.addr, h.ses, h.dir
 		h.running = true
+		h.held, h.heldKeep, h.dropHeld = true, in.KeepOnInterrupt, false
 		h.mu.Unlock()
 
 		// Guard for TUI co-use: wait while another client's turn is running (the same
 		// 60s as the maximum drain), then send anyway — serve handles /message serially
 		// even when busy.
 		waitIdle(addr, ses, dir, 60*time.Second)
-		h.runTurn(in)
+		if !h.releaseHeld() {
+			h.setState(agents.TurnCancelled) // stopped before it was sent: it never becomes a turn
+		} else {
+			h.runTurn(in)
+		}
 
 		h.mu.Lock()
 		h.running = false
 		h.mu.Unlock()
 	}
+}
+
+// releaseHeld ends the hold on the pumped input and reports whether it is still to be sent.
+// It also starts the input's own abort record: an abort asked before this point was aimed at
+// the other client's turn, not at this input.
+func (h *threadHandle) releaseHeld() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	drop := h.dropHeld
+	h.held, h.dropHeld, h.abortAsked = false, false, false
+	return !drop
 }
 
 // runTurn executes ONE blocking v1 /message turn and lands the terminal state.
@@ -509,8 +532,14 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	h.mu.Lock()
 	addr, ses := h.addr, h.ses
 	st := h.settings
-	h.abortAsked = false // nobody has asked to cut THIS turn short yet
+	// releaseHeld cleared abortAsked for this input, so set here it is a stop that landed
+	// after the hold ended and before /message went out, when serve had nothing to abort.
+	stopped := h.abortAsked
 	h.mu.Unlock()
+	if stopped {
+		h.setState(agents.TurnCancelled)
+		return
+	}
 
 	// Let serve assign the messageID (measured 1.17.18: the turn loop depends on the
 	// lexical order of message ids, so a turn whose client-assigned id sorts below an
@@ -620,6 +649,9 @@ func (h *threadHandle) interrupt(keep bool) error {
 		h.queue = agents.KeptOnInterrupt(h.queue)
 	} else {
 		h.queue = nil
+	}
+	if h.held && !(keep && h.heldKeep) {
+		h.dropHeld = true
 	}
 	if running {
 		h.state = agents.TurnInterrupting

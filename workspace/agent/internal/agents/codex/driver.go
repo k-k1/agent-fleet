@@ -550,6 +550,13 @@ type threadHandle struct {
 	events   chan agents.Event
 	lastErr  *codexError // failure detail of the last turn (errors.go); managedEnrich appends
 	// it as a synthetic trailing error turn until clearLastError runs at the next turn start.
+
+	// startKeep is the KeepOnInterrupt of the input whose turn/start is in flight, and
+	// stopStart records a stop that arrived before its turn id was known: there is nothing to
+	// name in turn/interrupt yet, so runTurn sends it once the answer names the turn. Without it
+	// the stop is dropped and the input it was meant to reach runs anyway.
+	startKeep bool
+	stopStart bool
 }
 
 // setLastError / clearLastError / turnError manage the failure detail managedEnrich
@@ -725,6 +732,7 @@ func (h *threadHandle) pump() {
 		in := h.queue[0]
 		h.queue = h.queue[1:]
 		h.running = true
+		h.startKeep, h.stopStart = in.KeepOnInterrupt, false
 		gen := h.gen
 		h.mu.Unlock()
 
@@ -764,6 +772,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 			h.turnEnd = nil
 		}
 		alive := h.alive
+		h.stopStart = false
 		h.mu.Unlock()
 		if !sameGen {
 			return // reconciliation already installed a new-generation snapshot
@@ -806,8 +815,17 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 		return // do not let an old generation's response overwrite a new-generation handle
 	}
 	h.turnID = tr.Turn.ID
+	stop := h.stopStart && tr.Turn.ID != ""
+	h.stopStart = false
 	h.mu.Unlock()
-	h.setState(agents.TurnRunning)
+	if stop {
+		h.setState(agents.TurnInterrupting)
+		if _, err := cl.call("turn/interrupt", map[string]any{"threadId": tid, "turnId": tr.Turn.ID}, 15*time.Second); err != nil {
+			log.Printf("codex managed: turn/interrupt %s after a stop during turn/start: %v", h.name, err)
+		}
+	} else {
+		h.setState(agents.TurnRunning)
+	}
 
 	final := <-end // turn/completed (dispatcher) or runtimeLost always delivers one
 	h.mu.Lock()
@@ -841,6 +859,9 @@ func (h *threadHandle) interrupt(keep bool) error {
 		h.queue = agents.KeptOnInterrupt(h.queue)
 	} else {
 		h.queue = nil
+	}
+	if running && turnID == "" && !(keep && h.startKeep) {
+		h.stopStart = true // turn/start is in flight: runTurn interrupts the turn it creates
 	}
 	if running {
 		h.state = agents.TurnInterrupting

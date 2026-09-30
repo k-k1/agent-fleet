@@ -53,6 +53,10 @@ type mockCodexServer struct {
 	// module compiles and runs beside this test, and the failure it produces
 	// ("state = running, want completed") reads like a driver defect in an unrelated PR.
 	callSignal chan struct{}
+
+	// holdStart, when set, keeps turn/start unanswered until it is closed: the window in which
+	// the client has sent the start but does not yet know the turn's id.
+	holdStart chan struct{}
 }
 
 func newMockCodexServer(t *testing.T) (*mockCodexServer, *appClient) {
@@ -117,7 +121,11 @@ func (m *mockCodexServer) serve(conn *websocket.Conn) {
 			m.mu.Lock()
 			failErr := m.failNextStart
 			m.failNextStart = nil
+			hold := m.holdStart
 			m.mu.Unlock()
+			if hold != nil {
+				<-hold
+			}
 			if failErr != nil {
 				m.write(map[string]any{"id": json.RawMessage(msg.ID), "error": json.RawMessage(failErr)})
 				continue
