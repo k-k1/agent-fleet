@@ -20,6 +20,8 @@ import (
 type gateClient struct {
 	started chan string   // the newest user message of each round trip, as it begins
 	proceed chan struct{} // one send answers one round trip
+	// holdCancel, when set, keeps a cancelled round trip from returning until it is closed.
+	holdCancel chan struct{}
 
 	mu      sync.Mutex
 	prompts []string
@@ -45,6 +47,9 @@ func (c *gateClient) Send(ctx context.Context, messages []harness.Message, _ []h
 	case <-c.proceed:
 		return harness.Turn{Content: "ok"}, nil
 	case <-ctx.Done():
+		if c.holdCancel != nil {
+			<-c.holdCancel
+		}
 		return harness.Turn{}, ctx.Err()
 	}
 }
@@ -414,5 +419,40 @@ func TestEpisodeEndsOnlyOnNewMemberInput(t *testing.T) {
 	items, discards, ep := settled(t, h)
 	if len(items) != 0 || len(discards) != 0 || ep {
 		t.Errorf("items %v, discards %v, episode %v", items, discards, ep)
+	}
+}
+
+// A stopped turn lands as cancelled even when input accepted after the stop has already moved
+// the displayed state to queued: the verdict comes from the stop, not from that state.
+func TestStoppedTurnLandsCancelledAfterASend(t *testing.T) {
+	h, c, _ := startHandle(t, "sess-q-verdict")
+	c.holdCancel = make(chan struct{})
+	mustSend(t, h, member("m1", "one"))
+	expectStarted(t, c, "one")
+	mustInterrupt(t, h, agents.InterruptOpts{}, agents.StopFirst)
+	mustSend(t, h, member("m2", "two")) // accept sets TurnQueued
+	var seen []agents.TurnState
+	for len(h.events) > 0 { // what happened before the stopped turn returns is not the verdict
+		<-h.events
+	}
+	close(c.holdCancel)
+	expectStarted(t, c, "two")
+	for len(h.events) > 0 {
+		seen = append(seen, (<-h.events).TurnState)
+	}
+	c.answer(t)
+	settled(t, h)
+	var verdict agents.TurnState
+	for _, st := range seen {
+		switch st {
+		case agents.TurnCancelled, agents.TurnFailed, agents.TurnCompleted, agents.TurnAborted:
+			verdict = st
+		}
+		if verdict != "" {
+			break
+		}
+	}
+	if verdict != agents.TurnCancelled {
+		t.Errorf("the stopped turn landed as %q (events %v), want cancelled", verdict, seen)
 	}
 }

@@ -161,7 +161,7 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 	}
 	// t.Cleanup is LIFO, so this wait, pushed after the t.Setenv("HOME", ...) above, runs
 	// before HOME is restored. Pushed before it, it would run after — too late.
-	t.Cleanup(func() { waitPumpIdle(t, h) })
+	t.Cleanup(func() { endTurnsBeforeHomeRestore(t, h) })
 	h.cl.onNotify = h.onNotify
 	return h, f
 }
@@ -174,17 +174,45 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 // reported as a failure rather than allowed to pollute the real environment.
 func waitPumpIdle(t *testing.T, h *threadHandle) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	if !pumpIdleWithin(h, 30*time.Second) {
+		t.Error("a turn is still running after the test finished: restoring HOME now writes to the real ~/.config/agent-fleet")
+	}
+}
+
+func pumpIdleWithin(h *threadHandle, d time.Duration) bool {
+	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		h.mu.Lock()
 		busy := h.pumping || h.running
 		h.mu.Unlock()
 		if !busy {
-			return
+			return true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Error("a turn is still running after the test finished: restoring HOME now writes to the real ~/.config/agent-fleet")
+	return false
+}
+
+// endTurnsBeforeHomeRestore is the handle's cleanup. A test that failed with a turn still held
+// by the fake (a mutation run, a real regression) would otherwise leave that turn to end after
+// HOME is restored — measured: slot-1 completion-key and session-status files landed in the
+// real ~/.local/state/agent-fleet. So it ends the turn itself by closing the client, while HOME
+// is still the test's.
+func endTurnsBeforeHomeRestore(t *testing.T, h *threadHandle) {
+	t.Helper()
+	if pumpIdleWithin(h, 10*time.Second) {
+		return
+	}
+	t.Error("a turn is still running after the test: ending it by closing the client")
+	h.mu.Lock()
+	cl := h.cl
+	h.mu.Unlock()
+	if cl != nil {
+		cl.markClosed()
+	}
+	if !pumpIdleWithin(h, 10*time.Second) {
+		t.Error("a turn is still running after the test finished: restoring HOME now writes to the real ~/.config/agent-fleet")
+	}
 }
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {

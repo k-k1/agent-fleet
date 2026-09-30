@@ -169,6 +169,10 @@ func TestFirstStopContinuesQueueInOrder(t *testing.T) {
 	if !episode(h) {
 		t.Error("a first stop that left input queued opened no stop episode")
 	}
+	if td := payload(t, h); !equal(ids(td.QueuedItems), []string{"m2", "m3"}) || !equal(td.Queued, []string{"two", "three"}) ||
+		td.QueuedItems[1].State != agents.EntryQueued || td.QueuedItems[1].Origin.Kind != agents.OriginPeer {
+		t.Errorf("messages payload while stopped: queued %q, items %+v", td.Queued, td.QueuedItems)
+	}
 	f.reply(first, map[string]any{"stopReason": "cancelled"})
 	second := expectPrompt(t, f, "two")
 	f.reply(second, map[string]any{"stopReason": "end_turn"})
@@ -223,6 +227,9 @@ func TestSecondStopDiscardsRestIncludingPeer(t *testing.T) {
 	}
 	if st := h.currentState(); st != agents.TurnCancelled {
 		t.Errorf("state = %s, want cancelled", st)
+	}
+	if td := payload(t, h); len(td.Discards) != 1 || td.Discards[0].ID != res.Discard.ID || len(td.QueuedItems) != 0 {
+		t.Errorf("messages payload: discards %+v, items %+v", td.Discards, td.QueuedItems)
 	}
 	if !h.DismissDiscard(res.Discard.ID) || h.DismissDiscard(res.Discard.ID) {
 		t.Error("DismissDiscard: want true once, then false")
