@@ -662,7 +662,7 @@ func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
 		// The longest handshake a def may declare: without mcpSyncBudget the first turn would
 		// block this long, so waitState gives up on it (measured) before the cap below is read.
 		TimeoutMS: 120000,
-		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindLcpp},
+		Enabled:   true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindLcpp},
 	}); err != nil {
 		t.Fatalf("mcpreg.Create: %v", err)
 	}
