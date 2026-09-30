@@ -2,6 +2,7 @@ package muse
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -265,5 +266,48 @@ func TestTheContributorRowsAreStillOffered(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Errorf("the picker offers %d of 2 rows: %+v", len(list), list)
+	}
+}
+
+// #1344: the rows as Muse 1.4.0 sends them (measured), with `variants` present — an effort
+// array, or the closed "unknown" scalar. Every fixture above omits the field, which is how a
+// decoder that failed on it went unnoticed while every model/list answer was being dropped.
+func TestModelsFromDecodesTheEffortVariants(t *testing.T) {
+	cl, _ := catalogHost(t, `{"providerId":"meta","profileId":"tbh","source":"providerCatalog","models":[
+		{"contextLimit":1007997,"cost":null,"description":null,"displayLabel":"muse-spark-1.3","isActive":false,"isDefault":false,
+		 "modelId":"muse-spark-1.3","outputLimit":128000,"profileId":"tbh","providerId":"meta","releaseDate":"2026-09-02",
+		 "variants":["minimal","low","medium","high","xhigh","max"]},
+		{"contextLimit":1007997,"cost":null,"description":"Your content, including inter-session messages, may be used for product improvement.",
+		 "displayLabel":"muse-spark-1.3-contributor","isActive":false,"isDefault":true,"modelId":"muse-spark-1.3-contributor",
+		 "outputLimit":128000,"profileId":"tbh","providerId":"meta","releaseDate":"2026-09-02","variants":"unknown"}]}`)
+
+	list, safe, err := modelsFrom(cl)
+	if err != nil {
+		t.Fatalf("modelsFrom: %v", err)
+	}
+	if len(list) != 2 || !slices.Equal(safe, []string{"muse-spark-1.3"}) {
+		t.Fatalf("list = %+v, safe = %v", list, safe)
+	}
+}
+
+// #1344: with no catalog ever read, a start with no model chosen is refused. Sending no modelId
+// instead — the old answer — ran the host's contributor default on every such session.
+func TestSafeDefaultModelRefusesAnUnreadableCatalog(t *testing.T) {
+	resetModelCatalogCache(t)
+	host, cl := msptest.New(t, msp.Handler{})
+	host.Handle(msp.MethodModelList, func(msptest.Message) (any, *msp.Error) {
+		return nil, &msp.Error{Code: msp.ErrCodeOverloaded, Message: "overloaded"}
+	})
+	if got, err := SafeDefaultModel(cl); !errors.Is(err, errCatalogUnknown) {
+		t.Fatalf("SafeDefaultModel = %q, %v; want errCatalogUnknown", got, err)
+	}
+
+	// A stale catalog is still an answer: a restart keeps the safe model it had.
+	modelsMu.Lock()
+	modelsList = []agents.ModelChoice{{ID: "muse-spark-1.3"}}
+	modelsSafe, modelsAt = []string{"muse-spark-1.3"}, time.Now().Add(-2*modelsTTL)
+	modelsMu.Unlock()
+	if got, err := SafeDefaultModel(cl); err != nil || got != "muse-spark-1.3" {
+		t.Fatalf("SafeDefaultModel with a stale catalog = %q, %v; want the stale safe row", got, err)
 	}
 }

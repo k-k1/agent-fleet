@@ -1667,7 +1667,7 @@ type ModelListResult struct {
 }
 
 // ModelReasoningEffortVariants A complete ordered effort set, or an explicit unknown capability.
-type ModelReasoningEffortVariants json.RawMessage
+type ModelReasoningEffortVariants = json.RawMessage
 
 // ModelSelection A model selection (tdd SS3.8). Empty strings are normalized to absent.
 type ModelSelection struct {
