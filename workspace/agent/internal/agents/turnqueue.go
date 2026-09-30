@@ -167,8 +167,12 @@ type TurnQueue struct {
 	queue       []TurnInput
 	head        *Taken
 	stopPending bool
-	episode     bool
-	discards    []Discard
+	// pendingFirst: the pending stop came from a first stop only. It was aimed at the head as
+	// the turn being started; if the head turns out to wait behind another turn (Hold), that
+	// stop belongs to the running turn instead and the head continues.
+	pendingFirst bool
+	episode      bool
+	discards     []Discard
 	// recorded holds the ids Requeue put back after LedgerAtTake's Take had recorded them, so
 	// the next Take does not read them as resends and drop them.
 	recorded map[string]bool
@@ -274,7 +278,7 @@ func (q *TurnQueue) Take() *Taken {
 			continue
 		}
 		q.head = &Taken{In: in}
-		q.stopPending = false
+		q.stopPending, q.pendingFirst = false, false
 		return q.head
 	}
 	q.maybeEndEpisode()
@@ -283,10 +287,23 @@ func (q *TurnQueue) Take() *Taken {
 
 // Hold marks the taken entry as waiting behind a turn this driver did not start (opencode's
 // waitIdle, muse's host-side queue). A first stop lets a held entry continue.
-func (q *TurnQueue) Hold(t *Taken, held bool) {
-	if t == q.head {
-		t.held = held
+//
+// redirect reports that a first stop had set stop-pending on t while it looked like the turn
+// being started (muse: turn/start sent, its "queued" answer not back yet). t is queued after
+// all, so the pending stop is lifted and the caller delivers it to the turn t waits behind
+// instead; the stop episode opens, since t is still to run. A pending stop from a second stop or
+// a discard stays: t is stopped when it starts.
+func (q *TurnQueue) Hold(t *Taken, held bool) (redirect bool) {
+	if t != q.head {
+		return false
 	}
+	t.held = held
+	if held && q.stopPending && q.pendingFirst {
+		q.stopPending, q.pendingFirst = false, false
+		q.episode = true
+		return true
+	}
+	return false
 }
 
 // Commit is the pump's last act under the lock before it hands t to the runtime. false: a stop
@@ -306,7 +323,7 @@ func (q *TurnQueue) Received(t *Taken) (deliverStop bool) {
 		return false
 	}
 	t.phase, t.held = phaseReceived, false
-	deliverStop, q.stopPending = q.stopPending, false
+	deliverStop, q.stopPending, q.pendingFirst = q.stopPending, false, false
 	return deliverStop
 }
 
@@ -316,7 +333,7 @@ func (q *TurnQueue) Settle(t *Taken) {
 	if t != q.head {
 		return
 	}
-	q.head, q.stopPending = nil, false
+	q.head, q.stopPending, q.pendingFirst = nil, false, false
 	q.maybeEndEpisode()
 }
 
@@ -329,7 +346,7 @@ func (q *TurnQueue) Requeue(t *Taken) bool {
 	}
 	q.head = nil
 	if q.stopPending {
-		q.stopPending = false
+		q.stopPending, q.pendingFirst = false, false
 		q.maybeEndEpisode()
 		return false
 	}
@@ -403,6 +420,8 @@ func (q *TurnQueue) stopHead(second bool) HeadAction {
 		q.head = nil
 		return HeadCancelled
 	case h.phase == phaseCommitted:
+		// A second stop on top of a pending first one makes it a second stop's.
+		q.pendingFirst = !second && (!q.stopPending || q.pendingFirst)
 		q.stopPending = true
 		return HeadStopPending
 	default:

@@ -553,3 +553,44 @@ func TestResendIsQueuedOnce(t *testing.T) {
 		sameIDs(t, fmt.Sprint(at, " discarded"), d.Items, "b")
 	}
 }
+
+// muse: turn/start is sent while another client's turn runs, and a first stop lands before the
+// "queued" answer. The stop was pending on the head as the turn being started; once Hold says it
+// waits behind that other turn, the stop is redirected to it and the head continues.
+func TestHoldRedirectsAFirstStopPendingOnTheHead(t *testing.T) {
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(member("a"))
+	h := q.Take()
+	q.Commit(h)
+	if out := q.Interrupt(InterruptOpts{}, false); out.Head != HeadStopPending {
+		t.Fatalf("head = %v", out.Head)
+	}
+	if !q.Hold(h, true) {
+		t.Fatal("the first stop was not redirected to the turn the head waits behind")
+	}
+	if q.Received(h) {
+		t.Fatal("the redirected stop still reached the held input when it started")
+	}
+	if !q.Episode() {
+		t.Fatal("the held input still runs: the episode must be open")
+	}
+
+	// From a second stop (or a discard) the pending stop stays on the head.
+	for _, second := range []InterruptOpts{{DiscardQueue: true}, {}} {
+		q2 := newQ(t, LedgerAtAccept)
+		q2.Accept(member("a"))
+		h2 := q2.Take()
+		q2.Commit(h2)
+		q2.Accept(member("b")) // queued behind: a first stop opens an episode
+		q2.Interrupt(InterruptOpts{}, false)
+		if out := q2.Interrupt(second, false); out.Result.Stop == StopFirst {
+			t.Fatalf("%+v: not a discarding stop", second)
+		}
+		if q2.Hold(h2, true) {
+			t.Fatalf("%+v: a discarding stop was redirected away from the head", second)
+		}
+		if !q2.Received(h2) {
+			t.Fatalf("%+v: the discarding stop did not reach the head when it started", second)
+		}
+	}
+}
