@@ -232,6 +232,81 @@ func TestResumedEntriesTheHostNeverMentionsDropAtTurnEnd(t *testing.T) {
 	}
 }
 
+// A member who resumes and sends nothing produces no turn, so the turn-end drop never runs:
+// the grace alone has to retire an orphan, or the session reads busy for good. A task the new
+// host confirms live is no longer a rebuilt entry and outlives the grace.
+func TestResumedEntriesExpireWithoutATurnUnlessConfirmedLive(t *testing.T) {
+	old := resumeBgGrace
+	resumeBgGrace = 50 * time.Millisecond
+	t.Cleanup(func() { resumeBgGrace = old })
+
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	name := "bg-grace"
+	registerHandle(t, name, h)
+	h.mu.Lock()
+	h.rebuildBgLocked(msp.SessionHistory{Mode: msp.HistoryModeInline, Items: []msp.Item{
+		toolItem("orphan", "bash", msp.ItemStatusInProgress, 1),
+		toolItem("alive", "read_file", msp.ItemStatusInProgress, 1),
+	}})
+	h.mu.Unlock()
+	if busy, reason := BackgroundWork(name); !busy || reason != bgReasonShell {
+		t.Fatalf("inside the grace: BackgroundWork = %v %q, want busy shell", busy, reason)
+	}
+
+	host.Notify(msp.NotificationItemUpdated, msp.ItemCompletedParams{Item: toolItem("alive", "read_file", msp.ItemStatusInProgress, 2)})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		h.mu.Lock()
+		e, ok := h.bg["alive"]
+		h.mu.Unlock()
+		if ok && e.rebuiltAt.IsZero() {
+			break // the confirmation has landed
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the live confirmation never reached the set")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// No turn from here on: only time passes.
+	time.Sleep(3 * resumeBgGrace)
+	busy, reason := BackgroundWork(name)
+	if !busy || reason != bgReasonProcess {
+		t.Errorf("after the grace: BackgroundWork = %v %q, want only the confirmed %q", busy, reason, bgReasonProcess)
+	}
+	h.mu.Lock()
+	_, orphan := h.bg["orphan"]
+	h.mu.Unlock()
+	if orphan {
+		t.Error("the unconfirmed orphan survived its grace with no turn")
+	}
+
+	// Once the confirmed task finishes, nothing is left: the session reads idle again.
+	host.Notify(msp.NotificationItemCompleted, msp.ItemCompletedParams{Item: toolItem("alive", "read_file", msp.ItemStatusCompleted, 3)})
+	waitBg(t, name, false)
+}
+
+// A resume with only an orphan and no turn afterwards: busy at first, idle once the grace ends.
+func TestResumeWithNoTurnGoesIdleAfterTheGrace(t *testing.T) {
+	old := resumeBgGrace
+	resumeBgGrace = 50 * time.Millisecond
+	t.Cleanup(func() { resumeBgGrace = old })
+
+	h := &threadHandle{}
+	newTestHandle(t, h)
+	name := "bg-grace-orphan"
+	registerHandle(t, name, h)
+	h.mu.Lock()
+	h.rebuildBgLocked(msp.SessionHistory{Mode: msp.HistoryModeInline, Items: []msp.Item{
+		toolItem("orphan", "bash", msp.ItemStatusInProgress, 1),
+	}})
+	h.mu.Unlock()
+	if busy, _ := BackgroundWork(name); !busy {
+		t.Fatal("inside the grace the rebuilt entry does not count")
+	}
+	waitBg(t, name, false)
+}
+
 // A stopped session has no work running, whatever the handle last saw.
 func TestNoBackgroundBusyWithoutALiveHost(t *testing.T) {
 	_, _, m := bgSession(t)

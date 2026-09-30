@@ -679,7 +679,7 @@ func (h *threadHandle) settleIdle(gen uint64) {
 	h.running, h.turnID, h.turnModel = false, "", ""
 	h.state = agents.TurnCompleted
 	h.settleHeadLocked()
-	h.dropResumedLocked()
+	h.dropResumedLocked(true)
 	h.mu.Unlock()
 	agents.MarkTurnEnd(h.slotSid, agents.TurnCompleted)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCompleted})
@@ -715,7 +715,7 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 		h.starting = "" // ended before it was ever reported started
 	}
 	h.settleHeadLocked()
-	h.dropResumedLocked()
+	h.dropResumedLocked(true)
 	h.running, h.state, h.turnID = false, st, ""
 	h.mu.Unlock()
 	agents.MarkTurnEndErr(h.slotSid, st, failure)
