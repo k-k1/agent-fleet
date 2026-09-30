@@ -91,7 +91,7 @@ replaces the symlink, and refuses (exit 1) when `node_modules` is a real install
 The `.package-lock.json` test is what stops `-f` from doing harm: the parent's own
 `node_modules` can be a `/scratch` link left dangling by a stop, or never installed, and
 `ln -sfT` would then swap a worktree tree you already installed for a link to nothing, exit 0.
-When the test fails, keep your own link and `npm ci --prefer-offline`.
+When the test fails, do not link; install your own as below, removing the link first.
 
 `npm run build`, the tests and the whole node project resolve through the link
 (measured: the full suite is green, 242 files, and the production build succeeds).

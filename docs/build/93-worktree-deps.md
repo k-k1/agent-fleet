@@ -99,8 +99,10 @@ size) and 20,719 files on 2026-09-29, in a Workspace without `$AF_WS_SCRATCH`. T
 measurement was 349 MB; the tree grows with the dependencies, so read either number as a
 snapshot.
 
-**The parent clone's tree can be shared by symlink**, with one condition: **the lockfile
-is identical to the parent's** (`cmp -s` the two, then link `node_modules` to the parent's).
+**The parent clone's tree can be shared by symlink**, on two conditions: **the lockfile
+is identical to the parent's** (`cmp -s` the two), and **the parent's tree is really
+installed** (its `node_modules/.package-lock.json` exists). Then link `node_modules` to
+the parent's.
 The commands are not repeated here: AGENTS.md has this repository's, and
 notes/worktrees.md gives every agent the general rule and its hazards. Both link with
 `ln -sfT`, never a plain `ln -s`, and only after checking that the parent's

@@ -89,8 +89,9 @@ Tool caches——は notes/environment.md の "Disk" が扱う。これらのキ
 2026-09-29、`$AF_WS_SCRATCH` の無い Workspace で、ディスク上 559MB（`du -sh`・見かけのサイズ 494MB）、
 20,719 ファイルだった。2026-08 の実測は 349MB。依存とともに育つので、どちらの数字もその時点の値として読む。
 
-**親クローンの実体を symlink で共有できる**。条件は 1 つ、**lockfile が親と同一**であること
-（2 つを `cmp -s` で比べ、`node_modules` を親のものへリンクする）。コマンドはここには繰り返さない:
+**親クローンの実体を symlink で共有できる**。条件は 2 つ、**lockfile が親と同一**であること
+（2 つを `cmp -s` で比べる）と、**親の実体が本当に入っている**こと（親の
+`node_modules/.package-lock.json` がある）。そのうえで `node_modules` を親のものへリンクする。コマンドはここには繰り返さない:
 このレポのコマンドは AGENTS.md に、すべてのエージェントが受け取る一般則とその危険は
 notes/worktrees.md にある。どちらも素の `ln -s` ではなく `ln -sfT` で張り、張る前に親の
 `node_modules/.package-lock.json` があることを確かめる（理由はどちらも下記）。
