@@ -2074,6 +2074,16 @@ func (s *SQL) MembershipOwnerName(ctx context.Context, membershipID string) (str
 	return key, nil
 }
 
+func (s *SQL) LFSObjectSize(ctx context.Context, tenantID, repo, oid string) (int64, bool, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT size FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=?`, tenantID, repo, oid).Scan(&n)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	return n, err == nil, err
+}
+
 func (s *SQL) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT oid FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)

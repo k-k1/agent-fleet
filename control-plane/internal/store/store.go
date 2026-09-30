@@ -1354,6 +1354,10 @@ type LFSObjectStore interface {
 	// DeleteLFSObject drops one object's ledger row (used by LFS GC when it prunes
 	// an orphaned object from disk, so the tenant's capacity quota frees up).
 	DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error
+	// LFSObjectSize returns the size an existing ledger row records for one object.
+	// A row can exist without its file (a failed publish keeps it), and a retry of that
+	// upload must not be charged for the same bytes twice.
+	LFSObjectSize(ctx context.Context, tenantID, repo, oid string) (int64, bool, error)
 	// ListLFSObjectOIDs returns the oids the ledger records for a repo — the set GC
 	// walks to reconcile against what git still references.
 	ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error)

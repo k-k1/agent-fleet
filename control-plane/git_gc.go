@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -148,8 +150,9 @@ func (g *gitGC) pruneLFS(ctx context.Context, slug, repo, bareDir string) {
 			log.Printf("lfs-gc: %s/%s: ledger delete %s failed, keeping the object: %v", slug, repo, oid, err)
 			return nil
 		}
-		if err := os.Remove(path); err != nil {
-			// The file stays, so its row has to come back: an upload of an existing
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			// Already gone (a repo delete got there first) counts as removed. Otherwise
+			// the file stays, so its row has to come back: an upload of an existing
 			// object is a no-op and would never write it again.
 			if perr := g.store.PutLFSObject(ctx, tenant.ID, repo, oid, info.Size()); perr != nil {
 				log.Printf("lfs-gc: %s/%s: remove %s failed (%v) and restoring its ledger row failed: %v", slug, repo, oid, err, perr)

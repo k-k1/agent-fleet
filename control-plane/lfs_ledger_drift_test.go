@@ -215,3 +215,88 @@ func TestLFSGCRemoveFailureKeepsAccounting(t *testing.T) {
 		t.Fatalf("ledger bytes = %d with the object still on disk, want 200", n)
 	}
 }
+
+// failFirstPublish makes the first upload's rename fail after its ledger write.
+func failFirstPublish(t *testing.T, e *lfsEnv, oid string) {
+	t.Helper()
+	real, first := e.g.store, true
+	e.g.store = hookedLFSStore{gitServerStore: real, afterPut: func() {
+		if !first {
+			return
+		}
+		first = false
+		temps, _ := filepath.Glob(filepath.Join(filepath.Dir(e.g.lfsObjectPath("default", "shared", oid)), ".upload-*"))
+		if len(temps) != 1 {
+			t.Fatalf("cannot inject a publish failure: %v", temps)
+		}
+		if err := os.Remove(temps[0]); err != nil {
+			t.Fatal(err)
+		}
+	}}
+}
+
+// The row a failed publish keeps is credited to the retry of the same oid; otherwise
+// at a full quota the object could never be uploaded again.
+func TestLFSRetryAfterFailedPublishAtQuota(t *testing.T) {
+	e := newLFSEnv(t)
+	data := []byte("retry-at-quota")
+	oid := oidOf(data)
+	e.setLFSCap(t, int64(len(data)))
+	failFirstPublish(t, e, oid)
+	if code := e.upload(oid, data).Code; code != http.StatusInternalServerError {
+		t.Fatalf("first upload: got %d, want 500", code)
+	}
+
+	out := e.batch(t, "upload", []map[string]any{{"oid": oid, "size": len(data)}})
+	obj := out["objects"].([]any)[0].(map[string]any)
+	if _, ok := obj["actions"]; !ok {
+		t.Fatalf("batch at quota refused the retry: %v", obj)
+	}
+	if w := e.upload(oid, data); w.Code != http.StatusOK {
+		t.Fatalf("retry upload: got %d (%s), want 200", w.Code, w.Body.String())
+	}
+	dflt, _, _ := e.st.GetTenantBySlug(context.Background(), "default")
+	if n, _ := e.st.TenantLFSBytes(context.Background(), dflt.ID); n != int64(len(data)) {
+		t.Fatalf("ledger bytes = %d after the retry, want %d", n, len(data))
+	}
+	// Any other object still meets the full quota.
+	other := []byte("x")
+	out = e.batch(t, "upload", []map[string]any{{"oid": oidOf(other), "size": 1}})
+	if _, ok := out["objects"].([]any)[0].(map[string]any)["error"]; !ok {
+		t.Fatalf("a new object was admitted over the quota: %v", out)
+	}
+}
+
+type hookedGCStore struct {
+	gitGCStore
+	afterDelete func()
+}
+
+func (s hookedGCStore) DeleteLFSObject(ctx context.Context, tenant, repo, oid string) error {
+	if err := s.gitGCStore.DeleteLFSObject(ctx, tenant, repo, oid); err != nil {
+		return err
+	}
+	s.afterDelete()
+	return nil
+}
+
+// A repo delete that lands between GC's row delete and its unlink leaves ENOENT; that
+// is a finished removal, not a failure whose row should be restored.
+func TestLFSGCDoesNotRestoreRowOfDeletedRepo(t *testing.T) {
+	f := newLFSGCFixture(t)
+	ctx := context.Background()
+	orphan := oidOf([]byte("orphaned-object"))
+	f.seed(t, orphan, 200, 2*time.Hour)
+	st := hookedGCStore{gitGCStore: f.st, afterDelete: func() {
+		if err := f.st.DeleteGitRepo(ctx, f.tenantID, "shared"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(f.bare); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	newGitGC(st, f.dataRoot, 0, time.Hour).pruneLFS(ctx, "default", "shared", f.bare)
+	if n, _ := f.st.TenantLFSBytes(ctx, f.tenantID); n != 0 {
+		t.Fatalf("GC restored %d ledger bytes for a deleted repo", n)
+	}
+}

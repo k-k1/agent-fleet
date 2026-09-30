@@ -136,15 +136,26 @@ func (a gitServerAPI) lfsBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		exists := fileExists(a.lfsObjectPath(mv.TenantSlug, name, o.OID))
 		href := a.lfsHref(slug, name, o.OID)
+		// need is what this object adds to the tenant's total: a ledger row left by a
+		// failed publish of the same oid is already counted.
+		need := o.Size
+		if upload && !exists && remaining >= 0 {
+			reserved, _, err := a.store.LFSObjectSize(r.Context(), mv.TenantID, name, o.OID)
+			if err != nil {
+				writeLFSErr(w, http.StatusInternalServerError, "store error")
+				return
+			}
+			need = max(o.Size-reserved, 0)
+		}
 		switch {
 		case upload && exists:
 			// Already stored → no action; the client skips the transfer.
-		case upload && remaining >= 0 && o.Size > remaining:
+		case upload && remaining >= 0 && need > remaining:
 			obj["error"] = map[string]any{"code": http.StatusInsufficientStorage, "message": "tenant LFS quota exceeded"}
 		case upload:
 			obj["actions"] = map[string]any{"upload": map[string]any{"href": href}}
 			if remaining >= 0 {
-				remaining -= o.Size
+				remaining -= need
 			}
 		case exists: // download
 			obj["actions"] = map[string]any{"download": map[string]any{"href": href}}
@@ -200,6 +211,13 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 		if remaining < 0 {
 			remaining = 0 // already over quota: nothing more may upload
 		}
+		// A retry of an upload whose publish failed finds its own row already counted.
+		reserved, _, err := a.store.LFSObjectSize(r.Context(), mv.TenantID, name, oid)
+		if err != nil {
+			writeLFSErr(w, http.StatusInternalServerError, "store error")
+			return
+		}
+		remaining += reserved
 		if r.ContentLength > 0 && r.ContentLength > remaining {
 			writeLFSErr(w, http.StatusInsufficientStorage, "tenant LFS quota exceeded")
 			return
@@ -256,7 +274,8 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 		os.Remove(tmpName)
 		// The row stays. A concurrent upload of the same oid may have found it and be
 		// relying on it, and no check-then-delete here is atomic with that upload. The
-		// cost is an over-count until this oid is uploaded again.
+		// cost is an over-count until this oid is uploaded again; the quota checks credit
+		// the row to that retry.
 		log.Printf("lfs: publish failed, ledger row kept tenant=%s repo=%s oid=%s: %v",
 			mv.TenantID, name, oid, err)
 		writeLFSErr(w, http.StatusInternalServerError, "publish failed")

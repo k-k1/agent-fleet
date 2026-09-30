@@ -477,6 +477,12 @@ func TestPostgresStore(t *testing.T) {
 	if err := st.PutLFSObject(ctx, tn.ID, "r1", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 10); err != nil {
 		t.Fatalf("put lfs: %v", err)
 	}
+	if n, ok, err := st.LFSObjectSize(ctx, tn.ID, "r1", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil || !ok || n != 10 {
+		t.Fatalf("lfs object size = (%d,%v,%v), want (10,true,nil)", n, ok, err)
+	}
+	if _, ok, err := st.LFSObjectSize(ctx, tn.ID, "r1", "missing"); err != nil || ok {
+		t.Fatalf("lfs object size of a missing row = (%v,%v), want (false,nil)", ok, err)
+	}
 	if err := st.CreateLFSLock(ctx, LFSLock{ID: NewID(), TenantID: tn.ID, RepoName: "r1", Path: "a.bin", OwnerID: "m", OwnerName: "o", LockedAt: NowTS()}); err != nil {
 		t.Fatalf("lfs lock: %v", err)
 	}
