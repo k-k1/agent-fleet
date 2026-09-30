@@ -43,7 +43,10 @@ at once**:
   `deploy/aws/ecs/cfn/20-platform.yaml`) that creates and deletes the workspace
   services, writes the SSM parameters under `/af-ws/` that carry every workspace's
   `AGENT_TOKEN` and DEK, attaches home volumes, runs shell commands on the slots over
-  `ssm:SendCommand`, and (with the engines stack) buys GPU instances.
+  `ssm:SendCommand`, and (with the engines stack) buys GPU instances. `SendCommand` is
+  limited to the `AWS-RunShellScript` document on instances tagged with this pool's
+  `af-pool` and `af-role=slot`; other instances in the account, engine boxes included,
+  are out of its reach.
 - On every target it unwraps the DEKs and injects them in plaintext (§7.6).
 
 It does not spread between companies, because those are separate deployments — which is

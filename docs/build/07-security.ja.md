@@ -38,7 +38,9 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 - `ecs` / `ecs-ec2` では CP のタスクロール（`deploy/aws/ecs/cfn/20-platform.yaml` の `CpTaskRole`）が、
   Workspace のサービスの作成・削除、全 Workspace の `AGENT_TOKEN` と DEK を載せた `/af-ws/` 配下の
   SSM パラメータの書き込み、home ボリュームの付け替え、`ssm:SendCommand` によるスロット上での
-  シェル実行、（エンジンのスタックがあれば）GPU インスタンスの購入を行える。
+  シェル実行、（エンジンのスタックがあれば）GPU インスタンスの購入を行える。`SendCommand` は
+  `AWS-RunShellScript` ドキュメントで、このプールの `af-pool` と `af-role=slot` のタグを持つ
+  インスタンスに対してだけ許される。アカウント内のほかのインスタンス（エンジン機を含む）には届かない。
 - どのターゲットでも CP が DEK を unwrap して平文で注入する（§7.6）。
 
 会社間は別デプロイゆえ波及しない——これが提供モデルの強み（[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)）。
