@@ -335,12 +335,37 @@ Resources:
                   # has to do it or ghosts accumulate and satisfy placement constraints.
                   - ecs:DeregisterContainerInstance
                 Resource: "*"
-              - Sid: SsmSlotCommands
+              # --- Shell commands on the slots (mount, umount, xfs_growfs, home wipe) ---
+              # SendCommand is authorized once per resource it names - the document AND each
+              # instance - so the two halves need separate statements: a tag condition on
+              # the document statement would never match, AWS-RunShellScript carries no tags.
+              # Without the instance fence this role could run a root shell on every
+              # SSM-managed box in the account and region, engine boxes included (they
+              # carry af-pool too; af-role=slot is what tells them apart).
+              - Sid: SsmSlotCommandDocument
                 Effect: Allow
-                Action:
-                  - ssm:SendCommand
-                  - ssm:GetCommandInvocation
-                Resource: "*"          # scoped by the AWS-RunShellScript document + slot tags
+                Action: ssm:SendCommand
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript"
+              # The pool value is the CP's AF_ECS_EC2_POOL, which defaults to the cluster
+              # name and is not overridden by these templates. Overriding it without
+              # changing this condition makes every mount fail with AccessDenied.
+              # A quarantined slot (af-role=quarantined) is out of reach on purpose: the
+              # CP never sends it another command.
+              - Sid: SsmSlotCommandInstances
+                Effect: Allow
+                Action: ssm:SendCommand
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals:
+                    ssm:resourceTag/af-pool: !Ref Cluster
+                    ssm:resourceTag/af-role: slot
+              # GetCommandInvocation has no resource type to scope (service authorization
+              # reference). It can read the output of any command in the account, but it
+              # cannot run one.
+              - Sid: SsmSlotCommandResults
+                Effect: Allow
+                Action: ssm:GetCommandInvocation
+                Resource: "*"
               - Sid: PassSlotRole
                 Effect: Allow
                 Action: iam:PassRole
