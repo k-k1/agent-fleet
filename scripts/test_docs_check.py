@@ -46,6 +46,17 @@ class IndexTests(unittest.TestCase):
         self.assertIn("docs/build/02-b.md: not linked from the shelf index docs/build/README.md", errors)
         self.assertIn("docs/build/02-b.ja.md: not linked from the shelf index docs/build/README.ja.md", errors)
 
+    def test_missing_index_is_an_error(self):
+        for gone in (("README.ja.md",), ("README.md", "README.ja.md")):
+            with self.subTest(gone=gone):
+                self.setUp()
+                for name in gone:
+                    (self.shelf / name).unlink()
+                errors = self.errors()
+                for name in gone:
+                    self.assertIn(f"has no index docs/build/{name}", errors)
+                self.assertEqual(errors.count("has no index"), len(gone))
+
     def test_link_inside_code_does_not_count(self):
         (self.shelf / "README.md").write_text("`[1](01-a.md)` [lite](lite.md)\n")
         self.assertIn("01-a.md: not linked", self.errors())

@@ -466,6 +466,7 @@ def check_index(files: list[str], f: Findings) -> None:
     (`README.md` for X.md, `README.ja.md` for X.ja.md).
     """
     present = {rel(p) for p in files}
+    missing: set[str] = set()
     for path in files:
         src = rel(path)
         name = os.path.basename(src)
@@ -473,7 +474,10 @@ def check_index(files: list[str], f: Findings) -> None:
             continue
         index = os.path.join(os.path.dirname(src), "README.ja.md" if is_ja(src) else "README.md")
         if index not in present:
-            continue  # a missing README is check_lang's business
+            if index not in missing:
+                missing.add(index)
+                f.error(f"{src}: the shelf has no index {index} to list it")
+            continue
         index_path = os.path.join(ROOT, index)
         linked = {
             os.path.normpath(os.path.join(os.path.dirname(index_path), m.group(2).split("#", 1)[0]))
