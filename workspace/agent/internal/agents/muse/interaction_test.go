@@ -718,3 +718,52 @@ func TestTranscriptKeepsUserInputAQuestion(t *testing.T) {
 		t.Errorf("a question was surfaced as an approval: %+v", td.PendingApproval)
 	}
 }
+
+// Declining a question is the runtime's own refusal (ADR 0105 decision 7): cancel and deny go out
+// as userInput/cancel, never as an empty userInput/answer, and they leave the queue alone.
+func TestCancelledQuestionSendsUserInputCancelAndKeepsTheQueue(t *testing.T) {
+	for _, d := range []agents.Decision{agents.DecisionCancel, agents.DecisionDeny} {
+		t.Run(string(d), func(t *testing.T) {
+			h := &threadHandle{}
+			host := newTestHandle(t, h)
+			starts := recordStarts(host)
+			host.Handle(msp.MethodUserInputCancel, func(m msptest.Message) (any, *msp.Error) {
+				return msp.CommandAcceptedResult{}, nil
+			})
+			host.Handle(msp.MethodUserInputAnswer, func(m msptest.Message) (any, *msp.Error) {
+				return msp.CommandAcceptedResult{}, nil
+			})
+			runTurn(t, h, host, starts, "asks")
+			if err := h.Send(memberInput("queued", "cm-q")); err != nil {
+				t.Fatal(err)
+			}
+			host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+				UserInputID: "ui-9", SessionID: h.sid,
+				Questions: []msp.UserInputQuestion{{ID: "q1", Options: []msp.UserInputOption{{Label: "a"}}}},
+			})
+			inter := waitInteraction(t, h)
+
+			if err := h.Respond(agents.InteractionReply{ID: inter.ID, Decision: d}); err != nil {
+				t.Fatal(err)
+			}
+			m := waitSent(t, host, isMethod(msp.MethodUserInputCancel))
+			var p msp.UserInputCancelParams
+			json.Unmarshal(m.Params, &p)
+			if p.UserInputID != "ui-9" || p.SessionID != h.sid {
+				t.Fatalf("userInput/cancel params = %+v", p)
+			}
+			for _, m := range host.Received() {
+				if m.Method == msp.MethodUserInputAnswer || m.Method == msp.MethodTurnInterrupt {
+					t.Fatalf("declining the question sent %s", m.Method)
+				}
+			}
+			h.mu.Lock()
+			pending, queued, running := h.inter, h.tq().Texts(), h.running
+			h.mu.Unlock()
+			if pending != nil || len(queued) != 1 || queued[0] != "queued" || !running {
+				t.Fatalf("after the cancel: question %v, queue %q, running %v; want the question gone, the queue and the turn untouched",
+					pending != nil, queued, running)
+			}
+		})
+	}
+}

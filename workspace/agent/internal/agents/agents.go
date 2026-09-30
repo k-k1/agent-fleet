@@ -260,6 +260,11 @@ type TranscriptData struct {
 	// message (opencode's session_input rows awaiting promotion) — surfaced as the
 	// mirror's "queued" badge, like claude's queue-operation reconstruction.
 	Queued []string
+	// QueuedItems is the driver-held queue with ids, origins and states (ADR 0105 decision
+	// 5), and Discards what stops discarded and the driver keeps for return (decision 4).
+	// Managed drivers only; the TUI routes leave both empty.
+	QueuedItems []QueueItem
+	Discards    []Discard
 	// Compacting reports the agent is compacting its conversation right now
 	// (opencode session.time_compacting) — surfaced as the mirror's "compacting" badge.
 	Compacting bool

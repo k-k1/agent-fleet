@@ -166,7 +166,7 @@ func TestSecondSendQueuesAndDrains(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 	h.mu.Lock()
-	queued := len(h.queue)
+	queued := h.tq().Len()
 	h.mu.Unlock()
 	if queued != 1 {
 		t.Errorf("%d turns queued, want 1", queued)
@@ -249,101 +249,106 @@ func TestResendWithTheSameClientMessageIDStartsOneTurn(t *testing.T) {
 	}
 }
 
-func TestInterruptCancelsTheQueueAndCallsTurnInterrupt(t *testing.T) {
+// A first stop interrupts the running turn and leaves the queue alone (ADR 0105 decision 1):
+// the queued input starts once the host reports the interrupted turn finished.
+func TestFirstStopInterruptsTheTurnAndKeepsTheQueue(t *testing.T) {
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
-	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
-		return msp.CommandAcceptedResult{}, nil
-	})
-	host.Handle(msp.MethodTurnInterrupt, func(m msptest.Message) (any, *msp.Error) {
-		return msp.CommandAcceptedResult{}, nil
-	})
+	starts := recordStarts(host)
+	acceptInterrupts(host)
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-3", SessionID: h.sid})
 	waitEvent(t, h, agents.TurnRunning)
-	if err := h.Send(agents.TurnInput{Prompt: "queued"}); err != nil {
+	if err := h.Send(memberInput("queued", "cm-q")); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := h.Interrupt(); err != nil {
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil {
 		t.Fatalf("interrupt: %v", err)
 	}
-	m := host.WaitForMethod(msp.MethodTurnInterrupt)
+	if res.Stop != agents.StopFirst || res.Discard != nil {
+		t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+	}
+	m := waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 	var p msp.TurnInterruptParams
 	json.Unmarshal(m.Params, &p)
 	if p.TurnID == nil || *p.TurnID != "t-3" {
 		t.Errorf("turnId = %v, want t-3", p.TurnID)
 	}
 	h.mu.Lock()
-	queued := len(h.queue)
+	queued := h.tq().Len()
 	h.mu.Unlock()
-	if queued != 0 {
-		t.Errorf("%d turns still queued after an interrupt", queued)
+	if queued != 1 {
+		t.Errorf("%d turns queued after a first stop, want the follow-up kept", queued)
+	}
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{TurnID: "t-3", SessionID: h.sid, Terminal: msp.TurnTerminalCancelled})
+	if got := *nextStart(t, starts).Input[0].Text; got != "queued" {
+		t.Fatalf("started %q after the stop, want the queued follow-up", got)
 	}
 }
 
-// A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
-// the next turn once the host reports the interrupted one finished, while the user's own
-// queued follow-up still goes with the stop.
-func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // accept records every send in the ledger
+// A second stop inside the episode interrupts the continued turn and discards the rest, the
+// peer message included; what it discarded is kept for return.
+func TestSecondStopDiscardsTheRestPeerIncluded(t *testing.T) {
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
-	starts := make(chan string, 4)
-	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
-		var p msp.TurnStartParams
-		json.Unmarshal(m.Params, &p)
-		starts <- *p.Input[0].Text
-		return msp.CommandAcceptedResult{}, nil
-	})
-	host.Handle(msp.MethodTurnInterrupt, func(m msptest.Message) (any, *msp.Error) {
-		return msp.CommandAcceptedResult{}, nil
-	})
+	starts := recordStarts(host)
+	acceptInterrupts(host)
 
-	queued, err := h.SendQueued(agents.TurnInput{Prompt: "stuck"})
+	queued, err := h.SendQueued(memberInput("stuck", "cm-stuck"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if queued {
 		t.Fatal("input to an idle session was reported as queued")
 	}
-	<-starts
-	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
+	first := nextStart(t, starts)
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: first.CommandID, TurnID: first.CommandID, SessionID: h.sid})
 	waitEvent(t, h, agents.TurnRunning)
-	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	queued, err = h.SendQueued(memberInput("own follow-up", "cm-own"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !queued {
 		t.Fatal("input behind a running turn was not reported as queued")
 	}
-	if err := h.Send(agents.TurnInput{Prompt: "own follow-up"}); err != nil {
+	if err := h.Send(peerInput("from a peer", "cm-peer")); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := h.Interrupt(); err != nil {
-		t.Fatalf("interrupt: %v", err)
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
+		t.Fatalf("first stop: %v", err)
 	}
-	host.WaitForMethod(msp.MethodTurnInterrupt)
-	// Nothing drains before turn/completed, so the queue is exactly what the stop left.
-	h.mu.Lock()
-	var left []string
-	for _, in := range h.queue {
-		left = append(left, in.Prompt)
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{TurnID: first.CommandID, SessionID: h.sid, Terminal: msp.TurnTerminalCancelled})
+	own := nextStart(t, starts)
+	if got := *own.Input[0].Text; got != "own follow-up" {
+		t.Fatalf("started %q after the first stop, want the own follow-up", got)
 	}
-	h.mu.Unlock()
-	if len(left) != 1 || left[0] != "from a peer" {
-		t.Fatalf("queue after the stop = %q, want only the peer message", left)
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: own.CommandID, TurnID: own.CommandID, SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil {
+		t.Fatalf("second stop: %v", err)
 	}
-	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{
-		TurnID: "t-1", SessionID: h.sid, Terminal: msp.TurnTerminalCancelled,
+	if res.Stop != agents.StopSecond || res.Discard == nil || len(res.Discard.Items) != 1 || res.Discard.Items[0].ID != "cm-peer" {
+		t.Fatalf("second stop = %+v, want the peer message discarded", res)
+	}
+	waitSent(t, host, func(m msptest.Message) bool {
+		var p msp.TurnInterruptParams
+		return m.Method == msp.MethodTurnInterrupt && json.Unmarshal(m.Params, &p) == nil && p.TurnID != nil && *p.TurnID == own.CommandID
 	})
-	select {
-	case s := <-starts:
-		if s != "from a peer" {
-			t.Errorf("started %q, want the peer message", s)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the peer message did not start a turn after the stop")
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{TurnID: own.CommandID, SessionID: h.sid, Terminal: msp.TurnTerminalCancelled})
+	waitEvent(t, h, agents.TurnCancelled)
+	noStart(t, starts, "the discarded peer message")
+	h.mu.Lock()
+	kept, idle := h.tq().Discards(), h.tq().Head() == nil && h.tq().Len() == 0 && !h.tq().Episode()
+	h.mu.Unlock()
+	if len(kept) != 1 || kept[0].Items[0].Origin.Kind != agents.OriginPeer {
+		t.Fatalf("kept discards = %+v, want the peer message", kept)
+	}
+	if !idle {
+		t.Fatal("the queue is not settled after the second stop's turn ended")
 	}
 }
 
@@ -369,7 +374,7 @@ func TestSendInTheStartGapQueuesInTheDriver(t *testing.T) {
 		t.Fatal("a turn the host started was reported as queued")
 	}
 	first := <-starts
-	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	queued, err = h.SendQueued(peerInput("from a peer", "cm-peer"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +411,7 @@ func TestHostQueuedDispositionReportsQueued(t *testing.T) {
 	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
 		return msp.TurnStartResult{Disposition: msp.TurnStartDispositionQueued, TurnID: "t-2"}, nil
 	})
-	queued, err := h.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	queued, err := h.SendQueued(peerInput("from a peer", "cm-peer"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,9 +420,9 @@ func TestHostQueuedDispositionReportsQueued(t *testing.T) {
 	}
 }
 
-// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
-// on the host being shut down.
-func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+// Agent shutdown interrupts through the teardown path: the whole queue goes, peer input
+// included, and nothing is kept for return (ADR 0105 decision 8).
+func TestAbortManagedDiscardsTheQueue(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
@@ -441,17 +446,17 @@ func TestAbortManagedDiscardsKeptInput(t *testing.T) {
 	})
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
 	waitEvent(t, h, agents.TurnRunning)
-	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+	if err := h.Send(peerInput("from a peer", "cm-peer")); err != nil {
 		t.Fatal(err)
 	}
 
 	AbortManaged()
-	host.WaitForMethod(msp.MethodTurnInterrupt)
+	waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 	h.mu.Lock()
-	left := len(h.queue)
+	left, kept := h.tq().Len(), h.tq().Discards()
 	h.mu.Unlock()
-	if left != 0 {
-		t.Errorf("%d entries queued after the shutdown interrupt, want none", left)
+	if left != 0 || len(kept) != 0 {
+		t.Errorf("%d entries queued and %d discards kept after the shutdown interrupt, want none", left, len(kept))
 	}
 	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{
 		TurnID: "t-1", SessionID: h.sid, Terminal: msp.TurnTerminalCancelled,

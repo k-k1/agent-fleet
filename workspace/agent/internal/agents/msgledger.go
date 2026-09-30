@@ -55,6 +55,24 @@ func (l *MsgLedger) SeenOrRecord(name, id string) bool {
 	return false
 }
 
+// Seen reports whether id was already submitted for name, without recording it. A driver
+// that records at take asks this at accept to tell a resend from new input (ADR 0105
+// decision 2): recording there would mark input a crash can still lose as seen.
+func (l *MsgLedger) Seen(name, id string) bool {
+	if id == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ids, _ := l.files.Read(name)
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Remove drops a session's ledger (stop — the slot identity is retired).
 func (l *MsgLedger) Remove(name string) {
 	l.mu.Lock()

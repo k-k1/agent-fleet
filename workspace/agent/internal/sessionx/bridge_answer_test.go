@@ -27,11 +27,15 @@ func (f *fakeHandle) Respond(r agents.InteractionReply) error {
 	f.responded = &r
 	return f.respErr
 }
-func (f *fakeHandle) Send(agents.TurnInput) error                { return nil }
-func (f *fakeHandle) Steer(agents.TurnInput) error               { return nil }
-func (f *fakeHandle) Interrupt() error                           { return nil }
-func (f *fakeHandle) UpdateSettings(agents.ThreadSettings) error { return nil }
-func (f *fakeHandle) Events() <-chan agents.Event                { return nil }
+func (f *fakeHandle) Send(agents.TurnInput) error  { return nil }
+func (f *fakeHandle) Steer(agents.TurnInput) error { return nil }
+func (f *fakeHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
+	return agents.InterruptResult{}, nil
+}
+func (f *fakeHandle) RemoveQueued(string) (agents.QueueItem, error) { return agents.QueueItem{}, nil }
+func (f *fakeHandle) DismissDiscard(string) bool                    { return false }
+func (f *fakeHandle) UpdateSettings(agents.ThreadSettings) error    { return nil }
+func (f *fakeHandle) Events() <-chan agents.Event                   { return nil }
 
 func questionInteraction(id string) *agents.Interaction {
 	return &agents.Interaction{ID: id, Kind: "question", Questions: []transcript.Question{

@@ -506,77 +506,9 @@ func TestResumedActiveTurnQueuesUntilCompletion(t *testing.T) {
 	waitCodexState(t, h, agents.TurnCompleted)
 }
 
-func TestInterruptCancelsTurnAndClearsQueue(t *testing.T) {
-	m, cl := newMockCodexServer(t)
-	h := newCodexTestHandle(t, cl, "codex-interrupt")
-	registerCodexTestHandle(t, h)
-	if err := h.Send(agents.TurnInput{Prompt: "long", ClientMessageID: "af_long"}); err != nil {
-		t.Fatal(err)
-	}
-	waitCodexState(t, h, agents.TurnRunning)
-	h.mu.Lock()
-	h.queue = append(h.queue, agents.TurnInput{Prompt: "discard me"})
-	h.mu.Unlock()
-	if err := h.Interrupt(); err != nil {
-		t.Fatal(err)
-	}
-	waitCodexState(t, h, agents.TurnCancelled)
-	if got := h.queuedPrompts(); len(got) != 0 {
-		t.Fatalf("queue after interrupt = %v", got)
-	}
-	if got := m.callCount("turn/interrupt"); got != 1 {
-		t.Fatalf("turn/interrupt count = %d", got)
-	}
-}
-
-// A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
-// the next turn, while the user's own queued follow-up still goes with the stop.
-func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
-	m, cl := newMockCodexServer(t)
-	h := newCodexTestHandle(t, cl, "codex-interrupt-keep")
-	registerCodexTestHandle(t, h)
-	queued, err := h.SendQueued(agents.TurnInput{Prompt: "stuck", ClientMessageID: "af_stuck"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if queued {
-		t.Fatal("input to an idle thread was reported as queued")
-	}
-	waitCodexState(t, h, agents.TurnRunning)
-	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "af_peer", KeepOnInterrupt: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !queued {
-		t.Fatal("input behind a running turn was not reported as queued")
-	}
-	if err := h.Send(agents.TurnInput{Prompt: "own follow-up", ClientMessageID: "af_own"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := h.Interrupt(); err != nil {
-		t.Fatal(err)
-	}
-	// The kept turn is left running (no autoComplete), so the pump is parked in it: anything
-	// still queued now is something the stop failed to discard.
-	waitCodexCalls(t, m, "turn/start", 2)
-	waitCodexState(t, h, agents.TurnRunning)
-	if got := h.queuedPrompts(); len(got) != 0 {
-		t.Fatalf("queue after the kept turn started = %v, want the own follow-up discarded", got)
-	}
-	m.mu.Lock()
-	turns := append([]string(nil), m.turns...)
-	m.mu.Unlock()
-	if len(turns) != 2 || turns[1] != "from a peer" {
-		t.Fatalf("turns = %q, want the peer message as the turn after the stop", turns)
-	}
-	m.complete("completed") // settle the kept turn while this test's HOME is still in place
-	waitCodexState(t, h, agents.TurnCompleted)
-}
-
-// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
-// on the way down.
-func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+// Agent shutdown interrupts through the teardown path: the whole queue goes, peer input
+// included, and nothing is kept for return (ADR 0105 decision 8).
+func TestAbortManagedDiscardsTheQueue(t *testing.T) {
 	m, cl := newMockCodexServer(t)
 	h := newCodexTestHandle(t, cl, "codex-abort-kept")
 	registerCodexTestHandle(t, h)
@@ -584,7 +516,7 @@ func TestAbortManagedDiscardsKeptInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitCodexState(t, h, agents.TurnRunning)
-	if err := h.Send(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "af_peer", KeepOnInterrupt: true}); err != nil {
+	if err := h.Send(peerInput("from a peer", "af_peer")); err != nil {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
@@ -593,6 +525,12 @@ func TestAbortManagedDiscardsKeptInput(t *testing.T) {
 	AbortManaged()
 	if got := h.queuedPrompts(); len(got) != 0 {
 		t.Fatalf("queue after shutdown interrupt = %v", got)
+	}
+	h.mu.Lock()
+	kept := h.tq().Discards()
+	h.mu.Unlock()
+	if len(kept) != 0 {
+		t.Fatalf("teardown kept %d discards for return, want none (decision 8)", len(kept))
 	}
 	m.complete("interrupted")
 	waitCodexState(t, h, agents.TurnCancelled)
@@ -702,7 +640,7 @@ func TestManagedEnrich(t *testing.T) {
 	h.mu.Lock()
 	h.inter = &agents.Interaction{ID: "item_q9", Kind: "question",
 		Questions: []transcript.Question{{Question: "q1"}, {Question: "q2"}}}
-	h.queue = []agents.TurnInput{{Prompt: "queued one"}}
+	h.tq().Accept(agents.TurnInput{Prompt: "queued one", ClientMessageID: "af_q1", Origin: agents.Origin{Kind: agents.OriginMember}})
 	h.settings.Mode = "plan"
 	h.mu.Unlock()
 
@@ -714,6 +652,9 @@ func TestManagedEnrich(t *testing.T) {
 	}
 	if len(td.Queued) != 2 || td.Queued[1] != "queued one" || td.Mode != "plan" {
 		t.Fatalf("Queued=%v Mode=%q", td.Queued, td.Mode)
+	}
+	if len(td.QueuedItems) != 1 || td.QueuedItems[0].ID != "af_q1" || td.QueuedItems[0].State != agents.EntryQueued {
+		t.Fatalf("QueuedItems = %+v", td.QueuedItems)
 	}
 
 	td2 := agents.TranscriptData{Mode: "normal"}

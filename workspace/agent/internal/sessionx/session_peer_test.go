@@ -282,8 +282,8 @@ func (d *queueingFakeDriver) Resume(session.Meta) (agents.ThreadHandle, error) {
 
 // A peer message to a Managed session in the middle of a turn only waits in the driver's
 // queue. /input has to say so (held) — it is the sender's only way to tell "started a turn"
-// from "held" — and the input has to carry KeepOnInterrupt, or the stop that frees the turn
-// it waits behind discards it. The user's own send gets neither: the stop still reaches it.
+// from "held" — and the input has to carry its peer origin, which is how the stop rules tell it
+// from the member's own input (ADR 0105). The user's own send is member input and not held.
 func TestPeerInputToBusyManagedSessionIsQueuedAndKept(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
@@ -314,8 +314,8 @@ func TestPeerInputToBusyManagedSessionIsQueuedAndKept(t *testing.T) {
 	if !resp.Held {
 		t.Errorf("response = %s, want held=true for a message waiting behind the running turn", rec.Body.String())
 	}
-	if in := <-h.got; !in.KeepOnInterrupt {
-		t.Error("the peer message was queued without KeepOnInterrupt: a stop of the turn it waits behind discards it")
+	if in := <-h.got; in.Origin != (agents.Origin{Kind: agents.OriginPeer, From: from}) {
+		t.Errorf("the peer message was queued with origin %+v, want peer from %s", in.Origin, from)
 	}
 
 	h.queued = false
@@ -326,7 +326,7 @@ func TestPeerInputToBusyManagedSessionIsQueuedAndKept(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "held") {
 		t.Errorf("response = %s, want no held for input that started a turn", rec.Body.String())
 	}
-	if in := <-h.got; in.KeepOnInterrupt {
-		t.Error("the user's own input carries KeepOnInterrupt: the stop button would no longer reach it")
+	if in := <-h.got; !in.Origin.IsMember() {
+		t.Errorf("the user's own input has origin %+v, want member", in.Origin)
 	}
 }

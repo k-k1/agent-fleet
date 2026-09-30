@@ -466,7 +466,7 @@ func TestTranscriptOverlaysThePendingPromptAndTheQueue(t *testing.T) {
 
 	h.mu.Lock()
 	h.inter = &agents.Interaction{ID: "q", Questions: []transcript.Question{{ID: "q", Question: "which?"}}}
-	h.queue = []agents.TurnInput{{Prompt: "next please"}}
+	h.tq().Accept(memberInput("next please", "cm-next"))
 	h.mu.Unlock()
 
 	td, ok := New().Transcript(m)
@@ -475,6 +475,9 @@ func TestTranscriptOverlaysThePendingPromptAndTheQueue(t *testing.T) {
 	}
 	if len(td.Pending) != 1 || td.Pending[0].Question != "which?" {
 		t.Errorf("Pending = %+v", td.Pending)
+	}
+	if len(td.QueuedItems) != 1 || td.QueuedItems[0].ID != "cm-next" || td.QueuedItems[0].State != agents.EntryQueued {
+		t.Errorf("QueuedItems = %+v", td.QueuedItems)
 	}
 	if len(td.Queued) != 1 || td.Queued[0] != "next please" {
 		t.Errorf("Queued = %+v", td.Queued)

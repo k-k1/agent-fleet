@@ -27,15 +27,6 @@ type TurnInput struct {
 	// submission after a reconnect, idempotent. The ledger that backs it holds operational
 	// metadata only, never conversation content (§9.5).
 	ClientMessageID string
-	// KeepOnInterrupt marks input from a sender who is not the one pressing stop — another
-	// session's message (ADR 0041). Interrupt leaves it queued, and it starts as the next turn
-	// once the interrupted one settles. Unmarked input is the stop's own target and is discarded
-	// with the turn (docs/log/27 §12.2-4). Without the mark, the stop that frees a stuck turn
-	// would also discard the message that turn was keeping out, and its sender would never know.
-	// Teardown (DropHandle, AbortManaged, a daemon drain) still discards it: the runtime it would
-	// start on is going away.
-	KeepOnInterrupt bool
-
 	// Origin is who this input came from (ADR 0105 decision 1). Every constructor of a
 	// TurnInput sets it; the stop rules read it to tell the member's own input from the rest.
 	Origin Origin
@@ -73,18 +64,6 @@ func (o Origin) IsMember() bool {
 		return true
 	}
 	return false
-}
-
-// KeptOnInterrupt is what an Interrupt leaves in a driver's queue: the KeepOnInterrupt
-// entries, in their order. nil when there are none.
-func KeptOnInterrupt(queue []TurnInput) []TurnInput {
-	var kept []TurnInput
-	for _, in := range queue {
-		if in.KeepOnInterrupt {
-			kept = append(kept, in)
-		}
-	}
-	return kept
 }
 
 // ThreadSettings is a dynamic settings update (§9.4-3: changing the model/effort of a
@@ -229,11 +208,28 @@ type ThreadSnapshot struct {
 type ThreadHandle interface {
 	Send(in TurnInput) error  // the turn/start equivalent
 	Steer(in TurnInput) error // the turn/steer equivalent (extra input into a running turn)
-	Interrupt() error         // the turn/interrupt equivalent
+	// Interrupt is the Console's stop (ADR 0105 decisions 1-3): a first stop ends the running
+	// turn and the queue continues; a stop inside the stop episode, or one with
+	// DiscardQueue, also discards everything still cancellable and reports it.
+	Interrupt(opts InterruptOpts) (InterruptResult, error)
+	// RemoveQueued takes one queued entry out by id while it is cancellable (decision 5):
+	// ErrAlreadyStarted once it is committed, ErrNotQueued for an id the queue does not hold.
+	RemoveQueued(id string) (QueueItem, error)
+	// DismissDiscard drops a kept discard once the member restored or dismissed it
+	// (decision 4). false when it is already gone.
+	DismissDiscard(id string) bool
 	UpdateSettings(s ThreadSettings) error
 	Respond(reply InteractionReply) error
 	Events() <-chan Event
 	Snapshot() (ThreadSnapshot, error)
+}
+
+// LiveHandles is implemented by a Managed driver that can return a session's handle without
+// starting anything. The /turn queue edits (remove, dismiss_discard) use it: the queue and the
+// kept discards live with the handle, so a session whose runtime is down has none, and Resume
+// would start a daemon or a host only to answer "nothing there". nil, false = no live handle.
+type LiveHandles interface {
+	LiveHandle(m session.Meta) (ThreadHandle, bool)
 }
 
 // QueueingSender is implemented by a handle whose Send can hold input behind a running turn.

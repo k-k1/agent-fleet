@@ -479,8 +479,8 @@ func (s *Supervisor) drain() {
 	time.Sleep(2 * time.Second)
 }
 
-// busyManaged lists handles with a turn in flight (queued input is not lost — the queue
-// lives inside the handle and the pump after reconcile submits the rest).
+// busyManaged lists handles with a turn in flight: the ones the drain waits for, and interrupts
+// through interruptAll on timeout, which discards their queues (ADR 0105 decision 8).
 func busyManaged() []*threadHandle {
 	var out []*threadHandle
 	for _, h := range liveHandles() {
