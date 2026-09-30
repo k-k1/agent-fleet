@@ -240,17 +240,6 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     const d = anchor.sec.getBoundingClientRect().top - anchor.scroller.getBoundingClientRect().top;
     if (d < 0) sc.scrollTop += d;
   }, [expanded]);
-  // The two fold buttons render on opposite conditions, so the pressed one unmounts with the
-  // toggle and keyboard focus falls to <body>. A keyboard press hands focus to the opposite
-  // button; a tap leaves it alone, like the filter's clear button. Runs after the pin above.
-  const foldFocus = useRef(false);
-  const moreBtn = useRef<HTMLButtonElement>(null);
-  const lessBtn = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    if (!foldFocus.current) return;
-    foldFocus.current = false;
-    (expanded ? lessBtn : moreBtn).current?.focus();
-  }, [expanded]);
   // The tracker search answers the needle it was pressed for; typing on makes it stale, so it
   // is dropped rather than shown under a filter it no longer matches.
   const [remote, setRemote] = useState<{ needle: string; result: WorkItemSearchResult } | null>(null);
@@ -260,6 +249,21 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   // for a needle the user has already typed over or cleared.
   const searchGen = useRef(0);
   const filterInput = useRef<HTMLInputElement>(null);
+  // The two fold buttons render on opposite conditions, so the pressed one unmounts with the
+  // toggle and keyboard focus falls to <body>. A keyboard press hands focus to the opposite
+  // button; a tap leaves it alone, like the filter's clear button. Runs after the pin above,
+  // and never scrolls: the default focus() scroll would undo that pin.
+  const foldFocus = useRef(false);
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  const lessBtn = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (!foldFocus.current) return;
+    foldFocus.current = false;
+    // A filter that leaves nothing hidden collapses with no show-more to land on; the filter
+    // input renders whenever show-less could have been pressed, so it is the fallback.
+    const to = (expanded ? lessBtn : moreBtn).current || filterInput.current;
+    to?.focus({ preventScroll: true });
+  }, [expanded]);
 
   // Switching tenant must not leave the previous tenant's rows behind (as in the other stores).
   useEffect(() => {

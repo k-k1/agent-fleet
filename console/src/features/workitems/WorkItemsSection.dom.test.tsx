@@ -702,9 +702,14 @@ describe("WorkItemsSection", () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
     const fold = () => host.querySelector<HTMLButtonElement>(".wi-more")!;
+    // jsdom never scrolls on focus, so the option is what proves the handoff leaves the
+    // collapse pin (#1348) alone.
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
     const press = async (detail: number) => {
       fold().focus();
+      focusSpy.mockClear();
       await act(async () => fold().dispatchEvent(new MouseEvent("click", { bubbles: true, detail })));
+      for (const call of focusSpy.mock.calls) expect(call).toEqual([{ preventScroll: true }]);
     };
 
     // Keyboard (detail 0): the pressed button unmounts, focus lands on the one that replaced it.
@@ -722,6 +727,23 @@ describe("WorkItemsSection", () => {
     await press(1);
     expect(fold().textContent).toBe(t("wi.show_more", { n: 31 }));
     expect(document.activeElement).not.toBe(fold());
+    focusSpy.mockRestore();
+  });
+
+  it("falls back to the filter when a keyboard collapse leaves no show-more to land on", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    // One match: nothing is hidden once folded, so show-more will not render.
+    await act(async () => typeInto(input, "G3M-100"));
+    expect(rows()).toBe(1);
+    const less = host.querySelector<HTMLButtonElement>(".wi-more")!;
+    expect(less.textContent).toBe(t("wi.show_less"));
+    less.focus();
+    await act(async () => less.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
+    expect(host.querySelector(".wi-more")).toBeNull();
+    expect(document.activeElement).toBe(input);
   });
 
   it("drops the error of a tracker search that was still in flight when the filter was cleared", async () => {
