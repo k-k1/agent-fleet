@@ -6,6 +6,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -101,4 +105,44 @@ func (f *fakeFlushHijack) Flush() { f.onFlush() }
 func (f *fakeFlushHijack) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	c, _ := net.Pipe()
 	return c, bufio.NewReadWriter(bufio.NewReader(c), bufio.NewWriter(c)), nil
+}
+
+// The background loops whose documentation (the comments where they are read, the
+// example env files, the ECS parameters) promises that "0" switches them off. Reading
+// one through envx.DurationOr turns that "0" into the default and the loop keeps
+// running, so each must be read through intervalOff — which is a call-site property,
+// hence a scan of the package's sources rather than a test of either parser.
+func TestZeroDisabledLoopsAreReadWithIntervalOff(t *testing.T) {
+	names := []string{
+		"AF_USAGE_SAMPLE_INTERVAL",
+		"AF_GIT_GC_INTERVAL",
+		"AF_SCHEDULER_INTERVAL",
+		"AF_CLOUD_COST_INTERVAL",
+	}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var src strings.Builder
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src.Write(b)
+	}
+	for _, n := range names {
+		read := regexp.MustCompile(`(\w+(?:\.\w+)?)\(os\.Getenv\("`+n+`"\)`).FindAllStringSubmatch(src.String(), -1)
+		if len(read) == 0 {
+			t.Errorf("%s: no read found — the scan has gone blind; update it", n)
+		}
+		for _, m := range read {
+			if m[1] != "intervalOff" {
+				t.Errorf("%s is read with %s; \"0\" must disable the loop, so read it with intervalOff", n, m[1])
+			}
+		}
+	}
 }

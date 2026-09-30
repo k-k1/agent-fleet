@@ -224,16 +224,17 @@ Workspace を起こさない。
     別のアベイラビリティゾーンへ写す。既定 off。
 - **usage サンプラー** — `AF_USAGE_SAMPLE_INTERVAL`（5 分）ごとに、running な Workspace の占有秒を日次と
   時間単位のバケツへ加算する。稼働ヒートマップの元にもなる。モデルの資格情報は利用者持ちなので、
-  **運用者のコストはトークンでなく占有時間**で、それをこれが測る。
+  **運用者のコストはトークンでなく占有時間**で、それをこれが測る。`0` で止まる。
 - **クラウドコストのポーラー** — 請求書のある runtime（AWS のターゲット）では、`AF_CLOUD_COST_INTERVAL`
   （6 時間）ごとに Cost Explorer を直近 `AF_CLOUD_COST_WINDOW_DAYS`（7 日）分読み、コスト配分タグで
-  メンバー別に按分する。`docker` と `native` では何もせず、コストの画面も無い。
+  メンバー別に按分する。`docker` と `native` では何もせず、コストの画面も無い。`0` で止まる。
 - **git GC** — `AF_GIT_GC_INTERVAL`（24 時間）ごとに内蔵 git の bare で `git gc --auto` を走らせ、
   `AF_LFS_GC_GRACE`（14 日）より古い LFS の孤児を prune する（進行中の push と競合しない）。**共有ホストの
-  RAM を守るため逐次実行**（[91](91-internal-git.ja.md)）。
+  RAM を守るため逐次実行**（[91](91-internal-git.ja.md)）。`0` で止まる。
 - **scheduler** — `AF_SCHEDULER_INTERVAL`（1 分）ごとに期限の来たスケジュールを発火させ、スケジュールごとの
   ゆらぎ（`AF_SCHEDULE_JITTER`、2 分）で散らす。発火は停止中の Workspace を CLI の自己更新無しで起こし、
   `AF_SCHEDULE_WAKE_TIMEOUT`（起動予算の 300 秒）まで待ち、`AF_SCHEDULE_SETTLE` の間 keep-alive を保つ。
+  `0` で止まり、何も発火せず Console はスケジュールの欄を隠す。
 - **監査 sweep** — `AF_CLAUDE_AUDIT_INTERVAL`、opt-in で既定 off。コンテナ内で claude がすることは CP の
   proxy を通らないので見えない。Agent → CP 方向は意図的に塞いであるので **CP が pull する**: running な
   claude セッションの transcript を読み、書き込み・編集・コマンドを監査する（`actor_kind=claude`）。
