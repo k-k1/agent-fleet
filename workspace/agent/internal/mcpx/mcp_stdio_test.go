@@ -1078,3 +1078,49 @@ func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
 		t.Errorf("send that started a turn = %v, want no queued", got)
 	}
 }
+
+// The server instructions must name every tool group the session surface can advertise, and
+// only the ones its flags turn on: a model reads them before the tool list.
+func TestMCPStdioInstructionsFollowSessionSurface(t *testing.T) {
+	withMCPFlags(t, false, true, false)
+	oldPeer, oldSpawn := mcpPeerMessagingEnabled, mcpFleetSpawnEnabled
+	t.Cleanup(func() { mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = oldPeer, oldSpawn })
+	mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = false, false
+
+	bare := mcpStdioInstructions()
+	for _, want := range []string{"completion report", "handoff", "memos", "session status", "image generation"} {
+		if !strings.Contains(bare, want) {
+			t.Errorf("session instructions miss %q: %s", want, bare)
+		}
+	}
+	for _, absent := range []string{"Chromium", "peer", "child sessions"} {
+		if strings.Contains(bare, absent) {
+			t.Errorf("session instructions mention %q with its flag off: %s", absent, bare)
+		}
+	}
+
+	setSessionChromiumEnabled(true)
+	mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = true, true
+	full := mcpStdioInstructions()
+	for _, want := range []string{"Chromium", "peer sessions", "child sessions"} {
+		if !strings.Contains(full, want) {
+			t.Errorf("session instructions miss %q with its flag on: %s", want, full)
+		}
+	}
+	for _, s := range []string{bare, full} {
+		for _, r := range s {
+			if r > 0x7f {
+				t.Fatalf("instructions must be English ASCII: %s", s)
+			}
+		}
+	}
+
+	withMCPFlags(t, false, false, false)
+	if got := mcpStdioInstructions(); !strings.Contains(got, "assistant") || strings.Contains(got, "steer") {
+		t.Errorf("read-only assistant instructions = %s", got)
+	}
+	withMCPFlags(t, true, false, false)
+	if got := mcpStdioInstructions(); !strings.Contains(got, "steer") {
+		t.Errorf("--write assistant instructions = %s", got)
+	}
+}
