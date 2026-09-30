@@ -47,7 +47,7 @@ jobs:
   # resolving a conflict (138 commits' worth in this repository) stays unscanned and green.
   # Allowlist and false-positive handling live in .gitleaks.toml.
   secret-scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -72,7 +72,7 @@ jobs:
   # invented words, so the gate can be shown not to be a no-op without knowing what is in
   # the ledger.
   release-scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: deploy/release/scan
@@ -100,7 +100,7 @@ jobs:
           deploy/release/scan-forbidden.sh /tmp/src.tar
 
   control-plane:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: control-plane
@@ -139,7 +139,7 @@ jobs:
         run: cd control-plane && ../scripts/vet-build-tags.sh
 
   workspace-agent:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: workspace/agent
@@ -191,7 +191,7 @@ jobs:
   # the script). Zero CFN create/delete/update calls: there are 198 invocations, but every
   # one is a read against the fake `aws` (180 `describe-stacks`, among others).
   deploy-scripts:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - name: capture / teardown restore point
@@ -225,7 +225,7 @@ jobs:
         run: ./deploy/local/cli-pin-bump-stub-test.sh
 
   console:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: console

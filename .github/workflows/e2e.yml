@@ -24,7 +24,7 @@ permissions:
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "workspace/**"
       - "control-plane/**"
@@ -53,7 +53,7 @@ concurrency:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     env:
       WS_IMAGE: agent-fleet/workspace:dev
@@ -95,7 +95,7 @@ jobs:
         run: go test -v -tags e2e -timeout 15m ./...
 
   ui-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     env:
       WS_IMAGE: agent-fleet/workspace:dev
@@ -161,7 +161,7 @@ jobs:
     # The state-detection contract is not visible here; claude-tui-contract.yml
     # covers it separately.
     if: github.event_name == 'workflow_dispatch' && inputs.live
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       WS_IMAGE: agent-fleet/workspace:dev
