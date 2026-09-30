@@ -109,9 +109,10 @@ type threadHandle struct {
 	// Live context fill (session/contextUsage). Separate lock from mu so onNotify
 	// can record context without contending with turn plumbing. Read by ManagedContext.
 	ctxMu       sync.Mutex
-	ctxUsed     int64  // usedTokens from the latest session/contextUsage notification
-	ctxWindow   *int64 // windowTokens; nil when the basis carries no limit
-	ctxHasUsage bool   // false until the first notification arrives
+	ctxUsed     int64       // usedTokens from the latest session/contextUsage notification
+	ctxWindow   *int64      // windowTokens; nil when the basis carries no limit
+	ctxHasUsage bool        // false until the first notification arrives
+	spends      []turnSpend // per-turn token trend from session/tokenUsage, newest last (context.go)
 }
 
 // pendingAsk is the wire identity of the thing an Interaction is standing in for. Two
@@ -238,6 +239,7 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		}
 		log.Printf("muse: %s: stored session %s is gone; starting a fresh one", h.name, prev.ID)
 	}
+	h.resetUsage() // a different conversation from here on
 
 	// A slot born from a fork opens by copying the source rather than starting empty. It is
 	// tried once, at birth: after this the slot has a stored session and takes the resume
@@ -491,6 +493,13 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		h.ctxWindow = p.WindowTokens
 		h.ctxHasUsage = true
 		h.ctxMu.Unlock()
+
+	case msp.NotificationSessionTokenUsage:
+		var p msp.SessionTokenUsageParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.recordTokenUsage(p)
 
 	case msp.NotificationSessionModelChanged:
 		var p msp.SessionModelChangedParams

@@ -87,6 +87,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	}
 	sid := slotSid(m)
 	li.State = status.EffectiveModal(sid, status.LiveState(sid))
+	// The overview card's gauge and trend come from the live handle, never from Transcript():
+	// AF's item store carries no usage, so sessionx's transcript fold finds nothing for muse.
+	// Both are in-memory reads — no MSP round trip on the 4 s list poll.
+	li.Context = overviewContext(m.Name)
+	li.TokenSpends = ManagedSpends(m.Name)
 	return li
 }
 
