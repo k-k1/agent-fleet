@@ -30,6 +30,31 @@ class GithubSlugTests(unittest.TestCase):
                 self.assertEqual(check.github_slug(text), rendered)
 
 
+class DecisionAnchorTests(unittest.TestCase):
+    """Anchors in an ADR are checked, same-file ones included."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.adr = self.root / "docs/decisions/0001-x.md"
+        self.adr.parent.mkdir(parents=True)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.root / "guide")).start()
+
+    def errors(self, link):
+        self.adr.write_text(f"# 0001. X\n\n## Revision — 取り消し（2026-09-27）\n\nSee [it]({link}).\n")
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_anchors([str(self.adr)], findings)
+        return "\n".join(findings.errors)
+
+    def test_same_file_anchor(self):
+        self.assertEqual(self.errors("#revision--取り消し2026-09-27"), "")
+        self.assertIn("anchor with no matching heading", self.errors("#revision--no-such-heading"))
+
+
 class NotesTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
