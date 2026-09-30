@@ -797,6 +797,34 @@ type Workspace struct {
 	PreviewSlug string
 }
 
+// WorkspaceAutoStop is why the Control Plane itself last stopped a workspace, kept so a
+// tenant admin can see it without the CP log (#1384). Kind is the stop's cause, today only
+// "start-deadline"; Phase is the last boot phase the runtime reported before the stop
+// (on ecs-ec2 the ECS sentence naming why the task cannot be placed), which the stop
+// itself clears everywhere else. The row goes away when the workspace is next marked
+// running.
+type WorkspaceAutoStop struct {
+	Kind         string `json:"kind"`
+	Phase        string `json:"phase"`
+	LimitMinutes int    `json:"limit_minutes"`
+	StoppedAt    string `json:"stopped_at"`
+}
+
+// CurrentAutoStop is the membership's WorkspaceAutoStop when state, the live runtime state,
+// says the workspace is still down, else nil. The row is only deleted when a start reaches
+// SetWorkspaceState("running"), so a launch still in flight must not be shown as stopped.
+// A read error is nil too: the admin views it feeds degrade to plain "stopped".
+func CurrentAutoStop(ctx context.Context, s WorkspaceStore, membershipID, state string) *WorkspaceAutoStop {
+	if state == "running" || state == "starting" {
+		return nil
+	}
+	a, ok, err := s.GetWorkspaceAutoStopByMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return nil
+	}
+	return &a
+}
+
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
 // served while the Workspace container is stopped (the Agent is the source of
 // truth when running). state is "running" | "stopped".
@@ -1280,7 +1308,11 @@ type WorkspaceStore interface {
 	// DeleteWorkspace removes the row and its dependents. Irreversible, and only ever
 	// reached through the explicit destroy operation (ADR 0045 decision 13-2).
 	DeleteWorkspace(ctx context.Context, workspaceID string) error
+	// SetWorkspaceState also deletes the WorkspaceAutoStop row when state is "running":
+	// every start path ends there, so none of them can leave a stale reason behind.
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
+	SetWorkspaceAutoStop(ctx context.Context, workspaceID string, a WorkspaceAutoStop) error
+	GetWorkspaceAutoStopByMembership(ctx context.Context, membershipID string) (WorkspaceAutoStop, bool, error)
 	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
 	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)
 	ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, ownerMembershipID, operationID, cutoff, now string) (bool, error)

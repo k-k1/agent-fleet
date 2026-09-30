@@ -1212,10 +1212,14 @@ func (a API) mcpListWorkspaces(ctx context.Context, ac *adminCtx) (string, error
 	rows := make([]map[string]any, 0, len(members))
 	for _, m := range members {
 		container, state := a.cp.WorkspaceStateByMembership(ctx, m.MembershipID)
-		rows = append(rows, map[string]any{
+		row := map[string]any{
 			"user_key": m.UserKey, "email": m.Email, "role": m.MemberRole,
 			"container": container, "state": state,
-		})
+		}
+		if as := store.CurrentAutoStop(ctx, a.cp.Store(), m.MembershipID, state); as != nil {
+			row["auto_stop"] = as
+		}
+		rows = append(rows, row)
 	}
 	return jsonText(map[string]any{"tenant": ac.tenant.Slug, "workspaces": rows})
 }

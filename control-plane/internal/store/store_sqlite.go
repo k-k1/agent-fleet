@@ -1427,6 +1427,11 @@ func (s *SQL) SetWorkspaceState(ctx context.Context, workspaceID, state string) 
 			return err
 		}
 	}
+	if state == "running" {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_auto_stop WHERE workspace_id=?`, workspaceID); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID); err != nil {
 		return err
 	}
@@ -1563,6 +1568,7 @@ func (s *SQL) DeleteWorkspace(ctx context.Context, workspaceID string) error {
 	}
 	for _, stmt := range []string{
 		`DELETE FROM workspace_stop_intent WHERE workspace_id=?`,
+		`DELETE FROM workspace_auto_stop WHERE workspace_id=?`,
 		`DELETE FROM workspace_activity WHERE workspace_id=?`,
 		`DELETE FROM shared_session_catalog WHERE workspace_id=?`,
 		`DELETE FROM session WHERE workspace_id=?`,
@@ -1672,6 +1678,33 @@ func (s *SQL) SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSO
 func (s *SQL) SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slug string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE workspace SET preview_slug=? WHERE id=?`, slug, workspaceID)
 	return err
+}
+
+// SetWorkspaceAutoStop records why the Control Plane stopped the workspace, replacing the
+// previous record.
+func (s *SQL) SetWorkspaceAutoStop(ctx context.Context, workspaceID string, a WorkspaceAutoStop) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO workspace_auto_stop(workspace_id, kind, phase, limit_minutes, stopped_at)
+		VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(workspace_id) DO UPDATE SET kind=excluded.kind, phase=excluded.phase,
+		  limit_minutes=excluded.limit_minutes, stopped_at=excluded.stopped_at`,
+		workspaceID, a.Kind, a.Phase, a.LimitMinutes, a.StoppedAt)
+	return err
+}
+
+// GetWorkspaceAutoStopByMembership returns the automatic-stop record of the membership's
+// workspace; ok is false when there is none.
+func (s *SQL) GetWorkspaceAutoStopByMembership(ctx context.Context, membershipID string) (WorkspaceAutoStop, bool, error) {
+	var a WorkspaceAutoStop
+	err := s.db.QueryRowContext(ctx, `SELECT a.kind, a.phase, a.limit_minutes, a.stopped_at
+		FROM workspace_auto_stop a JOIN workspace w ON w.id = a.workspace_id
+		WHERE w.membership_id=?`, membershipID).Scan(&a.Kind, &a.Phase, &a.LimitMinutes, &a.StoppedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, false, nil
+	}
+	if err != nil {
+		return a, false, err
+	}
+	return a, true, nil
 }
 
 // GetWorkspaceByPreviewSlug resolves a preview request's host label back to the

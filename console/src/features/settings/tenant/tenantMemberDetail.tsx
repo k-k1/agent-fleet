@@ -26,7 +26,7 @@ import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
-import { MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
+import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
 // GET …/home-backups: the copies of a member's home kept outside it, and whether the home
@@ -445,6 +445,7 @@ export function MemberView({
           lists them all: "s5 is running" and "s3 is pinned" call for different next moves from
           the operator (wait, or ask for the pin to be released). */}
       <MemberIdleDetail idle={member.idle} state={member.state} />
+      <MemberAutoStopDetail autoStop={member.auto_stop} />
 
       <section className="admin-panel">
         <h4>{tr("admin.ws_resources")}</h4>

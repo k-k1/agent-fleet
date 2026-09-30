@@ -210,6 +210,14 @@ workspace starts; and on the AWS deployments the figures are read from inside th
 a stopped workspace shows no meters at all — including disk, which on those deployments lives on
 the workspace's own volume rather than on a disk the platform can read while it is down.
 
+A workspace can also be stopped by the platform itself: a start that has not finished within
+the deployment's limit (30 minutes by default) is stopped so it stops holding capacity. Such a
+member's row in the roster says **"Workspace start stopped automatically"** (hover it for the
+reason), and the member detail shows the same heading with the limit, the last step the start
+reached — on AWS often why no machine could take the workspace, which is usually what needs
+fixing — and when it was stopped. The member got the same text as a notification. It stays
+until the workspace is next started. The `list_workspaces` MCP tool returns it as `auto_stop`.
+
 ## Viewing sessions / getting the whole picture
 
 **"Sessions"** in the member detail lists that person's sessions along with their kind
